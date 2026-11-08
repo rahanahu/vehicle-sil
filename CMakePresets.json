@@ -1,0 +1,257 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "gcc",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "clang",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "linux",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "windows",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "linux-gcc-debug",
+      "displayName": "Linux GCC Debug",
+      "inherits": [
+        "gcc",
+        "linux"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-gcc-release",
+      "displayName": "Linux GCC Release",
+      "inherits": [
+        "gcc",
+        "linux"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-clang-debug",
+      "displayName": "Linux Clang Debug",
+      "inherits": [
+        "clang",
+        "linux"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-gcc-asan",
+      "displayName": "Linux GCC Debug + AddressSanitizer/UBSan",
+      "inherits": [
+        "gcc",
+        "linux"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VEHICLE_SIL_SANITIZERS": "address;undefined"
+      }
+    },
+    {
+      "name": "linux-gcc-tsan",
+      "displayName": "Linux GCC Debug + ThreadSanitizer",
+      "inherits": [
+        "gcc",
+        "linux"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VEHICLE_SIL_SANITIZERS": "thread"
+      }
+    },
+    {
+      "name": "linux-clang-asan",
+      "displayName": "Linux Clang Debug + AddressSanitizer/UBSan",
+      "inherits": [
+        "clang",
+        "linux"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VEHICLE_SIL_SANITIZERS": "address;undefined"
+      }
+    },
+    {
+      "name": "linux-clang-tsan",
+      "displayName": "Linux Clang Debug + ThreadSanitizer",
+      "inherits": [
+        "clang",
+        "linux"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VEHICLE_SIL_SANITIZERS": "thread"
+      }
+    },
+    {
+      "name": "windows-mingw-debug",
+      "displayName": "Windows MSYS2 UCRT64 GCC Debug",
+      "description": "Run from an MSYS2 UCRT64 shell (gcc, g++, cmake, ninja from mingw-w64-ucrt-x86_64-*)",
+      "inherits": [
+        "gcc",
+        "windows"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-mingw-release",
+      "displayName": "Windows MSYS2 UCRT64 GCC Release",
+      "description": "Run from an MSYS2 UCRT64 shell (gcc, g++, cmake, ninja from mingw-w64-ucrt-x86_64-*)",
+      "inherits": [
+        "gcc",
+        "windows"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-gcc-debug",
+      "configurePreset": "linux-gcc-debug"
+    },
+    {
+      "name": "linux-gcc-release",
+      "configurePreset": "linux-gcc-release"
+    },
+    {
+      "name": "linux-clang-debug",
+      "configurePreset": "linux-clang-debug"
+    },
+    {
+      "name": "linux-gcc-asan",
+      "configurePreset": "linux-gcc-asan"
+    },
+    {
+      "name": "linux-gcc-tsan",
+      "configurePreset": "linux-gcc-tsan"
+    },
+    {
+      "name": "linux-clang-asan",
+      "configurePreset": "linux-clang-asan"
+    },
+    {
+      "name": "linux-clang-tsan",
+      "configurePreset": "linux-clang-tsan"
+    },
+    {
+      "name": "windows-mingw-debug",
+      "configurePreset": "windows-mingw-debug"
+    },
+    {
+      "name": "windows-mingw-release",
+      "configurePreset": "windows-mingw-release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "test-base",
+      "hidden": true,
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false,
+        "jobs": 8
+      }
+    },
+    {
+      "name": "linux-gcc-debug",
+      "inherits": "test-base",
+      "configurePreset": "linux-gcc-debug"
+    },
+    {
+      "name": "linux-gcc-release",
+      "inherits": "test-base",
+      "configurePreset": "linux-gcc-release"
+    },
+    {
+      "name": "linux-clang-debug",
+      "inherits": "test-base",
+      "configurePreset": "linux-clang-debug"
+    },
+    {
+      "name": "linux-gcc-asan",
+      "inherits": "test-base",
+      "configurePreset": "linux-gcc-asan"
+    },
+    {
+      "name": "linux-gcc-tsan",
+      "inherits": "test-base",
+      "configurePreset": "linux-gcc-tsan"
+    },
+    {
+      "name": "linux-clang-asan",
+      "inherits": "test-base",
+      "configurePreset": "linux-clang-asan"
+    },
+    {
+      "name": "linux-clang-tsan",
+      "inherits": "test-base",
+      "configurePreset": "linux-clang-tsan"
+    },
+    {
+      "name": "windows-mingw-debug",
+      "inherits": "test-base",
+      "configurePreset": "windows-mingw-debug"
+    },
+    {
+      "name": "windows-mingw-release",
+      "inherits": "test-base",
+      "configurePreset": "windows-mingw-release"
+    }
+  ]
+}

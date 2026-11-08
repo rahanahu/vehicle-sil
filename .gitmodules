@@ -1,0 +1,3 @@
+[submodule "external/sil-kit"]
+	path = external/sil-kit
+	url = https://github.com/vectorgrp/sil-kit.git

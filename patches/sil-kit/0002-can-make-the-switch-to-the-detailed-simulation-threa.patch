@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: rahanahu <rahanahu@gmail.com>
+Date: Sun, 8 Nov 2026 12:39:54 +0900
+Subject: [PATCH] can: make the switch to the detailed simulation thread safe
+
+A CAN controller switches from the trivial to the detailed simulation
+when the service discovery reports a network simulator for its network.
+The discovery handler runs on the IO worker thread and assigns
+SimBehavior::_currentBehavior, while the controller's own thread may use
+the same pointer at the same time: Start(), SetBaudRate() or SendFrame()
+of a controller created before the network simulator was discovered
+reads it (SimBehaviorTrivial delivers the controller status back to the
+controller, which calls AllowReception()). ThreadSanitizer reports this
+as a data race.
+
+Make the pointer atomic: the switch publishes the simulated link with a
+release store, and every use loads the pointer with acquire. Which
+behavior a call that races with the switch uses is unchanged.
+---
+ SilKit/source/services/can/SimBehavior.cpp | 14 +++++++-------
+ SilKit/source/services/can/SimBehavior.hpp |  5 ++++-
+ 2 files changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/SilKit/source/services/can/SimBehavior.cpp b/SilKit/source/services/can/SimBehavior.cpp
+index 546f4d72..22bbd7f0 100644
+--- a/SilKit/source/services/can/SimBehavior.cpp
++++ b/SilKit/source/services/can/SimBehavior.cpp
+@@ -16,18 +16,18 @@ SimBehavior::SimBehavior(Core::IParticipantInternal* participant, CanController*
+     : _trivial{participant, canController, timeProvider}
+     , _detailed{participant, canController, canController->GetServiceDescriptor()}
+ {
+-    _currentBehavior = &_trivial;
++    _currentBehavior.store(&_trivial, std::memory_order_release);
+ }
+ 
+ auto SimBehavior::AllowReception(const Core::IServiceEndpoint* from) const -> bool
+ {
+-    return _currentBehavior->AllowReception(from);
++    return _currentBehavior.load(std::memory_order_acquire)->AllowReception(from);
+ }
+ 
+ template <typename MsgT>
+ void SimBehavior::SendMsgImpl(MsgT&& msg)
+ {
+-    _currentBehavior->SendMsg(std::forward<MsgT>(msg));
++    _currentBehavior.load(std::memory_order_acquire)->SendMsg(std::forward<MsgT>(msg));
+ }
+ 
+ void SimBehavior::SendMsg(CanConfigureBaudrate&& msg)
+@@ -48,22 +48,22 @@ void SimBehavior::SendMsg(WireCanFrameEvent&& msg)
+ void SimBehavior::SetDetailedBehavior(const Core::ServiceDescriptor& simulatedLink)
+ {
+     _detailed.SetSimulatedLink(simulatedLink);
+-    _currentBehavior = &_detailed;
++    _currentBehavior.store(&_detailed, std::memory_order_release);
+ }
+ 
+ void SimBehavior::SetTrivialBehavior()
+ {
+-    _currentBehavior = &_trivial;
++    _currentBehavior.store(&_trivial, std::memory_order_release);
+ }
+ 
+ auto SimBehavior::IsTrivial() const -> bool
+ {
+-    return _currentBehavior == &_trivial;
++    return _currentBehavior.load(std::memory_order_acquire) == &_trivial;
+ }
+ 
+ auto SimBehavior::IsDetailed() const -> bool
+ {
+-    return _currentBehavior == &_detailed;
++    return _currentBehavior.load(std::memory_order_acquire) == &_detailed;
+ }
+ 
+ 
+diff --git a/SilKit/source/services/can/SimBehavior.hpp b/SilKit/source/services/can/SimBehavior.hpp
+index c7f78acf..e173aca3 100644
+--- a/SilKit/source/services/can/SimBehavior.hpp
++++ b/SilKit/source/services/can/SimBehavior.hpp
+@@ -4,6 +4,7 @@
+ 
+ #pragma once
+ 
++#include <atomic>
+ #include <tuple>
+ #include <vector>
+ #include <map>
+@@ -44,7 +45,9 @@ private:
+ 
+     SimBehaviorTrivial _trivial;
+     SimBehaviorDetailed _detailed;
+-    ISimBehavior* _currentBehavior;
++    // Switched by the service discovery (IO worker thread) while the controller's own thread may
++    // use it (e.g. Start() or SendFrame() before the network simulator was discovered).
++    std::atomic<ISimBehavior*> _currentBehavior;
+ };
+ 
+ } // namespace Can
+-- 
+2.56.0
+

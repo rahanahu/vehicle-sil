@@ -1,0 +1,5 @@
+# vehicle_sil_sim_controller: system controller for coordinated virtual-time simulations.
+add_executable(vehicle_sil_sim_controller main.cpp)
+target_link_libraries(vehicle_sil_sim_controller PRIVATE vehicle_sil::core vehicle_sil_cli)
+vehicle_sil_target_defaults(vehicle_sil_sim_controller)
+vehicle_sil_copy_runtime_dlls(vehicle_sil_sim_controller)

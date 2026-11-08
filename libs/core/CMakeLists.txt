@@ -1,0 +1,23 @@
+# vehicle_sil::core - SIL Kit participant, registry connection and lifecycle.
+# Protocol independent: must not depend on CAN, LIN or J1939 specifics.
+add_library(vehicle_sil_core STATIC
+  src/participant_runtime.cpp
+  src/simulation_controller.cpp
+  src/tick_scheduler.cpp)
+add_library(vehicle_sil::core ALIAS vehicle_sil_core)
+set_target_properties(vehicle_sil_core PROPERTIES EXPORT_NAME core)
+target_include_directories(vehicle_sil_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_link_libraries(vehicle_sil_core PUBLIC SilKit::SilKit)
+vehicle_sil_target_defaults(vehicle_sil_core)
+
+# vehicle_sil::sim_base - simulation time and the step inbox, without SIL Kit. The headers stay
+# under vehicle_sil/core/; libraries that must build without SIL Kit (vehicle_sil::can) link
+# only this target, so including a SIL Kit dependent header there fails to compile.
+find_package(Threads REQUIRED) # StepInbox uses std::mutex
+add_library(vehicle_sil_sim_base INTERFACE)
+add_library(vehicle_sil::sim_base ALIAS vehicle_sil_sim_base)
+set_target_properties(vehicle_sil_sim_base PROPERTIES EXPORT_NAME sim_base)
+target_include_directories(vehicle_sil_sim_base INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_compile_features(vehicle_sil_sim_base INTERFACE cxx_std_20)
+target_link_libraries(vehicle_sil_sim_base INTERFACE Threads::Threads)
+target_link_libraries(vehicle_sil_core PUBLIC vehicle_sil::sim_base)

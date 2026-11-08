@@ -1,0 +1,2 @@
+# Patches must apply byte for byte: never convert their line endings.
+/patches/**/*.patch -text

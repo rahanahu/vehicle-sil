@@ -1,0 +1,83 @@
+cmake_minimum_required(VERSION 3.21)
+
+project(
+  vehicle_sil
+  VERSION 0.1.0
+  DESCRIPTION "Vehicle network SIL simulation peers on Vector SIL Kit"
+  LANGUAGES C CXX)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+
+# ---------------------------------------------------------------------------
+# Options. Examples and tests default to ON only when vehicle-sil is the
+# top-level project, so FetchContent consumers only build the libraries they
+# link against (everything else is EXCLUDE_FROM_ALL or not added).
+# ---------------------------------------------------------------------------
+option(VEHICLE_SIL_BUILD_EXAMPLES "Build the example peer executables" ${PROJECT_IS_TOP_LEVEL})
+option(VEHICLE_SIL_BUILD_TESTS "Build the vehicle-sil tests" ${PROJECT_IS_TOP_LEVEL})
+option(VEHICLE_SIL_TEST_FETCHCONTENT
+       "Add a (slow) test that consumes this repository via FetchContent" OFF)
+option(VEHICLE_SIL_WARNINGS_AS_ERRORS "Treat warnings in vehicle-sil targets as errors" OFF)
+set(VEHICLE_SIL_SANITIZERS
+    ""
+    CACHE STRING "Semicolon separated -fsanitize= values, e.g. address;undefined (top-level builds only)")
+
+include(VehicleSilHelpers)
+# Sanitizers must be set before the dependencies are added so that SIL Kit is instrumented
+# too.
+# Only when vehicle-sil is the top-level project: a consumer's own targets would not get the
+# flags and would fail to link against instrumented libraries.
+if(PROJECT_IS_TOP_LEVEL)
+  vehicle_sil_enable_sanitizers()
+elseif(NOT "${VEHICLE_SIL_SANITIZERS}" STREQUAL "")
+  message(WARNING "vehicle-sil: VEHICLE_SIL_SANITIZERS is ignored in a subproject build; set the flags for the whole build instead")
+endif()
+
+include(VehicleSilDependencies)
+
+# Libraries:
+#   vehicle_sil::core       SIL Kit participant and lifecycle management (protocol independent)
+#   vehicle_sil::sim_base   simulation time and the step inbox, without SIL Kit (part of libs/core)
+#   vehicle_sil::can        backend-neutral CAN: frames, ports, host, step driver, virtual bus (no SIL Kit)
+#   vehicle_sil::can_silkit vehicle_sil::can port on SIL Kit CAN (virtual or real time)
+#   vehicle_sil::can_netsim the simple CAN network simulator (SIL Kit)
+#   vehicle_sil::j1939      J1939 stack on vehicle_sil::can (no SIL Kit); its protocol parts are
+#                           vehicle_sil::j1939_broadcast_suppression and vehicle_sil::j1939_diagnostics
+#   vehicle_sil::lin        LIN schedule and slave responses on SIL Kit LIN (links vehicle_sil::core)
+#   vehicle_sil::testkit    J1939 networks on a local virtual bus, recorders, fault injection (internal)
+#   vehicle_sil::peer       one SIL Kit participant with its J1939 networks and LIN nodes (internal)
+# The J1939 stack, the CAN base, the test kit and Peer are under development; their API may
+# still change.
+# As a subproject (FetchContent / add_subdirectory) the libraries are excluded
+# from "all", so a consumer only builds the libraries it links against.
+if(PROJECT_IS_TOP_LEVEL)
+  set(_vehicle_sil_exclude "")
+else()
+  set(_vehicle_sil_exclude EXCLUDE_FROM_ALL)
+endif()
+add_subdirectory(libs/core ${_vehicle_sil_exclude})
+add_subdirectory(libs/lin ${_vehicle_sil_exclude})
+add_subdirectory(libs/can ${_vehicle_sil_exclude})
+add_subdirectory(libs/can_silkit ${_vehicle_sil_exclude})
+add_subdirectory(libs/can_netsim ${_vehicle_sil_exclude})
+add_subdirectory(libs/j1939 ${_vehicle_sil_exclude})
+add_subdirectory(libs/testkit ${_vehicle_sil_exclude})
+add_subdirectory(libs/peer ${_vehicle_sil_exclude})
+# Vector XL CAN bridge: portable core everywhere, XL backend and executable on Windows only.
+add_subdirectory(bridges/vector-xl ${_vehicle_sil_exclude})
+# Command-line helpers shared by the executables, and the system controller for coordinated
+# virtual-time simulations.
+add_subdirectory(tools/common ${_vehicle_sil_exclude})
+add_subdirectory(tools/sim_controller ${_vehicle_sil_exclude})
+add_subdirectory(tools/can_bus_simulator ${_vehicle_sil_exclude})
+
+if(VEHICLE_SIL_BUILD_EXAMPLES)
+  add_subdirectory(examples/j1939)
+  add_subdirectory(examples/virtual_time)
+  add_subdirectory(examples/lin)
+endif()
+
+if(VEHICLE_SIL_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()

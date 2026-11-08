@@ -1,0 +1,233 @@
+include(VehicleSilTestHelpers)
+
+# main() and the registry of the in-process test harness (unit/test_harness.hpp).
+add_library(vehicle_sil_test_main OBJECT unit/test_main.cpp)
+target_include_directories(vehicle_sil_test_main PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+vehicle_sil_target_defaults(vehicle_sil_test_main)
+
+# Child processes, a registry process, log helpers and coordinated virtual-time runs for the
+# process-level launchers.
+add_library(vehicle_sil_test_process STATIC
+  integration/child_process.cpp
+  integration/launcher_support.cpp
+  integration/simulation_run.cpp)
+target_include_directories(vehicle_sil_test_process PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/integration)
+target_link_libraries(vehicle_sil_test_process PUBLIC vehicle_sil_cli)
+vehicle_sil_target_defaults(vehicle_sil_test_process)
+
+# ---------------------------------------------------------------------------
+# Unit tests: command line.
+# ---------------------------------------------------------------------------
+vehicle_sil_add_harness_tests(vehicle_sil_unit_tests
+  PREFIX unit LABELS unit TIMEOUT 60
+  SOURCES unit/test_cli_args.cpp
+  LINK vehicle_sil_cli)
+
+# ---------------------------------------------------------------------------
+# Core: simulation time helpers and SIL Kit virtual time (in-process registry). The virtual
+# time cases measure wall-clock speed and run alone.
+# ---------------------------------------------------------------------------
+vehicle_sil_add_harness_tests(vehicle_sil_core_tests
+  PREFIX core LABELS unit core TIMEOUT 120 RUN_SERIAL "^virtual_time_"
+  SOURCES core/test_time_helpers.cpp core/test_virtual_time.cpp
+  LINK vehicle_sil::core)
+
+# ---------------------------------------------------------------------------
+# LIN: schedule, frames, checksums, diagnostic frames, sleep and wakeup with SIL Kit LIN in
+# virtual time (in-process registry).
+# ---------------------------------------------------------------------------
+vehicle_sil_add_harness_tests(vehicle_sil_lin_tests
+  PREFIX lin LABELS unit lin TIMEOUT 120 RUN_SERIAL "wall_clock|every_speed"
+  SOURCES lin/test_lin_virtual_time.cpp lin/test_lin_cluster.cpp lin/test_lin_protocol.cpp
+  LINK vehicle_sil::lin)
+
+# ---------------------------------------------------------------------------
+# vehicle_sil::can (base of the J1939 stack): frame values, virtual bus, host and step
+# driver. Links only vehicle_sil::can, so building it checks that the library needs no SIL Kit.
+# ---------------------------------------------------------------------------
+vehicle_sil_add_harness_tests(vehicle_sil_can_tests
+  PREFIX can LABELS unit can TIMEOUT 60
+  SOURCES can/test_can_values_and_bus.cpp can/test_can_host.cpp can/test_can_bus_model.cpp
+          can/test_can_real_time.cpp can/test_can_faults.cpp can/test_can_tap_port.cpp
+  LINK vehicle_sil::can)
+target_include_directories(vehicle_sil_can_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/can)
+
+# The test kit (vehicle_sil::testkit): J1939 networks on a local virtual bus, recorders, fault
+# injection. Links no SIL Kit.
+vehicle_sil_add_harness_tests(vehicle_sil_testkit_tests
+  PREFIX testkit LABELS unit testkit j1939 TIMEOUT 60
+  SOURCES testkit/test_testkit.cpp
+  LINK vehicle_sil::testkit)
+
+# The SIL Kit port of vehicle_sil::can: against a fake controller, and on real participants
+# (in-process registry), where the traces must equal the virtual bus's.
+vehicle_sil_add_harness_tests(vehicle_sil_can_silkit_tests
+  PREFIX can_silkit LABELS unit can TIMEOUT 120
+  SOURCES can/test_silkit_can_port.cpp can/test_can_silkit_runs.cpp
+  LINK vehicle_sil::can_silkit)
+target_include_directories(vehicle_sil_can_silkit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/can)
+
+# vehicle_sil::Peer on real participants (in-process registry): J1939 and LIN nodes, the same
+# results as the local virtual bus, real time with an external port.
+vehicle_sil_add_harness_tests(vehicle_sil_peer_tests
+  PREFIX peer LABELS unit peer j1939 TIMEOUT 180
+  SOURCES peer/test_peer.cpp
+  LINK vehicle_sil::peer vehicle_sil::testkit)
+
+# The simple CAN network simulator (vehicle_sil::can_netsim) on real participants (in-process
+# registry), compared with the virtual bus; its configuration file; and the executable.
+if(TARGET vehicle_sil_can_bus_simulator)
+  vehicle_sil_add_harness_tests(vehicle_sil_can_netsim_tests
+    PREFIX can_netsim LABELS unit can TIMEOUT 120
+    SOURCES can/test_can_netsim.cpp
+    LINK vehicle_sil::can_netsim vehicle_sil_test_process)
+  target_include_directories(vehicle_sil_can_netsim_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/can)
+  target_compile_definitions(vehicle_sil_can_netsim_tests
+    PRIVATE VEHICLE_SIL_CAN_BUS_SIMULATOR="$<TARGET_FILE:vehicle_sil_can_bus_simulator>")
+  add_dependencies(vehicle_sil_can_netsim_tests vehicle_sil_can_bus_simulator)
+endif()
+
+# ---------------------------------------------------------------------------
+# Vector XL CAN bridge (against a fake XL driver; runs on every platform).
+# ---------------------------------------------------------------------------
+add_subdirectory(vector_xl)
+
+# ---------------------------------------------------------------------------
+# FetchContent consumer test (opt-in): configures, builds and runs
+# examples/fetchcontent_consumer against a git URL + commit.
+# ---------------------------------------------------------------------------
+if(VEHICLE_SIL_TEST_FETCHCONTENT)
+  set(VEHICLE_SIL_FETCHCONTENT_TEST_REPOSITORY "${PROJECT_SOURCE_DIR}"
+      CACHE STRING "Git repository the FetchContent test clones (local path or URL)")
+  set(VEHICLE_SIL_FETCHCONTENT_TEST_TAG "HEAD"
+      CACHE STRING "Commit the FetchContent test checks out; HEAD is resolved at test time")
+  add_test(
+    NAME fetchcontent.consumer
+    COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${PROJECT_SOURCE_DIR}/examples/fetchcontent_consumer
+            -DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/fetchcontent_consumer
+            -DREPOSITORY=${VEHICLE_SIL_FETCHCONTENT_TEST_REPOSITORY}
+            -DTAG=${VEHICLE_SIL_FETCHCONTENT_TEST_TAG}
+            -DGENERATOR=${CMAKE_GENERATOR}
+            -DBUILD_TYPE=${CMAKE_BUILD_TYPE}
+            -DC_COMPILER=${CMAKE_C_COMPILER}
+            -DCXX_COMPILER=${CMAKE_CXX_COMPILER}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/fetchcontent/run_consumer.cmake)
+  set_tests_properties(fetchcontent.consumer PROPERTIES LABELS fetchcontent TIMEOUT 7200)
+endif()
+
+# The remaining tests run the example peers as processes.
+if(NOT VEHICLE_SIL_BUILD_EXAMPLES)
+  message(STATUS "vehicle-sil: VEHICLE_SIL_BUILD_EXAMPLES is OFF; process-level J1939 and virtual time tests are skipped")
+  return()
+endif()
+
+# ---------------------------------------------------------------------------
+# J1939 integration: real sil-kit-registry, sender and receiver processes.
+# ---------------------------------------------------------------------------
+add_executable(vehicle_sil_it_launcher integration/launcher.cpp)
+target_link_libraries(vehicle_sil_it_launcher PRIVATE vehicle_sil_test_process)
+vehicle_sil_target_defaults(vehicle_sil_it_launcher)
+# The launcher starts these executables, so they must be built with it.
+add_dependencies(vehicle_sil_it_launcher sil-kit-registry vehicle_sil_j1939_sender vehicle_sil_j1939_receiver)
+
+vehicle_sil_add_scenario_tests(vehicle_sil_it_launcher
+  PREFIX integration LABELS integration TIMEOUT 120
+  WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/integration
+  SCENARIOS address-claim-and-pgn receiver-timeout receiver-detects-wrong-name receiver-detects-wrong-payload
+  ARGS --registry $<TARGET_FILE:sil-kit-registry>
+       --sender $<TARGET_FILE:vehicle_sil_j1939_sender>
+       --receiver $<TARGET_FILE:vehicle_sil_j1939_receiver>
+       --timeout-ms 60000)
+
+# ---------------------------------------------------------------------------
+# Virtual time across processes: controller + physics (1 ms) + ECU with an existing tick()
+# model and J1939 (10 ms) + LIN sensor (2 ms) + LIN body controller (5 ms). The scenarios
+# measure wall-clock speed and run alone.
+# ---------------------------------------------------------------------------
+add_executable(vehicle_sil_vt_launcher virtual_time/vt_launcher.cpp)
+target_link_libraries(vehicle_sil_vt_launcher PRIVATE vehicle_sil_test_process)
+vehicle_sil_target_defaults(vehicle_sil_vt_launcher)
+add_dependencies(vehicle_sil_vt_launcher sil-kit-registry vehicle_sil_sim_controller vehicle_sil_vt_physics
+                 vehicle_sil_vt_ecu vehicle_sil_vt_lin_sensor vehicle_sil_vt_body_controller)
+
+vehicle_sil_add_scenario_tests(vehicle_sil_vt_launcher
+  PREFIX virtual_time LABELS integration virtual_time TIMEOUT 300 RUN_SERIAL
+  WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/virtual_time
+  SCENARIOS fast slow-tick paced-fast paced-slow peer-failure
+  ARGS --registry $<TARGET_FILE:sil-kit-registry>
+       --controller $<TARGET_FILE:vehicle_sil_sim_controller>
+       --physics $<TARGET_FILE:vehicle_sil_vt_physics>
+       --ecu $<TARGET_FILE:vehicle_sil_vt_ecu>
+       --lin-sensor $<TARGET_FILE:vehicle_sil_vt_lin_sensor>
+       --body-controller $<TARGET_FILE:vehicle_sil_vt_body_controller>
+       --end-ms 1000
+       --timeout-ms 120000)
+
+# ---------------------------------------------------------------------------
+# LIN cluster across processes: controller + LIN master (5 ms) + two LIN slaves (2 ms, 4 ms):
+# schedule, master and slave frames, sleep and wakeup by master, slave and bus idle.
+# ---------------------------------------------------------------------------
+add_executable(vehicle_sil_lin_launcher lin/lin_launcher.cpp)
+target_link_libraries(vehicle_sil_lin_launcher PRIVATE vehicle_sil_test_process)
+vehicle_sil_target_defaults(vehicle_sil_lin_launcher)
+add_dependencies(vehicle_sil_lin_launcher sil-kit-registry vehicle_sil_sim_controller vehicle_sil_lin_master
+                 vehicle_sil_lin_slave)
+
+vehicle_sil_add_scenario_tests(vehicle_sil_lin_launcher
+  PREFIX lin_cluster LABELS integration lin TIMEOUT 300
+  WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/lin_cluster
+  SCENARIOS cluster cluster-paced cluster-master-10ms
+  ARGS --registry $<TARGET_FILE:sil-kit-registry>
+       --controller $<TARGET_FILE:vehicle_sil_sim_controller>
+       --master $<TARGET_FILE:vehicle_sil_lin_master>
+       --slave $<TARGET_FILE:vehicle_sil_lin_slave>
+       --timeout-ms 120000)
+
+# ---------------------------------------------------------------------------
+# The J1939 stack (vehicle_sil::j1939) on the virtual bus. Links no SIL Kit, so
+# building it checks that the stack needs none.
+# ---------------------------------------------------------------------------
+vehicle_sil_add_harness_tests(vehicle_sil_j1939_tests
+  PREFIX j1939 LABELS unit j1939 TIMEOUT 60
+  SOURCES j1939/test_j1939_types.cpp j1939/test_j1939_network.cpp j1939/test_j1939_request.cpp
+          j1939/test_j1939_address_claim.cpp j1939/test_j1939_address_management.cpp
+          j1939/test_j1939_transport_bam.cpp j1939/test_j1939_transport_rts.cpp
+          j1939/test_j1939_transport_faults.cpp j1939/test_j1939_bus_timing.cpp
+          j1939/test_j1939_outage.cpp j1939/test_j1939_real_time.cpp j1939/test_j1939_toolbox.cpp
+          j1939/test_j1939_observer.cpp
+  LINK vehicle_sil::j1939)
+target_include_directories(vehicle_sil_j1939_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/j1939)
+
+# The protocol parts (DM13, diagnostics, identification): built only from the engine's public API
+# and toolbox; the boundary test checks their sources and links.
+vehicle_sil_add_harness_tests(vehicle_sil_j1939_parts_tests
+  PREFIX j1939_parts LABELS unit j1939 TIMEOUT 60
+  SOURCES j1939/test_j1939_dm13.cpp j1939/test_j1939_diagnostics.cpp j1939/test_j1939_identification.cpp
+  LINK vehicle_sil::j1939_diagnostics)
+target_include_directories(vehicle_sil_j1939_parts_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/j1939)
+add_test(NAME j1939_parts.boundary
+         COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${PROJECT_SOURCE_DIR}/libs/j1939/parts
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
+set_tests_properties(j1939_parts.boundary PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
+# The test kit and Peer use the engine's public API only, like the parts.
+foreach(dir IN ITEMS testkit peer)
+  add_test(NAME ${dir}.boundary
+           COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${PROJECT_SOURCE_DIR}/libs/${dir} -DSOURCES_ONLY=ON
+                   -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
+  set_tests_properties(${dir}.boundary PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
+endforeach()
+
+# Replaces the global operator new to count allocations in steady-state steps: its own binary.
+vehicle_sil_add_harness_tests(vehicle_sil_j1939_allocation_tests
+  PREFIX j1939 LABELS unit j1939 TIMEOUT 60
+  SOURCES j1939/test_j1939_allocation.cpp
+  LINK vehicle_sil::j1939 vehicle_sil::j1939_diagnostics)
+target_include_directories(vehicle_sil_j1939_allocation_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/j1939)
+
+# The J1939 stack on SIL Kit participants (in-process registry): same traces as on the
+# virtual bus, with SIL Kit's trivial simulation and with the simple CAN network simulator.
+vehicle_sil_add_harness_tests(vehicle_sil_j1939_silkit_tests
+  PREFIX j1939_silkit LABELS unit j1939 TIMEOUT 180
+  SOURCES j1939/test_j1939_silkit.cpp
+  LINK vehicle_sil::j1939 vehicle_sil::can_silkit vehicle_sil::can_netsim)

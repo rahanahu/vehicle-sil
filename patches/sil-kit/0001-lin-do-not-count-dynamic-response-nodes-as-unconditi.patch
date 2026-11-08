@@ -1,0 +1,155 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: rahanahu <rahanahu@gmail.com>
+Date: Sat, 7 Nov 2026 21:52:45 +0900
+Subject: [PATCH] lin: do not count dynamic-response nodes as unconditional
+ responders
+
+SendDynamicResponse() distributes a response update with
+LinFrameResponseMode::TxUnconditional, so that the other controllers
+record the dynamic node as an unconditional responder for the LIN ID
+from then on. The trivial simulation of a master counts these
+responders in SendFrameHeader(): once two dynamic slaves have each
+responded to the same LIN ID once (for example two slaves that take
+turns on the diagnostic slave response frame 0x3D), the master counts
+two responders, does not send the header any more and reports
+LIN_RX_ERROR for every further header of that ID.
+
+A dynamic node decides on every header whether it responds, so
+GetResponse() skips it. With no unconditional responder the master
+still sends the header because a dynamic node is present.
+---
+ .../ITest_LinDynamicResponse.cpp              | 107 ++++++++++++++++++
+ SilKit/source/services/lin/LinController.cpp  |   4 +
+ 2 files changed, 111 insertions(+)
+
+diff --git a/SilKit/IntegrationTests/ITest_LinDynamicResponse.cpp b/SilKit/IntegrationTests/ITest_LinDynamicResponse.cpp
+index a3d9dcfe..c0aa88d9 100644
+--- a/SilKit/IntegrationTests/ITest_LinDynamicResponse.cpp
++++ b/SilKit/IntegrationTests/ITest_LinDynamicResponse.cpp
+@@ -1978,4 +1978,111 @@ TEST_F(ITest_LinDynamicResponse, normal_master_dynamic_slave_out_of_band_respons
+     // requested via SendFrameHeader or SendFrame(..., SlaveResponse)
+ }
+ 
++//! \brief Two dynamic slaves take turns responding to the same LIN ID. A dynamic response must not turn the slave into
++//!        an unconditional responder: otherwise, once both slaves have responded, the master counts two responders
++//!        and reports LIN_RX_ERROR for every further header without sending it.
++TEST_F(ITest_LinDynamicResponse, normal_master_dynamic_slaves_take_turns_on_one_id)
++{
++    auto participantNames = std::vector<std::string>{"LinMaster", "LinSlave1", "LinSlave2"};
++    _simTestHarness = std::make_unique<SimTestHarness>(participantNames, "silkit://localhost:0", false);
++
++    static constexpr LinId id = 34;
++    static constexpr size_t numHeaders = 4;
++
++    auto makeResponse = [](uint8_t value) {
++        LinFrame frame;
++        frame.id = id;
++        frame.checksumModel = LinChecksumModel::Enhanced;
++        frame.dataLength = 6;
++        frame.data = std::array<uint8_t, 8>{value, value, value, value, value, value, 0, 0};
++        return frame;
++    };
++
++    //////////////////////////////////////////////////////////////////////
++    //  LinMaster: sends a header for the ID every 10 ms
++    //////////////////////////////////////////////////////////////////////
++
++    std::vector<LinFrameStatusEvent> masterEvents;
++    {
++        auto&& participant = _simTestHarness->GetParticipant("LinMaster")->Participant();
++        auto&& lifecycleService = _simTestHarness->GetParticipant("LinMaster")->GetOrCreateLifecycleService();
++        auto&& timeSyncService = _simTestHarness->GetParticipant("LinMaster")->GetOrCreateTimeSyncService();
++        auto&& linController = participant->CreateLinController("LinController1", "LIN_1");
++
++        lifecycleService->SetCommunicationReadyHandler([linController]() {
++            auto config = MakeMasterConfig();
++            LinFrameResponse response;
++            response.frame.id = id;
++            response.frame.checksumModel = LinChecksumModel::Enhanced;
++            response.frame.dataLength = 6;
++            response.responseMode = LinFrameResponseMode::Rx;
++            config.frameResponses.push_back(response);
++            linController->Init(config);
++        });
++
++        linController->AddFrameStatusHandler([&masterEvents](auto&& /*linController*/, auto&& frameStatusEvent) {
++            masterEvents.push_back(frameStatusEvent);
++        });
++
++        timeSyncService->SetSimulationStepHandler(
++            [linController, lifecycleService, sent = size_t{0}](auto now, auto /*duration*/) mutable {
++            if (now % 10ms == 1ms && sent < numHeaders)
++            {
++                linController->SendFrameHeader(id);
++                ++sent;
++            }
++            if (now == 50ms)
++            {
++                lifecycleService->Stop("Test done");
++            }
++        }, 1ms);
++    }
++
++    //////////////////////////////////////////////////////////////////////
++    //  LinSlave1 responds to the 1st and 3rd header, LinSlave2 to the 2nd, nobody to the 4th
++    //////////////////////////////////////////////////////////////////////
++
++    std::array<size_t, 2> headersReceived{0, 0};
++    for (size_t slave = 0; slave < 2; ++slave)
++    {
++        const auto participantName = participantNames[slave + 1];
++        auto&& participant = _simTestHarness->GetParticipant(participantName)->Participant();
++        auto&& lifecycleService = _simTestHarness->GetParticipant(participantName)->GetOrCreateLifecycleService();
++        auto&& timeSyncService = _simTestHarness->GetParticipant(participantName)->GetOrCreateTimeSyncService();
++        auto&& linController = participant->CreateLinController("LinController1", "LIN_1");
++
++        lifecycleService->SetCommunicationReadyHandler([linController]() {
++            SilKit::Experimental::Services::Lin::InitDynamic(linController, MakeDynamicSlaveConfig());
++        });
++        timeSyncService->SetSimulationStepHandler([](auto /*now*/, auto /*duration*/) {}, 1ms);
++
++        SilKit::Experimental::Services::Lin::AddFrameHeaderHandler(
++            linController, [&headersReceived, slave, makeResponse](auto&& controller, auto&& /*event*/) {
++            const auto header = headersReceived[slave]++;
++            const bool respond = (slave == 0) ? (header == 0 || header == 2) : (header == 1);
++            if (respond)
++            {
++                SilKit::Experimental::Services::Lin::SendDynamicResponse(controller,
++                                                                         makeResponse(static_cast<uint8_t>(slave + 1)));
++            }
++        });
++    }
++
++    auto ok = _simTestHarness->Run(5s);
++    ASSERT_TRUE(ok) << "SimTestHarness should terminate without timeout";
++
++    // Every header reached both slaves.
++    EXPECT_EQ(headersReceived[0], numHeaders);
++    EXPECT_EQ(headersReceived[1], numHeaders);
++
++    // The master received the three responses, from the slave that sent each of them.
++    ASSERT_EQ(masterEvents.size(), 3u);
++    EXPECT_EQ(masterEvents[0].status, LinFrameStatus::LIN_RX_OK);
++    EXPECT_EQ(masterEvents[0].frame, makeResponse(1));
++    EXPECT_EQ(masterEvents[1].status, LinFrameStatus::LIN_RX_OK);
++    EXPECT_EQ(masterEvents[1].frame, makeResponse(2));
++    EXPECT_EQ(masterEvents[2].status, LinFrameStatus::LIN_RX_OK);
++    EXPECT_EQ(masterEvents[2].frame, makeResponse(1));
++}
++
+ } //end namespace
+diff --git a/SilKit/source/services/lin/LinController.cpp b/SilKit/source/services/lin/LinController.cpp
+index b96ff82c..8009513f 100644
+--- a/SilKit/source/services/lin/LinController.cpp
++++ b/SilKit/source/services/lin/LinController.cpp
+@@ -743,6 +743,10 @@ auto LinController::GetResponse(LinId id) -> std::pair<int, LinFrame>
+             continue;
+         if (node.controllerStatus != LinControllerStatus::Operational)
+             continue;
++        // A node with dynamic responses decides on every header whether it responds. The response
++        // update of an earlier SendDynamicResponse() does not make it an unconditional responder.
++        if (node.simulationMode == WireLinControllerConfig::SimulationMode::Dynamic)
++            continue;
+ 
+         auto& response = node.responses[id];
+         if (response.responseMode == LinFrameResponseMode::TxUnconditional)

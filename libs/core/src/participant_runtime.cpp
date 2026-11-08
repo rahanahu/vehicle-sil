@@ -1,0 +1,451 @@
+// SPDX-License-Identifier: MIT
+#include "vehicle_sil/core/participant_runtime.hpp"
+
+#include <silkit/services/orchestration/all.hpp>
+#include <silkit/services/orchestration/string_utils.hpp>
+
+#include <algorithm>
+#include <exception>
+#include <stdexcept>
+#include <thread>
+#include <utility>
+
+namespace vehicle_sil {
+namespace {
+
+namespace orch = SilKit::Services::Orchestration;
+
+bool is_terminal_or_stopping(orch::ParticipantState state) noexcept
+{
+    switch (state)
+    {
+    case orch::ParticipantState::Stopping:
+    case orch::ParticipantState::Stopped:
+    case orch::ParticipantState::Error:
+    case orch::ParticipantState::ShuttingDown:
+    case orch::ParticipantState::Shutdown:
+    case orch::ParticipantState::Aborting:
+        return true;
+    default:
+        return false;
+    }
+}
+
+} // namespace
+
+bool is_running(const PeerStatus& status) noexcept
+{
+    return status.state == orch::ParticipantState::Running;
+}
+
+bool has_finished(const PeerStatus& status) noexcept
+{
+    return status.state && is_terminal_or_stopping(*status.state);
+}
+
+ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
+  options_(std::move(options))
+{
+    if (options_.participant_name.empty())
+    {
+        throw std::invalid_argument("participant_name must not be empty");
+    }
+    // Validate before CreateParticipant(): once handlers that capture `this` are registered, a
+    // throwing constructor would destroy members the SIL Kit threads may still use.
+    if (options_.virtual_time)
+    {
+        const auto& vt = *options_.virtual_time;
+        if (vt.step <= SimDuration::zero())
+        {
+            throw std::invalid_argument("virtual_time.step must be > 0");
+        }
+        if (vt.real_time_factor)
+        {
+            pacer_.emplace(*vt.real_time_factor); // validates the factor
+        }
+    }
+
+    auto config = SilKit::Config::ParticipantConfigurationFromString(options_.participant_configuration);
+    participant_ = SilKit::CreateParticipant(config, options_.participant_name, options_.registry_uri);
+
+    // Handlers registered below capture `this`. If a later call throws, destroy the
+    // participant (which removes them) before the members they use go away.
+    try
+    {
+        monitor_ = participant_->CreateSystemMonitor();
+        // Only the participant status handler is used. ISystemMonitor::SetParticipantConnectedHandler
+        // and SetParticipantDisconnectedHandler are not: in SIL Kit v5.0.8 they assign the handler
+        // without synchronisation while the I/O thread may already be calling it (a data race found
+        // with ThreadSanitizer, see docs/dependencies.md). A lost connection still shows up here as
+        // ParticipantState::Error.
+        monitor_->AddParticipantStatusHandler([this](const orch::ParticipantStatus& status) { on_status(status, false); });
+
+        const auto mode = options_.lifecycle_mode == LifecycleMode::Coordinated ? orch::OperationMode::Coordinated
+                                                                                 : orch::OperationMode::Autonomous;
+        lifecycle_ = participant_->CreateLifecycleService({mode});
+
+        if (options_.virtual_time)
+        {
+            time_sync_ = lifecycle_->CreateTimeSyncService();
+            // The asynchronous variant, completed at the end of the handler. SIL Kit runs no
+            // other handler of this participant while the step runs (it runs the handlers on its
+            // I/O thread). CompleteSimulationStep() defers the completion on that thread, behind
+            // everything the step queued: the messages sent in the step, and also the messages
+            // SIL Kit sends while it delivers those back to this participant (a LIN master's own
+            // frame is generated when its header comes back to it). All of them go out before the
+            // participant announces its next step. The blocking variant announces the next step
+            // before that second round, and may even run the next step from a batch of received
+            // messages before it.
+            time_sync_->SetSimulationStepHandlerAsync(
+                [this](std::chrono::nanoseconds now, std::chrono::nanoseconds duration) {
+                    struct CompleteOnExit
+                    {
+                        SilKit::Services::Orchestration::ITimeSyncService* time_sync;
+                        ~CompleteOnExit()
+                        {
+                            try
+                            {
+                                time_sync->CompleteSimulationStep();
+                            }
+                            catch (const std::exception&)
+                            {
+                                // Only queues a task; nothing to recover if even that fails.
+                            }
+                        }
+                    } complete{time_sync_};
+                    on_step(now, duration);
+                },
+                options_.virtual_time->step);
+        }
+    }
+    catch (...)
+    {
+        participant_.reset();
+        throw;
+    }
+}
+
+ParticipantRuntime::~ParticipantRuntime()
+{
+    stop("ParticipantRuntime destroyed");
+    // Destroying the participant removes all handlers registered above before `this` dies.
+    participant_.reset();
+}
+
+void ParticipantRuntime::set_step_handler(StepHandler handler)
+{
+    if (!time_sync_)
+    {
+        throw std::logic_error("ParticipantRuntime::set_step_handler() needs virtual_time");
+    }
+    if (started())
+    {
+        throw std::logic_error("ParticipantRuntime::set_step_handler() must be called before start()");
+    }
+    step_handler_ = std::move(handler);
+}
+
+void ParticipantRuntime::set_communication_ready_handler(std::function<void()> handler)
+{
+    if (started())
+    {
+        throw std::logic_error("ParticipantRuntime::set_communication_ready_handler() must be called before start()");
+    }
+    lifecycle_->SetCommunicationReadyHandler(std::move(handler));
+}
+
+void ParticipantRuntime::start(std::chrono::milliseconds timeout)
+{
+    if (started())
+    {
+        throw std::logic_error("ParticipantRuntime::start() called twice");
+    }
+    if (time_sync_ && !step_handler_)
+    {
+        throw std::logic_error("ParticipantRuntime with virtual_time needs set_step_handler() before start()");
+    }
+    // Set first: the first step (and a request_stop() from it) can run before StartLifecycle()
+    // returns.
+    lifecycle_started_.store(true, std::memory_order_release);
+    lifecycle_done_ = lifecycle_->StartLifecycle();
+
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (true)
+    {
+        const auto current = lifecycle_->State();
+        // A short virtual-time simulation can pass through Running between two polls; a step
+        // handler call proves that it got there.
+        if (current == orch::ParticipantState::Running || step_entered_.load(std::memory_order_acquire))
+        {
+            return;
+        }
+        if (is_terminal_or_stopping(current))
+        {
+            throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name
+                                     + "' failed to start, state: " + orch::to_string(current));
+        }
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name
+                                     + "' did not reach Running within " + std::to_string(timeout.count())
+                                     + " ms, state: " + orch::to_string(current));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+void ParticipantRuntime::stop(std::string_view reason) noexcept
+{
+    if (std::exchange(stopped_, true))
+    {
+        return;
+    }
+    // Whatever happens below, the step handler must not run once stop() returns: callers
+    // destroy what it uses. A handler that is running is waited for (a long tick() delays
+    // stop() accordingly).
+    struct DisableSteps
+    {
+        ParticipantRuntime& self;
+        ~DisableSteps()
+        {
+            const std::lock_guard gate(self.step_gate_);
+            self.steps_disabled_ = true;
+        }
+    } disableSteps{*this};
+    if (!lifecycle_done_)
+    {
+        return;
+    }
+    request_stop(reason);
+    // The lifecycle proceeds to Shutdown on its own after Stop(), in both modes and from Error.
+    try
+    {
+        if (!final_state_ && lifecycle_done_->wait_for(options_.shutdown_timeout) == std::future_status::ready)
+        {
+            final_state_ = lifecycle_done_->get();
+        }
+    }
+    catch (const std::exception&)
+    {
+        // The lifecycle ended by an error or abort; get() has invalidated the future.
+        // Shutdown is best effort: the participant is destroyed (and disconnected) afterwards.
+        final_state_ = lifecycle_->State();
+    }
+}
+
+void ParticipantRuntime::request_stop(std::string_view reason) noexcept
+{
+    {
+        const std::lock_guard lock(control_mutex_);
+        stop_requested_ = true;
+    }
+    stop_cv_.notify_all(); // ends a pacing wait early
+    // lifecycle_done_ may still be being assigned by start() on another thread.
+    if (!started())
+    {
+        return;
+    }
+    try
+    {
+        // Error is included: SIL Kit keeps a participant in Error until it is stopped or
+        // aborted, and Stop() takes it from Error to Shutdown.
+        const auto state = lifecycle_->State();
+        if (state == orch::ParticipantState::Error || !is_terminal_or_stopping(state))
+        {
+            lifecycle_->Stop(std::string(reason));
+        }
+    }
+    catch (const std::exception&)
+    {
+        // Stop() may throw if the state machine cannot stop from its current state; the
+        // caller then waits or destroys the participant, which disconnects it.
+    }
+}
+
+std::optional<orch::ParticipantState> ParticipantRuntime::wait_until_finished(std::chrono::milliseconds timeout)
+{
+    if (final_state_)
+    {
+        return final_state_;
+    }
+    if (!lifecycle_done_)
+    {
+        return std::nullopt;
+    }
+    try
+    {
+        // The future completes at Shutdown. A participant in Error stays there until someone
+        // stops or aborts it, so Error also counts as finished (stop() then shuts it down).
+        constexpr auto kPoll = std::chrono::milliseconds(20);
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        // wait_for() returns at once for a non-positive duration.
+        while (lifecycle_done_->wait_for(std::min<std::chrono::steady_clock::duration>(
+                   kPoll, deadline - std::chrono::steady_clock::now()))
+               != std::future_status::ready)
+        {
+            if (lifecycle_->State() == orch::ParticipantState::Error)
+            {
+                return orch::ParticipantState::Error;
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return std::nullopt;
+            }
+        }
+        final_state_ = lifecycle_done_->get();
+    }
+    catch (const std::exception&)
+    {
+        // The lifecycle ended by an error or abort.
+        final_state_ = lifecycle_->State();
+    }
+    return final_state_;
+}
+
+bool ParticipantRuntime::stop_requested() const
+{
+    const std::lock_guard lock(control_mutex_);
+    return stop_requested_;
+}
+
+std::string ParticipantRuntime::step_error() const
+{
+    const std::lock_guard lock(control_mutex_);
+    return step_error_;
+}
+
+void ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nanoseconds duration)
+{
+    const auto wallStart = pacer_ ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const SimTime time = from_silkit_time(now);
+    now_ns_.store(now.count(), std::memory_order_release);
+    step_entered_.store(true, std::memory_order_release);
+    {
+        const std::lock_guard gate(step_gate_);
+        // Only this thread writes step_error_, so reading it here needs no lock.
+        if (steps_disabled_ || !step_error_.empty())
+        {
+            return;
+        }
+        if (const auto& end = options_.virtual_time->end; !end || time < *end)
+        {
+            if (!run_step_handler(time, duration))
+            {
+                return;
+            }
+            steps_completed_.fetch_add(1, std::memory_order_acq_rel);
+        }
+    }
+    if (pacer_)
+    {
+        pace_until(pacer_->step_deadline(time, duration, wallStart));
+    }
+}
+
+bool ParticipantRuntime::run_step_handler(SimTime now, SimDuration step)
+{
+    std::string error;
+    try
+    {
+        step_handler_(now, step);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        error = *e.what() != '\0' ? e.what() : "exception without message";
+    }
+    catch (...)
+    {
+        error = "unknown exception";
+    }
+    error = "step handler at t=" + std::to_string(to_ns(now)) + " ns failed: " + error;
+    {
+        const std::lock_guard lock(control_mutex_);
+        step_error_ = error;
+    }
+    try
+    {
+        lifecycle_->ReportError(error);
+    }
+    catch (const std::exception&)
+    {
+        // Already in a state that cannot report errors; the simulation is ending anyway.
+    }
+    return false;
+}
+
+void ParticipantRuntime::pace_until(std::chrono::steady_clock::time_point deadline)
+{
+    std::unique_lock lock(control_mutex_);
+    stop_cv_.wait_until(lock, deadline, [this] { return stop_requested_; });
+}
+
+orch::ParticipantState ParticipantRuntime::state() const
+{
+    return lifecycle_->State();
+}
+
+PeerStatus ParticipantRuntime::peer_status(const std::string& participant_name) const
+{
+    const std::lock_guard lock(peers_mutex_);
+    const auto it = peers_.find(participant_name);
+    return it == peers_.end() ? PeerStatus{} : it->second.status;
+}
+
+bool ParticipantRuntime::wait_for_peer(const std::string& participant_name,
+                                       const std::function<bool(const PeerStatus&)>& predicate,
+                                       std::chrono::milliseconds timeout)
+{
+    constexpr auto kResyncInterval = std::chrono::milliseconds(200);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (true)
+    {
+        {
+            std::unique_lock lock(peers_mutex_);
+            const auto now = std::chrono::steady_clock::now();
+            const auto until = std::min(deadline, now + kResyncInterval);
+            const bool holds = peers_cv_.wait_until(lock, until, [&] {
+                const auto it = peers_.find(participant_name);
+                return predicate(it == peers_.end() ? PeerStatus{} : it->second.status);
+            });
+            if (holds)
+            {
+                return true;
+            }
+            if (now >= deadline)
+            {
+                return false;
+            }
+        }
+        resync_peers(); // outside peers_mutex_: the replay calls on_status()
+    }
+}
+
+void ParticipantRuntime::resync_peers()
+{
+    // AddParticipantStatusHandler() replays the current status of every connected participant to
+    // the new handler synchronously, under SIL Kit's own lock.
+    const auto id =
+        monitor_->AddParticipantStatusHandler([this](const orch::ParticipantStatus& status) { on_status(status, true); });
+    monitor_->RemoveParticipantStatusHandler(id);
+}
+
+void ParticipantRuntime::on_status(const orch::ParticipantStatus& status, bool replayed)
+{
+    {
+        const std::lock_guard lock(peers_mutex_);
+        auto& record = peers_[status.participantName];
+        // A replayed status may be older than one delivered meanwhile; keep the newer one. Live
+        // statuses always apply: a "Connection Lost" Error is stamped with the local clock, which
+        // must not be compared with a remote participant's clock.
+        if (replayed && record.status.state && status.enterTime < record.enter_time)
+        {
+            return;
+        }
+        record.status.state = status.state;
+        record.enter_time = status.enterTime;
+    }
+    peers_cv_.notify_all();
+}
+
+} // namespace vehicle_sil
