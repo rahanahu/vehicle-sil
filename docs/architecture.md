@@ -461,7 +461,7 @@ Vector SIL Kit Network Simulator との差し替え:
 
 部品の API の「どこからでも呼べる」は、ステップを回すスレッドの上でのこと（ハンドラ、タイマー、アプリの処理、ステップの外）です。部品はロックを持たないので、ほかのスレッドからはホストの `post()` で渡します（「スレッドとキュー」）。
 
-部品が予約するタイマーの数（`timer_capacity` から）: `BroadcastSuppression` が 3、`Diagnostics` が 3、`Identification` が 0、`PeriodicSender` が 1（送る PG ごと。`suppressible` のときは、ノードにまだなければ `BroadcastSuppression` も付けるので、その 3 も）、`Requester` が 2、`Monitor` が 1（`timeout` があるとき）、`AddressCommander` が 2。NAME を持ち診断を付けたノードは、Address Claim の 2 と合わせて 8 です（既定の 64 で 8 ノード）。周期送信の多いノードでは `timer_capacity` を上げます（足りなければ部品の生成が `std::length_error` で、メッセージに `timer_capacity` と出ます）。周期送信ごとにタイマーを 1 つ使うのは、期限の並べ替えと発火の回の規則をエンジンの `Timer` にだけ持たせるためです（部品の中で同じ仕組みを作り直しません）。
+部品が予約するタイマーの数（`timer_capacity` から）: `BroadcastSuppression` が 3、`Diagnostics` が 3、`Identification` が 0、`PeriodicSender` が 1（送る PG ごと。DM13 に従うときは、ノードにまだなければ `BroadcastSuppression` も付けるので、その 3 も）、`Requester` が 2、`Monitor` が 1（`timeout` があるとき）、`AddressCommander` が 2。NAME を持ち診断を付けたノードは、Address Claim の 2 と合わせて 8 です（既定の 64 で 8 ノード）。周期送信の多いノードでは `timer_capacity` を上げます（足りなければ部品の生成が `std::length_error` で、メッセージに `timer_capacity` と出ます）。周期送信ごとにタイマーを 1 つ使うのは、期限の並べ替えと発火の回の規則をエンジンの `Timer` にだけ持たせるためです（部品の中で同じ仕組みを作り直しません）。
 
 #### DM13（`BroadcastSuppression`）
 
@@ -490,7 +490,7 @@ Vector SIL Kit Network Simulator との差し替え:
 - 送るのは `Node::can_send_now()` の間だけです（要求の後の待ちの間は送りません。エンジンが保留して 250 ms 後にまとめて出すのを避けるため）。送れるようになった通知の中ですぐ 1 回送り（そのステップに出ます）、そこから周期を数えます。生成時にすでに送れるノードは、次の機会に始めます。アドレスを失うか変えると止め、送れるようになったらまた始めます。
 - 期限は `Timer` の期限（事象の時刻）で数えるので、ステップ幅によらず格子（始めた時刻 + k × 周期）からずれません。送るのは期限以後の最初のステップで、フレームの時刻はそのステップの時刻です。ステップ幅が周期以下なら、1 ステップに入る期限は高々 1 つなので、送信の回数と期限はステップ幅によりません（試験で確かめています）。この主張は、送れるようになった通知から始まった周期についてのものです。`trigger()`、`resume()`、途中での生成で始め直したときは、最初の発火でもう周期が過ぎていれば（アプリの処理やステップの外から始め直したとき、ステップ幅が周期以上のときに起こります）、そのステップから周期を数え直します（まとめも追いつきもしません）。そのため始め直しを含む送信の時刻と回数は、ステップ幅によることがあります。
 - 遅れた期限（ステップ幅が周期より長く、1 ステップに期限が複数入るとき）: `MissedDeadlines::Coalesce`（既定）はまとめて 1 回送り（まとめた数は `statistics().coalesced`）、次の期限はそのステップより後の最初の格子点です。`CatchUp` は期限ごとに送り、同じ時刻のフレームが並びます（9 バイト以上は前の転送が終わるまで `Busy` で、失敗として数えます）。
-- DM13: `suppressible`（既定 true）なら `BroadcastSuppression::of(node).suspended()` の間は送りません（送れるようになったときの最初の送信も含みます。期限は進み、埋め合わせません。`statistics().suppressed`）。false なら `BroadcastSuppression` を使いません。
+- DM13: `suppressible` が true なら、`BroadcastSuppression::of(node).suspended()` の間は送りません（送れるようになったときの最初の送信も含みます。期限は進み、埋め合わせません。`statistics().suppressed`）。false なら `BroadcastSuppression` を使いません。指定しなければ（既定）、全体宛て（`kGlobalAddress`）の放送だけが従い、1 つのアドレス宛ての送信は従いません。宛先指定の周期送信を DM13 で止めるかは確かめていないので、利用者が選びます（下の「確かめていない点」）。
 - `trigger()` は次の機会に送り、周期をそこから数え直します（ハンドラの中ならそのステップ、`Timer` のコールバックの中ならそのステップか次のステップ（発火中のタイマーと同じ期限で始めたタイマーは次の回に回るため）、アプリの処理とステップの外なら次のステップ。アプリの処理ですぐ送るなら `Node::send()` を使います）。`pause()` と `resume()` で止めて再開します。
 - 送信の失敗（`SendStatus`）は数えて（`statistics().failures`、`last_failure`）、次の期限でまた送ります。例外にしません。`Encoder` の例外と、`max_length` を超える長さは `Network` を失敗させます。
 
@@ -518,8 +518,8 @@ Vector SIL Kit Network Simulator との差し替え:
 
 #### 規格との一致を確かめていない点（ECU アプリ向けの部品）
 
-- `Requester` の待ち時間と送り直しの回数の既定値（1250 ms、2 回）、グローバルの Request を送り直さないこと、相乗りと `min_interval` の扱い、まだ送っていない要求を同じ PG の受信で終えること。
-- `PeriodicSender` が DM13 の抑制を宛先によらず適用すること（`suppressible` で外せます）。`AddressCommander` の待ち時間の既定値と、Address Claimed で移ったと判断すること。
+- `Requester` の待ち時間と送り直しの回数の既定値（1250 ms、2 回）は、J1939-21 と J1939-82 の要求側の値に合わせています。確かめていないのは、Busy などの理由の ACK（`AckCode::CannotRespond` など）を受けたら送り直さずに終えること、グローバルの Request を送り直さないこと、相乗りと `min_interval` の扱い、まだ送っていない要求を同じ PG の受信で終えることです。
+- DM13 が 1 つのアドレス宛ての周期送信も止めるか（`PeriodicSender` は既定では止めず、`suppressible` で選べます）。`AddressCommander` の待ち時間の既定値と、Address Claimed で移ったと判断すること。
 
 #### 規格との一致を確かめていない点（診断）
 

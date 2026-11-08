@@ -212,6 +212,25 @@ TEST_CASE(periodic_sender_is_quiet_while_dm13_suspends_the_broadcasts)
     CHECK(BroadcastSuppression::of(us).stopped_by_dm13() == false);
 }
 
+TEST_CASE(periodic_sender_to_one_address_follows_dm13_only_when_asked)
+{
+    Bench bench;
+    Node& us = bench.add_node(kUs);
+    PeriodicSenderOptions toOne;
+    toOne.destination = 0x30;
+    auto& byDefault = us.attach<PeriodicSender>(Pgn{0xEF00}, 100ms, std::span<const std::uint8_t>(kData), toOne);
+    toOne.suppressible = true;
+    auto& asked = us.attach<PeriodicSender>(Pgn{0xEF00}, 100ms, std::span<const std::uint8_t>(kData), toOne);
+    PeriodicSenderOptions toAll;
+    auto& broadcast = us.attach<PeriodicSender>(Pgn{0xEF00}, 100ms, std::span<const std::uint8_t>(kData), toAll);
+    BroadcastSuppression::of(us).suspend(std::chrono::seconds(1));
+    bench.steps(10);
+    CHECK_EQ(byDefault.statistics().sent, 1u);
+    CHECK_EQ(byDefault.statistics().suppressed, 0u);
+    CHECK_EQ(asked.statistics().suppressed, 1u);
+    CHECK_EQ(broadcast.statistics().suppressed, 1u);
+}
+
 TEST_CASE(periodic_sender_does_not_send_its_first_message_while_suppressed)
 {
     {

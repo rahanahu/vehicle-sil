@@ -59,7 +59,7 @@ status.trigger();                                                               
 - `Encoder` は部品のバッファ（`max_length` バイト、既定 8）に書き、書いた長さを返します。9 バイト以上（`max_length` を上げる）はトランスポートプロトコルで送ります。
 - ノードが送れるようになるまで（Address Claim の後の 250 ms の待ちの間も）送らず、送れるようになったときに 1 回送ってから周期を数えます。アドレスを失えば止まり、取り直せば再開します。
 - `trigger()` をアプリの処理（`every` など）から呼ぶと、送るのは次のステップです。そのステップで送りたいときは `node.send()` を使います。
-- DM13 で放送を止めている間（他のノードの DM13 か、自分の `BroadcastSuppression::suspend()`）は送りません（`PeriodicSenderOptions::suppressible = false` で外せます）。
+- 全体宛ての放送は、DM13 で放送を止めている間（他のノードの DM13 か、自分の `BroadcastSuppression::suspend()`）は送りません。1 つのアドレス宛ての送信は、既定では止めません（規格での扱いを確かめていないため）。どちらも `PeriodicSenderOptions::suppressible`（true か false）で選べます。
 - PDU1 の PG を 1 つのアドレスへ送るときは `PeriodicSenderOptions{.destination = address}` です。
 
 ## Request に答える

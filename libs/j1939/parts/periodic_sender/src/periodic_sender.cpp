@@ -62,7 +62,8 @@ PeriodicSender::PeriodicSender(Node& node, Pgn pgn, SimDuration period, Periodic
     options_(checked(pgn, period, options)), // before anything is attached to the node
     encoder_(std::move(encoder)),
     buffer_(options_.max_length),
-    suppression_(options_.suppressible ? &BroadcastSuppression::of(node) : nullptr),
+    suppression_(options_.suppressible.value_or(options_.destination == kGlobalAddress) ? &BroadcastSuppression::of(node)
+                                                                                         : nullptr),
     timer_(node, TimerKind::Scheduled, [this] { on_deadline(); })
 {
     address_ = Subscription{node, node.on_address_change([this](const AddressChange& change) {

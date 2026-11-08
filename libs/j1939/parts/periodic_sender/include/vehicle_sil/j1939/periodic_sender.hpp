@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -35,9 +36,11 @@ struct PeriodicSenderOptions
     Address destination = kGlobalAddress;
     Priority priority = kDefaultPriority;
     MissedDeadlines missed_deadlines = MissedDeadlines::Coalesce;
-    /// Does not send while BroadcastSuppression::of(node) is suspended (DM13). false: sends
-    /// anyway, and the part does not use BroadcastSuppression.
-    bool suppressible = true;
+    /// true: does not send while BroadcastSuppression::of(node) is suspended (DM13). false:
+    /// sends anyway, and the part does not use BroadcastSuppression. Empty (the default): true
+    /// for a broadcast (destination kGlobalAddress), false for a group sent to one address
+    /// (whether DM13 stops those is not settled; choose it here).
+    std::optional<bool> suppressible{};
     /// The longest message (bytes; 9 .. kMaxTransportLength travel with the transport protocol).
     /// Its buffer is allocated when the sender is created.
     std::size_t max_length = 8;
@@ -67,7 +70,8 @@ struct PeriodicSenderStatistics
 ///   deadline (the first step at or after it), with that step's time. When the node loses or
 ///   changes its address, the sender stops; it starts again when the node can send.
 /// - Deadlines (the first message too) that pass while the node's broadcasts are suspended
-///   (DM13, `suppressible`) are not sent and not made up for.
+///   (DM13; by default only for a broadcast, see `suppressible`) are not sent and not made up
+///   for.
 /// - A start at the next chance (trigger(), resume(), creation) from a time already handled (the
 ///   application stage, outside a step) goes out in the next step; if a period has passed by
 ///   then, the period counts from that step (nothing is merged or caught up for it).
