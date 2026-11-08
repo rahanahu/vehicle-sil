@@ -260,6 +260,22 @@ struct EngineStatus
 | `raw_min`、`raw_max`、`lowest_raw()`、`highest_raw()` | 有効な raw 値の範囲（`EnumSignal` では最小と最大の列挙子）と、ビットに入る raw 値の範囲 |
 | `layout`、`name`、`unit`、`spn` | 定義（constexpr） |
 
+受けた値は、状態で分けて読みます。特別な値でも範囲外でも、`raw()` は受けた値をそのまま返します（範囲で定義した特別な値なら、範囲の中のどの値だったかまでわかります）。
+
+```cpp
+if (const auto v = m.speed.value()) {
+    use(*v);                                        // 物理値
+} else if (const auto name = m.speed.special()) {
+    log(*name, m.speed.raw());                      // 例: "sensor_error", 0xFE42
+    // 範囲の先頭からの差（下位のバイトに詳細を載せる独自の特別な値など）
+    for (const auto& s : decltype(m.speed)::specials) {
+        if (s.name == *name) { detail = m.speed.raw() - s.first; }
+    }
+} else {
+    log("out of range", m.speed.raw());             // 範囲外（列挙の信号では Undefined）
+}
+```
+
 物理値は `double` で計算します。raw × scale を `double` に丸めてから offset を足すので、コンパイラーや最適化が掛け算と足し算を 1 回の丸めにまとめることはなく、IEEE の倍精度で計算する環境（x86-64 の SSE、AArch64 など）ではどこでも同じ値になります（拡張精度の x87 で計算する 32 ビットの x86 は対象外です）。53 ビットを超える raw 値の物理値は丸められます（raw 値は正確です）。
 
 ## ノードで使う（`vehicle_sil/j1939/codec_node.hpp`）
