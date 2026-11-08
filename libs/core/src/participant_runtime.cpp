@@ -167,7 +167,7 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout)
     // Set first: the first step (and a request_stop() from it) can run before StartLifecycle()
     // returns.
     lifecycle_started_.store(true, std::memory_order_release);
-    lifecycle_done_ = lifecycle_->StartLifecycle();
+    lifecycle_done_ = lifecycle_->StartLifecycle().share();
 
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (true)
@@ -218,18 +218,34 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
     }
     request_stop(reason);
     // The lifecycle proceeds to Shutdown on its own after Stop(), in both modes and from Error.
+    const auto done = *lifecycle_done_; // own copy: wait_until_finished() may use it meanwhile
     try
     {
-        if (!final_state_ && lifecycle_done_->wait_for(options_.shutdown_timeout) == std::future_status::ready)
+        if (!final_state() && done.wait_for(options_.shutdown_timeout) == std::future_status::ready)
         {
-            final_state_ = lifecycle_done_->get();
+            set_final_state(done.get());
         }
     }
     catch (const std::exception&)
     {
-        // The lifecycle ended by an error or abort; get() has invalidated the future.
+        // The lifecycle ended by an error or abort.
         // Shutdown is best effort: the participant is destroyed (and disconnected) afterwards.
-        final_state_ = lifecycle_->State();
+        set_final_state(lifecycle_->State());
+    }
+}
+
+std::optional<orch::ParticipantState> ParticipantRuntime::final_state() const
+{
+    const std::lock_guard lock(final_mutex_);
+    return final_state_;
+}
+
+void ParticipantRuntime::set_final_state(orch::ParticipantState state)
+{
+    const std::lock_guard lock(final_mutex_);
+    if (!final_state_)
+    {
+        final_state_ = state;
     }
 }
 
@@ -264,14 +280,15 @@ void ParticipantRuntime::request_stop(std::string_view reason) noexcept
 
 std::optional<orch::ParticipantState> ParticipantRuntime::wait_until_finished(std::chrono::milliseconds timeout)
 {
-    if (final_state_)
+    if (auto state = final_state())
     {
-        return final_state_;
+        return state;
     }
     if (!lifecycle_done_)
     {
         return std::nullopt;
     }
+    const auto done = *lifecycle_done_; // own copy: stop() may use it meanwhile
     try
     {
         // The future completes at Shutdown. A participant in Error stays there until someone
@@ -279,7 +296,7 @@ std::optional<orch::ParticipantState> ParticipantRuntime::wait_until_finished(st
         constexpr auto kPoll = std::chrono::milliseconds(20);
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         // wait_for() returns at once for a non-positive duration.
-        while (lifecycle_done_->wait_for(std::min<std::chrono::steady_clock::duration>(
+        while (done.wait_for(std::min<std::chrono::steady_clock::duration>(
                    kPoll, deadline - std::chrono::steady_clock::now()))
                != std::future_status::ready)
         {
@@ -292,14 +309,14 @@ std::optional<orch::ParticipantState> ParticipantRuntime::wait_until_finished(st
                 return std::nullopt;
             }
         }
-        final_state_ = lifecycle_done_->get();
+        set_final_state(done.get());
     }
     catch (const std::exception&)
     {
         // The lifecycle ended by an error or abort.
-        final_state_ = lifecycle_->State();
+        set_final_state(lifecycle_->State());
     }
-    return final_state_;
+    return final_state();
 }
 
 bool ParticipantRuntime::stop_requested() const

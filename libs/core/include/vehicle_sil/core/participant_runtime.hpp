@@ -162,6 +162,7 @@ public:
     /// SIL Kit keeps a participant in Error until it is stopped; stop() (or the destructor)
     /// then shuts it down.
     /// @returns Shutdown or Error, or nullopt on timeout or if start() was never called.
+    /// Thread safe against stop() on another thread.
     std::optional<SilKit::Services::Orchestration::ParticipantState> wait_until_finished(std::chrono::milliseconds timeout);
 
     [[nodiscard]] bool uses_virtual_time() const noexcept { return time_sync_ != nullptr; }
@@ -214,13 +215,19 @@ private:
         std::chrono::system_clock::time_point enter_time{};
     };
 
+    [[nodiscard]] std::optional<SilKit::Services::Orchestration::ParticipantState> final_state() const;
+    void set_final_state(SilKit::Services::Orchestration::ParticipantState state); // the first one stays
+
     ParticipantRuntimeOptions options_;
     std::unique_ptr<SilKit::IParticipant> participant_;
     SilKit::Services::Orchestration::ILifecycleService* lifecycle_ = nullptr;
     SilKit::Services::Orchestration::ISystemMonitor* monitor_ = nullptr;
     SilKit::Services::Orchestration::ITimeSyncService* time_sync_ = nullptr;
-    std::optional<std::future<SilKit::Services::Orchestration::ParticipantState>> lifecycle_done_;
-    std::optional<SilKit::Services::Orchestration::ParticipantState> final_state_;
+    // Assigned once by start(); stop() and wait_until_finished() may run on two threads, so
+    // each uses its own copy (shared_future) and final_state_ is guarded.
+    std::optional<std::shared_future<SilKit::Services::Orchestration::ParticipantState>> lifecycle_done_;
+    mutable std::mutex final_mutex_;
+    std::optional<SilKit::Services::Orchestration::ParticipantState> final_state_; // guarded by final_mutex_
     bool stopped_ = false;
 
     StepHandler step_handler_;

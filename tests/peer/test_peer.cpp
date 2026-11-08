@@ -555,6 +555,43 @@ TEST_CASE(peer_stop_from_two_threads)
     }
 }
 
+TEST_CASE(peer_wait_returns_when_another_thread_stops)
+{
+    // wait() on one thread and stop() on another both finish the lifecycle (no data race).
+    InProcessRegistry registry;
+    for (const bool realTime : {false, true})
+    {
+        PeerOptions o;
+        o.participant = realTime ? "WaitRealTime" : "WaitVirtual";
+        o.registry_uri = registry.uri;
+        if (realTime)
+        {
+            o.virtual_time = std::nullopt;
+        }
+        else
+        {
+            o.virtual_time = VirtualTimeOptions{1ms, 1.0, std::nullopt}; // paced: still running when stopped
+        }
+        Peer peer(o);
+        static_cast<void>(peer.j1939("J1939_CAN").add_node({0x30}));
+        std::atomic<int> steps{0};
+        peer.on_step([&steps](SimTime) { ++steps; });
+        peer.start();
+        std::optional<orch::ParticipantState> waited;
+        std::thread waiter([&] { waited = peer.wait(30s); });
+        const auto deadline = std::chrono::steady_clock::now() + 20s;
+        while (steps.load() < 5 && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(1ms);
+        }
+        peer.stop("main thread");
+        waiter.join();
+        CHECK(waited == std::optional<orch::ParticipantState>{orch::ParticipantState::Shutdown});
+        CHECK(peer.wait(1s) == std::optional<orch::ParticipantState>{orch::ParticipantState::Shutdown});
+        CHECK(!peer.failed());
+    }
+}
+
 TEST_CASE(peer_start_together_reports_a_failed_start)
 {
     InProcessRegistry registry;
