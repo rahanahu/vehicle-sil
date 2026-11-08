@@ -62,6 +62,9 @@ void free_hook(const volatile void*) {}
 
 } // namespace
 #else
+#if defined(_WIN32)
+#include <malloc.h>
+#endif
 namespace {
 
 void* allocate(std::size_t size)
@@ -72,6 +75,26 @@ void* allocate(std::size_t size)
         return p;
     }
     throw std::bad_alloc();
+}
+
+/// Aligned allocations: MinGW's runtime (UCRT) has no std::aligned_alloc, and its aligned
+/// blocks must be freed with _aligned_free.
+void* allocate_aligned(std::size_t size, std::size_t alignment)
+{
+#if defined(_WIN32)
+    return _aligned_malloc(size, alignment);
+#else
+    return std::aligned_alloc(alignment, (size + alignment - 1) / alignment * alignment);
+#endif
+}
+
+void free_aligned(void* p) noexcept
+{
+#if defined(_WIN32)
+    _aligned_free(p);
+#else
+    std::free(p);
+#endif
 }
 
 } // namespace
@@ -94,17 +117,17 @@ void* operator new(std::size_t size, std::align_val_t align)
 {
     count_allocation();
     const auto a = static_cast<std::size_t>(align);
-    if (void* p = std::aligned_alloc(a, ((size == 0 ? 1 : size) + a - 1) / a * a))
+    if (void* p = allocate_aligned(size == 0 ? 1 : size, a))
     {
         return p;
     }
     throw std::bad_alloc();
 }
 void* operator new[](std::size_t size, std::align_val_t align) { return operator new(size, align); }
-void operator delete(void* p, std::align_val_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::align_val_t) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
+void operator delete(void* p, std::align_val_t) noexcept { free_aligned(p); }
+void operator delete[](void* p, std::align_val_t) noexcept { free_aligned(p); }
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept { free_aligned(p); }
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { free_aligned(p); }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
