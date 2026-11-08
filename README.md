@@ -19,6 +19,7 @@
 | `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`、`vehicle_sil::j1939_exchange`（開発中） | ECU アプリ向けの部品（同じく公開 API と道具箱だけで作る）。PG の周期送信（`PeriodicSender`）、Request の送信と応答・ACK・時間切れの報告（`Requester`）、受信の最新値と途絶（`Monitor`）、Commanded Address の送信（`AddressCommander`）、独自プロトコルのコマンドと応答（`Exchange`。例は [examples/j1939/param_service](examples/j1939/param_service)）。使い方は [docs/j1939-guide.md](docs/j1939-guide.md) |
 | `vehicle_sil::j1939_codec`（開発中） | J1939 の型付きメッセージ。YAML で PG と信号（位置、符号、スケーリング、範囲、列挙、Proprietary A/B、名前を付けた特別な値とそのプロファイル、埋め値）を定義すると、`vehicle_sil_add_j1939_codec()` がビルドのときに C++ の型を生成する。ビット操作を書かずに、信号を値として送受信する。使い方は [docs/j1939-codec.md](docs/j1939-codec.md) |
 | `vehicle_sil::peer`（開発中、内部向け） | 1 つの SIL Kit participant と、その J1939 の `Network`（SIL Kit の CAN か外部のポート）と LIN の Master/Slave をまとめて作り、仮想時間か実時間で動かす `vehicle_sil::Peer` |
+| `vehicle_sil::control`、`vehicle_sil::peer_control`（開発中） | participant の Control Agent: 型・範囲・単位つきの変数の公開と、外からの書き込みを仮想時刻を指定してステップの中で反映する（固定容量のキュー。通信はまだない）。`attach(peer, agent)` で Peer に組み込む |
 | `vehicle_sil::testkit`（開発中、内部向け） | SIL Kit なしの J1939 の試験の組み立て: 仮想バスの上の `Network` を名前で組み立てて回す `LocalCan`、出来事と生フレームの記録（`J1939Events`、`FrameLog`）、故障注入の関数（`faults`） |
 | `vehicle_sil::vector_xl_bridge_core` | CAN ブリッジのコア（`vehicle_sil::vector_xl::CanBridge` など）と、外部 CAN ポートを `vehicle_sil::can` の実時間のポートにする `ExternalPortAdapter`。プラットフォームに依存しない |
 | `vehicle_sil::vector_xl` | Vector XL Driver のバックエンド（`XlDriver`、`XlCanPort`）。Windows 専用で、XL Driver Library が必要 |

@@ -75,7 +75,8 @@ struct J1939ChannelOptions
 ///
 /// One step at `now`, in this order: the J1939 networks receive and handle what arrived (in the
 /// order they were added), then the application (on_step() and every(), in the order added),
-/// then the LIN nodes' step(now) (in the order added), then the J1939 networks send. LIN
+/// then the LIN nodes' step(now) (in the order added), then the J1939 networks send. A control
+/// agent's hooks (set_control()) run right before and after the application and LIN stage. LIN
 /// requests made by the application (LinMaster::set_frame_data(), LinSlave::set_response())
 /// therefore take effect in the same step; what the LIN nodes receive is reported in their
 /// step, and the application sees it in the next one.
@@ -129,6 +130,14 @@ public:
     /// Runs `fn` in the first step at or after 0, period, 2 * period, ... (once per step at
     /// most; a step that passes several of them runs it once). period > 0.
     void every(SimDuration period, std::function<void(SimTime now)> fn);
+
+    /// Hooks for a control agent (vehicle_sil::control::attach()): `before` runs in every step
+    /// just before the application (before on_step() and every(), whenever they were added),
+    /// `after` just after the LIN nodes' step, before the J1939 networks send, and `stopping`
+    /// once when stop() (or the destructor) begins. Any may be empty. Once only, before start()
+    /// (std::logic_error).
+    void set_control(std::function<void(SimTime now)> before, std::function<void(SimTime now)> after,
+                     std::function<void()> stopping = {});
 
     /// std::out_of_range for an unknown name.
     [[nodiscard]] j1939::Network& network(std::string_view name) const;
@@ -186,6 +195,10 @@ private:
     std::vector<std::unique_ptr<Channel>> channels_;
     std::vector<LinNode> lin_;
     std::vector<std::function<void(SimTime)>> step_functions_;
+    std::function<void(SimTime)> control_before_;
+    std::function<void(SimTime)> control_after_;
+    std::function<void()> control_stopping_;
+    bool control_set_ = false;
     std::mutex mutex_; ///< serialises stop(); guards driver_ and stopping_ against start()
     std::unique_ptr<can::RealTimeDriver> driver_;
     /// driver_ once it runs (set once in start()), for failed(), error() and wait() without the

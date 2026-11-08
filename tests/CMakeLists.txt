@@ -33,6 +33,15 @@ vehicle_sil_add_harness_tests(vehicle_sil_core_tests
   LINK vehicle_sil::core)
 
 # ---------------------------------------------------------------------------
+# Control agent: typed variables and timed writes applied in the steps, without a transport;
+# driven by vehicle_sil::Peer (in-process registry).
+# ---------------------------------------------------------------------------
+vehicle_sil_add_harness_tests(vehicle_sil_control_tests
+  PREFIX control LABELS unit control TIMEOUT 120
+  SOURCES control/test_agent.cpp control/test_peer_agent.cpp
+  LINK vehicle_sil::peer_control)
+
+# ---------------------------------------------------------------------------
 # LIN: schedule, frames, checksums, diagnostic frames, sleep and wakeup with SIL Kit LIN in
 # virtual time (in-process registry).
 # ---------------------------------------------------------------------------

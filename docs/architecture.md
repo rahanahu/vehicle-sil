@@ -625,7 +625,7 @@ peer.wait();
 ```
 
 - `j1939(network)` は SIL Kit の CAN コントローラ、`SilKitCanPort`、`TapPort`、`Network` を作ります（`tap(name)` で生フレームを観測できます）。`j1939(name, port)` は利用者が作ったポート（Vector XL の `ExternalPortAdapter` など）を受け取り、Peer が所有します。`lin_master(network, schedule, ...)` と `lin_slave(network, options, ...)` は LIN のノードを作り、communication ready の通知で `init()` を呼びます。`on_step(fn)` は毎ステップ、`every(period, fn)` は 0、period、2 period … の時刻以後の最初のステップで呼びます（1 ステップに 1 回まで）。
-- 1 ステップの順序: J1939 の各 `Network` の受信と処理（追加した順）→ アプリの処理（`on_step` と `every`、追加した順）→ LIN のノードの `step(now)`（追加した順）→ J1939 の送信。アプリが出した LIN の要求（`set_frame_data()`、`set_response()`）は同じステップから効き、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます。
+- 1 ステップの順序: J1939 の各 `Network` の受信と処理（追加した順）→ アプリの処理（`on_step` と `every`、追加した順）→ LIN のノードの `step(now)`（追加した順）→ J1939 の送信。制御のフック（`set_control(before, after, stopping)`、制御の Agent が使う）は、アプリの処理の直前と、LIN の処理の直後に呼ばれます（`on_step` をいつ足したかによりません）。`stopping` は `stop()`（と破棄）の始めに 1 回呼ばれます。アプリが出した LIN の要求（`set_frame_data()`、`set_response()`）は同じステップから効き、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます。
 - 時間のモード: `virtual_time` があれば SIL Kit の時間同期で回します（J1939 と LIN）。なければ実時間で、Peer が `RealTimeDriver` と時計（`SteadyRealTimeClock`、または `PeerOptions::real_time_clock`）を持ち、SIL Kit の CAN ポートを実時間にします（J1939 だけ。LIN は `std::logic_error`）。外部のポートの時間の領域が Peer と違えば `std::logic_error` です。SIL Kit を持たない構成（XL だけ）はありません。
 - lifecycle: `Coordinated` では `SimulationController` が開始と停止を決めます。1 つのプロセスで複数の Peer と controller を起動するときは `start_together(controller, {&a, &b})` を使います。`Autonomous` では、`stop()` か `request_stop()`（ステップの中から）で止まります。複数の participant を同じ時刻から決定的に動かすときは `Coordinated` にします（`Autonomous` の participant どうしは、開始の時刻がそろうとは限りません）。仮想時間で `virtual_time.end` があれば（0 より後であること）、end の前の最後のステップの後で自分で止まります。`wait()` は lifecycle の終わりを待ちます。`failed()` と `error()` は、ステップ（ホスト、アプリ、LIN、ポート）、ステップのハンドラ、実時間のドライバーの失敗を返します。仮想時間でステップが失敗すると participant は Error になり、`wait()` が戻ります。実時間ではドライバーが止まるだけで lifecycle は続き、`wait()` はその失敗では戻らないので、`failed()` を見て `stop()` します。
 - 複数の ECU の組み立ては、`Network&` を受け取る関数に書くと、同じコードを `Peer` と `testkit::LocalCan` の両方で使えます（例: `examples/j1939/ecu_pair`。試験で両者の結果が同じことを確かめています）。
@@ -1016,6 +1016,30 @@ J1939 スタックの制限と、規格との一致を確かめていない点�
 | Control Agent | 各 Peer に組み込むライブラリ。Peer の状態と操作できるパラメータを公開し、操作を受け付ける |
 | Control Server | 複数の PC（Windows/Linux）にまたがる Peer を発見し、操作を中継し、状態を集約する |
 | クライアント | GUI、CLI、Python。いずれも共通の Control API を使う |
+
+#### Control Agent（`vehicle_sil::control`、`vehicle_sil::peer_control`）
+
+participant の中で、外から操作できる変数を公開し、外からの書き込みをステップの中の決まった時刻に反映します。通信（Control Server との接続）は含みません。SIL Kit にも依存しません。
+
+```cpp
+BodyModel model;                                         // Peer より先に宣言する（Agent も）
+vehicle_sil::control::Agent agent;
+agent.input("cabin.parking_brake", &model.parking_brake, {.description = "Parking brake switch"});
+agent.input("engine.coolant", &model.coolant, {.unit = "degC", .min = -40.0, .max = 210.0});
+agent.input_enum("trans.gear", &model.gear, {{"P", 0}, {"R", 1}, {"N", 2}, {"D", 3}});
+agent.output("vehicle.speed", [&] { return model.speed; }, {.unit = "km/h"});
+vehicle_sil::Peer peer(options);
+vehicle_sil::control::attach(peer, agent);               // start() の前
+```
+
+- 変数: 型は bool、整数（C++ の型の範囲で検査。64 ビットの符号なしは入力にできず、出力では int64 の最大で止めて読む）、実数（`float` は `float` の範囲で検査）、列挙（値の一覧。型に収まり、名前と値が重複しないこと）。役割（FMI の causality に合わせる）は Input（走行中も書ける）、Output（読むだけ）、Parameter（最初のステップより前だけ書ける）。メタデータは名前（`.` で階層）、単位、最小、最大（含む。NaN は不可）、刻み（編集の目安、強制しない）、説明、列挙の項目で、`schema()` が登録順に返します。変数は、最初の `submit()` と最初のステップより前に登録します（後は `std::logic_error`。誤用の検出で、同期ではないので、登録と `submit()` を別のスレッドで同時に行わない）。ポインタや関数の参照先は Agent より長く生きること。
+- 書き込み（`Command`）: 1 つ以上の書き込みを、同じステップでまとめて反映します。`submit()` が名前、型、範囲、列挙、書き込めるかを確かめ、だめなら `Invalid` で何も積みません。整数の変数は整数か整数値の実数を、実数の変数は整数か有限の実数を受け付けます。整数の変数の最小と最大が型の範囲の外にあれば、登録のときに `std::invalid_argument` です。範囲外の値は丸めません（整数の範囲は整数のまま比べます）。`finish()` の後の `submit()` も `Invalid` です。
+- 反映の時刻: `Command::at` 以上の開始時刻を持つ最初のステップで、アプリの処理の前に反映します（アプリはそのステップで新しい値を見ます）。`at` がなければ次のステップです。同じステップで反映するものは (at, seq) の順です（`at` のないものは、そのステップの時刻として並べます）。participant が `at` 以降に始まるステップを受け取る前に実行していれば、その操作は遅すぎます。既定では反映せずに `Late` を返し、`LatePolicy::ApplyNext` なら次のステップで反映して `late` を立てます。Parameter の書き込みは、最初のステップが始まった後の `submit()` なら `Invalid`、始まる前に積んで時刻が最初のステップより後なら `Rejected` です。関数で登録した入力の setter が投げたら、その操作は `Rejected` で、同じ操作の中で先に書いた値はそのまま残ります（ステップは失敗しません）。
+- 結果: キューに積んだ操作には、必ず 1 つの `CommandResult`（`Applied` と反映したステップの時刻、`Late`、`Rejected`、`Cancelled`）が返ります。シミュレーションが終わったら `finish()` で、残っている操作を `Cancelled` にします。
+- 値: ステップの終わり（Peer では LIN の処理の後）に、0、`sample_period`、2 `sample_period` … の時刻以後の最初のステップ（`Peer::every()` と同じ数え方。既定 10 ms、0 なら毎ステップ）で全変数を読み、`latest()` で最新の 1 組を返します。受け渡しは 3 つのバッファで、ロックはありません。
+- スレッドと上限: ステップのスレッド（`on_step_begin`、`on_step_end`、`log`、`finish`。1 本）と通信の側（`submit`、`drain_results`、`drain_events`、`latest`、`stats`。互いにスレッド安全で、複数のスレッドから呼べる）で使います。ステップのスレッドは通信の側を待ちません。通信の側は、`finish()` の間と、実時間のドライバーを起こす `Host::post()` の短いロックを待つことがあります。`bind_driver()` に渡す起こしの関数の中から `submit()` と `clear_wakeup()` は呼びません。受け渡しは固定容量の SPSC リングです。処理中の操作（積んでから結果を `drain_results()` で受け取るまで）は `max_pending`（既定 256）までで、超えた `submit()` はすぐ `Busy` を返します。そのため結果は捨てません。出来事は `max_events`（既定 1024）までで、あふれたものは捨てて数えます。変数のアクセサはステップのスレッドだけで呼ぶので、モデルにロックは要りません。ステップのスレッドは通信のスレッドが持つロックを取りません（使い終えた操作の解放と、結果の理由の文字列の確保はステップのスレッドで行います。量は 1 ステップに `max_pending` まで）。
+- 決定論性: Agent は、反映の時刻を決めるだけで、ステップの並びとデータを変えません。Agent がない実行、Agent があって値を読み続けている実行で、通信の結果は同じです。時刻を指定した書き込みは、その時刻より前に participant に届けば、何度実行しても同じステップで反映されます。
+- Peer への組み込み（`attach(peer, agent)`）: `Peer::set_control()` のフックで、アプリの処理の直前に `on_step_begin()`、LIN の処理の直後に `on_step_end()` を呼びます。実時間の Peer では、操作を積むとドライバーを起こします（`Host::post()`。未処理の起こしは 1 つまで）。Peer が止まり始めると起こすのをやめるので、Peer の破棄の後に `submit()` しても Peer には触れません。Agent 1 つと Peer 1 つの組で 1 回だけ、`start()` と Agent の最初の `submit()` の前に呼びます（時間のモードによらず、違えば `std::logic_error` で、どちらも変わりません）。Agent は Peer より先に宣言し、Peer が止まったら `finish()` を呼びます。
 
 Control API で扱う機能は次のとおりです。
 

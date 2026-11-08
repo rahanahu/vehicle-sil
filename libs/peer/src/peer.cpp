@@ -236,8 +236,25 @@ void Peer::every(SimDuration period, std::function<void(SimTime now)> fn)
     });
 }
 
+void Peer::set_control(std::function<void(SimTime)> before, std::function<void(SimTime)> after,
+                       std::function<void()> stopping)
+{
+    require_not_started("set_control()");
+    if (std::exchange(control_set_, true))
+    {
+        throw std::logic_error("vehicle_sil::Peer: set_control() called twice");
+    }
+    control_before_ = std::move(before);
+    control_after_ = std::move(after);
+    control_stopping_ = std::move(stopping);
+}
+
 void Peer::run_application(SimTime now)
 {
+    if (control_before_)
+    {
+        control_before_(now);
+    }
     for (auto& fn : step_functions_)
     {
         fn(now);
@@ -252,6 +269,10 @@ void Peer::run_application(SimTime now)
         {
             node.slave->step(now);
         }
+    }
+    if (control_after_)
+    {
+        control_after_(now);
     }
 }
 
@@ -309,6 +330,11 @@ void Peer::stop(std::string_view reason) noexcept
 {
     // One stop at a time: a second caller (the destructor too) waits until the first is done.
     const std::lock_guard lock(mutex_);
+    if (control_stopping_)
+    {
+        // Once: the control agent stops waking the driver of this peer, whose host goes away.
+        std::exchange(control_stopping_, nullptr)();
+    }
     stopping_ = true;
     // Real time: the driver first, so that no step runs after the lifecycle stopped. A step
     // may still call failed() or error() meanwhile: they do not take the lock.

@@ -67,6 +67,7 @@ add_subdirectory(libs/can_netsim ${_vehicle_sil_exclude})
 add_subdirectory(libs/j1939 ${_vehicle_sil_exclude})
 add_subdirectory(libs/testkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/peer ${_vehicle_sil_exclude})
+add_subdirectory(libs/control ${_vehicle_sil_exclude})
 # Vector XL CAN bridge: portable core everywhere, XL backend and executable on Windows only.
 add_subdirectory(bridges/vector-xl ${_vehicle_sil_exclude})
 # Command-line helpers shared by the executables, and the system controller for coordinated
