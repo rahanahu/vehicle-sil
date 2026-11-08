@@ -23,14 +23,16 @@ struct AttachOptions
 /// With AttachOptions::monitor, the agent also gets these outputs (after the application's
 /// variables), read at the agent's samples on the step thread:
 ///   peer.steps, peer.speed (simulation seconds per wall-clock second since the previous
-///   sample), peer.app_time_max_us (longest application-and-LIN stage since then);
+///   sample: 0 at the first one, and low after the simulation stood still), peer.app_time_max_us
+///   (the longest application-and-LIN stage since then, without the J1939 handling);
 ///   for each J1939 network N: j1939.N.bus_state (-1 unknown, 0 error active, 1 error passive,
 ///   2 bus off) and the counters j1939.N.frames_received, frames_sent, send_failures,
 ///   send_queue_full, receive_overflows, held_dropped, address_violations,
 ///   transport_aborts_sent, transport_aborts_received;
 ///   for each node i of N: j1939.N.node<i>.address and j1939.N.node<i>.address_state
 ///   (0 fixed, 1 not started, 2 claiming, 3 claimed, 4 cannot claim);
-/// and events when a node's address state or address changes (Warning for cannot claim). The
+/// and events "j1939.N.node<i>: <state> at address <a>" (the state named as in the items) when
+/// a node's address state or address changes (Warning for cannot_claim). The
 /// networks and nodes that exist when attach() is called are covered; the names must not clash
 /// with the agent's variables (std::invalid_argument). A failed step is not reported here: no
 /// later step runs to report it; read Peer::failed() and Peer::error() (thread safe) instead.

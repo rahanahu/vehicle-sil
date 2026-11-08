@@ -15,6 +15,14 @@ namespace {
 
 using Wall = std::chrono::steady_clock;
 
+// The enum outputs use the engine's values: keep them in step.
+static_assert(static_cast<int>(j1939::AddressState::Fixed) == 0 && static_cast<int>(j1939::AddressState::NotStarted) == 1
+              && static_cast<int>(j1939::AddressState::Claiming) == 2 && static_cast<int>(j1939::AddressState::Claimed) == 3
+              && static_cast<int>(j1939::AddressState::CannotClaim) == 4);
+static_assert(static_cast<int>(can::BusState::ErrorActive) == 0 && static_cast<int>(can::BusState::ErrorPassive) == 1
+              && static_cast<int>(can::BusState::BusOff) == 2);
+
+/// The name of a state, as in the items of the address_state output.
 const char* state_name(j1939::AddressState state)
 {
     switch (state)
@@ -22,13 +30,13 @@ const char* state_name(j1939::AddressState state)
     case j1939::AddressState::Fixed:
         return "fixed";
     case j1939::AddressState::NotStarted:
-        return "not started";
+        return "not_started";
     case j1939::AddressState::Claiming:
         return "claiming";
     case j1939::AddressState::Claimed:
         return "claimed";
     case j1939::AddressState::CannotClaim:
-        return "cannot claim";
+        return "cannot_claim";
     }
     return "unknown";
 }
@@ -112,9 +120,13 @@ void add_monitoring(Peer& peer, Agent& agent, const std::shared_ptr<Monitor>& m)
 {
     agent.output("peer.steps", [m] { return m->steps; }, {.description = "Steps run"});
     agent.output("peer.speed", [m] { return m->speed(); },
-                 {.unit = "s/s", .description = "Simulation seconds per wall-clock second since the previous sample"});
+                 {.unit = "s/s",
+                  .description = "Simulation seconds per wall-clock second since the previous sample (0 at the first sample; "
+                                 "includes the time the simulation stood still)"});
     agent.output("peer.app_time_max_us", [m] { return std::exchange(m->app_us_max, 0.0); },
-                 {.unit = "us", .description = "Longest application and LIN stage of a step since the previous sample"});
+                 {.unit = "us",
+                  .description = "Longest application and LIN stage of a step since the previous sample (without the "
+                                 "J1939 handling and the commands applied before it)"});
     for (const auto& name : peer.network_names())
     {
         auto& network = peer.network(name);

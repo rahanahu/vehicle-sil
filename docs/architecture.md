@@ -1041,11 +1041,27 @@ vehicle_sil::control::attach(peer, agent);               // start() の前
 - 決定論性: Agent は、反映の時刻を決めるだけで、ステップの並びとデータを変えません。Agent がない実行、Agent があって値を読み続けている実行で、通信の結果は同じです。時刻を指定した書き込みは、その時刻より前に participant に届けば、何度実行しても同じステップで反映されます。
 - Peer への組み込み（`attach(peer, agent)`）: `Peer::set_control()` のフックで、アプリの処理の直前に `on_step_begin()`、LIN の処理の直後に `on_step_end()` を呼びます。実時間の Peer では、操作を積むとドライバーを起こします（`Host::post()`。未処理の起こしは 1 つまで）。Peer が止まり始めると起こすのをやめるので、Peer の破棄の後に `submit()` しても Peer には触れません。Agent 1 つと Peer 1 つの組で 1 回だけ、`start()` と Agent の最初の `submit()` の前に呼びます（時間のモードによらず、違えば `std::logic_error` で、どちらも変わりません）。Agent は Peer より先に宣言し、Peer が止まったら `finish()` を呼びます。
 - Peer の監視（`AttachOptions::monitor`、既定で有効）: `attach()` が、アプリの変数の後に次の出力を足します。値は Agent の読み出しの時にステップのスレッドで読みます。
-  - `peer.steps`（ステップの数）、`peer.speed`（前の読み出しからの仮想時間の秒 / 壁時計の秒）、`peer.app_time_max_us`（前の読み出しから、アプリと LIN の処理にかかった最長の時間）
+  - `peer.steps`（ステップの数）、`peer.speed`（前の読み出しからの仮想時間の秒 / 壁時計の秒。最初の読み出しでは 0、止まっていた後は小さくなる）、`peer.app_time_max_us`（前の読み出しから、アプリと LIN の処理にかかった最長の時間。J1939 の処理と書き込みの反映は含まない）
   - J1939 のネットワーク N ごとに `j1939.N.bus_state`（列挙: unknown、error_active、error_passive、bus_off）と、統計の `frames_received`、`frames_sent`、`send_failures`、`send_queue_full`、`receive_overflows`、`held_dropped`、`address_violations`、`transport_aborts_sent`、`transport_aborts_received`
   - N のノード i ごとに `j1939.N.node<i>.address` と `j1939.N.node<i>.address_state`（列挙: fixed、not_started、claiming、claimed、cannot_claim）
-  - 出来事: ノードのアドレスの状態かアドレスが変わったとき（cannot claim は Warning）
+  - 出来事: ノードのアドレスの状態かアドレスが変わったとき（本文は「j1939.N.node<i>: <状態> at address <a>」で、状態の名前は列挙の項目と同じ。cannot_claim は Warning）
   - 対象は `attach()` の時点にあるネットワークとノードです。名前がアプリの変数と重なれば `std::invalid_argument`（何も変えません）。ステップの失敗はここでは知らせません（失敗の後はステップが走らないため）。`Peer::failed()` と `error()`（スレッド安全）を通信の側で読みます。
+
+#### Control Server の中核（`vehicle_sil::control::Hub`）
+
+Control Server の、通信の方式によらない部分です。接続した Agent の一覧、書き込みの振り分け、Peer ごとの結果、最新の値、上限つきの購読を受け持ちます。全関数がスレッド安全です。
+
+- 通信の層は、接続ごとに `agent_connected(hello, link)` を呼んで `ConnectionId` を受け取り、以後 Agent から届いたもの（`agent_submitted`、`agent_result`、`agent_values`、`agent_events`、`agent_status`）と切断（`agent_disconnected`）を、その ID で渡します。`hello` は Agent を Peer に `attach()` した後で作ります（監視の出力がスキーマに入るため）。`agent_status` には `Peer::failed()` と `error()` を渡します（ステップの失敗は監視の出力では届かないため）。
+- `AgentLink::send()`: Hub は自分のロックを持たずに呼びます。1 つの Peer には 1 本のスレッドから、通し番号の順に 1 つずつ呼ぶので、短く待っても、中から Hub を呼び返してもかまいません。`false` を返せば、その操作は Invalid、例外なら Unknown になります。`write()` を呼んだスレッドが、同じ Peer への前の操作の送信も引き受けることがあるので、`write()` は `send()` の分だけ待つことがあります。Hub はリンクの最後の参照を、ロックの外で手放します。`agent_connected()` には、空でない名前、リンク、0 より大きい `max_pending` が要ります。
+- Agent は participant 名（空は不可）と起動ごとの ID（incarnation）で名乗ります。
+  - 同じ名前と同じ ID: 同じプロセスのつなぎ直しです。新しい接続が古い接続に代わり、未完了の操作は続きます。古い接続の切断の知らせが後から届いても、Peer は切断になりません（その接続に渡して積まれたと知らされていない操作だけが Unknown になります）。hello の `open_seqs` に、Agent がまだ持っている操作（積んだが、結果を通信の層がまだ届けていないもの）を入れると、それらは新しい接続で Queued になり（古い接続の終わりの影響を受けません）、それ以外の未確定の操作は Unknown で確定します。通信の層は、届けられなかった結果を次の接続で送り直します。`open_seqs` を入れなければ何も確定させないので、結果を失った操作は未確定のまま残り、その Peer の `max_pending` の枠を使い続けます。
+  - 同じ名前で別の ID: プロセスの再起動です。前の ID の未完了の操作は Unknown になり、前の ID の値は消えます。
+  - 切断: Agent が積んだ操作は Disconnected（未確定）になり、同じ ID でつなぎ直した後に結果が届けば、それで確定します。リンクに渡したが積まれたと知らされていない操作は Unknown、まだリンクに渡していない操作は Invalid です。`forget_peer()` で切断した Peer を消すと、その未確定の操作は Unknown になり、購読者には `removed` の印つきの PeerUpdate が届きます。
+  - 結果は、操作を送った ID のどの接続から届いても受け付けます。別の ID からの結果は使いません。値、出来事、状態は、いまの接続からのものだけを使います。スキーマと数が合わない値と、前より古い値は捨てます。
+- `write(request)` は、操作に Hub 全体で増える通し番号（既定の初めの値は壁時計のマイクロ秒で、Server を起動し直しても前より大きい）を振り、Peer ごとにまとめた `Command`（その番号を `seq` に持つ）を送ります。Hub が確かめるのは、Peer がつながっていること、変数があって書けること、その Peer の未完了の操作が `max_pending`（hello で受け取る）より少ないこと（多ければ Busy）だけです。型、範囲、反映するステップは Agent が決めます。Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Late、Rejected、Cancelled のどれか、または Disconnected、Invalid、Busy、Unknown です。Sent、Queued、Disconnected 以外は確定で、二度と変わりません。
+- `wait_queued(seq)` は、Sent の目標がなくなるまで待ち、そのときの操作を返します（時間切れと、知らない番号は空）。止まっている間に時刻を指定した書き込みをして、すべての目標が Queued になったことを確かめてから再開すれば、遅すぎる書き込みは起きません。`wait_done(seq)` は確定まで待って操作を返すので、直後に操作が忘れられても結果はわかります（待っている間に忘れられたときも空を返すので、`max_operations` は待つ操作の数より大きくします）。
+- 購読（`subscribe()`）: 始めると、その時点の Peer の一覧と最新の値がまず届きます。Peer、値、操作は、それぞれ Peer ごと・操作ごとに最新の状態だけを持ちます（読む前に変われば置き換える）。上限（`capacity`）があるのは出来事と操作で、あふれたら、出来事は古いものから、操作はいちばん前に変わったものから捨てて数えます。値には、そのスキーマの incarnation が付きます。`poll()` の順は、Peer、操作（番号の順）、出来事（届いた順）、値です。`close()` で待っている `poll()` を起こして終えます。
+- 覚えておく操作: 確定した操作は `max_operations` までで、超えたら古いものから忘れます。未確定の操作は忘れません（数は Peer ごとの `max_pending` で決まります）。
 
 Control API で扱う機能は次のとおりです。
 

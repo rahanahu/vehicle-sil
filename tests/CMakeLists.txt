@@ -38,7 +38,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_core_tests
 # ---------------------------------------------------------------------------
 vehicle_sil_add_harness_tests(vehicle_sil_control_tests
   PREFIX control LABELS unit control TIMEOUT 120
-  SOURCES control/test_agent.cpp control/test_peer_agent.cpp
+  SOURCES control/test_agent.cpp control/test_peer_agent.cpp control/test_hub.cpp
   LINK vehicle_sil::peer_control)
 
 # ---------------------------------------------------------------------------
