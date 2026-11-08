@@ -60,17 +60,27 @@ struct BroadcastSuppressionOptions
 ///   its own suspension, not a command, and are not used.
 /// - This node suspended them itself (suspend()), until the duration passed or resume().
 ///
-/// One per node: create it with BroadcastSuppression::of(node) or node.attach<>() (a second one
-/// attached to the same node throws std::logic_error). Do not construct one yourself: of() and
-/// the parts would not find it and would read another state. Parts that read it hold a
-/// reference and must be destroyed before it (attach them after it).
+/// One per node, attached to it: create it with BroadcastSuppression::of(node) or
+/// BroadcastSuppression::attach(node, options); it cannot be constructed otherwise (one of its
+/// own would be a second state that of() and the parts do not see). Parts that read it hold a
+/// reference and must be destroyed before it (attach them after it; of() in their constructor
+/// does that).
 class BroadcastSuppression
 {
+    struct Key
+    {
+        explicit Key() = default;
+    };
+
 public:
     /// The part of `node`, attached with the default options if it has none yet.
     static BroadcastSuppression& of(Node& node);
+    /// Attaches the part of `node` with `options`. std::logic_error if the node has one already
+    /// (attach it before the parts that use it).
+    static BroadcastSuppression& attach(Node& node, BroadcastSuppressionOptions options);
 
-    explicit BroadcastSuppression(Node& node, BroadcastSuppressionOptions options = {});
+    /// Only of() and attach() can call it (Key is private).
+    BroadcastSuppression(Node& node, Key key, BroadcastSuppressionOptions options);
     BroadcastSuppression(const BroadcastSuppression&) = delete;
     BroadcastSuppression& operator=(const BroadcastSuppression&) = delete;
 

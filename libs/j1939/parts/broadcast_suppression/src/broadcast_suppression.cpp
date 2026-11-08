@@ -29,10 +29,15 @@ BroadcastSuppression& BroadcastSuppression::of(Node& node)
     {
         return *existing;
     }
-    return node.attach<BroadcastSuppression>();
+    return node.attach<BroadcastSuppression>(Key{}, BroadcastSuppressionOptions{});
 }
 
-BroadcastSuppression::BroadcastSuppression(Node& node, BroadcastSuppressionOptions options)
+BroadcastSuppression& BroadcastSuppression::attach(Node& node, BroadcastSuppressionOptions options)
+{
+    return node.attach<BroadcastSuppression>(Key{}, options);
+}
+
+BroadcastSuppression::BroadcastSuppression(Node& node, Key /*key*/, BroadcastSuppressionOptions options)
   : node_(node),
     options_(options),
     hold_(node, TimerKind::Timeout, [this] { stopped_ = false; }),

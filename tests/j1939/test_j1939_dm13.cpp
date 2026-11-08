@@ -9,6 +9,7 @@
 #include "vehicle_sil/j1939/diagnostics.hpp"
 
 #include <chrono>
+#include <type_traits>
 
 using namespace vehicle_sil::unit::j1939;
 using vehicle_sil::SimDuration;
@@ -101,7 +102,7 @@ TEST_CASE(dm13_reaches_our_network_wherever_its_bits_are_and_the_current_data_li
         Bench bench;
         Node& us = bench.add_node(kUs);
         bench.step(); // frames injected from here on reach the network in the next step
-        auto& suppression = us.attach<BroadcastSuppression>(BroadcastSuppressionOptions{network});
+        auto& suppression = BroadcastSuppression::attach(us, BroadcastSuppressionOptions{network});
         bench.inject(dm13_from(kTool, kGlobal, dm13(kJ1587, kStop)));
         bench.step();
         CHECK(!suppression.suspended());
@@ -200,7 +201,10 @@ TEST_CASE(a_node_has_one_broadcast_suppression)
     auto& ours = BroadcastSuppression::of(us);
     CHECK(&BroadcastSuppression::of(us) == &ours);
     CHECK(&BroadcastSuppression::of(other) != &ours);
-    CHECK(throws<std::logic_error>([&] { us.attach<BroadcastSuppression>(); }));
+    CHECK(throws<std::logic_error>([&] { BroadcastSuppression::attach(us, {}); }));
+    // Only of() and attach() make one: a suppression of its own is not even constructible.
+    static_assert(!std::is_constructible_v<BroadcastSuppression, Node&>);
+    static_assert(!std::is_constructible_v<BroadcastSuppression, Node&, BroadcastSuppressionOptions>);
     // Every part of the node reads the same state.
     auto& diagnostics = us.attach<Diagnostics>();
     static_cast<void>(diagnostics);
