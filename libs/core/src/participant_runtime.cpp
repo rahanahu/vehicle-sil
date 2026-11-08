@@ -101,8 +101,13 @@ ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
                     struct CompleteOnExit
                     {
                         SilKit::Services::Orchestration::ITimeSyncService* time_sync;
+                        bool enabled = true; // false: a StepHold keeps the step until release_step()
                         ~CompleteOnExit()
                         {
+                            if (!enabled)
+                            {
+                                return;
+                            }
                             try
                             {
                                 time_sync->CompleteSimulationStep();
@@ -113,7 +118,7 @@ ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
                             }
                         }
                     } complete{time_sync_};
-                    on_step(now, duration);
+                    complete.enabled = on_step(now, duration);
                 },
                 options_.virtual_time->step);
         }
@@ -208,8 +213,13 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
         ParticipantRuntime& self;
         ~DisableSteps()
         {
-            const std::lock_guard gate(self.step_gate_);
-            self.steps_disabled_ = true;
+            {
+                const std::lock_guard gate(self.step_gate_);
+                self.steps_disabled_ = true;
+            }
+            // Waits for a StepHold that is deciding, and keeps later ones from running.
+            const std::lock_guard hold(self.hold_mutex_);
+            self.hold_disabled_ = true;
         }
     } disableSteps{*this};
     if (!lifecycle_done_)
@@ -331,7 +341,7 @@ std::string ParticipantRuntime::step_error() const
     return step_error_;
 }
 
-void ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nanoseconds duration)
+bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nanoseconds duration)
 {
     const auto wallStart = pacer_ ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const SimTime time = from_silkit_time(now);
@@ -342,13 +352,13 @@ void ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
         // Only this thread writes step_error_, so reading it here needs no lock.
         if (steps_disabled_ || !step_error_.empty())
         {
-            return;
+            return true;
         }
         if (const auto& end = options_.virtual_time->end; !end || time < *end)
         {
             if (!run_step_handler(time, duration))
             {
-                return;
+                return true;
             }
             steps_completed_.fetch_add(1, std::memory_order_acq_rel);
         }
@@ -356,6 +366,59 @@ void ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
     if (pacer_)
     {
         pace_until(pacer_->step_deadline(time, duration, wallStart));
+    }
+    if (!step_hold_ || stop_requested())
+    {
+        return true;
+    }
+    // held_ is set before the hold decides, under hold_mutex_: a release_step() that the hold
+    // triggers on another thread waits for the decision and then finds the step held.
+    const std::lock_guard lock(hold_mutex_);
+    if (hold_disabled_)
+    {
+        return true;
+    }
+    held_ = true;
+    bool hold = false;
+    try
+    {
+        hold = step_hold_(time, duration);
+    }
+    catch (...)
+    {
+        hold = false; // a failing hold must not stall the simulation
+    }
+    held_ = hold;
+    return !hold;
+}
+
+void ParticipantRuntime::set_step_hold(StepHold hold)
+{
+    if (!time_sync_)
+    {
+        throw std::logic_error("ParticipantRuntime::set_step_hold() needs virtual_time");
+    }
+    if (started())
+    {
+        throw std::logic_error("ParticipantRuntime::set_step_hold() must be called before start()");
+    }
+    step_hold_ = std::move(hold);
+}
+
+void ParticipantRuntime::release_step() noexcept
+{
+    const std::lock_guard lock(hold_mutex_);
+    if (!std::exchange(held_, false))
+    {
+        return;
+    }
+    try
+    {
+        time_sync_->CompleteSimulationStep(); // queues the completion on the SIL Kit thread
+    }
+    catch (const std::exception&)
+    {
+        // Only queues a task; nothing to recover if even that fails.
     }
 }
 

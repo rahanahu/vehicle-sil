@@ -29,7 +29,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_unit_tests
 # ---------------------------------------------------------------------------
 vehicle_sil_add_harness_tests(vehicle_sil_core_tests
   PREFIX core LABELS unit core TIMEOUT 120 RUN_SERIAL "^virtual_time_"
-  SOURCES core/test_time_helpers.cpp core/test_virtual_time.cpp
+  SOURCES core/test_time_helpers.cpp core/test_virtual_time.cpp core/test_time_gate.cpp
   LINK vehicle_sil::core)
 
 # ---------------------------------------------------------------------------

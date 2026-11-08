@@ -9,7 +9,7 @@
 
 | CMake ターゲット | 内容 |
 |---|---|
-| `vehicle_sil::core` | `vehicle_sil::ParticipantRuntime`（SIL Kit の participant、lifecycle、他参加者の状態、仮想時間のステップを RAII で管理する）、`SimulationController`（仮想時間のシミュレーションの開始と停止）、`SimTime`、`StepInbox`、`TickScheduler`。プロトコルに依存しない |
+| `vehicle_sil::core` | `vehicle_sil::ParticipantRuntime`（SIL Kit の participant、lifecycle、他参加者の状態、仮想時間のステップを RAII で管理する）、`SimulationController`（仮想時間のシミュレーションの開始と停止、一時停止、ステップ実行、速度）、`SimTime`、`StepInbox`、`TickScheduler`。プロトコルに依存しない |
 | `vehicle_sil::lin` | `vehicle_sil::lin::LinMaster`（スケジュールテーブル、Master が送るフレーム、マスターリクエスト、go-to-sleep と wakeup）と `vehicle_sil::lin::LinSlave`（ステップで設定した値で応答、スレーブレスポンス、Master のフレームの受信、休止と起床）。仮想時間で使う。`vehicle_sil::core` を含み、J1939 には依存しない |
 | `vehicle_sil::can`（開発中） | バックエンドに依存しない CAN の基盤。フレームの型、ポートの契約、複数のプロトコル処理をステップで回す `Host`、仮想時間の `StepDriver`、実時間の `RealTimeDriver`、テスト用の仮想バス（調停と送信時間の模擬、故障注入、ECU 単位の通信断を選べる）、生フレームを読み取り専用で観測する `TapPort`。SIL Kit に依存しない。J1939 スタックの土台で、API はまだ変わることがある |
 | `vehicle_sil::can_silkit`（開発中） | `vehicle_sil::can` のポートの SIL Kit 実装（仮想時間と、時刻同期なしの実時間）と、`Host` を `ParticipantRuntime` のステップにつなぐ `bind_host()` |
@@ -348,7 +348,7 @@ peer.run();   // start() と wait()
 
 ## 既知の制限
 
-- 仮想時間の一時停止とステップ実行は未実装です。
+- 仮想時間の一時停止とステップ実行は、C++ の API（`SimulationController` の時間ゲート）だけです。`vehicle_sil_sim_controller` や外部からは操作できません。
 - LIN の Slave は、応答するフレームのスロット長より短いステップ幅で動かす必要があります。LIN の dynamic response など、SIL Kit の experimental API を使っています。
 - LIN の Slave が決まったステップで受信できるのは、Master が送るフレームだけです。ほかの Slave の応答（slave-to-slave）も購読した ID なら渡されますが、受け取るステップと時刻は決定論的ではありません。
 - 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。

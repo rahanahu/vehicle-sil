@@ -76,6 +76,10 @@ struct ParticipantRuntimeOptions
 /// stamped with `now` and delivered when it returns.
 using StepHandler = std::function<void(SimTime now, SimDuration step)>;
 
+/// Decides, once per step after the step handler (and pacing), whether the participant holds
+/// back the completion of the step: true holds it until ParticipantRuntime::release_step().
+using StepHold = std::function<bool(SimTime now, SimDuration step)>;
+
 /// What this participant currently knows about another participant.
 struct PeerStatus
 {
@@ -139,6 +143,24 @@ public:
     /// ILinController::Init(). Only before start(); otherwise throws std::logic_error.
     void set_communication_ready_handler(std::function<void()> handler);
 
+    /// Sets a StepHold. While this participant holds a step that starts at P, it does not
+    /// announce its next step, so every other synchronised participant runs its steps that start
+    /// at or before P and none that starts after P: the simulation stands still at P. Holding
+    /// costs no thread: the SIL Kit thread stays free (statuses and a stop still arrive), and
+    /// SIL Kit's health check does not time a held step.
+    /// The hold runs on the SIL Kit thread, like the step handler; it must not call
+    /// release_step() or stop() itself (request_stop() is fine). It is not called once a stop was requested, after a step handler
+    /// failure, or once stop() has returned (stop() waits for a hold that is deciding); the step
+    /// completes then. If it throws, the step completes. It is called for the steps at or after
+    /// VirtualTimeOptions::end as well (they still take part in the synchronisation).
+    /// Only with virtual time, and only before start(); otherwise throws std::logic_error.
+    void set_step_hold(StepHold hold);
+
+    /// Completes the step that the StepHold held back; does nothing if none is held. Thread safe
+    /// (not from within the StepHold). A stop does not need it: stop() and request_stop() end a
+    /// simulation that stands still. Must not be called once the destructor has begun.
+    void release_step() noexcept;
+
     /// Starts the lifecycle and waits until this participant is Running. In Coordinated mode
     /// that requires the system controller and all other required participants.
     /// Throws std::runtime_error on timeout or if the lifecycle fails, std::logic_error if
@@ -198,7 +220,8 @@ public:
 private:
     /// @param replayed true for statuses re-read by resync_peers(): they never overwrite a newer one.
     void on_status(const SilKit::Services::Orchestration::ParticipantStatus& status, bool replayed);
-    void on_step(std::chrono::nanoseconds now, std::chrono::nanoseconds duration);
+    /// @returns true to complete the step now, false if the StepHold holds it.
+    bool on_step(std::chrono::nanoseconds now, std::chrono::nanoseconds duration);
     /// Runs the step handler; on an exception records step_error_, reports a SIL Kit error and
     /// returns false.
     bool run_step_handler(SimTime now, SimDuration step);
@@ -231,6 +254,10 @@ private:
     bool stopped_ = false;
 
     StepHandler step_handler_;
+    StepHold step_hold_;
+    std::mutex hold_mutex_; ///< guards held_; held while the StepHold decides
+    bool held_ = false;     ///< a step is held and not yet completed
+    bool hold_disabled_ = false; ///< guarded by hold_mutex_; set by stop()
     std::optional<RealTimePacer> pacer_; // only touched by the step handler thread
     std::atomic<std::int64_t> now_ns_{0};
     std::atomic<std::uint64_t> steps_completed_{0};
