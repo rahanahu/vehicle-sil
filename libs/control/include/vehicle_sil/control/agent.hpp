@@ -23,15 +23,7 @@
 #include <variant>
 #include <vector>
 
-namespace vehicle_sil {
-class Peer;
-} // namespace vehicle_sil
-
 namespace vehicle_sil::control {
-
-class Agent;
-/// Defined in vehicle_sil::peer_control (peer_agent.hpp).
-void attach(Peer& peer, Agent& agent);
 
 namespace detail {
 /// An input of a 64-bit unsigned type cannot take all its values from an int64.
@@ -271,6 +263,19 @@ public:
         add_typed<T>(std::move(name), std::function<T()>(std::move(get)), {}, Causality::Output, std::move(options), {});
     }
 
+    /// A read-only integer variable that takes the values of `items` (a state).
+    template <typename Get>
+        requires std::is_invocable_v<Get>
+    void output_enum(std::string name, Get get, std::vector<EnumItem> items, VariableOptions options = {})
+    {
+        using T = std::decay_t<std::invoke_result_t<Get>>;
+        using Raw = std::conditional_t<std::is_enum_v<T>, std::underlying_type<T>, std::type_identity<T>>;
+        using U = typename Raw::type;
+        static_assert(std::is_integral_v<U> && !std::is_same_v<U, bool>, "output_enum needs an enum or integer type");
+        add_typed<U>(std::move(name), std::function<U()>([g = std::move(get)] { return static_cast<U>(g()); }), {},
+                     Causality::Output, std::move(options), std::move(items), true);
+    }
+
     template <typename T>
     void output(std::string name, const T* value, VariableOptions options = {})
     {
@@ -302,6 +307,9 @@ public:
     void bind_driver(std::function<void()> wakeup = {});
     /// Stops calling the wakeup (for example when the driver goes away). Thread safe.
     void clear_wakeup();
+    /// Undoes bind_driver() when the driver could not take the agent after all (attach() uses
+    /// it). Only before the first submit() and step.
+    void unbind_driver() noexcept;
 
     // ---- step thread --------------------------------------------------------------------
 
@@ -346,8 +354,6 @@ private:
     void apply(Pending& command, SimTime now, bool late);
     void push_result(CommandResult result);
     void sample(SimTime now);
-    void unbind_driver() noexcept; ///< undoes bind_driver() when attach() fails
-    friend void attach(Peer& peer, Agent& agent);
 
     /// A command that takes effect in the current step.
     struct Due

@@ -289,6 +289,17 @@ Peer::Channel& Peer::channel(std::string_view name) const
 }
 
 j1939::Network& Peer::network(std::string_view name) const { return *channel(name).network; }
+
+std::vector<std::string> Peer::network_names() const
+{
+    std::vector<std::string> names;
+    names.reserve(channels_.size());
+    for (const auto& c : channels_)
+    {
+        names.push_back(c->name);
+    }
+    return names;
+}
 can::TapPort& Peer::tap(std::string_view name) const { return *channel(name).tap; }
 can::SilKitCanPort* Peer::silkit_port(std::string_view name) const { return channel(name).silkit_port.get(); }
 

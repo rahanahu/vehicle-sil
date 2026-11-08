@@ -8,6 +8,7 @@
 #include "vehicle_sil/control/peer_agent.hpp"
 #include "vehicle_sil/peer/peer.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -54,7 +55,24 @@ struct Run
     std::vector<std::pair<std::int64_t, std::uint8_t>> received; ///< (Body's step time, value)
     std::vector<CommandResult> results;
     Snapshot engine_snapshot;
+    Snapshot body_snapshot;
+    std::vector<VariableInfo> engine_schema;
+    std::vector<VariableInfo> body_schema;
+    std::vector<Event> engine_events;
 };
+
+/// The value of the variable `name` in a snapshot of an agent with `schema`.
+Value value_of(const std::vector<VariableInfo>& schema, const Snapshot& snapshot, const std::string& name)
+{
+    for (std::size_t i = 0; i < schema.size(); ++i)
+    {
+        if (schema[i].name == name)
+        {
+            return snapshot.values.at(i);
+        }
+    }
+    throw vehicle_sil::unit::Failure("no variable " + name);
+}
 
 Run run_pair(bool with_agents, const std::vector<Command>& engine_commands, bool hammer)
 {
@@ -118,6 +136,10 @@ Run run_pair(bool with_agents, const std::vector<Command>& engine_commands, bool
     engine_agent.finish();
     engine_agent.drain_results(run.results);
     run.engine_snapshot = engine_agent.latest();
+    run.body_snapshot = body_agent.latest();
+    run.engine_schema = engine_agent.schema();
+    run.body_schema = body_agent.schema();
+    engine_agent.drain_events(run.engine_events);
     return run;
 }
 
@@ -287,4 +309,59 @@ TEST_CASE(control_peer_agent_wakes_a_real_time_peer)
     agent.drain_results(results);
     CHECK_EQ(results.size(), std::size_t{4});
     CHECK(results[3].status == CommandStatus::Cancelled);
+}
+
+TEST_CASE(control_peer_agent_monitors_the_networks)
+{
+    const auto run = run_pair(true, {}, false);
+    const auto get = [&](const std::vector<VariableInfo>& schema, const Snapshot& snap, const char* name) {
+        return value_of(schema, snap, name);
+    };
+    // Engine: a NAME, so it claimed its address; it sent its broadcasts and its claim.
+    CHECK_EQ(std::get<std::int64_t>(get(run.engine_schema, run.engine_snapshot, "j1939.J1939_CAN.node0.address_state")),
+             std::int64_t{3});
+    CHECK_EQ(std::get<std::int64_t>(get(run.engine_schema, run.engine_snapshot, "j1939.J1939_CAN.node0.address")), std::int64_t{0});
+    CHECK(std::get<std::int64_t>(get(run.engine_schema, run.engine_snapshot, "j1939.J1939_CAN.frames_sent")) > 10);
+    CHECK_EQ(std::get<std::int64_t>(get(run.engine_schema, run.engine_snapshot, "j1939.J1939_CAN.send_failures")), std::int64_t{0});
+    CHECK(std::get<std::int64_t>(get(run.engine_schema, run.engine_snapshot, "peer.steps")) > 30);
+    CHECK(std::get<double>(get(run.engine_schema, run.engine_snapshot, "peer.speed")) > 0.0);
+    // Body: no NAME (a fixed address); it received the engine's frames.
+    CHECK_EQ(std::get<std::int64_t>(get(run.body_schema, run.body_snapshot, "j1939.J1939_CAN.node0.address_state")), std::int64_t{0});
+    CHECK(std::get<std::int64_t>(get(run.body_schema, run.body_snapshot, "j1939.J1939_CAN.frames_received")) > 10);
+    // The schema describes the states.
+    for (const auto& info : run.engine_schema)
+    {
+        if (info.name == "j1939.J1939_CAN.node0.address_state")
+        {
+            CHECK(info.type == ValueType::Enum);
+            CHECK(info.causality == Causality::Output);
+            CHECK_EQ(info.items.size(), std::size_t{5});
+        }
+    }
+    // Events: the engine's node went from not started to claiming to claimed.
+    std::vector<std::string> texts;
+    for (const auto& e : run.engine_events)
+    {
+        texts.push_back(e.text);
+    }
+    CHECK(std::find(texts.begin(), texts.end(), "j1939.J1939_CAN.node0: claiming at address 0") != texts.end());
+    CHECK(std::find(texts.begin(), texts.end(), "j1939.J1939_CAN.node0: claimed at address 0") != texts.end());
+}
+
+TEST_CASE(control_peer_agent_monitor_names_must_not_clash)
+{
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Clash";
+    o.registry_uri = registry.uri;
+    o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(50ms)};
+    double x = 0.0;
+    Agent agent;
+    Agent plain;
+    agent.input("peer.speed", &x);
+    plain.input("peer.speed", &x);
+    Peer peer(o);
+    CHECK(throws<std::invalid_argument>([&] { attach(peer, agent); }));
+    attach(peer, plain, AttachOptions{.monitor = false}); // the peer was left free
+    CHECK_EQ(plain.schema().size(), std::size_t{1});
 }

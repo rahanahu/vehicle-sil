@@ -141,6 +141,8 @@ public:
 
     /// std::out_of_range for an unknown name.
     [[nodiscard]] j1939::Network& network(std::string_view name) const;
+    /// The names of the J1939 networks, in the order they were added.
+    [[nodiscard]] std::vector<std::string> network_names() const;
     [[nodiscard]] can::TapPort& tap(std::string_view name) const;
     /// The SIL Kit port of a network made by j1939(network_name); nullptr for an external port.
     [[nodiscard]] can::SilKitCanPort* silkit_port(std::string_view name) const;
