@@ -65,10 +65,11 @@ int run(const Args& args)
 
     const int result = run_until_finished(peer, o);
     const auto stats = slave.statistics();
-    log(o.participant, "responses=%llu ignored_headers=%llu physics_overflows=%llu",
+    log(o.participant, "responses=%llu ignored_headers=%llu physics_overflows=%llu lin_overflows=%llu",
         static_cast<unsigned long long>(stats.responses_sent), static_cast<unsigned long long>(stats.headers_ignored),
-        static_cast<unsigned long long>(overflows));
-    if (result == kExitOk && overflows != 0)
+        static_cast<unsigned long long>(overflows), static_cast<unsigned long long>(stats.inbox_overflows));
+    // LIN bus events lost because the slave's steps did not drain them (as the body controller checks).
+    if (result == kExitOk && (overflows != 0 || stats.inbox_overflows != 0))
     {
         return kExitFailed;
     }

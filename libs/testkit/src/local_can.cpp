@@ -19,9 +19,17 @@ struct LocalCan::Channel
 
 LocalCan::LocalCan(can::VirtualCanBusOptions options) : bus_(std::move(options)), injector_(bus_.attach()) {}
 
-// Members go in reverse order: the driver, the channels (each host before its network and
-// tap), then the bus with the endpoints.
-LocalCan::~LocalCan() = default;
+// The channels first, the one added last first (each host before its network and tap; the
+// driver only keeps pointers to the hosts), then the other members: the driver, the bus with the
+// endpoints.
+LocalCan::~LocalCan()
+{
+    // std::vector destroys its elements in no stated order.
+    while (!channels_.empty())
+    {
+        channels_.pop_back();
+    }
+}
 
 j1939::Network& LocalCan::add_j1939(std::string name, SimDuration step, j1939::NetworkOptions options)
 {
