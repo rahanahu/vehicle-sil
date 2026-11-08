@@ -191,6 +191,84 @@ TEST_CASE(timer_start_after_counts_from_the_event_independent_of_the_step_size)
     }
 }
 
+TEST_CASE(a_periodic_timer_shorter_than_the_step_fires_every_deadline_without_falling_behind)
+{
+    // No frame: every deadline of a step is caught up at its end, however wide the step is.
+    std::vector<long long> expected;
+    for (long long d = 2; d <= 300; d += 3)
+    {
+        expected.push_back(d);
+    }
+    for (const SimDuration step : {SimDuration{1ms}, SimDuration{10ms}, SimDuration{20ms}, SimDuration{50ms}})
+    {
+        Bench bench({}, step);
+        Node& us = bench.add_node(kUs);
+        std::vector<long long> fired;
+        std::optional<Timer> periodic;
+        periodic.emplace(us, TimerKind::Scheduled, [&] {
+            fired.push_back(ms_of(*periodic->deadline()));
+            periodic->start_after(3ms);
+        });
+        periodic->start_at(at(2ms));
+        bench.steps(static_cast<int>(300ms / step) + 1); // the last step at 300 ms
+        if (fired != expected)
+        {
+            throw vehicle_sil::unit::Failure("step " + std::to_string(step.count()) + " ns: " + std::to_string(fired.size()) +
+                                             " firings, the last at " + std::to_string(fired.empty() ? -1 : fired.back()));
+        }
+        // Nothing overdue is left for the driver to wake up for.
+        CHECK(bench.network.next_deadline() == std::optional<SimTime>{at(302ms)});
+    }
+}
+
+TEST_CASE(periodic_timers_with_the_same_deadlines_fire_alike_whatever_the_step_size)
+{
+    // Periods of 10 ms and 20 ms from 0 (the same deadlines every 20 ms) and 3 ms from 2 ms: what
+    // one timer starts in its callback is compared with its own deadline, not with the deadline
+    // fired last, so the other timer of the same deadline does not hold it back.
+    std::vector<std::string> reference;
+    for (const SimDuration step : {SimDuration{1ms}, SimDuration{10ms}, SimDuration{50ms}, SimDuration{200ms}})
+    {
+        Bench bench({}, step);
+        Node& us = bench.add_node(kUs);
+        std::vector<std::string> log;
+        std::optional<Timer> a;
+        std::optional<Timer> b;
+        std::optional<Timer> c;
+        a.emplace(us, TimerKind::Scheduled, [&] {
+            log.push_back("a" + std::to_string(ms_of(*a->deadline())));
+            a->start_after(10ms);
+        });
+        b.emplace(us, TimerKind::Scheduled, [&] {
+            log.push_back("b" + std::to_string(ms_of(*b->deadline())));
+            b->start_after(20ms);
+        });
+        c.emplace(us, TimerKind::Scheduled, [&] {
+            log.push_back("c" + std::to_string(ms_of(*c->deadline())));
+            c->start_after(3ms);
+        });
+        a->start_at(at(0ms));
+        b->start_at(at(0ms));
+        c->start_at(at(2ms));
+        bench.steps(static_cast<int>(1000ms / step) + 1); // the last step at 1000 ms
+        if (step == SimDuration{1ms})
+        {
+            reference = log;
+            CHECK_EQ(log.size(), 101u + 51u + 333u);
+        }
+        else if (log != reference)
+        {
+            std::size_t i = 0;
+            while (i < log.size() && i < reference.size() && log[i] == reference[i])
+            {
+                ++i;
+            }
+            throw vehicle_sil::unit::Failure("step " + std::to_string(step.count()) + " ns: differs at " + std::to_string(i) +
+                                             (i < log.size() ? " (" + log[i] + ")" : std::string(" (end)")));
+        }
+    }
+}
+
 TEST_CASE(timer_started_outside_a_step_with_a_past_deadline_fires_in_the_next_step)
 {
     Bench bench;

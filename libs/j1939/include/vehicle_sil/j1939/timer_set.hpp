@@ -80,11 +80,19 @@ public:
     [[nodiscard]] std::size_t running() const noexcept { return running_; }
     [[nodiscard]] std::size_t capacity() const noexcept { return slots_.size(); }
 
-    /// Starts a firing round: the fire_one_*() calls that follow consider only the timers
-    /// started before this call. A timer started while the round runs (e.g. a timer restarting
-    /// itself at a deadline that is already due) waits for the next round, so a round always
-    /// ends. Before the first call every timer is considered.
-    void begin_round() noexcept { round_limit_ = next_serial_; }
+    /// Starts a firing round: the fire_one_*() calls that follow fire the due timers in
+    /// (deadline, start) order. A timer started while the round runs (in a callback) fires in it
+    /// only if its deadline is after the deadline of the timer that was firing when it was
+    /// started (a periodic timer restarting itself from its deadline catches up whatever the
+    /// step size); otherwise (e.g. restarting itself at the same, already due deadline) it waits
+    /// for the next round. The deadlines fired in a round never decrease, each timer started in
+    /// it is due strictly after the one that started it, and all are bounded by the round's
+    /// time, so a round always ends. Before the first call every timer is considered.
+    void begin_round() noexcept
+    {
+        round_limit_ = next_serial_;
+        round_floor_.reset();
+    }
 
     /// Fires the first timer (by deadline, start order) with deadline < `time`, of any kind.
     /// false if there is none.
@@ -101,6 +109,7 @@ private:
         std::uint64_t serial = 0;
         std::uint32_t tag = 0;
         TimerKind kind = TimerKind::Timeout;
+        std::optional<SimTime> started_after; ///< round_floor_ when started (used within its round)
     };
 
     template <typename Due>
@@ -111,7 +120,8 @@ private:
     std::size_t running_ = 0;
     std::size_t reservable_;
     std::size_t reserved_ = 0;
-    std::uint64_t round_limit_ = UINT64_MAX; ///< Timers with serial >= this wait for the next round.
+    std::uint64_t round_limit_ = UINT64_MAX; ///< Timers with serial >= this were started in the round.
+    std::optional<SimTime> round_floor_;     ///< The deadline fired last (being fired) in this round.
 };
 
 } // namespace vehicle_sil::j1939

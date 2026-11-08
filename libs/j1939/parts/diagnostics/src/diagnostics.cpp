@@ -206,7 +206,7 @@ void Diagnostics::restart_period()
 {
     periodic_.start_after(kPeriod);
     // Counted from an event long past (a Timer started at an old deadline): from the step time
-    // instead, so the DM1 does not go out in every step until the period caught up.
+    // instead, so the DM1 does not go out again and again until the period caught up.
     const auto now = node_.network().now();
     if (now && *periodic_.deadline() <= *now)
     {

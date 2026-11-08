@@ -32,7 +32,7 @@ TimerId TimerSet::start(TimerKind kind, SimTime deadline, TimerTarget& target, s
         Slot& slot = slots_[i];
         if (slot.target == nullptr)
         {
-            slot = Slot{&target, deadline, next_serial_++, tag, kind};
+            slot = Slot{&target, deadline, next_serial_++, tag, kind, round_floor_};
             ++running_;
             return TimerId{static_cast<std::uint32_t>(i), slot.serial};
         }
@@ -75,7 +75,13 @@ bool TimerSet::fire_first(Due due)
     Slot* first = nullptr;
     for (auto& slot : slots_)
     {
-        if (slot.target == nullptr || slot.serial >= round_limit_ || !due(slot))
+        if (slot.target == nullptr || !due(slot))
+        {
+            continue;
+        }
+        // Started in this round: only after the deadline that was firing when it was started
+        // (see begin_round()).
+        if (slot.serial >= round_limit_ && !(slot.started_after && slot.deadline > *slot.started_after))
         {
             continue;
         }
@@ -91,6 +97,7 @@ bool TimerSet::fire_first(Due due)
     }
     TimerTarget* target = first->target;
     const std::uint32_t tag = first->tag;
+    round_floor_ = first->deadline; // the deadline being fired; never decreases within a round
     first->target = nullptr; // free the slot first: the target may start a new timer
     --running_;
     target->on_timer(tag);

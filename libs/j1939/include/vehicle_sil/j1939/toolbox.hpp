@@ -51,7 +51,9 @@ private:
 /// - start_at() and start_after() restart a running timer. They are allowed everywhere: in a
 ///   handler, a responder, a timer, the application stage, and outside a step. A deadline that
 ///   has passed is not refused: the timer fires at the next chance (the next frame or the end of
-///   the step, or the next step), never in the same round of firing it was started in.
+///   the step, or the next step). Started in a timer's callback, it fires in the same round of
+///   firing only if its deadline is after that timer's deadline (so a periodic timer catches up
+///   within a step); otherwise in the next round.
 /// - start_after(d) counts from the time of the event being handled: the time of the message a
 ///   handler (or responder) got, the deadline of the Timer that fires, otherwise the step time
 ///   (time 0 before the first step). A timer that restarts itself with start_after() keeps its

@@ -1097,8 +1097,9 @@ struct ZeroDelayTimer final : TimerTarget
 
 TEST_CASE(timer_restarted_at_a_due_deadline_fires_in_the_next_round_without_failing)
 {
-    // At the end of a step the next round is the next step; before a frame it is the next frame
-    // boundary or the end of the step.
+    // A timer restarted at the deadline fired last in the round waits for the next round: at the
+    // end of a step the next step, before a frame the next frame boundary or the end of the step.
+    // A later deadline (timer2, fired late at 20 ms, restarts at 20 ms) fires in the same round.
     for (const SimDuration first : {SimDuration{10ms}, SimDuration{5ms}})
     {
         Bench bench;
@@ -1113,7 +1114,7 @@ TEST_CASE(timer_restarted_at_a_due_deadline_fires_in_the_next_round_without_fail
         bench.steps(5);
         CHECK(!bench.network.failed());
         const std::vector<std::string> expected =
-            first == SimDuration{10ms} ? std::vector<std::string>{"frame7", "timer1@10", "timer2@20", "timer3@30"}
+            first == SimDuration{10ms} ? std::vector<std::string>{"frame7", "timer1@10", "timer2@20", "timer3@20"}
                                        : std::vector<std::string>{"timer1@10", "frame7", "timer2@10", "timer3@20"};
         if (log != expected)
         {

@@ -248,8 +248,8 @@ TEST_CASE(timer_set_target_may_start_timers_while_firing)
 
 TEST_CASE(timer_set_restart_at_a_due_deadline_waits_for_the_next_round)
 {
-    // Restarting at the firing deadline (or earlier) would keep the timer due for ever; within a
-    // round only the timers started before the round fire.
+    // Restarting at the firing deadline (or earlier) would keep the timer due for ever; a timer
+    // started within a round fires in it only after the deadline that started it.
     for (const SimDuration offset : {SimDuration::zero(), SimDuration{-1ms}})
     {
         TimerSet timers(2);
