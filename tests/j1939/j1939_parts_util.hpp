@@ -37,16 +37,23 @@ inline constexpr std::uint32_t kPgnDiagnosticProtocolId = 0xFD32;
 /// DM1/DM2: lamp status, lamp flash, DTCs (4 zero bytes without); padded to 8 bytes.
 [[nodiscard]] inline Bytes dm_payload(std::uint8_t lamps, std::uint8_t flash, const std::vector<Bytes>& dtcs)
 {
-    Bytes out{lamps, flash};
+    // Sized first and filled in place: growing a 2-byte vector makes GCC 16 (-O3) warn falsely
+    // about its bounds.
+    Bytes out(std::max<std::size_t>(2 + 4 * std::max<std::size_t>(dtcs.size(), 1), 8), 0xFF);
+    out[0] = lamps;
+    out[1] = flash;
+    std::size_t at = 2;
     for (const auto& dtc : dtcs)
     {
-        out.insert(out.end(), dtc.begin(), dtc.end());
+        for (const std::uint8_t b : dtc)
+        {
+            out[at++] = b;
+        }
     }
     if (dtcs.empty())
     {
-        out.insert(out.end(), {0, 0, 0, 0});
+        std::fill_n(out.begin() + 2, 4, std::uint8_t{0});
     }
-    out.resize(std::max<std::size_t>(out.size(), 8), 0xFF);
     return out;
 }
 

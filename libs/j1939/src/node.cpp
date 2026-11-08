@@ -147,6 +147,18 @@ bool Node::acknowledge(const PendingRequest& request, AckCode code)
     return send_acknowledgement(code, request.requester_, request.raw_pgn_);
 }
 
+std::optional<Acknowledgement> parse_acknowledgement(const Message& message) noexcept
+{
+    if (message.pgn != kPgnAcknowledgement || message.data.size() < 8)
+    {
+        return std::nullopt;
+    }
+    const auto& d = message.data;
+    return Acknowledgement{static_cast<AckCode>(d[0]), d[1], d[4],
+                           Pgn{static_cast<std::uint32_t>(d[5]) | (static_cast<std::uint32_t>(d[6]) << 8) |
+                               (static_cast<std::uint32_t>(d[7]) << 16)}};
+}
+
 SimDuration cannot_claim_delay(Name name) noexcept
 {
     // splitmix64 of the NAME: deterministic, and different NAMEs spread over the range.

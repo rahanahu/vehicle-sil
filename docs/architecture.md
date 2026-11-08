@@ -20,7 +20,7 @@ vehicle-sil/
 ├── tools/common/     実行ファイル共通のコマンドライン解析、終了コード、ログ出力（内部用、ヘッダーのみ）
 ├── tools/sim_controller/ 仮想時間のシミュレーションを開始・停止する system controller（vehicle_sil_sim_controller）
 ├── tools/can_bus_simulator/ 簡易 CAN Network Simulator の実行ファイル（vehicle_sil_can_bus_simulator）
-├── examples/j1939/   最小ピア（実時間の Peer で送る sender と、SIL Kit の CAN で直接受けて照合する receiver）
+├── examples/j1939/   部品で作った 2 つの ECU（ecu_pair。試験も同じコードを使う）と、最小ピア（実時間の Peer で送る sender と、SIL Kit の CAN で直接受けて照合する receiver）
 ├── examples/virtual_time/ 仮想時間のピア（Peer の上の物理モデル、tick() 型の既存 ECU を載せた J1939 ECU、LIN Master と Slave）
 ├── examples/lin/     LIN クラスタのピア（Master と、役割の違う Slave。フレームの送受信と Sleep/Wakeup）
 ├── examples/fetchcontent_consumer/   外部プロジェクトからの利用例
@@ -42,6 +42,7 @@ vehicle-sil/
 | `vehicle_sil::can_netsim`（開発中） | `vehicle_sil::can_silkit`、`rapidyaml`（SIL Kit 付属） | 簡易 CAN Network Simulator（「簡易 CAN Network Simulator」） |
 | `vehicle_sil::j1939`（開発中） | `vehicle_sil::can` | `vehicle_sil::j1939::Network`、`Node`、`Pgn`、`Identifier`、`Observer`、道具箱（「J1939」） |
 | `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics`（開発中） | `vehicle_sil::j1939`（`j1939_diagnostics` は `j1939_broadcast_suppression` にも依存） | プロトコル部品の `BroadcastSuppression`（DM13）、`Diagnostics`、`Identification`（「プロトコル部品」） |
+| `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`（開発中） | `vehicle_sil::j1939`（`j1939_periodic_sender` は `j1939_broadcast_suppression` にも依存） | ECU アプリ向けのプロトコル部品 `PeriodicSender`、`Requester`、`Monitor`、`AddressCommander`（「プロトコル部品」、[j1939-guide.md](j1939-guide.md)） |
 | `vehicle_sil::testkit`（開発中、内部向け） | `vehicle_sil::can`、`vehicle_sil::j1939` | `vehicle_sil::testkit::LocalCan`、`J1939Events`、`FrameLog`、`faults`（「実行と試験の基盤」） |
 | `vehicle_sil::peer`（開発中、内部向け） | `vehicle_sil::core`、`vehicle_sil::can_silkit`、`vehicle_sil::j1939`、`vehicle_sil::lin` | `vehicle_sil::Peer`、`start_together()`（「実行と試験の基盤」） |
 | `vehicle_sil_sim_controller`（実行ファイル） | `vehicle_sil::core` | system controller の CLI |
@@ -302,7 +303,7 @@ Vector SIL Kit Network Simulator との差し替え:
 
 ## J1939（開発中）
 
-`vehicle_sil::j1939`（名前空間 `vehicle_sil::j1939`、ヘッダー `vehicle_sil/j1939/`）は、vehicle-sil の J1939 スタックです。外部の J1939 ライブラリを使いません。API はまだ変わることがあります。今あるのは、識別子と PGN、単一フレームの送受信、Request（PGN 59904）への応答、Acknowledgement（PGN 59392）、タイマーの仕組み、NAME と Address Claim（任意アドレスの選択、アドレス表、Commanded Address の処理、アドレス違反を含む）、トランスポートプロトコル（BAM と RTS/CTS。9〜1785 バイト）、部品を作るための道具箱（`Subscription`、`Timer`、`Node::attach`）、読み取り専用の観測口（`Observer`）、プロトコル部品の DM13（放送の抑制）、診断（DM1、DM2、DM3、DM11、DM22）、識別情報です。ETP はありません。NAME を指定しないノードは、生成時に指定した固定のアドレスで動きます（試験用）。
+`vehicle_sil::j1939`（名前空間 `vehicle_sil::j1939`、ヘッダー `vehicle_sil/j1939/`）は、vehicle-sil の J1939 スタックです。外部の J1939 ライブラリを使いません。API はまだ変わることがあります。今あるのは、識別子と PGN、単一フレームの送受信、Request（PGN 59904）への応答、Acknowledgement（PGN 59392）、タイマーの仕組み、NAME と Address Claim（任意アドレスの選択、アドレス表、Commanded Address の処理、アドレス違反を含む）、トランスポートプロトコル（BAM と RTS/CTS。9〜1785 バイト）、部品を作るための道具箱（`Subscription`、`Timer`、`Node::attach`）、読み取り専用の観測口（`Observer`）、プロトコル部品の DM13（放送の抑制）、診断（DM1、DM2、DM3、DM11、DM22）、識別情報、ECU アプリ向けの周期送信（`PeriodicSender`）、Request の送信と応答待ち（`Requester`）、受信の監視（`Monitor`）、Commanded Address の送信（`AddressCommander`）です。ノードの作り方は [j1939-guide.md](j1939-guide.md) にあります。ETP はありません。NAME を指定しないノードは、生成時に指定した固定のアドレスで動きます（試験用）。
 
 - `vehicle_sil::can` だけに依存します（SIL Kit なし）。スレッドを持たず、時計を読みません。`Network` が `Steppable` で、ホストがステップで回します。
 - 時刻は `SimTime` です。受信したメッセージの時刻はフレームの時刻（仮想時間では送信側のステップ時刻）、送信の時刻は送ったステップの時刻です。
@@ -343,7 +344,8 @@ Vector SIL Kit Network Simulator との差し替え:
 
 - `Node::send()` は 8 バイトまでなら単一フレーム、9〜1785 バイトならトランスポートプロトコル（下）です。結果は戻り値で返します（`Ok`、`QueueFull`、`TooLong`（1786 バイト以上）、`InvalidArgument`（不正な PGN、優先度 8 以上、単一フレームの PDU2 を 1 つの宛先へ、宛先 254）、`NoAddress`（アドレスを失ったノード）、`Busy`（下））。
 - 送信はステップの中（ハンドラ、応答者、タイマー、ホストのアプリの処理）だけです。ステップの外では `std::logic_error` です。
-- `Node::request(pgn, destination)` は Request（3 バイト、優先度 6）を送ります。
+- `Node::request(pgn, destination)` は Request（3 バイト、優先度 6）を送ります。応答を待つ、時間切れで送り直す、といった要求側の手順はエンジンではなく部品（`Requester`）にあります。
+- `Node::can_send_now()` は、送ったものがすぐ自分のアドレスから出るときに true です（NAME なし、`Claimed`、待たない `Claiming`）。要求の後の待ちの間、最初の要求の前、アドレスがないときは false です。値はアドレスか状態の変化（`on_address_change`）でだけ変わるので、自分で送る部品はその通知で始めて止めます。
 
 ### Request と Acknowledgement
 
@@ -356,6 +358,7 @@ Vector SIL Kit Network Simulator との差し替え:
 - `acknowledge()` は、制御キューがあふれて捨てたときにも false を返します。
 - 応答者がいなければ、宛先指定の Request に NACK を返し、グローバルの Request には何も返しません。要求元のアドレス要求（Address Claim）を見ているかどうかは条件にしません。
 - Acknowledgement のフレーム: 優先度 6、宛先グローバル、データは [制御バイト、0xFF、0xFF、0xFF、要求元のアドレス、要求された PGN（3 バイト、受けた値のまま）]。
+- `parse_acknowledgement(message)` は、受けた Acknowledgement（PGN 59392、8 バイト以上）の欄（`Acknowledgement`: 制御バイト、グループ機能、名指しされたアドレス、PGN）を返します（それ以外は空）。形を知っているのはエンジンだけにし、部品は自分で解析しません。
 - 規格との一致を確かめていない点: 要求された PGN が不正な値（PS が 0 でない PDU1、18 ビット超）のときの扱い（一致する応答者がないので宛先指定なら NACK）、拡張データページのビットが立ったフレームの扱い、Acknowledgement の 2〜4 バイト目の値。
 
 ### NAME と Address Claim
@@ -375,7 +378,7 @@ Vector SIL Kit Network Simulator との差し替え:
 - 状態の通知: `Node::on_address_change(handler)` は、アドレスか状態が変わるたびに `AddressChange`（新旧の状態とアドレス、原因の時刻）で呼ばれます。ハンドラと同じく、ステップの中で呼ばれ、送信できます。登録と解除の規則もハンドラと同じです。
 - 規格との一致を確かめていない点: 同じ NAME の別の送信者からの Address Claimed を負けとして扱うこと、Cannot Claim の遅延の起点と擬似乱数の作り方、待ちの間の ACK/NACK を保留すること、任意アドレスの範囲と最小の空きを選ぶこと、アドレス違反への応答の頻度（原因の時刻ごとに 1 回）と 8 バイト未満の Address Claimed を違反に含めること、任意アドレス不可のノードが Commanded Address を無視すること、同じアドレスの要求が重なったときにアドレス表に小さい NAME を残すこと（その NAME の制御機能がいなくなっていても、要求し直すまで残ります）。
 - 制限: 待ちの終わりは予定のタイマーなので、期限と同じステップの中で期限以後の時刻に届いた競合でも、保留を送ってから負けることがあります（このとき `on_address_change` の時刻は、Claimed の後に、それより前の時刻の CannotClaim になります）。同じアドレスの別の送信者が同じ時刻に送ったフレームの処理順（SIL Kit では決まらない）で、バスに出るフレームと結果は変わりませんが、`held_dropped` と `address_violations` の数は変わることがあります。Address Claimed は送信キューから出た時刻ではなく、入れたステップの時刻から待ちを数えます。制御キューがあふれて Address Claimed を捨てた場合も、状態は進みます（`control_frames_dropped` で数えます）。`timer_capacity` は、要求するノード 1 つにつき 2 つ必要です（足りなければ `add_node()` が `std::invalid_argument`）。`CannotClaim` になった任意アドレス可能なノードは、後でアドレスが空いても自分からは要求し直しません（Commanded Address で移れます）。
-- まだないもの: ノードの削除、バスオフの後の扱い、Commanded Address の送信（Commanded Address は 9 バイトなので、受信はトランスポートプロトコルで届きます）。応答しない制御機能を表から外すこと（表から外れるのは、その NAME が別のアドレスを要求したとき、Cannot Claim を送ったとき、自分のノードがそのアドレスを要求して勝つときだけです）。
+- まだないもの: ノードの削除、バスオフの後の扱い。Commanded Address の送信は部品（`AddressCommander`）です。応答しない制御機能を表から外すこと（表から外れるのは、その NAME が別のアドレスを要求したとき、Cannot Claim を送ったとき、自分のノードがそのアドレスを要求して勝つときだけです）。
 
 ### トランスポートプロトコル（J1939-21 の TP）
 
@@ -445,20 +448,24 @@ Vector SIL Kit Network Simulator との差し替え:
 
 ### プロトコル部品（`libs/j1939/parts`）
 
-部品は 1 つずつ別の CMake ターゲットで、エンジン（`vehicle_sil::j1939`）の公開ヘッダーと道具箱だけを使います。部品のターゲットの include パスにはエンジンの `src/` が入らず、エンジンの内部は private です。CTest の `j1939_parts.boundary` が、部品のソースに内部ヘッダーの include、試験用の入口（`detail::NetworkTestAccess`）、クラスを friend にする宣言（隠れた friend の関数は可）や `#define private` などがないこと、部品の CMakeLists.txt がコンパイルの定義・オプションを足さず、include パスに自分の `include/` しか足さず、`vehicle_sil::j1939` と他の部品のターゲットだけをリンクしていることを確かめます。
+部品は 1 つずつ別の CMake ターゲットで、エンジン（`vehicle_sil::j1939`）の公開ヘッダーと道具箱だけを使います。部品のターゲットの include パスにはエンジンの `src/` が入らず、エンジンの内部は private です。CTest の `j1939_parts.boundary` が、部品のソースに内部ヘッダーの include、試験用の入口（`detail::NetworkTestAccess`）、クラスを friend にする宣言（隠れた friend の関数は可）や `#define private` などがないこと、部品の CMakeLists.txt がコンパイルの定義・オプションを足さず、include パスに自分の `include/` しか足さず、`vehicle_sil::j1939` と他の部品のターゲットだけをリンクしていることを確かめます。部品は `Observer` を設定しません（`set_observer` も禁止語です。`Network` の観測口は 1 つで、試験と記録のためのものです。部品はハンドラで加わります）。
 
 | ターゲット | 部品 | 内容 |
 |---|---|---|
 | `vehicle_sil::j1939_broadcast_suppression` | `BroadcastSuppression` | DM13 による放送の抑制の状態（ノードに 1 つ） |
 | `vehicle_sil::j1939_diagnostics` | `Diagnostics`、`Identification` | DTC と DM1/DM2/DM3/DM11/DM22、識別情報。`BroadcastSuppression` を使う |
+| `vehicle_sil::j1939_periodic_sender` | `PeriodicSender` | 1 つの PG の周期送信。ノードのアドレスと DM13 に従う。`BroadcastSuppression` を使う |
+| `vehicle_sil::j1939_requester` | `Requester` | Request の送信と、応答・ACK・時間切れの報告、再送、同じ要求の相乗りと間隔の抑制 |
+| `vehicle_sil::j1939_monitor` | `Monitor` | 1 つの PG の最新の受信と途絶（送信元はアドレスか NAME） |
+| `vehicle_sil::j1939_address_commander` | `AddressCommander` | Commanded Address の送信と、相手が移ったことの確認 |
 
 部品の API の「どこからでも呼べる」は、ステップを回すスレッドの上でのこと（ハンドラ、タイマー、アプリの処理、ステップの外）です。部品はロックを持たないので、ほかのスレッドからはホストの `post()` で渡します（「スレッドとキュー」）。
 
-部品が予約するタイマーの数（`timer_capacity` から）: `BroadcastSuppression` が 3、`Diagnostics` が 3、`Identification` が 0。NAME を持ち診断を付けたノードは、Address Claim の 2 と合わせて 8 です（既定の 64 で 8 ノード）。
+部品が予約するタイマーの数（`timer_capacity` から）: `BroadcastSuppression` が 3、`Diagnostics` が 3、`Identification` が 0、`PeriodicSender` が 1（送る PG ごと。`suppressible` のときは、ノードにまだなければ `BroadcastSuppression` も付けるので、その 3 も）、`Requester` が 2、`Monitor` が 1（`timeout` があるとき）、`AddressCommander` が 2。NAME を持ち診断を付けたノードは、Address Claim の 2 と合わせて 8 です（既定の 64 で 8 ノード）。周期送信の多いノードでは `timer_capacity` を上げます（足りなければ部品の生成が `std::length_error` で、メッセージに `timer_capacity` と出ます）。周期送信ごとにタイマーを 1 つ使うのは、期限の並べ替えと発火の回の規則をエンジンの `Timer` にだけ持たせるためです（部品の中で同じ仕組みを作り直しません）。
 
 #### DM13（`BroadcastSuppression`）
 
-- ノードに 1 つです。`BroadcastSuppression::of(node)`（なければ既定の設定で付ける）か `node.attach<BroadcastSuppression>(options)` で作ります。同じノードに 2 つ目を付けると `std::logic_error` です。自分で生成したもの（`attach` しないもの）は `of()` と部品から見えず、別の状態になるので、直接生成しません。自分で放送する部品はこれを参照し、`suspended()` の間は放送しません。
+- ノードに 1 つです。`BroadcastSuppression::of(node)`（なければ既定の設定で付ける）か `BroadcastSuppression::attach(node, options)` で作ります。同じノードに 2 つ目を付けると `std::logic_error` です。コンストラクタは非公開の鍵の型を取るので、それ以外の方法では作れません（自分で生成したものは `of()` と部品から見えず、別の状態になるため。コンパイル時に検出します）。自分で放送する部品はこれを参照し、`suspended()` の間は放送しません。
 - 他のノードの DM13: 自分のネットワーク（`BroadcastSuppressionOptions::network`、既定は J1939 Network #1）のコマンドが Stop なら止め、Start なら再開します。自分のネットワークのコマンドが Stop でも Start でもなければ、Current Data Link のコマンドを使います。止めている間は DM13 を受けるたびに（Start でなければ、ほかのネットワークへのものや Hold Signal だけのものでも）6 秒を数え直し、6 秒間 DM13 が来なければ再開します。最後の DM13 からちょうど 6 秒の時刻に届いた DM13 は、まだ止めている間に届いたものとして扱います。8 バイト未満の DM13 は無視します。受けた DM13 の Suspend Signal と Suspend Duration は、送信元自身の一時停止の告知として扱い、停止の指示には使いません。
 - 自分の一時停止: `suspend(duration, scope)` で放送を止め、次の機会に DM13 を全体へ送って告げます（全ネットワークのコマンドと Hold Signal は「指定なし」、Suspend Signal は全部の停止か一部の停止、バイト 5〜6 は秒数で、期間なしは 0xFFFF）。期間が過ぎるか `resume()` で再開します（再開は告げません。まだ送っていない告知は取り消します）。
 - 抑制は、その状態を読む部品の放送だけに効きます。Request への応答、Address Claim、Acknowledgement、トランスポートプロトコルの制御フレーム、アプリが `Node::send()` で直接送るメッセージは止まりません。
@@ -476,6 +483,43 @@ Vector SIL Kit Network Simulator との差し替え:
 #### 識別情報（`Identification`）
 
 - ソフトウェア ID（フィールド数と、`*` で終わる各フィールド。未設定は 8 バイトの 0xFF）、ECU ID（部品番号、製造番号、場所、種類、製造者）、製品 ID（コード、ブランド、モデル）、診断プロトコル ID（J1939-73 だけ）の Request に答えます。8 バイト未満は 0xFF で埋め、9 バイト以上は宛先指定の Request なら要求元へ RTS/CTS、グローバルなら BAM です。同じ要求元への 2 つ目の応答は、1 つ目の転送が終わってから始まります。
+
+#### 周期送信（`PeriodicSender`）
+
+- `node.attach<PeriodicSender>(pgn, period, data_or_encoder, options)`。データは、持たせたバイト列（`set_data()` で入れ替え）か、送るたびに呼ぶ `Encoder`（部品のバッファに書いて長さを返す。バッファは生成時に `max_length` バイト、既定 8）です。9 バイト以上はトランスポートプロトコルです。`PeriodicSenderOptions` で宛先（PDU1 なら 1 つのアドレス）、優先度、遅れた期限の扱い、DM13 に従うか、`max_length` を選びます。
+- 送るのは `Node::can_send_now()` の間だけです（要求の後の待ちの間は送りません。エンジンが保留して 250 ms 後にまとめて出すのを避けるため）。送れるようになった通知の中ですぐ 1 回送り（そのステップに出ます）、そこから周期を数えます。生成時にすでに送れるノードは、次の機会に始めます。アドレスを失うか変えると止め、送れるようになったらまた始めます。
+- 期限は `Timer` の期限（事象の時刻）で数えるので、ステップ幅によらず格子（始めた時刻 + k × 周期）からずれません。送るのは期限以後の最初のステップで、フレームの時刻はそのステップの時刻です。ステップ幅が周期以下なら、1 ステップに入る期限は高々 1 つなので、送信の回数と期限はステップ幅によりません（試験で確かめています）。この主張は、送れるようになった通知から始まった周期についてのものです。`trigger()`、`resume()`、途中での生成で始め直したときは、最初の発火でもう周期が過ぎていれば（アプリの処理やステップの外から始め直したとき、ステップ幅が周期以上のときに起こります）、そのステップから周期を数え直します（まとめも追いつきもしません）。そのため始め直しを含む送信の時刻と回数は、ステップ幅によることがあります。
+- 遅れた期限（ステップ幅が周期より長く、1 ステップに期限が複数入るとき）: `MissedDeadlines::Coalesce`（既定）はまとめて 1 回送り（まとめた数は `statistics().coalesced`）、次の期限はそのステップより後の最初の格子点です。`CatchUp` は期限ごとに送り、同じ時刻のフレームが並びます（9 バイト以上は前の転送が終わるまで `Busy` で、失敗として数えます）。
+- DM13: `suppressible`（既定 true）なら `BroadcastSuppression::of(node).suspended()` の間は送りません（送れるようになったときの最初の送信も含みます。期限は進み、埋め合わせません。`statistics().suppressed`）。false なら `BroadcastSuppression` を使いません。
+- `trigger()` は次の機会に送り、周期をそこから数え直します（ハンドラの中ならそのステップ、`Timer` のコールバックの中ならそのステップか次のステップ（発火中のタイマーと同じ期限で始めたタイマーは次の回に回るため）、アプリの処理とステップの外なら次のステップ。アプリの処理ですぐ送るなら `Node::send()` を使います）。`pause()` と `resume()` で止めて再開します。
+- 送信の失敗（`SendStatus`）は数えて（`statistics().failures`、`last_failure`）、次の期限でまた送ります。例外にしません。`Encoder` の例外と、`max_length` を超える長さは `Network` を失敗させます。
+
+#### Request の送信（`Requester`）
+
+- `Requester::of(node).request(pgn, destination, callback)`。`Requester` はノードに 1 つで、ノードに付けて部品とアプリが共有します（相乗りと間隔の抑制はノード単位です）。`of()` はなければ既定の設定で付けます。設定を選ぶときは、何かが `of()` を使う前に `Requester::attach(node, options)` で付けます（2 つ目は `std::logic_error`。コンストラクタは非公開の鍵の型を取るので、それ以外の方法では作れません）。要求ごとに待ち時間を変えることはできません。
+- `request()` はどこからでも呼べます（ステップの外、アドレスを得る前も）。Request は次の機会（`trigger()` と同じ）に、ノードが送れるようになってから出ます（`can_send_now()`。待ちの間は出しません）。待ち時間（`timeout`、既定 1250 ms）は Request を出したステップの時刻から数えます（`flush()` で出るため）。
+- 宛先が 1 つのアドレス: そのアドレスからの要求した PG か、そのアドレスからの、このノードと PGN を名指しした Acknowledgement で終わります（`RequestOutcome::Response`、`Acknowledged`）。来なければ `retries`（既定 2）回まで送り直し、その後は `Timeout` です。送り直しは時間切れのステップで出ます。
+- グローバル: `timeout` の間に来た応答をそのたびに報告し（`last == false`）、最後に `Timeout`（`last == true`）を報告します。送り直しません。
+- 同じ PGN と宛先の要求が待っている間に来た要求は、その要求に相乗りします（Request を送らず、同じ答えを受けます。`statistics().joined`）。`min_interval`（既定 0）で、同じ PGN と宛先の Request の間隔の下限を持てます。待っている間（送る前、送り直す前）に来た答えでも終わります（周期的に放送されている PG を受けた場合も含みます。最新の値であることは同じです）。
+- ノードがアドレスを失うか変えると、送った要求は送れるようになってから送り直します（答えは古いアドレスへ来るため。この送り直しは `retries` に数えません）。アドレスを要求できなくなる（`CannotClaim`）と、すべて `NotSent`（`NoAddress`）で終えます。送信の失敗も `NotSent` です。
+- コールバックはステップの中（ハンドラかタイマー）で呼ばれ、`request()` と `cancel()` を呼べます。`cancel()` した要求のコールバックは呼びません。`RequestResult::data` は呼び出しの間だけ有効です。`capacity`（既定 8）の要求が待っていると、`request()` は空の `RequestId` を返します。
+
+#### 受信の監視（`Monitor`）
+
+- `node.attach<Monitor>(pgn, options)`。1 つの PG について、最新の受信（`data()`。`max_length`、既定 8 バイトまで）、時刻、送信元、受信数を持ちます。送信元は、どれでも、1 つのアドレス（`source`）、NAME（`name`。受けるたびにアドレス表と同じ `Network` のノードから今のアドレスを引くので、送信元が移っても追います）のどれかで絞ります。
+- 状態は `Waiting`（まだ受けていない）、`Receiving`、`Lost`（最後の受信から `timeout` の間来ない）です。途絶の時間は最初の受信から数えます（起動の遅れを途絶にしません）。期限はメッセージの時刻から数え、期限ちょうどの受信は間に合ったとします。そのため結果はステップ幅によりません（試験で確かめています）。変化は `on_state`、受信は `on_message` で知らせます。
+- 何も送りません。`set_observer` は使いません（ハンドラだけで作ります）。
+
+#### Commanded Address の送信（`AddressCommander`）
+
+- `commander.command(target_name, address, done, destination)`。Commanded Address（NAME と新しいアドレスの 9 バイト）を、グローバルなら BAM、1 つのアドレスなら RTS/CTS で送ります（ノードの前の転送が終わるまで待ちます）。`request()` と同じく、どこからでも呼べ、ノードが送れるようになってから出ます。
+- 転送の終わり（`on_transfer_end`、PGN 65240 と宛先で、送った順に照合します）から待ちを数えます。完了しなかった転送（自分のアドレスの変化による取り消し、受信側の Abort、時間切れ）は 1 回だけ送り直し、2 回目も完了しなければ `NotSent`（`CommandResult::transfer` と `reason`）です。同じノードが別に PGN 65240 を送ると照合がずれます。
+- 相手がその NAME で新しいアドレスの Address Claimed を送ったら `Moved`、転送の完了から `timeout`（既定 1250 ms）までに来なければ `Timeout`、`send()` が受け付けなければ `NotSent`（`send_status`）です。任意アドレス不可の相手は従わないので `Timeout` になります。
+
+#### 規格との一致を確かめていない点（ECU アプリ向けの部品）
+
+- `Requester` の待ち時間と送り直しの回数の既定値（1250 ms、2 回）、グローバルの Request を送り直さないこと、相乗りと `min_interval` の扱い、まだ送っていない要求を同じ PG の受信で終えること。
+- `PeriodicSender` が DM13 の抑制を宛先によらず適用すること（`suppressible` で外せます）。`AddressCommander` の待ち時間の既定値と、Address Claimed で移ったと判断すること。
 
 #### 規格との一致を確かめていない点（診断）
 
@@ -509,7 +553,7 @@ Vector SIL Kit Network Simulator との差し替え:
 
 - ステップ幅が 50 ms を超えると警告（`NetworkOptions::warning`、既定は標準エラー出力）、200 ms を超えると `start()` が `std::invalid_argument` を投げ、ホストが失敗状態になります（Request への応答とパケット間隔の 200 ms を守れないため）。推奨は 10 ms 以下です。`RealTimeDriver` で回すときは、その `max_idle` で同じ検査をします。
 - 実時間では、タイマーの期限（`next_deadline()`）にドライバーが起きます。CTS で求められたパケットは CTS を受けたステップで出ますが、ポートの `QueueFull` で残したフレームと 1 ステップの上限で繰り越したフレームは、`max_idle` の後のステップで出ます。
-- バッファはすべて生成時に確保します（`NetworkOptions`: 1 ステップの受信数、ノード数、データキュー、1 ステップの送信数、タイマー数、ノードごとの保留領域、トランスポートプロトコルのセッション（各 1785 バイトのバッファとタイマー 1 つ。タイマーは `timer_capacity` とは別に確保）と応答待ち行列）。`timer_capacity` は予約制です。NAME を持つノードの追加が 2 つ（Claim 後の待ちと Cannot Claim）、`Timer` の生成が 1 つを予約し、足りなければ `add_node()` が `std::invalid_argument`、`Timer` の生成が `std::length_error` を投げます。予約があるので、タイマーの開始が枠不足で失敗することはありません。フレームの受信と配送、Request への応答、送信（ポートの `QueueFull` と `Failed`、送信数の上限による繰り越しを含む）、ローカル折り返し、タイマー、Address Claim（任意アドレスの選択、アドレス表、アドレス違反、Commanded Address、状態の通知を含む）、トランスポートプロトコル（再送の要求、タイムアウト、Abort、応答待ち行列を含む）では、メモリを確保しません（テストで `operator new` を数えて確かめています）。道具箱と部品（`Timer` の開始と取り消し、DM1 の周期送信と BAM、DM13、DM1/DM2/識別情報の応答、DM22、後で返す ACK）と `Observer` への通知も、定常状態ではメモリを確保しません。メモリを確保するのは、ノードの追加、ハンドラと応答者の登録と解除、部品の生成、識別情報の設定のときだけです。
+- バッファはすべて生成時に確保します（`NetworkOptions`: 1 ステップの受信数、ノード数、データキュー、1 ステップの送信数、タイマー数、ノードごとの保留領域、トランスポートプロトコルのセッション（各 1785 バイトのバッファとタイマー 1 つ。タイマーは `timer_capacity` とは別に確保）と応答待ち行列）。`timer_capacity` は予約制です。NAME を持つノードの追加が 2 つ（Claim 後の待ちと Cannot Claim）、`Timer` の生成が 1 つを予約し、足りなければ `add_node()` が `std::invalid_argument`、`Timer` の生成が `std::length_error` を投げます。予約があるので、タイマーの開始が枠不足で失敗することはありません。フレームの受信と配送、Request への応答、送信（ポートの `QueueFull` と `Failed`、送信数の上限による繰り越しを含む）、ローカル折り返し、タイマー、Address Claim（任意アドレスの選択、アドレス表、アドレス違反、Commanded Address、状態の通知を含む）、トランスポートプロトコル（再送の要求、タイムアウト、Abort、応答待ち行列を含む）では、メモリを確保しません（テストで `operator new` を数えて確かめています）。道具箱と部品（`Timer` の開始と取り消し、DM1 の周期送信と BAM、DM13、DM1/DM2/識別情報の応答、DM22、後で返す ACK、`PeriodicSender`、`Requester` の応答と時間切れと送り直し、`Monitor`、`AddressCommander`）と `Observer` への通知も、定常状態ではメモリを確保しません。メモリを確保するのは、ノードの追加、ハンドラと応答者の登録と解除、部品の生成、識別情報の設定のときと、`Requester::request()` と `AddressCommander::command()` がコールバックをコピーするとき（大きなキャプチャ）だけです。
 - 上限に達したとき: 受信はそのステップの残りを捨てて数え、データキューは `send()` が `QueueFull` を返し、制御キュー（受信の上限、ノード数、保留領域の大きさ、セッション数、応答待ち行列の大きさから決めた容量。通常は満杯にならない）はあふれた分を捨てて数え、ノード数は `add_node()` が `std::length_error` を投げます。トランスポートプロトコルの上限は上の節のとおりです。
 - 失敗: ハンドラ、応答者、タイマー、ポートからの例外と、使い方の誤り（その `Network` のハンドラ、応答者、タイマーからの `start`/`begin`/`receive`/`process`/`flush`/`add_node`、時刻が増えない、段階の順序の誤り）で、`Network` は失敗状態になります。以後のステップの呼び出しはすべて `std::logic_error` です。ハンドラが例外を握りつぶしても失敗状態のままです。
 
@@ -537,6 +581,7 @@ peer.wait();
 - 1 ステップの順序: J1939 の各 `Network` の受信と処理（追加した順）→ アプリの処理（`on_step` と `every`、追加した順）→ LIN のノードの `step(now)`（追加した順）→ J1939 の送信。アプリが出した LIN の要求（`set_frame_data()`、`set_response()`）は同じステップから効き、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます。
 - 時間のモード: `virtual_time` があれば SIL Kit の時間同期で回します（J1939 と LIN）。なければ実時間で、Peer が `RealTimeDriver` と時計（`SteadyRealTimeClock`、または `PeerOptions::real_time_clock`）を持ち、SIL Kit の CAN ポートを実時間にします（J1939 だけ。LIN は `std::logic_error`）。外部のポートの時間の領域が Peer と違えば `std::logic_error` です。SIL Kit を持たない構成（XL だけ）はありません。
 - lifecycle: `Coordinated` では `SimulationController` が開始と停止を決めます。1 つのプロセスで複数の Peer と controller を起動するときは `start_together(controller, {&a, &b})` を使います。`Autonomous` では、`stop()` か `request_stop()`（ステップの中から）で止まります。複数の participant を同じ時刻から決定的に動かすときは `Coordinated` にします（`Autonomous` の participant どうしは、開始の時刻がそろうとは限りません）。仮想時間で `virtual_time.end` があれば（0 より後であること）、end の前の最後のステップの後で自分で止まります。`wait()` は lifecycle の終わりを待ちます。`failed()` と `error()` は、ステップ（ホスト、アプリ、LIN、ポート）、ステップのハンドラ、実時間のドライバーの失敗を返します。仮想時間でステップが失敗すると participant は Error になり、`wait()` が戻ります。実時間ではドライバーが止まるだけで lifecycle は続き、`wait()` はその失敗では戻らないので、`failed()` を見て `stop()` します。
+- 複数の ECU の組み立ては、`Network&` を受け取る関数に書くと、同じコードを `Peer` と `testkit::LocalCan` の両方で使えます（例: `examples/j1939/ecu_pair`。試験で両者の結果が同じことを確かめています）。
 - 組み立て（`j1939`、`lin_*`、`on_step`、`every`）は `start()` の前だけです（後は `std::logic_error`）。ノード、ハンドラ、部品、Observer、`TapPort` のリスナーも `start()` の前に付けます（ノードは `Network::add_node()` の規則どおりステップの中からも足せます）。
 - 所有と破棄: Peer が participant、コントローラ、ポート、`Network`、LIN のノードを持ち、返す参照は Peer の寿命まで有効です。`stop()`（と破棄）は、ステップを止め（実時間ではドライバー、続いて lifecycle。仮想時間では lifecycle。以後ステップは来ません）、SIL Kit のポートを閉じます。`stop()` の後も `Network` は残るので、統計や記録を読めます。破棄では続いて LIN のノード、`Network`（部品が先）、`TapPort`、ポート（外部のポートはそのデストラクタで閉じます）、ホストを破棄し、最後に participant を破棄します。
 - スレッド: 組み立て、`start()`、`wait()` は 1 つのスレッドから呼びます。ステップは SIL Kit のスレッド（仮想時間）かドライバーのスレッド（実時間）で動き、ハンドラ、アプリの処理、Observer、`TapPort` のリスナーもそこで呼ばれます（記録は `wait()` か `stop()` の後に読みます）。`stop()` は、ステップと SIL Kit のハンドラ以外のどのスレッドからでも呼べます（別のスレッドからは `start()` が戻った後）。同時の呼び出しは順に処理します（Peer の破棄は、他のスレッドの `stop()` が戻った後）。`request_stop()`、`failed()`、`error()` はステップの中を含めてどこからでも呼べます。

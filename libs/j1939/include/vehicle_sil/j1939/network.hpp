@@ -144,6 +144,23 @@ enum class AckCode : std::uint8_t
     CannotRespond = 3,
 };
 
+/// An Acknowledgement (PGN 59392) as received; parse_acknowledgement() reads it.
+struct Acknowledgement
+{
+    /// The control byte. Values other than those of AckCode are kept as they came.
+    AckCode code = AckCode::Positive;
+    std::uint8_t group_function = 0xFF;
+    /// The address acknowledged: the requester the answer is for.
+    Address address = kGlobalAddress;
+    /// The PGN acknowledged (the 3 bytes as received).
+    Pgn pgn{};
+};
+
+/// The fields of a received Acknowledgement (bytes: control, group function, 2 reserved, the
+/// address acknowledged, the PGN in 3 bytes, least significant first, as Node::acknowledge()
+/// sends them). Empty if `message` is not PGN 59392 or has fewer than 8 bytes.
+[[nodiscard]] std::optional<Acknowledgement> parse_acknowledgement(const Message& message) noexcept;
+
 /// Handle of a registered handler or request responder.
 struct HandlerId
 {
@@ -304,6 +321,15 @@ public:
     [[nodiscard]] AddressState address_state() const noexcept { return state_; }
     [[nodiscard]] const std::optional<Name>& name() const noexcept { return name_; }
     [[nodiscard]] Network& network() noexcept { return network_; }
+    /// true while what the node sends leaves at once from its address: a node without a NAME,
+    /// a Claimed one, and a Claiming one that does not wait after its claim (see the class
+    /// comment). false while it waits after its claim (sends are held), before its first claim
+    /// and without an address. Parts that send on their own start and stop with it (it changes
+    /// only with an address change, see on_address_change()).
+    [[nodiscard]] bool can_send_now() const noexcept
+    {
+        return state_ == AddressState::Fixed || (holds_address() && !holding_);
+    }
 
     /// Sends a message from this node's address.
     /// - Up to 8 bytes: one frame. `destination` must be kGlobalAddress for a PDU2 group.
@@ -466,11 +492,6 @@ private:
                                 std::uint32_t generation);
     /// `source`: the address the transfer was sent from (for the observer).
     void notify_transfer_end(const TransferEnd& end, Address source);
-    /// The node may send from its address now (not waiting after its claim).
-    [[nodiscard]] bool can_send_now() const noexcept
-    {
-        return state_ == AddressState::Fixed || (holds_address() && !holding_);
-    }
 
     Network& network_;
     std::size_t index_;

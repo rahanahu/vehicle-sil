@@ -5,6 +5,8 @@
 #   cmake -DPARTS_DIR=<libs/j1939/parts> -P VehicleSilCheckJ1939Parts.cmake
 # With -DSOURCES_ONLY=ON only the sources are checked (for libraries built on the engine that
 # are not parts, such as the test kit and Peer, which link other libraries too).
+# Parts also may not set an Observer (the network has one, for tests and recording; parts take
+# part through handlers): -DFORBID_OBSERVER=ON, the default without SOURCES_ONLY.
 if(NOT PARTS_DIR OR NOT IS_DIRECTORY "${PARTS_DIR}")
   message(FATAL_ERROR "PARTS_DIR is not a directory: ${PARTS_DIR}")
 endif()
@@ -25,6 +27,16 @@ set(forbidden
   # defaulted operator== are allowed: they give no access to the engine.
   "friend[ \t\r\n]+(class|struct)[ \t\r\n]"
   "friend[ \t\r\n]+[A-Za-z_:][A-Za-z0-9_:<>, \t\r\n]*\;") # (\; keeps the list element whole)
+if(NOT DEFINED FORBID_OBSERVER)
+  if(SOURCES_ONLY)
+    set(FORBID_OBSERVER OFF)
+  else()
+    set(FORBID_OBSERVER ON)
+  endif()
+endif()
+if(FORBID_OBSERVER)
+  list(APPEND forbidden "set_observer")
+endif()
 set(failures "")
 foreach(source IN LISTS sources)
   file(READ "${source}" text)

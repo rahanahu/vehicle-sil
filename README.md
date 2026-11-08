@@ -3,7 +3,7 @@
 [Vector SIL Kit](https://github.com/vectorgrp/sil-kit) の上で、車載通信のシミュレーションピアを作るための C++20 ライブラリです。J1939 over CAN と LIN に対応しています。ピアは Windows と Linux の独立したプロセスとして動きます。
 
 > [!NOTE]
-> 使えるのは、vehicle-sil 自身の J1939 スタック（開発中。単一フレーム、Request と Acknowledgement、Address Claim、トランスポートプロトコル、診断）、SIL Kit と Vector XL Driver をつなぐ CAN ブリッジ（実機は未検証）、LIN の Master/Slave（スケジュールテーブル、フレームの送受信、診断フレーム 0x3C/0x3D、応答の衝突の検出、Sleep/Wakeup）と、それらを同期させる共通仮想時間です。未実装の項目と制約は [docs/architecture.md](docs/architecture.md) にあります。
+> 使えるのは、vehicle-sil 自身の J1939 スタック（開発中。単一フレーム、Request と Acknowledgement、Address Claim、トランスポートプロトコル、診断、ECU アプリ向けの部品）、SIL Kit と Vector XL Driver をつなぐ CAN ブリッジ（実機は未検証）、LIN の Master/Slave（スケジュールテーブル、フレームの送受信、診断フレーム 0x3C/0x3D、応答の衝突の検出、Sleep/Wakeup）と、それらを同期させる共通仮想時間です。未実装の項目と制約は [docs/architecture.md](docs/architecture.md) にあります。
 
 ## ライブラリ
 
@@ -16,6 +16,7 @@
 | `vehicle_sil::can_netsim`（開発中） | 簡易 CAN Network Simulator: SIL Kit の Network Simulator API で、CAN の調停、送信時間、バスの占有を仮想時間で模擬する（`CanBusSimulator`）。Vector SIL Kit Network Simulator と共用の設定ファイルの読み込み |
 | `vehicle_sil::j1939`（開発中） | J1939 スタック（名前空間 `vehicle_sil::j1939`、ヘッダー `vehicle_sil/j1939/`）。単一フレームの送受信、Request、Acknowledgement、NAME と Address Claim（要求、競合、Cannot Claim、任意アドレスの選択、アドレス表、アドレス違反、Commanded Address の処理、状態の通知）、トランスポートプロトコル（BAM、RTS/CTS）、部品を作る道具箱（`Subscription`、`Timer`、`Node::attach`）、読み取り専用の観測口（`Observer`）。SIL Kit に依存しない |
 | `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics`（開発中） | `vehicle_sil::j1939` の公開 API と道具箱だけで作ったプロトコル部品。DM13 による放送の抑制、DTC と DM1/DM2/DM3/DM11/DM22、識別情報（ソフトウェア ID、ECU ID、製品 ID、診断プロトコル ID） |
+| `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`（開発中） | ECU アプリ向けの部品（同じく公開 API と道具箱だけで作る）。PG の周期送信（`PeriodicSender`）、Request の送信と応答・ACK・時間切れの報告（`Requester`）、受信の最新値と途絶（`Monitor`）、Commanded Address の送信（`AddressCommander`）。使い方は [docs/j1939-guide.md](docs/j1939-guide.md) |
 | `vehicle_sil::peer`（開発中、内部向け） | 1 つの SIL Kit participant と、その J1939 の `Network`（SIL Kit の CAN か外部のポート）と LIN の Master/Slave をまとめて作り、仮想時間か実時間で動かす `vehicle_sil::Peer` |
 | `vehicle_sil::testkit`（開発中、内部向け） | SIL Kit なしの J1939 の試験の組み立て: 仮想バスの上の `Network` を名前で組み立てて回す `LocalCan`、出来事と生フレームの記録（`J1939Events`、`FrameLog`）、故障注入の関数（`faults`） |
 | `vehicle_sil::vector_xl_bridge_core` | CAN ブリッジのコア（`vehicle_sil::vector_xl::CanBridge` など）と、外部 CAN ポートを `vehicle_sil::can` の実時間のポートにする `ExternalPortAdapter`。プラットフォームに依存しない |
@@ -29,7 +30,7 @@
 | `tools/sim_controller` | 仮想時間のシミュレーションを開始・停止する `vehicle_sil_sim_controller` |
 | `tools/can_bus_simulator` | 簡易 CAN Network Simulator の participant `vehicle_sil_can_bus_simulator` |
 | `bridges/vector-xl` | Vector XL CAN Bridge（ライブラリと実行ファイル `vehicle_sil_vector_xl_bridge`） |
-| `examples/j1939` | 最小ピア `vehicle_sil_j1939_sender`（`Peer` を実時間で動かして送る）/ `vehicle_sil_j1939_receiver`（SIL Kit の CAN で直接受けて照合する） |
+| `examples/j1939` | 部品で作った 2 つの ECU を 2 つの participant で動かす `vehicle_sil_j1939_ecu_pair`、最小ピア `vehicle_sil_j1939_sender`（`Peer` を実時間で動かして送る）/ `vehicle_sil_j1939_receiver`（SIL Kit の CAN で直接受けて照合する） |
 | `examples/virtual_time` | 仮想時間のピア（どれも `Peer` の上）: 物理モデル、既存 ECU（共有ライブラリの `tick()`）を載せた J1939 ECU、LIN センサー、ボディコントローラー |
 | `examples/lin` | LIN クラスタのピア `vehicle_sil_lin_master` / `vehicle_sil_lin_slave`（フレームの送受信と Sleep/Wakeup） |
 | `examples/fetchcontent_consumer` | 外部 CMake プロジェクトからの利用例 |
@@ -37,7 +38,7 @@
 | `tests/` | ユニットテスト、複数プロセスの統合テスト、FetchContent テスト |
 | `external/` | SIL Kit（Git サブモジュール、コミット固定） |
 | `patches/` | SIL Kit に当てるパッチ（上流への提出用の形式） |
-| `docs/` | [アーキテクチャと将来の制約](docs/architecture.md)、[依存ライブラリ](docs/dependencies.md) |
+| `docs/` | [J1939 のノードの作り方](docs/j1939-guide.md)、[アーキテクチャと将来の制約](docs/architecture.md)、[依存ライブラリ](docs/dependencies.md) |
 
 ## 必要なもの
 
@@ -308,7 +309,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(vehicle_sil)
 
 add_executable(example main.cpp)
-target_link_libraries(example PRIVATE vehicle_sil::peer)   # core だけなら vehicle_sil::core
+target_link_libraries(example PRIVATE vehicle_sil::peer vehicle_sil::j1939_periodic_sender)   # core だけなら vehicle_sil::core
 vehicle_sil_copy_runtime_dlls(example)   # Windows: SilKit.dll をコピーする（ほかの OS では何もしない）
 ```
 
@@ -317,7 +318,7 @@ SIL Kit は、vehicle-sil のサブモジュールとして自動で取得・設
 最小の使い方は次のとおりです。
 
 ```cpp
-#include <vehicle_sil/j1939/network.hpp>
+#include <vehicle_sil/j1939/periodic_sender.hpp>
 #include <vehicle_sil/peer/peer.hpp>
 
 namespace j1939 = vehicle_sil::j1939;
@@ -330,12 +331,14 @@ options.registry_uri = "silkit://localhost:8500";
 options.virtual_time = vehicle_sil::VirtualTimeOptions{10ms};   // 仮想時間。std::nullopt なら実時間
 vehicle_sil::Peer peer(options);
 auto& ecu = peer.j1939("J1939_CAN1").add_node(
-    {0x00, j1939::Name{}.set_identity_number(0x2345).set_manufacturer_code(0x7F0)});   // 最初のステップで主張する
-peer.every(100ms, [&](vehicle_sil::SimTime) { static_cast<void>(ecu.send(j1939::Pgn{0xFF10}, model.encode())); });
+    {.address = 0x00, .name = j1939::Name{}.set_identity_number(0x2345).set_manufacturer_code(0x7F0)});   // Address Claim はスタックが行う
+ecu.attach<j1939::PeriodicSender>(j1939::Pgn{0xFF10}, 100ms,   // アドレスを得てから 100 ms ごとに送る
+                                  [&](std::span<std::uint8_t> out) { return model.encode(out); });
+peer.every(10ms, [&](vehicle_sil::SimTime) { model.tick(); });
 peer.run();   // start() と wait()
 ```
 
-`vehicle_sil::Peer` はまだ内部向けで、API は変わることがあります。
+受信、Request と応答、受信の監視、試験の書き方は [docs/j1939-guide.md](docs/j1939-guide.md) にあります。`vehicle_sil::Peer` はまだ内部向けで、API は変わることがあります。
 
 ## 既知の制限
 

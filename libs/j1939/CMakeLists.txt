@@ -17,3 +17,7 @@ vehicle_sil_target_defaults(vehicle_sil_j1939)
 # (checked by the test j1939_parts.boundary).
 add_subdirectory(parts/broadcast_suppression)
 add_subdirectory(parts/diagnostics)
+add_subdirectory(parts/periodic_sender)
+add_subdirectory(parts/requester)
+add_subdirectory(parts/monitor)
+add_subdirectory(parts/address_commander)

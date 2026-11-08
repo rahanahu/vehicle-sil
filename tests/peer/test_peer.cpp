@@ -2,7 +2,9 @@
 //
 // vehicle_sil::Peer on real SIL Kit participants (in-process registry): J1939 ECUs, LIN master
 // and slave, J1939 and LIN in one participant, the same results as the local virtual bus,
-// real time with an external port, set-up errors, failures and the order of destruction.
+// real time with an external port, set-up errors, failures and the order of destruction; the
+// ECU application of examples/j1939/ecu_pair on two participants.
+#include "ecu_pair.hpp"
 #include "silkit_test_util.hpp"
 #include "test_harness.hpp"
 
@@ -610,4 +612,73 @@ TEST_CASE(peer_start_together_reports_a_failed_start)
     CHECK(throws<std::logic_error>([&] { start_together(controller, {&member, &started}); }));
     CHECK(member.wait(60s) == orch::ParticipantState::Shutdown);
     started.stop();
+}
+
+namespace {
+
+/// What the cab of examples/j1939/ecu_pair shows, at each change before 1 s.
+struct DashboardTrace
+{
+    std::vector<std::string> lines;
+    void record(SimTime now, const ecu_pair::Dashboard& dash)
+    {
+        const std::string line = std::to_string(dash.engine_rpm) + (dash.engine_silent ? " silent " : " ") +
+                                 std::to_string(dash.engine_software.size());
+        if (now < at(1000ms) && (lines.empty() || lines.back().substr(lines.back().find(' ') + 1) != line))
+        {
+            lines.push_back(std::to_string(ms(now)) + " " + line);
+        }
+    }
+};
+
+std::vector<std::string> ecu_pair_on_local_bus()
+{
+    ecu_pair::EngineModel engine;
+    ecu_pair::Dashboard dash;
+    DashboardTrace trace;
+    vehicle_sil::testkit::LocalCan bus;
+    ecu_pair::install_engine(bus.add_j1939("engine", 10ms), engine);
+    ecu_pair::install_cab(bus.add_j1939("cab", 5ms), dash);
+    bus.on_step("engine", [&](SimTime) { engine.tick(); });
+    bus.on_step("cab", [&](SimTime now) { trace.record(now, dash); });
+    bus.run_until(at(1000ms));
+    return trace.lines;
+}
+
+std::vector<std::string> ecu_pair_on_silkit()
+{
+    ecu_pair::EngineModel engine; // what the steps use: declared before the peers
+    ecu_pair::Dashboard dash;
+    DashboardTrace trace;
+    InProcessRegistry registry;
+    SimulationControllerOptions control;
+    control.registry_uri = registry.uri;
+    control.required_participants = {"Engine", "Cab"};
+    control.stop_at = 1100ms;
+    SimulationController controller(control);
+    Peer enginePeer(coordinated("Engine", registry.uri, 10ms));
+    ecu_pair::install_engine(enginePeer.j1939("J1939_CAN"), engine);
+    enginePeer.every(10ms, [&](SimTime) { engine.tick(); });
+    Peer cabPeer(coordinated("Cab", registry.uri, 5ms));
+    ecu_pair::install_cab(cabPeer.j1939("J1939_CAN"), dash);
+    cabPeer.on_step([&](SimTime now) { trace.record(now, dash); });
+    start_together(controller, {&enginePeer, &cabPeer});
+    CHECK(enginePeer.wait(60s) == orch::ParticipantState::Shutdown);
+    CHECK(cabPeer.wait(60s) == orch::ParticipantState::Shutdown);
+    CHECK(!enginePeer.failed() && !cabPeer.failed());
+    return trace.lines;
+}
+
+} // namespace
+
+// P3: the ECU application's install functions on two SIL Kit participants, unchanged, give what
+// they give on the local virtual bus.
+TEST_CASE(peer_runs_the_ecu_application_as_on_the_local_bus)
+{
+    const auto local = ecu_pair_on_local_bus();
+    const auto silkit = ecu_pair_on_silkit();
+    CHECK(local.size() > 10u);
+    // The engine's speed reached the cab's request, and the software id (14 bytes) arrived.
+    CHECK(!local.empty() && local.back().substr(local.back().find(' ') + 1) == "1500 14");
+    CHECK(silkit == local);
 }

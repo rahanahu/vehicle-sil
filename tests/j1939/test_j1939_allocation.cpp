@@ -11,9 +11,13 @@
 #include "vehicle_sil/can/step_driver.hpp"
 #include "vehicle_sil/j1939/broadcast_suppression.hpp"
 #include "vehicle_sil/j1939/diagnostics.hpp"
+#include "vehicle_sil/j1939/address_commander.hpp"
 #include "vehicle_sil/j1939/identification.hpp"
+#include "vehicle_sil/j1939/monitor.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/j1939/observer.hpp"
+#include "vehicle_sil/j1939/periodic_sender.hpp"
+#include "vehicle_sil/j1939/requester.hpp"
 #include "vehicle_sil/j1939/toolbox.hpp"
 
 #include <array>
@@ -21,6 +25,7 @@
 #include <cstdlib>
 #include <new>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -675,4 +680,106 @@ TEST_CASE(protocol_parts_and_the_toolbox_do_not_allocate_in_steady_state)
     CHECK(seen > 1000u);
     CHECK(!bench.network.failed());
     CHECK(bench.network.statistics().transport_messages_sent > 10u);
+}
+
+// The parts for ECU applications in steady state: periodic messages (single frames and BAM,
+// coalesced deadlines, DM13), requests with responses, acknowledgements, retries and timeouts,
+// a monitor going silent and back, Commanded Address. Their buffers are allocated when they are
+// created; request() and command() copy the callback (small captures: no allocation).
+TEST_CASE(ecu_application_parts_do_not_allocate_in_steady_state)
+{
+    using vehicle_sil::j1939::AddressCommander;
+    using vehicle_sil::j1939::BroadcastSuppression;
+    using vehicle_sil::j1939::CommandResult;
+    using vehicle_sil::j1939::Monitor;
+    using vehicle_sil::j1939::MonitorChange;
+    using vehicle_sil::j1939::MonitorOptions;
+    using vehicle_sil::j1939::Name;
+    using vehicle_sil::j1939::PeriodicSender;
+    using vehicle_sil::j1939::PeriodicSenderOptions;
+    using vehicle_sil::j1939::Requester;
+    using vehicle_sil::j1939::RequestResult;
+    Bench bench({}, std::chrono::milliseconds(10));
+    Node& us = bench.add_node(0x20);
+    std::uint8_t counter = 0;
+    us.attach<PeriodicSender>(Pgn{0xFF20}, std::chrono::milliseconds(7), [&](std::span<std::uint8_t> out) {
+        out[0] = counter++;
+        return std::size_t{8};
+    });
+    PeriodicSenderOptions longOne;
+    longOne.max_length = 30;
+    const Bytes thirty(30, 0x5A);
+    us.attach<PeriodicSender>(Pgn{0xFF21}, std::chrono::milliseconds(120), std::span<const std::uint8_t>(thirty), longOne);
+    const Name engine = Name{}.set_identity_number(5).set_manufacturer_code(9).set_arbitrary_address_capable(true);
+    std::size_t changes = 0;
+    MonitorOptions watch;
+    watch.name = engine;
+    watch.timeout = std::chrono::milliseconds(30);
+    watch.on_state = [&](const MonitorChange&) { ++changes; };
+    auto& monitor = us.attach<Monitor>(Pgn{0xFF30}, watch);
+    auto& requester = Requester::of(us);
+    auto& commander = us.attach<AddressCommander>();
+    std::size_t answers = 0;
+    std::size_t commanded = 0;
+    const auto engineName = engine.to_bytes();
+    const Bytes claim(engineName.begin(), engineName.end());
+    bench.inject(frame(6, kPgnAddressClaim, 0x30, kGlobal, claim));
+
+    int step = 0;
+    const auto drive = [&] {
+        const SimTime t = bench.next_time();
+        ++step;
+        if (step % 10 < 6)
+        {
+            bench.inject(t, frame(6, 0xFF30, 0x30, kGlobal, {1, 2, 3, 4, 5, 6, 7, 8})); // silent 4 steps of 10
+        }
+        if (step % 20 == 0)
+        {
+            static_cast<void>(requester.request(Pgn{0xFF40}, 0x30, [&](const RequestResult&) { ++answers; }));
+            static_cast<void>(requester.request(Pgn{0xFF41}, 0x31, [&](const RequestResult&) { ++answers; })); // retries
+            static_cast<void>(requester.request(Pgn{0xFF42}, kGlobal, [&](const RequestResult&) { ++answers; }));
+        }
+        if (step % 20 == 2)
+        {
+            bench.inject(t, frame(6, 0xFF40, 0x30, kGlobal, {9, 9, 9, 9, 9, 9, 9, 9}));
+            bench.inject(t, frame(6, 0xFF42, 0x32, kGlobal, {9, 9, 9, 9, 9, 9, 9, 9}));
+            bench.inject(t, frame(6, kPgnAck, 0x31, kGlobal, acknowledgement(kNack, 0x20, 0xFF41)));
+        }
+        if (step % 100 == 0)
+        {
+            static_cast<void>(commander.command(engine, 0x30, [&](const CommandResult&) { ++commanded; }));
+        }
+        if (step % 100 == 40)
+        {
+            bench.inject(t, frame(6, kPgnAddressClaim, 0x30, kGlobal, claim));
+        }
+        if (step % 200 == 150)
+        {
+            BroadcastSuppression::of(us).suspend(std::chrono::seconds(0));
+        }
+    };
+    for (int i = 0; i < 300; ++i)
+    {
+        drive();
+        bench.step();
+        static_cast<void>(bench.take_sent());
+    }
+    std::size_t counted = 0;
+    for (int i = 0; i < 1500; ++i)
+    {
+        drive();
+        g_allocations.store(0);
+        g_counting.store(true);
+        bench.step();
+        g_counting.store(false);
+        counted += g_allocations.load();
+        static_cast<void>(bench.take_sent());
+    }
+    CHECK_EQ(counted, 0u);
+    CHECK(monitor.losses() > 100u);
+    CHECK(changes > 200u);
+    CHECK(answers > 200u);
+    CHECK(commanded > 10u);
+    CHECK(!bench.network.failed());
+    CHECK(bench.network.statistics().transport_messages_sent > 50u);
 }

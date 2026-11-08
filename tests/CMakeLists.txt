@@ -59,6 +59,15 @@ vehicle_sil_add_harness_tests(vehicle_sil_testkit_tests
   SOURCES testkit/test_testkit.cpp
   LINK vehicle_sil::testkit)
 
+# The ECU application API as its users write it (examples/j1939/ecu_pair and parts of one's own)
+# on the local virtual bus.
+vehicle_sil_add_harness_tests(vehicle_sil_ecu_api_tests
+  PREFIX ecu_api LABELS unit testkit j1939 TIMEOUT 60
+  SOURCES testkit/test_ecu_personas.cpp
+  LINK vehicle_sil::testkit vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender
+       vehicle_sil::j1939_requester vehicle_sil::j1939_monitor vehicle_sil::j1939_address_commander)
+target_include_directories(vehicle_sil_ecu_api_tests PRIVATE ${PROJECT_SOURCE_DIR}/examples/j1939/ecu_pair)
+
 # The SIL Kit port of vehicle_sil::can: against a fake controller, and on real participants
 # (in-process registry), where the traces must equal the virtual bus's.
 vehicle_sil_add_harness_tests(vehicle_sil_can_silkit_tests
@@ -72,7 +81,9 @@ target_include_directories(vehicle_sil_can_silkit_tests PRIVATE ${CMAKE_CURRENT_
 vehicle_sil_add_harness_tests(vehicle_sil_peer_tests
   PREFIX peer LABELS unit peer j1939 TIMEOUT 180
   SOURCES peer/test_peer.cpp
-  LINK vehicle_sil::peer vehicle_sil::testkit)
+  LINK vehicle_sil::peer vehicle_sil::testkit vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender
+       vehicle_sil::j1939_requester vehicle_sil::j1939_monitor)
+target_include_directories(vehicle_sil_peer_tests PRIVATE ${PROJECT_SOURCE_DIR}/examples/j1939/ecu_pair)
 
 # The simple CAN network simulator (vehicle_sil::can_netsim) on real participants (in-process
 # registry), compared with the virtual bus; its configuration file; and the executable.
@@ -199,12 +210,15 @@ vehicle_sil_add_harness_tests(vehicle_sil_j1939_tests
   LINK vehicle_sil::j1939)
 target_include_directories(vehicle_sil_j1939_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/j1939)
 
-# The protocol parts (DM13, diagnostics, identification): built only from the engine's public API
+# The protocol parts (DM13, diagnostics, identification, periodic sender, requester, monitor,
+# address commander): built only from the engine's public API
 # and toolbox; the boundary test checks their sources and links.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_parts_tests
   PREFIX j1939_parts LABELS unit j1939 TIMEOUT 60
   SOURCES j1939/test_j1939_dm13.cpp j1939/test_j1939_diagnostics.cpp j1939/test_j1939_identification.cpp
-  LINK vehicle_sil::j1939_diagnostics)
+          j1939/test_j1939_periodic_sender.cpp j1939/test_j1939_requester.cpp j1939/test_j1939_monitor.cpp
+  LINK vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester
+       vehicle_sil::j1939_monitor vehicle_sil::j1939_address_commander)
 target_include_directories(vehicle_sil_j1939_parts_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/j1939)
 add_test(NAME j1939_parts.boundary
          COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${PROJECT_SOURCE_DIR}/libs/j1939/parts
@@ -220,6 +234,11 @@ endforeach()
 # Fails for the right reason (the exit code is not used with a regular expression).
 set_tests_properties(j1939_parts.boundary_check_friend_class j1939_parts.boundary_check_friend_type
                      PROPERTIES PASS_REGULAR_EXPRESSION "reach into the J1939 engine:.*part\\.hpp: matches 'friend")
+add_test(NAME j1939_parts.boundary_check_observer
+         COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/j1939/boundary_fixtures/observer
+                 -DSOURCES_ONLY=ON -DFORBID_OBSERVER=ON -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
+set_tests_properties(j1939_parts.boundary_check_observer PROPERTIES LABELS "unit;j1939" TIMEOUT 60
+                     PASS_REGULAR_EXPRESSION "reach into the J1939 engine:.*part\\.hpp: matches 'set_observer'")
 # The test kit and Peer use the engine's public API only, like the parts.
 foreach(dir IN ITEMS testkit peer)
   add_test(NAME ${dir}.boundary
@@ -232,7 +251,8 @@ endforeach()
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_allocation_tests
   PREFIX j1939 LABELS unit j1939 TIMEOUT 60
   SOURCES j1939/test_j1939_allocation.cpp
-  LINK vehicle_sil::j1939 vehicle_sil::j1939_diagnostics)
+  LINK vehicle_sil::j1939 vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester
+       vehicle_sil::j1939_monitor vehicle_sil::j1939_address_commander)
 target_include_directories(vehicle_sil_j1939_allocation_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/j1939)
 
 # The J1939 stack on SIL Kit participants (in-process registry): same traces as on the
