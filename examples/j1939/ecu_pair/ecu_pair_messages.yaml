@@ -1,6 +1,9 @@
 # The two parameter groups of examples/j1939/ecu_pair. Both are proprietary, with a layout of this
 # example. vehicle_sil_add_j1939_codec() turns this file into ecu_pair_messages.hpp.
 namespace: ecu_pair::messages
+# Proprietary groups, with the J1939 special values chosen for them (not_available when the model
+# has no value yet). Without this line every bit pattern would be a value.
+indicators: j1939
 messages:
   - name: EngineStatus
     comment: Engine -> all, every 20 ms.

@@ -35,24 +35,32 @@ enum class ByteOrder : std::uint8_t
     BigEndian,
 };
 
-/// What a signal's raw value means, checked in this order.
+/// What a signal's raw value means. A special value of the signal's definition comes first, then
+/// the valid range, then (for an EnumSignal) the enumerators.
 enum class SignalState : std::uint8_t
 {
-    Valid,        ///< Inside the valid range: value() has the physical value.
-    OutOfRange,   ///< Outside the valid range (also reserved and undefined enumerator values).
-    Error,        ///< In the signal's error range.
-    NotAvailable, ///< In the signal's "not available" range.
+    Valid,        ///< Inside the valid range: value() has the physical value (or the enumerator).
+    OutOfRange,   ///< Outside the valid range, and no special value.
+    Error,        ///< The special value named "error".
+    NotAvailable, ///< The special value named "not_available".
+    Special,      ///< Another special value of the definition (special() has its name).
+    Undefined,    ///< EnumSignal only: no special value and no enumerator has this value.
 };
 
-/// Bit patterns first .. last (inclusive, the raw bits read as unsigned). Empty if first > last.
-struct RawRange
+/// A named special value of a signal: the raw values first .. last (inclusive) mean `name` and
+/// are no physical value. `send` is what set_special(name) writes. Raw values are stored as 64
+/// bits (two's complement, sign-extended, for a signed signal), like SignalLayout::raw_min.
+struct SpecialValue
 {
-    std::uint64_t first = 1;
+    std::string_view name;
+    std::uint64_t first = 0;
     std::uint64_t last = 0;
-
-    [[nodiscard]] constexpr bool empty() const noexcept { return first > last; }
-    [[nodiscard]] constexpr bool contains(std::uint64_t bits) const noexcept { return first <= bits && bits <= last; }
+    std::uint64_t send = 0;
 };
+
+/// The names with a SignalState of their own.
+inline constexpr std::string_view kError = "error";
+inline constexpr std::string_view kNotAvailable = "not_available";
 
 /// Where a signal is and what its raw value means.
 ///
@@ -70,8 +78,6 @@ struct SignalLayout
     /// signal, sign-extended to 64 bits).
     std::uint64_t raw_min = 0;
     std::uint64_t raw_max = 0;
-    RawRange error{};
-    RawRange not_available{};
 };
 
 /// The `length` low bits set.
@@ -177,6 +183,19 @@ template <typename Spec>
 concept HasEnumerators = requires { Spec::enumerators; };
 
 template <typename Spec>
+constexpr auto specials_of() noexcept
+{
+    if constexpr (requires { Spec::special_values; })
+    {
+        return Spec::special_values;
+    }
+    else
+    {
+        return std::array<SpecialValue, 0>{};
+    }
+}
+
+template <typename Spec>
 constexpr std::optional<std::uint32_t> spn_of() noexcept
 {
     if constexpr (requires { Spec::spn; })
@@ -196,8 +215,8 @@ constexpr std::optional<std::uint32_t> spn_of() noexcept
 ///     static constexpr SignalLayout layout;
 ///     static constexpr std::string_view name, unit;
 /// optionally static constexpr std::uint32_t spn (a number for the reader; the codec does not use
-/// it), and, for an EnumSignal, static constexpr std::array<std::uint64_t, N> enumerators (the
-/// valid raw values).
+/// it) and static constexpr std::array<SpecialValue, N> special_values (none if absent), and, for
+/// an EnumSignal, static constexpr std::array<std::uint64_t, N> enumerators (the valid raw values).
 template <typename Spec>
 class SignalBase
 {
@@ -206,6 +225,8 @@ public:
     static constexpr std::string_view name = Spec::name;
     static constexpr std::string_view unit = Spec::unit;
     static constexpr std::optional<std::uint32_t> spn = detail::spn_of<Spec>();
+    /// The special values of the definition (resolved by the generator from the profiles).
+    static constexpr auto specials = detail::specials_of<Spec>();
     using raw_type = std::conditional_t<layout.is_signed, std::int64_t, std::uint64_t>;
 
     static_assert(layout.length >= 1 && layout.length <= 64, "a signal has 1 .. 64 bits");
@@ -215,39 +236,56 @@ public:
     static constexpr raw_type raw_min = static_cast<raw_type>(layout.raw_min);
     static constexpr raw_type raw_max = static_cast<raw_type>(layout.raw_max);
 
-    /// A new signal is not available (or raw 0 if it has no such range).
-    constexpr SignalBase() noexcept : bits_(layout.not_available.empty() ? 0 : layout.not_available.last) {}
+    /// true if the definition has a special value of this name.
+    [[nodiscard]] static constexpr bool has_special(std::string_view special_name) noexcept
+    {
+        return find_special(special_name) < specials.size();
+    }
+
+    /// A new signal is not available (the value set_special("not_available") writes), or raw 0
+    /// if it has no such special value.
+    constexpr SignalBase() noexcept
+      : bits_(has_special(kNotAvailable) ? specials[find_special(kNotAvailable)].send & low_bits(layout.length) : 0)
+    {
+    }
 
     [[nodiscard]] constexpr SignalState state() const noexcept
     {
-        if (layout.not_available.contains(bits_))
+        if (const std::size_t index = special_of(raw()); index < specials.size())
         {
-            return SignalState::NotAvailable;
-        }
-        if (layout.error.contains(bits_))
-        {
-            return SignalState::Error;
-        }
-        const raw_type value = raw();
-        bool inside = value <= raw_max;
-        if constexpr (layout.is_signed || layout.raw_min != 0)
-        {
-            inside = inside && value >= raw_min;
-        }
-        if (!inside)
-        {
-            return SignalState::OutOfRange;
+            const std::string_view found = specials[index].name;
+            return found == kNotAvailable ? SignalState::NotAvailable
+                   : found == kError      ? SignalState::Error
+                                          : SignalState::Special;
         }
         if constexpr (detail::HasEnumerators<Spec>)
         {
-            if (std::find(Spec::enumerators.begin(), Spec::enumerators.end(), bits_) == Spec::enumerators.end())
-            {
-                return SignalState::OutOfRange;
-            }
+            // An enumeration has no range of its own: any other value is undefined.
+            const bool defined = std::find(Spec::enumerators.begin(), Spec::enumerators.end(), bits_) !=
+                                 Spec::enumerators.end();
+            return defined ? SignalState::Valid : SignalState::Undefined;
         }
-        return SignalState::Valid;
+        else
+        {
+            const raw_type value = raw();
+            bool inside = value <= raw_max;
+            if constexpr (layout.is_signed || layout.raw_min != 0)
+            {
+                inside = inside && value >= raw_min;
+            }
+            return inside ? SignalState::Valid : SignalState::OutOfRange;
+        }
     }
     [[nodiscard]] constexpr bool valid() const noexcept { return state() == SignalState::Valid; }
+    /// The name of the special value the signal holds; empty if it holds none.
+    [[nodiscard]] constexpr std::optional<std::string_view> special() const noexcept
+    {
+        if (const std::size_t index = special_of(raw()); index < specials.size())
+        {
+            return specials[index].name;
+        }
+        return std::nullopt;
+    }
 
     /// The raw value (sign-extended for a signed signal), whatever its state.
     [[nodiscard]] constexpr raw_type raw() const noexcept
@@ -264,8 +302,8 @@ public:
     /// The bits as they are in the message (the raw value as unsigned).
     [[nodiscard]] constexpr std::uint64_t bits() const noexcept { return bits_; }
 
-    /// Any raw value that fits in the signal's bits, also an error, "not available" or out of
-    /// range one (for tests). std::out_of_range if it does not fit.
+    /// Any raw value that fits in the signal's bits, special and out of range ones too: the raw
+    /// value is not limited by the special values. std::out_of_range if it does not fit.
     constexpr void set_raw(raw_type raw)
     {
         bool fits = raw <= highest_raw();
@@ -281,17 +319,29 @@ public:
         }
         bits_ = static_cast<std::uint64_t>(raw) & low_bits(layout.length);
     }
-    /// The last value of the "not available" range (all bits 1 with the j1939 indicators).
-    constexpr void set_not_available() noexcept
-        requires(!layout.not_available.empty())
+    /// Writes the special value `special_name` (its `send` value). std::invalid_argument if the
+    /// definition has no special value of this name.
+    constexpr void set_special(std::string_view special_name)
     {
-        bits_ = layout.not_available.last;
+        const std::size_t index = find_special(special_name);
+        if (index >= specials.size())
+        {
+            throw std::invalid_argument("vehicle_sil::j1939::codec: " + std::string(name) + " has no special value '" +
+                                        std::string(special_name) + "'");
+        }
+        bits_ = specials[index].send & low_bits(layout.length);
     }
-    /// The first value of the error range (0xFE, 0xFE00, ... with the j1939 indicators).
-    constexpr void set_error() noexcept
-        requires(!layout.error.empty())
+    /// set_special("not_available") and set_special("error"), for a definition that has them
+    /// (a compile error otherwise).
+    constexpr void set_not_available() noexcept
+        requires(has_special(kNotAvailable))
     {
-        bits_ = layout.error.first;
+        bits_ = specials[find_special(kNotAvailable)].send & low_bits(layout.length);
+    }
+    constexpr void set_error() noexcept
+        requires(has_special(kError))
+    {
+        bits_ = specials[find_special(kError)].send & low_bits(layout.length);
     }
 
     /// Reads the signal from `data` (end_byte(layout) bytes at least).
@@ -322,12 +372,49 @@ protected:
     constexpr void set_bits(std::uint64_t bits) noexcept { bits_ = bits & low_bits(layout.length); }
 
 private:
+    // Indices, not pointers: a pointer compared with nullptr is no constant expression under
+    // GCC's -fsanitize=null, and has_special() is used in requires-clauses and if constexpr.
+    // specials.size() means "none".
+    [[nodiscard]] static constexpr std::size_t find_special(std::string_view special_name) noexcept
+    {
+        for (std::size_t i = 0; i < specials.size(); ++i)
+        {
+            if (specials[i].name == special_name)
+            {
+                return i;
+            }
+        }
+        return specials.size();
+    }
+    [[nodiscard]] static constexpr std::size_t special_of(raw_type value) noexcept
+    {
+        for (std::size_t i = 0; i < specials.size(); ++i)
+        {
+            if (static_cast<raw_type>(specials[i].first) <= value && value <= static_cast<raw_type>(specials[i].last))
+            {
+                return i;
+            }
+        }
+        return specials.size();
+    }
+    static constexpr bool specials_fit() noexcept
+    {
+        for (const SpecialValue& special : specials)
+        {
+            const auto first = static_cast<raw_type>(special.first);
+            const auto last = static_cast<raw_type>(special.last);
+            const auto send = static_cast<raw_type>(special.send);
+            if (!(lowest_raw() <= first && first <= last && last <= highest_raw() && first <= send && send <= last))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+    static_assert(specials_fit(), "a special value must fit in the signal's bits, with first <= send <= last");
+
     static_assert(lowest_raw() <= raw_min && raw_min <= raw_max && raw_max <= highest_raw(),
                   "the valid range must fit in the signal's bits");
-    static_assert(layout.error.empty() || layout.error.last <= low_bits(layout.length),
-                  "the error range must fit in the signal's bits");
-    static_assert(layout.not_available.empty() || layout.not_available.last <= low_bits(layout.length),
-                  "the \"not available\" range must fit in the signal's bits");
     static constexpr bool enumerators_fit() noexcept
     {
         if constexpr (detail::HasEnumerators<Spec>)
@@ -392,9 +479,9 @@ public:
     {
         if (std::isnan(physical))
         {
-            if constexpr (!layout.not_available.empty())
+            if constexpr (Base::has_special(kNotAvailable))
             {
-                this->set_bits(layout.not_available.last);
+                this->set_not_available();
             }
             return false;
         }
@@ -444,7 +531,9 @@ public:
 
 /// What a message type provides (the generated ones and those written by hand):
 ///     static constexpr Pgn kPgn; static constexpr Priority kPriority;
-///     static constexpr std::size_t kLength; static constexpr std::uint8_t kFill;
+///     static constexpr std::size_t kLength; and the bits no signal covers: either
+///     static constexpr std::uint8_t kFill (every byte) or
+///     static constexpr std::array<std::uint8_t, kLength> kFillBytes (one of the two, not both);
 ///     template <typename F> void for_each_signal(F&& f) (const and not const), and the
 ///     encode(), decode() and bytes() below (usually forwarding to encode_message() and
 ///     decode_message()).
@@ -455,7 +544,8 @@ concept MessageType = requires(const M& message, std::span<std::uint8_t> out, st
     { M::kPgn } -> std::convertible_to<Pgn>;
     { M::kPriority } -> std::convertible_to<Priority>;
     { M::kLength } -> std::convertible_to<std::size_t>;
-    { M::kFill } -> std::convertible_to<std::uint8_t>;
+    requires(requires { { M::kFill } -> std::convertible_to<std::uint8_t>; } !=
+             requires { requires std::same_as<std::remove_cv_t<decltype(M::kFillBytes)>, std::array<std::uint8_t, M::kLength>>; });
     message.for_each_signal([](const auto&) {});
     { message.encode(out) } -> std::same_as<std::size_t>;
     { M::decode(in) } -> std::same_as<std::optional<M>>;
@@ -469,7 +559,7 @@ concept HasSelector = requires { M::Selector::layout; M::Selector::value; };
 } // namespace detail
 
 /// Writes `message` into the first M::kLength bytes of `out`: the bits no signal covers get
-/// M::kFill. Returns M::kLength. std::length_error if `out` is shorter (for a PeriodicSender:
+/// M::kFill (or M::kFillBytes). Returns M::kLength. std::length_error if `out` is shorter (for a PeriodicSender:
 /// PeriodicSenderOptions::max_length).
 template <typename M>
 std::size_t encode_message(const M& message, std::span<std::uint8_t> out)
@@ -481,7 +571,15 @@ std::size_t encode_message(const M& message, std::span<std::uint8_t> out)
                                 std::to_string(out.size()));
     }
     const auto data = out.first(M::kLength);
-    std::fill(data.begin(), data.end(), M::kFill);
+    if constexpr (requires { M::kFillBytes; })
+    {
+        static_assert(M::kFillBytes.size() == M::kLength, "kFillBytes has kLength bytes");
+        std::copy(M::kFillBytes.begin(), M::kFillBytes.end(), data.begin());
+    }
+    else
+    {
+        std::fill(data.begin(), data.end(), M::kFill);
+    }
     if constexpr (detail::HasSelector<M>)
     {
         insert(data, M::Selector::layout, M::Selector::value);

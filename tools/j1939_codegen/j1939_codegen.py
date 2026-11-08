@@ -36,10 +36,10 @@ xor xor_eq final override import module
 
 # The members of a signal's description (Signals::<signal name>): a signal of the same name would
 # be a member with the name of its class.
-SPEC_MEMBERS = {"layout", "name", "unit", "spn", "enumerators"}
+SPEC_MEMBERS = {"layout", "name", "unit", "spn", "enumerators", "special_values"}
 
 # Names the generated message type uses itself (members and the parameters of its functions).
-MESSAGE_MEMBERS = {"kPgn", "kPriority", "kLength", "kFill", "Selector", "Signals", "encode", "decode",
+MESSAGE_MEMBERS = {"kPgn", "kPriority", "kLength", "kFill", "kFillBytes", "Selector", "Signals", "encode", "decode",
                    "bytes", "for_each_signal", "output_bytes", "input_bytes", "visitor", "Visitor"}
 
 # Names of the generated namespaces and types. Generated code spells std and vehicle_sil from the
@@ -170,20 +170,6 @@ def text(where, value):
     return value
 
 
-def raw_range(where, value, length):
-    top = (1 << length) - 1
-    if isinstance(value, list):
-        if len(value) != 2:
-            fail(where, "expected a value or [first, last]")
-        first = integer(where, value[0], 0, top)
-        last = integer(where, value[1], 0, top)
-        if first > last:
-            fail(where, "first > last")
-        return (first, last)
-    v = integer(where, value, 0, top)
-    return (v, v)
-
-
 def positions(layout):
     """The absolute bit positions of a signal (start_bit, length, big_endian)."""
     start, length, big = layout
@@ -197,38 +183,177 @@ def positions(layout):
     return result
 
 
-def j1939_indicators(length):
-    """(valid max, error, not available) of the j1939 indicators for an unsigned signal."""
-    top = (1 << length) - 1
-    if length == 1:
-        return top, None, None
-    if length % 8 == 0:
-        rest = length - 8
-        low = (1 << rest) - 1
-        return (0xFA << rest) | low, (0xFE << rest, (0xFE << rest) | low), (0xFF << rest, top)
-    return top - 2, (top - 1, top - 1), (top, top)
+# ---------------------------------------------------------------------------
+# Special values and their profiles
+#
+# A profile is a list of rules; a rule has an optional `when` (length: a number or a list, signed:
+# true/false) and `values` (name: value, [first, last] or {range|value, send}). The first rule
+# that matches the signal gives its special values. Values are raw values: a negative number for a
+# signed signal, or its bit pattern (0xFF is -1 in 8 signed bits).
+# ---------------------------------------------------------------------------
+SPECIAL_NAME = re.compile(r"[a-z_][a-z0-9_]*")
+BUILTIN_NONE = "none"
 
 
-def as_raw_intervals(bits_range, signed, length):
-    """A range of bit patterns as intervals of raw values (two for a signed range across the sign)."""
-    first, last = bits_range
-    if not signed:
-        return [(first, last)]
-    half = 1 << (length - 1)
-    value = lambda bits: bits - (1 << length) if bits >= half else bits  # noqa: E731
-    if first < half <= last:
-        return [(value(first), half - 1), (-half, value(last))]
-    return [(value(first), value(last))]
+def _j1939_bytes_rule(length):
+    rest = length - 8
+    low = (1 << rest) - 1
+    return {"when": {"length": length, "signed": False},
+            "values": {"parameter_specific": [0xFB << rest, (0xFB << rest) | low],
+                       "reserved": [0xFC << rest, (0xFD << rest) | low],
+                       "error": [0xFE << rest, (0xFE << rest) | low],
+                       "not_available": {"range": [0xFF << rest, (1 << length) - 1], "send": (1 << length) - 1}}}
 
 
-def without_special_values(where, low, high, ranges, signed, length):
-    """Narrows the valid range low .. high so that it holds no error or "not available" value: the
-    special values may sit at its ends, not inside it."""
-    intervals = [i for r in ranges if r for i in as_raw_intervals(r, signed, length)]
+# The built-in j1939 profile: the widely published values only, not checked against the standard
+# (docs/j1939-codec.md). A definition file may replace it with its own `j1939` profile.
+BUILTIN_PROFILES = {
+    "j1939": [_j1939_bytes_rule(8), _j1939_bytes_rule(16), _j1939_bytes_rule(32),
+              {"when": {"length": 2, "signed": False}, "values": {"error": 2, "not_available": 3}}],
+}
+
+
+class Rule:
+    pass
+
+
+def parse_special_values(where, values):
+    """name -> (first, last, send or None) as written (not yet fitted to a signal)."""
+    if not isinstance(values, dict):
+        fail(where, "expected a mapping of names to values")
+    result = {}
+    for name, value in values.items():
+        if not isinstance(name, str) or not SPECIAL_NAME.fullmatch(name):
+            fail(where, "'%s' is not a special value name (lowercase letters, digits, _)" % (name,))
+        w = "%s.%s" % (where, name)
+        send = None
+        if isinstance(value, dict):
+            check_keys(w, value, [], ["value", "range", "send"])
+            if ("value" in value) == ("range" in value):
+                fail(w, "give either 'value' or 'range'")
+            if "send" in value:
+                send = integer(w + ".send", value["send"], -(1 << 64), (1 << 64) - 1)
+            value = value.get("value", value.get("range"))
+        if isinstance(value, list):
+            if len(value) != 2:
+                fail(w, "expected a value or [first, last]")
+            first = integer(w, value[0], -(1 << 64), (1 << 64) - 1)
+            last = integer(w, value[1], -(1 << 64), (1 << 64) - 1)
+        else:
+            first = last = integer(w, value, -(1 << 64), (1 << 64) - 1)
+        result[name] = (first, last, send)
+    return result
+
+
+def parse_profile(where, profile):
+    rules_in = profile if isinstance(profile, list) else [profile]
+    rules = []
+    for i, r in enumerate(rules_in):
+        w = "%s[%d]" % (where, i) if isinstance(profile, list) else where
+        check_keys(w, r, ["values"], ["when"])
+        rule = Rule()
+        rule.lengths = None
+        rule.signed = None
+        when = r.get("when") or {}
+        check_keys(w + ".when", when, [], ["length", "signed"])
+        if "length" in when:
+            lengths = when["length"] if isinstance(when["length"], list) else [when["length"]]
+            if not lengths:
+                fail(w + ".when.length", "give at least one length")
+            rule.lengths = {integer(w + ".when.length", n, 1, 64) for n in lengths}
+        if "signed" in when:
+            if not isinstance(when["signed"], bool):
+                fail(w + ".when.signed", "expected true or false")
+            rule.signed = when["signed"]
+        rule.values = parse_special_values(w + ".values", r["values"] or {})
+        rules.append(rule)
+    return rules
+
+
+def parse_profiles(where, document):
+    """The profiles (built-in and the file's) and the names the file defines itself."""
+    profiles = {name: parse_profile("built-in profile %s" % name, rules) for name, rules in BUILTIN_PROFILES.items()}
+    defined = document.get("indicator_profiles") or {}
+    if not isinstance(defined, dict):
+        fail(where + ".indicator_profiles", "expected a mapping of names to profiles")
+    for name, profile in defined.items():
+        w = "%s.indicator_profiles.%s" % (where, name)
+        identifier(w, name)
+        if name == BUILTIN_NONE:
+            fail(w, "'none' cannot be redefined")
+        profiles[name] = parse_profile(w, profile)  # a file's own j1939 replaces the built-in one
+    return profiles, set(defined)
+
+
+def profile_name(where, value, profiles):
+    if not isinstance(value, str):
+        fail(where, "expected a profile name, got %r" % (value,))
+    if value != BUILTIN_NONE and value not in profiles:
+        known = ", ".join(sorted(list(profiles) + [BUILTIN_NONE]))
+        fail(where, "unknown profile '%s' (known: %s)" % (value, known))
+    return value
+
+
+def raw_value(where, value, length, signed):
+    """A raw value or a bit pattern as the signal's raw value."""
+    if signed:
+        low, high = -(1 << (length - 1)), (1 << (length - 1)) - 1
+        if low <= value <= high:
+            return value
+        if high < value <= (1 << length) - 1:
+            return value - (1 << length)  # the bit pattern of a negative value
+        fail(where, "%d does not fit in a %d-bit signed signal" % (value, length))
+    if not 0 <= value <= (1 << length) - 1:
+        fail(where, "%d does not fit in a %d-bit unsigned signal" % (value, length))
+    return value
+
+
+def fit_special_values(where, values, length, signed, source):
+    """[(name, first, last, send)] as raw values of the signal, checked. `source` tells where the
+    values come from (for the messages)."""
+    result = []
+    for name, (first, last, send) in values.items():
+        w = "%s: special value '%s' (%s)" % (where, name, source)
+        first_raw = raw_value(w, first, length, signed)
+        last_raw = raw_value(w, last, length, signed)
+        if first_raw > last_raw:
+            fail(w, "the range is reversed as raw values (%d > %d; a signed range across the sign is two "
+                    "special values)" % (first_raw, last_raw))
+        if send is None:
+            send_raw = first_raw
+        else:
+            send_raw = raw_value(w + " send", send, length, signed)
+            if not first_raw <= send_raw <= last_raw:
+                fail(w, "send %d is outside the range" % send)
+        result.append((name, first_raw, last_raw, send_raw))
+    ordered = sorted(result, key=lambda v: v[1])
+    for before, after in zip(ordered, ordered[1:]):
+        if after[1] <= before[2]:
+            fail(where, "special values '%s' and '%s' overlap (%s)" % (before[0], after[0], source))
+    return result
+
+
+def matching_rule(rules, length, signed):
+    for rule in rules:
+        if (rule.lengths is None or length in rule.lengths) and (rule.signed is None or rule.signed == signed):
+            return rule
+    return None
+
+
+def hex_raw(value, length):
+    """A raw value for a message: hexadecimal, and a negative one also in decimal (its bit pattern
+    in parentheses), so that a signed range does not look reversed."""
+    pattern = "0x%X" % (value & ((1 << length) - 1))
+    return "%d (%s)" % (value, pattern) if value < 0 else pattern
+
+
+def without_special_values(where, low, high, specials, source, length):
+    """Narrows the valid range low .. high so that it holds no special value: the special values may
+    sit at its ends, not inside it."""
     changed = True
     while changed:  # trims from the ends while one of them is special
         changed = False
-        for first, last in intervals:
+        for _, first, last, _ in specials:
             if low > high or last < low or first > high:
                 continue
             if last >= high:
@@ -236,11 +361,12 @@ def without_special_values(where, low, high, ranges, signed, length):
             elif first <= low:
                 low, changed = last + 1, True
     if low > high:
-        fail(where, "the error and 'not available' values leave no valid value (min, max)")
-    for first, last in intervals:
+        fail(where, "the special values (%s) leave no valid value (min, max)" % source)
+    for name, first, last, _ in specials:
         if first <= high and last >= low:
-            fail(where, "error or 'not available' values %d .. %d lie inside the valid range: "
-                 "set 'min' and 'max' around them" % (first, last))
+            shown = hex_raw(first, length) if first == last else "%s .. %s" % (hex_raw(first, length), hex_raw(last, length))
+            fail(where, "special value '%s' (%s, %s) lies inside the valid range %s .. %s: set 'min' and 'max' "
+                 "around it" % (name, shown, source, hex_raw(low, length), hex_raw(high, length)))
     return low, high
 
 
@@ -272,10 +398,44 @@ def parse_layout(where, s, message_bits):
     return layout, bits
 
 
-def parse_signal(where, s, default_indicators, message_bits):
+def special_values_of(where, s, inherited, profiles, length, signed):
+    """(special values, where they come from, whether an inherited profile had a rule for the
+    signal): the signal's own (special_values, not_available, error), or the profile it names, or
+    the inherited profile (message, then file). No merging: the nearest choice replaces the others.
+    `inherited` is (profile name, where it was chosen)."""
+    own = {key: s[key] for key in ("special_values", "not_available", "error") if key in s}
+    if own:
+        if "indicators" in s:
+            fail(where, "give either 'indicators' or the signal's own special values")
+        values = parse_special_values(where + ".special_values", own.get("special_values") or {})
+        for key in ("not_available", "error"):
+            if key in own:
+                if key in values:
+                    fail(where, "'%s' is given twice" % key)
+                values.update(parse_special_values(where, {key: own[key]}))
+        source = "the signal's own"
+        return fit_special_values(where, values, length, signed, source), source, False
+    if "indicators" in s:
+        name = profile_name(where + ".indicators", s["indicators"], profiles)
+        explicit, source = True, "profile %s of the signal" % name
+    else:
+        name, chosen_at = inherited
+        explicit, source = False, "profile %s of %s" % (name, chosen_at)
+    if name == BUILTIN_NONE:
+        return [], source, False
+    rule = matching_rule(profiles[name], length, signed)
+    if rule is None:
+        if explicit:
+            fail(where, "profile '%s' has no rule for a %d-bit %s signal" % (name, length,
+                                                                          "signed" if signed else "unsigned"))
+        return [], source, False  # an inherited profile leaves the signals it has no rule for alone
+    return fit_special_values(where, rule.values, length, signed, source), source, not explicit
+
+
+def parse_signal(where, s, inherited, profiles, message_bits):
     check_keys(where, s, ["name", "start_bit", "length"],
                ["byte_order", "signed", "scale", "offset", "min", "max", "unit", "indicators",
-                "not_available", "error", "spn", "values", "comment"])
+                "special_values", "not_available", "error", "spn", "values", "comment"])
     sig = Signal()
     sig.name = identifier(where + ".name", s["name"])
     where = "%s (%s)" % (where, sig.name)
@@ -292,30 +452,15 @@ def parse_signal(where, s, default_indicators, message_bits):
     sig.comment = text(where + ".comment", s.get("comment", ""))
     sig.spn = integer(where + ".spn", s["spn"], 0, (1 << 32) - 1) if "spn" in s else None
 
-    # Indicators and the valid range of the raw value.
+    sig.specials, source, sig.inherited_match = special_values_of(where, s, inherited, profiles, length, sig.signed)
+    sig.inherits = not any(key in s for key in ("indicators", "special_values", "not_available", "error"))
+
+    # The valid range of the raw value.
     top = (1 << length) - 1
     if sig.signed:
         low, high = -(1 << (length - 1)), (1 << (length - 1)) - 1
     else:
         low, high = 0, top
-    sig.error = sig.not_available = None
-    if "not_available" in s or "error" in s:
-        if "indicators" in s:
-            fail(where, "give either 'indicators' or 'not_available'/'error'")
-        if "not_available" in s:
-            sig.not_available = raw_range(where + ".not_available", s["not_available"], length)
-        if "error" in s:
-            sig.error = raw_range(where + ".error", s["error"], length)
-        if sig.error and sig.not_available and \
-                sig.error[0] <= sig.not_available[1] and sig.not_available[0] <= sig.error[1]:
-            fail(where, "the 'error' and 'not_available' ranges overlap")
-    else:
-        indicators = s.get("indicators", default_indicators)
-        if indicators not in ("j1939", "none"):
-            fail(where + ".indicators", "expected 'j1939' or 'none'")
-        if indicators == "j1939" and not sig.signed:
-            high, sig.error, sig.not_available = j1939_indicators(length)
-
     sig.enumerators = None
     if "values" in s:
         values = s["values"]
@@ -330,9 +475,9 @@ def parse_signal(where, s, default_indicators, message_bits):
             raw = integer("%s.values.%s" % (where, name), raw, 0, top)
             if raw in seen:
                 fail(where + ".values", "raw value %d appears twice" % raw)
-            for kind, rng in (("error", sig.error), ("not available", sig.not_available)):
-                if rng and rng[0] <= raw <= rng[1]:
-                    fail("%s.values.%s" % (where, name), "raw value %d is in the %s range" % (raw, kind))
+            for special, first, last, _ in sig.specials:
+                if first <= raw <= last:
+                    fail("%s.values.%s" % (where, name), "raw value %d is the special value '%s'" % (raw, special))
             seen.add(raw)
             sig.enumerators.append((name, raw))
         low, high = min(seen), max(seen)
@@ -342,8 +487,8 @@ def parse_signal(where, s, default_indicators, message_bits):
         if "max" in s:
             high = min(high, math.floor((number(where + ".max", s["max"]) - sig.offset) / sig.scale))
         if low > high:
-            fail(where, "the valid range is empty (min, max, indicators)")
-        low, high = without_special_values(where, low, high, (sig.error, sig.not_available), sig.signed, length)
+            fail(where, "the valid range is empty (min, max, special values)")
+        low, high = without_special_values(where, low, high, sig.specials, source, length)
     sig.raw_min, sig.raw_max = low, high
     return sig
 
@@ -377,9 +522,18 @@ def parse_pgn(where, m):
     return (page << 16) | 0xFF00 | extension
 
 
-def parse_message(where, m, default_indicators):
+def parse_fill(where, value, length):
+    """One byte for every byte, or the message's bytes: a tuple of `length` bytes."""
+    if isinstance(value, list):
+        if len(value) != length:
+            fail(where, "a list of %d bytes (the message's length), got %d" % (length, len(value)))
+        return tuple(integer(where, b, 0, 255) for b in value)
+    return (integer(where, value, 0, 255),) * length
+
+
+def parse_message(where, m, defaults, profiles, defined):
     check_keys(where, m, ["name"], ["pgn", "proprietary_a", "proprietary_b", "priority", "length", "fill",
-                                    "selector", "signals", "comment"])
+                                    "indicators", "selector", "signals", "comment"])
     msg = Message()
     msg.name = identifier(where + ".name", m["name"])
     if msg.name in MESSAGE_MEMBERS:
@@ -388,7 +542,12 @@ def parse_message(where, m, default_indicators):
     msg.pgn = parse_pgn(where, m)
     msg.priority = integer(where + ".priority", m.get("priority", 6), 0, 7)
     msg.length = integer(where + ".length", m.get("length", 8), 1, MAX_LENGTH)
-    msg.fill = integer(where + ".fill", m.get("fill", 0xFF), 0, 255)
+    msg.fill = parse_fill(where + ".fill", m["fill"] if "fill" in m else defaults["fill"], msg.length)
+    if "indicators" in m:
+        indicators = (profile_name(where + ".indicators", m["indicators"], profiles), "the message")
+    else:
+        indicators = defaults["indicators"]
+    msg.own_indicators = "indicators" in m
     msg.comment = text(where + ".comment", m.get("comment", ""))
     bits = msg.length * 8
     used = {}
@@ -414,7 +573,7 @@ def parse_message(where, m, default_indicators):
     msg.signals = []
     names = {}
     for i, s in enumerate(signals):
-        sig = parse_signal("%s.signals[%d]" % (where, i), s, default_indicators, bits)
+        sig = parse_signal("%s.signals[%d]" % (where, i), s, indicators, profiles, bits)
         if sig.name in MESSAGE_MEMBERS or sig.name in SPEC_MEMBERS or sig.name == msg.name:
             fail(where, "signal name '%s' is used by the generated type" % sig.name)
         claim("signal '%s'" % sig.name, sig.bits)
@@ -430,30 +589,52 @@ def parse_message(where, m, default_indicators):
                 fail(where, "the %s '%s' clashes with the %s of the same name" % (kind, name, names[name]))
             names[name] = kind
         msg.signals.append(sig)
+    if msg.own_indicators:
+        check_profile_used(where, indicators, "message", [sig for sig in msg.signals if sig.inherits], defined)
     return msg
+
+
+def check_profile_used(where, chosen, scope, inheriting, defined):
+    """A profile of the file's own, chosen for a whole file or message, that has a rule for none of
+    the signals that inherit it is most likely a mistake in its `when`: say so instead of leaving
+    them all without special values. (The built-in j1939 leaves the lengths it has no rule for
+    alone: a file of flags only is no mistake.)"""
+    name = chosen[0]
+    if name not in defined or not inheriting or any(sig.inherited_match for sig in inheriting):
+        return
+    kinds = sorted({"%d-bit %s" % (sig.layout[1], "signed" if sig.signed else "unsigned") for sig in inheriting})
+    fail(where, "profile '%s' of the %s has no rule for any of its signals (%s): check its 'when'"
+         % (name, scope, ", ".join(kinds)))
 
 
 def parse(document, where):
     if not isinstance(document, dict):
         fail(where, "expected a mapping with 'namespace' and 'messages'")
-    check_keys(where, document, ["namespace", "messages"], ["indicators"])
+    check_keys(where, document, ["namespace", "messages"], ["indicators", "indicator_profiles", "fill"])
     namespace = text(where + ".namespace", document["namespace"])
     for part in namespace.split("::"):
         identifier(where + ".namespace", part)
-    indicators = document.get("indicators", "j1939")
-    if indicators not in ("j1939", "none"):
-        fail(where + ".indicators", "expected 'j1939' or 'none'")
+    profiles, defined = parse_profiles(where, document)
+    # Without a choice, no special values: the J1939 ones are chosen, never assumed.
+    defaults = {"indicators": (profile_name(where + ".indicators", document.get("indicators", BUILTIN_NONE), profiles),
+                               "the file"),
+                "fill": document.get("fill", 0xFF)}
+    if isinstance(defaults["fill"], list):
+        fail(where + ".fill", "the default fill is one byte (a list of bytes belongs to a message)")
+    integer(where + ".fill", defaults["fill"], 0, 255)
     messages = document["messages"]
     if not isinstance(messages, list):
         fail(where + ".messages", "expected a list")
     result = []
     seen = set()
     for i, m in enumerate(messages):
-        msg = parse_message("%s.messages[%d]" % (where, i), m, indicators)
+        msg = parse_message("%s.messages[%d]" % (where, i), m, defaults, profiles, defined)
         if msg.name in seen:
             fail(where, "message '%s' appears twice" % msg.name)
         seen.add(msg.name)
         result.append(msg)
+    check_profile_used(where, defaults["indicators"], "file",
+                       [sig for msg in result if not msg.own_indicators for sig in msg.signals if sig.inherits], defined)
     check_same_pgn(where, result)
     return namespace, result
 
@@ -512,22 +693,14 @@ def comment_lines(value, indent):
     return lines
 
 
-def layout_initializer(layout, signed=False, scale=Fraction(1), offset=Fraction(0), raw_min=0, raw_max=0,
-                       error=None, not_available=None):
+def layout_initializer(layout, signed=False, scale=Fraction(1), offset=Fraction(0), raw_min=0, raw_max=0):
     start, length, big = layout
     parts = [".start_bit = %d" % start, ".length = %d" % length,
              ".byte_order = %s::ByteOrder::%s" % (CODEC, "BigEndian" if big else "LittleEndian"),
              ".is_signed = %s" % ("true" if signed else "false"),
              ".scale = %s" % cpp_double(scale), ".offset = %s" % cpp_double(offset),
              ".raw_min = %s" % cpp_u64(raw_min), ".raw_max = %s" % cpp_u64(raw_max)]
-    if error:
-        parts.append(".error = {%s, %s}" % (cpp_u64(error[0]), cpp_u64(error[1])))
-    if not_available:
-        parts.append(".not_available = {%s, %s}" % (cpp_u64(not_available[0]), cpp_u64(not_available[1])))
-    # Three lines, the error and "not available" ranges on the last one.
-    head, tail = parts[:3], parts[3:8]
-    rest = parts[8:]
-    lines = [", ".join(head), ", ".join(tail)] + ([", ".join(rest)] if rest else [])
+    lines = [", ".join(parts[:3]), ", ".join(parts[3:])]
     return "{\n" + ",\n".join(" " * 16 + line for line in lines) + "}"
 
 
@@ -551,7 +724,11 @@ def emit_message(msg):
     out.append("    static constexpr %s::Pgn kPgn{0x%Xu};" % (J1939, msg.pgn))
     out.append("    static constexpr %s::Priority kPriority = %d;" % (J1939, msg.priority))
     out.append("    static constexpr ::std::size_t kLength = %d;" % msg.length)
-    out.append("    static constexpr ::std::uint8_t kFill = 0x%02X;" % msg.fill)
+    if len(set(msg.fill)) == 1:
+        out.append("    static constexpr ::std::uint8_t kFill = 0x%02X;" % msg.fill[0])
+    else:
+        out.append("    static constexpr ::std::array<::std::uint8_t, %d> kFillBytes{%s};"
+                   % (msg.length, ", ".join("0x%02X" % b for b in msg.fill)))
     for sig in msg.signals:
         if sig.enumerators:
             out.append("")
@@ -574,12 +751,17 @@ def emit_message(msg):
         out.append("        struct %s" % sig.name)
         out.append("        {")
         out.append("            static constexpr %s::SignalLayout layout%s;" % (
-            CODEC, layout_initializer(sig.layout, sig.signed, sig.scale, sig.offset, sig.raw_min, sig.raw_max,
-                                      sig.error, sig.not_available)))
+            CODEC, layout_initializer(sig.layout, sig.signed, sig.scale, sig.offset, sig.raw_min, sig.raw_max)))
         out.append("            static constexpr ::std::string_view name{%s};" % cpp_string(sig.name))
         out.append("            static constexpr ::std::string_view unit{%s};" % cpp_string(sig.unit))
         if sig.spn is not None:
             out.append("            static constexpr ::std::uint32_t spn = %d;" % sig.spn)
+        if sig.specials:
+            out.append("            static constexpr ::std::array<%s::SpecialValue, %d> special_values{{"
+                       % (CODEC, len(sig.specials)))
+            items = ["{%s, %s, %s, %s}" % (cpp_string(name), cpp_u64(first), cpp_u64(last), cpp_u64(send))
+                     for name, first, last, send in sig.specials]
+            out.append(",\n".join(" " * 16 + item for item in items) + "}};")
         if sig.enumerators:
             out.append("            static constexpr ::std::array<::std::uint64_t, %d> enumerators{%s};" % (
                 len(sig.enumerators), ", ".join(cpp_unsigned(raw) for _, raw in sig.enumerators)))

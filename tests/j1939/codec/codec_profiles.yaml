@@ -1,0 +1,150 @@
+# Proprietary B messages of a made-up vendor, the way a large definition is written: one profile
+# for the special values, chosen once for the whole file, and the exceptions where they are.
+namespace: codec_profiles
+indicators: vendor               # every signal below, unless its message or itself says otherwise
+fill: 0x00                       # the vendor fills unused bits with 0
+indicator_profiles:
+  vendor:
+    - when: {length: 8, signed: false}
+      values: {sensor_error: 0xFE, not_available: 0xFF}
+    - when: {length: 16, signed: false}
+      values:
+        sensor_error: {range: [0xFE00, 0xFEFF], send: 0xFEFF}   # sends the last value
+        not_available: [0xFF00, 0xFFFF]
+    - when: {length: 16, signed: true}
+      values: {sensor_error: -32768, not_available: 0x7FFF}
+  calibration:
+    when: {length: 8, signed: false}
+    values: {calibrating: 0x00, not_available: 0xFF}
+messages:
+  - name: Bulk8
+    comment: 64 one-byte signals, all with the vendor's special values.
+    proprietary_b: 0x40
+    length: 64
+    signals:
+      - {name: s00, start_bit: 0, length: 8, scale: 0.5, unit: "%"}
+      - {name: s01, start_bit: 8, length: 8, scale: 0.5, unit: "%"}
+      - {name: s02, start_bit: 16, length: 8, scale: 0.5, unit: "%"}
+      - {name: s03, start_bit: 24, length: 8, scale: 0.5, unit: "%"}
+      - {name: s04, start_bit: 32, length: 8, scale: 0.5, unit: "%"}
+      - {name: s05, start_bit: 40, length: 8, scale: 0.5, unit: "%"}
+      - {name: s06, start_bit: 48, length: 8, scale: 0.5, unit: "%"}
+      - {name: s07, start_bit: 56, length: 8, scale: 0.5, unit: "%"}
+      - {name: s08, start_bit: 64, length: 8, scale: 0.5, unit: "%"}
+      - {name: s09, start_bit: 72, length: 8, scale: 0.5, unit: "%"}
+      - {name: s10, start_bit: 80, length: 8, scale: 0.5, unit: "%"}
+      - {name: s11, start_bit: 88, length: 8, scale: 0.5, unit: "%"}
+      - {name: s12, start_bit: 96, length: 8, scale: 0.5, unit: "%"}
+      - {name: s13, start_bit: 104, length: 8, scale: 0.5, unit: "%"}
+      - {name: s14, start_bit: 112, length: 8, scale: 0.5, unit: "%"}
+      - {name: s15, start_bit: 120, length: 8, scale: 0.5, unit: "%"}
+      - {name: s16, start_bit: 128, length: 8, scale: 0.5, unit: "%"}
+      - {name: s17, start_bit: 136, length: 8, scale: 0.5, unit: "%"}
+      - {name: s18, start_bit: 144, length: 8, scale: 0.5, unit: "%"}
+      - {name: s19, start_bit: 152, length: 8, scale: 0.5, unit: "%"}
+      - {name: s20, start_bit: 160, length: 8, scale: 0.5, unit: "%"}
+      - {name: s21, start_bit: 168, length: 8, scale: 0.5, unit: "%"}
+      - {name: s22, start_bit: 176, length: 8, scale: 0.5, unit: "%"}
+      - {name: s23, start_bit: 184, length: 8, scale: 0.5, unit: "%"}
+      - {name: s24, start_bit: 192, length: 8, scale: 0.5, unit: "%"}
+      - {name: s25, start_bit: 200, length: 8, scale: 0.5, unit: "%"}
+      - {name: s26, start_bit: 208, length: 8, scale: 0.5, unit: "%"}
+      - {name: s27, start_bit: 216, length: 8, scale: 0.5, unit: "%"}
+      - {name: s28, start_bit: 224, length: 8, scale: 0.5, unit: "%"}
+      - {name: s29, start_bit: 232, length: 8, scale: 0.5, unit: "%"}
+      - {name: s30, start_bit: 240, length: 8, scale: 0.5, unit: "%"}
+      - {name: s31, start_bit: 248, length: 8, scale: 0.5, unit: "%"}
+      - {name: s32, start_bit: 256, length: 8, scale: 0.5, unit: "%"}
+      - {name: s33, start_bit: 264, length: 8, scale: 0.5, unit: "%"}
+      - {name: s34, start_bit: 272, length: 8, scale: 0.5, unit: "%"}
+      - {name: s35, start_bit: 280, length: 8, scale: 0.5, unit: "%"}
+      - {name: s36, start_bit: 288, length: 8, scale: 0.5, unit: "%"}
+      - {name: s37, start_bit: 296, length: 8, scale: 0.5, unit: "%"}
+      - {name: s38, start_bit: 304, length: 8, scale: 0.5, unit: "%"}
+      - {name: s39, start_bit: 312, length: 8, scale: 0.5, unit: "%"}
+      - {name: s40, start_bit: 320, length: 8, scale: 0.5, unit: "%"}
+      - {name: s41, start_bit: 328, length: 8, scale: 0.5, unit: "%"}
+      - {name: s42, start_bit: 336, length: 8, scale: 0.5, unit: "%"}
+      - {name: s43, start_bit: 344, length: 8, scale: 0.5, unit: "%"}
+      - {name: s44, start_bit: 352, length: 8, scale: 0.5, unit: "%"}
+      - {name: s45, start_bit: 360, length: 8, scale: 0.5, unit: "%"}
+      - {name: s46, start_bit: 368, length: 8, scale: 0.5, unit: "%"}
+      - {name: s47, start_bit: 376, length: 8, scale: 0.5, unit: "%"}
+      - {name: s48, start_bit: 384, length: 8, scale: 0.5, unit: "%"}
+      - {name: s49, start_bit: 392, length: 8, scale: 0.5, unit: "%"}
+      - {name: s50, start_bit: 400, length: 8, scale: 0.5, unit: "%"}
+      - {name: s51, start_bit: 408, length: 8, scale: 0.5, unit: "%"}
+      - {name: s52, start_bit: 416, length: 8, scale: 0.5, unit: "%"}
+      - {name: s53, start_bit: 424, length: 8, scale: 0.5, unit: "%"}
+      - {name: s54, start_bit: 432, length: 8, scale: 0.5, unit: "%"}
+      - {name: s55, start_bit: 440, length: 8, scale: 0.5, unit: "%"}
+      - {name: s56, start_bit: 448, length: 8, scale: 0.5, unit: "%"}
+      - {name: s57, start_bit: 456, length: 8, scale: 0.5, unit: "%"}
+      - {name: s58, start_bit: 464, length: 8, scale: 0.5, unit: "%"}
+      - {name: s59, start_bit: 472, length: 8, scale: 0.5, unit: "%"}
+      - {name: s60, start_bit: 480, length: 8, scale: 0.5, unit: "%"}
+      - {name: s61, start_bit: 488, length: 8, scale: 0.5, unit: "%"}
+      - {name: s62, start_bit: 496, length: 8, scale: 0.5, unit: "%"}
+      - {name: s63, start_bit: 504, length: 8, scale: 0.5, unit: "%"}
+  - name: Bulk16
+    comment: 32 two-byte signals, signed and unsigned, and a few exceptions.
+    proprietary_b: 0x41
+    length: 64
+    signals:
+      - {name: w00, start_bit: 0, length: 16, scale: 0.1}
+      - {name: w01, start_bit: 16, length: 16, signed: true, scale: 0.01}
+      - {name: w02, start_bit: 32, length: 16, scale: 0.1}
+      - {name: w03, start_bit: 48, length: 16, signed: true, scale: 0.01}
+      - {name: w04, start_bit: 64, length: 16, scale: 0.1}
+      - {name: w05, start_bit: 80, length: 16, signed: true, scale: 0.01}
+      - {name: w06, start_bit: 96, length: 16, scale: 0.1}
+      - {name: w07, start_bit: 112, length: 16, signed: true, scale: 0.01}
+      - {name: w08, start_bit: 128, length: 16, scale: 0.1}
+      - {name: w09, start_bit: 144, length: 16, signed: true, scale: 0.01}
+      - {name: w10, start_bit: 160, length: 16, scale: 0.1}
+      - {name: w11, start_bit: 176, length: 16, signed: true, scale: 0.01}
+      - {name: w12, start_bit: 192, length: 16, scale: 0.1}
+      - {name: w13, start_bit: 208, length: 16, signed: true, scale: 0.01}
+      - {name: w14, start_bit: 224, length: 16, scale: 0.1}
+      - {name: w15, start_bit: 240, length: 16, signed: true, scale: 0.01}
+      - {name: w16, start_bit: 256, length: 16, scale: 0.1}
+      - {name: w17, start_bit: 272, length: 16, signed: true, scale: 0.01}
+      - {name: w18, start_bit: 288, length: 16, scale: 0.1}
+      - {name: w19, start_bit: 304, length: 16, signed: true, scale: 0.01}
+      - {name: w20, start_bit: 320, length: 16, scale: 0.1}
+      - {name: w21, start_bit: 336, length: 16, signed: true, scale: 0.01}
+      - {name: w22, start_bit: 352, length: 16, scale: 0.1}
+      - {name: w23, start_bit: 368, length: 16, signed: true, scale: 0.01}
+      - {name: w24, start_bit: 384, length: 16, scale: 0.1}
+      - {name: w25, start_bit: 400, length: 16, signed: true, scale: 0.01}
+      - {name: w26, start_bit: 416, length: 16, scale: 0.1}
+      - {name: w27, start_bit: 432, length: 16, signed: true, scale: 0.01}
+      - {name: w28, start_bit: 448, length: 16, scale: 0.1}
+      - {name: w29, start_bit: 464, length: 16, signed: true, scale: 0.01}
+      - {name: w30, start_bit: 480, length: 16, scale: 0.1, indicators: none}
+      - {name: w31, start_bit: 496, length: 16, special_values: {saturated: 0xFFFF}}
+  - name: Calibration
+    comment: The whole message uses another profile; one signal goes back to the vendor's.
+    proprietary_b: 0x42
+    indicators: calibration
+    fill: [0xFF, 0xFF, 0xFF, 0x00]
+    length: 4
+    signals:
+      - {name: gain, start_bit: 0, length: 8}
+      - {name: bias, start_bit: 8, length: 8, indicators: vendor}
+      - {name: flags, start_bit: 16, length: 4}                 # no rule for 4 bits: no special values
+      - {name: mode, start_bit: 20, length: 2, values: {low: 0, high: 2}}
+  - name: Plain
+    comment: No special values at all (a message that opts out of the file's profile).
+    proprietary_b: 0x43
+    indicators: none
+    signals:
+      - {name: counter, start_bit: 0, length: 8}
+      - {name: offset, start_bit: 8, length: 16, signed: true}
+      - {name: wide, start_bit: 24, length: 40}
+  - name: Totals
+    comment: A 64-bit signed signal whose lowest value is special.
+    proprietary_b: 0x44
+    indicators: none
+    signals:
+      - {name: total, start_bit: 0, length: 64, signed: true, special_values: {overflow: -9223372036854775808}}

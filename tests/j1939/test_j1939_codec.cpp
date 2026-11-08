@@ -134,13 +134,10 @@ void check_every_raw_value(const M& base)
         else
         {
             raws = {S::lowest_raw(), S::highest_raw(), S::raw_min, S::raw_max, Raw{0}, Raw{1}};
-            if constexpr (!S::layout.not_available.empty())
+            for (const auto& special : S::specials)
             {
-                raws.push_back(static_cast<Raw>(S::layout.not_available.first));
-            }
-            if constexpr (!S::layout.error.empty())
-            {
-                raws.push_back(static_cast<Raw>(S::layout.error.last));
+                raws.push_back(static_cast<Raw>(special.first));
+                raws.push_back(static_cast<Raw>(special.last));
             }
         }
         const S original = signal;
@@ -403,8 +400,12 @@ TEST_CASE(states_of_the_j1939_indicators)
     };
     CHECK(state_of(0x0000) == SignalState::Valid);
     CHECK(state_of(0xFAFF) == SignalState::Valid);
-    CHECK(state_of(0xFB00) == SignalState::OutOfRange);
-    CHECK(state_of(0xFDFF) == SignalState::OutOfRange);
+    CHECK(state_of(0xFB00) == SignalState::Special);
+    CHECK(s.speed.special() == std::optional<std::string_view>("parameter_specific"));
+    CHECK(state_of(0xFC00) == SignalState::Special);
+    CHECK(s.speed.special() == std::optional<std::string_view>("reserved"));
+    CHECK(state_of(0xFDFF) == SignalState::Special);
+    CHECK(s.speed.raw() == 0xFDFF); // the raw value stays
     CHECK(state_of(0xFE00) == SignalState::Error);
     CHECK(state_of(0xFEFF) == SignalState::Error);
     CHECK(state_of(0xFF00) == SignalState::NotAvailable);
@@ -416,12 +417,12 @@ TEST_CASE(states_of_the_j1939_indicators)
     s.speed.set_not_available();
     CHECK_EQ(s.speed.raw(), std::uint64_t{0xFFFF});
 
-    // 8 bits: valid up to 0xFA; 4 bits: up to 13, 14 error, 15 not available (level also has
-    // max 5); 2 bits: 0 and 1, 2 error, 3 not available; 32 bits.
+    // 8 bits: valid up to 0xFA; level (4 bits): its own special values, 14 error, 15 not
+    // available, and max 5; 2 bits: 0 and 1, 2 error, 3 not available; 32 bits.
     s.temperature.set_raw(0xFA);
     CHECK(s.temperature.state() == SignalState::Valid);
     s.temperature.set_raw(0xFB);
-    CHECK(s.temperature.state() == SignalState::OutOfRange);
+    CHECK(s.temperature.state() == SignalState::Special);
     s.temperature.set_error();
     CHECK_EQ(s.temperature.raw(), std::uint64_t{0xFE});
     s.level.set_raw(11);
@@ -438,7 +439,7 @@ TEST_CASE(states_of_the_j1939_indicators)
     w.distance.set_raw(0xFAFFFFFF);
     CHECK(w.distance.valid());
     w.distance.set_raw(0xFB000000);
-    CHECK(w.distance.state() == SignalState::OutOfRange);
+    CHECK(w.distance.state() == SignalState::Special);
     w.distance.set_error();
     CHECK_EQ(w.distance.raw(), std::uint64_t{0xFE000000});
     w.distance.set_raw(0xFEFFFFFF);
@@ -507,10 +508,12 @@ TEST_CASE(enumerations)
     CHECK_EQ(r.what.raw(), std::uint64_t{3});
     CHECK(r.what.valid());
     r.what.set_raw(2);
-    CHECK(r.what.state() == SignalState::OutOfRange);
+    CHECK(r.what.state() == SignalState::Undefined); // in the range, but no enumerator
     CHECK(!r.what.value().has_value());
     r.what.set_raw(4);
-    CHECK(r.what.state() == SignalState::OutOfRange);
+    CHECK(r.what.state() == SignalState::Undefined); // above the enumerators too
+    r.what.set_raw(0xFE);
+    CHECK(r.what.state() == SignalState::Error);
 }
 
 TEST_CASE(selectors_tell_messages_of_one_pgn_apart)
@@ -526,7 +529,7 @@ TEST_CASE(selectors_tell_messages_of_one_pgn_apart)
     Reset r;
     r.what.set(Reset::What::faults);
     const auto rb = r.bytes();
-    CHECK(rb == (std::array<std::uint8_t, 3>{0x02, 0x01, 0xFF}));
+    CHECK(rb == (std::array<std::uint8_t, 3>{0x02, 0x01, 0xCC})); // the selector, `what`, the fill bytes
     CHECK(Reset::decode(rb).has_value());
     CHECK(!SetPoint::decode(std::array<std::uint8_t, 8>{0x02, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}).has_value());
     // SetPoint's range from min/max: -100 .. 100.

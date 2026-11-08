@@ -1,5 +1,6 @@
 # Messages of the codec tests. All proprietary, with made-up layouts.
 namespace: codec_test
+indicators: j1939          # the J1939 special values for every signal the profile has a rule for
 messages:
   - name: Status
     comment: Every kind of signal in one message.
@@ -21,11 +22,12 @@ messages:
         start_bit: 24
         length: 2
         values: {off: 0, on: 1}
-      - name: level            # 4 bits, not on a byte boundary, limited range
+      - name: level            # 4 bits, not on a byte boundary, limited range, special values of its own
         start_bit: 26
         length: 4
         scale: 0.5
         max: 5
+        special_values: {error: 14, not_available: 15}
       - name: torque           # signed, no indicators
         start_bit: 32
         length: 12
@@ -63,7 +65,7 @@ messages:
       - name: custom           # explicit ranges
         start_bit: 152
         length: 8
-        not_available: [0xF0, 0xFF]
+        not_available: {range: [0xF0, 0xFF], send: 0xFF}
         error: [0xE0, 0xEF]
         min: 10
         max: 200
@@ -84,6 +86,7 @@ messages:
     proprietary_a: {}
     selector: {start_bit: 0, length: 8, value: 2}
     length: 3
+    fill: [0x00, 0x00, 0xCC]     # with the selector: byte 0 is the selector, byte 2 the fill
     signals:
       - name: what
         start_bit: 8

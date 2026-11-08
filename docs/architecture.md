@@ -535,13 +535,13 @@ Vector SIL Kit Network Simulator との差し替え:
 PG の信号を YAML で定義し、ビルドのときに C++ の型を生成します。書式と API は [j1939-codec.md](j1939-codec.md) にあります。
 
 - 責務: 型は信号の値とバイト列の変換だけを持ちます。送受信、周期、宛先、時間は持ちません。`codec.hpp` は `vehicle_sil/j1939/types.hpp`（`Pgn`、`Priority`）だけを include し、`Network` と `Node` を知りません。ノードと部品への接続は `codec_node.hpp` の関数（`attach_sender`、`encoder`、`on_message`、`send`）で、どれもノードの公開 API と `PeriodicSender` の上の薄い関数です。エンジンは型付きメッセージを知りません。
-- 生成: `vehicle_sil_add_j1939_codec()`（`cmake/VehicleSilJ1939Codec.cmake`）がビルドのときに `tools/j1939_codegen/j1939_codegen.py` を呼び、生成物はコミットしません。生成器は Python 3.8 以上と PyYAML を使い、この関数を呼んだときだけ要ります（vehicle-sil の試験と例をビルドするときも要ります）。生成器は定義の誤り（重なり、範囲外、名前、知らないキー、有効範囲の内側の特別な値、同じ PGN の型の区別）を生成の時点で止め、生成したヘッダーは同じ定義から同じ内容になります。生成するのは信号の配置の定数とメンバーだけで、ビット操作はランタイムのテンプレートの 1 か所にあります。
-- 値: 信号は raw のビットを持ち、状態（`Valid`、`OutOfRange`、`Error`、`NotAvailable`）と、`Valid` のときだけの物理値を返します。Not Available や Error の値が数値に暗黙に変わることはありません。物理値と raw 値の変換は `double` の四則演算と `std::round` だけで、乱数や時計を使いません。raw × scale は `double` に丸めてから offset を足します（積を一度格納し、コンパイラーが積和を 1 回の丸めにまとめないようにしています。clang の最適化ビルドでも同じ値になることを試験で確かめています）。
+- 生成: `vehicle_sil_add_j1939_codec()`（`cmake/VehicleSilJ1939Codec.cmake`）がビルドのときに `tools/j1939_codegen/j1939_codegen.py` を呼び、生成物はコミットしません。生成器は Python 3.8 以上と PyYAML を使い、この関数を呼んだときだけ要ります（vehicle-sil の試験と例をビルドするときも要ります）。特別な値のプロファイルの選択と継承（ファイル、メッセージ、信号）は生成器が解決し、信号ごとの特別な値の配列だけを生成します。生成器は定義の誤り（重なり、範囲外、名前、知らないキー、有効範囲の内側の特別な値、規則のないプロファイルの直接の指定、ファイルやメッセージで選んだ自前のプロファイルがどの信号にも合わないこと、同じ PGN の型の区別）を生成の時点で止め、生成したヘッダーは同じ定義から同じ内容になります。生成するのは信号の配置の定数とメンバーだけで、ビット操作はランタイムのテンプレートの 1 か所にあります。
+- 値: 信号は受けた raw のビットをそのまま持ち、状態（`Valid`、`Error`、`NotAvailable`、`Special`、`OutOfRange`、`Undefined`）と、`Valid` のときだけの物理値を返します。特別な値は Codec 全体では予約せず、信号の定義だけで決まります（定義のない信号ではすべてのビットパターンが値）。特別な値が数値に暗黙に変わることはなく、物理値を設定して特別な値になることもありません（有効範囲から外すため）。物理値と raw 値の変換は `double` の四則演算と `std::round` だけで、乱数や時計を使いません。raw × scale は `double` に丸めてから offset を足します（積を一度格納し、コンパイラーが積和を 1 回の丸めにまとめないようにしています。clang の最適化ビルドでも同じ値になることを試験で確かめています）。
 - 境界の検査: CTest の `j1939_codec.independent_of_the_engine` が `codec.hpp` の include を `types.hpp` だけに限り、`j1939_codec.boundary` が `libs/j1939/codec` がエンジンの内部を使わないことを確かめます。
 - 資源: 型は状態を持たない値で、`encode`、`decode`、`codec_node.hpp` のハンドラと `Encoder` は定常状態でメモリを確保しません（試験で確かめています）。`codec::encoder` は送るたびに新しいメッセージをスタックに作ります。
 - 決定論と時間: 型付きメッセージは時間に関わりません。周期と送信の時刻は `PeriodicSender` の規則のとおりです。
 - SAE J1939 の PG と SPN の定義データ（J1939DA）は同梱しません。例と試験は、独自（Proprietary）の PG と架空の配置だけを使います。
-- 確かめていない点: `indicators: j1939` の範囲と、Error を送るときの値（[j1939-codec.md](j1939-codec.md) の末尾）。
+- 確かめていない点: 組み込みの `j1939` プロファイルの値と、規則を設けていない長さ（[j1939-codec.md](j1939-codec.md) の「規格との一致」）。利用者はファイルで `j1939` を定義し直せます。
 
 ### 観測（`Observer`）
 

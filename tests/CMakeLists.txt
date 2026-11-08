@@ -256,10 +256,10 @@ endforeach()
 # Typed messages: the generator (Python, its error checks) and the generated types
 # (codec/codec_test_messages.yaml), alone and on a node.
 vehicle_sil_add_j1939_codec(vehicle_sil_codec_test_messages j1939/codec/codec_test_messages.yaml
-                            j1939/codec/codec_tricky_names.yaml)
+                            j1939/codec/codec_tricky_names.yaml j1939/codec/codec_profiles.yaml)
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_codec_tests
   PREFIX j1939_codec LABELS unit j1939 TIMEOUT 60
-  SOURCES j1939/test_j1939_codec.cpp j1939/test_j1939_codec_node.cpp
+  SOURCES j1939/test_j1939_codec.cpp j1939/test_j1939_codec_node.cpp j1939/test_j1939_codec_profiles.cpp
   LINK vehicle_sil_codec_test_messages vehicle_sil::j1939_monitor vehicle_sil::testkit)
 target_include_directories(vehicle_sil_j1939_codec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/j1939)
 add_test(NAME j1939_codec.generator
@@ -273,6 +273,23 @@ add_test(NAME j1939_codec.boundary
          COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${PROJECT_SOURCE_DIR}/libs/j1939/codec -DSOURCES_ONLY=ON
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
 set_tests_properties(j1939_codec.independent_of_the_engine j1939_codec.boundary PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
+# GCC's -fsanitize=undefined makes some expressions no constant expressions (a pointer compared
+# with nullptr): the codec's compile-time checks must still compile with it. Syntax only, so it
+# needs no libubsan.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set(_codec_includes "$<TARGET_PROPERTY:vehicle_sil_codec_test_messages,INTERFACE_INCLUDE_DIRECTORIES>"
+                      "$<TARGET_PROPERTY:vehicle_sil_j1939_codec,INTERFACE_INCLUDE_DIRECTORIES>"
+                      "$<TARGET_PROPERTY:vehicle_sil_j1939,INTERFACE_INCLUDE_DIRECTORIES>"
+                      "$<TARGET_PROPERTY:vehicle_sil_can,INTERFACE_INCLUDE_DIRECTORIES>"
+                      "${CMAKE_CURRENT_SOURCE_DIR}/unit" "${CMAKE_CURRENT_SOURCE_DIR}/j1939")
+  add_test(NAME j1939_codec.compiles_with_gcc_undefined_behavior_sanitizer
+           COMMAND ${CMAKE_CXX_COMPILER} -std=c++20 -fsyntax-only -fsanitize=undefined -Wall -Wextra -Werror
+                   "-I$<JOIN:${_codec_includes},;-I>"
+                   ${CMAKE_CURRENT_SOURCE_DIR}/j1939/test_j1939_codec.cpp
+                   ${CMAKE_CURRENT_SOURCE_DIR}/j1939/test_j1939_codec_profiles.cpp
+           COMMAND_EXPAND_LISTS)
+  set_tests_properties(j1939_codec.compiles_with_gcc_undefined_behavior_sanitizer PROPERTIES LABELS "unit;j1939" TIMEOUT 120)
+endif()
 # The check itself: a header that includes the engine (with angle brackets) fails.
 add_test(NAME j1939_codec.independent_check_rejects_the_engine
          COMMAND ${CMAKE_COMMAND} -DHEADER=${CMAKE_CURRENT_SOURCE_DIR}/j1939/boundary_fixtures/codec_includes_node/codec.hpp
