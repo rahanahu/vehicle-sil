@@ -145,6 +145,7 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
         CHECK(call(&v1::ControlService::Stub::ListPeers, v1::ListPeersRequest{}, peers).ok());
         for (const auto& p : peers.peers())
         {
+            CHECK(p.has_agent());
             if (p.participant() == "Engine")
             {
                 CHECK(p.schema(0).name() == "engine.level");
@@ -371,4 +372,35 @@ TEST_CASE(control_server_shutdown_ends_waiting_calls)
     CHECK(eventually([&] { return returned.load(); }));
     waiter.join();
     link.stop();
+}
+
+TEST_CASE(control_server_lists_simulation_participants_without_an_agent)
+{
+    // The server, as the controller, sees every participant of the simulation through the SIL Kit
+    // registry, on whatever PC it runs: one without an agent is listed with its SIL Kit state.
+    InProcessRegistry registry;
+    SimulationControllerOptions controlOptions;
+    controlOptions.registry_uri = registry.uri;
+    controlOptions.required_participants = {"Plain"};
+    controlOptions.time_control = TimeControlOptions{.step = 10ms};
+    SimulationController controller(controlOptions);
+    const auto time = control_grpc::time_control_of(controller);
+    control_grpc::ControlServer server({.listen = "127.0.0.1:0", .time = time.get()});
+    ParticipantRuntime plain(vehicle_sil::unit::coordinated_options("Plain", registry.uri, VirtualTimeOptions{10ms}));
+    const auto stub = v1::ControlService::NewStub(
+        grpc::CreateChannel("127.0.0.1:" + std::to_string(server.port()), grpc::InsecureChannelCredentials()));
+    const auto listed = [&](const std::string& state) {
+        grpc::ClientContext context;
+        v1::ListPeersReply peers;
+        return stub->ListPeers(&context, v1::ListPeersRequest{}, &peers).ok() && peers.peers_size() == 1
+               && peers.peers(0).participant() == "Plain" && !peers.peers(0).has_agent()
+               && peers.peers(0).simulation_state() == state;
+    };
+    // Before its lifecycle starts, SIL Kit has no state for it yet; once it runs, it is Running.
+    CHECK(listed(""));
+    plain.set_step_handler([](SimTime, SimDuration) {});
+    vehicle_sil::unit::start_together(controller, {&plain}, 30s);
+    CHECK(eventually([&] { return listed("Running"); }));
+    controller.stop("done");
+    plain.stop("done");
 }

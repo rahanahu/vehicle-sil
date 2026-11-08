@@ -176,9 +176,11 @@ message PingReply {
 message PeerInfo {
   string participant = 1;
   string incarnation = 2;
-  bool connected = 3;
+  bool connected = 3; // its agent is connected
   repeated VariableInfo schema = 4;
   PeerStatus status = 5;
+  bool has_agent = 6;          // an agent has connected for it (else it is known from SIL Kit only)
+  string simulation_state = 7; // its SIL Kit lifecycle state as the server sees it ("" if unknown)
 }
 
 message ListPeersRequest {}

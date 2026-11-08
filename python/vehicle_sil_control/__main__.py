@@ -89,9 +89,10 @@ def main(argv=None) -> int:
         with Control(args.server, token=args.token, root_certificates=roots) as c:
             if args.command == "peers":
                 for peer in c.peers():
-                    state = "connected" if peer.connected else "disconnected"
+                    state = ("connected" if peer.connected else "disconnected") if peer.has_agent else "no agent"
                     failed = f", FAILED: {peer.error}" if peer.failed else ""
-                    print(f"{peer.participant}\t{state}{failed}\t{len(peer.schema)} variables")
+                    sim = f"\tSIL Kit: {peer.simulation_state}" if peer.simulation_state else ""
+                    print(f"{peer.participant}\t{state}{failed}\t{len(peer.schema)} variables{sim}")
             elif args.command == "show":
                 peer = c.peer(args.peer)
                 values = c.values(args.peer)

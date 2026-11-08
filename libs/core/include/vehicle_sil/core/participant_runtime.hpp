@@ -209,6 +209,10 @@ public:
 
     [[nodiscard]] PeerStatus peer_status(const std::string& participant_name) const;
 
+    /// Re-reads the statuses SIL Kit's system monitor knows, so that peer_status() also reports
+    /// one whose notification was missed (see resync_peers()). Must not be called from a SIL Kit
+    /// handler.
+    void refresh_peer_statuses() { resync_peers(); }
     /// Blocks until `predicate(peer_status(name))` holds or the timeout expires.
     /// While waiting it periodically re-reads the statuses SIL Kit knows (see resync_peers()).
     /// Must not be called from a SIL Kit handler.

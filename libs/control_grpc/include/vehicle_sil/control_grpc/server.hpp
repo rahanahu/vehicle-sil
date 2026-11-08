@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil {
@@ -47,6 +48,9 @@ public:
     virtual std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout) = 0;
     /// Asks the simulation to stop; does not wait for it.
     virtual void stop(const std::string& reason) = 0;
+    /// The participants of the simulation and their SIL Kit lifecycle state ("" if not seen yet),
+    /// as the controller sees them through the registry (on any PC, with or without an agent).
+    [[nodiscard]] virtual std::vector<std::pair<std::string, std::string>> participants() const = 0;
 };
 
 /// The time gate of `controller` (SimulationControllerOptions::time_control must be set).

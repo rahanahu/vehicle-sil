@@ -1068,7 +1068,13 @@ Control Server の、通信の方式によらない部分です。接続した A
 `VEHICLE_SIL_BUILD_CONTROL_SERVER`（既定 OFF）のときだけ作ります。gRPC は `find_package(gRPC CONFIG)` で探し、なければ FetchContent で版を固定して取り込みます（[dependencies.md](dependencies.md)）。ほかのライブラリは gRPC に依存しません。
 
 - サービス: クライアント向けの `ControlService`（Peer の一覧、値、書き込み、操作の結果と待ち、購読、Peer を忘れる、時間の操作）と、Agent 向けの `AgentService`（1 接続 1 本の双方向ストリーム。Agent の hello を受け付けると、Server はどのコマンドよりも先に Welcome を返す）。列挙はどれも 0 が UNSPECIFIED で、知らない値は安全側に読みます（変数は書けないものとして、操作の結果は受け取らなかったものとして）。
-- `ControlServer`: Hub に 2 つのサービスを載せ、`TimeControl`（`time_control_of(controller)` で SimulationController の時間ゲートを使う）があれば時間の操作を受けます。なければ時間の操作は `FAILED_PRECONDITION` で、`GetTime` は `available = false` を返します。誤りは gRPC の状態コードで返します（引数の誤りは `INVALID_ARGUMENT`、ない操作や Peer は `NOT_FOUND`、待ちの時間切れは `DEADLINE_EXCEEDED`）。待つ呼び出し（`WaitOperation`、`WaitPaused`）は `max_wait`（既定 60 秒）で打ち切り、クライアントの取り消しと Server の終了でもすぐに終わります。`Stop` は停止を要求するだけで待ちません（複数のクライアントから同時に呼べます）。購読（`Watch`）は、始めにその時点の Peer と最新値（`time` を求めれば時間の状態も）を送ってから `initial_done` を送り、以後は変化を送ります。時間の状態は変わったときだけ送ります。`capacity` は `max_watch_capacity`（既定 65536）までです。接続には keepalive（10 秒ごと、5 秒で応答がなければ切断）を使うので、黙って切れた接続も数十秒以内に見つかります。
+- `ControlServer`: Hub に 2 つのサービスを載せます。
+  - 時間: `TimeControl`（`time_control_of(controller)` で SimulationController の時間ゲートを使う）があれば時間の操作を受けます。なければ時間の操作は `FAILED_PRECONDITION` で、`GetTime` は `available = false` を返します。`Stop` は停止を要求するだけで待ちません（複数のクライアントから同時に呼べます）。
+  - Peer の一覧（`ListPeers`）: つながった Agent に、controller が SIL Kit のレジストリを通して見ているシミュレーションの participant（どの PC でも、Agent がなくても）を合わせたものです。各 Peer に、Agent の有無（`has_agent`）と SIL Kit のライフサイクルの状態（`simulation_state`。まだ見えていなければ空）が付きます。
+  - 誤り: gRPC の状態コードで返します（引数の誤りは `INVALID_ARGUMENT`、ない操作や Peer は `NOT_FOUND`、待ちの時間切れは `DEADLINE_EXCEEDED`）。
+  - 待つ呼び出し（`WaitOperation`、`WaitPaused`）: `max_wait`（既定 60 秒）で打ち切り、クライアントの取り消しと Server の終了でもすぐに終わります。
+  - 購読（`Watch`）: 始めにその時点の Peer と最新値（`time` を求めれば時間の状態も）を送ってから `initial_done` を送り、以後は変化を送ります。時間の状態は変わったときだけ送ります。`capacity` は `max_watch_capacity`（既定 65536）までです。
+  - 接続: keepalive（10 秒ごと、5 秒で応答がなければ切断）を使うので、黙って切れた接続も数十秒以内に見つかります。
 - `AgentClient`: Agent の通信の側を自分のスレッドで動かします。Server へ接続し、Welcome を受けたらつながったとみなします。切れたら指数バックオフ（`reconnect_min` から `reconnect_max`）でつなぎ直し、Server に断られたら（認証、hello の誤り）`reconnect_max` 待ちます（理由は `last_error()`）。シミュレーションは止めません。受けたコマンドを `submit()` し、結果、値（新しい読み出しだけ）、出来事、Peer の状態を `publish_period`（既定 50 ms、壁時計）ごとに送ります。取り出した結果は送る前に「最近の結果」（`max_pending` 件）に入れ、つなぎ直すときは、Agent がまだ持っている操作の番号（`open_seqs`。積んで結果を送り終えていないものと、最近の結果）と、最近の結果を送り直します。Server はすでに確定した結果を無視するので、二重には反映されません。起動ごとの ID（incarnation）は既定で時刻と乱数から作ります。Agent を Peer に `attach()` した後で作ります。終えるときは `Agent::finish()` の後に `stop()` を呼ぶと、残りの結果を送ってから閉じます（送り切れなければ 2 秒で打ち切る）。`tls` を立てて PEM を渡さなければ、システムのルート証明書で TLS を使います。
 - 認証とアクセス制御:
   - TLS: `SecurityOptions` にサーバーの証明書と秘密鍵（PEM）を渡すと TLS で待ち受けます。クライアントと `AgentClient` は、ルート証明書（PEM）を渡して TLS でつなぎます。

@@ -120,6 +120,10 @@ public:
     /// With time_control, the time gate owns the runtime's StepHold: do not call
     /// set_step_hold() or release_step() through it.
     [[nodiscard]] ParticipantRuntime& runtime() noexcept { return *runtime_; }
+    [[nodiscard]] const std::vector<std::string>& required_participants() const noexcept
+    {
+        return options_.required_participants;
+    }
 
     // Time gate (only with SimulationControllerOptions::time_control; otherwise each function
     // throws std::logic_error). The controller holds back the completion of one of its steps;

@@ -6,6 +6,7 @@
 #include "vehicle_sil/core/simulation_controller.hpp"
 
 #include <grpcpp/grpcpp.h>
+#include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -49,6 +50,19 @@ public:
     std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout) override { return c_.wait_until_paused(timeout); }
     // Asks to stop without waiting; thread safe (the controller's own stop() is neither).
     void stop(const std::string& reason) override { c_.runtime().request_stop(reason); }
+
+    std::vector<std::pair<std::string, std::string>> participants() const override
+    {
+        std::vector<std::pair<std::string, std::string>> out;
+        // SIL Kit can miss a status that arrives while the handler is being registered.
+        c_.runtime().refresh_peer_statuses();
+        for (const auto& name : c_.required_participants())
+        {
+            const auto status = c_.runtime().peer_status(name);
+            out.emplace_back(name, status.state ? SilKit::Services::Orchestration::to_string(*status.state) : std::string());
+        }
+        return out;
+    }
 
 private:
     using PeerStatus = vehicle_sil::PeerStatus;
@@ -599,9 +613,47 @@ public:
         {
             return *denied;
         }
+        // The agents that connected, joined with the participants SIL Kit knows (with a time
+        // control: the simulation's participants on every PC, also those without an agent).
+        std::vector<std::pair<std::string, std::string>> simulation;
+        if (options_.time != nullptr)
+        {
+            try
+            {
+                simulation = options_.time->participants();
+            }
+            catch (const std::exception&)
+            {
+            }
+        }
+        const auto state_of = [&](const std::string& name) {
+            for (const auto& [n, state] : simulation)
+            {
+                if (n == name)
+                {
+                    return state;
+                }
+            }
+            return std::string();
+        };
         for (const auto& p : hub_.peers())
         {
-            detail::to_proto(p, *reply->add_peers());
+            auto* out = reply->add_peers();
+            detail::to_proto(p, *out);
+            out->set_has_agent(true);
+            out->set_simulation_state(state_of(p.participant));
+        }
+        for (const auto& [name, state] : simulation)
+        {
+            const auto known = std::any_of(reply->peers().begin(), reply->peers().end(),
+                                           [&](const v1::PeerInfo& p) { return p.participant() == name; });
+            if (!known)
+            {
+                auto* out = reply->add_peers();
+                out->set_participant(name);
+                out->set_has_agent(false);
+                out->set_simulation_state(state);
+            }
         }
         return grpc::Status::OK;
     }

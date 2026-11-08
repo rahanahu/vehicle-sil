@@ -57,6 +57,8 @@ class Peer:
     schema: List[Variable]
     failed: bool = False
     error: str = ""
+    has_agent: bool = True
+    simulation_state: str = ""  # the SIL Kit lifecycle state the server sees ("" if unknown)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -128,7 +130,7 @@ def _variable(v) -> Variable:
 
 def _peer(p) -> Peer:
     return Peer(p.participant, p.incarnation, p.connected, [_variable(v) for v in p.schema], p.status.failed,
-                p.status.error)
+                p.status.error, p.has_agent, p.simulation_state)
 
 
 def _value(v) -> Number:
