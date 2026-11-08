@@ -1,0 +1,12 @@
+# A message of this example (proprietary, with a layout of its own). vehicle_sil_add_j1939_codec()
+# turns it into consumer_messages.hpp.
+namespace: consumer
+messages:
+  - name: EngineTemperature
+    proprietary_b: 0x10
+    signals:
+      - name: coolant
+        start_bit: 0
+        length: 8
+        offset: -40
+        unit: degC

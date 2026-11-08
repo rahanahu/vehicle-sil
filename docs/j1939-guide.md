@@ -22,12 +22,15 @@ vehicle-sil の J1939 スタックで ECU のノードを作り、動かし、�
 j1939::Node& install_engine(j1939::Network& can, EngineModel& engine)
 {
     auto& ecu = can.add_node({.address = 0x00, .name = kEngineName});      // Address Claim はスタックが行う
-    ecu.attach<j1939::PeriodicSender>(kPgnEngineStatus, 20ms,
-                                      [&engine](std::span<std::uint8_t> out) { return encode_status(engine, out); });
-    ecu.on_message(kPgnSpeedRequest, [&engine](const j1939::Message& m) { engine.requested = read_u16(m.data); });
+    codec::attach_sender<EngineStatus>(ecu, 20ms, [&engine](EngineStatus& m) { m.speed.set(engine.rpm); });
+    codec::on_message<SpeedRequest>(ecu, [&engine](const SpeedRequest& m) {
+        if (const auto rpm = m.speed.value()) { engine.requested = static_cast<std::uint16_t>(*rpm); }
+    });
     return ecu;
 }
 ```
+
+`EngineStatus` と `SpeedRequest` は、YAML の定義から生成した型付きメッセージです（[j1939-codec.md](j1939-codec.md)）。信号を値として読み書きし、ビット位置やスケーリングを書きません。バイト列を直接扱うこともできます（下の各節）。
 
 - `NodeOptions::name` を付けると、ノードは最初のステップでアドレスを要求します。NAME を付けないノードは、指定したアドレスをすぐに使います（試験用）。
 - `node.attach<T>(...)` で付けた部品は `Network` が持ち、正しい順序で破棄します。ハンドラが参照するモデルは、`Peer`（や `LocalCan`）より先に宣言します。
@@ -36,10 +39,12 @@ j1939::Node& install_engine(j1939::Network& can, EngineModel& engine)
 ## 受ける
 
 ```cpp
-ecu.on_message(kPgnSpeedRequest, [&](const j1939::Message& m) { engine.requested = read_u16(m.data); });
+codec::on_message<SpeedRequest>(ecu, [&](const SpeedRequest& m) { engine.target_rpm = m.speed.value_or(800.0); });
+ecu.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // バイト列のまま
 ```
 
 - 自分のアドレス宛てとグローバル宛てのメッセージを受けます。9 バイト以上は、トランスポートプロトコルで組み立てたものを 1 回で受けます。
+- `codec::on_message<M>` は、decode できたもの（長さが足り、セレクターが合うもの）だけを渡します。
 - `Message::data` は呼び出しの間だけ有効です。残すときはコピーします。
 - 解除が要る登録は `j1939::Subscription` に持たせます（破棄で解除します）。
 - 最新の値と途絶だけが要るなら、`Monitor` を使います（下）。
@@ -50,12 +55,15 @@ ecu.on_message(kPgnSpeedRequest, [&](const j1939::Message& m) { engine.requested
 - 周期的に送るときは `PeriodicSender` です。
 
 ```cpp
+codec::attach_sender<EngineStatus>(ecu, 20ms, fill);                                   // 送るたびに新しい EngineStatus を fill で埋める
+codec::send(ecu, request, 0x80);                                                        // 型付きメッセージを 1 回
 auto& status = ecu.attach<j1939::PeriodicSender>(kPgnEngineStatus, 20ms, encoder);   // 送るたびに encoder を呼ぶ
 auto& fixed = ecu.attach<j1939::PeriodicSender>(kPgnVersion, 1s, std::span(bytes)); // 決まったバイト列
 fixed.set_data(new_bytes);                                                              // 次の送信から
 status.trigger();                                                                       // 次の機会にすぐ送る
 ```
 
+- `codec::attach_sender` は、定義の優先度と長さで送ります。
 - `Encoder` は部品のバッファ（`max_length` バイト、既定 8）に書き、書いた長さを返します。9 バイト以上（`max_length` を上げる）はトランスポートプロトコルで送ります。
 - ノードが送れるようになるまで（Address Claim の後の 250 ms の待ちの間も）送らず、送れるようになったときに 1 回送ってから周期を数えます。アドレスを失えば止まり、取り直せば再開します。
 - `trigger()` をアプリの処理（`every` など）から呼ぶと、送るのは次のステップです。そのステップで送りたいときは `node.send()` を使います。
@@ -98,7 +106,7 @@ auto& eec = cab.attach<j1939::Monitor>(kPgnEngineStatus,
     j1939::MonitorOptions{.name = kEngineName, .timeout = 100ms,
                           .on_state = [&](const j1939::MonitorChange& c) { dash.silent = c.state == j1939::MonitorState::Lost; }});
 ...
-if (eec.state() == j1939::MonitorState::Receiving) { use(eec.data()); }
+if (const auto status = EngineStatus::decode(eec.data())) { use(status->speed.value()); }   // まだ受けていなければ空
 ```
 
 - 送信元を NAME で指定すると、相手のアドレスが変わっても追います。
@@ -188,6 +196,6 @@ CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 - 故障注入（フレームの欠落、遅延、通信断）は仮想バスの端点で行います（`testkit::faults`、`add_outage`）。
 - `Monitor` は通信の途絶を、`J1939Events` は送信の要求、フレームの送出、転送の終わり、アドレスの変化を、`FrameLog` はバス上のフレームを見せます。
 
-## データの形（Codec）について
+## データの形（Codec）
 
-部品はバイト列だけを扱います。`PeriodicSender` の `Encoder` は「バッファに書いて長さを返す」関数、受信は `Message::data` の `std::span` です。PG の値の型と変換（Codec）は、この 2 つの形（`encode(std::span<std::uint8_t>) -> std::size_t` と、`std::span<const std::uint8_t>` からの読み出し）に合わせると、そのまま部品に渡せます。
+部品とエンジンはバイト列だけを扱います（`PeriodicSender` の `Encoder` は「バッファに書いて長さを返す」関数、受信は `Message::data` の `std::span`）。信号の配置とスケーリングは、YAML から生成した型付きメッセージ（[j1939-codec.md](j1939-codec.md)）が受け持ち、`codec_node.hpp` の関数が両者をつなぎます。独自プロトコルの部品も、メッセージの形を同じ YAML で定義できます（Proprietary A のように 1 つの PGN に複数のメッセージを載せるときは `selector`）。

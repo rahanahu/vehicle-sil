@@ -21,3 +21,7 @@ add_subdirectory(parts/periodic_sender)
 add_subdirectory(parts/requester)
 add_subdirectory(parts/monitor)
 add_subdirectory(parts/address_commander)
+
+# Typed messages (header only, on the engine's value types; codec_node.hpp adapts them to Node
+# and PeriodicSender).
+add_subdirectory(codec)

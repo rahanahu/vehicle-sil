@@ -13,13 +13,14 @@ vehicle-sil/
 ├── libs/can/         vehicle_sil::can    バックエンドに依存しない CAN の基盤（フレーム、ポート、ホスト、ステップドライバー、仮想バス。SIL Kit に依存しない。開発中）
 ├── libs/can_silkit/  vehicle_sil::can_silkit  vehicle_sil::can のポートの SIL Kit 実装（仮想時間と実時間。開発中）
 ├── libs/can_netsim/  vehicle_sil::can_netsim  簡易 CAN Network Simulator（SIL Kit の Network Simulator API。開発中）
-├── libs/j1939/       vehicle_sil::j1939  J1939 スタック（vehicle_sil::can の上。SIL Kit に依存しない）と、そのプロトコル部品（parts/。開発中）
+├── libs/j1939/       vehicle_sil::j1939  J1939 スタック（vehicle_sil::can の上。SIL Kit に依存しない）と、そのプロトコル部品（parts/）、型付きメッセージ（codec/。開発中）
 ├── libs/testkit/     vehicle_sil::testkit  仮想バスの上の J1939 の試験の組み立て、記録、故障注入（SIL Kit に依存しない。開発中、内部向け）
 ├── libs/peer/        vehicle_sil::peer   1 つの participant と、その J1939 と LIN のノードの組み立てと実行（開発中、内部向け）
 ├── bridges/vector-xl/ Vector XL CAN Bridge（転送のコアは移植可能、XL バックエンドと実行ファイルは Windows 専用）
 ├── tools/common/     実行ファイル共通のコマンドライン解析、終了コード、ログ出力（内部用、ヘッダーのみ）
 ├── tools/sim_controller/ 仮想時間のシミュレーションを開始・停止する system controller（vehicle_sil_sim_controller）
 ├── tools/can_bus_simulator/ 簡易 CAN Network Simulator の実行ファイル（vehicle_sil_can_bus_simulator）
+├── tools/j1939_codegen/ YAML の定義から J1939 の型付きメッセージ（C++ のヘッダー）を作る生成器（Python。ビルドのときに vehicle_sil_add_j1939_codec() が呼ぶ）
 ├── examples/j1939/   部品で作った 2 つの ECU（ecu_pair。試験も同じコードを使う）と、最小ピア（実時間の Peer で送る sender と、SIL Kit の CAN で直接受けて照合する receiver）
 ├── examples/virtual_time/ 仮想時間のピア（Peer の上の物理モデル、tick() 型の既存 ECU を載せた J1939 ECU、LIN Master と Slave）
 ├── examples/lin/     LIN クラスタのピア（Master と、役割の違う Slave。フレームの送受信と Sleep/Wakeup）
@@ -43,6 +44,7 @@ vehicle-sil/
 | `vehicle_sil::j1939`（開発中） | `vehicle_sil::can` | `vehicle_sil::j1939::Network`、`Node`、`Pgn`、`Identifier`、`Observer`、道具箱（「J1939」） |
 | `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics`（開発中） | `vehicle_sil::j1939`（`j1939_diagnostics` は `j1939_broadcast_suppression` にも依存） | プロトコル部品の `BroadcastSuppression`（DM13）、`Diagnostics`、`Identification`（「プロトコル部品」） |
 | `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`（開発中） | `vehicle_sil::j1939`（`j1939_periodic_sender` は `j1939_broadcast_suppression` にも依存） | ECU アプリ向けのプロトコル部品 `PeriodicSender`、`Requester`、`Monitor`、`AddressCommander`（「プロトコル部品」、[j1939-guide.md](j1939-guide.md)） |
+| `vehicle_sil::j1939_codec`（開発中、ヘッダーのみ） | `vehicle_sil::j1939`、`vehicle_sil::j1939_periodic_sender` | 型付きメッセージのランタイム（`codec.hpp`。エンジンの値の型だけを使う）と、ノードと `PeriodicSender` への接続（`codec_node.hpp`）。型は `vehicle_sil_add_j1939_codec()` が YAML から生成する（「型付きメッセージ」、[j1939-codec.md](j1939-codec.md)） |
 | `vehicle_sil::testkit`（開発中、内部向け） | `vehicle_sil::can`、`vehicle_sil::j1939` | `vehicle_sil::testkit::LocalCan`、`J1939Events`、`FrameLog`、`faults`（「実行と試験の基盤」） |
 | `vehicle_sil::peer`（開発中、内部向け） | `vehicle_sil::core`、`vehicle_sil::can_silkit`、`vehicle_sil::j1939`、`vehicle_sil::lin` | `vehicle_sil::Peer`、`start_together()`（「実行と試験の基盤」） |
 | `vehicle_sil_sim_controller`（実行ファイル） | `vehicle_sil::core` | system controller の CLI |
@@ -318,6 +320,7 @@ Vector SIL Kit Network Simulator との差し替え:
 - 部品は、ノードの公開 API と道具箱だけで作ります。スレッドやイベントループを持たず、ステップの中だけで動きます。エンジンの内部を操作するためだけの公開 API は足しません。同じ機能をエンジンと部品の両方に作りません。
 - 境界をまたぐ機能は、通信の整合を保証する部分をエンジンに、プロトコルの手順を部品に分けます（例: Request の配送はエンジン、Request の発行と応答待ちと時間切れは部品。Commanded Address の送信は部品、受信したときのアドレスの変更とトランスポートプロトコルのセッションとの整合はエンジン）。
 - 部品は `on_any_request` を使いません（応答者のない PGN への既定の NACK を奪うため）。1 つの PGN の応答者は 1 つです（同じ PGN に複数あると、先に登録したものだけが呼ばれます）。
+- PG と SPN の定義（信号の配置、スケーリング、特別な値）は、エンジンにも部品にも入れません。型付きメッセージ（`vehicle_sil::j1939_codec`）がバイト列との変換だけを受け持ち、エンジンと部品はバイト列を扱います。
 - DM13 による放送の停止は、エンジンでは行いません。エンジンはどの送信が「放送」かを区別できないためです。抑制の状態は部品（`BroadcastSuppression`）がノードに 1 つ持ち、自分で周期的に放送する部品（DM1 など）がそれを読みます。アプリが `Node::send()` で直接送るメッセージは抑制されません。
 
 ### 値の型
@@ -527,6 +530,19 @@ Vector SIL Kit Network Simulator との差し替え:
 - DM3/DM11 で後から返す ACK の期限（アプリが `complete_clear()` を呼ばなければ答えません）、DM22 の否定の理由のうち使っていないもの、グローバル宛ての DM22 を無視すること。
 - DM2 のランプのバイトを以前に有効な DTC から作ること、発生回数の上限、識別情報が未設定のときの答え（ソフトウェア ID の 0xFF、空のフィールド）。
 
+### 型付きメッセージ（`vehicle_sil::j1939_codec`）
+
+PG の信号を YAML で定義し、ビルドのときに C++ の型を生成します。書式と API は [j1939-codec.md](j1939-codec.md) にあります。
+
+- 責務: 型は信号の値とバイト列の変換だけを持ちます。送受信、周期、宛先、時間は持ちません。`codec.hpp` は `vehicle_sil/j1939/types.hpp`（`Pgn`、`Priority`）だけを include し、`Network` と `Node` を知りません。ノードと部品への接続は `codec_node.hpp` の関数（`attach_sender`、`encoder`、`on_message`、`send`）で、どれもノードの公開 API と `PeriodicSender` の上の薄い関数です。エンジンは型付きメッセージを知りません。
+- 生成: `vehicle_sil_add_j1939_codec()`（`cmake/VehicleSilJ1939Codec.cmake`）がビルドのときに `tools/j1939_codegen/j1939_codegen.py` を呼び、生成物はコミットしません。生成器は Python 3.8 以上と PyYAML を使い、この関数を呼んだときだけ要ります（vehicle-sil の試験と例をビルドするときも要ります）。生成器は定義の誤り（重なり、範囲外、名前、知らないキー、有効範囲の内側の特別な値、同じ PGN の型の区別）を生成の時点で止め、生成したヘッダーは同じ定義から同じ内容になります。生成するのは信号の配置の定数とメンバーだけで、ビット操作はランタイムのテンプレートの 1 か所にあります。
+- 値: 信号は raw のビットを持ち、状態（`Valid`、`OutOfRange`、`Error`、`NotAvailable`）と、`Valid` のときだけの物理値を返します。Not Available や Error の値が数値に暗黙に変わることはありません。物理値と raw 値の変換は `double` の四則演算と `std::round` だけで、乱数や時計を使いません。raw × scale は `double` に丸めてから offset を足します（積を一度格納し、コンパイラーが積和を 1 回の丸めにまとめないようにしています。clang の最適化ビルドでも同じ値になることを試験で確かめています）。
+- 境界の検査: CTest の `j1939_codec.independent_of_the_engine` が `codec.hpp` の include を `types.hpp` だけに限り、`j1939_codec.boundary` が `libs/j1939/codec` がエンジンの内部を使わないことを確かめます。
+- 資源: 型は状態を持たない値で、`encode`、`decode`、`codec_node.hpp` のハンドラと `Encoder` は定常状態でメモリを確保しません（試験で確かめています）。`codec::encoder` は送るたびに新しいメッセージをスタックに作ります。
+- 決定論と時間: 型付きメッセージは時間に関わりません。周期と送信の時刻は `PeriodicSender` の規則のとおりです。
+- SAE J1939 の PG と SPN の定義データ（J1939DA）は同梱しません。例と試験は、独自（Proprietary）の PG と架空の配置だけを使います。
+- 確かめていない点: `indicators: j1939` の範囲と、Error を送るときの値（[j1939-codec.md](j1939-codec.md) の末尾）。
+
 ### 観測（`Observer`）
 
 `Network::set_observer(&observer)` で、ネットワークの出来事を読み取り専用で受け取ります（ヘッダー `vehicle_sil/j1939/observer.hpp`）。試験と記録のための口で、通信には加わりません。
@@ -553,7 +569,7 @@ Vector SIL Kit Network Simulator との差し替え:
 
 - ステップ幅が 50 ms を超えると警告（`NetworkOptions::warning`、既定は標準エラー出力）、200 ms を超えると `start()` が `std::invalid_argument` を投げ、ホストが失敗状態になります（Request への応答とパケット間隔の 200 ms を守れないため）。推奨は 10 ms 以下です。`RealTimeDriver` で回すときは、その `max_idle` で同じ検査をします。
 - 実時間では、タイマーの期限（`next_deadline()`）にドライバーが起きます。CTS で求められたパケットは CTS を受けたステップで出ますが、ポートの `QueueFull` で残したフレームと 1 ステップの上限で繰り越したフレームは、`max_idle` の後のステップで出ます。
-- バッファはすべて生成時に確保します（`NetworkOptions`: 1 ステップの受信数、ノード数、データキュー、1 ステップの送信数、タイマー数、ノードごとの保留領域、トランスポートプロトコルのセッション（各 1785 バイトのバッファとタイマー 1 つ。タイマーは `timer_capacity` とは別に確保）と応答待ち行列）。`timer_capacity` は予約制です。NAME を持つノードの追加が 2 つ（Claim 後の待ちと Cannot Claim）、`Timer` の生成が 1 つを予約し、足りなければ `add_node()` が `std::invalid_argument`、`Timer` の生成が `std::length_error` を投げます。予約があるので、タイマーの開始が枠不足で失敗することはありません。フレームの受信と配送、Request への応答、送信（ポートの `QueueFull` と `Failed`、送信数の上限による繰り越しを含む）、ローカル折り返し、タイマー、Address Claim（任意アドレスの選択、アドレス表、アドレス違反、Commanded Address、状態の通知を含む）、トランスポートプロトコル（再送の要求、タイムアウト、Abort、応答待ち行列を含む）では、メモリを確保しません（テストで `operator new` を数えて確かめています）。道具箱と部品（`Timer` の開始と取り消し、DM1 の周期送信と BAM、DM13、DM1/DM2/識別情報の応答、DM22、後で返す ACK、`PeriodicSender`、`Requester` の応答と時間切れと送り直し、`Monitor`、`AddressCommander`）と `Observer` への通知も、定常状態ではメモリを確保しません。メモリを確保するのは、ノードの追加、ハンドラと応答者の登録と解除、部品の生成、識別情報の設定のときと、`Requester::request()` と `AddressCommander::command()` がコールバックをコピーするとき（大きなキャプチャ）だけです。
+- バッファはすべて生成時に確保します（`NetworkOptions`: 1 ステップの受信数、ノード数、データキュー、1 ステップの送信数、タイマー数、ノードごとの保留領域、トランスポートプロトコルのセッション（各 1785 バイトのバッファとタイマー 1 つ。タイマーは `timer_capacity` とは別に確保）と応答待ち行列）。`timer_capacity` は予約制です。NAME を持つノードの追加が 2 つ（Claim 後の待ちと Cannot Claim）、`Timer` の生成が 1 つを予約し、足りなければ `add_node()` が `std::invalid_argument`、`Timer` の生成が `std::length_error` を投げます。予約があるので、タイマーの開始が枠不足で失敗することはありません。フレームの受信と配送、Request への応答、送信（ポートの `QueueFull` と `Failed`、送信数の上限による繰り越しを含む）、ローカル折り返し、タイマー、Address Claim（任意アドレスの選択、アドレス表、アドレス違反、Commanded Address、状態の通知を含む）、トランスポートプロトコル（再送の要求、タイムアウト、Abort、応答待ち行列を含む）では、メモリを確保しません（テストで `operator new` を数えて確かめています）。道具箱と部品（`Timer` の開始と取り消し、DM1 の周期送信と BAM、DM13、DM1/DM2/識別情報の応答、DM22、後で返す ACK、`PeriodicSender`、`Requester` の応答と時間切れと送り直し、`Monitor`、`AddressCommander`）と `Observer` への通知と、型付きメッセージの送受信（`codec::attach_sender`、`codec::on_message`）も、定常状態ではメモリを確保しません。メモリを確保するのは、ノードの追加、ハンドラと応答者の登録と解除、部品の生成、識別情報の設定のときと、`Requester::request()` と `AddressCommander::command()` がコールバックをコピーするとき（大きなキャプチャ）だけです。
 - 上限に達したとき: 受信はそのステップの残りを捨てて数え、データキューは `send()` が `QueueFull` を返し、制御キュー（受信の上限、ノード数、保留領域の大きさ、セッション数、応答待ち行列の大きさから決めた容量。通常は満杯にならない）はあふれた分を捨てて数え、ノード数は `add_node()` が `std::length_error` を投げます。トランスポートプロトコルの上限は上の節のとおりです。
 - 失敗: ハンドラ、応答者、タイマー、ポートからの例外と、使い方の誤り（その `Network` のハンドラ、応答者、タイマーからの `start`/`begin`/`receive`/`process`/`flush`/`add_node`、時刻が増えない、段階の順序の誤り）で、`Network` は失敗状態になります。以後のステップの呼び出しはすべて `std::logic_error` です。ハンドラが例外を握りつぶしても失敗状態のままです。
 

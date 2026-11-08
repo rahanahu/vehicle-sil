@@ -1,0 +1,22 @@
+# Names that clash with what generated code uses (std, vehicle_sil, parameter and type names):
+# the generated header must still compile, without warnings.
+namespace: codec_names::vehicle_sil::std
+messages:
+  - name: std
+    proprietary_b: 0x20
+    signals:
+      - {name: f, start_bit: 0, length: 8}
+      - {name: out, start_bit: 8, length: 8}
+      - {name: data, start_bit: 16, length: 8}
+      - {name: size_t, start_bit: 24, length: 8}
+      - {name: uint8_t, start_bit: 32, length: 2, values: {span: 0, optional: 1}}
+      - {name: vehicle_sil, start_bit: 40, length: 8}
+      - {name: value, start_bit: 48, length: 8}
+      - {name: Signal, start_bit: 56, length: 8}
+  - name: Pgn
+    proprietary_b: 0x21
+    signals:
+      - name: array
+        start_bit: 0
+        length: 64
+        values: {big: 0xF000000000000000, small: 1}

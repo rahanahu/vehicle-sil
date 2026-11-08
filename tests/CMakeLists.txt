@@ -60,12 +60,18 @@ vehicle_sil_add_harness_tests(vehicle_sil_testkit_tests
   LINK vehicle_sil::testkit)
 
 # The ECU application API as its users write it (examples/j1939/ecu_pair and parts of one's own)
-# on the local virtual bus.
+# on the local virtual bus. The example's typed messages come from its YAML (generated here too
+# when the examples are not built).
+if(NOT TARGET vehicle_sil_ecu_pair_messages)
+  vehicle_sil_add_j1939_codec(vehicle_sil_ecu_pair_messages
+                              ${PROJECT_SOURCE_DIR}/examples/j1939/ecu_pair/ecu_pair_messages.yaml)
+endif()
 vehicle_sil_add_harness_tests(vehicle_sil_ecu_api_tests
   PREFIX ecu_api LABELS unit testkit j1939 TIMEOUT 60
   SOURCES testkit/test_ecu_personas.cpp
-  LINK vehicle_sil::testkit vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender
-       vehicle_sil::j1939_requester vehicle_sil::j1939_monitor vehicle_sil::j1939_address_commander)
+  LINK vehicle_sil::testkit vehicle_sil_ecu_pair_messages vehicle_sil::j1939_diagnostics
+       vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester vehicle_sil::j1939_monitor
+       vehicle_sil::j1939_address_commander)
 target_include_directories(vehicle_sil_ecu_api_tests PRIVATE ${PROJECT_SOURCE_DIR}/examples/j1939/ecu_pair)
 
 # The SIL Kit port of vehicle_sil::can: against a fake controller, and on real participants
@@ -81,8 +87,8 @@ target_include_directories(vehicle_sil_can_silkit_tests PRIVATE ${CMAKE_CURRENT_
 vehicle_sil_add_harness_tests(vehicle_sil_peer_tests
   PREFIX peer LABELS unit peer j1939 TIMEOUT 180
   SOURCES peer/test_peer.cpp
-  LINK vehicle_sil::peer vehicle_sil::testkit vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender
-       vehicle_sil::j1939_requester vehicle_sil::j1939_monitor)
+  LINK vehicle_sil::peer vehicle_sil::testkit vehicle_sil_ecu_pair_messages vehicle_sil::j1939_diagnostics
+       vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester vehicle_sil::j1939_monitor)
 target_include_directories(vehicle_sil_peer_tests PRIVATE ${PROJECT_SOURCE_DIR}/examples/j1939/ecu_pair)
 
 # The simple CAN network simulator (vehicle_sil::can_netsim) on real participants (in-process
@@ -247,12 +253,39 @@ foreach(dir IN ITEMS testkit peer)
   set_tests_properties(${dir}.boundary PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
 endforeach()
 
+# Typed messages: the generator (Python, its error checks) and the generated types
+# (codec/codec_test_messages.yaml), alone and on a node.
+vehicle_sil_add_j1939_codec(vehicle_sil_codec_test_messages j1939/codec/codec_test_messages.yaml
+                            j1939/codec/codec_tricky_names.yaml)
+vehicle_sil_add_harness_tests(vehicle_sil_j1939_codec_tests
+  PREFIX j1939_codec LABELS unit j1939 TIMEOUT 60
+  SOURCES j1939/test_j1939_codec.cpp j1939/test_j1939_codec_node.cpp
+  LINK vehicle_sil_codec_test_messages vehicle_sil::j1939_monitor vehicle_sil::testkit)
+target_include_directories(vehicle_sil_j1939_codec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/j1939)
+add_test(NAME j1939_codec.generator
+         COMMAND ${VEHICLE_SIL_J1939_CODEGEN_PYTHON} -B ${PROJECT_SOURCE_DIR}/tools/j1939_codegen/test_j1939_codegen.py)
+set_tests_properties(j1939_codec.generator PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
+# codec.hpp knows the engine's value types only; codec_node.hpp uses the public API only.
+add_test(NAME j1939_codec.independent_of_the_engine
+         COMMAND ${CMAKE_COMMAND} -DHEADER=${PROJECT_SOURCE_DIR}/libs/j1939/codec/include/vehicle_sil/j1939/codec.hpp
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Codec.cmake)
+add_test(NAME j1939_codec.boundary
+         COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${PROJECT_SOURCE_DIR}/libs/j1939/codec -DSOURCES_ONLY=ON
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
+set_tests_properties(j1939_codec.independent_of_the_engine j1939_codec.boundary PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
+# The check itself: a header that includes the engine (with angle brackets) fails.
+add_test(NAME j1939_codec.independent_check_rejects_the_engine
+         COMMAND ${CMAKE_COMMAND} -DHEADER=${CMAKE_CURRENT_SOURCE_DIR}/j1939/boundary_fixtures/codec_includes_node/codec.hpp
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Codec.cmake)
+set_tests_properties(j1939_codec.independent_check_rejects_the_engine PROPERTIES LABELS "unit;j1939" TIMEOUT 60
+                     PASS_REGULAR_EXPRESSION "found: vehicle_sil/j1939/network.hpp")
+
 # Replaces the global operator new to count allocations in steady-state steps: its own binary.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_allocation_tests
   PREFIX j1939 LABELS unit j1939 TIMEOUT 60
   SOURCES j1939/test_j1939_allocation.cpp
   LINK vehicle_sil::j1939 vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester
-       vehicle_sil::j1939_monitor vehicle_sil::j1939_address_commander)
+       vehicle_sil::j1939_monitor vehicle_sil::j1939_address_commander vehicle_sil_codec_test_messages)
 target_include_directories(vehicle_sil_j1939_allocation_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/j1939)
 
 # The J1939 stack on SIL Kit participants (in-process registry): same traces as on the

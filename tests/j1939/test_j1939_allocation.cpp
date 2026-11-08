@@ -4,12 +4,14 @@
 // answering requests, sending, local loopback and timers. This executable replaces the global
 // operator new to count the calls (with ThreadSanitizer, whose runtime defines operator new,
 // it counts through the sanitizer's allocator hooks instead), so it is built on its own.
+#include "codec_test_messages.hpp"
 #include "j1939_bench.hpp"
 #include "network_test_access.hpp"
 #include "test_harness.hpp"
 
 #include "vehicle_sil/can/step_driver.hpp"
 #include "vehicle_sil/j1939/broadcast_suppression.hpp"
+#include "vehicle_sil/j1939/codec_node.hpp"
 #include "vehicle_sil/j1939/diagnostics.hpp"
 #include "vehicle_sil/j1939/address_commander.hpp"
 #include "vehicle_sil/j1939/identification.hpp"
@@ -782,4 +784,64 @@ TEST_CASE(ecu_application_parts_do_not_allocate_in_steady_state)
     CHECK(commanded > 10u);
     CHECK(!bench.network.failed());
     CHECK(bench.network.statistics().transport_messages_sent > 50u);
+}
+
+// Typed messages (codec_node.hpp) in steady state: typed periodic senders (a single frame and a
+// BAM) and typed handlers, with messages of another selector and short ones.
+TEST_CASE(typed_messages_do_not_allocate_in_steady_state)
+{
+    namespace codec = vehicle_sil::j1939::codec;
+    using codec_test::Reset;
+    using codec_test::SetPoint;
+    using codec_test::Status;
+    using codec_test::Wide;
+    Bench bench({}, std::chrono::milliseconds(10));
+    Node& us = bench.add_node(0x20);
+    double speed = 0;
+    codec::attach_sender<Status>(us, std::chrono::milliseconds(7), [&](Status& s) {
+        s.speed.set(speed);
+        speed += 0.125;
+    });
+    codec::attach_sender<Wide>(us, std::chrono::milliseconds(200), [](Wide& w) { w.total.set_raw(7); });
+    std::size_t set_points = 0;
+    std::size_t resets = 0;
+    codec::on_message<SetPoint>(us, [&](const SetPoint& p) { set_points += p.target.valid() ? 1 : 0; });
+    codec::on_message<Reset>(us, [&](const Reset&, const vehicle_sil::j1939::Message&) { ++resets; });
+    SetPoint p;
+    p.target.set(1.5);
+    const auto pb = p.bytes();
+    const Bytes set_point(pb.begin(), pb.end());
+    int step = 0;
+    const auto drive = [&] {
+        const SimTime t = bench.next_time();
+        ++step;
+        bench.inject(t, frame(6, 0xEF00, 0x30, 0x20, set_point));
+        if (step % 3 == 0)
+        {
+            bench.inject(t, frame(6, 0xEF00, 0x30, 0x20, {0x02, 0x01, 0xFF}));
+            bench.inject(t, frame(6, 0xEF00, 0x30, 0x20, {0x01}));
+        }
+    };
+    for (int i = 0; i < 100; ++i)
+    {
+        drive();
+        bench.step();
+        static_cast<void>(bench.take_sent());
+    }
+    std::size_t counted = 0;
+    for (int i = 0; i < 1000; ++i)
+    {
+        drive();
+        g_allocations.store(0);
+        g_counting.store(true);
+        bench.step();
+        g_counting.store(false);
+        counted += g_allocations.load();
+        static_cast<void>(bench.take_sent());
+    }
+    CHECK_EQ(counted, 0u);
+    CHECK_EQ(set_points, 1099u); // one per step; the last one arrives in the next step
+    CHECK(resets > 300u);
+    CHECK(!bench.network.failed());
+    CHECK(bench.network.statistics().transport_messages_sent > 40u);
 }

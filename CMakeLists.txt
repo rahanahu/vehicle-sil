@@ -34,6 +34,8 @@ elseif(NOT "${VEHICLE_SIL_SANITIZERS}" STREQUAL "")
 endif()
 
 include(VehicleSilDependencies)
+# vehicle_sil_add_j1939_codec(): typed J1939 messages generated from YAML.
+include(VehicleSilJ1939Codec)
 
 # Libraries:
 #   vehicle_sil::core       SIL Kit participant and lifecycle management (protocol independent)
@@ -43,6 +45,8 @@ include(VehicleSilDependencies)
 #   vehicle_sil::can_netsim the simple CAN network simulator (SIL Kit)
 #   vehicle_sil::j1939      J1939 stack on vehicle_sil::can (no SIL Kit); its protocol parts are
 #                           vehicle_sil::j1939_broadcast_suppression and vehicle_sil::j1939_diagnostics
+#   vehicle_sil::j1939_codec typed J1939 messages (header only; the types are generated from YAML by
+#                           vehicle_sil_add_j1939_codec())
 #   vehicle_sil::lin        LIN schedule and slave responses on SIL Kit LIN (links vehicle_sil::core)
 #   vehicle_sil::testkit    J1939 networks on a local virtual bus, recorders, fault injection (internal)
 #   vehicle_sil::peer       one SIL Kit participant with its J1939 networks and LIN nodes (internal)

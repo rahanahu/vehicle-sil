@@ -2,10 +2,12 @@
 //
 // Smoke test for a FetchContent consumer: starts an in-process SIL Kit registry and runs one
 // vehicle_sil::Peer on virtual time with two J1939 nodes on one network. The engine claims its
-// address and broadcasts a message; the other node receives it.
+// address and broadcasts a typed message (consumer_messages.yaml); the other node receives it.
+#include "consumer_messages.hpp"
+
+#include <vehicle_sil/j1939/codec_node.hpp>
 #include <vehicle_sil/j1939/monitor.hpp>
 #include <vehicle_sil/j1939/network.hpp>
-#include <vehicle_sil/j1939/periodic_sender.hpp>
 #include <vehicle_sil/peer/peer.hpp>
 
 #include <silkit/vendor/CreateSilKitRegistry.hpp>
@@ -14,7 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <exception>
-#include <span>
+#include <optional>
 #include <string>
 
 int main()
@@ -27,7 +29,7 @@ int main()
         const std::string uri = registry->StartListening("silkit://127.0.0.1:0");
         std::printf("registry listening on %s\n", uri.c_str());
 
-        constexpr j1939::Pgn kPgn{0xFF10};
+        using consumer::EngineTemperature;
         vehicle_sil::PeerOptions options;
         options.participant = "FetchContentConsumer";
         options.registry_uri = uri;
@@ -37,13 +39,16 @@ int main()
         auto& engine = can.add_node(
             {.address = 0x81, .name = j1939::Name{}.set_identity_number(1).set_manufacturer_code(0x7F0).set_industry_group(2)});
         auto& display = can.add_node({.address = 0x28});
-        const std::uint8_t data[8]{1, 2, 3, 4, 5, 6, 7, 8};
-        engine.attach<j1939::PeriodicSender>(kPgn, 100ms, std::span<const std::uint8_t>(data)); // once claimed
-        auto& seen = display.attach<j1939::Monitor>(kPgn, j1939::MonitorOptions{.source = 0x81});
+        // Every 100 ms once claimed.
+        vehicle_sil::j1939::codec::attach_sender<EngineTemperature>(engine, 100ms,
+                                                                    [](EngineTemperature& m) { m.coolant.set(85.0); });
+        auto& seen = display.attach<j1939::Monitor>(EngineTemperature::kPgn, j1939::MonitorOptions{.source = 0x81});
         const auto state = peer.run(30s);
 
+        const auto latest = EngineTemperature::decode(seen.data());
         const bool ok = state.has_value() && !peer.failed() && engine.address_state() == j1939::AddressState::Claimed &&
-                        engine.address() == 0x81 && seen.count() > 0;
+                        engine.address() == 0x81 && seen.count() > 0 && latest &&
+                        latest->coolant.value() == std::optional<double>(85.0);
         std::printf("address claim and message %s (address 0x%02X, messages received %d)\n", ok ? "ok" : "FAILED",
                     engine.address(), static_cast<int>(seen.count()));
         return ok ? 0 : 1;

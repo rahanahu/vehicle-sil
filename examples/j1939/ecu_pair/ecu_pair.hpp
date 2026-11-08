@@ -6,9 +6,12 @@
 //
 // The install functions take a j1939::Network&: the same code runs on a SIL Kit participant
 // (vehicle_sil::Peer) and on the local virtual bus of the tests (testkit::LocalCan).
-// The groups 0xFF10 and 0xEF00 are proprietary, with a layout of this example.
+// The messages (ecu_pair_messages.yaml) are typed values generated from YAML: no bit or byte
+// handling here.
 #pragma once
 
+#include "ecu_pair_messages.hpp"
+#include "vehicle_sil/j1939/codec_node.hpp"
 #include "vehicle_sil/j1939/identification.hpp"
 #include "vehicle_sil/j1939/monitor.hpp"
 #include "vehicle_sil/j1939/periodic_sender.hpp"
@@ -17,37 +20,25 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
-#include <span>
 #include <string>
 
 namespace ecu_pair {
 
 using namespace std::chrono_literals;
 namespace j1939 = vehicle_sil::j1939;
+namespace codec = vehicle_sil::j1939::codec;
+using messages::EngineStatus;
+using messages::SpeedRequest;
 
-inline constexpr j1939::Pgn kPgnEngineStatus{0xFF10}; ///< Engine -> all, 20 ms: speed (rpm, bytes 0-1).
-inline constexpr j1939::Pgn kPgnSpeedRequest{0xEF00}; ///< Cab -> engine, 100 ms: speed (rpm, bytes 0-1).
-inline constexpr j1939::Pgn kPgnSoftwareId{0xFEDA};   ///< Answered by the engine's Identification.
+inline constexpr j1939::Pgn kPgnEngineStatus = EngineStatus::kPgn;
+inline constexpr j1939::Pgn kPgnSpeedRequest = SpeedRequest::kPgn;
+inline constexpr j1939::Pgn kPgnSoftwareId{0xFEDA}; ///< Answered by the engine's Identification.
 
 inline constexpr j1939::Address kEngineAddress = 0x00;
 inline constexpr j1939::Address kCabAddress = 0x80;
 inline const j1939::Name kEngineName = j1939::Name{}.set_identity_number(0x100).set_manufacturer_code(0x7F0);
 inline const j1939::Name kCabName =
     j1939::Name{}.set_identity_number(0x200).set_manufacturer_code(0x7F0).set_arbitrary_address_capable(true);
-
-[[nodiscard]] inline std::uint16_t read_u16(std::span<const std::uint8_t> data) noexcept
-{
-    return data.size() < 2 ? 0 : static_cast<std::uint16_t>(data[0] | (data[1] << 8));
-}
-
-/// Writes an 8-byte message into `out` (a PeriodicSender's buffer: 8 bytes by default).
-[[nodiscard]] inline std::size_t write_u16(std::span<std::uint8_t> out, std::uint16_t value) noexcept
-{
-    std::fill(out.begin(), out.begin() + 8, std::uint8_t{0xFF}); // not available
-    out[0] = static_cast<std::uint8_t>(value);
-    out[1] = static_cast<std::uint8_t>(value >> 8);
-    return 8;
-}
 
 /// The engine's model: plain C++, no J1939 in it.
 struct EngineModel
@@ -67,6 +58,7 @@ struct EngineModel
 struct Dashboard
 {
     std::uint16_t engine_rpm = 0;
+    bool engine_running = false;
     bool engine_silent = false;
     std::string engine_software; ///< The identification as it came (field count, fields with '*').
     std::uint16_t wanted_rpm = 1500;
@@ -75,9 +67,16 @@ struct Dashboard
 inline j1939::Node& install_engine(j1939::Network& can, EngineModel& engine)
 {
     auto& ecu = can.add_node({.address = kEngineAddress, .name = kEngineName});
-    ecu.attach<j1939::PeriodicSender>(kPgnEngineStatus, 20ms,
-                                      [&engine](std::span<std::uint8_t> out) { return write_u16(out, engine.rpm); });
-    ecu.on_message(kPgnSpeedRequest, [&engine](const j1939::Message& m) { engine.requested = read_u16(m.data); });
+    codec::attach_sender<EngineStatus>(ecu, 20ms, [&engine](EngineStatus& m) {
+        m.speed.set(engine.rpm);
+        m.state.set(engine.rpm > 0 ? EngineStatus::State::running : EngineStatus::State::stopped);
+    });
+    codec::on_message<SpeedRequest>(ecu, [&engine](const SpeedRequest& m) {
+        if (const auto rpm = m.speed.value()) // not when the cab sends "not available"
+        {
+            engine.requested = static_cast<std::uint16_t>(*rpm);
+        }
+    });
     const std::string software[] = {"ENGINE", "1.0.3"};
     ecu.attach<j1939::Identification>().set_software_identification(software);
     return ecu;
@@ -90,13 +89,19 @@ inline j1939::Node& install_cab(j1939::Network& can, Dashboard& dash)
         kPgnEngineStatus,
         j1939::MonitorOptions{.name = kEngineName,
                               .timeout = 100ms,
-                              .on_message = [&dash](const j1939::Message& m) { dash.engine_rpm = read_u16(m.data); },
+                              .on_message =
+                                  [&dash](const j1939::Message& m) {
+                                      if (const auto status = EngineStatus::decode(m.data))
+                                      {
+                                          dash.engine_rpm = static_cast<std::uint16_t>(status->speed.value_or(0.0));
+                                          dash.engine_running = status->state.value() == EngineStatus::State::running;
+                                      }
+                                  },
                               .on_state = [&dash](const j1939::MonitorChange& c) {
                                   dash.engine_silent = c.state == j1939::MonitorState::Lost;
                               }});
-    cab.attach<j1939::PeriodicSender>(
-        kPgnSpeedRequest, 100ms, [&dash](std::span<std::uint8_t> out) { return write_u16(out, dash.wanted_rpm); },
-        j1939::PeriodicSenderOptions{.destination = kEngineAddress});
+    codec::attach_sender<SpeedRequest>(cab, 100ms, [&dash](SpeedRequest& m) { m.speed.set(dash.wanted_rpm); },
+                                       j1939::PeriodicSenderOptions{.destination = kEngineAddress});
     j1939::Requester::of(cab).request(kPgnSoftwareId, kEngineAddress, [&dash](const j1939::RequestResult& r) {
         if (r.outcome == j1939::RequestOutcome::Response)
         {

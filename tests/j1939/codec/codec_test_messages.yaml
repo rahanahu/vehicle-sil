@@ -1,0 +1,95 @@
+# Messages of the codec tests. All proprietary, with made-up layouts.
+namespace: codec_test
+messages:
+  - name: Status
+    comment: Every kind of signal in one message.
+    proprietary_b: 0x10
+    priority: 3
+    signals:
+      - name: speed            # 16 bits, j1939 indicators, scaled
+        start_bit: 0
+        length: 16
+        scale: 1/8
+        unit: rpm
+        spn: 4242
+      - name: temperature      # 8 bits with an offset
+        start_bit: 16
+        length: 8
+        offset: -40
+        unit: "°C"
+      - name: mode             # 2-bit enumeration
+        start_bit: 24
+        length: 2
+        values: {off: 0, on: 1}
+      - name: level            # 4 bits, not on a byte boundary, limited range
+        start_bit: 26
+        length: 4
+        scale: 0.5
+        max: 5
+      - name: torque           # signed, no indicators
+        start_bit: 32
+        length: 12
+        signed: true
+        scale: 0.25
+      - name: counter          # big endian, crosses bytes
+        start_bit: 51
+        length: 10
+        byte_order: big
+        indicators: none
+      - name: flag             # 1 bit
+        start_bit: 44
+        length: 1
+
+  - name: Wide
+    pgn: 0x1FF20
+    length: 20
+    fill: 0x00
+    signals:
+      - name: distance         # 32 bits with j1939 indicators
+        start_bit: 0
+        length: 32
+        scale: 0.005
+        unit: km
+      - name: total            # 64 bits
+        start_bit: 64
+        length: 64
+        indicators: none
+      - name: delta            # signed 24 bits: the valid range stops below the special values
+        start_bit: 128
+        length: 24
+        signed: true
+        not_available: [0x7FFFFF, 0x7FFFFF]
+        error: 0x7FFFFE
+      - name: custom           # explicit ranges
+        start_bit: 152
+        length: 8
+        not_available: [0xF0, 0xFF]
+        error: [0xE0, 0xEF]
+        min: 10
+        max: 200
+
+  - name: SetPoint
+    comment: Proprietary A, told apart from Reset by its first byte.
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 1}
+    signals:
+      - name: target
+        start_bit: 8
+        length: 16
+        scale: 0.1
+        min: -100
+        max: 100
+        offset: -3200
+  - name: Reset
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 2}
+    length: 3
+    signals:
+      - name: what
+        start_bit: 8
+        length: 8
+        values: {all: 0, faults: 1, counters: 3}
+
+  - name: Empty
+    proprietary_b: {group_extension: 0x11, data_page: 1}
+    length: 1

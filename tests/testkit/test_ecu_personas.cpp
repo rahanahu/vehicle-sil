@@ -53,8 +53,10 @@ struct Vehicle
 TEST_CASE(p1_the_engine_and_the_cab_talk_without_the_application_handling_the_stack)
 {
     Vehicle v;
+    CHECK(!v.dash.engine_running);
     v.bus.run_for(2s);
     CHECK(v.cab.address_state() == j1939::AddressState::Claimed);
+    CHECK(v.dash.engine_running); // the engine's state, an enumerated signal
     CHECK(v.dash.engine_software == std::string("\x02") + "ENGINE*1.0.3*");
     CHECK_EQ(v.engine.requested, 1500);
     CHECK_EQ(v.dash.engine_rpm, 1500);

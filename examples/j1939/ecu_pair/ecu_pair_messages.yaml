@@ -1,0 +1,27 @@
+# The two parameter groups of examples/j1939/ecu_pair. Both are proprietary, with a layout of this
+# example. vehicle_sil_add_j1939_codec() turns this file into ecu_pair_messages.hpp.
+namespace: ecu_pair::messages
+messages:
+  - name: EngineStatus
+    comment: Engine -> all, every 20 ms.
+    proprietary_b: 0x10
+    signals:
+      - name: speed
+        start_bit: 0
+        length: 16
+        scale: 0.125
+        unit: rpm
+      - name: state
+        start_bit: 16
+        length: 2
+        values: {stopped: 0, running: 1}
+
+  - name: SpeedRequest
+    comment: Cab -> engine, every 100 ms.
+    proprietary_a: {}
+    signals:
+      - name: speed
+        start_bit: 0
+        length: 16
+        scale: 0.125
+        unit: rpm

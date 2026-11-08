@@ -8,6 +8,13 @@ vehicle-sil は上流ライブラリの SIL Kit を Git サブモジュールと
 
 SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`、`googletest`）を持つため、`git submodule update --init --recursive` が必要です。FetchContent はこれを自動で行います。
 
+### Python 3 と PyYAML（J1939 の型付きメッセージの生成）
+
+- `vehicle_sil_add_j1939_codec()` が、ビルドのときに `tools/j1939_codegen/j1939_codegen.py` を動かします。Python 3.8 以上と PyYAML（`import yaml`）が要ります。configure のときに `find_package(Python3)` で探し、PyYAML を import できるかを確かめます。なければ、この関数を呼んだ時点で configure が理由を示して失敗します。
+- vehicle-sil の試験と例（`VEHICLE_SIL_BUILD_TESTS`、`VEHICLE_SIL_BUILD_EXAMPLES`。トップレベルのビルドでは既定で ON）はこの関数を使うので、そのビルドには Python と PyYAML が要ります。ライブラリだけを使う利用側（FetchContent など）は、関数を呼ばなければ要りません。
+- PyYAML は YAML 1.1 で読みます。生成器は `on`、`off`、`yes`、`no` を真偽値にせず文字列として読み、整数は 10 進（先頭の 0 なし）、16 進、2 進だけを受け付け（8 進と、整数と小数の 60 進を誤りにする）、同じキーの重複を誤りにします（マージキーで取り込んだキーの上書きは可）。
+- Python や PyYAML が見つからなかった configure の結果はキャッシュに残りません。入れたあとで configure し直せば見つけます。
+
 ### Vector XL Driver Library（Vector XL CAN Bridge、Windows のみ）
 
 - XL Driver Library は vehicle-sil に含めず、サブモジュールにもしていません。利用者が Vector から入手し、`VEHICLE_SIL_VECTOR_XL_DIR` で場所を指定します。
