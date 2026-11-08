@@ -21,7 +21,10 @@ set(forbidden
   "\\.\\./"                                  # includes or paths that climb out of the part
   "NetworkTestAccess"                        # the tests' way into the internals
   "#[ \t]*define[ \t]+(private|protected|class|struct)" # access tricks
-  "friend[ \t]")                             # befriending engine classes
+  # befriending classes (friend class X; friend X;). Hidden friend functions such as a
+  # defaulted operator== are allowed: they give no access to the engine.
+  "friend[ \t\r\n]+(class|struct)[ \t\r\n]"
+  "friend[ \t\r\n]+[A-Za-z_:][A-Za-z0-9_:<>, \t\r\n]*\;") # (\; keeps the list element whole)
 set(failures "")
 foreach(source IN LISTS sources)
   file(READ "${source}" text)

@@ -210,6 +210,16 @@ add_test(NAME j1939_parts.boundary
          COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${PROJECT_SOURCE_DIR}/libs/j1939/parts
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
 set_tests_properties(j1939_parts.boundary PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
+# The check itself: a hidden friend function passes, befriending a class or type fails.
+foreach(fixture IN ITEMS hidden_friend friend_class friend_type)
+  add_test(NAME j1939_parts.boundary_check_${fixture}
+           COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/j1939/boundary_fixtures/${fixture}
+                   -DSOURCES_ONLY=ON -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
+  set_tests_properties(j1939_parts.boundary_check_${fixture} PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
+endforeach()
+# Fails for the right reason (the exit code is not used with a regular expression).
+set_tests_properties(j1939_parts.boundary_check_friend_class j1939_parts.boundary_check_friend_type
+                     PROPERTIES PASS_REGULAR_EXPRESSION "reach into the J1939 engine:.*part\\.hpp: matches 'friend")
 # The test kit and Peer use the engine's public API only, like the parts.
 foreach(dir IN ITEMS testkit peer)
   add_test(NAME ${dir}.boundary
