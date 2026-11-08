@@ -61,8 +61,9 @@ struct BroadcastSuppressionOptions
 /// - This node suspended them itself (suspend()), until the duration passed or resume().
 ///
 /// One per node: create it with BroadcastSuppression::of(node) or node.attach<>() (a second one
-/// attached to the same node throws std::logic_error). Parts that read it hold a reference and
-/// must be destroyed before it (attach them after it).
+/// attached to the same node throws std::logic_error). Do not construct one yourself: of() and
+/// the parts would not find it and would read another state. Parts that read it hold a
+/// reference and must be destroyed before it (attach them after it).
 class BroadcastSuppression
 {
 public:
@@ -81,7 +82,8 @@ public:
     /// Suspends this node's broadcasts for `duration` (whole seconds, at most 64255; empty: until
     /// resume()), and announces it at the next chance with a DM13 to all nodes (no command for
     /// any network, the suspend signal of `scope`, the duration in seconds or "not available").
-    /// Allowed everywhere, also outside a step. std::invalid_argument above 64255 s.
+    /// Allowed everywhere on the thread that steps the network (other threads: Host::post()),
+    /// also outside a step. std::invalid_argument above 64255 s.
     void suspend(std::optional<std::chrono::seconds> duration, SuspendScope scope = SuspendScope::All);
     /// Ends this node's own suspension now (no frame; an announcement not sent yet is dropped).
     void resume() noexcept;

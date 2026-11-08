@@ -120,9 +120,10 @@ public:
     Diagnostics& operator=(const Diagnostics&) = delete;
 
     /// Makes the DTC (SPN and FMI) active or inactive; an active DTC takes the lamp of `dtc`.
-    /// true if its state changed. Allowed everywhere, also outside a step (the DM1 goes out at
-    /// the next chance). std::invalid_argument for an SPN above 19 bits or an FMI above 31,
-    /// std::length_error if dtc_capacity DTCs are known already.
+    /// true if its state changed. Allowed everywhere on the thread that steps the network (other
+    /// threads: Host::post()), also outside a step (the DM1 goes out at the next chance).
+    /// std::invalid_argument for an SPN above 19 bits or an FMI above 31, std::length_error if
+    /// dtc_capacity DTCs are known already.
     bool set_active(const Dtc& dtc, bool active);
     [[nodiscard]] bool is_active(const Dtc& dtc) const noexcept;
     [[nodiscard]] bool is_previously_active(const Dtc& dtc) const noexcept;
@@ -131,7 +132,8 @@ public:
 
     /// Ends a clear that on_clear deferred: clears the DTCs if `cleared`, and acknowledges the
     /// waiting destination-specific requests (positive if cleared, negative otherwise) at the
-    /// next chance. false if no clear of that kind was deferred. Allowed everywhere.
+    /// next chance. false if no clear of that kind was deferred. Allowed everywhere on the thread
+    /// that steps the network (other threads: Host::post()).
     bool complete_clear(DtcClear which, bool cleared);
 
     [[nodiscard]] const DiagnosticsStatistics& statistics() const noexcept { return statistics_; }

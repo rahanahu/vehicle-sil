@@ -54,9 +54,10 @@ public:
     Identification(const Identification&) = delete;
     Identification& operator=(const Identification&) = delete;
 
-    /// The setters are allowed everywhere; the next answer uses the new value. They allocate (do
-    /// not call them in every step). std::invalid_argument for a field with '*', more than 255
-    /// software fields, or more than kMaxTransportLength bytes in all.
+    /// The setters are allowed everywhere on the thread that steps the network (other threads:
+    /// Host::post()); the next answer uses the new value. They allocate (do not call them in
+    /// every step). std::invalid_argument for a field with '*', more than 255 software fields,
+    /// or more than kMaxTransportLength bytes in all.
     void set_software_identification(std::span<const std::string> fields);
     void set_ecu_identification(const EcuIdentification& id);
     void set_product_identification(const ProductIdentification& id);

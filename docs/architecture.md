@@ -37,15 +37,15 @@ vehicle-sil/
 | `vehicle_sil::sim_base` | スレッドライブラリ（`Threads::Threads`） | `SimTime` と `SimDuration`、`StepInbox`（ヘッダーのみ。SIL Kit なしで使う） |
 | `vehicle_sil::core` | `SilKit::SilKit`、`vehicle_sil::sim_base` | `vehicle_sil::ParticipantRuntime`、`SimulationController`、`TickScheduler`、`RealTimePacer`。`sim_base` の型も使える |
 | `vehicle_sil::lin` | `vehicle_sil::core` | `vehicle_sil::lin::LinMaster`、`vehicle_sil::lin::LinSlave`、`LinScheduleTable` と `validate_schedule()` |
-| `vehicle_sil::can`（開発中） | `vehicle_sil::sim_base` | `vehicle_sil::can::Frame`、`Port`、`Steppable`、`Host`、`StepDriver`、`VirtualCanBus`（「CAN の共通基盤」） |
+| `vehicle_sil::can`（開発中） | `vehicle_sil::sim_base` | `vehicle_sil::can::Frame`、`Port`、`Steppable`、`Host`、`StepDriver`、`RealTimeDriver`、`VirtualCanBus`、`CanBusModel`、`TapPort`（「CAN の共通基盤」） |
 | `vehicle_sil::can_silkit`（開発中） | `vehicle_sil::can`、`vehicle_sil::core` | `vehicle_sil::can::SilKitCanPort`、`bind_host()` |
 | `vehicle_sil::can_netsim`（開発中） | `vehicle_sil::can_silkit`、`rapidyaml`（SIL Kit 付属） | 簡易 CAN Network Simulator（「簡易 CAN Network Simulator」） |
 | `vehicle_sil::j1939`（開発中） | `vehicle_sil::can` | `vehicle_sil::j1939::Network`、`Node`、`Pgn`、`Identifier`、`Observer`、道具箱（「J1939」） |
-| `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics`（開発中） | `vehicle_sil::j1939` | プロトコル部品の `BroadcastSuppression`（DM13）、`Diagnostics`、`Identification`（「プロトコル部品」） |
+| `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics`（開発中） | `vehicle_sil::j1939`（`j1939_diagnostics` は `j1939_broadcast_suppression` にも依存） | プロトコル部品の `BroadcastSuppression`（DM13）、`Diagnostics`、`Identification`（「プロトコル部品」） |
 | `vehicle_sil::testkit`（開発中、内部向け） | `vehicle_sil::can`、`vehicle_sil::j1939` | `vehicle_sil::testkit::LocalCan`、`J1939Events`、`FrameLog`、`faults`（「実行と試験の基盤」） |
 | `vehicle_sil::peer`（開発中、内部向け） | `vehicle_sil::core`、`vehicle_sil::can_silkit`、`vehicle_sil::j1939`、`vehicle_sil::lin` | `vehicle_sil::Peer`、`start_together()`（「実行と試験の基盤」） |
 | `vehicle_sil_sim_controller`（実行ファイル） | `vehicle_sil::core` | system controller の CLI |
-| `vehicle_sil::vector_xl_bridge_core` | `SilKit::SilKit` | `vehicle_sil::vector_xl::CanBridge`、`ExternalCanPort`、チャネル選択、CLI の解析。全プラットフォームでビルドする |
+| `vehicle_sil::vector_xl_bridge_core` | `SilKit::SilKit`、`vehicle_sil::can`、`vehicle_sil::can_silkit` | `vehicle_sil::vector_xl::CanBridge`、`ExternalCanPort`、`ExternalPortAdapter`、チャネル選択、CLI の解析。全プラットフォームでビルドする |
 | `vehicle_sil::vector_xl`（Windows のみ） | `vector_xl_bridge_core`、XL Driver Library | `vehicle_sil::vector_xl::XlDriver`、`XlCanPort` |
 | `vehicle_sil_vector_xl_bridge`（Windows のみ、実行ファイル） | 上記と `vehicle_sil::core` | ブリッジの CLI |
 
@@ -105,7 +105,7 @@ Host ──refers to──> ポートと Network（所有しない）
 
 プロトコル処理（`Network`、部品、ハンドラ）はロックを持たず、ステップを回すスレッドだけが触ります。仮想時間では SIL Kit のステップハンドラ、実時間ではドライバーのスレッドです。ほかのスレッドからは、ホストの `post()` で処理を渡します。
 
-キューの容量はすべて固定です。生成時に確保します。
+キューの容量は、ホストの `post()` の待ち行列を除いて固定です。生成時に確保します。`post()` の待ち行列は上限がなく、呼ぶたびに確保します（外部からの操作のための口で、ステップごとに使うものではありません）。
 
 | キュー | 既定の容量 | 備考 |
 |---|---|---|
@@ -225,7 +225,7 @@ CAN の上にプロトコルスタックを作るときの拡張点です。J193
 
 ### 生フレームの観測（`TapPort`）
 
-- `TapPort(inner, listener)` はポートを包み、すべてを `inner` に渡します。プロトコルスタックが受け取ったフレーム（`Received`、フレームの時刻）、送ったフレーム（`Sent`、送ったステップの時刻と `send()` の戻り値）、ポートの事象（`Event`、事象の時刻）を、通った順に `TapListener::on_tap()` へ知らせます。11 ビットと 29 ビットの両方をそのまま運びます。
+- `TapPort(inner, listener)` はポートを包み、すべてを `inner` に渡します。プロトコルスタックが受け取ったフレーム（`Received`、フレームの時刻）、送ったフレーム（`Sent`、送ったステップの時刻と `send()` の戻り値）、ポートの事象（`Event`、事象の時刻）を、通った順に `TapListener::on_tap()` へ知らせます。11 ビットと 29 ビットの両方をそのまま運びます。`Received` の順はポートの解放順（時刻順、同じ時刻なら到着順）で、SIL Kit のポートでは同じ時刻の別の送信者のフレームの順が実行ごとに変わりえます。実行の間で比べるときは（時刻、CAN ID）で並べ直すか、並べ替えた後の `Observer` の事象を使います。
 - 読み取り専用です。注入はしません（試験の刺激は仮想バスの端点から送ります）。例外を投げないリスナーなら、リスナーの有無で、スタックが受け取るものと送った結果は変わりません。リスナーの例外は呼び出し元に伝わり（ホストは失敗します）、受信のフレームと事象はスタックに渡す前に知らせるので、そのフレームはスタックに渡りません。リスナーの中からその `TapPort` の `send()`、`release_before()`、`release_events_before()`、`set_listener()` を呼ぶと `std::logic_error` です。
 - 時間の領域と wakeup は包んだポートのものです。包んだポートと同じく、ドライバーのスレッドから使います。リスナーは 1 つです。リスナーと `TapPort` は互いの登録を覚えており、どちらを先に破棄しても安全です。
 
@@ -335,7 +335,7 @@ Vector SIL Kit Network Simulator との差し替え:
 ### 1 ステップの処理
 
 - `process()` は、ポートから受けたフレームと前のステップのローカル折り返しを、時刻順に処理します。同じ時刻のフレームは、送信元アドレスごとの列（列の中は到着順。同じ時刻・同じアドレスでは外部のフレームが折り返しより先）を作り、列の先頭の CAN ID が小さいものから 1 つずつ取ります（CAN の調停の近似）。そのため、同じ送信者の順序は保たれ、結果はポートの到着順とステップ幅によりません。ただし、同じアドレスを使う別の送信者（アドレスの衝突中）が同じ時刻に送ったフレームは 1 つの列に入り、その中は到着順です。
-- タイマーは 2 種類です。タイムアウトは、期限より後の時刻のフレームを処理する直前か、ステップの最後で期限 < now のときに発火します（期限と同じ時刻のフレームが先）。予定（scheduled）は期限 ≤ now の最初のステップで発火します。どちらも、期限がフレームの時刻より前ならそのフレームの前に発火します。同時に発火できるタイマー同士は（期限、開始の順）です。タイマーの中で開始したタイマーは、期限がすでに来ていても、次の発火の機会（次のフレームの前か、ステップの最後。ステップの最後なら次のステップ）まで発火しません。期限がちょうど now のときは予定だけが発火し、同じ期限のタイムアウトは次のステップになります。タイムアウトの判定はステップ幅によりません。`next_deadline()` は最も早い期限を返します（タイムアウトは期限より後の最初のステップで発火します）。
+- タイマーは 2 種類です。タイムアウトは、期限より後の時刻のフレームを処理する直前か、ステップの最後で期限 < now のときに発火します（期限と同じ時刻のフレームが先）。予定（scheduled）は期限 ≤ now の最初のステップで発火します。どちらも、期限がフレームの時刻より前ならそのフレームの前に発火します。同時に発火できるタイマー同士は（期限、開始の順）です。タイマーの中で開始したタイマーは、期限がそれを開始したタイマーの期限より後なら、同じ発火の機会に（期限、開始の順に）発火します。そのため、期限から始め直す周期は、周期がステップ幅より短くても、ステップの中ですべての期限の分だけ発火し、遅れがたまりません（実時間で長く止まった後は、遅れた分を 1 ステップで取り戻します）。期限がその期限と同じか前のもの（同じ期限での始め直しなど）は、次の発火の機会（次のフレームの前か、ステップの最後。ステップの最後なら次のステップ）まで発火しません。期限がちょうど now のときは予定だけが発火し、同じ期限のタイムアウトは次のステップになります。タイムアウトの判定はステップ幅によりません。`next_deadline()` は最も早い期限を返します（タイムアウトは期限より後の最初のステップで発火します）。
 - ハンドラ、Request の応答者、タイマーから送ったフレームは、そのステップの `flush()` で出ます。
 - `flush()` の順序: 制御フレーム（Address Claimed、Acknowledgement、トランスポートプロトコルの TP.CM）、続いてデータキュー、最後にトランスポートプロトコルのデータパケット（TP.DT。データキューと合わせて 1 ステップの上限 `max_frames_per_step` まで。残りは次のステップ）。ポートが `QueueFull` を返したら、そのフレームと後続を残して次のステップで出し直します（順序を保つ）。`Failed` のフレームは捨てて数え、後続は続けます。
 
@@ -416,7 +416,7 @@ Vector SIL Kit Network Simulator との差し替え:
 
 アドレスとの関係:
 - Claim の後の待ちの間に送った転送は、セッションを確保して待ち、待ちが明けたとき保留したほかのメッセージと一緒に、保留した順に始めます。待ちの間に受けた RTS への CTS も、待ちが明けてから出します。
-- ノードがアドレスを失うか変えると、そのノードの送受信の転送と応答待ち行列の応答を、フレームを出さずに終えます（送信は `Cancelled`）。古いアドレスから Abort は出せないためです。キューに残っていた TP.CM も出しません。最初の Claim では終えません。`on_transfer_end` のハンドラがその通知の中で送り直した転送は、同じアドレスの変化では終えません（新しいアドレスと状態で扱います）。
+- ノードがアドレスを失うか変えると、そのノードの送受信の転送と応答待ち行列の応答を、フレームを出さずに終えます（送信は `Cancelled`）。古いアドレスから Abort は出せないためです。キューに残っていた TP.CM も出しません。最初の Claim では終えません。この通知（Claim の後の待ちで保留していた転送を含む）の時点で、ノードの `address()` と `address_state()` は変化の後のもので、`on_address_change` はその後に届きます。`on_transfer_end` のハンドラがその通知の中で送り直した転送は、同じアドレスの変化では終えません（新しいアドレスと状態で扱います）。
 - アドレス表で、あるアドレスの NAME が外れるか別の NAME に替わると、そのアドレスとの RTS/CTS の転送、その送信元の BAM の受信、そのアドレスへの応答待ち行列の応答を、フレームを出さずに終えます（時刻は原因の Address Claimed のフレームの時刻）。アドレス表にない相手（Address Claim を見ていない相手）と、同じ Network のノード（アドレス表に入らない）は対象外です。同じ Network のノード同士の転送では、相手のノードのアドレスが変わっても、こちらのセッションはタイムアウトで終わります。
 - 終わったか置き換わったセッションの TP.CM がキューに残っていれば、出さずに捨てて数えます（`transport_stale_dropped`）。
 
@@ -435,8 +435,8 @@ Vector SIL Kit Network Simulator との差し替え:
 部品とアプリが安全に書けるようにするための、プロトコルに依らない 3 つの仕組みです（ヘッダー `vehicle_sil/j1939/toolbox.hpp` と `network.hpp`）。
 
 - `Subscription{node, node.on_message(...)}`: ハンドラや応答者の登録（`HandlerId`）を持ち、破棄か `reset()` で解除します。解除の後は、配送の途中でも（自分のハンドラの中でも、別のハンドラの中でも）呼ばれません。ムーブできます。`Network` の破棄の後に破棄しても安全です（何もしません）。
-- `Timer(node_or_network, kind, callback)`: 仮想時間のタイマーです。生成時に `timer_capacity` の枠を 1 つ予約し、破棄で返します。`start_at(t)` と `start_after(d)` は動いているタイマーを始め直し、ハンドラ、応答者、タイマーの中、アプリの処理、ステップの外のどこからでも呼べます。過ぎた期限も受け付け、次の機会（次のフレームの前かステップの最後、なければ次のステップ）に発火します。発火の中で始めたタイマーは、同じ発火の回では発火しません。
-  - `start_after(d)` の起点は、処理中の事象の時刻（`Network::event_time()`）です。ハンドラ（応答者を含む）では受けたメッセージの時刻、アドレスの変化と転送の終わりの通知ではその原因の時刻（`AddressChange::time`、`TransferEnd::time`）、`Timer` のコールバックではその期限、それ以外ではステップの時刻（最初のステップの前は 0）です。部品が時間の間隔を数えるときもこの時刻を使うと、結果がステップ幅によりません。コールバックの中で `start_after()` で始め直す周期は、ステップ幅によらず期限がずれません（発火はステップ幅の分だけ遅れうる）。
+- `Timer(node_or_network, kind, callback)`: 仮想時間のタイマーです。生成時に `timer_capacity` の枠を 1 つ予約し、破棄で返します。`start_at(t)` と `start_after(d)` は動いているタイマーを始め直し、ハンドラ、応答者、タイマーの中、アプリの処理、ステップの外のどこからでも呼べます。過ぎた期限も受け付け、次の機会（次のフレームの前かステップの最後、なければ次のステップ）に発火します。発火の中で始めたタイマーは、それを始めたタイマーの期限より後の期限のときだけ、同じ回で発火します（「1 ステップの処理」）。
+  - `start_after(d)` の起点は、処理中の事象の時刻（`Network::event_time()`）です。ハンドラ（応答者を含む）では受けたメッセージの時刻、アドレスの変化と転送の終わりの通知ではその原因の時刻（`AddressChange::time`、`TransferEnd::time`）、`Timer` のコールバックではその期限、それ以外ではステップの時刻（最初のステップの前は 0）です。部品が時間の間隔を数えるときもこの時刻を使うと、結果がステップ幅によりません。コールバックの中で `start_after()` で始め直す周期は、ステップ幅によらず期限がずれず、発火の回数も変わりません（発火はステップ幅の分だけ遅れうる。周期がステップ幅より短いと、1 ステップに何回も発火します）。メッセージを送った時刻から数える間隔（応答の待ち時間など）は、送信がそのステップの `flush()` で出るので、`start_at(*network.now() + d)` で数えます。
   - コールバックの中で、自分自身を含むタイマーを始め直し、取り消し、破棄できます。`Network` の破棄の後の破棄は安全で、`start_at()` は `std::logic_error` です。
   - OS の時計やスレッドは使いません。実時間で動かすときは、ドライバーが `next_deadline()` まで眠ってからステップを回します。
 - `node.attach<T>(args...)`: 部品 `T(node, args...)` を作り、`Network` に所有させます。`node.find<T>()` は、そのノードに最初に付けた `T` を返します（なければ nullptr）。どこからでも呼べます（ハンドラの中で付けた部品のハンドラは、次の配送から呼ばれます）。部品は `attach` を使わず、アプリが所有してもかまいません（`Network` より先に、その `Network` のハンドラの外で破棄します）。
@@ -445,18 +445,20 @@ Vector SIL Kit Network Simulator との差し替え:
 
 ### プロトコル部品（`libs/j1939/parts`）
 
-部品は 1 つずつ別の CMake ターゲットで、エンジン（`vehicle_sil::j1939`）の公開ヘッダーと道具箱だけを使います。部品のターゲットの include パスにはエンジンの `src/` が入らず、エンジンの内部は private です。CTest の `j1939_parts.boundary` が、部品のソースに内部ヘッダーの include、試験用の入口（`detail::NetworkTestAccess`）、`friend` や `#define private` などがないこと、部品の CMakeLists.txt がコンパイルの定義・オプションを足さず、include パスに自分の `include/` しか足さず、`vehicle_sil::j1939` と他の部品のターゲットだけをリンクしていることを確かめます。
+部品は 1 つずつ別の CMake ターゲットで、エンジン（`vehicle_sil::j1939`）の公開ヘッダーと道具箱だけを使います。部品のターゲットの include パスにはエンジンの `src/` が入らず、エンジンの内部は private です。CTest の `j1939_parts.boundary` が、部品のソースに内部ヘッダーの include、試験用の入口（`detail::NetworkTestAccess`）、クラスを friend にする宣言（隠れた friend の関数は可）や `#define private` などがないこと、部品の CMakeLists.txt がコンパイルの定義・オプションを足さず、include パスに自分の `include/` しか足さず、`vehicle_sil::j1939` と他の部品のターゲットだけをリンクしていることを確かめます。
 
 | ターゲット | 部品 | 内容 |
 |---|---|---|
 | `vehicle_sil::j1939_broadcast_suppression` | `BroadcastSuppression` | DM13 による放送の抑制の状態（ノードに 1 つ） |
 | `vehicle_sil::j1939_diagnostics` | `Diagnostics`、`Identification` | DTC と DM1/DM2/DM3/DM11/DM22、識別情報。`BroadcastSuppression` を使う |
 
+部品の API の「どこからでも呼べる」は、ステップを回すスレッドの上でのこと（ハンドラ、タイマー、アプリの処理、ステップの外）です。部品はロックを持たないので、ほかのスレッドからはホストの `post()` で渡します（「スレッドとキュー」）。
+
 部品が予約するタイマーの数（`timer_capacity` から）: `BroadcastSuppression` が 3、`Diagnostics` が 3、`Identification` が 0。NAME を持ち診断を付けたノードは、Address Claim の 2 と合わせて 8 です（既定の 64 で 8 ノード）。
 
 #### DM13（`BroadcastSuppression`）
 
-- ノードに 1 つです。`BroadcastSuppression::of(node)`（なければ既定の設定で付ける）か `node.attach<BroadcastSuppression>(options)` で作ります。同じノードに 2 つ目を付けると `std::logic_error` です。自分で放送する部品はこれを参照し、`suspended()` の間は放送しません。
+- ノードに 1 つです。`BroadcastSuppression::of(node)`（なければ既定の設定で付ける）か `node.attach<BroadcastSuppression>(options)` で作ります。同じノードに 2 つ目を付けると `std::logic_error` です。自分で生成したもの（`attach` しないもの）は `of()` と部品から見えず、別の状態になるので、直接生成しません。自分で放送する部品はこれを参照し、`suspended()` の間は放送しません。
 - 他のノードの DM13: 自分のネットワーク（`BroadcastSuppressionOptions::network`、既定は J1939 Network #1）のコマンドが Stop なら止め、Start なら再開します。自分のネットワークのコマンドが Stop でも Start でもなければ、Current Data Link のコマンドを使います。止めている間は DM13 を受けるたびに（Start でなければ、ほかのネットワークへのものや Hold Signal だけのものでも）6 秒を数え直し、6 秒間 DM13 が来なければ再開します。最後の DM13 からちょうど 6 秒の時刻に届いた DM13 は、まだ止めている間に届いたものとして扱います。8 バイト未満の DM13 は無視します。受けた DM13 の Suspend Signal と Suspend Duration は、送信元自身の一時停止の告知として扱い、停止の指示には使いません。
 - 自分の一時停止: `suspend(duration, scope)` で放送を止め、次の機会に DM13 を全体へ送って告げます（全ネットワークのコマンドと Hold Signal は「指定なし」、Suspend Signal は全部の停止か一部の停止、バイト 5〜6 は秒数で、期間なしは 0xFFFF）。期間が過ぎるか `resume()` で再開します（再開は告げません。まだ送っていない告知は取り消します）。
 - 抑制は、その状態を読む部品の放送だけに効きます。Request への応答、Address Claim、Acknowledgement、トランスポートプロトコルの制御フレーム、アプリが `Node::send()` で直接送るメッセージは止まりません。
@@ -534,7 +536,7 @@ peer.wait();
 - `j1939(network)` は SIL Kit の CAN コントローラ、`SilKitCanPort`、`TapPort`、`Network` を作ります（`tap(name)` で生フレームを観測できます）。`j1939(name, port)` は利用者が作ったポート（Vector XL の `ExternalPortAdapter` など）を受け取り、Peer が所有します。`lin_master(network, schedule, ...)` と `lin_slave(network, options, ...)` は LIN のノードを作り、communication ready の通知で `init()` を呼びます。`on_step(fn)` は毎ステップ、`every(period, fn)` は 0、period、2 period … の時刻以後の最初のステップで呼びます（1 ステップに 1 回まで）。
 - 1 ステップの順序: J1939 の各 `Network` の受信と処理（追加した順）→ アプリの処理（`on_step` と `every`、追加した順）→ LIN のノードの `step(now)`（追加した順）→ J1939 の送信。アプリが出した LIN の要求（`set_frame_data()`、`set_response()`）は同じステップから効き、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます。
 - 時間のモード: `virtual_time` があれば SIL Kit の時間同期で回します（J1939 と LIN）。なければ実時間で、Peer が `RealTimeDriver` と時計（`SteadyRealTimeClock`、または `PeerOptions::real_time_clock`）を持ち、SIL Kit の CAN ポートを実時間にします（J1939 だけ。LIN は `std::logic_error`）。外部のポートの時間の領域が Peer と違えば `std::logic_error` です。SIL Kit を持たない構成（XL だけ）はありません。
-- lifecycle: `Coordinated` では `SimulationController` が開始と停止を決めます。1 つのプロセスで複数の Peer と controller を起動するときは `start_together(controller, {&a, &b})` を使います。`Autonomous` では、`stop()` か `request_stop()`（ステップの中から）で止まります。仮想時間で `virtual_time.end` があれば（0 より後であること）、end の前の最後のステップの後で自分で止まります。`wait()` は lifecycle の終わりを待ちます。`failed()` と `error()` は、ステップ（ホスト、アプリ、LIN、ポート）、ステップのハンドラ、実時間のドライバーの失敗を返します。
+- lifecycle: `Coordinated` では `SimulationController` が開始と停止を決めます。1 つのプロセスで複数の Peer と controller を起動するときは `start_together(controller, {&a, &b})` を使います。`Autonomous` では、`stop()` か `request_stop()`（ステップの中から）で止まります。複数の participant を同じ時刻から決定的に動かすときは `Coordinated` にします（`Autonomous` の participant どうしは、開始の時刻がそろうとは限りません）。仮想時間で `virtual_time.end` があれば（0 より後であること）、end の前の最後のステップの後で自分で止まります。`wait()` は lifecycle の終わりを待ちます。`failed()` と `error()` は、ステップ（ホスト、アプリ、LIN、ポート）、ステップのハンドラ、実時間のドライバーの失敗を返します。仮想時間でステップが失敗すると participant は Error になり、`wait()` が戻ります。実時間ではドライバーが止まるだけで lifecycle は続き、`wait()` はその失敗では戻らないので、`failed()` を見て `stop()` します。
 - 組み立て（`j1939`、`lin_*`、`on_step`、`every`）は `start()` の前だけです（後は `std::logic_error`）。ノード、ハンドラ、部品、Observer、`TapPort` のリスナーも `start()` の前に付けます（ノードは `Network::add_node()` の規則どおりステップの中からも足せます）。
 - 所有と破棄: Peer が participant、コントローラ、ポート、`Network`、LIN のノードを持ち、返す参照は Peer の寿命まで有効です。`stop()`（と破棄）は、ステップを止め（実時間ではドライバー、続いて lifecycle。仮想時間では lifecycle。以後ステップは来ません）、SIL Kit のポートを閉じます。`stop()` の後も `Network` は残るので、統計や記録を読めます。破棄では続いて LIN のノード、`Network`（部品が先）、`TapPort`、ポート（外部のポートはそのデストラクタで閉じます）、ホストを破棄し、最後に participant を破棄します。
 - スレッド: 組み立て、`start()`、`wait()` は 1 つのスレッドから呼びます。ステップは SIL Kit のスレッド（仮想時間）かドライバーのスレッド（実時間）で動き、ハンドラ、アプリの処理、Observer、`TapPort` のリスナーもそこで呼ばれます（記録は `wait()` か `stop()` の後に読みます）。`stop()` は、ステップと SIL Kit のハンドラ以外のどのスレッドからでも呼べます（別のスレッドからは `start()` が戻った後）。同時の呼び出しは順に処理します（Peer の破棄は、他のスレッドの `stop()` が戻った後）。`request_stop()`、`failed()`、`error()` はステップの中を含めてどこからでも呼べます。
