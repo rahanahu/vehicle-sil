@@ -296,6 +296,7 @@ public:
     /// The variables in registration order.
     [[nodiscard]] const std::vector<VariableInfo>& schema() const noexcept { return infos_; }
     [[nodiscard]] AgentStats stats() const;
+    [[nodiscard]] const AgentOptions& options() const noexcept { return options_; }
 
     // ---- the driver of the steps ----------------------------------------------------------
 

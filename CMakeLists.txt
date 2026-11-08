@@ -18,6 +18,8 @@ option(VEHICLE_SIL_BUILD_TESTS "Build the vehicle-sil tests" ${PROJECT_IS_TOP_LE
 option(VEHICLE_SIL_TEST_FETCHCONTENT
        "Add a (slow) test that consumes this repository via FetchContent" OFF)
 option(VEHICLE_SIL_WARNINGS_AS_ERRORS "Treat warnings in vehicle-sil targets as errors" OFF)
+option(VEHICLE_SIL_BUILD_CONTROL_SERVER
+       "Build the control server and the control agent's link to it (needs gRPC: found, or built with FetchContent)" OFF)
 set(VEHICLE_SIL_SANITIZERS
     ""
     CACHE STRING "Semicolon separated -fsanitize= values, e.g. address;undefined (top-level builds only)")
@@ -36,6 +38,9 @@ endif()
 include(VehicleSilDependencies)
 # vehicle_sil_add_j1939_codec(): typed J1939 messages generated from YAML.
 include(VehicleSilJ1939Codec)
+if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
+  include(VehicleSilGrpc)
+endif()
 
 # Libraries:
 #   vehicle_sil::core       SIL Kit participant and lifecycle management (protocol independent)
@@ -68,6 +73,10 @@ add_subdirectory(libs/j1939 ${_vehicle_sil_exclude})
 add_subdirectory(libs/testkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/peer ${_vehicle_sil_exclude})
 add_subdirectory(libs/control ${_vehicle_sil_exclude})
+if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
+  add_subdirectory(proto ${_vehicle_sil_exclude})
+  add_subdirectory(libs/control_grpc ${_vehicle_sil_exclude})
+endif()
 # Vector XL CAN bridge: portable core everywhere, XL backend and executable on Windows only.
 add_subdirectory(bridges/vector-xl ${_vehicle_sil_exclude})
 # Command-line helpers shared by the executables, and the system controller for coordinated
@@ -75,11 +84,17 @@ add_subdirectory(bridges/vector-xl ${_vehicle_sil_exclude})
 add_subdirectory(tools/common ${_vehicle_sil_exclude})
 add_subdirectory(tools/sim_controller ${_vehicle_sil_exclude})
 add_subdirectory(tools/can_bus_simulator ${_vehicle_sil_exclude})
+if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
+  add_subdirectory(tools/control_server ${_vehicle_sil_exclude})
+endif()
 
 if(VEHICLE_SIL_BUILD_EXAMPLES)
   add_subdirectory(examples/j1939)
   add_subdirectory(examples/virtual_time)
   add_subdirectory(examples/lin)
+  if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
+    add_subdirectory(examples/control)
+  endif()
 endif()
 
 if(VEHICLE_SIL_BUILD_TESTS)

@@ -1,0 +1,352 @@
+// SPDX-License-Identifier: MIT
+//
+// The vehicle-sil Control API, version 1 (under development: messages may still change).
+//
+// Times are simulation times in nanoseconds since the start of the simulation (T = 0).
+// The contract of the operations is described in docs/architecture.md ("Control Agent" and
+// "Control Server の中核").
+syntax = "proto3";
+
+package vehicle_sil.control.v1;
+
+// ---- values and variables -------------------------------------------------------------------
+
+message Value {
+  oneof kind {
+    bool b = 1;
+    sint64 i = 2;
+    double d = 3;
+  }
+}
+
+enum ValueType {
+  VALUE_TYPE_UNSPECIFIED = 0;
+  VALUE_TYPE_BOOL = 1;
+  VALUE_TYPE_INTEGER = 2;
+  VALUE_TYPE_REAL = 3;
+  VALUE_TYPE_ENUM = 4;
+}
+
+enum Causality {
+  CAUSALITY_UNSPECIFIED = 0;
+  CAUSALITY_INPUT = 1;
+  CAUSALITY_OUTPUT = 2;
+  CAUSALITY_PARAMETER = 3;
+}
+
+message EnumItem {
+  string name = 1;
+  sint64 value = 2;
+}
+
+message VariableInfo {
+  string name = 1;
+  ValueType type = 2;
+  Causality causality = 3;
+  string unit = 4;
+  optional double min = 5;
+  optional double max = 6;
+  optional double step = 7;
+  string description = 8;
+  repeated EnumItem items = 9;
+}
+
+message Snapshot {
+  sint64 time_ns = 1;
+  uint64 sequence = 2;
+  repeated Value values = 3; // in schema order
+}
+
+enum EventLevel {
+  EVENT_LEVEL_UNSPECIFIED = 0;
+  EVENT_LEVEL_INFO = 1;
+  EVENT_LEVEL_WARNING = 2;
+  EVENT_LEVEL_ERROR = 3;
+}
+
+message Event {
+  sint64 time_ns = 1;
+  EventLevel level = 2;
+  string text = 3;
+}
+
+// ---- commands between the server and an agent -----------------------------------------------
+
+message Write {
+  string name = 1;
+  Value value = 2;
+}
+
+enum LatePolicy {
+  LATE_POLICY_UNSPECIFIED = 0; // as REJECT
+  LATE_POLICY_REJECT = 1;
+  LATE_POLICY_APPLY_NEXT = 2;
+}
+
+message Command {
+  uint64 seq = 1;
+  repeated Write writes = 2;
+  optional sint64 at_ns = 3; // absent: the next step
+  LatePolicy late = 4;
+}
+
+enum SubmitStatus {
+  SUBMIT_STATUS_UNSPECIFIED = 0; // treated as INVALID
+  SUBMIT_STATUS_QUEUED = 1;
+  SUBMIT_STATUS_BUSY = 2;
+  SUBMIT_STATUS_INVALID = 3;
+}
+
+enum CommandStatus {
+  COMMAND_STATUS_UNSPECIFIED = 0; // treated as REJECTED
+  COMMAND_STATUS_APPLIED = 1;
+  COMMAND_STATUS_LATE = 2;
+  COMMAND_STATUS_REJECTED = 3;
+  COMMAND_STATUS_CANCELLED = 4;
+}
+
+message CommandResult {
+  uint64 seq = 1;
+  CommandStatus status = 2;
+  optional sint64 applied_at_ns = 3;
+  bool late = 4;
+  string reason = 5;
+}
+
+// ---- the agent link -------------------------------------------------------------------------
+
+message Hello {
+  string participant = 1;
+  string incarnation = 2;
+  repeated VariableInfo schema = 3;
+  uint64 max_pending = 4;
+  // On a reconnect of the same process: the commands the agent still holds.
+  bool has_open_seqs = 5;
+  repeated uint64 open_seqs = 6;
+}
+
+message Submitted {
+  uint64 seq = 1;
+  SubmitStatus status = 2;
+  string reason = 3;
+}
+
+message PeerStatus {
+  bool failed = 1;
+  string error = 2;
+}
+
+message AgentMessage {
+  oneof kind {
+    Hello hello = 1; // first, once per connection
+    Submitted submitted = 2;
+    CommandResult result = 3;
+    Snapshot values = 4;
+    Event event = 5;
+    PeerStatus status = 6;
+  }
+}
+
+// The server's answer to a hello: the connection is accepted. It comes before any command.
+message Welcome {}
+
+message ServerMessage {
+  oneof kind {
+    Command command = 1;
+    Welcome welcome = 2; // first, once per connection
+  }
+}
+
+// Agents connect to the server with this service (one stream per connection).
+service AgentService {
+  rpc Connect(stream AgentMessage) returns (stream ServerMessage);
+}
+
+// ---- the client API -------------------------------------------------------------------------
+
+message PingRequest {
+  string text = 1;
+}
+
+message PingReply {
+  string text = 1;
+  string server_version = 2;
+}
+
+message PeerInfo {
+  string participant = 1;
+  string incarnation = 2;
+  bool connected = 3;
+  repeated VariableInfo schema = 4;
+  PeerStatus status = 5;
+}
+
+message ListPeersRequest {}
+
+message ListPeersReply {
+  repeated PeerInfo peers = 1;
+}
+
+message GetValuesRequest {
+  string peer = 1;
+}
+
+message GetValuesReply {
+  bool has_values = 1;
+  string incarnation = 2;
+  Snapshot snapshot = 3;
+}
+
+message PeerWrite {
+  string peer = 1;
+  string name = 2;
+  Value value = 3;
+}
+
+message WriteRequest {
+  repeated PeerWrite writes = 1;
+  optional sint64 at_ns = 2;
+  LatePolicy late = 3;
+}
+
+enum TargetStatus {
+  TARGET_STATUS_UNSPECIFIED = 0;
+  TARGET_STATUS_SENT = 1;
+  TARGET_STATUS_QUEUED = 2;
+  TARGET_STATUS_DISCONNECTED = 3;
+  TARGET_STATUS_APPLIED = 4;
+  TARGET_STATUS_LATE = 5;
+  TARGET_STATUS_REJECTED = 6;
+  TARGET_STATUS_CANCELLED = 7;
+  TARGET_STATUS_INVALID = 8;
+  TARGET_STATUS_BUSY = 9;
+  TARGET_STATUS_UNKNOWN = 10;
+}
+
+message TargetResult {
+  string peer = 1;
+  TargetStatus status = 2;
+  optional sint64 applied_at_ns = 3;
+  bool late = 4;
+  string reason = 5;
+}
+
+message Operation {
+  uint64 seq = 1;
+  WriteRequest request = 2;
+  string client = 3;
+  repeated TargetResult targets = 4;
+  bool done = 5;
+}
+
+message WriteReply {
+  uint64 seq = 1;
+}
+
+message GetOperationRequest {
+  uint64 seq = 1;
+}
+
+enum WaitFor {
+  WAIT_FOR_UNSPECIFIED = 0; // as DONE
+  WAIT_FOR_DONE = 1;
+  WAIT_FOR_QUEUED = 2;
+}
+
+message WaitOperationRequest {
+  uint64 seq = 1;
+  WaitFor until = 2;
+  uint32 timeout_ms = 3;
+}
+
+message WatchRequest {
+  repeated string peers = 1; // empty: all
+  bool values = 2;
+  bool events = 3;
+  bool operations = 4;
+  uint32 capacity = 5; // 0: the server's default; capped by the server's maximum
+  bool time = 6;       // also the time state when it changes
+}
+
+message Update {
+  oneof kind {
+    PeerInfo peer = 1;
+    string removed_peer = 2;
+    PeerValues values = 3;
+    PeerEvent event = 4;
+    Operation operation = 5;
+    TimeState time = 7;
+    bool initial_done = 8; // the current peers and values (and time) have been sent
+  }
+  uint64 dropped = 6; // updates dropped for this watch so far
+}
+
+message PeerValues {
+  string peer = 1;
+  string incarnation = 2;
+  Snapshot snapshot = 3;
+}
+
+message PeerEvent {
+  string peer = 1;
+  string incarnation = 2;
+  Event event = 3;
+}
+
+// ---- time control (only when the server coordinates the simulation) -------------------------
+
+message TimeState {
+  bool available = 1; // false: the server does not control the time
+  sint64 now_ns = 2;
+  bool paused = 3;
+  optional sint64 pause_target_ns = 4;
+  optional double speed = 5;
+  bool running = 6; // the simulation has started and not ended
+}
+
+message GetTimeRequest {}
+message PauseRequest {
+  optional sint64 at_ns = 1; // absent: at the next gate step
+}
+message ResumeRequest {}
+message RunUntilRequest {
+  sint64 at_ns = 1;
+}
+message StepRequest {
+  sint64 duration_ns = 1;
+}
+message SetSpeedRequest {
+  optional double speed = 1; // absent: as fast as possible
+}
+message WaitPausedRequest {
+  uint32 timeout_ms = 1;
+}
+message StopRequest {
+  string reason = 1;
+}
+message ForgetPeerRequest {
+  string peer = 1;
+}
+message ForgetPeerReply {}
+
+// Clients (GUI, CLI, Python) talk to the control server through this service.
+service ControlService {
+  rpc Ping(PingRequest) returns (PingReply);
+  rpc ListPeers(ListPeersRequest) returns (ListPeersReply);
+  rpc GetValues(GetValuesRequest) returns (GetValuesReply);
+  rpc Write(WriteRequest) returns (WriteReply);
+  rpc GetOperation(GetOperationRequest) returns (Operation);
+  rpc WaitOperation(WaitOperationRequest) returns (Operation);
+  rpc Watch(WatchRequest) returns (stream Update);
+  // Removes a disconnected peer (operator): its open operations become UNKNOWN.
+  rpc ForgetPeer(ForgetPeerRequest) returns (ForgetPeerReply);
+
+  rpc GetTime(GetTimeRequest) returns (TimeState);
+  rpc Pause(PauseRequest) returns (TimeState);
+  rpc Resume(ResumeRequest) returns (TimeState);
+  rpc RunUntil(RunUntilRequest) returns (TimeState);
+  rpc Step(StepRequest) returns (TimeState);
+  rpc SetSpeed(SetSpeedRequest) returns (TimeState);
+  rpc WaitPaused(WaitPausedRequest) returns (TimeState);
+  rpc Stop(StopRequest) returns (TimeState);
+}

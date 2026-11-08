@@ -2,3 +2,5 @@
 /out/
 /.cache/
 compile_commands.json
+__pycache__/
+/python/vehicle_sil_control/_generated/

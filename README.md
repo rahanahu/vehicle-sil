@@ -19,7 +19,8 @@
 | `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`、`vehicle_sil::j1939_exchange`（開発中） | ECU アプリ向けの部品（同じく公開 API と道具箱だけで作る）。PG の周期送信（`PeriodicSender`）、Request の送信と応答・ACK・時間切れの報告（`Requester`）、受信の最新値と途絶（`Monitor`）、Commanded Address の送信（`AddressCommander`）、独自プロトコルのコマンドと応答（`Exchange`。例は [examples/j1939/param_service](examples/j1939/param_service)）。使い方は [docs/j1939-guide.md](docs/j1939-guide.md) |
 | `vehicle_sil::j1939_codec`（開発中） | J1939 の型付きメッセージ。YAML で PG と信号（位置、符号、スケーリング、範囲、列挙、Proprietary A/B、名前を付けた特別な値とそのプロファイル、埋め値）を定義すると、`vehicle_sil_add_j1939_codec()` がビルドのときに C++ の型を生成する。ビット操作を書かずに、信号を値として送受信する。使い方は [docs/j1939-codec.md](docs/j1939-codec.md) |
 | `vehicle_sil::peer`（開発中、内部向け） | 1 つの SIL Kit participant と、その J1939 の `Network`（SIL Kit の CAN か外部のポート）と LIN の Master/Slave をまとめて作り、仮想時間か実時間で動かす `vehicle_sil::Peer` |
-| `vehicle_sil::control`、`vehicle_sil::peer_control`（開発中） | participant の Control Agent: 型・範囲・単位つきの変数の公開と、外からの書き込みを仮想時刻を指定してステップの中で反映する（固定容量のキュー。通信はまだない）。`attach(peer, agent)` で Peer に組み込む |
+| `vehicle_sil::control`、`vehicle_sil::peer_control`（開発中） | participant の Control Agent（型・範囲・単位つきの変数の公開、外からの書き込みを仮想時刻を指定してステップの中で反映、J1939 の通信状態の監視。固定容量のキュー）と、Control Server の中核の `Hub`。`attach(peer, agent)` で Peer に組み込む |
+| `vehicle_sil::control_grpc`（開発中、`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のとき） | Control API（gRPC）の Server と、Agent の接続 `AgentClient`。認証（TLS、トークン、役割）。[使い方](docs/control-api.md) |
 | `vehicle_sil::testkit`（開発中、内部向け） | SIL Kit なしの J1939 の試験の組み立て: 仮想バスの上の `Network` を名前で組み立てて回す `LocalCan`、出来事と生フレームの記録（`J1939Events`、`FrameLog`）、故障注入の関数（`faults`） |
 | `vehicle_sil::vector_xl_bridge_core` | CAN ブリッジのコア（`vehicle_sil::vector_xl::CanBridge` など）と、外部 CAN ポートを `vehicle_sil::can` の実時間のポートにする `ExternalPortAdapter`。プラットフォームに依存しない |
 | `vehicle_sil::vector_xl` | Vector XL Driver のバックエンド（`XlDriver`、`XlCanPort`）。Windows 専用で、XL Driver Library が必要 |
@@ -28,7 +29,11 @@
 
 | パス | 内容 |
 |---|---|
-| `libs/` | ライブラリ（`core`、`can`、`can_silkit`、`can_netsim`、`j1939`、`lin`、`testkit`、`peer`） |
+| `libs/` | ライブラリ（`core`、`can`、`can_silkit`、`can_netsim`、`j1939`、`lin`、`testkit`、`peer`、`control`、`control_grpc`） |
+| `proto/` | Control API の定義（`vehicle_sil/control/v1/control.proto`） |
+| `python/` | Control API の Python クライアントと CLI（`python -m vehicle_sil_control`） |
+| `tools/control_server` | Control API の Server（とシミュレーションの調停、時間ゲート）`vehicle_sil_control_server` |
+| `examples/control` | Agent を組み込んだ Peer `vehicle_sil_control_peer` と、1 つのプロセスで動くデモ `vehicle_sil_control_demo` |
 | `tools/sim_controller` | 仮想時間のシミュレーションを開始・停止する `vehicle_sil_sim_controller` |
 | `tools/can_bus_simulator` | 簡易 CAN Network Simulator の participant `vehicle_sil_can_bus_simulator` |
 | `tools/j1939_codegen` | YAML の定義から J1939 の型付きメッセージを生成する `j1939_codegen.py` |
@@ -41,7 +46,7 @@
 | `tests/` | ユニットテスト、複数プロセスの統合テスト、FetchContent テスト |
 | `external/` | SIL Kit（Git サブモジュール、コミット固定） |
 | `patches/` | SIL Kit に当てるパッチ（上流への提出用の形式） |
-| `docs/` | [J1939 のノードの作り方](docs/j1939-guide.md)、[J1939 の型付きメッセージ](docs/j1939-codec.md)、[アーキテクチャと将来の制約](docs/architecture.md)、[依存ライブラリ](docs/dependencies.md) |
+| `docs/` | [J1939 のノードの作り方](docs/j1939-guide.md)、[J1939 の型付きメッセージ](docs/j1939-codec.md)、[Control API の使い方](docs/control-api.md)、[アーキテクチャと将来の制約](docs/architecture.md)、[依存ライブラリ](docs/dependencies.md) |
 
 ## 必要なもの
 
@@ -349,7 +354,8 @@ peer.run();   // start() と wait()
 
 ## 既知の制限
 
-- 仮想時間の一時停止とステップ実行は、C++ の API（`SimulationController` の時間ゲート）だけです。`vehicle_sil_sim_controller` や外部からは操作できません。
+- 仮想時間の一時停止とステップ実行は、C++ の API（`SimulationController` の時間ゲート）と、Control API（`vehicle_sil_control_server --required ...`）からできます。`vehicle_sil_sim_controller` からはできません。
+- Control API の GUI はまだありません。Peer の起動（Launcher）、リセット、CAN/LIN のチャネルの選択もありません。
 - LIN の Slave は、応答するフレームのスロット長より短いステップ幅で動かす必要があります。LIN の dynamic response など、SIL Kit の experimental API を使っています。
 - LIN の Slave が決まったステップで受信できるのは、Master が送るフレームだけです。ほかの Slave の応答（slave-to-slave）も購読した ID なら渡されますが、受け取るステップと時刻は決定論的ではありません。
 - 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。

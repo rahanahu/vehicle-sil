@@ -8,6 +8,13 @@ vehicle-sil は上流ライブラリの SIL Kit を Git サブモジュールと
 
 SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`、`googletest`）を持つため、`git submodule update --init --recursive` が必要です。FetchContent はこれを自動で行います。
 
+### gRPC と Protocol Buffers（Control Server、任意）
+
+- `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`（既定 OFF）のときだけ使います。`vehicle_sil::control_grpc`、`proto/` の生成コード、`vehicle_sil_control_server`、`examples/control` が対象で、ほかのライブラリは使いません。
+- `find_package(gRPC CONFIG)` で見つかればそれを使います（MSYS2 UCRT64 は `pacman -S mingw-w64-ucrt-x86_64-grpc`）。見つからなければ FetchContent で gRPC を取り込みます（GitHub の `grpc/grpc`、タグ `v1.76.0`、`VEHICLE_SIL_GRPC_VERSION` で変えられる。サブモジュールは abseil、protobuf、re2、c-ares、BoringSSL、zlib だけ）。取り込んだ gRPC はインストールのルールを作らず（abseil の export 用の設定だけ有効）、警告の対象外（`SYSTEM`）にします。FetchContent で取り込むには CMake 3.28 以上が要ります（それより古い CMake では、gRPC を入れて `find_package` で見つけさせます）。取得済みのソースは `-DFETCHCONTENT_SOURCE_DIR_GRPC=<path>` で再利用できます。
+- ライセンス: gRPC は Apache-2.0、Protocol Buffers は BSD-3-Clause、abseil は Apache-2.0、re2 は BSD-3-Clause、c-ares は MIT、BoringSSL は OpenSSL/ISC 系、zlib は zlib ライセンス。vehicle-sil のリポジトリには含めません。
+- Python のクライアント（`python/vehicle_sil_control`）は `grpcio` と `protobuf` を、スタブの生成には `grpcio-tools` を使います（pip、MSYS2 は `mingw-w64-ucrt-x86_64-python-grpcio` と `-python-grpcio-tools`）。試験はこれらが入った Python（`VEHICLE_SIL_CONTROL_PYTHON`、既定は見つかった Python 3）があるときだけ登録します。
+
 ### Python 3 と PyYAML（J1939 の型付きメッセージの生成）
 
 - `vehicle_sil_add_j1939_codec()` が、ビルドのときに `tools/j1939_codegen/j1939_codegen.py` を動かします。Python 3.8 以上と PyYAML（`import yaml`）が要ります。configure のときに `find_package(Python3)` で探し、PyYAML を import できるかを確かめます。なければ、この関数を呼んだ時点で configure が理由を示して失敗します。

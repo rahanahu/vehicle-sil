@@ -1007,15 +1007,15 @@ J1939 スタックの制限と、規格との一致を確かめていない点�
 - **SIL Kit**: CAN/LIN の通信と仮想時間の同期（データプレーン）
 - **Control API**: 操作と監視
 
-両者は分離します。Control API の通信方式はまだ決めていません。
+両者は分離します。Control API は gRPC（Protocol Buffers、`proto/vehicle_sil/control/v1/control.proto` の v1）で、SIL Kit とは別の接続です。利用者向けの使い方は [control-api.md](control-api.md) にあります。
 
 構成要素は次の3つです。
 
-| 構成要素 | 役割 |
-|---|---|
-| Control Agent | 各 Peer に組み込むライブラリ。Peer の状態と操作できるパラメータを公開し、操作を受け付ける |
-| Control Server | 複数の PC（Windows/Linux）にまたがる Peer を発見し、操作を中継し、状態を集約する |
-| クライアント | GUI、CLI、Python。いずれも共通の Control API を使う |
+| 構成要素 | 役割 | 実装 |
+|---|---|---|
+| Control Agent | 各 Peer に組み込むライブラリ。Peer の状態と操作できるパラメータを公開し、操作を受け付ける | `vehicle_sil::control::Agent`、`attach()`。Server への接続は `vehicle_sil::control_grpc::AgentClient` |
+| Control Server | 複数の PC（Windows/Linux）にまたがる Peer の Agent を受け付け、操作を中継し、状態を集約する。時間ゲートで時間を操作する | `vehicle_sil::control::Hub`、`vehicle_sil::control_grpc::ControlServer`、実行ファイル `vehicle_sil_control_server` |
+| クライアント | GUI、CLI、Python。いずれも共通の Control API を使う | Python のパッケージと CLI（`python/vehicle_sil_control`）。GUI はまだない |
 
 #### Control Agent（`vehicle_sil::control`、`vehicle_sil::peer_control`）
 
@@ -1063,15 +1063,31 @@ Control Server の、通信の方式によらない部分です。接続した A
 - 購読（`subscribe()`）: 始めると、その時点の Peer の一覧と最新の値がまず届きます。Peer、値、操作は、それぞれ Peer ごと・操作ごとに最新の状態だけを持ちます（読む前に変われば置き換える）。上限（`capacity`）があるのは出来事と操作で、あふれたら、出来事は古いものから、操作はいちばん前に変わったものから捨てて数えます。値には、そのスキーマの incarnation が付きます。`poll()` の順は、Peer、操作（番号の順）、出来事（届いた順）、値です。`close()` で待っている `poll()` を起こして終えます。
 - 覚えておく操作: 確定した操作は `max_operations` までで、超えたら古いものから忘れます。未確定の操作は忘れません（数は Peer ごとの `max_pending` で決まります）。
 
+#### Control Server と通信の層（`vehicle_sil::control_grpc`）
+
+`VEHICLE_SIL_BUILD_CONTROL_SERVER`（既定 OFF）のときだけ作ります。gRPC は `find_package(gRPC CONFIG)` で探し、なければ FetchContent で版を固定して取り込みます（[dependencies.md](dependencies.md)）。ほかのライブラリは gRPC に依存しません。
+
+- サービス: クライアント向けの `ControlService`（Peer の一覧、値、書き込み、操作の結果と待ち、購読、Peer を忘れる、時間の操作）と、Agent 向けの `AgentService`（1 接続 1 本の双方向ストリーム。Agent の hello を受け付けると、Server はどのコマンドよりも先に Welcome を返す）。列挙はどれも 0 が UNSPECIFIED で、知らない値は安全側に読みます（変数は書けないものとして、操作の結果は受け取らなかったものとして）。
+- `ControlServer`: Hub に 2 つのサービスを載せ、`TimeControl`（`time_control_of(controller)` で SimulationController の時間ゲートを使う）があれば時間の操作を受けます。なければ時間の操作は `FAILED_PRECONDITION` で、`GetTime` は `available = false` を返します。誤りは gRPC の状態コードで返します（引数の誤りは `INVALID_ARGUMENT`、ない操作や Peer は `NOT_FOUND`、待ちの時間切れは `DEADLINE_EXCEEDED`）。待つ呼び出し（`WaitOperation`、`WaitPaused`）は `max_wait`（既定 60 秒）で打ち切り、クライアントの取り消しと Server の終了でもすぐに終わります。`Stop` は停止を要求するだけで待ちません（複数のクライアントから同時に呼べます）。購読（`Watch`）は、始めにその時点の Peer と最新値（`time` を求めれば時間の状態も）を送ってから `initial_done` を送り、以後は変化を送ります。時間の状態は変わったときだけ送ります。`capacity` は `max_watch_capacity`（既定 65536）までです。接続には keepalive（10 秒ごと、5 秒で応答がなければ切断）を使うので、黙って切れた接続も数十秒以内に見つかります。
+- `AgentClient`: Agent の通信の側を自分のスレッドで動かします。Server へ接続し、Welcome を受けたらつながったとみなします。切れたら指数バックオフ（`reconnect_min` から `reconnect_max`）でつなぎ直し、Server に断られたら（認証、hello の誤り）`reconnect_max` 待ちます（理由は `last_error()`）。シミュレーションは止めません。受けたコマンドを `submit()` し、結果、値（新しい読み出しだけ）、出来事、Peer の状態を `publish_period`（既定 50 ms、壁時計）ごとに送ります。取り出した結果は送る前に「最近の結果」（`max_pending` 件）に入れ、つなぎ直すときは、Agent がまだ持っている操作の番号（`open_seqs`。積んで結果を送り終えていないものと、最近の結果）と、最近の結果を送り直します。Server はすでに確定した結果を無視するので、二重には反映されません。起動ごとの ID（incarnation）は既定で時刻と乱数から作ります。Agent を Peer に `attach()` した後で作ります。終えるときは `Agent::finish()` の後に `stop()` を呼ぶと、残りの結果を送ってから閉じます（送り切れなければ 2 秒で打ち切る）。`tls` を立てて PEM を渡さなければ、システムのルート証明書で TLS を使います。
+- 認証とアクセス制御:
+  - TLS: `SecurityOptions` にサーバーの証明書と秘密鍵（PEM）を渡すと TLS で待ち受けます。クライアントと `AgentClient` は、ルート証明書（PEM）を渡して TLS でつなぎます。
+  - トークン: 認証情報（`Credential`: 名前、トークン、役割、Agent なら名乗れる participant 名）を渡すと、すべての呼び出しに `authorization: Bearer <token>`（`Bearer` の大文字と小文字は問わない）が要ります。資格情報のファイル（`load_credentials()`）では、同じトークンの重複と、Agent 以外の行の participant 名を誤りにします。ないか合わなければ `UNAUTHENTICATED`、役割が足りなければ `PERMISSION_DENIED` です。トークンは長さによらない時間で比べます。認証情報を渡さなければ、誰でも何でもできます。
+  - 役割: viewer（読む: 一覧、値、操作、購読、時刻）< operator（変える: 書き込み、一時停止、再開、ステップ、速度、Peer を忘れる）< admin（停止）。agent は Agent の接続だけができ、クライアントの呼び出しはできません。agent の認証情報に participant 名を書くと、その名前でしか名乗れません。
+  - ループバック以外のアドレスで待ち受けるには、TLS と認証情報の両方が要ります（`allow_insecure` を明示しない限り、`std::invalid_argument` で起動しません）。ループバックとみなすのは `localhost`、`[::1]`、数字の `127.x.y.z`、`unix:` のアドレスだけです。
+  - 監査: `audit` に、変更する呼び出し（書き込み、時間の操作、Peer を忘れる、Agent の接続）と、断った呼び出しを、誰が（認証情報の名前と接続元）、何を、結果、の 1 行で渡します。制御文字は `?` に置き換えます（名前に改行を入れて偽の行を書けない）。
+  - SIL Kit のレジストリとデータプレーンには認証がありません。閉じたネットワークで使います。
+- 上限: Server の未完了の操作は Peer ごとの `max_pending`（hello の値。65536 まで）、確定した操作は `max_operations`、購読は `capacity`（既定 1024、`max_watch_capacity` まで）、Agent のストリームの送信待ちは未完了の操作の数までです。hello のスキーマに空の名前や重複があれば断ります。
+
 Control API で扱う機能は次のとおりです。
 
 - Peer の一覧と状態の取得
-- 開始、停止、一時停止、再開、リセット
-- 仮想時間の取得、ステップ実行、速度設定
+- 開始（必要な participant がそろったとき）、停止、一時停止、再開（リセットはない。やり直すにはプロセスを起動し直す）
+- 仮想時間の取得、ステップ実行、指定時刻まで実行、速度設定
 - スイッチ、レバー、センサー値などの操作（仮想時刻を指定した操作を含む）
-- CAN/LIN チャネルと Vector デバイスの選択
-- 通信ログ、エラー、性能情報の監視
-- 状態変更のリアルタイム通知
+- 通信状態（J1939 のアドレスと統計、バスの状態）、エラー、出来事、性能情報の監視
+- 状態変更のリアルタイム通知（購読）
+- CAN/LIN チャネルと Vector デバイスの選択はまだない（起動時の設定。変えるには再起動が要り、Launcher と一緒に扱う）
 
 守る制約は次のとおりです。
 
