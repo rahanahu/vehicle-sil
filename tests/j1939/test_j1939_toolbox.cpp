@@ -804,3 +804,137 @@ TEST_CASE(address_of_and_name_at_see_local_nodes_and_the_table)
     CHECK(net.name_at(kUs) == std::optional<Name>{Name{kOurName - 1}});
     CHECK(us.address_state() != AddressState::CannotClaim || !net.address_of(Name{kOurName}));
 }
+
+// --- Node::on_incoming_transfer: the transfers a node receives
+
+namespace {
+
+struct Incoming
+{
+    vehicle_sil::j1939::TransferStage stage;
+    std::uint64_t id;
+    std::uint32_t pgn;
+    Address source;
+    Address destination;
+    std::size_t length;
+    vehicle_sil::j1939::TransferResult result;
+    long long ms;
+};
+
+struct IncomingLog
+{
+    explicit IncomingLog(Node& node)
+      : sub(node, node.on_incoming_transfer([this](const vehicle_sil::j1939::IncomingTransfer& t) {
+            got.push_back(Incoming{t.stage, t.id.value, t.pgn.value(), t.source, t.destination, t.length, t.result, ms_of(t.time)});
+        }))
+    {
+    }
+    std::vector<Incoming> got;
+    Subscription sub;
+};
+
+using vehicle_sil::j1939::TransferResult;
+using vehicle_sil::j1939::TransferStage;
+
+} // namespace
+
+TEST_CASE(incoming_broadcasts_are_reported_started_and_ended_to_every_node)
+{
+    Bench bench;
+    Node& a = bench.add_node(kUs);
+    Node& b = bench.add_node(kOther);
+    IncomingLog logA(a), logB(b);
+    std::vector<long long> messages;
+    Subscription m{a, a.on_message(Pgn{kPgnPropB}, [&](const Message& msg) { messages.push_back(ms_of(msg.time)); })};
+    const Bytes data = payload(20, 4);
+    bench.inject(at(5ms), bam(kTool, 20, kPgnPropB));
+    bench.inject(at(15ms), dt(kTool, kGlobal, 1, data));
+    bench.inject(at(25ms), dt(kTool, kGlobal, 2, data));
+    bench.inject(at(35ms), dt(kTool, kGlobal, 3, data));
+    bench.steps(5);
+    CHECK_EQ(logA.got.size(), 2u);
+    CHECK(logA.got.size() == 2 && logA.got[0].stage == TransferStage::Started && logA.got[0].ms == 5 &&
+          logA.got[0].source == kTool && logA.got[0].destination == kGlobal && logA.got[0].length == 20u &&
+          logA.got[0].pgn == kPgnPropB && logA.got[0].id != 0);
+    CHECK(logA.got.size() == 2 && logA.got[1].stage == TransferStage::Ended && logA.got[1].id == logA.got[0].id &&
+          logA.got[1].result == TransferResult::Completed && logA.got[1].ms == 35);
+    CHECK(logB.got.size() == 2 && logB.got[0].id == logA.got[0].id);
+    CHECK(messages == std::vector<long long>{35});
+    // A missing packet (Lost), an announcement that times out (Lost), one replaced (Cancelled).
+    bench.inject(at(55ms), bam(kTool, 20, kPgnPropB));
+    bench.inject(at(65ms), dt(kTool, kGlobal, 2, data));
+    bench.inject(at(75ms), bam(0x91, 20, kPgnPropB));
+    bench.inject(at(85ms), bam(0x91, 30, kPgnPropB)); // the same sender again
+    bench.steps(100);
+    CHECK_EQ(logA.got.size(), 8u);
+    CHECK(logA.got.size() == 8 && logA.got[7].result == TransferResult::Lost && logA.got[7].ms == 85 + 750); // T1
+}
+
+TEST_CASE(incoming_connections_are_reported_to_their_destination_only)
+{
+    Bench bench;
+    Node& a = bench.add_node(kUs);
+    Node& b = bench.add_node(kOther);
+    IncomingLog logA(a), logB(b);
+    const Bytes data = payload(20, 4);
+    // Completed.
+    bench.inject(at(5ms), rts(kTool, kUs, 20, kPgnPropA));
+    bench.steps(2); // CTS at 10
+    bench.inject(at(15ms), dt(kTool, kUs, 1, data));
+    bench.inject(at(15ms), dt(kTool, kUs, 2, data));
+    bench.inject(at(15ms), dt(kTool, kUs, 3, data));
+    bench.steps(2);
+    CHECK(logB.got.empty());
+    CHECK(logA.got.size() == 2 && logA.got[0].destination == kUs && logA.got[1].result == TransferResult::Completed);
+    // Aborted by the originator, and by this node after a timeout (T2: no packet after the CTS).
+    bench.inject(at(35ms), rts(kTool, kUs, 20, kPgnPropA));
+    bench.steps(2);
+    bench.inject(at(55ms), conn_abort(kTool, kUs, 1, kPgnPropA));
+    bench.inject(at(55ms), rts(0x91, kUs, 20, kPgnPropA));
+    bench.steps(200);
+    CHECK(logA.got.size() == 6 && logA.got[3].result == TransferResult::AbortedByPeer && logA.got[3].ms == 55);
+    CHECK(logA.got.size() == 6 && logA.got[5].result == TransferResult::Aborted && logA.got[5].source == 0x91);
+    CHECK(logB.got.empty());
+}
+
+TEST_CASE(a_local_broadcast_is_not_reported_to_its_sender_and_handlers_may_go_during_a_report)
+{
+    Bench bench;
+    Node& a = bench.add_node(kUs);
+    Node& b = bench.add_node(kOther);
+    IncomingLog logA(a), logB(b);
+    int calls = 0;
+    std::optional<Subscription> once;
+    once.emplace(b, b.on_incoming_transfer([&](const vehicle_sil::j1939::IncomingTransfer&) {
+        ++calls;
+        once.reset(); // removed in its own call: not called again
+    }));
+    bench.app = [&](SimTime now) {
+        if (now == at(0ms))
+        {
+            CHECK(a.send(Pgn{kPgnPropB}, payload(20)) == SendStatus::Ok);
+        }
+    };
+    bench.steps(30);
+    CHECK(logA.got.empty());
+    CHECK(logB.got.size() == 2 && logB.got[0].source == kUs && logB.got[1].result == TransferResult::Completed);
+    CHECK_EQ(calls, 1);
+}
+
+TEST_CASE(a_node_added_during_a_broadcast_is_not_told_its_end)
+{
+    Bench bench;
+    Node& a = bench.add_node(kUs);
+    IncomingLog logA(a);
+    const Bytes data = payload(20, 4);
+    bench.inject(at(5ms), bam(kTool, 20, kPgnPropB));
+    bench.steps(2); // started
+    Node& late = bench.add_node(kOther);
+    IncomingLog logLate(late);
+    bench.inject(at(25ms), dt(kTool, kGlobal, 1, data));
+    bench.inject(at(25ms), dt(kTool, kGlobal, 2, data));
+    bench.inject(at(25ms), dt(kTool, kGlobal, 3, data));
+    bench.steps(3);
+    CHECK(logA.got.size() == 2 && logA.got[1].result == TransferResult::Completed);
+    CHECK(logLate.got.empty()); // no end without its start
+}

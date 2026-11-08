@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <optional>
 
 namespace vehicle_sil::j1939 {
 
@@ -89,6 +90,9 @@ Transport::Session* Transport::allocate(Kind kind) noexcept
         {
             s.order = next_order_++;
             s.transfer = 0;
+            s.rx_sender = -1;
+            s.announced = false;
+            s.rx_nodes = 0;
             s.next = 1;
             s.window_start = 1;
             s.window_end = 0;
@@ -212,7 +216,80 @@ void Transport::report_receive_start(const Session& session, SimTime time)
     network_.observe(e);
 }
 
+void Transport::announce_receive(Session& session, SimTime time)
+{
+    session.transfer = next_transfer_++;
+    session.announced = true;
+    // The nodes taking part now: those added during the step come last and take part from the
+    // next one; they are not told of this start, nor of its end.
+    std::uint32_t taking = 0;
+    while (taking < network_.nodes_.size() && network_.nodes_[taking]->active_)
+    {
+        ++taking;
+    }
+    session.rx_nodes = taking;
+    IncomingTransfer t;
+    t.stage = TransferStage::Started;
+    t.id = TransferId{session.transfer};
+    t.pgn = Pgn{session.raw_pgn};
+    t.source = session.source;
+    t.destination = session.destination;
+    t.length = session.length;
+    t.time = time;
+    notify_receive(t, session.node, session.rx_sender, session.rx_nodes);
+}
+
+void Transport::notify_receive(const IncomingTransfer& transfer, std::int32_t node, std::int32_t sender, std::size_t limit)
+{
+    auto& nodes = network_.nodes_;
+    if (node >= 0)
+    {
+        if (static_cast<std::size_t>(node) < nodes.size())
+        {
+            nodes[static_cast<std::size_t>(node)]->notify_incoming(transfer);
+        }
+        return;
+    }
+    // A broadcast: every node that took part at its start, but its sender (as for the message).
+    const std::size_t count = std::min(nodes.size(), limit);
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (static_cast<std::int32_t>(i) != sender && nodes[i]->active_)
+        {
+            nodes[i]->notify_incoming(transfer);
+        }
+    }
+}
+
 void Transport::end_receive(Session& session, TransferResult result, AbortReason reason, SimTime time)
+{
+    // A copy first: the session is released before anyone is told (a handler may start others).
+    std::optional<IncomingTransfer> ended;
+    const std::int32_t node = session.node;
+    const std::int32_t sender = session.rx_sender;
+    const std::size_t told = session.rx_nodes;
+    if (session.announced)
+    {
+        IncomingTransfer t;
+        t.stage = TransferStage::Ended;
+        t.id = TransferId{session.transfer};
+        t.pgn = Pgn{session.raw_pgn};
+        t.source = session.source;
+        t.destination = session.destination;
+        t.length = session.length;
+        t.result = result;
+        t.reason = reason;
+        t.time = time;
+        ended = t;
+    }
+    end_receive_released(session, result, reason, time);
+    if (ended)
+    {
+        notify_receive(*ended, node, sender, told);
+    }
+}
+
+void Transport::end_receive_released(Session& session, TransferResult result, AbortReason reason, SimTime time)
 {
     if (network_.observed())
     {
@@ -239,7 +316,7 @@ void Transport::finish(Session& session, TransferResult result, AbortReason reas
 {
     Node& node = node_of(session);
     const TransferEnd end{Pgn{session.raw_pgn}, session.destination, session.length, result, reason, time,
-                          TransferId{session.transfer}};
+                          TransferId{session.transfer}, session.packets > 0 && session.sent_high >= session.packets};
     release(session);
     if (result == TransferResult::Completed)
     {
@@ -664,7 +741,7 @@ void Transport::on_frame(const Message& message, std::int32_t sender)
         on_eoma(message, sender);
         break;
     case kBam:
-        on_bam(message);
+        on_bam(message, sender);
         break;
     case kAbort:
         on_abort(message, sender);
@@ -731,7 +808,12 @@ void Transport::on_rts(const Message& message, std::int32_t sender)
     s->packets = packets;
     s->rts_limit = limit;
     report_receive_start(*s, message.time);
+    const std::uint32_t generation = s->generation;
     send_cts(*s);
+    if (s->state != State::Free && s->generation == generation) // not ended by a full control queue
+    {
+        announce_receive(*s, message.time);
+    }
 }
 
 void Transport::send_cts(Session& session)
@@ -828,7 +910,7 @@ void Transport::on_eoma(const Message& message, std::int32_t sender)
     finish(*s, TransferResult::Completed, AbortReason::None, message.time);
 }
 
-void Transport::on_bam(const Message& message)
+void Transport::on_bam(const Message& message, std::int32_t sender)
 {
     if (message.destination != kGlobalAddress)
     {
@@ -860,9 +942,11 @@ void Transport::on_bam(const Message& message)
     s->priority = message.priority;
     s->length = static_cast<std::uint16_t>(size);
     s->packets = packets;
+    s->rx_sender = sender;
     s->state = State::BamReceiving;
     arm(*s, TimerKind::Timeout, message.time + kT1);
     report_receive_start(*s, message.time);
+    announce_receive(*s, message.time);
 }
 
 void Transport::on_abort(const Message& message, std::int32_t sender)

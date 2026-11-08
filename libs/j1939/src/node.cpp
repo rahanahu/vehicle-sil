@@ -606,6 +606,20 @@ void Node::notify_transfer_end(const TransferEnd& end, Address source)
     network_.event_time_ = outerTime;
 }
 
+void Node::notify_incoming(const IncomingTransfer& transfer)
+{
+    const std::optional<SimTime> outerTime = std::exchange(network_.event_time_, transfer.time);
+    const std::size_t count = entries_.size();
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (entries_[i].kind == EntryKind::IncomingTransfer && !entries_[i].removed)
+        {
+            entries_[i].incoming_handler(transfer);
+        }
+    }
+    network_.event_time_ = outerTime;
+}
+
 HandlerId Node::add_entry(Entry entry)
 {
     network_.require_not_observing("registering a handler");
@@ -692,6 +706,17 @@ HandlerId Node::on_transfer_end(TransferHandler handler)
         throw std::invalid_argument("vehicle_sil::j1939::Node: empty transfer handler");
     }
     return add_entry(Entry{{}, EntryKind::TransferEnd, false, false, Pgn{}, {}, {}, {}, std::move(handler)});
+}
+
+HandlerId Node::on_incoming_transfer(IncomingTransferHandler handler)
+{
+    if (!handler)
+    {
+        throw std::invalid_argument("vehicle_sil::j1939::Node: empty incoming transfer handler");
+    }
+    Entry entry{{}, EntryKind::IncomingTransfer, false, false, Pgn{}, {}, {}, {}, {}};
+    entry.incoming_handler = std::move(handler);
+    return add_entry(std::move(entry));
 }
 
 bool Node::remove_handler(HandlerId id)

@@ -170,6 +170,53 @@ TEST_CASE(monitor_follows_a_name_of_a_node_of_its_own_network)
     CHECK_EQ(monitor.source(), 0x90);
 }
 
+TEST_CASE(monitor_takes_only_what_accept_accepts)
+{
+    // A check of one's own (here: byte 0 is a counter that must go up by one, byte 7 a checksum
+    // of bytes 0..6). Refused messages are not kept and do not keep the monitor Receiving.
+    Bench bench;
+    Node& us = bench.add_node(kUs);
+    std::optional<std::uint8_t> last;
+    MonitorOptions options;
+    options.timeout = SimDuration{std::chrono::milliseconds(50)};
+    options.accept = [&](const Message& m) {
+        std::uint8_t sum = 0;
+        for (std::size_t i = 0; i < 7; ++i)
+        {
+            sum = static_cast<std::uint8_t>(sum + m.data[i]);
+        }
+        const bool ok = m.data.size() == 8 && m.data[7] == sum && (!last || m.data[0] == static_cast<std::uint8_t>(*last + 1));
+        if (ok)
+        {
+            last = m.data[0];
+        }
+        return ok;
+    };
+    auto& monitor = us.attach<Monitor>(vehicle_sil::j1939::Pgn{kPgnSpeed}, options);
+    const auto message = [](std::uint8_t counter, bool good) {
+        Bytes data{counter, 1, 2, 3, 4, 5, 6, 0};
+        std::uint8_t sum = 0;
+        for (std::size_t i = 0; i < 7; ++i)
+        {
+            sum = static_cast<std::uint8_t>(sum + data[i]);
+        }
+        data[7] = good ? sum : static_cast<std::uint8_t>(sum + 1);
+        return data;
+    };
+    bench.inject(at(5ms), speed_from(0x30, message(1, true)));
+    bench.inject(at(25ms), speed_from(0x30, message(2, false))); // bad checksum
+    bench.inject(at(45ms), speed_from(0x30, message(4, true)));  // a counter jump
+    bench.steps(6);
+    CHECK_EQ(monitor.count(), 1u);
+    CHECK_EQ(monitor.rejected(), 2u);
+    CHECK(monitor.data().size() == 8 && monitor.data()[0] == 1);
+    bench.steps(3); // 50 ms after the only accepted message: Lost, whatever came since
+    CHECK(monitor.state() == MonitorState::Lost);
+    bench.inject(at(85ms), speed_from(0x30, message(2, true)));
+    bench.steps(2);
+    CHECK(monitor.state() == MonitorState::Receiving && monitor.count() == 2u);
+}
+
 TEST_CASE(monitor_keeps_up_to_max_length_bytes)
 {
     Bench bench;

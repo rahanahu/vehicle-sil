@@ -68,6 +68,11 @@ void Monitor::on_message(const Message& message)
     {
         return;
     }
+    if (options_.accept && !options_.accept(message))
+    {
+        ++rejected_;
+        return;
+    }
     const std::size_t kept = std::min(message.data.size(), buffer_.size());
     std::copy_n(message.data.begin(), kept, buffer_.begin());
     length_ = message.data.size();

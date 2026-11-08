@@ -10,6 +10,7 @@
 #include "test_harness.hpp"
 #include "vehicle_sil/j1939/exchange.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -417,7 +418,7 @@ TEST_CASE(exchange_waits_for_the_address_claim_and_ends_when_the_node_cannot_cla
     }
 }
 
-TEST_CASE(exchange_sends_again_from_the_new_address_after_a_move_without_using_a_retry)
+TEST_CASE(exchange_sends_again_after_a_move_when_asked_without_using_a_retry)
 {
     Bench bench;
     Node& us = bench.network.add_node(
@@ -425,7 +426,8 @@ TEST_CASE(exchange_sends_again_from_the_new_address_after_a_move_without_using_a
     Exchange exchange(us, {.timeout = 100ms});
     Results results;
     bench.steps(30); // claimed at 250 ms
-    exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback());
+    exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback(),
+                   {.on_address_change = vehicle_sil::j1939::AddressChangePolicy::SendAgain});
     bench.step(); // 300: sent from 0x20
     const auto rival = Name{}.set_identity_number(1).set_manufacturer_code(1).to_bytes();
     bench.inject(frame(6, kPgnAddressClaim, kUs, kGlobal, Bytes(rival.begin(), rival.end())));
@@ -436,6 +438,50 @@ TEST_CASE(exchange_sends_again_from_the_new_address_after_a_move_without_using_a
     bench.inject(frame(6, kPgnPropA, kServer, 128, reply(1, 2)));
     bench.step();
     CHECK(results.got.size() == 1 && results.got[0].outcome == ExchangeOutcome::Reply && results.got[0].attempts == 2u);
+}
+
+TEST_CASE(exchange_ends_interrupted_when_the_node_moves_after_sending_by_default)
+{
+    // The default policy (Stop): a sent command whose answer cannot come is not sent again and
+    // not reported as not sent. One not sent yet waits and leaves from the new address.
+    Bench bench;
+    Node& us = bench.network.add_node(
+        NodeOptions{kUs, Name{}.set_identity_number(7).set_manufacturer_code(0x7F0).set_arbitrary_address_capable(true)});
+    Exchange exchange(us, {.timeout = 100ms, .retries = 3});
+    Results results;
+    bench.steps(30); // claimed at 250 ms
+    exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback());
+    bench.step(); // 300: sent from 0x20
+    const auto rival = Name{}.set_identity_number(1).set_manufacturer_code(1).to_bytes();
+    bench.inject(frame(6, kPgnAddressClaim, kUs, kGlobal, Bytes(rival.begin(), rival.end())));
+    bench.step(); // 310: moves to 128 and waits
+    CHECK(results.got.size() == 1 && results.got[0].outcome == ExchangeOutcome::Interrupted &&
+          results.got[0].attempts == 1u && results.got[0].send_status == SendStatus::Ok && results.got[0].time == at(300ms));
+    exchange.start(kPropA, command(2), kServer, answer_to(2), results.callback()); // during the wait
+    bench.steps(30);
+    const auto sent = sent_of(bench, kPgnPropA);
+    CHECK(sent.size() == 2 && sent[0].first.sa == kUs && sent[1].first.sa == 128 && sent[1].first.data[1] == 2);
+    CHECK_EQ(exchange.statistics().interrupted, 1u);
+}
+
+TEST_CASE(exchange_ends_interrupted_when_the_node_cannot_claim_after_sending)
+{
+    for (const auto policy : {vehicle_sil::j1939::AddressChangePolicy::Stop, vehicle_sil::j1939::AddressChangePolicy::SendAgain})
+    {
+        Bench bench;
+        Node& us = bench.network.add_node(NodeOptions{kUs, Name{}.set_identity_number(7).set_manufacturer_code(0x7F0)});
+        Exchange exchange(us, {.timeout = 100ms});
+        Results results;
+        bench.steps(2);
+        exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback(), {.on_address_change = policy});
+        bench.step(); // sent
+        const auto rival = Name{}.set_identity_number(1).set_manufacturer_code(1).to_bytes();
+        bench.inject(frame(6, kPgnAddressClaim, kUs, kGlobal, Bytes(rival.begin(), rival.end())));
+        bench.steps(3);
+        CHECK(us.address_state() == AddressState::CannotClaim);
+        CHECK(results.got.size() == 1 && results.got[0].outcome == ExchangeOutcome::Interrupted &&
+              results.got[0].send_status == SendStatus::NoAddress && results.got[0].attempts == 1u);
+    }
 }
 
 // --- long commands
@@ -531,7 +577,8 @@ TEST_CASE(exchange_with_a_long_command_whose_transfer_is_cancelled_follows_the_c
         Bytes longCommand = payload(20, 3);
         longCommand[0] = kRead;
         longCommand[1] = 5;
-        exchange.start(kPropA, longCommand, kServer, answer_to(5), results.callback());
+        exchange.start(kPropA, longCommand, kServer, answer_to(5), results.callback(),
+                   {.on_address_change = vehicle_sil::j1939::AddressChangePolicy::SendAgain});
         bench.step(); // 300: the RTS
         const auto rival = Name{}.set_identity_number(1).set_manufacturer_code(1).to_bytes();
         bench.inject(frame(6, kPgnAddressClaim, kUs, kGlobal, Bytes(rival.begin(), rival.end())));
@@ -540,6 +587,250 @@ TEST_CASE(exchange_with_a_long_command_whose_transfer_is_cancelled_follows_the_c
         CHECK(results.got.size() == 1 && results.got[0].outcome == ExchangeOutcome::Reply &&
               results.got[0].attempts == 2u && results.got[0].data == reply(5, 10));
     }
+}
+
+TEST_CASE(exchange_reports_a_long_command_it_gave_up_as_interrupted)
+{
+    // The counterpart took every packet but no acknowledgement of the end came: it may have
+    // the whole command. A refused transfer (AbortedByPeer) is NotSent instead (other test).
+    Bench bench;
+    Node& us = bench.add_node(kUs);
+    Exchange exchange(us, {.timeout = 100ms, .max_length = 20});
+    Results results;
+    exchange.start(kPropA, payload(20, 3), kServer, answer_to(1), results.callback());
+    bench.step(); // 0: RTS
+    bench.inject(cts(kServer, kUs, 3, 1, kPgnPropA));
+    bench.steps(200); // packets, then no EndOfMsgACK: this node aborts after T3
+    CHECK(results.got.size() == 1 && results.got[0].outcome == ExchangeOutcome::Interrupted &&
+          results.got[0].transfer == TransferResult::Aborted && results.got[0].reason == AbortReason::Timeout);
+    // No clear-to-send at all: no packet left, the counterpart cannot have it.
+    Bench quiet;
+    Node& node = quiet.add_node(kUs);
+    Exchange other(node, {.timeout = 100ms, .max_length = 20});
+    Results got;
+    other.start(kPropA, payload(20, 3), kServer, answer_to(1), got.callback());
+    quiet.steps(200);
+    CHECK(got.got.size() == 1 && got.got[0].outcome == ExchangeOutcome::NotSent &&
+          got.got[0].transfer == TransferResult::Aborted);
+}
+
+TEST_CASE(exchange_tells_a_long_command_cut_short_by_a_move_from_one_that_may_have_arrived)
+{
+    // Default policy (Stop). The node moves (a) after the RTS, before any packet: the counterpart
+    // cannot have the command, so it is sent again from the new address; (b) after the last
+    // packet, before the acknowledgement: it may have it, so Interrupted.
+    for (const bool allPackets : {false, true})
+    {
+        Bench bench;
+        Node& us = bench.network.add_node(
+            NodeOptions{kUs, Name{}.set_identity_number(7).set_manufacturer_code(0x7F0).set_arbitrary_address_capable(true)});
+        Exchange exchange(us, {.timeout = 100ms, .max_length = 20});
+        Results results;
+        bench.steps(30); // claimed at 250 ms
+        exchange.start(kPropA, payload(20, 3), kServer, answer_to(1), results.callback());
+        bench.step(); // 300: the RTS
+        if (allPackets)
+        {
+            bench.inject(cts(kServer, kUs, 3, 1, kPgnPropA));
+            bench.step(); // 310: the three packets leave; no EndOfMsgACK
+        }
+        const auto rival = Name{}.set_identity_number(1).set_manufacturer_code(1).to_bytes();
+        bench.inject(frame(6, kPgnAddressClaim, kUs, kGlobal, Bytes(rival.begin(), rival.end())));
+        bench.steps(40);
+        std::size_t rts = 0;
+        for (const auto& [f, t] : sent_of(bench, kPgnTpCm))
+        {
+            rts += f.data[0] == 16 ? 1 : 0;
+        }
+        if (allPackets)
+        {
+            CHECK(results.got.size() == 1 && results.got[0].outcome == ExchangeOutcome::Interrupted &&
+                  results.got[0].transfer == TransferResult::Cancelled);
+            CHECK_EQ(rts, 1u);
+        }
+        else
+        {
+            CHECK(results.got.empty() || results.got[0].outcome == ExchangeOutcome::Timeout);
+            CHECK_EQ(rts, 2u); // sent again from 128
+        }
+    }
+}
+
+TEST_CASE(exchange_reports_a_refused_retry_as_interrupted)
+{
+    // The retry finds the data queue full: the first attempt may have arrived.
+    vehicle_sil::j1939::NetworkOptions options;
+    options.data_queue_capacity = 2;
+    Bench bench(options);
+    Node& us = bench.add_node(kUs);
+    // A timer with the retry's deadline, started first, fills the queue just before the retry.
+    Timer filler(us, TimerKind::Timeout, [&] {
+        static_cast<void>(us.send(kPropB, command(9)));
+        static_cast<void>(us.send(kPropB, command(9)));
+    });
+    filler.start_at(at(50ms));
+    Exchange exchange(us, {.timeout = 50ms, .retries = 1});
+    Results results;
+    exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback());
+    bench.steps(10);
+    CHECK(results.got.size() == 1 && results.got[0].outcome == ExchangeOutcome::Interrupted &&
+          results.got[0].send_status == SendStatus::QueueFull && results.got[0].attempts == 1u);
+}
+
+// --- long answers (CommandOptions::long_answer) and the wait of each command
+
+namespace {
+
+/// Starts a command to kServer at 0 ms whose answer is a broadcast of PropB from kServer (an
+/// interim answer: [kBusy, ...] of PropA), and injects `frames` (time, frame). Returns the
+/// outcome and its time.
+std::pair<ExchangeOutcome, SimTime> run_long_answer(std::optional<vehicle_sil::j1939::Pgn> longAnswer,
+                                                    const std::vector<std::pair<SimTime, J1939Frame>>& frames,
+                                                    ExchangeOptions options = {.timeout = 100ms}, int steps = 120)
+{
+    Bench bench;
+    Node& us = bench.add_node(kUs);
+    Exchange exchange(us, options);
+    Results results;
+    exchange.start(kPropA, command(1), kServer,
+                   [](const Message& m) {
+                       if (m.pgn == kPropA && !m.data.empty() && m.data[0] == kBusy)
+                       {
+                           return ReplyMatch::Pending;
+                       }
+                       return m.pgn == kPropB ? ReplyMatch::Final : ReplyMatch::Ignore;
+                   },
+                   results.callback(), {.long_answer = longAnswer});
+    bench.step(); // 0: sent
+    for (const auto& [time, f] : frames)
+    {
+        bench.inject(time, f);
+    }
+    bench.steps(steps);
+    if (results.got.size() != 1)
+    {
+        return {ExchangeOutcome::NotSent, SimTime{}};
+    }
+    return {results.got[0].outcome, results.got[0].time};
+}
+
+std::vector<std::pair<SimTime, J1939Frame>> slow_broadcast(Address from, std::uint32_t pgn, SimTime start,
+                                                           std::chrono::milliseconds interval, int packets = 3)
+{
+    const Bytes data = payload(static_cast<std::size_t>(packets) * 7 - 1, 9);
+    std::vector<std::pair<SimTime, J1939Frame>> out{{start, bam(from, data.size(), pgn)}};
+    for (int k = 1; k <= packets; ++k)
+    {
+        out.emplace_back(start + k * interval, dt(from, kGlobal, static_cast<std::uint8_t>(k), data));
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE(exchange_holds_the_wait_while_the_long_answer_is_received)
+{
+    // The answer: a broadcast announced at 50 ms, packets every 50 ms, complete at 200 ms.
+    const auto answer = slow_broadcast(kServer, kPgnPropB, at(50ms), 50ms);
+    const auto held = run_long_answer(kPropB, answer);
+    CHECK(held.first == ExchangeOutcome::Reply && held.second == at(200ms));
+    // Without long_answer the wait counts on: Timeout at 100 ms, before the answer is complete.
+    const auto plain = run_long_answer(std::nullopt, answer);
+    CHECK(plain.first == ExchangeOutcome::Timeout && plain.second == at(100ms));
+}
+
+TEST_CASE(exchange_holds_the_wait_for_a_long_answer_by_connection_and_through_an_interim_answer)
+{
+    const Bytes data = payload(20, 9);
+    // A connection to this node: RTS at 50 ms (the node answers with a CTS), packets at 180 ms.
+    const auto rtsAnswer = run_long_answer(kPropB, {{at(50ms), rts(kServer, kUs, 20, kPgnPropB)},
+                                                    {at(180ms), dt(kServer, kUs, 1, data)},
+                                                    {at(180ms), dt(kServer, kUs, 2, data)},
+                                                    {at(180ms), dt(kServer, kUs, 3, data)}});
+    CHECK(rtsAnswer.first == ExchangeOutcome::Reply && rtsAnswer.second == at(180ms));
+    // An interim answer while the long one comes does not end the hold.
+    auto frames = slow_broadcast(kServer, kPgnPropB, at(50ms), 50ms);
+    frames.emplace_back(at(60ms), frame(6, kPgnPropA, kServer, kUs, {kBusy, 1, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}));
+    std::sort(frames.begin(), frames.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    const auto withPending = run_long_answer(kPropB, frames);
+    CHECK(withPending.first == ExchangeOutcome::Reply && withPending.second == at(200ms));
+}
+
+TEST_CASE(exchange_does_not_hold_the_wait_for_other_transfers)
+{
+    // Another sender, another PGN, and a connection to another node.
+    const auto sender = run_long_answer(kPropB, slow_broadcast(0x31, kPgnPropB, at(50ms), 50ms));
+    CHECK(sender.first == ExchangeOutcome::Timeout && sender.second == at(100ms));
+    const auto group = run_long_answer(kPropB, slow_broadcast(kServer, 0xFF20, at(50ms), 50ms));
+    CHECK(group.first == ExchangeOutcome::Timeout && group.second == at(100ms));
+    const auto other = run_long_answer(kPropB, {{at(50ms), rts(kServer, 0x40, 20, kPgnPropB)}});
+    CHECK(other.first == ExchangeOutcome::Timeout && other.second == at(100ms));
+}
+
+TEST_CASE(exchange_waits_again_from_the_end_of_a_long_answer_that_failed)
+{
+    const Bytes data = payload(20, 9);
+    // A missing packet at 70 ms (Lost): Timeout 100 ms later.
+    const auto lost = run_long_answer(kPropB, {{at(50ms), bam(kServer, 20, kPgnPropB)}, {at(70ms), dt(kServer, kGlobal, 2, data)}});
+    CHECK(lost.first == ExchangeOutcome::Timeout && lost.second == at(170ms));
+    // No packet after the announcement: the receiver gives up after 750 ms (T1), then 100 ms.
+    const auto silent = run_long_answer(kPropB, {{at(50ms), bam(kServer, 20, kPgnPropB)}});
+    CHECK(silent.first == ExchangeOutcome::Timeout && silent.second == at(900ms));
+}
+
+TEST_CASE(exchange_holds_the_wait_at_most_answer_transfer_limit)
+{
+    // The counterpart announces a new broadcast every 80 ms for ever (each replaces the last).
+    std::vector<std::pair<SimTime, J1939Frame>> forever;
+    for (int k = 0; k < 40; ++k)
+    {
+        forever.emplace_back(at(50ms) + k * 80ms, bam(kServer, 20, kPgnPropB));
+    }
+    const auto r = run_long_answer(kPropB, forever, {.timeout = 100ms, .answer_transfer_limit = 300ms}, 400);
+    // Held until 50 + 300 ms; the last broadcast before that ended the hold at most `timeout` later.
+    CHECK(r.first == ExchangeOutcome::Timeout && r.second >= at(350ms) && r.second <= at(450ms));
+    // A broadcast that never ends (no packets, the limit shorter than T1).
+    const auto silent = run_long_answer(kPropB, {{at(50ms), bam(kServer, 20, kPgnPropB)}},
+                                        {.timeout = 100ms, .answer_transfer_limit = 200ms});
+    CHECK(silent.first == ExchangeOutcome::Timeout && silent.second == at(250ms));
+}
+
+TEST_CASE(exchange_waits_each_command_for_its_own_timeout)
+{
+    Bench bench;
+    Node& us = bench.add_node(kUs);
+    Exchange exchange(us, {.timeout = 100ms, .retries = 1});
+    Results results;
+    exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback(), {.timeout = 30ms});
+    exchange.start(kPropA, command(2), kServer, answer_to(2), results.callback()); // ExchangeOptions::timeout
+    bench.steps(40);
+    // 1: sent at 0 and 40 (first step after 30), Timeout at 70. 2: sent at 0 and 110, Timeout at 210.
+    CHECK(results.got.size() == 2 && results.got[0].time == at(70ms) && results.got[0].attempts == 2u);
+    CHECK(results.got.size() == 2 && results.got[1].time == at(210ms) && results.got[1].attempts == 2u);
+    CHECK(throws<std::invalid_argument>([&] {
+        exchange.start(kPropA, command(3), kServer, answer_to(3), results.callback(), {.timeout = SimDuration::zero()});
+    }));
+}
+
+TEST_CASE(exchange_sends_each_command_again_as_often_as_it_allows)
+{
+    Bench bench;
+    Node& us = bench.add_node(kUs);
+    Exchange exchange(us, {.timeout = 50ms, .retries = 2});
+    Results results;
+    exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback());                 // 2 (the Exchange's)
+    exchange.start(kPropA, command(2), kServer, answer_to(2), results.callback(), {.retries = 0}); // an erasure: once
+    exchange.start(kPropA, command(3), kServer, answer_to(3), results.callback(), {.retries = 4});
+    bench.steps(60);
+    CHECK_EQ(results.got.size(), 3u);
+    CHECK(results.got.size() == 3 && results.got[0].attempts == 1u && results.got[0].outcome == ExchangeOutcome::Timeout);
+    CHECK(results.got.size() == 3 && results.got[1].attempts == 3u && results.got[2].attempts == 5u);
+    std::size_t erasures = 0;
+    for (const auto& [f, t] : sent_of(bench, kPgnPropA))
+    {
+        erasures += f.data[1] == 2 ? 1 : 0;
+    }
+    CHECK_EQ(erasures, 1u);
 }
 
 // --- cancel, capacity, arguments
@@ -585,7 +876,7 @@ TEST_CASE(exchange_refuses_invalid_arguments)
     CHECK(throws<std::invalid_argument>([&] { exchange.start(kPropA, Bytes{}, kServer, answer_to(1), results.callback()); }));
     CHECK(throws<std::invalid_argument>([&] { exchange.start(kPropA, command(1), kServer, nullptr, results.callback()); }));
     CHECK(throws<std::invalid_argument>([&] { exchange.start(kPropA, command(1), kServer, answer_to(1), nullptr); }));
-    CHECK(throws<std::invalid_argument>([&] { exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback(), 8); }));
+    CHECK(throws<std::invalid_argument>([&] { exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback(), {.priority = 8}); }));
     CHECK(throws<std::invalid_argument>(
         [&] { exchange.start(vehicle_sil::j1939::Pgn{0x40000}, command(1), kServer, answer_to(1), results.callback()); }));
     CHECK_EQ(exchange.pending(), 0u);
@@ -705,7 +996,8 @@ TEST_CASE(exchange_sends_again_after_a_move_also_after_an_interim_answer)
     Exchange exchange(us, {.timeout = 100ms});
     Results results;
     bench.steps(30); // claimed at 250 ms
-    exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback());
+    exchange.start(kPropA, command(1), kServer, answer_to(1), results.callback(),
+                   {.on_address_change = vehicle_sil::j1939::AddressChangePolicy::SendAgain});
     bench.step(); // 300: sent
     bench.inject(frame(6, kPgnPropA, kServer, kUs, {kBusy, 1, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}));
     bench.step();

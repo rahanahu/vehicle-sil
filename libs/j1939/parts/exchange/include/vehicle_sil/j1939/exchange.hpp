@@ -37,9 +37,17 @@ enum class ExchangeOutcome : std::uint8_t
 {
     Reply,    ///< The matcher took a message as the answer (ExchangeResult::reply).
     Timeout,  ///< No answer within `timeout` after the last attempt (or after the last Pending).
-    NotSent,  ///< The command could not be sent: Node::send() refused it (send_status; NoAddress
-              ///< once the node cannot claim an address), or its transfer (a command longer than
-              ///< 8 bytes) failed on the last attempt (transfer, reason).
+    NotSent,  ///< The command did not reach the counterpart: Node::send() refused it before it was
+              ///< ever sent (send_status; NoAddress once the node cannot claim an address), or its
+              ///< transfer (a command longer than 8 bytes) ended on the last attempt before its
+              ///< last packet or was refused by the counterpart (transfer, reason).
+    /// The command was sent, but its answer can no longer come, so whether the counterpart
+    /// carried it out is unknown: the node's address changed or was lost (on_address_change is
+    /// Stop, or the node cannot claim an address any more: send_status NoAddress; a transfer
+    /// cancelled after its last packet: transfer Cancelled), this node gave its transfer up after
+    /// the last packet (transfer Aborted: no acknowledgement came), or send() refused a retry
+    /// (send_status).
+    Interrupted,
     PeerLost, ///< The counterpart has no address: its NAME (given to start()) was not claimed
               ///< within `timeout` of when the command was due, or, while the exchange ran, it
               ///< moved to another address, gave its address up (Cannot Claim) or another NAME
@@ -57,14 +65,16 @@ struct ExchangeResult
     /// command was first sent (empty if none was known).
     std::optional<Name> peer_name{};
     Message reply{};                 ///< Reply: the answer (its data valid during the callback only).
-    SendStatus send_status = SendStatus::Ok;            ///< NotSent by send().
-    TransferResult transfer = TransferResult::Completed; ///< NotSent by the transfer: how it ended.
-    AbortReason reason = AbortReason::None;              ///< NotSent by the transfer.
+    SendStatus send_status = SendStatus::Ok;            ///< NotSent by send(); Interrupted: NoAddress
+                                                         ///< if the node cannot claim an address.
+    TransferResult transfer = TransferResult::Completed; ///< NotSent, Interrupted by the transfer.
+    AbortReason reason = AbortReason::None;              ///< NotSent, Interrupted by the transfer.
     std::uint32_t attempts = 0;      ///< Commands sent for it.
     bool pending = false;            ///< A Pending answer came before the end.
     /// Reply: the answer's time. Timeout: the deadline. NotSent: the step's time or the end of
     /// the transfer. PeerLost: the time of the Address Claimed (or Cannot Claim) that showed it,
-    /// or the step's time.
+    /// or the step's time. Interrupted: the address change, the end of the transfer, or the
+    /// step's time.
     SimTime time{};
 };
 
@@ -78,19 +88,62 @@ struct ExchangeId
     [[nodiscard]] friend constexpr bool operator==(ExchangeId, ExchangeId) noexcept = default;
 };
 
+/// What an exchange does with a command already sent when the node's address changes (its
+/// answer would go to the old address).
+enum class AddressChangePolicy : std::uint8_t
+{
+    /// End with Interrupted (the default): the counterpart may have carried the command out.
+    /// For commands that must not run twice (writes, erasures).
+    Stop,
+    /// Send it again from the new address once the node can send. Not an attempt of `retries`
+    /// (that is for timeouts). For commands that may run twice (reads, writes of the same value,
+    /// numbered commands the counterpart recognises).
+    SendAgain,
+};
+
+/// The settings of one command (Exchange::start()).
+struct CommandOptions
+{
+    Priority priority = kDefaultPriority;
+    /// The wait for its answer; ExchangeOptions::timeout if empty. See ExchangeOptions::timeout
+    /// for when it starts.
+    std::optional<SimDuration> timeout{};
+    /// Times it is sent again after a timeout (or a failed transfer); ExchangeOptions::retries if
+    /// empty. Give 0 to a command that must not run twice (a write, an erasure) whatever the
+    /// Exchange's default.
+    std::optional<std::uint32_t> retries{};
+    /// The PGN of an answer that may come with the transport protocol: while the counterpart
+    /// sends this node a transfer of that PGN (Node::on_incoming_transfer(): a connection to it,
+    /// or a broadcast), the wait does not end; it starts again when that transfer ends (also
+    /// aborted, timed out or lost). Transfers of other PGNs or other senders do not hold it. At
+    /// most ExchangeOptions::answer_transfer_limit per attempt. Empty: the wait counts on
+    /// through transfers.
+    std::optional<Pgn> long_answer{};
+    AddressChangePolicy on_address_change = AddressChangePolicy::Stop;
+};
+
 struct ExchangeOptions
 {
-    /// How long to wait for the answer: from the step that sent the command (a command longer
-    /// than 8 bytes: from the end of its transfer), and again from each Pending answer.
+    /// How long to wait for an answer, unless CommandOptions::timeout gives another. The wait
+    /// starts in the step that sends the command (the first time, and again for each retry);
+    /// for a command longer than 8 bytes, at the end of its transfer instead. It starts again
+    /// from each Pending answer, and from the end of each long answer that held it (completed or
+    /// not).
     SimDuration timeout = std::chrono::milliseconds(1250);
-    /// Commands sent again after a timeout or a failed transfer, before any Pending answer came.
-    /// 0 by default: a command is sent again only if the protocol allows it (idempotent, or the
-    /// counterpart recognises a repeated one).
+    /// Commands sent again after a timeout or a failed transfer, before any Pending answer came,
+    /// unless CommandOptions::retries gives another number. 0 by default: a command is sent again
+    /// only if the protocol allows it (idempotent, or the counterpart recognises a repeated one).
     std::uint32_t retries = 0;
     /// Exchanges that may run at the same time.
     std::size_t capacity = 4;
     /// The longest command in bytes (1 .. kMaxTransportLength); each exchange keeps a copy.
     std::size_t max_length = 8;
+    /// The most an attempt's wait may be held by long answers being received (start()'s
+    /// `long_answer`), counted from the start of the first one; then the wait is not held any
+    /// more, so a transfer that never ends, or ever new ones, cannot hold it for ever. Not from
+    /// a standard: the longest broadcast (255 packets) at the longest packet interval this
+    /// stack sends with (200 ms) takes 51 s.
+    SimDuration answer_transfer_limit = std::chrono::seconds(60);
 };
 
 struct ExchangeStatistics
@@ -100,15 +153,17 @@ struct ExchangeStatistics
     std::uint64_t timeouts = 0;  ///< ... with Timeout.
     std::uint64_t not_sent = 0;  ///< ... with NotSent.
     std::uint64_t peer_lost = 0; ///< ... with PeerLost.
+    std::uint64_t interrupted = 0; ///< ... with Interrupted.
     std::uint64_t refused = 0;   ///< start() calls refused because capacity was reached.
 };
 
 /// Sends commands of a protocol to one control function at a time and waits for the answers:
 ///
-///     Exchange exchange(node, {.timeout = 200ms, .retries = 1});
-///     exchange.start(kPgnMine, command, kServerName,
+///     Exchange exchange(node, {.timeout = 200ms});
+///     exchange.start(kPgnMine, read, kServerName,
 ///                    [](const Message& m) { return m.data[0] == 0x81 ? ReplyMatch::Final : ReplyMatch::Ignore; },
-///                    [](const ExchangeResult& r) { if (r.outcome == ExchangeOutcome::Reply) { use(r.reply.data); } });
+///                    [](const ExchangeResult& r) { if (r.outcome == ExchangeOutcome::Reply) { use(r.reply.data); } },
+///                    {.on_address_change = AddressChangePolicy::SendAgain}); // a read may run twice
 ///
 /// - start() may be called everywhere (also outside a step and before the node has an
 ///   address). The command leaves at the next chance once the node can send
@@ -129,12 +184,14 @@ struct ExchangeStatistics
 ///   (an item, a sequence number) where answers can come late.
 /// - Without an answer within `timeout` the command is sent again, `retries` times, then the
 ///   outcome is Timeout. A transfer that the receiver aborted or that timed out counts as an
-///   attempt the same way. After a Pending answer the command is not sent again. The wait does
-///   not know about an answer still being received with the transport protocol: allow for the
-///   time of a long answer in `timeout`.
-/// - When the node loses or changes its address, a command already sent is sent again once the
-///   node can send (the answer would go to the old address; this does not use up `retries`,
-///   also after a Pending answer); when it cannot claim one, the exchanges end with NotSent.
+///   attempt the same way. After a Pending answer the command is not sent again. An answer
+///   still being received with the transport protocol holds the wait only if start() names its
+///   PGN (`long_answer`); otherwise allow for its time in `timeout`.
+/// - When the node loses or changes its address, the answer to a command already sent would go
+///   to the old address: the exchange ends with Interrupted, or, with
+///   AddressChangePolicy::SendAgain, the command is sent again once the node can send (not one
+///   of `retries`, also after a Pending answer). Commands not sent yet wait. When the node
+///   cannot claim an address, the exchanges end: NotSent if never sent, Interrupted otherwise.
 /// - PeerLost when the counterpart's NAME (given, or known at its address when the command was
 ///   first sent) moves, gives its address up or loses it to another NAME, as soon as the
 ///   Address Claimed (or Cannot Claim) is received, also with retries left (a counterpart that
@@ -160,15 +217,16 @@ public:
     Exchange& operator=(const Exchange&) = delete;
 
     /// Sends `command` (copied) with `pgn` to the control function at `peer` (0..253) and calls
-    /// `done` with the outcome. An empty ExchangeId (and no callback) if `capacity` exchanges
-    /// run. std::invalid_argument for an invalid PGN, priority > 7, `peer` outside 0..253, an
-    /// empty `command`, a command longer than max_length, or an empty matcher or callback.
+    /// `done` with the outcome; `options` are this command's settings. An empty ExchangeId (and
+    /// no callback) if `capacity` exchanges run. std::invalid_argument for an invalid PGN or
+    /// long_answer, priority > 7, timeout <= 0, `peer` outside 0..253, an empty `command`, a
+    /// command longer than max_length, or an empty matcher or callback.
     ExchangeId start(Pgn pgn, std::span<const std::uint8_t> command, Address peer, ReplyMatcher match,
-                     ExchangeCallback done, Priority priority = kDefaultPriority);
+                     ExchangeCallback done, CommandOptions options = {});
     /// The same with the counterpart given by its NAME (see the class comment: it may wait for
     /// the NAME's Address Claimed).
     ExchangeId start(Pgn pgn, std::span<const std::uint8_t> command, Name peer, ReplyMatcher match,
-                     ExchangeCallback done, Priority priority = kDefaultPriority);
+                     ExchangeCallback done, CommandOptions options = {});
     /// Forgets an exchange: its callback is not called. false if it is not running. A command
     /// already sent (or a transfer under way) is not taken back: its answer may still come.
     bool cancel(ExchangeId id) noexcept;
@@ -209,6 +267,16 @@ private:
         bool pending = false;
         TransferId transfer{};
         std::optional<SimTime> resolve_by{}; ///< The end of the wait for the NAME (Resolving).
+        SimDuration timeout{};
+        std::uint32_t retries = 0;
+        AddressChangePolicy on_address_change = AddressChangePolicy::Stop;
+        /// Sent, but its answer can no longer come (the node's address changed or the command's
+        /// transfer was cancelled): sending it again depends on on_address_change.
+        bool unconfirmed = false;
+        bool transfer_cancelled = false; ///< Unconfirmed because its transfer was cancelled.
+        std::optional<Pgn> long_answer{};
+        TransferId receiving{};              ///< A long answer being received (holds the wait).
+        std::optional<SimTime> hold_until{}; ///< This attempt's limit for holding the wait.
         ReplyMatcher match;
         ExchangeCallback done;
     };
@@ -216,7 +284,7 @@ private:
     struct Guard;
 
     ExchangeId add(Pgn pgn, std::span<const std::uint8_t> command, Address to, std::optional<Name> toName,
-                   ReplyMatcher match, ExchangeCallback done, Priority priority);
+                   ReplyMatcher match, ExchangeCallback done, const CommandOptions& options);
     void arm();
     /// The next running slot after `after` in creation order with id < `limit`, or nullptr.
     [[nodiscard]] Slot* next_slot(std::uint64_t after, std::uint64_t limit) noexcept;
@@ -229,6 +297,11 @@ private:
     bool on_message(const Message& message);
     bool on_address(const AddressChange& change);
     bool on_transfer_end(const TransferEnd& end);
+    void on_incoming(const IncomingTransfer& transfer);
+    /// `base`, or later while a long answer holds the wait.
+    [[nodiscard]] static SimTime held(const Slot& slot, SimTime base) noexcept;
+    /// Forgets the long answer of the last attempt (a new attempt, or the node moved).
+    static void new_attempt(Slot& slot) noexcept;
     /// true if the counterpart of a slot that has sent no longer holds its address.
     [[nodiscard]] bool peer_lost(const Slot& slot) const noexcept;
     /// Frees the slot and calls its callback. false if the Exchange was destroyed.
@@ -245,6 +318,7 @@ private:
     Subscription messages_;
     Subscription address_;
     Subscription transfers_;
+    Subscription incoming_;
 };
 
 } // namespace vehicle_sil::j1939

@@ -298,7 +298,24 @@ TEST_CASE(a_tool_that_moves_gets_a_new_session)
     CHECK_EQ(w.server->statistics().sessions, 2u);
 }
 
-TEST_CASE(a_tool_that_cannot_claim_an_address_cannot_send)
+TEST_CASE(a_tool_that_moves_during_a_write_reports_it_interrupted_but_reads_again)
+{
+    Workshop w(Setup{.tool_name = kMovingToolName, .tool_address = 0x80});
+    Answer a, write, read;
+    w.client->read(kIdle, value_into(a, w.bus));
+    w.bus.run_for(600ms);
+    w.client->write(kIdle, 1000, status_into(write, w.bus)); // takes 300 ms
+    w.bus.run_for(100ms);
+    w.rival_claims(0x80, w.bus.now()); // the tool moves to 129 during the write
+    w.client->read(kRated, value_into(read, w.bus));
+    w.bus.run_for(1s);
+    // Not sent again (a write), and not reported as not done: the ECU may have written it.
+    CHECK(write.status == ParamStatus::Interrupted);
+    CHECK(read.status == ParamStatus::Ok && read.value == 2200u);
+    CHECK_EQ(w.client->statistics().interrupted, 1u);
+}
+
+TEST_CASE(a_tool_that_cannot_claim_an_address_cannot_send_and_a_sent_write_is_interrupted)
 {
     Workshop w;
     Answer a, b;
@@ -309,7 +326,11 @@ TEST_CASE(a_tool_that_cannot_claim_an_address_cannot_send)
     w.rival_claims(0xF9, w.bus.now());
     w.bus.run_for(500ms);
     CHECK(w.tool.address_state() == AddressState::CannotClaim);
-    CHECK(b.status == ParamStatus::NotSent);
+    CHECK(b.status == ParamStatus::Interrupted); // the write was sent: it may have been done
+    Answer c;
+    w.client->read(kIdle, value_into(c, w.bus));
+    w.bus.run_for(100ms);
+    CHECK(c.status == ParamStatus::NotSent); // never sent
 }
 
 TEST_CASE(refusals_reach_the_user_as_statuses)
@@ -348,6 +369,35 @@ TEST_CASE(a_late_answer_to_a_command_sent_again_is_not_taken_for_the_next_one)
     w.bus.run_for(1500ms);
     CHECK(b.status == ParamStatus::Ok && b.value == 750u);
     CHECK(c.status == ParamStatus::Ok && c.value == 2200u);
+}
+
+TEST_CASE(a_long_block_on_a_slow_bus_is_waited_for_while_it_comes)
+{
+    // The ECU's transport packets come 60 ms late each: the 64-byte block (10 packets in one
+    // window) takes longer than the tool's 200 ms wait. The tool names the block's PGN as a long
+    // answer, so the wait holds while the block comes.
+    Workshop w;
+    Answer a;
+    std::vector<std::uint8_t> block;
+    w.client->read(kIdle, value_into(a, w.bus));
+    w.bus.run_for(300ms);
+    std::uint32_t packets = 0;
+    w.bus.endpoint("engine").set_fault_injector([&packets](const vehicle_sil::can::TimedFrame& f) {
+        const auto id = vehicle_sil::j1939::Identifier::decode(f.frame);
+        if (id && id->pgn == vehicle_sil::j1939::Pgn{0xEB00u}) // TP.DT
+        {
+            return vehicle_sil::can::FaultAction::delay_by(std::chrono::milliseconds(60) * (++packets));
+        }
+        return vehicle_sil::can::FaultAction::deliver();
+    });
+    Answer status;
+    w.client->read_block(1, [&](ParamStatus s, std::span<const std::uint8_t> d) {
+        status.status = s;
+        block.assign(d.begin(), d.end());
+    });
+    w.bus.run_for(2s);
+    CHECK(status.status == ParamStatus::Ok && block == w.table.blocks[1]);
+    CHECK_EQ(w.client->statistics().sent, 2u + 1u); // Open, Read, ReadBlock: not sent again
 }
 
 // --- lifetime: parts destroyed while they work

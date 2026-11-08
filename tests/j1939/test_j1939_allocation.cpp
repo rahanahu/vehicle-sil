@@ -808,6 +808,14 @@ TEST_CASE(exchange_does_not_allocate_in_steady_state)
                 const std::array<std::uint8_t, 8> interim{0x7F, 2, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
                 static_cast<void>(server.send(propA, interim, m.source));
             }
+            if (m.data[1] == 4) // a long answer: a broadcast of PropB
+            {
+                std::array<std::uint8_t, 20> longReply{};
+                longReply.fill(0x44);
+                static_cast<void>(server.send(Pgn{0xFF10}, longReply, vehicle_sil::j1939::kGlobalAddress, 6,
+                                              vehicle_sil::j1939::WhenBusy::Queue));
+                return;
+            }
             const std::array<std::uint8_t, 8> reply{0x81, m.data[1], 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
             static_cast<void>(server.send(propA, reply, m.source));
         }
@@ -845,6 +853,13 @@ TEST_CASE(exchange_does_not_allocate_in_steady_state)
             static_cast<void>(exchange.start(propA, longOne, 0x30, answer_to(3), done));
             static_cast<void>(exchange.start(propA, one, 0x55, answer_to(1), done)); // nobody: sent again
             static_cast<void>(exchange.start(propA, one, nobody, answer_to(1), done)); // never claimed
+            const std::array<std::uint8_t, 8> four{0x01, 4, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+            vehicle_sil::j1939::CommandOptions longOne4;
+            longOne4.timeout = std::chrono::milliseconds(60);
+            longOne4.long_answer = Pgn{0xFF10};
+            static_cast<void>(exchange.start(propA, four, 0x30,
+                                             [](const Message& m) { return m.pgn == Pgn{0xFF10} ? ReplyMatch::Final : ReplyMatch::Ignore; },
+                                             done, longOne4));
         }
     };
     for (int i = 0; i < 300; ++i)
@@ -867,7 +882,7 @@ TEST_CASE(exchange_does_not_allocate_in_steady_state)
     CHECK_EQ(counted, 0u);
     CHECK(ended > 400u);
     CHECK_EQ(exchange.statistics().refused, 0u);
-    CHECK(exchange.statistics().replies > 240u && exchange.statistics().timeouts > 80u &&
+    CHECK(exchange.statistics().replies > 340u && exchange.statistics().timeouts > 80u &&
           exchange.statistics().peer_lost > 80u);
     CHECK(!bench.network.failed());
 }

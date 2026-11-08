@@ -110,7 +110,10 @@ private:
         bool gap = false;               ///< Receive: a packet was missed in this window.
         bool ready = false;             ///< BamSending: the interval has passed.
         std::uint64_t order = 0;        ///< Start order (transmit packets leave in this order).
-        std::uint64_t transfer = 0;     ///< Transmit: the TransferId.
+        std::uint64_t transfer = 0;     ///< The TransferId (receive: once announced to the nodes).
+        std::int32_t rx_sender = -1;    ///< BamRx: the local node that sent it, or -1.
+        bool announced = false;         ///< Receive: the nodes were told it started.
+        std::uint32_t rx_nodes = 0;     ///< BamRx: the nodes 0 .. rx_nodes-1 were told (the end goes to them).
         TimerId timer{};
         SimTime deadline{};             ///< The deadline of `timer`.
         std::vector<std::uint8_t> buffer;
@@ -163,6 +166,8 @@ private:
     void report_receive_start(const Session& session, SimTime time);
     /// Ends a receive session: TransferEnded to the observer, then release().
     void end_receive(Session& session, TransferResult result, AbortReason reason, SimTime time);
+    /// The observer's part of end_receive() and the release.
+    void end_receive_released(Session& session, TransferResult result, AbortReason reason, SimTime time);
     /// Ends a transmit session and tells its node.
     void finish(Session& session, TransferResult result, AbortReason reason, SimTime time);
     /// Sends a Connection Abort from `node` to `destination` for `raw_pgn`.
@@ -174,7 +179,12 @@ private:
     void on_rts(const Message& message, std::int32_t sender);
     void on_cts(const Message& message, std::int32_t sender);
     void on_eoma(const Message& message, std::int32_t sender);
-    void on_bam(const Message& message);
+    void on_bam(const Message& message, std::int32_t sender);
+    /// Tells the nodes that receive `session` that it started (IncomingTransfer).
+    void announce_receive(Session& session, SimTime time);
+    /// Tells the nodes that received `transfer` (a released session's copy) that it ended.
+    /// `nodes`: a broadcast goes to the nodes before this index (those told of its start).
+    void notify_receive(const IncomingTransfer& transfer, std::int32_t node, std::int32_t sender, std::size_t nodes);
     void on_abort(const Message& message, std::int32_t sender);
     void on_data(const Message& message, std::int32_t sender);
     void on_rts_data(Session& session, const Message& message, std::int32_t sender);

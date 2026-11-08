@@ -31,6 +31,13 @@ constexpr std::uint8_t kClosed = 0x95;
 
 using Code = msg::Error::Code;
 
+/// Reads, Open and Close may run twice: sent again after a timeout (ParamClientOptions::retries)
+/// and from the tool's new address if it moves.
+const j1939::CommandOptions kRepeatable{.on_address_change = j1939::AddressChangePolicy::SendAgain};
+/// Writes are sent once: no retries, and Interrupted (the default AddressChangePolicy::Stop) if
+/// the tool moves, as the ECU may have written already.
+const j1939::CommandOptions kOnce{.retries = 0};
+
 /// What an answer names after its operation and session bytes (byte 2 on): the parameter (2
 /// bytes, little endian) or the block (1 byte) of the command, so that a late answer to an
 /// earlier command (sent again after a timeout) is not taken for this one's.
@@ -94,6 +101,8 @@ ParamStatus status_of(const ExchangeResult& r)
         return ParamStatus::ServerLost;
     case ExchangeOutcome::NotSent:
         return ParamStatus::NotSent;
+    case ExchangeOutcome::Interrupted:
+        return ParamStatus::Interrupted;
     case ExchangeOutcome::Reply:
         break;
     }
@@ -424,18 +433,17 @@ void ParamClient::open()
 {
     msg::Open command;
     command.access.set(options_.write_access ? msg::Open::Access::write : msg::Open::Access::read);
-    exchange_.start(kPgn, command.bytes(), server_, answer_to(kOpen, kOpenOk, std::nullopt),
-                    [this](const ExchangeResult& r) {
-                        const auto ok = r.outcome == ExchangeOutcome::Reply ? msg::OpenOk::decode(r.reply.data)
-                                                                            : std::nullopt;
-                        if (!ok)
-                        {
-                            complete(status_of(r));
-                            return;
-                        }
-                        session_ = static_cast<std::uint8_t>(ok->session.raw());
-                        run();
-                    });
+    const auto opened = [this](const ExchangeResult& r) {
+        const auto ok = r.outcome == ExchangeOutcome::Reply ? msg::OpenOk::decode(r.reply.data) : std::nullopt;
+        if (!ok)
+        {
+            complete(status_of(r));
+            return;
+        }
+        session_ = static_cast<std::uint8_t>(ok->session.raw());
+        run();
+    };
+    exchange_.start(kPgn, command.bytes(), server_, answer_to(kOpen, kOpenOk, std::nullopt), opened, kRepeatable);
 }
 
 void ParamClient::run()
@@ -449,7 +457,7 @@ void ParamClient::run()
         msg::Read c;
         c.session.set_raw(session);
         c.parameter.set_raw(op.id);
-        exchange_.start(kPgn, c.bytes(), server_, answer_to(kRead, kReadOk, session, Item{op.id, 2}), done);
+        exchange_.start(kPgn, c.bytes(), server_, answer_to(kRead, kReadOk, session, Item{op.id, 2}), done, kRepeatable);
         return;
     }
     case Kind::Write: {
@@ -457,26 +465,28 @@ void ParamClient::run()
         c.session.set_raw(session);
         c.parameter.set_raw(op.id);
         c.value.set_raw(op.value);
-        exchange_.start(kPgn, c.bytes(), server_, answer_to(kWrite, kWriteOk, session, Item{op.id, 2}), done);
+        exchange_.start(kPgn, c.bytes(), server_, answer_to(kWrite, kWriteOk, session, Item{op.id, 2}), done, kOnce);
         return;
     }
     case Kind::ReadBlock: {
         msg::ReadBlock c;
         c.session.set_raw(session);
         c.block.set_raw(op.id);
-        exchange_.start(kPgn, c.bytes(), server_, answer_to(kReadBlock, kBlockData, session, Item{op.id, 1}), done);
+        exchange_.start(kPgn, c.bytes(), server_, answer_to(kReadBlock, kBlockData, session, Item{op.id, 1}), done,
+                        j1939::CommandOptions{.long_answer = kPgn, // the block comes with the transport protocol
+                                              .on_address_change = j1939::AddressChangePolicy::SendAgain});
         return;
     }
     case Kind::WriteBlock: {
         std::vector<std::uint8_t> c{kWriteBlock, session, static_cast<std::uint8_t>(op.id)};
         c.insert(c.end(), op.data.begin(), op.data.end());
-        exchange_.start(kPgn, c, server_, answer_to(kWriteBlock, kBlockWritten, session, Item{op.id, 1}), done);
+        exchange_.start(kPgn, c, server_, answer_to(kWriteBlock, kBlockWritten, session, Item{op.id, 1}), done, kOnce);
         return;
     }
     case Kind::Close: {
         msg::Close c;
         c.session.set_raw(session);
-        exchange_.start(kPgn, c.bytes(), server_, answer_to(kClose, kClosed, session), done);
+        exchange_.start(kPgn, c.bytes(), server_, answer_to(kClose, kClosed, session), done, kRepeatable);
         return;
     }
     }

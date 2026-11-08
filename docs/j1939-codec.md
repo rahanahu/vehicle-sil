@@ -288,7 +288,7 @@ if (const auto v = m.speed.value()) {
 | `codec::send(node, message, destination)` | `node.send(M::kPgn, message.bytes(), destination, M::kPriority)` |
 | `codec::decode<M>(message)` | `message.pgn` が `M::kPgn` のときだけ `M::decode(message.data)`（ほかは空）。いろいろな PGN が来る所（`Exchange` の `match` など）で使う |
 
-- `Monitor` の最新の受信は `M::decode(monitor.data())`、`Requester` の応答は `M::decode(result.data)` で読みます（まだ受けていなければ空）。
+- `Monitor` の最新の受信は `M::decode(monitor.data())`（同じ PGN に別の型が載るなら、`MonitorOptions::accept` で `codec::decode<M>(message)` が通るものだけにする）、`Requester` の応答は `M::decode(result.data)` で読みます（まだ受けていなければ空）。
 - 同じ PGN の複数の型（Proprietary A をセレクターで分けたもの）は、型ごとに `on_message<M>` を登録します。
 - `fill` とハンドラは、ほかのハンドラと同じくステップの中で呼ばれます。投げた例外は `Network` を失敗状態にします。
 

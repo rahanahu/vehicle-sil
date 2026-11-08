@@ -46,6 +46,12 @@ struct MonitorOptions
     /// The bytes kept of the latest message (allocated when the monitor is created); a longer
     /// message is kept cut to this length (length() has its full length).
     std::size_t max_length = 8;
+    /// Only messages for which this returns true (after `source` and `name`), e.g. those that
+    /// decode as one message type of a PGN with selectors, or those whose sequence counter and
+    /// checksum a safety protocol accepts. A rejected message is not kept, does not count as
+    /// received (it does not end Lost or restart the timeout) and is counted (rejected()). It
+    /// runs in the step and must not destroy the monitor. Empty: every message.
+    std::function<bool(const Message&)> accept{};
     /// Called for each accepted message, after the monitor took it.
     std::function<void(const Message&)> on_message{};
     /// Called after each change of state().
@@ -86,6 +92,8 @@ public:
     [[nodiscard]] Address source() const noexcept { return source_; }
     /// Accepted messages so far.
     [[nodiscard]] std::uint64_t count() const noexcept { return count_; }
+    /// Messages from the source that `accept` refused.
+    [[nodiscard]] std::uint64_t rejected() const noexcept { return rejected_; }
     /// Times the monitor went Lost.
     [[nodiscard]] std::uint64_t losses() const noexcept { return losses_; }
     [[nodiscard]] Pgn pgn() const noexcept { return pgn_; }
@@ -104,6 +112,7 @@ private:
     std::optional<SimTime> time_;
     Address source_ = kNullAddress;
     std::uint64_t count_ = 0;
+    std::uint64_t rejected_ = 0;
     std::uint64_t losses_ = 0;
     MonitorState state_ = MonitorState::Waiting;
     std::optional<Timer> timeout_;

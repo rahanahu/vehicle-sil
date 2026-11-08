@@ -118,6 +118,39 @@ struct TransferEnd
     AbortReason reason;       ///< AbortReason::None unless aborted.
     SimTime time;             ///< The time of the cause: the frame's time, or the step's time.
     TransferId id{};          ///< The transfer (Node::last_transfer_id() when it was accepted).
+    /// Every data packet left (always for Completed): the receiver may have the whole message
+    /// even if the transfer did not complete (e.g. its acknowledgement did not come). false: it
+    /// cannot have it (the transfer was refused, cancelled or timed out before the last packet,
+    /// or never started).
+    bool all_packets_sent = false;
+};
+
+/// Whether an IncomingTransfer reports the start or the end of a transfer.
+enum class TransferStage : std::uint8_t
+{
+    Started, ///< The connection (RTS) to the node was accepted, or a broadcast was announced (BAM).
+    Ended,
+};
+
+/// A transfer (a message longer than 8 bytes) that a node receives, passed to
+/// Node::on_incoming_transfer(): its start and its end, with the same id. Every transfer
+/// reported as started is reported as ended exactly once (unless the network fails or is
+/// destroyed first). The message of a Completed transfer is delivered right after its end.
+struct IncomingTransfer
+{
+    TransferStage stage = TransferStage::Started;
+    TransferId id{};                      ///< Unique within the network (with the sent ones).
+    Pgn pgn{};
+    Address source = kNullAddress;
+    Address destination = kGlobalAddress; ///< The node (RTS/CTS), or kGlobalAddress (BAM).
+    std::size_t length = 0;
+    /// Ended: Completed; AbortedByPeer (the originator aborted); Aborted (this node aborted, e.g.
+    /// after a timeout); Lost (a broadcast missed a packet or timed out); Cancelled (an address
+    /// changed, the sender started the same transfer again, or the clear-to-send could not be
+    /// queued).
+    TransferResult result = TransferResult::Completed;
+    AbortReason reason = AbortReason::None;
+    SimTime time{};                       ///< The time of the frame or the timeout that caused it.
 };
 
 /// Where a node is in address claiming.
@@ -258,6 +291,7 @@ using MessageHandler = std::function<void(const Message&)>;
 using RequestResponder = std::function<void(RequestContext&)>;
 using AddressHandler = std::function<void(const AddressChange&)>;
 using TransferHandler = std::function<void(const TransferEnd&)>;
+using IncomingTransferHandler = std::function<void(const IncomingTransfer&)>;
 
 /// The control functions on the bus that are not nodes of this network: the NAME each address
 /// was last claimed with. Updated from the Address Claimed messages the network receives (not
@@ -390,6 +424,10 @@ public:
     /// node that send() or RequestContext::respond() accepted (in the step, like a message
     /// handler).
     HandlerId on_transfer_end(TransferHandler handler);
+    /// Calls `handler` at the start and at the end of every transfer this node receives: a
+    /// connection (RTS/CTS) to its address, and a broadcast (BAM) of another sender (every node
+    /// of the network but the sender). In the step, like a message handler.
+    HandlerId on_incoming_transfer(IncomingTransferHandler handler);
     /// Removes a handler or responder. false if `id` is not registered. Removed while a message
     /// or a notification is being delivered, it is not called any more (also not for the rest
     /// of that delivery); the handler object itself is destroyed after the delivery.
@@ -417,6 +455,7 @@ private:
         Request,
         AddressChange,
         TransferEnd,
+        IncomingTransfer,
     };
     struct Entry
     {
@@ -429,6 +468,7 @@ private:
         RequestResponder responder;
         AddressHandler address_handler;
         TransferHandler transfer_handler;
+        IncomingTransferHandler incoming_handler{};
     };
 
     /// What a node sent during the wait after the claim.
@@ -508,6 +548,7 @@ private:
                                 std::uint32_t generation);
     /// `source`: the address the transfer was sent from (for the observer).
     void notify_transfer_end(const TransferEnd& end, Address source);
+    void notify_incoming(const IncomingTransfer& transfer);
 
     Network& network_;
     std::size_t index_;

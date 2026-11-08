@@ -136,12 +136,15 @@ enum class ParamStatus : std::uint8_t
     OutOfRange,
     Denied,     ///< A write in a read-only session.
     Failed,     ///< Any other error answer.
+    /// A write was sent, but the tool's address changed (or was lost) before the answer: the ECU
+    /// may have written it. Not sent again by itself.
+    Interrupted,
 };
 
 struct ParamClientOptions
 {
     vehicle_sil::SimDuration timeout = 200ms; ///< For each answer (Pending restarts it).
-    std::uint32_t retries = 1;                ///< Commands sent again after a timeout.
+    std::uint32_t retries = 1;                ///< Reads sent again after a timeout (writes: never).
     bool write_access = true;
     std::size_t max_block = 256;
     std::size_t queue_capacity = 8;           ///< Operations waiting their turn.
