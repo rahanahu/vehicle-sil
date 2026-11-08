@@ -435,7 +435,8 @@ private:
     void schedule_cannot_claim(SimTime since);
     void send_claim(Address source);
     void release_held();
-    /// Drops what the node holds (counted); a waiting transfer ends Cancelled at `time`.
+    /// Drops what the node holds (counted) without calling a handler: the address change that
+    /// follows ends a waiting transfer (Transport::close_node_sessions()).
     void drop_held(SimTime time);
     /// Calls the address handlers if the state or the address differs from the previous ones.
     void notify_change(AddressState previousState, Address previousAddress, SimTime time);

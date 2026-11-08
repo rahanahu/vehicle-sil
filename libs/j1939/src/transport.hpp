@@ -47,8 +47,6 @@ public:
     void on_control_dropped(std::uint32_t session, std::uint32_t generation);
     /// The node released what it held: the waiting transfer `session` starts now.
     void start_waiting(std::uint32_t session, std::uint32_t generation);
-    /// The node dropped what it held: the waiting transfer `session` is cancelled.
-    void cancel_waiting(std::uint32_t session, std::uint32_t generation, SimTime time);
     /// The node is about to lose or change its address: its sessions and queued responses end
     /// without a frame.
     void close_node_sessions(std::size_t node, SimTime time);

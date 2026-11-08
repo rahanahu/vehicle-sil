@@ -315,23 +315,19 @@ void Node::handle_commanded_address(const Message& message)
 
 void Node::drop_held(SimTime time)
 {
-    // Only what the node held when this started: a handler told about a cancelled transfer may
-    // send again, and what it holds then stays (the address change that follows deals with it).
-    const std::size_t count = held_.size();
-    network_.statistics_.held_dropped += count;
-    for (std::size_t i = 0; i < count; ++i)
+    // No handler is called here: the node's state is still the old one. A held transfer is a
+    // waiting session of the node; the address change that follows closes it (claim() or
+    // lose_address() calls Transport::close_node_sessions() after changing the state, and the
+    // node holds only while it has an address), and on_transfer_end() reports it there.
+    network_.statistics_.held_dropped += held_.size();
+    for (const Held& held : held_)
     {
-        const Held held = held_[i];
-        if (held.kind == Held::Kind::Transfer)
+        if (held.kind != Held::Kind::Transfer && held.kind != Held::Kind::Control)
         {
-            network_.transport_->cancel_waiting(held.session, held.generation, time);
-        }
-        else if (held.kind != Held::Kind::Control)
-        {
-            report_dropped(held, DropReason::AddressChanged, time);
+            report_dropped(held, DropReason::AddressChanged, time); // the Observer only
         }
     }
-    held_.erase(held_.begin(), held_.begin() + static_cast<std::ptrdiff_t>(count));
+    held_.clear();
 }
 
 void Node::lose_address(SimTime since)

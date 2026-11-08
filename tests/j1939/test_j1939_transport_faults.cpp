@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -24,6 +25,7 @@ using vehicle_sil::unit::throws;
 using vehicle_sil::can::FaultAction;
 using vehicle_sil::can::TimedFrame;
 using vehicle_sil::j1939::AbortReason;
+using vehicle_sil::j1939::AddressChange;
 using vehicle_sil::j1939::AddressState;
 using vehicle_sil::j1939::Message;
 using vehicle_sil::j1939::Name;
@@ -858,18 +860,29 @@ TEST_CASE(transport_handler_that_sends_again_after_a_cancel_keeps_the_new_transf
 
 TEST_CASE(transport_handler_that_sends_again_while_held_transfers_are_dropped)
 {
-    // A transfer held during the wait is cancelled when the node moves; the handler sends again
-    // (still before the move): that one is cancelled with the move, the next one is kept.
+    // A transfer held during the wait is cancelled when the node moves. The handler is told after
+    // the move (it sees the new address and state, then on_address_change follows), so what it
+    // sends again is held for the new address and kept.
     Bench bench;
     Node& us = bench.network.add_node({0x80, Name{kAacName}});
     std::vector<TransferResult> results;
+    std::vector<std::string> order;
     int resent = 0;
     us.on_transfer_end([&](const TransferEnd& e) {
         results.push_back(e.result);
+        order.push_back("end");
+        CHECK(us.address() == 0x81);
+        CHECK(us.address_state() == AddressState::Claiming);
         if (e.result == TransferResult::Cancelled && resent < 5)
         {
             ++resent;
             CHECK(us.send(Pgn{kPgn}, payload(9), kB) == SendStatus::Ok);
+        }
+    });
+    us.on_address_change([&](const AddressChange& c) {
+        if (c.previous_address == 0x80 && c.address == 0x81)
+        {
+            order.push_back("change");
         }
     });
     bench.app = [&](SimTime now) {
@@ -882,8 +895,11 @@ TEST_CASE(transport_handler_that_sends_again_while_held_transfers_are_dropped)
     bench.inject(claim_frame(0x80, kAacName - 1));
     bench.steps(30);
     CHECK_J1939(bench.take_sent(), {claim_frame(0x80, kAacName), claim_frame(0x81, kAacName), rts(0x81, kB, 9, kPgn)});
-    CHECK(results == (std::vector<TransferResult>{TransferResult::Cancelled, TransferResult::Cancelled}));
-    CHECK_EQ(resent, 2);
+    CHECK(results == (std::vector<TransferResult>{TransferResult::Cancelled}));
+    CHECK_EQ(resent, 1);
+    CHECK(order == (std::vector<std::string>{"end", "change"}));
+    CHECK_EQ(bench.network.statistics().held_dropped, 1u);
+    CHECK_EQ(bench.network.statistics().transport_sessions_cancelled, 1u);
 }
 
 // --- after the independent review ----------------------------------------------------------

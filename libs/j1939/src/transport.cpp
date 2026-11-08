@@ -396,16 +396,6 @@ void Transport::start_waiting(std::uint32_t tag, std::uint32_t generation)
     }
 }
 
-void Transport::cancel_waiting(std::uint32_t tag, std::uint32_t generation, SimTime time)
-{
-    Session* s = find(tag, generation);
-    if (s != nullptr && s->state == State::Waiting)
-    {
-        ++network_.statistics_.transport_sessions_cancelled;
-        finish(*s, TransferResult::Cancelled, AbortReason::None, time);
-    }
-}
-
 void Transport::close_node_sessions(std::size_t node, SimTime time)
 {
     // Handlers told about the end may send again at once: what they start is newer than `before`
