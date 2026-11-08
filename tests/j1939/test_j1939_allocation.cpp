@@ -19,6 +19,7 @@
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/j1939/observer.hpp"
 #include "vehicle_sil/j1939/periodic_sender.hpp"
+#include "vehicle_sil/j1939/exchange.hpp"
 #include "vehicle_sil/j1939/requester.hpp"
 #include "vehicle_sil/j1939/toolbox.hpp"
 
@@ -784,6 +785,91 @@ TEST_CASE(ecu_application_parts_do_not_allocate_in_steady_state)
     CHECK(commanded > 10u);
     CHECK(!bench.network.failed());
     CHECK(bench.network.statistics().transport_messages_sent > 50u);
+}
+
+// Exchange (commands of a protocol of one's own) in steady state: answered commands (one with
+// an interim answer), long ones (RTS/CTS), unanswered ones sent again, a NAME nobody claims.
+TEST_CASE(exchange_does_not_allocate_in_steady_state)
+{
+    using vehicle_sil::j1939::Exchange;
+    using vehicle_sil::j1939::ExchangeOptions;
+    using vehicle_sil::j1939::ExchangeResult;
+    using vehicle_sil::j1939::Name;
+    using vehicle_sil::j1939::ReplyMatch;
+    Bench bench({}, std::chrono::milliseconds(10));
+    Node& us = bench.add_node(0x20);
+    Node& server = bench.add_node(0x30);
+    const Pgn propA{0xEF00};
+    vehicle_sil::j1939::Subscription answers{server, server.on_message(propA, [&](const Message& m) {
+        if (m.data.size() >= 2 && m.data[0] == 0x01)
+        {
+            if (m.data[1] == 2)
+            {
+                const std::array<std::uint8_t, 8> interim{0x7F, 2, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+                static_cast<void>(server.send(propA, interim, m.source));
+            }
+            const std::array<std::uint8_t, 8> reply{0x81, m.data[1], 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+            static_cast<void>(server.send(propA, reply, m.source));
+        }
+    })};
+    ExchangeOptions options;
+    options.timeout = std::chrono::milliseconds(50);
+    options.retries = 1;
+    options.capacity = 8;
+    options.max_length = 40;
+    Exchange exchange(us, options);
+    const auto answer_to = [](std::uint8_t item) {
+        return [item](const Message& m) {
+            if (m.data.size() < 2 || m.data[1] != item)
+            {
+                return ReplyMatch::Ignore;
+            }
+            return m.data[0] == 0x81 ? ReplyMatch::Final : m.data[0] == 0x7F ? ReplyMatch::Pending : ReplyMatch::Ignore;
+        };
+    };
+    std::size_t ended = 0;
+    const auto done = [&ended](const ExchangeResult&) { ++ended; };
+    const std::array<std::uint8_t, 8> one{0x01, 1, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    const std::array<std::uint8_t, 8> two{0x01, 2, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    std::array<std::uint8_t, 40> longOne{};
+    longOne.fill(0x33);
+    longOne[0] = 0x01;
+    longOne[1] = 3;
+    const Name nobody = Name{}.set_identity_number(77).set_manufacturer_code(9);
+    int step = 0;
+    const auto drive = [&] {
+        if (++step % 20 == 0)
+        {
+            static_cast<void>(exchange.start(propA, one, 0x30, answer_to(1), done));
+            static_cast<void>(exchange.start(propA, two, 0x30, answer_to(2), done));
+            static_cast<void>(exchange.start(propA, longOne, 0x30, answer_to(3), done));
+            static_cast<void>(exchange.start(propA, one, 0x55, answer_to(1), done)); // nobody: sent again
+            static_cast<void>(exchange.start(propA, one, nobody, answer_to(1), done)); // never claimed
+        }
+    };
+    for (int i = 0; i < 300; ++i)
+    {
+        drive();
+        bench.step();
+        static_cast<void>(bench.take_sent());
+    }
+    std::size_t counted = 0;
+    for (int i = 0; i < 1500; ++i)
+    {
+        drive();
+        g_allocations.store(0);
+        g_counting.store(true);
+        bench.step();
+        g_counting.store(false);
+        counted += g_allocations.load();
+        static_cast<void>(bench.take_sent());
+    }
+    CHECK_EQ(counted, 0u);
+    CHECK(ended > 400u);
+    CHECK_EQ(exchange.statistics().refused, 0u);
+    CHECK(exchange.statistics().replies > 240u && exchange.statistics().timeouts > 80u &&
+          exchange.statistics().peer_lost > 80u);
+    CHECK(!bench.network.failed());
 }
 
 // Typed messages (codec_node.hpp) in steady state: typed periodic senders (a single frame and a

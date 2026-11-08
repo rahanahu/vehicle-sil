@@ -98,6 +98,16 @@ enum class TransferResult : std::uint8_t
                    ///< out; nothing is sent.
 };
 
+/// Identifies one transfer (a message longer than 8 bytes) of the nodes of a network: what
+/// Node::last_transfer_id() gives after the send that accepted it, and TransferEnd::id at its
+/// end. Unique within the network. Empty (false) for no transfer.
+struct TransferId
+{
+    std::uint64_t value = 0;
+    [[nodiscard]] explicit operator bool() const noexcept { return value != 0; }
+    [[nodiscard]] friend constexpr bool operator==(TransferId, TransferId) noexcept = default;
+};
+
 /// The end of a transfer, passed to Node::on_transfer_end().
 struct TransferEnd
 {
@@ -107,6 +117,7 @@ struct TransferEnd
     TransferResult result;
     AbortReason reason;       ///< AbortReason::None unless aborted.
     SimTime time;             ///< The time of the cause: the frame's time, or the step's time.
+    TransferId id{};          ///< The transfer (Node::last_transfer_id() when it was accepted).
 };
 
 /// Where a node is in address claiming.
@@ -342,6 +353,11 @@ public:
     SendStatus send(Pgn pgn, std::span<const std::uint8_t> data, Address destination = kGlobalAddress,
                     Priority priority = kDefaultPriority, WhenBusy whenBusy = WhenBusy::Fail);
 
+    /// The transfer that the last send() or respond() of this node (also RequestContext::respond())
+    /// accepted, to find its end in on_transfer_end() (TransferEnd::id). Empty if that call sent
+    /// a single frame or was refused. Read it right after the call.
+    [[nodiscard]] TransferId last_transfer_id() const noexcept { return last_transfer_; }
+
     /// Answers a request kept with RequestContext::defer() as RequestContext::respond() would
     /// have. NoAddress if the node lost or changed its address since the request.
     /// std::invalid_argument for a request of another node.
@@ -507,6 +523,7 @@ private:
     /// (also if the node came back to the same address).
     std::uint32_t epoch_ = 0;
     bool holding_;
+    TransferId last_transfer_{}; ///< See last_transfer_id().
     std::vector<Held> held_;
     TimerId claim_wait_{};
     TimerId cannot_claim_timer_{};
@@ -666,6 +683,15 @@ public:
 
     /// The other control functions on the bus and their addresses.
     [[nodiscard]] const AddressTable& address_table() const noexcept { return address_table_; }
+    /// The address the control function with `name` holds now: a node of this network that is
+    /// Claiming or Claimed with that NAME, otherwise the address table. Empty if neither has it.
+    /// Changes when an Address Claimed or a Cannot Claim is received or a local node's address
+    /// changes (before the handlers of that message or change are called).
+    [[nodiscard]] std::optional<Address> address_of(Name name) const noexcept;
+    /// The NAME of the control function at `address` now: a node of this network that is
+    /// Claiming or Claimed there, otherwise the address table. Empty if neither has one (also for
+    /// a node without a NAME).
+    [[nodiscard]] std::optional<Name> name_at(Address address) const noexcept;
 
     // can::Steppable
     /// Checks the step size: above 50 ms a warning, above 200 ms std::invalid_argument (the

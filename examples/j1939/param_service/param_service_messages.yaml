@@ -1,0 +1,99 @@
+# The fixed-length messages of the parameter service of examples/j1939/param_service: one
+# Proprietary A group (PGN 0xEF00) whose first byte tells the operation. The block data
+# (BlockData, WriteBlock) has a variable length and is written as bytes in param_service.cpp.
+# vehicle_sil_add_j1939_codec() turns this file into param_service_messages.hpp.
+namespace: param_service::messages
+# Protocol fields: every bit pattern is a value (no special values).
+indicators: none
+messages:
+  # tool -> ECU
+  - name: Open
+    comment: Opens a session (or returns the open one to the same tool).
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x10}
+    signals:
+      - {name: access, start_bit: 8, length: 8, values: {read: 0, write: 1}}
+
+  - name: Read
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x11}
+    signals:
+      - {name: session, start_bit: 8, length: 8}
+      - {name: parameter, start_bit: 16, length: 16}
+
+  - name: Write
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x12}
+    signals:
+      - {name: session, start_bit: 8, length: 8}
+      - {name: parameter, start_bit: 16, length: 16}
+      - {name: value, start_bit: 32, length: 32}
+
+  - name: ReadBlock
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x13}
+    signals:
+      - {name: session, start_bit: 8, length: 8}
+      - {name: block, start_bit: 16, length: 8}
+
+  - name: Close
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x15}
+    signals:
+      - {name: session, start_bit: 8, length: 8}
+
+  # ECU -> tool
+  - name: OpenOk
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x90}
+    signals:
+      - {name: session, start_bit: 8, length: 8}
+      - {name: idle_timeout, start_bit: 16, length: 16, unit: ms, comment: The session ends after this long without a command.}
+
+  - name: ReadOk
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x91}
+    signals:
+      - {name: session, start_bit: 8, length: 8}
+      - {name: parameter, start_bit: 16, length: 16}
+      - {name: value, start_bit: 32, length: 32}
+
+  - name: WriteOk
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x92}
+    signals:
+      - {name: session, start_bit: 8, length: 8}
+      - {name: parameter, start_bit: 16, length: 16}
+
+  - name: BlockWritten
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x94}
+    signals:
+      - {name: session, start_bit: 8, length: 8}
+      - {name: block, start_bit: 16, length: 8}
+      - {name: length, start_bit: 24, length: 16}
+
+  - name: Closed
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x95}
+    signals:
+      - {name: session, start_bit: 8, length: 8}
+
+  - name: Pending
+    comment: The ECU works on the command (a write); repeated until the answer.
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x7F}
+    signals:
+      - {name: request, start_bit: 8, length: 8, comment: The operation byte of the command.}
+      - {name: session, start_bit: 16, length: 8}
+
+  - name: Error
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0xEE}
+    signals:
+      - {name: request, start_bit: 8, length: 8, comment: The operation byte of the command.}
+      - {name: session, start_bit: 16, length: 8}
+      - name: code
+        start_bit: 24
+        length: 8
+        values: {no_session: 1, busy: 2, unknown_parameter: 3, read_only: 4, out_of_range: 5, denied: 6, bad_request: 7}

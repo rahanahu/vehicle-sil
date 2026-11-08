@@ -110,6 +110,7 @@ private:
         bool gap = false;               ///< Receive: a packet was missed in this window.
         bool ready = false;             ///< BamSending: the interval has passed.
         std::uint64_t order = 0;        ///< Start order (transmit packets leave in this order).
+        std::uint64_t transfer = 0;     ///< Transmit: the TransferId.
         TimerId timer{};
         SimTime deadline{};             ///< The deadline of `timer`.
         std::vector<std::uint8_t> buffer;
@@ -121,6 +122,7 @@ private:
     {
         bool used = false;
         std::uint64_t order = 0;
+        std::uint64_t transfer = 0; ///< The TransferId.
         std::uint32_t node = 0;
         Address source = kNullAddress; ///< The node's address when it was queued.
         Pgn pgn{};
@@ -147,7 +149,9 @@ private:
 
     /// Creates a transmit session and starts it (or, while the node waits after its claim,
     /// holds its start). QueueFull: no free session, or the frame or hold area is full.
-    SendStatus open_transmit(Node& node, Pgn pgn, std::span<const std::uint8_t> data, Address destination);
+    /// `transfer`: its TransferId.
+    SendStatus open_transmit(Node& node, Pgn pgn, std::span<const std::uint8_t> data, Address destination,
+                             std::uint64_t transfer);
     /// Sends the announcement or the RTS. false if the frame could not be queued.
     bool begin_transmit(Session& session);
 
@@ -188,6 +192,7 @@ private:
     std::vector<Session> sessions_;
     std::vector<Response> responses_;
     std::uint64_t next_order_ = 1;
+    std::uint64_t next_transfer_ = 1;
 };
 
 } // namespace vehicle_sil::j1939

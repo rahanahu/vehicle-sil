@@ -792,6 +792,30 @@ void Network::update_address_table(const Message& message)
     table_set(address, name, message.time);
 }
 
+std::optional<Address> Network::address_of(Name name) const noexcept
+{
+    for (const auto& node : nodes_)
+    {
+        if (node->name_ == name && node->holds_address())
+        {
+            return node->address_;
+        }
+    }
+    return address_table_.address_of(name);
+}
+
+std::optional<Name> Network::name_at(Address address) const noexcept
+{
+    for (const auto& node : nodes_)
+    {
+        if (node->address_ == address && node->name_ && node->holds_address())
+        {
+            return node->name_;
+        }
+    }
+    return address_table_.name_at(address);
+}
+
 Address Network::free_address(const Node& node) const noexcept
 {
     for (unsigned a = options_.arbitrary_address_first; a <= options_.arbitrary_address_last; ++a)

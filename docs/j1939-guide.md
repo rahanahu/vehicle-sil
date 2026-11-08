@@ -12,6 +12,7 @@ vehicle-sil の J1939 スタックで ECU のノードを作り、動かし、�
 | 送る PG と周期、データの作り方 | 周期の管理、アドレスを持つ間だけ送ること、DM13 による停止 |
 | 受ける PG と、受けたときの処理 | 宛先の振り分け、トランスポートプロトコル（9〜1785 バイト）の組み立て |
 | Request を送る相手と、答えの使い方 | 応答待ち、時間切れ、送り直し、同じ要求の相乗り |
+| 独自プロトコルのコマンドと、応答の見分け方 | 送れるようになってから送ること、応答待ち、途中の応答、送り直し、自分と相手のアドレスの変化、長いコマンドの転送 |
 | モデル（ふつうの C++） | 仮想時間、ステップ、スレッド、SIL Kit の participant とコントローラ |
 
 ## ノードを作る
@@ -139,37 +140,125 @@ tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome ==
 - ハンドラ、`Encoder`、コールバックから投げた例外は `Network` を失敗状態にします。`Peer::failed()` と `error()` で分かります。
 - 通信の状態は、`Network::statistics()`、部品の `statistics()`、`Monitor` の状態で見ます。
 
-## 独自のプロトコルを部品として作る
+## 独自のプロトコルを作る
 
-ノードの公開 API と道具箱（`Subscription`、`Timer`、`Node::attach`）と、既存の部品（`Requester` など）だけで作ります。
+Proprietary A/B やメーカー独自の通信手順は、vehicle-sil を変更せずに、利用者の部品として作れます。使うのはノードの公開 API、道具箱（`Subscription`、`Timer`、`Node::attach`）、既存の部品、型付きメッセージだけです。
 
-```cpp
-class ItemReader // 「項目 n を読む」コマンドを送り、応答か時間切れを返す
-{
-public:
-    ItemReader(j1939::Node& node, j1939::Address server)
-      : node_(node), server_(server),
-        replies_(node, node.on_message(kPgnItems, [this](const j1939::Message& m) { on_reply(m); })),
-        timeout_(node, j1939::TimerKind::Timeout, [this] { finish(std::nullopt); }) {}
+完全な例は [examples/j1939/param_service](../examples/j1939/param_service) です。サービスツールがエンジン ECU のパラメーターとブロックを Proprietary A で読み書きします（セッションの開始と終了、書き込み中の途中の応答、トランスポートプロトコルで送るブロック、エラー応答、無通信でのセッションの終了、相手の消失）。試験は `tests/testkit/test_param_service.cpp` です。
 
-    void read(std::uint8_t item, Done done)  // ステップの中から
-    {
-        item_ = item;
-        done_ = std::move(done);
-        node_.send(kPgnItems, encode_read(item), server_);
-        timeout_.start_at(*node_.network().now() + 200ms);  // 送ったステップから数える
-    }
-    ...
-};
-auto& reader = cab.attach<ItemReader>(0x00);
+### メッセージを決める
+
+固定長のメッセージは YAML で定義します（[j1939-codec.md](j1939-codec.md)）。1 つの PGN に複数のメッセージを載せるときは、操作のバイトを `selector` にします。
+
+```yaml
+  - name: Read
+    proprietary_a: {}
+    selector: {start_bit: 0, length: 8, value: 0x11}
+    signals:
+      - {name: session, start_bit: 8, length: 8}
+      - {name: parameter, start_bit: 16, length: 16}
 ```
 
+可変長のデータ（ブロックの中身など）は、バイト列のまま `node.send()` と `Message::data` で扱います。型付きメッセージとバイト列は、同じ PGN で混ぜて使えます（型の `decode()` は、セレクターの違うものを空で返します）。
+
+### 要求する側（`Exchange`）
+
+コマンドを 1 つの相手へ送り、応答を待つのは `j1939::Exchange` です（ターゲット `vehicle_sil::j1939_exchange`）。
+
+```cpp
+j1939::Exchange exchange(node, {.timeout = 200ms, .retries = 1});
+messages::Read read;
+read.session.set_raw(session);
+read.parameter.set_raw(0x0100);
+exchange.start(kPgn, read.bytes(), kEngineName,          // 相手は NAME（アドレスでもよい）
+    [](const j1939::Message& m) {                         // 受けたメッセージが何か（PGN も見る）
+        if (const auto ok = j1939::codec::decode<messages::ReadOk>(m); ok && ok->parameter.raw() == 0x0100) {
+            return j1939::ReplyMatch::Final;              // この読み出しの答え
+        }
+        if (const auto e = j1939::codec::decode<messages::Error>(m); e && e->request.raw() == kRead) {
+            return j1939::ReplyMatch::Final;              // 読み出しへのエラー
+        }
+        if (const auto p = j1939::codec::decode<messages::Pending>(m); p && p->request.raw() == kRead) {
+            return j1939::ReplyMatch::Pending;
+        }
+        return j1939::ReplyMatch::Ignore;
+    },
+    [](const j1939::ExchangeResult& r) {                  // 1 回だけ呼ばれる
+        if (r.outcome == j1939::ExchangeOutcome::Reply) { use(j1939::codec::decode<messages::ReadOk>(r.reply)); }
+    });
+```
+
+| `ExchangeOutcome` | 意味 |
+|---|---|
+| `Reply` | `match` が `Final` を返した（`reply`） |
+| `Timeout` | 送り直しても応答がなかった（`Pending` の後は送り直さず、最後の `Pending` から `timeout`） |
+| `NotSent` | 送れなかった（`send_status`。アドレスを要求できないときは `NoAddress`）か、長いコマンドの転送が最後まで失敗した（`transfer`、`reason`） |
+| `PeerLost` | 相手がアドレスを失った、移った、別の NAME に取られた。NAME で指定した相手が `timeout` の間にアドレスを要求しなかった |
+
+- `start()` はいつ呼んでもかまいません（ステップの外、アドレスを得る前も）。ノードが送れるようになってから送ります。NAME で指定した相手がまだアドレスを要求していなければ（起動の直後）、その Address Claimed を待って送ります。
+- `match` には、相手のアドレスから来たメッセージが PGN によらずすべて渡ります（このノード宛てとグローバル。相手の周期の放送も来ます）。`M::decode(data)` はバイト列だけを見るので、PGN も確かめる `j1939::codec::decode<M>(message)` を使います。自分のコマンドへの応答かどうかは、操作のバイト、セッション、コマンドが指す項目（パラメーターの番号など）で見分けます。`Pending`（途中の応答）を返すと、待ち時間を数え直し、送り直しをやめます。
+- 前のコマンドへの遅れた応答（送り直した元のコマンドへの応答、`cancel()` したコマンドへの応答）も `match` に来ます。応答が項目や番号を持たない手順では、それを次のやり取りの応答と取り違えます。応答が遅れうるなら、コマンドと応答に項目か通し番号を持たせて照合します。`cancel()` は送ったコマンドを取り消しません（応答は来ます）。
+- 送り直し（`retries`）は既定で 0 です。同じコマンドを 2 回受けても困らない手順（読み出し、同じ値の書き込み、番号付きのコマンド）でだけ使います。ただし、ノードのアドレスが変わったときは、`retries` によらず送り直します（応答は古いアドレスへ来るため）。
+- 待ち時間は、応答をトランスポートプロトコルで受けている途中かどうかを見ません。長い応答（とくに BAM。パケットの間隔は 50 ms 以上）を受けるときは、その時間を `timeout` に含めます。
+- NAME で指定した相手が待ちの間に移ると、送り直しが残っていても `PeerLost` で終わります（相手がやり取りの状態を失ったかもしれないため）。次のやり取りは新しいアドレスへ送ります。
+- `Exchange` は 1 つの相手とのやり取りだけを扱います。全体への問い合わせと複数の応答の収集（`Requester` のグローバルの要求を使う）や、相手と別のアドレスから来る応答（ゲートウェイ経由など）は扱いません。
+- 9 バイト以上のコマンドはトランスポートプロトコルで送り、転送が終わってから待ち時間を数えます（`max_length` を上げます）。
+- ノードのアドレスが変わると、送ったコマンドは新しいアドレスから送り直します。相手から見ると送り手が変わるので、相手がセッションを持つ手順では、相手が「セッションがない」と答えることがあります（下の例では、ツールがセッションを開き直します）。
+- 同時に動かせるやり取りは `capacity`（既定 4）です。タイマーは `Exchange` ごとに 2 つ使います。
+- コールバックと `match` の中から、次のコマンドを `start()` し、`cancel()` し、`Exchange` を破棄できます。破棄すると、残りのやり取りのコールバックは呼ばれません。
+
+### 手順を書く（複数のメッセージ）
+
+手順は、前の応答のコールバックで次のコマンドを `start()` してつなぎます。セッションのように前の応答で次のコマンドが決まる手順や、操作を順に 1 つずつ行う手順は、利用者の部品が操作の待ち行列を持ちます（例の `ParamClient`: セッションがなければ開いてから操作し、「セッションがない」と答えられたら 1 回だけ開き直す）。
+
+- 利用者へのコールバックは、自分の状態を確定してから呼びます（例では、次の操作を始めてから前の操作のコールバックを呼ぶので、コールバックの中で部品を破棄しても安全です）。
+- `read()` などの呼び出しの中で、その利用者のコールバックを呼ばないようにします（呼び出し側の状態が途中のことがあります）。
+
+### 応答する側
+
+応答側は `on_message` とノードの `send()` で書きます（専用の部品はありません）。
+
+```cpp
+ParamServer(j1939::Node& node, ParameterTable& table)
+  : node_(node), table_(table),
+    commands_(node, node.on_message(kPgn, [this](const j1939::Message& m) { on_command(m); })),
+    claims_(node, node.on_message(j1939::kPgnAddressClaimed, [this](const j1939::Message&) { on_claim(); })),
+    idle_(node, j1939::TimerKind::Timeout, [this] { end_session(); }) {}
+
+void on_command(const j1939::Message& m) {
+    if (m.destination != node_.address()) { return; }              // Proprietary A のグローバル宛ては使わない
+    ...
+    j1939::codec::send(node_, reply, m.source);                    // 応答は送ってきたアドレスへ
+    idle_.start_after(2s);                                          // 受けたメッセージの時刻から数える
+}
+```
+
+- 9 バイト以上の応答は `node.send(pgn, data, to, priority, j1939::WhenBusy::Queue)` で送ります（同じ相手への前の転送が終わるのを待ちます）。
+- 時間のかかる処理（フラッシュへの書き込みなど）は、`Timer` で後から応答します。その間に `Pending` のような途中の応答を周期的に送ると、要求側の `Exchange` は待ち続けます。
+- 相手の消失は、セッションを開いたときに `node.network().name_at(m.source)` で相手の NAME を控え、Address Claimed を受けるたびに `node.network().address_of(name)` が同じアドレスかを確かめて見つけます（Cannot Claim と、別の NAME にアドレスを取られた場合を含みます）。NAME の分からない相手は、無通信の時間切れで終えます。
+- 自分のアドレスが変わったら（`on_address_change`）、相手のコマンドは古いアドレスへ来ていたので、セッションを終えます。
+
+### 共通の規則
+
 - スレッド、イベントループ、OS の時計を使いません。時間は `Timer`（仮想時間）で数えます。
-- 登録は `Subscription`、タイマーは `Timer` に持たせると、部品の破棄で自動で解除されます。部品は `attach` で `Network` に持たせます。
-- 標準の Request を使うなら `Requester::of(node)` を使います（自分で応答待ちを作りません）。
+- 登録は `Subscription`、タイマーは `Timer`、要求は `Exchange` に持たせると、部品の破棄で自動で解除されます。部品は `attach` で `Network` に持たせるか、`Network` より先に破棄します。
+- 標準の Request（PGN 59904）を使うなら `Requester::of(node)` を使います（`Exchange` で作り直しません）。
 - 自分の利用者を呼ぶループでは、通知の前に自分の状態を確定し、通知の中で足されたものを同じループで扱いません（[architecture.md](architecture.md) の「道具箱」）。
 - `on_any_request` と `Network::set_observer` は使いません。
-- 試験の全文は `tests/testkit/test_ecu_personas.cpp` にあります。
+
+### 独自のプロトコルを試験する
+
+例の試験（`tests/testkit/test_param_service.cpp`）は、正常系のほかに次のことを確かめています。どれも仮想時間で、同じ入力からは同じフレームが出ます。
+
+| 起こすこと | 方法 |
+|---|---|
+| 相手の無応答 | `bus.endpoint("engine").add_outage(from, until)` |
+| 相手・自分のアドレスの喪失と移動 | 優先度の高い NAME の Address Claimed を `bus.inject()` で入れる |
+| 無通信でのセッションの終了 | `bus.run_for()` で待つ |
+| 2 台目のツール | 同じバスに `add_j1939()` でもう 1 つのネットワークを足す |
+| 部品の破棄（処理中、コールバックの中） | 部品を `std::unique_ptr` で持ち、途中で `reset()` する |
+
+コールバックの中で時刻を見るときは、そのネットワークの `now()`（ステップの時刻）を使います。`LocalCan::now()` は、最後の `run_until()` の終わりの時刻です。
 
 ## 動かす
 

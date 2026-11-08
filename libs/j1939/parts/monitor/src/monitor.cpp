@@ -57,21 +57,9 @@ bool Monitor::accepts(Address source) const noexcept
     {
         return true;
     }
-    Network& network = node_.network();
-    if (const auto address = network.address_table().address_of(*options_.name))
-    {
-        return source == *address;
-    }
-    // A node of the same network is not in the table.
-    for (std::size_t i = 0; i < network.node_count(); ++i)
-    {
-        const Node& local = network.node(i);
-        if (local.name() == options_.name)
-        {
-            return local.address() == source && is_unicast(source);
-        }
-    }
-    return false;
+    // Also a node of the same network (not in the address table).
+    const auto address = node_.network().address_of(*options_.name);
+    return address && source == *address;
 }
 
 void Monitor::on_message(const Message& message)

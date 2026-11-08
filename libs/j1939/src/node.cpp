@@ -62,6 +62,7 @@ SendStatus Node::respond(const PendingRequest& request, std::span<const std::uin
     const Address destination =
         (request.specific_ && (transfer || request.pgn_.is_pdu1())) ? request.requester_ : kGlobalAddress;
     const bool wait = !can_send_now();
+    last_transfer_ = {};
     // The request was for the address the node had then: no answer from another one.
     const SendStatus status = request.epoch_ != epoch_ ? SendStatus::NoAddress
                                                        : send_from(request.pgn_, data, destination, priority, transfer);
@@ -493,6 +494,7 @@ SendStatus Node::request_from(Pgn pgn, Address destination)
 SendStatus Node::send_from(Pgn pgn, std::span<const std::uint8_t> data, Address destination, Priority priority,
                            bool queue_if_busy)
 {
+    last_transfer_ = {};
     const bool transfer = data.size() > can::kMaxPayload;
     // A transfer may carry a PDU2 group to one destination; a single frame cannot.
     if (!pgn.is_valid() || priority > kMaxPriority || destination == kNullAddress ||

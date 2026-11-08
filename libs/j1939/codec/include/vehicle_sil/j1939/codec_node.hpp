@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -28,6 +29,18 @@ SendStatus send(Node& node, const M& message, Address destination = kGlobalAddre
 {
     const auto bytes = message_bytes(message);
     return node.send(M::kPgn, bytes, destination, M::kPriority, whenBusy);
+}
+
+/// Decodes `message` as M if it has M's PGN (M::decode() looks at the bytes only). For messages
+/// that may come with other PGNs, such as those an Exchange's matcher sees.
+template <MessageType M>
+[[nodiscard]] std::optional<M> decode(const Message& message)
+{
+    if (message.pgn != M::kPgn)
+    {
+        return std::nullopt;
+    }
+    return M::decode(message.data);
 }
 
 /// Calls `handler(const M&)` or `handler(const M&, const Message&)` for every received message of

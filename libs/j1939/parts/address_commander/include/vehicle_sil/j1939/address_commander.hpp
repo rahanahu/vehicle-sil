@@ -61,10 +61,9 @@ struct AddressCommanderOptions
 ///   (the target's NAME, the new address) with the transport protocol, a broadcast (BAM) to
 ///   all nodes, or a connection (RTS/CTS) to `destination`; a transfer of the node that is still
 ///   going delays it (WhenBusy::Queue).
-/// - The transfer's end (Node::on_transfer_end(), PGN 65240 and the destination, in the order
-///   sent) starts the wait. A transfer that ends otherwise (cancelled when this node lost or
-///   changed its address, aborted by the receiver, timed out) is sent again once; a second such
-///   end is NotSent. Another sender of PGN 65240 on the same node would confuse the matching.
+/// - The transfer's end (Node::on_transfer_end(), matched by TransferEnd::id) starts the wait.
+///   A transfer that ends otherwise (cancelled when this node lost or changed its address,
+///   aborted by the receiver, timed out) is sent again once; a second such end is NotSent.
 /// - The target answers by claiming the new address: Moved when Address Claimed with its NAME
 ///   comes from that address (also if it was there already, and also before the transfer's end
 ///   was reported). Only arbitrary address capable control functions follow the command;
@@ -108,7 +107,7 @@ private:
         Address destination = kGlobalAddress;
         SimTime deadline{};
         std::uint64_t serial = 0;
-        std::uint64_t sent_order = 0; ///< Matches the transfer ends (Transferring).
+        TransferId transfer{};        ///< Matches the transfer's end (Transferring, Answered).
         std::uint32_t failures = 0;   ///< Transfers that ended without completing.
         CommandCallback done;
     };
@@ -127,7 +126,6 @@ private:
     AddressCommanderOptions options_;
     std::vector<Command> commands_;
     std::uint64_t next_serial_ = 1;
-    std::uint64_t next_sent_ = 1;
     Timer send_;
     Timer wait_;
     Subscription claims_;

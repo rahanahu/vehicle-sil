@@ -456,7 +456,7 @@ TEST_CASE(a_deferred_request_is_answered_later)
     Subscription a{us, us.on_request(Pgn{kPgnPropA}, [&](RequestContext& r) { kept.push_back(r.defer()); })};
     Subscription b{us, us.on_request(Pgn{kPgnPropB}, [&](RequestContext& r) { kept.push_back(r.defer()); })};
     bench.inject(frame(6, kPgnRequest, kTool, kUs, request(kPgnPropA)));
-    bench.inject(frame(6, kPgnRequest, kTool, kGlobal, request(kPgnPropB)));
+    bench.inject(frame(6, kPgnRequest, kTool, kGlobal, vehicle_sil::unit::j1939::request(kPgnPropB)));
     bench.step();
     CHECK_J1939(bench.take_sent(), {}); // no NACK, no answer yet
     CHECK_EQ(kept.size(), 2u);
@@ -616,4 +616,191 @@ TEST_CASE(start_after_in_a_transfer_end_handler_counts_from_the_end)
     {
         CHECK(deadline_after_transfer_end(step) == at(18ms));
     }
+}
+
+// --- TransferId: matches a send to the end of its transfer
+
+TEST_CASE(transfer_ids_match_each_send_to_the_end_of_its_transfer)
+{
+    using vehicle_sil::j1939::TransferEnd;
+    using vehicle_sil::j1939::TransferId;
+    using vehicle_sil::j1939::TransferResult;
+    Bench bench;
+    Node& us = bench.add_node(kUs);
+    bench.add_node(kOther);
+    std::vector<TransferEnd> ends;
+    Subscription sub{us, us.on_transfer_end([&](const TransferEnd& end) { ends.push_back(end); })};
+    TransferId bam{}, rts{}, queued{}, queuedBam{};
+    bench.app = [&](SimTime now) {
+        if (now != at(0ms))
+        {
+            return;
+        }
+        CHECK(us.send(Pgn{kPgnPropB}, payload(8)) == SendStatus::Ok);
+        CHECK(!us.last_transfer_id()); // a single frame
+        CHECK(us.send(Pgn{kPgnPropB}, payload(10)) == SendStatus::Ok);
+        bam = us.last_transfer_id();
+        CHECK(us.send(Pgn{kPgnPropB}, payload(11)) == SendStatus::Busy);
+        CHECK(!us.last_transfer_id()); // refused
+        CHECK(us.send(Pgn{kPgnPropA}, payload(12), kOther) == SendStatus::Ok);
+        rts = us.last_transfer_id();
+        // Waits behind the connection to the same destination: the id is given now.
+        CHECK(us.send(Pgn{kPgnPropA}, payload(12), kOther, 6, WhenBusy::Queue) == SendStatus::Ok);
+        queued = us.last_transfer_id();
+        CHECK(us.send(Pgn{kPgnPropB}, payload(13), kGlobal, 6, WhenBusy::Queue) == SendStatus::Ok);
+        queuedBam = us.last_transfer_id();
+    };
+    bench.steps(200);
+    CHECK(bam && rts && queued && queuedBam);
+    CHECK(bam != rts && rts != queued && queued != queuedBam && bam != queuedBam);
+    CHECK_EQ(ends.size(), 4u);
+    const auto end_of = [&](TransferId id) -> const TransferEnd* {
+        for (const auto& e : ends)
+        {
+            if (e.id == id)
+            {
+                return &e;
+            }
+        }
+        return nullptr;
+    };
+    // The two connections have the same PGN, destination and length: only the id tells them apart.
+    for (const TransferId id : {bam, rts, queued, queuedBam})
+    {
+        const TransferEnd* e = end_of(id);
+        CHECK(e != nullptr && e->result == TransferResult::Completed);
+    }
+    CHECK(end_of(bam) != nullptr && end_of(bam)->length == 10u);
+    CHECK(end_of(queuedBam) != nullptr && end_of(queuedBam)->length == 13u);
+    CHECK(end_of(rts) != nullptr && end_of(queued) != nullptr && end_of(rts)->time < end_of(queued)->time);
+}
+
+TEST_CASE(transfer_ids_of_cancelled_and_queued_transfers_reach_their_ends)
+{
+    using vehicle_sil::j1939::TransferEnd;
+    using vehicle_sil::j1939::TransferId;
+    using vehicle_sil::j1939::TransferResult;
+    // A NAME the tester's claim beats (lower NAME wins): our node loses its address, its
+    // transfer and the one queued behind it are cancelled.
+    constexpr std::uint64_t kOurName = 0x0000'1000'0000'0002u;
+    Bench bench;
+    Node& us = bench.network.add_node({.address = kUs, .name = Name{kOurName}});
+    std::vector<TransferEnd> ends;
+    Subscription sub{us, us.on_transfer_end([&](const TransferEnd& end) { ends.push_back(end); })};
+    TransferId first{}, second{};
+    bench.app = [&](SimTime now) {
+        if (now == at(300ms))
+        {
+            CHECK(us.send(Pgn{kPgnPropA}, payload(20), kTool) == SendStatus::Ok);
+            first = us.last_transfer_id();
+            CHECK(us.send(Pgn{kPgnPropA}, payload(20), kTool, 6, WhenBusy::Queue) == SendStatus::Ok);
+            second = us.last_transfer_id();
+        }
+    };
+    bench.steps(32); // the RTS has left; no clear-to-send comes
+    Bytes lower(8);
+    for (int i = 0; i < 8; ++i)
+    {
+        lower[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>((kOurName - 1) >> (8 * i));
+    }
+    bench.inject(frame(6, kPgnAddressClaim, kUs, kGlobal, lower));
+    bench.steps(2);
+    CHECK_EQ(ends.size(), 2u);
+    CHECK(ends.size() == 2 && ends[0].id == first && ends[1].id == second);
+    CHECK(ends.size() == 2 && ends[0].result == TransferResult::Cancelled && ends[1].result == TransferResult::Cancelled);
+}
+
+TEST_CASE(transfer_ids_of_held_transfers_and_long_responses_reach_their_ends)
+{
+    using vehicle_sil::j1939::TransferEnd;
+    using vehicle_sil::j1939::TransferId;
+    using vehicle_sil::j1939::TransferResult;
+    Bench bench;
+    // 0x90 (128 .. 247): the node waits 250 ms after its claim; its transfer is held meanwhile.
+    Node& us = bench.network.add_node({.address = 0x90, .name = Name{}.set_identity_number(7).set_manufacturer_code(0x7F0)});
+    std::vector<TransferEnd> ends;
+    Subscription sub{us, us.on_transfer_end([&](const TransferEnd& end) { ends.push_back(end); })};
+    TransferId held{}, response{};
+    std::optional<PendingRequest> request;
+    Subscription responder{us, us.on_request(Pgn{kPgnPropB}, [&](RequestContext& r) {
+        CHECK(r.respond(payload(30)) == SendStatus::Ok);
+        response = us.last_transfer_id();
+        request = r.defer();
+    })};
+    bench.app = [&](SimTime now) {
+        if (now == at(10ms))
+        {
+            CHECK(us.send(Pgn{kPgnPropB}, payload(20)) == SendStatus::Ok);
+            held = us.last_transfer_id();
+        }
+    };
+    bench.steps(40);
+    bench.inject(frame(6, kPgnRequest, kTool, kGlobal, vehicle_sil::unit::j1939::request(kPgnPropB)));
+    bench.steps(60);
+    CHECK(held && response && held != response);
+    CHECK_EQ(ends.size(), 2u);
+    CHECK(ends.size() == 2 && ends[0].id == held && ends[0].length == 20u && ends[0].result == TransferResult::Completed);
+    CHECK(ends.size() == 2 && ends[1].id == response && ends[1].length == 30u);
+    // A respond() refused (the node changed its address since the request) gives no id.
+    CHECK(request.has_value());
+    bench.inject(frame(6, kPgnAddressClaim, 0x90, kGlobal, Bytes{1, 0, 0, 0, 0, 0, 0, 0}));
+    bench.steps(3);
+    CHECK(us.address_state() == AddressState::CannotClaim);
+    bench.app = [&](SimTime) {
+        if (request)
+        {
+            CHECK(us.respond(*request, payload(30)) == SendStatus::NoAddress);
+            CHECK(!us.last_transfer_id());
+            request.reset();
+        }
+    };
+    bench.step();
+    CHECK(!request);
+}
+
+// --- Network::address_of / name_at: local nodes and the address table
+
+TEST_CASE(address_of_and_name_at_see_local_nodes_and_the_table)
+{
+    constexpr std::uint64_t kOurName = 0x0000'1000'0000'0002u;
+    constexpr std::uint64_t kTheirs = 0x0000'2000'0000'0003u;
+    const auto claim = [](Address sa, std::uint64_t name) {
+        Bytes data(8);
+        for (int i = 0; i < 8; ++i)
+        {
+            data[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(name >> (8 * i));
+        }
+        return frame(6, kPgnAddressClaim, sa, kGlobal, data);
+    };
+    Bench bench;
+    Node& us = bench.network.add_node({.address = kUs, .name = Name{kOurName}});
+    Node& fixed = bench.add_node(kOther); // no NAME
+    static_cast<void>(fixed);
+    const Network& net = bench.network;
+    CHECK(!net.address_of(Name{kOurName})); // not started
+    bench.step();
+    CHECK(us.address_state() == AddressState::Claiming);
+    CHECK(net.address_of(Name{kOurName}) == std::optional<Address>{kUs});
+    CHECK(net.name_at(kUs) == std::optional<Name>{Name{kOurName}});
+    CHECK(!net.name_at(kOther)); // a node without a NAME
+    CHECK(!net.address_table().address_of(Name{kOurName})); // the table has only the others
+
+    bench.inject(claim(0x30, kTheirs));
+    bench.step();
+    CHECK(net.address_of(Name{kTheirs}) == std::optional<Address>{0x30});
+    CHECK(net.name_at(0x30) == std::optional<Name>{Name{kTheirs}});
+    bench.inject(claim(0x31, kTheirs)); // moves
+    bench.step();
+    CHECK(net.address_of(Name{kTheirs}) == std::optional<Address>{0x31});
+    CHECK(!net.name_at(0x30));
+    bench.inject(claim(kNull, kTheirs)); // Cannot Claim
+    bench.step();
+    CHECK(!net.address_of(Name{kTheirs}));
+    CHECK(!net.name_at(0x31));
+    // Our node loses its address to a lower NAME: the winner is at kUs, our NAME nowhere.
+    bench.inject(claim(kUs, kOurName - 1));
+    bench.step();
+    CHECK(us.address_state() == AddressState::CannotClaim || us.address() != kUs);
+    CHECK(net.name_at(kUs) == std::optional<Name>{Name{kOurName - 1}});
+    CHECK(us.address_state() != AddressState::CannotClaim || !net.address_of(Name{kOurName}));
 }

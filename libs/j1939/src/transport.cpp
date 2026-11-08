@@ -88,6 +88,7 @@ Transport::Session* Transport::allocate(Kind kind) noexcept
         if (s.kind == kind && s.state == State::Free)
         {
             s.order = next_order_++;
+            s.transfer = 0;
             s.next = 1;
             s.window_start = 1;
             s.window_end = 0;
@@ -237,7 +238,8 @@ void Transport::end_receive(Session& session, TransferResult result, AbortReason
 void Transport::finish(Session& session, TransferResult result, AbortReason reason, SimTime time)
 {
     Node& node = node_of(session);
-    const TransferEnd end{Pgn{session.raw_pgn}, session.destination, session.length, result, reason, time};
+    const TransferEnd end{Pgn{session.raw_pgn}, session.destination, session.length, result, reason, time,
+                          TransferId{session.transfer}};
     release(session);
     if (result == TransferResult::Completed)
     {
@@ -278,7 +280,14 @@ SendStatus Transport::send(Node& node, Pgn pgn, std::span<const std::uint8_t> da
     {
         return SendStatus::Busy;
     }
-    return open_transmit(node, pgn, data, destination);
+    const std::uint64_t transfer = next_transfer_;
+    const SendStatus status = open_transmit(node, pgn, data, destination, transfer);
+    if (status == SendStatus::Ok)
+    {
+        ++next_transfer_;
+        node.last_transfer_ = TransferId{transfer};
+    }
+    return status;
 }
 
 SendStatus Transport::respond(Node& node, Pgn pgn, std::span<const std::uint8_t> data, Address destination)
@@ -287,9 +296,15 @@ SendStatus Transport::respond(Node& node, Pgn pgn, std::span<const std::uint8_t>
     const bool queued = std::any_of(responses_.begin(), responses_.end(), [&](const Response& r) {
         return r.used && r.node == node.index_ && r.destination == destination;
     });
+    const std::uint64_t transfer = next_transfer_;
     if (!queued && !busy(node.index_, destination))
     {
-        const SendStatus status = open_transmit(node, pgn, data, destination);
+        const SendStatus status = open_transmit(node, pgn, data, destination, transfer);
+        if (status == SendStatus::Ok)
+        {
+            ++next_transfer_;
+            node.last_transfer_ = TransferId{transfer};
+        }
         if (status != SendStatus::QueueFull)
         {
             return status;
@@ -301,6 +316,8 @@ SendStatus Transport::respond(Node& node, Pgn pgn, std::span<const std::uint8_t>
         {
             r.used = true;
             r.order = next_order_++;
+            r.transfer = next_transfer_++;
+            node.last_transfer_ = TransferId{r.transfer};
             r.node = static_cast<std::uint32_t>(node.index_);
             r.source = node.address_;
             r.pgn = pgn;
@@ -314,7 +331,8 @@ SendStatus Transport::respond(Node& node, Pgn pgn, std::span<const std::uint8_t>
     return SendStatus::QueueFull;
 }
 
-SendStatus Transport::open_transmit(Node& node, Pgn pgn, std::span<const std::uint8_t> data, Address destination)
+SendStatus Transport::open_transmit(Node& node, Pgn pgn, std::span<const std::uint8_t> data, Address destination,
+                                    std::uint64_t transfer)
 {
     Session* s = allocate(destination == kGlobalAddress ? Kind::BamTx : Kind::RtsTx);
     if (s == nullptr)
@@ -322,6 +340,7 @@ SendStatus Transport::open_transmit(Node& node, Pgn pgn, std::span<const std::ui
         return SendStatus::QueueFull;
     }
     s->node = static_cast<std::int32_t>(node.index_);
+    s->transfer = transfer;
     s->source = node.address_;
     s->destination = destination;
     s->raw_pgn = pgn.value();
@@ -426,7 +445,9 @@ void Transport::close_node_sessions(std::size_t node, SimTime time)
             r.used = false;
             ++network_.statistics_.transport_sessions_cancelled;
             network_.nodes_[node]->notify_transfer_end(
-                TransferEnd{r.pgn, r.destination, r.length, TransferResult::Cancelled, AbortReason::None, time}, r.source);
+                TransferEnd{r.pgn, r.destination, r.length, TransferResult::Cancelled, AbortReason::None, time,
+                            TransferId{r.transfer}},
+                r.source);
         }
     }
 }
@@ -458,7 +479,9 @@ void Transport::close_peer_sessions(Address address, SimTime time)
             r.used = false;
             ++network_.statistics_.transport_sessions_cancelled;
             network_.nodes_[r.node]->notify_transfer_end(
-                TransferEnd{r.pgn, r.destination, r.length, TransferResult::Cancelled, AbortReason::None, time}, r.source);
+                TransferEnd{r.pgn, r.destination, r.length, TransferResult::Cancelled, AbortReason::None, time,
+                            TransferId{r.transfer}},
+                r.source);
         }
     }
 }
@@ -491,8 +514,9 @@ void Transport::pump_responses()
         {
             continue;
         }
-        const SendStatus status = open_transmit(
-            node, next->pgn, std::span<const std::uint8_t>(next->data.data(), next->length), next->destination);
+        const SendStatus status =
+            open_transmit(node, next->pgn, std::span<const std::uint8_t>(next->data.data(), next->length),
+                          next->destination, next->transfer);
         if (status == SendStatus::QueueFull)
         {
             (broadcast ? bamFull : rtsFull) = true;

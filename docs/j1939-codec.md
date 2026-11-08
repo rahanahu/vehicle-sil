@@ -286,6 +286,7 @@ if (const auto v = m.speed.value()) {
 | `codec::encoder<M>(fill)` | 同じことをする `PeriodicSender::Encoder`（自分で `PeriodicSender` を作るとき。`max_length` は `M::kLength` 以上にする） |
 | `codec::on_message<M>(node, handler)` | `M` の PGN を受けて decode できたものだけを `handler(const M&)` か `handler(const M&, const Message&)` に渡す。短いものとセレクターの違うものは渡さない（見るときは `node.on_message()` と `M::decode()`）。戻り値の `HandlerId` で解除する |
 | `codec::send(node, message, destination)` | `node.send(M::kPgn, message.bytes(), destination, M::kPriority)` |
+| `codec::decode<M>(message)` | `message.pgn` が `M::kPgn` のときだけ `M::decode(message.data)`（ほかは空）。いろいろな PGN が来る所（`Exchange` の `match` など）で使う |
 
 - `Monitor` の最新の受信は `M::decode(monitor.data())`、`Requester` の応答は `M::decode(result.data)` で読みます（まだ受けていなければ空）。
 - 同じ PGN の複数の型（Proprietary A をセレクターで分けたもの）は、型ごとに `on_message<M>` を登録します。

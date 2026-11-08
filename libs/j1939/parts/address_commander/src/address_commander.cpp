@@ -50,7 +50,7 @@ bool AddressCommander::command(Name target, Address address, CommandCallback don
     {
         return false;
     }
-    *free = Command{Phase::Waiting, target, address, destination, SimTime{}, next_serial_++, 0, 0, std::move(done)};
+    *free = Command{Phase::Waiting, target, address, destination, SimTime{}, next_serial_++, TransferId{}, 0, std::move(done)};
     arm();
     return true;
 }
@@ -129,7 +129,7 @@ void AddressCommander::send_waiting()
         if (status == SendStatus::Ok)
         {
             c.phase = Phase::Transferring; // the wait starts at the transfer's end
-            c.sent_order = next_sent_++;
+            c.transfer = node_.last_transfer_id();
             continue;
         }
         CommandResult result;
@@ -198,18 +198,13 @@ void AddressCommander::on_address(const AddressChange& /*change*/)
 
 void AddressCommander::on_transfer_end(const TransferEnd& end)
 {
-    if (end.pgn != kPgnCommandedAddress)
-    {
-        return;
-    }
-    // Transfers to one destination run one after the other, in the order sent.
     Command* first = nullptr;
     for (Command& c : commands_)
     {
-        if ((c.phase == Phase::Transferring || c.phase == Phase::Answered) && c.destination == end.destination &&
-            (first == nullptr || c.sent_order < first->sent_order))
+        if ((c.phase == Phase::Transferring || c.phase == Phase::Answered) && c.transfer == end.id)
         {
             first = &c;
+            break;
         }
     }
     if (first == nullptr)

@@ -289,6 +289,34 @@ TEST_CASE(address_commander_matches_each_transfer_end_to_its_own_command)
     CHECK_EQ(commander.pending(), 0u);
 }
 
+TEST_CASE(address_commander_is_not_confused_by_another_commanded_address_of_its_node)
+{
+    // The application sends its own Commanded Address (BAM) first; the commander's comes after
+    // it. The first end is the application's: the commander waits from its own (TransferEnd::id).
+    Bench bench;
+    Node& us = bench.add_node(kUs);
+    AddressCommander commander(us);
+    std::vector<CommandResult> results;
+    std::vector<vehicle_sil::j1939::TransferEnd> ends;
+    vehicle_sil::j1939::Subscription sub{us, us.on_transfer_end([&](const vehicle_sil::j1939::TransferEnd& e) { ends.push_back(e); })};
+    bench.app = [&](SimTime now) {
+        if (now == at(0ms))
+        {
+            Bytes own(9, 0x00);
+            own[8] = 0x93;
+            CHECK(us.send(vehicle_sil::j1939::kPgnCommandedAddress, own) == vehicle_sil::j1939::SendStatus::Ok);
+            CHECK(commander.command(kEngine, 0x91, [&](const CommandResult& r) { results.push_back(r); }));
+        }
+    };
+    for (int i = 0; i < 200; ++i)
+    {
+        bench.step();
+    }
+    CHECK_EQ(ends.size(), 2u);
+    CHECK(results.size() == 1 && ends.size() == 2 && results[0].outcome == CommandOutcome::Timeout &&
+          results[0].time == ends[1].time + 1250ms);
+}
+
 TEST_CASE(address_commander_sends_again_once_then_reports_the_failed_transfer)
 {
     // To one address that never answers the RTS: the transfer times out, is sent again once,
