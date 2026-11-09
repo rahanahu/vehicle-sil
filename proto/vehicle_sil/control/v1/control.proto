@@ -98,10 +98,10 @@ enum SubmitStatus {
 }
 
 enum CommandStatus {
-  COMMAND_STATUS_UNSPECIFIED = 0; // treated as REJECTED
+  COMMAND_STATUS_UNSPECIFIED = 0; // ignored by the server: the target stays open
   COMMAND_STATUS_APPLIED = 1;
   COMMAND_STATUS_LATE = 2;
-  COMMAND_STATUS_REJECTED = 3;
+  COMMAND_STATUS_REJECTED = 3; // a setter failed; values it wrote before stay
   COMMAND_STATUS_CANCELLED = 4;
 }
 
@@ -205,8 +205,10 @@ message PeerWrite {
   Value value = 3;
 }
 
+// Not resent by the client: a Write whose reply was lost may have been taken (sending it again
+// makes a second operation). After pausing at now_ns, write with at_ns > now_ns.
 message WriteRequest {
-  repeated PeerWrite writes = 1;
+  repeated PeerWrite writes = 1; // at most the server's max_writes_per_request (4096 by default)
   optional sint64 at_ns = 2;
   LatePolicy late = 3;
 }
@@ -218,7 +220,7 @@ enum TargetStatus {
   TARGET_STATUS_DISCONNECTED = 3;
   TARGET_STATUS_APPLIED = 4;
   TARGET_STATUS_LATE = 5;
-  TARGET_STATUS_REJECTED = 6;
+  TARGET_STATUS_REJECTED = 6; // a setter failed; values it wrote before stay
   TARGET_STATUS_CANCELLED = 7;
   TARGET_STATUS_INVALID = 8;
   TARGET_STATUS_BUSY = 9;
@@ -299,6 +301,8 @@ message PeerEvent {
 
 message TimeState {
   bool available = 1; // false: the server does not control the time
+  // While paused: every participant has run (or is running) its steps that start at or
+  // before now_ns, and runs none after it.
   sint64 now_ns = 2;
   bool paused = 3;
   optional sint64 pause_target_ns = 4;
@@ -308,7 +312,7 @@ message TimeState {
 
 message GetTimeRequest {}
 message PauseRequest {
-  optional sint64 at_ns = 1; // absent: at the next gate step
+  optional sint64 at_ns = 1; // absent: at the step held for pacing, if any, else the next gate step
 }
 message ResumeRequest {}
 message RunUntilRequest {
@@ -344,11 +348,15 @@ service ControlService {
   rpc ForgetPeer(ForgetPeerRequest) returns (ForgetPeerReply);
 
   rpc GetTime(GetTimeRequest) returns (TimeState);
+  // Pause, Resume, RunUntil and Step: the last call wins (Resume and RunUntil drop a planned
+  // pause; Pause with at_ns replaces an earlier target).
   rpc Pause(PauseRequest) returns (TimeState);
   rpc Resume(ResumeRequest) returns (TimeState);
   rpc RunUntil(RunUntilRequest) returns (TimeState);
   rpc Step(StepRequest) returns (TimeState);
   rpc SetSpeed(SetSpeedRequest) returns (TimeState);
+  // FAILED_PRECONDITION once the simulation has ended (it will not stand still again).
   rpc WaitPaused(WaitPausedRequest) returns (TimeState);
+  // Before the start: the simulation stops right after it starts.
   rpc Stop(StopRequest) returns (TimeState);
 }

@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -135,8 +136,12 @@ int main(int argc, char** argv)
         log(options.participant + " waits for the simulation to start");
         peer.start(timeout);
         log("running");
-        const auto state = peer.wait(timeout);
-        peer.stop();
+        // Until it ends, however long it stands still (--timeout-ms is for the start only).
+        decltype(peer.wait()) state;
+        while (!(state = peer.wait(std::chrono::minutes(1))))
+        {
+        }
+        peer.stop(); // the steps are over: finish() may run now
         agent.finish(); // cancels what is still waiting ...
         client.stop();  // ... and the client sends those results before it closes
         log(std::string("ended") + (peer.failed() ? ": FAILED " + peer.error() : ""));

@@ -31,6 +31,7 @@ struct TimeView
     std::optional<SimTime> pause_target;
     std::optional<double> speed;
     bool running = false;
+    bool ended = false; ///< the simulation ran and is over (it will not stand still again)
 };
 
 /// The time operations the server offers. All are thread safe and do not wait, except
@@ -108,9 +109,17 @@ struct ServerOptions
     std::size_t max_watch_capacity = 65536;
     /// The longest a WaitOperation or WaitPaused may wait.
     std::chrono::milliseconds max_wait{60000};
+    /// Calls that wait (Watch, WaitOperation, WaitPaused) at the same time; each holds a thread
+    /// of the server. More are refused with RESOURCE_EXHAUSTED. Must be > 0.
+    std::size_t max_waiting_calls = 256;
+    /// Writes in one Write request (INVALID_ARGUMENT beyond). Must be > 0.
+    std::size_t max_writes_per_request = 4096;
     SecurityOptions security{};
-    /// Called with one line for every call that changes something (write, time operations) and
-    /// for refused calls: who, from where, what, and the outcome. Must be thread safe.
+    /// Called with one line for every call that changes something (write, time operations),
+    /// agent connections, and refused calls: who, from where, what, and the outcome. Control
+    /// characters become '?' and a line is cut at about 1000 bytes. Refused calls are thinned
+    /// out (anyone who reaches the port can make them): at most 20 lines per second, and a line
+    /// with the number left out. Must be thread safe.
     std::function<void(const std::string& line)> audit{};
 };
 

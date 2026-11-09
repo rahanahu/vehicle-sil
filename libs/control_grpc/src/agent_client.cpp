@@ -210,15 +210,22 @@ struct AgentClient::Impl
             reader.join();
         }
         const auto status = stream->Finish();
+        // ABORTED: another connection of the same participant replaced this one (perhaps a
+        // second process with this name): backing off keeps the two from taking turns rapidly.
         const bool refused = status.error_code() == grpc::StatusCode::UNAUTHENTICATED
                              || status.error_code() == grpc::StatusCode::PERMISSION_DENIED
-                             || status.error_code() == grpc::StatusCode::INVALID_ARGUMENT;
+                             || status.error_code() == grpc::StatusCode::INVALID_ARGUMENT
+                             || status.error_code() == grpc::StatusCode::ABORTED;
         {
             const std::lock_guard lock(mutex);
             if (!status.ok() && status.error_code() != grpc::StatusCode::CANCELLED)
             {
                 last_error = status.error_message();
             }
+        }
+        if (status.error_code() == grpc::StatusCode::ABORTED)
+        {
+            return Outcome::Refused; // also after a welcome
         }
         return was_welcomed ? Outcome::Welcomed : (refused ? Outcome::Refused : Outcome::Failed);
     }
@@ -393,7 +400,7 @@ struct AgentClient::Impl
             std::unique_lock lock(mutex);
             stopping = true;
             cv.notify_all();
-            // At most 2 s for the last pass; then the stream is cancelled.
+            // At most 3 s for the last pass; then the stream is cancelled.
             if (!cv.wait_for(lock, std::chrono::seconds(3), [&] { return current_context == nullptr; }))
             {
                 current_context->TryCancel(); // a write that does not return

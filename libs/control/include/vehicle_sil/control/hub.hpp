@@ -32,6 +32,12 @@ public:
     /// from one thread at a time and in sequence order, so it may block briefly and may call
     /// back into the hub. @returns false if the link is down (the command was not sent).
     virtual bool send(const Command& command) = 0;
+    /// Ends the connection. The hub calls it, without holding its lock, on a link that another
+    /// connection of the same participant replaced, so that the replaced agent sees the end and
+    /// does not go on believing it is connected. The transport reports the end with
+    /// agent_disconnected() as usual (see there: for a replaced connection it settles only the
+    /// commands handed to it and not yet queued). An exception from it is ignored.
+    virtual void close() {}
 };
 
 using ConnectionId = std::uint64_t;
@@ -222,6 +228,9 @@ public:
     /// An agent connected. The same participant with the same incarnation is the same process
     /// reconnecting: the new connection replaces the old one, and its open commands go on.
     /// Another incarnation is a restarted process: what was open for the old one becomes Unknown.
+    /// In both cases the old link, if any, is closed (AgentLink::close()): also when the old
+    /// process still runs (two processes with the same name), the old one learns that it was
+    /// replaced instead of being ignored silently.
     /// std::invalid_argument for an empty participant name, no link or max_pending 0.
     ConnectionId agent_connected(PeerHello hello, std::shared_ptr<AgentLink> link);
     /// The connection is gone. Commands handed to it and not yet queued become Unknown (they may

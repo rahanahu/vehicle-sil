@@ -48,7 +48,7 @@ if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
   vehicle_sil_add_harness_tests(vehicle_sil_control_server_tests
     PREFIX control_server LABELS unit control control_server TIMEOUT 120
     SOURCES control_server/test_grpc_ping.cpp control_server/test_control_server.cpp control_server/test_security.cpp
-            control_server/test_convert.cpp
+            control_server/test_convert.cpp control_server/test_limits.cpp
     LINK vehicle_sil::control_proto vehicle_sil::control_grpc vehicle_sil::peer_control)
   target_include_directories(vehicle_sil_control_server_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/control_grpc/src)
   target_compile_definitions(vehicle_sil_control_server_tests PRIVATE

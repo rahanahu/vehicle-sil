@@ -36,6 +36,7 @@ struct FakePeer
         std::mutex mutex;
         std::deque<Command> queue;
         bool up = true;
+        bool closed = false; ///< the hub closed it (replaced by another connection)
         bool send(const Command& command) override
         {
             const std::lock_guard lock(mutex);
@@ -45,6 +46,11 @@ struct FakePeer
             }
             queue.push_back(command);
             return true;
+        }
+        void close() override
+        {
+            const std::lock_guard lock(mutex);
+            closed = true;
         }
     };
 
@@ -241,7 +247,10 @@ TEST_CASE(control_hub_reconnect_of_the_same_process)
     // The process reconnects again while its previous connection is still open, and the notice
     // that the previous connection closed arrives afterwards: the peer stays connected.
     const auto second = engine.connection;
+    const auto second_link = engine.link;
     engine.connect();
+    CHECK(second_link->closed); // the replaced connection is ended, not left open
+    CHECK(!engine.link->closed);
     hub.agent_disconnected(second);
     CHECK(hub.peers().at(0).connected);
     hub.agent_disconnected(first); // long gone: no effect either
@@ -264,7 +273,12 @@ TEST_CASE(control_hub_restart_of_the_peer)
     hub.agent_values(engine.connection, engine.agent->latest()); // an unread sample of e1
 
     FakePeer restarted("Engine", "e2", hub);
+    CHECK(!engine.link->closed);
     restarted.connect();
+    // Also another incarnation (perhaps a second process with the same name that still runs)
+    // ends the old connection, so that the old process learns it was replaced.
+    CHECK(engine.link->closed);
+    CHECK(!restarted.link->closed);
     CHECK(status_of(hub, open, "Engine") == TargetStatus::Unknown);
     CHECK(hub.peers().at(0).incarnation == "e2");
     CHECK(hub.latest("Engine") == nullptr); // e1's sample does not follow e2's schema

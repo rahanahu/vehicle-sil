@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
 
 namespace vehicle_sil::control {
@@ -347,6 +349,10 @@ ConnectionId Hub::agent_connected(PeerHello hello, std::shared_ptr<AgentLink> li
     {
         throw std::invalid_argument("Hub: an agent needs a participant name, a link and max_pending > 0");
     }
+    if (hello.open_seqs)
+    {
+        std::sort(hello.open_seqs->begin(), hello.open_seqs->end()); // looked up under the lock
+    }
     std::shared_ptr<AgentLink> old_link; // released after the lock: its destructor may wait for a thread that calls the hub
     std::unique_lock lock(mutex_);
     const auto id = next_connection_++;
@@ -380,7 +386,7 @@ ConnectionId Hub::agent_connected(PeerHello hello, std::shared_ptr<AgentLink> li
                 {
                     continue;
                 }
-                if (std::find(open.begin(), open.end(), seq) == open.end())
+                if (!std::binary_search(open.begin(), open.end(), seq))
                 {
                     t.result.status = TargetStatus::Unknown;
                     t.result.reason = "the agent no longer holds it after the reconnect";
@@ -417,6 +423,17 @@ ConnectionId Hub::agent_connected(PeerHello hello, std::shared_ptr<AgentLink> li
     entry.max_pending = hello.max_pending;
     announce_peer(entry);
     lock.unlock();
+    if (old_link)
+    {
+        try
+        {
+            old_link->close(); // the replaced connection: let its agent see the end
+        }
+        catch (const std::exception&)
+        {
+            // Best effort: the new connection is in place either way.
+        }
+    }
     old_link.reset();
     return id;
 }
@@ -649,24 +666,31 @@ std::uint64_t Hub::write(OperationRequest request)
     {
         throw std::invalid_argument("Hub::write() needs at least one write");
     }
+    Operation op;
+    op.request = std::move(request);
+    // Group by peer, keeping the order in which the peers and their writes appear. Done before
+    // taking the lock: its cost grows with the request, which comes from outside.
+    {
+        std::unordered_map<std::string_view, std::size_t> index; // peer -> its target
+        for (const auto& w : op.request.writes)
+        {
+            const auto [it, inserted] = index.try_emplace(w.peer, op.targets.size());
+            if (inserted)
+            {
+                Target target;
+                target.result.peer = w.peer;
+                target.command = Command{0, {}, op.request.at, op.request.late};
+                op.targets.push_back(std::move(target));
+            }
+            op.targets[it->second].command.writes.push_back({w.name, w.value});
+        }
+    }
     std::unique_lock lock(mutex_);
     const auto seq = next_seq_++;
-    Operation op;
     op.seq = seq;
-    op.request = std::move(request);
-    // Group by peer, keeping the order in which the peers and their writes appear.
-    for (const auto& w : op.request.writes)
+    for (auto& t : op.targets)
     {
-        auto t = std::find_if(op.targets.begin(), op.targets.end(), [&](const Target& x) { return x.result.peer == w.peer; });
-        if (t == op.targets.end())
-        {
-            Target target;
-            target.result.peer = w.peer;
-            target.command = Command{seq, {}, op.request.at, op.request.late};
-            op.targets.push_back(std::move(target));
-            t = std::prev(op.targets.end());
-        }
-        t->command.writes.push_back({w.name, w.value});
+        t.command.seq = seq;
     }
     std::vector<std::string> to_flush;
     for (auto& t : op.targets)

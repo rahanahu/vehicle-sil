@@ -39,7 +39,9 @@ public:
         v.paused = s.paused;
         v.pause_target = s.pause_target;
         v.speed = s.speed;
-        v.running = c_.runtime().started() && !has_finished(PeerStatus{c_.runtime().state()});
+        const bool finished = c_.runtime().started() && has_finished(PeerStatus{c_.runtime().state()});
+        v.running = c_.runtime().started() && !finished;
+        v.ended = finished;
         return v;
     }
     void pause(std::optional<SimTime> at) override { at ? c_.pause_at(*at) : c_.pause(); }
@@ -218,6 +220,97 @@ std::string clean(std::string text)
     return text;
 }
 
+/// At most `max` bytes of `text`, not cut in the middle of a UTF-8 sequence.
+std::string cut_utf8(std::string text, std::size_t max)
+{
+    if (text.size() > max)
+    {
+        auto cut = max;
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80)
+        {
+            --cut;
+        }
+        text.resize(cut);
+    }
+    return text;
+}
+
+/// The audit log (ServerOptions::audit): cleaned lines of bounded length, and refused calls
+/// thinned out, since anyone who reaches the port can make those (a flood must not fill the disk
+/// or slow the other calls down).
+class AuditLog
+{
+public:
+    static constexpr std::size_t kMaxLine = 1000;
+    static constexpr int kRefusedPerSecond = 20;
+
+    explicit AuditLog(std::function<void(const std::string&)> sink) : sink_(std::move(sink)) {}
+    AuditLog(const AuditLog&) = delete;
+    AuditLog& operator=(const AuditLog&) = delete;
+
+    void operator()(std::string text) const
+    {
+        if (sink_)
+        {
+            write(std::move(text));
+        }
+    }
+
+    void refused(std::string text) const
+    {
+        if (!sink_)
+        {
+            return;
+        }
+        std::uint64_t left_out = 0;
+        {
+            const std::lock_guard lock(mutex_);
+            const auto now = std::chrono::steady_clock::now();
+            if (now - window_ >= std::chrono::seconds(1))
+            {
+                window_ = now;
+                in_window_ = 0;
+                left_out = std::exchange(left_out_, 0);
+            }
+            if (in_window_ >= kRefusedPerSecond)
+            {
+                ++left_out_;
+                return;
+            }
+            ++in_window_;
+        }
+        if (left_out > 0)
+        {
+            write("(" + std::to_string(left_out) + " more refused calls not logged)");
+        }
+        write(std::move(text));
+    }
+
+private:
+    void write(std::string text) const
+    {
+        text = clean(std::move(text));
+        if (text.size() > kMaxLine)
+        {
+            text = cut_utf8(std::move(text), kMaxLine) + "...";
+        }
+        try
+        {
+            sink_(text);
+        }
+        catch (const std::exception&)
+        {
+            // A failing log must not end a call (or a gRPC callback) halfway.
+        }
+    }
+
+    std::function<void(const std::string&)> sink_;
+    mutable std::mutex mutex_;
+    mutable std::chrono::steady_clock::time_point window_{};
+    mutable int in_window_ = 0;
+    mutable std::uint64_t left_out_ = 0;
+};
+
 /// The live agent streams, so that the server can drop them (ControlServer::disconnect_agents()).
 struct StreamRegistry
 {
@@ -284,9 +377,36 @@ public:
             const std::lock_guard lock(mutex);
             return stream != nullptr && stream->queue(command);
         }
+        void close() override
+        {
+            // Finished with ABORTED, which the agent takes as a refusal (it waits reconnect_max:
+            // two live processes with one name do not take the connection from each other many
+            // times a second). Not under this mutex: OnDone() locks the handle and then this
+            // mutex. While the handle's mutex is held and its context is set, OnDone() has not
+            // begun, so the stream is alive.
+            AgentStream* s = nullptr;
+            std::shared_ptr<StreamRegistry::Handle> handle;
+            {
+                const std::lock_guard lock(mutex);
+                if (stream == nullptr)
+                {
+                    return;
+                }
+                s = stream;
+                handle = stream->handle_;
+            }
+            const std::lock_guard lock(handle->mutex);
+            if (handle->context == nullptr)
+            {
+                return;
+            }
+            // Not thinned with the refused calls: a flood of those must not hide a takeover.
+            s->audit_(s->who_.name + "@" + s->peer_ + " agent: replaced by another connection of the same participant");
+            s->finish(grpc::Status(grpc::StatusCode::ABORTED, "replaced by another connection of the same participant"));
+        }
     };
 
-    AgentStream(Hub& hub, Who who, std::string peer, const std::function<void(const std::string&)>& audit,
+    AgentStream(Hub& hub, Who who, std::string peer, const AuditLog& audit,
                 std::shared_ptr<StreamRegistry::Handle> handle) :
       hub_(hub),
       link_(std::make_shared<Link>()),
@@ -309,6 +429,14 @@ public:
         if (!dispatch())
         {
             return;
+        }
+        {
+            // Another thread may have finished the stream meanwhile (close(), OnCancel()).
+            const std::lock_guard lock(write_mutex_);
+            if (finished_)
+            {
+                return;
+            }
         }
         in_.Clear();
         StartRead(&in_);
@@ -389,11 +517,16 @@ private:
     {
         if (connection_ == 0)
         {
+            const auto refuse = [&](grpc::StatusCode code, const std::string& why) {
+                audit_.refused(who_.name + "@" + peer_ + " agent "
+                               + (in_.has_hello() ? in_.hello().participant() : std::string("?")) + ": refused (" + why + ")");
+                finish(grpc::Status(code, why));
+                return false;
+            };
             if (!in_.has_hello() || in_.hello().participant().empty() || in_.hello().max_pending() == 0
                 || in_.hello().max_pending() > kMaxAgentPending)
             {
-                finish(grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "the first message must be a valid hello"));
-                return false;
+                return refuse(grpc::StatusCode::INVALID_ARGUMENT, "the first message must be a valid hello");
             }
             const auto& h = in_.hello();
             {
@@ -402,25 +535,21 @@ private:
                 {
                     if (v.name().empty() || !names.insert(v.name()).second)
                     {
-                        finish(grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "the schema has an empty or repeated name"));
-                        return false;
+                        return refuse(grpc::StatusCode::INVALID_ARGUMENT, "the schema has an empty or repeated name");
                     }
                 }
+            }
+            // An agent holds at most max_pending queued commands and as many recent results.
+            if (static_cast<std::uint64_t>(h.open_seqs_size()) > 2 * h.max_pending())
+            {
+                return refuse(grpc::StatusCode::INVALID_ARGUMENT, "more open_seqs than the agent can hold");
             }
             if (!who_.participants.empty()
                 && std::find(who_.participants.begin(), who_.participants.end(), h.participant()) == who_.participants.end())
             {
-                if (audit_)
-                {
-                    audit_(clean(who_.name + "@" + peer_ + " agent " + h.participant() + ": refused (not allowed for this credential)"));
-                }
-                finish(grpc::Status(grpc::StatusCode::PERMISSION_DENIED, "this credential may not connect as " + h.participant()));
-                return false;
+                return refuse(grpc::StatusCode::PERMISSION_DENIED, "this credential may not connect as " + h.participant());
             }
-            if (audit_)
-            {
-                audit_(clean(who_.name + "@" + peer_ + " agent " + h.participant() + " (" + h.incarnation() + "): connected"));
-            }
+            audit_(who_.name + "@" + peer_ + " agent " + h.participant() + " (" + h.incarnation() + "): connected");
             PeerHello hello;
             hello.participant = h.participant();
             hello.incarnation = h.incarnation();
@@ -484,7 +613,7 @@ private:
     std::shared_ptr<Link> link_;
     Who who_;
     std::string peer_;
-    const std::function<void(const std::string&)>& audit_;
+    const AuditLog& audit_;
     std::shared_ptr<StreamRegistry::Handle> handle_;
     v1::AgentMessage in_;
     ConnectionId connection_ = 0;
@@ -506,7 +635,7 @@ public:
 class AgentServiceImpl final : public v1::AgentService::CallbackService
 {
 public:
-    AgentServiceImpl(Hub& hub, const Authorizer& auth, const std::function<void(const std::string&)>& audit, StreamRegistry& streams) :
+    AgentServiceImpl(Hub& hub, const Authorizer& auth, const AuditLog& audit, StreamRegistry& streams) :
       hub_(hub), auth_(auth), audit_(audit), streams_(streams)
     {
     }
@@ -515,10 +644,7 @@ public:
         const auto who = auth_.identify(*context);
         if (!who || !allows(*who, Role::Agent))
         {
-            if (audit_)
-            {
-                audit_(clean((who ? who->name : std::string("unauthenticated")) + "@" + context->peer() + " agent: refused"));
-            }
+            audit_.refused((who ? who->name : std::string("unauthenticated")) + "@" + context->peer() + " agent: refused");
             return new RefusedStream(grpc::Status(who ? grpc::StatusCode::PERMISSION_DENIED : grpc::StatusCode::UNAUTHENTICATED,
                                                   who ? "this credential may not connect an agent" : "a valid agent token is required"));
         }
@@ -528,7 +654,7 @@ public:
 private:
     Hub& hub_;
     const Authorizer& auth_;
-    const std::function<void(const std::string&)>& audit_;
+    const AuditLog& audit_;
     StreamRegistry& streams_;
 };
 
@@ -564,9 +690,38 @@ std::string peer_of(const grpc::ServerContext& context)
 class ControlServiceImpl final : public v1::ControlService::Service
 {
 public:
-    ControlServiceImpl(Hub& hub, const ServerOptions& options, const std::atomic<bool>& stopping, const Authorizer& auth) :
-      hub_(hub), options_(options), stopping_(stopping), auth_(auth)
+    ControlServiceImpl(Hub& hub, const ServerOptions& options, const std::atomic<bool>& stopping, const Authorizer& auth,
+                       const AuditLog& audit) :
+      hub_(hub), options_(options), stopping_(stopping), auth_(auth), audit_(audit)
     {
+    }
+
+    /// Counts a call that waits (holds a server thread); empty if too many wait already.
+    class WaitingCall
+    {
+    public:
+        explicit WaitingCall(std::atomic<std::size_t>& count) : count_(&count) {}
+        WaitingCall(const WaitingCall&) = delete;
+        WaitingCall& operator=(const WaitingCall&) = delete;
+        ~WaitingCall() { count_->fetch_sub(1, std::memory_order_acq_rel); }
+
+    private:
+        std::atomic<std::size_t>* count_;
+    };
+
+    std::optional<WaitingCall> enter_waiting()
+    {
+        if (waiting_.fetch_add(1, std::memory_order_acq_rel) >= options_.max_waiting_calls)
+        {
+            waiting_.fetch_sub(1, std::memory_order_acq_rel);
+            return std::nullopt;
+        }
+        return std::optional<WaitingCall>(std::in_place, waiting_);
+    }
+
+    static grpc::Status too_many_waiting()
+    {
+        return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED, "too many calls wait at the same time (Watch, WaitOperation, WaitPaused)");
     }
 
     /// @returns a refusal, or nullopt and `who` when the caller has at least `need`.
@@ -578,7 +733,7 @@ public:
             who = *found;
             return std::nullopt;
         }
-        audit(found ? found->name : std::string("unauthenticated"), *context, what, "refused");
+        audit_.refused((found ? found->name : std::string("unauthenticated")) + "@" + context->peer() + " " + what + ": refused");
         if (!found)
         {
             return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "a valid token is required");
@@ -588,10 +743,7 @@ public:
 
     void audit(const std::string& name, const grpc::ServerContext& context, const std::string& what, const std::string& outcome)
     {
-        if (options_.audit)
-        {
-            options_.audit(clean(name + "@" + context.peer() + " " + what + ": " + outcome));
-        }
+        audit_(name + "@" + context.peer() + " " + what + ": " + outcome);
     }
 
     grpc::Status Ping(grpc::ServerContext* context, const v1::PingRequest* request, v1::PingReply* reply) override
@@ -688,6 +840,12 @@ public:
         {
             return *denied;
         }
+        if (static_cast<std::size_t>(request->writes_size()) > options_.max_writes_per_request)
+        {
+            audit(who.name, *context, "write " + std::to_string(request->writes_size()) + " values", "refused (too many)");
+            return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                                "at most " + std::to_string(options_.max_writes_per_request) + " writes in one request");
+        }
         OperationRequest r;
         for (const auto& w : request->writes())
         {
@@ -705,9 +863,14 @@ public:
         r.late = late_of(request->late());
         r.client = who.name + "@" + peer_of(*context);
         std::string what = "write";
-        for (const auto& w : r.writes)
+        constexpr std::size_t kNamed = 16; // the audit line names the first ones
+        for (std::size_t i = 0; i < r.writes.size() && i < kNamed; ++i)
         {
-            what += " " + w.peer + "/" + w.name;
+            what += " " + r.writes[i].peer + "/" + r.writes[i].name;
+        }
+        if (r.writes.size() > kNamed)
+        {
+            what += " (+" + std::to_string(r.writes.size() - kNamed) + " more)";
         }
         try
         {
@@ -746,6 +909,11 @@ public:
         {
             return *denied;
         }
+        const auto waiting = enter_waiting();
+        if (!waiting)
+        {
+            return too_many_waiting();
+        }
         const auto deadline = std::chrono::steady_clock::now()
                               + std::min(options_.max_wait, std::chrono::milliseconds(request->timeout_ms()));
         const bool queued = request->until() == v1::WAIT_FOR_QUEUED;
@@ -782,6 +950,11 @@ public:
         if (auto denied = authorize(context, Role::Viewer, who, "watch"))
         {
             return *denied;
+        }
+        const auto waiting = enter_waiting();
+        if (!waiting)
+        {
+            return too_many_waiting();
         }
         SubscriptionOptions o;
         o.peers.assign(request->peers().begin(), request->peers().end());
@@ -996,16 +1169,30 @@ public:
         {
             return *denied;
         }
+        const auto waiting = enter_waiting();
+        if (!waiting)
+        {
+            return too_many_waiting();
+        }
         const auto deadline = std::chrono::steady_clock::now() + std::min(options_.max_wait, std::chrono::milliseconds(r->timeout_ms()));
         while (true)
         {
             bool reached = false;
+            bool ended = false;
             const auto slice = std::chrono::duration_cast<std::chrono::milliseconds>(std::min<std::chrono::steady_clock::duration>(
                 kWaitSlice, std::max<std::chrono::steady_clock::duration>(deadline - std::chrono::steady_clock::now(), {})));
-            auto status = with_time(reply, [&](TimeControl& t) { reached = t.wait_paused(slice).has_value(); });
+            auto status = with_time(reply, [&](TimeControl& t) {
+                reached = t.wait_paused(slice).has_value();
+                ended = !reached && t.state().ended;
+            });
             if (!status.ok() || reached)
             {
                 return status;
+            }
+            if (ended)
+            {
+                // It will not stand still again (and wait_paused() returns at once: no busy loop).
+                return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "the simulation has ended");
             }
             if (context->IsCancelled() || stopping_.load())
             {
@@ -1024,7 +1211,15 @@ public:
         {
             return *denied;
         }
-        return with_time(reply, [&](TimeControl& t) { t.stop(r->reason().empty() ? "stopped by a client" : r->reason()); }, &who, context, "stop");
+        // The reason goes to every participant and into SIL Kit's logs: cleaned and bounded.
+        constexpr std::size_t kMaxReason = 200;
+        auto reason = clean(cut_utf8(r->reason(), kMaxReason));
+        if (reason.empty())
+        {
+            reason = "stopped by a client";
+        }
+        const auto what = "stop (" + reason + ")";
+        return with_time(reply, [&](TimeControl& t) { t.stop(reason); }, &who, context, what.c_str());
     }
 
 private:
@@ -1032,6 +1227,8 @@ private:
     const ServerOptions& options_;
     const std::atomic<bool>& stopping_;
     const Authorizer& auth_;
+    const AuditLog& audit_;
+    std::atomic<std::size_t> waiting_{0};
 };
 
 } // namespace
@@ -1131,9 +1328,49 @@ std::unique_ptr<TimeControl> time_control_of(SimulationController& controller)
     return std::make_unique<SimulationTimeControl>(controller);
 }
 
+namespace {
+
+/// The checks of load_credentials() also for credentials given directly, and the other options.
+ServerOptions check(ServerOptions o)
+{
+    const auto& sec = o.security;
+    if (sec.certificate_chain_pem.empty() != sec.private_key_pem.empty())
+    {
+        throw std::invalid_argument("vehicle_sil control server: TLS needs both the certificate chain and the private key");
+    }
+    for (std::size_t i = 0; i < sec.credentials.size(); ++i)
+    {
+        const auto& c = sec.credentials[i];
+        if (c.token.size() < 16)
+        {
+            throw std::invalid_argument("vehicle_sil control server: the token of " + c.name + " has fewer than 16 characters");
+        }
+        if (!c.participants.empty() && c.role != Role::Agent)
+        {
+            throw std::invalid_argument("vehicle_sil control server: only an agent credential names participants (" + c.name + ")");
+        }
+        for (std::size_t j = 0; j < i; ++j)
+        {
+            if (sec.credentials[j].token == c.token)
+            {
+                throw std::invalid_argument("vehicle_sil control server: " + c.name + " and " + sec.credentials[j].name
+                                            + " have the same token");
+            }
+        }
+    }
+    if (o.max_waiting_calls == 0 || o.max_writes_per_request == 0)
+    {
+        throw std::invalid_argument("vehicle_sil control server: max_waiting_calls and max_writes_per_request must be > 0");
+    }
+    return o;
+}
+
+} // namespace
+
 struct ControlServer::Impl
 {
     ServerOptions options;
+    AuditLog audit;
     Hub hub;
     std::atomic<bool> stopping{false};
     Authorizer auth;
@@ -1146,11 +1383,12 @@ struct ControlServer::Impl
     bool shut_down = false;
 
     explicit Impl(ServerOptions o) :
-      options(std::move(o)),
+      options(check(std::move(o))),
+      audit(options.audit),
       hub(options.hub),
       auth(options.security),
-      agents(hub, auth, options.audit, streams),
-      clients(hub, options, stopping, auth)
+      agents(hub, auth, audit, streams),
+      clients(hub, options, stopping, auth, audit)
     {
         const auto& sec = options.security;
         const bool tls = !sec.certificate_chain_pem.empty() && !sec.private_key_pem.empty();

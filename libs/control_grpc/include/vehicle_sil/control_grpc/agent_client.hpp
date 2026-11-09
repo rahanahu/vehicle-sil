@@ -39,15 +39,19 @@ struct AgentClientOptions
 };
 
 /// Runs the transport side of `agent` on threads of its own: connects to the server (again and
-/// again with back-off if the link is lost, waiting reconnect_max after a refusal; the simulation
-/// is never held up). It is connected once the server has welcomed it. It hands the server's
+/// again with back-off if the link is lost, waiting reconnect_max after a refusal or after another
+/// connection of the same participant replaced this one, see last_error(); the simulation is
+/// never held up). It is connected once the server has welcomed it. It hands the server's
 /// commands to Agent::submit(), and sends the agent's results, values, events and the peer's
 /// status. After a reconnect it tells the server which commands the agent still holds and sends
-/// the latest results again (the server ignores the ones it has), so no result is lost.
+/// the latest results again (the server ignores the ones it has). A result that could not be
+/// sent and fell out of the latest results (more than max_pending since) is not sent again; the
+/// server then settles its operation as Unknown.
 ///
 /// Create it after the agent was attached to its peer (the schema is complete then) and destroy
-/// it before the agent; call Agent::finish() before stop(), which sends what is left and waits up
-/// to about 3 s for the server to take it (std::invalid_argument for non-positive periods). It is the only transport-side user of the agent.
+/// it before the agent and before what `status` refers to (the peer); call Agent::finish() before
+/// stop(), which sends what is left, waits up to about 3 s for the server to take it and then up to
+/// 1.5 s for the stream to end (std::invalid_argument for non-positive periods). It is the only transport-side user of the agent.
 class AgentClient
 {
 public:
