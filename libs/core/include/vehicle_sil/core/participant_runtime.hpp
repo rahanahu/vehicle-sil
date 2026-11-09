@@ -177,7 +177,12 @@ public:
 
     /// Asks the lifecycle to stop without waiting. Callable from any thread, including the step
     /// handler. In Coordinated mode this stops the whole simulation. Never throws. Pacing
-    /// (real_time_factor) is off from then on. Before start() the lifecycle is not affected.
+    /// (real_time_factor) is off from then on. A request made before the lifecycle runs (before
+    /// start(), or while it waits for the other participants) is kept and delivered when the
+    /// lifecycle can take it: with virtual time at the first step (which then still runs; it needs
+    /// every synchronised participant to have started its time), otherwise when start() sees
+    /// Running. SIL Kit itself ignores a stop before Running. In Error it is delivered at once.
+    /// Only the first reason is kept.
     void request_stop(std::string_view reason) noexcept;
 
     /// Waits until the lifecycle has shut down or is in Error, or the timeout expires.
@@ -196,7 +201,7 @@ public:
     /// VirtualTimeOptions::end are not counted).
     [[nodiscard]] std::uint64_t steps_completed() const noexcept { return steps_completed_.load(std::memory_order_acquire); }
 
-    /// true once request_stop() or stop() has been called. Thread safe.
+    /// true once request_stop() has been called, or stop() after start(). Thread safe.
     [[nodiscard]] bool stop_requested() const;
 
     /// Message of the exception that the step handler threw, empty if none.
@@ -222,6 +227,9 @@ public:
                        std::chrono::milliseconds timeout);
 
 private:
+    /// Gives a requested stop to the lifecycle once it can take it (Running, Paused, Error). A
+    /// request waits for the first step with virtual time unless `now`.
+    void deliver_stop(bool now) noexcept;
     /// @param replayed true for statuses re-read by resync_peers(): they never overwrite a newer one.
     void on_status(const SilKit::Services::Orchestration::ParticipantStatus& status, bool replayed);
     /// @returns true to complete the step now, false if the StepHold holds it.
@@ -273,6 +281,8 @@ private:
     mutable std::mutex control_mutex_; // guards stop_requested_, and writes of step_error_ (only the step thread writes it)
     std::condition_variable stop_cv_;
     bool stop_requested_ = false;
+    std::string stop_reason_;                // guarded by control_mutex_; the first request's
+    std::atomic<bool> stop_delivered_{false}; // Stop() was given to the lifecycle (or it ends anyway)
     std::string step_error_;
 
     mutable std::mutex peers_mutex_;

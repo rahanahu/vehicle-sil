@@ -352,7 +352,8 @@ void SimulationController::step(SimDuration d)
     auto& g = gate();
     {
         const std::lock_guard lock(g.mutex);
-        g.run_until(g.state.now + d);
+        // Saturates: a duration from outside (the Control API) may reach past the end of time.
+        g.run_until(d >= SimTime::max() - g.state.now ? SimTime::max() : g.state.now + d);
     }
     g.cv.notify_all();
 }

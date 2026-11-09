@@ -316,6 +316,105 @@ TEST_CASE(virtual_time_gate_stop_while_paused_shuts_down)
     CHECK(Wall::now() - waited < 2s);
 }
 
+TEST_CASE(virtual_time_gate_stop_requested_before_start_ends_the_simulation)
+{
+    // A stop asked for while the controller still waits for the participants (before Running,
+    // where SIL Kit ignores Stop()) is kept and ends the simulation once it runs, instead of being
+    // lost and leaving the participants running free with the time gate switched off.
+    GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true});
+    sim.controller->runtime().request_stop("stop before start");
+    std::vector<std::jthread> starters; // joined also when a check throws
+    for (auto& peer : sim.peers)
+    {
+        // A peer may see the simulation stopping before its own start() saw it run.
+        starters.emplace_back([&peer] {
+            try
+            {
+                peer->runtime->start(30s);
+            }
+            catch (const std::runtime_error&)
+            {
+            }
+        });
+    }
+    sim.controller->start(30s);
+    for (auto& starter : starters)
+    {
+        starter.join();
+    }
+    for (auto& peer : sim.peers)
+    {
+        const auto state = peer->runtime->wait_until_finished(10s);
+        CHECK(state.has_value());
+        CHECK(peer->last() < SimDuration(1s));
+    }
+    CHECK(sim.controller->wait_until_finished(10s).has_value());
+}
+
+TEST_CASE(virtual_time_gate_stop_requested_while_waiting_for_the_others_ends_the_simulation)
+{
+    // A participant whose lifecycle has started but waits for the others (not Running yet: SIL
+    // Kit ignores Stop() there) is asked to stop: the stop is delivered once it runs.
+    GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true});
+    std::vector<std::jthread> starters; // joined also when a check throws
+    for (auto& peer : sim.peers)
+    {
+        starters.emplace_back([&peer] {
+            try
+            {
+                peer->runtime->start(30s);
+            }
+            catch (const std::runtime_error&)
+            {
+            }
+        });
+    }
+    auto& first = *sim.peers.front()->runtime;
+    const auto deadline = Wall::now() + 10s;
+    while (!first.started() && Wall::now() < deadline)
+    {
+        std::this_thread::sleep_for(5ms);
+    }
+    std::this_thread::sleep_for(200ms); // its lifecycle waits for the controller
+    CHECK(first.state() != orch::ParticipantState::Running);
+    first.request_stop("stop while waiting for the others");
+    try
+    {
+        sim.controller->start(30s);
+    }
+    catch (const std::runtime_error&)
+    {
+        // The peer stops at its first step; the simulation may end before the controller's
+        // first step, and then its start() reports that it did not see the simulation run.
+    }
+    for (auto& starter : starters)
+    {
+        starter.join();
+    }
+    for (auto& peer : sim.peers)
+    {
+        CHECK(peer->runtime->wait_until_finished(10s).has_value());
+        CHECK(peer->last() < SimDuration(1s));
+    }
+    CHECK(sim.controller->wait_until_finished(10s).has_value());
+}
+
+TEST_CASE(virtual_time_gate_a_step_past_the_end_of_time_saturates)
+{
+    // step(d) with a d from outside (the Control API) that reaches past the largest time: the
+    // target is the largest time, not an overflowed one in the past.
+    GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true});
+    sim.start();
+    sim.controller->step(10ms);
+    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->time_state().now == at(10ms));
+    sim.controller->step(SimDuration::max());
+    const auto target = sim.controller->time_state().pause_target;
+    CHECK(target.has_value() && *target == SimTime::max());
+    sim.controller->pause();
+    CHECK(sim.controller->wait_until_paused(10s).has_value());
+}
+
 TEST_CASE(virtual_time_gate_api_misuse_is_rejected)
 {
     InProcessRegistry registry;

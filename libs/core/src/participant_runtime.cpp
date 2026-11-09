@@ -182,6 +182,7 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout)
         // handler call proves that it got there.
         if (current == orch::ParticipantState::Running || step_entered_.load(std::memory_order_acquire))
         {
+            deliver_stop(false); // a stop requested before Running
             return;
         }
         if (is_terminal_or_stopping(current))
@@ -226,7 +227,22 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
     {
         return;
     }
-    request_stop(reason);
+    {
+        const std::lock_guard lock(control_mutex_);
+        if (!stop_requested_)
+        {
+            stop_requested_ = true;
+            try
+            {
+                stop_reason_ = reason;
+            }
+            catch (const std::exception&)
+            {
+            }
+        }
+    }
+    stop_cv_.notify_all();
+    deliver_stop(true); // this participant ends now: no waiting for a first step
     // The lifecycle proceeds to Shutdown on its own after Stop(), in both modes and from Error.
     const auto done = *lifecycle_done_; // own copy: wait_until_finished() may use it meanwhile
     try
@@ -263,9 +279,29 @@ void ParticipantRuntime::request_stop(std::string_view reason) noexcept
 {
     {
         const std::lock_guard lock(control_mutex_);
-        stop_requested_ = true;
+        if (!stop_requested_)
+        {
+            stop_requested_ = true;
+            try
+            {
+                stop_reason_ = reason;
+            }
+            catch (const std::exception&)
+            {
+                // The reason is informative; an empty one is fine.
+            }
+        }
     }
     stop_cv_.notify_all(); // ends a pacing wait early
+    deliver_stop(false);
+}
+
+void ParticipantRuntime::deliver_stop(bool now) noexcept
+{
+    if (stop_delivered_.load(std::memory_order_acquire) || !stop_requested())
+    {
+        return;
+    }
     // lifecycle_done_ may still be being assigned by start() on another thread.
     if (!started())
     {
@@ -273,13 +309,37 @@ void ParticipantRuntime::request_stop(std::string_view reason) noexcept
     }
     try
     {
+        const auto state = lifecycle_->State();
+        const bool running = state == orch::ParticipantState::Running || state == orch::ParticipantState::Paused;
+        // With virtual time, a request waits for the first step: a participant can be Running
+        // while others (the system controller among them) are not there yet, and a stop then
+        // can leave those stuck before Running; the first step needs every synchronised
+        // participant to have started its time. stop() does not wait.
+        if (running && !now && time_sync_ && !step_entered_.load(std::memory_order_acquire))
+        {
+            return;
+        }
         // Error is included: SIL Kit keeps a participant in Error until it is stopped or
         // aborted, and Stop() takes it from Error to Shutdown.
-        const auto state = lifecycle_->State();
-        if (state == orch::ParticipantState::Error || !is_terminal_or_stopping(state))
+        if (running || state == orch::ParticipantState::Error)
         {
-            lifecycle_->Stop(std::string(reason));
+            if (stop_delivered_.exchange(true, std::memory_order_acq_rel))
+            {
+                return;
+            }
+            std::string reason;
+            {
+                const std::lock_guard lock(control_mutex_);
+                reason = stop_reason_;
+            }
+            lifecycle_->Stop(std::move(reason));
         }
+        else if (is_terminal_or_stopping(state))
+        {
+            stop_delivered_.store(true, std::memory_order_release); // it ends anyway
+        }
+        // Before Running, SIL Kit ignores Stop() (with a warning): the request is kept and
+        // delivered by start() once Running is reached or, with virtual time, by the first step.
     }
     catch (const std::exception&)
     {
@@ -347,6 +407,10 @@ bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
     const SimTime time = from_silkit_time(now);
     now_ns_.store(now.count(), std::memory_order_release);
     step_entered_.store(true, std::memory_order_release);
+    if (!stop_delivered_.load(std::memory_order_acquire))
+    {
+        deliver_stop(false); // a stop requested before Running: this step is the first chance
+    }
     {
         const std::lock_guard gate(step_gate_);
         // Only this thread writes step_error_, so reading it here needs no lock.
