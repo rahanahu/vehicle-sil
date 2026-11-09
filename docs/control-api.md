@@ -40,13 +40,15 @@ vehicle_sil::control_grpc::AgentClient link(agent, {
     .status = [&] { return vehicle_sil::control::PeerStatus{peer.failed(), peer.error()}; },
     .token = agent_token, .root_certificates_pem = server_certificate});
 peer.start();
-peer.wait();
-agent.finish();                             // 残っている操作を Cancelled に
+while (!peer.wait(std::chrono::minutes(1))) {} // 止めている間も含めて、終わるまで待つ
+peer.stop();                                // ステップがもう走らない
+agent.finish();                             // 残っている操作を Cancelled に（stop() の後）
 link.stop();                                // その結果を送ってから閉じる
 ```
 
 - 変数は bool、整数、実数、列挙で、単位、範囲、刻み、説明を付けられます。値は Agent のステップのスレッドで読み書きするので、モデルにロックは要りません。
-- 外からの書き込みは、指定した仮想時刻以後の最初のステップで、アプリの処理の前に反映されます。
+- 外からの書き込みは、指定した仮想時刻以後の最初のステップで、アプリの処理の前に反映されます（J1939 の受信処理や部品のタイマーが新しい値を使うのは次のステップから）。
+- `agent.finish()` は `peer.stop()` の後に呼びます。`wait()` が時間切れで戻っただけではステップが続いています。
 - 例: `examples/control/control_peer.cpp`（プロセスごとに 1 つの Peer）、`examples/control/control_demo.cpp`（1 つのプロセスにすべて）。
 
 ## Control Server を起動する
@@ -57,7 +59,7 @@ vehicle_sil_control_server --listen 0.0.0.0:8510 \
     --credentials credentials.txt --tls-cert server.crt --tls-key server.key --audit-log audit.log
 ```
 
-- `--required` を付けると、Server が SimulationController を兼ね、必要な participant がそろったところでシミュレーションを始めます。`--gate-step-ms`（既定 10）は止められる時刻の刻みです。`--start-paused 1` で T = 0 で止めて始めます。
+- `--required` を付けると、Server が SimulationController を兼ね、必要な participant がそろったところでシミュレーションを始めます。必要な participant が落ちる（プロセスの終了、ステップの失敗、切断）と、Server はシミュレーションを止めて終わります（終了コード 1）。始まる前に `stop` を呼ぶと、始まった直後に止まります（Peer によっては、最初のステップの前に終わりを見て、開始の失敗として終わります）。`--gate-step-ms`（既定 10）は止められる時刻の刻みです。`--start-paused 1` で T = 0 で止めて始めます。
 - 認証情報のファイルは 1 行に 1 つで、`<role> <name> <token> [participant,...]` です（role は viewer、operator、admin、agent。トークンは 16 文字以上の秘密の文字列）。agent の行に participant 名を書くと、その名前でしか接続できません。
 
 ```text
@@ -85,7 +87,7 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
     print([p.participant for p in c.peers()])
     c.sim.wait_paused()
     seq = c.write({"Engine": {"engine.throttle": 50.0}, "Body": {"cabin.lamp": 2}}, at=ms(100))
-    c.wait(seq, until="queued")         # 全員が受け取ってから進める（遅すぎる書き込みが起きない）
+    c.wait(seq, until="queued")         # 全員が受け取ってから進める（at が止まっている時刻より後なので、遅すぎる書き込みが起きない）
     c.sim.run_until(ms(500)); c.sim.wait_paused()
     print(c.wait(seq).target("Engine").applied_at)   # 100 ms（ns で）
     print(c.values("Engine").values["engine.speed"])
@@ -95,6 +97,11 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
 ```
 
 時刻は仮想時間のナノ秒です（`ms()`、`s()` で作る）。呼び出しの失敗は `ControlError`（`code` は gRPC の状態コード）で、Agent が断った書き込みは例外ではなく、操作の結果（`invalid` など）になります。
+
+- 止めてから書くときは、`at` を止まっている時刻（`c.sim.time().now`）より後にします（たとえば 1 ns 後）。止まっている時刻のステップは、すでに走った Peer があるので、その時刻か `at` なしの書き込みは `late` になるか、反映のステップが実行ごとに変わることがあります。
+- `write()` は自動では送り直しません。応答を受け取る前に接続が切れた書き込みは、受け付けられているかもしれません（同じ書き込みを送り直すと、別の操作になります）。
+- 複数のクライアントが同じ変数に同じ時刻で書くと、残る値は Server に届いた順で決まります。
+- 時間の状態の購読（`watch(time=True)`）は約 100 ms ごとの最新で、短い一時停止は現れないことがあります。止まるのを待つには `c.sim.wait_paused()` を使います。
 
 ## CLI
 
@@ -113,8 +120,9 @@ python -m vehicle_sil_control stop
 ## 複数の PC
 
 - SIL Kit のレジストリと Control Server を 1 台に置き、各 PC の Peer は両方へ外向きにつなぎます（Peer 側で待ち受けるポートは要りません。SIL Kit は participant どうしが直接つながらないとき、レジストリを中継に使います）。
-- 発見: Server（`--required` のとき）は、シミュレーションの participant を SIL Kit のレジストリを通して見ているので、どの PC の Peer も、Agent がつながる前から一覧に出ます（`peers` の `has_agent` が偽、`simulation_state` に SIL Kit の状態）。Agent がつながると、その変数と値が加わります。
-- Peer のプロセスが落ちて起動し直すと、Server は別の incarnation として扱い、前の未完了の操作を Unknown（反映されたかわからない）にします。回線が切れただけなら、Agent はつなぎ直し、Agent が受け取っていた操作はそのまま続きます（受け取ったと知らされる前に切れた操作は Unknown）。黙って切れた接続は keepalive で数十秒以内に見つけます。
+- 発見: Server（`--required` のとき）は、必須の participant を SIL Kit のレジストリを通して見ているので、どの PC の Peer も、Agent がつながる前から一覧に出ます（`peers` の `has_agent` が偽、`simulation_state` に SIL Kit の状態）。Agent がつながると、その変数と値が加わります。
+- Peer のプロセスが落ちて起動し直すと、Server は別の incarnation として扱い、前の未完了の操作を Unknown（反映されたかわからない）にします。ただし `--required` の Peer が落ちると、シミュレーションと Server が終わります（Coordinated の participant は、始まった後のシミュレーションに戻れない）。起動し直せるのは、必須でない Peer か、`--required` なしの Server のときです。同じ participant 名の Agent が別につながると、前の接続は閉じられ、その Agent は `reconnect_max` 待ってからつなぎ直します（理由は `last_error()`）。回線が切れただけなら、Agent はつなぎ直し、Agent が受け取っていた操作はそのまま続きます（受け取ったと知らされる前に切れた操作は Unknown）。黙って切れた接続は keepalive で数十秒以内に見つけます。
+- Server を起動し直すと、前の Server の操作の結果は問い合わせられません（`NOT_FOUND`）。Agent がまだ持っていた時刻つきの書き込みは、そのまま反映されます。
 - 試験: `tests/control_server/multi_process.py` は、レジストリ、Server、2 つの Peer をプロセスに分けて動かし、Python から操作します。`--remote-body` で Body を別の PC で動かせます。
 
 ## 制限
@@ -122,3 +130,4 @@ python -m vehicle_sil_control stop
 - 時間の操作（一時停止、ステップ実行、速度）は、Server が `--required` でシミュレーションを調停しているときだけです。止まるのは仮想時間で同期している Peer だけで、実時間の Peer は走り続けます。
 - リセット、Peer の起動（Launcher）、CAN/LIN のチャネルの選択はありません。
 - 値の購読は最新値です（読む前に来た新しい値で置き換えます）。すべての値の記録は、SIL Kit のトレースか `TapPort` を使います。
+- 1 回の `write()` の書き込みは 4096 個まで、同時に待つ呼び出しと購読は合わせて 256 本まで（Server の既定）です。
