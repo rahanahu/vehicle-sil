@@ -12,7 +12,8 @@ add_library(vehicle_sil_can_netsim STATIC
 add_library(vehicle_sil::can_netsim ALIAS vehicle_sil_can_netsim)
 set_target_properties(vehicle_sil_can_netsim PROPERTIES EXPORT_NAME can_netsim)
 target_include_directories(vehicle_sil_can_netsim PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-target_link_libraries(vehicle_sil_can_netsim PUBLIC vehicle_sil::can vehicle_sil::can_silkit vehicle_sil::core SilKit::SilKit)
+target_link_libraries(vehicle_sil_can_netsim PUBLIC vehicle_sil::can vehicle_sil::core SilKit::SilKit)
+# The public headers do not include vehicle_sil::can_silkit; only the sources use it.
 # The YAML/JSON parser that SIL Kit builds from its ThirdParty directory (rapidyaml, MIT).
-target_link_libraries(vehicle_sil_can_netsim PRIVATE rapidyaml)
+target_link_libraries(vehicle_sil_can_netsim PRIVATE vehicle_sil::can_silkit rapidyaml)
 vehicle_sil_target_defaults(vehicle_sil_can_netsim)
