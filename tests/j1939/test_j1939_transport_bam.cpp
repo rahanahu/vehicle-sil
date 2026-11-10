@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 //
 // Broadcast transfers (BAM) of the J1939 stack against a tester that plays the remote
-// nodes frame by frame. The cases follow the former AgIsoStack++ tests (formerly
-// tests/unit/test_j1939_tp_bam.cpp) with the differences recorded in the design (announcement-to-first-packet at least the
-// interval, invalid announcements do not end a running broadcast, announcements of 8 bytes or
-// fewer are ignored).
+// nodes frame by frame, with the choices of the design: announcement-to-first-packet at least
+// the interval, invalid announcements do not end a running broadcast, announcements of 8 bytes
+// or fewer are ignored.
 #include "j1939_bench.hpp"
 #include "j1939_transport_util.hpp"
 #include "test_harness.hpp"

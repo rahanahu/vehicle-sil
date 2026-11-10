@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // Request (PGN 59904) and Acknowledgement (PGN 59392) of the J1939 stack against remote
-// nodes the tester plays frame by frame. The expected frames are those of the former
-// AgIsoStack++ tests (formerly tests/unit/test_j1939_request.cpp) for the cases that do not need
-// address claiming; the cases that need a claimed requester or our own claim are with the
-// address claim tests.
+// nodes the tester plays frame by frame, in the cases that do not need address claiming; the
+// cases that need a claimed requester or our own claim are with the address management tests.
 #include "j1939_bench.hpp"
 #include "test_harness.hpp"
 
@@ -105,8 +103,8 @@ TEST_CASE(request_from_the_null_address_is_not_answered)
 
 TEST_CASE(request_from_a_node_we_have_not_seen_claim_is_nacked)
 {
-    // B: AgIsoStack++ did not NACK a requester whose claim it had not seen. The NACK only names
-    // the requester's address, so the stack answers like for any other requester.
+    // B: a requester whose claim was not seen is NACKed too. The NACK only names the requester's
+    // address, so the stack answers like for any other requester.
     Bench bench;
     bench.add_node(kUs);
     bench.inject(req(0x33, kUs, kUnsupported));

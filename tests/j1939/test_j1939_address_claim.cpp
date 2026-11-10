@@ -2,8 +2,7 @@
 //
 // NAME and the basics of address claiming of the J1939 stack: the first claim, the
 // wait after the claim, contention between two nodes, Request for Address Claimed and Cannot
-// Claim. The expected frames follow the former AgIsoStack++ tests where they apply
-// (formerly tests/unit/test_j1939_address_claim.cpp) and the stack's design otherwise.
+// Claim.
 #include "j1939_bench.hpp"
 #include "test_harness.hpp"
 

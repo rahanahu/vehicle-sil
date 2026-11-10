@@ -2,9 +2,7 @@
 //
 // The diagnostics part of the J1939 stack (DM1, DM2, DM3, DM11, DM22): when DM1 goes out,
 // the DTC encoding, answers to requests, clearing (also deferred by the application), DM22, the
-// broadcasts competing for the node's transfer, and the claim. The behaviour the AgIsoStack++
-// tests fix (formerly tests/unit/test_j1939_diagnostics.cpp) is kept where the design keeps it; the
-// differences are noted at the tests.
+// broadcasts competing for the node's transfer, and the claim.
 #include "j1939_parts_util.hpp"
 #include "network_test_access.hpp"
 #include "test_harness.hpp"
@@ -326,7 +324,7 @@ TEST_CASE(long_answers_go_to_all_nodes_or_by_rts_cts_to_the_requester)
     const Bytes expected = dm_payload(0x00, 0xFF, encoded); // 258 bytes: not cut at 256
     ecu.bench.steps(5);
     (void)ecu.bench.take_sent();
-    // Destination specific: RTS/CTS to the requester (the AgIsoStack++ version broadcast it).
+    // Destination specific: RTS/CTS to the requester.
     ecu.bench.inject(req(kTool, kUs, kPgnDm2));
     CHECK(receive_rts_cts(ecu.bench, kUs, kTool, kPgnDm2) == expected);
     // To all nodes: one BAM, also for two requests while it is under way.
@@ -600,7 +598,7 @@ TEST_CASE(dm22_malformed_to_all_nodes_or_to_another_node_is_ignored_and_several_
     CHECK(ecu.diag.is_active(Dtc{10, 2}));
 
     // In the order the step handles them (by time, then sender): 0x90, 0x90 (a duplicate that
-    // finds the DTC previously active), 0x91. The AgIsoStack++ version answered last to first.
+    // finds the DTC previously active), 0x91.
     ecu.bench.inject(dm22_from(kTool, kUs, dm22(0x11, 0xFF, 10, 2)));
     ecu.bench.inject(dm22_from(kOtherTool, kUs, dm22(0x11, 0xFF, 11, 2)));
     ecu.bench.inject(dm22_from(kTool, kUs, dm22(0x11, 0xFF, 10, 2)));

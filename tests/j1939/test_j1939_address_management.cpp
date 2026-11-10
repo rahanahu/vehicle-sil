@@ -3,9 +3,6 @@
 // Address management of the J1939 stack beyond the basic claim: the address table,
 // arbitrary address capable nodes that move, address violations, Commanded Address, the
 // address change handlers, several nodes on one network and several networks on one host.
-// The expected frames follow the former AgIsoStack++ tests where they apply
-// (formerly tests/unit/test_j1939_address_claim.cpp and test_j1939_request.cpp) and the stack's
-// design otherwise.
 #include "j1939_bench.hpp"
 #include "network_test_access.hpp"
 #include "test_harness.hpp"
@@ -136,7 +133,7 @@ TEST_CASE(address_table_records_the_claims_of_other_control_functions)
 
 TEST_CASE(address_table_follows_a_control_function_that_moves)
 {
-    // AgIsoStack++: address_claim_of_a_node_that_moves_updates_the_address_table.
+    // A NAME that claims another address no longer has its old one in the address table.
     Bench bench;
     bench.add_node(0x10);
     bench.inject(at(1ms), claim(0x90, 0x1000));
@@ -151,8 +148,7 @@ TEST_CASE(address_table_follows_a_control_function_that_moves)
 
 TEST_CASE(request_from_a_node_that_moved_is_nacked_at_its_new_address)
 {
-    // Moved here from the Request tests (it needs claimed addresses); the former AgIsoStack++ test
-    // of the same name was in tests/unit/test_j1939_request.cpp.
+    // A Request test that needs claimed addresses, so it is here.
     Bench bench;
     bench.add_node(0x20);
     bench.inject(at(1ms), claim(0x90, 0x3000));
@@ -165,9 +161,8 @@ TEST_CASE(request_from_a_node_that_moved_is_nacked_at_its_new_address)
 
 TEST_CASE(request_in_the_same_step_as_the_requesters_claim_is_answered)
 {
-    // Moved here from the Request tests. The claim does not have to come first: a destination-specific
-    // Request is answered whether or not the requester's claim was seen. (AgIsoStack++ does not
-    // NACK the Request that comes before the claim of a node it does not know yet.)
+    // A Request test that needs a claim, so it is here. The claim does not have to come first: a
+    // destination-specific Request is answered whether or not the requester's claim was seen.
     Bench bench;
     bench.add_node(0x20);
     bench.step();
@@ -182,8 +177,7 @@ TEST_CASE(request_in_the_same_step_as_the_requesters_claim_is_answered)
 
 TEST_CASE(cannot_claim_removes_the_control_function_from_the_address_table)
 {
-    // A NAME's old address is no longer its own after it could not claim. The former AgIsoStack++ stack kept it
-    // (address_claim_cannot_claim_from_other_nodes_is_handled).
+    // A NAME's old address is no longer its own after it could not claim.
     Bench bench;
     bench.add_node(0x10);
     bench.inject(at(1ms), claim(0x90, 0x1000));
@@ -196,8 +190,7 @@ TEST_CASE(cannot_claim_removes_the_control_function_from_the_address_table)
     CHECK_EQ(table.size(), 1u);
     CHECK(!table.name_at(0x90).has_value());
     CHECK(table.name_at(0x91) == Name{0x2000});
-    // It claims again later: the same NAME, at the new address
-    // (AgIsoStack++: address_claim_partner_that_could_not_claim_is_found_when_it_claims_later).
+    // It claims again later: the same NAME, at the new address.
     bench.inject(at(21ms), claim(0x92, 0x1000));
     bench.step();
     CHECK(table.address_of(Name{0x1000}) == Address{0x92});
@@ -280,7 +273,7 @@ TEST_CASE(address_table_ignores_local_nodes_and_short_claims)
 
 TEST_CASE(address_table_holds_every_address_claimed_in_one_step)
 {
-    // AgIsoStack++: address_claim_of_many_nodes_in_one_step_fills_the_table.
+    // Claims of every address in one step all reach the table, without a receive overflow.
     Bench bench;
     bench.add_node(0x10); // no NAME: does not contend
     for (unsigned a = 0; a < 254; ++a)
@@ -299,7 +292,7 @@ TEST_CASE(address_table_holds_every_address_claimed_in_one_step)
 
 TEST_CASE(arbitrary_capable_node_moves_to_the_lowest_free_address_when_it_loses)
 {
-    // AgIsoStack++: address_claim_lost_by_an_arbitrary_capable_cf_moves_to_a_free_address.
+    // An arbitrary address capable node that loses its address claims the lowest free one.
     Bench bench;
     Node& us = add_claiming(bench, kUs, kAacName);
     std::vector<std::string> changes;
@@ -530,15 +523,14 @@ TEST_CASE(name_priority_boundaries_decide_contention)
 
 TEST_CASE(address_violation_makes_us_claim_again)
 {
-    // AgIsoStack++: address_violation_makes_us_reclaim_our_address.
+    // A frame from our address (an address violation) makes us claim our address again.
     Bench bench;
     Node& us = add_claiming(bench, kUs, kOurName);
     bench.steps(31); // .. 300, claimed
     bench.take_sent();
     bench.inject(at(301ms), status(kUs));
     bench.inject(at(302ms), frame(6, kPgnPropA, kUs, 0x33, {1}));
-    // AgIsoStack++ address_claim_shorter_than_eight_bytes_is_not_a_claim: a short claim from
-    // our address is no claim, but a violation.
+    // A claim shorter than eight bytes from our address is no claim, but a violation.
     bench.inject(at(303ms), frame(6, kPgnAddressClaim, kUs, kGlobal, {1, 2, 3}));
     bench.inject(at(303ms), status(kUs)); // the same time: one claim answers both
     bench.step(); // 310: a claim for each time
@@ -587,9 +579,8 @@ TEST_CASE(nodes_without_a_name_do_not_detect_violations)
 
 TEST_CASE(contention_at_one_time_is_answered_with_one_claim)
 {
-    // AgIsoStack++ (address_claim_duplicated_in_one_step_is_answered_once) answers once per
-    // step; here one claim answers the claims of one time, so the count does not depend on the
-    // step size.
+    // One claim answers the claims of one time (not one per step), so the count does not depend
+    // on the step size.
     Bench bench;
     add_claiming(bench, kUs, kOurName);
     bench.steps(31); // .. 300
@@ -666,7 +657,7 @@ struct Commanded
 
 TEST_CASE(commanded_address_moves_an_arbitrary_capable_node)
 {
-    // AgIsoStack++: commanded_address_moves_an_arbitrary_capable_cf.
+    // Commanded Address moves an arbitrary address capable node to the commanded address.
     Commanded t;
     const auto data = commanded(kAacName, 0x95);
     t.app = [&](SimTime now) {
@@ -749,7 +740,8 @@ TEST_CASE(commanded_address_to_our_own_address_confirms_it)
 
 TEST_CASE(invalid_commanded_addresses_are_ignored)
 {
-    // AgIsoStack++: commanded_address_is_ignored_by_a_cf_that_is_not_arbitrary_capable.
+    // Commanded Address is ignored by a node that is not arbitrary address capable, and for the
+    // other cases below.
     Bench bench;
     Node& single = add_claiming(bench, 0x20, kOurName);
     Node& aac = add_claiming(bench, kUs, kAacName);

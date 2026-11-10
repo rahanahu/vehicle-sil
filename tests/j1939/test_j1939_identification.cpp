@@ -68,14 +68,13 @@ TEST_CASE(software_identification_without_fields_short_and_long)
     ecu.bench.inject(req(kTool, kUs, kPgnSoftwareId));
     ecu.bench.step();
     CHECK_J1939(ecu.bench.take_sent(), {frame(6, kPgnSoftwareId, kUs, kGlobal, Bytes(8, 0xFF))});
-    // Short: one frame padded to 8 bytes (the AgIsoStack++ version sent 5 bytes).
+    // Short: one frame padded to 8 bytes.
     const std::vector<std::string> one{"1.0"};
     ecu.id.set_software_identification(one);
     ecu.bench.inject(req(kTool, kGlobal, kPgnSoftwareId));
     ecu.bench.step();
     CHECK_J1939(ecu.bench.take_sent(), {frame(6, kPgnSoftwareId, kUs, kGlobal, padded({0x01, '1', '.', '0', '*'}))});
-    // Long: BAM for a request to all nodes (the AgIsoStack++ version used RTS/CTS), RTS/CTS for
-    // a destination-specific one.
+    // Long: BAM for a request to all nodes, RTS/CTS for a destination-specific one.
     ecu.id.set_software_identification(kLongSoftware);
     ecu.bench.inject(req(kTool, kGlobal, kPgnSoftwareId));
     const auto messages = bam_messages(record(ecu.bench, 30), kUs, kPgnSoftwareId);

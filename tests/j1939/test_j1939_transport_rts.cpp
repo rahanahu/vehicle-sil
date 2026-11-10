@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Connection transfers (RTS/CTS) of the J1939 stack against a tester that plays the
-// remote node frame by frame. The cases follow the former AgIsoStack++ tests
-// (formerly tests/unit/test_j1939_tp_cmdt.cpp) with the differences recorded in the design: a missing,
+// remote node frame by frame, with the choices of the design: a missing,
 // reordered or zero-numbered packet is asked for again with a clear-to-send (at most twice in a
 // row, then an abort), a repeated packet is ignored, an RTS for another group from the same
 // sender is refused while the running connection goes on, and the originator aborts on T3/T4.
