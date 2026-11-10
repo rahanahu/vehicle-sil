@@ -426,3 +426,5 @@ int main() {
 vehicle-sil は MIT License で公開しています（[LICENSE](LICENSE)）。
 
 依存ライブラリのライセンスは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+
+vehicle-sil は、Vector Informatik や SAE International とは関係のない、独立したプロジェクトです。文中の製品名と規格名は、それぞれの権利者のものです。
