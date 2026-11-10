@@ -77,6 +77,12 @@ ServerOptions check(ServerOptions o)
         {
             throw std::invalid_argument("vehicle_sil control server: only an agent credential names participants (" + c.name + ")");
         }
+        if (c.participants.empty() && c.role == Role::Agent)
+        {
+            throw std::invalid_argument("vehicle_sil control server: the agent credential '" + c.name
+                                        + "' names no participant; set its participants to the participant names it may "
+                                          "connect as, or to {\"*\"} (kAnyParticipant) for any name");
+        }
         for (std::size_t j = 0; j < i; ++j)
         {
             if (sec.credentials[j].token == c.token)
@@ -123,7 +129,7 @@ struct ControlServer::Impl
       monitor(options.time != nullptr
                   ? std::make_unique<SimulationMonitor>(*options.time, SimulationMonitorOptions{options.monitor_period, options.leave_grace, {}})
                   : nullptr),
-      agents(make_agent_service(hub, auth, audit, streams)),
+      agents(make_agent_service(hub, auth, audit, streams, monitor.get())),
       clients(make_control_service(hub, options, monitor.get(), stopping, auth, audit))
     {
         const auto& sec = options.security;

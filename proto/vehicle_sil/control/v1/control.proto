@@ -123,6 +123,11 @@ message Hello {
   // On a reconnect of the same process: the commands the agent still holds.
   bool has_open_seqs = 5;
   repeated uint64 open_seqs = 6;
+  // New for every connection. When another connection of the same participant replaces this
+  // one, the server ends this one with ABORTED and names the new connection's identifier in the
+  // trailing metadata "vehicle-sil-replaced-by" (an agent replaced by its own newer connection
+  // goes on; one replaced by another process stops reconnecting).
+  string connection = 7;
 }
 
 message Submitted {

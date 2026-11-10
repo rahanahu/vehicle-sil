@@ -311,11 +311,11 @@ TEST_CASE(control_server_ends_a_replaced_agent_connection)
     static_cast<void>(second.stream->Finish());
 }
 
-TEST_CASE(control_server_two_agents_with_one_name_do_not_take_turns_rapidly)
+TEST_CASE(control_server_a_second_agent_with_one_name_wins_and_the_first_stops)
 {
-    // Two live processes claim the same participant (a configuration error): each replacement
-    // ends the other's connection, which backs off like after a refusal and says why, instead
-    // of reconnecting at once and replacing the other again many times a second.
+    // Two live processes claim the same participant (a configuration error): the newer
+    // connection wins, and the older agent stops reconnecting and says why, instead of the two
+    // taking the participant from each other again and again.
     AuditLines audit;
     control_grpc::ServerOptions o;
     o.audit = audit.sink();
@@ -326,19 +326,93 @@ TEST_CASE(control_server_two_agents_with_one_name_do_not_take_turns_rapidly)
     control::Agent b;
     b.bind_driver();
     control_grpc::AgentClient first(a, {.server = address, .participant = "Engine", .incarnation = "a",
-                                        .reconnect_min = 20ms, .reconnect_max = 1s});
-    CHECK(eventually([&] { return first.connected(); }));
+                                        .reconnect_min = 20ms, .reconnect_max = 100ms});
+    CHECK(first.wait_connected(10s));
     control_grpc::AgentClient second(b, {.server = address, .participant = "Engine", .incarnation = "b",
-                                         .reconnect_min = 20ms, .reconnect_max = 1s});
-    CHECK(eventually([&] { return audit.count("replaced by another connection") >= 1; }));
-    std::this_thread::sleep_for(2500ms);
+                                         .reconnect_min = 20ms, .reconnect_max = 100ms});
+    CHECK(eventually([&] { return first.replaced(); }));
+    CHECK(first.last_error().find("replaced by another connection of the participant 'Engine' (incarnation 'b'") != std::string::npos);
+    CHECK(first.last_error().find("only one process runs as the participant 'Engine'") != std::string::npos);
+    CHECK(second.wait_connected(10s));
+    // Several of the first one's back-offs later: it has not taken the participant back.
+    std::this_thread::sleep_for(500ms);
+    CHECK(!first.connected());
+    CHECK(!second.replaced() && second.connected());
+    CHECK_EQ(second.sessions(), std::uint64_t{1});
+    CHECK_EQ(audit.count("replaced by another connection"), std::size_t{1});
     second.stop();
     first.stop();
-    const auto replaced = audit.count("replaced by another connection");
-    CHECK(replaced >= 1);
-    CHECK(replaced <= 6); // with reconnect_min it would be dozens
-    CHECK(first.last_error().find("replaced") != std::string::npos
-          || second.last_error().find("replaced") != std::string::npos);
+}
+
+TEST_CASE(control_server_an_agent_replaced_by_its_own_connection_goes_on)
+{
+    // The server still holds an agent's old stream when the agent's newer connection arrives
+    // (a lost link the server has not noticed). Seen from the agent, the replacing connection is
+    // its own: it reconnects instead of stopping.
+    control_grpc::ControlServer server(control_grpc::ServerOptions{});
+    const auto address = "127.0.0.1:" + std::to_string(server.port());
+    control::Agent a;
+    a.bind_driver();
+    control_grpc::AgentClient agent(a, {.server = address, .participant = "Engine", .incarnation = "a",
+                                        .reconnect_min = 20ms, .reconnect_max = 100ms});
+    CHECK(agent.wait_connected(10s));
+    auto stub = v1::AgentService::NewStub(channel(server));
+    auto own = hello("Engine", "a");
+    own.set_connection(agent.connection_id());
+    RawAgent same(*stub, own);
+    CHECK(eventually([&] { return agent.sessions() >= 2 && agent.connected(); }));
+    CHECK(!agent.replaced());
+    agent.stop();
+    same.context.TryCancel();
+    static_cast<void>(same.stream->Finish());
+}
+
+TEST_CASE(control_server_names_the_replacing_connection_and_tells_the_watches)
+{
+    AuditLines audit;
+    control_grpc::ServerOptions o;
+    o.audit = audit.sink();
+    control_grpc::ControlServer server(std::move(o));
+    auto clients = v1::ControlService::NewStub(channel(server));
+    grpc::ClientContext watch_context;
+    v1::WatchRequest request;
+    request.set_events(true);
+    auto watch = clients->Watch(&watch_context, request);
+    v1::Update u;
+    while (watch->Read(&u) && !u.initial_done())
+    {
+    }
+
+    auto stub = v1::AgentService::NewStub(channel(server));
+    auto h1 = hello("Engine", "e1");
+    h1.set_connection("c1");
+    RawAgent first(*stub, h1);
+    CHECK(first.read().has_value()); // welcome
+    auto h2 = hello("Engine", "e2");
+    h2.set_connection("c2");
+    RawAgent second(*stub, h2);
+    CHECK(second.read().has_value());
+    CHECK(!first.read().has_value());
+    const auto status = first.stream->Finish();
+    CHECK(status.error_code() == grpc::StatusCode::ABORTED);
+    CHECK(status.error_message().find("participant 'Engine' (incarnation 'e2'") != std::string::npos);
+    const auto& trailing = first.context.GetServerTrailingMetadata();
+    const auto by = trailing.find("vehicle-sil-replaced-by");
+    CHECK(by != trailing.end() && std::string(by->second.data(), by->second.size()) == "c2");
+    CHECK(eventually([&] { return audit.count("agent Engine (e1): replaced by another connection") == 1; }));
+
+    // The watch sees a warning of Engine's new connection.
+    bool warned = false;
+    while (!warned && watch->Read(&u))
+    {
+        warned = u.has_event() && u.event().peer() == "Engine" && u.event().incarnation() == "e2"
+                 && u.event().event().level() == v1::EVENT_LEVEL_WARNING
+                 && u.event().event().text().find("replaced the connection of 'Engine' (incarnation 'e1'") != std::string::npos;
+    }
+    CHECK(warned);
+    watch_context.TryCancel();
+    second.context.TryCancel();
+    static_cast<void>(second.stream->Finish());
 }
 
 TEST_CASE(control_server_cuts_a_stop_reason_between_characters)
@@ -369,6 +443,9 @@ TEST_CASE(control_server_checks_its_options)
     CHECK(throws<std::invalid_argument>(
         with({Credential{"a", "same-token-0123456789", Role::Viewer}, Credential{"b", "same-token-0123456789", Role::Admin}})));
     CHECK(throws<std::invalid_argument>(with({Credential{"a", "viewer-token-0123456789", Role::Viewer, {"Engine"}}})));
+    // An agent credential names the participants it may connect as, or "*".
+    CHECK(throws<std::invalid_argument>(with({Credential{"ecu", "agent-token-0123456789", Role::Agent}})));
+    CHECK(!throws<std::invalid_argument>(with({Credential{"ecu", "agent-token-0123456789", Role::Agent, {"*"}}})));
     // A certificate without its key is an error, not a silent plain-text server.
     CHECK(throws<std::invalid_argument>([] {
         control_grpc::ServerOptions o;

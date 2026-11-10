@@ -10,11 +10,16 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <string_view>
 
 namespace vehicle_sil::control_grpc::detail {
 
 namespace v1 = vehicle_sil::control::v1;
 using namespace vehicle_sil::control;
+
+/// The trailing metadata of a replaced agent connection: the identifier (Hello::connection) of the
+/// connection that replaced it.
+inline constexpr std::string_view kReplacedBy = "vehicle-sil-replaced-by";
 
 inline std::int64_t ns_of(SimTime t)
 {

@@ -25,6 +25,9 @@ struct Who
 
 bool allows(const Who& who, Role need);
 
+/// The agent `who` may connect as `participant`: its credential names it, or "*".
+bool may_connect_as(const Who& who, const std::string& participant);
+
 class Authorizer
 {
 public:

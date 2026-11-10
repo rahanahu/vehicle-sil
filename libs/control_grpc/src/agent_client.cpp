@@ -46,6 +46,10 @@ struct AgentClient::Impl
     bool welcomed = false;
     std::uint64_t sessions = 0; ///< connections the server welcomed
     std::string last_error;
+    bool replaced = false;              ///< another process took the participant over: no more reconnects
+    std::string connection_id;          ///< the current (or last) connection's
+    std::deque<std::string> own_connections; ///< this client's recent connection identifiers
+    std::uint64_t connection_count = 0;
     std::deque<v1::AgentMessage> outbound;  // acknowledgements from the reader
 
     // Transport bookkeeping (guarded by mutex).
@@ -98,6 +102,10 @@ struct AgentClient::Impl
                 }
             }
             const auto outcome = session(*stub);
+            if (outcome == Outcome::Replaced)
+            {
+                return; // see last_error
+            }
             if (outcome == Outcome::Welcomed)
             {
                 delay = options.reconnect_min;
@@ -117,6 +125,7 @@ struct AgentClient::Impl
         Failed,   ///< no connection (the server is not there, the link broke before the welcome)
         Refused,  ///< the server refused the agent (credentials, hello)
         Welcomed, ///< it was up
+        Replaced, ///< another process's connection of the same participant replaced it
     };
 
     /// One connection.
@@ -152,6 +161,13 @@ struct AgentClient::Impl
             }
             h->set_max_pending(agent.options().max_pending);
             const std::lock_guard lock(mutex);
+            connection_id = incarnation + "/" + std::to_string(++connection_count) + "/" + std::to_string(std::random_device{}());
+            own_connections.push_back(connection_id);
+            if (own_connections.size() > 64)
+            {
+                own_connections.pop_front();
+            }
+            h->set_connection(connection_id);
             if (had_session)
             {
                 // What the agent still holds: queued without a result, and results that may not
@@ -210,22 +226,37 @@ struct AgentClient::Impl
             reader.join();
         }
         const auto status = stream->Finish();
-        // ABORTED: another connection of the same participant replaced this one (perhaps a
-        // second process with this name): backing off keeps the two from taking turns rapidly.
+        if (status.error_code() == grpc::StatusCode::ABORTED)
+        {
+            // Another connection of the same participant replaced this one. If it is not one of
+            // this client's own (a second process with this name, or a server that does not say),
+            // the newer one wins: stop instead of taking the participant back again and again.
+            const auto& trailing = context.GetServerTrailingMetadata();
+            const auto by = trailing.find(std::string(kReplacedBy));
+            const std::lock_guard lock(mutex);
+            const bool own = by != trailing.end()
+                             && std::find(own_connections.begin(), own_connections.end(),
+                                          std::string(by->second.data(), by->second.size()))
+                                    != own_connections.end();
+            last_error = status.error_message();
+            if (own)
+            {
+                return Outcome::Failed; // replaced by its own newer connection: reconnect as usual
+            }
+            replaced = true;
+            last_error += "; this agent no longer reconnects: check that only one process runs as the participant '"
+                          + options.participant + "', then start this one again";
+            return Outcome::Replaced;
+        }
         const bool refused = status.error_code() == grpc::StatusCode::UNAUTHENTICATED
                              || status.error_code() == grpc::StatusCode::PERMISSION_DENIED
-                             || status.error_code() == grpc::StatusCode::INVALID_ARGUMENT
-                             || status.error_code() == grpc::StatusCode::ABORTED;
+                             || status.error_code() == grpc::StatusCode::INVALID_ARGUMENT;
         {
             const std::lock_guard lock(mutex);
             if (!status.ok() && status.error_code() != grpc::StatusCode::CANCELLED)
             {
                 last_error = status.error_message();
             }
-        }
-        if (status.error_code() == grpc::StatusCode::ABORTED)
-        {
-            return Outcome::Refused; // also after a welcome
         }
         return was_welcomed ? Outcome::Welcomed : (refused ? Outcome::Refused : Outcome::Failed);
     }
@@ -446,6 +477,18 @@ std::string AgentClient::last_error() const
 {
     const std::lock_guard lock(impl_->mutex);
     return impl_->last_error;
+}
+
+bool AgentClient::replaced() const
+{
+    const std::lock_guard lock(impl_->mutex);
+    return impl_->replaced;
+}
+
+std::string AgentClient::connection_id() const
+{
+    const std::lock_guard lock(impl_->mutex);
+    return impl_->connection_id;
 }
 
 const std::string& AgentClient::incarnation() const noexcept

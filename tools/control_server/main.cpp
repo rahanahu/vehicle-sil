@@ -53,6 +53,7 @@ void print_usage()
                "  --stop-at-ms <ms>        stop the simulation at this time\n"
                "  --timeout-ms <ms>        how long to wait for the required participants (600000)\n"
                "  --credentials <file>     tokens and roles, one per line: <role> <name> <token> [participants]\n"
+               "                           (an agent line names the participants it may connect as, or * for any)\n"
                "  --tls-cert <file>        PEM certificate chain of the server (with --tls-key: TLS)\n"
                "  --tls-key <file>         PEM private key of the server\n"
                "  --allow-insecure <0|1>   allow a non-loopback address without TLS and credentials (0)\n"

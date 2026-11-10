@@ -3,6 +3,7 @@
 
 #include "convert.hpp"
 #include "vehicle_sil/control/v1/control.grpc.pb.h"
+#include "vehicle_sil/control_grpc/simulation_monitor.hpp"
 
 #include <algorithm>
 #include <deque>
@@ -33,11 +34,11 @@ public:
         }
         void close() override
         {
-            // Finished with ABORTED, which the agent takes as a refusal (it waits reconnect_max:
-            // two live processes with one name do not take the connection from each other many
-            // times a second). Not under this mutex: OnDone() locks the handle and then this
-            // mutex. While the handle's mutex is held and its context is set, OnDone() has not
-            // begun, so the stream is alive.
+            // Finished with ABORTED and the replacing connection's identifier: an agent replaced
+            // by another process stops reconnecting (two live processes with one name would take
+            // the connection from each other forever). Not under this mutex: OnDone() locks the
+            // handle and then this mutex. While the handle's mutex is held and its context is set,
+            // OnDone() has not begun, so the stream is alive.
             AgentStream* s = nullptr;
             std::shared_ptr<StreamRegistry::Handle> handle;
             {
@@ -54,20 +55,25 @@ public:
             {
                 return;
             }
+            const auto by = s->streams_.latest_hello(s->participant_).value_or(StreamRegistry::Hello{});
+            const std::string why = "replaced by another connection of the participant '" + s->participant_ + "' (incarnation '"
+                                    + by.incarnation + "' from " + by.peer + ")";
             // Not thinned with the refused calls: a flood of those must not hide a takeover.
-            s->audit_(s->who_.name + "@" + s->peer_ + " agent: replaced by another connection of the same participant");
-            s->finish(grpc::Status(grpc::StatusCode::ABORTED, "replaced by another connection of the same participant"));
+            s->audit_(s->who_.name + "@" + s->peer_ + " agent " + s->participant_ + " (" + s->incarnation_ + "): " + why);
+            s->finish(grpc::Status(grpc::StatusCode::ABORTED, why), by.connection, handle->context);
         }
     };
 
-    AgentStream(Hub& hub, Who who, std::string peer, const AuditLog& audit,
-                std::shared_ptr<StreamRegistry::Handle> handle) :
+    AgentStream(Hub& hub, Who who, std::string peer, const AuditLog& audit, StreamRegistry& streams,
+                std::shared_ptr<StreamRegistry::Handle> handle, const SimulationMonitor* monitor) :
       hub_(hub),
       link_(std::make_shared<Link>()),
       who_(std::move(who)),
       peer_(std::move(peer)),
       audit_(audit),
-      handle_(std::move(handle))
+      streams_(streams),
+      handle_(std::move(handle)),
+      monitor_(monitor)
     {
         link_->stream = this;
         StartRead(&in_);
@@ -154,7 +160,9 @@ private:
         }
     }
 
-    void finish(grpc::Status status)
+    /// `replaced_by` (with `context`, alive): the trailing metadata naming the connection that
+    /// replaced this one.
+    void finish(grpc::Status status, const std::string& replaced_by = {}, grpc::CallbackServerContext* context = nullptr)
     {
         {
             const std::lock_guard lock(write_mutex_);
@@ -162,6 +170,10 @@ private:
             {
                 return;
             }
+        }
+        if (context != nullptr)
+        {
+            context->AddTrailingMetadata(std::string(kReplacedBy), replaced_by);
         }
         Finish(std::move(status));
     }
@@ -198,12 +210,34 @@ private:
             {
                 return refuse(grpc::StatusCode::INVALID_ARGUMENT, "more open_seqs than the agent can hold");
             }
-            if (!who_.participants.empty()
-                && std::find(who_.participants.begin(), who_.participants.end(), h.participant()) == who_.participants.end())
+            if (!may_connect_as(who_, h.participant()))
             {
-                return refuse(grpc::StatusCode::PERMISSION_DENIED, "this credential may not connect as " + h.participant());
+                std::string names;
+                for (const auto& p : who_.participants)
+                {
+                    names += (names.empty() ? "'" : ", '") + p + "'";
+                }
+                return refuse(grpc::StatusCode::PERMISSION_DENIED,
+                              "the credential '" + who_.name + "' may not connect as '" + h.participant() + "', only as " + names
+                                  + "; add the name to its participants or use the credential of that participant");
             }
             audit_(who_.name + "@" + peer_ + " agent " + h.participant() + " (" + h.incarnation() + "): connected");
+            participant_ = h.participant();
+            incarnation_ = h.incarnation();
+            // Another process (another incarnation) whose connection this one takes over.
+            std::optional<StreamRegistry::Hello> taken;
+            for (const auto& p : hub_.peers())
+            {
+                if (p.participant == participant_ && p.connected && p.incarnation != incarnation_)
+                {
+                    taken = streams_.latest_hello(participant_);
+                    if (taken)
+                    {
+                        taken->incarnation = p.incarnation;
+                    }
+                }
+            }
+            streams_.hello(participant_, StreamRegistry::Hello{h.connection(), incarnation_, peer_});
             PeerHello hello;
             hello.participant = h.participant();
             hello.incarnation = h.incarnation();
@@ -227,6 +261,18 @@ private:
                 start_write();
             }
             connection_ = hub_.agent_connected(std::move(hello), link_);
+            if (taken)
+            {
+                // For the watches: whoever puts the simulation together sees two processes with
+                // one name.
+                Event e;
+                e.time = monitor_ != nullptr ? monitor_->snapshot().time.now : SimTime{};
+                e.level = EventLevel::Warning;
+                e.text = "this connection (incarnation '" + incarnation_ + "' from " + peer_ + ") replaced the connection of '"
+                         + participant_ + "' (incarnation '" + taken->incarnation + "' from " + taken->peer
+                         + "); if two processes run as '" + participant_ + "', stop one of them";
+                hub_.agent_events(connection_, {e});
+            }
             return true;
         }
         switch (in_.kind_case())
@@ -268,7 +314,11 @@ private:
     Who who_;
     std::string peer_;
     const AuditLog& audit_;
+    StreamRegistry& streams_;
     std::shared_ptr<StreamRegistry::Handle> handle_;
+    const SimulationMonitor* monitor_;
+    std::string participant_; ///< after the hello
+    std::string incarnation_;
     v1::AgentMessage in_;
     ConnectionId connection_ = 0;
     std::mutex write_mutex_;
@@ -289,8 +339,8 @@ public:
 class AgentServiceImpl final : public v1::AgentService::CallbackService
 {
 public:
-    AgentServiceImpl(Hub& hub, const Authorizer& auth, const AuditLog& audit, StreamRegistry& streams) :
-      hub_(hub), auth_(auth), audit_(audit), streams_(streams)
+    AgentServiceImpl(Hub& hub, const Authorizer& auth, const AuditLog& audit, StreamRegistry& streams, const SimulationMonitor* monitor) :
+      hub_(hub), auth_(auth), audit_(audit), streams_(streams), monitor_(monitor)
     {
     }
     grpc::ServerBidiReactor<v1::AgentMessage, v1::ServerMessage>* Connect(grpc::CallbackServerContext* context) override
@@ -303,7 +353,7 @@ public:
             return new RefusedStream(grpc::Status(who ? grpc::StatusCode::PERMISSION_DENIED : grpc::StatusCode::UNAUTHENTICATED,
                                                   who ? "this credential may not connect an agent" : "a valid agent token is required"));
         }
-        return new AgentStream(hub_, *who, context->peer(), audit_, streams_.add(context));
+        return new AgentStream(hub_, *who, context->peer(), audit_, streams_, streams_.add(context), monitor_);
     }
 
 private:
@@ -311,13 +361,15 @@ private:
     const Authorizer& auth_;
     const AuditLog& audit_;
     StreamRegistry& streams_;
+    const SimulationMonitor* monitor_;
 };
 
 } // namespace
 
-std::unique_ptr<grpc::Service> make_agent_service(Hub& hub, const Authorizer& auth, const AuditLog& audit, StreamRegistry& streams)
+std::unique_ptr<grpc::Service> make_agent_service(Hub& hub, const Authorizer& auth, const AuditLog& audit, StreamRegistry& streams,
+                                                  const SimulationMonitor* monitor)
 {
-    return std::make_unique<AgentServiceImpl>(hub, auth, audit, streams);
+    return std::make_unique<AgentServiceImpl>(hub, auth, audit, streams, monitor);
 }
 
 } // namespace vehicle_sil::control_grpc::detail

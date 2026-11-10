@@ -39,9 +39,11 @@ struct AgentClientOptions
 };
 
 /// Runs the transport side of `agent` on threads of its own: connects to the server (again and
-/// again with back-off if the link is lost, waiting reconnect_max after a refusal or after another
-/// connection of the same participant replaced this one, see last_error(); the simulation is
-/// never held up). It is connected once the server has welcomed it. It hands the server's
+/// again with back-off if the link is lost, waiting reconnect_max after a refusal, see
+/// last_error(); the simulation is never held up). If another process connects as the same
+/// participant, the newer connection wins: this client then stops reconnecting for good
+/// (replaced(), last_error() says why). Replaced by its own newer connection (a reconnect after
+/// a lost link that the server had not noticed yet), it goes on. It is connected once the server has welcomed it. It hands the server's
 /// commands to Agent::submit(), and sends the agent's results, values, events and the peer's
 /// status. After a reconnect it tells the server which commands the agent still holds and sends
 /// the latest results again (the server ignores the ones it has). A result that could not be
@@ -66,6 +68,11 @@ public:
     bool wait_connected(std::chrono::milliseconds timeout) const;
     /// Why the last connection failed or was refused (empty while connected or before).
     [[nodiscard]] std::string last_error() const;
+    /// Another process's connection of the same participant replaced this one; the client no
+    /// longer reconnects (see last_error()).
+    [[nodiscard]] bool replaced() const;
+    /// The identifier of the current (or last) connection (Hello::connection).
+    [[nodiscard]] std::string connection_id() const;
     /// How many connections the server welcomed so far.
     [[nodiscard]] std::uint64_t sessions() const;
     [[nodiscard]] const std::string& incarnation() const noexcept;

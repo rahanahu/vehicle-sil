@@ -10,9 +10,16 @@
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/impl/service_type.h>
 
+#include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <vector>
+
+namespace vehicle_sil::control_grpc {
+class SimulationMonitor;
+} // namespace vehicle_sil::control_grpc
 
 namespace vehicle_sil::control_grpc::detail {
 
@@ -24,8 +31,30 @@ struct StreamRegistry
         std::recursive_mutex mutex;
         grpc::CallbackServerContext* context = nullptr; // nullptr once the stream is done
     };
+    /// The last hello of a participant: who replaces an older connection of it.
+    struct Hello
+    {
+        std::string connection;
+        std::string incarnation;
+        std::string peer; ///< the address it came from
+    };
+
     std::mutex mutex;
     std::vector<std::weak_ptr<Handle>> handles;
+    std::map<std::string, Hello> latest; ///< by participant
+
+    void hello(const std::string& participant, Hello h)
+    {
+        const std::lock_guard lock(mutex);
+        latest.insert_or_assign(participant, std::move(h));
+    }
+
+    [[nodiscard]] std::optional<Hello> latest_hello(const std::string& participant)
+    {
+        const std::lock_guard lock(mutex);
+        const auto it = latest.find(participant);
+        return it == latest.end() ? std::nullopt : std::optional<Hello>(it->second);
+    }
 
     std::shared_ptr<Handle> add(grpc::CallbackServerContext* context)
     {
@@ -61,8 +90,9 @@ struct StreamRegistry
     }
 };
 
-/// AgentService: one bidirectional stream per agent connection.
+/// AgentService: one bidirectional stream per agent connection. `monitor` (nullptr without one)
+/// gives the time of the events the server adds.
 std::unique_ptr<grpc::Service> make_agent_service(control::Hub& hub, const Authorizer& auth, const AuditLog& audit,
-                                                  StreamRegistry& streams);
+                                                  StreamRegistry& streams, const SimulationMonitor* monitor);
 
 } // namespace vehicle_sil::control_grpc::detail

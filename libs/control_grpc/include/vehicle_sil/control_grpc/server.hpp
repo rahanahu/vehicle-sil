@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -80,14 +81,20 @@ struct Credential
     std::string name;  ///< for the audit log
     std::string token; ///< a long random secret
     Role role = Role::Viewer;
-    /// Agent: the participant names it may connect as; empty: any.
+    /// Agent: the participant names it may connect as, or kAnyParticipant for any name. An
+    /// agent credential must name at least one (std::invalid_argument, a runtime_error from
+    /// load_credentials()); other roles name none.
     std::vector<std::string> participants{};
 };
 
+/// In Credential::participants: the agent may connect as any participant name.
+inline constexpr std::string_view kAnyParticipant = "*";
+
 /// Reads credentials from a text file: one per line, "<role> <name> <token> [participant,...]"
-/// (role: viewer, operator, admin, agent; participants only for agent, separated by commas or
-/// spaces); a word that starts with '#' starts a comment. A token has at least 16 characters and
-/// is not repeated. std::runtime_error on errors.
+/// (role: viewer, operator, admin, agent). An agent line must name the participants it may
+/// connect as (separated by commas or spaces), or "*" for any; the other roles name none. A word
+/// that starts with '#' starts a comment. A token has at least 16 characters and is not
+/// repeated. std::runtime_error on errors, with the file, the line and how to fix it.
 [[nodiscard]] std::vector<Credential> load_credentials(const std::string& path);
 
 struct SecurityOptions

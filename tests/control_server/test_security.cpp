@@ -199,6 +199,8 @@ TEST_CASE(control_server_agents_need_an_agent_token_for_their_name)
     CHECK(eventually([&] { return s.audited("agent Body: refused") && s.audited("bob@") && s.audited("unauthenticated@"); }));
     CHECK(!wrong_name.connected());
     CHECK(eventually([&] { return !wrong_name.last_error().empty(); })); // the server's refusal reaches the agent
+    // It names the credential, the name asked for and the names it may use.
+    CHECK(wrong_name.last_error().find("'engine-ecu' may not connect as 'Body', only as 'Engine'") != std::string::npos);
     std::this_thread::sleep_for(200ms);
     CHECK_EQ(s.server->hub().peers().size(), std::size_t{1});
     for (auto* c : {&ok, &wrong_name, &wrong_role, &no_token})
@@ -260,7 +262,40 @@ TEST_CASE(control_server_reads_a_credentials_file)
         out << "viewer bob short\n";
     }
     CHECK(vehicle_sil::unit::throws<std::runtime_error>([&] { static_cast<void>(control_grpc::load_credentials(path)); }));
+    {
+        std::ofstream out(path);
+        out << "agent ecu ffffffffffffffffffff\n"; // an agent names its participants (or *)
+    }
+    std::string why;
+    try
+    {
+        static_cast<void>(control_grpc::load_credentials(path));
+    }
+    catch (const std::runtime_error& e)
+    {
+        why = e.what();
+    }
+    CHECK(why.find(":1: the agent credential 'ecu' names no participant") != std::string::npos);
+    CHECK(why.find("agent ecu <token> Engine,Body") != std::string::npos && why.find("or * for any name") != std::string::npos);
+    {
+        std::ofstream out(path);
+        out << "agent ecu ffffffffffffffffffff *\n";
+    }
+    CHECK((control_grpc::load_credentials(path).at(0).participants == std::vector<std::string>{"*"}));
     std::remove(path.c_str());
+}
+
+TEST_CASE(control_server_an_agent_credential_with_a_star_may_use_any_name)
+{
+    control_grpc::ServerOptions o;
+    o.security.credentials = {Credential{"any-ecu", kAgent, Role::Agent, {"*"}}};
+    control_grpc::ControlServer server(std::move(o));
+    control::Agent agent;
+    agent.bind_driver();
+    control_grpc::AgentClient body(agent, {.server = "127.0.0.1:" + std::to_string(server.port()), .participant = "Body",
+                                           .token = kAgent});
+    CHECK(body.wait_connected(10s));
+    body.stop();
 }
 
 TEST_CASE(control_server_refused_agents_back_off)

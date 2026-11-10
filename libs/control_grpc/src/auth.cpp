@@ -39,6 +39,13 @@ bool allows(const Who& who, Role need)
     return static_cast<int>(have) >= static_cast<int>(need);
 }
 
+bool may_connect_as(const Who& who, const std::string& participant)
+{
+    return who.anyone || std::any_of(who.participants.begin(), who.participants.end(), [&](const std::string& p) {
+               return p == participant || p == kAnyParticipant;
+           });
+}
+
 std::optional<Who> Authorizer::identify(const grpc::ServerContextBase& context) const
 {
     if (security_.credentials.empty())
@@ -207,6 +214,12 @@ std::vector<Credential> load_credentials(const std::string& path)
         if (!c.participants.empty() && c.role != Role::Agent)
         {
             throw fail("only an agent credential names participants");
+        }
+        if (c.participants.empty() && c.role == Role::Agent)
+        {
+            throw fail("the agent credential '" + c.name
+                       + "' names no participant; write the participant names it may connect as after the token, separated "
+                         "by commas (for example: agent " + c.name + " <token> Engine,Body), or * for any name");
         }
         for (const auto& other : out)
         {
