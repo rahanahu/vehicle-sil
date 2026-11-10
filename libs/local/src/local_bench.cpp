@@ -281,12 +281,16 @@ void LocalBench::require_new_bus(std::string_view network, std::string_view what
     std::string ecus;
     for (const auto& e : unnamed_ecus_)
     {
-        ecus += (ecus.empty() ? "" : ", ") + e;
+        ecus += (ecus.empty() ? "\"" : ", \"") + e + "\"";
     }
-    throw std::logic_error(std::string(kWho) + std::string(what) + ": a second bus \"" + std::string(network) +
-                           "\" beside " + bus_list() +
-                           " would leave unclear which bus the ECUs added without a bus name are on (" + ecus +
-                           "); add them with add_ecu(name, step).j1939(network), naming the network");
+    // add_j1939() means the only bus; refusing the second bus in either order keeps the result
+    // independent of the order of the calls.
+    throw std::logic_error(std::string(kWho) + std::string(what) + ": no second bus \"" + std::string(network) +
+                           "\" can be made: the ECUs " + ecus +
+                           " were added without a bus name (add_j1939()), and with a second bus it would be unclear "
+                           "which bus they are meant to be on. Add those ECUs with add_ecu(name, step).j1939(\"<bus>\") "
+                           "instead. Buses: " +
+                           bus_list());
 }
 
 LocalBench::NamedBus& LocalBench::use_bus(NamedBus* existing, const std::string& network)
@@ -311,14 +315,38 @@ LocalBench::NamedBus& LocalBench::only_bus(std::string_view what)
     return use_bus(only_bus_if_any(what), "");
 }
 
-LocalBench::NamedBus& LocalBench::named_bus(std::string_view network)
+LocalBench::NamedBus& LocalBench::named_bus(std::string_view network, std::string_view call, std::string_view rest) const
 {
-    NamedBus* b = bus_to_name(network);
-    if (b == nullptr)
+    for (const auto& b : buses_)
     {
-        throw std::out_of_range(std::string(kWho) + "no bus named " + std::string(network));
+        if (b->name == network)
+        {
+            return *b;
+        }
     }
-    return use_bus(b, std::string(network));
+    const std::string quoted = "\"" + std::string(network) + "\"";
+    std::string message = std::string(kWho) + std::string(call) + quoted + std::string(rest) + ": no bus named " + quoted;
+    if (buses_.empty())
+    {
+        message += ": there is no bus yet. Use bus() / injector() / inject(time, frame) without a bus name (they make "
+                   "the only bus)";
+        if (!network.empty())
+        {
+            message += ", or add an ECU on the bus first with add_ecu(name, step).j1939(" + quoted + ") or can(" +
+                       quoted + ")";
+        }
+    }
+    else if (buses_.front()->name.empty()) // then it is the only bus
+    {
+        message += ": the only bus has no name yet. Use bus() / injector() / inject(time, frame) without a bus name, "
+                   "or name the bus first with an ECU's j1939(" +
+                   quoted + ") or can(" + quoted + ")";
+    }
+    else
+    {
+        message += ". Buses: " + bus_list();
+    }
+    throw std::out_of_range(message);
 }
 
 Ecu& LocalBench::add_ecu(std::string name, SimDuration step)
@@ -427,9 +455,12 @@ can::RawChannel& LocalBench::raw_channel(std::string_view ecu, std::string_view 
 }
 
 can::VirtualCanBus::Endpoint& LocalBench::injector() { return *only_bus("injector()").injector; }
-can::VirtualCanBus::Endpoint& LocalBench::injector(std::string_view network) { return *named_bus(network).injector; }
+can::VirtualCanBus::Endpoint& LocalBench::injector(std::string_view network) const
+{
+    return *named_bus(network, "injector(", ")").injector;
+}
 can::VirtualCanBus& LocalBench::bus() { return *only_bus("bus()").bus; }
-can::VirtualCanBus& LocalBench::bus(std::string_view network) { return *named_bus(network).bus; }
+can::VirtualCanBus& LocalBench::bus(std::string_view network) const { return *named_bus(network, "bus(", ")").bus; }
 
 can::SendResult LocalBench::inject(SimTime time, const can::Frame& frame)
 {
@@ -438,7 +469,7 @@ can::SendResult LocalBench::inject(SimTime time, const can::Frame& frame)
 
 can::SendResult LocalBench::inject(std::string_view network, SimTime time, const can::Frame& frame)
 {
-    return injector(network).send(can::TimedFrame{time, frame});
+    return named_bus(network, "inject(", ", time, frame)").injector->send(can::TimedFrame{time, frame});
 }
 
 void LocalBench::run_until(SimTime end)

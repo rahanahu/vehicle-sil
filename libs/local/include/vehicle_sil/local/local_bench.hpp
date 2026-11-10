@@ -28,18 +28,21 @@ namespace vehicle_sil {
 /// bus named `network`, wraps it in a TapPort and puts a J1939 network on it; the ECUs that name
 /// the same network share its bus. Ecu::can(network) (a raw CAN channel) attaches an endpoint of
 /// its own to that bus, so an ECU with j1939(network) and can(network) has two endpoints on it,
-/// and each receives the other's frames. A bus is made when it is first named (or by a form
+/// and each receives the other's frames. A bus is made when an ECU first names it (or by a form
 /// without a bus name, below), with the constructor's options.
 ///
 /// Forms without a bus name (add_j1939(name, step), inject(time, frame), injector(), bus()) use
 /// the only bus. If there is no bus yet, they make it, without a name (the bus "" in the lookups
-/// by name until it is named). The bus without a name is named by the first form with a bus name
-/// that comes: Ecu::j1939(network) and Ecu::can(network), and bus(network), injector(network) and
-/// inject(network, time, frame); no second bus is made. So the forms with and without a bus name
-/// reach the same bus in either order, and with one bus a frame cannot go to a bus no ECU is on.
+/// by name until it is named). Only an ECU names a bus: the bus without a name is named by the
+/// first Ecu::j1939(network) or Ecu::can(network) that comes, and no second bus is made. So an
+/// ECU's network and the forms without a bus name reach the same bus in either order, and with
+/// one bus a frame cannot go to a bus no ECU is on. The lookups by a bus name (bus(network),
+/// injector(network), inject(network, time, frame)) only look up: a name no bus has is
+/// std::out_of_range (the message lists the buses and how to name one), and they make and name
+/// no bus.
 /// A second bus name makes a second bus, but std::logic_error if an ECU was added without a bus
-/// name before (add_j1939(): which bus it is meant to be on is unclear; the message names those
-/// ECUs). With two or more buses, the forms without a bus name throw std::logic_error (the
+/// name before (add_j1939(): which bus it is meant to be on would be unclear; the message names
+/// those ECUs). With two or more buses, the forms without a bus name throw std::logic_error (the
 /// message lists the buses). An add_j1939(), j1939() or can() that throws makes and names no bus.
 /// Raw channels need a bus name (Ecu::can("") is std::invalid_argument, like j1939("")).
 ///
@@ -117,22 +120,22 @@ public:
     /// if there is none; the result of its send()). std::logic_error if there are two or more
     /// buses (use inject(network, time, frame) then).
     can::SendResult inject(SimTime time, const can::Frame& frame);
-    /// The same on the bus `network`; names the bus without a name (see above).
-    /// std::out_of_range for an unknown bus.
+    /// The same on the bus `network` (a lookup: it names no bus, see above). std::out_of_range
+    /// for an unknown bus.
     can::SendResult inject(std::string_view network, SimTime time, const can::Frame& frame);
     /// The endpoint inject() sends from on the only bus: set a fault injector or an outage on
     /// it like on any other. It receives every frame on the bus; run_until() discards them.
     /// std::logic_error if there are two or more buses (use injector(network) then).
     [[nodiscard]] can::VirtualCanBus::Endpoint& injector();
-    /// The same on the bus `network`; names the bus without a name (see above).
-    /// std::out_of_range for an unknown bus.
-    [[nodiscard]] can::VirtualCanBus::Endpoint& injector(std::string_view network);
+    /// The same on the bus `network` (a lookup: it names no bus, see above). std::out_of_range
+    /// for an unknown bus.
+    [[nodiscard]] can::VirtualCanBus::Endpoint& injector(std::string_view network) const;
     /// The only bus (made without a name if there is none). std::logic_error if there are two or
     /// more buses (use bus(network) then).
     [[nodiscard]] can::VirtualCanBus& bus();
-    /// The bus `network`; names the bus without a name (see above). std::out_of_range for an
+    /// The bus `network` (a lookup: it names no bus, see above). std::out_of_range for an
     /// unknown bus.
-    [[nodiscard]] can::VirtualCanBus& bus(std::string_view network);
+    [[nodiscard]] can::VirtualCanBus& bus(std::string_view network) const;
 
     /// Runs every step that starts before `end` and has not run yet. Exceptions of a host
     /// propagate (that host is failed: see host()).
@@ -150,7 +153,7 @@ private:
     [[nodiscard]] Site& site(std::string_view name) const;
     /// The names of the buses, quoted, for messages.
     [[nodiscard]] std::string bus_list() const;
-    /// The bus a form with the bus name `network` uses: the bus of that name, else the bus
+    /// The bus an ECU's j1939(network) or can(network) uses: the bus of that name, else the bus
     /// without a name, which it is to name; nullptr if there is neither (a new bus).
     [[nodiscard]] NamedBus* bus_to_name(std::string_view network) const;
     /// The bus a form without a bus name (`what`) uses; nullptr if there is none yet.
@@ -163,9 +166,9 @@ private:
     NamedBus& use_bus(NamedBus* existing, const std::string& network);
     /// The bus of a form without a bus name, made now if there is none (only_bus_if_any()).
     NamedBus& only_bus(std::string_view what);
-    /// The bus `network` of a lookup by name (bus_to_name(); names the bus without a name).
-    /// std::out_of_range if there is none.
-    NamedBus& named_bus(std::string_view network);
+    /// The bus named `network` for the lookup `call` + `network` + `rest` (as the message writes
+    /// it). Names no bus. std::out_of_range if there is none, with the buses and how to name one.
+    [[nodiscard]] NamedBus& named_bus(std::string_view network, std::string_view call, std::string_view rest) const;
 
     can::VirtualCanBusOptions options_;
     /// The buses, in the order made. A bus without a name is always the only one.
