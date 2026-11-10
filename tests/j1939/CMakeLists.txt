@@ -1,5 +1,6 @@
 # The J1939 stack (vehicle_sil::j1939) on the virtual bus. Links no SIL Kit, so
-# building it checks that the stack needs none. Added only with VEHICLE_SIL_BUILD_EXAMPLES.
+# building it checks that the stack needs none. Uses no example: added with or without
+# VEHICLE_SIL_BUILD_EXAMPLES.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_tests
   PREFIX j1939 LABELS unit j1939 TIMEOUT 60
   SOURCES test_j1939_types.cpp test_j1939_network.cpp test_j1939_request.cpp
@@ -105,8 +106,11 @@ vehicle_sil_add_harness_tests(vehicle_sil_j1939_allocation_tests
 target_include_directories(vehicle_sil_j1939_allocation_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # The J1939 stack on SIL Kit participants (in-process registry): same traces as on the
-# virtual bus, with SIL Kit's trivial simulation and with the simple CAN network simulator.
-vehicle_sil_add_harness_tests(vehicle_sil_j1939_silkit_tests
-  PREFIX j1939_silkit LABELS unit j1939 TIMEOUT 180
-  SOURCES test_j1939_silkit.cpp
-  LINK vehicle_sil::j1939 vehicle_sil::can_silkit vehicle_sil::can_netsim)
+# virtual bus, with SIL Kit's trivial simulation and with the simple CAN network simulator
+# (vehicle_sil::can_netsim, which is not built without SIL Kit's rapidyaml).
+if(TARGET vehicle_sil_can_netsim)
+  vehicle_sil_add_harness_tests(vehicle_sil_j1939_silkit_tests
+    PREFIX j1939_silkit LABELS unit j1939 TIMEOUT 180
+    SOURCES test_j1939_silkit.cpp
+    LINK vehicle_sil::j1939 vehicle_sil::can_silkit vehicle_sil::can_netsim)
+endif()

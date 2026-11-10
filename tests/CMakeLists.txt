@@ -29,6 +29,8 @@ add_subdirectory(can)
 add_subdirectory(testkit)
 add_subdirectory(simulation)
 add_subdirectory(peer)
+# The J1939 stack, its parts, the typed messages and the boundary checks; uses no example.
+add_subdirectory(j1939)
 # Vector XL CAN bridge (against a fake XL driver; runs on every platform).
 add_subdirectory(vector_xl)
 if(VEHICLE_SIL_TEST_FETCHCONTENT)
@@ -42,4 +44,3 @@ if(NOT VEHICLE_SIL_BUILD_EXAMPLES)
 endif()
 add_subdirectory(integration)
 add_subdirectory(virtual_time)
-add_subdirectory(j1939)
