@@ -4,6 +4,7 @@
 // participants are connected, and stops it when virtual time reaches --stop-at-ms (or on
 // Ctrl+C / SIGTERM).
 #include "vehicle_sil/cli/args.hpp"
+#include "vehicle_sil/core/failure_check.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 
 #include <silkit/services/orchestration/string_utils.hpp>
@@ -42,6 +43,8 @@ void print_usage()
                "  --participant <name>   participant name of the controller (SimulationController)\n"
                "  --stop-at-ms <ms>      stop when virtual time reaches this value (default: run until Ctrl+C)\n"
                "  --timeout-ms <ms>      wall-clock limit for start-up and, with --stop-at-ms, for the whole run (60000)\n"
+               "a required participant that leaves the running simulation in state Error fails it at once; one that\n"
+               "leaves in another state fails it if the simulation has not ended 5 s later\n"
                "exit codes: 0 simulation shut down normally, 1 a participant failed or the run ended abnormally,\n"
                "            2 timeout, 3 setup failure, 4 usage\n",
                stderr);
@@ -113,6 +116,7 @@ int main(int argc, char** argv)
     const std::optional<std::chrono::steady_clock::time_point> deadline =
         options.stop_at ? std::optional(std::chrono::steady_clock::now() + timeout) : std::nullopt;
     std::optional<orch::ParticipantState> state;
+    FailureCheck check;
     while (!(state = controller->wait_until_finished(std::chrono::milliseconds(50))))
     {
         if (g_interrupted.load())
@@ -123,9 +127,9 @@ int main(int argc, char** argv)
             break;
         }
         // A failed participant stalls virtual time for everyone; SIL Kit does not end the run.
-        if (const auto failed = controller->failed_participant())
+        if (const auto failed = check.check(*controller, std::chrono::steady_clock::now()))
         {
-            log("FAIL: participant '" + *failed + "' is in state Error; aborting");
+            log("FAIL: participant '" + failed->participant + "' " + failed->reason + "; aborting");
             controller->abort();
             return cli::kExitFailed;
         }

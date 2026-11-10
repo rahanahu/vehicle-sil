@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/simulation/simulation.hpp"
 
+#include "vehicle_sil/core/failure_check.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/local/local_bench.hpp"
 #include "vehicle_sil/peer/peer.hpp"
@@ -23,9 +24,6 @@ constexpr const char* kWho = "vehicle_sil::Simulation: ";
 constexpr const char* kControllerName = "SimulationController";
 /// How often a run looks for a failed participant while it waits for the end.
 constexpr std::chrono::milliseconds kPoll{50};
-/// How long a participant that left the simulation without an error may take to end it (its
-/// stop reaches the controller a moment after its state does).
-constexpr std::chrono::seconds kLeaveGrace{5};
 /// How long the participants of this process may take to end once the simulation ended.
 constexpr std::chrono::seconds kEndWait{10};
 
@@ -219,7 +217,7 @@ void Simulation::SilKitRun::run(std::optional<SimDuration> stop_at)
 std::vector<std::string> Simulation::SilKitRun::watch_with_controller(bool& failure)
 {
     std::vector<std::string> others;
-    std::optional<std::chrono::steady_clock::time_point> left_at;
+    FailureCheck check;
     std::optional<orch::ParticipantState> end;
     // SIL Kit does not end the simulation when a participant fails: virtual time only stops.
     while (!(end = controller->wait_until_finished(kPoll)))
@@ -229,27 +227,13 @@ std::vector<std::string> Simulation::SilKitRun::watch_with_controller(bool& fail
             failure = true;
             break;
         }
-        const auto name = controller->failed_participant();
-        if (!name)
-        {
-            left_at.reset();
-            continue;
-        }
-        const auto state = controller->runtime().peer_status(*name).state;
-        const auto seen = std::chrono::steady_clock::now();
-        if (!left_at)
-        {
-            left_at = seen;
-        }
-        // In Error: failed (or its connection was lost). Otherwise it stopped, which ends the
-        // simulation a moment later, unless it did not stop the simulation with it.
-        if (state == orch::ParticipantState::Error || seen - *left_at >= kLeaveGrace)
+        if (const auto failed = check.check(*controller, std::chrono::steady_clock::now()))
         {
             failure = true;
-            const auto own = std::find(names.begin(), names.end(), *name);
+            const auto own = std::find(names.begin(), names.end(), failed->participant);
             if (own == names.end() || !peers[static_cast<std::size_t>(own - names.begin())]->failed())
             {
-                others.push_back(*name + ": left the simulation (state " + state_text(state) + ")");
+                others.push_back(failed->participant + ": " + failed->reason);
             }
             break;
         }

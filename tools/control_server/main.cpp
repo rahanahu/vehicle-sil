@@ -5,6 +5,7 @@
 // required participants are connected, and clients can pause, step and pace it.
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/control_grpc/server.hpp"
+#include "vehicle_sil/core/failure_check.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 
 #include <atomic>
@@ -56,6 +57,8 @@ void print_usage()
                "  --allow-insecure <0|1>   allow a non-loopback address without TLS and credentials (0)\n"
                "  --audit-log <file>       append who changed what (default: standard output)\n"
                "The server runs until Ctrl+C / SIGTERM (or, with --required, until the simulation ended).\n"
+               "With --required, a required participant that leaves the running simulation in state Error fails it at\n"
+               "once; one that leaves in another state fails it if the simulation has not ended 5 s later.\n"
                "exit codes: 0 ok, 1 the simulation failed, 2 timeout, 3 setup failure, 4 usage\n",
                stderr);
 }
@@ -206,11 +209,12 @@ int main(int argc, char** argv)
             return cli::kExitTimeout;
         }
         log("simulation started");
+        FailureCheck check;
         while (!g_interrupted)
         {
-            if (const auto failed = controller->failed_participant())
+            if (const auto failed = check.check(*controller, std::chrono::steady_clock::now()))
             {
-                log("FAIL participant " + *failed + " left the simulation; aborting");
+                log("FAIL: participant '" + failed->participant + "' " + failed->reason + "; aborting");
                 controller->abort();
                 exitCode = cli::kExitFailed;
                 break;

@@ -78,7 +78,8 @@ struct SimulationControllerOptions
 /// A required participant that fails (a step handler exception, a crash or a lost connection)
 /// goes to ParticipantState::Error and possibly on to Shutdown. SIL Kit does not end the
 /// simulation then: virtual time simply stops advancing for everyone. Poll
-/// failed_participant() and abort() in that case (vehicle_sil_sim_controller does).
+/// failed_participant(), or FailureCheck (failure_check.hpp) for the policy the tools share, and
+/// abort() in that case (vehicle_sil_sim_controller does).
 ///
 /// Only one system controller may run per simulation.
 class SimulationController

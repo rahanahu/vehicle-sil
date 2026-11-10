@@ -1,6 +1,7 @@
 # vehicle_sil::core - SIL Kit participant, registry connection and lifecycle.
 # Protocol independent: must not depend on CAN, LIN or J1939 specifics.
 add_library(vehicle_sil_core STATIC
+  src/failure_check.cpp
   src/participant_runtime.cpp
   src/simulation_controller.cpp
   src/tick_scheduler.cpp)
