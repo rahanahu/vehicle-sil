@@ -104,6 +104,19 @@ public:
         throw std::out_of_range(std::string(kWho) + "the ECU " + name_ + " has no network named " + std::string(network));
     }
 
+    [[nodiscard]] can::RawChannel& raw_channel(std::string_view network) const
+    {
+        for (const auto& r : raw_channels_)
+        {
+            if (r->bus->name == network)
+            {
+                return *r->channel;
+            }
+        }
+        throw std::out_of_range(std::string(kWho) + "the ECU " + name_ + " has no raw CAN channel named " +
+                                std::string(network));
+    }
+
     [[nodiscard]] Channel& only_channel() const
     {
         if (channels_.size() != 1)
@@ -408,6 +421,10 @@ j1939::Network& LocalBench::network(std::string_view ecu) const { return *site(e
 can::VirtualCanBus::Endpoint& LocalBench::endpoint(std::string_view ecu) const { return *site(ecu).only_channel().endpoint; }
 can::TapPort& LocalBench::tap(std::string_view ecu) const { return *site(ecu).only_channel().tap; }
 can::Host& LocalBench::host(std::string_view ecu) const { return site(ecu).host(); }
+can::RawChannel& LocalBench::raw_channel(std::string_view ecu, std::string_view network) const
+{
+    return site(ecu).raw_channel(network);
+}
 
 can::VirtualCanBus::Endpoint& LocalBench::injector() { return *only_bus("injector()").injector; }
 can::VirtualCanBus::Endpoint& LocalBench::injector(std::string_view network) { return *named_bus(network).injector; }

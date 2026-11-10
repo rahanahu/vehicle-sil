@@ -411,6 +411,18 @@ std::vector<std::string> Peer::network_names() const
 can::TapPort& Peer::tap(std::string_view name) const { return *channel(name).tap; }
 can::SilKitCanPort* Peer::silkit_port(std::string_view name) const { return channel(name).silkit_port.get(); }
 
+can::RawChannel& Peer::raw_channel(std::string_view name) const
+{
+    for (const auto& r : raw_channels_)
+    {
+        if (r->name == name)
+        {
+            return *r->channel;
+        }
+    }
+    throw std::out_of_range("vehicle_sil::Peer: no raw CAN channel named " + std::string(name));
+}
+
 void Peer::start(std::chrono::milliseconds timeout)
 {
     require_not_started("start()");

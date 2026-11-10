@@ -5,6 +5,7 @@
 #pragma once
 
 #include "vehicle_sil/can/host.hpp"
+#include "vehicle_sil/can/raw_channel.hpp"
 #include "vehicle_sil/can/step_driver.hpp"
 #include "vehicle_sil/can/tap_port.hpp"
 #include "vehicle_sil/can/virtual_can_bus.hpp"
@@ -46,7 +47,8 @@ namespace vehicle_sil {
 /// fault injection and outages (VirtualCanBus::Endpoint), tap() to listen to its raw frames,
 /// host() for the ECU's host. The one-name forms are for an ECU with exactly one network (as
 /// add_j1939() makes; also an ECU with one named network). These lookups are for the J1939
-/// networks only: a raw channel is not one of them and does not count in the one-name forms.
+/// networks only: a raw channel is not one of them and does not count in the one-name forms;
+/// raw_channel() looks it up.
 /// inject() sends a raw frame (11 or 29 bit) from an endpoint of its own on a bus, which no
 /// network uses (injector()).
 ///
@@ -107,6 +109,9 @@ public:
     [[nodiscard]] can::TapPort& tap(std::string_view ecu) const;
     /// The ECU's host (std::out_of_range for an unknown name).
     [[nodiscard]] can::Host& host(std::string_view ecu) const;
+    /// The raw CAN channel `network` of the ECU `ecu` (Ecu::can(network)). std::out_of_range
+    /// for an unknown name.
+    [[nodiscard]] can::RawChannel& raw_channel(std::string_view ecu, std::string_view network) const;
 
     /// Sends `frame` at `time` from the injection endpoint of the only bus (made without a name
     /// if there is none; the result of its send()). std::logic_error if there are two or more

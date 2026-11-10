@@ -787,3 +787,26 @@ TEST_CASE(peer_refuses_a_controller_name_it_uses)
     CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
     CHECK(!peer.failed());
 }
+
+// raw_channel(name) finds a raw channel (Ecu::can(name)) by the network's name, like network()
+// finds a J1939 network; std::out_of_range for an unknown name, also a J1939 network's.
+TEST_CASE(peer_finds_a_raw_channel_by_name)
+{
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Raw";
+    o.registry_uri = registry.uri;
+    o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(30ms)};
+    Peer peer(o);
+    vehicle_sil::Ecu& ecu = peer;
+    auto& rawA = ecu.can("A");
+    auto& rawB = ecu.can("B");
+    ecu.j1939("J");
+    CHECK(&peer.raw_channel("A") == &rawA);
+    CHECK(&peer.raw_channel("B") == &rawB);
+    CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.raw_channel("C")); }));
+    CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.raw_channel("J")); }));
+    CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.network("A")); }));
+    CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
+    CHECK(!peer.failed());
+}

@@ -445,6 +445,24 @@ TEST_CASE(testkit_ecu_raw_can_lookups_and_setup_errors)
     CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.bus("E")); }));
 }
 
+// raw_channel(ecu, network) finds an ECU's raw channel by the network's name, like network()
+// finds a J1939 network; std::out_of_range for an unknown ECU or network.
+TEST_CASE(testkit_ecu_raw_channel_lookup)
+{
+    LocalCan buses;
+    auto& mixed = buses.add_ecu("mixed", 10ms);
+    mixed.j1939("A");
+    auto& rawA = mixed.can("A");
+    auto& rawB = mixed.can("B");
+    auto& other = buses.add_ecu("other", 10ms).can("A");
+    CHECK(&buses.raw_channel("mixed", "A") == &rawA);
+    CHECK(&buses.raw_channel("mixed", "B") == &rawB);
+    CHECK(&buses.raw_channel("other", "A") == &other);
+    CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.raw_channel("mixed", "C")); }));
+    CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.raw_channel("missing", "A")); }));
+    CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.raw_channel("other", "B")); }));
+}
+
 // An ECU with a J1939 network and a raw channel on the same bus: each receives the other's
 // frames (in the step after the one that sent them); a raw handler may send on the J1939 network
 // in the same step, and the other way round.

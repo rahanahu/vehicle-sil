@@ -5,6 +5,7 @@
 #pragma once
 
 #include "vehicle_sil/can/host.hpp"
+#include "vehicle_sil/can/raw_channel.hpp"
 #include "vehicle_sil/can/real_time_clock.hpp"
 #include "vehicle_sil/can/tap_port.hpp"
 #include "vehicle_sil/can_silkit/silkit_can_port.hpp"
@@ -173,6 +174,9 @@ public:
     [[nodiscard]] can::TapPort& tap(std::string_view name) const;
     /// The SIL Kit port of a network made by j1939(network_name); nullptr for an external port.
     [[nodiscard]] can::SilKitCanPort* silkit_port(std::string_view name) const;
+    /// The raw CAN channel on the network `name` (Ecu::can(name)). std::out_of_range for an
+    /// unknown name.
+    [[nodiscard]] can::RawChannel& raw_channel(std::string_view name) const;
 
     [[nodiscard]] ParticipantRuntime& runtime() noexcept { return *runtime_; }
     [[nodiscard]] can::Host& host() noexcept { return host_; }
@@ -240,7 +244,7 @@ private:
     can::Host host_;
     std::vector<std::unique_ptr<Channel>> channels_;
     /// The raw CAN channels (Ecu::can()); not in channels_, so network() and the other lookups
-    /// by name are J1939 only.
+    /// by name are J1939 only (raw_channel() looks here).
     std::vector<std::unique_ptr<RawCan>> raw_channels_;
     std::vector<LinNode> lin_;
     std::vector<std::function<void(SimTime)>> step_functions_;
