@@ -2,6 +2,7 @@
 #include "vehicle_sil/peer/peer.hpp"
 
 #include "vehicle_sil/can/real_time_driver.hpp"
+#include "vehicle_sil/core/periodic.hpp"
 
 #include <exception>
 #include <stdexcept>
@@ -14,10 +15,19 @@ struct Peer::Channel
 {
     // Destroyed bottom-up: the network, then the tap, then the port.
     std::string name;
+    std::string controller; ///< of the SIL Kit port; empty for an external port
     std::unique_ptr<can::SilKitCanPort> silkit_port;
     std::unique_ptr<can::Port> external_port;
     std::unique_ptr<can::TapPort> tap;
     std::unique_ptr<j1939::Network> network;
+};
+
+struct Peer::RawCan
+{
+    // Destroyed bottom-up: the channel, then the port.
+    std::string name;
+    std::unique_ptr<can::SilKitCanPort> port;
+    std::unique_ptr<can::RawChannel> channel;
 };
 
 Peer::Peer(PeerOptions options) : options_(std::move(options))
@@ -35,6 +45,7 @@ Peer::Peer(PeerOptions options) : options_(std::move(options))
         {
             throw std::invalid_argument("vehicle_sil::Peer: virtual_time.end must be after 0");
         }
+        end_ = options_.virtual_time->end;
         host_.require_time_domain(can::TimeDomain::Virtual);
         host_.set_step_size(options_.virtual_time->step); // std::invalid_argument unless > 0
     }
@@ -60,11 +71,16 @@ Peer::Peer(PeerOptions options) : options_(std::move(options))
     if (options_.virtual_time)
     {
         runtime_->set_step_handler([this](SimTime now, SimDuration step) {
+            // end_ is fixed before start(). The runtime itself skips the steps at or after
+            // VirtualTimeOptions::end; detail::set_virtual_time_end() may make it earlier.
+            if (end_ && now >= *end_)
+            {
+                return;
+            }
             host_.step(now);
-            // Autonomous: nobody else ends the run. The runtime runs no step at or after the
-            // end, so this is the last one.
-            const auto& end = options_.virtual_time->end;
-            if (options_.lifecycle == LifecycleMode::Autonomous && end && now + step >= *end)
+            // Autonomous: nobody else ends the run. No step at or after the end does anything,
+            // so this is the last one.
+            if (options_.lifecycle == LifecycleMode::Autonomous && end_ && now + step >= *end_)
             {
                 runtime_->request_stop("vehicle_sil::Peer: end of virtual time");
             }
@@ -89,9 +105,11 @@ Peer::~Peer()
 {
     stop("vehicle_sil::Peer destroyed");
     // No more steps: the LIN nodes (they use their controllers), then the networks, taps and
-    // ports. The host, the clock and last the participant go with the members.
+    // ports, then the raw channels and their ports. The host, the clock and last the
+    // participant go with the members.
     lin_.clear();
     channels_.clear();
+    raw_channels_.clear();
 }
 
 void Peer::require_not_started(const char* what) const
@@ -129,16 +147,40 @@ Peer::Channel& Peer::add_channel(std::string name)
     return *channels_.back();
 }
 
+bool Peer::controller_is_used(const std::string& controller) const
+{
+    for (const auto& c : channels_)
+    {
+        if (c->silkit_port && c->controller == controller)
+        {
+            return true;
+        }
+    }
+    for (const auto& r : raw_channels_)
+    {
+        if (r->name + ".raw" == controller)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions options)
 {
     require_not_started("j1939()");
+    std::string controller = options.controller_name.empty() ? network_name : options.controller_name;
+    if (!network_name.empty() && controller_is_used(controller))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: a CAN controller of this peer is named " + controller);
+    }
     Channel& c = add_channel(network_name);
     try
     {
-        const std::string controller = options.controller_name.empty() ? network_name : options.controller_name;
         auto* canController = runtime_->participant().CreateCanController(controller, network_name);
         options.port.real_time_clock = options_.virtual_time ? nullptr : clock_;
         c.silkit_port = std::make_unique<can::SilKitCanPort>(*canController, options.port);
+        c.controller = std::move(controller);
         c.tap = std::make_unique<can::TapPort>(*c.silkit_port);
         c.network = std::make_unique<j1939::Network>(std::move(options.network));
         host_.add(*c.network, *c.tap);
@@ -177,6 +219,88 @@ j1939::Network& Peer::j1939(std::string name, std::unique_ptr<can::Port> port, j
     }
     return *c.network;
 }
+
+j1939::Network& Peer::add_j1939(const std::string& network, j1939::NetworkOptions options)
+{
+    J1939ChannelOptions channel;
+    channel.network = std::move(options);
+    return j1939(network, std::move(channel));
+}
+
+can::RawChannel& Peer::add_can(const std::string& network, can::RawChannelOptions options)
+{
+    require_not_started("can()");
+    if (network.empty())
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: empty network name");
+    }
+    for (const auto& r : raw_channels_)
+    {
+        if (r->name == network)
+        {
+            throw std::invalid_argument("vehicle_sil::Peer: the raw CAN channel " + network + " was added before");
+        }
+    }
+    // A controller of its own: a J1939 network on the same bus has the one named like the
+    // network (or J1939ChannelOptions::controller_name).
+    const std::string controller = network + ".raw";
+    if (controller_is_used(controller))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: a CAN controller of this peer is named " + controller);
+    }
+    auto made = std::make_unique<RawCan>();
+    made->name = network;
+    made->channel = std::make_unique<can::RawChannel>(options); // std::invalid_argument
+    raw_channels_.push_back(std::move(made));
+    RawCan& r = *raw_channels_.back();
+    try
+    {
+        auto* canController = runtime_->participant().CreateCanController(controller, network);
+        can::SilKitCanPortOptions portOptions;
+        portOptions.real_time_clock = options_.virtual_time ? nullptr : clock_;
+        r.port = std::make_unique<can::SilKitCanPort>(*canController, portOptions);
+        host_.add(*r.channel, *r.port);
+    }
+    catch (...)
+    {
+        if (r.port)
+        {
+            r.port->close();
+        }
+        raw_channels_.pop_back();
+        throw;
+    }
+    return *r.channel;
+}
+
+void Peer::keep(std::shared_ptr<void> object)
+{
+    require_not_started("emplace()");
+    owned_.add(std::move(object));
+}
+
+void Peer::set_end(SimTime end)
+{
+    require_not_started("set_virtual_time_end()");
+    if (!options_.virtual_time)
+    {
+        throw std::logic_error("vehicle_sil::Peer: set_virtual_time_end() needs virtual time");
+    }
+    if (end <= SimTime{})
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: the end must be after 0");
+    }
+    if (!end_ || end < *end_)
+    {
+        end_ = end;
+    }
+}
+
+namespace detail {
+
+void set_virtual_time_end(Peer& peer, SimTime end) { peer.set_end(end); }
+
+} // namespace detail
 
 lin::LinMaster& Peer::lin_master(std::string network_name, lin::LinScheduleTable schedule, lin::LinMaster::ResultHandler on_result,
                                  lin::LinMaster::StateHandler on_state, lin::LinMasterOptions options)
@@ -217,23 +341,7 @@ void Peer::on_step(std::function<void(SimTime now)> fn)
 void Peer::every(SimDuration period, std::function<void(SimTime now)> fn)
 {
     require_not_started("every()");
-    if (!fn)
-    {
-        throw std::invalid_argument("vehicle_sil::Peer: empty function");
-    }
-    if (period <= SimDuration::zero())
-    {
-        throw std::invalid_argument("vehicle_sil::Peer: the period must be > 0");
-    }
-    step_functions_.push_back([period, due = SimTime{}, fn = std::move(fn)](SimTime now) mutable {
-        if (now < due)
-        {
-            return;
-        }
-        // Skip the times this step passed: once per step.
-        due += period * ((now - due) / period + 1);
-        fn(now);
-    });
+    step_functions_.push_back(periodic(period, std::move(fn))); // std::invalid_argument
 }
 
 void Peer::set_control(std::function<void(SimTime)> before, std::function<void(SimTime)> after,
@@ -361,6 +469,10 @@ void Peer::stop(std::string_view reason) noexcept
             c->silkit_port->close();
         }
     }
+    for (auto& r : raw_channels_)
+    {
+        r->port->close();
+    }
 }
 
 void Peer::request_stop(std::string_view reason) noexcept { runtime_->request_stop(reason); }
@@ -390,7 +502,11 @@ std::string Peer::error() const
     return driver != nullptr ? driver->error() : std::string{};
 }
 
-void start_together(SimulationController& controller, const std::vector<Peer*>& peers, std::chrono::milliseconds timeout)
+namespace {
+
+/// Starts each peer from its own thread and, if there is one, the controller from this one;
+/// joins every thread, then rethrows the controller's exception, else the first of a peer.
+void start_peers(SimulationController* controller, const std::vector<Peer*>& peers, std::chrono::milliseconds timeout)
 {
     std::vector<std::exception_ptr> errors(peers.size());
     std::vector<std::thread> starters;
@@ -423,13 +539,16 @@ void start_together(SimulationController& controller, const std::vector<Peer*>& 
         });
     }
     std::exception_ptr controllerError;
-    try
+    if (controller != nullptr)
     {
-        controller.start(timeout);
-    }
-    catch (...)
-    {
-        controllerError = std::current_exception();
+        try
+        {
+            controller->start(timeout);
+        }
+        catch (...)
+        {
+            controllerError = std::current_exception();
+        }
     }
     for (auto& starter : starters)
     {
@@ -447,6 +566,18 @@ void start_together(SimulationController& controller, const std::vector<Peer*>& 
             std::rethrow_exception(e);
         }
     }
+}
+
+} // namespace
+
+void start_together(SimulationController& controller, const std::vector<Peer*>& peers, std::chrono::milliseconds timeout)
+{
+    start_peers(&controller, peers, timeout);
+}
+
+void start_together(const std::vector<Peer*>& peers, std::chrono::milliseconds timeout)
+{
+    start_peers(nullptr, peers, timeout);
 }
 
 } // namespace vehicle_sil

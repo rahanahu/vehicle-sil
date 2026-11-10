@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 //
-// SimTime, StepInbox, TickScheduler and RealTimePacer: pure logic, no SIL Kit connection.
+// SimTime, StepInbox, TickScheduler, RealTimePacer and periodic(): pure logic, no SIL Kit
+// connection.
 #include "test_harness.hpp"
 
+#include "vehicle_sil/core/periodic.hpp"
 #include "vehicle_sil/core/real_time_pacer.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/core/step_inbox.hpp"
@@ -201,4 +203,45 @@ TEST_CASE(pacer_maps_simulation_time_to_wall_clock)
 
     CHECK(throws_invalid_argument([] { RealTimePacer bad(0.0); }));
     CHECK(throws_invalid_argument([] { RealTimePacer bad(-1.0); }));
+}
+
+namespace {
+
+/// The times `period` runs at when it is called with the steps 0, step, 2 * step, ... before `end`.
+std::vector<long long> periodic_runs(SimDuration period, SimDuration step, SimDuration end)
+{
+    std::vector<long long> runs;
+    auto fn = periodic(period, [&](SimTime now) { runs.push_back(now.time_since_epoch() / 1ms); });
+    for (SimDuration t{}; t < end; t += step)
+    {
+        fn(at(t));
+    }
+    return runs;
+}
+
+} // namespace
+
+TEST_CASE(periodic_runs_in_the_first_step_at_or_after_each_period)
+{
+    // On the step grid: every period.
+    CHECK((periodic_runs(20ms, 10ms, 100ms) == std::vector<long long>{0, 20, 40, 60, 80}));
+    // Off the grid: the first step at or after 0, 25, 50, 75, 100, 125.
+    CHECK((periodic_runs(25ms, 10ms, 140ms) == std::vector<long long>{0, 30, 50, 80, 100, 130}));
+    // A step longer than the period passes several times: it runs once per step.
+    CHECK((periodic_runs(10ms, 25ms, 100ms) == std::vector<long long>{0, 25, 50, 75}));
+    // Irregular calls: once per call at most, and the times passed are skipped.
+    std::vector<long long> runs;
+    auto fn = periodic(10ms, [&](SimTime now) { runs.push_back(now.time_since_epoch() / 1ms); });
+    for (const auto t : {0ms, 5ms, 9ms, 10ms, 37ms, 39ms, 40ms})
+    {
+        fn(at(t));
+    }
+    CHECK((runs == std::vector<long long>{0, 10, 37, 40}));
+}
+
+TEST_CASE(periodic_rejects_a_bad_period_or_function)
+{
+    CHECK(throws_invalid_argument([] { static_cast<void>(periodic(0ms, [](SimTime) {})); }));
+    CHECK(throws_invalid_argument([] { static_cast<void>(periodic(-1ms, [](SimTime) {})); }));
+    CHECK(throws_invalid_argument([] { static_cast<void>(periodic(10ms, {})); }));
 }

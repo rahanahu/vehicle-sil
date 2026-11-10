@@ -117,6 +117,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_can_tests
   PREFIX can LABELS unit can TIMEOUT 60
   SOURCES can/test_can_values_and_bus.cpp can/test_can_host.cpp can/test_can_bus_model.cpp
           can/test_can_real_time.cpp can/test_can_faults.cpp can/test_can_tap_port.cpp
+          can/test_can_raw_channel.cpp
   LINK vehicle_sil::can)
 target_include_directories(vehicle_sil_can_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/can)
 
@@ -124,7 +125,7 @@ target_include_directories(vehicle_sil_can_tests PRIVATE ${CMAKE_CURRENT_SOURCE_
 # injection. Links no SIL Kit.
 vehicle_sil_add_harness_tests(vehicle_sil_testkit_tests
   PREFIX testkit LABELS unit testkit j1939 TIMEOUT 60
-  SOURCES testkit/test_testkit.cpp
+  SOURCES testkit/test_testkit.cpp testkit/test_local_ecus.cpp
   LINK vehicle_sil::testkit)
 
 # The ECU application API as its users write it (examples/j1939/ecu_pair and parts of one's own)
@@ -166,6 +167,37 @@ if(TARGET vehicle_sil_j1939_param_service)
   set_tests_properties(param_service.demo PROPERTIES LABELS "unit;testkit;j1939" TIMEOUT 60)
 endif()
 
+# The first example, on the virtual buses and on SIL Kit (registry of the process).
+if(TARGET vehicle_sil_getting_started)
+  add_test(NAME getting_started.demo COMMAND vehicle_sil_getting_started)
+  add_test(NAME getting_started.silkit_demo COMMAND vehicle_sil_getting_started --silkit)
+  set_tests_properties(getting_started.demo getting_started.silkit_demo
+                       PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+endif()
+
+# Examples that run on the virtual buses and check their own result.
+if(TARGET vehicle_sil_typed_messages)
+  add_test(NAME typed_messages.demo COMMAND vehicle_sil_typed_messages)
+  set_tests_properties(typed_messages.demo PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+endif()
+if(TARGET vehicle_sil_pid_stream)
+  add_test(NAME pid_stream.demo COMMAND vehicle_sil_pid_stream)
+  set_tests_properties(pid_stream.demo PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+endif()
+if(TARGET vehicle_sil_fault_injection)
+  add_test(NAME fault_injection.demo COMMAND vehicle_sil_fault_injection)
+  set_tests_properties(fault_injection.demo PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+endif()
+if(TARGET vehicle_sil_vehicle)
+  add_test(NAME vehicle.silkit_demo COMMAND vehicle_sil_vehicle)
+  add_test(NAME vehicle.local_demo COMMAND vehicle_sil_vehicle --local)
+  set_tests_properties(vehicle.silkit_demo vehicle.local_demo PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+endif()
+if(TARGET vehicle_sil_low_level)
+  add_test(NAME low_level.demo COMMAND vehicle_sil_low_level)
+  set_tests_properties(low_level.demo PROPERTIES LABELS "examples" TIMEOUT 120)
+endif()
+
 # The SIL Kit port of vehicle_sil::can: against a fake controller, and on real participants
 # (in-process registry), where the traces must equal the virtual bus's.
 vehicle_sil_add_harness_tests(vehicle_sil_can_silkit_tests
@@ -182,6 +214,14 @@ vehicle_sil_add_harness_tests(vehicle_sil_peer_tests
   LINK vehicle_sil::peer vehicle_sil::testkit vehicle_sil_ecu_pair_messages vehicle_sil::j1939_diagnostics
        vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester vehicle_sil::j1939_monitor)
 target_include_directories(vehicle_sil_peer_tests PRIVATE ${PROJECT_SOURCE_DIR}/examples/j1939/ecu_pair)
+
+# vehicle_sil::Simulation: the same ECUs (written against vehicle_sil::Ecu) on the local virtual
+# buses and on SIL Kit (in-process registry), failures, the rules of a run, a controller
+# elsewhere and other participants.
+vehicle_sil_add_harness_tests(vehicle_sil_simulation_tests
+  PREFIX simulation LABELS unit simulation TIMEOUT 180
+  SOURCES simulation/test_simulation.cpp
+  LINK vehicle_sil::simulation)
 
 # The simple CAN network simulator (vehicle_sil::can_netsim) on real participants (in-process
 # registry), compared with the virtual bus; its configuration file; and the executable.
@@ -338,8 +378,8 @@ add_test(NAME j1939_parts.boundary_check_observer
                  -DSOURCES_ONLY=ON -DFORBID_OBSERVER=ON -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
 set_tests_properties(j1939_parts.boundary_check_observer PROPERTIES LABELS "unit;j1939" TIMEOUT 60
                      PASS_REGULAR_EXPRESSION "reach into the J1939 engine:.*part\\.hpp: matches 'set_observer'")
-# The test kit and Peer use the engine's public API only, like the parts.
-foreach(dir IN ITEMS testkit peer)
+# The test kit, Peer, Ecu and Simulation use the engine's public API only, like the parts.
+foreach(dir IN ITEMS testkit peer ecu simulation)
   add_test(NAME ${dir}.boundary
            COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${PROJECT_SOURCE_DIR}/libs/${dir} -DSOURCES_ONLY=ON
                    -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)

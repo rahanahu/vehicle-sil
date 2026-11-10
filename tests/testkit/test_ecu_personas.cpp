@@ -37,13 +37,9 @@ struct Vehicle
     EngineModel engine;
     Dashboard dash;
     LocalCan bus;
-    j1939::Node& engine_ecu = install_engine(bus.add_j1939("engine", 10ms), engine);
-    j1939::Node& cab = install_cab(bus.add_j1939("cab", 5ms), dash);
+    j1939::Node& engine_ecu = install_engine(bus.add_ecu("engine", 10ms), engine);
+    j1939::Node& cab = install_cab(bus.add_ecu("cab", 5ms), dash);
 
-    Vehicle()
-    {
-        bus.on_step("engine", [this](SimTime) { engine.tick(); });
-    }
 };
 
 } // namespace
@@ -90,7 +86,7 @@ TEST_CASE(p1_the_cab_notices_when_the_engine_goes_silent)
 TEST_CASE(p1_a_service_tool_commands_the_cab_to_another_address)
 {
     Vehicle v;
-    auto& tool = v.bus.add_j1939("tool", 10ms).add_node({.address = 0xF9}); // a fixed address, no NAME
+    auto& tool = v.bus.add_ecu("tool", 10ms).j1939("J1939_CAN").add_node({.address = 0xF9}); // a fixed address, no NAME
     auto& commander = tool.attach<j1939::AddressCommander>();
     std::optional<j1939::CommandOutcome> outcome;
     v.bus.run_for(1s);

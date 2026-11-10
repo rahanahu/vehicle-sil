@@ -11,11 +11,12 @@ foreach(peer IN ITEMS sender receiver)
 endforeach()
 
 # The ECU application API: two ECUs built from the J1939 parts (ecu_pair.hpp, also used by the
-# tests), run as two SIL Kit participants of one process. Their messages are typed values
+# tests), run by vehicle_sil::Simulation as two SIL Kit participants of one process or on
+# virtual buses. Their messages are typed values
 # generated from ecu_pair_messages.yaml.
 vehicle_sil_add_j1939_codec(vehicle_sil_ecu_pair_messages ecu_pair/ecu_pair_messages.yaml)
 add_executable(vehicle_sil_j1939_ecu_pair ecu_pair/main.cpp ecu_pair/ecu_pair.hpp)
-target_link_libraries(vehicle_sil_j1939_ecu_pair PRIVATE vehicle_sil::peer vehicle_sil_ecu_pair_messages vehicle_sil::j1939_diagnostics
+target_link_libraries(vehicle_sil_j1939_ecu_pair PRIVATE vehicle_sil::simulation vehicle_sil_ecu_pair_messages vehicle_sil::j1939_diagnostics
                       vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester vehicle_sil::j1939_monitor)
 vehicle_sil_target_defaults(vehicle_sil_j1939_ecu_pair)
 vehicle_sil_copy_runtime_dlls(vehicle_sil_j1939_ecu_pair)

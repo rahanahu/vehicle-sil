@@ -26,8 +26,8 @@ FetchContent_MakeAvailable(vehicle_sil)
 vehicle_sil_add_j1939_codec(consumer_messages consumer_messages.yaml)
 
 add_executable(vehicle_sil_consumer main.cpp)
-# Link only what is needed: vehicle_sil::peer brings the J1939 stack, the CAN base, the SIL Kit
-# port and vehicle_sil::core with it; the J1939 parts are targets of their own.
-target_link_libraries(vehicle_sil_consumer PRIVATE vehicle_sil::peer consumer_messages vehicle_sil::j1939_monitor)
+# Link only what is needed: vehicle_sil::simulation brings the ECU interface, the J1939 stack, the
+# CAN base, the SIL Kit port and vehicle_sil::core with it; the J1939 parts are targets of their own.
+target_link_libraries(vehicle_sil_consumer PRIVATE vehicle_sil::simulation consumer_messages vehicle_sil::j1939_monitor)
 # Windows only: copies SilKit.dll next to the executable.
 vehicle_sil_copy_runtime_dlls(vehicle_sil_consumer)

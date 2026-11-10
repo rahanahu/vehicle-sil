@@ -6,6 +6,6 @@ add_library(vehicle_sil_peer STATIC src/peer.cpp)
 add_library(vehicle_sil::peer ALIAS vehicle_sil_peer)
 set_target_properties(vehicle_sil_peer PROPERTIES EXPORT_NAME peer)
 target_include_directories(vehicle_sil_peer PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-target_link_libraries(vehicle_sil_peer PUBLIC vehicle_sil::core vehicle_sil::can vehicle_sil::can_silkit
+target_link_libraries(vehicle_sil_peer PUBLIC vehicle_sil::core vehicle_sil::can vehicle_sil::can_silkit vehicle_sil::ecu
                                               vehicle_sil::j1939 vehicle_sil::lin)
 vehicle_sil_target_defaults(vehicle_sil_peer)

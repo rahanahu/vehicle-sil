@@ -637,9 +637,8 @@ std::vector<std::string> ecu_pair_on_local_bus()
     ecu_pair::Dashboard dash;
     DashboardTrace trace;
     vehicle_sil::testkit::LocalCan bus;
-    ecu_pair::install_engine(bus.add_j1939("engine", 10ms), engine);
-    ecu_pair::install_cab(bus.add_j1939("cab", 5ms), dash);
-    bus.on_step("engine", [&](SimTime) { engine.tick(); });
+    ecu_pair::install_engine(bus.add_ecu("engine", 10ms), engine);
+    ecu_pair::install_cab(bus.add_ecu("cab", 5ms), dash);
     bus.on_step("cab", [&](SimTime now) { trace.record(now, dash); });
     bus.run_until(at(1000ms));
     return trace.lines;
@@ -657,10 +656,9 @@ std::vector<std::string> ecu_pair_on_silkit()
     control.stop_at = 1100ms;
     SimulationController controller(control);
     Peer enginePeer(coordinated("Engine", registry.uri, 10ms));
-    ecu_pair::install_engine(enginePeer.j1939("J1939_CAN"), engine);
-    enginePeer.every(10ms, [&](SimTime) { engine.tick(); });
+    ecu_pair::install_engine(enginePeer, engine); // a Peer is an Ecu
     Peer cabPeer(coordinated("Cab", registry.uri, 5ms));
-    ecu_pair::install_cab(cabPeer.j1939("J1939_CAN"), dash);
+    ecu_pair::install_cab(cabPeer, dash);
     cabPeer.on_step([&](SimTime now) { trace.record(now, dash); });
     start_together(controller, {&enginePeer, &cabPeer});
     CHECK(enginePeer.wait(60s) == orch::ParticipantState::Shutdown);
@@ -681,4 +679,111 @@ TEST_CASE(peer_runs_the_ecu_application_as_on_the_local_bus)
     // The engine's speed reached the cab's request, and the software id (14 bytes) arrived.
     CHECK(!local.empty() && local.back().substr(local.back().find(' ') + 1) == "1500 14");
     CHECK(silkit == local);
+}
+
+namespace {
+
+/// Writes its name into `log` when destroyed.
+struct Probe
+{
+    std::vector<std::string>& log;
+    std::string name;
+    Probe(std::vector<std::string>& l, std::string n) : log(l), name(std::move(n)) {}
+    Probe(const Probe&) = delete;
+    Probe& operator=(const Probe&) = delete;
+    ~Probe() { log.push_back(name); }
+};
+
+/// An application written against Ecu& only: a counter it owns, sent every 20 ms.
+struct Counter
+{
+    std::uint8_t value = 0;
+    std::vector<std::int64_t> sent;
+    explicit Counter(vehicle_sil::Ecu& ecu)
+    {
+        auto& node = ecu.j1939("CAN").add_node({.address = 0x10});
+        ecu.every(20ms, [this, &node](SimTime now) {
+            const std::uint8_t data[8]{value++, 0, 0, 0, 0, 0, 0, 0};
+            static_cast<void>(node.send(kPgnEngineSpeed, data));
+            sent.push_back(ms(now));
+        });
+    }
+};
+
+} // namespace
+
+// Peer is an Ecu: an application written against Ecu& runs on it; what it emplace()s goes after
+// everything else of the peer, the object emplaced last first; detail::set_virtual_time_end()
+// ends its steps; emplace() after start() makes no object.
+TEST_CASE(peer_is_an_ecu_and_destroys_what_it_emplaced_last)
+{
+    InProcessRegistry registry;
+    std::vector<std::string> log;
+    const Counter* counter = nullptr;
+    {
+        PeerOptions o;
+        o.participant = "Alone";
+        o.registry_uri = registry.uri;
+        o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(200ms)};
+        Peer peer(o);
+        vehicle_sil::Ecu& ecu = peer;
+        ecu.emplace<Probe>(log, "model");
+        counter = &ecu.emplace<Counter>(ecu);
+        auto handler = std::make_shared<Probe>(log, "handler");
+        peer.network("CAN").node(0).on_message(kPgnEngineSpeed, [handler](const j1939::Message&) {});
+        handler.reset();
+        ecu.emplace<Probe>(log, "app");
+        CHECK(throws<std::invalid_argument>([&] { vehicle_sil::detail::set_virtual_time_end(peer, SimTime{}); }));
+        vehicle_sil::detail::set_virtual_time_end(peer, at(95ms));  // earlier than virtual_time.end: it applies
+        vehicle_sil::detail::set_virtual_time_end(peer, at(150ms)); // later: the earlier one stays
+        CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
+        CHECK((counter->sent == std::vector<std::int64_t>{0, 20, 40, 60, 80}));
+        CHECK(throws<std::logic_error>([&] { ecu.emplace<Probe>(log, "late"); }));
+        CHECK(throws<std::logic_error>([&] { vehicle_sil::detail::set_virtual_time_end(peer, at(50ms)); }));
+        CHECK(log.empty()); // no "late" was made
+    }
+    CHECK((log == std::vector<std::string>{"handler", "app", "model"}));
+
+    // detail::set_virtual_time_end() needs virtual time.
+    PeerOptions realTime;
+    realTime.participant = "RealTime";
+    realTime.registry_uri = registry.uri;
+    realTime.virtual_time.reset();
+    Peer peer(realTime);
+    CHECK(throws<std::logic_error>([&] { vehicle_sil::detail::set_virtual_time_end(peer, at(50ms)); }));
+}
+
+// The SIL Kit CAN controllers of one peer have different names: a raw channel's "<network>.raw"
+// and a J1939 network's (its name, or J1939ChannelOptions::controller_name) are checked against
+// each other before SIL Kit is asked. Empty network names are refused through Ecu& too.
+TEST_CASE(peer_refuses_a_controller_name_it_uses)
+{
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Names";
+    o.registry_uri = registry.uri;
+    o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(30ms)};
+    Peer peer(o);
+    vehicle_sil::Ecu& ecu = peer;
+    ecu.can("A");                                                         // controller "A.raw"
+    CHECK(throws<std::invalid_argument>([&] { peer.j1939("A.raw"); }));   // its name
+    vehicle_sil::J1939ChannelOptions named;
+    named.controller_name = "A.raw";
+    CHECK(throws<std::invalid_argument>([&] { peer.j1939("B", named); })); // its controller_name
+    CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.network("A.raw")); }));
+    CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.network("B")); }));
+    named.controller_name = "C.raw";
+    peer.j1939("B", named);
+    CHECK(throws<std::invalid_argument>([&] { ecu.can("C"); }));   // "C.raw" is B's
+    CHECK(throws<std::invalid_argument>([&] { peer.j1939("C.raw"); }));
+    named.controller_name = "B2";
+    peer.j1939("D", named);
+    CHECK(throws<std::invalid_argument>([&] { peer.j1939("B2"); })); // between J1939 networks too
+    ecu.j1939("A");  // the controller "A" beside "A.raw": allowed
+    ecu.can("D");    // "D.raw"
+    CHECK(throws<std::invalid_argument>([&] { ecu.j1939(""); }));
+    CHECK(throws<std::invalid_argument>([&] { ecu.can(""); }));
+    CHECK((peer.network_names() == std::vector<std::string>{"B", "D", "A"}));
+    CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
+    CHECK(!peer.failed());
 }

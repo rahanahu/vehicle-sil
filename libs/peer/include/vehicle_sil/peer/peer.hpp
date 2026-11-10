@@ -10,6 +10,7 @@
 #include "vehicle_sil/can_silkit/silkit_can_port.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/ecu/ecu.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/lin/lin_master.hpp"
 #include "vehicle_sil/lin/lin_slave.hpp"
@@ -29,6 +30,21 @@ namespace vehicle_sil {
 namespace can {
 class RealTimeDriver;
 } // namespace can
+
+class Peer;
+
+namespace detail {
+
+/// For vehicle_sil::Simulation only, which makes its peers before it knows the end of the run:
+/// with virtual time, the peer runs no step that starts at or after `end` (the earlier of this
+/// and VirtualTimeOptions::end applies). Unlike VirtualTimeOptions::end, those steps still take
+/// part in the time synchronisation, but do nothing, so what the peer did does not depend on
+/// when a controller's stop reaches it. Autonomous: the peer stops itself after its last step
+/// before `end`. Only before start() and with virtual time (std::logic_error); `end` must be
+/// after 0 (std::invalid_argument).
+void set_virtual_time_end(Peer& peer, SimTime end);
+
+} // namespace detail
 
 struct PeerOptions
 {
@@ -65,7 +81,9 @@ struct J1939ChannelOptions
 /// and the application's work for each step. The peer creates the participant, the
 /// controllers and the ports, steps everything (with SIL Kit's time synchronisation, or in real
 /// time with a RealTimeDriver), initialises the LIN nodes when communication is ready, and tears
-/// it all down in the right order.
+/// it all down in the right order. It is an Ecu: an application written against Ecu& runs on a
+/// peer as it does on the test kit's local buses (Ecu::j1939(network) is j1939(network) with
+/// default port options).
 ///
 ///     vehicle_sil::Peer peer({.participant = "Engine", .registry_uri = uri});
 ///     auto& ecu = peer.j1939("J1939_CAN1").add_node({.address = 0x00, .name = name});
@@ -73,25 +91,31 @@ struct J1939ChannelOptions
 ///     peer.start();
 ///     peer.wait();
 ///
-/// One step at `now`, in this order: the J1939 networks receive and handle what arrived (in the
-/// order they were added), then the application (on_step() and every(), in the order added),
-/// then the LIN nodes' step(now) (in the order added), then the J1939 networks send. A control
+/// One step at `now`, in this order: the J1939 networks and the raw CAN channels (Ecu::can())
+/// receive and handle what arrived (in the order they were added), then the application
+/// (on_step() and every(), in the order added), then the LIN nodes' step(now) (in the order
+/// added), then the J1939 networks and raw channels send (in the same order). A control
 /// agent's hooks (set_control()) run right before and after the application and LIN stage. LIN
 /// requests made by the application (LinMaster::set_frame_data(), LinSlave::set_response())
 /// therefore take effect in the same step; what the LIN nodes receive is reported in their
 /// step, and the application sees it in the next one.
 ///
-/// Set up (j1939(), lin_master(), lin_slave(), on_step(), every(), and the networks' nodes,
-/// handlers, parts, observers and tap listeners) before start(); the set-up functions throw std::logic_error
-/// afterwards. Nodes may still be added from a step, as Network::add_node() allows.
+/// Set up (j1939(), can(), lin_master(), lin_slave(), on_step(), every(), emplace(), and the
+/// networks' nodes, handlers, parts, observers and tap listeners) before start(); the set-up
+/// functions throw std::logic_error afterwards. Nodes may still be added from a step, as
+/// Network::add_node() allows.
 ///
-/// Ownership: the peer owns the participant, the controllers, the ports, the networks and the
-/// LIN nodes; references it returns are valid as long as the peer. What the handlers refer to
-/// (models) must outlive the peer: declare it before the peer. stop() (and the destructor)
-/// stops the steps (real time: the driver, then the lifecycle; virtual time: the lifecycle) and
-/// closes the SIL Kit ports; the destructor then destroys the LIN nodes, the networks (their
-/// parts first), the taps and the ports (an external port closes in its destructor), the host,
-/// and last the participant.
+/// Ownership: the peer owns the participant, the controllers, the ports, the networks, the
+/// LIN nodes and the objects made by emplace(); references it returns are valid as long as the
+/// peer. What the handlers refer to (models) must outlive the networks: emplace() it, or
+/// declare it before the peer. stop() (and the destructor) stops the steps (real time: the
+/// driver, then the lifecycle; virtual time: the lifecycle) and closes the SIL Kit ports; the
+/// destructor then destroys the LIN nodes, the networks (their parts first), the taps and the
+/// ports (an external port closes in its destructor), the raw CAN channels and their ports, the
+/// host, the participant, and last the emplace()d objects (the one emplaced last first). So the
+/// emplace()d objects go after the participant: their destructors must not use SIL Kit
+/// services (the participant, controllers or Pub/Sub made through runtime()); make an object
+/// that does so after the peer instead, so that it goes first.
 ///
 /// Threading: set up, start() and wait() from one thread. The steps run on SIL Kit's thread
 /// (virtual time) or on the driver's thread (real time); handlers, the application, observers
@@ -100,17 +124,19 @@ struct J1939ChannelOptions
 /// thread only after start() returned; concurrent stop() calls are serialised. Destroy the peer
 /// only after a stop() of another thread has returned. failed() and error() from any thread,
 /// also from a step.
-class Peer
+class Peer : public Ecu
 {
 public:
     /// Connects to the registry (SilKit::SilKitError on failure).
     explicit Peer(PeerOptions options);
-    ~Peer();
+    ~Peer() override;
     Peer(const Peer&) = delete;
     Peer& operator=(const Peer&) = delete;
 
     /// A J1939 network on a SIL Kit CAN controller of network `network_name`. Its port is
-    /// wrapped in a TapPort (tap()). std::invalid_argument for a name used before.
+    /// wrapped in a TapPort (tap()). std::invalid_argument for an empty name, a name used
+    /// before, or a controller name (J1939ChannelOptions::controller_name, else the network
+    /// name) that a controller of this peer has, also a raw channel's "<network>.raw".
     j1939::Network& j1939(std::string network_name, J1939ChannelOptions options = {});
     /// A J1939 network on a port the caller made (e.g. a Vector XL ExternalPortAdapter with
     /// real_time_clock()), owned by the peer from now on and destroyed before the participant.
@@ -126,10 +152,11 @@ public:
     lin::LinSlave& lin_slave(std::string network_name, lin::LinSlaveOptions options = {},
                              lin::LinSlave::FrameHandler on_frame = {}, lin::LinSlave::StateHandler on_state = {});
     /// Runs `fn` in every step (see the class comment for the order).
-    void on_step(std::function<void(SimTime now)> fn);
+    void on_step(std::function<void(SimTime now)> fn) override;
     /// Runs `fn` in the first step at or after 0, period, 2 * period, ... (once per step at
-    /// most; a step that passes several of them runs it once). period > 0.
-    void every(SimDuration period, std::function<void(SimTime now)> fn);
+    /// most; a step that passes several of them runs it once; vehicle_sil::periodic()).
+    /// std::invalid_argument for period <= 0 or an empty function.
+    void every(SimDuration period, std::function<void(SimTime now)> fn) override;
 
     /// Hooks for a control agent (vehicle_sil::control::attach()): `before` runs in every step
     /// just before the application (before on_step() and every(), whenever they were added),
@@ -175,8 +202,21 @@ public:
     [[nodiscard]] std::string error() const;
 
 private:
+    friend void detail::set_virtual_time_end(Peer& peer, SimTime end);
+
     struct Channel;
-    void require_not_started(const char* what) const;
+    struct RawCan;
+    j1939::Network& add_j1939(const std::string& network, j1939::NetworkOptions options) override;
+    /// Ecu::can(): a raw channel on a SIL Kit CAN controller of its own, named "<network>.raw"
+    /// (std::invalid_argument if a controller of this peer has that name).
+    can::RawChannel& add_can(const std::string& network, can::RawChannelOptions options) override;
+    void keep(std::shared_ptr<void> object) override;
+    void require_not_started(const char* what) const override;
+    /// detail::set_virtual_time_end().
+    void set_end(SimTime end);
+    /// true if a SIL Kit CAN controller of this peer (a J1939 network's or a raw channel's) has
+    /// the name `controller`.
+    [[nodiscard]] bool controller_is_used(const std::string& controller) const;
     void require_virtual_time(const char* what) const;
     Channel& add_channel(std::string name);
     [[nodiscard]] Channel& channel(std::string_view name) const;
@@ -189,12 +229,19 @@ private:
         std::unique_ptr<lin::LinSlave> slave;
     };
 
+    /// First: the emplace()d objects go after everything else.
+    detail::OwnedObjects owned_;
     PeerOptions options_;
+    /// The end of the handled steps (VirtualTimeOptions::end or set_end()); virtual time only.
+    std::optional<SimTime> end_;
     std::unique_ptr<ParticipantRuntime> runtime_;
     std::unique_ptr<can::RealTimeClock> own_clock_;
     can::RealTimeClock* clock_ = nullptr;
     can::Host host_;
     std::vector<std::unique_ptr<Channel>> channels_;
+    /// The raw CAN channels (Ecu::can()); not in channels_, so network() and the other lookups
+    /// by name are J1939 only.
+    std::vector<std::unique_ptr<RawCan>> raw_channels_;
     std::vector<LinNode> lin_;
     std::vector<std::function<void(SimTime)>> step_functions_;
     std::function<void(SimTime)> control_before_;
@@ -216,5 +263,8 @@ private:
 /// every thread first.
 void start_together(SimulationController& controller, const std::vector<Peer*>& peers,
                     std::chrono::milliseconds timeout = std::chrono::seconds(30));
+/// The same without a controller: a controller elsewhere (another process or thread) starts
+/// the simulation. Rethrows the first exception of a peer's start(); joins every thread first.
+void start_together(const std::vector<Peer*>& peers, std::chrono::milliseconds timeout = std::chrono::seconds(30));
 
 } // namespace vehicle_sil

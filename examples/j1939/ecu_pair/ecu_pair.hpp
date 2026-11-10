@@ -4,13 +4,15 @@
 // speed request, and a cab that shows the engine speed, notices when the engine goes silent,
 // asks for a speed and reads the engine's software identification.
 //
-// The install functions take a j1939::Network&: the same code runs on a SIL Kit participant
-// (vehicle_sil::Peer) and on the local virtual bus of the tests (testkit::LocalCan).
+// The install functions take a vehicle_sil::Ecu&: the same code runs on virtual buses and on SIL
+// Kit (vehicle_sil::Simulation), on a Peer, and in a testkit::LocalCan. They also set up the
+// periodic step of the model.
 // The messages (ecu_pair_messages.yaml) are typed values generated from YAML: no bit or byte
 // handling here.
 #pragma once
 
 #include "ecu_pair_messages.hpp"
+#include "vehicle_sil/ecu/ecu.hpp"
 #include "vehicle_sil/j1939/codec_node.hpp"
 #include "vehicle_sil/j1939/identification.hpp"
 #include "vehicle_sil/j1939/monitor.hpp"
@@ -46,7 +48,7 @@ struct EngineModel
     std::uint16_t rpm = 0;
     std::uint16_t requested = 800;
 
-    /// Every 10 ms: 25 rpm closer to the request.
+    /// Called every 10 ms: 25 rpm closer to the request.
     void tick() noexcept
     {
         rpm = rpm < requested ? static_cast<std::uint16_t>(std::min<int>(requested, rpm + 25))
@@ -64,27 +66,30 @@ struct Dashboard
     std::uint16_t wanted_rpm = 1500;
 };
 
-inline j1939::Node& install_engine(j1939::Network& can, EngineModel& engine)
+/// The engine on the network J1939_CAN of `ecu`; `engine` steps every 10 ms.
+inline j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
 {
-    auto& ecu = can.add_node({.address = kEngineAddress, .name = kEngineName});
-    codec::attach_sender<EngineStatus>(ecu, 20ms, [&engine](EngineStatus& m) {
+    auto& node = ecu.j1939("J1939_CAN").add_node({.address = kEngineAddress, .name = kEngineName});
+    ecu.every(10ms, [&engine](vehicle_sil::SimTime) { engine.tick(); });
+    codec::attach_sender<EngineStatus>(node, 20ms, [&engine](EngineStatus& m) {
         m.speed.set(engine.rpm);
         m.state.set(engine.rpm > 0 ? EngineStatus::State::running : EngineStatus::State::stopped);
     });
-    codec::on_message<SpeedRequest>(ecu, [&engine](const SpeedRequest& m) {
+    codec::on_message<SpeedRequest>(node, [&engine](const SpeedRequest& m) {
         if (const auto rpm = m.speed.value()) // not when the cab sends "not available"
         {
             engine.requested = static_cast<std::uint16_t>(*rpm);
         }
     });
     const std::string software[] = {"ENGINE", "1.0.3"};
-    ecu.attach<j1939::Identification>().set_software_identification(software);
-    return ecu;
+    node.attach<j1939::Identification>().set_software_identification(software);
+    return node;
 }
 
-inline j1939::Node& install_cab(j1939::Network& can, Dashboard& dash)
+/// The cab on the network J1939_CAN of `ecu`.
+inline j1939::Node& install_cab(vehicle_sil::Ecu& ecu, Dashboard& dash)
 {
-    auto& cab = can.add_node({.address = kCabAddress, .name = kCabName});
+    auto& cab = ecu.j1939("J1939_CAN").add_node({.address = kCabAddress, .name = kCabName});
     cab.attach<j1939::Monitor>(
         kPgnEngineStatus,
         j1939::MonitorOptions{.name = kEngineName,

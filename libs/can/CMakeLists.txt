@@ -1,9 +1,11 @@
 # vehicle_sil::can - backend-neutral CAN: frame values, the port contract, the host that steps
-# protocol stacks, the virtual-time step driver, the virtual bus and the real-time driver.
+# protocol stacks, raw frames of an application (RawChannel), the virtual-time step driver, the
+# virtual bus and the real-time driver.
 # Must build without SIL Kit and Vector XL: link only vehicle_sil::sim_base.
 add_library(vehicle_sil_can STATIC
   src/bus_model.cpp
   src/host.cpp
+  src/raw_channel.cpp
   src/real_time.cpp
   src/step_driver.cpp
   src/tap_port.cpp
