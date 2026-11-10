@@ -14,8 +14,10 @@ vehicle-sil/
 ├── libs/can_silkit/  vehicle_sil::can_silkit  vehicle_sil::can のポートの SIL Kit 実装（仮想時間と実時間。開発中）
 ├── libs/can_netsim/  vehicle_sil::can_netsim  簡易 CAN Network Simulator（SIL Kit の Network Simulator API。開発中）
 ├── libs/j1939/       vehicle_sil::j1939  J1939 スタック（vehicle_sil::can の上。SIL Kit に依存しない）と、そのプロトコル部品（parts/）、型付きメッセージ（codec/。開発中）
-├── libs/testkit/     vehicle_sil::testkit  仮想バスの上の J1939 の試験の組み立て、記録、故障注入（SIL Kit に依存しない。開発中、内部向け）
-├── libs/peer/        vehicle_sil::peer   1 つの participant と、その J1939 と LIN のノードの組み立てと実行（開発中、内部向け）
+├── libs/ecu/         vehicle_sil::ecu    ECU のアプリケーションを組み立てる入口 Ecu（ヘッダーのみ。SIL Kit に依存しない。開発中）
+├── libs/testkit/     vehicle_sil::testkit  仮想バスの上の ECU と J1939 の試験の組み立て、記録、故障注入（SIL Kit に依存しない。開発中、内部向け）
+├── libs/peer/        vehicle_sil::peer   1 つの participant と、その J1939 と LIN のノードの組み立てと実行。Ecu の実装（開発中、内部向け）
+├── libs/simulation/  vehicle_sil::simulation  ECU を仮想バスか SIL Kit で動かす Simulation（開発中）
 ├── libs/control/     vehicle_sil::control、peer_control  Control Agent と Control Server の中核（Hub）。通信と SIL Kit に依存しない
 ├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（ControlServer、AgentClient。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
 ├── proto/            Control API の定義（vehicle_sil/control/v1/control.proto）
@@ -26,7 +28,9 @@ vehicle-sil/
 ├── tools/can_bus_simulator/ 簡易 CAN Network Simulator の実行ファイル（vehicle_sil_can_bus_simulator）
 ├── tools/control_server/ Control Server と system controller を兼ねる実行ファイル（vehicle_sil_control_server）
 ├── tools/j1939_codegen/ YAML の定義から J1939 の型付きメッセージ（C++ のヘッダー）を作る生成器（Python。ビルドのときに vehicle_sil_add_j1939_codec() が呼ぶ）
-├── examples/j1939/   部品で作った 2 つの ECU（ecu_pair。試験も同じコードを使う）と、最小ピア（実時間の Peer で送る sender と、SIL Kit の CAN で直接受けて照合する receiver）
+├── examples/getting_started/ 最初の例: Ecu& を受け取る 2 つの ECU を Simulation で動かす
+├── examples/         やりたいこと別のサンプル（typed_messages、pid_stream、fault_injection、vehicle、low_level など。索引は examples/README.md）
+├── examples/j1939/   部品で作った 2 つの ECU（ecu_pair。Simulation で動かし、試験も同じコードを使う）と、最小ピア（実時間の Peer で送る sender と、SIL Kit の CAN で直接受けて照合する receiver）
 ├── examples/virtual_time/ 仮想時間のピア（Peer の上の物理モデル、tick() 型の既存 ECU を載せた J1939 ECU、LIN Master と Slave）
 ├── examples/lin/     LIN クラスタのピア（Master と、役割の違う Slave。フレームの送受信と Sleep/Wakeup）
 ├── examples/control/  Control Agent を組み込んだピア（control_peer）と、1 プロセスのデモ（control_demo）
@@ -41,7 +45,7 @@ vehicle-sil/
 
 | ターゲット | 依存先 | 内容 |
 |---|---|---|
-| `vehicle_sil::sim_base` | スレッドライブラリ（`Threads::Threads`） | `SimTime` と `SimDuration`、`StepInbox`（ヘッダーのみ。SIL Kit なしで使う） |
+| `vehicle_sil::sim_base` | スレッドライブラリ（`Threads::Threads`） | `SimTime` と `SimDuration`、`StepInbox`、`periodic()`（ヘッダーのみ。SIL Kit なしで使う） |
 | `vehicle_sil::core` | `SilKit::SilKit`、`vehicle_sil::sim_base` | `vehicle_sil::ParticipantRuntime`、`SimulationController`、`TickScheduler`、`RealTimePacer`。`sim_base` の型も使える |
 | `vehicle_sil::lin` | `vehicle_sil::core` | `vehicle_sil::lin::LinMaster`、`vehicle_sil::lin::LinSlave`、`LinScheduleTable` と `validate_schedule()` |
 | `vehicle_sil::can`（開発中） | `vehicle_sil::sim_base` | `vehicle_sil::can::Frame`、`Port`、`Steppable`、`Host`、`StepDriver`、`RealTimeDriver`、`VirtualCanBus`、`CanBusModel`、`TapPort`（「CAN の共通基盤」） |
@@ -51,8 +55,10 @@ vehicle-sil/
 | `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics`（開発中） | `vehicle_sil::j1939`（`j1939_diagnostics` は `j1939_broadcast_suppression` にも依存） | プロトコル部品の `BroadcastSuppression`（DM13）、`Diagnostics`、`Identification`（「プロトコル部品」） |
 | `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`、`vehicle_sil::j1939_exchange`（開発中） | `vehicle_sil::j1939`（`j1939_periodic_sender` は `j1939_broadcast_suppression` にも依存） | ECU アプリ向けのプロトコル部品 `PeriodicSender`、`Requester`、`Monitor`、`AddressCommander`、独自プロトコル向けの `Exchange`（「プロトコル部品」、[j1939-guide.md](j1939-guide.md)） |
 | `vehicle_sil::j1939_codec`（開発中、ヘッダーのみ） | `vehicle_sil::j1939`、`vehicle_sil::j1939_periodic_sender` | 型付きメッセージのランタイム（`codec.hpp`。エンジンの値の型だけを使う）と、ノードと `PeriodicSender` への接続（`codec_node.hpp`）。型は `vehicle_sil_add_j1939_codec()` が YAML から生成する（「型付きメッセージ」、[j1939-codec.md](j1939-codec.md)） |
-| `vehicle_sil::testkit`（開発中、内部向け） | `vehicle_sil::can`、`vehicle_sil::j1939` | `vehicle_sil::testkit::LocalCan`、`J1939Events`、`FrameLog`、`faults`（「実行と試験の基盤」） |
-| `vehicle_sil::peer`（開発中、内部向け） | `vehicle_sil::core`、`vehicle_sil::can_silkit`、`vehicle_sil::j1939`、`vehicle_sil::lin` | `vehicle_sil::Peer`、`start_together()`（「実行と試験の基盤」） |
+| `vehicle_sil::ecu`（開発中、ヘッダーのみ） | `vehicle_sil::can`、`vehicle_sil::j1939` | `vehicle_sil::Ecu`、`detail::OwnedObjects`（「実行と試験の基盤」） |
+| `vehicle_sil::testkit`（開発中、内部向け） | `vehicle_sil::can`、`vehicle_sil::j1939`、`vehicle_sil::ecu` | `vehicle_sil::testkit::LocalCan`、`J1939Events`、`FrameLog`、`faults`（「実行と試験の基盤」） |
+| `vehicle_sil::peer`（開発中、内部向け） | `vehicle_sil::core`、`vehicle_sil::can_silkit`、`vehicle_sil::j1939`、`vehicle_sil::lin`、`vehicle_sil::ecu` | `vehicle_sil::Peer`、`start_together()`（「実行と試験の基盤」） |
+| `vehicle_sil::simulation`（開発中） | `vehicle_sil::ecu`、`vehicle_sil::peer`、`vehicle_sil::testkit` | `vehicle_sil::Simulation`、`SilKitOptions`、`SimulationError`（「実行と試験の基盤」） |
 | `vehicle_sil_sim_controller`（実行ファイル） | `vehicle_sil::core` | system controller の CLI |
 | `vehicle_sil::control`（開発中） | `vehicle_sil::sim_base` | `vehicle_sil::control::Agent`、`Hub`（「外部操作（Control API）と GUI」） |
 | `vehicle_sil::peer_control`（開発中） | `vehicle_sil::control`、`vehicle_sil::peer` | `vehicle_sil::control::attach()`（Agent を Peer のステップで動かす） |
@@ -81,7 +87,9 @@ vehicle-sil/
 | `vehicle_sil::StepInbox` | SIL Kit のスレッドで届いたメッセージをステップの境界までため、決まった順序で渡す |
 | `vehicle_sil::TickScheduler` | 1 つの participant の中で、固定周期のタスク（既存 ECU の `tick()` など）をステップから呼ぶ |
 | `vehicle_sil::RealTimePacer` | 仮想時間を壁時計に一定の比率で結合するための待ち時間を計算する |
-| `vehicle_sil::Peer` | 1 つの participant と、その J1939 の `Network`、LIN の Master と Slave、ステップごとのアプリの処理を組み立てて動かし、正しい順序で片付ける（「実行と試験の基盤」） |
+| `vehicle_sil::Ecu` | ECU のアプリケーションを組み立てる入口（J1939 の `Network`、生の CAN、ステップごとの処理、ECU が持つオブジェクト）。`Peer` と `LocalCan` の ECU が実装する（「実行と試験の基盤」） |
+| `vehicle_sil::Simulation` | `Ecu` を仮想バスか SIL Kit の仮想時間で動かし、失敗を `SimulationError` で報告する（「実行と試験の基盤」） |
+| `vehicle_sil::Peer` | 1 つの participant と、その J1939 の `Network`、LIN の Master と Slave、ステップごとのアプリの処理を組み立てて動かし、正しい順序で片付ける。`Ecu` を実装する（「実行と試験の基盤」） |
 | `vehicle_sil::lin::LinMaster` | LIN のスケジュールテーブルを仮想時間で実行し、ヘッダーごとの結果（応答の衝突は Error）を返す。Master が送るフレーム、診断のマスターリクエスト、go-to-sleep コマンド、wakeup パルスを送る |
 | `vehicle_sil::lin::LinSlave` | ステップで設定された値で Master のヘッダーに応答し（診断のスレーブレスポンスは 1 回だけ）、Master が送るフレームを受信する。休止と起床の状態を管理する |
 
@@ -377,7 +385,7 @@ Vector SIL Kit Network Simulator との差し替え:
 
 ### NAME と Address Claim
 
-- `Name` は 64 ビットの NAME です。下位ビットから、Identity Number（21 ビット）、Manufacturer Code（11）、ECU Instance（3）、Function Instance（5）、Function（8）、予約（1）、Vehicle System（7）、Vehicle System Instance（4）、Industry Group（3）、Arbitrary Address Capable（1）です。値が小さいほど優先されます（最上位の Arbitrary Address Capable のビットが立った NAME は、立っていない NAME より常に低い優先度です）。バス上では 8 バイトで、下位バイトが先です。
+- `Name` は 64 ビットの NAME です。下位ビットから、Identity Number（21 ビット）、Manufacturer Code（11）、ECU Instance（3）、Function Instance（5）、Function（8）、予約（1）、Vehicle System（7）、Vehicle System Instance（4）、Industry Group（3）、Arbitrary Address Capable（1）です。値が小さいほど優先されます（最上位の Arbitrary Address Capable のビットが立った NAME は、立っていない NAME より常に低い優先度です）。バス上では 8 バイトで、下位バイトが先です。 例と試験で使う Manufacturer Code `0x7F0` は仮の値です。実際の ECU には、その製造者に割り当てられた値を設定します。
 - `NodeOptions::name` を指定したノードは、`address` を要求します。任意アドレス可能（Arbitrary Address Capable）な NAME なら、`address` に 254 を指定でき、そのときは任意アドレスの範囲（下）の最初の空きを要求します。状態は `Node::address_state()` で読めます（`NotStarted`、`Claiming`、`Claimed`、`CannotClaim`。NAME のないノードは `Fixed`）。
 - 開始: ノードが加わった最初のステップで、そのステップのフレームを処理した後に、Address Claimed（優先度 6、宛先グローバル、データは NAME）を送ります。事前に Request for Address Claimed は送りません。
 - 要求の後の待ち: 送ったステップの時刻から 250 ms の間（`Claiming`）、そのノードが送るもの（`send()`、`request()`、Request への応答、ACK/NACK）をノードの保留領域（`NetworkOptions::hold_capacity`、既定 16 件）に持ち、待ちが明けたステップで、その時点のアドレスで送ります。保留領域があふれた `send()` は `QueueFull` です。Address Claim の手順のフレーム（Address Claimed、Cannot Claim、Request for Address Claimed とその応答）は待ちません。例外として、任意アドレス不可で、アドレスが 0〜127 か 248〜253 のノードは待ちません（`Claiming` の間もすぐに送ります）。待ちの終わりは予定のタイマーなので、期限以後の時刻に競合する Address Claimed が届き、それが期限と同じステップで処理される場合は、ステップ幅によって、保留を送ってから負けるか、先に負けて保留を捨てるかが変わります（下の制限）。待ちが明けたときにデータキューがあふれていれば、`send()` が `Ok` を返したメッセージでも捨てて数えます（`held_dropped`）。
@@ -617,17 +625,61 @@ PG の信号を YAML で定義し、ビルドのときに C++ の型を生成し
 
 ## 実行と試験の基盤（開発中、内部向け）
 
-J1939 と LIN のノードを動かす participant と、試験の組み立てです。どちらもエンジン（`vehicle_sil::j1939`）の公開 API だけを使います（CTest の `testkit.boundary` と `peer.boundary` が、内部ヘッダーや試験用の入口を使っていないことを確かめます）。API はまだ変わることがあり、外部向けの公開範囲は決めていません。
+この節で扱うのは、ECU のアプリケーションの入口（`Ecu`）、J1939 と LIN のノードを動かす participant（`Peer`）、試験の組み立て（`LocalCan`）、それらを選んで動かす `Simulation` です。`Peer` と `LocalCan` は、どちらもエンジン（`vehicle_sil::j1939`）の公開 API だけを使います（CTest の `testkit.boundary` と `peer.boundary` が、内部ヘッダーや試験用の入口を使っていないことを確かめます）。API はまだ変わることがあり、外部向けの公開範囲は決めていません。
+
+### ECU の入口（`vehicle_sil::Ecu`）
+
+ECU のアプリケーションを組み立てる入口です（`vehicle_sil::ecu`、ヘッダーのみ、SIL Kit なし）。`Peer`（SIL Kit の participant）と `testkit::LocalCan::add_ecu()`（仮想バスのホスト）が実装するので、`Ecu&` を受け取る関数やクラスは、どちらの上でも同じコードで動きます。
+
+```cpp
+class Engine {
+public:
+    explicit Engine(vehicle_sil::Ecu& ecu) {
+        auto& node = ecu.j1939("J1939_CAN").add_node({.address = 0x00, .name = kName});
+        codec::attach_sender<EngineStatus>(node, 20ms, [this](EngineStatus& m) { m.speed.set(rpm_); });
+        ecu.every(10ms, [this](vehicle_sil::SimTime) { tick(); });
+    }
+};
+```
+
+- 組み立て: `j1939(network, NetworkOptions)`（J1939 の `Network`）、`can(network, RawChannelOptions)`（生の CAN）、`on_step(fn)`、`every(period, fn)`、`emplace<T>(args...)`。どれも実行の開始前にだけ呼べます。開始後に呼ぶと `std::logic_error` です。`j1939()` と `can()` は、ECU ごとにネットワーク名を 1 回だけ使えます（2 回目は `std::invalid_argument`）。`emplace` は開始後に呼ぶと、`T` を作らずに `std::logic_error` を投げます。`j1939("")` と `can("")`（空のネットワーク名）は、どちらの実装でも `std::invalid_argument` です。`T` のコンストラクターが例外を投げたときは、その例外が伝わり、`T` は ECU に残りません。ただし、コンストラクターが ECU に足したもの（ネットワーク、ノード、ハンドラ、関数）は残ります。
+- 1 ステップの順序: `j1939()` と `can()` で作ったもの（足した順）が受信して処理 → `on_step` と `every` の関数（足した順）→ 同じ順で送信。片方のハンドラから他方へ送ると、同じステップで出ます（ゲートウェイは、ネットワークを 2 つ持つ ECU です）。
+- 所有と破棄: ECU がネットワーク（部品が先）、生チャネル、`emplace` したオブジェクトを持ち、返す参照は ECU の寿命まで有効です。破棄の順は、ネットワーク、生チャネル、`emplace` したオブジェクト（最後に足したものから先）です。ハンドラや部品は、`emplace` したオブジェクトを破棄の間も参照できます。
+- `every(period, fn)` は、0、period、2 period … の時刻以後の最初のステップで呼びます（1 ステップに 1 回まで。period がステップ幅の倍数でなくてもよい）。規則は `vehicle_sil::periodic()`（`core/periodic.hpp`）の 1 か所にあり、`Peer` と `LocalCan` の ECU が共用します。`TickScheduler` と違って、周期とステップ幅の関係を検査しません。
+- 生の CAN（`can::RawChannel`）は、J1939 でないプロトコルの土台です。`on_frame(handler)` で受け、`send(frame)` で送ります。`send()` はステップの中でだけ呼べます（それ以外は `std::logic_error`）。結果は `RawSendStatus`（`Ok`、`QueueFull`、`InvalidFrame`）です。送ったフレームは、そのステップの最後に、送った順に、ステップの時刻で出ます。上限は 1 ステップあたり送信 64、受信 1024 です（`RawChannelOptions`）。超えた分は数えて捨てます。再試行はしません。自分が送ったフレームは受けません。同じ ECU が同じネットワーク名で `j1939()` と `can()` を持つと、別のコントローラーとして互いのフレームを受けます。受けるのは次のステップですが、時刻は送ったステップのものです。J1939 のネットワークは 11 ビットのフレームを無視します。ただし、`Peer` の J1939 のネットワークが利用者のポート（`j1939(name, port)`。Vector XL など）の上にあるときは、別のバスになります。生チャネルは常に SIL Kit の上にあるためです。違う送り手から同じ時刻に届いたフレームの順は、SIL Kit では他の participant のスレッド次第で、仮想バスでは `StepDriver` の順です。`RawChannel` は並べ替えません。
+- 型の形: `j1939()` と `can()` は非仮想の関数で、実装は private の仮想関数（`add_j1939`、`add_can`）で行います。`Peer` には、引数が `J1939ChannelOptions` の `j1939(name, ...)` が別にあります。この宣言が基底クラスの同じ名前の関数を隠すので、`Peer&` から呼べる `j1939` は `Peer` のものだけです。`NetworkOptions` を渡す `j1939(network, NetworkOptions)` は `Ecu&` を通して使います。
+- LIN は `Ecu` にありません。LIN の型（`lin_types.hpp`）が SIL Kit のヘッダーを含み、`vehicle_sil::ecu` と `testkit` を SIL Kit から独立に保てなくなるためです。LIN は `Peer` の `lin_master()`、`lin_slave()` を使います（`Simulation` からは `peer(name)`）。
+- スレッド: 組み立ては 1 つのスレッドから行います。ステップは実装のスレッドで走り、関数、ハンドラ、部品もそこで呼ばれます。
+
+### `Simulation`（`vehicle_sil::Simulation`）
+
+`Ecu` を、プロセス内の仮想バスか、SIL Kit の participant として仮想時間で動かし、失敗を例外で報告します（`vehicle_sil::simulation`。ヘッダーは SIL Kit のヘッダーを含みません）。動かす場所はコンストラクターで選び、ECU のコードは変わりません。
+
+| | `Simulation()` | `Simulation(SilKitOptions)` |
+|---|---|---|
+| ECU の実体 | `LocalCan::add_ecu()` のホスト。`run_for()` を呼んだスレッドで進む | `Peer`（Coordinated、仮想時間、ECU の名前の participant）。SIL Kit のスレッドで進む |
+| `run_for(d)` | 何度でも呼べて、続きから進む | 1 回だけ。2 回目と、`controller = false` では `std::logic_error` |
+| `run()` | `std::logic_error` | 誰が終わらせてもよい simulation の終わりまで待つ（1 回だけ） |
+| 取り出す | `local()`: `LocalCan` | `peer(name)`: `Peer`、`registry_uri()` |
+
+- `run_for(d)`（d > 0）は、終わりの時刻（仮想バスでは今の時刻から `d` 進めた時刻）より前に始まるステップだけを動かします。SIL Kit では、controller の停止が届くまで他の participant が stop_at 以降のステップを走らせうるので、各 ECU に同じ上限を置き、仮想バスと同じ記録になるようにしています。
+- SIL Kit の `Simulation` が 1 回しか走らないのは、すべての participant を時刻の境界で止めても、その境界のステップが走っていることがあるためです。メインスレッドからモデルを読むと競合し、仮想バスとは境界のステップが 1 つずれます。止めながら確かめる試験は、仮想バスで行います。
+- 失敗: ECU のステップの例外は `SimulationError` で（`local()` から足した ECU の失敗も同じです）、`what()` は失敗した ECU ごとの `<ECU 名>: <理由>` を `; ` で区切ったものです。仮想バスでは、失敗した後の `run_for()` も `SimulationError` です。SIL Kit は、participant が失敗しても simulation を終えず、仮想時間が止まるだけです。そのため `run_for()` と `run()` は、短い間隔で失敗を見張り、見つけたら simulation を終えて `SimulationError` を投げます。全体の時間切れはありません。始めるときの例外（必要な participant がそろわない、`start_timeout`）は、全部を止めてからそのまま伝えます。SIL Kit では、`run_for()` は全 participant が止まった後に戻ります。ステップが書いたものはそれから読めます。
+- `run()` で `controller = true` のとき、Error で離脱した participant はすぐ失敗にします。Error 以外で離脱した participant が、数秒のうちに simulation を終えなければ、それも失敗です（`request_stop()` で終わる simulation を、誤って失敗にしないためです）。`controller = false` では、外の controller の仕事は見ず、このプロセスの ECU の失敗だけを見ます。
+- `SilKitOptions`: `registry_uri`（空ならコンストラクターがプロセス内に registry を立てる）、`controller`（既定 `true`。participant 名 `SimulationController`）、`other_participants`（始める前にそろうべき他の Coordinated な participant。`controller` が `true` のときだけ。空、重複、`SimulationController` は `std::invalid_argument`）、`start_timeout`（既定 30 秒）。`add_ecu()` は、空の名前、使用済みの名前、controller と `other_participants` の名前を `std::invalid_argument` にします。`SimulationController` という名前は、`controller = false` でも、仮想バスでも拒否します。ECU が 1 つもないまま `run_for()` と `run()` を呼ぶと、どちらの実装でも `std::logic_error` です。
+- `add<App>(name, step, args...)` は、`add_ecu()` と、`App{ecu, args...}` を ECU に持たせる `emplace` です。`App` のコンストラクターが例外を投げると、その例外が伝わり、その `Simulation` は使えなくなります。コンストラクターが ECU に足したものが、破棄された `App` を参照しうるためです。以後の `add_ecu()`、`add()`、`run_for()`、`run()` は、ECU の名前を添えた `std::logic_error` です。
+- 所有と破棄: `Simulation` が ECU とその持ち物を持ち、返す参照は `Simulation` の寿命まで有効です。破棄は、後から足した ECU から先に ECU を壊し、次に controller、最後にプロセス内の registry です。デストラクターは全部を止め、例外を投げません。
+- スレッド: `Simulation` の関数は 1 つのスレッドから呼びます。SIL Kit では、ステップは SIL Kit のスレッドで走ります（`Peer` と同じ）。
 
 ### Peer（`vehicle_sil::Peer`）
 
-1 つの SIL Kit participant と、その中で動くもの（CAN の上の J1939 の `Network`、LIN の Master と Slave、ステップごとのアプリの処理）をまとめて作り、動かし、正しい順序で片付けます。
+1 つの SIL Kit participant と、その中で動くもの（CAN の上の J1939 の `Network` と生の CAN、LIN の Master と Slave、ステップごとのアプリの処理）をまとめて作り、動かし、正しい順序で片付けます。`Ecu` を実装するので、`Ecu&` を受け取る ECU のコードを、そのまま載せられます。
 
 ```cpp
-EngineModel model;                                     // ハンドラが使うものは Peer より先に宣言する
 vehicle_sil::Peer peer({.participant = "Engine", .registry_uri = uri,
                         .lifecycle = vehicle_sil::LifecycleMode::Coordinated,
                         .virtual_time = vehicle_sil::VirtualTimeOptions{.step = 10ms}});
+auto& model = peer.emplace<EngineModel>();             // Peer が持つ。ハンドラが参照してよい（Peer より先に宣言してもよい）
 auto& ecu = peer.j1939("J1939_CAN1").add_node({.address = 0x00, .name = name});
 ecu.on_message(kPgnTsc1, [&](const j1939::Message& m) { model.set_request(m.data); });
 peer.every(100ms, [&](SimTime) { static_cast<void>(ecu.send(kPgnEec1, model.encode())); });
@@ -635,13 +687,13 @@ peer.start();
 peer.wait();
 ```
 
-- `j1939(network)` は SIL Kit の CAN コントローラ、`SilKitCanPort`、`TapPort`、`Network` を作ります（`tap(name)` で生フレームを観測できます。`network_names()` は追加した順の名前の一覧）。`j1939(name, port)` は利用者が作ったポート（Vector XL の `ExternalPortAdapter` など）を受け取り、Peer が所有します。`lin_master(network, schedule, ...)` と `lin_slave(network, options, ...)` は LIN のノードを作り、communication ready の通知で `init()` を呼びます。`on_step(fn)` は毎ステップ、`every(period, fn)` は 0、period、2 period … の時刻以後の最初のステップで呼びます（1 ステップに 1 回まで）。
-- 1 ステップの順序: J1939 の各 `Network` の受信と処理（追加した順）→ アプリの処理（`on_step` と `every`、追加した順）→ LIN のノードの `step(now)`（追加した順）→ J1939 の送信。制御のフック（`set_control(before, after, stopping)`、制御の Agent が使う）は、アプリの処理の直前と、LIN の処理の直後に呼ばれます（`on_step` をいつ足したかによりません）。`stopping` は `stop()`（と破棄）の始めに 1 回呼ばれます。アプリが出した LIN の要求（`set_frame_data()`、`set_response()`）は同じステップから効き、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます。
+- `j1939(network)` は SIL Kit の CAN コントローラ、`SilKitCanPort`、`TapPort`、`Network` を作ります（`tap(name)` で生フレームを観測できます。`network_names()` は追加した順の名前の一覧）。`j1939(name, port)` は利用者が作ったポート（Vector XL の `ExternalPortAdapter` など）を受け取り、Peer が所有します。`lin_master(network, schedule, ...)` と `lin_slave(network, options, ...)` は LIN のノードを作り、communication ready の通知で `init()` を呼びます。`on_step(fn)` は毎ステップ、`every(period, fn)` は 0、period、2 period … の時刻以後の最初のステップで呼びます（1 ステップに 1 回まで。`vehicle_sil::periodic()` の規則）。`can(network)` の生の CAN は、SIL Kit の CAN コントローラ（名前は `<network>.raw`）を 1 つ作ります。`network()`、`network_names()`、`tap()`、`silkit_port()` は J1939 だけです。生の CAN のコントローラ名 `<network>.raw` が、同じ Peer の他のコントローラ名と重なると `std::invalid_argument` です。J1939 のコントローラ名どうしの重なりも拒否します。
+- 1 ステップの順序: J1939 の各 `Network` と生の CAN の受信と処理（追加した順）→ アプリの処理（`on_step` と `every`、追加した順）→ LIN のノードの `step(now)`（追加した順）→ J1939 と生の CAN の送信。制御のフック（`set_control(before, after, stopping)`、制御の Agent が使う）は、アプリの処理の直前と、LIN の処理の直後に呼ばれます（`on_step` をいつ足したかによりません）。`stopping` は `stop()`（と破棄）の始めに 1 回呼ばれます。アプリが出した LIN の要求（`set_frame_data()`、`set_response()`）は同じステップから有効になり、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます。
 - 時間のモード: `virtual_time` があれば SIL Kit の時間同期で回します（J1939 と LIN）。なければ実時間で、Peer が `RealTimeDriver` と時計（`SteadyRealTimeClock`、または `PeerOptions::real_time_clock`）を持ち、SIL Kit の CAN ポートを実時間にします（J1939 だけ。LIN は `std::logic_error`）。外部のポートの時間の領域が Peer と違えば `std::logic_error` です。SIL Kit を持たない構成（XL だけ）はありません。
 - lifecycle: `Coordinated` では `SimulationController` が開始と停止を決めます。1 つのプロセスで複数の Peer と controller を起動するときは `start_together(controller, {&a, &b})` を使います。`Autonomous` では、`stop()` か `request_stop()`（ステップの中から）で止まります。lifecycle が Running になる前（`start()` の前や、ほかの participant を待っている間）の `request_stop()` は保っておき、仮想時間では最初のステップで、実時間では Running になったときに渡します（SIL Kit は Running の前の停止を無視するため）。仮想時間で最初のステップまで待つのは、最初のステップには時刻で同期するすべての participant が時刻を始めている必要があるからです。まだ Running でない participant を残して止めると、その participant が止まれなくなることがあります（controller が仮想時間を使わない構成では、controller はこの同期に入らないので保証しません）。仮想時間では Running になった後でも最初のステップの前の要求は最初のステップまで待ち（ふつうはすぐ来る）、Error のときはすぐ渡します。`stop()` は最初のステップを待たずに渡します。Coordinated では、ほかの participant の `start()` が、自分の最初のステップの前にシミュレーションの終わりを見て、開始の失敗として例外を投げることがあります。実時間で `start()` が時間切れで投げた後に Running になったときは、保った要求は渡らないので `stop()` で止めます。複数の participant を同じ時刻から決定的に動かすときは `Coordinated` にします（`Autonomous` の participant どうしは、開始の時刻がそろうとは限りません）。仮想時間で `virtual_time.end` があれば（0 より後であること）、end の前の最後のステップの後で自分で止まります。`wait()` は lifecycle の終わりを待ちます。`failed()` と `error()` は、ステップ（ホスト、アプリ、LIN、ポート）、ステップのハンドラ、実時間のドライバーの失敗を返します。仮想時間でステップが失敗すると participant は Error になり、`wait()` が戻ります。実時間ではドライバーが止まるだけで lifecycle は続き、`wait()` はその失敗では戻らないので、`failed()` を見て `stop()` します。
-- 複数の ECU の組み立ては、`Network&` を受け取る関数に書くと、同じコードを `Peer` と `testkit::LocalCan` の両方で使えます（例: `examples/j1939/ecu_pair`。試験で両者の結果が同じことを確かめています）。
-- 組み立て（`j1939`、`lin_*`、`on_step`、`every`）は `start()` の前だけです（後は `std::logic_error`）。ノード、ハンドラ、部品、Observer、`TapPort` のリスナーも `start()` の前に付けます（ノードは `Network::add_node()` の規則どおりステップの中からも足せます）。
-- 所有と破棄: Peer が participant、コントローラ、ポート、`Network`、LIN のノードを持ち、返す参照は Peer の寿命まで有効です。`stop()`（と破棄）は、ステップを止め（実時間ではドライバー、続いて lifecycle。仮想時間では lifecycle。以後ステップは来ません）、SIL Kit のポートを閉じます。`stop()` の後も `Network` は残るので、統計や記録を読めます。破棄では続いて LIN のノード、`Network`（部品が先）、`TapPort`、ポート（外部のポートはそのデストラクタで閉じます）、ホストを破棄し、最後に participant を破棄します。
+- 複数の ECU の組み立ては、`Ecu&` を受け取る関数やクラスに書くと、同じコードを `Peer` と `testkit::LocalCan` の両方で使えます（例: `examples/j1939/ecu_pair`。試験で両者の結果が同じことを確かめています）。`Simulation` は、これを 1 行で選べるようにしたものです。
+- 組み立て（`j1939`、`can`、`lin_*`、`on_step`、`every`、`emplace`）は `start()` の前だけです（後は `std::logic_error`）。ノード、ハンドラ、部品、Observer、`TapPort` のリスナーも `start()` の前に付けます（ノードは `Network::add_node()` の規則どおりステップの中からも足せます）。
+- 所有と破棄: Peer が participant、コントローラ、ポート、`Network`、LIN のノードを持ち、返す参照は Peer の寿命まで有効です。`stop()`（と破棄）は、ステップを止め（実時間ではドライバー、続いて lifecycle。仮想時間では lifecycle。以後ステップは来ません）、SIL Kit のポートを閉じます。`stop()` の後も `Network` は残るので、統計や記録を読めます。破棄では続いて LIN のノード、`Network`（部品が先）、`TapPort`、ポート（外部のポートはそのデストラクタで閉じます）、生の CAN とそのポート、ホスト、participant を破棄し、最後に `emplace` したオブジェクト（最後に足したものから先）を破棄します。`emplace` したオブジェクトは participant より後に壊れるので、そのデストラクターは SIL Kit のサービスを使ってはいけません。
 - スレッド: 組み立て、`start()`、`wait()` は 1 つのスレッドから呼びます。ステップは SIL Kit のスレッド（仮想時間）かドライバーのスレッド（実時間）で動き、ハンドラ、アプリの処理、Observer、`TapPort` のリスナーもそこで呼ばれます（記録は `wait()` か `stop()` の後に読みます）。`stop()` は、ステップと SIL Kit のハンドラ以外のどのスレッドからでも呼べます（別のスレッドからは `start()` が戻った後）。同時の呼び出しは順に処理します（Peer の破棄は、他のスレッドの `stop()` が戻った後）。`request_stop()`、`failed()`、`error()` はステップの中を含めてどこからでも呼べます。
 
 ### 試験キット（`vehicle_sil::testkit`）
@@ -650,8 +702,8 @@ SIL Kit を使わずに、仮想バスと `StepDriver` の上で J1939 の試験
 
 ```cpp
 testkit::LocalCan bus;                                           // 仮想バス + StepDriver
-install_engine(bus.add_j1939("engine", 10ms), model);            // Network&（自分のホストと端点）
-bus.add_j1939("rival", 5ms);
+install_engine(bus.add_ecu("engine", 10ms), model);              // Ecu&（自分のホストを持つ ECU。ネットワーク J1939_CAN）
+bus.add_ecu("rival", 5ms).j1939("J1939_CAN");                    // 同じ名前のネットワークは同じバス
 testkit::J1939Events events(bus.network("engine"));              // Observer
 testkit::FrameLog raw(bus.tap("engine"));                        // TapListener
 bus.endpoint("rival").set_fault_injector(
@@ -660,7 +712,10 @@ bus.run_until(SimTime{} + 1s);
 CHECK(events.has(j1939::EventKind::AddressChanged));
 ```
 
-- `LocalCan`: 1 つの `VirtualCanBus`（`VirtualCanBusOptions` でタイミングも選べる）と、その上の `Network` を持ちます。`add_j1939(name, step, options)` は、`Network` ごとに自分のホスト、ステップ幅、`TapPort` で包んだ端点を作ります（SIL Kit で participant を分けたときと同じ並びです）。名前で `network()`、`endpoint()`（故障注入と通信断）、`tap()`、`host()` を引きます。`on_step(name, fn)` はそのホストのアプリの処理です。`inject(time, frame)` は、どのネットワークも使わない専用の端点から生フレーム（11 ビットか 29 ビット）を送ります。時刻は `now()`（最後の `run_until()` の end）より前にできません。組み立ては最初の実行の前だけです（後は `std::logic_error`）。破棄は、後に足した `Network` から順に、ホスト、`Network`、`TapPort` で、最後にバスです。
+- `LocalCan`: `VirtualCanBus`（`VirtualCanBusOptions` でタイミングも選べる）をネットワーク名ごとに持ち、その上の ECU を持ちます。`add_ecu(name, step)` は `Ecu&` を返します。ECU ごとに自分のホストとステップ幅を持ちます（SIL Kit で ECU ごとに participant を分けたときと同じ構成です）。`Ecu::j1939(network)` は、名前 `network` のバス（なければコンストラクターのオプションで作る）に端点を足し、`TapPort` で包んで `Network` を作ります。同じ名前を使う ECU は同じバスを共有し、ECU は複数のバスに `Network` を持てます（ゲートウェイ）。`Ecu::can(network)` の生チャネルも、そのバスに自分の端点を持ちます。`LocalCan` は、名前のない 1 つのバス（`add_j1939(name, step, options)`、`inject(time, frame)`、`injector()`、`bus()`）か、名前のあるバス（`add_ecu(...).j1939(network)`、`.can(network)`）のどちらか一方だけを使います。最初に成功した使い方で決まり、もう一方を使うと `std::logic_error` です。生チャネルは、名前のあるバスにだけ置けます。`add_j1939()` は、名前のないバス（名前の検索では `""`）に J1939 のネットワークを 1 つ持つ ECU を作る略記です。
+- 参照: ECU の名前とネットワークの名前で、`network(ecu, network)`、`endpoint()`（故障注入と通信断）、`tap()`、`host(ecu)`、`ecu(name)` を引きます。ネットワークが 1 つの ECU には、ECU の名前だけの形も使えます（0 個や 2 個以上は `std::logic_error`）。生チャネルはこれらの対象に入りません。`bus(network)`、`injector(network)`、`inject(network, time, frame)` は名前のバスの形です。名前のあるバスを使う `LocalCan` で `bus()`、`injector()`、`inject(time, frame)` を呼ぶと `std::logic_error` です。ECU の名前の一覧は `ecu_names()` で取れます。`inject()` は、どのネットワークも使わない専用の端点から生フレーム（11 ビットか 29 ビット）を送ります。時刻は `now()`（最後の `run_until()` の end）より前にできません。`on_step(name, fn)` は ECU のアプリの処理を足します。
+- ステップ: `Ecu::on_step` と `every` は同じ列に、足した順に並びます。`every` は `vehicle_sil::periodic()` を通します。組み立て（`add_ecu`、`add_j1939`、ECU の `j1939()`、`can()`、`on_step()`、`every()`、`emplace()`）は最初の実行の前だけです（後は `std::logic_error`）。ホストは最初の実行で、足した順にドライバーへ登録されます。
+- 破棄の順は、後に足した ECU から順に、ホスト、`Network`（後に足したものから。各 `Network` の後にその `TapPort`）、生チャネル、`emplace` したオブジェクト（最後に足したものから先）です。その後にドライバー、最後にバスと端点を破棄します。
 - `J1939Events`（Observer）と `FrameLog`（TapListener）は、出来事と生フレームをコピーして持ちます。容量（既定 100000 件）を超えた分は持たずに数えます（`dropped()`）。問い合わせは種類（向き）と述語で数えたり取り出したりします（`count`、`of`、`first`、`last`）。
 - `faults`: 仮想バスの `FaultInjector` を作る小さな関数です。`when(pred, action)`、`between(from, until, action)`、`nth(n, action)`、`sequence({...})`、`first_of({...})` と、述語 `j1939_pgn(pgn)`、`j1939_source(sa)`、`can_id(id, format)` です。どれも、状態は選んだフレームの数だけなので決定的です。`nth` と `sequence` のコピーは数を共有するので、端点ごとに作ります。故障注入の仕組みそのものは仮想バスにあり（「仮想バス」の節）、試験キットは新しい注入の仕組みを持ちません。
 - LIN の仮想バスはありません。LIN の試験は `Peer` と in-process の registry で行います。
@@ -734,7 +789,7 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
 
 ### ビルド
 
-- XL バックエンドと実行ファイルは Windows 専用です。Vector の XL Driver Library（`vxlapi.h`、`vxlapi64.lib`）が必要です。
+- XL バックエンド（`vehicle_sil::vector_xl`）と実行ファイルは Windows 専用です。Vector の XL Driver Library（`vxlapi.h`、`vxlapi64.lib`）が必要です。
 - XL Driver Library は vehicle-sil に含めません。`VEHICLE_SIL_VECTOR_XL_DIR` で場所を指定します。
 - 見つからない場合は、ブリッジをビルドせずに続けます。`VEHICLE_SIL_REQUIRE_VECTOR_XL=ON` を指定すると、その場合に構成を失敗させます。
 - Linux のビルドに XL Driver Library は不要です。
@@ -903,7 +958,7 @@ LIN 2.x の診断用のフレームを、通常のフレームとは別の規則
 
 - 既存の ECU モデル（固定周期の `tick()` を持つ DLL など）は、ステップハンドラから `TickScheduler` で呼びます。
 - `TickScheduler` のタスクの周期とオフセットは、participant のステップ幅の倍数でなければなりません。そうでなければ `add()` が例外を投げます。周期がずれたまま黙って動くことはありません。
-- `Peer` の `every(period, fn)` でも呼べますが、`every` は周期とステップ幅の関係を検査しません（周期の時刻以後の最初のステップで、1 ステップに 1 回まで呼びます）。例の ECU は、周期がステップ幅の倍数であることを起動時に `on_step_grid()` で確かめてから `every` を使います。
+- `Ecu` の `every(period, fn)` でも呼べますが、`every` は周期とステップ幅の関係を検査しません（周期の時刻以後の最初のステップで、1 ステップに 1 回まで呼びます）。例の ECU は、周期がステップ幅の倍数であることを起動時に `on_step_grid()` で確かめてから `every` を使います。
 - 1 つの participant に、周期の違う複数のタスクを載せられます（例: ステップ 5 ms で、10 ms の `tick()` と 20 ms の診断タスク）。
 - ステップハンドラの中で動くので、次のことが言えます。
   - `tick()` の実行中、その participant のほかの SIL Kit ハンドラは呼ばれません。受信コールバックとの排他は不要です。
@@ -1047,7 +1102,7 @@ vehicle_sil::control::attach(peer, agent);               // start() の前
 - 書き込み（`Command`）: 1 つ以上の書き込みを、同じステップでまとめて反映します。`submit()` が名前、型、範囲、列挙、書き込めるかを確かめ、だめなら `Invalid` で何も積みません。整数の変数は整数か整数値の実数を、実数の変数は整数か有限の実数を受け付けます。整数の変数の最小と最大が型の範囲の外にあれば、登録のときに `std::invalid_argument` です。範囲外の値は丸めません（整数の範囲は整数のまま比べます）。`finish()` の後の `submit()` も `Invalid` です。
 - 反映の時刻: `Command::at` 以上の開始時刻を持つ最初のステップで、アプリの処理の前に反映します（アプリはそのステップで新しい値を見ます）。Peer では、J1939 の受信処理、ハンドラ、部品のタイマー（`PeriodicSender` の Encoder など）はアプリの処理より前に動くので、それらが新しい値を使うのは次のステップからです。`at` がなければ次のステップです。同じステップで反映するものは (at, seq) の順です（`at` のないものは、そのステップの時刻として並べます）。participant が `at` 以降に始まるステップを受け取る前に実行していれば、その操作は遅すぎます。既定では反映せずに `Late` を返し、`LatePolicy::ApplyNext` なら次のステップで反映して `late` を立てます。Parameter の書き込みは、最初のステップが始まった後の `submit()` なら `Invalid`、始まる前に積んで時刻が最初のステップより後なら `Rejected` です。関数で登録した入力の setter が投げたら、その操作は `Rejected` で、同じ操作の中で先に書いた値はそのまま残ります（ステップは失敗しません）。
 - 結果: キューに積んだ操作には、必ず 1 つの `CommandResult`（`Applied` と反映したステップの時刻、`Late`、`Rejected`、`Cancelled`）が返ります。シミュレーションが終わったら `finish()` で、残っている操作を `Cancelled` にします。`VirtualTimeOptions::end` 以降の時刻を指定した操作と、ステップが失敗した Peer への操作も、`finish()` まで確定しません。実時間の Peer では、`at` はその Peer のドライバーの時計の時刻です。
-- 値: ステップの終わり（Peer では LIN の処理の後）に、0、`sample_period`、2 `sample_period` … の時刻以後の最初のステップ（`Peer::every()` と同じ数え方。既定 10 ms、0 なら毎ステップ）で全変数を読み、`latest()` で最新の 1 組を返します。受け渡しは 3 つのバッファで、ロックはありません。
+- 値: ステップの終わり（Peer では LIN の処理の後）に、0、`sample_period`、2 `sample_period` … の時刻以後の最初のステップ（`Ecu::every()` と同じ数え方。既定 10 ms、0 なら毎ステップ）で全変数を読み、`latest()` で最新の 1 組を返します。受け渡しは 3 つのバッファで、ロックはありません。
 - スレッドと上限: ステップのスレッド（`on_step_begin`、`on_step_end`、`log`、`finish`。1 本）と通信の側（`submit`、`drain_results`、`drain_events`、`latest`、`stats`。互いにスレッド安全で、複数のスレッドから呼べる）で使います。ステップのスレッドは通信の側を待ちません。通信の側は、`finish()` の間と、実時間のドライバーを起こす `Host::post()` の短いロックを待つことがあります。`bind_driver()` に渡す起こしの関数の中から `submit()` と `clear_wakeup()` は呼びません。受け渡しは固定容量の SPSC リングです。処理中の操作（積んでから結果を `drain_results()` で受け取るまで）は `max_pending`（既定 256）までで、超えた `submit()` はすぐ `Busy` を返します。そのため結果は捨てません。出来事は `max_events`（既定 1024）までで、あふれたものは捨てて数えます。変数のアクセサはステップのスレッドだけで呼ぶので、モデルにロックは要りません。ステップのスレッドは通信のスレッドが持つロックを取りません（使い終えた操作の解放と、結果の理由の文字列の確保はステップのスレッドで行います。量は 1 ステップに `max_pending` まで）。
 - 決定論性: Agent は、反映の時刻を決めるだけで、ステップの並びとデータを変えません。Agent がない実行、Agent があって値を読み続けている実行で、通信の結果は同じです。時刻を指定した書き込みは、participant がその時刻以降に始まるステップを実行する前に届けば、何度実行しても同じステップで反映されます。保証はこの範囲だけです。
   - 時間ゲートで止めてから書くとき: 止まっている位置 P（`TimeState::now`）に始まるステップを、すでに実行した、または実行中の participant があります。そのため `at` は P より後（たとえば P + 1 ns）にします。`at` が P 以下なら `Late` になりえて、`at` がなければ P と次のステップのどちらで反映されるかは届いた時刻で決まります。

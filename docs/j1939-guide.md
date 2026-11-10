@@ -2,7 +2,7 @@
 
 vehicle-sil の J1939 スタックで ECU のノードを作り、動かし、試験する方法です。API の契約と規則の詳細は [architecture.md](architecture.md) の「J1939」にあります。API はまだ変わることがあります。
 
-完全な例は [examples/j1939/ecu_pair](../examples/j1939/ecu_pair) です。エンジンとキャブの 2 つの ECU を部品だけで作り、SIL Kit の 2 つの participant として動かします。同じコードを試験でも使っています。
+最初に動かすなら [examples/getting_started](../examples/getting_started) です。完全な例は [examples/j1939/ecu_pair](../examples/j1939/ecu_pair) です。エンジンとキャブの 2 つの ECU を部品だけで作り、`Simulation` で仮想バスか SIL Kit の 2 つの participant として動かします。同じコードを試験でも使っています。
 
 ## 利用者が書くものと、スタックが受け持つもの
 
@@ -17,31 +17,62 @@ vehicle-sil の J1939 スタックで ECU のノードを作り、動かし、�
 
 ## ノードを作る
 
-ノードは `j1939::Network` の上に作ります。`Network` は 1 つの CAN チャネルで、SIL Kit の participant なら `Peer::j1939(name)`、試験なら `testkit::LocalCan::add_j1939(name, step)` が作ります。ノードの組み立ては `Network&` を受け取る関数に書くと、同じコードがどちらの上でも動きます。
+ノードは `j1939::Network` の上に作ります。`Network` は 1 つの CAN ネットワーク（チャネル）への接続で、`Ecu::j1939(network)` が作ります。`vehicle_sil::Ecu` は ECU のアプリケーションを組み立てる入口です。SIL Kit の participant（`Peer`）と、試験キットの仮想バスの ECU（`LocalCan::add_ecu()`）が実装するので、`Ecu&` を受け取る関数かクラスに ECU を書くと、同じコードがどちらの上でも動きます。
 
 ```cpp
-j1939::Node& install_engine(j1939::Network& can, EngineModel& engine)
+j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
 {
-    auto& ecu = can.add_node({.address = 0x00, .name = kEngineName});      // Address Claim はスタックが行う
-    codec::attach_sender<EngineStatus>(ecu, 20ms, [&engine](EngineStatus& m) { m.speed.set(engine.rpm); });
-    codec::on_message<SpeedRequest>(ecu, [&engine](const SpeedRequest& m) {
+    auto& node = ecu.j1939("J1939_CAN").add_node({.address = 0x00, .name = kEngineName});   // Address Claim はスタックが行う
+    ecu.every(10ms, [&engine](vehicle_sil::SimTime) { engine.tick(); });                    // モデルを進める
+    codec::attach_sender<EngineStatus>(node, 20ms, [&engine](EngineStatus& m) { m.speed.set(engine.rpm); });
+    codec::on_message<SpeedRequest>(node, [&engine](const SpeedRequest& m) {
         if (const auto rpm = m.speed.value()) { engine.requested = static_cast<std::uint16_t>(*rpm); }
     });
-    return ecu;
+    return node;
 }
 ```
 
 `EngineStatus` と `SpeedRequest` は、YAML の定義から生成した型付きメッセージです（[j1939-codec.md](j1939-codec.md)）。信号を値として読み書きし、ビット位置やスケーリングを書きません。バイト列を直接扱うこともできます（下の各節）。
 
 - `NodeOptions::name` を付けると、ノードは最初のステップでアドレスを要求します。NAME を付けないノードは、指定したアドレスをすぐに使います（試験用）。
-- `node.attach<T>(...)` で付けた部品は `Network` が持ち、正しい順序で破棄します。ハンドラが参照するモデルは、`Peer`（や `LocalCan`）より先に宣言します。
-- 部品とハンドラは、ステップを回すスレッドの上で呼ばれます。ほかのスレッドから操作するときは、ホストの `post()` で渡します。
+- `node.attach<T>(...)` で付けた部品は `Network` が持ち、正しい順序で破棄します。
+- ハンドラが参照するモデルやアプリのオブジェクトは、`ecu.emplace<T>(args...)` で ECU に持たせます。ECU は、それをネットワークの後に（最後に emplace したものから先に）破棄するので、ハンドラや部品は破棄の間も参照してかまいません。`emplace` は実行の開始前だけ使えます。
+- 1 ステップの順序は、ネットワークの受信と処理、次に `on_step` と `every`（足した順）、最後にネットワークの送信です。同じネットワーク名で `j1939()` を呼べるのは、ECU ごとに 1 回だけです。開始後の `j1939()`、`every()`、`emplace()` は `std::logic_error` です（ノードは、`Network::add_node()` の規則でステップの中からも足せます）。
+- 部品とハンドラは、ステップを回すスレッドの上で呼ばれます。ほかのスレッドから操作するときは、「周期的な処理の使い分け」の「ステップの外から渡す」を参照してください。
+
+### 複数のネットワークを持つ ECU
+
+ゲートウェイは、`j1939()` を異なるネットワーク名で呼びます。片方のハンドラから他方へ送ると、同じステップで出ます。
+
+例: [examples/vehicle](../examples/vehicle)（2 つの CAN と 1 つの LIN）。
+
+```cpp
+class Gateway {
+public:
+    explicit Gateway(vehicle_sil::Ecu& ecu) {
+        auto& a = ecu.j1939("CAN_A").add_node({.address = 0x30});
+        auto& b = ecu.j1939("CAN_B").add_node({.address = 0x30});
+        a.on_message(kPgn, [&b](const j1939::Message& m) { static_cast<void>(b.send(kPgn, m.data)); });
+    }
+};
+```
+
+### J1939 でないプロトコル（生の CAN）
+
+`ecu.can(network)` は、J1939 を通さない生の CAN チャネル（`can::RawChannel`）を返します。`on_frame(handler)` で受け、`send(frame)` で送ります。タイマーも分割もないので、周期の処理は `every()` や `on_step()` で書きます。
+
+例: [examples/pid_stream](../examples/pid_stream)。
+
+- `send()` を呼べるのは、ステップの中だけです（コンストラクターから呼ぶと `std::logic_error`）。結果は `RawSendStatus`（`Ok`、`QueueFull`、`InvalidFrame`）で返ります。
+- 送ったフレームは、そのステップの最後に、ステップの時刻で出ます。
+- 同じ ECU が同じネットワーク名で `j1939()` と `can()` の両方を持ってもかまいません。別のコントローラーになるので、互いのフレームを受けます（J1939 のネットワークは 11 ビットのフレームを無視します）。ただし、`Peer` の J1939 のネットワークが利用者のポート（`j1939(name, port)`。Vector XL など）の上にあるときは別のバスになり、互いのフレームは受けません。生の CAN は常に SIL Kit の上にあるためです。
+- 違う ECU から同じ時刻に届いたフレームの順は、SIL Kit では決まりません。順に依存する処理を書かないでください。
 
 ## 受ける
 
 ```cpp
-codec::on_message<SpeedRequest>(ecu, [&](const SpeedRequest& m) { engine.target_rpm = m.speed.value_or(800.0); });
-ecu.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // バイト列のまま
+codec::on_message<SpeedRequest>(node, [&](const SpeedRequest& m) { engine.target_rpm = m.speed.value_or(800.0); });
+node.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // バイト列のまま
 ```
 
 - 自分のアドレス宛てとグローバル宛てのメッセージを受けます。9 バイト以上は、トランスポートプロトコルで組み立てたものを 1 回で受けます。
@@ -52,14 +83,14 @@ ecu.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // バ
 
 ## 送る
 
-- その場で 1 回送るときは `node.send(pgn, data, destination)` です。送れるのはステップの中（ハンドラ、タイマー、`Peer::every` などアプリの処理）だけです。結果は `SendStatus` で返ります（例外ではありません）。
+- その場で 1 回送るときは `node.send(pgn, data, destination)` です。送れるのはステップの中（ハンドラ、タイマー、`Ecu::every` や `Ecu::on_step` などアプリの処理）だけです。結果は `SendStatus` で返ります（例外ではありません）。
 - 周期的に送るときは `PeriodicSender` です。
 
 ```cpp
-codec::attach_sender<EngineStatus>(ecu, 20ms, fill);                                   // 送るたびに新しい EngineStatus を fill で埋める
-codec::send(ecu, request, 0x80);                                                        // 型付きメッセージを 1 回
-auto& status = ecu.attach<j1939::PeriodicSender>(kPgnEngineStatus, 20ms, encoder);   // 送るたびに encoder を呼ぶ
-auto& fixed = ecu.attach<j1939::PeriodicSender>(kPgnVersion, 1s, std::span(bytes)); // 決まったバイト列
+codec::attach_sender<EngineStatus>(node, 20ms, fill);                                   // 送るたびに新しい EngineStatus を fill で埋める
+codec::send(node, request, 0x80);                                                        // 型付きメッセージを 1 回
+auto& status = node.attach<j1939::PeriodicSender>(kPgnEngineStatus, 20ms, encoder);   // 送るたびに encoder を呼ぶ
+auto& fixed = node.attach<j1939::PeriodicSender>(kPgnVersion, 1s, std::span(bytes)); // 決まったバイト列
 fixed.set_data(new_bytes);                                                              // 次の送信から
 status.trigger();                                                                       // 次の機会にすぐ送る
 ```
@@ -67,18 +98,18 @@ status.trigger();                                                               
 - `codec::attach_sender` は、定義の優先度と長さで送ります。
 - `Encoder` は部品のバッファ（`max_length` バイト、既定 8）に書き、書いた長さを返します。9 バイト以上（`max_length` を上げる）はトランスポートプロトコルで送ります。
 - ノードが送れるようになるまで（Address Claim の後の 250 ms の待ちの間も）送らず、送れるようになったときに 1 回送ってから周期を数えます。アドレスを失えば止まり、取り直せば再開します。
-- `trigger()` をアプリの処理（`every` など）から呼ぶと、送るのは次のステップです。そのステップで送りたいときは `node.send()` を使います。
+- `trigger()` をアプリの処理（`Ecu::every` など）から呼ぶと、送るのは次のステップです。そのステップで送りたいときは `node.send()` を使います。
 - 全体宛ての放送は、DM13 で放送を止めている間（他のノードの DM13 か、自分の `BroadcastSuppression::suspend()`）は送りません。1 つのアドレス宛ての送信は、既定では止めません（規格での扱いを確かめていないため）。どちらも `PeriodicSenderOptions::suppressible`（true か false）で選べます。
 - PDU1 の PG を 1 つのアドレスへ送るときは `PeriodicSenderOptions{.destination = address}` です。
 
 ## Request に答える
 
 ```cpp
-ecu.on_request(kPgnSomething, [&](j1939::RequestContext& r) { r.respond(encode(model)); });
+node.on_request(kPgnSomething, [&](j1939::RequestContext& r) { r.respond(encode(model)); });
 ```
 
 - 応答者のない PGN への宛先指定の Request には、スタックが NACK を返します。
-- ソフトウェア ID などの識別情報は `Identification` 部品が答えます（`ecu.attach<j1939::Identification>().set_software_identification(fields)`）。診断（DM1 など）は `Diagnostics` 部品です。
+- ソフトウェア ID などの識別情報は `Identification` 部品が答えます（`node.attach<j1939::Identification>().set_software_identification(fields)`）。診断（DM1 など）は `Diagnostics` 部品です。
 - 何ステップかかけて答えるときは `r.defer()` で要求を値として取っておき、後で `node.respond(pending, data)` を呼びます。
 
 ## Request を送って答えを受ける
@@ -125,25 +156,38 @@ tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome ==
 
 ## 周期的な処理の使い分け
 
+### いつ動かすか
+
 | 使うもの | 向いているもの | 時刻 |
 |---|---|---|
 | `PeriodicSender` | PG を周期的に送る | 期限は仮想時間の格子でずれない。送信はその後の最初のステップ。PG ごとにタイマーを 1 つ使う |
-| `Peer::every(period, fn)`、`LocalCan::on_step` | モデルの計算（`tick()`）、アプリの処理 | ステップの時刻。1 ステップに 1 回まで |
-| `TickScheduler` | 固定周期の既存モデル（DLL の `tick()`） | ステップ幅の倍数の周期だけ（違えば例外） |
+| `Ecu::every(period, fn)` | モデルの計算（`tick()`）、アプリの周期的な処理 | 0、period、2 * period、… の時刻以後の最初のステップ。1 ステップに 1 回まで。period がステップ幅の倍数でなくてもよい（ステップ幅 10 ms、period 25 ms なら 0、30、50、80、100 ms…） |
+| `Ecu::on_step(fn)` | 毎ステップの処理 | ステップの時刻。受信の処理の後、送信の前 |
+| `TickScheduler` | 固定周期の既存モデル（DLL の `tick()`）。`Ecu` の外、`ParticipantRuntime` のステップハンドラで使う | ステップ幅の倍数の周期だけ（違えば例外） |
 | `j1939::Timer` | 部品の中の時間（待ち時間、遅延、独自の周期） | 事象の時刻から数える（ステップ幅によらない） |
+
+### ステップの外から渡す
+
+| 使うもの | 向いているもの | 決定性 |
+|---|---|---|
+| `StepInbox` | ほかのスレッドや SIL Kit のハンドラで受けたデータを、ステップで取り出す | 時刻つきで入れ、そのステップより前の時刻のものを、時刻、タイブレーク、到着の順に出す。決定的になるのは、次の 2 つを守るときだけです。1 つ目は、送り手を区別するタイブレークを選ぶことです（異なる送り手の同じ時刻のものは、選ばないと順が決まらない）。2 つ目は、容量を最悪の場合に合わせて取り、あふれを誤りとして扱うことです（上限の近くのあふれは決定的でない） |
+| Control Agent の書き込み | Control API からの変数の書き込み | 仮想時刻（`Command::at`）を指定すれば決定的。指定しなければ次のステップ |
+| `Host::post(fn)`（`LocalCan::host(ecu)`、`Peer::host()`） | ほかのスレッドや、ステップの外からの操作 | 時刻はなし。動くステップは post した時刻による。決定性が要るデータは `StepInbox` に入れる |
 
 モデルの周期とメッセージの周期は分けて書きます。モデルは `every` で進め、送る PG は `PeriodicSender` の `Encoder` でモデルの今の値から作ります。ステップ幅はメッセージの最短の周期以下にすると、送信の回数がステップ幅によりません（長いと、1 ステップの期限をまとめて 1 回送ります）。
 
 ## エラーの扱い
 
 - 送信の結果は `SendStatus` の戻り値です（`QueueFull`、`Busy`、`NoAddress` など）。部品は送信の失敗を数えて（`statistics()`）、次の機会にまた送ります。
-- 使い方の誤り（不正な PGN、範囲外の値）は、部品の生成や呼び出しの時点で `std::invalid_argument` などの例外です。タイマーの枠（`NetworkOptions::timer_capacity`、既定 64）が足りないときは部品の生成が `std::length_error` で、メッセージに `timer_capacity` と出ます。周期送信の多いノードでは、`J1939ChannelOptions::network.timer_capacity` などで上げます。
-- ハンドラ、`Encoder`、コールバックから投げた例外は `Network` を失敗状態にします。`Peer::failed()` と `error()` で分かります。
+- 使い方の誤り（不正な PGN、範囲外の値）は、部品の生成や呼び出しの時点で `std::invalid_argument` などの例外です。タイマーの枠（`NetworkOptions::timer_capacity`、既定 64）が足りないときは部品の生成が `std::length_error` で、メッセージに `timer_capacity` と出ます。周期送信の多いノードでは、`Ecu::j1939(network, NetworkOptions{.timer_capacity = ...})`（`Peer` では `J1939ChannelOptions::network.timer_capacity`）で上げます。
+- ハンドラ、`Encoder`、コールバックから投げた例外は `Network` を失敗状態にします。`Simulation` では `SimulationError` になります（「動かす」）。`Peer` を直接使うときは、`Peer::failed()` と `error()` で分かります。
 - 通信の状態は、`Network::statistics()`、部品の `statistics()`、`Monitor` の状態で見ます。
 
 ## 独自のプロトコルを作る
 
 Proprietary A/B やメーカー独自の通信手順は、vehicle-sil を変更せずに、利用者の部品として作れます。使うのはノードの公開 API、道具箱（`Subscription`、`Timer`、`Node::attach`）、既存の部品、型付きメッセージだけです。
+
+最初の手本は [examples/pid_stream](../examples/pid_stream) です（要求を受けて周期的に返す部品）。
 
 完全な例は [examples/j1939/param_service](../examples/j1939/param_service) です。サービスツールがエンジン ECU のパラメーターとブロックを Proprietary A で読み書きします（セッションの開始と終了、書き込み中の途中の応答、トランスポートプロトコルで送るブロック、エラー応答、無通信でのセッションの終了、相手の消失）。試験は `tests/testkit/test_param_service.cpp` です。
 
@@ -304,29 +348,77 @@ void on_command(const j1939::Message& m) {
 
 ## 動かす
 
-- SIL Kit の participant にするときは `vehicle_sil::Peer` です（[architecture.md](architecture.md) の「Peer」）。1 つの participant に複数のノード（ECU）を置けます。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`）。例は [examples/j1939/ecu_pair/main.cpp](../examples/j1939/ecu_pair/main.cpp) です。
-- SIL Kit を使わずに 1 つのプロセスで動かすときは `testkit::LocalCan` です（仮想バス、呼んだスレッドで進む）。
+`vehicle_sil::Simulation`（ターゲット `vehicle_sil::simulation`）が ECU を動かします。動かす場所はコンストラクターで選び、ECU のコードは変わりません。
+
+層を自分で組み立てる例は [examples/low_level](../examples/low_level) です。
+
+```cpp
+vehicle_sil::Simulation sim;                                   // プロセス内の仮想バス
+// vehicle_sil::Simulation sim(vehicle_sil::SilKitOptions{});  // SIL Kit の participant（registry はプロセス内に立つ）
+auto& engine_ecu = sim.add_ecu("Engine", 10ms);                // 10 ms ごとに進む ECU
+install_engine(engine_ecu, engine_ecu.emplace<EngineModel>());
+auto& cab_ecu = sim.add_ecu("Cab", 5ms);
+install_cab(cab_ecu, cab_ecu.emplace<Dashboard>());
+sim.run_for(3s);                                               // 仮想時間で 3 秒
+```
+
+`sim.add<App>("Engine", 10ms, args...)` は、`add_ecu()` と、`App{ecu, args...}` を ECU に持たせる `emplace` の略です。
+
+| | `Simulation()` | `Simulation(SilKitOptions)` |
+|---|---|---|
+| ECU | 仮想バス（`LocalCan`）のホスト。呼んだスレッドで進む | 仮想時間の Coordinated な participant（`Peer`）。SIL Kit のスレッドで進む |
+| `run_for(d)` | 続きから何度でも呼べる | 1 回だけ（2 回目は `std::logic_error`） |
+| 戻るとき | `d` だけ進んだとき | 全 participant が止まった後 |
+| 低水準 | `local()`: バス、故障注入、生フレーム、tap（`vehicle_sil/testkit/local_can.hpp`） | `peer(name)`: LIN、tap、Control Agent、SIL Kit のポート（`vehicle_sil/peer/peer.hpp`）。`registry_uri()` |
+
+- `run_for(d)` は、終わりの時刻（仮想バスでは今の時刻から `d` 進めた時刻）より前に始まるステップだけを動かします。SIL Kit では、1 回しか動かせません。止まった時刻のステップがまだ走っていることがあり、メインスレッドからモデルを読むと競合するためです。止めながら確かめるときは、仮想バスを使います。
+- ステップの例外は、`SimulationError` として `run_for()` から出ます。`what()` は `<ECU 名>: <理由>` です。仮想バスでは、失敗した後の `run_for()` も `SimulationError` です。SIL Kit では、失敗した participant があっても simulation は終わらず、仮想時間が止まるだけです。そのため `run_for()` は、失敗を見つけると simulation を終えてから投げます。
+- SIL Kit では、ステップは SIL Kit のスレッドで走ります。ステップが書いた値は、`run_for()` が戻ってから読んでください。`Simulation` の関数は 1 つのスレッドから呼びます。
+- 破棄の順序は、後から足した ECU から先に、ECU の持ち物（`emplace`）まで壊し、次に controller、最後にプロセス内の registry です。
+- `Ecu` には LIN がありません。LIN の Master/Slave は、SIL Kit の仮想時間で `sim.peer(name).lin_master(...)` を使います。
+
+`SilKitOptions` で、既存の registry（`registry_uri`）や、ほかのプロセスの participant との併用を選べます。
+
+| 項目 | 意味 |
+|---|---|
+| `registry_uri` | 接続する registry。空ならプロセス内に立てる（`registry_uri()` で場所が分かる） |
+| `controller` | `true`（既定）: このプロセスが simulation を始め、終える。`false`: 外の controller（`vehicle_sil_sim_controller`、Control Server）が決める。`run()` で終わりまで待つ |
+| `other_participants` | 始める前にそろっていなければならない、ほかのプロセスの Coordinated な participant（`controller` が `true` のときだけ） |
+| `start_timeout` | 始まるまでに許す時間（既定 30 秒） |
+
+`run()` は、誰が終えてもよい simulation の終わりまで待ちます（SIL Kit だけ）。`controller` が `true` のときは、Error で離脱した participant を失敗にします。Error 以外で離脱した participant が数秒のうちに simulation を終えなければ、それも失敗です。`controller` が `false` のときに失敗にするのは、このプロセスの ECU の失敗だけです。
+
+`Peer` を直接使うのは、実時間で動かすとき、別のプロセスで 1 つの participant として動かすとき、Control Agent を組み込むときです（[architecture.md](architecture.md) の「Peer」）。`Peer` も `Ecu` なので、`install_engine(peer, model)` のように同じ関数が使えます。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`）。
 
 ## 試験する
 
+自分の ECU は、`Simulation` の仮想バスで試験します。時刻は仮想時間で、`sleep` は要りません。同じ入力からは同じ結果になります。
+
+故障の注入と観測の例は [examples/fault_injection](../examples/fault_injection) です。
+
 ```cpp
-EngineModel engine;
-Dashboard dash;
-testkit::LocalCan bus;
-install_engine(bus.add_j1939("engine", 10ms), engine);
-install_cab(bus.add_j1939("cab", 5ms), dash);
-testkit::J1939Events events(bus.network("cab"));          // スタックの出来事（読み取り専用）
-testkit::FrameLog wire(bus.tap("engine"));                // バスのフレーム（読み取り専用）
-bus.run_for(1s);
-bus.endpoint("engine").add_outage(bus.now(), bus.now() + 300ms);  // エンジンがバスから外れる
-bus.run_for(1s);
+vehicle_sil::Simulation sim;                               // 仮想バス
+auto& engine_ecu = sim.add_ecu("engine", 10ms);
+install_engine(engine_ecu, engine_ecu.emplace<EngineModel>());
+auto& cab_ecu = sim.add_ecu("cab", 5ms);
+auto& dash = cab_ecu.emplace<Dashboard>();
+install_cab(cab_ecu, dash);
+auto& bus = sim.local();                                   // testkit::LocalCan（vehicle_sil/testkit/local_can.hpp）
+testkit::J1939Events events(bus.network("cab"));           // スタックの出来事（読み取り専用）
+testkit::FrameLog wire(bus.tap("engine"));                 // バスのフレーム（読み取り専用）
+sim.run_for(1s);                                           // 刻んで進め、そのたびに確かめられる
+bus.endpoint("engine").add_outage(sim.now(), sim.now() + 300ms);   // エンジンがバスから外れる
+sim.run_for(1s);
 CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 ```
 
-- 時刻はすべて仮想時間で、`sleep` は要りません。同じ入力からは同じ結果になります。
-- 故障注入（フレームの欠落、遅延、通信断）は仮想バスの端点で行います（`testkit::faults`、`add_outage`）。
+- `local()` の `LocalCan` から、故障注入（フレームの欠落、遅延、通信断。`testkit::faults`、`add_outage`）と、生フレームの注入（`inject()`）ができます。`Simulation` の `local()` では、バスの名前を渡します（例: `inject("J1939_CAN", t, frame)`）。
 - `Monitor` は通信の途絶を、`J1939Events` は送信の要求、フレームの送出、転送の終わり、アドレスの変化を、`FrameLog` はバス上のフレームを見せます。
+- 参照するときは、ECU の名前とネットワークの名前を渡します。`network("cab", "J1939_CAN")` のように 2 つ渡します。ネットワークが 1 つの ECU には 1 つの名前の形も使えます。
+- `LocalCan` を直接使うこともできます。`LocalCan::add_ecu(name, step)` は `Ecu&` を返します。`add_j1939(name, step)` は、名前のないバスに 1 つのネットワークを持つ ECU の略記です。`bus()`、`injector()`、`inject(time, frame)` の 1 バスの形も、この名前のないバスのものです。これらの形と `add_ecu(...).j1939(network)` は、1 つの `LocalCan` で混ぜられません。先に使った方が決まり、もう一方は `std::logic_error` です。名前のあるバスを使うときは、ECU が使うバスを `Ecu::j1939(network)` に渡した名前で決め、`inject(network, time, frame)` のようにバスの名前を渡します。
 
 ## データの形（Codec）
 
 部品とエンジンはバイト列だけを扱います（`PeriodicSender` の `Encoder` は「バッファに書いて長さを返す」関数、受信は `Message::data` の `std::span`）。信号の配置とスケーリングは、YAML から生成した型付きメッセージ（[j1939-codec.md](j1939-codec.md)）が受け持ち、`codec_node.hpp` の関数が両者をつなぎます。独自プロトコルの部品も、メッセージの形を同じ YAML で定義できます（Proprietary A のように 1 つの PGN に複数のメッセージを載せるときは `selector`）。
+
+YAML で定義して使う例は [examples/typed_messages](../examples/typed_messages) です。
