@@ -38,7 +38,11 @@ vehicle_sil::control::attach(peer, agent);  // start() の前。J1939 の監視�
 vehicle_sil::control_grpc::AgentClient link(agent, {
     .server = "ctrl-pc:8510", .participant = options.participant,
     .status = [&] { return vehicle_sil::control::PeerStatus{peer.failed(), peer.error()}; },
-    .token = agent_token, .root_certificates_pem = server_certificate});
+    .token = agent_token, .root_certificates_pem = server_certificate,
+    .on_replaced = [&](const std::string& why) {  // 同じ名前の別のプロセスに置き換えられた
+        std::fprintf(stderr, "%s\n", why.c_str());
+        peer.request_stop("replaced at the control server");
+    }});
 peer.start();
 while (!peer.wait(std::chrono::minutes(1))) {} // 止めている間も含めて、終わるまで待つ
 peer.stop();                                // ステップがもう走らない
@@ -49,6 +53,7 @@ link.stop();                                // その結果を送ってから閉
 - 変数は bool、整数、実数、列挙で、単位、範囲、刻み、説明を付けられます。値は Agent のステップのスレッドで読み書きするので、モデルにロックは要りません。
 - 外からの書き込みは、指定した仮想時刻以後の最初のステップで、アプリの処理の前に反映されます（J1939 の受信処理や部品のタイマーが新しい値を使うのは次のステップから）。
 - `agent.finish()` は `peer.stop()` の後に呼びます。`wait()` が時間切れで戻っただけではステップが続いています。
+- `on_replaced` は、同じ participant 名の別のプロセスに接続を置き換えられて、`AgentClient` がつなぎ直しをやめたときに 1 回だけ、`AgentClient` のスレッドで呼ばれます。引数は `last_error()` と同じ理由です。指定しなければ、理由を標準エラーに 1 行出します。この中で `link.stop()` を呼んだり `link` を破棄したりしません。`examples/control/control_peer.cpp` は、理由を標準エラーに出し、`peer.request_stop()` で止めて、終了コード 1 で終わります。
 - 例: `examples/control/control_peer.cpp`（プロセスごとに 1 つの Peer）、`examples/control/control_demo.cpp`（1 つのプロセスにすべて）。
 
 ## Control Server を起動する
@@ -124,7 +129,7 @@ python -m vehicle_sil_control stop
 
 - SIL Kit のレジストリと Control Server を 1 台に置き、各 PC の Peer は両方へ外向きにつなぎます（Peer 側で待ち受けるポートは要りません。SIL Kit は participant どうしが直接つながらないとき、レジストリを中継に使います）。
 - 発見: Server（`--required` のとき）は、必須の participant を SIL Kit のレジストリを通して見ているので、どの PC の Peer も、Agent がつながる前から一覧に出ます（`peers` の `has_agent` が偽、`simulation_state` に SIL Kit の状態）。Agent がつながると、その変数と値が加わります。
-- Peer のプロセスが落ちて起動し直すと、Server は別の incarnation として扱い、前の未完了の操作を Unknown（反映されたかわからない）にします。ただし `--required` の Peer が落ちると、シミュレーションと Server が終わります（Coordinated の participant は、始まった後のシミュレーションに戻れない）。起動し直せるのは、必須でない Peer か、`--required` なしの Server のときです。同じ participant 名の Agent が別のプロセスからつながると、新しい接続が勝ちます。前の Agent はつなぎ直しをやめ、`replaced()` が真になり、`last_error()` に理由（participant 名、新しい接続の incarnation と接続元、同じ名前のプロセスが 2 つ動いていないか確かめること）が入ります。Server は置き換えを監査に残し、購読には新しい接続の Peer の出来事（Warning）として流すので、まとめる人が画面で気づけます。回線が切れただけなら、Agent はつなぎ直し、Agent が受け取っていた操作はそのまま続きます（受け取ったと知らされる前に切れた操作は Unknown）。黙って切れた接続は keepalive で数十秒以内に見つけます。
+- Peer のプロセスが落ちて起動し直すと、Server は別の incarnation として扱い、前の未完了の操作を Unknown（反映されたかわからない）にします。ただし `--required` の Peer が落ちると、シミュレーションと Server が終わります（Coordinated の participant は、始まった後のシミュレーションに戻れない）。起動し直せるのは、必須でない Peer か、`--required` なしの Server のときです。同じ participant 名の Agent が別のプロセスからつながると、新しい接続が勝ちます。前の Agent はつなぎ直しをやめ、`replaced()` が真になり、`last_error()` に理由（participant 名、新しい接続の incarnation と接続元、同じ名前のプロセスが 2 つ動いていないか確かめること）が入り、`on_replaced` が呼ばれます（指定しなければ標準エラーに 1 行）。Server は置き換えを監査に残し、購読には新しい接続の Peer の出来事（Warning）として流すので、まとめる人が画面で気づけます。回線が切れただけなら、Agent はつなぎ直し、Agent が受け取っていた操作はそのまま続きます（受け取ったと知らされる前に切れた操作は Unknown）。黙って切れた接続は keepalive で数十秒以内に見つけます。
 - Server を起動し直すと、前の Server の操作の結果は問い合わせられません（`NOT_FOUND`）。Agent がまだ持っていた時刻つきの書き込みは、そのまま反映されます。
 - 試験: `tests/control_server/multi_process.py` は、レジストリ、Server、2 つの Peer をプロセスに分けて動かし、Python から操作します。`--remote-body` で Body を別の PC で動かせます。
 

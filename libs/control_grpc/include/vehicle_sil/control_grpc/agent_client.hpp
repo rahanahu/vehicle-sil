@@ -37,14 +37,21 @@ struct AgentClientOptions
     bool tls = false;
     /// PEM text of the root certificates that the server's certificate must chain to (set: TLS).
     std::string root_certificates_pem{};
+    /// Called once, on the client's thread, when another process's connection of the same
+    /// participant replaced this one and the client stopped reconnecting for good; `why` is
+    /// last_error(). Empty: `why` is written to std::cerr as one line. It must not throw, call
+    /// stop() or destroy the client (Peer::request_stop() is fine).
+    std::function<void(const std::string& why)> on_replaced{};
 };
 
 /// Runs the transport side of `agent` on threads of its own: connects to the server (again and
 /// again with back-off if the link is lost, waiting reconnect_max after a refusal, see
 /// last_error(); the simulation is never held up). If another process connects as the same
-/// participant, the newer connection wins: this client then stops reconnecting for good
-/// (replaced(), last_error() says why). Replaced by its own newer connection (a reconnect after
-/// a lost link that the server had not noticed yet), it goes on. It is connected once the server has welcomed it. It hands the server's
+/// participant, the newer connection wins: the server ends this client's connection with ABORTED
+/// and names the replacing connection in the trailing metadata "vehicle-sil-replaced-by"; this
+/// client then stops reconnecting for good (on_replaced, replaced(), last_error() says why).
+/// Replaced by its own newer connection (a reconnect after a lost link that the server had not
+/// noticed yet), it goes on. An ABORTED without that metadata is a lost connection like any other. It is connected once the server has welcomed it. It hands the server's
 /// commands to Agent::submit(), and sends the agent's results, values, events and the peer's
 /// status. After a reconnect it tells the server which commands the agent still holds and sends
 /// the latest results again (the server ignores the ones it has). A result that could not be

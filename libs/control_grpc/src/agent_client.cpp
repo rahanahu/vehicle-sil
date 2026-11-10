@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <iostream>
 #include <mutex>
 #include <random>
 #include <set>
@@ -131,7 +132,21 @@ struct AgentClient::Impl
             const auto outcome = session(*stub);
             if (outcome == Outcome::Replaced)
             {
-                return; // see last_error
+                // Said once, so that whoever runs this process sees it stopped.
+                std::string why;
+                {
+                    const std::lock_guard lock(mutex);
+                    why = last_error;
+                }
+                if (options.on_replaced)
+                {
+                    options.on_replaced(why);
+                }
+                else
+                {
+                    std::cerr << "vehicle_sil::control_grpc: " << why << std::endl;
+                }
+                return;
             }
             if (outcome == Outcome::Welcomed)
             {
@@ -253,18 +268,18 @@ struct AgentClient::Impl
             reader.join();
         }
         const auto status = stream->Finish();
-        if (status.error_code() == grpc::StatusCode::ABORTED)
+        const auto& trailing = context.GetServerTrailingMetadata();
+        const auto by = trailing.find(std::string(kReplacedBy));
+        if (status.error_code() == grpc::StatusCode::ABORTED && by != trailing.end())
         {
-            // Another connection of the same participant replaced this one. If it is not one of
-            // this client's own (a second process with this name, or a server that does not say),
-            // the newer one wins: stop instead of taking the participant back again and again.
-            const auto& trailing = context.GetServerTrailingMetadata();
-            const auto by = trailing.find(std::string(kReplacedBy));
+            // The server says another connection of the same participant replaced this one. If
+            // it is not one of this client's own (a second process with this name, or a client
+            // that sends no identifier), the newer one wins: stop instead of taking the
+            // participant back again and again. Without the metadata, ABORTED may come from
+            // anything between (a proxy): a lost connection, reconnected below.
             const std::lock_guard lock(mutex);
-            const bool own = by != trailing.end()
-                             && std::find(own_connections.begin(), own_connections.end(),
-                                          std::string(by->second.data(), by->second.size()))
-                                    != own_connections.end();
+            const bool own = std::find(own_connections.begin(), own_connections.end(), std::string(by->second.data(), by->second.size()))
+                             != own_connections.end();
             last_error = status.error_message();
             if (own)
             {

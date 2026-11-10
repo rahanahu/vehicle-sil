@@ -12,6 +12,7 @@
 
 #include <grpcpp/grpcpp.h>
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -525,6 +526,97 @@ TEST_CASE(control_server_an_agent_whose_names_are_not_ascii_reconnects_over_its_
     CHECK(peers.size() == 1 && peers.at(0).participant == participant && peers.at(0).connected
           && peers.at(0).incarnation == incarnation);
     agent.stop();
+}
+
+TEST_CASE(control_server_an_agent_replaced_by_a_client_without_an_identifier_stops_and_says_so)
+{
+    // A client that sends no connection identifier (an older one) replaces this agent: the
+    // server still says so (the metadata, empty), and the agent stops and tells, once.
+    control_grpc::ControlServer server(control_grpc::ServerOptions{});
+    const auto address = "127.0.0.1:" + std::to_string(server.port());
+    std::mutex mutex;
+    std::vector<std::string> reasons;
+    control::Agent a;
+    a.bind_driver();
+    control_grpc::AgentClient agent(a, {.server = address, .participant = "Engine", .incarnation = "a", .reconnect_min = 20ms,
+                                        .reconnect_max = 100ms, .on_replaced = [&](const std::string& why) {
+                                            const std::lock_guard lock(mutex);
+                                            reasons.push_back(why);
+                                        }});
+    CHECK(agent.wait_connected(10s));
+    auto stub = v1::AgentService::NewStub(channel(server));
+    RawAgent other(*stub, hello("Engine", "b"));
+    CHECK(other.read().has_value()); // welcome
+    CHECK(eventually([&] {
+        const std::lock_guard lock(mutex);
+        return !reasons.empty();
+    }));
+    CHECK(agent.replaced());
+    agent.stop();
+    const std::lock_guard lock(mutex);
+    CHECK_EQ(reasons.size(), std::size_t{1});
+    CHECK(reasons.at(0) == agent.last_error());
+    CHECK(reasons.at(0).find("replaced by another connection of the participant 'Engine' (incarnation 'b'") != std::string::npos);
+    CHECK(reasons.at(0).find("this agent no longer reconnects") != std::string::npos);
+    other.context.TryCancel();
+    static_cast<void>(other.stream->Finish());
+}
+
+namespace {
+
+/// An agent service that ends the first connection with ABORTED and no metadata (as something
+/// between the agent and the server might), and welcomes the ones after it.
+class AbortsFirst final : public v1::AgentService::Service
+{
+public:
+    grpc::Status Connect(grpc::ServerContext*, grpc::ServerReaderWriter<v1::ServerMessage, v1::AgentMessage>* stream) override
+    {
+        v1::AgentMessage m;
+        if (!stream->Read(&m))
+        {
+            return grpc::Status::CANCELLED;
+        }
+        if (connects_++ == 0)
+        {
+            return {grpc::StatusCode::ABORTED, "aborted on the way"};
+        }
+        v1::ServerMessage welcome;
+        welcome.mutable_welcome();
+        stream->Write(welcome);
+        while (stream->Read(&m))
+        {
+        }
+        return grpc::Status::OK;
+    }
+
+private:
+    std::atomic<int> connects_{0};
+};
+
+} // namespace
+
+TEST_CASE(control_server_an_agent_ended_with_aborted_and_no_identifier_reconnects)
+{
+    // Only the server's word that another connection replaced it stops an agent; an ABORTED
+    // without it is a lost connection.
+    AbortsFirst service;
+    int port = 0;
+    grpc::ServerBuilder builder;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    const auto server = builder.BuildAndStart();
+    CHECK(server != nullptr && port != 0);
+    {
+        control::Agent a;
+        a.bind_driver();
+        control_grpc::AgentClient agent(a, {.server = "127.0.0.1:" + std::to_string(port), .participant = "Engine",
+                                            .reconnect_min = 20ms, .reconnect_max = 100ms});
+        CHECK(agent.wait_connected(10s));
+        CHECK(!agent.replaced());
+        CHECK_EQ(agent.sessions(), std::uint64_t{1});
+        agent.stop();
+    }
+    server->Shutdown();
 }
 
 TEST_CASE(control_server_agent_client_refuses_a_token_it_cannot_send)

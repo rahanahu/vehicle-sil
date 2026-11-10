@@ -132,6 +132,13 @@ int main(int argc, char** argv)
         }
         control::attach(peer, agent);
         link.status = [&] { return control::PeerStatus{peer.failed(), peer.error()}; };
+        // Another process took this participant over at the control server: say why, leave the
+        // simulation and end with a failure instead of running on without control.
+        link.on_replaced = [&](const std::string& why) {
+            std::fprintf(stderr, "[control-peer] FAIL: %s\n", why.c_str());
+            std::fflush(stderr);
+            peer.request_stop("replaced at the control server");
+        };
         control_grpc::AgentClient client(agent, link);
         log(options.participant + " waits for the simulation to start");
         peer.start(timeout);
@@ -144,8 +151,9 @@ int main(int argc, char** argv)
         peer.stop(); // the steps are over: finish() may run now
         agent.finish(); // cancels what is still waiting ...
         client.stop();  // ... and the client sends those results before it closes
-        log(std::string("ended") + (peer.failed() ? ": FAILED " + peer.error() : ""));
-        return state && !peer.failed() ? cli::kExitOk : cli::kExitFailed;
+        log(std::string("ended") + (peer.failed() ? ": FAILED " + peer.error() : "")
+            + (client.replaced() ? ": FAILED replaced at the control server" : ""));
+        return state && !peer.failed() && !client.replaced() ? cli::kExitOk : cli::kExitFailed;
     }
     catch (const std::exception& e)
     {
