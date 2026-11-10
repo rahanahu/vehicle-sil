@@ -65,13 +65,15 @@ public:
         }
     };
 
-    AgentStream(Hub& hub, Who who, std::string peer, const AuditLog& audit, StreamRegistry& streams,
+    /// `audited`: the rule of Connect asks for a line for each agent that connects.
+    AgentStream(Hub& hub, Who who, std::string peer, const AuditLog& audit, bool audited, StreamRegistry& streams,
                 std::shared_ptr<StreamRegistry::Handle> handle, const SimulationMonitor* monitor) :
       hub_(hub),
       link_(std::make_shared<Link>()),
       who_(std::move(who)),
       peer_(std::move(peer)),
       audit_(audit),
+      audited_(audited),
       streams_(streams),
       handle_(std::move(handle)),
       monitor_(monitor)
@@ -236,9 +238,16 @@ private:
                               "the credential '" + who_.name + "' may not connect as '" + h.participant() + "', only as " + names
                                   + "; add the name to its participants or use the credential of that participant");
             }
-            audit_(who_.name + "@" + peer_ + " agent " + h.participant() + " (" + h.incarnation() + "): connected");
+            if (audited_)
+            {
+                audit_(who_.name + "@" + peer_ + " agent " + h.participant() + " (" + h.incarnation() + "): connected");
+            }
             participant_ = h.participant();
             incarnation_ = h.incarnation();
+            // From the hello to the hub's swap, one agent at a time: when two connect at once, the
+            // one whose hello is recorded last is the one the hub keeps, and the connection it
+            // replaces (closed within agent_connected()) names it.
+            std::unique_lock connecting(streams_.connecting);
             // Another process (another incarnation) whose connection this one takes over.
             std::optional<StreamRegistry::Hello> taken;
             for (const auto& p : hub_.peers())
@@ -276,6 +285,7 @@ private:
                 start_write();
             }
             connection_ = hub_.agent_connected(std::move(hello), link_);
+            connecting.unlock();
             if (taken)
             {
                 // For the watches: whoever puts the simulation together sees two processes with
@@ -329,6 +339,7 @@ private:
     Who who_;
     std::string peer_;
     const AuditLog& audit_;
+    bool audited_;
     StreamRegistry& streams_;
     std::shared_ptr<StreamRegistry::Handle> handle_;
     const SimulationMonitor* monitor_;
@@ -366,9 +377,10 @@ public:
         {
             audit_.refused((who ? who->name : std::string("unauthenticated")) + "@" + context->peer() + " agent: refused");
             return new RefusedStream(grpc::Status(who ? grpc::StatusCode::PERMISSION_DENIED : grpc::StatusCode::UNAUTHENTICATED,
-                                                  who ? "this credential may not connect an agent" : "a valid agent token is required"));
+                                                  who ? "this credential may not " + std::string(rule != nullptr ? rule->what : std::string_view("connect an agent"))
+                                                      : "a valid agent token is required"));
         }
-        return new AgentStream(hub_, *who, context->peer(), audit_, streams_, streams_.add(context), monitor_);
+        return new AgentStream(hub_, *who, context->peer(), audit_, rule->audited, streams_, streams_.add(context), monitor_);
     }
 
 private:

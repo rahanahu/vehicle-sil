@@ -169,7 +169,8 @@ std::vector<Credential> load_credentials(const std::string& path)
         }
         if (fields.size() < 3)
         {
-            throw fail("expected <role> <name> <token> [participant,...]");
+            throw fail("expected <role> <name> <token>, and on an agent line the participant names it may connect as "
+                       "(for example: viewer alice <token>, agent ecu <token> Engine,Body, or agent ecu <token> * for any name)");
         }
         Credential c;
         const auto& role = fields[0];

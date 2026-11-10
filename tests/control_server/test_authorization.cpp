@@ -109,7 +109,7 @@ const std::map<std::string, Expected>& expected()
         {"/vehicle_sil.control.v1.ControlService/SetSpeed", {Role::Operator, true}},
         {"/vehicle_sil.control.v1.ControlService/WaitPaused", {Role::Viewer, false}},
         {"/vehicle_sil.control.v1.ControlService/Stop", {Role::Admin, true}},
-        // An allowed agent stream whose first message is not a hello is refused (and audited).
+        // An allowed agent that connects is audited ("connected").
         {"/vehicle_sil.control.v1.AgentService/Connect", {Role::Agent, true}},
     };
     return table;
@@ -234,7 +234,11 @@ std::map<std::string, Call> calls()
         grpc::ClientContext context;
         prepare(context, c);
         auto stream = stub->Connect(&context);
-        stream->Write(v1::AgentMessage{}); // not a hello
+        v1::AgentMessage hello;
+        hello.mutable_hello()->set_participant("Engine");
+        hello.mutable_hello()->set_incarnation(caller_name(c));
+        hello.mutable_hello()->set_max_pending(1);
+        stream->Write(hello);
         stream->WritesDone();
         v1::ServerMessage message;
         while (stream->Read(&message))
@@ -308,6 +312,12 @@ TEST_CASE(control_server_allows_and_audits_every_rpc_by_role)
             }
             CHECK(allowed == want_allowed);
             CHECK(audited == want_audited);
+            if (method == "/vehicle_sil.control.v1.AgentService/Connect" && allowed)
+            {
+                // The line of the connection, not one of a refusal.
+                const std::lock_guard lock(server.mutex);
+                CHECK(server.audit.back().find(" agent Engine (" + std::string(caller_name(c)) + "): connected") != std::string::npos);
+            }
             if (!allowed)
             {
                 // Unauthenticated callers are told a token is needed, others that the role is not enough.

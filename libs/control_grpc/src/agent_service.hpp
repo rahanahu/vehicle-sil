@@ -41,6 +41,9 @@ struct StreamRegistry
     };
 
     std::mutex mutex;
+    /// Held from an agent's hello until the hub took its connection: the hello the server names
+    /// as the replacing one is that of the connection that did replace it.
+    std::mutex connecting;
     std::vector<std::weak_ptr<Handle>> handles;
     std::map<std::string, Hello> latest; ///< by participant
 

@@ -254,6 +254,16 @@ TEST_CASE(control_server_reads_a_credentials_file)
     CHECK(vehicle_sil::unit::throws<std::runtime_error>([&] { static_cast<void>(control_grpc::load_credentials(path)); }));
     {
         std::ofstream out(path);
+        out << "agent ecu\n"; // too few fields: the message tells what an agent line needs
+    }
+    CHECK(vehicle_sil::unit::throws_if<std::runtime_error>([&] { static_cast<void>(control_grpc::load_credentials(path)); },
+                                                           [](const std::runtime_error& e) {
+                                                               return std::string(e.what()).find(
+                                                                          "and on an agent line the participant names it may connect as")
+                                                                      != std::string::npos;
+                                                           }));
+    {
+        std::ofstream out(path);
         out << "superuser bob cccccccccccccccccccc\n";
     }
     CHECK(vehicle_sil::unit::throws<std::runtime_error>([&] { static_cast<void>(control_grpc::load_credentials(path)); }));
