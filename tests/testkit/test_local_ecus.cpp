@@ -309,8 +309,12 @@ TEST_CASE(testkit_named_and_unnamed_forms_share_the_only_bus_in_either_order)
         CHECK(throws<std::invalid_argument>([&] { ecu.j1939("A", bad); }));
         CHECK(throws<std::invalid_argument>([&] { ecu.can("A", can::RawChannelOptions{.send_capacity = 0}); }));
         CHECK_EQ(buses.bus("").endpoint_count(), 2u); // not named, nothing attached
-        // legacy's network is on the bus j1939("A") would name.
-        CHECK(throws<std::invalid_argument>([&] { buses.ecu("legacy").j1939("A"); }));
+        // legacy's network is on the bus j1939("A") would name: the message says so and how to
+        // name the bus.
+        CHECK(throws_with<std::invalid_argument>([&] { buses.ecu("legacy").j1939("A"); },
+                                                 "the ECU \"legacy\" already has a network on the only bus, which has no name yet"));
+        CHECK(throws_with<std::invalid_argument>([&] { buses.ecu("legacy").j1939("A"); },
+                                                 "add_ecu(\"legacy\", step).j1939(\"A\") instead of add_j1939()"));
         CHECK(throws<std::invalid_argument>([&] { ecu.j1939(""); }));
         CHECK(throws<std::invalid_argument>([&] { ecu.can(""); }));
         CHECK_EQ(buses.bus("").endpoint_count(), 2u);
@@ -388,21 +392,28 @@ TEST_CASE(testkit_ecu_lookups_and_setup_errors)
     CHECK(throws<std::invalid_argument>([&] { buses.add_ecu("gateway", 10ms); }));
     CHECK(throws<std::invalid_argument>([&] { buses.add_ecu("", 10ms); }));
     CHECK(throws<std::invalid_argument>([&] { buses.add_ecu("slow", 0ms); }));
-    CHECK(throws<std::invalid_argument>([&] { gateway.j1939("A"); }));
+    CHECK(throws_with<std::invalid_argument>([&] { gateway.j1939("A"); },
+                                             "j1939(\"A\"): the ECU \"gateway\" already has a network named \"A\""));
     CHECK(throws<std::invalid_argument>([&] { gateway.j1939(""); }));
     CHECK(throws<std::invalid_argument>([&] { gateway.every(0ms, [](SimTime) {}); }));
     CHECK(throws<std::invalid_argument>([&] { gateway.every(10ms, {}); }));
     CHECK(throws<std::invalid_argument>([&] { gateway.on_step({}); }));
     // One-name lookups need exactly one network.
-    CHECK(throws<std::logic_error>([&] { static_cast<void>(buses.network("gateway")); }));
-    CHECK(throws<std::logic_error>([&] { static_cast<void>(buses.endpoint("gateway")); }));
-    CHECK(throws<std::logic_error>([&] { static_cast<void>(buses.tap("gateway")); }));
-    CHECK(throws<std::logic_error>([&] { static_cast<void>(buses.network("empty")); }));
-    CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.network("missing")); }));
-    CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.network("gateway", "C")); }));
+    CHECK(throws_with<std::logic_error>([&] { static_cast<void>(buses.network("gateway")); },
+                                        "has 2 J1939 networks (\"A\", \"B\"): name the network, e.g. network(\"gateway\", \"A\")"));
+    CHECK(throws_with<std::logic_error>([&] { static_cast<void>(buses.endpoint("gateway")); }, "endpoint(\"gateway\", \"A\")"));
+    CHECK(throws_with<std::logic_error>([&] { static_cast<void>(buses.tap("gateway")); }, "tap(\"gateway\", \"A\")"));
+    CHECK(throws_with<std::logic_error>([&] { static_cast<void>(buses.network("empty")); },
+                                        "the ECU \"empty\" has no J1939 network (add one with its j1939(network))"));
+    CHECK(throws_with<std::out_of_range>([&] { static_cast<void>(buses.network("missing")); },
+                                         "no ECU named \"missing\". ECUs: \"gateway\", \"empty\""));
+    CHECK(throws_with<std::out_of_range>([&] { static_cast<void>(buses.network("gateway", "C")); },
+                                         "the ECU \"gateway\" has no network named \"C\". Its networks: \"A\", \"B\""));
+    CHECK(throws_with<std::out_of_range>([&] { static_cast<void>(buses.network("empty", "A")); }, "Its networks: none"));
     CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.ecu("missing")); }));
     CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.host("missing")); }));
-    CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.bus("C")); }));
+    CHECK(throws_with<std::out_of_range>([&] { static_cast<void>(buses.bus("C")); }, "Buses: \"A\", \"B\""));
+    CHECK(throws_with<std::out_of_range>([&] { static_cast<void>(LocalCan{}.ecu("missing")); }, "ECUs: none"));
     CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.injector("C")); }));
     CHECK(throws<std::out_of_range>([&] { buses.inject("C", at(0ms), can::Frame{}); }));
     CHECK((buses.ecu_names() == std::vector<std::string>{"gateway", "empty"}));
@@ -514,7 +525,14 @@ TEST_CASE(testkit_ecu_raw_channel_lookup)
     CHECK(&buses.raw_channel("mixed", "A") == &rawA);
     CHECK(&buses.raw_channel("mixed", "B") == &rawB);
     CHECK(&buses.raw_channel("other", "A") == &other);
-    CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.raw_channel("mixed", "C")); }));
+    CHECK(throws_with<std::out_of_range>([&] { static_cast<void>(buses.raw_channel("mixed", "C")); },
+                                         "the ECU \"mixed\" has no raw CAN channel named \"C\". Its raw CAN channels: \"A\", \"B\""));
+    CHECK(throws_with<std::out_of_range>([&] { static_cast<void>(buses.network("mixed", "B")); },
+                                         "(\"B\" is a raw CAN channel of it: raw_channel(ecu, network))"));
+    // An ECU with raw channels only has no J1939 network: the message points to raw_channel().
+    CHECK(throws_with<std::logic_error>([&] { static_cast<void>(buses.network("other")); },
+                                        "the ECU \"other\" has no J1939 network"));
+    CHECK(throws_with<std::logic_error>([&] { static_cast<void>(buses.network("other")); }, "raw_channel(\"other\", network)"));
     CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.raw_channel("missing", "A")); }));
     CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.raw_channel("other", "B")); }));
 }

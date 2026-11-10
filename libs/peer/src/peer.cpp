@@ -5,11 +5,44 @@
 #include "vehicle_sil/core/periodic.hpp"
 
 #include <exception>
+#include <memory>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <vector>
 #include <thread>
 #include <utility>
 
 namespace vehicle_sil {
+
+namespace {
+
+/// The names of `items` (each with a `name`), quoted, for messages; "none" if there is none.
+template <typename T>
+std::string name_list(const std::vector<std::unique_ptr<T>>& items)
+{
+    std::string out;
+    for (const auto& item : items)
+    {
+        out += (out.empty() ? "\"" : ", \"") + item->name + "\"";
+    }
+    return out.empty() ? "none" : out;
+}
+
+template <typename T>
+bool has_name(const std::vector<std::unique_ptr<T>>& items, std::string_view name)
+{
+    for (const auto& item : items)
+    {
+        if (item->name == name)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 struct Peer::Channel
 {
@@ -393,7 +426,14 @@ Peer::Channel& Peer::channel(std::string_view name) const
             return *c;
         }
     }
-    throw std::out_of_range("vehicle_sil::Peer: no network named " + std::string(name));
+    const std::string quoted = "\"" + std::string(name) + "\"";
+    std::string message = "vehicle_sil::Peer: the participant \"" + options_.participant + "\" has no network named " +
+                          quoted + ". Its networks: " + name_list(channels_);
+    if (has_name(raw_channels_, name))
+    {
+        message += " (" + quoted + " is a raw CAN channel of it: raw_channel(name))";
+    }
+    throw std::out_of_range(message);
 }
 
 j1939::Network& Peer::network(std::string_view name) const { return *channel(name).network; }
@@ -420,7 +460,15 @@ can::RawChannel& Peer::raw_channel(std::string_view name) const
             return *r->channel;
         }
     }
-    throw std::out_of_range("vehicle_sil::Peer: no raw CAN channel named " + std::string(name));
+    const std::string quoted = "\"" + std::string(name) + "\"";
+    std::string message = "vehicle_sil::Peer: the participant \"" + options_.participant +
+                          "\" has no raw CAN channel named " + quoted + ". Its raw CAN channels: " +
+                          name_list(raw_channels_);
+    if (has_name(channels_, name))
+    {
+        message += " (" + quoted + " is a J1939 network of it: network(name))";
+    }
+    throw std::out_of_range(message);
 }
 
 void Peer::start(std::chrono::milliseconds timeout)

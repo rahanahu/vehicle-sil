@@ -36,6 +36,7 @@ using vehicle_sil::SimulationControllerOptions;
 using vehicle_sil::VirtualTimeOptions;
 using vehicle_sil::unit::InProcessRegistry;
 using vehicle_sil::unit::throws;
+using vehicle_sil::unit::throws_with;
 namespace can = vehicle_sil::can;
 namespace j1939 = vehicle_sil::j1939;
 namespace lin = vehicle_sil::lin;
@@ -804,9 +805,12 @@ TEST_CASE(peer_finds_a_raw_channel_by_name)
     ecu.j1939("J");
     CHECK(&peer.raw_channel("A") == &rawA);
     CHECK(&peer.raw_channel("B") == &rawB);
-    CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.raw_channel("C")); }));
-    CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.raw_channel("J")); }));
-    CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.network("A")); }));
+    CHECK(throws_with<std::out_of_range>([&] { static_cast<void>(peer.raw_channel("C")); },
+                                         "the participant \"Raw\" has no raw CAN channel named \"C\". Its raw CAN channels: \"A\", \"B\""));
+    CHECK(throws_with<std::out_of_range>([&] { static_cast<void>(peer.raw_channel("J")); },
+                                         "(\"J\" is a J1939 network of it: network(name))"));
+    CHECK(throws_with<std::out_of_range>([&] { static_cast<void>(peer.network("A")); },
+                                         "has no network named \"A\". Its networks: \"J\" (\"A\" is a raw CAN channel"));
     CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
     CHECK(!peer.failed());
 }

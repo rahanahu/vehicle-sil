@@ -3,6 +3,7 @@
 
 #include "vehicle_sil/core/periodic.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -10,6 +11,8 @@ namespace vehicle_sil {
 
 namespace {
 constexpr const char* kWho = "vehicle_sil::LocalBench: ";
+
+std::string quoted(std::string_view name) { return "\"" + std::string(name) + "\""; }
 } // namespace
 
 struct LocalBench::NamedBus
@@ -101,7 +104,13 @@ public:
                 return *c;
             }
         }
-        throw std::out_of_range(std::string(kWho) + "the ECU " + name_ + " has no network named " + std::string(network));
+        std::string message = std::string(kWho) + "the ECU " + quoted(name_) + " has no network named " +
+                              quoted(network) + ". Its networks: " + network_list();
+        if (has_raw_channel(network))
+        {
+            message += " (" + quoted(network) + " is a raw CAN channel of it: raw_channel(ecu, network))";
+        }
+        throw std::out_of_range(message);
     }
 
     [[nodiscard]] can::RawChannel& raw_channel(std::string_view network) const
@@ -113,18 +122,43 @@ public:
                 return *r->channel;
             }
         }
-        throw std::out_of_range(std::string(kWho) + "the ECU " + name_ + " has no raw CAN channel named " +
-                                std::string(network));
+        std::string message = std::string(kWho) + "the ECU " + quoted(name_) + " has no raw CAN channel named " +
+                              quoted(network) + ". Its raw CAN channels: " + raw_channel_list();
+        if (has_network(network))
+        {
+            message += " (" + quoted(network) + " is a J1939 network of it: network(ecu, network))";
+        }
+        throw std::out_of_range(message);
     }
 
-    [[nodiscard]] Channel& only_channel() const
+    /// The only J1939 network, for the lookup `call`("<ecu>").
+    [[nodiscard]] Channel& only_channel(std::string_view call) const
     {
-        if (channels_.size() != 1)
+        if (channels_.size() == 1)
         {
-            throw std::logic_error(std::string(kWho) + "the ECU " + name_ + " has " + std::to_string(channels_.size()) +
-                                   " networks: name the network");
+            return *channels_.front();
         }
-        return *channels_.front();
+        std::string message = std::string(kWho) + std::string(call) + "(" + quoted(name_) + "): the ECU " + quoted(name_);
+        if (channels_.empty())
+        {
+            message += " has no J1939 network";
+            if (!raw_channels_.empty())
+            {
+                message += " (raw CAN channels are not J1939 networks: look its raw CAN channels " + raw_channel_list() +
+                           " up with raw_channel(" + quoted(name_) + ", network))";
+            }
+            else
+            {
+                message += " (add one with its j1939(network))";
+            }
+        }
+        else
+        {
+            message += " has " + std::to_string(channels_.size()) + " J1939 networks (" + network_list() +
+                       "): name the network, e.g. " + std::string(call) + "(" + quoted(name_) + ", " +
+                       quoted(channels_.front()->bus->name) + ")";
+        }
+        throw std::logic_error(message);
     }
 
     /// A J1939 network on the bus `network`, or on the only bus without a bus name (an empty
@@ -139,9 +173,22 @@ public:
         {
             for (const auto& c : channels_)
             {
+                if (c->bus == existing && existing->name.empty())
+                {
+                    throw std::invalid_argument(
+                        std::string(kWho) + what + ": the ECU " + quoted(name_) +
+                        " already has a network on the only bus, which has no name yet (it was added with "
+                        "add_j1939()), and " +
+                        what +
+                        " would name that bus and give the ECU a second network on it. To name the bus, add the ECU "
+                        "with add_ecu(" +
+                        quoted(name_) + ", step).j1939(" + quoted(network) + ") instead of add_j1939(), or name the "
+                        "bus with another ECU's j1939(" + quoted(network) + ")");
+                }
                 if (c->bus == existing)
                 {
-                    throw std::invalid_argument(std::string(kWho) + "the ECU " + name_ + " has a network named " + network);
+                    throw std::invalid_argument(std::string(kWho) + what + ": the ECU " + quoted(name_) +
+                                                " already has a network named " + quoted(network));
                 }
             }
             if (existing == nullptr)
@@ -163,6 +210,39 @@ public:
     }
 
 private:
+    /// The names of the J1939 networks, quoted, for messages ("none" if there is none).
+    [[nodiscard]] std::string network_list() const
+    {
+        std::string out;
+        for (const auto& c : channels_)
+        {
+            out += (out.empty() ? "" : ", ") + quoted(c->bus->name);
+        }
+        return out.empty() ? "none" : out;
+    }
+
+    /// The names of the raw CAN channels, quoted, for messages ("none" if there is none).
+    [[nodiscard]] std::string raw_channel_list() const
+    {
+        std::string out;
+        for (const auto& r : raw_channels_)
+        {
+            out += (out.empty() ? "" : ", ") + quoted(r->bus->name);
+        }
+        return out.empty() ? "none" : out;
+    }
+
+    [[nodiscard]] bool has_network(std::string_view network) const
+    {
+        return std::any_of(channels_.begin(), channels_.end(), [&](const auto& c) { return c->bus->name == network; });
+    }
+
+    [[nodiscard]] bool has_raw_channel(std::string_view network) const
+    {
+        return std::any_of(raw_channels_.begin(), raw_channels_.end(),
+                           [&](const auto& r) { return r->bus->name == network; });
+    }
+
     j1939::Network& add_j1939(const std::string& network, j1939::NetworkOptions options) override
     {
         return attach_j1939(network, std::move(options));
@@ -176,8 +256,8 @@ private:
         {
             if (r->bus == existing)
             {
-                throw std::invalid_argument(std::string(kWho) + "the ECU " + name_ + " has a raw CAN channel named " +
-                                            network);
+                throw std::invalid_argument(std::string(kWho) + "can(" + quoted(network) + "): the ECU " + quoted(name_) +
+                                            " already has a raw CAN channel named " + quoted(network));
             }
         }
         if (existing == nullptr)
@@ -419,7 +499,13 @@ LocalBench::Site& LocalBench::site(std::string_view name) const
             return *s;
         }
     }
-    throw std::out_of_range(std::string(kWho) + "no ECU named " + std::string(name));
+    std::string names;
+    for (const auto& s : sites_)
+    {
+        names += (names.empty() ? "" : ", ") + quoted(s->name());
+    }
+    throw std::out_of_range(std::string(kWho) + "no ECU named " + quoted(name) + ". ECUs: " +
+                            (names.empty() ? "none (add them with add_ecu() or add_j1939())" : names));
 }
 
 Ecu& LocalBench::ecu(std::string_view name) const { return site(name); }
@@ -445,9 +531,12 @@ can::VirtualCanBus::Endpoint& LocalBench::endpoint(std::string_view ecu, std::st
 }
 can::TapPort& LocalBench::tap(std::string_view ecu, std::string_view network) const { return *site(ecu).channel(network).tap; }
 
-j1939::Network& LocalBench::network(std::string_view ecu) const { return *site(ecu).only_channel().network; }
-can::VirtualCanBus::Endpoint& LocalBench::endpoint(std::string_view ecu) const { return *site(ecu).only_channel().endpoint; }
-can::TapPort& LocalBench::tap(std::string_view ecu) const { return *site(ecu).only_channel().tap; }
+j1939::Network& LocalBench::network(std::string_view ecu) const { return *site(ecu).only_channel("network").network; }
+can::VirtualCanBus::Endpoint& LocalBench::endpoint(std::string_view ecu) const
+{
+    return *site(ecu).only_channel("endpoint").endpoint;
+}
+can::TapPort& LocalBench::tap(std::string_view ecu) const { return *site(ecu).only_channel("tap").tap; }
 can::Host& LocalBench::host(std::string_view ecu) const { return site(ecu).host(); }
 can::RawChannel& LocalBench::raw_channel(std::string_view ecu, std::string_view network) const
 {
