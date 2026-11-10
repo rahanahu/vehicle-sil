@@ -1,0 +1,13 @@
+# The one message of examples/getting_started: a proprietary parameter group with a layout of
+# this example. vehicle_sil_add_j1939_codec() turns this file into getting_started_messages.hpp.
+namespace: getting_started::messages
+messages:
+  - name: EngineStatus
+    comment: Engine -> all, every 20 ms.
+    proprietary_b: 0x10
+    signals:
+      - name: speed
+        start_bit: 0
+        length: 16
+        scale: 0.125
+        unit: rpm

@@ -1,0 +1,7 @@
+# Typed messages: defined in typed_messages_messages.yaml, encoded, decoded and carried between
+# two ECUs without writing a bit position.
+vehicle_sil_add_j1939_codec(vehicle_sil_typed_messages_messages typed_messages_messages.yaml)
+add_executable(vehicle_sil_typed_messages main.cpp)
+target_link_libraries(vehicle_sil_typed_messages PRIVATE vehicle_sil::simulation vehicle_sil_typed_messages_messages)
+vehicle_sil_target_defaults(vehicle_sil_typed_messages)
+vehicle_sil_copy_runtime_dlls(vehicle_sil_typed_messages)

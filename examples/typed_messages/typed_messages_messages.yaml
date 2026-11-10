@@ -1,0 +1,56 @@
+# The messages of examples/typed_messages: proprietary parameter groups with layouts of this
+# example. vehicle_sil_add_j1939_codec() turns this file into typed_messages_messages.hpp.
+namespace: typed_messages::messages
+# Special values (not available, error, ...) are chosen per signal; this profile gives the
+# unsigned signals of 2, 8, 16 and 32 bits the usual "top of the range" ones. Signed signals and
+# signals of other lengths use every bit pattern.
+indicators: j1939
+messages:
+  - name: CoolantStatus
+    comment: Pump -> all, every 20 ms.
+    proprietary_b: 0x20
+    signals:
+      - name: temperature       # physical = raw * 1 - 40, valid up to 150 degC
+        start_bit: 0
+        length: 8
+        offset: -40
+        max: 150
+        unit: degC
+      - name: flow              # physical = raw * 0.05
+        start_bit: 8
+        length: 16
+        scale: 0.05
+        unit: l/min
+      - name: pump              # an enumeration; the 2-bit profile keeps 2 and 3 for error / not available
+        start_bit: 24
+        length: 2
+        values: {off: 0, on: 1}
+      - name: trim              # signed: -64.0 .. 63.5 percent
+        start_bit: 32
+        length: 8
+        signed: true
+        scale: 0.5
+        unit: "%"
+      - name: level             # a signal with a special value of its own
+        start_bit: 40
+        length: 8
+        special_values: {calibrating: 0, error: 0xFE, not_available: 0xFF}
+
+  - name: SamplePack
+    comment: Pump -> one receiver, 24 bytes (carried by the transport protocol).
+    proprietary_a: {}
+    length: 24
+    signals:
+      - name: sequence
+        start_bit: 0
+        length: 16
+      - name: first
+        start_bit: 16
+        length: 16
+        scale: 0.05
+        unit: l/min
+      - name: last              # the last bytes of the message: the whole message arrived
+        start_bit: 176
+        length: 16
+        scale: 0.05
+        unit: l/min
