@@ -8,11 +8,13 @@
 
 #include <algorithm>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <random>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -26,6 +28,21 @@ std::string make_incarnation()
     std::random_device random;
     const auto now = std::chrono::system_clock::now().time_since_epoch().count();
     return std::to_string(now) + "-" + std::to_string(random());
+}
+
+/// The first part of this client's connection identifiers: 16 random hexadecimal digits. Not
+/// made from the incarnation, which may hold any characters (the server accepts only
+/// A-Z a-z 0-9 . _ - there).
+std::string make_connection_prefix()
+{
+    std::random_device random;
+    const std::uint64_t bits = (static_cast<std::uint64_t>(random()) << 32U) ^ random();
+    std::string hex(16, '0');
+    for (std::size_t i = 0; i < hex.size(); ++i)
+    {
+        hex[hex.size() - 1 - i] = "0123456789abcdef"[(bits >> (4U * i)) & 0xFU];
+    }
+    return hex;
 }
 
 } // namespace
@@ -48,6 +65,7 @@ struct AgentClient::Impl
     std::string last_error;
     bool replaced = false;              ///< another process took the participant over: no more reconnects
     std::string connection_id;          ///< the current (or last) connection's
+    std::string connection_prefix = make_connection_prefix();
     std::deque<std::string> own_connections; ///< this client's recent connection identifiers
     std::uint64_t connection_count = 0;
     std::deque<v1::AgentMessage> outbound;  // acknowledgements from the reader
@@ -66,6 +84,15 @@ struct AgentClient::Impl
             || options.reconnect_max < options.reconnect_min)
         {
             throw std::invalid_argument("AgentClientOptions: publish_period and reconnect_min must be > 0, reconnect_max >= reconnect_min");
+        }
+        // The token goes into metadata, where gRPC aborts the process on a byte it refuses.
+        const auto bad = std::find_if(options.token.begin(), options.token.end(),
+                                      [](char c) { return static_cast<unsigned char>(c) < 0x20 || static_cast<unsigned char>(c) > 0x7E; });
+        if (bad != options.token.end())
+        {
+            throw std::invalid_argument("AgentClientOptions: the token has a character outside printable ASCII (0x20 to 0x7E) at byte "
+                                        + std::to_string(bad - options.token.begin())
+                                        + "; use the token exactly as written in the server's credentials, without a line break");
         }
         std::shared_ptr<grpc::ChannelCredentials> credentials;
         if (options.tls || !options.root_certificates_pem.empty())
@@ -161,7 +188,7 @@ struct AgentClient::Impl
             }
             h->set_max_pending(agent.options().max_pending);
             const std::lock_guard lock(mutex);
-            connection_id = incarnation + "/" + std::to_string(++connection_count) + "/" + std::to_string(std::random_device{}());
+            connection_id = connection_prefix + "-" + std::to_string(++connection_count);
             own_connections.push_back(connection_id);
             if (own_connections.size() > 64)
             {

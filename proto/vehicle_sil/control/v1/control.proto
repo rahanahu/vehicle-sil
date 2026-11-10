@@ -126,7 +126,8 @@ message Hello {
   // New for every connection. When another connection of the same participant replaces this
   // one, the server ends this one with ABORTED and names the new connection's identifier in the
   // trailing metadata "vehicle-sil-replaced-by" (an agent replaced by its own newer connection
-  // goes on; one replaced by another process stops reconnecting).
+  // goes on; one replaced by another process stops reconnecting). 1 to 64 characters, each of
+  // A-Z a-z 0-9 . _ - (the server refuses anything else with INVALID_ARGUMENT); empty: none.
   string connection = 7;
 }
 

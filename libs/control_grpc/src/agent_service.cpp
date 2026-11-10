@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <deque>
 #include <set>
+#include <string_view>
 #include <utility>
 
 namespace vehicle_sil::control_grpc::detail {
@@ -173,7 +174,9 @@ private:
         }
         if (context != nullptr)
         {
-            context->AddTrailingMetadata(std::string(kReplacedBy), replaced_by);
+            // The hello was checked already; checked again here, as a value gRPC refuses in
+            // metadata aborts the whole server. Empty: replaced by a connection without one.
+            context->AddTrailingMetadata(std::string(kReplacedBy), valid_connection_id(replaced_by) ? replaced_by : std::string());
         }
         Finish(std::move(status));
     }
@@ -209,6 +212,17 @@ private:
             if (static_cast<std::uint64_t>(h.open_seqs_size()) > 2 * h.max_pending())
             {
                 return refuse(grpc::StatusCode::INVALID_ARGUMENT, "more open_seqs than the agent can hold");
+            }
+            // Empty: a client that does not send one (it is then not told apart when replaced).
+            // The value itself stays out of the reply and the audit: it may not be printable.
+            if (!h.connection().empty() && !valid_connection_id(h.connection()))
+            {
+                const auto bad = std::count_if(h.connection().begin(), h.connection().end(),
+                                               [](char c) { return !valid_connection_id(std::string_view(&c, 1)); });
+                return refuse(grpc::StatusCode::INVALID_ARGUMENT,
+                              "the hello's connection identifier is not allowed (it has " + std::to_string(h.connection().size())
+                                  + " bytes, " + std::to_string(bad) + " of them outside A-Z a-z 0-9 . _ -): send 1 to "
+                                  + std::to_string(kMaxConnectionId) + " of those characters, new for every connection, or leave it empty");
             }
             if (!may_connect_as(who_, h.participant()))
             {

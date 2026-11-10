@@ -3,6 +3,7 @@
 // The bounds and input checks of the control server: refused calls in the audit log, the size of
 // a Write, the calls that wait, the agent's hello, a replaced agent connection, the options, and
 // the time operations at the edges (the end of the simulation, the stop reason).
+#include "convert.hpp"
 #include "test_harness.hpp"
 
 #include "vehicle_sil/control/v1/control.grpc.pb.h"
@@ -413,6 +414,132 @@ TEST_CASE(control_server_names_the_replacing_connection_and_tells_the_watches)
     watch_context.TryCancel();
     second.context.TryCancel();
     static_cast<void>(second.stream->Finish());
+}
+
+TEST_CASE(control_server_refuses_a_connection_identifier_it_cannot_send_back)
+{
+    // The identifier goes back in the metadata of the connection it replaces, where gRPC aborts
+    // the server on a byte it does not allow: a hello with such an identifier is refused, and
+    // the server goes on.
+    AuditLines audit;
+    control_grpc::ServerOptions o;
+    o.audit = audit.sink();
+    control_grpc::ControlServer server(std::move(o));
+    auto stub = v1::AgentService::NewStub(channel(server));
+    auto clients = v1::ControlService::NewStub(channel(server));
+    const auto ping = [&] {
+        grpc::ClientContext context;
+        v1::PingReply reply;
+        return clients->Ping(&context, v1::PingRequest{}, &reply).ok();
+    };
+    auto h1 = hello("Engine", "e1");
+    h1.set_connection("c1");
+    RawAgent first(*stub, h1);
+    CHECK(first.read().has_value()); // welcome
+
+    struct Bad
+    {
+        std::string connection;
+        std::string says;
+    };
+    const std::vector<Bad> bad = {
+        {"\xe6\x8e\xa5\xe7\xb6\x9a\n1", "(it has 8 bytes, 7 of them outside A-Z a-z 0-9 . _ -)"}, // non-ASCII and a line break
+        {std::string(65, 'a'), "(it has 65 bytes, 0 of them outside"},
+        {"a b", "(it has 3 bytes, 1 of them outside"},
+    };
+    for (const auto& b : bad)
+    {
+        auto h = hello("Engine", "e2");
+        h.set_connection(b.connection);
+        RawAgent agent(*stub, h);
+        CHECK(!agent.read().has_value());
+        const auto status = agent.stream->Finish();
+        CHECK(status.error_code() == grpc::StatusCode::INVALID_ARGUMENT);
+        CHECK(status.error_message().find("the hello's connection identifier is not allowed " + b.says) != std::string::npos);
+        CHECK(status.error_message().find("send 1 to 64 of those characters") != std::string::npos);
+        CHECK(ping());
+    }
+    CHECK(eventually([&] { return audit.count("agent Engine: refused (the hello's connection identifier is not allowed") == 3; }));
+    CHECK_EQ(audit.count("\xe6\x8e\xa5"), std::size_t{0}); // the value itself is not logged
+    // The first connection was not replaced.
+    auto peers = server.hub().peers();
+    CHECK(peers.size() == 1 && peers.at(0).connected && peers.at(0).incarnation == "e1");
+
+    // The longest identifier allowed, of every allowed kind of character, replaces it.
+    const std::string longest = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-";
+    CHECK_EQ(longest.size(), std::size_t{65});
+    auto h2 = hello("Engine", "e2");
+    h2.set_connection(longest.substr(1));
+    RawAgent second(*stub, h2);
+    CHECK(second.read().has_value());
+    CHECK(!first.read().has_value());
+    CHECK(first.stream->Finish().error_code() == grpc::StatusCode::ABORTED);
+    const auto& trailing = first.context.GetServerTrailingMetadata();
+    const auto by = trailing.find("vehicle-sil-replaced-by");
+    CHECK(by != trailing.end() && std::string(by->second.data(), by->second.size()) == longest.substr(1));
+    CHECK(ping());
+    second.context.TryCancel();
+    static_cast<void>(second.stream->Finish());
+}
+
+TEST_CASE(control_server_an_agent_whose_names_are_not_ascii_reconnects_over_its_old_stream)
+{
+    // A participant name and an incarnation in Japanese with a tab. The server still holds the
+    // agent's old stream when the agent reconnects (a lost link it has not noticed); it ends that
+    // stream with the new connection's identifier, which the agent made of characters gRPC
+    // allows in metadata.
+    control_grpc::ControlServer server(control_grpc::ServerOptions{});
+    const auto address = "127.0.0.1:" + std::to_string(server.port());
+    const std::string participant = "\xe3\x82\xa8\xe3\x83\xb3\xe3\x82\xb8\xe3\x83\xb3";   // エンジン
+    const std::string incarnation = "\xe8\xa9\xa6\xe4\xbd\x9c\t1";                       // 試作<tab>1
+    control::Agent a;
+    a.bind_driver();
+    control_grpc::AgentClient agent(a, {.server = address, .participant = participant, .incarnation = incarnation,
+                                        .reconnect_min = 20ms, .reconnect_max = 100ms});
+    CHECK(agent.wait_connected(10s));
+    CHECK(control_grpc::detail::valid_connection_id(agent.connection_id()));
+    // The stand-in for the old stream: same participant and incarnation. It takes over the
+    // agent's connection (with the agent's own identifier, so the agent reconnects), and the
+    // agent's new connection then replaces it.
+    auto stub = v1::AgentService::NewStub(channel(server));
+    auto own = hello(participant, incarnation);
+    own.set_connection(agent.connection_id());
+    RawAgent old_stream(*stub, own);
+    CHECK(eventually([&] { return agent.sessions() >= 2 && agent.connected(); }));
+    auto message = old_stream.read();
+    if (message.has_value())
+    {
+        CHECK(message->has_welcome()); // when it took over
+        message = old_stream.read();
+    }
+    CHECK(!message.has_value());
+    const auto status = old_stream.stream->Finish();
+    CHECK(status.error_code() == grpc::StatusCode::ABORTED);
+    CHECK(status.error_message().find("participant '" + participant + "' (incarnation '" + incarnation + "'") != std::string::npos);
+    const auto& trailing = old_stream.context.GetServerTrailingMetadata();
+    const auto by = trailing.find("vehicle-sil-replaced-by");
+    CHECK(by != trailing.end() && std::string(by->second.data(), by->second.size()) == agent.connection_id());
+    CHECK(!agent.replaced());
+    CHECK(agent.connected());
+    const auto peers = server.hub().peers();
+    CHECK(peers.size() == 1 && peers.at(0).participant == participant && peers.at(0).connected
+          && peers.at(0).incarnation == incarnation);
+    agent.stop();
+}
+
+TEST_CASE(control_server_agent_client_refuses_a_token_it_cannot_send)
+{
+    // gRPC would abort the agent's process when it puts such a token into the metadata.
+    control_grpc::ControlServer server(control_grpc::ServerOptions{});
+    const auto address = "127.0.0.1:" + std::to_string(server.port());
+    control::Agent a;
+    a.bind_driver();
+    CHECK(vehicle_sil::unit::throws_if<std::invalid_argument>(
+        [&] { control_grpc::AgentClient client(a, {.server = address, .participant = "Engine", .token = "agent-token\n"}); },
+        [](const std::invalid_argument& e) {
+            return std::string(e.what()).find("the token has a character outside printable ASCII (0x20 to 0x7E) at byte 11")
+                   != std::string::npos;
+        }));
 }
 
 TEST_CASE(control_server_cuts_a_stop_reason_between_characters)

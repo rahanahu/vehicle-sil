@@ -8,6 +8,7 @@
 #include "vehicle_sil/control/v1/control.pb.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -20,6 +21,29 @@ using namespace vehicle_sil::control;
 /// The trailing metadata of a replaced agent connection: the identifier (Hello::connection) of the
 /// connection that replaced it.
 inline constexpr std::string_view kReplacedBy = "vehicle-sil-replaced-by";
+
+/// The longest connection identifier (Hello::connection) the server accepts.
+inline constexpr std::size_t kMaxConnectionId = 64;
+
+/// A connection identifier the server accepts and may put into metadata: 1 to kMaxConnectionId
+/// characters, each of A-Z a-z 0-9 . _ -. gRPC aborts the process when the server ends a call
+/// with metadata holding bytes outside 0x20..0x7E, so nothing else from a client gets there.
+[[nodiscard]] constexpr bool valid_connection_id(std::string_view id) noexcept
+{
+    if (id.empty() || id.size() > kMaxConnectionId)
+    {
+        return false;
+    }
+    for (const char c : id)
+    {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        if (!ok)
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 inline std::int64_t ns_of(SimTime t)
 {

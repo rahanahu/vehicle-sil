@@ -29,7 +29,8 @@ struct AgentClientOptions
     std::chrono::milliseconds reconnect_max{2000};
     /// The peer's state outside its steps, e.g. [&] { return PeerStatus{peer.failed(), peer.error()}; }.
     std::function<control::PeerStatus()> status{};
-    /// The bearer token of an Agent credential (empty: none).
+    /// The bearer token of an Agent credential (empty: none). Printable ASCII only (0x20 to 0x7E);
+    /// anything else: std::invalid_argument.
     std::string token{};
     /// TLS. With root_certificates_pem empty, the server's certificate must chain to the
     /// system's root certificates.
@@ -53,7 +54,8 @@ struct AgentClientOptions
 /// Create it after the agent was attached to its peer (the schema is complete then) and destroy
 /// it before the agent and before what `status` refers to (the peer); call Agent::finish() before
 /// stop(), which sends what is left, waits up to about 3 s for the server to take it and then up to
-/// 1.5 s for the stream to end (std::invalid_argument for non-positive periods). It is the only transport-side user of the agent.
+/// 1.5 s for the stream to end (std::invalid_argument for non-positive periods or a token that is not
+/// printable ASCII). It is the only transport-side user of the agent.
 class AgentClient
 {
 public:
