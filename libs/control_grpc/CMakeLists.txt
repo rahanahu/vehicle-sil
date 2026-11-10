@@ -3,7 +3,8 @@
 # Only with VEHICLE_SIL_BUILD_CONTROL_SERVER (needs gRPC).
 add_library(vehicle_sil_control_grpc STATIC
   src/server.cpp
-  src/agent_client.cpp)
+  src/agent_client.cpp
+  src/simulation_monitor.cpp)
 add_library(vehicle_sil::control_grpc ALIAS vehicle_sil_control_grpc)
 set_target_properties(vehicle_sil_control_grpc PROPERTIES EXPORT_NAME control_grpc)
 target_include_directories(vehicle_sil_control_grpc PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

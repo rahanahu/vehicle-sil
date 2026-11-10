@@ -3,6 +3,7 @@
 
 #include "convert.hpp"
 #include "vehicle_sil/control/v1/control.grpc.pb.h"
+#include "vehicle_sil/control_grpc/simulation_monitor.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 
 #include <grpcpp/grpcpp.h>
@@ -65,6 +66,8 @@ public:
         }
         return out;
     }
+
+    std::optional<LeftParticipant> left_participant() const override { return FailureCheck::left_participant(c_); }
 
 private:
     using PeerStatus = vehicle_sil::PeerStatus;
@@ -690,9 +693,9 @@ std::string peer_of(const grpc::ServerContext& context)
 class ControlServiceImpl final : public v1::ControlService::Service
 {
 public:
-    ControlServiceImpl(Hub& hub, const ServerOptions& options, const std::atomic<bool>& stopping, const Authorizer& auth,
-                       const AuditLog& audit) :
-      hub_(hub), options_(options), stopping_(stopping), auth_(auth), audit_(audit)
+    ControlServiceImpl(Hub& hub, const ServerOptions& options, SimulationMonitor* monitor, const std::atomic<bool>& stopping,
+                       const Authorizer& auth, const AuditLog& audit) :
+      hub_(hub), options_(options), monitor_(monitor), stopping_(stopping), auth_(auth), audit_(audit)
     {
     }
 
@@ -768,14 +771,13 @@ public:
         // The agents that connected, joined with the participants SIL Kit knows (with a time
         // control: the simulation's participants on every PC, also those without an agent).
         std::vector<std::pair<std::string, std::string>> simulation;
-        if (options_.time != nullptr)
+        if (monitor_ != nullptr)
         {
-            try
+            const auto snapshot = monitor_->snapshot();
+            simulation = snapshot.participants;
+            if (!snapshot.participants_error.empty())
             {
-                simulation = options_.time->participants();
-            }
-            catch (const std::exception&)
-            {
+                reply->set_simulation_error("cannot read the participants' states: " + snapshot.participants_error);
             }
         }
         const auto state_of = [&](const std::string& name) {
@@ -963,31 +965,67 @@ public:
         o.operations = request->operations();
         o.capacity = std::min<std::size_t>(request->capacity() == 0 ? options_.default_watch_capacity : request->capacity(),
                                            options_.max_watch_capacity);
-        const bool watch_time = request->time() && options_.time != nullptr;
+        const bool watch_time = request->time() && monitor_ != nullptr;
+        const bool watch_simulation = request->simulation();
         const auto sub = hub_.subscribe(o);
-        std::optional<std::string> sent_time; // the last time state sent (serialized)
-        const auto send_time = [&]() {
-            if (!watch_time)
+        // The monitor's changes, taken by this stream between its waits on the hub.
+        struct Latest
+        {
+            std::mutex mutex;
+            std::optional<SimulationSnapshot> snapshot;
+        } latest;
+        SimulationMonitor::Subscription simulation_sub;
+        std::optional<SimulationSnapshot> current;
+        if (monitor_ != nullptr && (watch_time || watch_simulation))
+        {
+            simulation_sub = monitor_->subscribe([&latest](const SimulationSnapshot& snapshot) {
+                const std::lock_guard lock(latest.mutex);
+                latest.snapshot = snapshot;
+            });
+            current = monitor_->snapshot();
+        }
+        std::optional<TimeView> sent_time;
+        std::optional<SimulationSnapshot> sent_simulation;
+        bool sent_unavailable = false;
+        // Sends what changed since the last time; false if the client went away.
+        const auto send_simulation = [&]() {
+            const auto write = [&](v1::Update& out) {
+                out.set_dropped(sub->dropped());
+                return writer->Write(out);
+            };
+            if (watch_simulation && monitor_ == nullptr && !std::exchange(sent_unavailable, true))
+            {
+                v1::Update out;
+                detail::to_proto(nullptr, *out.mutable_simulation());
+                return write(out);
+            }
+            if (!current)
             {
                 return true;
             }
-            v1::Update out;
-            try
+            const auto snapshot = std::move(*current);
+            current.reset();
+            if (watch_time && snapshot.time_error.empty() && sent_time != snapshot.time)
             {
-                time_to_proto(options_.time->state(), *out.mutable_time());
+                v1::Update out;
+                time_to_proto(snapshot.time, *out.mutable_time());
+                if (!write(out))
+                {
+                    return false;
+                }
+                sent_time = snapshot.time;
             }
-            catch (const std::exception&)
+            if (watch_simulation && (!sent_simulation || !sent_simulation->same_state(snapshot)))
             {
-                return true;
+                v1::Update out;
+                detail::to_proto(&snapshot, *out.mutable_simulation());
+                if (!write(out))
+                {
+                    return false;
+                }
+                sent_simulation = snapshot;
             }
-            auto text = out.time().SerializeAsString();
-            if (sent_time == text)
-            {
-                return true;
-            }
-            sent_time = std::move(text);
-            out.set_dropped(sub->dropped());
-            return writer->Write(out);
+            return true;
         };
         bool initial = true;
         while (!context->IsCancelled() && !stopping_.load())
@@ -1032,7 +1070,15 @@ public:
                     return grpc::Status::OK; // the client went away
                 }
             }
-            if (!send_time())
+            {
+                const std::lock_guard lock(latest.mutex);
+                if (latest.snapshot && (!current || latest.snapshot->version > current->version))
+                {
+                    current = std::move(latest.snapshot);
+                }
+                latest.snapshot.reset();
+            }
+            if (!send_simulation())
             {
                 break;
             }
@@ -1225,6 +1271,7 @@ public:
 private:
     Hub& hub_;
     const ServerOptions& options_;
+    SimulationMonitor* monitor_;
     const std::atomic<bool>& stopping_;
     const Authorizer& auth_;
     const AuditLog& audit_;
@@ -1358,6 +1405,10 @@ ServerOptions check(ServerOptions o)
             }
         }
     }
+    if (o.monitor_period < std::chrono::milliseconds::zero() || o.leave_grace < std::chrono::steady_clock::duration::zero())
+    {
+        throw std::invalid_argument("vehicle_sil control server: monitor_period and leave_grace must not be negative");
+    }
     if (o.max_waiting_calls == 0 || o.max_writes_per_request == 0)
     {
         throw std::invalid_argument("vehicle_sil control server: max_waiting_calls and max_writes_per_request must be > 0");
@@ -1375,6 +1426,7 @@ struct ControlServer::Impl
     std::atomic<bool> stopping{false};
     Authorizer auth;
     StreamRegistry streams;
+    std::unique_ptr<SimulationMonitor> monitor; ///< outlives the services' calls (Watch subscribes)
     AgentServiceImpl agents;
     ControlServiceImpl clients;
     std::unique_ptr<grpc::Server> server;
@@ -1387,8 +1439,11 @@ struct ControlServer::Impl
       audit(options.audit),
       hub(options.hub),
       auth(options.security),
+      monitor(options.time != nullptr
+                  ? std::make_unique<SimulationMonitor>(*options.time, SimulationMonitorOptions{options.monitor_period, options.leave_grace, {}})
+                  : nullptr),
       agents(hub, auth, audit, streams),
-      clients(hub, options, stopping, auth, audit)
+      clients(hub, options, monitor.get(), stopping, auth, audit)
     {
         const auto& sec = options.security;
         const bool tls = !sec.certificate_chain_pem.empty() && !sec.private_key_pem.empty();
@@ -1442,6 +1497,11 @@ int ControlServer::port() const noexcept
 control::Hub& ControlServer::hub() noexcept
 {
     return impl_->hub;
+}
+
+SimulationMonitor* ControlServer::simulation() noexcept
+{
+    return impl_->monitor.get();
 }
 
 void ControlServer::disconnect_agents()

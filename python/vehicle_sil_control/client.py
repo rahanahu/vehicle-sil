@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import warnings
 from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Union
 
 import grpc
@@ -22,6 +23,10 @@ def ms(value: float) -> int:
 def s(value: float) -> int:
     """Seconds of simulation time, in nanoseconds."""
     return int(round(value * 1_000_000_000))
+
+
+class ControlWarning(UserWarning):
+    """The server answered, but could not tell everything (the message says what is missing)."""
 
 
 class ControlError(Exception):
@@ -91,6 +96,18 @@ class TimeState:
 
 
 @dataclasses.dataclass(frozen=True)
+class SimulationState:
+    """The coordinated simulation as the server sees it (watch(simulation=True))."""
+    available: bool  # False: the server does not coordinate a simulation
+    participants: Dict[str, str]  # required participant -> SIL Kit lifecycle state ("" if not seen yet)
+    error: str = ""  # not empty: the server could not read the state (why); the rest is the last known
+    failed_participant: str = ""  # a participant that failed the simulation ("" if none)
+    failed_state: str = ""
+    failure_reason: str = ""
+    ended: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
 class Values:
     peer: str
     incarnation: str
@@ -157,6 +174,11 @@ def _operation(o) -> Operation:
 def _time(t) -> TimeState:
     return TimeState(t.available, t.now_ns, t.paused, t.pause_target_ns if t.HasField("pause_target_ns") else None,
                      t.speed if t.HasField("speed") else None, t.running)
+
+
+def _simulation(m) -> SimulationState:
+    return SimulationState(m.available, {p.participant: p.state for p in m.participants}, m.error,
+                           m.failed_participant, m.failed_state, m.failure_reason, m.ended)
 
 
 class _TokenInterceptor(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor,
@@ -272,7 +294,12 @@ class Control:
         return self._call(self._stub.Ping, pb.PingRequest(text=text)).server_version
 
     def peers(self) -> List[Peer]:
-        return [_peer(p) for p in self._call(self._stub.ListPeers, pb.ListPeersRequest()).peers]
+        """The peers. If the server could not read the simulation's participants, it warns
+        (ControlWarning) and the list has their last known states."""
+        reply = self._call(self._stub.ListPeers, pb.ListPeersRequest())
+        if reply.simulation_error:
+            warnings.warn(f"ListPeers: {reply.simulation_error}", ControlWarning, stacklevel=2)
+        return [_peer(p) for p in reply.peers]
 
     def peer(self, name: str) -> Peer:
         for p in self.peers():
@@ -319,13 +346,14 @@ class Control:
         return _operation(self._call(self._stub.WaitOperation, request, timeout=timeout + 5))
 
     def watch(self, peers: Sequence[str] = (), values: bool = True, events: bool = True, operations: bool = True,
-              capacity: int = 0, time: bool = False) -> Iterator[object]:
-        """Yields Peer, ("removed", name), Values, EventInfo, Operation, TimeState (with time=True) and
+              capacity: int = 0, time: bool = False, simulation: bool = False) -> Iterator[object]:
+        """Yields Peer, ("removed", name), Values, EventInfo, Operation, TimeState (with time=True),
+        SimulationState (with simulation=True: participants' states, a failure, the end) and
         ("initial_done",) once the current state has been sent, until the caller stops iterating (or
         the server ends the stream)."""
         schemas: Dict[str, List[Variable]] = {}
         request = pb.WatchRequest(peers=list(peers), values=values, events=events, operations=operations,
-                                  capacity=capacity, time=time)
+                                  capacity=capacity, time=time, simulation=simulation)
         stream = self._stub.Watch(request)
         try:
             for u in stream:
@@ -350,6 +378,8 @@ class Control:
                     yield _operation(u.operation)
                 elif kind == "time":
                     yield _time(u.time)
+                elif kind == "simulation":
+                    yield _simulation(u.simulation)
                 elif kind == "initial_done":
                     yield ("initial_done",)
         except grpc.RpcError as e:

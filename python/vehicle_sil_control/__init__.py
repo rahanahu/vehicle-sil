@@ -4,7 +4,8 @@
 The names are loaded on first use, so `python -m vehicle_sil_control.generate` works before the
 gRPC stubs exist.
 """
-__all__ = ["Control", "ControlError", "EventInfo", "Operation", "Peer", "Target", "TimeState", "Values", "Variable",
+__all__ = ["Control", "ControlError", "ControlWarning", "EventInfo", "Operation", "Peer", "SimulationState", "Target",
+           "TimeState", "Values", "Variable",
            "ms", "s"]
 
 

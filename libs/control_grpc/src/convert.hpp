@@ -4,6 +4,7 @@
 #pragma once
 
 #include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/control_grpc/simulation_monitor.hpp"
 #include "vehicle_sil/control/v1/control.pb.h"
 
 #include <chrono>
@@ -294,6 +295,38 @@ inline void to_proto(const OperationResult& in, v1::Operation& out)
         pt->set_reason(t.reason);
     }
     out.set_done(in.done());
+}
+
+/// The simulation part of a monitor's snapshot; `in` nullptr: the server does not coordinate a
+/// simulation.
+inline void to_proto(const control_grpc::SimulationSnapshot* in, v1::SimulationState& out)
+{
+    out.set_available(in != nullptr);
+    if (in == nullptr)
+    {
+        return;
+    }
+    for (const auto& [name, state] : in->participants)
+    {
+        auto* p = out.add_participants();
+        p->set_participant(name);
+        p->set_state(state);
+    }
+    if (!in->participants_error.empty())
+    {
+        out.set_error("cannot read the participants' states: " + in->participants_error);
+    }
+    else if (!in->time_error.empty())
+    {
+        out.set_error("cannot read the time: " + in->time_error);
+    }
+    if (in->failure)
+    {
+        out.set_failed_participant(in->failure->participant);
+        out.set_failed_state(in->failure->state);
+        out.set_failure_reason(in->failure->reason);
+    }
+    out.set_ended(in->ended);
 }
 
 } // namespace vehicle_sil::control_grpc::detail

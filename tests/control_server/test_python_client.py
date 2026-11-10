@@ -11,7 +11,7 @@ import sys
 import threading
 import unittest
 
-from vehicle_sil_control import Control, ControlError, EventInfo, Operation, Peer, Values, ms
+from vehicle_sil_control import Control, ControlError, EventInfo, Operation, Peer, SimulationState, Values, ms
 
 
 class DemoTest(unittest.TestCase):
@@ -102,6 +102,15 @@ class DemoTest(unittest.TestCase):
         self.assertEqual(body["cabin.lamp"], 2)
         self.assertFalse(body["cabin.parking_brake"])
         self.assertEqual(engine["j1939.J1939_CAN.node0.address_state"], 3)  # claimed
+
+        # The simulation's state: the required participants run, nobody failed, not over.
+        with Control(self.address) as w:
+            for u in w.watch(values=False, events=False, operations=False, simulation=True):
+                if isinstance(u, SimulationState):
+                    break
+        self.assertTrue(u.available)
+        self.assertEqual(u.participants, {"Engine": "Running", "Body": "Running"})
+        self.assertEqual((u.failed_participant, u.ended, u.error), ("", False, ""))
 
         # A refused call raises ControlError (an operation that an agent refuses is a result instead).
         with self.assertRaises(ControlError):

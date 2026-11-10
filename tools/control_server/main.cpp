@@ -5,11 +5,12 @@
 // required participants are connected, and clients can pause, step and pace it.
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/control_grpc/server.hpp"
-#include "vehicle_sil/core/failure_check.hpp"
+#include "vehicle_sil/control_grpc/simulation_monitor.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdio>
 #include <exception>
@@ -209,22 +210,39 @@ int main(int argc, char** argv)
             return cli::kExitTimeout;
         }
         log("simulation started");
-        FailureCheck check;
+        // The server's monitor tells when the simulation changed (a failure, the end).
+        std::mutex changedMutex;
+        std::condition_variable changedCv;
+        bool changed = false;
+        auto* monitor = server->simulation();
+        auto subscription = monitor->subscribe([&](const control_grpc::SimulationSnapshot&) {
+            {
+                const std::lock_guard lock(changedMutex);
+                changed = true;
+            }
+            changedCv.notify_one();
+        });
         while (!g_interrupted)
         {
-            if (const auto failed = check.check(*controller, std::chrono::steady_clock::now()))
+            const auto snapshot = monitor->snapshot();
+            if (snapshot.failure)
             {
-                log("FAIL: participant '" + failed->participant + "' " + failed->reason + "; aborting");
+                log("FAIL: participant '" + snapshot.failure->participant + "' " + snapshot.failure->reason + "; aborting");
                 controller->abort();
                 exitCode = cli::kExitFailed;
                 break;
             }
-            if (controller->wait_until_finished(std::chrono::milliseconds(50)))
+            if (snapshot.ended)
             {
                 log("simulation ended");
                 break;
             }
+            // In slices: a signal handler cannot notify the condition variable.
+            std::unique_lock lock(changedMutex);
+            changedCv.wait_for(lock, std::chrono::milliseconds(50), [&] { return changed; });
+            changed = false;
         }
+        subscription.reset();
         controller->stop("control server ends");
         // A moment for the agents' last results and values before the server goes.
         std::this_thread::sleep_for(std::chrono::seconds(1));

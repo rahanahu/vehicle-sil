@@ -187,6 +187,9 @@ message ListPeersRequest {}
 
 message ListPeersReply {
   repeated PeerInfo peers = 1;
+  // Not empty: the server could not read the simulation's participants (why). The list then has
+  // their last known states.
+  string simulation_error = 2;
 }
 
 message GetValuesRequest {
@@ -270,6 +273,7 @@ message WatchRequest {
   bool operations = 4;
   uint32 capacity = 5; // 0: the server's default; capped by the server's maximum
   bool time = 6;       // also the time state when it changes
+  bool simulation = 7; // also the simulation state (participants, failure, end) when it changes
 }
 
 message Update {
@@ -280,7 +284,8 @@ message Update {
     PeerEvent event = 4;
     Operation operation = 5;
     TimeState time = 7;
-    bool initial_done = 8; // the current peers and values (and time) have been sent
+    bool initial_done = 8; // the current peers and values (and time and simulation) have been sent
+    SimulationState simulation = 9;
   }
   uint64 dropped = 6; // updates dropped for this watch so far
 }
@@ -308,6 +313,26 @@ message TimeState {
   optional sint64 pause_target_ns = 4;
   optional double speed = 5;
   bool running = 6; // the simulation has started and not ended
+}
+
+// A participant of the coordinated simulation and its SIL Kit lifecycle state.
+message ParticipantState {
+  string participant = 1;
+  string state = 2; // "" if the server has not seen one yet
+}
+
+// The coordinated simulation as the server's monitor sees it.
+message SimulationState {
+  bool available = 1; // false: the server does not coordinate a simulation
+  repeated ParticipantState participants = 2; // the required participants
+  // Not empty: the server could not read the simulation's state (why); the rest is the last known.
+  string error = 3;
+  // A required participant that failed the simulation ("" if none), its state and why. Once set,
+  // it stays: the server then ends the simulation.
+  string failed_participant = 4;
+  string failed_state = 5;
+  string failure_reason = 6;
+  bool ended = 7; // the simulation ran and is over
 }
 
 message GetTimeRequest {}

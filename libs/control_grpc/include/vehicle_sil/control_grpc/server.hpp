@@ -5,6 +5,7 @@
 #pragma once
 
 #include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/core/failure_check.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 
 #include <chrono>
@@ -32,6 +33,8 @@ struct TimeView
     std::optional<double> speed;
     bool running = false;
     bool ended = false; ///< the simulation ran and is over (it will not stand still again)
+
+    bool operator==(const TimeView&) const = default;
 };
 
 /// The time operations the server offers. All are thread safe and do not wait, except
@@ -52,6 +55,9 @@ public:
     /// The participants of the simulation and their SIL Kit lifecycle state ("" if not seen yet),
     /// as the controller sees them through the registry (on any PC, with or without an agent).
     [[nodiscard]] virtual std::vector<std::pair<std::string, std::string>> participants() const = 0;
+    /// The first required participant that has left the running simulation, with its state
+    /// (FailureCheck::left_participant()); empty if none, or if this time control cannot tell.
+    [[nodiscard]] virtual std::optional<LeftParticipant> left_participant() const { return std::nullopt; }
 };
 
 /// The time gate of `controller` (SimulationControllerOptions::time_control must be set).
@@ -121,7 +127,13 @@ struct ServerOptions
     /// out (anyone who reaches the port can make them): at most 20 lines per second, and a line
     /// with the number left out. Must be thread safe.
     std::function<void(const std::string& line)> audit{};
+    /// How often the server reads `time` for Watch, ListPeers and simulation() (0: only when
+    /// simulation()->poll() is called), and the grace of its failure check (SimulationMonitor).
+    std::chrono::milliseconds monitor_period{50};
+    std::chrono::steady_clock::duration leave_grace = FailureCheck::kDefaultGrace;
 };
+
+class SimulationMonitor;
 
 /// Serves the Control API: ControlService for clients and AgentService for agents
 /// (control_grpc::AgentClient). Starts listening in the constructor (std::runtime_error if it
@@ -137,6 +149,8 @@ public:
     /// The port the server listens on.
     [[nodiscard]] int port() const noexcept;
     [[nodiscard]] control::Hub& hub() noexcept;
+    /// The monitor of `time` (its snapshot and its changes); nullptr without ServerOptions::time.
+    [[nodiscard]] SimulationMonitor* simulation() noexcept;
     /// Drops every agent connection (the agents reconnect). For tests and administration.
     void disconnect_agents();
     /// Stops serving: open watches, waits and agent streams end. Idempotent.
