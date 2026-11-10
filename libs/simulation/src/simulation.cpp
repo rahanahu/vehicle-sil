@@ -289,6 +289,8 @@ void Simulation::SilKitRun::watch_without_controller(std::vector<std::optional<o
 
 Simulation::Simulation() : local_(std::make_unique<LocalRun>()) {}
 
+Simulation::Simulation(SilKitOptions silkit) : Simulation(std::optional<SilKitOptions>(std::move(silkit))) {}
+
 Simulation::Simulation(std::optional<SilKitOptions> silkit)
 {
     if (!silkit)

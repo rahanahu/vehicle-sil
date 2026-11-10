@@ -806,4 +806,13 @@ TEST_CASE(simulation_place_can_be_chosen_at_run_time)
     CHECK(!direct.is_local());
     silkit = SilKitOptions{.controller = false, .other_participants = {"X"}};
     CHECK(throws<std::invalid_argument>([&] { Simulation sim(silkit); }));
+    CHECK(throws<std::invalid_argument>([&] { Simulation sim(*silkit); }));
+
+    // A braced list without the type name is SilKitOptions. (Simulation sim{{}} does not compile:
+    // the empty list fits both SilKitOptions and std::optional, so it is not quietly local.)
+    Simulation braced({.registry_uri = "silkit://127.0.0.1:1", .controller = false});
+    CHECK(!braced.is_local());
+    CHECK(braced.registry_uri() == "silkit://127.0.0.1:1");
+    Simulation none(std::nullopt);
+    CHECK(none.is_local());
 }

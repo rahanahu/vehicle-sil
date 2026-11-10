@@ -88,12 +88,15 @@ class Simulation
 public:
     /// On virtual CAN buses in this process, stepped in the calling thread (LocalBench).
     Simulation();
-    /// On SIL Kit if `silkit` has a value (Simulation(SilKitOptions{...}) is this one), else as
-    /// Simulation(). On SIL Kit: starts the registry of this process if registry_uri is empty
-    /// (SilKit::SilKitError on failure); connects nothing else yet (add_ecu() connects each
-    /// participant). std::invalid_argument for other_participants without controller, or for an
-    /// empty or repeated name in it.
+    /// On SIL Kit if `silkit` has a value, else as Simulation(). On SIL Kit: starts the registry
+    /// of this process if registry_uri is empty (SilKit::SilKitError on failure); connects
+    /// nothing else yet (add_ecu() connects each participant). std::invalid_argument for
+    /// other_participants without controller, or for an empty or repeated name in it.
     explicit Simulation(std::optional<SilKitOptions> silkit);
+    /// On SIL Kit: Simulation(std::optional<SilKitOptions>(silkit)). It keeps a braced list
+    /// without the type name meaning SilKitOptions (Simulation sim({.registry_uri = uri})), and
+    /// makes Simulation sim{{}} ambiguous (a compile error) instead of quietly local.
+    explicit Simulation(SilKitOptions silkit);
     /// Stops everything; never throws.
     ~Simulation();
     Simulation(const Simulation&) = delete;
