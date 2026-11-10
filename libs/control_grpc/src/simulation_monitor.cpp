@@ -131,18 +131,23 @@ void SimulationMonitor::poll()
     }
     next.ended = next.time.ended;
     std::optional<LeftParticipant> left;
+    bool read = false;
     try
     {
-        next.participants = time_.participants();
+        // Both or neither: the participants and the one that left are of the same read.
+        auto participants = time_.participants();
         left = time_.left_participant();
+        next.participants = std::move(participants);
         next.participants_error.clear();
+        read = true;
     }
     catch (const std::exception& e)
     {
         next.participants_error = e.what();
     }
-    // A failure stays: once the simulation is aborted, nobody is "left" any more.
-    if (!next.failure)
+    // A failure stays: once the simulation is aborted, nobody is "left" any more. A failed read
+    // tells nothing: the grace of a participant seen leaving goes on being counted.
+    if (!next.failure && read)
     {
         next.failure = check_.check(left, options_.clock());
     }

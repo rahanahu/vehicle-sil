@@ -57,8 +57,9 @@ public:
     /// as the controller sees them through the registry (on any PC, with or without an agent).
     [[nodiscard]] virtual std::vector<std::pair<std::string, std::string>> participants() const = 0;
     /// The first required participant that has left the running simulation, with its state
-    /// (FailureCheck::left_participant()); empty if none, or if this time control cannot tell.
-    [[nodiscard]] virtual std::optional<LeftParticipant> left_participant() const { return std::nullopt; }
+    /// (FailureCheck::left_participant()); empty if none. Pure: an implementation that forgot it
+    /// would let a simulation run on after a participant left, without a word.
+    [[nodiscard]] virtual std::optional<LeftParticipant> left_participant() const = 0;
 };
 
 /// The time gate of `controller` (SimulationControllerOptions::time_control must be set).

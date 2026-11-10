@@ -95,3 +95,16 @@ TEST_CASE(control_server_write_request_round_trips)
     OperationRequest refused;
     CHECK(!from_proto(wire, refused));
 }
+
+TEST_CASE(control_convert_names_both_reasons_when_the_simulation_cannot_be_read)
+{
+    control_grpc::SimulationSnapshot s;
+    s.participants_error = "the registry is gone";
+    s.time_error = "the controller stopped";
+    v1::SimulationState out;
+    to_proto(&s, out);
+    CHECK(out.error() == "cannot read the participants' states: the registry is gone; cannot read the time: the controller stopped");
+    s.participants_error.clear();
+    to_proto(&s, out);
+    CHECK(out.error() == "cannot read the time: the controller stopped");
+}

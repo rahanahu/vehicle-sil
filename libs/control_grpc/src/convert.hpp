@@ -397,14 +397,17 @@ inline void to_proto(const control_grpc::SimulationSnapshot* in, v1::SimulationS
         p->set_participant(name);
         p->set_state(state);
     }
+    // Both when both fail: one must not hide the other.
+    std::string error;
     if (!in->participants_error.empty())
     {
-        out.set_error("cannot read the participants' states: " + in->participants_error);
+        error = "cannot read the participants' states: " + in->participants_error;
     }
-    else if (!in->time_error.empty())
+    if (!in->time_error.empty())
     {
-        out.set_error("cannot read the time: " + in->time_error);
+        error += (error.empty() ? "" : "; ") + std::string("cannot read the time: ") + in->time_error;
     }
+    out.set_error(error);
     if (in->failure)
     {
         out.set_failed_participant(in->failure->participant);

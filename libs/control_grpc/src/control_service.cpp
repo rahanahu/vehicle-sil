@@ -306,29 +306,18 @@ public:
                 return o.peers.empty() || std::find(o.peers.begin(), o.peers.end(), peer) != o.peers.end();
             };
             const auto sub = hub_.subscribe(o);
+            // The monitor's changes, in order, taken by this stream between its waits on the hub.
+            SnapshotQueue pending(kMaxPendingSnapshots);
             const auto write = [&](v1::Update& out) {
-                out.set_dropped(sub->dropped());
+                out.set_dropped(sub->dropped() + pending.dropped());
                 return writer->Write(out);
             };
-            // The monitor's changes, in order, taken by this stream between its waits on the hub.
-            struct Pending
-            {
-                std::mutex mutex;
-                std::deque<SimulationSnapshot> snapshots;
-            } pending;
             SimulationMonitor::Subscription simulation_sub;
             std::optional<SimulationSnapshot> current; ///< taken from the monitor, not handled yet
             std::optional<SimulationSnapshot> known;   ///< the latest handled: the peers' SIL Kit states
             if (monitor_ != nullptr)
             {
-                simulation_sub = monitor_->subscribe([&pending](const SimulationSnapshot& snapshot) {
-                    const std::lock_guard lock(pending.mutex);
-                    if (pending.snapshots.size() >= kMaxPendingSnapshots)
-                    {
-                        pending.snapshots.pop_front(); // a slow client misses intermediate states
-                    }
-                    pending.snapshots.push_back(snapshot);
-                });
+                simulation_sub = monitor_->subscribe([&pending](const SimulationSnapshot& snapshot) { pending.push(snapshot); });
                 current = monitor_->snapshot();
                 known = current;
             }
@@ -448,11 +437,7 @@ public:
                         return grpc::Status::OK; // the client went away
                     }
                 }
-                std::deque<SimulationSnapshot> taken;
-                {
-                    const std::lock_guard lock(pending.mutex);
-                    taken.swap(pending.snapshots);
-                }
+                auto taken = pending.take();
                 bool sent = send_simulation(); // the initial snapshot, or the unavailable one
                 for (auto& snapshot : taken)
                 {

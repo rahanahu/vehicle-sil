@@ -293,7 +293,10 @@ message Update {
     bool initial_done = 8; // the current peers and values (and time and simulation) have been sent
     SimulationState simulation = 9;
   }
-  uint64 dropped = 6; // updates dropped for this watch so far
+  // Updates dropped for this watch so far: changes of peers, values, events and operations, and
+  // states of the simulation the server could not hold while the client was slow (failures and
+  // the end are never lost: they stay in every later state).
+  uint64 dropped = 6;
 }
 
 message PeerValues {
@@ -332,7 +335,8 @@ message ParticipantState {
 message SimulationState {
   bool available = 1; // false: the server does not coordinate a simulation
   repeated ParticipantState participants = 2; // the required participants
-  // Not empty: the server could not read the simulation's state (why); the rest is the last known.
+  // Not empty: the server could not read the simulation's state (why; both reasons when neither
+  // the participants nor the time could be read); the rest is the last known.
   string error = 3;
   // A required participant that failed the simulation ("" if none), its state and why. Once set,
   // it stays: the server then ends the simulation.

@@ -9,6 +9,8 @@
 
 #include <silkit/services/orchestration/string_utils.hpp>
 
+#include <mutex>
+
 namespace vehicle_sil::control_grpc {
 namespace {
 
@@ -43,8 +45,12 @@ public:
     std::vector<std::pair<std::string, std::string>> participants() const override
     {
         std::vector<std::pair<std::string, std::string>> out;
-        // SIL Kit can miss a status that arrives while the handler is being registered.
-        c_.runtime().refresh_peer_statuses();
+        // SIL Kit can miss a status that arrives while the runtime's status handler is being
+        // registered (in its constructor, long before this); one re-read afterwards finds it.
+        // Later statuses reach that handler. Not on every read: each re-read registers a
+        // handler and replays every status under SIL Kit's lock, and this runs every period
+        // and on every time call.
+        std::call_once(refreshed_, [this] { c_.runtime().refresh_peer_statuses(); });
         for (const auto& name : c_.required_participants())
         {
             const auto status = c_.runtime().peer_status(name);
@@ -58,6 +64,7 @@ public:
 private:
     using PeerStatus = vehicle_sil::PeerStatus;
     SimulationController& c_;
+    mutable std::once_flag refreshed_;
 };
 
 } // namespace

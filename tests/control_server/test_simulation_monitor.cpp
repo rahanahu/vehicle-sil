@@ -2,6 +2,7 @@
 //
 // SimulationMonitor (one reader of the simulation for the whole server) with a scripted
 // TimeControl, and what Watch and ListPeers take from it.
+#include "control_service.hpp"
 #include "test_harness.hpp"
 
 #include "vehicle_sil/control/v1/control.grpc.pb.h"
@@ -19,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -298,6 +300,62 @@ TEST_CASE(simulation_monitor_fails_a_stopped_participant_only_after_the_grace)
     CHECK_EQ(seen.size(), 1U);
     CHECK(seen.last().failure.has_value());
     CHECK(seen.last().failure->state == "Stopped");
+}
+
+TEST_CASE(simulation_monitor_keeps_counting_the_grace_while_reads_fail_now_and_then)
+{
+    // Every other read fails: the participant that left still fails the simulation after the
+    // grace, counted from when it was first seen gone.
+    ScriptedTime time;
+    ManualMonitor m(time);
+    time.change([](ScriptedTime& t) { t.left = LeftParticipant{"Body", "Stopped", false}; });
+    m.monitor.poll();
+    for (int i = 1; i <= 6; ++i)
+    {
+        m.now += 1s;
+        time.change([i](ScriptedTime& t) { t.participants_fail = i % 2 == 1 ? "the registry did not answer" : ""; });
+        m.monitor.poll();
+    }
+    const auto s = m.monitor.snapshot();
+    CHECK(s.failure.has_value());
+    CHECK(s.failure.has_value() && s.failure->participant == "Body");
+}
+
+TEST_CASE(simulation_monitor_needs_every_time_control_to_tell_who_left)
+{
+    // A time control without left_participant() does not compile, instead of never failing.
+    struct WithoutLeft : control_grpc::TimeControl
+    {
+        [[nodiscard]] control_grpc::TimeView state() const override { return {}; }
+        void pause(std::optional<SimTime>) override {}
+        void resume() override {}
+        void run_until(SimTime) override {}
+        void step(SimDuration) override {}
+        void set_speed(std::optional<double>) override {}
+        std::optional<SimTime> wait_paused(std::chrono::milliseconds) override { return std::nullopt; }
+        void stop(const std::string&) override {}
+        [[nodiscard]] std::vector<std::pair<std::string, std::string>> participants() const override { return {}; }
+    };
+    CHECK(std::is_abstract_v<WithoutLeft>);
+}
+
+TEST_CASE(control_server_watch_counts_the_simulation_states_it_could_not_hold)
+{
+    // The queue of a slow watch keeps the newest; what it drops is counted for Update.dropped.
+    control_grpc::detail::SnapshotQueue queue(64);
+    for (std::uint64_t v = 1; v <= 70; ++v)
+    {
+        SimulationSnapshot s;
+        s.version = v;
+        queue.push(s);
+    }
+    CHECK_EQ(queue.dropped(), std::uint64_t{6});
+    const auto taken = queue.take();
+    CHECK_EQ(taken.size(), std::size_t{64});
+    CHECK_EQ(taken.front().version, std::uint64_t{7});
+    CHECK_EQ(taken.back().version, std::uint64_t{70});
+    CHECK(queue.take().empty());
+    CHECK_EQ(queue.dropped(), std::uint64_t{6});
 }
 
 TEST_CASE(simulation_monitor_keeps_the_last_participants_when_it_cannot_read_them)

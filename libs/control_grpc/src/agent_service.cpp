@@ -129,6 +129,7 @@ public:
         if (connection_ != 0)
         {
             hub_.agent_disconnected(connection_);
+            streams_.forget(participant_, this);
         }
         delete this;
     }
@@ -251,7 +252,7 @@ private:
                     }
                 }
             }
-            streams_.hello(participant_, StreamRegistry::Hello{h.connection(), incarnation_, peer_});
+            streams_.hello(participant_, StreamRegistry::Hello{h.connection(), incarnation_, peer_, this});
             PeerHello hello;
             hello.participant = h.participant();
             hello.incarnation = h.incarnation();

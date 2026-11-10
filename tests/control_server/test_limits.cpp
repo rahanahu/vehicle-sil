@@ -108,6 +108,7 @@ public:
         stop_reason = reason;
     }
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> participants() const override { return {}; }
+    [[nodiscard]] std::optional<LeftParticipant> left_participant() const override { return std::nullopt; }
 };
 
 /// An agent's stream, written by hand (a fake agent).

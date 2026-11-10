@@ -37,6 +37,7 @@ struct StreamRegistry
         std::string connection;
         std::string incarnation;
         std::string peer; ///< the address it came from
+        const void* owner = nullptr; ///< the stream it came on
     };
 
     std::mutex mutex;
@@ -47,6 +48,18 @@ struct StreamRegistry
     {
         const std::lock_guard lock(mutex);
         latest.insert_or_assign(participant, std::move(h));
+    }
+
+    /// The stream `owner` ended: forgets the participant's hello if it is that stream's (an
+    /// agent may connect under ever new names; their hellos must not pile up).
+    void forget(const std::string& participant, const void* owner)
+    {
+        const std::lock_guard lock(mutex);
+        const auto it = latest.find(participant);
+        if (it != latest.end() && it->second.owner == owner)
+        {
+            latest.erase(it);
+        }
     }
 
     [[nodiscard]] std::optional<Hello> latest_hello(const std::string& participant)
