@@ -27,16 +27,20 @@ namespace vehicle_sil {
 /// bus named `network`, wraps it in a TapPort and puts a J1939 network on it; the ECUs that name
 /// the same network share its bus. Ecu::can(network) (a raw CAN channel) attaches an endpoint of
 /// its own to that bus, so an ECU with j1939(network) and can(network) has two endpoints on it,
-/// and each receives the other's frames. A bus is made when it is first named, with the
-/// constructor's options.
+/// and each receives the other's frames. A bus is made when it is first named (or by a form
+/// without a bus name, below), with the constructor's options.
 ///
-/// The unnamed bus: add_j1939(name, step) is an ECU with one J1939 network on a bus without a
-/// name (the bus "" in the lookups by name), and inject(time, frame), injector() and bus() use
-/// that bus. A LocalBench uses either the unnamed bus or named buses, never both, so that a frame
-/// cannot go to a bus no ECU is on: what is used first decides (add_j1939() and those three: the
-/// unnamed bus; Ecu::j1939(network) and Ecu::can(network): named buses), and the other kind then
-/// throws std::logic_error. An add_j1939(), j1939() or can() that throws decides nothing. Raw
-/// channels are on named buses only (Ecu::can("") is std::invalid_argument, like j1939("")).
+/// Forms without a bus name (add_j1939(name, step), inject(time, frame), injector(), bus()) use
+/// the only bus. If there is no bus yet, they make it, without a name (the bus "" in the lookups
+/// by name until it is named). The bus without a name is named by the first form with a bus name
+/// that comes: Ecu::j1939(network) and Ecu::can(network), and bus(network), injector(network) and
+/// inject(network, time, frame); no second bus is made. So the forms with and without a bus name
+/// reach the same bus in either order, and with one bus a frame cannot go to a bus no ECU is on.
+/// A second bus name makes a second bus, but std::logic_error if an ECU was added without a bus
+/// name before (add_j1939(): which bus it is meant to be on is unclear; the message names those
+/// ECUs). With two or more buses, the forms without a bus name throw std::logic_error (the
+/// message lists the buses). An add_j1939(), j1939() or can() that throws makes and names no bus.
+/// Raw channels need a bus name (Ecu::can("") is std::invalid_argument, like j1939("")).
 ///
 /// Look them up by the ECU's name and the network's: network() for the stack, endpoint() for
 /// fault injection and outages (VirtualCanBus::Endpoint), tap() to listen to its raw frames,
@@ -78,8 +82,8 @@ public:
     /// std::invalid_argument for an empty or a used name, or step <= 0; std::logic_error after
     /// the first run.
     Ecu& add_ecu(std::string name, SimDuration step);
-    /// An ECU stepped every `step` with one J1939 network on the unnamed bus (named "" in the
-    /// lookups). std::logic_error if this LocalBench uses named buses (use add_ecu(name,
+    /// An ECU stepped every `step` with one J1939 network on the only bus (made without a name if
+    /// there is none). std::logic_error if there are two or more buses (use add_ecu(name,
     /// step).j1939(network) then), otherwise as add_ecu() and Ecu::j1939(). Nothing is added if
     /// it throws.
     j1939::Network& add_j1939(std::string name, SimDuration step, j1939::NetworkOptions options = {});
@@ -104,22 +108,25 @@ public:
     /// The ECU's host (std::out_of_range for an unknown name).
     [[nodiscard]] can::Host& host(std::string_view ecu) const;
 
-    /// Sends `frame` at `time` from the injection endpoint of the unnamed bus (the result of its
-    /// send()). std::logic_error if this LocalBench uses named buses (use inject(network, time,
-    /// frame) then).
+    /// Sends `frame` at `time` from the injection endpoint of the only bus (made without a name
+    /// if there is none; the result of its send()). std::logic_error if there are two or more
+    /// buses (use inject(network, time, frame) then).
     can::SendResult inject(SimTime time, const can::Frame& frame);
-    /// The same on the bus `network` (std::out_of_range for an unknown bus).
+    /// The same on the bus `network`; names the bus without a name (see above).
+    /// std::out_of_range for an unknown bus.
     can::SendResult inject(std::string_view network, SimTime time, const can::Frame& frame);
-    /// The endpoint inject() sends from on the unnamed bus: set a fault injector or an outage on
+    /// The endpoint inject() sends from on the only bus: set a fault injector or an outage on
     /// it like on any other. It receives every frame on the bus; run_until() discards them.
-    /// std::logic_error if this LocalBench uses named buses (use injector(network) then).
+    /// std::logic_error if there are two or more buses (use injector(network) then).
     [[nodiscard]] can::VirtualCanBus::Endpoint& injector();
-    /// The same on the bus `network` (std::out_of_range for an unknown bus).
-    [[nodiscard]] can::VirtualCanBus::Endpoint& injector(std::string_view network) const;
-    /// The unnamed bus. std::logic_error if this LocalBench uses named buses (use bus(network)
-    /// then).
+    /// The same on the bus `network`; names the bus without a name (see above).
+    /// std::out_of_range for an unknown bus.
+    [[nodiscard]] can::VirtualCanBus::Endpoint& injector(std::string_view network);
+    /// The only bus (made without a name if there is none). std::logic_error if there are two or
+    /// more buses (use bus(network) then).
     [[nodiscard]] can::VirtualCanBus& bus();
-    /// The bus `network` (std::out_of_range for an unknown bus).
+    /// The bus `network`; names the bus without a name (see above). std::out_of_range for an
+    /// unknown bus.
     [[nodiscard]] can::VirtualCanBus& bus(std::string_view network);
 
     /// Runs every step that starts before `end` and has not run yet. Exceptions of a host
@@ -136,26 +143,30 @@ private:
     struct RawCan;
     struct NamedBus;
     [[nodiscard]] Site& site(std::string_view name) const;
-    [[nodiscard]] NamedBus& named_bus(std::string_view network) const;
-    /// Throws std::logic_error (for `what`) if the bus `network` ("": the unnamed bus) is not of
-    /// the kind this LocalBench uses; decides nothing.
-    void require_bus_kind(std::string_view network, std::string_view what) const;
-    /// The bus `network` ("": the unnamed bus), made now if it does not exist; decides the kind
-    /// of buses this LocalBench uses (require_bus_kind() first).
-    NamedBus& bus_for(const std::string& network, std::string_view what);
-
-    /// Which buses this LocalBench uses: decided by the first use.
-    enum class BusKind
-    {
-        Undecided,
-        Unnamed,
-        Named,
-    };
+    /// The names of the buses, quoted, for messages.
+    [[nodiscard]] std::string bus_list() const;
+    /// The bus a form with the bus name `network` uses: the bus of that name, else the bus
+    /// without a name, which it is to name; nullptr if there is neither (a new bus).
+    [[nodiscard]] NamedBus* bus_to_name(std::string_view network) const;
+    /// The bus a form without a bus name (`what`) uses; nullptr if there is none yet.
+    /// std::logic_error if there are two or more.
+    [[nodiscard]] NamedBus* only_bus_if_any(std::string_view what) const;
+    /// std::logic_error (for `what`) if a new bus `network` would be a second bus while an ECU
+    /// was added without a bus name.
+    void require_new_bus(std::string_view network, std::string_view what) const;
+    /// `existing`, or a new bus if it is nullptr, named `network` if that is not empty.
+    NamedBus& use_bus(NamedBus* existing, const std::string& network);
+    /// The bus of a form without a bus name, made now if there is none (only_bus_if_any()).
+    NamedBus& only_bus(std::string_view what);
+    /// The bus `network` of a lookup by name (bus_to_name(); names the bus without a name).
+    /// std::out_of_range if there is none.
+    NamedBus& named_bus(std::string_view network);
 
     can::VirtualCanBusOptions options_;
-    /// The buses, in the order made: the unnamed one only, or named ones.
+    /// The buses, in the order made. A bus without a name is always the only one.
     std::vector<std::unique_ptr<NamedBus>> buses_;
-    BusKind bus_kind_ = BusKind::Undecided;
+    /// The ECUs added without a bus name (add_j1939()), in the order added.
+    std::vector<std::string> unnamed_ecus_;
     std::vector<std::unique_ptr<Site>> sites_;
     can::StepDriver driver_;
     SimTime now_{};

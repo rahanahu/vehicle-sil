@@ -14,6 +14,7 @@ constexpr const char* kWho = "vehicle_sil::LocalBench: ";
 
 struct LocalBench::NamedBus
 {
+    /// "" until the bus is named: a bus made by a form without a bus name.
     std::string name;
     std::unique_ptr<can::VirtualCanBus> bus;
     /// The endpoint inject() sends from; no network uses it.
@@ -23,7 +24,7 @@ struct LocalBench::NamedBus
 struct LocalBench::Channel
 {
     // Destroyed bottom-up: the network, then the tap.
-    std::string name;
+    NamedBus* bus = nullptr; ///< its name is the network's
     can::VirtualCanBus::Endpoint* endpoint = nullptr;
     std::unique_ptr<can::TapPort> tap;
     std::unique_ptr<j1939::Network> network;
@@ -32,7 +33,7 @@ struct LocalBench::Channel
 /// A raw CAN channel of an ECU (Ecu::can()) on an endpoint of its own.
 struct LocalBench::RawCan
 {
-    std::string name;
+    NamedBus* bus = nullptr; ///< its name is the channel's
     can::VirtualCanBus::Endpoint* endpoint = nullptr;
     std::unique_ptr<can::RawChannel> channel;
 };
@@ -95,7 +96,7 @@ public:
     {
         for (const auto& c : channels_)
         {
-            if (c->name == network)
+            if (c->bus->name == network)
             {
                 return *c;
             }
@@ -113,27 +114,35 @@ public:
         return *channels_.front();
     }
 
-    /// A J1939 network on the bus `network` ("": the unnamed bus, for LocalBench::add_j1939()).
-    /// Nothing is attached if it throws.
+    /// A J1939 network on the bus `network`, or on the only bus without a bus name (an empty
+    /// `network`, for LocalBench::add_j1939()). Nothing is attached, made or named if it throws.
     j1939::Network& attach_j1939(const std::string& network, j1939::NetworkOptions options)
     {
         require_not_started("j1939()");
-        for (const auto& c : channels_)
+        const bool named = !network.empty();
+        const std::string what = named ? "j1939(\"" + network + "\")" : "add_j1939()";
+        NamedBus* existing = named ? owner_.bus_to_name(network) : owner_.only_bus_if_any(what);
+        if (named)
         {
-            if (c->name == network)
+            for (const auto& c : channels_)
             {
-                throw std::invalid_argument(std::string(kWho) + "the ECU " + name_ + " has a network named " + network);
+                if (c->bus == existing)
+                {
+                    throw std::invalid_argument(std::string(kWho) + "the ECU " + name_ + " has a network named " + network);
+                }
+            }
+            if (existing == nullptr)
+            {
+                owner_.require_new_bus(network, what);
             }
         }
-        const std::string what = "j1939(\"" + network + "\")";
-        owner_.require_bus_kind(network, what);
         auto c = std::make_unique<Channel>();
-        c->name = network;
         c->network = std::make_unique<j1939::Network>(std::move(options)); // std::invalid_argument
         // The host must not keep a network that is not kept here: push_back() cannot throw after
         // the reserve().
         channels_.reserve(channels_.size() + 1);
-        c->endpoint = &owner_.bus_for(network, what).bus->attach();
+        c->bus = &owner_.use_bus(existing, network);
+        c->endpoint = &c->bus->bus->attach();
         c->tap = std::make_unique<can::TapPort>(*c->endpoint);
         host_->add(*c->network, *c->tap);
         channels_.push_back(std::move(c));
@@ -149,23 +158,26 @@ private:
     can::RawChannel& add_can(const std::string& network, can::RawChannelOptions options) override
     {
         require_not_started("can()");
+        NamedBus* existing = owner_.bus_to_name(network);
         for (const auto& r : raw_channels_)
         {
-            if (r->name == network)
+            if (r->bus == existing)
             {
                 throw std::invalid_argument(std::string(kWho) + "the ECU " + name_ + " has a raw CAN channel named " +
                                             network);
             }
         }
-        const std::string what = "can(\"" + network + "\")";
-        owner_.require_bus_kind(network, what);
+        if (existing == nullptr)
+        {
+            owner_.require_new_bus(network, "can(\"" + network + "\")");
+        }
         auto r = std::make_unique<RawCan>();
-        r->name = network;
         r->channel = std::make_unique<can::RawChannel>(options); // std::invalid_argument
         // The host must not keep a channel that is not kept here: push_back() cannot throw
         // after the reserve(). (An endpoint stays on its bus once attached.)
         raw_channels_.reserve(raw_channels_.size() + 1);
-        r->endpoint = &owner_.bus_for(network, what).bus->attach();
+        r->bus = &owner_.use_bus(existing, network);
+        r->endpoint = &r->bus->bus->attach();
         host_->add(*r->channel, *r->endpoint);
         raw_channels_.push_back(std::move(r));
         return *raw_channels_.back()->channel;
@@ -208,53 +220,92 @@ LocalBench::~LocalBench()
     }
 }
 
-void LocalBench::require_bus_kind(std::string_view network, std::string_view what) const
+std::string LocalBench::bus_list() const
 {
-    if (network.empty() && bus_kind_ == BusKind::Named)
-    {
-        throw std::logic_error(std::string(kWho) + std::string(what) +
-                               ": the ECUs of this LocalBench are on named buses, there is no unnamed bus; name the bus "
-                               "(inject(network, time, frame), injector(network), bus(network)) and add ECUs with "
-                               "add_ecu(name, step).j1939(network) instead of add_j1939()");
-    }
-    if (!network.empty() && bus_kind_ == BusKind::Unnamed)
-    {
-        throw std::logic_error(std::string(kWho) + std::string(what) +
-                               ": this LocalBench uses the unnamed bus (add_j1939(), inject(time, frame), injector(), "
-                               "bus()), which a named bus would never reach; add this ECU with add_j1939() too, or "
-                               "name the bus everywhere: add_ecu(name, step).j1939(network) and inject(network, ...)");
-    }
-}
-
-LocalBench::NamedBus& LocalBench::bus_for(const std::string& network, std::string_view what)
-{
-    require_bus_kind(network, what);
-    bus_kind_ = network.empty() ? BusKind::Unnamed : BusKind::Named;
+    std::string out;
     for (const auto& b : buses_)
     {
-        if (b->name == network)
-        {
-            return *b;
-        }
+        out += (out.empty() ? "\"" : ", \"") + b->name + "\"";
     }
-    auto b = std::make_unique<NamedBus>();
-    b->name = network;
-    b->bus = std::make_unique<can::VirtualCanBus>(options_);
-    b->injector = &b->bus->attach();
-    buses_.push_back(std::move(b));
-    return *buses_.back();
+    return out;
 }
 
-LocalBench::NamedBus& LocalBench::named_bus(std::string_view network) const
+LocalBench::NamedBus* LocalBench::bus_to_name(std::string_view network) const
 {
     for (const auto& b : buses_)
     {
         if (b->name == network)
         {
-            return *b;
+            return b.get();
         }
     }
-    throw std::out_of_range(std::string(kWho) + "no bus named " + std::string(network));
+    // A bus without a name is always the only one: a second bus names it instead.
+    if (buses_.size() == 1 && buses_.front()->name.empty())
+    {
+        return buses_.front().get();
+    }
+    return nullptr;
+}
+
+LocalBench::NamedBus* LocalBench::only_bus_if_any(std::string_view what) const
+{
+    if (buses_.size() > 1)
+    {
+        throw std::logic_error(std::string(kWho) + std::string(what) + ": there are " + std::to_string(buses_.size()) +
+                               " buses (" + bus_list() +
+                               "); name the bus: inject(network, time, frame), injector(network), bus(network), "
+                               "add_ecu(name, step).j1939(network)");
+    }
+    return buses_.empty() ? nullptr : buses_.front().get();
+}
+
+void LocalBench::require_new_bus(std::string_view network, std::string_view what) const
+{
+    if (buses_.empty() || unnamed_ecus_.empty())
+    {
+        return;
+    }
+    std::string ecus;
+    for (const auto& e : unnamed_ecus_)
+    {
+        ecus += (ecus.empty() ? "" : ", ") + e;
+    }
+    throw std::logic_error(std::string(kWho) + std::string(what) + ": a second bus \"" + std::string(network) +
+                           "\" beside " + bus_list() +
+                           " would leave unclear which bus the ECUs added without a bus name are on (" + ecus +
+                           "); add them with add_ecu(name, step).j1939(network), naming the network");
+}
+
+LocalBench::NamedBus& LocalBench::use_bus(NamedBus* existing, const std::string& network)
+{
+    if (existing == nullptr)
+    {
+        auto b = std::make_unique<NamedBus>();
+        b->bus = std::make_unique<can::VirtualCanBus>(options_);
+        b->injector = &b->bus->attach();
+        buses_.push_back(std::move(b));
+        existing = buses_.back().get();
+    }
+    if (!network.empty())
+    {
+        existing->name = network;
+    }
+    return *existing;
+}
+
+LocalBench::NamedBus& LocalBench::only_bus(std::string_view what)
+{
+    return use_bus(only_bus_if_any(what), "");
+}
+
+LocalBench::NamedBus& LocalBench::named_bus(std::string_view network)
+{
+    NamedBus* b = bus_to_name(network);
+    if (b == nullptr)
+    {
+        throw std::out_of_range(std::string(kWho) + "no bus named " + std::string(network));
+    }
+    return use_bus(b, std::string(network));
 }
 
 Ecu& LocalBench::add_ecu(std::string name, SimDuration step)
@@ -288,11 +339,15 @@ j1939::Network& LocalBench::add_j1939(std::string name, SimDuration step, j1939:
     {
         throw std::logic_error(std::string(kWho) + "add_j1939() after the first run");
     }
-    require_bus_kind("", "add_j1939()");
+    static_cast<void>(only_bus_if_any("add_j1939()"));
     add_ecu(std::move(name), step);
     try
     {
-        return sites_.back()->attach_j1939("", std::move(options));
+        // The name is kept first: nothing can throw after the network was attached.
+        unnamed_ecus_.reserve(unnamed_ecus_.size() + 1);
+        auto& network = sites_.back()->attach_j1939("", std::move(options));
+        unnamed_ecus_.push_back(sites_.back()->name());
+        return network;
     }
     catch (...)
     {
@@ -354,14 +409,14 @@ can::VirtualCanBus::Endpoint& LocalBench::endpoint(std::string_view ecu) const {
 can::TapPort& LocalBench::tap(std::string_view ecu) const { return *site(ecu).only_channel().tap; }
 can::Host& LocalBench::host(std::string_view ecu) const { return site(ecu).host(); }
 
-can::VirtualCanBus::Endpoint& LocalBench::injector() { return *bus_for("", "injector()").injector; }
-can::VirtualCanBus::Endpoint& LocalBench::injector(std::string_view network) const { return *named_bus(network).injector; }
-can::VirtualCanBus& LocalBench::bus() { return *bus_for("", "bus()").bus; }
+can::VirtualCanBus::Endpoint& LocalBench::injector() { return *only_bus("injector()").injector; }
+can::VirtualCanBus::Endpoint& LocalBench::injector(std::string_view network) { return *named_bus(network).injector; }
+can::VirtualCanBus& LocalBench::bus() { return *only_bus("bus()").bus; }
 can::VirtualCanBus& LocalBench::bus(std::string_view network) { return *named_bus(network).bus; }
 
 can::SendResult LocalBench::inject(SimTime time, const can::Frame& frame)
 {
-    return bus_for("", "inject(time, frame)").injector->send(can::TimedFrame{time, frame});
+    return only_bus("inject(time, frame)").injector->send(can::TimedFrame{time, frame});
 }
 
 can::SendResult LocalBench::inject(std::string_view network, SimTime time, const can::Frame& frame)

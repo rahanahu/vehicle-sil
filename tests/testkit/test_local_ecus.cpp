@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // The test kit's ECUs (LocalCan::add_ecu()): an ECU with networks on several named buses, its
-// work per step, the lookups by ECU and network, the set-up rules, the unnamed bus and named
-// buses not mixed, and the order of destruction. Built without SIL Kit.
+// work per step, the lookups by ECU and network, the set-up rules, the forms without a bus name
+// on the only bus, and the order of destruction. Built without SIL Kit.
 #include "test_harness.hpp"
 
 #include "vehicle_sil/ecu/ecu.hpp"
@@ -66,6 +66,16 @@ void install_gateway(Ecu& ecu)
         const std::uint8_t data[8]{m.data[0], 0, 0, 0, 0, 0, 0, 0};
         static_cast<void>(out.send(kPgnValue, data));
     });
+}
+
+/// kPgnValue from 0x40 with `value` in its first byte.
+can::Frame value_frame(std::uint8_t value)
+{
+    can::Frame frame;
+    frame.id = 0x18FF2040; // priority 6, kPgnValue, from 0x40
+    frame.length = 8;
+    frame.data[0] = value;
+    return frame;
 }
 
 /// Writes its name into `log` when destroyed.
@@ -152,76 +162,164 @@ TEST_CASE(testkit_ecu_runs_on_step_and_every_in_the_order_added)
     CHECK(calls == expected);
 }
 
-// A LocalCan uses the unnamed bus (add_j1939(); inject(), injector() and bus() without a bus
-// name) or named buses (Ecu::j1939(network), Ecu::can(network)), never both: what is used first
-// decides, the other kind throws std::logic_error and adds nothing. So a frame cannot go to a bus
-// no ECU is on. A failed add_j1939() leaves no endpoint and decides nothing.
-TEST_CASE(testkit_unnamed_and_named_buses_do_not_mix)
+// The forms without a bus name (add_j1939(), inject(time, frame), injector(), bus()) use the only
+// bus and make it, without a name, if there is none: the bus "" in the lookups by name. A lookup
+// by name (bus(), injector(), inject() with the bus's name) names it; no second bus is made.
+TEST_CASE(testkit_a_form_without_a_bus_name_makes_the_only_bus)
 {
-    can::Frame frame;
-    frame.id = 0x18FF2040; // priority 6, kPgnValue, from 0x40
-    frame.length = 8;
-    frame.data[0] = 5;
+    {
+        LocalCan buses;
+        CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.bus("J1939_CAN")); })); // no bus yet
+        auto& legacy = buses.add_j1939("legacy", 10ms);
+        CHECK(&buses.bus() == &buses.bus(""));
+        CHECK(&buses.network("legacy") == &buses.network("legacy", ""));
+        auto& bus = buses.bus("J1939_CAN"); // names it
+        CHECK(&bus == &buses.bus());
+        CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.bus("")); }));
+        CHECK(&buses.network("legacy", "J1939_CAN") == &legacy);
+        CHECK_EQ(bus.endpoint_count(), 2u); // the injector, legacy
+    }
+    {
+        LocalCan buses;
+        CHECK(buses.inject(at(0ms), value_frame(1)) == can::SendResult::Accepted); // makes the bus
+        auto& injector = buses.injector("J1939_CAN");                            // names it
+        CHECK(&injector == &buses.injector());
+        CHECK_EQ(buses.bus("J1939_CAN").endpoint_count(), 1u);
+    }
+    {
+        LocalCan buses;
+        auto& injector = buses.injector();
+        CHECK(buses.inject("J1939_CAN", at(0ms), value_frame(1)) == can::SendResult::Accepted);
+        CHECK(&injector == &buses.injector("J1939_CAN"));
+    }
+}
+
+// The forms with and without a bus name reach the same bus in either order: an ECU's
+// j1939(network) or can(network) names the bus without a name, and add_j1939() and inject(time,
+// frame) use the one named bus. Both orders give the same buses and the same frames. A failed
+// add_j1939() or j1939() makes and names no bus.
+TEST_CASE(testkit_named_and_unnamed_forms_share_the_only_bus_in_either_order)
+{
+    struct Outcome
+    {
+        std::size_t endpoints = 0;
+        std::vector<std::pair<long long, int>> seen;
+    };
+    const auto build = [](bool unnamed_first) {
+        LocalCan buses;
+        std::vector<std::pair<long long, int>> seen;
+        const auto add_legacy = [&] {
+            auto& node = buses.add_j1939("legacy", 10ms).add_node({.address = 0x20});
+            node.on_message(kPgnValue, [&seen](const j1939::Message& m) { seen.emplace_back(ms(m.time), m.data[0]); });
+        };
+        const auto add_named = [&] {
+            install_source(buses.add_ecu("engine", 10ms), "J1939_CAN", 0x40);
+            buses.add_ecu("display", 10ms).can("J1939_CAN");
+        };
+        if (unnamed_first)
+        {
+            add_legacy();
+            add_named();
+        }
+        else
+        {
+            add_named();
+            add_legacy();
+        }
+        CHECK(&buses.bus() == &buses.bus("J1939_CAN"));
+        CHECK(&buses.injector() == &buses.injector("J1939_CAN"));
+        CHECK(&buses.network("legacy") == &buses.network("legacy", "J1939_CAN"));
+        CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.bus("")); }));
+        CHECK(buses.inject(at(5ms), value_frame(200)) == can::SendResult::Accepted);
+        buses.run_until(at(30ms));
+        return Outcome{buses.bus("J1939_CAN").endpoint_count(), seen};
+    };
+    const Outcome unnamedFirst = build(true);
+    const Outcome namedFirst = build(false);
+    CHECK_EQ(unnamedFirst.endpoints, 4u); // the injector, legacy, engine, display
+    CHECK_EQ(namedFirst.endpoints, unnamedFirst.endpoints);
+    CHECK(std::any_of(unnamedFirst.seen.begin(), unnamedFirst.seen.end(), [](const auto& r) { return r.second == 200; }));
+    CHECK(unnamedFirst.seen.size() > 1); // the injected frame and the engine's
+    CHECK(namedFirst.seen == unnamedFirst.seen);
+
     j1939::NetworkOptions bad;
     bad.max_frames_per_step = 0;
     {
-        // The unnamed bus first.
         LocalCan buses;
         CHECK(throws<std::invalid_argument>([&] { buses.add_j1939("half", 10ms, bad); }));
         CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.ecu("half")); }));
         CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.bus("")); })); // not made
-        auto& legacy = buses.add_j1939("legacy", 10ms);
-        auto& recorder = legacy.add_node({.address = 0x20});
-        std::vector<int> seen;
-        recorder.on_message(kPgnValue, [&seen](const j1939::Message& m) { seen.push_back(m.data[0]); });
-        CHECK(&buses.bus() == &buses.bus(""));
-        CHECK(&buses.injector() == &buses.injector(""));
-        CHECK(&buses.network("legacy") == &buses.network("legacy", ""));
-        CHECK_EQ(buses.bus().endpoint_count(), 2u); // the injector, legacy
-        CHECK(throws<std::invalid_argument>([&] { buses.add_j1939("other", 10ms, bad); }));
-        CHECK_EQ(buses.bus().endpoint_count(), 2u); // the failed one left no endpoint
-        auto& other = buses.add_ecu("other", 10ms);
-        CHECK(throws_with<std::logic_error>([&] { other.j1939("A"); }, "add_j1939()"));
-        CHECK(throws<std::logic_error>([&] { other.can("A"); }));
-        CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.bus("A")); })); // nothing made
-        CHECK(throws<std::logic_error>([&] { static_cast<void>(buses.network("other")); })); // none
-        CHECK(throws<std::invalid_argument>([&] { other.j1939(""); }));
-        CHECK(throws<std::invalid_argument>([&] { other.can(""); }));
-        CHECK(buses.inject(at(0ms), frame) == can::SendResult::Accepted);
-        buses.run_until(at(20ms));
-        CHECK((seen == std::vector<int>{5}));
-    }
-    {
-        // Named buses first: the unnamed forms say what to write instead.
-        LocalCan buses;
-        auto& engine = buses.add_ecu("engine", 10ms);
-        engine.emplace<Recorder>(engine, "J1939_CAN", 0x20);
-        CHECK(throws_with<std::logic_error>([&] { buses.add_j1939("tool", 10ms); }, "add_ecu(name, step).j1939(network)"));
-        CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.ecu("tool")); }));
-        CHECK(throws_with<std::logic_error>([&] { buses.inject(at(0ms), frame); }, "inject(network, time, frame)"));
-        CHECK(throws<std::logic_error>([&] { static_cast<void>(buses.injector()); }));
-        CHECK(throws<std::logic_error>([&] { static_cast<void>(buses.bus()); }));
-        CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.bus("")); }));
-        CHECK(buses.inject("J1939_CAN", at(0ms), frame) == can::SendResult::Accepted);
-        CHECK_EQ(buses.bus("J1939_CAN").endpoint_count(), 2u); // the injector, engine
-    }
-    {
-        // inject() without a bus name decides as well.
-        LocalCan buses;
-        CHECK(buses.inject(at(0ms), frame) == can::SendResult::Accepted);
-        auto& late = buses.add_ecu("late", 10ms);
-        CHECK(throws<std::logic_error>([&] { late.j1939("A"); }));
-        buses.add_j1939("tool", 10ms);
-    }
-    {
-        // A failed j1939(network) decides nothing either.
-        LocalCan buses;
+        buses.add_j1939("legacy", 10ms);
         auto& ecu = buses.add_ecu("ecu", 10ms);
         CHECK(throws<std::invalid_argument>([&] { ecu.j1939("A", bad); }));
-        CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.bus("A")); }));
-        CHECK(throws<std::logic_error>([&] { static_cast<void>(buses.network("ecu")); })); // none
-        buses.add_j1939("tool", 10ms);
+        CHECK(throws<std::invalid_argument>([&] { ecu.can("A", can::RawChannelOptions{.send_capacity = 0}); }));
+        CHECK_EQ(buses.bus("").endpoint_count(), 2u); // not named, nothing attached
+        // legacy's network is on the bus j1939("A") would name.
+        CHECK(throws<std::invalid_argument>([&] { buses.ecu("legacy").j1939("A"); }));
+        CHECK(throws<std::invalid_argument>([&] { ecu.j1939(""); }));
+        CHECK(throws<std::invalid_argument>([&] { ecu.can(""); }));
+        CHECK_EQ(buses.bus("").endpoint_count(), 2u);
     }
+}
+
+// A second bus name makes a second bus, unless an ECU was added without a bus name before: which
+// bus it is meant to be on is unclear, so std::logic_error names those ECUs, adds nothing and
+// makes no bus.
+TEST_CASE(testkit_a_second_bus_after_an_ecu_without_a_bus_name_is_an_error)
+{
+    {
+        // inject() without a bus name added no ECU: a second bus is fine.
+        LocalCan buses;
+        CHECK(buses.inject(at(0ms), value_frame(1)) == can::SendResult::Accepted);
+        auto& first = buses.bus();
+        buses.add_ecu("engine", 10ms).j1939("A");
+        buses.add_ecu("cab", 10ms).j1939("B");
+        CHECK(&buses.bus("A") == &first);
+        CHECK(&buses.bus("B") != &first);
+    }
+    for (const bool unnamedFirst : {true, false})
+    {
+        LocalCan buses;
+        if (unnamedFirst)
+        {
+            buses.add_j1939("legacy", 10ms);
+            buses.add_j1939("tool", 10ms);
+            buses.add_ecu("engine", 10ms).j1939("A");
+        }
+        else
+        {
+            buses.add_ecu("engine", 10ms).j1939("A");
+            buses.add_j1939("legacy", 10ms);
+            buses.add_j1939("tool", 10ms);
+        }
+        auto& cab = buses.add_ecu("cab", 10ms);
+        CHECK(throws_with<std::logic_error>([&] { cab.j1939("B"); }, "(legacy, tool)"));
+        CHECK(throws_with<std::logic_error>([&] { cab.j1939("B"); }, "add_ecu(name, step).j1939(network)"));
+        CHECK(throws_with<std::logic_error>([&] { cab.can("B"); }, "(legacy, tool)"));
+        CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.bus("B")); })); // nothing made
+        CHECK(throws<std::logic_error>([&] { static_cast<void>(buses.network("cab")); }));   // none
+        CHECK_EQ(buses.bus("A").endpoint_count(), 4u); // the injector, engine, legacy, tool
+        cab.j1939("A");
+        cab.can("A");
+    }
+}
+
+// With two or more buses, every form without a bus name throws std::logic_error that lists the
+// buses, and adds nothing.
+TEST_CASE(testkit_forms_without_a_bus_name_need_a_single_bus)
+{
+    LocalCan buses;
+    buses.add_ecu("engine", 10ms).j1939("A");
+    buses.add_ecu("cab", 10ms).can("B");
+    const std::string list = "(\"A\", \"B\")";
+    CHECK(throws_with<std::logic_error>([&] { buses.add_j1939("tool", 10ms); }, list));
+    CHECK(throws<std::out_of_range>([&] { static_cast<void>(buses.ecu("tool")); }));
+    CHECK(throws_with<std::logic_error>([&] { buses.inject(at(0ms), value_frame(1)); }, list));
+    CHECK(throws_with<std::logic_error>([&] { static_cast<void>(buses.injector()); }, list));
+    CHECK(throws_with<std::logic_error>([&] { static_cast<void>(buses.bus()); }, list));
+    CHECK(throws_with<std::logic_error>([&] { static_cast<void>(buses.bus()); }, "bus(network)"));
+    CHECK(buses.inject("A", at(0ms), value_frame(1)) == can::SendResult::Accepted);
+    CHECK_EQ(buses.bus("A").endpoint_count(), 2u); // the injector, engine
 }
 
 TEST_CASE(testkit_ecu_lookups_and_setup_errors)

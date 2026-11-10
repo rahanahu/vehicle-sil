@@ -58,8 +58,8 @@ public:
 ///     sim.run_for(3s);                                             // SimulationError on failure
 ///
 /// Local: a LocalBench; every ECU is a host on it (LocalBench::add_ecu()), stepped in the
-/// calling thread. run_for() may be called again and continues. The ECUs' networks are on named
-/// buses, so local() takes the bus's name too (LocalBench::inject(network, time, frame)).
+/// calling thread. run_for() may be called again and continues. local() reaches the ECUs' buses
+/// by their names (LocalBench::inject(network, time, frame)); with one bus, also without a name.
 ///
 /// SIL Kit: every ECU is a Peer, a Coordinated participant in virtual time named like the ECU
 /// with the ECU's step. A run starts them together (with this process's SimulationController,

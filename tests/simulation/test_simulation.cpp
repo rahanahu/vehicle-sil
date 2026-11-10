@@ -732,8 +732,8 @@ TEST_CASE(simulation_stops_everything_when_the_start_times_out)
     CHECK(throws<std::logic_error>([&] { sim.run_for(1s); }));
 }
 
-// 16: on local buses, a failed ECU added through local() is a SimulationError too; the ECUs'
-// networks are on named buses, so local() takes the bus's name.
+// 16: on local buses, a failed ECU added through local() is a SimulationError too; local()
+// reaches the ECUs' bus by its name.
 TEST_CASE(simulation_local_covers_the_ecus_of_local)
 {
     {
@@ -751,10 +751,34 @@ TEST_CASE(simulation_local_covers_the_ecus_of_local)
         frame.id = 0x18FF2040; // priority 6, kPgnValue, from 0x40
         frame.length = 8;
         frame.data[0] = 9;
-        CHECK(throws<std::logic_error>([&] { sim.local().inject(at(0ms), frame); }));
-        CHECK(throws<std::logic_error>([&] { sim.local().add_j1939("Tool", 10ms); }));
         CHECK(sim.local().inject("CAN", at(0ms), frame) == can::SendResult::Accepted);
         sim.run_for(20ms);
         CHECK((receiver.seen == Records{{0, 9}}));
+    }
+}
+
+// With one bus, local() needs no bus name: inject(time, frame) and add_j1939() use the ECUs' bus.
+// With two, they throw std::logic_error.
+TEST_CASE(simulation_local_without_a_bus_name_uses_the_only_bus)
+{
+    can::Frame frame;
+    frame.id = 0x18FF2040; // priority 6, kPgnValue, from 0x40
+    frame.length = 8;
+    frame.data[0] = 9;
+    {
+        Simulation sim;
+        auto& receiver = sim.add<Receiver>("Receiver", 10ms);
+        CHECK(sim.local().inject(at(0ms), frame) == can::SendResult::Accepted);
+        auto& tool = sim.local().add_j1939("Tool", 10ms);
+        CHECK(&sim.local().network("Tool", "CAN") == &tool);
+        sim.run_for(20ms);
+        CHECK((receiver.seen == Records{{0, 9}}));
+    }
+    {
+        Simulation sim;
+        sim.add<Receiver>("Receiver", 10ms);
+        sim.add<Receiver>("Other", 10ms, "CAN2");
+        CHECK(throws_with<std::logic_error>([&] { sim.local().inject(at(0ms), frame); }, "\"CAN\", \"CAN2\""));
+        CHECK(throws<std::logic_error>([&] { sim.local().add_j1939("Tool", 10ms); }));
     }
 }
