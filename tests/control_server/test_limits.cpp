@@ -328,17 +328,18 @@ TEST_CASE(control_server_a_second_agent_with_one_name_wins_and_the_first_stops)
     a.bind_driver();
     control::Agent b;
     b.bind_driver();
-    control_grpc::AgentClient first(a, {.server = address, .participant = "Engine", .incarnation = "a",
-                                        .reconnect_min = 20ms, .reconnect_max = 100ms});
+    std::atomic<int> told{0};
+    control_grpc::AgentClient first(a, {.server = address, .participant = "Engine", .incarnation = "a", .reconnect_min = 20ms,
+                                        .reconnect_max = 100ms, .on_replaced = [&told](const std::string&) { ++told; }});
     CHECK(first.wait_connected(10s));
     control_grpc::AgentClient second(b, {.server = address, .participant = "Engine", .incarnation = "b",
                                          .reconnect_min = 20ms, .reconnect_max = 100ms});
-    CHECK(eventually([&] { return first.replaced(); }));
+    // on_replaced is the first client's last act: its thread ends there, it never connects again.
+    CHECK(eventually([&] { return told.load() == 1; }));
+    CHECK(first.replaced());
     CHECK(first.last_error().find("replaced by another connection of the participant 'Engine' (incarnation 'b'") != std::string::npos);
     CHECK(first.last_error().find("only one process runs as the participant 'Engine'") != std::string::npos);
     CHECK(second.wait_connected(10s));
-    // Several of the first one's back-offs later: it has not taken the participant back.
-    std::this_thread::sleep_for(500ms);
     CHECK(!first.connected());
     CHECK(!second.replaced() && second.connected());
     CHECK_EQ(second.sessions(), std::uint64_t{1});

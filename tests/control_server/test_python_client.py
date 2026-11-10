@@ -10,8 +10,28 @@ import subprocess
 import sys
 import threading
 import unittest
+import warnings
 
-from vehicle_sil_control import Control, ControlError, EventInfo, Operation, Peer, SimulationState, Values, ms
+from vehicle_sil_control import (Control, ControlError, ControlWarning, EventInfo, Operation, Peer, SimulationState, Values,
+                                 ms)
+
+
+def first(test, updates, pred, timeout=20.0):
+    """The first of `updates` for which `pred` holds; fails after `timeout` s instead of hanging
+    (the caller closes the client, which ends the iteration left behind)."""
+    found = []
+
+    def run():
+        for u in updates:
+            if pred(u):
+                found.append(u)
+                return
+
+    reader = threading.Thread(target=run, daemon=True)
+    reader.start()
+    reader.join(timeout)
+    test.assertTrue(found, f"no matching update within {timeout} s")
+    return found[0]
 
 
 class DemoTest(unittest.TestCase):
@@ -66,11 +86,11 @@ class DemoTest(unittest.TestCase):
         listed = {p.participant: p for p in c.peers()}
         watched = {}
         with Control(self.address) as w:
-            for u in w.watch(values=False, events=False, operations=False):
+            def note(u):
                 if isinstance(u, Peer):
                     watched[u.participant] = u
-                elif u == ("initial_done",):
-                    break
+                return u == ("initial_done",)
+            first(self, w.watch(values=False, events=False, operations=False), note)
         self.assertEqual(watched, listed)
         self.assertTrue(all(p.has_agent and p.simulation_state == "Running" for p in listed.values()))
         self.assertFalse(c.sim.time().ended)
@@ -118,9 +138,8 @@ class DemoTest(unittest.TestCase):
 
         # The simulation's state: the required participants run, nobody failed, not over.
         with Control(self.address) as w:
-            for u in w.watch(values=False, events=False, operations=False, simulation=True):
-                if isinstance(u, SimulationState):
-                    break
+            u = first(self, w.watch(values=False, events=False, operations=False, simulation=True),
+                      lambda u: isinstance(u, SimulationState))
         self.assertTrue(u.available)
         self.assertEqual(u.participants, {"Engine": "Running", "Body": "Running"})
         self.assertEqual((u.failed_participant, u.ended, u.error), ("", False, ""))
@@ -148,6 +167,61 @@ class DemoTest(unittest.TestCase):
         out = self.cli("set", "Engine", "engine.throttle=500")
         self.assertIn("Engine: invalid", out)
         self.assertIn("out of range", out)
+
+    def test_c_each_replacement_reaches_a_watch(self):
+        # A peer taken over by another process is a warning event of the new connection, every
+        # time (not a Python warning that is shown once).
+        import queue
+        import grpc
+        from vehicle_sil_control._stubs import pb, rpc
+        channel = grpc.insecure_channel(self.address)
+        agents = []
+
+        def connect(incarnation):
+            q = queue.Queue()
+            q.put(pb.AgentMessage(hello=pb.Hello(participant="Ghost", incarnation=incarnation, max_pending=1,
+                                                 connection="ghost-" + incarnation)))
+            replies = rpc.AgentServiceStub(channel).Connect(iter(q.get, None), timeout=60)
+            self.assertTrue(next(replies).HasField("welcome"))
+            agents.append((q, replies))
+
+        try:
+            with Control(self.address) as w:
+                updates = w.watch(values=False, operations=False)
+                first(self, updates, lambda u: u == ("initial_done",))
+                for incarnation in ("one", "two", "three"):
+                    connect(incarnation)
+                for old, new in (("one", "two"), ("two", "three")):
+                    e = first(self, updates, lambda u: isinstance(u, EventInfo) and u.peer == "Ghost"
+                              and "replaced the connection of 'Ghost'" in u.text)
+                    self.assertEqual(e.level, "warning")
+                    self.assertIn(f"(incarnation '{new}'", e.text)
+                    self.assertIn(f"(incarnation '{old}'", e.text)
+        finally:
+            for q, _ in agents:
+                q.put(None)
+            channel.close()
+
+    def test_d_a_warning_comes_on_every_call(self):
+        from vehicle_sil_control._stubs import pb
+        with Control(self.address) as c:
+            c._call = lambda method, request, timeout=None: pb.ListPeersReply(simulation_error="the registry is gone")
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("default")
+                filters = list(warnings.filters)
+                for _ in range(3):
+                    c.peers()
+                self.assertEqual(warnings.filters, filters)  # the user's filters stay as they are
+            self.assertEqual([str(w.message) for w in caught], ["ListPeers: the registry is gone"] * 3)
+            self.assertTrue(all(w.category is ControlWarning and w.filename == __file__ for w in caught))
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", ControlWarning)
+                with self.assertRaises(ControlWarning):
+                    c.peers()
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("ignore", ControlWarning)
+                c.peers()
+            self.assertEqual(caught, [])
 
 
 if __name__ == "__main__":

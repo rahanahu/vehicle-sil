@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import sys
 import warnings
 from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Union
 
@@ -27,6 +28,16 @@ def s(value: float) -> int:
 
 class ControlWarning(UserWarning):
     """The server answered, but could not tell everything (the message says what is missing)."""
+
+
+def _warn_every_time(message: str) -> None:
+    """Warns (ControlWarning) at the caller of the public method that calls this, on every call.
+    warnings.warn() under the default filter shows a warning once per call site, and a client
+    that asks again and again would miss the later ones. The user's filters still decide
+    (ignore, error, once); only the per-site registry is not used. The filters are not changed."""
+    frame = sys._getframe(2)
+    warnings.warn_explicit(message, ControlWarning, frame.f_code.co_filename, frame.f_lineno,
+                           module=frame.f_globals.get("__name__"), registry=None, module_globals=frame.f_globals)
 
 
 class ControlError(Exception):
@@ -299,7 +310,7 @@ class Control:
         (ControlWarning) and the list has their last known states."""
         reply = self._call(self._stub.ListPeers, pb.ListPeersRequest())
         if reply.simulation_error:
-            warnings.warn(f"ListPeers: {reply.simulation_error}", ControlWarning, stacklevel=2)
+            _warn_every_time(f"ListPeers: {reply.simulation_error}")
         return [_peer(p) for p in reply.peers]
 
     def peer(self, name: str) -> Peer:

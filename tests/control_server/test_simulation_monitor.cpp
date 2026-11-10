@@ -404,20 +404,56 @@ TEST_CASE(simulation_monitor_thread_reads_on_its_own_and_unsubscribes_while_it_r
     SimulationMonitorOptions options;
     options.period = 1ms;
     SimulationMonitor monitor(time, options);
+    const auto wait_for = [](auto pred) {
+        const auto deadline = std::chrono::steady_clock::now() + 10s;
+        while (!pred() && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(1ms);
+        }
+        return pred();
+    };
+    // The thread reads without poll(): a new time arrives.
+    time.change([](ScriptedTime& t) { t.view.now = SimTime{} + 5ms; });
+    CHECK(wait_for([&] { return monitor.snapshot().time.now == SimTime{} + 5ms; }));
+
+    // Unsubscribed while the monitor's thread is in the subscriber: reset() returns only after
+    // the call did. The call holds on until reset() returned, or for 2 s.
     std::atomic<int> calls{0};
-    for (int i = 0; i < 50; ++i)
-    {
-        time.change([i](ScriptedTime& t) { t.view.now = SimTime{} + std::chrono::milliseconds(i); });
-        auto sub = monitor.subscribe([&calls](const SimulationSnapshot&) { ++calls; });
-        std::this_thread::sleep_for(1ms);
-    }
-    // The thread reads without poll(): the last time arrives.
-    const auto deadline = std::chrono::steady_clock::now() + 10s;
-    while (monitor.snapshot().time.now != SimTime{} + 49ms && std::chrono::steady_clock::now() < deadline)
-    {
-        std::this_thread::sleep_for(1ms);
-    }
-    CHECK(monitor.snapshot().time.now == SimTime{} + 49ms);
+    std::atomic<bool> inside{false};
+    std::atomic<bool> resetting{false};
+    std::atomic<bool> reset_returned{false};
+    std::atomic<bool> returned_while_inside{false};
+    auto sub = monitor.subscribe([&](const SimulationSnapshot&) {
+        ++calls;
+        if (inside.exchange(true))
+        {
+            return;
+        }
+        const auto until = std::chrono::steady_clock::now() + 2s;
+        while (!resetting && std::chrono::steady_clock::now() < until)
+        {
+            std::this_thread::yield();
+        }
+        while (!reset_returned && std::chrono::steady_clock::now() < until)
+        {
+            std::this_thread::yield();
+        }
+        returned_while_inside = reset_returned.load();
+    });
+    time.change([](ScriptedTime& t) { t.view.now = SimTime{} + 6ms; });
+    CHECK(wait_for([&] { return inside.load(); }));
+    std::thread resetter([&] {
+        resetting = true;
+        sub.reset();
+        reset_returned = true;
+    });
+    resetter.join();
+    CHECK(!returned_while_inside);
+    // And it is not called again.
+    const int before = calls.load();
+    time.change([](ScriptedTime& t) { t.view.now = SimTime{} + 7ms; });
+    monitor.poll();
+    CHECK_EQ(calls.load(), before);
 }
 
 TEST_CASE(control_server_watches_share_one_reader_of_the_time)
@@ -436,8 +472,25 @@ TEST_CASE(control_server_watches_share_one_reader_of_the_time)
     CHECK_EQ(count(initial_a, v1::Update::kTime), 1U);
     CHECK_EQ(count(initial_a, v1::Update::kSimulation), 1U);
     CHECK_EQ(count(initial_b, v1::Update::kSimulation), 1U);
-    // Several of their waits pass: the watches read the monitor, not the time control.
-    std::this_thread::sleep_for(350ms);
+    // Two changes of the hub wake both watches twice: they read the monitor, not the time control.
+    for (const char* name : {"Spare1", "Spare2"})
+    {
+        control::PeerHello hello;
+        hello.participant = name;
+        hello.incarnation = "1";
+        hello.max_pending = 4;
+        static_cast<void>(server.hub().agent_connected(hello, std::make_shared<NullLink>()));
+    }
+    for (auto* w : {&a, &b})
+    {
+        bool spare2 = false;
+        while (!spare2)
+        {
+            const auto u = w->next(v1::Update::kPeer);
+            CHECK(u.has_value());
+            spare2 = u->peer().participant() == "Spare2";
+        }
+    }
     CHECK_EQ(time.state_reads.load(), reads);
 
     // One read of the monitor reaches both watches.

@@ -201,7 +201,7 @@ TEST_CASE(control_server_agents_need_an_agent_token_for_their_name)
     CHECK(eventually([&] { return !wrong_name.last_error().empty(); })); // the server's refusal reaches the agent
     // It names the credential, the name asked for and the names it may use.
     CHECK(wrong_name.last_error().find("'engine-ecu' may not connect as 'Body', only as 'Engine'") != std::string::npos);
-    std::this_thread::sleep_for(200ms);
+    // The refusals above came before the hub (all three are in the audit): none of them is a peer.
     CHECK_EQ(s.server->hub().peers().size(), std::size_t{1});
     for (auto* c : {&ok, &wrong_name, &wrong_role, &no_token})
     {
