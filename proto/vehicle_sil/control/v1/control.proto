@@ -313,6 +313,7 @@ message TimeState {
   optional sint64 pause_target_ns = 4;
   optional double speed = 5;
   bool running = 6; // the simulation has started and not ended
+  bool ended = 7;   // the simulation ran and is over (running is false before the start too)
 }
 
 // A participant of the coordinated simulation and its SIL Kit lifecycle state.

@@ -248,9 +248,11 @@ inline std::optional<CommandResult> from_proto(const v1::CommandResult& in)
     return out;
 }
 
+/// A peer of the hub: it has (or had) an agent.
 inline void to_proto(const PeerInfo& in, v1::PeerInfo& out)
 {
     out.set_participant(in.participant);
+    out.set_has_agent(true);
     out.set_incarnation(in.incarnation);
     out.set_connected(in.connected);
     for (const auto& v : in.schema)
@@ -295,6 +297,40 @@ inline void to_proto(const OperationResult& in, v1::Operation& out)
         pt->set_reason(t.reason);
     }
     out.set_done(in.done());
+}
+
+inline void time_to_proto(const control_grpc::TimeView& in, v1::TimeState& out)
+{
+    out.set_available(in.available);
+    out.set_now_ns(ns_of(in.now));
+    out.set_paused(in.paused);
+    if (in.pause_target)
+    {
+        out.set_pause_target_ns(ns_of(*in.pause_target));
+    }
+    if (in.speed)
+    {
+        out.set_speed(*in.speed);
+    }
+    out.set_running(in.running);
+    out.set_ended(in.ended);
+}
+
+/// A peer as ListPeers and Watch report it: the hub's peer (`agent`, if it has one) with its SIL
+/// Kit state from the monitor's snapshot (`simulation`, nullptr without one).
+inline void peer_to_proto(const std::string& participant, const PeerInfo* agent, const control_grpc::SimulationSnapshot* simulation,
+                          v1::PeerInfo& out)
+{
+    if (agent != nullptr)
+    {
+        to_proto(*agent, out);
+    }
+    else
+    {
+        out.set_participant(participant);
+        out.set_has_agent(false);
+    }
+    out.set_simulation_state(simulation != nullptr ? simulation->state_of(participant) : std::string());
 }
 
 /// The simulation part of a monitor's snapshot; `in` nullptr: the server does not coordinate a

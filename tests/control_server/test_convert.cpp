@@ -38,3 +38,42 @@ TEST_CASE(control_server_unknown_enum_values_are_read_safely)
     CHECK(from_proto(wire)->applied_at == applied.applied_at);
     CHECK(late_of(v1::LATE_POLICY_UNSPECIFIED) == LatePolicy::Reject);
 }
+
+TEST_CASE(control_server_time_state_tells_not_started_from_ended)
+{
+    control_grpc::TimeView before;
+    before.available = true;
+    v1::TimeState wire;
+    time_to_proto(before, wire);
+    CHECK(wire.available() && !wire.running() && !wire.ended());
+    control_grpc::TimeView over = before;
+    over.now = SimTime{} + std::chrono::milliseconds(30);
+    over.pause_target = SimTime{} + std::chrono::milliseconds(40);
+    over.speed = 2.0;
+    over.ended = true;
+    time_to_proto(over, wire);
+    CHECK(!wire.running() && wire.ended());
+    CHECK(wire.now_ns() == 30'000'000 && wire.pause_target_ns() == 40'000'000 && wire.speed() == 2.0);
+}
+
+TEST_CASE(control_server_peer_info_tells_whether_it_has_an_agent)
+{
+    PeerInfo engine;
+    engine.participant = "Engine";
+    engine.incarnation = "1";
+    engine.connected = true;
+    control_grpc::SimulationSnapshot snapshot;
+    snapshot.participants = {{"Engine", "Running"}, {"Body", "ReadyToRun"}};
+    v1::PeerInfo wire;
+    to_proto(engine, wire); // a peer of the hub has an agent
+    CHECK(wire.has_agent() && wire.simulation_state().empty());
+    wire.Clear();
+    peer_to_proto("Engine", &engine, &snapshot, wire);
+    CHECK(wire.has_agent() && wire.connected() && wire.simulation_state() == "Running");
+    wire.Clear();
+    peer_to_proto("Body", nullptr, &snapshot, wire);
+    CHECK(!wire.has_agent() && !wire.connected() && wire.participant() == "Body" && wire.simulation_state() == "ReadyToRun");
+    wire.Clear();
+    peer_to_proto("Engine", &engine, nullptr, wire); // no simulation coordinated
+    CHECK(wire.has_agent() && wire.simulation_state().empty());
+}

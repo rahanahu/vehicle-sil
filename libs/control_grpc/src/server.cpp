@@ -16,6 +16,7 @@
 #include <fstream>
 #include <set>
 #include <sstream>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <utility>
@@ -360,6 +361,8 @@ struct StreamRegistry
 };
 
 constexpr std::uint64_t kMaxAgentPending = 65536;
+/// Snapshots of the simulation a Watch holds before it sends them; beyond, the oldest are dropped.
+constexpr std::size_t kMaxPendingSnapshots = 64;
 /// Waits are cut into slices this long to see cancellation and shutdown.
 constexpr auto kWaitSlice = std::chrono::milliseconds(200);
 
@@ -669,22 +672,6 @@ grpc::Status error_status(const std::exception& e)
     return grpc::Status(argument ? grpc::StatusCode::INVALID_ARGUMENT : grpc::StatusCode::FAILED_PRECONDITION, e.what());
 }
 
-void time_to_proto(const TimeView& in, v1::TimeState& out)
-{
-    out.set_available(in.available);
-    out.set_now_ns(ns_of(in.now));
-    out.set_paused(in.paused);
-    if (in.pause_target)
-    {
-        out.set_pause_target_ns(ns_of(*in.pause_target));
-    }
-    if (in.speed)
-    {
-        out.set_speed(*in.speed);
-    }
-    out.set_running(in.running);
-}
-
 std::string peer_of(const grpc::ServerContext& context)
 {
     return context.peer();
@@ -770,43 +757,29 @@ public:
         }
         // The agents that connected, joined with the participants SIL Kit knows (with a time
         // control: the simulation's participants on every PC, also those without an agent).
-        std::vector<std::pair<std::string, std::string>> simulation;
+        std::optional<SimulationSnapshot> snapshot;
         if (monitor_ != nullptr)
         {
-            const auto snapshot = monitor_->snapshot();
-            simulation = snapshot.participants;
-            if (!snapshot.participants_error.empty())
+            snapshot = monitor_->snapshot();
+            if (!snapshot->participants_error.empty())
             {
-                reply->set_simulation_error("cannot read the participants' states: " + snapshot.participants_error);
+                reply->set_simulation_error("cannot read the participants' states: " + snapshot->participants_error);
             }
         }
-        const auto state_of = [&](const std::string& name) {
-            for (const auto& [n, state] : simulation)
+        const auto agents = hub_.peers();
+        for (const auto& p : agents)
+        {
+            detail::peer_to_proto(p.participant, &p, snapshot ? &*snapshot : nullptr, *reply->add_peers());
+        }
+        if (snapshot)
+        {
+            for (const auto& [name, state] : snapshot->participants)
             {
-                if (n == name)
+                const auto known = std::any_of(agents.begin(), agents.end(), [&](const PeerInfo& p) { return p.participant == name; });
+                if (!known)
                 {
-                    return state;
+                    detail::peer_to_proto(name, nullptr, &*snapshot, *reply->add_peers());
                 }
-            }
-            return std::string();
-        };
-        for (const auto& p : hub_.peers())
-        {
-            auto* out = reply->add_peers();
-            detail::to_proto(p, *out);
-            out->set_has_agent(true);
-            out->set_simulation_state(state_of(p.participant));
-        }
-        for (const auto& [name, state] : simulation)
-        {
-            const auto known = std::any_of(reply->peers().begin(), reply->peers().end(),
-                                           [&](const v1::PeerInfo& p) { return p.participant() == name; });
-            if (!known)
-            {
-                auto* out = reply->add_peers();
-                out->set_participant(name);
-                out->set_has_agent(false);
-                out->set_simulation_state(state);
             }
         }
         return grpc::Status::OK;
@@ -967,32 +940,60 @@ public:
                                            options_.max_watch_capacity);
         const bool watch_time = request->time() && monitor_ != nullptr;
         const bool watch_simulation = request->simulation();
+        const auto wants = [&o](const std::string& peer) {
+            return o.peers.empty() || std::find(o.peers.begin(), o.peers.end(), peer) != o.peers.end();
+        };
         const auto sub = hub_.subscribe(o);
-        // The monitor's changes, taken by this stream between its waits on the hub.
-        struct Latest
+        const auto write = [&](v1::Update& out) {
+            out.set_dropped(sub->dropped());
+            return writer->Write(out);
+        };
+        // The monitor's changes, in order, taken by this stream between its waits on the hub.
+        struct Pending
         {
             std::mutex mutex;
-            std::optional<SimulationSnapshot> snapshot;
-        } latest;
+            std::deque<SimulationSnapshot> snapshots;
+        } pending;
         SimulationMonitor::Subscription simulation_sub;
-        std::optional<SimulationSnapshot> current;
-        if (monitor_ != nullptr && (watch_time || watch_simulation))
+        std::optional<SimulationSnapshot> current; ///< taken from the monitor, not handled yet
+        std::optional<SimulationSnapshot> known;   ///< the latest handled: the peers' SIL Kit states
+        if (monitor_ != nullptr)
         {
-            simulation_sub = monitor_->subscribe([&latest](const SimulationSnapshot& snapshot) {
-                const std::lock_guard lock(latest.mutex);
-                latest.snapshot = snapshot;
+            simulation_sub = monitor_->subscribe([&pending](const SimulationSnapshot& snapshot) {
+                const std::lock_guard lock(pending.mutex);
+                if (pending.snapshots.size() >= kMaxPendingSnapshots)
+                {
+                    pending.snapshots.pop_front(); // a slow client misses intermediate states
+                }
+                pending.snapshots.push_back(snapshot);
             });
             current = monitor_->snapshot();
+            known = current;
         }
+        // The peers as ListPeers reports them (the hub's, then the participants without an agent),
+        // kept up to date: the hub's peers of this watch and the state each was last sent with.
+        std::map<std::string, PeerInfo> agents;
+        std::map<std::string, std::string> sent_states;
+        const auto send_peer = [&](const std::string& name) {
+            const auto agent = agents.find(name);
+            const bool participant = known && std::any_of(known->participants.begin(), known->participants.end(),
+                                                           [&](const auto& p) { return p.first == name; });
+            v1::Update out;
+            if (agent == agents.end() && !participant)
+            {
+                sent_states.erase(name);
+                out.set_removed_peer(name);
+                return write(out);
+            }
+            detail::peer_to_proto(name, agent != agents.end() ? &agent->second : nullptr, known ? &*known : nullptr, *out.mutable_peer());
+            sent_states[name] = out.peer().simulation_state();
+            return write(out);
+        };
         std::optional<TimeView> sent_time;
         std::optional<SimulationSnapshot> sent_simulation;
         bool sent_unavailable = false;
-        // Sends what changed since the last time; false if the client went away.
+        // Sends what changed in the simulation since the last time; false if the client went away.
         const auto send_simulation = [&]() {
-            const auto write = [&](v1::Update& out) {
-                out.set_dropped(sub->dropped());
-                return writer->Write(out);
-            };
             if (watch_simulation && monitor_ == nullptr && !std::exchange(sent_unavailable, true))
             {
                 v1::Update out;
@@ -1003,12 +1004,13 @@ public:
             {
                 return true;
             }
-            const auto snapshot = std::move(*current);
+            known = std::move(current);
             current.reset();
+            const auto& snapshot = *known;
             if (watch_time && snapshot.time_error.empty() && sent_time != snapshot.time)
             {
                 v1::Update out;
-                time_to_proto(snapshot.time, *out.mutable_time());
+                detail::time_to_proto(snapshot.time, *out.mutable_time());
                 if (!write(out))
                 {
                     return false;
@@ -1025,6 +1027,15 @@ public:
                 }
                 sent_simulation = snapshot;
             }
+            // The peers whose SIL Kit state changed, and participants not sent yet.
+            for (const auto& [name, state] : snapshot.participants)
+            {
+                const auto sent = sent_states.find(name);
+                if (wants(name) && (sent == sent_states.end() || sent->second != state) && !send_peer(name))
+                {
+                    return false;
+                }
+            }
             return true;
         };
         bool initial = true;
@@ -1033,52 +1044,67 @@ public:
             // The first poll takes everything the subscription starts with (peers, latest values).
             for (auto& update : sub->poll(initial ? 0 : 64, initial ? std::chrono::milliseconds(0) : std::chrono::milliseconds(100)))
             {
-                v1::Update out;
+                bool sent = true;
                 if (const auto* p = std::get_if<PeerUpdate>(&update))
                 {
                     if (p->removed)
                     {
-                        out.set_removed_peer(p->peer.participant);
+                        agents.erase(p->peer.participant);
                     }
                     else
                     {
-                        detail::to_proto(p->peer, *out.mutable_peer());
+                        agents.insert_or_assign(p->peer.participant, p->peer);
                     }
-                }
-                else if (const auto* v = std::get_if<ValuesUpdate>(&update))
-                {
-                    auto* pv = out.mutable_values();
-                    pv->set_peer(v->peer);
-                    pv->set_incarnation(v->incarnation);
-                    detail::to_proto(*v->snapshot, *pv->mutable_snapshot());
-                }
-                else if (const auto* e = std::get_if<EventUpdate>(&update))
-                {
-                    auto* pe = out.mutable_event();
-                    pe->set_peer(e->peer);
-                    pe->set_incarnation(e->incarnation);
-                    detail::to_proto(e->event, *pe->mutable_event());
+                    sent = send_peer(p->peer.participant);
                 }
                 else
                 {
-                    detail::to_proto(std::get<OperationUpdate>(update).operation, *out.mutable_operation());
+                    v1::Update out;
+                    if (const auto* v = std::get_if<ValuesUpdate>(&update))
+                    {
+                        auto* pv = out.mutable_values();
+                        pv->set_peer(v->peer);
+                        pv->set_incarnation(v->incarnation);
+                        detail::to_proto(*v->snapshot, *pv->mutable_snapshot());
+                    }
+                    else if (const auto* e = std::get_if<EventUpdate>(&update))
+                    {
+                        auto* pe = out.mutable_event();
+                        pe->set_peer(e->peer);
+                        pe->set_incarnation(e->incarnation);
+                        detail::to_proto(e->event, *pe->mutable_event());
+                    }
+                    else
+                    {
+                        detail::to_proto(std::get<OperationUpdate>(update).operation, *out.mutable_operation());
+                    }
+                    sent = write(out);
                 }
-                out.set_dropped(sub->dropped());
-                if (!writer->Write(out))
+                if (!sent)
                 {
                     sub->close();
                     return grpc::Status::OK; // the client went away
                 }
             }
+            std::deque<SimulationSnapshot> taken;
             {
-                const std::lock_guard lock(latest.mutex);
-                if (latest.snapshot && (!current || latest.snapshot->version > current->version))
-                {
-                    current = std::move(latest.snapshot);
-                }
-                latest.snapshot.reset();
+                const std::lock_guard lock(pending.mutex);
+                taken.swap(pending.snapshots);
             }
-            if (!send_simulation())
+            bool sent = send_simulation(); // the initial snapshot, or the unavailable one
+            for (auto& snapshot : taken)
+            {
+                if (!sent)
+                {
+                    break;
+                }
+                if (!known || snapshot.version > known->version)
+                {
+                    current = std::move(snapshot);
+                    sent = send_simulation();
+                }
+            }
+            if (!sent)
             {
                 break;
             }
@@ -1140,7 +1166,9 @@ public:
         try
         {
             f(*options_.time);
-            time_to_proto(options_.time->state(), *reply);
+            // The watches see the change at once, not only at the monitor's next read.
+            monitor_->poll();
+            detail::time_to_proto(options_.time->state(), *reply);
         }
         catch (const std::exception& e)
         {

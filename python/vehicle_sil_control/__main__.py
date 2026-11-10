@@ -37,7 +37,7 @@ def _print_time(t) -> None:
     if not t.available:
         print("this server does not control the time")
         return
-    state = "paused" if t.paused else ("running" if t.running else "not running")
+    state = "paused" if t.paused else ("running" if t.running else ("ended" if t.ended else "not started"))
     speed = "max" if t.speed is None else f"{t.speed:g}x"
     print(f"{state} at {_fmt_ms(t.now)}, speed {speed}" + (f", pause at {_fmt_ms(t.pause_target)}" if t.pause_target is not None else ""))
 

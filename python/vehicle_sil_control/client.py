@@ -62,7 +62,7 @@ class Peer:
     schema: List[Variable]
     failed: bool = False
     error: str = ""
-    has_agent: bool = True
+    has_agent: bool = False  # an agent has connected for it (else it is known from SIL Kit only)
     simulation_state: str = ""  # the SIL Kit lifecycle state the server sees ("" if unknown)
 
 
@@ -92,7 +92,8 @@ class TimeState:
     paused: bool
     pause_target: Optional[int]
     speed: Optional[float]
-    running: bool
+    running: bool  # started and not ended
+    ended: bool = False  # ran and is over (running is False before the start too)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -173,7 +174,7 @@ def _operation(o) -> Operation:
 
 def _time(t) -> TimeState:
     return TimeState(t.available, t.now_ns, t.paused, t.pause_target_ns if t.HasField("pause_target_ns") else None,
-                     t.speed if t.HasField("speed") else None, t.running)
+                     t.speed if t.HasField("speed") else None, t.running, t.ended)
 
 
 def _simulation(m) -> SimulationState:

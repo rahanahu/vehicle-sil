@@ -11,6 +11,7 @@
 #include <grpcpp/grpcpp.h>
 
 #include <atomic>
+#include <map>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -182,6 +183,26 @@ struct WatchStream
         return std::nullopt;
     }
 };
+
+/// A link of an agent the test connects to the hub directly.
+struct NullLink final : control::AgentLink
+{
+    bool send(const control::Command&) override { return true; }
+};
+
+/// The peers by name, as ListPeers reports them.
+std::map<std::string, std::string> listed(v1::ControlService::Stub& stub)
+{
+    grpc::ClientContext context;
+    v1::ListPeersReply reply;
+    CHECK(stub.ListPeers(&context, v1::ListPeersRequest{}, &reply).ok());
+    std::map<std::string, std::string> out;
+    for (const auto& p : reply.peers())
+    {
+        out[p.participant()] = p.SerializeAsString();
+    }
+    return out;
+}
 
 std::size_t count(const std::vector<v1::Update>& updates, v1::Update::KindCase kind)
 {
@@ -456,4 +477,52 @@ TEST_CASE(control_server_shuts_down_with_a_watch_of_the_simulation_open)
     {
     }
     CHECK(true);
+}
+
+TEST_CASE(control_server_watch_and_list_peers_report_a_peer_alike)
+{
+    ScriptedTime time;
+    time.change([](ScriptedTime& t) {
+        t.members[0].second = "Running";
+        t.members[1].second = "ReadyToRun";
+    });
+    control_grpc::ServerOptions options;
+    options.time = &time;
+    options.monitor_period = 0ms;
+    control_grpc::ControlServer server(options);
+    control::PeerHello hello;
+    hello.participant = "Engine";
+    hello.incarnation = "1";
+    hello.max_pending = 4;
+    static_cast<void>(server.hub().agent_connected(hello, std::make_shared<NullLink>()));
+    auto stub = v1::ControlService::NewStub(channel(server));
+
+    // Engine has an agent, Body is known from SIL Kit only; both with their SIL Kit state.
+    const auto list = listed(*stub);
+    CHECK_EQ(list.size(), 2U);
+    WatchStream w(*stub, false, false);
+    std::map<std::string, std::string> watched;
+    for (const auto& u : w.initial())
+    {
+        if (u.kind_case() == v1::Update::kPeer)
+        {
+            watched[u.peer().participant()] = u.peer().SerializeAsString();
+        }
+    }
+    CHECK(watched == list);
+    v1::PeerInfo engine;
+    engine.ParseFromString(list.at("Engine"));
+    CHECK(engine.has_agent() && engine.simulation_state() == "Running");
+    v1::PeerInfo body;
+    body.ParseFromString(list.at("Body"));
+    CHECK(!body.has_agent() && body.simulation_state() == "ReadyToRun");
+
+    // A change of a SIL Kit state reaches the watch as the peer ListPeers then reports.
+    time.change([](ScriptedTime& t) { t.members[1].second = "Running"; });
+    server.simulation()->poll();
+    const auto u = w.next(v1::Update::kPeer);
+    CHECK(u.has_value());
+    CHECK(u->peer().participant() == "Body");
+    CHECK(u->peer().SerializeAsString() == listed(*stub).at("Body"));
+    w.context.TryCancel();
 }

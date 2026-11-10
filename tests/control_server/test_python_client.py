@@ -62,6 +62,19 @@ class DemoTest(unittest.TestCase):
         self.assertTrue(t.available and t.paused)
         self.assertEqual(t.now, 0)
 
+        # ListPeers and Watch report the same peers alike (with the agent and the SIL Kit state).
+        listed = {p.participant: p for p in c.peers()}
+        watched = {}
+        with Control(self.address) as w:
+            for u in w.watch(values=False, events=False, operations=False):
+                if isinstance(u, Peer):
+                    watched[u.participant] = u
+                elif u == ("initial_done",):
+                    break
+        self.assertEqual(watched, listed)
+        self.assertTrue(all(p.has_agent and p.simulation_state == "Running" for p in listed.values()))
+        self.assertFalse(c.sim.time().ended)
+
         # A watcher in the background.
         seen = []
         stop = threading.Event()
