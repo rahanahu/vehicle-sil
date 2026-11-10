@@ -295,8 +295,9 @@ public:
     }
     grpc::ServerBidiReactor<v1::AgentMessage, v1::ServerMessage>* Connect(grpc::CallbackServerContext* context) override
     {
+        static const RpcRule* const rule = find_rule(kAgentService, "Connect");
         const auto who = auth_.identify(*context);
-        if (!who || !allows(*who, Role::Agent))
+        if (!who || rule == nullptr || !allows(*who, rule->need))
         {
             audit_.refused((who ? who->name : std::string("unauthenticated")) + "@" + context->peer() + " agent: refused");
             return new RefusedStream(grpc::Status(who ? grpc::StatusCode::PERMISSION_DENIED : grpc::StatusCode::UNAUTHENTICATED,

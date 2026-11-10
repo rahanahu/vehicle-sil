@@ -9,6 +9,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace vehicle_sil::control_grpc::detail {
@@ -37,5 +38,25 @@ private:
 };
 
 std::string role_name(Role role);
+
+/// What a call needs: one row of the authorization table.
+struct RpcRule
+{
+    std::string_view service; ///< the service's name in the proto ("ControlService")
+    std::string_view method;  ///< the RPC's name in the proto ("Write")
+    Role need;                ///< the least role (Agent: only an agent)
+    /// An allowed call leaves a line with its outcome in the audit log. (A refused call always
+    /// does.)
+    bool audited;
+    std::string_view what; ///< the action, for the audit log and the refusal ("write")
+};
+
+inline constexpr std::string_view kControlService = "ControlService";
+inline constexpr std::string_view kAgentService = "AgentService";
+
+/// The authorization table: a rule for every RPC of both services.
+[[nodiscard]] const std::vector<RpcRule>& rpc_rules();
+/// The rule of `service`/`method`; nullptr if the table has none (the call is refused).
+[[nodiscard]] const RpcRule* find_rule(std::string_view service, std::string_view method);
 
 } // namespace vehicle_sil::control_grpc::detail

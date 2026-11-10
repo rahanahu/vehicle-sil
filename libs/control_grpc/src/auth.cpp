@@ -91,6 +91,43 @@ std::string role_name(Role role)
     return "?";
 }
 
+const std::vector<RpcRule>& rpc_rules()
+{
+    // Viewer reads, Operator changes the simulation's inputs and time, Admin ends it.
+    static const std::vector<RpcRule> rules = {
+        {kControlService, "Ping", Role::Viewer, false, "ping"},
+        {kControlService, "ListPeers", Role::Viewer, false, "list peers"},
+        {kControlService, "GetValues", Role::Viewer, false, "read values"},
+        {kControlService, "Write", Role::Operator, true, "write"},
+        {kControlService, "GetOperation", Role::Viewer, false, "read operations"},
+        {kControlService, "WaitOperation", Role::Viewer, false, "wait for operations"},
+        {kControlService, "Watch", Role::Viewer, false, "watch"},
+        {kControlService, "ForgetPeer", Role::Operator, true, "forget a peer"},
+        {kControlService, "GetTime", Role::Viewer, false, "read the time"},
+        {kControlService, "Pause", Role::Operator, true, "pause"},
+        {kControlService, "Resume", Role::Operator, true, "resume"},
+        {kControlService, "RunUntil", Role::Operator, true, "run until"},
+        {kControlService, "Step", Role::Operator, true, "step"},
+        {kControlService, "SetSpeed", Role::Operator, true, "set the speed"},
+        {kControlService, "WaitPaused", Role::Viewer, false, "wait for a pause"},
+        {kControlService, "Stop", Role::Admin, true, "stop"},
+        {kAgentService, "Connect", Role::Agent, true, "connect an agent"},
+    };
+    return rules;
+}
+
+const RpcRule* find_rule(std::string_view service, std::string_view method)
+{
+    for (const auto& rule : rpc_rules())
+    {
+        if (rule.service == service && rule.method == method)
+        {
+            return &rule;
+        }
+    }
+    return nullptr;
+}
+
 } // namespace detail
 
 std::vector<Credential> load_credentials(const std::string& path)
