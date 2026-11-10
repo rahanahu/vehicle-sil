@@ -161,8 +161,9 @@ public:
     /// simulation that stands still. Must not be called once the destructor has begun.
     void release_step() noexcept;
 
-    /// Starts the lifecycle and waits until this participant is Running. In Coordinated mode
-    /// that requires the system controller and all other required participants.
+    /// Starts the lifecycle and waits until this participant is Running (or was: a short
+    /// simulation may have ended already when it looks). In Coordinated mode that requires the
+    /// system controller and all other required participants.
     /// Throws std::runtime_error on timeout or if the lifecycle fails, std::logic_error if
     /// virtual time is used without a step handler.
     void start(std::chrono::milliseconds timeout);
@@ -274,6 +275,7 @@ private:
     std::atomic<std::int64_t> now_ns_{0};
     std::atomic<std::uint64_t> steps_completed_{0};
     std::atomic<bool> step_entered_{false};
+    std::atomic<bool> starting_entered_{false}; ///< without virtual time: SIL Kit's starting handler ran
     std::atomic<bool> lifecycle_started_{false}; // set by start() just before StartLifecycle()
 
     std::mutex step_gate_;       // held while the step handler runs

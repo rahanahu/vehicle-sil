@@ -122,6 +122,12 @@ ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
                 },
                 options_.virtual_time->step);
         }
+        else
+        {
+            // Without time synchronisation no step proves that the lifecycle got to Running;
+            // this handler does (start()). SIL Kit calls it only without a TimeSyncService.
+            lifecycle_->SetStartingHandler([this] { starting_entered_.store(true, std::memory_order_release); });
+        }
     }
     catch (...)
     {
@@ -178,9 +184,11 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout)
     while (true)
     {
         const auto current = lifecycle_->State();
-        // A short virtual-time simulation can pass through Running between two polls; a step
-        // handler call proves that it got there.
-        if (current == orch::ParticipantState::Running || step_entered_.load(std::memory_order_acquire))
+        // A short simulation can pass through Running between two polls (to Stopping or on to
+        // Shutdown); a step handler call (virtual time) or the starting handler (otherwise)
+        // proves that it got there.
+        if (current == orch::ParticipantState::Running || step_entered_.load(std::memory_order_acquire)
+            || starting_entered_.load(std::memory_order_acquire))
         {
             deliver_stop(false); // a stop requested before Running
             return;
