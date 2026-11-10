@@ -54,11 +54,12 @@ endif()
 #                           vehicle_sil_add_j1939_codec())
 #   vehicle_sil::lin        LIN schedule and slave responses on SIL Kit LIN (links vehicle_sil::core)
 #   vehicle_sil::ecu        the interface an ECU's application is written against (header only, no SIL Kit)
-#   vehicle_sil::testkit    J1939 networks on a local virtual bus, recorders, fault injection (internal)
+#   vehicle_sil::local      ECUs on virtual CAN buses in this process, on virtual time (no SIL Kit; internal)
+#   vehicle_sil::testkit    recorders and fault injection for tests on vehicle_sil::local (internal)
 #   vehicle_sil::peer       one SIL Kit participant with its J1939 networks and LIN nodes (internal)
 #   vehicle_sil::simulation runs ECUs on local virtual buses or as SIL Kit participants of this process
-# The J1939 stack, the CAN base, the test kit, Peer, Ecu and Simulation are under development;
-# their API may still change.
+# The J1939 stack, the CAN base, the local buses, the test kit, Peer, Ecu and Simulation are under
+# development; their API may still change.
 # As a subproject (FetchContent / add_subdirectory) the libraries are excluded
 # from "all", so a consumer only builds the libraries it links against.
 if(PROJECT_IS_TOP_LEVEL)
@@ -73,6 +74,7 @@ add_subdirectory(libs/can_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/can_netsim ${_vehicle_sil_exclude})
 add_subdirectory(libs/j1939 ${_vehicle_sil_exclude})
 add_subdirectory(libs/ecu ${_vehicle_sil_exclude})
+add_subdirectory(libs/local ${_vehicle_sil_exclude})
 add_subdirectory(libs/testkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/peer ${_vehicle_sil_exclude})
 add_subdirectory(libs/simulation ${_vehicle_sil_exclude})

@@ -2,8 +2,8 @@
 #include "vehicle_sil/simulation/simulation.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/local/local_bench.hpp"
 #include "vehicle_sil/peer/peer.hpp"
-#include "vehicle_sil/testkit/local_can.hpp"
 
 #include <silkit/services/orchestration/string_utils.hpp>
 #include <silkit/vendor/CreateSilKitRegistry.hpp>
@@ -48,7 +48,7 @@ std::string state_text(const std::optional<orch::ParticipantState>& state)
 
 struct Simulation::LocalRun
 {
-    testkit::LocalCan can;
+    LocalBench can;
 };
 
 struct Simulation::SilKitRun
@@ -412,7 +412,7 @@ void Simulation::run_for(SimDuration duration)
         catch (...)
         {
             // A host that failed stays failed: a later run_for() reports it again. Every ECU of
-            // the LocalCan, also those added through local().
+            // the LocalBench, also those added through local().
             std::vector<std::string> failures;
             for (const auto& name : local_->can.ecu_names())
             {
@@ -464,7 +464,7 @@ SimTime Simulation::now() const noexcept { return local_ ? local_->can.now() : s
 
 bool Simulation::is_local() const noexcept { return local_ != nullptr; }
 
-testkit::LocalCan& Simulation::local()
+LocalBench& Simulation::local()
 {
     if (!local_)
     {

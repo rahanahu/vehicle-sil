@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 //
-// The parameter service of param_service.hpp between an engine ECU and a service tool, on the
-// test kit's local virtual bus (one process, no SIL Kit): the tool reads and writes parameters
-// and blocks, and meets the ECU's refusals. Exits with 1 if an answer is not the expected one.
+// The parameter service of param_service.hpp between an engine ECU and a service tool, on a
+// local virtual bus (vehicle_sil::LocalBench: one process, no SIL Kit): the tool reads and writes
+// parameters and blocks, and meets the ECU's refusals. Exits with 1 if an answer is not the
+// expected one.
 #include "param_service.hpp"
 
-#include "vehicle_sil/testkit/local_can.hpp"
+#include "vehicle_sil/local/local_bench.hpp"
 
 #include <cstdio>
 #include <numeric>
@@ -26,7 +27,7 @@ int main()
     const Name engineName = Name{}.set_identity_number(1).set_manufacturer_code(0x7F0).set_function(0);
     const Name toolName = Name{}.set_identity_number(2).set_manufacturer_code(0x7F0).set_function(129);
 
-    vehicle_sil::testkit::LocalCan bus;
+    vehicle_sil::LocalBench bus;
     auto& engine = bus.add_j1939("engine", 10ms).add_node({.address = 0x00, .name = engineName});
     auto& tool = bus.add_j1939("tool", 10ms).add_node({.address = 0xF9, .name = toolName});
     auto& server = engine.attach<ParamServer>(table);

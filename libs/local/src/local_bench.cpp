@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
-#include "vehicle_sil/testkit/local_can.hpp"
+#include "vehicle_sil/local/local_bench.hpp"
 
 #include "vehicle_sil/core/periodic.hpp"
 
 #include <stdexcept>
 #include <utility>
 
-namespace vehicle_sil::testkit {
+namespace vehicle_sil {
 
 namespace {
-constexpr const char* kWho = "vehicle_sil::testkit::LocalCan: ";
+constexpr const char* kWho = "vehicle_sil::LocalBench: ";
 } // namespace
 
-struct LocalCan::NamedBus
+struct LocalBench::NamedBus
 {
     std::string name;
     std::unique_ptr<can::VirtualCanBus> bus;
@@ -20,7 +20,7 @@ struct LocalCan::NamedBus
     can::VirtualCanBus::Endpoint* injector = nullptr;
 };
 
-struct LocalCan::Channel
+struct LocalBench::Channel
 {
     // Destroyed bottom-up: the network, then the tap.
     std::string name;
@@ -30,7 +30,7 @@ struct LocalCan::Channel
 };
 
 /// A raw CAN channel of an ECU (Ecu::can()) on an endpoint of its own.
-struct LocalCan::RawCan
+struct LocalBench::RawCan
 {
     std::string name;
     can::VirtualCanBus::Endpoint* endpoint = nullptr;
@@ -39,10 +39,10 @@ struct LocalCan::RawCan
 
 /// One ECU: a host with its networks, its raw channels, its application stage and the objects
 /// it owns.
-class LocalCan::Site final : public Ecu
+class LocalBench::Site final : public Ecu
 {
 public:
-    Site(LocalCan& owner, std::string ecuName, SimDuration stepSize) :
+    Site(LocalBench& owner, std::string ecuName, SimDuration stepSize) :
       owner_(owner), name_(std::move(ecuName)), step_(stepSize), host_(std::make_unique<can::Host>())
     {
         host_->set_application([this](SimTime now) {
@@ -113,7 +113,7 @@ public:
         return *channels_.front();
     }
 
-    /// A J1939 network on the bus `network` ("": the unnamed bus, for LocalCan::add_j1939()).
+    /// A J1939 network on the bus `network` ("": the unnamed bus, for LocalBench::add_j1939()).
     /// Nothing is attached if it throws.
     j1939::Network& attach_j1939(const std::string& network, j1939::NetworkOptions options)
     {
@@ -186,7 +186,7 @@ private:
     }
 
     detail::OwnedObjects owned_; ///< first: destroyed after everything else of the ECU
-    LocalCan& owner_;
+    LocalBench& owner_;
     std::string name_;
     SimDuration step_;
     std::vector<std::unique_ptr<Channel>> channels_;
@@ -195,11 +195,11 @@ private:
     std::unique_ptr<can::Host> host_;
 };
 
-LocalCan::LocalCan(can::VirtualCanBusOptions options) : options_(std::move(options)) {}
+LocalBench::LocalBench(can::VirtualCanBusOptions options) : options_(std::move(options)) {}
 
 // The ECUs first, the one added last first (each with its host first; the driver only keeps
 // pointers to the hosts), then the other members: the driver, the buses with the endpoints.
-LocalCan::~LocalCan()
+LocalBench::~LocalBench()
 {
     // std::vector destroys its elements in no stated order.
     while (!sites_.empty())
@@ -208,25 +208,25 @@ LocalCan::~LocalCan()
     }
 }
 
-void LocalCan::require_bus_kind(std::string_view network, std::string_view what) const
+void LocalBench::require_bus_kind(std::string_view network, std::string_view what) const
 {
     if (network.empty() && bus_kind_ == BusKind::Named)
     {
         throw std::logic_error(std::string(kWho) + std::string(what) +
-                               ": the ECUs of this LocalCan are on named buses, there is no unnamed bus; name the bus "
+                               ": the ECUs of this LocalBench are on named buses, there is no unnamed bus; name the bus "
                                "(inject(network, time, frame), injector(network), bus(network)) and add ECUs with "
                                "add_ecu(name, step).j1939(network) instead of add_j1939()");
     }
     if (!network.empty() && bus_kind_ == BusKind::Unnamed)
     {
         throw std::logic_error(std::string(kWho) + std::string(what) +
-                               ": this LocalCan uses the unnamed bus (add_j1939(), inject(time, frame), injector(), "
+                               ": this LocalBench uses the unnamed bus (add_j1939(), inject(time, frame), injector(), "
                                "bus()), which a named bus would never reach; add this ECU with add_j1939() too, or "
                                "name the bus everywhere: add_ecu(name, step).j1939(network) and inject(network, ...)");
     }
 }
 
-LocalCan::NamedBus& LocalCan::bus_for(const std::string& network, std::string_view what)
+LocalBench::NamedBus& LocalBench::bus_for(const std::string& network, std::string_view what)
 {
     require_bus_kind(network, what);
     bus_kind_ = network.empty() ? BusKind::Unnamed : BusKind::Named;
@@ -245,7 +245,7 @@ LocalCan::NamedBus& LocalCan::bus_for(const std::string& network, std::string_vi
     return *buses_.back();
 }
 
-LocalCan::NamedBus& LocalCan::named_bus(std::string_view network) const
+LocalBench::NamedBus& LocalBench::named_bus(std::string_view network) const
 {
     for (const auto& b : buses_)
     {
@@ -257,7 +257,7 @@ LocalCan::NamedBus& LocalCan::named_bus(std::string_view network) const
     throw std::out_of_range(std::string(kWho) + "no bus named " + std::string(network));
 }
 
-Ecu& LocalCan::add_ecu(std::string name, SimDuration step)
+Ecu& LocalBench::add_ecu(std::string name, SimDuration step)
 {
     if (started_)
     {
@@ -282,7 +282,7 @@ Ecu& LocalCan::add_ecu(std::string name, SimDuration step)
     return *sites_.back();
 }
 
-j1939::Network& LocalCan::add_j1939(std::string name, SimDuration step, j1939::NetworkOptions options)
+j1939::Network& LocalBench::add_j1939(std::string name, SimDuration step, j1939::NetworkOptions options)
 {
     if (started_)
     {
@@ -301,7 +301,7 @@ j1939::Network& LocalCan::add_j1939(std::string name, SimDuration step, j1939::N
     }
 }
 
-void LocalCan::on_step(std::string_view name, std::function<void(SimTime now)> fn)
+void LocalBench::on_step(std::string_view name, std::function<void(SimTime now)> fn)
 {
     if (started_)
     {
@@ -314,7 +314,7 @@ void LocalCan::on_step(std::string_view name, std::function<void(SimTime now)> f
     site(name).on_step(std::move(fn));
 }
 
-LocalCan::Site& LocalCan::site(std::string_view name) const
+LocalBench::Site& LocalBench::site(std::string_view name) const
 {
     for (const auto& s : sites_)
     {
@@ -326,9 +326,9 @@ LocalCan::Site& LocalCan::site(std::string_view name) const
     throw std::out_of_range(std::string(kWho) + "no ECU named " + std::string(name));
 }
 
-Ecu& LocalCan::ecu(std::string_view name) const { return site(name); }
+Ecu& LocalBench::ecu(std::string_view name) const { return site(name); }
 
-std::vector<std::string> LocalCan::ecu_names() const
+std::vector<std::string> LocalBench::ecu_names() const
 {
     std::vector<std::string> out;
     out.reserve(sites_.size());
@@ -339,37 +339,37 @@ std::vector<std::string> LocalCan::ecu_names() const
     return out;
 }
 
-j1939::Network& LocalCan::network(std::string_view ecu, std::string_view network) const
+j1939::Network& LocalBench::network(std::string_view ecu, std::string_view network) const
 {
     return *site(ecu).channel(network).network;
 }
-can::VirtualCanBus::Endpoint& LocalCan::endpoint(std::string_view ecu, std::string_view network) const
+can::VirtualCanBus::Endpoint& LocalBench::endpoint(std::string_view ecu, std::string_view network) const
 {
     return *site(ecu).channel(network).endpoint;
 }
-can::TapPort& LocalCan::tap(std::string_view ecu, std::string_view network) const { return *site(ecu).channel(network).tap; }
+can::TapPort& LocalBench::tap(std::string_view ecu, std::string_view network) const { return *site(ecu).channel(network).tap; }
 
-j1939::Network& LocalCan::network(std::string_view ecu) const { return *site(ecu).only_channel().network; }
-can::VirtualCanBus::Endpoint& LocalCan::endpoint(std::string_view ecu) const { return *site(ecu).only_channel().endpoint; }
-can::TapPort& LocalCan::tap(std::string_view ecu) const { return *site(ecu).only_channel().tap; }
-can::Host& LocalCan::host(std::string_view ecu) const { return site(ecu).host(); }
+j1939::Network& LocalBench::network(std::string_view ecu) const { return *site(ecu).only_channel().network; }
+can::VirtualCanBus::Endpoint& LocalBench::endpoint(std::string_view ecu) const { return *site(ecu).only_channel().endpoint; }
+can::TapPort& LocalBench::tap(std::string_view ecu) const { return *site(ecu).only_channel().tap; }
+can::Host& LocalBench::host(std::string_view ecu) const { return site(ecu).host(); }
 
-can::VirtualCanBus::Endpoint& LocalCan::injector() { return *bus_for("", "injector()").injector; }
-can::VirtualCanBus::Endpoint& LocalCan::injector(std::string_view network) const { return *named_bus(network).injector; }
-can::VirtualCanBus& LocalCan::bus() { return *bus_for("", "bus()").bus; }
-can::VirtualCanBus& LocalCan::bus(std::string_view network) { return *named_bus(network).bus; }
+can::VirtualCanBus::Endpoint& LocalBench::injector() { return *bus_for("", "injector()").injector; }
+can::VirtualCanBus::Endpoint& LocalBench::injector(std::string_view network) const { return *named_bus(network).injector; }
+can::VirtualCanBus& LocalBench::bus() { return *bus_for("", "bus()").bus; }
+can::VirtualCanBus& LocalBench::bus(std::string_view network) { return *named_bus(network).bus; }
 
-can::SendResult LocalCan::inject(SimTime time, const can::Frame& frame)
+can::SendResult LocalBench::inject(SimTime time, const can::Frame& frame)
 {
     return bus_for("", "inject(time, frame)").injector->send(can::TimedFrame{time, frame});
 }
 
-can::SendResult LocalCan::inject(std::string_view network, SimTime time, const can::Frame& frame)
+can::SendResult LocalBench::inject(std::string_view network, SimTime time, const can::Frame& frame)
 {
     return injector(network).send(can::TimedFrame{time, frame});
 }
 
-void LocalCan::run_until(SimTime end)
+void LocalBench::run_until(SimTime end)
 {
     if (!started_)
     {
@@ -394,6 +394,6 @@ void LocalCan::run_until(SimTime end)
     }
 }
 
-void LocalCan::run_for(SimDuration duration) { run_until(now_ + duration); }
+void LocalBench::run_for(SimDuration duration) { run_until(now_ + duration); }
 
-} // namespace vehicle_sil::testkit
+} // namespace vehicle_sil

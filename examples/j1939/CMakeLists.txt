@@ -23,13 +23,13 @@ vehicle_sil_copy_runtime_dlls(vehicle_sil_j1939_ecu_pair)
 
 # A protocol of one's own: a manufacturer's parameter service (param_service.hpp) built on the
 # Exchange part and typed messages generated from param_service_messages.yaml, with the public
-# API only. The demo runs on the test kit's local virtual bus (no SIL Kit); the tests use the same
-# code (tests/CMakeLists.txt builds it when the examples are not built).
+# API only. The demo runs on the local virtual bus (vehicle_sil::local, no SIL Kit); the tests use
+# the same code (tests/testkit/CMakeLists.txt builds it when the examples are not built).
 vehicle_sil_add_j1939_codec(vehicle_sil_param_service_messages param_service/param_service_messages.yaml)
 add_library(vehicle_sil_param_service STATIC param_service/param_service.cpp param_service/param_service.hpp)
 target_include_directories(vehicle_sil_param_service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/param_service)
 target_link_libraries(vehicle_sil_param_service PUBLIC vehicle_sil::j1939_exchange vehicle_sil_param_service_messages)
 vehicle_sil_target_defaults(vehicle_sil_param_service)
 add_executable(vehicle_sil_j1939_param_service param_service/main.cpp)
-target_link_libraries(vehicle_sil_j1939_param_service PRIVATE vehicle_sil_param_service vehicle_sil::testkit)
+target_link_libraries(vehicle_sil_j1939_param_service PRIVATE vehicle_sil_param_service vehicle_sil::local)
 vehicle_sil_target_defaults(vehicle_sil_j1939_param_service)

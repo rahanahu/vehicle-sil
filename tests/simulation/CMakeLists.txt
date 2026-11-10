@@ -4,7 +4,7 @@
 vehicle_sil_add_harness_tests(vehicle_sil_simulation_tests
   PREFIX simulation LABELS unit simulation TIMEOUT 180
   SOURCES test_simulation.cpp
-  LINK vehicle_sil::simulation)
+  LINK vehicle_sil::simulation vehicle_sil::testkit)
 
 # The first example, on the virtual buses and on SIL Kit (registry of the process).
 if(TARGET vehicle_sil_getting_started)

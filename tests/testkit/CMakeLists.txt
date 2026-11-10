@@ -1,5 +1,6 @@
-# The test kit (vehicle_sil::testkit): J1939 networks on a local virtual bus, recorders, fault
-# injection. Links no SIL Kit.
+# The local buses (vehicle_sil::local, through the test kit's name testkit::LocalCan) and the test
+# kit (vehicle_sil::testkit): J1939 networks on a local virtual bus, recorders, fault injection.
+# Links no SIL Kit.
 vehicle_sil_add_harness_tests(vehicle_sil_testkit_tests
   PREFIX testkit LABELS unit testkit j1939 TIMEOUT 60
   SOURCES test_testkit.cpp test_local_ecus.cpp

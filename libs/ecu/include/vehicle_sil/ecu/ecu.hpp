@@ -18,7 +18,7 @@ namespace vehicle_sil {
 
 /// Where one ECU's application is assembled: the J1939 networks it is on (and, for other
 /// protocols, raw CAN channels), its work per step, and the objects it owns. A runtime
-/// implements it (Peer: a SIL Kit participant; testkit::LocalCan::add_ecu(): a host on the
+/// implements it (Peer: a SIL Kit participant; LocalBench::add_ecu(): a host on the
 /// local virtual buses), so an application written against Ecu& runs on each of them unchanged.
 ///
 ///     class Engine {
@@ -64,7 +64,7 @@ public:
     /// A raw CAN channel of this ECU on the CAN network `network`, for a protocol that is not
     /// J1939: can::RawChannel (send() and on_frame(); no timers, no segmentation; use every()
     /// and on_step() for periodic work). It has a CAN controller of its own on that bus (Peer: a
-    /// SIL Kit CAN controller named "<network>.raw"; testkit::LocalCan: an endpoint of the bus
+    /// SIL Kit CAN controller named "<network>.raw"; LocalBench: an endpoint of the bus
     /// `network`). The same ECU may also have j1939(network) on that bus: they are two
     /// controllers, each receives the other's frames (the J1939 network ignores 11-bit frames),
     /// in the step after the one that sent them, like the frames of other ECUs. Not so for a

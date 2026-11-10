@@ -17,10 +17,8 @@
 
 namespace vehicle_sil {
 
+class LocalBench;
 class Peer;
-namespace testkit {
-class LocalCan;
-} // namespace testkit
 
 /// Runs the ECUs as SIL Kit participants of this process, in virtual time.
 struct SilKitOptions
@@ -59,9 +57,9 @@ public:
 ///     auto& cab = sim.add<Cab>("Cab", 5ms);
 ///     sim.run_for(3s);                                             // SimulationError on failure
 ///
-/// Local: a testkit::LocalCan; every ECU is a host on it (LocalCan::add_ecu()), stepped in the
+/// Local: a LocalBench; every ECU is a host on it (LocalBench::add_ecu()), stepped in the
 /// calling thread. run_for() may be called again and continues. The ECUs' networks are on named
-/// buses, so local() takes the bus's name too (LocalCan::inject(network, time, frame)).
+/// buses, so local() takes the bus's name too (LocalBench::inject(network, time, frame)).
 ///
 /// SIL Kit: every ECU is a Peer, a Coordinated participant in virtual time named like the ECU
 /// with the ECU's step. A run starts them together (with this process's SimulationController,
@@ -81,7 +79,7 @@ public:
 class Simulation
 {
 public:
-    /// On virtual CAN buses in this process, stepped in the calling thread (testkit::LocalCan).
+    /// On virtual CAN buses in this process, stepped in the calling thread (LocalBench).
     Simulation();
     /// On SIL Kit. Starts the registry of this process if options.registry_uri is empty
     /// (SilKit::SilKitError on failure); connects nothing else yet (add_ecu() connects each
@@ -139,14 +137,14 @@ public:
     /// the controller's to see): the run then stops this process's participants, which ends
     /// their part of the simulation. Throws SimulationError like run_for().
     void run();
-    /// Where the runs got to (local: LocalCan::now(); SIL Kit: the duration of a finished
+    /// Where the runs got to (local: LocalBench::now(); SIL Kit: the duration of a finished
     /// run_for(), else 0).
     [[nodiscard]] SimTime now() const noexcept;
 
     [[nodiscard]] bool is_local() const noexcept;
     /// Local only (std::logic_error otherwise): the buses, for fault injection, raw frames and
-    /// taps (include vehicle_sil/testkit/local_can.hpp).
-    [[nodiscard]] testkit::LocalCan& local();
+    /// taps (include vehicle_sil/local/local_bench.hpp).
+    [[nodiscard]] LocalBench& local();
     /// SIL Kit only (std::logic_error otherwise): the participant of an ECU, for what only a
     /// Peer has (LIN, taps, control agents, the SIL Kit port; include vehicle_sil/peer/peer.hpp).
     /// std::out_of_range for an unknown name.

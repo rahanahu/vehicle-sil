@@ -17,7 +17,7 @@ vehicle-sil の J1939 スタックで ECU のノードを作り、動かし、�
 
 ## ノードを作る
 
-ノードは `j1939::Network` の上に作ります。`Network` は 1 つの CAN ネットワーク（チャネル）への接続で、`Ecu::j1939(network)` が作ります。`vehicle_sil::Ecu` は ECU のアプリケーションを組み立てる入口です。SIL Kit の participant（`Peer`）と、試験キットの仮想バスの ECU（`LocalCan::add_ecu()`）が実装するので、`Ecu&` を受け取る関数かクラスに ECU を書くと、同じコードがどちらの上でも動きます。
+ノードは `j1939::Network` の上に作ります。`Network` は 1 つの CAN ネットワーク（チャネル）への接続で、`Ecu::j1939(network)` が作ります。`vehicle_sil::Ecu` は ECU のアプリケーションを組み立てる入口です。SIL Kit の participant（`Peer`）と、プロセス内の仮想バスの ECU（`LocalBench::add_ecu()`）が実装するので、`Ecu&` を受け取る関数かクラスに ECU を書くと、同じコードがどちらの上でも動きます。
 
 ```cpp
 j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
@@ -172,7 +172,7 @@ tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome ==
 |---|---|---|
 | `StepInbox` | ほかのスレッドや SIL Kit のハンドラで受けたデータを、ステップで取り出す | 時刻つきで入れ、そのステップより前の時刻のものを、時刻、タイブレーク、到着の順に出す。決定的になるのは、次の 2 つを守るときだけです。1 つ目は、送り手を区別するタイブレークを選ぶことです（異なる送り手の同じ時刻のものは、選ばないと順が決まらない）。2 つ目は、容量を最悪の場合に合わせて取り、あふれを誤りとして扱うことです（上限の近くのあふれは決定的でない） |
 | Control Agent の書き込み | Control API からの変数の書き込み | 仮想時刻（`Command::at`）を指定すれば決定的。指定しなければ次のステップ |
-| `Host::post(fn)`（`LocalCan::host(ecu)`、`Peer::host()`） | ほかのスレッドや、ステップの外からの操作 | 時刻はなし。動くステップは post した時刻による。決定性が要るデータは `StepInbox` に入れる |
+| `Host::post(fn)`（`LocalBench::host(ecu)`、`Peer::host()`） | ほかのスレッドや、ステップの外からの操作 | 時刻はなし。動くステップは post した時刻による。決定性が要るデータは `StepInbox` に入れる |
 
 モデルの周期とメッセージの周期は分けて書きます。モデルは `every` で進め、送る PG は `PeriodicSender` の `Encoder` でモデルの今の値から作ります。ステップ幅はメッセージの最短の周期以下にすると、送信の回数がステップ幅によりません（長いと、1 ステップの期限をまとめて 1 回送ります）。
 
@@ -344,7 +344,7 @@ void on_command(const j1939::Message& m) {
 | 2 台目のツール | 同じバスに `add_j1939()` でもう 1 つのネットワークを足す |
 | 部品の破棄（処理中、コールバックの中） | 部品を `std::unique_ptr` で持ち、途中で `reset()` する |
 
-コールバックの中で時刻を見るときは、そのネットワークの `now()`（ステップの時刻）を使います。`LocalCan::now()` は、最後の `run_until()` の終わりの時刻です。
+コールバックの中で時刻を見るときは、そのネットワークの `now()`（ステップの時刻）を使います。`LocalBench::now()` は、最後の `run_until()` の終わりの時刻です。
 
 ## 動かす
 
@@ -366,10 +366,10 @@ sim.run_for(3s);                                               // 仮想時間�
 
 | | `Simulation()` | `Simulation(SilKitOptions)` |
 |---|---|---|
-| ECU | 仮想バス（`LocalCan`）のホスト。呼んだスレッドで進む | 仮想時間の Coordinated な participant（`Peer`）。SIL Kit のスレッドで進む |
+| ECU | 仮想バス（`LocalBench`）のホスト。呼んだスレッドで進む | 仮想時間の Coordinated な participant（`Peer`）。SIL Kit のスレッドで進む |
 | `run_for(d)` | 続きから何度でも呼べる | 1 回だけ（2 回目は `std::logic_error`） |
 | 戻るとき | `d` だけ進んだとき | 全 participant が止まった後 |
-| 低水準 | `local()`: バス、故障注入、生フレーム、tap（`vehicle_sil/testkit/local_can.hpp`） | `peer(name)`: LIN、tap、Control Agent、SIL Kit のポート（`vehicle_sil/peer/peer.hpp`）。`registry_uri()` |
+| 低水準 | `local()`: バス、故障注入、生フレーム、tap（`vehicle_sil/local/local_bench.hpp`） | `peer(name)`: LIN、tap、Control Agent、SIL Kit のポート（`vehicle_sil/peer/peer.hpp`）。`registry_uri()` |
 
 - `run_for(d)` は、終わりの時刻（仮想バスでは今の時刻から `d` 進めた時刻）より前に始まるステップだけを動かします。SIL Kit では、1 回しか動かせません。止まった時刻のステップがまだ走っていることがあり、メインスレッドからモデルを読むと競合するためです。止めながら確かめるときは、仮想バスを使います。
 - ステップの例外は、`SimulationError` として `run_for()` から出ます。`what()` は `<ECU 名>: <理由>` です。仮想バスでは、失敗した後の `run_for()` も `SimulationError` です。SIL Kit では、失敗した participant があっても simulation は終わらず、仮想時間が止まるだけです。そのため `run_for()` は、失敗を見つけると simulation を終えてから投げます。
@@ -403,7 +403,7 @@ install_engine(engine_ecu, engine_ecu.emplace<EngineModel>());
 auto& cab_ecu = sim.add_ecu("cab", 5ms);
 auto& dash = cab_ecu.emplace<Dashboard>();
 install_cab(cab_ecu, dash);
-auto& bus = sim.local();                                   // testkit::LocalCan（vehicle_sil/testkit/local_can.hpp）
+auto& bus = sim.local();                                   // LocalBench（vehicle_sil/local/local_bench.hpp）
 testkit::J1939Events events(bus.network("cab"));           // スタックの出来事（読み取り専用）
 testkit::FrameLog wire(bus.tap("engine"));                 // バスのフレーム（読み取り専用）
 sim.run_for(1s);                                           // 刻んで進め、そのたびに確かめられる
@@ -412,10 +412,10 @@ sim.run_for(1s);
 CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 ```
 
-- `local()` の `LocalCan` から、故障注入（フレームの欠落、遅延、通信断。`testkit::faults`、`add_outage`）と、生フレームの注入（`inject()`）ができます。`Simulation` の `local()` では、バスの名前を渡します（例: `inject("J1939_CAN", t, frame)`）。
+- `local()` の `LocalBench` から、故障注入（フレームの欠落、遅延、通信断。`testkit::faults`、`add_outage`）と、生フレームの注入（`inject()`）ができます。`Simulation` の `local()` では、バスの名前を渡します（例: `inject("J1939_CAN", t, frame)`）。記録と故障注入の道具（`testkit::J1939Events`、`FrameLog`、`faults`）は `vehicle_sil::testkit` にあり、使うときはそれをリンクします（`vehicle_sil::simulation` はリンクしません）。
 - `Monitor` は通信の途絶を、`J1939Events` は送信の要求、フレームの送出、転送の終わり、アドレスの変化を、`FrameLog` はバス上のフレームを見せます。
 - 参照するときは、ECU の名前とネットワークの名前を渡します。`network("cab", "J1939_CAN")` のように 2 つ渡します。ネットワークが 1 つの ECU には 1 つの名前の形も使えます。
-- `LocalCan` を直接使うこともできます。`LocalCan::add_ecu(name, step)` は `Ecu&` を返します。`add_j1939(name, step)` は、名前のないバスに 1 つのネットワークを持つ ECU の略記です。`bus()`、`injector()`、`inject(time, frame)` の 1 バスの形も、この名前のないバスのものです。これらの形と `add_ecu(...).j1939(network)` は、1 つの `LocalCan` で混ぜられません。先に使った方が決まり、もう一方は `std::logic_error` です。名前のあるバスを使うときは、ECU が使うバスを `Ecu::j1939(network)` に渡した名前で決め、`inject(network, time, frame)` のようにバスの名前を渡します。
+- `LocalBench` を直接使うこともできます。`LocalBench::add_ecu(name, step)` は `Ecu&` を返します。`add_j1939(name, step)` は、名前のないバスに 1 つのネットワークを持つ ECU の略記です。`bus()`、`injector()`、`inject(time, frame)` の 1 バスの形も、この名前のないバスのものです。これらの形と `add_ecu(...).j1939(network)` は、1 つの `LocalBench` で混ぜられません。先に使った方が決まり、もう一方は `std::logic_error` です。名前のあるバスを使うときは、ECU が使うバスを `Ecu::j1939(network)` に渡した名前で決め、`inject(network, time, frame)` のようにバスの名前を渡します。
 
 ## データの形（Codec）
 

@@ -41,8 +41,9 @@ add_test(NAME j1939_parts.boundary_check_observer
                  -DSOURCES_ONLY=ON -DFORBID_OBSERVER=ON -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
 set_tests_properties(j1939_parts.boundary_check_observer PROPERTIES LABELS "unit;j1939" TIMEOUT 60
                      PASS_REGULAR_EXPRESSION "reach into the J1939 engine:.*part\\.hpp: matches 'set_observer'")
-# The test kit, Peer, Ecu and Simulation use the engine's public API only, like the parts.
-foreach(dir IN ITEMS testkit peer ecu simulation)
+# The local buses, the test kit, Peer, Ecu and Simulation use the engine's public API only, like
+# the parts.
+foreach(dir IN ITEMS local testkit peer ecu simulation)
   add_test(NAME ${dir}.boundary
            COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${PROJECT_SOURCE_DIR}/libs/${dir} -DSOURCES_ONLY=ON
                    -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)

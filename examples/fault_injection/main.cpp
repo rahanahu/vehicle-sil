@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 //
 // Fault injection and observation. ECUs run on a Simulation with virtual buses; its test side
-// (sim.local(), testkit::LocalCan) cuts an ECU off the bus, drops chosen frames, injects frames
+// (sim.local(), vehicle_sil::LocalBench) cuts an ECU off the bus, drops chosen frames, injects frames
 // and records what the stack and the bus did. Each scene builds a Simulation, advances it in
 // steps and checks what it saw. Time is virtual: nothing sleeps.
 #include "vehicle_sil/j1939/monitor.hpp"
 #include "vehicle_sil/j1939/periodic_sender.hpp"
+#include "vehicle_sil/local/local_bench.hpp"
 #include "vehicle_sil/simulation/simulation.hpp"
 #include "vehicle_sil/testkit/faults.hpp"
-#include "vehicle_sil/testkit/local_can.hpp"
 #include "vehicle_sil/testkit/recorders.hpp"
 
 #include <array>

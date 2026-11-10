@@ -5,7 +5,7 @@
 // asks for a speed and reads the engine's software identification.
 //
 // The install functions take a vehicle_sil::Ecu&: the same code runs on virtual buses and on SIL
-// Kit (vehicle_sil::Simulation), on a Peer, and in a testkit::LocalCan. They also set up the
+// Kit (vehicle_sil::Simulation), on a Peer, and on a vehicle_sil::LocalBench. They also set up the
 // periodic step of the model.
 // The messages (ecu_pair_messages.yaml) are typed values generated from YAML: no bit or byte
 // handling here.
