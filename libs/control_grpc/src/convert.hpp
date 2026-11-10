@@ -279,6 +279,26 @@ inline void to_proto(const OperationRequest& in, v1::WriteRequest& out)
     out.set_late(in.late == LatePolicy::ApplyNext ? v1::LATE_POLICY_APPLY_NEXT : v1::LATE_POLICY_REJECT);
 }
 
+/// A client's Write (without the client's name). @returns false if a write has no value.
+inline bool from_proto(const v1::WriteRequest& in, OperationRequest& out)
+{
+    for (const auto& w : in.writes())
+    {
+        Value value;
+        if (!from_proto(w.value(), value))
+        {
+            return false;
+        }
+        out.writes.push_back({w.peer(), w.name(), value});
+    }
+    if (in.has_at_ns())
+    {
+        out.at = time_of(in.at_ns());
+    }
+    out.late = late_of(in.late());
+    return true;
+}
+
 inline void to_proto(const OperationResult& in, v1::Operation& out)
 {
     out.set_seq(in.seq);

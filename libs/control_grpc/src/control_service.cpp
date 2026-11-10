@@ -72,6 +72,39 @@ public:
         return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED, "too many calls wait at the same time (Watch, WaitOperation, WaitPaused)");
     }
 
+    /// The wait of WaitOperation and WaitPaused, as a calling place of max_waiting_calls: calls
+    /// `slice_wait(slice)` (it waits up to `slice`) until it returns the call's status, the call
+    /// is cancelled or the server stops (CANCELLED), or `timeout_ms` (at most max_wait) passes
+    /// (DEADLINE_EXCEEDED with `late`). The slices are short so that a cancel or a shutdown ends
+    /// the wait soon.
+    template <typename F>
+    grpc::Status wait_in_slices(grpc::ServerContext* context, std::uint32_t timeout_ms, const char* late, F&& slice_wait)
+    {
+        const auto waiting = enter_waiting();
+        if (!waiting)
+        {
+            return too_many_waiting();
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::min(options_.max_wait, std::chrono::milliseconds(timeout_ms));
+        while (true)
+        {
+            const auto slice = std::chrono::duration_cast<std::chrono::milliseconds>(std::min<std::chrono::steady_clock::duration>(
+                kWaitSlice, std::max<std::chrono::steady_clock::duration>(deadline - std::chrono::steady_clock::now(), {})));
+            if (auto status = slice_wait(slice))
+            {
+                return *status;
+            }
+            if (context->IsCancelled() || stopping_.load())
+            {
+                return grpc::Status(grpc::StatusCode::CANCELLED, "the wait was cancelled");
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return grpc::Status(grpc::StatusCode::DEADLINE_EXCEEDED, late);
+            }
+        }
+    }
+
     /// An allowed call: who makes it, and the rule of the authorization table that allows it.
     struct Call
     {
@@ -188,20 +221,10 @@ public:
                                     "at most " + std::to_string(options_.max_writes_per_request) + " writes in one request");
             }
             OperationRequest r;
-            for (const auto& w : request->writes())
+            if (!from_proto(*request, r))
             {
-                Value value;
-                if (!from_proto(w.value(), value))
-                {
-                    return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "a write without a value");
-                }
-                r.writes.push_back({w.peer(), w.name(), value});
+                return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "a write without a value");
             }
-            if (request->has_at_ns())
-            {
-                r.at = time_of(request->at_ns());
-            }
-            r.late = late_of(request->late());
             r.client = call.who.name + "@" + peer_of(*context);
             std::string what = "write";
             constexpr std::size_t kNamed = 16; // the audit line names the first ones
@@ -244,39 +267,21 @@ public:
     grpc::Status WaitOperation(grpc::ServerContext* context, const v1::WaitOperationRequest* request, v1::Operation* reply) override
     {
         return guarded(context, "WaitOperation", [&](const Call&) -> grpc::Status {
-            const auto waiting = enter_waiting();
-            if (!waiting)
-            {
-                return too_many_waiting();
-            }
-            const auto deadline = std::chrono::steady_clock::now()
-                                  + std::min(options_.max_wait, std::chrono::milliseconds(request->timeout_ms()));
             const bool queued = request->until() == v1::WAIT_FOR_QUEUED;
-            // In short slices: a cancelled call or a shutdown ends the wait.
-            while (true)
-            {
-                const auto slice = std::min<std::chrono::steady_clock::duration>(
-                    kWaitSlice, std::max<std::chrono::steady_clock::duration>(deadline - std::chrono::steady_clock::now(), {}));
-                const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(slice);
-                const auto op = queued ? hub_.wait_queued(request->seq(), ms) : hub_.wait_done(request->seq(), ms);
-                if (op)
-                {
-                    detail::to_proto(*op, *reply);
-                    return grpc::Status::OK;
-                }
-                if (!hub_.operation(request->seq()))
-                {
-                    return grpc::Status(grpc::StatusCode::NOT_FOUND, "no operation " + std::to_string(request->seq()));
-                }
-                if (context->IsCancelled() || stopping_.load())
-                {
-                    return grpc::Status(grpc::StatusCode::CANCELLED, "the wait was cancelled");
-                }
-                if (std::chrono::steady_clock::now() >= deadline)
-                {
-                    return grpc::Status(grpc::StatusCode::DEADLINE_EXCEEDED, "the operation did not get there in time");
-                }
-            }
+            return wait_in_slices(context, request->timeout_ms(), "the operation did not get there in time",
+                                  [&](std::chrono::milliseconds slice) -> std::optional<grpc::Status> {
+                                      const auto op = queued ? hub_.wait_queued(request->seq(), slice) : hub_.wait_done(request->seq(), slice);
+                                      if (op)
+                                      {
+                                          detail::to_proto(*op, *reply);
+                                          return grpc::Status::OK;
+                                      }
+                                      if (!hub_.operation(request->seq()))
+                                      {
+                                          return grpc::Status(grpc::StatusCode::NOT_FOUND, "no operation " + std::to_string(request->seq()));
+                                      }
+                                      return std::nullopt;
+                                  });
         });
     }
 
@@ -575,40 +580,25 @@ public:
     grpc::Status WaitPaused(grpc::ServerContext* context, const v1::WaitPausedRequest* r, v1::TimeState* reply) override
     {
         return guarded(context, "WaitPaused", [&](const Call&) -> grpc::Status {
-            const auto waiting = enter_waiting();
-            if (!waiting)
-            {
-                return too_many_waiting();
-            }
-            const auto deadline = std::chrono::steady_clock::now() + std::min(options_.max_wait, std::chrono::milliseconds(r->timeout_ms()));
-            while (true)
-            {
-                bool reached = false;
-                bool ended = false;
-                const auto slice = std::chrono::duration_cast<std::chrono::milliseconds>(std::min<std::chrono::steady_clock::duration>(
-                    kWaitSlice, std::max<std::chrono::steady_clock::duration>(deadline - std::chrono::steady_clock::now(), {})));
-                auto status = with_time(reply, [&](TimeControl& t) {
-                    reached = t.wait_paused(slice).has_value();
-                    ended = !reached && t.state().ended;
-                });
-                if (!status.ok() || reached)
-                {
-                    return status;
-                }
-                if (ended)
-                {
-                    // It will not stand still again (and wait_paused() returns at once: no busy loop).
-                    return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "the simulation has ended");
-                }
-                if (context->IsCancelled() || stopping_.load())
-                {
-                    return grpc::Status(grpc::StatusCode::CANCELLED, "the wait was cancelled");
-                }
-                if (std::chrono::steady_clock::now() >= deadline)
-                {
-                    return grpc::Status(grpc::StatusCode::DEADLINE_EXCEEDED, "the simulation did not stand still in time");
-                }
-            }
+            return wait_in_slices(context, r->timeout_ms(), "the simulation did not stand still in time",
+                                  [&](std::chrono::milliseconds slice) -> std::optional<grpc::Status> {
+                                      bool reached = false;
+                                      bool ended = false;
+                                      auto status = with_time(reply, [&](TimeControl& t) {
+                                          reached = t.wait_paused(slice).has_value();
+                                          ended = !reached && t.state().ended;
+                                      });
+                                      if (!status.ok() || reached)
+                                      {
+                                          return status;
+                                      }
+                                      if (ended)
+                                      {
+                                          // It will not stand still again (and wait_paused() returns at once: no busy loop).
+                                          return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "the simulation has ended");
+                                      }
+                                      return std::nullopt;
+                                  });
         });
     }
     grpc::Status Stop(grpc::ServerContext* context, const v1::StopRequest* r, v1::TimeState* reply) override

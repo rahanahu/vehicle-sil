@@ -77,3 +77,21 @@ TEST_CASE(control_server_peer_info_tells_whether_it_has_an_agent)
     peer_to_proto("Engine", &engine, nullptr, wire); // no simulation coordinated
     CHECK(wire.has_agent() && wire.simulation_state().empty());
 }
+
+TEST_CASE(control_server_write_request_round_trips)
+{
+    OperationRequest request;
+    request.writes = {{"Engine", "engine.level", std::int64_t{7}}, {"Body", "cabin.lamp", true}};
+    request.at = SimTime{} + std::chrono::milliseconds(105);
+    request.late = LatePolicy::ApplyNext;
+    v1::WriteRequest wire;
+    to_proto(request, wire);
+    OperationRequest back;
+    CHECK(from_proto(wire, back));
+    CHECK(back.writes.size() == 2 && back.writes[1].peer == "Body" && back.writes[1].name == "cabin.lamp");
+    CHECK(std::get<std::int64_t>(back.writes[0].value) == 7 && std::get<bool>(back.writes[1].value));
+    CHECK(back.at == request.at && back.late == LatePolicy::ApplyNext);
+    wire.mutable_writes(0)->clear_value(); // a write without a value
+    OperationRequest refused;
+    CHECK(!from_proto(wire, refused));
+}
