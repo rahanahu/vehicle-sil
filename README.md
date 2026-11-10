@@ -139,6 +139,7 @@ int main() {
 ```
 
 - メッセージ（`EngineStatus`）は YAML から生成した型です（[docs/j1939-codec.md](docs/j1939-codec.md)）。完全なコードは [examples/getting_started](examples/getting_started) にあります。
+- 動かす場所を実行時に選ぶときは、`std::optional<vehicle_sil::SilKitOptions>` を渡します。空ならプロセス内の仮想バス、値があれば SIL Kit です（`Simulation sim(silkit);`）。
 - やりたいこと別のサンプル（型付きメッセージ、独自プロトコル、故障注入、複数の ECU と LIN など）は [examples/README.md](examples/README.md) にまとめています。
 - 作り方、試験の書き方、`Peer` を直接使う場合は [docs/j1939-guide.md](docs/j1939-guide.md) にあります。
 - 以降の「ピアを手動で動かす」「仮想時間で動かす」などは、`Peer` を別プロセスで動かす構成です。これらの実行ファイルは、結合試験でも使います。

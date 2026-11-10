@@ -782,3 +782,28 @@ TEST_CASE(simulation_local_without_a_bus_name_uses_the_only_bus)
         CHECK(throws<std::logic_error>([&] { sim.local().add_j1939("Tool", 10ms); }));
     }
 }
+
+// The place to run chosen at run time: a std::optional<SilKitOptions>, empty for the local
+// buses. Simulation sim; is local and Simulation sim(SilKitOptions{...}) is on SIL Kit, as
+// before; the options are checked the same way.
+TEST_CASE(simulation_place_can_be_chosen_at_run_time)
+{
+    Simulation byDefault;
+    CHECK(byDefault.is_local());
+
+    std::optional<SilKitOptions> silkit;
+    Simulation local(silkit);
+    CHECK(local.is_local());
+    CHECK(throws<std::logic_error>([&] { static_cast<void>(local.registry_uri()); }));
+
+    silkit.emplace();
+    Simulation onSilKit(silkit);
+    CHECK(!onSilKit.is_local());
+    CHECK(onSilKit.registry_uri().rfind("silkit://", 0) == 0);
+    CHECK(sender_and_receiver(onSilKit) == sender_and_receiver(local));
+
+    Simulation direct(SilKitOptions{.controller = false});
+    CHECK(!direct.is_local());
+    silkit = SilKitOptions{.controller = false, .other_participants = {"X"}};
+    CHECK(throws<std::invalid_argument>([&] { Simulation sim(silkit); }));
+}

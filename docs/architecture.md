@@ -655,7 +655,7 @@ public:
 
 ### `Simulation`（`vehicle_sil::Simulation`）
 
-`Ecu` を、プロセス内の仮想バスか、SIL Kit の participant として仮想時間で動かし、失敗を例外で報告します（`vehicle_sil::simulation`。ヘッダーは SIL Kit のヘッダーを含みません）。動かす場所はコンストラクターで選び、ECU のコードは変わりません。
+`Ecu` を、プロセス内の仮想バスか、SIL Kit の participant として仮想時間で動かし、失敗を例外で報告します（`vehicle_sil::simulation`。ヘッダーは SIL Kit のヘッダーを含みません）。動かす場所はコンストラクターで選び、ECU のコードは変わりません。`Simulation(std::optional<SilKitOptions>)` は、値があれば SIL Kit、空なら `Simulation()` と同じです。動かす場所を実行時に選ぶときに使います（`Simulation(SilKitOptions{...})` もこの形です）。`Simulation` はコピーもムーブもできません。
 
 | | `Simulation()` | `Simulation(SilKitOptions)` |
 |---|---|---|

@@ -348,7 +348,7 @@ void on_command(const j1939::Message& m) {
 
 ## 動かす
 
-`vehicle_sil::Simulation`（ターゲット `vehicle_sil::simulation`）が ECU を動かします。動かす場所はコンストラクターで選び、ECU のコードは変わりません。
+`vehicle_sil::Simulation`（ターゲット `vehicle_sil::simulation`）が ECU を動かします。動かす場所はコンストラクターで選び、ECU のコードは変わりません。実行時に選ぶときは、`std::optional<SilKitOptions>` を渡します（空ならプロセス内の仮想バス）。
 
 層を自分で組み立てる例は [examples/low_level](../examples/low_level) です。
 

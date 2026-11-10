@@ -289,8 +289,15 @@ void Simulation::SilKitRun::watch_without_controller(std::vector<std::optional<o
 
 Simulation::Simulation() : local_(std::make_unique<LocalRun>()) {}
 
-Simulation::Simulation(SilKitOptions options) : silkit_(std::make_unique<SilKitRun>())
+Simulation::Simulation(std::optional<SilKitOptions> silkit)
 {
+    if (!silkit)
+    {
+        local_ = std::make_unique<LocalRun>();
+        return;
+    }
+    SilKitOptions options = std::move(*silkit);
+    silkit_ = std::make_unique<SilKitRun>();
     if (!options.controller && !options.other_participants.empty())
     {
         throw std::invalid_argument(std::string(kWho) + "other_participants need a controller of this process");

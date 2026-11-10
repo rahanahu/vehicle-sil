@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <optional>
 #include <string>
 
 using namespace std::chrono_literals;
@@ -58,18 +59,20 @@ int main(int argc, char** argv)
 {
     try
     {
-        vehicle_sil::SilKitOptions silkit;
-        bool use_silkit = false;
+        std::optional<vehicle_sil::SilKitOptions> silkit; // empty: the virtual buses
         for (int i = 1; i < argc; ++i)
         {
             const std::string arg = argv[i];
-            use_silkit = use_silkit || arg == "--silkit" || arg == "--registry-uri";
+            if ((arg == "--silkit" || arg == "--registry-uri") && !silkit)
+            {
+                silkit.emplace(); // an empty registry URI: a registry of this process
+            }
             if (arg == "--registry-uri" && i + 1 < argc)
             {
-                silkit.registry_uri = argv[++i];
+                silkit->registry_uri = argv[++i];
             }
         }
-        vehicle_sil::Simulation sim = use_silkit ? vehicle_sil::Simulation(silkit) : vehicle_sil::Simulation();
+        vehicle_sil::Simulation sim(silkit);
         sim.add<Engine>("Engine", 10ms);
         auto& display = sim.add<Display>("Display", 5ms);
         sim.run_for(2s);

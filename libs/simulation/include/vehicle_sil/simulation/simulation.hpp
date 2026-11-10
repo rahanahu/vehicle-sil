@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -57,6 +58,12 @@ public:
 ///     auto& cab = sim.add<Cab>("Cab", 5ms);
 ///     sim.run_for(3s);                                             // SimulationError on failure
 ///
+/// To choose at run time, pass a std::optional<SilKitOptions>: empty for the local buses.
+///
+///     std::optional<vehicle_sil::SilKitOptions> silkit;
+///     if (use_silkit) silkit.emplace();
+///     vehicle_sil::Simulation sim(silkit);
+///
 /// Local: a LocalBench; every ECU is a host on it (LocalBench::add_ecu()), stepped in the
 /// calling thread. run_for() may be called again and continues. local() reaches the ECUs' buses
 /// by their names (LocalBench::inject(network, time, frame)); with one bus, also without a name.
@@ -81,11 +88,12 @@ class Simulation
 public:
     /// On virtual CAN buses in this process, stepped in the calling thread (LocalBench).
     Simulation();
-    /// On SIL Kit. Starts the registry of this process if options.registry_uri is empty
+    /// On SIL Kit if `silkit` has a value (Simulation(SilKitOptions{...}) is this one), else as
+    /// Simulation(). On SIL Kit: starts the registry of this process if registry_uri is empty
     /// (SilKit::SilKitError on failure); connects nothing else yet (add_ecu() connects each
     /// participant). std::invalid_argument for other_participants without controller, or for an
     /// empty or repeated name in it.
-    explicit Simulation(SilKitOptions options);
+    explicit Simulation(std::optional<SilKitOptions> silkit);
     /// Stops everything; never throws.
     ~Simulation();
     Simulation(const Simulation&) = delete;

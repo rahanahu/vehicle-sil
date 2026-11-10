@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -21,7 +22,7 @@ int main(int argc, char** argv)
     using namespace ecu_pair;
     try
     {
-        vehicle_sil::SilKitOptions silkit; // an empty registry URI: a registry of this process
+        std::string registry_uri; // empty: a registry of this process
         bool local = false;
         int seconds = 3;
         for (int i = 1; i < argc; ++i)
@@ -33,14 +34,19 @@ int main(int argc, char** argv)
             }
             else if (option == "--registry-uri" && i + 1 < argc)
             {
-                silkit.registry_uri = argv[++i];
+                registry_uri = argv[++i];
             }
             else if (option == "--seconds" && i + 1 < argc)
             {
                 seconds = std::stoi(argv[++i]);
             }
         }
-        vehicle_sil::Simulation sim = local ? vehicle_sil::Simulation() : vehicle_sil::Simulation(silkit);
+        std::optional<vehicle_sil::SilKitOptions> silkit; // empty: the virtual buses
+        if (!local)
+        {
+            silkit.emplace().registry_uri = registry_uri;
+        }
+        vehicle_sil::Simulation sim(silkit);
 
         auto& engine_ecu = sim.add_ecu("Engine", 10ms);
         install_engine(engine_ecu, engine_ecu.emplace<EngineModel>());

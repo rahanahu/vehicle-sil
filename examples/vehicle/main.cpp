@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <optional>
 #include <string>
 
 using namespace std::chrono_literals;
@@ -88,7 +89,12 @@ int main(int argc, char** argv)
     {
         const bool local = argc > 1 && std::string(argv[1]) == "--local";
         DoorModule door;
-        vehicle_sil::Simulation sim = local ? vehicle_sil::Simulation() : vehicle_sil::Simulation(vehicle_sil::SilKitOptions{});
+        std::optional<vehicle_sil::SilKitOptions> silkit; // empty: the virtual buses
+        if (!local)
+        {
+            silkit.emplace(); // a registry of this process
+        }
+        vehicle_sil::Simulation sim(silkit);
         sim.add<Engine>("Engine", 10ms);
         sim.add<Gateway>("Gateway", 10ms);
         auto& body = sim.add<BodyController>("BodyController", 5ms);
