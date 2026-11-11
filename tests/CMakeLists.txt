@@ -8,17 +8,17 @@ add_library(vehicle_sil_test_main OBJECT unit/test_main.cpp)
 target_include_directories(vehicle_sil_test_main PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unit)
 vehicle_sil_target_defaults(vehicle_sil_test_main)
 
-# Child processes, a registry process, log helpers and coordinated virtual-time runs for the
-# process-level launchers.
+# A registry process, log helpers and coordinated virtual-time runs for the process-level
+# launchers, on the child processes of vehicle_sil::process.
 add_library(vehicle_sil_test_process STATIC
-  integration/child_process.cpp
   integration/launcher_support.cpp
   integration/simulation_run.cpp)
 target_include_directories(vehicle_sil_test_process PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/integration)
-target_link_libraries(vehicle_sil_test_process PUBLIC vehicle_sil_cli)
+target_link_libraries(vehicle_sil_test_process PUBLIC vehicle_sil::process vehicle_sil_cli)
 vehicle_sil_target_defaults(vehicle_sil_test_process)
 
 add_subdirectory(unit)
+add_subdirectory(process)
 add_subdirectory(core)
 add_subdirectory(control)
 if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
@@ -29,6 +29,7 @@ add_subdirectory(can)
 add_subdirectory(testkit)
 add_subdirectory(ecu)
 add_subdirectory(simulation)
+add_subdirectory(launch)
 add_subdirectory(peer)
 # The J1939 stack, its parts, the typed messages and the boundary checks; uses no example.
 add_subdirectory(j1939)

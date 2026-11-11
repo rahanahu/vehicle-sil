@@ -63,7 +63,7 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 |---|---|
 | `SilKit::SilKit` | SIL Kit 本体。共有ライブラリで、Debug では `libSilKitd.so` / `SilKitd.dll` になる。出力先は `${CMAKE_BINARY_DIR}/$<CONFIG>` |
 | `sil-kit-registry` | レジストリの実行ファイル。SIL Kit を静的にリンクしているので、共有ライブラリは不要 |
-| `rapidyaml` | SIL Kit が `ThirdParty/rapidyaml` からビルドする YAML/JSON パーサー（MIT。静的ライブラリ）。`vehicle_sil::can_netsim` が設定ファイルの読み込みに使う。SIL Kit をサブモジュールから追加しないとき（利用側が `SilKit::SilKit` を定義済み）はこのターゲットがないので、`vehicle_sil::can_netsim` と `vehicle_sil_can_bus_simulator` を作らない |
+| `rapidyaml` | SIL Kit が `ThirdParty/rapidyaml` からビルドする YAML/JSON パーサー（MIT。静的ライブラリ）。`vehicle_sil::can_netsim` と `vehicle_sil::launch` が設定ファイルの読み込みに使う。SIL Kit をサブモジュールから追加しないとき（利用側が `SilKit::SilKit` を定義済み）はこのターゲットがないので、`vehicle_sil::can_netsim`、`vehicle_sil_can_bus_simulator`、`vehicle_sil::launch`、`vehicle_sil_launch` を作らない |
 
 Windows では `SilKit.dll` が実行ファイルと別のディレクトリに出力されます。`vehicle_sil_copy_runtime_dlls(<target>)` を呼ぶと、ビルド後に DLL が実行ファイルの隣へコピーされます。
 

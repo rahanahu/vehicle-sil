@@ -20,6 +20,8 @@ vehicle-sil/
 ├── libs/testkit/     vehicle_sil::testkit  LocalBench の上の J1939 の試験の記録と故障注入（SIL Kit に依存しない）
 ├── libs/peer/        vehicle_sil::peer   1 つの participant と、その J1939、生の CAN、LIN のノード、Control Agent（監視の出力を含む）の組み立てと実行。Ecu の実装
 ├── libs/simulation/  vehicle_sil::simulation  ECU を仮想バスか SIL Kit で動かす Simulation と、ECU の実行ファイルの main()（ecu_main）
+├── libs/process/     vehicle_sil::process  子プロセス（ログファイルへの出力、標準出力と標準エラーの取り込みと時間切れ。POSIX と Win32。内部用）
+├── libs/launch/      vehicle_sil::launch  シミュレーションの構成ファイルと、ECU の実行ファイルの自己申告との照合（内部用）
 ├── libs/control/     vehicle_sil::control  Control Agent と Control Server の中核（Hub）。通信と SIL Kit に依存しない
 ├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（ControlServer、AgentClient。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
 ├── proto/            Control API の定義（vehicle_sil/control/v1/control.proto）
@@ -28,6 +30,7 @@ vehicle-sil/
 ├── tools/common/     実行ファイル共通のコマンドライン解析、終了コード、ログ出力（内部用、ヘッダーのみ）
 ├── tools/sim_controller/ 仮想時間のシミュレーションを開始・停止する system controller（vehicle_sil_sim_controller）
 ├── tools/can_bus_simulator/ 簡易 CAN Network Simulator の実行ファイル（vehicle_sil_can_bus_simulator）
+├── tools/launch/     構成ファイルと ECU の実行ファイルを照合する vehicle_sil_launch
 ├── tools/control_server/ Control Server と system controller を兼ねる実行ファイル（vehicle_sil_control_server）
 ├── tools/j1939_codegen/ YAML の定義から J1939 の型付きメッセージ（C++ のヘッダー）を作る生成器（Python。ビルドのときに vehicle_sil_add_j1939_codec() が呼ぶ）
 ├── examples/getting_started/ 最初の例: Ecu& を受け取る 2 つの ECU を Simulation で動かす
@@ -66,6 +69,9 @@ vehicle-sil/
 | `vehicle_sil::peer` | 土台 | `vehicle_sil::core`、`vehicle_sil::can_silkit`、`vehicle_sil::j1939`、`vehicle_sil::lin_silkit`、`vehicle_sil::ecu`、`vehicle_sil::control` | `vehicle_sil::Peer`（Control Agent の監視の出力を含む）、`start_together()`（「実行と試験の基盤」） |
 | `vehicle_sil::simulation` | 利用者向け | `vehicle_sil::ecu`、`vehicle_sil::peer`、`vehicle_sil::local` | `vehicle_sil::Simulation`、`SilKitOptions`、`SimulationError`（「実行と試験の基盤」）、`ecu_main()` と `EcuMainOptions`（[ecu-executable.md](ecu-executable.md)） |
 | `vehicle_sil_sim_controller`（実行ファイル） | — | `vehicle_sil::core` | system controller の CLI |
+| `vehicle_sil::process`（内部用） | — | なし | 子プロセス: `ChildProcess`（ログファイルへ）と `run_captured()`（標準出力と標準エラーを別々に取り込み、時間切れで止める）。POSIX は `posix_spawn`、Windows は `CreateProcessW`（パスと引数は UTF-8 から変換する） |
+| `vehicle_sil::launch`（内部用。SIL Kit をサブモジュールからビルドしたとき） | — | `vehicle_sil::ecu`、`vehicle_sil::process`、`rapidyaml`（SIL Kit 付属、非公開） | 構成ファイルの読み込み、`--describe` の JSON の読み込み、照合の規則（プロセスを起動しない関数）、人向けと JSON の出力（[simulation-config.md](simulation-config.md)） |
+| `vehicle_sil_launch`（実行ファイル） | — | `vehicle_sil::launch` | `vehicle_sil_launch check`（[simulation-config.md](simulation-config.md)） |
 | `vehicle_sil::control` | 利用者向け | `vehicle_sil::sim_base` | `vehicle_sil::control::Agent`、`Hub`（「外部操作（Control API）と GUI」） |
 | `vehicle_sil::control_proto`（`VEHICLE_SIL_BUILD_CONTROL_SERVER` のとき） | — | gRPC、Protocol Buffers | `control.proto` から生成したコード（`control_grpc` の内部） |
 | `vehicle_sil::control_grpc`（同上） | 利用者向け | `vehicle_sil::control`、`vehicle_sil::core`（`control_proto` は非公開） | `vehicle_sil::control_grpc::ControlServer`、`AgentClient`、`time_control_of()` |

@@ -114,7 +114,7 @@ int main(int argc, char** argv)
 ```json
 {
   "vehicle_sil_ecu": 1,
-  "vehicle_sil": "0.1.0",
+  "vehicle_sil": "<version>",
   "name": "Engine",
   "step_ns": 10000000,
   "networks": [
@@ -170,3 +170,5 @@ vehicle_sil_sim_controller --registry-uri silkit://localhost:8500 --required Eng
 ```
 
 `--required` には、各 ECU の名前（`--describe` の `name`）を並べます。
+
+動かす前に、まとめる ECU の名前、ステップ幅、ネットワーク、J1939 のアドレスと NAME が食い違っていないかを、構成ファイルと `vehicle_sil_launch check` で確かめられます（[simulation-config.md](simulation-config.md)）。

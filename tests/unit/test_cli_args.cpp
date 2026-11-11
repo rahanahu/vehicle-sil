@@ -78,3 +78,33 @@ TEST_CASE(cli_args_positive_double_and_list)
     CHECK(args.list("none").empty());
     CHECK(throws<UsageError>([&] { (void)args.list("absent"); }));
 }
+
+TEST_CASE(cli_args_with_flags_and_positionals)
+{
+    const std::vector<std::string> words{"check", "--json", "a b.yaml", "--timeout-ms", "50"};
+    const Args args(words, {"timeout-ms"}, {"json", "strict"});
+    CHECK((args.positionals() == std::vector<std::string>{"check", "a b.yaml"}));
+    CHECK(args.flag("json"));
+    CHECK(!args.flag("strict"));
+    CHECK(args.millis("timeout-ms", std::chrono::milliseconds(1)) == std::chrono::milliseconds(50));
+    // Unknown options, repeated ones and missing values are usage errors.
+    const auto parse = [](std::vector<std::string> w) { return Args(w, {"timeout-ms"}, {"json"}); };
+    CHECK(vehicle_sil::unit::throws_with<UsageError>([&] { parse({"--bogus"}); }, "unknown option --bogus"));
+    CHECK(vehicle_sil::unit::throws_with<UsageError>([&] { parse({"-x"}); }, "unknown option -x"));
+    CHECK(vehicle_sil::unit::throws_with<UsageError>([&] { parse({"--json", "--json"}); }, "--json is given twice"));
+    CHECK(vehicle_sil::unit::throws_with<UsageError>([&] { parse({"--timeout-ms", "1", "--timeout-ms", "2"}); },
+                                                     "--timeout-ms is given twice"));
+    CHECK(vehicle_sil::unit::throws_with<UsageError>([&] { parse({"--timeout-ms"}); }, "missing value for --timeout-ms"));
+    CHECK(vehicle_sil::unit::throws_with<UsageError>([&] { parse({"--timeout-ms", "--json"}); },
+                                                     "missing value for --timeout-ms"));
+    // A flag takes no value: what follows is a positional argument.
+    CHECK((parse({"--json", "x"}).positionals() == std::vector<std::string>{"x"}));
+}
+
+TEST_CASE(cli_args_double_dash_ends_the_options)
+{
+    const std::vector<std::string> words{"check", "--json", "--", "-odd.yaml", "--json"};
+    const Args args(words, {}, {"json"});
+    CHECK(args.flag("json"));
+    CHECK((args.positionals() == std::vector<std::string>{"check", "-odd.yaml", "--json"}));
+}

@@ -22,7 +22,7 @@ if(TARGET vehicle_sil_can_bus_simulator)
   vehicle_sil_add_harness_tests(vehicle_sil_can_netsim_tests
     PREFIX can_netsim LABELS unit can TIMEOUT 120
     SOURCES test_can_netsim.cpp
-    LINK vehicle_sil::can_netsim vehicle_sil::can_silkit vehicle_sil_test_process)
+    LINK vehicle_sil::can_netsim vehicle_sil::can_silkit vehicle_sil::process)
   target_include_directories(vehicle_sil_can_netsim_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(vehicle_sil_can_netsim_tests
     PRIVATE VEHICLE_SIL_CAN_BUS_SIMULATOR="$<TARGET_FILE:vehicle_sil_can_bus_simulator>")

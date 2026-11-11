@@ -5,7 +5,7 @@
 // as the virtual bus with the same simulator step; independence from the step sizes of the
 // other participants; repeatability; senders without a send time; and the configuration file
 // shared with the Vector SIL Kit Network Simulator. The last test runs the executable.
-#include "child_process.hpp"
+#include "vehicle_sil/process/child_process.hpp"
 #include "silkit_test_util.hpp"
 #include "test_harness.hpp"
 
@@ -276,7 +276,7 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
     int localObject = 0;
     std::atomic<bool> foreignStarted{false};
     std::unique_ptr<ParticipantRuntime> simulatorRuntime;
-    std::unique_ptr<vehicle_sil::test::ChildProcess> child;
+    std::unique_ptr<vehicle_sil::process::ChildProcess> child;
     const auto logFile = scratch_dir() / ("simulator-" + std::to_string(to_ns(at(simulatorStep))) + ".log");
     if (kind == Simulator::InProcess)
     {
@@ -305,7 +305,7 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
                                  "    Type: LIN\n"
                                  "  - Name: UnusedCAN\n"
                                  "    Type: CAN\n";
-        child = std::make_unique<vehicle_sil::test::ChildProcess>(
+        child = std::make_unique<vehicle_sil::process::ChildProcess>(
             VEHICLE_SIL_CAN_BUS_SIMULATOR,
             std::vector<std::string>{"--connect-uri", registry.uri, "--log", "info", "--start-timeout-ms", "60000",
                                      "--default-bitrate", std::to_string(kBitrate), config.string()},

@@ -62,6 +62,8 @@ endif()
 #   vehicle_sil::peer       one SIL Kit participant with its J1939 networks, raw CAN and LIN nodes (internal)
 #   vehicle_sil::simulation runs ECUs on local virtual buses or as SIL Kit participants of this process;
 #                           ecu_main(), the main() of an executable that is one ECU
+#   vehicle_sil::process    child processes for the tools and the tests (internal)
+#   vehicle_sil::launch     the simulation configuration of vehicle_sil_launch and its check (internal)
 # The J1939 stack, the CAN base, the LIN port and buses, the local buses, the test kit, Peer, Ecu
 # and Simulation are under development; their API may still change.
 # As a subproject (FetchContent / add_subdirectory) the libraries are excluded
@@ -84,6 +86,8 @@ add_subdirectory(libs/local ${_vehicle_sil_exclude})
 add_subdirectory(libs/testkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/peer ${_vehicle_sil_exclude})
 add_subdirectory(libs/simulation ${_vehicle_sil_exclude})
+add_subdirectory(libs/process ${_vehicle_sil_exclude})
+add_subdirectory(libs/launch ${_vehicle_sil_exclude})
 if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
   add_subdirectory(proto ${_vehicle_sil_exclude})
   add_subdirectory(libs/control_grpc ${_vehicle_sil_exclude})
@@ -95,6 +99,8 @@ add_subdirectory(bridges/vector-xl ${_vehicle_sil_exclude})
 add_subdirectory(tools/common ${_vehicle_sil_exclude})
 add_subdirectory(tools/sim_controller ${_vehicle_sil_exclude})
 add_subdirectory(tools/can_bus_simulator ${_vehicle_sil_exclude})
+# vehicle_sil_launch: a simulation of ECU executables from a configuration file.
+add_subdirectory(tools/launch ${_vehicle_sil_exclude})
 if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
   add_subdirectory(tools/control_server ${_vehicle_sil_exclude})
 endif()

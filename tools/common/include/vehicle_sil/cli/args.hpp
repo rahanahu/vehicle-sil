@@ -9,8 +9,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -39,9 +41,55 @@ public:
 
 /// Parses `--key value` pairs. Every option takes exactly one value. All accessors throw
 /// UsageError for a missing required option or a malformed value.
+///
+/// The second constructor knows its options: value options (`--key value`), flags (`--key`,
+/// no value) and positional arguments (anything not starting with '-', and everything after "--");
+/// an unknown option, a repeated one and a missing value are UsageErrors.
 class Args
 {
 public:
+    Args(const std::vector<std::string>& arguments, std::initializer_list<std::string_view> value_options,
+         std::initializer_list<std::string_view> flags)
+    {
+        const auto known = [](std::initializer_list<std::string_view> names, std::string_view name) {
+            return std::find(names.begin(), names.end(), name) != names.end();
+        };
+        bool optionsEnded = false;
+        for (std::size_t i = 0; i < arguments.size(); ++i)
+        {
+            const std::string& arg = arguments[i];
+            if (!optionsEnded && arg == "--")
+            {
+                optionsEnded = true;
+                continue;
+            }
+            if (optionsEnded || arg.empty() || arg[0] != '-')
+            {
+                positionals_.push_back(arg);
+                continue;
+            }
+            const std::string key = arg.size() > 2 && arg.substr(0, 2) == "--" ? arg.substr(2) : std::string{};
+            if (key.empty() || (!known(value_options, key) && !known(flags, key)))
+            {
+                throw UsageError("unknown option " + arg);
+            }
+            if (values_.count(key) != 0 || flags_.count(key) != 0)
+            {
+                throw UsageError(arg + " is given twice");
+            }
+            if (known(flags, key))
+            {
+                flags_.insert(key);
+                continue;
+            }
+            if (i + 1 >= arguments.size() || arguments[i + 1].substr(0, 2) == "--")
+            {
+                throw UsageError("missing value for " + arg);
+            }
+            values_[key] = arguments[++i];
+        }
+    }
+
     Args(int argc, char** argv)
     {
         for (int i = 1; i < argc; ++i)
@@ -60,6 +108,12 @@ public:
     }
 
     [[nodiscard]] bool has(const std::string& key) const { return values_.count(key) != 0; }
+
+    /// true if the flag `--key` was given (second constructor).
+    [[nodiscard]] bool flag(const std::string& key) const { return flags_.count(key) != 0; }
+
+    /// The arguments that are not options, in order (second constructor).
+    [[nodiscard]] const std::vector<std::string>& positionals() const noexcept { return positionals_; }
 
     [[nodiscard]] std::string str(const std::string& key, const std::string& fallback) const
     {
@@ -186,6 +240,8 @@ private:
     }
 
     std::map<std::string, std::string> values_;
+    std::set<std::string> flags_;
+    std::vector<std::string> positionals_;
 };
 
 } // namespace vehicle_sil::cli

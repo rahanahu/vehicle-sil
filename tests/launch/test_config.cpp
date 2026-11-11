@@ -1,0 +1,558 @@
+// SPDX-License-Identifier: MIT
+//
+// Reading the simulation configuration (vehicle_sil::launch::read_config()): a correct file in
+// YAML and in JSON, every rule of the text with its message and line, many errors at once, the
+// files that cannot be read; the executables (resolve_executable(), check_executable()); the
+// placeholders; "did you mean".
+#include "launch_test_util.hpp"
+
+#include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/process/child_process.hpp"
+
+#include <filesystem>
+#include <fstream>
+#include <string>
+
+namespace fs = std::filesystem;
+using namespace vehicle_sil;
+using namespace vehicle_sil::launch;
+using vehicle_sil::launch::test::check_text;
+using vehicle_sil::launch::test::lines;
+
+namespace {
+
+constexpr const char* kExample = R"(# two ECUs
+vehicle_sil_simulation: 1
+stop_at_ms: 5000
+start_timeout_ms: 20000
+networks:
+  - name: J1939_CAN
+    kind: can
+  - name: Body_LIN
+    kind: lin
+participants:
+  - name: Engine
+    command: [engine/engine_ecu]
+    step_ms: 10
+  - name: Logger
+    command: [tools/logger, --registry-uri, "{registry_uri}", --name, "{name}"]
+    describe: false
+    required: false
+)";
+
+/// The findings of `text` as lines (lines()).
+std::string read(const std::string& text)
+{
+    return lines(read_config(text).findings);
+}
+
+/// A minimal correct file with `participants` as its participants list.
+std::string with_participants(const std::string& participants)
+{
+    return "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n" + participants;
+}
+
+fs::path scratch(const std::string& name)
+{
+    const fs::path dir = fs::path(VEHICLE_SIL_LAUNCH_SCRATCH) / name;
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    return dir;
+}
+
+} // namespace
+
+TEST_CASE(reads_a_correct_file)
+{
+    const ConfigRead read = read_config(kExample);
+    check_text(lines(read.findings), "");
+    CHECK(read.config.has_value());
+    const SimulationConfig& c = *read.config;
+    CHECK(c.stop_at_ms == 5000);
+    CHECK_EQ(c.start_timeout_ms, 20000);
+    CHECK_EQ(c.networks.size(), std::size_t{2});
+    CHECK(c.networks[0].name == "J1939_CAN" && c.networks[0].kind == NetworkKind::Can && c.networks[0].line == 6);
+    CHECK(c.networks[1].name == "Body_LIN" && c.networks[1].kind == NetworkKind::Lin && c.networks[1].line == 8);
+    CHECK(c.networks[0].valid && c.networks[1].valid);
+    CHECK_EQ(c.participants.size(), std::size_t{2});
+    const ParticipantConfig& engine = c.participants[0];
+    CHECK(engine.name == "Engine" && engine.command == std::vector<std::string>{"engine/engine_ecu"});
+    CHECK(engine.describe && engine.required && engine.step_ms == 10 && engine.valid);
+    CHECK(engine.line == 11 && engine.command_line == 12 && engine.step_line == 13);
+    const ParticipantConfig& logger = c.participants[1];
+    CHECK((logger.command == std::vector<std::string>{"tools/logger", "--registry-uri", "{registry_uri}", "--name", "{name}"}));
+    CHECK(!logger.describe && !logger.required && !logger.step_ms && logger.valid);
+    CHECK(logger.line == 14 && logger.command_line == 15 && logger.step_line == 14);
+}
+
+TEST_CASE(defaults_of_the_optional_keys)
+{
+    const ConfigRead read = read_config(with_participants("  - name: A\n    command: a\n"));
+    check_text(lines(read.findings), "");
+    CHECK(!read.config->stop_at_ms);
+    CHECK_EQ(read.config->start_timeout_ms, 30000);
+    // A command written as one text is the executable alone (not split at spaces).
+    CHECK(read.config->participants[0].command == std::vector<std::string>{"a"});
+    CHECK(read_config(with_participants("  - name: A\n    command: dir with spaces/a b\n"))
+              .config->participants[0]
+              .command == std::vector<std::string>{"dir with spaces/a b"});
+}
+
+TEST_CASE(reads_the_same_file_as_json)
+{
+    const std::string json = R"({
+  "vehicle_sil_simulation": 1,
+  "stop_at_ms": 5000,
+  "start_timeout_ms": 20000,
+  "networks": [{"name": "J1939_CAN", "kind": "can"}, {"name": "Body_LIN", "kind": "lin"}],
+  "participants": [
+    {"name": "Engine", "command": ["engine/engine_ecu"], "step_ms": 10},
+    {"name": "Logger", "command": ["tools/logger", "--registry-uri", "{registry_uri}", "--name", "{name}"],
+     "describe": false, "required": false}
+  ]
+})";
+    const ConfigRead fromJson = read_config(json);
+    const ConfigRead fromYaml = read_config(kExample);
+    check_text(lines(fromJson.findings), "");
+    CHECK(fromJson.config.has_value());
+    CHECK(fromJson.config->stop_at_ms == fromYaml.config->stop_at_ms);
+    CHECK_EQ(fromJson.config->networks.size(), std::size_t{2});
+    CHECK(fromJson.config->networks[1].name == "Body_LIN" && fromJson.config->networks[1].kind == NetworkKind::Lin);
+    CHECK(fromJson.config->participants[1].command == fromYaml.config->participants[1].command);
+    CHECK(!fromJson.config->participants[1].describe && fromJson.config->participants[0].step_ms == 10);
+    // Lines in JSON too.
+    CHECK_EQ(fromJson.config->participants[0].line, std::size_t{7});
+    // A JSON error has its line.
+    check_text(lines(read_config(R"({"vehicle_sil_simulation": 1, "networks": [], "participants": [
+  {"name": "A", "command": "a", "step_ms": "10"}]})")
+                         .findings),
+               "E 2 value: participant 'A': step_ms must be a whole number (the step the executable reports), not the text "
+               "\"10\": write the number without quotes\n");
+}
+
+TEST_CASE(a_byte_order_mark_is_skipped)
+{
+    const ConfigRead read = read_config("\xEF\xBB\xBF" + std::string(kExample));
+    check_text(lines(read.findings), "");
+    CHECK(read.config.has_value());
+}
+
+TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
+{
+    check_text(read(std::string(kExample) + "stop_at: 3\nextra: 1\n"),
+               "E 18 unknown-key: unknown key 'stop_at': did you mean 'stop_at_ms'? (the keys here: "
+               "vehicle_sil_simulation, stop_at_ms, start_timeout_ms, networks, participants)\n"
+               "E 19 unknown-key: unknown key 'extra': remove it, or use one of the keys here (vehicle_sil_simulation, "
+               "stop_at_ms, start_timeout_ms, networks, participants)\n");
+    check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
+               "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
+               "command, step_ms, describe, required)\n"
+               "E 7 unknown-key: participant 'A': unknown key 'Step_ms': did you mean 'step_ms'? (the keys here: name, "
+               "command, step_ms, describe, required)\n");
+    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
+                    "participants:\n  - name: A\n    command: a\n"),
+               "E 5 unknown-key: network 'N': unknown key 'bitrate': remove it, or use one of the keys here (name, kind)\n");
+}
+
+TEST_CASE(an_unknown_key_does_not_stop_the_participant_from_being_checked)
+{
+    const ConfigRead read = read_config(with_participants("  - name: A\n    command: a\n    requird: false\n"));
+    CHECK(read.config->participants[0].valid);
+}
+
+TEST_CASE(a_key_twice_is_an_error)
+{
+    check_text(read(with_participants("  - name: A\n    command: a\n    command: b\n")),
+               "E 6 duplicate-key: participant 'A': 'command' appears twice (first at line 5); keep one of them\n");
+    check_text(read("vehicle_sil_simulation: 1\nstop_at_ms: 1\nstop_at_ms: 2\nnetworks: []\nparticipants:\n  - name: A\n    "
+                    "command: a\n"),
+               "E 3 duplicate-key: 'stop_at_ms' appears twice (first at line 2); keep one of them\n");
+}
+
+TEST_CASE(missing_keys_are_errors)
+{
+    check_text(read("stop_at_ms: 1\n"),
+               "E 0 missing-key: the file has no vehicle_sil_simulation (the format version): add "
+               "vehicle_sil_simulation: 1\n"
+               "E 0 missing-key: the file has no networks: add networks, a list of the networks with name and kind (can "
+               "or lin)\n"
+               "E 0 missing-key: the file has no participants: add participants, a list of the participants with name "
+               "and command\n");
+    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - kind: can\n  - name: N\nparticipants:\n  - command: [a]\n  - "
+                    "name: B\n"),
+               "E 3 missing-key: networks[0] has no name: add name: <the network's name>\n"
+               "E 4 missing-key: network 'N': no kind: add kind: can or kind: lin\n"
+               "E 6 missing-key: participants[0] has no name: add name: <the participant's name> (an ecu_main executable "
+               "gets it with --name)\n"
+               "E 7 missing-key: participant 'B': no command: add command: [<path of the executable>]\n");
+}
+
+TEST_CASE(values_of_the_wrong_type_or_range_are_errors)
+{
+    check_text(read("vehicle_sil_simulation: 1\nstop_at_ms: 0\nstart_timeout_ms: 1.5\nnetworks: {}\nparticipants: x\n"),
+               "E 2 value: stop_at_ms is 0, but it must be from 1 to 1000000000000 (milliseconds of virtual time; leave "
+               "stop_at_ms out to run until stopped)\n"
+               "E 3 value: start_timeout_ms must be a whole number (milliseconds to wait for the participants), not '1.5'\n"
+               "E 4 value: networks must be a list of networks (\"- name: <name>\" and \"kind: can\" or \"kind: lin\"), "
+               "not a mapping\n"
+               "E 5 value: participants must be a list of participants (\"- name: <name>\" and \"command: "
+               "[<executable>]\"), not 'x'\n");
+    check_text(read(with_participants("  - name: A\n    command: a\n    step_ms: -5\n    describe: yes\n    required:\n")),
+               "E 6 value: participant 'A': step_ms is -5, but it must be from 1 to 1000000000000 (the step the "
+               "executable reports)\n"
+               "E 7 value: participant 'A': describe must be true or false, not 'yes'\n"
+               "E 8 value: participant 'A': required must be true or false, not empty\n");
+    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: A\n    kind: CAN\n  - name: B\n    kind: ethernet\n  - "
+                    "name: [x]\n    kind: can\n  - just text\nparticipants: []\n"),
+               "E 4 value: network 'A': kind is 'CAN': write can (lower case)\n"
+               "E 6 value: network 'B': kind is 'ethernet': write can or lin (the kinds of network there are)\n"
+               "E 7 value: networks[2]: name must be the network's name, not a list\n"
+               "E 9 value: networks[3] must be a network with name and kind (can or lin), not 'just text'\n"
+               "E 10 value: participants is empty: list the participants of the simulation\n");
+}
+
+TEST_CASE(a_bad_describe_value_stops_the_participant_from_being_checked)
+{
+    const ConfigRead read = read_config(with_participants("  - name: A\n    command: a\n    describe: 1\n"));
+    CHECK(!read.config->participants[0].valid);
+    const ConfigRead stepBad = read_config(with_participants("  - name: A\n    command: a\n    step_ms: x\n"));
+    CHECK(stepBad.config->participants[0].valid);
+    CHECK(!stepBad.config->participants[0].step_ms);
+}
+
+TEST_CASE(a_network_without_a_valid_kind_stays_listed_but_invalid)
+{
+    const ConfigRead read =
+        read_config("vehicle_sil_simulation: 1\nnetworks:\n  - name: A\n    kind: x\nparticipants:\n  - name: P\n    command: p\n");
+    CHECK_EQ(read.config->networks.size(), std::size_t{1});
+    CHECK(read.config->networks[0].name == "A" && !read.config->networks[0].valid);
+}
+
+TEST_CASE(names_twice_and_reserved_names_are_errors)
+{
+    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n  - name: N\n    kind: lin\n"
+                    "participants:\n  - name: A\n    command: a\n  - name: A\n    command: b\n  - name: SimulationController\n"
+                    "    command: c\n  - name: --x\n    command: d\n  - name: \"\"\n    command: e\n"),
+               "E 5 duplicate-name: network 'N' is listed twice (first at line 3); remove one, or give it another name\n"
+               "E 10 duplicate-name: participant 'A' is listed twice (first at line 8); give each participant its own name "
+               "(for a second copy of an ECU, e.g. A_2)\n"
+               "E 12 reserved-name: participant 'SimulationController': the name SimulationController is the controller's, "
+               "which vehicle_sil_launch runs: choose another name\n"
+               "E 14 value: participant '--x': a participant's name must not start with '-' (the executable would read it "
+               "as an option)\n"
+               "E 16 value: participants[4]: name must be the participant's name, not the text \"\"\n");
+    const ConfigRead r = read_config(with_participants("  - name: A\n    command: a\n  - name: A\n    command: b\n"));
+    CHECK(r.config->participants[0].valid && !r.config->participants[1].valid);
+}
+
+TEST_CASE(commands_must_be_texts)
+{
+    check_text(read(with_participants("  - name: A\n    command: []\n  - name: B\n    command: [b, {registry_uri}]\n"
+                                      "  - name: C\n    command: [\"\", x]\n  - name: D\n    command:\n")),
+               "E 5 value: participant 'A': command must be the executable and its arguments, e.g. command: "
+               "[engine/engine_ecu], not a list\n"
+               "E 7 value: participant 'B': command[1] must be a text, not a mapping: write \"{registry_uri}\" in quotes "
+               "(without them, YAML reads {...} as a mapping)\n"
+               "E 9 value: participant 'C': command must be the executable and its arguments, e.g. command: "
+               "[engine/engine_ecu], not a list\n"
+               "E 11 value: participant 'D': command must be the executable and its arguments, e.g. command: "
+               "[engine/engine_ecu], not empty\n");
+}
+
+TEST_CASE(an_ecu_main_command_has_no_launcher_argument_and_no_placeholder)
+{
+    check_text(read(with_participants("  - name: A\n    command: [a, --name, X, \"--registry-uri={registry_uri}\", -h, --verbose]\n")),
+               "E 5 launcher-argument: participant 'A': the command has '--name', but vehicle_sil_launch gives an "
+               "ecu_main executable --name itself: remove it (or set describe: false for an executable not made with "
+               "ecu_main)\n"
+               "E 5 launcher-argument: participant 'A': the command has '--registry-uri={registry_uri}', but "
+               "vehicle_sil_launch gives an ecu_main executable --registry-uri itself: remove it (or set describe: false "
+               "for an executable not made with ecu_main)\n"
+               "E 5 launcher-argument: participant 'A': the command has {registry_uri}, but only a command with "
+               "describe: false has placeholders (vehicle_sil_launch gives an ecu_main executable --name and "
+               "--registry-uri itself): remove it, or set describe: false\n"
+               "E 5 launcher-argument: participant 'A': the command has '-h', but vehicle_sil_launch gives an ecu_main "
+               "executable -h itself: remove it (or set describe: false for an executable not made with ecu_main)\n");
+    const ConfigRead r = read_config(with_participants("  - name: A\n    command: [a, --describe]\n  - name: B\n    command: [b, --verbose]\n"));
+    CHECK(!r.config->participants[0].valid);
+    CHECK(r.config->participants[1].valid);
+}
+
+TEST_CASE(other_commands_have_known_placeholders_and_the_registry)
+{
+    check_text(read(with_participants("  - name: L\n    describe: false\n    command: [l, --uri, \"{registry}\", \"{name}\", "
+                                      "\"{x}\", \"json {\\\"a\\\": 1}\"]\n")),
+               "E 6 unknown-placeholder: participant 'L': unknown placeholder {registry} in the command: did you mean "
+               "{registry_uri}? (the placeholders: {registry_uri}, {name}; write {{registry}} to pass {registry} as it "
+               "is)\n"
+               "E 6 unknown-placeholder: participant 'L': unknown placeholder {x} in the command (the placeholders: "
+               "{registry_uri}, {name}; write {{x}} to pass {x} as it is)\n"
+               "N 6 no-registry-uri: participant 'L': the command has no {registry_uri}, so the executable is not told "
+               "where the simulation's registry is: if it needs it, add its option for the registry URI with "
+               "\"{registry_uri}\" as the value\n");
+    // "{{" and "}}" are braces: no placeholder.
+    check_text(read(with_participants("  - name: L\n    describe: false\n    command: [l, \"--uri={registry_uri}\", "
+                                      "\"--pattern={{id}}\", \"${{HOME}}\", \"{{{name}}}\"]\n")),
+               "");
+    // The executable's path is not expanded: any {word} there is an error; {{word}} is the word.
+    check_text(read(with_participants("  - name: L\n    describe: false\n    command: [\"{name}/l\", \"{registry_uri}\"]\n"
+                                      "  - name: M\n    describe: false\n    command: [\"{odd}/m\", \"{registry_uri}\"]\n"
+                                      "  - name: N\n    describe: false\n    command: [\"{{odd}}/n\", \"{registry_uri}\"]\n")),
+               "E 6 value: participant 'L': the executable's path has {name}, but a path has no placeholders: write "
+               "{{name}} for a literal {name}, or write the path\n"
+               "E 9 value: participant 'M': the executable's path has {odd}, but a path has no placeholders: write "
+               "{{odd}} for a literal {odd}, or write the path\n");
+}
+
+TEST_CASE(an_ecu_main_command_has_no_braced_words_but_other_braces_pass)
+{
+    check_text(read(with_participants("  - name: A\n    command: [a, \"--pattern={id}\", \"{{name}}\", "
+                                      "'{\"a\":{\"b\":1}}', \"a}}b{{\"]\n")),
+               "E 5 unknown-placeholder: participant 'A': the command has {id}, but an ecu_main command has no "
+               "placeholders: write {{id}} to pass {id} as it is\n");
+}
+
+TEST_CASE(arguments_are_not_checked_while_describe_is_not_known)
+{
+    // describe: flase is an error; the arguments are not judged as if it were true.
+    check_text(read(with_participants("  - name: L\n    describe: flase\n    command: [l, \"{name}\", \"{registry_uri}\"]\n")),
+               "E 5 value: participant 'L': describe must be true or false, not 'flase'\n");
+}
+
+TEST_CASE(step_ms_of_a_participant_that_is_not_described_is_noted)
+{
+    check_text(read(with_participants("  - name: L\n    describe: false\n    command: [l, \"{registry_uri}\"]\n    step_ms: 5\n")),
+               "N 7 step-not-checked: participant 'L': step_ms is not compared for a participant with describe: false "
+               "(it does not report its step): remove it, or set describe: true for an ecu_main executable\n");
+}
+
+TEST_CASE(names_are_text_on_one_line)
+{
+    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: \"N\\tX\"\n    kind: can\nparticipants:\n"
+                    "  - name: \"A\\nB\"\n    command: a\n  - name: \"C\\x01\"\n    command: c\n"),
+               "E 3 value: networks[0]: the network's name must be text on one line (it has the control character "
+               "U+0009): write the name without it\n"
+               "E 6 value: participants[0]: the participant's name must be text on one line (it has the control "
+               "character U+000A): write the name without it\n"
+               "E 8 value: participants[1]: the participant's name must be text on one line (it has the control "
+               "character U+0001): write the name without it\n");
+}
+
+TEST_CASE(anchors_aliases_and_more_documents_are_refused)
+{
+    const ConfigRead aliased = read_config("vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                                           "  - name: &n Engine\n    command: [a]\n  - name: *n\n    command: [b]\n");
+    CHECK(!aliased.config.has_value());
+    check_text(lines(aliased.findings),
+               "E 4 unsupported-yaml: anchors and aliases (&name, *name, <<) are not read: write the values out (a value that "
+               "starts with * or & must be in quotes)\n"
+               "E 6 unsupported-yaml: anchors and aliases (&name, *name, <<) are not read: write the values out (a value that "
+               "starts with * or & must be in quotes)\n");
+    const ConfigRead merged = read_config("vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                                          "  - name: A\n    <<: {command: [a]}\n");
+    CHECK(!merged.config.has_value());
+    // A "---" at the end is no second document.
+    const ConfigRead tail = read_config(std::string(kExample) + "---\n");
+    CHECK(tail.config.has_value() && tail.findings.empty());
+    const ConfigRead two = read_config(std::string(kExample) + "---\nvehicle_sil_simulation: 1\n");
+    CHECK(two.config.has_value());
+    CHECK_EQ(two.config->participants.size(), std::size_t{2});
+    CHECK_EQ(two.findings.size(), std::size_t{1});
+    CHECK(two.findings[0].code == "unsupported-yaml");
+    CHECK_EQ(two.findings[0].line, std::size_t{19});
+    check_text(two.findings[0].message, "a second document (after ---): a file has one configuration; only the first is "
+                                        "read, so remove the others or put them in files of their own");
+}
+
+TEST_CASE(a_file_that_is_not_utf8_is_refused)
+{
+    const ConfigRead utf16 = read_config(std::string("\xFF\xFEv\0e\0", 6));
+    CHECK(!utf16.config.has_value());
+    check_text(lines(utf16.findings), "E 0 encoding: the file is not UTF-8 text (it looks like UTF-16, or has NUL bytes): "
+                                      "save it as UTF-8\n");
+}
+
+TEST_CASE(numbers_too_large_are_out_of_range)
+{
+    check_text(read(with_participants("  - name: A\n    command: a\n    step_ms: 99999999999999999999\n")),
+               "E 6 value: participant 'A': step_ms is 99999999999999999999, but it must be from 1 to 1000000000000 (the "
+               "step the executable reports)\n");
+}
+
+TEST_CASE(many_errors_are_reported_at_once_in_the_order_of_the_file)
+{
+    const std::string text = "vehicle_sil_simulation: 1\n"  // 1
+                             "stop_at_ms: never\n"          // 2
+                             "networks:\n"                  // 3
+                             "  - name: N\n"                // 4
+                             "    kind: CAN\n"              // 5
+                             "participants:\n"              // 6
+                             "  - name: A\n"                // 7
+                             "    command: [a, --local]\n"  // 8
+                             "    step_ms: 0\n"             // 9
+                             "  - name: A\n"                // 10
+                             "    commands: [b]\n";         // 11
+    check_text(read(text),
+               "E 2 value: stop_at_ms must be a whole number (milliseconds of virtual time; leave stop_at_ms out to run "
+               "until stopped), not 'never'\n"
+               "E 5 value: network 'N': kind is 'CAN': write can (lower case)\n"
+               "E 9 value: participant 'A': step_ms is 0, but it must be from 1 to 1000000000000 (the step the executable "
+               "reports)\n"
+               "E 8 launcher-argument: participant 'A': the command has '--local', but vehicle_sil_launch gives an "
+               "ecu_main executable --local itself: remove it (or set describe: false for an executable not made with "
+               "ecu_main)\n"
+               "E 11 unknown-key: participant 'A': unknown key 'commands': did you mean 'command'? (the keys here: name, "
+               "command, step_ms, describe, required)\n"
+               "E 10 missing-key: participant 'A': no command: add command: [<path of the executable>]\n"
+               "E 10 duplicate-name: participant 'A' is listed twice (first at line 7); give each participant its own name "
+               "(for a second copy of an ECU, e.g. A_2)\n");
+}
+
+TEST_CASE(files_that_cannot_be_read)
+{
+    const auto unreadable = [](const std::string& text) {
+        const ConfigRead r = read_config(text);
+        CHECK(!r.config.has_value());
+        return lines(r.findings);
+    };
+    check_text(unreadable("  \n\n"), "E 0 not-a-configuration: the file is empty: write vehicle_sil_simulation: 1, networks "
+                                     "and participants (docs/simulation-config.md)\n");
+    check_text(unreadable("- a\n- b\n"),
+               "E 1 not-a-configuration: the file is not a configuration: it must be a mapping with "
+               "vehicle_sil_simulation: 1, networks and participants (docs/simulation-config.md)\n");
+    // An unknown version: nothing else is reported (the keys may mean something else there).
+    check_text(unreadable("unknown: 1\nvehicle_sil_simulation: 2\nnetworks: x\n"),
+               "E 2 format-version: vehicle_sil_simulation is 2, but this vehicle_sil_launch reads format 1 only: use the "
+               "vehicle-sil that the file was written for\n");
+    const ConfigRead syntax = read_config("vehicle_sil_simulation: 1\nnetworks: [a\nparticipants: []\n");
+    CHECK(!syntax.config.has_value());
+    CHECK_EQ(syntax.findings.size(), std::size_t{1});
+    CHECK(syntax.findings[0].code == "syntax" && syntax.findings[0].line >= 2);
+    CHECK(syntax.findings[0].message.rfind("syntax error: ", 0) == 0);
+    // The line of a syntax error, and the parser's view of the place.
+    const ConfigRead brace = read_config(with_participants("  - name: A\n    command: [a, --x={y}]\n"));
+    CHECK(!brace.config.has_value());
+    check_text(lines(brace.findings), "E 5 syntax: syntax error: invalid character: '{'\n"
+                                      "  | 5:22:     command: [a, --x={y}]\n"
+                                      "                           ^~~~\n");
+    // A version that is not a number is an error, but the file is read.
+    const ConfigRead quoted = read_config("vehicle_sil_simulation: \"1\"\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n");
+    CHECK(quoted.config.has_value());
+    check_text(lines(quoted.findings), "E 1 format-version: vehicle_sil_simulation must be the format version 1, not the "
+                                       "text \"1\": write vehicle_sil_simulation: 1\n");
+}
+
+TEST_CASE(expands_the_placeholders_in_any_argument)
+{
+    CHECK((expand_placeholders({"--uri", "{registry_uri}", "--uri={registry_uri}", "{name}-{name}", "{other}", "{name"},
+                               "silkit://localhost:8500", "Engine") ==
+           std::vector<std::string>{"--uri", "silkit://localhost:8500", "--uri=silkit://localhost:8500", "Engine-Engine",
+                                    "{other}", "{name"}));
+}
+
+TEST_CASE(suggests_close_names_only)
+{
+    const std::vector<std::string> keys{"name", "command", "step_ms", "describe", "required"};
+    CHECK(launch::detail::closest("comand", keys) == "command");
+    CHECK(launch::detail::closest("STEP_MS", keys) == "step_ms");
+    CHECK(launch::detail::closest("step", keys) == "step_ms");     // a beginning
+    CHECK(launch::detail::closest("nmae", keys) == "name");        // two edits
+    CHECK(launch::detail::closest("bitrate", keys).empty());
+    CHECK(launch::detail::closest("x", keys).empty());
+    CHECK_EQ(launch::detail::edit_distance("kitten", "sitting"), std::size_t{3});
+}
+
+TEST_CASE(resolves_the_executable_from_the_directory_of_the_file)
+{
+    const fs::path base = scratch("resolve");
+    CHECK(resolve_executable("engine/engine_ecu", base) == base / "engine" / "engine_ecu");
+    // Not normalized: ".." keeps its meaning across a symbolic link.
+    CHECK(resolve_executable("./a/../b", base) == base / "." / "a" / ".." / "b");
+    const fs::path absolute = base / "abs";
+    CHECK(resolve_executable(process::utf8_from_path(absolute), "/elsewhere") == absolute);
+#ifdef _WIN32
+    std::ofstream(base / "tool.exe") << "x";
+    std::ofstream(base / "engine.v2.exe") << "x";
+    CHECK(resolve_executable("tool", base) == base / "tool.exe");
+    CHECK(resolve_executable("engine.v2", base) == base / "engine.v2.exe");
+#endif
+}
+
+TEST_CASE(checks_that_the_executable_is_an_executable_file)
+{
+    const fs::path base = scratch("executable");
+    ParticipantConfig p;
+    p.name = "Engine";
+    p.command = {"engine/engine_ecu"};
+    p.command_line = 12;
+    const fs::path missing = base / "engine" / "engine_ecu";
+    const auto none = check_executable(p, missing);
+    CHECK(none.has_value());
+    check_text(lines({*none}), "E 12 executable: participant 'Engine': the executable engine/engine_ecu does not exist "
+                               "(looked for " +
+                                   process::shown_path(missing) +
+                                   "): build it, or correct the path (a relative path is from the directory of the "
+                                   "configuration file)\n");
+    CHECK(none->participant == "Engine");
+    fs::create_directories(missing);
+    check_text(lines({*check_executable(p, missing)}),
+               "E 12 executable: participant 'Engine': the executable engine/engine_ecu is a directory (" +
+                   process::shown_path(missing) + "): name the executable file in it\n");
+    const fs::path file = base / "file";
+    std::ofstream(file) << "#!/bin/sh\n";
+#ifndef _WIN32
+    fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write);
+    check_text(lines({*check_executable(p, file)}),
+               "E 12 executable: participant 'Engine': the executable engine/engine_ecu is not executable (" +
+                   process::shown_path(file) + "): make it executable (chmod +x), or name the right file\n");
+    fs::permissions(file, fs::perms::owner_exec, fs::perm_options::add);
+#endif
+    CHECK(!check_executable(p, file).has_value());
+}
+
+TEST_CASE(a_missing_executable_gets_a_hint_for_path_and_arguments)
+{
+    const fs::path base = scratch("hints");
+    ParticipantConfig p;
+    p.name = "Tool";
+    p.command_line = 4;
+    p.command = {"python3", "tool.py"};
+    const auto bare = check_executable(p, resolve_executable("python3", base));
+    CHECK(bare.has_value());
+    CHECK(bare->message.ends_with("; PATH is not searched: write the path of the executable"));
+    p.command = {"tools/engine --fast"};
+    const auto spaced = check_executable(p, resolve_executable(p.command.front(), base));
+    CHECK(spaced.has_value());
+    CHECK(spaced->message.ends_with("; if the text after a space is an argument, write the command as a list, e.g. "
+                                    "command: [tools/engine, ...]"));
+    p.command = {"tools/engine"};
+    CHECK(check_executable(p, resolve_executable(p.command.front(), base))->message.ends_with("configuration file)"));
+}
+
+TEST_CASE(a_batch_file_is_not_an_executable)
+{
+    const fs::path base = scratch("batch");
+    std::ofstream(base / "run.CMD") << "@echo off\n";
+#ifndef _WIN32
+    fs::permissions(base / "run.CMD", fs::perms::owner_all);
+#endif
+    ParticipantConfig p;
+    p.name = "Tool";
+    p.command = {"run.CMD"};
+    p.command_line = 4;
+    const auto found = check_executable(p, resolve_executable("run.CMD", base));
+    CHECK(found.has_value());
+    check_text(found->message, "participant 'Tool': the executable run.CMD is a batch file (" +
+                                   process::shown_path(base / "run.CMD") +
+                                   "), which runs through cmd.exe with other quoting rules: name the executable it starts");
+}
+
+TEST_CASE(expands_escaped_braces)
+{
+    // Only "{{word}}" is an escape; any other brace stays, byte for byte.
+    CHECK((expand_placeholders({"{{name}}", "x{{name}}{name}", "a}}b{{", "${{HOME}}", "{x}", "{\"a\":{\"b\":1}}",
+                                "{{\"vehicle_sil_ecu\": 2}}", "{{{name}}}", "{}"},
+                               "uri", "Engine") ==
+           std::vector<std::string>{"{name}", "x{name}Engine", "a}}b{{", "${HOME}", "{x}", "{\"a\":{\"b\":1}}",
+                                    "{{\"vehicle_sil_ecu\": 2}}", "{{name}}", "{}"}));
+}

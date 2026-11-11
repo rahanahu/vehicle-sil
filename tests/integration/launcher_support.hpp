@@ -4,7 +4,7 @@
 // process on a free port, and waiting for child processes against a deadline.
 #pragma once
 
-#include "child_process.hpp"
+#include "vehicle_sil/process/child_process.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -13,6 +13,8 @@
 #include <string>
 
 namespace vehicle_sil::test {
+
+using process::ChildProcess;
 
 /// Sets the tag of log() lines, e.g. "launcher" -> "[launcher] text".
 void set_log_tag(std::string tag);
