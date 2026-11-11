@@ -12,10 +12,16 @@ needs no C++ build:
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help` and tests/control_server/multi_process.py --help
 
-The full output of every step goes to build/logs/<tag>-py<version>-<step>.log. The summary names the
-failed step, the first lines of its output and the log file.
+Then, unless --skip-lowest, one more run on 3.11 ("3.11 lowest", build/python-envs/3.11-lowest) with
+the lower bounds of pyproject.toml instead of uv.lock: its sync step makes the environment with uv's
+lowest-direct resolution of the dev group and fails unless every declared "name>=version" was
+installed at exactly that version; then codegen and control as above. So a declared bound is
+always one that the tests ran with.
 
-Exit codes: 0 every version passed, 1 a step failed, 2 usage error (also when uv is not installed).
+The full output of every step goes to build/logs/<tag>-py<version>[-lowest]-<step>.log. The summary
+names the failed step, the first lines of its output and the log file.
+
+Exit codes: 0 every run passed, 1 a step failed, 2 usage error (also when uv is not installed).
 Requires Python 3.11+ (standard library only) and uv; runs on Linux and in MSYS2 on Windows.
 """
 
@@ -28,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -101,13 +108,48 @@ class Step:
         self.file.flush()
         return code == 0
 
+    def note(self, text: str) -> None:
+        self.file.write(text + "\n")
+        self.file.flush()
+
     def close(self) -> None:
         self.file.close()
 
 
-def check_version(uv: str, version: str, tag: str, files: list[str]) -> tuple[bool, str, list[str], Path | None]:
-    """Runs every step for one Python version. Returns (ok, description, failure lines, failed log)."""
-    env_dir = ENV_DIR / version
+def normalize(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def lower_bounds() -> dict[str, str]:
+    """{package: version} of every 'name>=version' requirement in pyproject.toml's dependency groups."""
+    with open(ROOT / "pyproject.toml", "rb") as f:
+        groups = tomllib.load(f).get("dependency-groups", {})
+    bounds = {}
+    for items in groups.values():
+        for item in items:
+            m = re.fullmatch(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*>=\s*([^\s,;]+)\s*", item) if isinstance(item, str) else None
+            if m:
+                bounds[normalize(m.group(1))] = m.group(2)
+    return bounds
+
+
+def installed_versions(python: str, env: dict[str, str]) -> dict[str, str]:
+    code = ("import importlib.metadata as m\n"
+            "for d in m.distributions():\n"
+            "    print(d.metadata['Name'], d.version)\n")
+    proc = subprocess.run([python, "-c", code], env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    return {normalize(n): v for n, v in (ln.split() for ln in proc.stdout.splitlines() if len(ln.split()) == 2)}
+
+
+def check_version(uv: str, version: str, tag: str, files: list[str],
+                  lowest: bool = False) -> tuple[bool, str, list[str], Path | None]:
+    """Runs every step for one Python version. Returns (ok, description, failure lines, failed log).
+
+    With lowest, the environment gets the lower bounds of pyproject.toml (uv's lowest-direct resolution,
+    not uv.lock), and the sync step fails unless each declared lower bound is what was installed.
+    """
+    name = f"{version}-lowest" if lowest else version
+    env_dir = ENV_DIR / name
     python = str(env_python(env_dir))
     stubs = env_dir / "control-stubs"
     env = dict(os.environ)
@@ -118,9 +160,28 @@ def check_version(uv: str, version: str, tag: str, files: list[str]) -> tuple[bo
         "VEHICLE_SIL_CONTROL_STUBS": str(stubs),
     })
     env.pop("VIRTUAL_ENV", None)  # uv would warn that it does not match UV_PROJECT_ENVIRONMENT
+    resolved: list[str] = []
 
     def sync(s: Step) -> bool:
-        return s.run([uv, "sync", "--locked", "--python", version])
+        if not lowest:
+            return s.run([uv, "sync", "--locked", "--python", version])
+        if not (s.run([uv, "venv", "--clear", "--python", version, str(env_dir)])
+                and s.run([uv, "pip", "install", "--python", python, "--resolution", "lowest-direct",
+                           "--group", "dev"])):
+            return False
+        bounds = lower_bounds()
+        got = installed_versions(python, env)
+        ok = True
+        for package, bound in sorted(bounds.items()):
+            have = got.get(package)
+            resolved.append(f"{package} {have}")
+            if have != bound:
+                s.note(f"error: pyproject.toml declares {package}>={bound}, but the lowest resolution on Python "
+                       f"{version} installed {have} (the bound has no usable release there, or another package "
+                       f"needs more): the tests never run with {bound}; raise the bound to {have}")
+                ok = False
+        s.note("lower bounds installed: " + ", ".join(resolved))
+        return ok
 
     def syntax(s: Step) -> bool:
         code = ("import sys\n"
@@ -146,19 +207,24 @@ def check_version(uv: str, version: str, tag: str, files: list[str]) -> tuple[bo
         ])
 
     steps = [("sync", sync), ("syntax", syntax), ("codegen", codegen), ("scripts", scripts), ("control", control)]
+    if lowest:  # the syntax and the scripts do not depend on the packages
+        steps = [s for s in steps if s[0] not in ("syntax", "scripts")]
     times = []
-    for name, body in steps:
-        log = LOG_DIR / f"{tag}-py{version}-{name}.log"
+    for step_name, body in steps:
+        log = LOG_DIR / f"{tag}-py{name}-{step_name}.log"
         step = Step(log, env)
         start = time.monotonic()
         try:
             ok = body(step)
         finally:
             step.close()
-        times.append(f"{name} {time.monotonic() - start:.0f} s")
+        times.append(f"{step_name} {time.monotonic() - start:.0f} s")
         if not ok:
-            return False, f"FAILED ({name})", first_lines(log), log
-    return True, f"ok ({', '.join(times)})", [], None
+            return False, f"FAILED ({step_name})", first_lines(log), log
+    text = f"ok ({', '.join(times)})"
+    if resolved:
+        text += "\n  with " + ", ".join(resolved)
+    return True, text, [], None
 
 
 def main() -> int:
@@ -171,13 +237,17 @@ def main() -> int:
         "several Python versions and print a short summary; the full output goes to build/logs/. "
         "Exit code 0 if every version passed, 1 if a step failed, 2 on a usage error or without uv.",
         epilog="examples:\n"
-        "  scripts/verify-python.py                  # 3.11 and the version in .python-version\n"
+        "  scripts/verify-python.py                  # 3.11, .python-version, and 3.11 with the lower bounds\n"
+        "  scripts/verify-python.py --skip-lowest    # only the versions of uv.lock\n"
         "  scripts/verify-python.py --python 3.13\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--python", action="append", metavar="VERSION",
                         help=f"a Python version to check (repeatable; default: {LOWEST} and .python-version"
                         + (f", {pinned}" if pinned else "") + ")")
+    parser.add_argument("--skip-lowest", action="store_true",
+                        help=f"leave out the run on Python {LOWEST} with the lower bounds of pyproject.toml "
+                        "(uv's lowest-direct resolution; it needs the package index or uv's cache)")
     parser.add_argument("--tag", default="verify", help="prefix of the log names (default: verify)")
     args = parser.parse_args()
 
@@ -195,13 +265,15 @@ def main() -> int:
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     files = tracked_python_files()
+    runs = [(v, False) for v in versions] + ([] if args.skip_lowest else [(LOWEST, True)])
     failed = []
     try:
-        for v in versions:
-            ok, text, lines, log = check_version(uv, v, args.tag, files)
-            print(f"python {v}: {text}")
+        for v, lowest in runs:
+            label = f"{v} lowest" if lowest else v
+            ok, text, lines, log = check_version(uv, v, args.tag, files, lowest)
+            print(f"python {label}: {text}")
             if not ok:
-                failed.append(v)
+                failed.append(label)
                 print("  ---")
                 for ln in lines:
                     print("    " + ln)
@@ -213,7 +285,7 @@ def main() -> int:
     if failed:
         print("verify-python: FAILED " + ", ".join(failed))
         return 1
-    print(f"verify-python: {len(versions)} of {len(versions)} Python versions passed")
+    print(f"verify-python: {len(runs)} of {len(runs)} runs passed")
     return 0
 
 

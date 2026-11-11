@@ -6,7 +6,8 @@
 #   uv sync --only-group codegen  only what the J1939 code generator needs
 #   uv sync --only-group control  only the Control API client
 #
-# The lower bounds are the versions this repository is checked with; uv.lock pins the exact ones.
+# The lower bounds are the oldest versions the tests are run with (scripts/verify-python.py installs
+# exactly them on Python 3.11); uv.lock pins the versions of the development environment.
 
 [project]
 name = "vehicle-sil-dev"
@@ -19,7 +20,7 @@ dependencies = []
 # tools/j1939_codegen (vehicle_sil_add_j1939_codec() runs it at build time).
 codegen = ["pyyaml>=6.0.3"]
 # python/vehicle_sil_control: the client and CLI, and the generation of its gRPC stubs.
-control = ["grpcio>=1.85.1", "grpcio-tools>=1.85.1", "protobuf>=7.35.1"]
+control = ["grpcio>=1.85.0", "grpcio-tools>=1.85.0", "protobuf>=7.35.1"]
 dev = [{ include-group = "codegen" }, { include-group = "control" }]
 
 [tool.uv]

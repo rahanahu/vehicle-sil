@@ -240,13 +240,13 @@ dev = [
 [package.metadata.requires-dev]
 codegen = [{ name = "pyyaml", specifier = ">=6.0.3" }]
 control = [
-    { name = "grpcio", specifier = ">=1.85.1" },
-    { name = "grpcio-tools", specifier = ">=1.85.1" },
+    { name = "grpcio", specifier = ">=1.85.0" },
+    { name = "grpcio-tools", specifier = ">=1.85.0" },
     { name = "protobuf", specifier = ">=7.35.1" },
 ]
 dev = [
-    { name = "grpcio", specifier = ">=1.85.1" },
-    { name = "grpcio-tools", specifier = ">=1.85.1" },
+    { name = "grpcio", specifier = ">=1.85.0" },
+    { name = "grpcio-tools", specifier = ">=1.85.0" },
     { name = "protobuf", specifier = ">=7.35.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]

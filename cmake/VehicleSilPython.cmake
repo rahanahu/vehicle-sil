@@ -2,20 +2,19 @@ include_guard(GLOBAL)
 
 # vehicle_sil_repository_python(<out-var>)
 #
-# Sets <out-var> to the Python of the repository's uv environment (.venv at the top of vehicle-sil,
-# made by `uv sync`) when vehicle-sil is the top-level project and the environment exists, else to
-# "". A project that pulls vehicle-sil in (FetchContent, add_subdirectory) never gets it: it keeps
-# its own Python.
+# Sets <out-var> to the Python of the repository's uv environment (.venv/bin/python at the top of
+# vehicle-sil, made by `uv sync`) when vehicle-sil is the top-level project and the environment
+# exists, else to "". A project that pulls vehicle-sil in (FetchContent, add_subdirectory) never
+# gets it: it keeps its own Python. Not on a Windows host: a uv environment there holds a Python
+# that the MinGW (MSYS2) builds have not been checked with, so they keep finding the Python as
+# before (the MSYS2 packages).
 function(vehicle_sil_repository_python out)
   set(python "")
-  if(vehicle_sil_IS_TOP_LEVEL)
+  if(vehicle_sil_IS_TOP_LEVEL AND NOT CMAKE_HOST_WIN32)
     get_filename_component(root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/.." ABSOLUTE)
-    foreach(candidate "${root}/.venv/bin/python" "${root}/.venv/Scripts/python.exe")
-      if(EXISTS "${candidate}")
-        set(python "${candidate}")
-        break()
-      endif()
-    endforeach()
+    if(EXISTS "${root}/.venv/bin/python")
+      set(python "${root}/.venv/bin/python")
+    endif()
   endif()
   set(${out} "${python}" PARENT_SCOPE)
 endfunction()
@@ -63,11 +62,11 @@ function(vehicle_sil_find_python out)
 endfunction()
 
 # How to install the Python packages of <group> (a dependency group of pyproject.toml) for a message:
-# uv first when vehicle-sil is the top-level project, then pip, the OS packages (<os-packages>) and
-# MSYS2 (<msys2-packages>).
+# uv first when the repository's .venv would be used (vehicle_sil_repository_python()), then pip, the
+# OS packages (<os-packages>) and MSYS2 (<msys2-packages>).
 function(vehicle_sil_python_install_hint out group pip_packages os_packages msys2_packages)
   set(hint "")
-  if(vehicle_sil_IS_TOP_LEVEL)
+  if(vehicle_sil_IS_TOP_LEVEL AND NOT CMAKE_HOST_WIN32)
     string(CONCAT hint "with uv, run `uv sync` (everything) or `uv sync --only-group ${group}` at the top of "
                        "vehicle-sil and configure again; without uv, ")
   endif()

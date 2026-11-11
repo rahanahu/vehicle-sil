@@ -19,10 +19,11 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 ### Python の探し方
 
-- 版と依存は、リポジトリ直下の `pyproject.toml`（`requires-python` と `[dependency-groups]`。`codegen` は PyYAML、`control` は grpcio、grpcio-tools、protobuf、`dev` は両方で既定）、`.python-version`（開発で使う版）、`uv.lock`（解決した版の固定）で決めています。版の下限は確かめた版で、上限は付けていません。
-- vehicle-sil が最上位のプロジェクトのとき、configure はリポジトリの `.venv`（`uv sync` が作る。`.venv/bin/python` または `.venv/Scripts/python.exe`）が Python 3.11 以上で必要なモジュールを import できれば、それを使います。そうでなければ `find_package(Python3 3.11)` で探します（有効にした仮想環境が先。`-DPython3_EXECUTABLE=` で指定できる）。処理は `cmake/VehicleSilPython.cmake` にあります。
+- 版と依存は、リポジトリ直下の `pyproject.toml`（`requires-python` と `[dependency-groups]`。`codegen` は PyYAML、`control` は grpcio、grpcio-tools、protobuf、`dev` は両方で既定）、`.python-version`（開発で使う版）、`uv.lock`（解決した版の固定）で決めています。版の下限は、試験を実際に回している最も古い版です（`scripts/verify-python.py` が、uv の lowest-direct の解決で下限そのものを Python 3.11 に入れて確かめます）。上限は付けていません。
+- vehicle-sil が最上位のプロジェクトのとき、configure はリポジトリの `.venv/bin/python`（`uv sync` が作る）が Python 3.11 以上で必要なモジュールを import できれば、それを使います。そうでなければ `find_package(Python3 3.11)` で探します（有効にした仮想環境が先。`-DPython3_EXECUTABLE=` で指定できる）。処理は `cmake/VehicleSilPython.cmake` にあります。
+- `.venv` に必要なパッケージがなくて別の Python を使った後で、同じ `.venv` に足したときは、`cmake --fresh` で configure し直すと `.venv` を使います。
 - FetchContent や `add_subdirectory` で取り込んだ利用側のビルドは、vehicle-sil の `.venv` を使いません。利用側の Python（有効にした仮想環境、`Python3_EXECUTABLE`、`PATH`）を使います。
-- MSYS2 UCRT64 は、uv を使わず pacman のパッケージの Python を使えます（`.venv` がなければ今までどおり探します）。
+- Windows では `.venv` を候補にしません（uv の Python を MinGW のビルドから使うことは確かめていないため）。MSYS2 UCRT64 の pacman のパッケージの Python を、今までどおり探して使います。
 
 ### Python 3 と PyYAML（J1939 の型付きメッセージの生成）
 
