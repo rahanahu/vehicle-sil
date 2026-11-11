@@ -1,0 +1,43 @@
+/* 画面全体のスタイル。テーマ（色、文字）は theme.scss。 */
+
+/*
+ * レイアウトの寸法はここだけで決める。
+ * 画面の幅の区分（compact / medium / wide）の境目は src/app/layout/layout.service.ts の BREAKPOINTS。
+ * CSS の @media では var() を使えないので、画面の幅で分けるのはシェル（app.ts）だけにし、
+ * シェルは LayoutService の signal を data-width 属性にして CSS から選ぶ。
+ * 画面の中の部品は、画面の幅でなく自分の幅（auto-fill、container query）で並びを変える。
+ */
+:root {
+  --app-space-1: 4px;
+  --app-space-2: 8px;
+  --app-space-3: 16px;
+  --app-space-4: 24px;
+  --app-gutter: clamp(12px, 2.5vw, 32px);
+  --app-nav-width: 240px;
+  --app-rail-width: 80px;
+  --app-content-max: 1600px;
+  --app-card-min: 260px;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--mat-sys-background);
+  color: var(--mat-sys-on-background);
+  font: var(--mat-sys-body-medium);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

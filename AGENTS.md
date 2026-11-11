@@ -88,6 +88,7 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 | `scripts/verify.py` | プリセットごとに構成、ビルド、テストを実行して要約する。失敗した段、落ちたテストと出力の先頭、ログの場所を表示する。JUnit 形式の結果も `build/logs/` に書く |
 | `scripts/check-commits.py` | コミットメッセージの形式と、コミットしてはいけないファイル（ローカルにだけ置くもの、`CLAUDE.local.md`、`build/`）を確かめる |
 | `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる。書き換えたファイルは、中断しても元に戻す |
+| `scripts/verify-web.py` | 画面（`gui/web`）の `npm ci`、書式、lint、単体試験、ビルド、e2e を順に回して要約する。ログは `build/logs/web-*.log`。`--skip-install`、`--skip-e2e`、`--tag` |
 
 ```sh
 scripts/verify.py --linux                            # コミット前: Linux の 5 つのプリセット

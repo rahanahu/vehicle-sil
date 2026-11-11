@@ -1,0 +1,66 @@
+<mat-toolbar class="toolbar">
+  @if (navMode() === 'drawer') {
+    <button
+      matIconButton
+      type="button"
+      data-testid="nav-toggle"
+      aria-controls="app-nav"
+      [attr.aria-expanded]="drawerOpen()"
+      [attr.aria-label]="drawerOpen() ? closeLabel : openLabel"
+      (click)="toggleDrawer()"
+    >
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+        <path d="M3 6h18v2H3zM3 11h18v2H3zM3 16h18v2H3z" fill="currentColor" />
+      </svg>
+    </button>
+  }
+  <span class="title" data-testid="app-title" i18n>vehicle-sil</span>
+</mat-toolbar>
+
+<!--
+  開閉の状態は drawerOpen だけが持つ。Material の Esc と背景のクリックでの自動の閉じを止め（disableClose）、
+  引き出しのときだけ閉じる（rail と full では Esc を押しても消えない）。
+-->
+<mat-sidenav-container class="body" (backdropClick)="closeDrawer()">
+  <mat-sidenav
+    id="app-nav"
+    class="nav"
+    data-testid="nav"
+    [attr.data-nav-mode]="navMode()"
+    [mode]="navMode() === 'drawer' ? 'over' : 'side'"
+    [opened]="navOpened()"
+    disableClose
+    (keydown.escape)="closeDrawer()"
+  >
+    <nav aria-label="画面" i18n-aria-label>
+      <mat-nav-list>
+        @for (item of navItems; track item.path) {
+          <a
+            mat-list-item
+            [routerLink]="item.path"
+            routerLinkActive
+            ariaCurrentWhenActive="page"
+            #active="routerLinkActive"
+            [activated]="active.isActive"
+            [attr.aria-label]="item.label"
+            [attr.title]="navMode() === 'rail' ? item.label : null"
+            (click)="closeDrawer()"
+          >
+            <svg matListItemIcon viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+              <path [attr.d]="item.icon" fill="currentColor" fill-rule="evenodd" />
+            </svg>
+            @if (navMode() !== 'rail') {
+              <span matListItemTitle>{{ item.label }}</span>
+            }
+          </a>
+        }
+      </mat-nav-list>
+    </nav>
+  </mat-sidenav>
+
+  <mat-sidenav-content>
+    <main class="content" data-testid="content">
+      <router-outlet />
+    </main>
+  </mat-sidenav-content>
+</mat-sidenav-container>

@@ -4,3 +4,12 @@
 compile_commands.json
 __pycache__/
 /python/vehicle_sil_control/_generated/
+
+# 画面（gui/web）
+/gui/web/node_modules/
+/gui/web/dist/
+/gui/web/.angular/
+/gui/web/test-results/
+/gui/web/playwright-report/
+/gui/web/blob-report/
+/gui/web/coverage/

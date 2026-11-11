@@ -1,0 +1,28 @@
+// Material のテーマ。明るい配色と暗い配色の両方を持ち、OS の設定（prefers-color-scheme）に従う。
+// 色は --mat-sys-* のシステムトークンとして出る。画面の CSS はこのトークンを使い、色を直接書かない。
+@use '@angular/material' as mat;
+
+html {
+  color-scheme: light dark;
+  @include mat.theme(
+    (
+      color: mat.$azure-palette,
+      // フォントは外部から読まない（オフラインでも同じ見た目にするため）
+      typography: (
+        plain-family: (
+          system-ui,
+          'Segoe UI',
+          'Noto Sans JP',
+          sans-serif,
+        ),
+        brand-family: (
+          system-ui,
+          'Segoe UI',
+          'Noto Sans JP',
+          sans-serif,
+        ),
+      ),
+      density: 0,
+    )
+  );
+}

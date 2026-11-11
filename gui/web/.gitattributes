@@ -1,0 +1,4 @@
+# Windows（core.autocrlf=true）でも LF で取り出す（prettier の検査を通すため）。
+* text=auto eol=lf
+*.ico binary
+*.png binary

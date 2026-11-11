@@ -1,0 +1,58 @@
+/* シェル: 上にツールバー、その下にナビゲーションと中身。幅の区分は host の data-width（Layout）。 */
+:host {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+}
+
+.toolbar {
+  gap: var(--app-space-2);
+  background: var(--mat-sys-surface-container);
+  color: var(--mat-sys-on-surface);
+}
+
+.title {
+  font: var(--mat-sys-title-large);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.body {
+  min-height: 0;
+}
+
+/* ナビゲーションの幅は区分ごとに決まった値 */
+.nav {
+  inline-size: var(--app-nav-width);
+  max-inline-size: 85vw;
+}
+
+:host([data-width='medium']) .nav {
+  inline-size: var(--app-rail-width);
+}
+
+:host([data-width='medium']) .nav [mat-list-item] {
+  justify-content: center;
+}
+
+/*
+ * 中身の領域。部品は container query（content）でこの幅に合わせる。
+ * 区分が上がるとナビゲーションが広がるので、各区分の中身の幅を「次の区分の最小の中身の幅」までに抑え、
+ * 窓を広げて中身が狭くなることがないようにする。
+ */
+.content {
+  container: content / inline-size;
+  box-sizing: border-box;
+  max-inline-size: var(--app-content-max);
+  margin-inline: auto;
+  padding: var(--app-gutter);
+}
+
+:host([data-width='compact']) .content {
+  max-inline-size: calc(var(--app-breakpoint-medium) - var(--app-rail-width));
+}
+
+:host([data-width='medium']) .content {
+  max-inline-size: calc(var(--app-breakpoint-wide) - var(--app-nav-width));
+}
