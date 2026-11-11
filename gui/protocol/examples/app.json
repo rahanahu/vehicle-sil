@@ -1,0 +1,41 @@
+{
+  "description": "The server, the launcher it found, and the limits.",
+  "request": {
+    "method": "GET",
+    "path": "api/app"
+  },
+  "status": 200,
+  "response": {
+    "vehicle_sil_gui": 1,
+    "version": "0.1.0",
+    "instance": "0123456789abcdef",
+    "root": "/path/to/root",
+    "initial_file": null,
+    "launcher": {
+      "path": "/path/to/vehicle_sil_launch",
+      "usable": true,
+      "problems": [],
+      "version": {
+        "vehicle_sil_launch": 1,
+        "vehicle_sil": "0.1.0",
+        "formats": {
+          "check": 1,
+          "run": 1,
+          "events": 1,
+          "describe": 1
+        },
+        "features": [
+          "events",
+          "stdin-commands",
+          "speed"
+        ]
+      }
+    },
+    "limits": {
+      "log_lines_per_source": 2000,
+      "check_timeout_s": 120,
+      "speed_min": 0.01,
+      "speed_max": 1000.0
+    }
+  }
+}

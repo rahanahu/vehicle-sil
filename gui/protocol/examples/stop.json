@@ -1,0 +1,62 @@
+{
+  "description": "Ask the run to stop (a second stop stops without waiting).",
+  "request": {
+    "method": "POST",
+    "path": "api/stop",
+    "body": {}
+  },
+  "status": 200,
+  "response": {
+    "session": {
+      "id": 1,
+      "file": "forever.yaml",
+      "disable": [
+        "Logger"
+      ],
+      "speed": null,
+      "start_paused": false,
+      "state": "running",
+      "phase": "running",
+      "stop_requests": 1,
+      "started_at": "2026-01-01T00:00:00.000Z",
+      "ended_at": null,
+      "launcher_pid": 10001,
+      "exit_code": null,
+      "last_seq": 15,
+      "sim_ms": 100,
+      "participants": [
+        {
+          "name": "Engine",
+          "required": true,
+          "enabled": true,
+          "state": "joined",
+          "pid": 10002,
+          "exit_code": null,
+          "signal": null
+        },
+        {
+          "name": "Dashboard",
+          "required": true,
+          "enabled": true,
+          "state": "joined",
+          "pid": 10003,
+          "exit_code": null,
+          "signal": null
+        },
+        {
+          "name": "Logger",
+          "required": false,
+          "enabled": false,
+          "state": "disabled",
+          "pid": null,
+          "exit_code": null,
+          "signal": null
+        }
+      ],
+      "findings": [],
+      "result": null,
+      "problems": [],
+      "problems_omitted": 0
+    }
+  }
+}

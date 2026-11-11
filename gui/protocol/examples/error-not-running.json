@@ -1,0 +1,16 @@
+{
+  "description": "Stop when nothing runs.",
+  "request": {
+    "method": "POST",
+    "path": "api/stop",
+    "body": {}
+  },
+  "status": 409,
+  "response": {
+    "error": {
+      "code": "not-running",
+      "message": "no simulation is running",
+      "detail": null
+    }
+  }
+}

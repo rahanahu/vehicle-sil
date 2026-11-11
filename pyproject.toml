@@ -22,8 +22,16 @@ dependencies = []
 codegen = ["pyyaml>=6.0.3"]
 # python/vehicle_sil_control: the client and CLI, and the generation of its gRPC stubs.
 control = ["grpcio>=1.85.0", "grpcio-tools>=1.85.0", "protobuf>=7.35.1"]
-dev = [{ include-group = "codegen" }, { include-group = "control" }]
+# gui/server: the browser GUI's server (vehicle-sil-gui, a member of this workspace) and its tests.
+gui = ["vehicle-sil-gui", "pytest>=9.2.0"]
+dev = [{ include-group = "codegen" }, { include-group = "control" }, { include-group = "gui" }]
 
 [tool.uv]
 package = false
 default-groups = ["dev"]
+
+[tool.uv.workspace]
+members = ["gui/server"]
+
+[tool.uv.sources]
+vehicle-sil-gui = { workspace = true }

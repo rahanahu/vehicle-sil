@@ -1,0 +1,574 @@
+{
+  "description": "A screen that reconnects and says what it already has: only the events from from_seq on.",
+  "client": [
+    {
+      "type": "auth",
+      "token": "<token>",
+      "session": 1,
+      "from_seq": 58
+    }
+  ],
+  "server": [
+    {
+      "type": "hello",
+      "vehicle_sil_gui": 1,
+      "version": "0.1.0",
+      "instance": "0123456789abcdef",
+      "session": {
+        "id": 1,
+        "file": "simulation.yaml",
+        "disable": [],
+        "speed": null,
+        "start_paused": false,
+        "state": "ended",
+        "phase": "ended",
+        "stop_requests": 0,
+        "started_at": "2026-01-01T00:00:00.000Z",
+        "ended_at": "2026-01-01T00:00:01.000Z",
+        "launcher_pid": 10001,
+        "exit_code": 0,
+        "last_seq": 59,
+        "sim_ms": 1000,
+        "participants": [
+          {
+            "name": "Engine",
+            "required": true,
+            "enabled": true,
+            "state": "ended",
+            "pid": 10002,
+            "exit_code": 0,
+            "signal": null
+          },
+          {
+            "name": "Dashboard",
+            "required": true,
+            "enabled": true,
+            "state": "ended",
+            "pid": 10003,
+            "exit_code": 0,
+            "signal": null
+          },
+          {
+            "name": "Logger",
+            "required": false,
+            "enabled": true,
+            "state": "ended",
+            "pid": 10004,
+            "exit_code": 0,
+            "signal": null
+          }
+        ],
+        "findings": [],
+        "result": {
+          "vehicle_sil_run": 1,
+          "vehicle_sil": "0.1.0",
+          "file": "simulation.yaml",
+          "result": "passed",
+          "strict": false,
+          "errors": 0,
+          "warnings": 0,
+          "notes": 1,
+          "simulation": "reached_stop_at",
+          "interrupted_by": null,
+          "participants": [
+            {
+              "name": "Engine",
+              "required": true,
+              "enabled": true,
+              "ended": "exited",
+              "exit_code": 0,
+              "signal": null,
+              "left_processes": false,
+              "log": null
+            },
+            {
+              "name": "Dashboard",
+              "required": true,
+              "enabled": true,
+              "ended": "exited",
+              "exit_code": 0,
+              "signal": null,
+              "left_processes": false,
+              "log": null
+            },
+            {
+              "name": "Logger",
+              "required": false,
+              "enabled": true,
+              "ended": "exited",
+              "exit_code": 0,
+              "signal": null,
+              "left_processes": false,
+              "log": null
+            }
+          ],
+          "findings": [],
+          "check": {
+            "vehicle_sil_check": 1,
+            "vehicle_sil": "0.1.0",
+            "file": "simulation.yaml",
+            "result": "passed",
+            "strict": false,
+            "errors": 0,
+            "warnings": 0,
+            "notes": 1,
+            "stop_at_ms": 1000,
+            "start_timeout_ms": 30000,
+            "stop_timeout_ms": 10000,
+            "registry_uri": null,
+            "participants": [
+              {
+                "name": "Engine",
+                "line": 9,
+                "command": [
+                  "engine/vehicle_sil_engine_ecu"
+                ],
+                "describe": true,
+                "required": true,
+                "enabled": true,
+                "step_ms": null,
+                "status": "described",
+                "reported": {
+                  "vehicle_sil": "0.1.0",
+                  "name": "Engine",
+                  "step_ns": 10000000,
+                  "networks": [
+                    {
+                      "name": "J1939_CAN",
+                      "kind": "can",
+                      "use": "raw",
+                      "nodes": []
+                    }
+                  ]
+                },
+                "variables": [
+                  {
+                    "name": "engine.demand",
+                    "type": "real",
+                    "causality": "input",
+                    "unit": "%",
+                    "min": 0,
+                    "max": 100,
+                    "step": null,
+                    "description": "requested level",
+                    "items": []
+                  },
+                  {
+                    "name": "engine.speed",
+                    "type": "integer",
+                    "causality": "output",
+                    "unit": "rpm",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "",
+                    "items": []
+                  },
+                  {
+                    "name": "engine.mode",
+                    "type": "enum",
+                    "causality": "parameter",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "operating mode",
+                    "items": [
+                      {
+                        "name": "off",
+                        "value": 0
+                      },
+                      {
+                        "name": "on",
+                        "value": 1
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "Dashboard",
+                "line": 11,
+                "command": [
+                  "dashboard/vehicle_sil_dashboard_ecu"
+                ],
+                "describe": true,
+                "required": true,
+                "enabled": true,
+                "step_ms": null,
+                "status": "described",
+                "reported": {
+                  "vehicle_sil": "0.1.0",
+                  "name": "Dashboard",
+                  "step_ns": 10000000,
+                  "networks": [
+                    {
+                      "name": "J1939_CAN",
+                      "kind": "can",
+                      "use": "raw",
+                      "nodes": []
+                    }
+                  ]
+                },
+                "variables": [
+                  {
+                    "name": "dashboard.demand",
+                    "type": "real",
+                    "causality": "input",
+                    "unit": "%",
+                    "min": 0,
+                    "max": 100,
+                    "step": null,
+                    "description": "requested level",
+                    "items": []
+                  },
+                  {
+                    "name": "dashboard.speed",
+                    "type": "integer",
+                    "causality": "output",
+                    "unit": "rpm",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "",
+                    "items": []
+                  },
+                  {
+                    "name": "dashboard.mode",
+                    "type": "enum",
+                    "causality": "parameter",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "operating mode",
+                    "items": [
+                      {
+                        "name": "off",
+                        "value": 0
+                      },
+                      {
+                        "name": "on",
+                        "value": 1
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "Logger",
+                "line": 13,
+                "command": [
+                  "logger/can_logger",
+                  "{registry_uri}"
+                ],
+                "describe": false,
+                "required": false,
+                "enabled": true,
+                "step_ms": null,
+                "status": "not_checked",
+                "reported": null,
+                "variables": null
+              }
+            ],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "line": 6,
+                "participants": [
+                  "Engine",
+                  "Dashboard",
+                  "Logger"
+                ]
+              }
+            ],
+            "findings": [
+              {
+                "severity": "note",
+                "code": "not-checked",
+                "file": "simulation.yaml",
+                "line": 13,
+                "participant": "Logger",
+                "network": null,
+                "message": "participant 'Logger': describe is false, so it was not checked",
+                "detail": null
+              }
+            ]
+          }
+        },
+        "problems": [],
+        "problems_omitted": 0
+      },
+      "replay": {
+        "from_seq": 58,
+        "omitted": {
+          "log": {},
+          "events": 0
+        }
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
+        "seq": 58,
+        "t_ms": 580,
+        "phase": "ended"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "result",
+        "seq": 59,
+        "t_ms": 590,
+        "result": {
+          "vehicle_sil_run": 1,
+          "vehicle_sil": "0.1.0",
+          "file": "simulation.yaml",
+          "result": "passed",
+          "strict": false,
+          "errors": 0,
+          "warnings": 0,
+          "notes": 1,
+          "simulation": "reached_stop_at",
+          "interrupted_by": null,
+          "participants": [
+            {
+              "name": "Engine",
+              "required": true,
+              "enabled": true,
+              "ended": "exited",
+              "exit_code": 0,
+              "signal": null,
+              "left_processes": false,
+              "log": null
+            },
+            {
+              "name": "Dashboard",
+              "required": true,
+              "enabled": true,
+              "ended": "exited",
+              "exit_code": 0,
+              "signal": null,
+              "left_processes": false,
+              "log": null
+            },
+            {
+              "name": "Logger",
+              "required": false,
+              "enabled": true,
+              "ended": "exited",
+              "exit_code": 0,
+              "signal": null,
+              "left_processes": false,
+              "log": null
+            }
+          ],
+          "findings": [],
+          "check": {
+            "vehicle_sil_check": 1,
+            "vehicle_sil": "0.1.0",
+            "file": "simulation.yaml",
+            "result": "passed",
+            "strict": false,
+            "errors": 0,
+            "warnings": 0,
+            "notes": 1,
+            "stop_at_ms": 1000,
+            "start_timeout_ms": 30000,
+            "stop_timeout_ms": 10000,
+            "registry_uri": null,
+            "participants": [
+              {
+                "name": "Engine",
+                "line": 9,
+                "command": [
+                  "engine/vehicle_sil_engine_ecu"
+                ],
+                "describe": true,
+                "required": true,
+                "enabled": true,
+                "step_ms": null,
+                "status": "described",
+                "reported": {
+                  "vehicle_sil": "0.1.0",
+                  "name": "Engine",
+                  "step_ns": 10000000,
+                  "networks": [
+                    {
+                      "name": "J1939_CAN",
+                      "kind": "can",
+                      "use": "raw",
+                      "nodes": []
+                    }
+                  ]
+                },
+                "variables": [
+                  {
+                    "name": "engine.demand",
+                    "type": "real",
+                    "causality": "input",
+                    "unit": "%",
+                    "min": 0,
+                    "max": 100,
+                    "step": null,
+                    "description": "requested level",
+                    "items": []
+                  },
+                  {
+                    "name": "engine.speed",
+                    "type": "integer",
+                    "causality": "output",
+                    "unit": "rpm",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "",
+                    "items": []
+                  },
+                  {
+                    "name": "engine.mode",
+                    "type": "enum",
+                    "causality": "parameter",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "operating mode",
+                    "items": [
+                      {
+                        "name": "off",
+                        "value": 0
+                      },
+                      {
+                        "name": "on",
+                        "value": 1
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "Dashboard",
+                "line": 11,
+                "command": [
+                  "dashboard/vehicle_sil_dashboard_ecu"
+                ],
+                "describe": true,
+                "required": true,
+                "enabled": true,
+                "step_ms": null,
+                "status": "described",
+                "reported": {
+                  "vehicle_sil": "0.1.0",
+                  "name": "Dashboard",
+                  "step_ns": 10000000,
+                  "networks": [
+                    {
+                      "name": "J1939_CAN",
+                      "kind": "can",
+                      "use": "raw",
+                      "nodes": []
+                    }
+                  ]
+                },
+                "variables": [
+                  {
+                    "name": "dashboard.demand",
+                    "type": "real",
+                    "causality": "input",
+                    "unit": "%",
+                    "min": 0,
+                    "max": 100,
+                    "step": null,
+                    "description": "requested level",
+                    "items": []
+                  },
+                  {
+                    "name": "dashboard.speed",
+                    "type": "integer",
+                    "causality": "output",
+                    "unit": "rpm",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "",
+                    "items": []
+                  },
+                  {
+                    "name": "dashboard.mode",
+                    "type": "enum",
+                    "causality": "parameter",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "operating mode",
+                    "items": [
+                      {
+                        "name": "off",
+                        "value": 0
+                      },
+                      {
+                        "name": "on",
+                        "value": 1
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "Logger",
+                "line": 13,
+                "command": [
+                  "logger/can_logger",
+                  "{registry_uri}"
+                ],
+                "describe": false,
+                "required": false,
+                "enabled": true,
+                "step_ms": null,
+                "status": "not_checked",
+                "reported": null,
+                "variables": null
+              }
+            ],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "line": 6,
+                "participants": [
+                  "Engine",
+                  "Dashboard",
+                  "Logger"
+                ]
+              }
+            ],
+            "findings": [
+              {
+                "severity": "note",
+                "code": "not-checked",
+                "file": "simulation.yaml",
+                "line": 13,
+                "participant": "Logger",
+                "network": null,
+                "message": "participant 'Logger': describe is false, so it was not checked",
+                "detail": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "synced",
+      "session": 1,
+      "last_seq": 59
+    }
+  ]
+}

@@ -1,0 +1,168 @@
+"""Finding vehicle_sil_launch, asking what it can do, and the only command lines this server gives it."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import math
+import os
+import shutil
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from . import process
+
+LAUNCHER_NAME = "vehicle_sil_launch"
+ENV_VARIABLE = "VEHICLE_SIL_LAUNCH"
+REQUIRED_FEATURES = ("events", "stdin-commands")
+VERSION_TIMEOUT_S = 10
+SPEED_MIN = 0.01
+SPEED_MAX = 1000.0
+
+
+class LauncherNotFound(Exception):
+    pass
+
+
+@dataclass
+class Launcher:
+    path: Path
+    usable: bool = False
+    problems: list[dict] = field(default_factory=list)
+    version: dict | None = None
+    _stamp: tuple | None = None
+
+    @property
+    def prefix(self) -> list[str]:
+        """The program to start. A .py file (the fake launcher of the tests) runs with this Python."""
+        if self.path.suffix == ".py":
+            return [sys.executable, str(self.path)]
+        return [str(self.path)]
+
+    @property
+    def features(self) -> list[str]:
+        f = (self.version or {}).get("features")
+        return [x for x in f if isinstance(x, str)] if isinstance(f, list) else []
+
+    def info(self) -> dict:
+        return {"path": str(self.path), "usable": self.usable, "problems": self.problems, "version": self.version}
+
+    async def probe(self) -> None:
+        """Runs `version --json` (again only when the file has changed) and decides whether it is usable."""
+        try:
+            st = self.path.stat()
+            stamp = (st.st_mtime_ns, st.st_size)
+        except OSError as e:
+            self._set(None, [{"code": "launcher-missing",
+                              "message": f"{self.path} cannot be read any more ({e.strerror}): build it again, "
+                                         "or start the GUI with --launcher <path>"}])
+            self._stamp = None
+            return
+        if stamp == self._stamp:
+            return
+        self._stamp = stamp
+        try:
+            code, out, err = await process.run_to_end(self.prefix + ["version", "--json"], cwd=None,
+                                                      timeout_s=VERSION_TIMEOUT_S)
+        except (OSError, TimeoutError) as e:
+            what = "did not answer in time" if isinstance(e, TimeoutError) else f"cannot be started ({e})"
+            self._set(None, [{"code": "launcher-version",
+                              "message": f"{self.path} version --json {what}: check that it is "
+                                         f"{LAUNCHER_NAME} and that it runs"}])
+            return
+        try:
+            version = json.loads(out)
+        except ValueError:
+            version = None
+        if code != 0 or not isinstance(version, dict) or version.get("vehicle_sil_launch") != 1:
+            last = err.decode("utf-8", "replace").strip().splitlines()[-1:] or [""]
+            self._set(None, [{"code": "launcher-version",
+                              "message": f"{self.path} version --json did not write the version object "
+                                         f"(exit code {code}{': ' + last[0] if last[0] else ''}): this "
+                                         f"{LAUNCHER_NAME} is older than this GUI; build a newer one"}])
+            return
+        self.version = version
+        missing = [f for f in REQUIRED_FEATURES if f not in self.features]
+        self._set(version, [{"code": "missing-feature",
+                             "message": f"{self.path} has no '{f}' (its features: "
+                                        f"{', '.join(self.features) or 'none'}): this {LAUNCHER_NAME} is older "
+                                        "than this GUI; build a newer one"} for f in missing])
+
+    def _set(self, version: dict | None, problems: list[dict]) -> None:
+        self.version = version
+        self.problems = problems
+        self.usable = not problems
+
+
+def find(explicit: str | None) -> Path:
+    """--launcher, then the environment variable, then PATH. Raises LauncherNotFound with what to do."""
+    for given, origin in ((explicit, "--launcher"), (os.environ.get(ENV_VARIABLE), ENV_VARIABLE)):
+        if given:
+            path = Path(given).expanduser()
+            if not path.is_file():
+                raise LauncherNotFound(f"{origin} {given}: no such file: give the path of {LAUNCHER_NAME}")
+            return path.resolve()
+    found = shutil.which(LAUNCHER_NAME)
+    if not found:
+        raise LauncherNotFound(f"{LAUNCHER_NAME} is not on PATH: give its path with --launcher <path> or "
+                               f"{ENV_VARIABLE}=<path> (it is built in build/<preset>/tools/launch/)")
+    return Path(found).resolve()
+
+
+# ---------------------------------------------------------------- the command lines
+
+
+class InvalidRequest(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def check_speed(speed: object) -> float | str | None:
+    if speed is None or speed == "max":
+        return speed
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not math.isfinite(speed) \
+            or not SPEED_MIN <= speed <= SPEED_MAX:
+        raise InvalidRequest("invalid-field", f"speed must be null, \"max\" or a number from {SPEED_MIN} to "
+                                              f"{SPEED_MAX:g} (1 is real time)")
+    return float(speed)
+
+
+def check_disable(disable: object, known: list[str]) -> list[str]:
+    """The names to give --disable: each must be a participant of the check result of the file."""
+    if disable is None:
+        return []
+    if not isinstance(disable, list) or not all(isinstance(n, str) for n in disable):
+        raise InvalidRequest("invalid-field", "disable must be a list of participant names")
+    unknown = [n for n in disable if n not in known]
+    if unknown:
+        raise InvalidRequest("unknown-participant",
+                             f"no participant named {', '.join(repr(n) for n in unknown)} in this file: the "
+                             f"participants are {', '.join(known) or 'none'}")
+    if len(set(disable)) != len(disable):
+        raise InvalidRequest("invalid-field", "disable names a participant twice")
+    return list(disable)
+
+
+def speed_argument(speed: float | str) -> str:
+    return "max" if speed == "max" else f"{speed:g}"
+
+
+def check_command(launcher: Launcher, file: str, disable: list[str]) -> list[str]:
+    argv = launcher.prefix + ["check", "--json"]
+    for name in disable:
+        argv += ["--disable", name]
+    return argv + ["--", file]
+
+
+def run_command(launcher: Launcher, file: str, disable: list[str], speed: float | str | None,
+                start_paused: bool) -> list[str]:
+    argv = launcher.prefix + ["run", "--events", "--stdin-commands"]
+    for name in disable:
+        argv += ["--disable", name]
+    if speed is not None:
+        argv += ["--speed", speed_argument(speed)]
+    if start_paused:
+        argv += ["--start-paused"]
+    return argv + ["--", file]

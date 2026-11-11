@@ -1,0 +1,23 @@
+{
+  "description": "Start while a run is running.",
+  "request": {
+    "method": "POST",
+    "path": "api/run",
+    "body": {
+      "file": "forever.yaml",
+      "disable": [
+        "Logger"
+      ],
+      "speed": null,
+      "start_paused": false
+    }
+  },
+  "status": 409,
+  "response": {
+    "error": {
+      "code": "session-running",
+      "message": "a simulation is running: stop it (POST api/stop) and wait for it to end before starting another",
+      "detail": null
+    }
+  }
+}

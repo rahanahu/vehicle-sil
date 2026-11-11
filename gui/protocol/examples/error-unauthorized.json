@@ -1,0 +1,18 @@
+{
+  "description": "No token, or a wrong one.",
+  "request": {
+    "method": "POST",
+    "path": "api/check",
+    "body": {
+      "file": "simulation.yaml"
+    }
+  },
+  "status": 401,
+  "response": {
+    "error": {
+      "code": "unauthorized",
+      "message": "missing or wrong token: send Authorization: Bearer <token>, the token in the URL the server printed (#token=...)",
+      "detail": null
+    }
+  }
+}

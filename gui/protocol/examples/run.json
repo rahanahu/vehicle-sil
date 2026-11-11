@@ -1,0 +1,41 @@
+{
+  "description": "Start a run.",
+  "request": {
+    "method": "POST",
+    "path": "api/run",
+    "body": {
+      "file": "forever.yaml",
+      "disable": [
+        "Logger"
+      ],
+      "speed": null,
+      "start_paused": false
+    }
+  },
+  "status": 200,
+  "response": {
+    "session": {
+      "id": 1,
+      "file": "forever.yaml",
+      "disable": [
+        "Logger"
+      ],
+      "speed": null,
+      "start_paused": false,
+      "state": "running",
+      "phase": null,
+      "stop_requests": 0,
+      "started_at": "2026-01-01T00:00:00.000Z",
+      "ended_at": null,
+      "launcher_pid": 10001,
+      "exit_code": null,
+      "last_seq": null,
+      "sim_ms": null,
+      "participants": [],
+      "findings": [],
+      "result": null,
+      "problems": [],
+      "problems_omitted": 0
+    }
+  }
+}

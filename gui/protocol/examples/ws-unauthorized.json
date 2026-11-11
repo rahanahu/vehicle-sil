@@ -1,0 +1,18 @@
+{
+  "description": "A wrong token: an error, then the server closes the connection with code 4401.",
+  "client": [
+    {
+      "type": "auth",
+      "token": "wrong"
+    }
+  ],
+  "server": [
+    {
+      "type": "error",
+      "session": null,
+      "code": "unauthorized",
+      "message": "the first message must be {\"type\":\"auth\",\"token\":...} with the token of the URL the server printed",
+      "detail": null
+    }
+  ]
+}
