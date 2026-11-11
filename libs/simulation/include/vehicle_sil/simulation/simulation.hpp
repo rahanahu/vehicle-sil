@@ -152,12 +152,17 @@ public:
     /// run_for(), else 0).
     [[nodiscard]] SimTime now() const noexcept;
 
+    /// The ECU named `name` (added with add_ecu() or add(), on both; local: also one added
+    /// through local()), e.g. for its control agent (Ecu::agent()) after add<App>().
+    /// std::out_of_range for an unknown name (the message lists the ECUs).
+    [[nodiscard]] Ecu& ecu(std::string_view name);
     [[nodiscard]] bool is_local() const noexcept;
     /// Local only (std::logic_error otherwise): the buses, for fault injection, raw frames and
     /// taps (include vehicle_sil/local/local_bench.hpp).
     [[nodiscard]] LocalBench& local();
     /// SIL Kit only (std::logic_error otherwise): the participant of an ECU, for what only a
-    /// Peer has (taps, control agents, the SIL Kit ports; include vehicle_sil/peer/peer.hpp).
+    /// Peer has (taps, the SIL Kit ports, the runtime; include vehicle_sil/peer/peer.hpp). The
+    /// ECU's variables and its control agent are on the Ecu (Ecu::input(), Ecu::agent()), on both.
     /// std::out_of_range for an unknown name.
     [[nodiscard]] Peer& peer(std::string_view ecu);
     /// SIL Kit only (std::logic_error otherwise): the registry's URI (the one given, or where the

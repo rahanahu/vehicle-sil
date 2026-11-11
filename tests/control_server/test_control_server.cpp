@@ -5,7 +5,7 @@
 #include "silkit_test_util.hpp"
 #include "test_harness.hpp"
 
-#include "vehicle_sil/control/peer_agent.hpp"
+#include "vehicle_sil/control/agent.hpp"
 #include "vehicle_sil/control/v1/control.grpc.pb.h"
 #include "vehicle_sil/control_grpc/agent_client.hpp"
 #include "vehicle_sil/control_grpc/server.hpp"
@@ -81,11 +81,8 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
     control_grpc::ControlServer server({.listen = "127.0.0.1:0", .time = time.get()});
     const std::string address = "127.0.0.1:" + std::to_string(server.port());
 
-    // Models and agents before the peers.
+    // Models before the peers.
     std::uint8_t level = 1;
-    control::Agent engine_agent(control::AgentOptions{.sample_period = 10ms});
-    engine_agent.input("engine.level", &level, {.unit = "%", .min = 0.0, .max = 200.0});
-    control::Agent body_agent;
     std::mutex received_mutex;
     std::vector<std::pair<std::int64_t, std::uint8_t>> received;
 
@@ -101,11 +98,12 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
         const std::lock_guard lock(received_mutex);
         received.emplace_back(ms_of(body.runtime().now()), m.data[0]);
     });
-    control::attach(engine, engine_agent);
-    control::attach(body, body_agent);
-    control_grpc::AgentClient engine_link(engine_agent, {.server = address, .participant = "Engine",
-                                                         .status = [&] { return control::PeerStatus{engine.failed(), engine.error()}; }});
-    control_grpc::AgentClient body_link(body_agent, {.server = address, .participant = "Body"});
+    engine.set_agent_options(control::AgentOptions{.sample_period = 10ms});
+    engine.input("engine.level", &level, {.unit = "%", .min = 0.0, .max = 200.0});
+    // Body declares nothing: its agent has the peer's monitoring outputs only.
+    control_grpc::AgentClient engine_link(engine.agent(), {.server = address, .participant = "Engine",
+                                                           .status = [&] { return control::PeerStatus{engine.failed(), engine.error()}; }});
+    control_grpc::AgentClient body_link(body.agent(), {.server = address, .participant = "Body"});
 
     const auto stub = v1::ControlService::NewStub(grpc::CreateChannel(address, grpc::InsecureChannelCredentials()));
     const auto call = [&](auto method, const auto& request, auto& reply) {
@@ -300,9 +298,9 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
     CHECK(saw_initial);
     CHECK(saw_paused_time);
 
-    engine_agent.finish();
-    body_agent.finish();
-    engine_link.stop();
+    engine.stop(); // cancels what is still waiting on the agents ...
+    body.stop();
+    engine_link.stop(); // ... and the links send those results before they close
     body_link.stop();
 }
 

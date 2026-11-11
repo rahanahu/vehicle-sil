@@ -62,39 +62,65 @@ Agent::Agent(AgentOptions options) :
   results_(options.max_pending == 0 ? 1 : options.max_pending),
   events_(options.max_events == 0 ? 1 : options.max_events)
 {
-    if (options_.max_pending == 0 || options_.max_events == 0)
-    {
-        throw std::invalid_argument("AgentOptions max_pending and max_events must be > 0");
-    }
-    if (options_.sample_period < SimDuration::zero())
-    {
-        throw std::invalid_argument("AgentOptions sample_period must be >= 0");
-    }
+    check_options(options_);
     waiting_.reserve(options_.max_pending);
     due_.reserve(options_.max_pending);
 }
 
-void Agent::require_registering(const char* what) const
+void Agent::check_options(const AgentOptions& options)
 {
-    if (sealed_.load(std::memory_order_acquire))
+    if (options.max_pending == 0 || options.max_events == 0)
     {
-        throw std::logic_error(std::string("Agent::") + what + "() after the first submit() or step");
+        throw std::invalid_argument("vehicle_sil::control::AgentOptions: max_pending and max_events must be > 0 (got "
+                                    + std::to_string(options.max_pending) + " and " + std::to_string(options.max_events) + ")");
     }
+    if (options.sample_period < SimDuration::zero())
+    {
+        throw std::invalid_argument("vehicle_sil::control::AgentOptions: sample_period must be >= 0 (0: every step)");
+    }
+}
+
+void Agent::require_registering(const std::string& what) const
+{
+    if (sealed_.load(std::memory_order_acquire) || completed_.load(std::memory_order_acquire))
+    {
+        throw std::logic_error("vehicle_sil::control::Agent: " + what
+                               + " after the schema was complete (by the start of the run, the first submit() or a "
+                                 "transport such as AgentClient): declare every variable before that");
+    }
+}
+
+void Agent::complete_schema()
+{
+    if (completed_.load(std::memory_order_acquire))
+    {
+        return;
+    }
+    const std::lock_guard lock(schema_mutex_);
+    if (completed_.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+    if (complete_)
+    {
+        complete_(); // may throw: the schema stays open
+    }
+    completed_.store(true, std::memory_order_release);
 }
 
 void Agent::add(VariableInfo info, Variable variable)
 {
-    require_registering("add a variable");
+    require_registering("variable '" + info.name + "' declared");
     const auto bad = [&](const std::string& why) {
-        return std::invalid_argument("Agent: variable '" + info.name + "' " + why);
+        return std::invalid_argument("vehicle_sil::control::Agent: variable '" + info.name + "' " + why);
     };
     if (info.name.empty())
     {
-        throw std::invalid_argument("Agent: a variable needs a name");
+        throw std::invalid_argument("vehicle_sil::control::Agent: a variable needs a name (an empty name was given)");
     }
     if (index_.count(info.name) != 0)
     {
-        throw bad("is defined twice");
+        throw bad("is declared twice: give each variable of the agent its own name");
     }
     if ((info.min && std::isnan(*info.min)) || (info.max && std::isnan(*info.max)))
     {
@@ -135,21 +161,16 @@ void Agent::add(VariableInfo info, Variable variable)
     variables_.push_back(std::move(variable));
 }
 
-void Agent::bind_driver(std::function<void()> wakeup)
+void Agent::bind_driver(std::function<void()> wakeup, std::function<void()> complete)
 {
-    require_registering("bind_driver");
+    require_registering("bind_driver()");
     if (std::exchange(bound_, true))
     {
-        throw std::logic_error("Agent: already bound to a driver of its steps (attach() it to one peer only)");
+        throw std::logic_error("vehicle_sil::control::Agent: already bound to a driver of its steps (one driver per agent)");
     }
+    complete_ = std::move(complete);
     const std::lock_guard lock(wakeup_mutex_);
     wakeup_ = std::move(wakeup);
-}
-
-void Agent::unbind_driver() noexcept
-{
-    bound_ = false;
-    clear_wakeup();
 }
 
 void Agent::clear_wakeup()
@@ -243,6 +264,7 @@ std::optional<std::string> Agent::check(const Write& write, std::pair<std::size_
 SubmitResult Agent::submit(Command command)
 {
     const std::lock_guard transport(transport_mutex_);
+    complete_schema(); // the schema the command is checked against is final from here
     sealed_.store(true, std::memory_order_release);
     stats_.submitted.fetch_add(1, std::memory_order_relaxed);
     const auto invalid = [&](std::string reason) {
@@ -350,6 +372,18 @@ void Agent::push_result(CommandResult result)
 
 void Agent::on_step_begin(SimTime now)
 {
+    if (!completed_.load(std::memory_order_acquire))
+    {
+        // A driver with a completion function completes the schema before its first step;
+        // without one, the first step closes the registration.
+        if (complete_)
+        {
+            throw std::logic_error("vehicle_sil::control::Agent::on_step_begin(): the schema is not complete; the driver "
+                                   "that gave bind_driver() a completion function must call complete_schema() before "
+                                   "its first step");
+        }
+        completed_.store(true, std::memory_order_release);
+    }
     sealed_.store(true, std::memory_order_release);
     if (last_step_ && now <= *last_step_)
     {

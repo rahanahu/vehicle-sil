@@ -1,6 +1,6 @@
 # Control API の使い方
 
-実行中のシミュレーションを、外から操作・監視します。Peer に Control Agent を組み込み、Control Server につなぎます。クライアント（Python、CLI、将来の GUI）は Control Server の gRPC の API（`proto/vehicle_sil/control/v1/control.proto`）を使います。契約の詳細（反映の時刻、順序、上限、スレッド）は [architecture.md](architecture.md) の「外部操作（Control API）と GUI」にあります。
+実行中のシミュレーションを、外から操作・監視します。ECU が外から読み書きする変数を宣言し、その Control Agent を Control Server につなぎます。クライアント（Python、CLI、将来の GUI）は Control Server の gRPC の API（`proto/vehicle_sil/control/v1/control.proto`）を使います。契約の詳細（反映の時刻、順序、上限、スレッド）は [architecture.md](architecture.md) の「外部操作（Control API）と GUI」にあります。
 
 ```
 クライアント（Python、CLI）──gRPC（TLS、トークン）──┐
@@ -20,22 +20,38 @@ cmake --build --preset linux-gcc-release
 
 gRPC が見つからなければ FetchContent で取り込みます（初回は取得とビルドに数分かかります）。Windows（MSYS2 UCRT64）は `pacman -S mingw-w64-ucrt-x86_64-grpc` で入れておきます。詳しくは [dependencies.md](dependencies.md)。
 
-## Peer に Agent を組み込む
+## ECU の変数
+
+ECU のクラス（`Ecu&` を受け取るクラス）が、コンストラクターで変数を宣言します。宣言は ECU の Control Agent（`Ecu::agent()`。ECU に 1 つ）が持ちます。SIL Kit の `Peer` でも、ローカルの `Simulation()` と `LocalBench` でも、同じコードが同じように動きます。
 
 ```cpp
-#include "vehicle_sil/control/peer_agent.hpp"
-#include "vehicle_sil/control_grpc/agent_client.hpp"
+class Engine {
+public:
+    explicit Engine(vehicle_sil::Ecu& ecu) {
+        ecu.input("engine.throttle", &throttle_, {.unit = "%", .min = 0.0, .max = 100.0});
+        ecu.output("engine.speed", &rpm_, {.unit = "rpm"});
+        ecu.every(10ms, [this](vehicle_sil::SimTime) { rpm_ = 800.0 + 50.0 * throttle_; });
+    }
+private:
+    double throttle_ = 0.0;
+    double rpm_ = 800.0;
+};
+```
 
-double throttle = 0.0;                      // モデル（Peer より先に宣言する）
-double rpm = 800.0;
-vehicle_sil::control::Agent agent;          // Agent も Peer より先
-agent.input("engine.throttle", &throttle, {.unit = "%", .min = 0.0, .max = 100.0});
-agent.output("engine.speed", &rpm, {.unit = "rpm"});
+- 宣言: `input(name, &value, options)`、`input(name, get, set, options)`（setter が値の保存以外もするとき）、`input_enum(name, &value, items, options)`、`output(name, &value, options)`、`output(name, get, options)`、`output_enum(name, get, items, options)`。型は bool、整数、実数、列挙で、単位、範囲、刻み、説明を付けられます（`VariableOptions`。`parameter` は最初のステップの前だけ書ける変数）。値は ECU のステップのスレッドで読み書きするので、モデルにロックは要りません。
+- 宣言は実行の前（ECU の組み立ての中）だけです。開始後は `std::logic_error`、同じ ECU での同じ名前は `std::invalid_argument` です（どちらも文言に ECU の名前があります）。
+- ポインターと関数は、ECU が持つもの（`Simulation::add()` が作るクラス、`emplace()` したオブジェクト）を指すようにします。ECU は Agent を、ネットワークの後、`emplace()` したオブジェクトの前に破棄します。
+- `set_agent_options()` で、読み出しの周期（`sample_period`、既定 10 ms、0 で毎ステップ）とキューの大きさを選べます。最初の `input()`、`output()`、`agent()` より前だけです。不正な値はその場で `std::invalid_argument` です（文言に ECU の名前）。
+- 変数を宣言しない ECU には Agent がなく、ステップの処理も増えません。
+- 外からの書き込みは、指定した仮想時刻以後の最初のステップで、アプリの処理の前に反映されます（そのステップの J1939 の受信処理や部品のタイマーは反映より前に動くので、それらが新しい値を使うのは次のステップから）。値は、アプリと LIN の処理の後に読み出します。SIL Kit とローカルで同じ時点です。
+- 同じプロセスからは、`ecu.agent().submit()` で書き込み、`latest()` で読めます。`Simulation::add<App>()` で足した ECU は、`sim.ecu(name).agent()` で引けます（例: `examples/vehicle`）。
 
+## Control Server につなぐ
+
+```cpp
 vehicle_sil::Peer peer(options);            // Coordinated、仮想時間
-// ... J1939 のネットワーク、ノード、on_step() ...
-vehicle_sil::control::attach(peer, agent);  // start() の前。J1939 の監視の出力も足す
-vehicle_sil::control_grpc::AgentClient link(agent, {
+peer.emplace<Engine>(peer);                 // ECU が変数を宣言する
+vehicle_sil::control_grpc::AgentClient link(peer.agent(), {   // ECU の後、start() の前に作る
     .server = "ctrl-pc:8510", .participant = options.participant,
     .status = [&] { return vehicle_sil::control::PeerStatus{peer.failed(), peer.error()}; },
     .token = agent_token, .root_certificates_pem = server_certificate,
@@ -45,16 +61,18 @@ vehicle_sil::control_grpc::AgentClient link(agent, {
     }});
 peer.start();
 while (!peer.wait(std::chrono::minutes(1))) {} // 止めている間も含めて、終わるまで待つ
-peer.stop();                                // ステップがもう走らない
-agent.finish();                             // 残っている操作を Cancelled に（stop() の後）
+peer.stop();                                // ステップが終わり、残っている操作を Cancelled にする
 link.stop();                                // その結果を送ってから閉じる
 ```
 
-- 変数は bool、整数、実数、列挙で、単位、範囲、刻み、説明を付けられます。値は Agent のステップのスレッドで読み書きするので、モデルにロックは要りません。
-- 外からの書き込みは、指定した仮想時刻以後の最初のステップで、アプリの処理の前に反映されます（J1939 の受信処理や部品のタイマーが新しい値を使うのは次のステップから）。
-- `agent.finish()` は `peer.stop()` の後に呼びます。`wait()` が時間切れで戻っただけではステップが続いています。
+- `AgentClient` は、作るときに Agent の変数の一覧（スキーマ）を確定させます。ECU が変数を宣言した後、`start()` の前に作ると、シミュレーションが始まる前に Server につながります。確定した後の宣言は `std::logic_error` です。
+- `AgentClient` は ECU（`Peer`、`Simulation`、`LocalBench`）より後に宣言し、先に破棄します。ECU が Agent を破棄するためです。ECU に `emplace()` しません（`emplace()` したオブジェクトは Agent より後に壊れます）。`AgentClient` が残ったまま ECU が Agent を破棄すると、ECU の名前と直し方を標準エラーに出してプロセスを止めます（`std::terminate()`）。
+- Peer は、スキーマを確定するときに、ECU の変数の後に監視の出力を足します（`peer.steps`、`peer.speed`、J1939 のネットワークとノードの状態と統計。一覧は [architecture.md](architecture.md) の「Peer の監視」）。対象は、そのときにある J1939 のネットワークとノードです。その後に `j1939()` でネットワークを足すと `std::logic_error` になるので、ネットワークは `AgentClient` を作る前（最初の `submit()` の前）に足します。要らなければ `PeerOptions::monitor = false` にします。
+- 終わり: `peer.stop()` は、ステップが走らなくなった後に、残っている操作を `Cancelled` にします（破棄でも同じ）。その後で `link.stop()` を呼ぶと、その結果も Server に届きます。`wait()` が時間切れで戻っただけでは、ステップが続いています。
 - `on_replaced` は、同じ participant 名の別のプロセスに接続を置き換えられて、`AgentClient` がつなぎ直しをやめたときに 1 回だけ、`AgentClient` のスレッドで呼ばれます。引数は `last_error()` と同じ理由です。指定しなければ、理由を標準エラーに 1 行出します。この中で `link.stop()` を呼んだり `link` を破棄したりしません。`examples/control/control_peer.cpp` は、理由を標準エラーに出し、`peer.request_stop()` で止めて、終了コード 1 で終わります。
-- 例: `examples/control/control_peer.cpp`（プロセスごとに 1 つの Peer）、`examples/control/control_demo.cpp`（1 つのプロセスにすべて）。
+- `Simulation` の ECU も同じです（`AgentClient link(sim.ecu("Engine").agent(), ...)`）。SIL Kit の `Simulation` は、実行の終わりに ECU を止めるので、残っている操作はそこで `Cancelled` になります。
+- ローカル（`Simulation()`、`LocalBench`）の ECU も、`AgentClient` で既存の Control Server につないで値を読み書きできます。ただし、時間の操作（一時停止、ステップ実行）、`Simulation` から Control Server を起動する口、監視の出力はありません。待っている書き込みの結果は届きません（`AgentClient` は ECU より先に破棄するため）。
+- 例: `examples/control/control_peer.cpp`（プロセスごとに 1 つの Peer）、`examples/control/control_demo.cpp`（1 つのプロセスにすべて）。どちらも ECU のクラスは `examples/control/control_apps.hpp` にあります。
 
 ## Control Server を起動する
 

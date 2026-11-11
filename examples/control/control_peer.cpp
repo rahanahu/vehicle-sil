@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
 //
-// vehicle_sil_control_peer: one J1939 peer with a control agent, in its own process (possibly on
-// another PC). The role decides the model:
+// vehicle_sil_control_peer: one J1939 peer whose ECU declares control variables, in its own
+// process (possibly on another PC). The role decides the ECU (control_apps.hpp):
 //   --role engine  engine.throttle (input, %), engine.speed (output, rpm); broadcasts its speed
 //   --role body    cabin.parking_brake (input), cabin.lamp (enum input), body.engine_speed (output)
 // The peer is Coordinated: start vehicle_sil_control_server --required <participants> first.
 //
 //   vehicle_sil_control_peer --role engine --participant Engine --registry-uri silkit://host:8500
 //                            --control-server host:8510 [--token T] [--root-cert server.crt]
+#include "control_apps.hpp"
+
 #include "vehicle_sil/cli/args.hpp"
-#include "vehicle_sil/control/peer_agent.hpp"
 #include "vehicle_sil/control_grpc/agent_client.hpp"
 #include "vehicle_sil/peer/peer.hpp"
 
-#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -25,15 +25,6 @@ namespace {
 
 using namespace std::chrono_literals;
 using namespace vehicle_sil;
-
-constexpr j1939::Pgn kPgnEngineSpeed{0xFF10}; // proprietary B
-
-enum class Lamp : std::uint8_t
-{
-    Off = 0,
-    Low = 1,
-    High = 2,
-};
 
 void log(const std::string& text)
 {
@@ -88,49 +79,18 @@ int main(int argc, char** argv)
         return cli::kExitUsage;
     }
 
-    // Models and the agent before the peer.
-    double throttle = 0.0;
-    double rpm = 800.0;
-    bool parking_brake = true;
-    Lamp lamp = Lamp::Off;
-    double received_rpm = 0.0;
-    control::Agent agent;
-    if (role == "engine")
-    {
-        agent.input("engine.throttle", &throttle, {.unit = "%", .min = 0.0, .max = 100.0, .step = 1.0, .description = "Accelerator pedal"});
-        agent.output("engine.speed", &rpm, {.unit = "rpm"});
-    }
-    else
-    {
-        agent.input("cabin.parking_brake", &parking_brake, {.description = "Parking brake switch"});
-        agent.input_enum("cabin.lamp", &lamp, {{"off", 0}, {"low", 1}, {"high", 2}}, {.description = "Head lamp switch"});
-        agent.output("body.engine_speed", &received_rpm, {.unit = "rpm", .description = "Engine speed received on J1939"});
-    }
-
     try
     {
+        // The peer owns the ECU (emplace()); the ECU declares its variables on the peer's agent.
         Peer peer(options);
         if (role == "engine")
         {
-            auto& ecu = peer.j1939("J1939_CAN").add_node({0x00, j1939::Name{}.set_identity_number(0x100).set_manufacturer_code(0x7F0)});
-            peer.on_step([&](SimTime) { rpm += (800.0 + 52.0 * throttle - rpm) * 0.05; });
-            peer.every(20ms, [&](SimTime) {
-                const auto value = static_cast<std::uint16_t>(std::clamp(rpm, 0.0, 65535.0));
-                const std::uint8_t data[2]{static_cast<std::uint8_t>(value & 0xFF), static_cast<std::uint8_t>(value >> 8)};
-                static_cast<void>(ecu.send(kPgnEngineSpeed, data));
-            });
+            peer.emplace<control_example::Engine>(peer);
         }
         else
         {
-            auto& node = peer.j1939("J1939_CAN").add_node({0x21});
-            node.on_message(kPgnEngineSpeed, [&](const j1939::Message& m) {
-                if (m.data.size() >= 2)
-                {
-                    received_rpm = static_cast<double>(m.data[0] | (m.data[1] << 8));
-                }
-            });
+            peer.emplace<control_example::Body>(peer);
         }
-        control::attach(peer, agent);
         link.status = [&] { return control::PeerStatus{peer.failed(), peer.error()}; };
         // Another process took this participant over at the control server: say why, leave the
         // simulation and end with a failure instead of running on without control.
@@ -139,7 +99,9 @@ int main(int argc, char** argv)
             std::fflush(stderr);
             peer.request_stop("replaced at the control server");
         };
-        control_grpc::AgentClient client(agent, link);
+        // It completes the agent's schema (with the peer's monitoring outputs): after the ECU,
+        // before the start (so it connects first); destroyed before the peer.
+        control_grpc::AgentClient client(peer.agent(), link);
         log(options.participant + " waits for the simulation to start");
         peer.start(timeout);
         log("running");
@@ -148,9 +110,8 @@ int main(int argc, char** argv)
         while (!(state = peer.wait(std::chrono::minutes(1))))
         {
         }
-        peer.stop(); // the steps are over: finish() may run now
-        agent.finish(); // cancels what is still waiting ...
-        client.stop();  // ... and the client sends those results before it closes
+        peer.stop();   // the steps are over: cancels what is still waiting on the agent ...
+        client.stop(); // ... and the client sends those results before it closes
         log(std::string("ended") + (peer.failed() ? ": FAILED " + peer.error() : "")
             + (client.replaced() ? ": FAILED replaced at the control server" : ""));
         return state && !peer.failed() && !client.replaced() ? cli::kExitOk : cli::kExitFailed;

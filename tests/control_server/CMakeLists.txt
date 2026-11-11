@@ -4,7 +4,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_control_server_tests
   SOURCES test_grpc_ping.cpp test_control_server.cpp test_security.cpp
           test_convert.cpp test_limits.cpp test_simulation_monitor.cpp test_authorization.cpp
           test_authorization_rules.cpp
-  LINK vehicle_sil::control_proto vehicle_sil::control_grpc vehicle_sil::peer_control)
+  LINK vehicle_sil::control_proto vehicle_sil::control_grpc vehicle_sil::peer)
 target_include_directories(vehicle_sil_control_server_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/control_grpc/src)
 target_compile_definitions(vehicle_sil_control_server_tests PRIVATE
   VEHICLE_SIL_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/testdata")

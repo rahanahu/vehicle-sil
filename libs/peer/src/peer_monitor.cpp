@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: MIT
-#include "vehicle_sil/control/peer_agent.hpp"
+#include "peer_monitor.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
-namespace vehicle_sil::control {
+namespace vehicle_sil::detail {
 namespace {
 
-using Wall = std::chrono::steady_clock;
+using control::Agent;
+using control::EventLevel;
 
 // The enum outputs use the engine's values: keep them in step.
 static_assert(static_cast<int>(j1939::AddressState::Fixed) == 0 && static_cast<int>(j1939::AddressState::NotStarted) == 1
@@ -41,58 +42,6 @@ const char* state_name(j1939::AddressState state)
     return "unknown";
 }
 
-/// What the monitoring keeps between steps. Used on the step thread only.
-struct Monitor
-{
-    struct NodeWatch
-    {
-        std::string name;
-        j1939::Node* node = nullptr;
-        j1939::AddressState state{};
-        j1939::Address address{};
-    };
-
-    std::vector<NodeWatch> nodes;
-    std::uint64_t steps = 0;
-    SimTime now{};
-    Wall::time_point app_begin{};
-    double app_us_max = 0.0;
-    std::optional<std::pair<SimTime, Wall::time_point>> speed_ref;
-
-    void after_step(SimTime t, Agent& agent)
-    {
-        app_us_max = std::max(app_us_max, std::chrono::duration<double, std::micro>(Wall::now() - app_begin).count());
-        ++steps;
-        now = t;
-        for (auto& w : nodes)
-        {
-            const auto state = w.node->address_state();
-            const auto address = w.node->address();
-            if (state != w.state || address != w.address)
-            {
-                w.state = state;
-                w.address = address;
-                agent.log(state == j1939::AddressState::CannotClaim ? EventLevel::Warning : EventLevel::Info,
-                          w.name + ": " + state_name(state) + " at address " + std::to_string(address));
-            }
-        }
-    }
-
-    /// Simulation seconds per wall-clock second since the previous sample.
-    double speed()
-    {
-        const auto wall = Wall::now();
-        double result = 0.0;
-        if (speed_ref && wall > speed_ref->second)
-        {
-            result = std::chrono::duration<double>(now - speed_ref->first).count()
-                     / std::chrono::duration<double>(wall - speed_ref->second).count();
-        }
-        speed_ref = std::make_pair(now, wall);
-        return result;
-    }
-};
-
 /// The names add_monitoring() would register (to check them before anything changes).
 std::vector<std::string> monitoring_names(Peer& peer)
 {
@@ -116,7 +65,7 @@ std::vector<std::string> monitoring_names(Peer& peer)
 }
 
 /// Registers the outputs that monitoring_names() lists.
-void add_monitoring(Peer& peer, Agent& agent, const std::shared_ptr<Monitor>& m)
+void add_monitoring(Peer& peer, Agent& agent, const std::shared_ptr<PeerMonitor>& m)
 {
     agent.output("peer.steps", [m] { return m->steps; }, {.description = "Steps run"});
     agent.output("peer.speed", [m] { return m->speed(); },
@@ -161,65 +110,56 @@ void add_monitoring(Peer& peer, Agent& agent, const std::shared_ptr<Monitor>& m)
 
 } // namespace
 
-void attach(Peer& peer, Agent& agent, AttachOptions options)
+void PeerMonitor::after_step(SimTime t, Agent& agent)
 {
-    std::function<void()> wakeup;
-    if (!peer.uses_virtual_time())
+    app_us_max = std::max(app_us_max, std::chrono::duration<double, std::micro>(Wall::now() - app_begin).count());
+    ++steps;
+    now = t;
+    for (auto& w : nodes)
     {
-        auto pending = std::make_shared<std::atomic<bool>>(false);
-        wakeup = [pending, &host = peer.host()] {
-            if (!pending->exchange(true, std::memory_order_acq_rel))
-            {
-                host.post([pending] { pending->store(false, std::memory_order_release); });
-            }
-        };
-    }
-    std::shared_ptr<Monitor> monitor;
-    if (options.monitor)
-    {
-        // Checked before anything changes: the outputs must not clash with the agent's variables.
-        for (const auto& name : monitoring_names(peer))
+        const auto state = w.node->address_state();
+        const auto address = w.node->address();
+        if (state != w.state || address != w.address)
         {
-            for (const auto& info : agent.schema())
-            {
-                if (info.name == name)
-                {
-                    throw std::invalid_argument("vehicle_sil::control::attach(): the agent already has a variable '" + name
-                                                + "' (use AttachOptions::monitor = false or another name)");
-                }
-            }
+            w.state = state;
+            w.address = address;
+            agent.log(state == j1939::AddressState::CannotClaim ? EventLevel::Warning : EventLevel::Info,
+                      w.name + ": " + state_name(state) + " at address " + std::to_string(address));
         }
-        monitor = std::make_shared<Monitor>();
-    }
-    agent.bind_driver(std::move(wakeup)); // checks the agent first: nothing is changed if it throws
-    try
-    {
-        peer.set_control(
-            [&agent, monitor](SimTime now) {
-                agent.on_step_begin(now);
-                if (monitor)
-                {
-                    monitor->app_begin = Wall::now();
-                }
-            },
-            [&agent, monitor](SimTime now) {
-                if (monitor)
-                {
-                    monitor->after_step(now, agent);
-                }
-                agent.on_step_end(now);
-            },
-            [&agent] { agent.clear_wakeup(); });
-    }
-    catch (...)
-    {
-        agent.unbind_driver();
-        throw;
-    }
-    if (monitor)
-    {
-        add_monitoring(peer, agent, monitor); // the names were checked; registration is still open
     }
 }
 
-} // namespace vehicle_sil::control
+double PeerMonitor::speed()
+{
+    const auto wall = Wall::now();
+    double result = 0.0;
+    if (speed_ref && wall > speed_ref->second)
+    {
+        result = std::chrono::duration<double>(now - speed_ref->first).count()
+                 / std::chrono::duration<double>(wall - speed_ref->second).count();
+    }
+    speed_ref = std::make_pair(now, wall);
+    return result;
+}
+
+std::shared_ptr<PeerMonitor> add_peer_monitoring(Peer& peer, Agent& agent, const std::string& who)
+{
+    // Checked before anything changes: the outputs must not clash with the ECU's variables.
+    for (const auto& name : monitoring_names(peer))
+    {
+        for (const auto& info : agent.schema())
+        {
+            if (info.name == name)
+            {
+                throw std::invalid_argument(who + "the ECU declares a variable '" + name
+                                            + "', the name of a monitoring output of the peer (rename the variable, or "
+                                              "set PeerOptions::monitor = false)");
+            }
+        }
+    }
+    auto monitor = std::make_shared<PeerMonitor>();
+    add_monitoring(peer, agent, monitor); // the names were checked; registration is still open
+    return monitor;
+}
+
+} // namespace vehicle_sil::detail

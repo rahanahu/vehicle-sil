@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: MIT
 //
-// A control agent driven by vehicle_sil::Peer (vehicle_sil::control::attach), with real SIL Kit
-// participants (in-process registry).
+// The control agent of a vehicle_sil::Peer (its variables declared on the Ecu), with real SIL
+// Kit participants (in-process registry): where the writes take effect, the traffic, real time,
+// the monitoring outputs (PeerOptions::monitor).
 #include "silkit_test_util.hpp"
 #include "test_harness.hpp"
 
-#include "vehicle_sil/control/peer_agent.hpp"
+#include "vehicle_sil/control/agent.hpp"
 #include "vehicle_sil/peer/peer.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -25,6 +27,7 @@ using namespace vehicle_sil::control;
 namespace orch = SilKit::Services::Orchestration;
 using vehicle_sil::unit::InProcessRegistry;
 using vehicle_sil::unit::throws;
+using vehicle_sil::unit::throws_with;
 
 constexpr j1939::Pgn kPgnEngine{0xFF10}; ///< proprietary B: the engine's broadcast
 
@@ -49,7 +52,8 @@ PeerOptions coordinated(std::string name, const std::string& uri, SimDuration st
 }
 
 /// Two peers: Engine broadcasts `level` every 20 ms, Body records what it receives with its step
-/// time. Each peer optionally has an agent; `while_running` runs on another thread meanwhile.
+/// time. With `with_agents`, Engine declares `level` as an input and Body `last` as an output;
+/// with `hammer`, another thread reads the agents meanwhile.
 struct Run
 {
     std::vector<std::pair<std::int64_t, std::uint8_t>> received; ///< (Body's step time, value)
@@ -84,13 +88,9 @@ Run run_pair(bool with_agents, const std::vector<Command>& engine_commands, bool
     control.stop_at = 400ms;
     SimulationController controller(control);
 
-    // Models and agents first: they outlive the peers' steps.
+    // Models first: they outlive the peers and their agents.
     std::uint8_t level = 1;
-    Agent engine_agent(AgentOptions{.sample_period = SimDuration::zero()});
-    engine_agent.input("engine.level", &level, {.min = 0.0, .max = 200.0});
-    Agent body_agent;
     std::uint8_t last = 0;
-    body_agent.output("body.last", &last);
 
     Peer engine(coordinated("Engine", registry.uri, 10ms));
     auto& ecu = engine.j1939("J1939_CAN").add_node({0x00, j1939::Name{}.set_identity_number(0x2345).set_manufacturer_code(0x7F0)});
@@ -104,24 +104,29 @@ Run run_pair(bool with_agents, const std::vector<Command>& engine_commands, bool
         last = m.data[0];
         run.received.emplace_back(ms(body.runtime().now()), m.data[0]);
     });
+    Agent* engine_agent = nullptr;
+    Agent* body_agent = nullptr;
     if (with_agents)
     {
-        attach(engine, engine_agent);
-        attach(body, body_agent);
+        engine.set_agent_options(AgentOptions{.sample_period = SimDuration::zero()});
+        engine.input("engine.level", &level, {.min = 0.0, .max = 200.0});
+        body.output("body.last", &last);
+        engine_agent = &engine.agent();
+        body_agent = &body.agent();
         for (const auto& c : engine_commands)
         {
-            CHECK(engine_agent.submit(c).status == SubmitStatus::Queued);
+            CHECK(engine_agent->submit(c).status == SubmitStatus::Queued);
         }
     }
 
-    std::atomic<bool> running{true};
-    std::thread transport([&] {
-        while (hammer && running.load())
+    // Stopped by its destructor too, so a failed CHECK below does not wait for it forever.
+    std::jthread transport([&](const std::stop_token& stop) {
+        while (hammer && !stop.stop_requested())
         {
-            static_cast<void>(engine_agent.latest());
-            static_cast<void>(body_agent.latest());
+            static_cast<void>(engine_agent->latest());
+            static_cast<void>(body_agent->latest());
             std::vector<Event> events;
-            engine_agent.drain_events(events);
+            engine_agent->drain_events(events);
         }
     });
     start_together(controller, {&engine, &body});
@@ -131,15 +136,23 @@ Run run_pair(bool with_agents, const std::vector<Command>& engine_commands, bool
         CHECK(state.has_value() && *state == orch::ParticipantState::Shutdown);
         CHECK(!p->failed());
     }
-    running = false;
+    transport.request_stop();
     transport.join();
-    engine_agent.finish();
-    engine_agent.drain_results(run.results);
-    run.engine_snapshot = engine_agent.latest();
-    run.body_snapshot = body_agent.latest();
-    run.engine_schema = engine_agent.schema();
-    run.body_schema = body_agent.schema();
-    engine_agent.drain_events(run.engine_events);
+    if (!with_agents)
+    {
+        // No variables: the peers made no agent, also not in the run.
+        CHECK(throws<std::logic_error>([&] { static_cast<void>(engine.agent()); }));
+        CHECK(throws<std::logic_error>([&] { static_cast<void>(body.agent()); }));
+        return run;
+    }
+    engine.stop(); // the steps are over: the writes still waiting are cancelled
+    body.stop();
+    engine_agent->drain_results(run.results);
+    run.engine_snapshot = engine_agent->latest();
+    run.body_snapshot = body_agent->latest();
+    run.engine_schema = engine_agent->schema();
+    run.body_schema = body_agent->schema();
+    engine_agent->drain_events(run.engine_events);
     return run;
 }
 
@@ -156,24 +169,23 @@ TEST_CASE(control_peer_agent_applies_before_the_application_of_its_step)
     bool brake = false;
     double speed = 0.0;
     std::vector<std::pair<std::int64_t, bool>> seen;
-    Agent agent(AgentOptions{.sample_period = 50ms});
-    agent.input("cabin.brake", &brake);
-    agent.output("vehicle.speed", &speed, {.unit = "km/h"});
-
     Peer peer(o);
-    // Added before attach(): the agent's hook still runs before it.
+    peer.set_agent_options(AgentOptions{.sample_period = 50ms});
+    // Added before the variables: the agent still applies the writes before it.
     peer.on_step([&](SimTime now) {
         seen.emplace_back(ms(now), brake);
         speed += 1.0;
     });
-    attach(peer, agent);
-    CHECK(throws<std::logic_error>([&] { peer.set_control({}, {}); }));
-    CHECK(throws<std::logic_error>([&] { attach(peer, agent); })); // the agent is bound already
+    peer.input("cabin.brake", &brake);
+    peer.output("vehicle.speed", &speed, {.unit = "km/h"});
+    auto& agent = peer.agent();
+    CHECK(throws<std::logic_error>([&] { peer.set_agent_options({}); })); // the agent is made
     CHECK(agent.submit(Command{1, {{"cabin.brake", true}}, at(55ms)}).status == SubmitStatus::Queued);
     CHECK(agent.submit(Command{2, {{"cabin.brake", false}}, at(120ms)}).status == SubmitStatus::Queued);
     CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
-    CHECK(throws<std::logic_error>([&] { peer.set_control({}, {}); }));
-    agent.finish();
+    CHECK(throws<std::logic_error>([&] { peer.input("late", &brake); }));
+    CHECK(&peer.agent() == &agent); // after the start too
+    peer.stop();
 
     std::vector<CommandResult> results;
     agent.drain_results(results);
@@ -223,92 +235,46 @@ TEST_CASE(control_peer_agent_timed_writes_are_reproducible)
     CHECK(std::get<std::int64_t>(first.engine_snapshot.values[0]) == 9);
 }
 
-TEST_CASE(control_peer_agent_attach_errors_leave_nothing_behind)
-{
-    InProcessRegistry registry;
-    PeerOptions o;
-    o.participant = "Errors";
-    o.registry_uri = registry.uri;
-    o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(50ms)};
-    int x = 0;
-    {
-        // An agent that already took a command cannot be attached (in both time modes).
-        // Agents are declared before the peers: a peer uses its agent until it is destroyed.
-        Agent agent;
-        Agent other;
-        agent.input("x", &x);
-        CHECK(agent.submit(Command{1, {{"x", std::int64_t{1}}}, std::nullopt}).status == SubmitStatus::Queued);
-        Peer peer(o);
-        CHECK(throws<std::logic_error>([&] { attach(peer, agent); }));
-        // The peer is untouched: another agent can still be attached.
-        attach(peer, other);
-    }
-    {
-        // One agent, two peers: the second attach fails and leaves the second peer free.
-        Agent agent;
-        Agent other;
-        agent.input("x", &x);
-        Peer first(o);
-        PeerOptions o2 = o;
-        o2.participant = "Errors2";
-        Peer second(o2);
-        attach(first, agent);
-        CHECK(throws<std::logic_error>([&] { attach(second, agent); }));
-        attach(second, other);
-    }
-    {
-        // A peer whose control is set: attach fails and leaves the agent free.
-        Agent agent;
-        agent.input("x", &x);
-        Peer peer(o);
-        peer.set_control({}, {});
-        CHECK(throws<std::logic_error>([&] { attach(peer, agent); }));
-        Peer other(PeerOptions{.participant = "Errors3", .registry_uri = registry.uri,
-                               .virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(50ms)}});
-        attach(other, agent);
-    }
-}
-
 TEST_CASE(control_peer_agent_wakes_a_real_time_peer)
 {
     // A real-time peer that otherwise steps only every 2 s (max_idle): queued commands wake it, so
-    // they take effect within a fraction of that, again and again. After the peer is gone, a
-    // submit does not touch it.
+    // they take effect within a fraction of that, again and again. stop() cancels what is still
+    // waiting, and a later submit is refused without touching the peer.
     InProcessRegistry registry;
     std::atomic<int> value{0};
-    Agent agent;
-    agent.input("value", [&] { return value.load(); }, [&](int v) { value = v; });
-    std::vector<CommandResult> results;
+    PeerOptions o;
+    o.participant = "RealTimeAgent";
+    o.registry_uri = registry.uri;
+    o.virtual_time = std::nullopt;
+    o.max_idle = 2s;
+    Peer peer(o);
+    peer.input("value", [&] { return value.load(); }, [&](int v) { value = v; });
+    auto& agent = peer.agent();
+    peer.start();
+    std::this_thread::sleep_for(50ms);
+    for (int i = 1; i <= 3; ++i)
     {
-        PeerOptions o;
-        o.participant = "RealTimeAgent";
-        o.registry_uri = registry.uri;
-        o.virtual_time = std::nullopt;
-        o.max_idle = 2s;
-        Peer peer(o);
-        attach(peer, agent);
-        peer.start();
-        std::this_thread::sleep_for(50ms);
-        for (int i = 1; i <= 3; ++i)
+        const auto begin = std::chrono::steady_clock::now();
+        CHECK(agent.submit(Command{static_cast<std::uint64_t>(i), {{"value", std::int64_t{i}}}, std::nullopt}).status
+              == SubmitStatus::Queued);
+        while (value.load() != i && std::chrono::steady_clock::now() - begin < 5s)
         {
-            const auto begin = std::chrono::steady_clock::now();
-            CHECK(agent.submit(Command{static_cast<std::uint64_t>(i), {{"value", std::int64_t{i}}}, std::nullopt}).status
-                  == SubmitStatus::Queued);
-            while (value.load() != i && std::chrono::steady_clock::now() - begin < 5s)
-            {
-                std::this_thread::sleep_for(1ms);
-            }
-            CHECK_EQ(value.load(), i);
-            CHECK(std::chrono::steady_clock::now() - begin < 1s);
+            std::this_thread::sleep_for(1ms);
         }
-        peer.stop();
-        CHECK(!peer.failed());
+        CHECK_EQ(value.load(), i);
+        CHECK(std::chrono::steady_clock::now() - begin < 1s);
     }
-    CHECK(agent.submit(Command{9, {{"value", std::int64_t{9}}}, std::nullopt}).status == SubmitStatus::Queued);
-    agent.finish();
+    // Far in the future: still waiting when the peer stops.
+    CHECK(agent.submit(Command{4, {{"value", std::int64_t{4}}}, at(std::chrono::hours(1))}).status == SubmitStatus::Queued);
+    peer.stop();
+    CHECK(!peer.failed());
+    CHECK(agent.submit(Command{9, {{"value", std::int64_t{9}}}, std::nullopt}).status == SubmitStatus::Invalid);
+    std::vector<CommandResult> results;
     agent.drain_results(results);
     CHECK_EQ(results.size(), std::size_t{4});
+    CHECK(results[3].seq == 4);
     CHECK(results[3].status == CommandStatus::Cancelled);
+    CHECK_EQ(value.load(), 3);
 }
 
 TEST_CASE(control_peer_agent_monitors_the_networks)
@@ -356,12 +322,90 @@ TEST_CASE(control_peer_agent_monitor_names_must_not_clash)
     o.registry_uri = registry.uri;
     o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(50ms)};
     double x = 0.0;
-    Agent agent;
-    Agent plain;
-    agent.input("peer.speed", &x);
-    plain.input("peer.speed", &x);
+    {
+        // The clash shows when the schema is completed (here: start()); nothing is added, the
+        // message names the peer and the way out, and the peer is not started.
+        Peer peer(o);
+        peer.input("peer.speed", &x);
+        CHECK(throws_with<std::invalid_argument>([&] { peer.start(); }, "\"Clash\""));
+        CHECK(throws_with<std::invalid_argument>([&] { peer.agent().complete_schema(); }, "PeerOptions::monitor = false"));
+        CHECK_EQ(peer.agent().schema().size(), std::size_t{1});
+        peer.input("still.open", &x); // the schema stayed open
+    }
+    {
+        PeerOptions plain = o;
+        plain.monitor = false;
+        Peer peer(plain);
+        peer.input("peer.speed", &x);
+        peer.agent().complete_schema();
+        CHECK_EQ(peer.agent().schema().size(), std::size_t{1});
+        // The schema is complete: the message names the peer and why.
+        CHECK(throws_with<std::logic_error>([&] { peer.input("too.late", &x); }, "\"Clash\""));
+        CHECK(throws_with<std::logic_error>([&] { peer.input("too.late", &x); }, "after the schema was complete"));
+    }
+}
+
+TEST_CASE(control_peer_agent_monitor_covers_what_exists_when_the_schema_completes)
+{
+    // The agent made before the network (a variable declared first): the monitoring still covers
+    // the network and its node, and comes after the ECU's variables.
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Order";
+    o.registry_uri = registry.uri;
+    o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(50ms)};
+    double x = 0.0;
     Peer peer(o);
-    CHECK(throws<std::invalid_argument>([&] { attach(peer, agent); }));
-    attach(peer, plain, AttachOptions{.monitor = false}); // the peer was left free
-    CHECK_EQ(plain.schema().size(), std::size_t{1});
+    peer.output("app.x", &x);
+    peer.j1939("J1939_CAN").add_node({0x21});
+    peer.agent().complete_schema();
+    const auto& schema = peer.agent().schema();
+    CHECK(!schema.empty() && schema[0].name == "app.x");
+    bool has_node = false;
+    for (const auto& info : schema)
+    {
+        has_node = has_node || info.name == "j1939.J1939_CAN.node0.address_state";
+    }
+    CHECK(has_node);
+}
+
+TEST_CASE(control_peer_agent_refuses_a_network_the_monitoring_would_miss)
+{
+    // Once the schema is complete with the monitoring outputs, a J1939 network added later would
+    // not be monitored: j1939() refuses it (both forms), naming the peer, the network and the way
+    // out. Without monitoring, or before the schema is complete, it is fine.
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Late";
+    o.registry_uri = registry.uri;
+    o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(50ms)};
+    double x = 0.0;
+    {
+        Peer peer(o);
+        peer.output("app.x", &x);
+        peer.j1939("CAN1");
+        peer.agent().complete_schema();
+        CHECK(throws_with<std::logic_error>([&] { peer.j1939("CAN2"); }, "\"Late\""));
+        CHECK(throws_with<std::logic_error>([&] { peer.j1939("CAN2"); }, "j1939(\"CAN2\")"));
+        CHECK(throws_with<std::logic_error>([&] { peer.j1939("CAN2"); }, "PeerOptions::monitor = false"));
+        CHECK(throws<std::logic_error>([&] { peer.j1939("CAN3", J1939ChannelOptions{}); }));
+        Ecu& ecu = peer;
+        CHECK(throws<std::logic_error>([&] { ecu.j1939("CAN4"); }));
+        // Checked before the port (no port: std::invalid_argument otherwise).
+        CHECK(vehicle_sil::unit::throws_if<std::logic_error>([&] { peer.j1939("EXT", std::unique_ptr<can::Port>{}); },
+                                                             [](const std::logic_error& e) {
+                                                                 return dynamic_cast<const std::invalid_argument*>(&e) == nullptr;
+                                                             }));
+        CHECK_EQ(peer.network_names().size(), std::size_t{1});
+        peer.can("CAN5"); // raw CAN and LIN are not monitored
+    }
+    {
+        PeerOptions plain = o;
+        plain.monitor = false;
+        Peer peer(plain);
+        peer.output("app.x", &x);
+        peer.agent().complete_schema();
+        peer.j1939("CAN1");
+        CHECK_EQ(peer.agent().schema().size(), std::size_t{1});
+    }
 }

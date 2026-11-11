@@ -68,14 +68,18 @@ namespace vehicle_sil {
 /// network uses (injector()).
 ///
 /// Set up (add_ecu(), add_j1939(), on_step(), and the ECUs' j1939(), can(), lin_master(),
-/// lin_slave(), on_step(), every() and emplace()) before the first run; afterwards they throw std::logic_error. Times: every host
+/// lin_slave(), input(), output(), set_agent_options(), on_step(), every() and emplace()) before
+/// the first run; afterwards they throw std::logic_error. Times: every host
 /// starts at 0; run_until(t) runs every step that starts before t. A frame injected with time t
 /// reaches a network in its first step after t; t must not be earlier than now(), the end of the
 /// last run (the bus refuses the past: std::logic_error).
 ///
 /// One step of an ECU at `now`: its networks and raw channels receive and handle what arrived (in
-/// the order added), then on_step() and every() (in the order added), then its LIN nodes'
-/// step(now) (in the order added), then the networks and raw channels send. A frame one network
+/// the order added), then the writes to its variables whose time has come take effect, then
+/// on_step() and every() (in the order added), then its LIN nodes' step(now) (in the order
+/// added), then its variables are sampled, then the networks and raw channels send. The control
+/// agent of an ECU (Ecu::agent()) runs in the calling thread's steps, with no wake-up and no
+/// monitoring outputs (those are Peer's). A frame one network
 /// of the ECU receives can be sent on to another network (or raw channel) of it in the same
 /// step. The LIN buses deliver inside the sender's step (lin::VirtualLinBus).
 ///
@@ -83,9 +87,12 @@ namespace vehicle_sil {
 /// the LIN nodes, the hosts and the objects the ECUs emplace(). It destroys the ECUs last added
 /// first, each with its host first, then its LIN nodes (the one added last first), then its
 /// networks (the one added last first; each network's parts first, then its tap), then its raw
-/// channels (the one added last first), then the objects it emplace()d (the one emplaced last
-/// first); then the driver, and last the LIN buses and the CAN buses with the endpoints. References it returns are valid as long as the LocalBench. Observers and tap
-/// listeners may outlive it (they are detached).
+/// channels (the one added last first), then its control agent, then the objects it emplace()d
+/// (the one emplaced last first); then the driver, and last the LIN buses and the CAN buses with
+/// the endpoints. References it returns are valid as long as the LocalBench. Observers and tap
+/// listeners may outlive it (they are detached). A transport of an ECU's agent
+/// (control_grpc::AgentClient) must be destroyed before the LocalBench, so the results of the
+/// writes still waiting then reach nobody.
 ///
 /// Not thread safe.
 class LocalBench

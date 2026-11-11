@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/peer/peer.hpp"
 
+#include "peer_monitor.hpp"
+
 #include "vehicle_sil/can/real_time_driver.hpp"
 #include "vehicle_sil/core/periodic.hpp"
 #include "vehicle_sil/lin_silkit/silkit_lin_port.hpp"
 
+#include <atomic>
 #include <exception>
 #include <memory>
 #include <stdexcept>
@@ -73,7 +76,9 @@ struct Peer::LinNode
     std::unique_ptr<lin::LinSlave> slave;
 };
 
-Peer::Peer(PeerOptions options) : options_(std::move(options))
+Peer::Peer(PeerOptions options) :
+  agent_("vehicle_sil::Peer \"" + options.participant + "\": ", [this](control::Agent& agent) { bind_agent(agent); }),
+  options_(std::move(options))
 {
     ParticipantRuntimeOptions runtimeOptions;
     runtimeOptions.participant_name = options_.participant;
@@ -162,7 +167,8 @@ void Peer::require_not_started(const char* what) const
 {
     if (started_)
     {
-        throw std::logic_error(std::string("vehicle_sil::Peer: ") + what + " is only allowed before start()");
+        throw std::logic_error("vehicle_sil::Peer \"" + options_.participant + "\": " + what
+                               + " is only allowed before start() (set the ECU up before the run)");
     }
 }
 
@@ -225,9 +231,21 @@ void Peer::require_can_name(const std::string& network, const char* what) const
     }
 }
 
+void Peer::require_unmonitored(const std::string& network) const
+{
+    if (monitor_)
+    {
+        throw std::logic_error("vehicle_sil::Peer \"" + options_.participant + "\": j1939(\"" + network
+                               + "\") after the control agent's schema was completed with the monitoring outputs: the "
+                                 "network would not be monitored. Add the J1939 networks before an AgentClient is made "
+                                 "for the agent and before its first submit(), or set PeerOptions::monitor = false");
+    }
+}
+
 j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions options)
 {
     require_not_started("j1939()");
+    require_unmonitored(network_name);
     require_can_name(network_name, "j1939");
     std::string controller = options.controller_name.empty() ? network_name : options.controller_name;
     if (!network_name.empty() && controller_is_used(controller))
@@ -267,6 +285,7 @@ j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions option
 j1939::Network& Peer::j1939(std::string name, std::unique_ptr<can::Port> port, j1939::NetworkOptions options)
 {
     require_not_started("j1939()");
+    require_unmonitored(name);
     if (!port)
     {
         throw std::invalid_argument("vehicle_sil::Peer: no port");
@@ -489,24 +508,35 @@ void Peer::every(SimDuration period, std::function<void(SimTime now)> fn)
     step_functions_.push_back(periodic(period, std::move(fn))); // std::invalid_argument
 }
 
-void Peer::set_control(std::function<void(SimTime)> before, std::function<void(SimTime)> after,
-                       std::function<void()> stopping)
+void Peer::bind_agent(control::Agent& agent)
 {
-    require_not_started("set_control()");
-    if (std::exchange(control_set_, true))
+    std::function<void()> wakeup;
+    if (!uses_virtual_time())
     {
-        throw std::logic_error("vehicle_sil::Peer: set_control() called twice");
+        // A queued write wakes the driver, with at most one wake-up pending; stop() clears it
+        // before the host goes.
+        auto pending = std::make_shared<std::atomic<bool>>(false);
+        wakeup = [pending, &host = host_] {
+            if (!pending->exchange(true, std::memory_order_acq_rel))
+            {
+                host.post([pending] { pending->store(false, std::memory_order_release); });
+            }
+        };
     }
-    control_before_ = std::move(before);
-    control_after_ = std::move(after);
-    control_stopping_ = std::move(stopping);
+    agent.bind_driver(std::move(wakeup), [this, &agent] {
+        if (options_.monitor)
+        {
+            monitor_ = detail::add_peer_monitoring(*this, agent, "vehicle_sil::Peer \"" + options_.participant + "\": ");
+        }
+    });
 }
 
 void Peer::run_application(SimTime now)
 {
-    if (control_before_)
+    agent_.begin(now);
+    if (monitor_)
     {
-        control_before_(now);
+        monitor_->before_step();
     }
     for (auto& fn : step_functions_)
     {
@@ -523,10 +553,11 @@ void Peer::run_application(SimTime now)
             node->slave->step(now);
         }
     }
-    if (control_after_)
+    if (monitor_)
     {
-        control_after_(now);
+        monitor_->after_step(now, *agent_.find());
     }
+    agent_.end(now);
 }
 
 Peer::Channel& Peer::channel(std::string_view name) const
@@ -586,6 +617,10 @@ can::RawChannel& Peer::raw_channel(std::string_view name) const
 void Peer::start(std::chrono::milliseconds timeout)
 {
     require_not_started("start()");
+    if (auto* agent = agent_.find())
+    {
+        agent->complete_schema(); // the monitoring outputs; the peer stays unstarted if it throws
+    }
     started_ = true;
     runtime_->start(timeout);
     if (!options_.virtual_time)
@@ -621,10 +656,9 @@ void Peer::stop(std::string_view reason) noexcept
 {
     // One stop at a time: a second caller (the destructor too) waits until the first is done.
     const std::lock_guard lock(mutex_);
-    if (control_stopping_)
+    if (auto* agent = agent_.find())
     {
-        // Once: the control agent stops waking the driver of this peer, whose host goes away.
-        std::exchange(control_stopping_, nullptr)();
+        agent->clear_wakeup(); // the agent stops waking the driver of this peer, whose host goes away
     }
     stopping_ = true;
     // Real time: the driver first, so that no step runs after the lifecycle stopped. A step
@@ -645,6 +679,8 @@ void Peer::stop(std::string_view reason) noexcept
     {
         r->port->close();
     }
+    // No step runs any more: the writes still waiting are cancelled.
+    agent_.finish();
 }
 
 void Peer::request_stop(std::string_view reason) noexcept { runtime_->request_stop(reason); }

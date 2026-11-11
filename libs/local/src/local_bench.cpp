@@ -107,9 +107,15 @@ class LocalBench::Site final : public Ecu
 {
 public:
     Site(LocalBench& owner, std::string ecuName, SimDuration stepSize) :
-      owner_(owner), name_(std::move(ecuName)), step_(stepSize), host_(std::make_unique<can::Host>())
+      // No wakeup: the calling thread runs the steps, in virtual time.
+      agent_(std::string(kWho) + "ECU " + quoted(ecuName) + ": ", [](control::Agent& agent) { agent.bind_driver(); }),
+      owner_(owner),
+      name_(std::move(ecuName)),
+      step_(stepSize),
+      host_(std::make_unique<can::Host>())
     {
         host_->set_application([this](SimTime now) {
+            agent_.begin(now);
             for (std::size_t i = 0; i < applications_.size(); ++i)
             {
                 applications_[i](now);
@@ -125,14 +131,18 @@ public:
                     node->slave->step(now);
                 }
             }
+            agent_.end(now);
         });
     }
 
-    // The host first, then the LIN nodes (the one added last first), then the networks (the one
-    // added last first, each before its tap), then the raw channels (the one added last first);
-    // the owned objects go last with the members.
+    // The writes still waiting on the control agent are cancelled (no step runs any more; the
+    // transports are gone already, so the agent's state is only consistent, not reported). Then
+    // the host, then the LIN nodes (the one added last first), then the networks (the one added
+    // last first, each before its tap), then the raw channels (the one added last first); the
+    // control agent and last the owned objects go with the members.
     ~Site() override
     {
+        agent_.finish();
         host_.reset();
         while (!lin_nodes_.empty())
         {
@@ -444,11 +454,15 @@ private:
     {
         if (owner_.started_)
         {
-            throw std::logic_error(std::string(kWho) + what + " after the first run");
+            throw std::logic_error(std::string(kWho) + "ECU " + quoted(name_) + ": " + what
+                                   + " after the first run (set the ECU up before the run)");
         }
     }
+    [[nodiscard]] bool started() const noexcept override { return owner_.started_; }
+    detail::EcuAgent& ecu_agent() noexcept override { return agent_; }
 
     detail::OwnedObjects owned_; ///< first: destroyed after everything else of the ECU
+    detail::EcuAgent agent_;     ///< second: after the networks, before the owned objects
     LocalBench& owner_;
     std::string name_;
     SimDuration step_;

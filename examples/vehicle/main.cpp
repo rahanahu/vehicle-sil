@@ -3,13 +3,16 @@
 // A small vehicle in one Simulation. CAN "Powertrain": Engine, Gateway. CAN "Body": Gateway,
 // BodyController. LIN "Door": BodyController (master), DoorModule (slave). The engine broadcasts
 // its speed, the gateway forwards it to the body network, the body controller sends it on LIN,
-// and the door module answers with its lock state. By default everything runs on SIL Kit with a
-// registry in this process; --local runs the same ECU classes on virtual CAN and LIN buses.
+// and the door module answers with its lock state. The engine declares control variables (an
+// input that stops it accelerating, its speed as an output); main() writes the input at a set
+// time, as a Control API client could. By default everything runs on SIL Kit with a registry in
+// this process; --local runs the same ECU classes on virtual CAN and LIN buses.
 //
 // To split it over processes, give each process SilKitOptions{.registry_uri = "silkit://...",
 // .controller = false} and run vehicle_sil_sim_controller once (see docs/architecture.md). Without
 // the controller in the process, run_for() throws std::logic_error: wait with run() instead, and
 // let the controller decide the required participants and the end (--required ... --stop-at-ms ...).
+#include "vehicle_sil/control/agent.hpp"
 #include "vehicle_sil/j1939/periodic_sender.hpp"
 #include "vehicle_sil/simulation/simulation.hpp"
 
@@ -18,8 +21,10 @@
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <variant>
 
 using namespace std::chrono_literals;
 namespace j1939 = vehicle_sil::j1939;
@@ -43,10 +48,16 @@ public:
             out[1] = static_cast<std::uint8_t>(speed_ >> 8);
             return std::size_t{2};
         });
-        ecu.every(10ms, [this](SimTime) { ++speed_; }); // accelerates 100 km/h per second
+        // Variables for control from outside (Ecu::agent(), or a Control API client through it).
+        ecu.input("engine.accelerating", &accelerating_, {.description = "Accelerates while true"});
+        ecu.output("engine.speed", &speed_, {.unit = "km/h"});
+        ecu.every(10ms, [this](SimTime) { // accelerates 100 km/h per second
+            if (accelerating_) ++speed_;
+        });
     }
 
 private:
+    bool accelerating_ = true;
     unsigned speed_ = 0;
 };
 
@@ -114,10 +125,16 @@ int main(int argc, char** argv)
         sim.add<Gateway>("Gateway", 10ms);
         auto& body = sim.add<BodyController>("BodyController", 5ms);
         auto& door = sim.add<DoorModule>("DoorModule", 5ms);
+        // The engine stops accelerating at 1200 ms: the write takes effect in its step at 1200 ms,
+        // before its application, so it has accelerated in 120 steps.
+        auto& control = sim.ecu("Engine").agent();
+        static_cast<void>(control.submit({.seq = 1, .writes = {{"engine.accelerating", false}}, .at = SimTime{} + 1200ms}));
         sim.run_for(1500ms);
+        const auto speed = std::get<std::int64_t>(control.latest().values.at(1)); // engine.speed, the last sample
+        std::printf("engine: speed %lld km/h (stopped accelerating at 1200 ms)\n", static_cast<long long>(speed));
         std::printf("body controller: speed %u km/h from the gateway, door locked %u\n", body.speed, body.door_locked);
         std::printf("door module: speed %u km/h from the body controller over LIN\n", door.speed);
-        const bool ok = body.speed > 100 && door.speed > 100 && body.door_locked == 1;
+        const bool ok = speed == 120 && body.speed == 120 && door.speed == 120 && body.door_locked == 1;
         std::printf("%s\n", ok ? "[ok] values reached the end of the chain" : "[FAILED] the chain is broken");
         return ok ? 0 : 1;
     }

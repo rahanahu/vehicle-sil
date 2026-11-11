@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// The control agent of one participant: typed variables, timed writes applied inside the
-// simulation steps, sampled values and events, all through bounded queues (vehicle_sil::control).
+// The control agent of one ECU: typed variables, timed writes applied inside the simulation
+// steps, sampled values and events, all through bounded queues (vehicle_sil::control).
 #pragma once
 
 #include "vehicle_sil/control/spsc_ring.hpp"
@@ -180,15 +180,18 @@ struct AgentOptions
     SimDuration sample_period = std::chrono::milliseconds(10);
 };
 
-/// The control agent of one participant.
+/// The control agent of one ECU (vehicle_sil::Ecu::agent(): the ECU makes it, declares its
+/// variables on it, and drives it from its steps).
 ///
 /// Two sides use it:
-/// - the step thread (the participant's simulation steps): on_step_begin(), on_step_end(),
-///   log(), and finish() after the last step. Call them from one thread at a time. The setters
-///   and getters of the variables run only here, so the model needs no locks. The step thread
-///   never waits for the transport side.
+/// - the step thread (the ECU's simulation steps): on_step_begin(), on_step_end(), log(), and
+///   finish() after the last step (the ECU calls on_step_begin(), on_step_end() and finish()).
+///   Call them from one thread at a time. The setters and getters of the variables run only
+///   here, so the model needs no locks. The step thread never waits for the transport side.
 /// - the transport side (the connection to a control server, or a test): submit(),
-///   drain_results(), drain_events(), latest(), stats(). These are thread safe among themselves
+///   drain_results(), drain_events(), latest(), stats(). A transport that outlives the calls it
+///   makes (a thread of its own, such as control_grpc::AgentClient) holds a TransportLease on
+///   the agent while it lives. These are thread safe among themselves
 ///   (a lock that the step thread never takes); they may wait briefly for finish() and for the
 ///   wake-up of a real-time driver (Host::post()).
 /// One thread may play both sides. schema() may be read from any thread after registration.
@@ -206,14 +209,20 @@ struct AgentOptions
 /// reason texts (bounded by max_pending per step); it takes no lock that the transport thread
 /// holds.
 ///
-/// Register the variables before the first submit() and the first step (std::logic_error
-/// afterwards; this is a check against misuse, not a synchronisation: do not register from one
-/// thread while another submits). A pointer or function passed to input() and output() must
-/// stay valid as long as the agent is used.
+/// Register the variables before the schema is complete (std::logic_error afterwards; this is a
+/// check against misuse, not a synchronisation: do not register from one thread while another
+/// submits). The schema is complete from the first of: complete_schema() (a transport such as
+/// control_grpc::AgentClient calls it before it reads schema(); the driver before the first
+/// step), the first submit() and the first step. A pointer or function passed to input() and
+/// output() must stay valid as long as the agent is used.
 class Agent
 {
 public:
+    /// std::invalid_argument for options that check_options() refuses.
     explicit Agent(AgentOptions options = {});
+    /// std::invalid_argument (saying which option and why) for options the constructor refuses:
+    /// max_pending or max_events 0, a negative sample_period.
+    static void check_options(const AgentOptions& options);
     Agent(const Agent&) = delete;
     Agent& operator=(const Agent&) = delete;
 
@@ -285,7 +294,10 @@ public:
     // ---- transport thread ---------------------------------------------------------------
 
     /// Checks the command against the schema and queues it. Never waits for the step thread.
-    /// After finish(): Invalid.
+    /// After finish(): Invalid. The first call completes the schema if nothing did before
+    /// (complete_schema(), on the calling thread): the exceptions of the driver's completion
+    /// function (e.g. std::invalid_argument for a Peer's monitoring output whose name a variable
+    /// has) then come out of submit(), with nothing queued or counted.
     SubmitResult submit(Command command);
     /// Moves the results produced so far into `out` (appends) and frees their slots.
     std::size_t drain_results(std::vector<CommandResult>& out);
@@ -293,29 +305,45 @@ public:
     /// The latest published sample (sequence 0 before the first one). The step thread hands it
     /// over without a lock.
     [[nodiscard]] Snapshot latest() const;
-    /// The variables in registration order.
+    /// The variables in registration order. Complete (and fixed) after complete_schema().
     [[nodiscard]] const std::vector<VariableInfo>& schema() const noexcept { return infos_; }
+    /// Completes the schema: runs the function given to bind_driver() (a Peer adds its
+    /// monitoring outputs there; it reads the driver's set-up), then closes the registration
+    /// (input() and output() throw std::logic_error afterwards). Once: later calls return at
+    /// once; concurrent calls wait for the first. The function runs on the thread of the call
+    /// that completes: a transport calls it on the set-up thread before it starts a thread of
+    /// its own or reads schema() (control_grpc::AgentClient's constructor does); otherwise its
+    /// first submit() completes on the transport's thread, which races with a set-up still in
+    /// progress. The driver calls it before its first step. If the function throws, the
+    /// exception propagates and the schema stays open; what makes it throw must be fixed first
+    /// (for a Peer's monitoring clash that means a new Peer: a declared variable cannot be
+    /// removed, nor PeerOptions::monitor changed). Not from a step.
+    void complete_schema();
+    /// The number of TransportLease objects on this agent now.
+    [[nodiscard]] std::size_t transports() const noexcept { return transports_.load(std::memory_order_acquire); }
     [[nodiscard]] AgentStats stats() const;
     [[nodiscard]] const AgentOptions& options() const noexcept { return options_; }
 
     // ---- the driver of the steps ----------------------------------------------------------
 
-    /// Binds the agent to the one driver of its steps (vehicle_sil::control::attach() does it
-    /// for a Peer). `wakeup`, if set, is called by submit() after a command was queued (from
-    /// the transport side), e.g. to wake a real-time driver; it can be cleared later with
-    /// clear_wakeup(). It must not call submit() or clear_wakeup(). Once only and before the
-    /// first submit() and step (std::logic_error).
-    void bind_driver(std::function<void()> wakeup = {});
+    /// Binds the agent to the one driver of its steps (the ECU that owns the agent does it,
+    /// see Ecu::agent()). `wakeup`, if set, is called by submit() after a command was queued
+    /// (from the transport side), e.g. to wake a real-time driver; it can be cleared later with
+    /// clear_wakeup(). It must not call submit() or clear_wakeup(). `complete`, if set, is run
+    /// once by complete_schema() before the registration closes, to register what the driver
+    /// adds (it may call input() and output()). With `complete`, the driver must call
+    /// complete_schema() before its first step (on_step_begin() throws std::logic_error
+    /// otherwise). Once only and before the schema is complete (std::logic_error).
+    void bind_driver(std::function<void()> wakeup = {}, std::function<void()> complete = {});
     /// Stops calling the wakeup (for example when the driver goes away). Thread safe.
     void clear_wakeup();
-    /// Undoes bind_driver() when the driver could not take the agent after all (attach() uses
-    /// it). Only before the first submit() and step.
-    void unbind_driver() noexcept;
 
     // ---- step thread --------------------------------------------------------------------
 
     /// At the start of the step at `now`, before the application: applies the commands whose
-    /// time has come. `now` increases from step to step.
+    /// time has come. `now` increases from step to step (std::logic_error otherwise). The first
+    /// step closes the registration; std::logic_error if bind_driver() was given a completion
+    /// function and complete_schema() has not run.
     void on_step_begin(SimTime now);
     /// At the end of the step at `now`: samples the values (AgentOptions::sample_period).
     void on_step_end(SimTime now);
@@ -350,7 +378,8 @@ private:
     void add_typed(std::string name, std::function<T()> get, std::function<void(T)> set, Causality causality,
                    VariableOptions options, std::vector<EnumItem> items, bool is_enum = false);
     void add(VariableInfo info, Variable variable);
-    void require_registering(const char* what) const;
+    /// std::logic_error (naming `what`) once the schema is complete.
+    void require_registering(const std::string& what) const;
     [[nodiscard]] std::optional<std::string> check(const Write& write, std::pair<std::size_t, Value>& out, bool& parameter) const;
     void apply(Pending& command, SimTime now, bool late);
     void push_result(CommandResult result);
@@ -371,6 +400,11 @@ private:
     std::atomic<bool> sealed_{false};
     std::atomic<bool> stepped_{false}; ///< the first step has begun
     bool bound_ = false;
+    std::mutex schema_mutex_; ///< serialises complete_schema()
+    std::atomic<bool> completed_{false}; ///< the schema is complete: no more registration
+    std::function<void()> complete_; ///< bind_driver(); run by complete_schema()
+    std::atomic<std::size_t> transports_{0}; ///< TransportLease objects on this agent
+    friend class TransportLease;
 
     mutable std::mutex transport_mutex_; ///< serialises the transport side; never taken by the step thread
     std::mutex wakeup_mutex_; ///< guards wakeup_ (submit() and clear_wakeup())
@@ -406,6 +440,23 @@ private:
             events_dropped{0};
     };
     AtomicStats stats_;
+};
+
+/// Marks a transport as attached to an agent for as long as it lives (Agent::transports()). The
+/// owner of the agent checks that none is left when it destroys the agent: an ECU stops the
+/// process with a message if one is (the transport would use a destroyed agent). A transport
+/// with a thread of its own makes one before the thread starts and destroys it after the thread
+/// ended (control_grpc::AgentClient does).
+class TransportLease
+{
+public:
+    explicit TransportLease(Agent& agent) noexcept : agent_(agent) { agent_.transports_.fetch_add(1, std::memory_order_acq_rel); }
+    ~TransportLease() { agent_.transports_.fetch_sub(1, std::memory_order_acq_rel); }
+    TransportLease(const TransportLease&) = delete;
+    TransportLease& operator=(const TransportLease&) = delete;
+
+private:
+    Agent& agent_;
 };
 
 namespace detail {

@@ -58,11 +58,17 @@ struct AgentClientOptions
 /// sent and fell out of the latest results (more than max_pending since) is not sent again; the
 /// server then settles its operation as Unknown.
 ///
-/// Create it after the agent was attached to its peer (the schema is complete then) and destroy
-/// it before the agent and before what `status` refers to (the peer); call Agent::finish() before
-/// stop(), which sends what is left, waits up to about 3 s for the server to take it and then up to
-/// 1.5 s for the stream to end (std::invalid_argument for non-positive periods or a token that is not
-/// printable ASCII). It is the only transport-side user of the agent.
+/// The constructor completes the agent's schema (Agent::complete_schema(): with an ECU's agent,
+/// the outputs its driver adds, such as a Peer's monitoring), so create it after the ECU declared
+/// its variables (Ecu::input(), output()) and before the run starts, so that it connects before
+/// the first step. Destroy it before the agent's ECU (Peer, Simulation, LocalBench: they destroy
+/// the agent; do not emplace() it in the ECU, whose emplaced objects go after the agent) and
+/// before what `status` refers to (the peer). It holds a control::TransportLease on the agent
+/// while it lives: an ECU destroyed before it stops the process with a message. Stop the ECU first (Peer::stop(),
+/// which calls Agent::finish()), then call stop(), which sends what is left, waits up to about
+/// 3 s for the server to take it and then up to 1.5 s for the stream to end
+/// (std::invalid_argument for non-positive periods or a token that is not printable ASCII). It is
+/// the only transport-side user of the agent.
 class AgentClient
 {
 public:

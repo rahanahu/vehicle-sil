@@ -51,6 +51,8 @@ std::string make_connection_prefix()
 struct AgentClient::Impl
 {
     control::Agent& agent;
+    /// Held until this Impl goes, after its thread was joined: the agent's ECU checks it.
+    control::TransportLease lease;
     AgentClientOptions options;
     std::string incarnation;
     std::shared_ptr<grpc::Channel> channel;
@@ -78,7 +80,7 @@ struct AgentClient::Impl
 
     std::thread thread;
 
-    Impl(control::Agent& a, AgentClientOptions o) : agent(a), options(std::move(o))
+    Impl(control::Agent& a, AgentClientOptions o) : agent(a), lease(a), options(std::move(o))
     {
         incarnation = options.incarnation.empty() ? make_incarnation() : options.incarnation;
         if (options.publish_period <= std::chrono::milliseconds::zero() || options.reconnect_min <= std::chrono::milliseconds::zero()
@@ -113,6 +115,9 @@ struct AgentClient::Impl
         arguments.SetInt(GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS, 1);
         arguments.SetInt(GRPC_ARG_HTTP2_MAX_PINGS_WITHOUT_DATA, 0);
         channel = grpc::CreateCustomChannel(options.server, credentials, arguments);
+        // The schema goes to the server as it is now: complete it first (an ECU's agent gets the
+        // outputs its driver adds, and no more variables after this).
+        agent.complete_schema();
         thread = std::thread([this] { run(); });
     }
 

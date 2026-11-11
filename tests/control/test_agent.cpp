@@ -6,6 +6,7 @@
 
 #include "vehicle_sil/control/agent.hpp"
 #include "vehicle_sil/control/spsc_ring.hpp"
+#include "vehicle_sil/simulation/simulation.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -674,4 +675,160 @@ TEST_CASE(control_agent_sample_grid_and_a_busy_reader)
     reader.join();
     CHECK_EQ(seen.load(), std::uint64_t{2000});
     CHECK_EQ(torn.load(), 0);
+}
+
+TEST_CASE(control_agent_runs_the_completion_function_once)
+{
+    // complete_schema() twice, then a submit and a step: the driver's function runs once, before
+    // the registration closes (it may declare), and nothing more may be declared afterwards.
+    Agent agent;
+    int x = 0;
+    int extra = 0;
+    int runs = 0;
+    agent.input("x", &x);
+    agent.bind_driver({}, [&] {
+        ++runs;
+        agent.output("driver.extra", &extra);
+    });
+    agent.complete_schema();
+    agent.complete_schema();
+    CHECK(agent.submit(Command{1, {{"x", std::int64_t{2}}}, std::nullopt}).status == SubmitStatus::Queued);
+    agent.on_step_begin(SimTime{});
+    agent.on_step_end(SimTime{});
+    CHECK_EQ(runs, 1);
+    CHECK_EQ(agent.schema().size(), std::size_t{2});
+    CHECK(agent.schema()[1].name == "driver.extra");
+    CHECK_EQ(x, 2);
+    CHECK(vehicle_sil::unit::throws_with<std::logic_error>([&] { agent.input("late", &x); }, "'late'"));
+    CHECK(vehicle_sil::unit::throws_with<std::logic_error>([&] { agent.input("late", &x); }, "after the schema was complete"));
+}
+
+TEST_CASE(control_agent_first_submit_propagates_the_completion_error)
+{
+    // Nothing completed the schema: the first submit() does, on its thread. The function throws
+    // the first time: the exception comes out of submit(), nothing is queued or counted, the
+    // schema stays open (a variable may still be declared), and the next submit() tries again.
+    Agent agent;
+    int x = 0;
+    int runs = 0;
+    agent.input("x", &x);
+    agent.bind_driver({}, [&] {
+        if (++runs == 1)
+        {
+            throw std::invalid_argument("driver: clash");
+        }
+    });
+    CHECK(vehicle_sil::unit::throws_with<std::invalid_argument>(
+        [&] { static_cast<void>(agent.submit(Command{1, {{"x", std::int64_t{1}}}, std::nullopt})); }, "driver: clash"));
+    CHECK_EQ(agent.stats().submitted, std::uint64_t{0});
+    CHECK_EQ(agent.stats().invalid, std::uint64_t{0});
+    int y = 0;
+    agent.input("y", &y); // still open
+    CHECK(agent.submit(Command{2, {{"y", std::int64_t{5}}}, std::nullopt}).status == SubmitStatus::Queued);
+    CHECK_EQ(runs, 2);
+    CHECK_EQ(agent.stats().submitted, std::uint64_t{1});
+    agent.on_step_begin(SimTime{});
+    CHECK_EQ(y, 5);
+}
+
+TEST_CASE(control_agent_completes_once_from_two_threads)
+{
+    // The transport's first submit() and the driver's complete_schema() at the same time: the
+    // function runs once and the schema both see is the complete one (meaningful under TSan).
+    for (int round = 0; round < 50; ++round)
+    {
+        Agent agent;
+        int x = 0;
+        int extra = 0;
+        std::atomic<int> runs{0};
+        agent.input("x", &x);
+        agent.bind_driver({}, [&] {
+            runs.fetch_add(1);
+            agent.output("driver.extra", &extra);
+        });
+        std::atomic<bool> go{false};
+        std::atomic<int> queued{0};
+        {
+            std::jthread transport([&] {
+                while (!go.load())
+                {
+                }
+                if (agent.submit(Command{1, {{"x", std::int64_t{3}}}, std::nullopt}).status == SubmitStatus::Queued)
+                {
+                    queued.fetch_add(1);
+                }
+            });
+            std::jthread driver([&] {
+                while (!go.load())
+                {
+                }
+                agent.complete_schema();
+            });
+            go = true;
+        }
+        CHECK_EQ(runs.load(), 1);
+        CHECK_EQ(queued.load(), 1);
+        CHECK_EQ(agent.schema().size(), std::size_t{2});
+        agent.on_step_begin(SimTime{});
+        CHECK_EQ(x, 3);
+    }
+}
+
+TEST_CASE(control_agent_step_needs_the_driver_to_complete_the_schema)
+{
+    // A driver that gave a completion function and steps without complete_schema(): the step
+    // refuses, instead of closing the registration without the driver's outputs.
+    Agent agent;
+    int x = 0;
+    agent.input("x", &x);
+    agent.bind_driver({}, [&] { agent.output("driver.extra", &x); });
+    CHECK(vehicle_sil::unit::throws_with<std::logic_error>([&] { agent.on_step_begin(SimTime{}); }, "complete_schema()"));
+    agent.complete_schema();
+    agent.on_step_begin(SimTime{});
+    CHECK_EQ(agent.schema().size(), std::size_t{2});
+    // Without a completion function, the first step closes the registration by itself.
+    Agent plain;
+    plain.input("x", &x);
+    plain.bind_driver();
+    plain.on_step_begin(SimTime{});
+    CHECK(throws<std::logic_error>([&] { plain.input("late", &x); }));
+}
+
+TEST_CASE(control_agent_options_are_checked_on_their_own)
+{
+    CHECK(vehicle_sil::unit::throws_with<std::invalid_argument>([] { Agent::check_options({.max_pending = 0}); }, "max_pending"));
+    CHECK(throws<std::invalid_argument>([] { Agent::check_options({.max_events = 0}); }));
+    CHECK(vehicle_sil::unit::throws_with<std::invalid_argument>(
+        [] { Agent::check_options({.sample_period = -1ms}); }, "sample_period"));
+    Agent::check_options({});
+    Agent::check_options({.sample_period = SimDuration::zero()});
+    CHECK(throws<std::invalid_argument>([] { Agent agent({.max_pending = 0}); }));
+}
+
+TEST_CASE(control_agent_counts_its_transports)
+{
+    Agent agent;
+    CHECK_EQ(agent.transports(), std::size_t{0});
+    {
+        TransportLease first(agent);
+        TransportLease second(agent);
+        CHECK_EQ(agent.transports(), std::size_t{2});
+    }
+    CHECK_EQ(agent.transports(), std::size_t{0});
+}
+
+TEST_CASE(control_agent_of_an_ecu_names_it_after_the_schema_is_complete)
+{
+    // An ECU's agent (local Simulation): declaring after the schema was completed (as an
+    // AgentClient does) is std::logic_error naming the ECU and why.
+    Simulation sim;
+    Ecu& ecu = sim.add_ecu("Gauge", 10ms);
+    int x = 0;
+    ecu.input("gauge.x", &x);
+    ecu.agent().complete_schema();
+    CHECK(vehicle_sil::unit::throws_with<std::logic_error>([&] { ecu.output("gauge.y", &x); }, "\"Gauge\""));
+    CHECK(vehicle_sil::unit::throws_with<std::logic_error>([&] { ecu.output("gauge.y", &x); }, "after the schema was complete"));
+    CHECK(vehicle_sil::unit::throws_if<std::logic_error>([&] { ecu.output("gauge.y", &x); }, [](const std::logic_error& e) {
+        return dynamic_cast<const std::invalid_argument*>(&e) == nullptr; // a std::logic_error, not std::invalid_argument
+    }));
 }

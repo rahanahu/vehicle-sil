@@ -42,8 +42,8 @@ public:
 
 using ConnectionId = std::uint64_t;
 
-/// What an agent says about itself when it connects. Build it after the agent was attached to
-/// its peer (attach() adds the monitoring outputs to the schema).
+/// What an agent says about itself when it connects. Build it from a complete schema
+/// (Agent::complete_schema(): a Peer adds its monitoring outputs then).
 struct PeerHello
 {
     std::string participant; ///< the SIL Kit participant name (unique in the simulation, not empty)

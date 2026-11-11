@@ -34,6 +34,8 @@ class Peer;
 
 namespace detail {
 
+struct PeerMonitor;
+
 /// For vehicle_sil::Simulation only, which makes its peers before it knows the end of the run:
 /// with virtual time, the peer runs no step that starts at or after `end` (the earlier of this
 /// and VirtualTimeOptions::end applies). Unlike VirtualTimeOptions::end, those steps still take
@@ -82,6 +84,28 @@ struct PeerOptions
     /// Real time: the clock of the driver and the ports. nullptr: the peer uses a
     /// SteadyRealTimeClock of its own. Must outlive the peer.
     can::RealTimeClock* real_time_clock = nullptr;
+    /// With a control agent (Ecu::input(), output(), agent()): it also gets the peer's monitoring
+    /// outputs, after the ECU's variables, when its schema is completed (control::Agent::
+    /// complete_schema(): by a transport such as control_grpc::AgentClient, the first submit()
+    /// or start(), whichever comes first), for the J1939 networks and nodes that exist then
+    /// (j1939() is std::logic_error afterwards; nodes added afterwards are not monitored).
+    /// Read at the agent's samples, on the step thread:
+    ///   peer.steps, peer.speed (simulation seconds per wall-clock second since the previous
+    ///   sample: 0 at the first one, and low after the simulation stood still),
+    ///   peer.app_time_max_us (the longest application-and-LIN stage since then, without the
+    ///   J1939 handling and the writes applied before it);
+    ///   for each J1939 network N: j1939.N.bus_state (-1 unknown, 0 error active, 1 error
+    ///   passive, 2 bus off) and the counters j1939.N.frames_received, frames_sent,
+    ///   send_failures, send_queue_full, receive_overflows, held_dropped, address_violations,
+    ///   transport_aborts_sent, transport_aborts_received;
+    ///   for each node i of N: j1939.N.node<i>.address and j1939.N.node<i>.address_state
+    ///   (0 fixed, 1 not started, 2 claiming, 3 claimed, 4 cannot claim);
+    /// and events "j1939.N.node<i>: <state> at address <a>" (the state named as in the items)
+    /// when a node's address state or address changes (Warning for cannot_claim). A variable of
+    /// the ECU with one of these names is std::invalid_argument when the schema is completed. A
+    /// failed step is not reported here (no later step runs to report it): read failed() and
+    /// error() instead. Without an agent, nothing is monitored.
+    bool monitor = true;
 };
 
 struct J1939ChannelOptions
@@ -111,10 +135,14 @@ struct J1939ChannelOptions
 /// One step at `now`, in this order (as Ecu states): the J1939 networks and the raw CAN channels
 /// (Ecu::can()) receive and handle what arrived (in the order they were added), then the
 /// application (on_step() and every(), in the order added), then the LIN nodes' step(now) (in
-/// the order added), then the J1939 networks and raw channels send (in the same order). A
-/// control agent's hooks (set_control()) run right before and after the application and LIN
-/// stage. LIN requests made by the application (LinMaster::set_frame_data(),
-/// LinSlave::set_response()) therefore take effect in the same step; what the LIN nodes receive
+/// the order added), then the J1939 networks and raw channels send (in the same order). The
+/// ECU's control agent (Ecu::agent()) applies the writes right before the application and
+/// samples right after the LIN stage (before the monitoring of PeerOptions::monitor reads the
+/// networks). In real time, a write queued on the agent wakes the driver (Host::post(), with at
+/// most one wake-up pending), so it takes effect in the next step instead of after up to
+/// max_idle; when the peer stops, the agent stops waking it. LIN requests made by the
+/// application (LinMaster::set_frame_data(), LinSlave::set_response()) take effect in the same
+/// step; what the LIN nodes receive
 /// is reported in their step, and the application sees it in the next one. The LIN nodes are
 /// initialised (init()) when communication is ready, before the first step.
 ///
@@ -122,23 +150,28 @@ struct J1939ChannelOptions
 /// LIN network's name is its own), and no two SIL Kit controllers of the peer have one name
 /// (std::invalid_argument).
 ///
-/// Set up (j1939(), can(), lin_master(), lin_slave(), on_step(), every(), emplace(), and the
-/// networks' nodes, handlers, parts, observers and tap listeners, the LIN nodes' handlers)
-/// before start(); the set-up functions throw std::logic_error afterwards. Nodes may still be
-/// added from a step, as Network::add_node() allows.
+/// Set up (j1939(), can(), lin_master(), lin_slave(), input(), output(), set_agent_options(),
+/// on_step(), every(), emplace(), and the networks' nodes, handlers, parts, observers and tap
+/// listeners, the LIN nodes' handlers) before start(); the set-up functions throw
+/// std::logic_error afterwards. Nodes may still be added from a step, as Network::add_node()
+/// allows. With monitoring (PeerOptions::monitor), j1939() also throws std::logic_error once the
+/// agent's schema is complete.
 ///
 /// Ownership: the peer owns the participant, the controllers, the ports, the networks, the
-/// LIN nodes and the objects made by emplace(); references it returns are valid as long as the
-/// peer. What the handlers refer to (models) must outlive the networks: emplace() it, or
-/// declare it before the peer. stop() (and the destructor) stops the steps (real time: the
-/// driver, then the lifecycle; virtual time: the lifecycle) and closes the SIL Kit ports; the
+/// LIN nodes, the control agent and the objects made by emplace(); references it returns are
+/// valid as long as the peer. What the handlers refer to (models) must outlive the networks:
+/// emplace() it, or declare it before the peer. stop() (and the destructor) stops the steps
+/// (real time: the driver, then the lifecycle; virtual time: the lifecycle), closes the SIL Kit
+/// ports and cancels the writes still waiting on the agent (control::Agent::finish()); the
 /// destructor then destroys the LIN nodes (each before its port), the networks (their parts
-/// first), the taps and the
-/// ports (an external port closes in its destructor), the raw CAN channels and their ports, the
-/// host, the participant, and last the emplace()d objects (the one emplaced last first). So the
-/// emplace()d objects go after the participant: their destructors must not use SIL Kit
-/// services (the participant, controllers or Pub/Sub made through runtime()); make an object
-/// that does so after the peer instead, so that it goes first.
+/// first), the taps and the ports (an external port closes in its destructor), the raw CAN
+/// channels and their ports, the host, the participant, the control agent, and last the
+/// emplace()d objects (the one emplaced last first). So the emplace()d objects go after the
+/// participant: their destructors must not use SIL Kit services (the participant, controllers
+/// or Pub/Sub made through runtime()); make an object that does so after the peer instead, so
+/// that it goes first. A transport of the agent (control_grpc::AgentClient) is made after the
+/// peer and destroyed before it (not emplace()d); stop the peer first, so that the transport
+/// still sends the cancelled writes when it stops.
 ///
 /// Threading: set up, start() and wait() from one thread. The steps run on SIL Kit's thread
 /// (virtual time) or on the driver's thread (real time); handlers, the application, observers
@@ -175,14 +208,6 @@ public:
     /// std::invalid_argument for period <= 0 or an empty function.
     void every(SimDuration period, std::function<void(SimTime now)> fn) override;
 
-    /// Hooks for a control agent (vehicle_sil::control::attach()): `before` runs in every step
-    /// just before the application (before on_step() and every(), whenever they were added),
-    /// `after` just after the LIN nodes' step, before the J1939 networks send, and `stopping`
-    /// once when stop() (or the destructor) begins. Any may be empty. Once only, before start()
-    /// (std::logic_error).
-    void set_control(std::function<void(SimTime now)> before, std::function<void(SimTime now)> after,
-                     std::function<void()> stopping = {});
-
     /// std::out_of_range for an unknown name.
     [[nodiscard]] j1939::Network& network(std::string_view name) const;
     /// The names of the J1939 networks, in the order they were added.
@@ -201,16 +226,20 @@ public:
     /// virtual time.
     [[nodiscard]] can::RealTimeClock* real_time_clock() const noexcept { return clock_; }
 
-    /// Starts the lifecycle and waits until the participant runs (ParticipantRuntime::start()),
-    /// then, in real time, starts the driver. Once only (std::logic_error).
+    /// Completes the schema of the control agent, if there is one (with the monitoring outputs:
+    /// std::invalid_argument for a clash, and the peer stays unstarted), starts the lifecycle and
+    /// waits until the participant runs (ParticipantRuntime::start()), then, in real time,
+    /// starts the driver. Once only (std::logic_error).
     void start(std::chrono::milliseconds timeout = std::chrono::seconds(30));
     /// Waits until the lifecycle ends (ParticipantRuntime::wait_until_finished()). Real time:
     /// then stops the driver.
     std::optional<SilKit::Services::Orchestration::ParticipantState> wait(std::chrono::milliseconds timeout = std::chrono::minutes(10));
     /// start(), then wait().
     std::optional<SilKit::Services::Orchestration::ParticipantState> run(std::chrono::milliseconds timeout = std::chrono::minutes(10));
-    /// Stops the steps (real time: the driver first) and the lifecycle, waits for it and closes
-    /// the SIL Kit ports. Idempotent; never throws. The networks stay for reading.
+    /// Stops the steps (real time: the driver first) and the lifecycle, waits for it, closes
+    /// the SIL Kit ports and cancels the writes still waiting on the control agent
+    /// (control::Agent::finish()). Idempotent; never throws. The networks and the agent stay for
+    /// reading.
     void stop(std::string_view reason = "stopped") noexcept;
     /// Asks the lifecycle to stop without waiting (also from a step).
     void request_stop(std::string_view reason = "stop requested") noexcept;
@@ -243,6 +272,9 @@ private:
     /// lin_slave()): std::invalid_argument for a name or a controller name in use, and what the
     /// network check (detail::set_network_check()) refuses.
     void require_lin_name(const std::string& network, const char* what) const;
+    /// std::logic_error (naming `network`) once the monitoring outputs are registered: a J1939
+    /// network added afterwards would not be monitored.
+    void require_unmonitored(const std::string& network) const;
     /// Adds a LIN node on the LIN network `network` (checked by require_lin_name()), with its SIL
     /// Kit controller and port. Check the node's arguments first: the controller cannot be
     /// removed again. The caller makes the master or slave on the port and removes the node if
@@ -254,6 +286,11 @@ private:
     void require_can_name(const std::string& network, const char* what) const;
     void keep(std::shared_ptr<void> object) override;
     void require_not_started(const char* what) const override;
+    [[nodiscard]] bool started() const noexcept override { return started_; }
+    detail::EcuAgent& ecu_agent() noexcept override { return agent_; }
+    /// Binds a new control agent to this peer (detail::EcuAgent): the wakeup in real time, and
+    /// the monitoring outputs when the schema is completed.
+    void bind_agent(control::Agent& agent);
     /// detail::set_virtual_time_end().
     void set_end(SimTime end);
     /// true if a SIL Kit CAN controller of this peer (a J1939 network's or a raw channel's) has
@@ -266,6 +303,8 @@ private:
 
     /// First: the emplace()d objects go after everything else.
     detail::OwnedObjects owned_;
+    /// Second: the control agent goes after the networks and before the emplace()d objects.
+    detail::EcuAgent agent_;
     PeerOptions options_;
     /// The end of the handled steps (VirtualTimeOptions::end or set_end()); virtual time only.
     std::optional<SimTime> end_;
@@ -282,10 +321,8 @@ private:
     /// detail::set_network_check(); empty: none.
     std::function<void(const std::string& network, detail::NetworkKind kind, const std::string& call)> network_check_;
     std::vector<std::function<void(SimTime)>> step_functions_;
-    std::function<void(SimTime)> control_before_;
-    std::function<void(SimTime)> control_after_;
-    std::function<void()> control_stopping_;
-    bool control_set_ = false;
+    /// PeerOptions::monitor: set when the agent's schema is completed (before the first step).
+    std::shared_ptr<detail::PeerMonitor> monitor_;
     std::mutex mutex_; ///< serialises stop(); guards driver_ and stopping_ against start()
     std::unique_ptr<can::RealTimeDriver> driver_;
     /// driver_ once it runs (set once in start()), for failed(), error() and wait() without the

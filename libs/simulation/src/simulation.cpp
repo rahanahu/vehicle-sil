@@ -498,6 +498,25 @@ LocalBench& Simulation::local()
     return local_->can;
 }
 
+Ecu& Simulation::ecu(std::string_view name)
+{
+    const auto names = local_ ? local_->can.ecu_names() : silkit_->names;
+    for (std::size_t i = 0; i < names.size(); ++i)
+    {
+        if (names[i] == name)
+        {
+            return local_ ? local_->can.ecu(name) : static_cast<Ecu&>(*silkit_->peers[i]);
+        }
+    }
+    std::string list;
+    for (const auto& n : names)
+    {
+        list += (list.empty() ? "\"" : ", \"") + n + "\"";
+    }
+    throw std::out_of_range(std::string(kWho) + "ecu(\"" + std::string(name) + "\"): no ECU has that name. ECUs: "
+                            + (list.empty() ? std::string("none (add one with add_ecu() or add())") : list));
+}
+
 Peer& Simulation::peer(std::string_view ecu)
 {
     if (!silkit_)
