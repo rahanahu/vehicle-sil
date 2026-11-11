@@ -6,6 +6,7 @@
 #include "../common/lin_cluster.hpp"
 
 #include "vehicle_sil/lin/lin_slave.hpp"
+#include "vehicle_sil/lin_silkit/silkit_lin_port.hpp"
 
 #include <silkit/services/lin/all.hpp>
 
@@ -55,18 +56,18 @@ int run(const Args& args)
     SimTime currentStep{}; // traced with each frame: the step that handled it
 
     ParticipantRuntime runtime(runtime_options(o));
-    LinSlave slave(
-        *runtime.participant().CreateLinController("LIN1", network), slaveOptions,
-        [&](const LinReceivedFrame& f) {
-            trace.line("frame t_us=%lld rx_us=%lld id=0x%02X data=%s", us(f.header_time), us(currentStep), f.id,
-                       hex(f.data.data(), f.data_length).c_str());
-            if (f.id == kCommandId && f.data_length == 2)
-            {
-                newestCommand = {f.data[0], f.data[1]};
-                ++commands;
-            }
-        },
-        [&](SimTime t, LinNodeState s) { trace.line("state t_us=%lld state=%s", us(t), to_string(s)); });
+    SilKitLinPort port(*runtime.participant().CreateLinController("LIN1", network), LinRole::Slave);
+    LinSlave slave(port, slaveOptions);
+    slave.on_frame([&](const LinReceivedFrame& f) {
+        trace.line("frame t_us=%lld rx_us=%lld id=0x%02X data=%s", us(f.header_time), us(currentStep), f.id,
+                   hex(f.data.data(), f.data_length).c_str());
+        if (f.id == kCommandId && f.data_length == 2)
+        {
+            newestCommand = {f.data[0], f.data[1]};
+            ++commands;
+        }
+    });
+    slave.on_state([&](SimTime t, LinNodeState s) { trace.line("state t_us=%lld state=%s", us(t), to_string(s)); });
     runtime.set_communication_ready_handler([&] { slave.init(); });
     runtime.set_step_handler([&](SimTime now, SimDuration) {
         const auto pulsesBefore = slave.statistics().wakeups_sent;

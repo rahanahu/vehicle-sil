@@ -10,6 +10,7 @@
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/lin/lin_master.hpp"
 #include "vehicle_sil/lin/lin_slave.hpp"
+#include "vehicle_sil/lin_silkit/silkit_lin_port.hpp"
 
 #include <silkit/services/lin/all.hpp>
 
@@ -86,7 +87,7 @@ struct ClusterOptions
     SimDuration stop_at = 600ms;
     std::chrono::microseconds master_busy{0};
     std::chrono::microseconds slave_busy{0};
-    LinMasterOptions master; // step is filled in from master_step
+    LinMasterOptions master;
     std::array<LinSlaveOptions, kSlaves> slaves{
         LinSlaveOptions{{kCommandId}, std::nullopt},
         LinSlaveOptions{{kCommandId}, std::nullopt},
@@ -145,18 +146,17 @@ ClusterTrace run_cluster(ClusterOptions o)
     const SimTime keepBefore = SimTime{} + o.stop_at - 20ms;
 
     auto masterRuntime = make_runtime("Master", o.master_step);
-    o.master.step = o.master_step;
-    LinMaster master(
-        *masterRuntime->participant().CreateLinController("LIN1", "LIN_CLUSTER"), default_schedule(), o.master,
-        [&](const LinScheduleResult& r) {
+    SilKitLinPort masterPort(*masterRuntime->participant().CreateLinController("LIN1", "LIN_CLUSTER"), LinRole::Master);
+    LinMaster master(masterPort, default_schedule(), o.master_step, o.master);
+    master.on_result([&](const LinScheduleResult& r) {
             if (r.header_time < keepBefore)
             {
                 out.results.push_back(r);
                 out.master.push_back("result t=" + std::to_string(ms_of(r.header_time)) + " id=" + std::to_string(r.id) +
                                      " status=" + status_name(r.status) + " data=" + hex(r.data.data(), r.data_length));
             }
-        },
-        [&](SimTime t, LinNodeState s) {
+        });
+    master.on_state([&](SimTime t, LinNodeState s) {
             if (t < keepBefore)
             {
                 out.master.push_back("state t=" + std::to_string(ms_of(t)) + " " + to_string(s));
@@ -176,6 +176,7 @@ ClusterTrace run_cluster(ClusterOptions o)
     });
 
     std::vector<std::unique_ptr<ParticipantRuntime>> slaveRuntimes;
+    std::vector<std::unique_ptr<SilKitLinPort>> slavePorts;
     std::vector<std::unique_ptr<LinSlave>> slaves;
     // Newest command each slave received; slave 0 echoes it.
     std::array<std::array<std::uint8_t, 2>, kSlaves> lastCommand{};
@@ -186,9 +187,10 @@ ClusterTrace run_cluster(ClusterOptions o)
         slaveRuntimes.push_back(make_runtime(slaveNames[i], o.slave_step));
         auto& runtime = *slaveRuntimes.back();
         auto& trace = out.slaves[i];
-        slaves.push_back(std::make_unique<LinSlave>(
-            *runtime.participant().CreateLinController("LIN1", "LIN_CLUSTER"), o.slaves[i],
-            [&, i](const LinReceivedFrame& f) {
+        slavePorts.push_back(
+            std::make_unique<SilKitLinPort>(*runtime.participant().CreateLinController("LIN1", "LIN_CLUSTER"), LinRole::Slave));
+        slaves.push_back(std::make_unique<LinSlave>(*slavePorts.back(), o.slaves[i]));
+        slaves.back()->on_frame([&, i](const LinReceivedFrame& f) {
                 if (f.header_time < keepBefore)
                 {
                     trace.push_back("frame t=" + std::to_string(ms_of(f.header_time)) +
@@ -199,13 +201,13 @@ ClusterTrace run_cluster(ClusterOptions o)
                 {
                     lastCommand[i] = {f.data[0], f.data[1]};
                 }
-            },
-            [&](SimTime t, LinNodeState s) {
+            });
+        slaves.back()->on_state([&](SimTime t, LinNodeState s) {
                 if (t < keepBefore)
                 {
                     trace.push_back("state t=" + std::to_string(ms_of(t)) + " " + to_string(s));
                 }
-            }));
+            });
         auto& slave = *slaves.back();
         runtime.set_communication_ready_handler([&slave] { slave.init(); });
         runtime.set_step_handler([&, i](SimTime now, SimDuration) {
@@ -701,10 +703,12 @@ TEST_CASE(lin_cluster_rejects_invalid_configuration)
                            {0x10, 2, LinChecksumModel::Enhanced, 5ms, LinPublisher::Master}},
                           5ms);
     }));
-    LinMasterOptions negativeDelay{5ms, -1ms};
-    CHECK(throws<std::invalid_argument>([&] { LinMaster m(*controller, default_schedule(), negativeDelay, nullptr); }));
+    SilKitLinPort masterPort(*controller, LinRole::Master);
+    LinMasterOptions negativeDelay{-1ms};
+    CHECK(throws<std::invalid_argument>([&] { LinMaster m(masterPort, default_schedule(), 5ms, negativeDelay); }));
+    CHECK(throws<std::invalid_argument>([&] { LinMaster m(masterPort, default_schedule(), 0ms); }));
 
-    LinMaster master(*controller, default_schedule(), LinMasterOptions{5ms}, nullptr);
+    LinMaster master(masterPort, default_schedule(), 5ms);
     const std::array<std::uint8_t, 3> three{};
     CHECK(throws<std::invalid_argument>([&] { master.set_frame_data(kCommandId, three); })); // 2 bytes in the table
     CHECK(throws<std::invalid_argument>([&] { master.set_frame_data(0x40, three); }));
@@ -720,10 +724,42 @@ TEST_CASE(lin_cluster_rejects_invalid_configuration)
     master.set_frame_data(0x30, three);
 
     auto* slaveController = runtime.participant().CreateLinController("LIN2", "LIN_X");
-    CHECK(throws<std::invalid_argument>([&] { LinSlave s(*slaveController, LinSlaveOptions{{0x40}, std::nullopt}); }));
-    CHECK(throws<std::invalid_argument>([&] { LinSlave s(*slaveController, LinSlaveOptions{{}, 0ms}); }));
-    LinSlave slave(*slaveController);
+    SilKitLinPort slavePort(*slaveController, LinRole::Slave);
+    CHECK(throws<std::invalid_argument>([&] { LinSlave s(slavePort, LinSlaveOptions{{0x40}, std::nullopt}); }));
+    CHECK(throws<std::invalid_argument>([&] { LinSlave s(slavePort, LinSlaveOptions{{}, 0ms}); }));
+    LinSlave slave(slavePort);
     CHECK(throws<std::invalid_argument>([&] { slave.clear_response(SimTime{}, 0x40); }));
+
+    // The checks of the constructors, without a node (Peer runs them before it makes the
+    // controller).
+    LinMaster::validate(default_schedule(), 5ms);
+    CHECK(throws<std::invalid_argument>([&] { LinMaster::validate({}, 5ms); }));
+    CHECK(throws<std::invalid_argument>([&] { LinMaster::validate(default_schedule(), 0ms); }));
+    CHECK(throws<std::invalid_argument>([&] { LinMaster::validate(default_schedule(), 5ms, negativeDelay); }));
+    CHECK(throws<std::invalid_argument>([&] {
+        LinMaster::validate({{0x10, 2, LinChecksumModel::Enhanced, 5ms}, {0x10, 3, LinChecksumModel::Enhanced, 5ms}}, 5ms);
+    }));
+    LinSlave::validate(LinSlaveOptions{{0x10}, std::nullopt});
+    CHECK(throws<std::invalid_argument>([] { LinSlave::validate(LinSlaveOptions{{0x40}, std::nullopt}); }));
+    CHECK(throws<std::invalid_argument>([] { LinSlave::validate(LinSlaveOptions{{}, 0ms}); }));
+
+    // The SIL Kit port: a function of the other role, and the master's headers and frames with
+    // an id above 63 or a length outside 1..8.
+    using vehicle_sil::unit::throws_with;
+    CHECK(throws_with<std::logic_error>([&] { slavePort.send_header(SimTime{}, 0x10, 1, LinChecksumModel::Enhanced); },
+                                        "send_header() is a function of a master port"));
+    CHECK(throws<std::logic_error>([&] { slavePort.send_frame(SimTime{}, LinFrame{0x10, LinChecksumModel::Enhanced, 1, {}}); }));
+    CHECK(throws<std::logic_error>([&] { slavePort.send_go_to_sleep(SimTime{}); }));
+    CHECK(throws_with<std::logic_error>([&] { masterPort.respond(SimTime{}, LinFrame{0x10, LinChecksumModel::Enhanced, 1, {}}); },
+                                        "respond() is a function of a slave port"));
+    CHECK(throws_with<std::invalid_argument>([&] { masterPort.send_header(SimTime{}, 64, 1, LinChecksumModel::Enhanced); },
+                                             "id 64"));
+    CHECK(throws_with<std::invalid_argument>([&] { masterPort.send_header(SimTime{}, 0x10, 0, LinChecksumModel::Enhanced); },
+                                             "0 bytes"));
+    CHECK(throws_with<std::invalid_argument>([&] { masterPort.send_header(SimTime{}, 0x10, 9, LinChecksumModel::Enhanced); },
+                                             "9 bytes"));
+    CHECK(throws<std::invalid_argument>([&] { masterPort.send_frame(SimTime{}, LinFrame{64, LinChecksumModel::Enhanced, 1, {}}); }));
+    CHECK(throws<std::invalid_argument>([&] { masterPort.send_frame(SimTime{}, LinFrame{0x10, LinChecksumModel::Enhanced, 9, {}}); }));
 }
 
 } // namespace

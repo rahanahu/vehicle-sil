@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: MIT
 //
-// LIN master: schedule table, frame transmission and reception, sleep and wakeup, in SIL Kit
-// virtual time (vehicle_sil::lin).
+// LIN master: schedule table, frame transmission and reception, sleep and wakeup, in virtual
+// time, on a LinPort (vehicle_sil::lin, no SIL Kit).
 #pragma once
 
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/core/step_inbox.hpp"
+#include "vehicle_sil/lin/lin_port.hpp"
 #include "vehicle_sil/lin/lin_schedule.hpp"
 #include "vehicle_sil/lin/lin_types.hpp"
 
-#include <silkit/services/lin/ILinController.hpp>
-
 #include <array>
-#include <bitset>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -20,15 +18,9 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <utility>
 
 namespace vehicle_sil::lin {
-
-enum class LinResultStatus
-{
-    Ok,         ///< The publisher sent the response (for a master frame: the master sent it).
-    NoResponse, ///< Nobody responded to the header.
-    Error,      ///< Conflicting responses, or a length or checksum mismatch.
-};
 
 /// What became of one header of the schedule.
 struct LinScheduleResult
@@ -55,21 +47,22 @@ struct LinMasterStatistics
 
 struct LinMasterOptions
 {
-    /// Step size of the participant that calls step(). Every slot must be a multiple of it.
-    SimDuration step{};
     /// After a wakeup pulse, the schedule restarts at its first entry at the first step at least
     /// this long after the pulse. LIN 2.x gives the slaves 100 ms to become ready.
     SimDuration wakeup_delay{std::chrono::milliseconds(100)};
 };
 
-/// The master node of a LIN cluster on a SIL Kit LIN controller, in virtual time.
+/// The master node of a LIN cluster, in virtual time. It reaches the bus only through its
+/// LinPort (a VirtualLinBus endpoint, or a SilKitLinPort of vehicle_sil::lin_silkit); Ecu::
+/// lin_master() makes it with the port of the runtime.
 ///
-/// - init() configures the controller as master. Call it from
-///   ParticipantRuntime::set_communication_ready_handler().
-/// - step(now) must be called once per simulation step, with the step's time. Everything the
-///   master puts on the bus happens in step(): headers, its own frames, the go-to-sleep command
-///   and wakeup pulses. Requests (set_frame_data(), set_schedule(), request_sleep(),
-///   request_wakeup()) made from the step handler before step(now) take effect in that step.
+/// - init() opens the port (SIL Kit: configures the controller as master). Call it once before
+///   the first step (with SIL Kit: from ParticipantRuntime::set_communication_ready_handler()).
+/// - step(now) must be called once per simulation step, with the step's time; the steps are
+///   `step` apart, starting at T = 0. Everything the master puts on the bus happens in step():
+///   headers, its own frames, the go-to-sleep command and wakeup pulses. Requests
+///   (set_frame_data(), set_schedule(), request_sleep(), request_wakeup()) made in the step
+///   before step(now) take effect in that step.
 ///
 /// Schedule: the first header goes out at T = 0. When a slot ends, step() reports the result
 /// of the header sent at its start, then sends the next header. Every slot must be a multiple
@@ -78,16 +71,17 @@ struct LinMasterOptions
 /// Frames the master publishes (LinPublisher::Master) carry the newest set_frame_data() value
 /// for their identifier, zeros until the first one.
 ///
-/// Determinism of slave responses: a slave answers a header from its SIL Kit receive handler,
-/// so its response is not bound to a step. Let the header be sent at T with slot length S, and
-/// let the responding slave's step size be D < S (strictly). The slave may already have
-/// executed its step at T, but it cannot announce a time of T + S or later before it has
-/// executed a step after T, and it can execute that step only after the master has announced its
-/// next time, i.e. after the header has reached it. So the response has arrived before the
-/// master's step at T + S. The master pairs the response with the header itself and reports it
-/// at T + S, independent of wall-clock speed. With D >= S the response may arrive after T + S:
-/// it is then reported as NoResponse, or taken for the response to a later header of the same
-/// identifier. vehicle-sil does not support that configuration.
+/// Determinism of slave responses: a slave answers a header from its port's header event, so its
+/// response is not bound to a step. On the virtual bus it arrives inside send_header(). On SIL
+/// Kit, let the header be sent at T with slot length S, and let the responding slave's step size
+/// be D < S (strictly). The slave may already have executed its step at T, but it cannot
+/// announce a time of T + S or later before it has executed a step after T, and it can execute
+/// that step only after the master has announced its next time, i.e. after the header has
+/// reached it. So the response has arrived before the master's step at T + S. The master pairs
+/// the response with the header itself and reports it at T + S, independent of wall-clock speed.
+/// With D >= S the response may arrive after T + S: it is then reported as NoResponse, or taken
+/// for the response to a later header of the same identifier. vehicle-sil does not support that
+/// configuration.
 ///
 /// Sleep and wakeup:
 /// - request_sleep(): at the next slot boundary the master sends the go-to-sleep command instead
@@ -109,26 +103,41 @@ struct LinMasterOptions
 /// response to one header (two slaves, or a slave answering a frame the master publishes) is a
 /// collision, reported as LinResultStatus::Error, as on a real bus.
 ///
-/// Thread safety: init(), step() and the request functions belong to the participant's step
-/// handler. SIL Kit runs the step handler and the receive handlers on one thread (its I/O
-/// thread), and its LIN controller is not thread safe, so the master calls the controller only
-/// from there. The state the handlers share with step() is still guarded.
+/// Ownership: the master does not own its port; the port must outlive it. The master listens
+/// to the port from its constructor to its destructor.
+///
+/// Thread safety: init(), step(), the handler setters and the request functions belong to the
+/// step of the node's runtime. The port reports on the thread that runs the steps (SIL Kit: its
+/// I/O thread; virtual bus: inside the sender's step); the state its events share with step() is
+/// still guarded.
 class LinMaster
 {
 public:
     using ResultHandler = std::function<void(const LinScheduleResult&)>;
     using StateHandler = std::function<void(SimTime time, LinNodeState state)>;
 
-    /// Throws std::invalid_argument for an invalid schedule (validate_schedule()), a step that
-    /// is not positive or a negative wakeup delay.
-    LinMaster(SilKit::Services::Lin::ILinController& controller, LinScheduleTable schedule, LinMasterOptions options,
-              ResultHandler on_result, StateHandler on_state = {});
+    /// A master on `port` (LinRole::Master) stepped every `step`. Throws std::invalid_argument
+    /// for an invalid schedule (validate_schedule(): also a step that is not positive) or a
+    /// negative wakeup delay; it then leaves the port as it was.
+    LinMaster(LinPort& port, LinScheduleTable schedule, SimDuration step, LinMasterOptions options = {});
     ~LinMaster();
+
+    /// Checks the constructor's arguments without making a master: throws std::invalid_argument
+    /// exactly where the constructor would. Check before making a port that cannot be removed
+    /// again (a SIL Kit LIN controller stays with its participant).
+    static void validate(const LinScheduleTable& schedule, SimDuration step, const LinMasterOptions& options = {});
 
     LinMaster(const LinMaster&) = delete;
     LinMaster& operator=(const LinMaster&) = delete;
     LinMaster(LinMaster&&) = delete;
     LinMaster& operator=(LinMaster&&) = delete;
+
+    /// Called with the result of every header, at the end of its slot (in step()). Set it before
+    /// the first step (not thread safe); an empty function reports nothing.
+    void on_result(ResultHandler handler) { on_result_ = std::move(handler); }
+    /// Called when the master goes to sleep or wakes up, in step(), with the step's time. Set it
+    /// before the first step (not thread safe); an empty function reports nothing.
+    void on_state(StateHandler handler) { on_state_ = std::move(handler); }
 
     void init();
     void step(SimTime now);
@@ -156,8 +165,8 @@ public:
 
     /// Replaces the schedule at the next slot boundary (asleep: at the restart); the new table
     /// starts at its first entry. Throws std::invalid_argument for an invalid table, or for an
-    /// identifier whose length, checksum or publisher differs from an earlier schedule: SIL Kit
-    /// cannot reconfigure an identifier.
+    /// identifier whose length, checksum or publisher differs from an earlier schedule (a SIL
+    /// Kit controller cannot reconfigure an identifier; the rule holds on every port).
     void set_schedule(LinScheduleTable schedule);
 
     void request_sleep();
@@ -178,23 +187,45 @@ private:
         bool operator==(const FrameConfig&) const = default;
     };
 
-    void on_frame_status(const SilKit::Services::Lin::LinFrameStatusEvent& event);
+    /// Receives the port's events (LinMaster does not show them in its own interface).
+    class PortListener final : public LinPortListener
+    {
+    public:
+        explicit PortListener(LinMaster& master) : master_(master) {}
+        void on_header(SimTime, LinId) override {}
+        void on_response(SimTime header_time, const LinFrame& frame, LinResultStatus status) override
+        {
+            master_.on_response(header_time, frame, status);
+        }
+        void on_go_to_sleep(SimTime) override {}
+        void on_wakeup(SimTime time) override { master_.on_wakeup(time); }
+
+    private:
+        LinMaster& master_;
+    };
+
+    void on_response(SimTime header_time, const LinFrame& frame, LinResultStatus status);
+    void on_wakeup(SimTime time);
     /// Ends the outstanding slot and returns its result, if any.
     std::optional<LinScheduleResult> end_slot();
     void report(const std::optional<LinScheduleResult>& result);
+    using FrameConfigs = std::array<std::optional<FrameConfig>, kMaxLinId + 1>;
+
+    /// `before` with the identifiers of `table` added; throws std::invalid_argument if one differs
+    /// from `before` or within `table`.
+    static FrameConfigs merge_frame_configs(const FrameConfigs& before, const LinScheduleTable& table);
     /// Adds the identifiers of `table` to frame_configs_; throws std::invalid_argument (and adds
     /// nothing) if one differs from a schedule given before.
     void remember_frame_configs(const LinScheduleTable& table);
-    void configure(const LinScheduleEntry& entry);
     void wake(SimTime now, SimTime pulse_time);
     void notify(SimTime time, LinNodeState state);
 
-    SilKit::Services::Lin::ILinController& controller_;
+    LinPort& port_;
+    const SimDuration step_;
     const LinMasterOptions options_;
-    const ResultHandler on_result_;
-    const StateHandler on_state_;
-    std::optional<SilKit::Util::HandlerId> status_handler_;
-    std::optional<SilKit::Util::HandlerId> wakeup_handler_;
+    ResultHandler on_result_;
+    StateHandler on_state_;
+    PortListener listener_{*this};
 
     // Step-handler state.
     LinScheduleTable schedule_;
@@ -206,8 +237,7 @@ private:
     bool sleep_requested_ = false;
     bool wakeup_requested_ = false;
     /// Configuration of every identifier in any schedule given to the master; never changes.
-    std::array<std::optional<FrameConfig>, kMaxLinId + 1> frame_configs_{};
-    std::bitset<kMaxLinId + 1> configured_; ///< Identifiers configured as Rx in the controller.
+    FrameConfigs frame_configs_{};
     std::array<std::array<std::uint8_t, kMaxLinDataLength>, kMaxLinId + 1> master_data_{};
     std::optional<std::array<std::uint8_t, kDiagnosticFrameLength>> master_request_;
 

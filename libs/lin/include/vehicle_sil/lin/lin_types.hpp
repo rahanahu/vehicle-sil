@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 //
-// Types shared by the LIN master, slave and schedule table (vehicle_sil::lin).
+// Types shared by the LIN master, slave, schedule table, ports and buses (vehicle_sil::lin, no
+// SIL Kit).
 #pragma once
 
 #include "vehicle_sil/core/sim_time.hpp"
-
-#include <silkit/services/lin/LinDatatypes.hpp>
 
 #include <array>
 #include <cstddef>
@@ -13,8 +12,8 @@
 
 namespace vehicle_sil::lin {
 
-using SilKit::Services::Lin::LinChecksumModel;
-using SilKit::Services::Lin::LinId;
+/// A LIN frame identifier (0..kMaxLinId).
+using LinId = std::uint8_t;
 
 inline constexpr LinId kMaxLinId = 63;
 inline constexpr std::size_t kMaxLinDataLength = 8;
@@ -31,6 +30,40 @@ inline constexpr std::size_t kDiagnosticFrameLength = 8;
 {
     return id <= kMaxLinId && data_length >= 1 && data_length <= kMaxLinDataLength;
 }
+
+/// The checksum model of a frame. The receivers of a frame compare it with their own
+/// configuration of the identifier: a mismatch is an error, like a wrong length.
+enum class LinChecksumModel : std::uint8_t
+{
+    Classic,
+    Enhanced,
+};
+
+/// A frame on the bus: identifier, checksum model and the first `data_length` bytes of `data`.
+struct LinFrame
+{
+    LinId id = 0;
+    LinChecksumModel checksum_model = LinChecksumModel::Enhanced;
+    std::uint8_t data_length = 0;
+    std::array<std::uint8_t, kMaxLinDataLength> data{};
+
+    bool operator==(const LinFrame&) const = default;
+};
+
+/// The role of a node, and of its port, on a LIN bus.
+enum class LinRole
+{
+    Master,
+    Slave,
+};
+
+/// The outcome of a header.
+enum class LinResultStatus
+{
+    Ok,         ///< The publisher sent the response (for a master frame: the master sent it).
+    NoResponse, ///< Nobody responded to the header.
+    Error,      ///< Conflicting responses, or a length or checksum mismatch.
+};
 
 /// The node that provides the response of a frame (the LDF "publisher").
 enum class LinPublisher

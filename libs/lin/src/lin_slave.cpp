@@ -1,99 +1,67 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/lin/lin_slave.hpp"
 
-#include "lin_internal.hpp"
-
-#include <silkit/experimental/services/lin/LinControllerExtensions.hpp>
-
 #include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 namespace vehicle_sil::lin {
-namespace {
-
-namespace silkit_lin = SilKit::Services::Lin;
-namespace experimental_lin = SilKit::Experimental::Services::Lin;
-
-bool is_go_to_sleep_frame(const silkit_lin::LinFrame& frame)
+LinSlave::LinSlave(LinPort& port, LinSlaveOptions options) : port_(port), bus_idle_timeout_(options.bus_idle_timeout)
 {
-    const auto command = silkit_lin::GoToSleepFrame();
-    return frame.id == command.id && frame.data == command.data;
+    validate(options);
+    for (const LinId id : options.subscriptions)
+    {
+        subscriptions_.set(id);
+    }
+    // Last: nothing above may throw once the port knows the slave.
+    port_.set_listener(&listener_);
 }
 
-} // namespace
-
-LinSlave::LinSlave(silkit_lin::ILinController& controller, LinSlaveOptions options, FrameHandler on_frame,
-                   StateHandler on_state) :
-  controller_(controller),
-  bus_idle_timeout_(options.bus_idle_timeout),
-  on_frame_(std::move(on_frame)),
-  on_state_(std::move(on_state))
+void LinSlave::validate(const LinSlaveOptions& options)
 {
     for (const LinId id : options.subscriptions)
     {
         if (id > kMaxLinId)
         {
-            throw std::invalid_argument("LinSlave subscription " + std::to_string(id) + ": id must be 0..63");
+            throw std::invalid_argument("vehicle_sil::lin::LinSlave: subscription " + std::to_string(id) +
+                                        ": a LIN id is 0..63");
         }
-        subscriptions_.set(id);
     }
-    if (bus_idle_timeout_ && *bus_idle_timeout_ <= SimDuration::zero())
+    if (options.bus_idle_timeout && *options.bus_idle_timeout <= SimDuration::zero())
     {
-        throw std::invalid_argument("LinSlave bus_idle_timeout must be > 0");
+        throw std::invalid_argument("vehicle_sil::lin::LinSlave: bus_idle_timeout is " +
+                                    std::to_string(options.bus_idle_timeout->count()) +
+                                    " ns; it must be > 0 (std::nullopt disables it)");
     }
-    header_handler_ = experimental_lin::AddFrameHeaderHandler(
-        &controller_, [this](silkit_lin::ILinController*, const experimental_lin::LinFrameHeaderEvent& event) {
-            on_header(from_silkit_time(event.timestamp), event.id);
-        });
-    status_handler_ = controller_.AddFrameStatusHandler(
-        [this](silkit_lin::ILinController*, const silkit_lin::LinFrameStatusEvent& event) { on_frame_status(event); });
-    sleep_handler_ = controller_.AddGoToSleepHandler(
-        [this](silkit_lin::ILinController*, const silkit_lin::LinGoToSleepEvent& event) {
-            on_go_to_sleep(from_silkit_time(event.timestamp));
-        });
-    wakeup_handler_ =
-        controller_.AddWakeupHandler([this](silkit_lin::ILinController*, const silkit_lin::LinWakeupEvent& event) {
-            on_wakeup(from_silkit_time(event.timestamp), event.direction);
-        });
 }
 
 LinSlave::~LinSlave()
 {
-    detail::remove_handler(header_handler_,
-                           [this](auto id) { experimental_lin::RemoveFrameHeaderHandler(&controller_, id); });
-    detail::remove_handler(status_handler_, [this](auto id) { controller_.RemoveFrameStatusHandler(id); });
-    detail::remove_handler(sleep_handler_, [this](auto id) { controller_.RemoveGoToSleepHandler(id); });
-    detail::remove_handler(wakeup_handler_, [this](auto id) { controller_.RemoveWakeupHandler(id); });
+    port_.set_listener(nullptr);
 }
 
 void LinSlave::init()
 {
-    experimental_lin::LinControllerDynamicConfig config;
-    config.controllerMode = silkit_lin::LinControllerMode::Slave;
-    config.baudRate = detail::kBaudRate;
-    experimental_lin::InitDynamic(&controller_, config);
+    port_.open();
 }
 
 void LinSlave::set_response(SimTime now, LinId id, std::span<const std::uint8_t> data, LinChecksumModel checksum_model)
 {
     if (!valid_lin_frame(id, data.size()))
     {
-        throw std::invalid_argument("LinSlave::set_response: id must be 0..63 and data 1..8 bytes");
+        throw std::invalid_argument("vehicle_sil::lin::LinSlave: set_response(id " + std::to_string(id) + ", " +
+                                    std::to_string(data.size()) + " bytes): the id must be 0..63 and the data 1..8 bytes");
     }
     if (id == kMasterRequestId || id == kSlaveResponseId)
     {
-        throw std::invalid_argument("LinSlave::set_response: diagnostic frames go through set_slave_response()");
+        throw std::invalid_argument("vehicle_sil::lin::LinSlave: set_response(id " + std::to_string(id) +
+                                    "): diagnostic frames go through set_slave_response()");
     }
-    if (checksum_model != LinChecksumModel::Classic && checksum_model != LinChecksumModel::Enhanced)
-    {
-        throw std::invalid_argument("LinSlave::set_response: checksum_model must be Classic or Enhanced");
-    }
-    silkit_lin::LinFrame frame;
+    LinFrame frame;
     frame.id = id;
-    frame.checksumModel = checksum_model;
-    frame.dataLength = static_cast<silkit_lin::LinDataLength>(data.size());
+    frame.checksum_model = checksum_model;
+    frame.data_length = static_cast<std::uint8_t>(data.size());
     std::copy(data.begin(), data.end(), frame.data.begin());
     store(now, id, frame);
 }
@@ -102,12 +70,13 @@ void LinSlave::set_slave_response(SimTime now, std::span<const std::uint8_t> dat
 {
     if (data.size() != kDiagnosticFrameLength)
     {
-        throw std::invalid_argument("LinSlave::set_slave_response: a slave response has 8 bytes");
+        throw std::invalid_argument("vehicle_sil::lin::LinSlave: set_slave_response() got " + std::to_string(data.size()) +
+                                    " bytes; a slave response has 8 bytes");
     }
-    silkit_lin::LinFrame frame;
+    LinFrame frame;
     frame.id = kSlaveResponseId;
-    frame.checksumModel = LinChecksumModel::Classic;
-    frame.dataLength = static_cast<silkit_lin::LinDataLength>(data.size());
+    frame.checksum_model = LinChecksumModel::Classic;
+    frame.data_length = static_cast<std::uint8_t>(data.size());
     std::copy(data.begin(), data.end(), frame.data.begin());
     store(now, kSlaveResponseId, frame, true);
 }
@@ -116,18 +85,22 @@ void LinSlave::clear_response(SimTime now, LinId id)
 {
     if (id > kMaxLinId)
     {
-        throw std::invalid_argument("LinSlave::clear_response: id must be 0..63");
+        throw std::invalid_argument("vehicle_sil::lin::LinSlave: clear_response(id " + std::to_string(id) +
+                                    "): a LIN id is 0..63");
     }
     store(now, id, std::nullopt);
 }
 
-void LinSlave::store(SimTime now, LinId id, std::optional<silkit_lin::LinFrame> frame, bool once)
+void LinSlave::store(SimTime now, LinId id, std::optional<LinFrame> frame, bool once)
 {
     const std::lock_guard lock(mutex_);
     auto& values = values_[id];
     if (values.current && now < values.current->since)
     {
-        throw std::logic_error("LinSlave: response time went backwards");
+        throw std::logic_error("vehicle_sil::lin::LinSlave: the response of id " + std::to_string(id) + " was set at " +
+                               std::to_string(values.current->since.time_since_epoch().count()) +
+                               " ns and now at an earlier time (" + std::to_string(now.time_since_epoch().count()) +
+                               " ns); pass the time of the current step");
     }
     // A value set again at the same `now` replaces the one set before; headers stamped after
     // `now` see only the new one, which is a new one-shot response (sent cleared).
@@ -157,7 +130,7 @@ void LinSlave::on_header(SimTime header_time, LinId id)
 {
     push(header_time, BusEvent{BusEvent::Kind::Header, id, 0, {}});
 
-    std::optional<silkit_lin::LinFrame> response;
+    std::optional<LinFrame> response;
     {
         const std::lock_guard lock(mutex_);
         if (id <= kMaxLinId)
@@ -188,22 +161,21 @@ void LinSlave::on_header(SimTime header_time, LinId id)
     }
     if (response)
     {
-        experimental_lin::SendDynamicResponse(&controller_, *response);
+        port_.respond(header_time, *response);
     }
 }
 
-void LinSlave::on_frame_status(const silkit_lin::LinFrameStatusEvent& event)
+void LinSlave::on_response(SimTime header_time, const LinFrame& frame, LinResultStatus status)
 {
-    // TX statuses are this slave's own responses; error statuses carry no valid data.
-    const auto& frame = event.frame;
-    if (event.status != silkit_lin::LinFrameStatus::LIN_RX_OK || frame.id > kMaxLinId || !subscriptions_.test(frame.id) ||
-        is_go_to_sleep_frame(frame))
+    // The port passes the master's frames only (not the go-to-sleep command, not this slave's
+    // own responses); an error carries no valid data.
+    if (status != LinResultStatus::Ok || frame.id > kMaxLinId || !subscriptions_.test(frame.id))
     {
         return;
     }
     BusEvent received{BusEvent::Kind::Frame, frame.id,
-                      static_cast<std::uint8_t>(std::min<std::size_t>(frame.dataLength, kMaxLinDataLength)), frame.data};
-    push(from_silkit_time(event.timestamp), received);
+                      static_cast<std::uint8_t>(std::min<std::size_t>(frame.data_length, kMaxLinDataLength)), frame.data};
+    push(header_time, received);
 }
 
 void LinSlave::on_go_to_sleep(SimTime time)
@@ -211,13 +183,9 @@ void LinSlave::on_go_to_sleep(SimTime time)
     push(time, BusEvent{BusEvent::Kind::GoToSleep, 0, 0, {}});
 }
 
-void LinSlave::on_wakeup(SimTime time, SilKit::Services::TransmitDirection direction)
+void LinSlave::on_wakeup(SimTime time)
 {
-    // TX: the pulse this slave sent itself (request_wakeup()).
-    if (direction != SilKit::Services::TransmitDirection::RX)
-    {
-        return;
-    }
+    // The port reports only the pulses of other nodes (not request_wakeup()'s own).
     push(time, BusEvent{BusEvent::Kind::WakeupPulse, 0, 0, {}});
 }
 
@@ -269,12 +237,8 @@ void LinSlave::step(SimTime now)
 
     if (std::exchange(wakeup_requested_, false) && state_ == LinNodeState::Sleep)
     {
-        // The controller is always operational (see the class comment). Wakeup() sends the pulse
-        // and switches the controller to operational, and warns if it already is: switch it to
-        // sleep first. Nothing is received in between: SIL Kit runs this step on the thread that
-        // delivers messages.
-        controller_.GoToSleepInternal();
-        controller_.Wakeup();
+        // The port is always operational (see the class comment); it sends the pulse.
+        port_.send_wakeup(now);
         {
             const std::lock_guard lock(mutex_);
             ++stats_.wakeups_sent;

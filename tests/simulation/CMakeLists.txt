@@ -1,9 +1,9 @@
 # vehicle_sil::Simulation: the same ECUs (written against vehicle_sil::Ecu) on the local virtual
-# buses and on SIL Kit (in-process registry), failures, the rules of a run, a controller
+# buses and on SIL Kit (in-process registry), also LIN, failures, the rules of a run, a controller
 # elsewhere and other participants.
 vehicle_sil_add_harness_tests(vehicle_sil_simulation_tests
   PREFIX simulation LABELS unit simulation TIMEOUT 180
-  SOURCES test_simulation.cpp
+  SOURCES test_simulation.cpp test_lin_simulation.cpp
   LINK vehicle_sil::simulation vehicle_sil::testkit)
 
 # The first example, on the virtual buses and on SIL Kit (registry of the process).

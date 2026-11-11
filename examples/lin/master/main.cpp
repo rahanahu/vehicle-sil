@@ -6,6 +6,7 @@
 #include "../common/lin_cluster.hpp"
 
 #include "vehicle_sil/lin/lin_master.hpp"
+#include "vehicle_sil/lin_silkit/silkit_lin_port.hpp"
 
 #include <silkit/services/lin/all.hpp>
 
@@ -52,27 +53,27 @@ int run(const Args& args)
     const CommonOptions o = parse_common(args, "LinMaster", 5ms);
     const std::string network = args.str("network", "LIN_CLUSTER");
     const SimDuration slot = std::chrono::microseconds(args.u64("slot-us", 10000, 10'000'000));
-    LinMasterOptions masterOptions{o.step, std::chrono::milliseconds(args.u64("wakeup-delay-ms", 100, 3'600'000))};
+    LinMasterOptions masterOptions{std::chrono::milliseconds(args.u64("wakeup-delay-ms", 100, 3'600'000))};
     const auto sleepAt = times_ms(args, "sleep-at-ms");
     const auto wakeupAt = times_ms(args, "wakeup-at-ms");
     Trace trace(o.trace_path);
 
     ParticipantRuntime runtime(runtime_options(o));
+    SilKitLinPort port(*runtime.participant().CreateLinController("LIN1", network), LinRole::Master);
     std::unique_ptr<LinMaster> master;
     try
     {
-        master = std::make_unique<LinMaster>(
-            *runtime.participant().CreateLinController("LIN1", network), cluster_schedule(slot), masterOptions,
-            [&trace](const LinScheduleResult& r) {
-                trace.line("result t_us=%lld id=0x%02X status=%s data=%s", us(r.header_time), r.id, status_name(r.status),
-                           hex(r.data.data(), r.data_length).c_str());
-            },
-            [&trace](SimTime t, LinNodeState s) { trace.line("state t_us=%lld state=%s", us(t), to_string(s)); });
+        master = std::make_unique<LinMaster>(port, cluster_schedule(slot), o.step, masterOptions);
     }
     catch (const std::invalid_argument& e)
     {
         throw UsageError(e.what());
     }
+    master->on_result([&trace](const LinScheduleResult& r) {
+        trace.line("result t_us=%lld id=0x%02X status=%s data=%s", us(r.header_time), r.id, status_name(r.status),
+                   hex(r.data.data(), r.data_length).c_str());
+    });
+    master->on_state([&trace](SimTime t, LinNodeState s) { trace.line("state t_us=%lld state=%s", us(t), to_string(s)); });
     runtime.set_communication_ready_handler([&] { master->init(); });
     runtime.set_step_handler([&](SimTime now, SimDuration) {
         master->set_frame_data(kCommandId, command_at(now));

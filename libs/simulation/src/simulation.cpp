@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace vehicle_sil {
@@ -107,6 +108,30 @@ struct Simulation::SilKitRun
         if (controller)
         {
             controller->stop(reason);
+        }
+    }
+
+    /// The network check of the ECU `ecu` (its peer `self`, see detail::set_network_check()):
+    /// std::invalid_argument if another ECU of this process has a network named `network` of the
+    /// other kind. The participants of other processes are not seen.
+    void require_network_kind(const Peer& self, const std::string& ecu, const std::string& network,
+                              detail::NetworkKind kind, const std::string& call) const
+    {
+        for (std::size_t i = 0; i < peers.size(); ++i)
+        {
+            if (peers[i].get() == &self)
+            {
+                continue;
+            }
+            const auto other = detail::network_kind(*peers[i], network);
+            if (other && *other != kind)
+            {
+                const bool lin = *other == detail::NetworkKind::Lin;
+                throw std::invalid_argument(std::string(kWho) + call + " of the ECU \"" + ecu + "\": \"" + network +
+                                            "\" is a " + (lin ? "LIN" : "CAN") + " network of the ECU \"" + names[i] +
+                                            "\" (made by " + (lin ? "lin_master() or lin_slave()" : "j1939() or can()") +
+                                            "); a " + (lin ? "CAN" : "LIN") + " network needs a name of its own");
+            }
         }
     }
 
@@ -383,7 +408,14 @@ Ecu& Simulation::add_ecu(std::string name, SimDuration step)
     o.lifecycle = LifecycleMode::Coordinated;
     o.virtual_time = VirtualTimeOptions{step, std::nullopt, std::nullopt};
     s.names.reserve(s.names.size() + 1);
-    s.peers.push_back(std::make_unique<Peer>(std::move(o)));
+    auto peer = std::make_unique<Peer>(std::move(o));
+    // As on the local buses: a name is a CAN or a LIN network for all the ECUs of this process.
+    detail::set_network_check(*peer, [run = &s, self = peer.get(), ecu = name](const std::string& network,
+                                                                               detail::NetworkKind kind,
+                                                                               const std::string& call) {
+        run->require_network_kind(*self, ecu, network, kind, call);
+    });
+    s.peers.push_back(std::move(peer));
     s.names.push_back(std::move(name));
     return *s.peers.back();
 }

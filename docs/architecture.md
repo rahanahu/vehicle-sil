@@ -9,15 +9,16 @@ vehicle-sil は、Vector SIL Kit の上で車載通信のシミュレーショ�
 ```
 vehicle-sil/
 ├── libs/core/        vehicle_sil::core   SIL Kit participant、lifecycle、他参加者の監視
-├── libs/lin/         vehicle_sil::lin    SIL Kit LIN の Master と Slave（スケジュールテーブル、フレームの送受信、診断フレーム、Sleep/Wakeup。core に依存し、J1939 には依存しない）
+├── libs/lin/         vehicle_sil::lin    LIN の Master と Slave（スケジュールテーブル、フレームの送受信、診断フレーム、Sleep/Wakeup）、LIN のポートの抽象、プロセス内の仮想 LIN バス（SIL Kit と J1939 に依存しない）
+├── libs/lin_silkit/  vehicle_sil::lin_silkit  vehicle_sil::lin のポートの SIL Kit 実装（仮想時間）
 ├── libs/can/         vehicle_sil::can    バックエンドに依存しない CAN の基盤（フレーム、ポート、ホスト、ステップドライバー、仮想バス。SIL Kit に依存しない）
 ├── libs/can_silkit/  vehicle_sil::can_silkit  vehicle_sil::can のポートの SIL Kit 実装（仮想時間と実時間）
 ├── libs/can_netsim/  vehicle_sil::can_netsim  簡易 CAN Network Simulator（SIL Kit の Network Simulator API）
 ├── libs/j1939/       vehicle_sil::j1939  J1939 スタック（vehicle_sil::can の上。SIL Kit に依存しない）と、そのプロトコル部品（parts/）、型付きメッセージ（codec/）
 ├── libs/ecu/         vehicle_sil::ecu    ECU のアプリケーションを組み立てる入口 Ecu（ヘッダーのみ。SIL Kit に依存しない）
-├── libs/local/       vehicle_sil::local  プロセス内の仮想バスの上で ECU を仮想時間で回す LocalBench（SIL Kit に依存しない）
+├── libs/local/       vehicle_sil::local  プロセス内の仮想 CAN バスと仮想 LIN バスの上で ECU を仮想時間で回す LocalBench（SIL Kit に依存しない）
 ├── libs/testkit/     vehicle_sil::testkit  LocalBench の上の J1939 の試験の記録と故障注入（SIL Kit に依存しない）
-├── libs/peer/        vehicle_sil::peer   1 つの participant と、その J1939 と LIN のノードの組み立てと実行。Ecu の実装
+├── libs/peer/        vehicle_sil::peer   1 つの participant と、その J1939、生の CAN、LIN のノードの組み立てと実行。Ecu の実装
 ├── libs/simulation/  vehicle_sil::simulation  ECU を仮想バスか SIL Kit で動かす Simulation
 ├── libs/control/     vehicle_sil::control、peer_control  Control Agent と Control Server の中核（Hub）。通信と SIL Kit に依存しない
 ├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（ControlServer、AgentClient。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
@@ -50,7 +51,8 @@ vehicle-sil/
 |---|---|---|---|
 | `vehicle_sil::sim_base` | 土台 | スレッドライブラリ（`Threads::Threads`） | `SimTime` と `SimDuration`、`StepInbox`、`periodic()`（ヘッダーのみ。SIL Kit なしで使う） |
 | `vehicle_sil::core` | 土台 | `SilKit::SilKit`、`vehicle_sil::sim_base` | `vehicle_sil::ParticipantRuntime`、`SimulationController`、`TickScheduler`、`RealTimePacer`。`sim_base` の型も使える |
-| `vehicle_sil::lin` | 土台 | `vehicle_sil::core` | `vehicle_sil::lin::LinMaster`、`vehicle_sil::lin::LinSlave`、`LinScheduleTable` と `validate_schedule()` |
+| `vehicle_sil::lin` | 土台 | `vehicle_sil::sim_base` | `vehicle_sil::lin::LinMaster`、`vehicle_sil::lin::LinSlave`、`LinScheduleTable` と `validate_schedule()`、`LinPort`、`VirtualLinBus`（「LIN」） |
+| `vehicle_sil::lin_silkit` | 土台 | `vehicle_sil::lin`、`vehicle_sil::core` | `vehicle_sil::lin::SilKitLinPort` |
 | `vehicle_sil::can` | 土台 | `vehicle_sil::sim_base` | `vehicle_sil::can::Frame`、`Port`、`Steppable`、`Host`、`StepDriver`、`RealTimeDriver`、`VirtualCanBus`、`CanBusModel`、`TapPort`（「CAN の共通基盤」） |
 | `vehicle_sil::can_silkit` | 土台 | `vehicle_sil::can`、`vehicle_sil::core` | `vehicle_sil::can::SilKitCanPort`、`bind_host()` |
 | `vehicle_sil::can_netsim` | 土台 | `vehicle_sil::can_silkit`、`rapidyaml`（SIL Kit 付属） | 簡易 CAN Network Simulator（「簡易 CAN Network Simulator」） |
@@ -58,10 +60,10 @@ vehicle-sil/
 | `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics` | 利用者向け | `vehicle_sil::j1939`（`j1939_diagnostics` は `j1939_broadcast_suppression` にも依存） | プロトコル部品の `BroadcastSuppression`（DM13）、`Diagnostics`、`Identification`（「プロトコル部品」） |
 | `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`、`vehicle_sil::j1939_exchange` | 利用者向け | `vehicle_sil::j1939`（`j1939_periodic_sender` は `j1939_broadcast_suppression` にも依存） | ECU アプリ向けのプロトコル部品 `PeriodicSender`、`Requester`、`Monitor`、`AddressCommander`、独自プロトコル向けの `Exchange`（「プロトコル部品」、[j1939-guide.md](j1939-guide.md)） |
 | `vehicle_sil::j1939_codec`（ヘッダーのみ） | 利用者向け | `vehicle_sil::j1939`、`vehicle_sil::j1939_periodic_sender` | 型付きメッセージのランタイム（`codec.hpp`。エンジンの値の型だけを使う）と、ノードと `PeriodicSender` への接続（`codec_node.hpp`）。型は `vehicle_sil_add_j1939_codec()` が YAML から生成する（「型付きメッセージ」、[j1939-codec.md](j1939-codec.md)） |
-| `vehicle_sil::ecu`（ヘッダーのみ） | 利用者向け | `vehicle_sil::can`、`vehicle_sil::j1939` | `vehicle_sil::Ecu`、`detail::OwnedObjects`（「実行と試験の基盤」） |
-| `vehicle_sil::local` | 土台 | `vehicle_sil::can`、`vehicle_sil::j1939`、`vehicle_sil::ecu` | `vehicle_sil::LocalBench`（「実行と試験の基盤」） |
+| `vehicle_sil::ecu`（ヘッダーのみ） | 利用者向け | `vehicle_sil::can`、`vehicle_sil::j1939`、`vehicle_sil::lin` | `vehicle_sil::Ecu`、`detail::OwnedObjects`（「実行と試験の基盤」） |
+| `vehicle_sil::local` | 土台 | `vehicle_sil::can`、`vehicle_sil::j1939`、`vehicle_sil::lin`、`vehicle_sil::ecu` | `vehicle_sil::LocalBench`（「実行と試験の基盤」） |
 | `vehicle_sil::testkit` | 試験用 | `vehicle_sil::local`、`vehicle_sil::can`、`vehicle_sil::j1939`、`vehicle_sil::ecu` | `J1939Events`、`FrameLog`、`faults`、`LocalBench` の別名 `testkit::LocalCan`（「実行と試験の基盤」） |
-| `vehicle_sil::peer` | 土台 | `vehicle_sil::core`、`vehicle_sil::can_silkit`、`vehicle_sil::j1939`、`vehicle_sil::lin`、`vehicle_sil::ecu` | `vehicle_sil::Peer`、`start_together()`（「実行と試験の基盤」） |
+| `vehicle_sil::peer` | 土台 | `vehicle_sil::core`、`vehicle_sil::can_silkit`、`vehicle_sil::j1939`、`vehicle_sil::lin_silkit`、`vehicle_sil::ecu` | `vehicle_sil::Peer`、`start_together()`（「実行と試験の基盤」） |
 | `vehicle_sil::simulation` | 利用者向け | `vehicle_sil::ecu`、`vehicle_sil::peer`、`vehicle_sil::local` | `vehicle_sil::Simulation`、`SilKitOptions`、`SimulationError`（「実行と試験の基盤」） |
 | `vehicle_sil_sim_controller`（実行ファイル） | — | `vehicle_sil::core` | system controller の CLI |
 | `vehicle_sil::control` | 利用者向け | `vehicle_sil::sim_base` | `vehicle_sil::control::Agent`、`Hub`（「外部操作（Control API）と GUI」） |
@@ -91,11 +93,13 @@ vehicle-sil/
 | `vehicle_sil::StepInbox` | SIL Kit のスレッドで届いたメッセージをステップの境界までため、決まった順序で渡す |
 | `vehicle_sil::TickScheduler` | 1 つの participant の中で、固定周期のタスク（既存 ECU の `tick()` など）をステップから呼ぶ |
 | `vehicle_sil::RealTimePacer` | 仮想時間を壁時計に一定の比率で結合するための待ち時間を計算する |
-| `vehicle_sil::Ecu` | ECU のアプリケーションを組み立てる入口（J1939 の `Network`、生の CAN、ステップごとの処理、ECU が持つオブジェクト）。`Peer` と `LocalBench` の ECU が実装する（「実行と試験の基盤」） |
+| `vehicle_sil::Ecu` | ECU のアプリケーションを組み立てる入口（J1939 の `Network`、生の CAN、LIN の Master と Slave、ステップごとの処理、ECU が持つオブジェクト）。`Peer` と `LocalBench` の ECU が実装する（「実行と試験の基盤」） |
 | `vehicle_sil::Simulation` | `Ecu` を仮想バスか SIL Kit の仮想時間で動かし、失敗を `SimulationError` で報告する（「実行と試験の基盤」） |
 | `vehicle_sil::Peer` | 1 つの participant と、その J1939 の `Network`、LIN の Master と Slave、ステップごとのアプリの処理を組み立てて動かし、正しい順序で片付ける。`Ecu` を実装する（「実行と試験の基盤」） |
 | `vehicle_sil::lin::LinMaster` | LIN のスケジュールテーブルを仮想時間で実行し、ヘッダーごとの結果（応答の衝突は Error）を返す。Master が送るフレーム、診断のマスターリクエスト、go-to-sleep コマンド、wakeup パルスを送る |
 | `vehicle_sil::lin::LinSlave` | ステップで設定された値で Master のヘッダーに応答し（診断のスレーブレスポンスは 1 回だけ）、Master が送るフレームを受信する。休止と起床の状態を管理する |
+| `vehicle_sil::lin::LinPort` | LIN のノードがバスに触れる唯一の口。実装は `VirtualLinBus` のエンドポイントと `SilKitLinPort` |
+| `vehicle_sil::lin::VirtualLinBus` | プロセス内の LIN バス。送った側の呼び出しの中で、同期に配る。`LocalBench` が LIN のネットワーク名ごとに 1 つ作る |
 
 ### 公開 API の契約
 
@@ -104,14 +108,15 @@ vehicle-sil/
 - `start(timeout)` は lifecycle が Running になるまで待ちます。タイムアウトや失敗のときは `std::runtime_error` を投げます。
 - `stop()` は何度呼んでもよく、例外を投げません。
 - `wait_for_peer()` は、相手の状態が条件を満たすまで待ちます。待っている間は、SIL Kit から状態を定期的に読み直します（[docs/dependencies.md](dependencies.md) の既知の不具合を参照）。SIL Kit のハンドラの中からは呼べません。
-- コントローラを参照するもの（`SilKitCanPort`、`LinMaster`、`LinSlave`）はコントローラを所有しません。participant より先に閉じるか破棄します。
+- コントローラを参照するもの（`SilKitCanPort`、`SilKitLinPort`）はコントローラを所有しません。participant より先に閉じるか破棄します。`LinMaster` と `LinSlave` はポートを所有しないので、ポートより先に破棄します。
 - J1939 スタックはプロセス全体の状態を持ちません。1 つのプロセスに、いくつでも `Network` と `Peer` を置けます。
 
 ### 所有権と終了順序
 
 ```
 ParticipantRuntime ──owns──> SilKit::IParticipant ──owns──> ICanController、ILinController
-SilKitCanPort、LinMaster、LinSlave ──refers to──> コントローラ（所有しない）
+SilKitCanPort、SilKitLinPort ──refers to──> コントローラ（所有しない）
+LinMaster、LinSlave ──refers to──> LinPort（所有しない）
 Host ──refers to──> ポートと Network（所有しない）
 ```
 
@@ -119,7 +124,7 @@ Host ──refers to──> ポートと Network（所有しない）
 
 1. ステップを止める（実時間では `RealTimeDriver`、続いて lifecycle。仮想時間では lifecycle）。
 2. SIL Kit のポートを閉じる（ハンドラを外し、コントローラを止める）。
-3. LIN のノード、`Network`（部品が先）、ポート、ホストを破棄する。
+3. LIN のノード（それぞれのポートより先）、`Network`（部品が先）、ポート、ホストを破棄する。
 4. participant を破棄する。
 
 ### スレッドとキュー
@@ -646,13 +651,13 @@ public:
 };
 ```
 
-- 組み立て: `j1939(network, NetworkOptions)`（J1939 の `Network`）、`can(network, RawChannelOptions)`（生の CAN）、`on_step(fn)`、`every(period, fn)`、`emplace<T>(args...)`。どれも実行の開始前にだけ呼べます。開始後に呼ぶと `std::logic_error` です。`j1939()` と `can()` は、ECU ごとにネットワーク名を 1 回だけ使えます（2 回目は `std::invalid_argument`）。`emplace` は開始後に呼ぶと、`T` を作らずに `std::logic_error` を投げます。`j1939("")` と `can("")`（空のネットワーク名）は、どちらの実装でも `std::invalid_argument` です。`T` のコンストラクターが例外を投げたときは、その例外が伝わり、`T` は ECU に残りません。ただし、コンストラクターが ECU に足したもの（ネットワーク、ノード、ハンドラ、関数）は残ります。
-- 1 ステップの順序: `j1939()` と `can()` で作ったもの（足した順）が受信して処理 → `on_step` と `every` の関数（足した順）→ 同じ順で送信。片方のハンドラから他方へ送ると、同じステップで出ます（ゲートウェイは、ネットワークを 2 つ持つ ECU です）。
-- 所有と破棄: ECU がネットワーク（部品が先）、生チャネル、`emplace` したオブジェクトを持ち、返す参照は ECU の寿命まで有効です。破棄の順は、ネットワーク、生チャネル、`emplace` したオブジェクト（最後に足したものから先）です。ハンドラや部品は、`emplace` したオブジェクトを破棄の間も参照できます。
+- 組み立て: `j1939(network, NetworkOptions)`（J1939 の `Network`）、`can(network, RawChannelOptions)`（生の CAN）、`lin_master(network, schedule, LinMasterOptions)`、`lin_slave(network, LinSlaveOptions)`（LIN のノード）、`on_step(fn)`、`every(period, fn)`、`emplace<T>(args...)`。どれも実行の開始前にだけ呼べます。開始後に呼ぶと `std::logic_error` です。`j1939()` と `can()` は、ECU ごとにネットワーク名を 1 回だけ使えます（2 回目は `std::invalid_argument`）。`j1939()` と `can()` は同じ CAN のネットワーク名を使えますが、LIN のネットワーク名は CAN と共有できません。ECU は 1 つの LIN のネットワークに LIN のノードを 1 つだけ持ちます（どちらに反しても `std::invalid_argument`）。`emplace` は開始後に呼ぶと、`T` を作らずに `std::logic_error` を投げます。`j1939("")` と `can("")`（空のネットワーク名）は、どちらの実装でも `std::invalid_argument` です。`T` のコンストラクターが例外を投げたときは、その例外が伝わり、`T` は ECU に残りません。ただし、コンストラクターが ECU に足したもの（ネットワーク、ノード、ハンドラ、関数）は残ります。
+- 1 ステップの順序: `j1939()` と `can()` で作ったもの（足した順）が受信して処理 → `on_step` と `every` の関数（足した順）→ LIN のノードの `step(now)`（足した順）→ `j1939()` と `can()` で作ったものが同じ順で送信。片方のハンドラから他方へ送ると、同じステップで出ます（ゲートウェイは、ネットワークを 2 つ持つ ECU です）。アプリがステップで出した LIN の要求（`set_frame_data()`、`set_response()`、`request_sleep()` など）はそのステップから効き、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます。`Peer`、`LocalBench`、`Ecu` の説明は同じ順序です。
+- 所有と破棄: ECU が LIN のノード、ネットワーク（部品が先）、生チャネル、`emplace` したオブジェクトを持ち、返す参照は ECU の寿命まで有効です。破棄の順は、LIN のノード、ネットワーク、生チャネル、`emplace` したオブジェクト（最後に足したものから先）です。ハンドラや部品は、`emplace` したオブジェクトを破棄の間も参照できます。
 - `every(period, fn)` は、0、period、2 period … の時刻以後の最初のステップで呼びます（1 ステップに 1 回まで。period がステップ幅の倍数でなくてもよい）。規則は `vehicle_sil::periodic()`（`core/periodic.hpp`）の 1 か所にあり、`Peer` と `LocalBench` の ECU が共用します。`TickScheduler` と違って、周期とステップ幅の関係を検査しません。
 - 生の CAN（`can::RawChannel`）は、J1939 でないプロトコルの土台です。`on_frame(handler)` で受け、`send(frame)` で送ります。`send()` はステップの中でだけ呼べます（それ以外は `std::logic_error`）。結果は `RawSendStatus`（`Ok`、`QueueFull`、`InvalidFrame`）です。送ったフレームは、そのステップの最後に、送った順に、ステップの時刻で出ます。上限は 1 ステップあたり送信 64、受信 1024 です（`RawChannelOptions`）。超えた分は数えて捨てます。再試行はしません。自分が送ったフレームは受けません。同じ ECU が同じネットワーク名で `j1939()` と `can()` を持つと、別のコントローラーとして互いのフレームを受けます。受けるのは次のステップですが、時刻は送ったステップのものです。J1939 のネットワークは 11 ビットのフレームを無視します。ただし、`Peer` の J1939 のネットワークが利用者のポート（`j1939(name, port)`。Vector XL など）の上にあるときは、別のバスになります。生チャネルは常に SIL Kit の上にあるためです。違う送り手から同じ時刻に届いたフレームの順は、SIL Kit では他の participant のスレッド次第で、仮想バスでは `StepDriver` の順です。`RawChannel` は並べ替えません。
-- 型の形: `j1939()` と `can()` は非仮想の関数で、実装は private の仮想関数（`add_j1939`、`add_can`）で行います。`Peer` には、引数が `J1939ChannelOptions` の `j1939(name, ...)` が別にあります。この宣言が基底クラスの同じ名前の関数を隠すので、`Peer&` から呼べる `j1939` は `Peer` のものだけです。`NetworkOptions` を渡す `j1939(network, NetworkOptions)` は `Ecu&` を通して使います。
-- LIN は `Ecu` にありません。LIN の型（`lin_types.hpp`）が SIL Kit のヘッダーを含み、`vehicle_sil::ecu` と `vehicle_sil::local` を SIL Kit から独立に保てなくなるためです。LIN は `Peer` の `lin_master()`、`lin_slave()` を使います（`Simulation` からは `peer(name)`）。
+- 型の形: `j1939()`、`can()`、`lin_master()`、`lin_slave()` は非仮想の関数で、空の名前を検査し、実装は private の仮想関数（`add_j1939`、`add_can`、`add_lin_master`、`add_lin_slave`）で行います。`Peer` には、引数が `J1939ChannelOptions` の `j1939(name, ...)` が別にあります。この宣言が基底クラスの同じ名前の関数を隠すので、`Peer&` から呼べる `j1939` は `Peer` のものだけです。`NetworkOptions` を渡す `j1939(network, NetworkOptions)` は `Ecu&` を通して使います。
+- LIN: `lin_master(network, schedule)` は、ECU のステップ幅で回る `lin::LinMaster` を、`lin_slave(network)` は `lin::LinSlave` を作って返します。ハンドラ（`on_result()`、`on_state()`、`on_frame()`）は実行の前に設定します。ノードは最初のステップの前に初期化されます（`init()`）。`Peer` では LIN のネットワーク名を名前にした SIL Kit の LIN コントローラと `SilKitLinPort`（仮想時間だけ。実時間では `std::logic_error`）、`LocalBench` ではその名前の `VirtualLinBus` のエンドポイント（1 つのバスに Master は 1 つ。2 つ目は両方の ECU の名前を言う `std::logic_error`）の上に作ります。スケジュールとオプションの誤りは、エンジンの検査による `std::invalid_argument` です。`vehicle_sil::lin` は SIL Kit を含まないので、`vehicle_sil::ecu` と `vehicle_sil::local` は SIL Kit なしのままです。
 - スレッド: 組み立ては 1 つのスレッドから行います。ステップは実装のスレッドで走り、関数、ハンドラ、部品もそこで呼ばれます。
 
 ### `Simulation`（`vehicle_sil::Simulation`）
@@ -672,6 +677,7 @@ public:
 - `run()` で `controller = true` のとき、Error で離脱した participant はすぐ失敗にします。Error 以外で離脱した participant が、数秒のうちに simulation を終えなければ、それも失敗です（`request_stop()` で終わる simulation を、誤って失敗にしないためです）。`controller = false` では、外の controller の仕事は見ず、このプロセスの ECU の失敗だけを見ます。
 - `SilKitOptions`: `registry_uri`（空ならコンストラクターがプロセス内に registry を立てる）、`controller`（既定 `true`。participant 名 `SimulationController`）、`other_participants`（始める前にそろうべき他の Coordinated な participant。`controller` が `true` のときだけ。空、重複、`SimulationController` は `std::invalid_argument`）、`start_timeout`（既定 30 秒）。`add_ecu()` は、空の名前、使用済みの名前、controller と `other_participants` の名前を `std::invalid_argument` にします。`SimulationController` という名前は、`controller = false` でも、仮想バスでも拒否します。ECU が 1 つもないまま `run_for()` と `run()` を呼ぶと、どちらの実装でも `std::logic_error` です。
 - `add<App>(name, step, args...)` は、`add_ecu()` と、`App{ecu, args...}` を ECU に持たせる `emplace` です。`App` のコンストラクターが例外を投げると、その例外が伝わり、その `Simulation` は使えなくなります。コンストラクターが ECU に足したものが、破棄された `App` を参照しうるためです。以後の `add_ecu()`、`add()`、`run_for()`、`run()` は、ECU の名前を添えた `std::logic_error` です。
+- ネットワークの名前: 1 つの名前は、`Simulation` のすべての ECU にとって、CAN（`j1939()`、`can()`）か LIN（`lin_master()`、`lin_slave()`）のどちらか一方のネットワークです。ほかの ECU が別の種類で使った名前は、どちらの実装でも `std::invalid_argument` です（文言に両方の種類を言います。SIL Kit では、使っている ECU の名前も言います）。SIL Kit では、確かめるのはこのプロセスの ECU の間だけです。ほかのプロセスの participant の名前は見えません。
 - 所有と破棄: `Simulation` が ECU とその持ち物を持ち、返す参照は `Simulation` の寿命まで有効です。破棄は、後から足した ECU から先に ECU を壊し、次に controller、最後にプロセス内の registry です。デストラクターは全部を止め、例外を投げません。
 - スレッド: `Simulation` の関数は 1 つのスレッドから呼びます。SIL Kit では、ステップは SIL Kit のスレッドで走ります（`Peer` と同じ）。
 
@@ -691,13 +697,13 @@ peer.start();
 peer.wait();
 ```
 
-- `j1939(network)` は SIL Kit の CAN コントローラ、`SilKitCanPort`、`TapPort`、`Network` を作ります（`tap(name)` で生フレームを観測できます。`network_names()` は追加した順の名前の一覧）。`j1939(name, port)` は利用者が作ったポート（Vector XL の `ExternalPortAdapter` など）を受け取り、Peer が所有します。`lin_master(network, schedule, ...)` と `lin_slave(network, options, ...)` は LIN のノードを作り、communication ready の通知で `init()` を呼びます。`on_step(fn)` は毎ステップ、`every(period, fn)` は 0、period、2 period … の時刻以後の最初のステップで呼びます（1 ステップに 1 回まで。`vehicle_sil::periodic()` の規則）。`can(network)` の生の CAN は、SIL Kit の CAN コントローラ（名前は `<network>.raw`）を 1 つ作ります。`network()`、`network_names()`、`tap()`、`silkit_port()` は J1939 だけです。生の CAN のチャネルは `raw_channel(network)` で引きます。生の CAN のコントローラ名 `<network>.raw` が、同じ Peer の他のコントローラ名と重なると `std::invalid_argument` です。J1939 のコントローラ名どうしの重なりも拒否します。
-- 1 ステップの順序: J1939 の各 `Network` と生の CAN の受信と処理（追加した順）→ アプリの処理（`on_step` と `every`、追加した順）→ LIN のノードの `step(now)`（追加した順）→ J1939 と生の CAN の送信。制御のフック（`set_control(before, after, stopping)`、制御の Agent が使う）は、アプリの処理の直前と、LIN の処理の直後に呼ばれます（`on_step` をいつ足したかによりません）。`stopping` は `stop()`（と破棄）の始めに 1 回呼ばれます。アプリが出した LIN の要求（`set_frame_data()`、`set_response()`）は同じステップから有効になり、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます。
+- `j1939(network)` は SIL Kit の CAN コントローラ、`SilKitCanPort`、`TapPort`、`Network` を作ります（`tap(name)` で生フレームを観測できます。`network_names()` は追加した順の名前の一覧）。`j1939(name, port)` は利用者が作ったポート（Vector XL の `ExternalPortAdapter` など）を受け取り、Peer が所有します。`Ecu::lin_master(network, schedule, options)` と `Ecu::lin_slave(network, options)` は、LIN のネットワーク名を名前にした SIL Kit の LIN コントローラ、`SilKitLinPort`、LIN のノードを作り、communication ready の通知で `init()` を呼びます。SIL Kit のコントローラは作ると外せないので、名前、スケジュール、オプションを先に検査します（エンジンの検査は `LinMaster::validate()` と `LinSlave::validate()`。コンストラクターと同じ検査です）。例外を投げた `lin_master()` と `lin_slave()` は何も残さず、同じ名前で呼び直せます。`on_step(fn)` は毎ステップ、`every(period, fn)` は 0、period、2 period … の時刻以後の最初のステップで呼びます（1 ステップに 1 回まで。`vehicle_sil::periodic()` の規則）。`can(network)` の生の CAN は、SIL Kit の CAN コントローラ（名前は `<network>.raw`）を 1 つ作ります。`network()`、`network_names()`、`tap()`、`silkit_port()` は J1939 だけです。生の CAN のチャネルは `raw_channel(network)` で引きます。生の CAN のコントローラ名 `<network>.raw` が、同じ Peer の他のコントローラ名と重なると `std::invalid_argument` です。J1939 のコントローラ名どうしの重なりと、CAN のコントローラ名と LIN のコントローラ名（LIN のネットワーク名）の重なりも拒否します。
+- 1 ステップの順序: J1939 の各 `Network` と生の CAN の受信と処理（追加した順）→ アプリの処理（`on_step` と `every`、追加した順）→ LIN のノードの `step(now)`（追加した順）→ J1939 と生の CAN の送信。制御のフック（`set_control(before, after, stopping)`、制御の Agent が使う）は、アプリの処理の直前と、LIN の処理の直後に呼ばれます（`on_step` をいつ足したかによりません）。`stopping` は `stop()`（と破棄）の始めに 1 回呼ばれます。アプリが出した LIN の要求（`set_frame_data()`、`set_response()`）は同じステップから有効になり、LIN のノードが受けたものはそのステップの LIN の処理で通知されるので、アプリは次のステップで読みます（`Ecu` の順序と同じです）。
 - 時間のモード: `virtual_time` があれば SIL Kit の時間同期で回します（J1939 と LIN）。なければ実時間で、Peer が `RealTimeDriver` と時計（`SteadyRealTimeClock`、または `PeerOptions::real_time_clock`）を持ち、SIL Kit の CAN ポートを実時間にします（J1939 だけ。LIN は `std::logic_error`）。外部のポートの時間の領域が Peer と違えば `std::logic_error` です。SIL Kit を持たない構成（XL だけ）はありません。
 - lifecycle: `Coordinated` では `SimulationController` が開始と停止を決めます。1 つのプロセスで複数の Peer と controller を起動するときは `start_together(controller, {&a, &b})` を使います。`Autonomous` では、`stop()` か `request_stop()`（ステップの中から）で止まります。lifecycle が Running になる前（`start()` の前や、ほかの participant を待っている間）の `request_stop()` は保っておき、仮想時間では最初のステップで、実時間では Running になったときに渡します（SIL Kit は Running の前の停止を無視するため）。仮想時間で最初のステップまで待つのは、最初のステップには時刻で同期するすべての participant が時刻を始めている必要があるからです。まだ Running でない participant を残して止めると、その participant が止まれなくなることがあります（controller が仮想時間を使わない構成では、controller はこの同期に入らないので保証しません）。仮想時間では Running になった後でも最初のステップの前の要求は最初のステップまで待ち（ふつうはすぐ来る）、Error のときはすぐ渡します。`stop()` は最初のステップを待たずに渡します。Coordinated では、ほかの participant の `start()` が、自分の最初のステップの前にシミュレーションの終わりを見て、開始の失敗として例外を投げることがあります。実時間で `start()` が時間切れで投げた後に Running になったときは、保った要求は渡らないので `stop()` で止めます。複数の participant を同じ時刻から決定的に動かすときは `Coordinated` にします（`Autonomous` の participant どうしは、開始の時刻がそろうとは限りません）。仮想時間で `virtual_time.end` があれば（0 より後であること）、end の前の最後のステップの後で自分で止まります。`wait()` は lifecycle の終わりを待ちます。`failed()` と `error()` は、ステップ（ホスト、アプリ、LIN、ポート）、ステップのハンドラ、実時間のドライバーの失敗を返します。仮想時間でステップが失敗すると participant は Error になり、`wait()` が戻ります。実時間ではドライバーが止まるだけで lifecycle は続き、`wait()` はその失敗では戻らないので、`failed()` を見て `stop()` します。
 - 複数の ECU の組み立ては、`Ecu&` を受け取る関数やクラスに書くと、同じコードを `Peer` と `LocalBench` の両方で使えます（例: `examples/j1939/ecu_pair`。試験で両者の結果が同じことを確かめています）。`Simulation` は、これを 1 行で選べるようにしたものです。
 - 組み立て（`j1939`、`can`、`lin_*`、`on_step`、`every`、`emplace`）は `start()` の前だけです（後は `std::logic_error`）。ノード、ハンドラ、部品、Observer、`TapPort` のリスナーも `start()` の前に付けます（ノードは `Network::add_node()` の規則どおりステップの中からも足せます）。
-- 所有と破棄: Peer が participant、コントローラ、ポート、`Network`、LIN のノードを持ち、返す参照は Peer の寿命まで有効です。`stop()`（と破棄）は、ステップを止め（実時間ではドライバー、続いて lifecycle。仮想時間では lifecycle。以後ステップは来ません）、SIL Kit のポートを閉じます。`stop()` の後も `Network` は残るので、統計や記録を読めます。破棄では続いて LIN のノード、`Network`（部品が先）、`TapPort`、ポート（外部のポートはそのデストラクタで閉じます）、生の CAN とそのポート、ホスト、participant を破棄し、最後に `emplace` したオブジェクト（最後に足したものから先）を破棄します。`emplace` したオブジェクトは participant より後に壊れるので、そのデストラクターは SIL Kit のサービスを使ってはいけません。
+- 所有と破棄: Peer が participant、コントローラ、ポート、`Network`、LIN のノードを持ち、返す参照は Peer の寿命まで有効です。`stop()`（と破棄）は、ステップを止め（実時間ではドライバー、続いて lifecycle。仮想時間では lifecycle。以後ステップは来ません）、SIL Kit のポートを閉じます。`stop()` の後も `Network` は残るので、統計や記録を読めます。破棄では続いて LIN のノード（それぞれ、その `SilKitLinPort` より先）、`Network`（部品が先）、`TapPort`、ポート（外部のポートはそのデストラクタで閉じます）、生の CAN とそのポート、ホスト、participant を破棄し、最後に `emplace` したオブジェクト（最後に足したものから先）を破棄します。`emplace` したオブジェクトは participant より後に壊れるので、そのデストラクターは SIL Kit のサービスを使ってはいけません。
 - スレッド: 組み立て、`start()`、`wait()` は 1 つのスレッドから呼びます。ステップは SIL Kit のスレッド（仮想時間）かドライバーのスレッド（実時間）で動き、ハンドラ、アプリの処理、Observer、`TapPort` のリスナーもそこで呼ばれます（記録は `wait()` か `stop()` の後に読みます）。`stop()` は、ステップと SIL Kit のハンドラ以外のどのスレッドからでも呼べます（別のスレッドからは `start()` が戻った後）。同時の呼び出しは順に処理します（Peer の破棄は、他のスレッドの `stop()` が戻った後）。`request_stop()`、`failed()`、`error()` はステップの中を含めてどこからでも呼べます。
 
 ### ローカルの実行（`vehicle_sil::LocalBench`）と試験キット（`vehicle_sil::testkit`）
@@ -716,14 +722,15 @@ bus.run_until(SimTime{} + 1s);
 CHECK(events.has(j1939::EventKind::AddressChanged));
 ```
 
-- `LocalBench`: `VirtualCanBus`（`VirtualCanBusOptions` でタイミングも選べる）をネットワーク名ごとに持ち、その上の ECU を持ちます。`add_ecu(name, step)` は `Ecu&` を返します。ECU ごとに自分のホストとステップ幅を持ちます（SIL Kit で ECU ごとに participant を分けたときと同じ構成です）。`Ecu::j1939(network)` は、名前 `network` のバス（なければコンストラクターのオプションで作る）に端点を足し、`TapPort` で包んで `Network` を作ります。同じ名前を使う ECU は同じバスを共有し、ECU は複数のバスに `Network` を持てます（ゲートウェイ）。`Ecu::can(network)` の生チャネルも、そのバスに自分の端点を持ちます。`add_j1939(name, step, options)` は、J1939 のネットワークを 1 つ持つ ECU を作る略記です。
+- `LocalBench`: `VirtualCanBus`（`VirtualCanBusOptions` でタイミングも選べる）と `lin::VirtualLinBus` をネットワーク名ごとに持ち、その上の ECU を持ちます。`add_ecu(name, step)` は `Ecu&` を返します。ECU ごとに自分のホストとステップ幅を持ちます（SIL Kit で ECU ごとに participant を分けたときと同じ構成です）。`Ecu::j1939(network)` は、名前 `network` のバス（なければコンストラクターのオプションで作る）に端点を足し、`TapPort` で包んで `Network` を作ります。同じ名前を使う ECU は同じバスを共有し、ECU は複数のバスに `Network` を持てます（ゲートウェイ）。`Ecu::can(network)` の生チャネルも、そのバスに自分の端点を持ちます。`add_j1939(name, step, options)` は、J1939 のネットワークを 1 つ持つ ECU を作る略記です。
 - バスの名前を省く形: `add_j1939()`、`inject(time, frame)`、`injector()`、`bus()` は、ただ 1 つのバスを使います。バスがまだなければ、名前の決まっていないバスを作ります（名前の検索では `""`）。バスに名前を付けるのは ECU だけです。このバスは、次に来た `Ecu::j1939(network)` か `Ecu::can(network)` の名前になり、新しいバスは作りません。名前つきのバスが 1 つあるときに名前を省く形が来ても、そのバスを使います。どちらの順で書いても同じバスになります。2 つ目の名前が来ると 2 つ目のバスを作りますが、それまでに `add_j1939()` で ECU を足していたら `std::logic_error` です（その ECU がどのバスのつもりか決まらないためです。文言にその ECU の名前と、今あるバスの名前が入ります。その ECU を `add_ecu(name, step).j1939(network)` で足し直します）。バスが 2 つ以上あるときに名前を省く形を使うと、`std::logic_error` です（文言にバスの名前の一覧が入ります）。例外を投げた `add_j1939()`、`j1939()`、`can()` は、バスを作らず、名前も付けません。生チャネルには名前が要ります（`Ecu::can("")` は `std::invalid_argument`）。
+- LIN: `Ecu::lin_master(network)` と `Ecu::lin_slave(network)` は、名前 `network` の LIN バス（ECU が最初にその名前を言ったときに作る）に、ECU の名前のエンドポイントを付けてノードを作り、すぐ初期化します。同じ名前の CAN バスと LIN バスは作れません（どちらの順でも、両方の種類を言う `std::invalid_argument`）。名前のないバスの仕組み（上の項）は CAN だけのもので、LIN は関わりません。1 つの LIN バスに Master は 1 つです（2 つ目は両方の ECU の名前を言う `std::logic_error`）。例外を投げた `lin_master()` と `lin_slave()` は、エンドポイントを付けず、バスも作りません。`lin_bus(network)`（`VirtualLinBus&`。Observer はここで足す。知らない名前は LIN バスの一覧を言う `std::out_of_range`）、`lin_master(ecu, network)`、`lin_slave(ecu, network)` で引きます。LIN のノードのステップは、ECU のアプリの処理の後です。
 - 参照: ECU の名前とネットワークの名前で、`network(ecu, network)`、`endpoint()`（故障注入と通信断）、`tap()`、`host(ecu)`、`ecu(name)` を引きます。ネットワークが 1 つの ECU には、ECU の名前だけの形も使えます（0 個や 2 個以上は `std::logic_error`）。生チャネルはこれらの対象に入らず、`raw_channel(ecu, network)` で引きます。`bus(network)`、`injector(network)`、`inject(network, time, frame)` は名前でバスを引くだけで、バスを作らず、名前も付けません。その名前のバスがなければ `std::out_of_range` です（文言に、今あるバスの名前か、直し方が入ります。名前の決まっていないバスなら、名前を省く形を使うか、ECU の `j1939(network)` か `can(network)` で先に名前を付けます）。名前のないバスを `bus("")` で引くこともできます。ECU の名前の一覧は `ecu_names()` で取れます。`inject()` は、どのネットワークも使わない専用の端点から生フレーム（11 ビットか 29 ビット）を送ります。時刻は `now()`（最後の `run_until()` の end）より前にできません。`on_step(name, fn)` は ECU のアプリの処理を足します。
-- ステップ: `Ecu::on_step` と `every` は同じ列に、足した順に並びます。`every` は `vehicle_sil::periodic()` を通します。組み立て（`add_ecu`、`add_j1939`、ECU の `j1939()`、`can()`、`on_step()`、`every()`、`emplace()`）は最初の実行の前だけです（後は `std::logic_error`）。ホストは最初の実行で、足した順にドライバーへ登録されます。
-- 破棄の順は、後に足した ECU から順に、ホスト、`Network`（後に足したものから。各 `Network` の後にその `TapPort`）、生チャネル、`emplace` したオブジェクト（最後に足したものから先）です。その後にドライバー、最後にバスと端点を破棄します。
+- ステップ: `Ecu::on_step` と `every` は同じ列に、足した順に並びます。`every` は `vehicle_sil::periodic()` を通します。組み立て（`add_ecu`、`add_j1939`、ECU の `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`on_step()`、`every()`、`emplace()`）は最初の実行の前だけです（後は `std::logic_error`）。ホストは最初の実行で、足した順にドライバーへ登録されます。
+- 破棄の順は、後に足した ECU から順に、ホスト、LIN のノード（後に足したものから）、`Network`（後に足したものから。各 `Network` の後にその `TapPort`）、生チャネル、`emplace` したオブジェクト（最後に足したものから先）です。その後にドライバー、最後に LIN バスと CAN バスと端点を破棄します。
 - `J1939Events`（Observer）と `FrameLog`（TapListener）は、出来事と生フレームをコピーして持ちます。容量（既定 100000 件）を超えた分は持たずに数えます（`dropped()`）。問い合わせは種類（向き）と述語で数えたり取り出したりします（`count`、`of`、`first`、`last`）。
 - `faults`: 仮想バスの `FaultInjector` を作る小さな関数です。`when(pred, action)`、`between(from, until, action)`、`nth(n, action)`、`sequence({...})`、`first_of({...})` と、述語 `j1939_pgn(pgn)`、`j1939_source(sa)`、`can_id(id, format)` です。どれも、状態は選んだフレームの数だけなので決定的です。`nth` と `sequence` のコピーは数を共有するので、端点ごとに作ります。故障注入の仕組みそのものは仮想バスにあり（「仮想バス」の節）、試験キットは新しい注入の仕組みを持ちません。
-- LIN の仮想バスはありません。LIN の試験は `Peer` と in-process の registry で行います。
+- LIN の試験は、仮想 LIN バスの上（`LocalBench`）でも、`Peer` と in-process の registry の上でも行えます。結果は同じです（「LIN」の節の決定性）。LIN の故障注入と記録の道具はありません。
 
 ## Vector XL CAN Bridge
 
@@ -892,46 +899,51 @@ SIL Kit が保証するのは、ステップ T の時点で T より前のタイ
 
 ### LIN を仮想時間で動かす（`vehicle_sil::lin`）
 
-`vehicle_sil::lin` は core だけに依存し、J1939 には依存しません。SIL Kit の LIN コントローラ（trivial simulation）を使います。ファイルは役割ごとに分けています。
+`vehicle_sil::lin` は `vehicle_sil::sim_base` だけに依存し、SIL Kit にも J1939 にも依存しません（CTest の `lin.boundary` が、ソースとヘッダーが SIL Kit を含まないことを確かめます）。エンジン（`LinMaster`、`LinSlave`）は、ポート（`LinPort`）だけを通してバスに触れます。ポートの実装は 2 つです。プロセス内の `VirtualLinBus`（同じライブラリ）と、SIL Kit の LIN コントローラ（trivial simulation）の上の `SilKitLinPort`（`vehicle_sil::lin_silkit`）です。`Ecu::lin_master()` と `Ecu::lin_slave()` は、実行する場所に合ったポートの上にノードを作ります（`LocalBench` は仮想バス、`Peer` は SIL Kit）。ファイルは役割ごとに分けています。
 
 | ヘッダー | 内容 |
 |---|---|
-| `lin_types.hpp` | 共通の型（`LinPublisher`、`LinNodeState`、`LinReceivedFrame`） |
+| `lin_types.hpp` | 共通の型（`LinId`、`LinChecksumModel`、`LinFrame`、`LinRole`、`LinResultStatus`、`LinPublisher`、`LinNodeState`、`LinReceivedFrame`） |
 | `lin_schedule.hpp` | スケジュールテーブル（`LinScheduleEntry`、`LinScheduleTable`、`validate_schedule()`） |
+| `lin_port.hpp` | `LinPort`、`LinPortListener` |
 | `lin_master.hpp` | `LinMaster` |
 | `lin_slave.hpp` | `LinSlave` |
+| `virtual_lin_bus.hpp` | `VirtualLinBus`、`LinBusEvent` |
+| `lin_silkit/silkit_lin_port.hpp`（`vehicle_sil::lin_silkit`） | `SilKitLinPort` |
 
 #### 共通の規則
 
 - Master も Slave も、`step(now)` をステップごとに 1 回、そのステップの時刻で呼びます。バスへの送信（ヘッダー、Master のフレーム、go-to-sleep コマンド、wakeup パルス）は、すべて `step()` の中で行います。要求（`set_frame_data()`、`send_master_request()`、`set_schedule()`、`request_sleep()`、`request_wakeup()`）は、同じステップで `step(now)` より前に呼べば、そのステップで反映されます。
-- ステップ T で送ったものは、ほかのピアの T より後のステップまでに必ず届きます。Master が送るフレームは SIL Kit が 1 段遅れて送りますが、`ParticipantRuntime` がステップの完了をその後に回すので、同じ保証が成り立ちます（「参加と進み方」）。受信側は、受け取ったイベントを `StepInbox` にためて、`step(now)` で now より前のものだけを時刻順に処理します。そのため、状態の変化とフレームの受信は壁時計によりません。
+- ステップ T で送ったものは、ほかのノードの T より後のステップまでに必ず届きます。仮想バスでは、送った呼び出しの中で届きます。SIL Kit では、Master が送るフレームは SIL Kit が 1 段遅れて送りますが、`ParticipantRuntime` がステップの完了をその後に回すので、同じ保証が成り立ちます（「参加と進み方」）。受信側は、受け取ったイベントを `StepInbox` にためて、`step(now)` で now より前のものだけを時刻順に処理します。そのため、状態の変化とフレームの受信は壁時計にも、同じ時刻のステップの順にもよりません。
+- 作り方: `LinMaster(port, schedule, step, options)`（`step` はノードを回すステップ幅）、`LinSlave(port, options)`。ポートはノードより長く生きなければなりません。ノードはコンストラクタからデストラクタまでポートのリスナーです。ハンドラ（`LinMaster::on_result()`、`on_state()`、`LinSlave::on_frame()`、`on_state()`）は、最初のステップの前に設定します（スレッドセーフではありません）。空の関数は「なし」です。`Ecu` を通すと、ポートとステップ幅は実装が決めます。
 - 状態の変化は `StateHandler(time, state)` に、時刻付きで通知します。Slave は受け取ったイベントの時刻（自分の操作ならそのステップの時刻）、Master は状態が変わったステップの時刻です。
-- `init()`、`step()`、`request_*()` はステップハンドラから呼びます。SIL Kit の LIN コントローラはスレッドセーフではありませんが、SIL Kit はステップハンドラと受信ハンドラを同じ I/O スレッドで呼ぶので、コントローラの呼び出しは 1 つのスレッドに収まります。`LinSlave::set_response()`、`clear_response()`、`set_slave_response()` は、どのスレッドから呼んでもかまいません。
-- 両方の `init()` は、`ParticipantRuntime::set_communication_ready_handler()` から呼びます。購読が確立する前に初期化すると、ほかの参加者がその設定を受け取れないためです。
+- `init()`、`step()`、`request_*()` はノードのステップから呼びます。ポートはスレッドセーフではありませんが、SIL Kit はステップハンドラと受信ハンドラを同じ I/O スレッドで呼び、仮想バスは送った側のステップの中で配るので、ポートの呼び出しは 1 つのスレッドに収まります。`LinSlave::set_response()`、`clear_response()`、`set_slave_response()` は、どのスレッドから呼んでもかまいません。
+- 両方の `init()` は、最初のステップの前に 1 回呼びます（`Ecu` を通すと実装が呼びます）。SIL Kit のポートの上で自分で組み立てるときは、`ParticipantRuntime::set_communication_ready_handler()` から呼びます。購読が確立する前に初期化すると、ほかの参加者がその設定を受け取れないためです。
+- 例外の文言は `vehicle_sil::lin::LinMaster: `、`vehicle_sil::lin::LinSlave: `、`vehicle_sil::lin: `（スケジュール）で始まり、値と直し方を含みます。
 
 #### スケジュールテーブル（`LinMaster`）
 
 - エントリは ID、データ長、チェックサム、スロット長、publisher（`Slave` か `Master`）を持ちます。テーブルは巡回します。最初のヘッダーは T = 0 で送ります。
-- `validate_schedule()` の条件: 空でない、ID は 0〜63、データ長は 1〜8、チェックサムは Classic か Enhanced、スロット長は Master のステップ幅の正の倍数、同じ ID のエントリはデータ長・チェックサム・publisher が同じ、診断フレーム（0x3C は Master、0x3D は Slave が送る）は 8 バイトで Classic。満たさなければ `std::invalid_argument` です。
-  - `LinChecksumModel::Unknown` は受け付けません（`LinSlave::set_response()` も同じ）。SIL Kit は `Unknown` のときにチェックサムモデルを比べないので、設定の誤りが Ok として通ってしまうためです。
-- **ID の設定は変えられません**: `LinMaster` に渡したすべてのテーブル（コンストラクタと `set_schedule()`）を通して、1 つの ID のデータ長・チェックサム・publisher は同じでなければなりません。違えば `set_schedule()` が `std::invalid_argument` を投げます。SIL Kit が、一度設定した ID の設定の変更を受け付けないためです。
+- `validate_schedule()` の条件: 空でない、ID は 0〜63、データ長は 1〜8、スロット長は Master のステップ幅の正の倍数、同じ ID のエントリはデータ長・チェックサム・publisher が同じ、診断フレーム（0x3C は Master、0x3D は Slave が送る）は 8 バイトで Classic。満たさなければ `std::invalid_argument` です。チェックサムモデル（`LinChecksumModel`）は Classic と Enhanced だけで、受信側はヘッダーの設定と比べます。
+- **ID の設定は変えられません**: `LinMaster` に渡したすべてのテーブル（コンストラクタと `set_schedule()`）を通して、1 つの ID のデータ長・チェックサム・publisher は同じでなければなりません。違えば `set_schedule()` が `std::invalid_argument` を投げます。SIL Kit が、一度設定した ID の設定の変更を受け付けないためです。結果がポートによらないよう、仮想バスでも同じ規則です。
 - ヘッダーの結果（Ok、NoResponse、Error とデータ）は、そのスロットの終わり、つまり次のヘッダーを送るステップで返します。結果には、ヘッダーを送った時刻と publisher が付きます。
 - `set_schedule()` は、次のスロット境界でテーブルを切り替え、新しいテーブルの先頭から始めます。休止中に呼ぶと、起床後の再開のときに切り替えます。
 
 #### フレームの送受信
 
 - **Slave が送るフレーム**: `LinSlave` は、ステップで `set_response(now, id, data)` された値のうち、ヘッダーの時刻より厳密に前に設定された最新の値で応答します。
-  - SIL Kit の dynamic response（`InitDynamic`、`AddFrameHeaderHandler`、`SendDynamicResponse`。SIL Kit v5.0.8 では experimental）を使います。
-  - 静的な TX バッファでは決定論的になりません。ヘッダーの時刻と Slave のステップが同じ時刻のとき、どちらが先に処理されるかが決まっていないためです。
+  - Slave はヘッダーをポートから受け（`LinPortListener::on_header()`）、その中で応答します（`LinPort::respond()`）。SIL Kit のポートは dynamic response（`InitDynamic`、`AddFrameHeaderHandler`、`SendDynamicResponse`。SIL Kit v5.0.8 では experimental）を使います。
+  - 静的な TX バッファでは決定論的になりません。ヘッダーの時刻と Slave のステップが同じ時刻のとき、どちらが先に処理されるかが決まっていないためです（SIL Kit でも、仮想バスのステップの順でも）。
 - **Master が送るフレーム**: `LinMaster::set_frame_data(id, data)` の最新の値を、ヘッダーを送るステップで送ります（SIL Kit の `MasterResponse`）。最初の設定までは 0 を送ります。`set_frame_data()` に渡せるのは、これまでに渡したテーブルで Master が送る ID だけで、データ長も一致しなければなりません。
 - `LinSlave::clear_response(now, id)` を呼ぶと、now より後のヘッダーに応答しなくなります。
 - 1 つのヘッダーに 2 つ以上のノードが応答すると（2 つの Slave、または Master が送るフレームに応答する Slave）、実際のバスと同じく衝突として Error を返し、データは付けません。応答はどれもスロットの終わりまでに届くので、結果は到着順によりません。
 - 1 つの ID に、時間を分けて別々の Slave が応答するのはかまいません（`clear_response()` で応答をやめ、別の Slave が `set_response()` する。診断の 0x3D）。SIL Kit v5.0.8 では、2 つ目の Slave が応答したあと、その ID のヘッダーが送られなくなっていました。パッチで修正しています（[dependencies.md](dependencies.md)、「SIL Kit へのパッチ」）。
 - **Slave の受信**: `LinSlaveOptions::subscriptions` に挙げた ID のうち、Master が送るフレームを、`step()` から `FrameHandler` に渡します。時刻はヘッダーの時刻です。
-- **制約**: 応答する Slave のステップ幅は、そのフレームのスロット長より厳密に小さくします。
+- **制約**（SIL Kit）: 応答する Slave のステップ幅は、そのフレームのスロット長より厳密に小さくします。
   - Slave はヘッダーを受信ハンドラの中で応答するので、応答はステップに結びつきません。
   - Slave のステップ幅 D がスロット長 S より小さければ、ヘッダー T への応答は Master のステップ T + S より前に必ず届きます。D ≥ S では保証されず、NoResponse になるか、同じ ID の後のヘッダーへの応答として扱われることがあります。
-- **制限**: Slave が、ほかの Slave の応答を受信すること（slave-to-slave）には対応していません。応答のタイムスタンプは応答した Slave の `Now()` で、ヘッダーの時刻ではありません。また、到着の上限は応答した Slave のステップ幅で決まり、受信側からはわかりません。購読した ID をほかの Slave が送ると、そのフレームも渡されますが、時刻と渡すステップは決定論的ではありません。
+  - 仮想バスでは、応答はヘッダーを送った呼び出しの中で届くので、この制約はありません。両方で同じ結果にするには、SIL Kit の制約を守ります。
+- **制限**: Slave が、ほかの Slave の応答を受信すること（slave-to-slave）には対応していません。仮想バスは、Slave の応答をほかの Slave に配りません。SIL Kit では、応答のタイムスタンプは応答した Slave の `Now()` で、ヘッダーの時刻ではありません。また、到着の上限は応答した Slave のステップ幅で決まり、受信側からはわかりません。SIL Kit のポートは、Master のフレームとほかの Slave の応答を区別できないので、購読した ID をほかの Slave が送ると、そのフレームも渡しますが、時刻と渡すステップは決定論的ではありません。購読には Master が送る ID だけを入れます。Master が送るフレームに Slave が応答した衝突（設定の誤り）では、仮想バスはどの Slave にもフレームを配りませんが、SIL Kit では購読した Slave に Master のフレームと応答の両方が渡ることがあります。Master の結果（Error）はどちらも同じです。
 
 #### 診断フレーム（0x3C、0x3D）
 
@@ -956,8 +968,35 @@ LIN 2.x の診断用のフレームを、通常のフレームとは別の規則
 - Slave は、go-to-sleep コマンドを受けるか、バスが `LinSlaveOptions::bus_idle_timeout`（既定 4 s。`std::nullopt` で無効）のあいだ無通信だと休止します。wakeup パルスかヘッダーを受けると起床します。
 - 休止中の Slave も、ヘッダーには応答します。ブレークフィールドは物理的にも wakeup 信号になるためです。また、休止中は応答しないという規則にすると、ほかの Slave のパルスとヘッダーのどちらが先に届くかで結果が変わってしまいます。
 - 状態に合わない要求（起きているときの wakeup、休止中の sleep）は捨てます。休止中に sleep と wakeup を同じステップで要求すると、起床だけが行われます。起床してからスケジュールを再開するまでの間に sleep を要求すると、再開のスロット境界で、ヘッダーを送らずに go-to-sleep コマンドを送ります。
-- Master の SIL Kit コントローラは、go-to-sleep で Sleep になり、起床で Operational に戻ります（`Wakeup` / `WakeupInternal`）。
-- Slave の休止の状態は `LinSlave` の中だけにあり、SIL Kit のコントローラは常に Operational のままです。Sleep のコントローラは go-to-sleep フレームも含めてフレームを捨てるので、コマンドを受け取ったかどうかが到着順で決まってしまうためです。`request_wakeup()` は、パルスを送る直前にだけコントローラを Sleep にします（`Wakeup()` が Operational のコントローラに警告を出すため）。
+- SIL Kit のポートでは、Master のコントローラは go-to-sleep で Sleep になり、起床で Operational に戻ります（`send_wakeup()` は `Wakeup`、ほかのノードのパルスで起きたときの `resume()` は `WakeupInternal`）。
+- Slave の休止の状態は `LinSlave` の中だけにあり、ポート（SIL Kit のコントローラ）は常に Operational のままです。Sleep のコントローラは go-to-sleep フレームも含めてフレームを捨てるので、コマンドを受け取ったかどうかが到着順で決まってしまうためです。SIL Kit の Slave のポートの `send_wakeup()` は、パルスを送る直前にだけコントローラを Sleep にします（`Wakeup()` が Operational のコントローラに警告を出すため）。
+
+#### ポート（`LinPort`）と仮想 LIN バス（`VirtualLinBus`）
+
+ポートは、ノードがバスに触れる唯一の口です。役割（Master か Slave）はポートを作るときに決まり、ほかの役割の関数は `std::logic_error` です。
+
+- Master の関数: `send_header(now, id, length, checksum)`（Slave が応答するフレームのヘッダー）、`send_frame(now, frame)`（ヘッダーと Master 自身の応答）、`send_go_to_sleep(now)`。Slave の関数: `respond(header_time, frame)`（`on_header()` の中からだけ）。両方: `send_wakeup(now)`、`resume()`（ほかのノードのパルスで起きた。バスには何も出さない）、`open()`（`init()` が呼ぶ）、`set_listener()`。
+- リスナー（`LinPortListener`、エンジンが実装）への通知:
+  - `on_header(time, id)`: Slave のポートだけ。Master が送ったすべてのヘッダー（Master が自分で応答するフレームも）。
+  - `on_response(header_time, frame, status)`、Master のポート: 自分のヘッダーの結果。自分のフレームが出た（Ok）、Slave の応答（Ok とデータ）、応答なし（NoResponse。`send_header()` の中から同期で来ることがある）、長さかチェックサムモデルの不一致（Error）。1 つのヘッダーに 2 回以上来ることがあり（複数の応答）、衝突の判定は `LinMaster` がします。
+  - `on_response()`、Slave のポート: Master が応答したフレーム（Ok）。go-to-sleep コマンドと自分の応答は来ません。ほかの Slave の応答は、仮想バスは配らず、SIL Kit のポートは区別できずに渡します（上の「制限」）。
+  - `on_go_to_sleep(time)`: Slave のポートだけ。`on_wakeup(time)`: ほかのノードのパルスだけ（自分のは来ません）。
+- 引数: `send_header()` と `send_frame()` は、ID が 63 を超えるか長さが 1〜8 の外なら `std::invalid_argument` です（両方の実装。`LinMaster` はそうした値を送りません）。
+- 時刻: `now` は呼び出したステップの時刻です。SIL Kit のポートは使わず、SIL Kit が participant の時刻を付けます。
+- スレッド: SIL Kit のポートは、リスナーを SIL Kit の I/O スレッドから呼びます。仮想バスは、送った側の呼び出しの中で同期に呼びます。`set_listener()` は、イベントが来ない間（実行の前と後）にだけ呼びます。
+- `SilKitLinPort(controller, role)`: コンストラクタで SIL Kit のハンドラを登録し（Slave はヘッダーのハンドラも）、デストラクタで外します。コントローラを所有しないので、participant より先に破棄します。`open()` は、Master では `Init`（フレームの応答の設定は空）、Slave では `InitDynamic` です。`send_header()` は、その ID をまだ受信用に設定していなければ、ヘッダーの長さとチェックサムモデルで設定（`SetFrameResponse`）してからヘッダーを送ります。最初のスケジュールの ID も同じ経路で設定します。型の変換（`LinFrame`、チェックサムモデル、状態）はこのポートの中だけにあります。
+
+`VirtualLinBus` はプロセス内の LIN バスです。Master 1 つと Slave をいくつでも付けられ（`attach(role, name)`。2 つ目の Master は両方の名前を言う `std::logic_error`）、エンドポイント（`VirtualLinBus::Endpoint`、`LinPort`）はバスが持ちます。スレッドもキューも持たず、すべてを送った側の呼び出しの中で、付けた順に配ります。
+
+- `send_header()`: すべての Slave の `on_header()` を呼び、その中の `respond()` を集めます。応答がなければ Master に NoResponse を 1 回、あれば応答ごとに 1 回（長さとチェックサムモデルがヘッダーと合えば Ok、合わなければ Error）です。
+- `send_frame()`: すべての Slave の `on_header()` を呼びます。応答した Slave がいなければ、Master と全 Slave に Ok でフレームを配ります。いれば衝突で、Master に自分のフレームと各応答を配り（2 回以上）、Slave には配りません。
+- `send_go_to_sleep()`: すべての Slave の `on_go_to_sleep()`。`send_wakeup()`: 送った以外のすべてのエンドポイントの `on_wakeup()`。`open()` と `resume()` は何もしません。
+- Observer（`add_observer()`）は、エンドポイントに配った後に、1 つの出来事を 1 回見ます（`LinBusEvent`: Frame、NoResponse、Collision、GoToSleep、Wakeup と、時刻、送った側の名前、フレーム）。同じ時刻に違う ECU が出した出来事の順は、ステップの順です。
+- 誤用（`std::logic_error`。エンドポイントの名前と直し方を言う）: `on_header()` の外からの `respond()`、1 回の `on_header()` の中での 2 回目の `respond()`、リスナーや Observer の中からの送信（再入）、配っている間の `attach()` と `add_observer()`。ヘッダーと違う ID や時刻、長さの誤った応答は `std::invalid_argument` です。
+- リスナーや Observer が投げた例外は、送った側の呼び出しに伝わります。それまでに配ったものは取り消さず、後ろのエンドポイントと Observer にはその出来事が届きません。バスはその後も使えます。
+- エンドポイントは外せません。Master のノードを破棄しても、そのバスに新しい Master は付けられません。
+- 決定性: `StepDriver` は（開始時刻、登録順）でステップを回すので、時刻 T のステップは、ほかのホストの T より前のステップがすべて終わってから走ります。エンジンは「T より厳密に前」に設定された値と「now より前」のイベントだけを使うので、同じ時刻のステップの順は結果を変えません。SIL Kit の上と同じ規則なので、結果も同じになります（試験で、同じ ECU のクラスを `Simulation()` と `Simulation(SilKitOptions{})` で動かし、結果、受信、状態の変化、統計が一致することを確かめています）。
+- 仮想バスに故障注入（応答を落とす、壊す）はありません。
 
 ### 固定周期 tick() の統合
 
@@ -991,13 +1030,16 @@ LIN 2.x の診断用のフレームを、通常のフレームとは別の規則
   - 規格との一致を確かめていない点は、「J1939」の各節にまとめています。
 - J1939 と SIL Kit（`j1939_silkit.*`）: 同じシナリオ（Request、Address Claim、BAM、RTS/CTS）を仮想バスと SIL Kit（プロセス内のレジストリ、ステップ幅の違う participant）で動かし、トレースが一致することを確かめます。SIL Kit の簡易シミュレーションと簡易 CAN Network Simulator の両方で、プロトコルの結果を確かめます。
 - `Peer` と試験キット（`peer.*`、`testkit.*`）: 3 つの participant での J1939 と LIN、ローカルの仮想バスと同じ結果になること、実時間と外部のポート、組み立ての誤り、失敗、破棄の順序
-- LIN（`lin.*`）
-  - 応答値がヘッダー時刻の規則に従い、壁時計の速さによらないこと
+- LIN（`lin.*` は SIL Kit のポートの上、`lin_local.*` は `LocalBench` の仮想 LIN バスの上で主なシナリオを同じ期待値で、`lin_bus.*` は仮想 LIN バスだけ）
+  - 応答値がヘッダー時刻の規則に従い、壁時計の速さにも、同じ時刻のステップの順（ECU を足した順）にもよらないこと
   - Master が送るフレームを 2 つの Slave が受信し、Slave の応答が Master に届くこと
   - 休止と起床（Master の要求、Slave のパルス、bus idle、休止中のヘッダー、同時刻の go-to-sleep とパルス）、スケジュールの切り替え（休止中を含む）、応答の取り消し、データ長の不一致による Error
-  - 境界と異常系: ID 0 と 0x3F・データ長 1 と 8・長さの違うスロットの混在、同じスロットでの 2 回のスケジュール切り替え、チェックサムモデルの不一致（両方向）による Error、2 つの応答の衝突による Error（速さを変えても同じ）、時間を分けて同じ ID に応答する 2 つの Slave、既定の bus idle（4 s ちょうど）、同時刻の 2 つの wakeup パルス、`wakeup_delay` 0、Slave の受信キューのあふれ（数えられ、その後は回復する）、`Unknown` チェックサムと診断フレームの誤用の拒否
+  - 境界と異常系: ID 0 と 0x3F・データ長 1 と 8・長さの違うスロットの混在、同じスロットでの 2 回のスケジュール切り替え、チェックサムモデルの不一致（両方向）による Error、2 つの応答の衝突による Error（速さを変えても同じ）、時間を分けて同じ ID に応答する 2 つの Slave、既定の bus idle（4 s ちょうど）、同時刻の 2 つの wakeup パルス、`wakeup_delay` 0、Slave の受信キューのあふれ（数えられ、その後は回復する）、診断フレームの誤用の拒否
   - 診断フレーム: マスターリクエストが 1 回だけ送られ、該当する Slave が 1 回だけ応答すること、応答の置き換え・取り消し・衝突、リクエストの取り消し、マルチフレームのやり取り（速さを変えても同じ）、休止中に積んだリクエストが再開後に送られること
   - クラスタのトレースが、Master や Slave の速さを変えても一致すること
+  - 仮想 LIN バスの配り方（相手、順、同期の NoResponse、不一致、衝突、go-to-sleep、wakeup、Observer、誤用の例外）と、`Ecu::lin_master()`、`lin_slave()` の名前の検査と開始後の例外
+  - 同じ LIN の ECU のクラスを `Simulation()` と `Simulation(SilKitOptions{})` で動かし、記録が一致すること（長さの不一致による Error と、Master のフレームへの Slave の応答による衝突を含む。`simulation.*`）
+  - `vehicle_sil::lin` が SIL Kit を含まないこと（`lin.boundary`）
 - 上流へのパッチ（[dependencies.md](dependencies.md)）には、どれも、パッチを外すと失敗する vehicle-sil のテストがあります。
 プロセスを分けた統合テストでは、次のことを確かめています。
 

@@ -3,6 +3,7 @@
 
 #include "vehicle_sil/can/real_time_driver.hpp"
 #include "vehicle_sil/core/periodic.hpp"
+#include "vehicle_sil/lin_silkit/silkit_lin_port.hpp"
 
 #include <exception>
 #include <memory>
@@ -61,6 +62,15 @@ struct Peer::RawCan
     std::string name;
     std::unique_ptr<can::SilKitCanPort> port;
     std::unique_ptr<can::RawChannel> channel;
+};
+
+struct Peer::LinNode
+{
+    // Destroyed bottom-up: the node, then the port.
+    std::string name;
+    std::unique_ptr<lin::SilKitLinPort> port;
+    std::unique_ptr<lin::LinMaster> master;
+    std::unique_ptr<lin::LinSlave> slave;
 };
 
 Peer::Peer(PeerOptions options) : options_(std::move(options))
@@ -122,13 +132,13 @@ Peer::Peer(PeerOptions options) : options_(std::move(options))
     runtime_->set_communication_ready_handler([this] {
         for (auto& node : lin_)
         {
-            if (node.master)
+            if (node->master)
             {
-                node.master->init();
+                node->master->init();
             }
             else
             {
-                node.slave->init();
+                node->slave->init();
             }
         }
     });
@@ -137,10 +147,13 @@ Peer::Peer(PeerOptions options) : options_(std::move(options))
 Peer::~Peer()
 {
     stop("vehicle_sil::Peer destroyed");
-    // No more steps: the LIN nodes (they use their controllers), then the networks, taps and
-    // ports, then the raw channels and their ports. The host, the clock and last the
-    // participant go with the members.
-    lin_.clear();
+    // No more steps: the LIN nodes (each before its port; they use their controllers), then the
+    // networks, taps and ports, then the raw channels and their ports. The host, the clock and
+    // last the participant go with the members.
+    while (!lin_.empty())
+    {
+        lin_.pop_back();
+    }
     channels_.clear();
     raw_channels_.clear();
 }
@@ -199,13 +212,34 @@ bool Peer::controller_is_used(const std::string& controller) const
     return false;
 }
 
+void Peer::require_can_name(const std::string& network, const char* what) const
+{
+    if (has_name(lin_, network))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: " + std::string(what) + "(\"" + network + "\"): \"" + network +
+                                    "\" is a LIN network of this peer; a CAN network needs a name of its own");
+    }
+    if (network_check_ && !network.empty())
+    {
+        network_check_(network, detail::NetworkKind::Can, std::string(what) + "(\"" + network + "\")");
+    }
+}
+
 j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions options)
 {
     require_not_started("j1939()");
+    require_can_name(network_name, "j1939");
     std::string controller = options.controller_name.empty() ? network_name : options.controller_name;
     if (!network_name.empty() && controller_is_used(controller))
     {
-        throw std::invalid_argument("vehicle_sil::Peer: a CAN controller of this peer is named \"" + controller + "\"");
+        throw std::invalid_argument("vehicle_sil::Peer: a CAN controller of this peer is named \"" + controller +
+                                    "\"; give this one another name (J1939ChannelOptions::controller_name)");
+    }
+    if (has_name(lin_, controller))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: the LIN controller of the LIN network \"" + controller +
+                                    "\" has the name \"" + controller +
+                                    "\"; give the CAN controller another name (J1939ChannelOptions::controller_name)");
     }
     Channel& c = add_channel(network_name);
     try
@@ -237,6 +271,7 @@ j1939::Network& Peer::j1939(std::string name, std::unique_ptr<can::Port> port, j
     {
         throw std::invalid_argument("vehicle_sil::Peer: no port");
     }
+    require_can_name(name, "j1939");
     Channel& c = add_channel(std::move(name));
     try
     {
@@ -274,12 +309,20 @@ can::RawChannel& Peer::add_can(const std::string& network, can::RawChannelOption
             throw std::invalid_argument("vehicle_sil::Peer: the raw CAN channel " + network + " was added before");
         }
     }
+    require_can_name(network, "can");
     // A controller of its own: a J1939 network on the same bus has the one named like the
     // network (or J1939ChannelOptions::controller_name).
     const std::string controller = network + ".raw";
     if (controller_is_used(controller))
     {
-        throw std::invalid_argument("vehicle_sil::Peer: a CAN controller of this peer is named \"" + controller + "\"");
+        throw std::invalid_argument("vehicle_sil::Peer: a CAN controller of this peer is named \"" + controller +
+                                    "\"; rename that network or controller");
+    }
+    if (has_name(lin_, controller))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: can(\"" + network + "\"): the LIN network \"" + controller +
+                                    "\" has a controller named \"" + controller +
+                                    "\", the name of this raw channel's controller; rename one of the networks");
     }
     auto made = std::make_unique<RawCan>();
     made->name = network;
@@ -333,32 +376,101 @@ namespace detail {
 
 void set_virtual_time_end(Peer& peer, SimTime end) { peer.set_end(end); }
 
+void set_network_check(Peer& peer,
+                       std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> check)
+{
+    peer.require_not_started("set_network_check()");
+    peer.network_check_ = std::move(check);
+}
+
+std::optional<NetworkKind> network_kind(const Peer& peer, std::string_view network)
+{
+    if (has_name(peer.channels_, network) || has_name(peer.raw_channels_, network))
+    {
+        return NetworkKind::Can;
+    }
+    if (has_name(peer.lin_, network))
+    {
+        return NetworkKind::Lin;
+    }
+    return std::nullopt;
+}
+
 } // namespace detail
 
-lin::LinMaster& Peer::lin_master(std::string network_name, lin::LinScheduleTable schedule, lin::LinMaster::ResultHandler on_result,
-                                 lin::LinMaster::StateHandler on_state, lin::LinMasterOptions options)
+void Peer::require_lin_name(const std::string& network, const char* what) const
+{
+    const std::string call = std::string(what).substr(0, std::string(what).size() - 2) + "(\"" + network + "\")";
+    if (has_name(lin_, network))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: " + call + ": the peer has a LIN node on \"" + network +
+                                    "\" already; an ECU has one LIN node per LIN network");
+    }
+    if (has_name(channels_, network) || has_name(raw_channels_, network))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: " + call + ": \"" + network +
+                                    "\" is a CAN network of this peer; a LIN network needs a name of its own");
+    }
+    if (controller_is_used(network))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: " + call + ": a CAN controller of this peer is named \"" + network +
+                                    "\" (the LIN controller is named like its network); rename that controller "
+                                    "(J1939ChannelOptions::controller_name) or the LIN network");
+    }
+    if (network_check_)
+    {
+        network_check_(network, detail::NetworkKind::Lin, call);
+    }
+}
+
+Peer::LinNode& Peer::add_lin_node(const std::string& network, lin::LinRole role)
+{
+    auto node = std::make_unique<LinNode>();
+    node->name = network;
+    auto* controller = runtime_->participant().CreateLinController(network, network);
+    node->port = std::make_unique<lin::SilKitLinPort>(*controller, role);
+    lin_.push_back(std::move(node));
+    return *lin_.back();
+}
+
+lin::LinMaster& Peer::add_lin_master(const std::string& network, lin::LinScheduleTable schedule, lin::LinMasterOptions options)
 {
     require_not_started("lin_master()");
     require_virtual_time("lin_master()");
-    options.step = options_.virtual_time->step;
-    auto* controller = runtime_->participant().CreateLinController(network_name, network_name);
-    LinNode node;
-    node.master = std::make_unique<lin::LinMaster>(*controller, std::move(schedule), options, std::move(on_result),
-                                                   std::move(on_state));
-    lin_.push_back(std::move(node));
-    return *lin_.back().master;
+    require_lin_name(network, "lin_master()");
+    // Before the controller: SIL Kit cannot remove it, and a second one with its name is refused.
+    lin::LinMaster::validate(schedule, options_.virtual_time->step, options);
+    LinNode& node = add_lin_node(network, lin::LinRole::Master);
+    try
+    {
+        node.master = std::make_unique<lin::LinMaster>(*node.port, std::move(schedule), options_.virtual_time->step, options);
+    }
+    catch (...)
+    {
+        lin_.pop_back();
+        throw;
+    }
+    return *node.master;
 }
 
-lin::LinSlave& Peer::lin_slave(std::string network_name, lin::LinSlaveOptions options, lin::LinSlave::FrameHandler on_frame,
-                               lin::LinSlave::StateHandler on_state)
+lin::LinSlave& Peer::add_lin_slave(const std::string& network, lin::LinSlaveOptions options)
 {
     require_not_started("lin_slave()");
     require_virtual_time("lin_slave()");
-    auto* controller = runtime_->participant().CreateLinController(network_name, network_name);
-    LinNode node;
-    node.slave = std::make_unique<lin::LinSlave>(*controller, std::move(options), std::move(on_frame), std::move(on_state));
-    lin_.push_back(std::move(node));
-    return *lin_.back().slave;
+    require_lin_name(network, "lin_slave()");
+    // Before the controller, as in add_lin_master().
+    lin::LinSlave::validate(options);
+    LinNode& node = add_lin_node(network, lin::LinRole::Slave);
+    try
+    {
+        node.slave = std::make_unique<lin::LinSlave>(*node.port, std::move(options));
+    }
+    catch (...)
+    {
+        lin_.pop_back();
+        throw;
+    }
+    return *node.slave;
 }
 
 void Peer::on_step(std::function<void(SimTime now)> fn)
@@ -402,13 +514,13 @@ void Peer::run_application(SimTime now)
     }
     for (auto& node : lin_)
     {
-        if (node.master)
+        if (node->master)
         {
-            node.master->step(now);
+            node->master->step(now);
         }
         else
         {
-            node.slave->step(now);
+            node->slave->step(now);
         }
     }
     if (control_after_)

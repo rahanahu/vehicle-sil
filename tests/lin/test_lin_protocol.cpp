@@ -12,6 +12,7 @@
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/lin/lin_master.hpp"
 #include "vehicle_sil/lin/lin_slave.hpp"
+#include "vehicle_sil/lin_silkit/silkit_lin_port.hpp"
 
 #include <silkit/services/lin/all.hpp>
 
@@ -121,7 +122,7 @@ struct Cluster
 {
     LinScheduleTable schedule;
     SimDuration master_step = 5ms;
-    LinMasterOptions master; // step is filled in from master_step
+    LinMasterOptions master;
     std::chrono::microseconds master_busy{0};
     std::vector<SlaveSpec> slaves;
     SimDuration stop_at = 300ms;
@@ -175,22 +176,21 @@ Trace run(Cluster c)
     const SimTime keepBefore = SimTime{} + c.stop_at - 20ms;
 
     auto masterRuntime = make_runtime("Master", c.master_step);
-    c.master.step = c.master_step;
-    LinMaster master(
-        *masterRuntime->participant().CreateLinController("LIN1", "LIN_CLUSTER"), c.schedule, c.master,
-        [&](const LinScheduleResult& r) {
-            if (r.header_time < keepBefore)
-            {
-                out.results.push_back(r);
-                out.master.push_back("result " + describe(r));
-            }
-        },
-        [&](SimTime t, LinNodeState s) {
-            if (t < keepBefore)
-            {
-                out.master.push_back("state t=" + std::to_string(ms_of(t)) + " " + to_string(s));
-            }
-        });
+    SilKitLinPort masterPort(*masterRuntime->participant().CreateLinController("LIN1", "LIN_CLUSTER"), LinRole::Master);
+    LinMaster master(masterPort, c.schedule, c.master_step, c.master);
+    master.on_result([&](const LinScheduleResult& r) {
+        if (r.header_time < keepBefore)
+        {
+            out.results.push_back(r);
+            out.master.push_back("result " + describe(r));
+        }
+    });
+    master.on_state([&](SimTime t, LinNodeState s) {
+        if (t < keepBefore)
+        {
+            out.master.push_back("state t=" + std::to_string(ms_of(t)) + " " + to_string(s));
+        }
+    });
     masterRuntime->set_communication_ready_handler([&] { master.init(); });
     masterRuntime->set_step_handler([&](SimTime now, SimDuration) {
         if (!c.master_script || c.master_script(now, master))
@@ -204,6 +204,7 @@ Trace run(Cluster c)
     });
 
     std::vector<std::unique_ptr<ParticipantRuntime>> slaveRuntimes;
+    std::vector<std::unique_ptr<SilKitLinPort>> slavePorts;
     std::vector<std::unique_ptr<LinSlave>> slaves;
     std::vector<SimTime> slaveNow(c.slaves.size());
     for (std::size_t i = 0; i < c.slaves.size(); ++i)
@@ -211,26 +212,26 @@ Trace run(Cluster c)
         slaveRuntimes.push_back(make_runtime(names[i + 1], c.slaves[i].step));
         auto& runtime = *slaveRuntimes.back();
         auto& trace = out.slaves[i];
-        slaves.push_back(std::make_unique<LinSlave>(
-            *runtime.participant().CreateLinController("LIN1", "LIN_CLUSTER"), c.slaves[i].options,
-            [&, i](const LinReceivedFrame& f) {
-                if (f.header_time < keepBefore)
-                {
-                    trace.push_back("frame t=" + std::to_string(ms_of(f.header_time)) +
-                                    " rx=" + std::to_string(ms_of(slaveNow[i])) + " id=" + std::to_string(f.id) +
-                                    " data=" + hex(f.data.data(), f.data_length));
-                }
-                if (c.slave_frame)
-                {
-                    c.slave_frame(i, slaveNow[i], f, *slaves[i]);
-                }
-            },
-            [&](SimTime t, LinNodeState s) {
-                if (t < keepBefore)
-                {
-                    trace.push_back("state t=" + std::to_string(ms_of(t)) + " " + to_string(s));
-                }
-            }));
+        slavePorts.push_back(
+            std::make_unique<SilKitLinPort>(*runtime.participant().CreateLinController("LIN1", "LIN_CLUSTER"), LinRole::Slave));
+        slaves.push_back(std::make_unique<LinSlave>(*slavePorts.back(), c.slaves[i].options));
+        slaves.back()->on_frame([&, i](const LinReceivedFrame& f) {
+            if (f.header_time < keepBefore)
+            {
+                trace.push_back("frame t=" + std::to_string(ms_of(f.header_time)) + " rx=" + std::to_string(ms_of(slaveNow[i])) +
+                                " id=" + std::to_string(f.id) + " data=" + hex(f.data.data(), f.data_length));
+            }
+            if (c.slave_frame)
+            {
+                c.slave_frame(i, slaveNow[i], f, *slaves[i]);
+            }
+        });
+        slaves.back()->on_state([&](SimTime t, LinNodeState s) {
+            if (t < keepBefore)
+            {
+                trace.push_back("state t=" + std::to_string(ms_of(t)) + " " + to_string(s));
+            }
+        });
         auto& slave = *slaves.back();
         runtime.set_communication_ready_handler([&slave] { slave.init(); });
         runtime.set_step_handler([&, i](SimTime now, SimDuration) {
@@ -1013,7 +1014,7 @@ TEST_CASE(lin_slave_inbox_overflow_is_counted_and_the_slave_recovers)
 // Configuration
 // ---------------------------------------------------------------------------------------------
 
-TEST_CASE(lin_rejects_unknown_checksums_and_misused_diagnostic_frames)
+TEST_CASE(lin_rejects_misused_diagnostic_frames)
 {
     InProcessRegistry registry;
     ParticipantRuntimeOptions options;
@@ -1023,9 +1024,6 @@ TEST_CASE(lin_rejects_unknown_checksums_and_misused_diagnostic_frames)
     auto* masterController = runtime.participant().CreateLinController("LIN1", "LIN_X");
     auto* slaveController = runtime.participant().CreateLinController("LIN2", "LIN_X");
 
-    // SIL Kit skips the checksum check for LinChecksumModel::Unknown: a wrong checksum model would
-    // pass unnoticed.
-    CHECK(throws<std::invalid_argument>([] { validate_schedule({{0x10, 2, LinChecksumModel::Unknown, 5ms}}, 5ms); }));
     // Diagnostic frames: 8 bytes, classic checksum, the master publishes 0x3C and a slave 0x3D.
     const LinScheduleEntry request{kMasterRequestId, 8, LinChecksumModel::Classic, 5ms, LinPublisher::Master};
     const LinScheduleEntry response{kSlaveResponseId, 8, LinChecksumModel::Classic, 5ms, LinPublisher::Slave};
@@ -1044,7 +1042,8 @@ TEST_CASE(lin_rejects_unknown_checksums_and_misused_diagnostic_frames)
         }
     }
 
-    LinMaster master(*masterController, diagnostic_schedule(), LinMasterOptions{5ms}, nullptr);
+    SilKitLinPort masterPort(*masterController, LinRole::Master);
+    LinMaster master(masterPort, diagnostic_schedule(), 5ms);
     const std::array<std::uint8_t, 8> sleepCommand{0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     const std::array<std::uint8_t, 8> request8{kNad0, 0x06, 0xB2, 0x00, 0x34, 0x12, 0xFF, 0xFF};
     const std::array<std::uint8_t, 7> seven{};
@@ -1055,9 +1054,8 @@ TEST_CASE(lin_rejects_unknown_checksums_and_misused_diagnostic_frames)
     CHECK(throws<std::invalid_argument>([&] { master.send_master_request(seven); }));
     CHECK(!master.master_request_pending());
 
-    LinSlave slave(*slaveController);
-    const std::array<std::uint8_t, 2> two{};
-    CHECK(throws<std::invalid_argument>([&] { slave.set_response(SimTime{}, 0x10, two, LinChecksumModel::Unknown); }));
+    SilKitLinPort slavePort(*slaveController, LinRole::Slave);
+    LinSlave slave(slavePort);
     // The slave response goes through set_slave_response(), answered once; 0x3C is the master's.
     CHECK(throws<std::invalid_argument>([&] { slave.set_response(SimTime{}, kSlaveResponseId, request8, LinChecksumModel::Classic); }));
     CHECK(throws<std::invalid_argument>([&] { slave.set_response(SimTime{}, kMasterRequestId, request8, LinChecksumModel::Classic); }));

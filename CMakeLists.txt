@@ -52,14 +52,15 @@ endif()
 #                           vehicle_sil::j1939_broadcast_suppression and vehicle_sil::j1939_diagnostics
 #   vehicle_sil::j1939_codec typed J1939 messages (header only; the types are generated from YAML by
 #                           vehicle_sil_add_j1939_codec())
-#   vehicle_sil::lin        LIN schedule and slave responses on SIL Kit LIN (links vehicle_sil::core)
+#   vehicle_sil::lin        LIN master and slave on a port, and the virtual LIN bus (no SIL Kit)
+#   vehicle_sil::lin_silkit vehicle_sil::lin port on SIL Kit LIN (virtual time)
 #   vehicle_sil::ecu        the interface an ECU's application is written against (header only, no SIL Kit)
-#   vehicle_sil::local      ECUs on virtual CAN buses in this process, on virtual time (no SIL Kit; internal)
+#   vehicle_sil::local      ECUs on virtual CAN and LIN buses in this process, on virtual time (no SIL Kit; internal)
 #   vehicle_sil::testkit    recorders and fault injection for tests on vehicle_sil::local (internal)
-#   vehicle_sil::peer       one SIL Kit participant with its J1939 networks and LIN nodes (internal)
+#   vehicle_sil::peer       one SIL Kit participant with its J1939 networks, raw CAN and LIN nodes (internal)
 #   vehicle_sil::simulation runs ECUs on local virtual buses or as SIL Kit participants of this process
-# The J1939 stack, the CAN base, the local buses, the test kit, Peer, Ecu and Simulation are under
-# development; their API may still change.
+# The J1939 stack, the CAN base, the LIN port and buses, the local buses, the test kit, Peer, Ecu
+# and Simulation are under development; their API may still change.
 # As a subproject (FetchContent / add_subdirectory) the libraries are excluded
 # from "all", so a consumer only builds the libraries it links against.
 if(PROJECT_IS_TOP_LEVEL)
@@ -69,6 +70,7 @@ else()
 endif()
 add_subdirectory(libs/core ${_vehicle_sil_exclude})
 add_subdirectory(libs/lin ${_vehicle_sil_exclude})
+add_subdirectory(libs/lin_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/can ${_vehicle_sil_exclude})
 add_subdirectory(libs/can_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/can_netsim ${_vehicle_sil_exclude})

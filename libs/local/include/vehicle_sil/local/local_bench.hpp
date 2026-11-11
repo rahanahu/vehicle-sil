@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
-// Virtual CAN buses with ECUs and their J1939 networks on them, stepped on virtual time in the
-// calling thread: running ECUs in this process without SIL Kit (vehicle_sil::local).
+// Virtual CAN and LIN buses with ECUs and their J1939 networks and LIN nodes on them, stepped on
+// virtual time in the calling thread: running ECUs in this process without SIL Kit
+// (vehicle_sil::local).
 #pragma once
 
 #include "vehicle_sil/can/host.hpp"
@@ -11,6 +12,9 @@
 #include "vehicle_sil/can/virtual_can_bus.hpp"
 #include "vehicle_sil/ecu/ecu.hpp"
 #include "vehicle_sil/j1939/network.hpp"
+#include "vehicle_sil/lin/lin_master.hpp"
+#include "vehicle_sil/lin/lin_slave.hpp"
+#include "vehicle_sil/lin/virtual_lin_bus.hpp"
 
 #include <functional>
 #include <memory>
@@ -46,6 +50,14 @@ namespace vehicle_sil {
 /// message lists the buses). An add_j1939(), j1939() or can() that throws makes and names no bus.
 /// Raw channels need a bus name (Ecu::can("") is std::invalid_argument, like j1939("")).
 ///
+/// LIN: Ecu::lin_master(network) and Ecu::lin_slave(network) attach an endpoint (named like the
+/// ECU) to the virtual LIN bus (lin::VirtualLinBus) named `network`, made when an ECU first
+/// names it, and make the node on it; the node is initialised then. A LIN bus and a CAN bus
+/// cannot have one name (std::invalid_argument in either order). The forms without a bus name
+/// are for CAN only. A second master on a LIN bus is std::logic_error (naming both ECUs). A
+/// lin_master() or lin_slave() that throws attaches nothing and makes no bus. lin_bus() looks a
+/// LIN bus up (add observers there), lin_master() and lin_slave() an ECU's node.
+///
 /// Look them up by the ECU's name and the network's: network() for the stack, endpoint() for
 /// fault injection and outages (VirtualCanBus::Endpoint), tap() to listen to its raw frames,
 /// host() for the ECU's host. The one-name forms are for an ECU with exactly one network (as
@@ -55,23 +67,24 @@ namespace vehicle_sil {
 /// inject() sends a raw frame (11 or 29 bit) from an endpoint of its own on a bus, which no
 /// network uses (injector()).
 ///
-/// Set up (add_ecu(), add_j1939(), on_step(), and the ECUs' j1939(), can(), on_step(), every()
-/// and emplace()) before the first run; afterwards they throw std::logic_error. Times: every host
+/// Set up (add_ecu(), add_j1939(), on_step(), and the ECUs' j1939(), can(), lin_master(),
+/// lin_slave(), on_step(), every() and emplace()) before the first run; afterwards they throw std::logic_error. Times: every host
 /// starts at 0; run_until(t) runs every step that starts before t. A frame injected with time t
 /// reaches a network in its first step after t; t must not be earlier than now(), the end of the
 /// last run (the bus refuses the past: std::logic_error).
 ///
 /// One step of an ECU at `now`: its networks and raw channels receive and handle what arrived (in
-/// the order added), then on_step() and every() (in the order added), then the networks and raw
-/// channels send. A frame one network of the ECU receives can be sent on to another network (or
-/// raw channel) of it in the same step.
+/// the order added), then on_step() and every() (in the order added), then its LIN nodes'
+/// step(now) (in the order added), then the networks and raw channels send. A frame one network
+/// of the ECU receives can be sent on to another network (or raw channel) of it in the same
+/// step. The LIN buses deliver inside the sender's step (lin::VirtualLinBus).
 ///
 /// Ownership: LocalBench owns the buses, the endpoints, the taps, the networks, the raw channels,
-/// the hosts and the objects the ECUs emplace(). It destroys the ECUs last added first, each
-/// with its host first, then its networks (the one added last first; each network's parts
-/// first, then its tap), then its raw channels (the one added last first), then the objects it
-/// emplace()d (the one emplaced last first); then the driver, and last the buses with the
-/// endpoints. References it returns are valid as long as the LocalBench. Observers and tap
+/// the LIN nodes, the hosts and the objects the ECUs emplace(). It destroys the ECUs last added
+/// first, each with its host first, then its LIN nodes (the one added last first), then its
+/// networks (the one added last first; each network's parts first, then its tap), then its raw
+/// channels (the one added last first), then the objects it emplace()d (the one emplaced last
+/// first); then the driver, and last the LIN buses and the CAN buses with the endpoints. References it returns are valid as long as the LocalBench. Observers and tap
 /// listeners may outlive it (they are detached).
 ///
 /// Not thread safe.
@@ -115,6 +128,15 @@ public:
     /// The raw CAN channel `network` of the ECU `ecu` (Ecu::can(network)). std::out_of_range
     /// for an unknown name.
     [[nodiscard]] can::RawChannel& raw_channel(std::string_view ecu, std::string_view network) const;
+    /// The LIN master of the ECU `ecu` on the LIN bus `network` (Ecu::lin_master(network)).
+    /// std::out_of_range for an unknown ECU or if it has no LIN master there.
+    [[nodiscard]] lin::LinMaster& lin_master(std::string_view ecu, std::string_view network) const;
+    /// The LIN slave of the ECU `ecu` on the LIN bus `network` (Ecu::lin_slave(network)).
+    /// std::out_of_range for an unknown ECU or if it has no LIN slave there.
+    [[nodiscard]] lin::LinSlave& lin_slave(std::string_view ecu, std::string_view network) const;
+    /// The LIN bus `network` (made by an ECU's lin_master() or lin_slave()). std::out_of_range
+    /// for an unknown name (the message lists the LIN buses).
+    [[nodiscard]] lin::VirtualLinBus& lin_bus(std::string_view network) const;
 
     /// Sends `frame` at `time` from the injection endpoint of the only bus (made without a name
     /// if there is none; the result of its send()). std::logic_error if there are two or more
@@ -150,9 +172,20 @@ private:
     struct Channel;
     struct RawCan;
     struct NamedBus;
+    struct NamedLinBus;
     [[nodiscard]] Site& site(std::string_view name) const;
     /// The names of the buses, quoted, for messages.
     [[nodiscard]] std::string bus_list() const;
+    /// The names of the LIN buses, quoted, for messages ("none" if there is none).
+    [[nodiscard]] std::string lin_bus_list() const;
+    /// The LIN bus named `network`; nullptr if there is none.
+    [[nodiscard]] NamedLinBus* find_lin_bus(std::string_view network) const;
+    /// The LIN bus named `network`, made now if there is none.
+    lin::VirtualLinBus& use_lin_bus(const std::string& network);
+    /// std::invalid_argument for the CAN set-up `what` (naming the ECU `ecu`) if `network` is a
+    /// LIN bus, and for the LIN set-up `what` if it is a CAN bus.
+    void require_can_name(std::string_view network, std::string_view ecu, std::string_view what) const;
+    void require_lin_name(std::string_view network, std::string_view ecu, std::string_view what) const;
     /// The bus an ECU's j1939(network) or can(network) uses: the bus of that name, else the bus
     /// without a name, which it is to name; nullptr if there is neither (a new bus).
     [[nodiscard]] NamedBus* bus_to_name(std::string_view network) const;
@@ -173,6 +206,8 @@ private:
     can::VirtualCanBusOptions options_;
     /// The buses, in the order made. A bus without a name is always the only one.
     std::vector<std::unique_ptr<NamedBus>> buses_;
+    /// The LIN buses, in the order made; destroyed after the ECUs.
+    std::vector<std::unique_ptr<NamedLinBus>> lin_buses_;
     /// The ECUs added without a bus name (add_j1939()), in the order added.
     std::vector<std::string> unnamed_ecus_;
     std::vector<std::unique_ptr<Site>> sites_;

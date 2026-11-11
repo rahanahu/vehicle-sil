@@ -86,7 +86,7 @@ public:
 class Simulation
 {
 public:
-    /// On virtual CAN buses in this process, stepped in the calling thread (LocalBench).
+    /// On virtual CAN and LIN buses in this process, stepped in the calling thread (LocalBench).
     Simulation();
     /// On SIL Kit if `silkit` has a value, else as Simulation(). On SIL Kit: starts the registry
     /// of this process if registry_uri is empty (SilKit::SilKitError on failure); connects
@@ -157,7 +157,7 @@ public:
     /// taps (include vehicle_sil/local/local_bench.hpp).
     [[nodiscard]] LocalBench& local();
     /// SIL Kit only (std::logic_error otherwise): the participant of an ECU, for what only a
-    /// Peer has (LIN, taps, control agents, the SIL Kit port; include vehicle_sil/peer/peer.hpp).
+    /// Peer has (taps, control agents, the SIL Kit ports; include vehicle_sil/peer/peer.hpp).
     /// std::out_of_range for an unknown name.
     [[nodiscard]] Peer& peer(std::string_view ecu);
     /// SIL Kit only (std::logic_error otherwise): the registry's URI (the one given, or where the

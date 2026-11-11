@@ -8,6 +8,7 @@
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/lin/lin_master.hpp"
 #include "vehicle_sil/lin/lin_slave.hpp"
+#include "vehicle_sil/lin_silkit/silkit_lin_port.hpp"
 
 #include <silkit/services/lin/all.hpp>
 
@@ -82,17 +83,19 @@ RunResult run(const RunOptions& o)
     // Master: sensor frame and status frame every 10 ms each, plus an identifier nobody answers.
     auto masterRuntime = make_runtime("LinMaster", o.master_step);
     auto* masterController = masterRuntime->participant().CreateLinController("LIN1", "LIN_VT");
-    LinMaster master(*masterController,
+    SilKitLinPort masterPort(*masterController, LinRole::Master);
+    LinMaster master(masterPort,
                      {{kSensorId, 2, LinChecksumModel::Enhanced, o.slots[0]},
                       {kStatusId, 1, LinChecksumModel::Enhanced, o.slots[1]},
                       {kUnansweredId, 1, LinChecksumModel::Classic, o.slots[2]}},
-                     LinMasterOptions{o.master_step}, [&](const LinScheduleResult& r) {
-                         const std::lock_guard lock(outMutex);
-                         if (r.header_time < SimTime{} + o.stop_at - 2 * o.slots[2])
-                         {
-                             out.results.push_back(r);
-                         }
-                     });
+                     o.master_step);
+    master.on_result([&](const LinScheduleResult& r) {
+        const std::lock_guard lock(outMutex);
+        if (r.header_time < SimTime{} + o.stop_at - 2 * o.slots[2])
+        {
+            out.results.push_back(r);
+        }
+    });
     masterRuntime->set_communication_ready_handler([&] { master.init(); });
     masterRuntime->set_step_handler([&](SimTime now, SimDuration) {
         master.step(now);
@@ -105,7 +108,8 @@ RunResult run(const RunOptions& o)
     // Sensor slave: sets its value every step; the status frame only from 50 ms on.
     auto slaveRuntime = make_runtime("LinSensor", o.slave_step);
     auto* slaveController = slaveRuntime->participant().CreateLinController("LIN1", "LIN_VT");
-    LinSlave slave(*slaveController);
+    SilKitLinPort slavePort(*slaveController, LinRole::Slave);
+    LinSlave slave(slavePort);
     slaveRuntime->set_communication_ready_handler([&] { slave.init(); });
     slaveRuntime->set_step_handler([&](SimTime now, SimDuration) {
         slave.step(now);
@@ -257,9 +261,9 @@ TEST_CASE(lin_schedule_rejects_invalid_configuration)
     ParticipantRuntime runtime(options);
     auto* controller = runtime.participant().CreateLinController("LIN1", "LIN_X");
 
+    SilKitLinPort masterPort(*controller, LinRole::Master);
     auto rejects = [&](std::vector<LinScheduleEntry> schedule, SimDuration step) {
-        return throws<std::invalid_argument>(
-            [&] { LinMaster master(*controller, std::move(schedule), LinMasterOptions{step}, nullptr); });
+        return throws<std::invalid_argument>([&] { LinMaster master(masterPort, std::move(schedule), step); });
     };
     CHECK(rejects({}, 5ms));
     CHECK(rejects({{0x10, 2, LinChecksumModel::Enhanced, 7ms}}, 5ms)); // slot off the step grid
@@ -267,7 +271,9 @@ TEST_CASE(lin_schedule_rejects_invalid_configuration)
     CHECK(rejects({{0x10, 9, LinChecksumModel::Enhanced, 5ms}}, 5ms)); // > 8 bytes
     CHECK(rejects({{0x10, 2, LinChecksumModel::Enhanced, 5ms}}, 0ms));
 
-    LinSlave slave(*controller);
+    auto* slaveController = runtime.participant().CreateLinController("LIN2", "LIN_X");
+    SilKitLinPort slavePort(*slaveController, LinRole::Slave);
+    LinSlave slave(slavePort);
     const std::array<std::uint8_t, 9> tooLong{};
     CHECK(throws<std::invalid_argument>([&] { slave.set_response(SimTime{}, 0x10, tooLong); }));
     const std::array<std::uint8_t, 1> one{1};

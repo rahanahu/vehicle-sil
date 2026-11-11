@@ -13,6 +13,60 @@ namespace {
 constexpr const char* kWho = "vehicle_sil::LocalBench: ";
 
 std::string quoted(std::string_view name) { return "\"" + std::string(name) + "\""; }
+
+/// The port a LIN node of an ECU is made on. It reaches its bus endpoint only once the node
+/// exists (bind()), so a node whose constructor throws leaves nothing on the bus.
+class LinNodePort final : public lin::LinPort
+{
+public:
+    void bind(lin::VirtualLinBus::Endpoint& endpoint)
+    {
+        endpoint_ = &endpoint;
+        endpoint_->set_listener(listener_);
+    }
+
+    void set_listener(lin::LinPortListener* listener) override
+    {
+        listener_ = listener;
+        if (endpoint_ != nullptr)
+        {
+            endpoint_->set_listener(listener);
+        }
+    }
+    void open() override { endpoint().open(); }
+    void send_header(SimTime now, lin::LinId id, std::uint8_t data_length, lin::LinChecksumModel checksum_model) override
+    {
+        endpoint().send_header(now, id, data_length, checksum_model);
+    }
+    void send_frame(SimTime now, const lin::LinFrame& frame) override { endpoint().send_frame(now, frame); }
+    void send_go_to_sleep(SimTime now) override { endpoint().send_go_to_sleep(now); }
+    void respond(SimTime header_time, const lin::LinFrame& frame) override { endpoint().respond(header_time, frame); }
+    void send_wakeup(SimTime now) override { endpoint().send_wakeup(now); }
+    void resume() override { endpoint().resume(); }
+
+private:
+    [[nodiscard]] lin::VirtualLinBus::Endpoint& endpoint() const
+    {
+        if (endpoint_ == nullptr)
+        {
+            throw std::logic_error(std::string(kWho) + "a LIN node used its port before it was on its bus");
+        }
+        return *endpoint_;
+    }
+
+    lin::VirtualLinBus::Endpoint* endpoint_ = nullptr;
+    lin::LinPortListener* listener_ = nullptr;
+};
+
+/// A LIN master or slave of an ECU.
+struct LinNode
+{
+    // Destroyed bottom-up: the node, then its port.
+    std::string network;
+    LinNodePort port;
+    std::unique_ptr<lin::LinMaster> master;
+    std::unique_ptr<lin::LinSlave> slave;
+};
 } // namespace
 
 struct LocalBench::NamedBus
@@ -22,6 +76,12 @@ struct LocalBench::NamedBus
     std::unique_ptr<can::VirtualCanBus> bus;
     /// The endpoint inject() sends from; no network uses it.
     can::VirtualCanBus::Endpoint* injector = nullptr;
+};
+
+struct LocalBench::NamedLinBus
+{
+    std::string name;
+    std::unique_ptr<lin::VirtualLinBus> bus;
 };
 
 struct LocalBench::Channel
@@ -54,14 +114,30 @@ public:
             {
                 applications_[i](now);
             }
+            for (const auto& node : lin_nodes_)
+            {
+                if (node->master)
+                {
+                    node->master->step(now);
+                }
+                else
+                {
+                    node->slave->step(now);
+                }
+            }
         });
     }
 
-    // The host first, then the networks (the one added last first, each before its tap), then
-    // the raw channels (the one added last first); the owned objects go last with the members.
+    // The host first, then the LIN nodes (the one added last first), then the networks (the one
+    // added last first, each before its tap), then the raw channels (the one added last first);
+    // the owned objects go last with the members.
     ~Site() override
     {
         host_.reset();
+        while (!lin_nodes_.empty())
+        {
+            lin_nodes_.pop_back();
+        }
         while (!channels_.empty())
         {
             channels_.pop_back();
@@ -161,6 +237,26 @@ public:
         throw std::logic_error(message);
     }
 
+    /// The LIN node on `network` of the role `role` (std::out_of_range otherwise).
+    [[nodiscard]] LinNode& lin_node(std::string_view network, lin::LinRole role) const
+    {
+        for (const auto& node : lin_nodes_)
+        {
+            if (node->network == network && (node->master != nullptr) == (role == lin::LinRole::Master))
+            {
+                return *node;
+            }
+        }
+        std::string nodes;
+        for (const auto& node : lin_nodes_)
+        {
+            nodes += (nodes.empty() ? "" : ", ") + quoted(node->network) + (node->master ? " (master)" : " (slave)");
+        }
+        throw std::out_of_range(std::string(kWho) + "the ECU " + quoted(name_) + " has no LIN " +
+                                (role == lin::LinRole::Master ? "master" : "slave") + " on " + quoted(network) +
+                                ". Its LIN nodes: " + (nodes.empty() ? "none" : nodes));
+    }
+
     /// A J1939 network on the bus `network`, or on the only bus without a bus name (an empty
     /// `network`, for LocalBench::add_j1939()). Nothing is attached, made or named if it throws.
     j1939::Network& attach_j1939(const std::string& network, j1939::NetworkOptions options)
@@ -168,6 +264,10 @@ public:
         require_not_started("j1939()");
         const bool named = !network.empty();
         const std::string what = named ? "j1939(\"" + network + "\")" : "add_j1939()";
+        if (named)
+        {
+            owner_.require_can_name(network, name_, what);
+        }
         NamedBus* existing = named ? owner_.bus_to_name(network) : owner_.only_bus_if_any(what);
         if (named)
         {
@@ -251,6 +351,7 @@ private:
     can::RawChannel& add_can(const std::string& network, can::RawChannelOptions options) override
     {
         require_not_started("can()");
+        owner_.require_can_name(network, name_, "can(\"" + network + "\")");
         NamedBus* existing = owner_.bus_to_name(network);
         for (const auto& r : raw_channels_)
         {
@@ -276,6 +377,63 @@ private:
         return *raw_channels_.back()->channel;
     }
 
+    lin::LinMaster& add_lin_master(const std::string& network, lin::LinScheduleTable schedule,
+                                   lin::LinMasterOptions options) override
+    {
+        auto node = new_lin_node(network, "lin_master");
+        node->master = std::make_unique<lin::LinMaster>(node->port, std::move(schedule), step_, options);
+        attach_lin_node(std::move(node), lin::LinRole::Master);
+        return *lin_nodes_.back()->master;
+    }
+
+    lin::LinSlave& add_lin_slave(const std::string& network, lin::LinSlaveOptions options) override
+    {
+        auto node = new_lin_node(network, "lin_slave");
+        node->slave = std::make_unique<lin::LinSlave>(node->port, std::move(options));
+        attach_lin_node(std::move(node), lin::LinRole::Slave);
+        return *lin_nodes_.back()->slave;
+    }
+
+    /// A LIN node on `network`, not yet on its bus; checks the name (`call`: lin_master or
+    /// lin_slave).
+    std::unique_ptr<LinNode> new_lin_node(const std::string& network, const std::string& call)
+    {
+        require_not_started((call + "()").c_str());
+        const std::string what = call + "(" + quoted(network) + ")";
+        for (const auto& node : lin_nodes_)
+        {
+            if (node->network == network)
+            {
+                throw std::invalid_argument(std::string(kWho) + what + ": the ECU " + quoted(name_) +
+                                            " has a LIN node on " + quoted(network) +
+                                            " already; an ECU has one LIN node per LIN bus");
+            }
+        }
+        owner_.require_lin_name(network, name_, what);
+        auto node = std::make_unique<LinNode>();
+        node->network = network;
+        return node;
+    }
+
+    /// Puts the node made on `node->port` on its bus (made now if it is new) and initialises
+    /// it. Nothing is attached or made if it throws (a second master).
+    void attach_lin_node(std::unique_ptr<LinNode> node, lin::LinRole role)
+    {
+        lin_nodes_.reserve(lin_nodes_.size() + 1);
+        auto* existing = owner_.find_lin_bus(node->network);
+        lin::VirtualLinBus& bus = existing != nullptr ? *existing->bus : owner_.use_lin_bus(node->network);
+        node->port.bind(bus.attach(role, name_)); // std::logic_error for a second master (not on a new bus)
+        if (node->master)
+        {
+            node->master->init();
+        }
+        else
+        {
+            node->slave->init();
+        }
+        lin_nodes_.push_back(std::move(node));
+    }
+
     void keep(std::shared_ptr<void> object) override
     {
         require_not_started("emplace()");
@@ -296,6 +454,7 @@ private:
     SimDuration step_;
     std::vector<std::unique_ptr<Channel>> channels_;
     std::vector<std::unique_ptr<RawCan>> raw_channels_; ///< not in channels_: the lookups are J1939 only
+    std::vector<std::unique_ptr<LinNode>> lin_nodes_;   ///< stepped after the application, in this order
     std::vector<std::function<void(SimTime)>> applications_;
     std::unique_ptr<can::Host> host_;
 };
@@ -321,6 +480,65 @@ std::string LocalBench::bus_list() const
         out += (out.empty() ? "\"" : ", \"") + b->name + "\"";
     }
     return out;
+}
+
+std::string LocalBench::lin_bus_list() const
+{
+    std::string out;
+    for (const auto& b : lin_buses_)
+    {
+        out += (out.empty() ? "" : ", ") + quoted(b->name);
+    }
+    return out.empty() ? "none" : out;
+}
+
+LocalBench::NamedLinBus* LocalBench::find_lin_bus(std::string_view network) const
+{
+    for (const auto& b : lin_buses_)
+    {
+        if (b->name == network)
+        {
+            return b.get();
+        }
+    }
+    return nullptr;
+}
+
+lin::VirtualLinBus& LocalBench::use_lin_bus(const std::string& network)
+{
+    if (auto* existing = find_lin_bus(network))
+    {
+        return *existing->bus;
+    }
+    auto b = std::make_unique<NamedLinBus>();
+    b->name = network;
+    b->bus = std::make_unique<lin::VirtualLinBus>();
+    lin_buses_.push_back(std::move(b));
+    return *lin_buses_.back()->bus;
+}
+
+void LocalBench::require_can_name(std::string_view network, std::string_view ecu, std::string_view what) const
+{
+    if (find_lin_bus(network) != nullptr)
+    {
+        throw std::invalid_argument(std::string(kWho) + std::string(what) + " of the ECU " + quoted(ecu) + ": " +
+                                    quoted(network) +
+                                    " is a LIN bus (made by lin_master() or lin_slave()); a CAN bus needs a name of "
+                                    "its own");
+    }
+}
+
+void LocalBench::require_lin_name(std::string_view network, std::string_view ecu, std::string_view what) const
+{
+    for (const auto& b : buses_)
+    {
+        if (!b->name.empty() && b->name == network)
+        {
+            throw std::invalid_argument(std::string(kWho) + std::string(what) + " of the ECU " + quoted(ecu) + ": " +
+                                        quoted(network) +
+                                        " is a CAN bus (made by j1939() or can()); a LIN bus needs a name of its own");
+        }
+    }
 }
 
 LocalBench::NamedBus* LocalBench::bus_to_name(std::string_view network) const
@@ -425,6 +643,10 @@ LocalBench::NamedBus& LocalBench::named_bus(std::string_view network, std::strin
     else
     {
         message += ". Buses: " + bus_list();
+    }
+    if (find_lin_bus(network) != nullptr)
+    {
+        message += " (" + quoted + " is a LIN bus: lin_bus(network))";
     }
     throw std::out_of_range(message);
 }
@@ -541,6 +763,32 @@ can::Host& LocalBench::host(std::string_view ecu) const { return site(ecu).host(
 can::RawChannel& LocalBench::raw_channel(std::string_view ecu, std::string_view network) const
 {
     return site(ecu).raw_channel(network);
+}
+lin::LinMaster& LocalBench::lin_master(std::string_view ecu, std::string_view network) const
+{
+    return *site(ecu).lin_node(network, lin::LinRole::Master).master;
+}
+lin::LinSlave& LocalBench::lin_slave(std::string_view ecu, std::string_view network) const
+{
+    return *site(ecu).lin_node(network, lin::LinRole::Slave).slave;
+}
+lin::VirtualLinBus& LocalBench::lin_bus(std::string_view network) const
+{
+    if (auto* found = find_lin_bus(network))
+    {
+        return *found->bus;
+    }
+    std::string message = std::string(kWho) + "lin_bus(" + quoted(network) + "): no LIN bus named " + quoted(network) +
+                          ". LIN buses: " + lin_bus_list() + " (an ECU's lin_master(network) or lin_slave(network) "
+                          "makes one)";
+    for (const auto& b : buses_)
+    {
+        if (!b->name.empty() && b->name == network)
+        {
+            message += "; " + quoted(network) + " is a CAN bus: bus(network)";
+        }
+    }
+    throw std::out_of_range(message);
 }
 
 can::VirtualCanBus::Endpoint& LocalBench::injector() { return *only_bus("injector()").injector; }

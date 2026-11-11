@@ -110,8 +110,8 @@ TEST_CASE(peer_runs_j1939_and_lin_nodes_in_three_participants)
     bodyEcu.on_message(kPgnEngineSpeed, [&](const j1939::Message& m) { lastSpeed = m.data[0]; });
     auto& master = body.lin_master("BODY_LIN",
                                    {{kCommandId, 2, lin::LinChecksumModel::Enhanced, 20ms, lin::LinPublisher::Master},
-                                    {kDoorId, 1, lin::LinChecksumModel::Enhanced, 20ms, lin::LinPublisher::Slave}},
-                                   [&](const lin::LinScheduleResult& r) { bodyResults.push_back(r); });
+                                    {kDoorId, 1, lin::LinChecksumModel::Enhanced, 20ms, lin::LinPublisher::Slave}});
+    master.on_result([&](const lin::LinScheduleResult& r) { bodyResults.push_back(r); });
     body.on_step([&](SimTime now) {
         // The step's time in byte 1: the header sent in this step carries it (the application
         // runs before the LIN step).
@@ -124,7 +124,8 @@ TEST_CASE(peer_runs_j1939_and_lin_nodes_in_three_participants)
     Peer door(coordinated("Door", registry.uri, 5ms));
     lin::LinSlaveOptions slaveOptions;
     slaveOptions.subscriptions = {kCommandId};
-    auto& slave = door.lin_slave("BODY_LIN", slaveOptions, [&](const lin::LinReceivedFrame& f) { doorCommands.push_back(f.data[0]); });
+    auto& slave = door.lin_slave("BODY_LIN", slaveOptions);
+    slave.on_frame([&](const lin::LinReceivedFrame& f) { doorCommands.push_back(f.data[0]); });
     door.every(10ms, [&](SimTime now) {
         const std::uint8_t state[1]{static_cast<std::uint8_t>(ms(now) >= 500 ? 1 : 0)};
         slave.set_response(now, kDoorId, state);
@@ -377,8 +378,33 @@ TEST_CASE(peer_setup_errors)
     CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.network("BAD")); }));
     CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.network("XL")); }));
     CHECK(peer.silkit_port("CAN1") != nullptr);
+    // LIN: a network name is one kind of network, and one LIN node per LIN network.
+    const lin::LinScheduleTable linSchedule{{0x10, 1, lin::LinChecksumModel::Enhanced, 10ms}};
+    CHECK(throws<std::invalid_argument>([&] { static_cast<void>(peer.lin_slave("")); }));
+    CHECK(throws<std::invalid_argument>([&] { static_cast<void>(peer.lin_slave("CAN1")); }));
+    CHECK(throws<std::invalid_argument>([&] { static_cast<void>(peer.lin_master("CAN1", linSchedule)); }));
+    auto& linMaster = peer.lin_master("LIN1", linSchedule);
+    CHECK(throws<std::invalid_argument>([&] { static_cast<void>(peer.lin_slave("LIN1")); }));
+    CHECK(throws<std::invalid_argument>([&] { static_cast<void>(peer.lin_master("LIN1", linSchedule)); }));
+    CHECK(throws<std::invalid_argument>([&] { peer.j1939("LIN1"); }));
+    CHECK(throws<std::invalid_argument>([&] { static_cast<void>(static_cast<vehicle_sil::Ecu&>(peer).can("LIN1")); }));
+    vehicle_sil::J1939ChannelOptions linController;
+    linController.controller_name = "LIN1"; // the LIN controller's name
+    CHECK(throws<std::invalid_argument>([&] { peer.j1939("CAN4", linController); }));
+    // Invalid schedules and options make no SIL Kit controller: the same name works afterwards.
+    CHECK(throws<std::invalid_argument>([&] { static_cast<void>(peer.lin_master("LIN2", {})); })); // invalid schedule
+    CHECK(throws<std::invalid_argument>([&] { static_cast<void>(peer.lin_master("LIN2", linSchedule, lin::LinMasterOptions{-1ms})); }));
+    auto& linMaster2 = peer.lin_master("LIN2", linSchedule);
+    CHECK(throws<std::invalid_argument>([&] { static_cast<void>(peer.lin_slave("LIN5", lin::LinSlaveOptions{{0x40}, std::nullopt})); }));
+    CHECK(throws<std::invalid_argument>([&] { static_cast<void>(peer.lin_slave("LIN5", lin::LinSlaveOptions{{}, 0ms})); }));
+    static_cast<void>(peer.lin_slave("LIN5", lin::LinSlaveOptions{{0x10}, std::nullopt}));
     CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
     CHECK(throws<std::logic_error>([&] { peer.j1939("CAN3"); }));
+    CHECK(throws<std::logic_error>([&] { static_cast<void>(peer.lin_slave("LIN3")); }));
+    // The master ran its schedule (nobody answers 0x10).
+    CHECK(linMaster.statistics().headers_sent >= 4u);
+    CHECK_EQ(linMaster.statistics().no_responses + 1, linMaster.statistics().headers_sent);
+    CHECK(linMaster2.statistics().headers_sent >= 4u);
     CHECK(throws<std::logic_error>([&] { peer.on_step([](SimTime) {}); }));
     CHECK(throws<std::logic_error>([&] { peer.start(); }));
 

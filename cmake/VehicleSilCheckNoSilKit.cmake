@@ -1,0 +1,32 @@
+# Checks that the sources and headers under DIR include no SIL Kit header, directly or through
+# a vehicle-sil header that needs SIL Kit: of vehicle-sil's core headers only those of
+# vehicle_sil::sim_base (sim_time.hpp, step_inbox.hpp, periodic.hpp) are allowed, and no header
+# of a *_silkit library.
+# Usage: cmake -DDIR=<directory> -P VehicleSilCheckNoSilKit.cmake
+if(NOT DEFINED DIR)
+  message(FATAL_ERROR "VehicleSilCheckNoSilKit.cmake: DIR is required")
+endif()
+file(GLOB_RECURSE files "${DIR}/*.hpp" "${DIR}/*.h" "${DIR}/*.cpp")
+if(NOT files)
+  message(FATAL_ERROR "VehicleSilCheckNoSilKit.cmake: no sources under ${DIR}")
+endif()
+set(allowed_core vehicle_sil/core/sim_time.hpp vehicle_sil/core/step_inbox.hpp vehicle_sil/core/periodic.hpp)
+set(bad "")
+foreach(file IN LISTS files)
+  file(STRINGS "${file}" includes REGEX "^[ \t]*#[ \t]*include[ \t]*[\"<]")
+  foreach(line IN LISTS includes)
+    string(REGEX REPLACE "^[ \t]*#[ \t]*include[ \t]*[\"<]([^\">]+)[\">].*" "\\1" path "${line}")
+    string(TOLOWER "${path}" lower)
+    if(lower MATCHES "^silkit/" OR lower MATCHES "_silkit/")
+      list(APPEND bad "${file}: ${path}")
+    elseif(path MATCHES "^vehicle_sil/core/" AND NOT path IN_LIST allowed_core)
+      list(APPEND bad "${file}: ${path}")
+    endif()
+  endforeach()
+endforeach()
+if(bad)
+  list(JOIN bad "\n  " text)
+  message(FATAL_ERROR "${DIR} must not include SIL Kit:\n  ${text}")
+endif()
+list(LENGTH files count)
+message(STATUS "${DIR}: ${count} files, no SIL Kit include")

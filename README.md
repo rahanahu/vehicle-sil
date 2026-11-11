@@ -14,7 +14,8 @@
 | CMake ターゲット | 区分 | 内容 |
 |---|---|---|
 | `vehicle_sil::core` | 土台 | `vehicle_sil::ParticipantRuntime`（SIL Kit の participant、lifecycle、他参加者の状態、仮想時間のステップを RAII で管理する）、`SimulationController`（仮想時間のシミュレーションの開始と停止、一時停止、ステップ実行、速度）、`SimTime`、`StepInbox`、`TickScheduler`。プロトコルに依存しない |
-| `vehicle_sil::lin` | 土台 | `vehicle_sil::lin::LinMaster`（スケジュールテーブル、Master が送るフレーム、マスターリクエスト、go-to-sleep と wakeup）と `vehicle_sil::lin::LinSlave`（ステップで設定した値で応答、スレーブレスポンス、Master のフレームの受信、休止と起床）。仮想時間で使う。`vehicle_sil::core` を含み、J1939 には依存しない |
+| `vehicle_sil::lin` | 土台 | `vehicle_sil::lin::LinMaster`（スケジュールテーブル、Master が送るフレーム、マスターリクエスト、go-to-sleep と wakeup）と `vehicle_sil::lin::LinSlave`（ステップで設定した値で応答、スレーブレスポンス、Master のフレームの受信、休止と起床）、バスへの口 `LinPort` と、プロセス内の仮想 LIN バス `VirtualLinBus`。仮想時間で使う。SIL Kit にも J1939 にも依存しない。ふつうは `Ecu::lin_master()` と `Ecu::lin_slave()` から使う |
+| `vehicle_sil::lin_silkit` | 土台 | `vehicle_sil::lin` のポートの SIL Kit 実装 `vehicle_sil::lin::SilKitLinPort`（`Peer` が使う） |
 | `vehicle_sil::can` | 土台 | バックエンドに依存しない CAN の基盤。フレームの型、ポートの契約、複数のプロトコル処理をステップで回す `Host`、仮想時間の `StepDriver`、実時間の `RealTimeDriver`、テスト用の仮想バス（調停と送信時間の模擬、故障注入、ECU 単位の通信断を選べる）、生フレームを読み取り専用で観測する `TapPort`。SIL Kit に依存しない。J1939 スタックの土台 |
 | `vehicle_sil::can_silkit` | 土台 | `vehicle_sil::can` のポートの SIL Kit 実装（仮想時間と、時刻同期なしの実時間）と、`Host` を `ParticipantRuntime` のステップにつなぐ `bind_host()` |
 | `vehicle_sil::can_netsim` | 土台 | 簡易 CAN Network Simulator: SIL Kit の Network Simulator API で、CAN の調停、送信時間、バスの占有を仮想時間で模擬する（`CanBusSimulator`）。Vector SIL Kit Network Simulator と共用の設定ファイルの読み込み |
@@ -22,8 +23,8 @@
 | `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics` | 利用者向け | `vehicle_sil::j1939` の公開 API と道具箱だけで作ったプロトコル部品。DM13 による放送の抑制、DTC と DM1/DM2/DM3/DM11/DM22、識別情報（ソフトウェア ID、ECU ID、製品 ID、診断プロトコル ID） |
 | `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`、`vehicle_sil::j1939_exchange` | 利用者向け | ECU アプリ向けの部品（同じく公開 API と道具箱だけで作る）。PG の周期送信（`PeriodicSender`）、Request の送信と応答・ACK・時間切れの報告（`Requester`）、受信の最新値と途絶（`Monitor`）、Commanded Address の送信（`AddressCommander`）、独自プロトコルのコマンドと応答（`Exchange`。例は [examples/j1939/param_service](examples/j1939/param_service)）。使い方は [docs/j1939-guide.md](docs/j1939-guide.md) |
 | `vehicle_sil::j1939_codec` | 利用者向け | J1939 の型付きメッセージ。YAML で PG と信号（位置、符号、スケーリング、範囲、列挙、Proprietary A/B、名前を付けた特別な値とそのプロファイル、埋め値）を定義すると、`vehicle_sil_add_j1939_codec()` がビルドのときに C++ の型を生成する。ビット操作を書かずに、信号を値として送受信する。使い方は [docs/j1939-codec.md](docs/j1939-codec.md) |
-| `vehicle_sil::ecu` | 利用者向け | ECU のアプリケーションを組み立てる入口 `vehicle_sil::Ecu`: J1939 の `Network`、生の CAN チャネル（J1939 でないプロトコル用の `can::RawChannel`）、ステップごとの処理（`on_step`、`every`）、ECU が持つオブジェクト（`emplace`）。`Peer` と `LocalBench` の ECU が実装するので、`Ecu&` を受け取るクラスは仮想バスでも SIL Kit でも同じコードで動く。SIL Kit に依存しない |
-| `vehicle_sil::peer` | 土台 | 1 つの SIL Kit participant と、その J1939 の `Network`（SIL Kit の CAN か外部のポート）と LIN の Master/Slave をまとめて作り、仮想時間か実時間で動かす `vehicle_sil::Peer`。`Ecu` を実装する |
+| `vehicle_sil::ecu` | 利用者向け | ECU のアプリケーションを組み立てる入口 `vehicle_sil::Ecu`: J1939 の `Network`、生の CAN チャネル（J1939 でないプロトコル用の `can::RawChannel`）、LIN の Master と Slave（`lin_master()`、`lin_slave()`）、ステップごとの処理（`on_step`、`every`）、ECU が持つオブジェクト（`emplace`）。`Peer` と `LocalBench` の ECU が実装するので、`Ecu&` を受け取るクラスは仮想バスでも SIL Kit でも同じコードで動く。SIL Kit に依存しない |
+| `vehicle_sil::peer` | 土台 | 1 つの SIL Kit participant と、その J1939 の `Network`（SIL Kit の CAN か外部のポート）、生の CAN、LIN の Master/Slave をまとめて作り、仮想時間か実時間で動かす `vehicle_sil::Peer`。`Ecu` を実装する |
 | `vehicle_sil::simulation` | 利用者向け | `vehicle_sil::Simulation`: ECU をプロセス内の仮想バスか、SIL Kit の participant として仮想時間で動かし、失敗を例外で報告する。動かす場所はコンストラクターで選ぶ（SIL Kit では、registry をプロセス内に立てられる）。入門は [examples/getting_started](examples/getting_started) |
 | `vehicle_sil::control`、`vehicle_sil::peer_control` | 利用者向け | participant の Control Agent（型・範囲・単位つきの変数の公開、外からの書き込みを仮想時刻を指定してステップの中で反映、J1939 の通信状態の監視。固定容量のキュー）と、Control Server の中核の `Hub`。`attach(peer, agent)` で Peer に組み込む |
 | `vehicle_sil::control_grpc`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のとき） | 利用者向け | Control API（gRPC）の Server と、Agent の接続 `AgentClient`。認証（TLS、トークン、役割）。[使い方](docs/control-api.md) |
@@ -36,7 +37,7 @@
 
 | パス | 内容 |
 |---|---|
-| `libs/` | ライブラリ（`core`、`can`、`can_silkit`、`can_netsim`、`j1939`、`lin`、`ecu`、`local`、`testkit`、`peer`、`simulation`、`control`、`control_grpc`） |
+| `libs/` | ライブラリ（`core`、`can`、`can_silkit`、`can_netsim`、`j1939`、`lin`、`lin_silkit`、`ecu`、`local`、`testkit`、`peer`、`simulation`、`control`、`control_grpc`） |
 | `proto/` | Control API の定義（`vehicle_sil/control/v1/control.proto`） |
 | `python/` | Control API の Python クライアントと CLI（`python -m vehicle_sil_control`） |
 | `tools/control_server` | Control API の Server（とシミュレーションの調停、時間ゲート）`vehicle_sil_control_server` |
@@ -243,7 +244,7 @@ $B/tools/sim_controller/vehicle_sil_sim_controller --registry-uri $URI --require
 
 ## LIN
 
-`vehicle_sil::lin` は、仮想時間で動く LIN の Master と Slave です（J1939 には依存しません）。`examples/lin` の 3 つのピアで 1 つのクラスタを作れます。
+`vehicle_sil::lin` は、仮想時間で動く LIN の Master と Slave です（SIL Kit にも J1939 にも依存しません）。ECU のクラスの中で `Ecu::lin_master()` と `Ecu::lin_slave()` から使うと、`Simulation()`（プロセス内の仮想 LIN バス）でも `Simulation(SilKitOptions{})`（SIL Kit）でも同じ結果になります。例は [examples/vehicle](examples/vehicle) です。`examples/lin` の 3 つのピアは、`Peer` を使わずに SIL Kit の上で 1 つのクラスタを作ります。
 
 ```sh
 B=build/linux-gcc-release
@@ -258,29 +259,39 @@ $E/vehicle_sil_lin_slave --role echo   --registry-uri $URI --end-ms 1000 --trace
 $E/vehicle_sil_lin_slave --role status --registry-uri $URI --end-ms 1000 --step-us 4000 --trace status.trace
 ```
 
-自分のピアでは、次のように使います。
+ECU のクラスでは、次のように使います。
 
 ```cpp
 using namespace vehicle_sil::lin;
-// Master: 0x10 は Master が送り、0x20 は Slave が応答する
-LinMaster master(*runtime.participant().CreateLinController("LIN1", "LIN_NET"),
-                 LinScheduleTable{{0x10, 2, LinChecksumModel::Enhanced, 10ms, LinPublisher::Master},
-                                  {0x20, 2, LinChecksumModel::Enhanced, 10ms, LinPublisher::Slave}},
-                 LinMasterOptions{5ms}, [](const LinScheduleResult& r) { /* スロットの終わりに届く */ });
-runtime.set_communication_ready_handler([&] { master.init(); });
-runtime.set_step_handler([&](vehicle_sil::SimTime now, vehicle_sil::SimDuration) {
-    master.set_frame_data(0x10, command);  // 必要なら request_sleep() / request_wakeup()
-    master.step(now);
-});
+// Master: 0x10 は Master が送り、0x20 は Slave が応答する。Master は ECU のステップ幅で回る
+class Body {
+public:
+    explicit Body(vehicle_sil::Ecu& ecu)
+      : master_(ecu.lin_master("LIN_NET", {{0x10, 2, LinChecksumModel::Enhanced, 10ms, LinPublisher::Master},
+                                           {0x20, 2, LinChecksumModel::Enhanced, 10ms, LinPublisher::Slave}})) {
+        master_.on_result([](const LinScheduleResult& r) { /* スロットの終わりに届く */ });
+        // アプリの処理は LIN の処理より前: このステップのヘッダーから効く。必要なら request_sleep() / request_wakeup()
+        ecu.on_step([this](vehicle_sil::SimTime) { master_.set_frame_data(0x10, command_); });
+    }
+private:
+    LinMaster& master_;
+    std::array<std::uint8_t, 2> command_{};
+};
 
-// Slave（別のピア）: 0x10 を受信し、0x20 に応答する
-LinSlave slave(*controller, LinSlaveOptions{{0x10}}, [](const LinReceivedFrame& f) { /* ヘッダーの時刻付き */ });
-runtime.set_communication_ready_handler([&] { slave.init(); });
-runtime.set_step_handler([&](vehicle_sil::SimTime now, vehicle_sil::SimDuration) {
-    slave.step(now);                        // 受信、休止と起床の処理
-    slave.set_response(now, 0x20, value);  // 以後のヘッダーへの応答
-});
+// Slave（別の ECU）: 0x10 を受信し、0x20 に応答する
+class Sensor {
+public:
+    explicit Sensor(vehicle_sil::Ecu& ecu) : slave_(ecu.lin_slave("LIN_NET", {.subscriptions = {0x10}})) {
+        slave_.on_frame([](const LinReceivedFrame& f) { /* ヘッダーの時刻付き。アプリは次のステップで読む */ });
+        ecu.on_step([this](vehicle_sil::SimTime now) { slave_.set_response(now, 0x20, value_); }); // now より後のヘッダーへ
+    }
+private:
+    LinSlave& slave_;
+    std::array<std::uint8_t, 2> value_{};
+};
 ```
+
+`Peer` を使わずに組み立てるときは、SIL Kit の LIN コントローラの上に `vehicle_sil::lin::SilKitLinPort`（`vehicle_sil::lin_silkit`）を作り、`LinMaster(port, schedule, step)` と `LinSlave(port, options)` を自分のステップハンドラで回します（`examples/lin`）。
 
 スケジュール、フレームの送受信、診断フレーム（0x3C、0x3D）、Sleep/Wakeup の規則と制約は、[docs/architecture.md](docs/architecture.md) の「LIN を仮想時間で動かす」を参照してください。
 
@@ -337,7 +348,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 | `j1939` | `vehicle_sil::j1939` の単体テスト（SIL Kit なしでビルドする）と SIL Kit 上の試験（`j1939_silkit.*`）。PGN と識別子、単一フレームの送受信、宛先の振り分け、ローカル折り返し、同じ時刻のフレームの順序とタイマーの発火がステップ幅と到着順によらないこと、Request への応答と ACK/NACK、NAME と Address Claim（複数ノードと複数 Network の競合、任意アドレスの選択、アドレス表、アドレス違反、Commanded Address を含む）、1 つのホストの複数の Network（ゲートウェイ、片方の失敗）、再入と失敗、ステップ幅の検査、資源の上限、定常状態のステップでメモリを確保しないことを確かめる。プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致することも確かめる（簡易 CAN Network Simulator ありでも。`unit` ラベルも付く）。タイミングありの仮想バスで、プロトコルの結果が変わらないこと、混雑で転送が遅れ、バスが飽和すると時間切れになることも確かめる。1 つの ECU がバスから切り離されたとき（受信だけ、送受信とも）の TP の時間切れと回復、隠れていたアドレスの衝突の解決、時刻同期なしの SIL Kit での実時間の動作も確かめる。道具箱（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）とプロトコル部品（`j1939_parts.*`: DM13、診断、識別情報、送信の競合、後で返す ACK、ステップ幅によらない結果）も確かめ、`j1939_parts.boundary` が部品がエンジンの内部を使っていないことを検査する。型付きメッセージ（`j1939_codec.*`）は、ビット配置をビットごとの実装と照合し、raw 値と物理値の変換、丸めと範囲の端、特別な値（J1939 のプロファイル、利用者のプロファイル、継承と上書き、すべてのビットパターンを値として使う Proprietary B、raw 値の保持）、列挙、セレクター、埋め値、長さ、小さい信号のすべての raw 値の往復、ノードでの送受信を確かめる。`j1939_codec.generator` は生成器が誤った定義を止めることを確かめる |
 | `peer` / `testkit` | `Peer` をプロセス内のレジストリで動かす試験（J1939 と LIN の 3 つの participant、仮想バスと同じ結果、実時間と外部ポート、組み立ての誤り、失敗の報告）と、試験キットの試験（アドレスの喪失、Address Claimed の欠落、TP のパケットの欠落、通信断、生フレームの注入、受信側のステップ幅と記録の有無によらない結果）。`local.boundary`、`testkit.boundary`、`peer.boundary` がエンジンの内部を使っていないことを検査する |
 | `simulation` / `examples` | `Simulation` の試験（同じ ECU が仮想バスと SIL Kit で同じ記録を残すこと、ECU が持つオブジェクトの破棄、ステップの失敗が `SimulationError` になって戻ること、使い方の誤り（同じ入力を両方の実装で拒否すること、`App` のコンストラクターの例外）、`request_stop` で終わる実行、ほかの participant の失敗、開始の時間切れ、`local()` から足した ECU、別プロセスの controller や participant との併用、2 つのネットワークを持つゲートウェイ、生の CAN）と、サンプルの実行（`vehicle_sil_getting_started`（仮想バスと `--silkit`）、`typed_messages`、`pid_stream`、`fault_injection`、`vehicle`（SIL Kit と `--local`）、`low_level`）。サンプルは自分で結果を検査し、違えば 0 以外で終わる |
-| `core` / `lin` | 仮想時間の単体テスト。プロセス内のレジストリで、ステップ幅の違う参加者の同期、最も遅い参加者を待つこと、実時間への結合、`TickScheduler`、`StepInbox`、LIN のスケジュール、応答、Master のフレームの受信、休止と起床、スケジュールの切り替えを確かめる（`unit` ラベルも付く） |
+| `core` / `lin` | 仮想時間の単体テスト。プロセス内のレジストリで、ステップ幅の違う参加者の同期、最も遅い参加者を待つこと、実時間への結合、`TickScheduler`、`StepInbox`、LIN のスケジュール、応答、Master のフレームの受信、休止と起床、スケジュールの切り替えを確かめる。LIN は主なシナリオを仮想 LIN バスの上でも確かめ（`lin_local.*`）、仮想 LIN バスだけの試験（`lin_bus.*`）と、`vehicle_sil::lin` が SIL Kit を含まないことの検査（`lin.boundary`）もある（`unit` ラベルも付く） |
 | `virtual_time` | registry、controller、4 つのピア（1 / 2 / 5 / 10 ms。どれも `Peer` の上）を別プロセスで動かす。トレースを照合して、データがピアの間を予測どおりの仮想時刻で渡ること、J1939 の ECU が Address Claim の 250 ms 後から送ることを確かめる。全速、遅い `tick()`、4 倍速、0.5 倍速の各条件でトレースが一致し、壁時計の所要時間が実時間より速い・遅いことも確かめる。`peer-failure` は、途中で失敗したピアを controller が検出して中断し、全プロセスが終了コード 1 で終わることを確かめる（`integration` ラベルも付く） |
 | `lin`（`lin_cluster.*`） | registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を別プロセスで動かす。トレースを照合して、スケジュール、両方向のフレーム、Master・Slave・bus idle による休止と起床を確かめる。Slave の 1 つを実時間に結合してもトレースが一致することも確かめる（`integration` ラベルも付く） |
 | `fetchcontent` | 既定では無効。このリポジトリのコミットを FetchContent で取り込み、利用例をビルドして実行する |
@@ -413,11 +424,11 @@ int main() {
 
 - 仮想時間の一時停止とステップ実行は、C++ の API（`SimulationController` の時間ゲート）と、Control API（`vehicle_sil_control_server --required ...`）からできます。`vehicle_sil_sim_controller` からはできません。
 - Control API の GUI はまだありません。Peer の起動（Launcher）、リセット、CAN/LIN のチャネルの選択もありません。
-- LIN の Slave は、応答するフレームのスロット長より短いステップ幅で動かす必要があります。LIN の dynamic response など、SIL Kit の experimental API を使っています。
-- LIN の Slave が決まったステップで受信できるのは、Master が送るフレームだけです。ほかの Slave の応答（slave-to-slave）も購読した ID なら渡されますが、受け取るステップと時刻は決定論的ではありません。
+- SIL Kit で動かすとき、LIN の Slave は、応答するフレームのスロット長より短いステップ幅で動かす必要があります。LIN の dynamic response など、SIL Kit の experimental API を使っています。
+- LIN の Slave が受信できるのは、Master が送るフレームだけです。ほかの Slave の応答（slave-to-slave）は、仮想 LIN バスでは渡されず、SIL Kit では購読した ID なら渡されますが、受け取るステップと時刻は決定論的ではありません。
 - 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。
 - J1939 スタックに ETP（1785 バイトを超えるメッセージ）はありません。制限と規格との一致を確かめていない点は [docs/architecture.md](docs/architecture.md) の「J1939 の既知の制限」と「J1939」の各節にあります。
-- LIN は `vehicle_sil::Ecu` から使えません。LIN のノードは `vehicle_sil::Peer` の `lin_master()`、`lin_slave()` で作ります（`Simulation` では、SIL Kit で動かすときの `peer(name)` から）。プロセス内の仮想バス（`LocalBench`）では LIN を動かせません。
+- 仮想 LIN バスには、故障注入と記録の道具がありません。LIN は仮想時間だけで動きます（実時間の `Peer` では `std::logic_error`）。
 - `LocalBench`（`vehicle_sil::local`）と `vehicle_sil::testkit` の API は固まっていません。
 - 対応するのはクラシック CAN（8 バイト以下）だけです。RTR、CAN FD、CAN XL のフレームは、受信時に捨てて件数を数えます。
 - `install()` とパッケージ化（`find_package`）には未対応です。使えるのは FetchContent と `add_subdirectory` だけです。

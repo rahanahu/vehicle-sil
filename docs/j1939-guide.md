@@ -37,7 +37,7 @@ j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
 - `NodeOptions::name` を付けると、ノードは最初のステップでアドレスを要求します。NAME を付けないノードは、指定したアドレスをすぐに使います（試験用）。
 - `node.attach<T>(...)` で付けた部品は `Network` が持ち、正しい順序で破棄します。
 - ハンドラが参照するモデルやアプリのオブジェクトは、`ecu.emplace<T>(args...)` で ECU に持たせます。ECU は、それをネットワークの後に（最後に emplace したものから先に）破棄するので、ハンドラや部品は破棄の間も参照してかまいません。`emplace` は実行の開始前だけ使えます。
-- 1 ステップの順序は、ネットワークの受信と処理、次に `on_step` と `every`（足した順）、最後にネットワークの送信です。同じネットワーク名で `j1939()` を呼べるのは、ECU ごとに 1 回だけです。開始後の `j1939()`、`every()`、`emplace()` は `std::logic_error` です（ノードは、`Network::add_node()` の規則でステップの中からも足せます）。
+- 1 ステップの順序は、ネットワークの受信と処理、次に `on_step` と `every`（足した順）、LIN のノードの処理（足した順）、最後にネットワークの送信です。同じネットワーク名で `j1939()` を呼べるのは、ECU ごとに 1 回だけです。開始後の `j1939()`、`every()`、`emplace()` は `std::logic_error` です（ノードは、`Network::add_node()` の規則でステップの中からも足せます）。
 - 部品とハンドラは、ステップを回すスレッドの上で呼ばれます。ほかのスレッドから操作するときは、「周期的な処理の使い分け」の「ステップの外から渡す」を参照してください。
 
 ### 複数のネットワークを持つ ECU
@@ -369,13 +369,13 @@ sim.run_for(3s);                                               // 仮想時間�
 | ECU | 仮想バス（`LocalBench`）のホスト。呼んだスレッドで進む | 仮想時間の Coordinated な participant（`Peer`）。SIL Kit のスレッドで進む |
 | `run_for(d)` | 続きから何度でも呼べる | 1 回だけ（2 回目は `std::logic_error`） |
 | 戻るとき | `d` だけ進んだとき | 全 participant が止まった後 |
-| 低水準 | `local()`: バス、故障注入、生フレーム、tap（`vehicle_sil/local/local_bench.hpp`） | `peer(name)`: LIN、tap、Control Agent、SIL Kit のポート（`vehicle_sil/peer/peer.hpp`）。`registry_uri()` |
+| 低水準 | `local()`: バス（CAN と LIN）、故障注入、生フレーム、tap（`vehicle_sil/local/local_bench.hpp`） | `peer(name)`: tap、Control Agent、SIL Kit のポート（`vehicle_sil/peer/peer.hpp`）。`registry_uri()` |
 
 - `run_for(d)` は、終わりの時刻（仮想バスでは今の時刻から `d` 進めた時刻）より前に始まるステップだけを動かします。SIL Kit では、1 回しか動かせません。止まった時刻のステップがまだ走っていることがあり、メインスレッドからモデルを読むと競合するためです。止めながら確かめるときは、仮想バスを使います。
 - ステップの例外は、`SimulationError` として `run_for()` から出ます。`what()` は `<ECU 名>: <理由>` です。仮想バスでは、失敗した後の `run_for()` も `SimulationError` です。SIL Kit では、失敗した participant があっても simulation は終わらず、仮想時間が止まるだけです。そのため `run_for()` は、失敗を見つけると simulation を終えてから投げます。
 - SIL Kit では、ステップは SIL Kit のスレッドで走ります。ステップが書いた値は、`run_for()` が戻ってから読んでください。`Simulation` の関数は 1 つのスレッドから呼びます。
 - 破棄の順序は、後から足した ECU から先に、ECU の持ち物（`emplace`）まで壊し、次に controller、最後にプロセス内の registry です。
-- `Ecu` には LIN がありません。LIN の Master/Slave は、SIL Kit の仮想時間で `sim.peer(name).lin_master(...)` を使います。
+- LIN の Master/Slave は `Ecu::lin_master(network, schedule)` と `Ecu::lin_slave(network)` で作ります。仮想バスでも SIL Kit でも同じ結果になります（[architecture.md](architecture.md) の「LIN を仮想時間で動かす」）。
 
 `SilKitOptions` で、既存の registry（`registry_uri`）や、ほかのプロセスの participant との併用を選べます。
 

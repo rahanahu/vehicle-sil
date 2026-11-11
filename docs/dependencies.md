@@ -77,7 +77,7 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 | SIL Kit | lifecycle | `CreateLifecycleService({OperationMode::Autonomous / Coordinated})`、`StartLifecycle`、`Stop`、`State`、`ReportError`、`SetCommunicationReadyHandler` |
 | SIL Kit | 時刻同期 | `ILifecycleService::CreateTimeSyncService`、`ITimeSyncService::SetSimulationStepHandlerAsync` と `CompleteSimulationStep`（ハンドラの最後で完了させる） |
 | SIL Kit | system controller（experimental） | `Experimental::Participant::CreateSystemController`、`SetWorkflowConfiguration`、`AbortSimulation` |
-| SIL Kit | LIN | `CreateLinController`、`ILinController::Init`、`SendFrameHeader`、`AddFrameStatusHandler` |
+| SIL Kit | LIN（`vehicle_sil::lin_silkit`） | `CreateLinController`、`ILinController::Init`、`SetFrameResponse`、`SendFrameHeader`、`AddFrameStatusHandler` |
 | SIL Kit | LIN dynamic response（experimental） | `Experimental::Services::Lin::InitDynamic`、`AddFrameHeaderHandler`、`SendDynamicResponse` |
 | SIL Kit | publish/subscribe（examples/virtual_time） | `CreateDataPublisher`、`CreateDataSubscriber` |
 | SIL Kit | 他参加者の監視 | `CreateSystemMonitor`、`AddParticipantStatusHandler`（`SetParticipantConnectedHandler` と `SetParticipantDisconnectedHandler` は使わない。「上流の既知の不具合」を参照） |
@@ -106,10 +106,10 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 - SIL Kit は、ある ID に最初に応答した Slave をその ID の送り手として記録し、取り消す方法がありません。別の Slave が同じ ID に応答すると、Master はヘッダーを送らずに Error を報告し続けます。
 - LIN の `GoToSleep()`（Master のみ）は、trivial simulation ではヘッダーなしで go-to-sleep フレーム（ID 0x3C）を送り、自分をすぐ Sleep にします。`Wakeup()` は、ほかの参加者に方向 RX のパルスを送り、自分のハンドラを方向 TX で呼び、自分を Operational にします。受信側の状態は変わらないので、`GoToSleepInternal()` / `WakeupInternal()` を自分で呼びます。同じ状態に変えると警告のログが出ます。
 - Sleep の LIN コントローラは、届いたフレーム（`LinTransmission`）を、go-to-sleep フレームも含めて捨てます。dynamic response のヘッダーイベントと wakeup パルスは、状態によらず届きます。そのため `LinSlave` は、SIL Kit のコントローラを Sleep にしません。
-- dynamic response の Slave には、Rx の設定と関係なく、すべてのフレームが送信どおりの状態で届きます。`LinSlave` は購読した ID だけを渡します。
+- dynamic response の Slave には、Rx の設定と関係なく、すべてのフレームが送信どおりの状態で届きます。`SilKitLinPort` は Ok のもの（go-to-sleep フレームを除く）を渡し、`LinSlave` は購読した ID だけを渡します。
 - `SendDynamicResponse` は、その ID の応答を `TxUnconditional` とする更新をほかのコントローラに配ります。v5.0.8 の Master は、`SendFrameHeader` でこれを応答するノードとして数えるので、2 つの dynamic response の Slave が同じ ID に一度ずつ応答すると、以後そのヘッダーを送らずに `LIN_RX_ERROR` を通知していました。パッチ 0001 で、dynamic response のノードを数えないようにしています（「SIL Kit へのパッチ」）。
 - 2 つのノードが同じヘッダーに応答すると、Master には両方の応答が `LIN_RX_OK`（Master が送るフレームなら `LIN_TX_OK`）で届きます。trivial simulation は衝突をエラーにしません（上流のテストにも既知の問題として書かれています）。`LinMaster` は、1 つのスロットに 2 つ目の応答が届いたら Error とします。
-- Rx の設定と応答のどちらかのチェックサムモデルが `LinChecksumModel::Unknown` だと、trivial simulation はチェックサムモデルを比べません。`LinMaster` と `LinSlave` は `Unknown` を受け付けません。
+- Rx の設定と応答のどちらかのチェックサムモデルが `LinChecksumModel::Unknown` だと、trivial simulation はチェックサムモデルを比べません。vehicle-sil の `LinChecksumModel` には Classic と Enhanced しかないので、`SilKitLinPort` が `Unknown` を SIL Kit に渡すことはありません。
 - Master が送るフレーム（`SendFrame` の `MasterResponse`）は、`SendFrame` の中では送られません。SIL Kit がヘッダーを Master 自身に配送するとき（I/O スレッドのタスク）に作られ、そこからさらにタスクとして送られます。Master 自身のフレームの状態（`LIN_TX_OK`）も、そのヘッダーの配送の中で通知されます。タイムスタンプは、そのときの Master の `Now()` です。
 - SIL Kit の `SendMsg` は、送信を I/O スレッドのタスクとして積むだけです。ブロッキング版のステップハンドラでは、ハンドラが戻るとすぐに次のステップの時刻を通知するタスクが積まれるので、上の 2 段目の送信はその通知より後になります。また、I/O スレッドは 1 回の読み取りで届いた複数のメッセージを続けて処理し（`VAsioPeer::DispatchBuffer`）、その中で次のステップを直接実行することがあります（`ReceiveNextSimTask`）。非同期版では、`CompleteSimulationStep` が完了の処理をタスクとして積み、ステップが完了するまで次のステップを実行しません。`ParticipantRuntime` はこれを使って、Master のフレームを次のステップの時刻の通知より前に送らせています。
 

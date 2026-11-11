@@ -6,6 +6,8 @@
 #include "vehicle_sil/can/raw_channel.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/j1939/network.hpp"
+#include "vehicle_sil/lin/lin_master.hpp"
+#include "vehicle_sil/lin/lin_slave.hpp"
 
 #include <functional>
 #include <memory>
@@ -17,9 +19,10 @@
 namespace vehicle_sil {
 
 /// Where one ECU's application is assembled: the J1939 networks it is on (and, for other
-/// protocols, raw CAN channels), its work per step, and the objects it owns. A runtime
-/// implements it (Peer: a SIL Kit participant; LocalBench::add_ecu(): a host on the
-/// local virtual buses), so an application written against Ecu& runs on each of them unchanged.
+/// protocols, raw CAN channels), its LIN master and slaves, its work per step, and the objects
+/// it owns. A runtime implements it (Peer: a SIL Kit participant; LocalBench::add_ecu(): a host
+/// on the local virtual buses), so an application written against Ecu& runs on each of them
+/// unchanged.
 ///
 ///     class Engine {
 ///     public:
@@ -30,19 +33,27 @@ namespace vehicle_sil {
 ///
 /// One step of an ECU at `now`: its networks and raw CAN channels receive and handle what
 /// arrived (all of them in the order they were added by j1939() and can()), then the functions
-/// of on_step() and every() run (in the order added), then the networks and raw channels send
-/// (in the same order). A handler of one of them may send on another: the frame leaves in this
-/// step.
+/// of on_step() and every() run (in the order added), then the LIN nodes' step(now) (in the
+/// order added by lin_master() and lin_slave()), then the networks and raw channels send (in
+/// the same order as they received). A handler of one of them may send on another: the frame
+/// leaves in this step. What the application asks of a LIN node in a step (set_frame_data(),
+/// set_response(), request_sleep(), ...) takes effect in that step; what a LIN node receives is
+/// reported in its step, so the application sees it in the next one.
 ///
-/// Set up (j1939(), can(), on_step(), every(), emplace(), and the networks' nodes, handlers and
-/// parts, the raw channels' handlers) before the run starts; afterwards these functions throw
-/// std::logic_error (nodes may still be added from a step, as j1939::Network::add_node()
-/// allows).
+/// Network names: one name is one network of one kind. j1939() and can() may name the same CAN
+/// network; a LIN network needs a name of its own, used by one LIN node of the ECU. LocalBench
+/// and Simulation check the kind across their ECUs (std::invalid_argument; on SIL Kit, among the
+/// ECUs of the Simulation's process only: other processes are not seen).
 ///
-/// Ownership: the ECU owns its networks, its raw channels and the objects made by emplace();
-/// references to them are valid as long as the ECU. It destroys its networks (their parts
-/// first), then its raw channels, before the emplaced objects, so handlers and parts may refer
-/// to those.
+/// Set up (j1939(), can(), lin_master(), lin_slave(), on_step(), every(), emplace(), and the
+/// networks' nodes, handlers and parts, the raw channels' and LIN nodes' handlers) before the
+/// run starts; afterwards these functions throw std::logic_error (nodes may still be added from
+/// a step, as j1939::Network::add_node() allows).
+///
+/// Ownership: the ECU owns its networks, its raw channels, its LIN nodes and the objects made by
+/// emplace(); references to them are valid as long as the ECU. It destroys its LIN nodes, then
+/// its networks (their parts first), then its raw channels, before the emplaced objects, so
+/// handlers and parts may refer to those.
 ///
 /// Threading: set it up from one thread. The steps run on the runtime's thread (see the
 /// implementation); so do the functions, handlers and parts.
@@ -54,8 +65,9 @@ public:
     Ecu& operator=(const Ecu&) = delete;
 
     /// A J1939 network of this ECU on the CAN network `network` (ECUs that name the same
-    /// network share its bus). std::invalid_argument for an empty name and for a name this ECU
-    /// used before; std::logic_error once the run has started.
+    /// network share its bus). std::invalid_argument for an empty name, for a name this ECU
+    /// used before for a J1939 network and for a LIN network's name; std::logic_error once the
+    /// run has started.
     j1939::Network& j1939(const std::string& network, j1939::NetworkOptions options = {})
     {
         require_network_name(network);
@@ -71,11 +83,36 @@ public:
     /// Peer's J1939 network on a port the caller made (Peer::j1939(name, port), e.g. Vector XL):
     /// the raw channel is always on SIL Kit, so the two are on different buses.
     /// std::invalid_argument for an empty name, for a name this ECU used for a raw channel
-    /// before and for a capacity of 0; std::logic_error once the run has started.
+    /// before, for a LIN network's name and for a capacity of 0; std::logic_error once the run
+    /// has started.
     can::RawChannel& can(const std::string& network, can::RawChannelOptions options = {})
     {
         require_network_name(network);
         return add_can(network, options);
+    }
+    /// The LIN master of this ECU on the LIN network `network` (the ECUs that name the same
+    /// network share its bus; one master per bus), running `schedule` with the ECU's step
+    /// (lin::LinMaster). Set its handlers (on_result(), on_state()) before the run. Peer: a SIL
+    /// Kit LIN controller named `network`, virtual time only; LocalBench: an endpoint of the
+    /// virtual LIN bus `network`.
+    /// std::invalid_argument for an empty name, a name this ECU used before (for any network),
+    /// an invalid schedule or options (lin::LinMaster's constructor); std::logic_error once the
+    /// run has started, for a Peer in real time, and for a second master on a LocalBench bus.
+    lin::LinMaster& lin_master(const std::string& network, lin::LinScheduleTable schedule,
+                               lin::LinMasterOptions options = {})
+    {
+        require_network_name(network);
+        return add_lin_master(network, std::move(schedule), options);
+    }
+    /// A LIN slave of this ECU on the LIN network `network` (lin::LinSlave). Set its handlers
+    /// (on_frame(), on_state()) before the run. Peer and LocalBench as for lin_master().
+    /// std::invalid_argument for an empty name, a name this ECU used before (for any network)
+    /// and invalid options (lin::LinSlave's constructor); std::logic_error once the run has
+    /// started and for a Peer in real time.
+    lin::LinSlave& lin_slave(const std::string& network, lin::LinSlaveOptions options = {})
+    {
+        require_network_name(network);
+        return add_lin_slave(network, std::move(options));
     }
     /// Runs `fn` in every step of this ECU, after its networks handled what arrived and before
     /// they send (in the order added, together with every()). std::invalid_argument for an
@@ -85,8 +122,8 @@ public:
     /// most; vehicle_sil::periodic() in core/periodic.hpp). std::invalid_argument for period <= 0
     /// or an empty function; std::logic_error once the run has started.
     virtual void every(SimDuration period, std::function<void(SimTime now)> fn) = 0;
-    /// Constructs a T that the ECU owns: it is destroyed after the ECU's networks and raw
-    /// channels (their handlers and parts may refer to it), the object emplaced last first. Use
+    /// Constructs a T that the ECU owns: it is destroyed after the ECU's LIN nodes, networks and
+    /// raw channels (their handlers and parts may refer to it), the object emplaced last first. Use
     /// it for the models and application objects the handlers refer to. Only before the run
     /// starts: afterwards std::logic_error, and no T is made. Exceptions of T's constructor
     /// propagate and the T is not kept, but what the constructor set up on the ECU (networks,
@@ -121,6 +158,13 @@ private:
     virtual j1939::Network& add_j1939(const std::string& network, j1939::NetworkOptions options) = 0;
     /// can() of the implementation, with a name that is not empty.
     virtual can::RawChannel& add_can(const std::string& network, can::RawChannelOptions options) = 0;
+    /// lin_master() of the implementation, with a name that is not empty. Initialises the
+    /// master (init()) before its first step.
+    virtual lin::LinMaster& add_lin_master(const std::string& network, lin::LinScheduleTable schedule,
+                                           lin::LinMasterOptions options) = 0;
+    /// lin_slave() of the implementation, with a name that is not empty. Initialises the slave
+    /// (init()) before its first step.
+    virtual lin::LinSlave& add_lin_slave(const std::string& network, lin::LinSlaveOptions options) = 0;
     /// Takes ownership of an emplace()d object (std::logic_error once the run has started).
     virtual void keep(std::shared_ptr<void> object) = 0;
 };

@@ -108,18 +108,17 @@ int run(const Args& args)
     LinMaster* master = nullptr;
     try
     {
-        master = &peer.lin_master(linNetwork,
-                                  LinScheduleTable{{kDistanceId, 3, LinChecksumModel::Enhanced, slot},
-                                                   {kStatusId, 1, LinChecksumModel::Enhanced, slot}},
-                                  [&trace](const LinScheduleResult& r) {
-                                      trace.line("lin header_us=%lld id=0x%02X status=%s data=%s", us(r.header_time), r.id,
-                                                 status_name(r.status), hex(r.data.data(), r.data_length).c_str());
-                                  });
+        master = &peer.lin_master(linNetwork, LinScheduleTable{{kDistanceId, 3, LinChecksumModel::Enhanced, slot},
+                                                               {kStatusId, 1, LinChecksumModel::Enhanced, slot}});
     }
     catch (const std::invalid_argument& e)
     {
         throw UsageError(e.what());
     }
+    master->on_result([&trace](const LinScheduleResult& r) {
+        trace.line("lin header_us=%lld id=0x%02X status=%s data=%s", us(r.header_time), r.id, status_name(r.status),
+                   hex(r.data.data(), r.data_length).c_str());
+    });
     peer.on_step([&](SimTime now) {
         for (const auto& r : received.take())
         {
