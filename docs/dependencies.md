@@ -19,7 +19,7 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 ### Python の探し方
 
-- 版と依存は、リポジトリ直下の `pyproject.toml`（`requires-python` と `[dependency-groups]`。`codegen` は PyYAML、`control` は grpcio、grpcio-tools、protobuf、`dev` は両方で既定）、`.python-version`（開発で使う版）、`uv.lock`（解決した版の固定）で決めています。版の下限は、試験を実際に回している最も古い版です（`scripts/verify-python.py` が、uv の lowest-direct の解決で下限そのものを Python 3.11 に入れて確かめます）。上限は付けていません。
+- 版と依存は、リポジトリ直下の `pyproject.toml`（`requires-python` と `[dependency-groups]`。`codegen` は PyYAML、`control` は grpcio、grpcio-tools、protobuf、`gui` は GUI サーバー（`gui/server`、workspace のメンバー）と pytest、`dev` はすべてで既定）、`.python-version`（開発で使う版）、`uv.lock`（解決した版の固定）で決めています。版の下限は、試験を実際に回している最も古い版です（`scripts/verify-python.py` が、uv の lowest-direct の解決で下限そのものを Python 3.11 に入れて確かめます）。上限は付けていません。
 - vehicle-sil が最上位のプロジェクトのとき、configure はリポジトリの `.venv/bin/python`（`uv sync` が作る）が Python 3.11 以上で必要なモジュールを import できれば、それを使います。そうでなければ `find_package(Python3 3.11)` で探します（有効にした仮想環境が先。`-DPython3_EXECUTABLE=` で指定できる）。処理は `cmake/VehicleSilPython.cmake` にあります。
 - 生成器の Python は configure のたびに探し直します。`uv sync` で `.venv` を作ったり、`.venv` にパッケージを足したりした後は、普通に configure し直せば使います（`--fresh` は要りません）。
 - FetchContent や `add_subdirectory` で取り込んだ利用側のビルドは、vehicle-sil の `.venv` を使いません。利用側の Python（有効にした仮想環境、`Python3_EXECUTABLE`、`PATH`）を使います。
@@ -31,6 +31,11 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 - vehicle-sil の試験と例（`VEHICLE_SIL_BUILD_TESTS`、`VEHICLE_SIL_BUILD_EXAMPLES`。トップレベルのビルドでは既定で ON）はこの関数を使うので、そのビルドには Python と PyYAML が要ります。ライブラリだけを使う利用側（FetchContent など）は、関数を呼ばなければ要りません。
 - PyYAML は YAML 1.1 で読みます。生成器は `on`、`off`、`yes`、`no` を真偽値にせず文字列として読み、整数は 10 進（先頭の 0 なし）、16 進、2 進だけを受け付け（8 進と、整数と小数の 60 進を誤りにする）、同じキーの重複を誤りにします（マージキーで取り込んだキーの上書きは可）。
 - Python や PyYAML が見つからなかった configure の結果はキャッシュに残りません。入れたあとで configure し直せば見つけます。
+
+### aiohttp（ブラウザの GUI のサーバー）
+
+- GUI サーバー（`gui/server`、配布名 `vehicle-sil-gui`、[gui.md](gui.md)）は aiohttp だけに依存します。HTTP のサーバー、WebSocket、試験で使うクライアントを 1 つで持ち、asyncio の Windows の既定のイベントループ（子プロセスを動かせる ProactorEventLoop）で動き、Windows（3.11 以降）の wheel があります。C++ のビルドは使いません。
+- ライセンス: aiohttp は Apache-2.0（同梱の llhttp は MIT）。依存する multidict、yarl、frozenlist、aiosignal、propcache は Apache-2.0、aiohappyeyeballs は PSF-2.0、attrs は MIT、idna は BSD-3-Clause。vehicle-sil のリポジトリには含めず、uv が入れます。
 
 ### Vector XL Driver Library（Vector XL CAN Bridge、Windows のみ）
 

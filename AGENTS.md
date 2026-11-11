@@ -89,6 +89,7 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 | `scripts/check-commits.py` | コミットメッセージの形式と、コミットしてはいけないファイル（ローカルにだけ置くもの、`CLAUDE.local.md`、`build/`）を確かめる |
 | `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる。書き換えたファイルは、中断しても元に戻す |
 | `scripts/verify-web.py` | 画面（`gui/web`）の `npm ci`、書式、lint、単体試験、ビルド、e2e を順に回して要約する。ログは `build/logs/web-*.log`。`--skip-install`、`--skip-e2e`、`--tag` |
+| `scripts/verify-gui.py` | GUI 全体: GUI サーバー（`gui/server`）の試験（pytest。偽のランチャーで API、WebSocket、安全、止め方、`gui/protocol` の例の照合）の後に `scripts/verify-web.py` を回して要約する。ログは `build/logs/gui-*.log`。`--skip-web`、`-k`、`--skip-install`、`--skip-e2e`、`--tag` |
 | `scripts/verify-python.py` | uv で、Python 3.11 と `.python-version` の版の環境を `uv.lock` から作り、C++ のビルドなしで回せる Python の確認（構文、生成器の試験、スクリプトの `--help`、Control API のスタブの生成と import）をする。続けて、`pyproject.toml` の依存の下限そのものを 3.11 に入れて同じ確認をする（`--skip-lowest` で省く）。uv がなければ終了コード 2 |
 
 ```sh
@@ -99,4 +100,5 @@ scripts/check-commits.py                             # ステージした内容
 scripts/check-commits.py --range origin/main..HEAD   # 範囲の各コミット
 scripts/mutate.py mutations.toml --check             # 書き換える箇所が見つかるかだけを確かめる
 scripts/verify-python.py                             # Python のコード: 3.11、.python-version の版、3.11 と依存の下限
+scripts/verify-gui.py                                # GUI: サーバーの試験と画面（--skip-web でサーバーだけ）
 ```
