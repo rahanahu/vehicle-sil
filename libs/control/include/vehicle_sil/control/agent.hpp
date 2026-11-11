@@ -53,6 +53,8 @@ struct EnumItem
 {
     std::string name;
     std::int64_t value = 0;
+
+    friend bool operator==(const EnumItem&, const EnumItem&) = default;
 };
 
 /// Self-description of a variable: enough for a client to build an editor for it.
@@ -67,6 +69,8 @@ struct VariableInfo
     std::optional<double> step; ///< a hint for editors (slider resolution); not enforced
     std::string description;
     std::vector<EnumItem> items; ///< Enum only: the allowed values
+
+    friend bool operator==(const VariableInfo&, const VariableInfo&) = default;
 };
 
 struct VariableOptions

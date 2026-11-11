@@ -200,7 +200,7 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout)
         }
         if (std::chrono::steady_clock::now() >= deadline)
         {
-            throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name
+            throw StartTimeoutError("SIL Kit lifecycle of '" + options_.participant_name
                                      + "' did not reach Running within " + std::to_string(timeout.count())
                                      + " ms, state: " + orch::to_string(current));
         }

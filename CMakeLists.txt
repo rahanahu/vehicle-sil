@@ -56,11 +56,12 @@ endif()
 #   vehicle_sil::lin_silkit vehicle_sil::lin port on SIL Kit LIN (virtual time)
 #   vehicle_sil::control    the control agent of an ECU (variables, timed writes, samples) and the
 #                           control server's core (Hub); no transport, no SIL Kit
-#   vehicle_sil::ecu        the interface an ECU's application is written against (header only, no SIL Kit)
+#   vehicle_sil::ecu        the interface an ECU's application is written against and its description (no SIL Kit)
 #   vehicle_sil::local      ECUs on virtual CAN and LIN buses in this process, on virtual time (no SIL Kit; internal)
 #   vehicle_sil::testkit    recorders and fault injection for tests on vehicle_sil::local (internal)
 #   vehicle_sil::peer       one SIL Kit participant with its J1939 networks, raw CAN and LIN nodes (internal)
-#   vehicle_sil::simulation runs ECUs on local virtual buses or as SIL Kit participants of this process
+#   vehicle_sil::simulation runs ECUs on local virtual buses or as SIL Kit participants of this process;
+#                           ecu_main(), the main() of an executable that is one ECU
 # The J1939 stack, the CAN base, the LIN port and buses, the local buses, the test kit, Peer, Ecu
 # and Simulation are under development; their API may still change.
 # As a subproject (FetchContent / add_subdirectory) the libraries are excluded
@@ -108,6 +109,7 @@ if(VEHICLE_SIL_BUILD_EXAMPLES)
   add_subdirectory(examples/j1939)
   add_subdirectory(examples/virtual_time)
   add_subdirectory(examples/lin)
+  add_subdirectory(examples/ecu_main)
   if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
     add_subdirectory(examples/control)
   endif()

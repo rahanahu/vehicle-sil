@@ -323,20 +323,31 @@ TEST_CASE(control_peer_agent_monitor_names_must_not_clash)
     o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(50ms)};
     double x = 0.0;
     {
-        // The clash shows when the schema is completed (here: start()); nothing is added, the
-        // message names the peer and the way out, and the peer is not started.
+        // "peer." is reserved at the declaration (also without monitoring, as on the local buses).
         Peer peer(o);
-        peer.input("peer.speed", &x);
+        CHECK(throws_with<std::invalid_argument>([&] { peer.input("peer.speed", &x); }, "\"peer.speed\" starts with \"peer.\""));
+        CHECK(peer.agent().schema().empty());
+        // A clash with a network's monitoring output shows when the schema is completed (here:
+        // start()); nothing is added, the message names the peer and the way out, and the peer is
+        // not started.
+        static_cast<void>(peer.j1939("CAN").add_node({0x21}));
+        peer.input("j1939.CAN.bus_state", &x);
         CHECK(throws_with<std::invalid_argument>([&] { peer.start(); }, "\"Clash\""));
         CHECK(throws_with<std::invalid_argument>([&] { peer.agent().complete_schema(); }, "PeerOptions::monitor = false"));
         CHECK_EQ(peer.agent().schema().size(), std::size_t{1});
         peer.input("still.open", &x); // the schema stayed open
+        // ... and what was declared after the failed completion is the ECU's (describe()).
+        const auto described = peer.describe().variables;
+        CHECK_EQ(described.size(), std::size_t{2});
+        CHECK(described.back().name == "still.open");
     }
     {
         PeerOptions plain = o;
         plain.monitor = false;
         Peer peer(plain);
-        peer.input("peer.speed", &x);
+        CHECK(throws<std::invalid_argument>([&] { peer.input("peer.speed", &x); }));
+        static_cast<void>(peer.j1939("CAN").add_node({0x21}));
+        peer.input("j1939.CAN.bus_state", &x); // no monitoring: no clash
         peer.agent().complete_schema();
         CHECK_EQ(peer.agent().schema().size(), std::size_t{1});
         // The schema is complete: the message names the peer and why.

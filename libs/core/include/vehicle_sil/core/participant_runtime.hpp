@@ -20,10 +20,20 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
 namespace vehicle_sil {
+
+/// ParticipantRuntime::start() timed out: the participant did not reach Running in time (in
+/// Coordinated mode: no controller started the simulation, or a required participant is
+/// missing).
+class StartTimeoutError : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
 
 /// How the participant's lifecycle is started and stopped.
 enum class LifecycleMode
@@ -164,8 +174,8 @@ public:
     /// Starts the lifecycle and waits until this participant is Running (or was: a short
     /// simulation may have ended already when it looks). In Coordinated mode that requires the
     /// system controller and all other required participants.
-    /// Throws std::runtime_error on timeout or if the lifecycle fails, std::logic_error if
-    /// virtual time is used without a step handler.
+    /// Throws StartTimeoutError (a std::runtime_error) on timeout, std::runtime_error if the
+    /// lifecycle fails, std::logic_error if virtual time is used without a step handler.
     void start(std::chrono::milliseconds timeout);
 
     /// Stops the lifecycle and waits (bounded by shutdown_timeout) for it to shut down.

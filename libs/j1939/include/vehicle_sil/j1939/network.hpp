@@ -363,6 +363,8 @@ public:
 
     /// The current source address (kNullAddress after losing it).
     [[nodiscard]] Address address() const noexcept { return address_; }
+    /// The address the node was added with (NodeOptions::address), whatever it has now.
+    [[nodiscard]] Address requested_address() const noexcept { return requested_address_; }
     [[nodiscard]] AddressState address_state() const noexcept { return state_; }
     [[nodiscard]] const std::optional<Name>& name() const noexcept { return name_; }
     [[nodiscard]] Network& network() noexcept { return network_; }
@@ -561,6 +563,7 @@ private:
     Network& network_;
     std::size_t index_;
     Address address_;
+    Address requested_address_; ///< NodeOptions::address
     std::optional<Name> name_;
     AddressState state_;
     bool active_ = true;      ///< false until the network's next begin() if added during a step.
@@ -729,6 +732,7 @@ public:
 
     [[nodiscard]] std::size_t node_count() const noexcept { return nodes_.size(); }
     [[nodiscard]] Node& node(std::size_t index) { return *nodes_.at(index); }
+    [[nodiscard]] const Node& node(std::size_t index) const { return *nodes_.at(index); }
 
     /// How many Timers can still be created: NetworkOptions::timer_capacity less the slots held by
     /// the nodes with a NAME (2 each) and by the Timers that exist (1 each, until destroyed). The

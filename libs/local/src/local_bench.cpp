@@ -63,6 +63,7 @@ struct LinNode
 {
     // Destroyed bottom-up: the node, then its port.
     std::string network;
+    std::size_t order = 0; ///< among the ECU's networks, raw channels and LIN nodes (describe())
     LinNodePort port;
     std::unique_ptr<lin::LinMaster> master;
     std::unique_ptr<lin::LinSlave> slave;
@@ -88,6 +89,7 @@ struct LocalBench::Channel
 {
     // Destroyed bottom-up: the network, then the tap.
     NamedBus* bus = nullptr; ///< its name is the network's
+    std::size_t order = 0;   ///< as LinNode::order
     can::VirtualCanBus::Endpoint* endpoint = nullptr;
     std::unique_ptr<can::TapPort> tap;
     std::unique_ptr<j1939::Network> network;
@@ -97,6 +99,7 @@ struct LocalBench::Channel
 struct LocalBench::RawCan
 {
     NamedBus* bus = nullptr; ///< its name is the channel's
+    std::size_t order = 0;   ///< as LinNode::order
     can::VirtualCanBus::Endpoint* endpoint = nullptr;
     std::unique_ptr<can::RawChannel> channel;
 };
@@ -181,6 +184,29 @@ public:
     {
         require_not_started("at()");
         applications_.push_back(once_at(time, std::move(fn))); // std::invalid_argument
+    }
+
+    [[nodiscard]] EcuDescription describe() const override
+    {
+        detail::NetworkList networks;
+        for (const auto& c : channels_)
+        {
+            networks.add(c->order, detail::describe_j1939(c->bus->name, *c->network));
+        }
+        for (const auto& r : raw_channels_)
+        {
+            networks.add(r->order, {r->bus->name, NetworkUse::Raw, {}});
+        }
+        for (const auto& node : lin_nodes_)
+        {
+            networks.add(node->order, {node->network, node->master ? NetworkUse::LinMaster : NetworkUse::LinSlave, {}});
+        }
+        EcuDescription out;
+        out.name = name_;
+        out.step = step_;
+        out.networks = std::move(networks).networks();
+        out.variables = agent_.variables();
+        return out;
     }
 
     [[nodiscard]] const std::string& name() const noexcept { return name_; }
@@ -318,6 +344,7 @@ public:
         // the reserve().
         channels_.reserve(channels_.size() + 1);
         c->bus = &owner_.use_bus(existing, network);
+        c->order = added_++;
         c->endpoint = &c->bus->bus->attach();
         c->tap = std::make_unique<can::TapPort>(*c->endpoint);
         host_->add(*c->network, *c->tap);
@@ -387,6 +414,7 @@ private:
         // after the reserve(). (An endpoint stays on its bus once attached.)
         raw_channels_.reserve(raw_channels_.size() + 1);
         r->bus = &owner_.use_bus(existing, network);
+        r->order = added_++;
         r->endpoint = &r->bus->bus->attach();
         host_->add(*r->channel, *r->endpoint);
         raw_channels_.push_back(std::move(r));
@@ -439,6 +467,7 @@ private:
         auto* existing = owner_.find_lin_bus(node->network);
         lin::VirtualLinBus& bus = existing != nullptr ? *existing->bus : owner_.use_lin_bus(node->network);
         node->port.bind(bus.attach(role, name_)); // std::logic_error for a second master (not on a new bus)
+        node->order = added_++;
         if (node->master)
         {
             node->master->init();
@@ -475,6 +504,7 @@ private:
     std::vector<std::unique_ptr<Channel>> channels_;
     std::vector<std::unique_ptr<RawCan>> raw_channels_; ///< not in channels_: the lookups are J1939 only
     std::vector<std::unique_ptr<LinNode>> lin_nodes_;   ///< stepped after the application, in this order
+    std::size_t added_ = 0; ///< numbers the networks, raw channels and LIN nodes in the order added
     std::vector<std::function<void(SimTime)>> applications_;
     std::unique_ptr<can::Host> host_;
 };

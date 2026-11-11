@@ -174,6 +174,7 @@ Node::Node(Network& network, std::size_t index, const NodeOptions& options)
   : network_(network),
     index_(index),
     address_(options.address),
+    requested_address_(options.address),
     name_(options.name),
     state_(options.name ? AddressState::NotStarted : AddressState::Fixed),
     holding_(options.name && waits_after_claim(*options.name, options.address))

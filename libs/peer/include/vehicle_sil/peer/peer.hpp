@@ -45,13 +45,6 @@ struct PeerMonitor;
 /// after 0 (std::invalid_argument).
 void set_virtual_time_end(Peer& peer, SimTime end);
 
-/// The kind of a network of a peer: CAN (j1939(), can()) or LIN (lin_master(), lin_slave()).
-enum class NetworkKind
-{
-    Can,
-    Lin,
-};
-
 /// For vehicle_sil::Simulation only, which checks the network names across the peers of its
 /// process: before the peer makes a CAN or LIN network, it calls `check` with the network's
 /// name, its kind and the call (e.g. `lin_slave("LIN1")`); `check` refuses it by throwing. Only
@@ -201,6 +194,9 @@ public:
     /// std::logic_error otherwise. std::invalid_argument for a name used before (also a LIN
     /// network's).
     j1939::Network& j1939(std::string name, std::unique_ptr<can::Port> port, j1939::NetworkOptions options = {});
+    /// Ecu::describe(): the participant name, the virtual time step (empty in real time), the
+    /// networks in the order added (also those of j1939(name, port)) and the ECU's variables.
+    [[nodiscard]] EcuDescription describe() const override;
     /// Runs `fn` in every step (see the class comment for the order).
     void on_step(std::function<void(SimTime now)> fn) override;
     /// Runs `fn` in the first step at or after 0, period, 2 * period, ... (once per step at
@@ -256,8 +252,8 @@ public:
 private:
     friend void detail::set_virtual_time_end(Peer& peer, SimTime end);
     friend void detail::set_network_check(
-        Peer& peer, std::function<void(const std::string& network, detail::NetworkKind kind, const std::string& call)> check);
-    friend std::optional<detail::NetworkKind> detail::network_kind(const Peer& peer, std::string_view network);
+        Peer& peer, std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> check);
+    friend std::optional<NetworkKind> detail::network_kind(const Peer& peer, std::string_view network);
 
     struct Channel;
     struct RawCan;
@@ -322,8 +318,10 @@ private:
     /// The LIN nodes, in the order added.
     std::vector<std::unique_ptr<LinNode>> lin_;
     /// detail::set_network_check(); empty: none.
-    std::function<void(const std::string& network, detail::NetworkKind kind, const std::string& call)> network_check_;
+    std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> network_check_;
     std::vector<std::function<void(SimTime)>> step_functions_;
+    /// Numbers the networks, raw channels and LIN nodes in the order added (describe()).
+    std::size_t added_ = 0;
     /// PeerOptions::monitor: set when the agent's schema is completed (before the first step).
     std::shared_ptr<detail::PeerMonitor> monitor_;
     std::mutex mutex_; ///< serialises stop(); guards driver_ and stopping_ against start()

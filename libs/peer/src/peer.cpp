@@ -52,6 +52,7 @@ struct Peer::Channel
 {
     // Destroyed bottom-up: the network, then the tap, then the port.
     std::string name;
+    std::size_t order = 0; ///< among the networks, raw channels and LIN nodes (describe())
     std::string controller; ///< of the SIL Kit port; empty for an external port
     std::unique_ptr<can::SilKitCanPort> silkit_port;
     std::unique_ptr<can::Port> external_port;
@@ -63,6 +64,7 @@ struct Peer::RawCan
 {
     // Destroyed bottom-up: the channel, then the port.
     std::string name;
+    std::size_t order = 0; ///< as Channel::order
     std::unique_ptr<can::SilKitCanPort> port;
     std::unique_ptr<can::RawChannel> channel;
 };
@@ -71,6 +73,7 @@ struct Peer::LinNode
 {
     // Destroyed bottom-up: the node, then the port.
     std::string name;
+    std::size_t order = 0; ///< as Channel::order
     std::unique_ptr<lin::SilKitLinPort> port;
     std::unique_ptr<lin::LinMaster> master;
     std::unique_ptr<lin::LinSlave> slave;
@@ -195,6 +198,7 @@ Peer::Channel& Peer::add_channel(std::string name)
     }
     auto c = std::make_unique<Channel>();
     c->name = std::move(name);
+    c->order = added_++;
     channels_.push_back(std::move(c));
     return *channels_.back();
 }
@@ -227,7 +231,7 @@ void Peer::require_can_name(const std::string& network, const char* what) const
     }
     if (network_check_ && !network.empty())
     {
-        network_check_(network, detail::NetworkKind::Can, std::string(what) + "(\"" + network + "\")");
+        network_check_(network, NetworkKind::Can, std::string(what) + "(\"" + network + "\")");
     }
 }
 
@@ -345,6 +349,7 @@ can::RawChannel& Peer::add_can(const std::string& network, can::RawChannelOption
     }
     auto made = std::make_unique<RawCan>();
     made->name = network;
+    made->order = added_++;
     made->channel = std::make_unique<can::RawChannel>(options); // std::invalid_argument
     raw_channels_.push_back(std::move(made));
     RawCan& r = *raw_channels_.back();
@@ -438,7 +443,7 @@ void Peer::require_lin_name(const std::string& network, const char* what) const
     }
     if (network_check_)
     {
-        network_check_(network, detail::NetworkKind::Lin, call);
+        network_check_(network, NetworkKind::Lin, call);
     }
 }
 
@@ -446,6 +451,7 @@ Peer::LinNode& Peer::add_lin_node(const std::string& network, lin::LinRole role)
 {
     auto node = std::make_unique<LinNode>();
     node->name = network;
+    node->order = added_++;
     auto* controller = runtime_->participant().CreateLinController(network, network);
     node->port = std::make_unique<lin::SilKitLinPort>(*controller, role);
     lin_.push_back(std::move(node));
@@ -530,9 +536,20 @@ void Peer::bind_agent(control::Agent& agent)
         };
     }
     agent.bind_driver(std::move(wakeup), [this, &agent] {
+        agent_.end_declarations(); // describe() leaves the monitoring outputs out
         if (options_.monitor)
         {
-            monitor_ = detail::add_peer_monitoring(*this, agent, "vehicle_sil::Peer \"" + options_.participant + "\": ");
+            try
+            {
+                monitor_ = detail::add_peer_monitoring(*this, agent, "vehicle_sil::Peer \"" + options_.participant + "\": ");
+            }
+            catch (...)
+            {
+                // A clash, found before anything was registered: the schema stays open, and
+                // what the ECU declares now is its own again.
+                agent_.reopen_declarations();
+                throw;
+            }
         }
     });
 }
@@ -586,6 +603,32 @@ Peer::Channel& Peer::channel(std::string_view name) const
 }
 
 j1939::Network& Peer::network(std::string_view name) const { return *channel(name).network; }
+
+EcuDescription Peer::describe() const
+{
+    detail::NetworkList networks;
+    for (const auto& c : channels_)
+    {
+        networks.add(c->order, detail::describe_j1939(c->name, *c->network));
+    }
+    for (const auto& r : raw_channels_)
+    {
+        networks.add(r->order, {r->name, NetworkUse::Raw, {}});
+    }
+    for (const auto& node : lin_)
+    {
+        networks.add(node->order, {node->name, node->master ? NetworkUse::LinMaster : NetworkUse::LinSlave, {}});
+    }
+    EcuDescription out;
+    out.name = options_.participant;
+    if (options_.virtual_time)
+    {
+        out.step = options_.virtual_time->step;
+    }
+    out.networks = std::move(networks).networks();
+    out.variables = agent_.variables();
+    return out;
+}
 
 std::vector<std::string> Peer::network_names() const
 {

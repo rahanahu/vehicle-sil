@@ -27,6 +27,7 @@ endif()
 add_subdirectory(lin)
 add_subdirectory(can)
 add_subdirectory(testkit)
+add_subdirectory(ecu)
 add_subdirectory(simulation)
 add_subdirectory(peer)
 # The J1939 stack, its parts, the typed messages and the boundary checks; uses no example.

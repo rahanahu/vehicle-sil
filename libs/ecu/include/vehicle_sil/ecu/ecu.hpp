@@ -6,16 +6,21 @@
 #include "vehicle_sil/can/raw_channel.hpp"
 #include "vehicle_sil/control/agent.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
+#include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/lin/lin_master.hpp"
 #include "vehicle_sil/lin/lin_slave.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <exception>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -147,15 +152,17 @@ public:
     /// every write), step, description, parameter (writable before the first step only).
     /// `value` must stay valid as long as the ECU (a member of an emplace()d object, or of the
     /// application class that Simulation::add() makes). std::invalid_argument for an empty
-    /// name, a name this ECU declared before and bad options; std::logic_error once the run has
-    /// started or the schema is complete. A clash with a Peer's monitoring outputs shows when
-    /// the schema is completed (control::Agent::complete_schema(): Peer::start(), an
-    /// AgentClient's constructor or the first submit()), as std::invalid_argument there.
+    /// name, a name this ECU declared before, a name that starts with "peer." (reserved for a
+    /// Peer's monitoring outputs, on every implementation alike) and bad options;
+    /// std::logic_error once the run has started or the schema is complete. A clash with the
+    /// other monitoring outputs of a Peer ("j1939.<network>. ...") shows when the schema is
+    /// completed (control::Agent::complete_schema(): Peer::start(), an AgentClient's
+    /// constructor or the first submit()), as std::invalid_argument there.
     template <typename T>
     void input(std::string name, T* value, control::VariableOptions options = {})
     {
         require_not_started("input()");
-        declare([&](control::Agent& target) { target.input(std::move(name), value, std::move(options)); });
+        declare(name, [&](control::Agent& target) { target.input(std::move(name), value, std::move(options)); });
     }
     /// An input read and written through functions (the setter may do more than store); its
     /// type is the getter's return type. A setter that throws rejects the write
@@ -165,7 +172,7 @@ public:
     void input(std::string name, Get get, Set set, control::VariableOptions options = {})
     {
         require_not_started("input()");
-        declare([&](control::Agent& target) { target.input(std::move(name), std::move(get), std::move(set), std::move(options)); });
+        declare(name, [&](control::Agent& target) { target.input(std::move(name), std::move(get), std::move(set), std::move(options)); });
     }
     /// An integer or enum input that only takes the values of `items` (names and values unique,
     /// each within the type).
@@ -173,14 +180,14 @@ public:
     void input_enum(std::string name, T* value, std::vector<control::EnumItem> items, control::VariableOptions options = {})
     {
         require_not_started("input_enum()");
-        declare([&](control::Agent& target) { target.input_enum(std::move(name), value, std::move(items), std::move(options)); });
+        declare(name, [&](control::Agent& target) { target.input_enum(std::move(name), value, std::move(items), std::move(options)); });
     }
     /// A read-only variable bound to `*value` (as input()).
     template <typename T>
     void output(std::string name, const T* value, control::VariableOptions options = {})
     {
         require_not_started("output()");
-        declare([&](control::Agent& target) { target.output(std::move(name), value, std::move(options)); });
+        declare(name, [&](control::Agent& target) { target.output(std::move(name), value, std::move(options)); });
     }
     /// A read-only variable read through `get` (its type is the return type), called in the
     /// samples, on the step thread.
@@ -189,7 +196,7 @@ public:
     void output(std::string name, Get get, control::VariableOptions options = {})
     {
         require_not_started("output()");
-        declare([&](control::Agent& target) { target.output(std::move(name), std::move(get), std::move(options)); });
+        declare(name, [&](control::Agent& target) { target.output(std::move(name), std::move(get), std::move(options)); });
     }
     /// A read-only integer variable that takes the values of `items` (a state).
     template <typename Get>
@@ -197,7 +204,7 @@ public:
     void output_enum(std::string name, Get get, std::vector<control::EnumItem> items, control::VariableOptions options = {})
     {
         require_not_started("output_enum()");
-        declare([&](control::Agent& target) { target.output_enum(std::move(name), std::move(get), std::move(items), std::move(options)); });
+        declare(name, [&](control::Agent& target) { target.output_enum(std::move(name), std::move(get), std::move(items), std::move(options)); });
     }
     /// The options of this ECU's agent (queue sizes, AgentOptions::sample_period). Before the
     /// agent is made: before the first input(), output() or agent() (std::logic_error
@@ -215,6 +222,15 @@ public:
     /// a transport still holds a control::TransportLease on its agent writes why to stderr and
     /// calls std::terminate() (instead of a transport using a destroyed agent).
     control::Agent& agent();
+
+    /// What this ECU is (EcuDescription): its name and step, the networks it is on in the order
+    /// added (with each J1939 network's nodes as they were added: the address asked for, the
+    /// NAME) and the variables declared so far. It reads the declarations without closing them
+    /// (the control agent's schema stays open; a Peer's monitoring outputs are left out), so it
+    /// may be called at any point of the set-up, and before and after a run; during a run, only
+    /// from a step of this ECU (like the other functions). The same ECU set up the same way gives
+    /// the same description on a Peer and on LocalBench (virtual time). to_json() writes it.
+    [[nodiscard]] virtual EcuDescription describe() const = 0;
 
     /// Runs `fn` in every step of this ECU, after its networks handled what arrived and before
     /// they send (in the order added, together with every() and at()). std::invalid_argument for an
@@ -267,9 +283,9 @@ private:
     [[nodiscard]] virtual bool started() const noexcept = 0;
     /// The implementation's control agent holder (detail::EcuAgent).
     virtual detail::EcuAgent& ecu_agent() noexcept = 0;
-    /// Runs `add` (a registration) on the agent, made if there is none; its exceptions come
-    /// back with the ECU named.
-    void declare(const std::function<void(control::Agent&)>& add);
+    /// Runs `add` (the registration of the variable `name`) on the agent, made if there is none;
+    /// its exceptions come back with the ECU named. A reserved name is refused first.
+    void declare(const std::string& name, const std::function<void(control::Agent&)>& add);
     /// j1939() of the implementation, with a name that is not empty (a separate name: Peer has
     /// a j1939() of its own).
     virtual j1939::Network& add_j1939(const std::string& network, j1939::NetworkOptions options) = 0;
@@ -370,10 +386,21 @@ public:
         }
         return *agent_;
     }
-    /// Runs `add` on get(); std::invalid_argument and std::logic_error come back of the same
-    /// type with `who` in front.
-    void declare(const std::function<void(control::Agent&)>& add)
+    /// The prefix of the names a Peer gives its own monitoring outputs (PeerOptions::monitor).
+    static constexpr std::string_view kReservedPrefix = "peer.";
+
+    /// Runs `add` (the registration of the variable `name`) on get(); std::invalid_argument and
+    /// std::logic_error come back of the same type with `who` in front. A name that starts with
+    /// kReservedPrefix is std::invalid_argument before anything is made.
+    void declare(const std::string& name, const std::function<void(control::Agent&)>& add)
     {
+        if (name.compare(0, kReservedPrefix.size(), kReservedPrefix) == 0)
+        {
+            throw std::invalid_argument(who_ + "the variable name \"" + name + "\" starts with \"" +
+                                        std::string(kReservedPrefix) +
+                                        "\", which is reserved for the monitoring outputs of a Peer (PeerOptions::monitor): "
+                                        "choose a name that does not start with it");
+        }
         auto& agent = get(); // names the ECU itself
         try
         {
@@ -399,6 +426,38 @@ public:
         return *agent_;
     }
     [[nodiscard]] control::Agent* find() const noexcept { return agent_.get(); }
+    /// The variables the ECU declared, in order: the agent's schema without what the
+    /// implementation registered after end_declarations(); empty without an agent. Does not
+    /// complete the schema.
+    [[nodiscard]] std::vector<control::VariableInfo> variables() const
+    {
+        if (!agent_)
+        {
+            return {};
+        }
+        const auto& schema = agent_->schema();
+        const std::size_t n = declared_ ? std::min(*declared_, schema.size()) : schema.size();
+        return {schema.begin(), schema.begin() + static_cast<std::ptrdiff_t>(n)};
+    }
+    /// The implementation's completion function (control::Agent::bind_driver()) calls it before
+    /// it registers variables of its own (a Peer's monitoring outputs), which variables() then
+    /// leaves out.
+    void end_declarations() noexcept
+    {
+        if (agent_ && !declared_)
+        {
+            declared_ = agent_->schema().size();
+        }
+    }
+    /// The completion function failed before it registered anything (the schema stays open):
+    /// what is declared afterwards is the ECU's again.
+    void reopen_declarations() noexcept
+    {
+        if (agent_ && declared_ && agent_->schema().size() == *declared_)
+        {
+            declared_.reset();
+        }
+    }
     /// Before the application of the step at `now`: applies the writes whose time has come.
     void begin(SimTime now)
     {
@@ -438,6 +497,8 @@ private:
     std::function<void(control::Agent&)> bind_;
     control::AgentOptions options_{};
     std::unique_ptr<control::Agent> agent_;
+    /// end_declarations(): the number of the ECU's own variables.
+    std::optional<std::size_t> declared_;
     bool finished_ = false;
 };
 
@@ -468,6 +529,43 @@ private:
     std::vector<std::shared_ptr<void>> objects_;
 };
 
+/// For Ecu::describe() of an implementation: the J1939 network `name` with its nodes as they
+/// were added.
+inline NetworkDescription describe_j1939(std::string name, const j1939::Network& network)
+{
+    NetworkDescription out{std::move(name), NetworkUse::J1939, {}};
+    out.nodes.reserve(network.node_count());
+    for (std::size_t i = 0; i < network.node_count(); ++i)
+    {
+        const j1939::Node& node = network.node(i);
+        out.nodes.push_back({node.requested_address(), node.name()});
+    }
+    return out;
+}
+
+/// For Ecu::describe() of an implementation, which keeps its J1939 networks, raw channels and
+/// LIN nodes apart: each network with the number that orders the calls that added them
+/// (a counter of the implementation); networks() returns them in that order.
+class NetworkList
+{
+public:
+    void add(std::size_t order, NetworkDescription network) { items_.emplace_back(order, std::move(network)); }
+    [[nodiscard]] std::vector<NetworkDescription> networks() &&
+    {
+        std::sort(items_.begin(), items_.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        std::vector<NetworkDescription> out;
+        out.reserve(items_.size());
+        for (auto& item : items_)
+        {
+            out.push_back(std::move(item.second));
+        }
+        return out;
+    }
+
+private:
+    std::vector<std::pair<std::size_t, NetworkDescription>> items_;
+};
+
 } // namespace detail
 
 inline void Ecu::set_agent_options(control::AgentOptions options)
@@ -476,7 +574,10 @@ inline void Ecu::set_agent_options(control::AgentOptions options)
     ecu_agent().set_options(options);
 }
 
-inline void Ecu::declare(const std::function<void(control::Agent&)>& add) { ecu_agent().declare(add); }
+inline void Ecu::declare(const std::string& name, const std::function<void(control::Agent&)>& add)
+{
+    ecu_agent().declare(name, add);
+}
 
 inline control::Agent& Ecu::agent()
 {
