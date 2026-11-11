@@ -17,7 +17,8 @@ else `pass`:
   check-error        the check finds an error, so nothing is started (result check_failed, exit code 1)
   participant-crash  the last required participant exits with code 3 on the third step (result failed, exit code 1)
   forever            runs until a stop command (or the end of standard input), whatever stop_at_ms says
-  ignore-stop        like forever, but the first stop only waits; the second stop kills the participants
+  ignore-stop        like forever, but the first stop only waits; the second stop kills the participants; it
+                     also ignores SIGTERM (a launcher that is stuck), so only a kill ends it from outside
   launcher-crash     dies on the third step without writing a result (exit code 70)
   bad-lines          writes a line that is not JSON, a JSON array, an unknown event, an unknown field and a gap
                      in seq on the first step, then runs like pass
@@ -25,7 +26,8 @@ else `pass`:
   flood              writes FAKE_LAUNCHER_FLOOD (default 5000) log lines at once when running starts, then passes
 
 Other environment variables: FAKE_LAUNCHER_TICK_MS (wall time of one 100 ms step at speed 1, default 100),
-FAKE_LAUNCHER_FEATURES (the features of `version --json`, comma-separated, default events,stdin-commands,speed).
+FAKE_LAUNCHER_FEATURES (the features of `version --json`, comma-separated, default events,stdin-commands,speed),
+FAKE_LAUNCHER_CHECK_DELAY_MS (how long `check` takes, default 0).
 
 Each started participant is a real sleeping process, a child of this one, so that a test can see whether
 stopping left processes behind. The configuration is read with a small line parser, not a YAML library:
@@ -38,6 +40,7 @@ import json
 import os
 import queue
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -278,6 +281,8 @@ def sleeper() -> subprocess.Popen:
 
 
 def run(args: dict, file: str, config: dict, scenario: str) -> int:
+    if scenario == "ignore-stop":
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
     ev = Events(bool(args.get("events")))
     strict = bool(args.get("strict"))
     ev.emit("hello", vehicle_sil_events=2 if scenario == "future-events" else 1, vehicle_sil=VERSION,
@@ -487,6 +492,7 @@ def main(argv: list[str]) -> int:
         if p["name"] in args["enable"]:
             p["enabled"] = True
     if args["command"] == "check":
+        time.sleep(int(os.environ.get("FAKE_LAUNCHER_CHECK_DELAY_MS", "0")) / 1000)
         result = check(file, config, scenario, strict)
         if args.get("json"):
             print(json.dumps(result, indent=2, ensure_ascii=False))

@@ -111,9 +111,9 @@ class GuiServer:
     async def _headers(self, request: web.Request, handler) -> web.StreamResponse:
         try:
             response = await handler(request)
-        except web.HTTPException as e:  # the router's 404 and 405
-            response = error(e.status, "not-found" if e.status == 404 else "method-not-allowed",
-                             f"{request.method} {request.path}: {e.reason}")
+        except web.HTTPException as e:  # the router's 404 and 405, aiohttp's 413
+            code = {404: "not-found", 405: "method-not-allowed", 413: "too-large"}.get(e.status, "http-error")
+            response = error(e.status, code, f"{request.method} {request.path}: {e.reason}")
         if not isinstance(response, web.WebSocketResponse) or not response.prepared:
             for k, v in COMMON_HEADERS.items():
                 response.headers.setdefault(k, v)
