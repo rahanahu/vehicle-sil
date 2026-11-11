@@ -5,13 +5,15 @@
 //
 //   docs        the configuration files and outputs of docs/simulation-config.md, byte for byte
 //               but for the vehicle-sil version: the example's simulation.yaml (exit 0), the
-//               file with errors (exit 1), the JSON (exit 1)
+//               file with errors (exit 1), the JSON (exit 1), the example without Dashboard
 //   describe    executables that fail --describe: exit code 4, too slow, not JSON, another
 //               format version, missing; one with describe: false (exit 1, the whole text)
 //   strict      warnings only: exit 0, with --strict exit 1
 //   unreadable  a missing file, a directory, a syntax error, another format version (exit 3,
 //               also with --json)
 //   usage       command lines that are wrong (exit 4, the message) and --help (exit 0)
+//   enabled     a disabled participant whose executable does not exist (exit 0, --strict too),
+//               --enable and --disable, and the names they must have (exit 4)
 #include "launcher_support.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
@@ -133,6 +135,17 @@ std::string yaml_quote(const std::string& text)
     return out + "'";
 }
 
+/// `text` as a JSON string (with its quotes): '\\' and '"' escaped.
+std::string json_string(const std::string& text)
+{
+    std::string out = "\"";
+    for (const char ch : text)
+    {
+        out += ch == '\\' || ch == '"' ? std::string("\\") + ch : std::string(1, ch);
+    }
+    return out + "\"";
+}
+
 /// Runs vehicle_sil_launch with `args`.
 Captured launch(const Options& o, const std::vector<std::string>& args)
 {
@@ -186,6 +199,13 @@ void docs(const Options& o)
     expect_code(failed, 1, "check two-engines.yaml");
     expect_text(shown_as(failed.standard_output, twoEngines, "two-engines.yaml"),
                 block_after(o.docs, "<!-- vehicle_sil_launch check two-engines.yaml -->"), "check two-engines.yaml");
+
+    // Without Dashboard (--disable).
+    const Captured without = launch(o, {"check", shown_path(example), "--disable", "Dashboard"});
+    expect_code(without, 0, "check simulation.yaml --disable Dashboard");
+    expect_text(shown_as(without.standard_output, example, "simulation.yaml"),
+                block_after(o.docs, "<!-- vehicle_sil_launch check simulation.yaml --disable Dashboard -->"),
+                "check simulation.yaml --disable Dashboard");
 
     const fs::path alone = o.example_dir / "engine-alone.yaml";
     write_file(alone, block_after(o.docs, "<!-- engine-alone.yaml -->"));
@@ -383,6 +403,12 @@ void unreadable(const Options& o)
     expect_code(later, 3, "check future.yaml");
     require(contains(later.standard_output, ":1: vehicle_sil_simulation is 2, but this vehicle_sil_launch reads format 1"),
             "check future.yaml wrote:\n" + later.standard_output);
+    // A file that cannot be read comes before the names of --disable (exit 3); a name given to
+    // both is a usage error all the same (exit 4).
+    const Captured noneDisabled = launch(o, {"check", m, "--disable", "Engine"});
+    expect_code(noneDisabled, 3, "check nope.yaml --disable Engine");
+    const Captured noneBoth = launch(o, {"check", m, "--disable", "Engine", "--enable", "Engine"});
+    expect_code(noneBoth, 4, "check nope.yaml --disable Engine --enable Engine");
     log("CHECK files that cannot be read: exit code 3 -> ok");
 }
 
@@ -417,16 +443,122 @@ void usage(const Options& o)
     // With --json, a wrong command line is JSON on stdout too.
     const Captured json = launch(o, {"check", "--json", "a.yaml", "--bogus"});
     expect_code(json, 4, "vehicle_sil_launch check --json --bogus");
-    require(contains(json.standard_output, "\n  \"file\": null,\n  \"result\": \"usage\",\n") &&
+    // The file is known from the arguments: the JSON names it.
+    require(contains(json.standard_output, "\n  \"file\": \"a.yaml\",\n  \"result\": \"usage\",\n") &&
                 contains(json.standard_output, "\n      \"code\": \"usage\",\n") &&
                 contains(json.standard_output, "\"message\": \"unknown option --bogus\""),
             "check --json --bogus wrote:\n" + json.standard_output);
+    // Two files: which one is meant is not known, so no file.
+    const Captured twoFiles = launch(o, {"check", "--json", "a.yaml", "b.yaml"});
+    expect_code(twoFiles, 4, "vehicle_sil_launch check --json a.yaml b.yaml");
+    require(contains(twoFiles.standard_output, "\n  \"file\": null,\n  \"result\": \"usage\",\n"),
+            "check --json a.yaml b.yaml wrote:\n" + twoFiles.standard_output);
     // After "--", a name that starts with '-' is the file.
     const Captured dashed = launch(o, {"check", "--", "-h"});
     expect_code(dashed, 3, "vehicle_sil_launch check -- -h");
     require(dashed.standard_output.rfind("error: -h: the file does not exist", 0) == 0,
             "check -- -h wrote:\n" + dashed.standard_output);
     log("CHECK usage errors: exit code 4 and the message; --help: exit code 0 -> ok");
+}
+
+void enabled(const Options& o)
+{
+    // Ghost's executable does not exist: disabled, it is not looked for (and not run).
+    const fs::path config = o.work_dir / "ghost.yaml";
+    write_file(config, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                       "  - name: Logger\n    command: [" + yaml_quote(shown_path(o.helper)) +
+                       ", \"{registry_uri}\"]\n    describe: false\n"
+                       "  - name: Ghost\n    command: [missing/ghost]\n    enabled: false\n");
+    const std::string c = shown_path(config);
+    // Only notes: --strict passes.
+    const Captured passed = launch(o, {"check", "--strict", c});
+    expect_code(passed, 0, "check --strict ghost.yaml");
+    require(contains(passed.standard_output, ": 2 participants (1 disabled), 0 networks\n") &&
+                contains(passed.standard_output, "\nGhost        -     disabled\n") &&
+                contains(passed.standard_output, ":7: participant 'Ghost': disabled (enabled: false, or --disable): it is "
+                                                 "neither checked nor started") &&
+                contains(passed.standard_output, "\npassed: 0 errors, 0 warnings, 2 notes\n"),
+            "check --strict ghost.yaml wrote:\n" + passed.standard_output);
+    const Captured json = launch(o, {"check", "--json", c});
+    expect_code(json, 0, "check --json ghost.yaml");
+    require(contains(json.standard_output, "      \"required\": true,\n      \"enabled\": false,\n      \"step_ms\": null,\n"
+                                           "      \"status\": \"disabled\",\n      \"reported\": null\n") &&
+                contains(json.standard_output, "      \"code\": \"participant-disabled\",\n"),
+            "check --json ghost.yaml wrote:\n" + json.standard_output);
+    // Taken in again (--enable), its missing executable is an error; Logger left out instead,
+    // Ghost is the only one.
+    const Captured enabledGhost = launch(o, {"check", c, "--enable", "Ghost", "--disable", "Logger"});
+    expect_code(enabledGhost, 1, "check ghost.yaml --enable Ghost --disable Logger");
+    require(contains(enabledGhost.standard_output, ": participant 'Ghost': the executable missing/ghost does not exist") &&
+                contains(enabledGhost.standard_output, ": participant 'Logger': disabled") &&
+                !contains(enabledGhost.standard_output, "participant 'Ghost': disabled"),
+            "check ghost.yaml --enable Ghost --disable Logger wrote:\n" + enabledGhost.standard_output);
+    // Every participant left out: nothing to wait for.
+    const Captured none = launch(o, {"check", c, "--disable", "Logger"});
+    expect_code(none, 1, "check ghost.yaml --disable Logger");
+    require(contains(none.standard_output, ":3: every participant is disabled (enabled: false, or --disable), so the "
+                                           "simulation has no participant to wait for"),
+            "check ghost.yaml --disable Logger wrote:\n" + none.standard_output);
+    // Names the file does not have, and one name twice: usage errors after the file is read.
+    const auto expect_usage = [&](const std::vector<std::string>& args, const std::string& error) {
+        const Captured run = launch(o, args);
+        expect_code(run, 4, "vehicle_sil_launch " + error);
+        const bool isJson = std::find(args.begin(), args.end(), "--json") != args.end();
+        require(isJson ? contains(run.standard_output, "\n  \"file\": " + json_string(c) + ",\n  \"result\": \"usage\",\n") &&
+                             contains(run.standard_output, "\"message\": \"" + error + "\"")
+                       : run.standard_output.empty(),
+                "usage error, stdout: " + run.standard_output);
+        require(lf(run.standard_error).rfind("error: " + error + "\nusage: vehicle_sil_launch check [--json]", 0) == 0,
+                "for the error '" + error + "' vehicle_sil_launch wrote:\n" + run.standard_error);
+    };
+    expect_usage({"check", c, "--disable", "logger"},
+                 "--disable logger: the file has no participant with this name (did you mean 'Logger'?); its participants "
+                 "are Logger, Ghost");
+    // Every name that does not fit is said, each on a line of its own.
+    const Captured two = launch(o, {"check", c, "--disable", "logger", "--enable", "Host"});
+    expect_code(two, 4, "check --disable logger --enable Host");
+    require(lf(two.standard_error).rfind("error: --disable logger: the file has no participant with this name (did you mean "
+                                         "'Logger'?); its participants are Logger, Ghost\nerror: --enable Host: the file "
+                                         "has no participant with this name (did you mean 'Ghost'?); its participants are "
+                                         "Logger, Ghost\nusage: ",
+                                         0) == 0,
+            "check --disable logger --enable Host wrote:\n" + two.standard_error);
+    expect_usage({"check", c, "--json", "--enable", "Ghost", "--disable", "Ghost"},
+                 "--disable and --enable both name Ghost: give one of them");
+    expect_usage({"check", c, "--disable"}, "missing value for --disable");
+
+    // A file with an error: its findings first (exit 1); a name it does not have is not said yet.
+    const fs::path broken = o.work_dir / "broken.yaml";
+    write_file(broken, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                       "  - name: [Logger]\n    command: [" + yaml_quote(shown_path(o.helper)) +
+                       ", \"{registry_uri}\"]\n    describe: false\n"
+                       "  - name: Ghost\n    command: [missing/ghost]\n    enabled: false\n");
+    const Captured fileFirst = launch(o, {"check", shown_path(broken), "--disable", "Logger"});
+    expect_code(fileFirst, 1, "check broken.yaml --disable Logger");
+    require(contains(fileFirst.standard_output, "\nerror: ") && !contains(fileFirst.standard_output, "--disable Logger") &&
+                !contains(fileFirst.standard_error, "--disable Logger"),
+            "check broken.yaml --disable Logger wrote:\n" + fileFirst.standard_output + fileFirst.standard_error);
+
+    // A disabled entry with an error: the error fails the check, the status is disabled, and the
+    // network rules still hold (Engine alone on J1939_CAN).
+    const fs::path partly = o.work_dir / "partly.yaml";
+    write_file(partly, "vehicle_sil_simulation: 1\nnetworks:\n  - name: J1939_CAN\n    kind: can\nparticipants:\n"
+                       "  - name: Engine\n    command: " + yaml_quote(shown_path(o.engine)) + "\n    step_ms: 10\n"
+                       "  - name: Ghost\n    enabled: false\n");
+    const Captured partial = launch(o, {"check", "--json", shown_path(partly)});
+    expect_code(partial, 1, "check partly.yaml --json");
+    require(contains(partial.standard_output, "      \"status\": \"disabled\",\n") &&
+                contains(partial.standard_output, "      \"code\": \"missing-key\",\n") &&
+                contains(partial.standard_output, "      \"code\": \"single-participant\",\n"),
+            "check partly.yaml --json wrote:\n" + partial.standard_output);
+
+    // --strict: the warning that leaving Dashboard out brings fails it (the note does not).
+    const fs::path example = o.example_dir / "simulation.yaml";
+    const Captured strictWithout = launch(o, {"check", "--strict", shown_path(example), "--disable", "Dashboard"});
+    expect_code(strictWithout, 1, "check --strict simulation.yaml --disable Dashboard");
+    require(contains(strictWithout.standard_output, "\nfailed: 0 errors, 1 warning, 1 note (--strict)\n"),
+            "check --strict simulation.yaml --disable Dashboard wrote:\n" + strictWithout.standard_output);
+    log("CHECK enabled: false, --disable and --enable -> ok");
 }
 
 } // namespace
@@ -459,6 +591,10 @@ int main(int argc, char** argv)
         else if (o.scenario == "usage")
         {
             usage(o);
+        }
+        else if (o.scenario == "enabled")
+        {
+            enabled(o);
         }
         else
         {

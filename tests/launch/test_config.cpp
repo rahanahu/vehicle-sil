@@ -151,9 +151,9 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
                "stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, networks, participants)\n");
     check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
                "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
-               "command, step_ms, describe, required)\n"
+               "command, step_ms, describe, required, enabled)\n"
                "E 7 unknown-key: participant 'A': unknown key 'Step_ms': did you mean 'step_ms'? (the keys here: name, "
-               "command, step_ms, describe, required)\n");
+               "command, step_ms, describe, required, enabled)\n");
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'bitrate': remove it, or use one of the keys here (name, kind)\n");
@@ -407,7 +407,7 @@ TEST_CASE(many_errors_are_reported_at_once_in_the_order_of_the_file)
                "ecu_main executable --local itself: remove it (or set describe: false for an executable not made with "
                "ecu_main)\n"
                "E 11 unknown-key: participant 'A': unknown key 'commands': did you mean 'command'? (the keys here: name, "
-               "command, step_ms, describe, required)\n"
+               "command, step_ms, describe, required, enabled)\n"
                "E 10 missing-key: participant 'A': no command: add command: [<path of the executable>]\n"
                "E 10 duplicate-name: participant 'A' is listed twice (first at line 7); give each participant its own name "
                "(for a second copy of an ECU, e.g. A_2)\n");
@@ -611,8 +611,8 @@ TEST_CASE(required_false_is_only_for_executables_that_are_not_ecu_main)
                                       "  - name: C\n    command: c\n    required: true\n")),
                "E 6 not-required-ecu: participant 'A': required: false is only for executables with describe: false: an "
                "ecu_main executable joins as a coordinated participant, which SIL Kit starts only among the required "
-               "participants; remove required: false (to run the simulation without this ECU, remove the participant or "
-               "make it a comment)\n"
+               "participants; remove required: false (to run the simulation without this ECU, write enabled: false "
+               "instead, or give vehicle_sil_launch --disable A)\n"
                "N 8 no-registry-uri: participant 'B': the command has no {registry_uri}, so the executable is not told "
                "where the simulation's registry is: if it needs it, add its option for the registry URI with "
                "\"{registry_uri}\" as the value\n");
@@ -704,4 +704,141 @@ TEST_CASE(a_file_next_to_the_configuration_that_is_not_executable_does_not_hide_
     // Windows has no execute permission: a file next to the configuration is the program.
     throw vehicle_sil::unit::Skipped("every file is executable on Windows");
 #endif
+}
+
+// --- enabled, --disable and --enable ----------------------------------------------------------
+
+TEST_CASE(enabled_is_true_by_default_and_must_be_true_or_false)
+{
+    const ConfigRead r = read_config(with_participants("  - name: A\n    command: a\n"
+                                                       "  - name: B\n    command: b\n    enabled: false\n"
+                                                       "  - name: C\n    command: c\n    enabled: true\n"
+                                                       "  - name: D\n    command: d\n    enabled: \"false\"\n"));
+    check_text(lines(r.findings), "E 14 value: participant 'D': enabled must be true or false, not the text \"false\"\n");
+    CHECK(r.config.has_value());
+    CHECK(r.config->participants[0].enabled);
+    CHECK(!r.config->participants[1].enabled);
+    CHECK(r.config->participants[2].enabled);
+    CHECK(r.config->participants[3].enabled); // not read: as if it were not there...
+    CHECK(!r.config->participants[3].valid);  // ...but neither described nor started
+    CHECK(r.config->participants[1].valid);   // a disabled entry is still usable
+    CHECK(r.override_errors.empty());
+}
+
+TEST_CASE(a_disabled_participant_is_checked_like_any_other)
+{
+    // Its errors show now, not when it is taken in again.
+    check_text(read(with_participants("  - name: A\n    command: a\n"
+                                      "  - name: B\n    command: [b, --local]\n    enabled: false\n    required: false\n"
+                                      "    bitrate: 1\n"
+                                      "  - name: A\n    command: a\n    enabled: false\n")),
+               "E 10 unknown-key: participant 'B': unknown key 'bitrate': remove it, or use one of the keys here (name, "
+               "command, step_ms, describe, required, enabled)\n"
+               "E 7 launcher-argument: participant 'B': the command has '--local', but vehicle_sil_launch gives an ecu_main "
+               "executable --local itself: remove it (or set describe: false for an executable not made with ecu_main)\n"
+               "E 9 not-required-ecu: participant 'B': required: false is only for executables with describe: false: an "
+               "ecu_main executable joins as a coordinated participant, which SIL Kit starts only among the required "
+               "participants; remove required: false (to run the simulation without this ECU, write enabled: false "
+               "instead, or give vehicle_sil_launch --disable B)\n"
+               "E 11 duplicate-name: participant 'A' is listed twice (first at line 4); give each participant its own name "
+               "(for a second copy of an ECU, e.g. A_2)\n");
+}
+
+TEST_CASE(only_the_enabled_participants_count_as_required)
+{
+    // The one required participant is disabled.
+    check_text(read(with_participants("  - name: A\n    command: a\n    enabled: false\n"
+                                      "  - name: B\n    command: [b, \"{registry_uri}\"]\n    describe: false\n"
+                                      "    required: false\n")),
+               "E 3 no-required-participant: every enabled participant has required: false (disabled: A), but the "
+               "simulation starts when its required participants have joined, so it needs at least one: enable a required "
+               "participant, or remove required: false from the participants it must wait for (an ecu_main executable is "
+               "always required)\n");
+    // Every participant disabled.
+    check_text(read(with_participants("  - name: A\n    command: a\n    enabled: false\n"
+                                      "  - name: B\n    command: b\n    enabled: false\n")),
+               "E 3 no-required-participant: every participant is disabled (enabled: false, or --disable), so the "
+               "simulation has no participant to wait for: enable at least one (enabled: true, or --enable <name>)\n");
+    // Only the disabled participants that are required are named: enabling them would help.
+    check_text(read(with_participants("  - name: A\n    command: [a, \"{registry_uri}\"]\n    describe: false\n"
+                                      "    required: false\n"
+                                      "  - name: B\n    command: [b, \"{registry_uri}\"]\n    describe: false\n"
+                                      "    required: false\n    enabled: false\n"
+                                      "  - name: C\n    command: c\n    enabled: false\n")),
+               "E 3 no-required-participant: every enabled participant has required: false (disabled: C), but the "
+               "simulation starts when its required participants have joined, so it needs at least one: enable a required "
+               "participant, or remove required: false from the participants it must wait for (an ecu_main executable is "
+               "always required)\n");
+    // None of them: the message without disabled participants (enabling B would not help).
+    check_text(read(with_participants("  - name: A\n    command: [a, \"{registry_uri}\"]\n    describe: false\n"
+                                      "    required: false\n"
+                                      "  - name: B\n    command: [b, \"{registry_uri}\"]\n    describe: false\n"
+                                      "    required: false\n    enabled: false\n")),
+               "E 3 no-required-participant: every participant has required: false, but the simulation starts when its "
+               "required participants have joined, so it needs at least one: remove required: false from the "
+               "participants it must wait for (an ecu_main executable is always required)\n");
+    // A disabled optional participant beside a required one: fine.
+    check_text(read(with_participants("  - name: A\n    command: a\n"
+                                      "  - name: B\n    command: [b, \"{registry_uri}\"]\n    describe: false\n"
+                                      "    required: false\n    enabled: false\n")),
+               "");
+}
+
+TEST_CASE(the_command_line_disables_and_enables_participants)
+{
+    const std::string text = with_participants("  - name: Engine\n    command: e\n"
+                                               "  - name: Brake\n    command: b\n    enabled: false\n"
+                                               "  - name: Cluster\n    command: c\n");
+    const ConfigRead r = read_config(text, EnabledOverrides{{"Engine", "Engine"}, {"Brake"}});
+    check_text(lines(r.findings), "");
+    CHECK(r.override_errors.empty());
+    CHECK(!r.config->participants[0].enabled);
+    CHECK(r.config->participants[1].enabled);
+    CHECK(r.config->participants[2].enabled);
+    // The rule of a required participant counts after the overrides.
+    const ConfigRead none = read_config(text, EnabledOverrides{{"Engine", "Cluster"}, {}});
+    check_text(lines(none.findings), "E 3 no-required-participant: every participant is disabled (enabled: false, or "
+                                     "--disable), so the simulation has no participant to wait for: enable at least one "
+                                     "(enabled: true, or --enable <name>)\n");
+    const ConfigRead back = read_config(with_participants("  - name: A\n    command: a\n    enabled: false\n"),
+                                        EnabledOverrides{{}, {"A"}});
+    check_text(lines(back.findings), "");
+    CHECK(back.config->participants[0].enabled);
+}
+
+TEST_CASE(the_command_line_must_name_participants_of_the_file_once)
+{
+    const std::string text = with_participants("  - name: Engine\n    command: e\n"
+                                               "  - name: Brake\n    command: b\n    enabled: false\n");
+    // Every name that does not fit, at once; nothing is applied.
+    const ConfigRead typo = read_config(text, EnabledOverrides{{"Engin", "Brake", "Wheel", "Engin"}, {"Brak"}});
+    check_text(lines(typo.override_errors),
+               "E 0 usage: --disable Engin: the file has no participant with this name (did you mean 'Engine'?); its "
+               "participants are Engine, Brake\n"
+               "E 0 usage: --disable Wheel: the file has no participant with this name; its participants are Engine, Brake\n"
+               "E 0 usage: --enable Brak: the file has no participant with this name (did you mean 'Brake'?); its "
+               "participants are Engine, Brake\n");
+    CHECK(typo.config->participants[0].enabled && !typo.config->participants[1].enabled);
+    // Each name given to both, once.
+    const ConfigRead both = read_config(text, EnabledOverrides{{"Engine", "Brake"}, {"Engine", "Brake", "Engine"}});
+    check_text(lines(both.override_errors), "E 0 usage: --disable and --enable both name Engine: give one of them\n"
+                                            "E 0 usage: --disable and --enable both name Brake: give one of them\n");
+    CHECK(both.config->participants[0].enabled && !both.config->participants[1].enabled);
+    check_text(lines(override_conflicts(EnabledOverrides{{"A", "B"}, {"B"}})),
+               "E 0 usage: --disable and --enable both name B: give one of them\n");
+    CHECK(override_conflicts(EnabledOverrides{{"A"}, {"B"}}).empty());
+}
+
+TEST_CASE(an_error_in_the_file_comes_before_the_names_of_the_command_line)
+{
+    // The name Engine cannot be read: the file's error says so, not "no participant Engine".
+    const std::string text = with_participants("  - name: [Engine]\n    command: e\n"
+                                               "  - name: Brake\n    command: b\n");
+    const ConfigRead r = read_config(text, EnabledOverrides{{"Engine", "Brake"}, {}});
+    CHECK(r.override_errors.empty());
+    CHECK(!r.findings.empty() && r.findings.front().code == "value");
+    CHECK(!r.config->participants[1].enabled); // the names that the file has are applied
+    // A name given to both is an error all the same (it needs no file).
+    check_text(lines(read_config(text, EnabledOverrides{{"Brake"}, {"Brake"}}).override_errors),
+               "E 0 usage: --disable and --enable both name Brake: give one of them\n");
 }

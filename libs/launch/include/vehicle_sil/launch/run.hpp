@@ -46,7 +46,7 @@ enum class SimulationEnd
 /// How and when a participant's process ended.
 enum class Ending
 {
-    NotStarted,        ///< it could not be started (or the run ended before its turn)
+    NotStarted,        ///< it could not be started (or the run ended before its turn, or it is disabled)
     ExitedBeforeStart, ///< it ended by itself before the simulation started
     Exited,            ///< it ended by itself while the simulation ran, or after it ended
     Stopped,           ///< it ended after the launcher asked it to stop
@@ -59,6 +59,8 @@ struct ParticipantRun
     std::string name;
     bool required = true;
     bool describe = true;
+    /// false: disabled (enabled: false, or --disable); it was not started (Ending::NotStarted).
+    bool enabled = true;
     std::size_t line = 0; ///< its entry in the configuration file
     /// Why it could not be started (Ending::NotStarted), or "".
     std::string start_error{};

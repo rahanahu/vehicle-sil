@@ -89,6 +89,9 @@ struct ParticipantConfig
     bool describe = true;
     /// false: the simulation may start without it.
     bool required = true;
+    /// false: it is not part of the simulation (its "enabled" key, or --disable): not checked, not
+    /// started, not waited for. Its entry is read and checked like any other.
+    bool enabled = true;
     /// The step the executable must report, in milliseconds; empty: any.
     std::optional<std::int64_t> step_ms{};
     std::size_t line = 0;         ///< the line of the participant's entry
@@ -115,6 +118,15 @@ struct SimulationConfig
     std::optional<std::string> registry_uri{};
     std::vector<NetworkConfig> networks{};
     std::vector<ParticipantConfig> participants{};
+    std::size_t participants_line = 0; ///< the line of participants (0 if it is missing)
+};
+
+/// The command line's changes to the participants' "enabled" keys: the names of the participants
+/// to leave out (--disable) and to take in (--enable).
+struct EnabledOverrides
+{
+    std::vector<std::string> disable{};
+    std::vector<std::string> enable{};
 };
 
 /// What read_config() found.
@@ -125,13 +137,24 @@ struct ConfigRead
     std::optional<SimulationConfig> config;
     /// Every error and warning of the text, in the order of the file.
     std::vector<Finding> findings;
+    /// The overrides' usage errors (code "usage"), every one: a name given to both --disable and
+    /// --enable (always); a name that the file does not have (only if the text has no error: an
+    /// error in the text may be why the name is not there, so it is corrected first; meanwhile the
+    /// overrides of the names the file has are applied). If there is one, no override is applied.
+    std::vector<Finding> override_errors{};
 };
+
+/// The overrides' usage errors that do not need the file: each name given to both --disable and
+/// --enable.
+[[nodiscard]] std::vector<Finding> override_conflicts(const EnabledOverrides& overrides);
 
 /// Reads a configuration (YAML, or JSON if it starts with '{'; a UTF-8 byte order mark is
 /// skipped) and checks what the text alone can tell: the format version, unknown and missing
 /// keys, the types and ranges of the values, duplicate and reserved names, launcher arguments
 /// and placeholders in the commands. Reports every problem at once. No file system access.
-[[nodiscard]] ConfigRead read_config(std::string_view text);
+/// `overrides` change the participants' "enabled" before the rules that depend on it (a required
+/// participant among the enabled ones).
+[[nodiscard]] ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides = {});
 
 /// Where a participant's executable is: command[0], relative to `base_dir` unless absolute
 /// (UTF-8 in, a path that works with non-ASCII characters on Windows out; not normalized, so that

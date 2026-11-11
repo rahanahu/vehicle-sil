@@ -43,13 +43,15 @@ public:
 /// UsageError for a missing required option or a malformed value.
 ///
 /// The second constructor knows its options: value options (`--key value`), flags (`--key`,
-/// no value) and positional arguments (anything not starting with '-', and everything after "--");
-/// an unknown option, a repeated one and a missing value are UsageErrors.
+/// no value), repeatable value options (`--key a --key b`: all() has every value, the other
+/// accessors see the last one) and positional
+/// arguments (anything not starting with '-', and everything after "--"); an unknown option, a
+/// repeated one (but a repeatable one) and a missing value are UsageErrors.
 class Args
 {
 public:
     Args(const std::vector<std::string>& arguments, std::initializer_list<std::string_view> value_options,
-         std::initializer_list<std::string_view> flags)
+         std::initializer_list<std::string_view> flags, std::initializer_list<std::string_view> repeatable = {})
     {
         const auto known = [](std::initializer_list<std::string_view> names, std::string_view name) {
             return std::find(names.begin(), names.end(), name) != names.end();
@@ -69,6 +71,16 @@ public:
                 continue;
             }
             const std::string key = arg.size() > 2 && arg.substr(0, 2) == "--" ? arg.substr(2) : std::string{};
+            if (!key.empty() && known(repeatable, key))
+            {
+                if (i + 1 >= arguments.size() || arguments[i + 1].substr(0, 2) == "--")
+                {
+                    throw UsageError("missing value for " + arg);
+                }
+                values_[key] = arguments[++i];
+                repeated_[key].push_back(values_[key]);
+                continue;
+            }
             if (key.empty() || (!known(value_options, key) && !known(flags, key)))
             {
                 throw UsageError("unknown option " + arg);
@@ -108,6 +120,13 @@ public:
     }
 
     [[nodiscard]] bool has(const std::string& key) const { return values_.count(key) != 0; }
+
+    /// Every value of the repeatable option `--key`, in order (none: empty).
+    [[nodiscard]] std::vector<std::string> all(const std::string& key) const
+    {
+        const auto it = repeated_.find(key);
+        return it == repeated_.end() ? std::vector<std::string>{} : it->second;
+    }
 
     /// true if the flag `--key` was given (second constructor).
     [[nodiscard]] bool flag(const std::string& key) const { return flags_.count(key) != 0; }
@@ -240,6 +259,7 @@ private:
     }
 
     std::map<std::string, std::string> values_;
+    std::map<std::string, std::vector<std::string>> repeated_;
     std::set<std::string> flags_;
     std::vector<std::string> positionals_;
 };

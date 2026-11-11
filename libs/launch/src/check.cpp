@@ -363,16 +363,17 @@ std::string network_cell(const NetworkDescription& network)
     return out + ")";
 }
 
-bool has_status(const std::vector<ParticipantResult>& results, ParticipantStatus status)
+/// true if the participant is enabled and described itself (its networks count).
+bool is_on_any(const ParticipantConfig& participant, const ParticipantResult& result)
 {
-    return std::any_of(results.begin(), results.end(), [status](const ParticipantResult& r) { return r.status == status; });
+    return participant.enabled && result.status == ParticipantStatus::Described && result.ecu;
 }
 
-/// true if the participant described itself on `network` with its kind (as the rules count; any
-/// kind for a network whose kind could not be read).
-bool is_on(const ParticipantResult& result, const NetworkConfig& network)
+/// true if the participant is enabled and described itself on `network` with its kind (as the rules
+/// count; any kind for a network whose kind could not be read).
+bool is_on(const ParticipantConfig& participant, const ParticipantResult& result, const NetworkConfig& network)
 {
-    return result.status == ParticipantStatus::Described && result.ecu &&
+    return participant.enabled && result.status == ParticipantStatus::Described && result.ecu &&
            std::any_of(result.ecu->description.networks.begin(), result.ecu->description.networks.end(),
                        [&](const NetworkDescription& n) {
                            return n.name == network.name && (!network.valid || n.kind() == network.kind);
@@ -396,6 +397,8 @@ const char* status_name(ParticipantStatus status)
         return "failed";
     case ParticipantStatus::Skipped:
         return "skipped";
+    case ParticipantStatus::Disabled:
+        return "disabled";
     }
     return "skipped";
 }
@@ -582,9 +585,20 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
     // The rules that need every participant's description: not said while a description is
     // missing (the error of that participant says why), only noted while a participant has
     // describe: false (it may be the one).
-    const bool incomplete =
-        has_status(results, ParticipantStatus::Failed) || has_status(results, ParticipantStatus::Skipped);
-    const bool unchecked = has_status(results, ParticipantStatus::NotChecked);
+    // Only the enabled participants count: a disabled one is not in the simulation, whatever its
+    // status.
+    const auto any_enabled = [&](ParticipantStatus status) {
+        for (std::size_t i = 0; i < config.participants.size() && i < results.size(); ++i)
+        {
+            if (config.participants[i].enabled && results[i].status == status)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    const bool incomplete = any_enabled(ParticipantStatus::Failed) || any_enabled(ParticipantStatus::Skipped);
+    const bool unchecked = any_enabled(ParticipantStatus::NotChecked);
     const std::string notCounted = unchecked ? " (participants with describe: false are not counted)" : "";
 
     // Each participant against its entry.
@@ -593,6 +607,15 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
         const ParticipantConfig& p = config.participants[i];
         const ParticipantResult& result = results[i];
         const std::string prefix = participant_prefix(p.name);
+        if (!p.enabled)
+        {
+            add(Severity::Note, "participant-disabled", p.line,
+                (p.name.empty() ? "participants[" + std::to_string(i) + "]: " : prefix) +
+                    "disabled (enabled: false, or --disable): it is neither checked nor started, and the other "
+                    "findings are about the simulation without it",
+                p.name, "");
+            continue;
+        }
         if (result.status == ParticipantStatus::NotChecked)
         {
             add(Severity::Note, "not-checked", p.line,
@@ -685,7 +708,7 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
         std::vector<std::string> slaves;
         for (std::size_t i = 0; i < config.participants.size() && i < results.size(); ++i)
         {
-            if (results[i].status != ParticipantStatus::Described || !results[i].ecu)
+            if (!is_on_any(config.participants[i], results[i]))
             {
                 continue;
             }
@@ -918,7 +941,10 @@ std::string detail::check_text_body(const CheckReport& report)
     if (report.config)
     {
         const SimulationConfig& config = *report.config;
-        out += report.file + ": " + count_text(config.participants.size(), "participant", "participants") + ", " +
+        const auto disabled = static_cast<std::size_t>(std::count_if(
+            config.participants.begin(), config.participants.end(), [](const ParticipantConfig& p) { return !p.enabled; }));
+        out += report.file + ": " + count_text(config.participants.size(), "participant", "participants") +
+               (disabled > 0 ? " (" + std::to_string(disabled) + " disabled)" : std::string{}) + ", " +
                count_text(config.networks.size(), "network", "networks") + "\n\n";
         std::vector<std::vector<std::string>> rows{{"participant", "step", "networks"}};
         for (std::size_t i = 0; i < config.participants.size(); ++i)
@@ -942,6 +968,7 @@ std::string detail::check_text_body(const CheckReport& report)
                 row.push_back("-");
                 row.push_back(result.status == ParticipantStatus::NotChecked ? "not checked (describe: false)"
                               : result.status == ParticipantStatus::Failed   ? "no description (see the errors)"
+                              : result.status == ParticipantStatus::Disabled ? "disabled"
                                                                              : "not read (see the errors)");
             }
             rows.push_back(std::move(row));
@@ -956,7 +983,7 @@ std::string detail::check_text_body(const CheckReport& report)
             std::string users;
             for (std::size_t i = 0; i < config.participants.size() && i < report.participants.size(); ++i)
             {
-                if (is_on(report.participants[i], network))
+                if (is_on(config.participants[i], report.participants[i], network))
                 {
                     users += (users.empty() ? "" : ", ") + config.participants[i].name;
                 }
@@ -1130,6 +1157,7 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
             w.end_array();
             w.boolean("describe", p.describe);
             w.boolean("required", p.required);
+            w.boolean("enabled", p.enabled);
             optional_integer("step_ms", p.step_ms);
             w.string("status", status_name(result.status));
             if (!result.ecu)
@@ -1181,7 +1209,7 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
             w.begin_array("participants");
             for (std::size_t i = 0; i < report.config->participants.size() && i < report.participants.size(); ++i)
             {
-                if (is_on(report.participants[i], network))
+                if (is_on(report.config->participants[i], report.participants[i], network))
                 {
                     w.string({}, report.config->participants[i].name);
                 }
@@ -1205,6 +1233,13 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     CheckReport report;
     report.file = shown_as;
     report.strict = options.strict;
+    // Known without the file.
+    if (auto conflicts = override_conflicts(options.overrides); !conflicts.empty())
+    {
+        report.usage = true;
+        report.findings = std::move(conflicts);
+        return report;
+    }
     std::error_code ec;
     std::string problem;
     std::string text;
@@ -1238,7 +1273,13 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         report.findings.push_back(Finding{Severity::Error, "file", problem, 0, "", ""});
         return report;
     }
-    ConfigRead read = read_config(text);
+    ConfigRead read = read_config(text, options.overrides);
+    if (!read.override_errors.empty())
+    {
+        report.usage = true;
+        report.findings = std::move(read.override_errors);
+        return report;
+    }
     report.findings = std::move(read.findings);
     report.config = std::move(read.config);
     if (!report.config)
@@ -1249,6 +1290,13 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     for (const ParticipantConfig& p : report.config->participants)
     {
         ParticipantResult result;
+        // Disabled whatever its entry's errors (they are findings).
+        if (!p.enabled)
+        {
+            result.status = ParticipantStatus::Disabled;
+            report.participants.push_back(result);
+            continue;
+        }
         if (!p.valid)
         {
             report.participants.push_back(result);

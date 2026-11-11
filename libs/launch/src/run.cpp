@@ -64,7 +64,7 @@ std::string ending_cell(const ParticipantRun& p)
     switch (p.ending)
     {
     case Ending::NotStarted:
-        return "not started";
+        return p.enabled ? "not started" : "not started (disabled)";
     case Ending::ExitedBeforeStart:
     case Ending::Exited:
         return status();
@@ -392,7 +392,7 @@ std::string format_run_text(const RunReport& report)
         std::vector<std::vector<std::string>> rows{{"participant", "required", "ended"}};
         for (const auto& p : run.participants)
         {
-            rows.push_back({p.name, p.required ? "yes" : "no", ending_cell(p)});
+            rows.push_back({p.name, !p.enabled ? "-" : p.required ? "yes" : "no", ending_cell(p)});
         }
         out += detail::table_text(rows) + "\n";
     }
@@ -451,6 +451,7 @@ std::string format_run_json(const RunReport& report)
             w.begin_object();
             w.string("name", p.name);
             w.boolean("required", p.required);
+            w.boolean("enabled", p.enabled);
             w.string("ended", ending_name(p.ending));
             if (p.exit && !p.exit->signal)
             {
@@ -668,6 +669,7 @@ public:
             run.name = p.name;
             run.required = p.required;
             run.describe = p.describe;
+            run.enabled = p.enabled;
             run.line = p.line;
             outcome_.participants.push_back(std::move(run));
         }
@@ -710,7 +712,7 @@ public:
             c.registry_uri = uri;
             for (const auto& p : config_.participants)
             {
-                if (p.required)
+                if (p.required && p.enabled)
                 {
                     c.required_participants.push_back(p.name);
                 }
@@ -784,6 +786,10 @@ private:
         };
         for (std::size_t i = 0; i < config_.participants.size(); ++i)
         {
+            if (!config_.participants[i].enabled)
+            {
+                continue; // not started: no log
+            }
             std::string name = log_name(config_.participants[i].name);
             for (int n = 2; !used.insert(lower(name)).second; ++n)
             {
@@ -820,6 +826,11 @@ private:
         {
             const ParticipantConfig& p = config_.participants[i];
             ParticipantRun& run = outcome_.participants[i];
+            if (!p.enabled)
+            {
+                say("not starting " + p.name + ": disabled");
+                continue;
+            }
             const std::vector<std::string> rest(p.command.begin() + 1, p.command.end());
             std::vector<std::string> arguments;
             if (p.describe)

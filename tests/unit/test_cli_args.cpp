@@ -108,3 +108,22 @@ TEST_CASE(cli_args_double_dash_ends_the_options)
     CHECK(args.flag("json"));
     CHECK((args.positionals() == std::vector<std::string>{"check", "-odd.yaml", "--json"}));
 }
+
+TEST_CASE(cli_args_repeatable_options_keep_every_value)
+{
+    const std::vector<std::string> words{"run", "--disable", "A", "x.yaml", "--disable", "B", "--json"};
+    const Args args(words, {}, {"json"}, {"disable", "enable"});
+    CHECK((args.all("disable") == std::vector<std::string>{"A", "B"}));
+    CHECK(args.all("enable").empty());
+    CHECK(args.has("disable"));
+    CHECK(!args.has("enable"));
+    // The accessors for one value see the last one.
+    CHECK(args.str("disable", "") == "B");
+    CHECK(args.required("disable") == "B");
+    CHECK(throws<UsageError>([&] { (void)args.required("enable"); }));
+    CHECK((args.positionals() == std::vector<std::string>{"run", "x.yaml"}));
+    const auto parse = [](std::vector<std::string> w) { return Args(w, {}, {"json"}, {"disable"}); };
+    CHECK(vehicle_sil::unit::throws_with<UsageError>([&] { parse({"--disable"}); }, "missing value for --disable"));
+    CHECK(vehicle_sil::unit::throws_with<UsageError>([&] { parse({"--disable", "--json"}); },
+                                                     "missing value for --disable"));
+}

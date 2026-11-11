@@ -41,9 +41,10 @@ namespace {
 using namespace vehicle_sil;
 
 constexpr const char* kUsage =
-    "usage: vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--] <file>\n"
+    "usage: vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--disable <name>]...\n"
+    "                                [--enable <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json] [--strict] [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>]\n"
-    "                              [--] <file>\n"
+    "                              [--disable <name>]... [--enable <name>]... [--] <file>\n"
     "  check <file>                compare the simulation configuration <file> (YAML or JSON) with what each\n"
     "                              ecu_main executable in it reports (--describe); list the participants,\n"
     "                              the networks and every error and warning\n"
@@ -56,6 +57,8 @@ constexpr const char* kUsage =
     "  --log-dir <dir>             run: also write each participant's output to <dir>/<name>.log\n"
     "  --timeout-ms <ms>           run: abort the simulation if it has not ended <ms> after its start (wall clock)\n"
     "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)\n"
+    "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
+    "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
     "  --help, -h                  this text\n"
     "  --                          what follows is the file, also if it starts with '-'\n"
     "exit codes: 0 passed, 1 errors (with --strict: or warnings; run: also a failed simulation), 3 the file\n"
@@ -228,16 +231,22 @@ int write_or_fail(const std::string& text, int code)
     return code;
 }
 
-/// A wrong command line: the message and the usage on stderr; with --json also the JSON (result
-/// "usage") on stdout, so that a program that reads it gets an answer.
-int usage_error(const std::string& message, bool json, bool run)
+/// A wrong command line: each error and the usage on stderr; with --json also the JSON (result
+/// "usage") on stdout, so that a program that reads it gets an answer. `file`: the configuration
+/// file if the arguments name one, else "" (null in the JSON).
+int usage_error(const std::vector<launch::Finding>& errors, bool json, bool run, const std::string& file)
 {
-    std::fprintf(stderr, "error: %s\n%s", message.c_str(), kUsage);
+    for (const auto& error : errors)
+    {
+        std::fprintf(stderr, "error: %s\n", error.message.c_str());
+    }
+    std::fputs(kUsage, stderr);
     if (json)
     {
         launch::CheckReport check;
+        check.file = file;
         check.usage = true;
-        check.findings.push_back(launch::Finding{launch::Severity::Error, "usage", message, 0, "", ""});
+        check.findings = errors;
         if (run)
         {
             launch::RunReport report;
@@ -248,6 +257,37 @@ int usage_error(const std::string& message, bool json, bool run)
         return write_or_fail(launch::format_json(check), cli::kExitUsage);
     }
     return cli::kExitUsage;
+}
+
+int usage_error(const std::string& message, bool json, bool run, const std::string& file)
+{
+    return usage_error({launch::Finding{launch::Severity::Error, "usage", message, 0, "", ""}}, json, run, file);
+}
+
+/// The arguments that are no option or an option's value (as cli::Args reads them), for a usage
+/// error that comes before cli::Args has read them.
+std::vector<std::string> positional_arguments(const std::vector<std::string>& arguments)
+{
+    std::vector<std::string> out;
+    bool optionsEnded = false;
+    for (std::size_t i = 0; i < arguments.size(); ++i)
+    {
+        const std::string& a = arguments[i];
+        if (optionsEnded || a.empty() || a[0] != '-')
+        {
+            out.push_back(a);
+        }
+        else if (a == "--")
+        {
+            optionsEnded = true;
+        }
+        else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--disable" ||
+                 a == "--enable")
+        {
+            ++i;
+        }
+    }
+    return out;
 }
 
 /// The file and the options both commands share.
@@ -273,6 +313,8 @@ Common common(const cli::Args& args, const std::string& command)
         throw cli::UsageError("--describe-timeout-ms must be at least 1");
     }
     c.options.strict = args.flag("strict");
+    c.options.overrides.disable = args.all("disable");
+    c.options.overrides.enable = args.all("enable");
     c.file = positionals[1];
     return c;
 }
@@ -286,6 +328,10 @@ int check(const cli::Args& args)
     }
     const Common c = common(args, "check");
     const launch::CheckReport report = launch::check_file(process::path_from_utf8(c.file), c.file, c.options);
+    if (report.usage)
+    {
+        return usage_error(report.findings, args.flag("json"), false, c.file);
+    }
     const int code = !report.config ? cli::kExitSetupFailed : report.passed() ? cli::kExitOk : cli::kExitFailed;
     return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), code);
 }
@@ -316,6 +362,10 @@ int run(const cli::Args& args)
     options.interrupts = &g_interrupts;
     options.interrupt_name = interrupt_name;
     const launch::RunReport report = launch::run_file(process::path_from_utf8(c.file), c.file, options);
+    if (report.check.usage)
+    {
+        return usage_error(report.check.findings, args.flag("json"), true, c.file);
+    }
     return write_or_fail(args.flag("json") ? launch::format_run_json(report) : launch::format_run_text(report),
                          report.exit_code());
 }
@@ -343,38 +393,28 @@ int main(int argc, char** argv)
         }
         json = json || argument == "--json";
     }
-    // The command, for a usage error's JSON: the first argument that is no option or its value.
-    bool isRun = false;
-    for (std::size_t i = 0; i < arguments.size(); ++i)
-    {
-        if (arguments[i] == "--describe-timeout-ms" || arguments[i] == "--log-dir" || arguments[i] == "--timeout-ms")
-        {
-            ++i;
-            continue;
-        }
-        if (arguments[i].empty() || arguments[i][0] != '-')
-        {
-            isRun = arguments[i] == "run";
-            break;
-        }
-    }
+    // The command and the file, for a usage error's JSON.
+    const std::vector<std::string> positionals = positional_arguments(arguments);
+    const bool isRun = !positionals.empty() && positionals.front() == "run";
+    const std::string file = positionals.size() == 2 ? positionals[1] : std::string{};
     try
     {
-        const cli::Args args(arguments, {"describe-timeout-ms", "log-dir", "timeout-ms"}, {"json", "strict"});
+        const cli::Args args(arguments, {"describe-timeout-ms", "log-dir", "timeout-ms"}, {"json", "strict"},
+                             {"disable", "enable"});
         if (args.positionals().empty())
         {
-            return usage_error("no command: give check <file> or run <file>", json, false);
+            return usage_error("no command: give check <file> or run <file>", json, false, file);
         }
         const std::string& command = args.positionals().front();
         if (command != "check" && !isRun)
         {
-            return usage_error("unknown command '" + command + "': the commands are check and run", json, false);
+            return usage_error("unknown command '" + command + "': the commands are check and run", json, false, file);
         }
         return isRun ? run(args) : check(args);
     }
     catch (const cli::UsageError& e)
     {
-        return usage_error(e.what(), json, isRun);
+        return usage_error(e.what(), json, isRun, file);
     }
     catch (const std::exception& e)
     {

@@ -8,6 +8,8 @@
 #include "vehicle_sil/launch/check.hpp"
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -582,6 +584,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       ],
       "describe": true,
       "required": true,
+      "enabled": true,
       "step_ms": 10,
       "status": "described",
       "reported": {
@@ -619,6 +622,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       ],
       "describe": true,
       "required": true,
+      "enabled": true,
       "step_ms": null,
       "status": "described",
       "reported": {
@@ -655,6 +659,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       ],
       "describe": true,
       "required": true,
+      "enabled": true,
       "step_ms": null,
       "status": "failed",
       "reported": null
@@ -883,4 +888,148 @@ TEST_CASE(the_json_report_writes_null_for_what_is_not_there)
     r.participants = {ParticipantResult{ParticipantStatus::Described, ecu("", 10ms, {}, "")}};
     const std::string reported = format_json(r);
     CHECK(reported.find("\n      \"reported\": {\n        \"vehicle_sil\": null,\n        \"name\": null,\n") != std::string::npos);
+}
+
+// --- disabled participants --------------------------------------------------------------------
+
+namespace {
+
+/// The good pair with Dashboard disabled.
+Setup without_dashboard()
+{
+    Setup s = good_pair();
+    s.config.participants[1].enabled = false;
+    s.results[1] = ParticipantResult{ParticipantStatus::Disabled, std::nullopt};
+    return s;
+}
+
+} // namespace
+
+TEST_CASE(a_disabled_participant_is_a_note_and_the_rules_are_about_the_rest)
+{
+    // Not on its network any more: what follows from that is said (the rules do not wait for it).
+    check_text(without_dashboard().check(),
+               "N 9 participant-disabled: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither "
+               "checked nor started, and the other findings are about the simulation without it\n"
+               "W 3 single-participant: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: "
+               "add the other participants of this network, or remove it\n");
+    // Whatever its result says (an entry with an error, or a description): disabled is decisive,
+    // and it holds back no rule.
+    for (const ParticipantStatus status : {ParticipantStatus::Skipped, ParticipantStatus::Described,
+                                           ParticipantStatus::NotChecked, ParticipantStatus::Failed})
+    {
+        Setup other = good_pair();
+        other.config.participants[1].enabled = false;
+        other.config.participants[1].name.clear();
+        other.results[1].status = status;
+        check_text(other.check(),
+                   "N 9 participant-disabled: participants[1]: disabled (enabled: false, or --disable): it is neither "
+                   "checked nor started, and the other findings are about the simulation without it\n"
+                   "W 3 single-participant: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no "
+                   "one: add the other participants of this network, or remove it\n");
+    }
+}
+
+TEST_CASE(the_reports_show_a_disabled_participant)
+{
+    const Setup s = without_dashboard();
+    CheckReport r;
+    r.file = "sim.yaml";
+    r.config = s.config;
+    r.participants = s.results;
+    r.findings = check_participants(s.config, s.results, "1.0.0");
+    sort_findings(r.findings);
+    check_text(format_text(r),
+               "sim.yaml: 2 participants (1 disabled), 1 network\n"
+               "\n"
+               "participant  step   networks\n"
+               "Engine       10 ms  J1939_CAN (j1939 0x00)\n"
+               "Dashboard    -      disabled\n"
+               "\n"
+               "network    kind  participants\n"
+               "J1939_CAN  can   Engine\n"
+               "\n"
+               "warning: sim.yaml:3: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add "
+               "the other participants of this network, or remove it\n"
+               "note: sim.yaml:9: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked "
+               "nor started, and the other findings are about the simulation without it\n"
+               "\n"
+               "passed: 0 errors, 1 warning, 1 note\n");
+    // The note does not fail --strict (the warning does).
+    r.strict = true;
+    r.findings.erase(r.findings.begin());
+    CHECK(r.passed());
+    const std::string json = format_json(r);
+    CHECK(json.find("      \"required\": true,\n      \"enabled\": true,\n      \"step_ms\": 10,\n      \"status\": "
+                    "\"described\",\n") != std::string::npos);
+    CHECK(json.find("      \"required\": true,\n      \"enabled\": false,\n      \"step_ms\": null,\n      \"status\": "
+                    "\"disabled\",\n      \"reported\": null\n") != std::string::npos);
+    CHECK(json.find("      \"participants\": [\n        \"Engine\"\n      ]\n") != std::string::npos);
+}
+
+TEST_CASE(check_file_neither_looks_for_nor_runs_a_disabled_executable)
+{
+    const auto dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "disabled";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "sim.yaml";
+    std::ofstream(file) << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                           "  - name: Engine\n    command: [missing/engine]\n"
+                           "  - name: Ghost\n    command: [missing/ghost]\n    enabled: false\n";
+    const CheckReport r = check_file(file, "sim.yaml", CheckOptions{});
+    CHECK(r.config.has_value());
+    CHECK(r.participants.size() == 2 && r.participants[0].status == ParticipantStatus::Failed &&
+          r.participants[1].status == ParticipantStatus::Disabled && r.participants[1].executable.empty());
+    std::string codes;
+    for (const auto& f : r.findings)
+    {
+        codes += f.code + "(" + f.participant + ") ";
+    }
+    check_text(codes, "executable(Engine) participant-disabled(Ghost) ");
+    // --disable and --enable change the file's choice; a name that the file does not have is a usage error.
+    CheckOptions swapped;
+    swapped.overrides = EnabledOverrides{{"Engine"}, {"Ghost"}};
+    const CheckReport s = check_file(file, "sim.yaml", swapped);
+    CHECK(!s.usage);
+    CHECK(s.participants[0].status == ParticipantStatus::Disabled && s.participants[1].status == ParticipantStatus::Failed);
+    CheckOptions wrong;
+    wrong.overrides = EnabledOverrides{{"Gost"}, {}};
+    const CheckReport u = check_file(file, "sim.yaml", wrong);
+    CHECK(u.usage && !u.config && !u.passed());
+    check_text(lines(u.findings), "E 0 usage: --disable Gost: the file has no participant with this name (did you mean "
+                                  "'Ghost'?); its participants are Engine, Ghost\n");
+    // The JSON of a usage error names the file.
+    const std::string json = format_json(u);
+    CHECK(json.find("\n  \"file\": \"sim.yaml\",\n  \"result\": \"usage\",\n") != std::string::npos);
+    // A name given to both is a usage error before the file is read (here: there is none).
+    CheckOptions both;
+    both.overrides = EnabledOverrides{{"Ghost"}, {"Ghost"}};
+    const CheckReport b = check_file(dir / "none.yaml", "none.yaml", both);
+    CHECK(b.usage);
+    check_text(lines(b.findings), "E 0 usage: --disable and --enable both name Ghost: give one of them\n");
+}
+
+TEST_CASE(check_file_a_disabled_entry_with_errors_and_an_unreadable_enabled)
+{
+    const auto dir = std::filesystem::path(VEHICLE_SIL_LAUNCH_SCRATCH) / "disabled-errors";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "sim.yaml";
+    // Ghost is disabled and has no command; Maybe's enabled cannot be read: neither is looked for.
+    std::ofstream(file) << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                           "  - name: Engine\n    command: [missing/engine]\n"
+                           "  - name: Ghost\n    enabled: false\n"
+                           "  - name: Maybe\n    command: [missing/maybe]\n    enabled: no\n";
+    const CheckReport r = check_file(file, "sim.yaml", CheckOptions{});
+    CHECK(r.participants.size() == 3 && r.participants[1].status == ParticipantStatus::Disabled &&
+          r.participants[2].status == ParticipantStatus::Skipped);
+    std::string codes;
+    for (const auto& f : r.findings)
+    {
+        codes += f.code + "(" + f.participant + ") ";
+    }
+    check_text(codes, "executable(Engine) missing-key(Ghost) value(Maybe) participant-disabled(Ghost) ");
+    // The JSON says disabled for Ghost.
+    CHECK(format_json(r).find("      \"enabled\": false,\n      \"step_ms\": null,\n      \"status\": \"disabled\",\n") !=
+          std::string::npos);
 }

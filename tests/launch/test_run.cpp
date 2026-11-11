@@ -427,6 +427,7 @@ TEST_CASE(the_json_report)
                "    {\n"
                "      \"name\": \"Engine\",\n"
                "      \"required\": true,\n"
+               "      \"enabled\": true,\n"
                "      \"ended\": \"exited\",\n"
                "      \"exit_code\": 0,\n"
                "      \"signal\": null,\n"
@@ -436,6 +437,7 @@ TEST_CASE(the_json_report)
                "    {\n"
                "      \"name\": \"Brake\",\n"
                "      \"required\": true,\n"
+               "      \"enabled\": true,\n"
                "      \"ended\": \"killed\",\n"
                "      \"exit_code\": null,\n"
                "      \"signal\": null,\n"
@@ -623,4 +625,27 @@ TEST_CASE(an_unexpected_failure_is_written_in_the_form_of_the_command)
     const std::string check = format_internal_error_json(false, "boom");
     CHECK(check.rfind("{\n  \"vehicle_sil_check\": 1,\n", 0) == 0);
     CHECK(check.find("\"code\": \"internal\"") != std::string::npos);
+}
+
+TEST_CASE(a_disabled_participant_is_shown_as_not_started_and_is_no_finding)
+{
+    RunOutcome o = passed_run();
+    ParticipantRun off = participant("Brake", 7);
+    off.enabled = false;
+    o.participants[1] = off;
+    const RunReport r = report_of(o);
+    check_text(lines(r.findings), "");
+    CHECK(r.result() == RunResult::Passed);
+    const std::string text = format_run_text(r);
+    check_text(text.substr(text.find("run: ")), "run: the simulation ran to stop_at_ms (1000 ms) and ended\n"
+                                                "\n"
+                                                "participant  required  ended\n"
+                                                "Engine       yes       exit code 0\n"
+                                                "Brake        -         not started (disabled)\n"
+                                                "\n"
+                                                "passed: 0 errors, 0 warnings, 0 notes\n");
+    const std::string json = format_run_json(r);
+    CHECK(json.find("      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": false,\n      \"ended\": "
+                    "\"not_started\",\n      \"exit_code\": null,\n      \"signal\": null,\n      \"left_processes\": false,\n"
+                    "      \"log\": null\n") != std::string::npos);
 }

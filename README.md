@@ -44,7 +44,7 @@
 | `examples/control` | 変数を宣言する ECU の Peer `vehicle_sil_control_peer` と、1 つのプロセスで動くデモ `vehicle_sil_control_demo` |
 | `tools/sim_controller` | 仮想時間のシミュレーションを開始・停止する `vehicle_sil_sim_controller` |
 | `tools/can_bus_simulator` | 簡易 CAN Network Simulator の participant `vehicle_sil_can_bus_simulator` |
-| `tools/launch` | ECU の実行ファイルをまとめる構成ファイルを照合する `vehicle_sil_launch check` と、シミュレーション全体を起動して見届ける `vehicle_sil_launch run`（[docs/simulation-config.md](docs/simulation-config.md)） |
+| `tools/launch` | ECU の実行ファイルをまとめる構成ファイルを照合する `vehicle_sil_launch check` と、シミュレーション全体を起動して見届ける `vehicle_sil_launch run`（[docs/simulation-config.md](docs/simulation-config.md)）。ECU を外して動かすときは `run simulation.yaml --disable <participant 名>`（[participant を外す](docs/simulation-config.md#participant-を外すenabled--disable--enable)） |
 | `tools/j1939_codegen` | YAML の定義から J1939 の型付きメッセージを生成する `j1939_codegen.py` |
 | `bridges/vector-xl` | Vector XL CAN Bridge（ライブラリと実行ファイル `vehicle_sil_vector_xl_bridge`） |
 | `examples/getting_started` | 最初の例 `vehicle_sil_getting_started`: `Ecu&` を受け取る 2 つの ECU を、`Simulation` で仮想バスか SIL Kit に載せる |

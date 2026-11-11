@@ -54,7 +54,8 @@ participants:
 | `participants[].command` | はい | 実行ファイルと、その引数の配列。引数がなければ文字列 1 つでもかまいません（空白で分けません） |
 | `participants[].step_ms` | | 実行ファイルが申告するステップ幅（ミリ秒、1 以上 10^12 以下の整数）。書いたときだけ照合します |
 | `participants[].describe` | | `true`（既定）: ecu_main の実行ファイル（照合します）。`false`: それ以外の実行ファイル（照合しません） |
-| `participants[].required` | | `true`（既定）か `false`。シミュレーションがその participant を待つか。`false` は `describe: false` の participant にだけ書けます。少なくとも 1 つは `true` の participant が要ります（誤り `no-required-participant`） |
+| `participants[].required` | | `true`（既定）か `false`。シミュレーションがその participant を待つか。`false` は `describe: false` の participant にだけ書けます。外していない participant のうち、少なくとも 1 つは `true` の participant が要ります（誤り `no-required-participant`） |
+| `participants[].enabled` | | `true`（既定）か `false`。`false` の participant は外します（照合も起動もしません。[participant を外す](#participant-を外すenabled--disable--enable)） |
 
 - 知らないキーはエラーです（打ち間違いを黙って無視しません）。近い名前があれば示します。同じキーを 2 回書くのもエラーです。
 - 整数は引用符なしで書きます（`"5000"` は文字列なのでエラーです）。真偽値は `true` か `false` です。
@@ -82,19 +83,48 @@ participants:
 
 - `command` には、`ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--help`、`-h`。`--name=X` の形も）を書けません（誤り）。
 - 照合では、`command` の引数（`{{語}}` を `{語}` に戻したもの）に `--describe --name <participant 名>` を足して動かします。`run` では `--name <participant 名> --registry-uri <URI> --start-timeout-ms <ms>` を足します。`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です（開始を待つのはランチャーで、来なかった participant を挙げるのもランチャーです。ECU の制限は、ランチャーがいなくなったときのためのものです）。
-- `required: false` は書けません（誤り `not-required-ecu`）。ecu_main の実行ファイルは coordinated の participant として参加し、SIL Kit は必須でない coordinated の participant を始めないためです。ECU を外して動かすときは、その participant を消すか、コメントにします。
+- `required: false` は書けません（誤り `not-required-ecu`）。ecu_main の実行ファイルは coordinated の participant として参加し、SIL Kit は必須でない coordinated の participant を始めないためです。ECU を外して動かすときは、`enabled: false` を書くか、`--disable <participant 名>` を付けます（[participant を外す](#participant-を外すenabled--disable--enable)）。
 
 ### ほかの実行ファイル（`describe: false`）
 
 - 照合しません。名前、ステップ幅、ネットワークを確かめられないことを注記します。`step_ms` を書いても照合しないので、注記します。
 - `run` は、書いた引数（プレースホルダーを置き換えたもの）のまま起動します。`required: true`（既定）の participant は、`{registry_uri}` の registry に、participant 名で、coordinated のライフサイクルで参加する必要があります（シミュレーションはそれを待ちます）。シミュレーションに参加しない道具（ログを取るだけのものなど）は `required: false` にします。
 
+### participant を外す（`enabled`、`--disable`、`--enable`）
+
+ある ECU を除いて動かすときは、その participant に `enabled: false` を書きます。ファイルを書き換えずに組み合わせを変えるときは、`check` と `run` に `--disable <participant 名>`（外す）か `--enable <participant 名>`（`enabled: false` のものを戻す）を付けます。どちらも繰り返せます。コマンドラインの指定が、ファイルの `enabled` より優先します。
+
+- 外した participant は、照合も起動もしません。`--describe` も動かさず、実行ファイルも探しません（まだない実行ファイルでもかまいません）。シミュレーションはそれを待ちません。
+- 外した participant の項目も、書き方は同じように確かめます（キー、値の型、名前の重複、`command` の引数など）。戻したときに初めて誤りが出ることはありません。誤りがあっても、外した participant は残りの照合を止めません。`enabled` の値が真偽値でない participant は、外すかどうかがわからないので、照合も起動もしません（誤りなので照合は失敗します）。
+- 同じ名前の項目は、外していても誤りです（`--disable <名前>` がどれを指すかわからなくなるため）。代わりの ECU と入れ替えるときは、別の名前にするか、構成ファイルを分けます。
+- 照合は、残りの participant の組み合わせで行います。外した結果として出るもの（participant が 1 つだけになったネットワークなど）は、そのまま出します。
+- 外した participant ごとに注記 `participant-disabled` を出します（`--strict` でも失敗にしません）。「一部を外して通った」を「全部で通った」と読み違えないためです。ただし、外したことで出る警告（下の例の `single-participant` など）は警告のままなので、`--strict` を付けると失敗します（`run --strict` は何も起動しません）。
+- 外していない participant のうち、少なくとも 1 つは必須（`required: true`）でなければなりません（誤り `no-required-participant`）。
+- `--disable` と `--enable` には、構成ファイルにある participant 名を書きます。同じ名前を両方に書くのは、いつでも引数の誤りです（終了コード 4）。構成ファイルにない名前は、構成ファイルを読めて誤りがないときだけ引数の誤りにします（終了コード 4。使える名前を並べ、合わない名前を全部挙げます）。構成ファイルを読めないとき（終了コード 3）と誤りがあるとき（終了コード 1）は、ファイルの誤りを先に出し、合わない名前は言いません（名前を読めなかった項目のせいかもしれないため）。その間も、構成ファイルにある名前の指定は当てます。
+
+<!-- vehicle_sil_launch check simulation.yaml --disable Dashboard -->
+```text
+simulation.yaml: 2 participants (1 disabled), 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    -      disabled
+
+network    kind  participants
+J1939_CAN  can   Engine
+
+warning: simulation.yaml:8: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it
+note: simulation.yaml:14: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it
+
+passed: 0 errors, 1 warning, 1 note
+```
+
 ## 照合
 
 `vehicle_sil_launch check <file>` は、次の順に確かめ、見つけたものを全部まとめて出します。見つけたものには 3 つの重さがあります。誤り（error）は照合を失敗にします。警告（warning）は `--strict` のときだけ失敗にします。注記（note）は失敗にしません（照合が確かめられなかったことを伝えます）。
 
 1. 構成ファイルの文面: 形式の版、知らないキーと足りないキー、値の型と範囲、名前、`command` の引数と波括弧。誤りのある participant（名前がない・使えない、`command` が使えない、名前が重複している、`describe` が真偽値でない、`command` の引数の誤り）は、次の段に進めません。知らないキーや `step_ms` の誤りは、照合を止めません。
-2. 実行ファイル: あること、ディレクトリでないこと、バッチファイルでないこと、（Linux では）実行の許可があること。
+2. 実行ファイル: あること、ディレクトリでないこと、バッチファイルでないこと、（Linux では）実行の許可があること。外した participant（`enabled: false`、`--disable`）は、ここから先を飛ばします。
 3. `describe: true` の各実行ファイルを `--describe --name <participant 名>` で 1 つずつ順に動かし（並列にしません）、標準出力の JSON を読みます。作業ディレクトリは構成ファイルのあるディレクトリで、標準入力は空です。終了コードが 0 でない（シグナルや例外で終わったときは、そう書きます）、時間内に終わらない（`--describe-timeout-ms`、既定 10000 ms。過ぎたら止めます。出力を書き続ける実行ファイルも止めます）、JSON でない、形式の版が違う、は、その participant の誤りです。標準エラーの最後の 10 行を添えます。読むのは標準出力の最初の 1 MiB と標準エラーの最後の 1 MiB です。標準出力を切ったときは自己申告の誤りの添え書きで、標準エラーを切ったときはその末尾を添えるところで、そう書きます。
 4. 構成と自己申告の突き合わせ。
 
@@ -121,7 +151,7 @@ participants:
 | `executable` | 誤り | 実行ファイルがない（区切りのない名前は `PATH` にもない）、ディレクトリ、バッチファイル、実行の許可がない |
 | `found-on-path` | 注記 | 実行ファイルを `PATH` で見つけた（その場所を示します） |
 | `not-required-ecu` | 誤り | `describe: true` の participant に `required: false` がある |
-| `no-required-participant` | 誤り | どの participant も `required: false`（シミュレーションが待つ participant がない） |
+| `no-required-participant` | 誤り | 外していない participant がどれも `required: false`、またはすべてを外した（シミュレーションが待つ participant がない） |
 | `describe-start` | 誤り | 実行ファイルを起動できない |
 | `describe-timeout` | 誤り | `--describe` が時間内に終わらない |
 | `describe-failed` | 誤り | `--describe` の終了コードが 0 でない（4 は、ecu_main でない実行ファイルの見込みが高い） |
@@ -139,6 +169,7 @@ participants:
 | `unused-network` | 警告（同上のときは注記） | どの participant も使わないネットワーク |
 | `single-participant` | 警告（同上のときは注記） | participant が 1 つだけのネットワーク（送ったものを誰も受けない） |
 | `not-checked` | 注記 | `describe: false` の participant（照合していない） |
+| `participant-disabled` | 注記 | 外した participant（`enabled: false`、`--disable`。照合も起動もしない） |
 | `version-mismatch` | 注記 | 実行ファイルをビルドした vehicle-sil の版が、`vehicle_sil_launch` の版と違う |
 | `usage` | 誤り | 引数の誤り（`--json` のときの JSON だけ） |
 | `internal` | 誤り | `vehicle_sil_launch` 自身の想定外の失敗（`--json` のときの JSON だけ） |
@@ -216,7 +247,7 @@ Body_LIN   lin   -
 
 error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number)
 error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms
-error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required)
+error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled)
 warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs
 
 failed: 3 errors, 1 warning, 0 notes
@@ -228,7 +259,7 @@ failed: 3 errors, 1 warning, 0 notes
 
 - 先頭の `vehicle_sil_check` は形式の版です。版が上がるのは、あるキーか `code` の意味が変わるとき、またはなくなるときです。キーと、`code`、`severity`、`result`、`participants[].status` の値は、版を上げずに増えることがあります。読む側は、知らない版を断り、知らないキーは無視し、知らない `code` はその `severity` で扱い、知らない `severity` は `"error"` として、知らない `result` は成功でないものとして（終了コードを見ます）、知らない `status` は照合できなかったものとして扱います。
 - 値のないものは `null` です（空の文字列にしません）。配列は空の配列です。
-- 構成ファイルを読めないとき（終了コード 3）も JSON を書きます（`result` が `"unreadable"`、`participants` と `networks` は空）。引数の誤り（終了コード 4）でも、`--json` があれば JSON を書きます（`result` が `"usage"`、`file` は `null`、`findings` に `code` が `usage` の誤り）。
+- 構成ファイルを読めないとき（終了コード 3）も JSON を書きます（`result` が `"unreadable"`、`participants` と `networks` は空）。引数の誤り（終了コード 4）でも、`--json` があれば JSON を書きます（`result` が `"usage"`、`findings` に `code` が `usage` の誤り。`file` は引数から構成ファイルがわかればその名前、わからないとき（ファイルがない、2 つ以上など）は `null`）。
 
 | キー | 値 |
 |---|---|
@@ -239,8 +270,8 @@ failed: 3 errors, 1 warning, 0 notes
 | `strict` | `--strict` を付けたか |
 | `errors`、`warnings`、`notes` | 誤り、警告、注記の数 |
 | `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 構成ファイルの値（読めないときと、書いていない `stop_at_ms` と `registry_uri` は `null`。`start_timeout_ms` と `stop_timeout_ms` は既定の値も） |
-| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`step_ms`（なければ `null`）、`status`、`reported` |
-| `participants[].status` | `"described"`（自己申告を読んだ）、`"not_checked"`（`describe: false`）、`"failed"`（実行ファイルがない、`--describe` の失敗）、`"skipped"`（構成ファイルの誤りで進めなかった） |
+| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`step_ms`（なければ `null`）、`status`、`reported` |
+| `participants[].status` | `"described"`（自己申告を読んだ）、`"not_checked"`（`describe: false`）、`"failed"`（実行ファイルがない、`--describe` の失敗）、`"skipped"`（構成ファイルの誤りで進めなかった）、`"disabled"`（外した。項目に誤りがあっても） |
 | `participants[].reported` | 自己申告（`described` のときだけ。ほかは `null`）: `vehicle_sil`、`name`、`step_ns`、`networks`（`--describe` の JSON と同じ形。変数は含みません） |
 | `networks[]` | 構成ファイルの順。`name`、`kind`（読めなかったときは `null`）、`line`、`participants`（使う participant 名。構成ファイルの順） |
 | `findings[]` | 人向けと同じ順。`severity`（`"error"`、`"warning"`、`"note"`）、`code`、`file`、`line`（なければ `null`）、`participant`、`network`（関係するもの。なければ `null`）、`message`（1 行）、`detail`（添える文。なければ `null`） |
@@ -281,6 +312,7 @@ participants:
       ],
       "describe": true,
       "required": true,
+      "enabled": true,
       "step_ms": 20,
       "status": "described",
       "reported": {
@@ -347,8 +379,8 @@ participants:
 
 1. `check` と同じ照合をします。誤りがあれば（`--strict` では警告も）、何も起動せずに照合の結果を書き、終了コード 1 です。
 2. registry をこのプロセスの中で立てます（`registry_uri`、なければ 127.0.0.1 の空いているポート）。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。
-3. controller（participant 名 `SimulationController`）をこのプロセスの中で動かします。シミュレーションが待つ（必須の）participant は、`required: true` のものです。
-4. participant を構成ファイルの順に、それぞれ別のプロセスで起動します。作業ディレクトリは構成ファイルのあるディレクトリ、標準入力は空です。
+3. controller（participant 名 `SimulationController`）をこのプロセスの中で動かします。シミュレーションが待つ（必須の）participant は、外していない `required: true` のものです。
+4. 外していない participant を構成ファイルの順に、それぞれ別のプロセスで起動します。作業ディレクトリは構成ファイルのあるディレクトリ、標準入力は空です。
 5. 必須の participant がそろったら始めます。`stop_at_ms` があれば、仮想時間がそこに達したところで止めます。なければ、participant が止めるか、Ctrl+C まで動きます。
 6. 終わったら、すべての participant を終わらせ（下の「止め方」）、結果を書きます。
 
@@ -424,6 +456,32 @@ participant の表の `ended` の列:
 | `stopped (SIGTERM), exit code <n>` | 止まるよう求めた後に終わった（Windows では `Ctrl+Break`） |
 | `killed` | 強制終了した |
 | `not started` | 起動できなかった（またはその前に実行をやめた） |
+| `not started (disabled)` | 外した participant（`required` の列は `-`） |
+
+外した participant がいるときの例です。照合の部分は `check` と同じです（[participant を外す](#participant-を外すenabled--disable--enable)）。
+
+<!-- vehicle_sil_launch run simulation.yaml --disable Dashboard -->
+```text
+simulation.yaml: 2 participants (1 disabled), 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    -      disabled
+
+network    kind  participants
+J1939_CAN  can   Engine
+
+warning: simulation.yaml:8: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it
+note: simulation.yaml:14: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it
+
+run: the simulation ran to stop_at_ms (1000 ms) and ended
+
+participant  required  ended
+Engine       yes       exit code 0
+Dashboard    -         not started (disabled)
+
+passed: 0 errors, 1 warning, 1 note
+```
 
 実行で見つけるものの `code`:
 
@@ -457,7 +515,7 @@ participant の表の `ended` の列:
 | `errors`、`warnings`、`notes` | 照合と実行を合わせた数 |
 | `simulation` | `"reached_stop_at"`（`stop_at_ms` まで動いた）、`"ended"`（participant が止めた）、`"aborted"`（中断した。`--timeout-ms` のときも）、`"interrupted"`、`"not_started"`。何も起動しなかったときは `null` |
 | `interrupted_by` | 中断のシグナルかキー（`"SIGINT"`、`"Ctrl+C"` など）。中断でなければ `null` |
-| `participants[]` | 構成ファイルの順。`name`、`required`、`ended`（`"exited"`、`"stopped"`、`"killed"`、`"not_started"`）、`exit_code`（シグナルで終わったとき、強制終了したとき、起動しなかったときは `null`）、`signal`（`"SIGSEGV"` など。なければ `null`）、`left_processes`（起動したプロセスを残したか）、`log`（`--log-dir` のファイル。なければ `null`） |
+| `participants[]` | 構成ファイルの順（外した participant も）。`name`、`required`、`enabled`（`false` なら外した participant で、`ended` は `"not_started"`、`log` は `null`。シミュレーションが待つのは `required` と `enabled` がどちらも `true` のもの）、`ended`（`"exited"`、`"stopped"`、`"killed"`、`"not_started"`）、`exit_code`（シグナルで終わったとき、強制終了したとき、起動しなかったときは `null`）、`signal`（`"SIGSEGV"` など。なければ `null`）、`left_processes`（起動したプロセスを残したか）、`log`（`--log-dir` のファイル。なければ `null`） |
 | `findings[]` | 実行で見つけたもの（照合の `findings[]` と同じ形） |
 | `check` | 照合の結果（`check --json` と同じオブジェクト） |
 
@@ -478,6 +536,7 @@ participant の表の `ended` の列:
     {
       "name": "Engine",
       "required": true,
+      "enabled": true,
       "ended": "exited",
       "exit_code": 0,
       "signal": null,
@@ -487,6 +546,7 @@ participant の表の `ended` の列:
     {
       "name": "Dashboard",
       "required": true,
+      "enabled": true,
       "ended": "exited",
       "exit_code": 0,
       "signal": null,
@@ -517,6 +577,7 @@ participant の表の `ended` の列:
         ],
         "describe": true,
         "required": true,
+        "enabled": true,
         "step_ms": 10,
         "status": "described",
         "reported": {
@@ -547,6 +608,7 @@ participant の表の `ended` の列:
         ],
         "describe": true,
         "required": true,
+        "enabled": true,
         "step_ms": 5,
         "status": "described",
         "reported": {
@@ -591,8 +653,9 @@ participant の表の `ended` の列:
 ## 引数と終了コード
 
 ```text
-vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--] <file>
-vehicle_sil_launch run [--json] [--strict] [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--] <file>
+vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>
+vehicle_sil_launch run [--json] [--strict] [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>]
+                       [--disable <name>]... [--enable <name>]... [--] <file>
 ```
 
 | 引数 | 意味 |
@@ -602,6 +665,8 @@ vehicle_sil_launch run [--json] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
 | `--log-dir <dir>` | `run` だけ。participant ごとの出力のファイルを置くディレクトリ |
 | `--timeout-ms <ms>` | `run` だけ。シミュレーションの開始から終わりまでの実時間の上限（1 以上の整数）。超えたら中断して誤り。既定は上限なし |
 | `--describe-timeout-ms <ms>` | 1 つの実行ファイルの `--describe` を待つ時間（1 以上の整数。既定は 10000） |
+| `--disable <name>` | participant `<name>` を外す（`enabled: false` と同じ）。繰り返せる |
+| `--enable <name>` | participant `<name>` を戻す（`enabled: true` と同じ）。繰り返せる |
 | `--` | これより後はファイル名（`-` で始まる名前のとき） |
 | `--help`、`-h` | 使い方を標準出力に書いて 0 で終わる（`--` より前のどこにあっても） |
 
@@ -610,7 +675,7 @@ vehicle_sil_launch run [--json] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
 | 0 | 誤りがない（警告と注記だけなら 0。`--strict` では警告もない）。`run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった |
 | 1 | 誤りがある（`--strict` では警告も）。`run` では、照合の誤り（何も起動しない）か、実行の誤り（participant が失敗した、そろわなかった、止めても終わらなかったなど） |
 | 3 | 構成ファイルを読めない（ファイルがない、文法の誤り、知らない形式の版など）。`run` で registry や controller を用意できないときも 3 です。結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です（標準エラーに理由。`--json` では、そのコマンドの形の JSON に `code` が `internal` の誤り） |
-| 4 | 引数の誤り（知らないコマンドや引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目、値のない `--describe-timeout-ms`、`check` の `--log-dir` と `--timeout-ms`）。誤りと使い方を標準エラーに書きます |
+| 4 | 引数の誤り（知らないコマンドや引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir` と `--timeout-ms`、構成ファイルにない participant 名の `--disable` と `--enable`、同じ名前の `--disable` と `--enable`）。誤りと使い方を標準エラーに書きます |
 | 130 | `run` が中断された（Ctrl+C など） |
 
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。

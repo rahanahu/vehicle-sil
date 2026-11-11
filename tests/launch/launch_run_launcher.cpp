@@ -5,8 +5,8 @@
 // and the helper of tests/process:
 //
 //   docs         the run of the example and its output in docs/simulation-config.md (text and
-//                JSON, byte for byte but for the version), the participants' lines on stderr,
-//                --log-dir
+//                JSON, byte for byte but for the version; also without Dashboard), the
+//                participants' lines on stderr, --log-dir
 //   check        a configuration with an error: nothing is started (exit 1)
 //   crash        a required ECU's process ends while the simulation runs: aborted (exit 1)
 //   step         a required ECU's step throws: aborted (exit 1)
@@ -26,6 +26,8 @@
 //   no_console   (Windows) the launcher without a console ends a participant at once
 //   killed       the launcher dies (SIGKILL / TerminateProcess): no participant is left
 //   usage        wrong command lines (exit 4), also with --json
+//   disabled     participants left out (enabled: false, --disable): not started, not waited for,
+//                no log; --enable takes one in again; a name the file does not have (exit 4)
 #include "launcher_support.hpp"
 #include "spawn_sleeper.hpp"
 
@@ -259,6 +261,12 @@ void docs(const Options& o)
             "the first line on stderr is where the registry listens:\n" + err);
     require(contains(err, "\n[vehicle_sil_launch] simulation running\n"), "the start on stderr:\n" + err);
 
+    const Captured without = launch(o, {"run", "simulation.yaml", "--disable", "Dashboard"}, dir);
+    expect_code(without, 0, "run simulation.yaml --disable Dashboard");
+    expect_text(without.standard_output,
+                block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml --disable Dashboard -->"),
+                "run simulation.yaml --disable Dashboard");
+
     const Captured json = launch(o, {"run", "simulation.yaml", "--json"}, dir);
     expect_code(json, 0, "run simulation.yaml --json");
     // Byte for byte: "\n" also on Windows.
@@ -296,7 +304,7 @@ void check(const Options& o)
                 "Logger       -     not checked (describe: false)\n"
                 "\n"
                 "error: sim.yaml:7: participant 'Logger': unknown key 'requried': did you mean 'required'? (the keys "
-                "here: name, command, step_ms, describe, required)\n"
+                "here: name, command, step_ms, describe, required, enabled)\n"
                 "note: sim.yaml:4: participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot "
                 "compare its name, step and networks with this file\n"
                 "note: sim.yaml:5: participant 'Logger': the command has no {registry_uri}, so the executable is not told "
@@ -1002,6 +1010,120 @@ void usage(const Options& o)
             "the run's JSON for a file that cannot be read:\n" + missing.standard_output);
 }
 
+void disabled(const Options& o)
+{
+    // Ghost's executable does not exist, and it is required: started or waited for, it would fail
+    // the run.
+    const fs::path dir = scenario_dir(o,
+                                      "vehicle_sil_simulation: 1\n"
+                                      "stop_at_ms: 300\n"
+                                      "networks: []\n"
+                                      "participants:\n"
+                                      "  - name: Engine\n"
+                                      "    command: [" + ecu(o) + "]\n"
+                                      "  - name: Brake\n"
+                                      "    command: [" + ecu(o) + "]\n"
+                                      "    enabled: false\n"
+                                      "  - name: Ghost\n"
+                                      "    command: [missing/ghost]\n"
+                                      "    enabled: false\n",
+                                      {{"Engine", "pid"}, {"Brake", "pid"}});
+    const fs::path logs = o.work_dir / "disabled-logs";
+    const Captured run = launch(o, {"run", "sim.yaml", "--log-dir", shown_path(logs)}, dir);
+    expect_code(run, 0, "run with disabled participants");
+    expect_text(run.standard_output,
+                "sim.yaml: 3 participants (2 disabled), 0 networks\n"
+                "\n"
+                "participant  step   networks\n"
+                "Engine       10 ms  -\n"
+                "Brake        -      disabled\n"
+                "Ghost        -      disabled\n"
+                "\n"
+                "note: sim.yaml:7: participant 'Brake': disabled (enabled: false, or --disable): it is neither checked nor "
+                "started, and the other findings are about the simulation without it\n"
+                "note: sim.yaml:10: participant 'Ghost': disabled (enabled: false, or --disable): it is neither checked nor "
+                "started, and the other findings are about the simulation without it\n"
+                "\n"
+                "run: the simulation ran to stop_at_ms (300 ms) and ended\n"
+                "\n"
+                "participant  required  ended\n"
+                "Engine       yes       exit code 0\n"
+                "Brake        -         not started (disabled)\n"
+                "Ghost        -         not started (disabled)\n"
+                "\n"
+                "passed: 0 errors, 0 warnings, 2 notes\n",
+                "run with disabled participants");
+    const std::string err = lf(run.standard_error);
+    require(contains(err, "\n[vehicle_sil_launch] not starting Brake: disabled\n") &&
+                contains(err, "\n[vehicle_sil_launch] not starting Ghost: disabled\n"),
+            "the launcher says whom it does not start:\n" + err);
+    require(fs::exists(dir / "Engine.pid") && !fs::exists(dir / "Brake.pid"), "Engine ran, Brake did not");
+    require(fs::exists(logs / "Engine.log") && !fs::exists(logs / "Brake.log") && !fs::exists(logs / "Ghost.log"),
+            "no log for a participant that was not started");
+    fs::remove(dir / "Engine.pid");
+
+    // The command line swaps them: Brake runs, Engine does not.
+    const Captured swapped = launch(o, {"run", "--json", "--disable", "Engine", "--enable", "Brake", "sim.yaml"}, dir);
+    expect_code(swapped, 0, "run --disable Engine --enable Brake");
+    const std::string json = swapped.standard_output;
+    require(contains(json, "      \"name\": \"Engine\",\n      \"required\": true,\n      \"enabled\": false,\n"
+                           "      \"ended\": \"not_started\",\n      \"exit_code\": null,\n      \"signal\": null,\n"
+                           "      \"left_processes\": false,\n      \"log\": null\n") &&
+                contains(json, "      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": true,\n"
+                               "      \"ended\": \"exited\",\n      \"exit_code\": 0,\n") &&
+                contains(json, "        \"enabled\": false,\n        \"step_ms\": null,\n        \"status\": \"disabled\",\n"),
+            "the run's JSON for --disable Engine --enable Brake:\n" + json);
+    require(fs::exists(dir / "Brake.pid") && !fs::exists(dir / "Engine.pid"), "Brake ran, Engine did not");
+
+    // A name the file does not have: nothing is started.
+    fs::remove(dir / "Brake.pid");
+    const Captured typo = launch(o, {"run", "sim.yaml", "--enable", "Brak"}, dir);
+    expect_code(typo, 4, "run --enable Brak");
+    require(lf(typo.standard_error).rfind("error: --enable Brak: the file has no participant with this name (did you mean "
+                                          "'Brake'?); its participants are Engine, Brake, Ghost\nusage: ", 0) == 0 &&
+                typo.standard_output.empty(),
+            "run --enable Brak wrote:\n" + typo.standard_output + typo.standard_error);
+    // The options may come before the command.
+    const Captured typoJson = launch(o, {"--json", "--disable", "Engine", "run", "sim.yaml", "--enable", "Engine"}, dir);
+    expect_code(typoJson, 4, "run --json --disable Engine --enable Engine");
+    require(contains(typoJson.standard_output, "\"vehicle_sil_run\": 1,\n") &&
+                contains(typoJson.standard_output, "\"result\": \"usage\",\n") &&
+                contains(typoJson.standard_output, "\"message\": \"--disable and --enable both name Engine: give one of them\""),
+            "the run's JSON for --disable and --enable of one name:\n" + typoJson.standard_output);
+    require(!fs::exists(dir / "Engine.pid") && !fs::exists(dir / "Brake.pid"), "nothing was started after a usage error");
+
+    // A run that fails with a disabled participant: it stays not started, with no finding.
+    const fs::path failing = scenario_dir(o,
+                                          "vehicle_sil_simulation: 1\n"
+                                          "stop_at_ms: 1000\n"
+                                          "networks: []\n"
+                                          "participants:\n"
+                                          "  - name: Engine\n"
+                                          "    command: [" + ecu(o) + "]\n"
+                                          "  - name: Brake\n"
+                                          "    command: [" + ecu(o) + "]\n"
+                                          "    enabled: false\n",
+                                          {{"Engine", "exit-at-ms 200 7"}, {"Brake", "pid"}});
+    const Captured crashed = launch(o, {"run", "--json", "sim.yaml"}, failing);
+    expect_code(crashed, 1, "run with a crashing ECU and a disabled one");
+    require(contains(crashed.standard_output, "  \"result\": \"failed\",\n") &&
+                contains(crashed.standard_output, "      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": "
+                                                  "false,\n      \"ended\": \"not_started\",\n      \"exit_code\": null,\n"
+                                                  "      \"signal\": null,\n      \"left_processes\": false,\n") &&
+                !contains(crashed.standard_output.substr(0, crashed.standard_output.find("  \"check\": {")),
+                          "\"participant\": \"Brake\""),
+            "the run's JSON with a crashing ECU and a disabled one:\n" + crashed.standard_output);
+    require(!fs::exists(failing / "Brake.pid"), "Brake was not started");
+
+    // --strict: leaving Dashboard out of the example gives a warning (one participant on
+    // J1939_CAN), so nothing is started.
+    const Captured strict = launch(o, {"run", "--strict", "simulation.yaml", "--disable", "Dashboard"}, o.example_dir);
+    expect_code(strict, 1, "run --strict simulation.yaml --disable Dashboard");
+    require(contains(strict.standard_output, "\nnothing was started: the check found warnings, and --strict fails on them") &&
+                !contains(strict.standard_error, "[vehicle_sil_launch] registry"),
+            "run --strict simulation.yaml --disable Dashboard wrote:\n" + strict.standard_output);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -1019,7 +1141,7 @@ int main(int argc, char** argv)
             {"grandchild", grandchild}, {"path", path},   {"interrupt", interrupt}, {"interrupt_twice", interrupt_twice},
             {"killed", killed}, {"ended_early", ended_early}, {"interrupt_ending", interrupt_ending},
             {"timeout", timeout}, {"no_console", no_console},
-            {"usage", usage}};
+            {"usage", usage}, {"disabled", disabled}};
         const auto it = std::find_if(scenarios.begin(), scenarios.end(), [&](const auto& s) { return s.first == o.scenario; });
         if (it == scenarios.end())
         {

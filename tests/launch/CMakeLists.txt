@@ -22,7 +22,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_cli_launcher
     PREFIX launch_cli LABELS integration launch TIMEOUT 120
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/cli
-    SCENARIOS docs describe strict unreadable usage
+    SCENARIOS docs describe strict unreadable usage enabled
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --engine $<TARGET_FILE:vehicle_sil_engine_ecu>
@@ -51,7 +51,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
     SCENARIOS docs check crash step optional not_joined quitter hang grandchild path interrupt interrupt_twice
-              interrupt_ending ended_early timeout no_console killed usage
+              interrupt_ending ended_early timeout no_console killed usage disabled
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>

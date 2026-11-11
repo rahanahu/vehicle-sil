@@ -19,7 +19,7 @@ namespace {
 const std::vector<std::string> kTopKeys = {"vehicle_sil_simulation", "stop_at_ms", "start_timeout_ms", "stop_timeout_ms",
                                            "registry_uri", "networks", "participants"};
 const std::vector<std::string> kNetworkKeys = {"name", "kind"};
-const std::vector<std::string> kParticipantKeys = {"name", "command", "step_ms", "describe", "required"};
+const std::vector<std::string> kParticipantKeys = {"name", "command", "step_ms", "describe", "required", "enabled"};
 
 std::string join(const std::vector<std::string>& items)
 {
@@ -260,15 +260,7 @@ public:
             error("missing-key", 0,
                   "the file has no participants: add participants, a list of the participants with name and command");
         }
-        else if (!config.participants.empty() &&
-                 std::none_of(config.participants.begin(), config.participants.end(),
-                              [](const ParticipantConfig& p) { return p.required; }))
-        {
-            error("no-required-participant", participantsLine,
-                  "every participant has required: false, but the simulation starts when its required participants "
-                  "have joined, so it needs at least one: remove required: false from the participants it must wait "
-                  "for (an ecu_main executable is always required)");
-        }
+        config.participants_line = participantsLine;
         return config;
     }
 
@@ -651,6 +643,13 @@ private:
                     requiredLine = doc_.line(child);
                     participant.required = boolean(child, prefix, key, who).value_or(true);
                 }
+                else if (key == "enabled")
+                {
+                    const auto enabled = boolean(child, prefix, key, who);
+                    participant.enabled = enabled.value_or(true);
+                    // Not known whether to leave it out: neither described nor started.
+                    usable = usable && enabled.has_value();
+                }
                 else if (key != "name")
                 {
                     unknown_key(child, key, prefix, kParticipantKeys);
@@ -691,8 +690,8 @@ private:
                 error("not-required-ecu", requiredLine,
                       prefix + "required: false is only for executables with describe: false: an ecu_main executable joins "
                                "as a coordinated participant, which SIL Kit starts only among the required participants; "
-                               "remove required: false (to run the simulation without this ECU, remove the participant or "
-                               "make it a comment)",
+                               "remove required: false (to run the simulation without this ECU, write enabled: false "
+                               "instead, or give vehicle_sil_launch --disable " + (who.empty() ? std::string("<name>") : who) + ")",
                       who);
             }
             if (!participant.describe && participant.step_ms)
@@ -894,7 +893,128 @@ std::string closest(std::string_view word, const std::vector<std::string>& candi
 
 } // namespace detail
 
-ConfigRead read_config(std::string_view text)
+namespace {
+
+Finding usage(std::string message) { return Finding{Severity::Error, "usage", std::move(message), 0, "", ""}; }
+
+/// Applies --disable and --enable to `config` and returns their usage errors (then nothing is
+/// applied). Names the file does not have are errors only if `check_names`; else they are ignored.
+std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOverrides& overrides, bool check_names)
+{
+    std::vector<Finding> errors = override_conflicts(overrides);
+    std::vector<std::string> names;
+    for (const auto& p : config.participants)
+    {
+        if (!p.name.empty() && std::find(names.begin(), names.end(), p.name) == names.end())
+        {
+            names.push_back(p.name);
+        }
+    }
+    std::vector<std::string> reported;
+    const auto unknown = [&](const char* option, const std::string& name) {
+        const std::string key = std::string(option) + " " + name;
+        if (!check_names || std::find(names.begin(), names.end(), name) != names.end() ||
+            std::find(reported.begin(), reported.end(), key) != reported.end())
+        {
+            return;
+        }
+        reported.push_back(key);
+        const std::string guess = detail::closest(name, names);
+        errors.push_back(usage(key + ": the file has no participant with this name" +
+                               (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its participants are " +
+                               join(names)));
+    };
+    for (const auto& name : overrides.disable)
+    {
+        unknown("--disable", name);
+    }
+    for (const auto& name : overrides.enable)
+    {
+        unknown("--enable", name);
+    }
+    if (!errors.empty())
+    {
+        return errors;
+    }
+    for (auto& p : config.participants)
+    {
+        const auto named = [&p](const std::vector<std::string>& list) {
+            return std::find(list.begin(), list.end(), p.name) != list.end();
+        };
+        if (named(overrides.disable))
+        {
+            p.enabled = false;
+        }
+        else if (named(overrides.enable))
+        {
+            p.enabled = true;
+        }
+    }
+    return errors;
+}
+
+/// The simulation waits for its required participants: at least one enabled participant must be
+/// required.
+void check_required(const SimulationConfig& config, std::vector<Finding>& findings)
+{
+    if (config.participants.empty() || std::any_of(config.participants.begin(), config.participants.end(),
+                                                   [](const ParticipantConfig& p) { return p.enabled && p.required; }))
+    {
+        return;
+    }
+    // The disabled participants that would be waited for: enabling one of them helps.
+    std::vector<std::string> disabled;
+    bool anyEnabled = false;
+    for (const auto& p : config.participants)
+    {
+        anyEnabled = anyEnabled || p.enabled;
+        if (!p.enabled && p.required && !p.name.empty())
+        {
+            disabled.push_back(p.name);
+        }
+    }
+    std::string message;
+    if (!anyEnabled)
+    {
+        message = "every participant is disabled (enabled: false, or --disable), so the simulation has no participant "
+                  "to wait for: enable at least one (enabled: true, or --enable <name>)";
+    }
+    else if (disabled.empty())
+    {
+        message = "every participant has required: false, but the simulation starts when its required participants "
+                  "have joined, so it needs at least one: remove required: false from the participants it must wait "
+                  "for (an ecu_main executable is always required)";
+    }
+    else
+    {
+        message = "every enabled participant has required: false (disabled: " + join(disabled) +
+                  "), but the simulation starts when its required participants have joined, so it needs at least one: "
+                  "enable a required participant, or remove required: false from the participants it must wait for "
+                  "(an ecu_main executable is always required)";
+    }
+    findings.push_back(Finding{Severity::Error, "no-required-participant", std::move(message), config.participants_line,
+                               "", ""});
+}
+
+} // namespace
+
+std::vector<Finding> override_conflicts(const EnabledOverrides& overrides)
+{
+    std::vector<Finding> out;
+    std::vector<std::string> seen;
+    for (const auto& name : overrides.enable)
+    {
+        if (std::find(overrides.disable.begin(), overrides.disable.end(), name) != overrides.disable.end() &&
+            std::find(seen.begin(), seen.end(), name) == seen.end())
+        {
+            seen.push_back(name);
+            out.push_back(usage("--disable and --enable both name " + name + ": give one of them"));
+        }
+    }
+    return out;
+}
+
+ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)
 {
     ConfigRead out;
     if (text.substr(0, 2) == "\xFF\xFE" || text.substr(0, 2) == "\xFE\xFF" || text.find('\0') != std::string_view::npos)
@@ -917,6 +1037,13 @@ ConfigRead read_config(std::string_view text)
             return out;
         }
         out.config = Reader(doc, out.findings).read();
+        if (out.config)
+        {
+            const bool textHasErrors = std::any_of(out.findings.begin(), out.findings.end(),
+                                                   [](const Finding& f) { return f.severity == Severity::Error; });
+            out.override_errors = apply_overrides(*out.config, overrides, !textHasErrors);
+            check_required(*out.config, out.findings);
+        }
     }
     catch (const detail::YamlSyntaxError& e)
     {

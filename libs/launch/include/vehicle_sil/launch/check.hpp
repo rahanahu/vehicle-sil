@@ -83,7 +83,8 @@ enum class ParticipantStatus
     Described,  ///< its executable described itself (ParticipantResult::ecu)
     NotChecked, ///< describe: false
     Failed,     ///< its executable is missing, or --describe failed
-    Skipped,    ///< its entry in the file has an error
+    Skipped,    ///< its entry in the file has an error (and it is enabled)
+    Disabled,   ///< enabled: false (or --disable), also with an error in its entry: not checked, not started
 };
 
 struct ParticipantResult
@@ -98,7 +99,9 @@ struct ParticipantResult
 /// Compares the configuration with what the participants reported (`results` in the order of
 /// config.participants): names, steps, networks and their kinds, J1939 addresses and NAMEs,
 /// LIN masters, unused networks and networks with one participant, participants that were not
-/// checked, vehicle-sil versions other than `launcher_version`. Findings in a fixed order:
+/// checked or are disabled, vehicle-sil versions other than `launcher_version`. A disabled
+/// participant (ParticipantConfig::enabled, whatever its result) is not on any network and holds
+/// back no rule: the rules are about the simulation without it. Findings in a fixed order:
 /// participants in the file's order, then networks in the file's order.
 [[nodiscard]] std::vector<Finding> check_participants(const SimulationConfig& config,
                                                       const std::vector<ParticipantResult>& results,
@@ -114,7 +117,9 @@ struct CheckReport
     std::vector<Finding> findings{};               ///< in the order of sort_findings()
     /// --strict: a warning fails the check too (a note never does).
     bool strict = false;
-    /// The command line was wrong (format_json(): result "usage"; the finding says why).
+    /// The command line was wrong (format_json(): result "usage"; the findings say why; `file` stays
+    /// as given). check_file() sets it for overrides that do not fit (override_conflicts(),
+    /// ConfigRead::override_errors); `config` is then empty.
     bool usage = false;
 
     [[nodiscard]] std::size_t errors() const;
@@ -143,11 +148,14 @@ struct CheckOptions
     std::chrono::milliseconds describe_timeout{10000};
     /// CheckReport::strict.
     bool strict = false;
+    /// --disable and --enable.
+    EnabledOverrides overrides{};
 };
 
 /// Checks the file `path` (shown as `shown_as`): reads it, checks the executables, runs each
-/// --describe in turn (not in parallel), compares. Never throws for a problem of the file or
-/// of an executable: they are findings.
+/// --describe in turn (not in parallel), compares. A disabled participant's executable is neither
+/// looked for nor run. Never throws for a problem of the file or of an executable: they are
+/// findings.
 [[nodiscard]] CheckReport check_file(const std::filesystem::path& path, const std::string& shown_as,
                                      const CheckOptions& options);
 
