@@ -93,6 +93,8 @@ uv sync --only-group codegen   # 型付きメッセージの生成だけ（PyYAM
 uv sync --only-group control   # Control API のクライアントだけ（grpcio、grpcio-tools、protobuf）
 ```
 
+`--only-group` は、ほかのグループのパッケージを `.venv` から外します（`uv sync --only-group control` の後は、型付きメッセージの生成に `.venv` を使えません）。迷ったら `uv sync` にします。
+
 - vehicle-sil を最上位のプロジェクトとして Linux でビルドするとき、CMake はこの `.venv` があれば、その Python を先に使います（環境を有効にしたり、Python を指定したりしなくてよい）。`.venv` がないか、必要なパッケージがないときは、今までどおり `find_package(Python3)` で探します。FetchContent などで取り込んだ利用側のビルドと Windows のビルドは、vehicle-sil の `.venv` を使いません（[依存ライブラリ](docs/dependencies.md)の「Python の探し方」）。
 - 依存を変えたら `uv lock` で `uv.lock` を更新し、両方をコミットします。`uv sync --locked` は、`uv.lock` が `pyproject.toml` と合わないと失敗します。
 - 対応する最も古い版（3.11）と `.python-version` の版で Python のコードを確かめるには、`scripts/verify-python.py` を使います（C++ のビルドは要りません）。`pyproject.toml` に書いた依存の下限そのものでも 3.11 で確かめるので、下限は試験を回した版になります。

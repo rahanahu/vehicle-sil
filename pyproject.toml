@@ -5,6 +5,7 @@
 #   uv sync                       every group (dev, the default group)
 #   uv sync --only-group codegen  only what the J1939 code generator needs
 #   uv sync --only-group control  only the Control API client
+#   (--only-group takes the other groups' packages out of .venv)
 #
 # The lower bounds are the oldest versions the tests are run with (scripts/verify-python.py installs
 # exactly them on Python 3.11); uv.lock pins the versions of the development environment.

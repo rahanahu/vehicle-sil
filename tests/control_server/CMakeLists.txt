@@ -49,12 +49,14 @@ if(TARGET vehicle_sil_control_demo AND TARGET vehicle_sil_control_server)
       add_dependencies(vehicle_sil_control_python_stubs sil-kit-registry vehicle_sil_control_server vehicle_sil_control_peer)
     endif()
   else()
-    vehicle_sil_python_install_hint(_hint control "grpcio grpcio-tools protobuf" "or the OS packages"
-                                    "mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools")
+    vehicle_sil_python_install_hint(_hint "grpcio grpcio-tools protobuf" "the OS packages"
+                                    "mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools"
+                                    -DVEHICLE_SIL_CONTROL_PYTHON)
     if(VEHICLE_SIL_CONTROL_PYTHON)
-      set(_what "${VEHICLE_SIL_CONTROL_PYTHON} (VEHICLE_SIL_CONTROL_PYTHON) is not Python 3.11+ with grpcio and grpcio-tools")
+      string(CONCAT _what "${VEHICLE_SIL_CONTROL_PYTHON} (VEHICLE_SIL_CONTROL_PYTHON) is not Python 3.11+ with grpcio "
+                          "and grpcio-tools: ${_vehicle_sil_control_python_ok_REASON}")
     else()
-      set(_what "no Python 3.11+ with grpcio and grpcio-tools was found")
+      set(_what "no Python 3.11+ with grpcio and grpcio-tools was found (tried: ${_control_python_TRIED})")
     endif()
     message(STATUS "vehicle-sil: ${_what}; the Python client tests are skipped (${_hint})")
   endif()

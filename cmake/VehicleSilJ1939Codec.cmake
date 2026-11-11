@@ -5,27 +5,26 @@ include(${CMAKE_CURRENT_LIST_DIR}/VehicleSilPython.cmake)
 set(VEHICLE_SIL_J1939_CODEGEN "${CMAKE_CURRENT_LIST_DIR}/../tools/j1939_codegen/j1939_codegen.py"
     CACHE INTERNAL "The generator of typed J1939 messages")
 
-# Finds Python 3.11+ with PyYAML for the generator: the repository's uv environment (.venv) first
-# when vehicle-sil is the top-level project, else the Python 3 of find_package(Python3). Sets
-# VEHICLE_SIL_J1939_CODEGEN_PYTHON (empty if there is none: then it looks again at the next
-# configuration, after PyYAML was installed) and, with REQUIRED, stops the configuration with the
-# reason. It looks again when the Python it found is gone, and when a .venv appeared after it found
-# another Python.
+# Finds Python 3.11+ with PyYAML for the generator (vehicle_sil_find_python(): the repository's uv
+# environment first when vehicle-sil is the top-level project, else the Python 3 of
+# find_package(Python3)). Sets VEHICLE_SIL_J1939_CODEGEN_PYTHON (empty if there is none) and, with
+# REQUIRED, stops the configuration with the Pythons it tried and how to get one. It searches once
+# per configuration, so a .venv made or changed (`uv sync`) since the last one is noticed.
 function(vehicle_sil_find_j1939_codegen)
   cmake_parse_arguments(ARG "REQUIRED" "" "" ${ARGN})
-  vehicle_sil_repository_python(venv)
-  if(NOT VEHICLE_SIL_J1939_CODEGEN_PYTHON OR NOT EXISTS "${VEHICLE_SIL_J1939_CODEGEN_PYTHON}"
-     OR (venv AND NOT VEHICLE_SIL_J1939_CODEGEN_PYTHON STREQUAL venv
-         AND NOT VEHICLE_SIL_J1939_CODEGEN_VENV_CHECKED STREQUAL venv))
+  get_property(searched GLOBAL PROPERTY VEHICLE_SIL_J1939_CODEGEN_SEARCHED)
+  if(NOT searched)
+    set_property(GLOBAL PROPERTY VEHICLE_SIL_J1939_CODEGEN_SEARCHED TRUE)
     vehicle_sil_find_python(python yaml)
     set(VEHICLE_SIL_J1939_CODEGEN_PYTHON "${python}" CACHE INTERNAL "Python 3.11+ with PyYAML for j1939_codegen")
-    # A .venv without PyYAML is not checked again at every call.
-    set(VEHICLE_SIL_J1939_CODEGEN_VENV_CHECKED "${venv}" CACHE INTERNAL "The .venv checked for PyYAML")
+    set_property(GLOBAL PROPERTY VEHICLE_SIL_J1939_CODEGEN_TRIED "${python_TRIED}")
   endif()
   if(ARG_REQUIRED AND VEHICLE_SIL_J1939_CODEGEN_PYTHON STREQUAL "")
-    vehicle_sil_python_install_hint(hint codegen pyyaml "dnf install python3-pyyaml, apt install python3-yaml"
-                                    mingw-w64-ucrt-x86_64-python-yaml)
-    message(FATAL_ERROR "vehicle-sil: generating J1939 message types needs Python 3.11+ with PyYAML: ${hint}")
+    get_property(tried GLOBAL PROPERTY VEHICLE_SIL_J1939_CODEGEN_TRIED)
+    vehicle_sil_python_install_hint(hint pyyaml "dnf install python3-pyyaml, apt install python3-yaml"
+                                    mingw-w64-ucrt-x86_64-python-yaml -DPython3_EXECUTABLE)
+    message(FATAL_ERROR "vehicle-sil: generating J1939 message types needs Python 3.11+ with PyYAML, and there is "
+                        "none (tried: ${tried}). To get one: ${hint}")
   endif()
 endfunction()
 

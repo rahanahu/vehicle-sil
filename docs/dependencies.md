@@ -21,13 +21,13 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 - 版と依存は、リポジトリ直下の `pyproject.toml`（`requires-python` と `[dependency-groups]`。`codegen` は PyYAML、`control` は grpcio、grpcio-tools、protobuf、`dev` は両方で既定）、`.python-version`（開発で使う版）、`uv.lock`（解決した版の固定）で決めています。版の下限は、試験を実際に回している最も古い版です（`scripts/verify-python.py` が、uv の lowest-direct の解決で下限そのものを Python 3.11 に入れて確かめます）。上限は付けていません。
 - vehicle-sil が最上位のプロジェクトのとき、configure はリポジトリの `.venv/bin/python`（`uv sync` が作る）が Python 3.11 以上で必要なモジュールを import できれば、それを使います。そうでなければ `find_package(Python3 3.11)` で探します（有効にした仮想環境が先。`-DPython3_EXECUTABLE=` で指定できる）。処理は `cmake/VehicleSilPython.cmake` にあります。
-- `.venv` に必要なパッケージがなくて別の Python を使った後で、同じ `.venv` に足したときは、`cmake --fresh` で configure し直すと `.venv` を使います。
+- 生成器の Python は configure のたびに探し直します。`uv sync` で `.venv` を作ったり、`.venv` にパッケージを足したりした後は、普通に configure し直せば使います（`--fresh` は要りません）。
 - FetchContent や `add_subdirectory` で取り込んだ利用側のビルドは、vehicle-sil の `.venv` を使いません。利用側の Python（有効にした仮想環境、`Python3_EXECUTABLE`、`PATH`）を使います。
 - Windows では `.venv` を候補にしません（uv の Python を MinGW のビルドから使うことは確かめていないため）。MSYS2 UCRT64 の pacman のパッケージの Python を、今までどおり探して使います。
 
 ### Python 3 と PyYAML（J1939 の型付きメッセージの生成）
 
-- `vehicle_sil_add_j1939_codec()` が、ビルドのときに `tools/j1939_codegen/j1939_codegen.py` を動かします。Python 3.11 以上と PyYAML（`import yaml`）が要ります。configure のときに上の順で探し、PyYAML を import できるかを確かめます。なければ、この関数を呼んだ時点で configure が理由と入れ方（uv、pip、OS と MSYS2 のパッケージ）を示して失敗します。見つけた Python はキャッシュに残し、その Python がなくなったときと、別の Python を見つけた後に `.venv` ができたときは探し直します。
+- `vehicle_sil_add_j1939_codec()` が、ビルドのときに `tools/j1939_codegen/j1939_codegen.py` を動かします。Python 3.11 以上と PyYAML（`import yaml`）が要ります。configure のときに上の順で探し、PyYAML を import できるかを確かめます。なければ、この関数を呼んだ時点で configure が失敗し、試した Python とそれぞれを使わなかった理由（`No module named 'yaml'`、3.11 より古い版など）と、入れ方（uv、pip、OS と MSYS2 のパッケージ）を示します。Control API の試験を見送るときの configure の表示も、同じように試した Python と理由を示します。
 - vehicle-sil の試験と例（`VEHICLE_SIL_BUILD_TESTS`、`VEHICLE_SIL_BUILD_EXAMPLES`。トップレベルのビルドでは既定で ON）はこの関数を使うので、そのビルドには Python と PyYAML が要ります。ライブラリだけを使う利用側（FetchContent など）は、関数を呼ばなければ要りません。
 - PyYAML は YAML 1.1 で読みます。生成器は `on`、`off`、`yes`、`no` を真偽値にせず文字列として読み、整数は 10 進（先頭の 0 なし）、16 進、2 進だけを受け付け（8 進と、整数と小数の 60 進を誤りにする）、同じキーの重複を誤りにします（マージキーで取り込んだキーの上書きは可）。
 - Python や PyYAML が見つからなかった configure の結果はキャッシュに残りません。入れたあとで configure し直せば見つけます。
