@@ -15,5 +15,7 @@ add_test(
           -DBUILD_TYPE=${CMAKE_BUILD_TYPE}
           -DC_COMPILER=${CMAKE_C_COMPILER}
           -DCXX_COMPILER=${CMAKE_CXX_COMPILER}
+          # The consumer does not use vehicle-sil's .venv; it gets the Python found here.
+          -DPYTHON=${VEHICLE_SIL_J1939_CODEGEN_PYTHON}
           -P ${CMAKE_CURRENT_SOURCE_DIR}/run_consumer.cmake)
 set_tests_properties(fetchcontent.consumer PROPERTIES LABELS fetchcontent TIMEOUT 7200)

@@ -5,7 +5,7 @@
 Usage: j1939_codegen.py <definition.yaml> -o <header.hpp>
 
 The format is described in docs/j1939-codec.md. The header includes only
-vehicle_sil/j1939/codec.hpp. Needs Python 3.8+ and PyYAML.
+vehicle_sil/j1939/codec.hpp. Needs Python 3.11+ and PyYAML.
 """
 
 import argparse

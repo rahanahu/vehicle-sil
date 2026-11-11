@@ -1,7 +1,8 @@
 # Configures, builds and runs examples/fetchcontent_consumer in a fresh build
 # tree, fetching vehicle-sil from REPOSITORY at TAG (HEAD is resolved to a commit
 # hash first: with git rev-parse for a local repository, with git ls-remote for a
-# URL). Invoked by CTest with cmake -P.
+# URL). PYTHON, if given, is the consumer's Python3_EXECUTABLE (for the J1939 code generator).
+# Invoked by CTest with cmake -P.
 foreach(var SOURCE_DIR BINARY_DIR REPOSITORY TAG GENERATOR)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "run_consumer.cmake: ${var} is required")
@@ -43,6 +44,9 @@ if(C_COMPILER)
 endif()
 if(CXX_COMPILER)
   list(APPEND configure_args "-DCMAKE_CXX_COMPILER=${CXX_COMPILER}")
+endif()
+if(PYTHON)
+  list(APPEND configure_args "-DPython3_EXECUTABLE=${PYTHON}")
 endif()
 
 execute_process(COMMAND "${CMAKE_COMMAND}" ${configure_args} COMMAND_ERROR_IS_FATAL ANY)

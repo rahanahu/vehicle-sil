@@ -9,19 +9,18 @@ target_include_directories(vehicle_sil_control_server_tests PRIVATE ${PROJECT_SO
 target_compile_definitions(vehicle_sil_control_server_tests PRIVATE
   VEHICLE_SIL_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/testdata")
 
-# The Python client and CLI against the demo (examples/control), with a Python that has grpcio
-# and grpcio-tools.
-# VEHICLE_SIL_CONTROL_PYTHON may name it; otherwise the Python 3 found here.
+# The Python client and CLI against the demo (examples/control), with a Python 3.11+ that has
+# grpcio and grpcio-tools.
+# VEHICLE_SIL_CONTROL_PYTHON may name it; otherwise the repository's uv environment (.venv) if it has
+# them, else the Python 3 found here (cmake/VehicleSilPython.cmake).
 if(VEHICLE_SIL_CONTROL_PYTHON)
   set(_control_python "${VEHICLE_SIL_CONTROL_PYTHON}")
 else()
-  find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
-  set(_control_python "${Python3_EXECUTABLE}")
+  vehicle_sil_find_python(_control_python grpc grpc_tools)
 endif()
-if(_control_python AND TARGET vehicle_sil_control_demo AND TARGET vehicle_sil_control_server)
-  execute_process(COMMAND "${_control_python}" -c "import grpc, grpc_tools"
-                  RESULT_VARIABLE _vehicle_sil_control_python_ok OUTPUT_QUIET ERROR_QUIET)
-  if(_vehicle_sil_control_python_ok EQUAL 0)
+if(TARGET vehicle_sil_control_demo AND TARGET vehicle_sil_control_server)
+  vehicle_sil_python_can_import(_vehicle_sil_control_python_ok "${_control_python}" grpc grpc_tools)
+  if(_vehicle_sil_control_python_ok)
     set(_stubs "${CMAKE_CURRENT_BINARY_DIR}/control_python_stubs")
     add_custom_command(
       OUTPUT "${_stubs}/vehicle_sil/control/v1/control_pb2.py"
@@ -50,6 +49,13 @@ if(_control_python AND TARGET vehicle_sil_control_demo AND TARGET vehicle_sil_co
       add_dependencies(vehicle_sil_control_python_stubs sil-kit-registry vehicle_sil_control_server vehicle_sil_control_peer)
     endif()
   else()
-    message(STATUS "vehicle-sil: ${_control_python} has no grpcio/grpcio-tools; the Python client tests are skipped")
+    vehicle_sil_python_install_hint(_hint control "grpcio grpcio-tools protobuf" "or the OS packages"
+                                    "mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools")
+    if(VEHICLE_SIL_CONTROL_PYTHON)
+      set(_what "${VEHICLE_SIL_CONTROL_PYTHON} (VEHICLE_SIL_CONTROL_PYTHON) is not Python 3.11+ with grpcio and grpcio-tools")
+    else()
+      set(_what "no Python 3.11+ with grpcio and grpcio-tools was found")
+    endif()
+    message(STATUS "vehicle-sil: ${_what}; the Python client tests are skipped (${_hint})")
   endif()
 endif()

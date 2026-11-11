@@ -22,7 +22,7 @@ FetchContent_Declare(
   GIT_TAG ${VEHICLE_SIL_GIT_TAG})
 FetchContent_MakeAvailable(vehicle_sil)
 
-# Typed J1939 messages generated from YAML at build time (needs Python 3 with PyYAML).
+# Typed J1939 messages generated from YAML at build time (needs Python 3.11+ with PyYAML).
 vehicle_sil_add_j1939_codec(consumer_messages consumer_messages.yaml)
 
 add_executable(vehicle_sil_consumer main.cpp)

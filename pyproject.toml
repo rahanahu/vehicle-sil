@@ -1,0 +1,27 @@
+# The Python development environment of vehicle-sil: the J1939 code generator, the Control API
+# client and its tests. It is not a package to distribute (package = false); `uv sync` installs the
+# dependency groups into .venv, and CMake uses .venv when it exists (docs/dependencies.md).
+#
+#   uv sync                       every group (dev, the default group)
+#   uv sync --only-group codegen  only what the J1939 code generator needs
+#   uv sync --only-group control  only the Control API client
+#
+# The lower bounds are the versions this repository is checked with; uv.lock pins the exact ones.
+
+[project]
+name = "vehicle-sil-dev"
+version = "0.1.0"
+description = "Python development environment of vehicle-sil (not distributed)"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+# tools/j1939_codegen (vehicle_sil_add_j1939_codec() runs it at build time).
+codegen = ["pyyaml>=6.0.3"]
+# python/vehicle_sil_control: the client and CLI, and the generation of its gRPC stubs.
+control = ["grpcio>=1.85.1", "grpcio-tools>=1.85.1", "protobuf>=7.35.1"]
+dev = [{ include-group = "codegen" }, { include-group = "control" }]
+
+[tool.uv]
+package = false
+default-groups = ["dev"]

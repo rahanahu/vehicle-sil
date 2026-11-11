@@ -1,28 +1,31 @@
 include_guard(GLOBAL)
 
+include(${CMAKE_CURRENT_LIST_DIR}/VehicleSilPython.cmake)
+
 set(VEHICLE_SIL_J1939_CODEGEN "${CMAKE_CURRENT_LIST_DIR}/../tools/j1939_codegen/j1939_codegen.py"
     CACHE INTERNAL "The generator of typed J1939 messages")
 
-# Finds Python 3 with PyYAML for the generator. Sets VEHICLE_SIL_J1939_CODEGEN_PYTHON (empty if
-# there is none: then it looks again at the next configuration, after PyYAML was installed) and,
-# with REQUIRED, stops the configuration with the reason.
+# Finds Python 3.11+ with PyYAML for the generator: the repository's uv environment (.venv) first
+# when vehicle-sil is the top-level project, else the Python 3 of find_package(Python3). Sets
+# VEHICLE_SIL_J1939_CODEGEN_PYTHON (empty if there is none: then it looks again at the next
+# configuration, after PyYAML was installed) and, with REQUIRED, stops the configuration with the
+# reason. It looks again when the Python it found is gone, and when a .venv appeared after it found
+# another Python.
 function(vehicle_sil_find_j1939_codegen)
   cmake_parse_arguments(ARG "REQUIRED" "" "" ${ARGN})
-  if(NOT VEHICLE_SIL_J1939_CODEGEN_PYTHON)
-    find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
-    set(python "")
-    if(Python3_Interpreter_FOUND)
-      execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import yaml" RESULT_VARIABLE result OUTPUT_QUIET ERROR_QUIET)
-      if(result EQUAL 0)
-        set(python "${Python3_EXECUTABLE}")
-      endif()
-    endif()
-    set(VEHICLE_SIL_J1939_CODEGEN_PYTHON "${python}" CACHE INTERNAL "Python 3 with PyYAML for j1939_codegen")
+  vehicle_sil_repository_python(venv)
+  if(NOT VEHICLE_SIL_J1939_CODEGEN_PYTHON OR NOT EXISTS "${VEHICLE_SIL_J1939_CODEGEN_PYTHON}"
+     OR (venv AND NOT VEHICLE_SIL_J1939_CODEGEN_PYTHON STREQUAL venv
+         AND NOT VEHICLE_SIL_J1939_CODEGEN_VENV_CHECKED STREQUAL venv))
+    vehicle_sil_find_python(python yaml)
+    set(VEHICLE_SIL_J1939_CODEGEN_PYTHON "${python}" CACHE INTERNAL "Python 3.11+ with PyYAML for j1939_codegen")
+    # A .venv without PyYAML is not checked again at every call.
+    set(VEHICLE_SIL_J1939_CODEGEN_VENV_CHECKED "${venv}" CACHE INTERNAL "The .venv checked for PyYAML")
   endif()
   if(ARG_REQUIRED AND VEHICLE_SIL_J1939_CODEGEN_PYTHON STREQUAL "")
-    message(FATAL_ERROR "vehicle-sil: generating J1939 message types needs Python 3.8+ with PyYAML "
-                        "(pip install pyyaml, dnf install python3-pyyaml, apt install python3-yaml, or "
-                        "pacman -S mingw-w64-ucrt-x86_64-python-yaml on MSYS2)")
+    vehicle_sil_python_install_hint(hint codegen pyyaml "dnf install python3-pyyaml, apt install python3-yaml"
+                                    mingw-w64-ucrt-x86_64-python-yaml)
+    message(FATAL_ERROR "vehicle-sil: generating J1939 message types needs Python 3.11+ with PyYAML: ${hint}")
   endif()
 endfunction()
 
@@ -31,7 +34,7 @@ endfunction()
 # Generates one header per definition (<file name without its last extension>.hpp) at build time and makes
 # <target> an INTERFACE library that puts them on the include path and links
 # vehicle_sil::j1939_codec. The headers are regenerated when a definition or the generator
-# changes. Needs Python 3.8+ with PyYAML.
+# changes. Needs Python 3.11+ with PyYAML.
 function(vehicle_sil_add_j1939_codec target)
   if(ARGC LESS 2)
     message(FATAL_ERROR "vehicle_sil_add_j1939_codec(${target}): give at least one YAML definition")

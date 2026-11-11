@@ -21,7 +21,7 @@ target_link_libraries(my_ecu PRIVATE engine_messages)
 ```
 
 - `vehicle_sil_add_j1939_codec(<target> <定義.yaml>...)` は、定義ごとにヘッダー（`<ファイル名から最後の拡張子を除いたもの>.hpp`。`engine.v2.yaml` なら `engine.v2.hpp`）をビルドのときに生成し、それを include パスに置く INTERFACE ライブラリ `<target>` を作ります。`<target>` は `vehicle_sil::j1939_codec` をリンクします。定義か生成器を変えると、ヘッダーを作り直します。
-- 生成には Python 3.8 以上と PyYAML が要ります（この関数を呼んだときだけ）。生成したヘッダーは `vehicle_sil/j1939/codec.hpp` だけを include します。
+- 生成には Python 3.11 以上と PyYAML が要ります（この関数を呼んだときだけ）。vehicle-sil を最上位のプロジェクトとしてビルドするときは、`uv sync`（または `uv sync --only-group codegen`）で作ったリポジトリの `.venv` を先に使います。なければ `find_package(Python3)` で見つかる Python を使います（[依存ライブラリ](dependencies.md)）。生成したヘッダーは `vehicle_sil/j1939/codec.hpp` だけを include します。
 - 生成器は `tools/j1939_codegen/j1939_codegen.py <定義.yaml> -o <ヘッダー>` で直接も動きます。
 
 ## 定義の書き方

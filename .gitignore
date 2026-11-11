@@ -13,3 +13,4 @@ __pycache__/
 /gui/web/playwright-report/
 /gui/web/blob-report/
 /gui/web/coverage/
+.venv/

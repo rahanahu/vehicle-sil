@@ -101,10 +101,14 @@ agent      bench    5e07d2...                 *      # どの名前でもよい�
 ## Python
 
 ```sh
-pip install grpcio grpcio-tools protobuf
+uv sync                                         # .venv に grpcio、grpcio-tools、protobuf などを入れる
+source .venv/bin/activate                       # または、各コマンドの前に uv run を付ける
 python -m vehicle_sil_control.generate          # スタブを python/vehicle_sil_control/_generated に作る
 export PYTHONPATH=$PWD/python
 ```
+
+- Python は 3.11 以上です。版と依存はリポジトリ直下の `pyproject.toml`（`control` グループ）と `uv.lock` で決めています（README の「Python（uv）」）。
+- uv を使わない場合は `pip install grpcio grpcio-tools protobuf`、MSYS2 UCRT64 では `pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools` で入れます。
 
 ```python
 from vehicle_sil_control import Control, ms

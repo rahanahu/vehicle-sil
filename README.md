@@ -78,9 +78,25 @@
 | コンパイラ | GCC（標準）または Clang。C++20 対応のもの | MSYS2 UCRT64 の MinGW-w64 GCC |
 | ビルドツール | CMake 3.21 以上、Ninja | 同左（MSYS2 のパッケージ） |
 | その他 | Git（SIL Kit へのパッチ適用にも使う） | 同左 |
-| 試験と例のビルド、型付きメッセージの生成 | Python 3.8 以上と PyYAML | 同左（MSYS2 のパッケージ） |
+| 試験と例のビルド、型付きメッセージの生成 | Python 3.11 以上と PyYAML（[uv](https://docs.astral.sh/uv/) で入れることを勧めます） | 同左（MSYS2 のパッケージ） |
+| Control API の Python クライアント | Python 3.11 以上と grpcio、grpcio-tools、protobuf（同上） | 同左（MSYS2 のパッケージ） |
 
 Visual Studio と MSVC は不要です。
+
+### Python（uv）
+
+Python の版と依存は、リポジトリ直下の `pyproject.toml`、`.python-version`、`uv.lock` で決めています。[uv](https://docs.astral.sh/uv/) があれば、次のコマンドで `.venv` に開発用の Python と依存の全部が入ります（`.python-version` の Python がなければ uv が取ってきます）。
+
+```sh
+uv sync                        # すべて（既定の dev グループ）
+uv sync --only-group codegen   # 型付きメッセージの生成だけ（PyYAML）
+uv sync --only-group control   # Control API のクライアントだけ（grpcio、grpcio-tools、protobuf）
+```
+
+- vehicle-sil を最上位のプロジェクトとしてビルドするとき、CMake はこの `.venv` があれば、その Python を先に使います（環境を有効にしたり、Python を指定したりしなくてよい）。`.venv` がないか、必要なパッケージがないときは、今までどおり `find_package(Python3)` で探します。FetchContent などで取り込んだ利用側のビルドは、vehicle-sil の `.venv` を使いません。
+- 依存を変えたら `uv lock` で `uv.lock` を更新し、両方をコミットします。`uv sync --locked` は、`uv.lock` が `pyproject.toml` と合わないと失敗します。
+- 対応する最も古い版（3.11）と `.python-version` の版で Python のコードを確かめるには、`scripts/verify-python.py` を使います（C++ のビルドは要りません）。
+- uv を使わない場合は、`pyproject.toml` の `[dependency-groups]` にあるパッケージを pip で入れても構いません。Windows（MSYS2 UCRT64）では、uv を使わずに、下の pacman のパッケージの Python のままで構いません。
 
 ## 取得とビルド
 
@@ -441,7 +457,7 @@ int main() {
 
 受信、Request と応答、受信の監視、試験の書き方は [docs/j1939-guide.md](docs/j1939-guide.md) にあります。
 
-信号を YAML で定義して型付きメッセージにするときは、`vehicle_sil_add_j1939_codec(<target> <定義.yaml>)` を呼び、`<target>` をリンクします（Python 3 と PyYAML が要ります。[docs/j1939-codec.md](docs/j1939-codec.md)）。
+信号を YAML で定義して型付きメッセージにするときは、`vehicle_sil_add_j1939_codec(<target> <定義.yaml>)` を呼び、`<target>` をリンクします（Python 3.11 以上と PyYAML が要ります。[docs/j1939-codec.md](docs/j1939-codec.md)）。
 
 ## 既知の制限
 
