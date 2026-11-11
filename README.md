@@ -96,6 +96,8 @@ ctest --preset linux-gcc-release
 
 `-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON` を付けると、vehicle-sil 自身のターゲットの警告をエラーにします。
 
+コミット前の確認には `scripts/verify.py --linux` が使えます（[AGENTS.md](AGENTS.md) の「検証とスクリプト」）。
+
 ### Windows（MSYS2 UCRT64）
 
 MSYS2 の「UCRT64」シェルで実行します。

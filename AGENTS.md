@@ -74,3 +74,26 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 5. ドキュメントの内容が実際のコードと合っている。
 
 既存のコミット履歴は書き換えません。追跡済みのファイルは ignore の設定だけでは追跡対象から外れないので、無断で削除、移動、追跡解除をしません。
+
+## 検証とスクリプト
+
+`scripts/` に、開発と CI で使うスクリプトがあります。Python 3.11 以上の標準ライブラリだけで書いてあります。
+
+- 出力は要約だけです。詳細は `build/logs/` のログに書き、要約にその場所を表示します。
+- 終了コードは、0 が成功、1 が失敗、2 が使い方の誤りです。CI からそのまま呼べます。
+- 使い方は `--help` で表示します。
+
+| スクリプト | 内容 |
+|---|---|
+| `scripts/verify.py` | プリセットごとに構成、ビルド、テストを実行して要約する。失敗した段、落ちたテストと出力の先頭、ログの場所を表示する。JUnit 形式の結果も `build/logs/` に書く |
+| `scripts/check-commits.py` | コミットメッセージの形式と、コミットしてはいけないファイル（ローカルにだけ置くもの、`CLAUDE.local.md`、`build/`）を確かめる |
+| `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる。書き換えたファイルは、中断しても元に戻す |
+
+```sh
+scripts/verify.py --linux                            # コミット前: Linux の 5 つのプリセット
+scripts/verify.py linux-gcc-debug --tests '^launch'  # 1 つのプリセットで一部のテストだけ
+scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log
+scripts/check-commits.py                             # ステージした内容
+scripts/check-commits.py --range origin/main..HEAD   # 範囲の各コミット
+scripts/mutate.py mutations.toml --check             # 書き換える箇所が見つかるかだけを確かめる
+```
