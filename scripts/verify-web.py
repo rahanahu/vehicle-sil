@@ -2,10 +2,11 @@
 """Install, check, unit-test, build and end-to-end test the web front end (gui/web), with a short summary.
 
 Steps, in order: npm ci, npm run format:check, npm run lint, npm test, npm run build, npm run e2e (the built
-app served by the stub server), npm run e2e:dev (the dev server with its proxy). The full output of each step
-goes to build/logs/<tag>-<step>.log (tag: web); the summary shows one line per step and, for a failed step,
-its first error lines and its log. Stops at the first failed step. A stopped run (Ctrl-C, SIGTERM) stops the
-whole process group of the running step, so no dev server or stub server is left behind.
+app served by the GUI server of gui/server, which runs the fake launcher), npm run e2e:dev (the dev server with
+its proxy to the GUI server). The full output of each step goes to build/logs/<tag>-<step>.log (tag: web); the
+summary shows one line per step and, for a failed step, its first error lines and its log. Stops at the first
+failed step. A stopped run (Ctrl-C, SIGTERM) stops the whole process group of the running step, so no dev
+server or GUI server is left behind.
 
 Exit codes: 0 every step passed, 1 a step failed, 2 usage error (missing tools, unsupported Node or npm).
 Requires Python 3.11+ (standard library only), Node and npm (gui/web/.nvmrc), and uv for the e2e steps.
@@ -141,7 +142,7 @@ def group_alive(pgid: int) -> bool:
 
 
 def stop_group(process: subprocess.Popen) -> None:
-    """Stop the step and everything it started (dev server, stub server, browsers)."""
+    """Stop the step and everything it started (dev server, GUI server, browsers)."""
     if os.name == "nt":
         subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True)
         return
@@ -202,7 +203,7 @@ def main() -> int:
         epilog="examples:\n"
         "  scripts/verify-web.py                  # everything, from a clean npm ci\n"
         "  scripts/verify-web.py --skip-install   # keep node_modules\n"
-        "  scripts/verify-web.py --skip-e2e       # no browser, no stub server\n"
+        "  scripts/verify-web.py --skip-e2e       # no browser, no GUI server\n"
         "  scripts/verify-web.py --tag web-ci     # logs as build/logs/web-ci-*.log",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -222,7 +223,7 @@ def main() -> int:
         if tool in engines:
             check_engine(tool, path, engines[tool])
     if not args.skip_e2e and shutil.which("uv") is None:
-        die_usage("uv is not on PATH; the e2e tests start the stub server with uv (or pass --skip-e2e)")
+        die_usage("uv is not on PATH; the e2e tests start the GUI server with uv (or pass --skip-e2e)")
     if args.skip_install and not (WEB / "node_modules").is_dir():
         die_usage("gui/web/node_modules is missing; run without --skip-install")
 

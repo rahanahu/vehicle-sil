@@ -1,5 +1,6 @@
 // 配信と経路の試験（捨てない）。
 import { expect, test } from '@playwright/test';
+import { guiToken } from './support/gui-server';
 
 const staticOnly = () =>
   test.skip(test.info().project.name !== 'static', 'ビルド済みの画面を配信するときだけ');
@@ -11,7 +12,12 @@ test('an unknown path shows the not-found page', async ({ page }) => {
 });
 
 test('a mistyped API path answers 404, not the app', async ({ request }) => {
-  expect((await request.get('/api/helth')).status()).toBe(404);
+  const headers = { Authorization: `Bearer ${guiToken()}` };
+  expect((await request.get('/api/helth', { headers })).status()).toBe(404);
+});
+
+test('the API refuses a request without the token', async ({ request }) => {
+  expect((await request.get('/api/app')).status()).toBe(401);
 });
 
 test.describe('static serving', () => {

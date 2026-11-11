@@ -1,16 +1,24 @@
 // シェルのレイアウトを、幅を変えて確かめる。中身は試験用の画面（/_test/layout）で、捨てる画面には頼らない。
 // 画面を足したら ROUTES に足す（その画面も、すべての幅で崩れないことを確かめる）。
 import { Page, expect, test } from '@playwright/test';
+import { guiToken } from './support/gui-server';
 import { VIEWPORTS, Viewport, findLayoutProblems } from './support/layout';
 
-/** 確かめる経路と、その画面の見出し。 */
-const ROUTES = [{ path: '_test/layout', heading: 'レイアウトの試験' }];
+/**
+ * 確かめる経路と、その画面の見出し。最初のもの（中身を固定した試験用の画面）は、ほかの試験も使う。
+ * 実行の画面は、いろいろな状態での崩れを run.spec.ts でも確かめる。
+ */
+const ROUTES = [
+  { path: '_test/layout', heading: 'レイアウトの試験' },
+  { path: '', heading: '実行' },
+];
 
 /** スクリーンショットを残す幅。 */
 const SCREENSHOT_WIDTHS = [360, 480, 1024, 1920];
 
 async function open(page: Page, path: string, heading: string) {
-  await page.goto(path);
+  // サーバーが表示する URL と同じく、トークンを付けて開く
+  await page.goto(`/${path}#token=${guiToken()}`);
   await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible();
 }
 
@@ -28,7 +36,9 @@ for (const viewport of VIEWPORTS) {
 
         if (SCREENSHOT_WIDTHS.includes(viewport.width)) {
           await page.screenshot({
-            path: testInfo.outputPath(`layout-${viewport.width}.png`),
+            path: testInfo.outputPath(
+              `layout-${route.path.replace(/\W+/g, '-') || 'run'}-${viewport.width}.png`,
+            ),
             fullPage: true,
           });
         }
