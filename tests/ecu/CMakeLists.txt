@@ -7,7 +7,7 @@ target_compile_definitions(vehicle_sil_ecu_tests PRIVATE VEHICLE_SIL_TEST_PROJEC
 
 # vehicle_sil::ecu, and the headers of vehicle_sil::simulation (simulation.hpp, ecu_main.hpp),
 # include no SIL Kit header, also through the vehicle-sil headers they include.
-add_test(NAME ecu.boundary
+add_test(NAME ecu.no_silkit_boundary
          COMMAND ${CMAKE_COMMAND} -DDIR=${PROJECT_SOURCE_DIR}/libs/ecu
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckNoSilKit.cmake)
 add_test(NAME ecu.simulation_headers_boundary
@@ -26,7 +26,7 @@ add_test(NAME ecu.boundary_check_allows_a_listed_unresolved_include
          COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/boundary_fixtures/unresolved
                  -DALLOW_UNRESOLVED=vehicle_sil/nowhere/missing.hpp
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckNoSilKit.cmake)
-set_tests_properties(ecu.boundary ecu.simulation_headers_boundary ecu.boundary_check_rejects_a_peer_include
+set_tests_properties(ecu.no_silkit_boundary ecu.simulation_headers_boundary ecu.boundary_check_rejects_a_peer_include
                      ecu.boundary_check_rejects_an_unresolved_include ecu.boundary_check_allows_a_listed_unresolved_include
                      PROPERTIES LABELS "unit;ecu" TIMEOUT 60)
 set_tests_properties(ecu.boundary_check_rejects_an_unresolved_include PROPERTIES
