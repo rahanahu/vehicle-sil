@@ -1,0 +1,58 @@
+:host {
+  display: block;
+  min-inline-size: 0;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--app-space-2) var(--app-space-3);
+}
+
+.source {
+  flex: 1 1 10em;
+  min-inline-size: 0;
+}
+
+.text {
+  flex: 2 1 12em;
+  min-inline-size: 0;
+}
+
+.count {
+  margin: var(--app-space-2) 0;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.dropped {
+  margin-inline-start: var(--app-space-2);
+  color: var(--mat-sys-tertiary);
+}
+
+/* 行は折り返さず、長い行は横にスクロールする（決まった高さで並べるため） */
+.viewport {
+  block-size: clamp(240px, 50dvh, 640px);
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--mat-sys-corner-small);
+  background: var(--mat-sys-surface-container-lowest);
+}
+
+.viewport:focus-visible {
+  outline: 2px solid var(--mat-sys-primary);
+  outline-offset: 2px;
+}
+
+.line {
+  block-size: 20px;
+  line-height: 20px;
+  padding-inline: var(--app-space-2);
+  white-space: pre;
+  font-family: ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.from {
+  margin-inline-end: 1ch;
+  color: var(--mat-sys-primary);
+}

@@ -6,7 +6,7 @@
 
 - Node.js 24（`.nvmrc`）。`package.json` の `engines` は Node.js 24.15 以上の 24 と 26、npm 11.12.1 以上です。`.npmrc` の `engine-strict` により、範囲の外では `npm ci` が止まります。
 - npm（Node.js に付いてくるもの）。ほかのパッケージマネージャーは使いません。
-- [uv](https://docs.astral.sh/uv/)（代役のサーバーと e2e の試験で使う）。
+- [uv](https://docs.astral.sh/uv/)（GUI サーバー `gui/server` を動かす。開発と e2e の試験で使う）。
 - e2e の試験のブラウザ: `npx playwright install chromium --only-shell`（Playwright の版に合う Chromium をユーザーのキャッシュに入れる。管理者の権限は要らない）。
 
 Windows でも同じコマンドで動かす想定です。Node.js は Windows 版を使います。`scripts/verify-web.py` は Windows の Python（python.org か MinGW のもの）で動かします。
@@ -15,59 +15,43 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 
 `gui/web/` で実行します。どれも終了コードで成否を返します。
 
-| コマンド               | 内容                                                                                                                                   |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm ci`               | `package-lock.json` のとおりに入れる                                                                                                   |
-| `npm start`            | 開発サーバー（http://127.0.0.1:4200）。`/api/` と `/ws` を 127.0.0.1:8765 へ転送する（`proxy.conf.mjs`。ポートは環境変数 `STUB_PORT`） |
-| `npm run build`        | 本番のビルド。出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`                                                   |
-| `npm test`             | 単体試験（Vitest、jsdom）。1 回走って終わる                                                                                            |
-| `npm run lint`         | ESLint（angular-eslint）。警告も失敗にする                                                                                             |
-| `npm run format:check` | Prettier の書式の検査                                                                                                                  |
-| `npm run e2e`          | Playwright。代役のサーバーが `dist/browser/` と API を同じオリジンで配信する。先に `npm run build` が要る                              |
-| `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                                                             |
-| `npm run i18n:extract` | 翻訳する文言を `src/locale/messages.xlf` に書き出す                                                                                    |
+| コマンド               | 内容                                                                                                                                                 |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm ci`               | `package-lock.json` のとおりに入れる                                                                                                                 |
+| `npm start`            | 開発サーバー（http://127.0.0.1:4200）。`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送する（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`） |
+| `npm run build`        | 本番のビルド。出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`                                                                 |
+| `npm test`             | 単体試験（Vitest、jsdom）。1 回走って終わる                                                                                                          |
+| `npm run lint`         | ESLint（angular-eslint）。警告も失敗にする                                                                                                           |
+| `npm run format:check` | Prettier の書式の検査                                                                                                                                |
+| `npm run e2e`          | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する。先に `npm run build` が要る                                              |
+| `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                                                                           |
+| `npm run i18n:extract` | 翻訳する文言を `src/locale/messages.xlf` に書き出す                                                                                                  |
 
 リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、ビルド、e2e を順に回して要約だけを表示します。
 
-開発のときは、2 つの端末で次のように動かします。
+開発のときは、2 つの端末で次のように動かします。GUI サーバーは偽のランチャー（`gui/server/tests/fake_launcher.py`）を使い、`gui/server/tests/configs/` の構成ファイル（ファイルごとに筋書きが決まっている）を選べます。サーバーが表示する `dev_url`（トークンつき）を開きます。
 
 ```sh
-uv run dev/stub_server.py   # 代役のサーバー（127.0.0.1:8765）
-npm start                   # 画面（127.0.0.1:4200）
+uv run vehicle-sil-gui --no-browser --json --port 8765 --dev-origin http://127.0.0.1:4200 \
+  --launcher ../server/tests/fake_launcher.py --root ../server/tests/configs   # GUI サーバー
+npm start                                                                     # 画面（127.0.0.1:4200）
 ```
+
+e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを偽のランチャーと一緒に自分で起動し（`e2e/support/gui-server.ts`。ポートは 18000 から 18999 のどれか）、終わったら止めます。
 
 ## ディレクトリ
 
-| パス                                     | 内容                                                                                                                                           |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                               |
-| `src/app/app.routes.ts`、`navigation.ts` | 経路と、ナビゲーションの項目                                                                                                                   |
-| `src/app/core/`                          | 画面をまたいで使うもの: サーバーとの間の型（`api.ts`）、URL（`urls.ts`）、幅の区分（`layout/`）、計測値の書式（`format/`）、流れ（`streams/`） |
-| `src/app/not-found/`                     | 見つからない経路の画面                                                                                                                         |
-| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）                                                           |
-| `src/app/smoke/`                         | 仮の画面（後で捨てる）                                                                                                                         |
-| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                                        |
-| `public/`                                | そのまま配信するファイル（アイコン）                                                                                                           |
-| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`layout.spec.ts` と `support/layout.ts`（レイアウト）                                          |
-| `dev/stub_server.py`                     | 代役のサーバー（依存のロックは `stub_server.py.lock`）                                                                                         |
-
-## 仮の画面（後で捨てる）
-
-`src/app/smoke/` と `e2e/smoke/` は、道具の組み合わせを確かめるための仮の画面とその試験です。どのファイルも先頭に「通しの確認用（後で捨てる）」と書いてあります。本物の画面ができたら、次のように消します。
-
-1. `src/app/smoke/` と `e2e/smoke/` を消す。
-2. `src/app/app.routes.ts` の `SMOKE_ROUTES` と、`src/app/navigation.ts` の `SMOKE_NAV` を消し、最初の画面の経路（`''`）を足す。
-
-## 代役のサーバー
-
-`dev/stub_server.py` は、画面の開発と試験のための代役です。本物の GUI サーバーではありません。本物ができるまで、e2e の試験で画面を配信するのに使います。依存はファイルの先頭に書いてあり（PEP 723）、`uv run` で動きます。127.0.0.1 だけで待ちます。
-
-- `GET /api/health`: 状態を JSON で返す
-- `/ws`: WebSocket。決まった間隔で数値を JSON で流す（`--interval`）
-- `--static <dir>`: ビルド済みの画面も配信する。ファイルがなく拡張子もないパスには `index.html` を返す（SPA の戻し先）。`api/` と `ws` の下と、拡張子のあるファイルがないときは 404。画面には厳しい CSP（inline の script を禁じる）を付ける
-- `--mount /gui/`: 入り口を `/` 以外のパスに置く
-
-開発サーバーの転送を通すと、サーバーに届く `Host` と `Origin` は開発サーバーのもの（`127.0.0.1:4200`）になります。本物のサーバーで `Host` と `Origin` を検査するときは、開発のときにこれを許す設定が要ります。
+| パス                                     | 内容                                                                                                                                                                              |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                                                                  |
+| `src/app/app.routes.ts`、`navigation.ts` | 経路と、ナビゲーションの項目                                                                                                                                                      |
+| `src/app/core/`                          | 画面をまたいで使うもの: サーバーとの間の型と読み取り（`api.ts`）、トークン（`auth/`）、URL（`urls.ts`）、幅の区分（`layout/`）、計測値の書式（`format/`）、流れ（`streams/`）     |
+| `src/app/run/`                           | 実行の画面（`''`）。状態は `run-session.ts`（WebSocket の写し）と `run-state.ts`（事象を当てる純粋な関数）                                                                        |
+| `src/app/not-found/`                     | 見つからない経路の画面                                                                                                                                                            |
+| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）と、単体試験が `gui/protocol/examples/` を読む関数                                            |
+| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                                                                           |
+| `public/`                                | そのまま配信するファイル（アイコン）                                                                                                                                              |
+| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`run.spec.ts`（実行の画面）、`layout.spec.ts` と `support/layout.ts`（レイアウト）、`support/gui-server.ts`（GUI サーバーの起動） |
 
 ## URL と CSP
 
@@ -104,12 +88,12 @@ API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api
 - 状態、そこから導く値、テンプレートが読むものは signal（`signal`、`computed`、`linkedSignal`）。
 - 1 回の取得は `httpResource`（ほかの非同期の値は `resource`）。`HttpClient` と `toSignal` で書かない。
 - RxJS は、時間とともに続く流れに演算子が要るときに使う（再接続と待ち時間、間引き、取り消し、いくつかの流れの組み合わせ）。サービスの中に置き、外へは signal を出す。流れそのものが要る利用者には、流れとわかる名前の Observable を出し、利用者が `toSignal`（`core/streams/stream-signals.ts` の `latestValue`、`recentValues`）で signal にする。
-- 見本は `core/streams/live-connection.ts`（WebSocket の差し替え口、購読の寿命、再接続）と `smoke/telemetry.ts`、`smoke/smoke-page.ts`、試験は `live-connection.spec.ts`（偽の WebSocket）。
+- 見本は `core/streams/live-connection.ts`（WebSocket の差し替え口、購読の寿命、再接続、つなぐたびに最初に送るもの）と `run/run-session.ts`（流れをまとめて状態の signal に当てる。画面の providers に置き、画面と同じ寿命）、試験は `live-connection.spec.ts` と `run-session.spec.ts`（偽の WebSocket）。
 - 画面へ毎秒数十回を超えて送らない（間引きはサーバーの仕事）。グラフには固定長の履歴（`recentValues`）を使う。
 
 ```ts
 // よい: 流れはサービスの中の RxJS、画面は signal で読む（画面が壊れると購読も止まる）
-readonly samples = liveConnection<TelemetrySample>('ws').messages; // サービス
+readonly samples = liveConnection<Sample>('ws').messages; // サービス
 protected readonly latest = latestValue(this.telemetry.samples); // コンポーネント
 ```
 
@@ -153,14 +137,15 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 
 ### サーバーとの間の型
 
-- サーバーとの間でやりとりする形は `core/api.ts` にだけ型で書く。本物のサーバーの契約ができたら、それに合わせて置き換える。
+- サーバーとの間でやりとりする形は `core/api.ts` にだけ、型と読み取り関数（`read*`）で書く。形の正本は `gui/protocol/`（README と `examples/`）。届いた JSON は読み取り関数を通してから使う（`httpResource` の `parse`、WebSocket の通知）。知らない欄、知らない通知と事象は無視して通す。
+- `api.spec.ts` が `gui/protocol/examples/` のすべての例を読ませる。例が変わったら、型と読み取り関数を合わせる。
 
 ### 試験の書き方
 
 - 単体試験は TestBed。`Layout` は signal を持つ偽物に差し替える（jsdom に `matchMedia` がない）。
 - `httpResource` は `TestBed.tick()` で要求を出させ、`HttpTestingController` で `flush` してから `whenStable()`（応答していない要求があると `whenStable()` が終わらない）。
-- WebSocket は `FakeWebSockets`（`core/streams/fake-web-socket.ts`）で差し替える。時間は Vitest の偽の時計。
-- e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。
+- WebSocket は `FakeWebSockets`（`core/streams/fake-web-socket.ts`）で差し替える。時間は Vitest の偽の時計。サーバーの通知は、作らずに `gui/protocol/examples/` の例を流す（`testing/protocol-examples.ts`）。
+- e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。e2e は本物の GUI サーバーと偽のランチャーを相手にする（筋書きは構成ファイルで選ぶ）。
 
 ## アイコン
 

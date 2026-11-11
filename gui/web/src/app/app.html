@@ -39,6 +39,7 @@
             mat-list-item
             [routerLink]="item.path"
             routerLinkActive
+            [routerLinkActiveOptions]="{ exact: item.path === '/' }"
             ariaCurrentWhenActive="page"
             #active="routerLinkActive"
             [activated]="active.isActive"

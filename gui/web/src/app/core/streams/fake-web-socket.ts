@@ -10,6 +10,8 @@ export class FakeSocket<T = unknown> {
 
   constructor(
     readonly config: WebSocketSubjectConfig<T>,
+    /** 開いた直後に送ったメッセージ（liveConnection の greeting）。 */
+    readonly greeting: readonly unknown[],
     private readonly subscriber: Subscriber<T>,
   ) {}
 
@@ -25,15 +27,24 @@ export class FakeSocket<T = unknown> {
     this.config.closeObserver?.next(new Event('close') as CloseEvent);
     this.subscriber.error(new Error('connection lost'));
   }
+
+  /** サーバーが閉じた（エラーでない終わり）。 */
+  close(): void {
+    this.config.closeObserver?.next(new Event('close') as CloseEvent);
+    this.subscriber.complete();
+  }
 }
 
 /** 開かれた偽の接続を順に持つ。`providers: [fake.provider]` で WEB_SOCKET_FACTORY を差し替える。 */
 export class FakeWebSockets {
   readonly sockets: FakeSocket[] = [];
 
-  private readonly factory: WebSocketFactory = <T>(config: WebSocketSubjectConfig<T>) =>
+  private readonly factory: WebSocketFactory = <T>(
+    config: WebSocketSubjectConfig<T>,
+    greeting: readonly unknown[],
+  ) =>
     new Observable<T>((subscriber) => {
-      const socket = new FakeSocket<T>(config, subscriber);
+      const socket = new FakeSocket<T>(config, greeting, subscriber);
       this.sockets.push(socket as FakeSocket);
       return () => (socket.closedByClient = true);
     });

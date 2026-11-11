@@ -3,12 +3,28 @@ import { Observable, defer, repeat, retry, share, timer } from 'rxjs';
 import { WebSocketSubjectConfig, webSocket } from 'rxjs/webSocket';
 import { webSocketUrl } from '../urls';
 
-/** WebSocket を開く関数。試験では偽物に差し替える。 */
-export type WebSocketFactory = <T>(config: WebSocketSubjectConfig<T>) => Observable<T>;
+/**
+ * WebSocket を開く関数。greeting は、開いた直後にこの順で送るメッセージ（JSON にする）。試験では偽物に差し替える。
+ */
+export type WebSocketFactory = <T>(
+  config: WebSocketSubjectConfig<T>,
+  greeting: readonly unknown[],
+) => Observable<T>;
 
 export const WEB_SOCKET_FACTORY = new InjectionToken<WebSocketFactory>('WEB_SOCKET_FACTORY', {
   providedIn: 'root',
-  factory: () => (config) => webSocket(config),
+  factory:
+    () =>
+    <T>(config: WebSocketSubjectConfig<T>, greeting: readonly unknown[]) =>
+      new Observable<T>((subscriber) => {
+        const socket = webSocket<T>(config);
+        const subscription = socket.subscribe(subscriber);
+        // 開く前に渡したものは、開いたときに送られる
+        for (const message of greeting) {
+          socket.next(message as T);
+        }
+        return subscription;
+      }),
 });
 
 /** closed: つながっていない（再接続を待っている間も）、connecting: つなぎに行っている、open: つながっている。 */
@@ -26,6 +42,10 @@ export interface LiveConnectionOptions {
   lingerMs?: number;
   /** 再接続の待ち時間の上限。 */
   maxBackoffMs?: number;
+  /**
+   * つなぐたびに（再接続でも）、開いた直後に送るメッセージ。つなぐときに呼ぶ（認証や、どこから再送してほしいか）。
+   */
+  greeting?: () => readonly unknown[];
 }
 
 /** 再接続の待ち時間。0.5 秒から倍にして、上限で頭打ち。attempt は 1 から。 */
@@ -38,23 +58,27 @@ export function backoffMs(attempt: number, maxMs = 5000): number {
  *
  * - 作っただけではつながらない。最初の購読でつなぎ、最後の購読が終わって lingerMs たったら切る。
  * - 切れたら（エラーでも、サーバーが閉じても）backoffMs の間を置いてつなぎ直す。通知が届いたら待ち時間を戻す。
+ * - options.greeting を渡すと、つなぐたびに、開いた直後にそのメッセージを送る。
  */
 export function liveConnection<T>(
   path: string,
   options: LiveConnectionOptions = {},
 ): LiveConnection<T> {
-  const { lingerMs = 1000, maxBackoffMs = 5000 } = options;
+  const { lingerMs = 1000, maxBackoffMs = 5000, greeting = () => [] } = options;
   const factory = inject(WEB_SOCKET_FACTORY);
   const url = webSocketUrl(inject(DOCUMENT).baseURI, path);
   const state = signal<ConnectionState>('closed');
 
   const messages = defer(() => {
     state.set('connecting');
-    return factory<T>({
-      url,
-      openObserver: { next: () => state.set('open') },
-      closeObserver: { next: () => state.set('closed') },
-    });
+    return factory<T>(
+      {
+        url,
+        openObserver: { next: () => state.set('open') },
+        closeObserver: { next: () => state.set('closed') },
+      },
+      greeting(),
+    );
   }).pipe(
     retry({
       delay: (_error, attempt) => timer(backoffMs(attempt, maxBackoffMs)),

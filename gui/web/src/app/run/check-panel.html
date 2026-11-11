@@ -1,0 +1,63 @@
+<p class="outcome" [class.failed]="!passed()" data-testid="check-outcome">
+  <span aria-hidden="true">{{ passed() ? '✓' : '✕' }}</span>
+  <ng-container i18n
+    >照合: {{ outcome() }}（誤り {{ check().errors }}、警告 {{ check().warnings }}、注記
+    {{ check().notes }}）</ng-container
+  >
+</p>
+
+<h3 class="heading" i18n>participant</h3>
+<ul class="participants" aria-label="participant" i18n-aria-label>
+  @for (row of rows(); track row.name) {
+    <li class="participant" [attr.data-testid]="'check-participant-' + row.name">
+      <span class="name">{{ row.name }}</span>
+      <mat-slide-toggle
+        class="use"
+        [checked]="row.used"
+        [disabled]="locked() || row.disabledInFile"
+        (change)="setUsed(row.name, $event.checked)"
+        [aria-label]="useLabel(row.name)"
+        i18n
+        >使う</mat-slide-toggle
+      >
+      <dl class="meta">
+        <div>
+          <dt i18n>照合</dt>
+          <dd>{{ row.status }}</dd>
+        </div>
+        <div>
+          <dt i18n>待つか</dt>
+          <dd>
+            @switch (row.required) {
+              @case (true) {
+                <ng-container i18n>必須</ng-container>
+              }
+              @case (false) {
+                <ng-container i18n>任意</ng-container>
+              }
+              @default {
+                —
+              }
+            }
+          </dd>
+        </div>
+        <div>
+          <dt i18n>ネットワーク</dt>
+          <dd>{{ row.networks || '—' }}</dd>
+        </div>
+        <div>
+          <dt i18n>変数</dt>
+          <dd>{{ row.variables ?? '—' }}</dd>
+        </div>
+      </dl>
+      @if (row.disabledInFile) {
+        <p class="hint" i18n>構成ファイルで外してあります（enabled: false）。</p>
+      }
+    </li>
+  } @empty {
+    <li class="hint" i18n>participant がありません。</li>
+  }
+</ul>
+
+<h3 class="heading" i18n>所見</h3>
+<app-findings-list [findings]="check().findings" />

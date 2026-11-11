@@ -1,0 +1,71 @@
+.outcome {
+  margin: 0 0 var(--app-space-3);
+  font: var(--mat-sys-title-small);
+}
+
+.outcome.failed {
+  color: var(--mat-sys-error);
+}
+
+.heading {
+  font: var(--mat-sys-title-small);
+  margin: var(--app-space-3) 0 var(--app-space-2);
+}
+
+.participants {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--app-space-2);
+}
+
+/* 名前と切り替えを 1 行目に、残りは幅に応じて折り返す */
+.participant {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--app-space-1) var(--app-space-3);
+  padding-block: var(--app-space-2);
+  border-block-end: 1px solid var(--mat-sys-outline-variant);
+  min-inline-size: 0;
+}
+
+.name {
+  font: var(--mat-sys-title-medium);
+  overflow-wrap: anywhere;
+  flex: 1 1 8em;
+}
+
+.meta {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--app-space-3);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.meta div {
+  display: flex;
+  gap: var(--app-space-1);
+  min-inline-size: 0;
+}
+
+.meta dt {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.meta dt::after {
+  content: ':';
+}
+
+.meta dd {
+  margin: 0;
+}
+
+.hint {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--mat-sys-on-surface-variant);
+}

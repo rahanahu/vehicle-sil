@@ -1,8 +1,12 @@
 import { Routes } from '@angular/router';
-import { SMOKE_ROUTES } from './smoke/routes';
 
 export const routes: Routes = [
-  ...SMOKE_ROUTES,
+  {
+    path: '',
+    pathMatch: 'full',
+    title: $localize`実行 - vehicle-sil`,
+    loadComponent: () => import('./run/run-page').then((m) => m.RunPage),
+  },
   {
     // レイアウトの e2e（e2e/layout.spec.ts）が使う試験用の中身。ナビゲーションには出さない。
     path: '_test/layout',

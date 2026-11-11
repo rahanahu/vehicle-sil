@@ -1,0 +1,204 @@
+<h1 i18n>実行</h1>
+
+@if (!auth.token()) {
+  <mat-card appearance="outlined" data-testid="no-token">
+    <mat-card-content>
+      <p i18n>
+        この画面は、GUI サーバーが起動したときに表示した URL（<code>#token=</code>
+        の付いたもの）から開いてください。
+      </p>
+    </mat-card-content>
+  </mat-card>
+} @else if (auth.rejected()) {
+  <mat-card appearance="outlined" data-testid="token-rejected">
+    <mat-card-content>
+      <p i18n>
+        サーバーがこの画面の鍵（トークン）を受け付けませんでした。サーバーを起動し直したときは、新しく表示された
+        URL から開き直してください。
+      </p>
+    </mat-card-content>
+  </mat-card>
+} @else {
+  @if (connectionText(); as text) {
+    <p class="banner" role="status" data-testid="connection">{{ text }}</p>
+  }
+  @if (app.hasValue() && !app.value().launcher.usable) {
+    <div class="banner error" data-testid="launcher-problem">
+      <p i18n>ランチャーをまだ使えません。</p>
+      @for (problem of app.value().launcher.problems; track $index) {
+        <p lang="en">{{ problem.message }}</p>
+      }
+    </div>
+  } @else if (app.error()) {
+    <p class="banner error" i18n>サーバーの情報を取得できませんでした。</p>
+  }
+  @for (notice of run.notices(); track notice.id) {
+    <p class="banner" data-testid="notice">
+      <span lang="en">{{ notice.message }}</span>
+      <button matButton type="button" (click)="run.dismissNotice(notice.id)" i18n>閉じる</button>
+    </p>
+  }
+
+  <div class="columns">
+    <div class="column">
+      <mat-card appearance="outlined">
+        <mat-card-header>
+          <mat-card-title><h2 i18n>構成ファイル</h2></mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          @if (active()) {
+            <p class="file" data-testid="session-file">{{ session()?.file }}</p>
+          } @else if (configs.hasValue()) {
+            <mat-form-field class="picker" subscriptSizing="dynamic">
+              <mat-label i18n>構成ファイル</mat-label>
+              <mat-select
+                [value]="selected()"
+                (valueChange)="selectFile($event)"
+                data-testid="config-select"
+              >
+                @for (config of configs.value().files; track config.path) {
+                  <mat-option [value]="config.path">{{ config.path }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            @if (configs.value().files.length === 0) {
+              <p class="hint" i18n>選べる構成ファイル（.yaml、.yml）がありません。</p>
+            }
+            @if (configs.value().truncated) {
+              <p class="hint" i18n>多すぎるので、一覧を途中で打ち切りました。</p>
+            }
+          } @else if (configs.error()) {
+            <p class="error" i18n>構成ファイルの一覧を取得できませんでした。</p>
+          } @else {
+            <p class="hint" i18n>一覧を取得しています。</p>
+          }
+          @if (app.hasValue()) {
+            <p class="hint">
+              <ng-container i18n>選べる範囲:</ng-container> <code>{{ app.value().root }}</code>
+            </p>
+          }
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card appearance="outlined" data-testid="check-card">
+        <mat-card-header>
+          <mat-card-title><h2 i18n>照合</h2></mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          @if (shownCheck(); as check) {
+            <app-check-panel [check]="check" [(disabled)]="disabled" [locked]="active()" />
+          } @else if (check.isLoading()) {
+            <p class="hint" i18n>照合しています。</p>
+          } @else if (check.error()) {
+            <p class="error" i18n>照合できませんでした。</p>
+          } @else {
+            <p class="hint" i18n>構成ファイルを選ぶと照合します。</p>
+          }
+        </mat-card-content>
+        @if (!active() && selected() !== null) {
+          <mat-card-actions>
+            <button matButton type="button" [disabled]="check.isLoading()" (click)="recheck()" i18n>
+              照合し直す
+            </button>
+          </mat-card-actions>
+        }
+      </mat-card>
+
+      <mat-card appearance="outlined">
+        <mat-card-header>
+          <mat-card-title><h2 i18n>操作</h2></mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <app-run-controls
+            [session]="session()"
+            [active]="active()"
+            [blockedBy]="blockedBy()"
+            [pending]="run.pending()"
+            [elapsedMs]="run.elapsedMs()"
+            [speedSupported]="speedSupported()"
+            [speedMin]="speedRange().speed_min"
+            [speedMax]="speedRange().speed_max"
+            [(speed)]="speed"
+            (start)="start()"
+            (stop)="stop()"
+          />
+          @if (run.actionError(); as error) {
+            <p class="error" data-testid="action-error">
+              <ng-container i18n>操作を受け付けられませんでした:</ng-container>
+              <span lang="en">{{ error }}</span>
+            </p>
+          }
+        </mat-card-content>
+      </mat-card>
+    </div>
+
+    <div class="column">
+      @if (session(); as session) {
+        @if (session.result; as result) {
+          <mat-card
+            appearance="outlined"
+            data-testid="result-card"
+            [attr.data-session]="session.id"
+          >
+            <mat-card-header>
+              <mat-card-title><h2 i18n>結果</h2></mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              <app-result-panel [result]="result" />
+            </mat-card-content>
+          </mat-card>
+        }
+        @if (session.problems.length > 0) {
+          <mat-card appearance="outlined" data-testid="problems-card">
+            <mat-card-header>
+              <mat-card-title><h2 i18n>サーバーの知らせ</h2></mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              <ul class="problems">
+                @for (problem of session.problems; track $index) {
+                  <li data-testid="problem">
+                    <code>{{ problem.code }}</code> <span lang="en">{{ problem.message }}</span>
+                  </li>
+                }
+              </ul>
+            </mat-card-content>
+          </mat-card>
+        }
+        <mat-card appearance="outlined">
+          <mat-card-header>
+            <mat-card-title><h2 i18n>participant の状態</h2></mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <app-participant-status [participants]="session.participants" />
+          </mat-card-content>
+        </mat-card>
+        @if (!session.result && session.findings.length > 0) {
+          <mat-card appearance="outlined">
+            <mat-card-header>
+              <mat-card-title><h2 i18n>実行の所見</h2></mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              <app-findings-list [findings]="session.findings" />
+            </mat-card-content>
+          </mat-card>
+        }
+        <mat-card appearance="outlined" class="log-card">
+          <mat-card-header>
+            <mat-card-title><h2 i18n>ログ</h2></mat-card-title>
+          </mat-card-header>
+          <mat-card-content>
+            <app-log-view [lines]="session.logs" [dropped]="session.droppedLogLines" />
+          </mat-card-content>
+        </mat-card>
+      } @else {
+        <mat-card appearance="outlined">
+          <mat-card-content>
+            <p class="hint" i18n>
+              まだ実行していません。始めると、participant の状態とログがここに出ます。
+            </p>
+          </mat-card-content>
+        </mat-card>
+      }
+    </div>
+  </div>
+}

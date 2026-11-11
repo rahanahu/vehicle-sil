@@ -1,0 +1,61 @@
+<div class="filters">
+  <mat-form-field subscriptSizing="dynamic" class="source">
+    <mat-label i18n>participant</mat-label>
+    <mat-select [value]="source()" (valueChange)="source.set($event)" data-testid="log-source">
+      <mat-option value="" i18n>すべて</mat-option>
+      @for (name of sources(); track name) {
+        <mat-option [value]="name">{{ name }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+  <mat-form-field subscriptSizing="dynamic" class="text">
+    <mat-label i18n>文字で絞る</mat-label>
+    <input
+      matInput
+      type="search"
+      #filterInput
+      [value]="text()"
+      (input)="setText(filterInput.value)"
+      data-testid="log-filter"
+    />
+  </mat-form-field>
+  <mat-slide-toggle
+    [checked]="follow()"
+    (change)="follow.set($event.checked)"
+    data-testid="log-follow"
+    i18n
+    >末尾に追従</mat-slide-toggle
+  >
+</div>
+
+<p class="count" data-testid="log-count">
+  <ng-container i18n>{{ shown().length }} 行</ng-container>
+  @if (shown().length !== lines().length) {
+    <ng-container i18n>（全 {{ lines().length }} 行）</ng-container>
+  }
+  @if (dropped() > 0) {
+    <span class="dropped" data-testid="log-dropped" i18n
+      >古い行を {{ dropped() }} 行落としました。</span
+    >
+  }
+</p>
+
+<cdk-virtual-scroll-viewport
+  class="viewport"
+  [itemSize]="rowPx"
+  (scroll)="onScroll()"
+  tabindex="0"
+  role="region"
+  aria-label="ログ"
+  i18n-aria-label
+  data-scroll-x
+  data-testid="log"
+>
+  <div
+    *cdkVirtualFor="let line of shown(); trackBy: trackLine; templateCacheSize: 0"
+    class="line"
+    data-testid="log-line"
+  >
+    <span class="from">{{ line.source }}</span> <span lang="en">{{ line.line }}</span>
+  </div>
+</cdk-virtual-scroll-viewport>

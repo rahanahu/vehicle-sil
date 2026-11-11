@@ -90,6 +90,21 @@ describe('liveConnection', () => {
     expect(fake.sockets).toHaveLength(4);
   });
 
+  it('sends the greeting each time it connects, built at that moment', () => {
+    let from = 0;
+    const connection = TestBed.runInInjectionContext(() =>
+      liveConnection<number>('ws', { greeting: () => [{ type: 'auth', from }] }),
+    );
+    runInInjectionContext(screen(), () => latestValue(connection.messages));
+    expect(fake.last().greeting).toEqual([{ type: 'auth', from: 0 }]);
+
+    from = 5;
+    fake.last().close();
+    vi.advanceTimersByTime(backoffMs(1));
+    expect(fake.sockets).toHaveLength(2);
+    expect(fake.last().greeting).toEqual([{ type: 'auth', from: 5 }]);
+  });
+
   it('keeps a fixed-length history', () => {
     const connection = TestBed.runInInjectionContext(() => liveConnection<number>('ws'));
     const one = runInInjectionContext(screen(), () => recentValues(connection.messages, 1));

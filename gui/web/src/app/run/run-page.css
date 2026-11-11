@@ -1,0 +1,87 @@
+h1 {
+  font: var(--mat-sys-headline-small);
+  margin-block: 0 var(--app-space-3);
+}
+
+h2 {
+  font: var(--mat-sys-title-large);
+  margin: 0;
+}
+
+/* 中身の領域が広ければ 2 列（左: 選ぶ、照合、操作。右: 実行の様子）、狭ければ 1 列 */
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--app-space-3);
+}
+
+@container content (inline-size >= 1000px) {
+  .columns {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  }
+}
+
+.column {
+  display: grid;
+  gap: var(--app-space-3);
+  align-content: start;
+  min-inline-size: 0;
+}
+
+mat-card {
+  min-inline-size: 0;
+}
+
+mat-card-content {
+  padding-block-start: var(--app-space-2);
+  overflow-wrap: anywhere;
+}
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-2);
+  margin: 0 0 var(--app-space-3);
+  padding: var(--app-space-2) var(--app-space-3);
+  border-radius: var(--mat-sys-corner-small);
+  background: var(--mat-sys-secondary-container);
+  color: var(--mat-sys-on-secondary-container);
+  overflow-wrap: anywhere;
+}
+
+.banner.error {
+  background: var(--mat-sys-error-container);
+  color: var(--mat-sys-on-error-container);
+}
+
+.picker {
+  inline-size: 100%;
+}
+
+.file {
+  margin: 0;
+  font: var(--mat-sys-title-medium);
+}
+
+.hint {
+  margin: var(--app-space-2) 0 0;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.error {
+  margin: var(--app-space-2) 0 0;
+  color: var(--mat-sys-error);
+}
+
+.problems {
+  margin: 0;
+  padding-inline-start: 1.25em;
+  display: grid;
+  gap: var(--app-space-1);
+}
+
+.banner p {
+  margin: 0;
+}

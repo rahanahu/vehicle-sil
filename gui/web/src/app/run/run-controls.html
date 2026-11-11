@@ -1,0 +1,109 @@
+<div class="row">
+  @if (active()) {
+    <button
+      matButton="filled"
+      type="button"
+      class="stop"
+      data-testid="stop"
+      [disabled]="pending() === 'stop' || stopRequests() >= 2"
+      (click)="stop.emit()"
+    >
+      @if (stopRequests() === 0) {
+        <ng-container i18n>停止</ng-container>
+      } @else {
+        <ng-container i18n>待たずに止める</ng-container>
+      }
+    </button>
+  } @else {
+    <button
+      matButton="filled"
+      type="button"
+      data-testid="start"
+      [disabled]="!canStart() || (speedSupported() && choice() === 'factor' && factorInvalid())"
+      (click)="start.emit()"
+    >
+      @if (again()) {
+        <ng-container i18n>もう一度実行</ng-container>
+      } @else {
+        <ng-container i18n>開始</ng-container>
+      }
+    </button>
+  }
+
+  @if (speedSupported()) {
+    <div class="speed">
+      <span class="speed-label" id="speed-label" i18n>速度</span>
+      <mat-button-toggle-group
+        aria-labelledby="speed-label"
+        [value]="choice()"
+        [disabled]="active()"
+        (change)="choose($event.value)"
+      >
+        <mat-button-toggle value="file" i18n>構成のとおり</mat-button-toggle>
+        <mat-button-toggle value="max" i18n>最速</mat-button-toggle>
+        <mat-button-toggle value="real" i18n>等速</mat-button-toggle>
+        <mat-button-toggle value="factor" i18n>倍率</mat-button-toggle>
+      </mat-button-toggle-group>
+      @if (choice() === 'factor') {
+        <mat-form-field class="factor" subscriptSizing="dynamic">
+          <mat-label i18n>倍率</mat-label>
+          <input
+            matInput
+            type="number"
+            inputmode="decimal"
+            [min]="speedMin()"
+            [max]="speedMax()"
+            step="0.5"
+            [value]="factor()"
+            [disabled]="active()"
+            #factorInput
+            (input)="setFactor(factorInput.value)"
+          />
+          @if (factorInvalid()) {
+            <mat-error i18n>{{ speedMin() }} から {{ speedMax() }} の数</mat-error>
+          }
+        </mat-form-field>
+      }
+    </div>
+  }
+</div>
+
+@if (!active() && blockedBy().length > 0) {
+  <ul class="blocked" data-testid="blocked">
+    @for (reason of blockedBy(); track reason) {
+      <li>{{ reason }}</li>
+    }
+  </ul>
+}
+@if (active() && stopRequests() === 1) {
+  <p class="stopping" data-testid="stopping" i18n>
+    止めています。participant が終わるのを待っています（もう一度押すと待たずに止めます）。
+  </p>
+}
+
+<ol class="phases" aria-label="段階" i18n-aria-label>
+  @for (step of steps(); track step.phase) {
+    <li [class]="step.state" [attr.aria-current]="step.state === 'current' ? 'step' : null">
+      <span class="mark" aria-hidden="true">{{
+        step.state === 'done' ? '✓' : step.state === 'current' ? '●' : '○'
+      }}</span>
+      {{ step.label }}
+    </li>
+  }
+  @if (unknownPhase(); as phase) {
+    <li class="current" aria-current="step">{{ phase }}</li>
+  }
+</ol>
+
+<dl class="times">
+  <div>
+    <dt i18n>経過</dt>
+    <dd data-testid="elapsed" i18n>{{ elapsedSeconds() | measure: 1 }} s</dd>
+  </div>
+  @if (simSeconds() !== null) {
+    <div>
+      <dt i18n>仮想時刻</dt>
+      <dd data-testid="sim-time" i18n>{{ simSeconds() | measure: 3 }} s</dd>
+    </div>
+  }
+</dl>
