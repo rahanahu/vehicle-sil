@@ -44,7 +44,7 @@
 | `examples/control` | 変数を宣言する ECU の Peer `vehicle_sil_control_peer` と、1 つのプロセスで動くデモ `vehicle_sil_control_demo` |
 | `tools/sim_controller` | 仮想時間のシミュレーションを開始・停止する `vehicle_sil_sim_controller` |
 | `tools/can_bus_simulator` | 簡易 CAN Network Simulator の participant `vehicle_sil_can_bus_simulator` |
-| `tools/launch` | ECU の実行ファイルをまとめる構成ファイルを照合する `vehicle_sil_launch check`（[docs/simulation-config.md](docs/simulation-config.md)） |
+| `tools/launch` | ECU の実行ファイルをまとめる構成ファイルを照合する `vehicle_sil_launch check` と、シミュレーション全体を起動して見届ける `vehicle_sil_launch run`（[docs/simulation-config.md](docs/simulation-config.md)） |
 | `tools/j1939_codegen` | YAML の定義から J1939 の型付きメッセージを生成する `j1939_codegen.py` |
 | `bridges/vector-xl` | Vector XL CAN Bridge（ライブラリと実行ファイル `vehicle_sil_vector_xl_bridge`） |
 | `examples/getting_started` | 最初の例 `vehicle_sil_getting_started`: `Ecu&` を受け取る 2 つの ECU を、`Simulation` で仮想バスか SIL Kit に載せる |
@@ -53,7 +53,7 @@
 | `examples/virtual_time` | 仮想時間のピア（どれも `Peer` の上）: 物理モデル、既存 ECU（共有ライブラリの `tick()`）を載せた J1939 ECU、LIN センサー、ボディコントローラー |
 | `examples/lin` | LIN クラスタのピア `vehicle_sil_lin_master` / `vehicle_sil_lin_slave`（フレームの送受信と Sleep/Wakeup） |
 | `examples/fetchcontent_consumer` | 外部 CMake プロジェクトからの利用例 |
-| `tools/` | `vehicle_sil_sim_controller`（仮想時間のシミュレーションの開始と停止）、`vehicle_sil_launch`（構成ファイルの照合）と、実行ファイル共通のコマンドライン処理（内部用） |
+| `tools/` | `vehicle_sil_sim_controller`（仮想時間のシミュレーションの開始と停止）、`vehicle_sil_launch`（構成ファイルの照合と、シミュレーション全体の実行）と、実行ファイル共通のコマンドライン処理（内部用） |
 | `tests/` | ユニットテスト、複数プロセスの統合テスト、FetchContent テスト |
 | `external/` | SIL Kit（Git サブモジュール、コミット固定） |
 | `patches/` | SIL Kit に当てるパッチ（上流への提出用の形式） |
@@ -353,7 +353,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 | `core` / `lin` | 仮想時間の単体テスト。プロセス内のレジストリで、ステップ幅の違う参加者の同期、最も遅い参加者を待つこと、実時間への結合、`TickScheduler`、`StepInbox`、LIN のスケジュール、応答、Master のフレームの受信、休止と起床、スケジュールの切り替えを確かめる。LIN は主なシナリオを仮想 LIN バスの上でも確かめ（`lin_local.*`）、仮想 LIN バスだけの試験（`lin_bus.*`）と、`vehicle_sil::lin` が SIL Kit を含まないことの検査（`lin.boundary`）もある（`unit` ラベルも付く） |
 | `virtual_time` | registry、controller、4 つのピア（1 / 2 / 5 / 10 ms。どれも `Peer` の上）を別プロセスで動かす。トレースを照合して、データがピアの間を予測どおりの仮想時刻で渡ること、J1939 の ECU が Address Claim の 250 ms 後から送ることを確かめる。全速、遅い `tick()`、4 倍速、0.5 倍速の各条件でトレースが一致し、壁時計の所要時間が実時間より速い・遅いことも確かめる。`peer-failure` は、途中で失敗したピアを controller が検出して中断し、全プロセスが終了コード 1 で終わることを確かめる（`integration` ラベルも付く） |
 | `lin`（`lin_cluster.*`） | registry、controller、LIN の Master と 2 つの Slave（5 / 2 / 4 ms）を別プロセスで動かす。トレースを照合して、スケジュール、両方向のフレーム、Master・Slave・bus idle による休止と起床を確かめる。Slave の 1 つを実時間に結合してもトレースが一致することも確かめる（`integration` ラベルも付く） |
-| `launch` / `process` | 構成ファイルの読み込みと照合の規則（プロセスを起動しない試験。各規則の通る例と落ちる例を、文言と行番号まで照合する）、人向けと JSON の出力。`launch_cli.*` は `vehicle_sil_launch check` を実行ファイルとして動かす（[docs/simulation-config.md](docs/simulation-config.md) の例とバイト単位で照合、`--describe` に失敗する実行ファイル、`--strict`、読めないファイル、引数の誤り）。`process.*` は子プロセスの試験（標準出力と標準エラーの取り込み、時間切れ、空の標準入力、空白と ASCII 以外の文字を含むパスと引数） |
+| `launch` / `process` | 構成ファイルの読み込みと照合の規則（プロセスを起動しない試験。各規則の通る例と落ちる例を、文言と行番号まで照合する）、人向けと JSON の出力。`launch_cli.*` は `vehicle_sil_launch check` を実行ファイルとして動かす（[docs/simulation-config.md](docs/simulation-config.md) の例とバイト単位で照合、`--describe` に失敗する実行ファイル、`--strict`、読めないファイル、引数の誤り）。`launch_run.*` は `vehicle_sil_launch run` を実行ファイルとして動かす（docs の例との照合、失敗する ECU、そろわない participant、終わらない participant、残されたプロセス、中断、ランチャーが落ちたとき）。`process.*` は子プロセスの試験（標準出力と標準エラーの取り込み、行ごとの受け渡し、時間切れ、空の標準入力、作業ディレクトリ、受け継がないハンドル、止める要求、起動したプロセスごとの終了、空白と ASCII 以外の文字を含むパスと引数） |
 | `fetchcontent` | 既定では無効。このリポジトリのコミットを FetchContent で取り込み、利用例をビルドして実行する |
 
 各プロセスのログは `build/<preset>/tests/` の下の `integration/<シナリオ>/`、`virtual_time/<シナリオ>/`、`lin_cluster/<シナリオ>/`、`vector_xl/integration/<シナリオ>/` に残ります。失敗したときは、ランチャーがすべてのログを出力します。

@@ -4,6 +4,7 @@ add_library(vehicle_sil_core STATIC
   src/failure_check.cpp
   src/participant_runtime.cpp
   src/simulation_controller.cpp
+  src/simulation_watch.cpp
   src/tick_scheduler.cpp)
 add_library(vehicle_sil::core ALIAS vehicle_sil_core)
 set_target_properties(vehicle_sil_core PROPERTIES EXPORT_NAME core)

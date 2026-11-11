@@ -19,6 +19,7 @@ int main(int argc, char** argv)
 
     int failures = 0;
     int executed = 0;
+    int skipped = 0;
     for (const auto& [name, test] : tests)
     {
         if (argc == 2 && name != argv[1])
@@ -31,6 +32,11 @@ int main(int argc, char** argv)
             test();
             std::printf("[ PASS ] %s\n", name.c_str());
         }
+        catch (const vehicle_sil::unit::Skipped& e)
+        {
+            ++skipped;
+            std::printf("[ SKIP ] %s\n  %s\n", name.c_str(), e.what());
+        }
         catch (const std::exception& e)
         {
             ++failures;
@@ -42,5 +48,10 @@ int main(int argc, char** argv)
         std::printf("no test matched '%s'\n", argc == 2 ? argv[1] : "");
         return 2;
     }
-    return failures == 0 ? 0 : 1;
+    if (failures > 0)
+    {
+        return 1;
+    }
+    // A test run alone that could not run here is reported as skipped.
+    return executed == 1 && skipped == 1 ? vehicle_sil::unit::kExitSkipped : 0;
 }

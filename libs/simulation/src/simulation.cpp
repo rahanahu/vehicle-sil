@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/simulation/simulation.hpp"
 
-#include "vehicle_sil/core/failure_check.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/core/simulation_watch.hpp"
 #include "vehicle_sil/local/local_bench.hpp"
 #include "vehicle_sil/peer/peer.hpp"
 
@@ -242,35 +242,30 @@ void Simulation::SilKitRun::run(std::optional<SimDuration> stop_at)
 std::vector<std::string> Simulation::SilKitRun::watch_with_controller(bool& failure)
 {
     std::vector<std::string> others;
-    FailureCheck check;
-    std::optional<orch::ParticipantState> end;
-    // SIL Kit does not end the simulation when a participant fails: virtual time only stops.
-    while (!(end = controller->wait_until_finished(kPoll)))
-    {
-        if (any_peer_failed())
+    WatchOptions watch;
+    watch.poll = kPoll;
+    watch.failed = [this] { return any_peer_failed(); };
+    // Before the abort, as the participants were then: whether the one that left is an ECU of
+    // this process that failed (reported with its own error) or another participant.
+    watch.before_abort = [this, &others](const WatchResult& why) {
+        if (const auto& failed = why.failure)
         {
-            failure = true;
-            break;
-        }
-        if (const auto failed = check.check(*controller, std::chrono::steady_clock::now()))
-        {
-            failure = true;
             const auto own = std::find(names.begin(), names.end(), failed->participant);
             if (own == names.end() || !peers[static_cast<std::size_t>(own - names.begin())]->failed())
             {
                 others.push_back(failed->participant + ": " + failed->reason);
             }
-            break;
         }
-    }
-    if (failure)
-    {
-        controller->abort();
-    }
-    else if (end != orch::ParticipantState::Shutdown)
+    };
+    const WatchResult watched = watch_simulation(*controller, watch);
+    if (watched.end == WatchEnd::Failed)
     {
         failure = true;
-        others.push_back(std::string(kControllerName) + ": ended in state " + state_text(end));
+    }
+    else if (watched.state != orch::ParticipantState::Shutdown)
+    {
+        failure = true;
+        others.push_back(std::string(kControllerName) + ": ended in state " + state_text(watched.state));
     }
     return others;
 }

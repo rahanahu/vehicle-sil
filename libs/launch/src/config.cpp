@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstdlib>
 #include <map>
 #include <system_error>
 
@@ -14,10 +15,9 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-constexpr std::int64_t kMaxMillis = 1'000'000'000'000; // about 31 years, as ecu_main allows
 
-const std::vector<std::string> kTopKeys = {"vehicle_sil_simulation", "stop_at_ms", "start_timeout_ms", "networks",
-                                           "participants"};
+const std::vector<std::string> kTopKeys = {"vehicle_sil_simulation", "stop_at_ms", "start_timeout_ms", "stop_timeout_ms",
+                                           "registry_uri", "networks", "participants"};
 const std::vector<std::string> kNetworkKeys = {"name", "kind"};
 const std::vector<std::string> kParticipantKeys = {"name", "command", "step_ms", "describe", "required"};
 
@@ -181,6 +181,7 @@ public:
         bool hasVersion = false;
         bool hasNetworks = false;
         bool hasParticipants = false;
+        std::size_t participantsLine = 0;
         std::map<std::string, std::size_t> seen;
         for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
         {
@@ -218,6 +219,15 @@ public:
                 config.start_timeout_ms =
                     millis(child, "", key, "milliseconds to wait for the participants").value_or(config.start_timeout_ms);
             }
+            else if (key == "stop_timeout_ms")
+            {
+                config.stop_timeout_ms =
+                    millis(child, "", key, "milliseconds to wait for each participant to end").value_or(config.stop_timeout_ms);
+            }
+            else if (key == "registry_uri")
+            {
+                config.registry_uri = registry_uri(child);
+            }
             else if (key == "networks")
             {
                 hasNetworks = true;
@@ -226,6 +236,7 @@ public:
             else if (key == "participants")
             {
                 hasParticipants = true;
+                participantsLine = doc_.line(child);
                 read_participants(child, config);
             }
             else
@@ -248,6 +259,15 @@ public:
         {
             error("missing-key", 0,
                   "the file has no participants: add participants, a list of the participants with name and command");
+        }
+        else if (!config.participants.empty() &&
+                 std::none_of(config.participants.begin(), config.participants.end(),
+                              [](const ParticipantConfig& p) { return p.required; }))
+        {
+            error("no-required-participant", participantsLine,
+                  "every participant has required: false, but the simulation starts when its required participants "
+                  "have joined, so it needs at least one: remove required: false from the participants it must wait "
+                  "for (an ecu_main executable is always required)");
         }
         return config;
     }
@@ -403,6 +423,31 @@ private:
         }
         error("value", doc_.line(node), prefix + key + " must be true or false, not " + shown_value(node), participant);
         return std::nullopt;
+    }
+
+    /// "silkit://<host>:<port>", or empty (and an error).
+    std::optional<std::string> registry_uri(ryml::id_type node)
+    {
+        const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree_.val(node)) : std::string{};
+        const std::string scheme = "silkit://";
+        const auto colon = text.rfind(':');
+        std::int64_t port = -1;
+        const bool hasPort = colon != std::string::npos && colon > scheme.size() &&
+                             std::from_chars(text.data() + colon + 1, text.data() + text.size(), port).ptr ==
+                                 text.data() + text.size() &&
+                             colon + 1 < text.size();
+        const bool plain = std::none_of(text.begin(), text.end(), [](char c) {
+            return static_cast<unsigned char>(c) <= 0x20 || c == 0x7F;
+        });
+        if (text.rfind(scheme, 0) != 0 || !hasPort || port < 1 || port > 65535 || !plain)
+        {
+            error("value", doc_.line(node),
+                  "registry_uri must be where the registry of the simulation listens, silkit://<host>:<port> with a port "
+                  "from 1 to 65535 (e.g. silkit://127.0.0.1:8500, or silkit://0.0.0.0:8500 for other computers too), not " +
+                      shown_value(node) + "; leave registry_uri out for a free port on 127.0.0.1");
+            return std::nullopt;
+        }
+        return text;
     }
 
     /// A text that is not empty, or empty (and an error).
@@ -573,6 +618,7 @@ private:
             bool usable = name.has_value();
             bool hasCommand = false;
             bool describeRead = true;
+            std::size_t requiredLine = 0;
             std::map<std::string, std::size_t> seen;
             for (auto child = tree_.first_child(item); child != ryml::NONE; child = tree_.next_sibling(child))
             {
@@ -602,6 +648,7 @@ private:
                 }
                 else if (key == "required")
                 {
+                    requiredLine = doc_.line(child);
                     participant.required = boolean(child, prefix, key, who).value_or(true);
                 }
                 else if (key != "name")
@@ -638,6 +685,15 @@ private:
             if (!participant.command.empty() && describeRead)
             {
                 usable = check_arguments(prefix, who, participant) && usable;
+            }
+            if (participant.describe && describeRead && !participant.required)
+            {
+                error("not-required-ecu", requiredLine,
+                      prefix + "required: false is only for executables with describe: false: an ecu_main executable joins "
+                               "as a coordinated participant, which SIL Kit starts only among the required participants; "
+                               "remove required: false (to run the simulation without this ECU, remove the participant or "
+                               "make it a comment)",
+                      who);
             }
             if (!participant.describe && participant.step_ms)
             {
@@ -892,6 +948,57 @@ std::filesystem::path resolve_executable(std::string_view executable, const std:
     return path;
 }
 
+FoundExecutable find_executable(std::string_view executable, const std::filesystem::path& base_dir)
+{
+    FoundExecutable found{resolve_executable(executable, base_dir), false};
+    std::error_code ec;
+    const auto runnable = [&ec](const std::filesystem::path& candidate) {
+        if (!std::filesystem::is_regular_file(candidate, ec))
+        {
+            return false;
+        }
+#ifndef _WIN32
+        const auto perms = std::filesystem::status(candidate, ec).permissions();
+        return (perms & (std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+                         std::filesystem::perms::others_exec)) != std::filesystem::perms::none;
+#else
+        return true;
+#endif
+    };
+    // Next to the file only an executable file counts (a data file of the same name does not
+    // hide the program on PATH).
+    if (runnable(found.path) || executable.empty() || executable.find_first_of("/\\") != std::string_view::npos)
+    {
+        return found;
+    }
+#ifdef _WIN32
+    const wchar_t* variable = _wgetenv(L"PATH");
+    const std::wstring list = variable != nullptr ? variable : L"";
+    constexpr wchar_t kSeparator = L';';
+#else
+    const char* variable = std::getenv("PATH");
+    const std::string list = variable != nullptr ? variable : "";
+    constexpr char kSeparator = ':';
+#endif
+    std::size_t begin = 0;
+    while (begin <= list.size())
+    {
+        const std::size_t end = std::min(list.find(kSeparator, begin), list.size());
+        const std::filesystem::path directory(list.substr(begin, end - begin));
+        begin = end + 1;
+        if (directory.empty() || directory.is_relative())
+        {
+            continue; // a relative entry would depend on the directory the launcher runs in
+        }
+        const std::filesystem::path candidate = resolve_executable(executable, directory);
+        if (runnable(candidate))
+        {
+            return FoundExecutable{candidate, true};
+        }
+    }
+    return found;
+}
+
 std::optional<Finding> check_executable(const ParticipantConfig& participant, const std::filesystem::path& path)
 {
     const std::string shown = process::shown_path(path);
@@ -911,7 +1018,7 @@ std::optional<Finding> check_executable(const ParticipantConfig& participant, co
         }
         else if (written.find_first_of("/\\") == std::string::npos)
         {
-            hint = "; PATH is not searched: write the path of the executable";
+            hint = "; it is not on PATH either";
         }
         problem = prefix + " does not exist (looked for " + shown +
                   "): build it, or correct the path (a relative path is from the directory of the configuration file)" + hint;

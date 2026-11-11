@@ -9,9 +9,13 @@
 #include "vehicle_sil/launch/config.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 
+#include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 using namespace vehicle_sil;
@@ -141,9 +145,10 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
 {
     check_text(read(std::string(kExample) + "stop_at: 3\nextra: 1\n"),
                "E 18 unknown-key: unknown key 'stop_at': did you mean 'stop_at_ms'? (the keys here: "
-               "vehicle_sil_simulation, stop_at_ms, start_timeout_ms, networks, participants)\n"
+               "vehicle_sil_simulation, stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, networks, "
+               "participants)\n"
                "E 19 unknown-key: unknown key 'extra': remove it, or use one of the keys here (vehicle_sil_simulation, "
-               "stop_at_ms, start_timeout_ms, networks, participants)\n");
+               "stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, networks, participants)\n");
     check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
                "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
                "command, step_ms, describe, required)\n"
@@ -519,7 +524,7 @@ TEST_CASE(a_missing_executable_gets_a_hint_for_path_and_arguments)
     p.command = {"python3", "tool.py"};
     const auto bare = check_executable(p, resolve_executable("python3", base));
     CHECK(bare.has_value());
-    CHECK(bare->message.ends_with("; PATH is not searched: write the path of the executable"));
+    CHECK(bare->message.ends_with("; it is not on PATH either"));
     p.command = {"tools/engine --fast"};
     const auto spaced = check_executable(p, resolve_executable(p.command.front(), base));
     CHECK(spaced.has_value());
@@ -555,4 +560,148 @@ TEST_CASE(expands_escaped_braces)
                                "uri", "Engine") ==
            std::vector<std::string>{"{name}", "x{name}Engine", "a}}b{{", "${HOME}", "{x}", "{\"a\":{\"b\":1}}",
                                     "{{\"vehicle_sil_ecu\": 2}}", "{{name}}", "{}"}));
+}
+
+TEST_CASE(reads_where_the_registry_listens_and_how_long_to_wait_for_the_end)
+{
+    const ConfigRead read = read_config("vehicle_sil_simulation: 1\nstop_timeout_ms: 2500\nregistry_uri: silkit://0.0.0.0:8500\n"
+                                        "networks: []\nparticipants:\n  - name: A\n    command: a\n");
+    check_text(lines(read.findings), "");
+    CHECK_EQ(read.config->stop_timeout_ms, 2500);
+    CHECK(read.config->registry_uri == "silkit://0.0.0.0:8500");
+    // Without them: 10 s, and no URI (a free port).
+    const ConfigRead defaults = read_config(with_participants("  - name: A\n    command: a\n"));
+    CHECK_EQ(defaults.config->stop_timeout_ms, 10000);
+    CHECK(!defaults.config->registry_uri.has_value());
+    CHECK(read_config("vehicle_sil_simulation: 1\nregistry_uri: 'silkit://[::1]:65535'\nnetworks: []\nparticipants:\n"
+                      "  - name: A\n    command: a\n")
+              .config->registry_uri == "silkit://[::1]:65535");
+}
+
+TEST_CASE(a_registry_uri_must_be_a_silkit_uri_with_a_port)
+{
+    const std::string expected = "registry_uri must be where the registry of the simulation listens, silkit://<host>:<port> "
+                                 "with a port from 1 to 65535 (e.g. silkit://127.0.0.1:8500, or silkit://0.0.0.0:8500 for "
+                                 "other computers too), not ";
+    const std::string tail = "; leave registry_uri out for a free port on 127.0.0.1\n";
+    for (const auto& [value, shown] : std::vector<std::pair<std::string, std::string>>{
+             {"http://localhost:8500", "the text \"http://localhost:8500\""},
+             {"silkit://localhost", "the text \"silkit://localhost\""},
+             {"silkit://localhost:0", "the text \"silkit://localhost:0\""},
+             {"silkit://localhost:65536", "the text \"silkit://localhost:65536\""},
+             {"silkit://localhost:85x0", "the text \"silkit://localhost:85x0\""},
+             {"'silkit://local host:8500'", "the text \"silkit://local host:8500\""},
+             {"8500", "the text \"8500\""}})
+    {
+        const std::string got = read("vehicle_sil_simulation: 1\nregistry_uri: " + value +
+                                     "\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n");
+        check_text(got.substr(0, std::min(got.size(), std::string("E 2 value: ").size())), "E 2 value: ", value.c_str());
+        CHECK(got.find(expected) != std::string::npos);
+        CHECK(got.ends_with(tail));
+    }
+    check_text(read("vehicle_sil_simulation: 1\nstop_timeout_ms: 0\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n"),
+               "E 2 value: stop_timeout_ms is 0, but it must be from 1 to 1000000000000 (milliseconds to wait for each "
+               "participant to end)\n");
+}
+
+TEST_CASE(required_false_is_only_for_executables_that_are_not_ecu_main)
+{
+    check_text(read(with_participants("  - name: A\n    command: a\n    required: false\n"
+                                      "  - name: B\n    command: b\n    describe: false\n    required: false\n"
+                                      "  - name: C\n    command: c\n    required: true\n")),
+               "E 6 not-required-ecu: participant 'A': required: false is only for executables with describe: false: an "
+               "ecu_main executable joins as a coordinated participant, which SIL Kit starts only among the required "
+               "participants; remove required: false (to run the simulation without this ECU, remove the participant or "
+               "make it a comment)\n"
+               "N 8 no-registry-uri: participant 'B': the command has no {registry_uri}, so the executable is not told "
+               "where the simulation's registry is: if it needs it, add its option for the registry URI with "
+               "\"{registry_uri}\" as the value\n");
+}
+
+TEST_CASE(a_bare_name_that_is_not_next_to_the_file_is_looked_for_on_path)
+{
+    const fs::path base = scratch("path base");
+    const fs::path bin = scratch("path bin");
+    const fs::path other = scratch("path other");
+    const auto make = [](const fs::path& file) {
+        std::ofstream(file) << "#!/bin/sh\n";
+        fs::permissions(file, fs::perms::owner_all);
+    };
+#ifdef _WIN32
+    const std::string tool = "tool.exe";
+    const char separator = ';';
+#else
+    const std::string tool = "tool";
+    const char separator = ':';
+#endif
+    make(bin / tool);
+    const std::string path = std::string("relative") + separator + other.string() + separator + bin.string();
+#ifdef _WIN32
+    _putenv_s("PATH", path.c_str());
+#else
+    ::setenv("PATH", path.c_str(), 1);
+#endif
+    FoundExecutable found = find_executable("tool", base);
+    CHECK(found.on_path);
+    CHECK(fs::equivalent(found.path, bin / tool));
+    // Next to the file it wins over PATH.
+    make(base / tool);
+    found = find_executable("tool", base);
+    CHECK(!found.on_path);
+    CHECK(fs::equivalent(found.path, base / tool));
+    // A path with a separator is never looked for on PATH (bin/sub/tool exists).
+    fs::create_directories(bin / "sub");
+    make(bin / "sub" / tool);
+    found = find_executable("sub/tool", base);
+    CHECK(!found.on_path);
+    CHECK(process::shown_path(found.path) == process::shown_path(base / "sub/tool"));
+    // Not anywhere: the path next to the file, for the message.
+    found = find_executable("nothing", base);
+    CHECK(!found.on_path);
+    CHECK(process::shown_path(found.path) == process::shown_path(base / "nothing"));
+#ifndef _WIN32
+    // A file without the execute permission on PATH is not taken.
+    std::ofstream(other / "plain") << "x";
+    found = find_executable("plain", base);
+    CHECK(!found.on_path);
+#endif
+}
+
+TEST_CASE(a_simulation_needs_a_required_participant)
+{
+    check_text(read("vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                    "  - name: A\n    command: a\n    describe: false\n    required: false\n"
+                    "  - name: B\n    command: b\n    describe: false\n    required: false\n"),
+               "N 5 no-registry-uri: participant 'A': the command has no {registry_uri}, so the executable is not told "
+               "where the simulation's registry is: if it needs it, add its option for the registry URI with "
+               "\"{registry_uri}\" as the value\n"
+               "N 9 no-registry-uri: participant 'B': the command has no {registry_uri}, so the executable is not told "
+               "where the simulation's registry is: if it needs it, add its option for the registry URI with "
+               "\"{registry_uri}\" as the value\n"
+               "E 3 no-required-participant: every participant has required: false, but the simulation starts when its "
+               "required participants have joined, so it needs at least one: remove required: false from the "
+               "participants it must wait for (an ecu_main executable is always required)\n");
+    // One required participant is enough.
+    check_text(read("vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                    "  - name: A\n    command: a\n"
+                    "  - name: B\n    command: [b, \"{registry_uri}\"]\n    describe: false\n    required: false\n"),
+               "");
+}
+
+TEST_CASE(a_file_next_to_the_configuration_that_is_not_executable_does_not_hide_the_program_on_path)
+{
+#ifndef _WIN32
+    const fs::path base = scratch("path data base");
+    const fs::path bin = scratch("path data bin");
+    std::ofstream(base / "tool") << "data, not a program";
+    std::ofstream(bin / "tool") << "#!/bin/sh\n";
+    fs::permissions(bin / "tool", fs::perms::owner_all);
+    ::setenv("PATH", bin.string().c_str(), 1);
+    const FoundExecutable found = find_executable("tool", base);
+    CHECK(found.on_path);
+    CHECK(fs::equivalent(found.path, bin / "tool"));
+#else
+    // Windows has no execute permission: a file next to the configuration is the program.
+    throw vehicle_sil::unit::Skipped("every file is executable on Windows");
+#endif
 }

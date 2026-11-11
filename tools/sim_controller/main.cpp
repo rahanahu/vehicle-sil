@@ -4,8 +4,8 @@
 // participants are connected, and stops it when virtual time reaches --stop-at-ms (or on
 // Ctrl+C / SIGTERM).
 #include "vehicle_sil/cli/args.hpp"
-#include "vehicle_sil/core/failure_check.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/core/simulation_watch.hpp"
 
 #include <silkit/services/orchestration/string_utils.hpp>
 
@@ -113,33 +113,45 @@ int main(int argc, char** argv)
     log("simulation running");
 
     // Without --stop-at-ms the simulation runs until it is interrupted.
-    const std::optional<std::chrono::steady_clock::time_point> deadline =
-        options.stop_at ? std::optional(std::chrono::steady_clock::now() + timeout) : std::nullopt;
-    std::optional<orch::ParticipantState> state;
-    FailureCheck check;
-    while (!(state = controller->wait_until_finished(std::chrono::milliseconds(50))))
+    WatchOptions watch;
+    if (options.stop_at)
     {
-        if (g_interrupted.load())
+        watch.deadline = std::chrono::steady_clock::now() + timeout;
+    }
+    watch.interrupted = [] {
+        if (!g_interrupted.load())
         {
-            log("interrupted, stopping the simulation");
-            controller->stop("vehicle_sil_sim_controller interrupted");
-            state = controller->wait_until_finished(std::chrono::milliseconds(5000));
-            break;
+            return false;
         }
-        // A failed participant stalls virtual time for everyone; SIL Kit does not end the run.
-        if (const auto failed = check.check(*controller, std::chrono::steady_clock::now()))
-        {
-            log("FAIL: participant '" + failed->participant + "' " + failed->reason + "; aborting");
-            controller->abort();
-            return cli::kExitFailed;
-        }
-        if (deadline && std::chrono::steady_clock::now() >= *deadline)
+        log("interrupted, stopping the simulation");
+        return true;
+    };
+    watch.stop_reason = "vehicle_sil_sim_controller interrupted";
+    // The reason first: abort() may take a while.
+    watch.before_abort = [](const WatchResult& why) {
+        if (why.end == WatchEnd::TimedOut)
         {
             log("FAIL timeout: simulation did not reach --stop-at-ms in time; aborting");
-            controller->abort();
-            return cli::kExitTimeout;
         }
+        else if (why.failure)
+        {
+            log("FAIL: participant '" + why.failure->participant + "' " + why.failure->reason + "; aborting");
+        }
+        else
+        {
+            log("FAIL: a participant failed; aborting");
+        }
+    };
+    const WatchResult watched = watch_simulation(*controller, watch);
+    if (watched.end == WatchEnd::Failed)
+    {
+        return cli::kExitFailed;
     }
+    if (watched.end == WatchEnd::TimedOut)
+    {
+        return cli::kExitTimeout;
+    }
+    const std::optional<orch::ParticipantState> state = watched.state;
 
     if (const auto wall = controller->wall_time_to_stop_at())
     {

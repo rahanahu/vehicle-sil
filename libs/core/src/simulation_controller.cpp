@@ -429,7 +429,14 @@ void SimulationController::start(std::chrono::milliseconds timeout)
     {
         if (!runtime_->wait_for_peer(name, has_any_state, remaining()))
         {
-            throw std::runtime_error("SimulationController: required participant '" + name + "' did not connect within " +
+            const std::vector<std::string> missing = missing_participants();
+            std::string names;
+            for (const auto& m : missing.empty() ? std::vector<std::string>{name} : missing)
+            {
+                names += (names.empty() ? "'" : ", '") + m + "'";
+            }
+            throw std::runtime_error("SimulationController: required participant" + std::string(missing.size() > 1 ? "s " : " ") +
+                                     names + " did not connect within " +
                                      std::to_string(timeout.count()) + " ms");
         }
     }
@@ -439,6 +446,19 @@ void SimulationController::start(std::chrono::milliseconds timeout)
     system_controller_->SetWorkflowConfiguration(orch::WorkflowConfiguration{required});
 
     runtime_->start(remaining());
+}
+
+std::vector<std::string> SimulationController::missing_participants() const
+{
+    std::vector<std::string> missing;
+    for (const auto& name : options_.required_participants)
+    {
+        if (!has_any_state(runtime_->peer_status(name)))
+        {
+            missing.push_back(name);
+        }
+    }
+    return missing;
 }
 
 std::optional<orch::ParticipantState> SimulationController::wait_until_finished(std::chrono::milliseconds timeout)

@@ -21,6 +21,10 @@ namespace vehicle_sil::launch {
 /// The version of the configuration format (its "vehicle_sil_simulation" key).
 inline constexpr int kSimulationFormat = 1;
 
+/// The longest duration in milliseconds the configuration takes (about 31 years). It is also the
+/// largest --start-timeout-ms (and --run-for-ms) that ecu_main accepts (docs/ecu-executable.md).
+inline constexpr std::int64_t kMaxMillis = 1'000'000'000'000;
+
 /// The participant name of the controller that vehicle_sil_launch runs; no participant may use it.
 inline constexpr std::string_view kControllerName = "SimulationController";
 
@@ -103,6 +107,12 @@ struct SimulationConfig
     std::optional<std::int64_t> stop_at_ms{};
     /// How long to wait for the required participants to join, in milliseconds (wall clock).
     std::int64_t start_timeout_ms = 30000;
+    /// How long vehicle_sil_launch run waits, at each step of ending the participants, for them to
+    /// end, in milliseconds (wall clock).
+    std::int64_t stop_timeout_ms = 10000;
+    /// Where the registry of the simulation listens ("silkit://<host>:<port>"); empty: a free port
+    /// on 127.0.0.1.
+    std::optional<std::string> registry_uri{};
     std::vector<NetworkConfig> networks{};
     std::vector<ParticipantConfig> participants{};
 };
@@ -126,8 +136,21 @@ struct ConfigRead
 /// Where a participant's executable is: command[0], relative to `base_dir` unless absolute
 /// (UTF-8 in, a path that works with non-ASCII characters on Windows out; not normalized, so that
 /// ".." keeps its meaning across symbolic links). On Windows a path that does not exist and does
-/// not end in ".exe" gets ".exe" if that file exists. PATH is not searched.
+/// not end in ".exe" gets ".exe" if that file exists. PATH is not searched (find_executable()).
 [[nodiscard]] std::filesystem::path resolve_executable(std::string_view executable, const std::filesystem::path& base_dir);
+
+/// Where command[0] of a participant is.
+struct FoundExecutable
+{
+    std::filesystem::path path;
+    /// It was not next to the configuration file but on PATH (`path` is then where).
+    bool on_path = false;
+};
+
+/// resolve_executable(); if no executable file is there and `executable` is a bare name (no '/' or
+/// '\\'), the first directory of PATH that has it as an executable file (on Windows also with
+/// ".exe"). Without a match: resolve_executable()'s path.
+[[nodiscard]] FoundExecutable find_executable(std::string_view executable, const std::filesystem::path& base_dir);
 
 /// An error if `path` (resolve_executable()) is not an executable file of `participant`:
 /// missing (with a hint for PATH and for arguments in one text), a directory, a batch file

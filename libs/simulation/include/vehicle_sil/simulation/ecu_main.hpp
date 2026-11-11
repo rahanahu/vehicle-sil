@@ -48,8 +48,14 @@ struct EcuMainOptions
 /// codes, as the other tools: 0 done, 1 the ECU failed in the run (SimulationError), 3 the set-up
 /// failed (the application's constructor threw, EcuMainOptions is wrong, the registry could not be
 /// reached, the simulation did not start, stdout could not be written), 4 a bad command line (an
-/// unknown argument, a missing or bad value, an argument given twice, two of the three modes).
-/// Every failure writes one line "error: <ECU name>: <why and what to do>" to stderr, a bad
+/// unknown argument, a missing or bad value, an argument given twice, two of the three modes),
+/// 130 stopped by a signal (below).
+/// With --registry-uri, SIGINT and SIGTERM (Windows: Ctrl+C, Ctrl+Break, closing the console)
+/// stop the participant once the simulation runs (which stops the coordinated simulation in
+/// order), and ecu_main() returns 130 after the run; before it runs, the process ends at once with
+/// 130 (no destructor runs). A second signal ends it at once. The handlers are installed only
+/// while ecu_main() runs the simulation (not for --describe and --local, not while the ECU is
+/// destroyed). Every failure writes one line "error: <ECU name>: <why and what to do>" to stderr, a bad
 /// command line also the usage. ecu_main() itself writes to stdout only the JSON and the usage.
 /// --describe leaves fd 1 pointing at stderr when it returns: call it as the last thing of main().
 int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, const std::function<void(Ecu&)>& set_up);

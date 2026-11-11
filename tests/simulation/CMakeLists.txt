@@ -41,17 +41,17 @@ endif()
 
 # ECU executables made with ecu_main() (examples/ecu_main), as processes: --describe against
 # the JSON in docs/ecu-executable.md, --local, both ECUs on SIL Kit under
-# vehicle_sil_sim_controller, the usage.
+# vehicle_sil_sim_controller, the usage, a stop request before and after the start.
 if(TARGET vehicle_sil_engine_ecu)
   add_executable(vehicle_sil_ecu_main_launcher ecu_main_launcher.cpp)
-  target_link_libraries(vehicle_sil_ecu_main_launcher PRIVATE vehicle_sil_test_process)
+  target_link_libraries(vehicle_sil_ecu_main_launcher PRIVATE vehicle_sil_test_process vehicle_sil::core)
   vehicle_sil_target_defaults(vehicle_sil_ecu_main_launcher)
   add_dependencies(vehicle_sil_ecu_main_launcher sil-kit-registry vehicle_sil_sim_controller vehicle_sil_engine_ecu
                    vehicle_sil_dashboard_ecu)
   vehicle_sil_add_scenario_tests(vehicle_sil_ecu_main_launcher
     PREFIX ecu_main LABELS integration simulation TIMEOUT 180
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/ecu_main
-    SCENARIOS describe local silkit usage
+    SCENARIOS describe local silkit usage signal
     ARGS --registry $<TARGET_FILE:sil-kit-registry>
          --controller $<TARGET_FILE:vehicle_sil_sim_controller>
          --engine $<TARGET_FILE:vehicle_sil_engine_ecu>

@@ -96,6 +96,8 @@ struct CaptureOptions
     /// The most bytes kept of each of standard output (its beginning) and standard error (its
     /// end); the rest is read and dropped (Captured::output_truncated, error_truncated).
     std::size_t max_bytes = std::size_t{1} << 20;
+    /// The directory the process starts in; empty: the caller's.
+    std::filesystem::path working_directory{};
 };
 
 /// What a process run by run_captured() did.
@@ -115,9 +117,11 @@ struct Captured
 
 /// Runs `executable arguments` to its end, with standard input from the null device and
 /// standard output and standard error each captured, and returns what it wrote and its exit
-/// code. The time limit holds also for a process that writes without a pause. The caller's file
-/// descriptors 0 to 2 are expected open (as in any program started from a shell or a launcher). Waits for the streams to close, at most a short while after the process has ended (a
-/// process it started may keep them open). The process does not search PATH: `executable` is
+/// code. The time limit holds also for a process that writes without a pause; when it passes,
+/// the process is killed with the processes it started (POSIX: its process group; Windows: its
+/// job). The process inherits no other descriptor or handle; like Process, it runs in a group of
+/// its own and, on Linux, ends with the calling thread. Waits for the streams to close, at most a
+/// short while after the process has ended (a process it started may keep them open). The process does not search PATH: `executable` is
 /// a path (on Windows with its extension, such as ".exe"). Throws StartError, naming the
 /// executable and the reason, if the process cannot be started.
 [[nodiscard]] Captured run_captured(const std::filesystem::path& executable,

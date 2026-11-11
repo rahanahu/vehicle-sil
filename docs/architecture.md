@@ -20,8 +20,8 @@ vehicle-sil/
 ├── libs/testkit/     vehicle_sil::testkit  LocalBench の上の J1939 の試験の記録と故障注入（SIL Kit に依存しない）
 ├── libs/peer/        vehicle_sil::peer   1 つの participant と、その J1939、生の CAN、LIN のノード、Control Agent（監視の出力を含む）の組み立てと実行。Ecu の実装
 ├── libs/simulation/  vehicle_sil::simulation  ECU を仮想バスか SIL Kit で動かす Simulation と、ECU の実行ファイルの main()（ecu_main）
-├── libs/process/     vehicle_sil::process  子プロセス（ログファイルへの出力、標準出力と標準エラーの取り込みと時間切れ。POSIX と Win32。内部用）
-├── libs/launch/      vehicle_sil::launch  シミュレーションの構成ファイルと、ECU の実行ファイルの自己申告との照合（内部用）
+├── libs/process/     vehicle_sil::process  子プロセス（ログファイルへの出力、標準出力と標準エラーの取り込みと時間切れ、行ごとの受け渡しと止める要求とプロセスの木ごとの終了。POSIX と Win32。内部用）
+├── libs/launch/      vehicle_sil::launch  シミュレーションの構成ファイル、ECU の実行ファイルの自己申告との照合、シミュレーション全体の実行（内部用）
 ├── libs/control/     vehicle_sil::control  Control Agent と Control Server の中核（Hub）。通信と SIL Kit に依存しない
 ├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（ControlServer、AgentClient。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
 ├── proto/            Control API の定義（vehicle_sil/control/v1/control.proto）
@@ -30,7 +30,7 @@ vehicle-sil/
 ├── tools/common/     実行ファイル共通のコマンドライン解析、終了コード、ログ出力（内部用、ヘッダーのみ）
 ├── tools/sim_controller/ 仮想時間のシミュレーションを開始・停止する system controller（vehicle_sil_sim_controller）
 ├── tools/can_bus_simulator/ 簡易 CAN Network Simulator の実行ファイル（vehicle_sil_can_bus_simulator）
-├── tools/launch/     構成ファイルと ECU の実行ファイルを照合する vehicle_sil_launch
+├── tools/launch/     構成ファイルの照合とシミュレーション全体の実行をする vehicle_sil_launch
 ├── tools/control_server/ Control Server と system controller を兼ねる実行ファイル（vehicle_sil_control_server）
 ├── tools/j1939_codegen/ YAML の定義から J1939 の型付きメッセージ（C++ のヘッダー）を作る生成器（Python。ビルドのときに vehicle_sil_add_j1939_codec() が呼ぶ）
 ├── examples/getting_started/ 最初の例: Ecu& を受け取る 2 つの ECU を Simulation で動かす
@@ -69,9 +69,9 @@ vehicle-sil/
 | `vehicle_sil::peer` | 土台 | `vehicle_sil::core`、`vehicle_sil::can_silkit`、`vehicle_sil::j1939`、`vehicle_sil::lin_silkit`、`vehicle_sil::ecu`、`vehicle_sil::control` | `vehicle_sil::Peer`（Control Agent の監視の出力を含む）、`start_together()`（「実行と試験の基盤」） |
 | `vehicle_sil::simulation` | 利用者向け | `vehicle_sil::ecu`、`vehicle_sil::peer`、`vehicle_sil::local` | `vehicle_sil::Simulation`、`SilKitOptions`、`SimulationError`（「実行と試験の基盤」）、`ecu_main()` と `EcuMainOptions`（[ecu-executable.md](ecu-executable.md)） |
 | `vehicle_sil_sim_controller`（実行ファイル） | — | `vehicle_sil::core` | system controller の CLI |
-| `vehicle_sil::process`（内部用） | — | なし | 子プロセス: `ChildProcess`（ログファイルへ）と `run_captured()`（標準出力と標準エラーを別々に取り込み、時間切れで止める）。POSIX は `posix_spawn`、Windows は `CreateProcessW`（パスと引数は UTF-8 から変換する） |
-| `vehicle_sil::launch`（内部用。SIL Kit をサブモジュールからビルドしたとき） | — | `vehicle_sil::ecu`、`vehicle_sil::process`、`rapidyaml`（SIL Kit 付属、非公開） | 構成ファイルの読み込み、`--describe` の JSON の読み込み、照合の規則（プロセスを起動しない関数）、人向けと JSON の出力（[simulation-config.md](simulation-config.md)） |
-| `vehicle_sil_launch`（実行ファイル） | — | `vehicle_sil::launch` | `vehicle_sil_launch check`（[simulation-config.md](simulation-config.md)） |
+| `vehicle_sil::process`（内部用） | — | なし | 子プロセス: `ChildProcess`（ログファイルへ）、`run_captured()`（標準出力と標準エラーを別々に取り込み、時間切れで止める）、`Process`（標準出力と標準エラーを行ごとに渡す。作業ディレクトリ、止める要求、起動したプロセスごとの終了）。`run_captured()` と `Process` の子は、自分のプロセスグループ（Windows ではプロセスグループとジョブオブジェクト）で動き、標準の 3 つのほかにハンドルを受け継がず、Linux では呼んだスレッドが終わると SIGKILL を受けます。POSIX は `fork` と `exec`（`ChildProcess` は `posix_spawn`）、Windows は `CreateProcessW`（パスと引数は UTF-8 から変換する） |
+| `vehicle_sil::launch`（内部用。SIL Kit をサブモジュールからビルドしたとき） | — | `vehicle_sil::ecu`、`vehicle_sil::process`、`vehicle_sil::core`（非公開）、`rapidyaml`（SIL Kit 付属、非公開） | 構成ファイルの読み込み、`--describe` の JSON の読み込み、照合の規則（プロセスを起動しない関数）、実行（registry と `SimulationController` をプロセスの中に持ち、participant を子プロセスで動かす。実行の判定はプロセスを起動しない関数）、人向けと JSON の出力（[simulation-config.md](simulation-config.md)） |
+| `vehicle_sil_launch`（実行ファイル） | — | `vehicle_sil::launch` | `vehicle_sil_launch check`、`vehicle_sil_launch run`（[simulation-config.md](simulation-config.md)） |
 | `vehicle_sil::control` | 利用者向け | `vehicle_sil::sim_base` | `vehicle_sil::control::Agent`、`Hub`（「外部操作（Control API）と GUI」） |
 | `vehicle_sil::control_proto`（`VEHICLE_SIL_BUILD_CONTROL_SERVER` のとき） | — | gRPC、Protocol Buffers | `control.proto` から生成したコード（`control_grpc` の内部） |
 | `vehicle_sil::control_grpc`（同上） | 利用者向け | `vehicle_sil::control`、`vehicle_sil::core`（`control_proto` は非公開） | `vehicle_sil::control_grpc::ControlServer`、`AgentClient`、`time_control_of()` |
@@ -853,7 +853,7 @@ SIL Kit の `ITimeSyncService` で、すべてのピアが 1 つの仮想時間�
   - そのため、実行速度に関係なく、各ピアのステップの並びと受け取るデータは同じになります。
 - `SimulationController` の `stop_at` を指定すると、controller は stop_at だけのステップで時刻同期に参加し、時刻 stop_at で全体を停止します。このとき、ほかの全ピアは stop_at より前のステップをすべて終えています。stop_at と同時刻のステップを実行するかどうかは決まっていません。
   - そのため、各ピアの作業範囲は `VirtualTimeOptions::end` で決めます。ステップハンドラは end より前に始まるステップでだけ呼ばれます。end 以降のステップも時刻同期と実時間との結合には参加しますが、ハンドラは呼ばれず `steps_completed()` にも数えません。end ≤ stop_at にすれば、最後に処理するステップは停止のタイミングに左右されません。end 以降はハンドラが受信バッファ（`StepInbox`、`SilKitCanPort` の受け箱）を空にしないので、ほかのピアが送り続けるとあふれます。あふれの判定は、処理したステップの範囲で行います。
-  - `vehicle_sil_sim_controller` の `--timeout-ms` は、起動待ちの上限です。`--stop-at-ms` を指定したときは、起動後の実行にも同じ値を上限として別に適用します。実行中に必要な参加者が Error で抜けると（ステップの失敗、接続断）すぐに、ほかの状態で抜けて 5 秒たってもシミュレーションが終わらなければ、controller はシミュレーションを中断して終了コード 1 で終わります（参加者が自分で止めたシミュレーションを、誤って失敗にしないための猶予です）。この判定は `vehicle_sil::Simulation` と `vehicle_sil_control_server` と共通の `vehicle_sil::FailureCheck`（`vehicle_sil/core/failure_check.hpp`）で、ログに参加者の名前、状態、理由を出します。SIL Kit は失敗した参加者がいても全体を止めず、仮想時間が進まなくなるだけだからです。`--stop-at-ms` がなければ、シミュレーションは Ctrl+C / SIGTERM まで続きます。起動待ちの間の Ctrl+C は、プロセスをそのまま終了させます。
+  - `vehicle_sil_sim_controller` の `--timeout-ms` は、起動待ちの上限です。`--stop-at-ms` を指定したときは、起動後の実行にも同じ値を上限として別に適用します。実行中に必要な参加者が Error で抜けると（ステップの失敗、接続断）すぐに、ほかの状態で抜けて 5 秒たってもシミュレーションが終わらなければ、controller はシミュレーションを中断して終了コード 1 で終わります（参加者が自分で止めたシミュレーションを、誤って失敗にしないための猶予です）。この判定は `vehicle_sil::Simulation`、`vehicle_sil_launch run`、`vehicle_sil_control_server` と共通の `vehicle_sil::FailureCheck`（`vehicle_sil/core/failure_check.hpp`）で、controller を持つ道具（`Simulation`、`vehicle_sil_sim_controller`、`vehicle_sil_launch run`）は、終わりを待って中断や停止をするループも `vehicle_sil::watch_simulation()`（`vehicle_sil/core/simulation_watch.hpp`）で共有します。どの道具も、ログに参加者の名前、状態、理由を出します。SIL Kit は失敗した参加者がいても全体を止めず、仮想時間が進まなくなるだけだからです。`--stop-at-ms` がなければ、シミュレーションは Ctrl+C / SIGTERM まで続きます。起動待ちの間の Ctrl+C は、プロセスをそのまま終了させます。
 - ステップハンドラが例外を投げると、`ParticipantRuntime` はそれを捕まえて SIL Kit にエラーを報告します。その participant は Error になり、`step_error()` がメッセージを返します。`wait_until_finished()` は Error も終了として返します。SIL Kit は Error の participant を停止するまでそのままにするので、`stop()` かデストラクタで Shutdown にします。
 - 例のピア（`examples/virtual_time`）は、シミュレーションが `--end-ms` より前の最後のステップに届かずに終わった場合（中断）、Shutdown でも終了コード 1 で終わります。
 - `stop()` が戻った時点で、ステップハンドラは実行中でなく、以後も呼ばれません。実行中のハンドラがあれば終わるまで待ちます。ハンドラが使うオブジェクトは、`stop()`（またはデストラクタ）のあとに破棄します。

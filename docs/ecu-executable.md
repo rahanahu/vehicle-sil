@@ -41,22 +41,34 @@ int main(int argc, char** argv)
 | 1 | 実行中に ECU が失敗した（ステップの例外。`SimulationError`） |
 | 3 | 準備に失敗した（`App` のコンストラクターの例外、`EcuMainOptions` の誤り、registry に接続できない、シミュレーションが始まらない、標準出力に書けない） |
 | 4 | 引数の誤り |
+| 130 | `--registry-uri` で、止まるよう求められた（下の「止まるよう求められたとき」） |
 
 - 失敗は、標準エラーに 1 行 `error: <ECU 名>: <理由と直し方>` を書きます（SIL Kit の文言の改行は空白にします。`std::exception` でない例外も、固定の文言で 1 行にします）。ECU 名は `--name` で変えた名前です（引数の誤りのときは `EcuMainOptions::name`）。引数の誤りでは、続けて使い方を書きます。
 - シミュレーションが始まらないときの文言は、時間切れ（controller がいない、必要な participant がそろわない。controller と `--start-timeout-ms` の確かめ方を添えます）と、それ以外（例: 変数の名前が `Peer` の監視の出力とぶつかる）で分けます。
 - `ecu_main` が標準出力に書くのは、`--describe` の JSON と `--help` の使い方だけです。`--describe` では、ECU を組み立てる前から、プロセスが終わるまで、標準出力（fd 1）を標準エラーに向けます（元に戻しません）。`App` のコンストラクターとデストラクター、`App` のスレッド、`atexit`、リンクしたライブラリが標準出力に書いたもの（`printf`、`std::cout` など）は、標準エラーに出ます。JSON は、元の標準出力を複製した記述子に直接書きます。標準エラーが閉じていれば、先に null デバイスを開いて標準エラーにするので、`App` の出力はどこにも出ません。標準出力が閉じていれば、JSON を書けないので終了コード 3 です。`ecu_main` が戻った後も fd 1 は標準エラーのままなので、`ecu_main` は `main()` の最後で呼びます。
-- `ecu_main` は Ctrl+C（SIGINT）も SIGTERM も扱いません。既定の動作でプロセスがすぐに終わります（participant を順に止める処理はしません）。
+
+### 止まるよう求められたとき（`--registry-uri`）
+
+`--registry-uri` のとき、`ecu_main` は SIGINT（Ctrl+C）と SIGTERM（Windows: Ctrl+C、Ctrl+Break、コンソールを閉じる）を受けます。
+
+- シミュレーションが始まった後: participant を止めます（`request_stop()`）。coordinated の participant が止まると、シミュレーション全体が順に止まります。`run()` が戻り、`App` のデストラクターなどが動いてから、`error: <ECU 名>: interrupted (SIGTERM): it stopped the simulation and left it` を書いて、終了コード 130 で終わります。
+- 始まる前（registry への接続中、開始の待ち）: `error: <ECU 名>: interrupted (SIGTERM) before the simulation started: it ends at once` を書いて、すぐに終了コード 130 で終わります。デストラクターは動きません（既定の動作と同じです）。終わる前に C の標準入出力（`printf` など）のバッファーは書き出します。
+- 止めている間の 2 回目も、すぐに終わります。
+- 受けるのは `ecu_main` の中で `--registry-uri` のシミュレーションが動いている間だけです。`App` のデストラクターが動くときには、前の設定に戻しています。`--describe` と `--local` では扱いません（既定の動作ですぐに終わります）。
+- その間、これらのシグナルは `ecu_main` のものです（`SA_RESTART` で、`App` の `read()` などを途中で戻しません）。起動した側が無視するように設定したシグナル（`nohup`）は、無視したままです。シグナルを自分で扱いたい ECU は、`ecu_main` を使わず、`Simulation` を直接使います。
+- Windows でコンソールを閉じたときは、順に止める処理が終わるのを、最大 4 秒待ちます（その後 Windows がプロセスを終わらせます）。
+- `vehicle_sil_launch run` は、シミュレーションが終わっても終わらない participant や、始まらなかったときの participant に、この方法で止まるよう求めます（[simulation-config.md](simulation-config.md) の「止め方」）。
 
 ### 実行中にほかの参加者がいなくなったとき（`--registry-uri`）
 
-`ecu_main` が自分で終わるのは、シミュレーションが終わったとき（終了コード 0）と、この ECU のステップが失敗したとき（1）だけです。
+`ecu_main` が自分で終わるのは、シミュレーションが終わったとき（終了コード 0）と、この ECU のステップが失敗したとき（1）だけです（ほかに、止まるよう求められたとき（130））。
 
 - controller のプロセスがなくなると、シミュレーションは止まらずに、仮想時間が進み続けます。ECU は自分では終わりません。
 - registry のプロセスがなくなると、participant の間の接続によっては、ほかの participant から見てこの ECU が Error になり、この ECU は仮想時間が進まないまま待ち続けることがあります。
 - ほかの participant が失敗し、controller がシミュレーションを中断すると、この ECU は終了コード 0 で終わります。どれが失敗したかは、controller（`vehicle_sil_sim_controller` の出力と終了コード 1）が知らせます。
-- どの場合も、ECU を起動した側が、controller の終わりを見てプロセスを止めてください。決まりは次の 2 つです。
+- どの場合も、ECU を起動した側が、controller の終わりを見てプロセスを止めてください。`vehicle_sil_launch run` はこれをします（[simulation-config.md](simulation-config.md)）。自分で起動するときの決まりは次の 2 つです。
   - シミュレーションの結果は controller の終了コードです。ECU の終了コードだけで決めません（ほかの participant が失敗しても、ECU は 0 で終わることがあります）。ECU の終了コード 1 は、その ECU のステップが失敗したことだけを示します。
-  - controller のプロセスが結果を出さずになくなったら、すべての ECU を止めます（自分では終わりません）。controller が終わった後もしばらく動いている ECU（registry がなくなった場合など）も止めます。止める方法はプロセスの強制終了だけです（SIGTERM や SIGINT で順に止める処理はなく、Windows ではプロセスの終了です）。
+  - controller のプロセスが結果を出さずになくなったら、すべての ECU を止めます（自分では終わりません）。controller が終わった後もしばらく動いている ECU（registry がなくなった場合など）も止めます。まず SIGTERM（Windows: Ctrl+Break）で止まるよう求め（上の「止まるよう求められたとき」）、それでも終わらなければ強制終了します。
 
 ## `Ecu::describe()`
 
@@ -160,7 +172,14 @@ int main(int argc, char** argv)
 
 ## まとめて動かす
 
-2 つの ECU の実行ファイルを、1 つの SIL Kit のシミュレーションで動かす例です。ECU は `--registry-uri` で参加し、`vehicle_sil_sim_controller` が全員の参加を待って始め、仮想時間 1 秒で止めます。
+2 つの ECU の実行ファイルを 1 つの SIL Kit のシミュレーションで動かすには、構成ファイルを書いて `vehicle_sil_launch run` に渡します（[simulation-config.md](simulation-config.md)）。照合してから、registry、controller、各 ECU を起動し、終わりまで見て、各 ECU がどう終わったかを出します。
+
+```sh
+cd build/<preset>/examples/ecu_main
+vehicle_sil_launch run simulation.yaml
+```
+
+同じことを手で組み立てる例です。ECU は `--registry-uri` で参加し、`vehicle_sil_sim_controller` が全員の参加を待って始め、仮想時間 1 秒で止めます。
 
 ```sh
 sil-kit-registry --listen-uri silkit://localhost:8500 &

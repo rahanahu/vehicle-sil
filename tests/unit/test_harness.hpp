@@ -35,6 +35,16 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// The test cannot run here (what() says why). A test run alone then exits with kExitSkipped,
+/// which CTest reports as skipped (SKIP_RETURN_CODE).
+class Skipped : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
+
+inline constexpr int kExitSkipped = 77;
+
 template <typename A, typename B>
 void check_equal(const A& actual, const B& expected, const char* actualText, const char* expectedText, const char* file, int line)
 {

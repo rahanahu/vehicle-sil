@@ -90,6 +90,9 @@ struct ParticipantResult
 {
     ParticipantStatus status = ParticipantStatus::Skipped;
     std::optional<ReportedEcu> ecu{};
+    /// Its executable (find_executable()) if it is one (Described, NotChecked, and Failed by
+    /// --describe); empty otherwise.
+    std::filesystem::path executable{};
 };
 
 /// Compares the configuration with what the participants reported (`results` in the order of

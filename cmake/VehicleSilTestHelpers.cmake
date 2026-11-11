@@ -26,7 +26,8 @@ function(vehicle_sil_add_harness_tests target)
       list(APPEND names ${name})
       set(test "${ARG_PREFIX}.${name}")
       add_test(NAME ${test} COMMAND ${target} ${name})
-      set_tests_properties(${test} PROPERTIES LABELS "${ARG_LABELS}" TIMEOUT ${ARG_TIMEOUT})
+      # 77: the test cannot run on this machine (vehicle_sil::unit::Skipped).
+      set_tests_properties(${test} PROPERTIES LABELS "${ARG_LABELS}" TIMEOUT ${ARG_TIMEOUT} SKIP_RETURN_CODE 77)
       if(ARG_RUN_SERIAL AND name MATCHES "${ARG_RUN_SERIAL}")
         set_tests_properties(${test} PROPERTIES RUN_SERIAL TRUE)
       endif()
@@ -60,6 +61,8 @@ function(vehicle_sil_add_scenario_tests launcher)
     set(test "${ARG_PREFIX}.${scenario}")
     add_test(NAME ${test}
              COMMAND ${launcher} ${ARG_ARGS} --work-dir "${ARG_WORK_DIR}/${scenario}" --scenario ${scenario})
-    set_tests_properties(${test} PROPERTIES LABELS "${ARG_LABELS}" TIMEOUT ${ARG_TIMEOUT} RUN_SERIAL ${ARG_RUN_SERIAL})
+    # 77: the scenario cannot run on this machine (it says why).
+    set_tests_properties(${test} PROPERTIES LABELS "${ARG_LABELS}" TIMEOUT ${ARG_TIMEOUT} RUN_SERIAL ${ARG_RUN_SERIAL}
+                                            SKIP_RETURN_CODE 77)
   endforeach()
 endfunction()

@@ -10,16 +10,36 @@
 //   silkit    a sil-kit-registry, vehicle_sil_sim_controller and both ECUs with --registry-uri:
 //             the dashboard shows the engine's speed; every process exits 0
 //   usage     without arguments: the usage and exit code 4
+//   signal    a stop request (POSIX SIGTERM, Windows Ctrl+Break) to an ECU with --registry-uri:
+//             before the start it ends at once; while the simulation runs it stops the simulation
+//             in order (the controller of this test sees it shut down) and ends; exit code 130
 #include "launcher_support.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
+#include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/process/process.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <exception>
+#include <mutex>
 #include <filesystem>
 #include <stdexcept>
+#include <memory>
 #include <string>
+#include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
@@ -53,6 +73,12 @@ Options parse(int argc, char** argv)
     o.timeout = args.millis("timeout-ms", o.timeout);
     return o;
 }
+
+/// The scenario cannot run on this machine: main() exits with 77 (CTest's SKIP_RETURN_CODE).
+struct Skip : std::runtime_error
+{
+    using std::runtime_error::runtime_error;
+};
 
 void require(bool condition, const std::string& what)
 {
@@ -191,6 +217,102 @@ void usage(const Options& o)
     log("CHECK engine without arguments: usage and exit code 4 -> ok");
 }
 
+/// The engine with --registry-uri `uri` in a process group of its own, its lines collected.
+struct Engine
+{
+    std::mutex mutex;
+    std::string lines;
+    std::unique_ptr<vehicle_sil::process::Process> process;
+
+    Engine(const Options& o, const std::string& uri)
+    {
+        vehicle_sil::process::ProcessOptions options;
+        options.on_line = [this](vehicle_sil::process::Stream, std::string_view line) {
+            const std::lock_guard lock(mutex);
+            lines += std::string(line) + "\n";
+        };
+        process = std::make_unique<vehicle_sil::process::Process>(o.engine, std::vector<std::string>{"--registry-uri", uri},
+                                                                   std::move(options));
+    }
+    std::string text()
+    {
+        process->finish_output(10s);
+        const std::lock_guard lock(mutex);
+        return lines;
+    }
+};
+
+void signal(const Options& o)
+{
+#ifdef _WIN32
+    if (GetConsoleWindow() == nullptr && GetConsoleCP() == 0)
+    {
+        throw Skip("no console to send Ctrl+Break through");
+    }
+    const std::string by = "Ctrl+Break";
+#else
+    const std::string by = "SIGTERM";
+#endif
+    RegistryProcess registry(o.registry, o.work_dir);
+    const auto deadline = std::chrono::steady_clock::now() + o.timeout;
+    {
+        // Before the start: the controller waits for Ghost too, which never comes. Once the
+        // engine has connected, it has its handler (it installs it before it connects).
+        vehicle_sil::SimulationControllerOptions c;
+        c.registry_uri = registry.uri();
+        c.required_participants = {"Engine", "Ghost"};
+        vehicle_sil::SimulationController controller(c);
+        Engine engine(o, registry.uri());
+        const auto engine_missing = [&controller] {
+            const std::vector<std::string> missing = controller.missing_participants();
+            return std::find(missing.begin(), missing.end(), "Engine") != missing.end();
+        };
+        while (engine_missing())
+        {
+            require(std::chrono::steady_clock::now() < deadline && !engine.process->poll(), "the engine did not connect");
+            std::this_thread::sleep_for(10ms);
+        }
+        require(engine.process->request_stop(), "the stop request could not be sent");
+        const auto status = engine.process->wait_for(o.timeout);
+        const std::string out = lf(engine.text());
+        require(status && status->code == 130 && !status->signal,
+                "before the start: exit code 130, not " + (status ? std::to_string(status->code) : std::string("running")) +
+                    ":\n" + out);
+        require(out == "error: Engine: interrupted (" + by + ") before the simulation started: it ends at once\n",
+                "before the start the engine wrote:\n" + out);
+        log("CHECK a stop request before the start ends the ECU at once -> ok");
+    }
+    {
+        vehicle_sil::SimulationControllerOptions c;
+        c.participant_name = "SignalController";
+        c.registry_uri = registry.uri();
+        c.required_participants = {"Engine"};
+        vehicle_sil::SimulationController controller(c);
+        Engine engine(o, registry.uri());
+        controller.start(o.timeout);
+        // The controller runs before the engine may: wait until the engine itself runs (its
+        // published state), so that the request finds it running.
+        while (controller.runtime().peer_status("Engine").state != SilKit::Services::Orchestration::ParticipantState::Running)
+        {
+            require(std::chrono::steady_clock::now() < deadline && !engine.process->poll(), "the engine did not run");
+            std::this_thread::sleep_for(10ms);
+        }
+        require(engine.process->request_stop(), "the stop request could not be sent");
+        // The engine stops the simulation in order: the controller shuts down.
+        const auto end = controller.wait_until_finished(o.timeout);
+        require(end == SilKit::Services::Orchestration::ParticipantState::Shutdown,
+                "the simulation did not shut down in order after the stop request");
+        const auto status = engine.process->wait_for(o.timeout);
+        const std::string out = lf(engine.text());
+        require(status && status->code == 130 && !status->signal,
+                "while running: exit code 130, not " + (status ? std::to_string(status->code) : std::string("running")) +
+                    ":\n" + out);
+        require(out == "error: Engine: interrupted (" + by + "): it stopped the simulation and left it\n",
+                "while running the engine wrote:\n" + out);
+        log("CHECK a stop request while the simulation runs stops it in order -> ok");
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -218,12 +340,21 @@ int main(int argc, char** argv)
         {
             usage(o);
         }
+        else if (o.scenario == "signal")
+        {
+            signal(o);
+        }
         else
         {
             throw std::invalid_argument("unknown scenario " + o.scenario);
         }
         log("PASS");
         return 0;
+    }
+    catch (const Skip& e)
+    {
+        log(std::string("SKIP: ") + e.what());
+        return 77;
     }
     catch (const std::exception& e)
     {

@@ -571,6 +571,8 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
   "notes": 1,
   "stop_at_ms": 1000,
   "start_timeout_ms": 30000,
+  "stop_timeout_ms": 10000,
+  "registry_uri": null,
   "participants": [
     {
       "name": "Engine",
@@ -730,6 +732,8 @@ TEST_CASE(the_json_report_of_a_file_that_cannot_be_read)
   "notes": 0,
   "stop_at_ms": null,
   "start_timeout_ms": null,
+  "stop_timeout_ms": null,
+  "registry_uri": null,
   "participants": [],
   "networks": [],
   "findings": [
@@ -764,6 +768,8 @@ TEST_CASE(the_json_report_of_a_wrong_command_line)
   "notes": 0,
   "stop_at_ms": null,
   "start_timeout_ms": null,
+  "stop_timeout_ms": null,
+  "registry_uri": null,
   "participants": [],
   "networks": [],
   "findings": [

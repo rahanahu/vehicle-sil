@@ -97,8 +97,14 @@ public:
 
     /// Waits until every required participant has connected, publishes the workflow
     /// configuration and waits until the simulation is Running.
-    /// Throws std::runtime_error on timeout.
+    /// Throws std::runtime_error on timeout (naming every required participant that has not
+    /// connected).
     void start(std::chrono::milliseconds timeout);
+
+    /// The required participants that have not connected yet (no lifecycle state seen), in the
+    /// order of SimulationControllerOptions::required_participants. Once it is empty, start()
+    /// only publishes the workflow configuration and waits for Running. Thread safe.
+    [[nodiscard]] std::vector<std::string> missing_participants() const;
 
     /// Waits until the controller's lifecycle has ended. @returns its final state or nullopt.
     std::optional<SilKit::Services::Orchestration::ParticipantState> wait_until_finished(std::chrono::milliseconds timeout);

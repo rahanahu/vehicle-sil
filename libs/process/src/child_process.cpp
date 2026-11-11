@@ -3,6 +3,8 @@
 
 #include "vehicle_sil/process/detail/capture.hpp"
 
+#include "spawn.hpp"
+
 #include <algorithm>
 #include <stdexcept>
 #include <thread>
@@ -60,162 +62,11 @@ std::string utf8_from_path(const std::filesystem::path& path)
 
 #ifdef _WIN32
 
-namespace {
-
-// Quotes one argument following the rules of CommandLineToArgvW / the MSVC and MinGW CRTs.
-std::wstring quote_argument(const std::wstring& argument)
-{
-    if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos)
-    {
-        return argument;
-    }
-    std::wstring quoted = L"\"";
-    for (auto it = argument.begin();; ++it)
-    {
-        std::size_t backslashes = 0;
-        while (it != argument.end() && *it == L'\\')
-        {
-            ++it;
-            ++backslashes;
-        }
-        if (it == argument.end())
-        {
-            quoted.append(backslashes * 2, L'\\');
-            break;
-        }
-        if (*it == L'"')
-        {
-            quoted.append(backslashes * 2 + 1, L'\\');
-        }
-        else
-        {
-            quoted.append(backslashes, L'\\');
-        }
-        quoted.push_back(*it);
-    }
-    quoted.push_back(L'"');
-    return quoted;
-}
-
-std::wstring widen(const std::string& text)
-{
-    if (text.empty())
-    {
-        return {};
-    }
-    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    std::wstring result(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size);
-    return result;
-}
-
-std::string last_error_message(const char* what)
-{
-    const DWORD code = GetLastError();
-    std::string reason;
-    switch (code)
-    {
-    case ERROR_FILE_NOT_FOUND:
-        reason = " (the file does not exist)";
-        break;
-    case ERROR_PATH_NOT_FOUND:
-        reason = " (the directory does not exist)";
-        break;
-    case ERROR_ACCESS_DENIED:
-        reason = " (access denied)";
-        break;
-    case ERROR_BAD_EXE_FORMAT:
-        reason = " (not a Windows executable)";
-        break;
-    default:
-        break;
-    }
-    return std::string(what) + " failed with Win32 error " + std::to_string(code) + reason;
-}
-
-std::wstring command_line(const std::filesystem::path& executable, const std::vector<std::string>& arguments)
-{
-    std::wstring line = quote_argument(executable.wstring());
-    for (const auto& argument : arguments)
-    {
-        line += L' ';
-        line += quote_argument(widen(argument));
-    }
-    return line;
-}
-
-/// A job that kills its processes when its handle closes (also when this process dies).
-/// A job that kills its processes when its handle closes (also when this process dies); null
-/// if it cannot be made (start() then refuses to start).
-HANDLE make_kill_on_close_job()
-{
-    HANDLE job = CreateJobObjectW(nullptr, nullptr);
-    if (job == nullptr)
-    {
-        return nullptr;
-    }
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
-    {
-        CloseHandle(job);
-        return nullptr;
-    }
-    return job;
-}
-
-/// Starts the process suspended with the given standard handles, puts it in `job` and resumes
-/// it. Throws StartError (also when there is no job, the process cannot join it or does not
-/// resume: then the process is ended before it runs).
-HANDLE start(const std::filesystem::path& executable, const std::vector<std::string>& arguments, HANDLE in, HANDLE out,
-             HANDLE err, HANDLE job)
-{
-    std::wstring line = command_line(executable, arguments);
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    startup.dwFlags = STARTF_USESTDHANDLES;
-    startup.hStdInput = in;
-    startup.hStdOutput = out;
-    startup.hStdError = err;
-    PROCESS_INFORMATION info{};
-    const std::string what = "cannot start " + shown_path(executable) + ": ";
-    const std::string jobHint = " (vehicle-sil runs each child in a job object, to stop it with what it starts; "
-                                "this Windows does not allow that here)";
-    if (job == nullptr)
-    {
-        throw StartError(what + last_error_message("making the job object") + jobHint, StartError::Cause::System);
-    }
-    if (!CreateProcessW(executable.wstring().c_str(), line.data(), nullptr, nullptr, TRUE, CREATE_SUSPENDED, nullptr,
-                        nullptr, &startup, &info))
-    {
-        throw StartError(what + last_error_message("CreateProcessW"), StartError::Cause::Executable);
-    }
-    const auto end_suspended = [&info] {
-        TerminateProcess(info.hProcess, 1);
-        WaitForSingleObject(info.hProcess, 5000);
-        CloseHandle(info.hThread);
-        CloseHandle(info.hProcess);
-    };
-    // Still suspended: a process outside the job could not be stopped with the processes it
-    // starts, so it does not run at all.
-    if (!AssignProcessToJobObject(job, info.hProcess))
-    {
-        const std::string error = last_error_message("AssignProcessToJobObject");
-        end_suspended();
-        throw StartError(what + error + jobHint, StartError::Cause::System);
-    }
-    // A thread that does not resume would leave the process waiting for ever.
-    if (ResumeThread(info.hThread) == static_cast<DWORD>(-1))
-    {
-        const std::string error = last_error_message("ResumeThread");
-        end_suspended();
-        throw StartError(what + error, StartError::Cause::System);
-    }
-    CloseHandle(info.hThread);
-    return info.hProcess;
-}
-
-} // namespace
+using detail::Handle;
+using detail::last_error_message;
+using detail::make_kill_on_close_job;
+using detail::make_pipe;
+using detail::start;
 
 ChildProcess::ChildProcess(const std::filesystem::path& executable,
                            const std::vector<std::string>& arguments,
@@ -230,9 +81,9 @@ ChildProcess::ChildProcess(const std::filesystem::path& executable,
     {
         throw std::runtime_error(last_error_message("CreateFileW(log)"));
     }
-    job_ = make_kill_on_close_job();
     try
     {
+        job_ = make_kill_on_close_job();
         process_ = start(executable, arguments, GetStdHandle(STD_INPUT_HANDLE), log, log, job_);
     }
     catch (...)
@@ -292,42 +143,6 @@ void ChildProcess::kill() noexcept
 
 namespace {
 
-/// Closes a handle when it goes out of scope.
-struct Handle
-{
-    HANDLE h = nullptr;
-    Handle() = default;
-    explicit Handle(HANDLE handle) : h(handle == INVALID_HANDLE_VALUE ? nullptr : handle) {}
-    Handle(const Handle&) = delete;
-    Handle& operator=(const Handle&) = delete;
-    ~Handle() { reset(); }
-    void reset() noexcept
-    {
-        if (h != nullptr)
-        {
-            CloseHandle(h);
-            h = nullptr;
-        }
-    }
-};
-
-/// A pipe whose read end stays here and whose write end the child inherits.
-void make_pipe(Handle& read, Handle& write)
-{
-    SECURITY_ATTRIBUTES inherit{};
-    inherit.nLength = sizeof(inherit);
-    inherit.bInheritHandle = TRUE;
-    HANDLE r = nullptr;
-    HANDLE w = nullptr;
-    if (!CreatePipe(&r, &w, &inherit, 0))
-    {
-        throw StartError(last_error_message("CreatePipe"), StartError::Cause::System);
-    }
-    read.h = r;
-    write.h = w;
-    SetHandleInformation(r, HANDLE_FLAG_INHERIT, 0);
-}
-
 /// Reads what the pipe holds now, without blocking. Returns false once the pipe is closed
 /// (the writers are gone) and resets it.
 bool read_available(Handle& pipe, Sink& sink, bool& read_any)
@@ -372,13 +187,13 @@ Captured run_captured(const std::filesystem::path& executable, const std::vector
     Handle errWrite;
     make_pipe(outRead, outWrite);
     make_pipe(errRead, errWrite);
-    SECURITY_ATTRIBUTES inherit{};
-    inherit.nLength = sizeof(inherit);
-    inherit.bInheritHandle = TRUE;
-    Handle nul(CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, nullptr));
+    Handle nul(detail::open_null_for_child());
     Handle job(make_kill_on_close_job());
-    Handle process(start(executable, arguments, nul.h, outWrite.h, errWrite.h, job.h));
+    detail::StartFlags flags;
+    flags.working_directory = options.working_directory;
+    flags.new_group = true;
+    flags.only_std_handles = true;
+    Handle process(start(executable, arguments, nul.h, outWrite.h, errWrite.h, job.h, flags));
     // Only the child holds the write ends now: the pipes close when it (and what it started)
     // has ended.
     outWrite.reset();
@@ -554,20 +369,11 @@ struct Fd
     }
 };
 
-/// A pipe with both ends closed on exec (the child gets the write end with dup2, which clears
-/// the flag on the copy).
+/// A pipe with both ends closed on exec and the read end non-blocking.
 void make_pipe(Fd& read, Fd& write)
 {
-    int fds[2] = {-1, -1};
-    if (::pipe(fds) != 0)
-    {
-        throw StartError(std::string("pipe() failed: ") + std::strerror(errno), StartError::Cause::System);
-    }
-    read.fd = fds[0];
-    write.fd = fds[1];
-    ::fcntl(fds[0], F_SETFD, FD_CLOEXEC);
-    ::fcntl(fds[1], F_SETFD, FD_CLOEXEC);
-    ::fcntl(fds[0], F_SETFL, ::fcntl(fds[0], F_GETFL) | O_NONBLOCK);
+    detail::make_pipe(read.fd, write.fd);
+    ::fcntl(read.fd, F_SETFL, ::fcntl(read.fd, F_GETFL) | O_NONBLOCK);
 }
 
 } // namespace
@@ -604,35 +410,28 @@ bool detail::read_available(int& fd, Sink& sink)
 Captured run_captured(const std::filesystem::path& executable, const std::vector<std::string>& arguments,
                       const CaptureOptions& options)
 {
-    const std::string program = executable.string();
-    std::vector<char*> argv;
-    argv.reserve(arguments.size() + 2);
-    argv.push_back(const_cast<char*>(program.c_str()));
-    for (const auto& argument : arguments)
-    {
-        argv.push_back(const_cast<char*>(argument.c_str()));
-    }
-    argv.push_back(nullptr);
-
     Fd outRead;
     Fd outWrite;
     Fd errRead;
     Fd errWrite;
     make_pipe(outRead, outWrite);
     make_pipe(errRead, errWrite);
-
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-    posix_spawn_file_actions_adddup2(&actions, outWrite.fd, STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&actions, errWrite.fd, STDERR_FILENO);
-    pid_t pid = -1;
-    const int rc = posix_spawn(&pid, program.c_str(), &actions, nullptr, argv.data(), environ);
-    posix_spawn_file_actions_destroy(&actions);
-    if (rc != 0)
+    Fd null;
+    null.fd = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (null.fd < 0)
     {
-        throw StartError("cannot start " + program + ": " + std::strerror(rc), StartError::Cause::Executable);
+        throw StartError(std::string("cannot open /dev/null: ") + std::strerror(errno), StartError::Cause::System);
     }
+    detail::SpawnRequest request;
+    request.in = null.fd;
+    request.out = outWrite.fd;
+    request.err = errWrite.fd;
+    request.working_directory = options.working_directory;
+    // A group of its own: the time limit ends what it started too, and the terminal's Ctrl+C
+    // reaches only the caller (which then ends, and with it this child).
+    request.own_group = true;
+    request.end_with_caller = true;
+    const pid_t pid = detail::spawn(executable, arguments, request);
     // Only the child holds the write ends now: the pipes close when it (and what it started)
     // has ended.
     outWrite.reset();
@@ -673,6 +472,7 @@ Captured run_captured(const std::filesystem::path& executable, const std::vector
         }
         if (!exitedAt && now >= deadline)
         {
+            ::kill(-pid, SIGKILL);
             ::kill(pid, SIGKILL);
             int status = 0;
             while (::waitpid(pid, &status, 0) < 0 && errno == EINTR)

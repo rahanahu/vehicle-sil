@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/check.hpp"
 
+#include "check_format.hpp"
+
 #include "vehicle_sil/ecu/detail/json_writer.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 #include "yaml_tree.hpp"
@@ -910,7 +912,7 @@ void sort_findings(std::vector<Finding>& findings)
     });
 }
 
-std::string format_text(const CheckReport& report)
+std::string detail::check_text_body(const CheckReport& report)
 {
     std::string out;
     if (report.config)
@@ -966,9 +968,16 @@ std::string format_text(const CheckReport& report)
             out += table(rows) + "\n";
         }
     }
-    for (const auto& finding : report.findings)
+    out += detail::findings_text(report.file, report.findings);
+    return out;
+}
+
+std::string detail::findings_text(const std::string& file, const std::vector<Finding>& findings)
+{
+    std::string out;
+    for (const auto& finding : findings)
     {
-        out += std::string(severity_name(finding.severity)) + ": " + report.file +
+        out += std::string(severity_name(finding.severity)) + ": " + file +
                (finding.line > 0 ? ":" + std::to_string(finding.line) : std::string{}) + ": " + finding.message + "\n";
         if (!finding.detail.empty())
         {
@@ -980,10 +989,26 @@ std::string format_text(const CheckReport& report)
             }
         }
     }
-    if (!report.findings.empty())
+    if (!findings.empty())
     {
         out += "\n";
     }
+    return out;
+}
+
+std::string detail::count_summary(std::size_t errors, std::size_t warnings, std::size_t notes)
+{
+    return count_text(errors, "error", "errors") + ", " + count_text(warnings, "warning", "warnings") + ", " +
+           count_text(notes, "note", "notes");
+}
+
+std::string detail::table_text(const std::vector<std::vector<std::string>>& rows) { return table(rows); }
+
+const char* detail::severity_text(Severity severity) { return severity_name(severity); }
+
+std::string format_text(const CheckReport& report)
+{
+    std::string out = detail::check_text_body(report);
     const std::string counts = count_text(report.errors(), "error", "errors") + ", " +
                                count_text(report.warnings(), "warning", "warnings") + ", " +
                                count_text(report.notes(), "note", "notes");
@@ -1002,9 +1027,53 @@ std::string format_text(const CheckReport& report)
     return out;
 }
 
+void detail::write_findings_json(vehicle_sil::detail::JsonWriter& w, const std::string& file, const std::vector<Finding>& findings)
+{
+    const auto optional_text = [&w](std::string_view key, const std::string& value) {
+        if (value.empty())
+        {
+            w.null(key);
+        }
+        else
+        {
+            w.string(key, value);
+        }
+    };
+    w.begin_array("findings");
+    for (const auto& finding : findings)
+    {
+        w.begin_object();
+        w.string("severity", severity_name(finding.severity));
+        w.string("code", finding.code);
+        optional_text("file", file);
+        if (finding.line > 0)
+        {
+            w.integer("line", static_cast<std::int64_t>(finding.line));
+        }
+        else
+        {
+            w.null("line");
+        }
+        optional_text("participant", finding.participant);
+        optional_text("network", finding.network);
+        w.string("message", finding.message);
+        optional_text("detail", finding.detail);
+        w.end_object();
+    }
+    w.end_array();
+}
+
 std::string format_json(const CheckReport& report)
 {
     vehicle_sil::detail::JsonWriter w;
+    detail::write_check_json(w, {}, report);
+    std::string out = w.take();
+    out += '\n';
+    return out;
+}
+
+void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_view member, const CheckReport& report)
+{
     const auto optional_text = [&w](std::string_view key, const std::string& value) {
         if (value.empty())
         {
@@ -1025,7 +1094,7 @@ std::string format_json(const CheckReport& report)
             w.null(key);
         }
     };
-    w.begin_object();
+    w.begin_object(member);
     w.integer("vehicle_sil_check", kCheckFormat);
     w.string("vehicle_sil", version());
     optional_text("file", report.file);
@@ -1040,6 +1109,9 @@ std::string format_json(const CheckReport& report)
     optional_integer("stop_at_ms", report.config ? report.config->stop_at_ms : std::nullopt);
     optional_integer("start_timeout_ms",
                      report.config ? std::optional<std::int64_t>(report.config->start_timeout_ms) : std::nullopt);
+    optional_integer("stop_timeout_ms",
+                     report.config ? std::optional<std::int64_t>(report.config->stop_timeout_ms) : std::nullopt);
+    optional_text("registry_uri", report.config ? report.config->registry_uri.value_or("") : std::string{});
     w.begin_array("participants");
     if (report.config)
     {
@@ -1119,26 +1191,8 @@ std::string format_json(const CheckReport& report)
         }
     }
     w.end_array();
-    w.begin_array("findings");
-    for (const auto& finding : report.findings)
-    {
-        w.begin_object();
-        w.string("severity", severity_name(finding.severity));
-        w.string("code", finding.code);
-        optional_text("file", report.file);
-        optional_integer("line", finding.line > 0 ? std::optional<std::int64_t>(static_cast<std::int64_t>(finding.line))
-                                                  : std::nullopt);
-        optional_text("participant", finding.participant);
-        optional_text("network", finding.network);
-        w.string("message", finding.message);
-        optional_text("detail", finding.detail);
-        w.end_object();
-    }
-    w.end_array();
+    detail::write_findings_json(w, report.file, report.findings);
     w.end_object();
-    std::string out = w.take();
-    out += '\n';
-    return out;
 }
 
 namespace {
@@ -1201,13 +1255,24 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
             continue;
         }
         // "{{word}}" in the path is the literal "{word}" (a valid entry has no other "{word}").
-        const auto executable = resolve_executable(expand_placeholders({p.command.front()}, "", "").front(), base);
+        const std::string written = expand_placeholders({p.command.front()}, "", "").front();
+        const FoundExecutable found = find_executable(written, base);
+        const std::filesystem::path& executable = found.path;
         if (auto bad = check_executable(p, executable))
         {
             report.findings.push_back(std::move(*bad));
             result.status = ParticipantStatus::Failed;
             report.participants.push_back(result);
             continue;
+        }
+        result.executable = executable;
+        if (found.on_path)
+        {
+            report.findings.push_back(Finding{Severity::Note, "found-on-path",
+                                              "participant '" + p.name + "': " + written +
+                                                  " is not in the directory of the configuration file; it runs " +
+                                                  process::shown_path(executable) + " (found on PATH)",
+                                              p.command_line, p.name, ""});
         }
         if (!p.describe)
         {
@@ -1226,8 +1291,10 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         run.timeout = options.describe_timeout;
         try
         {
-            process::Captured captured =
-                process::run_captured(executable, arguments, process::CaptureOptions{options.describe_timeout, 1u << 20});
+            // As vehicle_sil_launch run starts it: in the directory of the configuration file.
+            process::Captured captured = process::run_captured(
+                std::filesystem::absolute(executable), arguments,
+                process::CaptureOptions{options.describe_timeout, 1u << 20, std::filesystem::absolute(base)});
             run.exit_code = captured.exit_code;
             run.signal = captured.signal;
             run.output_truncated = captured.output_truncated;
