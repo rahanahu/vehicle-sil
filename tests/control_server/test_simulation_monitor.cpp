@@ -622,10 +622,10 @@ TEST_CASE(control_server_watch_and_list_peers_report_a_peer_alike)
     }
     CHECK(watched == list);
     v1::PeerInfo engine;
-    engine.ParseFromString(list.at("Engine"));
+    CHECK(engine.ParseFromString(list.at("Engine")));
     CHECK(engine.has_agent() && engine.simulation_state() == "Running");
     v1::PeerInfo body;
-    body.ParseFromString(list.at("Body"));
+    CHECK(body.ParseFromString(list.at("Body")));
     CHECK(!body.has_agent() && body.simulation_state() == "ReadyToRun");
 
     // A change of a SIL Kit state reaches the watch as the peer ListPeers then reports.
