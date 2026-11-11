@@ -30,6 +30,8 @@ LINUX_PRESETS = ["linux-gcc-debug", "linux-gcc-release", "linux-clang-debug", "l
 MAX_FAILED_NAMES = 20
 MAX_FAILED_OUTPUTS = 3
 OUTPUT_LINES = 15
+# The longest line shown (longer ones are cut): a test's message whole, as far as it is sensible.
+LINE_CHARS = 400
 MAX_ERRORS = 3
 ERROR_CONTEXT = 3
 
@@ -162,7 +164,7 @@ def outputs_from_junit(path: Path, names: list[str]) -> dict[str, list[str]]:
 def _trim(lines: list[str]) -> list[str]:
     while lines and not lines[-1].strip():
         lines.pop()
-    return [ln[:300] for ln in lines]
+    return [ln[:LINE_CHARS] for ln in lines]
 
 
 def first_errors(text: str) -> list[list[str]]:
@@ -171,13 +173,13 @@ def first_errors(text: str) -> list[list[str]]:
     blocks, i = [], 0
     while i < len(lines) and len(blocks) < MAX_ERRORS:
         if BUILD_ERROR.search(lines[i]) and not lines[i].startswith("FAILED: "):
-            block = [ln[:300] for ln in lines[i:i + 1 + ERROR_CONTEXT]]
+            block = [ln[:LINE_CHARS] for ln in lines[i:i + 1 + ERROR_CONTEXT]]
             blocks.append(_trim(block))
             i += 1 + ERROR_CONTEXT
         else:
             i += 1
     if not blocks:
-        tail = [ln[:300] for ln in lines[-8:]]
+        tail = [ln[:LINE_CHARS] for ln in lines[-8:]]
         if tail:
             blocks.append(tail)
     return blocks
@@ -207,7 +209,7 @@ def summarize_log(path: Path) -> Result:
     if "Test project " in text:
         result.stage = "test"
         result.note = "ctest did not print its summary (interrupted, or it failed before running the tests)"
-        result.errors = [_trim([ln[:300] for ln in text.splitlines()[-8:]])]
+        result.errors = [_trim([ln[:LINE_CHARS] for ln in text.splitlines()[-8:]])]
     elif "ninja: build stopped" in text or "FAILED: " in text or "error:" in text:
         result.stage = "build"
         result.errors = first_errors(text)
@@ -338,7 +340,7 @@ def run_preset(preset: str, args: argparse.Namespace) -> Result:
     if not parse_ctest(text, result):
         result.ok, result.stage = False, "test"
         result.note = f"ctest exited with {code} without its summary"
-        result.errors = [_trim([ln[:300] for ln in text.splitlines()[-8:]])]
+        result.errors = [_trim([ln[:LINE_CHARS] for ln in text.splitlines()[-8:]])]
         return result
     if code != 0 or result.failed_tests:
         result.ok, result.stage = False, "test"

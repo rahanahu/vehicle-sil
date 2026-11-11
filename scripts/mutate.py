@@ -4,8 +4,9 @@
 For each mutation: replace `old` by `new` in `file`, build the targets, run the tests, and restore the
 file from the content read before the change (not from Git: the working tree often has uncommitted
 changes). The file is restored on errors, Ctrl+C and SIGTERM too. A mutation is "killed" when a test
-fails, "killed (build)" when it does not build, and "SURVIVED" when every test passes. At the end the
-targets are built again from the restored sources.
+fails, "SURVIVED" when every test passes, and "INVALID" when it does not build (it says nothing about
+the tests: rewrite it so that it builds). At the end the targets are built again from the restored
+sources.
 
 The mutation list is a TOML file:
 
@@ -23,7 +24,8 @@ The mutation list is a TOML file:
     old = '''    return a + b;'''                 # must occur exactly once in the file
     new = '''    return a;'''
 
-Exit codes: 0 every mutation killed, 1 a mutation survived or a step went wrong, 2 usage error.
+Exit codes: 0 every mutation killed, 1 a mutation survived or was invalid or a step went wrong, 2 usage
+error.
 Requires Python 3.11+ (standard library only); runs on Linux and in MSYS2 on Windows.
 """
 
@@ -197,7 +199,7 @@ def main() -> int:
     if hasattr(signal, "SIGHUP"):
         signal.signal(signal.SIGHUP, on_signal)
 
-    killed = by_build = survived = errors = 0
+    killed = invalid = survived = errors = 0
     touched: list[str] = []
     interrupted = False
     with open(log_path, "w", encoding="utf-8") as log:
@@ -212,10 +214,9 @@ def main() -> int:
                 path.write_bytes(src.replace(old, new, 1))
                 build = run(["cmake", "--build", build_dir, "-j", jobs, "--target", *m.targets], log)
                 if build.returncode != 0:
-                    killed += 1
-                    by_build += 1
+                    invalid += 1
                     err = first_error(build.stdout + build.stderr)
-                    print(f"{m.name}: killed (build)" + (f" - {err}" if err else ""), flush=True)
+                    print(f"{m.name}: INVALID (it does not build)" + (f" - {err}" if err else ""), flush=True)
                     continue
                 test = run(["ctest", "--test-dir", build_dir, "-R", m.tests, "--timeout", timeout, "-j", test_jobs], log)
                 failed = []
@@ -247,16 +248,16 @@ def main() -> int:
             return 130
         rebuild = run(["cmake", "--build", build_dir, "-j", jobs, "--target", *touched], log)
 
-    total = f"{killed} killed" + (f" ({by_build} by the build)" if by_build else "") + f", {survived} survived"
+    total = f"{killed} killed, {survived} survived, {invalid} invalid"
     if errors:
         total += f", {errors} errors"
     print(f"mutate: {total}")
     if rebuild.returncode != 0:
         print(f"mutate: rebuilding {' '.join(touched)} from the restored sources failed; see {log_path}")
         return 1
-    if survived or errors:
+    if survived or invalid or errors:
         print(f"mutate: log {log_path}")
-    return 1 if survived or errors else 0
+    return 1 if survived or invalid or errors else 0
 
 
 if __name__ == "__main__":
