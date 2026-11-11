@@ -22,7 +22,8 @@ READ_CHUNK = 64 * 1024
 async def start(argv: Sequence[str], cwd: str | os.PathLike | None, stdin: bool = True) -> asyncio.subprocess.Process:
     kwargs: dict = {}
     if WINDOWS:
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+        # No CREATE_NO_WINDOW: CTRL_BREAK_EVENT reaches only a child that shares this server's console.
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
     return await asyncio.create_subprocess_exec(
