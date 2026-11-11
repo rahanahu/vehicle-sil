@@ -1,5 +1,7 @@
 # J1939 のノードの作り方
 
+ECU を書く人向けです。先に README の「[最初の ECU を動かす](../README.md#最初の-ecu-を動かす)」を読みます。次は [j1939-codec.md](j1939-codec.md)（信号を値として読み書きする）と [ecu-executable.md](ecu-executable.md)（ECU を実行ファイルにする）です。
+
 vehicle-sil の J1939 スタックで ECU のノードを作り、動かし、試験する方法です。API の契約と規則の詳細は [architecture.md](architecture.md) の「J1939」にあります。API はまだ変わることがあります。
 
 最初に動かすなら [examples/getting_started](../examples/getting_started) です。完全な例は [examples/j1939/ecu_pair](../examples/j1939/ecu_pair) です。エンジンとキャブの 2 つの ECU を部品だけで作り、`Simulation` で仮想バスか SIL Kit の 2 つの participant として動かします。同じコードを試験でも使っています。
@@ -437,6 +439,18 @@ CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 - `Monitor` は通信の途絶を、`J1939Events` は送信の要求、フレームの送出、転送の終わり、アドレスの変化を、`FrameLog` はバス上のフレームを見せます。
 - 参照するときは、ECU の名前とネットワークの名前を渡します。`network("cab", "J1939_CAN")` のように 2 つ渡します。ネットワークが 1 つの ECU には 1 つの名前の形も使えます。
 - `LocalBench` を直接使うこともできます。`LocalBench::add_ecu(name, step)` は `Ecu&` を返します。`add_j1939(name, step)` は、1 つのネットワークを持つ ECU の略記です。`add_j1939()` と、`bus()`、`injector()`、`inject(time, frame)` のようにバスの名前を省く形は、ただ 1 つのバスを使います。バスがまだなければ作り、そのバスは後から来た `Ecu::j1939(network)` か `Ecu::can(network)` の名前になります。`bus(network)`、`injector(network)`、`inject(network, time, frame)` は名前でバスを引くだけで、名前を付けません（その名前のバスがなければ `std::out_of_range`）。どちらの順で書いても同じバスです。バスが 2 つ以上あるときに名前を省くと `std::logic_error` です。`add_j1939()` で ECU を足した後に 2 つ目のバスの名前を使うのも `std::logic_error` です（その ECU のバスが決まらないためです）。バスを複数使うときは、ECU を `add_ecu(name, step).j1939(network)` で足し、`inject(network, time, frame)` のようにバスの名前を渡します。
+
+## 外から信号を操作する・読む（UI、試験）
+
+UI や試験から ECU の値を読み書きするときは、ECU に変数を宣言し、Control API を使います。Control API が扱うのは宣言した変数と時間の操作で、J1939 のフレームは扱いません。受けた信号を外に見せるときは、その値を `output` に、外から決める値は `input` にします（例: [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp)）。
+
+```cpp
+ecu.input("engine.throttle", &throttle_,
+          {.unit = "%", .min = 0.0, .max = 100.0, .description = "accelerator pedal position"});
+ecu.output("engine.speed", &rpm_, {.unit = "rpm"});   // 送る PG の元にする値
+```
+
+宣言の規則、同じプロセスからの読み書き、Control Server へのつなぎ方は [control-api.md](control-api.md) にあります。
 
 ## データの形（Codec）
 

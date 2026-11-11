@@ -1,0 +1,228 @@
+# コードの地図
+
+vehicle-sil 自体を直す人と AI エージェント向けです。変える場所、その試験、試験だけを回す方法を、探さずに見つけるための地図です。先に [AGENTS.md](../AGENTS.md)（文書の管理、コミット、検証のスクリプト）を読みます。次は [architecture.md](architecture.md) です。
+
+各ディレクトリの内容は README の「[構成](../README.md#構成)」に、各ターゲットの内容は [architecture.md](architecture.md) の「構成」にあります。ここには書きません。
+
+## 試験の名前と回し方
+
+- 試験の名前は `<前置き>.<名前>` です。前置きは `tests/<領域>/CMakeLists.txt` の `PREFIX` です。
+- 試験の実行ファイルの試験は、ソースの `TEST_CASE(名前)` から設定時に登録されます（`vehicle_sil_add_harness_tests()`、`cmake/VehicleSilTestHelpers.cmake`）。既存のソースに `TEST_CASE` を足すときは、CMake を書き換えません。新しいソースのファイルは、その `CMakeLists.txt` の `SOURCES` に足します。マクロ（`TEST_CASE`、`CHECK`、`CHECK_EQ`）は `tests/unit/test_harness.hpp` にあります。
+- 1 つの試験は、試験の実行ファイルに名前を渡すと動きます（`<実行ファイル> <名前>`。ctest もそうしています）。
+- プロセスを起動する試験（シナリオ）は `vehicle_sil_add_scenario_tests()` で登録し、名前は `<前置き>.<シナリオ>` です。シナリオの一覧は `CMakeLists.txt` の `SCENARIOS`、中身は同じディレクトリの `*launcher.cpp`（`tests/integration/launcher.cpp`、`tests/launch/launch_run_launcher.cpp` など）です。共通の部品は `tests/integration/launcher_support.hpp` にあります。
+- 前置きだけを回すときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.` にも当たります。
+
+```sh
+ctest --preset linux-gcc-debug -R '^launch\.'
+scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
+```
+
+## ディレクトリごとの場所と試験
+
+ヘッダーは `include/` の下のパスです。
+
+| ディレクトリ | 主なクラス・関数（ヘッダー） | 試験 | `ctest -R` |
+|---|---|---|---|
+| `libs/core` | `ParticipantRuntime`（`vehicle_sil/core/participant_runtime.hpp`）、`SimulationController`（`core/simulation_controller.hpp`）、`TickScheduler`（`core/tick_scheduler.hpp`）。`sim_base` の `SimTime`（`core/sim_time.hpp`）、`StepInbox`（`core/step_inbox.hpp`）、`periodic()`（`core/periodic.hpp`） | `tests/core` | `^core\.` |
+| `libs/can` | `Frame`（`can/frame.hpp`）、`Port`（`can/port.hpp`）、`Host`、`Steppable`（`can/host.hpp`）、`StepDriver`（`can/step_driver.hpp`）、`RealTimeDriver`（`can/real_time_driver.hpp`）、`VirtualCanBus`（`can/virtual_can_bus.hpp`）、`CanBusModel`（`can/bus_model.hpp`）、`TapPort`（`can/tap_port.hpp`）、`RawChannel`（`can/raw_channel.hpp`） | `tests/can` | `^can\.` |
+| `libs/can_silkit` | `SilKitCanPort`、`bind_host()`（`can_silkit/silkit_can_port.hpp`） | `tests/can` | `^can_silkit\.` |
+| `libs/can_netsim`、`tools/can_bus_simulator` | `CanBusSimulator`（`can_netsim/can_bus_simulator.hpp`）、`NetworkSimulatorConfig`（`can_netsim/network_simulator_config.hpp`） | `tests/can` | `^can_netsim\.` |
+| `libs/lin`、`libs/lin_silkit` | `LinMaster`（`lin/lin_master.hpp`）、`LinSlave`（`lin/lin_slave.hpp`）、`LinPort`（`lin/lin_port.hpp`）、`VirtualLinBus`（`lin/virtual_lin_bus.hpp`）、`SilKitLinPort`（`lin_silkit/silkit_lin_port.hpp`） | `tests/lin` | `^lin_bus\.`（仮想 LIN バス）、`^lin_local\.`（`LocalBench` の上）、`^lin\.`（SIL Kit の上）、`^lin_cluster\.`（`examples/lin` のプロセス） |
+| `libs/j1939`（エンジン） | `Network`、`Node`（`j1939/network.hpp`）、`Pgn`、`Identifier`（`j1939/types.hpp`）、`Name`（`j1939/name.hpp`）、`Subscription`、`Timer`（`j1939/toolbox.hpp`）、`Observer`（`j1939/observer.hpp`）。Address Claim と Request は `src/node.cpp`、トランスポートプロトコルは `src/transport.cpp` | `tests/j1939` | `^j1939\.`、`^j1939_silkit\.` |
+| `libs/j1939/parts/<部品>` | 部品ごとに 1 つのディレクトリとターゲット。`PeriodicSender`（`j1939/periodic_sender.hpp`）、`Requester`、`Monitor`、`AddressCommander`、`Exchange`、`BroadcastSuppression`、`Diagnostics`、`Identification` | `tests/j1939` | `^j1939_parts\.` |
+| `libs/j1939/codec`、`tools/j1939_codegen` | `j1939/codec.hpp`（信号の型）、`j1939/codec_node.hpp`（`attach_sender()`、`on_message()`）、生成器 `j1939_codegen.py`、`vehicle_sil_add_j1939_codec()`（`cmake/VehicleSilJ1939Codec.cmake`） | `tests/j1939` | `^j1939_codec\.` |
+| `libs/ecu` | `Ecu`（`ecu/ecu.hpp`）、`EcuDescription`、`to_json()`（`ecu/describe.hpp`） | `tests/ecu` | `^ecu\.` |
+| `libs/local` | `LocalBench`（`local/local_bench.hpp`） | `tests/testkit`、`tests/lin` | `^testkit\.`、`^lin_local\.`、`^local\.` |
+| `libs/testkit` | `J1939Events`、`FrameLog`（`testkit/recorders.hpp`）、`faults`（`testkit/faults.hpp`）、`LocalCan`（`testkit/local_can.hpp`） | `tests/testkit` | `^testkit\.`、`^ecu_api\.`、`^param_service\.` |
+| `libs/peer` | `Peer`、`PeerOptions`、`start_together()`（`peer/peer.hpp`）。監視の出力は `src/peer_monitor.cpp` | `tests/peer` | `^peer\.` |
+| `libs/simulation` | `Simulation`、`SilKitOptions`、`SimulationError`（`simulation/simulation.hpp`）、`ecu_main()`、`EcuMainOptions`（`simulation/ecu_main.hpp`） | `tests/simulation` | `^simulation\.`、`^ecu_main\.`（`examples/ecu_main` のプロセス）、サンプルの実行は `getting_started.`、`typed_messages.`、`pid_stream.`、`fault_injection.`、`vehicle.`、`low_level.` で始まる |
+| `libs/control` | `Agent`（`control/agent.hpp`）、`Hub`（`control/hub.hpp`） | `tests/control` | `^control\.` |
+| `libs/control_grpc`、`tools/control_server`、`proto/`、`python/` | `ControlServer`（`control_grpc/server.hpp`）、`AgentClient`（`control_grpc/agent_client.hpp`）、Python のクライアント（`python/vehicle_sil_control/client.py`） | `tests/control_server`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ） | `^control_server\.` |
+| `libs/process` | `ChildProcess`、`run_captured()`（`process/child_process.hpp`）、`Process`（`process/process.hpp`） | `tests/process` | `^process\.` |
+| `libs/launch`、`tools/launch` | `read_config()`（`launch/config.hpp`）、`check_file()`（`launch/check.hpp`）、`run_file()`（`launch/run.hpp`）。照合の規則は `src/check.cpp`、コマンドラインは `tools/launch/main.cpp` | `tests/launch` | `^launch\.`（プロセスなし）、`^launch_cli\.`（`check`）、`^launch_run\.`（`run`） |
+| `tools/common` | 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、`vehicle_sil/cli/console.hpp`。ターゲット `vehicle_sil_cli`） | `tests/unit` | `^unit\.` |
+| `tools/sim_controller` | `vehicle_sil_sim_controller`（`main.cpp`） | 専用の試験はなく、プロセスの試験が使う | `^virtual_time\.`、`^ecu_main\.`、`^lin_cluster\.` |
+| `bridges/vector-xl` | `CanBridge`（`vector_xl/can_bridge.hpp`）、`ExternalPortAdapter`（`vector_xl/external_port_adapter.hpp`）、`XlDriver`、`XlCanPort`（`vector_xl/xl_driver.hpp`） | `tests/vector_xl`（XL ドライバのフェイクは `tests/vector_xl/fake_xl`） | `^vector_xl\.` |
+| `examples/j1939`（sender と receiver） | | `tests/integration` | `^integration\.` |
+| `examples/virtual_time` | | `tests/virtual_time` | `^virtual_time\.` |
+| FetchContent での利用 | `examples/fetchcontent_consumer` | `tests/fetchcontent`（`VEHICLE_SIL_TEST_FETCHCONTENT=ON` のときだけ） | `^fetchcontent\.` |
+| `cmake/` | 依存の取り込み（`VehicleSilDependencies.cmake`、`VehicleSilGrpc.cmake`）、試験の登録（`VehicleSilTestHelpers.cmake`）、境界の検査（`VehicleSilCheck*.cmake`） | | |
+
+## 依存の向き
+
+矢印は「リンクする」（`target_link_libraries`）です。点線は非公開（`PRIVATE`）のリンクで、実線は `PUBLIC` と `INTERFACE` のリンクです。ノードの名前はターゲットの名前で、`vehicle_sil::` を省きます。逆向きの依存は作りません。
+
+全体の層です。箱はターゲットのまとまりで、箱の間の矢印は、下の図の 1 本以上のリンクをまとめたものです。
+
+```mermaid
+flowchart TD
+    subgraph no_silkit["no SIL Kit"]
+        protocols["sim_base, can, lin, j1939"]
+        control["control"]
+        j1939_parts["J1939 parts, j1939_codec"]
+        app["ecu, local, testkit"]
+    end
+    subgraph with_silkit["SIL Kit"]
+        bindings["core, can_silkit, lin_silkit, can_netsim"]
+        run["peer, simulation"]
+        launch_process["launch, process"]
+        grpc["control_grpc, control_proto"]
+        tools["executables, vector_xl bridge"]
+    end
+    j1939_parts --> protocols
+    control --> protocols
+    app --> protocols
+    app --> control
+    bindings --> protocols
+    run --> app
+    run --> bindings
+    run --> protocols
+    run --> control
+    launch_process --> app
+    launch_process -.-> bindings
+    grpc --> control
+    grpc --> bindings
+    tools --> protocols
+    tools --> bindings
+    tools -.-> launch_process
+    tools -.-> grpc
+```
+
+SIL Kit を使わないのは `sim_base`、`can`、`lin`、`control`、`j1939` とその部品、`j1939_codec`、`ecu`、`local`、`testkit`、`process` です（`process` は「launch, process」の箱にありますが、SIL Kit を使いません）。
+
+### 土台と SIL Kit の実装
+
+```mermaid
+flowchart TD
+    sim_base --> Threads["Threads::Threads"]
+    core --> SilKit["SilKit::SilKit"]
+    core --> sim_base
+    can --> sim_base
+    lin --> sim_base
+    can_silkit --> can
+    can_silkit --> core
+    can_silkit --> SilKit
+    lin_silkit --> lin
+    lin_silkit --> core
+    lin_silkit --> SilKit
+    can_netsim --> can
+    can_netsim --> core
+    can_netsim --> SilKit
+    can_netsim -.-> can_silkit
+    can_netsim -.-> rapidyaml
+```
+
+### J1939 のエンジンと部品
+
+```mermaid
+flowchart TD
+    j1939 --> can
+    j1939_broadcast_suppression --> j1939
+    j1939_diagnostics --> j1939
+    j1939_diagnostics --> j1939_broadcast_suppression
+    j1939_periodic_sender --> j1939_broadcast_suppression
+    j1939_requester --> j1939
+    j1939_monitor --> j1939
+    j1939_address_commander --> j1939
+    j1939_exchange --> j1939
+    j1939_codec --> j1939
+    j1939_codec --> j1939_periodic_sender
+```
+
+### ECU とローカルの実行（SIL Kit なし）
+
+```mermaid
+flowchart TD
+    ecu --> can
+    ecu --> j1939
+    ecu --> lin
+    ecu --> control
+    control --> sim_base
+    local --> can
+    local --> j1939
+    local --> lin
+    local --> ecu
+    testkit --> local
+    testkit --> can
+    testkit --> j1939
+    testkit --> ecu
+```
+
+### Peer と Simulation
+
+```mermaid
+flowchart TD
+    peer --> core
+    peer --> can
+    peer --> can_silkit
+    peer --> ecu
+    peer --> j1939
+    peer --> lin_silkit
+    peer --> control
+    simulation --> ecu
+    simulation --> peer
+    simulation --> local
+```
+
+### launch と Control API
+
+`control_proto` と `control_grpc` は `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ、`launch` は SIL Kit をサブモジュールからビルドしたとき（`rapidyaml` があるとき）だけ作ります。`grpcpp` は gRPC の C++ ライブラリです（`cmake/VehicleSilGrpc.cmake`）。
+
+```mermaid
+flowchart TD
+    launch --> ecu
+    launch --> process
+    launch -.-> core
+    launch -.-> rapidyaml
+    process --> Threads["Threads::Threads"]
+    control_grpc --> control
+    control_grpc --> core
+    control_grpc -.-> control_proto
+    control_proto --> grpcpp
+```
+
+### Vector XL CAN Bridge
+
+`vector_xl` と `vehicle_sil_vector_xl_bridge` は Windows で、XL Driver Library があるときだけ作ります。
+
+```mermaid
+flowchart TD
+    vector_xl_bridge_core --> SilKit["SilKit::SilKit"]
+    vector_xl_bridge_core --> can
+    vector_xl_bridge_core --> can_silkit
+    vehicle_sil_vector_xl_logic --> vector_xl_bridge_core
+    vector_xl --> vector_xl_bridge_core
+    vector_xl -.-> vehicle_sil_vector_xl_logic
+    vector_xl -.-> vxlapi["XL Driver Library"]
+    vehicle_sil_vector_xl_bridge -.-> vector_xl
+    vehicle_sil_vector_xl_bridge -.-> core
+    vehicle_sil_vector_xl_bridge -.-> vehicle_sil_cli
+```
+
+### ほかの実行ファイル
+
+どれも非公開で `vehicle_sil_cli`（`tools/common`、ヘッダーのみ）をリンクします。ほかにリンクするのは、`vehicle_sil_sim_controller` が `core`、`vehicle_sil_can_bus_simulator` が `can_netsim`、`vehicle_sil_launch` が `launch` と `process`（Windows では `shell32` も）、`vehicle_sil_control_server` が `control_grpc` と `core` です。
+
+## 境界を検査する試験
+
+次の試験は、ソースの `#include` などを読んで、層の境界を検査します。内部のヘッダーや SIL Kit のヘッダーを足すと落ちます。
+
+| 試験 | 検査すること |
+|---|---|
+| `j1939_parts.boundary` | `libs/j1939/parts` が、エンジンの公開 API と道具箱だけを使い、`vehicle_sil::j1939` とほかの部品だけをリンクする |
+| `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
+| `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
+| `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |
+
+## これを変えるならここも
+
+| 変えるもの | 合わせて直すもの |
+|---|---|
+| `vehicle_sil_launch check` と `run` の出力（`libs/launch/src`）、`examples/ecu_main/simulation.yaml` | [simulation-config.md](simulation-config.md) の、`<!-- ... -->` の行の直後のコードブロック。`launch_cli.docs` と `launch_run.docs` が、vehicle-sil の版を除いてバイト単位で照合します |
+| `--describe` の JSON（`libs/ecu/src/describe.cpp`）、`examples/ecu_main/engine` の ECU | [ecu-executable.md](ecu-executable.md) の `<!-- vehicle_sil_engine_ecu --describe -->` の後のコードブロック（`ecu_main.describe` が照合）と「JSON の形式」。JSON を読む側の `read_description()`（`libs/launch/src/check.cpp`）。形式の版は `kEcuDescriptionFormat`（`ecu/describe.hpp`） |
+| `ecu_main` の引数（`libs/simulation/src/ecu_main.cpp`） | `kLauncherArguments`（`libs/launch/include/vehicle_sil/launch/config.hpp`。構成ファイルの `command` に書けない引数）と、[ecu-executable.md](ecu-executable.md) の「引数」 |
+| 照合の規則と `code`（`libs/launch/src/check.cpp`） | [simulation-config.md](simulation-config.md) の「照合」の `code` の表。試験はこの表を照合しないので、手で合わせます |
+| J1939 の部品を足す | `libs/j1939/parts/<部品>/` と、`libs/j1939/CMakeLists.txt` の `add_subdirectory`。試験は `tests/j1939/CMakeLists.txt` の `vehicle_sil_j1939_parts_tests` の `SOURCES` と `LINK`。README の「ライブラリ」と [architecture.md](architecture.md) の「プロトコル部品」 |
+| `libs/` にライブラリを足す | ルートの `CMakeLists.txt` の `add_subdirectory`、README の「構成」と「ライブラリ」、[architecture.md](architecture.md) の「構成」 |
+| `proto/vehicle_sil/control/v1/control.proto` | `libs/control_grpc/src`（`convert.hpp`、`control_service.cpp`、`agent_service.cpp`、`agent_client.cpp`）、`python/vehicle_sil_control/client.py`、[control-api.md](control-api.md)。Python のスタブは試験のビルドで生成します（`python -m vehicle_sil_control.generate`） |
+| 使う SIL Kit の API、上流の挙動への前提 | [dependencies.md](dependencies.md) の「使っている API」と「実装が前提にしている上流の挙動」 |

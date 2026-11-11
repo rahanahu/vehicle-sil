@@ -1,5 +1,7 @@
 # シミュレーションの構成ファイル、照合と実行（`vehicle_sil_launch check`、`run`）
 
+まとめる人向けです。先に [ecu-executable.md](ecu-executable.md)（ECU の実行ファイルの引数、`--describe` の JSON、止め方）を読みます。この後に読む文書はありません。
+
 各自が作った ECU の実行ファイル（[ecu-executable.md](ecu-executable.md)）を 1 つのシミュレーションにまとめるときに、まとめる人が書く構成ファイルと、その照合です。構成ファイルには、participant にする実行ファイル、それらがつながるネットワーク、止める時刻を書きます。`vehicle_sil_launch check` は、構成ファイルと、各実行ファイルの自己申告（`--describe`）を突き合わせ、食い違いを 1 回で全部出します。`vehicle_sil_launch run` は、同じ照合をしてから、シミュレーション全体を起動し、終わりまで見届けて、各 participant がどう終わったかを出します。形式と規則はまだ変わることがあります。
 
 `check` はシミュレーションを始めず、registry にも接続しません。ただし、`describe: true` の実行ファイルは、1 つずつ `--describe` で起動します。`--describe` は ECU を組み立てるので、その実行ファイルのコード（ECU のコンストラクターなど）が動きます。構成ファイルは、実行するコマンドの一覧です。信頼できない構成ファイルを `check` にも `run` にも渡さないでください。`describe: false` の実行ファイルは起動せず、あることだけを確かめます。

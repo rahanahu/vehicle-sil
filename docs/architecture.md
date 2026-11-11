@@ -1,5 +1,7 @@
 # アーキテクチャ
 
+vehicle-sil 自体を直す人と、API の契約や制限を確かめたい利用者（該当する節だけ）向けです。直す人は、先に [code-map.md](code-map.md)（どこに何があるか）を読みます。次は [dependencies.md](dependencies.md) です。
+
 vehicle-sil は、Vector SIL Kit の上で車載通信のシミュレーションピアを作るためのライブラリ群です。対象は J1939 over CAN、LIN、将来の Ethernet などです。ピアは Windows または Linux 上で独立したプロセスとして動きます。
 
 この文書の「将来の機能が守る制約」は要件と制約であり、実装済みの機能ではありません。
@@ -50,35 +52,37 @@ vehicle-sil/
 
 区分は、どこから使い始めるかの目安です。利用者向けは、ECU を書く人と ECU をまとめる人が直接使うライブラリで、入口は `vehicle_sil::Ecu` と `vehicle_sil::Simulation` です。土台は利用者向けのライブラリを通して使うもので、直接も使えますが、API は上の層の必要に合わせて変わります。試験用は、試験とサンプルのための道具です。実行ファイル、生成コード、CAN ブリッジは区分に入れていません（「—」）。
 
-| ターゲット | 区分 | 依存先 | 内容 |
-|---|---|---|---|
-| `vehicle_sil::sim_base` | 土台 | スレッドライブラリ（`Threads::Threads`） | `SimTime` と `SimDuration`、`StepInbox`、`periodic()` と `once_at()`（ヘッダーのみ。SIL Kit なしで使う） |
-| `vehicle_sil::core` | 土台 | `SilKit::SilKit`、`vehicle_sil::sim_base` | `vehicle_sil::ParticipantRuntime`、`SimulationController`、`TickScheduler`、`RealTimePacer`。`sim_base` の型も使える |
-| `vehicle_sil::lin` | 土台 | `vehicle_sil::sim_base` | `vehicle_sil::lin::LinMaster`、`vehicle_sil::lin::LinSlave`、`LinScheduleTable` と `validate_schedule()`、`LinPort`、`VirtualLinBus`（「LIN」） |
-| `vehicle_sil::lin_silkit` | 土台 | `vehicle_sil::lin`、`vehicle_sil::core` | `vehicle_sil::lin::SilKitLinPort` |
-| `vehicle_sil::can` | 土台 | `vehicle_sil::sim_base` | `vehicle_sil::can::Frame`、`Port`、`Steppable`、`Host`、`StepDriver`、`RealTimeDriver`、`VirtualCanBus`、`CanBusModel`、`TapPort`（「CAN の共通基盤」） |
-| `vehicle_sil::can_silkit` | 土台 | `vehicle_sil::can`、`vehicle_sil::core` | `vehicle_sil::can::SilKitCanPort`、`bind_host()` |
-| `vehicle_sil::can_netsim` | 土台 | `vehicle_sil::can_silkit`、`rapidyaml`（SIL Kit 付属） | 簡易 CAN Network Simulator（「簡易 CAN Network Simulator」） |
-| `vehicle_sil::j1939` | 利用者向け | `vehicle_sil::can` | `vehicle_sil::j1939::Network`、`Node`、`Pgn`、`Identifier`、`Observer`、道具箱（「J1939」） |
-| `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics` | 利用者向け | `vehicle_sil::j1939`（`j1939_diagnostics` は `j1939_broadcast_suppression` にも依存） | プロトコル部品の `BroadcastSuppression`（DM13）、`Diagnostics`、`Identification`（「プロトコル部品」） |
-| `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`、`vehicle_sil::j1939_exchange` | 利用者向け | `vehicle_sil::j1939`（`j1939_periodic_sender` は `j1939_broadcast_suppression` にも依存） | ECU アプリ向けのプロトコル部品 `PeriodicSender`、`Requester`、`Monitor`、`AddressCommander`、独自プロトコル向けの `Exchange`（「プロトコル部品」、[j1939-guide.md](j1939-guide.md)） |
-| `vehicle_sil::j1939_codec`（ヘッダーのみ） | 利用者向け | `vehicle_sil::j1939`、`vehicle_sil::j1939_periodic_sender` | 型付きメッセージのランタイム（`codec.hpp`。エンジンの値の型だけを使う）と、ノードと `PeriodicSender` への接続（`codec_node.hpp`）。型は `vehicle_sil_add_j1939_codec()` が YAML から生成する（「型付きメッセージ」、[j1939-codec.md](j1939-codec.md)） |
-| `vehicle_sil::ecu` | 利用者向け | `vehicle_sil::can`、`vehicle_sil::j1939`、`vehicle_sil::lin`、`vehicle_sil::control` | `vehicle_sil::Ecu`、`EcuDescription` と `to_json()`、`detail::OwnedObjects`、`detail::EcuAgent`（「実行と試験の基盤」、[ecu-executable.md](ecu-executable.md)） |
-| `vehicle_sil::local` | 土台 | `vehicle_sil::can`、`vehicle_sil::j1939`、`vehicle_sil::lin`、`vehicle_sil::ecu` | `vehicle_sil::LocalBench`（「実行と試験の基盤」） |
-| `vehicle_sil::testkit` | 試験用 | `vehicle_sil::local`、`vehicle_sil::can`、`vehicle_sil::j1939`、`vehicle_sil::ecu` | `J1939Events`、`FrameLog`、`faults`、`LocalBench` の別名 `testkit::LocalCan`（「実行と試験の基盤」） |
-| `vehicle_sil::peer` | 土台 | `vehicle_sil::core`、`vehicle_sil::can_silkit`、`vehicle_sil::j1939`、`vehicle_sil::lin_silkit`、`vehicle_sil::ecu`、`vehicle_sil::control` | `vehicle_sil::Peer`（Control Agent の監視の出力を含む）、`start_together()`（「実行と試験の基盤」） |
-| `vehicle_sil::simulation` | 利用者向け | `vehicle_sil::ecu`、`vehicle_sil::peer`、`vehicle_sil::local` | `vehicle_sil::Simulation`、`SilKitOptions`、`SimulationError`（「実行と試験の基盤」）、`ecu_main()` と `EcuMainOptions`（[ecu-executable.md](ecu-executable.md)） |
-| `vehicle_sil_sim_controller`（実行ファイル） | — | `vehicle_sil::core` | system controller の CLI |
-| `vehicle_sil::process`（内部用） | — | なし | 子プロセス: `ChildProcess`（ログファイルへ）、`run_captured()`（標準出力と標準エラーを別々に取り込み、時間切れで止める）、`Process`（標準出力と標準エラーを行ごとに渡す。作業ディレクトリ、止める要求、起動したプロセスごとの終了）。`run_captured()` と `Process` の子は、自分のプロセスグループ（Windows ではプロセスグループとジョブオブジェクト）で動き、標準の 3 つのほかにハンドルを受け継がず、Linux では呼んだスレッドが終わると SIGKILL を受けます。POSIX は `fork` と `exec`（`ChildProcess` は `posix_spawn`）、Windows は `CreateProcessW`（パスと引数は UTF-8 から変換する） |
-| `vehicle_sil::launch`（内部用。SIL Kit をサブモジュールからビルドしたとき） | — | `vehicle_sil::ecu`、`vehicle_sil::process`、`vehicle_sil::core`（非公開）、`rapidyaml`（SIL Kit 付属、非公開） | 構成ファイルの読み込み、`--describe` の JSON の読み込み、照合の規則（プロセスを起動しない関数）、実行（registry と `SimulationController` をプロセスの中に持ち、participant を子プロセスで動かす。実行の判定はプロセスを起動しない関数）、人向けと JSON の出力（[simulation-config.md](simulation-config.md)） |
-| `vehicle_sil_launch`（実行ファイル） | — | `vehicle_sil::launch` | `vehicle_sil_launch check`、`vehicle_sil_launch run`（[simulation-config.md](simulation-config.md)） |
-| `vehicle_sil::control` | 利用者向け | `vehicle_sil::sim_base` | `vehicle_sil::control::Agent`、`Hub`（「外部操作（Control API）と GUI」） |
-| `vehicle_sil::control_proto`（`VEHICLE_SIL_BUILD_CONTROL_SERVER` のとき） | — | gRPC、Protocol Buffers | `control.proto` から生成したコード（`control_grpc` の内部） |
-| `vehicle_sil::control_grpc`（同上） | 利用者向け | `vehicle_sil::control`、`vehicle_sil::core`（`control_proto` は非公開） | `vehicle_sil::control_grpc::ControlServer`、`AgentClient`、`time_control_of()` |
-| `vehicle_sil_control_server`（同上、実行ファイル） | — | `vehicle_sil::control_grpc`、`vehicle_sil::core` | Control Server と system controller の CLI |
-| `vehicle_sil::vector_xl_bridge_core` | — | `SilKit::SilKit`、`vehicle_sil::can`、`vehicle_sil::can_silkit` | `vehicle_sil::vector_xl::CanBridge`、`ExternalCanPort`、`ExternalPortAdapter`、チャネル選択、CLI の解析。全プラットフォームでビルドする |
-| `vehicle_sil::vector_xl`（Windows のみ） | — | `vector_xl_bridge_core`、XL Driver Library | `vehicle_sil::vector_xl::XlDriver`、`XlCanPort` |
-| `vehicle_sil_vector_xl_bridge`（Windows のみ、実行ファイル） | — | 上記と `vehicle_sil::core` | ブリッジの CLI |
+各ターゲットがリンクするもの（依存の向き）は、[code-map.md](code-map.md) の「依存の向き」の図にあります。
+
+| ターゲット | 区分 | 内容 |
+|---|---|---|
+| `vehicle_sil::sim_base` | 土台 | `SimTime` と `SimDuration`、`StepInbox`、`periodic()` と `once_at()`（ヘッダーのみ。SIL Kit なしで使う） |
+| `vehicle_sil::core` | 土台 | `vehicle_sil::ParticipantRuntime`、`SimulationController`、`TickScheduler`、`RealTimePacer`。`sim_base` の型も使える |
+| `vehicle_sil::lin` | 土台 | `vehicle_sil::lin::LinMaster`、`vehicle_sil::lin::LinSlave`、`LinScheduleTable` と `validate_schedule()`、`LinPort`、`VirtualLinBus`（「LIN」） |
+| `vehicle_sil::lin_silkit` | 土台 | `vehicle_sil::lin::SilKitLinPort` |
+| `vehicle_sil::can` | 土台 | `vehicle_sil::can::Frame`、`Port`、`Steppable`、`Host`、`StepDriver`、`RealTimeDriver`、`VirtualCanBus`、`CanBusModel`、`TapPort`（「CAN の共通基盤」） |
+| `vehicle_sil::can_silkit` | 土台 | `vehicle_sil::can::SilKitCanPort`、`bind_host()` |
+| `vehicle_sil::can_netsim` | 土台 | 簡易 CAN Network Simulator（「簡易 CAN Network Simulator」） |
+| `vehicle_sil::j1939` | 利用者向け | `vehicle_sil::j1939::Network`、`Node`、`Pgn`、`Identifier`、`Observer`、道具箱（「J1939」） |
+| `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics` | 利用者向け | プロトコル部品の `BroadcastSuppression`（DM13）、`Diagnostics`、`Identification`（「プロトコル部品」） |
+| `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`、`vehicle_sil::j1939_exchange` | 利用者向け | ECU アプリ向けのプロトコル部品 `PeriodicSender`、`Requester`、`Monitor`、`AddressCommander`、独自プロトコル向けの `Exchange`（「プロトコル部品」、[j1939-guide.md](j1939-guide.md)） |
+| `vehicle_sil::j1939_codec`（ヘッダーのみ） | 利用者向け | 型付きメッセージのランタイム（`codec.hpp`。エンジンの値の型だけを使う）と、ノードと `PeriodicSender` への接続（`codec_node.hpp`）。型は `vehicle_sil_add_j1939_codec()` が YAML から生成する（「型付きメッセージ」、[j1939-codec.md](j1939-codec.md)） |
+| `vehicle_sil::ecu` | 利用者向け | `vehicle_sil::Ecu`、`EcuDescription` と `to_json()`、`detail::OwnedObjects`、`detail::EcuAgent`（「実行と試験の基盤」、[ecu-executable.md](ecu-executable.md)） |
+| `vehicle_sil::local` | 土台 | `vehicle_sil::LocalBench`（「実行と試験の基盤」） |
+| `vehicle_sil::testkit` | 試験用 | `J1939Events`、`FrameLog`、`faults`、`LocalBench` の別名 `testkit::LocalCan`（「実行と試験の基盤」） |
+| `vehicle_sil::peer` | 土台 | `vehicle_sil::Peer`（Control Agent の監視の出力を含む）、`start_together()`（「実行と試験の基盤」） |
+| `vehicle_sil::simulation` | 利用者向け | `vehicle_sil::Simulation`、`SilKitOptions`、`SimulationError`（「実行と試験の基盤」）、`ecu_main()` と `EcuMainOptions`（[ecu-executable.md](ecu-executable.md)） |
+| `vehicle_sil_sim_controller`（実行ファイル） | — | system controller の CLI |
+| `vehicle_sil::process`（内部用） | — | 子プロセス: `ChildProcess`（ログファイルへ）、`run_captured()`（標準出力と標準エラーを別々に取り込み、時間切れで止める）、`Process`（標準出力と標準エラーを行ごとに渡す。作業ディレクトリ、止める要求、起動したプロセスごとの終了）。`run_captured()` と `Process` の子は、自分のプロセスグループ（Windows ではプロセスグループとジョブオブジェクト）で動き、標準の 3 つのほかにハンドルを受け継がず、Linux では呼んだスレッドが終わると SIGKILL を受けます。POSIX は `fork` と `exec`（`ChildProcess` は `posix_spawn`）、Windows は `CreateProcessW`（パスと引数は UTF-8 から変換する） |
+| `vehicle_sil::launch`（内部用。SIL Kit をサブモジュールからビルドしたとき） | — | 構成ファイルの読み込み、`--describe` の JSON の読み込み、照合の規則（プロセスを起動しない関数）、実行（registry と `SimulationController` をプロセスの中に持ち、participant を子プロセスで動かす。実行の判定はプロセスを起動しない関数）、人向けと JSON の出力（[simulation-config.md](simulation-config.md)） |
+| `vehicle_sil_launch`（実行ファイル） | — | `vehicle_sil_launch check`、`vehicle_sil_launch run`（[simulation-config.md](simulation-config.md)） |
+| `vehicle_sil::control` | 利用者向け | `vehicle_sil::control::Agent`、`Hub`（「外部操作（Control API）と GUI」） |
+| `vehicle_sil::control_proto`（`VEHICLE_SIL_BUILD_CONTROL_SERVER` のとき） | — | `control.proto` から生成したコード（`control_grpc` の内部） |
+| `vehicle_sil::control_grpc`（同上） | 利用者向け | `vehicle_sil::control_grpc::ControlServer`、`AgentClient`、`time_control_of()` |
+| `vehicle_sil_control_server`（同上、実行ファイル） | — | Control Server と system controller の CLI |
+| `vehicle_sil::vector_xl_bridge_core` | — | `vehicle_sil::vector_xl::CanBridge`、`ExternalCanPort`、`ExternalPortAdapter`、チャネル選択、CLI の解析。全プラットフォームでビルドする |
+| `vehicle_sil::vector_xl`（Windows のみ） | — | `vehicle_sil::vector_xl::XlDriver`、`XlCanPort` |
+| `vehicle_sil_vector_xl_bridge`（Windows のみ、実行ファイル） | — | ブリッジの CLI |
 
 利用側は必要なターゲットだけをリンクします。依存ライブラリは `EXCLUDE_FROM_ALL` で追加しているので、リンクしないものはビルドされません（外部プロジェクトから取り込んだときは vehicle-sil のライブラリも同じです）。
 
@@ -112,11 +116,11 @@ vehicle-sil/
 - バスのコントローラは `start()` の前に作ります。`start()` が戻った時点で、接続済みの相手はそのコントローラの購読を確認済みです。
 - `start(timeout)` は lifecycle が Running になるまで待ちます。タイムアウトや失敗のときは `std::runtime_error` を投げます。
 - `stop()` は何度呼んでもよく、例外を投げません。
+- participant が失敗すると（ステップのハンドラ、実時間のドライバー、`report_failure()`）、自分の `stop()` と `request_stop()` は、Error になるまで lifecycle に停止を渡しません（先にふつうの停止が渡ると、Coordinated ではシミュレーション全体が正常に止まり、controller から失敗が見えないためです）。失敗の印を立てることと SIL Kit に Error を報告することは 1 つのロックの下で行うので、失敗が見えた後の停止が報告を追い越すことはありません。SIL Kit が後回しにした処理を実行する順序には頼りません。`stop()` の待ちは Error と Shutdown を合わせて `shutdown_timeout` までで、過ぎれば Error の前でも停止を渡します。次の場合は Error を経ないか、Stopping の後で Error になります。失敗より前に届いた `request_stop()`（失敗するステップのハンドラが始まる前、`report_failure()` の前）は、ふつうの停止です。controller の中断やほかの participant の停止が先に届いたときも同じです。`report_failure()` は、`start()` が lifecycle を始めるまでは何もしません。
 - `wait_for_peer()` は、相手の状態が条件を満たすまで待ちます。待っている間は、SIL Kit から状態を定期的に読み直します（[docs/dependencies.md](dependencies.md) の既知の不具合を参照）。SIL Kit のハンドラの中からは呼べません。
 - コントローラを参照するもの（`SilKitCanPort`、`SilKitLinPort`）はコントローラを所有しません。participant より先に閉じるか破棄します。`LinMaster` と `LinSlave` はポートを所有しないので、ポートより先に破棄します。
 - J1939 スタックはプロセス全体の状態を持ちません。1 つのプロセスに、いくつでも `Network` と `Peer` を置けます。
 
-- participant が失敗すると（ステップのハンドラ、実時間のドライバー、`report_failure()`）、自分の `stop()` と `request_stop()` は、Error になるまで lifecycle に停止を渡しません（先にふつうの停止が渡ると、Coordinated ではシミュレーション全体が正常に止まり、controller から失敗が見えないためです）。失敗の印を立てることと SIL Kit に Error を報告することは 1 つのロックの下で行うので、失敗が見えた後の停止が報告を追い越すことはありません。SIL Kit が後回しにした処理を実行する順序には頼りません。`stop()` の待ちは Error と Shutdown を合わせて `shutdown_timeout` までで、過ぎれば Error の前でも停止を渡します。次の場合は Error を経ないか、Stopping の後で Error になります。失敗より前に届いた `request_stop()`（失敗するステップのハンドラが始まる前、`report_failure()` の前）は、ふつうの停止です。controller の中断やほかの participant の停止が先に届いたときも同じです。`report_failure()` は、`start()` が lifecycle を始めるまでは何もしません。
 ### 所有権と終了順序
 
 ```
