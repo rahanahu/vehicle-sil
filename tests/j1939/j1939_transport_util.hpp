@@ -15,8 +15,11 @@
 
 namespace vehicle_sil::unit::j1939 {
 
+// Written out independently of the stack; the public constants must match them.
 inline constexpr std::uint32_t kPgnTpCm = 0xEC00;
 inline constexpr std::uint32_t kPgnTpDt = 0xEB00;
+static_assert(vehicle_sil::j1939::kPgnTransportControl.value() == kPgnTpCm);
+static_assert(vehicle_sil::j1939::kPgnTransportData.value() == kPgnTpDt);
 
 /// The test message of `length` bytes: a pattern that differs in every packet.
 [[nodiscard]] inline Bytes payload(std::size_t length, std::uint8_t seed = 0)

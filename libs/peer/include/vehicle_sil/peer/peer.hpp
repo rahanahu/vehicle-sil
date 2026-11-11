@@ -134,8 +134,8 @@ struct J1939ChannelOptions
 ///
 /// One step at `now`, in this order (as Ecu states): the J1939 networks and the raw CAN channels
 /// (Ecu::can()) receive and handle what arrived (in the order they were added), then the
-/// application (on_step() and every(), in the order added), then the LIN nodes' step(now) (in
-/// the order added), then the J1939 networks and raw channels send (in the same order). The
+/// application (on_step(), every() and at(), in the order added), then the LIN nodes' step(now)
+/// (in the order added), then the J1939 networks and raw channels send (in the same order). The
 /// ECU's control agent (Ecu::agent()) applies the writes right before the application and
 /// samples right after the LIN stage (before the monitoring of PeerOptions::monitor reads the
 /// networks). In real time, a write queued on the agent wakes the driver (Host::post(), with at
@@ -151,8 +151,8 @@ struct J1939ChannelOptions
 /// (std::invalid_argument).
 ///
 /// Set up (j1939(), can(), lin_master(), lin_slave(), input(), output(), set_agent_options(),
-/// on_step(), every(), emplace(), and the networks' nodes, handlers, parts, observers and tap
-/// listeners, the LIN nodes' handlers) before start(); the set-up functions throw
+/// on_step(), every(), at(), emplace(), and the networks' nodes, handlers, parts, observers and
+/// tap listeners, the LIN nodes' handlers) before start(); the set-up functions throw
 /// std::logic_error afterwards. Nodes may still be added from a step, as Network::add_node()
 /// allows. With monitoring (PeerOptions::monitor), j1939() also throws std::logic_error once the
 /// agent's schema is complete.
@@ -207,6 +207,9 @@ public:
     /// most; a step that passes several of them runs it once; vehicle_sil::periodic()).
     /// std::invalid_argument for period <= 0 or an empty function.
     void every(SimDuration period, std::function<void(SimTime now)> fn) override;
+    /// Runs `fn` once, in the first step at or after `time` (vehicle_sil::once_at()).
+    /// std::invalid_argument for an empty function.
+    void at(SimTime time, std::function<void(SimTime now)> fn) override;
 
     /// std::out_of_range for an unknown name.
     [[nodiscard]] j1939::Network& network(std::string_view name) const;

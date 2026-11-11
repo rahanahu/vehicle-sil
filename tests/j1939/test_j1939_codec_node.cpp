@@ -6,6 +6,7 @@
 
 #include "codec_test_messages.hpp"
 #include "j1939_bench.hpp"
+#include "j1939_transport_util.hpp"
 #include "test_harness.hpp"
 #include "vehicle_sil/j1939/codec_node.hpp"
 #include "vehicle_sil/j1939/monitor.hpp"
@@ -88,7 +89,7 @@ TEST_CASE(attach_sender_takes_the_priority_and_length_from_the_message)
     CHECK_EQ(sender.statistics().failures, 0u);
     const auto frames = bench.take_sent();
     CHECK(!frames.empty());
-    CHECK_EQ(frames.front().pgn, 0xEC00u); // TP.CM (BAM)
+    CHECK_EQ(frames.front().pgn, kPgnTpCm); // BAM
     CHECK_EQ(frames.front().data[0], 0x20); // BAM
     CHECK_EQ(frames.front().data[1] | (frames.front().data[2] << 8), 20);
 

@@ -35,9 +35,9 @@ namespace {
 constexpr j1939::Pgn kPgnEec1{0xF004};
 constexpr j1939::Pgn kPgnPropA{0xEF00};
 constexpr j1939::Pgn kPgnPropB{0xFF10};
-constexpr j1939::Pgn kPgnAddressClaimed{0xEE00};
-constexpr j1939::Pgn kPgnTpDt{0xEB00};
-constexpr j1939::Pgn kPgnTpCm{0xEC00};
+using j1939::kPgnAddressClaimed;
+using j1939::kPgnTransportControl;
+using j1939::kPgnTransportData;
 constexpr j1939::Address kEngine = 0x80;
 const j1939::Name kEngineName{0x20008200FE001234u};
 const j1939::Name kRivalName{0x20008200FE001000u}; ///< lower: wins against kEngineName
@@ -176,7 +176,7 @@ TEST_CASE(testkit_dropped_broadcast_packet_is_lost_at_the_receiver)
         }
     });
     // The second packet of the first broadcast is lost; the second broadcast is complete.
-    bus.endpoint("sender").set_fault_injector(faults::nth(2, can::FaultAction::drop(), faults::j1939_pgn(kPgnTpDt)));
+    bus.endpoint("sender").set_fault_injector(faults::nth(2, can::FaultAction::drop(), faults::j1939_pgn(kPgnTransportData)));
     J1939Events sent(bus.network("sender"));
     J1939Events received(bus.network("receiver"));
     bus.run_until(at(2s));
@@ -209,7 +209,7 @@ TEST_CASE(testkit_dropped_connection_packet_is_sent_again)
             static_cast<void>(sender.send(kPgnPropA, bytes(40), 0x30));
         }
     });
-    bus.endpoint("sender").set_fault_injector(faults::nth(3, can::FaultAction::drop(), faults::j1939_pgn(kPgnTpDt)));
+    bus.endpoint("sender").set_fault_injector(faults::nth(3, can::FaultAction::drop(), faults::j1939_pgn(kPgnTransportData)));
     J1939Events sent(bus.network("sender"));
     J1939Events received(bus.network("receiver"));
     FrameLog raw(bus.tap("receiver"));
@@ -227,7 +227,7 @@ TEST_CASE(testkit_dropped_connection_packet_is_sent_again)
     // The receiver asked for the packet again: a second clear-to-send among its frames.
     const auto cts = raw.count(FrameLog::Direction::Sent, [](const can::TapRecord& r) {
         const auto id = j1939::Identifier::decode(r.frame);
-        return id && id->pgn == kPgnTpCm && r.frame.data[0] == 17;
+        return id && id->pgn == kPgnTransportControl && r.frame.data[0] == 17;
     });
     CHECK(cts >= 2u);
 }
@@ -323,7 +323,7 @@ std::vector<std::string> receiver_trace(SimDuration receiverStep, bool recorders
                         std::to_string(m.data.empty() ? 0 : m.data[0]));
     });
     bus.endpoint("sender").set_fault_injector(
-        faults::first_of({faults::nth(5, can::FaultAction::drop(), faults::j1939_pgn(kPgnTpDt)),
+        faults::first_of({faults::nth(5, can::FaultAction::drop(), faults::j1939_pgn(kPgnTransportData)),
                           faults::between(at(600ms), at(650ms), can::FaultAction::delay_by(3ms))}));
     std::unique_ptr<J1939Events> events;
     std::unique_ptr<FrameLog> raw;

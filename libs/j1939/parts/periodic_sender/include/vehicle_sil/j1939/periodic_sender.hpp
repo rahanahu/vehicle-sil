@@ -11,6 +11,8 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil::j1939 {
@@ -32,14 +34,14 @@ enum class MissedDeadlines : std::uint8_t
 
 struct PeriodicSenderOptions
 {
-    /// kGlobalAddress, or one address for a PDU1 group.
+    /// kGlobalAddress, or one address for a PDU1 group (PeriodicSender::set_destination()).
     Address destination = kGlobalAddress;
-    Priority priority = kDefaultPriority;
+    Priority priority = kDefaultPriority; ///< PeriodicSender::set_priority()
     MissedDeadlines missed_deadlines = MissedDeadlines::Coalesce;
     /// true: does not send while BroadcastSuppression::of(node) is suspended (DM13). false:
     /// sends anyway, and the part does not use BroadcastSuppression. Empty (the default): true
-    /// for a broadcast (destination kGlobalAddress), false for a group sent to one address
-    /// (whether DM13 stops those is not settled; choose it here).
+    /// while the destination is kGlobalAddress, false while it is one address (whether DM13
+    /// stops those is not settled; choose it here); set_destination() decides again.
     std::optional<bool> suppressible{};
     /// The longest message (bytes; 9 .. kMaxTransportLength travel with the transport protocol).
     /// Its buffer is allocated when the sender is created.
@@ -75,21 +77,36 @@ struct PeriodicSenderStatistics
 /// - A start at the next chance (trigger(), resume(), creation) from a time already handled (the
 ///   application stage, outside a step) goes out in the next step; if a period has passed by
 ///   then, the period counts from that step (nothing is merged or caught up for it).
-/// - The data: either fixed bytes the sender keeps (set_data()), or an Encoder that writes the
-///   message into the sender's buffer at each send and returns its length.
+/// - The data: fixed bytes the sender keeps (set_data()); or an Encoder that writes the message
+///   into the sender's buffer at each send and returns its length; or a VectorEncoder that
+///   appends the message to a vector, for messages whose length changes from send to send.
 /// - trigger() sends at the next chance (for a change that should go out now) and counts the
 ///   period from there.
+/// - The period, the destination and the priority can be changed later (set_period(),
+///   set_destination(), set_priority()), also while paused or while the node cannot send: the
+///   sender then starts with the new values.
 /// - Send failures (SendStatus) are counted, not thrown; the next deadline tries again. An
-///   Encoder that throws, or returns more than max_length, fails the network.
+///   encoder that throws, or makes a message longer than max_length, fails the network. An
+///   encoder may destroy its sender (owned by the application): that message is not sent (`out`
+///   stays valid until the encoder returns).
 ///
-/// Uses one Timer of the network (NetworkOptions::timer_capacity). Create it with
-/// node.attach<PeriodicSender>(...) or owned by the application. Everything is allowed
-/// everywhere on the thread that steps the network (other threads: Host::post()).
+/// Uses kTimers Timers of the network (Network::timers_free()). A sender that follows DM13 when
+/// it is created (`suppressible` true, or empty with destination kGlobalAddress) also uses
+/// BroadcastSuppression::of(node), which the constructor attaches if the node has none
+/// (BroadcastSuppression::kTimers more). Create it with node.attach<PeriodicSender>(...) or
+/// owned by the application (which may destroy it in a handler: Node::attach()). Everything is
+/// allowed everywhere on the thread that steps the network (other threads: Host::post()).
 class PeriodicSender
 {
 public:
     /// Writes the message into `out` (max_length bytes) and returns its length.
     using Encoder = std::function<std::size_t(std::span<std::uint8_t> out)>;
+    /// Appends the message to `out`, which it gets empty (the sender keeps the vector, with room
+    /// for max_length bytes, from send to send: no allocation per send as long as it only
+    /// appends; assigning another vector to it gives that room up). Its size is the length.
+    using VectorEncoder = std::function<void(std::vector<std::uint8_t>& out)>;
+    /// The Timers of the network one sender uses (without BroadcastSuppression's).
+    static constexpr std::size_t kTimers = 1;
 
     /// Sends `data` every `period`. std::invalid_argument for an invalid PGN, period <= 0,
     /// priority > 7, a PDU2 group to one address or a PDU1 group to kNullAddress, max_length
@@ -100,12 +117,47 @@ public:
     /// Sends what `encoder` writes every `period` (same errors; std::invalid_argument for an
     /// empty encoder).
     PeriodicSender(Node& node, Pgn pgn, SimDuration period, Encoder encoder, PeriodicSenderOptions options = {});
+    /// Sends what `encoder` appends every `period` (same errors): a function that cannot be called
+    /// with the span of an Encoder, takes a std::vector<std::uint8_t>& (not a copy, not a const& or
+    /// an rvalue) and returns nothing. Write the parameter's type (or `auto&`): a function that
+    /// takes a span goes to the Encoder constructor and must return the length.
+    template <typename F>
+        requires(!std::is_invocable_v<F&, std::span<std::uint8_t>>) && std::is_invocable_v<F&, std::vector<std::uint8_t>&> &&
+                (!std::is_invocable_v<F&, std::vector<std::uint8_t>&&>) &&
+                std::is_void_v<std::invoke_result_t<F&, std::vector<std::uint8_t>&>>
+    PeriodicSender(Node& node, Pgn pgn, SimDuration period, F&& encoder, PeriodicSenderOptions options = {})
+      : PeriodicSender(node, pgn, period, options, {}, Encoder{}, required(pgn, VectorEncoder(std::forward<F>(encoder))))
+    {
+    }
+    ~PeriodicSender();
     PeriodicSender(const PeriodicSender&) = delete;
     PeriodicSender& operator=(const PeriodicSender&) = delete;
 
-    /// Replaces the data the next sends carry (with an Encoder: none; the encoder wins).
+    /// Replaces the data the next sends carry (with an encoder: none; the encoder wins).
     /// std::length_error above max_length.
     void set_data(std::span<const std::uint8_t> data);
+    /// Sets the period and counts it from now: the next message goes one new period after the
+    /// time of the event being handled (as Timer::start_after(): a handler's message, a timer's
+    /// deadline, otherwise the step time), on a new grid; a start at the next chance that is
+    /// still to come (trigger(), resume()) stays, and the new period counts from it. To send at
+    /// once as well, call trigger(). While paused or while the node cannot send, it only keeps
+    /// the period. Also from the encoder (the next deadline then follows the new period).
+    /// std::invalid_argument for period <= 0, and nothing changes. Not from an Observer: there it
+    /// throws std::logic_error (and fails the network, the period unchanged) while the sender's
+    /// timer runs, and only keeps the period while it does not.
+    void set_period(SimDuration period);
+    /// Sends the next messages to `destination` (kGlobalAddress, or one address for a PDU1
+    /// group), on the same grid. With `suppressible` empty, whether DM13 stops them follows the
+    /// new destination: a sender that did not follow DM13 and goes to kGlobalAddress uses the
+    /// node's BroadcastSuppression (node.find(); it does not attach one, which would take timers
+    /// and would not have seen the DM13 that came before). std::invalid_argument as the
+    /// constructor (a PDU2 group to one address, a PDU1 group to kNullAddress), std::logic_error
+    /// if the node has no BroadcastSuppression then (call BroadcastSuppression::of(node) at
+    /// set-up, or set `suppressible`); nothing changes on either.
+    void set_destination(Address destination);
+    /// Sends the next messages with `priority`. std::invalid_argument above 7, and nothing
+    /// changes.
+    void set_priority(Priority priority);
     /// Sends at the next chance and counts the period from there: in a handler, in this step; in a
     /// Timer's callback, in this step or the next (a timer started at the deadline being fired
     /// waits for the next round of firing); in the application stage or outside a step, in the
@@ -120,28 +172,51 @@ public:
 
     [[nodiscard]] Pgn pgn() const noexcept { return pgn_; }
     [[nodiscard]] SimDuration period() const noexcept { return period_; }
+    [[nodiscard]] Address destination() const noexcept { return options_.destination; }
+    [[nodiscard]] Priority priority() const noexcept { return options_.priority; }
     [[nodiscard]] const PeriodicSenderStatistics& statistics() const noexcept { return statistics_; }
 
 private:
-    PeriodicSender(Node& node, Pgn pgn, SimDuration period, PeriodicSenderOptions options, Encoder encoder);
+    /// Checks everything before it attaches or reserves anything; one of `data`, `encoder` and
+    /// `vector_encoder` is used (the public constructors check that an encoder is not empty).
+    PeriodicSender(Node& node, Pgn pgn, SimDuration period, PeriodicSenderOptions options,
+                   std::span<const std::uint8_t> data, Encoder encoder, VectorEncoder vector_encoder);
+    /// `encoder`; std::invalid_argument if it is empty.
+    static Encoder required(Pgn pgn, Encoder encoder);
+    static VectorEncoder required(Pgn pgn, VectorEncoder encoder);
+    /// true when DM13 stops the messages to the current destination.
+    [[nodiscard]] bool suppressible() const noexcept;
+    enum class Source : std::uint8_t
+    {
+        Data,
+        Encoder,
+        Vector,
+    };
     void on_deadline();
     /// Starts at the next chance (trigger(), resume(), creation).
     void restart();
-    /// Sends, or counts the deadline as suppressed (DM13).
-    void send_or_suppress();
-    void send_now();
+    /// Sends, or counts the deadline as suppressed (DM13). false if the encoder destroyed the
+    /// sender (touch nothing then).
+    bool send_or_suppress();
+    bool send_now();
 
     Node& node_;
     Pgn pgn_;
     SimDuration period_;
     PeriodicSenderOptions options_;
     Encoder encoder_;
+    VectorEncoder vector_encoder_;
+    Source source_;
+    /// The message: max_length bytes for the fixed data and an Encoder; for a VectorEncoder the
+    /// vector it appends to (capacity max_length).
     std::vector<std::uint8_t> buffer_;
     std::size_t length_ = 0;
+    /// The node's BroadcastSuppression while the sender follows DM13 or did once; else nullptr.
     BroadcastSuppression* suppression_ = nullptr;
     bool paused_ = false;
     bool restarted_ = false; ///< The timer runs for a restart (see on_deadline()).
     PeriodicSenderStatistics statistics_;
+    bool* gone_ = nullptr; ///< Set while the encoder runs: tells it the sender is gone.
     Timer timer_;
     Subscription address_;
 };

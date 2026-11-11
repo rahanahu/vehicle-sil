@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // The Monitor and AddressCommander parts of the J1939 stack: the latest message and the loss of
-// its sender (by address and by NAME), and sending Commanded Address.
+// its sender (by address and by NAME), a monitor destroyed in its own callbacks, and sending
+// Commanded Address.
 
 #include "j1939_bench.hpp"
 #include "j1939_parts_util.hpp"
@@ -11,6 +12,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <stdexcept>
 #include <vector>
 
@@ -411,4 +414,81 @@ TEST_CASE(address_commander_sends_again_after_its_node_moved)
     bench.inject(claim_of(0x40, kEngine));
     bench.steps(2);
     CHECK(results.size() == 1 && results[0].outcome == CommandOutcome::Moved);
+}
+
+TEST_CASE(monitor_owned_by_the_application_may_be_destroyed_in_its_callbacks)
+{
+    {
+        // In on_state for the first message: on_message is not called for it; what the callback
+        // captured is still there after the destruction.
+        Bench bench;
+        Node& us = bench.add_node(kUs);
+        std::unique_ptr<Monitor> monitor;
+        std::vector<std::string> log;
+        MonitorOptions options;
+        options.on_state = [&monitor, &log, note = std::string(40, 's')](const MonitorChange&) {
+            monitor.reset();
+            log.push_back(note);
+        };
+        options.on_message = [&log](const Message&) { log.push_back("message"); };
+        monitor = std::make_unique<Monitor>(us, Pgn{kPgnSpeed}, options);
+        bench.inject(speed_from(0x30));
+        bench.steps(3);
+        CHECK(monitor == nullptr);
+        CHECK((log == std::vector<std::string>{std::string(40, 's')}));
+        CHECK(!bench.network.failed());
+    }
+    {
+        // In on_state when it goes Lost (from its own timer), and in on_message.
+        Bench bench;
+        Node& us = bench.add_node(kUs);
+        std::unique_ptr<Monitor> lost;
+        std::unique_ptr<Monitor> once;
+        std::vector<std::string> log;
+        MonitorOptions timed;
+        timed.timeout = 50ms;
+        timed.on_state = [&lost, &log, note = std::string(40, 'l')](const MonitorChange& c) {
+            if (c.state == MonitorState::Lost)
+            {
+                lost.reset();
+                log.push_back(note);
+            }
+        };
+        lost = std::make_unique<Monitor>(us, Pgn{kPgnSpeed}, timed);
+        MonitorOptions plain;
+        plain.on_message = [&once, &log, note = std::string(40, 'm')](const Message&) {
+            once.reset();
+            log.push_back(note);
+        };
+        once = std::make_unique<Monitor>(us, Pgn{kPgnSpeed}, plain);
+        bench.inject(speed_from(0x30));
+        bench.steps(10);
+        CHECK(lost == nullptr);
+        CHECK(once == nullptr);
+        CHECK((log == std::vector<std::string>{std::string(40, 'm'), std::string(40, 'l')}));
+        CHECK(!bench.network.failed());
+    }
+}
+
+TEST_CASE(monitor_owned_by_the_application_may_be_destroyed_in_accept)
+{
+    // The message is then not taken, and nothing else is called.
+    Bench bench;
+    Node& us = bench.add_node(kUs);
+    std::unique_ptr<Monitor> monitor;
+    std::vector<std::string> log;
+    MonitorOptions options;
+    options.accept = [&monitor, &log, note = std::string(40, 'a')](const Message&) {
+        monitor.reset();
+        log.push_back(note);
+        return true;
+    };
+    options.on_state = [&log](const MonitorChange&) { log.push_back("state"); };
+    options.on_message = [&log](const Message&) { log.push_back("message"); };
+    monitor = std::make_unique<Monitor>(us, Pgn{kPgnSpeed}, options);
+    bench.inject(speed_from(0x30));
+    bench.steps(3);
+    CHECK(monitor == nullptr);
+    CHECK((log == std::vector<std::string>{std::string(40, 'a')}));
+    CHECK(!bench.network.failed());
 }

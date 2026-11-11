@@ -19,10 +19,12 @@ vehicle_sil_add_harness_tests(vehicle_sil_j1939_parts_tests
   PREFIX j1939_parts LABELS unit j1939 TIMEOUT 60
   SOURCES test_j1939_dm13.cpp test_j1939_diagnostics.cpp test_j1939_identification.cpp
           test_j1939_periodic_sender.cpp test_j1939_requester.cpp test_j1939_monitor.cpp
-          test_j1939_exchange.cpp
+          test_j1939_exchange.cpp test_j1939_pid_stream_example.cpp
   LINK vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester
        vehicle_sil::j1939_monitor vehicle_sil::j1939_address_commander vehicle_sil::j1939_exchange)
-target_include_directories(vehicle_sil_j1939_parts_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# The part of examples/pid_stream is header only: its test includes it from there.
+target_include_directories(vehicle_sil_j1939_parts_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                                                                  ${PROJECT_SOURCE_DIR}/examples/pid_stream)
 add_test(NAME j1939_parts.boundary
          COMMAND ${CMAKE_COMMAND} -DPARTS_DIR=${PROJECT_SOURCE_DIR}/libs/j1939/parts
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)

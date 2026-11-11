@@ -177,6 +177,12 @@ public:
         applications_.push_back(periodic(period, std::move(fn))); // std::invalid_argument
     }
 
+    void at(SimTime time, std::function<void(SimTime now)> fn) override
+    {
+        require_not_started("at()");
+        applications_.push_back(once_at(time, std::move(fn))); // std::invalid_argument
+    }
+
     [[nodiscard]] const std::string& name() const noexcept { return name_; }
     [[nodiscard]] SimDuration step() const noexcept { return step_; }
     [[nodiscard]] can::Host& host() const noexcept { return *host_; }

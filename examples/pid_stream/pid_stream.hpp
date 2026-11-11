@@ -10,7 +10,8 @@
 // The group is Proprietary A with data page 1 (PGN 0x1EF00). The ids and the byte layout are made
 // up for this example. The layout is the `Format`: four small functions that can be replaced.
 // A stream ends with Stop, when the client's NAME leaves its address, when the ECU's own address
-// changes, or (if `lease` is set) when the client does not repeat its Start in time.
+// changes, or (if `lease` is set) when the client does not repeat its Start in time. A new Start
+// from the same client changes its stream (period, ids) in place.
 #pragma once
 
 #include "vehicle_sil/j1939/periodic_sender.hpp"
@@ -25,6 +26,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -104,7 +106,9 @@ struct Format
         }
         return reply;
     };
-    std::size_t max_reply = 64; ///< The longest reply a stream may write (bytes).
+    /// The longest reply a stream sends (1 .. kMaxTransportLength bytes). A longer one is cut, and a
+    /// reader may drop a cut reply (the default one does): choose it with StreamerOptions::max_ids.
+    std::size_t max_reply = 64;
 };
 
 /// The ECU's parameters: id -> the current value. An id that is not in the table reads 0xFFFF.
@@ -114,13 +118,14 @@ struct StreamerOptions
 {
     Format format{};
     std::size_t max_ids = 16;                 ///< Ids per stream; longer requests are ignored.
-    std::size_t max_streams = 8;              ///< Clients served at once (each stream uses timers of the network).
+    std::size_t max_streams = 8;              ///< Clients served at once (each stream uses 1 timer, 2 with a lease).
     std::chrono::milliseconds min_period{10}; ///< Shorter periods are ignored.
     std::chrono::milliseconds lease{0};       ///< > 0: a stream ends this long after the client's last Start.
 };
 
-/// The ECU's side: node.attach<PidStreamer>(table, options). One stream per client; a new Start
-/// from the same client replaces its stream.
+/// The ECU's side: node.attach<PidStreamer>(table, options). One stream per client. A Start from
+/// a new client is ignored when max_streams are served or the network has too few timers free
+/// (instead of failing the network). std::invalid_argument for min_period <= 0.
 class PidStreamer
 {
 public:
@@ -137,6 +142,13 @@ public:
             }
         }))
     {
+        if (options_.min_period.count() <= 0 || options_.format.max_reply == 0 ||
+            options_.format.max_reply > j1939::kMaxTransportLength) // checked here, not in a handler
+        {
+            throw std::invalid_argument("pid_stream::PidStreamer: min_period must be > 0 and Format::max_reply 1 .. 1785, "
+                                        "not " + std::to_string(options_.min_period.count()) + " ms and " +
+                                        std::to_string(options_.format.max_reply) + " bytes");
+        }
     }
 
     [[nodiscard]] std::size_t streams() const noexcept { return streams_.size(); }
@@ -166,8 +178,7 @@ private:
         {
             streams_.erase(m.source);
         }
-        else if (!request->ids.empty() && request->ids.size() <= options_.max_ids && request->period >= options_.min_period &&
-                 (streams_.size() < options_.max_streams || streams_.contains(m.source)))
+        else if (!request->ids.empty() && request->ids.size() <= options_.max_ids && request->period >= options_.min_period)
         {
             start(m.source, *request);
         }
@@ -175,23 +186,38 @@ private:
 
     void start(j1939::Address client, const Request& request)
     {
-        auto stream = std::make_unique<Stream>();
-        Stream* s = stream.get();
-        s->ids = request.ids;
-        s->client_name = node_.network().name_at(client); // to see it leave its address
-        // The period and the destination are fixed when a PeriodicSender is made: a new Start makes a new one.
-        s->sender = std::make_unique<j1939::PeriodicSender>(
-            node_, kPgn, request.period, [this, s](std::span<std::uint8_t> out) { return encode(*s, out); },
-            j1939::PeriodicSenderOptions{.destination = client, .suppressible = false, .max_length = options_.format.max_reply});
-        if (options_.lease.count() > 0)
+        auto found = streams_.find(client);
+        if (found == streams_.end()) // a new client: within max_streams and the free timers
         {
-            s->lease = std::make_unique<j1939::Timer>(node_, j1939::TimerKind::Timeout, [this, client] { streams_.erase(client); });
-            s->lease->start_after(options_.lease);
+            const bool leased = options_.lease.count() > 0;
+            if (streams_.size() >= options_.max_streams ||
+                node_.network().timers_free() < j1939::PeriodicSender::kTimers + (leased ? 1u : 0u))
+            {
+                return;
+            }
+            auto stream = std::make_unique<Stream>();
+            Stream* s = stream.get();
+            s->sender = std::make_unique<j1939::PeriodicSender>(
+                node_, kPgn, options_.min_period, [this, s](std::vector<std::uint8_t>& out) { encode(*s, out); },
+                j1939::PeriodicSenderOptions{.destination = client, .suppressible = false, .max_length = options_.format.max_reply});
+            if (leased) // ends the stream from its own callback, which the parts allow
+            {
+                s->lease = std::make_unique<j1939::Timer>(node_, j1939::TimerKind::Timeout, [this, client] { streams_.erase(client); });
+            }
+            found = streams_.emplace(client, std::move(stream)).first;
         }
-        streams_[client] = std::move(stream); // destroys the client's earlier stream
+        Stream& s = *found->second; // a new Start changes the stream in place
+        s.ids = request.ids;
+        s.client_name = node_.network().name_at(client); // to see it leave its address
+        s.sender->set_period(request.period);
+        s.sender->trigger(); // the first reply now, then every period from it
+        if (s.lease)
+        {
+            s.lease->start_after(options_.lease);
+        }
     }
 
-    std::size_t encode(Stream& s, std::span<std::uint8_t> out)
+    void encode(Stream& s, std::vector<std::uint8_t>& out)
     {
         readings_.clear();
         for (const std::uint8_t id : s.ids)
@@ -199,10 +225,8 @@ private:
             const auto found = table_.find(id);
             readings_.push_back({id, found != table_.end() ? found->second() : std::uint16_t{0xFFFF}});
         }
-        bytes_.clear();
-        options_.format.write_reply(bytes_, s.sequence++, readings_);
-        std::copy_n(bytes_.begin(), (std::min)(bytes_.size(), out.size()), out.begin());
-        return (std::min)(bytes_.size(), out.size());
+        options_.format.write_reply(out, s.sequence++, readings_);
+        out.resize((std::min)(out.size(), options_.format.max_reply)); // a Format may write more
     }
 
     void drop_gone_clients()
@@ -218,7 +242,6 @@ private:
     StreamerOptions options_;
     std::map<j1939::Address, std::unique_ptr<Stream>> streams_;
     std::vector<Reading> readings_; // scratch
-    std::vector<std::uint8_t> bytes_;
     j1939::Subscription commands_;
     j1939::Subscription claims_;
     j1939::Subscription address_;

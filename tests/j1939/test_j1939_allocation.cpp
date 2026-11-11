@@ -686,7 +686,7 @@ TEST_CASE(protocol_parts_and_the_toolbox_do_not_allocate_in_steady_state)
 }
 
 // The parts for ECU applications in steady state: periodic messages (single frames and BAM,
-// coalesced deadlines, DM13), requests with responses, acknowledgements, retries and timeouts,
+// coalesced deadlines, DM13, a length that changes with each send), requests with responses, acknowledgements, retries and timeouts,
 // a monitor going silent and back, Commanded Address. Their buffers are allocated when they are
 // created; request() and command() copy the callback (small captures: no allocation).
 TEST_CASE(ecu_application_parts_do_not_allocate_in_steady_state)
@@ -713,6 +713,13 @@ TEST_CASE(ecu_application_parts_do_not_allocate_in_steady_state)
     longOne.max_length = 30;
     const Bytes thirty(30, 0x5A);
     us.attach<PeriodicSender>(Pgn{0xFF21}, std::chrono::milliseconds(120), std::span<const std::uint8_t>(thirty), longOne);
+    PeriodicSenderOptions growing;
+    growing.max_length = 12;
+    std::size_t grown = 0;
+    us.attach<PeriodicSender>(
+        Pgn{0xFF22}, std::chrono::milliseconds(50),
+        [&](std::vector<std::uint8_t>& out) { out.assign(4 + 4 * (grown++ % 3), 0x33); }, // 4, 8, 12 (a BAM) bytes
+        growing);
     const Name engine = Name{}.set_identity_number(5).set_manufacturer_code(9).set_arbitrary_address_capable(true);
     std::size_t changes = 0;
     MonitorOptions watch;
@@ -779,6 +786,7 @@ TEST_CASE(ecu_application_parts_do_not_allocate_in_steady_state)
         static_cast<void>(bench.take_sent());
     }
     CHECK_EQ(counted, 0u);
+    CHECK(grown > 100u);
     CHECK(monitor.losses() > 100u);
     CHECK(changes > 200u);
     CHECK(answers > 200u);

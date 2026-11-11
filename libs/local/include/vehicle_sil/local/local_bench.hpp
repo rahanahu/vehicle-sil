@@ -68,15 +68,15 @@ namespace vehicle_sil {
 /// network uses (injector()).
 ///
 /// Set up (add_ecu(), add_j1939(), on_step(), and the ECUs' j1939(), can(), lin_master(),
-/// lin_slave(), input(), output(), set_agent_options(), on_step(), every() and emplace()) before
-/// the first run; afterwards they throw std::logic_error. Times: every host
-/// starts at 0; run_until(t) runs every step that starts before t. A frame injected with time t
-/// reaches a network in its first step after t; t must not be earlier than now(), the end of the
-/// last run (the bus refuses the past: std::logic_error).
+/// lin_slave(), input(), output(), set_agent_options(), on_step(), every(), at() and emplace())
+/// before the first run; afterwards they throw std::logic_error. Times: every host starts at 0;
+/// run_until(t) runs every step that starts before t. A frame injected with time t reaches a
+/// network in its first step after t; t must not be earlier than now(), the end of the last run
+/// (the bus refuses the past: std::logic_error).
 ///
 /// One step of an ECU at `now`: its networks and raw channels receive and handle what arrived (in
 /// the order added), then the writes to its variables whose time has come take effect, then
-/// on_step() and every() (in the order added), then its LIN nodes' step(now) (in the order
+/// on_step(), every() and at() (in the order added), then its LIN nodes' step(now) (in the order
 /// added), then its variables are sampled, then the networks and raw channels send. The control
 /// agent of an ECU (Ecu::agent()) runs in the calling thread's steps, with no wake-up and no
 /// monitoring outputs (those are Peer's). A frame one network
@@ -113,7 +113,7 @@ public:
     /// it throws.
     j1939::Network& add_j1939(std::string name, SimDuration step, j1939::NetworkOptions options = {});
     /// The ECU's on_step(): work for the application stage of its host (in the order added,
-    /// together with its every()), after its networks handled what they received. Send from
+    /// together with its every() and at()), after its networks handled what they received. Send from
     /// here. std::out_of_range for an unknown name.
     void on_step(std::string_view name, std::function<void(SimTime now)> fn);
 

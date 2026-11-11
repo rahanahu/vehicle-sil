@@ -68,14 +68,17 @@ struct AddressCommanderOptions
 ///   comes from that address (also if it was there already, and also before the transfer's end
 ///   was reported). Only arbitrary address capable control functions follow the command;
 ///   others ignore it and the outcome is Timeout.
-/// - The callback runs in the step; it may call command() again.
+/// - The callback runs in the step; it may call command() again. It must not destroy the
+///   commander (the commander goes on with its other commands after the callback).
 ///
-/// Uses two Timers of the network (one to send, one to wait). Create it with
-/// node.attach<AddressCommander>(options) or owned by the application. Not from other threads
-/// (Host::post()).
+/// Uses kTimers (two) Timers of the network (one to send, one to wait; Network::timers_free()).
+/// Create it with node.attach<AddressCommander>(options) or owned by the application. Not from
+/// other threads (Host::post()).
 class AddressCommander
 {
 public:
+    /// The Timers of the network the part uses.
+    static constexpr std::size_t kTimers = 2;
     /// std::invalid_argument for timeout <= 0 or capacity 0; std::length_error if the network
     /// has fewer than two timers left.
     explicit AddressCommander(Node& node, AddressCommanderOptions options = {});

@@ -70,8 +70,8 @@ public:
     using Callback = std::function<void()>;
 
     /// Reserves a timer slot of `network`; std::length_error if all of timer_capacity is
-    /// reserved (by nodes with a NAME, 2 each, and other Timers). std::invalid_argument for an
-    /// empty callback.
+    /// reserved (by nodes with a NAME, 2 each, and other Timers; Network::timers_free() is 0).
+    /// std::invalid_argument for an empty callback.
     Timer(Network& network, TimerKind kind, Callback callback);
     Timer(Node& node, TimerKind kind, Callback callback) : Timer(node.network(), kind, std::move(callback)) {}
     ~Timer();

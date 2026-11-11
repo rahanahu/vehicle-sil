@@ -50,11 +50,14 @@ struct MonitorOptions
     /// decode as one message type of a PGN with selectors, or those whose sequence counter and
     /// checksum a safety protocol accepts. A rejected message is not kept, does not count as
     /// received (it does not end Lost or restart the timeout) and is counted (rejected()). It
-    /// runs in the step and must not destroy the monitor. Empty: every message.
+    /// runs in the step and may destroy the monitor (owned by the application; the message is then
+    /// not taken). Empty: every message.
     std::function<bool(const Message&)> accept{};
-    /// Called for each accepted message, after the monitor took it.
+    /// Called for each accepted message, after the monitor took it (and after on_state). It may
+    /// destroy the monitor (owned by the application).
     std::function<void(const Message&)> on_message{};
-    /// Called after each change of state().
+    /// Called after each change of state(). It may destroy the monitor (owned by the
+    /// application); on_message is then not called for that message.
     std::function<void(const MonitorChange&)> on_state{};
 };
 
@@ -69,15 +72,19 @@ struct MonitorOptions
 /// the step size; a message exactly `timeout` after the one before still counts as in time.
 /// Messages are those the node receives: sent to its address or to all nodes.
 ///
-/// Read only: it sends nothing. Uses one Timer of the network if `timeout` is set. Create it
-/// with node.attach<Monitor>(pgn, options) or owned by the application (destroy it before the
-/// network). The state is read on the thread that steps the network.
+/// Read only: it sends nothing. Uses one Timer of the network if `timeout` is set, reserved when
+/// the monitor is created (Network::timers_free()). Create it with node.attach<Monitor>(pgn,
+/// options) or owned by the application (destroy it before the network; Node::attach() says
+/// where). The state is read on the thread that steps the network.
 class Monitor
 {
 public:
+    /// The Timers of the network a monitor with a `timeout` uses (none without).
+    static constexpr std::size_t kTimers = 1;
     /// std::invalid_argument for an invalid PGN, both `source` and `name`, timeout <= 0 or
     /// max_length 0; std::length_error if the network has no timer left.
     Monitor(Node& node, Pgn pgn, MonitorOptions options = {});
+    ~Monitor();
     Monitor(const Monitor&) = delete;
     Monitor& operator=(const Monitor&) = delete;
 
@@ -102,7 +109,8 @@ private:
     [[nodiscard]] bool accepts(Address source) const noexcept;
     void on_message(const Message& message);
     void on_timeout();
-    void change(MonitorState state, SimTime time);
+    /// Sets the state and calls on_state; false if on_state destroyed the monitor.
+    bool change(MonitorState state, SimTime time);
 
     Node& node_;
     Pgn pgn_;
@@ -115,6 +123,7 @@ private:
     std::uint64_t rejected_ = 0;
     std::uint64_t losses_ = 0;
     MonitorState state_ = MonitorState::Waiting;
+    bool* gone_ = nullptr; ///< Set while a callback runs: tells it the monitor is gone.
     std::optional<Timer> timeout_;
     Subscription messages_;
 };

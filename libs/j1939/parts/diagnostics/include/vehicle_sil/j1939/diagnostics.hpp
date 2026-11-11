@@ -76,7 +76,7 @@ struct DiagnosticsOptions
     std::size_t deferred_capacity = 8;
     /// Called for each DM3 and DM11 (not while a deferred clear of the same kind runs: those
     /// requests wait for the same complete_clear()). It may call complete_clear() itself before
-    /// it returns Defer. Empty: always Clear.
+    /// it returns Defer. It must not destroy the Diagnostics. Empty: always Clear.
     std::function<ClearDecision(DtcClear)> on_clear;
 };
 
@@ -109,11 +109,14 @@ struct DiagnosticsStatistics
 /// (SPN, FMI, occurrence count); without DTCs 4 zero bytes; padded to 8 bytes with 0xFF. The
 /// occurrence count counts the activations (1 .. 126).
 ///
-/// Uses BroadcastSuppression::of(node) (attached if the node has none). Create one per node,
-/// with node.attach<Diagnostics>() or owned by the application.
+/// Uses kTimers (three) Timers of the network and BroadcastSuppression::of(node) (attached if the
+/// node has none, with three Timers of its own; Network::timers_free()). Create one per node, with
+/// node.attach<Diagnostics>() or owned by the application.
 class Diagnostics
 {
 public:
+    /// The Timers of the network the part uses (without BroadcastSuppression's).
+    static constexpr std::size_t kTimers = 3;
     /// std::invalid_argument if dtc_capacity is not 1 .. kMaxDtcs.
     explicit Diagnostics(Node& node, DiagnosticsOptions options = {});
     Diagnostics(const Diagnostics&) = delete;

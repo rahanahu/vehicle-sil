@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 //
-// The toolbox of the J1939 stack (Subscription, Timer, Node::attach) and the engine
-// entries the protocol parts use (send() with WhenBusy::Queue, PendingRequest): ownership,
-// removal and destruction during deliveries and timers, the reserved timer slots, virtual time
-// independent of the step size, and the order in which a network destroys its parts.
+// The toolbox of the J1939 stack (Subscription, Timer, Node::attach) and the engine entries the
+// protocol parts use (send() with WhenBusy::Queue, PendingRequest): ownership, removal and
+// destruction during deliveries and timers, the reserved timer slots and Network::timers_free(),
+// virtual time independent of the step size, and the order in which a network destroys its parts.
 #include "j1939_bench.hpp"
 #include "j1939_transport_util.hpp"
 #include "network_test_access.hpp"
@@ -38,6 +38,7 @@ using vehicle_sil::j1939::TimerKind;
 using vehicle_sil::j1939::WhenBusy;
 using vehicle_sil::j1939::detail::NetworkTestAccess;
 using vehicle_sil::unit::throws;
+using vehicle_sil::unit::throws_with;
 
 namespace {
 
@@ -339,6 +340,51 @@ TEST_CASE(timer_slots_are_reserved_and_address_claiming_keeps_its_own)
     b.start_at(at(100ms));
     bench.steps(30); // the claim's 250 ms wait runs meanwhile
     CHECK(bench.network.node(0).address_state() == AddressState::Claimed);
+}
+
+TEST_CASE(timers_free_counts_what_the_nodes_and_timers_hold_and_not_the_transport_sessions)
+{
+    NetworkOptions options;
+    options.timer_capacity = 10;
+    Bench bench(options);
+    CHECK_EQ(bench.network.timers_free(), 10u);
+    NodeOptions named;
+    named.address = kUs;
+    named.name = Name{0x20008200FE001234u};
+    Node& us = bench.network.add_node(named);
+    CHECK_EQ(bench.network.timers_free(), 8u); // 2 for its address claim
+    Node& plain = bench.add_node(kOther);      // without a NAME: none
+    CHECK_EQ(bench.network.timers_free(), 8u);
+    auto a = std::make_unique<Timer>(bench.network, TimerKind::Scheduled, [] {});
+    {
+        Timer b(us, TimerKind::Timeout, [] {});
+        CHECK_EQ(bench.network.timers_free(), 6u);
+    }
+    CHECK_EQ(bench.network.timers_free(), 7u);
+    // A transfer runs on a timer of its own session.
+    bench.steps(30); // claimed
+    const std::size_t running = NetworkTestAccess::timers(bench.network).running();
+    bench.app = [&](SimTime now) {
+        if (now == at(300ms))
+        {
+            CHECK(plain.send(Pgn{kPgnPropB}, payload(20)) == SendStatus::Ok); // a BAM: 3 packets 50 ms apart
+        }
+    };
+    bench.steps(2); // 300, 310 ms
+    CHECK(NetworkTestAccess::timers(bench.network).running() > running);
+    CHECK_EQ(bench.network.timers_free(), 7u);
+    a.reset();
+    CHECK_EQ(bench.network.timers_free(), 8u);
+    // None free: a Timer says what is full and what to do.
+    std::vector<std::unique_ptr<Timer>> all;
+    while (bench.network.timers_free() > 0)
+    {
+        all.push_back(std::make_unique<Timer>(bench.network, TimerKind::Scheduled, [] {}));
+    }
+    CHECK_EQ(all.size(), 8u);
+    CHECK(throws_with<std::length_error>([&] { Timer c(bench.network, TimerKind::Scheduled, [] {}); },
+                                         "all 10 of NetworkOptions::timer_capacity are taken"));
+    CHECK(throws_with<std::length_error>([&] { Timer c(bench.network, TimerKind::Scheduled, [] {}); }, "Network::timers_free()"));
 }
 
 // --- attach

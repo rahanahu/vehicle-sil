@@ -44,8 +44,8 @@ class EcuAgent;
 /// One step of an ECU at `now`: its networks and raw CAN channels receive and handle what
 /// arrived (all of them in the order they were added by j1939() and can()), then the writes to
 /// its variables whose time has come take effect (control::Agent::on_step_begin()), then the
-/// functions of on_step() and every() run (in the order added), then the LIN nodes' step(now)
-/// (in the order added by lin_master() and lin_slave()), then the variables are sampled
+/// functions of on_step(), every() and at() run (in the order added), then the LIN nodes'
+/// step(now) (in the order added by lin_master() and lin_slave()), then the variables are sampled
 /// (control::Agent::on_step_end(), every AgentOptions::sample_period), then the networks and
 /// raw channels send (in the same order as they received). A handler of one of them may send on
 /// another: the frame leaves in this step. What the application asks of a LIN node in a step
@@ -71,7 +71,7 @@ class EcuAgent;
 /// ECUs of the Simulation's process only: other processes are not seen).
 ///
 /// Set up (j1939(), can(), lin_master(), lin_slave(), input(), output(), set_agent_options(),
-/// on_step(), every(), emplace(), and the networks' nodes, handlers and parts, the raw
+/// on_step(), every(), at(), emplace(), and the networks' nodes, handlers and parts, the raw
 /// channels' and LIN nodes' handlers) before the run starts; afterwards these functions throw
 /// std::logic_error (nodes may still be added from a step, as j1939::Network::add_node()
 /// allows).
@@ -217,13 +217,21 @@ public:
     control::Agent& agent();
 
     /// Runs `fn` in every step of this ECU, after its networks handled what arrived and before
-    /// they send (in the order added, together with every()). std::invalid_argument for an
+    /// they send (in the order added, together with every() and at()). std::invalid_argument for an
     /// empty function; std::logic_error once the run has started.
     virtual void on_step(std::function<void(SimTime now)> fn) = 0;
     /// Runs `fn` in the first step at or after 0, period, 2 * period, ... (once per step at
     /// most; vehicle_sil::periodic() in core/periodic.hpp). std::invalid_argument for period <= 0
     /// or an empty function; std::logic_error once the run has started.
     virtual void every(SimDuration period, std::function<void(SimTime now)> fn) = 0;
+    /// Runs `fn` once, in the first step that starts at or after `time` (the step need not land on
+    /// it; the first step if `time` is before it), at the same place as on_step() and every() (in
+    /// the order added, together with them; vehicle_sil::once_at() in core/periodic.hpp). For
+    /// what a script does at a moment of the run, e.g. calling Node::send() or a part that sends,
+    /// which only works in a step. A run that ends before `time` never calls it (silently).
+    /// std::invalid_argument for an empty function; std::logic_error once the run has started
+    /// (add every at() before the first run).
+    virtual void at(SimTime time, std::function<void(SimTime now)> fn) = 0;
     /// Constructs a T that the ECU owns: it is destroyed after the ECU's LIN nodes, networks and
     /// raw channels (their handlers and parts may refer to it), the object emplaced last first. Use
     /// it for the models and application objects the handlers refer to. Only before the run

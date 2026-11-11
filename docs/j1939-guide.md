@@ -37,7 +37,7 @@ j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
 - `NodeOptions::name` を付けると、ノードは最初のステップでアドレスを要求します。NAME を付けないノードは、指定したアドレスをすぐに使います（試験用）。
 - `node.attach<T>(...)` で付けた部品は `Network` が持ち、正しい順序で破棄します。
 - ハンドラが参照するモデルやアプリのオブジェクトは、`ecu.emplace<T>(args...)` で ECU に持たせます。ECU は、それをネットワークの後に（最後に emplace したものから先に）破棄するので、ハンドラや部品は破棄の間も参照してかまいません。`emplace` は実行の開始前だけ使えます。
-- 1 ステップの順序は、ネットワークの受信と処理、次に `on_step` と `every`（足した順）、LIN のノードの処理（足した順）、最後にネットワークの送信です。同じネットワーク名で `j1939()` を呼べるのは、ECU ごとに 1 回だけです。開始後の `j1939()`、`every()`、`emplace()` は `std::logic_error` です（ノードは、`Network::add_node()` の規則でステップの中からも足せます）。
+- 1 ステップの順序は、ネットワークの受信と処理、次に `on_step`、`every`、`at`（足した順）、LIN のノードの処理（足した順）、最後にネットワークの送信です。同じネットワーク名で `j1939()` を呼べるのは、ECU ごとに 1 回だけです。開始後の `j1939()`、`on_step()`、`every()`、`at()`、`emplace()` は `std::logic_error` です（ノードは、`Network::add_node()` の規則でステップの中からも足せます）。
 - 部品とハンドラは、ステップを回すスレッドの上で呼ばれます。ほかのスレッドから操作するときは、「周期的な処理の使い分け」の「ステップの外から渡す」を参照してください。
 
 ### 複数のネットワークを持つ ECU
@@ -75,7 +75,7 @@ codec::on_message<SpeedRequest>(node, [&](const SpeedRequest& m) { engine.target
 node.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // バイト列のまま
 ```
 
-- 自分のアドレス宛てとグローバル宛てのメッセージを受けます。9 バイト以上は、トランスポートプロトコルで組み立てたものを 1 回で受けます。
+- 自分のアドレス宛てとグローバル宛てのメッセージを受けます。9 バイト以上は、トランスポートプロトコルで組み立てたものを 1 回で受けます。その `Message::time` は転送が終わった時刻（最後のパケットの時刻）で、送り手が送り始めた時刻ではありません。相手の送信の周期を受けた時刻から確かめるときは、単一フレームのメッセージで確かめます。
 - `codec::on_message<M>` は、decode できたもの（長さが足り、セレクターが合うもの）だけを渡します。
 - `Message::data` は呼び出しの間だけ有効です。残すときはコピーします。
 - 解除が要る登録は `j1939::Subscription` に持たせます（破棄で解除します）。
@@ -83,7 +83,14 @@ node.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // �
 
 ## 送る
 
-- その場で 1 回送るときは `node.send(pgn, data, destination)` です。送れるのはステップの中（ハンドラ、タイマー、`Ecu::every` や `Ecu::on_step` などアプリの処理）だけです。結果は `SendStatus` で返ります（例外ではありません）。
+- その場で 1 回送るときは `node.send(pgn, data, destination)` です。送れるのはステップの中（ハンドラ、タイマー、`Ecu::every`、`Ecu::on_step`、`Ecu::at` などアプリの処理）だけです。結果は `SendStatus` で返ります（例外ではありません）。
+- シナリオの「ある時刻に 1 回」（要求を送る、購読を始める、止める）は `ecu.at(time, fn)` で書きます。開始時刻が `time` 以後の最初のステップで 1 回だけ呼ぶので、ステップ幅が時刻を割り切らなくても動きます。実行が `time` に届かずに終われば呼ばれません。登録は最初の実行の前だけです。`main` から直接 `send()` や、送る部品の関数（`examples/pid_stream` の `subscribe()`、`unsubscribe()` など）は呼べません（ステップの外のため）。
+
+```cpp
+ecu.at(vehicle_sil::SimTime{} + 100ms, [&client](vehicle_sil::SimTime) { client.subscribe(0x00, {kRpm}, 50ms, on_reply); });
+ecu.at(vehicle_sil::SimTime{} + 600ms, [&client](vehicle_sil::SimTime) { client.unsubscribe(); });
+```
+
 - 周期的に送るときは `PeriodicSender` です。
 
 ```cpp
@@ -93,13 +100,23 @@ auto& status = node.attach<j1939::PeriodicSender>(kPgnEngineStatus, 20ms, encode
 auto& fixed = node.attach<j1939::PeriodicSender>(kPgnVersion, 1s, std::span(bytes)); // 決まったバイト列
 fixed.set_data(new_bytes);                                                              // 次の送信から
 status.trigger();                                                                       // 次の機会にすぐ送る
+status.set_period(50ms);                                                                // 今から数え直す
 ```
 
 - `codec::attach_sender` は、定義の優先度と長さで送ります。
 - `Encoder` は部品のバッファ（`max_length` バイト、既定 8）に書き、書いた長さを返します。9 バイト以上（`max_length` を上げる）はトランスポートプロトコルで送ります。
+- 長さが送るたびに変わるメッセージは、`std::vector<std::uint8_t>&` に追記する関数（`PeriodicSender::VectorEncoder`）で作ります。ベクターは空で渡され、その大きさが長さです。部品がベクターを持ち回るので、追記だけなら送るたびの確保はありません。引数の型は書きます（`std::vector<std::uint8_t>&` か `auto&`）。span を取る関数は長さを返す `Encoder` として扱います。`max_length` を超えると、span の形と同じく `Network` が失敗します。
+
+```cpp
+auto& reply = node.attach<j1939::PeriodicSender>(kPgnReply, 100ms, [&](std::vector<std::uint8_t>& out) {
+    for (const auto id : ids) { out.push_back(id); out.push_back(value_of(id)); }
+}, j1939::PeriodicSenderOptions{.destination = client, .max_length = 64});
+```
+
+- 周期、宛先、優先度は後から変えられます（`set_period()`、`set_destination()`、`set_priority()`）。`set_period()` は呼んだ時点から新しい周期を数え直します（すぐ送るなら `trigger()` も呼ぶ）。宛先と優先度は次の送信から効き、周期の刻みは変わりません。一時停止の間に変えれば、再開したときに新しい値で動きます。不正な値は `std::invalid_argument` で、何も変わりません。同じ相手からの新しい要求は、作り直さずに周期を変えて応えられます（`examples/pid_stream`）。
 - ノードが送れるようになるまで（Address Claim の後の 250 ms の待ちの間も）送らず、送れるようになったときに 1 回送ってから周期を数えます。アドレスを失えば止まり、取り直せば再開します。
 - `trigger()` をアプリの処理（`Ecu::every` など）から呼ぶと、送るのは次のステップです。そのステップで送りたいときは `node.send()` を使います。
-- 全体宛ての放送は、DM13 で放送を止めている間（他のノードの DM13 か、自分の `BroadcastSuppression::suspend()`）は送りません。1 つのアドレス宛ての送信は、既定では止めません（規格での扱いを確かめていないため）。どちらも `PeriodicSenderOptions::suppressible`（true か false）で選べます。
+- 全体宛ての放送は、DM13 で放送を止めている間（他のノードの DM13 か、自分の `BroadcastSuppression::suspend()`）は送りません。1 つのアドレス宛ての送信は、既定では止めません（規格での扱いを確かめていないため）。既定では、そのときの宛先で決まります（`set_destination()` で決め直す。1 つのアドレス宛てで作った送信を全体宛てにするには、組み立てで `BroadcastSuppression::of(node)` を付けておく。なければ `std::logic_error`）。どちらも `PeriodicSenderOptions::suppressible`（true か false）で固定できます。
 - PDU1 の PG を 1 つのアドレスへ送るときは `PeriodicSenderOptions{.destination = address}` です。
 
 ## Request に答える
@@ -163,6 +180,7 @@ tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome ==
 | `PeriodicSender` | PG を周期的に送る | 期限は仮想時間の格子でずれない。送信はその後の最初のステップ。PG ごとにタイマーを 1 つ使う |
 | `Ecu::every(period, fn)` | モデルの計算（`tick()`）、アプリの周期的な処理 | 0、period、2 * period、… の時刻以後の最初のステップ。1 ステップに 1 回まで。period がステップ幅の倍数でなくてもよい（ステップ幅 10 ms、period 25 ms なら 0、30、50、80、100 ms…） |
 | `Ecu::on_step(fn)` | 毎ステップの処理 | ステップの時刻。受信の処理の後、送信の前 |
+| `Ecu::at(time, fn)` | シナリオの 1 回きりの操作（要求を送る、購読を始める、止める） | 開始時刻が `time` 以後の最初のステップで 1 回。`time` がステップ幅で割り切れなくてもよい |
 | `TickScheduler` | 固定周期の既存モデル（DLL の `tick()`）。`Ecu` の外、`ParticipantRuntime` のステップハンドラで使う | ステップ幅の倍数の周期だけ（違えば例外） |
 | `j1939::Timer` | 部品の中の時間（待ち時間、遅延、独自の周期） | 事象の時刻から数える（ステップ幅によらない） |
 
@@ -180,6 +198,7 @@ tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome ==
 
 - 送信の結果は `SendStatus` の戻り値です（`QueueFull`、`Busy`、`NoAddress` など）。部品は送信の失敗を数えて（`statistics()`）、次の機会にまた送ります。
 - 使い方の誤り（不正な PGN、範囲外の値）は、部品の生成や呼び出しの時点で `std::invalid_argument` などの例外です。タイマーの枠（`NetworkOptions::timer_capacity`、既定 64）が足りないときは部品の生成が `std::length_error` で、メッセージに `timer_capacity` と出ます。周期送信の多いノードでは、`Ecu::j1939(network, NetworkOptions{.timer_capacity = ...})`（`Peer` では `J1939ChannelOptions::network.timer_capacity`）で上げます。
+- 受けた要求ごとに部品（`PeriodicSender`、`Timer` など）をハンドラの中で作るときは、作る前に `node.network().timers_free()`（残りの枠の数）を、作る部品の `kTimers`（`PeriodicSender::kTimers` など）と比べて確かめ、足りなければ要求を断ります。ハンドラの中の `std::length_error` は `Network` を失敗させるので、確かめないと、多数のアドレスから要求を送るだけでその ECU の通信を止められます。各部品が使うタイマーの数は、部品のヘッダーのコメントと [architecture.md](architecture.md) の「プロトコル部品」にあります。
 - ハンドラ、`Encoder`、コールバックから投げた例外は `Network` を失敗状態にします。`Simulation` では `SimulationError` になります（「動かす」）。`Peer` を直接使うときは、`Peer::failed()` と `error()` で分かります。
 - 通信の状態は、`Network::statistics()`、部品の `statistics()`、`Monitor` の状態で見ます。
 
@@ -328,6 +347,8 @@ void on_command(const j1939::Message& m) {
 
 - スレッド、イベントループ、OS の時計を使いません。時間は `Timer`（仮想時間）で数えます。
 - 登録は `Subscription`、タイマーは `Timer`、要求は `Exchange` に持たせると、部品の破棄で自動で解除されます。部品は `attach` で `Network` に持たせるか、`Network` より先に破棄します。
+- アプリが持つ部品（`std::unique_ptr` など）は、ハンドラやタイマーのコールバックの中で破棄してかまいません（相手の Stop を受けたら止める、など）。破棄した部品のハンドラは、同じ配送の残りでも呼ばれず、タイマーも発火しません。部品が呼ぶ関数（`PeriodicSender` の Encoder、`Monitor` と `Exchange` のコールバック）の中でも、その部品を破棄してかまいません。例外は `AddressCommander` のコールバックと `Diagnostics` の `on_clear` です。
+- ハンドラの中で部品を作るときは、`timers_free()` で枠を確かめてから作ります（「エラーの扱い」）。
 - 標準の Request（PGN 59904）を使うなら `Requester::of(node)` を使います（`Exchange` で作り直しません）。
 - 自分の利用者を呼ぶループでは、通知の前に自分の状態を確定し、通知の中で足されたものを同じループで扱いません（[architecture.md](architecture.md) の「道具箱」）。
 - `on_any_request` と `Network::set_observer` は使いません。

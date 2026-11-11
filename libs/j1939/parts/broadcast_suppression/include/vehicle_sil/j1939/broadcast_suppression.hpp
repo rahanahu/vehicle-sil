@@ -7,6 +7,7 @@
 #include "vehicle_sil/j1939/toolbox.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -61,10 +62,10 @@ struct BroadcastSuppressionOptions
 /// - This node suspended them itself (suspend()), until the duration passed or resume().
 ///
 /// One per node, attached to it: create it with BroadcastSuppression::of(node) or
-/// BroadcastSuppression::attach(node, options); it cannot be constructed otherwise (one of its
-/// own would be a second state that of() and the parts do not see). Parts that read it hold a
-/// reference and must be destroyed before it (attach them after it; of() in their constructor
-/// does that).
+/// BroadcastSuppression::attach(node, options); it cannot be constructed otherwise (one of its own
+/// would be a second state that of() and the parts do not see). Parts that read it hold a reference
+/// and must be destroyed before it (attach them after it; of() in their constructor does that).
+/// Uses kTimers (three) Timers of the network (Network::timers_free()).
 class BroadcastSuppression
 {
     struct Key
@@ -73,6 +74,8 @@ class BroadcastSuppression
     };
 
 public:
+    /// The Timers of the network the part uses.
+    static constexpr std::size_t kTimers = 3;
     /// The part of `node`, attached with the default options if it has none yet.
     static BroadcastSuppression& of(Node& node);
     /// Attaches the part of `node` with `options`. std::logic_error if the node has one already

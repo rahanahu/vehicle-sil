@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/j1939/monitor.hpp"
 
+#include "vehicle_sil/j1939/detail/user_call.hpp"
+
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
@@ -31,6 +33,8 @@ namespace {
 }
 
 } // namespace
+
+Monitor::~Monitor() { detail::mark_gone(gone_); }
 
 Monitor::Monitor(Node& node, Pgn pgn, MonitorOptions options)
   : node_(node), pgn_(pgn), options_(checked(pgn, std::move(options))), buffer_(options_.max_length)
@@ -68,10 +72,20 @@ void Monitor::on_message(const Message& message)
     {
         return;
     }
-    if (options_.accept && !options_.accept(message))
+    if (options_.accept)
     {
-        ++rejected_;
-        return;
+        const detail::UserCall call(gone_);
+        detail::Lent<std::function<bool(const Message&)>> accept(options_.accept, call);
+        const bool accepted = accept.value(message);
+        if (call.gone())
+        {
+            return;
+        }
+        if (!accepted)
+        {
+            ++rejected_;
+            return;
+        }
     }
     const std::size_t kept = std::min(message.data.size(), buffer_.size());
     std::copy_n(message.data.begin(), kept, buffer_.begin());
@@ -83,30 +97,36 @@ void Monitor::on_message(const Message& message)
     {
         timeout_->start_after(*options_.timeout); // from the message's time
     }
-    if (state_ != MonitorState::Receiving)
+    if (state_ != MonitorState::Receiving && !change(MonitorState::Receiving, message.time))
     {
-        change(MonitorState::Receiving, message.time);
+        return; // on_state destroyed the monitor
     }
     if (options_.on_message)
     {
-        options_.on_message(message);
+        const detail::UserCall call(gone_);
+        detail::Lent<std::function<void(const Message&)>> callback(options_.on_message, call);
+        callback.value(message);
     }
 }
 
 void Monitor::on_timeout()
 {
     ++losses_;
-    change(MonitorState::Lost, *timeout_->deadline());
+    static_cast<void>(change(MonitorState::Lost, *timeout_->deadline())); // last: it may destroy the monitor
 }
 
-void Monitor::change(MonitorState state, SimTime time)
+bool Monitor::change(MonitorState state, SimTime time)
 {
     const MonitorChange c{state, state_, time};
     state_ = state; // before the callback, which may read it
-    if (options_.on_state)
+    if (!options_.on_state)
     {
-        options_.on_state(c);
+        return true;
     }
+    const detail::UserCall call(gone_);
+    detail::Lent<std::function<void(const MonitorChange&)>> callback(options_.on_state, call);
+    callback.value(c);
+    return !call.gone();
 }
 
 } // namespace vehicle_sil::j1939

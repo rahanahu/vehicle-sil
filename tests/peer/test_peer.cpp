@@ -284,7 +284,11 @@ TEST_CASE(peer_runs_alone_until_the_end_of_its_virtual_time)
     peer.on_step([&](SimTime now) { steps.push_back(ms(now)); });
     peer.every(30ms, [&](SimTime now) { periodic.push_back(ms(now)); });
     peer.every(25ms, [&](SimTime now) { periodic.push_back(1000 + ms(now)); }); // not a multiple of the step
+    std::vector<std::int64_t> once;
+    peer.at(at(25ms), [&](SimTime now) { once.push_back(ms(now)); }); // not on the step grid: 30
+    peer.at(at(0ms), [&](SimTime now) { once.push_back(100 + ms(now)); });
     CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
+    CHECK((once == std::vector<std::int64_t>{100, 30}));
     CHECK(!steps.empty());
     CHECK_EQ(steps.front(), 0);
     CHECK(steps.back() <= 200);
@@ -363,6 +367,7 @@ TEST_CASE(peer_setup_errors)
     CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.network("CAN2")); }));
     CHECK(throws<std::invalid_argument>([&] { peer.every(0ms, [](SimTime) {}); }));
     CHECK(throws<std::invalid_argument>([&] { peer.on_step({}); }));
+    CHECK(throws<std::invalid_argument>([&] { peer.at(at(10ms), {}); }));
     // A real-time port on a peer with virtual time: the host refuses it, nothing is kept.
     class RealTimeOnly final : public can::Port
     {
@@ -406,6 +411,7 @@ TEST_CASE(peer_setup_errors)
     CHECK_EQ(linMaster.statistics().no_responses + 1, linMaster.statistics().headers_sent);
     CHECK(linMaster2.statistics().headers_sent >= 4u);
     CHECK(throws<std::logic_error>([&] { peer.on_step([](SimTime) {}); }));
+    CHECK(throws<std::logic_error>([&] { peer.at(at(100ms), [](SimTime) {}); }));
     CHECK(throws<std::logic_error>([&] { peer.start(); }));
 
     PeerOptions zeroEnd = o;

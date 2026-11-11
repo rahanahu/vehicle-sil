@@ -70,6 +70,12 @@ inline constexpr Pgn kPgnAcknowledgement{0xE800u};
 inline constexpr Pgn kPgnAddressClaimed{0xEE00u};
 /// Commanded Address: 9 bytes (NAME, new address), so it arrives over the transport protocol.
 inline constexpr Pgn kPgnCommandedAddress{0xFED8u};
+/// The groups of the transport protocol: connection management (TP.CM) and the data packets
+/// (TP.DT) of messages of 9 .. kMaxTransportLength bytes. The network takes their frames itself
+/// and hands the assembled message to the handlers, never these frames; the constants name
+/// them where frames are seen, e.g. a fault injector that drops a packet or a frame log.
+inline constexpr Pgn kPgnTransportControl{0xEC00u};
+inline constexpr Pgn kPgnTransportData{0xEB00u};
 
 /// The fields of a 29-bit J1939 identifier.
 struct Identifier

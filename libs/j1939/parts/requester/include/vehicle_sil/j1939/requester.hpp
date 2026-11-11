@@ -104,10 +104,11 @@ struct RequesterStatistics
 ///   and cancel(). It is called once per request (and per response to all nodes), never for a
 ///   cancelled one.
 ///
-/// One per node, attached to it and shared by the application and the parts (the transactions
-/// and min_interval are the node's): Requester::of(node), or Requester::attach(node, options)
-/// to choose the options (before anything uses of()). It cannot be constructed otherwise.
-/// Uses two Timers of the network. Not from other threads (Host::post()).
+/// One per node, attached to it and shared by the application and the parts (the transactions and
+/// min_interval are the node's): Requester::of(node), or Requester::attach(node, options) to choose
+/// the options (before anything uses of()). It cannot be constructed otherwise. Uses kTimers (two)
+/// Timers of the network, reserved by the first of() or attach() (Network::timers_free()). Not from
+/// other threads (Host::post()).
 class Requester
 {
     struct Key
@@ -116,6 +117,8 @@ class Requester
     };
 
 public:
+    /// The Timers of the network the part uses.
+    static constexpr std::size_t kTimers = 2;
     /// The requester of `node`, attached with the default options if it has none yet.
     static Requester& of(Node& node);
     /// Attaches the requester of `node` with `options`. std::logic_error if the node has one

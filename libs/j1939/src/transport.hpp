@@ -14,8 +14,6 @@
 
 namespace vehicle_sil::j1939 {
 
-inline constexpr Pgn kPgnTransportControl{0xEC00u};
-inline constexpr Pgn kPgnTransportData{0xEB00u};
 inline constexpr Priority kTransportPriority = 7;
 
 /// Owned by its Network; uses the private parts of Network and Node.

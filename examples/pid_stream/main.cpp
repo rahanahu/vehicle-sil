@@ -2,8 +2,9 @@
 //
 // A protocol of one's own, "on a request, send these values every period" (pid_stream.hpp). An
 // engine ECU exposes three values by id; a tool subscribes, renews the subscription with another
-// period and ids, and stops it. The run is repeated with a different byte layout: only the
-// Format changes. The tool checks what arrived, when, and that nothing arrives after Stop.
+// period and ids, and stops it; a second tool subscribes after that and gets a stream of its own.
+// The run is repeated with a different byte layout: only the Format changes. The tools check what
+// arrived, when, and that nothing arrives after Stop.
 #include "pid_stream.hpp"
 
 #include "vehicle_sil/simulation/simulation.hpp"
@@ -11,6 +12,7 @@
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <iterator>
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -46,26 +48,30 @@ public:
         auto& node = ecu.j1939("J1939_CAN").add_node({.address = 0x80});
         auto& client = node.attach<pid_stream::PidClient>(format);
         auto record = [this](const pid_stream::Reply& r) { replies_.push_back(r); };
-        // The script runs on the first step at or after each time. A comparison with == would never
-        // fire if the step size did not divide the time, so a stage counter makes each action once.
-        ecu.on_step([&client, record, stage = 0](SimTime now) mutable { // the tool's script
-            const auto t = now - SimTime{};
-            if (stage == 0 && t >= 100ms)
-            {
-                ++stage;
-                client.subscribe(0x00, {kRpm, kCoolant, kLoad}, 50ms, record); // 11 bytes: transport protocol
-            }
-            if (stage == 1 && t >= 300ms)
-            {
-                ++stage;
-                client.subscribe(0x00, {kRpm, 0x7E}, 100ms, record); // renew: new period, 0x7E is unknown
-            }
-            if (stage == 2 && t >= 600ms)
-            {
-                ++stage;
-                client.unsubscribe();
-            }
+        // The tool's script. Each action runs once, in the first step at or after its time (also
+        // with a step size that does not divide it), from the step: subscribe() sends.
+        ecu.at(SimTime{} + 100ms, [&client, record](SimTime) {
+            client.subscribe(0x00, {kRpm, kCoolant, kLoad}, 50ms, record); // 11 bytes: transport protocol
         });
+        ecu.at(SimTime{} + 300ms, [&client, record](SimTime) {
+            client.subscribe(0x00, {kRpm, 0x7E}, 100ms, record); // renew: new period, 0x7E is unknown
+        });
+        ecu.at(SimTime{} + 600ms, [&client](SimTime) { client.unsubscribe(); });
+    }
+    std::vector<pid_stream::Reply> replies_;
+};
+
+/// A second tool, at another address, that subscribes after the first one stopped.
+class Logger
+{
+public:
+    Logger(vehicle_sil::Ecu& ecu, const pid_stream::Format& format)
+    {
+        auto& client = ecu.j1939("J1939_CAN").add_node({.address = 0x81}).attach<pid_stream::PidClient>(format);
+        ecu.at(SimTime{} + 650ms, [this, &client](SimTime) {
+            client.subscribe(0x00, {kCoolant}, 100ms, [this](const pid_stream::Reply& r) { replies_.push_back(r); });
+        });
+        ecu.at(SimTime{} + 1000ms, [&client](SimTime) { client.unsubscribe(); });
     }
     std::vector<pid_stream::Reply> replies_;
 };
@@ -75,6 +81,7 @@ bool run(const char* label, const pid_stream::Format& format)
     vehicle_sil::Simulation sim;
     auto& engine = sim.add<Engine>("Engine", 10ms, format);
     auto& tool = sim.add<Tool>("Tool", 5ms, format);
+    auto& logger = sim.add<Logger>("Logger", 5ms, format);
     sim.run_for(700ms);
     const auto count_at_stop = tool.replies_.size();
     sim.run_for(500ms); // a stopped stream stays stopped
@@ -99,9 +106,19 @@ bool run(const char* label, const pid_stream::Format& format)
     const bool unknown_id = !r.empty() && r.back().readings.size() == 2 && r.back().readings[1].id == 0x7E &&
                             r.back().readings[1].value == 0xFFFF;
     const bool stopped = r.size() == count_at_stop && engine.streamer_->streams() == 0;
-    std::printf("%-9s %zu replies of 3 values, %zu of 2 (every 100 ms: %s); rpm rises: %s; stays stopped: %s\n", label, big, small,
-                periodic ? "yes" : "NO", rising ? "yes" : "NO", stopped ? "yes" : "NO");
-    return big >= 4 && small >= 3 && periodic && rising && unknown_id && stopped;
+    // The second tool: the first reply in the step that handled its Start (660 ms), then every 100 ms
+    // counted from the Start's time (650 ms); its Stop at 1000 ms comes before 1050 ms. The coolant only.
+    const auto& l = logger.replies_;
+    const long long expected[]{660, 750, 850, 950};
+    bool second = l.size() == std::size(expected);
+    for (std::size_t i = 0; second && i < l.size(); ++i)
+    {
+        second = (l[i].time - SimTime{}) / 1ms == expected[i] && l[i].readings.size() == 1 && l[i].readings[0].id == kCoolant &&
+                 l[i].readings[0].value == 85;
+    }
+    std::printf("%-9s %zu replies of 3 values, %zu of 2 (every 100 ms: %s); rpm rises: %s; stays stopped: %s; second tool: %s\n",
+                label, big, small, periodic ? "yes" : "NO", rising ? "yes" : "NO", stopped ? "yes" : "NO", second ? "yes" : "NO");
+    return big >= 4 && small >= 3 && periodic && rising && unknown_id && stopped && second;
 }
 
 } // namespace

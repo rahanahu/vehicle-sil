@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// SimTime, StepInbox, TickScheduler, RealTimePacer and periodic(): pure logic, no SIL Kit
+// SimTime, StepInbox, TickScheduler, RealTimePacer, periodic() and once_at(): pure logic, no SIL Kit
 // connection.
 #include "test_harness.hpp"
 
@@ -237,6 +237,38 @@ TEST_CASE(periodic_runs_in_the_first_step_at_or_after_each_period)
         fn(at(t));
     }
     CHECK((runs == std::vector<long long>{0, 10, 37, 40}));
+}
+
+TEST_CASE(once_at_runs_once_in_the_first_step_at_or_after_its_time)
+{
+    const auto runs_of = [](SimTime time, SimDuration first, SimDuration step, SimDuration end) {
+        std::vector<long long> runs;
+        auto fn = once_at(time, [&](SimTime now) { runs.push_back(now.time_since_epoch() / 1ms); });
+        for (SimDuration t = first; t < end; t += step)
+        {
+            fn(at(t));
+        }
+        return runs;
+    };
+    // Off the step grid: the first step at or after it, once.
+    CHECK((runs_of(at(25ms), 0ms, 10ms, 100ms) == std::vector<long long>{30}));
+    // On the grid: that step.
+    CHECK((runs_of(at(30ms), 0ms, 10ms, 100ms) == std::vector<long long>{30}));
+    // Time 0, and a time before the first step: the first step.
+    CHECK((runs_of(at(0ms), 0ms, 10ms, 100ms) == std::vector<long long>{0}));
+    CHECK((runs_of(at(20ms), 50ms, 10ms, 100ms) == std::vector<long long>{50}));
+    // After the end: never.
+    CHECK(runs_of(at(100ms), 0ms, 10ms, 100ms).empty());
+    // A function that throws does not run again.
+    int calls = 0;
+    auto throwing = once_at(at(0ms), [&](SimTime) {
+        ++calls;
+        throw std::runtime_error("model");
+    });
+    CHECK(vehicle_sil::unit::throws<std::runtime_error>([&] { throwing(at(0ms)); }));
+    throwing(at(10ms));
+    CHECK_EQ(calls, 1);
+    CHECK(throws_invalid_argument([] { static_cast<void>(once_at(at(0ms), {})); }));
 }
 
 TEST_CASE(periodic_rejects_a_bad_period_or_function)

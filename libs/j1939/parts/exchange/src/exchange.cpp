@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/j1939/exchange.hpp"
 
+#include "vehicle_sil/j1939/detail/user_call.hpp"
+
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
@@ -32,33 +34,6 @@ namespace {
 
 } // namespace
 
-/// Marks the Exchange as being in user code; if the user destroys it, `gone` is set (also in
-/// the guards further out) and the caller must not touch the Exchange any more.
-struct Exchange::Guard
-{
-    explicit Guard(Exchange& exchange) noexcept : self(exchange), outer(exchange.gone_) { exchange.gone_ = &gone; }
-    ~Guard()
-    {
-        if (gone)
-        {
-            if (outer != nullptr)
-            {
-                *outer = true;
-            }
-        }
-        else
-        {
-            self.gone_ = outer;
-        }
-    }
-    Guard(const Guard&) = delete;
-    Guard& operator=(const Guard&) = delete;
-
-    Exchange& self;
-    bool* outer;
-    bool gone = false;
-};
-
 Exchange::Exchange(Node& node, ExchangeOptions options)
   : node_(node),
     options_(checked(options)),
@@ -76,13 +51,7 @@ Exchange::Exchange(Node& node, ExchangeOptions options)
     incoming_ = Subscription{node, node.on_incoming_transfer([this](const IncomingTransfer& t) { on_incoming(t); })};
 }
 
-Exchange::~Exchange()
-{
-    if (gone_ != nullptr)
-    {
-        *gone_ = true;
-    }
-}
+Exchange::~Exchange() { detail::mark_gone(gone_); }
 
 ExchangeId Exchange::start(Pgn pgn, std::span<const std::uint8_t> command, Address peer, ReplyMatcher match,
                            ExchangeCallback done, CommandOptions options)
@@ -593,9 +562,9 @@ bool Exchange::on_message(const Message& message)
         ReplyMatcher match = std::move(s->match);
         ReplyMatch verdict = ReplyMatch::Ignore;
         {
-            Guard guard(*this);
+            const detail::UserCall guard(gone_);
             verdict = match(message);
-            if (guard.gone)
+            if (guard.gone())
             {
                 return false;
             }
@@ -715,9 +684,9 @@ bool Exchange::finish(Slot& slot, ExchangeResult result)
     slot.phase = Phase::Free;
     slot.done = nullptr;
     slot.match = nullptr;
-    Guard guard(*this);
+    const detail::UserCall guard(gone_);
     done(result);
-    return !guard.gone;
+    return !guard.gone();
 }
 
 } // namespace vehicle_sil::j1939

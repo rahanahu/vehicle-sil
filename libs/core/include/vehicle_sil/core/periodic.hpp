@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
-// The rule of periodic work in fixed steps: every(period) of Peer and of the test kit's ECUs
-// (vehicle_sil::sim_base, no SIL Kit).
+// The rules of work in fixed steps that Ecu::every() and Ecu::at() follow on every place an ECU
+// runs (Peer on SIL Kit, the ECUs of LocalBench). Header only, without SIL Kit
+// (vehicle_sil::sim_base).
 #pragma once
 
 #include "vehicle_sil/core/sim_time.hpp"
@@ -36,6 +37,27 @@ namespace vehicle_sil {
         }
         // Skip the times this step passed: once per step.
         due += period * ((now - due) / period + 1);
+        fn(now);
+    };
+}
+
+/// Wraps `fn` so that it runs once, in the first step at or after `time` (the first step if
+/// `time` is before it). The step need not land on `time`: with steps of 10, a time of 25 runs
+/// at 30. Call the result with the start time of every step, in increasing order; after the run
+/// it does nothing, and if no step reaches `time` it never runs. std::invalid_argument for an
+/// empty function.
+[[nodiscard]] inline std::function<void(SimTime)> once_at(SimTime time, std::function<void(SimTime)> fn)
+{
+    if (!fn)
+    {
+        throw std::invalid_argument("vehicle_sil::once_at: empty function");
+    }
+    return [time, done = false, fn = std::move(fn)](SimTime now) mutable {
+        if (done || now < time)
+        {
+            return;
+        }
+        done = true; // before the call: a function that throws does not run again
         fn(now);
     };
 }

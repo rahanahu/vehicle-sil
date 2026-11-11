@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 //
-// vehicle_sil::Simulation: the same ECUs (classes that take an Ecu&) on the local virtual buses
-// and on SIL Kit with a registry of this process give the same records; a failed ECU ends the
-// run with SimulationError on both; the rules of a run; a controller elsewhere; a participant
-// made by the caller; a gateway ECU on two networks; raw CAN channels (Ecu::can()), also beside a
-// J1939 network on the same network; the same input refused on both; an application whose
-// constructor throws; the failures of the SIL Kit run (an ECU that ends it, another participant
-// that fails, a start that times out); ECUs added through local().
+// vehicle_sil::Simulation: the same ECUs (classes that take an Ecu&) on the local virtual buses and
+// on SIL Kit with a registry of this process give the same records (also of Ecu::at()); a failed
+// ECU ends the run with SimulationError on both; the rules of a run; a controller elsewhere; a
+// participant made by the caller; a gateway ECU on two networks; raw CAN channels (Ecu::can()),
+// also beside a J1939 network on the same network; the same input refused on both; an application
+// whose constructor throws; the failures of the SIL Kit run (an ECU that ends it, another
+// participant that fails, a start that times out); ECUs added through local().
 #include "test_harness.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
@@ -166,6 +166,45 @@ TEST_CASE(simulation_runs_the_same_ecus_locally_and_on_silkit)
     CHECK(onSilKit == onLocal);
 }
 
+namespace {
+
+/// Records (time, which) of its every() and at() functions. With 7 ms steps no time below but 0
+/// is on the step grid.
+class Script
+{
+public:
+    explicit Script(Ecu& ecu)
+    {
+        ecu.at(at(100ms), [this](SimTime now) { calls.emplace_back(ms(now), 1); });
+        ecu.every(30ms, [this](SimTime now) { calls.emplace_back(ms(now), 0); });
+        ecu.at(at(100ms), [this](SimTime now) { calls.emplace_back(ms(now), 2); });
+        ecu.at(at(0ms), [this](SimTime now) { calls.emplace_back(ms(now), 3); });
+    }
+    Records calls;
+};
+
+Records script(Simulation& sim)
+{
+    auto& s = sim.add<Script>("Script", 7ms);
+    sim.run_for(140ms);
+    return s.calls;
+}
+
+} // namespace
+
+TEST_CASE(simulation_runs_at_once_alike_locally_and_on_silkit)
+{
+    Simulation local;
+    const Records onLocal = script(local);
+    Simulation silkit(SilKitOptions{});
+    const Records onSilKit = script(silkit);
+    // Steps 0, 7, 14, ...: every(30 ms) at 0, 35, 63, 91, 126; both at(100 ms) at 105; in each
+    // step in the order added (at 0, every() before at(0 ms)).
+    const Records expected{{0, 0}, {0, 3}, {35, 0}, {63, 0}, {91, 0}, {105, 1}, {105, 2}, {126, 0}};
+    CHECK(onLocal == expected);
+    CHECK(onSilKit == onLocal);
+}
+
 // 3: a step that throws ends the run with SimulationError naming the ECU, on both; on SIL Kit
 // within seconds (the failed participant stalls virtual time; the run must see it).
 TEST_CASE(simulation_reports_a_failed_ecu)
@@ -226,6 +265,7 @@ TEST_CASE(simulation_rules)
         CHECK(throws<std::logic_error>([&] { sim.run(); }));
         CHECK(throws<std::logic_error>([&] { sim.add_ecu("B", 10ms); }));
         CHECK(throws<std::logic_error>([&] { ecu.on_step([](SimTime) {}); }));
+        CHECK(throws<std::logic_error>([&] { ecu.at(at(100ms), [](SimTime) {}); }));
     }
     {
         Simulation sim;

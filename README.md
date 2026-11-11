@@ -23,7 +23,7 @@
 | `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics` | 利用者向け | `vehicle_sil::j1939` の公開 API と道具箱だけで作ったプロトコル部品。DM13 による放送の抑制、DTC と DM1/DM2/DM3/DM11/DM22、識別情報（ソフトウェア ID、ECU ID、製品 ID、診断プロトコル ID） |
 | `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`、`vehicle_sil::j1939_exchange` | 利用者向け | ECU アプリ向けの部品（同じく公開 API と道具箱だけで作る）。PG の周期送信（`PeriodicSender`）、Request の送信と応答・ACK・時間切れの報告（`Requester`）、受信の最新値と途絶（`Monitor`）、Commanded Address の送信（`AddressCommander`）、独自プロトコルのコマンドと応答（`Exchange`。例は [examples/j1939/param_service](examples/j1939/param_service)）。使い方は [docs/j1939-guide.md](docs/j1939-guide.md) |
 | `vehicle_sil::j1939_codec` | 利用者向け | J1939 の型付きメッセージ。YAML で PG と信号（位置、符号、スケーリング、範囲、列挙、Proprietary A/B、名前を付けた特別な値とそのプロファイル、埋め値）を定義すると、`vehicle_sil_add_j1939_codec()` がビルドのときに C++ の型を生成する。ビット操作を書かずに、信号を値として送受信する。使い方は [docs/j1939-codec.md](docs/j1939-codec.md) |
-| `vehicle_sil::ecu` | 利用者向け | ECU のアプリケーションを組み立てる入口 `vehicle_sil::Ecu`: J1939 の `Network`、生の CAN チャネル（J1939 でないプロトコル用の `can::RawChannel`）、LIN の Master と Slave（`lin_master()`、`lin_slave()`）、外から読み書きする変数（`input`、`output`、ECU の Control Agent `agent()`）、ステップごとの処理（`on_step`、`every`）、ECU が持つオブジェクト（`emplace`）。`Peer` と `LocalBench` の ECU が実装するので、`Ecu&` を受け取るクラスは仮想バスでも SIL Kit でも同じコードで動く。SIL Kit に依存しない |
+| `vehicle_sil::ecu` | 利用者向け | ECU のアプリケーションを組み立てる入口 `vehicle_sil::Ecu`: J1939 の `Network`、生の CAN チャネル（J1939 でないプロトコル用の `can::RawChannel`）、LIN の Master と Slave（`lin_master()`、`lin_slave()`）、外から読み書きする変数（`input`、`output`、ECU の Control Agent `agent()`）、ステップごとの処理（`on_step`、`every`、ある時刻に 1 回の `at`）、ECU が持つオブジェクト（`emplace`）。`Peer` と `LocalBench` の ECU が実装するので、`Ecu&` を受け取るクラスは仮想バスでも SIL Kit でも同じコードで動く。SIL Kit に依存しない |
 | `vehicle_sil::peer` | 土台 | 1 つの SIL Kit participant と、その J1939 の `Network`（SIL Kit の CAN か外部のポート）、生の CAN、LIN の Master/Slave、Control Agent（J1939 の通信状態の監視の出力を含む）をまとめて作り、仮想時間か実時間で動かす `vehicle_sil::Peer`。`Ecu` を実装する |
 | `vehicle_sil::simulation` | 利用者向け | `vehicle_sil::Simulation`: ECU をプロセス内の仮想バスか、SIL Kit の participant として仮想時間で動かし、失敗を例外で報告する。動かす場所はコンストラクターで選ぶ（SIL Kit では、registry をプロセス内に立てられる）。入門は [examples/getting_started](examples/getting_started) |
 | `vehicle_sil::control` | 利用者向け | ECU の Control Agent（型・範囲・単位つきの変数の公開、外からの書き込みを仮想時刻を指定してステップの中で反映。固定容量のキュー）と、Control Server の中核の `Hub`。Agent は ECU が持って動かす（`Ecu::input()`、`output()` で変数を宣言する） |
@@ -209,7 +209,7 @@ options.virtual_time = vehicle_sil::VirtualTimeOptions{std::chrono::milliseconds
 vehicle_sil::Peer peer(options);
 auto& ecu = peer.j1939("J1939_CAN1").add_node({0x80, name});
 
-// 1 ステップの順序: J1939 の受信と処理 → アプリ（on_step、every）→ LIN → J1939 の送信
+// 1 ステップの順序: J1939 の受信と処理 → アプリ（on_step、every、at）→ LIN → J1939 の送信
 peer.every(std::chrono::milliseconds(10), [&](vehicle_sil::SimTime) {
     ecu_tick();                                       // 既存 ECU の tick()
     // ステップの終わりに、ステップの時刻で出る。ただし Address Claim の後の 250 ms は保留され、待ちが明けたステップで出る

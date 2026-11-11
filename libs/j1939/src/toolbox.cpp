@@ -2,6 +2,7 @@
 #include "vehicle_sil/j1939/toolbox.hpp"
 
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace vehicle_sil::j1939 {
@@ -51,7 +52,9 @@ Timer::Timer(Network& network, TimerKind kind, Callback callback)
     network.require_not_observing("creating a Timer");
     if (!network.timers_.reserve(1))
     {
-        throw std::length_error("vehicle_sil::j1939::Timer: no timer left (NetworkOptions::timer_capacity)");
+        throw std::length_error("vehicle_sil::j1939::Timer: no timer left: all " + std::to_string(network.timers_.reservable()) +
+                                " of NetworkOptions::timer_capacity are taken (2 per node with a NAME, 1 per Timer); raise "
+                                "timer_capacity, or check Network::timers_free() before creating a part in a handler");
     }
 }
 

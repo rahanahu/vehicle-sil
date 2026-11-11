@@ -384,7 +384,7 @@ TEST_CASE(a_long_block_on_a_slow_bus_is_waited_for_while_it_comes)
     std::uint32_t packets = 0;
     w.bus.endpoint("engine").set_fault_injector([&packets](const vehicle_sil::can::TimedFrame& f) {
         const auto id = vehicle_sil::j1939::Identifier::decode(f.frame);
-        if (id && id->pgn == vehicle_sil::j1939::Pgn{0xEB00u}) // TP.DT
+        if (id && id->pgn == vehicle_sil::j1939::kPgnTransportData)
         {
             return vehicle_sil::can::FaultAction::delay_by(std::chrono::milliseconds(60) * (++packets));
         }

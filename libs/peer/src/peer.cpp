@@ -508,6 +508,12 @@ void Peer::every(SimDuration period, std::function<void(SimTime now)> fn)
     step_functions_.push_back(periodic(period, std::move(fn))); // std::invalid_argument
 }
 
+void Peer::at(SimTime time, std::function<void(SimTime now)> fn)
+{
+    require_not_started("at()");
+    step_functions_.push_back(once_at(time, std::move(fn))); // std::invalid_argument
+}
+
 void Peer::bind_agent(control::Agent& agent)
 {
     std::function<void()> wakeup;

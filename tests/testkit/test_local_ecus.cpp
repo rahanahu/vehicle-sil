@@ -162,6 +162,32 @@ TEST_CASE(testkit_ecu_runs_on_step_and_every_in_the_order_added)
     CHECK(calls == expected);
 }
 
+TEST_CASE(testkit_ecu_runs_at_once_in_the_first_step_at_or_after_its_time)
+{
+    LocalCan buses;
+    auto& ecu = buses.add_ecu("ecu", 10ms);
+    std::vector<std::string> calls;
+    const auto record = [&calls](std::string what) {
+        return [&calls, what = std::move(what)](SimTime now) { calls.push_back(what + " " + std::to_string(ms(now))); };
+    };
+    ecu.at(at(25ms), record("at25")); // off the step grid: 30
+    ecu.on_step(record("step"));
+    ecu.at(at(25ms), record("again25")); // the same time: in the order added
+    ecu.every(20ms, record("every20"));
+    ecu.at(at(0ms), record("at0"));
+    ecu.at(at(-5ms), record("before")); // before the first step: the first step
+    ecu.at(at(40ms), record("at40"));
+    buses.run_until(at(50ms));
+    const std::vector<std::string> expected{
+        "step 0",  "every20 0", "at0 0", "before 0",  // 0
+        "step 10",                                    // 10
+        "step 20", "every20 20",                      // 20
+        "at25 30", "step 30",   "again25 30",         // 30
+        "step 40", "every20 40", "at40 40",           // 40
+    };
+    CHECK(calls == expected);
+}
+
 // The forms without a bus name (add_j1939(), inject(time, frame), injector(), bus()) use the only
 // bus and make it, without a name, if there is none: the bus "" in the lookups by name. Only an
 // ECU names it; a lookup by a bus name (bus(), injector(), inject() with a name) makes and names no
@@ -399,6 +425,7 @@ TEST_CASE(testkit_ecu_lookups_and_setup_errors)
     CHECK(throws<std::invalid_argument>([&] { gateway.every(0ms, [](SimTime) {}); }));
     CHECK(throws<std::invalid_argument>([&] { gateway.every(10ms, {}); }));
     CHECK(throws<std::invalid_argument>([&] { gateway.on_step({}); }));
+    CHECK(throws<std::invalid_argument>([&] { gateway.at(at(10ms), {}); }));
     // One-name lookups need exactly one network.
     CHECK(throws_with<std::logic_error>([&] { static_cast<void>(buses.network("gateway")); },
                                         "has 2 J1939 networks (\"A\", \"B\"): name the network, e.g. network(\"gateway\", \"A\")"));
@@ -433,6 +460,7 @@ TEST_CASE(testkit_ecu_lookups_and_setup_errors)
     CHECK(throws<std::logic_error>([&] { gateway.j1939("C"); }));
     CHECK(throws<std::logic_error>([&] { gateway.on_step([](SimTime) {}); }));
     CHECK(throws<std::logic_error>([&] { gateway.every(10ms, [](SimTime) {}); }));
+    CHECK(throws<std::logic_error>([&] { gateway.at(at(100ms), [](SimTime) {}); }));
     std::vector<std::string> log;
     CHECK(throws<std::logic_error>([&] { gateway.emplace<Probe>(log, "late"); }));
     CHECK(log.empty()); // no Probe was made

@@ -27,7 +27,6 @@ using vehicle_sil::testkit::J1939Events;
 namespace {
 constexpr const char* kBus = "J1939_CAN";
 constexpr j1939::Pgn kStatus{0xFF30}, kBlob{0xFF40}; // groups of this example
-constexpr j1939::Pgn kTpData{0xEB00};                // the frames that carry a long message's packets
 
 bool report(const char* scene, bool ok)
 {
@@ -98,7 +97,9 @@ bool lost_packet()
     ecu.every(1s, [&](SimTime) { static_cast<void>(sender.send(kBlob, std::array<std::uint8_t, 20>{})); });
     sim.add_ecu("Receiver", 10ms).j1939(kBus).add_node({.address = 0x30});
     auto& bus = sim.local();
-    bus.endpoint("Sender").set_fault_injector(faults::nth(2, can::FaultAction::drop(), faults::j1939_pgn(kTpData)));
+    // kPgnTransportData: the frames that carry a long message's packets.
+    bus.endpoint("Sender").set_fault_injector(
+        faults::nth(2, can::FaultAction::drop(), faults::j1939_pgn(j1939::kPgnTransportData)));
     J1939Events sent(bus.network("Sender"));
     J1939Events received(bus.network("Receiver"));
     sim.run_for(2s); // broadcasts at 0 and 1 s

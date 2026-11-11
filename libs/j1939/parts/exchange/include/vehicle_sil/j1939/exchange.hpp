@@ -203,12 +203,14 @@ struct ExchangeStatistics
 /// - Destroying the Exchange ends its exchanges without calling back. It may outlive the
 ///   network (it then does nothing).
 ///
-/// Uses two Timers of the network. Create it with node.attach<Exchange>(options) or owned by a
-/// part or the application (members of a part of one's own). Not from other threads
-/// (Host::post()).
+/// Uses kTimers (two) Timers of the network (Network::timers_free()). Create it with
+/// node.attach<Exchange>(options) or owned by a part or the application (members of a part of one's
+/// own). Not from other threads (Host::post()).
 class Exchange
 {
 public:
+    /// The Timers of the network the part uses.
+    static constexpr std::size_t kTimers = 2;
     /// std::invalid_argument for timeout <= 0, capacity 0 or max_length outside 1 ..
     /// kMaxTransportLength; std::length_error if the network has fewer than two timers left.
     explicit Exchange(Node& node, ExchangeOptions options = {});
@@ -280,8 +282,6 @@ private:
         ReplyMatcher match;
         ExchangeCallback done;
     };
-    /// Set while user code runs: tells the caller that the Exchange was destroyed.
-    struct Guard;
 
     ExchangeId add(Pgn pgn, std::span<const std::uint8_t> command, Address to, std::optional<Name> toName,
                    ReplyMatcher match, ExchangeCallback done, const CommandOptions& options);
@@ -312,7 +312,7 @@ private:
     std::vector<Slot> slots_;
     std::uint64_t next_id_ = 1;
     ExchangeStatistics statistics_;
-    bool* gone_ = nullptr;
+    bool* gone_ = nullptr; ///< Set while user code runs: tells the caller the Exchange is gone.
     Timer send_;
     Timer wait_;
     Subscription messages_;

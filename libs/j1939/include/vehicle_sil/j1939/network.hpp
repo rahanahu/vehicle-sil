@@ -435,9 +435,17 @@ public:
 
     /// Creates a protocol part T(*this, args...) that the network owns from now on. The parts
     /// of all nodes are destroyed first when the network is destroyed, the last attached first
-    /// (a part that uses another one attaches it before itself). A part can also be created
-    /// without attach() and owned by the application (destroy it before the network, and not
-    /// in a handler of the network). Allowed everywhere, also in handlers.
+    /// (a part that uses another one attaches it before itself). Allowed everywhere, also in
+    /// handlers (a part that creates Timers there needs free ones: Network::timers_free()).
+    ///
+    /// A part can also be created without attach() and owned by the application. Destroy it
+    /// before the network. It may be destroyed anywhere on the network's thread, also in a
+    /// handler, a responder or a timer callback of the network (of this part's node or another,
+    /// e.g. to end a stream when its client says Stop): the handlers of its Subscriptions are
+    /// not called any more, also not later in the same delivery, and its Timers do not fire
+    /// (the parts of this library, and parts of one's own built on them). Not from inside a call
+    /// the part itself is making (its encoder, its callbacks), unless the part's comment allows
+    /// it, and not from an Observer.
     template <typename T, typename... Args>
     T& attach(Args&&... args);
     /// The part of type T attached to this node first; nullptr if none.
@@ -721,6 +729,16 @@ public:
 
     [[nodiscard]] std::size_t node_count() const noexcept { return nodes_.size(); }
     [[nodiscard]] Node& node(std::size_t index) { return *nodes_.at(index); }
+
+    /// How many Timers can still be created: NetworkOptions::timer_capacity less the slots held by
+    /// the nodes with a NAME (2 each) and by the Timers that exist (1 each, until destroyed). The
+    /// sessions of the transport protocol have timers of their own and do not count. A Timer
+    /// created when none is free throws std::length_error, and from a handler, a responder or a
+    /// timer callback that fails the network: before creating a part there, compare this with the
+    /// Timers the part uses (its kTimers, e.g. PeriodicSender::kTimers) and refuse the work if too
+    /// few are free (e.g. answer with a negative acknowledgement). Nothing else on the network's
+    /// thread runs between the check and the creation.
+    [[nodiscard]] std::size_t timers_free() const noexcept { return timers_.reservable() - timers_.reserved(); }
 
     /// The other control functions on the bus and their addresses.
     [[nodiscard]] const AddressTable& address_table() const noexcept { return address_table_; }
