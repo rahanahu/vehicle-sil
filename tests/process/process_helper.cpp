@@ -12,7 +12,7 @@
 //   --read-stdin         reads stdin to its end and writes "stdin <bytes>" to stdout
 //   --sleep-ms <ms>      sleeps
 //   --flood              writes to stdout without end
-//   --abort              ends with std::abort() (POSIX: the signal SIGABRT)
+//   --abort              ends with std::abort() (POSIX: the signal SIGABRT; Linux: without a core file)
 //   --pid-file <path>    writes its process ID to <path>
 //   --pwd                writes its working directory (generic form, '/') to stdout
 //   --on-stop <code>     from now on, a stop request (POSIX SIGTERM, Windows Ctrl+Break) ends it with <code>
@@ -38,6 +38,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -170,6 +174,10 @@ int main(int argc, char** argv)
         else if (arg == "--abort")
         {
             std::fflush(stdout);
+#ifdef __linux__
+            // An abort on purpose: no core file (and no crash report on the desktop).
+            prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
+#endif
             std::abort();
         }
         else if (arg == "--pid-file" && hasValue)
