@@ -389,7 +389,8 @@ TEST_CASE(testkit_ecu_lookups_and_setup_errors)
     gateway.j1939("A");
     gateway.j1939("B");
     buses.add_ecu("empty", 10ms);
-    CHECK(throws<std::invalid_argument>([&] { buses.add_ecu("gateway", 10ms); }));
+    CHECK(throws_with<std::invalid_argument>([&] { buses.add_ecu("gateway", 10ms); },
+                                             "the name \"gateway\" is used"));
     CHECK(throws<std::invalid_argument>([&] { buses.add_ecu("", 10ms); }));
     CHECK(throws<std::invalid_argument>([&] { buses.add_ecu("slow", 0ms); }));
     CHECK(throws_with<std::invalid_argument>([&] { gateway.j1939("A"); },

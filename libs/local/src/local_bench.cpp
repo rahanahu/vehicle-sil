@@ -443,7 +443,7 @@ Ecu& LocalBench::add_ecu(std::string name, SimDuration step)
     {
         if (s->name() == name)
         {
-            throw std::invalid_argument(std::string(kWho) + "the name " + name + " is used");
+            throw std::invalid_argument(std::string(kWho) + "the name " + quoted(name) + " is used");
         }
     }
     if (step <= SimDuration::zero())

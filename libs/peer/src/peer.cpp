@@ -205,7 +205,7 @@ j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions option
     std::string controller = options.controller_name.empty() ? network_name : options.controller_name;
     if (!network_name.empty() && controller_is_used(controller))
     {
-        throw std::invalid_argument("vehicle_sil::Peer: a CAN controller of this peer is named " + controller);
+        throw std::invalid_argument("vehicle_sil::Peer: a CAN controller of this peer is named \"" + controller + "\"");
     }
     Channel& c = add_channel(network_name);
     try
@@ -279,7 +279,7 @@ can::RawChannel& Peer::add_can(const std::string& network, can::RawChannelOption
     const std::string controller = network + ".raw";
     if (controller_is_used(controller))
     {
-        throw std::invalid_argument("vehicle_sil::Peer: a CAN controller of this peer is named " + controller);
+        throw std::invalid_argument("vehicle_sil::Peer: a CAN controller of this peer is named \"" + controller + "\"");
     }
     auto made = std::make_unique<RawCan>();
     made->name = network;

@@ -767,7 +767,8 @@ TEST_CASE(peer_refuses_a_controller_name_it_uses)
     Peer peer(o);
     vehicle_sil::Ecu& ecu = peer;
     ecu.can("A");                                                         // controller "A.raw"
-    CHECK(throws<std::invalid_argument>([&] { peer.j1939("A.raw"); }));   // its name
+    CHECK(throws_with<std::invalid_argument>([&] { peer.j1939("A.raw"); }, // its name
+                                             "a CAN controller of this peer is named \"A.raw\""));
     vehicle_sil::J1939ChannelOptions named;
     named.controller_name = "A.raw";
     CHECK(throws<std::invalid_argument>([&] { peer.j1939("B", named); })); // its controller_name
@@ -775,7 +776,8 @@ TEST_CASE(peer_refuses_a_controller_name_it_uses)
     CHECK(throws<std::out_of_range>([&] { static_cast<void>(peer.network("B")); }));
     named.controller_name = "C.raw";
     peer.j1939("B", named);
-    CHECK(throws<std::invalid_argument>([&] { ecu.can("C"); }));   // "C.raw" is B's
+    CHECK(throws_with<std::invalid_argument>([&] { ecu.can("C"); }, // "C.raw" is B's
+                                             "a CAN controller of this peer is named \"C.raw\""));
     CHECK(throws<std::invalid_argument>([&] { peer.j1939("C.raw"); }));
     named.controller_name = "B2";
     peer.j1939("D", named);
