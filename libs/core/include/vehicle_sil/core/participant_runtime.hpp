@@ -181,9 +181,15 @@ public:
     /// Stops the lifecycle and waits (bounded by shutdown_timeout) for it to shut down.
     /// In Coordinated mode this stops the whole simulation. Once it returns, the step handler is
     /// not running and is never called again, so objects it uses may be destroyed; a handler
-    /// that is running when stop() is called is waited for. Safe to call more than once, but not
-    /// from two threads at the same time; never throws. Must not be called from a SIL Kit
-    /// handler (use request_stop() there).
+    /// that is running when stop() is called is waited for (without a bound), and no handler
+    /// starts after that. Safe to call more than once, but not from two threads at the same time;
+    /// never throws. Must not be called from a SIL Kit handler (use request_stop() there).
+    /// After a failure (of the step handler, or report_failure()), the stop goes to the lifecycle
+    /// only once the participant is in Error, so that the others see the failure and not an
+    /// ordinary stop. The wait for the Error and the wait for the shutdown share one
+    /// shutdown_timeout; if the Error has not come by then, the stop goes out anyway. A stop or
+    /// abort that another participant (the controller) gives first is not held back: the
+    /// participant then may stop (Stopping, Stopped) before it is in Error, or never be in Error.
     void stop(std::string_view reason) noexcept;
 
     /// Asks the lifecycle to stop without waiting. Callable from any thread, including the step
@@ -192,8 +198,12 @@ public:
     /// start(), or while it waits for the other participants) is kept and delivered when the
     /// lifecycle can take it: with virtual time at the first step (which then still runs; it needs
     /// every synchronised participant to have started its time), otherwise when start() sees
-    /// Running. SIL Kit itself ignores a stop before Running. In Error it is delivered at once.
-    /// Only the first reason is kept.
+    /// Running. SIL Kit itself ignores a stop before Running. A request made while the step
+    /// handler runs (from the handler too) is delivered when the handler has returned. In Error
+    /// it is delivered at once; after a failure (see stop()) it is delivered only once the
+    /// participant is in Error. A request that arrives before a failure (before the failing step
+    /// handler started, before report_failure()) is an ordinary stop. Only the first reason is
+    /// kept.
     void request_stop(std::string_view reason) noexcept;
 
     /// Waits until the lifecycle has shut down or is in Error, or the timeout expires.
@@ -218,6 +228,16 @@ public:
     /// Message of the exception that the step handler threw, empty if none.
     [[nodiscard]] std::string step_error() const;
 
+    /// Reports a failure of this participant found outside the step handler (a real-time
+    /// driver's step, for example): the lifecycle goes to Error, as after a failed step handler
+    /// (SIL Kit does not end the simulation; the system controller has to abort it), and stop()
+    /// and request_stop() wait for that Error. Only the first failure (this or the step
+    /// handler's) is reported. Callable from any thread, but not once the destructor has begun.
+    /// Until start() has started the lifecycle it does nothing (SIL Kit would ignore the error;
+    /// a call made while start() is doing so counts as made before or after). Never throws.
+    /// step_error() does not change.
+    void report_failure(std::string_view reason) noexcept;
+
     /// true once start() has been called (whether or not it succeeded). Thread safe.
     [[nodiscard]] bool started() const noexcept { return lifecycle_started_.load(std::memory_order_acquire); }
 
@@ -239,8 +259,11 @@ public:
 
 private:
     /// Gives a requested stop to the lifecycle once it can take it (Running, Paused, Error). A
-    /// request waits for the first step with virtual time unless `now`.
-    void deliver_stop(bool now) noexcept;
+    /// request waits for the first step with virtual time unless `now`. After a failure, `now`
+    /// waits for the Error until `deadline`; otherwise it keeps the request.
+    void deliver_stop(bool now, std::chrono::steady_clock::time_point deadline = {}) noexcept;
+    /// true once the step handler failed or report_failure() was called.
+    [[nodiscard]] bool has_failed() const;
     /// @param replayed true for statuses re-read by resync_peers(): they never overwrite a newer one.
     void on_status(const SilKit::Services::Orchestration::ParticipantStatus& status, bool replayed);
     /// @returns true to complete the step now, false if the StepHold holds it.
@@ -285,6 +308,8 @@ private:
     std::atomic<std::int64_t> now_ns_{0};
     std::atomic<std::uint64_t> steps_completed_{0};
     std::atomic<bool> step_entered_{false};
+    /// The step handler runs, until its error (if any) is reported: a stop request waits.
+    std::atomic<bool> handler_running_{false};
     std::atomic<bool> starting_entered_{false}; ///< without virtual time: SIL Kit's starting handler ran
     std::atomic<bool> lifecycle_started_{false}; // set by start() just before StartLifecycle()
 
@@ -296,6 +321,10 @@ private:
     std::string stop_reason_;                // guarded by control_mutex_; the first request's
     std::atomic<bool> stop_delivered_{false}; // Stop() was given to the lifecycle (or it ends anyway)
     std::string step_error_;
+    /// Guarded by control_mutex_; a failure was reported: ReportError() is queued (both happen
+    /// under the lock).
+    bool failed_ = false;
+    bool error_reportable_ = false; ///< guarded by control_mutex_; start() is past StartLifecycle()
 
     mutable std::mutex peers_mutex_;
     mutable std::condition_variable peers_cv_;

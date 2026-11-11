@@ -145,8 +145,11 @@ public:
     /// With SilKitOptions::controller, a participant that leaves the simulation in Error is a
     /// failure; one that leaves otherwise must end the simulation within a few seconds, or it is
     /// one too. Without it, only a failed ECU of this process is (the other participants' are
-    /// the controller's to see): the run then stops this process's participants, which ends
-    /// their part of the simulation. Throws SimulationError like run_for().
+    /// the controller's to see): the ECUs of this process, the failed one too (it stays in
+    /// Error), then wait up to 5 s for that controller to abort the simulation, so that it sees
+    /// the failure; the run stops none of them meanwhile. If nobody aborts or stops it in that
+    /// time, the run stops the failed ECUs first and then the others, which ends the simulation
+    /// for the other participants too. Throws SimulationError like run_for().
     void run();
     /// Where the runs got to (local: LocalBench::now(); SIL Kit: the duration of a finished
     /// run_for(), else 0).

@@ -399,6 +399,19 @@ void RealTimeDriver::run()
     ended_ = true;
     sleeping_ = false;
     idle_cv_.notify_all();
+    if (failed_ && options_.on_failure)
+    {
+        const std::string error = error_;
+        lock.unlock();
+        try
+        {
+            options_.on_failure(error);
+        }
+        catch (...)
+        {
+            // The driver has ended; nothing to do about a failing callback.
+        }
+    }
 }
 
 } // namespace vehicle_sil::can

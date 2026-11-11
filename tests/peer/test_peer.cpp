@@ -17,6 +17,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -625,6 +626,101 @@ TEST_CASE(peer_wait_returns_when_another_thread_stops)
         CHECK(peer.wait(1s) == std::optional<orch::ParticipantState>{orch::ParticipantState::Shutdown});
         CHECK(!peer.failed());
     }
+}
+
+TEST_CASE(peer_real_time_failure_leaves_through_error)
+{
+    // A Coordinated peer in real time whose step fails leaves through Error, as with virtual time,
+    // also when its owner stops it as soon as it sees the failure: the controller sees a failure,
+    // not an ordinary stop of the whole simulation.
+    InProcessRegistry registry;
+    vehicle_sil::unit::StateLog log(registry.uri, "Driven");
+    SimulationControllerOptions control;
+    control.registry_uri = registry.uri;
+    control.required_participants = {"Driven"};
+    SimulationController controller(control);
+    PeerOptions o;
+    o.participant = "Driven";
+    o.registry_uri = registry.uri;
+    o.lifecycle = LifecycleMode::Coordinated;
+    o.virtual_time = std::nullopt;
+    Peer peer(o);
+    static_cast<void>(peer.j1939("J1939_CAN").add_node({0x30}));
+    std::atomic<int> steps{0};
+    peer.on_step([&steps](SimTime) {
+        if (++steps == 5)
+        {
+            throw std::runtime_error("model failed");
+        }
+    });
+    start_together(controller, {&peer}, 30s);
+    CHECK(vehicle_sil::unit::eventually([&] { return peer.failed(); }, 20s));
+    peer.stop("the owner saw the failure");
+    CHECK(vehicle_sil::unit::eventually([&] { return log.reached(orch::ParticipantState::Shutdown); }, 10s));
+    if (log.after_running() != orch::ParticipantState::Error)
+    {
+        std::fprintf(stderr, "  states of Driven: %s\n", log.text().c_str());
+    }
+    CHECK(log.after_running() == orch::ParticipantState::Error);
+    CHECK(peer.error().find("model failed") != std::string::npos);
+    CHECK(vehicle_sil::unit::eventually([&] { return controller.failed_participant() == std::optional<std::string>("Driven"); }, 10s));
+    controller.abort();
+}
+
+TEST_CASE(peer_real_time_stop_request_right_after_the_failure_leaves_through_error)
+{
+    // failed() is true from the moment the host fails, before the driver's thread has reported
+    // the failure to the lifecycle. A request_stop() in between (someone saw the failure) must
+    // not be an ordinary stop. The exception puts the request exactly there: the driver reads
+    // what() once more after the host has failed and before it reports.
+    struct AsksToStop : std::exception
+    {
+        Peer* peer = nullptr;
+        std::atomic<bool>* asked = nullptr;
+        const char* what() const noexcept override
+        {
+            if (peer->failed() && !asked->exchange(true))
+            {
+                peer->request_stop("someone saw the failure");
+            }
+            return "model failed";
+        }
+    };
+    InProcessRegistry registry;
+    vehicle_sil::unit::StateLog log(registry.uri, "Driven");
+    SimulationControllerOptions control;
+    control.registry_uri = registry.uri;
+    control.required_participants = {"Driven"};
+    SimulationController controller(control);
+    PeerOptions o;
+    o.participant = "Driven";
+    o.registry_uri = registry.uri;
+    o.lifecycle = LifecycleMode::Coordinated;
+    o.virtual_time = std::nullopt;
+    Peer peer(o);
+    static_cast<void>(peer.j1939("J1939_CAN").add_node({0x30}));
+    std::atomic<int> steps{0};
+    std::atomic<bool> asked{false};
+    peer.on_step([&](SimTime) {
+        if (++steps == 5)
+        {
+            AsksToStop e;
+            e.peer = &peer;
+            e.asked = &asked;
+            throw e;
+        }
+    });
+    start_together(controller, {&peer}, 30s);
+    CHECK(vehicle_sil::unit::eventually([&] { return log.reached(orch::ParticipantState::Shutdown); }, 20s));
+    CHECK(asked.load());
+    if (log.after_running() != orch::ParticipantState::Error)
+    {
+        std::fprintf(stderr, "  states of Driven: %s\n", log.text().c_str());
+    }
+    CHECK(log.after_running() == orch::ParticipantState::Error);
+    CHECK(peer.failed());
+    peer.stop("the end of the test");
+    controller.abort();
 }
 
 TEST_CASE(peer_start_together_reports_a_failed_start)

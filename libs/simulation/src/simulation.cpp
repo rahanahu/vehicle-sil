@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/simulation/simulation.hpp"
 
+#include "simulation_internal.hpp"
+
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/core/simulation_watch.hpp"
 #include "vehicle_sil/local/local_bench.hpp"
@@ -10,9 +12,12 @@
 #include <silkit/vendor/CreateSilKitRegistry.hpp>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace vehicle_sil {
@@ -27,6 +32,13 @@ constexpr const char* kControllerName = "SimulationController";
 constexpr std::chrono::milliseconds kPoll{50};
 /// How long the participants of this process may take to end once the simulation ended.
 constexpr std::chrono::seconds kEndWait{10};
+/// After a failure under a controller elsewhere: how long the ECUs of this process wait for
+/// that controller to abort the simulation before they stop (see
+/// Simulation::SilKitRun::wait_for_the_abort()). The tools of this project look every 50 ms and
+/// abort when a participant is in Error. Tests shorten it (detail::set_abort_wait()).
+std::atomic<std::chrono::milliseconds::rep> abort_wait_ms{5000};
+/// How often wait_for_the_abort() looks at the states.
+constexpr std::chrono::milliseconds kAbortPoll{10};
 
 std::string join(const std::vector<std::string>& parts)
 {
@@ -99,11 +111,28 @@ struct Simulation::SilKitRun
         return out;
     }
 
+    /// The ECUs that failed first, then the others, each group in the order they were added:
+    /// what a failed run does to the rest of the simulation must not depend on that order. A
+    /// failed ECU goes from Error to Shutdown; only then is the stop of another ECU, in
+    /// Coordinated mode, an ordinary stop of the whole simulation (while an ECU is in Error it
+    /// would stop that ECU alone). So a run that nobody aborted leaves no other process behind
+    /// in a simulation that is in Error. Without a failure the order is the one of add().
     void stop_all(std::string_view reason) noexcept
     {
-        for (auto& p : peers)
+        std::vector<bool> stopFirst(peers.size(), false);
+        for (std::size_t i = 0; i < peers.size(); ++i)
         {
-            p->stop(reason);
+            stopFirst[i] = peers[i]->failed();
+        }
+        for (const bool first : {true, false})
+        {
+            for (std::size_t i = 0; i < peers.size(); ++i)
+            {
+                if (stopFirst[i] == first)
+                {
+                    peers[i]->stop(reason);
+                }
+            }
         }
         if (controller)
         {
@@ -143,6 +172,10 @@ private:
     std::vector<std::string> watch_with_controller(bool& failure);
     /// Waits until every ECU ended, or one failed.
     void watch_without_controller(std::vector<std::optional<orch::ParticipantState>>& states, bool& failure);
+    /// After a failure under a controller elsewhere: waits (up to the abort wait) until no ECU
+    /// of this process is Running, Paused or in Error any more, which the controller's abort
+    /// does. Nobody is stopped meanwhile.
+    void wait_for_the_abort();
 };
 
 void Simulation::SilKitRun::run(std::optional<SimDuration> stop_at)
@@ -205,9 +238,15 @@ void Simulation::SilKitRun::run(std::optional<SimDuration> stop_at)
     else
     {
         watch_without_controller(states, failure);
+        if (failure)
+        {
+            wait_for_the_abort();
+        }
     }
-    // Without a controller, stopping a participant of a failed run ends the simulation for
-    // the others too (the Coordinated stop).
+    // Without a controller, stopping an ECU that did not fail ends the simulation for the others
+    // too (the Coordinated stop); after a failure, wait_for_the_abort() has given the controller
+    // elsewhere its chance to see the failure first. If it did not abort, the failed ECUs are
+    // stopped first (stop_all()), and the stop of the others then ends the simulation in order.
     stop_all("vehicle_sil::Simulation: the run ended");
 
     std::vector<std::string> failures;
@@ -290,6 +329,40 @@ void Simulation::SilKitRun::watch_without_controller(std::vector<std::optional<o
         ended[i] = states[i].has_value();
     }
 }
+
+void Simulation::SilKitRun::wait_for_the_abort()
+{
+    // The controller elsewhere sees the failure as a participant in Error. So the failed ECUs
+    // stay in Error and nobody is stopped until that controller has aborted the simulation (no
+    // ECU of this process is Running, Paused or in Error any more), also when the failed ECU is
+    // the only one of this process:
+    // - Stopping a failed ECU takes it from Error to Shutdown at once; a controller that looks
+    //   from time to time then sees a participant that left, not one that failed.
+    // - Stopping an ECU that did not fail is an ordinary stop: once no ECU is in Error any more
+    //   it ends the whole simulation (Coordinated), and the controller sees no failure at all.
+    // A stop that someone asks for meanwhile (Peer::request_stop(), a signal in ecu_main()) is
+    // not held back: it takes the ECU out of these states, which ends the wait.
+    const auto in_the_simulation = [](const std::unique_ptr<Peer>& p) {
+        const auto state = p->runtime().state();
+        return state == orch::ParticipantState::Running || state == orch::ParticipantState::Paused
+               || state == orch::ParticipantState::Error;
+    };
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(abort_wait_ms.load(std::memory_order_relaxed));
+    while (std::any_of(peers.begin(), peers.end(), in_the_simulation) && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(kAbortPoll);
+    }
+}
+
+namespace detail {
+
+void set_abort_wait(std::chrono::milliseconds wait) noexcept
+{
+    abort_wait_ms.store(wait.count(), std::memory_order_relaxed);
+}
+
+} // namespace detail
 
 Simulation::Simulation() : local_(std::make_unique<LocalRun>()) {}
 

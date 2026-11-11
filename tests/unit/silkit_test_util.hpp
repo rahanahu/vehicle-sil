@@ -7,10 +7,15 @@
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 
+#include <silkit/services/orchestration/ISystemMonitor.hpp>
+#include <silkit/services/orchestration/string_utils.hpp>
 #include <silkit/vendor/CreateSilKitRegistry.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -24,6 +29,82 @@ struct InProcessRegistry
     std::unique_ptr<SilKit::Vendor::Vector::ISilKitRegistry> registry =
         SilKit::Vendor::Vector::CreateSilKitRegistry(SilKit::Config::ParticipantConfigurationFromString("{}"));
     std::string uri = registry->StartListening("silkit://127.0.0.1:0");
+};
+
+/// The states one participant goes through, in order, as another participant sees them (a plain
+/// SIL Kit participant outside the simulation, with a system monitor).
+class StateLog
+{
+public:
+    using State = SilKit::Services::Orchestration::ParticipantState;
+
+    StateLog(const std::string& uri, std::string watched, const std::string& own_name = "Watcher") :
+      watched_(std::move(watched))
+    {
+        participant_ = SilKit::CreateParticipant(SilKit::Config::ParticipantConfigurationFromString("{}"), own_name, uri);
+        participant_->CreateSystemMonitor()->AddParticipantStatusHandler(
+            [this](const SilKit::Services::Orchestration::ParticipantStatus& status) {
+                if (status.participantName == watched_)
+                {
+                    const std::lock_guard lock(mutex_);
+                    states_.push_back(status.state);
+                    entered_.push_back(status.enterTime);
+                }
+            });
+    }
+
+    [[nodiscard]] std::vector<State> states() const
+    {
+        const std::lock_guard lock(mutex_);
+        return states_;
+    }
+
+    [[nodiscard]] bool reached(State state) const
+    {
+        const auto s = states();
+        return std::find(s.begin(), s.end(), state) != s.end();
+    }
+
+    /// When the watched participant entered `state` for the first time, by its own clock.
+    [[nodiscard]] std::optional<std::chrono::system_clock::time_point> entered(State state) const
+    {
+        const std::lock_guard lock(mutex_);
+        const auto it = std::find(states_.begin(), states_.end(), state);
+        if (it == states_.end())
+        {
+            return std::nullopt;
+        }
+        return entered_[static_cast<std::size_t>(it - states_.begin())];
+    }
+
+    /// The state that followed Running, if any.
+    [[nodiscard]] std::optional<State> after_running() const
+    {
+        const auto s = states();
+        auto it = std::find(s.begin(), s.end(), State::Running);
+        if (it == s.end() || ++it == s.end())
+        {
+            return std::nullopt;
+        }
+        return *it;
+    }
+
+    [[nodiscard]] std::string text() const
+    {
+        std::string out;
+        for (const auto state : states())
+        {
+            out += (out.empty() ? "" : " ") + SilKit::Services::Orchestration::to_string(state);
+        }
+        return out;
+    }
+
+private:
+    std::string watched_;
+    mutable std::mutex mutex_;
+    std::vector<State> states_;
+    std::vector<std::chrono::system_clock::time_point> entered_; // as states_
+    std::unique_ptr<SilKit::IParticipant> participant_; // last: destroyed first, with the handler
 };
 
 /// Options of a participant whose lifecycle a SimulationController coordinates.

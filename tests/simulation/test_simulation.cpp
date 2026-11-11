@@ -7,9 +7,12 @@
 // also beside a J1939 network on the same network; the same input refused on both; an application
 // whose constructor throws; the failures of the SIL Kit run (an ECU that ends it, another
 // participant that fails, a start that times out); ECUs added through local().
+#include "silkit_test_util.hpp"
+#include "simulation_internal.hpp"
 #include "test_harness.hpp"
 
 #include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/core/simulation_watch.hpp"
 #include "vehicle_sil/peer/peer.hpp"
 #include "vehicle_sil/simulation/simulation.hpp"
 #include "vehicle_sil/testkit/local_can.hpp"
@@ -17,6 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -329,6 +333,176 @@ TEST_CASE(simulation_runs_under_a_controller_elsewhere)
     CHECK(end == orch::ParticipantState::Shutdown);
     CHECK(before(receiver.seen, 500) == reference);
     CHECK(sim.now() == SimTime{});
+}
+
+// 5b: an ECU that fails in a run under a controller elsewhere, alone in its process or next to
+// one that does not fail: the controller sees the failure (a participant in Error) and aborts,
+// whichever ECU was added first. Stopping the ECU that did not fail would end the simulation as
+// an ordinary stop; stopping the one that failed would take it out of Error before the controller
+// has looked.
+TEST_CASE(simulation_failure_under_a_controller_elsewhere_is_seen_by_it)
+{
+    enum class Layout { GoodBad, BadGood, BadAlone };
+    for (const Layout layout : {Layout::GoodBad, Layout::BadGood, Layout::BadAlone})
+    {
+        const bool failingFirst = layout != Layout::GoodBad;
+        Simulation sim(SilKitOptions{.controller = false});
+        const auto add = [&sim](const char* name, bool fails) {
+            sim.add_ecu(name, 10ms).on_step([fails](SimTime now) {
+                if (fails && now == at(50ms))
+                {
+                    throw std::runtime_error("model failed");
+                }
+            });
+        };
+        vehicle_sil::SimulationControllerOptions c;
+        c.registry_uri = sim.registry_uri();
+        if (layout == Layout::BadAlone)
+        {
+            add("Bad", true);
+            c.required_participants = {"Bad"};
+        }
+        else if (failingFirst)
+        {
+            add("Bad", true);
+            add("Good", false);
+            c.required_participants = {"Good", "Bad"};
+        }
+        else
+        {
+            add("Good", false);
+            add("Bad", true);
+            c.required_participants = {"Good", "Bad"};
+        }
+        c.stop_at = 60s; // ends only by the failure
+        vehicle_sil::SimulationController controller(c);
+        std::exception_ptr error;
+        vehicle_sil::WatchResult watched;
+        {
+            std::jthread control([&] {
+                try
+                {
+                    controller.start(30s);
+                    watched = vehicle_sil::watch_simulation(controller);
+                }
+                catch (...)
+                {
+                    error = std::current_exception();
+                }
+            });
+            CHECK(throws_with<SimulationError>([&] { sim.run(); }, "Bad: "));
+        }
+        CHECK(!error);
+        CHECK(watched.end == vehicle_sil::WatchEnd::Failed);
+        CHECK(watched.failure.has_value());
+        if (watched.failure)
+        {
+            if (watched.failure->participant != "Bad" || watched.failure->state != "Error")
+            {
+                std::fprintf(stderr, "  layout %d, the controller saw: %s, %s\n", static_cast<int>(layout),
+                             watched.failure->participant.c_str(), watched.failure->state.c_str());
+            }
+            CHECK(watched.failure->participant == "Bad");
+            CHECK(watched.failure->state == "Error");
+        }
+        else
+        {
+            std::fprintf(stderr, "  layout %d, the simulation ended (no failure seen)\n", static_cast<int>(layout));
+        }
+    }
+}
+
+// 5c: the controller elsewhere does not abort. The failed ECU stays in Error for the abort wait
+// (shortened here); then the run stops the failed ECU first and the other one after it, whichever
+// was added first, which ends the simulation for the controller too (an ordinary stop: no
+// participant is in Error any more). Alone in its process, the failed ECU ends the same way.
+TEST_CASE(simulation_failure_that_the_controller_elsewhere_does_not_abort_ends_after_the_wait)
+{
+    const auto wait = 400ms;
+    vehicle_sil::detail::set_abort_wait(wait);
+    enum class Layout { GoodBad, BadGood, BadAlone };
+    for (const Layout layout : {Layout::GoodBad, Layout::BadGood, Layout::BadAlone})
+    {
+        const bool alone = layout == Layout::BadAlone;
+        Simulation sim(SilKitOptions{.controller = false});
+        vehicle_sil::unit::StateLog bad(sim.registry_uri(), "Bad", "WatcherOfBad");
+        vehicle_sil::unit::StateLog good(sim.registry_uri(), "Good", "WatcherOfGood");
+        const auto add = [&sim](const char* name, bool fails) {
+            sim.add_ecu(name, 10ms).on_step([fails](SimTime now) {
+                if (fails && now == at(50ms))
+                {
+                    throw std::runtime_error("model failed");
+                }
+            });
+        };
+        vehicle_sil::SimulationControllerOptions c;
+        c.registry_uri = sim.registry_uri();
+        c.required_participants = alone ? std::vector<std::string>{"Bad"} : std::vector<std::string>{"Good", "Bad"};
+        if (layout == Layout::GoodBad)
+        {
+            add("Good", false);
+        }
+        add("Bad", true);
+        if (layout == Layout::BadGood)
+        {
+            add("Good", false);
+        }
+        c.stop_at = 60s; // never reached
+        vehicle_sil::SimulationController controller(c);
+        std::exception_ptr error;
+        std::optional<orch::ParticipantState> end;
+        {
+            std::jthread control([&] {
+                try
+                {
+                    controller.start(30s);
+                    // No watch: this controller does not abort when a participant fails.
+                    end = controller.wait_until_finished(alone ? 1500ms : 30s);
+                }
+                catch (...)
+                {
+                    error = std::current_exception();
+                }
+            });
+            CHECK(throws_with<SimulationError>([&] { sim.run(); }, "Bad: "));
+            if (alone)
+            {
+                // Nobody else is there to stop: the simulation stays as it is, and so does the
+                // controller, until someone ends it.
+                control.join();
+                CHECK(!end.has_value());
+                controller.abort();
+            }
+        }
+        CHECK(!error);
+        const auto inError = bad.entered(orch::ParticipantState::Error);
+        const auto badDown = bad.entered(orch::ParticipantState::Shutdown);
+        if (bad.after_running() != orch::ParticipantState::Error || !badDown)
+        {
+            std::fprintf(stderr, "  layout %d, states of Bad: %s\n", static_cast<int>(layout), bad.text().c_str());
+        }
+        CHECK(bad.after_running() == orch::ParticipantState::Error);
+        CHECK(inError.has_value());
+        CHECK(badDown.has_value());
+        if (inError && badDown)
+        {
+            CHECK(*badDown - *inError >= wait / 2); // it stayed in Error, for the controller to see
+        }
+        if (!alone)
+        {
+            CHECK(end == orch::ParticipantState::Shutdown);
+            const auto goodStopping = good.entered(orch::ParticipantState::Stopping);
+            CHECK(goodStopping.has_value());
+            if (badDown && goodStopping)
+            {
+                if (*badDown > *goodStopping)
+                {
+                    std::fprintf(stderr, "  layout %d: Good was stopped before Bad had shut down\n", static_cast<int>(layout));
+                }
+                CHECK(*badDown <= *goodStopping);
+            }
+        }
+    }
 }
 
 // 6: a Coordinated participant made by the caller (here a Peer in this process, with the same

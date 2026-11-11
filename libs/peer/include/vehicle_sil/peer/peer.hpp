@@ -240,11 +240,14 @@ public:
     /// (control::Agent::finish()). Idempotent; never throws. The networks and the agent stay for
     /// reading.
     void stop(std::string_view reason = "stopped") noexcept;
-    /// Asks the lifecycle to stop without waiting (also from a step).
+    /// Asks the lifecycle to stop without waiting (also from a step). After a failure
+    /// (failed()) the stop is given only once the lifecycle is in Error
+    /// (ParticipantRuntime::request_stop()).
     void request_stop(std::string_view reason = "stop requested") noexcept;
 
     /// A step failed: the host (a network, the application, a LIN node, a port), the step
-    /// handler or the real-time driver threw.
+    /// handler or the real-time driver threw. In both time modes the lifecycle then goes to
+    /// Error (ParticipantRuntime::report_failure() for the driver), and wait() returns.
     [[nodiscard]] bool failed() const;
     /// Why (empty if not failed).
     [[nodiscard]] std::string error() const;

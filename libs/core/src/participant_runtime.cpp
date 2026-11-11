@@ -179,6 +179,13 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout)
     // returns.
     lifecycle_started_.store(true, std::memory_order_release);
     lifecycle_done_ = lifecycle_->StartLifecycle().share();
+    {
+        // Only now does SIL Kit take a reported error (report_failure()). Not held across
+        // StartLifecycle(): that registers status handlers under SIL Kit's handler lock, which
+        // the SIL Kit thread holds while it calls on_status(), which takes this lock.
+        const std::lock_guard lock(control_mutex_);
+        error_reportable_ = true;
+    }
 
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (true)
@@ -250,12 +257,24 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
         }
     }
     stop_cv_.notify_all();
-    deliver_stop(true); // this participant ends now: no waiting for a first step
+    {
+        // A step that is failing now reports its error before the stop goes out (see
+        // deliver_stop()). The caller may have seen the failure before the step handler
+        // returned: Peer::failed() looks at the Host, which fails inside the handler. No
+        // handler starts afterwards, so no failure can begin after this point either: without
+        // that, a step that started right after the gate was let go and failed would report
+        // its error behind the Stop() that deliver_stop() queued from Running.
+        const std::lock_guard gate(step_gate_);
+        steps_disabled_ = true;
+    }
+    // One deadline for the Error (deliver_stop()) and the Shutdown below.
+    const auto deadline = std::chrono::steady_clock::now() + options_.shutdown_timeout;
+    deliver_stop(true, deadline); // this participant ends now: no waiting for a first step
     // The lifecycle proceeds to Shutdown on its own after Stop(), in both modes and from Error.
     const auto done = *lifecycle_done_; // own copy: wait_until_finished() may use it meanwhile
     try
     {
-        if (!final_state() && done.wait_for(options_.shutdown_timeout) == std::future_status::ready)
+        if (!final_state() && done.wait_until(deadline) == std::future_status::ready)
         {
             set_final_state(done.get());
         }
@@ -304,7 +323,7 @@ void ParticipantRuntime::request_stop(std::string_view reason) noexcept
     deliver_stop(false);
 }
 
-void ParticipantRuntime::deliver_stop(bool now) noexcept
+void ParticipantRuntime::deliver_stop(bool now, std::chrono::steady_clock::time_point deadline) noexcept
 {
     if (stop_delivered_.load(std::memory_order_acquire) || !stop_requested())
     {
@@ -317,8 +336,42 @@ void ParticipantRuntime::deliver_stop(bool now) noexcept
     }
     try
     {
-        const auto state = lifecycle_->State();
-        const bool running = state == orch::ParticipantState::Running || state == orch::ParticipantState::Paused;
+        const auto is_running_or_paused = [](orch::ParticipantState s) {
+            return s == orch::ParticipantState::Running || s == orch::ParticipantState::Paused;
+        };
+        auto state = lifecycle_->State();
+        // A participant that failed (its step handler, or report_failure()) leaves through
+        // Error. ReportError() and Stop() are both carried out later on the SIL Kit thread; a
+        // Stop() taken there while still Running would be an ordinary stop (in Coordinated
+        // mode, of the whole simulation), and nobody would see the failure. So no Stop() from
+        // Running after a failure: a request waits for the Error (on_status() delivers it),
+        // stop() waits here until `deadline`. Nor while a step handler runs, which may be
+        // failing (the caller may have seen it fail): a request then goes out when the handler
+        // has returned (on_step()); stop() waited for the handler already.
+        //
+        // The failure flag is set and ReportError() queued under one lock, so the error is
+        // queued before any Stop() that this function could queue after seeing the flag. The
+        // two branches under has_failed() are what makes the result independent of the order
+        // in which SIL Kit carries out queued calls: asio does not promise the order of
+        // post(), and it was not confirmed for Windows. Where queued calls run in order (seen
+        // on Linux), removing the branches changes nothing that a test can observe.
+        if (!now && is_running_or_paused(state) && handler_running_.load(std::memory_order_acquire))
+        {
+            return;
+        }
+        if (is_running_or_paused(state) && has_failed())
+        {
+            if (!now)
+            {
+                return;
+            }
+            while (is_running_or_paused(state) && std::chrono::steady_clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                state = lifecycle_->State();
+            }
+        }
+        const bool running = is_running_or_paused(state);
         // With virtual time, a request waits for the first step: a participant can be Running
         // while others (the system controller among them) are not there yet, and a stop then
         // can leave those stuck before Running; the first step needs every synchronised
@@ -409,6 +462,38 @@ std::string ParticipantRuntime::step_error() const
     return step_error_;
 }
 
+bool ParticipantRuntime::has_failed() const
+{
+    const std::lock_guard lock(control_mutex_);
+    return failed_;
+}
+
+void ParticipantRuntime::report_failure(std::string_view reason) noexcept
+{
+    try
+    {
+        std::string text(reason);
+        // The flag and the queued error together (deliver_stop()): whoever sees the flag can
+        // count on the Error to come. ReportError() only queues a call for the SIL Kit thread
+        // (Participant::ExecuteDeferred() is asio::post()), so nothing runs under the lock.
+        const std::lock_guard lock(control_mutex_);
+        if (!error_reportable_)
+        {
+            return; // SIL Kit ignores an error before StartLifecycle(); so does the stop logic
+        }
+        if (failed_)
+        {
+            return; // only the first failure is reported
+        }
+        lifecycle_->ReportError(std::move(text));
+        failed_ = true;
+    }
+    catch (const std::exception&)
+    {
+        // Already in a state that cannot report errors; the simulation is ending anyway.
+    }
+}
+
 bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nanoseconds duration)
 {
     const auto wallStart = pacer_ ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -428,7 +513,24 @@ bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
         }
         if (const auto& end = options_.virtual_time->end; !end || time < *end)
         {
-            if (!run_step_handler(time, duration))
+            struct Running
+            {
+                std::atomic<bool>& flag;
+                explicit Running(std::atomic<bool>& f) : flag(f) { flag.store(true, std::memory_order_release); }
+                ~Running() { flag.store(false, std::memory_order_release); }
+                Running(const Running&) = delete;
+                Running& operator=(const Running&) = delete;
+            };
+            bool ok = false;
+            {
+                const Running running(handler_running_);
+                ok = run_step_handler(time, duration);
+            }
+            if (!stop_delivered_.load(std::memory_order_acquire))
+            {
+                deliver_stop(false); // a request made while the handler ran (deliver_stop())
+            }
+            if (!ok)
             {
                 return true;
             }
@@ -511,13 +613,17 @@ bool ParticipantRuntime::run_step_handler(SimTime now, SimDuration step)
         error = "unknown exception";
     }
     error = "step handler at t=" + std::to_string(to_ns(now)) + " ns failed: " + error;
+    // The flag and the queued error under one lock, as in report_failure(). A step runs only
+    // after StartLifecycle(), so SIL Kit takes the error.
+    const std::lock_guard lock(control_mutex_);
+    step_error_ = error;
+    if (std::exchange(failed_, true))
     {
-        const std::lock_guard lock(control_mutex_);
-        step_error_ = error;
+        return false; // report_failure() reported a failure already
     }
     try
     {
-        lifecycle_->ReportError(error);
+        lifecycle_->ReportError(std::move(error));
     }
     catch (const std::exception&)
     {
@@ -598,6 +704,12 @@ void ParticipantRuntime::on_status(const orch::ParticipantStatus& status, bool r
         record.enter_time = status.enterTime;
     }
     peers_cv_.notify_all();
+    // This participant's own status comes here too: a stop requested after a step failure
+    // waited for the Error (deliver_stop()).
+    if (status.participantName == options_.participant_name && status.state == orch::ParticipantState::Error)
+    {
+        deliver_stop(false);
+    }
 }
 
 } // namespace vehicle_sil

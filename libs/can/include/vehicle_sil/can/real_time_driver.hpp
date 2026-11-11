@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -24,6 +25,11 @@ struct RealTimeDriverOptions
     /// over to the next step). Also passed to Host::set_step_size(), so that a protocol can
     /// check it like a step size of virtual time.
     SimDuration max_idle = std::chrono::milliseconds(10);
+
+    /// Called once on the driver's thread when a step throws, with error(), after failed() has
+    /// become true and before the thread ends (stop() from another thread waits for it). It must
+    /// not call stop() of this driver. Exceptions from it are ignored. Empty: nothing is called.
+    std::function<void(const std::string& error)> on_failure{};
 };
 
 /// Steps a host of real-time ports (TimeDomain::RealTime) on its own thread, one per

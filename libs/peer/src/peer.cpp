@@ -21,6 +21,9 @@ namespace vehicle_sil {
 
 namespace {
 
+/// Start of the error that a real-time peer reports to the lifecycle when a step fails.
+const std::string kRealTimeFailure = "real-time step failed: ";
+
 /// The names of `items` (each with a `name`), quoted, for messages; "none" if there is none.
 template <typename T>
 std::string name_list(const std::vector<std::unique_ptr<T>>& items)
@@ -679,7 +682,13 @@ void Peer::start(std::chrono::milliseconds timeout)
         {
             return; // stopped from another thread meanwhile: no driver
         }
-        driver_ = std::make_unique<can::RealTimeDriver>(host_, *clock_, can::RealTimeDriverOptions{options_.max_idle});
+        can::RealTimeDriverOptions driverOptions{options_.max_idle};
+        // As with virtual time, a failed step takes the lifecycle to Error: the controller sees
+        // the failure, and a stop waits for the Error instead of stopping the simulation.
+        driverOptions.on_failure = [runtime = runtime_.get()](const std::string& error) {
+            runtime->report_failure(kRealTimeFailure + error);
+        };
+        driver_ = std::make_unique<can::RealTimeDriver>(host_, *clock_, std::move(driverOptions));
         driver_->start();
         running_driver_.store(driver_.get(), std::memory_order_release);
     }
@@ -732,7 +741,27 @@ void Peer::stop(std::string_view reason) noexcept
     agent_.finish();
 }
 
-void Peer::request_stop(std::string_view reason) noexcept { runtime_->request_stop(reason); }
+void Peer::request_stop(std::string_view reason) noexcept
+{
+    // Real time: failed() is true from the moment the host fails, a little before the driver's
+    // thread reports the failure to the lifecycle (on_failure, above). A caller that saw the
+    // failure and asks to stop must not get ahead of that report, or the stop would be an
+    // ordinary one; so the failure is reported here first (the runtime takes the first report
+    // only). With virtual time the runtime keeps a request made while the step handler runs.
+    // Only the host is looked at: this may run on the driver's own thread.
+    if (!options_.virtual_time && host_.failed())
+    {
+        try
+        {
+            runtime_->report_failure(kRealTimeFailure + host_.error());
+        }
+        catch (const std::exception&)
+        {
+            // Out of memory for the text; the driver's own report follows.
+        }
+    }
+    runtime_->request_stop(reason);
+}
 
 bool Peer::failed() const
 {

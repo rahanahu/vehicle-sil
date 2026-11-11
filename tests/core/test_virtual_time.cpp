@@ -9,14 +9,19 @@
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/core/tick_scheduler.hpp"
 
+#include <silkit/services/orchestration/ISystemMonitor.hpp>
 #include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -31,6 +36,7 @@ using Wall = std::chrono::steady_clock;
 using vehicle_sil::unit::coordinated_options;
 using vehicle_sil::unit::InProcessRegistry;
 using vehicle_sil::unit::start_together;
+using vehicle_sil::unit::StateLog;
 using vehicle_sil::unit::throws;
 
 /// One begin/end record per step, in the wall-clock order in which they happened.
@@ -309,6 +315,162 @@ TEST_CASE(virtual_time_step_handler_exception_is_reported)
     CHECK(vehicle_sil::unit::eventually([&] { return controller.failed_participant() == std::optional<std::string>("Faulty"); }, 10s));
     CHECK(!controller.wait_until_finished(50ms).has_value()); // still waiting for time to advance
     controller.abort();
+}
+
+/// A coordinated simulation of "Faulty" alone, with a controller that ends it only by an abort,
+/// and a log of the states of "Faulty". The step handler at 30 ms tells `entered`, then waits until
+/// the test calls release(); `fails` makes it throw then.
+struct HeldStep
+{
+    explicit HeldStep(bool fails) :
+      log(registry.uri, "Faulty"), controller(controller_options(registry.uri)), runtime(runtime_options(registry.uri))
+    {
+        runtime.set_step_handler([this, fails](SimTime now, SimDuration) {
+            if (now == SimTime{} + 30ms)
+            {
+                // Like Peer: its Host has failed (Peer::failed() is true) before the exception
+                // leaves the step handler.
+                entered.set_value();
+                if (release_future.wait_for(10s) != std::future_status::ready)
+                {
+                    throw std::runtime_error("the test did not release the step");
+                }
+                if (fails)
+                {
+                    throw std::runtime_error("ECU model diverged");
+                }
+            }
+            else if (now > SimTime{} + 30ms)
+            {
+                ++later_steps;
+            }
+        });
+        start_together(controller, {&runtime}, 30s);
+        CHECK(entered_future.wait_for(10s) == std::future_status::ready);
+    }
+
+    ~HeldStep() { controller.abort(); }
+
+    HeldStep(const HeldStep&) = delete;
+    HeldStep& operator=(const HeldStep&) = delete;
+
+    void release() { released.set_value(); }
+
+    /// It left through Error, and the controller saw a failure. An ordinary stop first (Running,
+    /// then Stopping) would end the coordinated simulation as if nothing had failed.
+    void check_left_through_error()
+    {
+        CHECK(vehicle_sil::unit::eventually([&] { return log.reached(orch::ParticipantState::Shutdown); }, 10s));
+        const auto next = log.after_running();
+        if (next != orch::ParticipantState::Error)
+        {
+            std::fprintf(stderr, "  states of Faulty: %s\n", log.text().c_str());
+        }
+        CHECK(next == orch::ParticipantState::Error);
+        CHECK(vehicle_sil::unit::eventually([&] { return controller.failed_participant() == std::optional<std::string>("Faulty"); }, 10s));
+    }
+
+    static SimulationControllerOptions controller_options(const std::string& uri)
+    {
+        SimulationControllerOptions o;
+        o.registry_uri = uri;
+        o.required_participants = {"Faulty"};
+        o.stop_at = 60s; // ends only by the failure
+        o.shutdown_timeout = 2s;
+        return o;
+    }
+
+    static ParticipantRuntimeOptions runtime_options(const std::string& uri)
+    {
+        auto o = coordinated_options("Faulty", uri, VirtualTimeOptions{10ms, std::nullopt});
+        o.shutdown_timeout = 5s;
+        return o;
+    }
+
+    InProcessRegistry registry;
+    StateLog log;
+    SimulationController controller;
+    std::promise<void> entered;
+    std::future<void> entered_future = entered.get_future();
+    std::promise<void> released;
+    std::future<void> release_future = released.get_future();
+    std::atomic<int> later_steps{0};
+    ParticipantRuntime runtime; // last: destroyed first, before what its handler uses
+};
+
+TEST_CASE(virtual_time_stop_during_a_failing_step_leaves_through_error)
+{
+    // The owner sees the failure (Peer::failed()) while the handler still runs, and stops it.
+    HeldStep held(true);
+    std::thread owner([&] { held.runtime.stop("the owner saw the step fail"); });
+    std::this_thread::sleep_for(50ms); // stop() waits for the handler meanwhile
+    held.release();
+    owner.join();
+    held.check_left_through_error();
+    CHECK(held.runtime.step_error().find("ECU model diverged") != std::string::npos);
+}
+
+TEST_CASE(virtual_time_stop_request_during_a_failing_step_leaves_through_error)
+{
+    // No stop(): the request itself goes out once the participant is in Error.
+    HeldStep held(true);
+    held.runtime.request_stop("the owner saw the step fail");
+    held.release();
+    held.check_left_through_error();
+}
+
+TEST_CASE(virtual_time_stop_request_during_a_step_goes_out_after_it)
+{
+    // A request from another thread while the handler runs (and does not fail) is kept until the
+    // handler has returned, then delivered: the simulation stops in order.
+    HeldStep held(false);
+    held.runtime.request_stop("the owner is done");
+    held.release();
+    CHECK(held.runtime.wait_until_finished(10s) == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
+    CHECK(held.log.after_running() == orch::ParticipantState::Stopping);
+    CHECK(held.runtime.step_error().empty());
+}
+
+TEST_CASE(virtual_time_reported_failure_takes_a_kept_request_through_error)
+{
+    // report_failure() from another thread while the handler runs; a request made meanwhile is
+    // kept past the handler (the participant is still Running) and delivered once it is in Error
+    // (by its own status), without stop().
+    HeldStep held(false);
+    held.runtime.report_failure("the driver failed");
+    held.runtime.request_stop("the owner saw the failure");
+    held.release();
+    held.check_left_through_error();
+    CHECK(held.runtime.step_error().empty());
+    CHECK_EQ(held.later_steps.load(), 0);
+}
+
+TEST_CASE(virtual_time_failure_reported_before_start_is_ignored)
+{
+    // SIL Kit ignores an error reported before the lifecycle starts; so does the runtime: the
+    // participant runs, and its own stop request is not kept waiting for an Error.
+    InProcessRegistry registry;
+    SimulationControllerOptions controllerOptions;
+    controllerOptions.registry_uri = registry.uri;
+    controllerOptions.required_participants = {"Early"};
+    controllerOptions.stop_at = 60s;
+    SimulationController controller(controllerOptions);
+    StateLog log(registry.uri, "Early");
+    ParticipantRuntime runtime(coordinated_options("Early", registry.uri, VirtualTimeOptions{10ms, std::nullopt}));
+    std::atomic<int> steps{0};
+    runtime.set_step_handler([&runtime, &steps](SimTime now, SimDuration) {
+        ++steps;
+        if (now == SimTime{} + 20ms)
+        {
+            runtime.request_stop("done");
+        }
+    });
+    runtime.report_failure("too early");
+    start_together(controller, {&runtime}, 30s);
+    CHECK(runtime.wait_until_finished(10s) == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
+    CHECK(steps.load() < 50); // the request stopped it soon after 20 ms, not the controller at 60 s
+    CHECK(log.after_running() == orch::ParticipantState::Stopping);
+    CHECK(!log.reached(orch::ParticipantState::Error));
 }
 
 TEST_CASE(virtual_time_end_limits_the_handled_steps)
