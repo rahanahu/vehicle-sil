@@ -1,12 +1,19 @@
 import { Component, LOCALE_ID, computed, inject, input } from '@angular/core';
 import { RunResult } from '../core/api';
+import { MeasurePipe } from '../core/format/measure-pipe';
 import { FindingsList } from './findings-list';
-import { interruptedByLabel, runOutcomeLabel, simulationLabel } from './labels';
+import {
+  interruptedByLabel,
+  latenessText,
+  runOutcomeLabel,
+  simulationLabel,
+  speedLabel,
+} from './labels';
 
-/** 実行の結果: 結果と、どう終わったか、理由（所見）。 */
+/** 実行の結果: 結果と、どう終わったか、時間の進み方、理由（所見）。 */
 @Component({
   selector: 'app-result-panel',
-  imports: [FindingsList],
+  imports: [FindingsList, MeasurePipe],
   template: `
     <!-- ランチャーの英語の値（result、simulation、interrupted_by）は、日本語の横に並べず title に置く -->
     <p class="outcome" [attr.data-tone]="tone()" [title]="result().result" data-testid="result">
@@ -33,6 +40,61 @@ import { interruptedByLabel, runOutcomeLabel, simulationLabel } from './labels';
         </dd>
       </div>
     </dl>
+    @if (result().timing; as timing) {
+      <dl class="facts" data-testid="timing">
+        <div>
+          <dt i18n>速度</dt>
+          <dd>{{ speedText() }}</dd>
+        </div>
+        @if (timing.sim_ms !== null) {
+          <div>
+            <dt i18n>仮想時刻</dt>
+            <dd i18n>{{ timing.sim_ms / 1000 | measure: 3 }} s</dd>
+          </div>
+        }
+        @if (timing.wall_ms !== null) {
+          <div>
+            <dt i18n>かかった実時間</dt>
+            <dd i18n>{{ timing.wall_ms / 1000 | measure: 3 }} s</dd>
+          </div>
+        }
+        @if (timing.actual_speed !== null) {
+          <div>
+            <dt i18n>実際の速さ</dt>
+            <dd i18n>{{ timing.actual_speed | measure: 2 }} 倍</dd>
+          </div>
+        }
+        @if (timing.paused_ms) {
+          <div>
+            <dt i18n>一時停止していた時間</dt>
+            <dd i18n>{{ timing.paused_ms / 1000 | measure: 3 }} s</dd>
+          </div>
+        }
+        @if (timing.paced_steps) {
+          <div>
+            <dt i18n>遅れた刻み</dt>
+            <dd i18n>{{ timing.late_steps ?? 0 }} / {{ timing.paced_steps }}</dd>
+          </div>
+          <div>
+            <dt i18n>最大の遅れ</dt>
+            <dd i18n>{{ timing.max_late_ms ?? 0 }} ms</dd>
+          </div>
+          <div>
+            <dt i18n>ずれの合計</dt>
+            <dd i18n>{{ timing.slipped_ms ?? 0 }} ms</dd>
+          </div>
+          @if (timing.late_ms) {
+            <div>
+              <dt i18n>終わったときの遅れ</dt>
+              <dd i18n>{{ timing.late_ms }} ms</dd>
+            </div>
+          }
+        }
+      </dl>
+      @if (lateText(); as text) {
+        <p class="failed" data-testid="timing-late"><span aria-hidden="true">⚠</span> {{ text }}</p>
+      }
+    }
     @if (leftProcesses()) {
       <p class="failed" i18n>プロセスが残った participant: {{ leftProcesses() }}</p>
     }
@@ -86,6 +148,21 @@ export class ResultPanel {
   );
   protected readonly mark = computed(() => ({ good: '✓', neutral: '■', bad: '✕' })[this.tone()]);
   protected readonly outcome = computed(() => runOutcomeLabel(this.result().result));
+  protected readonly speedText = computed(() => speedLabel(this.result().timing?.speed ?? null));
+  /**
+   * 実時間への遅れ（許容を超えて遅れた刻みがあったときだけ。ランチャーが所見 behind-real-time を出す条件と同じ）。
+   * 終わったときの遅れ（late_ms）は、数の欄で見せる。
+   */
+  protected readonly lateText = computed(() => {
+    const t = this.result().timing;
+    return t
+      ? latenessText({
+          lateSteps: t.late_steps ?? 0,
+          maxLateMs: t.max_late_ms ?? 0,
+          slippedMs: t.slipped_ms ?? 0,
+        })
+      : null;
+  });
   /** プロセスが残った participant（言語の並べ方で）。なければ空。 */
   protected readonly leftProcesses = computed(() =>
     this.list.format(

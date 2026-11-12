@@ -34,6 +34,10 @@
       "source": "言語（Language）: {$language}",
       "target": "Language: {$language}"
     },
+    "2831722713291175641": {
+      "source": "ランチャーが命令（{$command}）に {$seconds} 秒たっても答えません。入力を読んでいないかもしれません。もう一度送れます。",
+      "target": "The launcher has not answered the command ({$command}) for {$seconds} s: it may not read its input. You can send again."
+    },
     "8542080435534198197": {
       "source": "実行",
       "target": "Run"
@@ -286,6 +290,62 @@
       "source": "事象を読む側がいなくなった",
       "target": "Nothing reads the events any more"
     },
+    "2816314616218041925": {
+      "source": "最速",
+      "target": "Fastest"
+    },
+    "5397961213649650354": {
+      "source": "等速",
+      "target": "Real time"
+    },
+    "4099169947969588842": {
+      "source": "{$factor} 倍",
+      "target": "{$factor}×"
+    },
+    "1908210406916551300": {
+      "source": "実時間に遅れました: 遅れた刻み {$steps} 回、最大の遅れ {$max} ms、ずれの合計 {$slipped} ms。",
+      "target": "Fell behind real time: {$steps} late steps, the latest by {$max} ms, {$slipped} ms behind in all."
+    },
+    "5820938043696799093": {
+      "source": "実時間に遅れました。",
+      "target": "Fell behind real time."
+    },
+    "9205666988521086765": {
+      "source": "送った命令へのランチャーの答えを待っています。",
+      "target": "Waiting for the launcher to answer the command sent."
+    },
+    "7779081102281014893": {
+      "source": "変数: つながった",
+      "target": "Variables: connected"
+    },
+    "2298619856924853358": {
+      "source": "変数: つながった（{$count} 個）",
+      "target": "Variables: connected ({$count})"
+    },
+    "924182004814858054": {
+      "source": "変数: hello が来なかった（読み書きできない）",
+      "target": "Variables: no hello came (cannot be read or written)"
+    },
+    "3166090015486688334": {
+      "source": "変数: 形式の版が違う（読み書きできない）",
+      "target": "Variables: another message version (cannot be read or written)"
+    },
+    "9142096827559408509": {
+      "source": "変数: 形式の版 {$version} が違う（読み書きできない）",
+      "target": "Variables: message version {$version} differs (cannot be read or written)"
+    },
+    "2648994986082843508": {
+      "source": "変数: あるが、この ECU は読み書きの口を出していない",
+      "target": "Variables: has some, but this ECU does not offer them to be read or written"
+    },
+    "1727434890989314966": {
+      "source": "変数: なし",
+      "target": "Variables: none"
+    },
+    "1507490651024932329": {
+      "source": "変数: {$state}",
+      "target": "Variables: {$state}"
+    },
     "7129416215527586830": {
       "source": "すべて",
       "target": "All"
@@ -386,6 +446,58 @@
       "source": " 誤り {$INTERPOLATION}、警告 {$INTERPOLATION_1}、注記 {$INTERPOLATION_2} ",
       "target": " errors: {$INTERPOLATION}, warnings: {$INTERPOLATION_1}, notes: {$INTERPOLATION_2} "
     },
+    "8177955834629607216": {
+      "source": "速度",
+      "target": "Speed"
+    },
+    "5622577318708264383": {
+      "source": "仮想時刻",
+      "target": "Virtual time"
+    },
+    "3969642018190845113": {
+      "source": "{$INTERPOLATION} s",
+      "target": "{$INTERPOLATION} s"
+    },
+    "3128582342067852835": {
+      "source": "かかった実時間",
+      "target": "Wall-clock time"
+    },
+    "2939805397658749693": {
+      "source": "実際の速さ",
+      "target": "Actual speed"
+    },
+    "375336114336977975": {
+      "source": "{$INTERPOLATION} 倍",
+      "target": "{$INTERPOLATION}×"
+    },
+    "4720818833838394805": {
+      "source": "一時停止していた時間",
+      "target": "Time paused"
+    },
+    "718640939027272115": {
+      "source": "遅れた刻み",
+      "target": "Late steps"
+    },
+    "400916214031860722": {
+      "source": "{$INTERPOLATION} / {$INTERPOLATION_1}",
+      "target": "{$INTERPOLATION} / {$INTERPOLATION_1}"
+    },
+    "6610436969984243417": {
+      "source": "最大の遅れ",
+      "target": "Latest by"
+    },
+    "7181536990766699085": {
+      "source": "{$INTERPOLATION} ms",
+      "target": "{$INTERPOLATION} ms"
+    },
+    "8848804709372536148": {
+      "source": "ずれの合計",
+      "target": "Behind in all"
+    },
+    "3979514638476809444": {
+      "source": "終わったときの遅れ",
+      "target": "Late at the end"
+    },
     "7091115058470204677": {
       "source": "プロセスが残った participant: {$INTERPOLATION}",
       "target": "Participants whose process was left running: {$INTERPOLATION}"
@@ -457,6 +569,10 @@
     "4171957228112156442": {
       "source": "コピー",
       "target": "Copy"
+    },
+    "6198959273292437434": {
+      "source": "止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）",
+      "target": "Start paused (stand still at virtual time 0 until resumed or stepped)"
     },
     "5988127550695008293": {
       "source": "この実行の照合の結果はありません。",
@@ -550,6 +666,10 @@
       "source": "{VAR_PLURAL, plural, other {ほかに {INTERPOLATION} 件あります（出していません）。}}",
       "target": "{VAR_PLURAL, plural, other {{INTERPOLATION} more not shown.}}"
     },
+    "5354570056559896268": {
+      "source": "時刻",
+      "target": "Time"
+    },
     "8297317269179257969": {
       "source": " まだ実行していません。始めると、participant の状態とログがここに出ます。 ",
       "target": " Nothing has run yet. When you start, the participant status and the log appear here. "
@@ -622,14 +742,6 @@
       "source": "経過",
       "target": "Elapsed"
     },
-    "3969642018190845113": {
-      "source": "{$INTERPOLATION} s",
-      "target": "{$INTERPOLATION} s"
-    },
-    "5622577318708264383": {
-      "source": "仮想時刻",
-      "target": "Virtual time"
-    },
     "3546224380235485503": {
       "source": "実行中は開始できません。",
       "target": "Cannot start while a run is going."
@@ -677,6 +789,10 @@
     "3685874571258323992": {
       "source": "まだ実行していません。",
       "target": "Nothing has run yet."
+    },
+    "1483151911201142225": {
+      "source": "一時停止中",
+      "target": "Paused"
     },
     "4790358423910213729": {
       "source": "実行中",
@@ -734,21 +850,9 @@
       "source": "停止",
       "target": "Stop"
     },
-    "8177955834629607216": {
-      "source": "速度",
-      "target": "Speed"
-    },
     "3190502933620390937": {
       "source": "構成のとおり",
       "target": "As configured"
-    },
-    "2816314616218041925": {
-      "source": "最速",
-      "target": "Fastest"
-    },
-    "5397961213649650354": {
-      "source": "等速",
-      "target": "Real time"
     },
     "1254075052970929264": {
       "source": "倍率",
@@ -757,6 +861,62 @@
     "8021742515226990447": {
       "source": "倍率は {$min} から {$max} の数にしてください。",
       "target": "Enter a factor from {$min} to {$max}."
+    },
+    "2672770701084214909": {
+      "source": "一時停止",
+      "target": "Pause"
+    },
+    "9056348193082714770": {
+      "source": "再開",
+      "target": "Resume"
+    },
+    "9084130244021564389": {
+      "source": "状態",
+      "target": "State"
+    },
+    "3774189797169423796": {
+      "source": "いまの遅れ",
+      "target": "Late now"
+    },
+    "6354291750492542849": {
+      "source": "ステップ送りの量（ms）",
+      "target": "Step (ms)"
+    },
+    "5735916835728028289": {
+      "source": " ステップ送り ",
+      "target": " Step "
+    },
+    "1611428417583539924": {
+      "source": " 速度を変える ",
+      "target": " Change speed "
+    },
+    "7722760895092270928": {
+      "source": "命令を受け付けられませんでした:",
+      "target": "The command was not accepted:"
+    },
+    "4351321709489989090": {
+      "source": "新しい速度",
+      "target": "New speed"
+    },
+    "6313800702032544939": {
+      "source": "動いている",
+      "target": "Running"
+    },
+    "3521573166656724286": {
+      "source": "ステップ送りの量は 1 から {$max} までの整数（ミリ秒）にしてください。",
+      "target": "Make the step a whole number of milliseconds from 1 to {$max}."
+    },
+    "1241904257650615775": {
+      "source": "前のステップ送りで進む量: {$ms} ms（ランチャーが刻みの倍数に切り上げます）。",
+      "target": "The last step goes {$ms} ms (the launcher rounds a step up to whole time steps)."
+    },
+    "5201109295240183808": {
+      "source": "時刻の操作は、実行が動いている間だけできます。",
+      "target": "The time controls work only while a run is going."
+    },
+    "3234026008411750840": {
+      "source": "ステップ送りは、一時停止している間だけできます。",
+      "target": "Stepping works only while paused."
     },
     "6850339870794295920": {
       "source": "レイアウトの試験",

@@ -32,6 +32,7 @@ EXAMPLES = {
     "error-not-a-configuration", "error-unknown-participant", "error-unsupported", "error-file-not-found",
     "error-already-running", "error-check-busy", "error-check-timeout", "error-launcher-output",
     "error-launcher-unusable", "error-launcher-start", "error-shutting-down", "error-too-many-connections",
+    "error-not-running", "time", "ws-time", "ws-late", "ws-control-trouble",
     "ws-pass", "ws-log-dropped", "ws-check-error", "ws-participant-crash", "ws-launcher-crash", "ws-bad-lines", "ws-bad-types",
     "ws-orphan", "ws-stop", "ws-force-stop", "ws-replay", "ws-resume", "ws-dropped", "ws-slow-client",
     "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit",
@@ -58,6 +59,13 @@ class Normalizer:
                 out["t_ms"] = out["seq"] * 10
             if isinstance(out.get("last_seq"), int) and "last_t_ms" in out:
                 out["last_t_ms"] = out["last_seq"] * 10
+            # How fast it went in real time (a time event, the result's timing)
+            if "actual_speed" in out:
+                out["actual_speed"] = None if out.get("paused") is True else 1.5
+            if isinstance(out.get("wall_ms"), int):
+                out["wall_ms"] = 1000
+            if isinstance(out.get("paused_ms"), int) and out["paused_ms"] > 0:
+                out["paused_ms"] = 500
             return out
         if isinstance(value, list):
             return [self(v) for v in value]
@@ -154,8 +162,8 @@ def test_http_examples(tmp_path: Path) -> None:
                      "A participant name that the check of the file does not have."),
                     ("invalid-field", "api/run", {"file": "simulation.yaml", "speed": 0}, {},
                      "A field of the wrong type or out of range."),
-                    ("unsupported", "api/run", {"file": "simulation.yaml", "start_paused": True}, {},
-                     "start_paused true with a launcher that has no start-paused feature."),
+                    ("not-running", "api/time", {"command": "pause"}, {},
+                     "A time command when no simulation is running."),
             ):
                 status, body = await c.post(path, req, **kw)
                 assert body["error"]["code"] == code, body
@@ -203,6 +211,16 @@ def test_http_examples(tmp_path: Path) -> None:
             status, body = await c.post("api/stop")
             check_example("stop-ended", http("Stop when the run has ended: the summary, not an error.", "POST",
                                              "api/stop", None, status, body), gui)
+        run_async(talk, gui)
+
+
+def test_errors_of_an_older_launcher(tmp_path: Path) -> None:
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_FEATURES": "events,stdin-commands,check-variables"}) as gui:
+        async def talk(c: Client) -> None:
+            req = {"file": "simulation.yaml", "start_paused": True}
+            status, body = await c.post("api/run", req)
+            check_example("error-unsupported", http("start_paused true with a launcher that has no start-paused "
+                                                    "feature.", "POST", "api/run", req, status, body), gui)
         run_async(talk, gui)
 
 
@@ -291,6 +309,11 @@ SCENARIOS = {
     "large-fields": ("large-fields.yaml", "A participant event larger than 4 KiB (a long command): the event is "
                                           "passed on whole; the summary keeps the participant without the command "
                                           "and names it in omitted_fields (kept-limit, once)."),
+    "control-trouble": ("control-trouble.yaml", "The control links: Engine does not say hello (no_hello), Dashboard "
+                                                "says hello in another version (version_mismatch), Gauge does not "
+                                                "offer its variables (not_offered, a note of the check), Logger has "
+                                                "none; the control_link events before running, kept in the summary's "
+                                                "participants (control_link), the warnings at the end."),
     "loose-fields": ("loose-fields.yaml", "Known events whose fields that the server does not check are missing or "
                                           "of other types (a finding with only severity and message, a registry "
                                           "with uri null, a participant with a number as signal and message, a log "
@@ -322,6 +345,58 @@ def test_ws_scenario_examples(tmp_path: Path, scenario: str) -> None:
                 status, body = await c.get("api/session")
                 check_example("session-ended", http("The summary after the run ended.", "GET", "api/session",
                                                     None, status, body), gui)
+        run_async(talk, gui)
+
+
+def is_time(**fields):
+    return lambda m: m["type"] == "event" and m["event"]["event"] == "time" and \
+        all(m["event"].get(k) == v for k, v in fields.items())
+
+
+def test_ws_time_examples(tmp_path: Path) -> None:
+    # Slow steps, so that a command sent right after the time event it waits for lands before the next step.
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "600"}) as gui:
+        async def talk(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"], "speed": "max",
+                                     "start_paused": True})
+            await sock.until(is_time(paused=True))
+            req = {"command": "step", "ms": 25}
+            status, body = await c.post("api/time", req)
+            check_example("time", http("A time command: passed on to the launcher at once (what it did comes as its "
+                                       "command and time events).", "POST", "api/time", req, status, body), gui)
+            await sock.until(is_time(sim_ms=30, paused=True))
+            await c.post("api/time", {"command": "speed", "value": 1})
+            await sock.until(is_time(speed=1))
+            await c.post("api/time", {"command": "resume"})
+            await sock.until(is_time(paused=False))
+            await c.post("api/time", {"command": "step", "ms": 100})
+            await sock.until(lambda m: m.get("event", {}).get("event") == "command")
+            await c.post("api/time", {"command": "pause"})
+            await sock.until(is_time(paused=True))
+            await c.post("api/stop", {})
+            await sock.until(is_ended)
+            await sock.close()
+            check_example("ws-time", ws("Started paused at the speed max: a step of 25 ms (the launcher rounds it up "
+                                        "to its time step: ms 30), the speed 1, resume, a step it refuses (not "
+                                        "paused), pause, stop.", sock.sent, sock.received), gui)
+        run_async(talk, gui)
+
+
+def test_ws_late_example(tmp_path: Path) -> None:
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "600"}) as gui:
+        async def talk(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            await c.post("api/run", {"file": "late.yaml"})
+            await sock.until(is_time(late_steps=1, late_ms=0))
+            await c.post("api/stop", {})
+            await sock.until(is_ended)
+            await sock.close()
+            check_example("ws-late", ws("A run at speed 1 whose third step starts 200 ms late: a time event while it "
+                                        "stands (late_ms), the counts after it, the warning behind-real-time and the "
+                                        "result's timing.", sock.sent, sock.received), gui)
         run_async(talk, gui)
 
 

@@ -17,6 +17,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     file: 'sim.yaml',
     disable: [],
     speed: null,
+    start_paused: false,
     state: 'running',
     phase: null,
     stop: 'none',
@@ -24,6 +25,8 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     last_t_ms: null,
     sim_ms: null,
     time_omitted_fields: [],
+    time: null,
+    last_command: null,
     check: null,
     participants: [],
     findings: [],
@@ -74,6 +77,7 @@ function check(participants: { name: string; enabled?: boolean; required?: boole
       step_ms: 10,
       status: p.enabled === false ? 'disabled' : 'described',
       variables: null,
+      control: null,
     })),
     networks: [],
     findings: [],
@@ -144,6 +148,7 @@ describe('applyEvents', () => {
         message: null,
         stopRequested: false,
         omittedFields: [],
+        controlLink: null,
       },
       {
         name: 'B',
@@ -156,6 +161,7 @@ describe('applyEvents', () => {
         message: null,
         stopRequested: false,
         omittedFields: [],
+        controlLink: null,
       },
     ]);
     expect(runOutcome(session)).toBe('running');
@@ -206,15 +212,153 @@ describe('applyEvents', () => {
     expect(dropped).toBe(seq - MAX_LOG_LINES);
   });
 
-  it('keeps the reason of a refused command', () => {
+  it('keeps how each participant is linked to its variables, from the events and from the result', () => {
     const session = applyEvents(
       emptySession(),
       events(
-        { event: 'command', command: 'stop', accepted: true, message: null },
-        { event: 'command', command: 'jump', accepted: false, message: 'unknown command' },
+        {
+          event: 'participant',
+          name: 'A',
+          state: 'joined',
+          pid: null,
+          exit_code: null,
+          signal: null,
+        },
+        {
+          event: 'control_link',
+          name: 'A',
+          link: { state: 'connected', variables: 17, version: null, late_messages: null },
+        },
+        {
+          event: 'control_link',
+          name: 'B',
+          link: { state: 'no_hello', variables: null, version: null, late_messages: null },
+        },
       ),
     );
-    expect(session.rejectedCommand).toBe('unknown command');
+    expect(session.participants.map((p) => [p.name, p.state, p.controlLink?.state])).toEqual([
+      ['A', 'joined', 'connected'],
+      ['B', null, 'no_hello'],
+    ]);
+    // 結果のほうが新しい（遅れて届いたメッセージの数を持つ）
+    const ended = applyEvents(
+      session,
+      eventsFrom(3, [
+        {
+          event: 'result',
+          result: {
+            result: 'passed',
+            findings: [],
+            check: null,
+            participants: [
+              {
+                name: 'A',
+                required: true,
+                enabled: true,
+                ended: 'exited',
+                exit_code: 0,
+                signal: null,
+                control_link: {
+                  state: 'connected',
+                  variables: 17,
+                  version: null,
+                  late_messages: 0,
+                },
+              },
+              {
+                name: 'C',
+                required: true,
+                enabled: true,
+                ended: 'exited',
+                exit_code: 0,
+                signal: null,
+                control_link: { state: 'none', variables: null, version: null, late_messages: 0 },
+              },
+            ],
+          },
+        },
+      ]),
+    );
+    expect(ended.participants.find((p) => p.name === 'A')?.controlLink).toEqual({
+      state: 'connected',
+      variables: 17,
+      version: null,
+      late_messages: 0,
+    });
+    expect(ended.participants.find((p) => p.name === 'C')?.controlLink?.state).toBe('none');
+  });
+
+  it('keeps the last command and whether the launcher took it', () => {
+    const session = applyEvents(
+      emptySession(),
+      events(
+        { event: 'command', command: 'step', accepted: true, message: null, ms: 30 },
+        {
+          event: 'command',
+          command: 'jump',
+          accepted: false,
+          message: 'unknown command',
+          ms: null,
+        },
+      ),
+    );
+    expect(session.lastCommand).toEqual({
+      name: 'jump',
+      accepted: false,
+      message: 'unknown command',
+      ms: null,
+      seq: 1,
+    });
+  });
+
+  it('follows the time: from the events, and from a summary for a screen opened later', () => {
+    const time = {
+      event: 'time',
+      sim_ms: 300,
+      speed: 1,
+      paused: true,
+      actual_speed: null,
+      late_steps: 1,
+      max_late_ms: 200,
+      slipped_ms: 200,
+      late_ms: 0,
+    };
+    const session = applyEvents(emptySession(), events(time));
+    expect(session.time).toEqual({
+      simMs: 300,
+      speed: 1,
+      paused: true,
+      actualSpeed: null,
+      lateSteps: 1,
+      maxLateMs: 200,
+      slippedMs: 200,
+      lateMs: 0,
+    });
+    const later = sessionFromSummary(
+      summary({
+        last_seq: 9,
+        sim_ms: 300,
+        time: { ...time, event: undefined } as unknown as SessionSummary['time'],
+        start_paused: true,
+        last_command: {
+          seq: 8,
+          command: 'pause',
+          source: 'stdin',
+          accepted: true,
+          message: null,
+          ms: null,
+        },
+      }),
+    );
+    expect(later.time).toEqual(session.time);
+    expect(later.startPaused).toBe(true);
+    expect(later.lastCommand).toEqual({
+      name: 'pause',
+      accepted: true,
+      message: null,
+      ms: null,
+      seq: 8,
+    });
   });
 
   it('ends with the result, which alone tells how the participants ended', () => {
@@ -226,6 +370,7 @@ describe('applyEvents', () => {
       notes: 0,
       simulation: 'aborted',
       interrupted_by: null,
+      timing: null,
       participants: [
         {
           name: 'A',
@@ -235,6 +380,7 @@ describe('applyEvents', () => {
           exit_code: 0,
           signal: null,
           left_processes: false,
+          control_link: null,
         },
         {
           name: 'B',
@@ -244,6 +390,7 @@ describe('applyEvents', () => {
           exit_code: 3,
           signal: null,
           left_processes: false,
+          control_link: null,
         },
         {
           name: 'C',
@@ -253,6 +400,7 @@ describe('applyEvents', () => {
           exit_code: null,
           signal: null,
           left_processes: false,
+          control_link: null,
         },
       ],
       findings: [finding],
@@ -335,6 +483,7 @@ describe('applySummary', () => {
       message: null,
       omitted_fields: [],
       stop_requested: false,
+      control_link: null,
     };
     const session = applySummary(
       emptySession(),
@@ -383,6 +532,7 @@ describe('applySummary', () => {
             message: null,
             omitted_fields: ['command', 'environment'],
             stop_requested: false,
+            control_link: null,
           },
         ],
       }),
@@ -415,6 +565,7 @@ describe('applySummary', () => {
       reason: null,
       message: null,
       omitted_fields: [],
+      control_link: null,
     };
     // サーバーの印がなくても、手元で知っていれば残す
     const later = applySummary(
@@ -652,6 +803,7 @@ describe('addProblem', () => {
             message: null,
             omitted_fields: [],
             stop_requested: false,
+            control_link: null,
           },
         ],
       }),
@@ -740,6 +892,7 @@ describe('addProblem', () => {
             message: null,
             omitted_fields: [],
             stop_requested: false,
+            control_link: null,
           },
         ],
       }),

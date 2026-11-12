@@ -27,13 +27,20 @@
       },
       "stop": "requested",
       "phase": "running",
-      "last_seq": 17,
-      "last_t_ms": 170,
+      "last_seq": 19,
+      "last_t_ms": 190,
       "time": {
         "event": "time",
-        "seq": 17,
-        "t_ms": 170,
-        "sim_ms": 0
+        "seq": 19,
+        "t_ms": 190,
+        "sim_ms": 0,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
       },
       "check": {
         "vehicle_sil_check": 1,
@@ -116,7 +123,11 @@
                   }
                 ]
               }
-            ]
+            ],
+            "control": {
+              "transport": "silkit",
+              "wire_version": 1
+            }
           },
           {
             "name": "Dashboard",
@@ -185,7 +196,11 @@
                   }
                 ]
               }
-            ]
+            ],
+            "control": {
+              "transport": "silkit",
+              "wire_version": 1
+            }
           },
           {
             "name": "Logger",
@@ -200,7 +215,8 @@
             "step_ms": null,
             "status": "disabled",
             "reported": null,
-            "variables": null
+            "variables": null,
+            "control": null
           }
         ],
         "networks": [
@@ -248,7 +264,11 @@
             "--start-timeout-ms",
             "50000"
           ],
-          "log": null
+          "log": null,
+          "control_link": {
+            "state": "connected",
+            "variables": 3
+          }
         },
         {
           "name": "Dashboard",
@@ -263,7 +283,11 @@
             "--start-timeout-ms",
             "50000"
           ],
-          "log": null
+          "log": null,
+          "control_link": {
+            "state": "connected",
+            "variables": 3
+          }
         }
       ],
       "participants_omitted": 0,

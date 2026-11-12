@@ -152,6 +152,31 @@ describe('RunPage', () => {
     expect(disabled(button(fixture, 'start'))).toBe(true);
   });
 
+  it('starts paused when asked to, and shows the pause and resume buttons of a launcher that has them', async () => {
+    const fixture = await openWithFiles();
+    (await checkRequest()).flush(response('check-passed'));
+    await fixture.whenStable();
+    // 実行がない間は、一時停止と再開のボタンを出さない（帯を高くしない）
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('[data-testid="pause"]')).toBeNull();
+    (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLInputElement>('[data-testid="start-paused"] input')
+      ?.click();
+    await fixture.whenStable();
+    await sleep(10);
+    await fixture.whenStable();
+    button(fixture, 'start').click();
+    expect(http.expectOne('api/run').request.body).toMatchObject({ start_paused: true });
+    // 開始を頼んだら、停止の後に一時停止と再開（動き出すまでは押せない）
+    await fixture.whenStable();
+    const actions = [...element.querySelectorAll('app-run-status .actions button')].map((b) =>
+      b.getAttribute('data-testid'),
+    );
+    expect(actions).toEqual(['start', 'stop', 'pause', 'resume']);
+    expect(disabled(button(fixture, 'pause'))).toBe(true);
+    expect(disabled(button(fixture, 'resume'))).toBe(true);
+  });
+
   it('checks once after quick switches, after the answer to the check before', async () => {
     const fixture = await openWithFiles();
     const first = await checkRequest();
@@ -209,6 +234,7 @@ describe('readRunChoices', () => {
   it('reads the choices carried over a change of language', () => {
     expect(readRunChoices(choices)).toEqual(choices);
     expect(readRunChoices({ ...choices, session: null, chosen: null, speed: 2.5 })).not.toBeNull();
+    expect(readRunChoices({ ...choices, startPaused: true })?.startPaused).toBe(true);
   });
 
   it('carries nothing when the shape is wrong', () => {
@@ -216,5 +242,6 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, disable: [1] })).toBeNull();
     expect(readRunChoices({ ...choices, speed: 'fast' })).toBeNull();
     expect(readRunChoices({ ...choices, logSource: undefined })).toBeNull();
+    expect(readRunChoices({ ...choices, startPaused: 'yes' })).toBeNull();
   });
 });

@@ -303,11 +303,16 @@ describe('ServerConnection', () => {
     const { run, socket } = open();
     play(socket, 'ws-dropped');
     const session = run.session();
-    // ws-dropped.json の dropped の数
-    expect(session?.logSources['Engine'].dropped).toBe(108);
+    // ws-dropped.json の dropped の数（例を作り直すと変わるので、例から読む）
+    const dropped = (examples.get('ws-dropped')?.server ?? []).find(
+      (m) => (m as { type: string }).type === 'dropped',
+    ) as { log: Record<string, number> };
+    const count = dropped.log['Engine'];
+    expect(count).toBeGreaterThan(0);
+    expect(session?.logSources['Engine'].dropped).toBe(count);
     const gap = session?.logs.find((line) => line.gap);
     expect(gap?.source).toBe('Engine');
-    expect(gap?.gap?.count).toBe(108);
+    expect(gap?.gap?.count).toBe(count);
   });
 
   it('builds the state again after a resync', () => {

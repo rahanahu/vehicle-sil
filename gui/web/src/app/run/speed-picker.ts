@@ -11,6 +11,9 @@ function choiceOf(speed: Speed): SpeedChoice {
   return speed === null ? 'file' : speed === 'max' ? 'max' : speed === 1 ? 'real' : 'factor';
 }
 
+/** 1 つの画面に複数置けるように、要素の id を部品ごとに変える。 */
+let pickers = 0;
+
 /** 選んだ形のままで、その速度を表せるか（倍率の欄に 1 と打っても、等速に切り替えない）。 */
 function fits(choice: SpeedChoice, speed: Speed): boolean {
   return choice === 'factor' ? typeof speed === 'number' : choiceOf(speed) === choice;
@@ -24,14 +27,16 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
   selector: 'app-speed-picker',
   imports: [MatButtonToggleModule, MatFormFieldModule, MatInputModule],
   template: `
-    <span class="label" id="speed-label" i18n>速度</span>
+    <span class="label" [id]="id + '-label'">{{ label() }}</span>
     <mat-button-toggle-group
-      aria-labelledby="speed-label"
+      [attr.aria-labelledby]="id + '-label'"
       [value]="choice()"
       [disabled]="locked()"
       (change)="choose($event.value)"
     >
-      <mat-button-toggle value="file" i18n>構成のとおり</mat-button-toggle>
+      @if (withFile()) {
+        <mat-button-toggle value="file" i18n>構成のとおり</mat-button-toggle>
+      }
       <mat-button-toggle value="max" i18n>最速</mat-button-toggle>
       <mat-button-toggle value="real" i18n>等速</mat-button-toggle>
       <mat-button-toggle value="factor" i18n>倍率</mat-button-toggle>
@@ -48,7 +53,7 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
           [value]="factorText()"
           [disabled]="locked()"
           [attr.aria-invalid]="error() !== null"
-          [attr.aria-describedby]="error() !== null ? 'speed-factor-error' : null"
+          [attr.aria-describedby]="error() !== null ? id + '-error' : null"
           #factorInput
           (input)="setFactor(factorInput.value)"
         />
@@ -56,7 +61,7 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
     }
     <p
       class="error"
-      id="speed-factor-error"
+      [id]="id + '-error'"
       role="alert"
       data-testid="speed-error"
       [class.shown]="error() !== null"
@@ -74,6 +79,11 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
     }
     .label {
       color: var(--mat-sys-on-surface-variant);
+    }
+    /* 狭い幅では、選択肢を折り返す（カードからはみ出さない） */
+    mat-button-toggle-group {
+      flex-wrap: wrap;
+      max-inline-size: 100%;
     }
     .factor {
       inline-size: 8em;
@@ -94,9 +104,14 @@ function fits(choice: SpeedChoice, speed: Speed): boolean {
   `,
 })
 export class SpeedPicker {
+  protected readonly id = `speed-${++pickers}`;
   /** 倍率の範囲（サーバーが api/app で言う）。 */
-  readonly min = input(0.01);
-  readonly max = input(1000);
+  readonly min = input(0.000001);
+  readonly max = input(1000000);
+  /** 「構成のとおり」を選べるか（始める前だけ。実行中の速さの変更では出さない）。 */
+  readonly withFile = input(true);
+  /** 欄の名前。 */
+  readonly label = input($localize`速度`);
   /** 変えられないとき（実行中）。 */
   readonly locked = input(false);
   /** 速度。null は構成ファイルのとおり、'max' は最速、数は倍率（1 が等速）。 */

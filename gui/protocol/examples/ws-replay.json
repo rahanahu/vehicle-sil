@@ -30,13 +30,20 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 58,
-        "last_t_ms": 580,
+        "last_seq": 70,
+        "last_t_ms": 700,
         "time": {
           "event": "time",
-          "seq": 48,
-          "t_ms": 480,
-          "sim_ms": 1000
+          "seq": 60,
+          "t_ms": 600,
+          "sim_ms": 1000,
+          "speed": "max",
+          "paused": false,
+          "actual_speed": 1.5,
+          "late_steps": 0,
+          "max_late_ms": 0,
+          "slipped_ms": 0,
+          "late_ms": 0
         },
         "check": {
           "vehicle_sil_check": 1,
@@ -119,7 +126,11 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
             },
             {
               "name": "Dashboard",
@@ -188,7 +199,11 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
             },
             {
               "name": "Logger",
@@ -203,7 +218,8 @@
               "step_ms": null,
               "status": "not_checked",
               "reported": null,
-              "variables": null
+              "variables": null,
+              "control": null
             }
           ],
           "networks": [
@@ -249,6 +265,10 @@
               "50000"
             ],
             "log": null,
+            "control_link": {
+              "state": "connected",
+              "variables": 3
+            },
             "exit_code": 0,
             "signal": null
           },
@@ -266,6 +286,10 @@
               "50000"
             ],
             "log": null,
+            "control_link": {
+              "state": "connected",
+              "variables": 3
+            },
             "exit_code": 0,
             "signal": null
           },
@@ -278,6 +302,9 @@
               "silkit://127.0.0.1:8500"
             ],
             "log": null,
+            "control_link": {
+              "state": "none"
+            },
             "exit_code": 0,
             "signal": null
           }
@@ -297,6 +324,22 @@
           "notes": 1,
           "simulation": "reached_stop_at",
           "interrupted_by": null,
+          "timing": {
+            "speed": "max",
+            "time_step_ms": 10,
+            "ecu_step_ms": null,
+            "step_delay_ms": null,
+            "late_tolerance_ms": 10,
+            "sim_ms": 1000,
+            "wall_ms": 1000,
+            "actual_speed": 1.5,
+            "paced_steps": 0,
+            "late_steps": 0,
+            "max_late_ms": 0,
+            "slipped_ms": 0,
+            "late_ms": 0,
+            "paused_ms": 0
+          },
           "participants": [
             {
               "name": "Engine",
@@ -306,7 +349,13 @@
               "exit_code": 0,
               "signal": null,
               "left_processes": false,
-              "log": null
+              "log": null,
+              "control_link": {
+                "state": "connected",
+                "variables": 3,
+                "version": null,
+                "late_messages": 0
+              }
             },
             {
               "name": "Dashboard",
@@ -316,7 +365,13 @@
               "exit_code": 0,
               "signal": null,
               "left_processes": false,
-              "log": null
+              "log": null,
+              "control_link": {
+                "state": "connected",
+                "variables": 3,
+                "version": null,
+                "late_messages": 0
+              }
             },
             {
               "name": "Logger",
@@ -326,7 +381,13 @@
               "exit_code": 0,
               "signal": null,
               "left_processes": false,
-              "log": null
+              "log": null,
+              "control_link": {
+                "state": "none",
+                "variables": null,
+                "version": null,
+                "late_messages": 0
+              }
             }
           ],
           "findings": [],
@@ -411,7 +472,11 @@
                       }
                     ]
                   }
-                ]
+                ],
+                "control": {
+                  "transport": "silkit",
+                  "wire_version": 1
+                }
               },
               {
                 "name": "Dashboard",
@@ -480,7 +545,11 @@
                       }
                     ]
                   }
-                ]
+                ],
+                "control": {
+                  "transport": "silkit",
+                  "wire_version": 1
+                }
               },
               {
                 "name": "Logger",
@@ -495,7 +564,8 @@
                 "step_ms": null,
                 "status": "not_checked",
                 "reported": null,
-                "variables": null
+                "variables": null,
+                "control": null
               }
             ],
             "networks": [
@@ -598,43 +668,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 16,
-        "t_ms": 160,
-        "source": "vehicle_sil_launch",
-        "line": "simulation running"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 18,
-        "t_ms": 180,
-        "source": "Engine",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
         "seq": 19,
         "t_ms": 190,
-        "source": "Dashboard",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 20,
-        "t_ms": 200,
-        "source": "Logger",
-        "line": "step 1: t = 100 ms"
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
       }
     },
     {
@@ -645,7 +682,7 @@
         "seq": 21,
         "t_ms": 210,
         "source": "Engine",
-        "line": "step 2: t = 200 ms"
+        "line": "step 1: t = 100 ms"
       }
     },
     {
@@ -656,7 +693,7 @@
         "seq": 22,
         "t_ms": 220,
         "source": "Dashboard",
-        "line": "step 2: t = 200 ms"
+        "line": "step 1: t = 100 ms"
       }
     },
     {
@@ -667,18 +704,7 @@
         "seq": 23,
         "t_ms": 230,
         "source": "Logger",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 24,
-        "t_ms": 240,
-        "source": "Engine",
-        "line": "step 3: t = 300 ms"
+        "line": "step 1: t = 100 ms"
       }
     },
     {
@@ -688,8 +714,8 @@
         "event": "log",
         "seq": 25,
         "t_ms": 250,
-        "source": "Dashboard",
-        "line": "step 3: t = 300 ms"
+        "source": "Engine",
+        "line": "step 2: t = 200 ms"
       }
     },
     {
@@ -699,8 +725,8 @@
         "event": "log",
         "seq": 26,
         "t_ms": 260,
-        "source": "Logger",
-        "line": "step 3: t = 300 ms"
+        "source": "Dashboard",
+        "line": "step 2: t = 200 ms"
       }
     },
     {
@@ -710,19 +736,8 @@
         "event": "log",
         "seq": 27,
         "t_ms": 270,
-        "source": "Engine",
-        "line": "step 4: t = 400 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 28,
-        "t_ms": 280,
-        "source": "Dashboard",
-        "line": "step 4: t = 400 ms"
+        "source": "Logger",
+        "line": "step 2: t = 200 ms"
       }
     },
     {
@@ -732,8 +747,8 @@
         "event": "log",
         "seq": 29,
         "t_ms": 290,
-        "source": "Logger",
-        "line": "step 4: t = 400 ms"
+        "source": "Engine",
+        "line": "step 3: t = 300 ms"
       }
     },
     {
@@ -743,8 +758,8 @@
         "event": "log",
         "seq": 30,
         "t_ms": 300,
-        "source": "Engine",
-        "line": "step 5: t = 500 ms"
+        "source": "Dashboard",
+        "line": "step 3: t = 300 ms"
       }
     },
     {
@@ -754,19 +769,8 @@
         "event": "log",
         "seq": 31,
         "t_ms": 310,
-        "source": "Dashboard",
-        "line": "step 5: t = 500 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 32,
-        "t_ms": 320,
         "source": "Logger",
-        "line": "step 5: t = 500 ms"
+        "line": "step 3: t = 300 ms"
       }
     },
     {
@@ -777,7 +781,7 @@
         "seq": 33,
         "t_ms": 330,
         "source": "Engine",
-        "line": "step 6: t = 600 ms"
+        "line": "step 4: t = 400 ms"
       }
     },
     {
@@ -788,7 +792,7 @@
         "seq": 34,
         "t_ms": 340,
         "source": "Dashboard",
-        "line": "step 6: t = 600 ms"
+        "line": "step 4: t = 400 ms"
       }
     },
     {
@@ -799,18 +803,7 @@
         "seq": 35,
         "t_ms": 350,
         "source": "Logger",
-        "line": "step 6: t = 600 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 36,
-        "t_ms": 360,
-        "source": "Engine",
-        "line": "step 7: t = 700 ms"
+        "line": "step 4: t = 400 ms"
       }
     },
     {
@@ -820,8 +813,8 @@
         "event": "log",
         "seq": 37,
         "t_ms": 370,
-        "source": "Dashboard",
-        "line": "step 7: t = 700 ms"
+        "source": "Engine",
+        "line": "step 5: t = 500 ms"
       }
     },
     {
@@ -831,8 +824,8 @@
         "event": "log",
         "seq": 38,
         "t_ms": 380,
-        "source": "Logger",
-        "line": "step 7: t = 700 ms"
+        "source": "Dashboard",
+        "line": "step 5: t = 500 ms"
       }
     },
     {
@@ -842,19 +835,8 @@
         "event": "log",
         "seq": 39,
         "t_ms": 390,
-        "source": "Engine",
-        "line": "step 8: t = 800 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 40,
-        "t_ms": 400,
-        "source": "Dashboard",
-        "line": "step 8: t = 800 ms"
+        "source": "Logger",
+        "line": "step 5: t = 500 ms"
       }
     },
     {
@@ -864,8 +846,8 @@
         "event": "log",
         "seq": 41,
         "t_ms": 410,
-        "source": "Logger",
-        "line": "step 8: t = 800 ms"
+        "source": "Engine",
+        "line": "step 6: t = 600 ms"
       }
     },
     {
@@ -875,8 +857,8 @@
         "event": "log",
         "seq": 42,
         "t_ms": 420,
-        "source": "Engine",
-        "line": "step 9: t = 900 ms"
+        "source": "Dashboard",
+        "line": "step 6: t = 600 ms"
       }
     },
     {
@@ -886,19 +868,8 @@
         "event": "log",
         "seq": 43,
         "t_ms": 430,
-        "source": "Dashboard",
-        "line": "step 9: t = 900 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 44,
-        "t_ms": 440,
         "source": "Logger",
-        "line": "step 9: t = 900 ms"
+        "line": "step 6: t = 600 ms"
       }
     },
     {
@@ -909,7 +880,7 @@
         "seq": 45,
         "t_ms": 450,
         "source": "Engine",
-        "line": "step 10: t = 1000 ms"
+        "line": "step 7: t = 700 ms"
       }
     },
     {
@@ -920,7 +891,7 @@
         "seq": 46,
         "t_ms": 460,
         "source": "Dashboard",
-        "line": "step 10: t = 1000 ms"
+        "line": "step 7: t = 700 ms"
       }
     },
     {
@@ -931,7 +902,7 @@
         "seq": 47,
         "t_ms": 470,
         "source": "Logger",
-        "line": "step 10: t = 1000 ms"
+        "line": "step 7: t = 700 ms"
       }
     },
     {
@@ -941,8 +912,19 @@
         "event": "log",
         "seq": 49,
         "t_ms": 490,
-        "source": "vehicle_sil_launch",
-        "line": "the simulation ended"
+        "source": "Engine",
+        "line": "step 8: t = 800 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 50,
+        "t_ms": 500,
+        "source": "Dashboard",
+        "line": "step 8: t = 800 ms"
       }
     },
     {
@@ -952,8 +934,8 @@
         "event": "log",
         "seq": 51,
         "t_ms": 510,
-        "source": "vehicle_sil_launch",
-        "line": "Engine exited with code 0"
+        "source": "Logger",
+        "line": "step 8: t = 800 ms"
       }
     },
     {
@@ -963,8 +945,19 @@
         "event": "log",
         "seq": 53,
         "t_ms": 530,
-        "source": "vehicle_sil_launch",
-        "line": "Dashboard exited with code 0"
+        "source": "Engine",
+        "line": "step 9: t = 900 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 54,
+        "t_ms": 540,
+        "source": "Dashboard",
+        "line": "step 9: t = 900 ms"
       }
     },
     {
@@ -974,6 +967,83 @@
         "event": "log",
         "seq": 55,
         "t_ms": 550,
+        "source": "Logger",
+        "line": "step 9: t = 900 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 57,
+        "t_ms": 570,
+        "source": "Engine",
+        "line": "step 10: t = 1000 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 58,
+        "t_ms": 580,
+        "source": "Dashboard",
+        "line": "step 10: t = 1000 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 59,
+        "t_ms": 590,
+        "source": "Logger",
+        "line": "step 10: t = 1000 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 61,
+        "t_ms": 610,
+        "source": "vehicle_sil_launch",
+        "line": "the simulation ended"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 63,
+        "t_ms": 630,
+        "source": "vehicle_sil_launch",
+        "line": "Engine exited with code 0"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 65,
+        "t_ms": 650,
+        "source": "vehicle_sil_launch",
+        "line": "Dashboard exited with code 0"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 67,
+        "t_ms": 670,
         "source": "vehicle_sil_launch",
         "line": "Logger exited with code 0"
       }
@@ -981,7 +1051,7 @@
     {
       "type": "synced",
       "session": 1,
-      "last_seq": 58
+      "last_seq": 70
     }
   ]
 }

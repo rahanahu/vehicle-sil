@@ -27,15 +27,20 @@
         "features": [
           "events",
           "stdin-commands",
-          "check-variables"
+          "check-variables",
+          "speed",
+          "start-paused",
+          "time-commands",
+          "control-links"
         ]
       }
     },
     "limits": {
       "log_lines_per_source": 2000,
       "check_timeout_s": 120,
-      "speed_min": 0.01,
-      "speed_max": 1000.0
+      "speed_min": 1e-06,
+      "speed_max": 1000000.0,
+      "step_ms_max": 1000000000000
     }
   }
 }

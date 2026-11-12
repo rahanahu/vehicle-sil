@@ -89,14 +89,26 @@
   color: var(--mat-sys-on-surface-variant);
 }
 
-.silent {
+.silent,
+.late {
   flex-basis: 100%;
   color: var(--mat-sys-error);
   overflow-wrap: anywhere;
 }
 
-.silent:not(.shown) {
+.silent:not(.shown),
+.late:not(.shown) {
   display: none;
+}
+
+/* 読み上げだけの領域（見た目には出さない） */
+.announce {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .outcome .mark {
@@ -178,6 +190,13 @@
 .times dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+}
+
+/* 狭い帯では、速度は帯に出さない（「時刻」のカードにある。帯を高くしない） */
+@container run-status (inline-size < 600px) {
+  .times .speed {
+    display: none;
+  }
 }
 
 /* とても狭い帯（360 px の窓など）では、状態の文をボタンの横に詰めず、下の行に出す */

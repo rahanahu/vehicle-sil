@@ -9,6 +9,7 @@ import {
   readLauncherEvent,
   readServerMessage,
   readSessionResponse,
+  readTimeResponse,
 } from './api';
 
 /** 要求のパスごとの、成功の応答を読む関数。 */
@@ -18,6 +19,7 @@ const READERS: Record<string, (value: unknown) => unknown> = {
   'POST api/check': readCheckResponse,
   'POST api/run': readSessionResponse,
   'POST api/stop': readSessionResponse,
+  'POST api/time': readTimeResponse,
   'GET api/session': readSessionResponse,
 };
 
@@ -48,6 +50,7 @@ describe('the readers accept every example of gui/protocol', () => {
     expect(bodies.get('check-passed')?.sort()).toEqual(['disable', 'file']);
     expect(bodies.get('run')?.sort()).toEqual(['disable', 'file', 'speed', 'start_paused']);
     expect(bodies.get('stop-force')).toEqual(['force']);
+    expect(bodies.get('time')?.sort()).toEqual(['command', 'ms']);
   });
 
   it('reads the lines the server skipped in the standard error, and the fields it left out', async () => {
@@ -131,6 +134,90 @@ describe('the readers accept every example of gui/protocol', () => {
         ).toBe(true);
       }
     }
+  });
+
+  it('reads the time, the commands and the timing of a run with time commands', async () => {
+    const examples = await webSocketExamples();
+    const read = (name: string) =>
+      (examples.find((example) => example.name === name)?.server ?? []).map((message) =>
+        readServerMessage(message),
+      );
+    const time = read('ws-time');
+    const events = time.flatMap((m) => (m?.type === 'event' ? [m.event] : []));
+    expect(events.filter((e) => e.event === 'command').map((e) => e.unreadable)).not.toContain(
+      expect.anything(),
+    );
+    const step = events.find((e) => e.event === 'command' && e.command === 'step');
+    expect(step).toMatchObject({ accepted: true, ms: 30, message: null });
+    const refused = events.filter((e) => e.event === 'command' && !e.accepted);
+    expect(refused.length).toBe(1);
+    const times = events.flatMap((e) => (e.event === 'time' ? [e] : []));
+    expect(times[0]).toMatchObject({ sim_ms: 0, speed: 'max', paused: true, late_steps: 0 });
+    expect(times.some((t) => t.speed === 1 && t.paused === false)).toBe(true);
+    const end = time.at(-1);
+    expect(end?.type === 'session' && end.session.result?.timing).toMatchObject({
+      speed: 1,
+      time_step_ms: 10,
+    });
+    expect(end?.type === 'session' && end.session.time?.paused).toBe(false);
+
+    const late = read('ws-late').flatMap((m) => (m?.type === 'event' ? [m.event] : []));
+    expect(late.find((e) => e.event === 'time' && (e.late_ms ?? 0) > 0) as unknown).toMatchObject({
+      late_ms: 200,
+      late_steps: 1,
+      slipped_ms: 200,
+    });
+    expect(late.some((e) => e.event === 'finding' && e.finding.code === 'behind-real-time')).toBe(
+      true,
+    );
+  });
+
+  it('reads the control links of the participants, in the check, the events and the summary', async () => {
+    const example = (await webSocketExamples()).find((e) => e.name === 'ws-control-trouble');
+    const read = (example?.server ?? []).map((m) => readServerMessage(m));
+    const links = read.flatMap((m) =>
+      m?.type === 'event' && m.event.event === 'control_link' ? [[m.event.name, m.event.link]] : [],
+    );
+    const link = (state: string, extra = {}) => ({
+      state,
+      variables: null,
+      version: null,
+      late_messages: null,
+      ...extra,
+    });
+    expect(links).toEqual([
+      ['Engine', link('no_hello')],
+      ['Dashboard', link('version_mismatch', { version: 2 })],
+      ['Gauge', link('not_offered')],
+      ['Logger', link('none')],
+    ]);
+    const check = read.flatMap((m) =>
+      m?.type === 'event' && m.event.event === 'check' ? [m.event.check] : [],
+    )[0];
+    expect(check?.participants.map((p) => p.control)).toEqual([
+      { transport: 'silkit', wire_version: 1 },
+      { transport: 'silkit', wire_version: 1 },
+      null,
+      null,
+    ]);
+    expect(check?.findings.map((f) => f.code)).toContain('control-link-not-offered');
+    const end = read.at(-1);
+    const states = ['no_hello', 'version_mismatch', 'not_offered', 'none'];
+    expect(
+      end?.type === 'session' && end.session.participants.map((p) => p.control_link?.state),
+    ).toEqual(states);
+    expect(
+      end?.type === 'session' && end.session.result?.participants.map((p) => p.control_link?.state),
+    ).toEqual(states);
+    expect(
+      end?.type === 'session' && end.session.result?.participants[0].control_link?.late_messages,
+    ).toBe(0);
+  });
+
+  it('reads a time event of an older launcher, which has only sim_ms', () => {
+    const read = readLauncherEvent({ event: 'time', seq: 3, t_ms: 0, sim_ms: 1000 }, 'e', true);
+    expect(read).toMatchObject({ sim_ms: 1000, speed: null, paused: null, late_steps: null });
+    expect(read?.unreadable).toBeUndefined();
   });
 
   it('reads the summary in the hello of a replay', async () => {

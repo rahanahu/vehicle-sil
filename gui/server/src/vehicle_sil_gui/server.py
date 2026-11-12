@@ -22,8 +22,9 @@ from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, process
 from .hub import Hub, encode
-from .launcher import (SPEED_MAX, SPEED_MIN, InvalidRequest, Launcher, check_command, check_disable, check_speed,
-                       run_command)
+from .launcher import (FEATURE_SPEED, FEATURE_START_PAUSED, FEATURE_TIME_COMMANDS, SPEED_MAX, SPEED_MIN, STEP_MS_MAX,
+                       InvalidRequest, Launcher, check_command, check_disable, check_speed, check_time_command,
+                       command_line, run_command)
 from .paths import ConfigRoot, PathRejected
 from .session import SILENT_AFTER_S, Limits, Session
 from .static import NOT_BUILT, StaticFiles
@@ -117,6 +118,7 @@ class Run:
     session: Session
     proc: asyncio.subprocess.Process
     task: asyncio.Task | None = None
+    features: tuple[str, ...] = ()  # of the launcher that runs it (version --json when it started)
 
 
 class GuiServer:
@@ -165,6 +167,7 @@ class GuiServer:
         app.router.add_post("/api/check", self.post_check)
         app.router.add_post("/api/run", self.post_run)
         app.router.add_post("/api/stop", self.post_stop)
+        app.router.add_post("/api/time", self.post_time)
         app.router.add_get("/api/session", self.get_session)
         app.router.add_get("/ws", self.websocket)
         app.router.add_route("*", "/api/{rest:.*}", self.api_not_found)
@@ -258,7 +261,8 @@ class GuiServer:
             "root": str(self.root.root), "initial_file": self.o.initial_file,
             "launcher": self.launcher.info(),
             "limits": {"log_lines_per_source": self.o.limits.log_lines_per_source,
-                       "check_timeout_s": self.o.check_timeout_s, "speed_min": SPEED_MIN, "speed_max": SPEED_MAX},
+                       "check_timeout_s": self.o.check_timeout_s, "speed_min": SPEED_MIN, "speed_max": SPEED_MAX,
+                       "step_ms_max": STEP_MS_MAX},
         })
 
     async def get_configs(self, request: web.Request) -> web.Response:
@@ -317,11 +321,11 @@ class GuiServer:
         start_paused = body.get("start_paused", False)
         if not isinstance(start_paused, bool):
             raise InvalidRequest("invalid-field", "start_paused must be true or false")
-        for wanted, feature in ((speed is not None, "speed"), (start_paused, "start-paused")):
+        for wanted, feature, default in ((speed is not None, FEATURE_SPEED, "speed null"),
+                                         (start_paused, FEATURE_START_PAUSED, "start_paused false")):
             if wanted and feature not in self.launcher.features:
-                raise InvalidRequest("unsupported", f"this vehicle_sil_launch has no '{feature}': leave "
-                                                    f"{'speed null' if feature == 'speed' else 'start_paused false'}"
-                                                    ", or build a newer launcher")
+                raise InvalidRequest("unsupported", f"this vehicle_sil_launch has no '{feature}': leave {default}, "
+                                                    "or build a newer launcher")
         known = await self.participant_names(config.relative)
         disable = check_disable(body.get("disable"), known)
         self._not_closing()
@@ -333,7 +337,7 @@ class GuiServer:
         # Registered in the same step as the start returns: the server's end sees every launcher.
         session = Session(next(self._ids), config.relative, disable, speed, start_paused, limits=self.o.limits,
                           launcher_pid=proc.pid)
-        run = Run(session, proc)
+        run = Run(session, proc, features=tuple(self.launcher.features))
         self._runs.add(run)
         self.current = run
         run.task = asyncio.create_task(self._follow(run))
@@ -367,6 +371,41 @@ class GuiServer:
             except (TimeoutError, BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
                 pass
         return web.json_response({"session": session.summary()})
+
+    async def post_time(self, request: web.Request) -> web.Response:
+        """A time command (pause, resume, step, speed) to the launcher of the run that is running. Written to its
+        standard input and not waited for: whether the launcher took it comes as its command event (a launcher
+        that stands still must not hold this request)."""
+        try:
+            self._not_closing()
+            command = check_time_command(await self._body(request))
+        except (InvalidRequest, Refused) as e:
+            return self._refusal(e)
+        run = self.current
+        proc = run.proc if run else None
+        if run is None or self._starting or run.session.state != "running" or not run.session.launcher_running \
+                or proc.stdin is None or proc.stdin.is_closing():
+            return error(409, "not-running", "no simulation is running: time commands go to the run that is "
+                                             "running (start one with POST api/run, and wait for its start)")
+        # What the launcher that runs can do, not the one on disk now (it may have been built again since).
+        if FEATURE_TIME_COMMANDS not in run.features:
+            return error(400, "unsupported", f"the vehicle_sil_launch of this run has no '{FEATURE_TIME_COMMANDS}': "
+                                             "it cannot pause, resume, step or change the speed; build a newer "
+                                             "launcher")
+        gone = error(409, "not-running", "the launcher's input is closed (it is ending): the command was not sent")
+        try:
+            proc.stdin.write(command_line(command))  # written before any await: in the order the requests came
+        except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
+            return gone
+        try:
+            async with asyncio.timeout(STDIN_DRAIN_S):
+                await proc.stdin.drain()
+        except TimeoutError:
+            pass  # the launcher does not read its input now: the command waits there, the request does not
+        except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
+            return gone
+        # Not the summary: what the command does comes later, as the launcher's command and time events.
+        return web.json_response({"session_id": run.session.id, "command": command})
 
     def _write_stop(self, run: Run, force: bool) -> bool:
         """Records a stop request and writes its commands to the launcher's input (no await); whether something

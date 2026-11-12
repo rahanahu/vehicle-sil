@@ -15,8 +15,16 @@ function participant(name: string, extra: Partial<ParticipantView> = {}): Partic
     message: null,
     stopRequested: false,
     omittedFields: [],
+    controlLink: null,
     ...extra,
   };
+}
+
+function link(
+  state: string,
+  extra: { variables?: number; version?: number } = {},
+): ParticipantView['controlLink'] {
+  return { state, variables: null, version: null, late_messages: null, ...extra };
 }
 
 @Component({
@@ -39,6 +47,30 @@ describe('ParticipantStatus', () => {
   function row(name: string): HTMLElement | null {
     return (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="status-${name}"]`);
   }
+
+  it('shows how each participant is linked to its variables, a trouble in words', async () => {
+    fixture.componentInstance.participants.set([
+      participant('Engine', { controlLink: link('connected', { variables: 17 }) }),
+      participant('Dashboard', {
+        controlLink: link('version_mismatch', { version: 2 }),
+      }),
+      participant('Gauge', { controlLink: link('no_hello') }),
+      participant('Meter', { controlLink: link('not_offered') }),
+      participant('Logger', { controlLink: link('none') }),
+      participant('Old'),
+    ]);
+    await fixture.whenStable();
+    const control = (name: string) =>
+      (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="control-${name}"]`);
+    expect(control('Engine')?.textContent).toContain('つながった（17 個）');
+    expect(control('Dashboard')?.textContent).toContain('形式の版 2 が違う');
+    expect(control('Dashboard')?.textContent).toContain('⚠');
+    expect(control('Gauge')?.textContent).toContain('hello が来なかった');
+    expect(control('Meter')?.textContent).toContain('読み書きの口を出していない');
+    expect(control('Meter')?.textContent).not.toContain('⚠');
+    expect(control('Logger')?.textContent).toContain('変数: なし');
+    expect(control('Old')).toBeNull(); // 口を知らせない古いランチャー
+  });
 
   it('shows a participant whose end was never told as unknown once the launcher is gone', async () => {
     fixture.componentInstance.participants.set([

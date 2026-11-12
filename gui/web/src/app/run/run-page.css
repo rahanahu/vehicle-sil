@@ -131,6 +131,12 @@ mat-card-content {
   margin-block-start: var(--app-space-3);
 }
 
+.start-paused {
+  display: block;
+  margin-block-start: var(--app-space-2);
+  max-inline-size: 100%;
+}
+
 .error {
   margin: var(--app-space-2) 0 0;
   color: var(--mat-sys-error);

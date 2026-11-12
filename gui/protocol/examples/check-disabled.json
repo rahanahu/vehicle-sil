@@ -98,7 +98,11 @@
                 }
               ]
             }
-          ]
+          ],
+          "control": {
+            "transport": "silkit",
+            "wire_version": 1
+          }
         },
         {
           "name": "Dashboard",
@@ -112,7 +116,8 @@
           "step_ms": null,
           "status": "disabled",
           "reported": null,
-          "variables": null
+          "variables": null,
+          "control": null
         },
         {
           "name": "Logger",
@@ -127,7 +132,8 @@
           "step_ms": null,
           "status": "not_checked",
           "reported": null,
-          "variables": null
+          "variables": null,
+          "control": null
         }
       ],
       "networks": [

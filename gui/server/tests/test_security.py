@@ -14,7 +14,7 @@ import pytest
 from conftest import CONFIGS, Client, Gui, gui_server, run_async, wait_until
 
 API = [("GET", "api/app"), ("GET", "api/configs"), ("GET", "api/session"), ("POST", "api/check"),
-       ("POST", "api/run"), ("POST", "api/stop")]
+       ("POST", "api/run"), ("POST", "api/stop"), ("POST", "api/time")]
 
 
 async def request(c: Client, method: str, path: str, headers: dict, body: bytes = b"{}") -> aiohttp.ClientResponse:
@@ -62,7 +62,7 @@ def test_changes_need_the_servers_own_origin(gui: Gui) -> None:
     async def main(c: Client) -> None:
         for origin in (None, "null", "http://evil.example", f"http://127.0.0.1:{gui.port + 1}",
                        f"https://127.0.0.1:{gui.port}", "http://127.0.0.1:4200", f"http://localhost:{gui.port}"):
-            for path in ("api/check", "api/run", "api/stop"):
+            for path in ("api/check", "api/run", "api/stop", "api/time"):
                 status, body = await c.post(path, {"file": "simulation.yaml"}, origin=origin)
                 assert status == 403 and body["error"]["code"] == "forbidden-origin", (origin, path)
             if origin is not None:  # a GET from another page is refused too
@@ -158,16 +158,13 @@ def test_only_participants_of_the_file_can_be_disabled(gui: Gui) -> None:
         for disable in ("Engine", [1], ["Engine", "Engine"], {"Engine": True}):
             status, body = await c.post("api/check", {"file": "simulation.yaml", "disable": disable})
             assert status == 400 and body["error"]["code"] == "invalid-field", disable
-        for speed in (True, 0, -1, 1e6, "fast", "Infinity", [2]):
+        for speed in (True, 0, -1, 1e7, 1e-7, "fast", "Infinity", [2]):
             status, body = await c.post("api/run", {"file": "simulation.yaml", "speed": speed})
             assert status == 400 and body["error"]["code"] == "invalid-field", speed
         status, body = await c.post("api/run", raw=b'{"file": "simulation.yaml", "speed": NaN}')
         assert status == 400
         status, body = await c.post("api/run", {"file": "simulation.yaml", "start_paused": "yes"})
         assert status == 400 and body["error"]["code"] == "invalid-field"
-        # The fake launcher has no start-paused: the server does not pass an argument it cannot take.
-        status, body = await c.post("api/run", {"file": "simulation.yaml", "start_paused": True})
-        assert status == 400 and body["error"]["code"] == "unsupported"
         status, body = await c.get("api/session")
         assert body["session"] is None  # nothing was started by any of these
     run_async(main, gui)

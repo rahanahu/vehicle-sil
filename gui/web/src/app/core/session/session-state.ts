@@ -2,6 +2,9 @@
 // アプリ全体の接続（server-connection.ts）が使い、画面はできた状態を signal で読む。
 import {
   CheckResult,
+  CONTROL_EVENT,
+  CommandReport,
+  ControlLink,
   Dropped,
   Finding,
   LauncherEvent,
@@ -13,6 +16,7 @@ import {
   SessionSummary,
   Speed,
   StopRequest,
+  TimeReport,
 } from '../api';
 
 /** 出どころ（participant かランチャー）ごとに覚えておくログの行の数。サーバーが覚える数と同じ。 */
@@ -65,6 +69,8 @@ export interface ParticipantView {
   stopRequested: boolean;
   /** 要約に入りきらず、サーバーが省いた欄の名前（その後の事象が届けば空）。 */
   omittedFields: readonly string[];
+  /** 変数を読み書きする口のつながり方（control_link の事象、または結果の control_link）。まだわからなければ null。 */
+  controlLink: ControlLink | null;
 }
 
 /** ランチャーのプロセスの様子（サーバーが見ている）。 */
@@ -78,6 +84,64 @@ export interface LauncherView {
   silentSeconds: number | null;
 }
 
+/**
+ * 仮想時間とその進み方（最後の time の事象、または要約の time）。古いランチャーが書かない欄は null。
+ * 画面の部品は、これを直接ではなく SimulationTime（simulation-time.ts）の signal で読む。
+ */
+export interface TimeView {
+  simMs: number;
+  /** いまの速さ（数か 'max'。書いていなければ null）。 */
+  speed: Speed;
+  /** 一時停止しているか（書いていなければ null）。 */
+  paused: boolean | null;
+  /** 直近 1 秒ほどの実際の速さ（一時停止中や動き始めは null）。 */
+  actualSpeed: number | null;
+  /** 遅れた刻みの数。 */
+  lateSteps: number | null;
+  /** 最大の遅れ（ミリ秒）。 */
+  maxLateMs: number | null;
+  /** ずれの合計（ミリ秒）。 */
+  slippedMs: number | null;
+  /** いま期限を過ぎて始まっていない刻みの遅れ（ミリ秒）。 */
+  lateMs: number | null;
+}
+
+/** 最後に届いた command の事象（stop も含む）。 */
+export interface CommandView {
+  /** 命令の名前（読めなかった行は null）。 */
+  name: string | null;
+  accepted: boolean;
+  /** 受け付けなかった理由（英語のまま）。 */
+  message: string | null;
+  /** 受け付けた step の、実際に進む仮想時間（ミリ秒）。 */
+  ms: number | null;
+  /** その事象の seq（わからなければ -1）。新しい答えか、前と同じ答えが要約で届き直したのかを見分ける。 */
+  seq: number;
+}
+
+export function timeView(time: TimeReport): TimeView {
+  return {
+    simMs: time.sim_ms,
+    speed: time.speed,
+    paused: time.paused,
+    actualSpeed: time.actual_speed,
+    lateSteps: time.late_steps,
+    maxLateMs: time.max_late_ms,
+    slippedMs: time.slipped_ms,
+    lateMs: time.late_ms,
+  };
+}
+
+function commandView(command: CommandReport, seq: number): CommandView {
+  return {
+    name: command.command,
+    accepted: command.accepted,
+    message: command.message,
+    ms: command.ms,
+    seq,
+  };
+}
+
 /** 1 つのセッション（ランチャーの 1 回の run）の、画面から見た状態。 */
 export interface SessionView {
   /** サーバーが付けたセッションの番号。 */
@@ -88,7 +152,10 @@ export interface SessionView {
   file: string;
   /** 外した participant。 */
   disable: readonly string[];
+  /** 始めたときに指定した速さ（null は構成ファイルのまま）。いまの速さは time.speed。 */
   speed: Speed;
+  /** 止めた状態で始めたか。 */
+  startPaused: boolean;
   phase: Phase | null;
   /** 最後に届いた、知っている段階の位置（知らない段階が来ても、段階を戻さないため）。 */
   phaseRank: number;
@@ -106,10 +173,12 @@ export interface SessionView {
   simMs: number | null;
   /** 最後の time の、要約に入りきらずサーバーが省いた欄の名前（その後の事象が届けば空）。 */
   timeOmittedFields: readonly string[];
+  /** 仮想時間とその進み方（time の事象が来てから）。 */
+  time: TimeView | null;
   /** 停止を頼んだ回数（1 で「止めています」、2 で「待たずに止める」を頼んだ後）。 */
   stopRequests: number;
-  /** 最後に断られた命令の理由。 */
-  rejectedCommand: string | null;
+  /** 最後に届いた command の事象（受け付けたか、理由）。 */
+  lastCommand: CommandView | null;
   result: RunResult | null;
   launcher: LauncherView;
   /** サーバーが気づいたこと（英語のまま出す）。 */
@@ -159,6 +228,7 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     file: summary.file,
     disable: summary.disable,
     speed: summary.speed,
+    startPaused: summary.start_paused,
     phase: null,
     phaseRank: -1,
     check: null,
@@ -169,8 +239,9 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     elapsedMs: 0,
     simMs: null,
     timeOmittedFields: [],
+    time: null,
     stopRequests: 0,
-    rejectedCommand: null,
+    lastCommand: null,
     result: null,
     launcher: launcherOf(summary),
     problems: [],
@@ -275,6 +346,7 @@ export function applySummary(
     stopRequested:
       p.stop_requested || p.state === 'stop_requested' || !!known.get(p.name)?.stopRequested,
     omittedFields: p.omitted_fields,
+    controlLink: p.control_link ?? known.get(p.name)?.controlLink ?? null,
   }));
   return {
     ...next,
@@ -285,6 +357,10 @@ export function applySummary(
     simMs: summary.sim_ms ?? next.simMs,
     timeOmittedFields:
       summary.sim_ms === null ? next.timeOmittedFields : summary.time_omitted_fields,
+    time: summary.time ? timeView(summary.time) : next.time,
+    lastCommand: summary.last_command
+      ? commandView(summary.last_command, summary.last_command.seq ?? -1)
+      : next.lastCommand,
     findings: summary.findings,
     result,
     check,
@@ -424,6 +500,16 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
         : next;
     case 'participant':
       return { ...next, participants: updateParticipant(next.participants, event) };
+    case CONTROL_EVENT: {
+      const known = next.participants.find((p) => p.name === event.name);
+      const updated = { ...(known ?? blankParticipant(event.name)), controlLink: event.link };
+      return {
+        ...next,
+        participants: known
+          ? next.participants.map((p) => (p === known ? updated : p))
+          : [...next.participants, updated],
+      };
+    }
     case 'log':
       logs.push({ seq: event.seq, key: String(event.seq), source: event.source, line: event.line });
       return next;
@@ -447,9 +533,9 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
         ? next
         : { ...next, findings: [...next.findings, event.finding] };
     case 'time':
-      return { ...next, simMs: event.sim_ms, timeOmittedFields: [] };
+      return { ...next, simMs: event.sim_ms, timeOmittedFields: [], time: timeView(event) };
     case 'command':
-      return event.accepted ? next : { ...next, rejectedCommand: event.message ?? event.command };
+      return { ...next, lastCommand: commandView(event, event.seq) };
     case 'result':
       return {
         ...next,
@@ -536,6 +622,9 @@ function mergeResult(
       exitCode: p.exit_code,
       signal: p.signal,
       stopRequested: base.stopRequested || p.ended === 'stopped',
+      // 事象で知った口（変数の数など）を残し、なければ結果の状態だけ
+      // 結果のほうが新しい（遅れて届いたメッセージの数を持つ）。結果になければ、事象で知ったもの
+      controlLink: p.control_link ?? base.controlLink,
     };
     if (i >= 0) merged[i] = view;
     else merged.push(view);
@@ -555,5 +644,6 @@ function blankParticipant(name: string): ParticipantView {
     message: null,
     stopRequested: false,
     omittedFields: [],
+    controlLink: null,
   };
 }

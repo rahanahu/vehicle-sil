@@ -174,7 +174,11 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
             },
             {
               "name": "Dashboard",
@@ -243,7 +247,11 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
             },
             {
               "name": "Logger",
@@ -258,7 +266,8 @@
               "step_ms": null,
               "status": "not_checked",
               "reported": null,
-              "variables": null
+              "variables": null,
+              "control": null
             }
           ],
           "networks": [
@@ -326,6 +335,7 @@
           "notes": 1,
           "simulation": null,
           "interrupted_by": null,
+          "timing": null,
           "participants": [],
           "findings": [],
           "check": {
@@ -409,7 +419,11 @@
                       }
                     ]
                   }
-                ]
+                ],
+                "control": {
+                  "transport": "silkit",
+                  "wire_version": 1
+                }
               },
               {
                 "name": "Dashboard",
@@ -478,7 +492,11 @@
                       }
                     ]
                   }
-                ]
+                ],
+                "control": {
+                  "transport": "silkit",
+                  "wire_version": 1
+                }
               },
               {
                 "name": "Logger",
@@ -493,7 +511,8 @@
                 "step_ms": null,
                 "status": "not_checked",
                 "reported": null,
-                "variables": null
+                "variables": null,
+                "control": null
               }
             ],
             "networks": [
@@ -638,7 +657,11 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
             },
             {
               "name": "Dashboard",
@@ -707,7 +730,11 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
             },
             {
               "name": "Logger",
@@ -722,7 +749,8 @@
               "step_ms": null,
               "status": "not_checked",
               "reported": null,
-              "variables": null
+              "variables": null,
+              "control": null
             }
           ],
           "networks": [
@@ -777,6 +805,7 @@
           "notes": 1,
           "simulation": null,
           "interrupted_by": null,
+          "timing": null,
           "participants": [],
           "findings": [],
           "check": {
@@ -860,7 +889,11 @@
                       }
                     ]
                   }
-                ]
+                ],
+                "control": {
+                  "transport": "silkit",
+                  "wire_version": 1
+                }
               },
               {
                 "name": "Dashboard",
@@ -929,7 +962,11 @@
                       }
                     ]
                   }
-                ]
+                ],
+                "control": {
+                  "transport": "silkit",
+                  "wire_version": 1
+                }
               },
               {
                 "name": "Logger",
@@ -944,7 +981,8 @@
                 "step_ms": null,
                 "status": "not_checked",
                 "reported": null,
-                "variables": null
+                "variables": null,
+                "control": null
               }
             ],
             "networks": [

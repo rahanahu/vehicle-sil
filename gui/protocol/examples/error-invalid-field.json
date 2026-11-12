@@ -12,7 +12,7 @@
   "response": {
     "error": {
       "code": "invalid-field",
-      "message": "speed must be null, \"max\" or a number from 0.01 to 1000 (1 is real time)",
+      "message": "speed must be null, \"max\" or a number from 0.000001 to 1000000 (1 is real time)",
       "detail": null
     }
   }

@@ -33,8 +33,13 @@ REASON = ("no real launcher: set VEHICLE_SIL_GUI_LAUNCHER to build/<preset>/tool
 pytestmark = pytest.mark.skipif(REASON is not None, reason=REASON or "")
 
 RUN_TIMEOUT_S = 60
-# Events whose number and place depend on timing, not on what happens: left out of the order compared.
-NOT_IN_ORDER = {"log", "heartbeat", "log_dropped"}
+# Events whose number and place depend on timing, not on what happens: left out of the order compared (time: the
+# real launcher writes it at most every 100 ms while the time moves; check_rules checks where it must be).
+NOT_IN_ORDER = {"log", "heartbeat", "log_dropped", "time"}
+# Findings that depend on how the run went on this machine (a real ECU may be late on a busy machine; the real
+# launcher may drop a hello or a message of the control links): compared, place included, when both launchers wrote
+# them; left out of the order when only one did.
+TIMING_FINDINGS = {"finding:behind-real-time", "finding:control-link-dropped"}
 
 
 @dataclass
@@ -47,11 +52,13 @@ class Run:
 
 def launch(argv: list[str], cwd: Path, *, env: dict | None = None, stop_on: str | None = None, stops: int = 1,
            stop_after_s: float = 0.0, close_stdin: bool = False, kill_on_running: str | None = None,
-           pause_reading_s: float = 0.0) -> Run:
+           pause_reading_s: float = 0.0, script: tuple = ()) -> Run:
     """Runs a launcher with --events and --stdin-commands and reads its events to the result. stop_on: the phase
     on which `stops` stop commands are written (stop_after_s later); close_stdin: standard input is closed at
     once; kill_on_running: the participant killed (SIGKILL) half a second after the phase running;
-    pause_reading_s: how long the reading stops when the phase running comes (a slow reader)."""
+    pause_reading_s: how long the reading stops when the phase running comes (a slow reader); script: (condition
+    on an event, lines) in order: the lines are written when an event after the one before meets the condition."""
+    script = list(script)
     proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env={**os.environ, **(env or {})}, start_new_session=True)
     run = Run([], -1, "")
@@ -73,6 +80,9 @@ def launch(argv: list[str], cwd: Path, *, env: dict | None = None, stop_on: str 
                     threading.Timer(0.5, lambda: os.kill(pid, signal.SIGKILL)).start()
                 if pause_reading_s:
                     time.sleep(pause_reading_s)
+            if script and script[0][0](event):
+                proc.stdin.write(script.pop(0)[1])
+                proc.stdin.flush()
             if event["event"] == "phase" and event["phase"] == stop_on:
                 time.sleep(stop_after_s)
                 proc.stdin.write(b'{"command":"stop"}\n' * stops)
@@ -154,6 +164,12 @@ def check_rules(run: Run) -> None:
     for e in events:
         if e["event"] == "participant" and e["state"] == "disabled":
             assert check_seq is not None and check_seq < e["seq"] and (starting is None or e["seq"] < starting)
+    times = [e for e in events if e["event"] == "time"]
+    running = next((e["seq"] for e in events if e.get("phase") == "running"), None)
+    if running is not None:
+        assert times and times[0]["seq"] > running and times[0]["sim_ms"] == 0, "time 0 when running starts"
+        assert all(a["sim_ms"] <= b["sim_ms"] for a, b in zip(times, times[1:])), "sim_ms does not go back"
+        assert times[-1]["paused"] is False, "an ended simulation is not paused"
     first_command = next((e["seq"] for e in events if e["event"] == "command"), None)
     stopping = next((e["seq"] for e in events if e.get("phase") == "stopping"), None)
     if first_command is not None and stopping is not None and run.events[-1]["result"]["interrupted_by"]:
@@ -184,6 +200,8 @@ class Shapes:
                     self._object(f"{kind}.{name}", value)
             if event["event"] == "result" and isinstance(event["result"].get("check"), dict):
                 self._object("result.result.check", event["result"]["check"])
+            if event["event"] == "result" and isinstance(event["result"].get("timing"), dict):
+                self._object("result.result.timing", event["result"]["timing"])
 
     def _object(self, where: str, value: dict) -> None:
         self.keys[where].add(frozenset(value))
@@ -233,6 +251,14 @@ SCENARIOS = {
     "usage": (["--bogus", "simulation.yaml"], {}, None, {}),
     "unknown-name": (["--disable", "Nobody", "simulation.yaml"], {}, None, {}),
     "participant-fails": (["forever.yaml"], {}, "participant-crash", {"kill_on_running": "Engine"}),
+    "paced": (["--speed", "4", "simulation.yaml"], {}, None, {}),
+    "time-commands": (["--start-paused", "--speed", "max", "forever.yaml"], {"script": (
+        (lambda e: e["event"] == "time" and e["paused"], b'{"command":"step","ms":25}\n'),
+        (lambda e: e["event"] == "time" and e["paused"] and e["sim_ms"] > 0, b'{"command":"speed","value":1}\n'),
+        (lambda e: e["event"] == "time" and e["speed"] == 1, b'{"command":"resume"}\n'),
+        (lambda e: e["event"] == "time" and not e["paused"], b'{"command":"step","ms":10}\n{"command":"pause"}\n'),
+        (lambda e: e["event"] == "time" and e["paused"], b'{"command":"stop"}\n'),
+    )}, None, {}),
 }
 
 
@@ -253,9 +279,24 @@ def test_the_same_events_in_the_same_order(runs, name: str) -> None:
     check_rules(real_run)
     check_rules(fake_run)
     assert fake_run.exit_code == real_run.exit_code, f"{name}: exit code"
-    assert order(fake_run) == order(real_run), f"{name}: the order of the events differs"
-    real_commands = [token(e) for e in real_run.events if e["event"] == "command"]
-    assert [token(e) for e in fake_run.events if e["event"] == "command"] == real_commands, name
+    real_order, fake_order = order(real_run), order(fake_run)
+    for kind in TIMING_FINDINGS:
+        if (kind in real_order) != (kind in fake_order):
+            real_order = [k for k in real_order if k != kind]
+            fake_order = [k for k in fake_order if k != kind]
+    assert fake_order == real_order, f"{name}: the order of the events differs"
+    # The findings of the result in the same order (errors, warnings, notes), timing ones as above
+    def codes(run: Run) -> list[str]:
+        return [f["code"] for f in run.events[-1]["result"]["findings"]]
+    real_codes, fake_codes = codes(real_run), codes(fake_run)
+    for code in (kind.split(":", 1)[1] for kind in TIMING_FINDINGS):
+        if (code in real_codes) != (code in fake_codes):
+            real_codes = [c for c in real_codes if c != code]
+            fake_codes = [c for c in fake_codes if c != code]
+    assert fake_codes == real_codes, f"{name}: the findings of the result differ"
+    def commands(run: Run) -> list[tuple]:
+        return [(token(e), e["command"], e["accepted"], e.get("ms")) for e in run.events if e["event"] == "command"]
+    assert commands(fake_run) == commands(real_run), name
     real_result, fake_result = real_run.events[-1]["result"], fake_run.events[-1]["result"]
     for key in ("result", "simulation", "interrupted_by"):
         assert fake_result[key] == real_result[key], f"{name}: result.{key}"

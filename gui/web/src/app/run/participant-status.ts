@@ -1,6 +1,6 @@
 import { Component, LOCALE_ID, computed, inject, input } from '@angular/core';
 import { ParticipantView } from '../core/session/session-state';
-import { failureReasonLabel, participantStateLabel } from './labels';
+import { controlLabel, failureReasonLabel, participantStateLabel } from './labels';
 
 /** 終わりが決まった状態。ほかの状態は、ランチャーが先に終わると、その後どうなったかわからない。 */
 const SETTLED: ReadonlySet<string> = new Set([
@@ -40,6 +40,19 @@ const SETTLED: ReadonlySet<string> = new Set([
           }
           @if (row.lastKnown) {
             <span class="exit" i18n>最後の知らせ: {{ row.lastKnown }}</span>
+          }
+          @if (row.control; as control) {
+            <span
+              class="control"
+              [class.trouble]="control.trouble"
+              [title]="control.raw"
+              [attr.data-testid]="'control-' + row.name"
+            >
+              @if (control.trouble) {
+                <span class="mark" aria-hidden="true">⚠</span>
+              }
+              {{ control.text }}
+            </span>
           }
           @if (row.required === false) {
             <span class="optional" i18n>任意</span>
@@ -97,8 +110,12 @@ const SETTLED: ReadonlySet<string> = new Set([
     }
     .exit,
     .optional,
-    .omitted {
+    .omitted,
+    .control {
       color: var(--mat-sys-on-surface-variant);
+    }
+    .control.trouble {
+      color: var(--mat-sys-error);
     }
     .omitted {
       flex-basis: 100%;
@@ -120,6 +137,10 @@ export class ParticipantStatus {
   protected readonly rows = computed(() =>
     this.participants().map((p) => {
       const omitted = p.omittedFields.length > 0 ? this.list.format(p.omittedFields) : null;
+      // 変数を読み書きする口（ランチャーの英語の状態は title に）
+      const control = p.controlLink
+        ? { ...controlLabel(p.controlLink), raw: p.controlLink.state }
+        : null;
       if (this.launcherGone() && !SETTLED.has(p.state ?? '')) {
         return {
           name: p.name,
@@ -134,6 +155,7 @@ export class ParticipantStatus {
           raw: p.state ?? '',
           failure: null,
           failureRaw: null,
+          control,
         };
       }
       // ランチャーが失敗と決めた participant は、プロセスが終わる前でもすぐに失敗として出す（後の ended でも残す）
@@ -175,6 +197,7 @@ export class ParticipantStatus {
         // 理由は日本語で、ランチャーの英語（reason と message）は title に
         failure: decided ? (p.failure ? failureReasonLabel(p.failure) : null) : null,
         failureRaw: decided ? [p.failure, p.message].filter(Boolean).join(': ') : null,
+        control,
       };
     }),
   );

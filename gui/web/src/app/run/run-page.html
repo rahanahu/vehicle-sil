@@ -72,7 +72,11 @@
     (stop)="run.stop()"
     (forceStop)="run.forceStop()"
     (showDetails)="showDetails()"
-  />
+  >
+    @if (timeButtonsShown()) {
+      <app-time-buttons runStatusActions />
+    }
+  </app-run-status>
   <p class="action-error" role="alert" data-testid="action-error">
     @if (run.actionError(); as error) {
       <ng-container i18n>操作を受け付けられませんでした:</ng-container>
@@ -145,6 +149,17 @@
               [(speed)]="speed"
               [(invalid)]="speedInvalid"
             />
+          }
+          @if (startPausedSupported()) {
+            <mat-checkbox
+              class="start-paused"
+              data-testid="start-paused"
+              [checked]="startPaused()"
+              [disabled]="running()"
+              (change)="startPaused.set($event.checked)"
+              i18n
+              >止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）</mat-checkbox
+            >
           }
         </mat-card-content>
       </mat-card>
@@ -331,6 +346,16 @@
                   }
                 </p>
               }
+            </mat-card-content>
+          </mat-card>
+        }
+        @if (timeCardShown()) {
+          <mat-card appearance="outlined" data-testid="time-card">
+            <mat-card-header>
+              <mat-card-title><h2 id="run-time" tabindex="-1" i18n>時刻</h2></mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              <app-time-panel />
             </mat-card-content>
           </mat-card>
         }

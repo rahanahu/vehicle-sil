@@ -234,6 +234,8 @@ export interface CheckParticipant {
   status: CheckStatus;
   /** 自己申告の変数。null は「わからない」（申告がない、外した、読めなかった）、空の配列は「0 個」。 */
   variables: Variable[] | null;
+  /** ECU が申告した変数の出し方。申告がない、照合していない、古いランチャーでは null。 */
+  control: ControlOffer | null;
 }
 
 const readCheckParticipant = (value: unknown, path: string, u?: Unreadable): CheckParticipant => {
@@ -250,6 +252,16 @@ const readCheckParticipant = (value: unknown, path: string, u?: Unreadable): Che
       path,
       'variables',
       soft(nullable(u ? items(readVariable, u) : array(readVariable)), null, u),
+    ),
+    control: field(
+      f,
+      path,
+      CONTROL_CHECK_KEY,
+      soft(
+        nullable((v, p) => readControlOffer(v, p, u)),
+        null,
+        u,
+      ),
     ),
   };
 };
@@ -327,7 +339,66 @@ export interface RunParticipant {
   exit_code: number | null;
   signal: string | null;
   left_processes: boolean;
+  /** 始まったときの、変数を読み書きする口のつながり方（古いランチャーは書かないので null）。 */
+  control_link: ControlLink | null;
 }
+
+/**
+ * 変数を読み書きする口（ランチャーの control-links）のつながり方。ランチャーの語はここにだけ書く（名前が増えたり
+ * 変わったりしても、知らない値は文字列のまま通す）。
+ * connected: 変数を読み書きできる、no_hello: 出すと申告したのに hello が来なかった、version_mismatch: 形式の版が
+ * 違う、not_offered: 変数はあるが出すと申告していない（--no-control、古い実行ファイル）、none: 変数を出す ECU では
+ * ない。
+ */
+export type ControlState = Open<
+  'connected' | 'no_hello' | 'version_mismatch' | 'not_offered' | 'none'
+>;
+
+/** ランチャーの事象の名前（変数を読み書きする口のつながり方）。 */
+export const CONTROL_EVENT = 'control_link';
+/** ランチャーの結果の participants[] の、口のつながり方のキー（オブジェクト）。 */
+export const CONTROL_RESULT_KEY = 'control_link';
+/** GUI サーバーの要約の participants[] の、口のつながり方の欄（事象の欄を重ねたもの）。 */
+export const CONTROL_SUMMARY_KEY = 'control_link';
+/** 照合の結果の participants[] の、ECU が申告した変数の出し方の欄。 */
+export const CONTROL_CHECK_KEY = 'control';
+
+/** ECU が申告した、変数の出し方（照合の participants[].control）。 */
+export interface ControlOffer {
+  /** 運び手（いまは silkit）。 */
+  transport: string;
+  /** メッセージの形式の版。 */
+  wire_version: number | null;
+}
+
+const readControlOffer = (value: unknown, path: string, u?: Unreadable): ControlOffer => {
+  const f = object(value, path);
+  return {
+    transport: field(f, path, 'transport', lenient(string, '', u)),
+    wire_version: field(f, path, 'wire_version', soft(nullable(integer), null, u)),
+  };
+};
+
+/** ランチャーの control_link の事象と結果（と、要約の participant の control_link）: ある participant の口のつながり方。 */
+export interface ControlLink {
+  state: ControlState;
+  /** connected: その ECU が出す変数の数。 */
+  variables: number | null;
+  /** version_mismatch: 相手の形式の版。 */
+  version: number | null;
+  /** 約束より遅れて届いたメッセージの数（結果だけ。事象にはないので null）。 */
+  late_messages: number | null;
+}
+
+const readControlLink = (value: unknown, path: string, u?: Unreadable): ControlLink => {
+  const f = object(value, path);
+  return {
+    state: field(f, path, 'state', string),
+    variables: field(f, path, 'variables', soft(nullable(integer), null, u)),
+    version: field(f, path, 'version', soft(nullable(integer), null, u)),
+    late_messages: field(f, path, 'late_messages', soft(nullable(integer), null, u)),
+  };
+};
 
 const readRunParticipant = (value: unknown, path: string, u?: Unreadable): RunParticipant => {
   const f = object(value, path);
@@ -339,12 +410,69 @@ const readRunParticipant = (value: unknown, path: string, u?: Unreadable): RunPa
     exit_code: field(f, path, 'exit_code', soft(nullable(integer), null, u)),
     signal: field(f, path, 'signal', soft(nullable(string), null, u)),
     left_processes: field(f, path, 'left_processes', soft(boolean, false, u)),
+    control_link: field(
+      f,
+      path,
+      CONTROL_RESULT_KEY,
+      soft(
+        nullable((v, p) => readControlLink(v, p, u)),
+        null,
+        u,
+      ),
+    ),
   };
 };
 
 export type RunOutcome = Open<
   'passed' | 'failed' | 'interrupted' | 'check_failed' | 'unreadable' | 'setup_failed' | 'usage'
 >;
+
+/**
+ * 結果の timing: 時間の進み方（数の定義はランチャーの docs の「等速で動かす」）。何も起動しなかったとき、古い
+ * ランチャーでは結果に null。欄ごとに、ないか読めなければ null。
+ */
+export interface RunTiming {
+  /** 終わったときの速さ。 */
+  speed: Speed;
+  /** controller の刻み（ミリ秒）。ステップ送りはこの倍数に切り上がる。 */
+  time_step_ms: number | null;
+  ecu_step_ms: number | null;
+  /** 刻みが ECU のステップより粗いために、ECU のステップが遅れて動く量の最大（ミリ秒）。 */
+  step_delay_ms: number | null;
+  late_tolerance_ms: number | null;
+  sim_ms: number | null;
+  /** かかった実時間（一時停止していた時間を含む）。 */
+  wall_ms: number | null;
+  actual_speed: number | null;
+  /** 速さを合わせた刻みの数。0 なら最速で動いた（遅れは数えていない）。 */
+  paced_steps: number | null;
+  late_steps: number | null;
+  max_late_ms: number | null;
+  slipped_ms: number | null;
+  late_ms: number | null;
+  paused_ms: number | null;
+}
+
+const readRunTiming = (value: unknown, path: string, u?: Unreadable): RunTiming => {
+  const f = object(value, path);
+  const count = (key: string) => field(f, path, key, soft(nullable(number), null, u));
+  return {
+    speed: field(f, path, 'speed', soft(readSpeed, null, u)),
+    time_step_ms: count('time_step_ms'),
+    ecu_step_ms: count('ecu_step_ms'),
+    step_delay_ms: count('step_delay_ms'),
+    late_tolerance_ms: count('late_tolerance_ms'),
+    sim_ms: count('sim_ms'),
+    wall_ms: count('wall_ms'),
+    actual_speed: count('actual_speed'),
+    paced_steps: count('paced_steps'),
+    late_steps: count('late_steps'),
+    max_late_ms: count('max_late_ms'),
+    slipped_ms: count('slipped_ms'),
+    late_ms: count('late_ms'),
+    paused_ms: count('paused_ms'),
+  };
+};
 
 /** `vehicle_sil_launch run --json` の結果（形式の版 1）。 */
 export interface RunResult {
@@ -355,6 +483,8 @@ export interface RunResult {
   notes: number;
   simulation: string | null;
   interrupted_by: string | null;
+  /** 時間の進み方。古いランチャーと、何も起動しなかったときは null。 */
+  timing: RunTiming | null;
   participants: RunParticipant[];
   findings: Finding[];
   check: CheckResult | null;
@@ -375,6 +505,16 @@ export const readRunResult = (value: unknown, path: string, u?: Unreadable): Run
     notes: field(f, path, 'notes', lenient(integer, 0, u)),
     simulation: field(f, path, 'simulation', soft(nullable(string), null, u)),
     interrupted_by: field(f, path, 'interrupted_by', soft(nullable(string), null, u)),
+    timing: field(
+      f,
+      path,
+      'timing',
+      soft(
+        nullable((v, p) => readRunTiming(v, p, u)),
+        null,
+        u,
+      ),
+    ),
     participants: field(
       f,
       path,
@@ -450,20 +590,77 @@ export type LauncherEvent =
       message: string | null;
     })
   | (EventBase & { event: 'log'; source: string; line: string })
+  /** 変数を読み書きする口のつながり方（始まる直前に、起動した participant ごとに 1 回）。 */
+  | (EventBase & { event: typeof CONTROL_EVENT; name: string; link: ControlLink })
   /** 読む側が遅くて、ランチャーが書けなかった log の行の数（出どころごと）。その位置に来る。 */
   | (EventBase & { event: 'log_dropped'; count: number; sources: Record<string, number> })
   | (EventBase & { event: 'finding'; finding: Finding })
-  | (EventBase & { event: 'time'; sim_ms: number })
-  | (EventBase & {
-      event: 'command';
-      /** 命令の名前（読めなかった行は null）。 */
-      command: string | null;
-      /** stdin: 行で来た、eof: 標準入力の終わり。 */
-      source: Open<'stdin' | 'eof'>;
-      accepted: boolean;
-      message: string | null;
-    })
+  | (EventBase & { event: 'time' } & TimeReport)
+  | (EventBase & { event: 'command' } & CommandReport)
   | (EventBase & { event: 'result'; result: RunResult });
+
+/**
+ * time の事象（と要約の time）: controller が見ている仮想時間と、その進み方。古いランチャーは sim_ms だけを書くので、
+ * ほかの欄はないか読めなければ null（画面は、null なら出さない）。
+ */
+export interface TimeReport {
+  /** 仮想時間（ミリ秒。減らない）。 */
+  sim_ms: number;
+  /** いまの速さ（数か 'max'）。書いていなければ null。 */
+  speed: Speed;
+  /** 一時停止しているか（止まる予定の時刻に着いたら true）。書いていなければ null。 */
+  paused: boolean | null;
+  /** 直近 1 秒ほどの実際の速さ。動いた時間が短いとき、一時停止しているときは null。 */
+  actual_speed: number | null;
+  /** それまでに遅れた刻みの数（いま終わったとしたときの値。最速では 0）。 */
+  late_steps: number | null;
+  /** それまでの最大の遅れ（ミリ秒）。 */
+  max_late_ms: number | null;
+  /** それまでのずれの合計（ミリ秒）。 */
+  slipped_ms: number | null;
+  /** 期限を過ぎてもまだ始まっていない刻みの、いまの遅れ（ミリ秒。なければ 0）。 */
+  late_ms: number | null;
+}
+
+function readTimeFields(f: Fields, path: string, u?: Unreadable): TimeReport {
+  const count = (key: string) => field(f, path, key, soft(nullable(number), null, u));
+  return {
+    sim_ms: field(f, path, 'sim_ms', number),
+    speed: field(f, path, 'speed', soft(readSpeed, null, u)),
+    paused: field(f, path, 'paused', soft(nullable(boolean), null, u)),
+    actual_speed: count('actual_speed'),
+    late_steps: count('late_steps'),
+    max_late_ms: count('max_late_ms'),
+    slipped_ms: count('slipped_ms'),
+    late_ms: count('late_ms'),
+  };
+}
+
+/** command の事象（と要約の last_command）: ランチャーが標準入力の命令を受けたか。 */
+export interface CommandReport {
+  /** 命令の名前（読めなかった行は null）。 */
+  command: string | null;
+  /** stdin: 行で来た、eof: 標準入力の終わり。 */
+  source: Open<'stdin' | 'eof'>;
+  accepted: boolean;
+  /** 受け付けなかった理由（英語のまま出す）。受け付けたら null。 */
+  message: string | null;
+  /** 受け付けた step の、実際に進む仮想時間（刻みの倍数に切り上げたもの）。ほかは null。 */
+  ms: number | null;
+}
+
+/** 要約の last_command: 事象の欄と、その事象の seq（古いサーバーは書かないので null）。 */
+export type SummaryCommand = CommandReport & { seq: number | null };
+
+function readCommandFields(f: Fields, path: string, u?: Unreadable): CommandReport {
+  return {
+    command: field(f, path, 'command', nullable(string)),
+    source: field(f, path, 'source', soft(string, 'stdin', u)),
+    accepted: field(f, path, 'accepted', boolean),
+    message: field(f, path, 'message', soft(nullable(string), null, u)),
+    ms: field(f, path, 'ms', soft(nullable(integer), null, u)),
+  };
+}
 
 /**
  * ランチャーの事象を 1 つ読む。知らない事象は null（読み飛ばす）。partly が真なら部分ごとに読み、読めない欄は
@@ -545,6 +742,13 @@ function readEventFields(
         count: field(f, path, 'count', integer),
         sources: field(f, path, 'sources', record(integer)),
       };
+    case CONTROL_EVENT:
+      return {
+        ...base,
+        event: kind,
+        name: field(f, path, 'name', string),
+        link: readControlLink(f, path, u),
+      };
     case 'log':
       return {
         ...base,
@@ -556,16 +760,9 @@ function readEventFields(
       // 所見の欄は事象の行にそのまま並ぶ
       return { ...base, event: kind, finding: readFinding(f, path, u) };
     case 'time':
-      return { ...base, event: kind, sim_ms: field(f, path, 'sim_ms', number) };
+      return { ...base, event: kind, ...readTimeFields(f, path, u) };
     case 'command':
-      return {
-        ...base,
-        event: kind,
-        command: field(f, path, 'command', nullable(string)),
-        source: field(f, path, 'source', soft(string, 'stdin', u)),
-        accepted: field(f, path, 'accepted', boolean),
-        message: field(f, path, 'message', soft(nullable(string), null, u)),
-      };
+      return { ...base, event: kind, ...readCommandFields(f, path, u) };
     case 'result':
       return {
         ...base,
@@ -619,7 +816,10 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** 速度。null はランチャーの既定（構成ファイルの値）、'max' は最速、数は倍率（1 が等速）。 */
+/**
+ * 速さ。'max' は最速、数は倍率（1 が等速）。null は、始めるときの指定ではランチャーの既定（構成ファイルの値）、
+ * ランチャーが書く値では「書いていない」。
+ */
 export type Speed = null | number | 'max';
 
 const readSpeed: Reader<Speed> = (value, path) =>
@@ -647,6 +847,8 @@ export interface AppInfo {
   limits: {
     speed_min: number;
     speed_max: number;
+    /** ステップ送りの ms の上限。古いサーバーは書かないので、ランチャーの上限（10^12）。 */
+    step_ms_max: number;
   };
 }
 
@@ -674,6 +876,7 @@ export const readAppInfo = (value: unknown): AppInfo => {
     limits: {
       speed_min: field(limits, `${path}.limits`, 'speed_min', number),
       speed_max: field(limits, `${path}.limits`, 'speed_max', number),
+      step_ms_max: field(limits, `${path}.limits`, 'step_ms_max', optional(number, 1e12)),
     },
   };
 };
@@ -738,6 +941,8 @@ export interface SummaryParticipant {
   omitted_fields: string[];
   /** ランチャーが止めるよう求めた（stop_requested の事象が来た。後の状態でも残る）。 */
   stop_requested: boolean;
+  /** 変数を読み書きする口のつながり方（ランチャーの control_link の事象）。まだなければ null。 */
+  control_link: ControlLink | null;
 }
 
 const readSummaryParticipant = (
@@ -756,6 +961,16 @@ const readSummaryParticipant = (
     message: field(f, path, 'message', soft(nullable(string), null, u)),
     omitted_fields: field(f, path, 'omitted_fields', soft(items(string, u), [], u)),
     stop_requested: field(f, path, 'stop_requested', soft(boolean, false, u)),
+    control_link: field(
+      f,
+      path,
+      CONTROL_SUMMARY_KEY,
+      soft(
+        nullable((v, p) => readControlLink(v, p, u)),
+        null,
+        u,
+      ),
+    ),
   };
 };
 
@@ -807,7 +1022,10 @@ export interface SessionSummary {
   /** root からの相対パス。 */
   file: string;
   disable: string[];
+  /** 始めたときに指定した速さ（null は構成ファイルのまま）。いまの速さは time.speed。 */
   speed: Speed;
+  /** 止めた状態で始めたか。 */
+  start_paused: boolean;
   /** サーバーから見た状態。`ended` なら、ランチャーは終わり、その出力も読み終えた。 */
   state: Open<'running' | 'ended'>;
   launcher: SummaryLauncher;
@@ -820,6 +1038,10 @@ export interface SessionSummary {
   sim_ms: number | null;
   /** 最後の time 事象の、大きすぎて要約に入れなかった欄の名前。 */
   time_omitted_fields: string[];
+  /** 最後の time 事象（仮想時間、速さ、一時停止、遅れの数）。まだなければ null。 */
+  time: TimeReport | null;
+  /** 最後の command 事象（受け付けたか、理由）。まだなければ null。 */
+  last_command: SummaryCommand | null;
   /** この run の照合の結果（check の事象）。まだなければ null。 */
   check: CheckResult | null;
   participants: SummaryParticipant[];
@@ -853,6 +1075,7 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
     file: field(f, path, 'file', lenient(string, '', u)),
     disable: field(f, path, 'disable', items(string, u)),
     speed: field(f, path, 'speed', lenient(readSpeed, null, u)),
+    start_paused: field(f, path, 'start_paused', soft(boolean, false, u)),
     phase: field(f, path, 'phase', soft(nullable(string), null, u)),
     last_seq: field(f, path, 'last_seq', soft(nullable(integer), null, u)),
     last_t_ms: field(f, path, 'last_t_ms', soft(nullable(number), null, u)),
@@ -860,6 +1083,25 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
     time_omitted_fields: time
       ? field(time, timePath, 'omitted_fields', soft(items(string, u), [], u))
       : [],
+    time: time
+      ? lenient((v, p) => readTimeFields(object(v, p), p, u), null, u)(time, timePath)
+      : null,
+    last_command: field(
+      f,
+      path,
+      'last_command',
+      soft(
+        nullable((v, p): SummaryCommand => {
+          const c = object(v, p);
+          return {
+            ...readCommandFields(c, p, u),
+            seq: field(c, p, 'seq', soft(nullable(integer), null, u)),
+          };
+        }),
+        null,
+        u,
+      ),
+    ),
     check: field(
       f,
       path,
@@ -919,6 +1161,36 @@ export const readSessionResponse = (value: unknown): SessionSummary | null =>
 export interface StopRequestBody {
   force: boolean;
 }
+
+/** 時刻の命令の名前（ランチャーの標準入力の命令のうち、stop を除くもの）。 */
+export type TimeCommandName = 'pause' | 'resume' | 'step' | 'speed';
+
+/**
+ * POST api/time の本文。サーバーはランチャーに 1 行で渡して、すぐ返す。受け付けたかは command の事象で、効いたことは
+ * time の事象で届く。
+ */
+export type TimeCommand =
+  | { command: 'pause' }
+  | { command: 'resume' }
+  /** 一時停止している間だけ。ms 進めて、また止まる（ランチャーが刻みの倍数に切り上げる）。 */
+  | { command: 'step'; ms: number }
+  | { command: 'speed'; value: number | 'max' };
+
+/** POST api/time の応答: 送った実行の番号と、ランチャーに渡した命令。 */
+export interface TimeAnswer {
+  session_id: number;
+  command: TimeCommandName;
+}
+
+export const readTimeResponse = (value: unknown): TimeAnswer => {
+  const path = 'response';
+  const f = object(value, path);
+  const command = field(f, path, 'command', object);
+  return {
+    session_id: field(f, path, 'session_id', integer),
+    command: field(command, `${path}.command`, 'command', string) as TimeCommandName,
+  };
+};
 
 // --- GUI サーバー: WebSocket -------------------------------------------------------------------
 

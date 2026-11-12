@@ -77,8 +77,12 @@ test('stopping a real run that does not end by itself', async ({ page }) => {
   await expect(page.getByTestId('outcome')).toContainText('実行中', { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('status-Engine')).toContainText('参加した');
   await expect(page.getByTestId('log-line').first()).toBeVisible();
-  // いまのランチャーは動いている間の仮想時刻を知らせない: 0 を出し続けない
-  await expect(page.getByTestId('sim-time')).toHaveCount(0);
+  // ランチャーは動いている間も仮想時刻を知らせる（time の事象に paused がある）: 出して、進む
+  const simSeconds = async () =>
+    Number((await page.getByTestId('sim-time').textContent())?.match(/[\d.]+/)?.[0] ?? NaN);
+  await expect(page.getByTestId('sim-time')).toBeVisible({ timeout: RUN_TIMEOUT });
+  const first = await simSeconds();
+  await expect.poll(simSeconds, { timeout: RUN_TIMEOUT }).toBeGreaterThan(first);
   const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop'));
   await press(stopButton(page));
   expect((await stop).postDataJSON()).toEqual({ force: false });

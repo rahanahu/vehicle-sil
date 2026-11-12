@@ -21,6 +21,7 @@ import {
   stopIfRunning,
   stopOnServer,
 } from './support/run-page';
+import { guiToken } from './support/gui-server';
 
 test.beforeEach(async ({ page, locale }) => {
   await openRun(page, languageOf(locale));
@@ -45,6 +46,176 @@ test('a run that passes: phases, participants, logs and the result', async ({ pa
   await expect(page.getByTestId('log-line').first()).toBeVisible();
   await expect(startButton(page)).toHaveText(/もう一度実行/);
   await expect(stopButton(page)).toHaveAttribute('aria-disabled', 'true');
+});
+
+/** 状態の帯の一時停止と再開のボタン（別々のボタンで、実行している間、いつも開始と停止の後にある）。 */
+const pauseButton = (page: Page) => page.getByTestId('pause');
+const resumeButton = (page: Page) => page.getByTestId('resume');
+
+/** 時刻の命令を送り、サーバーの応答を待つ（ランチャーが受けたかは、画面に command と time の事象で届く）。 */
+async function command(page: Page, button: Locator, body: object): Promise<void> {
+  const sent = page.waitForRequest((r) => r.url().endsWith('/api/time'));
+  await expect(button).not.toHaveAttribute('aria-disabled', 'true');
+  await button.click();
+  expect((await sent).postDataJSON()).toEqual(body);
+}
+
+test('started paused: a step, resume, pause, a new speed, stop', async ({ page }) => {
+  await choose(page, 'forever.yaml');
+  await page.getByTestId('start-paused').getByRole('checkbox').check();
+  const session = await start(page);
+  // 仮想時間 0 で止まっている: 再開とステップ送りだけが押せる。一時停止と再開は別のボタンで、場所は変わらない
+  await expect(page.getByTestId('outcome')).toContainText('一時停止中', { timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('time-state')).toHaveText('一時停止中');
+  await expect(page.getByTestId('time-sim')).toHaveText('0.000 s');
+  await expect(pauseButton(page)).toHaveAttribute('aria-disabled', 'true');
+  await expect(resumeButton(page)).not.toHaveAttribute('aria-disabled', 'true');
+  const place = await resumeButton(page).boundingBox();
+
+  // ステップ送り: ランチャーが刻み（10 ms）の倍数に切り上げた、実際に進む量を出す
+  // ダブルクリックしても 1 回だけ進む（ランチャーの答えが届くまで、次を送らない）
+  await page.getByTestId('step-ms').fill('２５');
+  const steps: unknown[] = [];
+  page.on('request', (r) => {
+    if (r.url().endsWith('/api/time')) steps.push(r.postDataJSON());
+  });
+  await expect(page.getByTestId('step')).not.toHaveAttribute('aria-disabled', 'true');
+  await page.getByTestId('step').dblclick();
+  await expect(page.getByTestId('step-hint')).toContainText('30 ms');
+  await expect(page.getByTestId('time-sim')).toHaveText('0.030 s');
+  await expect(page.getByTestId('time-state')).toHaveText('一時停止中');
+  expect(steps).toEqual([{ command: 'step', ms: 25 }]);
+
+  await command(page, resumeButton(page), { command: 'resume' });
+  await expect(page.getByTestId('outcome')).toContainText('実行中');
+  await expect(resumeButton(page)).toHaveAttribute('aria-disabled', 'true');
+  await expect(pauseButton(page)).not.toHaveAttribute('aria-disabled', 'true');
+  // 動いている間は、ステップ送りはできない（理由を出す）
+  await expect(page.getByTestId('step')).toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByTestId('step-hint')).toContainText('一時停止している間だけ');
+  await expect
+    .poll(async () =>
+      Number((await page.getByTestId('time-sim').textContent())?.match(/[\d.]+/)?.[0]),
+    )
+    .toBeGreaterThan(0.1);
+
+  await command(page, pauseButton(page), { command: 'pause' });
+  await expect(page.getByTestId('outcome')).toContainText('一時停止中');
+  expect(await resumeButton(page).boundingBox()).toEqual(place);
+
+  // 速度を変える（一時停止はそのまま）
+  const card = page.getByTestId('time-card');
+  await card.getByRole('radio', { name: '倍率' }).click();
+  await card.getByTestId('speed-factor').fill('2');
+  await command(page, page.getByTestId('set-speed'), { command: 'speed', value: 2 });
+  await expect(page.getByTestId('time-speed')).toHaveText('2 倍');
+  await expect(page.getByTestId('speed')).toHaveText('2 倍');
+  await expect(page.getByTestId('time-state')).toHaveText('一時停止中');
+
+  await press(stopButton(page));
+  await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
+  // 終わった後: 時間の進み方の要約。止めた後の停止のボタンは「止めています…」のままにしない
+  await expect(result(page, session).getByTestId('timing')).toContainText('2 倍');
+  await expect(result(page, session).getByTestId('timing')).toContainText('一時停止していた時間');
+  await expect(page.getByTestId('time-card')).toHaveCount(0);
+  await expect(stopButton(page)).toHaveAttribute('aria-disabled', 'true');
+  await expect(stopButton(page)).toHaveText(/停止/);
+  await expect(stopButton(page)).not.toHaveText(/止めています/);
+  // 実行が終わったら、一時停止と再開は出さない
+  await expect(pauseButton(page)).toHaveCount(0);
+  await expect(resumeButton(page)).toHaveCount(0);
+});
+
+test('a command the launcher refuses shows its reason', async ({ page }) => {
+  await choose(page, 'forever.yaml');
+  await start(page);
+  await expect(pauseButton(page)).not.toHaveAttribute('aria-disabled', 'true', {
+    timeout: RUN_TIMEOUT,
+  });
+  // 画面はステップ送りを押させない（動いている）。ほかの道具から送られた命令の結果も、同じ所に出る
+  const headers = { Authorization: `Bearer ${guiToken()}`, Origin: new URL(page.url()).origin };
+  await page.request.post('api/time', { headers, data: { command: 'step', ms: 10 } });
+  await expect(page.getByTestId('time-refused')).toContainText('受け付けられませんでした');
+  await expect(page.getByTestId('time-refused')).toContainText(
+    'step works while the simulation is paused',
+  );
+  await stopOnServer(page);
+});
+
+test('a run behind real time says so in words, also after it ended', async ({ page }) => {
+  // 偽のランチャーの筋書き late: 構成ファイルの速度 1 で、3 つ目のステップが 200 ms 遅れて始まる
+  await choose(page, 'late.yaml');
+  const session = await start(page);
+  await expect(page.getByTestId('late')).toContainText('実時間に遅れました', {
+    timeout: RUN_TIMEOUT,
+  });
+  await expect(page.getByTestId('late')).toContainText('200 ms');
+  // 読み上げるのは状態の帯の決まった文だけ（数は読み上げない）
+  await expect(page.getByTestId('late-announce')).toHaveText('実時間に遅れました。');
+  await expect(page.getByRole('status').filter({ hasText: '実時間に遅れ' })).toHaveCount(1);
+  await expect(page.getByTestId('time-late')).toContainText('実時間に遅れました');
+  await expect(page.getByTestId('time-lateness')).toContainText('200 ms');
+  await press(stopButton(page));
+  await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
+  await expect(result(page, session).getByTestId('timing-late')).toContainText(
+    '実時間に遅れました',
+  );
+  await expect(result(page, session).getByTestId('finding').first()).toContainText(
+    'behind-real-time',
+  );
+  await expect(page.getByTestId('late')).toHaveText('');
+});
+
+test('a small lateness within the tolerance is not called late', async ({ page }) => {
+  // 偽のランチャーの筋書き jitter: 速度 1 で、1 つおきのステップが 3 ms 遅れる（許容の 10 ms の内）
+  await choose(page, 'jitter.yaml');
+  await start(page);
+  await expect(page.getByTestId('time-lateness')).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect
+    .poll(async () =>
+      Number((await page.getByTestId('time-sim').textContent())?.match(/[\d.]+/)?.[0]),
+    )
+    .toBeGreaterThan(1);
+  await expect(page.getByTestId('late')).toHaveText('');
+  await expect(page.getByTestId('late-announce')).toHaveText('');
+  await expect(page.getByTestId('time-late')).toHaveText('');
+  await stopOnServer(page);
+});
+
+test('a launcher without the time features shows no time controls', async ({ page }) => {
+  await page.route('**/api/app', async (route) => {
+    const response = await route.fetch();
+    const app = (await response.json()) as { launcher: { version: { features: string[] } } };
+    app.launcher.version.features = ['events', 'stdin-commands', 'check-variables'];
+    await route.fulfill({ response, json: app });
+  });
+  await page.reload();
+  await choose(page, 'forever.yaml');
+  await expect(page.getByTestId('check-outcome')).toContainText('通った');
+  await expect(pauseButton(page)).toHaveCount(0);
+  await expect(resumeButton(page)).toHaveCount(0);
+  await expect(page.getByTestId('start-paused')).toHaveCount(0);
+  await expect(page.getByRole('radio', { name: '等速' })).toHaveCount(0);
+  const run = page.waitForRequest((r) => r.url().endsWith('/api/run'));
+  await start(page);
+  expect((await run).postDataJSON()).toMatchObject({ speed: null, start_paused: false });
+  await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('time-card')).toHaveCount(0);
+  await stopOnServer(page);
+});
+
+test('how each participant is linked to its variables, a trouble in words', async ({ page }) => {
+  // 偽のランチャーの筋書き control-trouble: Engine は hello が来ず、Dashboard は形式の版が違い、Gauge は口を出さない
+  await choose(page, 'control-trouble.yaml');
+  const session = await start(page);
+  await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('control-Engine')).toContainText('hello が来なかった');
+  await expect(page.getByTestId('control-Dashboard')).toContainText('形式の版 2 が違う');
+  await expect(page.getByTestId('control-Gauge')).toContainText('読み書きの口を出していない');
+  await expect(page.getByTestId('control-Logger')).toContainText('変数: なし');
+  await expect(result(page, session).getByTestId('finding').first()).toContainText(
+    'control-link-no-hello',
+  );
 });
 
 test('a check with an error: the findings, and no start', async ({ page }) => {
@@ -602,6 +773,7 @@ for (const language of ['ja', 'en'] as const) {
       const STATES = [
         { name: 'chosen', file: 'check-error.yaml', run: false },
         { name: 'running', file: 'forever.yaml', run: true },
+        { name: 'paused', file: 'forever.yaml', run: true },
         { name: 'stopping', file: 'ignore-stop.yaml', run: true },
         { name: 'failed', file: 'participant-crash.yaml', run: true },
         { name: 'crashed', file: 'launcher-crash.yaml', run: true },
@@ -612,7 +784,16 @@ for (const language of ['ja', 'en'] as const) {
           page,
         }) => {
           await choose(page, state.file, language);
-          if (state.run) {
+          if (state.name === 'paused') {
+            await page.getByTestId('start-paused').getByRole('checkbox').check();
+          }
+          if (state.name === 'paused') {
+            await start(page);
+            await expect(page.getByTestId('resume')).not.toHaveAttribute('aria-disabled', 'true', {
+              timeout: RUN_TIMEOUT,
+            });
+            await expect(page.getByTestId('time-card')).toBeVisible();
+          } else if (state.run) {
             const session = await start(page);
             if (state.name === 'running' || state.name === 'stopping') {
               await expect(page.getByTestId('log-line').nth(5)).toBeVisible({
@@ -621,6 +802,11 @@ for (const language of ['ja', 'en'] as const) {
               if (state.name === 'stopping') {
                 await press(stopButton(page));
                 await expect(page.getByTestId('force-stop')).toBeVisible();
+                // 一時停止と再開は、押せないまま同じ場所に残る（待たずに止めるはその後）
+                await expect(page.getByTestId('pause')).toHaveAttribute('aria-disabled', 'true');
+                const pause = await page.getByTestId('pause').boundingBox();
+                const force = await page.getByTestId('force-stop').boundingBox();
+                expect(pause && force && (force.y > pause.y || force.x > pause.x)).toBe(true);
               }
             } else {
               await expect(startButton(page)).toHaveText(new RegExp(WORDS[language].again), {

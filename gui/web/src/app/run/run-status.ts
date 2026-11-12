@@ -20,7 +20,7 @@ import { MeasurePipe } from '../core/format/measure-pipe';
 import { RunOutcome, SessionView, phaseIndex } from '../core/session/session-state';
 import { settledAfter } from '../core/streams/stream-signals';
 import { ForceStopDialog } from './force-stop-dialog';
-import { phaseLabel, runOutcomeLabel } from './labels';
+import { LATE_ANNOUNCEMENT, latenessText, phaseLabel, runOutcomeLabel, speedLabel } from './labels';
 import { StopAction } from './run-session';
 
 /**
@@ -40,6 +40,10 @@ export const ACTION_GUARD = new InjectionToken<number>('ACTION_GUARD', {
  *
  * 開始と停止は別のボタンで、帯の決まった位置にいつも置く（押している最中に意味が入れ替わらない）。使えない方は
  * 押せなくする（フォーカスは受ける）。押せるようになったばかりのボタンは、ACTION_GUARD_MS の間は押しても何もしない。
+ *
+ * 帯の操作には、外から操作を足せる（`<app-run-status><app-time-buttons runStatusActions /></app-run-status>` のように、
+ * `runStatusActions` の属性を付けた要素を中に置く）。開始と停止の後、「待たずに止める」の前に並ぶので、足した操作が
+ * 出ても消えても、開始と停止は動かない。
  */
 @Component({
   selector: 'app-run-status',
@@ -97,9 +101,14 @@ export class RunStatus {
     return this.blockedBy()[0] ?? null;
   });
 
-  /** 止めている最中（頼んだ、頼んでいる、開始の応答の後に届ける）。停止のボタンは「止めています…」。 */
+  /**
+   * 止めている最中（頼んだ、頼んでいる、開始の応答の後に届ける）。停止のボタンは「止めています…」。実行が終わったら
+   * （止める実行がない）、止めている最中ではない。
+   */
   protected readonly stopInProgress = computed(
-    () => this.stopRequests() >= 1 || this.stopping() !== null || this.stopWhileStarting(),
+    () =>
+      (this.running() || this.starting()) &&
+      (this.stopRequests() >= 1 || this.stopping() !== null || this.stopWhileStarting()),
   );
 
   /**
@@ -150,15 +159,48 @@ export class RunStatus {
     return ms === null ? null : ms / 1000;
   });
   /**
-   * 仮想時刻。いまのランチャーは、動き始めた 0 と stop_at_ms に達したときしか知らせないので、動いている間の 0 は
-   * 出さない（止まって見えるため）。進んだ値と、終わった後の値を出す。
+   * 仮想時刻。古いランチャー（time の事象に paused がない）は、動き始めた 0 と stop_at_ms に達したときしか知らせない
+   * ので、動いている間の 0 は出さない（止まって見えるため）。新しいランチャーは動いている間も知らせるので、0 も出す。
    */
   protected readonly simSeconds = computed(() => {
     const session = this.session();
     const simMs = session?.simMs ?? null;
-    if (simMs === null || (simMs === 0 && session?.launcher.running)) return null;
+    const moves = session?.time?.paused !== null && session?.time?.paused !== undefined;
+    if (simMs === null || (simMs === 0 && session?.launcher.running && !moves)) return null;
     return simMs / 1000;
   });
+  /** いまの速度（ランチャーが書くとき。実行中だけ）。 */
+  protected readonly speedText = computed(() => {
+    const session = this.session();
+    const speed = session?.launcher.running ? (session.time?.speed ?? null) : null;
+    return speed === null ? null : speedLabel(speed);
+  });
+  /** 一時停止している（実行中で、止めるよう頼んでいないとき）。 */
+  private readonly paused = computed(
+    () => this.outcome() === 'running' && this.session()?.time?.paused === true,
+  );
+  /**
+   * 実時間への遅れ（実行中で、許容を超えて遅れた刻みがあるとき。色だけでなく文で）。途中で最速に変えても、それまでの
+   * 遅れは出したまま。結果が出たら、結果のカードが言う。
+   */
+  protected readonly lateText = computed(() => {
+    const session = this.session();
+    const time = session?.time;
+    if (!session?.launcher.running || session.result || !time || time.lateSteps === null)
+      return null;
+    return latenessText({
+      lateSteps: time.lateSteps,
+      maxLateMs: time.maxLateMs ?? 0,
+      slippedMs: time.slippedMs ?? 0,
+    });
+  });
+  /**
+   * 読み上げる遅れの知らせ。遅れが「ある」になったときだけ変わる（数が変わるたびには読み上げない）。読み上げる領域は
+   * 画面でここだけ。
+   */
+  protected readonly lateAnnouncement = computed(() =>
+    this.lateText() === null ? '' : LATE_ANNOUNCEMENT,
+  );
   /** 仮想時刻の事象で、要約に入りきらずサーバーが省いた欄（あれば、その説明）。 */
   protected readonly timeOmitted = computed(() => {
     const fields = this.session()?.timeOmittedFields ?? [];
@@ -198,7 +240,9 @@ export class RunStatus {
     const result = session.result;
     switch (outcome) {
       case 'running':
-        return { tone: 'active', mark: '●', text: $localize`実行中` };
+        return this.paused()
+          ? { tone: 'active', mark: '‖', text: $localize`一時停止中` }
+          : { tone: 'active', mark: '●', text: $localize`実行中` };
       case 'stopping':
         return {
           tone: 'active',

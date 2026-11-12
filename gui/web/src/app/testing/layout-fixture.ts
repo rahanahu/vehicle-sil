@@ -192,6 +192,7 @@ export class LayoutFixture {
         step_ms: 10,
         status: 'described',
         variables: null,
+        control: null,
       },
     ],
     networks: [
@@ -212,6 +213,7 @@ export class LayoutFixture {
       message: null,
       stopRequested: false,
       omittedFields: ['environment_with_a_very_long_field_name_that_does_not_break', 'command'],
+      controlLink: { state: 'version_mismatch', variables: null, version: 2, late_messages: null },
     },
     {
       name: 'Dashboard',
@@ -224,6 +226,7 @@ export class LayoutFixture {
       message: null,
       stopRequested: false,
       omittedFields: [],
+      controlLink: { state: 'connected', variables: 17, version: null, late_messages: null },
     },
   ];
 

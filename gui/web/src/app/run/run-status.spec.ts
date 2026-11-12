@@ -55,6 +55,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     file: 'sim.yaml',
     disable: [],
     speed: null,
+    start_paused: false,
     state: 'running',
     phase: 'running',
     stop: 'none',
@@ -62,6 +63,8 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     last_t_ms: null,
     sim_ms: null,
     time_omitted_fields: [],
+    time: null,
+    last_command: null,
     check: null,
     participants: [],
     findings: [],
@@ -183,6 +186,97 @@ describe('RunStatus', () => {
     expect(stopButton().textContent).toContain('止めています');
     expect(stopButton().getAttribute('aria-disabled')).toBe('true');
     expect(query('force-stop')).not.toBeNull();
+  });
+
+  it('does not say that it stops once the stopped run has ended', async () => {
+    await show(sessionFromSummary(summary({ stop: 'requested' })));
+    expect(stopButton().textContent).toContain('止めています');
+    await show(
+      sessionFromSummary(
+        summary({
+          ...ENDED,
+          stop: 'requested',
+          launcher: { running: false, exit_code: 130, signal: null, silent_s: null },
+        }),
+      ),
+    );
+    expect(stopButton().getAttribute('aria-disabled')).toBe('true');
+    expect(stopButton().textContent).not.toContain('止めています');
+    expect(stopButton().textContent).toContain('停止');
+  });
+
+  it('says when the simulation is paused, its speed, and how late it is, in words', async () => {
+    const time = (extra: Partial<NonNullable<SessionSummary['time']>> = {}) => ({
+      sim_ms: 0,
+      speed: 1,
+      paused: true,
+      actual_speed: null,
+      late_steps: 0,
+      max_late_ms: 0,
+      slipped_ms: 0,
+      late_ms: 0,
+      ...extra,
+    });
+    await show(sessionFromSummary(summary({ sim_ms: 0, time: time() })));
+    expect(query('outcome')?.textContent).toContain('一時停止中');
+    expect(query('speed')?.textContent).toContain('等速');
+    // 動いている間の 0 も出す（新しいランチャーは動いている間も知らせる）
+    expect(query('sim-time')?.textContent).toContain('0.000');
+    expect(query('late')?.textContent?.trim()).toBe('');
+    // 読み上げるのは、遅れが「ある」になったときの決まった文だけ（数は読み上げない）
+    expect(query('late-announce')?.getAttribute('role')).toBe('status');
+    expect(query('late')?.getAttribute('role')).toBeNull();
+    // 許容の内の小さな遅れ（刻みの同期のたびに出たり消えたりする）は、遅れとして言わない
+    await show(
+      sessionFromSummary(
+        summary({ sim_ms: 100, time: time({ sim_ms: 100, paused: false, late_ms: 3 }) }),
+      ),
+    );
+    expect(query('late')?.textContent?.trim()).toBe('');
+    expect(query('late-announce')?.textContent?.trim()).toBe('');
+    await show(
+      sessionFromSummary(
+        summary({
+          sim_ms: 300,
+          time: time({
+            sim_ms: 300,
+            paused: false,
+            late_steps: 1,
+            max_late_ms: 200,
+            slipped_ms: 200,
+          }),
+        }),
+      ),
+    );
+    expect(query('outcome')?.textContent).toContain('実行中');
+    expect(query('late')?.textContent).toContain('実時間に遅れました');
+    expect(query('late')?.textContent).toContain('200 ms');
+    expect(query('late-announce')?.textContent?.trim()).toBe('実時間に遅れました。');
+    // 数が変わっても、読み上げる文は変わらない
+    await show(
+      sessionFromSummary(
+        summary({
+          sim_ms: 900,
+          time: time({
+            sim_ms: 900,
+            paused: false,
+            late_steps: 2,
+            max_late_ms: 300,
+            slipped_ms: 500,
+          }),
+        }),
+      ),
+    );
+    expect(query('late')?.textContent).toContain('500 ms');
+    expect(query('late-announce')?.textContent?.trim()).toBe('実時間に遅れました。');
+    // 途中で最速に変えても、それまでの遅れは出したまま
+    await show(
+      sessionFromSummary(
+        summary({ sim_ms: 300, time: time({ speed: 'max', paused: false, late_steps: 1 }) }),
+      ),
+    );
+    expect(query('late')?.textContent).toContain('実時間に遅れました');
+    expect(query('speed')?.textContent).toContain('最速');
   });
 
   it('says only what it waits for while stopping (the button says that it stops)', async () => {

@@ -22,6 +22,8 @@ from datetime import UTC, datetime
 from itertools import islice
 from typing import Any
 
+from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD
+
 EVENTS_FORMAT = 1  # the `vehicle_sil_events` of hello that this server reads
 SHARED_LOG = "*"  # the source key of the log shared by the sources after Limits.log_sources
 ENVELOPE = ("event", "seq", "t_ms")  # what is removed from an event when its fields are kept in the summary
@@ -29,10 +31,10 @@ MAX_COUNT = 2 ** 53  # seq and t_ms: integers that JavaScript reads exactly
 # The fields of a small event that the summary keeps however large the event is (the others are left out of
 # the summary when the event is larger than Limits.small_bytes, and named in `omitted_fields`).
 ESSENTIAL = {
-    "participant": ("name", "state", "pid", "exit_code", "signal", "reason", "stop_requested"),
-    "time": ("event", "seq", "t_ms", "sim_ms"),
+    "participant": ("name", "state", "pid", "exit_code", "signal", "reason", "stop_requested", CONTROL_SUMMARY_FIELD),
+    "time": ("event", "seq", "t_ms", "sim_ms", "speed", "paused", "late_steps", "max_late_ms", "slipped_ms", "late_ms"),
     "registry": ("uri",),
-    "command": ("command", "accepted"),
+    "command": ("seq", "command", "accepted", "ms"),
 }
 # Problems that the server notices about the run, as opposed to what the launcher wrote: each has its own room
 # in the summary, so that a launcher that writes junk cannot push them out.
@@ -146,6 +148,9 @@ def _shape_problem(event: dict) -> str | None:
             else "command is not a string, or accepted is not true or false"
     if kind == "result":
         return None if isinstance(event.get("result"), dict) else "result is not an object"
+    if kind == CONTROL_EVENT:
+        return None if isinstance(event.get("name"), str) and isinstance(event.get("state"), str) \
+            else "name or state is not a string"
     return None
 
 
@@ -373,16 +378,20 @@ class Session:
             kept = self._small(kind, {k: v for k, v in event.items() if k not in ENVELOPE}, None)
             self.registry = kept if kept is not None else self.registry
         elif kind == "command":
-            kept = self._small(kind, {k: v for k, v in event.items() if k not in ENVELOPE}, None)
+            # with its seq: a screen tells a new answer from the same one sent again in a later summary
+            kept = self._small(kind, {k: v for k, v in event.items() if k not in ("event", "t_ms")}, None)
             self.last_command = kept if kept is not None else self.last_command
-        elif kind == "participant":
+        elif kind in ("participant", CONTROL_EVENT):
             name = event["name"]
             if name in self.participants or len(self.participants) < self.limits.participants:
                 fields = {k: v for k, v in event.items() if k not in ENVELOPE}
-                if event["state"] == "stop_requested":
+                if kind == CONTROL_EVENT:
+                    # the participant's control link, kept as one field of its entry
+                    fields = {"name": name, CONTROL_SUMMARY_FIELD: {k: v for k, v in fields.items() if k != "name"}}
+                elif event["state"] == "stop_requested":
                     # kept after later states: a participant asked to stop that then ends is not a failure
                     fields["stop_requested"] = True
-                kept = self._small(kind, fields, self.participants.get(name, {"name": name}))
+                kept = self._small("participant", fields, self.participants.get(name, {"name": name}))
                 if kept is not None:
                     self.participants[name] = kept
             else:

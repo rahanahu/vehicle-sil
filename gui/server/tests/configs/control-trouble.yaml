@@ -1,0 +1,20 @@
+# A configuration for the fake launcher (gui/server/tests/fake_launcher.py); the line below picks its scenario.
+# fake-launcher: control-trouble
+vehicle_sil_simulation: 1
+# Engine offers its variables and does not say hello (no_hello), Dashboard says hello in another version of the
+# messages (version_mismatch), Gauge does not offer them (not_offered), Logger has none
+stop_at_ms: 1000
+networks:
+  - name: J1939_CAN
+    kind: can
+participants:
+  - name: Engine
+    command: [engine/vehicle_sil_engine_ecu]
+  - name: Dashboard
+    command: [dashboard/vehicle_sil_dashboard_ecu]
+  - name: Gauge
+    command: [gauge/vehicle_sil_gauge_ecu]
+  - name: Logger
+    command: [logger/can_logger, "{registry_uri}"]
+    describe: false
+    required: false

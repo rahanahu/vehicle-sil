@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 from vehicle_sil_gui import process
 from vehicle_sil_gui.hub import Client, Hub, encode
-from vehicle_sil_gui.launcher import InvalidRequest, check_disable, check_speed
+from vehicle_sil_gui.launcher import (InvalidRequest, check_disable, check_speed, check_time_command, command_line,
+                                     speed_argument)
 from vehicle_sil_gui.paths import ConfigRoot, PathRejected
 from vehicle_sil_gui.session import Limits, Session
 from vehicle_sil_gui.static import StaticFiles
@@ -58,7 +59,7 @@ def test_session_follows_the_events() -> None:
                                         "exit_code": 3, "signal": None}]
     assert summary["findings"] == [{"severity": "error", "code": "participant-failed", "message": "m"}]
     assert summary["registry"] == {"uri": "silkit://x"}
-    assert summary["last_command"] == {"command": "stop", "accepted": True}
+    assert summary["last_command"] == {"seq": 9, "command": "stop", "accepted": True}
     assert summary["result"] == {"result": "failed"} and summary["problems"] == []
     assert kinds(out) == ["session"] and out[0]["session"]["state"] == "ended"
 
@@ -361,6 +362,38 @@ def test_a_participant_state_this_server_does_not_know_passes_through() -> None:
         {"name": "B", "state": "sleeping", "why": {"x": 1}}]
 
 
+def test_the_control_link_of_a_participant_is_kept_in_its_entry() -> None:
+    """The control event (a state of the participant's link to its variables) is laid over the participant's entry
+    as one field, so that a screen opened later sees it; a state this server does not know passes through."""
+    s = new_session()
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("participant", 1, name="A", state="started", pid=7))
+    s.feed_line(line("participant", 2, name="A", state="joined"))
+    out = s.feed_line(line("control_link", 3, name="A", state="connected", variables=17))
+    assert kinds(out) == ["event"]
+    s.feed_line(line("control_link", 4, name="B", state="version_mismatch", version=2))
+    s.feed_line(line("control_link", 5, name="C", state="some_new_state"))
+    s.feed_line(line("participant", 6, name="A", state="ended", exit_code=0, signal=None))
+    assert s.summary()["participants"] == [
+        {"name": "A", "state": "ended", "pid": 7, "control_link": {"state": "connected", "variables": 17},
+         "exit_code": 0, "signal": None},
+        {"name": "B", "control_link": {"state": "version_mismatch", "version": 2}},
+        {"name": "C", "control_link": {"state": "some_new_state"}}]
+    assert kinds(s.feed_line(line("control_link", 7, name=5, state="connected"))) == ["error:bad-event"]
+
+
+def test_an_event_this_server_does_not_know_is_passed_on_and_the_reading_goes_on() -> None:
+    """A launcher newer than this server may write events it does not know: they reach the screens as they are
+    (the screen skips what it does not know), nothing is reported, and the events after them are read as usual."""
+    s = new_session()
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    out = s.feed_line(line("future_thing", 1, payload={"a": [1, 2]}, note="n"))
+    assert kinds(out) == ["event"] and out[0]["event"]["payload"] == {"a": [1, 2]}
+    out = s.feed_line(line("phase", 2, phase="running"))
+    assert kinds(out) == ["event"] and s.summary()["phase"] == "running"
+    assert s.summary()["problems"] == [] and s.last_seq == 2
+
+
 def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
     s = new_session()
     s.feed_line(line("hello", 0, vehicle_sil_events=1))
@@ -387,10 +420,18 @@ def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
     summary = s.summary()
     assert summary["phase"] == "running"
     assert summary["time"] == {"event": "time", "seq": 7, "t_ms": 7, "sim_ms": 100, "omitted_fields": ["detail"]}
-    assert summary["last_command"] == {"command": "stop", "accepted": True, "omitted_fields": ["message"]}
+    assert summary["last_command"] == {"seq": 8, "command": "stop", "accepted": True, "omitted_fields": ["message"]}
     assert summary["registry"] == {"uri": "silkit://x", "omitted_fields": ["detail"]}
     out = s.feed_line(line("participant", 10, name="N" * 5000, state="started"))  # not even the name fits
     assert kinds(out) == ["event"] and len(s.summary()["participants"]) == 2
+    # The time with its lateness, however large the event: a screen opened later still sees how late it is
+    s.feed_line(line("time", 11, sim_ms=300, speed=1, paused=False, actual_speed=0.9, late_steps=1, max_late_ms=200,
+                     slipped_ms=200, late_ms=0, detail="d" * 5000))
+    time = s.summary()["time"]
+    assert {k: time[k] for k in ("sim_ms", "speed", "paused", "late_steps", "max_late_ms", "slipped_ms", "late_ms")} \
+        == {"sim_ms": 300, "speed": 1, "paused": False, "late_steps": 1, "max_late_ms": 200, "slipped_ms": 200,
+            "late_ms": 0}
+    assert time["omitted_fields"] == ["detail"]
 
 
 def test_dropped_counts_are_exact_while_recorded() -> None:
@@ -599,9 +640,26 @@ def test_disable_and_speed_are_checked() -> None:
         with pytest.raises(InvalidRequest):
             check_disable(bad, ["A", "B"])
     assert check_speed(None) is None and check_speed("max") == "max" and check_speed(2) == 2.0
-    for bad in (True, 0, -1, 1e9, float("nan"), float("inf"), "fast", [1]):
+    for bad in (True, 0, -1, 1e9, 1e-7, float("nan"), float("inf"), "fast", [1]):
         with pytest.raises(InvalidRequest):
             check_speed(bad)
+    assert check_speed(0.000001) == 1e-6 and check_speed(1000000) == 1e6
+
+
+def test_speeds_and_time_commands_are_written_as_the_launcher_reads_them() -> None:
+    # The shortest decimal that is the number: never rounded, and no ".0"
+    assert [speed_argument(s) for s in ("max", 2.0, 0.5, 1e-6, 1.2345678, 1e6)] == \
+        ["max", "2", "0.5", "1e-06", "1.2345678", "1000000"]
+    assert command_line(check_time_command({"command": "pause"})) == b'{"command":"pause"}\n'
+    assert command_line(check_time_command({"command": "resume"})) == b'{"command":"resume"}\n'
+    assert command_line(check_time_command({"command": "step", "ms": 25})) == b'{"command":"step","ms":25}\n'
+    assert command_line(check_time_command({"command": "speed", "value": 2})) == b'{"command":"speed","value":2}\n'
+    assert command_line(check_time_command({"command": "speed", "value": "max"})) == \
+        b'{"command":"speed","value":"max"}\n'
+    for bad in ({}, {"command": None}, {"command": "stop"}, {"command": "step", "ms": 0}, {"command": "step"},
+                {"command": "speed", "value": None}, {"command": "resume", "value": 1}):
+        with pytest.raises(InvalidRequest):
+            check_time_command(bad)
 
 
 # ---------------------------------------------------------------- static files

@@ -24,13 +24,20 @@
       },
       "stop": "none",
       "phase": "ended",
-      "last_seq": 58,
-      "last_t_ms": 580,
+      "last_seq": 70,
+      "last_t_ms": 700,
       "time": {
         "event": "time",
-        "seq": 48,
-        "t_ms": 480,
-        "sim_ms": 1000
+        "seq": 60,
+        "t_ms": 600,
+        "sim_ms": 1000,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
       },
       "check": {
         "vehicle_sil_check": 1,
@@ -113,7 +120,11 @@
                   }
                 ]
               }
-            ]
+            ],
+            "control": {
+              "transport": "silkit",
+              "wire_version": 1
+            }
           },
           {
             "name": "Dashboard",
@@ -182,7 +193,11 @@
                   }
                 ]
               }
-            ]
+            ],
+            "control": {
+              "transport": "silkit",
+              "wire_version": 1
+            }
           },
           {
             "name": "Logger",
@@ -197,7 +212,8 @@
             "step_ms": null,
             "status": "not_checked",
             "reported": null,
-            "variables": null
+            "variables": null,
+            "control": null
           }
         ],
         "networks": [
@@ -243,6 +259,10 @@
             "50000"
           ],
           "log": null,
+          "control_link": {
+            "state": "connected",
+            "variables": 3
+          },
           "exit_code": 0,
           "signal": null
         },
@@ -260,6 +280,10 @@
             "50000"
           ],
           "log": null,
+          "control_link": {
+            "state": "connected",
+            "variables": 3
+          },
           "exit_code": 0,
           "signal": null
         },
@@ -272,6 +296,9 @@
             "silkit://127.0.0.1:8500"
           ],
           "log": null,
+          "control_link": {
+            "state": "none"
+          },
           "exit_code": 0,
           "signal": null
         }
@@ -291,6 +318,22 @@
         "notes": 1,
         "simulation": "reached_stop_at",
         "interrupted_by": null,
+        "timing": {
+          "speed": "max",
+          "time_step_ms": 10,
+          "ecu_step_ms": null,
+          "step_delay_ms": null,
+          "late_tolerance_ms": 10,
+          "sim_ms": 1000,
+          "wall_ms": 1000,
+          "actual_speed": 1.5,
+          "paced_steps": 0,
+          "late_steps": 0,
+          "max_late_ms": 0,
+          "slipped_ms": 0,
+          "late_ms": 0,
+          "paused_ms": 0
+        },
         "participants": [
           {
             "name": "Engine",
@@ -300,7 +343,13 @@
             "exit_code": 0,
             "signal": null,
             "left_processes": false,
-            "log": null
+            "log": null,
+            "control_link": {
+              "state": "connected",
+              "variables": 3,
+              "version": null,
+              "late_messages": 0
+            }
           },
           {
             "name": "Dashboard",
@@ -310,7 +359,13 @@
             "exit_code": 0,
             "signal": null,
             "left_processes": false,
-            "log": null
+            "log": null,
+            "control_link": {
+              "state": "connected",
+              "variables": 3,
+              "version": null,
+              "late_messages": 0
+            }
           },
           {
             "name": "Logger",
@@ -320,7 +375,13 @@
             "exit_code": 0,
             "signal": null,
             "left_processes": false,
-            "log": null
+            "log": null,
+            "control_link": {
+              "state": "none",
+              "variables": null,
+              "version": null,
+              "late_messages": 0
+            }
           }
         ],
         "findings": [],
@@ -405,7 +466,11 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
             },
             {
               "name": "Dashboard",
@@ -474,7 +539,11 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
             },
             {
               "name": "Logger",
@@ -489,7 +558,8 @@
               "step_ms": null,
               "status": "not_checked",
               "reported": null,
-              "variables": null
+              "variables": null,
+              "control": null
             }
           ],
           "networks": [

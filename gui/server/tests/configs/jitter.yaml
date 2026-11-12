@@ -1,0 +1,14 @@
+# A configuration for the fake launcher (gui/server/tests/fake_launcher.py); the line below picks its scenario.
+# fake-launcher: jitter
+vehicle_sil_simulation: 1
+# no stop_at_ms: runs until stopped; at the speed of the file, every other step starts 3 ms late (within the
+# tolerance of 10 ms): late_ms comes and goes, and no step is late
+speed: 1
+networks:
+  - name: J1939_CAN
+    kind: can
+participants:
+  - name: Engine
+    command: [engine/vehicle_sil_engine_ecu]
+  - name: Dashboard
+    command: [dashboard/vehicle_sil_dashboard_ecu]

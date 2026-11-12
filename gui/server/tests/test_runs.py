@@ -10,6 +10,7 @@ import shutil
 import signal
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,18 @@ async def run_to_end(c: Client, body: dict) -> list[dict]:
 
 
 SPEED = {"FAKE_LAUNCHER_FEATURES": "events,stdin-commands,check-variables,speed"}
+OLD = {"FAKE_LAUNCHER_FEATURES": "events,stdin-commands,check-variables"}
+
+
+def is_time(**fields) -> Callable[[dict], bool]:
+    """A time event with these values."""
+    return lambda m: m["type"] == "event" and m["event"]["event"] == "time" and \
+        all(m["event"].get(k) == v for k, v in fields.items())
+
+
+def is_command(name: str, accepted: bool) -> Callable[[dict], bool]:
+    return lambda m: m["type"] == "event" and m["event"]["event"] == "command" and \
+        m["event"]["command"] == name and m["event"]["accepted"] is accepted
 
 
 def test_a_run_that_passes(tmp_path: Path) -> None:
@@ -363,3 +376,188 @@ def test_a_launcher_in_the_current_directory_is_not_taken_from_path(tmp_path: Pa
         assert gui.proc.returncode == 2 and "current directory" in gui.stderr_text()
     with gui_server(tmp_path, launcher=planted, env=env, cwd=here) as gui:
         pass
+
+
+def test_pause_step_resume_and_speed(tmp_path: Path) -> None:
+    """Started paused: a step (rounded up to the controller's time step), a new speed, resume, pause, stop. Each
+    command goes to the launcher at once; what it did comes as its events, and the summary keeps the last."""
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "200"}) as gui:
+        async def main(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            status, body = await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"], "speed": "max",
+                                                    "start_paused": True})
+            assert status == 200 and body["session"]["start_paused"] is True, body
+            await sock.until(is_time(sim_ms=0, paused=True))
+            hello = events(sock.received, "hello")[0]
+            assert hello["arguments"] == ["run", "--events", "--stdin-commands", "--disable", "Logger", "--speed",
+                                          "max", "--start-paused", "--", "forever.yaml"]
+            status, body = await c.post("api/time", {"command": "step", "ms": 25})
+            assert status == 200 and body == {"session_id": 1, "command": {"command": "step", "ms": 25}}, body
+            got = await sock.until(is_time(sim_ms=30, paused=True))
+            step = next(e for e in events(got, "command"))
+            assert step["accepted"] and step["ms"] == 30  # whole steps of 10 ms
+            status, body = await c.post("api/time", {"command": "speed", "value": 2})
+            assert status == 200 and body["command"] == {"command": "speed", "value": 2.0}
+            await sock.until(is_time(speed=2, paused=True))
+            await c.post("api/time", {"command": "resume"})
+            await sock.until(is_time(paused=False))
+            status, body = await c.post("api/time", {"command": "step", "ms": 10})
+            assert status == 200  # the server passes it on; the launcher refuses it
+            got = await sock.until(is_command("step", False))
+            assert "paused" in got[-1]["event"]["message"]
+            await c.post("api/time", {"command": "pause"})
+            await sock.until(is_time(paused=True))
+            status, body = await c.get("api/session")
+            summary = body["session"]
+            assert summary["time"]["paused"] is True and summary["time"]["speed"] == 2
+            assert summary["last_command"]["command"] == "pause" and summary["last_command"]["accepted"] is True
+            await c.post("api/stop")
+            got = await sock.until(is_ended)
+            end = got[-1]["session"]
+            assert end["result"]["result"] == "interrupted" and end["time"]["paused"] is False
+            timing = end["result"]["timing"]
+            assert timing["speed"] == 2 and timing["time_step_ms"] == 10 and timing["paused_ms"] > 0
+            status, body = await c.post("api/time", {"command": "resume"})
+            assert status == 409 and body["error"]["code"] == "not-running"
+        run_async(main, gui)
+
+
+def test_time_commands_are_checked(tmp_path: Path) -> None:
+    async def main(c: Client) -> None:
+        status, body = await c.post("api/time", {"command": "pause"})
+        assert status == 409 and body["error"]["code"] == "not-running", body
+        for bad in ({}, {"command": "stop"}, {"command": "Pause"}, {"command": "step"}, {"command": "step", "ms": 0},
+                    {"command": "step", "ms": 1.5}, {"command": "step", "ms": True}, {"command": "step", "ms": "5"},
+                    {"command": "step", "ms": 10 ** 12 + 1}, {"command": "speed"}, {"command": "speed", "value": 0},
+                    {"command": "speed", "value": "fast"}, {"command": "speed", "value": 10 ** 7},
+                    {"command": "pause", "ms": 5}):
+            status, body = await c.post("api/time", bad)
+            assert status == 400 and body["error"]["code"] == "invalid-field", (bad, body)
+        status, body = await c.post("api/time", raw=b'{"command": "speed", "value": NaN}')
+        assert status == 400
+        sock = await c.ws()
+        await sock.until(is_synced)
+        await c.post("api/run", {"file": "forever.yaml"})
+        await sock.until(is_time(sim_ms=0))
+        status, body = await c.post("api/time", {"command": "step", "ms": 10 ** 12})
+        assert status == 200
+        await sock.until(is_command("step", False))  # not paused
+        await c.post("api/stop")
+        await sock.until(is_ended)
+    with gui_server(tmp_path) as gui:
+        run_async(main, gui)
+
+
+def test_a_launcher_without_time_commands(tmp_path: Path) -> None:
+    async def main(c: Client) -> None:
+        status, app = await c.get("api/app")
+        assert "time-commands" not in app["launcher"]["version"]["features"]
+        # The server does not pass an argument the launcher cannot take, nor a command it cannot read.
+        status, body = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
+        assert status == 400 and body["error"]["code"] == "unsupported" and "start-paused" in body["error"]["message"]
+        sock = await c.ws()
+        await sock.until(is_synced)
+        await c.post("api/run", {"file": "forever.yaml"})
+        await sock.until(is_time(sim_ms=0))
+        status, body = await c.post("api/time", {"command": "pause"})
+        assert status == 400 and body["error"]["code"] == "unsupported" and "time-commands" in body["error"]["message"]
+        await c.post("api/stop")
+        await sock.until(is_ended)
+    with gui_server(tmp_path, env=OLD) as gui:
+        run_async(main, gui)
+
+
+def test_lateness_reaches_the_screen_and_the_summary(tmp_path: Path) -> None:
+    async def main(c: Client) -> None:
+        sock = await c.ws()
+        await sock.until(is_synced)
+        await c.post("api/run", {"file": "late.yaml"})
+        got = await sock.until(is_time(late_steps=1, late_ms=0))
+        stalled = [e for e in events(got, "time") if e["late_ms"] > 0]
+        assert stalled and stalled[0]["late_ms"] == 200 and stalled[0]["slipped_ms"] == 200
+        status, body = await c.get("api/session")
+        assert body["session"]["time"]["late_steps"] == 1 and body["session"]["time"]["max_late_ms"] == 200
+        await c.post("api/stop")
+        got = await sock.until(is_ended)
+        end = got[-1]["session"]
+        # The real launcher's order: warnings before notes
+        assert [f["code"] for f in end["result"]["findings"]] == ["behind-real-time", "interrupted"]
+        assert [e["code"] for e in events(got, "finding")] == ["behind-real-time", "interrupted"]
+        timing = end["result"]["timing"]
+        assert (timing["late_steps"], timing["max_late_ms"], timing["slipped_ms"], timing["speed"]) == (1, 200, 200, 1)
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "50"}) as gui:
+        run_async(main, gui)
+
+
+def test_lateness_within_the_tolerance_is_not_a_late_step(tmp_path: Path) -> None:
+    """late_ms comes and goes while each step's synchronisation takes a little longer than its real time; only a
+    step later than the tolerance counts (late_steps), and only that makes the warning."""
+    async def main(c: Client) -> None:
+        sock = await c.ws()
+        await sock.until(is_synced)
+        await c.post("api/run", {"file": "jitter.yaml"})
+        got = await sock.until(is_time(sim_ms=1000))
+        times = events(got, "time")
+        assert {t["late_ms"] for t in times} == {0, 3} and {t["late_steps"] for t in times} == {0}
+        await c.post("api/stop")
+        got = await sock.until(is_ended)
+        end = got[-1]["session"]
+        assert [f["code"] for f in end["result"]["findings"]] == ["interrupted"]
+        assert end["result"]["timing"]["late_steps"] == 0
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "20"}) as gui:
+        run_async(main, gui)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the fake makes its input pipe small with F_SETPIPE_SZ")
+def test_a_launcher_that_does_not_read_its_input_holds_no_request(tmp_path: Path) -> None:
+    """Commands to a launcher that reads nothing fill its input; a request then returns after about
+    STDIN_DRAIN_S (2 s) instead of waiting, and the launcher's events go on reaching the screens meanwhile."""
+    async def main(c: Client) -> None:
+        sock = await c.ws()
+        await sock.until(is_synced)
+        await c.post("api/run", {"file": "deaf.yaml"})
+        await sock.until(is_time(sim_ms=0))
+        body = {"command": "speed", "value": 0.000001}  # the longest line
+        for _ in range(200):  # until the input pipe and the server's own buffer (64 KiB) are full
+            began = time.monotonic()
+            replies = await asyncio.gather(*(c.post("api/time", body) for _ in range(100)))
+            took = time.monotonic() - began
+            assert all(status == 200 for status, _ in replies), replies[0]
+            if took >= 1.5:
+                break
+        assert 1.5 <= took < 5, took
+        logs = len(events(sock.received, "log"))
+        await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "log")
+        await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "log")
+        assert len(events(sock.received, "log")) >= logs + 2
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "100"}, args=("--stop-timeout", "1")) as gui:
+        run_async(main, gui)
+
+
+@pytest.mark.skipif(not POSIX, reason="file modes")
+def test_time_commands_follow_the_launcher_of_the_run(tmp_path: Path) -> None:
+    """A launcher built again while a run goes: the commands the running one can take decide, not the new one's."""
+    launcher = tmp_path / "vehicle_sil_launch"
+
+    def write(features: str) -> None:  # another size each time: the server asks the new one for its version
+        launcher.write_text(f"#!{sys.executable}\n# {features}\nimport os, runpy\n"
+                            f"os.environ['FAKE_LAUNCHER_FEATURES'] = {features!r}\n"
+                            f"runpy.run_path({str(FAKE)!r}, run_name='__main__')\n")
+        launcher.chmod(0o755)
+
+    write("events,stdin-commands,check-variables")
+    with gui_server(tmp_path, launcher=launcher) as gui:
+        async def main(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            await c.post("api/run", {"file": "forever.yaml"})
+            await sock.until(is_time(sim_ms=0))
+            write("events,stdin-commands,check-variables,speed,start-paused,time-commands")
+            status, app = await c.get("api/app")
+            assert "time-commands" in app["launcher"]["version"]["features"]
+            status, body = await c.post("api/time", {"command": "pause"})
+            assert status == 400 and body["error"]["code"] == "unsupported", body
+            await c.post("api/stop")
+            await sock.until(is_ended)
+        run_async(main, gui)

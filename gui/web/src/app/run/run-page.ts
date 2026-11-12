@@ -11,6 +11,7 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { firstValueFrom } from 'rxjs';
@@ -25,6 +26,12 @@ import {
 import { AuthToken } from '../core/auth/auth-token';
 import { shortPath } from '../core/format/short-path';
 import { LanguageChoice } from '../core/i18n/language-choice';
+import { ServerInfo } from '../core/session/server-info';
+import {
+  FEATURE_SPEED,
+  FEATURE_START_PAUSED,
+  SimulationTime,
+} from '../core/session/simulation-time';
 import { CheckPanel } from './check-panel';
 import { FindingsList } from './findings-list';
 import { STDERR_CODE, launcherStderr } from './launcher-stderr';
@@ -34,6 +41,8 @@ import { ResultPanel } from './result-panel';
 import { RunSession } from './run-session';
 import { RunStatus } from './run-status';
 import { SpeedPicker } from './speed-picker';
+import { TimeButtons } from './time-buttons';
+import { TimePanel } from './time-panel';
 
 /** 「使う」を切り替えてから照合を頼むまでの間（ミリ秒）。続けて切り替えたら、最後の組み合わせで 1 回だけ照合する。 */
 export const CHECK_DELAY_MS = 300;
@@ -57,6 +66,8 @@ interface RunChoices {
   file: string | null;
   disable: string[];
   speed: Speed;
+  /** 止めた状態で始めるか（古い持ち越しにはない）。 */
+  startPaused?: boolean;
   logSource: string;
 }
 
@@ -74,6 +85,7 @@ export function readRunChoices(value: unknown): RunChoices | null {
     !Array.isArray(v['disable']) ||
     !v['disable'].every(isText) ||
     !speedOk ||
+    !(v['startPaused'] === undefined || typeof v['startPaused'] === 'boolean') ||
     !isText(v['logSource'])
   ) {
     return null;
@@ -109,6 +121,7 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
   imports: [
     MatButtonModule,
     MatCardModule,
+    MatCheckboxModule,
     MatFormFieldModule,
     MatSelectModule,
     CheckPanel,
@@ -118,6 +131,8 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
     ResultPanel,
     RunStatus,
     SpeedPicker,
+    TimeButtons,
+    TimePanel,
   ],
   providers: [RunSession],
   templateUrl: './run-page.html',
@@ -128,13 +143,15 @@ export class RunPage {
   private readonly document = inject(DOCUMENT);
   protected readonly auth = inject(AuthToken);
   protected readonly run = inject(RunSession);
+  private readonly info = inject(ServerInfo);
+  /** 時刻（仮想時間、一時停止、速さ）と、その操作。 */
+  protected readonly time = inject(SimulationTime);
   private readonly language = inject(LanguageChoice);
   /** 言語を変える前の選択（なければ null）。 */
   private readonly carried = readRunChoices(this.language.take('run'));
 
-  protected readonly app = httpResource(() => (this.auth.token() ? 'api/app' : undefined), {
-    parse: readAppInfo,
-  });
+  /** サーバーとランチャーの情報（アプリ全体で 1 つ。ほかの部品も ServerInfo から同じものを読む）。 */
+  protected readonly app = this.info.app;
   protected readonly configs = httpResource(() => (this.auth.token() ? 'api/configs' : undefined), {
     parse: readConfigList,
   });
@@ -224,12 +241,33 @@ export class RunPage {
   });
 
   /** ランチャーが速度を変えられるか（できないときは欄を出さず、速度を送らない）。 */
-  protected readonly speedSupported = computed(
-    () => this.app.hasValue() && this.app.value().launcher.features.includes('speed'),
+  protected readonly speedSupported = computed(() => this.info.features().includes(FEATURE_SPEED));
+  /** ランチャーが止めた状態で始められるか（できないときは欄を出さず、送らない）。 */
+  protected readonly startPausedSupported = computed(() =>
+    this.info.features().includes(FEATURE_START_PAUSED),
   );
-  protected readonly speedRange = computed(() =>
-    this.app.hasValue() ? this.app.value().limits : { speed_min: 0.01, speed_max: 1000 },
-  );
+  protected readonly speedRange = this.info.limits;
+  /**
+   * 帯に一時停止と再開を出すか: 始めてから、結果が出るかランチャーが終わるまで。止めるよう頼んだ後も、押せないまま
+   * 同じ場所に残す（「待たずに止める」が、一時停止のあった場所に出ないように）。停止の後に並ぶので、出ても消えても
+   * 開始と停止は動かない。
+   */
+  protected readonly timeButtonsShown = computed(() => {
+    const session = this.session();
+    if (!this.time.supported()) return false;
+    if (this.run.starting()) return true;
+    return !!session && session.launcher.running && !session.result;
+  });
+  /** 「時刻」のカードを出すか: 実行中で、ランチャーが時刻の操作か速度を持つとき（速度だけなら、見るだけ）。 */
+  protected readonly timeCardShown = computed(() => {
+    const session = this.session();
+    return (
+      (this.time.supported() || this.speedSupported()) &&
+      !!session &&
+      session.launcher.running &&
+      !session.result
+    );
+  });
   /** 速度。前の実行のもの（なければ構成ファイルのとおり）から始める。 */
   protected readonly speed = linkedSignal<Speed>(() => {
     const session = this.session();
@@ -238,6 +276,11 @@ export class RunPage {
   });
   /** 速度の倍率の欄が範囲の外。 */
   protected readonly speedInvalid = signal(false);
+  /**
+   * 止めた状態で始める（全員がそろったら仮想時間 0 で止まり、再開かステップ送りを待つ）。前の実行からは持ち越さない
+   * （別のタブや前の人が止めて始めたことで、気づかずに止まったまま始まらないように）。この画面の中では選んだまま。
+   */
+  protected readonly startPaused = signal(this.carried?.startPaused ?? false);
 
   /** 照合し直すよう頼んだ回数（同じ組み合わせでも照合し直すため）。 */
   private readonly rechecks = signal(0);
@@ -400,6 +443,7 @@ export class RunPage {
         file: this.selected(),
         disable: [...this.disabled()],
         speed: this.speed(),
+        startPaused: this.startPaused(),
         logSource: this.logSource(),
       }),
       inject(DestroyRef),
@@ -422,7 +466,7 @@ export class RunPage {
       file,
       disable: [...this.disabled()].sort(),
       speed: this.speedSupported() ? this.speed() : null,
-      start_paused: false,
+      start_paused: this.startPausedSupported() && this.startPaused(),
     });
   }
 

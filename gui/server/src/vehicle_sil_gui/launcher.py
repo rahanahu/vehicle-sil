@@ -16,8 +16,23 @@ LAUNCHER_NAME = "vehicle_sil_launch"
 ENV_VARIABLE = "VEHICLE_SIL_LAUNCH"
 REQUIRED_FEATURES = ("events", "stdin-commands")
 VERSION_TIMEOUT_S = 10
-SPEED_MIN = 0.01
-SPEED_MAX = 1000.0
+# The words of vehicle_sil_launch that this server uses, in one place (docs/simulation-config.md, 「等速で動かす」
+# and 「機械から使う」): the range of a speed (the same for --speed and the speed command), the most milliseconds
+# one step command may ask for, the time commands, and the features that say which of them a launcher has.
+SPEED_MIN = 0.000001
+SPEED_MAX = 1000000.0
+STEP_MS_MAX = 10 ** 12
+TIME_COMMANDS = ("pause", "resume", "step", "speed")
+FEATURE_SPEED = "speed"
+FEATURE_START_PAUSED = "start-paused"
+FEATURE_TIME_COMMANDS = "time-commands"
+# The control links (the launcher's side of the ECUs' variables): the event that says, once per started participant
+# before the simulation runs, where its link stands ({"name", "state", "variables" | "version"}). The states
+# (connected, no_hello, version_mismatch, not_offered, none) are passed on as they are: the server does not read
+# them. The summary keeps the event's fields in the participant's entry, under the same name as the event.
+FEATURE_CONTROL_LINKS = "control-links"
+CONTROL_EVENT = "control_link"
+CONTROL_SUMMARY_FIELD = "control_link"
 
 
 class LauncherNotFound(Exception):
@@ -136,8 +151,8 @@ def check_speed(speed: object) -> float | str | None:
         return speed
     # Compared before any conversion: an integer of 400 digits is out of range, not an overflow.
     if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not SPEED_MIN <= speed <= SPEED_MAX:
-        raise InvalidRequest("invalid-field", f"speed must be null, \"max\" or a number from {SPEED_MIN} to "
-                                              f"{SPEED_MAX:g} (1 is real time)")
+        raise InvalidRequest("invalid-field", f"speed must be null, \"max\" or a number from {SPEED_MIN:f} to "
+                                              f"{SPEED_MAX:.0f} (1 is real time)")
     return float(speed)
 
 
@@ -158,7 +173,53 @@ def check_disable(disable: object, known: list[str]) -> list[str]:
 
 
 def speed_argument(speed: float | str) -> str:
-    return "max" if speed == "max" else f"{speed:g}"
+    """A speed as --speed and the speed command take it: max, or the shortest decimal that is the number (2, 0.5,
+    1e-06), never rounded (f"{x:g}" would make 1.2345678 into 1.23457)."""
+    if speed == "max":
+        return "max"
+    text = repr(float(speed))
+    return text[:-2] if text.endswith(".0") else text
+
+
+def check_time_command(body: dict) -> dict:
+    """The body of POST api/time as the command line it becomes: {"command": "pause" | "resume"},
+    {"command": "step", "ms": <1 to 10^12>} or {"command": "speed", "value": <a speed or "max">}. Other keys
+    are refused (they would be ignored by the launcher, and a typo should not pass silently)."""
+    name = body.get("command")
+    if name not in TIME_COMMANDS:
+        raise InvalidRequest("invalid-field", f"command must be one of {', '.join(TIME_COMMANDS)} (to stop, use "
+                                              "POST api/stop)")
+    allowed = {"command", *({"step": ("ms",), "speed": ("value",)}.get(name, ()))}
+    extra = sorted(k for k in body if k not in allowed)
+    if extra:
+        raise InvalidRequest("invalid-field", f"{name} takes no {', '.join(extra)}: send "
+                                              f"{_time_example(name)}")
+    if name == "step":
+        ms = body.get("ms")
+        if isinstance(ms, bool) or not isinstance(ms, int) or not 1 <= ms <= STEP_MS_MAX:
+            raise InvalidRequest("invalid-field", f"step needs ms, a whole number of milliseconds of virtual time "
+                                                  f"from 1 to {STEP_MS_MAX}: send {_time_example(name)}")
+        return {"command": name, "ms": ms}
+    if name == "speed":
+        value = body.get("value")
+        if value is None:
+            raise InvalidRequest("invalid-field", f"speed needs value: send {_time_example(name)}")
+        return {"command": name, "value": "max" if value == "max" else check_speed(value)}
+    return {"command": name}
+
+
+def _time_example(name: str) -> str:
+    return {"step": '{"command":"step","ms":100}', "speed": '{"command":"speed","value":1}'}.get(
+        name, f'{{"command":"{name}"}}')
+
+
+def command_line(command: dict) -> bytes:
+    """The line written to the launcher's standard input for a command that check_time_command accepted."""
+    if command["command"] == "speed":
+        value = command["value"]
+        text = '"max"' if value == "max" else speed_argument(value)
+        return f'{{"command":"speed","value":{text}}}\n'.encode()
+    return (json.dumps(command, separators=(",", ":")) + "\n").encode()
 
 
 def check_command(launcher: Launcher, file: str, disable: list[str]) -> list[str]:

@@ -28,6 +28,11 @@
   >
     {{ stopText() }}
   </button>
+  <!--
+    外から足した操作（一時停止と再開など）。開始と停止の後、待たずに止めるの前に置く: 出ても消えても、開始と停止は
+    動かない
+  -->
+  <ng-content select="[runStatusActions]" />
   @if (canForce()) {
     <button
       matButton="outlined"
@@ -71,6 +76,13 @@
       >
     }
   </p>
+  <!-- 読み上げの領域は、中身が変わる前から置いておく -->
+  <p class="late" data-testid="late" [class.shown]="lateText() !== null">
+    @if (lateText(); as text) {
+      <span class="mark" aria-hidden="true">⚠</span> {{ text }}
+    }
+  </p>
+  <p class="announce" role="status" data-testid="late-announce">{{ lateAnnouncement() }}</p>
   @if (firstError(); as error) {
     <p class="first-error" lang="en" data-testid="first-error" [title]="error">{{ error }}</p>
   }
@@ -120,6 +132,12 @@
         }
       </dd>
     </div>
+    @if (speedText(); as speed) {
+      <div class="speed">
+        <dt i18n>速度</dt>
+        <dd data-testid="speed">{{ speed }}</dd>
+      </div>
+    }
     @if (simSeconds() !== null) {
       <div>
         <dt i18n>仮想時刻</dt>

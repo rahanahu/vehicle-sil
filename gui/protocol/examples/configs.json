@@ -33,9 +33,21 @@
         "simulation": true
       },
       {
+        "path": "control-trouble.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 746,
+        "simulation": true
+      },
+      {
         "path": "dash-name.yaml",
         "modified": "2026-01-01T00:00:00Z",
         "size": 524,
+        "simulation": true
+      },
+      {
+        "path": "deaf.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 537,
         "simulation": true
       },
       {
@@ -69,6 +81,12 @@
         "simulation": true
       },
       {
+        "path": "jitter.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 538,
+        "simulation": true
+      },
+      {
         "path": "large-fields.yaml",
         "modified": "2026-01-01T00:00:00Z",
         "size": 484,
@@ -78,6 +96,12 @@
         "path": "large-result.yaml",
         "modified": "2026-01-01T00:00:00Z",
         "size": 484,
+        "simulation": true
+      },
+      {
+        "path": "late.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 450,
         "simulation": true
       },
       {

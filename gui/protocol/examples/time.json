@@ -1,0 +1,19 @@
+{
+  "description": "A time command: passed on to the launcher at once (what it did comes as its command and time events).",
+  "request": {
+    "method": "POST",
+    "path": "api/time",
+    "body": {
+      "command": "step",
+      "ms": 25
+    }
+  },
+  "status": 200,
+  "response": {
+    "session_id": 1,
+    "command": {
+      "command": "step",
+      "ms": 25
+    }
+  }
+}
