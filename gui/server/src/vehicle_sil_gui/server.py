@@ -20,7 +20,7 @@ from pathlib import Path
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, process
-from .hub import Hub
+from .hub import Hub, encode
 from .launcher import (SPEED_MAX, SPEED_MIN, InvalidRequest, Launcher, check_command, check_disable, check_speed,
                        run_command)
 from .paths import ConfigRoot, PathRejected
@@ -30,14 +30,14 @@ from .static import NOT_BUILT, StaticFiles
 PROTOCOL = 1  # vehicle_sil_gui: the version of the shapes in gui/protocol
 MAX_BODY = 64 * 1024
 MAX_WS_MESSAGE = 16 * 1024
-MAX_SOCKETS = 32  # WebSocket connections, authenticated or not
+MAX_SOCKETS = 32  # authenticated WebSocket connections
+MAX_UNAUTHENTICATED = 16  # connections waiting for their auth; when full, the oldest is closed for a new one
 AUTH_TIMEOUT_S = 5
 WS_CLOSE_TIMEOUT_S = 2  # waiting for the screen's answer to a close
 CHECK_TIMEOUT_S = 120
 MAX_CHECK_WAITING = 4  # api/check requests waiting for the one that runs
 MAX_NAMES_CACHED = 256
 MAX_LINE = 16 * 1024 * 1024  # one line of the launcher's events (a check with many variables is long)
-MAX_STDERR_LINES = 50  # launcher stderr lines reported as problems in one session
 STDIN_DRAIN_S = 2  # writing a stop command to a launcher that does not read its input
 ESCALATE_WAIT_S = 5  # at the server's end, after asking the group to stop, before killing it
 START_WAIT_S = 5  # at the server's end, for a launcher being started to be registered
@@ -132,9 +132,14 @@ class GuiServer:
         self._ids = itertools.count(1)
         self._check_lock = asyncio.Lock()
         self._check_waiting = 0
-        self._checks: set[asyncio.subprocess.Process] = set()
+        self._checks: set[asyncio.subprocess.Process] = set()  # the checks and the launcher's version probes
+        self.launcher.track = self._checks
         self._names: dict[str, tuple[tuple, list[str]]] = {}
         self._sockets: dict[web.WebSocketResponse, web.BaseRequest] = {}
+        self._unauthenticated: dict[web.WebSocketResponse, None] = {}  # oldest first
+        self._authenticated: set[web.WebSocketResponse] = set()
+        self._evicting: set[asyncio.Task] = set()
+        self._stop_on_start: bool | None = None  # api/stop while a run starts: its force, applied once started
         self._hurry = asyncio.Event()
         self._closing = False
         self.hub = Hub(self.snapshot)
@@ -259,7 +264,9 @@ class GuiServer:
         return web.json_response({"root": str(self.root.root), "files": files, "truncated": truncated})
 
     async def get_session(self, request: web.Request) -> web.Response:
-        return web.json_response({"session": self.session.summary() if self.session else None})
+        # The same encoding as the WebSocket: strict JSON (never a bare NaN or Infinity), or a 500.
+        return web.Response(text=encode({"session": self.session.summary() if self.session else None}),
+                            content_type="application/json")
 
     async def api_not_found(self, request: web.Request) -> web.Response:
         return error(404, "not-found", f"{request.method} {request.path}: no such API")
@@ -291,12 +298,14 @@ class GuiServer:
         # From here until the launcher is registered (or the start fails), no other run may start.
         self._starting = True
         self._started.clear()
+        self._stop_on_start = None
         try:
             return await self._start(body)
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
         finally:
             self._starting = False
+            self._stop_on_start = None
             self._started.set()
 
     async def _start(self, body: dict) -> web.Response:
@@ -326,6 +335,8 @@ class GuiServer:
         self._runs.add(run)
         self.current = run
         run.task = asyncio.create_task(self._follow(run))
+        if self._stop_on_start is not None:  # api/stop came while it was starting: it applies now
+            self._write_stop(run, self._stop_on_start)
         self.hub.broadcast([session.message()])
         if self._closing:  # the end began while the launcher was starting: it is stopped with the others
             raise Refused(503, "shutting-down", "the GUI server is stopping: the run that was starting is stopped")
@@ -339,33 +350,42 @@ class GuiServer:
         force = body.get("force", False)
         if not isinstance(force, bool):
             return error(400, "invalid-field", "force must be true or false")
+        if self._starting and not self._closing:  # applied as soon as the launcher has started (in _start)
+            self._stop_on_start = force or bool(self._stop_on_start)
         run = self.current
         if run is None:
             return web.json_response({"session": None})
         session, proc = run.session, run.proc
-        if self._closing:  # the server's end is stopping it
+        if self._closing or self._starting:  # the server's end is stopping it, or it is the run before
             return web.json_response({"session": session.summary()})
-        commands = session.request_stop(force)  # decided and recorded before any await
-        if commands:
-            delivered = proc.stdin is not None and not proc.stdin.is_closing()
-            if delivered:
-                try:
-                    proc.stdin.write(b'{"command":"stop"}\n' * commands)
-                except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
-                    delivered = False
-            messages = [session.message()]
-            if not delivered:
-                messages = session.problem("stop-not-delivered", "the stop could not be written to the launcher's "
-                                                                 "input (it is closed): the launcher may be ending; "
-                                                                 "if it is not, stop the GUI server", None) + messages
-            self.hub.broadcast(messages)
-            if delivered:
-                try:
-                    async with asyncio.timeout(STDIN_DRAIN_S):
-                        await proc.stdin.drain()
-                except (TimeoutError, BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
-                    pass
+        if self._write_stop(run, force):  # decided, recorded and written before any await
+            try:
+                async with asyncio.timeout(STDIN_DRAIN_S):
+                    await proc.stdin.drain()
+            except (TimeoutError, BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
+                pass
         return web.json_response({"session": session.summary()})
+
+    def _write_stop(self, run: Run, force: bool) -> bool:
+        """Records a stop request and writes its commands to the launcher's input (no await); whether something
+        was written that may need draining."""
+        session, proc = run.session, run.proc
+        commands = session.request_stop(force)
+        if not commands:
+            return False
+        delivered = proc.stdin is not None and not proc.stdin.is_closing()
+        if delivered:
+            try:
+                proc.stdin.write(b'{"command":"stop"}\n' * commands)
+            except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
+                delivered = False
+        messages = [session.message()]
+        if not delivered:
+            messages = session.problem("stop-not-delivered", "the stop could not be written to the launcher's "
+                                                             "input (it is closed): the launcher may be ending; "
+                                                             "if it is not, stop the GUI server", None) + messages
+        self.hub.broadcast(messages)
+        return delivered
 
     async def _usable(self) -> None:
         await self.launcher.probe()
@@ -467,22 +487,27 @@ class GuiServer:
                     self.hub.broadcast(session.problem("line-too-long", f"the launcher wrote a line longer than "
                                                        f"{MAX_LINE} bytes: it is skipped", None))
                 elif line.strip():
-                    try:
-                        messages = session.feed_line(line)
-                    except Exception as e:  # a shape the checks did not foresee: never stop reading
-                        log.exception("reading an event")
-                        messages = session.problem("bad-event", f"the server could not read an event "
-                                                   f"({type(e).__name__}): it is ignored", session._cut(line))
-                    self.hub.broadcast(messages)
+                    self.relay(session, line)
 
         async def stderr() -> None:
-            count = 0
             async for line in process.lines(proc.stderr, 64 * 1024):
-                count += 1
-                if line and count <= MAX_STDERR_LINES:
+                if line:
                     self.hub.broadcast(session.stderr_line(line))
 
         await asyncio.gather(stdout(), stderr(), return_exceptions=True)
+
+    def relay(self, session: Session, line: str) -> None:
+        """One line of the launcher's events: into the summary and to the screens. Nothing that goes wrong with
+        one line stops the reading: the line becomes a bad-event problem, and the next line is read."""
+        try:
+            if self.hub.broadcast(session.feed_line(line), session.log_key):
+                return
+            error: str = "a message for the screens could not be made of it"
+        except Exception as e:  # a shape the checks did not foresee
+            log.exception("reading an event")
+            error = type(e).__name__
+        self.hub.broadcast(session.problem("bad-event", f"the server could not pass on an event ({error}): it is "
+                                                        "ignored", session._cut(line)))
 
     # ------------------------------------------------------------ the server's end
 
@@ -571,25 +596,47 @@ class GuiServer:
     async def websocket(self, request: web.Request) -> web.StreamResponse:
         if self._closing:
             return error(503, "shutting-down", "the GUI server is stopping")
-        if len(self._sockets) >= MAX_SOCKETS:
+        if len(self._authenticated) >= MAX_SOCKETS:
             return error(503, "too-many-connections", "too many screens are connected: close some tabs")
+        if len(self._unauthenticated) >= MAX_UNAUTHENTICATED:
+            # The oldest connection that has not sent its auth makes room: a process without the token that
+            # opens connections cannot keep the screen out, only make it try again.
+            oldest = next(iter(self._unauthenticated))
+            del self._unauthenticated[oldest]
+            task = asyncio.create_task(self._make_room(oldest))
+            self._evicting.add(task)
+            task.add_done_callback(self._evicting.discard)
         ws = web.WebSocketResponse(max_msg_size=MAX_WS_MESSAGE, heartbeat=30, timeout=WS_CLOSE_TIMEOUT_S)
         self._sockets[ws] = request  # counted from here, before the handshake's first await
+        self._unauthenticated[ws] = None
         try:
             await ws.prepare(request)
             await self._talk(ws)
         finally:
             self._sockets.pop(ws, None)
+            self._unauthenticated.pop(ws, None)
+            self._authenticated.discard(ws)
         return ws
 
+    @staticmethod
+    async def _make_room(ws: web.WebSocketResponse) -> None:
+        try:
+            await ws.close(code=WSCloseCode.TRY_AGAIN_LATER, message=b"too-many-unauthenticated")
+        except Exception:  # not prepared yet: _talk closes it when it is
+            pass
+
     async def _talk(self, ws: web.WebSocketResponse) -> None:
+        if ws not in self._unauthenticated:  # it made room for a newer one during its handshake
+            await ws.close(code=WSCloseCode.TRY_AGAIN_LATER, message=b"too-many-unauthenticated")
+            return
         try:
             async with asyncio.timeout(AUTH_TIMEOUT_S):
                 msg = await ws.receive()
         except TimeoutError:
             await ws.close(code=4401, message=b"auth-timeout")
             return
-        if self._closing or msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED, WSMsgType.ERROR):
+        if self._closing or ws.closed or ws not in self._unauthenticated or \
+                msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED, WSMsgType.ERROR):
             return
         auth = None
         if msg.type == WSMsgType.TEXT:
@@ -604,6 +651,11 @@ class GuiServer:
                                            "token of the URL the server printed", "detail": None})
             await ws.close(code=4401, message=b"unauthorized")
             return
+        del self._unauthenticated[ws]
+        if len(self._authenticated) >= MAX_SOCKETS:  # others authenticated since this one's handshake
+            await ws.close(code=WSCloseCode.TRY_AGAIN_LATER, message=b"too-many-connections")
+            return
+        self._authenticated.add(ws)
         client = self.hub.client(ws.send_str)
         sender = asyncio.create_task(self.hub.serve(client, count_or_none(auth.get("session")),
                                                     count_or_none(auth.get("from_seq"))))

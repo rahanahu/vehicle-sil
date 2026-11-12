@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 
@@ -20,6 +21,9 @@ SEND_TIMEOUT_S = 30  # one message that cannot be sent in this time closes the c
 
 # Events that the summary is made of: never dropped for a slow screen (the others can be, and are counted).
 SUMMARY_EVENTS = frozenset({"hello", "phase", "check", "registry", "participant", "finding", "command", "result"})
+DROPPED_SOURCES = 64  # sources named in one slow-client `dropped`; the others are counted under "*"
+
+log = logging.getLogger("vehicle_sil_gui")
 
 
 def encode(message: dict) -> str:
@@ -36,7 +40,9 @@ class Outgoing:
 
     __slots__ = ("text", "size", "kind", "session", "source")
 
-    def __init__(self, message: dict):
+    def __init__(self, message: dict, log_key: Callable[[str], str] | None = None):
+        """log_key: the name a log line's source has in the session's summary (where the `dropped` counts of
+        a slow screen are put)."""
         self.text = encode(message)
         self.size = len(self.text)
         self.session = message.get("session") if isinstance(message.get("session"), int) else None
@@ -45,7 +51,10 @@ class Outgoing:
         if message.get("type") == "event":
             event = message["event"]["event"]
             if event == "log":
-                self.kind, self.source = "log", message["event"].get("source")
+                source = message["event"].get("source")
+                if isinstance(source, str) and log_key is not None:
+                    source = log_key(source)
+                self.kind, self.source = "log", source
             elif event == "time":
                 self.kind = "time"
             elif event not in SUMMARY_EVENTS:
@@ -123,6 +132,8 @@ class Client:
                 kept.append(notice)  # where the first dropped message was
             if item.kind == "log":
                 key = item.source if isinstance(item.source, str) else "*"
+                if key not in notice.log and len(notice.log) >= DROPPED_SOURCES:
+                    key = "*"
                 notice.log[key] = notice.log.get(key, 0) + 1
             else:
                 notice.events += 1
@@ -164,13 +175,20 @@ class Hub:
     def client(self, send: Callable[[str], Awaitable[None]]) -> Client:
         return Client(send, self.limit, self.max_bytes)
 
-    def broadcast(self, messages: list[dict]) -> None:
-        if not self.clients:
-            return
-        items = [Outgoing(m) for m in messages]
+    def broadcast(self, messages: list[dict], log_key: Callable[[str], str] | None = None) -> bool:
+        """Queues the messages for every screen. Never raises: a message that cannot be turned into JSON text (a
+        bug) is left out and logged, and the others are sent. Whether every message could be."""
+        items, ok = [], True
+        for m in messages:
+            try:
+                items.append(Outgoing(m, log_key))
+            except (ValueError, TypeError, RecursionError, KeyError):
+                log.exception("a message for the screens cannot be sent: %.200r", m)
+                ok = False
         for client in list(self.clients):
             for item in items:
                 client.put(item)
+        return ok
 
     def close_all(self) -> None:
         self.closed = True

@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import heapq
 import json
+import math
 from array import array
-from bisect import bisect_left
+from bisect import bisect_left, insort
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -23,6 +24,20 @@ from typing import Any
 EVENTS_FORMAT = 1  # the `vehicle_sil_events` of hello that this server reads
 SHARED_LOG = "*"  # the source key of the log shared by the sources after Limits.log_sources
 ENVELOPE = ("event", "seq", "t_ms")  # what is removed from an event when its fields are kept in the summary
+MAX_COUNT = 2 ** 53  # seq and t_ms: integers that JavaScript reads exactly
+# The fields of a small event that the summary keeps however large the event is (the others are left out of
+# the summary when the event is larger than Limits.small_bytes, and named in `omitted_fields`).
+ESSENTIAL = {
+    "participant": ("name", "state", "pid", "exit_code", "signal"),
+    "time": ("event", "seq", "t_ms", "sim_ms"),
+    "registry": ("uri",),
+    "command": ("command", "accepted"),
+}
+# Problems that the server notices about the run, as opposed to what the launcher wrote: each has its own room
+# in the summary, so that a launcher that writes junk cannot push them out.
+SERVER_PROBLEMS = frozenset({"kept-limit", "no-result", "output-left-open", "stop-not-delivered",
+                             "stop-escalated"})
+STDERR = "launcher-stderr"
 STOP_NONE, STOP_REQUESTED, STOP_FORCED = "none", "requested", "forced"
 
 
@@ -39,9 +54,16 @@ class Limits:
     findings: int = 1000
     findings_bytes: int = 1024 * 1024
     participants: int = 256
-    problems: int = 100
+    problems: int = 100  # problems from what the launcher wrote (not its standard error)
+    server_problems: int = 50  # problems the server noticed itself (SERVER_PROBLEMS)
+    stderr_first: int = 20  # the launcher's standard error: the first lines, sent at once
+    stderr_last: int = 30  # and the last lines, sent when the run ends
     detail_chars: int = 300  # the part of a bad line shown in a problem
     message_chars: int = 1000  # the part of a launcher's stderr line shown in a problem
+
+
+def _size(value: object) -> int:
+    return len(json.dumps(value))
 
 
 def now_iso() -> str:
@@ -50,6 +72,18 @@ def now_iso() -> str:
 
 def _no_constant(name: str) -> Any:
     raise ValueError(f"{name} is not JSON")
+
+
+def _finite(text: str) -> float:
+    """A JSON number with a fraction or an exponent: 1e999 is valid JSON, but not a number JSON can carry on."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"{text} is not a finite number")
+    return value
+
+
+def _is_count(value: object) -> bool:
+    return _is_int(value) and 0 <= value <= MAX_COUNT
 
 
 def _is_int(value: object) -> bool:
@@ -105,42 +139,38 @@ def _shape_problem(event: dict) -> str | None:
     return None
 
 
-class _SeqRing:
-    """The seqs of the last `size` dropped lines of one source, oldest first (they are dropped in seq order)."""
+class _DroppedSeqs:
+    """The seqs of the last `size` dropped lines of one source (the largest seqs), in seq order. Lines are
+    mostly dropped in seq order (the oldest kept line first); a line too long to keep is dropped when it comes,
+    before older ones, and is put in its place."""
 
     def __init__(self, size: int):
         self.size = size
         self.data = array("q")
-        self.start = 0  # index of the oldest when full
+        self.start = 0  # data[start:] are recorded; data[:start] were pushed out and are removed in bulk
 
     def add(self, seq: int) -> None:
         if self.size <= 0:
             return
-        if len(self.data) < self.size:
-            self.data.append(seq)
+        if len(self) and seq < self.data[-1]:
+            insort(self.data, seq, lo=self.start)
         else:
-            self.data[self.start] = seq
-            self.start = (self.start + 1) % self.size
+            self.data.append(seq)
+        if len(self) > self.size:
+            self.start += 1
+        if self.start >= self.size:
+            del self.data[:self.start]
+            self.start = 0
 
     def __len__(self) -> int:
-        return len(self.data)
-
-    def _at(self, i: int) -> int:
-        return self.data[(self.start + i) % len(self.data)]
+        return len(self.data) - self.start
 
     def oldest(self) -> int | None:
-        return self._at(0) if self.data else None
+        return self.data[self.start] if len(self) else None
 
     def count_from(self, seq: int) -> int:
         """How many of the recorded seqs are >= seq."""
-        lo, hi = 0, len(self.data)
-        while lo < hi:
-            mid = (lo + hi) // 2
-            if self._at(mid) < seq:
-                lo = mid + 1
-            else:
-                hi = mid
-        return len(self.data) - lo
+        return len(self.data) - bisect_left(self.data, seq, lo=self.start)
 
 
 class _Log:
@@ -150,7 +180,7 @@ class _Log:
         self.lines: deque[tuple[int, int, dict]] = deque()  # (seq, size, event)
         self.bytes = 0
         self.dropped = 0
-        self.ring = _SeqRing(ring_size)
+        self.ring = _DroppedSeqs(ring_size)
 
     def drop_oldest(self) -> int:
         seq, size, _ = self.lines.popleft()
@@ -167,8 +197,8 @@ class _Log:
         if seq is None or self.dropped == 0:
             return self.dropped, True
         n = self.ring.count_from(seq)
-        if self.dropped > len(self.ring) and (not len(self.ring) or self.ring.oldest() >= seq):
-            return n, False  # older dropped lines are not recorded: some of them may be >= seq
+        if self.dropped > len(self.ring) and (not len(self.ring) or self.ring.oldest() > seq):
+            return n, False  # the dropped lines not recorded are older than the oldest recorded: some may be >= seq
         return n, True
 
 
@@ -205,17 +235,21 @@ class Session:
         self.result: dict | None = None
         self.problems: list[dict] = []
         self.problems_omitted = 0
+        self._problem_counts = {"launcher": 0, "server": 0}
+        self._stderr_lines = 0
+        self._stderr_last: deque[str] = deque(maxlen=self.limits.stderr_last)
         self.hello_seen = False
         self._logs: dict[str, _Log] = {}
         self._log_bytes = 0
         self._limit_reported: set[str] = set()
+        self._small_problems: list[dict] = []
 
     # ------------------------------------------------------------ input
 
     def feed_line(self, line: str) -> list[dict]:
         """Takes one line of the launcher's standard output; returns the messages for the screens."""
         try:
-            event = json.loads(line, parse_constant=_no_constant)
+            event = json.loads(line, parse_constant=_no_constant, parse_float=_finite)
         except (ValueError, RecursionError):
             event = None
         if not isinstance(event, dict) or not isinstance(event.get("event"), str):
@@ -224,10 +258,10 @@ class Session:
                                 "the line is ignored; if it repeats, the launcher and this GUI do not match",
                                 self._cut(line))
         seq = event.get("seq")
-        if not _is_int(seq):
+        if not _is_count(seq):
             return self.problem("launcher-output",
-                                f"the launcher wrote a '{self._cut(event['event'])}' event without an integer seq: "
-                                "it is ignored", self._cut(line))
+                                f"the launcher wrote a '{self._cut(event['event'])}' event without a seq that is an "
+                                f"integer from 0 to 2^53: it is ignored", self._cut(line))
         if self.last_seq is not None and seq <= self.last_seq:
             return self.problem("seq-order",
                                 f"the launcher wrote seq {seq} after {self.last_seq}: the event is ignored "
@@ -243,9 +277,11 @@ class Session:
             out += self.problem("no-hello", f"the first event is '{self._cut(kind)}', not 'hello'", None)
         self.hello_seen = True
         self.last_seq = seq
-        if _is_int(event.get("t_ms")):
-            self.last_t_ms = event["t_ms"]
-        wrong = _shape_problem(event)
+        wrong = None if "t_ms" not in event or _is_count(event["t_ms"]) else "t_ms is not an integer from 0 to 2^53"
+        if wrong is None:
+            if "t_ms" in event:
+                self.last_t_ms = event["t_ms"]
+            wrong = _shape_problem(event)
         if wrong is not None:
             return out + self.problem("bad-event", f"the launcher wrote a '{kind}' event whose {wrong}: it is "
                                                    "ignored (not shown); the launcher and this GUI may not match",
@@ -291,30 +327,71 @@ class Session:
                 out += self._limit("findings", f"more findings than {self.limits.findings} (or "
                                                f"{self.limits.findings_bytes} bytes): later ones are shown now, but "
                                                "not kept for a screen opened later")
-        elif kind in ("phase", "time", "registry", "command", "participant") and size > self.limits.small_bytes:
-            out += self._limit(kind, f"the launcher wrote a '{kind}' event larger than {self.limits.small_bytes} "
-                                     "bytes: it is shown now, but not kept for a screen opened later")
         elif kind == "phase":
-            self.phase = event["phase"]
+            if len(event["phase"]) <= self.limits.small_bytes:
+                self.phase = event["phase"]
+            else:
+                out += self._limit(kind, f"the launcher wrote a phase name longer than {self.limits.small_bytes} "
+                                         "characters: it is shown now, but not kept for a screen opened later")
         elif kind == "time":
-            self.time = event
+            kept = self._small(kind, event, None)
+            self.time = kept if kept is not None else self.time
         elif kind == "registry":
-            self.registry = {k: v for k, v in event.items() if k not in ENVELOPE}
+            kept = self._small(kind, {k: v for k, v in event.items() if k not in ENVELOPE}, None)
+            self.registry = kept if kept is not None else self.registry
         elif kind == "command":
-            self.last_command = {k: v for k, v in event.items() if k not in ENVELOPE}
+            kept = self._small(kind, {k: v for k, v in event.items() if k not in ENVELOPE}, None)
+            self.last_command = kept if kept is not None else self.last_command
         elif kind == "participant":
             name = event["name"]
             if name in self.participants or len(self.participants) < self.limits.participants:
-                entry = self.participants.setdefault(name, {"name": name})
-                entry.update((k, v) for k, v in event.items() if k not in ENVELOPE)
-                if len(json.dumps(entry)) > self.limits.small_bytes:  # fields piled up over many events
-                    self.participants[name] = {k: entry.get(k) for k in ("name", "state", "pid", "exit_code",
-                                                                         "signal")}
+                kept = self._small(kind, {k: v for k, v in event.items() if k not in ENVELOPE},
+                                   self.participants.get(name, {"name": name}))
+                if kept is not None:
+                    self.participants[name] = kept
             else:
                 self.participants_omitted += 1
                 out += self._limit("participants", f"more participants than {self.limits.participants}: the "
                                                    "later ones are shown now, but not kept for a screen opened later")
+        out += self._small_problems
+        self._small_problems = []
         return out
+
+    def _small(self, kind: str, fields: dict, old: dict | None) -> dict | None:
+        """What the summary keeps of a small event's fields (laid over `old`, the participant's entry so far):
+        all of them when they fit in Limits.small_bytes; else the essential ones and then as many of the others
+        as fit, the rest named in `omitted_fields` (a kept-limit problem says so, once). None when not even the
+        essential fields fit: then nothing is kept."""
+        omitted = [k for k in (old or {}).get("omitted_fields", []) if k not in fields]  # still not known
+        entry = {k: v for k, v in (old or {}).items() if k != "omitted_fields"}
+        entry.update(fields)
+        limit = self.limits.small_bytes
+        if not omitted and _size(entry) <= limit:
+            return entry
+        essential = ESSENTIAL[kind]
+        kept = {k: entry[k] for k in essential if k in entry}
+        if _size(kept) > limit:
+            self._small_problems += self._limit(kind, f"the launcher wrote a '{kind}' event whose "
+                                                      f"{', '.join(essential)} are longer than {limit} bytes: it is "
+                                                      "shown now, but not kept for a screen opened later")
+            return None
+        room = limit - _size(kept) - _size({"omitted_fields": [*omitted, *entry]})
+        for k, v in entry.items():
+            if k in kept:
+                continue
+            size = _size({k: v})
+            if size <= room:
+                kept[k] = v
+                room -= size
+            elif k not in omitted:
+                omitted.append(k)
+        if omitted:
+            kept["omitted_fields"] = omitted
+            self._small_problems += self._limit(kind, f"the launcher wrote a '{kind}' event larger than {limit} "
+                                                      f"bytes: only its {', '.join(essential)} and the fields "
+                                                      "that fit are kept for a screen opened later (the others "
+                                                      "are named in omitted_fields)")
+        return kept
 
     def _keep_log(self, event: dict, size: int) -> None:
         source = event["source"]
@@ -335,6 +412,10 @@ class Session:
             oldest = min((l for l in self._logs.values() if l.lines), key=lambda l: l.lines[0][0])
             self._log_bytes -= oldest.drop_oldest()
 
+    def log_key(self, source: str) -> str:
+        """The name under which the log lines of a source are counted in the summary."""
+        return source if source in self._logs else SHARED_LOG
+
     def _limit(self, what: str, message: str) -> list[dict]:
         """A kept-limit problem, once per kind of thing."""
         if what in self._limit_reported:
@@ -343,17 +424,46 @@ class Session:
         return self.problem("kept-limit", message, {"what": what})
 
     def problem(self, code: str, message: str, detail: Any) -> list[dict]:
+        """A problem for the screens, kept in the summary while its room has space: the server's own problems,
+        the launcher's standard error (bounded by stderr_line) and the rest of what the launcher wrote each have
+        their own room."""
         entry = {"code": code, "message": message, "detail": detail}
-        if len(self.problems) < self.limits.problems:
+        room = "server" if code in SERVER_PROBLEMS else None if code == STDERR else "launcher"
+        if room is None or self._problem_counts[room] < (self.limits.server_problems if room == "server"
+                                                         else self.limits.problems):
             self.problems.append(entry)
+            if room is not None:
+                self._problem_counts[room] += 1
         else:
             self.problems_omitted += 1
         return [{"type": "error", "session": self.id, **entry}]
 
     def stderr_line(self, line: str) -> list[dict]:
+        """A line of the launcher's standard error. The first stderr_first lines are problems at once; of the
+        later ones only the last stderr_last are kept, and they become problems when the run ends (the last
+        lines of a launcher that fails say why)."""
+        self._stderr_lines += 1
+        if self._stderr_lines > self.limits.stderr_first:
+            self._stderr_last.append(line)
+            return []
+        return self._stderr_problem(line)
+
+    def _stderr_problem(self, line: str) -> list[dict]:
         n = self.limits.message_chars
         cut = line if len(line) <= n else line[:n] + f"... ({len(line) - n} more characters)"
-        return self.problem("launcher-stderr", f"the launcher wrote: {cut}", None)
+        return self.problem(STDERR, f"the launcher wrote: {cut}", None)
+
+    def _stderr_end(self) -> list[dict]:
+        out: list[dict] = []
+        skipped = self._stderr_lines - self.limits.stderr_first - len(self._stderr_last)
+        if skipped > 0:
+            out += self.problem(STDERR, f"the launcher wrote {skipped} more lines to its standard error here: "
+                                        f"they are not shown (only the first {self.limits.stderr_first} and the "
+                                        f"last {self.limits.stderr_last} are)", {"skipped": skipped})
+        for line in self._stderr_last:
+            out += self._stderr_problem(line)
+        self._stderr_last.clear()
+        return out
 
     # ------------------------------------------------------------ what the server did and saw
 
@@ -384,7 +494,7 @@ class Session:
 
     def ended(self, output_cut: bool = False) -> list[dict]:
         """The launcher has exited and its output is read (or, output_cut, given up on)."""
-        out: list[dict] = []
+        out: list[dict] = self._stderr_end()
         if output_cut:
             out += self.problem("output-left-open",
                                 "the launcher has exited, but a process it started still holds its output open: "

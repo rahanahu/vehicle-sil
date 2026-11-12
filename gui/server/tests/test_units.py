@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from vehicle_sil_gui import process
-from vehicle_sil_gui.hub import Client, Hub
+from vehicle_sil_gui.hub import Client, Hub, encode
 from vehicle_sil_gui.launcher import InvalidRequest, check_disable, check_speed
 from vehicle_sil_gui.paths import ConfigRoot, PathRejected
 from vehicle_sil_gui.session import Limits, Session
@@ -95,7 +95,10 @@ def test_lines_that_are_not_events_are_reported_and_not_passed_on() -> None:
     assert len(long["detail"]) < 400 and "more characters" in long["detail"]
 
 
-WRONG_VALUES = [None, True, 0, -1, 2.5, "x", "", [], [1], {}, {"a": 1}, [{"name": 1}], "\ud800"]
+# NOT_FINITE stands for numbers that are valid JSON but not finite: they are put in the line as they are.
+NOT_FINITE = {"<1e999>": "1e999", "<-1e999>": "-1e999", "<1E400>": "1E400"}
+WRONG_VALUES = [None, True, 0, -1, 2.5, "x", "", [], [1], {}, {"a": 1}, [{"name": 1}], "\ud800", 2 ** 64, -(2 ** 64),
+                *NOT_FINITE]
 KNOWN = {
     "hello": {"vehicle_sil_events": 1, "pid": 1},
     "phase": {"phase": "running"},
@@ -129,13 +132,41 @@ def test_no_field_of_the_wrong_type_stops_the_reading() -> None:
     seq = 0
     for kind, fields in KNOWN.items():
         for variant in variants(fields):
-            out = s.feed_line(json.dumps({"event": kind, "seq": seq, "t_ms": seq, **variant}))
+            text = json.dumps({"event": kind, "seq": seq, "t_ms": seq, **variant})
+            for marker, number in NOT_FINITE.items():
+                text = text.replace(json.dumps(marker), number)
+            out = s.feed_line(text)
             seq += 1
             assert all(m["type"] in ("event", "error") for m in out)
-            json.dumps(s.summary())  # the summary can still be sent
+            for m in out:
+                encode(m)  # strict JSON: no NaN or Infinity
+            encode(s.summary())  # the summary can still be sent
     good = s.feed_line(line("phase", seq, phase="ended"))
     assert kinds(good) == ["event"] and s.summary()["phase"] == "ended"
     assert s.summary()["problems_omitted"] > 0  # many were reported (and the summary keeps a bounded number)
+
+
+def test_numbers_that_are_not_finite_are_not_events() -> None:
+    s = new_session()
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    for n, number in enumerate(("1e999", "-1e999", "1E400", "-0.5e+999")):
+        out = s.feed_line(f'{{"event":"time","seq":{n + 1},"t_ms":0,"sim_ms":5,"actual_speed":{number}}}')
+        assert kinds(out) == ["error:launcher-output"], number
+    assert s.summary()["time"] is None and s.last_seq == 0
+    encode(s.summary())
+    assert kinds(s.feed_line(line("time", 5, sim_ms=5, actual_speed=1.5))) == ["error:seq-gap", "event"]
+
+
+def test_seq_and_t_ms_are_integers_javascript_reads_exactly() -> None:
+    s = new_session(dropped_seqs=4, log_line_bytes=10)
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    for seq in (2 ** 63, 2 ** 64, 2 ** 53 + 1, -1):
+        assert kinds(s.feed_line(line("log", seq, source="A", line="x"))) == ["error:launcher-output"], seq
+    out = s.feed_line(json.dumps({"event": "log", "seq": 1, "t_ms": 2 ** 64, "source": "A", "line": "x"}))
+    assert kinds(out) == ["error:bad-event"] and s.last_t_ms == 0
+    out = s.feed_line(line("log", 2 ** 53, source="A", line="a line too long to keep"))
+    assert kinds(out) == ["error:seq-gap", "event"]
+    assert s.summary()["log"] == {"A": {"kept": 0, "dropped": 1}} and s.last_seq == 2 ** 53
 
 
 def test_a_known_event_of_the_wrong_shape_is_not_passed_on() -> None:
@@ -173,6 +204,25 @@ def test_problems_are_capped() -> None:
         s.feed_line("bad")
     assert len(s.summary()["problems"]) == 3 and s.summary()["problems_omitted"] == 2
     assert len(s.stderr_line("e" * 100_000)[0]["message"]) < 1100
+
+
+def test_junk_does_not_hide_the_servers_notices_or_the_last_stderr_lines() -> None:
+    s = new_session()
+    for n in range(120):  # junk from the launcher: more than its room
+        s.feed_line(f"junk {n}")
+    stderr = [f"stderr {n}" for n in range(100)]
+    live = [m for text in stderr for m in s.stderr_line(text)]
+    assert [m["message"] for m in live] == [f"the launcher wrote: stderr {n}" for n in range(20)]  # the first
+    s.launcher_exited(70)
+    out = s.ended(output_cut=True)
+    codes = [m["code"] for m in out if m["type"] == "error"]
+    assert codes == ["launcher-stderr"] * 31 + ["output-left-open", "no-result"]
+    assert out[0]["detail"] == {"skipped": 50} and out[30]["message"] == "the launcher wrote: stderr 99"  # the last
+    problems = s.summary()["problems"]
+    assert [p["code"] for p in problems].count("launcher-output") == 100 and s.summary()["problems_omitted"] == 20
+    kept = [p["message"] for p in problems if p["code"] == "launcher-stderr"]
+    assert kept[0].endswith("stderr 0") and kept[-1].endswith("stderr 99") and len(kept) == 51
+    assert [p["code"] for p in problems][-2:] == ["output-left-open", "no-result"]
 
 
 def test_the_log_is_kept_per_source_and_bounded() -> None:
@@ -242,6 +292,55 @@ def test_memory_is_bounded_in_bytes() -> None:
     assert len(json.dumps(summary)) < 2 * 1024 * 1024
 
 
+def test_dropped_counts_are_exact_with_a_line_too_long_to_keep() -> None:
+    s = new_session(log_lines_per_source=5)
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    for seq in range(1, 12):  # seq 6 is too long to keep: dropped when it comes, before 1..5
+        s.feed_line(line("log", seq, source="A", line="x" * (70_000 if seq == 6 else 1)))
+    for from_seq, want in ((None, 6), (1, 6), (4, 3), (6, 1)):
+        dropped = s.replay(from_seq)[0]
+        assert dropped["log"] == {"A": want} and dropped["at_least"] == [], from_seq
+    assert s.replay(7)[0] is None
+    small = new_session(log_lines_per_source=2, dropped_seqs=3)  # fewer recorded than dropped
+    small.feed_line(line("hello", 0, vehicle_sil_events=1))
+    for seq in range(1, 9):  # 4 too long: dropped first; kept 7, 8; dropped 1..6
+        small.feed_line(line("log", seq, source="A", line="x" * (70_000 if seq == 4 else 1)))
+    assert small.replay(4)[0]["log"] == {"A": 3} and small.replay(4)[0]["at_least"] == []  # 4, 5, 6
+    assert small.replay(3)[0]["log"] == {"A": 3} and small.replay(3)[0]["at_least"] == ["A"]
+
+
+def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
+    s = new_session()
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    long_command = [f"--argument-{n}-" + "x" * 100 for n in range(45)]  # about 5 KiB
+    out = s.feed_line(line("participant", 1, name="Engine", state="started", pid=7, command=long_command,
+                           log="engine.log"))
+    assert kinds(out) == ["error:kept-limit", "event"] and out[0]["detail"] == {"what": "participant"}
+    assert s.summary()["participants"] == [{"name": "Engine", "state": "started", "pid": 7, "log": "engine.log",
+                                            "omitted_fields": ["command"]}]
+    s.feed_line(line("participant", 2, name="Dash", state="started", pid=8, command=["dash"]))
+    s.feed_line(line("participant", 3, name="Dash", state="ended", exit_code=0, signal=None, note="n" * 5000))
+    s.feed_line(line("participant", 4, name="Engine", state="ended", exit_code=1, signal=None))
+    assert s.summary()["participants"] == [
+        {"name": "Engine", "state": "ended", "pid": 7, "log": "engine.log", "exit_code": 1, "signal": None,
+         "omitted_fields": ["command"]},  # still not known
+        {"name": "Dash", "state": "ended", "pid": 8, "command": ["dash"], "exit_code": 0, "signal": None,
+         "omitted_fields": ["note"]}]
+    s.feed_line(line("participant", 5, name="Engine", state="ended", command=["engine"]))  # known again
+    assert "omitted_fields" not in s.summary()["participants"][0]
+    s.feed_line(line("phase", 6, phase="running", detail="d" * 5000))
+    s.feed_line(line("time", 7, sim_ms=100, detail="d" * 5000))
+    s.feed_line(line("command", 8, command="stop", accepted=True, message="m" * 5000))
+    s.feed_line(line("registry", 9, uri="silkit://x", detail="d" * 5000))
+    summary = s.summary()
+    assert summary["phase"] == "running"
+    assert summary["time"] == {"event": "time", "seq": 7, "t_ms": 7, "sim_ms": 100, "omitted_fields": ["detail"]}
+    assert summary["last_command"] == {"command": "stop", "accepted": True, "omitted_fields": ["message"]}
+    assert summary["registry"] == {"uri": "silkit://x", "omitted_fields": ["detail"]}
+    out = s.feed_line(line("participant", 10, name="N" * 5000, state="started"))  # not even the name fits
+    assert kinds(out) == ["event"] and len(s.summary()["participants"]) == 2
+
+
 def test_dropped_counts_are_exact_while_recorded() -> None:
     s = new_session(log_lines_per_source=10, dropped_seqs=20)
     s.feed_line(line("hello", 0, vehicle_sil_events=1))
@@ -257,7 +356,8 @@ def test_dropped_counts_are_exact_while_recorded() -> None:
 # ---------------------------------------------------------------- hub
 
 
-def run_hub(messages: list[dict], limit: int = 10, max_bytes: int = 1 << 30) -> tuple[list[dict], Client]:
+def run_hub(messages: list[dict], limit: int = 10, max_bytes: int = 1 << 30,
+            log_key=None) -> tuple[list[dict], Client]:
     """A screen that reads nothing until all messages are broadcast, then everything."""
     async def main() -> tuple[list[dict], Client]:
         snapshots = []
@@ -279,7 +379,7 @@ def run_hub(messages: list[dict], limit: int = 10, max_bytes: int = 1 << 30) -> 
         task = asyncio.create_task(hub.serve(client, None, None))
         await asyncio.sleep(0)
         for m in messages:
-            hub.broadcast([m])
+            hub.broadcast([m], log_key)
             assert len(client.items) <= limit + 1
         gate.set()
         await asyncio.sleep(0.05)
@@ -323,6 +423,44 @@ def test_a_slow_screen_gets_resync_when_dropping_is_not_enough() -> None:
     assert "resync" in types and client.resyncs >= 1
     # What came after the overflow is in the state the resync sends (the server's snapshot has the summary).
     assert types[-3:] == ["resync", "hello", "synced"]
+
+
+def test_a_slow_screen_is_told_the_sources_the_summary_names() -> None:
+    messages = [log_event(n, f"S{n}") for n in range(200)]
+    named = {"S0", "S1", "S2", "S3", "S4"}
+    sent, _ = run_hub(messages, limit=10, log_key=lambda source: source if source in named else "*")
+    keys = {k for m in sent if m["type"] == "dropped" for k in m["log"]}
+    assert keys and keys <= {"S0", "S1", "S2", "S3", "S4", "*"}, keys
+    sent, _ = run_hub(messages, limit=10)  # without names from the summary: a bounded number of keys
+    assert all(len(m["log"]) <= 65 for m in sent if m["type"] == "dropped")
+
+
+def test_a_message_that_cannot_be_sent_does_not_stop_the_others() -> None:
+    bad = {"type": "event", "session": 1, "event": {"event": "time", "seq": 1, "x": float("inf")}}
+    sent, _ = run_hub([log_event(0), bad, log_event(2)], limit=100)
+    assert [m["event"]["seq"] for m in sent if m["type"] == "event"] == [0, 2]
+
+
+def test_one_line_that_cannot_be_passed_on_does_not_stop_the_reading() -> None:
+    from conftest import CONFIGS, FAKE
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(FAKE), port=1, token="t"))
+    session = new_session()
+    sent: list[dict] = []
+    server.hub.broadcast = lambda messages, log_key=None, real=server.hub.broadcast: (
+        sent.extend(messages), real(messages, log_key))[1]
+    feed = session.feed_line
+    calls = iter([
+        lambda text: [{"type": "event", "session": 1, "event": {"event": "time", "seq": 1, "x": float("inf")}}],
+        lambda text: 1 / 0,
+    ])
+    session.feed_line = lambda text: next(calls, feed)(text)
+    server.relay(session, line("time", 1, sim_ms=1))  # a message that cannot be turned into JSON
+    server.relay(session, line("time", 2, sim_ms=2))  # an exception while reading it
+    server.relay(session, line("hello", 0, vehicle_sil_events=1))
+    assert kinds(sent[1:]) == ["error:bad-event", "error:bad-event", "event"]
+    assert "ZeroDivisionError" in sent[2]["message"]
 
 
 def test_messages_are_valid_utf_8() -> None:
@@ -454,7 +592,57 @@ def test_a_command_that_does_not_end_is_killed_with_its_children(tmp_path: Path)
     assert wait_until(lambda: not alive(parent) and not alive(child), 5)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_a_cancelled_command_is_killed_with_its_children(tmp_path: Path) -> None:
+    pids = tmp_path / "pids"
+    code = ("import os, subprocess, sys, time\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            f"open({str(pids)!r}, 'w').write(f'{{os.getpid()}} {{child.pid}}')\n"
+            "time.sleep(60)\n")
+
+    async def main() -> None:
+        task = asyncio.create_task(process.run_to_end([sys.executable, "-c", code], cwd=None, timeout_s=60))
+        while not pids.exists() or not pids.read_text():
+            await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(main())
+    from conftest import alive, wait_until
+    parent, child = map(int, pids.read_text().split())
+    assert wait_until(lambda: not alive(parent) and not alive(child), 5)
+
+
 # ---------------------------------------------------------------- the launcher's version
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_the_last_resort_kills_a_version_probe_that_hangs(tmp_path: Path) -> None:
+    from conftest import CONFIGS, alive
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+    pid_file = tmp_path / "pid"
+    path = tmp_path / "launcher.py"
+    path.write_text(f"import os, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n")
+    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(path), port=1, token="t"))
+
+    async def main() -> bool:
+        probe = asyncio.create_task(server.launcher.probe())
+        while not pid_file.exists() or not pid_file.read_text():
+            await asyncio.sleep(0.05)
+        server.kill_all()  # what the server's end does when it takes too long: the probe is not left
+        pid = int(pid_file.read_text())
+        for _ in range(60):
+            if not alive(pid):
+                break
+            await asyncio.sleep(0.05)
+        gone = not alive(pid)
+        probe.cancel()
+        await asyncio.gather(probe, return_exceptions=True)
+        return gone
+
+    assert asyncio.run(main())
 
 
 def test_concurrent_probes_wait_for_the_answer(tmp_path: Path) -> None:

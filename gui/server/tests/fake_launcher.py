@@ -30,6 +30,8 @@ else `pass`:
                      this launcher's standard output and error open for FAKE_LAUNCHER_ORPHAN_S seconds (default
                      30); a log line says its pid
   check-garbage      `check --json` writes a line that is not JSON (exit code 0)
+  non-finite         like pass, but on the first step writes a time event and a log event with a number that is
+                     valid JSON but not finite (1e999, -1e999)
 
 Other environment variables: FAKE_LAUNCHER_TICK_MS (wall time of one 100 ms step at speed 1, default 100),
 FAKE_LAUNCHER_FEATURES (the features of `version --json`, comma-separated, default events,stdin-commands,speed),
@@ -55,7 +57,8 @@ from pathlib import Path
 
 VERSION = "0.1.0"
 SCENARIOS = ("pass", "check-error", "participant-crash", "forever", "ignore-stop", "launcher-crash",
-             "bad-lines", "future-events", "flood", "finding-flood", "bad-types", "orphan", "check-garbage")
+             "bad-lines", "future-events", "flood", "finding-flood", "bad-types", "orphan", "check-garbage",
+             "non-finite")
 USAGE = __doc__.split("\n\n")[1]
 STEP_MS = 100
 
@@ -428,6 +431,11 @@ def run(args: dict, file: str, config: dict, scenario: str) -> int:
                                  ("time", {"sim_ms": "100"}), ("phase", {"phase": {}}), ("result", {"result": []}),
                                  ("command", {"command": "stop", "accepted": "yes"}), ("finding", {"severity": 1})):
                 ev.emit(kind, **fields)
+        if scenario == "non-finite" and step == 1:
+            for fields in ('"event":"time","sim_ms":50,"actual_speed":1e999', '"event":"log","source":"vehicle_sil_launch",'
+                           '"line":"x","level":-1e999'):
+                ev.raw(f'{{{fields},"seq":{ev.seq},"t_ms":0}}')
+                ev.seq += 1
         if scenario == "orphan" and step == 1:
             orphan = subprocess.Popen(
                 [sys.executable, "-c", f"import time; time.sleep({float(os.environ.get('FAKE_LAUNCHER_ORPHAN_S', '30'))})"],

@@ -122,6 +122,28 @@ def test_force_without_a_stop_first_sends_two(tmp_path: Path) -> None:
         run_async(main, gui)
 
 
+def test_a_stop_while_the_run_starts_stops_it_once_started(tmp_path: Path) -> None:
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "50", "FAKE_LAUNCHER_CHECK_DELAY_MS": "1500"}) as gui:
+        async def main(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            run = asyncio.create_task(c.post("api/run", {"file": "forever.yaml"}))  # checks the names first
+            await asyncio.sleep(0.5)
+            status, body = await c.post("api/stop", {"force": False})
+            assert status == 200 and body == {"session": None}  # no run yet: the one starting gets the stop
+            status, body = await run
+            assert status == 200 and body["session"]["stop"] == "requested", body
+            got = await sock.until(is_ended, timeout=15)
+            assert got[-1]["session"]["result"]["result"] == "interrupted"
+            assert len(event_messages(sock.received, "command")) == 1
+            # The next run does not inherit the stop.
+            status, body = await c.post("api/run", {"file": "forever.yaml"})
+            assert status == 200 and body["session"]["stop"] == "none"
+            await c.post("api/stop", {"force": True})
+            await sock.until(is_ended, timeout=15)
+        run_async(main, gui)
+
+
 # ---------------------------------------------------------------- checks
 
 

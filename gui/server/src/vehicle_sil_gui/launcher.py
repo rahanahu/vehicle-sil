@@ -31,6 +31,7 @@ class Launcher:
     problems: list[dict] = field(default_factory=list)
     version: dict | None = None
     _stamp: tuple | None = None
+    track: set | None = field(default=None, repr=False)  # where a running `version --json` is put (see process)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     @property
@@ -69,7 +70,7 @@ class Launcher:
         self._stamp = stamp  # under the lock: no one sees the new stamp before the answer below
         try:
             code, out, err = await process.run_to_end(self.prefix + ["version", "--json"], cwd=None,
-                                                      timeout_s=VERSION_TIMEOUT_S)
+                                                      timeout_s=VERSION_TIMEOUT_S, track=self.track)
         except (OSError, TimeoutError) as e:
             what = "did not answer in time" if isinstance(e, TimeoutError) else f"cannot be started ({e})"
             self._set(None, [{"code": "launcher-version",

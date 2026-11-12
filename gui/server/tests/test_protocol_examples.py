@@ -219,7 +219,9 @@ def test_errors_of_the_launcher_and_of_load(tmp_path: Path) -> None:
             status, body = next((s, b) for s, b in replies if s == 503)
             check_example("error-check-busy", http("Too many checks waiting for the one that runs.", "POST",
                                                    "api/check", req, status, body), gui)
-            socks = [await c.ws(auth=False) for _ in range(32)]
+            socks = [await c.ws() for _ in range(32)]
+            for sock in socks:
+                await sock.until(is_synced)
             status, body = await c.get("ws")
             check_example("error-too-many-connections", http("A WebSocket over the limit (the handshake's answer).",
                                                              "GET", "ws", None, status, body), gui)

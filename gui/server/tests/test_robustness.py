@@ -39,6 +39,30 @@ def test_events_with_wrong_types_do_not_stop_the_reading(gui: Gui) -> None:
     run_async(main, gui)
 
 
+def test_a_number_that_is_not_finite_does_not_stop_the_reading(tmp_path: Path) -> None:
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_SCENARIO": "non-finite"}) as gui:
+        async def main(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            assert (await c.post("api/run", {"file": "simulation.yaml"}))[0] == 200
+            got = await sock.until(is_ended, timeout=15)
+            end = got[-1]["session"]
+            assert end["result"]["result"] == "passed" and end["phase"] == "ended"
+            codes = [m["code"] for m in got if m["type"] == "error"]
+            assert codes.count("launcher-output") == 2 and "seq-gap" in codes, codes
+            assert event_messages(got, "time")[-1]["sim_ms"] == 1000
+            async with c.http.get(f"{gui.base}/api/session", headers=gui.headers()) as r:
+                text = await r.text()
+
+            def refuse(name: str) -> None:
+                raise ValueError(name)
+            assert json.loads(text, parse_constant=refuse)["session"]["state"] == "ended"  # what a browser reads
+            again = await c.ws()
+            hello = (await again.until(is_synced))[0]
+            assert hello["type"] == "hello" and hello["session"]["result"]["result"] == "passed"
+        run_async(main, gui)
+
+
 # ---------------------------------------------------------------- requests that were a 500
 
 
@@ -78,19 +102,37 @@ def test_odd_input_is_a_4xx_with_the_usual_headers(gui: Gui) -> None:
 # ---------------------------------------------------------------- connections
 
 
-def test_unauthenticated_websockets_count_toward_the_limit(gui: Gui) -> None:
+def test_unauthenticated_websockets_cannot_keep_the_screen_out(gui: Gui) -> None:
     async def main(c: Client) -> None:
-        socks, refused = [], None
-        for n in range(40):
-            try:
-                socks.append(await c.http.ws_connect(f"ws://127.0.0.1:{gui.port}/ws", headers={"Origin": gui.origin}))
-            except aiohttp.WSServerHandshakeError as e:
-                refused = (n, e.status)
-                break
-        assert refused == (32, 503), refused
-        msg = await socks[0].receive(timeout=10)  # no auth in time: closed
+        url = f"ws://127.0.0.1:{gui.port}/ws"
+        socks = [await c.http.ws_connect(url, headers={"Origin": gui.origin}) for _ in range(40)]  # never refused
+        msg = await socks[0].receive(timeout=5)  # the oldest made room
+        assert msg.type == aiohttp.WSMsgType.CLOSE and msg.data == 1013 and msg.extra == "too-many-unauthenticated"
+        screen = await c.ws()
+        hello = (await screen.until(is_synced))[0]
+        assert hello["type"] == "hello"
+        msg = await socks[-1].receive(timeout=10)  # no auth in time: closed
         assert msg.type == aiohttp.WSMsgType.CLOSE and msg.data == 4401 and msg.extra == "auth-timeout"
         for s in socks:
+            await s.close()
+        await screen.close()
+    run_async(main, gui)
+
+
+def test_authenticated_websockets_have_a_limit(gui: Gui) -> None:
+    async def main(c: Client) -> None:
+        screens = []
+        for _ in range(32):
+            screens.append(await c.ws())
+            await screens[-1].until(is_synced)
+        with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
+            await c.ws()
+        assert refused.value.status == 503
+        await screens[0].close()
+        await asyncio.sleep(0.2)
+        again = await c.ws()
+        assert (await again.until(is_synced))[0]["type"] == "hello"
+        for s in screens[1:] + [again]:
             await s.close()
     run_async(main, gui)
 
@@ -122,7 +164,9 @@ def test_the_checks_that_aiohttp_makes(gui: Gui) -> None:
 
     assert status(b"GET /api/app HTTP/1.0\r\n" + auth) == 403  # no Host
     assert status(b"GET /api/app HTTP/1.1\r\n" + auth) == 400  # no Host (aiohttp)
+    # Two Host headers: aiohttp answers 400 before this server sees the request (it relies on that).
     assert status(b"GET /api/app HTTP/1.1\r\n" + auth + b"Host: " + host + b"\r\nHost: evil.example\r\n") == 400
+    assert status(b"GET /api/app HTTP/1.1\r\n" + auth + b"Host: " + host + b"\r\nHost: " + host + b"\r\n") == 400
     assert status(b"GET /api/app HTTP/1.1\r\n" + auth + b"Host: evil.example\r\nHost: " + host + b"\r\n") == 400
     # The Host header decides, not the request line (a browser cannot forge Host).
     assert status(b"GET http://evil.example/api/app HTTP/1.1\r\n" + auth + b"Host: " + host + b"\r\n") == 200

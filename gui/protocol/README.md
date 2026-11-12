@@ -28,7 +28,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 - `speed`（`null`、`"max"`、数）と `start_paused`（真偽）は、`api/app` の `launcher.version.features` に `speed`、`start-paused` があるときだけ値を送ります。ないときは欄を省くか `null` / `false` を送ります（ほかの値は 400 `unsupported`）。
 - **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけているか動いている間、409 `already-running` です。応答の要約を、画面はその場で当てます（後から届く `session` も同じ内容です）。
 - **照合**: 同時の `api/check` は断らず、順に 1 つずつ実行します。待っている要求が多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も、participant 名を確かめるために同じ順番で照合することがあります。
-- **停止**: 本文は `{"force": 真偽}`（省略は `false`。本文なしで `Content-Type` もない要求も `false`）。`force: false` は「順に止める」（ランチャーの標準入力に `{"command":"stop"}`）で、すでに頼んであれば何もしません。`force: true` は「待たずに止める」（まだ頼んでいなければ `stop` を 2 回、頼んであればもう 1 回）で、すでに頼んであれば何もしません。どちらも、実行がない、または終わっているときは 409 にせず、今の要約を返します（何度呼んでも同じ結果）。止めた経過は、要約の `stop` と、ランチャーの `command` / `phase` の事象で見えます。標準入力を読まないランチャーは、これでは止まりません（サーバーを止めると、シグナルで止めます）。
+- **停止**: 本文は `{"force": 真偽}`（省略は `false`。本文なしで `Content-Type` もない要求も `false`）。`force: false` は「順に止める」（ランチャーの標準入力に `{"command":"stop"}`）で、すでに頼んであれば何もしません。`force: true` は「待たずに止める」（まだ頼んでいなければ `stop` を 2 回、頼んであればもう 1 回）で、すでに頼んであれば何もしません。どちらも、実行がない、または終わっているときは 409 にせず、今の要約を返します（何度呼んでも同じ結果）。実行が始まりかけている間（`api/run` が応答する前）の停止は、ランチャーが起動したところで届けます（応答の要約は前の実行のもの。始まった実行の要約の `stop` に出ます）。止めた経過は、要約の `stop` と、ランチャーの `command` / `phase` の事象で見えます。標準入力を読まないランチャーは、これでは止まりません（サーバーを止めると、シグナルで止めます）。
 - サーバーが終わり始めたら、`api/run` と `api/check` は 503 `shutting-down` です。
 
 ## 誤りの `code`
@@ -67,7 +67,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 
 ## WebSocket（`ws`）
 
-つないだら最初に `{"type": "auth", "token": "...", "session": <id>, "from_seq": <n>}` を送ります（`session` と `from_seq` は、再接続で持っている分を言うときだけ。0 以上の整数でなければ、ないものとして扱います）。トークンが違えば `error`（`code: unauthorized`）の後に、5 秒以内に `auth` が届かなければそのまま、閉じるコード 4401 で閉じます（理由の文は `unauthorized` か `auth-timeout`）。サーバーが終わるときは 1001 で閉じます。握手の段の拒否（`Host`、`Origin`、`too-many-connections`）は、ブラウザの JavaScript からは理由が見えません（1006 になります）。画面は、握手に失敗したら `GET api/app` を 1 回呼んで理由を知ります。認証前の接続も数の上限に数えます。
+つないだら最初に `{"type": "auth", "token": "...", "session": <id>, "from_seq": <n>}` を送ります（`session` と `from_seq` は、再接続で持っている分を言うときだけ。0 以上の整数でなければ、ないものとして扱います）。トークンが違えば `error`（`code: unauthorized`）の後に、5 秒以内に `auth` が届かなければそのまま、閉じるコード 4401 で閉じます（理由の文は `unauthorized` か `auth-timeout`）。サーバーが終わるときは 1001 で閉じます。握手の段の拒否（`Host`、`Origin`、`too-many-connections`）は、ブラウザの JavaScript からは理由が見えません（1006 になります）。画面は、握手に失敗したら `GET api/app` を 1 回呼んで理由を知ります。認証した接続は 32 本まで（それを超える握手は 503 `too-many-connections`。握手の後、認証までの間に埋まったときは、閉じるコード 1013、理由の文 `too-many-connections`）。認証前の接続は別に 16 本までで、あふれたら最も古い認証前の接続を、閉じるコード 1013（理由の文は `too-many-unauthenticated`）で閉じて場所を空けます。1013 で閉じられた画面は、つなぎ直します。
 
 認証の後に届くものは、この順です。
 
@@ -86,7 +86,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}`（要約）。実行を始めたとき、止めるよう頼んだとき、実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後の事象の後） | `ws-pass.json` |
 | `error` | `{session, code, message, detail}`。サーバーが気づいたこと（下の表）。要約の `problems` にも残る | `ws-bad-lines.json` |
-| `dropped` | `{session, reason, log, at_least, events}`（`ws-slow-client.json` の数は例）。この画面に送らなかったものの数。`log` は source ごとの log の行の数、`at_least` はその数が下限でしかない source（もっと落ちているかもしれない）、`events` はほかの事象の数。`reason` が `not-kept` はサーバーが覚えていない（再送の前）、`slow-client` は画面の受け取りが遅く、送る分から落とした。画面は、その source のログのその位置に「ここで N 行が落ちた」を出す | `ws-dropped.json`、`ws-slow-client.json` |
+| `dropped` | `{session, reason, log, at_least, events}`（`ws-slow-client.json` の数は例）。この画面に送らなかったものの数。`log` は source ごとの log の行の数、`at_least` はその数が下限でしかない source（もっと落ちているかもしれない）、`events` はほかの事象の数。source の名前は要約の `log` と同じです（65 個目からの source は `*`）。`reason` が `not-kept` はサーバーが覚えていない（再送の前）、`slow-client` は画面の受け取りが遅く、送る分から落とした。画面は、その source のログのその位置に「ここで N 行が落ちた」を出す | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受け取りが遅く、落とせない知らせまであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
 
 受け取りが遅い画面には、まず log の行と知らない事象を落とし（`dropped`）、`time` は最後の 1 つにまとめます。それでも追いつかないときだけ `resync` です。
@@ -96,14 +96,14 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `code` | 意味 |
 |---|---|
 | `unauthorized` | 認証の誤り（`session` は `null`。この後 4401 で閉じる） |
-| `launcher-output` | ランチャーが事象でない行を書いた（JSON のオブジェクトでない、`event` か整数の `seq` がない） |
-| `bad-event` | 知っている事象の欄の型が違う。その事象は捨てる（中継も要約への反映もしない） |
+| `launcher-output` | ランチャーが事象でない行を書いた（JSON のオブジェクトでない、`event` がない、`seq` が 0 から 2^53 までの整数でない）。`1e999` のような有限でない数を含む行も、ここに入る |
+| `bad-event` | 知っている事象の欄の型が違う（`t_ms` が 0 から 2^53 までの整数でない、を含む）か、サーバーがその事象を中継できなかった。その事象は捨てる（中継も要約への反映もしない） |
 | `line-too-long` | 1 行が上限（16 MiB）を超えた。捨てる |
 | `seq-gap`、`seq-order` | `seq` が飛んだ、戻った |
 | `no-hello` | 最初の事象が `hello` でない |
 | `events-format` | `hello` の `vehicle_sil_events` が、このサーバーの読む版と違う |
-| `launcher-stderr` | ランチャーが標準エラーに書いた行（1 回の実行で 50 行まで） |
-| `kept-limit` | 覚える量の上限を超えたので、要約に入れなかった（`detail.what`: `check`、`result`、`findings`、`participants`、または 4 KiB を超えた事象の種類 `phase`、`time`、`registry`、`command`、`participant`）。種類ごとに 1 回 |
+| `launcher-stderr` | ランチャーが標準エラーに書いた行。最初の 20 行はすぐに送る。それより後は最後の 30 行だけを、実行が終わったときに送る。間で落とした行があれば、その前に 1 つ（`detail.skipped`: 落とした行の数） |
+| `kept-limit` | 覚える量の上限を超えたので、要約に一部しか入れなかった（`detail.what`: `check`、`result`、`findings`、`participants`、または 4 KiB を超えた事象の種類 `phase`、`time`、`registry`、`command`、`participant`）。4 KiB を超えた事象は、大事な欄（下の「上限」）を残し、ほかの欄は入る分だけ入れて、入らない欄の名前を `omitted_fields` に書く。種類ごとに 1 回 |
 | `no-result` | ランチャーが `result` を書かずに終わった（`detail.exit_code`） |
 | `output-left-open` | ランチャーは終わったが、ランチャーが起動したプロセスが出力を開いたままなので、残りを読まずに終えた |
 | `stop-not-delivered` | 停止の命令をランチャーの標準入力に書けなかった |
@@ -121,19 +121,19 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `stop` | サーバーがランチャーに頼んだ停止: `none`、`requested`（順に止める）、`forced`（待たずに止める） |
 | `phase` | 最後の `phase` 事象の段階（まだなければ `null`） |
 | `last_seq`、`last_t_ms` | 最後に受け取った事象の `seq` と `t_ms` |
-| `time` | 最後の `time` 事象（そのまま。なければ `null`） |
+| `time` | 最後の `time` 事象（そのまま。なければ `null`）。大きすぎた欄があれば `omitted_fields` |
 | `check` | `check` 事象の `check`（照合の結果を丸ごと。participant の `required`、`enabled`、`variables` を含む）。まだなければ `null` |
-| `registry` | 最後の `registry` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`） |
-| `participants` | participant ごとの今の状態。`participant` 事象の欄（`event`、`seq`、`t_ms` を除く）を名前ごとに重ねたもの（`name`、`state`、`pid`、`exit_code`、`signal` など）。初めて現れた順。`required` と `enabled` は `check` を見る |
+| `registry` | 最後の `registry` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`）。大きすぎた欄があれば `omitted_fields` |
+| `participants` | participant ごとの今の状態。`participant` 事象の欄（`event`、`seq`、`t_ms` を除く）を名前ごとに重ねたもの（`name`、`state`、`pid`、`exit_code`、`signal` など）。初めて現れた順。`required` と `enabled` は `check` を見る。大きすぎて入れなかった欄があれば、その名前の配列 `omitted_fields`（後の事象でその欄が届けば消える） |
 | `participants_omitted` | 上限（256 人）を超えたので覚えていない participant の事象の数 |
 | `findings`、`findings_omitted` | `finding` 事象（`event`、`seq`、`t_ms` を除く）と、上限を超えて覚えていない数 |
-| `last_command` | 最後の `command` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`） |
+| `last_command` | 最後の `command` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`）。大きすぎた欄があれば `omitted_fields` |
 | `result` | `result` 事象の `result`（なければ `null`） |
 | `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、覚えずに落とした行の数 |
-| `problems`、`problems_omitted` | サーバーの知らせ（`error` と同じ `{code, message, detail}`）と、上限を超えて覚えていない数 |
+| `problems`、`problems_omitted` | サーバーの知らせ（`error` と同じ `{code, message, detail}`）を起きた順に、と、上限を超えて覚えていない数 |
 
 ランチャーが `result` を出さずに終わったときは、`launcher.running: false` と `exit_code`、`state: ended`、知らせの `no-result` になります。
 
 ## 上限
 
-サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB、`problems` は 100 個。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。
+サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB。4 KiB を超えても、大事な欄は必ず入れます（participant の `name`、`state`、`pid`、`exit_code`、`signal`、`phase` の段階の名前、`time` の `sim_ms`、`registry` の `uri`、`command` の `command` と `accepted`。これだけで 4 KiB を超えるときは入れません）。`problems` は、ランチャーが書いたもの（標準エラーを除く）が 100 個、サーバー自身の知らせ（`kept-limit`、`no-result`、`output-left-open`、`stop-not-delivered`、`stop-escalated`）が別に 50 個、標準エラーが別に最初の 20 行と最後の 30 行です。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。
