@@ -233,13 +233,18 @@ TEST_CASE(start_window_that_opens_after_start_gave_up_is_completed_without_its_f
                 }
             } const join{controller, start_a};
             CHECK(eventually([&] { return controller->missing_participants().empty(); }, 30s));
-            // Publishes the workflow and gives up at once: the window cannot have opened yet
-            // (it takes messages to and fro), except on a machine that stalls right here.
+            // Publishes the workflow and gives up at once: as a rule the window has not opened yet
+            // (it takes messages to and fro). If this thread is kept from running for about a
+            // millisecond right after the lifecycle was started (seen on Windows under load),
+            // the window opens and the simulation runs before start() looks at the time: start()
+            // then returns, having called the function. That round shows nothing about a late
+            // window and is not counted.
             std::string gave_up;
+            bool returned = false;
             try
             {
                 controller->start(0ms);
-                gave_up = "start(0 ms) returned";
+                returned = true;
             }
             catch (const StartTimeoutError&)
             {
@@ -251,6 +256,10 @@ TEST_CASE(start_window_that_opens_after_start_gave_up_is_completed_without_its_f
             if (!gave_up.empty())
             {
                 throw vehicle_sil::unit::Failure(gave_up);
+            }
+            if (returned)
+            {
+                CHECK_EQ(calls.load(), 1); // start() returns only after the window's function did
             }
             if (!destroy_at_once)
             {

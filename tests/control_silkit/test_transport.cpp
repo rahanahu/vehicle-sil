@@ -1302,8 +1302,14 @@ TEST_CASE(hellos_beyond_the_bounds_are_refused_and_counted)
     }));
 
     RawAgent flood("Flood", registry.uri, 1);
-    // One participant after the other says hello under a new name and session.
-    for (std::uint64_t i = 1; i <= 10; ++i)
+    // One participant after the other says hello under a new name and session. The first one
+    // alone, until the hub has it: SIL Kit carries only what is published after the hub's
+    // subscriber has found this publisher (and, with the history of 1, the last message before
+    // that), and nothing waits for that when the publisher is made. Published at once, all but
+    // the last of the ten could be lost, and then fewer than six are refused.
+    flood.hello(3, "Name1", 101);
+    CHECK(eventually([&] { return side.transport->stats().hellos == 1; }, 30s));
+    for (std::uint64_t i = 2; i <= 10; ++i)
     {
         flood.hello(3, "Name" + std::to_string(i), 100 + i);
     }
