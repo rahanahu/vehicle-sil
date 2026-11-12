@@ -41,17 +41,18 @@ e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを偽
 
 ## ディレクトリ
 
-| パス                                     | 内容                                                                                                                                                                              |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                                                                  |
-| `src/app/app.routes.ts`、`navigation.ts` | 経路と、ナビゲーションの項目                                                                                                                                                      |
-| `src/app/core/`                          | 画面をまたいで使うもの: サーバーとの間の型と読み取り（`api.ts`）、トークン（`auth/`）、URL（`urls.ts`）、幅の区分（`layout/`）、計測値の書式（`format/`）、流れ（`streams/`）     |
-| `src/app/run/`                           | 実行の画面（`''`）。状態は `run-session.ts`（WebSocket の写し）と `run-state.ts`（事象を当てる純粋な関数）                                                                        |
-| `src/app/not-found/`                     | 見つからない経路の画面                                                                                                                                                            |
-| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）と、単体試験が `gui/protocol/examples/` を読む関数                                            |
-| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                                                                           |
-| `public/`                                | そのまま配信するファイル（アイコン）                                                                                                                                              |
-| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`run.spec.ts`（実行の画面）、`layout.spec.ts` と `support/layout.ts`（レイアウト）、`support/gui-server.ts`（GUI サーバーの起動） |
+| パス                                     | 内容                                                                                                                                                                                                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                                                                                                                      |
+| `src/app/app.routes.ts`、`navigation.ts` | 経路と、ナビゲーションの項目                                                                                                                                                                                                          |
+| `src/app/core/`                          | 画面をまたいで使うもの: サーバーとの間の型と読み取り（`api.ts`）、トークン（`auth/`）、URL（`urls.ts`）、幅の区分（`layout/`）、計測値とパスの書式（`format/`）、流れ（`streams/`）、サーバーとの接続とセッションの状態（`session/`） |
+| `src/app/core/session/`                  | `server-connection.ts`（アプリ全体で 1 つの WebSocket の接続。認証、再接続、要約と事象を当てたセッションの状態）と `session-state.ts`（要約と事象を当てる純粋な関数）                                                                 |
+| `src/app/run/`                           | 実行の画面（`''`）。操作は `run-session.ts`（開始、停止、待たずに止める。画面と同じ寿命）、いつも見える状態の帯は `run-status.ts`                                                                                                     |
+| `src/app/not-found/`                     | 見つからない経路の画面                                                                                                                                                                                                                |
+| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）と、単体試験が `gui/protocol/examples/` を読む関数                                                                                                |
+| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                                                                                                                               |
+| `public/`                                | そのまま配信するファイル（アイコン）                                                                                                                                                                                                  |
+| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`run.spec.ts`（実行の画面）、`layout.spec.ts` と `support/layout.ts`（レイアウト）、`support/gui-server.ts`（GUI サーバーの起動）                                                     |
 
 ## URL と CSP
 
@@ -88,7 +89,10 @@ API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api
 - 状態、そこから導く値、テンプレートが読むものは signal（`signal`、`computed`、`linkedSignal`）。
 - 1 回の取得は `httpResource`（ほかの非同期の値は `resource`）。`HttpClient` と `toSignal` で書かない。
 - RxJS は、時間とともに続く流れに演算子が要るときに使う（再接続と待ち時間、間引き、取り消し、いくつかの流れの組み合わせ）。サービスの中に置き、外へは signal を出す。流れそのものが要る利用者には、流れとわかる名前の Observable を出し、利用者が `toSignal`（`core/streams/stream-signals.ts` の `latestValue`、`recentValues`）で signal にする。
-- 見本は `core/streams/live-connection.ts`（WebSocket の差し替え口、購読の寿命、再接続、つなぐたびに最初に送るもの）と `run/run-session.ts`（流れをまとめて状態の signal に当てる。画面の providers に置き、画面と同じ寿命）、試験は `live-connection.spec.ts` と `run-session.spec.ts`（偽の WebSocket）。
+- 見本は `core/streams/live-connection.ts`（WebSocket の差し替え口、購読の寿命、再接続、つなぐたびに最初に送るもの）と `core/session/server-connection.ts`（流れをまとめて状態の signal に当てる。アプリ全体で 1 つで、画面を移っても切れない）、試験は `live-connection.spec.ts` と `server-connection.spec.ts`（偽の WebSocket）。
+- サーバーとの接続は `ServerConnection` だけが持つ。画面はその signal を読む。自分で流れを当てたい画面（毎秒数十回の値など）は、`batches`（まとめた通知の Observable）を購読して自分の signal に当てる。接続や認証を画面ごとに持たない。
+- 変更を伴う要求（開始、停止）は `HttpClient` で送り、応答（いまの要約）をその場で `ServerConnection.adopt` に当てる。
+- 照合（`POST api/check`）は読み取りに近いので signal から自動で送るが、`httpResource` ではなく `resource` で書く。切り替えを少し待ってまとめ、前の照合の応答を待ってから次を送り、古い応答を捨てるため（`httpResource` は前の要求を取り消すだけで、サーバーでは照合が続く）。
 - 画面へ毎秒数十回を超えて送らない（間引きはサーバーの仕事）。グラフには固定長の履歴（`recentValues`）を使う。
 
 ```ts
@@ -127,6 +131,8 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 - キーボードだけで全部を操作できる。Esc で引き出しを閉じる。
 - 色だけで状態を伝えない（文字や形も添える）。
 - 部品は Material のもの（ボタン、リスト、カードなど）を使う。速く変わる値に `aria-live` を付けない。
+- 状態の変わり目（実行の始まり、止めている、結果、異常終了、接続の切断）は `role="status"`、操作の誤りは `role="alert"` の領域で知らせる。領域は中身が変わる前から置いておく（中身がない間は見た目から消す）。
+- 押すと役目が変わるボタン（開始と停止）は、同じ要素のまま文言と動きを変える（フォーカスが残る）。押せない間は `disabledInteractive` で、フォーカスを受けたまま理由を `aria-describedby` で読ませる。
 
 ### 国際化
 
@@ -134,6 +140,8 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 - テンプレートの文言には `i18n`（属性には `i18n-<属性>`）、TypeScript の文言には `$localize` を付ける。英語は、翻訳ファイルを足して後から出せる。印のない文言は lint で止まる。
 - 計測値は `measure` パイプ（`core/format/measure-pipe.ts`）で出す。桁区切りを入れず、小数の桁を決める。locale の数値の書式に任せない。
 - ECU やランチャーが出す英語の文（所見、ログ）は訳さず、そのまま出す。
+- 翻訳はビルドのときだけ。`run/labels.ts` の表のように、モジュールを読み込むときに `$localize` を評価するところがあるので、実行時に翻訳を読み込む形にはしない。
+- 並べる語の区切りは `Intl.ListFormat`（`LOCALE_ID`）で作る。区切りや `:` を CSS の `content` で足さない（訳せない）。
 
 ### サーバーとの間の型
 
@@ -145,7 +153,8 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 - 単体試験は TestBed。`Layout` は signal を持つ偽物に差し替える（jsdom に `matchMedia` がない）。
 - `httpResource` は `TestBed.tick()` で要求を出させ、`HttpTestingController` で `flush` してから `whenStable()`（応答していない要求があると `whenStable()` が終わらない）。
 - WebSocket は `FakeWebSockets`（`core/streams/fake-web-socket.ts`）で差し替える。時間は Vitest の偽の時計。サーバーの通知は、作らずに `gui/protocol/examples/` の例を流す（`testing/protocol-examples.ts`）。
-- e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。e2e は本物の GUI サーバーと偽のランチャーを相手にする（筋書きは構成ファイルで選ぶ）。
+- e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。e2e は本物の GUI サーバーと偽のランチャーを相手にする（筋書きは構成ファイルで選ぶ）。筋書きにない状況（結果の後も終わらないランチャー、大量の行）は、`page.routeWebSocket` で通知を差し込んで作る。
+- 見た目の確かめとスクリーンショットは、窓を伸ばさずに利用者が見る大きさのままで行う（最初の画面に何が入っているかを見るため）。
 
 ## アイコン
 
