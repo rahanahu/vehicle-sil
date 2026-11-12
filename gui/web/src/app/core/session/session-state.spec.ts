@@ -23,6 +23,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     last_seq: null,
     last_t_ms: null,
     sim_ms: null,
+    time_omitted_fields: [],
     check: null,
     participants: [],
     findings: [],
@@ -131,8 +132,24 @@ describe('applyEvents', () => {
     expect(session.elapsedMs).toBe(70);
     expect(session.simMs).toBe(300);
     expect(session.participants).toEqual([
-      { name: 'A', state: 'joined', required: true, pid: 42, exitCode: null, signal: null },
-      { name: 'B', state: 'disabled', required: true, pid: null, exitCode: null, signal: null },
+      {
+        name: 'A',
+        state: 'joined',
+        required: true,
+        pid: 42,
+        exitCode: null,
+        signal: null,
+        omittedFields: [],
+      },
+      {
+        name: 'B',
+        state: 'disabled',
+        required: true,
+        pid: null,
+        exitCode: null,
+        signal: null,
+        omittedFields: [],
+      },
     ]);
     expect(runOutcome(session)).toBe('running');
   });
@@ -301,7 +318,14 @@ describe('applySummary', () => {
   });
 
   it('takes the participants from a summary newer than the events it has, with the check', () => {
-    const participant = { name: 'A', state: 'joined', pid: 7, exit_code: null, signal: null };
+    const participant = {
+      name: 'A',
+      state: 'joined',
+      pid: 7,
+      exit_code: null,
+      signal: null,
+      omitted_fields: [],
+    };
     const session = applySummary(
       emptySession(),
       summary({
@@ -330,6 +354,38 @@ describe('applySummary', () => {
     );
     expect(answered.phase).toBe('stopping');
     expect(answered.stopRequests).toBe(1);
+  });
+
+  it('keeps the names of the fields the server left out, until an event brings them', () => {
+    const session = sessionFromSummary(
+      summary({
+        last_seq: 4,
+        sim_ms: 300,
+        time_omitted_fields: ['wall_clock'],
+        participants: [
+          {
+            name: 'A',
+            state: 'joined',
+            pid: 7,
+            exit_code: null,
+            signal: null,
+            omitted_fields: ['command', 'environment'],
+          },
+        ],
+      }),
+    );
+    expect(session.participants[0].omittedFields).toEqual(['command', 'environment']);
+    expect(session.timeOmittedFields).toEqual(['wall_clock']);
+
+    const later = applyEvents(
+      session,
+      eventsFrom(5, [
+        { event: 'participant', name: 'A', state: 'ended', pid: 7, exit_code: 0, signal: null },
+        { event: 'time', sim_ms: 400 },
+      ]),
+    );
+    expect(later.participants[0].omittedFields).toEqual([]);
+    expect(later.timeOmittedFields).toEqual([]);
   });
 
   it('lists the log sources of the summary, even without lines', () => {

@@ -28,9 +28,9 @@ export class FakeSocket<T = unknown> {
     this.subscriber.error(new Error('connection lost'));
   }
 
-  /** サーバーが閉じた（エラーでない終わり）。 */
-  close(): void {
-    this.config.closeObserver?.next(new Event('close') as CloseEvent);
+  /** サーバーが閉じた（エラーでない終わり）。code と reason は閉じるコードと理由の文。 */
+  close(code = 1000, reason = ''): void {
+    this.config.closeObserver?.next(new CloseEvent('close', { code, reason, wasClean: true }));
     this.subscriber.complete();
   }
 }

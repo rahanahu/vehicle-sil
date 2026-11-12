@@ -149,3 +149,9 @@
     display: none;
   }
 }
+
+.omitted {
+  margin-inline-start: var(--app-space-1);
+  color: var(--mat-sys-on-surface-variant);
+  cursor: help;
+}

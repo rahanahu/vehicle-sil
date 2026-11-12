@@ -26,6 +26,8 @@ export class RunSession {
   readonly connectionState = this.server.connectionState;
   /** 握手で断られた回数。 */
   readonly handshakeFailures = this.server.handshakeFailures;
+  /** サーバーが「後でもう一度」で閉じた理由（つなぎ直している間だけ）。 */
+  readonly tryAgainReason = this.server.tryAgainReason;
   /** サーバーと揃っている（つながっていて、再送を受け終えた）。 */
   readonly ready = this.server.ready;
   /** いまの（または最後の）セッション。 */

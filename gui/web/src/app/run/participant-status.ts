@@ -1,6 +1,9 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, LOCALE_ID, computed, inject, input } from '@angular/core';
 import { ParticipantView } from '../core/session/session-state';
 import { participantStateLabel } from './labels';
+
+/** 終わりが決まった状態。ほかの状態は、ランチャーが先に終わると、その後どうなったかわからない。 */
+const SETTLED: ReadonlySet<string> = new Set(['ended', 'killed', 'disabled', 'not_started']);
 
 /** 実行中の participant ごとの状態（起動、参加、終了と終了コード）。 */
 @Component({
@@ -20,8 +23,14 @@ import { participantStateLabel } from './labels';
           @if (row.signal) {
             <span class="exit" i18n>シグナル {{ row.signal }}</span>
           }
+          @if (row.lastKnown) {
+            <span class="exit" i18n>最後の知らせ: {{ row.lastKnown }}</span>
+          }
           @if (row.required === false) {
             <span class="optional" i18n>任意</span>
+          }
+          @if (row.omitted) {
+            <span class="omitted" i18n>大きすぎて省いた欄: {{ row.omitted }}</span>
           }
         </li>
       } @empty {
@@ -64,19 +73,48 @@ import { participantStateLabel } from './labels';
     .item[data-state='good'] .state {
       color: var(--mat-sys-primary);
     }
-    .exit,
-    .optional {
+    .item[data-state='unknown'] .state {
       color: var(--mat-sys-on-surface-variant);
+      font-style: italic;
+    }
+    .exit,
+    .optional,
+    .omitted {
+      color: var(--mat-sys-on-surface-variant);
+    }
+    .omitted {
+      flex-basis: 100%;
+      font: var(--mat-sys-body-small);
     }
   `,
 })
 export class ParticipantStatus {
+  private readonly list = new Intl.ListFormat(inject(LOCALE_ID), { type: 'conjunction' });
   readonly participants = input.required<readonly ParticipantView[]>();
   /** 利用者が止めた実行か。止めたことによるシグナルや強制終了は、失敗の色にしない。 */
   readonly interrupted = input(false);
+  /**
+   * ランチャーが結果を出さずに終わった。終わりを知らせてこなかった participant は、最後に届いた状態（「参加した」
+   * など）のままでは誤りなので「不明」にする。
+   */
+  readonly launcherGone = input(false);
 
   protected readonly rows = computed(() =>
     this.participants().map((p) => {
+      const omitted = p.omittedFields.length > 0 ? this.list.format(p.omittedFields) : null;
+      if (this.launcherGone() && !SETTLED.has(p.state ?? '')) {
+        return {
+          name: p.name,
+          label: $localize`不明（ランチャーが先に終了）`,
+          mark: '?',
+          tone: 'unknown',
+          exit: null,
+          signal: null,
+          lastKnown: p.state === null ? null : participantStateLabel(p.state),
+          required: p.required,
+          omitted,
+        };
+      }
       const failed =
         p.state === 'killed' ||
         (p.state === 'ended' && (p.exitCode ?? 0) !== 0) ||
@@ -101,7 +139,9 @@ export class ParticipantStatus {
         tone,
         exit: p.state === 'ended' || p.state === 'killed' ? p.exitCode : null,
         signal: p.signal,
+        lastKnown: null,
         required: p.required,
+        omitted,
       };
     }),
   );

@@ -50,6 +50,51 @@ describe('the readers accept every example of gui/protocol', () => {
     expect(bodies.get('stop-force')).toEqual(['force']);
   });
 
+  it('reads the lines the server skipped in the standard error, and the fields it left out', async () => {
+    const examples = await webSocketExamples();
+    const stderr = examples
+      .flatMap((example) => example.server)
+      .map((message) => readServerMessage(message))
+      .filter((message) => message?.type === 'error' && message.code === 'launcher-stderr');
+    expect(stderr.length).toBeGreaterThan(0);
+    expect(
+      stderr.every((message) => message?.type === 'error' && message.skipped === undefined),
+    ).toBe(true);
+    // 間で落とした行の知らせ（例にはない形: 標準エラーに 50 行より多く書くランチャー）
+    const gap = readServerMessage({
+      type: 'error',
+      session: 1,
+      code: 'launcher-stderr',
+      message: 'the launcher wrote 7 more lines to its standard error here',
+      detail: { skipped: 7 },
+    });
+    expect(gap).toMatchObject({ type: 'error', code: 'launcher-stderr', skipped: 7 });
+    expect(
+      readServerMessage({
+        type: 'error',
+        session: 1,
+        code: 'x',
+        message: 'm',
+        detail: { skipped: -1 },
+      }),
+    ).not.toHaveProperty('skipped');
+
+    const running = (await httpExamples()).find((example) => example.name === 'session-running');
+    const raw = (running?.response as { session: Record<string, unknown> }).session;
+    const participants = raw['participants'] as Record<string, unknown>[];
+    expect(participants.length).toBeGreaterThan(0);
+    const summary = readSessionResponse({
+      session: {
+        ...raw,
+        time: { sim_ms: 250, omitted_fields: ['wall_clock'] },
+        participants: [{ ...participants[0], omitted_fields: ['environment'] }],
+      },
+    });
+    expect(summary?.time_omitted_fields).toEqual(['wall_clock']);
+    expect(summary?.participants[0].omitted_fields).toEqual(['environment']);
+    expect(readSessionResponse(running?.response)?.participants[0].omitted_fields).toEqual([]);
+  });
+
   it('reads the launcher state and the stop request of a summary', async () => {
     const summary = readSessionResponse(
       (await httpExamples()).find((example) => example.name === 'run')?.response,

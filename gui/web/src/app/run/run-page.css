@@ -169,3 +169,36 @@ mat-card-content {
   margin-inline: var(--app-space-1);
   color: var(--mat-sys-on-surface-variant);
 }
+
+/* ランチャーの標準エラー: 最後の行を目立たせ、最初の行はたたむ。長い行は折り返す（横にはみ出さない） */
+.stderr {
+  margin: var(--app-space-2) 0 0;
+  padding: var(--app-space-2);
+  max-block-size: 40dvh;
+  overflow: auto;
+  border-radius: var(--mat-sys-corner-small);
+  background: var(--mat-sys-surface-container-low);
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+  font-family: ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stderr.last {
+  background: var(--mat-sys-surface-container-high);
+  color: var(--mat-sys-on-surface);
+  font-size: var(--mat-sys-body-medium-size);
+}
+
+.stderr-first summary {
+  cursor: pointer;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.stderr-gap,
+.stderr-label {
+  margin: var(--app-space-2) 0 0;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}

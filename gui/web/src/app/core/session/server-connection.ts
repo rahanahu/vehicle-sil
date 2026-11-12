@@ -23,6 +23,9 @@ import {
 /** 届いた通知をまとめて画面へ渡す間隔（ミリ秒）。ログが速く流れても、画面の更新は毎秒この回数まで。 */
 export const BATCH_MS = 100;
 
+/** サーバーが「後でもう一度」で閉じたときの閉じるコード。つなぎ直す（トークンを断ったのではない）。 */
+export const TRY_AGAIN_LATER = 1013;
+
 /** 画面に残す、セッションにつながらない知らせの種類の数。 */
 export const MAX_NOTICES = 20;
 
@@ -67,6 +70,14 @@ export class ServerConnection {
   /** 握手で断られた（開く前に閉じた）回数。増えたら、画面は api/app を呼んで理由を知る。 */
   readonly handshakeFailures = this.connection.failures;
   /**
+   * サーバーが接続を「後でもう一度」（1013）で閉じた理由の文（`too-many-connections`、`too-many-unauthenticated`）。
+   * 間を置いてつなぎ直していて、つながり直したら null。
+   */
+  readonly tryAgainReason = computed(() => {
+    const close = this.connection.lastClose();
+    return close?.code === TRY_AGAIN_LATER ? close.reason || 'try-again-later' : null;
+  });
+  /**
    * つながっていて、hello と再送を受け終えた（画面の状態がサーバーと揃っている）。
    * 揃っていない間は、古い表示を見て操作しないよう、開始と停止を押せなくする。
    */
@@ -103,6 +114,8 @@ export class ServerConnection {
   adopt(summary: SessionSummary | null): void {
     if (!summary) return;
     const session = this.current();
+    // 前の実行の要約（始まりかけの実行への停止の応答など）で、新しい実行を戻さない
+    if (session && summary.id < session.id) return;
     // 応答と通知の順は決まらないので、手元の事象より新しい要約のときだけ段階などを取る
     this.current.set(
       session?.id === summary.id ? applySummary(session, summary) : sessionFromSummary(summary),
@@ -179,7 +192,11 @@ export class ServerConnection {
           if (message.code === 'unauthorized') {
             this.auth.markRejected();
           } else if (session && message.session === session.id) {
-            session = addProblem(session, { code: message.code, message: message.message });
+            const { code, message: text, skipped } = message;
+            session = addProblem(
+              session,
+              skipped === undefined ? { code, message: text } : { code, message: text, skipped },
+            );
           } else {
             this.notify(message.message);
           }

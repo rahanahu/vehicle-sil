@@ -201,8 +201,24 @@ export class LayoutFixture {
   };
   protected readonly noneDisabled: ReadonlySet<string> = new Set();
   protected readonly participants: ParticipantView[] = [
-    { name: LONG_NAME, state: 'ended', required: true, pid: 1, exitCode: 3, signal: null },
-    { name: 'Dashboard', state: 'joined', required: false, pid: 2, exitCode: null, signal: null },
+    {
+      name: LONG_NAME,
+      state: 'ended',
+      required: true,
+      pid: 1,
+      exitCode: 3,
+      signal: null,
+      omittedFields: ['environment_with_a_very_long_field_name_that_does_not_break', 'command'],
+    },
+    {
+      name: 'Dashboard',
+      state: 'joined',
+      required: false,
+      pid: 2,
+      exitCode: null,
+      signal: null,
+      omittedFields: [],
+    },
   ];
 
   protected readonly rows = [

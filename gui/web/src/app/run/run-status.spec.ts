@@ -50,6 +50,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     last_seq: 3,
     last_t_ms: null,
     sim_ms: null,
+    time_omitted_fields: [],
     check: null,
     participants: [],
     findings: [],

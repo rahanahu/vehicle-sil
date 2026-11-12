@@ -389,11 +389,25 @@ export const readLauncherEvent: Reader<LauncherEvent | null> = (value, path) => 
 export interface ServerProblem {
   code: string;
   message: string;
+  /** launcher-stderr の、ここで落とした行の数（`detail.skipped`）。ほかの知らせにはない。 */
+  skipped?: number;
 }
 
 const readProblem: Reader<ServerProblem> = (value, path) => {
   const f = object(value, path);
-  return { code: field(f, path, 'code', string), message: field(f, path, 'message', string) };
+  const problem: ServerProblem = {
+    code: field(f, path, 'code', string),
+    message: field(f, path, 'message', string),
+  };
+  // detail の中身は code ごとに違う。使うものだけを、形が合うときだけ取る
+  const detail = f['detail'];
+  if (typeof detail === 'object' && detail !== null && 'skipped' in detail) {
+    const skipped = detail.skipped;
+    if (typeof skipped === 'number' && Number.isSafeInteger(skipped) && skipped >= 0) {
+      problem.skipped = skipped;
+    }
+  }
+  return problem;
 };
 
 /**
@@ -522,6 +536,8 @@ export interface SummaryParticipant {
   pid: number | null;
   exit_code: number | null;
   signal: string | null;
+  /** 大きすぎて要約に入れなかった欄の名前（後の事象でその欄が届けば消える）。 */
+  omitted_fields: string[];
 }
 
 const readSummaryParticipant: Reader<SummaryParticipant> = (value, path) => {
@@ -532,6 +548,7 @@ const readSummaryParticipant: Reader<SummaryParticipant> = (value, path) => {
     pid: field(f, path, 'pid', optional(nullable(integer), null)),
     exit_code: field(f, path, 'exit_code', optional(nullable(integer), null)),
     signal: field(f, path, 'signal', optional(nullable(string), null)),
+    omitted_fields: field(f, path, 'omitted_fields', optional(array(string), [])),
   };
 };
 
@@ -591,6 +608,8 @@ export interface SessionSummary {
   last_t_ms: number | null;
   /** 最後の time 事象の仮想時刻。 */
   sim_ms: number | null;
+  /** 最後の time 事象の、大きすぎて要約に入れなかった欄の名前。 */
+  time_omitted_fields: string[];
   /** この run の照合の結果（check の事象）。まだなければ null。 */
   check: CheckResult | null;
   participants: SummaryParticipant[];
@@ -617,6 +636,9 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
     last_seq: field(f, path, 'last_seq', nullable(integer)),
     last_t_ms: field(f, path, 'last_t_ms', nullable(number)),
     sim_ms: time ? field(time, `${path}.time`, 'sim_ms', number) : null,
+    time_omitted_fields: time
+      ? field(time, `${path}.time`, 'omitted_fields', optional(array(string), []))
+      : [],
     check: field(f, path, 'check', nullable(readCheckResult)),
     participants: field(f, path, 'participants', array(readSummaryParticipant)),
     findings: field(f, path, 'findings', array(readFinding)),
@@ -680,7 +702,7 @@ export type ServerMessage =
   /** セッションの要約が変わった（始まった、停止を頼んだ、ランチャーが終わった、実行が終わった）。 */
   | { type: 'session'; session: SessionSummary }
   /** サーバーの知らせ（seq の抜け、ランチャーの不正な行、結果のない終わり、認証の失敗など）。 */
-  | { type: 'error'; session: number | null; code: string; message: string }
+  | ({ type: 'error'; session: number | null } & ServerProblem)
   /** 送らなかったものの数。 */
   | Dropped
   /** 画面が読むのが遅く、メッセージを落とした。続けて hello から送り直される。 */
@@ -716,8 +738,7 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
       return {
         type,
         session: field(f, path, 'session', nullable(integer)),
-        code: field(f, path, 'code', string),
-        message: field(f, path, 'message', string),
+        ...readProblem(value, path),
       };
     case 'dropped':
       return {

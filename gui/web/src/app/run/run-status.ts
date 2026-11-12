@@ -1,4 +1,4 @@
-import { Component, computed, inject, input, output } from '@angular/core';
+import { Component, LOCALE_ID, computed, inject, input, output } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { PHASES, severityRank } from '../core/api';
@@ -22,6 +22,7 @@ type Primary = 'start' | 'again' | 'stop' | 'stopping';
   styleUrl: './run-status.css',
 })
 export class RunStatus {
+  private readonly list = new Intl.ListFormat(inject(LOCALE_ID), { type: 'conjunction' });
   private readonly dialog = inject(MatDialog);
 
   readonly session = input.required<SessionView | null>();
@@ -75,6 +76,13 @@ export class RunStatus {
   protected readonly simSeconds = computed(() => {
     const simMs = this.session()?.simMs ?? null;
     return simMs === null ? null : simMs / 1000;
+  });
+  /** 仮想時刻の事象で、要約に入りきらずサーバーが省いた欄（あれば、その説明）。 */
+  protected readonly timeOmitted = computed(() => {
+    const fields = this.session()?.timeOmittedFields ?? [];
+    return fields.length === 0
+      ? null
+      : $localize`仮想時刻の事象の欄 ${this.list.format(fields)}:fields: は、大きすぎてサーバーが省きました`;
   });
 
   /** 結果の 1 行（色だけで伝えないよう、印と文で）。 */

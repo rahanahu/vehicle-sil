@@ -25,6 +25,7 @@ import { AuthToken } from '../core/auth/auth-token';
 import { shortPath } from '../core/format/short-path';
 import { CheckPanel } from './check-panel';
 import { FindingsList } from './findings-list';
+import { STDERR_CODE, launcherStderr } from './launcher-stderr';
 import { LogView } from './log-view';
 import { ParticipantStatus } from './participant-status';
 import { ResultPanel } from './result-panel';
@@ -240,7 +241,18 @@ export class RunPage {
   });
 
   protected readonly connectionText = computed(() => {
-    switch (this.run.connectionState()) {
+    const state = this.run.connectionState();
+    if (state !== 'open') {
+      switch (this.run.tryAgainReason()) {
+        case null:
+          break;
+        case 'too-many-connections':
+          return $localize`この GUI サーバーにつないでいる画面が多すぎます。使わないタブを閉じてください。間を置いてつなぎ直しています…`;
+        default:
+          return $localize`サーバーが混んでいて、接続を後回しにしました。間を置いてつなぎ直しています…`;
+      }
+    }
+    switch (state) {
       case 'connecting':
         return $localize`サーバーにつないでいます…`;
       case 'closed':
@@ -256,6 +268,8 @@ export class RunPage {
     if (!session) return { groups: [], hidden: 0 };
     const groups = new Map<string, { code: string; message: string; count: number }>();
     for (const problem of session.problems) {
+      // ランチャーの標準エラーは、別のまとまり（stderr）で出す
+      if (problem.code === STDERR_CODE) continue;
       const group = groups.get(problem.code);
       if (group) {
         group.count++;
@@ -272,6 +286,15 @@ export class RunPage {
         session.problemsOmitted,
     };
   });
+
+  /** ランチャーが標準エラーに書いた行（最初の行、落とした数、最後の行）。 */
+  protected readonly stderr = computed(() => {
+    const session = this.session();
+    return session ? launcherStderr(session.problems) : null;
+  });
+
+  /** ランチャーが結果を出さずに終わった（participant の最後の状態は古いかもしれない）。 */
+  protected readonly launcherGone = computed(() => this.run.outcome() === 'crashed');
 
   /** participant の終わりが、利用者が止めたことによるものか（色を弱める）。 */
   protected readonly interrupted = computed(() => {
@@ -316,6 +339,10 @@ export class RunPage {
 
   protected showProblems(): void {
     this.reveal('run-problems');
+  }
+
+  protected showStderr(): void {
+    this.reveal('run-stderr');
   }
 
   protected copyRoot(path: string): void {

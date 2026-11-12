@@ -223,20 +223,56 @@
                 }
               </p>
               <p i18n>
-                理由は、ランチャーのログ（{{
+                理由は、ランチャーの標準エラー、ランチャーのログ（{{
                   launcherSource
-                }}）とサーバーの知らせに出ていることがあります。
+                }}）、サーバーの知らせに出ていることがあります。participant
+                の状態は、ランチャーが終わる前に届いたところまでです。
               </p>
               <div class="next">
+                @if (stderr()) {
+                  <button matButton="tonal" type="button" (click)="showStderr()" i18n>
+                    標準エラーを見る
+                  </button>
+                }
                 <button matButton="tonal" type="button" (click)="showLauncherLog()" i18n>
                   ランチャーのログを見る
                 </button>
-                @if (session.problems.length > 0) {
+                @if (problemGroups().groups.length > 0) {
                   <button matButton="tonal" type="button" (click)="showProblems()" i18n>
                     サーバーの知らせを見る
                   </button>
                 }
               </div>
+            </mat-card-content>
+          </mat-card>
+        }
+        @if (stderr(); as stderr) {
+          <mat-card appearance="outlined" data-testid="stderr-card">
+            <mat-card-header>
+              <mat-card-title>
+                <h2 id="run-stderr" tabindex="-1" i18n>ランチャーの標準エラー</h2>
+              </mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              @if (stderr.first.length > 0) {
+                <details class="stderr-first">
+                  <summary i18n>最初の {{ stderr.first.length }} 行</summary>
+                  <pre class="stderr" lang="en" data-testid="stderr-first">{{
+                    stderr.first.join('\n')
+                  }}</pre>
+                </details>
+              }
+              @if (stderr.skipped > 0) {
+                <p class="stderr-gap" data-testid="stderr-gap" i18n>
+                  … ここで {{ stderr.skipped }} 行を省きました …
+                </p>
+              }
+              @if (stderr.first.length > 0) {
+                <p class="stderr-label" i18n>最後の {{ stderr.last.length }} 行</p>
+              }
+              <pre class="stderr last" lang="en" data-testid="stderr-last">{{
+                stderr.last.join('\n')
+              }}</pre>
             </mat-card-content>
           </mat-card>
         }
@@ -275,6 +311,7 @@
             <app-participant-status
               [participants]="session.participants"
               [interrupted]="interrupted()"
+              [launcherGone]="launcherGone()"
             />
           </mat-card-content>
         </mat-card>

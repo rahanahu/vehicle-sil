@@ -83,7 +83,12 @@
     @if (simSeconds() !== null) {
       <div>
         <dt i18n>仮想時刻</dt>
-        <dd data-testid="sim-time" i18n>{{ simSeconds() | measure: 3 }} s</dd>
+        <dd data-testid="sim-time">
+          <ng-container i18n>{{ simSeconds() | measure: 3 }} s</ng-container>
+          @if (timeOmitted(); as text) {
+            <span class="omitted" role="img" [attr.aria-label]="text" [title]="text">※</span>
+          }
+        </dd>
       </div>
     }
   </dl>

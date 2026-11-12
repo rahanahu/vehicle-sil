@@ -52,6 +52,8 @@ export interface ParticipantView {
   pid: number | null;
   exitCode: number | null;
   signal: string | null;
+  /** 要約に入りきらず、サーバーが省いた欄の名前（その後の事象が届けば空）。 */
+  omittedFields: readonly string[];
 }
 
 /** ランチャーのプロセスの様子（サーバーが見ている）。 */
@@ -89,6 +91,8 @@ export interface SessionView {
   elapsedMs: number;
   /** 仮想時刻（time の事象が来たときだけ）。 */
   simMs: number | null;
+  /** 最後の time の、要約に入りきらずサーバーが省いた欄の名前（その後の事象が届けば空）。 */
+  timeOmittedFields: readonly string[];
   /** 停止を頼んだ回数（1 で「止めています」、2 で「待たずに止める」を頼んだ後）。 */
   stopRequests: number;
   /** 最後に断られた命令の理由。 */
@@ -142,6 +146,7 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     findings: [],
     elapsedMs: 0,
     simMs: null,
+    timeOmittedFields: [],
     stopRequests: 0,
     rejectedCommand: null,
     result: null,
@@ -219,6 +224,7 @@ export function applySummary(
     pid: p.pid,
     exitCode: p.exit_code,
     signal: p.signal,
+    omittedFields: p.omitted_fields,
   }));
   return {
     ...next,
@@ -226,6 +232,8 @@ export function applySummary(
     phaseRank: rank >= 0 ? rank : next.phaseRank,
     elapsedMs: Math.max(next.elapsedMs, summary.last_t_ms ?? 0),
     simMs: summary.sim_ms ?? next.simMs,
+    timeOmittedFields:
+      summary.sim_ms === null ? next.timeOmittedFields : summary.time_omitted_fields,
     findings: summary.findings,
     result: summary.result ?? next.result,
     check,
@@ -347,7 +355,7 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
         ? next
         : { ...next, findings: [...next.findings, event.finding] };
     case 'time':
-      return { ...next, simMs: event.sim_ms };
+      return { ...next, simMs: event.sim_ms, timeOmittedFields: [] };
     case 'command':
       return event.accepted ? next : { ...next, rejectedCommand: event.message ?? event.command };
     case 'result':
@@ -392,6 +400,8 @@ function updateParticipant(
   const updated: ParticipantView = {
     ...(known ?? blankParticipant(event.name)),
     state: event.state,
+    // 事象はそのまま届く（省くのは要約だけ）
+    omittedFields: [],
   };
   if (event.pid !== null) updated.pid = event.pid;
   if (event.state === 'ended' || event.state === 'killed') {
@@ -431,5 +441,13 @@ function mergeResult(
 }
 
 function blankParticipant(name: string): ParticipantView {
-  return { name, state: null, required: null, pid: null, exitCode: null, signal: null };
+  return {
+    name,
+    state: null,
+    required: null,
+    pid: null,
+    exitCode: null,
+    signal: null,
+    omittedFields: [],
+  };
 }

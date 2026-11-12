@@ -1,5 +1,5 @@
 import { DOCUMENT, InjectionToken, Signal, inject, signal } from '@angular/core';
-import { Observable, defer, repeat, retry, share, timer } from 'rxjs';
+import { Observable, defer, repeat, retry, share, tap, timer } from 'rxjs';
 import { WebSocketSubjectConfig, webSocket } from 'rxjs/webSocket';
 import { webSocketUrl } from '../urls';
 
@@ -30,6 +30,12 @@ export const WEB_SOCKET_FACTORY = new InjectionToken<WebSocketFactory>('WEB_SOCK
 /** closed: つながっていない（再接続を待っている間も）、connecting: つなぎに行っている、open: つながっている。 */
 export type ConnectionState = 'connecting' | 'open' | 'closed';
 
+/** 接続が閉じたときの、閉じるコードと理由の文。 */
+export interface CloseInfo {
+  code: number;
+  reason: string;
+}
+
 export interface LiveConnection<T> {
   /** 接続の状態。 */
   readonly state: Signal<ConnectionState>;
@@ -38,6 +44,8 @@ export interface LiveConnection<T> {
    * 増えたら HTTP で理由を確かめる。
    */
   readonly failures: Signal<number>;
+  /** 最後に閉じたときのコードと理由。閉じた後に通知が届いたら null に戻る（つながり直した）。 */
+  readonly lastClose: Signal<CloseInfo | null>;
   /** 届いた通知の流れ。購読する人がいる間だけつながる（共有）。画面へは stream-signals.ts の関数で signal にして渡す。 */
   readonly messages: Observable<T>;
 }
@@ -62,7 +70,8 @@ export function backoffMs(attempt: number, maxMs = 5000): number {
  * base href からの相対の path（例: 'ws'）への WebSocket の接続を作る。注入の文脈で呼ぶ（サービスの field など）。
  *
  * - 作っただけではつながらない。最初の購読でつなぎ、最後の購読が終わって lingerMs たったら切る。
- * - 切れたら（エラーでも、サーバーが閉じても）backoffMs の間を置いてつなぎ直す。通知が届いたら待ち時間を戻す。
+ * - 切れたら（エラーでも、サーバーが閉じても）backoffMs の間を置いてつなぎ直す。続けて切れるたびに待ち時間を
+ *   延ばし（サーバーが 1013「後でもう一度」で閉じ続けても、詰めてつなぎ直さない）、通知が届いたら最初に戻す。
  * - options.greeting を渡すと、つなぐたびに、開いた直後にそのメッセージを送る。
  */
 export function liveConnection<T>(
@@ -74,6 +83,10 @@ export function liveConnection<T>(
   const url = webSocketUrl(inject(DOCUMENT).baseURI, path);
   const state = signal<ConnectionState>('closed');
   const failures = signal(0);
+  const lastClose = signal<CloseInfo | null>(null);
+  /** 通知が届かないまま続けて切れた回数。 */
+  let attempts = 0;
+  const wait = () => timer(backoffMs(++attempts, maxBackoffMs));
 
   const messages = defer(() => {
     state.set('connecting');
@@ -88,8 +101,9 @@ export function liveConnection<T>(
           },
         },
         closeObserver: {
-          next: () => {
+          next: (event: CloseEvent) => {
             if (!opened) failures.update((n) => n + 1);
+            lastClose.set({ code: event.code ?? 0, reason: event.reason ?? '' });
             state.set('closed');
           },
         },
@@ -97,13 +111,19 @@ export function liveConnection<T>(
       greeting(),
     );
   }).pipe(
-    retry({
-      delay: (_error, attempt) => timer(backoffMs(attempt, maxBackoffMs)),
-      resetOnSuccess: true,
+    tap(() => {
+      attempts = 0;
+      if (lastClose() !== null) lastClose.set(null);
     }),
-    repeat({ delay: () => timer(backoffMs(1, maxBackoffMs)) }),
+    retry({ delay: wait }),
+    repeat({ delay: wait }),
     share({ resetOnRefCountZero: () => timer(lingerMs) }),
   );
 
-  return { state: state.asReadonly(), failures: failures.asReadonly(), messages };
+  return {
+    state: state.asReadonly(),
+    failures: failures.asReadonly(),
+    lastClose: lastClose.asReadonly(),
+    messages,
+  };
 }

@@ -152,6 +152,54 @@ describe('ServerConnection', () => {
     expect(run.session()?.launcher.running).toBe(true);
   });
 
+  it('waits longer each time the server says to try again later, and does not take it as a refused token', () => {
+    const { run, socket } = open();
+    socket.close(1013, 'too-many-connections');
+    expect(run.tryAgainReason()).toBe('too-many-connections');
+    expect(TestBed.inject(AuthToken).rejected()).toBe(false);
+    vi.advanceTimersByTime(backoffMs(1));
+    expect(fake.sockets).toHaveLength(2);
+
+    fake.last().open();
+    fake.last().close(1013, 'too-many-unauthenticated');
+    expect(run.tryAgainReason()).toBe('too-many-unauthenticated');
+    vi.advanceTimersByTime(backoffMs(2) - 1);
+    expect(fake.sockets).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(fake.sockets).toHaveLength(3);
+
+    // つながり直して通知が届けば、理由は消え、次の待ち時間は最初に戻る
+    fake.last().open();
+    play(fake.last(), 'ws-pass', 0, 1);
+    expect(run.tryAgainReason()).toBeNull();
+    fake.last().close(1013, 'too-many-connections');
+    vi.advanceTimersByTime(backoffMs(1));
+    expect(fake.sockets).toHaveLength(4);
+  });
+
+  it('keeps a run asked to stop while it started: the answer of the run before does not replace it', async () => {
+    const { run, socket } = open();
+    play(socket, 'ws-pass', 0, 2);
+    const answers = new Map((await httpExamples()).map((example) => [example.name, example]));
+    const answer = (name: string) => readSessionResponse(answers.get(name)?.response);
+    // 新しい実行（2）の要約が先に届き、停止の応答は前の実行（1）の要約か null
+    const started = answer('run');
+    if (!started) throw new Error('no summary in run.json');
+    run.adopt({ ...started, id: 2 });
+    run.adopt(answer('session-ended'));
+    run.adopt(null);
+    expect(run.session()?.id).toBe(2);
+    expect(run.session()?.launcher.running).toBe(true);
+    // 始まった実行の要約に、届けた停止が出る
+    const stopped = (answers.get('stop')?.response as { session: { stop: string } }).session;
+    expect(stopped.stop).toBe('requested');
+    socket.send({ type: 'session', session: { ...stopped, id: 2 } });
+    vi.advanceTimersByTime(BATCH_MS);
+    const session = run.session();
+    expect(session?.id).toBe(2);
+    expect(session && runOutcome(session)).toBe('stopping');
+  });
+
   it('counts a notice that comes again instead of repeating it', () => {
     const { run, socket } = open();
     for (let i = 0; i < 3; i++) socket.send({ type: 'hello' });
