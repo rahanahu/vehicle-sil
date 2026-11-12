@@ -18,6 +18,8 @@ target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMA
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::ecu vehicle_sil::process)
 # The registry and the controller of vehicle_sil_launch run.
 target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::core)
+# The hub's end of the ECUs' control agents, on the controller's participant.
+target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::control_silkit)
 # The YAML/JSON parser that SIL Kit builds from its ThirdParty directory (rapidyaml, MIT); the
 # public headers do not include it.
 target_link_libraries(vehicle_sil_launch_lib PRIVATE rapidyaml)

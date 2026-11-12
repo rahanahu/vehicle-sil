@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -149,6 +150,27 @@ struct SimulationControllerOptions
     std::chrono::milliseconds shutdown_timeout{5000};
 };
 
+/// What a start window function is given (SimulationController::set_start_window()).
+class StartWindow
+{
+public:
+    /// When SimulationController::start() gives up: return before it.
+    [[nodiscard]] std::chrono::steady_clock::time_point deadline() const noexcept { return deadline_; }
+    /// true once going on is pointless: a stop was requested, the controller's lifecycle has
+    /// ended, or start() has given up. Look at it in every wait and return soon once it is true:
+    /// start() waits for the function.
+    [[nodiscard]] bool cancelled() const;
+
+private:
+    friend class SimulationController;
+    StartWindow(std::chrono::steady_clock::time_point deadline, std::function<bool()> cancelled) :
+      deadline_(deadline), cancelled_(std::move(cancelled))
+    {
+    }
+    std::chrono::steady_clock::time_point deadline_;
+    std::function<bool()> cancelled_;
+};
+
 /// Starts and stops a coordinated SIL Kit simulation.
 ///
 /// The controller is itself a coordinated participant: it sets the workflow configuration
@@ -181,6 +203,26 @@ public:
     /// Throws std::runtime_error on timeout (naming every required participant that has not
     /// connected).
     void start(std::chrono::milliseconds timeout);
+
+    /// Sets a function for the window before the start: start() runs it, on a thread of the
+    /// controller's (not SIL Kit's, not the caller's), when every required participant and the
+    /// controller wait before their first step with their publish/subscribe services connected
+    /// (ParticipantRuntime::set_communication_ready_handler_async()), and the simulation starts
+    /// when it has returned. What it sends and receives through services of runtime() made before
+    /// start() is exchanged with every participant before anyone's step at 0: a write that a
+    /// participant accepts there takes effect in its first step.
+    ///
+    /// The window is part of the start: start()'s timeout covers it (StartWindow::deadline()), the
+    /// start() of every participant waits for it, and nothing interrupts the function but itself
+    /// (StartWindow::cancelled()). If it throws, the simulation starts all the same and start()
+    /// throws std::runtime_error with its message afterwards. It is not called if the window never
+    /// opens before start() gives up (a required participant did not get that far); a window that
+    /// opens afterwards is completed without it, so that the participants do not stay before their
+    /// first step and a stop still ends them in order. start() waits for the function before it
+    /// returns or throws (after its timeout: until the function has seen cancelled()), so the
+    /// function never runs once start() is over.
+    /// Once, before start() (std::logic_error; std::invalid_argument for an empty function).
+    void set_start_window(std::function<void(const StartWindow& window)> window);
 
     /// The required participants that have not connected yet (no lifecycle state seen), in the
     /// order of SimulationControllerOptions::required_participants. Once it is empty, start()
@@ -259,7 +301,14 @@ public:
 
 private:
     struct Gate;
+    struct Window;
     [[nodiscard]] Gate& gate() const;
+    /// The thread of the start window: waits for the window, runs the function, completes.
+    void run_window(std::chrono::steady_clock::time_point deadline);
+    /// Tells the window's function to give up and waits for it (not for the thread).
+    void cancel_window() noexcept;
+    /// Ends the window's thread (the controller goes).
+    void end_window() noexcept;
     /// The StepHold of the runtime (SIL Kit thread).
     bool hold_step(SimTime now, SimDuration step);
     void run_gate();
@@ -270,6 +319,8 @@ private:
     /// Only with time_control. Before runtime_, so that it outlives it: the runtime's handlers
     /// (the step, the hold, the stop observer) use it.
     std::unique_ptr<Gate> gate_;
+    /// Only with set_start_window(). Before runtime_ as well: the runtime's handler uses it.
+    std::unique_ptr<Window> window_;
     std::unique_ptr<ParticipantRuntime> runtime_;
     SilKit::Experimental::Services::Orchestration::ISystemController* system_controller_ = nullptr;
     std::atomic<std::int64_t> wall_start_ns_{-1};

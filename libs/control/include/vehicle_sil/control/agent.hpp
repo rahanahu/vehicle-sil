@@ -342,6 +342,22 @@ public:
     /// Stops calling the wakeup (for example when the driver goes away). Thread safe.
     void clear_wakeup();
 
+    // ---- a transport that sends from the steps ----------------------------------------------
+
+    /// Called at the end of every step, on the step thread, after on_step_end() has sampled:
+    /// `now` is the step's start time, `sample` the sample this step took (valid during the call;
+    /// its sequence is the one latest() reports), or null if this step took none.
+    using StepSink = std::function<void(SimTime now, const Snapshot* sample)>;
+    /// Sets the one StepSink of this agent: for a transport that must send what a step produced
+    /// (its results, its events, its sample) from within that step, such as
+    /// control_silkit::AgentTransport, whose messages then carry the step's time in SIL Kit's time
+    /// synchronisation. The sink may call the transport side (drain_results(), drain_events());
+    /// it must not block, and what it throws fails the step. Without a sink a step pays one
+    /// test for it. Once, on the set-up thread, before the first step and before finish()
+    /// (std::logic_error; std::invalid_argument for an empty function). The sink is never removed:
+    /// what it refers to must stay valid as long as steps run, or it must stop using it by itself.
+    void set_step_sink(StepSink sink);
+
     // ---- step thread --------------------------------------------------------------------
 
     /// At the start of the step at `now`, before the application: applies the commands whose
@@ -387,7 +403,7 @@ private:
     [[nodiscard]] std::optional<std::string> check(const Write& write, std::pair<std::size_t, Value>& out, bool& parameter) const;
     void apply(Pending& command, SimTime now, bool late);
     void push_result(CommandResult result);
-    void sample(SimTime now);
+    const Snapshot& sample(SimTime now);
 
     /// A command that takes effect in the current step.
     struct Due
@@ -428,6 +444,7 @@ private:
     std::vector<Due> due_;         ///< capacity max_pending
     std::optional<SimTime> last_step_;
     std::optional<SimTime> next_sample_;
+    StepSink step_sink_; ///< set before the first step, then read by the step thread only
 
     // Values: a triple buffer. The step thread fills buffers_[back_] and swaps it with the
     // middle one; latest() swaps the middle one with buffers_[front_] when it is newer.

@@ -5,7 +5,8 @@
 # it from its steps.
 add_library(vehicle_sil_control STATIC
   src/agent.cpp
-  src/hub.cpp)
+  src/hub.cpp
+  src/wire.cpp)
 add_library(vehicle_sil::control ALIAS vehicle_sil_control)
 set_target_properties(vehicle_sil_control PROPERTIES EXPORT_NAME control)
 target_include_directories(vehicle_sil_control PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

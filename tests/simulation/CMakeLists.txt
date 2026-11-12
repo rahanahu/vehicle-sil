@@ -5,7 +5,7 @@
 vehicle_sil_add_harness_tests(vehicle_sil_simulation_tests
   PREFIX simulation LABELS unit simulation TIMEOUT 180
   SOURCES test_simulation.cpp test_lin_simulation.cpp test_describe.cpp test_ecu_main.cpp
-  LINK vehicle_sil::simulation vehicle_sil::testkit)
+  LINK vehicle_sil::simulation vehicle_sil::testkit vehicle_sil::control_silkit)
 # simulation_internal.hpp: the tests shorten a wait of the library.
 target_include_directories(vehicle_sil_simulation_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/simulation/src)
 

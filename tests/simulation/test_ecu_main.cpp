@@ -4,10 +4,14 @@
 // its exit code and message, --describe (the JSON of the ECU, --name, a set-up that writes to
 // stdout, a closed stdout), --local (runs the ECU, a failed step), a failed set-up (also with an
 // exception that is not a std::exception, a reserved variable name, a name that is not UTF-8), a
-// registry that cannot be reached, a start that times out (--start-timeout-ms) or fails, and the
-// template form passing its arguments to the application.
+// registry that cannot be reached, a start that times out (--start-timeout-ms) or fails, the
+// ECU's variables offered to a hub over SIL Kit (and --no-control), and the template form passing
+// its arguments to the application.
 #include "test_harness.hpp"
 
+#include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/control_silkit/hub_transport.hpp"
+#include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/simulation/ecu_main.hpp"
 #include "vehicle_sil/simulation/simulation.hpp"
 
@@ -21,6 +25,7 @@
 #include <random>
 #include <system_error>
 #include <memory>
+#include <thread>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -146,6 +151,14 @@ struct Probe
         });
     }
 };
+
+/// The description as ecu_main() writes it: the executable offers the ECU's variables over SIL
+/// Kit (unless --no-control).
+vehicle_sil::EcuDescription offered(vehicle_sil::EcuDescription description)
+{
+    description.control = vehicle_sil::ControlOffer{"silkit", 1};
+    return description;
+}
 
 /// What one call of ecu_main() wrote and returned.
 struct Result
@@ -313,7 +326,7 @@ TEST_CASE(ecu_main_describe_writes_the_json_of_the_ecu)
     Probe reference;
     vehicle_sil::Simulation sim;
     reference.set_up(sim.add_ecu("Engine", 10ms));
-    const std::string expected = to_json(sim.ecu("Engine").describe());
+    const std::string expected = to_json(offered(sim.ecu("Engine").describe()));
 
     Probe probe;
     const Result r = call({"--describe"}, probe);
@@ -532,7 +545,7 @@ TEST_CASE(ecu_main_describe_keeps_stdout_for_the_json)
     // carries the JSON only; also what is written after ecu_main() returned.
     vehicle_sil::Simulation sim;
     node_only(sim.add_ecu("Engine", 10ms));
-    const std::string expected = to_json(sim.ecu("Engine").describe());
+    const std::string expected = to_json(offered(sim.ecu("Engine").describe()));
 
     const std::vector<std::string> args{"--describe"};
     const auto argv = argv_of(args); // points into args
@@ -566,7 +579,7 @@ TEST_CASE(ecu_main_describe_with_stderr_closed_keeps_stdout_for_the_json)
     // device), not into stdout before the JSON.
     vehicle_sil::Simulation sim;
     node_only(sim.add_ecu("Engine", 10ms));
-    const std::string expected = to_json(sim.ecu("Engine").describe());
+    const std::string expected = to_json(offered(sim.ecu("Engine").describe()));
 
     const std::vector<std::string> args{"--describe"};
     const auto argv = argv_of(args);
@@ -679,4 +692,86 @@ TEST_CASE(ecu_main_start_timeout_and_start_failure)
     require(clash.code == 3, "exit 3", clash);
     require(clash.err.rfind("error: Clash: could not start: ", 0) == 0, "could not start", clash);
     require(!contains(clash.err, "controller"), "no hint about a controller", clash);
+}
+
+TEST_CASE(ecu_main_offers_its_variables_to_the_simulation_unless_no_control)
+{
+    // The other side: a controller with a hub on its participant, as vehicle_sil_launch has.
+    const auto run_with = [](const std::string& name, const std::vector<std::string>& extra, vehicle_sil::control::Hub& hub) {
+        vehicle_sil::Simulation registry(vehicle_sil::SilKitOptions{});
+        vehicle_sil::SimulationControllerOptions c;
+        c.registry_uri = registry.registry_uri();
+        c.required_participants = {name};
+        c.stop_at = 100ms;
+        c.time_control = vehicle_sil::TimeControlOptions{};
+        vehicle_sil::SimulationController controller(std::move(c));
+        vehicle_sil::control_silkit::HubTransport transport(hub, controller.runtime());
+        std::string start_error;
+        std::thread starter([&] {
+            try
+            {
+                controller.start(60s);
+            }
+            catch (const std::exception& e)
+            {
+                start_error = e.what();
+            }
+        });
+        std::vector<std::string> args{"--registry-uri", registry.registry_uri(), "--name", name};
+        args.insert(args.end(), extra.begin(), extra.end());
+        Probe probe;
+        const Result r = call(args, probe);
+        starter.join();
+        require(r.code == 0, "the ECU ran to the end of the simulation", r);
+        require(start_error.empty(), "the controller started: " + start_error, r);
+        require(probe.steps >= 10, "the ECU stepped", r);
+        // The ECU's last word reaches the hub while the controller's participant is still there.
+        const auto deadline = std::chrono::steady_clock::now() + 20s;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            const auto peers = hub.peers();
+            if (peers.empty() || !peers.front().connected)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(5ms);
+        }
+        return r;
+    };
+    {
+        vehicle_sil::control::Hub hub;
+        run_with("Offer", {}, hub);
+        const auto peers = hub.peers();
+        CHECK_EQ(peers.size(), std::size_t{1});
+        CHECK(peers.at(0).participant == "Offer");
+        CHECK(!peers.at(0).connected); // it said its last word when it ended
+        CHECK(peers.at(0).schema.at(0).name == "steps");
+        const auto latest = hub.latest("Offer");
+        CHECK(latest != nullptr);
+        // The step is 10 ms, as is the sample period: the last sample before the stop at 100 ms.
+        CHECK(latest->time >= SimTime{} + 90ms);
+        CHECK(std::get<std::int64_t>(latest->values.at(0)) >= 10);
+    }
+    {
+        vehicle_sil::control::Hub hub;
+        run_with("Hidden", {"--no-control"}, hub);
+        CHECK(hub.peers().empty());
+    }
+    // --no-control goes with every mode (a launcher passes a participant's arguments to
+    // --describe too), and once.
+    // --describe says whether the executable offers the variables: not with --no-control.
+    const Result described = call({"--describe", "--no-control"});
+    require(described.code == 0 && contains(described.out, "\"variables\"") && contains(described.out, "  \"control\": null\n"),
+            "--describe --no-control", described);
+    const Result offering = call({"--describe"});
+    require(offering.code == 0 &&
+                contains(offering.out, "  \"control\": {\n    \"transport\": \"silkit\",\n    \"wire_version\": 1\n  }\n"),
+            "--describe says that the variables are offered", offering);
+    const Result local = call({"--local", "--run-for-ms", "20", "--no-control"});
+    require(local.code == 0, "--local --no-control", local);
+    const Result twice = call({"--describe", "--no-control", "--no-control"});
+    require(twice.code == 4 && contains(twice.err, "\"--no-control\" is given twice"), "--no-control twice", twice);
+    const Result help = call({"--help"});
+    require(contains(help.out, "[--no-control]") && contains(help.out, "  --no-control            with --registry-uri: do not offer"),
+            "the usage has --no-control", help);
 }

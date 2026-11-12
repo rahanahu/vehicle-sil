@@ -832,3 +832,89 @@ TEST_CASE(control_agent_of_an_ecu_names_it_after_the_schema_is_complete)
         return dynamic_cast<const std::invalid_argument*>(&e) == nullptr; // a std::logic_error, not std::invalid_argument
     }));
 }
+
+TEST_CASE(control_agent_step_sink_gets_each_step_and_its_sample)
+{
+    AgentOptions options;
+    options.sample_period = 10ms;
+    Agent agent(options);
+    std::int64_t level = 0;
+    agent.input("level", &level);
+
+    struct Call
+    {
+        SimTime now;
+        bool sampled = false;
+        std::uint64_t sequence = 0;
+        std::int64_t level = 0;
+        std::size_t results = 0;
+        std::thread::id thread;
+    };
+    std::vector<Call> calls;
+    CHECK(throws<std::invalid_argument>([&] { agent.set_step_sink({}); }));
+    agent.set_step_sink([&](SimTime now, const Snapshot* sample) {
+        Call call;
+        call.now = now;
+        call.thread = std::this_thread::get_id();
+        if (sample != nullptr)
+        {
+            call.sampled = true;
+            call.sequence = sample->sequence;
+            call.level = std::get<std::int64_t>(sample->values.at(0));
+            CHECK(sample->time == now);
+            // What the sink is given is what latest() reports.
+            CHECK_EQ(agent.latest().sequence, sample->sequence);
+        }
+        // The results of this step are there: the sink may play the transport.
+        std::vector<CommandResult> results;
+        call.results = agent.drain_results(results);
+        calls.push_back(call);
+    });
+    // One sink per agent.
+    CHECK(throws<std::logic_error>([&] { agent.set_step_sink([](SimTime, const Snapshot*) {}); }));
+
+    CHECK(agent.submit(Command{1, {{"level", Value{std::int64_t{7}}}}, std::nullopt, LatePolicy::Reject}).status
+          == SubmitStatus::Queued);
+    for (int i = 0; i < 25; ++i)
+    {
+        const SimTime now = at(1ms * i);
+        agent.on_step_begin(now);
+        agent.on_step_end(now);
+    }
+    // Every step, in order, on the step thread; a sample at 0, 10 and 20 ms.
+    CHECK_EQ(calls.size(), std::size_t{25});
+    for (std::size_t i = 0; i < calls.size(); ++i)
+    {
+        CHECK(calls[i].now == at(1ms * static_cast<int>(i)));
+        CHECK(calls[i].thread == std::this_thread::get_id());
+        CHECK_EQ(calls[i].sampled, i % 10 == 0);
+        CHECK_EQ(calls[i].results, std::size_t{i == 0 ? 1U : 0U});
+    }
+    CHECK_EQ(calls[0].sequence, std::uint64_t{1});
+    CHECK_EQ(calls[0].level, std::int64_t{7}); // sampled after the write of this step
+    CHECK_EQ(calls[10].sequence, std::uint64_t{2});
+    CHECK_EQ(calls[20].sequence, std::uint64_t{3});
+}
+
+TEST_CASE(control_agent_step_sink_is_set_before_the_first_step)
+{
+    {
+        Agent agent;
+        agent.on_step_begin(at(0ms));
+        agent.on_step_end(at(0ms));
+        CHECK(vehicle_sil::unit::throws_with<std::logic_error>([&] { agent.set_step_sink([](SimTime, const Snapshot*) {}); },
+                                            "before the first step"));
+    }
+    {
+        Agent agent;
+        agent.finish();
+        CHECK(throws<std::logic_error>([&] { agent.set_step_sink([](SimTime, const Snapshot*) {}); }));
+    }
+    {
+        // What the sink throws fails the step (it comes out of on_step_end()).
+        Agent agent;
+        agent.set_step_sink([](SimTime, const Snapshot*) { throw std::runtime_error("sink"); });
+        agent.on_step_begin(at(0ms));
+        CHECK(throws<std::runtime_error>([&] { agent.on_step_end(at(0ms)); }));
+    }
+}

@@ -3,6 +3,7 @@
 
 #include "check_format.hpp"
 
+#include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/ecu/detail/json_writer.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 #include "yaml_tree.hpp"
@@ -81,6 +82,23 @@ public:
                 out.description.variables.push_back(variable(item, "variables[" + std::to_string(index) + "]"));
             }
             out.variables_reported = true;
+        }
+        // Absent (an executable of an earlier vehicle-sil) or null: it does not offer its variables.
+        if (const auto control = find(root_, "control"); control != ryml::NONE && !is_null(control))
+        {
+            if (!tree_.is_map(control))
+            {
+                fail("control is not an object");
+            }
+            ControlOffer offer;
+            offer.transport = text(member(control, "transport", "control"), "control.transport");
+            const auto version = integer(member(control, "wire_version", "control"), "control.wire_version");
+            if (version < 0 || version > 65535)
+            {
+                fail("control.wire_version is " + std::to_string(version) + ", not a version");
+            }
+            offer.wire_version = static_cast<int>(version);
+            out.description.control = std::move(offer);
         }
         return out;
     }
@@ -774,6 +792,29 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
                     p.name, network.name);
             }
         }
+        // The variables: whether vehicle_sil_launch run can read and write them (run.hpp, ControlLink).
+        if (!result.ecu->description.variables.empty())
+        {
+            const auto& offer = result.ecu->description.control;
+            if (!offer)
+            {
+                add(Severity::Note, "control-link-not-offered", p.line,
+                    prefix + "it describes variables, but does not offer them to the simulation (--no-control, or an "
+                             "executable of a vehicle-sil that does not yet): vehicle_sil_launch run cannot read or write "
+                             "them",
+                    p.name, "");
+            }
+            else if (offer->transport != "silkit" || offer->wire_version != static_cast<int>(control::wire::kVersion))
+            {
+                add(Severity::Warning, "control-link-version", p.line,
+                    prefix + "it offers its variables as " + offer->transport + " messages of version " +
+                        std::to_string(offer->wire_version) + ", and this vehicle_sil_launch speaks silkit messages of version " +
+                        std::to_string(control::wire::kVersion) +
+                        ", so vehicle_sil_launch run cannot read or write them: build the ECU and vehicle_sil_launch from the "
+                        "same version of vehicle-sil",
+                    p.name, "");
+            }
+        }
         if (!result.ecu->vehicle_sil_version.empty() && result.ecu->vehicle_sil_version != launcher_version)
         {
             add(Severity::Note, "version-mismatch", p.line,
@@ -1295,6 +1336,17 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
             else
             {
                 w.null("variables");
+            }
+            if (result.ecu && result.ecu->description.control)
+            {
+                w.begin_object("control");
+                w.string("transport", result.ecu->description.control->transport);
+                w.integer("wire_version", result.ecu->description.control->wire_version);
+                w.end_object();
+            }
+            else
+            {
+                w.null("control");
             }
             w.end_object();
         }

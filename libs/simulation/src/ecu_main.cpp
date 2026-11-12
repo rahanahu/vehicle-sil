@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/simulation/ecu_main.hpp"
 
+#include "vehicle_sil/control/wire.hpp"
+#include "vehicle_sil/control_silkit/agent_transport.hpp"
+#include "vehicle_sil/ecu/describe.hpp"
+
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/peer/peer.hpp"
 #include "vehicle_sil/simulation/simulation.hpp"
@@ -65,6 +69,7 @@ struct CommandLine
 {
     bool describe = false;
     bool local = false;
+    bool no_control = false;
     std::optional<std::string> registry_uri;
     std::optional<std::string> name;
     std::optional<std::chrono::milliseconds> run_for;
@@ -138,7 +143,7 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
 {
     const std::string pad(program.size(), ' ');
     return "usage: " + program + " --describe [--name <name>]\n"
-           "       " + pad + " --registry-uri <uri> [--start-timeout-ms <ms>] [--name <name>]\n"
+           "       " + pad + " --registry-uri <uri> [--start-timeout-ms <ms>] [--no-control] [--name <name>]\n"
            "       " + pad + " --local --run-for-ms <ms> [--name <name>]\n"
            "       " + pad + " --help\n"
            "the ECU " + quoted(options.name) + ", step " + duration_text(options.step) + "\n"
@@ -147,6 +152,8 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
            "  --registry-uri <uri>    join the SIL Kit simulation at <uri> and run until it ends; a controller\n"
            "                          elsewhere (vehicle_sil_sim_controller) starts and stops it\n"
            "  --start-timeout-ms <ms> with --registry-uri: how long to wait for the start (default 30000)\n"
+           "  --no-control            with --registry-uri: do not offer the ECU's variables to the simulation\n"
+           "                          (vehicle_sil_launch then cannot read or write them); the ECU runs the same\n"
            "  --local                 run this ECU alone on local virtual buses, for --run-for-ms\n"
            "  --run-for-ms <ms>       how long --local runs (virtual time, > 0)\n"
            "  --name <name>           the participant name instead of " + quoted(options.name) + "; only the name\n"
@@ -220,6 +227,10 @@ CommandLine parse(const std::vector<std::string_view>& args)
         else if (arg == "--local")
         {
             c.local = true;
+        }
+        else if (arg == "--no-control")
+        {
+            c.no_control = true; // only --registry-uri has anything to leave out; accepted with every mode
         }
         else if (arg == "--registry-uri")
         {
@@ -765,6 +776,10 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
     const std::string name = c.name.value_or(options.name);
 
     std::optional<Simulation> sim;
+    // --registry-uri, for an ECU with a control agent: its variables go to the simulation's hub
+    // over SIL Kit. After `sim` (the ECU), so that it is destroyed before it; the run has stopped
+    // the ECU by then, so its last word carries the writes that were cancelled.
+    std::optional<control_silkit::AgentTransport> control;
     std::optional<StopOnSignal> stop_on_signal; // --registry-uri; destroyed before the ECU
     std::optional<DescribeStdout> describe_out; // --describe; destroyed before the ECU, never restored
     Ecu* ecu = nullptr;
@@ -830,10 +845,39 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
     {
         return fail(name, kExitSetupFailed, "the set-up threw an exception that is not a std::exception");
     }
+    if (c.registry_uri && !c.no_control)
+    {
+        // An ECU that declared variables (or made its agent for events) has an agent; one that a
+        // transport of the application holds already is left to that transport. Making the
+        // transport completes the agent's schema, as the start would.
+        try
+        {
+            Peer& peer = sim->peer(name);
+            if (control::Agent* agent = peer.find_agent(); agent != nullptr && agent->transports() == 0)
+            {
+                control_silkit::AgentTransportOptions transport;
+                transport.step = options.step;
+                control.emplace(*agent, peer.runtime(), transport);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            return fail(name, kExitSetupFailed, "could not start: " + std::string(e.what()));
+        }
+    }
 
     if (c.describe)
     {
-        if (!describe_out->write(to_json(ecu->describe())))
+        EcuDescription description = ecu->describe();
+        // What --registry-uri does with the ECU's variables (if it has any): the same condition as
+        // below. An agent that a transport of the application holds is left to that transport,
+        // and is not announced.
+        const bool own_transport = !description.variables.empty() && ecu->agent().transports() > 0;
+        if (!c.no_control && !own_transport)
+        {
+            description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion)};
+        }
+        if (!describe_out->write(to_json(description)))
         {
             return fail(name, kExitSetupFailed, "could not write the description to stdout (is it closed?)");
         }

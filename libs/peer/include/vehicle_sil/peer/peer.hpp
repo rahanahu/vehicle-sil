@@ -162,7 +162,8 @@ struct J1939ChannelOptions
 /// emplace()d objects (the one emplaced last first). So the emplace()d objects go after the
 /// participant: their destructors must not use SIL Kit services (the participant, controllers
 /// or Pub/Sub made through runtime()); make an object that does so after the peer instead, so
-/// that it goes first. A transport of the agent (control_grpc::AgentClient) is made after the
+/// that it goes first. A transport of the agent (control_silkit::AgentTransport,
+/// control_grpc::AgentClient) is made after the
 /// peer and destroyed before it (not emplace()d); stop the peer first, so that the transport
 /// still sends the cancelled writes when it stops.
 ///
@@ -219,6 +220,10 @@ public:
     [[nodiscard]] can::RawChannel& raw_channel(std::string_view name) const;
 
     [[nodiscard]] ParticipantRuntime& runtime() noexcept { return *runtime_; }
+    /// The ECU's control agent if it has one (it declared a variable, or agent() was called),
+    /// else nullptr; unlike Ecu::agent(), it makes none. For whoever attaches a transport to the
+    /// agents that exist (ecu_main()).
+    [[nodiscard]] control::Agent* find_agent() noexcept { return agent_.find(); }
     [[nodiscard]] can::Host& host() noexcept { return host_; }
     [[nodiscard]] bool uses_virtual_time() const noexcept { return options_.virtual_time.has_value(); }
     /// Real time: the clock of the driver and the ports (for external ports). nullptr with

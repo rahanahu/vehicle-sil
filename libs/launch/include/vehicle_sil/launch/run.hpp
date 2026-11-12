@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -24,6 +25,9 @@
 
 namespace vehicle_sil {
 class SimulationController;
+namespace control {
+class Hub;
+} // namespace control
 } // namespace vehicle_sil
 
 namespace vehicle_sil::launch {
@@ -62,6 +66,21 @@ enum class Ending
     Killed,            ///< the launcher ended it (with the processes it started)
 };
 
+/// Where a participant's control agent stood when the simulation started: whether the launcher's
+/// hub can read and write its variables in this run (vehicle_sil/control_silkit/hub_transport.hpp).
+enum class ControlLink
+{
+    None,            ///< nothing to connect: no variables (or describe: false, or not started), and no hello
+    Connected,       ///< its agent said hello and receives the launcher's commands: its variables are the hub's
+    NoHello,         ///< it describes variables and offers them (--describe's "control"), but its agent did not say hello before the start
+    VersionMismatch, ///< it offers them in another version of the messages (ParticipantRun::control_version), by --describe or by its hello
+    NotOffered,      ///< it describes variables and does not offer them (--no-control, an executable of an earlier vehicle-sil)
+};
+
+/// The name of a ControlLink in the result and in the events ("none", "connected", "no_hello",
+/// "version_mismatch", "not_offered").
+[[nodiscard]] const char* control_link_name(ControlLink link);
+
 /// What happened to one participant (in the order of the configuration).
 struct ParticipantRun
 {
@@ -87,6 +106,19 @@ struct ParticipantRun
     bool left_processes = false;
     /// Its log file (--log-dir) as shown, or "".
     std::string log{};
+    ControlLink control = ControlLink::None;
+    /// Connected: how many variables its agent offers (with those the ECU's run adds itself).
+    std::size_t control_variables = 0;
+    /// NoHello: its hello did arrive, but its agent did not answer that it receives commands.
+    bool control_hello_seen = false;
+    /// VersionMismatch: the version of the messages its agent speaks.
+    int control_version = 0;
+    /// VersionMismatch: --describe said so (the check has the finding).
+    bool control_version_described = false;
+    /// Messages of its agent's steps that reached the launcher after the launcher's controller
+    /// had begun a later step (HubTransportStats::late_messages): 0 for an agent that publishes
+    /// within its steps.
+    std::uint64_t control_late_messages = 0;
 };
 
 /// How the simulation's time went (the result's "timing"). The pacing numbers are the time gate's
@@ -158,6 +190,14 @@ struct RunOutcome
     bool timed_out = false;
     /// --timeout-ms, if given.
     std::optional<std::int64_t> timeout_ms{};
+    /// What the launcher's end of the control agents dropped in the run (HubTransportStats):
+    /// hellos it did not take, messages it could not decode, and messages that fit no agent it
+    /// knows or no schema.
+    std::uint64_t control_refused_hellos = 0;
+    std::uint64_t control_undecodable = 0;
+    std::uint64_t control_unknown = 0;
+    /// RunOptions::before_start threw: the simulation had started, and the launcher aborted it. Why.
+    std::string before_start_error{};
     /// The participant whose failure ended the run (it ended, or the controller saw it leave), or "".
     std::string failed_participant{};
     /// Why the controller saw it fail (FailureCheck, without the name), or "" if the launcher saw
@@ -165,6 +205,8 @@ struct RunOutcome
     std::string failure_reason{};
     std::int64_t start_timeout_ms = 0;
     std::int64_t stop_timeout_ms = 0;
+    /// How long the start waited at most for the hello of the control agents.
+    std::int64_t control_hello_timeout_ms = 0;
     std::optional<std::int64_t> stop_at_ms{};
     RunTiming timing{};
     std::vector<ParticipantRun> participants{};
@@ -285,6 +327,22 @@ struct RunOptions
     /// The longest the simulation may run, from its start to its end (wall clock); then it is
     /// aborted (RunOutcome::timed_out). Empty: no limit.
     std::optional<std::chrono::milliseconds> timeout{};
+    /// The hub that the ECUs' control agents connect to (over SIL Kit, on the controller's
+    /// participant), from the start window to the end of the run; it must outlive run_file().
+    /// Null: the run has a hub of its own. With a hub of the caller, other threads read and write
+    /// the ECUs' variables through it while the simulation runs.
+    control::Hub* hub = nullptr;
+    /// Called in the window before the start (SimulationController::set_start_window()), on a
+    /// thread of the controller, after the wait for the agents' hellos: every participant waits
+    /// before its first step, and a write that an agent accepts now (control::Hub::write(),
+    /// wait_queued()) takes effect in its step at 0. The simulation starts when it returns. If it
+    /// throws, the launcher aborts the simulation as soon as it has started
+    /// (RunOutcome::before_start_error). Not called if the start was given up before the window.
+    std::function<void(control::Hub& hub)> before_start{};
+    /// How long the start waits for the hello of each required ECU that describes variables and
+    /// offers them in the launcher's version of the messages (it is there before the wait begins,
+    /// by the order in which SIL Kit sets the participants up: the limit is a last line).
+    std::chrono::milliseconds control_hello_timeout{5000};
 };
 
 /// Runs the file `path` (shown as `shown_as`): check_file(); if it passed, the simulation. Never

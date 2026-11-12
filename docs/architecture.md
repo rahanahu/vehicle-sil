@@ -24,7 +24,8 @@ vehicle-sil/
 ├── libs/simulation/  vehicle_sil::simulation  ECU を仮想バスか SIL Kit で動かす Simulation と、ECU の実行ファイルの main()（ecu_main）
 ├── libs/process/     vehicle_sil::process  子プロセス（ログファイルへの出力、標準出力と標準エラーの取り込みと時間切れ、行ごとの受け渡しと止める要求とプロセスの木ごとの終了。POSIX と Win32。内部用）
 ├── libs/launch/      vehicle_sil::launch  シミュレーションの構成ファイル、ECU の実行ファイルの自己申告との照合、シミュレーション全体の実行（内部用）
-├── libs/control/     vehicle_sil::control  Control Agent と Control Server の中核（Hub）。通信と SIL Kit に依存しない
+├── libs/control/     vehicle_sil::control  Control Agent と Control Server の中核（Hub）、両者の間のメッセージのバイト列の形式。通信と SIL Kit に依存しない
+├── libs/control_silkit/ vehicle_sil::control_silkit  Agent と Hub の間を SIL Kit の publish/subscribe で運ぶ層（AgentTransport、HubTransport）
 ├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（ControlServer、AgentClient。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
 ├── proto/            Control API の定義（vehicle_sil/control/v1/control.proto）
 ├── python/vehicle_sil_control/ Control API の Python クライアントと CLI
@@ -76,7 +77,8 @@ vehicle-sil/
 | `vehicle_sil::process`（内部用） | — | 子プロセス: `ChildProcess`（ログファイルへ）、`run_captured()`（標準出力と標準エラーを別々に取り込み、時間切れで止める）、`Process`（標準出力と標準エラーを行ごとに渡す。作業ディレクトリ、止める要求、起動したプロセスごとの終了）。`run_captured()` と `Process` の子は、自分のプロセスグループ（Windows ではプロセスグループとジョブオブジェクト）で動き、標準の 3 つのほかにハンドルを受け継がず、Linux では呼んだスレッドが終わると SIGKILL を受けます。POSIX は `fork` と `exec`（`ChildProcess` は `posix_spawn`）、Windows は `CreateProcessW`（パスと引数は UTF-8 から変換する） |
 | `vehicle_sil::launch`（内部用。SIL Kit をサブモジュールからビルドしたとき） | — | 構成ファイルの読み込み、`--describe` の JSON の読み込み、照合の規則（プロセスを起動しない関数）、実行（registry と `SimulationController` をプロセスの中に持ち、participant を子プロセスで動かす。実行の判定はプロセスを起動しない関数）、人向けと JSON の出力（[simulation-config.md](simulation-config.md)） |
 | `vehicle_sil_launch`（実行ファイル） | — | `vehicle_sil_launch check`、`vehicle_sil_launch run`（[simulation-config.md](simulation-config.md)） |
-| `vehicle_sil::control` | 利用者向け | `vehicle_sil::control::Agent`、`Hub`（「外部操作（Control API）と GUI」） |
+| `vehicle_sil::control` | 利用者向け | `vehicle_sil::control::Agent`、`Hub`、`wire`（「外部操作（Control API）と GUI」） |
+| `vehicle_sil::control_silkit` | 利用者向け | `vehicle_sil::control_silkit::AgentTransport`、`HubTransport`（「SIL Kit の上の運び手」） |
 | `vehicle_sil::control_proto`（`VEHICLE_SIL_BUILD_CONTROL_SERVER` のとき） | — | `control.proto` から生成したコード（`control_grpc` の内部） |
 | `vehicle_sil::control_grpc`（同上） | 利用者向け | `vehicle_sil::control_grpc::ControlServer`、`AgentClient`、`time_control_of()` |
 | `vehicle_sil_control_server`（同上、実行ファイル） | — | Control Server と system controller の CLI |
@@ -115,6 +117,8 @@ vehicle-sil/
 - `ParticipantRuntime` のコンストラクタはレジストリに接続します。失敗すると `SilKit::SilKitError` を投げます。
 - バスのコントローラは `start()` の前に作ります。`start()` が戻った時点で、接続済みの相手はそのコントローラの購読を確認済みです。
 - `start(timeout)` は lifecycle が Running になるまで待ちます。タイムアウトや失敗のときは `std::runtime_error` を投げます。
+- `set_communication_ready_handler_async(handler)` と `complete_communication_ready()`: ハンドラーが戻った後も、`complete_communication_ready()` を呼ぶまで、participant は最初のステップの前（CommunicationInitialized）にとどまります。Coordinated では全員がそこで待つので、その間に publish/subscribe でやりとりできます（ハンドラーの中ではできません）。完了は、ハンドラーが起こした別のスレッドから呼びます（ハンドラーの中からは呼べません。ハンドラーが呼ばれる前と、2 回目は何もせずに偽を返します）。完了するまで誰のステップも始まらないので、窓の用が失敗したときも必ず完了させます。`SimulationController::set_start_window()` がこれを使います（「SIL Kit の上の運び手」）。
+- `set_peer_status_observer(observer)`: ほかの participant（と自分）のライフサイクルの状態がわかるたびに、名前と状態を渡して呼びます。呼ぶのは、それを知ったスレッド（SIL Kit のスレッドか、状態を読み直すスレッド）で、1 つずつです。同じ状態でもう一度呼ぶことがあります。短く、`peer_status()` のほかはこの runtime を呼ばないこと。`start()` の前に登録します。
 - `stop()` は何度呼んでもよく、例外を投げません。
 - participant が失敗すると（ステップのハンドラ、実時間のドライバー、`report_failure()`）、自分の `stop()` と `request_stop()` は、Error になるまで lifecycle に停止を渡しません（先にふつうの停止が渡ると、Coordinated ではシミュレーション全体が正常に止まり、controller から失敗が見えないためです）。失敗の印を立てることと SIL Kit に Error を報告することは 1 つのロックの下で行うので、失敗が見えた後の停止が報告を追い越すことはありません。SIL Kit が後回しにした処理を実行する順序には頼りません。`stop()` の待ちは Error と Shutdown を合わせて `shutdown_timeout` までで、過ぎれば Error の前でも停止を渡します。次の場合は Error を経ないか、Stopping の後で Error になります。失敗より前に届いた `request_stop()`（失敗するステップのハンドラが始まる前、`report_failure()` の前）は、ふつうの停止です。controller の中断やほかの participant の停止が先に届いたときも同じです。`report_failure()` は、`start()` が lifecycle を始めるまでは何もしません。
 - `wait_for_peer()` は、相手の状態が条件を満たすまで待ちます。待っている間は、SIL Kit から状態を定期的に読み直します（[docs/dependencies.md](dependencies.md) の既知の不具合を参照）。SIL Kit のハンドラの中からは呼べません。
@@ -1147,14 +1151,27 @@ J1939 スタックの制限と、規格との一致を確かめていない点�
 - **SIL Kit**: CAN/LIN の通信と仮想時間の同期（データプレーン）
 - **Control API**: 操作と監視
 
-両者は分離します。Control API は gRPC（Protocol Buffers、`proto/vehicle_sil/control/v1/control.proto` の v1）で、SIL Kit とは別の接続です。利用者向けの使い方は [control-api.md](control-api.md) にあります。
+クライアント（GUI、CLI、Python）が使う Control API は gRPC（Protocol Buffers、`proto/vehicle_sil/control/v1/control.proto` の v1）で、SIL Kit とは別の接続です。利用者向けの使い方は [control-api.md](control-api.md) にあります。
+
+ECU の Agent と Hub の間の運び手は 2 つあります。
+
+- **SIL Kit の publish/subscribe**（`vehicle_sil::control_silkit`）: `ecu_main()` で作った ECU と `vehicle_sil_launch run` が使います。ECU の実行ファイルは gRPC にも Protocol Buffers にも依存しません。値と結果が仮想時刻に合わせて届きます（下の「SIL Kit の上の運び手」）。
+- **gRPC**（`vehicle_sil::control_grpc` の `AgentClient`）: Agent が Control Server へ自分で接続します。値は実時間の間隔で届きます。
+
+```mermaid
+flowchart LR
+    client["client (GUI, CLI, Python)"] -- gRPC --> server["Control Server"]
+    server --- hub["Hub"]
+    hub -- "SIL Kit publish/subscribe" --> a1["Agent of an ECU (ecu_main)"]
+    hub -- gRPC --> a2["Agent with an AgentClient"]
+```
 
 構成要素は次の3つです。
 
 | 構成要素 | 役割 | 実装 |
 |---|---|---|
-| Control Agent | 各 ECU が持つ。ECU の変数（と Peer の状態）を公開し、操作を受け付ける | `vehicle_sil::control::Agent`、`Ecu::input()`、`output()`、`agent()`。Server への接続は `vehicle_sil::control_grpc::AgentClient` |
-| Control Server | 複数の PC（Windows/Linux）にまたがる Peer の Agent を受け付け、操作を中継し、状態を集約する。時間ゲートで時間を操作する | `vehicle_sil::control::Hub`、`vehicle_sil::control_grpc::ControlServer`、実行ファイル `vehicle_sil_control_server` |
+| Control Agent | 各 ECU が持つ。ECU の変数（と Peer の状態）を公開し、操作を受け付ける | `vehicle_sil::control::Agent`、`Ecu::input()`、`output()`、`agent()`。Hub への接続は `vehicle_sil::control_silkit::AgentTransport`（`ecu_main()` が付ける）か `vehicle_sil::control_grpc::AgentClient` |
+| Control Server | 複数の PC（Windows/Linux）にまたがる Peer の Agent を受け付け、操作を中継し、状態を集約する。時間ゲートで時間を操作する | `vehicle_sil::control::Hub`。Agent の側は `vehicle_sil::control_silkit::HubTransport`（`vehicle_sil_launch run` が controller の participant に持つ）か `vehicle_sil::control_grpc::ControlServer`（実行ファイル `vehicle_sil_control_server`） |
 | クライアント | GUI、CLI、Python。いずれも共通の Control API を使う | Python のパッケージと CLI（`python/vehicle_sil_control`）。GUI はまだない |
 
 #### Control Agent（`vehicle_sil::control`）
@@ -1179,6 +1196,7 @@ public:
 - 反映の時刻: `Command::at` 以上の開始時刻を持つ最初のステップで、アプリの処理の前に反映します（アプリはそのステップで新しい値を見ます）。Peer では、J1939 の受信処理、ハンドラ、部品のタイマー（`PeriodicSender` の Encoder など）はアプリの処理より前に動くので、それらが新しい値を使うのは次のステップからです。`at` がなければ次のステップです。同じステップで反映するものは (at, seq) の順です（`at` のないものは、そのステップの時刻として並べます）。participant が `at` 以降に始まるステップを受け取る前に実行していれば、その操作は遅すぎます。既定では反映せずに `Late` を返し、`LatePolicy::ApplyNext` なら次のステップで反映して `late` を立てます。Parameter の書き込みは、最初のステップが始まった後の `submit()` なら `Invalid`、始まる前に積んで時刻が最初のステップより後なら `Rejected` です。関数で登録した入力の setter が投げたら、その操作は `Rejected` で、同じ操作の中で先に書いた値はそのまま残ります（ステップは失敗しません）。
 - 結果: キューに積んだ操作には、必ず 1 つの `CommandResult`（`Applied` と反映したステップの時刻、`Late`、`Rejected`、`Cancelled`）が返ります。シミュレーションが終わると `finish()` が、残っている操作を `Cancelled` にします（ECU の Agent では ECU が呼びます。「ECU の入口」の変数の時点）。`VirtualTimeOptions::end` 以降の時刻を指定した操作と、ステップが失敗した Peer への操作も、`finish()` まで確定しません。実時間の Peer では、`at` はその Peer のドライバーの時計の時刻です。
 - 値: ステップの終わり（Peer では LIN の処理の後）に、0、`sample_period`、2 `sample_period` … の時刻以後の最初のステップ（`Ecu::every()` と同じ数え方。既定 10 ms、0 なら毎ステップ）で全変数を読み、`latest()` で最新の 1 組を返します。受け渡しは 3 つのバッファで、ロックはありません。
+- ステップの中から送る通信の側（`set_step_sink()`）: 関数を 1 つ登録すると、毎ステップの終わり（読み出しの直後）に、ステップのスレッドで、ステップの時刻と、そのステップが読んだ 1 組（読まなかったステップでは空）を渡して呼びます。その中から `drain_results()` と `drain_events()` を呼べます。そのステップが作ったもの（反映の結果、出来事、値）を、そのステップの中で送るための口です（`control_silkit::AgentTransport` が使います）。登録は最初のステップの前に 1 回だけで（後からと 2 つ目は `std::logic_error`）、外せません。登録がなければ、ステップの負担は分岐 1 つです。関数が投げた例外は、そのステップの失敗です。
 - スレッドと上限: ステップのスレッド（`on_step_begin`、`on_step_end`、`log`、`finish`。1 本）と通信の側（`submit`、`drain_results`、`drain_events`、`latest`、`stats`。互いにスレッド安全で、複数のスレッドから呼べる）で使います。ステップのスレッドは通信の側を待ちません。通信の側は、`finish()` の間と、実時間のドライバーを起こす `Host::post()` の短いロックを待つことがあります。`bind_driver()` に渡す起こしの関数の中から `submit()` と `clear_wakeup()` は呼びません。受け渡しは固定容量の SPSC リングです。処理中の操作（積んでから結果を `drain_results()` で受け取るまで）は `max_pending`（既定 256）までで、超えた `submit()` はすぐ `Busy` を返します。そのため結果は捨てません。出来事は `max_events`（既定 1024）までで、あふれたものは捨てて数えます。変数のアクセサはステップのスレッドだけで呼ぶので、モデルにロックは要りません。ステップのスレッドは通信のスレッドが持つロックを取りません（使い終えた操作の解放と、結果の理由の文字列の確保はステップのスレッドで行います。量は 1 ステップに `max_pending` まで）。
 - 決定論性: Agent は、反映の時刻を決めるだけで、ステップの並びとデータを変えません。Agent がない実行、Agent があって値を読み続けている実行で、通信の結果は同じです。時刻を指定した書き込みは、participant がその時刻以降に始まるステップを実行する前に届けば、何度実行しても同じステップで反映されます。保証はこの範囲だけです。
   - 時間ゲートで止めてから書くとき: 止まっている位置 P（`TimeState::now`）に始まるステップを、すでに実行した、または実行中の participant があります。そのため `at` は P より後（たとえば P + 1 ns）にします。`at` が P 以下なら `Late` になりえて、`at` がなければ P と次のステップのどちらで反映されるかは届いた時刻で決まります。
@@ -1201,12 +1219,60 @@ Control Server の、通信の方式によらない部分です。接続した A
   - 同じ名前と同じ ID: 同じプロセスのつなぎ直しです。新しい接続が古い接続に代わり、未完了の操作は続きます。古い接続の切断の知らせが後から届いても、Peer は切断になりません（その接続に渡して積まれたと知らされていない操作だけが Unknown になります）。hello の `open_seqs` に、Agent がまだ持っている操作（積んだが、結果を通信の層がまだ届けていないもの）を入れると、それらは新しい接続で Queued になり（古い接続の終わりの影響を受けません）、それ以外の未確定の操作は Unknown で確定します。通信の層は、届けられなかった結果を次の接続で送り直します。`open_seqs` を入れなければ何も確定させないので、結果を失った操作は未確定のまま残り、その Peer の `max_pending` の枠を使い続けます。
   - 同じ名前で別の ID: プロセスの再起動です。前の ID の未完了の操作は Unknown になり、前の ID の値は消えます。
   - どちらの場合も、置き換えた古い接続は `AgentLink::close()` で閉じます。同じ名前の 2 つのプロセスが同時に動いている（設定の誤り）ときも、古いほうは黙って無視されるのではなく、接続が切れたことを知ります。gRPC の層は置き換えた接続を `ABORTED` で終え、置き換えた新しい接続の識別子（hello の `connection`。`AgentClient` が接続ごとに作る）を trailing metadata の `vehicle-sil-replaced-by` で知らせます。識別子は 1〜64 文字で、使える文字は `A-Z a-z 0-9 . _ -` だけです。gRPC は metadata の値に許さないバイトがあるとプロセスを止めるので、Server は hello を受けたところでほかの値を `INVALID_ARGUMENT` で断り、metadata に入れる前にも同じ検査をします。識別子のない hello（送らない古いクライアント）は受け付けますが、置き換えのときに見分けられません。新しい接続が勝ちます。`AgentClient` は、その識別子が自分の接続のものなら（Server がまだ古いストリームを持っていた、つなぎ直し）ふつうにつなぎ直し、ほかのプロセスのもの（値が空、つまり識別子を送らないクライアントを含む）なら、つなぎ直しをやめます（`replaced()` が真、`last_error()` に participant 名、置き換えた接続の incarnation と接続元、同じ名前のプロセスが 2 つ動いていないか確かめること。`on_replaced` を 1 回呼び、指定がなければ標準エラーに 1 行出す）。この metadata のない `ABORTED`（間の proxy などが返したもの）は、ほかの切断と同じにつなぎ直します。Server は置き換えを監査に残し、別の incarnation が置き換えたときは、新しい接続の Peer の出来事（Warning。時刻は Server の見たシミュレーションの時刻）としても購読に流します。
+  - 終わり（`agent_ended(connection, reason)`）: 同じ ID ではもうつながらないと通信の層がわかっているとき（participant がシミュレーションを去った、Agent が最後の知らせを送った）に呼びます。切断と同じ処理をしたうえで、その ID の未確定の操作をすべて Unknown（理由つき）で確定させるので、待っている呼び出しは残りません。
   - 切断: Agent が積んだ操作は Disconnected（未確定）になり、同じ ID でつなぎ直した後に結果が届けば、それで確定します。リンクに渡したが積まれたと知らされていない操作は Unknown、まだリンクに渡していない操作は Invalid です。`forget_peer()` で切断した Peer を消すと、その未確定の操作は Unknown になり、購読者には `removed` の印つきの PeerUpdate が届きます。
   - 結果は、操作を送った ID のどの接続から届いても受け付けます。別の ID からの結果は使いません。値、出来事、状態は、いまの接続からのものだけを使います。スキーマと数が合わない値と、前より古い値は捨てます。
 - `write(request)` は、Peer ごとのまとめをロックの外で行い、操作に Hub 全体で増える通し番号（既定の初めの値は壁時計のマイクロ秒で、Server を起動し直しても前より大きい）を振り、Peer ごとにまとめた `Command`（その番号を `seq` に持つ）を送ります。Hub が確かめるのは、Peer がつながっていること、変数があって書けること、その Peer の未完了の操作が `max_pending`（hello で受け取る）より少ないこと（多ければ Busy）だけです。型、範囲、反映するステップは Agent が決めます。Peer ごとの状態は Sent → Queued（Agent が積んだ）→ Applied、Late、Rejected、Cancelled のどれか、または Disconnected、Invalid、Busy、Unknown です。Sent、Queued、Disconnected 以外は確定で、二度と変わりません。
 - `wait_queued(seq)` は、Sent の目標がなくなるまで待ち、そのときの操作を返します（時間切れと、知らない番号は空）。止まっている位置より後の時刻を指定して書き込み（Control Agent の「決定論性」）、すべての目標が Queued になったことを確かめてから再開すれば、遅すぎる書き込みは起きません。`wait_done(seq)` は確定まで待って操作を返すので、直後に操作が忘れられても結果はわかります（待っている間に忘れられたときも空を返すので、`max_operations` は待つ操作の数より大きくします）。
 - 購読（`subscribe()`）: 始めると、その時点の Peer の一覧と最新の値がまず届きます。Peer、値、操作は、それぞれ Peer ごと・操作ごとに最新の状態だけを持ちます（読む前に変われば置き換える）。上限（`capacity`）があるのは出来事と操作で、あふれたら、出来事は古いものから、操作はいちばん前に変わったものから捨てて数えます。値には、そのスキーマの incarnation が付きます。`poll()` の順は、Peer、操作（番号の順）、出来事（届いた順）、値です。`close()` で待っている `poll()` を起こして終えます。
 - 覚えておく操作: 確定した操作は `max_operations` までで、超えたら古いものから忘れます。未確定の操作は忘れません（数は Peer ごとの `max_pending` で決まります）。
+
+#### SIL Kit の上の運び手（`vehicle_sil::control_silkit`）
+
+Agent と Hub の間のメッセージを、SIL Kit の publish/subscribe で運びます。新しい participant は作りません。ECU の側（`AgentTransport`）は ECU の participant に、Hub の側（`HubTransport`）は Hub を持つ側の participant（`vehicle_sil_launch run` では controller）に、発行者と購読者を作ります。
+
+```mermaid
+sequenceDiagram
+    participant E as ECU (AgentTransport)
+    participant H as controller (HubTransport)
+    E->>H: hello (before the start; kept for a late subscriber)
+    Note over E,H: start window: everyone waits before the first step
+    H->>E: command
+    E->>H: submitted (from the receive handler)
+    Note over E,H: steps
+    E->>H: step message (results, events, sample; sent within the step)
+    E->>H: last word (when the transport is destroyed)
+```
+
+- メッセージの形式（`control/wire.hpp`、`vehicle_sil::control`）: hello、コマンド、受け付け（`submit()` の返事）、ステップのメッセージ（結果、出来事、値）、問い合わせ（probe）とその返事（ready）の 6 種類です。依存のないバイト列で、数はリトルエンディアンです。どのメッセージも先頭に形式の版（`kVersion`）を持ち、復号は自分の版だけを受け付けます。hello は、どの版でも participant 名までが同じ並びなので、版の違う hello からも名前を読めます。復号は例外を投げず、渡されたバイト列の外を読みません。切れた入力、種類の違い、版の違い、大きすぎる入力、範囲の外の値を、それぞれ別の誤りで返します。大きさの上限は版より先に見ます（版の違うメッセージも、上限を超えて読みません）。数の欄は、残りのバイト数に収まるかを確かめ、申告された数の分の領域を先に取りません。同じメッセージのオブジェクトに続けて復号すると、領域を使い回します。宛先（セッション）だけを先に読む関数（`addressed()`）があり、ECU は自分宛てでないコマンドを復号しません。
+- 大きさ: コマンド、受け付け、ステップのメッセージは 64 KiB（`kMaxMessageBytes`）までです。1 ステップの分（結果、出来事、値）がそれを超えるときは、複数のステップのメッセージに分けて同じステップの中で送り、Hub の側が 1 組の値に組み立てます。コマンドは分けません（1 つのコマンドの書き込みは同じステップで反映するため）。収まらないコマンドは送らず、その操作は Invalid です。hello は 1 つのメッセージで（後から購読した相手には、最後に送った 1 つしか届かないため）、4 MiB（`kMaxHelloBytes`）、変数 65536 個（`kMaxVariables`）までです。participant 名と変数名は 1〜256 バイト（`kMaxNameBytes`）です。これを超える Agent には、`AgentTransport` を作れません（`std::invalid_argument`）。復号も同じ上限で断ります。理由と出来事の文は 1024 バイトで切ります。
+- トピック: 向きと種類ごとに 1 つで、全 participant で共通です（`vehicle_sil.control.hello`、`.step`、`.submitted`、`.command`）。participant 名はトピックに入れません。メッセージが、送り手か宛先の Agent を、`AgentTransport` ごとに新しく作る 64 ビットの番号（セッション。Hub から見た incarnation）で示します。コマンドは全 ECU に届き、宛先でない ECU は捨てます。この名前で始まる SIL Kit のサービスは、利用者が作らないでください。
+- ECU の側（`AgentTransport`）のスレッド:
+  - コンストラクター: Agent のスキーマを確定させ（`complete_schema()`）、hello を履歴 1 の発行者で送ります。ECU を作った後、ECU を始める前に、組み立てのスレッドで作ります（始めた後は `std::logic_error`）。Agent に 1 つだけです。
+  - ステップのスレッド: ステップが作ったもの（反映の結果、出来事、読んだ値）を、値を読んだ直後に、そのステップの中で送ります（`Agent::set_step_sink()`）。ほかのスレッドからは送りません。何も作らなかったステップは何も送りません。
+  - SIL Kit の受信のハンドラー: コマンドを `submit()` し、その返事をその場で送ります（ステップの外）。
+  - デストラクター: まだ送っていない結果（`Peer::stop()` の後なら、取り消された書き込み）を「最後の知らせ」として送ります。ECU を止めてから壊し、ECU より先に壊します（`control::TransportLease` を持ちます）。
+- Hub の側（`HubTransport`）のスレッド: 受信のハンドラーは、メッセージを復号して Hub に渡すだけです。participant の SIL Kit のスレッドで動き、そのスレッドは participant のステップも動かすので、ハンドラーが遅いとシミュレーション全体が待ちます。待ち行列は持たず、何も捨てません（遅さは値の欠けではなく、実行の遅れになります。`HubTransportStats::handler_time`）。Hub の購読者への配布は、購読者のスレッドが `Subscription::poll()` で行います。コマンドの送信は、`Hub::write()` を呼んだスレッドがそのまま発行します。作るのは participant を始める前です。
+- Hub の側が受け取るものの検査と上限:
+  - 値の組は、hello のスキーマと、個数、順（分けた部分が先頭から続いていること）、変数ごとの型が合うものだけを Hub に渡します。合わないものは捨てて数えます（`HubTransportStats::unknown`）。
+  - 覚える participant は `HubTransportOptions::max_links`（既定 256）までです（つながっているもの、終わったもの、版の違うものの合計）。超えた hello と、ほかの participant がつながっているセッション番号を名乗る hello は、捨てて数えます（`refused_hellos`）。1 つの hello が Hub に残すのは、上の hello の上限までです。
+- コマンドを送れるようになるまで: hello が届いただけでは、ECU の側のコマンドの購読が確立しているとは限りません（向きごとに別々につながるため）。`HubTransport` は問い合わせ（probe）を送り、ECU の返事（ready）が届いてから、その Agent へコマンドを送ります（`LinkInfo::ready`）。問い合わせは、hello のとき、返事が来るまでのステップのメッセージ（8 通に 1 回）のとき、`wait_for_hellos()` の中で送ります。返事の前の書き込みと、ライフサイクルが止まり始めた（Stopping 以降、Error）participant への書き込みは、`AgentLink::send()` が断り、Hub がその場で Invalid にします（誰にも届かないコマンドを送って、操作が確定しないまま残ることがないように）。始まる前の窓の中では、必須の participant への問い合わせは必ず届きます。
+- 届く順序の約束（Hub の側の participant が時刻同期に参加し、ECU が仮想時間で動くとき。`vehicle_sil_launch run` はいつもそうです）:
+  - Hub の側の participant のステップ P が始まった時点で、したがって時間ゲートが P で止まった時点で、Hub には、各 ECU の「P より前に始まったステップ」の結果と値がすべて入っています。
+  - ちょうど P に始まる ECU のステップの分は、その時点で入っているかどうか決まりません。止まっている間に届きます。「P まで」ではなく「P より前まで」として扱います（`StepInbox` と同じ規則）。
+  - P より後に始まるステップの分は、シミュレーションを進めるまで届きません。
+  - 受け付けの返事（Queued など）とコマンドはステップの外で送るので、順序は保たれますが、時刻の約束はありません。止めてから `at` > P で書き、全員の Queued を待ってから進める手順（Control Agent の「決定論性」）は、そのまま使えます。
+  - `HubTransport` は、この約束に反して届いたステップのメッセージ（Hub の側がすでに後のステップを始めていた）を数えます（`HubTransportStats::late_messages`、`LinkInfo::late_messages`）。ECU がステップの中から送っている限り 0 です。
+- 始まる前の窓（`SimulationController::set_start_window()`）: controller は、必須の participant が全員、最初のステップの前で待っている間（SIL Kit の CommunicationReady の非同期のハンドラー。`ParticipantRuntime::set_communication_ready_handler_async()`）に、登録した関数を自分のスレッド（SIL Kit のスレッドでも、`start()` を呼んだスレッドでもない）で呼び、関数が戻ってからシミュレーションを始めます。この間に `HubTransport::wait_for_hellos()` で Agent の hello を待ち、`Hub::write()` で Parameter を書いて `wait_queued()` で受け付けを待てば、その値は各 ECU の時刻 0 のステップで反映され、アプリはそのステップで見ます。ECU と controller がどの順に起動しても同じです。
+  - 窓は開始の一部です。`start()` の時間切れは窓を含み（`StartWindow::deadline()`）、全 participant の `start()` が窓の終わりを待ちます。関数を外から止める手段はないので、関数は待つたびに `StartWindow::cancelled()`（止める要求、ライフサイクルの終わり、`start()` の時間切れ）を見て、すぐ戻ります。`start()` は、戻るときも投げるときも、関数の終わりを待ちます。関数が投げても窓は閉じて全員が始まり、`start()` がその文言で `std::runtime_error` を投げます。
+  - 窓は必ず完了させます。`start()` があきらめた後で窓が開いたとき（必須の participant の準備が遅かった）は、関数を呼ばずに完了だけします。全員が最初のステップまで進むので、その後の controller の停止で、窓のないときと同じに順に終わります（controller のデストラクターは、停止を待つ間も、開いた窓を完了させます）。
+  - `wait_for_hellos()` は、挙げた participant のそれぞれが、つながってコマンドを受け取れると返事をする、版の違う hello を送る、シミュレーションを去る、のどれかになるまで待ちます（期限と取り消しつき）。窓の中で participant がいなくなっても、待ちは終わります（その後の開始は、ほかの開始の失敗と同じに時間切れになります）。
+  - 窓より前（workflow の前や、hello が届いた直後）に書いたコマンドは、届く保証がありません。
+- 接続の終わり: Agent の「最後の知らせ」が届いたとき、その participant のライフサイクルが Error になったとき（ステップの失敗、接続が切れた＝プロセスが終わった）、`HubTransport` を壊したときに、`Hub::agent_ended()` で終えます。その Agent を待っていた操作は、最後の知らせに入っていた結果（Cancelled など）か Unknown で確定します。順に終わった（Shutdown になった）のに最後の知らせを送らなかった participant の接続は、`HubTransport` を壊すまで残ります（最後の知らせは、送った直後に participant を壊すと届かないことがあります）。その間も、その participant への新しい書き込みは上のとおり断るので、確定しない操作は増えません。
+- hello が来ない相手: Agent のない ECU（変数がない、運び手を付けていない）は hello を送らないので、Hub の Peer になりません。版の違う hello を送った相手は、Peer にならず、`HubTransport::links()` に participant 名と版つきで残ります。どちらも、待つ側には「来ない」ではなく別の答えとして見えます（`HelloReport` の `connected`、`mismatched`、`ended`、`missing`）。
+- 実時間の Peer（仮想時間なし）にも `AgentTransport` を付けられます。同じメッセージが流れますが、届く時刻と Hub の側の仮想時刻の間に約束はありません（値は届いた時点のものとして扱います。`late_messages` にも数えません）。同じ名前で起動し直した participant は、新しいセッションの hello で古い接続に代わります（落ちた後の起動し直しでも同じです。hello を受けるときに、その名前のライフサイクルの状態は見ません。前のプロセスの状態かもしれないためです）。
+- 認証: この区間に認証はありません。registry に参加できる者は、コマンドのトピックへ書けます（シミュレーションのバスにフレームを送れるのと同じです）。閉じたネットワークで使います。クライアント向けの gRPC の認証は、この区間に及びません。
+- 量: 値は間引きません。送る量は「ECU の数 × `sample_period` ごとの 1 組」で、シミュレーションの速さに比例して増えます。量を減らすには `AgentOptions::sample_period` を大きくします（`Ecu::set_agent_options()`）。
 
 #### Control Server と通信の層（`vehicle_sil::control_grpc`）
 
@@ -1229,7 +1295,7 @@ Control Server の、通信の方式によらない部分です。接続した A
   - 役割: viewer（読む: 一覧、値、操作、購読、時刻）< operator（変える: 書き込み、一時停止、再開、ステップ、速度、Peer を忘れる）< admin（停止）。agent は Agent の接続だけができ、クライアントの呼び出しはできません。agent の認証情報には、名乗れる participant 名を必ず書きます（`Credential::participants`）。`*`（`kAnyParticipant`）を書いた認証情報はどの名前でも名乗れ、つながっている Peer を置き換えられます（名前は予約しません）。書いていない名前で名乗ると、認証情報の名前、名乗った名前、名乗れる名前を添えて `PERMISSION_DENIED` で断ります。viewer は、値、スキーマ、出来事、操作（書いた人の認証情報の名前と接続元を含む）を読めます。 RPC ごとに要る役割と監査の有無は、Server の 1 つの表（`rpc_rules()`）にあり、各 RPC はその表で認可してから処理します。表にない RPC は、誰が呼んでも `PERMISSION_DENIED` です（RPC を足して表を忘れると、試験が落ちます）。
   - ループバック以外のアドレスで待ち受けるには、TLS と認証情報の両方が要ります（`allow_insecure` を明示しない限り、`std::invalid_argument` で起動しません）。ループバックとみなすのは `localhost`、`[::1]`、数字の `127.x.y.z`、`unix:` のアドレスだけです。
   - 監査: `audit` に、変更する呼び出し（書き込み、時間の操作、Peer を忘れる、Agent の接続と置き換え）と、断った呼び出し（Agent の hello を含む）を、誰が（認証情報の名前と接続元）、何を、結果、の 1 行で渡します。制御文字は `?` に置き換え（名前に改行を入れて偽の行を書けない）、1 行は約 1000 バイトで切ります。書き込みの行は最初の 16 個の名前と残りの数です。断った呼び出しはポートに届く誰でも起こせるので、1 秒に 20 行までにし、記録しなかった数は、次に記録する断った呼び出しの行の前に知らせます。監査の関数が投げた例外は無視します。
-  - SIL Kit のレジストリとデータプレーンには認証がありません。閉じたネットワークで使います。
+  - SIL Kit のレジストリとデータプレーンには認証がありません。閉じたネットワークで使います。SIL Kit の上の運び手（`vehicle_sil::control_silkit`）で運ぶ Agent と Hub の間も同じです。
 - 上限: Server の未完了の操作は Peer ごとの `max_pending`（hello の値。65536 まで）、確定した操作は `max_operations`、購読は `capacity`（既定 1024、`max_watch_capacity` まで）、Agent のストリームの送信待ちは未完了の操作の数まで、1 回の `Write` の書き込みは `max_writes_per_request`（既定 4096。超えたら `INVALID_ARGUMENT`）、待つ呼び出しと `Watch` は `max_waiting_calls` までです。hello のスキーマに空の名前や重複があるとき、`open_seqs` が `max_pending` の 2 倍（積んだ操作と最近の結果）を超えるとき、`connection` が空でなく、1〜64 文字の `A-Z a-z 0-9 . _ -` でないときは断ります。1 つのメッセージは gRPC の既定の 4 MB までです。
 - Server の再起動: Hub の状態（操作、値）は引き継ぎません。前の Server の操作の番号を問い合わせると `NOT_FOUND` です。Agent がまだ持っている前の Server の操作（時刻つきを含む）はそのまま反映され、結果は新しい Server が捨てます。`vehicle_sil_control_server` は system controller も兼ねるので、起動し直せばシミュレーションも終わります。
 

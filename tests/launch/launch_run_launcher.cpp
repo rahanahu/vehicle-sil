@@ -363,7 +363,7 @@ void docs(const Options& o)
     const Captured logged = launch(o, {"run", "--json", "--log-dir", shown_path(logs), "simulation.yaml"}, dir);
     expect_code(logged, 0, "run --log-dir");
     // The JSON names each participant's file.
-    require(contains(logged.standard_output, "      \"log\": \"" + shown_path(logs / "Dashboard.log") + "\"\n"),
+    require(contains(logged.standard_output, "      \"log\": \"" + shown_path(logs / "Dashboard.log") + "\",\n"),
             "the JSON names Dashboard's log:\n" + logged.standard_output);
     const std::string dashboard = lf(read_text(logs / "Dashboard.log"));
     require(dashboard.rfind("t=0 ms engine speed 0 rpm (0 messages)\n", 0) == 0,
@@ -1095,6 +1095,89 @@ void usage(const Options& o)
             "the run's JSON for a file that cannot be read:\n" + missing.standard_output);
 }
 
+/// The ECUs' control agents: who is connected when the simulation starts, in the events, the
+/// result and the findings.
+void control(const Options& o)
+{
+    {
+        // Engine and Brake offer variables; Tool has none; Quiet has some and does not offer them
+        // (--no-control, which its --describe says too).
+        const fs::path dir = scenario_dir(o,
+                                          "vehicle_sil_simulation: 1\n"
+                                          "stop_at_ms: 200\n"
+                                          "networks: []\n"
+                                          "participants:\n"
+                                          "  - name: Engine\n"
+                                          "    command: [" + ecu(o) + "]\n"
+                                          "  - name: Brake\n"
+                                          "    command: [" + ecu(o) + "]\n"
+                                          "  - name: Tool\n"
+                                          "    command: [" + ecu(o) + "]\n"
+                                          "  - name: Quiet\n"
+                                          "    command: [" + ecu(o) + ", --no-control]\n",
+                                          {{"Engine", "variables"}, {"Brake", "variables"}, {"Quiet", "variables"}});
+        const auto begin = std::chrono::steady_clock::now();
+        const Captured run = launch(o, {"run", "sim.yaml", "--events"}, dir);
+        expect_code(run, 0, "run with control agents");
+        // Nobody is waited for in vain: the hellos are there when the start looks for them.
+        require(std::chrono::steady_clock::now() - begin < 60s, "the run with control agents took too long");
+        const std::string out = lf(run.standard_output);
+        // The four variables and the three outputs that the ECU's run adds (peer.*).
+        for (const std::string name : {"Engine", "Brake"})
+        {
+            require(contains(out, "\"name\":\"" + name + "\",\"state\":\"connected\",\"variables\":7}\n"),
+                    name + " is connected with its variables:\n" + out);
+        }
+        require(contains(out, "\"event\":\"control_link\"") && contains(out, "\"name\":\"Tool\",\"state\":\"none\"}\n"),
+                "Tool has nothing to connect:\n" + out);
+        require(contains(out, "\"name\":\"Quiet\",\"state\":\"not_offered\"}\n"), "Quiet does not offer its variables:\n" + out);
+        // After everyone joined, before the simulation runs.
+        const auto first = out.find("{\"event\":\"control_link\"");
+        const auto last = out.rfind("{\"event\":\"control_link\"");
+        const auto joined = out.rfind("\"state\":\"joined\"", first);
+        const auto running = out.find("\"phase\":\"running\"");
+        require(first != std::string::npos && joined != std::string::npos && running != std::string::npos && joined < first &&
+                    last < running && out.find("\"state\":\"joined\"", first) == std::string::npos,
+                "the control events come between the last joined and running:\n" + out);
+        require(contains(out, "\"log\":null,\"control_link\":{\"state\":\"connected\",\"variables\":7,\"version\":null,"
+                              "\"late_messages\":0}},{\"name\":\"Brake\"") &&
+                    contains(out, "\"log\":null,\"control_link\":{\"state\":\"not_offered\",\"variables\":null,\"version\":null,"
+                                  "\"late_messages\":0}}],\"findings\":[]"),
+                "the result has each participant's control link:\n" + out);
+        // The check notes the variables that are not offered, and says what each executable offers.
+        require(contains(out, "\"code\":\"control-link-not-offered\"") &&
+                    contains(out, "participant 'Quiet': it describes variables, but does not offer them to the simulation") &&
+                    contains(out, "\"control\":{\"transport\":\"silkit\",\"wire_version\":1}") && contains(out, "\"control\":null") &&
+                    !contains(out, "control-link-no-hello") && !contains(out, "control-link-version"),
+                "the check notes what is not offered, and nothing else is found:\n" + out);
+        log("CHECK control agents in the events and the result -> ok");
+    }
+    {
+        // An ECU whose --describe offers its variables and whose run does not (it runs with
+        // --no-control behind the launcher's back): the start waits for its hello in vain, and
+        // says so.
+        const fs::path dir = scenario_dir(o,
+                                          "vehicle_sil_simulation: 1\n"
+                                          "stop_at_ms: 200\n"
+                                          "networks: []\n"
+                                          "participants:\n"
+                                          "  - name: Engine\n"
+                                          "    command: [" + ecu(o) + "]\n",
+                                          {{"Engine", "variables"}});
+        write_file(dir / "test-ecu-no-control", "\n");
+        const Captured run = launch(o, {"run", "sim.yaml", "--json"}, dir);
+        fs::remove(dir / "test-ecu-no-control");
+        expect_code(run, 0, "run with an ECU that does not say hello");
+        const std::string out = lf(run.standard_output);
+        require(contains(out, "        \"state\": \"no_hello\",\n") && contains(out, "\"code\": \"control-link-no-hello\"") &&
+                    contains(out, "participant 'Engine': it offers its variables (--describe), but its control agent did not "
+                                  "say hello within 5000 ms before the simulation started") &&
+                    contains(out, "  \"warnings\": 1,\n") && contains(out, "  \"simulation\": \"reached_stop_at\",\n"),
+                "the ECU without a hello is a warning, and the simulation runs:\n" + out);
+        log("CHECK an ECU that does not say hello -> ok");
+    }
+}
+
 void disabled(const Options& o)
 {
     // Ghost's executable does not exist, and it is required: started or waited for, it would fail
@@ -1153,7 +1236,8 @@ void disabled(const Options& o)
     const std::string json = swapped.standard_output;
     require(contains(json, "      \"name\": \"Engine\",\n      \"required\": true,\n      \"enabled\": false,\n"
                            "      \"ended\": \"not_started\",\n      \"exit_code\": null,\n      \"signal\": null,\n"
-                           "      \"left_processes\": false,\n      \"log\": null\n") &&
+                           "      \"left_processes\": false,\n      \"log\": null,\n      \"control_link\": {\n"
+                           "        \"state\": \"none\",\n") &&
                 contains(json, "      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": true,\n"
                                "      \"ended\": \"exited\",\n      \"exit_code\": 0,\n") &&
                 contains(json, "        \"enabled\": false,\n        \"step_ms\": null,\n        \"status\": \"disabled\",\n"),
@@ -2272,9 +2356,21 @@ void events_findings(const Options& o)
     // The same result as without --events.
     const Captured json = launch(o, {"run", "--json", "sim.yaml"}, dir);
     const std::string& last = lines.back();
-    // (But for how long the two runs took.)
-    expect_text(without_timing(last.substr(last.find(",\"result\":") + 10)),
-                without_timing(compact(json.standard_output.substr(0, json.standard_output.size() - 1)) + "}"),
+    // (But for how long the two runs took, and for the controller's last step: the launcher
+    // notices the failed participant either before or after the controller begins its step at
+    // the time of the failure, so a run that a failure ends reaches that step or the one before.)
+    const auto comparable = [](std::string text) {
+        const std::string head = "\"sim_ms\":";
+        const auto at = text.find(head);
+        require(at != std::string::npos, "the result has sim_ms:\n" + text);
+        const auto to = text.find_first_of(",}", at);
+        const std::string value = text.substr(at + head.size(), to - at - head.size());
+        require(value == "190" || value == "200", "the simulation got to the step of the failure (200 ms) or the one before, not to " + value);
+        text.replace(at + head.size(), value.size(), "<sim_ms>");
+        return without_timing(text);
+    };
+    expect_text(comparable(last.substr(last.find(",\"result\":") + 10)),
+                comparable(compact(json.standard_output.substr(0, json.standard_output.size() - 1)) + "}"),
                 "the result event as run --json");
 
     // Engine's process ends in a step (exit code 7): the launcher learns of the failure by the end
@@ -2970,7 +3066,7 @@ int main(int argc, char** argv)
             {"events_findings", events_findings}, {"events_nonblocking", events_nonblocking}, {"events_output", events_output},
             {"events_stderr", events_stderr}, {"realtime", realtime}, {"on_time", on_time}, {"late", late}, {"stall", stall},
             {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
-            {"paused_failures", paused_failures}, {"time_usage", time_usage}};
+            {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control}};
         const auto it = std::find_if(scenarios.begin(), scenarios.end(), [&](const auto& s) { return s.first == o.scenario; });
         if (it == scenarios.end())
         {

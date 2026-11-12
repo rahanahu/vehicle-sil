@@ -66,6 +66,27 @@ struct SimulationController::Gate
     }
 };
 
+/// The start window (set_start_window()).
+struct SimulationController::Window
+{
+    std::function<void(const StartWindow&)> function;
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool open = false;      ///< the participants wait before their first step (SIL Kit thread)
+    bool cancelled = false; ///< start() gave up, or the controller goes: the function is not called (any more)
+    bool running = false;   ///< the function runs
+    bool quit = false;      ///< the controller goes: the thread ends even if the window never opened
+    std::string error;      ///< what the function threw
+    /// run_window(); started by start(). It lives until the window has opened and been completed,
+    /// or the controller goes: a window that opens after start() gave up is completed all the same.
+    std::thread thread;
+};
+
+bool StartWindow::cancelled() const
+{
+    return cancelled_();
+}
+
 SimulationController::SimulationController(SimulationControllerOptions options) : options_(std::move(options))
 {
     if (options_.required_participants.empty())
@@ -149,9 +170,13 @@ SimulationController::SimulationController(SimulationControllerOptions options) 
 
 SimulationController::~SimulationController()
 {
-    // Stop first: the step handler and the hold use the members below, which are destroyed
-    // before runtime_.
+    // The window's function first: it uses what the owner destroys next.
+    cancel_window();
+    // Then stop: the step handler and the hold use the members below, which are destroyed
+    // before runtime_. The window's thread still lives: a window that opens while the stop waits
+    // is completed, so that the stop reaches a lifecycle that runs.
     runtime_->stop("SimulationController destroyed");
+    end_window();
     if (gate_)
     {
         {
@@ -331,6 +356,112 @@ std::optional<SimTime> SimulationController::wait_until_paused(std::chrono::mill
     }
 }
 
+void SimulationController::set_start_window(std::function<void(const StartWindow& window)> window)
+{
+    if (!window)
+    {
+        throw std::invalid_argument("SimulationController::set_start_window(): the function is empty");
+    }
+    if (window_ || runtime_->started())
+    {
+        throw std::logic_error("SimulationController::set_start_window() must be called once, before start()");
+    }
+    auto w = std::make_unique<Window>();
+    w->function = std::move(window);
+    runtime_->set_communication_ready_handler_async([w = w.get()] {
+        {
+            const std::lock_guard lock(w->mutex);
+            w->open = true;
+        }
+        w->cv.notify_all();
+    });
+    window_ = std::move(w);
+}
+
+void SimulationController::run_window(std::chrono::steady_clock::time_point deadline)
+{
+    auto& w = *window_;
+    {
+        std::unique_lock lock(w.mutex);
+        w.cv.wait(lock, [&] { return w.open || w.quit; });
+        if (!w.open)
+        {
+            return; // the controller goes and the window never opened: nothing to complete
+        }
+        if (w.cancelled)
+        {
+            // It opened after start() had given up: the function is not called, but the window
+            // is completed, so that every participant gets to its first step and can be stopped
+            // in order.
+            lock.unlock();
+            runtime_->complete_communication_ready();
+            return;
+        }
+        w.running = true; // under the lock that start() takes to give up: it then waits for the function
+    }
+    const StartWindow window(deadline, [this, &w] {
+        {
+            const std::lock_guard lock(w.mutex);
+            if (w.cancelled)
+            {
+                return true;
+            }
+        }
+        return runtime_->stop_requested() || has_finished(PeerStatus{runtime_->state()});
+    });
+    std::string error;
+    try
+    {
+        w.function(window);
+    }
+    catch (const std::exception& e)
+    {
+        error = *e.what() != '\0' ? e.what() : "exception without message";
+    }
+    catch (...)
+    {
+        error = "unknown exception";
+    }
+    {
+        const std::lock_guard lock(w.mutex);
+        w.error = std::move(error);
+        w.running = false;
+    }
+    w.cv.notify_all();
+    // In every case: nobody's first step runs before this.
+    runtime_->complete_communication_ready();
+}
+
+void SimulationController::cancel_window() noexcept
+{
+    if (!window_)
+    {
+        return;
+    }
+    std::unique_lock lock(window_->mutex);
+    window_->cancelled = true;
+    window_->cv.notify_all();
+    // The function sees StartWindow::cancelled() and returns.
+    window_->cv.wait(lock, [this] { return !window_->running; });
+}
+
+void SimulationController::end_window() noexcept
+{
+    if (!window_)
+    {
+        return;
+    }
+    {
+        const std::lock_guard lock(window_->mutex);
+        window_->quit = true;
+    }
+    window_->cv.notify_all();
+    if (window_->thread.joinable())
+    {
+        window_->thread.join();
+    }
+}
+
 void SimulationController::start(std::chrono::milliseconds timeout)
 {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -362,7 +493,32 @@ void SimulationController::start(std::chrono::milliseconds timeout)
     required.push_back(options_.participant_name);
     system_controller_->SetWorkflowConfiguration(orch::WorkflowConfiguration{required});
 
-    runtime_->start(remaining());
+    if (window_ && !window_->thread.joinable())
+    {
+        window_->thread = std::thread([this, deadline] { run_window(deadline); });
+    }
+    try
+    {
+        runtime_->start(remaining());
+    }
+    catch (...)
+    {
+        // The function is told to give up and waited for: once start() has returned, either way,
+        // it does not run any more (what it uses may be destroyed). The thread stays: if the
+        // window opens later, it completes it.
+        cancel_window();
+        throw;
+    }
+    if (window_)
+    {
+        // Running: the window was completed, so the thread is on its way out.
+        window_->thread.join();
+        const std::lock_guard lock(window_->mutex);
+        if (!window_->error.empty())
+        {
+            throw std::runtime_error("SimulationController: the start window failed: " + window_->error);
+        }
+    }
 }
 
 std::vector<std::string> SimulationController::missing_participants() const

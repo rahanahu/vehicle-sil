@@ -54,8 +54,9 @@ endif()
 #                           vehicle_sil_add_j1939_codec())
 #   vehicle_sil::lin        LIN master and slave on a port, and the virtual LIN bus (no SIL Kit)
 #   vehicle_sil::lin_silkit vehicle_sil::lin port on SIL Kit LIN (virtual time)
-#   vehicle_sil::control    the control agent of an ECU (variables, timed writes, samples) and the
-#                           control server's core (Hub); no transport, no SIL Kit
+#   vehicle_sil::control    the control agent of an ECU (variables, timed writes, samples), the
+#                           control server's core (Hub) and their messages as bytes; no transport, no SIL Kit
+#   vehicle_sil::control_silkit the control agent's messages over SIL Kit publish/subscribe (both ends)
 #   vehicle_sil::ecu        the interface an ECU's application is written against and its description (no SIL Kit)
 #   vehicle_sil::local      ECUs on virtual CAN and LIN buses in this process, on virtual time (no SIL Kit; internal)
 #   vehicle_sil::testkit    recorders and fault injection for tests on vehicle_sil::local (internal)
@@ -81,6 +82,7 @@ add_subdirectory(libs/can_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/can_netsim ${_vehicle_sil_exclude})
 add_subdirectory(libs/j1939 ${_vehicle_sil_exclude})
 add_subdirectory(libs/control ${_vehicle_sil_exclude})
+add_subdirectory(libs/control_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/ecu ${_vehicle_sil_exclude})
 add_subdirectory(libs/local ${_vehicle_sil_exclude})
 add_subdirectory(libs/testkit ${_vehicle_sil_exclude})

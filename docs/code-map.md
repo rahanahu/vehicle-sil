@@ -23,7 +23,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 
 | ディレクトリ | 主なクラス・関数（ヘッダー） | 試験 | `ctest -R` |
 |---|---|---|---|
-| `libs/core` | `ParticipantRuntime`（`vehicle_sil/core/participant_runtime.hpp`）、`SimulationController`（`core/simulation_controller.hpp`）、`TickScheduler`（`core/tick_scheduler.hpp`）。`sim_base` の `SimTime`（`core/sim_time.hpp`）、`StepInbox`（`core/step_inbox.hpp`）、`periodic()`（`core/periodic.hpp`） | `tests/core` | `^core\.` |
+| `libs/core` | `ParticipantRuntime`（`vehicle_sil/core/participant_runtime.hpp`）、`SimulationController`、`StartWindow`（`core/simulation_controller.hpp`）、`TickScheduler`（`core/tick_scheduler.hpp`）。`sim_base` の `SimTime`（`core/sim_time.hpp`）、`StepInbox`（`core/step_inbox.hpp`）、`periodic()`（`core/periodic.hpp`） | `tests/core` | `^core\.` |
 | `libs/can` | `Frame`（`can/frame.hpp`）、`Port`（`can/port.hpp`）、`Host`、`Steppable`（`can/host.hpp`）、`StepDriver`（`can/step_driver.hpp`）、`RealTimeDriver`（`can/real_time_driver.hpp`）、`VirtualCanBus`（`can/virtual_can_bus.hpp`）、`CanBusModel`（`can/bus_model.hpp`）、`TapPort`（`can/tap_port.hpp`）、`RawChannel`（`can/raw_channel.hpp`） | `tests/can` | `^can\.` |
 | `libs/can_silkit` | `SilKitCanPort`、`bind_host()`（`can_silkit/silkit_can_port.hpp`） | `tests/can` | `^can_silkit\.` |
 | `libs/can_netsim`、`tools/can_bus_simulator` | `CanBusSimulator`（`can_netsim/can_bus_simulator.hpp`）、`NetworkSimulatorConfig`（`can_netsim/network_simulator_config.hpp`） | `tests/can` | `^can_netsim\.` |
@@ -36,7 +36,8 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 | `libs/testkit` | `J1939Events`、`FrameLog`（`testkit/recorders.hpp`）、`faults`（`testkit/faults.hpp`）、`LocalCan`（`testkit/local_can.hpp`） | `tests/testkit` | `^testkit\.`、`^ecu_api\.`、`^param_service\.` |
 | `libs/peer` | `Peer`、`PeerOptions`、`start_together()`（`peer/peer.hpp`）。監視の出力は `src/peer_monitor.cpp` | `tests/peer` | `^peer\.` |
 | `libs/simulation` | `Simulation`、`SilKitOptions`、`SimulationError`（`simulation/simulation.hpp`）、`ecu_main()`、`EcuMainOptions`（`simulation/ecu_main.hpp`） | `tests/simulation` | `^simulation\.`、`^ecu_main\.`（`examples/ecu_main` のプロセス）、サンプルの実行は `getting_started.`、`typed_messages.`、`pid_stream.`、`fault_injection.`、`vehicle.`、`low_level.` で始まる |
-| `libs/control` | `Agent`（`control/agent.hpp`）、`Hub`（`control/hub.hpp`） | `tests/control` | `^control\.` |
+| `libs/control` | `Agent`（`control/agent.hpp`）、`Hub`（`control/hub.hpp`）、Agent と Hub の間のメッセージの符号化と復号（`control/wire.hpp`） | `tests/control` | `^control\.`（`wire.hpp` は `^control\.wire_`） |
+| `libs/control_silkit` | `AgentTransport`（`control_silkit/agent_transport.hpp`）、`HubTransport`（`control_silkit/hub_transport.hpp`）。トピックの名前は `src/topics.hpp` | `tests/control_silkit`、`tests/launch`（プロセスをまたぐ窓） | `^control_silkit\.`、`^launch_control\.` |
 | `libs/control_grpc`、`tools/control_server`、`proto/`、`python/` | `ControlServer`（`control_grpc/server.hpp`）、`AgentClient`（`control_grpc/agent_client.hpp`）、Python のクライアント（`python/vehicle_sil_control/client.py`） | `tests/control_server`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ） | `^control_server\.` |
 | `libs/process` | `ChildProcess`、`run_captured()`（`process/child_process.hpp`）、`Process`（`process/process.hpp`） | `tests/process` | `^process\.` |
 | `libs/launch`、`tools/launch` | `read_config()`（`launch/config.hpp`）、`check_file()`（`launch/check.hpp`）、`run_file()`、`TimeCommands`（`launch/run.hpp`）、`EventStream`、`parse_command()`（`launch/events.hpp`）。照合の規則は `src/check.cpp`、コマンドラインと標準入力・標準出力のスレッドは `tools/launch/main.cpp` | `tests/launch` | `^launch\.`（プロセスなし）、`^launch_cli\.`（`check`）、`^launch_run\.`（`run`） |
@@ -63,7 +64,7 @@ flowchart TD
         app["ecu, local, testkit"]
     end
     subgraph with_silkit["SIL Kit"]
-        bindings["core, can_silkit, lin_silkit, can_netsim"]
+        bindings["core, can_silkit, lin_silkit, can_netsim, control_silkit"]
         run["peer, simulation"]
         launch_process["launch, process"]
         grpc["control_grpc, control_proto"]
@@ -74,6 +75,7 @@ flowchart TD
     app --> protocols
     app --> control
     bindings --> protocols
+    bindings --> control
     run --> app
     run --> bindings
     run --> protocols
@@ -162,6 +164,7 @@ flowchart TD
     simulation --> ecu
     simulation --> peer
     simulation --> local
+    simulation -.-> control_silkit
 ```
 
 ### launch と Control API
@@ -173,8 +176,12 @@ flowchart TD
     launch --> ecu
     launch --> process
     launch -.-> core
+    launch -.-> control_silkit
     launch -.-> rapidyaml
     process --> Threads["Threads::Threads"]
+    control_silkit --> control
+    control_silkit --> core
+    control_silkit --> SilKit["SilKit::SilKit"]
     control_grpc --> control
     control_grpc --> core
     control_grpc -.-> control_proto
@@ -228,3 +235,5 @@ flowchart TD
 | `libs/` にライブラリを足す | ルートの `CMakeLists.txt` の `add_subdirectory`、README の「構成」と「ライブラリ」、[architecture.md](architecture.md) の「構成」 |
 | `proto/vehicle_sil/control/v1/control.proto` | `libs/control_grpc/src`（`convert.hpp`、`control_service.cpp`、`agent_service.cpp`、`agent_client.cpp`）、`python/vehicle_sil_control/client.py`、[control-api.md](control-api.md)。Python のスタブは試験のビルドで生成します（`python -m vehicle_sil_control.generate`） |
 | 使う SIL Kit の API、上流の挙動への前提 | [dependencies.md](dependencies.md) の「使っている API」と「実装が前提にしている上流の挙動」 |
+| Agent と Hub の間のメッセージ（`libs/control/src/wire.cpp`） | 並びを変えたら `control/wire.hpp` の `kVersion` を上げます（復号は自分の版だけを受け付けます）。hello の先頭から participant 名までは、どの版でも変えません（版の違う相手の名前を読むため）。大きさの上限（`kMaxMessageBytes`、`kMaxHelloBytes`、`kMaxTextBytes`）と分け方は [architecture.md](architecture.md) の「SIL Kit の上の運び手」。試験は `^control\.wire_`（1 バイトずつ切る、欄を壊す、乱数の入力。境界の外を読むと sanitizer のプリセットが落とします） |
+| SIL Kit の上の運び手（`libs/control_silkit/src`）、始まる前の窓（`libs/core/src/simulation_controller.cpp` の `run_window()` と `cancel_window()`、`libs/core/src/participant_runtime.cpp` の `set_communication_ready_handler_async()`）、`ecu_main()` が運び手を付ける所（`libs/simulation/src/ecu_main.cpp`）、ランチャーの Hub（`libs/launch/src/run.cpp` の `start_window()`、`note_control()`） | 契約の正本は `agent_transport.hpp` と `hub_transport.hpp` のクラスのコメントで、[architecture.md](architecture.md) の「SIL Kit の上の運び手」（スレッド、届く順序の約束、窓、接続の終わり、認証がないこと）を合わせます。頼っている SIL Kit の挙動は [dependencies.md](dependencies.md) の「実装が前提にしている上流の挙動」。値と結果は、ステップのスレッドから、値を読んだ直後に送ります（別のスレッドに渡すと、順序の約束がなくなります。`HubTransportStats::late_messages` が数えます）。Hub の側の受信のハンドラーには、待つもの・重い処理を足しません（シミュレーション全体が待ちます）。ランチャーの出力（事象 `control_link`、結果の `participants[].control_link`、照合の JSON の `participants[].control`、所見 `control-link-no-hello`、`control-link-version`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered`、`before-start`）は [simulation-config.md](simulation-config.md) の「変数を読み書きする口」と表。ECU の自己申告（`--describe` の `control`。`libs/ecu/src/describe.cpp`、足すのは `ecu_main`、読むのは `libs/launch/src/check.cpp`）は [ecu-executable.md](ecu-executable.md) の「JSON の形式」。上限（`kMaxVariables`、`kMaxNameBytes`、`HubTransportOptions::max_links`）を変えたら architecture.md の同じ節。試験は `^control_silkit\.`、`^core\.`、`^launch_control\.`、`launch_run.control`、`simulation.ecu_main_offers_its_variables_to_the_simulation_unless_no_control` |

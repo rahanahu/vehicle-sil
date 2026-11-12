@@ -153,6 +153,31 @@ public:
     /// ILinController::Init(). Only before start(); otherwise throws std::logic_error.
     void set_communication_ready_handler(std::function<void()> handler);
 
+    /// Like set_communication_ready_handler(), but the participant stays where the handler found
+    /// it (CommunicationInitialized) after the handler has returned, until
+    /// complete_communication_ready(). A Coordinated participant gets there when every required
+    /// participant has: all of them then wait before their first step, their publish/subscribe
+    /// services are connected, and this participant can exchange messages with them (the handler
+    /// itself must return at once: SIL Kit delivers nothing while it runs). Nobody's first step
+    /// runs before the completion, so start() of every participant waits for it: complete in
+    /// every case, also when what the window was for failed. Replaces
+    /// set_communication_ready_handler(). Only before start(); otherwise throws std::logic_error.
+    void set_communication_ready_handler_async(std::function<void()> handler);
+
+    /// Lets the lifecycle go on after the handler of set_communication_ready_handler_async().
+    /// Thread safe; not from within that handler (from the thread it woke instead).
+    /// @returns false if there is nothing to complete: the handler has not been called (yet), or
+    /// it was completed already.
+    bool complete_communication_ready() noexcept;
+
+    /// Sets an observer of the other participants' (and this one's) lifecycle states: called with
+    /// the participant's name and its status whenever peer_status() of it changes, on the thread
+    /// where that is learnt (the SIL Kit thread, or a thread that re-reads the statuses:
+    /// wait_for_peer(), refresh_peer_statuses()), one call at a time, possibly again with the
+    /// same state. It must be short, must not call into this runtime except peer_status(), and
+    /// must not throw. Only before start(); otherwise throws std::logic_error.
+    void set_peer_status_observer(std::function<void(const std::string& participant, const PeerStatus& status)> observer);
+
     /// Sets a StepHold. While this participant holds a step that starts at P, it does not
     /// announce its next step, so every other synchronised participant runs its steps that start
     /// at or before P and none that starts after P: the simulation stands still at P. Holding
@@ -308,6 +333,16 @@ private:
 
     StepHandler step_handler_;
     StepHold step_hold_;
+    std::function<void()> communication_ready_; ///< set_communication_ready_handler_async()
+    std::mutex communication_ready_mutex_;      ///< guards communication_ready_state_
+    enum class CommunicationReady
+    {
+        NotCalled, ///< the asynchronous handler has not been called
+        Open,      ///< it was called and is not completed
+        Completed,
+    } communication_ready_state_ = CommunicationReady::NotCalled;
+    std::mutex peer_observer_mutex_; ///< guards peer_observer_; held while it is called
+    std::function<void(const std::string&, const PeerStatus&)> peer_observer_;
     std::mutex stop_observer_mutex_; ///< guards stop_observer_; held while it is called
     std::function<void()> stop_observer_;
     void notify_stop_observer() noexcept;

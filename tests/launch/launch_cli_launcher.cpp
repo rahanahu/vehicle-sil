@@ -500,7 +500,7 @@ void enabled(const Options& o)
     const Captured json = launch(o, {"check", "--json", c});
     expect_code(json, 0, "check --json ghost.yaml");
     require(contains(json.standard_output, "      \"required\": true,\n      \"enabled\": false,\n      \"step_ms\": null,\n"
-                                           "      \"status\": \"disabled\",\n      \"reported\": null,\n      \"variables\": null\n") &&
+                                           "      \"status\": \"disabled\",\n      \"reported\": null,\n      \"variables\": null,\n      \"control\": null\n") &&
                 contains(json.standard_output, "      \"code\": \"participant-disabled\",\n"),
             "check --json ghost.yaml wrote:\n" + json.standard_output);
     // Taken in again (--enable), its missing executable is an error; Logger left out instead,

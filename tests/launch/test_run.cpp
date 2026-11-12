@@ -389,6 +389,100 @@ TEST_CASE(processes_left_behind_and_a_participant_that_cannot_start)
                "configuration file\n");
 }
 
+TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
+{
+    // Nothing to connect, connected, and variables that are not offered (the check notes that):
+    // nothing for the run to say.
+    RunOutcome o = passed_run();
+    o.control_hello_timeout_ms = 5000;
+    check_text(lines(assess_run(o)), "");
+    o.participants[0].control = ControlLink::Connected;
+    o.participants[0].control_variables = 12;
+    o.participants[1].control = ControlLink::NotOffered;
+    check_text(lines(assess_run(o)), "");
+    std::string json = format_run_json(report_of(o));
+    CHECK(json.find("      \"control_link\": {\n        \"state\": \"connected\",\n        \"variables\": 12,\n"
+                    "        \"version\": null,\n        \"late_messages\": 0\n      }\n") != std::string::npos);
+    CHECK(json.find("        \"state\": \"not_offered\",\n        \"variables\": null,\n") != std::string::npos);
+
+    // Offered, and no hello; a hello of another version than --describe announced.
+    o.participants[0].control = ControlLink::NoHello;
+    o.participants[1].control = ControlLink::VersionMismatch;
+    o.participants[1].control_version = 7;
+    const std::string expected =
+        "W 5 control-link-no-hello: participant 'Engine': it offers its variables (--describe), but its control agent did "
+        "not say hello within 5000 ms before the simulation started, so its variables cannot be read or written in this "
+        "run. Either the executable did not make the agent's transport that --describe announces (an application with a "
+        "transport of its own gives --no-control), or the launcher did not take its hello (the finding "
+        "control-link-dropped says so, if it is there); the lines [Engine] above show what it wrote\n"
+        "W 7 control-link-version: participant 'Brake': its control agent speaks version 7 of the control messages and "
+        "this launcher version 1, so its variables cannot be read or written in this run: build the ECU and "
+        "vehicle_sil_launch from the same version of vehicle-sil\n";
+    check_text(lines(assess_run(o)), expected);
+    // They are settled when the simulation starts: the participants' end does not change them.
+    check_text(lines(launch::detail::settled_findings(o)), expected);
+    const RunReport r = report_of(o);
+    CHECK(r.result() == RunResult::Passed); // warnings
+    CHECK(report_of(o, true).result() == RunResult::Failed); // --strict
+    json = format_run_json(r);
+    CHECK(json.find("        \"state\": \"no_hello\",\n") != std::string::npos);
+    CHECK(json.find("        \"state\": \"version_mismatch\",\n        \"variables\": null,\n        \"version\": 7,\n") !=
+          std::string::npos);
+    // A version that --describe announced is the check's finding: the run does not say it again.
+    o.participants[0].control = ControlLink::None;
+    o.participants[1].control_version_described = true;
+    check_text(lines(assess_run(o)), "");
+
+    RunOutcome late = passed_run();
+    late.participants[0].control = ControlLink::Connected;
+    late.participants[0].control_late_messages = 3;
+    check_text(lines(assess_run(late)),
+               "W 5 control-link-late-values: participant 'Engine': 3 messages of its control agent's steps reached the "
+               "launcher after the launcher's controller had begun a later step: the values and results that the launcher "
+               "had at a pause were not complete. Its agent must publish within its steps (an executable built with "
+               "ecu_main() does; a transport of its own must send from control::Agent::set_step_sink(), not from another "
+               "thread)\n");
+    CHECK(format_run_json(report_of(late)).find("        \"late_messages\": 3\n") != std::string::npos);
+    CHECK(std::string(control_link_name(ControlLink::None)) == "none");
+    CHECK(std::string(control_link_name(ControlLink::NotOffered)) == "not_offered");
+
+    // A hello, and no answer to the launcher's probe: no_hello as well, said apart.
+    RunOutcome mute = passed_run();
+    mute.control_hello_timeout_ms = 5000;
+    mute.participants[0].control = ControlLink::NoHello;
+    mute.participants[0].control_hello_seen = true;
+    check_text(lines(assess_run(mute)),
+               "W 5 control-link-no-hello: participant 'Engine': it offers its variables (--describe), but its control agent "
+               "said hello and then did not answer that it receives the launcher's commands within 5000 ms before the "
+               "simulation started, so its variables cannot be read or written in this run. Its transport does not answer "
+               "the launcher's probe: build the ECU and vehicle_sil_launch from the same version of vehicle-sil; the lines "
+               "[Engine] above show what it wrote\n");
+
+    // What the launcher's end dropped is said once, with the numbers.
+    RunOutcome dropped = passed_run();
+    dropped.control_refused_hellos = 2;
+    dropped.control_unknown = 40;
+    const std::string said = lines(assess_run(dropped));
+    CHECK(said.rfind("W 0 control-link-dropped: the launcher dropped messages of control agents: 2 hellos it did not take, 0 "
+                     "messages it could not read and 40 messages (or samples) that fit no agent it knows. Hellos are not taken "
+                     "beyond 256 participants with control agents",
+                     0) == 0);
+    CHECK(lines(launch::detail::settled_findings(dropped)) == said);
+    dropped.control_refused_hellos = 0;
+    dropped.control_unknown = 0;
+    dropped.control_undecodable = 1;
+    CHECK(lines(assess_run(dropped)).find("0 hellos it did not take, 1 messages it could not read and 0 messages") != std::string::npos);
+
+    // What was to be done before the start failed: the simulation had started and was aborted.
+    RunOutcome failed = passed_run();
+    failed.simulation = SimulationEnd::Aborted;
+    failed.before_start_error = "no answer from Engine";
+    check_text(lines(assess_run(failed)),
+               "E 0 before-start: what was to be done before the simulation started failed, and the launcher aborted the "
+               "simulation at once: no answer from Engine\n");
+    CHECK(report_of(failed).result() == RunResult::Failed);
+}
+
 TEST_CASE(the_simulation_findings_setup_state_abort_and_interrupt)
 {
     RunOutcome o = passed_run();
@@ -591,7 +685,13 @@ TEST_CASE(the_json_report)
                "      \"exit_code\": 0,\n"
                "      \"signal\": null,\n"
                "      \"left_processes\": false,\n"
-               "      \"log\": null\n"
+               "      \"log\": null,\n"
+               "      \"control_link\": {\n"
+               "        \"state\": \"none\",\n"
+               "        \"variables\": null,\n"
+               "        \"version\": null,\n"
+               "        \"late_messages\": 0\n"
+               "      }\n"
                "    },\n"
                "    {\n"
                "      \"name\": \"Brake\",\n"
@@ -601,7 +701,13 @@ TEST_CASE(the_json_report)
                "      \"exit_code\": null,\n"
                "      \"signal\": null,\n"
                "      \"left_processes\": true,\n"
-               "      \"log\": null\n"
+               "      \"log\": null,\n"
+               "      \"control_link\": {\n"
+               "        \"state\": \"none\",\n"
+               "        \"variables\": null,\n"
+               "        \"version\": null,\n"
+               "        \"late_messages\": 0\n"
+               "      }\n"
                "    }\n"
                "  ],\n"
                "  \"findings\": [\n"
@@ -1062,8 +1168,8 @@ TEST_CASE(log_names_avoid_windows_devices_and_the_json_names_the_log)
     RunOutcome o = passed_run();
     o.participants[0].log = "logs/Engine.log";
     const std::string json = format_run_json(report_of(o));
-    CHECK(json.find("      \"left_processes\": false,\n      \"log\": \"logs/Engine.log\"\n") != std::string::npos);
-    CHECK(json.find("      \"left_processes\": false,\n      \"log\": null\n") != std::string::npos);
+    CHECK(json.find("      \"left_processes\": false,\n      \"log\": \"logs/Engine.log\",\n") != std::string::npos);
+    CHECK(json.find("      \"left_processes\": false,\n      \"log\": null,\n") != std::string::npos);
 }
 
 TEST_CASE(a_participants_line_shows_no_c1_control_and_no_broken_utf8)
@@ -1105,5 +1211,5 @@ TEST_CASE(a_disabled_participant_is_shown_as_not_started_and_is_no_finding)
     const std::string json = format_run_json(r);
     CHECK(json.find("      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": false,\n      \"ended\": "
                     "\"not_started\",\n      \"exit_code\": null,\n      \"signal\": null,\n      \"left_processes\": false,\n"
-                    "      \"log\": null\n") != std::string::npos);
+                    "      \"log\": null,\n      \"control_link\": {\n        \"state\": \"none\",\n        \"variables\": null,\n        \"version\": null,\n        \"late_messages\": 0\n      }\n") != std::string::npos);
 }

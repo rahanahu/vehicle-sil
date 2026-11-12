@@ -39,6 +39,7 @@
 | `vehicle_sil::peer` | 土台 | 1 つの SIL Kit participant と、その J1939 の `Network`（SIL Kit の CAN か外部のポート）、生の CAN、LIN の Master/Slave、Control Agent（J1939 の通信状態の監視の出力を含む）をまとめて作り、仮想時間か実時間で動かす `vehicle_sil::Peer`。`Ecu` を実装する |
 | `vehicle_sil::simulation` | 利用者向け | `vehicle_sil::Simulation`: ECU をプロセス内の仮想バスか、SIL Kit の participant として仮想時間で動かし、失敗を例外で報告する。動かす場所はコンストラクターで選ぶ（SIL Kit では、registry をプロセス内に立てられる）。入門は [examples/getting_started](examples/getting_started)。ECU のクラスを 1 つの実行ファイルにする `ecu_main()`（どの ECU も同じ引数: `--describe`、`--registry-uri`、`--local`。[docs/ecu-executable.md](docs/ecu-executable.md)） |
 | `vehicle_sil::control` | 利用者向け | ECU の Control Agent（型・範囲・単位つきの変数の公開、外からの書き込みを仮想時刻を指定してステップの中で反映。固定容量のキュー）と、Control Server の中核の `Hub`。Agent は ECU が持って動かす（`Ecu::input()`、`output()` で変数を宣言する） |
+| `vehicle_sil::control_silkit` | 利用者向け | Control Agent と `Hub` の間を SIL Kit の publish/subscribe で運ぶ層（`AgentTransport`、`HubTransport`）。`ecu_main()` で作った ECU と `vehicle_sil_launch run` が使う。gRPC は要らない |
 | `vehicle_sil::control_grpc`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のとき） | 利用者向け | Control API（gRPC）の Server と、Agent の接続 `AgentClient`。認証（TLS、トークン、役割）。[使い方](docs/control-api.md) |
 | `vehicle_sil::local` | 土台 | SIL Kit なしでプロセス内の仮想バスに ECU を載せて回す `vehicle_sil::LocalBench`: 仮想バスの上の ECU（`Ecu`）とその `Network` を名前で組み立て、呼んだスレッドで仮想時間で進める。`Simulation` のローカルの実行もこれを使う |
 | `vehicle_sil::testkit`（サンプルと試験が使う） | 試験用 | `LocalBench` の上の J1939 の試験の道具: 出来事と生フレームの記録（`J1939Events`、`FrameLog`）、故障注入の関数（`faults`）。`testkit::LocalCan` は `LocalBench` の別名 |
@@ -49,7 +50,7 @@
 
 | パス | 内容 |
 |---|---|
-| `libs/` | ライブラリ（`core`、`can`、`can_silkit`、`can_netsim`、`j1939`、`lin`、`lin_silkit`、`ecu`、`local`、`testkit`、`peer`、`simulation`、`control`、`control_grpc`）と、ツールと試験の内部用の `process`、`launch` |
+| `libs/` | ライブラリ（`core`、`can`、`can_silkit`、`can_netsim`、`j1939`、`lin`、`lin_silkit`、`ecu`、`local`、`testkit`、`peer`、`simulation`、`control`、`control_silkit`、`control_grpc`）と、ツールと試験の内部用の `process`、`launch` |
 | `proto/` | Control API の定義（`vehicle_sil/control/v1/control.proto`） |
 | `python/` | Control API の Python クライアントと CLI（`python -m vehicle_sil_control`） |
 | `tools/control_server` | Control API の Server（とシミュレーションの調停、時間ゲート）`vehicle_sil_control_server` |

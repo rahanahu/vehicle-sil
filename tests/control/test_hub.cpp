@@ -794,3 +794,50 @@ TEST_CASE(control_hub_open_seqs_survive_the_end_of_the_old_connection)
     engine.step(at(10ms)); // applies it; the result comes on the new connection
     CHECK(status_of(hub, s1, "Engine") == TargetStatus::Applied);
 }
+
+TEST_CASE(control_hub_the_end_of_an_agent_settles_what_is_open_for_it)
+{
+    Hub hub;
+    FakePeer engine("Engine", "e1", hub);
+    FakePeer brake("Brake", "b1", hub);
+    engine.connect();
+    brake.connect();
+    const auto queued = hub.write(req({{"Engine", "level", 1.0}, {"Brake", "level", 1.0}}, at(20ms)));
+    engine.pump();
+    brake.pump();
+    const auto unsent = hub.write(req({{"Engine", "level", 2.0}}, at(30ms))); // handed to the link, not queued
+    const auto done = hub.write(req({{"Engine", "lamp", true}}));
+    engine.step(at(10ms));
+    CHECK(status_of(hub, done, "Engine") == TargetStatus::Applied);
+
+    // The transport knows that this incarnation will not come back: nothing stays open for it.
+    hub.agent_ended(engine.connection, "the participant left");
+    CHECK(status_of(hub, queued, "Engine") == TargetStatus::Unknown);
+    CHECK(target(*hub.operation(queued), "Engine").reason == "the participant left");
+    CHECK(status_of(hub, unsent, "Engine") == TargetStatus::Unknown);
+    CHECK(status_of(hub, done, "Engine") == TargetStatus::Applied); // what was final stays
+    CHECK(status_of(hub, queued, "Brake") == TargetStatus::Queued); // the others are not touched
+    CHECK(!hub.operation(queued)->done());
+    for (const auto& peer : hub.peers())
+    {
+        CHECK_EQ(peer.connected, peer.participant == "Brake");
+    }
+    // A waiter gets its answer.
+    CHECK(hub.wait_done(unsent, 0ms).has_value());
+    // A result that still arrives changes nothing; a second end neither.
+    hub.agent_result(engine.connection, CommandResult{queued, CommandStatus::Applied, at(20ms), false, {}});
+    hub.agent_ended(engine.connection, "again");
+    CHECK(status_of(hub, queued, "Engine") == TargetStatus::Unknown);
+    CHECK(target(*hub.operation(queued), "Engine").reason == "the participant left");
+
+    // The end of a connection that another connection of the same incarnation has replaced
+    // settles nothing of the new one.
+    const auto old_connection = brake.connection;
+    brake.connect(std::vector<std::uint64_t>{queued});
+    hub.agent_ended(old_connection, "the old connection ended");
+    CHECK(status_of(hub, queued, "Brake") == TargetStatus::Queued);
+    CHECK(hub.peers().at(0).connected);
+    hub.agent_ended(brake.connection, "gone");
+    CHECK(status_of(hub, queued, "Brake") == TargetStatus::Unknown);
+    CHECK(hub.operation(queued)->done());
+}

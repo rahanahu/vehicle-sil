@@ -59,7 +59,8 @@ TEST_CASE(empty_description_has_every_key)
                "  \"name\": \"Empty\",\n"
                "  \"step_ns\": 1000000,\n"
                "  \"networks\": [],\n"
-               "  \"variables\": []\n"
+               "  \"variables\": [],\n"
+               "  \"control\": null\n"
                "}\n");
 }
 
@@ -72,7 +73,8 @@ TEST_CASE(real_time_step_is_null)
                "  \"name\": \"Bridge\",\n"
                "  \"step_ns\": null,\n"
                "  \"networks\": [],\n"
-               "  \"variables\": []\n"
+               "  \"variables\": [],\n"
+               "  \"control\": null\n"
                "}\n");
 }
 
@@ -109,6 +111,7 @@ TEST_CASE(full_description)
     count.max = 1e300;
     d.variables.push_back(count);
 
+    d.control = vehicle_sil::ControlOffer{"silkit", 1};
     check_text(to_json(d),
                R"({
   "vehicle_sil_ecu": 1,
@@ -218,7 +221,11 @@ TEST_CASE(full_description)
       "description": "",
       "items": []
     }
-  ]
+  ],
+  "control": {
+    "transport": "silkit",
+    "wire_version": 1
+  }
 }
 )");
 }

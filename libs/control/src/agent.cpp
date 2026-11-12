@@ -482,20 +482,24 @@ void Agent::apply(Pending& command, SimTime now, bool late)
 
 void Agent::on_step_end(SimTime now)
 {
-    if (next_sample_ && now < *next_sample_)
+    const Snapshot* sampled = nullptr;
+    if (!next_sample_ || now >= *next_sample_)
     {
-        return;
+        sampled = &sample(now);
+        if (options_.sample_period > SimDuration::zero())
+        {
+            // The next multiple of the period after `now`, as Peer::every() counts.
+            const auto periods = now.time_since_epoch() / options_.sample_period + 1;
+            next_sample_ = SimTime{} + options_.sample_period * periods;
+        }
     }
-    sample(now);
-    if (options_.sample_period > SimDuration::zero())
+    if (step_sink_)
     {
-        // The next multiple of the period after `now`, as Peer::every() counts.
-        const auto periods = now.time_since_epoch() / options_.sample_period + 1;
-        next_sample_ = SimTime{} + options_.sample_period * periods;
+        step_sink_(now, sampled);
     }
 }
 
-void Agent::sample(SimTime now)
+const Snapshot& Agent::sample(SimTime now)
 {
     auto& buffer = buffers_[back_];
     buffer.values.resize(variables_.size()); // allocates once per buffer, in its first sample
@@ -506,6 +510,29 @@ void Agent::sample(SimTime now)
     buffer.time = now;
     buffer.sequence = ++sample_sequence_;
     back_ = middle_.exchange(back_ | kFresh, std::memory_order_acq_rel) & ~kFresh;
+    // Handed over, and from now on only read (by latest() too) until this thread gets it back as
+    // its back buffer, which is at its next sample at the earliest.
+    return buffer;
+}
+
+void Agent::set_step_sink(StepSink sink)
+{
+    if (!sink)
+    {
+        throw std::invalid_argument("vehicle_sil::control::Agent::set_step_sink(): the function is empty");
+    }
+    if (step_sink_)
+    {
+        throw std::logic_error("vehicle_sil::control::Agent::set_step_sink(): the agent has a step sink already (one "
+                               "transport sends from its steps); attach one such transport per agent");
+    }
+    const std::lock_guard lock(finish_mutex_);
+    if (stepped_.load(std::memory_order_acquire) || finished_)
+    {
+        throw std::logic_error("vehicle_sil::control::Agent::set_step_sink(): the steps have begun; set the step sink "
+                               "(attach the transport) before the first step");
+    }
+    step_sink_ = std::move(sink);
 }
 
 void Agent::log(EventLevel level, std::string text)

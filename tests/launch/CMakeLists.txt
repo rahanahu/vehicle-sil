@@ -54,7 +54,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
               interrupt_ending ended_early timeout no_console killed usage disabled events events_usage stdin_stop
               stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
               events_slow events_findings events_nonblocking events_output events_stderr realtime late stall
-              speed_change step_width pause_step paused_failures time_usage
+              speed_change step_width pause_step paused_failures time_usage control
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
@@ -72,4 +72,22 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
          --docs ${PROJECT_SOURCE_DIR}/docs/simulation-config.md
     RUN_SERIAL)
+endif()
+
+# The run of vehicle_sil_launch as a library with a hub of the caller: a parameter written in the
+# window before the start is what each ECU's process sees in its step at 0, and the values the
+# hub has at the end are those of the last steps.
+if(TARGET vehicle_sil_launch_test_ecu)
+  add_executable(vehicle_sil_launch_control_test launch_control_test.cpp)
+  target_link_libraries(vehicle_sil_launch_control_test PRIVATE vehicle_sil::launch vehicle_sil::control SilKit::SilKit)
+  # The names of the topics (a hand-made agent says hello and writes what is no message).
+  target_include_directories(vehicle_sil_launch_control_test PRIVATE ${PROJECT_SOURCE_DIR}/libs/control_silkit/src)
+  vehicle_sil_target_defaults(vehicle_sil_launch_control_test)
+  vehicle_sil_copy_runtime_dlls(vehicle_sil_launch_control_test)
+  add_dependencies(vehicle_sil_launch_control_test vehicle_sil_launch_test_ecu)
+  add_test(NAME launch_control.a_write_in_the_start_window_reaches_each_process_before_its_first_step
+           COMMAND vehicle_sil_launch_control_test $<TARGET_FILE:vehicle_sil_launch_test_ecu>
+                   ${CMAKE_CURRENT_BINARY_DIR}/control)
+  set_tests_properties(launch_control.a_write_in_the_start_window_reaches_each_process_before_its_first_step PROPERTIES
+    LABELS "integration;launch;control" TIMEOUT 300)
 endif()

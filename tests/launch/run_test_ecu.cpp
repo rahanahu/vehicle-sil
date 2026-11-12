@@ -23,11 +23,18 @@
 //   grandchild <helper>     in its first step, starts <helper> (tests/process/process_helper.cpp)
 //                           as a process that sleeps, writes "<name>-grandchild.pid", and is not
 //                           ended with the ECU
+//   variables               declares the input "level", the parameter "gain", and the outputs
+//                           "gain_at_0" (the parameter as the step at 0 saw it) and "ticks" (the
+//                           number of its 10 ms steps so far)
+// With the file "test-ecu-no-control" in its working directory, the ECUs started there run with
+// --no-control (their --describe still has the variables): an executable that describes
+// variables and never offers them.
 #include "spawn_sleeper.hpp"
 
 #include "vehicle_sil/simulation/ecu_main.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -35,6 +42,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace std::chrono_literals;
 
@@ -129,10 +137,18 @@ public:
             {
                 in >> grandchild_;
             }
+            else if (word == "variables")
+            {
+                ecu.input("level", &level_);
+                ecu.input("gain", &gain_, {.parameter = true});
+                ecu.output("gain_at_0", &gain_at_0_);
+                ecu.output("ticks", &ticks_);
+            }
         }
         // Not in the constructor: --describe constructs the ECU too, and must start nothing.
         ecu.at(vehicle_sil::SimTime{}, [this](vehicle_sil::SimTime) {
             ran_ = true;
+            gain_at_0_ = gain_;
             if (pid_)
             {
                 std::ofstream(name_ + ".pid") <<
@@ -155,6 +171,7 @@ public:
             }
         });
         ecu.every(10ms, [this](vehicle_sil::SimTime now) {
+            ++ticks_;
             const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
             if (slow_ > 0)
             {
@@ -229,6 +246,10 @@ private:
     long long linger_ = 0;
     bool ran_ = false;
     int stop_code_ = -1;
+    std::int64_t level_ = 0;
+    std::int64_t gain_ = 0;
+    std::int64_t gain_at_0_ = -1;
+    std::int64_t ticks_ = 0;
 };
 
 } // namespace
@@ -240,5 +261,17 @@ int main(int argc, char** argv)
     {
         in >> step;
     }
-    return vehicle_sil::ecu_main<TestEcu>(argc, argv, {.name = "TestEcu", .step = std::chrono::milliseconds(step)});
+    std::vector<char*> args(argv, argv + argc);
+    static char no_control[] = "--no-control";
+    bool describe = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        describe = describe || std::string(argv[i]) == "--describe";
+    }
+    if (std::ifstream("test-ecu-no-control") && !describe)
+    {
+        args.push_back(no_control);
+    }
+    return vehicle_sil::ecu_main<TestEcu>(static_cast<int>(args.size()), args.data(),
+                                          {.name = "TestEcu", .step = std::chrono::milliseconds(step)});
 }

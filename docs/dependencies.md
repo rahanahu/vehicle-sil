@@ -89,12 +89,12 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 | ライブラリ | 用途 | API |
 |---|---|---|
 | SIL Kit | 参加 | `Config::ParticipantConfigurationFromString`、`CreateParticipant(config, name, registryUri)` |
-| SIL Kit | lifecycle | `CreateLifecycleService({OperationMode::Autonomous / Coordinated})`、`StartLifecycle`、`Stop`、`State`、`ReportError`、`SetCommunicationReadyHandler` |
+| SIL Kit | lifecycle | `CreateLifecycleService({OperationMode::Autonomous / Coordinated})`、`StartLifecycle`、`Stop`、`State`、`ReportError`、`SetCommunicationReadyHandler`、`SetCommunicationReadyHandlerAsync` と `CompleteCommunicationReadyHandlerAsync`（始まる前の窓。`SimulationController::set_start_window()`） |
 | SIL Kit | 時刻同期 | `ILifecycleService::CreateTimeSyncService`、`ITimeSyncService::SetSimulationStepHandlerAsync` と `CompleteSimulationStep`（ハンドラの最後で完了させる） |
 | SIL Kit | system controller（experimental） | `Experimental::Participant::CreateSystemController`、`SetWorkflowConfiguration`、`AbortSimulation` |
 | SIL Kit | LIN（`vehicle_sil::lin_silkit`） | `CreateLinController`、`ILinController::Init`、`SetFrameResponse`、`SendFrameHeader`、`AddFrameStatusHandler` |
 | SIL Kit | LIN dynamic response（experimental） | `Experimental::Services::Lin::InitDynamic`、`AddFrameHeaderHandler`、`SendDynamicResponse` |
-| SIL Kit | publish/subscribe（examples/virtual_time） | `CreateDataPublisher`、`CreateDataSubscriber` |
+| SIL Kit | publish/subscribe（`vehicle_sil::control_silkit`、examples/virtual_time） | `CreateDataPublisher`（履歴 0。hello だけ履歴 1）、`CreateDataSubscriber`、`IDataPublisher::Publish`、`PubSubSpec`（トピックとメディアタイプ。ラベルは使わない） |
 | SIL Kit | 他参加者の監視 | `CreateSystemMonitor`、`AddParticipantStatusHandler`（`SetParticipantConnectedHandler` と `SetParticipantDisconnectedHandler` は使わない。「上流の既知の不具合」を参照） |
 | SIL Kit | CAN | `CreateCanController`、`ICanController::Start/Stop/SendFrame/SetBaudRate`、`AddFrameHandler`、`AddFrameTransmitHandler`。`SendFrame` の userContext に送信時刻を入れる（簡易 CAN Network Simulator との取り決め） |
 | SIL Kit | Network Simulator（experimental、`vehicle_sil::can_netsim`） | `Experimental::Participant::CreateNetworkSimulator`、`INetworkSimulator::SimulateNetwork/Start`、`ISimulatedNetwork`、`Can::ISimulatedCanController`、`Can::ICanEventProducer::Produce`（フレーム、送信確認、状態の変化） |
@@ -110,6 +110,15 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 - 購読が確立する前に送ったフレームは届かないことがあります。そのため、コントローラは `ParticipantRuntime::start()` の前に作ります。
 - `sil-kit-registry --listen-uri silkit://127.0.0.1:0 --generate-configuration <file>` は空きポートで待ち受け、実際の URI を含む設定ファイルを原子的に書き出します。統合テストはこれを使って、並列実行でもポートが衝突しないようにしています。
 - 時刻同期した participant は、自分の次のステップ時刻がほかの全員の次のステップ時刻以下のときだけ進みます（`TimeConfiguration::OtherParticipantHasLowerTimepoint`）。「最も遅いピアを待つ」と `SimulationController` の stop_at の保証は、これに基づいています。
+- Agent と Hub の間を publish/subscribe で運ぶ層（`vehicle_sil::control_silkit`）と始まる前の窓は、次の挙動を前提にしています。試験 `control_silkit.*` と `launch_control.*` が、まとめて確かめます（どれかが変わると、`HubTransportStats::late_messages` が 0 でなくなるか、窓の中の書き込みが時刻 0 のステップに間に合わなくなります）。
+  - `IDataPublisher::Publish` は、呼んだスレッドでデータを写し、送信を participant の I/O スレッドの待ち行列に積むだけです。どのスレッドから呼んでも安全で、1 つの相手には積んだ順に届きます。
+  - ステップの完了（`CompleteSimulationStep`）も同じ待ち行列に積まれます。そのため、ステップの中で送ったメッセージは、そのステップの次の時刻の知らせより前に相手に届きます。上の「進む条件」と合わせて、受け手のステップ P が始まる時点で、P より前に始まった送り手のステップのメッセージは全部届いています（ちょうど P のステップの分は決まりません）。ステップの外（別のスレッド、受信のハンドラー）から送ったメッセージには、この関係がありません。
+  - 受信のハンドラーは、participant の I/O スレッドで、届いた順に 1 つずつ呼ばれます。ステップのハンドラーも同じスレッドです。時間ゲートがステップを保留している間も、I/O スレッドは空いていて、メッセージは届きます。
+  - 履歴 1 の発行者が最後に送ったメッセージは、後から購読した相手にも届きます（発行者の participant がつながっている間）。participant を始める前に送った hello も届きます。
+  - Coordinated の participant の CommunicationReady のハンドラーは、必須の participant が全員 ServicesCreated になり、全員から返事が届き、自分の publish/subscribe の購読が確認された後で呼ばれます（ほかの participant は、その時点でまだ CommunicationInitializing の途中のことがあります。コマンドは受け取れます）。相手は、購読の知らせを受けると、履歴（hello）を送ってから確認を返すので、必須の ECU が始める前に送った hello は、窓が開く前に届いています。非同期のハンドラーでは、`CompleteCommunicationReadyHandlerAsync` を呼ぶまで、誰も ReadyToRun に進まず、どのステップも始まりません。その間、publish/subscribe は届きます。`CompleteCommunicationReadyHandlerAsync` は、ハンドラーが呼ばれる前に呼ぶと無視されます（`ParticipantRuntime` が、呼ばれた後にだけ渡します）。
+  - 始めたライフサイクルを持つ participant が、Shutdown せずに接続を切ると、ほかの participant にはその状態が Error として届きます（`HubTransport` が、いなくなった Agent の接続を終えるのに使います）。
+  - participant の構成の `EnableMessageAggregation` は既定の Off のままであること（On にした participant は、データのメッセージを溜めてから送るので、上の順序の前提が変わります）。
+  - participant を壊すとき、すでに I/O スレッドの待ち行列に積んだ送信は、接続を閉じる処理より前に実行されます（Agent の「最後の知らせ」が届くのは、これによります。届かなくても、接続は `HubTransport` を壊すときに終わります）。
 - 時刻同期した participant が送るメッセージのタイムスタンプは、送信時のステップの時刻です。
 - CAN の `SendFrame` の userContext は、ポインタの値（64 ビット）のまま運ばれます。ネットワークシミュレーターの `CanFrameRequest` と送信確認には届き、他の受信者の RX のフレームでは `nullptr` になります（`CanController::ReceiveMsg`）。`SilKitCanPort` は送信時刻を入れ、簡易 CAN Network Simulator がそれを読みます。
 - Network Simulator API（experimental）: あるネットワークの模擬を引き受ける participant が現れると、そのネットワークの CAN コントローラーは詳細シミュレーションに切り替わり、送信の要求、ボーレート、モードの変更をその participant に送ります。コントローラーの状態（`Started` など）は、シミュレーターが返す状態の変化で初めて変わります。`ControllerDescriptor` は見つけた順の通し番号で、決定的ではありません。

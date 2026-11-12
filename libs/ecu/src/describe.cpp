@@ -225,6 +225,17 @@ std::string to_json(const EcuDescription& description)
     }
     w.end_array();
     detail::write_variables(w, "variables", description.variables);
+    if (description.control)
+    {
+        w.begin_object("control");
+        w.string("transport", description.control->transport);
+        w.integer("wire_version", description.control->wire_version);
+        w.end_object();
+    }
+    else
+    {
+        w.null("control");
+    }
     w.end_object();
     std::string out = w.take();
     out += '\n';

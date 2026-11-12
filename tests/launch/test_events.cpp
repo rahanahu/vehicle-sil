@@ -939,7 +939,8 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "check-variables",
     "speed",
     "start-paused",
-    "time-commands"
+    "time-commands",
+    "control-links"
   ]
 }
 )");

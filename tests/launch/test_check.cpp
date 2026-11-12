@@ -438,6 +438,73 @@ TEST_CASE(a_lin_network_has_one_master)
                           "master\n");
 }
 
+TEST_CASE(reads_what_an_executable_says_about_offering_its_variables)
+{
+    EcuDescription d{"Engine", 10ms, {}, {variable("x")}};
+    // Not said (an executable of an earlier vehicle-sil), or null (--no-control): not offered.
+    CHECK(!read_description(to_json(d)).description.control.has_value());
+    CHECK(!read_description(R"({"vehicle_sil_ecu": 1, "name": "A", "step_ns": 1000, "networks": []})").description.control.has_value());
+    d.control = ControlOffer{"silkit", 3};
+    const ReportedEcu read = read_description(to_json(d));
+    CHECK(read.description == d);
+    CHECK(read.description.control->transport == "silkit");
+    CHECK_EQ(read.description.control->wire_version, 3);
+    // Keys it does not know are ignored; what is there must be of the right kind.
+    const std::string head = R"({"vehicle_sil_ecu": 1, "name": "A", "step_ns": 1000, "networks": [], "control": )";
+    const ControlOffer other{"other", 2};
+    CHECK(read_description(head + R"({"transport": "other", "wire_version": 2, "later": true}})").description.control == other);
+    const auto refused = [&head](const std::string& control) {
+        try
+        {
+            (void)read_description(head + control + "}");
+        }
+        catch (const DescriptionError& e)
+        {
+            return std::string(e.what());
+        }
+        return std::string("(read)");
+    };
+    check_text(refused("7"), "control is not an object");
+    check_text(refused(R"({"wire_version": 1})"), "control: the key transport is missing");
+    check_text(refused(R"({"transport": "silkit"})"), "control: the key wire_version is missing");
+    check_text(refused(R"({"transport": "silkit", "wire_version": -1})"), "control.wire_version is -1, not a version");
+    check_text(refused(R"({"transport": "silkit", "wire_version": 70000})"), "control.wire_version is 70000, not a version");
+}
+
+TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_messages_a_warning)
+{
+    // Variables, offered in this launcher's version of the messages: nothing to say.
+    Setup s = good_pair();
+    s.results[0].ecu->description.variables = {variable("x")};
+    s.results[0].ecu->description.control = ControlOffer{"silkit", 1};
+    // No variables: nothing to offer, whatever the executable says.
+    s.results[1].ecu->description.control.reset();
+    check_text(s.check(), "");
+    // Variables that the executable does not offer (--no-control, an earlier vehicle-sil).
+    s.results[1].ecu->description.variables = {variable("y")};
+    check_text(s.check(), "N 9 control-link-not-offered: participant 'Dashboard': it describes variables, but does not offer "
+                          "them to the simulation (--no-control, or an executable of a vehicle-sil that does not yet): "
+                          "vehicle_sil_launch run cannot read or write them\n");
+    // Offered in another version of the messages: known before anything is started.
+    s.results[1].ecu->description.control = ControlOffer{"silkit", 2};
+    check_text(s.check(), "W 9 control-link-version: participant 'Dashboard': it offers its variables as silkit messages of "
+                          "version 2, and this vehicle_sil_launch speaks silkit messages of version 1, so vehicle_sil_launch "
+                          "run cannot read or write them: build the ECU and vehicle_sil_launch from the same version of "
+                          "vehicle-sil\n");
+    // The check's JSON says what each executable offers.
+    CheckReport r;
+    r.file = "sim.yaml";
+    r.config = s.config;
+    r.participants = s.results;
+    const std::string json = format_json(r);
+    CHECK(json.find("      \"control\": {\n        \"transport\": \"silkit\",\n        \"wire_version\": 1\n      }\n") !=
+          std::string::npos);
+    CHECK(json.find("\"wire_version\": 2\n") != std::string::npos);
+    // A disabled participant is not in the simulation: nothing about its variables.
+    s.config.participants[1].enabled = false;
+    CHECK(s.check().find("control-link") == std::string::npos);
+}
+
 TEST_CASE(another_vehicle_sil_version_is_a_note)
 {
     Setup s = good_pair();
@@ -666,7 +733,8 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
             }
           ]
         }
-      ]
+      ],
+      "control": null
     },
     {
       "name": "Dashboard",
@@ -705,7 +773,8 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
           }
         ]
       },
-      "variables": []
+      "variables": [],
+      "control": null
     },
     {
       "name": "Cluster é",
@@ -719,7 +788,8 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "step_ms": null,
       "status": "failed",
       "reported": null,
-      "variables": null
+      "variables": null,
+      "control": null
     }
   ],
   "networks": [
@@ -777,7 +847,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
 )");
     // A description without "variables" (an older ECU): not known.
     r.participants[1].ecu->variables_reported = false;
-    CHECK(format_json(r).find("\n        ]\n      },\n      \"variables\": null\n    },\n    {\n      \"name\": \"Cluster") !=
+    CHECK(format_json(r).find("\n        ]\n      },\n      \"variables\": null,\n      \"control\": null\n    },\n    {\n      \"name\": \"Cluster") !=
           std::string::npos);
 }
 
@@ -1024,7 +1094,7 @@ TEST_CASE(the_reports_show_a_disabled_participant)
     CHECK(json.find("      \"required\": true,\n      \"enabled\": true,\n      \"step_ms\": 10,\n      \"status\": "
                     "\"described\",\n") != std::string::npos);
     CHECK(json.find("      \"required\": true,\n      \"enabled\": false,\n      \"step_ms\": null,\n      \"status\": "
-                    "\"disabled\",\n      \"reported\": null,\n      \"variables\": null\n") != std::string::npos);
+                    "\"disabled\",\n      \"reported\": null,\n      \"variables\": null,\n      \"control\": null\n") != std::string::npos);
     CHECK(json.find("      \"participants\": [\n        \"Engine\"\n      ]\n") != std::string::npos);
 }
 

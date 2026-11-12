@@ -658,6 +658,23 @@ void EventStream::participant(const std::string& name, ParticipantState state)
          }));
 }
 
+void EventStream::control_link(const std::string& name, std::string_view state, std::optional<std::size_t> variables,
+                               std::optional<int> version)
+{
+    emit("control_link", object([&](Writer& w) {
+             w.string("name", name);
+             w.string("state", state);
+             if (variables)
+             {
+                 w.integer("variables", static_cast<std::int64_t>(*variables));
+             }
+             if (version)
+             {
+                 w.integer("version", *version);
+             }
+         }));
+}
+
 void EventStream::participant_not_started(const std::string& name, const std::string& message)
 {
     emit("participant", object([&](Writer& w) {

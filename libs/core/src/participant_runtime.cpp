@@ -165,6 +165,58 @@ void ParticipantRuntime::set_communication_ready_handler(std::function<void()> h
     lifecycle_->SetCommunicationReadyHandler(std::move(handler));
 }
 
+void ParticipantRuntime::set_communication_ready_handler_async(std::function<void()> handler)
+{
+    if (started())
+    {
+        throw std::logic_error("ParticipantRuntime::set_communication_ready_handler_async() must be called before start()");
+    }
+    communication_ready_ = std::move(handler);
+    lifecycle_->SetCommunicationReadyHandlerAsync([this] {
+        {
+            // Before the handler: a thread it wakes may complete at once. The lock also orders
+            // SIL Kit's own (unsynchronised) record of the call before the completing thread's
+            // read of it.
+            const std::lock_guard lock(communication_ready_mutex_);
+            communication_ready_state_ = CommunicationReady::Open;
+        }
+        if (communication_ready_)
+        {
+            communication_ready_();
+        }
+    });
+}
+
+bool ParticipantRuntime::complete_communication_ready() noexcept
+{
+    const std::lock_guard lock(communication_ready_mutex_);
+    if (communication_ready_state_ != CommunicationReady::Open)
+    {
+        return false;
+    }
+    communication_ready_state_ = CommunicationReady::Completed;
+    try
+    {
+        lifecycle_->CompleteCommunicationReadyHandlerAsync(); // queues the transition on the SIL Kit thread
+    }
+    catch (const std::exception&)
+    {
+        // Only queues a task; nothing to recover if even that fails.
+    }
+    return true;
+}
+
+void ParticipantRuntime::set_peer_status_observer(std::function<void(const std::string&, const PeerStatus&)> observer)
+{
+    if (started())
+    {
+        throw std::logic_error("ParticipantRuntime::set_peer_status_observer() must be called before start()");
+    }
+    // The SIL Kit thread may deliver a status (on_status()) already.
+    const std::lock_guard lock(peer_observer_mutex_);
+    peer_observer_ = std::move(observer);
+}
+
 void ParticipantRuntime::start(std::chrono::milliseconds timeout)
 {
     if (started())
@@ -733,6 +785,20 @@ void ParticipantRuntime::on_status(const orch::ParticipantStatus& status, bool r
         record.enter_time = status.enterTime;
     }
     peers_cv_.notify_all();
+    {
+        const std::lock_guard lock(peer_observer_mutex_);
+        if (peer_observer_)
+        {
+            try
+            {
+                peer_observer_(status.participantName, PeerStatus{status.state});
+            }
+            catch (...)
+            {
+                // An observer must not disturb the status handling.
+            }
+        }
+    }
     // This participant's own status comes here too: a stop requested after a step failure
     // waited for the Error (deliver_stop()).
     if (status.participantName == options_.participant_name)

@@ -29,6 +29,7 @@ int main(int argc, char** argv)
 | `--describe` | ECU をプロセス内の仮想バスの上で組み立て、何も動かさず、どこにも接続せずに、`to_json(Ecu::describe())` を標準出力に書いて終了します。 |
 | `--registry-uri <uri>` | `<uri>` の registry の SIL Kit のシミュレーションに、Coordinated で仮想時間の participant として参加し、シミュレーションが終わるまで動きます。始めるのと止めるのは、ほかのプロセスの controller（`vehicle_sil_sim_controller`）です。 |
 | `--start-timeout-ms <ms>` | `--registry-uri` のときだけ。参加してからシミュレーションが始まるまで待つ時間（1 以上の整数。既定は 30000）です。それまでに始まらなければ、終了コード 3 です。ECU をたくさん起動するときや、遅いマシンで使います。 |
+| `--no-control` | `--registry-uri` のとき、ECU の変数をシミュレーションへ出しません（下の「変数を出す」）。ECU の動きは変わりません。`--describe` に付けると、`variables` はそのままで、`control` が `null` になります（まとめる側は、この ECU を待ちません）。`--local` に付けても何も変わりません。 |
 | `--local --run-for-ms <ms>` | この ECU だけを、プロセス内の仮想バスの上で、仮想時間で `<ms>` ミリ秒（1 以上の整数）動かします。ECU を単体で確かめるときに使います。 |
 | `--name <name>` | `EcuMainOptions::name` の代わりの participant 名です（ASCII か UTF-8）。`--describe` の `name` にも効きます。変わるのは名前だけで、J1939 の NAME、アドレス、変数の名前は同じです。同じ ECU を 2 つ載せるときは、それらがぶつからないようにしてください。 |
 | `--help`（`-h`） | 使い方を標準出力に書いて、0 で終了します。ほかの引数に誤りがあっても使い方を書きます。ただし、値を取る引数の後ろの `-h` は値です（`--name -h` は名前が `-h`）。 |
@@ -48,6 +49,17 @@ int main(int argc, char** argv)
 - 失敗は、標準エラーに 1 行 `error: <ECU 名>: <理由と直し方>` を書きます（SIL Kit の文言の改行は空白にします。`std::exception` でない例外も、固定の文言で 1 行にします）。ECU 名は `--name` で変えた名前です（引数の誤りのときは `EcuMainOptions::name`）。引数の誤りでは、続けて使い方を書きます。
 - シミュレーションが始まらないときの文言は、時間切れ（controller がいない、必要な participant がそろわない。controller と `--start-timeout-ms` の確かめ方を添えます）と、それ以外（例: 変数の名前が `Peer` の監視の出力とぶつかる）で分けます。
 - `ecu_main` が標準出力に書くのは、`--describe` の JSON と `--help` の使い方だけです。`--describe` では、ECU を組み立てる前から、プロセスが終わるまで、標準出力（fd 1）を標準エラーに向けます（元に戻しません）。`App` のコンストラクターとデストラクター、`App` のスレッド、`atexit`、リンクしたライブラリが標準出力に書いたもの（`printf`、`std::cout` など）は、標準エラーに出ます。JSON は、元の標準出力を複製した記述子に直接書きます。標準エラーが閉じていれば、先に null デバイスを開いて標準エラーにするので、`App` の出力はどこにも出ません。標準出力が閉じていれば、JSON を書けないので終了コード 3 です。`ecu_main` が戻った後も fd 1 は標準エラーのままなので、`ecu_main` は `main()` の最後で呼びます。
+
+### 変数を出す（`--registry-uri`）
+
+変数を宣言した ECU（`input()`、`output()` など。`agent()` を呼んだだけの ECU も）は、`--registry-uri` で参加するとき、何も書かなくても、その変数を SIL Kit の publish/subscribe でシミュレーションへ出します（`vehicle_sil::control_silkit::AgentTransport`。[architecture.md](architecture.md) の「SIL Kit の上の運び手」）。`vehicle_sil_launch run` がそれを受けて、変数を読み書きする側になります（[simulation-config.md](simulation-config.md) の「変数を読み書きする口」）。受ける側がいなければ、送ったものは誰にも届かないだけです。
+
+- gRPC も Protocol Buffers も要りません（ECU の実行ファイルは、どちらにも依存しません）。
+- 値と書き込みの結果は、ステップの中で、値を読んだ直後に送ります。送る頻度は Agent の `sample_period`（既定 10 ms。`Ecu::set_agent_options()`）です。間引きはしません。
+- 出すことは `--describe` の `control` で自己申告します（`Ecu::describe()` 自体は申告しません。`ecu_main` が足します）。まとめる側は、申告した ECU だけを待ちます。
+- `--no-control` で出さなくなります（`--describe` の `control` も `null` になります）。アプリが Agent に自分の通信の側を付けるときは、`--no-control` を付けてください（`--describe` の時点で通信の側が付いていれば `ecu_main` は申告しませんが、付いていなければ「出す」と申告し、まとめる側が hello を待ちます）。アプリが自分で通信の側（`control::TransportLease` を持つもの）を Agent に付けているときも、`ecu_main` は付けません。
+- 変数のない ECU は何も出しません。
+- この区間に認証はありません（registry に参加できる者は、変数に書けます）。
 
 ### 止まるよう求められたとき（`--registry-uri`）
 
@@ -121,6 +133,9 @@ int main(int argc, char** argv)
 | `variables[].step` | 編集の刻みの目安。なければ `null` |
 | `variables[].description` | 説明（なければ `""`） |
 | `variables[].items` | `"enum"` の値の配列（`name` と、64 ビットの整数の `value`）。ほかの型では空 |
+| `control` | この実行ファイルが `--registry-uri` のときに変数をシミュレーションへ出すなら、その出し方。出さない（`--no-control`）なら `null`。このキーができる前の vehicle-sil でビルドした実行ファイルには、このキーがありません（読む側は `null` と同じに扱います） |
+| `control.transport` | 運び手。いまは `"silkit"`（SIL Kit の publish/subscribe）だけ |
+| `control.wire_version` | メッセージの形式の版（整数）。まとめる側の版と違えば、変数を読み書きできません |
 
 例: `vehicle_sil_engine_ecu --describe` の出力です（CTest の `ecu_main.describe` が、実行ファイルの出力とこのブロックをバイト単位で照合します）。
 
@@ -168,7 +183,11 @@ int main(int argc, char** argv)
       "description": "",
       "items": []
     }
-  ]
+  ],
+  "control": {
+    "transport": "silkit",
+    "wire_version": 1
+  }
 }
 ```
 

@@ -5,6 +5,9 @@
 
 #include "vehicle_sil/launch/events.hpp"
 
+#include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/control/wire.hpp"
+#include "vehicle_sil/control_silkit/hub_transport.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/core/simulation_watch.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
@@ -112,6 +115,28 @@ const char* ending_name(Ending ending)
     }
     return "not_started";
 }
+
+} // namespace
+
+const char* control_link_name(ControlLink link)
+{
+    switch (link)
+    {
+    case ControlLink::None:
+        return "none";
+    case ControlLink::Connected:
+        return "connected";
+    case ControlLink::NoHello:
+        return "no_hello";
+    case ControlLink::VersionMismatch:
+        return "version_mismatch";
+    case ControlLink::NotOffered:
+        return "not_offered";
+    }
+    return "none";
+}
+
+namespace {
 
 const char* simulation_name(SimulationEnd end)
 {
@@ -260,6 +285,44 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                     "; a participant should end when the simulation ends (" + lines_hint(p) + ")",
                 &p);
         }
+        if (p.control == ControlLink::NoHello)
+        {
+            add(Severity::Warning, "control-link-no-hello",
+                pre + "it offers its variables (--describe), but " +
+                    (p.control_hello_seen ? "its control agent said hello and then did not answer that it receives the "
+                                            "launcher's commands within "
+                                          : "its control agent did not say hello within ") +
+                    std::to_string(outcome.control_hello_timeout_ms) +
+                    " ms before the simulation started, so its variables cannot be read or written in this run. " +
+                    (p.control_hello_seen
+                         ? "Its transport does not answer the launcher's probe: build the ECU and vehicle_sil_launch from "
+                           "the same version of vehicle-sil"
+                         : "Either the executable did not make the agent's transport that --describe announces (an "
+                           "application with a transport of its own gives --no-control), or the launcher did not take its "
+                           "hello (the finding control-link-dropped says so, if it is there)") +
+                    "; " + lines_hint(p),
+                &p);
+        }
+        // Said by the check already if --describe announced the version.
+        else if (p.control == ControlLink::VersionMismatch && !p.control_version_described)
+        {
+            add(Severity::Warning, "control-link-version",
+                pre + "its control agent speaks version " + std::to_string(p.control_version) +
+                    " of the control messages and this launcher version " + std::to_string(control::wire::kVersion) +
+                    ", so its variables cannot be read or written in this run: build the ECU and vehicle_sil_launch from "
+                    "the same version of vehicle-sil",
+                &p);
+        }
+        if (p.control_late_messages > 0)
+        {
+            add(Severity::Warning, "control-link-late-values",
+                pre + std::to_string(p.control_late_messages) +
+                    " messages of its control agent's steps reached the launcher after the launcher's controller had "
+                    "begun a later step: the values and results that the launcher had at a pause were not complete. Its "
+                    "agent must publish within its steps (an executable built with ecu_main() does; a transport of its "
+                    "own must send from control::Agent::set_step_sink(), not from another thread)",
+                &p);
+        }
         if (p.left_processes)
         {
             add(Severity::Warning, "left-processes",
@@ -271,6 +334,29 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     if (!outcome.start_error.empty())
     {
         add(Severity::Error, "simulation-start", "the simulation did not start: " + outcome.start_error, nullptr);
+    }
+    if (outcome.control_refused_hellos + outcome.control_undecodable + outcome.control_unknown > 0)
+    {
+        add(Severity::Warning, "control-link-dropped",
+            "the launcher dropped messages of control agents: " + std::to_string(outcome.control_refused_hellos) +
+                " hellos it did not take, " + std::to_string(outcome.control_undecodable) + " messages it could not read and " +
+                std::to_string(outcome.control_unknown) +
+                " messages (or samples) that fit no agent it knows. Hellos are not taken beyond " +
+                std::to_string(control_silkit::HubTransportOptions{}.max_links) +
+                " participants with control agents, or with the session number of another participant; a message cannot be "
+                "read if it is of another version of vehicle-sil (the participant's control-link-version says so) or not a "
+                "control message at all (another program publishes on the topics vehicle_sil.control.*); a message fits "
+                "no agent if its agent's hello was not taken, is of another version or has not arrived yet (a "
+                "participant that joined while the simulation ran), and a sample if it does not match the variables its "
+                "agent announced. The variables of the participants concerned may be missing or stale",
+            nullptr);
+    }
+    if (!outcome.before_start_error.empty())
+    {
+        add(Severity::Error, "before-start",
+            "what was to be done before the simulation started failed, and the launcher aborted the simulation at once: " +
+                outcome.before_start_error,
+            nullptr);
     }
     if (!outcome.controller_state.empty())
     {
@@ -287,7 +373,8 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                 "(the lines above show what the participants wrote); if it is only slow, raise --timeout-ms",
             nullptr);
     }
-    else if (outcome.simulation == SimulationEnd::Aborted && outcome.failed_participant.empty())
+    else if (outcome.simulation == SimulationEnd::Aborted && outcome.failed_participant.empty() &&
+             outcome.before_start_error.empty())
     {
         add(Severity::Error, "simulation", "the simulation was aborted: the lines above show what the participants wrote",
             nullptr);
@@ -690,6 +777,26 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
             {
                 w.string("log", p.log);
             }
+            w.begin_object("control_link");
+            w.string("state", control_link_name(p.control));
+            if (p.control == ControlLink::Connected)
+            {
+                w.integer("variables", static_cast<std::int64_t>(p.control_variables));
+            }
+            else
+            {
+                w.null("variables");
+            }
+            if (p.control == ControlLink::VersionMismatch)
+            {
+                w.integer("version", p.control_version);
+            }
+            else
+            {
+                w.null("version");
+            }
+            w.integer("late_messages", static_cast<std::int64_t>(p.control_late_messages));
+            w.end_object();
             w.end_object();
         }
     }
@@ -989,6 +1096,7 @@ public:
     {
         outcome_.start_timeout_ms = config.start_timeout_ms;
         outcome_.stop_timeout_ms = config.stop_timeout_ms;
+        outcome_.control_hello_timeout_ms = options.control_hello_timeout.count();
         outcome_.stop_at_ms = config.stop_at_ms;
         const std::optional<double> speed = options.speed ? *options.speed : config.speed;
         outcome_.timing = detail::plan_time_step(config, check, speed);
@@ -1022,6 +1130,9 @@ public:
         // Before the guard below, so that they go after it.
         std::unique_ptr<SilKit::Vendor::Vector::ISilKitRegistry> registry;
         std::unique_ptr<SimulationController> controller;
+        // The hub's end of the ECUs' control agents, on the controller's participant: after the
+        // controller, so that it goes before it.
+        std::unique_ptr<control_silkit::HubTransport> transport;
         // Whatever happens, the time commands end with the run (they are refused from then on),
         // and before the controller they are given to goes: the thread that reads the commands
         // may apply one at any time.
@@ -1080,6 +1191,11 @@ public:
             time.late_tolerance = std::chrono::milliseconds(outcome_.timing.late_tolerance_ms);
             c.time_control = time;
             controller = std::make_unique<SimulationController>(std::move(c));
+            // Before the participants start and before the controller does: SIL Kit connects the
+            // publisher of the commands and the subscribers with every participant that starts.
+            transport = std::make_unique<control_silkit::HubTransport>(hub(), controller->runtime());
+            controller->set_start_window(
+                [this, t = transport.get()](const StartWindow& window) { start_window(*t, window); });
             commands().attach(*controller, outcome_.timing.time_step_ms, outcome_.timing.speed);
         }
         catch (const std::exception& e)
@@ -1096,14 +1212,18 @@ public:
             {
                 ran = true;
                 watch(*controller);
+                note_late_values(*transport);
             }
         }
         // What is known for good when the simulation is over (why it ended), before the
         // participants end.
         publish_findings(false);
         event([](EventStream& e) { e.phase(Phase::Stopping); });
-        end_children(ran);
+        end_children(ran || before_start_failed_);
         commands().detach();
+        // The agents have said their last word (their processes have ended); what is still open
+        // in the hub is settled here.
+        transport.reset();
         controller.reset();
         registry.reset();
         return outcome_;
@@ -1130,6 +1250,175 @@ public:
 
 private:
     [[nodiscard]] TimeCommands& commands() { return own_commands_ ? *own_commands_ : *options_.time_commands; }
+    [[nodiscard]] control::Hub& hub()
+    {
+        if (options_.hub != nullptr)
+        {
+            return *options_.hub;
+        }
+        if (!own_hub_)
+        {
+            own_hub_ = std::make_unique<control::Hub>();
+        }
+        return *own_hub_;
+    }
+
+    /// What --describe says about participant `i`'s variables (ControlLink::None, NotOffered,
+    /// VersionMismatch), or Connected for "it offers them in this launcher's version".
+    [[nodiscard]] ControlLink described_link(std::size_t i) const
+    {
+        const auto& ecu = check_.participants[i].ecu;
+        if (!config_.participants[i].describe || !ecu || ecu->description.variables.empty())
+        {
+            return ControlLink::None;
+        }
+        const auto& offer = ecu->description.control;
+        if (!offer)
+        {
+            return ControlLink::NotOffered;
+        }
+        return offer->transport == "silkit" && offer->wire_version == static_cast<int>(control::wire::kVersion)
+                   ? ControlLink::Connected
+                   : ControlLink::VersionMismatch;
+    }
+
+    /// The enabled, required ECUs that offer variables in this launcher's version of the
+    /// messages: their hello is waited for.
+    [[nodiscard]] std::vector<std::string> expected_agents() const
+    {
+        std::vector<std::string> names;
+        for (std::size_t i = 0; i < config_.participants.size(); ++i)
+        {
+            const ParticipantConfig& p = config_.participants[i];
+            if (p.enabled && p.required && described_link(i) == ControlLink::Connected)
+            {
+                names.push_back(p.name);
+            }
+        }
+        return names;
+    }
+
+    /// The window before the start, on the controller's thread: every participant waits before
+    /// its first step. Waits for the agents' hellos, then lets the caller write (before_start).
+    /// Touches nothing of the run but control_start_ (the main thread waits in
+    /// SimulationController::start(), but stops waiting at its timeout).
+    void start_window(control_silkit::HubTransport& transport, const StartWindow& window)
+    {
+        const auto cancelled = [this, &window] { return window.cancelled() || interrupts() > 0; };
+        // Not beyond the start's own limit, and with room for the start to go on after it.
+        const auto deadline = std::min(std::chrono::steady_clock::now() + options_.control_hello_timeout,
+                                       window.deadline() - std::chrono::milliseconds(500));
+        control_silkit::HelloReport report = transport.wait_for_hellos(expected_agents(), deadline, cancelled);
+        {
+            // The links as they are now, before any step: the simulation may be over by the time
+            // the main thread looks (a short one at full speed), and an agent that has ended by
+            // then was connected at the start all the same.
+            const std::lock_guard lock(control_start_mutex_);
+            control_start_ = ControlStart{std::move(report), transport.links()};
+        }
+        if (options_.before_start && !cancelled())
+        {
+            // The simulation starts whatever happens here: a failure is kept, and the run ends
+            // the simulation for it once it has started (wait_for_start()).
+            std::string error;
+            try
+            {
+                options_.before_start(hub());
+            }
+            catch (const std::exception& e)
+            {
+                error = *e.what() != '\0' ? e.what() : "exception without message";
+            }
+            catch (...)
+            {
+                error = "unknown exception";
+            }
+            const std::lock_guard lock(control_start_mutex_);
+            before_start_error_ = std::move(error);
+        }
+    }
+
+    /// After the start: where each started participant's control agent stands (the result's
+    /// "control_link", the event "control_link"): what its hello says, else what --describe said.
+    void note_control()
+    {
+        std::optional<ControlStart> start;
+        {
+            const std::lock_guard lock(control_start_mutex_);
+            start = control_start_;
+        }
+        const std::optional<control_silkit::HelloReport> report =
+            start ? std::optional<control_silkit::HelloReport>(start->report) : std::nullopt;
+        const std::vector<control_silkit::LinkInfo> links = start ? start->links : std::vector<control_silkit::LinkInfo>{};
+        for (std::size_t i = 0; i < children_.size(); ++i)
+        {
+            ParticipantRun& run = outcome_.participants[i];
+            if (!children_[i])
+            {
+                continue;
+            }
+            const ControlLink described = described_link(i);
+            const auto link = std::find_if(links.begin(), links.end(),
+                                           [&run](const control_silkit::LinkInfo& l) { return l.participant == run.name; });
+            if (link != links.end() && link->state == control_silkit::LinkState::VersionMismatch)
+            {
+                run.control = ControlLink::VersionMismatch;
+                run.control_version = link->version;
+                run.control_version_described = described == ControlLink::VersionMismatch;
+            }
+            else if (link != links.end() && link->state == control_silkit::LinkState::Connected && link->ready)
+            {
+                run.control = ControlLink::Connected;
+                run.control_variables = link->variables;
+            }
+            else if (described == ControlLink::VersionMismatch)
+            {
+                run.control = ControlLink::VersionMismatch;
+                run.control_version = check_.participants[i].ecu->description.control->wire_version;
+                run.control_version_described = true;
+            }
+            else if (described == ControlLink::NotOffered)
+            {
+                run.control = ControlLink::NotOffered;
+            }
+            // Awaited in vain: no hello, or a hello and no answer to the probe. Not one whose agent
+            // said hello and ended in the window (it left), and not when the wait was cut short.
+            else if (report && !report->cancelled &&
+                     (link == links.end() || (link->state == control_silkit::LinkState::Connected && !link->ready)) &&
+                     std::find(report->missing.begin(), report->missing.end(), run.name) != report->missing.end())
+            {
+                run.control = ControlLink::NoHello;
+                run.control_hello_seen = link != links.end();
+            }
+            event([&run](EventStream& e) {
+                e.control_link(run.name, control_link_name(run.control),
+                               run.control == ControlLink::Connected ? std::optional<std::size_t>(run.control_variables)
+                                                                     : std::nullopt,
+                               run.control == ControlLink::VersionMismatch ? std::optional<int>(run.control_version)
+                                                                           : std::nullopt);
+            });
+        }
+    }
+
+    /// After the simulation: the agents whose messages came late (RunOutcome's
+    /// control_late_messages).
+    void note_late_values(control_silkit::HubTransport& transport)
+    {
+        const control_silkit::HubTransportStats stats = transport.stats();
+        outcome_.control_refused_hellos = stats.refused_hellos;
+        outcome_.control_undecodable = stats.undecodable;
+        outcome_.control_unknown = stats.unknown;
+        for (const control_silkit::LinkInfo& link : transport.links())
+        {
+            for (ParticipantRun& run : outcome_.participants)
+            {
+                if (run.name == link.participant)
+                {
+                    run.control_late_messages = link.late_messages;
+                }
+            }
+        }
+    }
     [[nodiscard]] int interrupts() const { return options_.interrupts != nullptr ? options_.interrupts->load() : 0; }
     [[nodiscard]] std::string interrupt_name() const
     {
@@ -1361,13 +1650,29 @@ private:
         }
         try
         {
+            // The start includes the window in which the agents' hellos are awaited.
             const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
-            controller.start(std::max(left, std::chrono::milliseconds(1000)));
+            controller.start(std::max(left, options_.control_hello_timeout + std::chrono::milliseconds(1000)));
         }
         catch (const std::exception& e)
         {
             outcome_.start_error = one_line(e.what());
             say("the simulation did not start: " + outcome_.start_error);
+            return false;
+        }
+        note_control();
+        {
+            const std::lock_guard lock(control_start_mutex_);
+            outcome_.before_start_error = before_start_error_;
+        }
+        if (!outcome_.before_start_error.empty())
+        {
+            // It runs (every participant got to its first step), but not as it was to: ended here.
+            say("the simulation started, but what was to be done before it failed (" + outcome_.before_start_error +
+                "): aborting it");
+            controller.abort();
+            outcome_.simulation = SimulationEnd::Aborted;
+            before_start_failed_ = true;
             return false;
         }
         event([](EventStream& e) { e.phase(Phase::Running); });
@@ -1774,6 +2079,18 @@ private:
     std::optional<double> last_speed_{};
     std::deque<std::pair<std::chrono::steady_clock::time_point, std::int64_t>> samples_; ///< (wall, sim_ms)
     std::vector<Finding> published_;
+    std::unique_ptr<control::Hub> own_hub_; ///< without RunOptions::hub
+    std::mutex control_start_mutex_;
+    /// What the start window found (written by the controller's thread).
+    /// What the start window found: who answered, and every link as it was then.
+    struct ControlStart
+    {
+        control_silkit::HelloReport report;
+        std::vector<control_silkit::LinkInfo> links;
+    };
+    std::optional<ControlStart> control_start_; ///< guarded by control_start_mutex_
+    std::string before_start_error_;                           ///< guarded by control_start_mutex_
+    bool before_start_failed_ = false; ///< the simulation ran (and was aborted): the participants are ended as after a run
     std::unique_ptr<TimeCommands> own_commands_; ///< without RunOptions::time_commands
     std::mutex output_;
     // Last, so that it goes first: a Process ends its reader thread, which uses output_ and logs_,

@@ -72,6 +72,18 @@ struct NetworkDescription
 
 /// What an ECU is: its name, its step, the networks it is on and the variables it declared.
 /// Ecu::describe() makes it; to_json() writes it.
+/// What an ECU's executable says about offering its variables to the simulation.
+struct ControlOffer
+{
+    /// How the control agent is reached: "silkit" (vehicle_sil::control_silkit, over SIL Kit's
+    /// publish/subscribe).
+    std::string transport;
+    /// The version of the messages it speaks (control::wire::kVersion of its build).
+    int wire_version = 0;
+
+    friend bool operator==(const ControlOffer&, const ControlOffer&) = default;
+};
+
 struct EcuDescription
 {
     /// The ECU's name (on SIL Kit, its participant name).
@@ -85,6 +97,9 @@ struct EcuDescription
     /// in the order declared; not a Peer's monitoring outputs (PeerOptions::monitor). Empty for an
     /// ECU without a control agent.
     std::vector<control::VariableInfo> variables{};
+    /// Set by whoever runs the ECU with a transport for its control agent (ecu_main(), unless
+    /// --no-control); Ecu::describe() leaves it empty. In the JSON: "control", null if empty.
+    std::optional<ControlOffer> control{};
 
     friend bool operator==(const EcuDescription&, const EcuDescription&) = default;
 };

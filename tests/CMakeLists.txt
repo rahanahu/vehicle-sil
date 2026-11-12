@@ -31,6 +31,7 @@ add_subdirectory(ecu)
 add_subdirectory(simulation)
 add_subdirectory(launch)
 add_subdirectory(peer)
+add_subdirectory(control_silkit)
 # The J1939 stack, its parts, the typed messages and the boundary checks; uses no example.
 add_subdirectory(j1939)
 # Vector XL CAN bridge (against a fake XL driver; runs on every platform).

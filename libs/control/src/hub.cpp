@@ -489,6 +489,30 @@ void Hub::agent_disconnected(ConnectionId id)
     old_link.reset();
 }
 
+void Hub::agent_ended(ConnectionId id, const std::string& reason)
+{
+    Connection conn;
+    {
+        const std::lock_guard lock(mutex_);
+        const auto* c = connection(id);
+        if (c == nullptr)
+        {
+            return;
+        }
+        conn = *c;
+    }
+    agent_disconnected(id);
+    const std::lock_guard lock(mutex_);
+    // Not if the same incarnation is connected (again, or by another connection all along), and
+    // a new incarnation has settled the old one's commands itself.
+    const auto it = peers_.find(conn.participant);
+    if (it != peers_.end() && it->second.info.incarnation == conn.incarnation && !it->second.info.connected)
+    {
+        settle_open(conn.participant, conn.incarnation, TargetStatus::Unknown, TargetStatus::Unknown, reason);
+        forget_finished();
+    }
+}
+
 void Hub::agent_submitted(ConnectionId id, std::uint64_t seq, const SubmitResult& result)
 {
     const std::lock_guard lock(mutex_);

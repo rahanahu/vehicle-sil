@@ -238,6 +238,12 @@ public:
     /// the peer's current connection, the peer is disconnected: its queued commands become
     /// Disconnected and commands not yet handed to a link become Invalid.
     void agent_disconnected(ConnectionId connection);
+    /// The connection is gone and the agent's process will not connect again as this incarnation
+    /// (a transport that knows: the participant left the simulation, or the agent said its last
+    /// word): as agent_disconnected(), and if it was the peer's current connection, every command
+    /// still open for the incarnation becomes Unknown with `reason` (no result will come), so
+    /// that nothing waits for it.
+    void agent_ended(ConnectionId connection, const std::string& reason);
     /// What Agent::submit() returned for the command `seq`.
     void agent_submitted(ConnectionId connection, std::uint64_t seq, const SubmitResult& result);
     /// A result of the agent. Accepted from any connection of the incarnation the command was
