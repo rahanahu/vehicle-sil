@@ -11,6 +11,13 @@ requires-python = ">=3.11"
 license = "MIT"
 dependencies = ["aiohttp>=3.14.5"]
 
+[project.optional-dependencies]
+# The ECUs' variables: the client side of the launcher's control server (gRPC). Without it the server runs, and
+# says why it shows no variables. Not enough by itself outside the repository: the gRPC stubs are made from the
+# repository's proto file with grpcio-tools (the `control` group; `uv sync` installs everything), or are given
+# with VEHICLE_SIL_CONTROL_STUBS. They are not in the package yet.
+variables = ["grpcio>=1.85.0", "protobuf>=7.35.1"]
+
 [project.scripts]
 vehicle-sil-gui = "vehicle_sil_gui.cli:main"
 

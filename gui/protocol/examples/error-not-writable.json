@@ -1,0 +1,25 @@
+{
+  "description": "An output cannot be written.",
+  "request": {
+    "method": "POST",
+    "path": "api/write",
+    "body": {
+      "writes": {
+        "Engine": {
+          "engine.speed": 900
+        }
+      }
+    }
+  },
+  "status": 400,
+  "response": {
+    "error": {
+      "code": "not-writable",
+      "message": "Engine's engine.speed is an output: only inputs and parameters can be written",
+      "detail": {
+        "peer": "Engine",
+        "name": "engine.speed"
+      }
+    }
+  }
+}

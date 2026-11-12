@@ -8,7 +8,8 @@
 - 照合の結果（所見、participant の表）を見る。participant を外して（`--disable`）照合し直す。
 - 実行を始める、止める（順に止めるか、待たずに止める）。段階、participant ごとの状態と終了コード、ログ、所見、結果を見る。ランチャーが participant を失敗と決めたら（`failed`）、プロセスが終わる前でもすぐに失敗として出します。利用者が止めた実行は「中断」として、失敗の色にせずに出します。
 - 時刻を操作する（下の「時刻の操作」）: 速度を決めて始める、止めた状態で始める、一時停止、再開、ステップ送り、速度の変更。仮想時刻、いまの速度、実際の速さ、実時間への遅れを見る。
-- participant ごとに、変数を読み書きする口のつながり方（ランチャーの `control-links`: つながった、hello が来なかった、形式の版が違う、変数はあるが口を出していない、なし）を見る。読み書きできないつながり方は、色だけでなく ⚠ と文で出します。変数の値はまだ見られません（下の「いまの制限」）。
+- participant ごとに、変数を読み書きする口のつながり方（ランチャーの `control-links`: つながった、hello が来なかった、形式の版が違う、変数はあるが口を出していない、なし）を見る。読み書きできないつながり方は、色だけでなく ⚠ と文で出します。
+- ECU の変数を読み書きする口を持ちます（下の「ECU の変数」）: GUI サーバーが、変数の一覧、値、書き込みとその結果を、サーバーの口とクライアントのライブラリで出します。画面の部品（値の表示、スイッチ、グラフ）はまだありません（下の「いまの制限」）。
 - ランチャーが 1 秒ごとの心拍も書かなくなったら（既定で 5 秒。`--silent-after`）、止まっているかもしれないことを状態の帯に出します。ランチャーが読む側の遅さで書けなかったログの行（`log_dropped`）は、その位置に落ちた行の数として出します。
 - ランチャーが結果を出さずに終わったら、異常終了と終了コード、ランチャーが標準エラーに書いた行（最初の 20 行と最後の 30 行）を見る。終わりを知らせてこなかった participant の状態は「不明」になります（ランチャーが先に終わったので、その後どうなったかは画面にはわかりません）。
 - 画面を開き直したり、別のタブで開いたりしても、同じ実行の状態を見られる。ログは、participant ごとに直近の 2000 行（1 MiB まで）を見られます。それより古い行は、落とした行の数だけを表示します。
@@ -17,6 +18,7 @@
 ## 要るもの
 
 - `vehicle_sil_launch`（`tools/launch` をビルドしたもの）。`version --json` の `features` に `events` と `stdin-commands` があるもの（`run --events`、`run --stdin-commands`。[simulation-config.md](simulation-config.md) の「機械から使う」）。時刻の操作には `speed`、`start-paused`、`time-commands` も要ります（ないランチャーでは、その操作を出しません）。
+- ECU の変数を読み書きするには、Control Server を持つランチャー（`features` に `control-server`。`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` でビルドしたもの。[control-api.md](control-api.md)）と、GUI サーバーの Python に gRPC（`grpcio`、`protobuf`。`uv sync` が入れます）が要ります。どちらかがなくても、ほかの機能はそのまま使えます（変数だけが「使えない」になり、理由を出します）。
 - 構成ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します）。
 - Python 3.11 以上と [uv](https://docs.astral.sh/uv/)（GUI サーバー）。画面のビルド（`gui/web` の `npm run build` の出力）。画面を使うだけなら Node.js は要りませんが、ビルドには要ります（[gui/web/README.md](../gui/web/README.md)）。
 
@@ -47,6 +49,7 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 | `--stop-timeout <秒>` | 終わるとき、実行中のシミュレーションが止まるのを待つ時間（既定 10）。過ぎたらランチャーを止める |
 | `--check-timeout <秒>` | 照合（各 ECU の `--describe` を含む）の時間の上限（既定 120）。過ぎたら照合を止める |
 | `--silent-after <秒>` | 動いているランチャーがこの時間より長く何も書かなければ（心拍も来なければ）、画面に知らせる（既定 5。1 以上） |
+| `--no-variables` | ランチャーの Control Server を立てない（ECU の変数を読み書きしない） |
 
 終了コード: 0 は止めた（Ctrl+C、SIGTERM）、1 は動いている間の失敗、2 は引数の誤りか、ランチャーやポートを使えない。
 
@@ -58,6 +61,7 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 - 起動のたびに新しいトークンを作ります。トークンは表示した URL の `#token=` の後ろにだけあり、画面はそれを読んだら URL から消します。API と WebSocket はトークンがないと答えません。URL を人に渡さないでください。
 - ほかのウェブページからの要求を断ります（`Host` と `Origin` の検査。CORS は許しません）。
 - 画面から使えるのは `--root` の下の構成ファイルだけです。外へ出るパスや、root の外へのシンボリックリンクは、検査の時点で断ります（検査の後に root の中でリンクを差し替えることは防げませんが、root に書ける人は構成ファイルをそのまま置けます）。ランチャーに渡す引数はサーバーが決まった形で組み立て、任意のコマンドは受け取りません。
+- ECU の変数は、ランチャーの Control Server（127.0.0.1 の空いているポート）から読み書きします。実行のたびに新しいトークンを作り、自分だけが読めるファイル（一時ディレクトリの `vehicle-sil-gui-control-*.txt`。POSIX では権限 0600）でランチャーに渡します。ファイルは、ランチャーが読んだ後（Control Server が待ち受けを始めたとき）に消し、実行の終わりにも消します。このトークンは、ランチャーの引数、事象、画面への通知、誤りの文のどこにも出しません。同じ PC のほかのプロセスは、このトークンなしでは Control Server を使えません。GUI サーバーがつなぐのは、ランチャーが知らせた `127.0.0.1:<port>` だけです。画面からの書き込みは、ほかの API と同じ検査（トークン、`Host`、`Origin`）を通り、変数の一覧にある書ける変数へ、型と範囲の合う値だけを渡します。
 - 実行は、サーバー 1 つにつき一度に 1 つです。同時に開始を頼まれても、始めるのは 1 つだけです。サーバーを 2 つ起動すれば、実行も 2 つ動きます。
 
 守れないもの:
@@ -85,6 +89,8 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 - 途中から開いた画面や、別のタブも、同じ時刻の状態を出します（サーバーの要約に、最後の `time` と `command` の事象があるため）。
 - ランチャーの `features` に `speed`、`start-paused`、`time-commands` がなければ、それぞれの操作を出しません（`speed` だけのランチャーでは、「時刻」のカードは見るだけです）。時刻の命令を受け付けるかは、動いている実行のランチャー（始めたときの `version --json`）で決めます。
 
+- 変数を読み書きできる実行（ランチャーが Control Server を持つ）では、「止めた状態で始める」は、最初のステップの前（時刻 0 のステップが走る前）で止まります（ランチャーの決まり。[control-api.md](control-api.md) の「始まる前に書く」）。この間に書いた変数は、時刻 0 のステップで反映されます。ランチャーは、この間は `time` の事象を書きませんが、再開とステップ送りを受け付けます（ライブラリの `client.time.state` の `beforeStart`）。`--no-variables` で起動したときと、Control Server を持たないランチャーでは、今までどおり時刻 0 のステップの後に止まります。
+
 ### サーバーの口
 
 | 要求 | すること |
@@ -111,13 +117,34 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 | `paced` | 速度が数か（遅れを数えているか） |
 | `lateness`、`behind` | 遅れの数と、実時間に遅れたか（許容を超えて遅れた刻みがある） |
 | `lastCommand` | 最後の `command` の事象（`name`、`accepted`、`message`、`ms`） |
-| `controllable` | 時刻の命令が意味を持つか（ランチャーが対応し、段階が running で、`time` の事象が来ていて、結果がまだで、止めるよう頼んでいない。サーバーと揃っている） |
+| `controllable` | 時刻の命令が意味を持つか（ランチャーが対応し、段階が running で、`time` の事象が来ていて、結果がまだで、止めるよう頼んでいない。サーバーと揃っている。`beforeStart` の間も真） |
+| `beforeStart` | 最初のステップの前で、再開かステップ送りを待っているか（止めて始めた実行で、ランチャーが変数を読み書きする口を持つとき。`time` はまだ `null` で、`canResume` と `canStep` が真になる） |
 | `canPause`、`canResume`、`canStep` | いま押してよいか（`controllable` で、さらに前の命令の答えを待っていない。一時停止しているか、ステップ送りの途中か、で分かれる） |
 | `stepping` | ステップ送りの途中か（ランチャーは一時停止の扱い） |
 | `sending` | 送って、ランチャーの答え（`command` の事象）をまだ見ていない命令。答えが届く、ランチャーが終わる、実行が変わる、サーバーが断る、つなぎ直した要約に答えがある、のどれかで解ける。5 秒（`ANSWER_TIMEOUT_MS`）たっても答えがなければ、待つのをやめる |
 | `error`、`errorFromServer` | 最後の命令がうまくいかなかった理由（サーバーが断った文は英語のまま。答えが来なかったときは画面の文）と、それがサーバーの文か |
 
 命令は `pause()`、`resume()`、`step(ms)`、`setSpeed(value)`（どれも `send(command)` を通る）です。前の命令の答えを待っている間と、実行がないときは送らず、`{sent: false, reason: 'waiting' | 'no-session'}` を返します（送ったら `{sent: true}`）。押せるかは、送る前に `canPause` などで確かめます。状態の帯に操作を足すときは、`<app-run-status>` の中に `runStatusActions` の属性を付けた要素を置きます（開始と停止の後、「待たずに止める」の前に並びます。開始と停止の位置は動きません）。
+
+## ECU の変数
+
+ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数」）を、GUI サーバーを通して読み書きします。値を持っているのはランチャーの Control Server で、GUI サーバーは中継するだけです。
+
+```mermaid
+flowchart LR
+  screen["screen / tool<br/>(gui/client)"] -- "watch, values (WebSocket)<br/>write (HTTP)" --> server["GUI server"]
+  server -- "gRPC, token of the run" --> control["vehicle_sil_launch<br/>control server"]
+  control -- "SIL Kit" --> ecu["ECUs"]
+```
+
+- **始め方**: ランチャーが Control Server を持てば、GUI サーバーは実行を `--control 0 --control-credentials <file>` 付きで始め、ランチャーの事象 `control_server` が知らせたアドレスへつなぎます。変数の機能の状態（`off`、`connecting`、`ready`、`failed`、`ended`）と理由は、要約の `variables` と `variables` の通知で届きます。つながらなくても、切れても、実行はそのまま続きます（変数だけが `connecting` か `failed` になり、切れたときは自分でつなぎ直します）。
+- **一覧**: participant ごとの変数（名前、型、役割、単位、範囲、刻み、説明、列挙の項目、書けるか）。
+- **値**: 画面が変数を選んで watch すると、選んだ間隔（20 ms 以上）で最後の値が届きます。GUI サーバーは、watch されている participant の値だけを、頼まれた頻度でランチャーから読みます（シミュレーションが速くても、読む量は増えません）。値は最後の 1 組だけを持ち、履歴は持ちません（履歴は画面の側。ライブラリが環状バッファーで持ちます）。受け取りの遅い画面には、読めるようになったときの最後の値を送ります（古い値をためません）。
+- **止まっている時刻の値**: `values` の通知の `paused` が真のとき、その通知の値には、`sim_ms` より前に始まったステップの値が全部入っています。GUI サーバーは、止まっている間に時刻と値をランチャーから読み直して確かめてから、真にします（止まった知らせだけでは真にしません）。動いている間は偽です。
+- **書き込み**: `POST api/write`。サーバーが、変数の一覧と照らして型と範囲を確かめてから、ランチャーに渡します。結果（操作）は、受け付けた（`queued`）、反映された（`applied` と、そのステップの時刻）、間に合わなかった（`late`）、ECU が断った（`rejected`、`invalid`）などとして、全部の画面に届きます。結果は捨てません。実行が終わるまでに結果が来なかった操作は、`unknown` で確定します。
+- **終わった後**: 状態は `ended` になり、最後に読めた値が残ります（次の実行を始めるまで）。
+
+形と上限は [gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」、ライブラリの口は [gui/client/README.md](../gui/client/README.md) の「ECU の変数」、動く例は `examples/gui_client/variables.mjs` です。Angular の包みは `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`: `status`、`reason`、`peers`、`operations`、`find(ref)`、部品が壊れると自分でやめる `watch()`、`write()`）です。
 
 ## 自分の画面や道具を作る
 
@@ -133,19 +160,21 @@ flowchart LR
 ```
 
 - **サーバーの口**（[gui/protocol/README.md](../gui/protocol/README.md)）: HTTP と WebSocket の形、実例（`examples/`）、版と互換の決まり（足すのは互換、消す・意味を変えるのは `vehicle_sil_gui` の版を上げる。読む側は知らない欄と事象を無視する）、認証と `Origin` の決まり。どの言語からでも使えます。
-- **最小の例**（[examples/gui_client](../examples/gui_client/)）: 画面を使わずに口を叩く、素の JavaScript の 1 ファイルの例が 2 つあります（Node 22 以上）。`run.mjs` はライブラリを使わず、標準の `fetch` と `WebSocket` だけで書いたもの、`run-with-library.mjs` は下のライブラリを 1 つにまとめたファイル（`gui/web` で `npm run build:client`）を使うものです。どちらも、照合して実行を始め、事象を読み、終わりを待って、結果で終了コードを返します。`VEHICLE_SIL_GUI_URL='<サーバーが表示した URL>' node examples/gui_client/run.mjs simulation.yaml`（URL は環境変数で渡す。引数に書くと、トークンがほかの利用者のプロセスの一覧に見えるため）。ブラウザの外から使うので、`Origin` をサーバー自身の origin にして送ります。
-- **クライアントのライブラリ**（[gui/client/README.md](../gui/client/README.md)、`@vehicle-sil/gui-client`）: TypeScript。接続（トークン、再接続、握手の失敗の数）、セッションの写し（要約が正、再送、部分ごとの読み取り）、実行と時刻の操作、口の型と読み取り。状態は「読める値」（`get()` と、解除の関数を返す `subscribe(fn)`）で出すので、枠組みに依らず使えます。公開するものは入口（`gui/client/src/index.ts`）に挙げたものだけで、README に一覧があります。TypeScript のアプリは `paths` でソースを取り込み、素の JavaScript からは 1 つにまとめたファイルを読みます。
-- **Angular の包み**（`gui/web/src/app/core/session/`）: ライブラリの読める値を signal にするだけの薄い層です（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`。つなぐところは `gui-client.ts`）。画面（`gui/web/src/app/run/`）は包みだけを読みます。型と純粋な関数は、ライブラリから直接 import します。別の枠組みで画面を作るときは、この層に当たるものを書きます。
+- **最小の例**（[examples/gui_client](../examples/gui_client/)）: 画面を使わずに口を叩く、素の JavaScript の 1 ファイルの例があります（Node 22 以上）。`run.mjs` はライブラリを使わず、標準の `fetch` と `WebSocket` だけで書いたもの、`run-with-library.mjs` は下のライブラリを 1 つにまとめたファイル（`gui/web` で `npm run build:client`）を使うものです。どちらも、照合して実行を始め、事象を読み、終わりを待って、結果で終了コードを返します。`variables.mjs` は、ライブラリで ECU の変数を読み書きします（止めて始め、最初のステップの前に 1 つ書き、進めて止め、止まっている時刻の値を確かめる。期待どおりなら終了コード 0）。`VEHICLE_SIL_GUI_URL='<サーバーが表示した URL>' node examples/gui_client/run.mjs simulation.yaml`（URL は環境変数で渡す。引数に書くと、トークンがほかの利用者のプロセスの一覧に見えるため）。ブラウザの外から使うので、`Origin` をサーバー自身の origin にして送ります。
+- **クライアントのライブラリ**（[gui/client/README.md](../gui/client/README.md)、`@vehicle-sil/gui-client`）: TypeScript。接続（トークン、再接続、握手の失敗の数）、セッションの写し（要約が正、再送、部分ごとの読み取り）、実行と時刻の操作、ECU の変数（一覧、watch、書き込みと結果、履歴）、口の型と読み取り。状態は「読める値」（`get()` と、解除の関数を返す `subscribe(fn)`）で出すので、枠組みに依らず使えます。公開するものは入口（`gui/client/src/index.ts`）に挙げたものだけで、README に一覧があります。TypeScript のアプリは `paths` でソースを取り込み、素の JavaScript からは 1 つにまとめたファイルを読みます。
+- **Angular の包み**（`gui/web/src/app/core/session/`）: ライブラリの読める値を signal にするだけの薄い層です（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`、`EcuVariables`。つなぐところは `gui-client.ts`）。画面（`gui/web/src/app/run/`）は包みだけを読みます。型と純粋な関数は、ライブラリから直接 import します。別の枠組みで画面を作るときは、この層に当たるものを書きます。
 
 ## いまの制限
 
-- 変数の値（Control）はまだ見られません。照合の結果にある変数の数だけを表示します。
+- 変数を見る・書く画面の部品はまだありません（口とライブラリまで。画面は、照合の結果にある変数の数と、口のつながり方だけを表示します）。
+- 変数の値は、GUI サーバーが読んだ時点の最後の値です。全部の値の記録ではありません（速いシミュレーションでは、間の値は届きません）。実行が終わった後に残る値は、最後に読めた値で、ランチャーが Control Server を閉じるのが早ければ、終わりの値より少し古いことがあります。
+- 変数の読み書きは、リポジトリの中で動かす GUI サーバー（`uv sync` の後の `uv run vehicle-sil-gui`）が前提です。gRPC のスタブを、リポジトリの `proto/` から `grpcio-tools` で作る（なければ `python -m vehicle_sil_control.generate` が作ったものを使う）ためです。リポジトリの外に入れた GUI サーバーは、任意の依存 `vehicle-sil-gui[variables]`（grpcio、protobuf）だけでは変数を使えません。スタブを自分で作って `VEHICLE_SIL_CONTROL_STUBS` で渡します（`PYTHONPATH` と同じく、そこに置いたコードを GUI サーバーが読み込みます。自分のディレクトリだけを指します）。スタブは、まだパッケージに入っていません。
 - 古いランチャー（`time` の事象に `paused` がない）は、仮想時刻を動き始め（0）と `stop_at_ms` に達したときにしか知らせないので、動いている間の 0 は出しません。
 - Windows では確かめていません（子プロセスの止め方、Ctrl+Break、`taskkill`、一時ファイルの権限は書いてありますが、動かしていません）。Windows はコンソールを閉じると約 5 秒でプロセスを終わらせるので、`--stop-timeout` を待たずに終わります（ランチャーには標準入力の終わりが届きます）。
 
 ## 開発
 
 - サーバーは `gui/server`（Python パッケージ `vehicle_sil_gui`、uv の workspace のメンバー）、画面は `gui/web`、クライアントのライブラリは `gui/client`（画面はこれを通してサーバーを使う）、サーバーの口の正本は `gui/protocol`（README と実例）です。
-- 試験: `scripts/verify-gui.py`（サーバーの試験、画面の `scripts/verify-web.py`、最小の例 `examples/gui_client/` の 2 つを偽のランチャーで動かす試験。ライブラリの試験は `verify-web.py` の `client` の段、1 つにまとめるのは `bundle` の段）。サーバーだけなら `--skip-web`。
-- 試験は、ランチャーの代わりに偽のランチャー（`gui/server/tests/fake_launcher.py`。本物と同じ事象を、筋書きどおりに書く。時刻の命令、`time` の事象、結果の `timing` も本物の形で、筋書き `late`（`gui/server/tests/configs/late.yaml`）は実時間への遅れを作る）を使います。偽のランチャーでも GUI を動かせます: `uv run vehicle-sil-gui --launcher gui/server/tests/fake_launcher.py gui/server/tests/configs/simulation.yaml`。
-- 本物のランチャーでも確かめるには、`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch`（または環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）。そのランチャーの隣にビルドした ecu_main の例の ECU を使い、偽のランチャーとの事象の形の比べ（`gui/server/tests/test_real_launcher.py`）と、画面の e2e（`gui/web/e2e/real/`）を回します。ランチャーを渡さなければ、この 2 つは「skipped」と出して飛ばします。
+- 試験: `scripts/verify-gui.py`（サーバーの試験、画面の `scripts/verify-web.py`、最小の例 `examples/gui_client/` を偽のランチャーで動かす試験。ライブラリの試験は `verify-web.py` の `client` の段、1 つにまとめるのは `bundle` の段）。サーバーだけなら `--skip-web`。
+- 試験は、ランチャーの代わりに偽のランチャー（`gui/server/tests/fake_launcher.py`。本物と同じ事象を、筋書きどおりに書く。時刻の命令、`time` の事象、結果の `timing` も本物の形で、筋書き `late`（`gui/server/tests/configs/late.yaml`）は実時間への遅れを作る）を使います。偽のランチャーは、既定では Control Server を持たないランチャーの代わりです（変数は「使えない」になる）。変数の試験は、`FAKE_LAUNCHER_FEATURES` に `control-server` を足し、偽の Control Server（`gui/server/tests/fake_control.py`。gRPC）を立てさせて行います。GUI サーバーの中の変数の元（`vehicle_sil_gui/source.py` の `Source`）は差し替えられ、順序の試験（`test_variable_units.py`）は筋書きどおりに答える元を使います。偽のランチャーでも GUI を動かせます: `uv run vehicle-sil-gui --launcher gui/server/tests/fake_launcher.py gui/server/tests/configs/simulation.yaml`。
+- 本物のランチャーでも確かめるには、`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch`（または環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）。そのランチャーの隣にビルドした ecu_main の例の ECU を使い、偽のランチャーとの事象の形の比べ（`gui/server/tests/test_real_launcher.py`）、変数の読み書き（`test_real_variables.py` と、例 `examples/gui_client/variables.mjs`。Control Server を持つランチャーのとき）、画面の e2e（`gui/web/e2e/real/`）を回します。ランチャーを渡さなければ、これらは「skipped」と出して飛ばします。

@@ -65,6 +65,19 @@ else `pass`:
   deaf               like forever, but it never reads its standard input (on Linux its pipe is made as small as it
                      can be): a launcher that hangs while commands are written to it; only a signal ends it
 
+With the feature control-server in FAKE_LAUNCHER_FEATURES (it is not there by default: the fake then stands for
+a launcher built without the control server, and refuses --control as that one does), `run --control <address>
+[--control-credentials <file>]` starts a stand-in for the control server (fake_control.py: gRPC, needs grpcio and
+VEHICLE_SIL_CONTROL_STUBS) with the variables that the check lists for the started participants, and writes the
+control_server event before registry. Every step is a sample of every peer; the time stands still as the time
+events say, and standing still at a time, the step that begins there has run (as the real launcher's ECUs have
+run it or are running it). With --start-paused it stands still before the first step as the real launcher does
+with a control server: the phase stays `waiting`, no time event is written, a log line says so, and a resume or a
+step command lets it go on (the control_link events, the phase `running`, the time events come then); a pause or
+a speed command is accepted and it stays; a stop ends the wait. FAKE_LAUNCHER_CONTROL chooses what goes wrong: `wrong-token` (the server wants another token than the
+file's), `unreachable` (the event names a port where nothing listens), `bad-address` (the event names another
+computer), `closes` (the server ends after the third step, the run goes on).
+
 Other environment variables: FAKE_LAUNCHER_TICK_MS (wall time of one 100 ms step at speed 1, and of every step
 when no speed is given, default 100), FAKE_LAUNCHER_FEATURES (the features of `version --json`, comma-separated,
 default the real launcher's: events,stdin-commands,check-variables,speed,start-paused,time-commands; leave some out
@@ -119,6 +132,7 @@ CONTROL_CHECK_KEY = "control"  # the check's participants[]: what the ECU offers
 CONTROL_TRANSPORT, CONTROL_VERSION = "silkit", 1
 CONTROL_NO_HELLO_CODE, CONTROL_VERSION_CODE = "control-link-no-hello", "control-link-version"  # warnings of the run
 CONTROL_NOT_OFFERED_CODE = "control-link-not-offered"  # a note of the check
+CONTROL_FEATURE, CONTROL_SERVER_EVENT = "control-server", "control_server"  # run --control and its event
 
 
 def control_plan(config: dict, scenario: str) -> dict[str, str]:
@@ -321,6 +335,8 @@ def parse(argv: list[str]) -> dict:
              "run": {"--json", "--events", "--stdin-commands", "--strict", "--start-paused"}}
     valued = {"version": set(), "check": {"--disable", "--enable"},
               "run": {"--disable", "--enable", "--speed"}}
+    if CONTROL_FEATURE in os.environ.get("FAKE_LAUNCHER_FEATURES", FEATURES).split(","):
+        valued["run"] |= {"--control", "--control-credentials"}
     if command not in flags:
         raise Usage(f"unknown command '{command}': write version, check or run")
     args = {"command": command, "disable": [], "enable": [], "files": [], "speed": None}
@@ -343,6 +359,8 @@ def parse(argv: list[str]) -> dict:
                                 f"to 1000000 (1: real time, 2: twice as fast) or max (as fast as possible), not "
                                 f"'{rest[i]}'")
                 args["speed"] = speed
+            elif a in ("--control", "--control-credentials"):
+                args[a[2:].replace("-", "_")] = rest[i]
             else:
                 args[a[2:]].append(rest[i])
         elif a.startswith("-"):
@@ -352,8 +370,10 @@ def parse(argv: list[str]) -> dict:
         i += 1
     if args.get("json") and args.get("events"):
         raise Usage("--json and --events cannot be used together")
-    if args.get("start_paused") and not args.get("stdin_commands"):
+    if args.get("start_paused") and not args.get("stdin_commands") and not args.get("control"):
         raise Usage("--start-paused needs --stdin-commands (resume or step it with a command)")
+    if args.get("control_credentials") and not args.get("control"):
+        raise Usage("--control-credentials needs --control")
     if command != "version" and len(args["files"]) != 1:
         raise Usage("write one configuration file")
     return args
@@ -585,6 +605,38 @@ def sleeper() -> subprocess.Popen:
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def start_control(args: dict, config: dict, scenario: str, ev: Events, say):
+    """The stand-in for the control server: started, and announced by the control_server event. None when it
+    cannot be (the credentials file cannot be read, as the real launcher's setup error)."""
+    trouble = os.environ.get("FAKE_LAUNCHER_CONTROL", "")
+    token = None
+    if args.get("control_credentials"):
+        try:
+            lines = [ln.split() for ln in Path(args["control_credentials"]).read_text().splitlines()
+                     if ln.strip() and not ln.lstrip().startswith("#")]
+            token = lines[0][2]
+        except (OSError, IndexError) as e:
+            sys.stderr.write(f"error: --control-credentials: cannot read a credential ({type(e).__name__})\n")
+            return None
+        mode = os.stat(args["control_credentials"]).st_mode & 0o777
+        say(f"control credentials: {len(lines)} credential(s), file mode {mode:o}")  # never the token
+    import fake_control
+    plan = control_plan(config, scenario)
+    peers = {name: variables(name) for name, state in plan.items() if state == CONTROL_CONNECTED}
+    control = fake_control.FakeControl(peers, token + "-other" if trouble == "wrong-token" and token else token,
+                                       role=lines[0][0] if token is not None else "operator")
+    address = control.start()
+    if trouble == "unreachable":
+        control.stop()
+        control.server = None
+    if trouble == "bad-address":
+        address = "control.example:8510"
+    control.set_time(0, bool(args.get("start_paused")), running=False)
+    ev.emit(CONTROL_SERVER_EVENT, address=address, tls=False, credentials=token is not None)
+    say(f"control server at {address}")
+    return control
+
+
 def started_command(file: str, p: dict, uri: str, config: dict) -> list[str]:
     """The command as the launcher starts it: the executable found (relative to the file's directory, or on PATH
     for a bare name), and for an ecu_main executable the arguments the launcher adds."""
@@ -637,6 +689,8 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
                              "log": None, CONTROL_RESULT_KEY: control_link(CONTROL_NONE)})
     run_findings: list[dict] = []
     timing: dict | None = None  # the result's timing, once the simulation has ended
+    control = None  # the stand-in for the control server (--control)
+    clock = {"sim": 0}
 
     def result(outcome: str, simulation, interrupted_by=None) -> dict:
         everything = result_check["findings"] + run_findings
@@ -650,6 +704,9 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
 
     def finish(outcome: str, simulation, code: int, interrupted_by=None) -> int:
         gate.detach()
+        if control is not None and control.server is not None:  # closed before the result, clients or not
+            control.set_time(clock["sim"], False, running=False, ended=True)
+            control.stop()
         ev.emit("phase", phase="ended")
         failed = outcome == "passed" and strict and any(f["severity"] == "warning" for f in run_findings)
         r = result("failed" if failed else outcome, simulation, interrupted_by)
@@ -689,6 +746,11 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         if not p["enabled"]:
             ev.emit("participant", name=p["name"], state="disabled")
     ev.emit("phase", phase="starting")
+    control = None
+    if args.get("control"):
+        control = start_control(args, config, scenario, ev, say)
+        if control is None:
+            return finish("setup", None, 3)
     uri = "silkit://127.0.0.1:8500"  # the real launcher takes a free port; a fixed one keeps the examples stable
     ev.emit("registry", uri=uri)
     say(f"registry at {uri}")
@@ -709,6 +771,15 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
     for name in running:
         if by_name[name]["describe"]:  # only participants with a lifecycle join
             ev.emit("participant", name=name, state="joined")
+    if control is not None and args.get("start_paused"):
+        # Standing still before the first step (--start-paused with a control server): until a resume or a step.
+        say("standing still before the first step until a resume, step or run_until command (--start-paused with "
+            "a control server)")
+        with gate.cond:
+            gate.step_ms = plan_time_step(config, gate.speed)["time_step_ms"]  # a step command is taken from now
+            while stops.count == 0 and gate.paused and gate.target in (0, None):
+                gate.target = 0  # a pause changes nothing here
+                gate.cond.wait(0.05)
     # Where each started participant's control link stands, in the file's order, before the simulation runs
     plan = control_plan(config, scenario)
     for name in running:
@@ -727,8 +798,8 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
     pace_s = int(os.environ.get("FAKE_LAUNCHER_TICK_MS", "100")) / 1000 / STEP_MS  # per ms of virtual time
     stop_at = None if scenario in ("forever", "ignore-stop", "late", "jitter", "deaf") else config["stop_at_ms"]
     began = time.monotonic()
-    clock = {"sim": 0, "step": 0, "paced": 0, "late_steps": 0, "max_late": 0, "slipped": 0, "late": 0,
-             "paused_s": 0.0, "standing_since": None, "over": False}
+    clock.update({"sim": 0, "step": 0, "paced": 0, "late_steps": 0, "max_late": 0, "slipped": 0, "late": 0,
+                  "paused_s": 0.0, "standing_since": None, "over": False})
     shown: dict = {}  # the last time event's values
     samples: deque = deque()  # (wall, sim) while it runs at one speed: the actual speed of about the last second
 
@@ -755,6 +826,8 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         actual = None
         if len(samples) >= 2 and samples[-1][0] - samples[0][0] >= 0.2:
             actual = round((samples[-1][1] - samples[0][1]) / 1000 / (samples[-1][0] - samples[0][0]), 3)
+        if control is not None:
+            control.set_time(sim, paused)
         ev.emit("time", sim_ms=sim, speed=number(speed) if isinstance(speed, float) else "max", paused=paused,
                 actual_speed=actual, late_steps=clock["late_steps"], max_late_ms=clock["max_late"],
                 slipped_ms=clock["slipped"], late_ms=clock["late"])
@@ -773,6 +846,8 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         note_time(False, speed, moved=True)
         clock["over"] = True
         gate.detach()
+        if control is not None:
+            control.set_time(clock["sim"], False, running=False, ended=True)
         wall = int((time.monotonic() - began) * 1000)
         paused_ms = int(clock["paused_s"] * 1000)
         ran = wall - paused_ms
@@ -888,9 +963,18 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         if held or stops.count != seen:
             continue
 
+        if control is not None and clock["step"] == 0:
+            control.step(0)  # the first step
         clock["step"] += 1
         clock["sim"] += advance
         step, sim_ms = clock["step"], clock["sim"]
+        if control is not None:
+            if stop_at is None or sim_ms < stop_at:
+                control.step(sim_ms)  # the step that begins at the new time runs before anyone hears of that time
+            control.set_time(sim_ms, False)
+            if step == 3 and os.environ.get("FAKE_LAUNCHER_CONTROL") == "closes":
+                control.stop()
+                control.server = None
         with gate.cond:
             gate.sim_ms = sim_ms
         if isinstance(speed, float):
@@ -1004,7 +1088,8 @@ def usage_result(file: str | None, outcome: str, code: str, message: str, strict
                                                                                      strict)}
 
 
-VALUED = {"--disable", "--enable", "--speed", "--log-dir", "--timeout-ms", "--describe-timeout-ms"}
+VALUED = {"--disable", "--enable", "--speed", "--log-dir", "--timeout-ms", "--describe-timeout-ms", "--control",
+          "--control-credentials"}
 
 
 def has_flag(argv: list[str], flag: str) -> bool:

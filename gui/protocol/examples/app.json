@@ -35,12 +35,23 @@
         ]
       }
     },
+    "variables": {
+      "available": false,
+      "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)"
+    },
     "limits": {
       "log_lines_per_source": 2000,
       "check_timeout_s": 120,
       "speed_min": 1e-06,
       "speed_max": 1000000.0,
-      "step_ms_max": 1000000000000
+      "step_ms_max": 1000000000000,
+      "watches": 16,
+      "watch_variables": 2000,
+      "watch_period_ms_min": 20,
+      "watch_period_ms_max": 60000,
+      "writes_per_request": 256,
+      "write_at_ms_max": 1000000000000,
+      "write_timeout_s": 5.0
     }
   }
 }

@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import Client, alive, children, gui_server, is_ended, is_synced, run_async, wait_until
+from conftest import Client, alive, children, gui_server, is_ended, is_synced, run_async, wait_until, without_variables
 
 POSIX = sys.platform != "win32"
 pytestmark = pytest.mark.skipif(not POSIX, reason="signals and /proc")
@@ -79,7 +79,7 @@ def test_stop_is_idempotent_and_answers_with_the_summary(tmp_path: Path) -> None
             assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "exit_code": 130,
                                        "signal": None, "silent_s": None}
             status, body = await c.post("api/stop", {"force": True})  # ended: the summary, nothing sent
-            assert status == 200 and body["session"] == end
+            assert status == 200 and without_variables(body["session"]) == end
             for bad in ({"force": "yes"}, {"force": 1}):
                 status, body = await c.post("api/stop", bad)
                 assert status == 400 and body["error"]["code"] == "invalid-field"

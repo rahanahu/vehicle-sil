@@ -892,11 +892,11 @@ dev = [
     { name = "protobuf" },
     { name = "pytest" },
     { name = "pyyaml" },
-    { name = "vehicle-sil-gui" },
+    { name = "vehicle-sil-gui", extra = ["variables"] },
 ]
 gui = [
     { name = "pytest" },
-    { name = "vehicle-sil-gui" },
+    { name = "vehicle-sil-gui", extra = ["variables"] },
 ]
 
 [package.metadata]
@@ -914,11 +914,11 @@ dev = [
     { name = "protobuf", specifier = ">=7.35.1" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "vehicle-sil-gui", editable = "gui/server" },
+    { name = "vehicle-sil-gui", extras = ["variables"], editable = "gui/server" },
 ]
 gui = [
     { name = "pytest", specifier = ">=9.2.0" },
-    { name = "vehicle-sil-gui", editable = "gui/server" },
+    { name = "vehicle-sil-gui", extras = ["variables"], editable = "gui/server" },
 ]
 
 [[package]]
@@ -929,8 +929,19 @@ dependencies = [
     { name = "aiohttp" },
 ]
 
+[package.optional-dependencies]
+variables = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+
 [package.metadata]
-requires-dist = [{ name = "aiohttp", specifier = ">=3.14.5" }]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14.5" },
+    { name = "grpcio", marker = "extra == 'variables'", specifier = ">=1.85.0" },
+    { name = "protobuf", marker = "extra == 'variables'", specifier = ">=7.35.1" },
+]
+provides-extras = ["variables"]
 
 [[package]]
 name = "yarl"

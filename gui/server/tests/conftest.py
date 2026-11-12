@@ -86,6 +86,49 @@ def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None,
         stop_server(proc)
 
 
+REPOSITORY = TESTS.parents[2]
+CONTROL_FEATURES = ("events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,"
+                    "control-server")
+
+
+@pytest.fixture(scope="session")
+def control_stubs(tmp_path_factory) -> Path:
+    """The gRPC stubs of the Control API, made once for the tests that use the stand-in for the launcher's control
+    server (fake_control.py). Skips when grpcio-tools is not installed (`uv sync` installs it); fails instead
+    when VEHICLE_SIL_GUI_REQUIRE_CONTROL is 1 (scripts/verify-gui.py sets it)."""
+    try:
+        import grpc  # noqa: F401
+        from grpc_tools import protoc
+    except ImportError as e:
+        # scripts/verify-gui.py asks for these tests: there, missing packages are a failure, not a skip.
+        if os.environ.get("VEHICLE_SIL_GUI_REQUIRE_CONTROL") == "1":
+            pytest.fail(f"grpcio and grpcio-tools are needed for the tests of the variables ({e}): uv sync")
+        pytest.skip(f"grpcio or grpcio-tools is not installed ({e}): uv sync")
+    out = tmp_path_factory.mktemp("control-stubs")
+    proto = REPOSITORY / "proto"
+    code = protoc.main(["protoc", f"-I{proto}", f"--python_out={out}", f"--grpc_python_out={out}",
+                        str(proto / "vehicle_sil" / "control" / "v1" / "control.proto")])
+    assert code == 0, "protoc failed"
+    return out
+
+
+@pytest.fixture
+def control_env(control_stubs: Path, monkeypatch) -> dict:
+    """The environment of a GUI server whose fake launcher has a control server (and of this process, for tests
+    that start fake_control themselves)."""
+    monkeypatch.setenv("VEHICLE_SIL_CONTROL_STUBS", str(control_stubs))
+    return {"FAKE_LAUNCHER_FEATURES": CONTROL_FEATURES, "VEHICLE_SIL_CONTROL_STUBS": str(control_stubs)}
+
+
+def without_variables(summary: dict) -> dict:
+    """A summary of hello or of an HTTP answer as a `session` message carries it (those have no `variables`)."""
+    return {k: v for k, v in summary.items() if k != "variables"}
+
+
+def is_variables(state: str):
+    return lambda m: m["type"] == "variables" and m["variables"]["state"] == state
+
+
 def read_line(proc: subprocess.Popen, timeout: float) -> str:
     out: list[str] = []
     reader = threading.Thread(target=lambda: out.append(proc.stdout.readline().decode()), daemon=True)

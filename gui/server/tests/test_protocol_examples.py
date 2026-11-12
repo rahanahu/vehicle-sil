@@ -36,6 +36,8 @@ EXAMPLES = {
     "ws-pass", "ws-log-dropped", "ws-check-error", "ws-participant-crash", "ws-launcher-crash", "ws-bad-lines", "ws-bad-types",
     "ws-orphan", "ws-stop", "ws-force-stop", "ws-replay", "ws-resume", "ws-dropped", "ws-slow-client",
     "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit", "ws-without-check",
+    "write", "ws-variables", "ws-variables-failed", "error-unknown-variable", "error-not-writable",
+    "error-variables-not-ready", "error-invalid-watch",
 }
 
 
@@ -82,6 +84,7 @@ class Normalizer:
                 value = value.replace(real, fixed)
             value = value.replace(f"pid {self.pid_in_log(value)}", "pid 10099") if "pid " in value else value
             value = re.sub(r'"t_ms":\s*\d+', '"t_ms":0', value)  # a raw line in a problem's detail
+            value = re.sub(r"127\.0\.0\.1:(?!8765\b)\d+", "127.0.0.1:8510", value)  # a run's control server
             assert self.token not in value, "the token must not appear in any response"
         return value
 
@@ -412,6 +415,77 @@ def test_ws_time_examples(tmp_path: Path) -> None:
             check_example("ws-time", ws("Started paused at the speed max: a step of 25 ms (the launcher rounds it up "
                                         "to its time step: ms 30), the speed 1, resume, a step it refuses (not "
                                         "paused), pause, stop.", sock.sent, sock.received), gui)
+        run_async(talk, gui)
+
+
+def variables_only(messages: list[dict]) -> list[dict]:
+    """A conversation without what comes in an order of its own: the launcher's events (they come by another way
+    than the variables), the values while it runs, and the first word of an operation (`sent`, which the news of
+    it being queued may overtake)."""
+    return [m for m in messages if m["type"] != "event" and not (m["type"] == "values" and not m["paused"])
+            and not (m["type"] == "operation" and m["state"] == "sent")]
+
+
+def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
+    with gui_server(tmp_path, env={**control_env, "FAKE_LAUNCHER_TICK_MS": "100"}) as gui:
+        async def talk(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"], "start_paused": True})
+            await sock.until(lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready")
+            await sock.send({"type": "watch", "id": 1, "period_ms": 100,
+                             "variables": [{"peer": "Engine", "name": "engine.demand"},
+                                           {"peer": "Engine", "name": "engine.speed"}]})
+            await sock.until(lambda m: m["type"] == "values" and m["paused"])
+            req = {"writes": {"Engine": {"engine.demand": 40, "engine.mode": "on"}}}
+            status, body = await c.post("api/write", req)
+            check_example("write", http("A write: checked against the schema and given to the run's control server "
+                                        "(what became of it comes as operation messages).", "POST", "api/write", req,
+                                        status, body), gui)
+            await sock.until(lambda m: m["type"] == "operation" and m["state"] == "queued")
+            await c.post("api/time", {"command": "step", "ms": 200})
+            await sock.until(lambda m: m["type"] == "values" and m["paused"] and m["sim_ms"] == 200)
+            for code, req, text in (
+                    ("unknown-variable", {"writes": {"Engine": {"engine.torque": 1}}}, "A variable the run does not have."),
+                    ("not-writable", {"writes": {"Engine": {"engine.speed": 900}}}, "An output cannot be written.")):
+                status, body = await c.post("api/write", req)
+                check_example(f"error-{code}", http(text, "POST", "api/write", req, status, body), gui)
+            await sock.send({"type": "watch", "id": 2, "variables": "all", "period_ms": 5})
+            got = await sock.until(lambda m: m["type"] == "error")
+            check_example("error-invalid-watch", ws("A watch that is wrong: an error for this connection, which "
+                                                    "goes on.", sock.sent[-1:], got[-1:]), gui)
+            await sock.send({"type": "unwatch", "id": 1})
+            await c.post("api/stop", {})
+            await sock.until(is_ended)
+            await sock.close()
+            check_example("ws-variables", ws(
+                "A run with variables, started paused: the schema (variables), a watch of two variables, a write "
+                "before the first step, a step of 200 ms, the end. Left out here: the launcher's events, the values "
+                "sent while it ran (paused false), and the operation's first state (sent).",
+                sock.sent, variables_only(sock.received)), gui)
+        run_async(talk, gui)
+
+
+def test_variables_failed_examples(tmp_path: Path, control_env: dict) -> None:
+    with gui_server(tmp_path, env={**control_env, "FAKE_LAUNCHER_CONTROL": "unreachable"}) as gui:
+        async def talk(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"]})
+            await sock.until(lambda m: m["type"] == "variables" and m["variables"]["reason"])
+            req = {"writes": {"Engine": {"engine.demand": 40}}}
+            status, body = await c.post("api/write", req)
+            check_example("error-variables-not-ready", http("A write while the variables cannot be read (the reason "
+                                                            "is the summary's variables.reason).", "POST",
+                                                            "api/write", req, status, body), gui)
+            await c.post("api/stop", {})
+            await sock.until(is_ended)
+            await sock.close()
+            told = [m for m in sock.received if m["type"] == "variables"]
+            check_example("ws-variables-failed", ws(
+                "The run's control server cannot be reached: the run goes on, and the variables say why (only the "
+                "variables messages are shown; while the server tries again, the same message is not sent twice).",
+                sock.sent, told), gui)
         run_async(talk, gui)
 
 

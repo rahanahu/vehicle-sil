@@ -57,6 +57,18 @@
       }
     },
     {
+      "type": "variables",
+      "session": 1,
+      "variables": {
+        "state": "off",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "peers": [],
+        "peers_omitted": 0,
+        "variables_omitted": 0,
+        "operations": []
+      }
+    },
+    {
       "type": "event",
       "session": 1,
       "event": {
@@ -314,7 +326,7 @@
         "event": "registry",
         "seq": 4,
         "t_ms": 40,
-        "uri": "silkit://127.0.0.1:8500"
+        "uri": "silkit://127.0.0.1:8510"
       }
     },
     {
@@ -325,7 +337,7 @@
         "seq": 5,
         "t_ms": 50,
         "source": "vehicle_sil_launch",
-        "line": "registry at silkit://127.0.0.1:8500"
+        "line": "registry at silkit://127.0.0.1:8510"
       }
     },
     {
@@ -336,7 +348,7 @@
         "seq": 6,
         "t_ms": 60,
         "source": "vehicle_sil_launch",
-        "line": "starting Engine: /path/to/root/engine/vehicle_sil_engine_ecu --name Engine --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 50000"
+        "line": "starting Engine: /path/to/root/engine/vehicle_sil_engine_ecu --name Engine --registry-uri silkit://127.0.0.1:8510 --start-timeout-ms 50000"
       }
     },
     {
@@ -354,7 +366,7 @@
           "--name",
           "Engine",
           "--registry-uri",
-          "silkit://127.0.0.1:8500",
+          "silkit://127.0.0.1:8510",
           "--start-timeout-ms",
           "50000"
         ],
@@ -369,7 +381,7 @@
         "seq": 8,
         "t_ms": 80,
         "source": "vehicle_sil_launch",
-        "line": "starting Dashboard: /path/to/root/dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 50000"
+        "line": "starting Dashboard: /path/to/root/dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://127.0.0.1:8510 --start-timeout-ms 50000"
       }
     },
     {
@@ -387,7 +399,7 @@
           "--name",
           "Dashboard",
           "--registry-uri",
-          "silkit://127.0.0.1:8500",
+          "silkit://127.0.0.1:8510",
           "--start-timeout-ms",
           "50000"
         ],
@@ -402,7 +414,7 @@
         "seq": 10,
         "t_ms": 100,
         "source": "vehicle_sil_launch",
-        "line": "starting Logger: /path/to/root/logger/can_logger silkit://127.0.0.1:8500"
+        "line": "starting Logger: /path/to/root/logger/can_logger silkit://127.0.0.1:8510"
       }
     },
     {
@@ -417,7 +429,7 @@
         "pid": 10004,
         "command": [
           "/path/to/root/logger/can_logger",
-          "silkit://127.0.0.1:8500"
+          "silkit://127.0.0.1:8510"
         ],
         "log": null
       }
@@ -1721,7 +1733,7 @@
           ]
         },
         "registry": {
-          "uri": "silkit://127.0.0.1:8500"
+          "uri": "silkit://127.0.0.1:8510"
         },
         "participants": [
           {
@@ -1733,7 +1745,7 @@
               "--name",
               "Engine",
               "--registry-uri",
-              "silkit://127.0.0.1:8500",
+              "silkit://127.0.0.1:8510",
               "--start-timeout-ms",
               "50000"
             ],
@@ -1754,7 +1766,7 @@
               "--name",
               "Dashboard",
               "--registry-uri",
-              "silkit://127.0.0.1:8500",
+              "silkit://127.0.0.1:8510",
               "--start-timeout-ms",
               "50000"
             ],
@@ -1772,7 +1784,7 @@
             "pid": 10004,
             "command": [
               "/path/to/root/logger/can_logger",
-              "silkit://127.0.0.1:8500"
+              "silkit://127.0.0.1:8510"
             ],
             "log": null,
             "control_link": {

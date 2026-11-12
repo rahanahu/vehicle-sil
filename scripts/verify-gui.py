@@ -10,15 +10,20 @@ Steps, in order:
           are listed under this one, with their logs
   example the example clients in examples/gui_client (Node 22 or later) against the GUI server and the fake
           launcher: run.mjs (plain JavaScript, no library) and run-with-library.mjs (the bundled client library from
-          the web step): a run that passes, runs that fail, a refused token (gui/server/tests/test_example_client.py,
-          which the server step leaves out); not with --skip-web or -k
+          the web step): a run that passes, runs that fail, a refused token; and variables.mjs (the library again:
+          write a variable of an ECU before the first step, step, check what is read while the simulation stands
+          still) against the fake launcher with its stand-in for the control server and, with a real launcher,
+          against that one and the ecu_main example ECUs (gui/server/tests/test_example_client.py, which the
+          server step leaves out); not with --skip-web or -k
   real    with a real launcher only (--launcher <path>, or VEHICLE_SIL_GUI_LAUNCHER): npm run e2e:real, the
           screen, the GUI server, that vehicle_sil_launch and the ecu_main example ECUs built next to it (pass,
           a participant left out, stop, failing checks, a failing run); needs the build of gui/web (the web step,
           or an earlier one). Without a launcher it prints "skipped: no launcher" and does not fail
 
 With a real launcher, the server step also runs gui/server/tests/test_real_launcher.py, which compares what the
-fake launcher writes with what the real one writes (without one, those tests are skipped and say why).
+fake launcher writes with what the real one writes, and test_real_variables.py, which reads and writes the
+variables of the example ECUs through the GUI server (a launcher built with its control server); without one,
+those tests are skipped and say why.
 
 The full output of each step goes to build/logs/<tag>-<step>.log (the web steps: build/logs/<tag>-web-*.log).
 The summary shows one line per step and, for a failed step, its first error lines and its log. Stops at the
@@ -256,7 +261,8 @@ def main() -> int:
             die_usage("npm is not on PATH: the real step runs the browser tests (gui/web/README.md)")
         steps.append(Step("real", [npm, "--prefix", "gui/web", "run", "e2e:real"]))
 
-    env = {**os.environ, "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+    # The tests of the ECUs' variables need grpcio-tools (uv sync installs it): here they fail without it, not skip.
+    env = {**os.environ, "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1", "VEHICLE_SIL_GUI_REQUIRE_CONTROL": "1"}
     env.pop("VEHICLE_SIL_GUI_LAUNCHER", None)
     if launcher is not None:
         env["VEHICLE_SIL_GUI_LAUNCHER"] = str(Path(launcher).resolve())

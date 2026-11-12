@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import CONFIGS, FAKE, Client, Gui, alive, gui_server, is_ended, is_synced, run_async, wait_until
+from conftest import CONFIGS, FAKE, Client, Gui, alive, gui_server, is_ended, is_synced, run_async, wait_until, without_variables
 
 POSIX = sys.platform != "win32"
 
@@ -69,7 +69,7 @@ def test_a_run_that_passes(tmp_path: Path) -> None:
         assert [p["name"] for p in end["check"]["participants"]] == ["Engine", "Dashboard", "Logger"]
         assert all(not alive(pid) for pid in started_pids(got))
         status, body = await c.get("api/session")
-        assert body["session"] == end
+        assert without_variables(body["session"]) == end and body["session"]["variables"]["state"] == "off"
     with gui_server(tmp_path, env=SPEED) as gui:
         run_async(main, gui)
 
@@ -210,7 +210,7 @@ def test_reconnecting_replays_the_kept_log(tmp_path: Path) -> None:
             again = await c.ws()
             got = await again.until(is_synced)
             hello = got[0]
-            assert hello["type"] == "hello" and hello["session"] == live[-1]["session"]
+            assert hello["type"] == "hello" and without_variables(hello["session"]) == live[-1]["session"]
             assert hello["replay"] == {"from_seq": None}
             live_engine = [e for e in events(live, "log") if e["source"] == "Engine"]
             assert got[1] == {"type": "dropped", "session": 1, "reason": "not-kept",

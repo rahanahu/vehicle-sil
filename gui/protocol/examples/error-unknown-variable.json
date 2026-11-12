@@ -1,0 +1,25 @@
+{
+  "description": "A variable the run does not have.",
+  "request": {
+    "method": "POST",
+    "path": "api/write",
+    "body": {
+      "writes": {
+        "Engine": {
+          "engine.torque": 1
+        }
+      }
+    }
+  },
+  "status": 400,
+  "response": {
+    "error": {
+      "code": "unknown-variable",
+      "message": "Engine has no variable 'engine.torque': the summary's variables.peers lists them",
+      "detail": {
+        "peer": "Engine",
+        "name": "engine.torque"
+      }
+    }
+  }
+}
