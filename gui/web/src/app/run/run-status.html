@@ -36,6 +36,11 @@
     }
     <span>{{ summary().text }}</span>
   </p>
+  @if (silentSeconds(); as seconds) {
+    <p class="silent" data-testid="silent" i18n>
+      ランチャーから {{ seconds }} 秒以上、何も届いていません（止まっているかもしれません）。
+    </p>
+  }
   @if (firstError(); as error) {
     <p class="first-error" lang="en" data-testid="first-error" [title]="error">{{ error }}</p>
   }

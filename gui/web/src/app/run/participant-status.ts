@@ -1,9 +1,15 @@
 import { Component, LOCALE_ID, computed, inject, input } from '@angular/core';
 import { ParticipantView } from '../core/session/session-state';
-import { participantStateLabel } from './labels';
+import { failureReasonLabel, participantStateLabel } from './labels';
 
 /** 終わりが決まった状態。ほかの状態は、ランチャーが先に終わると、その後どうなったかわからない。 */
-const SETTLED: ReadonlySet<string> = new Set(['ended', 'killed', 'disabled', 'not_started']);
+const SETTLED: ReadonlySet<string> = new Set([
+  'ended',
+  'killed',
+  'disabled',
+  'not_started',
+  'failed',
+]);
 
 /** 実行中の participant ごとの状態（起動、参加、終了と終了コード）。 */
 @Component({
@@ -19,10 +25,13 @@ const SETTLED: ReadonlySet<string> = new Set(['ended', 'killed', 'disabled', 'no
       @for (row of rows(); track row.name) {
         <li class="item" [attr.data-state]="row.tone" [attr.data-testid]="'status-' + row.name">
           <span class="name">{{ row.name }}</span>
-          <span class="state">
+          <span class="state" [title]="row.raw">
             <span class="mark" aria-hidden="true">{{ row.mark }}</span>
             {{ row.label }}
           </span>
+          @if (row.failure) {
+            <span class="exit" [title]="row.failureRaw">{{ row.failure }}</span>
+          }
           @if (row.exit !== null) {
             <span class="exit" i18n>終了コード {{ row.exit }}</span>
           }
@@ -122,19 +131,30 @@ export class ParticipantStatus {
           lastKnown: p.state === null ? null : participantStateLabel(p.state),
           required: p.required,
           omitted,
+          raw: p.state ?? '',
+          failure: null,
+          failureRaw: null,
         };
       }
+      // ランチャーが失敗と決めた participant は、プロセスが終わる前でもすぐに失敗として出す（後の ended でも残す）
+      const decided = p.failure !== null;
       const failed =
+        decided ||
         p.state === 'killed' ||
         (p.state === 'ended' && (p.exitCode ?? 0) !== 0) ||
+        (p.state === 'not_started' && p.message !== null) ||
         p.signal !== null;
-      // 止めたときの SIGTERM などは失敗ではない（終了コードが 0 以外で終わったものは、止めたときでも失敗）
+      // 止めたとき（利用者が止めた、またはランチャーが止まるよう求めた）の SIGTERM などは失敗ではない。
+      // 利用者が止めたのに 0 以外の終了コードで終わったものは失敗のまま
       const stopped =
-        failed && this.interrupted() && !(p.state === 'ended' && (p.exitCode ?? 0) !== 0);
+        failed &&
+        !decided &&
+        (p.stopRequested ||
+          (this.interrupted() && !(p.state === 'ended' && (p.exitCode ?? 0) !== 0)));
       const tone = stopped ? 'stopped' : failed ? 'bad' : p.state === 'joined' ? 'good' : 'plain';
       return {
         name: p.name,
-        label: participantStateLabel(p.state),
+        label: decided ? participantStateLabel('failed') : participantStateLabel(p.state),
         // 色だけで伝えないための形
         mark: stopped
           ? '■'
@@ -146,11 +166,15 @@ export class ParticipantStatus {
                 ? '✓'
                 : '○',
         tone,
-        exit: p.state === 'ended' || p.state === 'killed' ? p.exitCode : null,
+        exit: p.exitCode,
         signal: p.signal,
         lastKnown: null,
         required: p.required,
         omitted,
+        raw: p.state === 'not_started' && p.message ? `${p.state}: ${p.message}` : (p.state ?? ''),
+        // 理由は日本語で、ランチャーの英語（reason と message）は title に
+        failure: decided ? (p.failure ? failureReasonLabel(p.failure) : null) : null,
+        failureRaw: decided ? [p.failure, p.message].filter(Boolean).join(': ') : null,
       };
     }),
   );

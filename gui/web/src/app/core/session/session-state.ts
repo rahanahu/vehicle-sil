@@ -31,8 +31,8 @@ export interface LogLine {
   /** participant の名前か `vehicle_sil_launch`。 */
   source: string;
   line: string;
-  /** 落ちた行の印（「ここで N 行が落ちた」）のときだけ。 */
-  gap?: { count: number; atLeast: boolean };
+  /** 落ちた行の印（「ここで N 行が落ちた」）のときだけ。launcher: ランチャーが書けなかった行（log_dropped）。 */
+  gap?: { count: number; atLeast: boolean; launcher?: boolean };
 }
 
 /** 出どころごとのログの数。 */
@@ -52,6 +52,15 @@ export interface ParticipantView {
   pid: number | null;
   exitCode: number | null;
   signal: string | null;
+  /**
+   * ランチャーが失敗と決めた理由（failed の事象の reason。プロセスが終わる前にも届く）。後で ended が来ても残る。
+   * 失敗と決めていなければ null。
+   */
+  failure: string | null;
+  /** 起動できなかった理由（not_started）か、失敗の所見の文（failed）。英語のまま。 */
+  message: string | null;
+  /** ランチャーが止まるよう求めた（stop_requested、結果の ended が stopped）。止めた後の終わり方は失敗の色にしない。 */
+  stopRequested: boolean;
   /** 要約に入りきらず、サーバーが省いた欄の名前（その後の事象が届けば空）。 */
   omittedFields: readonly string[];
 }
@@ -63,6 +72,8 @@ export interface LauncherView {
   exitCode: number | null;
   /** 終わらせたシグナルの番号（POSIX だけ）。 */
   signal: number | null;
+  /** 動いているのに、何も書いてこない秒数（サーバーが心拍で見ている）。書いていれば null。 */
+  silentSeconds: number | null;
 }
 
 /** 1 つのセッション（ランチャーの 1 回の run）の、画面から見た状態。 */
@@ -190,6 +201,7 @@ function launcherOf(summary: SessionSummary): LauncherView {
     running: summary.launcher.running,
     exitCode: summary.launcher.exit_code,
     signal: summary.launcher.signal,
+    silentSeconds: summary.launcher.silent_s,
   };
 }
 
@@ -217,6 +229,7 @@ export function applySummary(
   const phase = summary.phase ?? next.phase;
   const rank = phaseIndex(phase);
   const check = summary.check ?? next.check ?? summary.result?.check ?? null;
+  const result = summary.result ?? next.result;
   const participants: readonly ParticipantView[] = summary.participants.map((p) => ({
     name: p.name,
     state: p.state,
@@ -224,6 +237,9 @@ export function applySummary(
     pid: p.pid,
     exitCode: p.exit_code,
     signal: p.signal,
+    failure: p.reason,
+    message: p.message,
+    stopRequested: p.state === 'stop_requested',
     omittedFields: p.omitted_fields,
   }));
   return {
@@ -235,10 +251,10 @@ export function applySummary(
     timeOmittedFields:
       summary.sim_ms === null ? next.timeOmittedFields : summary.time_omitted_fields,
     findings: summary.findings,
-    result: summary.result ?? next.result,
+    result,
     check,
-    // 必須か、外したかは照合の結果にある（並びも構成ファイルの順に）
-    participants: check ? mergeCheck(participants, check) : participants,
+    // 必須か、外したかは照合の結果にある（並びも構成ファイルの順に）。結果があれば、終わり方（止めたか）も結果から
+    participants: withResult(check ? mergeCheck(participants, check) : participants, result),
   };
 }
 
@@ -279,7 +295,17 @@ export function applyEvents(session: SessionView, events: readonly LauncherEvent
       next = applyOne(next, event, logs);
     }
   }
-  return logs.length > 0 ? appendLogs(next, logs) : next;
+  if (logs.length === 0) return next;
+  next = appendLogs(next, logs);
+  // ランチャーが書けなかった行（log_dropped）は、その出どころの落とした行に数える
+  const gaps = logs.filter((line) => line.gap?.launcher);
+  if (gaps.length === 0) return next;
+  const sources = { ...next.logSources };
+  for (const gap of gaps) {
+    const counts = sources[gap.source] ?? { lines: 0, dropped: 0 };
+    sources[gap.source] = { ...counts, dropped: counts.dropped + (gap.gap?.count ?? 0) };
+  }
+  return { ...next, logSources: sources };
 }
 
 /** ログの行を足し、出どころごとの上限と全体の上限を超えた分を、古い行から落とす。 */
@@ -349,6 +375,19 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
     case 'log':
       logs.push({ seq: event.seq, source: event.source, line: event.line });
       return next;
+    case 'log_dropped':
+      // 落ちた位置に印を置く（ここで N 行が落ちた）。印の seq はこの事象の seq
+      for (const [source, count] of Object.entries(event.sources)) {
+        if (count > 0) {
+          logs.push({
+            seq: event.seq,
+            source,
+            line: '',
+            gap: { count, atLeast: false, launcher: true },
+          });
+        }
+      }
+      return next;
     case 'finding':
       // 再送は所見を送り直さない（要約が持つ）ので、届いた所見はそのまま足す（同じ文が 2 回出ることもある）
       return next.findings.length >= MAX_FINDINGS
@@ -404,11 +443,21 @@ function updateParticipant(
     omittedFields: [],
   };
   if (event.pid !== null) updated.pid = event.pid;
+  if (event.state === 'failed') updated.failure = event.reason ?? '';
+  if (event.state === 'stop_requested') updated.stopRequested = true;
+  if (event.message) updated.message = event.message;
   if (event.state === 'ended' || event.state === 'killed') {
     updated.exitCode = event.exit_code;
     updated.signal = event.signal;
   }
   return known ? current.map((p) => (p === known ? updated : p)) : [...current, updated];
+}
+
+function withResult(
+  participants: readonly ParticipantView[],
+  result: RunResult | null,
+): readonly ParticipantView[] {
+  return result ? mergeResult(participants, result) : participants;
 }
 
 /** 最後の結果の、participant の終わり方を映す（事象を取りこぼしていても、結果だけで完結する）。 */
@@ -433,6 +482,7 @@ function mergeResult(
       state,
       exitCode: p.exit_code,
       signal: p.signal,
+      stopRequested: base.stopRequested || p.ended === 'stopped',
     };
     if (i >= 0) merged[i] = view;
     else merged.push(view);
@@ -448,6 +498,9 @@ function blankParticipant(name: string): ParticipantView {
     pid: null,
     exitCode: null,
     signal: null,
+    failure: null,
+    message: null,
+    stopRequested: false,
     omittedFields: [],
   };
 }

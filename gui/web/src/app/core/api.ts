@@ -285,7 +285,14 @@ export const PHASES = ['checking', 'starting', 'waiting', 'running', 'stopping',
 export type Phase = Open<(typeof PHASES)[number]>;
 
 export type ParticipantState = Open<
-  'disabled' | 'started' | 'joined' | 'ended' | 'stop_requested' | 'killed'
+  | 'disabled'
+  | 'not_started'
+  | 'started'
+  | 'joined'
+  | 'failed'
+  | 'ended'
+  | 'stop_requested'
+  | 'killed'
 >;
 
 interface EventBase {
@@ -313,11 +320,25 @@ export type LauncherEvent =
       pid: number | null;
       exit_code: number | null;
       signal: string | null;
+      /** failed: なぜ失敗としたか（left_simulation、process_ended、ended_before_start。増えることがある）。 */
+      reason: string | null;
+      /** not_started: 起動できなかった理由。failed: その所見の文（決まっていれば）。 */
+      message: string | null;
     })
   | (EventBase & { event: 'log'; source: string; line: string })
+  /** 読む側が遅くて、ランチャーが書けなかった log の行の数（出どころごと）。その位置に来る。 */
+  | (EventBase & { event: 'log_dropped'; count: number; sources: Record<string, number> })
   | (EventBase & { event: 'finding'; finding: Finding })
   | (EventBase & { event: 'time'; sim_ms: number })
-  | (EventBase & { event: 'command'; command: string; accepted: boolean; message: string | null })
+  | (EventBase & {
+      event: 'command';
+      /** 命令の名前（読めなかった行は null）。 */
+      command: string | null;
+      /** stdin: 行で来た、eof: 標準入力の終わり。 */
+      source: Open<'stdin' | 'eof'>;
+      accepted: boolean;
+      message: string | null;
+    })
   | (EventBase & { event: 'result'; result: RunResult });
 
 /** ランチャーの事象を 1 つ読む。知らない事象は null（読み飛ばす）。 */
@@ -355,6 +376,15 @@ export const readLauncherEvent: Reader<LauncherEvent | null> = (value, path) => 
         pid: field(f, path, 'pid', optional(nullable(integer), null)),
         exit_code: field(f, path, 'exit_code', optional(nullable(integer), null)),
         signal: field(f, path, 'signal', optional(nullable(string), null)),
+        reason: field(f, path, 'reason', optional(nullable(string), null)),
+        message: field(f, path, 'message', optional(nullable(string), null)),
+      };
+    case 'log_dropped':
+      return {
+        ...base,
+        event: kind,
+        count: field(f, path, 'count', integer),
+        sources: field(f, path, 'sources', record(integer)),
       };
     case 'log':
       return {
@@ -372,7 +402,8 @@ export const readLauncherEvent: Reader<LauncherEvent | null> = (value, path) => 
       return {
         ...base,
         event: kind,
-        command: field(f, path, 'command', string),
+        command: field(f, path, 'command', nullable(string)),
+        source: field(f, path, 'source', optional(string, 'stdin')),
         accepted: field(f, path, 'accepted', boolean),
         message: field(f, path, 'message', optional(nullable(string), null)),
       };
@@ -536,6 +567,10 @@ export interface SummaryParticipant {
   pid: number | null;
   exit_code: number | null;
   signal: string | null;
+  /** failed の事象の reason（失敗とした理由。後で ended が来ても残る）。 */
+  reason: string | null;
+  /** not_started の理由、failed の所見の文。 */
+  message: string | null;
   /** 大きすぎて要約に入れなかった欄の名前（後の事象でその欄が届けば消える）。 */
   omitted_fields: string[];
 }
@@ -548,6 +583,8 @@ const readSummaryParticipant: Reader<SummaryParticipant> = (value, path) => {
     pid: field(f, path, 'pid', optional(nullable(integer), null)),
     exit_code: field(f, path, 'exit_code', optional(nullable(integer), null)),
     signal: field(f, path, 'signal', optional(nullable(string), null)),
+    reason: field(f, path, 'reason', optional(nullable(string), null)),
+    message: field(f, path, 'message', optional(nullable(string), null)),
     omitted_fields: field(f, path, 'omitted_fields', optional(array(string), [])),
   };
 };
@@ -559,6 +596,8 @@ export interface SummaryLauncher {
   exit_code: number | null;
   /** 終わらせたシグナルの番号（POSIX だけ）。 */
   signal: number | null;
+  /** 動いているのに、この秒数より長く何も書いていない（心拍も来ない。止まっているかもしれない）。なければ null。 */
+  silent_s: number | null;
 }
 
 const readSummaryLauncher: Reader<SummaryLauncher> = (value, path) => {
@@ -567,6 +606,7 @@ const readSummaryLauncher: Reader<SummaryLauncher> = (value, path) => {
     running: field(f, path, 'running', boolean),
     exit_code: field(f, path, 'exit_code', nullable(integer)),
     signal: field(f, path, 'signal', nullable(integer)),
+    silent_s: field(f, path, 'silent_s', optional(nullable(integer), null)),
   };
 };
 

@@ -238,7 +238,7 @@
                 <button matButton="tonal" type="button" (click)="showLauncherLog()" i18n>
                   ランチャーのログを見る
                 </button>
-                @if (problemGroups().groups.length > 0) {
+                @if (hasProblems()) {
                   <button matButton="tonal" type="button" (click)="showProblems()" i18n>
                     サーバーの知らせを見る
                   </button>
@@ -277,7 +277,7 @@
             </mat-card-content>
           </mat-card>
         }
-        @if (problemGroups().groups.length > 0) {
+        @if (hasProblems()) {
           <mat-card appearance="outlined" data-testid="problems-card">
             <mat-card-header>
               <mat-card-title>
@@ -285,17 +285,37 @@
               </mat-card-title>
             </mat-card-header>
             <mat-card-content>
-              <ul class="problems">
-                @for (problem of problemGroups().groups; track problem.code) {
-                  <li data-testid="problem">
-                    <code>{{ problem.code }}</code>
-                    @if (problem.count > 1) {
-                      <span class="count" i18n>（{{ problem.count }} 件）</span>
+              @if (problemGroups().groups.length > 0) {
+                <ul class="problems">
+                  @for (problem of problemGroups().groups; track problem.code) {
+                    <li data-testid="problem">
+                      <code>{{ problem.code }}</code>
+                      @if (problem.count > 1) {
+                        <span class="count" i18n>（{{ problem.count }} 件）</span>
+                      }
+                      <span lang="en">{{ problem.message }}</span>
+                    </li>
+                  }
+                </ul>
+              }
+              @if (problemGroups().explained.length > 0) {
+                <details class="explained" data-testid="problems-explained">
+                  <summary i18n>
+                    詳細（画面に説明のある知らせ {{ problemGroups().explained.length }} 件）
+                  </summary>
+                  <ul class="problems">
+                    @for (problem of problemGroups().explained; track problem.code) {
+                      <li data-testid="problem">
+                        <code>{{ problem.code }}</code>
+                        @if (problem.count > 1) {
+                          <span class="count" i18n>（{{ problem.count }} 件）</span>
+                        }
+                        <span lang="en">{{ problem.message }}</span>
+                      </li>
                     }
-                    <span lang="en">{{ problem.message }}</span>
-                  </li>
-                }
-              </ul>
+                  </ul>
+                </details>
+              }
               @if (problemGroups().hidden > 0) {
                 <p class="hint" i18n>
                   ほかに {{ problemGroups().hidden }} 件あります（出していません）。

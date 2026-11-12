@@ -208,6 +208,9 @@ export class LayoutFixture {
       pid: 1,
       exitCode: 3,
       signal: null,
+      failure: null,
+      message: null,
+      stopRequested: false,
       omittedFields: ['environment_with_a_very_long_field_name_that_does_not_break', 'command'],
     },
     {
@@ -217,6 +220,9 @@ export class LayoutFixture {
       pid: 2,
       exitCode: null,
       signal: null,
+      failure: null,
+      message: null,
+      stopRequested: false,
       omittedFields: [],
     },
   ];

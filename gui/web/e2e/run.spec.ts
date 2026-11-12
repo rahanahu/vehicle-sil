@@ -1,85 +1,18 @@
 // 実行の画面を、本物の GUI サーバーと偽のランチャー（gui/server/tests/fake_launcher.py）で通す。
 // 構成ファイルは gui/server/tests/configs/ で、ファイルごとに偽のランチャーの筋書きが決まっている。
 // サーバーは 1 つのセッションしか動かさないので、試験は順に動き、動かしたものは止めてから終わる。
-import { Page, WebSocketRoute, expect, test } from '@playwright/test';
-import { guiToken } from './support/gui-server';
+import { WebSocketRoute, expect, test } from '@playwright/test';
 import { VIEWPORTS, findLayoutProblems } from './support/layout';
-
-/** ランチャーの 1 回の実行の上限（偽のランチャーは 1 ステップ 50 ms、stop_at_ms まで 10 ステップ）。 */
-const RUN_TIMEOUT = 20_000;
-
-async function openRun(page: Page): Promise<void> {
-  await page.goto(`/#token=${guiToken()}`);
-  await expect(page.getByRole('heading', { level: 1, name: '実行' })).toBeVisible();
-  await expect(page).toHaveTitle('実行 - vehicle-sil');
-}
-
-/** 状態の帯の主なボタン（開始 / 停止 / 止めています / もう一度実行。1 つの要素のまま変わる）。 */
-function primary(page: Page) {
-  return page.getByTestId('primary');
-}
-
-/** 選んでいる構成ファイル（mat-select の表示。選択肢の一覧も mat-select の中に描かれるので、表示の部分だけ）。 */
-function chosenFile(page: Page) {
-  return page.getByRole('combobox', { name: '構成ファイル' }).locator('.mat-mdc-select-value-text');
-}
-
-/** 構成ファイルを選び、その照合の結果が出るまで待つ。 */
-async function choose(page: Page, file: string): Promise<void> {
-  const select = page.getByRole('combobox', { name: '構成ファイル' });
-  await expect(select).toBeEnabled();
-  if ((await chosenFile(page).textContent())?.trim() !== file) {
-    const checked = page.waitForResponse(
-      (r) => r.url().endsWith('/api/check') && r.request().postDataJSON().file === file,
-    );
-    await select.click();
-    await page.getByRole('option', { name: file, exact: true }).click();
-    await checked;
-  }
-  await expect(chosenFile(page)).toHaveText(file);
-  await expect(page.getByTestId('check-outcome')).toBeVisible();
-  await expect(page.getByRole('button', { name: '照合し直す' })).toBeEnabled();
-}
-
-/** 始めて、サーバーが付けたセッションの番号を返す。 */
-async function start(page: Page): Promise<number> {
-  await expect(primary(page)).not.toHaveAttribute('aria-disabled', 'true');
-  const response = page.waitForResponse((r) => r.url().endsWith('/api/run'));
-  await primary(page).click();
-  const answer = await response;
-  expect(answer.status()).toBe(200);
-  return ((await answer.json()) as { session: { id: number } }).session.id;
-}
-
-function result(page: Page, session: number) {
-  return page.locator(`[data-testid="result-card"][data-session="${session}"]`);
-}
-
-/** 前の試験のセッションが動いていたら止める（順に止め、止まらなければ待たずに止める）。 */
-async function stopIfRunning(page: Page): Promise<void> {
-  await expect(primary(page)).toBeVisible();
-  // つないで揃うまでは、帯が「開始」のままのことがある
-  await expect(page.getByTestId('connection')).toHaveText('', { timeout: 10_000 });
-  await expect(page.getByTestId('blocked').filter({ hasText: 'サーバーと揃うまで' })).toHaveCount(
-    0,
-  );
-  if ((await primary(page).getAttribute('data-action')) === 'stop') {
-    await primary(page).click();
-  }
-  const force = page.getByTestId('force-stop');
-  await expect(primary(page)).toHaveAttribute('data-action', /start|again|stopping/);
-  if ((await primary(page).getAttribute('data-action')) === 'stopping') {
-    try {
-      await expect(primary(page)).toHaveAttribute('data-action', /start|again/, { timeout: 3000 });
-    } catch {
-      await force.click();
-      await page.getByTestId('force-stop-confirm').click();
-    }
-  }
-  await expect(primary(page)).toHaveAttribute('data-action', /start|again/, {
-    timeout: RUN_TIMEOUT,
-  });
-}
+import {
+  RUN_TIMEOUT,
+  choose,
+  chosenFile,
+  openRun,
+  primary,
+  result,
+  start,
+  stopIfRunning,
+} from './support/run-page';
 
 test.beforeEach(async ({ page }) => {
   await openRun(page);
@@ -164,6 +97,10 @@ test('stopping a run that does not end by itself', async ({ page }) => {
   await primary(page).click();
   expect((await stop).postDataJSON()).toEqual({ force: false });
   await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
+  // 利用者が止めた中断は失敗の色と ✕ にしない
+  await expect(result(page, session).getByTestId('result')).toHaveAttribute('data-tone', 'neutral');
+  await expect(page.getByTestId('outcome')).toHaveAttribute('data-tone', 'neutral');
+  await expect(page.getByTestId('outcome')).not.toContainText('✕');
 });
 
 test('a double click on stop does not stop without waiting', async ({ page }) => {
@@ -175,7 +112,7 @@ test('a double click on stop does not stop without waiting', async ({ page }) =>
     if (r.url().endsWith('/api/stop')) bodies.push(r.postDataJSON());
   });
   await primary(page).dblclick();
-  await expect(page.getByTestId('outcome')).toContainText('止めています');
+  await expect(page.getByTestId('outcome')).toContainText('participant が終わるのを待っています');
   await expect(primary(page)).toHaveText(/止めています/);
   // しばらく待っても、待たずに止めてはいない
   await page.waitForTimeout(1500);
@@ -209,6 +146,8 @@ test('a participant that fails: the result, the reason and its exit code', async
   await expect(page.getByTestId('first-error')).toContainText('participant-failed');
   await expect(result(page, session).getByTestId('finding')).toContainText('participant-failed');
   await expect(page.getByTestId('status-Dashboard')).toContainText('終了コード 3');
+  await expect(page.getByTestId('status-Dashboard')).toContainText('失敗');
+  await expect(page.getByTestId('status-Dashboard')).toContainText('プロセスが失敗で終わった');
 });
 
 test('a launcher that dies without a result: an abnormal end, and where to look', async ({
@@ -224,7 +163,9 @@ test('a launcher that dies without a result: an abnormal end, and where to look'
     page.getByRole('list', { name: '段階' }).locator('[aria-current="step"]'),
   ).toHaveText(/終了/);
   await expect(page.getByRole('list', { name: '段階' })).toContainText('（中断）');
-  await expect(page.getByTestId('problems-card')).toContainText('no-result');
+  // no-result は異常終了のカードが日本語で説明しているので、「詳細」の中にたたむ
+  await expect(page.getByTestId('problems-explained')).toContainText('no-result');
+  await expect(page.getByTestId('problems-explained')).not.toHaveAttribute('open');
   // ランチャーの標準エラーは、サーバーの知らせとは別のまとまりに
   await expect(page.getByTestId('stderr-last')).toContainText('dying on purpose');
   await expect(page.getByTestId('problems-card')).not.toContainText('launcher-stderr');

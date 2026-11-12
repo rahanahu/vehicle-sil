@@ -52,6 +52,7 @@ const PARTICIPANT_STATES: Record<string, string> = {
   stop_requested: $localize`停止を求めた`,
   killed: $localize`強制終了した`,
   not_started: $localize`起動していない`,
+  failed: $localize`失敗`,
 };
 
 export function participantStateLabel(state: ParticipantState | null): string {
@@ -88,3 +89,21 @@ const SIMULATIONS: Record<string, string> = {
 };
 
 export const simulationLabel = (simulation: string): string => label(SIMULATIONS, simulation);
+
+const FAILURE_REASONS: Record<string, string> = {
+  left_simulation: $localize`シミュレーションを去った`,
+  process_ended: $localize`プロセスが失敗で終わった`,
+  ended_before_start: $localize`始まる前に終わった`,
+};
+
+/** ランチャーが participant を失敗とした理由（failed の reason）。知らない理由はそのまま出す。 */
+export const failureReasonLabel = (reason: string): string => label(FAILURE_REASONS, reason);
+
+const INTERRUPTED_BY: Record<string, string> = {
+  'stop command': $localize`停止の命令（画面の「停止」）`,
+  'end of input': $localize`標準入力の終わり（GUI サーバーが終わった）`,
+  'output closed': $localize`事象を読む側がいなくなった`,
+};
+
+/** 何が実行を止めたか（結果の interrupted_by）。シグナルやキーの名前（SIGINT、Ctrl+C）はそのまま出す。 */
+export const interruptedByLabel = (by: string): string => label(INTERRUPTED_BY, by);

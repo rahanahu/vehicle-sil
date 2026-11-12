@@ -61,6 +61,17 @@
   color: var(--mat-sys-primary);
 }
 
+/* 利用者が止めた中断: 失敗の色にしない */
+.outcome[data-tone='neutral'] {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.silent {
+  flex-basis: 100%;
+  color: var(--mat-sys-error);
+  overflow-wrap: anywhere;
+}
+
 .outcome .mark {
   margin-inline-end: var(--app-space-1);
 }
@@ -136,6 +147,13 @@
 .times dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+}
+
+/* とても狭い帯（360 px の窓など）では、状態の文をボタンの横に詰めず、下の行に出す */
+@container run-status (inline-size < 420px) {
+  .state {
+    flex-basis: 100%;
+  }
 }
 
 /* 狭い帯では、段階はいまの段階（と中断した段階）だけ。帯を 2 行に保つ */

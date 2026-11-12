@@ -1,5 +1,6 @@
 // e2e の試験の前に GUI サーバー（gui/server）を偽のランチャーと一緒に起動し、終わったら止める（Playwright の globalSetup）。
 // サーバーは起動のたびにトークンを作るので、Playwright の webServer ではなく、ここで起動して 1 行の JSON からトークンを読む。
+// 本物のランチャーで動かす e2e（e2e/real/）も、ここの startGuiServer でサーバーを起動する（support/real-server.ts）。
 import { ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
@@ -15,7 +16,7 @@ process.env['VEHICLE_SIL_GUI_E2E_PORT'] ??= String(18000 + (process.pid % 1000))
 export const GUI_PORT = Number(process.env['VEHICLE_SIL_GUI_E2E_PORT']);
 
 /** 構成ファイルを選べる範囲: 偽のランチャーの筋書きごとの構成ファイル。 */
-const REPOSITORY = resolve(__dirname, '../../../..');
+export const REPOSITORY = resolve(__dirname, '../../../..');
 const CONFIGS = resolve(REPOSITORY, 'gui/server/tests/configs');
 const FAKE_LAUNCHER = resolve(REPOSITORY, 'gui/server/tests/fake_launcher.py');
 
@@ -59,8 +60,26 @@ async function stop(server: ChildProcess): Promise<void> {
   if (groupAlive(pid)) process.kill(-pid, 'SIGKILL');
 }
 
-export default async function startGuiServer(config: FullConfig): Promise<() => Promise<void>> {
-  const devOrigin = config.metadata['devOrigin'] as string | undefined;
+/** GUI サーバーの起動の指定。 */
+export interface GuiServerOptions {
+  launcher: string;
+  root: string;
+  devOrigin?: string;
+  env?: Record<string, string>;
+}
+
+export default async function startFakeGuiServer(config: FullConfig): Promise<() => Promise<void>> {
+  return startGuiServer({
+    launcher: FAKE_LAUNCHER,
+    root: CONFIGS,
+    devOrigin: config.metadata['devOrigin'] as string | undefined,
+    env: { FAKE_LAUNCHER_TICK_MS: '50' },
+  });
+}
+
+/** GUI サーバーを起動してトークンを環境変数に置き、止める関数を返す。 */
+export async function startGuiServer(options: GuiServerOptions): Promise<() => Promise<void>> {
+  const { launcher, root, devOrigin } = options;
   const server = spawn(
     'uv',
     [
@@ -73,16 +92,16 @@ export default async function startGuiServer(config: FullConfig): Promise<() => 
       '--port',
       String(GUI_PORT),
       '--launcher',
-      FAKE_LAUNCHER,
+      launcher,
       '--root',
-      CONFIGS,
+      root,
       ...(devOrigin ? ['--dev-origin', devOrigin] : []),
     ],
     {
       cwd: REPOSITORY,
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'inherit'],
-      env: { ...process.env, FAKE_LAUNCHER_TICK_MS: '50' },
+      env: { ...process.env, ...options.env },
     },
   );
   const lines = createInterface({ input: server.stdout! });

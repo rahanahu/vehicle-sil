@@ -69,7 +69,11 @@
   >
     <span class="from">{{ line.source }}</span>
     @if (line.gap; as gap) {
-      @if (gap.atLeast) {
+      @if (gap.launcher) {
+        <span data-testid="log-gap" i18n
+          >── ここで {{ gap.count }} 行が落ちました（ランチャーが書けなかった行） ──</span
+        >
+      } @else if (gap.atLeast) {
         <span data-testid="log-gap" i18n>── ここで {{ gap.count }} 行以上が落ちました ──</span>
       } @else {
         <span data-testid="log-gap" i18n>── ここで {{ gap.count }} 行が落ちました ──</span>

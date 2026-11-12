@@ -57,7 +57,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     participants: [],
     findings: [],
     result: null,
-    launcher: { running: true, exit_code: null, signal: null },
+    launcher: { running: true, exit_code: null, signal: null, silent_s: null },
     log: {},
     problems: [],
     problems_omitted: 0,
@@ -108,6 +108,48 @@ describe('RunStatus', () => {
     expect(query('force-stop')).not.toBeNull();
   });
 
+  it('says only what it waits for while stopping (the button says that it stops)', async () => {
+    await show(sessionFromSummary(summary({ stop: 'requested' })));
+    expect(query('primary')?.textContent).toContain('止めています');
+    expect(query('outcome')?.textContent).toContain('participant が終わるのを待っています');
+    expect(query('outcome')?.textContent).not.toContain('止めています');
+    await show(sessionFromSummary(summary({ stop: 'forced' })));
+    expect(query('outcome')?.textContent).toContain('強制終了するのを待っています');
+  });
+
+  it('shows a run the user stopped in a neutral tone, not as a failure', async () => {
+    const result = {
+      result: 'interrupted',
+      findings: [{ severity: 'note', code: 'interrupted', message: 'm' }],
+      participants: [],
+    };
+    await show(
+      sessionFromSummary(
+        summary({
+          state: 'ended',
+          launcher: { running: false, exit_code: 130, signal: null, silent_s: null },
+          result: result as unknown as SessionSummary['result'],
+        }),
+      ),
+    );
+    expect(query('outcome')?.getAttribute('data-tone')).toBe('neutral');
+    expect(query('outcome')?.textContent).toContain('■');
+    expect(query('outcome')?.textContent).not.toContain('✕');
+    expect(query('outcome')?.textContent).toContain('中断');
+    expect(query('first-error')).toBeNull();
+  });
+
+  it('says when the launcher has written nothing for a while', async () => {
+    await show(
+      sessionFromSummary(
+        summary({ launcher: { running: true, exit_code: null, signal: null, silent_s: 10 } }),
+      ),
+    );
+    expect(query('silent')?.textContent).toContain('10 秒以上、何も届いていません');
+    await show(sessionFromSummary(summary()));
+    expect(query('silent')).toBeNull();
+  });
+
   it('can stop a launcher that runs on after its result', async () => {
     const result = { result: 'passed', findings: [], participants: [] };
     await show(
@@ -120,7 +162,10 @@ describe('RunStatus', () => {
   it('says that the launcher ended without a result, and moves the phases to the end', async () => {
     await show(
       sessionFromSummary(
-        summary({ state: 'ended', launcher: { running: false, exit_code: 70, signal: null } }),
+        summary({
+          state: 'ended',
+          launcher: { running: false, exit_code: 70, signal: null, silent_s: null },
+        }),
       ),
     );
     expect(query('outcome')?.textContent).toContain('異常終了（終了コード 70）');
@@ -135,7 +180,10 @@ describe('RunStatus', () => {
   it('starts, not runs again, when another file is chosen, and says the result is of the run before', async () => {
     await show(
       sessionFromSummary(
-        summary({ state: 'ended', launcher: { running: false, exit_code: 70, signal: null } }),
+        summary({
+          state: 'ended',
+          launcher: { running: false, exit_code: 70, signal: null, silent_s: null },
+        }),
       ),
     );
     fixture.componentInstance.otherFile.set(true);

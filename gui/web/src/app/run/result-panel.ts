@@ -1,29 +1,29 @@
 import { Component, LOCALE_ID, computed, inject, input } from '@angular/core';
 import { RunResult } from '../core/api';
 import { FindingsList } from './findings-list';
-import { runOutcomeLabel, simulationLabel } from './labels';
+import { interruptedByLabel, runOutcomeLabel, simulationLabel } from './labels';
 
 /** 実行の結果: 結果と、どう終わったか、理由（所見）。 */
 @Component({
   selector: 'app-result-panel',
   imports: [FindingsList],
   template: `
-    <p class="outcome" [class.failed]="!passed()" data-testid="result">
-      <span class="mark" aria-hidden="true">{{ passed() ? '✓' : '✕' }}</span>
+    <!-- ランチャーの英語の値（result、simulation、interrupted_by）は、日本語の横に並べず title に置く -->
+    <p class="outcome" [attr.data-tone]="tone()" [title]="result().result" data-testid="result">
+      <span class="mark" aria-hidden="true">{{ mark() }}</span>
       {{ outcome() }}
-      <code class="raw">{{ result().result }}</code>
     </p>
     <dl class="facts">
       @if (result().simulation; as simulation) {
         <div>
           <dt i18n>終わり方</dt>
-          <dd>{{ simulationText(simulation) }}</dd>
+          <dd [title]="simulation">{{ simulationText(simulation) }}</dd>
         </div>
       }
       @if (result().interrupted_by; as by) {
         <div>
-          <dt i18n>中断</dt>
-          <dd>{{ by }}</dd>
+          <dt i18n>止めたもの</dt>
+          <dd [title]="by">{{ interruptedBy(by) }}</dd>
         </div>
       }
       <div>
@@ -47,12 +47,12 @@ import { runOutcomeLabel, simulationLabel } from './labels';
       align-items: baseline;
       gap: var(--app-space-2);
     }
-    .failed {
+    .failed,
+    .outcome[data-tone='bad'] {
       color: var(--mat-sys-error);
     }
-    .raw {
-      font: var(--mat-sys-label-medium);
-      color: var(--mat-sys-on-surface-variant);
+    .outcome[data-tone='good'] {
+      color: var(--mat-sys-primary);
     }
     .facts {
       display: flex;
@@ -76,7 +76,15 @@ export class ResultPanel {
   private readonly list = new Intl.ListFormat(inject(LOCALE_ID), { type: 'conjunction' });
   readonly result = input.required<RunResult>();
 
-  protected readonly passed = computed(() => this.result().result === 'passed');
+  /** 成功は ✓、利用者が止めた中断は ■ で色を付けない（失敗ではない）、ほかは ✕。 */
+  protected readonly tone = computed(() =>
+    this.result().result === 'passed'
+      ? 'good'
+      : this.result().result === 'interrupted'
+        ? 'neutral'
+        : 'bad',
+  );
+  protected readonly mark = computed(() => ({ good: '✓', neutral: '■', bad: '✕' })[this.tone()]);
   protected readonly outcome = computed(() => runOutcomeLabel(this.result().result));
   /** プロセスが残った participant（言語の並べ方で）。なければ空。 */
   protected readonly leftProcesses = computed(() =>
@@ -89,5 +97,9 @@ export class ResultPanel {
 
   protected simulationText(simulation: string): string {
     return simulationLabel(simulation);
+  }
+
+  protected interruptedBy(by: string): string {
+    return interruptedByLabel(by);
   }
 }

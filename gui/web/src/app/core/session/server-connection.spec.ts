@@ -212,10 +212,11 @@ describe('ServerConnection', () => {
     const { run, socket } = open();
     play(socket, 'ws-dropped');
     const session = run.session();
-    expect(session?.logSources['Engine'].dropped).toBe(104);
+    // ws-dropped.json の dropped の数
+    expect(session?.logSources['Engine'].dropped).toBe(108);
     const gap = session?.logs.find((line) => line.gap);
     expect(gap?.source).toBe('Engine');
-    expect(gap?.gap?.count).toBe(104);
+    expect(gap?.gap?.count).toBe(108);
   });
 
   it('builds the state again after a resync', () => {

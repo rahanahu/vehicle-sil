@@ -38,6 +38,8 @@ export const CHECK_DELAY_MS = 300;
 
 /** 画面に出すサーバーの知らせの種類（code）の数。 */
 const MAX_PROBLEM_GROUPS = 50;
+/** 画面がほかの場所で日本語で説明している知らせ（no-result は異常終了のカード、launcher-silent は状態の帯）。 */
+const EXPLAINED_PROBLEMS = ['no-result', 'launcher-silent'];
 
 /** ランチャー自身のログの出どころ。 */
 const LAUNCHER_SOURCE = 'vehicle_sil_launch';
@@ -268,10 +270,14 @@ export class RunPage {
     }
   });
 
-  /** サーバーの知らせを code ごとにまとめる（同じ code は数を出す）。最後に届いた文を見せる。 */
+  /**
+   * サーバーの知らせを code ごとにまとめる（同じ code は数を出す）。最後に届いた文を見せる。画面がほかの場所で
+   * 日本語で説明している知らせ（異常終了のカードの no-result、状態の帯の launcher-silent）は `explained` に分け、
+   * 「詳細」の中にたたむ。
+   */
   protected readonly problemGroups = computed(() => {
     const session = this.session();
-    if (!session) return { groups: [], hidden: 0 };
+    if (!session) return { groups: [], explained: [], hidden: 0 };
     const groups = new Map<string, { code: string; message: string; count: number }>();
     for (const problem of session.problems) {
       // ランチャーの標準エラーは、別のまとまり（stderr）で出す
@@ -284,11 +290,14 @@ export class RunPage {
         groups.set(problem.code, { ...problem, count: 1 });
       }
     }
-    const all = [...groups.values()];
+    const all = [...groups.values()].slice(0, MAX_PROBLEM_GROUPS);
+    const explained = new Set(EXPLAINED_PROBLEMS);
+    if (session.result || session.launcher.running) explained.delete('no-result');
     return {
-      groups: all.slice(0, MAX_PROBLEM_GROUPS),
+      groups: all.filter((g) => !explained.has(g.code)),
+      explained: all.filter((g) => explained.has(g.code)),
       hidden:
-        all.slice(MAX_PROBLEM_GROUPS).reduce((sum, g) => sum + g.count, 0) +
+        [...groups.values()].slice(MAX_PROBLEM_GROUPS).reduce((sum, g) => sum + g.count, 0) +
         session.problemsOmitted,
     };
   });
@@ -298,6 +307,10 @@ export class RunPage {
     const session = this.session();
     return session ? launcherStderr(session.problems) : null;
   });
+
+  protected readonly hasProblems = computed(
+    () => this.problemGroups().groups.length + this.problemGroups().explained.length > 0,
+  );
 
   /** ランチャーが結果を出さずに終わった（participant の最後の状態は古いかもしれない）。 */
   protected readonly launcherGone = computed(() => this.run.outcome() === 'crashed');

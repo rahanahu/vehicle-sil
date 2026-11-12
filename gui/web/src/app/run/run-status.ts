@@ -78,9 +78,15 @@ export class RunStatus {
     const ms = this.elapsedMs();
     return ms === null ? null : ms / 1000;
   });
+  /**
+   * 仮想時刻。いまのランチャーは、動き始めた 0 と stop_at_ms に達したときしか知らせないので、動いている間の 0 は
+   * 出さない（止まって見えるため）。進んだ値と、終わった後の値を出す。
+   */
   protected readonly simSeconds = computed(() => {
-    const simMs = this.session()?.simMs ?? null;
-    return simMs === null ? null : simMs / 1000;
+    const session = this.session();
+    const simMs = session?.simMs ?? null;
+    if (simMs === null || (simMs === 0 && session?.launcher.running)) return null;
+    return simMs / 1000;
   });
   /** 仮想時刻の事象で、要約に入りきらずサーバーが省いた欄（あれば、その説明）。 */
   protected readonly timeOmitted = computed(() => {
@@ -90,7 +96,14 @@ export class RunStatus {
       : $localize`仮想時刻の事象の欄 ${this.list.format(fields)}:fields: は、大きすぎてサーバーが省きました`;
   });
 
-  /** 結果の 1 行（色だけで伝えないよう、印と文で）。 */
+  /** 結果の印と色: 成功は ✓、利用者が止めた中断は ■（失敗の色にしない）、ほかは ✕。 */
+  private resultTone(result: string | undefined): { tone: string; mark: string } {
+    if (result === 'passed') return { tone: 'good', mark: '✓' };
+    if (result === 'interrupted') return { tone: 'neutral', mark: '■' };
+    return { tone: 'bad', mark: '✕' };
+  }
+
+  /** 結果の 1 行（色だけで伝えないよう、印と文で）。止めている間は、ボタンが「止めています…」なので、待っているものだけ。 */
   protected readonly summary = computed(() => {
     const session = this.session();
     const outcome = this.outcome();
@@ -104,24 +117,22 @@ export class RunStatus {
         return {
           tone: 'active',
           mark: '●',
-          text: $localize`止めています（participant が終わるのを待っています）`,
+          text: $localize`participant が終わるのを待っています`,
         };
       case 'forcing':
         return {
           tone: 'active',
           mark: '●',
-          text: $localize`待たずに止めています（終わらなければ、サーバーが時間切れで強制終了します）`,
+          text: $localize`残っている participant を強制終了するのを待っています`,
         };
       case 'finishing':
         return {
-          tone: result?.result === 'passed' ? 'good' : 'bad',
-          mark: result?.result === 'passed' ? '✓' : '✕',
+          ...this.resultTone(result?.result),
           text: $localize`${runOutcomeLabel(result?.result ?? '')}:outcome:（ランチャーが終わるのを待っています）`,
         };
       case 'ended':
         return {
-          tone: result?.result === 'passed' ? 'good' : 'bad',
-          mark: result?.result === 'passed' ? '✓' : '✕',
+          ...this.resultTone(result?.result),
           text: this.otherFile()
             ? $localize`前の実行: ${runOutcomeLabel(result?.result ?? '')}:outcome:`
             : runOutcomeLabel(result?.result ?? ''),
@@ -147,12 +158,19 @@ export class RunStatus {
   /** 失敗したとき、最初の誤り（ランチャーの英語の文）。 */
   protected readonly firstError = computed(() => {
     const session = this.session();
-    if (!session?.result || session.result.result === 'passed') return null;
+    // 利用者が止めた中断は誤りではない（所見は注記の interrupted だけ）
+    if (!session?.result || ['passed', 'interrupted'].includes(session.result.result)) return null;
     const findings = session.result.findings;
     const worst = [...findings].sort(
       (a, b) => severityRank(a.severity) - severityRank(b.severity),
     )[0];
     return worst ? `${worst.code}: ${worst.message}` : null;
+  });
+
+  /** 動いているランチャーから、心拍も含めて何も届かない秒数（なければ null）。 */
+  protected readonly silentSeconds = computed(() => {
+    const session = this.session();
+    return session?.launcher.running ? session.launcher.silentSeconds : null;
   });
 
   protected readonly hasDetails = computed(() => {

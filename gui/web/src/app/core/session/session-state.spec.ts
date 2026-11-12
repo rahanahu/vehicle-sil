@@ -28,7 +28,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     participants: [],
     findings: [],
     result: null,
-    launcher: { running: true, exit_code: null, signal: null },
+    launcher: { running: true, exit_code: null, signal: null, silent_s: null },
     log: {},
     problems: [],
     problems_omitted: 0,
@@ -139,6 +139,9 @@ describe('applyEvents', () => {
         pid: 42,
         exitCode: null,
         signal: null,
+        failure: null,
+        message: null,
+        stopRequested: false,
         omittedFields: [],
       },
       {
@@ -148,6 +151,9 @@ describe('applyEvents', () => {
         pid: null,
         exitCode: null,
         signal: null,
+        failure: null,
+        message: null,
+        stopRequested: false,
         omittedFields: [],
       },
     ]);
@@ -307,7 +313,7 @@ describe('applySummary', () => {
         phase: 'running',
         last_seq: 0,
         stop: 'requested',
-        launcher: { running: false, exit_code: 70, signal: null },
+        launcher: { running: false, exit_code: 70, signal: null, silent_s: null },
         problems: [{ code: 'no-result', message: 'no result' }],
       }),
     );
@@ -324,6 +330,8 @@ describe('applySummary', () => {
       pid: 7,
       exit_code: null,
       signal: null,
+      reason: null,
+      message: null,
       omitted_fields: [],
     };
     const session = applySummary(
@@ -369,6 +377,8 @@ describe('applySummary', () => {
             pid: 7,
             exit_code: null,
             signal: null,
+            reason: null,
+            message: null,
             omitted_fields: ['command', 'environment'],
           },
         ],
@@ -403,7 +413,10 @@ describe('runOutcome', () => {
     expect(runOutcome(session)).toBe('finishing');
     const ended = applySummary(
       session,
-      summary({ state: 'ended', launcher: { running: false, exit_code: 0, signal: null } }),
+      summary({
+        state: 'ended',
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+      }),
     );
     expect(runOutcome(ended)).toBe('ended');
   });
@@ -451,5 +464,154 @@ describe('addProblem', () => {
     }
     expect(session.problems).toHaveLength(MAX_PROBLEMS);
     expect(session.problemsOmitted).toBe(3);
+  });
+
+  it('marks where the launcher could not write log lines, and counts them per source', () => {
+    const session = applyEvents(
+      emptySession(),
+      events(
+        ...logs('Engine', 2),
+        { event: 'log_dropped', count: 125, sources: { Engine: 120, vehicle_sil_launch: 5 } },
+        ...logs('Engine', 1),
+      ),
+    );
+    const gaps = session.logs.filter((line) => line.gap);
+    expect(gaps.map((g) => [g.source, g.seq, g.gap?.count, g.gap?.launcher])).toEqual([
+      ['Engine', 2, 120, true],
+      ['vehicle_sil_launch', 2, 5, true],
+    ]);
+    expect(session.logs.filter((l) => l.source === 'Engine').map((l) => l.seq)).toEqual([
+      0, 1, 2, 3,
+    ]);
+    expect(session.logSources['Engine'].dropped).toBe(120);
+    expect(session.logSources['vehicle_sil_launch'].dropped).toBe(5);
+  });
+
+  it('shows a participant as failed as soon as the launcher says so, and keeps it after it ends', () => {
+    let session = applyEvents(
+      emptySession(),
+      events(
+        { event: 'participant', name: 'Engine', state: 'started', pid: 7 },
+        { event: 'participant', name: 'Engine', state: 'failed', reason: 'left_simulation' },
+      ),
+    );
+    expect(session.participants[0].failure).toBe('left_simulation');
+    session = applyEvents(
+      session,
+      eventsFrom(2, [
+        { event: 'participant', name: 'Engine', state: 'ended', exit_code: 1, signal: null },
+      ]),
+    );
+    expect(session.participants[0]).toMatchObject({
+      state: 'ended',
+      failure: 'left_simulation',
+      exitCode: 1,
+    });
+    // つなぎ直した画面は、要約の reason から同じものを知る
+    const again = sessionFromSummary(
+      summary({
+        last_seq: 2,
+        participants: [
+          {
+            name: 'Engine',
+            state: 'ended',
+            pid: 7,
+            exit_code: 1,
+            signal: null,
+            reason: 'left_simulation',
+            message: null,
+            omitted_fields: [],
+          },
+        ],
+      }),
+    );
+    expect(again.participants[0].failure).toBe('left_simulation');
+  });
+
+  it('remembers that the launcher asked a participant to stop', () => {
+    const session = applyEvents(
+      emptySession(),
+      events(
+        { event: 'participant', name: 'Engine', state: 'stop_requested' },
+        { event: 'participant', name: 'Engine', state: 'ended', exit_code: 130, signal: null },
+        {
+          event: 'participant',
+          name: 'Logger',
+          state: 'ended',
+          exit_code: null,
+          signal: 'SIGTERM',
+        },
+        {
+          event: 'result',
+          result: {
+            result: 'failed',
+            findings: [],
+            participants: [
+              {
+                name: 'Engine',
+                required: true,
+                enabled: true,
+                ended: 'stopped',
+                exit_code: 130,
+                signal: null,
+              },
+              {
+                name: 'Logger',
+                required: true,
+                enabled: true,
+                ended: 'stopped',
+                exit_code: null,
+                signal: 'SIGTERM',
+              },
+            ],
+          },
+        },
+      ),
+    );
+    expect(session.participants.map((p) => p.stopRequested)).toEqual([true, true]);
+  });
+
+  it('knows when the launcher has been silent', () => {
+    const session = sessionFromSummary(
+      summary({ launcher: { running: true, exit_code: null, signal: null, silent_s: 10 } }),
+    );
+    expect(session.launcher.silentSeconds).toBe(10);
+  });
+
+  it('takes from the result of a summary that the launcher stopped a participant', () => {
+    const result = {
+      result: 'failed',
+      findings: [],
+      participants: [
+        {
+          name: 'Engine',
+          required: true,
+          enabled: true,
+          ended: 'stopped',
+          exit_code: 130,
+          signal: null,
+        },
+      ],
+    } as unknown as RunResult;
+    const session = sessionFromSummary(
+      summary({
+        state: 'ended',
+        last_seq: 9,
+        result,
+        participants: [
+          {
+            name: 'Engine',
+            state: 'ended',
+            pid: 7,
+            exit_code: 130,
+            signal: null,
+            reason: null,
+            message: null,
+            omitted_fields: [],
+          },
+        ],
+      }),
+    );
+    expect(session.participants[0]).toMatchObject({ state: 'ended', stopRequested: true });
   });
 });

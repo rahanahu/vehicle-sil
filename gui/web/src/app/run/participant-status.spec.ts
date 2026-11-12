@@ -11,6 +11,9 @@ function participant(name: string, extra: Partial<ParticipantView> = {}): Partic
     pid: 1,
     exitCode: null,
     signal: null,
+    failure: null,
+    message: null,
+    stopRequested: false,
     omittedFields: [],
     ...extra,
   };
@@ -62,6 +65,42 @@ describe('ParticipantStatus', () => {
     expect(row('Dashboard')?.textContent).toContain('終了した');
     expect(row('Dashboard')?.textContent).toContain('終了コード 0');
     expect(row('Logger')?.textContent).toContain('外した');
+  });
+
+  it('shows a participant the launcher has decided failed at once, with the reason in words', async () => {
+    fixture.componentInstance.participants.set([
+      participant('Engine', { state: 'failed', failure: 'left_simulation', message: 'it left' }),
+    ]);
+    await fixture.whenStable();
+    expect(row('Engine')?.textContent).toContain('失敗');
+    expect(row('Engine')?.textContent).toContain('シミュレーションを去った');
+    expect(row('Engine')?.getAttribute('data-state')).toBe('bad');
+    // ランチャーの英語の値は title に
+    expect(row('Engine')?.textContent).not.toContain('left_simulation');
+    expect(row('Engine')?.querySelector('[title="left_simulation: it left"]')).not.toBeNull();
+    // プロセスが終わっても失敗のまま
+    fixture.componentInstance.participants.set([
+      participant('Engine', { state: 'ended', exitCode: 0, failure: 'left_simulation' }),
+    ]);
+    await fixture.whenStable();
+    expect(row('Engine')?.textContent).toContain('失敗');
+    expect(row('Engine')?.getAttribute('data-state')).toBe('bad');
+  });
+
+  it('does not show a participant the launcher stopped as failed', async () => {
+    fixture.componentInstance.participants.set([
+      participant('Engine', { state: 'ended', exitCode: 130, stopRequested: true }),
+      participant('Logger', {
+        state: 'ended',
+        exitCode: null,
+        signal: 'SIGTERM',
+        stopRequested: true,
+      }),
+    ]);
+    await fixture.whenStable();
+    expect(row('Engine')?.getAttribute('data-state')).toBe('stopped');
+    expect(row('Logger')?.getAttribute('data-state')).toBe('stopped');
+    expect(row('Engine')?.textContent).toContain('■');
   });
 
   it('names the fields the server left out', async () => {
