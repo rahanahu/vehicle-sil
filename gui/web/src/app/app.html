@@ -1,6 +1,7 @@
 <mat-toolbar class="toolbar">
   @if (navMode() === 'drawer') {
     <button
+      #navToggle
       matIconButton
       type="button"
       data-testid="nav-toggle"
@@ -19,7 +20,8 @@
 
 <!--
   開閉の状態は drawerOpen だけが持つ。Material の Esc と背景のクリックでの自動の閉じを止め（disableClose）、
-  引き出しのときだけ閉じる（rail と full では Esc を押しても消えない）。
+  引き出しのときだけ閉じる（rail と full では Esc を押しても消えない）。閉じたらフォーカスを開くボタンへ戻す
+  （Material は開く動きが終わったときに戻し先を覚えるので、開いている最中に閉じると body に落ちる）。
 -->
 <mat-sidenav-container class="body" (backdropClick)="closeDrawer()">
   <mat-sidenav

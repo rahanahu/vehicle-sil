@@ -53,4 +53,24 @@ describe('App', () => {
     expect(toggle?.getAttribute('aria-expanded')).toBe('true');
     expect(toggle?.getAttribute('aria-label')).toBe('ナビゲーションを閉じる');
   });
+
+  it('puts the focus back on the toggle when Esc closes the drawer, even while it opens', async () => {
+    widthClass.set('compact');
+    const fixture = TestBed.createComponent(App);
+    const element = fixture.nativeElement as HTMLElement;
+    document.body.appendChild(element);
+    await fixture.whenStable();
+    const toggle = query(element, 'nav-toggle') as HTMLElement;
+    toggle.focus();
+    toggle.click();
+    await fixture.whenStable();
+    // jsdom does not end the opening transition: Material has not yet remembered where the focus was
+    const link = query(element, 'nav')?.querySelector('a') as HTMLElement;
+    link.focus();
+    link.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await fixture.whenStable();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(toggle);
+    element.remove();
+  });
 });
