@@ -9,8 +9,8 @@ import { VIEWPORTS, Viewport, findLayoutProblems } from './support/layout';
  * 実行の画面は、いろいろな状態での崩れを run.spec.ts でも確かめる。
  */
 const ROUTES = [
-  { path: '_test/layout', heading: 'レイアウトの試験' },
-  { path: '', heading: '実行' },
+  { path: '_test/layout', heading: 'レイアウトの試験', english: 'Layout test' },
+  { path: '', heading: '実行', english: 'Run' },
 ];
 
 /** スクリーンショットを残す幅。 */
@@ -51,6 +51,33 @@ for (const viewport of VIEWPORTS) {
     });
   });
 }
+
+// 英語の文は長い。英語でも、すべての幅で崩れない
+test.describe('in English', () => {
+  test.use({ locale: 'en-US' });
+
+  for (const viewport of VIEWPORTS) {
+    for (const route of ROUTES) {
+      test(`${viewport.width}x${viewport.height}: ${route.path} lays out without overflow or overlap`, async ({
+        page,
+      }, testInfo) => {
+        await page.setViewportSize({ width: viewport.width, height: viewport.height });
+        await open(page, route.path, route.english);
+        await expect(page.getByTestId('nav')).toHaveAttribute('data-nav-mode', viewport.navMode);
+        await expect(page.getByTestId('language-menu')).toBeInViewport({ ratio: 1 });
+        expect(await findLayoutProblems(page)).toEqual([]);
+        if (SCREENSHOT_WIDTHS.includes(viewport.width)) {
+          await page.screenshot({
+            path: testInfo.outputPath(
+              `layout-en-${route.path.replace(/\W+/g, '-') || 'run'}-${viewport.width}.png`,
+            ),
+            fullPage: true,
+          });
+        }
+      });
+    }
+  }
+});
 
 async function checkNavigation(page: Page, viewport: Viewport) {
   const nav = page.getByTestId('nav');

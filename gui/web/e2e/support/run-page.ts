@@ -13,10 +13,37 @@ export function protocolExample(name: string): unknown {
 /** ランチャーの 1 回の実行の上限（偽のランチャーは 1 ステップ 50 ms、stop_at_ms まで 10 ステップ。本物の例の ECU はもっと速い）。 */
 export const RUN_TIMEOUT = 20_000;
 
-export async function openRun(page: Page): Promise<void> {
+/** 画面の言語。試験は日本語（元の言語）で書く。英語の試験（i18n.spec.ts）は、ブラウザの言語を変えて en を渡す。 */
+export type Language = 'ja' | 'en';
+
+/** 手順が探す画面の言葉。 */
+export const WORDS = {
+  ja: {
+    run: '実行',
+    title: '実行 - vehicle-sil',
+    configFile: '構成ファイル',
+    recheck: '照合し直す',
+    again: 'もう一度実行',
+    syncing: 'サーバーと揃うまで',
+  },
+  en: {
+    run: 'Run',
+    title: 'Run - vehicle-sil',
+    configFile: 'Config file',
+    recheck: 'Check again',
+    again: 'Run again',
+    syncing: 'in sync with the server',
+  },
+} as const;
+
+/** ブラウザの言語（Playwright の locale）から、画面の言語。 */
+export const languageOf = (locale: string | undefined): Language =>
+  locale?.startsWith('en') ? 'en' : 'ja';
+
+export async function openRun(page: Page, language: Language = 'ja'): Promise<void> {
   await page.goto(`/#token=${guiToken()}`);
-  await expect(page.getByRole('heading', { level: 1, name: '実行' })).toBeVisible();
-  await expect(page).toHaveTitle('実行 - vehicle-sil');
+  await expect(page.getByRole('heading', { level: 1, name: WORDS[language].run })).toBeVisible();
+  await expect(page).toHaveTitle(WORDS[language].title);
 }
 
 /** 状態の帯の開始のボタン（開始 / もう一度実行）。 */
@@ -40,15 +67,17 @@ export async function press(button: Locator): Promise<void> {
 }
 
 /** 選んでいる構成ファイル（mat-select の表示。選択肢の一覧も mat-select の中に描かれるので、表示の部分だけ）。 */
-export function chosenFile(page: Page) {
-  return page.getByRole('combobox', { name: '構成ファイル' }).locator('.mat-mdc-select-value-text');
+export function chosenFile(page: Page, language: Language = 'ja') {
+  return page
+    .getByRole('combobox', { name: WORDS[language].configFile })
+    .locator('.mat-mdc-select-value-text');
 }
 
 /** 構成ファイルを選び、その照合の結果が出るまで待つ。 */
-export async function choose(page: Page, file: string): Promise<void> {
-  const select = page.getByRole('combobox', { name: '構成ファイル' });
+export async function choose(page: Page, file: string, language: Language = 'ja'): Promise<void> {
+  const select = page.getByRole('combobox', { name: WORDS[language].configFile });
   await expect(select).toBeEnabled();
-  if ((await chosenFile(page).textContent())?.trim() !== file) {
+  if ((await chosenFile(page, language).textContent())?.trim() !== file) {
     const checked = page.waitForResponse(
       (r) => r.url().endsWith('/api/check') && r.request().postDataJSON().file === file,
     );
@@ -56,9 +85,9 @@ export async function choose(page: Page, file: string): Promise<void> {
     await page.getByRole('option', { name: file, exact: true }).click();
     await checked;
   }
-  await expect(chosenFile(page)).toHaveText(file);
+  await expect(chosenFile(page, language)).toHaveText(file);
   await expect(page.getByTestId('check-outcome')).toBeVisible();
-  await expect(page.getByRole('button', { name: '照合し直す' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: WORDS[language].recheck })).toBeEnabled();
 }
 
 /** 始めて、サーバーが付けたセッションの番号を返す。 */
@@ -116,13 +145,13 @@ export function result(page: Page, session: number) {
 }
 
 /** 前の試験のセッションが動いていたら止め（サーバーの API で）、画面がそれを映すまで待つ。 */
-export async function stopIfRunning(page: Page): Promise<void> {
+export async function stopIfRunning(page: Page, language: Language = 'ja'): Promise<void> {
   await expect(page.getByTestId('connection')).toHaveText('', { timeout: 10_000 });
   if ((await serverSession(page))?.state === 'running') await stopOnServer(page);
   await expect(stopButton(page)).toHaveAttribute('aria-disabled', 'true', {
     timeout: RUN_TIMEOUT,
   });
-  await expect(page.getByTestId('blocked').filter({ hasText: 'サーバーと揃うまで' })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByTestId('blocked').filter({ hasText: WORDS[language].syncing }),
+  ).toHaveCount(0);
 }

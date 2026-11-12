@@ -384,7 +384,7 @@
     },
     "845801156829170127": {
       "source": " 誤り {$INTERPOLATION}、警告 {$INTERPOLATION_1}、注記 {$INTERPOLATION_2} ",
-      "target": " Errors: {$INTERPOLATION}, warnings: {$INTERPOLATION_1}, notes: {$INTERPOLATION_2} "
+      "target": " errors: {$INTERPOLATION}, warnings: {$INTERPOLATION_1}, notes: {$INTERPOLATION_2} "
     },
     "7091115058470204677": {
       "source": "プロセスが残った participant: {$INTERPOLATION}",

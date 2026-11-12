@@ -4,9 +4,20 @@
 import { Page, expect, test } from '@playwright/test';
 import { CONFIGS, FAKE_LAUNCHER, GUI_PORT, GuiServer, launchGuiServer } from './support/gui-server';
 import { VIEWPORTS } from './support/layout';
-import { RUN_TIMEOUT, choose, press, start, startButton, stopButton } from './support/run-page';
+import {
+  Language,
+  RUN_TIMEOUT,
+  WORDS,
+  choose,
+  press,
+  start,
+  startButton,
+  stopButton,
+} from './support/run-page';
 
 const directory = process.env['VEHICLE_SIL_GUI_SHOTS'];
+/** 撮る画面の言語（VEHICLE_SIL_GUI_SHOTS_LANGUAGE、ja か en。既定は ja）。 */
+const language: Language = process.env['VEHICLE_SIL_GUI_SHOTS_LANGUAGE'] === 'en' ? 'en' : 'ja';
 
 /** 撮る状態と、その構成ファイル。 */
 const STATES = [
@@ -21,7 +32,7 @@ const STATES = [
 const WIDTHS = [360, 1024];
 
 async function reach(page: Page, state: (typeof STATES)[number]): Promise<void> {
-  await choose(page, state.file);
+  await choose(page, state.file, language);
   if (state.name === 'chosen') return;
   await start(page);
   if (state.name === 'running' || state.name === 'stopping') {
@@ -32,12 +43,15 @@ async function reach(page: Page, state: (typeof STATES)[number]): Promise<void> 
     }
     return;
   }
-  await expect(startButton(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
+  await expect(startButton(page)).toHaveText(new RegExp(WORDS[language].again), {
+    timeout: RUN_TIMEOUT,
+  });
   await expect(startButton(page)).toHaveAttribute('data-armed', 'true');
 }
 
 test.describe('screenshots', () => {
   test.skip(!directory, 'VEHICLE_SIL_GUI_SHOTS is not set');
+  test.use({ locale: language === 'en' ? 'en-US' : 'ja-JP' });
 
   for (const [i, state] of STATES.entries()) {
     test(state.name, async ({ page }, testInfo) => {
@@ -52,7 +66,9 @@ test.describe('screenshots', () => {
       });
       try {
         await page.goto(server.url);
-        await expect(page.getByRole('heading', { level: 1, name: '実行' })).toBeVisible();
+        await expect(
+          page.getByRole('heading', { level: 1, name: WORDS[language].run }),
+        ).toBeVisible();
         await reach(page, state);
         const content = page.locator('mat-sidenav-content');
         for (const viewport of VIEWPORTS.filter((v) => WIDTHS.includes(v.width))) {

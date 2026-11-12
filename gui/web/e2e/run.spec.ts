@@ -6,11 +6,13 @@ import { VIEWPORTS, findLayoutProblems } from './support/layout';
 import {
   RUN_TIMEOUT,
   ServerSession,
+  WORDS,
   choose,
   chosenFile,
   openRun,
   press,
   protocolExample,
+  languageOf,
   result,
   serverSession,
   start,
@@ -20,9 +22,9 @@ import {
   stopOnServer,
 } from './support/run-page';
 
-test.beforeEach(async ({ page }) => {
-  await openRun(page);
-  await stopIfRunning(page);
+test.beforeEach(async ({ page, locale }) => {
+  await openRun(page, languageOf(locale));
+  await stopIfRunning(page, languageOf(locale));
 });
 
 test('a run that passes: phases, participants, logs and the result', async ({ page }) => {
@@ -586,68 +588,89 @@ test('everything can be done with the keyboard; Enter on start does not stop the
   await expect(log).toBeFocused();
 });
 
+// 英語の文は長い。英語でも同じ幅で崩れないことを確かめる
+for (const language of ['ja', 'en'] as const) {
+  test.describe(
+    language === 'ja' ? 'the screen at every width' : 'the screen at every width, in English',
+    () => {
+      test.use({ locale: language === 'ja' ? 'ja-JP' : 'en-US' });
+
+      /**
+       * 状態: ファイルを選んで所見がある、実行中でログが流れる、止めるよう頼んだ（待たずに止めるボタンが出る）、
+       * 失敗で終わった、ランチャーが異常終了した。
+       */
+      const STATES = [
+        { name: 'chosen', file: 'check-error.yaml', run: false },
+        { name: 'running', file: 'forever.yaml', run: true },
+        { name: 'stopping', file: 'ignore-stop.yaml', run: true },
+        { name: 'failed', file: 'participant-crash.yaml', run: true },
+        { name: 'crashed', file: 'launcher-crash.yaml', run: true },
+      ] as const;
+
+      for (const state of STATES) {
+        test(`${state.name}: the status bar stays in view, no overflow or overlap`, async ({
+          page,
+        }) => {
+          await choose(page, state.file, language);
+          if (state.run) {
+            const session = await start(page);
+            if (state.name === 'running' || state.name === 'stopping') {
+              await expect(page.getByTestId('log-line').nth(5)).toBeVisible({
+                timeout: RUN_TIMEOUT,
+              });
+              if (state.name === 'stopping') {
+                await press(stopButton(page));
+                await expect(page.getByTestId('force-stop')).toBeVisible();
+              }
+            } else {
+              await expect(startButton(page)).toHaveText(new RegExp(WORDS[language].again), {
+                timeout: RUN_TIMEOUT,
+              });
+              await expect(page.locator(`[data-session="${session}"]`).first()).toBeVisible();
+            }
+          }
+          const content = page.locator('mat-sidenav-content');
+          for (const viewport of VIEWPORTS) {
+            // 窓は伸ばさない（利用者が見る大きさのまま）
+            await page.setViewportSize({ width: viewport.width, height: viewport.height });
+            await expect(page.getByTestId('nav')).toHaveAttribute(
+              'data-nav-mode',
+              viewport.navMode,
+            );
+            await content.evaluate((element) => element.scrollTo(0, 0));
+            await expect
+              .poll(() => findLayoutProblems(page), { message: `${viewport.width} px` })
+              .toEqual([]);
+            // 操作と結果は、最初の画面に入っていて、下までスクロールしても見えている
+            for (const where of ['top', 'bottom'] as const) {
+              await content.evaluate(
+                (element, to) => element.scrollTo(0, to === 'top' ? 0 : element.scrollHeight),
+                where,
+              );
+              for (const element of [
+                startButton(page),
+                stopButton(page),
+                page.getByTestId('outcome'),
+              ]) {
+                await expect(element, `${viewport.width} px, ${where}`).toBeInViewport({
+                  ratio: 1,
+                });
+              }
+            }
+            // 帯は窓の高さの 3 分の 1 を超えない
+            const band = await page.locator('app-run-status').boundingBox();
+            expect(band?.height ?? 0, `${viewport.width} px`).toBeLessThanOrEqual(
+              viewport.height / 3,
+            );
+          }
+          await stopIfRunning(page, language);
+        });
+      }
+    },
+  );
+}
+
 test.describe('the screen at every width', () => {
-  /**
-   * 状態: ファイルを選んで所見がある、実行中でログが流れる、止めるよう頼んだ（待たずに止めるボタンが出る）、
-   * 失敗で終わった、ランチャーが異常終了した。
-   */
-  const STATES = [
-    { name: 'chosen', file: 'check-error.yaml', run: false },
-    { name: 'running', file: 'forever.yaml', run: true },
-    { name: 'stopping', file: 'ignore-stop.yaml', run: true },
-    { name: 'failed', file: 'participant-crash.yaml', run: true },
-    { name: 'crashed', file: 'launcher-crash.yaml', run: true },
-  ] as const;
-
-  for (const state of STATES) {
-    test(`${state.name}: the status bar stays in view, no overflow or overlap`, async ({
-      page,
-    }) => {
-      await choose(page, state.file);
-      if (state.run) {
-        const session = await start(page);
-        if (state.name === 'running' || state.name === 'stopping') {
-          await expect(page.getByTestId('log-line').nth(5)).toBeVisible({ timeout: RUN_TIMEOUT });
-          if (state.name === 'stopping') {
-            await press(stopButton(page));
-            await expect(page.getByTestId('force-stop')).toBeVisible();
-          }
-        } else {
-          await expect(startButton(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
-          await expect(page.locator(`[data-session="${session}"]`).first()).toBeVisible();
-        }
-      }
-      const content = page.locator('mat-sidenav-content');
-      for (const viewport of VIEWPORTS) {
-        // 窓は伸ばさない（利用者が見る大きさのまま）
-        await page.setViewportSize({ width: viewport.width, height: viewport.height });
-        await expect(page.getByTestId('nav')).toHaveAttribute('data-nav-mode', viewport.navMode);
-        await content.evaluate((element) => element.scrollTo(0, 0));
-        await expect
-          .poll(() => findLayoutProblems(page), { message: `${viewport.width} px` })
-          .toEqual([]);
-        // 操作と結果は、最初の画面に入っていて、下までスクロールしても見えている
-        for (const where of ['top', 'bottom'] as const) {
-          await content.evaluate(
-            (element, to) => element.scrollTo(0, to === 'top' ? 0 : element.scrollHeight),
-            where,
-          );
-          for (const element of [
-            startButton(page),
-            stopButton(page),
-            page.getByTestId('outcome'),
-          ]) {
-            await expect(element, `${viewport.width} px, ${where}`).toBeInViewport({ ratio: 1 });
-          }
-        }
-        // 帯は窓の高さの 3 分の 1 を超えない
-        const band = await page.locator('app-run-status').boundingBox();
-        expect(band?.height ?? 0, `${viewport.width} px`).toBeLessThanOrEqual(viewport.height / 3);
-      }
-      await stopIfRunning(page);
-    });
-  }
-
   test('failed, in the dark color scheme', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.setViewportSize({ width: 1024, height: 768 });
