@@ -1,9 +1,18 @@
-import { httpResource } from '@angular/common/http';
-import { Component, computed, inject, linkedSignal, signal } from '@angular/core';
+import { HttpClient, httpResource } from '@angular/common/http';
+import {
+  Component,
+  DOCUMENT,
+  computed,
+  inject,
+  linkedSignal,
+  resource,
+  signal,
+} from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
+import { firstValueFrom } from 'rxjs';
 import {
   CheckResult,
   Speed,
@@ -13,18 +22,42 @@ import {
   readConfigList,
 } from '../core/api';
 import { AuthToken } from '../core/auth/auth-token';
+import { shortPath } from '../core/format/short-path';
 import { CheckPanel } from './check-panel';
 import { FindingsList } from './findings-list';
 import { LogView } from './log-view';
 import { ParticipantStatus } from './participant-status';
 import { ResultPanel } from './result-panel';
-import { RunControls } from './run-controls';
 import { RunSession } from './run-session';
+import { RunStatus } from './run-status';
+import { SpeedPicker } from './speed-picker';
+
+/** 「使う」を切り替えてから照合を頼むまでの間（ミリ秒）。続けて切り替えたら、最後の組み合わせで 1 回だけ照合する。 */
+export const CHECK_DELAY_MS = 300;
+
+/** 画面に出すサーバーの知らせの種類（code）の数。 */
+const MAX_PROBLEM_GROUPS = 50;
+
+/** ランチャー自身のログの出どころ。 */
+const LAUNCHER_SOURCE = 'vehicle_sil_launch';
+
+/** 中断できる待ち。中断されたら、その理由で失敗する。 */
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted();
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    });
+  });
+}
 
 /**
  * 実行の画面: 構成ファイルを選び、照合の結果を見て participant を外し、始めて、経過とログを見て、結果を見る。
  *
- * - 実行の状態はサーバーにあり、RunSession が WebSocket で映す（この画面と同じ寿命）。
+ * - 実行の状態はサーバーにあり、アプリ全体の接続（ServerConnection）が映す。この画面は RunSession を通して読む。
+ * - 上の状態の帯に、操作と結果をいつも出す。詳しいカードはその下（実行した後は、結果、状態、ログを先に）。
  * - 選んだファイル、外す participant、速度は、この画面だけの signal。実行中は、実行しているセッションのものを出す。
  */
 @Component({
@@ -39,13 +72,16 @@ import { RunSession } from './run-session';
     LogView,
     ParticipantStatus,
     ResultPanel,
-    RunControls,
+    RunStatus,
+    SpeedPicker,
   ],
   providers: [RunSession],
   templateUrl: './run-page.html',
   styleUrl: './run-page.css',
 })
 export class RunPage {
+  private readonly http = inject(HttpClient);
+  private readonly document = inject(DOCUMENT);
   protected readonly auth = inject(AuthToken);
   protected readonly run = inject(RunSession);
 
@@ -56,8 +92,35 @@ export class RunPage {
     parse: readConfigList,
   });
 
+  /**
+   * WebSocket の握手で断られたとき、その理由（ブラウザからは見えない）を api/app で確かめる。
+   * 断られるたびに 1 回呼ぶ。トークンの誤りは interceptor が「断られた」にする。
+   */
+  protected readonly handshake = httpResource(
+    () => {
+      const failures = this.run.handshakeFailures();
+      return failures > 0 && this.auth.token() ? { url: 'api/app' } : undefined;
+    },
+    { parse: readAppInfo },
+  );
+  protected readonly handshakeError = computed(() => {
+    if (this.run.connectionState() === 'open') return null;
+    const error = this.handshake.error();
+    return error ? errorMessage(error) : null;
+  });
+
   protected readonly session = this.run.session;
-  protected readonly active = this.run.active;
+  /** ランチャーが動いている（設定を変えられず、照合もしない）。 */
+  protected readonly running = this.run.launcherRunning;
+
+  /** 選べる範囲（root）の短い表示。 */
+  protected readonly root = computed(() => {
+    if (!this.app.hasValue()) return null;
+    const full = this.app.value().root;
+    return { full, short: shortPath(full) };
+  });
+  private readonly copiedPath = signal(false);
+  protected readonly copied = this.copiedPath.asReadonly();
 
   /** 最初に選んでおくファイル: いまのセッションのもの、起動のときに渡されたもの、一覧の最初、の順。 */
   private readonly preferredFile = computed(() => {
@@ -75,20 +138,18 @@ export class RunPage {
    */
   protected readonly selected = computed(() => this.chosen() ?? this.preferredFile());
 
-  /** セッションのファイルを選んでいるときの、そのセッションで外した participant（「もう一度実行」を同じ組み合わせにする）。 */
-  private readonly sessionDisable = computed(() => {
-    const session = this.session();
-    return session && session.file === this.selected() ? session.disable.join('\n') : '';
-  });
   /** 外す participant。ファイルを変えたら、そのファイルのセッションで外したもの（なければ空）に戻す。 */
-  protected readonly disabled = linkedSignal<string, ReadonlySet<string>>({
-    source: () => `${this.selected()}\n\n${this.sessionDisable()}`,
-    computation: () =>
-      new Set(
-        this.sessionDisable()
-          .split('\n')
-          .filter((name) => name !== ''),
-      ),
+  protected readonly disabled = linkedSignal<
+    { file: string | null; names: readonly string[] },
+    ReadonlySet<string>
+  >({
+    source: () => {
+      const file = this.selected();
+      const session = this.session();
+      return { file, names: session && session.file === file ? session.disable : [] };
+    },
+    computation: ({ names }) => new Set(names),
+    equal: (a, b) => a.size === b.size && [...a].every((name) => b.has(name)),
   });
 
   /** ランチャーが速度を変えられるか（できないときは欄を出さず、速度を送らない）。 */
@@ -100,20 +161,38 @@ export class RunPage {
   );
   /** 速度。前の実行のもの（なければ構成ファイルのとおり）から始める。 */
   protected readonly speed = linkedSignal<Speed>(() => this.session()?.speed ?? null);
+  /** 速度の倍率の欄が範囲の外。 */
+  protected readonly speedInvalid = signal(false);
 
-  /** 選んだファイルと外す participant で照合する（変えるたびに照合し直す。前の要求は取り消す）。実行中は照合しない。 */
-  protected readonly check = httpResource(
-    () => {
+  /** 照合し直すよう頼んだ回数（同じ組み合わせでも照合し直すため）。 */
+  private readonly rechecks = signal(0);
+  /** 送った照合の要求の終わり。次の照合は、前の照合の応答を待ってから送る（サーバーで重ならない）。 */
+  private checkChain: Promise<unknown> = Promise.resolve();
+
+  /**
+   * 選んだファイルと外す participant で照合する。切り替えたら CHECK_DELAY_MS 待ってから 1 回、前の照合の応答を
+   * 待ってから送る。途中で組み合わせが変わったら、古い応答は捨てる。ランチャーが動いている間は照合しない。
+   */
+  protected readonly check = resource({
+    params: () => {
       const file = this.selected();
-      if (!this.auth.token() || file === null || this.active()) return undefined;
-      return {
-        url: 'api/check',
-        method: 'POST',
-        body: { file, disable: [...this.disabled()].sort() },
-      };
+      if (!this.auth.token() || file === null || this.running()) return undefined;
+      return { file, disable: [...this.disabled()].sort(), again: this.rechecks() };
     },
-    { parse: readCheckResponse },
-  );
+    loader: async ({ params, abortSignal }) => {
+      await wait(CHECK_DELAY_MS, abortSignal);
+      const body = { file: params.file, disable: params.disable };
+      const request = this.checkChain.then(() => {
+        // 待っている間に組み合わせが変わったら送らない
+        abortSignal.throwIfAborted();
+        return firstValueFrom(this.http.post('api/check', body));
+      });
+      this.checkChain = request.catch(() => undefined);
+      const response = await request;
+      abortSignal.throwIfAborted();
+      return readCheckResponse(response);
+    },
+  });
 
   /**
    * 選んだファイルの最後の照合の結果。照合し直している間も前の結果を残す（切り替えたスイッチが消えて、フォーカスを失わないように）。
@@ -134,7 +213,7 @@ export class RunPage {
   /** 見せる照合の結果: 実行中はそのセッションの照合、それ以外は選んだファイルの照合。 */
   protected readonly shownCheck = computed<CheckResult | null>(() => {
     const session = this.session();
-    if (this.active() && session) return session.check;
+    if (this.running() && session) return session.check;
     return this.lastCheck();
   });
 
@@ -144,6 +223,9 @@ export class RunPage {
       return [$localize`ランチャーがこの画面に対応していません。`];
     }
     if (this.selected() === null) return [$localize`構成ファイルを選んでください。`];
+    if (this.speedSupported() && this.speedInvalid()) {
+      return [$localize`速度の倍率が範囲の外です。`];
+    }
     if (this.check.isLoading()) return [$localize`照合しています。`];
     const error = this.check.error();
     if (error) return [$localize`照合できませんでした: ${errorMessage(error)}:reason:`];
@@ -168,6 +250,40 @@ export class RunPage {
     }
   });
 
+  /** サーバーの知らせを code ごとにまとめる（同じ code は数を出す）。最後に届いた文を見せる。 */
+  protected readonly problemGroups = computed(() => {
+    const session = this.session();
+    if (!session) return { groups: [], hidden: 0 };
+    const groups = new Map<string, { code: string; message: string; count: number }>();
+    for (const problem of session.problems) {
+      const group = groups.get(problem.code);
+      if (group) {
+        group.count++;
+        group.message = problem.message;
+      } else {
+        groups.set(problem.code, { ...problem, count: 1 });
+      }
+    }
+    const all = [...groups.values()];
+    return {
+      groups: all.slice(0, MAX_PROBLEM_GROUPS),
+      hidden:
+        all.slice(MAX_PROBLEM_GROUPS).reduce((sum, g) => sum + g.count, 0) +
+        session.problemsOmitted,
+    };
+  });
+
+  /** participant の終わりが、利用者が止めたことによるものか（色を弱める）。 */
+  protected readonly interrupted = computed(() => {
+    const session = this.session();
+    return !!session && (session.stopRequests > 0 || session.result?.result === 'interrupted');
+  });
+
+  /** ログで絞る出どころ（「ランチャーのログを見る」で選ぶ）。 */
+  protected readonly logSource = signal('');
+  protected readonly launcherSource = LAUNCHER_SOURCE;
+  protected readonly copyLabel = $localize`選べる範囲のパスをコピー`;
+
   protected selectFile(file: string): void {
     this.chosen.set(file);
   }
@@ -183,11 +299,33 @@ export class RunPage {
     });
   }
 
-  protected stop(): void {
-    this.run.stop();
+  protected recheck(): void {
+    this.rechecks.update((n) => n + 1);
   }
 
-  protected recheck(): void {
-    this.check.reload();
+  /** 結果（または異常終了）のカードへ移る。 */
+  protected showDetails(): void {
+    this.reveal('run-result');
+  }
+
+  /** ランチャー自身のログに絞って、ログへ移る。 */
+  protected showLauncherLog(): void {
+    this.logSource.set(LAUNCHER_SOURCE);
+    this.reveal('run-log');
+  }
+
+  protected showProblems(): void {
+    this.reveal('run-problems');
+  }
+
+  protected copyRoot(path: string): void {
+    void navigator.clipboard?.writeText(path).then(() => this.copiedPath.set(true));
+  }
+
+  /** 見出しへフォーカスを移す（スクロールもする。上の帯に隠れないよう、見出しの scroll-margin で余白を取る）。 */
+  private reveal(id: string): void {
+    const heading = this.document.getElementById(id);
+    heading?.focus();
+    heading?.scrollIntoView({ block: 'start' });
   }
 }

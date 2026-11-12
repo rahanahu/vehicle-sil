@@ -43,10 +43,19 @@ describe('the readers accept every example of gui/protocol', () => {
     const bodies = new Map(
       (await httpExamples())
         .filter((example) => example.status === 200 && example.request.method === 'POST')
-        .map((example) => [example.request.path, Object.keys(example.request.body as object)]),
+        .map((example) => [example.name, Object.keys(example.request.body ?? {})]),
     );
-    expect(bodies.get('api/check')?.sort()).toEqual(['disable', 'file']);
-    expect(bodies.get('api/run')?.sort()).toEqual(['disable', 'file', 'speed', 'start_paused']);
+    expect(bodies.get('check-passed')?.sort()).toEqual(['disable', 'file']);
+    expect(bodies.get('run')?.sort()).toEqual(['disable', 'file', 'speed', 'start_paused']);
+    expect(bodies.get('stop-force')).toEqual(['force']);
+  });
+
+  it('reads the launcher state and the stop request of a summary', async () => {
+    const summary = readSessionResponse(
+      (await httpExamples()).find((example) => example.name === 'run')?.response,
+    );
+    expect(summary?.launcher.running).toBe(true);
+    expect(summary?.stop).toBe('none');
   });
 
   it('reads every WebSocket message, passing over what it does not know', async () => {

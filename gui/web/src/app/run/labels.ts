@@ -28,7 +28,7 @@ const PHASES: Record<string, string> = {
   starting: $localize`起動`,
   waiting: $localize`参加を待つ`,
   running: $localize`実行`,
-  stopping: $localize`停止`,
+  stopping: $localize`停止中`,
   ended: $localize`終了`,
 };
 

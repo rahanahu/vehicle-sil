@@ -1,3 +1,7 @@
+:host {
+  display: block;
+}
+
 h1 {
   font: var(--mat-sys-headline-small);
   margin-block: 0 var(--app-space-3);
@@ -6,26 +10,48 @@ h1 {
 h2 {
   font: var(--mat-sys-title-large);
   margin: 0;
+  /* 見出しへ移ったとき、上に貼り付いた状態の帯に隠れない */
+  scroll-margin-block-start: 12rem;
 }
 
-/* 中身の領域が広ければ 2 列（左: 選ぶ、照合、操作。右: 実行の様子）、狭ければ 1 列 */
+h2:focus-visible {
+  outline: 2px solid var(--mat-sys-primary);
+  outline-offset: 2px;
+}
+
+app-run-status {
+  margin-block-end: var(--app-space-3);
+}
+
+/*
+ * 中身の領域が広ければ 2 列（左: 選ぶ、照合。右: 実行の様子）、狭ければ 1 列。
+ * 1 列のとき、実行した後は実行の様子を先に並べる（列の箱を display: contents にして、order で並べ替える）。
+ */
 .columns {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--app-space-3);
 }
 
+.column {
+  display: contents;
+}
+
+.columns.after-run .setup > * {
+  order: 1;
+}
+
 @container content (inline-size >= 1000px) {
   .columns {
     grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
   }
-}
 
-.column {
-  display: grid;
-  gap: var(--app-space-3);
-  align-content: start;
-  min-inline-size: 0;
+  .column {
+    display: grid;
+    gap: var(--app-space-3);
+    align-content: start;
+    min-inline-size: 0;
+  }
 }
 
 mat-card {
@@ -37,6 +63,7 @@ mat-card-content {
   overflow-wrap: anywhere;
 }
 
+/* 知らせの帯。読み上げの領域（接続）は中身がない間も置き、見た目からは消す */
 .banner {
   display: flex;
   flex-wrap: wrap;
@@ -51,9 +78,30 @@ mat-card-content {
   overflow-wrap: anywhere;
 }
 
+.banner:not(.shown),
+.action-error:empty {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
 .banner.error {
   background: var(--mat-sys-error-container);
   color: var(--mat-sys-on-error-container);
+}
+
+.banner p {
+  margin: 0;
+}
+
+.action-error {
+  margin: 0 0 var(--app-space-3);
+  color: var(--mat-sys-error);
+  overflow-wrap: anywhere;
 }
 
 .picker {
@@ -70,9 +118,40 @@ mat-card-content {
   color: var(--mat-sys-on-surface-variant);
 }
 
+.root {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--app-space-2);
+}
+
+.root code {
+  min-inline-size: 0;
+}
+
+.speed {
+  margin-block-start: var(--app-space-3);
+}
+
 .error {
   margin: var(--app-space-2) 0 0;
   color: var(--mat-sys-error);
+}
+
+.crash-outcome {
+  margin: 0 0 var(--app-space-2);
+  font: var(--mat-sys-title-medium);
+  color: var(--mat-sys-error);
+}
+
+.crash-outcome .mark {
+  margin-inline-end: var(--app-space-1);
+}
+
+.next {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--app-space-2);
 }
 
 .problems {
@@ -82,6 +161,11 @@ mat-card-content {
   gap: var(--app-space-1);
 }
 
-.banner p {
-  margin: 0;
+.problems code {
+  margin-inline-end: var(--app-space-2);
+}
+
+.problems .count {
+  margin-inline: var(--app-space-1);
+  color: var(--mat-sys-on-surface-variant);
 }

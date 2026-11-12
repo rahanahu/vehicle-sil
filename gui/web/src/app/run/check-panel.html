@@ -22,11 +22,11 @@
       >
       <dl class="meta">
         <div>
-          <dt i18n>照合</dt>
+          <dt i18n>照合:</dt>
           <dd>{{ row.status }}</dd>
         </div>
         <div>
-          <dt i18n>待つか</dt>
+          <dt i18n>待つか:</dt>
           <dd>
             @switch (row.required) {
               @case (true) {
@@ -42,11 +42,11 @@
           </dd>
         </div>
         <div>
-          <dt i18n>ネットワーク</dt>
+          <dt i18n>ネットワーク:</dt>
           <dd>{{ row.networks || '—' }}</dd>
         </div>
         <div>
-          <dt i18n>変数</dt>
+          <dt i18n>変数:</dt>
           <dd>{{ row.variables ?? '—' }}</dd>
         </div>
       </dl>

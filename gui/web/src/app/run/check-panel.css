@@ -56,10 +56,6 @@
   color: var(--mat-sys-on-surface-variant);
 }
 
-.meta dt::after {
-  content: ':';
-}
-
 .meta dd {
   margin: 0;
 }

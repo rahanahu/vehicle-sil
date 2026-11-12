@@ -1,0 +1,90 @@
+<div class="actions">
+  <button
+    matButton="filled"
+    type="button"
+    class="primary"
+    data-testid="primary"
+    [class.stop]="primary() === 'stop' || primary() === 'stopping'"
+    [attr.data-action]="primary()"
+    [disabled]="primaryDisabled()"
+    disabledInteractive
+    [attr.aria-describedby]="primaryBlocked() ? 'run-primary-blocked' : null"
+    (click)="press()"
+  >
+    {{ primaryText() }}
+  </button>
+  @if (canForce()) {
+    <button
+      matButton="outlined"
+      type="button"
+      class="force"
+      data-testid="force-stop"
+      [disabled]="!ready() || pending() !== null"
+      disabledInteractive
+      (click)="askForceStop()"
+      i18n
+    >
+      待たずに止める…
+    </button>
+  }
+</div>
+
+<div class="state">
+  <p class="outcome" role="status" data-testid="outcome" [attr.data-tone]="summary().tone">
+    @if (summary().mark) {
+      <span class="mark" aria-hidden="true">{{ summary().mark }}</span>
+    }
+    <span>{{ summary().text }}</span>
+  </p>
+  @if (firstError(); as error) {
+    <p class="first-error" lang="en" data-testid="first-error" [title]="error">{{ error }}</p>
+  }
+  @if (hasDetails()) {
+    <button matButton type="button" class="details" (click)="showDetails.emit()" i18n>
+      詳しく
+    </button>
+  }
+  @if (primaryBlocked(); as reason) {
+    <p class="blocked" id="run-primary-blocked" data-testid="blocked">{{ reason }}</p>
+  }
+</div>
+
+<div class="progress">
+  <ol class="phases" aria-label="段階" i18n-aria-label>
+    @for (step of steps(); track step.phase) {
+      <li [class]="step.state" [attr.aria-current]="step.state === 'current' ? 'step' : null">
+        <span class="mark" aria-hidden="true">{{
+          step.state === 'done'
+            ? '✓'
+            : step.state === 'current'
+              ? '●'
+              : step.state === 'cut'
+                ? '✕'
+                : '○'
+        }}</span>
+        {{ step.label }}
+      </li>
+    }
+    @if (unknownPhase(); as phase) {
+      <li class="current" aria-current="step">{{ phase }}</li>
+    }
+  </ol>
+  <dl class="times">
+    <div>
+      <dt i18n>経過</dt>
+      <dd data-testid="elapsed">
+        @if (elapsedSeconds() !== null) {
+          <ng-container i18n>{{ elapsedSeconds() | measure: 1 }} s</ng-container>
+        } @else {
+          —
+        }
+      </dd>
+    </div>
+    @if (simSeconds() !== null) {
+      <div>
+        <dt i18n>仮想時刻</dt>
+        <dd data-testid="sim-time" i18n>{{ simSeconds() | measure: 3 }} s</dd>
+      </div>
+    }
+  </dl>
+</div>

@@ -1,4 +1,4 @@
-import { Component, computed, input } from '@angular/core';
+import { Component, LOCALE_ID, computed, inject, input } from '@angular/core';
 import { RunResult } from '../core/api';
 import { FindingsList } from './findings-list';
 import { runOutcomeLabel, simulationLabel } from './labels';
@@ -33,8 +33,8 @@ import { runOutcomeLabel, simulationLabel } from './labels';
         </dd>
       </div>
     </dl>
-    @if (leftProcesses().length > 0) {
-      <p class="failed" i18n>プロセスが残った participant: {{ leftProcesses().join(', ') }}</p>
+    @if (leftProcesses()) {
+      <p class="failed" i18n>プロセスが残った participant: {{ leftProcesses() }}</p>
     }
     <app-findings-list [findings]="result().findings" label="実行の所見" i18n-label />
   `,
@@ -73,14 +73,18 @@ import { runOutcomeLabel, simulationLabel } from './labels';
   `,
 })
 export class ResultPanel {
+  private readonly list = new Intl.ListFormat(inject(LOCALE_ID), { type: 'conjunction' });
   readonly result = input.required<RunResult>();
 
   protected readonly passed = computed(() => this.result().result === 'passed');
   protected readonly outcome = computed(() => runOutcomeLabel(this.result().result));
+  /** プロセスが残った participant（言語の並べ方で）。なければ空。 */
   protected readonly leftProcesses = computed(() =>
-    this.result()
-      .participants.filter((p) => p.left_processes)
-      .map((p) => p.name),
+    this.list.format(
+      this.result()
+        .participants.filter((p) => p.left_processes)
+        .map((p) => p.name),
+    ),
   );
 
   protected simulationText(simulation: string): string {

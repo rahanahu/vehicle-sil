@@ -515,11 +515,9 @@ export interface RunRequest extends CheckRequest {
   start_paused: boolean;
 }
 
-/** セッションの要約の participant（事象から組み立てたもの。まだ知らない欄は null）。 */
+/** セッションの要約の participant（participant の事象を名前ごとに重ねたもの。まだ届いていない欄は null）。 */
 export interface SummaryParticipant {
   name: string;
-  required: boolean | null;
-  enabled: boolean | null;
   state: ParticipantState | null;
   pid: number | null;
   exit_code: number | null;
@@ -530,56 +528,113 @@ const readSummaryParticipant: Reader<SummaryParticipant> = (value, path) => {
   const f = object(value, path);
   return {
     name: field(f, path, 'name', string),
-    required: field(f, path, 'required', nullable(boolean)),
-    enabled: field(f, path, 'enabled', nullable(boolean)),
-    state: field(f, path, 'state', nullable(string)),
-    pid: field(f, path, 'pid', nullable(integer)),
-    exit_code: field(f, path, 'exit_code', nullable(integer)),
-    signal: field(f, path, 'signal', nullable(string)),
+    state: field(f, path, 'state', optional(nullable(string), null)),
+    pid: field(f, path, 'pid', optional(nullable(integer), null)),
+    exit_code: field(f, path, 'exit_code', optional(nullable(integer), null)),
+    signal: field(f, path, 'signal', optional(nullable(string), null)),
   };
 };
 
-/** サーバーのセッション（ランチャーの 1 回の run）の要約。 */
+/** 要約の launcher: ランチャーのプロセスが動いているか、終わったならその終わり方。 */
+export interface SummaryLauncher {
+  /** 動いているか。結果を出した後も、プロセスが終わるまでは true。止められるかはこれで決める。 */
+  running: boolean;
+  exit_code: number | null;
+  /** 終わらせたシグナルの番号（POSIX だけ）。 */
+  signal: number | null;
+}
+
+const readSummaryLauncher: Reader<SummaryLauncher> = (value, path) => {
+  const f = object(value, path);
+  return {
+    running: field(f, path, 'running', boolean),
+    exit_code: field(f, path, 'exit_code', nullable(integer)),
+    signal: field(f, path, 'signal', nullable(integer)),
+  };
+};
+
+/** サーバーがランチャーに頼んだ停止。none: 頼んでいない、requested: 順に止める、forced: 待たずに止める。 */
+export type StopRequest = Open<'none' | 'requested' | 'forced'>;
+
+/** 出どころごとの、サーバーが覚えている行と落とした行の数。 */
+export interface LogCounts {
+  kept: number;
+  dropped: number;
+}
+
+const readLogCounts: Reader<LogCounts> = (value, path) => {
+  const f = object(value, path);
+  return { kept: field(f, path, 'kept', integer), dropped: field(f, path, 'dropped', integer) };
+};
+
+function record<T>(read: Reader<T>): Reader<Record<string, T>> {
+  return (value, path) =>
+    Object.fromEntries(
+      Object.entries(object(value, path)).map(([key, item]) => [key, read(item, `${path}.${key}`)]),
+    );
+}
+
+/** サーバーのセッション（ランチャーの 1 回の run）の要約。画面の状態はこれで作り直す（要約が正）。 */
 export interface SessionSummary {
   id: number;
   /** root からの相対パス。 */
   file: string;
   disable: string[];
   speed: Speed;
-  /** サーバーから見た状態。`ended` なら、ランチャーはもう動いていない（result がなくても）。 */
+  /** サーバーから見た状態。`ended` なら、ランチャーは終わり、その出力も読み終えた。 */
   state: Open<'running' | 'ended'>;
+  launcher: SummaryLauncher;
+  stop: StopRequest;
   phase: Phase | null;
-  stop_requests: number;
   last_seq: number | null;
+  /** 最後に受け取った事象の t_ms。 */
+  last_t_ms: number | null;
+  /** 最後の time 事象の仮想時刻。 */
   sim_ms: number | null;
+  /** この run の照合の結果（check の事象）。まだなければ null。 */
+  check: CheckResult | null;
   participants: SummaryParticipant[];
   findings: Finding[];
   result: RunResult | null;
+  /** 出どころごとの、サーバーが覚えている行と落とした行の数。 */
+  log: Record<string, LogCounts>;
   problems: ServerProblem[];
+  problems_omitted: number;
 }
 
 export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
   const f = object(value, path);
+  const time = field(f, path, 'time', nullable(object));
   return {
     id: field(f, path, 'id', integer),
     file: field(f, path, 'file', string),
     disable: field(f, path, 'disable', array(string)),
     speed: field(f, path, 'speed', readSpeed),
     state: field(f, path, 'state', string),
+    launcher: field(f, path, 'launcher', readSummaryLauncher),
+    stop: field(f, path, 'stop', string),
     phase: field(f, path, 'phase', nullable(string)),
-    stop_requests: field(f, path, 'stop_requests', integer),
     last_seq: field(f, path, 'last_seq', nullable(integer)),
-    sim_ms: field(f, path, 'sim_ms', nullable(number)),
+    last_t_ms: field(f, path, 'last_t_ms', nullable(number)),
+    sim_ms: time ? field(time, `${path}.time`, 'sim_ms', number) : null,
+    check: field(f, path, 'check', nullable(readCheckResult)),
     participants: field(f, path, 'participants', array(readSummaryParticipant)),
     findings: field(f, path, 'findings', array(readFinding)),
     result: field(f, path, 'result', nullable(readRunResult)),
+    log: field(f, path, 'log', record(readLogCounts)),
     problems: field(f, path, 'problems', array(readProblem)),
+    problems_omitted: field(f, path, 'problems_omitted', integer),
   };
 };
 
 /** GET api/session、POST api/run、POST api/stop の応答（いまのセッション。なければ null）。 */
 export const readSessionResponse = (value: unknown): SessionSummary | null =>
   field(object(value, 'response'), 'response', 'session', nullable(readSessionSummary));
+
+/** POST api/stop の本文。force: false は順に止める（何度頼んでも同じ）、true は待たずに止める。 */
+export interface StopRequestBody {
+  force: boolean;
+}
 
 // --- GUI サーバー: WebSocket -------------------------------------------------------------------
 
@@ -591,40 +646,43 @@ export interface AuthMessage {
   from_seq?: number;
 }
 
-/** hello の replay: どこから再送したか、覚えておく上限で落とした数。 */
+/** hello の replay: どこから再送するか（null は最初から）。 */
 export interface Replay {
   from_seq: number | null;
-  /** 落としたログの行の数（出どころごと）。 */
-  omittedLog: Record<string, number>;
-  /** 落としたほかの事象の数。 */
-  omittedEvents: number;
 }
 
 const readReplay: Reader<Replay> = (value, path) => {
   const f = object(value, path);
-  const omitted = field(f, path, 'omitted', object);
-  const op = `${path}.omitted`;
-  const log = field(omitted, op, 'log', object);
-  return {
-    from_seq: field(f, path, 'from_seq', nullable(integer)),
-    omittedLog: Object.fromEntries(
-      Object.entries(log).map(([source, count]) => [source, integer(count, `${op}.log.${source}`)]),
-    ),
-    omittedEvents: field(omitted, op, 'events', integer),
-  };
+  return { from_seq: field(f, path, 'from_seq', nullable(integer)) };
 };
+
+/** dropped: この画面に送らなかったものの数。 */
+export interface Dropped {
+  type: 'dropped';
+  session: number | null;
+  /** not-kept: サーバーが覚えていない（再送の前）、slow-client: 画面の受け取りが遅く、送る分から落とした。 */
+  reason: Open<'not-kept' | 'slow-client'>;
+  /** 出どころごとの、落とした log の行の数。 */
+  log: Record<string, number>;
+  /** 数が下限でしかない（もっと落ちているかもしれない）出どころ。 */
+  at_least: string[];
+  /** 落としたほかの事象の数。 */
+  events: number;
+}
 
 export type ServerMessage =
   /** つないだ直後（と resync の後）。いまのセッションの要約と、続く再送の説明。 */
   | { type: 'hello'; instance: string; session: SessionSummary | null; replay: Replay | null }
-  /** ランチャーの事象（再送のものも、新しいものも）。 */
+  /** ランチャーの事象（再送の log の行も、新しいものも）。 */
   | { type: 'event'; session: number; event: LauncherEvent }
   /** 再送が終わった。 */
   | { type: 'synced'; session: number | null; last_seq: number | null }
-  /** セッションの要約が変わった（始まった、停止を受け付けた、終わった）。 */
+  /** セッションの要約が変わった（始まった、停止を頼んだ、ランチャーが終わった、実行が終わった）。 */
   | { type: 'session'; session: SessionSummary }
   /** サーバーの知らせ（seq の抜け、ランチャーの不正な行、結果のない終わり、認証の失敗など）。 */
   | { type: 'error'; session: number | null; code: string; message: string }
+  /** 送らなかったものの数。 */
+  | Dropped
   /** 画面が読むのが遅く、メッセージを落とした。続けて hello から送り直される。 */
   | { type: 'resync'; message: string };
 
@@ -660,6 +718,15 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
         session: field(f, path, 'session', nullable(integer)),
         code: field(f, path, 'code', string),
         message: field(f, path, 'message', string),
+      };
+    case 'dropped':
+      return {
+        type,
+        session: field(f, path, 'session', nullable(integer)),
+        reason: field(f, path, 'reason', string),
+        log: field(f, path, 'log', record(integer)),
+        at_least: field(f, path, 'at_least', array(string)),
+        events: field(f, path, 'events', integer),
       };
     case 'resync':
       return { type, message: field(f, path, 'message', optional(string, '')) };

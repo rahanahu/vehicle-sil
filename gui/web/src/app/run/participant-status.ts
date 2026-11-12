@@ -1,6 +1,6 @@
 import { Component, computed, input } from '@angular/core';
+import { ParticipantView } from '../core/session/session-state';
 import { participantStateLabel } from './labels';
-import { ParticipantView } from './run-state';
 
 /** 実行中の participant ごとの状態（起動、参加、終了と終了コード）。 */
 @Component({
@@ -57,6 +57,10 @@ import { ParticipantView } from './run-state';
     .item[data-state='bad'] .exit {
       color: var(--mat-sys-error);
     }
+    .item[data-state='stopped'] .state,
+    .item[data-state='stopped'] .exit {
+      color: var(--mat-sys-on-surface-variant);
+    }
     .item[data-state='good'] .state {
       color: var(--mat-sys-primary);
     }
@@ -68,6 +72,8 @@ import { ParticipantView } from './run-state';
 })
 export class ParticipantStatus {
   readonly participants = input.required<readonly ParticipantView[]>();
+  /** 利用者が止めた実行か。止めたことによるシグナルや強制終了は、失敗の色にしない。 */
+  readonly interrupted = input(false);
 
   protected readonly rows = computed(() =>
     this.participants().map((p) => {
@@ -75,12 +81,23 @@ export class ParticipantStatus {
         p.state === 'killed' ||
         (p.state === 'ended' && (p.exitCode ?? 0) !== 0) ||
         p.signal !== null;
-      const tone = failed ? 'bad' : p.state === 'joined' ? 'good' : 'plain';
+      // 止めたときの SIGTERM などは失敗ではない（終了コードが 0 以外で終わったものは、止めたときでも失敗）
+      const stopped =
+        failed && this.interrupted() && !(p.state === 'ended' && (p.exitCode ?? 0) !== 0);
+      const tone = stopped ? 'stopped' : failed ? 'bad' : p.state === 'joined' ? 'good' : 'plain';
       return {
         name: p.name,
         label: participantStateLabel(p.state),
         // 色だけで伝えないための形
-        mark: failed ? '✕' : p.state === 'joined' ? '●' : p.state === 'ended' ? '✓' : '○',
+        mark: stopped
+          ? '■'
+          : failed
+            ? '✕'
+            : p.state === 'joined'
+              ? '●'
+              : p.state === 'ended'
+                ? '✓'
+                : '○',
         tone,
         exit: p.state === 'ended' || p.state === 'killed' ? p.exitCode : null,
         signal: p.signal,

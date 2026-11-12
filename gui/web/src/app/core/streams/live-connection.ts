@@ -33,6 +33,11 @@ export type ConnectionState = 'connecting' | 'open' | 'closed';
 export interface LiveConnection<T> {
   /** 接続の状態。 */
   readonly state: Signal<ConnectionState>;
+  /**
+   * 開く前に閉じた（握手で断られたか、届かなかった）回数。ブラウザからは理由が見えないので、
+   * 増えたら HTTP で理由を確かめる。
+   */
+  readonly failures: Signal<number>;
   /** 届いた通知の流れ。購読する人がいる間だけつながる（共有）。画面へは stream-signals.ts の関数で signal にして渡す。 */
   readonly messages: Observable<T>;
 }
@@ -68,14 +73,26 @@ export function liveConnection<T>(
   const factory = inject(WEB_SOCKET_FACTORY);
   const url = webSocketUrl(inject(DOCUMENT).baseURI, path);
   const state = signal<ConnectionState>('closed');
+  const failures = signal(0);
 
   const messages = defer(() => {
     state.set('connecting');
+    let opened = false;
     return factory<T>(
       {
         url,
-        openObserver: { next: () => state.set('open') },
-        closeObserver: { next: () => state.set('closed') },
+        openObserver: {
+          next: () => {
+            opened = true;
+            state.set('open');
+          },
+        },
+        closeObserver: {
+          next: () => {
+            if (!opened) failures.update((n) => n + 1);
+            state.set('closed');
+          },
+        },
       },
       greeting(),
     );
@@ -88,5 +105,5 @@ export function liveConnection<T>(
     share({ resetOnRefCountZero: () => timer(lingerMs) }),
   );
 
-  return { state: state.asReadonly(), messages };
+  return { state: state.asReadonly(), failures: failures.asReadonly(), messages };
 }

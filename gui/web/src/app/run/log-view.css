@@ -25,14 +25,22 @@
   color: var(--mat-sys-on-surface-variant);
 }
 
-.dropped {
-  margin-inline-start: var(--app-space-2);
+.dropped,
+.newer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--app-space-2);
+  margin: 0 0 var(--app-space-2);
   color: var(--mat-sys-tertiary);
 }
 
-/* 行は折り返さず、長い行は横にスクロールする（決まった高さで並べるため） */
+/*
+ * 行は折り返さず、長い行は横にスクロールする（決まった高さで並べるため）。
+ * 高さは中身の行の数に合わせ（--log-rows）、画面の高さの半分で頭打ち。
+ */
 .viewport {
-  block-size: clamp(240px, 50dvh, 640px);
+  block-size: clamp(calc(3 * 20px + 2px), calc(var(--log-rows, 0) * 20px + 2px), max(50dvh, 160px));
   border: 1px solid var(--mat-sys-outline-variant);
   border-radius: var(--mat-sys-corner-small);
   background: var(--mat-sys-surface-container-lowest);
@@ -55,4 +63,8 @@
 .from {
   margin-inline-end: 1ch;
   color: var(--mat-sys-primary);
+}
+
+.gap {
+  color: var(--mat-sys-tertiary);
 }

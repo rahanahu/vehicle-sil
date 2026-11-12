@@ -4,8 +4,8 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { authInterceptor } from '../core/auth/auth-interceptor';
 import { FakeWebSockets } from '../core/streams/fake-web-socket';
 import { protocolExamples } from '../testing/protocol-examples';
-import { RunPage } from './run-page';
-import { BATCH_MS } from './run-session';
+import { CHECK_DELAY_MS, RunPage } from './run-page';
+import { BATCH_MS } from '../core/session/server-connection';
 
 describe('RunPage', () => {
   let examples: Map<string, unknown>;
@@ -53,6 +53,27 @@ describe('RunPage', () => {
     return found;
   }
 
+  /** 押せないか（主なボタンは、フォーカスを残すため aria-disabled で押せなくする）。 */
+  const disabled = (b: HTMLButtonElement) =>
+    b.disabled || b.getAttribute('aria-disabled') === 'true';
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /** 照合を頼むまでの間を待って、照合の要求を 1 つ受け取る。 */
+  async function checkRequest() {
+    await sleep(CHECK_DELAY_MS + 20);
+    return http.expectOne('api/check');
+  }
+
+  function toggle(fixture: ComponentFixture<RunPage>, name: string): void {
+    (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLButtonElement>(
+        `[data-testid="check-participant-${name}"] button[role="switch"]`,
+      )
+      ?.click();
+    TestBed.tick();
+  }
+
   /** 画面を開き、サーバーの情報と一覧に答え、最初の照合の要求まで進める。 */
   async function openWithFiles(): Promise<ComponentFixture<RunPage>> {
     const fixture = TestBed.createComponent(RunPage);
@@ -79,21 +100,17 @@ describe('RunPage', () => {
   it('checks the chosen file, and checks again without a participant that is switched off', async () => {
     const fixture = await openWithFiles();
     // 起動のときのファイルがないので、一覧の最初のファイル
-    const first = http.expectOne('api/check');
+    const first = await checkRequest();
     expect(first.request.body).toEqual({ file: 'bad-lines.yaml', disable: [] });
     expect(first.request.headers.get('Authorization')).toBe('Bearer secret');
     first.flush(response('check-passed'));
     await fixture.whenStable();
 
     expect(text(fixture, 'check-outcome')).toContain('通った');
-    expect(button(fixture, 'start').disabled).toBe(false);
+    expect(disabled(button(fixture, 'primary'))).toBe(false);
 
-    const toggle = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
-      '[data-testid="check-participant-Dashboard"] button[role="switch"]',
-    );
-    toggle?.click();
-    TestBed.tick();
-    const again = http.expectOne('api/check');
+    toggle(fixture, 'Dashboard');
+    const again = await checkRequest();
     expect(again.request.body).toEqual({ file: 'bad-lines.yaml', disable: ['Dashboard'] });
     again.flush(response('check-disabled'));
     await fixture.whenStable();
@@ -102,18 +119,19 @@ describe('RunPage', () => {
 
   it('does not start while the check finds errors, and says why', async () => {
     const fixture = await openWithFiles();
-    http.expectOne('api/check').flush(response('check-failed'));
+    (await checkRequest()).flush(response('check-failed'));
     await fixture.whenStable();
-    expect(button(fixture, 'start').disabled).toBe(true);
+    expect(disabled(button(fixture, 'primary'))).toBe(true);
     expect(text(fixture, 'blocked')).toContain('誤り 1 件');
     expect(text(fixture, 'check-card')).toContain('step-mismatch');
   });
 
   it('starts with the chosen settings', async () => {
     const fixture = await openWithFiles();
-    http.expectOne('api/check').flush(response('check-passed'));
+    (await checkRequest()).flush(response('check-passed'));
     await fixture.whenStable();
-    button(fixture, 'start').click();
+    expect(button(fixture, 'primary').textContent).toContain('開始');
+    button(fixture, 'primary').click();
     const run = http.expectOne('api/run');
     expect(run.request.method).toBe('POST');
     expect(run.request.body).toEqual({
@@ -122,21 +140,52 @@ describe('RunPage', () => {
       speed: null,
       start_paused: false,
     });
+    // 応答の要約をその場で当てる（通知を待たずに、停止のボタンになる）
+    run.flush(response('run'));
+    await fixture.whenStable();
+    expect(button(fixture, 'primary').textContent).toContain('停止');
+  });
+
+  it('checks once after quick switches, after the answer to the check before', async () => {
+    const fixture = await openWithFiles();
+    const first = await checkRequest();
+    first.flush(response('check-passed'));
+    await fixture.whenStable();
+    // 続けて 2 回切り替える: 最後の組み合わせで 1 回だけ
+    toggle(fixture, 'Dashboard');
+    toggle(fixture, 'Engine');
+    const once = await checkRequest();
+    expect(once.request.body).toEqual({ file: 'bad-lines.yaml', disable: ['Dashboard', 'Engine'] });
+    // 応答の前に切り替える: 前の照合の応答が来るまで、次は送らない
+    toggle(fixture, 'Engine');
+    await sleep(CHECK_DELAY_MS + 20);
+    http.expectNone('api/check');
+    once.flush(response('check-passed'));
+    const next = await checkRequest();
+    expect(next.request.body).toEqual({ file: 'bad-lines.yaml', disable: ['Dashboard'] });
+    next.flush(response('check-disabled'));
+    await fixture.whenStable();
+    // 古い応答（Engine も外したもの）は使わず、最後の組み合わせの結果を出す
+    expect(text(fixture, 'check-participant-Dashboard')).toContain('外した');
+    expect(disabled(button(fixture, 'primary'))).toBe(false);
   });
 
   it('shows the result and the reason of a failed run, and offers to run again', async () => {
     const fixture = await openWithFiles();
-    http.expectOne('api/check').flush(response('check-passed'));
+    (await checkRequest()).flush(response('check-passed'));
     for (const message of server('ws-participant-crash').slice(2)) fake.last().send(message);
     await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
     TestBed.tick();
     // 終わったので、選んだファイル（セッションのもの）を照合し直す
+    await sleep(CHECK_DELAY_MS + 20);
     for (const request of http.match('api/check')) request.flush(response('check-passed'));
     await fixture.whenStable();
 
     expect(text(fixture, 'result')).toContain('失敗');
     expect(text(fixture, 'result-card')).toContain('participant-failed');
     expect(text(fixture, 'status-Dashboard')).toContain('終了コード 3');
-    expect(button(fixture, 'start').textContent).toContain('もう一度実行');
+    expect(button(fixture, 'primary').textContent).toContain('もう一度実行');
+    expect(text(fixture, 'outcome')).toContain('失敗');
+    expect(text(fixture, 'first-error')).toContain('participant-failed');
   });
 });
