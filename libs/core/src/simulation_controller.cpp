@@ -462,21 +462,37 @@ void SimulationController::end_window() noexcept
     }
 }
 
-void SimulationController::start(std::chrono::milliseconds timeout)
+void SimulationController::start(std::chrono::milliseconds timeout, const std::function<std::string()>& give_up)
 {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    // No limit: the deadline that never comes (give_up decides). Waits go in slices then, so no
+    // duration is added to "now" that does not fit.
+    const bool limited = timeout != kNoStartLimit;
+    const auto deadline = limited ? std::chrono::steady_clock::now() + timeout : std::chrono::steady_clock::time_point::max();
     auto remaining = [&] {
-        return std::max(std::chrono::milliseconds(0), std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                          deadline - std::chrono::steady_clock::now()));
+        return limited ? std::max(std::chrono::milliseconds(0), std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                                    deadline - std::chrono::steady_clock::now()))
+                       : kNoStartLimit;
     };
+    constexpr std::chrono::milliseconds kSlice{200};
 
     // A participant has connected once its first lifecycle status (ServicesCreated) is known.
     // The workflow configuration is published only then, as sil-kit-system-controller does,
     // so that every required participant receives it.
     for (const auto& name : options_.required_participants)
     {
-        if (!runtime_->wait_for_peer(name, has_any_state, remaining()))
+        while (!runtime_->wait_for_peer(name, has_any_state, std::min(remaining(), kSlice)))
         {
+            if (give_up)
+            {
+                if (std::string why = give_up(); !why.empty())
+                {
+                    throw std::runtime_error("SimulationController: the start was given up: " + why);
+                }
+            }
+            if (remaining() > std::chrono::milliseconds(0))
+            {
+                continue;
+            }
             const std::vector<std::string> missing = missing_participants();
             std::string names;
             for (const auto& m : missing.empty() ? std::vector<std::string>{name} : missing)
@@ -499,7 +515,7 @@ void SimulationController::start(std::chrono::milliseconds timeout)
     }
     try
     {
-        runtime_->start(remaining());
+        runtime_->start(remaining(), give_up);
     }
     catch (...)
     {

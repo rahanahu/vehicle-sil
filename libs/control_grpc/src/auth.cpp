@@ -139,16 +139,26 @@ const RpcRule* find_rule(std::string_view service, std::string_view method)
 
 std::vector<Credential> load_credentials(const std::string& path)
 {
-    std::ifstream in(path);
+    std::ifstream in(path, std::ios::binary);
     if (!in)
     {
         throw std::runtime_error("cannot read the credentials file " + path);
     }
+    std::ostringstream text;
+    text << in.rdbuf();
+    return parse_credentials(text.str(), path);
+}
+
+std::vector<Credential> parse_credentials(const std::string& text, const std::string& source)
+{
+    std::istringstream in(text);
     std::vector<Credential> out;
     std::string line;
     int number = 0;
+    // The words of a line are never repeated in a message: one of them is a token (also when
+    // they are in the wrong order).
     const auto fail = [&](const std::string& why) {
-        return std::runtime_error(path + ":" + std::to_string(number) + ": " + why);
+        return std::runtime_error(source + ":" + std::to_string(number) + ": " + why);
     };
     while (std::getline(in, line))
     {
@@ -192,7 +202,7 @@ std::vector<Credential> load_credentials(const std::string& path)
         }
         else
         {
-            throw fail("unknown role " + role);
+            throw fail("the first word is no role: the roles are viewer, operator, admin and agent (<role> <name> <token>)");
         }
         c.name = fields[1];
         c.token = fields[2];
@@ -218,15 +228,14 @@ std::vector<Credential> load_credentials(const std::string& path)
         }
         if (c.participants.empty() && c.role == Role::Agent)
         {
-            throw fail("the agent credential '" + c.name
-                       + "' names no participant; write the participant names it may connect as after the token, separated "
-                         "by commas (for example: agent " + c.name + " <token> Engine,Body), or * for any name");
+            throw fail("the agent credential names no participant; write the participant names it may connect as after the "
+                       "token, separated by commas (for example: agent ecu <token> Engine,Body), or * for any name");
         }
         for (const auto& other : out)
         {
             if (other.token == c.token)
             {
-                throw fail("the token of " + c.name + " is used by " + other.name + " already");
+                throw fail("the token is used by an earlier line already: each credential needs a token of its own");
             }
         }
         out.push_back(std::move(c));

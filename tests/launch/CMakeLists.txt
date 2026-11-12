@@ -84,10 +84,13 @@ if(TARGET vehicle_sil_launch_test_ecu)
   target_include_directories(vehicle_sil_launch_control_test PRIVATE ${PROJECT_SOURCE_DIR}/libs/control_silkit/src)
   vehicle_sil_target_defaults(vehicle_sil_launch_control_test)
   vehicle_sil_copy_runtime_dlls(vehicle_sil_launch_control_test)
-  add_dependencies(vehicle_sil_launch_control_test vehicle_sil_launch_test_ecu)
+  add_dependencies(vehicle_sil_launch_control_test vehicle_sil_launch_test_ecu vehicle_sil_process_helper)
+  # Also: the limits of the start before and after the hold of --start-paused with a control
+  # server (a participant of the test that never gets ready), --timeout-ms and Ctrl+C in the
+  # hold, a resume before the window.
   add_test(NAME launch_control.a_write_in_the_start_window_reaches_each_process_before_its_first_step
            COMMAND vehicle_sil_launch_control_test $<TARGET_FILE:vehicle_sil_launch_test_ecu>
-                   ${CMAKE_CURRENT_BINARY_DIR}/control)
+                   ${CMAKE_CURRENT_BINARY_DIR}/control $<TARGET_FILE:vehicle_sil_process_helper>)
   set_tests_properties(launch_control.a_write_in_the_start_window_reaches_each_process_before_its_first_step PROPERTIES
     LABELS "integration;launch;control" TIMEOUT 300)
 endif()

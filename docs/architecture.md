@@ -1151,7 +1151,7 @@ J1939 スタックの制限と、規格との一致を確かめていない点�
 - **SIL Kit**: CAN/LIN の通信と仮想時間の同期（データプレーン）
 - **Control API**: 操作と監視
 
-クライアント（GUI、CLI、Python）が使う Control API は gRPC（Protocol Buffers、`proto/vehicle_sil/control/v1/control.proto` の v1）で、SIL Kit とは別の接続です。利用者向けの使い方は [control-api.md](control-api.md) にあります。
+クライアント（GUI、CLI、Python）が使う Control API は gRPC（Protocol Buffers、`proto/vehicle_sil/control/v1/control.proto` の v1）で、SIL Kit とは別の接続です。Server は、ふつうはシミュレーションを動かす `vehicle_sil_launch run --control` の中にあります（下の「ランチャーの Control Server」）。単独の `vehicle_sil_control_server` もあります。利用者向けの使い方は [control-api.md](control-api.md) にあります。
 
 ECU の Agent と Hub の間の運び手は 2 つあります。
 
@@ -1162,8 +1162,8 @@ ECU の Agent と Hub の間の運び手は 2 つあります。
 flowchart LR
     client["client (GUI, CLI, Python)"] -- gRPC --> server["Control Server"]
     server --- hub["Hub"]
-    hub -- "SIL Kit publish/subscribe" --> a1["Agent of an ECU (ecu_main)"]
-    hub -- gRPC --> a2["Agent with an AgentClient"]
+    hub -- "SIL Kit publish/subscribe (vehicle_sil_launch)" --> a1["Agent of an ECU (ecu_main)"]
+    hub -- "gRPC (vehicle_sil_control_server)" --> a2["Agent with an AgentClient"]
 ```
 
 構成要素は次の3つです。
@@ -1171,7 +1171,7 @@ flowchart LR
 | 構成要素 | 役割 | 実装 |
 |---|---|---|
 | Control Agent | 各 ECU が持つ。ECU の変数（と Peer の状態）を公開し、操作を受け付ける | `vehicle_sil::control::Agent`、`Ecu::input()`、`output()`、`agent()`。Hub への接続は `vehicle_sil::control_silkit::AgentTransport`（`ecu_main()` が付ける）か `vehicle_sil::control_grpc::AgentClient` |
-| Control Server | 複数の PC（Windows/Linux）にまたがる Peer の Agent を受け付け、操作を中継し、状態を集約する。時間ゲートで時間を操作する | `vehicle_sil::control::Hub`。Agent の側は `vehicle_sil::control_silkit::HubTransport`（`vehicle_sil_launch run` が controller の participant に持つ）か `vehicle_sil::control_grpc::ControlServer`（実行ファイル `vehicle_sil_control_server`） |
+| Control Server | 複数の PC（Windows/Linux）にまたがる Peer の Agent を受け付け、操作を中継し、状態を集約する。時間ゲートで時間を操作する | `vehicle_sil::control::Hub`。Agent の側は `vehicle_sil::control_silkit::HubTransport`（`vehicle_sil_launch run` が controller の participant に持つ）か `vehicle_sil::control_grpc::ControlServer` の `AgentService`（実行ファイル `vehicle_sil_control_server`）。クライアントの側は `ControlServer` の `ControlService`（`vehicle_sil_launch run --control` と `vehicle_sil_control_server`） |
 | クライアント | GUI、CLI、Python。いずれも共通の Control API を使う | Python のパッケージと CLI（`python/vehicle_sil_control`）。GUI はまだない |
 
 #### Control Agent（`vehicle_sil::control`）
@@ -1266,6 +1266,7 @@ sequenceDiagram
 - 始まる前の窓（`SimulationController::set_start_window()`）: controller は、必須の participant が全員、最初のステップの前で待っている間（SIL Kit の CommunicationReady の非同期のハンドラー。`ParticipantRuntime::set_communication_ready_handler_async()`）に、登録した関数を自分のスレッド（SIL Kit のスレッドでも、`start()` を呼んだスレッドでもない）で呼び、関数が戻ってからシミュレーションを始めます。この間に `HubTransport::wait_for_hellos()` で Agent の hello を待ち、`Hub::write()` で Parameter を書いて `wait_queued()` で受け付けを待てば、その値は各 ECU の時刻 0 のステップで反映され、アプリはそのステップで見ます。ECU と controller がどの順に起動しても同じです。
   - 窓は開始の一部です。`start()` の時間切れは窓を含み（`StartWindow::deadline()`）、全 participant の `start()` が窓の終わりを待ちます。関数を外から止める手段はないので、関数は待つたびに `StartWindow::cancelled()`（止める要求、ライフサイクルの終わり、`start()` の時間切れ）を見て、すぐ戻ります。`start()` は、戻るときも投げるときも、関数の終わりを待ちます。関数が投げても窓は閉じて全員が始まり、`start()` がその文言で `std::runtime_error` を投げます。
   - 窓は必ず完了させます。`start()` があきらめた後で窓が開いたとき（必須の participant の準備が遅かった）は、関数を呼ばずに完了だけします。全員が最初のステップまで進むので、その後の controller の停止で、窓のないときと同じに順に終わります（controller のデストラクターは、停止を待つ間も、開いた窓を完了させます）。
+  - `vehicle_sil_launch` の `start()` は、開始を待つ間、必須の participant がシミュレーションを去っていないか（`has_finished()`。プロセスが終われば Error）を見て、去っていればすぐにあきらめます（`SimulationController::start()` の `give_up`）。窓の中で participant がいなくなると、残りの participant は時間切れまで待つためです。
   - `wait_for_hellos()` は、挙げた participant のそれぞれが、つながってコマンドを受け取れると返事をする、版の違う hello を送る、シミュレーションを去る、のどれかになるまで待ちます（期限と取り消しつき）。窓の中で participant がいなくなっても、待ちは終わります（その後の開始は、ほかの開始の失敗と同じに時間切れになります）。
   - 窓より前（workflow の前や、hello が届いた直後）に書いたコマンドは、届く保証がありません。
 - 接続の終わり: Agent の「最後の知らせ」が届いたとき、その participant のライフサイクルが Error になったとき（ステップの失敗、接続が切れた＝プロセスが終わった）、`HubTransport` を壊したときに、`Hub::agent_ended()` で終えます。その Agent を待っていた操作は、最後の知らせに入っていた結果（Cancelled など）か Unknown で確定します。順に終わった（Shutdown になった）のに最後の知らせを送らなかった participant の接続は、`HubTransport` を壊すまで残ります（最後の知らせは、送った直後に participant を壊すと届かないことがあります）。その間も、その participant への新しい書き込みは上のとおり断るので、確定しない操作は増えません。
@@ -1279,7 +1280,7 @@ sequenceDiagram
 `VEHICLE_SIL_BUILD_CONTROL_SERVER`（既定 OFF）のときだけ作ります。gRPC は `find_package(gRPC CONFIG)` で探し、なければ FetchContent で版を固定して取り込みます（[dependencies.md](dependencies.md)）。ほかのライブラリは gRPC に依存しません。
 
 - サービス: クライアント向けの `ControlService`（Peer の一覧、値、書き込み、操作の結果と待ち、購読、Peer を忘れる、時間の操作）と、Agent 向けの `AgentService`（1 接続 1 本の双方向ストリーム。Agent の hello を受け付けると、Server はどのコマンドよりも先に Welcome を返す）。列挙はどれも 0 が UNSPECIFIED で、知らない値は安全側に読みます（変数は書けないものとして、操作の結果は受け取らなかったものとして）。
-- `ControlServer`: Hub に 2 つのサービスを載せます。
+- `ControlServer`: Hub に 2 つのサービスを載せます。Hub は自分で持つか、呼ぶ側のもの（`ServerOptions::external_hub`。Server より長く生きること）を使います。`ServerOptions::serve_agents` が偽なら `AgentService` を載せません（Agent が別の運び手で Hub につながるとき）。
   - 時間: `TimeControl`（`time_control_of(controller)` で SimulationController の時間ゲートを使う）があれば時間の操作を受けます。なければ時間の操作は `FAILED_PRECONDITION` で、`GetTime` は `available = false` を返します。`Stop` は停止を要求するだけで待ちません（複数のクライアントから同時に呼べます）。理由は全 participant と SIL Kit のログに渡るので、制御文字を `?` にして 200 バイトまで（UTF-8 の文字の途中では切らない）にし、監査にも残します。シミュレーションが始まる前の `Stop` は、始まった直後に止めます（`ParticipantRuntime::request_stop()` は、lifecycle が Running になる前の要求を保ち、最初のステップで渡します。SIL Kit は Running の前の Stop を無視するため）。
   - シミュレーションの監視（`SimulationMonitor`、`ControlServer::simulation()`）: `TimeControl` があれば、Server は 1 本のスレッドで `ServerOptions::monitor_period`（既定 50 ms）ごとに `TimeControl` を読み、時間の状態、participant ごとの SIL Kit の状態、失敗した participant と理由（`FailureCheck`。猶予は `leave_grace`。一度失敗を見たら消さない）、終わったか、を 1 つのスナップショットに持ちます。変わったときだけ購読者（監視のスレッドか、`poll()` を呼んだスレッド、つまり時間の呼び出しを処理する gRPC のスレッドで、1 つずつ呼ばれる。短く、中から購読の登録や解除をしない）に知らせます。`ListPeers`、`Watch`、`vehicle_sil_control_server` の終わりの判定は、どれもこのスナップショットを使うので、購読の数によらず `TimeControl` を読むのは監視の 1 か所だけです。状態を読めなかったとき（`TimeControl` が投げた）は、前に読めた値を残し、理由を添えます（`ListPeers` の `simulation_error`、`SimulationState::error`。participant と時間の両方を読めなければ両方の理由）。participant を読めなかった回は失敗を判定しないので、いなくなった participant の猶予は数え直さずに続きます。`SimulationMonitor` は `TimeControl` だけに依存します。`TimeControl::left_participant()` は純粋仮想です（実装し忘れると、失敗を判定しないまま動くため）。SIL Kit の実装は、participant の状態を最初の 1 回だけ SIL Kit から読み直し（ハンドラーの登録中に届いた状態を SIL Kit が渡さないことがあるため）、以後はハンドラーが受けた状態を読みます。
   - Peer の一覧（`ListPeers`）: つながった Agent に、controller の必須の participant（`SimulationControllerOptions::required_participants`、`vehicle_sil_control_server` の `--required`。どの PC でも、Agent がなくても）を合わせたものです。必須でない participant は、Agent があるときだけ（`simulation_state` は空で）出ます。各 Peer に、Agent の有無（`has_agent`）と SIL Kit のライフサイクルの状態（`simulation_state`。まだ見えていなければ空）が付きます。`Watch` の Peer も同じ変換で作るので、同じ Peer は `ListPeers` と同じ内容で届きます。
@@ -1293,11 +1294,32 @@ sequenceDiagram
   - TLS: `SecurityOptions` にサーバーの証明書と秘密鍵（PEM）を渡すと TLS で待ち受けます。クライアントと `AgentClient` は、ルート証明書（PEM）を渡して TLS でつなぎます。
   - トークン: 認証情報（`Credential`: 名前、トークン、役割、Agent なら名乗れる participant 名）を渡すと、すべての呼び出しに `authorization: Bearer <token>`（`Bearer` の大文字と小文字は問わない）が要ります。資格情報のファイル（`load_credentials()`）では、同じトークンの重複、Agent 以外の行の participant 名、participant 名のない Agent の行を誤りにします（どの名前でもよいときは `*` を書きます）。`SecurityOptions` に認証情報を直接渡しても同じ検査をし（`std::invalid_argument`）、証明書と秘密鍵の片方だけでも `std::invalid_argument` です。ないか合わなければ `UNAUTHENTICATED`、役割が足りなければ `PERMISSION_DENIED` です。トークンは長さによらない時間で比べます。認証情報を渡さなければ、誰でも何でもできます。
   - 役割: viewer（読む: 一覧、値、操作、購読、時刻）< operator（変える: 書き込み、一時停止、再開、ステップ、速度、Peer を忘れる）< admin（停止）。agent は Agent の接続だけができ、クライアントの呼び出しはできません。agent の認証情報には、名乗れる participant 名を必ず書きます（`Credential::participants`）。`*`（`kAnyParticipant`）を書いた認証情報はどの名前でも名乗れ、つながっている Peer を置き換えられます（名前は予約しません）。書いていない名前で名乗ると、認証情報の名前、名乗った名前、名乗れる名前を添えて `PERMISSION_DENIED` で断ります。viewer は、値、スキーマ、出来事、操作（書いた人の認証情報の名前と接続元を含む）を読めます。 RPC ごとに要る役割と監査の有無は、Server の 1 つの表（`rpc_rules()`）にあり、各 RPC はその表で認可してから処理します。表にない RPC は、誰が呼んでも `PERMISSION_DENIED` です（RPC を足して表を忘れると、試験が落ちます）。
-  - ループバック以外のアドレスで待ち受けるには、TLS と認証情報の両方が要ります（`allow_insecure` を明示しない限り、`std::invalid_argument` で起動しません）。ループバックとみなすのは `localhost`、`[::1]`、数字の `127.x.y.z`、`unix:` のアドレスだけです。
+  - ループバック以外のアドレスで待ち受けるには、TLS と認証情報の両方が要ります（`allow_insecure` を明示しない限り、`std::invalid_argument` で起動しません）。ループバックとみなすのは `localhost`、`[::1]`、数字の `127.x.y.z`、`unix:` のアドレスだけです（`is_loopback_address()`）。
   - 監査: `audit` に、変更する呼び出し（書き込み、時間の操作、Peer を忘れる、Agent の接続と置き換え）と、断った呼び出し（Agent の hello を含む）を、誰が（認証情報の名前と接続元）、何を、結果、の 1 行で渡します。制御文字は `?` に置き換え（名前に改行を入れて偽の行を書けない）、1 行は約 1000 バイトで切ります。書き込みの行は最初の 16 個の名前と残りの数です。断った呼び出しはポートに届く誰でも起こせるので、1 秒に 20 行までにし、記録しなかった数は、次に記録する断った呼び出しの行の前に知らせます。監査の関数が投げた例外は無視します。
   - SIL Kit のレジストリとデータプレーンには認証がありません。閉じたネットワークで使います。SIL Kit の上の運び手（`vehicle_sil::control_silkit`）で運ぶ Agent と Hub の間も同じです。
 - 上限: Server の未完了の操作は Peer ごとの `max_pending`（hello の値。65536 まで）、確定した操作は `max_operations`、購読は `capacity`（既定 1024、`max_watch_capacity` まで）、Agent のストリームの送信待ちは未完了の操作の数まで、1 回の `Write` の書き込みは `max_writes_per_request`（既定 4096。超えたら `INVALID_ARGUMENT`）、待つ呼び出しと `Watch` は `max_waiting_calls` までです。hello のスキーマに空の名前や重複があるとき、`open_seqs` が `max_pending` の 2 倍（積んだ操作と最近の結果）を超えるとき、`connection` が空でなく、1〜64 文字の `A-Z a-z 0-9 . _ -` でないときは断ります。1 つのメッセージは gRPC の既定の 4 MB までです。
 - Server の再起動: Hub の状態（操作、値）は引き継ぎません。前の Server の操作の番号を問い合わせると `NOT_FOUND` です。Agent がまだ持っている前の Server の操作（時刻つきを含む）はそのまま反映され、結果は新しい Server が捨てます。`vehicle_sil_control_server` は system controller も兼ねるので、起動し直せばシミュレーションも終わります。
+
+#### ランチャーの Control Server（`vehicle_sil_launch run --control`）
+
+`VEHICLE_SIL_BUILD_CONTROL_SERVER` のビルドの `vehicle_sil_launch` だけが持ちます（`tools/launch/control_server.cpp`）。`libs/launch` は gRPC に依存しません。ランチャーは、`run` の Hub（ECU の Agent が SIL Kit でつながる。上の「SIL Kit の上の運び手」）を `ServerOptions::external_hub` で `ControlServer` に渡し、`ServerOptions::serve_agents` を偽にします（gRPC の Agent は受け付けない）。
+
+```mermaid
+flowchart LR
+    stdin["stdin reader"] -- "apply(source stdin)" --> tc["TimeCommands"]
+    grpc["gRPC threads"] -- "apply(source control_server)" --> tc
+    tc -- "under its mutex" --> gate["time gate of the controller"]
+    grpc -- "write, read" --> hub["Hub"]
+```
+
+- 立てる時期: 照合が通った後、registry より前に、`run_file()` が `RunOptions::serve_control` を呼びます（main のスレッド）。立てられなければ、何も起動しません（`setup`）。閉じるのは、`run_file()` が戻った後、結果を書く前です（main のスレッド。`ControlServer::shutdown()`）。
+- 時間の操作: `TimeControl` の実装は `launch::TimeCommands` に渡すだけです。標準入力の命令と同じ `apply()` を、`source` を `control_server` にして呼びます。`apply()` は 1 つのミューテックスの中で、受け付けるかを決め、`command` の事象を書き、ゲートに渡すので、2 つの口の命令は 1 列に並び、事象の順が効いた順です。規則も同じです（`step` は一時停止中だけ、など）。受け付けなかった命令は、`std::invalid_argument`（引数の誤り）か `std::logic_error` にして、`ControlServer` が `INVALID_ARGUMENT` か `FAILED_PRECONDITION` で答えます。`Stop` も `apply()` で受け付けるかを決めて事象を書き（実行が終わった後は断る）、受け付けたら標準入力の `stop` と同じ止める要求にします（待たない）。
+- 読むもの（時間の状態、必須の participant と SIL Kit の状態、去った participant）: `TimeCommands::inspect()` が、controller が付いている間だけ、ミューテックスの中で関数を呼びます。外れた後（`detach()`。controller を壊す前に、どの終わり方でも呼ぶ）は、最後に読んだ値を返します（`ended` は真）。そのため、gRPC のスレッドが、壊れた controller に触れることはありません。`WaitPaused` は `TimeCommands::wait_paused()` で、ミューテックスを持たずに待ち、外れたらすぐに戻ります。
+- 始まる前の窓で止める（`--start-paused`）: 窓の関数が、hello を待った後に `TimeCommands::hold_before_start()` で待ちます。`resume`、`step`、`run_until` のどれかを受け付けると戻り、窓が閉じてシミュレーションが始まります。止める要求、窓の取り消し、必須の participant が去ったこと、`--timeout-ms` でも戻ります（そのときは、時刻 0 のステップの後に 0 で止まる、ふつうの `--start-paused` になります）。窓より前に受け付けた命令で、止まる時点に 0 で止まることになっていなければ、止まりません（`TimeCommands` が、最後の `pause` の後に `resume`、`step`、`run_until`、後の時刻への `pause` があったかを持つ）。この間、`GetTime` は 0 で止まって始まっていない状態を返し、`wait_paused()` はすぐに 0 を返します。
+- 開始の期限: `vehicle_sil_launch` は `SimulationController::start()` を期限なし（`kNoStartLimit`）で呼び、期限を `give_up` で自分で持ちます。止まるまでは `start_timeout_ms` の残り（少なくとも hello の待ち + 1 秒）、止まっている間はなし、止まるのをやめてからは改めて `start_timeout_ms` です。期限は main と窓のスレッドが 1 つのミューテックスで読み書きし、`give_up` は main のスレッドで 5 ms ごとに見ます。過ぎたら、最初のステップに着いていない participant（ReadyToRun でないもの）と状態を文言に挙げて `start()` を終わらせます。`--timeout-ms` は、止まった時点から数えます。
+- 終わった後の値: `TimeCommands::detach()` が、controller を外す前に `set_on_detach()` の関数を呼び、`LaunchTimeControl` がそこで最後の時刻（結果の `sim_ms` と同じ数え方）、participant、去った participant を読みます。外れた後の `GetTime` は、その値を返します。
+- 終わり: ランチャーはクライアントを待ちません。`run_file()` の中のどのスレッドも gRPC を待たず、gRPC のスレッドが取るのは `TimeCommands`、Hub、ゲートの短いロックだけです。`shutdown()` は、待つ呼び出しと購読に終わりを知らせ（それぞれ 200 ms と 100 ms ごとに見る）、gRPC の Server を最長 2 秒の期限で止めます。`WaitOperation` は、Agent の接続の終わり（`Hub::agent_ended()`）で操作が確定して戻ります。
+- 認証: `ControlServer` の規則のとおりです（ループバック以外は TLS と認証情報）。ランチャーは、ループバックでないアドレスに TLS と認証情報がなければ、引数の誤りにします（`allow_insecure` は出しません）。トークンはファイルでだけ受け取ります（引数は事象の `hello` に出るため）。
 
 Control API で扱う機能は次のとおりです。
 

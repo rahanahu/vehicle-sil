@@ -35,6 +35,10 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// As the timeout of ParticipantRuntime::start() and SimulationController::start(): no limit of
+/// its own; the caller's `give_up` decides when to stop waiting.
+inline constexpr std::chrono::milliseconds kNoStartLimit = std::chrono::milliseconds::max();
+
 /// How the participant's lifecycle is started and stopped.
 enum class LifecycleMode
 {
@@ -208,7 +212,12 @@ public:
     /// system controller and all other required participants.
     /// Throws StartTimeoutError (a std::runtime_error) on timeout, std::runtime_error if the
     /// lifecycle fails, std::logic_error if virtual time is used without a step handler.
-    void start(std::chrono::milliseconds timeout);
+    /// `give_up`, if set, is asked while it waits (on the calling thread, every few milliseconds):
+    /// a non-empty answer ends the wait at once with std::runtime_error that has the answer (for
+    /// a required participant that has gone, which the lifecycle would wait for until the
+    /// timeout, or for limits of the caller's own). `timeout` kNoStartLimit: no limit but
+    /// `give_up`.
+    void start(std::chrono::milliseconds timeout, const std::function<std::string()>& give_up = {});
 
     /// Stops the lifecycle and waits (bounded by shutdown_timeout) for it to shut down.
     /// In Coordinated mode this stops the whole simulation. Once it returns, the step handler is

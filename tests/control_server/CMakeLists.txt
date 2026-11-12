@@ -35,6 +35,23 @@ if(TARGET vehicle_sil_control_demo AND TARGET vehicle_sil_control_server)
     set_tests_properties(control_server.python_client PROPERTIES
       LABELS "control;control_server;python" TIMEOUT 180 RUN_SERIAL TRUE
       ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs};VEHICLE_SIL_CONTROL_DEMO=$<TARGET_FILE:vehicle_sil_control_demo>;VEHICLE_SIL_CONTROL_SERVER_EXE=$<TARGET_FILE:vehicle_sil_control_server>")
+    # vehicle_sil_launch run --control with the ECUs of examples/ecu_main, driven from Python; and
+    # the example of examples/launch_control (it checks itself).
+    if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu AND TARGET vehicle_sil_dashboard_ecu)
+      add_test(NAME control_server.launcher
+               COMMAND "${_control_python}" -m unittest -v test_launcher
+               WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+      set_tests_properties(control_server.launcher PROPERTIES
+        LABELS "control;control_server;python;launch;integration" TIMEOUT 300 RUN_SERIAL TRUE
+        ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs};VEHICLE_SIL_LAUNCH_EXE=$<TARGET_FILE:vehicle_sil_launch>;VEHICLE_SIL_EXAMPLE_DIR=$<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..;VEHICLE_SIL_TEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata;VEHICLE_SIL_LAUNCH_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/launcher_scratch")
+      add_test(NAME control_server.example_write_before_start
+               COMMAND "${_control_python}" "${PROJECT_SOURCE_DIR}/examples/launch_control/write_before_start.py"
+                       --launch $<TARGET_FILE:vehicle_sil_launch> $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/../simulation.yaml)
+      set_tests_properties(control_server.example_write_before_start PROPERTIES
+        LABELS "control;control_server;python;examples" TIMEOUT 120 RUN_SERIAL TRUE
+        ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/python;VEHICLE_SIL_CONTROL_STUBS=${_stubs}")
+      add_dependencies(vehicle_sil_control_python_stubs vehicle_sil_launch vehicle_sil_engine_ecu vehicle_sil_dashboard_ecu)
+    endif()
     # Registry, server and two peers as separate processes, driven from Python.
     if(TARGET vehicle_sil_control_peer AND TARGET sil-kit-registry)
       add_test(NAME control_server.multi_process

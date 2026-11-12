@@ -7,6 +7,7 @@
 // output: docs/simulation-config.md.
 #pragma once
 
+#include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/process/process.hpp"
 
@@ -190,6 +191,9 @@ struct RunOutcome
     bool timed_out = false;
     /// --timeout-ms, if given.
     std::optional<std::int64_t> timeout_ms{};
+    /// timed_out: --timeout-ms passed while the run stood still before the first step (the hold of
+    /// --start-paused with a control server); the simulation was aborted right after it started.
+    bool timed_out_while_holding = false;
     /// What the launcher's end of the control agents dropped in the run (HubTransportStats):
     /// hellos it did not take, messages it could not decode, and messages that fit no agent it
     /// knows or no schema.
@@ -261,14 +265,25 @@ struct RunReport
 /// result "unreadable", one finding with the code "internal".
 [[nodiscard]] std::string format_internal_error_json(bool run, const std::string& message);
 
-/// The time commands of `run --stdin-commands` (pause, resume, step, speed) on their way from the
-/// thread that reads them to the simulation's time gate. Thread safe. apply() never waits for the
-/// run or the reader of the events: only for this object's mutex and the gate's (neither is held
-/// while something waits).
+/// The time commands (pause, resume, step, run_until, speed) on their way to the simulation's time
+/// gate, from every source: the reader of standard input (`run --stdin-commands`) and the threads
+/// of a control server (`run --control`). Thread safe. The commands of all sources go through one
+/// mutex: each is decided, written as a command event and done before the next, so the order of
+/// the command events is the order in which they took effect. apply() never waits for the run or
+/// the reader of the events: only for this object's mutex and the gate's (neither is held while
+/// something waits).
 ///
 /// Before the run attaches its controller (the check, the start), what the commands ask for is
 /// kept and given to the controller when it is attached. While attached, each command goes to the
 /// gate at once. Once detached (the simulation is over, or did not start), commands are refused.
+///
+/// The hold (run --start-paused with a control server): in the start window, before anyone's
+/// step at 0, the run waits in hold_before_start() until a resume, step or run_until command is
+/// accepted; until then the simulation stands still at 0 before its first step, so what a client
+/// writes then takes effect in the steps at 0. The commands accepted before the window count:
+/// the run holds only if it is to stand still at 0 when the window opens (start paused, or a
+/// pause since, and no resume, step, run_until or pause at a later time after that). A step or
+/// run_until before the window is done from 0 without a hold, as if it had come in the hold.
 class TimeCommands
 {
 public:
@@ -281,20 +296,69 @@ public:
 
     /// Decides whether the time command (Command::is_time()) can be done now; writes its command
     /// event (`source`) with that answer (and, for step, how far the simulation goes: "ms" rounded
-    /// up to whole steps of the controller), then does it. The event comes before what the command
-    /// changes. Returns the command as written.
+    /// up to whole steps of the controller; for run_until and pause with at_ms, where it will stand
+    /// still: "at_ms" rounded up the same way), then does it. The event comes before what the
+    /// command changes. Returns the command as written. Refused: a step while not paused, a step,
+    /// run_until or pause with at_ms before the controller is attached, any command once detached,
+    /// a speed out of the range of parse_speed(), a step or at_ms out of 1 to kMaxMillis (at_ms
+    /// from 0). A "stop" (a control server's) is only decided and written here (refused once
+    /// detached); the caller asks the run to stop.
     Command apply(const Command& command, std::string_view source);
 
     /// The run's part. attach(): from now on the commands go to `controller` (its time gate,
     /// made with `step_ms`); first it is given the speed (`speed`, or the last speed command) and
     /// the pause (start paused, or the last pause or resume command, and the steps since). detach():
-    /// before the controller goes; the commands are refused from then on.
+    /// before the controller goes; the commands are refused from then on, a hold ends and
+    /// wait_paused() returns.
     void attach(SimulationController& controller, std::int64_t step_ms, std::optional<double> speed);
     void detach();
+    /// `f` is called in detach() with the controller (if one is attached), under this object's
+    /// mutex, before it goes: the last look at it (short, must not wait). Set before the run.
+    void set_on_detach(std::function<void(SimulationController& controller)> f);
+
+    /// How hold_before_start() ended.
+    enum class Hold
+    {
+        None,     ///< nothing was held: the commands before it let the simulation go on (see above)
+        Released, ///< a resume, step or run_until command was accepted
+        GaveUp,   ///< `give_up()` was true, or detach() was called
+    };
+    /// The hold, on the thread of the start window: waits until a resume, step or run_until
+    /// command has been accepted, `give_up()` is true or detach() is called. `on_hold` is called
+    /// once when the hold begins (not for Hold::None), `give_up` every `poll`; both without this
+    /// object's mutex.
+    Hold hold_before_start(const std::function<bool()>& give_up, std::chrono::milliseconds poll,
+                           const std::function<void()>& on_hold = {});
+
+    /// Where the run stands, for a control server.
+    enum class Stage
+    {
+        SettingUp, ///< before attach(): the check, the start of the registry and the controller
+        Attached,  ///< the controller takes the commands (also before its start and in the hold)
+        Detached,  ///< the simulation is over, or did not start
+    };
+    /// While attached, calls `f` with the controller and whether the run holds before its first
+    /// step, under this object's mutex (`f` must be short and must not wait). Returns the stage.
+    Stage inspect(const std::function<void(SimulationController& controller, bool holding)>& f);
+
+    /// Waits up to `timeout` until the simulation stands still: the time it stands at (0 in the
+    /// hold), or empty on the timeout, once detached and once the controller's lifecycle has ended
+    /// (as SimulationController::wait_until_paused()).
+    std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout);
 
 private:
     struct State;
     std::unique_ptr<State> state_;
+};
+
+/// Where the run's control server listens (RunOptions::serve_control).
+struct ControlServerInfo
+{
+    /// host:port with the port it actually listens on (also for port 0).
+    std::string address{};
+    bool tls = false;
+    /// Every call needs a token of the server's credentials.
+    bool credentials = false;
 };
 
 struct RunOptions
@@ -343,6 +407,14 @@ struct RunOptions
     /// offers them in the launcher's version of the messages (it is there before the wait begins,
     /// by the order in which SIL Kit sets the participants up: the limit is a last line).
     std::chrono::milliseconds control_hello_timeout{5000};
+    /// run --control: starts the control server on the run's hub (the argument) and says where it
+    /// listens. Called once, on the main thread, when the check has passed and before the registry
+    /// starts; the run writes the event "control_server" and the line "control server at
+    /// <address>". If it throws, nothing is started (RunOutcome::setup_error). The server must
+    /// stay usable while run_file() runs (its time operations go to `time_commands`, which must be
+    /// set) and outlive the hub's use by run_file(); the caller ends it after run_file().
+    /// With start_paused, the run holds before the first step (TimeCommands::hold_before_start()).
+    std::function<ControlServerInfo(control::Hub& hub)> serve_control{};
 };
 
 /// Runs the file `path` (shown as `shown_as`): check_file(); if it passed, the simulation. Never

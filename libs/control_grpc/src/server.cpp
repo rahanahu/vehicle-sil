@@ -20,7 +20,9 @@ namespace {
 
 using namespace detail;
 
-bool is_loopback(const std::string& listen)
+} // namespace
+
+bool is_loopback_address(const std::string& listen)
 {
     if (listen.rfind("unix:", 0) == 0)
     {
@@ -57,6 +59,8 @@ bool is_loopback(const std::string& listen)
     }
     return parts == 4 && first == 127;
 }
+
+namespace {
 
 /// The checks of load_credentials() also for credentials given directly, and the other options.
 ServerOptions check(ServerOptions o)
@@ -109,7 +113,8 @@ struct ControlServer::Impl
 {
     ServerOptions options;
     AuditLog audit;
-    control::Hub hub;
+    std::unique_ptr<control::Hub> own_hub; ///< without ServerOptions::external_hub
+    control::Hub& hub;
     std::atomic<bool> stopping{false};
     Authorizer auth;
     StreamRegistry streams;
@@ -124,17 +129,18 @@ struct ControlServer::Impl
     explicit Impl(ServerOptions o) :
       options(check(std::move(o))),
       audit(options.audit),
-      hub(options.hub),
+      own_hub(options.external_hub == nullptr ? std::make_unique<control::Hub>(options.hub) : nullptr),
+      hub(options.external_hub != nullptr ? *options.external_hub : *own_hub),
       auth(options.security),
       monitor(options.time != nullptr
                   ? std::make_unique<SimulationMonitor>(*options.time, SimulationMonitorOptions{options.monitor_period, options.leave_grace, {}})
                   : nullptr),
-      agents(make_agent_service(hub, auth, audit, streams, monitor.get())),
+      agents(options.serve_agents ? make_agent_service(hub, auth, audit, streams, monitor.get()) : nullptr),
       clients(make_control_service(hub, options, monitor.get(), stopping, auth, audit))
     {
         const auto& sec = options.security;
         const bool tls = !sec.certificate_chain_pem.empty() && !sec.private_key_pem.empty();
-        if (!is_loopback(options.listen) && !sec.allow_insecure && (!tls || sec.credentials.empty()))
+        if (!is_loopback_address(options.listen) && !sec.allow_insecure && (!tls || sec.credentials.empty()))
         {
             throw std::invalid_argument("vehicle_sil control server: listening on " + options.listen
                                         + " (not the loopback) needs TLS and credentials, or allow_insecure");
@@ -159,7 +165,10 @@ struct ControlServer::Impl
         builder.AddChannelArgument(GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS, 5000);
         builder.AddChannelArgument(GRPC_ARG_HTTP2_MAX_PINGS_WITHOUT_DATA, 0);
         builder.AddListeningPort(options.listen, credentials, &port);
-        builder.RegisterService(agents.get());
+        if (agents)
+        {
+            builder.RegisterService(agents.get());
+        }
         builder.RegisterService(clients.get());
         server = builder.BuildAndStart();
         if (!server || port == 0)

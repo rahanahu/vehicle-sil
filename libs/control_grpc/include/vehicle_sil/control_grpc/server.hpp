@@ -97,6 +97,9 @@ inline constexpr std::string_view kAnyParticipant = "*";
 /// that starts with '#' starts a comment. A token has at least 16 characters and is not
 /// repeated. std::runtime_error on errors, with the file, the line and how to fix it.
 [[nodiscard]] std::vector<Credential> load_credentials(const std::string& path);
+/// load_credentials() of the text of such a file (`source`: the file's name in the messages). The
+/// messages name the line and what is wrong with it, never a word of it (one may be a token).
+[[nodiscard]] std::vector<Credential> parse_credentials(const std::string& text, const std::string& source);
 
 struct SecurityOptions
 {
@@ -110,11 +113,22 @@ struct SecurityOptions
     bool allow_insecure = false;
 };
 
+/// Whether `listen` (a gRPC address) is only reachable from this computer: localhost, [::1], a
+/// numeric 127.x.y.z, or a unix: socket. Another address needs TLS and credentials
+/// (SecurityOptions::allow_insecure).
+[[nodiscard]] bool is_loopback_address(const std::string& listen);
+
 struct ServerOptions
 {
     /// gRPC address to listen on; port 0 picks a free port (see ControlServer::port()).
     std::string listen = "127.0.0.1:0";
     control::HubOptions hub{};
+    /// The hub to serve instead of a hub of the server's own (`hub` is then not used), for a
+    /// caller whose other parts connect the agents (vehicle_sil_launch: over SIL Kit). Must
+    /// outlive the server.
+    control::Hub* external_hub = nullptr;
+    /// false: no AgentService (only clients call the server; the agents reach the hub otherwise).
+    bool serve_agents = true;
     /// The time operations; nullptr: GetTime reports available = false and the others fail.
     /// Must outlive the server.
     TimeControl* time = nullptr;

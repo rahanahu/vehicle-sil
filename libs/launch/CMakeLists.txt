@@ -16,6 +16,8 @@ add_library(vehicle_sil_launch_lib STATIC
 add_library(vehicle_sil::launch ALIAS vehicle_sil_launch_lib)
 target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::ecu vehicle_sil::process)
+# The simulation time (run.hpp: TimeCommands::wait_paused()); no SIL Kit.
+target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::sim_base)
 # The registry and the controller of vehicle_sil_launch run.
 target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::core)
 # The hub's end of the ECUs' control agents, on the controller's participant.

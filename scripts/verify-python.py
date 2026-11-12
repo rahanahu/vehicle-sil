@@ -10,7 +10,8 @@ needs no C++ build:
   codegen  tools/j1939_codegen/test_j1939_codegen.py
   scripts  scripts/*.py --help
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
-           `python -m vehicle_sil_control --help` and tests/control_server/multi_process.py --help
+           `python -m vehicle_sil_control --help`, tests/control_server/multi_process.py --help and
+           examples/launch_control/write_before_start.py --help
 
 Then, unless --skip-lowest, one more run on 3.11 ("3.11 lowest", build/python-envs/3.11-lowest) with
 the lower bounds of pyproject.toml instead of uv.lock: its sync step makes the environment with uv's
@@ -201,9 +202,10 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             return False
         return all([
             s.run([python, "-c", "import vehicle_sil_control as c; c.Control; print('imported', c.__name__)"]),
-            s.run([python, "-c", "import test_python_client"], cwd=ROOT / "tests" / "control_server"),
+            s.run([python, "-c", "import test_python_client, test_launcher"], cwd=ROOT / "tests" / "control_server"),
             s.run([python, "-m", "vehicle_sil_control", "--help"]),
             s.run([python, "tests/control_server/multi_process.py", "--help"]),
+            s.run([python, "examples/launch_control/write_before_start.py", "--help"]),
         ])
 
     steps = [("sync", sync), ("syntax", syntax), ("codegen", codegen), ("scripts", scripts), ("control", control)]

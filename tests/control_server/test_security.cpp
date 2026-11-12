@@ -285,8 +285,25 @@ TEST_CASE(control_server_reads_a_credentials_file)
     {
         why = e.what();
     }
-    CHECK(why.find(":1: the agent credential 'ecu' names no participant") != std::string::npos);
+    CHECK(why.find(":1: the agent credential names no participant") != std::string::npos);
     CHECK(why.find("agent ecu <token> Engine,Body") != std::string::npos && why.find("or * for any name") != std::string::npos);
+    // No word of a line is repeated in a message: a line in the wrong order has its token first.
+    const std::string token = "a-secret-token-0123456789";
+    for (const std::string& text : {token + " bob viewer\n", "agent " + token + " " + token + "x\n",
+                                    "viewer bob " + token + "\nviewer alice " + token + "\n"})
+    {
+        std::string message;
+        try
+        {
+            static_cast<void>(control_grpc::parse_credentials(text, "creds.txt"));
+        }
+        catch (const std::runtime_error& e)
+        {
+            message = e.what();
+        }
+        CHECK(!message.empty() && message.rfind("creds.txt:", 0) == 0);
+        CHECK(message.find(token) == std::string::npos);
+    }
     {
         std::ofstream out(path);
         out << "agent ecu ffffffffffffffffffff *\n";

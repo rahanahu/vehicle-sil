@@ -51,7 +51,7 @@ void optional_text(Writer& w, std::string_view key, const std::string& value)
 
 std::string format_version_text() { return std::string("vehicle_sil_launch ") + version() + "\n"; }
 
-std::string format_version_json()
+std::string format_version_json(const std::vector<std::string_view>& more)
 {
     Writer w;
     w.begin_object();
@@ -65,6 +65,10 @@ std::string format_version_json()
     w.end_object();
     w.begin_array("features");
     for (const auto feature : kFeatures)
+    {
+        w.string({}, feature);
+    }
+    for (const auto feature : more)
     {
         w.string({}, feature);
     }
@@ -650,6 +654,15 @@ void EventStream::registry(const std::string& uri)
     emit("registry", object([&](Writer& w) { w.string("uri", uri); }));
 }
 
+void EventStream::control_server(const std::string& address, bool tls, bool credentials)
+{
+    emit("control_server", object([&](Writer& w) {
+             w.string("address", address);
+             w.boolean("tls", tls);
+             w.boolean("credentials", credentials);
+         }));
+}
+
 void EventStream::participant(const std::string& name, ParticipantState state)
 {
     emit("participant", object([&](Writer& w) {
@@ -786,6 +799,11 @@ void EventStream::command(const Command& command, std::string_view source)
              if (command.accepted && command.name == "step" && command.ms)
              {
                  w.integer("ms", *command.ms);
+             }
+             // pause at, run_until (a control client): where it will stand.
+             if (command.accepted && command.at_ms)
+             {
+                 w.integer("at_ms", *command.at_ms);
              }
          }));
 }

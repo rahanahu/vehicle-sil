@@ -2,16 +2,18 @@
 
 実行中のシミュレーションを外から操作・監視する人（Python、CLI、試験）と、ECU に変数を宣言する人向けです。前に読む文書はありません。ECU の実行ファイル（`ecu_main`）なら、変数の名前と型は `--describe` の `variables` で調べられます（[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。次に読むのは、契約の詳細が要るときだけ、下の段落にある architecture.md の節です。
 
-実行中のシミュレーションを、外から操作・監視します。ECU が外から読み書きする変数を宣言し、その Control Agent を Control Server につなぎます。クライアント（Python、CLI、将来の GUI）は Control Server の gRPC の API（`proto/vehicle_sil/control/v1/control.proto`）を使います。契約の詳細（反映の時刻、順序、上限、スレッド）は [architecture.md](architecture.md) の「外部操作（Control API）と GUI」にあります。
+実行中のシミュレーションを、外から操作・監視します。ECU が外から読み書きする変数を宣言し、クライアント（Python、CLI、GUI）が Control Server の gRPC の API（`proto/vehicle_sil/control/v1/control.proto`）で、その変数と仮想時間を操作します。契約の詳細（反映の時刻、順序、上限、スレッド）は [architecture.md](architecture.md) の「外部操作（Control API）と GUI」にあります。
 
+ふつうは、シミュレーションを動かす `vehicle_sil_launch run` に `--control` を付けて、ランチャーの中の Control Server につなぎます（下の「ランチャーにつなぐ」）。`ecu_main` で作った ECU は、変数を宣言していれば、何も書かなくてもランチャーから読み書きできます。ECU の実行ファイルは gRPC を持ちません（ECU とランチャーの間は SIL Kit です）。
+
+```mermaid
+flowchart LR
+    client["client (Python, CLI, GUI)"] -- gRPC --> launch["vehicle_sil_launch run --control<br>(Control Server, hub, time gate)"]
+    launch -- SIL Kit --> e1["ECU (ecu_main)"]
+    launch -- SIL Kit --> e2["ECU (ecu_main)"]
 ```
-クライアント（Python、CLI）──gRPC（TLS、トークン）──┐
-                                                  ▼
-                      vehicle_sil_control_server（Hub、時間ゲート）
-                         ▲ gRPC（Agent が接続する）     │ SIL Kit（開始、停止、時刻同期）
-          Peer + Agent ──┘                              ▼
-          （どの PC でもよい）           SIL Kit のレジストリと CAN/LIN（データプレーン）
-```
+
+ランチャーを使わずに、単独の Control Server（`vehicle_sil_control_server`）に、gRPC の `AgentClient` を付けた ECU をつなぐこともできます（下の「単独の Control Server」）。
 
 ## ビルド
 
@@ -20,7 +22,60 @@ cmake --preset linux-gcc-release -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON
 cmake --build --preset linux-gcc-release
 ```
 
-gRPC が見つからなければ FetchContent で取り込みます（初回は取得とビルドに数分かかります）。Windows（MSYS2 UCRT64）は `pacman -S mingw-w64-ucrt-x86_64-grpc` で入れておきます。詳しくは [dependencies.md](dependencies.md)。
+gRPC が見つからなければ FetchContent で取り込みます（初回は取得とビルドに数分かかります）。Windows（MSYS2 UCRT64）は `pacman -S mingw-w64-ucrt-x86_64-grpc` で入れておきます。詳しくは [dependencies.md](dependencies.md)。このビルドの `vehicle_sil_launch` は `--control` を持ち、`vehicle_sil_launch version --json` の `features` に `control-server` があります。持たないビルドで `--control` を付けると、引数の誤り（終了コード 4）で、作り直し方を標準エラーに書きます。
+
+## ランチャーにつなぐ
+
+```sh
+vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simulation.yaml
+```
+
+- `--control <address>` で、ランチャーが Control Server を立てます。`<address>` は、ポート番号だけ（127.0.0.1 で待ち受けます。0 なら空いているポート）、`<host>:<port>`、`unix:<path>` のどれかです。
+- 実際のアドレス（ポート 0 なら選ばれたポート）は、事象 `control_server` の `address` と、人向けの出力の `[vehicle_sil_launch] control server at <address>` の行で知らせます。照合が通った後、registry より前に立てます（照合で失敗した実行では立てません）。立てられなければ（ポートが使われているなど）、何も起動せずに設定の誤り（`setup`、終了コード 3）です。
+- サーバーが扱うのは、そのランチャーの実行だけです。ECU の変数（Peer の一覧、値、書き込み、操作の結果、購読）と、仮想時間（一時停止、再開、ステップ、指定時刻まで、速さ、停止）です。Peer の一覧には、構成ファイルの必須の participant も、Agent がなくても出ます。gRPC の Agent の接続（`AgentService`）は受け付けません。
+- 実行が終わると（ふつうの終わり、止める要求、`--timeout-ms`、participant の失敗、どれでも）、ランチャーは participant を終わらせてから、結果を書く前にサーバーを閉じます。待っている呼び出し（`Watch`、`WaitOperation`、`WaitPaused`）は、そこで終わります（`Watch` はストリームの終わり、`WaitPaused` は `FAILED_PRECONDITION` か `CANCELLED`）。ランチャーはクライアントを待たないので、クライアントがあっても終わるのは遅れません。シミュレーションが終わってからサーバーを閉じるまでの間は、終わった時点の値を読めます。
+- 例: [examples/launch_control](../examples/launch_control)（Python から起動してつなぎ、始まる前に書いて、読み返して確かめる）。
+
+### 始まる前に書く（`--start-paused`）
+
+`--control` と `--start-paused` を一緒に付けると、全員がそろった後、どの participant も時刻 0 のステップを始める前で止まり、`resume`、`step`、`run_until` のどれかを待ちます（標準入力からでも、クライアントからでもかまいません）。この間に書いた値は、各 ECU の時刻 0 のステップで反映されます（Parameter も書けます）。
+
+```python
+from vehicle_sil_control import Control, Launch, ms
+
+with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launch, Control(launch.address) as c:
+    c.sim.wait_paused()                               # 0 で止まっている（time().running は偽: まだ始まっていない）
+    seq = c.write({"Engine": {"engine.throttle": 50.0}})
+    c.wait(seq, until="queued")                       # 全員が受け取ってから進める
+    c.sim.step(ms(500)); c.sim.wait_paused()
+    print(c.wait(seq).target("Engine").applied_at)    # 0
+```
+
+- 止まっている間、`GetTime` は `now` 0、`paused` 真、`running` 偽（まだ始まっていない）、`ended` 偽です。`WaitPaused` はすぐに 0 を返します。事象の `phase` は `waiting` のままで、ランチャーは `standing still before the first step until a resume, step or run_until command ...` の行を書きます。
+- 書いたら、`wait(seq, until="queued")` で全員が受け取ったことを確かめてから進めます。受け取る前に進めると、時刻 0 に間に合わないことがあります。
+- 止まっている時間に、それだけの上限はありません。`start_timeout_ms` は、止まるまで（全員がそろい、変数を出す ECU とつながるまで）と、進んだ後（全員が最初のステップに着くまで）にそれぞれ効き、止まっている間は数えません。止まるまでか進んだ後に participant が固まると、`simulation-start` の誤りになります（着いていない participant と状態を文言に挙げます）。
+- `--timeout-ms` は、止まっている時間も数えます（一時停止している時間を数えるのと同じです）。クライアントが来ないまま `--timeout-ms` が過ぎると、時刻 0 のステップを走らせてから中断し、誤り `timeout` になります（文言に、最初のステップの前に止まっていたことを書きます）。`--timeout-ms` がなければ、止める要求が来るまで待ちます。
+- 止める要求（Ctrl+C、`stop` の命令、標準入力の終わり、クライアントの `Stop`）でも止まるのをやめます。そのときは、時刻 0 のステップを 1 つ走らせてから止まります。待っている間に必須の participant が抜けると（プロセスが終わったなど）、すぐに待つのをやめて、始まらなかった実行として終わります（`ended-before-start`）。
+- `pause` と `speed` では進みません（`speed` は、進んだ後の速さになります）。時刻を指定した `pause`（0 より後）は、`run_until` と同じく進みます。`run_until` 0 を送ると、時刻 0 のステップを走らせて 0 で止まります（`--control` なしの `--start-paused` と同じ止まり方）。
+- 止まるより前（照合や、participant がそろうのを待つ間）に受け付けた命令も効きます。止まるのは、止まる時点で 0 で止まることになっているときだけです。`resume` を受け付けていれば止まらずに始まり、`step` や `run_until` を受け付けていれば、止まらずに 0 から進んでその時刻で止まります（止まってから受けたのと同じ結果）。その後に `pause` を受け付けていれば、また止まります。標準入力から来た命令も同じです。
+- `--control` なしの `--start-paused`（`--stdin-commands` だけ）は、時刻 0 のステップを走らせてから 0 で止まります。この場合と、一時停止してから書く場合は、`at` を止まっている時刻より後にします（下の「Python」）。
+
+### 2 つの口の命令
+
+時間の命令は、標準入力（`--stdin-commands`）とクライアントの両方から受け付けます。どちらも同じ経路を通ります。
+
+- 1 つずつ順に処理します。受け付けるかを決め、`command` の事象を書き、時間のゲートに渡すまでを、ほかの命令をはさまずに行います。事象の順が、効いた順です。どの口から来たかは `source` でわかります（`stdin`、`eof`、`control_server`）。
+- 規則は同じです（`step` は一時停止している間だけ、など）。クライアントへの答えは、受け付けなければ gRPC の誤りで、文言は事象の `message` と同じです。引数の誤り（範囲の外の速さ、0 以下のステップ）は `INVALID_ARGUMENT`、今はできない命令は `FAILED_PRECONDITION` です。
+- クライアントの命令の名前は、`Pause` が `pause`（時刻つきなら `at_ms`）、`Resume` が `resume`、`Step` が `step`（`ms`）、`RunUntil` が `run_until`（`at_ms`）、`SetSpeed` が `speed`、`Stop` が `stop` です。時刻はミリ秒に切り上げ、さらに controller の刻みに切り上げます（事象の値が、実際に止まる時刻です）。
+- `Stop` は、標準入力の `{"command":"stop"}` と同じです（1 回目は順に止め、2 回目は待たずに participant を終わらせます）。結果の `interrupted_by` は `"control server stop"` です。`Stop` の理由の文は、監査の行にだけ残ります。シミュレーションが終わった後（始まらなかったときも）の `Stop` は、時間の命令と同じく断ります（`accepted: false`、`FAILED_PRECONDITION`）。結果は変わりません。`Stop` の事象も、時間の命令と同じ順に並びます。
+- 標準入力とクライアントが同時に命令を送ると、どちらが先かは届いた順です。たとえば、クライアントの `step` と標準入力の `resume` が重なると、事象の順で、止まるか進み続けるかが決まります。
+
+### 認証
+
+- ループバック（ポート番号だけ、`localhost:<port>`、`[::1]:<port>`、数字の `127.x.y.z:<port>`、`unix:<path>`）では、`--control-credentials` を付けなければ認証はありません。同じコンピューターの誰でもつなげます。`unix:` のソケットは、ファイルの権限しだいで、同じコンピューターのほかの利用者もつなげます。
+- ほかのコンピューターからつながるアドレス（`0.0.0.0:<port>` など）では、TLS と認証情報が要ります（`--control-tls-cert`、`--control-tls-key`、`--control-credentials`）。足りなければ引数の誤り（終了コード 4）です。
+- 認証情報は、単独の Control Server と同じ形式のファイルです（下の「単独の Control Server を起動する」。`agent` の行は使いません）。1 件もないファイル（空、コメントだけ）は引数の誤りです（付けたのに誰でもつなげる、を避けるため）。誤りの文は行番号と何が違うかだけで、行の語は出しません（トークンかもしれないため）。トークンは引数に書けません（ランチャーの引数は、事象 `hello` の `arguments` や、プロセスの一覧に出るため）。
+- `--control-audit-log <file>` で、誰が何を変えたかをファイルに追記します（書けなくなっても実行は続き、その行は失われます）。呼び出しに要る役割は、単独の Control Server と同じです（viewer は読むだけ、operator は時間の操作と書き込み、`Stop` は admin だけ）。
 
 ## ECU の変数
 
@@ -48,7 +103,81 @@ private:
 - 外からの書き込みは、指定した仮想時刻以後の最初のステップで、アプリの処理の前に反映されます（そのステップの J1939 の受信処理や部品のタイマーは反映より前に動くので、それらが新しい値を使うのは次のステップから）。値は、アプリと LIN の処理の後に読み出します。SIL Kit とローカルで同じ時点です。
 - 同じプロセスからは、`ecu.agent().submit()` で書き込み、`latest()` で読めます。`Simulation::add<App>()` で足した ECU は、`sim.ecu(name).agent()` で引けます（例: `examples/vehicle`）。
 
-## Control Server につなぐ
+## Python
+
+```sh
+uv sync                                         # .venv に grpcio、grpcio-tools、protobuf などを入れる
+source .venv/bin/activate                       # または、各コマンドの前に uv run を付ける
+python -m vehicle_sil_control.generate          # スタブを python/vehicle_sil_control/_generated に作る
+export PYTHONPATH=$PWD/python
+```
+
+- Python は 3.11 以上です。版と依存はリポジトリ直下の `pyproject.toml`（`control` グループ）と `uv.lock` で決めています（README の「Python（uv）」）。
+- uv を使わない場合は `pip install grpcio grpcio-tools protobuf`、MSYS2 UCRT64 では `pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools` で入れます。
+
+ランチャーは、`Launch` で子プロセスとして起動できます。`vehicle_sil_launch run --events --stdin-commands --control <address>` を起動し、事象を別のスレッドで読みます（標準ライブラリだけで、gRPC は要りません）。
+
+```python
+from vehicle_sil_control import Control, Launch, ms
+
+with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulation.yaml", start_paused=True) as launch:
+    with Control(launch.address) as c:   # address は事象 control_server を待って返す
+        ...
+    launch.stop()                        # {"command":"stop"}（with を出るときも、動いていれば止める）
+    print(launch.wait()["result"])       # run --json と同じ結果
+```
+
+- `Launch(launcher, config, address="0", start_paused=False, arguments=(), cwd=None, stderr=None)`: `arguments` は `run` のほかの引数（`--speed`、`--disable`、`--control-credentials` など）です。`events`（読んだ事象の dict の一覧）、`result`、`wait_for_event(event, timeout, **keys)`（キーの値が合う最初の事象を待つ）、`send(command)`（標準入力に命令を 1 行）、`stop()`、`wait(timeout)`、`returncode`。ランチャーが結果を書かずに終わったときや、待つ事象が来ないまま実行が終わったときは `LaunchError` です（文言に結果と誤りの所見）。
+- 自分でランチャーを起動するときは、`control_address(lines)` が、事象の行（文字列か dict）から最初の `control_server` の `address` を返します。
+
+単独の Control Server（TLS とトークンつき）にも、同じようにつなぎます。
+
+```python
+from vehicle_sil_control import Control, ms
+
+with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "rb").read()) as c:
+    print([p.participant for p in c.peers()])
+    c.sim.wait_paused()
+    seq = c.write({"Engine": {"engine.throttle": 50.0}, "Body": {"cabin.lamp": 2}}, at=ms(100))
+    c.wait(seq, until="queued")         # 全員が受け取ってから進める（at が止まっている時刻より後なので、遅すぎる書き込みが起きない）
+    c.sim.run_until(ms(500)); c.sim.wait_paused()
+    print(c.wait(seq).target("Engine").applied_at)   # 100 ms（ns で）
+    print(c.values("Engine").values["engine.speed"])
+    for update in c.watch(peers=["Body"]):           # Peer、Values、EventInfo、Operation
+        print(update)
+        break
+```
+
+時刻は仮想時間のナノ秒です（`ms()`、`s()` で作る）。呼び出しの失敗は `ControlError`（`code` は gRPC の状態コード）で、Agent が断った書き込みは例外ではなく、操作の結果（`invalid` など）になります。
+
+- 止めてから書くときは、`at` を止まっている時刻（`c.sim.time().now`）より後にします（たとえば 1 ns 後）。止まっている時刻のステップは、すでに走った Peer があるので、その時刻か `at` なしの書き込みは `late` になるか、反映のステップが実行ごとに変わることがあります。例外は、ランチャーの `--start-paused` で最初のステップの前に止まっているときです（上の「始まる前に書く」）。
+- `write()` は自動では送り直しません。応答を受け取る前に接続が切れた書き込みは、受け付けられているかもしれません（同じ書き込みを送り直すと、別の操作になります）。
+- 複数のクライアントが同じ変数に同じ時刻で書くと、残る値は Server に届いた順で決まります。
+- 時間の状態の購読（`watch(time=True)`）は約 100 ms ごとの最新で、短い一時停止は現れないことがあります。止まるのを待つには `c.sim.wait_paused()` を使います。
+- `peers()` と `watch()` は、同じ Peer を同じ内容で返します。`has_agent` は Agent がつながったことがあるか（既定は偽）、`simulation_state` は SIL Kit の状態です。`TimeState.running` が偽のとき、`ended` が真なら終わっていて、偽ならまだ始まっていません。
+- シミュレーションの状態の購読（`watch(simulation=True)`）は `SimulationState` を返します。必須の participant ごとの SIL Kit の状態（`participants`）、失敗した participant と理由（`failed_participant`、`failure_reason`）、終わったか（`ended`）が入ります。Server が状態を読めなかったときは、前の値に理由（`error`）が付きます。クライアントが遅くて Server が途中の状態を持ちきれなかったときは、捨てた数が gRPC の `Update.dropped` に入ります（Python の `watch()` はこの数を返しません。失敗と終わりは後の状態に残るので失われません）。`peers()` も、読めなかったときは、呼ぶたびに `ControlWarning` で知らせます（同じ箇所からの 2 回目以降も出します。出すか、例外にするか、無視するかは利用者の警告フィルターのとおりで、ライブラリはフィルターを変えません）。
+
+## CLI
+
+`--server`（既定は `VEHICLE_SIL_CONTROL_SERVER`）に、ランチャーの事象 `control_server` の `address`（人向けの出力では `control server at` の行）か、単独の Control Server のアドレスを渡します。
+
+```sh
+export VEHICLE_SIL_CONTROL_SERVER=ctrl-pc:8510 VEHICLE_SIL_CONTROL_TOKEN=... VEHICLE_SIL_CONTROL_ROOT_CERT=server.crt
+python -m vehicle_sil_control peers
+python -m vehicle_sil_control show Engine
+python -m vehicle_sil_control set Engine engine.throttle=50 --at-ms 100   # 既定は全員が積むまで待つ（--wait done で反映まで）
+python -m vehicle_sil_control run-until 500
+python -m vehicle_sil_control step 10
+python -m vehicle_sil_control speed 1        # 実時間。max でできるだけ速く
+python -m vehicle_sil_control watch --peer Body --count 10
+python -m vehicle_sil_control stop
+```
+
+## 単独の Control Server（`vehicle_sil_control_server`）
+
+ランチャーを使わないときの形です。`vehicle_sil_control_server` が Hub と（`--required` で）シミュレーションの調停と時間ゲートを持ち、ECU は自分で gRPC の `AgentClient` を付けて、Server へつなぎます。クライアントの API（上の「Python」と「CLI」）は、ランチャーの Control Server と同じです。
+
+### ECU を gRPC でつなぐ（`AgentClient`）
 
 ```cpp
 vehicle_sil::Peer peer(options);            // Coordinated、仮想時間
@@ -77,7 +206,7 @@ link.stop();                                // その結果を送ってから閉
 - ローカル（`Simulation()`、`LocalBench`）の ECU も、`AgentClient` で既存の Control Server につないで値を読み書きできます。ただし、時間の操作（一時停止、ステップ実行）、`Simulation` から Control Server を起動する口、監視の出力はありません。待っている書き込みの結果は届きません（`AgentClient` は ECU より先に破棄するため）。
 - 例: `examples/control/control_peer.cpp`（プロセスごとに 1 つの Peer）、`examples/control/control_demo.cpp`（1 つのプロセスにすべて）。どちらも ECU のクラスは `examples/control/control_apps.hpp` にあります。
 
-## Control Server を起動する
+### 単独の Control Server を起動する
 
 ```sh
 vehicle_sil_control_server --listen 0.0.0.0:8510 \
@@ -99,58 +228,7 @@ agent      bench    5e07d2...                 *      # どの名前でもよい�
 
 - ループバック以外で待ち受けるときは TLS と認証情報が必須です（試すだけなら `--allow-insecure 1`）。
 
-## Python
-
-```sh
-uv sync                                         # .venv に grpcio、grpcio-tools、protobuf などを入れる
-source .venv/bin/activate                       # または、各コマンドの前に uv run を付ける
-python -m vehicle_sil_control.generate          # スタブを python/vehicle_sil_control/_generated に作る
-export PYTHONPATH=$PWD/python
-```
-
-- Python は 3.11 以上です。版と依存はリポジトリ直下の `pyproject.toml`（`control` グループ）と `uv.lock` で決めています（README の「Python（uv）」）。
-- uv を使わない場合は `pip install grpcio grpcio-tools protobuf`、MSYS2 UCRT64 では `pacman -S mingw-w64-ucrt-x86_64-python-grpcio mingw-w64-ucrt-x86_64-python-grpcio-tools` で入れます。
-
-```python
-from vehicle_sil_control import Control, ms
-
-with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "rb").read()) as c:
-    print([p.participant for p in c.peers()])
-    c.sim.wait_paused()
-    seq = c.write({"Engine": {"engine.throttle": 50.0}, "Body": {"cabin.lamp": 2}}, at=ms(100))
-    c.wait(seq, until="queued")         # 全員が受け取ってから進める（at が止まっている時刻より後なので、遅すぎる書き込みが起きない）
-    c.sim.run_until(ms(500)); c.sim.wait_paused()
-    print(c.wait(seq).target("Engine").applied_at)   # 100 ms（ns で）
-    print(c.values("Engine").values["engine.speed"])
-    for update in c.watch(peers=["Body"]):           # Peer、Values、EventInfo、Operation
-        print(update)
-        break
-```
-
-時刻は仮想時間のナノ秒です（`ms()`、`s()` で作る）。呼び出しの失敗は `ControlError`（`code` は gRPC の状態コード）で、Agent が断った書き込みは例外ではなく、操作の結果（`invalid` など）になります。
-
-- 止めてから書くときは、`at` を止まっている時刻（`c.sim.time().now`）より後にします（たとえば 1 ns 後）。止まっている時刻のステップは、すでに走った Peer があるので、その時刻か `at` なしの書き込みは `late` になるか、反映のステップが実行ごとに変わることがあります。
-- `write()` は自動では送り直しません。応答を受け取る前に接続が切れた書き込みは、受け付けられているかもしれません（同じ書き込みを送り直すと、別の操作になります）。
-- 複数のクライアントが同じ変数に同じ時刻で書くと、残る値は Server に届いた順で決まります。
-- 時間の状態の購読（`watch(time=True)`）は約 100 ms ごとの最新で、短い一時停止は現れないことがあります。止まるのを待つには `c.sim.wait_paused()` を使います。
-- `peers()` と `watch()` は、同じ Peer を同じ内容で返します。`has_agent` は Agent がつながったことがあるか（既定は偽）、`simulation_state` は SIL Kit の状態です。`TimeState.running` が偽のとき、`ended` が真なら終わっていて、偽ならまだ始まっていません。
-- シミュレーションの状態の購読（`watch(simulation=True)`）は `SimulationState` を返します。必須の participant ごとの SIL Kit の状態（`participants`）、失敗した participant と理由（`failed_participant`、`failure_reason`）、終わったか（`ended`）が入ります。Server が状態を読めなかったときは、前の値に理由（`error`）が付きます。クライアントが遅くて Server が途中の状態を持ちきれなかったときは、捨てた数が gRPC の `Update.dropped` に入ります（Python の `watch()` はこの数を返しません。失敗と終わりは後の状態に残るので失われません）。`peers()` も、読めなかったときは、呼ぶたびに `ControlWarning` で知らせます（同じ箇所からの 2 回目以降も出します。出すか、例外にするか、無視するかは利用者の警告フィルターのとおりで、ライブラリはフィルターを変えません）。
-
-## CLI
-
-```sh
-export VEHICLE_SIL_CONTROL_SERVER=ctrl-pc:8510 VEHICLE_SIL_CONTROL_TOKEN=... VEHICLE_SIL_CONTROL_ROOT_CERT=server.crt
-python -m vehicle_sil_control peers
-python -m vehicle_sil_control show Engine
-python -m vehicle_sil_control set Engine engine.throttle=50 --at-ms 100   # 既定は全員が積むまで待つ（--wait done で反映まで）
-python -m vehicle_sil_control run-until 500
-python -m vehicle_sil_control step 10
-python -m vehicle_sil_control speed 1        # 実時間。max でできるだけ速く
-python -m vehicle_sil_control watch --peer Body --count 10
-python -m vehicle_sil_control stop
-```
-
-## 複数の PC
+### 複数の PC
 
 - SIL Kit のレジストリと Control Server を 1 台に置き、各 PC の Peer は両方へ外向きにつなぎます（Peer 側で待ち受けるポートは要りません。SIL Kit は participant どうしが直接つながらないとき、レジストリを中継に使います）。
 - 発見: Server（`--required` のとき）は、必須の participant を SIL Kit のレジストリを通して見ているので、どの PC の Peer も、Agent がつながる前から一覧に出ます（`peers` の `has_agent` が偽、`simulation_state` に SIL Kit の状態）。Agent がつながると、その変数と値が加わります。
@@ -160,7 +238,7 @@ python -m vehicle_sil_control stop
 
 ## 制限
 
-- 時間の操作（一時停止、ステップ実行、速度）は、Server が `--required` でシミュレーションを調停しているときだけです。止まるのは仮想時間で同期している Peer だけで、実時間の Peer は走り続けます。速度を指定したとき、シミュレーションが実時間に遅れても、後から追いつこうとはしません（遅れた分だけ後ろにずれたまま、指定の速度で進みます。[architecture.md](architecture.md) の時間の操作の「遅れ」）。
-- リセット、Peer の起動（Launcher）、CAN/LIN のチャネルの選択はありません。
+- 時間の操作（一時停止、ステップ実行、速度）は、ランチャーの Control Server と、`--required` でシミュレーションを調停している単独の Control Server だけです。止まるのは仮想時間で同期している Peer だけで、実時間の Peer は走り続けます。速度を指定したとき、シミュレーションが実時間に遅れても、後から追いつこうとはしません（遅れた分だけ後ろにずれたまま、指定の速度で進みます。[architecture.md](architecture.md) の時間の操作の「遅れ」）。
+- リセット、participant の起動と再起動、CAN/LIN のチャネルの選択はありません。ランチャーの Control Server は、そのランチャーの 1 回の実行だけを扱い、実行が終わると閉じます。
 - 値の購読は最新値です（読む前に来た新しい値で置き換えます）。すべての値の記録は、SIL Kit のトレースか `TapPort` を使います。
 - 1 回の `write()` の書き込みは 4096 個まで、同時に待つ呼び出しと購読は合わせて 256 本まで（Server の既定）です。

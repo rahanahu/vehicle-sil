@@ -21,6 +21,7 @@
 #include <numeric>
 #include <cctype>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
@@ -369,8 +370,12 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     {
         add(Severity::Error, "timeout",
             "the simulation did not end within " + std::to_string(outcome.timeout_ms.value_or(0)) +
-                " ms of wall-clock time (--timeout-ms), so the launcher aborted it: a participant may hang in a step "
-                "(the lines above show what the participants wrote); if it is only slow, raise --timeout-ms",
+                " ms of wall-clock time (--timeout-ms), so the launcher aborted it: " +
+                (outcome.timed_out_while_holding
+                     ? std::string("it stood still before its first step all that time, waiting for a resume, step or "
+                                   "run_until command (--start-paused with a control server): no client let it go on")
+                     : std::string("a participant may hang in a step (the lines above show what the participants "
+                                   "wrote); if it is only slow, raise --timeout-ms")),
             nullptr);
     }
     else if (outcome.simulation == SimulationEnd::Aborted && outcome.failed_participant.empty() &&
@@ -936,6 +941,8 @@ std::string detail::printable(std::string_view line)
 struct TimeCommands::State
 {
     std::mutex mutex;
+    /// hold_before_start() and wait_paused(): a command released the hold, or detach().
+    std::condition_variable cv;
     EventStream* events = nullptr;
     /// A pause was asked for (or the run starts paused) and no resume since.
     bool paused = false;
@@ -944,7 +951,24 @@ struct TimeCommands::State
     SimulationController* controller = nullptr;
     std::int64_t step_ms = 1;
     bool detached = false;
+    /// In hold_before_start(), and no resume, step or run_until yet.
+    bool holding = false;
+    /// Since the last pause (or the start, paused): a step, run_until or pause at a later time
+    /// has let the simulation go on from 0, so there is nothing to hold before the first step.
+    bool released = false;
+    /// Called in detach() with the controller, before it goes (set_on_detach()).
+    std::function<void(SimulationController&)> on_detach{};
 };
+
+namespace {
+
+/// `ms` rounded up to a whole number of `step_ms`.
+std::int64_t whole_steps(std::int64_t ms, std::int64_t step_ms)
+{
+    return (ms + step_ms - 1) / step_ms * step_ms;
+}
+
+} // namespace
 
 TimeCommands::TimeCommands(bool start_paused, EventStream* events) : state_(std::make_unique<State>())
 {
@@ -964,15 +988,40 @@ Command TimeCommands::apply(const Command& command, std::string_view source)
         out.accepted = false;
         out.message = std::move(why);
     };
+    // A pause at a time, or run_until: they need the controller's step to round to.
+    const bool at_time = command.at_ms.has_value() && (name == "pause" || name == "run_until");
     if (s.detached)
     {
         refuse("the simulation is not running (it is over, or it did not start): " + name +
                " works from the start of the run until the simulation ends");
     }
-    else if (name == "step" && s.controller == nullptr)
+    else if (name != "pause" && name != "resume" && name != "step" && name != "run_until" && name != "speed" &&
+             name != "stop")
     {
-        refuse("the simulation has not been set up yet: step works once it stands still (a time event with paused "
-               "true), with --start-paused from the start");
+        refuse("'" + name + "' is no time command: the time commands are pause, resume, step, run_until and speed");
+    }
+    else if (name == "speed" && command.speed && !(*command.speed >= kMinSpeed && *command.speed <= kMaxSpeed))
+    {
+        refuse("the speed must be from 0.000001 to 1000000 simulation seconds per wall-clock second, or max");
+    }
+    else if (name == "step" && !(command.ms.value_or(1) >= 1 && command.ms.value_or(1) <= kMaxMillis))
+    {
+        refuse("step needs a time from 1 to " + std::to_string(kMaxMillis) + " ms");
+    }
+    else if (name == "run_until" && !command.at_ms)
+    {
+        refuse("run_until needs the time to stand still at");
+    }
+    else if (at_time && !(*command.at_ms >= 0 && *command.at_ms <= kMaxMillis))
+    {
+        refuse(name + " at a time needs a time from 0 to " + std::to_string(kMaxMillis) + " ms");
+    }
+    else if ((name == "step" || at_time) && s.controller == nullptr)
+    {
+        refuse("the simulation has not been set up yet: " + name +
+               (name == "step" ? std::string(" works once it stands still (a time event with paused true), with "
+                                             "--start-paused from the start")
+                               : std::string(" at a time works once the participants have been started")));
     }
     else if (name == "step" && !s.paused)
     {
@@ -982,7 +1031,11 @@ Command TimeCommands::apply(const Command& command, std::string_view source)
     else if (name == "step")
     {
         // Whole steps of the controller: the simulation can stand still only at one of them.
-        out.ms = (command.ms.value_or(1) + s.step_ms - 1) / s.step_ms * s.step_ms;
+        out.ms = whole_steps(command.ms.value_or(1), s.step_ms);
+    }
+    else if (at_time)
+    {
+        out.at_ms = whole_steps(*command.at_ms, s.step_ms);
     }
     if (s.events != nullptr)
     {
@@ -993,12 +1046,44 @@ Command TimeCommands::apply(const Command& command, std::string_view source)
         return out;
     }
     SimulationController* c = s.controller;
+    // A stop is the caller's (it asks the run to stop): only its event and its refusal are here,
+    // in the order of the other commands.
+    if (name == "stop")
+    {
+        return out;
+    }
+    // What lets the simulation go on from 0: the hold ends with it, or (before the hold) there
+    // is none. A pause (not at a later time) asks for it again.
+    const bool goes_on = name == "resume" || name == "step" || name == "run_until" ||
+                         (name == "pause" && out.at_ms && *out.at_ms > 0);
+    if (goes_on)
+    {
+        s.released = true;
+    }
+    else if (name == "pause")
+    {
+        s.released = false;
+    }
+    if (s.holding && goes_on)
+    {
+        s.holding = false;
+        s.cv.notify_all();
+    }
     if (name == "pause")
     {
         s.paused = true;
         if (c != nullptr)
         {
-            c->pause();
+            out.at_ms ? c->pause_at(SimTime{} + std::chrono::milliseconds(*out.at_ms)) : c->pause();
+        }
+    }
+    else if (name == "run_until")
+    {
+        // It stands still there: a step from there is a step while paused.
+        s.paused = true;
+        if (c != nullptr)
+        {
+            c->run_until(SimTime{} + std::chrono::milliseconds(*out.at_ms));
         }
     }
     else if (name == "resume")
@@ -1044,12 +1129,133 @@ void TimeCommands::attach(SimulationController& controller, std::int64_t step_ms
     }
 }
 
-void TimeCommands::detach()
+void TimeCommands::set_on_detach(std::function<void(SimulationController& controller)> f)
 {
     State& s = *state_;
     const std::lock_guard lock(s.mutex);
-    s.controller = nullptr;
-    s.detached = true;
+    s.on_detach = std::move(f);
+}
+
+void TimeCommands::detach()
+{
+    State& s = *state_;
+    {
+        const std::lock_guard lock(s.mutex);
+        if (s.controller != nullptr && s.on_detach)
+        {
+            s.on_detach(*s.controller);
+        }
+        s.controller = nullptr;
+        s.detached = true;
+        s.holding = false;
+    }
+    s.cv.notify_all();
+}
+
+TimeCommands::Hold TimeCommands::hold_before_start(const std::function<bool()>& give_up, std::chrono::milliseconds poll,
+                                                   const std::function<void()>& on_hold)
+{
+    State& s = *state_;
+    {
+        const std::lock_guard lock(s.mutex);
+        if (s.detached)
+        {
+            return Hold::GaveUp;
+        }
+        if (!s.paused || s.released)
+        {
+            return Hold::None; // a command before the window let it go on: nothing to hold
+        }
+        s.holding = true;
+    }
+    // However this ends (also by an exception), the run no longer holds.
+    struct EndHold
+    {
+        State& s;
+        ~EndHold()
+        {
+            const std::lock_guard lock(s.mutex);
+            s.holding = false;
+        }
+    } const end{s};
+    if (on_hold)
+    {
+        on_hold();
+    }
+    while (true)
+    {
+        {
+            std::unique_lock lock(s.mutex);
+            if (s.cv.wait_for(lock, poll, [&s] { return !s.holding; }))
+            {
+                return s.detached ? Hold::GaveUp : Hold::Released;
+            }
+        }
+        // Without the lock: it may take other locks (the window's, the runtime's).
+        if (give_up && give_up())
+        {
+            const std::lock_guard lock(s.mutex);
+            if (!s.holding)
+            {
+                return s.detached ? Hold::GaveUp : Hold::Released; // a command came just now
+            }
+            return Hold::GaveUp;
+        }
+    }
+}
+
+TimeCommands::Stage TimeCommands::inspect(const std::function<void(SimulationController& controller, bool holding)>& f)
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    if (s.detached)
+    {
+        return Stage::Detached;
+    }
+    if (s.controller == nullptr)
+    {
+        return Stage::SettingUp;
+    }
+    f(*s.controller, s.holding);
+    return Stage::Attached;
+}
+
+std::optional<SimTime> TimeCommands::wait_paused(std::chrono::milliseconds timeout)
+{
+    State& s = *state_;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    std::unique_lock lock(s.mutex);
+    while (true)
+    {
+        if (s.detached)
+        {
+            return std::nullopt;
+        }
+        if (s.holding)
+        {
+            return SimTime{};
+        }
+        if (SimulationController* c = s.controller)
+        {
+            // As SimulationController::wait_until_paused(), without waiting under the gate's lock.
+            if (c->runtime().started() && has_finished(PeerStatus{c->runtime().state()}))
+            {
+                return std::nullopt;
+            }
+            const TimeState t = c->time_state();
+            if (t.paused)
+            {
+                return t.now;
+            }
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+        {
+            return std::nullopt;
+        }
+        // Short slices: the gate does not signal this condition variable.
+        s.cv.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(10)));
+    }
 }
 
 namespace {
@@ -1151,6 +1357,20 @@ public:
         {
             return outcome_;
         }
+        if (options_.serve_control)
+        {
+            try
+            {
+                const ControlServerInfo server = options_.serve_control(hub());
+                event([&server](EventStream& e) { e.control_server(server.address, server.tls, server.credentials); });
+                say("control server at " + server.address);
+            }
+            catch (const std::exception& e)
+            {
+                outcome_.setup_error = "the control server cannot be started: " + one_line(e.what());
+                return outcome_;
+            }
+        }
         std::string uri;
         try
         {
@@ -1194,8 +1414,9 @@ public:
             // Before the participants start and before the controller does: SIL Kit connects the
             // publisher of the commands and the subscribers with every participant that starts.
             transport = std::make_unique<control_silkit::HubTransport>(hub(), controller->runtime());
-            controller->set_start_window(
-                [this, t = transport.get()](const StartWindow& window) { start_window(*t, window); });
+            controller->set_start_window([this, t = transport.get(), c = controller.get()](const StartWindow& window) {
+                start_window(*t, *c, window);
+            });
             commands().attach(*controller, outcome_.timing.time_step_ms, outcome_.timing.speed);
         }
         catch (const std::exception& e)
@@ -1302,12 +1523,12 @@ private:
     /// its first step. Waits for the agents' hellos, then lets the caller write (before_start).
     /// Touches nothing of the run but control_start_ (the main thread waits in
     /// SimulationController::start(), but stops waiting at its timeout).
-    void start_window(control_silkit::HubTransport& transport, const StartWindow& window)
+    void start_window(control_silkit::HubTransport& transport, SimulationController& controller, const StartWindow& window)
     {
         const auto cancelled = [this, &window] { return window.cancelled() || interrupts() > 0; };
-        // Not beyond the start's own limit, and with room for the start to go on after it.
+        // Not beyond the start's limit, and with room for the start to go on after it.
         const auto deadline = std::min(std::chrono::steady_clock::now() + options_.control_hello_timeout,
-                                       window.deadline() - std::chrono::milliseconds(500));
+                                       start_limit() - std::chrono::milliseconds(500));
         control_silkit::HelloReport report = transport.wait_for_hellos(expected_agents(), deadline, cancelled);
         {
             // The links as they are now, before any step: the simulation may be over by the time
@@ -1336,6 +1557,114 @@ private:
             const std::lock_guard lock(control_start_mutex_);
             before_start_error_ = std::move(error);
         }
+        if (holds() && !cancelled())
+        {
+            // Every participant waits before its step at 0, with its subscriptions connected:
+            // what a control client writes now (and is queued) takes effect in the steps at 0.
+            std::chrono::steady_clock::time_point began{};
+            const auto on_hold = [&] {
+                // The start has no limit while it holds; --timeout-ms counts from here.
+                began = std::chrono::steady_clock::now();
+                hold_began_ns_.store(began.time_since_epoch().count());
+                set_start_limit(std::chrono::steady_clock::time_point::max(), {}, false);
+                say("standing still before the first step until a resume, step or run_until command (--start-paused "
+                    "with a control server)");
+            };
+            const auto give_up = [&] {
+                if (options_.timeout && std::chrono::steady_clock::now() >= began + *options_.timeout)
+                {
+                    hold_timed_out_.store(true);
+                    return true;
+                }
+                return cancelled() || !gone_before_start(controller).empty();
+            };
+            if (commands().hold_before_start(give_up, std::chrono::milliseconds(20), on_hold) != TimeCommands::Hold::None)
+            {
+                // From here on, the participants have start_timeout_ms to get to their first step.
+                const std::chrono::milliseconds limit(config_.start_timeout_ms);
+                set_start_limit(std::chrono::steady_clock::now() + limit, limit, true);
+            }
+        }
+    }
+
+    /// The limit of the start (wait_for_start()): its time, how long it was, and whether it is
+    /// the one after the hold. Written by main and the window's thread, read by main.
+    void set_start_limit(std::chrono::steady_clock::time_point at, std::chrono::milliseconds length, bool after_hold)
+    {
+        const std::lock_guard lock(start_limit_mutex_);
+        start_limit_at_ = at;
+        start_limit_length_ = length;
+        start_limit_after_hold_ = after_hold;
+    }
+    [[nodiscard]] std::chrono::steady_clock::time_point start_limit() const
+    {
+        const std::lock_guard lock(start_limit_mutex_);
+        return start_limit_at_;
+    }
+
+    /// The give_up of the start (main thread): a required participant has left, or the start's
+    /// limit has passed (the participants that hold it up named).
+    [[nodiscard]] std::string start_given_up(SimulationController& controller) const
+    {
+        if (std::string gone = gone_before_start(controller); !gone.empty())
+        {
+            return gone;
+        }
+        std::chrono::steady_clock::time_point at;
+        std::chrono::milliseconds length{};
+        bool after_hold = false;
+        {
+            const std::lock_guard lock(start_limit_mutex_);
+            at = start_limit_at_;
+            length = start_limit_length_;
+            after_hold = start_limit_after_hold_;
+        }
+        if (std::chrono::steady_clock::now() < at)
+        {
+            return {};
+        }
+        // Who is not ready yet: those that have not got to ReadyToRun (the others wait for them).
+        std::string waiting;
+        std::string all;
+        for (const std::string& name : controller.required_participants())
+        {
+            const PeerStatus status = controller.runtime().peer_status(name);
+            const auto state = status.state.value_or(orch::ParticipantState::Invalid);
+            if (state == orch::ParticipantState::Running)
+            {
+                continue;
+            }
+            const std::string item = name + " (" + std::string(orch::to_string(state)) + ")";
+            all += (all.empty() ? "" : ", ") + item;
+            if (state != orch::ParticipantState::ReadyToRun)
+            {
+                waiting += (waiting.empty() ? "" : ", ") + item;
+            }
+        }
+        return "the participants did not all get to their first step within " + std::to_string(length.count()) +
+               " ms" + (after_hold ? " after the run stopped standing still before it" : "") +
+               " (start_timeout_ms; a participant may hang while it starts): not ready: " +
+               (waiting.empty() ? (all.empty() ? std::string("the launcher's controller") : all) : waiting);
+    }
+
+    /// run --start-paused with a control server: the run holds before the first step.
+    [[nodiscard]] bool holds() const { return options_.start_paused && static_cast<bool>(options_.serve_control); }
+
+    /// The first enabled required participant that has left the simulation before it started (a
+    /// process that ended is seen as Error: "Connection Lost"), as "participant '<name>' left
+    /// ... (state <state>)"; "" if none. Thread safe (the controller's runtime's peer statuses).
+    [[nodiscard]] std::string gone_before_start(SimulationController& controller) const
+    {
+        for (const std::string& name : controller.required_participants())
+        {
+            const PeerStatus status = controller.runtime().peer_status(name);
+            if (has_finished(status))
+            {
+                return "participant '" + name + "' left the simulation before it started (state " +
+                       std::string(orch::to_string(*status.state)) + ")";
+            }
+        }
+        return {};
     }
 
     /// After the start: where each started participant's control agent stands (the result's
@@ -1601,6 +1930,19 @@ private:
         return ended;
     }
 
+    /// After a start that failed: the first required participant whose process has ended; if one
+    /// has left the simulation (`left`), waiting a moment for its process (SIL Kit may see the
+    /// connection end before the process can be waited for). -1 if none ended.
+    int gone_process(bool left)
+    {
+        int ended = -1;
+        static_cast<void>(wait_until(std::chrono::milliseconds(left ? 2000 : 0), 1, [&] {
+            ended = look_at_children(true);
+            return ended >= 0;
+        }));
+        return ended;
+    }
+
     /// Waits until every required participant has joined, then starts the simulation. false if
     /// it did not start (outcome_ says why).
     bool wait_for_start(SimulationController& controller)
@@ -1650,12 +1992,25 @@ private:
         }
         try
         {
-            // The start includes the window in which the agents' hellos are awaited.
+            // The start's limits are the run's own (start_limit_): until the hold, what is left of
+            // start_timeout_ms (with room for the wait for the agents' hellos); in the hold, none
+            // (it ends with a command, a stop, --timeout-ms or a participant that leaves); after
+            // it, start_timeout_ms anew. A required participant that leaves ends the start at
+            // once: the others would wait for it until the limit.
             const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
-            controller.start(std::max(left, options_.control_hello_timeout + std::chrono::milliseconds(1000)));
+            const auto limit = std::max(left, options_.control_hello_timeout + std::chrono::milliseconds(1000));
+            set_start_limit(std::chrono::steady_clock::now() + limit, limit, false);
+            controller.start(kNoStartLimit, [this, &controller] { return start_given_up(controller); });
         }
         catch (const std::exception& e)
         {
+            if (const int gone = gone_process(!gone_before_start(controller).empty()); gone >= 0)
+            {
+                // A participant's process ended before the simulation started: as in the wait above.
+                outcome_.failed_participant = outcome_.participants[static_cast<std::size_t>(gone)].name;
+                note_failed(outcome_.failed_participant, "ended_before_start");
+                return false;
+            }
             outcome_.start_error = one_line(e.what());
             say("the simulation did not start: " + outcome_.start_error);
             return false;
@@ -1876,7 +2231,12 @@ private:
         };
         if (options_.timeout)
         {
-            watch.deadline = std::chrono::steady_clock::now() + *options_.timeout;
+            // From the start, or from the hold before the first step (it counts as standing still).
+            const std::int64_t held = hold_began_ns_.load();
+            watch.deadline = (held >= 0 ? std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(held))
+                                        : std::chrono::steady_clock::now()) +
+                             *options_.timeout;
+            outcome_.timed_out_while_holding = hold_timed_out_.load();
         }
         watch.before_abort = [this](const WatchResult& why) {
             if (why.end == WatchEnd::TimedOut)
@@ -2091,6 +2451,15 @@ private:
     std::optional<ControlStart> control_start_; ///< guarded by control_start_mutex_
     std::string before_start_error_;                           ///< guarded by control_start_mutex_
     bool before_start_failed_ = false; ///< the simulation ran (and was aborted): the participants are ended as after a run
+    /// The start's limit (set_start_limit()): main and the window's thread.
+    mutable std::mutex start_limit_mutex_;
+    std::chrono::steady_clock::time_point start_limit_at_ = std::chrono::steady_clock::time_point::max();
+    std::chrono::milliseconds start_limit_length_{};
+    bool start_limit_after_hold_ = false;
+    /// When the hold began (steady-clock nanoseconds), or -1 if there was none.
+    std::atomic<std::int64_t> hold_began_ns_{-1};
+    /// --timeout-ms ended the hold.
+    std::atomic<bool> hold_timed_out_{false};
     std::unique_ptr<TimeCommands> own_commands_; ///< without RunOptions::time_commands
     std::mutex output_;
     // Last, so that it goes first: a Process ends its reader thread, which uses output_ and logs_,

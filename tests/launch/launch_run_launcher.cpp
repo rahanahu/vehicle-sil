@@ -3009,9 +3009,29 @@ void time_usage(const Options& o)
     const fs::path dir = one_ecu(o, "stop_at_ms: 100\n");
     Captured run = launch(o, {"run", "--start-paused", "sim.yaml"}, dir);
     expect_code(run, 4, "--start-paused without --stdin-commands");
-    require(contains(run.standard_error, "error: --start-paused needs --stdin-commands: without commands nothing could make "
-                                         "the simulation go on (resume, step)\n"),
+    require(contains(run.standard_error, "error: --start-paused needs --stdin-commands or --control: without commands nothing "
+                                         "could make the simulation go on (resume, step)\n"),
             run.standard_error);
+    // The options of the control server: without --control, and --control in a build without the
+    // server (with it: tests/control_server/test_launcher.py).
+    run = launch(o, {"run", "--control-credentials", "c.txt", "sim.yaml"}, dir);
+    expect_code(run, 4, "--control-credentials without --control");
+    require(contains(run.standard_error, "error: --control-credentials is for --control: without it there is no control "
+                                         "server\n"),
+            run.standard_error);
+    run = launch(o, {"check", "--control", "0", "sim.yaml"}, dir);
+    expect_code(run, 4, "check --control");
+    require(contains(run.standard_error, "error: --control is for run: check starts no participant\n"), run.standard_error);
+    const Captured version = launch(o, {"version", "--json"}, dir);
+    if (!contains(version.standard_output, "\"control-server\""))
+    {
+        run = launch(o, {"run", "--control", "0", "sim.yaml"}, dir);
+        expect_code(run, 4, "--control without the control server");
+        require(contains(run.standard_error, "error: --control needs a vehicle_sil_launch built with the control server: "
+                                             "configure with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (it needs gRPC) and build "
+                                             "again"),
+                run.standard_error);
+    }
     run = launch(o, {"run", "--speed", "fast", "sim.yaml"}, dir);
     expect_code(run, 4, "--speed fast");
     require(contains(run.standard_error, "error: --speed must be a number of simulation seconds per wall-clock second from "

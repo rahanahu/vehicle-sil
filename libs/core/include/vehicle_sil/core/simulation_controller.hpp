@@ -201,8 +201,12 @@ public:
     /// Waits until every required participant has connected, publishes the workflow
     /// configuration and waits until the simulation is Running.
     /// Throws std::runtime_error on timeout (naming every required participant that has not
-    /// connected).
-    void start(std::chrono::milliseconds timeout);
+    /// connected). `give_up`: as in ParticipantRuntime::start(), asked while it waits for the
+    /// participants to connect and for Running (also during the start window, whose function is
+    /// then told to give up and waited for as on a timeout). `timeout` kNoStartLimit: no limit
+    /// but `give_up` (the window's StartWindow::deadline() is then the time_point that never
+    /// comes: do not add to it or wait until it).
+    void start(std::chrono::milliseconds timeout, const std::function<std::string()>& give_up = {});
 
     /// Sets a function for the window before the start: start() runs it, on a thread of the
     /// controller's (not SIL Kit's, not the caller's), when every required participant and the

@@ -33,8 +33,13 @@ inline constexpr std::array<std::string_view, 7> kFeatures{"events", "stdin-comm
 
 /// `version`: "vehicle_sil_launch <version>\n".
 [[nodiscard]] std::string format_version_text();
-/// `version --json`: the formats this launcher writes and reads, and kFeatures.
-[[nodiscard]] std::string format_version_json();
+/// The feature of a vehicle_sil_launch built with the control server (run --control): only such
+/// a build lists it (format_version_json()'s `more`).
+inline constexpr std::string_view kControlServerFeature = "control-server";
+
+/// `version --json`: the formats this launcher writes and reads, kFeatures, then `more` (what
+/// this build adds).
+[[nodiscard]] std::string format_version_json(const std::vector<std::string_view>& more = {});
 
 /// The stages of a run, in this order (a run may skip some, never goes back).
 enum class Phase
@@ -61,9 +66,13 @@ struct Command
     std::optional<std::int64_t> ms{};
     /// speed: its "value" (empty: "max").
     std::optional<double> speed{};
+    /// Only from a control server: pause at, and run_until, this virtual time; once applied
+    /// (TimeCommands), where the simulation will stand (the command event's "at_ms"), a whole
+    /// number of the controller's steps.
+    std::optional<std::int64_t> at_ms{};
 
     [[nodiscard]] bool is_stop() const { return accepted && name == "stop"; }
-    /// pause, resume, step or speed (TimeCommands applies it).
+    /// pause, resume, step, run_until or speed (TimeCommands applies it).
     [[nodiscard]] bool is_time() const { return accepted && name && *name != "stop"; }
 };
 
@@ -234,6 +243,9 @@ public:
     /// The check's result, as `check --json` writes it.
     void check(const CheckReport& report);
     void registry(const std::string& uri);
+    /// "control_server": the run's control server listens at `address` (gRPC, the actual port),
+    /// with TLS or not, with credentials (every call needs a token) or not.
+    void control_server(const std::string& address, bool tls, bool credentials);
     /// Disabled, Joined, StopRequested, Killed.
     void participant(const std::string& name, ParticipantState state);
     void participant_not_started(const std::string& name, const std::string& message);
@@ -259,7 +271,8 @@ public:
     void finding(const std::string& file, const Finding& finding);
     /// The simulation's virtual time as the controller sees it, and how it goes.
     void time(const TimeEvent& time);
-    /// A command from standard input (`source` "stdin") or its end ("eof").
+    /// A command from standard input (`source` "stdin"), its end ("eof"), or a call of a control
+    /// client ("control_server").
     void command(const Command& command, std::string_view source);
     /// The last event: the run's result as `run --json` writes it. Waits until it has been written
     /// (true) or the stream has closed (false): at most stall_timeout, whether the reader reads

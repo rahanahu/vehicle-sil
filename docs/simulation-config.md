@@ -416,10 +416,10 @@ participants:
 `vehicle_sil_launch run <file>` は、次の順に動きます。
 
 1. `check` と同じ照合をします。誤りがあれば（`--strict` では警告も）、何も起動せずに照合の結果を書き、終了コード 1 です。
-2. registry をこのプロセスの中で立てます（`registry_uri`、なければ 127.0.0.1 の空いているポート）。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。
+2. registry をこのプロセスの中で立てます（`registry_uri`、なければ 127.0.0.1 の空いているポート）。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。`--control` を付けたときは、その前に Control Server を立て、`[vehicle_sil_launch] control server at <address>` の行を書きます。
 3. controller（participant 名 `SimulationController`）をこのプロセスの中で動かします。シミュレーションが待つ（必須の）participant は、外していない `required: true` のものです。controller は刻み（`time_step_ms` か、その既定値）で時刻同期に参加し、刻みの終わりを止めて、速さ、一時停止、ステップ送りを決めます（最速のときも同じです。刻みごとに同期が 1 回増えます）。
 4. 外していない participant を構成ファイルの順に、それぞれ別のプロセスで起動します。作業ディレクトリは構成ファイルのあるディレクトリ、標準入力は空です。
-5. 必須の participant がそろったら、変数を出す ECU とつながるのを待ってから（下の「変数を読み書きする口」。ふつうは待ちません）始めます。`stop_at_ms` があれば、仮想時間がそこに達したところで止めます。なければ、participant が止めるか、Ctrl+C まで動きます。
+5. 必須の participant がそろったら、変数を出す ECU とつながるのを待ってから（下の「変数を読み書きする口」。ふつうは待ちません）始めます。`--control` と `--start-paused` を付けたときは、どの participant も時刻 0 のステップを始める前で、`resume`、`step` か `run_until` の命令を待ちます（[control-api.md](control-api.md) の「始まる前に書く」）。`stop_at_ms` があれば、仮想時間がそこに達したところで止めます。なければ、participant が止めるか、Ctrl+C まで動きます。
 6. 終わったら、すべての participant を終わらせ（下の「止め方」）、結果を書きます。
 
 ### 見張ること
@@ -429,6 +429,9 @@ participants:
 - `required: false` の participant は待たず、終わってもシミュレーションを止めません。0 でない終了コードは警告です。
 - `--timeout-ms <ms>` を付けると、シミュレーションが始まってから `<ms>` の実時間で終わらなければ中断し、誤り（`timeout`）にします。ステップの中で止まった ECU がいると仮想時間が進まず、`stop_at_ms` があっても終わらないためです（CI などで使います）。一時停止している時間も数えます。既定は上限なしです。
 - 一時停止している間も、上の見張りはどれも同じように効きます（participant の失敗、止める要求、`--timeout-ms`）。`start_timeout_ms` は、そろうまでの時間です。`--start-paused` で 0 に止まっている時間は含みません。
+- 始まる前の窓（変数を出す ECU を待つ間と、`--control` と `--start-paused` で時刻 0 のステップの前に止まっている間）に必須の participant が抜けると（プロセスが終わった、接続が切れた）、すぐに開始をやめます（`ended-before-start`。プロセスが動いているまま抜けたときは `simulation-start`）。
+- 始まるまでの上限: `start_timeout_ms` は、そろうまでの時間で、そろった後の開始（最初のステップまで）にも、その残り（少なくとも、変数を出す ECU を待つ時間 + 1 秒）が効きます。`--control` と `--start-paused` で時刻 0 のステップの前に止まっている間は数えず、進んだ後に改めて `start_timeout_ms` が効きます。過ぎると `simulation-start` の誤りで、最初のステップに着いていない participant と状態を文言に挙げます。
+- `--timeout-ms` は、シミュレーションが始まってから数えます。`--control` と `--start-paused` では、時刻 0 のステップの前に止まった時点から数えます（止まっている時間も数えます）。止まったまま過ぎると、時刻 0 のステップを走らせてから中断し、`timeout` の文言に、最初のステップの前に止まっていたことを書きます。
 - `stop_at_ms` を書いたのに、participant がそれより前にシミュレーションを止めたときは、注記（`ended-before-stop-at`）を出します（`--strict` でも失敗にしません）。
 
 ### 変数を読み書きする口
@@ -452,7 +455,7 @@ participants:
 - 始まった後に参加した participant（`required: false`、手で起動した実時間の Peer、同じ名前での起動し直し）は、hello の後、「コマンドを受け取れる」という返事が届いてから書けるようになります（ふつうは一瞬です）。それまでの書き込みと、シミュレーションを去り始めた participant（ライフサイクルが止まり始めた、失敗した）への書き込みは、送らずにすぐ Invalid で確定します。
 - 値は間引きません。ECU は Agent の `sample_period`（既定 10 ms の仮想時間）ごとに全変数を送ります。ECU が多く、変数が多く、速く回すほど、量が増えます。重いときは、ECU の `sample_period` を大きくします。
 - ECU と `vehicle_sil_launch` の間に認証はありません。registry に参加できる者は、ECU の変数に書けます（バスにフレームを送れるのと同じです）。registry は既定で 127.0.0.1 だけで待ち受けます。
-- この口を使うのは、`vehicle_sil_launch` の中の Hub です。いまの `vehicle_sil_launch` には、Hub を外へ出す引数はありません（`run` を関数として呼ぶ側が Hub を渡します。内部用）。
+- この口を使うのは、`vehicle_sil_launch` の中の Hub です。`run --control <address>`（Control Server を持つビルドだけ）で、Hub を gRPC の Control API としてクライアント（Python、CLI、GUI）に出します。使い方は [control-api.md](control-api.md) の「ランチャーにつなぐ」です。
 
 ### 等速で動かす
 
@@ -491,7 +494,7 @@ participants:
 - 遅れたときは、速さを下げるか、遅い原因を探します。1 ステップの計算が重い ECU は、そのステップを軽くします（ステップ幅を大きくしても、1 ステップが重ければ遅れは減りません）。小さいステップの ECU が多くて同期の回数が多いときは、ECU のステップ幅と `time_step_ms` を大きくします。`vehicle_sil_launch` は、どの participant が遅いかを知りません（SIL Kit は各 participant のステップにかかった時間を controller に伝えません）。ECU を 1 つずつ外して（`--disable`）比べます。
 - `late_tolerance_ms` の既定の 10 ms は、実時間で動く機器のタイムアウトに比べて十分小さく、OS のタイマーの揺れより十分大きい値として選んでいます。実時間の長さで、刻みと速さによりません。機器が待てる時間に合わせて変えます。
 - 最速（`max`）では合わせず、遅れも数えません。
-- 一時停止、ステップ送り、途中での速さの変更は、標準入力の命令です（[標準入力の命令](#標準入力の命令run---stdin-commands)）。`run --start-paused` は、全員がそろったら仮想時間 0 で止まり、`resume` か `step` を待ちます（`--stdin-commands` と一緒に使います）。
+- 一時停止、ステップ送り、途中での速さの変更は、標準入力の命令と、Control Server（`--control`）のクライアントの呼び出しです（[標準入力の命令](#標準入力の命令run---stdin-commands)）。`run --start-paused` は、全員がそろったら仮想時間 0 で止まり、`resume` か `step` を待ちます（`--stdin-commands` か `--control` と一緒に使います）。`--stdin-commands` だけのときは時刻 0 のステップを走らせてから止まり、`--control` があるときは時刻 0 のステップの前で止まります。
 
 ### 止め方
 
@@ -887,6 +890,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `hello` | 最初の行 | `vehicle_sil_events`（事象の形式の版。今は 1）、`vehicle_sil`（vehicle-sil の版）、`pid`（`vehicle_sil_launch` のプロセス ID）、`file`（構成ファイル。引数に書いたとおり。わからなければ `null`）、`arguments`（受け取った引数の配列） |
 | `phase` | 段階が変わったとき | `phase`: `checking`（照合）、`starting`（registry、controller、participant の起動）、`waiting`（必須の participant がそろうのを待つ）、`running`（シミュレーションが動いている）、`stopping`（participant を終わらせている）、`ended`（すべて終わった）。この順に進み、戻りません。飛ばすことがあります（照合で失敗すれば `checking` の次は `ended`） |
 | `check` | 照合が終わったとき | `check`: `check --json` と同じオブジェクト（[JSON](#json--json)） |
+| `control_server` | `--control` の Control Server が待ち受けを始めたとき（`registry` の前） | `address`: クライアントがつなぐアドレス（ポート 0 なら選ばれたポート）、`tls`: TLS か、`credentials`: 呼び出しにトークンが要るか |
 | `registry` | registry が待ち受けを始めたとき | `uri`: participant が接続する URI |
 | `participant` | participant の状態が変わったとき | `name`、`state`（下の表） |
 | `control_link` | シミュレーションが始まった直後（`phase` の `running` の前）に、起動した participant ごとに 1 回 | `name`、`state`（結果の `participants[].control_link.state` と同じ 5 つ）。`connected` には `variables`、`version_mismatch` には `version`（結果の同じ名前のキーと同じ意味。ほかの `state` にはこの 2 つのキーがありません） |
@@ -894,7 +898,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `log_dropped` | 読む側が遅くて `log` を書けなかったとき、その場所に（[読む側が遅いとき](#読む側が遅いとき読まないとき)） | `count`（書かなかった `log` の数）、`sources`（`source` ごとの数のオブジェクト。例: `{"Engine": 120, "vehicle_sil_launch": 1}`） |
 | `finding` | 実行で見つけたものが決まったとき | 結果の `findings[]` の 1 つと同じキー（`severity`、`code`、`file`、`line`、`participant`、`network`、`message`、`detail`） |
 | `time` | 仮想時間が進んだとき、一時停止に入ったとき・出たとき、速さが変わったとき | `sim_ms`: controller が見ている仮想時間（ミリ秒。減りません）、`speed`: 今の速さ（数か `"max"`）、`paused`: 一時停止しているか、`actual_speed`: 直近 1 秒ほどの、進んだ仮想時間 ÷ 実時間（小数 3 桁。動いた時間が短いとき、一時停止しているときは `null`）、`late_steps`: それまでに遅れた刻みの数、`max_late_ms`: それまでの最大の遅れ、`slipped_ms`: それまでのずれの合計（どれも結果の `timing` と同じ意味で、いま実行が終わったとしたときの値）、`late_ms`: 期限を過ぎてもまだ始まっていない刻みの、いまの遅れ（なければ 0）。シミュレーションが止まっている間（仮想時間が進まず、`late_ms` が許容を超えて増えている間）も、100 ms に 1 回まで出ます。`paused` は、止まる予定の時刻に着いた時点で `true` になります（始まった直後の `--start-paused` など。controller が実際に止まるのは、その刻みの participant のステップが終わった後です） |
-| `command` | 標準入力から命令を受けたとき（`--stdin-commands`） | `command`（命令の名前。読めなければ `null`）、`source`（`"stdin"`: 行で来た、`"eof"`: 標準入力の終わり）、`accepted`（受け付けたか）、`message`（受け付けなかった理由。受け付けたら `null`）。受け付けた `step` には `ms`（実際に進む仮想時間。刻みの倍数に切り上げたもの） |
+| `command` | 標準入力から命令を受けたとき（`--stdin-commands`）、Control Server のクライアントが時間の操作か停止を呼んだとき（`--control`） | `command`（命令の名前。読めなければ `null`）、`source`（`"stdin"`: 行で来た、`"eof"`: 標準入力の終わり、`"control_server"`: クライアントの呼び出し）、`accepted`（受け付けたか）、`message`（受け付けなかった理由。受け付けたら `null`）。受け付けた `step` には `ms`（実際に進む仮想時間。刻みの倍数に切り上げたもの）。クライアントからは `run_until` と、時刻つきの `pause` も来ます。受け付けたものには `at_ms`（止まる仮想時刻。刻みの倍数に切り上げたもの） |
 | `heartbeat` | 1 秒のあいだ何も書かなかったとき | なし（3 つのキーだけ） |
 | `result` | 最後の行 | `result`: `run --json` と同じオブジェクト（[JSON](#jsonrun---json)） |
 
@@ -922,7 +926,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 - `time` は、`running` になったときに 0 を書きます。その後は、仮想時間が進んだときに実時間で 100 ms に 1 回まで、一時停止に入ったとき・出たとき・速さが変わったとき・一時停止したまま時刻が変わったとき（ステップ送りの後）はすぐに書きます。シミュレーションが終わったときの状態は、間隔によらず書きます（終わったシミュレーションは一時停止していません）。`sim_ms` は減りません（一時停止や速さの変更では、前と同じ値のことがあります）。見張りが 20 ms ごとに読むので、それより短い間の変化（最速でのステップ送りの途中など）は書かないことがあります。最後の状態は必ず書きます。
 - `finding` は実行で見つけたものです。シミュレーションが終わった（または始まらなかった）ときに、その時点で決まっているものを書き、残りを participant を終わらせた後に書きます。一度書いた `finding` は、同じ内容のまま `result` の `findings` に入ります。同じものを 2 回は書きません。シミュレーションの途中で失敗した participant の `participant-failed` は、プロセスの終わり方を含むので、プロセスが終わってから書きます（失敗に気づいた時点では、`participant` の `failed` が知らせます。`vehicle_sil_launch` の `log` の行にも理由があります）。照合で見つけたものは `check` の中にあります。`result` だけを読んでも、結果はわかります。
 - `heartbeat` は、`hello` から `result` までのどの段階でも、ほかの行の間に入ります。数は実行にかかった時間で変わります。
-- `command` の事象は、その命令で起きること（`phase` の `stopping` など）より前に書きます。
+- `command` の事象は、その命令で起きること（`phase` の `stopping` など）より前に書きます。標準入力とクライアントの時間の命令は、1 つずつ順に処理するので、`command` の事象の順が、効いた順です。
+- `control_server` は、`phase` の `starting` の後、`registry` より前に 1 回だけ書きます（照合で失敗した実行と、引数の誤りでは書きません）。
 
 #### 実行に進まないときの事象
 
@@ -1048,11 +1053,13 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 - 時間の命令を受け付けないのは、`step` を一時停止していないときに送ったとき（`resume` の後など）、`step` を controller ができる前（照合の間など）に送ったとき、シミュレーションが終わった後（始まらなかったときも）です。`message` に理由を書きます。一時停止しているときの `pause` と、動いているときの `resume` は、受け付けて何もしません。
 - controller ができる前（照合の間など）に受けた `pause`、`resume`、`speed` は覚えておき、controller ができたときに渡します（`pause` は `--start-paused` と同じく 0 で止まります）。
 - 一時停止しても、`phase` は `running` のままです。`time` の `paused` で知らせます。
-- 命令で止めた実行の結果は、Ctrl+C で止めたときと同じです（`result` は `"interrupted"`、終了コード 130、注記 `interrupted`）。`interrupted_by` は、`{"command":"stop"}` なら `"stop command"`、標準入力の終わりなら `"end of input"` です。
+- 命令で止めた実行の結果は、Ctrl+C で止めたときと同じです（`result` は `"interrupted"`、終了コード 130、注記 `interrupted`）。`interrupted_by` は、`{"command":"stop"}` なら `"stop command"`、標準入力の終わりなら `"end of input"`、Control Server のクライアントの `Stop` なら `"control server stop"` です。
 - `command` の事象の `accepted: true` は、行が命令として正しく、処理に回したという意味です（時間の命令では、今できるという意味でもあります）。その命令で実行が変わったとは限りません。たとえば、実行が終わった後（`phase` の `ended` の後）に受けた `stop` は、`accepted: true` ですが、結果は変わりません。
 - `command` の事象は、その命令で起きること（`phase` の `stopping` など）より前に書きます。
 - 照合の間に受けた `stop` は、照合が終わってから効きます（Ctrl+C と同じ）。
 - 事象を読む側が読んでいなくても、命令は効きます。
+- `--control` の Control Server のクライアントの時間の操作（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）と `Stop` も、同じ命令として処理します（`source` が `"control_server"`。規則と順序は [control-api.md](control-api.md) の「2 つの口の命令」）。`--stdin-commands` がなくても受け付けます。`run_until` と時刻つきの `pause` は、標準入力からは送れません。クライアントの `Stop` は、シミュレーションが終わった後は断ります（標準入力の `stop` は、上のとおり受け付けて何もしません）。
+- `--control` と `--start-paused` で時刻 0 のステップの前に止まる実行では、止まるより前に受け付けた `resume`、`step`、`pause` も、その後の止まり方を決めます（[control-api.md](control-api.md) の「始まる前に書く」）。
 
 ### 版とできること（`vehicle_sil_launch version`）
 
@@ -1097,14 +1104,17 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `start-paused` | `run --start-paused` |
 | `time-commands` | 標準入力の `pause`、`resume`、`step`、`speed` |
 | `control-links` | ECU の変数を読み書きする口: 事象 `control_link`、結果の `participants[].control_link`、照合の JSON の `participants[].control`、所見 `control-link-no-hello`、`control-link-version`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered` |
+| `control-server` | `run --control`（Control Server を持つビルドだけ）: 事象 `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
-この例も、CTest の `launch_cli.docs` が照合します（`vehicle_sil` の版を除いて、バイト単位で）。
+この例は、Control Server を持たないビルドの出力です。持つビルドは、`features` の最後に `"control-server"` を足します。この例も、CTest の `launch_cli.docs` が照合します（`vehicle_sil` の版と、`control-server` を除いて、バイト単位で）。
 
 ## 引数と終了コード
 
 ```text
 vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>
-vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands [--start-paused]]
+vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
+                       [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
+                       [--control-audit-log <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>
 vehicle_sil_launch version [--json]
@@ -1116,11 +1126,15 @@ vehicle_sil_launch version [--json]
 | `--events` | `run` だけ。経過と結果を事象として書く（[機械から使う](#機械から使う--events--stdin-commandsversion)）。`--json` と一緒には使えない |
 | `--events-stall-ms <ms>` | `--events` を付けた `run` だけ。事象の書き込みがこの時間まったく進まなければ、読む側がいなくなったものとして扱う。`result` を書き終えるのを待つ時間の上限でもある（1000 以上 86400000 以下の整数。既定は 30000。[読む側が遅いとき](#読む側が遅いとき読まないとき)） |
 | `--stdin-commands` | `run` だけ。標準入力から命令を読む。標準入力の終わりも止める要求 |
-| `--start-paused` | `--stdin-commands` を付けた `run` だけ。全員がそろったら仮想時間 0 で止まり、`resume` か `step` の命令を待つ |
+| `--start-paused` | `--stdin-commands` か `--control` を付けた `run` だけ。全員がそろったら仮想時間 0 で止まり、`resume` か `step` の命令を待つ（`--control` があれば、時刻 0 のステップの前で止まる） |
+| `--control <address>` | `run` だけ、Control Server を持つビルドだけ。Control API（gRPC）の Server を立てる。`<address>` はポート番号（127.0.0.1 で待ち受ける。0 なら空いているポート）、`<host>:<port>`、`unix:<path>`。ループバックでないアドレスには、TLS と認証情報が要る（[control-api.md](control-api.md) の「ランチャーにつなぐ」） |
+| `--control-credentials <file>` | `--control` だけ。トークンと役割のファイル（1 行に `<role> <name> <token>`）。あれば、どの呼び出しにもトークンが要る |
+| `--control-tls-cert <file>`、`--control-tls-key <file>` | `--control` だけ。サーバーの証明書の鎖と秘密鍵（PEM）。2 つ一緒に付けると TLS |
+| `--control-audit-log <file>` | `--control` だけ。誰が何を変えたかを追記する |
 | `--speed <speed>` | `run` だけ。構成ファイルの `speed` を上書きする（数か `max`。[等速で動かす](#等速で動かす)） |
 | `--strict` | 警告があっても失敗にする（注記では失敗にしない） |
 | `--log-dir <dir>` | `run` だけ。participant ごとの出力のファイルを置くディレクトリ |
-| `--timeout-ms <ms>` | `run` だけ。シミュレーションの開始から終わりまでの実時間の上限（1 以上の整数。一時停止している時間も数える）。超えたら中断して誤り。既定は上限なし |
+| `--timeout-ms <ms>` | `run` だけ。シミュレーションの開始から終わりまでの実時間の上限（1 以上の整数。一時停止している時間も数える。`--control` と `--start-paused` では、時刻 0 のステップの前に止まった時点から）。超えたら中断して誤り。既定は上限なし |
 | `--describe-timeout-ms <ms>` | 1 つの実行ファイルの `--describe` を待つ時間（1 以上の整数。既定は 10000） |
 | `--disable <name>` | participant `<name>` を外す（`enabled: false` と同じ）。繰り返せる |
 | `--enable <name>` | participant `<name>` を戻す（`enabled: true` と同じ）。繰り返せる |
@@ -1133,7 +1147,7 @@ vehicle_sil_launch version [--json]
 | 0 | 誤りがない（警告と注記だけなら 0。`--strict` では警告もない）。`run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった |
 | 1 | 誤りがある（`--strict` では警告も）。`run` では、照合の誤り（何も起動しない）か、実行の誤り（participant が失敗した、そろわなかった、止めても終わらなかったなど） |
 | 3 | 構成ファイルを読めない（ファイルがない、文法の誤り、知らない形式の版など）。`run` で registry や controller を用意できないときも 3 です。結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です（標準エラーに理由。`--json` では、そのコマンドの形の JSON に `code` が `internal` の誤り） |
-| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` なしの `--start-paused`、数でも `max` でもない `--speed`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、構成ファイルにない participant 名の `--disable` と `--enable`、同じ名前の `--disable` と `--enable`）。誤りと使い方を標準エラーに書きます |
-| 130 | `run` が中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力など） |
+| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` も `--control` もない `--start-paused`、`--control` なしの `--control-credentials` などと Control Server を持たないビルドの `--control`、`--control` の値の誤り、読めない `--control-*` のファイル、認証情報が 1 件もない `--control-credentials` のファイル、片方だけの `--control-tls-cert` と `--control-tls-key`、TLS と認証情報のない、ループバックでない `--control`、数でも `max` でもない `--speed`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*`、構成ファイルにない participant 名の `--disable` と `--enable`、同じ名前の `--disable` と `--enable`）。誤りと使い方を標準エラーに書きます |
+| 130 | `run` が中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力、Control Server のクライアントの `Stop` など） |
 
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。

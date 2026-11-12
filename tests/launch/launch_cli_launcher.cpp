@@ -219,7 +219,10 @@ void docs(const Options& o)
     // The version and what this launcher can do; it reads no file.
     const Captured version = launch(o, {"version", "--json"});
     expect_code(version, 0, "version --json");
-    expect_text(without_versions(version.standard_output),
+    // A build with the control server lists one more feature, last; the docs show a build without.
+    std::string features = version.standard_output;
+    replace_all(features, ",\n    \"control-server\"\n", "\n");
+    expect_text(without_versions(features),
                 without_versions(block_after(o.docs, "<!-- vehicle_sil_launch version --json -->")), "version --json");
     for (const std::vector<std::string>& args : {std::vector<std::string>{"version"}, {"--version"}, {"check", "--version"}})
     {

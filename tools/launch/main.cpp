@@ -19,12 +19,20 @@
 // controller's steps (the gate holds them). They meet in the event stream (a queue: no thread
 // that makes an event waits; events.hpp says what holds), in TimeCommands and in the stop
 // requests (atomics, as the signal handler). Only main is ever waited for: the others are
-// detached and may still wait when the process ends.
+// detached and may still wait when the process ends. With --control (a build with the control
+// server), gRPC's threads serve the clients: their time operations go through the same
+// TimeCommands (source "control_server"), a Stop is a stop request like {"command":"stop"}, and
+// their writes and reads go to the run's hub; main ends the server after the run, before the
+// result.
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/process/child_process.hpp"
+#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
+#include "control_server.hpp"
+#include "vehicle_sil/control/hub.hpp"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -68,7 +76,9 @@ using namespace vehicle_sil;
 constexpr const char* kUsage =
     "usage: vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--disable <name>]...\n"
     "                                [--enable <name>]... [--] <file>\n"
-    "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands [--start-paused]]\n"
+    "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
+    "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
+    "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
     "                              [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>]\n"
     "                              [--disable <name>]... [--enable <name>]... [--] <file>\n"
@@ -89,12 +99,24 @@ constexpr const char* kUsage =
     "  --stdin-commands            run: read commands from stdin, one JSON object per line: {\"command\":\"stop\"}\n"
     "                              stops in order (twice: without waiting); the end of stdin stops as well;\n"
     "                              pause, resume, step (with \"ms\") and speed (with \"value\") control the time\n"
-    "  --start-paused              run --stdin-commands: stand still at 0 until a resume or step command\n"
+    "  --start-paused              run --stdin-commands or --control: stand still at 0 until a resume or step\n"
+    "                              command (with --control: before the first step, so that a client's writes\n"
+    "                              take effect at 0)\n"
+    "  --control <address>         run: serve the Control API (gRPC) for clients: the ECUs' variables and the\n"
+    "                              time; <port> (on 127.0.0.1; 0: any free port), <host>:<port> or unix:<path>;\n"
+    "                              the event control_server and a line say where (only in a build with\n"
+    "                              VEHICLE_SIL_BUILD_CONTROL_SERVER=ON)\n"
+    "  --control-credentials <file> run --control: tokens and roles, one per line: <role> <name> <token>\n"
+    "                              (every call then needs a token; never put a token on the command line)\n"
+    "  --control-tls-cert <file>   run --control: PEM certificate chain of the server (with --control-tls-key: TLS)\n"
+    "  --control-tls-key <file>    run --control: PEM private key of the server\n"
+    "  --control-audit-log <file>  run --control: append who changed what\n"
     "  --speed <speed>             run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
     "                              or max (as fast as possible); replaces speed in <file>\n"
     "  --strict                    fail on warnings too\n"
     "  --log-dir <dir>             run: also write each participant's output to <dir>/<name>.log\n"
-    "  --timeout-ms <ms>           run: abort the simulation if it has not ended <ms> after its start (wall clock)\n"
+    "  --timeout-ms <ms>           run: abort the simulation if it has not ended <ms> after its start (wall clock;\n"
+    "                              with --start-paused and --control, from when it stands still before the start)\n"
     "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
@@ -326,6 +348,7 @@ std::atomic<int> g_first_interrupt{0};
 constexpr int kStopCommand = -1;  // {"command":"stop"} on standard input
 constexpr int kEndOfInput = -2;   // standard input ended (run --stdin-commands)
 constexpr int kOutputClosed = -3; // the reader of the events has gone (run --events)
+constexpr int kControlStop = -4;  // a client of the control server called Stop (run --control)
 
 std::string stop_source_name(int source)
 {
@@ -334,6 +357,7 @@ std::string stop_source_name(int source)
     case kStopCommand: return "stop command";
     case kEndOfInput: return "end of input";
     case kOutputClosed: return "output closed";
+    case kControlStop: return "control server stop";
     default: return {};
     }
 }
@@ -783,7 +807,8 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
             optionsEnded = true;
         }
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
-                 a == "--disable" || a == "--enable" || a == "--speed")
+                 a == "--disable" || a == "--enable" || a == "--speed" || a == "--control" || a == "--control-credentials" ||
+                 a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
             ++i;
         }
@@ -822,7 +847,8 @@ Common common(const cli::Args& args, const std::string& command)
 
 int check(const cli::Args& args)
 {
-    for (const char* runOnly : {"log-dir", "timeout-ms", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused"})
+    for (const char* runOnly : {"log-dir", "timeout-ms", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused",
+                                "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"})
     {
         if (args.has(runOnly) || args.flag(runOnly))
         {
@@ -888,15 +914,37 @@ int run(const cli::Args& args, launch::EventStream* events)
         }
         options.speed.emplace(speed); // also an empty one: "max" replaces the file's speed
     }
+    const bool control = args.has("control");
+    for (const char* option : {"control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"})
+    {
+        if (args.has(option) && !control)
+        {
+            throw cli::UsageError("--" + std::string(option) + " is for --control: without it there is no control server");
+        }
+    }
+#ifndef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
+    if (control)
+    {
+        throw cli::UsageError("--control needs a vehicle_sil_launch built with the control server: configure with "
+                              "-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (it needs gRPC) and build again; `vehicle_sil_launch "
+                              "version --json` lists control-server in its features when it has it (docs/control-api.md)");
+    }
+#endif
     if (args.flag("start-paused"))
     {
-        if (!args.flag("stdin-commands"))
+        if (!args.flag("stdin-commands") && !control)
         {
-            throw cli::UsageError("--start-paused needs --stdin-commands: without commands nothing could make the "
-                                  "simulation go on (resume, step)");
+            throw cli::UsageError("--start-paused needs --stdin-commands or --control: without commands nothing could make "
+                                  "the simulation go on (resume, step)");
         }
         options.start_paused = true;
     }
+#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
+    // The hub of the control server (the run has one of its own otherwise); before the server, so
+    // that it goes after it.
+    control::Hub hub;
+    std::unique_ptr<launch_cli::LauncherControlServer> server;
+#endif
     watch_interrupts();
     if (events != nullptr)
     {
@@ -906,16 +954,44 @@ int run(const cli::Args& args, launch::EventStream* events)
     {
         options.write_line = write_stderr_line;
     }
-    if (args.flag("stdin-commands"))
+    if (args.flag("stdin-commands") || control)
     {
         // Never destroyed: the reader of stdin may use it until the process ends.
         shared().time_commands = new launch::TimeCommands(options.start_paused, events);
         options.time_commands = shared().time_commands;
+    }
+#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
+    if (control)
+    {
+        launch_cli::ControlArguments a;
+        a.address = args.str("control", "");
+        a.credentials = args.str("control-credentials", "");
+        a.tls_cert = args.str("control-tls-cert", "");
+        a.tls_key = args.str("control-tls-key", "");
+        a.audit_log = args.str("control-audit-log", "");
+        launch_cli::ControlHooks hooks;
+        hooks.commands = shared().time_commands;
+        // Its event (and its refusal once the run is over) comes from the time commands.
+        hooks.stop = [] { request_stop(kControlStop); };
+        server = launch_cli::make_control_server(a, std::move(hooks));
+        options.hub = &hub;
+        options.serve_control = [&server](control::Hub& h) { return server->start(h); };
+    }
+#endif
+    if (args.flag("stdin-commands"))
+    {
         start_reading_commands();
     }
     options.interrupts = &g_interrupts;
     options.interrupt_name = interrupt_name;
     const launch::RunReport report = launch::run_file(process::path_from_utf8(c.file), c.file, options);
+#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
+    // Before the result: every call of a client ends (a watch, a wait) and none comes any more.
+    if (server)
+    {
+        server->end();
+    }
+#endif
     if (report.check.usage)
     {
         return usage_error(report.check.findings, args.flag("json"), true, c.file, events);
@@ -926,6 +1002,16 @@ int run(const cli::Args& args, launch::EventStream* events)
     }
     return write_or_fail(args.flag("json") ? launch::format_run_json(report) : launch::format_run_text(report),
                          report.exit_code());
+}
+
+/// What this build adds to launch::kFeatures.
+std::vector<std::string_view> build_features()
+{
+#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
+    return {launch::kControlServerFeature};
+#else
+    return {};
+#endif
 }
 
 /// `version [--json]`: nothing else on its command line.
@@ -949,8 +1035,9 @@ int version(const std::vector<std::string>& arguments)
         std::fputs(kUsage, stderr);
         return cli::kExitUsage;
     }
-    return write_stdout(json ? launch::format_version_json() : launch::format_version_text()) ? cli::kExitOk
-                                                                                              : cli::kExitSetupFailed;
+    return write_stdout(json ? launch::format_version_json(build_features()) : launch::format_version_text())
+               ? cli::kExitOk
+               : cli::kExitSetupFailed;
 }
 
 } // namespace
@@ -1009,7 +1096,9 @@ int main(int argc, char** argv)
     int code = cli::kExitSetupFailed;
     try
     {
-        const cli::Args args(arguments, {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed"},
+        const cli::Args args(arguments,
+                             {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "control",
+                              "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"},
                              {"json", "strict", "events", "stdin-commands", "start-paused"}, {"disable", "enable"});
         if (args.positionals().empty())
         {

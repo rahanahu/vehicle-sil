@@ -217,7 +217,7 @@ void ParticipantRuntime::set_peer_status_observer(std::function<void(const std::
     peer_observer_ = std::move(observer);
 }
 
-void ParticipantRuntime::start(std::chrono::milliseconds timeout)
+void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::function<std::string()>& give_up)
 {
     if (started())
     {
@@ -239,7 +239,8 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout)
         error_reportable_ = true;
     }
 
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto deadline = timeout == kNoStartLimit ? std::chrono::steady_clock::time_point::max()
+                                                   : std::chrono::steady_clock::now() + timeout;
     while (true)
     {
         const auto current = lifecycle_->State();
@@ -256,6 +257,14 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout)
         {
             throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name
                                      + "' failed to start, state: " + orch::to_string(current));
+        }
+        if (give_up)
+        {
+            if (std::string why = give_up(); !why.empty())
+            {
+                throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name +
+                                         "': the start was given up, state: " + orch::to_string(current) + ": " + why);
+            }
         }
         if (std::chrono::steady_clock::now() >= deadline)
         {
