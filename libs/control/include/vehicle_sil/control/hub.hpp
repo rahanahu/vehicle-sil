@@ -150,6 +150,19 @@ struct OperationUpdate
 };
 using Update = std::variant<PeerUpdate, ValuesUpdate, EventUpdate, OperationUpdate>;
 
+/// The latest sample of a peer, as Hub::latest_of() reads it.
+struct LatestValues
+{
+    std::string participant;
+    std::string incarnation;                  ///< of the sample's schema; "" if the hub has no such peer
+    std::shared_ptr<const Snapshot> snapshot; ///< nullptr: no sample since the incarnation connected (or no such peer)
+};
+
+/// Whether no sample in `values` is of a step that started after `now`. With a time state read
+/// before the values that stood still at `now`, the values are then those of that moment (see
+/// Hub::latest_of()).
+[[nodiscard]] bool none_after(const std::vector<LatestValues>& values, SimTime now) noexcept;
+
 struct SubscriptionOptions
 {
     std::vector<std::string> peers{}; ///< empty: all
@@ -260,6 +273,16 @@ public:
     [[nodiscard]] std::vector<PeerInfo> peers() const;
     /// The latest sample of a peer (nullptr if none since its current incarnation connected).
     [[nodiscard]] std::shared_ptr<const Snapshot> latest(const std::string& peer) const;
+    /// The latest samples of several peers as they are at one moment (one look under the hub's
+    /// lock; the samples are shared, not copied). `peers` empty: every peer, by name. Else: one
+    /// entry per name in the order given (a name given again is left out), also for a name the hub
+    /// does not know (no incarnation, no sample).
+    ///
+    /// For a caller that wants the time and the values of one moment: read the time state first,
+    /// then call this. Samples only get newer, so the values then hold everything the hub had when
+    /// the time was read (with a transport on a time-synchronised participant: every step that
+    /// started before that time), and none_after() tells whether they hold anything later.
+    [[nodiscard]] std::vector<LatestValues> latest_of(const std::vector<std::string>& peers) const;
     /// Removes a disconnected peer (subscribers get a PeerUpdate with removed); its open commands
     /// become Unknown. @returns false if it is connected or unknown.
     bool forget_peer(const std::string& peer);

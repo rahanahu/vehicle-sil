@@ -69,7 +69,7 @@ public:
 /// What a client may do. Each role includes the ones before it.
 enum class Role
 {
-    Viewer,   ///< read: peers, values, operations, watch, time
+    Viewer,   ///< read: peers, values, operations, watch, time, snapshots
     Operator, ///< and change: write variables, pause, resume, step, run until, speed
     Admin,    ///< and end the simulation: stop
 };
@@ -131,6 +131,11 @@ struct ServerOptions
     std::size_t max_waiting_calls = 256;
     /// Writes in one Write request (INVALID_ARGUMENT beyond). Must be > 0.
     std::size_t max_writes_per_request = 4096;
+    /// Peer names in one GetSnapshot request (INVALID_ARGUMENT beyond). Must be > 0.
+    std::size_t max_peers_per_request = 1024;
+    /// The largest GetSnapshot reply, in bytes (RESOURCE_EXHAUSTED beyond, with the advice to ask
+    /// for fewer peers). The default is what a gRPC client receives unless it was told otherwise.
+    std::size_t max_snapshot_bytes = std::size_t{4} * 1024 * 1024;
     SecurityOptions security{};
     /// Called with one line for every call that changes something (write, time operations) and
     /// for refused calls: who, from where, what, and the outcome. Control

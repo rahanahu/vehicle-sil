@@ -669,6 +669,47 @@ std::shared_ptr<const Snapshot> Hub::latest(const std::string& peer) const
     return it == peers_.end() ? nullptr : it->second.latest;
 }
 
+std::vector<LatestValues> Hub::latest_of(const std::vector<std::string>& peers) const
+{
+    std::vector<LatestValues> out;
+    // The strings are made outside the lock where they can be: the transport's handler waits for it.
+    out.reserve(peers.size());
+    for (const auto& name : peers)
+    {
+        const bool again = std::any_of(out.begin(), out.end(), [&](const LatestValues& v) { return v.participant == name; });
+        if (!again)
+        {
+            out.push_back(LatestValues{name, {}, nullptr});
+        }
+    }
+    const std::lock_guard lock(mutex_);
+    if (peers.empty())
+    {
+        out.reserve(peers_.size());
+        for (const auto& [name, entry] : peers_)
+        {
+            out.push_back(LatestValues{name, entry.info.incarnation, entry.latest});
+        }
+        return out;
+    }
+    for (auto& values : out)
+    {
+        const auto it = peers_.find(values.participant);
+        if (it != peers_.end())
+        {
+            values.incarnation = it->second.info.incarnation;
+            values.snapshot = it->second.latest;
+        }
+    }
+    return out;
+}
+
+bool none_after(const std::vector<LatestValues>& values, SimTime now) noexcept
+{
+    return std::none_of(values.begin(), values.end(),
+                        [&](const LatestValues& v) { return v.snapshot != nullptr && v.snapshot->time > now; });
+}
+
 bool Hub::forget_peer(const std::string& peer)
 {
     const std::lock_guard lock(mutex_);

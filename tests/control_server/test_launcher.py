@@ -5,6 +5,8 @@ examples/ecu_main as processes, driven from Python.
 - The hold of --start-paused: a write before the first step takes effect at 0; the commands of
   standard input and of the control server go the same way and are events in the order they took
   effect (`source`); the refusals.
+- A snapshot: after stop, write, step, one call returns the time and the values of that moment;
+  while the simulation runs, the values are never older than the time.
 - The end: calls that wait (Watch, WaitOperation, WaitPaused) are still waiting while the run lasts,
   end with the run, and the run does not wait for them: at its end, on --timeout-ms, when a
   participant fails (also in the hold); a stop from standard input in the hold.
@@ -176,6 +178,81 @@ class LauncherTest(unittest.TestCase):
         lines = [e["line"] for e in launch.events if e["event"] == "log" and e["source"] == "vehicle_sil_launch"]
         self.assertIn(f"control server at {server['address']}", lines)
         self.assertEqual(control_address(json.dumps(e) for e in launch.events), server["address"])
+
+    def test_a_snapshot_has_the_time_and_the_values_of_one_moment(self):
+        step = ms(10)  # the engine's step, its sample period and the controller's step
+        throttle_at = {0: 20.0}  # the engine's step -> the throttle from then on (20 % as it starts)
+
+        def engine_speed(at):
+            """The engine's model up to its step at `at`: the speed moves by 50 rpm a step towards
+            800 rpm + 20 rpm per percent of throttle."""
+            rpm, throttle = 0, 0.0
+            for t in range(0, at + step, step):
+                throttle = throttle_at.get(t, throttle)
+                target = 800 + int(throttle * 20.0)
+                rpm += 50 if rpm < target else -50 if rpm > target else 0
+            return rpm
+
+        def check_pair(snap, now):
+            """The reply is of the moment `now`: the time, and the values of the last steps before
+            it (or of the steps at it), the engine's speed being the model's at its sample's time."""
+            self.assertTrue(snap.consistent)
+            self.assertEqual((snap.time.now, snap.time.paused), (now, True))
+            engine, dashboard = snap.values["Engine"], snap.values["Dashboard"]
+            self.assertIn(engine.time, (now - step, now))
+            self.assertIn(dashboard.time, (now - ms(5), now))
+            self.assertEqual(engine.values["engine.speed"], engine_speed(engine.time))
+
+        with self.launch("snapshot", stop_at_ms=600_000, start_paused=True) as launch:
+            with Control(launch.address) as c:
+                # In the hold: the time 0 it stands still at, and no step has run.
+                self.assertEqual(c.sim.wait_paused(30).now, 0)
+                snap = c.snapshot()
+                self.assertTrue(snap.consistent)
+                self.assertEqual((snap.time.now, snap.time.paused, snap.time.running), (0, True, False))
+                self.assertEqual(snap.values, {})
+                c.sim.step(ms(100))
+                now = c.sim.wait_paused().now
+                check_pair(c.snapshot(), now)
+
+                # Stop, write, step, snapshot (at once, without waiting): each time one pair.
+                for i in range(40):
+                    throttle = float((i * 35) % 100)
+                    seq = c.write({"Engine": {"engine.throttle": throttle}}, at=now + 1)
+                    self.assertEqual(c.wait(seq, until="queued").target("Engine").status, "queued")
+                    throttle_at[now + step] = throttle
+                    c.sim.step(ms(20 + 10 * (i % 3)))
+                    now = c.sim.wait_paused().now
+                    snap = c.snapshot()
+                    check_pair(snap, now)
+                    self.assertEqual(snap.values["Engine"].values["engine.throttle"], throttle)
+                self.assertEqual(c.wait(seq).target("Engine").applied_at, now - (ms(20 + 10 * (39 % 3)) - step))
+
+                # The peers asked for, in one reply; one without an agent has no values.
+                snap = c.snapshot(["Dashboard", "Nobody"])
+                self.assertEqual(list(snap.values), ["Dashboard"])
+                self.assertTrue(snap.consistent)
+
+                # While it runs: never older than the time (every step before it is there), and
+                # the mark only with a time that stands still and no value after it.
+                c.sim.set_speed(2.0)  # slow enough to ask many times before the end
+                c.sim.resume()
+                moving = 0
+                for _ in range(300):
+                    snap = c.snapshot()
+                    engine = snap.values["Engine"]
+                    last_before = -(-snap.time.now // step) * step - step
+                    self.assertGreaterEqual(engine.time, last_before, snap)
+                    self.assertEqual(engine.values["engine.speed"], engine_speed(engine.time))
+                    if snap.consistent:
+                        self.assertTrue(snap.time.paused and engine.time <= snap.time.now, snap)
+                    moving += 0 if snap.time.paused else 1
+                self.assertGreater(moving, 0)
+                c.sim.pause()
+                now = c.sim.wait_paused().now
+                check_pair(c.snapshot(), now)
+                c.sim.stop("the test is done")
+            launch.wait()
 
     def start_waiting_calls(self, c: Control, launch: Launch, calls: Calls, with_paused: bool = True):
         """In the hold: a watch, a write for a time that never comes and its WaitOperation; once the

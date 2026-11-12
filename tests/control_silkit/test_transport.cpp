@@ -471,6 +471,130 @@ TEST_CASE(values_before_a_pause_are_complete_and_a_write_while_paused_takes_effe
     CHECK(stats.handler_time / static_cast<std::int64_t>(stats.handler_calls) < 2ms);
 }
 
+// The read a Control Server makes for a snapshot: the gate's time first, then all the values in
+// one look at the hub. Whatever the simulation does meanwhile (it runs, stops, goes on), the
+// values are never older than the time: every step before the time is in them. And when the time
+// stood still and no value is of a later step, they are the values of that moment.
+TEST_CASE(the_time_and_then_all_values_are_never_older_than_the_time_while_the_simulation_runs_and_stops)
+{
+    const InProcessRegistry registry;
+    HubSide side(registry.uri, {"A", "B"});
+    TestEcu a("A", registry.uri, {.step = 1ms});
+    TestEcu b("B", registry.uri, {.step = 3ms});
+    start_together(*side.controller, {a.peer.get(), b.peer.get()});
+    auto& controller = *side.controller;
+    auto& hub = side.hub;
+    CHECK(controller.wait_until_paused(20s) == SimTime{});
+
+    struct Look
+    {
+        TimeState time;
+        std::vector<LatestValues> values;
+    };
+    const auto look = [&] {
+        Look l;
+        l.time = controller.time_state(); // first
+        l.values = hub.latest_of({"A", "B"});
+        return l;
+    };
+    // What is wrong with a look ("" if nothing).
+    const auto wrong = [&](const Look& l) -> std::string {
+        const SimDuration steps[] = {1ms, 3ms};
+        for (std::size_t i = 0; i < l.values.size(); ++i)
+        {
+            const auto& sample = l.values[i].snapshot;
+            if (l.time.now == SimTime{})
+            {
+                continue; // no step before 0
+            }
+            const SimTime last_before = first_step_at_or_after(l.time.now, steps[i]) - steps[i];
+            if (!sample || sample->time < last_before)
+            {
+                return l.values[i].participant + " at " + std::to_string(sample ? sample->time.time_since_epoch().count() : -1)
+                       + " ns is older than the last step before " + std::to_string(l.time.now.time_since_epoch().count()) + " ns";
+            }
+        }
+        return {};
+    };
+
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> looks{0};
+    std::atomic<std::uint64_t> moving{0};     ///< looks at a time that went on
+    std::atomic<std::uint64_t> still{0};      ///< looks at a time that stood still
+    std::atomic<std::uint64_t> consistent{0}; ///< of those: no value after it
+    std::mutex failure_mutex;
+    std::string failure;
+    std::vector<std::thread> readers;
+    for (int r = 0; r < 2; ++r)
+    {
+        readers.emplace_back([&] {
+            while (!stop.load())
+            {
+                const Look l = look();
+                const std::string what = wrong(l);
+                if (!what.empty())
+                {
+                    const std::lock_guard lock(failure_mutex);
+                    failure = what;
+                    return;
+                }
+                looks.fetch_add(1);
+                moving.fetch_add(l.time.paused ? 0 : 1);
+                if (l.time.paused)
+                {
+                    still.fetch_add(1);
+                    consistent.fetch_add(none_after(l.values, l.time.now) ? 1 : 0);
+                }
+            }
+        });
+    }
+
+    // Mostly it runs free and is stopped (a look sees a step begin between its two reads only
+    // while it runs); now and then it steps. With a look at once after each stop.
+    const SimDuration advances[] = {10ms, 13ms, 40ms, 5ms, 20ms, 70ms, 10ms};
+    const auto give_up = Wall::now() + 120s;
+    constexpr std::uint64_t kMoving = 20000;
+    int rounds = 0;
+    for (; (rounds < 40 || moving.load() < kMoving) && Wall::now() < give_up; ++rounds)
+    {
+        if (rounds % 4 != 3)
+        {
+            controller.resume();
+            std::this_thread::sleep_for(std::chrono::microseconds(1000 + 700 * (rounds % 5)));
+            controller.pause();
+        }
+        else
+        {
+            controller.step(advances[static_cast<std::size_t>(rounds) % std::size(advances)]);
+        }
+        const auto paused = controller.wait_until_paused(30s);
+        CHECK(paused.has_value());
+        // Nobody lets it go on now: the look is of this moment.
+        const Look l = look();
+        CHECK(l.time.paused);
+        CHECK(l.time.now == *paused);
+        CHECK(wrong(l).empty());
+        CHECK(none_after(l.values, l.time.now));
+    }
+    stop.store(true);
+    for (auto& reader : readers)
+    {
+        reader.join();
+    }
+    {
+        const std::lock_guard lock(failure_mutex);
+        if (!failure.empty())
+        {
+            throw vehicle_sil::unit::Failure(failure);
+        }
+    }
+    CHECK(moving.load() >= kMoving);
+    CHECK(looks.load() > moving.load());
+    CHECK(still.load() > 0);
+    CHECK(consistent.load() > 0);
+    CHECK_EQ(side.transport->stats().late_messages, std::uint64_t{0});
+}
+
 // A parameter written in the window before the start is what the application sees in its
 // step at 0, whatever the order in which the ECUs and the controller come up.
 TEST_CASE(a_write_in_the_start_window_is_seen_in_the_first_step_in_every_start_order)

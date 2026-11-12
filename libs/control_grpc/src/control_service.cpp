@@ -532,6 +532,54 @@ public:
             return with_time(reply, [](TimeControl&) {});
         });
     }
+    grpc::Status GetSnapshot(grpc::ServerContext* context, const v1::GetSnapshotRequest* request, v1::GetSnapshotReply* reply) override
+    {
+        return guarded(context, "GetSnapshot", [&](const Call&) -> grpc::Status {
+            if (static_cast<std::size_t>(request->peers_size()) > options_.max_peers_per_request)
+            {
+                return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                                    "at most " + std::to_string(options_.max_peers_per_request) + " peers in one request");
+            }
+            // The time first, then the values (no lock is held across the two). The hub's samples
+            // only get newer, and when the gate says P, the hub has every step before P (the
+            // gate's step and the transport's handler run on one thread). So the values are never
+            // older than the time, and they are those of the moment P if the time stood still at
+            // P and none of them is of a step after P: whatever happened between the two reads.
+            TimeView time;
+            if (options_.time != nullptr)
+            {
+                try
+                {
+                    time = options_.time->state();
+                }
+                catch (const std::exception& e)
+                {
+                    return error_status(e);
+                }
+            }
+            const auto values = hub_.latest_of({request->peers().begin(), request->peers().end()});
+            detail::time_to_proto(time, *reply->mutable_time());
+            reply->set_consistent(time.available && time.paused && !time.ended && none_after(values, time.now));
+            for (const auto& v : values)
+            {
+                auto* out = reply->add_values();
+                out->set_peer(v.participant);
+                out->set_incarnation(v.incarnation);
+                if (v.snapshot)
+                {
+                    detail::to_proto(*v.snapshot, *out->mutable_snapshot());
+                }
+            }
+            if (const auto bytes = reply->ByteSizeLong(); bytes > options_.max_snapshot_bytes)
+            {
+                return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                    "the snapshot of " + std::to_string(values.size()) + " peers has " + std::to_string(bytes)
+                                        + " bytes, more than the " + std::to_string(options_.max_snapshot_bytes)
+                                        + " a reply may have: name fewer peers in one request (GetSnapshotRequest.peers)");
+            }
+            return grpc::Status::OK;
+        });
+    }
     grpc::Status Pause(grpc::ServerContext* context, const v1::PauseRequest* r, v1::TimeState* reply) override
     {
         return guarded(context, "Pause", [&](const Call& call) -> grpc::Status {

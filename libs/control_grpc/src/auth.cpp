@@ -97,6 +97,7 @@ const std::vector<RpcRule>& rpc_rules()
         {kControlService, "Watch", Role::Viewer, false, "watch"},
         {kControlService, "ForgetPeer", Role::Operator, true, "forget a peer"},
         {kControlService, "GetTime", Role::Viewer, false, "read the time"},
+        {kControlService, "GetSnapshot", Role::Viewer, false, "read a snapshot"},
         {kControlService, "Pause", Role::Operator, true, "pause"},
         {kControlService, "Resume", Role::Operator, true, "resume"},
         {kControlService, "RunUntil", Role::Operator, true, "run until"},

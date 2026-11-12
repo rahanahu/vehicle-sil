@@ -152,11 +152,38 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
 時刻は仮想時間のナノ秒です（`ms()`、`s()` で作る）。呼び出しの失敗は `ControlError`（`code` は gRPC の状態コード）で、Agent が断った書き込みは例外ではなく、操作の結果（`invalid` など）になります。
 
 - 止めてから書くときは、`at` を止まっている時刻（`c.sim.time().now`）より後にします（たとえば 1 ns 後）。止まっている時刻のステップは、すでに走った Peer があるので、その時刻か `at` なしの書き込みは `late` になるか、反映のステップが実行ごとに変わることがあります。例外は、ランチャーの `--start-paused` で最初のステップの前に止まっているときです（上の「始まる前に書く」）。
+- 時刻と、複数の Peer の値を、同じ瞬間のものとして読むには `c.snapshot(peers=())` を使います（下の「時刻と値をまとめて読む」）。`c.sim.time()` と `c.values()` を別々に呼ぶと、その間にシミュレーションが進むことがあり、2 つの間に約束はありません。
 - `write()` は自動では送り直しません。応答を受け取る前に接続が切れた書き込みは、受け付けられているかもしれません（同じ書き込みを送り直すと、別の操作になります）。
 - 複数のクライアントが同じ変数に同じ時刻で書くと、残る値は Server に届いた順で決まります。
 - 時間の状態の購読（`watch(time=True)`）は約 100 ms ごとの最新で、短い一時停止は現れないことがあります。止まるのを待つには `c.sim.wait_paused()` を使います。
 - `peers()` と `watch()` は、同じ Peer を同じ内容で返します。`has_agent` は Agent がつながったことがあるか（既定は偽）、`simulation_state` は SIL Kit の状態です。`TimeState.running` が偽のとき、`ended` が真なら終わっていて、偽ならまだ始まっていません。
 - シミュレーションの状態の購読（`watch(simulation=True)`）は `SimulationState` を返します。必須の participant ごとの SIL Kit の状態（`participants`）、失敗した participant と理由（`failed_participant`、`failure_reason`）、終わったか（`ended`）が入ります。Server が状態を読めなかったときは、前の値に理由（`error`）が付きます。クライアントが遅くて Server が途中の状態を持ちきれなかったときは、捨てた数が gRPC の `Update.dropped` に入ります（Python の `watch()` はこの数を返しません。失敗と終わりは後の状態に残るので失われません）。`peers()` も、読めなかったときは、呼ぶたびに `ControlWarning` で知らせます（同じ箇所からの 2 回目以降も出します。出すか、例外にするか、無視するかは利用者の警告フィルターのとおりで、ライブラリはフィルターを変えません）。
+
+### 時刻と値をまとめて読む（`snapshot()`）
+
+```python
+c.sim.step(ms(100)); c.sim.wait_paused()
+snap = c.snapshot()                       # 全 Peer。c.snapshot(["Engine", "Body"]) で絞る
+if snap.consistent:                       # 値は、止まっている時刻 snap.time.now のもの
+    print(snap.time.now, snap.values["Engine"].values["engine.speed"])
+```
+
+`snapshot()`（gRPC の `GetSnapshot`）は、時間の状態（`sim.time()` と同じ `TimeState`）と、Peer ごとの最後の値（`values()` と同じ `Values`）を、Server が 1 回で読んで返します。Server は、時間の状態を先に読み、その後で全 Peer の値を同じ瞬間に読みます。約束は、シミュレーションの時刻で動く Peer について、Server が時間を操作できる（`time.available`）ときのものです。
+
+- いつでも（動いている間も）: 値は時刻より古くありません。`time.now` より前に始まった各 Peer のステップの値は、すべて入っています。値のほうが新しいことはあります（読む間にシミュレーションが進んだ分）。
+- `consistent` が真: 時刻は `time.now` で止まっていて（`time.paused`）、どの値も `time.now` より後のステップのものではありません。値は、止まっている時刻のものです（`time.now` より前のステップは全部、後のステップは 1 つもない）。
+  - ちょうど `time.now` に始まるステップの値は、入っているかどうか決まりません（止まっている間に届きます）。どちらかは `Values.time` でわかります。
+  - 止まるのを待って（`sim.wait_paused()`）から呼び、その間にだれもシミュレーションを進めなければ、`consistent` は真です。
+- 前提と限り:
+  - この約束は、ECU が値をステップの中から送っているかぎりのものです（`ecu_main` で作った ECU はそうします）。破れると、ランチャーが警告 `control-link-late-values` を出します。そのときは `consistent` が真でも、値が欠けていることがあります。
+  - 「ステップの値」は、その時刻より前に読んだ最後のサンプルです（Agent が読むのは `sample_period` ごとで、ステップより長いことがあります）。
+  - 実時間の Peer（シミュレーションの時刻で動かない Peer）の値には、約束がありません。どの Peer が実時間かは、この API からはわかりません。
+  - 切れた Peer の最後の値は、そのまま入っています。つながっているかは `c.peers()` で見ます。
+  - 止まった直後は、同じ時刻でも、ちょうどその時刻のステップの値が届く前と後の 2 通りの応答がありえます（どちらも `consistent` は真）。届いたかどうかは `Values.time` でわかります。
+- `consistent` が偽: 動いている、終わっている、呼び出しの間に進んで後のステップの値が入った、Server が時間を操作しない（`--required` のない単独の Control Server）、のどれかです。シミュレーションの時刻で動かない Peer（実時間の Peer）の値が `time.now` より後の時刻を持つときも偽です（その Peer を除いて呼べば、ほかの Peer について判定できます）。値と時刻は、偽でも入っています。
+- `values` には、値を持つ Peer だけが入ります。まだ値のない Peer、Agent のない participant、知らない名前は入りません。gRPC の応答（`GetSnapshotReply.values`）は、名前を挙げたときは挙げた順に 1 つずつ（同じ名前は 1 回）、挙げなければ Agent を持つ Peer を名前の順に並べ、値のない Peer は `snapshot` なし、Agent のない名前は `incarnation` も空です。値の並びは、その `incarnation` のスキーマ（`ListPeers`）の順です。
+- 役割は viewer で呼べます。1 回に挙げられる名前は 1024 個までです（`INVALID_ARGUMENT`）。応答が 1 つのメッセージの上限（4 MiB）を超えるときは `RESOURCE_EXHAUSTED` で、文言のとおり、Peer を分けて呼びます（分けた呼び出しどうしの間に約束はありません）。
+- この呼び出しを持たない前の版の Server では、`ControlError`（`code` は `UNIMPLEMENTED`）になります。そのときは `sim.time()` と `values()` を使います（2 つの間に約束はありません）。
 
 ## CLI
 
@@ -220,4 +247,4 @@ admin      lead     7b21e4...
 - リセット、participant の起動と再起動、CAN/LIN のチャネルの選択はありません。ランチャーの Control Server は、そのランチャーの 1 回の実行だけを扱い、実行が終わると閉じます。
 - Peer の `status`（Python の `Peer.failed` と `error`、CLI の `FAILED`）は、いつも空です（ECU の Agent はこれを送りません）。participant の失敗は、シミュレーションの状態（`watch(simulation=True)` の `failed_participant` と `failure_reason`）で読みます。
 - 値の購読は最新値です（読む前に来た新しい値で置き換えます）。すべての値の記録は、SIL Kit のトレースか `TapPort` を使います。
-- 1 回の `write()` の書き込みは 4096 個まで、同時に待つ呼び出しと購読は合わせて 256 本まで（Server の既定）です。
+- 1 回の `write()` の書き込みは 4096 個まで、1 回の `snapshot()` の Peer の名前は 1024 個まで、同時に待つ呼び出しと購読は合わせて 256 本まで（Server の既定）です。
