@@ -13,8 +13,8 @@
 
 | 役割 | 読む順 | 読まなくてよいもの |
 |---|---|---|
-| ECU を書く人（C/C++ で 1 つの ECU を作る） | 「[最初の ECU を動かす](#最初の-ecu-を動かす)」→ [examples/getting_started](examples/getting_started) → [docs/j1939-guide.md](docs/j1939-guide.md) → [docs/j1939-codec.md](docs/j1939-codec.md) → [docs/ecu-executable.md](docs/ecu-executable.md)。LIN を使うときは「[LIN](#lin)」も | docs/simulation-config.md、docs/dependencies.md、docs/code-map.md。docs/architecture.md は、契約や制限を確かめるときに該当する節だけ |
-| まとめる人（各自の ECU の実行ファイルを 1 つのシミュレーションにする） | [docs/ecu-executable.md](docs/ecu-executable.md) → [docs/simulation-config.md](docs/simulation-config.md) | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md |
+| ECU を書く人（C/C++ で 1 つの ECU を作る） | 「[最初の ECU を動かす](#最初の-ecu-を動かす)」→ [examples/getting_started](examples/getting_started) → 手引き「[最初の ECU を作る](docs/howto/first-ecu.md)」（実行ファイルにして、構成ファイルで動かし、Python から変数を読み書きするまで）→ [docs/j1939-guide.md](docs/j1939-guide.md) → [docs/j1939-codec.md](docs/j1939-codec.md) → [docs/ecu-executable.md](docs/ecu-executable.md)。LIN を使うときは「[LIN](#lin)」も | docs/simulation-config.md、docs/dependencies.md、docs/code-map.md。docs/architecture.md は、契約や制限を確かめるときに該当する節だけ |
+| まとめる人（各自の ECU の実行ファイルを 1 つのシミュレーションにする） | 手引き「[ECU をまとめて動かす](docs/howto/integrate-ecus.md)」→ [docs/ecu-executable.md](docs/ecu-executable.md) → [docs/simulation-config.md](docs/simulation-config.md) | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md |
 | 外から操作する人（Python、CLI、試験） | [docs/control-api.md](docs/control-api.md)（`vehicle_sil_launch run --control` で、ランチャーの Control Server につなぐ）→ [examples/launch_control](examples/launch_control) → [docs/simulation-config.md](docs/simulation-config.md) の「機械から使う」（事象と命令）。変数の名前は、`ecu_main` で作った ECU の実行ファイルなら `--describe` の `variables` で調べる（[docs/ecu-executable.md](docs/ecu-executable.md) の「JSON の形式」） | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md。docs/control-api.md の「単独の Control Server」は、ランチャーを使わないときだけ |
 | 実機の CAN につなぐ人 | 「[Vector XL CAN Bridge（Windows）](#vector-xl-can-bridgewindows)」→ [docs/architecture.md](docs/architecture.md) の「Vector XL CAN Bridge」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/simulation-config.md、docs/code-map.md |
 | vehicle-sil 自体を直す人 | [AGENTS.md](AGENTS.md) → [docs/code-map.md](docs/code-map.md) → [docs/architecture.md](docs/architecture.md) → [docs/dependencies.md](docs/dependencies.md) | なし（利用者向けの文書は、変える機能のものを読む） |
@@ -70,7 +70,7 @@
 | `tests/` | ユニットテスト、複数プロセスの統合テスト、FetchContent テスト |
 | `external/` | SIL Kit（Git サブモジュール、コミット固定） |
 | `patches/` | SIL Kit に当てるパッチ（上流への提出用の形式） |
-| `docs/` | [J1939 のノードの作り方](docs/j1939-guide.md)、[J1939 の型付きメッセージ](docs/j1939-codec.md)、[Control API の使い方](docs/control-api.md)、[ECU の実行ファイル](docs/ecu-executable.md)、[構成ファイルと照合](docs/simulation-config.md)、[アーキテクチャと将来の制約](docs/architecture.md)、[依存ライブラリ](docs/dependencies.md)、[コードの地図](docs/code-map.md) |
+| `docs/` | 目的別の手引き（[最初の ECU を作る](docs/howto/first-ecu.md)、[ECU をまとめて動かす](docs/howto/integrate-ecus.md)）、[J1939 のノードの作り方](docs/j1939-guide.md)、[J1939 の型付きメッセージ](docs/j1939-codec.md)、[Control API の使い方](docs/control-api.md)、[ECU の実行ファイル](docs/ecu-executable.md)、[構成ファイルと照合](docs/simulation-config.md)、[アーキテクチャと将来の制約](docs/architecture.md)、[依存ライブラリ](docs/dependencies.md)、[コードの地図](docs/code-map.md) |
 
 ## 必要なもの
 
