@@ -260,7 +260,9 @@
             <mat-card-content>
               @if (stderr.first.length > 0) {
                 <details class="stderr-first">
-                  <summary i18n>最初の {{ stderr.first.length }} 行</summary>
+                  <summary i18n>
+                    {stderr.first.length, plural, other {最初の {{ stderr.first.length }} 行}}
+                  </summary>
                   <pre class="stderr" lang="en" data-testid="stderr-first">{{
                     stderr.first.join('\n')
                   }}</pre>
@@ -268,11 +270,13 @@
               }
               @if (stderr.skipped > 0) {
                 <p class="stderr-gap" data-testid="stderr-gap" i18n>
-                  … ここで {{ stderr.skipped }} 行を省きました …
+                  {stderr.skipped, plural, other {… ここで {{ stderr.skipped }} 行を省きました …}}
                 </p>
               }
               @if (stderr.first.length > 0) {
-                <p class="stderr-label" i18n>最後の {{ stderr.last.length }} 行</p>
+                <p class="stderr-label" i18n>
+                  {stderr.last.length, plural, other {最後の {{ stderr.last.length }} 行}}
+                </p>
               }
               <pre class="stderr last" lang="en" data-testid="stderr-last">{{
                 stderr.last.join('\n')
@@ -303,8 +307,9 @@
               }
               @if (problemGroups().explained.length > 0) {
                 <details class="explained" data-testid="problems-explained">
+                  @let explained = problemGroups().explained.length;
                   <summary i18n>
-                    詳細（画面に説明のある知らせ {{ problemGroups().explained.length }} 件）
+                    {explained, plural, other {詳細（画面に説明のある知らせ {{ explained }} 件）}}
                   </summary>
                   <ul class="problems">
                     @for (problem of problemGroups().explained; track problem.code) {
@@ -321,7 +326,9 @@
               }
               @if (problemGroups().hidden > 0) {
                 <p class="hint" i18n>
-                  ほかに {{ problemGroups().hidden }} 件あります（出していません）。
+                  {problemGroups().hidden, plural,
+                    other {ほかに {{ problemGroups().hidden }} 件あります（出していません）。}
+                  }
                 </p>
               }
             </mat-card-content>

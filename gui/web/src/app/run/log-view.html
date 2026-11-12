@@ -29,22 +29,28 @@
 </div>
 
 <p class="count" data-testid="log-count">
-  <ng-container i18n>{{ shownCount() }} 行</ng-container>
+  <ng-container i18n>{shownCount(), plural, other {{{ shownCount() }} 行}}</ng-container>
   @if (shownCount() !== visibleCount()) {
-    <ng-container i18n>（全 {{ visibleCount() }} 行）</ng-container>
+    <ng-container i18n
+      >（全 {visibleCount(), plural, other {{{ visibleCount() }} 行}}）</ng-container
+    >
   }
 </p>
 @if (dropped().length > 0) {
   <p class="dropped" data-testid="log-dropped">
     <ng-container i18n>古い行を落としました:</ng-container>
     @for (entry of dropped(); track entry.name) {
-      <span class="dropped-source" i18n>{{ entry.name }} {{ entry.count }} 行</span>
+      <span class="dropped-source" i18n
+        >{{ entry.name }} {entry.count, plural, other {{{ entry.count }} 行}}</span
+      >
     }
   </p>
 }
 @if (newer() > 0) {
   <p class="newer">
-    <ng-container i18n>読んでいる間に {{ newer() }} 行が届きました。</ng-container>
+    <ng-container i18n>{newer(), plural,
+      other {読んでいる間に {{ newer() }} 行が届きました。}
+    }</ng-container>
     <button matButton type="button" data-testid="log-to-end" (click)="toEnd()" i18n>末尾へ</button>
   </p>
 }
@@ -70,13 +76,17 @@
     <span class="from">{{ line.source }}</span>
     @if (line.gap; as gap) {
       @if (gap.launcher) {
-        <span data-testid="log-gap" i18n
-          >── ここで {{ gap.count }} 行が落ちました（ランチャーが書けなかった行） ──</span
-        >
+        <span data-testid="log-gap" i18n>{gap.count, plural,
+          other {── ここで {{ gap.count }} 行が落ちました（ランチャーが書けなかった行） ──}
+        }</span>
       } @else if (gap.atLeast) {
-        <span data-testid="log-gap" i18n>── ここで {{ gap.count }} 行以上が落ちました ──</span>
+        <span data-testid="log-gap" i18n>{gap.count, plural,
+          other {── ここで {{ gap.count }} 行以上が落ちました ──}
+        }</span>
       } @else {
-        <span data-testid="log-gap" i18n>── ここで {{ gap.count }} 行が落ちました ──</span>
+        <span data-testid="log-gap" i18n>{gap.count, plural,
+          other {── ここで {{ gap.count }} 行が落ちました ──}
+        }</span>
       }
     } @else {
       <span lang="en">{{ line.line }}</span>
