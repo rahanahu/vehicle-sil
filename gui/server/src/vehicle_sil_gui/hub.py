@@ -11,6 +11,10 @@ A screen that asked for it in its auth (`session_without_check`) gets the `sessi
 `check` (it has the check from hello and the `check` event; it does not change during a run and can be large).
 That text is made once per message, when the message is queued (the summary shares lists with the session, which
 change later), without encoding the check a second time.
+
+The values of a watch are not queued as text: the watch itself waits in the queue, at most once (put_deferred),
+and its message is made when the queue comes to it, from the values at that time. A slow screen so gets the
+latest values each time it reads, costs nothing in between, and its queue does not grow with the values.
 """
 
 from __future__ import annotations
@@ -44,7 +48,7 @@ def encode(message: dict) -> str:
 class Outgoing:
     """One message for the screens, as text, with what a slow screen's queue needs to know about it."""
 
-    __slots__ = ("text", "text_without_check", "size", "kind", "session", "source", "counts")
+    __slots__ = ("text", "text_without_check", "size", "kind", "session", "source", "counts", "variables_of")
 
     def __init__(self, message: dict, log_key: Callable[[str], str] | None = None):
         """log_key: the name a log line's source has in the session's summary (where the `dropped` counts of
@@ -57,6 +61,9 @@ class Outgoing:
             self.text_without_check = encode({**message, "session": {k: v for k, v in summary.items()
                                                                       if k != "check"}})
         self.session = message.get("session") if isinstance(message.get("session"), int) else None
+        # The run whose variables this message tells (a `variables` message): after it, the values of that run
+        # may be sent to the screen (Client.variables_of).
+        self.variables_of = self.session if message.get("type") == "variables" else None
         self.source = None
         self.counts: dict[str, int] | None = None
         self.kind = "keep"
@@ -116,6 +123,10 @@ class Client:
         self.resyncs = 0
         self.sheds = 0
         self.without_check = False  # session messages without the summary's check (session_without_check)
+        self.deferred: set = set()  # the items of put_deferred that wait in the queue
+        # The run whose variables this screen was last sent (hello's summary, or a `variables` message): a `values`
+        # message of another run would come before the screen knows the run it belongs to.
+        self.variables_of: int | None = None
 
     def put(self, item: Outgoing) -> None:
         if self.items and (self.items[0] is RESYNC or self.items[-1] is CLOSE):
@@ -125,6 +136,25 @@ class Client:
         if len(self.items) > self.limit or self.bytes > self.max_bytes:
             self._shed()
         self.ready.set()
+
+    def put_deferred(self, item) -> None:
+        """Queues an item whose text is made when it is sent (item.render() -> str or None for nothing; item.size
+        is 0). An item that already waits is not queued again: it will send what is latest then."""
+        if item in self.deferred or (self.items and (self.items[0] is RESYNC or self.items[-1] is CLOSE)):
+            return
+        self.deferred.add(item)
+        self.items.append(item)
+        self.ready.set()
+
+    def drop_deferred(self, item) -> None:
+        """Takes an item of put_deferred out of the queue (a watch that has ended): it does not wait there for a
+        screen that does not read."""
+        if item in self.deferred:
+            self.deferred.discard(item)
+            try:
+                self.items.remove(item)
+            except ValueError:
+                pass
 
     def _shed(self) -> None:
         """Drops what can be dropped; when that is not enough, everything (resync)."""
@@ -160,12 +190,15 @@ class Client:
                 notice.events += 1
         self.items = kept
         self.bytes = sum(item.size for item in kept if not isinstance(item, _Marker))
-        if len(kept) > 1 and (len(kept) > self.limit or self.bytes > self.max_bytes):
+        waiting = len(kept) - len(self.deferred)  # the deferred ones are few, hold nothing, and are never dropped
+        if waiting > 1 and (waiting > self.limit or self.bytes > self.max_bytes):
             self.items = deque([RESYNC])
+            self.deferred.clear()
             self.bytes = 0
             self.resyncs += 1
 
     def close(self) -> None:
+        self.deferred.clear()
         self.items = deque([CLOSE])
         self.bytes = 0
         self.ready.set()
@@ -175,8 +208,10 @@ class Client:
             self.ready.clear()
             await self.ready.wait()
         item = self.items.popleft()
+        self.deferred.discard(item)
         if item is RESYNC:  # what is still queued is in the snapshot taken next
             self.items.clear()
+            self.deferred.clear()
             self.bytes = 0
         elif not isinstance(item, _Marker):
             self.bytes -= item.size
@@ -222,8 +257,14 @@ class Hub:
         if self.closed:
             return
         self.clients.add(client)
+        def told(messages: list[dict]) -> list[str]:
+            for m in messages:
+                if m.get("type") == "hello":
+                    client.variables_of = m["session"]["id"] if isinstance(m.get("session"), dict) else None
+            return [encode(m) for m in messages]
+
         try:
-            pending = [encode(m) for m in self.snapshot(session, from_seq)]
+            pending = told(self.snapshot(session, from_seq))
             while True:
                 for text in pending:
                     async with asyncio.timeout(SEND_TIMEOUT_S):
@@ -235,10 +276,19 @@ class Hub:
                     pending = [encode({"type": "resync", "reason": "slow-client",
                                        "message": "this screen read too slowly and messages were dropped: the "
                                                   "state is sent again from the start"})]
-                    pending += [encode(m) for m in self.snapshot(None, None)]
-                elif client.without_check and isinstance(item, Outgoing):
-                    pending = [item.text_without_check]
-                else:
+                    pending += told(self.snapshot(None, None))
+                elif isinstance(item, Outgoing):
+                    if item.variables_of is not None:
+                        client.variables_of = item.variables_of
+                    pending = [item.text_without_check if client.without_check else item.text]
+                elif isinstance(item, _Dropped):
                     pending = [item.text]
+                else:  # deferred: made now
+                    try:
+                        text = item.render()
+                    except Exception:
+                        log.exception("a message for a screen could not be made")
+                        text = None
+                    pending = [] if text is None else [text]
         finally:
             self.clients.discard(client)

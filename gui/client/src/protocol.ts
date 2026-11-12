@@ -843,7 +843,20 @@ export interface AppInfo {
     step_ms_max: number;
     /** 照合の時間の上限（秒。`--check-timeout`）。古いサーバーは書かないので、その既定（120）。 */
     check_timeout_s: number;
+    /** 変数の watch: 間隔（ミリ秒）の下限と上限、接続ごとの数、1 つに名前で挙げられる変数の数。 */
+    watch_period_ms_min: number;
+    watch_period_ms_max: number;
+    watches: number;
+    watch_variables: number;
+    /** 1 回の書き込みの変数の数の上限と、書き込みに指定できる仮想時刻（ミリ秒）の上限。 */
+    writes_per_request: number;
+    write_at_ms_max: number;
   };
+  /**
+   * いま実行を始めたら変数を読み書きできるか（ランチャーが Control Server を持ち、GUI サーバーが gRPC を持つ）と、
+   * できない理由（英語のまま出す）。古いサーバーは書かない（available は false、reason は null）。
+   */
+  variables: { available: boolean; reason: string | null };
 }
 
 export const readAppInfo = (value: unknown): AppInfo => {
@@ -854,6 +867,8 @@ export const readAppInfo = (value: unknown): AppInfo => {
   const launcher = field(f, path, 'launcher', object);
   const launcherVersion = field(launcher, lp, 'version', nullable(object));
   const limits = field(f, path, 'limits', object);
+  const lim = `${path}.limits`;
+  const variables = field(f, path, 'variables', optional(object, null));
   return {
     version: field(f, path, 'version', string),
     instance: field(f, path, 'instance', string),
@@ -872,7 +887,19 @@ export const readAppInfo = (value: unknown): AppInfo => {
       speed_max: field(limits, `${path}.limits`, 'speed_max', number),
       step_ms_max: field(limits, `${path}.limits`, 'step_ms_max', optional(number, 1e12)),
       check_timeout_s: field(limits, `${path}.limits`, 'check_timeout_s', optional(number, 120)),
+      watch_period_ms_min: field(limits, lim, 'watch_period_ms_min', optional(number, 20)),
+      watch_period_ms_max: field(limits, lim, 'watch_period_ms_max', optional(number, 60_000)),
+      write_at_ms_max: field(limits, lim, 'write_at_ms_max', optional(number, 1e12)),
+      watches: field(limits, lim, 'watches', optional(number, 16)),
+      watch_variables: field(limits, lim, 'watch_variables', optional(number, 2000)),
+      writes_per_request: field(limits, lim, 'writes_per_request', optional(number, 256)),
     },
+    variables: variables
+      ? {
+          available: field(variables, `${path}.variables`, 'available', boolean),
+          reason: field(variables, `${path}.variables`, 'reason', nullable(string)),
+        }
+      : { available: false, reason: null },
   };
 };
 
@@ -1193,6 +1220,165 @@ export const readTimeResponse = (value: unknown): TimeAnswer => {
 // --- GUI サーバー: WebSocket -------------------------------------------------------------------
 
 /** つないだ直後に送る最初のメッセージ。session と from_seq を言うと、その続きから再送される。 */
+/** 変数 1 つの定義（要約の `variables.peers[].variables[]`）。 */
+export interface VariableSummary {
+  name: string;
+  type: Open<'bool' | 'integer' | 'real' | 'enum'>;
+  role: Open<'input' | 'output' | 'parameter'>;
+  writable: boolean;
+  unit: string;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  description: string;
+  /** 列挙の項目（type が enum のとき。ほかは null）。 */
+  enum: { name: string; value: number }[] | null;
+}
+
+/** 書き込みの結果（`operation` の通知と、要約の `variables.operations[]`）。 */
+export interface OperationReport {
+  seq: number;
+  /** sent、queued（途中）。確定したら applied、late、rejected、cancelled、invalid、busy、unknown、mixed。 */
+  state: string;
+  done: boolean;
+  peers: Record<
+    string,
+    { state: string; applied_at_ms: number | null; late: boolean; reason: string | null }
+  >;
+}
+
+/** 要約の `variables`: 変数の機能の状態、participant ごとの変数、最近の操作。 */
+export interface VariablesSummary {
+  state: Open<'off' | 'connecting' | 'ready' | 'failed' | 'ended'>;
+  reason: string | null;
+  peers: { name: string; connected: boolean; variables: VariableSummary[] }[];
+  peers_omitted: number;
+  variables_omitted: number;
+  operations: OperationReport[];
+}
+
+const readOperationReport: Reader<OperationReport> = (value, path) => {
+  const f = object(value, path);
+  return {
+    seq: field(f, path, 'seq', integer),
+    state: field(f, path, 'state', string),
+    done: field(f, path, 'done', boolean),
+    peers: field(
+      f,
+      path,
+      'peers',
+      record((v, p) => {
+        const t = object(v, p);
+        return {
+          state: field(t, p, 'state', string),
+          applied_at_ms: field(t, p, 'applied_at_ms', optional(nullable(number), null)),
+          late: field(t, p, 'late', optional(boolean, false)),
+          reason: field(t, p, 'reason', optional(nullable(string), null)),
+        };
+      }),
+    ),
+  };
+};
+
+const readVariableSummary: Reader<VariableSummary> = (value, path) => {
+  const f = object(value, path);
+  return {
+    name: field(f, path, 'name', string),
+    type: field(f, path, 'type', string),
+    role: field(f, path, 'role', optional(string, 'output')),
+    writable: field(f, path, 'writable', optional(boolean, false)),
+    unit: field(f, path, 'unit', optional(string, '')),
+    min: field(f, path, 'min', optional(nullable(number), null)),
+    max: field(f, path, 'max', optional(nullable(number), null)),
+    step: field(f, path, 'step', optional(nullable(number), null)),
+    description: field(f, path, 'description', optional(string, '')),
+    enum: field(
+      f,
+      path,
+      'enum',
+      optional(
+        nullable(
+          array((v, p) => {
+            const item = object(v, p);
+            return { name: field(item, p, 'name', string), value: field(item, p, 'value', number) };
+          }),
+        ),
+        null,
+      ),
+    ),
+  };
+};
+
+/** 要約の `variables` を読む（`hello` と HTTP の要約にある。`session` の通知にはない）。 */
+export const readVariablesSummary = (value: unknown): VariablesSummary =>
+  readVariables(value, 'variables');
+
+const readVariables: Reader<VariablesSummary> = (value, path) => {
+  const f = object(value, path);
+  return {
+    state: field(f, path, 'state', string),
+    reason: field(f, path, 'reason', optional(nullable(string), null)),
+    peers: field(
+      f,
+      path,
+      'peers',
+      optional(
+        array((v, p) => {
+          const peer = object(v, p);
+          return {
+            name: field(peer, p, 'name', string),
+            connected: field(peer, p, 'connected', optional(boolean, false)),
+            variables: field(peer, p, 'variables', optional(array(readVariableSummary), [])),
+          };
+        }),
+        [],
+      ),
+    ),
+    peers_omitted: field(f, path, 'peers_omitted', optional(integer, 0)),
+    variables_omitted: field(f, path, 'variables_omitted', optional(integer, 0)),
+    operations: field(f, path, 'operations', optional(array(readOperationReport), [])),
+  };
+};
+
+/** `values` の通知: watch している変数の最後の値と、それがいつのものか。 */
+export interface ValuesMessage {
+  type: 'values';
+  /** watch の id。 */
+  id: number;
+  session: number;
+  /** controller の仮想時間（ミリ秒。わからなければ null）。 */
+  sim_ms: number | null;
+  /** true: 止まっていて、sim_ms より前に始まったステップの値は全部入っている。 */
+  paused: boolean;
+  /** participant ごとの、値を読んだステップの仮想時間と、変数の値（有限でない実数は null）。 */
+  peers: Record<string, { sample_ms: number; values: Record<string, number | boolean | null> }>;
+}
+
+/** `api/write` の応答。 */
+export interface WriteAnswer {
+  session_id: number;
+  /** 操作の番号。結果は `operation` の通知で届く。 */
+  operation: number;
+}
+
+export const readWriteResponse = (value: unknown): WriteAnswer => {
+  const f = object(value, 'response');
+  return {
+    session_id: field(f, 'response', 'session_id', integer),
+    operation: field(f, 'response', 'operation', integer),
+  };
+};
+
+/** 認証の後に画面が送る通知: 変数の watch を始める（同じ id なら置き換える）、やめる。 */
+export type WatchMessage =
+  | {
+      type: 'watch';
+      id: number;
+      variables: 'all' | { peer: string; name: string }[];
+      period_ms?: number;
+    }
+  | { type: 'unwatch'; id: number };
+
 export interface AuthMessage {
   type: 'auth';
   token: string;
@@ -1243,7 +1429,13 @@ export type ServerMessage =
   /** 送らなかったものの数。 */
   | Dropped
   /** 画面が読むのが遅く、メッセージを落とした。続けて hello から送り直される。 */
-  | { type: 'resync'; message: string };
+  | { type: 'resync'; message: string }
+  /** 変数の機能の状態か一覧が変わった（実行が始まった直後にも 1 回）。 */
+  | { type: 'variables'; session: number; variables: VariablesSummary }
+  /** watch している変数の値。 */
+  | ValuesMessage
+  /** 書き込みの結果が変わった。 */
+  | ({ type: 'operation'; session: number } & OperationReport);
 
 /** WebSocket の通知を 1 つ読む。知らない通知と、知らない事象を包んだ通知は null（読み飛ばす）。 */
 export const readServerMessage = (value: unknown): ServerMessage | null => {
@@ -1288,6 +1480,46 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
       };
     case 'resync':
       return { type, message: field(f, path, 'message', optional(string, '')) };
+    case 'variables':
+      return {
+        type,
+        session: field(f, path, 'session', integer),
+        variables: field(f, path, 'variables', readVariables),
+      };
+    case 'values':
+      return {
+        type,
+        id: field(f, path, 'id', integer),
+        session: field(f, path, 'session', integer),
+        sim_ms: field(f, path, 'sim_ms', nullable(number)),
+        paused: field(f, path, 'paused', boolean),
+        peers: field(
+          f,
+          path,
+          'peers',
+          record((v, p) => {
+            const peer = object(v, p);
+            return {
+              sample_ms: field(peer, p, 'sample_ms', number),
+              values: field(
+                peer,
+                p,
+                'values',
+                record((x, xp) => {
+                  if (x !== null && typeof x !== 'boolean') return number(x, xp);
+                  return x;
+                }),
+              ),
+            };
+          }),
+        ),
+      };
+    case 'operation':
+      return {
+        type,
+        session: field(f, path, 'session', integer),
+        ...readOperationReport(value, path),
+      };
     default:
       return null;
   }

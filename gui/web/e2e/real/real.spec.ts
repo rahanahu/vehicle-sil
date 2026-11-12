@@ -157,3 +157,23 @@ test.describe('screenshots', () => {
     });
   }
 });
+
+test('started paused: the screen resumes the run from before its first step, and it passes', async ({
+  page,
+}) => {
+  // Control Server を持つランチャーは、最初のステップの前で待つ（time の事象を書かない）。持たないランチャーは、
+  // 時刻 0 のステップの後に止まる。どちらでも、画面の「再開」で最後まで走る
+  await choose(page, 'simulation.yaml');
+  await page.getByTestId('start-paused').getByRole('checkbox').check();
+  const session = await start(page);
+  await expect(page.getByTestId('resume')).not.toHaveAttribute('aria-disabled', 'true', {
+    timeout: RUN_TIMEOUT,
+  });
+  const sent = page.waitForRequest((r) => r.url().endsWith('/api/time'));
+  await page.getByTestId('resume').click();
+  expect((await sent).postDataJSON()).toEqual({ command: 'resume' });
+  await expect(result(page, session).getByTestId('result')).toContainText('成功', {
+    timeout: RUN_TIMEOUT,
+  });
+  await expect(page.getByTestId('sim-time')).toHaveText('1.000 s');
+});

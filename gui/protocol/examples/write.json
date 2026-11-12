@@ -1,0 +1,20 @@
+{
+  "description": "A write: checked against the schema and given to the run's control server (what became of it comes as operation messages).",
+  "request": {
+    "method": "POST",
+    "path": "api/write",
+    "body": {
+      "writes": {
+        "Engine": {
+          "engine.demand": 40,
+          "engine.mode": "on"
+        }
+      }
+    }
+  },
+  "status": 200,
+  "response": {
+    "session_id": 1,
+    "operation": 1
+  }
+}

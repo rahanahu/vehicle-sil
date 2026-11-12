@@ -230,8 +230,13 @@ def check_command(launcher: Launcher, file: str, disable: list[str]) -> list[str
 
 
 def run_command(launcher: Launcher, file: str, disable: list[str], speed: float | str | None,
-                start_paused: bool) -> list[str]:
+                start_paused: bool, control_credentials: Path | None = None) -> list[str]:
+    """control_credentials: start the launcher's control server (the ECUs' variables) on a free port of
+    127.0.0.1, with the credentials of that file (a token is never an argument: arguments are in the hello
+    event and in the list of processes)."""
     argv = launcher.prefix + ["run", "--events", "--stdin-commands"]
+    if control_credentials is not None:
+        argv += ["--control", "0", "--control-credentials", str(control_credentials)]
     for name in disable:
         argv += ["--disable", name]
     if speed is not None:

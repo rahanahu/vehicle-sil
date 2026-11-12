@@ -9,6 +9,8 @@ import {
   readServerMessage,
   readSessionResponse,
   readTimeResponse,
+  readVariablesSummary,
+  readWriteResponse,
 } from './protocol';
 
 /** 要求のパスごとの、成功の応答を読む関数。 */
@@ -20,6 +22,7 @@ const READERS: Record<string, (value: unknown) => unknown> = {
   'POST api/stop': readSessionResponse,
   'POST api/time': readTimeResponse,
   'GET api/session': readSessionResponse,
+  'POST api/write': readWriteResponse,
 };
 
 describe('the readers accept every example of gui/protocol', () => {
@@ -125,11 +128,14 @@ describe('the readers accept every example of gui/protocol', () => {
         }
       }
       for (const message of example.client) {
-        // 画面が送る最初のメッセージの欄（AuthMessage）
+        // 画面が送るメッセージの欄: 最初のメッセージ（AuthMessage）と、変数の watch（WatchMessage）
+        const keys =
+          (message as { type?: string }).type === 'auth'
+            ? ['type', 'token', 'session', 'from_seq', 'session_without_check']
+            : ['type', 'id', 'variables', 'period_ms'];
         expect(
-          Object.keys(message as object).every((key) =>
-            ['type', 'token', 'session', 'from_seq', 'session_without_check'].includes(key),
-          ),
+          Object.keys(message as object).every((key) => keys.includes(key)),
+          `${example.name}: ${JSON.stringify(message)}`,
         ).toBe(true);
       }
     }
@@ -311,5 +317,37 @@ describe('the readers refuse what they cannot read', () => {
     expect(errorMessage(error)).toBe('HTTP 502 Bad Gateway');
     expect(error.problem).toBeNull();
     expect(errorMessage(new HttpError(0, '', null))).toBe('HTTP 0');
+  });
+
+  it('reads the variables of every summary that has them', async () => {
+    const summaries = (await webSocketExamples())
+      .flatMap((example) => example.server)
+      .flatMap((message) => {
+        const m = message as {
+          type: string;
+          session?: { variables?: unknown };
+          variables?: unknown;
+        };
+        return m.type === 'hello' && m.session
+          ? [m.session.variables]
+          : m.type === 'variables'
+            ? [m.variables]
+            : [];
+      });
+    const read = summaries.map((summary) => readVariablesSummary(summary));
+    expect(read.length).toBeGreaterThan(10);
+    expect(new Set(read.map((v) => v.state))).toEqual(
+      new Set(['off', 'connecting', 'ready', 'failed', 'ended']),
+    );
+    const ready = read.find((v) => v.state === 'ready');
+    expect(ready?.peers[0].variables[0]).toMatchObject({
+      name: 'engine.demand',
+      type: 'real',
+      writable: true,
+    });
+    expect(ready?.peers[0].variables[2].enum).toEqual([
+      { name: 'off', value: 0 },
+      { name: 'on', value: 1 },
+    ]);
   });
 });

@@ -17,6 +17,7 @@ import time
 from array import array
 from bisect import bisect_left, insort
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import islice
@@ -45,6 +46,9 @@ SERVER_PROBLEMS = frozenset({"kept-limit", "no-result", "output-left-open", "sto
 SILENT_AFTER_S = 5.0
 STDERR = "launcher-stderr"
 STOP_NONE, STOP_REQUESTED, STOP_FORCED = "none", "requested", "forced"
+# The summary's `variables` of a run without any (variables.Variables.summary makes the others).
+NO_VARIABLES = {"state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
+                "operations": []}
 
 
 @dataclass(frozen=True)
@@ -272,6 +276,9 @@ class Session:
         self._small_problems: list[dict] = []
         self.last_line_at = time.monotonic()  # when the launcher last wrote a line (or started)
         self.silent_s: int | None = None  # how long it has written nothing, once that is SILENT_AFTER_S or more
+        # The ECUs' variables of the run (the schema, the state, the last operations), made by the server's
+        # variables.Variables when a summary is asked for. Not in the `session` messages (see message).
+        self.variables: Callable[[], dict] | None = None
 
     # ------------------------------------------------------------ input
 
@@ -606,8 +613,8 @@ class Session:
 
     # ------------------------------------------------------------ output
 
-    def summary(self) -> dict:
-        return {
+    def summary(self, variables: bool = True) -> dict:
+        out = {
             "id": self.id, "file": self.file, "disable": self.disable, "speed": self.speed,
             "start_paused": self.start_paused, "started_at": self.started_at, "ended_at": self.ended_at,
             "state": self.state,
@@ -622,9 +629,14 @@ class Session:
                     for source, log in self._logs.items()},
             "problems": self.problems, "problems_omitted": self.problems_omitted,
         }
+        if variables:
+            out["variables"] = self.variables() if self.variables is not None else dict(NO_VARIABLES)
+        return out
 
     def message(self) -> dict:
-        return {"type": "session", "session": self.summary()}
+        """The summary for the screens that are connected. Without `variables`: they are large, change seldom,
+        and have a message of their own when they do (`variables`); hello and the HTTP answers have them."""
+        return {"type": "session", "session": self.summary(variables=False)}
 
     def replay(self, from_seq: int | None) -> tuple[dict | None, list[dict]]:
         """(the dropped message, or None when nothing is missing; the log events to send), for a screen that

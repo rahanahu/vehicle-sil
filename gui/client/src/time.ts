@@ -2,6 +2,7 @@ import { HttpTransport, errorMessage } from './http';
 import { AppInfo, TimeCommand, TimeCommandName } from './protocol';
 import { CommandView, SessionView, TimeView } from './session-state';
 import { ErrorSink, Readable, Writable, derived, rethrowLater, shallowEqual } from './values';
+import { VariablesState } from './variables';
 
 /** ランチャーの features のうち、時刻にかかわるもの。 */
 export const FEATURE_SPEED = 'speed';
@@ -58,9 +59,17 @@ export interface TimeState {
   lastCommand: CommandView | null;
   /**
    * 時刻の命令を送れるか: ランチャーが対応し、セッションの写しが揃っていて、段階が running で、time の事象が来ていて、
-   * 結果がまだで、止めるよう頼んでいない。段階が stopping に進んだら、ランチャーはもう受け付けない。
+   * 結果がまだで、止めるよう頼んでいない。段階が stopping に進んだら、ランチャーはもう受け付けない。beforeStart の
+   * 間も送れる。
    */
   controllable: boolean;
+  /**
+   * 最初のステップの前（始まる前）で、再開かステップ送りを待っている実行か: 止めて始めた（start_paused）実行で、
+   * ランチャーが Control Server を持ち（変数の状態が off でない）、まだ動き出していない。この間、ランチャーは time の
+   * 事象を書かないが、再開とステップ送りを受け付け（一時停止は受け付けても進まない）、書いた変数は時刻 0 のステップで
+   * 反映される。
+   */
+  beforeStart: boolean;
   /**
    * 送って、まだ答えを見ていない命令（HTTP の応答か、ランチャーの command の事象を待っている）。その間は、次の命令を
    * 送らない（ダブルクリックや Enter の繰り返しで、ステップ送りが 2 回にならないように）。
@@ -130,12 +139,22 @@ export class TimeControl implements ClientTime {
     /** 答えを待つ時間（ミリ秒）。 */
     readonly answerTimeoutMs = ANSWER_TIMEOUT_MS,
     onError: ErrorSink = rethrowLater,
+    /** 変数の状態（beforeStart を決めるのに使う。なければ、いつも偽）。 */
+    private readonly variables: Readable<VariablesState> | null = null,
   ) {
     this.inFlight = new Writable<number>(0, Object.is, onError);
     this.pending = new Writable<Pending | null>(null, Object.is, onError);
     this.failureValue = new Writable<TimeFailure | null>(null, Object.is, onError);
     this.state = derived(
-      [session, ready, app, this.inFlight, this.pending, this.failureValue],
+      [
+        session,
+        ready,
+        app,
+        this.inFlight,
+        this.pending,
+        this.failureValue,
+        ...(variables ? [variables] : []),
+      ],
       () => this.compute(session.get(), ready.get(), app.get()),
       shallowEqual,
       onError,
@@ -232,13 +251,23 @@ export class TimeControl implements ClientTime {
     }
     this.lastLateness = lateness;
     const lastCommand = session?.lastCommand ?? null;
+    const variables = this.variables?.get();
+    const beforeStart =
+      !!session &&
+      session.startPaused &&
+      session.phase === 'waiting' &&
+      session.time === null &&
+      session.launcher.running &&
+      session.result === null &&
+      variables?.session === session.id &&
+      variables.status !== 'off' &&
+      variables.status !== 'unknown';
     const controllable =
       supported &&
       ready &&
       !!session &&
-      session.phase === 'running' &&
+      ((session.phase === 'running' && session.time !== null) || beforeStart) &&
       session.launcher.running &&
-      session.time !== null &&
       session.result === null &&
       session.stopRequests === 0;
     const pending = this.pending.get();
@@ -251,7 +280,7 @@ export class TimeControl implements ClientTime {
         (session.lastCommand?.seq ?? -1) > pending.afterSeq;
       sending = this.inFlight.get() > 0 || !answered ? pending.command : null;
     }
-    const paused = time?.paused ?? null;
+    const paused = time?.paused ?? (beforeStart ? true : null);
     const stepping = lastCommand?.name === 'step' && lastCommand.accepted && paused === false;
     const free = controllable && sending === null;
     const canResume = free && (paused === true || stepping);
@@ -264,6 +293,7 @@ export class TimeControl implements ClientTime {
       behind: (lateness?.lateSteps ?? 0) > 0,
       lastCommand,
       controllable,
+      beforeStart,
       sending,
       stepping,
       canPause: free && paused === false,

@@ -42,6 +42,10 @@ features events and stdin-commands in `version --json`. A path ending in .py run
 exit codes: 0 stopped (Ctrl+C, SIGTERM), 1 failed while running, 2 usage error, or the launcher or the port
 cannot be used (the message says what to do)
 
+The ECUs' variables are read from the launcher's control server (a launcher with the feature control-server;
+the server is started on a free port of 127.0.0.1 with a token made for each run). They need grpcio and protobuf
+in this Python; without them, or with --no-variables, everything else works.
+
 examples:
   vehicle-sil-gui examples/simulation.yaml          # root: the file's directory
   vehicle-sil-gui --root examples --no-browser --json"""
@@ -69,6 +73,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--silent-after", type=float, default=SILENT_AFTER_S, metavar="SECONDS",
                    help="tell the screen when a running launcher has written nothing for this long (it writes a "
                         f"heartbeat every second; default {SILENT_AFTER_S:g})")
+    p.add_argument("--no-variables", action="store_true",
+                   help="do not start the launcher's control server (run --control): the screen then shows no "
+                        "variables of the ECUs, and --start-paused stands still after the first step, not before it")
     p.add_argument("--version", action="version", version=f"vehicle-sil-gui {__version__}")
     return p.parse_args(argv)
 
@@ -143,7 +150,8 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
     token = secrets.token_urlsafe(32)
     server = GuiServer(Options(root=root, launcher=launcher, port=port, token=token, initial_file=initial,
                                dev_origin=args.dev_origin, web_dir=find_web_dir(), stop_timeout_s=args.stop_timeout,
-                               check_timeout_s=args.check_timeout, silent_after_s=args.silent_after))
+                               check_timeout_s=args.check_timeout, silent_after_s=args.silent_after,
+                               variables=not args.no_variables))
     runner = web.AppRunner(server.app(), access_log=None, handle_signals=False, shutdown_timeout=RUNNER_SHUTDOWN_S)
     await runner.setup()
     stop = asyncio.Event()

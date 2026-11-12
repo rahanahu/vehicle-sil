@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from conftest import FAKE
+from conftest import CONTROL_FEATURES, FAKE
 from real_configs import examples_dir, usable, write
 
 LAUNCHER = os.environ.get("VEHICLE_SIL_GUI_LAUNCHER")
@@ -334,10 +334,15 @@ def test_version_and_check_json(tmp_path: Path) -> None:
     write(tmp_path, EXAMPLES)
 
     def output(argv: list[str]) -> tuple[int, dict]:
-        p = subprocess.run(argv, cwd=tmp_path, capture_output=True, timeout=RUN_TIMEOUT_S)
+        p = subprocess.run(argv, cwd=tmp_path, capture_output=True, timeout=RUN_TIMEOUT_S, env=env)
         return p.returncode, json.loads(p.stdout)
 
+    env = dict(os.environ)
     real_version = output([LAUNCHER, "version", "--json"])
+    # The fake stands for a launcher built without the control server unless it is told otherwise: against a
+    # real launcher that has one, it is told (the feature is the last one, as the real launcher lists it).
+    if "control-server" in real_version[1]["features"]:
+        env["FAKE_LAUNCHER_FEATURES"] = CONTROL_FEATURES
     fake_version = output([sys.executable, str(FAKE), "version", "--json"])
     assert fake_version[0] == real_version[0] == 0
     assert list(fake_version[1]) == list(real_version[1])
@@ -345,7 +350,8 @@ def test_version_and_check_json(tmp_path: Path) -> None:
     assert fake_version[1]["features"] == real_version[1]["features"], \
         "the fake's default features (FAKE_LAUNCHER_FEATURES) must be the real launcher's"
     real_text = subprocess.run([LAUNCHER, "version", "--json"], capture_output=True, text=True).stdout
-    fake_text = subprocess.run([sys.executable, str(FAKE), "version", "--json"], capture_output=True, text=True).stdout
+    fake_text = subprocess.run([sys.executable, str(FAKE), "version", "--json"], capture_output=True, text=True,
+                               env=env).stdout
     assert fake_text.replace(fake_version[1]["vehicle_sil"], "<v>") == \
         real_text.replace(real_version[1]["vehicle_sil"], "<v>"), "the same layout"
     for args in (["simulation.yaml"], ["--disable", "Dashboard", "simulation.yaml"], ["missing.yaml"],

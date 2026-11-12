@@ -86,6 +86,11 @@ export interface ConnectionOptions {
   socket: SocketFactory;
   /** つなぐたびに（再接続でも）、開いた直後に送るメッセージ（JSON にして送る）。つなぐときに呼ぶ。 */
   greeting: () => readonly unknown[];
+  /**
+   * greeting の後に続けて送るメッセージ（変数の購読など、認証の後に送るもの）。開いたときに呼ぶ（つなぎに行って
+   * から開くまでの間に増えた分も入る）。
+   */
+  afterGreeting?: () => readonly unknown[];
   /** 再接続の待ち時間の上限。 */
   maxBackoffMs?: number;
   /** 届いた通知をまとめる間隔。 */
@@ -218,6 +223,21 @@ export class Connection implements ClientConnection {
     this.scheduleRetry(delayMs);
   }
 
+  /**
+   * サーバーへ通知を送る（認証の後のもの。変数の購読など）。開いているときだけ送り、送ったかを返す。開いていない
+   * ときの分は、開いたときの afterGreeting で送る。
+   */
+  send(message: unknown): boolean {
+    if (this.socket === null || this.stateValue.get() !== 'open') return false;
+    try {
+      this.socket.send(JSON.stringify(message));
+      return true;
+    } catch (error) {
+      this.onError(error);
+      return false;
+    }
+  }
+
   onBatch(listener: (batch: readonly unknown[]) => void): () => void {
     this.batchListeners.add(listener);
     return () => {
@@ -282,6 +302,13 @@ export class Connection implements ClientConnection {
         clearTimeout(this.steadyTimer);
         this.steadyTimer = setTimeout(() => (this.garbled = 0), STEADY_MS);
         for (const message of greeting) socket?.send(JSON.stringify(message));
+        try {
+          for (const message of this.options.afterGreeting?.() ?? []) {
+            socket?.send(JSON.stringify(message));
+          }
+        } catch (error) {
+          this.onError(error);
+        }
       },
       message: (text) => {
         if (!current()) return;

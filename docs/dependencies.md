@@ -19,7 +19,7 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 ### Python の探し方
 
-- 版と依存は、リポジトリ直下の `pyproject.toml`（`requires-python` と `[dependency-groups]`。`codegen` は PyYAML、`control` は grpcio、grpcio-tools、protobuf、`gui` は GUI サーバー（`gui/server`、workspace のメンバー）と pytest、`dev` はすべてで既定）、`.python-version`（開発で使う版）、`uv.lock`（解決した版の固定）で決めています。版の下限は、試験を実際に回している最も古い版です（`scripts/verify-python.py` が、uv の lowest-direct の解決で下限そのものを Python 3.11 に入れて確かめます）。上限は付けていません。
+- 版と依存は、リポジトリ直下の `pyproject.toml`（`requires-python` と `[dependency-groups]`。`codegen` は PyYAML、`control` は grpcio、grpcio-tools、protobuf、`gui` は GUI サーバー（`gui/server`、workspace のメンバー。変数の読み書き用の grpcio と protobuf つき）と pytest、`dev` はすべてで既定）、`.python-version`（開発で使う版）、`uv.lock`（解決した版の固定）で決めています。版の下限は、試験を実際に回している最も古い版です（`scripts/verify-python.py` が、uv の lowest-direct の解決で下限そのものを Python 3.11 に入れて確かめます）。上限は付けていません。
 - vehicle-sil が最上位のプロジェクトのとき、configure はリポジトリの `.venv/bin/python`（`uv sync` が作る）が Python 3.11 以上で必要なモジュールを import できれば、それを使います。そうでなければ `find_package(Python3 3.11)` で探します（有効にした仮想環境が先。`-DPython3_EXECUTABLE=` で指定できる）。処理は `cmake/VehicleSilPython.cmake` にあります。
 - 生成器の Python は configure のたびに探し直します。`uv sync` で `.venv` を作ったり、`.venv` にパッケージを足したりした後は、普通に configure し直せば使います（`--fresh` は要りません）。
 - FetchContent や `add_subdirectory` で取り込んだ利用側のビルドは、vehicle-sil の `.venv` を使いません。利用側の Python（有効にした仮想環境、`Python3_EXECUTABLE`、`PATH`）を使います。
@@ -34,7 +34,7 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 ### aiohttp（ブラウザの GUI のサーバー）
 
-- GUI サーバー（`gui/server`、配布名 `vehicle-sil-gui`、[gui.md](gui.md)）は aiohttp だけに依存します。HTTP のサーバー、WebSocket、試験で使うクライアントを 1 つで持ち、asyncio の Windows の既定のイベントループ（子プロセスを動かせる ProactorEventLoop）で動き、Windows（3.11 以降）の wheel があります。C++ のビルドは使いません。
+- GUI サーバー（`gui/server`、配布名 `vehicle-sil-gui`、[gui.md](gui.md)）は aiohttp だけに依存します。HTTP のサーバー、WebSocket、試験で使うクライアントを 1 つで持ち、asyncio の Windows の既定のイベントループ（子プロセスを動かせる ProactorEventLoop）で動き、Windows（3.11 以降）の wheel があります。C++ のビルドは使いません。ECU の変数を読み書きするときだけ、ランチャーの Control Server のクライアントとして grpcio と protobuf を使います（任意の依存 `vehicle-sil-gui[variables]`。`gui` のグループが入れます）。なくても GUI サーバーは動き、変数だけが使えないと理由を出します。この任意の依存だけでは足りず、スタブが要ります（リポジトリの中で `uv sync` して動かすのが前提。スタブは、まだパッケージに入っていません）。gRPC のスタブは、起動のたびに `proto/` から grpcio-tools（`control` のグループ）で作るか、`python -m vehicle_sil_control.generate` が作ったもの、`VEHICLE_SIL_CONTROL_STUBS` のディレクトリのものを使います。
 - ライセンス: aiohttp は Apache-2.0（同梱の llhttp は MIT）。依存する multidict、yarl、frozenlist、aiosignal、propcache は Apache-2.0、aiohappyeyeballs は PSF-2.0、attrs は MIT、idna は BSD-3-Clause。vehicle-sil のリポジトリには含めず、uv が入れます。
 
 ### Vector XL Driver Library（Vector XL CAN Bridge、Windows のみ）

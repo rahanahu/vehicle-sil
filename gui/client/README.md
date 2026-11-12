@@ -1,8 +1,8 @@
 # gui/client
 
-GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリです（TypeScript）。接続（トークン、再接続）、セッションの写し（サーバーの要約と事象から作る実行の状態）、実行と時刻の操作、サーバーの口の型と読み取りを持ちます。Angular にも RxJS にも、ほかのパッケージにも依りません。私たちの画面（`gui/web`）も、Angular の薄い包み（`gui/web/src/app/core/session/`）を通して、これだけを使います。
+GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリです（TypeScript）。接続（トークン、再接続）、セッションの写し（サーバーの要約と事象から作る実行の状態）、実行と時刻の操作、ECU の変数（一覧、値の watch、書き込みと結果）、サーバーの口の型と読み取りを持ちます。Angular にも RxJS にも、ほかのパッケージにも依りません。私たちの画面（`gui/web`）も、Angular の薄い包み（`gui/web/src/app/core/session/`）を通して、これだけを使います。
 
-サーバーの口そのもの（HTTP と WebSocket の形、版と互換の決まり、認証）は [gui/protocol](../protocol/README.md) にあります。例は [examples/gui_client](../../examples/gui_client/) の 2 つです: ライブラリを使わずに口を叩く `run.mjs` と、ライブラリを 1 つにまとめたファイルを素の JavaScript（Node）から使う `run-with-library.mjs`。
+サーバーの口そのもの（HTTP と WebSocket の形、版と互換の決まり、認証）は [gui/protocol](../protocol/README.md) にあります。例は [examples/gui_client](../../examples/gui_client/) にあります: ライブラリを使わずに口を叩く `run.mjs`、ライブラリを 1 つにまとめたファイルを素の JavaScript（Node）から使う `run-with-library.mjs`、同じくライブラリで ECU の変数を読み書きする `variables.mjs`。
 
 ## 取り込み方
 
@@ -23,17 +23,18 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 ## 公開するもの
 
-| まとまり         | 公開するもの                                                                                                                                                                                                                                                                                                           |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| クライアント     | `createClient(options)`、`ClientOptions`（`baseUrl`、`token`、`origin`、`http`、`socket`、`answerTimeoutMs`、`onError`）、`GuiClient`（`connection`、`session`、`run`、`time`、`app`、`limits`、`connect()`、`close()`、`loadApp()`、`configs()`、`check()`、`fetchSession()`）、`DEFAULT_LIMITS`                      |
-| 接続（読むだけ） | `ClientConnection`（`state`、`failures`、`lastClose`、`tryAgainReason`、`onBatch`、`onUnreadable`）、`ConnectionState`、`CloseInfo`、`BATCH_MS`、`TRY_AGAIN_LATER`                                                                                                                                                     |
-| セッションの写し | `ClientSession`（`session`、`ready`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`）、`Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`、`runOutcome`、`phaseIndex`                          |
-| 実行の操作       | `ClientRun`（`starting`、`stopping`、`stopWhileStarting`、`error`、`start`、`stop`、`forceStop`）、`StopAction`                                                                                                                                                                                                        |
-| 時刻             | `ClientTime`（`state`、`answerTimeoutMs`、`pause`、`resume`、`step`、`setSpeed`、`send`）、`TimeState`、`TimeFailure`、`Lateness`、`SendResult`、`NotSentReason`、`ANSWER_TIMEOUT_MS`、`FEATURE_SPEED`、`FEATURE_START_PAUSED`、`FEATURE_TIME_COMMANDS`                                                                |
-| 読める値         | `Readable<T>`（`get()`、`subscribe(fn)`）                                                                                                                                                                                                                                                                              |
-| 差し替えの口     | `SocketFactory`、`SocketHandlers`、`SocketLike`、`webSocketFactory`、`HttpTransport`、`HttpRequest`、`HttpOutcome`、`fetchTransport`、`FetchTransportOptions`、`DEFAULT_TIMEOUT_MS`                                                                                                                                    |
-| 誤り             | `HttpError`（`status`、`statusText`、`problem`、`timedOut`）、`errorMessage`、`ProtocolError`                                                                                                                                                                                                                          |
-| 口の形と読み取り | `gui/protocol` の形の型（`SessionSummary`、`ServerMessage`、`LauncherEvent`、`CheckResult`、`RunResult`、`AppInfo` など）、`PROTOCOL_VERSION`、`PHASES`、`severityRank`。口を自分で読む人のための `readServerMessage`、`readAppInfo`、`readConfigList`、`readCheckResponse`、`readSessionResponse`、`readTimeResponse` |
+| まとまり         | 公開するもの                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| クライアント     | `createClient(options)`、`ClientOptions`（`baseUrl`、`token`、`origin`、`http`、`socket`、`answerTimeoutMs`、`onError`）、`GuiClient`（`connection`、`session`、`run`、`time`、`variables`、`app`、`limits`、`connect()`、`close()`、`loadApp()`、`configs()`、`check()`、`fetchSession()`）、`DEFAULT_LIMITS`                                                                                                                                                                                                  |
+| 接続（読むだけ） | `ClientConnection`（`state`、`failures`、`lastClose`、`tryAgainReason`、`onBatch`、`onUnreadable`）、`ConnectionState`、`CloseInfo`、`BATCH_MS`、`TRY_AGAIN_LATER`                                                                                                                                                                                                                                                                                                                                              |
+| セッションの写し | `ClientSession`（`session`、`ready`、`lastEventAt`、`notices`、`rejected`、`incompatible`、`onMessages`、`report`、`dismissNotice`）、`Notice`、`SessionView`、`ParticipantView`、`LauncherView`、`LogLine`、`LogSource`、`TimeView`、`CommandView`、`RunOutcome`、`runOutcome`、`phaseIndex`                                                                                                                                                                                                                   |
+| 実行の操作       | `ClientRun`（`starting`、`stopping`、`stopWhileStarting`、`error`、`start`、`stop`、`forceStop`）、`StopAction`                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 時刻             | `ClientTime`（`state`、`answerTimeoutMs`、`pause`、`resume`、`step`、`setSpeed`、`send`）、`TimeState`、`TimeFailure`、`Lateness`、`SendResult`、`NotSentReason`、`ANSWER_TIMEOUT_MS`、`FEATURE_SPEED`、`FEATURE_START_PAUSED`、`FEATURE_TIME_COMMANDS`                                                                                                                                                                                                                                                         |
+| ECU の変数       | `ClientVariables`（`state`、`operations`、`watchProblem`、`watch`、`write`）、`VariablesState`、`VariablesStatus`、`VariablePeer`、`VariableInfo`、`VariableRef`、`VariableValue`、`VariableWatch`（`values`、`value`、`history`、`close`）、`WatchOptions`、`WatchValues`、`VariableReading`、`HistoryPoint`、`WriteOptions`、`OperationView`、`OperationPeer`、`WriteError`、`WatchProblem`、`WATCH_PERIOD_MS`、`WATCH_PERIODS_MS`、`WRITE_TIMEOUT_MS`、`HISTORY_MAX`、`HISTORY_TOTAL_MAX`、`OPERATIONS_KEPT` |
+| 読める値         | `Readable<T>`（`get()`、`subscribe(fn)`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 差し替えの口     | `SocketFactory`、`SocketHandlers`、`SocketLike`、`webSocketFactory`、`HttpTransport`、`HttpRequest`、`HttpOutcome`、`fetchTransport`、`FetchTransportOptions`、`DEFAULT_TIMEOUT_MS`                                                                                                                                                                                                                                                                                                                             |
+| 誤り             | `HttpError`（`status`、`statusText`、`problem`、`timedOut`）、`errorMessage`、`ProtocolError`                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 口の形と読み取り | `gui/protocol` の形の型（`SessionSummary`、`ServerMessage`、`LauncherEvent`、`CheckResult`、`RunResult`、`AppInfo` など）、`PROTOCOL_VERSION`、`PHASES`、`severityRank`。口を自分で読む人のための `readServerMessage`、`readAppInfo`、`readConfigList`、`readCheckResponse`、`readSessionResponse`、`readTimeResponse`、`readWriteResponse`、`readVariablesSummary`。変数の口の形は `VariablesSummary`、`VariableSummary`、`ValuesMessage`、`OperationReport`、`WatchMessage`、`WriteAnswer`                    |
 
 ## 使い方
 
@@ -57,17 +58,56 @@ await client.run.start({ file: 'simulation.yaml', disable: [], speed: null, star
 - 読み取りは部分ごとです。要約と事象の一部が読めなくても、読める部分を使い、読めない部分の名前を `SessionView.unreadable` に入れます。知らない通知と事象は状態に当てずに通します（`client.connection.onBatch` には、読む前のものがすべて届きます）。JSON として読めない通知は、知らせを出して `hello` から受け直します。
 - Node では、`Origin` をサーバー自身の origin にして送ります（`createClient` が `baseUrl` から作ります）。ブラウザと Web Worker では、ブラウザが付けるので `origin` を渡しません（Worker の WebSocket は握手のヘッダーを付けられません）。HTTP の道具を変えるときは `http`（`HttpTransport`）を、WebSocket を変えるときは `socket`（`SocketFactory`）を渡します。
 
+## ECU の変数
+
+```ts
+const watch = client.variables.watch([{ peer: 'Engine', name: 'engine.speed' }], {
+  periodMs: 100,
+  history: 600,
+});
+watch.values.subscribe((values) => console.log(values['Engine']?.['engine.speed']));
+try {
+  const operation = await client.variables.write({ Engine: { 'engine.throttle': 50 } });
+  console.log(operation.peers['Engine'].appliedAtMs);
+} catch (error) {
+  if (error instanceof WriteError) console.log(error.kind, error.message);
+}
+watch.close();
+```
+
+- **一覧と状態**（`client.variables.state`）: `status` は `unknown`（まだ聞いていない）、`off`（この実行に変数はない）、`connecting`、`ready`、`failed`、`ended`（実行が終わった。値は最後のもの）。`off`、`connecting`、`failed` の理由は `reason`（サーバーの英語の文）。実行を始める前に使えるかは `client.app` の `variables`（`available`、`reason`）でわかります。変数の定義は `peers[].variables[]`（`type`、`role`、`writable`、`unit`、`min`、`max`、`step`、`description`、`enum`）。
+- **watch**: 変数（`'all'` は全部）の最後の値を受け取ります。`values`（読める値）は `values[peer]?.[name]` が `VariableReading`（`value`、`sampleMs`、`simMs`、`paused`）です。値ごとに「いつのものか」を持ちます。`paused` が真の値は、止まっている時刻 `simMs` の値として見せられます（その時刻より前に始まったステップの値は入っています）。偽の値は、動いている途中の最後の値です。
+  - 同じ変数を見る watch がいくつあっても、サーバーへの購読は変数ごとに 1 つです（変数は、頼まれた中でいちばん短い間隔の購読に入ります。間隔は 20、50、100、200、500 ms … の段に丸めます）。`close()` で、ほかに見ている watch がなければサーバーの購読もやめます。使い終わったら必ず `close()` します。
+  - つなぎ直したら、自動で購読し直します。実行が替わっても watch は続き、前の実行の値と履歴は捨てます。
+  - `history` を頼むと、変数ごとに、その数までの点（`sampleMs`、`value`）を環状バッファーに持ちます（変数ごとの上限 `HISTORY_MAX`。古いものから捨てます）。場所は点が届いてから取ります（頼んだだけでは取りません）。全部の変数の履歴を合わせて `HISTORY_TOTAL_MAX` 点（約 34 MB）までで、そこに届くと、どの履歴もそれ以上は伸びず、そのときの大きさのまま古い点を捨てます（`history(ref)` が返す点が、頼んだ数より少なくなります）。同じステップの値は 1 点で、同じステップの値が変わって届いたら、その点を置き換えます。実行が替わると、履歴は空から始まります。`watch.history(ref)` は、呼ぶたびに新しい配列を返します。通知は約 100 ms ごとにまとめて届くので（`BATCH_MS`）、`values` の知らせはその頻度ですが、履歴には間の値も入ります。
+  - 長い名前を多く挙げて、購読の 1 通がサーバーの上限（256 KiB）を超えそうなときは、その間隔の購読を「全部」に替えます（受け取った中から、見ている変数だけを使います）。サーバーが watch を断ったとき（上限の違うサーバー）は、`client.variables.watchProblem` に出ます。
+  - 値を覚えるのは、だれかが見ている変数だけです。
+- **書き込み**（`write(writes, options)`）: サーバーが型と範囲を確かめ、ランチャーに渡します。Promise は、反映されたら（`applied`）その操作（`OperationView`）で解け、ほかは `WriteError` で断ります。同じ書き込みを自動で送り直すことはありません。`kind` は次のとおりです。
+
+  | `kind`      | 意味                                                                                                                                                                                                                                                   | 送り直してよいか                           |
+  | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
+  | `refused`   | サーバーが受け付けなかった（`code` に `unknown-variable`、`not-writable`、`invalid-field`、`not-running`、`variables-not-ready`、`write-busy` など）。ランチャーには渡っていない                                                                       | 直してから、よい                           |
+  | `failed`    | 受け付けたが、反映されなかった（`operation` に participant ごとの状態と理由: `late`、`rejected`、`invalid` など）                                                                                                                                      | 理由を直してから、よい（反映されていない） |
+  | `no-answer` | **反映されたかどうかわからない**: `timeoutMs` の間に結果が来なかった（`operation` に、わかっている最後の状態）、HTTP の答えがなかった、サーバーが Control Server の答えを待ちきれなかった（`code` が `write-timeout`）か途中で切れた（`write-failed`） | **そのままは送り直さない**（下）           |
+  | `closed`    | 結果の前に `close()` した                                                                                                                                                                                                                              | 同上                                       |
+  - **二重の書き込みを避ける**: `no-answer` の後は、先に確かめます。`error.operation` があれば、その番号の操作を `client.variables.operations` で追います（`queued` なら、シミュレーションがそのステップに進めば反映されます。待つ時間が短かっただけです）。番号がなければ、`operations` に自分の書き込みらしい操作が増えていないかと、その変数の値（watch）を見ます。反映されていないとわかってから送り直します。値を足し込むような（同じ書き込みを 2 回すると結果が変わる）使い方では、特に守ります。同じ値を書くだけなら、2 回書いても結果は同じです。
+  - `timeoutMs`（既定 `WRITE_TIMEOUT_MS`）は、HTTP の答えが来てから数えます。`Infinity` は時間で切りません（実行が替わるか `close()` するまで待ちます）。2^31-1 ms（約 24.8 日）より長い値は、そこに丸めます。数でない値と 0 以下は既定の時間です。
+  - 書き込みは、指定した仮想時刻（`atMs`。省くと次のステップ）のステップで反映されるので、止まっている間は確定しません。止めて書くときは、`client.variables.operations` で `queued` を見てから進めます（`examples/gui_client/variables.mjs`）。
+  - 最近の操作（ほかのクライアントの書き込みも）は `client.variables.operations` で読めます。
+
+- 止めて始めた実行（`start_paused`）は、変数の読み書きができるランチャーでは、最初のステップの前で待ちます。その間は `client.time.state` の `beforeStart` が真で、再開とステップ送りを押せます（書いた値は時刻 0 のステップで反映されます）。
+
 ## 寿命
 
-| 呼び出し                             | すること                                                                                                          |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `createClient()`                     | 作るだけ。つながない                                                                                              |
-| `connect()`                          | WebSocket でつなぐ。トークンがないときは何もしない                                                                |
-| つながっている間の `connect()`       | 何もしない（つなぎ直しを待っている間も）                                                                          |
-| `close()`                            | 切る。つなぎ直さない。待っている時計を止め、時刻の命令の答えを待つのをやめる。まとめている途中の通知は捨てる      |
-| `close()` の後の `connect()`         | またつなぐ。セッションの写しは残り、持っている分の続きから受け直す                                                |
-| `close()` の後の HTTP の要求         | 使える（`loadApp()`、`run.start()` などは、つないでいなくても送れる）                                             |
-| 断られた・版が違った後の `connect()` | 何もしない（`session.rejected`、`session.incompatible` は戻らない）。別のトークンや版では、クライアントを作り直す |
+| 呼び出し                             | すること                                                                                                                                                                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `createClient()`                     | 作るだけ。つながない                                                                                                                                                                       |
+| `connect()`                          | WebSocket でつなぐ。トークンがないときは何もしない                                                                                                                                         |
+| つながっている間の `connect()`       | 何もしない（つなぎ直しを待っている間も）                                                                                                                                                   |
+| `close()`                            | 切る。つなぎ直さない。待っている時計を止め、時刻の命令の答えを待つのをやめ、結果を待っている書き込みを `WriteError`（`closed`）で断る。まとめている途中の通知は捨てる。変数の watch は残る |
+| `close()` の後の `connect()`         | またつなぐ。セッションの写しは残り、持っている分の続きから受け直す。残っている watch を購読し直す                                                                                          |
+| `close()` の後の HTTP の要求         | 使える（`loadApp()`、`run.start()` などは、つないでいなくても送れる）                                                                                                                      |
+| 断られた・版が違った後の `connect()` | 何もしない（`session.rejected`、`session.incompatible` は戻らない）。別のトークンや版では、クライアントを作り直す                                                                          |
 
 ## 書き方の決まり
 

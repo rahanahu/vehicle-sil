@@ -16,6 +16,7 @@ import { ClientRun, RunControl } from './run';
 import { ClientSession, SessionFeed } from './session';
 import { ANSWER_TIMEOUT_MS, ClientTime, TimeControl } from './time';
 import { webSocketUrl } from './urls';
+import { ClientVariables, VariablesFeed } from './variables';
 import { ErrorSink, Readable, Writable } from './values';
 
 /** 上限を知らないとき（api/app の答えの前）の値。ランチャーとサーバーの既定と同じ。 */
@@ -24,6 +25,12 @@ export const DEFAULT_LIMITS: AppInfo['limits'] = {
   speed_max: 1000000,
   step_ms_max: 1e12,
   check_timeout_s: 120,
+  watch_period_ms_min: 20,
+  watch_period_ms_max: 60_000,
+  watches: 16,
+  watch_variables: 2000,
+  writes_per_request: 256,
+  write_at_ms_max: 1e12,
 };
 
 /** 既定の onError: 標準エラーに出す（購読者が投げたものだけ。トークンは入れない）。 */
@@ -66,7 +73,7 @@ export interface ClientOptions {
  * 状態はどれも読める値（Readable: get と subscribe）で出す。枠組みに依らず、ブラウザでも Node でも動く。
  *
  * 寿命: connect() でつなぐ（つながっている間にもう一度呼んでも何もしない）。close() で切り、待っている時計を止め、
- * 答えを待っている時刻の命令を待つのをやめる。close() の後に connect() すると、またつなぐ（セッションの写しは
+ * 答えを待っている時刻の命令を待つのをやめ、結果を待っている書き込みを断る（変数の watch は残り、つなぎ直すと続く）。close() の後に connect() すると、またつなぐ（セッションの写しは
  * 残り、持っている分の続きから受け直す）。HTTP の要求（loadApp() など）は、つないでいなくても使える。サーバーが
  * トークンを断った（session.rejected）か、版が違う（session.incompatible）後の connect() は何もしない
  * （クライアントを作り直す）。
@@ -80,6 +87,8 @@ export interface GuiClient {
   readonly run: ClientRun;
   /** 時刻の状態と命令。 */
   readonly time: ClientTime;
+  /** ECU の変数: 一覧と状態、値の watch、書き込みと結果。 */
+  readonly variables: ClientVariables;
   /** サーバーとランチャーの情報（`GET api/app`。loadApp() の後）。まだなければ null。 */
   readonly app: Readable<AppInfo | null>;
   /** 速さの範囲、ステップ送りと照合の上限（app の limits。まだなければ DEFAULT_LIMITS）。 */
@@ -133,6 +142,7 @@ export function createClient(options: ClientOptions): GuiClient {
 
   // 認証のメッセージに、機能ごとの欄を足す（セッションの写しは、どこから再送してほしいか）
   let feed: SessionFeed | null = null;
+  let variablesFeed: VariablesFeed | null = null;
   const connection = new Connection({
     url: webSocketUrl(options.baseUrl, 'ws'),
     socket: options.socket ?? webSocketFactory({ origin }),
@@ -144,10 +154,13 @@ export function createClient(options: ClientOptions): GuiClient {
         session_without_check: true,
       },
     ],
+    afterGreeting: () => variablesFeed?.resume() ?? [],
     onError,
   });
   feed = new SessionFeed(connection, onError);
   const session = feed;
+  variablesFeed = new VariablesFeed(connection, http, onError, () => limits.get());
+  const variables = variablesFeed;
   const run = new RunControl(session, http, onError, () => longRequestMs(limits.get()));
   const time = new TimeControl(
     session.session,
@@ -156,6 +169,7 @@ export function createClient(options: ClientOptions): GuiClient {
     http,
     options.answerTimeoutMs ?? ANSWER_TIMEOUT_MS,
     onError,
+    variables.state,
   );
 
   /** 送って読む。after は、読めた値で Promise が解ける前に（同じ呼び出しの中で）呼ぶ。 */
@@ -215,6 +229,13 @@ export function createClient(options: ClientOptions): GuiClient {
       setSpeed: (value) => time.setSpeed(value),
       send: (command) => time.send(command),
     },
+    variables: {
+      state: variables.state,
+      operations: variables.operations,
+      watchProblem: variables.watchProblem,
+      watch: (wanted, watchOptions) => variables.watch(wanted, watchOptions),
+      write: (writes, writeOptions) => variables.write(writes, writeOptions),
+    },
     app: app.readonly(),
     limits: limits.readonly(),
     connect: () => {
@@ -223,6 +244,7 @@ export function createClient(options: ClientOptions): GuiClient {
     close: () => {
       connection.close();
       time.dispose();
+      variables.dispose();
     },
     loadApp: () => call({ method: 'GET', path: 'api/app' }, readAppInfo, (info) => app.set(info)),
     configs: () => call({ method: 'GET', path: 'api/configs' }, readConfigList),
@@ -237,8 +259,22 @@ export function createClient(options: ClientOptions): GuiClient {
         readCheckResponse,
       ),
     fetchSession: () =>
-      call({ method: 'GET', path: 'api/session' }, readSessionResponse, (summary) =>
-        session.adopt(summary),
+      new Promise<SessionSummary | null>((resolve, reject) =>
+        http({ method: 'GET', path: 'api/session' }, (outcome) => {
+          if (!outcome.ok) {
+            reject(outcome.error);
+            return;
+          }
+          try {
+            const summary = readSessionResponse(outcome.body);
+            session.adopt(summary);
+            // 変数の一覧と状態は、要約の読み取り（SessionSummary）の外にある
+            variables.adoptSummary((outcome.body as { session?: unknown } | null)?.session);
+            resolve(summary);
+          } catch (error) {
+            reject(error);
+          }
+        }),
       ),
   };
 }

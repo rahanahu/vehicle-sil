@@ -23,6 +23,35 @@ export {
   FEATURE_TIME_COMMANDS,
 } from './time';
 
+// ECU の変数
+export {
+  HISTORY_MAX,
+  HISTORY_TOTAL_MAX,
+  OPERATIONS_KEPT,
+  WATCH_PERIODS_MS,
+  WATCH_PERIOD_MS,
+  WRITE_TIMEOUT_MS,
+  WriteError,
+} from './variables';
+export type {
+  ClientVariables,
+  HistoryPoint,
+  OperationPeer,
+  OperationView,
+  VariableInfo,
+  VariablePeer,
+  VariableReading,
+  VariableRef,
+  VariableValue,
+  VariableWatch,
+  VariablesState,
+  VariablesStatus,
+  WatchOptions,
+  WatchProblem,
+  WatchValues,
+  WriteOptions,
+} from './variables';
+
 // 読める値
 export type { Readable } from './values';
 
@@ -56,6 +85,8 @@ export {
   readServerMessage,
   readSessionResponse,
   readTimeResponse,
+  readVariablesSummary,
+  readWriteResponse,
   severityRank,
 } from './protocol';
 export type {
@@ -100,5 +131,11 @@ export type {
   TimeCommand,
   TimeCommandName,
   TimeReport,
+  ValuesMessage,
   Variable,
+  VariableSummary,
+  VariablesSummary,
+  OperationReport,
+  WatchMessage,
+  WriteAnswer,
 } from './protocol';

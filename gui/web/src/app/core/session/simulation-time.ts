@@ -44,6 +44,11 @@ export class SimulationTime {
   readonly lastCommand = computed<CommandView | null>(() => this.state().lastCommand);
   /** 時刻の命令を送れるか（ランチャーが対応し、段階が running で、結果がまだで、止めるよう頼んでいない）。 */
   readonly controllable = computed(() => this.state().controllable);
+  /**
+   * 最初のステップの前で、再開かステップ送りを待っているか（止めて始めた実行で、ランチャーが変数を読み書きする口を
+   * 持つとき）。この間は time がまだないが、再開とステップ送りを押せる。
+   */
+  readonly beforeStart = computed(() => this.state().beforeStart);
   /** 送って、まだ答えを見ていない命令。その間は、次の命令を送らない。 */
   readonly sending = computed(() => this.state().sending);
   /** ステップ送りの途中（ランチャーは一時停止の扱い）。 */

@@ -1,0 +1,22 @@
+{
+  "description": "A watch that is wrong: an error for this connection, which goes on.",
+  "client": [
+    {
+      "type": "watch",
+      "id": 2,
+      "variables": "all",
+      "period_ms": 5
+    }
+  ],
+  "server": [
+    {
+      "type": "error",
+      "session": null,
+      "code": "invalid-watch",
+      "message": "period_ms must be a whole number of milliseconds from 20 to 60000: send {\"type\":\"watch\",\"id\":1,\"variables\":\"all\",\"period_ms\":100}",
+      "detail": {
+        "id": 2
+      }
+    }
+  ]
+}
