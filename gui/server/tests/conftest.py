@@ -57,7 +57,8 @@ class Gui:
 
 @contextmanager
 def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None, args: tuple = (),
-               launcher: Path = FAKE, expect_start: bool = True) -> Iterator[Gui]:
+               launcher: Path | None = FAKE, expect_start: bool = True, browser: bool = False,
+               cwd: Path | None = None) -> Iterator[Gui]:
     environment = dict(os.environ)
     environment.setdefault("FAKE_LAUNCHER_TICK_MS", "10")
     environment.pop("FAKE_LAUNCHER_SCENARIO", None)
@@ -65,13 +66,16 @@ def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None,
     stderr = tmp_path / f"server-{time.monotonic_ns()}.err"
     with open(stderr, "wb") as err:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "vehicle_sil_gui", "--no-browser", "--json", "--launcher", str(launcher),
-             "--root", str(root), *args],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, env=environment)
+            [sys.executable, "-m", "vehicle_sil_gui", *([] if browser else ["--no-browser"]), "--json",
+             *(["--launcher", str(launcher)] if launcher is not None else []), "--root", str(root), *args],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, env=environment, cwd=cwd)
     line = read_line(proc, START_TIMEOUT_S)
     if not expect_start:
-        proc.wait(START_TIMEOUT_S)
-        yield Gui(proc, 0, "", "", stderr)
+        try:
+            proc.wait(START_TIMEOUT_S)
+            yield Gui(proc, 0, "", "", stderr)
+        finally:
+            stop_server(proc)
         return
     assert line, f"the server did not print its URL: {stderr.read_text()}"
     info = json.loads(line)
@@ -108,6 +112,40 @@ def alive(pid: int) -> bool:
     except (OSError, IndexError):
         return False
     return state != "Z"
+
+
+def children(pid: int) -> list[int]:
+    """The processes whose parent is pid and that are not zombies (Linux)."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if fields[0] != "Z" and int(fields[1]) == pid:
+            found.append(int(entry.name))
+    return found
+
+
+def raw_http(port: int, data: bytes, timeout: float = 3) -> bytes:
+    """Sends bytes as they are (headers that a client library would not send) and returns the answer."""
+    import socket
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as s:
+        s.sendall(data)
+        answer = b""
+        try:
+            while chunk := s.recv(65536):
+                answer += chunk
+                head, sep, body = answer.partition(b"\r\n\r\n")
+                length = next((int(h.split(b":", 1)[1]) for h in head.split(b"\r\n")
+                               if h.lower().startswith(b"content-length:")), None)
+                if sep and (length is None or len(body) >= length):
+                    break
+        except TimeoutError:
+            pass
+    return answer
 
 
 def wait_until(condition: Callable[[], bool], timeout: float = 10) -> bool:

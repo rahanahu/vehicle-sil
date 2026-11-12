@@ -1,0 +1,18 @@
+{
+  "description": "A check that did not end in time (--check-timeout).",
+  "request": {
+    "method": "POST",
+    "path": "api/check",
+    "body": {
+      "file": "simulation.yaml"
+    }
+  },
+  "status": 504,
+  "response": {
+    "error": {
+      "code": "check-timeout",
+      "message": "the check did not end in 1 s (it was stopped): an ECU's --describe may hang",
+      "detail": null
+    }
+  }
+}

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import os
 import shutil
 import sys
@@ -32,6 +31,7 @@ class Launcher:
     problems: list[dict] = field(default_factory=list)
     version: dict | None = None
     _stamp: tuple | None = None
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     @property
     def prefix(self) -> list[str]:
@@ -49,7 +49,12 @@ class Launcher:
         return {"path": str(self.path), "usable": self.usable, "problems": self.problems, "version": self.version}
 
     async def probe(self) -> None:
-        """Runs `version --json` (again only when the file has changed) and decides whether it is usable."""
+        """Runs `version --json` (again only when the file has changed) and decides whether it is usable.
+        A call made while another one runs waits for its answer."""
+        async with self._lock:
+            await self._probe()
+
+    async def _probe(self) -> None:
         try:
             st = self.path.stat()
             stamp = (st.st_mtime_ns, st.st_size)
@@ -61,7 +66,7 @@ class Launcher:
             return
         if stamp == self._stamp:
             return
-        self._stamp = stamp
+        self._stamp = stamp  # under the lock: no one sees the new stamp before the answer below
         try:
             code, out, err = await process.run_to_end(self.prefix + ["version", "--json"], cwd=None,
                                                       timeout_s=VERSION_TIMEOUT_S)
@@ -107,7 +112,13 @@ def find(explicit: str | None) -> Path:
     if not found:
         raise LauncherNotFound(f"{LAUNCHER_NAME} is not on PATH: give its path with --launcher <path> or "
                                f"{ENV_VARIABLE}=<path> (it is built in build/<preset>/tools/launch/)")
-    return Path(found).resolve()
+    path = Path(found).resolve()
+    if path.parent == Path.cwd().resolve():
+        # Windows looks in the current directory before PATH (and a "." on PATH does it anywhere): a folder
+        # received from someone could start its own program here.
+        raise LauncherNotFound(f"{LAUNCHER_NAME} was found in the current directory ({path}), not taken from "
+                               "there: give its path with --launcher <path> if it is the one to use")
+    return path
 
 
 # ---------------------------------------------------------------- the command lines
@@ -122,8 +133,8 @@ class InvalidRequest(ValueError):
 def check_speed(speed: object) -> float | str | None:
     if speed is None or speed == "max":
         return speed
-    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not math.isfinite(speed) \
-            or not SPEED_MIN <= speed <= SPEED_MAX:
+    # Compared before any conversion: an integer of 400 digits is out of range, not an overflow.
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not SPEED_MIN <= speed <= SPEED_MAX:
         raise InvalidRequest("invalid-field", f"speed must be null, \"max\" or a number from {SPEED_MIN} to "
                                               f"{SPEED_MAX:g} (1 is real time)")
     return float(speed)

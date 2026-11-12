@@ -1,0 +1,19 @@
+{
+  "description": "start_paused true with a launcher that has no start-paused feature.",
+  "request": {
+    "method": "POST",
+    "path": "api/run",
+    "body": {
+      "file": "simulation.yaml",
+      "start_paused": true
+    }
+  },
+  "status": 400,
+  "response": {
+    "error": {
+      "code": "unsupported",
+      "message": "this vehicle_sil_launch has no 'start-paused': leave start_paused false, or build a newer launcher",
+      "detail": null
+    }
+  }
+}

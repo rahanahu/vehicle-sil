@@ -1,0 +1,16 @@
+{
+  "description": "What a screen that reads too slowly gets (one message; the numbers are examples).",
+  "client": [],
+  "server": [
+    {
+      "type": "dropped",
+      "session": 1,
+      "reason": "slow-client",
+      "log": {
+        "Engine": 1000
+      },
+      "at_least": [],
+      "events": 0
+    }
+  ]
+}

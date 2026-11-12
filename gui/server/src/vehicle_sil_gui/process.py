@@ -17,6 +17,8 @@ from collections.abc import AsyncIterator, Sequence
 
 WINDOWS = sys.platform == "win32"
 READ_CHUNK = 64 * 1024
+OUTPUT_GRACE_S = 2.0  # after a child has exited, how long the rest of its output is read
+KILL_WAIT_S = 2.0  # after SIGKILL / taskkill, how long the exit is waited for
 
 
 async def start(argv: Sequence[str], cwd: str | os.PathLike | None, stdin: bool = True) -> asyncio.subprocess.Process:
@@ -32,31 +34,71 @@ async def start(argv: Sequence[str], cwd: str | os.PathLike | None, stdin: bool 
 
 
 async def run_to_end(argv: Sequence[str], cwd: str | os.PathLike | None, timeout_s: float,
-                     max_output: int = 64 * 1024 * 1024) -> tuple[int, bytes, bytes]:
+                     max_output: int = 64 * 1024 * 1024,
+                     track: set[asyncio.subprocess.Process] | None = None) -> tuple[int, bytes, bytes]:
     """Runs a command with an empty standard input; (exit code, stdout, stderr). On timeout the tree is
-    killed and TimeoutError raised. Output beyond max_output bytes is dropped (the end of stderr is kept)."""
+    killed and TimeoutError raised. Output beyond max_output bytes is dropped (the end of stderr is kept).
+    The end is the process's exit, not the end of its output: what it started may keep the output open, so
+    the rest is read for at most OUTPUT_GRACE_S. The process is in `track` while it runs."""
     proc = await start(argv, cwd, stdin=False)
+    if track is not None:
+        track.add(proc)
+    out, err = bytearray(), bytearray()
 
-    async def collect(stream: asyncio.StreamReader, keep_end: bool) -> bytes:
-        data = bytearray()
-        while chunk := await stream.read(READ_CHUNK):
-            data += chunk
-            if len(data) > max_output:
-                data = data[-max_output:] if keep_end else data[:max_output]
-        return bytes(data)
+    async def collect(stream: asyncio.StreamReader, data: bytearray, keep_end: bool) -> None:
+        try:
+            while chunk := await stream.read(READ_CHUNK):
+                data += chunk
+                if len(data) > max_output:
+                    if keep_end:
+                        del data[:len(data) - max_output]
+                    else:
+                        del data[max_output:]
+        except (OSError, ValueError):
+            pass
 
+    readers = asyncio.gather(collect(proc.stdout, out, False), collect(proc.stderr, err, True))
     try:
-        async with asyncio.timeout(timeout_s):
-            out, err = await asyncio.gather(collect(proc.stdout, False), collect(proc.stderr, True))
-            code = await proc.wait()
-    except TimeoutError:
-        kill_tree(proc)
-        await proc.wait()
-        raise
+        try:
+            async with asyncio.timeout(timeout_s):
+                code = await proc.wait()
+        except TimeoutError:
+            kill_tree(proc)
+            await wait_bounded(proc, KILL_WAIT_S)
+            raise
+        kill_tree(proc)  # what it left in its group (POSIX)
+        try:
+            async with asyncio.timeout(OUTPUT_GRACE_S):
+                await asyncio.shield(readers)
+        except TimeoutError:
+            pass
+        return code, bytes(out), bytes(err)
     except BaseException:
         kill_tree(proc)
         raise
-    return code, out, err
+    finally:
+        readers.cancel()
+        await asyncio.gather(readers, return_exceptions=True)
+        close_pipes(proc)
+        if track is not None:
+            track.discard(proc)
+
+
+async def wait_bounded(proc: asyncio.subprocess.Process, seconds: float) -> bool:
+    """Waits for the process to exit, at most `seconds`; whether it has."""
+    try:
+        async with asyncio.timeout(seconds):
+            await proc.wait()
+        return True
+    except TimeoutError:
+        return False
+
+
+def close_pipes(proc: asyncio.subprocess.Process) -> None:
+    """Closes this side of the child's pipes (a descendant may still hold the other side open)."""
+    transport = getattr(proc, "_transport", None)
+    if transport is not None and proc.returncode is not None:
+        transport.close()
 
 
 async def lines(stream: asyncio.StreamReader, max_line: int) -> AsyncIterator[str | None]:

@@ -24,6 +24,12 @@ else `pass`:
                      in seq on the first step, then runs like pass
   future-events      like pass, but hello says vehicle_sil_events 2
   flood              writes FAKE_LAUNCHER_FLOOD (default 5000) log lines at once when running starts, then passes
+  finding-flood      like flood, with finding events instead of log lines
+  bad-types          writes known events whose fields have the wrong types on the first step, then passes
+  orphan             like pass, but before its result it starts a process in a session of its own that keeps
+                     this launcher's standard output and error open for FAKE_LAUNCHER_ORPHAN_S seconds (default
+                     30); a log line says its pid
+  check-garbage      `check --json` writes a line that is not JSON (exit code 0)
 
 Other environment variables: FAKE_LAUNCHER_TICK_MS (wall time of one 100 ms step at speed 1, default 100),
 FAKE_LAUNCHER_FEATURES (the features of `version --json`, comma-separated, default events,stdin-commands,speed),
@@ -49,7 +55,7 @@ from pathlib import Path
 
 VERSION = "0.1.0"
 SCENARIOS = ("pass", "check-error", "participant-crash", "forever", "ignore-stop", "launcher-crash",
-             "bad-lines", "future-events", "flood")
+             "bad-lines", "future-events", "flood", "finding-flood", "bad-types", "orphan", "check-garbage")
 USAGE = __doc__.split("\n\n")[1]
 STEP_MS = 100
 
@@ -413,6 +419,20 @@ def run(args: dict, file: str, config: dict, scenario: str) -> int:
         if scenario == "flood" and step == 1:
             for n in range(int(os.environ.get("FAKE_LAUNCHER_FLOOD", "5000"))):
                 ev.emit("log", source=next(iter(running)), line=f"flood line {n}")
+        if scenario == "finding-flood" and step == 1:
+            for n in range(int(os.environ.get("FAKE_LAUNCHER_FLOOD", "5000"))):
+                ev.emit("finding", **finding("note", "flood", file, None, None, None, f"flood finding {n}"))
+        if scenario == "bad-types" and step == 1:
+            for kind, fields in (("check", {"check": {"participants": 5}}), ("participant", {"name": 5}),
+                                 ("participant", {"name": "Engine", "state": ["x"]}), ("log", {"source": None}),
+                                 ("time", {"sim_ms": "100"}), ("phase", {"phase": {}}), ("result", {"result": []}),
+                                 ("command", {"command": "stop", "accepted": "yes"}), ("finding", {"severity": 1})):
+                ev.emit(kind, **fields)
+        if scenario == "orphan" and step == 1:
+            orphan = subprocess.Popen(
+                [sys.executable, "-c", f"import time; time.sleep({float(os.environ.get('FAKE_LAUNCHER_ORPHAN_S', '30'))})"],
+                stdin=subprocess.DEVNULL, start_new_session=True)
+            ev.emit("log", source="vehicle_sil_launch", line=f"left a process behind: pid {orphan.pid}")
         if scenario == "launcher-crash" and step == 3:
             sys.stderr.write("fake_launcher: dying on purpose (scenario launcher-crash)\n")
             sys.stderr.flush()
@@ -493,6 +513,9 @@ def main(argv: list[str]) -> int:
             p["enabled"] = True
     if args["command"] == "check":
         time.sleep(int(os.environ.get("FAKE_LAUNCHER_CHECK_DELAY_MS", "0")) / 1000)
+        if scenario == "check-garbage":
+            print("this is not the check object")
+            return 0
         result = check(file, config, scenario, strict)
         if args.get("json"):
             print(json.dumps(result, indent=2, ensure_ascii=False))

@@ -47,8 +47,10 @@ def test_a_run_that_passes(gui: Gui) -> None:
         assert hello["arguments"] == ["run", "--events", "--stdin-commands", "--disable", "Logger", "--speed", "2",
                                       "--", "simulation.yaml"]
         end = got[-1]["session"]
-        assert end["exit_code"] == 0 and end["result"]["result"] == "passed" and end["problems"] == []
-        assert [p["state"] for p in end["participants"]] == ["ended", "ended", "disabled"]
+        assert end["launcher"]["exit_code"] == 0 and end["result"]["result"] == "passed" and end["problems"] == []
+        assert {p["name"]: p["state"] for p in end["participants"]} == \
+            {"Engine": "ended", "Dashboard": "ended", "Logger": "disabled"}
+        assert [p["name"] for p in end["check"]["participants"]] == ["Engine", "Dashboard", "Logger"]
         assert all(not alive(pid) for pid in started_pids(got))
         status, body = await c.get("api/session")
         assert body["session"] == end
@@ -73,20 +75,18 @@ def test_check_then_run_with_a_participant_left_out(gui: Gui) -> None:
 def test_one_run_at_a_time_and_stop(tmp_path: Path) -> None:
     with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "50"}) as gui:
         async def main(c: Client) -> None:
-            status, body = await c.post("api/stop")
-            assert status == 409 and body["error"]["code"] == "not-running"
             sock = await c.ws()
             await sock.until(is_synced)
             status, _ = await c.post("api/run", {"file": "forever.yaml"})
             assert status == 200
             status, body = await c.post("api/run", {"file": "simulation.yaml"})
-            assert status == 409 and body["error"]["code"] == "session-running"
+            assert status == 409 and body["error"]["code"] == "already-running"
             await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "time")
             status, body = await c.post("api/stop")
-            assert status == 200 and body["session"]["stop_requests"] == 1
+            assert status == 200 and body["session"]["stop"] == "requested"
             got = await sock.until(is_ended)
             end = got[-1]["session"]
-            assert end["exit_code"] == 130 and end["result"]["result"] == "interrupted"
+            assert end["launcher"]["exit_code"] == 130 and end["result"]["result"] == "interrupted"
             assert all(not alive(pid) for pid in started_pids(sock.received))
             status, _ = await c.post("api/run", {"file": "simulation.yaml"})  # the next run may start
             assert status == 200
@@ -107,8 +107,8 @@ def test_a_second_stop_does_not_wait(tmp_path: Path) -> None:
             await asyncio.sleep(0.3)
             status, body = await c.get("api/session")
             assert body["session"]["state"] == "running"  # this launcher waits after the first stop
-            status, body = await c.post("api/stop")
-            assert body["session"]["stop_requests"] == 2
+            status, body = await c.post("api/stop", {"force": True})
+            assert body["session"]["stop"] == "forced"
             got = await sock.until(is_ended)
             assert [p["state"] for p in got[-1]["session"]["participants"]] == ["killed"] * 3
         run_async(main, gui)
@@ -119,10 +119,11 @@ def test_problems_of_the_launcher_are_shown(gui: Gui) -> None:
         got = await run_to_end(c, {"file": "participant-crash.yaml"})
         end = got[-1]["session"]
         assert end["result"]["result"] == "failed" and end["findings"][0]["code"] == "participant-failed"
-        assert end["participants"][1]["exit_code"] == 3
+        assert {p["name"]: p.get("exit_code") for p in end["participants"]}["Dashboard"] == 3
         got = await run_to_end(c, {"file": "launcher-crash.yaml"})
         end = got[-1]["session"]
-        assert end["exit_code"] == 70 and [p["code"] for p in end["problems"]] == ["launcher-stderr", "no-result"]
+        assert end["launcher"]["exit_code"] == 70
+        assert [p["code"] for p in end["problems"]] == ["launcher-stderr", "no-result"]
         if POSIX:  # what the dead launcher left in its process group is killed
             assert wait_until(lambda: all(not alive(pid) for pid in started_pids(got)), 5)
         got = await run_to_end(c, {"file": "bad-lines.yaml"})
@@ -135,31 +136,28 @@ def test_problems_of_the_launcher_are_shown(gui: Gui) -> None:
     run_async(main, gui)
 
 
-def test_reconnecting_replays_what_is_kept(tmp_path: Path) -> None:
+def test_reconnecting_replays_the_kept_log(tmp_path: Path) -> None:
     with gui_server(tmp_path, env={"FAKE_LAUNCHER_FLOOD": "2500"}) as gui:
         async def main(c: Client) -> None:
             live = await run_to_end(c, {"file": "flood.yaml"})
             again = await c.ws()
             got = await again.until(is_synced)
             hello = got[0]
-            assert hello["type"] == "hello" and hello["session"]["state"] == "ended"
-            omitted = hello["replay"]["omitted"]["log"]
-            replayed = events(got)
-            assert len(events(got, "log")) <= 2000 * 4 and omitted["Engine"] > 0
+            assert hello["type"] == "hello" and hello["session"] == live[-1]["session"]
+            assert hello["replay"] == {"from_seq": None}
             live_engine = [e for e in events(live, "log") if e["source"] == "Engine"]
-            kept_engine = [e for e in events(got, "log") if e["source"] == "Engine"]
-            assert len(kept_engine) == 2000 and kept_engine == live_engine[-2000:]
-            assert omitted["Engine"] == len(live_engine) - 2000
-            assert [e for e in replayed if e["event"] not in ("log", "time")] == \
-                [e for e in events(live) if e["event"] not in ("log", "time")]
-            assert events(got, "time") == events(live, "time")[-1:]
+            assert got[1] == {"type": "dropped", "session": 1, "reason": "not-kept",
+                              "log": {"Engine": len(live_engine) - 2000}, "at_least": [], "events": 0}
+            assert hello["session"]["log"]["Engine"] == {"kept": 2000, "dropped": len(live_engine) - 2000}
+            assert events(got) == [e for e in events(live, "log") if e not in live_engine[:-2000]]
             assert got[-1] == {"type": "synced", "session": 1, "last_seq": events(live)[-1]["seq"]}
-            resumed = await c.ws({"session": 1, "from_seq": events(live)[-3]["seq"]})
+            from_seq = events(live, "log")[-5]["seq"]
+            resumed = await c.ws({"session": 1, "from_seq": from_seq})
             got = await resumed.until(is_synced)
-            assert events(got) == events(live)[-3:]
+            assert got[0]["replay"] == {"from_seq": from_seq} and events(got) == events(live, "log")[-5:]
             other = await c.ws({"session": 99, "from_seq": 10_000})  # an old session: everything again
             got = await other.until(is_synced)
-            assert got[0]["replay"]["from_seq"] is None and events(got)[0]["event"] == "hello"
+            assert got[0]["replay"]["from_seq"] is None and len(events(got)) > 2000
         run_async(main, gui)
 
 
@@ -174,7 +172,7 @@ def test_several_screens_see_the_same_run(gui: Gui) -> None:
     run_async(main, gui)
 
 
-def test_check_busy_and_configs(tmp_path: Path) -> None:
+def test_checks_and_configs(tmp_path: Path) -> None:
     root = tmp_path / "root"
     shutil.copytree(CONFIGS, root)
     (root / "nested" / "deeper").mkdir(parents=True)
@@ -190,9 +188,7 @@ def test_check_busy_and_configs(tmp_path: Path) -> None:
             paths = [f["path"] for f in body["files"]]
             assert "nested/deeper/n.yml" in paths and not any(p.startswith(".git") for p in paths)
             results = await asyncio.gather(*(c.post("api/check", {"file": "simulation.yaml"}) for _ in range(3)))
-            codes = sorted(s for s, _ in results)
-            assert codes[0] == 200 and codes[-1] == 409
-            assert all(b["error"]["code"] == "check-busy" for s, b in results if s == 409)
+            assert [s for s, _ in results] == [200, 200, 200]  # they wait their turn
         run_async(main, gui)
 
 
@@ -208,7 +204,7 @@ def start_run(gui: Gui, file: str, wait_for: str = "time") -> list[int]:
         assert status == 200, body
         await sock.until(lambda m: m.get("event", {}).get("event") == wait_for)
         await sock.close()
-        return [body["session"]["launcher_pid"], *started_pids(sock.received)]
+        return [body["session"]["launcher"]["pid"], *started_pids(sock.received)]
     return run_async(main, gui)
 
 
@@ -267,6 +263,7 @@ def test_a_killed_server_leaves_no_run(tmp_path: Path) -> None:
     ({"FAKE_LAUNCHER_FEATURES": "events"}, (), "has no 'stdin-commands'"),
     ({"FAKE_LAUNCHER_FEATURES": ""}, (), "has no 'events'"),
     ({}, ("--port", "70000"), "--port"),
+    ({}, ("--port", "80"), "--port 80"),
     ({}, ("/nonexistent/x.yaml",), "no such file"),
 ])
 def test_start_errors_exit_with_2(tmp_path: Path, env: dict, args: tuple, expected: str) -> None:
@@ -296,3 +293,19 @@ def test_the_url_line(tmp_path: Path) -> None:
         assert gui.url == f"http://127.0.0.1:{gui.port}/#token={gui.token}" and len(gui.token) >= 40
     with gui_server(tmp_path) as other:
         assert other.token != gui.token
+
+
+@pytest.mark.skipif(not POSIX, reason="an executable script")
+def test_a_launcher_in_the_current_directory_is_not_taken_from_path(tmp_path: Path) -> None:
+    # Windows looks in the current directory before PATH: a folder received from someone could run its own
+    # vehicle_sil_launch. The server does not take a launcher found there; --launcher still can name it.
+    here = tmp_path / "received"
+    here.mkdir()
+    planted = here / "vehicle_sil_launch"
+    planted.write_text(f"#!{sys.executable}\n" + FAKE.read_text())
+    planted.chmod(0o755)
+    env = {"PATH": os.pathsep.join([".", os.environ.get("PATH", "")]), "VEHICLE_SIL_LAUNCH": ""}
+    with gui_server(tmp_path, launcher=None, env=env, cwd=here, expect_start=False) as gui:
+        assert gui.proc.returncode == 2 and "current directory" in gui.stderr_text()
+    with gui_server(tmp_path, launcher=planted, env=env, cwd=here) as gui:
+        pass

@@ -1,0 +1,11 @@
+{
+  "description": "What a screen that reads too slowly gets (one message; the numbers are examples).",
+  "client": [],
+  "server": [
+    {
+      "type": "resync",
+      "reason": "slow-client",
+      "message": "this screen read too slowly and messages were dropped: the state is sent again from the start"
+    }
+  ]
+}

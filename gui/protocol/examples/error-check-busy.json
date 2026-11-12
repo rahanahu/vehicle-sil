@@ -1,0 +1,18 @@
+{
+  "description": "Too many checks waiting for the one that runs.",
+  "request": {
+    "method": "POST",
+    "path": "api/check",
+    "body": {
+      "file": "simulation.yaml"
+    }
+  },
+  "status": 503,
+  "response": {
+    "error": {
+      "code": "check-busy",
+      "message": "4 checks are already waiting for the one that runs: wait for their answers, then check again",
+      "detail": null
+    }
+  }
+}

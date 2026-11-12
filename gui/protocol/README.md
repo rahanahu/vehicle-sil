@@ -63,7 +63,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | 503 | `too-many-connections` | WebSocket の数の上限（握手の応答） |
 | 504 | `check-timeout` | 照合が時間の上限までに終わらなかった（止めた） |
 
-例は `error-<code>.json` です（`internal` を除く）。
+例は `error-<code>.json` です（`internal` を除く）。`stop.json`、`stop-force.json`、`stop-ended.json` は停止の応答です。
 
 ## WebSocket（`ws`）
 
@@ -86,7 +86,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
 | `session` | `{session}`（要約）。実行を始めたとき、止めるよう頼んだとき、ランチャーが終わったとき（`launcher.running` が `false` に）、実行が終わったとき（`state` が `ended` に） | `ws-pass.json` |
 | `error` | `{session, code, message, detail}`。サーバーが気づいたこと（下の表）。要約の `problems` にも残る | `ws-bad-lines.json` |
-| `dropped` | `{session, reason, log, at_least, events}`。この画面に送らなかったものの数。`log` は source ごとの log の行の数、`at_least` はその数が下限でしかない source（もっと落ちているかもしれない）、`events` はほかの事象の数。`reason` が `not-kept` はサーバーが覚えていない（再送の前）、`slow-client` は画面の受け取りが遅く、送る分から落とした。画面は、その source のログのその位置に「ここで N 行が落ちた」を出す | `ws-dropped.json`、`ws-slow-client.json` |
+| `dropped` | `{session, reason, log, at_least, events}`（`ws-slow-client.json` の数は例）。この画面に送らなかったものの数。`log` は source ごとの log の行の数、`at_least` はその数が下限でしかない source（もっと落ちているかもしれない）、`events` はほかの事象の数。`reason` が `not-kept` はサーバーが覚えていない（再送の前）、`slow-client` は画面の受け取りが遅く、送る分から落とした。画面は、その source のログのその位置に「ここで N 行が落ちた」を出す | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受け取りが遅く、落とせない知らせまであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
 
 受け取りが遅い画面には、まず log の行と知らない事象を落とし（`dropped`）、`time` は最後の 1 つにまとめます。それでも追いつかないときだけ `resync` です。
@@ -103,7 +103,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `no-hello` | 最初の事象が `hello` でない |
 | `events-format` | `hello` の `vehicle_sil_events` が、このサーバーの読む版と違う |
 | `launcher-stderr` | ランチャーが標準エラーに書いた行（1 回の実行で 50 行まで） |
-| `kept-limit` | 覚える量の上限を超えたので、要約に入れなかった（`detail.what`: `check`、`result`、`findings`、`participants`） |
+| `kept-limit` | 覚える量の上限を超えたので、要約に入れなかった（`detail.what`: `check`、`result`、`findings`、`participants`、または 4 KiB を超えた事象の種類 `phase`、`time`、`registry`、`command`、`participant`）。種類ごとに 1 回 |
 | `no-result` | ランチャーが `result` を書かずに終わった（`detail.exit_code`） |
 | `output-left-open` | ランチャーは終わったが、ランチャーが起動したプロセスが出力を開いたままなので、残りを読まずに終えた |
 | `stop-not-delivered` | 停止の命令をランチャーの標準入力に書けなかった |
@@ -125,7 +125,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `check` | `check` 事象の `check`（照合の結果を丸ごと。participant の `required`、`enabled`、`variables` を含む）。まだなければ `null` |
 | `registry` | 最後の `registry` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`） |
 | `participants` | participant ごとの今の状態。`participant` 事象の欄（`event`、`seq`、`t_ms` を除く）を名前ごとに重ねたもの（`name`、`state`、`pid`、`exit_code`、`signal` など）。初めて現れた順。`required` と `enabled` は `check` を見る |
-| `participants_omitted` | 上限（256 人）を超えて覚えていない participant の数 |
+| `participants_omitted` | 上限（256 人）を超えたので覚えていない participant の事象の数 |
 | `findings`、`findings_omitted` | `finding` 事象（`event`、`seq`、`t_ms` を除く）と、上限を超えて覚えていない数 |
 | `last_command` | 最後の `command` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`） |
 | `result` | `result` 事象の `result`（なければ `null`） |
@@ -136,4 +136,4 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 
 ## 上限
 
-サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない欄だけ）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`problems` は 100 個。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。
+サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB、`problems` は 100 個。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。

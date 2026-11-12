@@ -1,0 +1,18 @@
+{
+  "description": "Not a .yaml or .yml file.",
+  "request": {
+    "method": "POST",
+    "path": "api/check",
+    "body": {
+      "file": "notes.txt"
+    }
+  },
+  "status": 400,
+  "response": {
+    "error": {
+      "code": "not-a-configuration",
+      "message": "'notes.txt' is not a .yaml or .yml file",
+      "detail": null
+    }
+  }
+}

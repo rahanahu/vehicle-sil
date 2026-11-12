@@ -1,5 +1,5 @@
 {
-  "description": "Start while a run is running.",
+  "description": "Start while a run is starting or running.",
   "request": {
     "method": "POST",
     "path": "api/run",
@@ -15,8 +15,8 @@
   "status": 409,
   "response": {
     "error": {
-      "code": "session-running",
-      "message": "a simulation is running: stop it (POST api/stop) and wait for it to end before starting another",
+      "code": "already-running",
+      "message": "a simulation is starting or running: stop it (POST api/stop) and wait for it to end before starting another",
       "detail": null
     }
   }

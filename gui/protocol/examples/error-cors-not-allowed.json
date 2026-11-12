@@ -1,0 +1,15 @@
+{
+  "description": "OPTIONS (a CORS preflight).",
+  "request": {
+    "method": "OPTIONS",
+    "path": "api/run"
+  },
+  "status": 403,
+  "response": {
+    "error": {
+      "code": "cors-not-allowed",
+      "message": "this server does not answer cross-origin requests",
+      "detail": null
+    }
+  }
+}

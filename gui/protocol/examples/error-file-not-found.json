@@ -1,0 +1,18 @@
+{
+  "description": "No such file under the root.",
+  "request": {
+    "method": "POST",
+    "path": "api/check",
+    "body": {
+      "file": "missing.yaml"
+    }
+  },
+  "status": 404,
+  "response": {
+    "error": {
+      "code": "file-not-found",
+      "message": "'missing.yaml' does not exist under the root (/path/to/root): choose one that GET api/configs lists",
+      "detail": null
+    }
+  }
+}

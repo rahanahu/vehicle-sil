@@ -1,0 +1,15 @@
+{
+  "description": "A WebSocket over the limit (the handshake's answer).",
+  "request": {
+    "method": "GET",
+    "path": "ws"
+  },
+  "status": 503,
+  "response": {
+    "error": {
+      "code": "too-many-connections",
+      "message": "too many screens are connected: close some tabs",
+      "detail": null
+    }
+  }
+}

@@ -43,12 +43,20 @@ class ConfigRoot:
         if not isinstance(relative, str) or not relative:
             raise PathRejected("invalid-path", "file must be a non-empty string: a path relative to the root, "
                                                "as GET api/configs lists it")
+        try:
+            relative.encode("utf-8")
+        except UnicodeEncodeError:
+            raise PathRejected("invalid-path", "file has a lone surrogate (not a character): write the path as "
+                                               "GET api/configs lists it") from None
         if len(relative) > MAX_PATH_CHARS or "\x00" in relative or "\\" in relative:
             raise PathRejected("invalid-path", "file must be a path relative to the root, with / between the "
                                                "parts (no backslash, no NUL)")
         if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
             raise PathRejected("outside-root", f"{relative!r} is absolute: write it relative to the root "
                                                f"({self.root})")
+        if ":" in relative:  # on Windows a drive or an alternate data stream (a.yaml:b.yaml)
+            raise PathRejected("invalid-path", f"{relative!r} has a ':': the configuration files the screen may "
+                                               "use have none in their path")
         parts = relative.split("/")
         if any(p in ("", ".", "..") for p in parts):
             raise PathRejected("outside-root", f"{relative!r} has an empty, '.' or '..' part: write the path "
@@ -57,7 +65,7 @@ class ConfigRoot:
             raise PathRejected("not-a-configuration", f"{relative!r} is not a .yaml or .yml file")
         try:
             absolute = (self.root / Path(*parts)).resolve(strict=True)
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             raise PathRejected("file-not-found", f"{relative!r} does not exist under the root ({self.root}): "
                                                  "choose one that GET api/configs lists") from None
         if not absolute.is_relative_to(self.root):

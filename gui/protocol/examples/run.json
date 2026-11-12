@@ -1,5 +1,5 @@
 {
-  "description": "Start a run.",
+  "description": "Start a run: the summary of the new run.",
   "request": {
     "method": "POST",
     "path": "api/run",
@@ -22,18 +22,29 @@
       ],
       "speed": null,
       "start_paused": false,
-      "state": "running",
-      "phase": null,
-      "stop_requests": 0,
       "started_at": "2026-01-01T00:00:00.000Z",
       "ended_at": null,
-      "launcher_pid": 10001,
-      "exit_code": null,
+      "state": "running",
+      "launcher": {
+        "pid": 10001,
+        "running": true,
+        "exit_code": null,
+        "signal": null
+      },
+      "stop": "none",
+      "phase": null,
       "last_seq": null,
-      "sim_ms": null,
+      "last_t_ms": null,
+      "time": null,
+      "check": null,
+      "registry": null,
       "participants": [],
+      "participants_omitted": 0,
       "findings": [],
+      "findings_omitted": 0,
+      "last_command": null,
       "result": null,
+      "log": {},
       "problems": [],
       "problems_omitted": 0
     }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import html
 import json
 import logging
 import os
@@ -12,6 +13,8 @@ import secrets
 import signal
 import socket
 import sys
+import tempfile
+import threading
 import webbrowser
 from pathlib import Path
 
@@ -19,11 +22,12 @@ from aiohttp import web
 
 from . import __version__, launcher as launcher_module
 from .paths import ConfigRoot, PathRejected
-from .server import PROTOCOL, GuiServer, Options
+from .server import CHECK_TIMEOUT_S, END_BUDGET_S, PROTOCOL, RUNNER_SHUTDOWN_S, GuiServer, Options
 from .static import find_web_dir
 
 EXIT_OK, EXIT_FAILED, EXIT_USAGE = 0, 1, 2
-DEV_ORIGIN = re.compile(r"http://(127\.0\.0\.1|localhost):\d{1,5}")
+DEV_ORIGIN = re.compile(r"http://127\.0\.0\.1:\d{1,5}")
+BROWSER_PAGE_S = 30  # how long the page that hands the URL to the browser is kept
 
 DESCRIPTION = """\
 Starts the browser GUI of vehicle-sil: a server on 127.0.0.1 that runs vehicle_sil_launch and shows its
@@ -51,13 +55,16 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--port", type=int, default=0, help="the port on 127.0.0.1 (default 0: a free one)")
     p.add_argument("--no-browser", action="store_true", help="do not open the browser")
     p.add_argument("--launcher", help="the path of vehicle_sil_launch")
-    p.add_argument("--dev-origin", help="also accept requests from this development server, e.g. "
-                                        "http://127.0.0.1:4200 (ng serve's proxy)")
+    p.add_argument("--dev-origin", help="also accept requests from this development server, "
+                                        "http://127.0.0.1:<port> (ng serve's proxy)")
     p.add_argument("--json", action="store_true",
                    help='print {"vehicle_sil_gui": 1, "url": ..., "port": ...} on one line instead of the URL')
     p.add_argument("--stop-timeout", type=float, default=10.0, metavar="SECONDS",
                    help="on exit, how long to wait for a running simulation to stop before the launcher is "
                         "asked to stop with a signal and then killed (default 10)")
+    p.add_argument("--check-timeout", type=float, default=CHECK_TIMEOUT_S, metavar="SECONDS",
+                   help=f"how long a check (check --json, which runs each ECU's --describe) may take before it "
+                        f"is stopped (default {CHECK_TIMEOUT_S:g})")
     p.add_argument("--version", action="version", version=f"vehicle-sil-gui {__version__}")
     return p.parse_args(argv)
 
@@ -81,12 +88,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr, format="vehicle-sil-gui: %(message)s")
     if args.dev_origin is not None and not DEV_ORIGIN.fullmatch(args.dev_origin):
-        return usage_error(f"--dev-origin {args.dev_origin}: write http://127.0.0.1:<port> or "
-                           "http://localhost:<port> (only a development server on this computer)")
+        return usage_error(f"--dev-origin {args.dev_origin}: write http://127.0.0.1:<port> (only a development "
+                           "server on this computer)")
     if not 0 <= args.port <= 65535:
         return usage_error(f"--port {args.port}: write 0 (a free port) or a port from 1 to 65535")
+    if args.port == 80:  # a browser leaves :80 out of Host and Origin, which the checks compare
+        return usage_error("--port 80 cannot be used: choose another port, or 0 for a free one")
     if args.stop_timeout < 0:
         return usage_error("--stop-timeout must be 0 or more seconds")
+    if not args.check_timeout > 0:
+        return usage_error("--check-timeout must be more than 0 seconds")
     config = Path(args.config) if args.config else None
     if config is not None and not config.is_file():
         return usage_error(f"{config}: no such file")
@@ -125,11 +136,13 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
     port = sock.getsockname()[1]
     token = secrets.token_urlsafe(32)
     server = GuiServer(Options(root=root, launcher=launcher, port=port, token=token, initial_file=initial,
-                               dev_origin=args.dev_origin, web_dir=find_web_dir(), stop_timeout_s=args.stop_timeout))
-    runner = web.AppRunner(server.app(), access_log=None, handle_signals=False)
+                               dev_origin=args.dev_origin, web_dir=find_web_dir(), stop_timeout_s=args.stop_timeout,
+                               check_timeout_s=args.check_timeout))
+    runner = web.AppRunner(server.app(), access_log=None, handle_signals=False, shutdown_timeout=RUNNER_SHUTDOWN_S)
     await runner.setup()
     stop = asyncio.Event()
     signals = install_signal_handlers(stop, server)
+    page: Path | None = None
     try:
         await web.SockSite(runner, sock).start()
         url = f"http://127.0.0.1:{port}/#token={token}"
@@ -145,13 +158,41 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
                 print(f"vehicle-sil-gui: through the development server: {dev_url}", file=sys.stderr)
             print("vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server", file=sys.stderr)
         if not args.no_browser:
-            await asyncio.to_thread(webbrowser.open, dev_url or url)
+            page = open_browser(dev_url or url)
+            asyncio.get_running_loop().call_later(BROWSER_PAGE_S, remove, page)
         await stop.wait()
         return EXIT_OK
     finally:
-        await server.shutdown()
+        try:  # each step of the end is bounded; this is the bound of all of them
+            async with asyncio.timeout(args.stop_timeout + END_BUDGET_S):
+                await server.shutdown()
+        except TimeoutError:
+            server.kill_all()
         await runner.cleanup()
         signals()
+        if page is not None:
+            remove(page)
+
+
+def open_browser(url: str) -> Path:
+    """Opens the URL through a file that only this user can read: the browser's command line, which other
+    users of the computer can see, has the file's path and not the token."""
+    fd, name = tempfile.mkstemp(prefix="vehicle-sil-gui-", suffix=".html")  # mode 0600
+    link = html.escape(url, quote=True)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(f'<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url={link}">'
+                f'<title>vehicle-sil-gui</title></head><body><p><a href="{link}">vehicle-sil-gui</a></p></body></html>\n')
+    page = Path(name)
+    # Not awaited: a browser command may wait until the browser is closed.
+    threading.Thread(target=webbrowser.open, args=(page.as_uri(),), daemon=True).start()
+    return page
+
+
+def remove(page: Path) -> None:
+    try:
+        page.unlink()
+    except OSError:
+        pass
 
 
 def install_signal_handlers(stop: asyncio.Event, server: GuiServer):

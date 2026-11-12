@@ -15,9 +15,33 @@
         "simulation": true
       },
       {
+        "path": "bad-types.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 481,
+        "simulation": true
+      },
+      {
         "path": "check-error.yaml",
         "modified": "2026-01-01T00:00:00Z",
         "size": 483,
+        "simulation": true
+      },
+      {
+        "path": "check-garbage.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 485,
+        "simulation": true
+      },
+      {
+        "path": "dash-name.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 524,
+        "simulation": true
+      },
+      {
+        "path": "finding-flood.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 485,
         "simulation": true
       },
       {
@@ -48,6 +72,12 @@
         "path": "launcher-crash.yaml",
         "modified": "2026-01-01T00:00:00Z",
         "size": 486,
+        "simulation": true
+      },
+      {
+        "path": "orphan.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 478,
         "simulation": true
       },
       {

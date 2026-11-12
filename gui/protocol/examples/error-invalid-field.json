@@ -1,0 +1,19 @@
+{
+  "description": "A field of the wrong type or out of range.",
+  "request": {
+    "method": "POST",
+    "path": "api/run",
+    "body": {
+      "file": "simulation.yaml",
+      "speed": 0
+    }
+  },
+  "status": 400,
+  "response": {
+    "error": {
+      "code": "invalid-field",
+      "message": "speed must be null, \"max\" or a number from 0.01 to 1000 (1 is real time)",
+      "detail": null
+    }
+  }
+}

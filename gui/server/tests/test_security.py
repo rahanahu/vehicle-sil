@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 import aiohttp
 import pytest
-from conftest import CONFIGS, Client, Gui, gui_server, run_async
+from conftest import CONFIGS, Client, Gui, gui_server, run_async, wait_until
 
 API = [("GET", "api/app"), ("GET", "api/configs"), ("GET", "api/session"), ("POST", "api/check"),
        ("POST", "api/run"), ("POST", "api/stop")]
@@ -45,28 +47,28 @@ def test_every_api_needs_the_token(gui: Gui) -> None:
 
 def test_only_the_servers_own_host_is_answered(gui: Gui) -> None:
     async def main(c: Client) -> None:
+        # localhost is refused too: a browser may try ::1 first, where another program could listen.
         for host in ("evil.example", f"evil.example:{gui.port}", f"127.0.0.1:{gui.port + 1}", "127.0.0.1",
-                     f"0.0.0.0:{gui.port}", f"[::1]:{gui.port}"):
+                     f"0.0.0.0:{gui.port}", f"[::1]:{gui.port}", f"localhost:{gui.port}", f"LOCALHOST:{gui.port}"):
             for path in ("api/app", "", "index.html"):
                 r = await request(c, "GET", path, {**gui.headers(), "Host": host})
                 assert r.status == 403, (host, path)
-        for host in (f"127.0.0.1:{gui.port}", f"localhost:{gui.port}", f"LOCALHOST:{gui.port}"):
-            r = await request(c, "GET", "api/app", {**gui.headers(origin=None), "Host": host})
-            assert r.status == 200, host
+        r = await request(c, "GET", "api/app", {**gui.headers(origin=None), "Host": f"127.0.0.1:{gui.port}"})
+        assert r.status == 200
     run_async(main, gui)
 
 
 def test_changes_need_the_servers_own_origin(gui: Gui) -> None:
     async def main(c: Client) -> None:
         for origin in (None, "null", "http://evil.example", f"http://127.0.0.1:{gui.port + 1}",
-                       f"https://127.0.0.1:{gui.port}", "http://127.0.0.1:4200"):
+                       f"https://127.0.0.1:{gui.port}", "http://127.0.0.1:4200", f"http://localhost:{gui.port}"):
             for path in ("api/check", "api/run", "api/stop"):
                 status, body = await c.post(path, {"file": "simulation.yaml"}, origin=origin)
                 assert status == 403 and body["error"]["code"] == "forbidden-origin", (origin, path)
             if origin is not None:  # a GET from another page is refused too
                 status, _ = await c.get("api/app", origin=origin)
                 assert status == 403
-        status, _ = await c.post("api/check", {"file": "simulation.yaml"}, origin=f"http://localhost:{gui.port}")
+        status, _ = await c.post("api/check", {"file": "simulation.yaml"})
         assert status == 200
         status, _ = await c.get("api/app", origin=None)  # same-origin GETs may come without Origin
         assert status == 200
@@ -209,7 +211,7 @@ def test_dev_origin_is_accepted_only_when_given(tmp_path: Path) -> None:
             assert status == 403
         run_async(main, gui)
     for bad in ("http://evil.example:4200", "https://127.0.0.1:4200", "http://127.0.0.1", "*",
-                "http://127.0.0.1:4200/"):
+                "http://127.0.0.1:4200/", "http://localhost:4200"):
         with gui_server(tmp_path, args=("--dev-origin", bad), expect_start=False) as gui:
             assert gui.proc.returncode == 2 and "--dev-origin" in gui.stderr_text()
 
@@ -223,3 +225,30 @@ def test_the_server_listens_on_loopback_only(gui: Gui) -> None:
     for address in addresses:
         with pytest.raises(OSError):
             socket.create_connection((address, gui.port), timeout=2).close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="file modes, and BROWSER as a script")
+def test_the_browser_is_not_given_the_token(tmp_path: Path) -> None:
+    # Another user of the computer can read the command line of a process (/proc/<pid>/cmdline): the browser is
+    # given a file that only this user can read, which forwards to the URL with the token.
+    record = tmp_path / "browser.json"
+    script = tmp_path / "browser.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, stat, sys\n"
+        "from urllib.parse import unquote\n"
+        "info = {'argv': sys.argv[1:]}\n"
+        "path = unquote(sys.argv[1][len('file://'):]) if sys.argv[1].startswith('file://') else None\n"
+        "if path and os.path.exists(path):\n"
+        "    info['mode'] = stat.S_IMODE(os.stat(path).st_mode)\n"
+        "    info['content'] = open(path, encoding='utf-8').read()\n"
+        f"open({str(record)!r}, 'w').write(json.dumps(info))\n")
+    script.chmod(0o755)
+    with gui_server(tmp_path, browser=True, env={"BROWSER": str(script)}) as gui:
+        assert wait_until(record.exists, 10)
+        info = json.loads(record.read_text())
+        assert all(gui.token not in a for a in info["argv"]), info["argv"]
+        assert info["argv"][0].startswith("file://") and info["mode"] == 0o600
+        assert gui.url in info["content"]
+        page = Path(unquote(info["argv"][0][len("file://"):]))
+    assert not page.exists()  # removed, at the latest when the server ends
