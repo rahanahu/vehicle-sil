@@ -2,6 +2,7 @@ import { HttpClient, HttpErrorResponse, httpResource } from '@angular/common/htt
 import {
   Component,
   DOCUMENT,
+  DestroyRef,
   computed,
   inject,
   linkedSignal,
@@ -23,6 +24,7 @@ import {
 } from '../core/api';
 import { AuthToken } from '../core/auth/auth-token';
 import { shortPath } from '../core/format/short-path';
+import { LanguageChoice } from '../core/i18n/language-choice';
 import { CheckPanel } from './check-panel';
 import { FindingsList } from './findings-list';
 import { STDERR_CODE, launcherStderr } from './launcher-stderr';
@@ -43,6 +45,41 @@ const EXPLAINED_PROBLEMS = ['no-result', 'launcher-silent'];
 
 /** ランチャー自身のログの出どころ。 */
 const LAUNCHER_SOURCE = 'vehicle_sil_launch';
+
+/**
+ * 言語を変えて読み込み直すときに持ち越す、この画面の選択（サーバーにまだ送っていないもの）。外す participant と
+ * 速度は、持ち越したときと同じセッション（なければ、セッションがないまま）の間だけ戻す（次の実行の値は上書きしない）。
+ */
+interface RunChoices {
+  session: number | null;
+  chosen: string | null;
+  /** 外す participant を選んだときのファイル。 */
+  file: string | null;
+  disable: string[];
+  speed: Speed;
+  logSource: string;
+}
+
+const isText = (value: unknown): value is string => typeof value === 'string';
+
+/** 持ち越した値（sessionStorage から来る）を確かめる。形が違えば null（持ち越さない）。 */
+export function readRunChoices(value: unknown): RunChoices | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  const speedOk = v['speed'] === null || v['speed'] === 'max' || typeof v['speed'] === 'number';
+  if (
+    !(v['session'] === null || typeof v['session'] === 'number') ||
+    !(v['chosen'] === null || isText(v['chosen'])) ||
+    !(v['file'] === null || isText(v['file'])) ||
+    !Array.isArray(v['disable']) ||
+    !v['disable'].every(isText) ||
+    !speedOk ||
+    !isText(v['logSource'])
+  ) {
+    return null;
+  }
+  return v as unknown as RunChoices;
+}
 
 /** 中断できる待ち。中断されたら、その理由で失敗する（待ち終えたら、中断の受け口を外す）。 */
 function wait(ms: number, signal: AbortSignal): Promise<void> {
@@ -91,6 +128,9 @@ export class RunPage {
   private readonly document = inject(DOCUMENT);
   protected readonly auth = inject(AuthToken);
   protected readonly run = inject(RunSession);
+  private readonly language = inject(LanguageChoice);
+  /** 言語を変える前の選択（なければ null）。 */
+  private readonly carried = readRunChoices(this.language.take('run'));
 
   protected readonly app = httpResource(() => (this.auth.token() ? 'api/app' : undefined), {
     parse: readAppInfo,
@@ -148,7 +188,7 @@ export class RunPage {
   });
 
   /** 利用者が選んだファイル。選ぶまでは null で、preferredFile に従う。 */
-  private readonly chosen = signal<string | null>(null);
+  private readonly chosen = signal<string | null>(this.carried?.chosen ?? null);
   /**
    * 選んでいる構成ファイル（root からの相対）。利用者が選んだら、後から届いたセッションの知らせなどで変えない。
    */
@@ -168,7 +208,16 @@ export class RunPage {
     source: () => {
       const file = this.selected();
       const session = this.session();
-      return { file, names: session && session.file === file ? session.disable : [] };
+      const carried = this.carriedFor(session?.id ?? null);
+      return {
+        file,
+        names:
+          carried && carried.file === file
+            ? carried.disable
+            : session && session.file === file
+              ? session.disable
+              : [],
+      };
     },
     computation: ({ names }) => new Set(names),
     equal: (a, b) => a.size === b.size && [...a].every((name) => b.has(name)),
@@ -182,7 +231,11 @@ export class RunPage {
     this.app.hasValue() ? this.app.value().limits : { speed_min: 0.01, speed_max: 1000 },
   );
   /** 速度。前の実行のもの（なければ構成ファイルのとおり）から始める。 */
-  protected readonly speed = linkedSignal<Speed>(() => this.session()?.speed ?? null);
+  protected readonly speed = linkedSignal<Speed>(() => {
+    const session = this.session();
+    const carried = this.carriedFor(session?.id ?? null);
+    return carried ? carried.speed : (session?.speed ?? null);
+  });
   /** 速度の倍率の欄が範囲の外。 */
   protected readonly speedInvalid = signal(false);
 
@@ -335,8 +388,28 @@ export class RunPage {
   });
 
   /** ログで絞る出どころ（「ランチャーのログを見る」で選ぶ）。 */
-  protected readonly logSource = signal('');
+  protected readonly logSource = signal(this.carried?.logSource ?? '');
   protected readonly copyLabel = $localize`選べる範囲のパスをコピー`;
+
+  constructor() {
+    this.language.keep(
+      'run',
+      (): RunChoices => ({
+        session: this.session()?.id ?? null,
+        chosen: this.chosen(),
+        file: this.selected(),
+        disable: [...this.disabled()],
+        speed: this.speed(),
+        logSource: this.logSource(),
+      }),
+      inject(DestroyRef),
+    );
+  }
+
+  /** 持ち越した選択。持ち越したときと同じセッションの間だけ使う。 */
+  private carriedFor(session: number | null): RunChoices | null {
+    return this.carried && this.carried.session === session ? this.carried : null;
+  }
 
   protected selectFile(file: string): void {
     this.chosen.set(file);

@@ -610,7 +610,9 @@ def test_disable_and_speed_are_checked() -> None:
 def test_static_files_stay_in_their_directory(tmp_path: Path) -> None:
     web = tmp_path / "web"
     (web / "assets").mkdir(parents=True)
+    (web / "locale").mkdir()
     (web / "index.html").write_text("<html>")
+    (web / "locale" / "messages.en.json").write_text("{}")
     (web / "main.js").write_text("x")
     (web / "assets" / "a.svg").write_text("<svg/>")
     (web / "secret.py").write_text("x")
@@ -620,10 +622,11 @@ def test_static_files_stay_in_their_directory(tmp_path: Path) -> None:
     s = StaticFiles(web)
     assert s.lookup("/main.js")[1:] == ("text/javascript; charset=utf-8", 200)
     assert s.lookup("/assets/a.svg")[1:] == ("image/svg+xml", 200)
+    assert s.lookup("/locale/messages.en.json")[1:] == ("application/json", 200)  # the screen's translations
     assert s.lookup("/")[0].name == "index.html"
     assert s.lookup("/run/some/route")[0].name == "index.html"  # the screen's routes
     for path in ("/api/x", "/api", "/ws", "/ws/x", "/secret.py", "/.env", "/../outside.js", "/assets/../../x.js",
-                 "/missing.js", "/link.js", "/a\\b.js", "/C:/x.js"):
+                 "/missing.js", "/locale/messages.xx.json", "/link.js", "/a\\b.js", "/C:/x.js"):
         assert s.lookup(path)[2] == 404, path
     assert StaticFiles(None).lookup("/") == (None, None, 200)  # the page that says how to build the screen
 

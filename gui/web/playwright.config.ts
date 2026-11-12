@@ -27,6 +27,8 @@ export const e2eConfig = (mode: E2eMode) =>
     use: {
       baseURL: mode === 'dev' ? devOrigin : `http://127.0.0.1:${GUI_PORT}`,
       trace: 'retain-on-failure',
+      // 画面の言語はブラウザの言語で決まる。試験は日本語（元の言語）で書き、英語の試験（i18n.spec.ts）だけが変える
+      locale: 'ja-JP',
     },
     // プロジェクトの名前で試験が配信の形を知る
     projects: [{ name: mode, use: { ...devices['Desktop Chrome'] } }],

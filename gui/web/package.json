@@ -14,7 +14,7 @@
     "e2e:dev": "playwright test -c playwright.dev.config.ts",
     "e2e:real": "playwright test -c playwright.real.config.ts",
     "format:check": "prettier --check .",
-    "i18n:extract": "ng extract-i18n --output-path src/locale"
+    "i18n:extract": "ng extract-i18n --format json --output-path ../../build/i18n"
   },
   "engines": {
     "node": "^24.15.0 || ^26.0.0",

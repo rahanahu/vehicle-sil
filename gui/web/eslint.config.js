@@ -119,6 +119,7 @@ module.exports = defineConfig([
             'inputmode',
             'aria-labelledby',
             'aria-current',
+            'xPosition',
           ],
         },
       ],

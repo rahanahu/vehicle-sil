@@ -1,0 +1,794 @@
+{
+  "locale": "en",
+  "note": "First pass of the English translation, not yet reviewed by a native speaker. target null: not translated yet (the screen shows the Japanese source).",
+  "translations": {
+    "7760318231941318064": {
+      "source": "vehicle-sil",
+      "target": "vehicle-sil"
+    },
+    "3645018018749173298": {
+      "source": "画面",
+      "target": "Screens"
+    },
+    "5969417612617606058": {
+      "source": "実行 - vehicle-sil",
+      "target": "Run - vehicle-sil"
+    },
+    "4407674405558635807": {
+      "source": "レイアウトの試験 - vehicle-sil",
+      "target": "Layout test - vehicle-sil"
+    },
+    "8601103906724514798": {
+      "source": "見つからない - vehicle-sil",
+      "target": "Not found - vehicle-sil"
+    },
+    "4014900750292963975": {
+      "source": "ナビゲーションを開く",
+      "target": "Open navigation"
+    },
+    "3938326170683588640": {
+      "source": "ナビゲーションを閉じる",
+      "target": "Close navigation"
+    },
+    "1297937002367084422": {
+      "source": "言語（Language）: {$language}",
+      "target": "Language: {$language}"
+    },
+    "8542080435534198197": {
+      "source": "実行",
+      "target": "Run"
+    },
+    "4701042726840341535": {
+      "source": "画面が見つからない",
+      "target": "Page not found"
+    },
+    "4961816437981243176": {
+      "source": "このアドレスの画面はありません。リンクが古いか、打ち間違いかもしれません。",
+      "target": "There is no page at this address. The link may be old or mistyped."
+    },
+    "4390535284457798540": {
+      "source": "最初の画面へ",
+      "target": "Go to the first page"
+    },
+    "5987842789541229177": {
+      "source": "照合: {$INTERPOLATION}（誤り {$INTERPOLATION_1}、警告 {$INTERPOLATION_2}、注記 {$INTERPOLATION_3}）",
+      "target": "Check: {$INTERPOLATION} (errors: {$INTERPOLATION_1}, warnings: {$INTERPOLATION_2}, notes: {$INTERPOLATION_3})"
+    },
+    "954250222839823287": {
+      "source": "participant",
+      "target": "Participants"
+    },
+    "6601304880850067743": {
+      "source": "使う",
+      "target": "Use"
+    },
+    "1828061073589725228": {
+      "source": "照合:",
+      "target": "Check:"
+    },
+    "3262925686581915009": {
+      "source": "待つか:",
+      "target": "Joining:"
+    },
+    "4656317926122790575": {
+      "source": "必須",
+      "target": "Required"
+    },
+    "6737373052763466256": {
+      "source": "任意",
+      "target": "Optional"
+    },
+    "1371034516410911340": {
+      "source": "ネットワーク:",
+      "target": "Networks:"
+    },
+    "1211296294326191265": {
+      "source": "変数:",
+      "target": "Variables:"
+    },
+    "3525856972279023725": {
+      "source": "構成ファイルで外してあります（enabled: false）。",
+      "target": "Disabled in the config file (enabled: false)."
+    },
+    "1231569490753108814": {
+      "source": "participant がありません。",
+      "target": "No participants."
+    },
+    "5937475454163217594": {
+      "source": "所見",
+      "target": "Findings"
+    },
+    "6358845893914240906": {
+      "source": "{$name} を使う",
+      "target": "Use {$name}"
+    },
+    "8500979095361014136": {
+      "source": "所見はありません。",
+      "target": "No findings."
+    },
+    "1255610003415040995": {
+      "source": "待たずに止めますか",
+      "target": "Stop without waiting?"
+    },
+    "8072528740842311599": {
+      "source": " participant の終わりを待たずに、ランチャーに強制終了を頼みます。participant が書き終えていない結果やログは失われることがあります。 ",
+      "target": " The launcher is asked to kill the participants without waiting for them to end. Results and logs they have not finished writing may be lost. "
+    },
+    "5368637977289654342": {
+      "source": " やめる ",
+      "target": " Cancel "
+    },
+    "1462265652524498832": {
+      "source": " 待たずに止める ",
+      "target": " Stop without waiting "
+    },
+    "4407124656831693694": {
+      "source": "誤り",
+      "target": "Error"
+    },
+    "276452183513091886": {
+      "source": "警告",
+      "target": "Warning"
+    },
+    "8685169183318841127": {
+      "source": "注記",
+      "target": "Note"
+    },
+    "8436857783983636398": {
+      "source": "照合",
+      "target": "Check"
+    },
+    "2090622754283542606": {
+      "source": "起動",
+      "target": "Start"
+    },
+    "6986580671790460179": {
+      "source": "参加を待つ",
+      "target": "Waiting to join"
+    },
+    "1325193399605761038": {
+      "source": "停止中",
+      "target": "Stopping"
+    },
+    "3446453269909162427": {
+      "source": "終了",
+      "target": "Ended"
+    },
+    "6510556546876197055": {
+      "source": "照合した",
+      "target": "Checked"
+    },
+    "5562034637386172728": {
+      "source": "照合していない",
+      "target": "Not checked"
+    },
+    "708845366436870643": {
+      "source": "照合できない",
+      "target": "Check failed"
+    },
+    "4264594946253376882": {
+      "source": "飛ばした",
+      "target": "Skipped"
+    },
+    "6435693854879621379": {
+      "source": "外した",
+      "target": "Disabled"
+    },
+    "8583173837108479200": {
+      "source": "起動した",
+      "target": "Started"
+    },
+    "2029821123243853476": {
+      "source": "参加した",
+      "target": "Joined"
+    },
+    "587783925337897132": {
+      "source": "終了した",
+      "target": "Ended"
+    },
+    "127390117042502804": {
+      "source": "停止を求めた",
+      "target": "Stop requested"
+    },
+    "7338348602374785237": {
+      "source": "強制終了した",
+      "target": "Killed"
+    },
+    "2127419512614225972": {
+      "source": "起動していない",
+      "target": "Not started"
+    },
+    "4584084038807311533": {
+      "source": "失敗",
+      "target": "Failed"
+    },
+    "4698021167924269276": {
+      "source": "待っている",
+      "target": "Waiting"
+    },
+    "6202238069693779226": {
+      "source": "通った",
+      "target": "Passed"
+    },
+    "7150011854091514567": {
+      "source": "誤りがある",
+      "target": "Has errors"
+    },
+    "8130600690008587170": {
+      "source": "構成ファイルを読めない",
+      "target": "Cannot read the config file"
+    },
+    "7595249859235127369": {
+      "source": "引数の誤り",
+      "target": "Wrong arguments"
+    },
+    "5561109810048431292": {
+      "source": "成功",
+      "target": "Passed"
+    },
+    "2513729513979630059": {
+      "source": "中断",
+      "target": "Interrupted"
+    },
+    "73246474307767438": {
+      "source": "照合の誤りで起動しなかった",
+      "target": "Not started: the check found errors"
+    },
+    "7256754669943930147": {
+      "source": "準備に失敗した",
+      "target": "Setup failed"
+    },
+    "5640466719174617982": {
+      "source": "結果の名前を読めません",
+      "target": "Cannot read the result name"
+    },
+    "7825180317461266234": {
+      "source": "stop_at_ms まで動いた",
+      "target": "Ran until stop_at_ms"
+    },
+    "1220425914004385212": {
+      "source": "participant が止めた",
+      "target": "A participant ended it"
+    },
+    "2631821060658369967": {
+      "source": "打ち切られた",
+      "target": "Aborted"
+    },
+    "4399587238119921507": {
+      "source": "止めた",
+      "target": "Stopped"
+    },
+    "3784701066459330034": {
+      "source": "始まらなかった",
+      "target": "Did not start"
+    },
+    "5178359797605568054": {
+      "source": "シミュレーションを去った",
+      "target": "Left the simulation"
+    },
+    "5537494390038076078": {
+      "source": "プロセスが失敗で終わった",
+      "target": "The process ended with a failure"
+    },
+    "3369891108883893361": {
+      "source": "始まる前に終わった",
+      "target": "Ended before the start"
+    },
+    "35670291445944221": {
+      "source": "停止の命令（画面の「停止」）",
+      "target": "The stop command (Stop on the screen)"
+    },
+    "8741061450773619028": {
+      "source": "標準入力の終わり（GUI サーバーが終わった）",
+      "target": "End of input (the GUI server ended)"
+    },
+    "4614367135449924014": {
+      "source": "事象を読む側がいなくなった",
+      "target": "Nothing reads the events any more"
+    },
+    "7129416215527586830": {
+      "source": "すべて",
+      "target": "All"
+    },
+    "4756073670678722404": {
+      "source": "文字で絞る",
+      "target": "Filter by text"
+    },
+    "3051548222537298898": {
+      "source": "末尾に追従",
+      "target": "Follow the end"
+    },
+    "6952070187813782386": {
+      "source": "{VAR_PLURAL, plural, other {{INTERPOLATION} 行}}",
+      "target": "{VAR_PLURAL, plural, one {{INTERPOLATION} line} other {{INTERPOLATION} lines}}"
+    },
+    "4088255818584132906": {
+      "source": "（全 {$ICU}）",
+      "target": "(of {$ICU})"
+    },
+    "8495269387096078460": {
+      "source": "古い行を落としました:",
+      "target": "Old lines dropped:"
+    },
+    "7804724824750282316": {
+      "source": "{$INTERPOLATION} {$ICU}",
+      "target": "{$INTERPOLATION}: {$ICU}"
+    },
+    "711176558503009631": {
+      "source": "{VAR_PLURAL, plural, other {読んでいる間に {INTERPOLATION} 行が届きました。}}",
+      "target": "{VAR_PLURAL, plural, one {{INTERPOLATION} new line came in while you were reading.} other {{INTERPOLATION} new lines came in while you were reading.}}"
+    },
+    "5933475576422501221": {
+      "source": "末尾へ",
+      "target": "Go to the end"
+    },
+    "8982094913917671380": {
+      "source": "ログ",
+      "target": "Log"
+    },
+    "4178718330541701208": {
+      "source": "{VAR_PLURAL, plural, other {── ここで {INTERPOLATION} 行が落ちました（ランチャーが書けなかった行） ──}}",
+      "target": "{VAR_PLURAL, plural, one {── {INTERPOLATION} line dropped here (the launcher could not write it) ──} other {── {INTERPOLATION} lines dropped here (the launcher could not write them) ──}}"
+    },
+    "5747187771005007068": {
+      "source": "{VAR_PLURAL, plural, other {── ここで {INTERPOLATION} 行以上が落ちました ──}}",
+      "target": "{VAR_PLURAL, plural, other {── {INTERPOLATION} or more lines dropped here ──}}"
+    },
+    "5760546185805569038": {
+      "source": "{VAR_PLURAL, plural, other {── ここで {INTERPOLATION} 行が落ちました ──}}",
+      "target": "{VAR_PLURAL, plural, one {── {INTERPOLATION} line dropped here ──} other {── {INTERPOLATION} lines dropped here ──}}"
+    },
+    "9054170585872214007": {
+      "source": " ランチャーが先に終わったので、終わりを知らせてこなかった participant がどうなったかはわかりません。 ",
+      "target": " The launcher ended first, so it is not known what happened to the participants that did not report their end. "
+    },
+    "8256279921376192658": {
+      "source": "participant の状態",
+      "target": "Participant status"
+    },
+    "8037781260982081123": {
+      "source": "終了コード {$INTERPOLATION}",
+      "target": "Exit code {$INTERPOLATION}"
+    },
+    "5983484754379211865": {
+      "source": "シグナル {$INTERPOLATION}",
+      "target": "Signal {$INTERPOLATION}"
+    },
+    "6976850228063420003": {
+      "source": "最後の知らせ: {$INTERPOLATION}",
+      "target": "Last report: {$INTERPOLATION}"
+    },
+    "6093372099174534144": {
+      "source": "大きすぎて省いた欄: {$INTERPOLATION}",
+      "target": "Fields left out (too large): {$INTERPOLATION}"
+    },
+    "4249960518295599261": {
+      "source": "まだ participant の知らせがありません。",
+      "target": "No reports from participants yet."
+    },
+    "7944508049780343564": {
+      "source": "不明",
+      "target": "Unknown"
+    },
+    "7021650277600365342": {
+      "source": "終わり方",
+      "target": "How it ended"
+    },
+    "7757205955446785916": {
+      "source": "止めたもの",
+      "target": "Stopped by"
+    },
+    "5484115653788609668": {
+      "source": "所見の数",
+      "target": "Findings"
+    },
+    "845801156829170127": {
+      "source": " 誤り {$INTERPOLATION}、警告 {$INTERPOLATION_1}、注記 {$INTERPOLATION_2} ",
+      "target": " Errors: {$INTERPOLATION}, warnings: {$INTERPOLATION_1}, notes: {$INTERPOLATION_2} "
+    },
+    "7091115058470204677": {
+      "source": "プロセスが残った participant: {$INTERPOLATION}",
+      "target": "Participants whose process was left running: {$INTERPOLATION}"
+    },
+    "7152190322515477762": {
+      "source": "実行の所見",
+      "target": "Findings of the run"
+    },
+    "5897589235032745351": {
+      "source": " この画面は、GUI サーバーが起動したときに表示した URL（{$START_TAG_CODE}#token={$CLOSE_TAG_CODE} の付いたもの）から開いてください。 ",
+      "target": " Open this screen from the URL that the GUI server printed when it started (the one with {$START_TAG_CODE}#token={$CLOSE_TAG_CODE}). "
+    },
+    "9009873899296566776": {
+      "source": " サーバーがこの画面の鍵（トークン）を受け付けませんでした。サーバーを起動し直したときは、新しく表示された URL から開き直してください。 ",
+      "target": " The server did not accept this screen's token. If you restarted the server, open the new URL that it printed. "
+    },
+    "2886405734274820456": {
+      "source": "サーバーにつなげません:",
+      "target": "Cannot connect to the server:"
+    },
+    "1695680494711456940": {
+      "source": "ランチャーをまだ使えません。",
+      "target": "The launcher cannot be used yet."
+    },
+    "4866298044892904743": {
+      "source": "サーバーの情報を取得できませんでした:",
+      "target": "Could not get the server information:"
+    },
+    "8687801181735723843": {
+      "source": "（{$INTERPOLATION} 回）",
+      "target": "({$INTERPOLATION} times)"
+    },
+    "5118572535897803416": {
+      "source": "閉じる",
+      "target": "Close"
+    },
+    "8995777842646753773": {
+      "source": "操作を受け付けられませんでした:",
+      "target": "The request was refused:"
+    },
+    "6386120766786105326": {
+      "source": "構成ファイル",
+      "target": "Config file"
+    },
+    "4783322918523851928": {
+      "source": "選べる構成ファイル（.yaml、.yml）がありません。",
+      "target": "There are no config files (.yaml, .yml) to choose from."
+    },
+    "8752660157361370778": {
+      "source": "多すぎるので、一覧を途中で打ち切りました。",
+      "target": "Too many files: the list is cut short."
+    },
+    "987394291298224651": {
+      "source": "構成ファイルの一覧を取得できませんでした。",
+      "target": "Could not get the list of config files."
+    },
+    "6324604665730725815": {
+      "source": "一覧を取得しています。",
+      "target": "Getting the list."
+    },
+    "6649189367386432573": {
+      "source": "選べる範囲:",
+      "target": "Files under:"
+    },
+    "1574573437643780597": {
+      "source": "コピーしました",
+      "target": "Copied"
+    },
+    "4171957228112156442": {
+      "source": "コピー",
+      "target": "Copy"
+    },
+    "5988127550695008293": {
+      "source": "この実行の照合の結果はありません。",
+      "target": "This run has no check result."
+    },
+    "7479271004379569664": {
+      "source": "照合しています。",
+      "target": "Checking."
+    },
+    "4443246497430797772": {
+      "source": "照合できませんでした。",
+      "target": "The check could not run."
+    },
+    "347102029828925097": {
+      "source": "構成ファイルを選ぶと照合します。",
+      "target": "Choose a config file to check it."
+    },
+    "143689126225118142": {
+      "source": " 照合し直す ",
+      "target": " Check again "
+    },
+    "2342610381360105341": {
+      "source": "結果",
+      "target": "Result"
+    },
+    "8605946730764086024": {
+      "source": " 結果は出ましたが、ランチャーはまだ終わっていません。終わらないときは、上の「停止」で止めてください。 ",
+      "target": " The result is in, but the launcher has not ended yet. If it does not end, stop it with Stop above. "
+    },
+    "1607626622383920310": {
+      "source": "異常終了: ランチャーが結果を出さずに終わりました（終了コード {$INTERPOLATION}）。",
+      "target": "Abnormal end: the launcher ended without a result (exit code {$INTERPOLATION})."
+    },
+    "3810788762919406712": {
+      "source": "異常終了: ランチャーが結果を出さずに終わりました（シグナル {$INTERPOLATION}）。",
+      "target": "Abnormal end: the launcher ended without a result (signal {$INTERPOLATION})."
+    },
+    "6772893999169966692": {
+      "source": "異常終了: ランチャーが結果を出さずに終わりました。",
+      "target": "Abnormal end: the launcher ended without a result."
+    },
+    "5523934394086438569": {
+      "source": "理由は、次のどれかに出ていることがあります。",
+      "target": "The reason may be in one of these:"
+    },
+    "627393138018896366": {
+      "source": " 標準エラーを見る ",
+      "target": " See the standard error "
+    },
+    "8671099972485963414": {
+      "source": " ランチャーのログを見る ",
+      "target": " See the launcher log "
+    },
+    "1344615807426591546": {
+      "source": " サーバーの知らせを見る ",
+      "target": " See the server messages "
+    },
+    "2325964529765656107": {
+      "source": "ランチャーの標準エラー",
+      "target": "Launcher standard error"
+    },
+    "8856905278208146821": {
+      "source": " {$ICU} ",
+      "target": " {$ICU} "
+    },
+    "2842031653881903912": {
+      "source": "{VAR_PLURAL, plural, other {最初の {INTERPOLATION} 行}}",
+      "target": "{VAR_PLURAL, plural, one {First line} other {First {INTERPOLATION} lines}}"
+    },
+    "5575263061291116600": {
+      "source": "{VAR_PLURAL, plural, other {… ここで {INTERPOLATION} 行を省きました …}}",
+      "target": "{VAR_PLURAL, plural, one {… {INTERPOLATION} line left out here …} other {… {INTERPOLATION} lines left out here …}}"
+    },
+    "6410417219278048346": {
+      "source": "{VAR_PLURAL, plural, other {最後の {INTERPOLATION} 行}}",
+      "target": "{VAR_PLURAL, plural, one {Last line} other {Last {INTERPOLATION} lines}}"
+    },
+    "5249904548791296477": {
+      "source": "サーバーの知らせ",
+      "target": "Server messages"
+    },
+    "5061754360654571481": {
+      "source": "（{$INTERPOLATION} 件）",
+      "target": "({$INTERPOLATION} times)"
+    },
+    "5398683463011856962": {
+      "source": "{VAR_PLURAL, plural, other {詳細（画面に説明のある知らせ {INTERPOLATION} 件）}}",
+      "target": "{VAR_PLURAL, plural, one {Details ({INTERPOLATION} message explained on the screen)} other {Details ({INTERPOLATION} messages explained on the screen)}}"
+    },
+    "1199270782051102786": {
+      "source": "{VAR_PLURAL, plural, other {ほかに {INTERPOLATION} 件あります（出していません）。}}",
+      "target": "{VAR_PLURAL, plural, other {{INTERPOLATION} more not shown.}}"
+    },
+    "8297317269179257969": {
+      "source": " まだ実行していません。始めると、participant の状態とログがここに出ます。 ",
+      "target": " Nothing has run yet. When you start, the participant status and the log appear here. "
+    },
+    "6710731690961911262": {
+      "source": "ランチャーがこの画面に対応していません。",
+      "target": "The launcher does not support this screen."
+    },
+    "4802514740729461545": {
+      "source": "構成ファイルを選んでください。",
+      "target": "Choose a config file."
+    },
+    "2311313022214449144": {
+      "source": "速度の倍率が範囲の外です。",
+      "target": "The speed factor is out of range."
+    },
+    "4267031745399035688": {
+      "source": "照合できませんでした: {$reason}",
+      "target": "The check could not run: {$reason}"
+    },
+    "8622944444543432409": {
+      "source": "照合の結果を待っています。",
+      "target": "Waiting for the check result."
+    },
+    "4245265438145013993": {
+      "source": "照合で誤りが見つかりました（誤り {$count} 件）。直してから始めてください。",
+      "target": "The check found errors (errors: {$count}). Fix them before you start."
+    },
+    "2173710819374882307": {
+      "source": "この GUI サーバーにつないでいる画面が多すぎます。使わないタブを閉じてください。間を置いてつなぎ直しています…",
+      "target": "Too many screens are connected to this GUI server. Close the tabs you do not use. Reconnecting after a pause…"
+    },
+    "2297728902928991276": {
+      "source": "サーバーが混んでいて、接続を後回しにしました。間を置いてつなぎ直しています…",
+      "target": "The server is busy and put the connection off. Reconnecting after a pause…"
+    },
+    "1147974496596730377": {
+      "source": "サーバーにつないでいます…",
+      "target": "Connecting to the server…"
+    },
+    "6177498606047703018": {
+      "source": "サーバーとの接続が切れました。つなぎ直しています…",
+      "target": "Lost the connection to the server. Reconnecting…"
+    },
+    "478554458320405936": {
+      "source": "選べる範囲のパスをコピー",
+      "target": "Copy the folder path"
+    },
+    "2236669895312382111": {
+      "source": " 待たずに止める… ",
+      "target": " Stop without waiting… "
+    },
+    "8652260267629391995": {
+      "source": "ランチャーから {$INTERPOLATION} 秒以上、何も届いていません（止まっているかもしれません）。",
+      "target": "Nothing has come from the launcher for {$INTERPOLATION} s or more (it may be stuck)."
+    },
+    "2164633585506386661": {
+      "source": "一部を表示できません:",
+      "target": "Some parts cannot be shown:"
+    },
+    "102436029108002807": {
+      "source": " 詳しく ",
+      "target": " Details "
+    },
+    "8399729224319913431": {
+      "source": "段階",
+      "target": "Phase"
+    },
+    "7115163054325885874": {
+      "source": "経過",
+      "target": "Elapsed"
+    },
+    "3969642018190845113": {
+      "source": "{$INTERPOLATION} s",
+      "target": "{$INTERPOLATION} s"
+    },
+    "5622577318708264383": {
+      "source": "仮想時刻",
+      "target": "Virtual time"
+    },
+    "3546224380235485503": {
+      "source": "実行中は開始できません。",
+      "target": "Cannot start while a run is going."
+    },
+    "1267568114596218673": {
+      "source": "開始の応答を待っています。",
+      "target": "Waiting for the answer to Start."
+    },
+    "7351220620640842749": {
+      "source": "停止の応答を待っています。",
+      "target": "Waiting for the answer to Stop."
+    },
+    "8919550949935609324": {
+      "source": "サーバーと揃うまで、開始できません。",
+      "target": "Cannot start until the screen is in sync with the server."
+    },
+    "7946498218330436713": {
+      "source": "止める実行はありません。",
+      "target": "There is no run to stop."
+    },
+    "8870991040093646901": {
+      "source": "止めるよう頼みました。",
+      "target": "Stop requested."
+    },
+    "1831517223422252813": {
+      "source": "サーバーに届かないので、止めるよう頼めません。",
+      "target": "The server cannot be reached, so a stop cannot be requested."
+    },
+    "428710078700780985": {
+      "source": "最新の状態は見えていませんが、止めるよう頼むことはできます。",
+      "target": "The latest state is not visible, but you can still request a stop."
+    },
+    "4811031685765687032": {
+      "source": "仮想時刻の事象の欄 {$fields} は、大きすぎてサーバーが省きました",
+      "target": "The server left out the virtual time fields {$fields} (too large)"
+    },
+    "3179337564161813972": {
+      "source": "開始をやめます（ランチャーが起動したところで止めます）",
+      "target": "Cancelling the start (the launcher is stopped as soon as it has started)"
+    },
+    "4307373006762478454": {
+      "source": "始めています…",
+      "target": "Starting…"
+    },
+    "3685874571258323992": {
+      "source": "まだ実行していません。",
+      "target": "Nothing has run yet."
+    },
+    "4790358423910213729": {
+      "source": "実行中",
+      "target": "Running"
+    },
+    "1310325384570851397": {
+      "source": "participant が終わるのを待っています",
+      "target": "Waiting for the participants to end"
+    },
+    "4347575089504127812": {
+      "source": "残っている participant を強制終了するのを待っています",
+      "target": "Waiting for the remaining participants to be killed"
+    },
+    "1524206275876348327": {
+      "source": "{$outcome}（ランチャーが終わるのを待っています）",
+      "target": "{$outcome} (waiting for the launcher to end)"
+    },
+    "5414409293770176426": {
+      "source": "前の実行: {$outcome}",
+      "target": "Previous run: {$outcome}"
+    },
+    "7080907369861547662": {
+      "source": "終了コード {$code}",
+      "target": "exit code {$code}"
+    },
+    "5999968346874532607": {
+      "source": "シグナル {$signal}",
+      "target": "signal {$signal}"
+    },
+    "1207451067391522452": {
+      "source": "終わり方は不明",
+      "target": "how it ended is unknown"
+    },
+    "5034331345302203445": {
+      "source": "異常終了（{$how}）",
+      "target": "Abnormal end ({$how})"
+    },
+    "6996685723143967056": {
+      "source": "{$phase}（中断）",
+      "target": "{$phase} (interrupted)"
+    },
+    "3062228176605332858": {
+      "source": "もう一度実行",
+      "target": "Run again"
+    },
+    "9016893360605284053": {
+      "source": "開始",
+      "target": "Start"
+    },
+    "4251342305086603066": {
+      "source": "止めています…",
+      "target": "Stopping…"
+    },
+    "4418433101149864838": {
+      "source": "停止",
+      "target": "Stop"
+    },
+    "8177955834629607216": {
+      "source": "速度",
+      "target": "Speed"
+    },
+    "3190502933620390937": {
+      "source": "構成のとおり",
+      "target": "As configured"
+    },
+    "2816314616218041925": {
+      "source": "最速",
+      "target": "Fastest"
+    },
+    "5397961213649650354": {
+      "source": "等速",
+      "target": "Real time"
+    },
+    "1254075052970929264": {
+      "source": "倍率",
+      "target": "Factor"
+    },
+    "8021742515226990447": {
+      "source": "倍率は {$min} から {$max} の数にしてください。",
+      "target": "Enter a factor from {$min} to {$max}."
+    },
+    "6850339870794295920": {
+      "source": "レイアウトの試験",
+      "target": "Layout test"
+    },
+    "5630848612877165648": {
+      "source": "カード",
+      "target": "Card"
+    },
+    "7146331271332263936": {
+      "source": "一覧",
+      "target": "List"
+    },
+    "648412382115717634": {
+      "source": "名前",
+      "target": "Name"
+    },
+    "6903603163429670126": {
+      "source": "値",
+      "target": "Value"
+    },
+    "4025306852603491769": {
+      "source": "単位",
+      "target": "Unit"
+    },
+    "4616055348267935012": {
+      "source": "グラフの場所",
+      "target": "Chart area"
+    },
+    "4417969800817891316": {
+      "source": "実行の部品",
+      "target": "Run parts"
+    }
+  }
+}

@@ -1,6 +1,8 @@
 import {
   Component,
+  DestroyRef,
   ElementRef,
+  afterNextRender,
   afterRenderEffect,
   computed,
   inject,
@@ -9,9 +11,12 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatListModule } from '@angular/material/list';
+import { MatMenuModule } from '@angular/material/menu';
 import { MatSidenav, MatSidenavContainer, MatSidenavModule } from '@angular/material/sidenav';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { LanguageChoice } from './core/i18n/language-choice';
+import { LanguageCode } from './core/i18n/language';
 import { BREAKPOINTS, Layout } from './core/layout/layout';
 import { NAV_ITEMS } from './navigation';
 
@@ -28,6 +33,7 @@ export type NavMode = 'drawer' | 'rail' | 'full';
     MatSidenavModule,
     MatListModule,
     MatButtonModule,
+    MatMenuModule,
   ],
   templateUrl: './app.html',
   styleUrl: './app.css',
@@ -40,9 +46,13 @@ export type NavMode = 'drawer' | 'rail' | 'full';
 })
 export class App {
   protected readonly widthClass = inject(Layout).widthClass;
+  private readonly language = inject(LanguageChoice);
   private readonly container = viewChild.required(MatSidenavContainer);
   private readonly drawer = viewChild.required(MatSidenav, { read: ElementRef });
   private readonly toggle = viewChild('navToggle', { read: ElementRef<HTMLElement> });
+  private readonly languageButton = viewChild.required('languageButton', {
+    read: ElementRef<HTMLElement>,
+  });
 
   protected readonly navMode = computed<NavMode>(() => {
     switch (this.widthClass()) {
@@ -67,12 +77,27 @@ export class App {
   protected readonly openLabel = $localize`ナビゲーションを開く`;
   protected readonly closeLabel = $localize`ナビゲーションを閉じる`;
 
+  protected readonly languages = this.language.languages;
+  protected readonly currentLanguage =
+    this.languages.find((language) => language.code === this.language.current) ?? this.languages[0];
+  /** 言語のメニューの名前。どの言語でも「Language」を含める（訳では、その言語の語に「Language」を添える）。 */
+  protected readonly languageLabel = $localize`言語（Language）: ${this.currentLanguage.name}:language:`;
+
   constructor() {
+    // 言語を変えて読み込み直したら、フォーカスを言語のメニューへ戻す（キーボードで続けて操作できる）
+    if (this.language.take('shell') === 'language') {
+      afterNextRender(() => this.languageButton().nativeElement.focus());
+    }
+    this.language.keep('shell', () => 'language', inject(DestroyRef));
     // rail と full ではナビゲーションの幅だけが変わる。そのときだけ中身の余白を測り直す（autosize は使わない）。
     afterRenderEffect(() => {
       this.widthClass();
       this.container().updateContentMargins();
     });
+  }
+
+  protected chooseLanguage(code: LanguageCode): void {
+    this.language.choose(code);
   }
 
   protected toggleDrawer(): void {

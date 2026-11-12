@@ -56,3 +56,18 @@
 :host([data-width='medium']) .content {
   max-inline-size: calc(var(--app-breakpoint-wide) - var(--app-nav-width));
 }
+
+/* 言語のメニューは右端に置く。狭い幅でも名前を省かない（短い） */
+.language {
+  margin-inline-start: auto;
+  flex: none;
+}
+
+.language svg {
+  margin-inline-end: var(--app-space-1);
+}
+
+.check {
+  display: inline-block;
+  inline-size: 1.5em;
+}

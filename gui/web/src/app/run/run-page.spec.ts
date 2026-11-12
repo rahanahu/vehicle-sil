@@ -4,7 +4,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { authInterceptor } from '../core/auth/auth-interceptor';
 import { FakeWebSockets } from '../core/streams/fake-web-socket';
 import { protocolExamples } from '../testing/protocol-examples';
-import { CHECK_DELAY_MS, RunPage } from './run-page';
+import { CHECK_DELAY_MS, RunPage, readRunChoices } from './run-page';
 import { ACTION_GUARD } from './run-status';
 import { BATCH_MS } from '../core/session/server-connection';
 
@@ -193,5 +193,28 @@ describe('RunPage', () => {
     expect(button(fixture, 'start').textContent).toContain('もう一度実行');
     expect(text(fixture, 'outcome')).toContain('失敗');
     expect(text(fixture, 'first-error')).toContain('participant-failed');
+  });
+});
+
+describe('readRunChoices', () => {
+  const choices = {
+    session: 3,
+    chosen: 'a.yaml',
+    file: 'a.yaml',
+    disable: ['Logger'],
+    speed: 'max',
+    logSource: '',
+  };
+
+  it('reads the choices carried over a change of language', () => {
+    expect(readRunChoices(choices)).toEqual(choices);
+    expect(readRunChoices({ ...choices, session: null, chosen: null, speed: 2.5 })).not.toBeNull();
+  });
+
+  it('carries nothing when the shape is wrong', () => {
+    expect(readRunChoices(undefined)).toBeNull();
+    expect(readRunChoices({ ...choices, disable: [1] })).toBeNull();
+    expect(readRunChoices({ ...choices, speed: 'fast' })).toBeNull();
+    expect(readRunChoices({ ...choices, logSource: undefined })).toBeNull();
   });
 });

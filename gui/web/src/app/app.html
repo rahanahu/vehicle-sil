@@ -16,6 +16,52 @@
     </button>
   }
   <span class="title" data-testid="app-title" i18n>vehicle-sil</span>
+  <!--
+    言語のメニュー。いまの言語を読めない人も見つけられるよう、地球の絵と、言語の名前（その言語自身の文字）を出し、
+    名前には英語の「Language」を添える。選ぶと読み込み直す（翻訳は起動の前に決まる）。
+  -->
+  <button
+    #languageButton
+    matButton
+    type="button"
+    class="language"
+    data-testid="language-menu"
+    [matMenuTriggerFor]="languageMenu"
+    [attr.aria-label]="languageLabel"
+  >
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <ellipse cx="12" cy="12" rx="4" ry="9" />
+      <path d="M3 12h18M4.6 7.5h14.8M4.6 16.5h14.8" />
+    </svg>
+    <span [attr.lang]="currentLanguage.code">{{ currentLanguage.name }}</span>
+  </button>
+  <mat-menu #languageMenu="matMenu" xPosition="before">
+    @for (language of languages; track language.code) {
+      <button
+        mat-menu-item
+        type="button"
+        role="menuitemradio"
+        [attr.aria-checked]="language.code === currentLanguage.code"
+        [attr.lang]="language.code"
+        [attr.data-language]="language.code"
+        (click)="chooseLanguage(language.code)"
+      >
+        <span class="check" aria-hidden="true">{{
+          language.code === currentLanguage.code ? '✓' : ''
+        }}</span>
+        {{ language.name }}
+      </button>
+    }
+  </mat-menu>
 </mat-toolbar>
 
 <!--

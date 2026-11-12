@@ -27,6 +27,11 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "messages.*.json",
+                "input": "src/locale",
+                "output": "locale"
               }
             ],
             "styles": ["src/theme.scss", "src/styles.css"],
