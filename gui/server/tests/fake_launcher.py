@@ -32,6 +32,8 @@ else `pass`:
   check-garbage      `check --json` writes a line that is not JSON (exit code 0)
   non-finite         like pass, but on the first step writes a time event and a log event with a number that is
                      valid JSON but not finite (1e999, -1e999)
+  result-then-wait   like pass, but after its result it keeps running (the participants have ended) until a stop
+                     command or the end of standard input, then exits with the result's code
 
 Other environment variables: FAKE_LAUNCHER_TICK_MS (wall time of one 100 ms step at speed 1, default 100),
 FAKE_LAUNCHER_FEATURES (the features of `version --json`, comma-separated, default events,stdin-commands,speed),
@@ -58,7 +60,7 @@ from pathlib import Path
 VERSION = "0.1.0"
 SCENARIOS = ("pass", "check-error", "participant-crash", "forever", "ignore-stop", "launcher-crash",
              "bad-lines", "future-events", "flood", "finding-flood", "bad-types", "orphan", "check-garbage",
-             "non-finite")
+             "non-finite", "result-then-wait")
 USAGE = __doc__.split("\n\n")[1]
 STEP_MS = 100
 
@@ -467,7 +469,19 @@ def run(args: dict, file: str, config: dict, scenario: str) -> int:
         if stop_at is not None and sim_ms >= stop_at:
             ev.emit("phase", phase="stopping")
             end_participants("ended")
-            return finish("passed", "reached_stop_at", 0)
+            code = finish("passed", "reached_stop_at", 0)
+            while scenario == "result-then-wait":  # ended, but still running until told to stop
+                line = commands.get()
+                if line is None:
+                    break
+                try:
+                    command = json.loads(line)
+                except ValueError:
+                    command = None
+                if isinstance(command, dict) and command.get("command") == "stop":
+                    ev.emit("command", command="stop", accepted=True)
+                    break
+            return code
 
 
 # ---------------------------------------------------------------- main

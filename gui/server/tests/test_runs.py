@@ -136,6 +136,26 @@ def test_problems_of_the_launcher_are_shown(gui: Gui) -> None:
     run_async(main, gui)
 
 
+def test_a_launcher_that_runs_on_after_its_result_can_be_stopped(gui: Gui) -> None:
+    async def main(c: Client) -> None:
+        sock = await c.ws()
+        await sock.until(is_synced)
+        assert (await c.post("api/run", {"file": "result-then-wait.yaml"}))[0] == 200
+        await sock.until(lambda m: m.get("event", {}).get("event") == "result")
+        await asyncio.sleep(0.5)
+        status, body = await c.get("api/session")
+        summary = body["session"]
+        assert summary["result"]["result"] == "passed" and summary["phase"] == "ended"
+        assert summary["launcher"]["running"] and summary["state"] == "running"  # so the screen offers Stop
+        status, body = await c.post("api/stop", {})
+        assert status == 200 and body["session"]["stop"] == "requested"
+        got = await sock.until(is_ended)
+        end = got[-1]["session"]
+        assert end["launcher"]["running"] is False and end["launcher"]["exit_code"] == 0
+        assert end["result"]["result"] == "passed" and end["last_command"] == {"command": "stop", "accepted": True}
+    run_async(main, gui)
+
+
 def test_reconnecting_replays_the_kept_log(tmp_path: Path) -> None:
     with gui_server(tmp_path, env={"FAKE_LAUNCHER_FLOOD": "2500"}) as gui:
         async def main(c: Client) -> None:
