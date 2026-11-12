@@ -1,5 +1,5 @@
-import { readServerMessage } from '../core/api';
-import { webSocketExamples } from '../testing/protocol-examples';
+import { readServerMessage } from '@vehicle-sil/gui-client';
+import { webSocketExamples } from '@vehicle-sil/gui-client/testing';
 import { launcherStderr } from './launcher-stderr';
 
 const line = (text: string) => ({

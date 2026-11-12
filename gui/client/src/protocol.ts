@@ -1,10 +1,8 @@
-import { HttpErrorResponse } from '@angular/common/http';
-
 /**
  * サーバーとの間でやりとりするデータの形と、その読み取り関数（正本は gui/protocol/）。
  *
- * サーバーとの間の型はここにだけ書き、画面はここから import する。
- * 届いた JSON は、ここの read* 関数で型を確かめてから使う（httpResource の parse、WebSocket の通知）。
+ * サーバーとの間の型はここにだけ書き、ライブラリの利用者（画面も）は入口（index.ts）から import する。
+ * 届いた JSON は、ここの read* 関数で型を確かめてから使う（HTTP の応答、WebSocket の通知）。
  * - 知らない欄は無視する。知らない事象と知らない通知は null にして読み飛ばす。
  * - 値の集合が増えうる欄（段階、状態、結果など）は、知らない値も文字列のまま通す。
  * - 形が違うもの（欄がない、型が違う、知らない形式の版）は ProtocolError を投げる。
@@ -29,9 +27,16 @@ export class ProtocolError extends Error {
 /** 値の集合が増えうる文字列。知っている値は補完が効き、知らない値も入る。 */
 export type Open<T extends string> = T | (string & {});
 
+/**
+ * このライブラリが読む GUI サーバーの口の版（`api/app` と `hello` の `vehicle_sil_gui`）。違う版の hello と api/app は
+ * 読まない（欄の意味が変わっているかもしれないため）。版を上げる決まりは gui/protocol/README.md の「版と互換」。
+ */
+export const PROTOCOL_VERSION = 1;
+
 // --- 読み取りの部品 ---------------------------------------------------------------------------
 
-type Reader<T> = (value: unknown, path: string) => T;
+/** 届いた値を読む関数。path は誤りの場所の表示（例: `message.session`）。形が違えば ProtocolError を投げる。 */
+export type Reader<T> = (value: unknown, path: string) => T;
 type Fields = Record<string, unknown>;
 
 function object(value: unknown, path: string): Fields {
@@ -423,7 +428,8 @@ const readRunParticipant = (value: unknown, path: string, u?: Unreadable): RunPa
   };
 };
 
-export type RunOutcome = Open<
+/** 実行の結果の名前（`result` 事象の `result.result`）。 */
+export type RunResultName = Open<
   'passed' | 'failed' | 'interrupted' | 'check_failed' | 'unreadable' | 'setup_failed' | 'usage'
 >;
 
@@ -477,7 +483,7 @@ const readRunTiming = (value: unknown, path: string, u?: Unreadable): RunTiming 
 /** `vehicle_sil_launch run --json` の結果（形式の版 1）。 */
 export interface RunResult {
   file: string | null;
-  result: RunOutcome;
+  result: RunResultName;
   errors: number;
   warnings: number;
   notes: number;
@@ -784,7 +790,8 @@ export interface ServerProblem {
   skipped?: number;
 }
 
-const readProblem: Reader<ServerProblem> = (value, path) => {
+/** サーバーの知らせ（`{code, message, detail}`）を読む。HTTP の誤りの `error` の中身も同じ形。 */
+export const readServerProblem: Reader<ServerProblem> = (value, path) => {
   const f = object(value, path);
   const problem: ServerProblem = {
     code: field(f, path, 'code', string),
@@ -800,21 +807,6 @@ const readProblem: Reader<ServerProblem> = (value, path) => {
   }
   return problem;
 };
-
-/**
- * HTTP の失敗から、画面に出す文を取り出す。サーバーの誤りの形（`{"error": {"code", "message", "detail"}}`）なら
- * その message、ほかは状態の番号。
- */
-export function errorMessage(error: unknown): string {
-  if (error instanceof HttpErrorResponse) {
-    try {
-      return readProblem(object(error.error, 'response')['error'], 'response.error').message;
-    } catch {
-      return `HTTP ${error.status} ${error.statusText}`.trim();
-    }
-  }
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * 速さ。'max' は最速、数は倍率（1 が等速）。null は、始めるときの指定ではランチャーの既定（構成ファイルの値）、
@@ -849,13 +841,15 @@ export interface AppInfo {
     speed_max: number;
     /** ステップ送りの ms の上限。古いサーバーは書かないので、ランチャーの上限（10^12）。 */
     step_ms_max: number;
+    /** 照合の時間の上限（秒。`--check-timeout`）。古いサーバーは書かないので、その既定（120）。 */
+    check_timeout_s: number;
   };
 }
 
 export const readAppInfo = (value: unknown): AppInfo => {
   const path = 'app';
   const f = object(value, path);
-  version(f, path, 'vehicle_sil_gui', 1);
+  version(f, path, 'vehicle_sil_gui', PROTOCOL_VERSION);
   const lp = `${path}.launcher`;
   const launcher = field(f, path, 'launcher', object);
   const launcherVersion = field(launcher, lp, 'version', nullable(object));
@@ -868,7 +862,7 @@ export const readAppInfo = (value: unknown): AppInfo => {
     launcher: {
       path: field(launcher, lp, 'path', nullable(string)),
       usable: field(launcher, lp, 'usable', boolean),
-      problems: field(launcher, lp, 'problems', array(readProblem)),
+      problems: field(launcher, lp, 'problems', array(readServerProblem)),
       features: launcherVersion
         ? field(launcherVersion, `${lp}.version`, 'features', optional(array(string), []))
         : [],
@@ -877,6 +871,7 @@ export const readAppInfo = (value: unknown): AppInfo => {
       speed_min: field(limits, `${path}.limits`, 'speed_min', number),
       speed_max: field(limits, `${path}.limits`, 'speed_max', number),
       step_ms_max: field(limits, `${path}.limits`, 'step_ms_max', optional(number, 1e12)),
+      check_timeout_s: field(limits, `${path}.limits`, 'check_timeout_s', optional(number, 120)),
     },
   };
 };
@@ -1042,7 +1037,10 @@ export interface SessionSummary {
   time: TimeReport | null;
   /** 最後の command 事象（受け付けたか、理由）。まだなければ null。 */
   last_command: SummaryCommand | null;
-  /** この run の照合の結果（check の事象）。まだなければ null。 */
+  /**
+   * この run の照合の結果（check の事象）。まだなければ null。`session_without_check` を頼んだ接続の `session` の
+   * 通知には欄がなく、null として読む（手元の照合の結果をそのまま使う）。
+   */
   check: CheckResult | null;
   participants: SummaryParticipant[];
   findings: Finding[];
@@ -1135,7 +1133,7 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
       ),
     ),
     log: field(f, path, 'log', soft(partlyRecord(readLogCounts, u), {}, u)),
-    problems: field(f, path, 'problems', items(readProblem, u)),
+    problems: field(f, path, 'problems', items(readServerProblem, u)),
     problems_omitted: field(f, path, 'problems_omitted', soft(integer, 0, u)),
   };
   return { ...summary, unreadable: u.parts };
@@ -1200,6 +1198,11 @@ export interface AuthMessage {
   token: string;
   session?: number;
   from_seq?: number;
+  /**
+   * true なら、この接続の `session` の通知の要約に `check` を入れない（`hello` の要約と `check` の事象で届く）。
+   * 照合の結果は大きく、実行の間に変わらないため。
+   */
+  session_without_check?: boolean;
 }
 
 /** hello の replay: どこから再送するか（null は最初から）。 */
@@ -1249,7 +1252,7 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
   const type = field(f, path, 'type', string);
   switch (type) {
     case 'hello':
-      version(f, path, 'vehicle_sil_gui', 1);
+      version(f, path, 'vehicle_sil_gui', PROTOCOL_VERSION);
       return {
         type,
         instance: field(f, path, 'instance', string),
@@ -1272,7 +1275,7 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
       return {
         type,
         session: field(f, path, 'session', nullable(integer)),
-        ...readProblem(value, path),
+        ...readServerProblem(value, path),
       };
     case 'dropped':
       return {

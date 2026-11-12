@@ -8,6 +8,12 @@ const angular = require('angular-eslint');
 // RxJS をどこで使うかは lint で縛らない（README の「書き方の決まり」で判断する）。
 // lint には、どこに書いても誤りと言える規則だけを置く。
 
+/** gui/client のソースを相対パスで import しない（入口 @vehicle-sil/gui-client から使う）。 */
+const CLIENT_SOURCES = {
+  group: ['**/client/src', '**/client/src/**'],
+  message: 'import from @vehicle-sil/gui-client (or @vehicle-sil/gui-client/testing in tests)',
+};
+
 module.exports = defineConfig([
   {
     files: ['**/*.ts'],
@@ -47,6 +53,28 @@ module.exports = defineConfig([
       '@angular-eslint/no-async-lifecycle-method': 'error',
       '@angular-eslint/no-lifecycle-call': 'error',
       '@angular-eslint/no-implicit-take-until-destroyed': 'error',
+      // クライアントのライブラリ（gui/client）は入口からだけ使う（公開の一覧にないものに頼らない）
+      'no-restricted-imports': ['error', { patterns: [CLIENT_SOURCES] }],
+    },
+  },
+  {
+    // 本番のコードは、ライブラリの公開の入口だけを使う（internal は互換の約束の外、testing は試験の部品）
+    files: ['src/**/*.ts'],
+    ignores: ['src/**/*.spec.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            CLIENT_SOURCES,
+            {
+              group: ['@vehicle-sil/gui-client/internal', '@vehicle-sil/gui-client/testing'],
+              message:
+                'the app uses only @vehicle-sil/gui-client: internal is outside the compatibility promise and testing is for tests (add what is missing to gui/client/src/index.ts)',
+            },
+          ],
+        },
+      ],
     },
   },
   {

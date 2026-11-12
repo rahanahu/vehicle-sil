@@ -2,11 +2,11 @@ import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { authInterceptor } from '../core/auth/auth-interceptor';
-import { FakeWebSockets } from '../core/streams/fake-web-socket';
-import { protocolExamples } from '../testing/protocol-examples';
+import { BATCH_MS } from '@vehicle-sil/gui-client';
+import { FakeWebSockets, protocolExamples } from '@vehicle-sil/gui-client/testing';
+import { SOCKET_FACTORY } from '../core/session/gui-client';
 import { CHECK_DELAY_MS, RunPage, readRunChoices } from './run-page';
 import { ACTION_GUARD } from './run-status';
-import { BATCH_MS } from '../core/session/server-connection';
 
 describe('RunPage', () => {
   let examples: Map<string, unknown>;
@@ -33,7 +33,7 @@ describe('RunPage', () => {
       providers: [
         provideHttpClient(withInterceptors([authInterceptor])),
         provideHttpClientTesting(),
-        fake.provider,
+        { provide: SOCKET_FACTORY, useValue: fake.factory },
         // 押せるようになったばかりのボタンを押しても何もしない間（試験ではすぐ）
         { provide: ACTION_GUARD, useValue: 0 },
       ],

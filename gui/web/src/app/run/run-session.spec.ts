@@ -1,12 +1,13 @@
-import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { readSessionResponse } from '../core/api';
-import { ServerConnection } from '../core/session/server-connection';
-import { FakeWebSockets } from '../core/streams/fake-web-socket';
-import { HttpExample, httpExamples } from '../testing/protocol-examples';
+import { FakeWebSockets, HttpExample, httpExamples } from '@vehicle-sil/gui-client/testing';
+import { authInterceptor } from '../core/auth/auth-interceptor';
+import { SOCKET_FACTORY } from '../core/session/gui-client';
 import { RunSession } from './run-session';
 
+// 包みの試験: HttpClient（トークンつき）で送ること、応答がその場で signal に出ること。開始と停止の決まり
+// （開始中の停止、断られた理由をいつまで出すか）は gui/client の試験（run.spec.ts）。
 describe('RunSession', () => {
   let examples: Map<string, HttpExample>;
   let http: HttpTestingController;
@@ -21,9 +22,9 @@ describe('RunSession', () => {
     TestBed.configureTestingModule({
       providers: [
         RunSession,
-        provideHttpClient(),
+        provideHttpClient(withInterceptors([authInterceptor])),
         provideHttpClientTesting(),
-        new FakeWebSockets().provider,
+        { provide: SOCKET_FACTORY, useValue: new FakeWebSockets().factory },
       ],
     });
     http = TestBed.inject(HttpTestingController);
@@ -32,97 +33,33 @@ describe('RunSession', () => {
 
   afterEach(() => sessionStorage.clear());
 
-  function answer(name: string): object {
-    const example = examples.get(name);
-    if (!example) throw new Error(`no example ${name}`);
-    return example.response as object;
-  }
-
   it('starts, and shows the new session from the answer at once', () => {
     run.start({ file: 'a.yaml', disable: ['B'], speed: 'max', start_paused: false });
     expect(run.starting()).toBe(true);
     const request = http.expectOne('api/run');
+    expect(request.request.headers.get('Authorization')).toBe('Bearer secret');
     expect(request.request.body).toEqual({
       file: 'a.yaml',
       disable: ['B'],
       speed: 'max',
       start_paused: false,
     });
-    request.flush(answer('run'));
+    request.flush(examples.get('run')?.response as object);
     expect(run.starting()).toBe(false);
     expect(run.launcherRunning()).toBe(true);
     expect(run.outcome()).toBe('running');
   });
 
-  it('asks to stop in order, and only the other button asks to stop without waiting', () => {
-    run.stop();
-    expect(http.expectOne('api/stop').request.body).toEqual({ force: false });
-    run.forceStop();
-    expect(http.expectOne('api/stop').request.body).toEqual({ force: true });
-    http.verify();
-  });
-
   it('shows why the server refused', () => {
-    run.start({ file: 'a.yaml', disable: [], speed: null, start_paused: false });
+    run.forceStop();
+    expect(run.stopping()).toBe('force');
     http
-      .expectOne('api/run')
+      .expectOne('api/stop')
       .flush(
-        { error: { code: 'session-running', message: 'a simulation is running', detail: null } },
-        { status: 409, statusText: 'Conflict' },
+        { error: { code: 'shutting-down', message: 'the server is shutting down', detail: null } },
+        { status: 503, statusText: 'Service Unavailable' },
       );
-    expect(run.starting()).toBe(false);
-    expect(run.actionError()).toBe('a simulation is running');
-    run.stop();
-    http.expectOne('api/stop').flush({ session: null });
-    expect(run.actionError()).toBeNull();
-  });
-
-  it('can be asked to stop while the start waits for its answer, and asks again if the answer does not show it', () => {
-    run.start({ file: 'a.yaml', disable: [], speed: null, start_paused: false });
-    run.stop();
-    expect(run.stopWhileStarting()).toBe(true);
-    expect(run.stopping()).toBe('stop');
-    // 停止の応答は、まだ前の実行（ここでは何もない）の要約
-    http.expectOne('api/stop').flush({ session: null });
     expect(run.stopping()).toBeNull();
-    // 開始の応答の要約は「頼んでいない」: 何度頼んでも同じ停止を、もう一度頼む
-    http.expectOne('api/run').flush(answer('run'));
-    expect(run.stopWhileStarting()).toBe(false);
-    expect(http.expectOne('api/stop').request.body).toEqual({ force: false });
-    http.verify();
-  });
-
-  it('says so when an answer cannot be read, instead of dropping it silently', () => {
-    run.stop();
-    http.expectOne('api/stop').flush({ session: { id: 'x' } });
-    const notices = TestBed.inject(ServerConnection).notices();
-    expect(notices.map((n) => n.message)).toEqual([
-      'unreadable answer: response.session.id: expected an integer',
-    ]);
-  });
-
-  it('reads an answer whose result the server cut to its plain fields', () => {
-    const cut = structuredClone(answer('session-ended')) as {
-      session: { result: Record<string, unknown> };
-    };
-    for (const key of ['participants', 'findings', 'check']) delete cut.session.result[key];
-    run.stop();
-    http.expectOne('api/stop').flush(cut);
-    expect(run.outcome()).toBe('ended');
-    expect(run.session()?.result?.result).toBe('passed');
-    expect(run.session()?.unreadable).toEqual(['result.participants', 'result.findings']);
-  });
-
-  it('forgets a refusal once another run starts or the run ends', () => {
-    run.start({ file: 'a.yaml', disable: [], speed: null, start_paused: false });
-    http
-      .expectOne('api/run')
-      .flush(
-        { error: { code: 'already-running', message: 'a run is running', detail: null } },
-        { status: 409, statusText: 'Conflict' },
-      );
-    expect(run.actionError()).toBe('a run is running');
-    TestBed.inject(ServerConnection).adopt(readSessionResponse(answer('run')));
-    expect(run.actionError()).toBeNull();
+    expect(run.actionError()).toBe('the server is shutting down');
   });
 });

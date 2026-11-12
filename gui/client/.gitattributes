@@ -1,0 +1,2 @@
+# Windows（core.autocrlf=true）でも LF で取り出す（gui/web の prettier の検査が、ここも見るため）。
+* text=auto eol=lf

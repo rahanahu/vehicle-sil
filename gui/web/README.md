@@ -15,20 +15,22 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 
 `gui/web/` で実行します。どれも終了コードで成否を返します。
 
-| コマンド               | 内容                                                                                                                                                             |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm ci`               | `package-lock.json` のとおりに入れる                                                                                                                             |
-| `npm start`            | 開発サーバー（http://127.0.0.1:4200）。`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送する（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`）             |
-| `npm run build`        | 本番のビルド。出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`                                                                             |
-| `npm test`             | 単体試験（Vitest、jsdom）。1 回走って終わる                                                                                                                      |
-| `npm run lint`         | ESLint（angular-eslint）。警告も失敗にする                                                                                                                       |
-| `npm run format:check` | Prettier の書式の検査                                                                                                                                            |
-| `npm run e2e`          | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する。先に `npm run build` が要る                                                          |
-| `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                                                                                       |
-| `npm run e2e:real`     | Playwright。本物のランチャー（環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）と、その隣にビルドした ecu_main の例の ECU で通す（`e2e/real/`）。先に `npm run build` が要る |
-| `npm run i18n:extract` | 翻訳する文言を `build/i18n/messages.json`（リポジトリの直下の `build/`）に書き出す。翻訳ファイルとの比べと更新は `scripts/verify-web.py`（下の「国際化」）       |
+| コマンド               | 内容                                                                                                                                                                 |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm ci`               | `package-lock.json` のとおりに入れる                                                                                                                                 |
+| `npm start`            | 開発サーバー（http://127.0.0.1:4200）。`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送する（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`）                 |
+| `npm run build`        | 本番のビルド。出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`                                                                                 |
+| `npm test`             | 単体試験（Vitest、jsdom）。1 回走って終わる                                                                                                                          |
+| `npm run test:client`  | クライアントのライブラリ（`../client`）の型の検査と単体試験（Vitest、Node。Angular も DOM もなし）                                                                   |
+| `npm run build:client` | クライアントのライブラリを 1 つの ESM のファイルにまとめる（`../../build/gui-client/vehicle-sil-gui-client.mjs`。esbuild は Angular のビルドの道具が持っているもの） |
+| `npm run lint`         | ESLint（angular-eslint）。警告も失敗にする。`../client` も、その `eslint.config.js` で                                                                               |
+| `npm run format:check` | Prettier の書式の検査（`../client` も。設定は `../.prettierrc`）                                                                                                     |
+| `npm run e2e`          | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する。先に `npm run build` が要る                                                              |
+| `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                                                                                           |
+| `npm run e2e:real`     | Playwright。本物のランチャー（環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）と、その隣にビルドした ecu_main の例の ECU で通す（`e2e/real/`）。先に `npm run build` が要る     |
+| `npm run i18n:extract` | 翻訳する文言を `build/i18n/messages.json`（リポジトリの直下の `build/`）に書き出す。翻訳ファイルとの比べと更新は `scripts/verify-web.py`（下の「国際化」）           |
 
-リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、翻訳ファイルの比べ、ビルド、e2e を順に回して要約だけを表示します。e2e を直している間は `--skip-checks`（書式、lint、単体試験、翻訳ファイルの比べを省く）、`--e2e-grep <名前の一部>`、`--e2e-repeat <回数>` で絞れます。
+リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、クライアントのライブラリの単体試験、翻訳ファイルの比べ、ビルド、e2e を順に回して要約だけを表示します。e2e を直している間は `--skip-checks`（書式、lint、単体試験、翻訳ファイルの比べを省く）、`--e2e-grep <名前の一部>`、`--e2e-repeat <回数>` で絞れます。
 
 開発のときは、2 つの端末で次のように動かします。GUI サーバーは偽のランチャー（`gui/server/tests/fake_launcher.py`）を使い、`gui/server/tests/configs/` の構成ファイル（ファイルごとに筋書きが決まっている）を選べます。サーバーが表示する `dev_url`（トークンつき）を開きます。
 
@@ -46,11 +48,11 @@ e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを偽
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                                                                                                                                                                                                                                                |
 | `src/app/app.routes.ts`、`navigation.ts` | 経路と、ナビゲーションの項目                                                                                                                                                                                                                                                                                                                                    |
-| `src/app/core/`                          | 画面をまたいで使うもの: サーバーとの間の型と読み取り（`api.ts`）、トークン（`auth/`）、URL（`urls.ts`）、幅の区分（`layout/`）、計測値とパスの書式（`format/`）、流れ（`streams/`）、サーバーとの接続とセッションの状態（`session/`）、画面の言語（`i18n/`）                                                                                                    |
-| `src/app/core/session/`                  | `server-connection.ts`（アプリ全体で 1 つの WebSocket の接続。認証、再接続、要約と事象を当てたセッションの状態）と `session-state.ts`（要約と事象を当てる純粋な関数）                                                                                                                                                                                           |
-| `src/app/run/`                           | 実行の画面（`''`）。操作は `run-session.ts`（開始、停止、待たずに止める。画面と同じ寿命）、いつも見える状態の帯は `run-status.ts`                                                                                                                                                                                                                               |
+| `src/app/core/`                          | 画面をまたいで使うもの: トークン（`auth/`）、幅の区分（`layout/`）、計測値とパスの書式（`format/`）、流れ（`streams/`）、クライアントのライブラリの包み（`session/`）、画面の言語（`i18n/`）。サーバーとの間の型と読み取り、接続、セッションの状態はクライアントのライブラリ（`../client`、`@vehicle-sil/gui-client`）にある                                    |
+| `src/app/core/session/`                  | クライアントのライブラリの Angular の包み（読める値を signal にするだけ）: `gui-client.ts`（アプリ全体で 1 つのクライアントを作る。HTTP は HttpClient、`SOCKET_FACTORY`、`readableSignal`）、`server-connection.ts`（接続とセッションの写し）、`server-info.ts`（`api/app` と 1 回の要求）、`simulation-time.ts`（時刻）、`run-commands.ts`（開始と停止）       |
+| `src/app/run/`                           | 実行の画面（`''`）。操作は `run-session.ts`（開始、停止、待たずに止める、経過時間。画面と同じ寿命。中身は包みの `RunCommands`）、いつも見える状態の帯は `run-status.ts`                                                                                                                                                                                         |
 | `src/app/not-found/`                     | 見つからない経路の画面                                                                                                                                                                                                                                                                                                                                          |
-| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）と、単体試験が `gui/protocol/examples/` を読む関数                                                                                                                                                                                                                          |
+| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）。単体試験の部品（偽の WebSocket と HTTP、`gui/protocol/examples/` を読む関数）は `@vehicle-sil/gui-client/testing`                                                                                                                                                         |
 | `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                                                                                                                                                                                                                                                         |
 | `src/main.ts`、`src/start.ts`            | 起動。`main.ts` が言語を決めて翻訳を読み込み、それから `start.ts`（アプリ）を読み込む                                                                                                                                                                                                                                                                           |
 | `src/locale/`                            | 翻訳ファイル（`messages.<言語>.json`）。ビルドで `locale/` に置かれる                                                                                                                                                                                                                                                                                           |
@@ -59,7 +61,7 @@ e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを偽
 
 ## URL と CSP
 
-API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api/health`、`ws`）。`index.html` の `<base href>` からの相対になるので、`/` 以外のパスに置いても動きます。そのときは `ng build --base-href /gui/` でビルドします。WebSocket の URL は `document.baseURI` から作ります（`core/urls.ts` の `webSocketUrl`）。
+API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api/health`、`ws`）。`index.html` の `<base href>` からの相対になるので、`/` 以外のパスに置いても動きます。そのときは `ng build --base-href /gui/` でビルドします。WebSocket の URL は `document.baseURI` から作ります（クライアントのライブラリの `webSocketUrl`。`core/session/gui-client.ts` が `baseUrl` に `document.baseURI` を渡す）。
 
 本番のビルドは inline の script を出しません（`angular.json` で `inlineCritical: false`）。`script-src 'self'` の CSP で動きます。コンポーネントのスタイルは `<style>` で入るので、`style-src` には `'unsafe-inline'`（または nonce）が要ります。
 
@@ -90,24 +92,24 @@ API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api
 ### signal と RxJS
 
 - 状態、そこから導く値、テンプレートが読むものは signal（`signal`、`computed`、`linkedSignal`）。
-- 1 回の取得は `httpResource`（ほかの非同期の値は `resource`）。`HttpClient` と `toSignal` で書かない。
-- RxJS は、時間とともに続く流れに演算子が要るときに使う（再接続と待ち時間、間引き、取り消し、いくつかの流れの組み合わせ）。サービスの中に置き、外へは signal を出す。流れそのものが要る利用者には、流れとわかる名前の Observable を出し、利用者が `toSignal`（`core/streams/stream-signals.ts` の `latestValue`、`recentValues`）で signal にする。
-- 見本は `core/streams/live-connection.ts`（WebSocket の差し替え口、購読の寿命、再接続、つなぐたびに最初に送るもの）と `core/session/server-connection.ts`（流れをまとめて状態の signal に当てる。アプリ全体で 1 つで、画面を移っても切れない）、試験は `live-connection.spec.ts` と `server-connection.spec.ts`（偽の WebSocket）。
-- サーバーとの接続は `ServerConnection` だけが持つ。画面はその signal を読む。自分で流れを当てたい画面（毎秒数十回の値など）は、`batches`（まとめた通知の Observable）を購読して自分の signal に当てる。接続や認証を画面ごとに持たない。
-- 変更を伴う要求（開始、停止）は `HttpClient` で送り、応答（いまの要約）をその場で `ServerConnection.adopt` に当てる。
-- 照合（`POST api/check`）は読み取りに近いので signal から自動で送るが、`httpResource` ではなく `resource` で書く。切り替えを少し待ってまとめ、前の照合の応答を待ってから次を送り、古い応答を捨てるため（`httpResource` は前の要求を取り消すだけで、サーバーでは照合が続く）。
+- サーバーへの要求と接続は、クライアントのライブラリ（`@vehicle-sil/gui-client`）だけが持つ。画面は `core/session/` の包み（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`）の signal とメソッドを使い、`HttpClient` や WebSocket を自分で持たない（自分の画面を作る人と同じ部品だけを使う。docs/gui.md の「自分の画面や道具を作る」）。ライブラリの HTTP は、包みが `HttpClient` で送る（interceptor がトークンを付ける）。
+- ライブラリの状態は「読める値」（`get()` と `subscribe()`）。包みは `readableSignal`（`core/session/gui-client.ts`）で signal にする。ライブラリが足りないときは、包みで近道を作らず、ライブラリの公開の入口（`@vehicle-sil/gui-client`）に足す。本番のコードは `@vehicle-sil/gui-client/internal`（互換の約束の外）と `/testing` を import しない（lint で止まる。試験は使ってよい）。購読が投げたものは、Angular の `ErrorHandler` へ渡る。
+- 1 回の取得（`api/app`、`api/configs`）は、包みの Promise を返すメソッドを `resource` の loader で呼ぶ。照合（`POST api/check`）は読み取りに近いので signal から自動で送るが、切り替えを少し待ってまとめ、前の照合の応答を待ってから次を送り、古い応答を捨てる（`run-page.ts` の `check`）。
+- RxJS は、時間とともに続く流れに演算子が要るときに使う（間引き、取り消し、いくつかの流れの組み合わせ）。サービスの中に置き、外へは signal を出す。流れそのものが要る利用者には、流れとわかる名前の Observable を出し、利用者が `toSignal`（`core/streams/stream-signals.ts` の `latestValue`、`recentValues`）で signal にする。再接続と待ち時間はライブラリの `Connection` が持つ（RxJS を使わない）。
+- 自分で通知を当てたい画面（毎秒数十回の値など）は、`ServerConnection.batches`（まとめて読んだ通知の Observable）を購読して自分の signal に当てる。接続や認証を画面ごとに持たない。
+- 変更を伴う要求（開始、停止、時刻の命令）は包みのメソッドで送る。応答（いまの要約）はライブラリがその場でセッションの写しに当てる。
 - 画面へ毎秒数十回を超えて送らない（間引きはサーバーの仕事）。グラフには固定長の履歴（`recentValues`）を使う。
 
 ```ts
-// よい: 流れはサービスの中の RxJS、画面は signal で読む（画面が壊れると購読も止まる）
-readonly samples = liveConnection<Sample>('ws').messages; // サービス
+// よい: 流れはサービスの中の Observable、画面は signal で読む（画面が壊れると購読も止まる）
+readonly samples = this.server.batches.pipe(map(toSamples)); // サービス
 protected readonly latest = latestValue(this.telemetry.samples); // コンポーネント
 ```
 
 ```ts
 // しない: ただの状態や 1 回の取得に RxJS を使う
 readonly selected$ = new BehaviorSubject<string | null>(null); // → signal<string | null>(null)
-readonly health = toSignal(inject(HttpClient).get<Health>('api/health')); // → httpResource
+readonly configs = toSignal(inject(HttpClient).get<ConfigList>('api/configs')); // → resource({ loader: () => this.info.configs() })
 ```
 
 ### effect
@@ -188,15 +190,16 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 
 ### サーバーとの間の型
 
-- サーバーとの間でやりとりする形は `core/api.ts` にだけ、型と読み取り関数（`read*`）で書く。形の正本は `gui/protocol/`（README と `examples/`）。届いた JSON は読み取り関数を通してから使う（`httpResource` の `parse`、WebSocket の通知）。知らない欄、知らない通知と事象は無視して通す。
+- サーバーとの間でやりとりする形は、クライアントのライブラリの `gui/client/src/protocol.ts` にだけ、型と読み取り関数（`read*`）で書く（画面は `@vehicle-sil/gui-client` から import する）。形の正本は `gui/protocol/`（README と `examples/`）。届いた JSON は読み取り関数を通してから使う（ライブラリが HTTP の応答と WebSocket の通知を読む）。知らない欄、知らない通知と事象は無視して通す。
 - セッションの要約とランチャーの事象は、部分ごとに読む。ランチャーから来る部分やサーバーが上限で縮めた部分が読めなくても、全体を捨てない。読めない部分は既定の値（`null`、空）にして、その名前を `unreadable` に入れ、帯に「一部を表示できません」と出す。全体を読めないとするのは、要約の芯（`id`、`state`、`launcher`、`stop`）か事象の芯（`seq`、`event`）が読めないときだけ（`hello` と `session` なら、つなぎ直して受け直す）。
-- `api.spec.ts` が `gui/protocol/examples/` のすべての例を読ませる。例が変わったら、型と読み取り関数を合わせる。
+- ライブラリの `protocol.spec.ts` が `gui/protocol/examples/` のすべての例を読ませる。例が変わったら、型と読み取り関数を合わせる。
 
 ### 試験の書き方
 
 - 単体試験は TestBed。`Layout` は signal を持つ偽物に差し替える（jsdom に `matchMedia` がない）。
-- `httpResource` は `TestBed.tick()` で要求を出させ、`HttpTestingController` で `flush` してから `whenStable()`（応答していない要求があると `whenStable()` が終わらない）。
-- WebSocket は `FakeWebSockets`（`core/streams/fake-web-socket.ts`）で差し替える。時間は Vitest の偽の時計。サーバーの通知は、作らずに `gui/protocol/examples/` の例を流す（`testing/protocol-examples.ts`）。
+- `resource` は `TestBed.tick()` で要求を出させ、`HttpTestingController` で `flush` してから `whenStable()`（応答していない要求があると `whenStable()` が終わらない）。
+- WebSocket は `FakeWebSockets`（`@vehicle-sil/gui-client/testing`）で差し替える（`{ provide: SOCKET_FACTORY, useValue: fake.factory }`）。HTTP は、包みが `HttpClient` で送るので `HttpTestingController` で答える。時間は Vitest の偽の時計。サーバーの通知は、作らずに `gui/protocol/examples/` の例を流す（`webSocketExamples`、`httpExamples`）。
+- 接続、セッションの写し、時刻と実行の操作の決まりは、ライブラリの試験（`gui/client/src/*.spec.ts`。Angular なし）で確かめる。包みの試験は、signal に写ること、トークン、画面の言葉だけを見る。
 - 「何かが起きないこと」を、決まった時間待ってから確かめない（遅いマシンで見落とす）。その時間が過ぎたとわかる後の出来事（後の事象、サーバーの要約の `last_seq` や `stop`）を待ってから確かめる。
 - e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。e2e は本物の GUI サーバーと偽のランチャーを相手にする（筋書きは構成ファイルで選ぶ）。偽のランチャーは本物と同じ事象を書く（`gui/server/tests/test_real_launcher.py` が比べる）。本物のランチャーでしか起きないこと（例の ECU の申告、本物の止まり方）は `e2e/real/` で確かめる。筋書きにない状況（切断、読んでいる間に流れ続ける行）は、`page.routeWebSocket` で通知を差し込んで作る。
 - 見た目の確かめとスクリーンショットは、窓を伸ばさずに利用者が見る大きさのままで行う（最初の画面に何が入っているかを見るため）。

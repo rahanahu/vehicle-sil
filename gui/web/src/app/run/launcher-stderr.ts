@@ -1,4 +1,4 @@
-import { ServerProblem } from '../core/api';
+import { ServerProblem } from '@vehicle-sil/gui-client';
 
 /** ランチャーが標準エラーに書いた行の知らせ。 */
 export const STDERR_CODE = 'launcher-stderr';

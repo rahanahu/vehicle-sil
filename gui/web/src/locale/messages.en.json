@@ -518,6 +518,10 @@
       "source": "サーバーにつなげません:",
       "target": "Cannot connect to the server:"
     },
+    "6351257757762243858": {
+      "source": "この画面と GUI サーバーの版が合わないので、つなぎません。同じ版の画面とサーバーを使ってください:",
+      "target": "This screen and the GUI server are of different versions, so it does not connect. Use a screen and a server of the same version:"
+    },
     "1695680494711456940": {
       "source": "ランチャーをまだ使えません。",
       "target": "The launcher cannot be used yet."

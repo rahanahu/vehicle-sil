@@ -1,6 +1,6 @@
 import { Component, computed, input, model } from '@angular/core';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { CheckResult } from '../core/api';
+import { CheckResult } from '@vehicle-sil/gui-client';
 import { FindingsList } from './findings-list';
 import { checkOutcomeLabel, checkStatusLabel } from './labels';
 

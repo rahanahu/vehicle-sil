@@ -1,40 +1,48 @@
-import { httpResource } from '@angular/common/http';
-import { Injectable, computed, inject } from '@angular/core';
-import { readAppInfo } from '../api';
+import { Injectable, computed, inject, resource } from '@angular/core';
+import { AppInfo, CheckRequest, CheckResult, ConfigList } from '@vehicle-sil/gui-client';
 import { AuthToken } from '../auth/auth-token';
-
-/** 上限を知らないとき（サーバーの答えの前）の値。ランチャーと同じ。 */
-export const DEFAULT_LIMITS = {
-  speed_min: 0.000001,
-  speed_max: 1000000,
-  step_ms_max: 1e12,
-} as const;
+import { GUI_CLIENT, readableSignal } from './gui-client';
 
 /**
- * サーバーとランチャーの情報（GET api/app）。アプリ全体で 1 つ。ランチャーの `features`（何ができるか）を、画面の
- * どの部品からも同じ signal で読む。古いランチャーが持たない機能の操作は、ここを見て出さない。
+ * サーバーとランチャーの情報（GET api/app）と、1 回で終わる要求（構成ファイルの一覧、照合）の、Angular の包み。
+ * アプリ全体で 1 つ。ランチャーの `features`（何ができるか）を、画面のどの部品からも同じ signal で読む。古い
+ * ランチャーが持たない機能の操作は、ここを見て出さない。中身はクライアントのライブラリ（`@vehicle-sil/gui-client`）。
  */
 @Injectable({ providedIn: 'root' })
 export class ServerInfo {
   private readonly auth = inject(AuthToken);
+  private readonly client = inject(GUI_CLIENT);
+  private readonly info = readableSignal(this.client.app);
 
-  /** GET api/app（トークンがあるときだけ）。 */
-  readonly app = httpResource(() => (this.auth.token() ? 'api/app' : undefined), {
-    parse: readAppInfo,
+  /** GET api/app（トークンがあるときだけ）。読めたら、ライブラリの app にも入る。 */
+  readonly app = resource<AppInfo, string | undefined>({
+    params: () => this.auth.token() ?? undefined,
+    loader: () => this.client.loadApp(),
   });
 
   /** ランチャーの `version --json` の features（まだわからなければ空）。 */
-  readonly features = computed<readonly string[]>(() =>
-    this.app.hasValue() ? this.app.value().launcher.features : [],
-  );
+  readonly features = computed<readonly string[]>(() => this.info()?.launcher.features ?? []);
 
   /** 速さの範囲とステップ送りの上限（サーバーが言う。ランチャーと同じ）。 */
-  readonly limits = computed(() =>
-    this.app.hasValue() ? this.app.value().limits : DEFAULT_LIMITS,
-  );
+  readonly limits = readableSignal(this.client.limits);
 
   /** ランチャーがその機能を持つか（`speed`、`start-paused`、`time-commands` など）。 */
   has(feature: string): boolean {
     return this.features().includes(feature);
+  }
+
+  /** GET api/app をもう一度（WebSocket の握手で断られた理由を確かめるとき）。失敗は HttpError。 */
+  fetchApp(): Promise<AppInfo> {
+    return this.client.loadApp();
+  }
+
+  /** GET api/configs: root の下の構成ファイル。 */
+  configs(): Promise<ConfigList> {
+    return this.client.configs();
+  }
+
+  /** POST api/check: 構成ファイルを照合する。 */
+  check(request: CheckRequest): Promise<CheckResult> {
+    return this.client.check(request);
   }
 }

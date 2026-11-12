@@ -6,6 +6,11 @@ the events that are not in the summary are dropped from the queue and counted in
 launcher's `log_dropped` adds its counts to the log lines of its sources), `time` events are reduced to the last
 one, and heartbeats are dropped without a count (the server watches them; a screen does not need them). Only when that is not enough is the queue emptied, and the screen gets
 `resync` followed by a fresh hello (what a reconnection gets).
+
+A screen that asked for it in its auth (`session_without_check`) gets the `session` messages without the summary's
+`check` (it has the check from hello and the `check` event; it does not change during a run and can be large).
+That text is made once per message, when the message is queued (the summary shares lists with the session, which
+change later), without encoding the check a second time.
 """
 
 from __future__ import annotations
@@ -39,13 +44,18 @@ def encode(message: dict) -> str:
 class Outgoing:
     """One message for the screens, as text, with what a slow screen's queue needs to know about it."""
 
-    __slots__ = ("text", "size", "kind", "session", "source", "counts")
+    __slots__ = ("text", "text_without_check", "size", "kind", "session", "source", "counts")
 
     def __init__(self, message: dict, log_key: Callable[[str], str] | None = None):
         """log_key: the name a log line's source has in the session's summary (where the `dropped` counts of
         a slow screen are put)."""
         self.text = encode(message)
         self.size = len(self.text)
+        self.text_without_check = self.text  # for screens that asked for summaries without the check
+        summary = message.get("session")
+        if message.get("type") == "session" and isinstance(summary, dict) and "check" in summary:
+            self.text_without_check = encode({**message, "session": {k: v for k, v in summary.items()
+                                                                      if k != "check"}})
         self.session = message.get("session") if isinstance(message.get("session"), int) else None
         self.source = None
         self.counts: dict[str, int] | None = None
@@ -105,6 +115,7 @@ class Client:
         self.ready = asyncio.Event()
         self.resyncs = 0
         self.sheds = 0
+        self.without_check = False  # session messages without the summary's check (session_without_check)
 
     def put(self, item: Outgoing) -> None:
         if self.items and (self.items[0] is RESYNC or self.items[-1] is CLOSE):
@@ -225,6 +236,8 @@ class Hub:
                                        "message": "this screen read too slowly and messages were dropped: the "
                                                   "state is sent again from the start"})]
                     pending += [encode(m) for m in self.snapshot(None, None)]
+                elif client.without_check and isinstance(item, Outgoing):
+                    pending = [item.text_without_check]
                 else:
                     pending = [item.text]
         finally:

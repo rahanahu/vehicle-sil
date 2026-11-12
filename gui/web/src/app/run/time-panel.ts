@@ -2,7 +2,7 @@ import { Component, computed, inject, linkedSignal, signal } from '@angular/core
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { Speed } from '../core/api';
+import { Speed } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';

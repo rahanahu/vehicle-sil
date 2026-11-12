@@ -1,8 +1,7 @@
-import { HttpErrorResponse } from '@angular/common/http';
-import { httpExamples, webSocketExamples } from '../testing/protocol-examples';
+import { HttpError, errorMessage } from './http';
+import { httpExamples, webSocketExamples } from './testing/protocol-examples';
 import {
   ProtocolError,
-  errorMessage,
   readAppInfo,
   readCheckResponse,
   readConfigList,
@@ -10,7 +9,7 @@ import {
   readServerMessage,
   readSessionResponse,
   readTimeResponse,
-} from './api';
+} from './protocol';
 
 /** 要求のパスごとの、成功の応答を読む関数。 */
 const READERS: Record<string, (value: unknown) => unknown> = {
@@ -30,7 +29,7 @@ describe('the readers accept every example of gui/protocol', () => {
     for (const example of examples) {
       const key = `${example.request.method} ${example.request.path}`;
       if (example.status >= 400) {
-        const error = new HttpErrorResponse({ error: example.response, status: example.status });
+        const error = HttpError.from(example.status, '', example.response);
         const message = (example.response as { error: { message: string } }).error.message;
         expect(errorMessage(error), example.name).toBe(message);
         continue;
@@ -129,7 +128,7 @@ describe('the readers accept every example of gui/protocol', () => {
         // 画面が送る最初のメッセージの欄（AuthMessage）
         expect(
           Object.keys(message as object).every((key) =>
-            ['type', 'token', 'session', 'from_seq'].includes(key),
+            ['type', 'token', 'session', 'from_seq', 'session_without_check'].includes(key),
           ),
         ).toBe(true);
       }
@@ -308,7 +307,9 @@ describe('the readers refuse what they cannot read', () => {
   });
 
   it('falls back to the status when an error is not in the server form', () => {
-    const error = new HttpErrorResponse({ error: 'down', status: 502, statusText: 'Bad Gateway' });
+    const error = HttpError.from(502, 'Bad Gateway', 'down');
     expect(errorMessage(error)).toBe('HTTP 502 Bad Gateway');
+    expect(error.problem).toBeNull();
+    expect(errorMessage(new HttpError(0, '', null))).toBe('HTTP 0');
   });
 });

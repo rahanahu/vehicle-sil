@@ -1,10 +1,35 @@
 # gui/protocol
 
-GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとりする形の正本です。`examples/` の JSON は、サーバーの試験（`gui/server/tests/test_protocol_examples.py`）が偽のランチャーとの実際のやりとりから作り、毎回照合します。試験が作らないファイルが `examples/` に残っていても試験は落ちます。形を変えたら `UPDATE_PROTOCOL_EXAMPLES=1 uv run pytest gui/server/tests` で書き直し、画面の型（`gui/web/src/app/core/api.ts`）と、その単体試験（同じファイルを読む）を合わせます。プロセス ID、時刻、インスタンス、この PC のパス、決まらない数は、決まった値に置き換えてあります（`t_ms` は `seq × 10`）。
+GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の契約です。私たちの画面（`gui/web`）も、クライアントのライブラリ（`gui/client`）を通して、この口だけを使います。自分の画面や道具を作るときも、この文書と例に従えば、同じことができます（作り方は [docs/gui.md](../../docs/gui.md) の「自分の画面や道具を作る」）。
 
-読む側は、知らない欄、知らない `type`、知らない事象（`event`）、知らない `code` を無視して通します。サーバーは欄を足すことがありますが、ここにある欄を消したり意味を変えたりするときは `vehicle_sil_gui`（今は 1）を上げます。ランチャーの事象（`event` の中身）は、ランチャーの `run --events` の形そのままです（[docs/simulation-config.md](../../docs/simulation-config.md) の「機械から使う」）。`heartbeat` もそのまま通します（画面は読み飛ばします。ランチャーが動いているかはサーバーが見て、要約の `launcher.silent_s` で知らせます）。participant の知らない `state`（`failed` など、ランチャーが足すもの）も、そのまま通して要約に重ねます。サーバーが形を確かめるのは、事象の一部の欄（下の `bad-event`）だけです。ほかの欄は、なくても型が違っても、そのまま通して要約に重ねます（`ws-loose-fields.json`）。画面は要約と事象を部分ごとに読み、読めない部分だけを読み飛ばします。
+`examples/` の JSON は、サーバーの試験（`gui/server/tests/test_protocol_examples.py`）が偽のランチャーとの実際のやりとりから作り、毎回照合します。試験が作らないファイルが `examples/` に残っていても試験は落ちます。形を変えたら `UPDATE_PROTOCOL_EXAMPLES=1 scripts/verify-gui.py --skip-web` で書き直し、ライブラリの型と読み取り（`gui/client/src/protocol.ts`）と、その単体試験（同じファイルを読む）を合わせます。プロセス ID、時刻、インスタンス、この PC のパス、決まらない数は、決まった値に置き換えてあります（`t_ms` は `seq × 10`）。
+
+## 版と互換
+
+口の版は `vehicle_sil_gui`（今は 1）です。サーバーは `GET api/app` の応答、WebSocket の `hello`、`--json` で起動したときの 1 行に書きます。
+
+- **足すのは互換**: 欄、`type`、`code`、事象、要求、認証のメッセージの任意の欄を足しても、版は上げません。読む側は、知らない欄、知らない `type`、知らない事象（`event`）、知らない `code`、値の集合が増えうる欄（`phase`、`state`、`result` など）の知らない値を、無視するか、そのまま通します。
+- **消す、意味を変えるのは版を上げる**: ここにある欄や要求を消す、型や意味を変える、送る順の決まりを変えるときは、`vehicle_sil_gui` を上げます。読む側は、知らない版の `api/app` と `hello` を読まずに、版が違うと知らせます。待っても直らないので、つなぎ直しません（ライブラリは `api/app` で `ProtocolError`、`hello` で `session.incompatible` を立てて止まる）。
+- **読み飛ばすものと、受け直すもの**: 知らない `type`、欄、事象、値は、読み飛ばすか、そのまま通すだけです（足すのは互換なので）。一方、WebSocket のメッセージが JSON として読めない、または `hello` と `session` の要約の芯（`id`、`state`、`launcher`、`stop`）が読めないときは、何が抜けたかわからないので、つなぎ直して `hello` から受け直します（要約が正。続けて起きるたびに、つなぎ直すまでの間を延ばす）。
+- **頼んだときだけ変わる形**: 前の形のままでは重いものは、クライアントが認証のメッセージで頼んだときだけ形を変えます（`session_without_check`）。頼まないクライアントには、いままでの形で送ります。
+- ランチャーの事象（`event` の中身）は、ランチャーの `run --events` の形そのままで、その版（`hello` の事象の `vehicle_sil_events`）はランチャーが決めます（[docs/simulation-config.md](../../docs/simulation-config.md) の「機械から使う」）。
+- 誤りの `code` の名前は変えません（足すことはあります）。`message` は人向けの英語の 1 文で、文言は変わることがあります。機械は `code` で分けます。
+
+## 認証と Origin
+
+- サーバーは `127.0.0.1` だけで待ち、`Host` は `127.0.0.1:<port>`（開発のときは `--dev-origin` のホストも）だけを受け付けます。
+- トークンは起動のたびに作られ、サーバーが表示した URL の `#token=` の後ろにだけあります。HTTP は `Authorization: Bearer <token>`、WebSocket は最初のメッセージ（`auth`）で送ります。
+- `POST` と WebSocket の握手は、`Origin` がサーバー自身（`http://127.0.0.1:<port>`。開発のときは `--dev-origin`）のものだけを受け付けます。ブラウザは自分で付けます。ブラウザの外（Node、Python など）から使うときは、サーバー自身の origin を `Origin` に書きます（`examples/gui_client/run.mjs`）。
+- CORS は許しません。別の origin のページからは使えません。
+
+## 使い方の例
+
+- 画面を使わない最小のクライアント: [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs)（素の JavaScript、依存なし、Node 22 以上）。照合して実行を始め、事象を読み、終わりを待ちます。`scripts/verify-gui.py` が、偽のランチャーを相手に動かして確かめます。
+- TypeScript のクライアントのライブラリ: [gui/client](../client/README.md)。接続、再接続、要約と事象の当て方、時刻の命令を持ちます。
 
 ## 考え方
+
+読む側は、知らない欄、知らない `type`、知らない事象（`event`）、知らない `code` を無視して通します。ランチャーの事象は、ランチャーが書いた形のまま届きます。`heartbeat` もそのまま通します（画面は読み飛ばします。ランチャーが動いているかはサーバーが見て、要約の `launcher.silent_s` で知らせます）。participant の知らない `state`（`failed` など、ランチャーが足すもの）も、そのまま通して要約に重ねます。サーバーが形を確かめるのは、事象の一部の欄（下の `bad-event`）だけです。ほかの欄は、なくても型が違っても、そのまま通して要約に重ねます（`ws-loose-fields.json`）。読む側は要約と事象を部分ごとに読み、読めない部分だけを読み飛ばします。
 
 - **要約が正**。実行の要約（下の「要約」）に、画面を作り直すのに要るものを全部入れます。画面は `hello` と `session` を受けたら、手元の状態をその要約で置き換えます。
 - 事象は届くたびに `event` で送ります。画面は `hello` の後に届いた事象を要約に当てて進めます。
@@ -70,7 +95,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 
 ## WebSocket（`ws`）
 
-つないだら最初に `{"type": "auth", "token": "...", "session": <id>, "from_seq": <n>}` を送ります（`session` と `from_seq` は、再接続で持っている分を言うときだけ。0 以上の整数でなければ、ないものとして扱います）。トークンが違えば `error`（`code: unauthorized`）の後に、5 秒以内に `auth` が届かなければそのまま、閉じるコード 4401 で閉じます（理由の文は `unauthorized` か `auth-timeout`）。サーバーが終わるときは 1001 で閉じます。握手の段の拒否（`Host`、`Origin`、`too-many-connections`）は、ブラウザの JavaScript からは理由が見えません（1006 になります）。画面は、握手に失敗したら `GET api/app` を 1 回呼んで理由を知ります。認証した接続は 32 本まで（それを超える握手は 503 `too-many-connections`。握手の後、認証までの間に埋まったときは、閉じるコード 1013、理由の文 `too-many-connections`）。認証前の接続は別に 16 本までで、あふれたら最も古い認証前の接続を、閉じるコード 1013（理由の文は `too-many-unauthenticated`）で閉じて場所を空けます。1013 で閉じられた画面は、つなぎ直します。
+つないだら最初に `{"type": "auth", "token": "...", "session": <id>, "from_seq": <n>, "session_without_check": true}` を送ります（`session` と `from_seq` は、再接続で持っている分を言うときだけ。0 以上の整数でなければ、ないものとして扱います。`session_without_check` は任意で、`true` なら、この接続への `session` の通知の要約から `check` の欄を省きます。`hello` の要約には入り、照合の結果は `check` の事象で届くので、手元の値を使い続けます。照合の結果は大きく、実行の間に変わらないためです。例は `ws-without-check.json`）。トークンが違えば `error`（`code: unauthorized`）の後に、5 秒以内に `auth` が届かなければそのまま、閉じるコード 4401 で閉じます（理由の文は `unauthorized` か `auth-timeout`）。サーバーが終わるときは 1001 で閉じます。握手の段の拒否（`Host`、`Origin`、`too-many-connections`）は、ブラウザの JavaScript からは理由が見えません（1006 になります）。画面は、握手に失敗したら `GET api/app` を 1 回呼んで理由を知ります。認証した接続は 32 本まで（それを超える握手は 503 `too-many-connections`。握手の後、認証までの間に埋まったときは、閉じるコード 1013、理由の文 `too-many-connections`）。認証前の接続は別に 16 本までで、あふれたら最も古い認証前の接続を、閉じるコード 1013（理由の文は `too-many-unauthenticated`）で閉じて場所を空けます。1013 で閉じられた画面は、つなぎ直します。
 
 認証の後に届くものは、この順です。
 
@@ -87,7 +112,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `hello` | 上の 1 | `ws-*.json` の最初 |
 | `event` | `{session, event}`。ランチャーの事象そのまま（サーバーが形を確かめて通したもの） | `ws-pass.json`、`ws-log-dropped.json`、`ws-time.json`（時刻の命令）、`ws-late.json`（遅れ） |
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
-| `session` | `{session}`（要約）。実行を始めたとき、止めるよう頼んだとき、実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後の事象の後）、ランチャーが黙ったとき（`launcher.silent_s` が変わったとき）と、また書き始めたとき | `ws-pass.json` |
+| `session` | `{session}`（要約）。実行を始めたとき、止めるよう頼んだとき、実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後の事象の後）、ランチャーが黙ったとき（`launcher.silent_s` が変わったとき）と、また書き始めたとき。`session_without_check` を頼んだ接続には `check` の欄がない | `ws-pass.json`、`ws-without-check.json` |
 | `error` | `{session, code, message, detail}`。サーバーが気づいたこと（下の表）。要約の `problems` にも残る | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`（`ws-slow-client.json` の数は例）。この画面に送らなかったものの数。`log` は source ごとの log の行の数（送らなかった `log_dropped` の数も、その source に足す）、`at_least` はその数が下限でしかない source（もっと落ちているかもしれない）、`events` はほかの事象の数。source の名前は要約の `log` と同じです（65 個目からの source は `*`）。`reason` が `not-kept` はサーバーが覚えていない（再送の前）、`slow-client` は画面の受け取りが遅く、送る分から落とした。画面は、その source のログのその位置に「ここで N 行が落ちた」を出す | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受け取りが遅く、落とせない知らせまであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
@@ -126,7 +151,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `phase` | 最後の `phase` 事象の段階（まだなければ `null`） |
 | `last_seq`、`last_t_ms` | 最後に受け取った事象の `seq` と `t_ms` |
 | `time` | 最後の `time` 事象（そのまま。なければ `null`）。仮想時間 `sim_ms`、いまの速さ `speed`、一時停止 `paused`、実際の速さ `actual_speed`、遅れの数 `late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`（古いランチャーは `sim_ms` だけ）。途中から開いた画面も、これで今の時刻の状態がわかる。大きすぎた欄があれば `omitted_fields` |
-| `check` | `check` 事象の `check`（照合の結果を丸ごと。participant の `required`、`enabled`、`variables` を含む）。まだなければ `null` |
+| `check` | `check` 事象の `check`（照合の結果を丸ごと。participant の `required`、`enabled`、`variables` を含む）。まだなければ `null`。`session_without_check` を頼んだ接続への `session` の通知には、この欄がない（`hello` と HTTP の応答にはある） |
 | `registry` | 最後の `registry` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`）。大きすぎた欄があれば `omitted_fields` |
 | `participants` | participant ごとの今の状態。`participant` 事象の欄（`event`、`seq`、`t_ms` を除く）を名前ごとに重ねたもの（`name`、`state`、`pid`、`exit_code`、`signal` など。`failed` の `reason` は、後で `ended` が来ても残る）。ランチャーの `control_link` 事象（変数を読み書きする口のつながり方）は、その participant の `control_link` の欄に、`name` を除いた欄のオブジェクト（`{"state", "variables"}` など。`state` の値はランチャーのまま）として重ねる（例は `ws-control-trouble.json`）。初めて現れた順。`required` と `enabled` は `check` を見る。`stop_requested` の事象が来た participant には、サーバーが `stop_requested: true` を付け、後の状態でも残す（止めるよう求めた後の終わりを、失敗と区別するため）。大きすぎて入れなかった欄があれば、その名前の配列 `omitted_fields`（後の事象でその欄が届けば消える。例は `ws-large-fields.json`） |
 | `participants_omitted` | 上限（256 人）を超えたので覚えていない participant の事象の数 |

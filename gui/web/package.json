@@ -9,11 +9,13 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test --watch=false",
-    "lint": "ng lint",
+    "test:client": "tsc -p ../client && vitest run --dir ../client --environment node --globals",
+    "lint": "ng lint && eslint ../client",
+    "build:client": "node node_modules/esbuild/bin/esbuild ../client/src/index.ts --bundle --format=esm --platform=neutral --target=es2022 --outfile=../../build/gui-client/vehicle-sil-gui-client.mjs",
     "e2e": "playwright test",
     "e2e:dev": "playwright test -c playwright.dev.config.ts",
     "e2e:real": "playwright test -c playwright.real.config.ts",
-    "format:check": "prettier --check .",
+    "format:check": "prettier --check . ../client",
     "i18n:extract": "ng extract-i18n --format json --output-path ../../build/i18n"
   },
   "engines": {

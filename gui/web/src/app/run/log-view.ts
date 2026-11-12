@@ -14,7 +14,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { LogLine, LogSource } from '../core/session/session-state';
+import { LogLine, LogSource } from '@vehicle-sil/gui-client';
 
 function countLines(lines: readonly LogLine[]): number {
   let count = 0;

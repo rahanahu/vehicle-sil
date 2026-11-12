@@ -12,7 +12,12 @@
     "experimentalDecorators": true,
     "importHelpers": true,
     "target": "ES2022",
-    "module": "preserve"
+    "module": "preserve",
+    "paths": {
+      "@vehicle-sil/gui-client": ["../client/src/index.ts"],
+      "@vehicle-sil/gui-client/internal": ["../client/src/internal.ts"],
+      "@vehicle-sil/gui-client/testing": ["../client/src/testing/index.ts"]
+    }
   },
   "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,

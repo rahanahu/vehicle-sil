@@ -1,5 +1,5 @@
 import { Component, computed, input } from '@angular/core';
-import { Finding, severityRank } from '../core/api';
+import { Finding, severityRank } from '@vehicle-sil/gui-client';
 import { severityLabel } from './labels';
 
 /** 所見の一覧。重い順（同じ重さは届いた順）。文はランチャーの英語のまま出す。 */

@@ -2,7 +2,7 @@ import { Component, computed, input, linkedSignal, model } from '@angular/core';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { Speed } from '../core/api';
+import { Speed } from '@vehicle-sil/gui-client';
 
 /** file: 構成ファイルのとおり（ランチャーの既定）、max: 最速、real: 等速、factor: 倍率。 */
 export type SpeedChoice = 'file' | 'max' | 'real' | 'factor';

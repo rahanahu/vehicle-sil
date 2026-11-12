@@ -2,9 +2,8 @@
 // 本物の画面によくある形（カードの並び、2 段組み、表、長い名前）を置き、3 つの幅で崩れないことを確かめる。
 import { Component } from '@angular/core';
 import { MatCardModule } from '@angular/material/card';
-import { CheckResult, Finding } from '../core/api';
+import { CheckResult, Finding, ParticipantView } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
-import { ParticipantView } from '../core/session/session-state';
 import { CheckPanel } from '../run/check-panel';
 import { FindingsList } from '../run/findings-list';
 import { ParticipantStatus } from '../run/participant-status';

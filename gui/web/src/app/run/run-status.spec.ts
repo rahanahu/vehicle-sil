@@ -1,13 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { SessionSummary } from '../core/api';
-import {
-  RunOutcome,
-  SessionView,
-  applySummary,
-  runOutcome,
-  sessionFromSummary,
-} from '../core/session/session-state';
+import { RunOutcome, SessionSummary, SessionView, runOutcome } from '@vehicle-sil/gui-client';
+import { sessionViewFrom } from '@vehicle-sil/gui-client/testing';
 import { StopAction } from './run-session';
 import { ACTION_GUARD, RunStatus } from './run-status';
 
@@ -129,7 +123,7 @@ describe('RunStatus', () => {
     expect(start.getAttribute('aria-disabled')).not.toBe('true');
     expect(stop.getAttribute('aria-disabled')).toBe('true');
 
-    await show(sessionFromSummary(summary()));
+    await show(sessionViewFrom(summary()));
     expect(order()).toEqual([start, stop]);
     expect(start.getAttribute('aria-disabled')).toBe('true');
     expect(stop.getAttribute('aria-disabled')).not.toBe('true');
@@ -140,7 +134,7 @@ describe('RunStatus', () => {
   });
 
   it('ignores a press right after a button became pressable (a double click, a repeated Enter)', async () => {
-    host.session.set(sessionFromSummary(summary()));
+    host.session.set(sessionViewFrom(summary()));
     await fixture.whenStable();
     // 停止は押せるようになったばかり: 薄く出て、押しても何もしない
     expect(stopButton().getAttribute('aria-disabled')).not.toBe('true');
@@ -155,9 +149,9 @@ describe('RunStatus', () => {
   });
 
   it('does not start a run with a click meant for stop just as the run ends', async () => {
-    const running = sessionFromSummary(summary());
+    const running = sessionViewFrom(summary());
     await show(running);
-    host.session.set(applySummary(running, summary(ENDED), true));
+    host.session.set(sessionViewFrom(summary(), summary(ENDED)));
     await fixture.whenStable();
     // 利用者は同じ位置（停止）を押す: 停止は押せない。開始は別の位置にあり、押せるようになったばかり
     stopButton().click();
@@ -172,7 +166,7 @@ describe('RunStatus', () => {
   });
 
   it('does not stop without waiting on a second click', async () => {
-    const running = sessionFromSummary(summary());
+    const running = sessionViewFrom(summary());
     await show(running);
     stopButton().click();
     host.stopping.set('stop');
@@ -180,7 +174,7 @@ describe('RunStatus', () => {
     stopButton().click();
     // 停止を受け付けた要約が当たった後の 2 回目のクリック
     host.stopping.set(null);
-    await show(applySummary(running, summary({ stop: 'requested' })));
+    await show(sessionViewFrom(summary(), summary({ stop: 'requested' })));
     stopButton().click();
     expect(host.stops).toBe(1);
     expect(stopButton().textContent).toContain('止めています');
@@ -189,10 +183,10 @@ describe('RunStatus', () => {
   });
 
   it('does not say that it stops once the stopped run has ended', async () => {
-    await show(sessionFromSummary(summary({ stop: 'requested' })));
+    await show(sessionViewFrom(summary({ stop: 'requested' })));
     expect(stopButton().textContent).toContain('止めています');
     await show(
-      sessionFromSummary(
+      sessionViewFrom(
         summary({
           ...ENDED,
           stop: 'requested',
@@ -217,7 +211,7 @@ describe('RunStatus', () => {
       late_ms: 0,
       ...extra,
     });
-    await show(sessionFromSummary(summary({ sim_ms: 0, time: time() })));
+    await show(sessionViewFrom(summary({ sim_ms: 0, time: time() })));
     expect(query('outcome')?.textContent).toContain('一時停止中');
     expect(query('speed')?.textContent).toContain('等速');
     // 動いている間の 0 も出す（新しいランチャーは動いている間も知らせる）
@@ -228,14 +222,14 @@ describe('RunStatus', () => {
     expect(query('late')?.getAttribute('role')).toBeNull();
     // 許容の内の小さな遅れ（刻みの同期のたびに出たり消えたりする）は、遅れとして言わない
     await show(
-      sessionFromSummary(
+      sessionViewFrom(
         summary({ sim_ms: 100, time: time({ sim_ms: 100, paused: false, late_ms: 3 }) }),
       ),
     );
     expect(query('late')?.textContent?.trim()).toBe('');
     expect(query('late-announce')?.textContent?.trim()).toBe('');
     await show(
-      sessionFromSummary(
+      sessionViewFrom(
         summary({
           sim_ms: 300,
           time: time({
@@ -254,7 +248,7 @@ describe('RunStatus', () => {
     expect(query('late-announce')?.textContent?.trim()).toBe('実時間に遅れました。');
     // 数が変わっても、読み上げる文は変わらない
     await show(
-      sessionFromSummary(
+      sessionViewFrom(
         summary({
           sim_ms: 900,
           time: time({
@@ -271,7 +265,7 @@ describe('RunStatus', () => {
     expect(query('late-announce')?.textContent?.trim()).toBe('実時間に遅れました。');
     // 途中で最速に変えても、それまでの遅れは出したまま
     await show(
-      sessionFromSummary(
+      sessionViewFrom(
         summary({ sim_ms: 300, time: time({ speed: 'max', paused: false, late_steps: 1 }) }),
       ),
     );
@@ -280,11 +274,11 @@ describe('RunStatus', () => {
   });
 
   it('says only what it waits for while stopping (the button says that it stops)', async () => {
-    await show(sessionFromSummary(summary({ stop: 'requested' })));
+    await show(sessionViewFrom(summary({ stop: 'requested' })));
     expect(stopButton().textContent).toContain('止めています');
     expect(query('outcome')?.textContent).toContain('participant が終わるのを待っています');
     expect(query('outcome')?.textContent).not.toContain('止めています');
-    await show(sessionFromSummary(summary({ stop: 'forced' })));
+    await show(sessionViewFrom(summary({ stop: 'forced' })));
     expect(query('outcome')?.textContent).toContain('強制終了するのを待っています');
   });
 
@@ -303,12 +297,12 @@ describe('RunStatus', () => {
 
   it('can stop a running launcher while the WebSocket is down, and says what it does not see', async () => {
     host.ready.set(false);
-    await show(sessionFromSummary(summary()));
+    await show(sessionViewFrom(summary()));
     expect(query('blocked')?.textContent).toContain('最新の状態は見えていませんが');
     stopButton().click();
     expect(host.stops).toBe(1);
     // 開始は、揃うまでできない
-    await show(sessionFromSummary(summary(ENDED)));
+    await show(sessionViewFrom(summary(ENDED)));
     expect(startButton().getAttribute('aria-disabled')).toBe('true');
     expect(query('blocked')?.textContent).toContain('サーバーと揃うまで');
   });
@@ -316,7 +310,7 @@ describe('RunStatus', () => {
   it('does not offer to stop when the server cannot be reached at all', async () => {
     host.ready.set(false);
     host.reachable.set(false);
-    await show(sessionFromSummary(summary()));
+    await show(sessionViewFrom(summary()));
     expect(stopButton().getAttribute('aria-disabled')).toBe('true');
     expect(query('blocked')?.textContent).toContain('サーバーに届かない');
   });
@@ -328,7 +322,7 @@ describe('RunStatus', () => {
       participants: [],
     };
     await show(
-      sessionFromSummary(
+      sessionViewFrom(
         summary({
           state: 'ended',
           launcher: { running: false, exit_code: 130, signal: null, silent_s: null },
@@ -346,18 +340,18 @@ describe('RunStatus', () => {
   it('says when the launcher has written nothing for a while, in a status region that is always there', async () => {
     expect(query('silent')?.getAttribute('role')).toBe('status');
     await show(
-      sessionFromSummary(
+      sessionViewFrom(
         summary({ launcher: { running: true, exit_code: null, signal: null, silent_s: 10 } }),
       ),
     );
     expect(query('silent')?.textContent).toContain('10 秒以上、何も届いていません');
-    await show(sessionFromSummary(summary()));
+    await show(sessionViewFrom(summary()));
     expect(query('silent')?.textContent?.trim()).toBe('');
   });
 
   it('names the parts it cannot show', async () => {
     await show(
-      sessionFromSummary(summary({ unreadable: ['result.participants', 'result.findings'] })),
+      sessionViewFrom(summary({ unreadable: ['result.participants', 'result.findings'] })),
     );
     expect(query('unreadable')?.textContent).toContain('一部を表示できません');
     expect(query('unreadable')?.textContent).toContain('result.participants');
@@ -365,9 +359,7 @@ describe('RunStatus', () => {
 
   it('can stop a launcher that runs on after its result', async () => {
     const result = { result: 'passed', findings: [], participants: [] };
-    await show(
-      sessionFromSummary(summary({ result: result as unknown as SessionSummary['result'] })),
-    );
+    await show(sessionViewFrom(summary({ result: result as unknown as SessionSummary['result'] })));
     expect(stopButton().textContent).toContain('停止');
     expect(stopButton().getAttribute('aria-disabled')).not.toBe('true');
     expect(query('outcome')?.textContent).toContain('ランチャーが終わるのを待っています');
@@ -375,7 +367,7 @@ describe('RunStatus', () => {
 
   it('says that the launcher ended without a result, and moves the phases to the end', async () => {
     await show(
-      sessionFromSummary(
+      sessionViewFrom(
         summary({
           state: 'ended',
           launcher: { running: false, exit_code: 70, signal: null, silent_s: null },
@@ -393,7 +385,7 @@ describe('RunStatus', () => {
 
   it('starts, not runs again, when another file is chosen, and says the result is of the run before', async () => {
     await show(
-      sessionFromSummary(
+      sessionViewFrom(
         summary({
           state: 'ended',
           launcher: { running: false, exit_code: 70, signal: null, silent_s: null },

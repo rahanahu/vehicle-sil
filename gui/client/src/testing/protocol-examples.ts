@@ -1,5 +1,6 @@
 // 単体試験のための、gui/protocol/examples/ の実例の読み込み。本番のコードからは import しない。
 // 単体試験は Node の上で動くので、ファイルを直接読む（例を足したら、試験も自動でそれを読む）。
+// 試験は gui/web で動かす（gui/client の試験も、gui/web の道具で回す）。
 
 /** HTTP の例（{description, request, status, response}）。 */
 export interface HttpExample {
@@ -27,13 +28,16 @@ interface NodeProcess {
   cwd(): string;
 }
 
-/** gui/protocol/examples/ の、名前（拡張子なし）と中身。試験は gui/web で動く。 */
-export async function protocolExamples(): Promise<Map<string, unknown>> {
+/**
+ * gui/protocol/examples/ の、名前（拡張子なし）と中身。dir は例のディレクトリ（既定は、カレントディレクトリが
+ * gui/web のときの `../protocol/examples`）。
+ */
+export async function protocolExamples(dir?: string): Promise<Map<string, unknown>> {
   // node: の組み込みは、試験の束ね（esbuild）に含めず、実行のときに読む
   const fsName = 'node:fs';
   const fs = (await import(/* @vite-ignore */ fsName)) as NodeFs;
   const process = (globalThis as unknown as { process: NodeProcess }).process;
-  const dir = `${process.cwd()}/../protocol/examples`;
+  dir ??= `${process.cwd()}/../protocol/examples`;
   const examples = new Map<string, unknown>();
   for (const file of fs.readdirSync(dir).sort()) {
     if (file.endsWith('.json')) {
@@ -46,14 +50,14 @@ export async function protocolExamples(): Promise<Map<string, unknown>> {
   return examples;
 }
 
-export async function httpExamples(): Promise<HttpExample[]> {
-  return [...(await protocolExamples())]
+export async function httpExamples(dir?: string): Promise<HttpExample[]> {
+  return [...(await protocolExamples(dir))]
     .filter(([, value]) => typeof value === 'object' && value !== null && 'request' in value)
     .map(([name, value]) => ({ name, ...(value as Omit<HttpExample, 'name'>) }));
 }
 
-export async function webSocketExamples(): Promise<WebSocketExample[]> {
-  return [...(await protocolExamples())]
+export async function webSocketExamples(dir?: string): Promise<WebSocketExample[]> {
+  return [...(await protocolExamples(dir))]
     .filter(([, value]) => typeof value === 'object' && value !== null && 'server' in value)
     .map(([name, value]) => ({ name, ...(value as Omit<WebSocketExample, 'name'>) }));
 }

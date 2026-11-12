@@ -15,9 +15,8 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog, MatDialogRef } from '@angular/material/dialog';
-import { PHASES, severityRank } from '../core/api';
+import { PHASES, RunOutcome, SessionView, phaseIndex, severityRank } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
-import { RunOutcome, SessionView, phaseIndex } from '../core/session/session-state';
 import { settledAfter } from '../core/streams/stream-signals';
 import { ForceStopDialog } from './force-stop-dialog';
 import { LATE_ANNOUNCEMENT, latenessText, phaseLabel, runOutcomeLabel, speedLabel } from './labels';

@@ -1,4 +1,3 @@
-import { HttpClient, HttpErrorResponse, httpResource } from '@angular/common/http';
 import {
   Component,
   DOCUMENT,
@@ -14,24 +13,19 @@ import { MatCardModule } from '@angular/material/card';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
-import { firstValueFrom } from 'rxjs';
 import {
   CheckResult,
+  FEATURE_SPEED,
+  FEATURE_START_PAUSED,
+  HttpError,
   Speed,
   errorMessage,
-  readAppInfo,
-  readCheckResponse,
-  readConfigList,
-} from '../core/api';
+} from '@vehicle-sil/gui-client';
 import { AuthToken } from '../core/auth/auth-token';
 import { shortPath } from '../core/format/short-path';
 import { LanguageChoice } from '../core/i18n/language-choice';
 import { ServerInfo } from '../core/session/server-info';
-import {
-  FEATURE_SPEED,
-  FEATURE_START_PAUSED,
-  SimulationTime,
-} from '../core/session/simulation-time';
+import { SimulationTime } from '../core/session/simulation-time';
 import { CheckPanel } from './check-panel';
 import { FindingsList } from './findings-list';
 import { STDERR_CODE, launcherStderr } from './launcher-stderr';
@@ -139,7 +133,6 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
   styleUrl: './run-page.css',
 })
 export class RunPage {
-  private readonly http = inject(HttpClient);
   private readonly document = inject(DOCUMENT);
   protected readonly auth = inject(AuthToken);
   protected readonly run = inject(RunSession);
@@ -152,21 +145,22 @@ export class RunPage {
 
   /** サーバーとランチャーの情報（アプリ全体で 1 つ。ほかの部品も ServerInfo から同じものを読む）。 */
   protected readonly app = this.info.app;
-  protected readonly configs = httpResource(() => (this.auth.token() ? 'api/configs' : undefined), {
-    parse: readConfigList,
+  protected readonly configs = resource({
+    params: () => this.auth.token() ?? undefined,
+    loader: () => this.info.configs(),
   });
 
   /**
    * WebSocket の握手で断られたとき、その理由（ブラウザからは見えない）を api/app で確かめる。
    * 断られるたびに 1 回呼ぶ。トークンの誤りは interceptor が「断られた」にする。
    */
-  protected readonly handshake = httpResource(
-    () => {
+  protected readonly handshake = resource({
+    params: () => {
       const failures = this.run.handshakeFailures();
-      return failures > 0 && this.auth.token() ? { url: 'api/app' } : undefined;
+      return failures > 0 && this.auth.token() ? failures : undefined;
     },
-    { parse: readAppInfo },
-  );
+    loader: () => this.info.fetchApp(),
+  });
   protected readonly handshakeError = computed(() => {
     if (this.run.connectionState() === 'open') return null;
     const error = this.handshake.error();
@@ -179,7 +173,7 @@ export class RunPage {
   protected readonly reachable = computed(() => {
     if (this.run.connectionState() === 'open') return true;
     const error = this.handshake.error();
-    return !(error instanceof HttpErrorResponse && error.status === 0);
+    return !(error instanceof HttpError && error.status === 0);
   });
 
   protected readonly session = this.run.session;
@@ -303,12 +297,12 @@ export class RunPage {
       const request = this.checkChain.then(() => {
         // 待っている間に組み合わせが変わったら送らない
         abortSignal.throwIfAborted();
-        return firstValueFrom(this.http.post('api/check', body));
+        return this.info.check(body);
       });
       this.checkChain = request.catch(() => undefined);
-      const response = await request;
+      const result = await request;
       abortSignal.throwIfAborted();
-      return readCheckResponse(response);
+      return result;
     },
   });
 
@@ -358,6 +352,8 @@ export class RunPage {
   });
 
   protected readonly connectionText = computed(() => {
+    // 版が合わずにつながないときは、つなぎ直していない（理由は別の帯）
+    if (this.run.incompatible() !== null) return null;
     const state = this.run.connectionState();
     if (state !== 'open') {
       switch (this.run.tryAgainReason()) {

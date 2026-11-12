@@ -1,5 +1,5 @@
 import { Component, LOCALE_ID, computed, inject, input } from '@angular/core';
-import { RunResult } from '../core/api';
+import { RunResult } from '@vehicle-sil/gui-client';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { FindingsList } from './findings-list';
 import {

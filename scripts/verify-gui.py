@@ -6,8 +6,12 @@ Steps, in order:
   sync    uv sync --locked (fails when uv.lock does not match the pyproject.toml files)
   server  uv run pytest gui/server/tests: the GUI server against the fake launcher (API, WebSocket, security,
           stopping, and the comparison of gui/protocol/examples); JUnit XML in build/logs/<tag>-server.xml
-  web     scripts/verify-web.py --json: npm ci, format, lint, unit tests, build and e2e of gui/web; its steps
+  web     scripts/verify-web.py --json: npm ci, format, lint, unit tests, build and e2e of gui/web and gui/client; its steps
           are listed under this one, with their logs
+  example the example clients in examples/gui_client (Node 22 or later) against the GUI server and the fake
+          launcher: run.mjs (plain JavaScript, no library) and run-with-library.mjs (the bundled client library from
+          the web step): a run that passes, runs that fail, a refused token (gui/server/tests/test_example_client.py,
+          which the server step leaves out); not with --skip-web or -k
   real    with a real launcher only (--launcher <path>, or VEHICLE_SIL_GUI_LAUNCHER): npm run e2e:real, the
           screen, the GUI server, that vehicle_sil_launch and the ecu_main example ECUs built next to it (pass,
           a participant left out, stop, failing checks, a failing run); needs the build of gui/web (the web step,
@@ -55,12 +59,14 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 ERROR_LINES = {
     "sync": re.compile(r"error|lockfile|needs to be updated", re.IGNORECASE),
     "server": re.compile(r"^(FAILED|ERROR) |^E\s+|Error:|^\S+\.py:\d+: "),
+    "example": re.compile(r"^(FAILED|ERROR) |^E\s+|Error:|^\S+\.py:\d+: "),
     "web": re.compile(r"."),
     "real": re.compile(r"✘|^\s+\d+\) |Error:|Timed out|\d+ (failed|flaky)"),
 }
 SUMMARY_LINES = {
     "sync": re.compile(r"^(Resolved|Audited|Installed|Checked) "),
     "server": re.compile(r"^=*\s*\d+ (passed|failed)|^\d+ (passed|failed)"),
+    "example": re.compile(r"^=*\s*\d+ (passed|failed|skipped)|^\d+ (passed|failed|skipped)"),
     "web": re.compile(r"$^"),
     "real": re.compile(r"^\s+\d+ passed"),
 }
@@ -219,16 +225,24 @@ def main() -> int:
         die_usage(f"--launcher {launcher}: no such file (build/<preset>/tools/launch/vehicle_sil_launch)")
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     junit = LOG_DIR / f"{args.tag}-server.xml"
-    pytest = [uv, "run", "--locked", "pytest", "gui/server/tests", "-q", "-rs",
+    example_tests = "gui/server/tests/test_example_client.py"
+    pytest = [uv, "run", "--locked", "pytest", "gui/server/tests", "-q", "-rs", f"--ignore={example_tests}",
               f"--junitxml={junit}"]
     if args.keyword:
         pytest += ["-k", args.keyword]
     steps = [Step("sync", [uv, "sync", "--locked"]), Step("server", pytest)]
+    skipped_example = "--skip-web" if args.skip_web else "-k (only server tests)" if args.keyword else None
+    if skipped_example is None:
+        if shutil.which("node") is None:
+            die_usage("node is not on PATH: the example step runs examples/gui_client/run.mjs (Node 22 or later; "
+                      "or pass --skip-web)")
     if not args.skip_web:
         web = [sys.executable, str(ROOT / "scripts" / "verify-web.py"), "--json", "--tag", f"{args.tag}-web"]
         web += ["--skip-install"] * args.skip_install + ["--skip-e2e"] * args.skip_e2e
         web += ["--no-wait"] if args.no_wait else ["--wait-limit", f"{args.wait_limit:g}"]
         steps.append(Step("web", web))
+    if skipped_example is None:  # after web: it uses the library bundled there
+        steps.append(Step("example", [uv, "run", "--locked", "pytest", example_tests, "-q", "-rs"]))
     skipped_real = None
     if launcher is None:
         skipped_real = "no launcher (--launcher <path> or VEHICLE_SIL_GUI_LAUNCHER)"
@@ -283,12 +297,15 @@ def main() -> int:
         return 130
 
     failed = [s for s in done if not s.ok]
-    if skipped_real is not None and not failed and not args.json:
-        print(f"gui real: skipped: {skipped_real}")
+    skipped = [(name, reason) for name, reason in (("example", skipped_example), ("real", skipped_real))
+               if reason is not None]
+    if not failed and not args.json:
+        for name, reason in skipped:
+            print(f"gui {name}: skipped: {reason}")
     if args.json:
         out = {"vehicle_sil_verify_gui": 1, "ok": not failed, "steps": [s.to_json() for s in done]}
-        if skipped_real is not None:
-            out["skipped"] = [{"step": "real", "reason": skipped_real}]
+        if skipped:
+            out["skipped"] = [{"step": name, "reason": reason} for name, reason in skipped]
         print(json.dumps(out, indent=2, ensure_ascii=False))
     elif failed:
         print(f"verify-gui: FAILED {failed[0].name}")

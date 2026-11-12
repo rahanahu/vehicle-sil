@@ -707,6 +707,8 @@ class GuiServer:
             return
         self._authenticated.add(ws)
         client = self.hub.client(ws.send_str)
+        # A screen that keeps the check from hello and the check event can ask for summaries without it.
+        client.without_check = auth.get("session_without_check") is True
         sender = asyncio.create_task(self.hub.serve(client, count_or_none(auth.get("session")),
                                                     count_or_none(auth.get("from_seq"))))
         reader = asyncio.create_task(self._drain(ws))

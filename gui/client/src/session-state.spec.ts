@@ -1,4 +1,4 @@
-import { CheckResult, LauncherEvent, RunResult, SessionSummary } from '../api';
+import { CheckResult, LauncherEvent, RunResult, SessionSummary } from './protocol';
 import {
   MAX_LOG_LINES,
   MAX_LOG_LINES_PER_SOURCE,

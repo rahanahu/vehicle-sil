@@ -1,6 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { Speed } from '../core/api';
+import { Speed } from '@vehicle-sil/gui-client';
 import { SpeedPicker } from './speed-picker';
 
 @Component({

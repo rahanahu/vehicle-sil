@@ -98,7 +98,7 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 
 ### 画面の部品から使う
 
-時刻の状態と命令は、アプリ全体で 1 つのサービスにあります。部品はここの signal を読むだけにして、状態を自分で持ちません（どの部品も同じ状態を見ます）。
+時刻の状態と命令は、アプリ全体で 1 つのサービスにあります（中身はクライアントのライブラリの `TimeControl`。下の「自分の画面や道具を作る」）。部品はここの signal を読むだけにして、状態を自分で持ちません（どの部品も同じ状態を見ます）。
 
 - `ServerInfo`（`gui/web/src/app/core/session/server-info.ts`）: `app`（`GET api/app`）、`features`（ランチャーができること）、`has(name)`（その機能があるか）、`limits`（速度の範囲、ステップ送りの上限）。
 - `SimulationTime`（`gui/web/src/app/core/session/simulation-time.ts`）:
@@ -119,6 +119,24 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 
 命令は `pause()`、`resume()`、`step(ms)`、`setSpeed(value)`（どれも `send(command)` を通る）です。前の命令の答えを待っている間と、実行がないときは送らず、`{sent: false, reason: 'waiting' | 'no-session'}` を返します（送ったら `{sent: true}`）。押せるかは、送る前に `canPause` などで確かめます。状態の帯に操作を足すときは、`<app-run-status>` の中に `runStatusActions` の属性を付けた要素を置きます（開始と停止の後、「待たずに止める」の前に並びます。開始と停止の位置は動きません）。
 
+## 自分の画面や道具を作る
+
+私たちの画面は、誰でも使える部品だけで作っています。同じ部品で、自分の画面（別の枠組みでも）や、画面のない道具（試験の駆動、記録）を作れます。
+
+```mermaid
+flowchart LR
+  tool["自分の道具<br/>（素の JavaScript、Python など）"] -->|HTTP と WebSocket| server["GUI サーバー<br/>gui/protocol が契約"]
+  lib["クライアントのライブラリ<br/>gui/client"] -->|HTTP と WebSocket| server
+  ours["私たちの画面<br/>gui/web（Angular の包み）"] --> lib
+  yours["自分の画面"] --> lib
+  server --> launcher["vehicle_sil_launch"]
+```
+
+- **サーバーの口**（[gui/protocol/README.md](../gui/protocol/README.md)）: HTTP と WebSocket の形、実例（`examples/`）、版と互換の決まり（足すのは互換、消す・意味を変えるのは `vehicle_sil_gui` の版を上げる。読む側は知らない欄と事象を無視する）、認証と `Origin` の決まり。どの言語からでも使えます。
+- **最小の例**（[examples/gui_client](../examples/gui_client/)）: 画面を使わずに口を叩く、素の JavaScript の 1 ファイルの例が 2 つあります（Node 22 以上）。`run.mjs` はライブラリを使わず、標準の `fetch` と `WebSocket` だけで書いたもの、`run-with-library.mjs` は下のライブラリを 1 つにまとめたファイル（`gui/web` で `npm run build:client`）を使うものです。どちらも、照合して実行を始め、事象を読み、終わりを待って、結果で終了コードを返します。`VEHICLE_SIL_GUI_URL='<サーバーが表示した URL>' node examples/gui_client/run.mjs simulation.yaml`（URL は環境変数で渡す。引数に書くと、トークンがほかの利用者のプロセスの一覧に見えるため）。ブラウザの外から使うので、`Origin` をサーバー自身の origin にして送ります。
+- **クライアントのライブラリ**（[gui/client/README.md](../gui/client/README.md)、`@vehicle-sil/gui-client`）: TypeScript。接続（トークン、再接続、握手の失敗の数）、セッションの写し（要約が正、再送、部分ごとの読み取り）、実行と時刻の操作、口の型と読み取り。状態は「読める値」（`get()` と、解除の関数を返す `subscribe(fn)`）で出すので、枠組みに依らず使えます。公開するものは入口（`gui/client/src/index.ts`）に挙げたものだけで、README に一覧があります。TypeScript のアプリは `paths` でソースを取り込み、素の JavaScript からは 1 つにまとめたファイルを読みます。
+- **Angular の包み**（`gui/web/src/app/core/session/`）: ライブラリの読める値を signal にするだけの薄い層です（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`。つなぐところは `gui-client.ts`）。画面（`gui/web/src/app/run/`）は包みだけを読みます。型と純粋な関数は、ライブラリから直接 import します。別の枠組みで画面を作るときは、この層に当たるものを書きます。
+
 ## いまの制限
 
 - 変数の値（Control）はまだ見られません。照合の結果にある変数の数だけを表示します。
@@ -127,7 +145,7 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 
 ## 開発
 
-- サーバーは `gui/server`（Python パッケージ `vehicle_sil_gui`、uv の workspace のメンバー）、画面は `gui/web`、両者の間の形の正本は `gui/protocol`（README と実例）です。
-- 試験: `uv run pytest gui/server/tests`。画面まで含めて確かめるには `scripts/verify-gui.py`。
+- サーバーは `gui/server`（Python パッケージ `vehicle_sil_gui`、uv の workspace のメンバー）、画面は `gui/web`、クライアントのライブラリは `gui/client`（画面はこれを通してサーバーを使う）、サーバーの口の正本は `gui/protocol`（README と実例）です。
+- 試験: `scripts/verify-gui.py`（サーバーの試験、画面の `scripts/verify-web.py`、最小の例 `examples/gui_client/` の 2 つを偽のランチャーで動かす試験。ライブラリの試験は `verify-web.py` の `client` の段、1 つにまとめるのは `bundle` の段）。サーバーだけなら `--skip-web`。
 - 試験は、ランチャーの代わりに偽のランチャー（`gui/server/tests/fake_launcher.py`。本物と同じ事象を、筋書きどおりに書く。時刻の命令、`time` の事象、結果の `timing` も本物の形で、筋書き `late`（`gui/server/tests/configs/late.yaml`）は実時間への遅れを作る）を使います。偽のランチャーでも GUI を動かせます: `uv run vehicle-sil-gui --launcher gui/server/tests/fake_launcher.py gui/server/tests/configs/simulation.yaml`。
 - 本物のランチャーでも確かめるには、`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch`（または環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）。そのランチャーの隣にビルドした ecu_main の例の ECU を使い、偽のランチャーとの事象の形の比べ（`gui/server/tests/test_real_launcher.py`）と、画面の e2e（`gui/web/e2e/real/`）を回します。ランチャーを渡さなければ、この 2 つは「skipped」と出して飛ばします。

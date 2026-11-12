@@ -1,6 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { ParticipantView } from '../core/session/session-state';
+import { ParticipantView } from '@vehicle-sil/gui-client';
 import { ParticipantStatus } from './participant-status';
 
 function participant(name: string, extra: Partial<ParticipantView> = {}): ParticipantView {

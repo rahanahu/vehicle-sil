@@ -35,7 +35,7 @@ EXAMPLES = {
     "error-not-running", "time", "ws-time", "ws-late", "ws-control-trouble",
     "ws-pass", "ws-log-dropped", "ws-check-error", "ws-participant-crash", "ws-launcher-crash", "ws-bad-lines", "ws-bad-types",
     "ws-orphan", "ws-stop", "ws-force-stop", "ws-replay", "ws-resume", "ws-dropped", "ws-slow-client",
-    "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit",
+    "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit", "ws-without-check",
 }
 
 
@@ -345,6 +345,37 @@ def test_ws_scenario_examples(tmp_path: Path, scenario: str) -> None:
                 status, body = await c.get("api/session")
                 check_example("session-ended", http("The summary after the run ended.", "GET", "api/session",
                                                     None, status, body), gui)
+        run_async(talk, gui)
+
+
+def test_ws_without_check_example(tmp_path: Path) -> None:
+    with gui_server(tmp_path) as gui:
+        async def talk(c: Client) -> None:
+            lean = await c.ws({"session_without_check": True})
+            full = await c.ws()
+            # only true asks for it: other values leave the summaries as they are
+            loose = [await c.ws({"session_without_check": value}) for value in (1, "true", None)]
+            for sock in (lean, full, *loose):
+                await sock.until(is_synced)
+            await c.post("api/run", {"file": "simulation.yaml"})
+            for sock in (lean, full, *loose):
+                await sock.until(is_ended)
+
+            def summaries(sock):
+                return [m["session"] for m in sock.received if m["type"] == "session"]
+            for sock in (full, *loose):
+                assert summaries(sock) and all("check" in s for s in summaries(sock))
+            assert summaries(lean) and not any("check" in s for s in summaries(lean))
+            # The check comes as its event; the rest of each summary is the same
+            assert any(m["type"] == "event" and m["event"]["event"] == "check" for m in lean.received)
+            assert [{k: v for k, v in s.items() if k != "check"} for s in summaries(full)] == summaries(lean)
+            check_example("ws-without-check", ws("A screen that asks for summaries without the check "
+                                                 "(session_without_check): the check comes in its event, and the "
+                                                 "session messages leave it out.", lean.sent, lean.received), gui)
+            # hello always has it (a reconnection has no check event to take it from)
+            again = await c.ws({"session_without_check": True})
+            hello = (await again.until(is_synced))[0]
+            assert hello["session"]["check"]["result"] == "passed"
         run_async(talk, gui)
 
 

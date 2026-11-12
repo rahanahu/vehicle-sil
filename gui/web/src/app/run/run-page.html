@@ -34,6 +34,15 @@
       <span lang="en">{{ reason }}</span>
     </p>
   }
+  @if (run.incompatible(); as reason) {
+    <p class="banner shown error" role="alert" data-testid="incompatible">
+      <ng-container i18n
+        >この画面と GUI
+        サーバーの版が合わないので、つなぎません。同じ版の画面とサーバーを使ってください:</ng-container
+      >
+      <span lang="en">{{ reason }}</span>
+    </p>
+  }
   @if (app.hasValue() && !app.value().launcher.usable) {
     <div class="banner shown error" role="alert" data-testid="launcher-problem">
       <p i18n>ランチャーをまだ使えません。</p>

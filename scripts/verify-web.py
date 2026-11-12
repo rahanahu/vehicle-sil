@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Install, check, unit-test, build and end-to-end test the web front end (gui/web), with a short summary.
 
-Steps, in order: npm ci, npm run format:check, npm run lint, npm test, i18n (npm run i18n:extract, then the
+Steps, in order: npm ci, npm run format:check, npm run lint (gui/web and gui/client), npm test, npm run
+test:client (the client library gui/client: a type check, then its unit tests on Node without Angular or a
+DOM), i18n (npm run i18n:extract, then the
 extracted messages are compared with each translation file gui/web/src/locale/messages.<lang>.json: a missing
 message, a changed source and a broken target fail, unless the message is marked not translated yet with
-"target": null; obsolete entries are listed; see scripts/web_i18n.py), npm run build, npm run e2e (the built
+"target": null; obsolete entries are listed; see scripts/web_i18n.py), npm run build, npm run build:client (the
+client library bundled into one ESM file, build/gui-client/vehicle-sil-gui-client.mjs, with the esbuild that the
+Angular build tools bring), npm run e2e (the built
 app served by the GUI server of gui/server, which runs the fake launcher), npm run e2e:dev (the dev server with
 its proxy to the GUI server). The full output of each step goes to build/logs/<tag>-<step>.log (tag: web); the
 summary shows one line per step and, for a failed step, its first error lines and its log. Stops at the first
@@ -60,8 +64,10 @@ ERROR_LINES = {
     "format": re.compile(r"\[warn\]|\[error\]"),
     "lint": re.compile(r"^\S.*\.(ts|html)$|^\s+\d+:\d+\s+(error|warning)\s|problems?\s*\(|Error"),
     "test": re.compile(r"\bFAIL\b|×|AssertionError|Error:|^\s+(Test Files|Tests)\s"),
+    "client": re.compile(r"\bFAIL\b|×|AssertionError|Error:|error TS\d+|^\s+(Test Files|Tests)\s"),
     "i18n": re.compile(r"\[ERROR\]|error TS\d+|^Error|rror:"),
     "build": re.compile(r"^\s*(✘|X)\s*\[ERROR\]|\[ERROR\]|error TS\d+|^Error|budget"),
+    "bundle": re.compile(r"\[ERROR\]|^Error|rror:|Cannot find module"),
     "e2e": E2E_ERRORS,
     "e2e-dev": E2E_ERRORS,
 }
@@ -73,14 +79,16 @@ SUMMARY_LINES = {
     "format": re.compile(r"All matched files use Prettier code style"),
     "lint": re.compile(r"All files pass linting"),
     "test": re.compile(r"^\s+Tests\s+\d+"),
+    "client": re.compile(r"^\s+Tests\s+\d+"),
     "i18n": re.compile(r"Extraction Complete"),
     "build": re.compile(r"Initial total"),
+    "bundle": re.compile(r"vehicle-sil-gui-client\.mjs\s+\S+"),
     "e2e": E2E_SUMMARY,
     "e2e-dev": E2E_SUMMARY,
 }
 
 # Steps that wait while timing-sensitive work runs on the machine.
-HEAVY = {"test", "i18n", "build", "e2e", "e2e-dev"}
+HEAVY = {"test", "client", "i18n", "build", "e2e", "e2e-dev"}
 
 # Warnings worth showing even when a step passes.
 NOTE_LINES = {"build": re.compile(r"budget", re.IGNORECASE)}
@@ -204,6 +212,8 @@ def run_step(step: Step, env: dict[str, str], log: Path) -> None:
     lines = clean_lines(log.read_text(encoding="utf-8", errors="replace"))
     found = [ln.strip() for ln in lines if SUMMARY_LINES[step.name].search(ln)]
     step.summary = re.sub(r"\s*\|\s*|\s{2,}", " ", found[-1]).strip() if found else ""
+    if step.name == "lint" and not step.ok:
+        step.summary = ""  # "All files pass linting" is ng lint's; the lint of gui/client may still have failed
     if step.name in NOTE_LINES:
         step.notes = [ln.strip() for ln in lines if NOTE_LINES[step.name].search(ln)][:3]
     if not step.ok:
@@ -290,8 +300,8 @@ def main() -> int:
     parser.add_argument("--wait-limit", type=float, default=DEFAULT_LIMIT_S / 60, metavar="MIN",
                         help="stop waiting for them after MIN minutes and go on with a warning (default: %(default)g)")
     parser.add_argument("--skip-checks", action="store_true",
-                        help="do not run the format check, lint, unit tests and the i18n step (the build and e2e "
-                        "still run)")
+                        help="do not run the format check, lint, unit tests (gui/web and gui/client) and the i18n "
+                        "step (the build and e2e still run)")
     parser.add_argument("--e2e-grep", metavar="PATTERN", help="run only the e2e tests whose title matches PATTERN")
     parser.add_argument("--e2e-repeat", type=int, default=1, metavar="N", help="run each e2e test N times")
     parser.add_argument("--i18n-only", action="store_true",
@@ -329,9 +339,10 @@ def main() -> int:
         steps.append(Step("install", [npm, "ci", "--no-fund", "--no-audit"]))
     if not i18n_alone and not args.skip_checks:
         steps += [Step("format", [npm, "run", "format:check"]), Step("lint", [npm, "run", "lint"]),
-                  Step("test", [npm, "test"]), Step("i18n", [npm, "run", "i18n:extract"])]
+                  Step("test", [npm, "test"]), Step("client", [npm, "run", "test:client"]),
+                  Step("i18n", [npm, "run", "i18n:extract"])]
     if not i18n_alone:
-        steps.append(Step("build", [npm, "run", "build"]))
+        steps += [Step("build", [npm, "run", "build"]), Step("bundle", [npm, "run", "build:client"])]
     if not i18n_alone and not args.skip_e2e:
         narrow = (["--grep", args.e2e_grep] if args.e2e_grep else []) + \
             (["--repeat-each", str(args.e2e_repeat)] if args.e2e_repeat > 1 else [])

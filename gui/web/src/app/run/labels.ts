@@ -5,10 +5,10 @@ import {
   ControlLink,
   ParticipantState,
   Phase,
-  RunOutcome,
+  RunResultName,
   Severity,
   Speed,
-} from '../core/api';
+} from '@vehicle-sil/gui-client';
 
 function label(table: Record<string, string>, value: string): string {
   return table[value] ?? value;
@@ -81,7 +81,7 @@ const RUN_OUTCOMES: Record<string, string> = {
 };
 
 /** 結果の名前。読めなかった結果（''）は、そう言う。 */
-export const runOutcomeLabel = (result: RunOutcome): string =>
+export const runOutcomeLabel = (result: RunResultName): string =>
   result === '' ? $localize`結果の名前を読めません` : label(RUN_OUTCOMES, result);
 
 const SIMULATIONS: Record<string, string> = {

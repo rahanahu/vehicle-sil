@@ -1,5 +1,5 @@
 // セッション（ランチャーの 1 回の run）の状態を、サーバーの要約とランチャーの事象から組み立てる純粋な関数。
-// アプリ全体の接続（server-connection.ts）が使い、画面はできた状態を signal で読む。
+// セッションの写し（session.ts の SessionFeed）が使い、利用者はできた状態を読める値で読む。
 import {
   CheckResult,
   CONTROL_EVENT,
@@ -17,7 +17,7 @@ import {
   Speed,
   StopRequest,
   TimeReport,
-} from '../api';
+} from './protocol';
 
 /** 出どころ（participant かランチャー）ごとに覚えておくログの行の数。サーバーが覚える数と同じ。 */
 export const MAX_LOG_LINES_PER_SOURCE = 2000;
@@ -86,7 +86,7 @@ export interface LauncherView {
 
 /**
  * 仮想時間とその進み方（最後の time の事象、または要約の time）。古いランチャーが書かない欄は null。
- * 画面の部品は、これを直接ではなく SimulationTime（simulation-time.ts）の signal で読む。
+ * 時刻の操作に要るもの（いま押せるか、など）は TimeControl（time.ts）が、これから作る。
  */
 export interface TimeView {
   simMs: number;

@@ -1,5 +1,5 @@
 import { Component, LOCALE_ID, computed, inject, input } from '@angular/core';
-import { ParticipantView } from '../core/session/session-state';
+import { ParticipantView } from '@vehicle-sil/gui-client';
 import { controlLabel, failureReasonLabel, participantStateLabel } from './labels';
 
 /** 終わりが決まった状態。ほかの状態は、ランチャーが先に終わると、その後どうなったかわからない。 */

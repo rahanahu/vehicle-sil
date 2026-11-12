@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmit": true,
+    "rootDir": "src",
+    "target": "ES2022",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "typeRoots": ["../web/node_modules"],
+    "types": ["vitest/globals"]
+  },
+  "include": ["src/**/*.ts"]
+}
