@@ -1,17 +1,23 @@
 // 実行の画面を、本物の GUI サーバーと偽のランチャー（gui/server/tests/fake_launcher.py）で通す。
 // 構成ファイルは gui/server/tests/configs/ で、ファイルごとに偽のランチャーの筋書きが決まっている。
 // サーバーは 1 つのセッションしか動かさないので、試験は順に動き、動かしたものは止めてから終わる。
-import { WebSocketRoute, expect, test } from '@playwright/test';
+import { Locator, Page, WebSocketRoute, expect, test } from '@playwright/test';
 import { VIEWPORTS, findLayoutProblems } from './support/layout';
 import {
   RUN_TIMEOUT,
+  ServerSession,
   choose,
   chosenFile,
   openRun,
-  primary,
+  press,
+  protocolExample,
   result,
+  serverSession,
   start,
+  startButton,
+  stopButton,
   stopIfRunning,
+  stopOnServer,
 } from './support/run-page';
 
 test.beforeEach(async ({ page }) => {
@@ -35,7 +41,8 @@ test('a run that passes: phases, participants, logs and the result', async ({ pa
   await expect(page.getByTestId('status-Engine')).toContainText('終了した');
   await expect(page.getByTestId('sim-time')).toHaveText(/^\d+\.\d{3} s$/);
   await expect(page.getByTestId('log-line').first()).toBeVisible();
-  await expect(primary(page)).toHaveText(/もう一度実行/);
+  await expect(startButton(page)).toHaveText(/もう一度実行/);
+  await expect(stopButton(page)).toHaveAttribute('aria-disabled', 'true');
 });
 
 test('a check with an error: the findings, and no start', async ({ page }) => {
@@ -44,7 +51,7 @@ test('a check with an error: the findings, and no start', async ({ page }) => {
   await expect(page.getByTestId('check-card').getByTestId('finding').first()).toContainText(
     'step-mismatch',
   );
-  await expect(primary(page)).toHaveAttribute('aria-disabled', 'true');
+  await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
   await expect(page.getByTestId('blocked')).toContainText('直してから始めてください');
 });
 
@@ -84,7 +91,7 @@ test('quick switches are checked once, without a busy check', async ({ page }) =
   await page.getByRole('switch', { name: 'Logger を使う' }).click();
   await page.getByRole('switch', { name: 'Logger を使う' }).click();
   await expect(page.getByTestId('check-participant-Dashboard')).toContainText('外した');
-  await expect(primary(page)).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(startButton(page)).not.toHaveAttribute('aria-disabled', 'true');
   expect(checks).toEqual([{ file: 'forever.yaml', disable: ['Dashboard'] }]);
   expect(failures).toEqual([]);
 });
@@ -94,7 +101,7 @@ test('stopping a run that does not end by itself', async ({ page }) => {
   const session = await start(page);
   await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
   const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop'));
-  await primary(page).click();
+  await press(stopButton(page));
   expect((await stop).postDataJSON()).toEqual({ force: false });
   await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
   // 利用者が止めた中断は失敗の色と ✕ にしない
@@ -111,18 +118,19 @@ test('a double click on stop does not stop without waiting', async ({ page }) =>
   page.on('request', (r) => {
     if (r.url().endsWith('/api/stop')) bodies.push(r.postDataJSON());
   });
-  await primary(page).dblclick();
+  await expect(stopButton(page)).toHaveAttribute('data-armed', 'true');
+  await stopButton(page).dblclick();
+  // 2 回目のクリックより後に、サーバーが停止を受けた知らせが届いた
   await expect(page.getByTestId('outcome')).toContainText('participant が終わるのを待っています');
-  await expect(primary(page)).toHaveText(/止めています/);
-  // しばらく待っても、待たずに止めてはいない
-  await page.waitForTimeout(1500);
+  await expect(stopButton(page)).toHaveText(/止めています/);
+  // 待たずに止めてはいない（サーバーの要約でも）
   expect(bodies.every((body) => (body as { force: boolean }).force === false)).toBe(true);
+  expect((await serverSession(page))?.stop).toBe('requested');
   await expect(page.getByTestId('status-Engine')).not.toContainText('強制終了');
 
   // 待たずに止める: 確かめの「やめる」では止めない
   const force = page.getByTestId('force-stop');
-  await expect(force).toBeVisible();
-  await force.click();
+  await press(force);
   await expect(page.getByRole('dialog')).toContainText('待たずに止めますか');
   await expect(page.getByRole('button', { name: 'やめる' })).toBeFocused();
   await page.keyboard.press('Enter');
@@ -134,8 +142,124 @@ test('a double click on stop does not stop without waiting', async ({ page }) =>
   const forced = page.waitForRequest((r) => r.url().endsWith('/api/stop'));
   await page.getByTestId('force-stop-confirm').click();
   expect((await forced).postDataJSON()).toEqual({ force: true });
+  // 待たずに止めるボタンは消える: フォーカスは、いまの状態を言う帯の文へ移る（body に落ちない）
+  await expect(force).toHaveCount(0);
+  await expect(page.getByTestId('outcome')).toBeFocused();
   await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('status-Engine')).toContainText('強制終了した');
+});
+
+test('the dialog to stop without waiting closes when the run ends meanwhile', async ({ page }) => {
+  await choose(page, 'ignore-stop.yaml');
+  const session = await start(page);
+  await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
+  await press(stopButton(page));
+  await press(page.getByTestId('force-stop'));
+  await expect(page.getByRole('dialog')).toContainText('待たずに止めますか');
+  // 別のところ（ここでは API）で止めた
+  await stopOnServer(page);
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('outcome')).toBeFocused();
+});
+
+/** 開始と停止の要求を、送った順に記録する。 */
+function recordActions(page: Page): string[] {
+  const actions: string[] = [];
+  page.on('request', (r) => {
+    const match = /\/api\/(run|stop)$/.exec(r.url());
+    if (match) actions.push(match[1]);
+  });
+  return actions;
+}
+
+/** 要素の真ん中（マウスで押す位置）。 */
+async function centre(locator: Locator): Promise<{ x: number; y: number }> {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error('the element is not visible');
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+test('a double click on start starts one run and does not stop it', async ({ page }) => {
+  await choose(page, 'forever.yaml');
+  await expect(startButton(page)).toHaveAttribute('data-armed', 'true');
+  const actions = recordActions(page);
+  // 利用者の速い続けての押し（ダブルクリックの 2 回目、3 回目）: 応答の前後にまたがる
+  const at = await centre(startButton(page));
+  const reply = page.waitForResponse((r) => r.url().endsWith('/api/run'));
+  for (let i = 0; i < 5; i++) {
+    await page.mouse.click(at.x, at.y);
+    await page.waitForTimeout(100);
+  }
+  const session = ((await (await reply).json()) as { session: { id: number } }).session.id;
+  // 押した後も実行は続いている（押した時刻より後の行が届いた）
+  await expect(page.getByTestId('log-line').nth(8)).toBeVisible({ timeout: RUN_TIMEOUT });
+  expect(actions).toEqual(['run']);
+  expect(await serverSession(page)).toMatchObject({ id: session, stop: 'none' });
+});
+
+test('repeated Enter on start starts one run and does not stop it', async ({ page }) => {
+  await choose(page, 'forever.yaml');
+  await expect(startButton(page)).toHaveAttribute('data-armed', 'true');
+  const actions = recordActions(page);
+  await startButton(page).focus();
+  const reply = page.waitForResponse((r) => r.url().endsWith('/api/run'));
+  for (let i = 0; i < 5; i++) {
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(100);
+  }
+  const session = ((await (await reply).json()) as { session: { id: number } }).session.id;
+  await expect(page.getByTestId('log-line').nth(8)).toBeVisible({ timeout: RUN_TIMEOUT });
+  expect(actions).toEqual(['run']);
+  expect(await serverSession(page)).toMatchObject({ id: session, stop: 'none' });
+});
+
+test('a click meant for stop as the run ends does not start a new run', async ({ page }) => {
+  // 実行が終わった知らせを、利用者が停止を押す直前に差し込むために、WebSocket を間に入れる
+  let route: WebSocketRoute | undefined;
+  await page.routeWebSocket(/\/ws$/, (ws) => {
+    ws.connectToServer();
+    route = ws;
+  });
+  await page.reload();
+  await choose(page, 'forever.yaml');
+  const session = await start(page);
+  await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(stopButton(page)).toHaveText(/停止/);
+  const at = await centre(stopButton(page));
+  const actions = recordActions(page);
+
+  // 実行が終わった（結果は成功）。サーバーの要約を写して、終わった形にする
+  const now = await serverSession(page);
+  const ended = (protocolExample('session-ended') as { response: { session: ServerSession } })
+    .response.session;
+  route?.send(
+    JSON.stringify({
+      type: 'session',
+      session: {
+        ...now,
+        state: 'ended',
+        launcher: { ...(now?.launcher ?? {}), running: false, exit_code: 0 },
+        phase: 'ended',
+        result: ended['result'],
+      },
+    }),
+  );
+  await expect(page.getByTestId('outcome')).toContainText('成功');
+  // 利用者は、止めようとして同じ位置を押し続ける。もう一度実行できるようになった後も、少し押し続ける
+  let after = 0;
+  for (let i = 0; i < 100 && after < 4; i++) {
+    await page.mouse.click(at.x, at.y);
+    const startable =
+      (await startButton(page).getAttribute('aria-disabled')) !== 'true' &&
+      (await startButton(page).getAttribute('data-armed')) !== 'false';
+    if (startable) after++;
+    await page.waitForTimeout(100);
+  }
+  expect(after).toBe(4);
+  expect(actions).not.toContain('run');
+  expect((await serverSession(page))?.id).toBe(session);
+  await stopOnServer(page);
 });
 
 test('a participant that fails: the result, the reason and its exit code', async ({ page }) => {
@@ -178,7 +302,7 @@ test('a launcher that dies without a result: an abnormal end, and where to look'
   await page.getByRole('button', { name: 'ランチャーのログを見る' }).click();
   await expect(page.getByRole('heading', { name: 'ログ' })).toBeFocused();
   await expect(page.getByTestId('log-source')).toContainText('vehicle_sil_launch');
-  await expect(primary(page)).toHaveText(/もう一度実行/);
+  await expect(startButton(page)).toHaveText(/もう一度実行/);
 });
 
 test('a launcher that runs on after its result can still be stopped', async ({ page }) => {
@@ -188,15 +312,20 @@ test('a launcher that runs on after its result can still be stopped', async ({ p
   await expect(result(page, session)).toContainText('成功', { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('outcome')).toContainText('ランチャーが終わるのを待っています');
   await expect(page.getByTestId('finishing')).toBeVisible();
-  await expect(primary(page)).toHaveAttribute('data-action', 'stop');
-  await expect(primary(page)).toHaveText(/停止/);
-  // しばらく待っても、ランチャーは終わらず、停止を出したまま
-  await page.waitForTimeout(1000);
-  await expect(primary(page)).toHaveAttribute('data-action', 'stop');
+  await expect(stopButton(page)).toHaveText(/停止/);
+  await expect(stopButton(page)).not.toHaveAttribute('aria-disabled', 'true');
+  // 結果から 1 秒以上たっても（画面の経過が進んだ）、ランチャーは終わらず、停止を出したまま
+  const elapsed = async () =>
+    Number((await page.getByTestId('elapsed').textContent())?.match(/[\d.]+/)?.[0]);
+  const atResult = await elapsed();
+  await expect.poll(elapsed, { timeout: 10_000 }).toBeGreaterThan(atResult + 1);
+  expect((await serverSession(page))?.launcher.running).toBe(true);
+  await expect(stopButton(page)).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
   const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop'));
-  await primary(page).click();
+  await press(stopButton(page));
   expect((await stop).postDataJSON()).toEqual({ force: false });
-  await expect(primary(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
+  await expect(startButton(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('outcome')).toContainText('成功');
   await expect(page.getByTestId('finishing')).toHaveCount(0);
 });
@@ -210,7 +339,7 @@ test('a reload and a second tab show the same run', async ({ page, context }) =>
   await page.reload();
   expect(page.url()).not.toContain('token');
   await expect(page.getByTestId('session-file')).toHaveText('forever.yaml');
-  await expect(primary(page)).toHaveText(/停止/);
+  await expect(stopButton(page)).not.toHaveAttribute('aria-disabled', 'true');
   await expect(page.getByTestId('status-Engine')).toContainText('参加した');
   await expect(page.getByTestId('log-line').first()).toBeVisible();
 
@@ -220,7 +349,7 @@ test('a reload and a second tab show the same run', async ({ page, context }) =>
   await expect(other.getByTestId('session-file')).toHaveText('forever.yaml');
   await expect(other.getByTestId('log-line').first()).toBeVisible();
   // 別のタブで止めても、こちらに届く
-  await primary(other).click();
+  await press(stopButton(other));
   await expect(page.getByTestId('result')).toContainText('中断', { timeout: RUN_TIMEOUT });
   await other.close();
 });
@@ -249,14 +378,15 @@ test('a dropped connection is shown, joined again, and the log goes on without a
   refuse = true;
   await drop?.();
   await expect(page.getByTestId('connection')).toContainText(/接続が切れました|つないでいます/);
-  // 切れている間は止められない（古い表示で操作しない）
-  await expect(primary(page)).toHaveAttribute('aria-disabled', 'true');
-  await expect(page.getByTestId('blocked')).toContainText('サーバーと揃うまで');
-  await page.waitForTimeout(1000);
+  // 切れている間も、HTTP で止めるよう頼める（何度頼んでも同じ）。見えていないことは帯が言う
+  await expect(page.getByTestId('blocked')).toContainText('最新の状態は見えていません');
+  const stop = page.waitForResponse((r) => r.url().endsWith('/api/stop'));
+  await press(stopButton(page));
+  expect((await stop).request().postDataJSON()).toEqual({ force: false });
+  // 応答の要約から、止めるよう頼んだことがわかる
+  await expect(stopButton(page)).toHaveText(/止めています/);
   refuse = false;
   await expect(page.getByTestId('connection')).toHaveText('', { timeout: 10_000 });
-  await expect(primary(page)).not.toHaveAttribute('aria-disabled', 'true');
-  await primary(page).click();
   await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
 
   // Engine の行は「step 1」から「step N」まで、重ならず抜けずに N 行
@@ -296,10 +426,11 @@ test('a log read while lines keep coming does not move', async ({ page }) => {
     route = ws;
   });
   await page.reload();
-  await choose(page, 'forever.yaml');
+  await choose(page, 'simulation.yaml');
   const session = await start(page);
-  await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
-  let seq = 1_000_000;
+  // 実行が終わってから、その続きの seq で行を足す（偽のランチャーの事象と seq が重ならない）
+  await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
+  let seq = Number((await serverSession(page))?.['last_seq']) + 1;
   const send = (count: number) => {
     for (let i = 0; i < count; i++, seq++) {
       route?.send(
@@ -314,6 +445,7 @@ test('a log read while lines keep coming does not move', async ({ page }) => {
   send(6000);
   const log = page.getByTestId('log');
   await expect(page.getByTestId('log-dropped')).toBeVisible();
+  await expect(page.getByTestId('log-line').last()).toContainText(`injected ${seq - 1}`);
   // 途中まで戻して読む（追従をやめる）
   await log.evaluate((element) => (element.scrollTop = element.scrollHeight / 2));
   await log.evaluate((element) => element.dispatchEvent(new Event('scroll')));
@@ -326,14 +458,65 @@ test('a log read while lines keep coming does not move', async ({ page }) => {
     });
   const before = await firstVisible();
   send(300);
-  await expect(page.getByTestId('log-to-end')).toBeVisible();
-  await page.waitForTimeout(300);
+  // 300 行がすべて届いた後も、読んでいる行は動かない
+  await expect(page.getByText('読んでいる間に 300 行が届きました')).toBeVisible();
   expect(await firstVisible()).toBe(before);
   // 末尾へ戻ると、また追従する
   await page.getByTestId('log-to-end').click();
   await expect(page.getByTestId('log-follow')).toHaveClass(/checked/);
   await expect(page.getByTestId('log-line').last()).toContainText(`injected ${seq - 1}`);
-  await stopIfRunning(page);
+  // seq が戻った事象を黙って捨てない
+  await expect(page.getByTestId('notice')).toHaveCount(0);
+  route?.send(
+    JSON.stringify({
+      type: 'event',
+      session,
+      event: { event: 'log', seq: 1, t_ms: 0, source: 'Engine', line: 'late' },
+    }),
+  );
+  await expect(page.getByTestId('notice')).toContainText('seq that is not after the last one');
+});
+
+test('a log paused in one run shows the next run, not the lines of the one before', async ({
+  page,
+}) => {
+  await choose(page, 'participant-crash.yaml');
+  const first = await start(page);
+  await expect(result(page, first)).toBeVisible({ timeout: RUN_TIMEOUT });
+  // 前の実行にだけある行に絞り、追従をやめて読む
+  await page.getByTestId('log-filter').fill('went wrong');
+  await expect(page.getByTestId('log-count')).toContainText(/^\s*1 行/);
+  await page.getByTestId('log-follow').click();
+  await expect(page.getByTestId('log-follow')).not.toHaveClass(/checked/);
+  // 次の実行
+  await choose(page, 'simulation.yaml');
+  const second = await start(page);
+  await expect(result(page, second)).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('log-follow')).toHaveClass(/checked/);
+  await expect(page.getByTestId('log-count')).toContainText(/^\s*0 行/);
+});
+
+test('stopping while the start waits for its answer', async ({ page }) => {
+  // 開始の応答を遅らせる（サーバーは実行を始めている）
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(/\/api\/run$/, async (route) => {
+    const response = await route.fetch();
+    await held;
+    await route.fulfill({ response });
+  });
+  await choose(page, 'forever.yaml');
+  await press(startButton(page));
+  await expect(page.getByTestId('outcome')).toContainText('始めています');
+  await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
+  const stop = page.waitForResponse((r) => r.url().endsWith('/api/stop'));
+  await press(stopButton(page));
+  expect((await stop).request().postDataJSON()).toEqual({ force: false });
+  await expect(page.getByTestId('outcome')).toContainText('開始をやめます');
+  release();
+  await expect(page.getByTestId('outcome')).toContainText('中断', { timeout: RUN_TIMEOUT });
+  expect((await serverSession(page))?.stop).toBe('requested');
+  await page.unroute(/\/api\/run$/);
 });
 
 test('the screen asks for the server URL without a token', async ({ browser }) => {
@@ -343,7 +526,7 @@ test('the screen asks for the server URL without a token', async ({ browser }) =
   await page.close();
 });
 
-test('everything can be done with the keyboard, and the focus stays on the button', async ({
+test('everything can be done with the keyboard; Enter on start does not stop the run', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -365,27 +548,37 @@ test('everything can be done with the keyboard, and the focus stays on the butto
   await page.keyboard.press('Space');
   await expect(toggle).not.toBeChecked();
   await expect(page.getByTestId('check-participant-Logger')).toContainText('外した');
-  await expect(primary(page)).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(startButton(page)).toHaveAttribute('data-armed', 'true');
 
-  // 帯の主なボタンへ、キーボードだけでたどる（帯はカードより前にある）
+  // 帯の開始のボタンへ、キーボードだけでたどる（帯はカードより前にある）
   for (
     let i = 0;
-    i < 40 && !(await primary(page).evaluate((b) => b === document.activeElement));
+    i < 40 && !(await startButton(page).evaluate((b) => b === document.activeElement));
     i++
   ) {
     await page.keyboard.press('Shift+Tab');
   }
-  await expect(primary(page)).toBeFocused();
+  await expect(startButton(page)).toBeFocused();
+  const actions = recordActions(page);
   const response = page.waitForResponse((r) => r.url().endsWith('/api/run'));
   await page.keyboard.press('Enter');
   const session = ((await (await response).json()) as { session: { id: number } }).session.id;
-  // 始めた後も、フォーカスは同じボタンにあり、Enter で止められる
-  await expect(primary(page)).toHaveText(/停止/);
-  await expect(primary(page)).toBeFocused();
   await expect(page.getByTestId('outcome')).toContainText('実行中');
+  // フォーカスは開始のボタンに残る（押せない）。もう一度 Enter を押しても、止めない
+  await expect(startButton(page)).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('log-line').nth(5)).toBeVisible({ timeout: RUN_TIMEOUT });
+  expect(actions).toEqual(['run']);
+  expect((await serverSession(page))?.stop).toBe('none');
+  // 止めるのは、次の要素の停止のボタン
+  await page.keyboard.press('Tab');
+  await expect(stopButton(page)).toBeFocused();
+  await expect(stopButton(page)).toHaveAttribute('data-armed', 'true');
   await page.keyboard.press('Enter');
   await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
-  await expect(primary(page)).toBeFocused();
+  expect(actions).toEqual(['run', 'stop']);
+  // 停止のボタンは押せなくなっても、そこにあってフォーカスを持ったまま
+  await expect(stopButton(page)).toBeFocused();
 
   // ログは Tab で届き、矢印で動かせる
   const log = page.getByTestId('log');
@@ -405,23 +598,22 @@ test.describe('the screen at every width', () => {
     { name: 'failed', file: 'participant-crash.yaml', run: true },
     { name: 'crashed', file: 'launcher-crash.yaml', run: true },
   ] as const;
-  const SCREENSHOT_WIDTHS = [360, 1024, 1920];
 
   for (const state of STATES) {
     test(`${state.name}: the status bar stays in view, no overflow or overlap`, async ({
       page,
-    }, testInfo) => {
+    }) => {
       await choose(page, state.file);
       if (state.run) {
         const session = await start(page);
         if (state.name === 'running' || state.name === 'stopping') {
           await expect(page.getByTestId('log-line').nth(5)).toBeVisible({ timeout: RUN_TIMEOUT });
           if (state.name === 'stopping') {
-            await primary(page).click();
+            await press(stopButton(page));
             await expect(page.getByTestId('force-stop')).toBeVisible();
           }
         } else {
-          await expect(primary(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
+          await expect(startButton(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
           await expect(page.locator(`[data-session="${session}"]`).first()).toBeVisible();
         }
       }
@@ -440,38 +632,31 @@ test.describe('the screen at every width', () => {
             (element, to) => element.scrollTo(0, to === 'top' ? 0 : element.scrollHeight),
             where,
           );
-          await expect(primary(page), `${viewport.width} px, ${where}`).toBeInViewport({
-            ratio: 1,
-          });
-          await expect(
+          for (const element of [
+            startButton(page),
+            stopButton(page),
             page.getByTestId('outcome'),
-            `${viewport.width} px, ${where}`,
-          ).toBeInViewport({ ratio: 1 });
+          ]) {
+            await expect(element, `${viewport.width} px, ${where}`).toBeInViewport({ ratio: 1 });
+          }
         }
-        if (SCREENSHOT_WIDTHS.includes(viewport.width)) {
-          await content.evaluate((element) => element.scrollTo(0, 0));
-          // ナビゲーションの動き（幅の区分の切り替え）が終わってから撮る
-          await page.waitForTimeout(500);
-          await page.screenshot({
-            path: testInfo.outputPath(`run-${state.name}-${viewport.width}.png`),
-          });
-        }
+        // 帯は窓の高さの 3 分の 1 を超えない
+        const band = await page.locator('app-run-status').boundingBox();
+        expect(band?.height ?? 0, `${viewport.width} px`).toBeLessThanOrEqual(viewport.height / 3);
       }
       await stopIfRunning(page);
     });
   }
 
-  test('failed, in the dark color scheme', async ({ page }, testInfo) => {
+  test('failed, in the dark color scheme', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.setViewportSize({ width: 1024, height: 768 });
     await choose(page, 'participant-crash.yaml');
     await start(page);
-    await expect(primary(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
+    await expect(startButton(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
     const background = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     const [r, g, b] = (background.match(/\d+/g) ?? []).map(Number);
     expect(r + g + b).toBeLessThan(3 * 80);
     await expect.poll(() => findLayoutProblems(page)).toEqual([]);
-    await page.waitForTimeout(500);
-    await page.screenshot({ path: testInfo.outputPath('run-failed-1024-dark.png') });
   });
 });

@@ -26,8 +26,10 @@ export const MAX_FINDINGS = 500;
 
 /** 1 つのログの行。 */
 export interface LogLine {
-  /** 事象の seq。落ちた行の印は、その位置の前の行の seq + 0.5。 */
+  /** 事象の seq。落ちた行の印は、その位置の前の行の seq + 0.5（印は seq が同じこともある）。 */
   seq: number;
+  /** 画面で行を見分ける鍵（印も含めて、セッションの中で重ならない）。 */
+  key: string;
   /** participant の名前か `vehicle_sil_launch`。 */
   source: string;
   line: string;
@@ -37,7 +39,7 @@ export interface LogLine {
 
 /** 出どころごとのログの数。 */
 export interface LogSource {
-  /** いま持っている行の数。 */
+  /** いま持っている行の数（落ちた行の印は数えない）。 */
   lines: number;
   /** 落とした古い行の数（サーバーが覚えていなかった分と、画面が上限で落とした分）。 */
   dropped: number;
@@ -114,6 +116,15 @@ export interface SessionView {
   problems: readonly ServerProblem[];
   /** 上限を超えて覚えていないサーバーの知らせの数。 */
   problemsOmitted: number;
+  /**
+   * 読めなかった部分の名前（要約の `result.participants`、事象の `finding.code` など）。画面はここに挙がった部分を
+   * 「一部を表示できません」と出す。
+   */
+  unreadable: readonly string[];
+  /** seq が前の事象より後でなかったので当てなかった事象の数（サーバーの再送と重なったか、seq が戻った）。 */
+  staleEvents: number;
+  /** サーバーが送らなかった行の印（dropped）を置いた数（印の鍵に使う）。 */
+  droppedMarks: number;
 }
 
 /** 実行がいまどうなっているか（状態の帯と結果の表示が使う）。 */
@@ -164,6 +175,9 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     launcher: launcherOf(summary),
     problems: [],
     problemsOmitted: 0,
+    unreadable: [],
+    staleEvents: 0,
+    droppedMarks: 0,
   };
   return applySummary(blank, summary, true);
 }
@@ -175,13 +189,15 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
 export function addDropped(session: SessionView, dropped: Dropped): SessionView {
   const counts = Object.entries(dropped.log).filter(([, count]) => count > 0);
   if (counts.length === 0) return session;
+  const mark = session.droppedMarks + 1;
   const gaps: LogLine[] = counts.map(([source, count]) => ({
     seq: session.lastSeq + 0.5,
+    key: `dropped ${mark} ${source}`,
     source,
     line: '',
     gap: { count, atLeast: dropped.at_least.includes(source) },
   }));
-  const next = appendLogs(session, gaps);
+  const next = { ...appendLogs(session, gaps), droppedMarks: mark };
   const sources = { ...next.logSources };
   for (const [source, count] of counts) {
     sources[source] = { ...sources[source], dropped: sources[source].dropped + count };
@@ -206,30 +222,46 @@ function launcherOf(summary: SessionSummary): LauncherView {
 }
 
 /**
- * 要約を当てる。ランチャーが動いているか、停止の依頼、サーバーの知らせは、いつも要約に従う（要約が正）。
- * 段階、照合、participant、所見、結果、仮想時刻は、force（WebSocket の hello と session: 事象と同じ順で届くので、
- * 届いた時点の正）か、要約が手元の事象より新しいとき（HTTP の応答）に要約から取る。ログは手元のまま。
+ * 要約を当てる。ログは手元のまま。
+ *
+ * - force（WebSocket の hello と session）: 事象と同じ順で届くので、届いた時点の正としてすべて取る。
+ * - force でない（HTTP の応答）: 通知との順が決まらない。ランチャーが動いているかと停止の依頼は取るが、同じ実行で
+ *   終わったランチャーを「動いている」に戻さない。サーバーの知らせは、手元より少なくないときだけ取る（サーバーは
+ *   足すだけなので、少ない要約は古い）。段階、照合、participant、所見、結果、仮想時刻は、要約が手元の事象より
+ *   新しいときだけ取る。ただし controlOnly（WebSocket がつながっていて、同じものが通知で届く）なら取らない
+ *   （所見が通知と重なって 2 つ並ばないように）。
  */
 export function applySummary(
   session: SessionView,
   summary: SessionSummary,
   force = false,
+  controlOnly = false,
 ): SessionView {
+  const newer = force || (summary.last_seq ?? -1) > session.lastSeq;
+  const launcher =
+    !force && !session.launcher.running && summary.launcher.running
+      ? session.launcher
+      : launcherOf(summary);
+  const notLess =
+    summary.problems.length + summary.problems_omitted >=
+    session.problems.length + session.problemsOmitted;
   const next: SessionView = {
     ...session,
-    launcher: launcherOf(summary),
+    launcher,
     stopRequests: Math.max(session.stopRequests, stopRequestsOf(summary.stop)),
-    problems: summary.problems,
-    problemsOmitted: summary.problems_omitted,
     logSources: withSources(session.logSources, Object.keys(summary.log)),
+    ...(force || notLess
+      ? { problems: summary.problems, problemsOmitted: summary.problems_omitted }
+      : {}),
   };
-  if (!force && (summary.last_seq ?? -1) <= session.lastSeq) {
+  if (!newer || (!force && controlOnly)) {
     return next;
   }
   const phase = summary.phase ?? next.phase;
   const rank = phaseIndex(phase);
   const check = summary.check ?? next.check ?? summary.result?.check ?? null;
   const result = summary.result ?? next.result;
+  const known = new Map(session.participants.map((p) => [p.name, p]));
   const participants: readonly ParticipantView[] = summary.participants.map((p) => ({
     name: p.name,
     state: p.state,
@@ -239,11 +271,14 @@ export function applySummary(
     signal: p.signal,
     failure: p.reason,
     message: p.message,
-    stopRequested: p.state === 'stop_requested',
+    // 止めるよう求めたことは、後の状態（ended など）の要約でも残す
+    stopRequested:
+      p.stop_requested || p.state === 'stop_requested' || !!known.get(p.name)?.stopRequested,
     omittedFields: p.omitted_fields,
   }));
   return {
     ...next,
+    unreadable: force ? summary.unreadable : union(next.unreadable, summary.unreadable),
     phase,
     phaseRank: rank >= 0 ? rank : next.phaseRank,
     elapsedMs: Math.max(next.elapsedMs, summary.last_t_ms ?? 0),
@@ -256,6 +291,10 @@ export function applySummary(
     // 必須か、外したかは照合の結果にある（並びも構成ファイルの順に）。結果があれば、終わり方（止めたか）も結果から
     participants: withResult(check ? mergeCheck(participants, check) : participants, result),
   };
+}
+
+function union(a: readonly string[], b: readonly string[]): readonly string[] {
+  return b.every((name) => a.includes(name)) ? a : [...new Set([...a, ...b])];
 }
 
 /** 出どころの一覧に、まだ行のない出どころを足す（選べるように）。 */
@@ -284,17 +323,28 @@ export function phaseIndex(phase: Phase | null): number {
 }
 
 /**
- * 事象をまとめて当てる。同じ seq か、それより前の事象（再送の重なり）は無視する。
+ * 事象をまとめて当てる。同じ seq か、それより前の事象は当てない（再送の重なり。つなぎ直す前に受けていた分）。
+ * countStale なら（再送ではない事象）、当てなかった数を staleEvents に数える（seq が戻った）。
  * ログの配列は 1 回のまとまりで 1 回だけ作り直す（届くたびに写さない）。
  */
-export function applyEvents(session: SessionView, events: readonly LauncherEvent[]): SessionView {
+export function applyEvents(
+  session: SessionView,
+  events: readonly LauncherEvent[],
+  countStale = false,
+): SessionView {
   let next = session;
   const logs: LogLine[] = [];
+  let stale = 0;
   for (const event of events) {
     if (event.seq > next.lastSeq) {
       next = applyOne(next, event, logs);
+      if (event.unreadable)
+        next = { ...next, unreadable: union(next.unreadable, event.unreadable) };
+    } else {
+      stale++;
     }
   }
+  if (countStale && stale > 0) next = { ...next, staleEvents: next.staleEvents + stale };
   if (logs.length === 0) return next;
   next = appendLogs(next, logs);
   // ランチャーが書けなかった行（log_dropped）は、その出どころの落とした行に数える
@@ -308,14 +358,17 @@ export function applyEvents(session: SessionView, events: readonly LauncherEvent
   return { ...next, logSources: sources };
 }
 
-/** ログの行を足し、出どころごとの上限と全体の上限を超えた分を、古い行から落とす。 */
+/**
+ * ログの行を足し、出どころごとの上限と全体の上限を超えた分を、古い行から落とす。落ちた行の印は行に数えず、
+ * 落とす行より前にある印は一緒に落とす（その位置はもう見えないため）。
+ */
 function appendLogs(session: SessionView, added: readonly LogLine[]): SessionView {
   const sources: Record<string, LogSource> = {};
   for (const [source, counts] of Object.entries(session.logSources))
     sources[source] = { ...counts };
   for (const line of added) {
     const counts = (sources[line.source] ??= { lines: 0, dropped: 0 });
-    counts.lines++;
+    if (!line.gap) counts.lines++;
   }
   // 落とす数を出どころごとに決める
   const drop = new Map<string, number>();
@@ -344,7 +397,7 @@ function appendLogs(session: SessionView, added: readonly LogLine[]): SessionVie
   const kept = all.filter((line) => {
     const left = drop.get(line.source);
     if (left === undefined || left === 0) return true;
-    drop.set(line.source, left - 1);
+    if (!line.gap) drop.set(line.source, left - 1);
     return false;
   });
   return { ...session, logs: kept, logSources: sources };
@@ -354,7 +407,7 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
   const next: SessionView = {
     ...session,
     lastSeq: event.seq,
-    elapsedMs: Math.max(session.elapsedMs, event.t_ms),
+    elapsedMs: Math.max(session.elapsedMs, event.t_ms ?? 0),
   };
   switch (event.event) {
     case 'phase': {
@@ -365,15 +418,14 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       return index >= next.phaseRank ? { ...next, phase: event.phase, phaseRank: index } : next;
     }
     case 'check':
-      return {
-        ...next,
-        check: event.check,
-        participants: mergeCheck(next.participants, event.check),
-      };
+      // 読めなかった照合（null）は当てない（読めない部分として出ている）
+      return event.check
+        ? { ...next, check: event.check, participants: mergeCheck(next.participants, event.check) }
+        : next;
     case 'participant':
       return { ...next, participants: updateParticipant(next.participants, event) };
     case 'log':
-      logs.push({ seq: event.seq, source: event.source, line: event.line });
+      logs.push({ seq: event.seq, key: String(event.seq), source: event.source, line: event.line });
       return next;
     case 'log_dropped':
       // 落ちた位置に印を置く（ここで N 行が落ちた）。印の seq はこの事象の seq
@@ -381,6 +433,7 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
         if (count > 0) {
           logs.push({
             seq: event.seq,
+            key: `${event.seq} ${source}`,
             source,
             line: '',
             gap: { count, atLeast: false, launcher: true },

@@ -1,4 +1,4 @@
-import { HttpClient, httpResource } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, httpResource } from '@angular/common/http';
 import {
   Component,
   DOCUMENT,
@@ -44,15 +44,19 @@ const EXPLAINED_PROBLEMS = ['no-result', 'launcher-silent'];
 /** ランチャー自身のログの出どころ。 */
 const LAUNCHER_SOURCE = 'vehicle_sil_launch';
 
-/** 中断できる待ち。中断されたら、その理由で失敗する。 */
+/** 中断できる待ち。中断されたら、その理由で失敗する（待ち終えたら、中断の受け口を外す）。 */
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     signal.throwIfAborted();
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener('abort', () => {
+    const abort = () => {
       clearTimeout(timer);
       reject(signal.reason);
-    });
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', abort, { once: true });
   });
 }
 
@@ -110,6 +114,15 @@ export class RunPage {
     if (this.run.connectionState() === 'open') return null;
     const error = this.handshake.error();
     return error ? errorMessage(error) : null;
+  });
+  /**
+   * HTTP でサーバーに届くか。WebSocket が切れて、理由を確かめる api/app も届かなかった（状態 0）ときだけ偽。
+   * WebSocket だけが切れているなら、停止は HTTP で頼める。
+   */
+  protected readonly reachable = computed(() => {
+    if (this.run.connectionState() === 'open') return true;
+    const error = this.handshake.error();
+    return !(error instanceof HttpErrorResponse && error.status === 0);
   });
 
   protected readonly session = this.run.session;
@@ -367,10 +380,13 @@ export class RunPage {
     void navigator.clipboard?.writeText(path).then(() => this.copiedPath.set(true));
   }
 
-  /** 見出しへフォーカスを移す（スクロールもする。上の帯に隠れないよう、見出しの scroll-margin で余白を取る）。 */
+  /**
+   * 見出しへフォーカスを移す（スクロールもする）。上に貼り付いた帯の高さは幅と中身で変わるので、見出しを窓の
+   * 真ん中へ送る（帯に隠れない）。
+   */
   private reveal(id: string): void {
     const heading = this.document.getElementById(id);
-    heading?.focus();
-    heading?.scrollIntoView({ block: 'start' });
+    heading?.focus({ preventScroll: true });
+    heading?.scrollIntoView({ block: 'center' });
   }
 }

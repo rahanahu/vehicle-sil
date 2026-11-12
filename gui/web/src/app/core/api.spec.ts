@@ -144,6 +144,43 @@ describe('the readers accept every example of gui/protocol', () => {
   });
 });
 
+describe('the readers read summaries and events part by part', () => {
+  it('keeps what it can read of a summary, and names the parts it cannot read', async () => {
+    const ended = (await httpExamples()).find((example) => example.name === 'session-ended');
+    const raw = structuredClone((ended?.response as { session: Record<string, unknown> }).session);
+    raw['findings'] = [{ severity: 'error', message: 'm', code: 5 }, 'junk'];
+    raw['participants'] = [{ name: 'A', state: 'ended', signal: 9 }];
+    (raw['result'] as Record<string, unknown>)['vehicle_sil_run'] = 2;
+    const summary = readSessionResponse({ session: raw });
+    expect(summary?.findings).toEqual([expect.objectContaining({ code: '', message: 'm' })]);
+    expect(summary?.participants[0]).toMatchObject({ name: 'A', state: 'ended', signal: null });
+    expect(summary?.result?.result).toBe('passed');
+    expect([...(summary?.unreadable ?? [])].sort()).toEqual([
+      'findings',
+      'findings.code',
+      'participants.signal',
+      'result.vehicle_sil_run',
+    ]);
+    // 芯（id、state、launcher、stop）が読めなければ、要約は読めない
+    expect(() => readSessionResponse({ session: { ...raw, launcher: null } })).toThrow(
+      /response\.session\.launcher: expected an object/,
+    );
+  });
+
+  it('reads an event whose loose fields are missing or of other types, and names them', () => {
+    const read = readServerMessage({
+      type: 'event',
+      session: 1,
+      event: { event: 'participant', seq: 4, name: 'A', state: 'joined', signal: 9 },
+    });
+    expect(read).toMatchObject({
+      type: 'event',
+      event: { name: 'A', state: 'joined', signal: null, t_ms: null },
+    });
+    expect(read?.type === 'event' && read.event.unreadable).toEqual(['participant.signal']);
+  });
+});
+
 describe('the readers refuse what they cannot read', () => {
   const finding = {
     event: 'finding',

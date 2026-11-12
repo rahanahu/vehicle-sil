@@ -4,7 +4,7 @@ import { AuthToken } from '../auth/auth-token';
 import { FakeSocket, FakeWebSockets } from '../streams/fake-web-socket';
 import { backoffMs } from '../streams/live-connection';
 import { WebSocketExample, httpExamples, webSocketExamples } from '../../testing/protocol-examples';
-import { BATCH_MS, ServerConnection } from './server-connection';
+import { BATCH_MS, STALE_EVENTS_NOTICE, ServerConnection } from './server-connection';
 import { runOutcome } from './session-state';
 
 describe('ServerConnection', () => {
@@ -202,10 +202,101 @@ describe('ServerConnection', () => {
 
   it('counts a notice that comes again instead of repeating it', () => {
     const { run, socket } = open();
-    for (let i = 0; i < 3; i++) socket.send({ type: 'hello' });
+    for (let i = 0; i < 3; i++) socket.send({ type: 'event', session: 1 });
     vi.advanceTimersByTime(BATCH_MS);
     expect(run.notices()).toHaveLength(1);
     expect(run.notices()[0].count).toBe(3);
+  });
+
+  it('does not take an unreadable hello as in step, and connects again', () => {
+    const { run, socket } = open();
+    const hello = examples.get('ws-replay')?.server[0] as Record<string, unknown>;
+    socket.send({ ...hello, session: { id: 'one' } });
+    socket.send({ type: 'synced', session: null, last_seq: null });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(run.ready()).toBe(false);
+    expect(run.notices()[0].message).toContain('unreadable message: message.session.id');
+    // 間を置いてつなぎ直し、読める hello から揃う
+    vi.advanceTimersByTime(backoffMs(1));
+    const again = fake.last();
+    expect(again).not.toBe(socket);
+    again.open();
+    play(again, 'ws-replay');
+    expect(run.ready()).toBe(true);
+    expect(run.session()?.result?.result).toBe('passed');
+  });
+
+  it('reads a summary whose result the server cut, and names what it cannot show', () => {
+    const { run, socket } = open();
+    play(socket, 'ws-kept-limit');
+    expect(run.ready()).toBe(true);
+    const session = run.session();
+    expect(session && runOutcome(session)).toBe('ended');
+    expect(session?.result?.result).toBe('passed');
+    expect(session?.unreadable).toEqual(['result.participants', 'result.findings']);
+    expect(session?.problems.map((p) => p.code)).toContain('kept-limit');
+    // 開いていた画面に、同じ要約が session で届いても同じ
+    const hello = examples.get('ws-kept-limit')?.server[0] as { session: object };
+    const live = open();
+    play(live.socket, 'ws-pass', 0, 2);
+    live.socket.send({ type: 'session', session: hello.session });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(live.run.session()?.launcher.running).toBe(false);
+    expect(live.run.session()?.result?.result).toBe('passed');
+  });
+
+  it('keeps what it can read of events and summaries whose loose fields are missing or of other types', () => {
+    const { run, socket } = open();
+    play(socket, 'ws-loose-fields');
+    expect(run.notices()).toEqual([]);
+    const session = run.session();
+    expect(session?.result?.result).toBe('passed');
+    expect(session?.findings.map((f) => f.message)).toContain(
+      'a finding with only a severity and a message',
+    );
+    expect(session?.unreadable).toEqual(
+      expect.arrayContaining(['participants.message', 'findings.code']),
+    );
+    expect(session?.logs.some((line) => line.line === 'a log event without t_ms')).toBe(true);
+  });
+
+  it('shows the fields the server left out of a large participant event', () => {
+    const { run, socket } = open();
+    play(socket, 'ws-large-fields');
+    const session = run.session();
+    expect(session?.result?.result).toBe('passed');
+    expect(session?.unreadable).toEqual([]);
+    // 要約が正: 終わりの要約で、長すぎた command を省いたことが出る（読めないのではない）
+    const engine = session?.participants.find((p) => p.name === 'Engine');
+    expect(engine?.omittedFields).toEqual(['command']);
+    expect(engine?.state).toBe('ended');
+  });
+
+  it('says so when events come with a seq that went back, instead of dropping them silently', () => {
+    const { run, socket } = open();
+    play(socket, 'ws-pass');
+    const last = run.session()?.lastSeq ?? 0;
+    socket.send({
+      type: 'event',
+      session: run.session()?.id,
+      event: { event: 'log', seq: last - 1, t_ms: 0, source: 'Engine', line: 'late' },
+    });
+    vi.advanceTimersByTime(BATCH_MS);
+    expect(run.notices().map((n) => [n.message, n.count])).toEqual([[STALE_EVENTS_NOTICE, 1]]);
+  });
+
+  it('does not take an older answer as running again, nor repeat findings that the notifications bring', async () => {
+    const { run, socket } = open();
+    play(socket, 'ws-pass');
+    const ended = run.session();
+    expect(ended?.launcher.running).toBe(false);
+    // 停止の応答（実行中の要約）が、終わりの通知より遅れて届いた
+    const answers = new Map((await httpExamples()).map((example) => [example.name, example]));
+    const stop = readSessionResponse(answers.get('stop')?.response);
+    if (!stop) throw new Error('no summary in stop.json');
+    run.adopt({ ...stop, id: ended?.id ?? 1, last_seq: 10_000 });
+    expect(run.session()?.launcher.running).toBe(false);
+    expect(run.session()?.findings).toEqual(ended?.findings);
   });
 
   it('marks in the log where the server could not send lines, and counts them', () => {

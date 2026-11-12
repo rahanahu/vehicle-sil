@@ -5,6 +5,7 @@ import { authInterceptor } from '../core/auth/auth-interceptor';
 import { FakeWebSockets } from '../core/streams/fake-web-socket';
 import { protocolExamples } from '../testing/protocol-examples';
 import { CHECK_DELAY_MS, RunPage } from './run-page';
+import { ACTION_GUARD } from './run-status';
 import { BATCH_MS } from '../core/session/server-connection';
 
 describe('RunPage', () => {
@@ -33,6 +34,8 @@ describe('RunPage', () => {
         provideHttpClient(withInterceptors([authInterceptor])),
         provideHttpClientTesting(),
         fake.provider,
+        // 押せるようになったばかりのボタンを押しても何もしない間（試験ではすぐ）
+        { provide: ACTION_GUARD, useValue: 0 },
       ],
     }).compileComponents();
     http = TestBed.inject(HttpTestingController);
@@ -53,7 +56,7 @@ describe('RunPage', () => {
     return found;
   }
 
-  /** 押せないか（主なボタンは、フォーカスを残すため aria-disabled で押せなくする）。 */
+  /** 押せないか（開始と停止は、フォーカスを残すため aria-disabled で押せなくする）。 */
   const disabled = (b: HTMLButtonElement) =>
     b.disabled || b.getAttribute('aria-disabled') === 'true';
 
@@ -107,7 +110,7 @@ describe('RunPage', () => {
     await fixture.whenStable();
 
     expect(text(fixture, 'check-outcome')).toContain('通った');
-    expect(disabled(button(fixture, 'primary'))).toBe(false);
+    expect(disabled(button(fixture, 'start'))).toBe(false);
 
     toggle(fixture, 'Dashboard');
     const again = await checkRequest();
@@ -121,7 +124,7 @@ describe('RunPage', () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-failed'));
     await fixture.whenStable();
-    expect(disabled(button(fixture, 'primary'))).toBe(true);
+    expect(disabled(button(fixture, 'start'))).toBe(true);
     expect(text(fixture, 'blocked')).toContain('誤り 1 件');
     expect(text(fixture, 'check-card')).toContain('step-mismatch');
   });
@@ -130,8 +133,10 @@ describe('RunPage', () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));
     await fixture.whenStable();
-    expect(button(fixture, 'primary').textContent).toContain('開始');
-    button(fixture, 'primary').click();
+    expect(button(fixture, 'start').textContent).toContain('開始');
+    await sleep(10);
+    await fixture.whenStable();
+    button(fixture, 'start').click();
     const run = http.expectOne('api/run');
     expect(run.request.method).toBe('POST');
     expect(run.request.body).toEqual({
@@ -140,10 +145,11 @@ describe('RunPage', () => {
       speed: null,
       start_paused: false,
     });
-    // 応答の要約をその場で当てる（通知を待たずに、停止のボタンになる）
+    // 応答の要約をその場で当てる（通知を待たずに、停止が押せて、開始は押せない）
     run.flush(response('run'));
     await fixture.whenStable();
-    expect(button(fixture, 'primary').textContent).toContain('停止');
+    expect(disabled(button(fixture, 'stop'))).toBe(false);
+    expect(disabled(button(fixture, 'start'))).toBe(true);
   });
 
   it('checks once after quick switches, after the answer to the check before', async () => {
@@ -167,7 +173,7 @@ describe('RunPage', () => {
     await fixture.whenStable();
     // 古い応答（Engine も外したもの）は使わず、最後の組み合わせの結果を出す
     expect(text(fixture, 'check-participant-Dashboard')).toContain('外した');
-    expect(disabled(button(fixture, 'primary'))).toBe(false);
+    expect(disabled(button(fixture, 'start'))).toBe(false);
   });
 
   it('shows the result and the reason of a failed run, and offers to run again', async () => {
@@ -184,7 +190,7 @@ describe('RunPage', () => {
     expect(text(fixture, 'result')).toContain('失敗');
     expect(text(fixture, 'result-card')).toContain('participant-failed');
     expect(text(fixture, 'status-Dashboard')).toContain('終了コード 3');
-    expect(button(fixture, 'primary').textContent).toContain('もう一度実行');
+    expect(button(fixture, 'start').textContent).toContain('もう一度実行');
     expect(text(fixture, 'outcome')).toContain('失敗');
     expect(text(fixture, 'first-error')).toContain('participant-failed');
   });

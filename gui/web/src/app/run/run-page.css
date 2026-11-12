@@ -10,8 +10,6 @@ h1 {
 h2 {
   font: var(--mat-sys-title-large);
   margin: 0;
-  /* 見出しへ移ったとき、上に貼り付いた状態の帯に隠れない */
-  scroll-margin-block-start: 12rem;
 }
 
 h2:focus-visible {

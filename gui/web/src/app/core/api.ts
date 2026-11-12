@@ -8,6 +8,10 @@ import { HttpErrorResponse } from '@angular/common/http';
  * - 知らない欄は無視する。知らない事象と知らない通知は null にして読み飛ばす。
  * - 値の集合が増えうる欄（段階、状態、結果など）は、知らない値も文字列のまま通す。
  * - 形が違うもの（欄がない、型が違う、知らない形式の版）は ProtocolError を投げる。
+ * - ただし、セッションの要約とランチャーの事象は部分ごとに読む（readSessionSummary、readServerMessage）。
+ *   ランチャーから来る部分（照合、結果、所見、participant）や、サーバーが上限で縮めた部分が読めなくても、
+ *   読める部分は使い、読めない部分は既定の値にして、その名前を `unreadable` に入れる。要約の芯（id、state、
+ *   launcher、stop）と事象の芯（seq、event）が読めないときだけ、全体を読めないとする。
  * 単体試験（api.spec.ts）が gui/protocol/examples/ の実例をすべて読ませて確かめる。
  */
 
@@ -79,10 +83,83 @@ function field<T>(fields: Fields, path: string, key: string, read: Reader<T>): T
   return read(fields[key], `${path}.${key}`);
 }
 
-/** 形式の版の欄。知らない版は読まない（意味が変わっているかもしれないため）。 */
-function version(fields: Fields, path: string, key: string, expected: number): void {
+/**
+ * 部分ごとに読むときに、読めなかった部分の名前を集める。名前は root からの相対で、配列の添え字を除く
+ * （`message.session.participants[2].signal` → `participants.signal`）。
+ */
+export class Unreadable {
+  private readonly names = new Set<string>();
+
+  constructor(
+    private readonly root: string,
+    private readonly prefix = '',
+  ) {}
+
+  add(path: string): void {
+    const relative = path.startsWith(`${this.root}.`) ? path.slice(this.root.length + 1) : path;
+    this.names.add(this.prefix + relative.replace(/\[\d+\]/g, ''));
+  }
+
+  get parts(): string[] {
+    return [...this.names];
+  }
+}
+
+/** 読めなければ fallback にして、その場所を u に覚える（u がなければ投げる）。欄がないのも読めないうち。 */
+function lenient<T, F>(read: Reader<T>, fallback: F, u?: Unreadable): Reader<T | F> {
+  if (!u) return read;
+  return (value, path) => {
+    try {
+      return read(value, path);
+    } catch (error) {
+      if (!(error instanceof ProtocolError)) throw error;
+      u.add(error.path);
+      return fallback;
+    }
+  };
+}
+
+/** 欄がなければ黙って fallback、型が違えば fallback にして u に覚える（u がなければ投げる）。 */
+function soft<T, F>(read: Reader<T>, fallback: F, u?: Unreadable): Reader<T | F> {
+  return lenient(optional(read, fallback), fallback, u);
+}
+
+/** 配列。u があれば、読めない要素を読み飛ばして u に覚える（配列でないか、ないときは空）。 */
+function items<T>(read: Reader<T>, u?: Unreadable): Reader<T[]> {
+  if (!u) return array(read);
+  return (value, path) => {
+    if (!Array.isArray(value)) {
+      u.add(path);
+      return [];
+    }
+    const out: T[] = [];
+    value.forEach((item, i) => {
+      try {
+        out.push(read(item, `${path}[${i}]`));
+      } catch (error) {
+        if (!(error instanceof ProtocolError)) throw error;
+        u.add(error.path);
+      }
+    });
+    return out;
+  };
+}
+
+/**
+ * 形式の版の欄。知らない版は読まない（意味が変わっているかもしれないため）。部分ごとに読むとき（u）は、
+ * 読めない部分として覚えて、読める欄は読む。
+ */
+function version(
+  fields: Fields,
+  path: string,
+  key: string,
+  expected: number,
+  u?: Unreadable,
+): void {
   if (fields[key] !== expected) {
-    throw new ProtocolError(`${path}.${key}`, `format version ${expected}`);
+    const error = new ProtocolError(`${path}.${key}`, `format version ${expected}`);
+    if (!u) throw error;
+    u.add(error.path);
   }
 }
 
@@ -108,17 +185,18 @@ export function severityRank(severity: Severity): number {
   return severity === 'note' ? 2 : severity === 'warning' ? 1 : 0;
 }
 
-export const readFinding: Reader<Finding> = (value, path) => {
+/** 所見を読む。u があれば部分ごとに（重さと文が読めなければ、その所見は読めない）。 */
+export const readFinding = (value: unknown, path: string, u?: Unreadable): Finding => {
   const f = object(value, path);
   return {
     severity: field(f, path, 'severity', string),
-    code: field(f, path, 'code', string),
-    file: field(f, path, 'file', nullable(string)),
-    line: field(f, path, 'line', nullable(integer)),
-    participant: field(f, path, 'participant', nullable(string)),
-    network: field(f, path, 'network', nullable(string)),
+    code: field(f, path, 'code', lenient(string, '', u)),
+    file: field(f, path, 'file', soft(nullable(string), null, u)),
+    line: field(f, path, 'line', soft(nullable(integer), null, u)),
+    participant: field(f, path, 'participant', soft(nullable(string), null, u)),
+    network: field(f, path, 'network', soft(nullable(string), null, u)),
     message: field(f, path, 'message', string),
-    detail: field(f, path, 'detail', nullable(string)),
+    detail: field(f, path, 'detail', soft(nullable(string), null, u)),
   };
 };
 
@@ -158,16 +236,21 @@ export interface CheckParticipant {
   variables: Variable[] | null;
 }
 
-const readCheckParticipant: Reader<CheckParticipant> = (value, path) => {
+const readCheckParticipant = (value: unknown, path: string, u?: Unreadable): CheckParticipant => {
   const f = object(value, path);
   return {
     name: field(f, path, 'name', nullable(string)),
-    line: field(f, path, 'line', optional(nullable(integer), null)),
-    required: field(f, path, 'required', nullable(boolean)),
-    enabled: field(f, path, 'enabled', nullable(boolean)),
-    step_ms: field(f, path, 'step_ms', nullable(number)),
-    status: field(f, path, 'status', string),
-    variables: field(f, path, 'variables', optional(nullable(array(readVariable)), null)),
+    line: field(f, path, 'line', soft(nullable(integer), null, u)),
+    required: field(f, path, 'required', lenient(nullable(boolean), null, u)),
+    enabled: field(f, path, 'enabled', lenient(nullable(boolean), null, u)),
+    step_ms: field(f, path, 'step_ms', lenient(nullable(number), null, u)),
+    status: field(f, path, 'status', lenient(string, '', u)),
+    variables: field(
+      f,
+      path,
+      'variables',
+      soft(nullable(u ? items(readVariable, u) : array(readVariable)), null, u),
+    ),
   };
 };
 
@@ -178,12 +261,12 @@ export interface CheckNetwork {
   participants: string[];
 }
 
-const readCheckNetwork: Reader<CheckNetwork> = (value, path) => {
+const readCheckNetwork = (value: unknown, path: string, u?: Unreadable): CheckNetwork => {
   const f = object(value, path);
   return {
-    name: field(f, path, 'name', nullable(string)),
-    kind: field(f, path, 'kind', nullable(string)),
-    participants: field(f, path, 'participants', array(string)),
+    name: field(f, path, 'name', lenient(nullable(string), null, u)),
+    kind: field(f, path, 'kind', lenient(nullable(string), null, u)),
+    participants: field(f, path, 'participants', items(string, u)),
   };
 };
 
@@ -202,19 +285,35 @@ export interface CheckResult {
   findings: Finding[];
 }
 
-export const readCheckResult: Reader<CheckResult> = (value, path) => {
+/** 照合の結果を読む。u があれば部分ごとに。 */
+export const readCheckResult = (value: unknown, path: string, u?: Unreadable): CheckResult => {
   const f = object(value, path);
-  version(f, path, 'vehicle_sil_check', 1);
+  version(f, path, 'vehicle_sil_check', 1, u);
   return {
-    file: field(f, path, 'file', nullable(string)),
-    result: field(f, path, 'result', string),
-    errors: field(f, path, 'errors', integer),
-    warnings: field(f, path, 'warnings', integer),
-    notes: field(f, path, 'notes', integer),
-    stop_at_ms: field(f, path, 'stop_at_ms', nullable(number)),
-    participants: field(f, path, 'participants', array(readCheckParticipant)),
-    networks: field(f, path, 'networks', array(readCheckNetwork)),
-    findings: field(f, path, 'findings', array(readFinding)),
+    file: field(f, path, 'file', soft(nullable(string), null, u)),
+    result: field(f, path, 'result', lenient(string, '', u)),
+    errors: field(f, path, 'errors', lenient(integer, 0, u)),
+    warnings: field(f, path, 'warnings', lenient(integer, 0, u)),
+    notes: field(f, path, 'notes', lenient(integer, 0, u)),
+    stop_at_ms: field(f, path, 'stop_at_ms', soft(nullable(number), null, u)),
+    participants: field(
+      f,
+      path,
+      'participants',
+      items((v, p) => readCheckParticipant(v, p, u), u),
+    ),
+    networks: field(
+      f,
+      path,
+      'networks',
+      items((v, p) => readCheckNetwork(v, p, u), u),
+    ),
+    findings: field(
+      f,
+      path,
+      'findings',
+      items((v, p) => readFinding(v, p, u), u),
+    ),
   };
 };
 
@@ -230,16 +329,16 @@ export interface RunParticipant {
   left_processes: boolean;
 }
 
-const readRunParticipant: Reader<RunParticipant> = (value, path) => {
+const readRunParticipant = (value: unknown, path: string, u?: Unreadable): RunParticipant => {
   const f = object(value, path);
   return {
     name: field(f, path, 'name', string),
-    required: field(f, path, 'required', boolean),
-    enabled: field(f, path, 'enabled', boolean),
-    ended: field(f, path, 'ended', string),
-    exit_code: field(f, path, 'exit_code', nullable(integer)),
-    signal: field(f, path, 'signal', nullable(string)),
-    left_processes: field(f, path, 'left_processes', boolean),
+    required: field(f, path, 'required', lenient(boolean, true, u)),
+    enabled: field(f, path, 'enabled', lenient(boolean, true, u)),
+    ended: field(f, path, 'ended', lenient(string, '', u)),
+    exit_code: field(f, path, 'exit_code', soft(nullable(integer), null, u)),
+    signal: field(f, path, 'signal', soft(nullable(string), null, u)),
+    left_processes: field(f, path, 'left_processes', soft(boolean, false, u)),
   };
 };
 
@@ -261,20 +360,43 @@ export interface RunResult {
   check: CheckResult | null;
 }
 
-export const readRunResult: Reader<RunResult> = (value, path) => {
+/**
+ * 実行の結果を読む。u があれば部分ごとに: サーバーが上限で縮めた結果（入れ子でない短い欄だけ）も、結果として
+ * 読む（participant と所見は空にして、読めない部分に入れる）。結果の名前が読めなければ ''。
+ */
+export const readRunResult = (value: unknown, path: string, u?: Unreadable): RunResult => {
   const f = object(value, path);
-  version(f, path, 'vehicle_sil_run', 1);
+  version(f, path, 'vehicle_sil_run', 1, u);
   return {
-    file: field(f, path, 'file', nullable(string)),
-    result: field(f, path, 'result', string),
-    errors: field(f, path, 'errors', integer),
-    warnings: field(f, path, 'warnings', integer),
-    notes: field(f, path, 'notes', integer),
-    simulation: field(f, path, 'simulation', nullable(string)),
-    interrupted_by: field(f, path, 'interrupted_by', nullable(string)),
-    participants: field(f, path, 'participants', array(readRunParticipant)),
-    findings: field(f, path, 'findings', array(readFinding)),
-    check: field(f, path, 'check', optional(nullable(readCheckResult), null)),
+    file: field(f, path, 'file', soft(nullable(string), null, u)),
+    result: field(f, path, 'result', lenient(string, '', u)),
+    errors: field(f, path, 'errors', lenient(integer, 0, u)),
+    warnings: field(f, path, 'warnings', lenient(integer, 0, u)),
+    notes: field(f, path, 'notes', lenient(integer, 0, u)),
+    simulation: field(f, path, 'simulation', soft(nullable(string), null, u)),
+    interrupted_by: field(f, path, 'interrupted_by', soft(nullable(string), null, u)),
+    participants: field(
+      f,
+      path,
+      'participants',
+      items((v, p) => readRunParticipant(v, p, u), u),
+    ),
+    findings: field(
+      f,
+      path,
+      'findings',
+      items((v, p) => readFinding(v, p, u), u),
+    ),
+    check: field(
+      f,
+      path,
+      'check',
+      soft(
+        nullable((v, p) => readCheckResult(v, p, u)),
+        null,
+        u,
+      ),
+    ),
   };
 };
 
@@ -297,8 +419,10 @@ export type ParticipantState = Open<
 
 interface EventBase {
   seq: number;
-  /** ランチャーの開始からの実時間（ミリ秒）。 */
-  t_ms: number;
+  /** ランチャーの開始からの実時間（ミリ秒）。ない事象もある（サーバーは欄がなくても通す）。 */
+  t_ms: number | null;
+  /** 読めなかった欄の名前（`finding.code` のように事象の種類を先に付ける）。なければ欄がない。 */
+  unreadable?: string[];
 }
 
 export type LauncherEvent =
@@ -311,8 +435,8 @@ export type LauncherEvent =
       arguments: string[];
     })
   | (EventBase & { event: 'phase'; phase: Phase })
-  | (EventBase & { event: 'check'; check: CheckResult })
-  | (EventBase & { event: 'registry'; uri: string })
+  | (EventBase & { event: 'check'; check: CheckResult | null })
+  | (EventBase & { event: 'registry'; uri: string | null })
   | (EventBase & {
       event: 'participant';
       name: string;
@@ -341,43 +465,78 @@ export type LauncherEvent =
     })
   | (EventBase & { event: 'result'; result: RunResult });
 
-/** ランチャーの事象を 1 つ読む。知らない事象は null（読み飛ばす）。 */
-export const readLauncherEvent: Reader<LauncherEvent | null> = (value, path) => {
+/**
+ * ランチャーの事象を 1 つ読む。知らない事象は null（読み飛ばす）。partly が真なら部分ごとに読み、読めない欄は
+ * 既定の値にして、その名前を unreadable に入れる（芯の seq と event、事象ごとの芯の欄が読めないときだけ投げる）。
+ */
+export const readLauncherEvent = (
+  value: unknown,
+  path: string,
+  partly = false,
+): LauncherEvent | null => {
   const f = object(value, path);
-  const base: EventBase = {
-    seq: field(f, path, 'seq', integer),
-    t_ms: field(f, path, 't_ms', number),
-  };
   const kind = field(f, path, 'event', string);
+  const u = partly ? new Unreadable(path, `${kind}.`) : undefined;
+  const event = readEventFields(
+    f,
+    path,
+    kind,
+    {
+      seq: field(f, path, 'seq', integer),
+      t_ms: field(f, path, 't_ms', soft(nullable(number), null, u)),
+    },
+    u,
+  );
+  if (event && u && u.parts.length > 0) event.unreadable = u.parts;
+  return event;
+};
+
+function readEventFields(
+  f: Fields,
+  path: string,
+  kind: string,
+  base: EventBase,
+  u?: Unreadable,
+): LauncherEvent | null {
   switch (kind) {
     case 'hello':
       // 形式の版の食い違いはサーバーが見つけて知らせる。画面は読める欄だけを使う
       return {
         ...base,
         event: kind,
-        vehicle_sil_events: field(f, path, 'vehicle_sil_events', integer),
-        vehicle_sil: field(f, path, 'vehicle_sil', string),
-        pid: field(f, path, 'pid', optional(nullable(integer), null)),
-        file: field(f, path, 'file', optional(nullable(string), null)),
-        arguments: field(f, path, 'arguments', optional(array(string), [])),
+        vehicle_sil_events: field(f, path, 'vehicle_sil_events', lenient(integer, 0, u)),
+        vehicle_sil: field(f, path, 'vehicle_sil', lenient(string, '', u)),
+        pid: field(f, path, 'pid', soft(nullable(integer), null, u)),
+        file: field(f, path, 'file', soft(nullable(string), null, u)),
+        arguments: field(f, path, 'arguments', soft(items(string, u), [], u)),
       };
     case 'phase':
       return { ...base, event: kind, phase: field(f, path, 'phase', string) };
     case 'check':
-      return { ...base, event: kind, check: field(f, path, 'check', readCheckResult) };
+      // 読めない照合は null（読めない部分として出し、ほかの事象は当てる）
+      return {
+        ...base,
+        event: kind,
+        check: field(
+          f,
+          path,
+          'check',
+          lenient((v, p) => readCheckResult(v, p, u), null, u),
+        ),
+      };
     case 'registry':
-      return { ...base, event: kind, uri: field(f, path, 'uri', string) };
+      return { ...base, event: kind, uri: field(f, path, 'uri', soft(nullable(string), null, u)) };
     case 'participant':
       return {
         ...base,
         event: kind,
         name: field(f, path, 'name', string),
         state: field(f, path, 'state', string),
-        pid: field(f, path, 'pid', optional(nullable(integer), null)),
-        exit_code: field(f, path, 'exit_code', optional(nullable(integer), null)),
-        signal: field(f, path, 'signal', optional(nullable(string), null)),
-        reason: field(f, path, 'reason', optional(nullable(string), null)),
-        message: field(f, path, 'message', optional(nullable(string), null)),
+        pid: field(f, path, 'pid', soft(nullable(integer), null, u)),
+        exit_code: field(f, path, 'exit_code', soft(nullable(integer), null, u)),
+        signal: field(f, path, 'signal', soft(nullable(string), null, u)),
+        reason: field(f, path, 'reason', soft(nullable(string), null, u)),
+        message: field(f, path, 'message', soft(nullable(string), null, u)),
       };
     case 'log_dropped':
       return {
@@ -395,7 +554,7 @@ export const readLauncherEvent: Reader<LauncherEvent | null> = (value, path) => 
       };
     case 'finding':
       // 所見の欄は事象の行にそのまま並ぶ
-      return { ...base, event: kind, finding: readFinding(f, path) };
+      return { ...base, event: kind, finding: readFinding(f, path, u) };
     case 'time':
       return { ...base, event: kind, sim_ms: field(f, path, 'sim_ms', number) };
     case 'command':
@@ -403,16 +562,20 @@ export const readLauncherEvent: Reader<LauncherEvent | null> = (value, path) => 
         ...base,
         event: kind,
         command: field(f, path, 'command', nullable(string)),
-        source: field(f, path, 'source', optional(string, 'stdin')),
+        source: field(f, path, 'source', soft(string, 'stdin', u)),
         accepted: field(f, path, 'accepted', boolean),
-        message: field(f, path, 'message', optional(nullable(string), null)),
+        message: field(f, path, 'message', soft(nullable(string), null, u)),
       };
     case 'result':
-      return { ...base, event: kind, result: field(f, path, 'result', readRunResult) };
+      return {
+        ...base,
+        event: kind,
+        result: field(f, path, 'result', (v, p) => readRunResult(v, p, u)),
+      };
     default:
       return null;
   }
-};
+}
 
 // --- GUI サーバー: 共通 -------------------------------------------------------------------------
 
@@ -573,19 +736,26 @@ export interface SummaryParticipant {
   message: string | null;
   /** 大きすぎて要約に入れなかった欄の名前（後の事象でその欄が届けば消える）。 */
   omitted_fields: string[];
+  /** ランチャーが止めるよう求めた（stop_requested の事象が来た。後の状態でも残る）。 */
+  stop_requested: boolean;
 }
 
-const readSummaryParticipant: Reader<SummaryParticipant> = (value, path) => {
+const readSummaryParticipant = (
+  value: unknown,
+  path: string,
+  u: Unreadable,
+): SummaryParticipant => {
   const f = object(value, path);
   return {
     name: field(f, path, 'name', string),
-    state: field(f, path, 'state', optional(nullable(string), null)),
-    pid: field(f, path, 'pid', optional(nullable(integer), null)),
-    exit_code: field(f, path, 'exit_code', optional(nullable(integer), null)),
-    signal: field(f, path, 'signal', optional(nullable(string), null)),
-    reason: field(f, path, 'reason', optional(nullable(string), null)),
-    message: field(f, path, 'message', optional(nullable(string), null)),
-    omitted_fields: field(f, path, 'omitted_fields', optional(array(string), [])),
+    state: field(f, path, 'state', soft(nullable(string), null, u)),
+    pid: field(f, path, 'pid', soft(nullable(integer), null, u)),
+    exit_code: field(f, path, 'exit_code', soft(nullable(integer), null, u)),
+    signal: field(f, path, 'signal', soft(nullable(string), null, u)),
+    reason: field(f, path, 'reason', soft(nullable(string), null, u)),
+    message: field(f, path, 'message', soft(nullable(string), null, u)),
+    omitted_fields: field(f, path, 'omitted_fields', soft(items(string, u), [], u)),
+    stop_requested: field(f, path, 'stop_requested', soft(boolean, false, u)),
   };
 };
 
@@ -659,35 +829,87 @@ export interface SessionSummary {
   log: Record<string, LogCounts>;
   problems: ServerProblem[];
   problems_omitted: number;
+  /**
+   * 読めなかった部分の名前（`result.participants`、`findings.code` など。画面が付ける。サーバーの欄ではない）。
+   * 上限で縮めた結果の、ない欄もここに入る。
+   */
+  unreadable: string[];
 }
 
+/**
+ * セッションの要約を、部分ごとに読む。芯（id、state、launcher、stop）が読めなければ投げる。ほかの部分は、
+ * 読めなければ既定の値（null、空）にして、その名前を unreadable に入れる。
+ */
 export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
   const f = object(value, path);
-  const time = field(f, path, 'time', nullable(object));
-  return {
+  const u = new Unreadable(path);
+  const time = field(f, path, 'time', soft(nullable(object), null, u));
+  const timePath = `${path}.time`;
+  const summary: Omit<SessionSummary, 'unreadable'> = {
     id: field(f, path, 'id', integer),
-    file: field(f, path, 'file', string),
-    disable: field(f, path, 'disable', array(string)),
-    speed: field(f, path, 'speed', readSpeed),
     state: field(f, path, 'state', string),
     launcher: field(f, path, 'launcher', readSummaryLauncher),
     stop: field(f, path, 'stop', string),
-    phase: field(f, path, 'phase', nullable(string)),
-    last_seq: field(f, path, 'last_seq', nullable(integer)),
-    last_t_ms: field(f, path, 'last_t_ms', nullable(number)),
-    sim_ms: time ? field(time, `${path}.time`, 'sim_ms', number) : null,
+    file: field(f, path, 'file', lenient(string, '', u)),
+    disable: field(f, path, 'disable', items(string, u)),
+    speed: field(f, path, 'speed', lenient(readSpeed, null, u)),
+    phase: field(f, path, 'phase', soft(nullable(string), null, u)),
+    last_seq: field(f, path, 'last_seq', soft(nullable(integer), null, u)),
+    last_t_ms: field(f, path, 'last_t_ms', soft(nullable(number), null, u)),
+    sim_ms: time ? field(time, timePath, 'sim_ms', lenient(number, null, u)) : null,
     time_omitted_fields: time
-      ? field(time, `${path}.time`, 'omitted_fields', optional(array(string), []))
+      ? field(time, timePath, 'omitted_fields', soft(items(string, u), [], u))
       : [],
-    check: field(f, path, 'check', nullable(readCheckResult)),
-    participants: field(f, path, 'participants', array(readSummaryParticipant)),
-    findings: field(f, path, 'findings', array(readFinding)),
-    result: field(f, path, 'result', nullable(readRunResult)),
-    log: field(f, path, 'log', record(readLogCounts)),
-    problems: field(f, path, 'problems', array(readProblem)),
-    problems_omitted: field(f, path, 'problems_omitted', integer),
+    check: field(
+      f,
+      path,
+      'check',
+      soft(
+        nullable((v, p) => readCheckResult(v, p, u)),
+        null,
+        u,
+      ),
+    ),
+    participants: field(
+      f,
+      path,
+      'participants',
+      items((v, p) => readSummaryParticipant(v, p, u), u),
+    ),
+    findings: field(
+      f,
+      path,
+      'findings',
+      items((v, p) => readFinding(v, p, u), u),
+    ),
+    result: field(
+      f,
+      path,
+      'result',
+      soft(
+        nullable((v, p) => readRunResult(v, p, u)),
+        null,
+        u,
+      ),
+    ),
+    log: field(f, path, 'log', soft(partlyRecord(readLogCounts, u), {}, u)),
+    problems: field(f, path, 'problems', items(readProblem, u)),
+    problems_omitted: field(f, path, 'problems_omitted', soft(integer, 0, u)),
   };
+  return { ...summary, unreadable: u.parts };
 };
+
+/** 出どころごとの数を、読めるものだけ読む。 */
+function partlyRecord<T>(read: Reader<T>, u: Unreadable): Reader<Record<string, T>> {
+  return (value, path) => {
+    const out: Record<string, T> = {};
+    for (const [key, item] of Object.entries(object(value, path))) {
+      const read1 = lenient(read, undefined, u)(item, `${path}.${key}`);
+      if (read1 !== undefined) out[key] = read1;
+    }
+    return out;
+  };
+}
 
 /** GET api/session、POST api/run、POST api/stop の応答（いまのセッション。なければ null）。 */
 export const readSessionResponse = (value: unknown): SessionSummary | null =>
@@ -763,7 +985,7 @@ export const readServerMessage = (value: unknown): ServerMessage | null => {
         replay: field(f, path, 'replay', nullable(readReplay)),
       };
     case 'event': {
-      const event = field(f, path, 'event', readLauncherEvent);
+      const event = field(f, path, 'event', (v, p) => readLauncherEvent(v, p, true));
       return event && { type, session: field(f, path, 'session', integer), event };
     }
     case 'synced':

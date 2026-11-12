@@ -7,9 +7,11 @@ import {
   RUN_TIMEOUT,
   choose,
   openRun,
-  primary,
+  press,
   result,
   start,
+  startButton,
+  stopButton,
   stopIfRunning,
 } from '../support/run-page';
 
@@ -50,7 +52,7 @@ test('a real run that passes', async ({ page }) => {
     page.getByTestId('log-line').filter({ hasText: 'engine speed' }).first(),
   ).toBeAttached();
   await expect(page.getByTestId('problems-card')).toHaveCount(0);
-  await expect(primary(page)).toHaveText(/もう一度実行/);
+  await expect(startButton(page)).toHaveText(/もう一度実行/);
 });
 
 test('a real run with a participant left out', async ({ page }) => {
@@ -78,7 +80,7 @@ test('stopping a real run that does not end by itself', async ({ page }) => {
   // いまのランチャーは動いている間の仮想時刻を知らせない: 0 を出し続けない
   await expect(page.getByTestId('sim-time')).toHaveCount(0);
   const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop'));
-  await primary(page).click();
+  await press(stopButton(page));
   expect((await stop).postDataJSON()).toEqual({ force: false });
   await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
   await expect(result(page, session).getByTestId('result')).toHaveAttribute('data-tone', 'neutral');
@@ -97,7 +99,7 @@ test('configurations that fail the real check', async ({ page }) => {
     await choose(page, file);
     await expect(page.getByTestId('check-outcome')).toContainText('誤りがある');
     await expect(page.getByTestId('check-card').getByTestId('finding').first()).toContainText(code);
-    await expect(primary(page)).toHaveAttribute('aria-disabled', 'true');
+    await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
   }
   await choose(page, 'broken.yaml');
   await expect(page.getByTestId('check-outcome')).toContainText('構成ファイルを読めない');
@@ -130,7 +132,7 @@ async function reach(page: Page, state: string): Promise<void> {
   }
   await choose(page, state === 'ended' ? 'simulation.yaml' : 'not-joined.yaml');
   await start(page);
-  await expect(primary(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
+  await expect(startButton(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
 }
 
 test.describe('screenshots', () => {

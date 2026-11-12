@@ -1,6 +1,17 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { EMPTY, Observable, bufferTime, defer, filter, map, share, takeWhile } from 'rxjs';
+import {
+  EMPTY,
+  Observable,
+  bufferTime,
+  defer,
+  filter,
+  map,
+  retry,
+  share,
+  takeWhile,
+  timer,
+} from 'rxjs';
 import {
   AuthMessage,
   LauncherEvent,
@@ -10,7 +21,7 @@ import {
   readServerMessage,
 } from '../api';
 import { AuthToken } from '../auth/auth-token';
-import { liveConnection } from '../streams/live-connection';
+import { backoffMs, liveConnection } from '../streams/live-connection';
 import {
   SessionView,
   addDropped,
@@ -28,6 +39,17 @@ export const TRY_AGAIN_LATER = 1013;
 
 /** 画面に残す、セッションにつながらない知らせの種類の数。 */
 export const MAX_NOTICES = 20;
+
+/** seq が前の事象より後でない事象を当てなかったときの知らせ（英語。ほかの知らせと同じく、そのまま出す）。 */
+export const STALE_EVENTS_NOTICE =
+  'events came with a seq that is not after the last one, and were not shown ' +
+  '(the launcher wrote them out of order, or the server sent them again)';
+
+/**
+ * 要約の芯が読めない hello か session を受けた（画面の状態がサーバーと揃わない）。その接続をやめて、間を置いて
+ * つなぎ直す（hello から受け直す）。
+ */
+class LostStep extends Error {}
 
 /** セッションにつながらない知らせ（読めない通知など。英語の文はそのまま出す）。同じ文は数をまとめる。 */
 export interface Notice {
@@ -99,6 +121,8 @@ export class ServerConnection {
     // トークンがなければつながない。断られたら、その知らせで流れを終え、つなぎ直さない（画面が開き直しを促す）
     this.batches = defer(() => (this.auth.token() ? this.connection.messages : EMPTY)).pipe(
       map((message) => this.read(message)),
+      // 要約の芯が読めなかったら、その接続をやめてつなぎ直す（揃わないまま「揃った」にしない）
+      retry({ delay: (_, attempt) => timer(backoffMs(attempt)), resetOnSuccess: true }),
       filter((message) => message !== null),
       takeWhile((message) => !(message.type === 'error' && message.code === 'unauthorized'), true),
       bufferTime(BATCH_MS),
@@ -110,16 +134,26 @@ export class ServerConnection {
       .subscribe((batch) => this.apply(batch));
   }
 
-  /** HTTP の応答の要約（開始、停止）を、通知を待たずに当てる。 */
+  /**
+   * HTTP の応答の要約（開始、停止）を、通知を待たずに当てる。WebSocket がつながっていれば、同じ実行では
+   * ランチャーと停止の依頼だけを取る（ほかは通知で届く）。つながっていなければ、手元より新しい部分も取る。
+   */
   adopt(summary: SessionSummary | null): void {
     if (!summary) return;
     const session = this.current();
     // 前の実行の要約（始まりかけの実行への停止の応答など）で、新しい実行を戻さない
     if (session && summary.id < session.id) return;
-    // 応答と通知の順は決まらないので、手元の事象より新しい要約のときだけ段階などを取る
+    const live = this.connectionState() === 'open';
     this.current.set(
-      session?.id === summary.id ? applySummary(session, summary) : sessionFromSummary(summary),
+      session?.id === summary.id
+        ? applySummary(session, summary, false, live)
+        : sessionFromSummary(summary),
     );
+  }
+
+  /** 画面が気づいたこと（読めない応答など）を、知らせに出す。 */
+  report(message: string): void {
+    this.notify(message);
   }
 
   /** 知らせを消す。 */
@@ -141,17 +175,26 @@ export class ServerConnection {
       this.notify(
         error instanceof ProtocolError ? `unreadable message: ${error.message}` : String(error),
       );
+      const type = (message as { type?: unknown } | null)?.type;
+      if (type === 'hello' || type === 'session') {
+        // 状態を作り直せないので、揃っていないことにして、hello から受け直す
+        this.synced.set(false);
+        throw new LostStep();
+      }
       return null;
     }
   }
 
   private apply(batch: readonly ServerMessage[]): void {
-    let session = this.current();
+    const before = this.current();
+    let session = before;
     let events: LauncherEvent[] = [];
     let applied = false;
+    // hello から synced までの再送は、つなぎ直す前に受けていた分と重なることがある（数えない）
+    let replaying = !this.synced();
     const flush = () => {
       if (session && events.length > 0) {
-        session = applyEvents(session, events);
+        session = applyEvents(session, events, !replaying);
         applied = true;
       }
       events = [];
@@ -162,6 +205,7 @@ export class ServerConnection {
         case 'hello': {
           // 要約で作り直す。持っている分の続きを頼んだ再接続（from_seq つき）だけは、手元のログを残す
           this.synced.set(false);
+          replaying = true;
           const { session: summary, replay } = message;
           const resumed = summary && session?.id === summary.id && replay?.from_seq != null;
           session = !summary
@@ -177,6 +221,7 @@ export class ServerConnection {
         }
         case 'synced':
           this.synced.set(true);
+          replaying = false;
           break;
         case 'session':
           // 要約が正: 事象と同じ順で届くので、届いた時点のサーバーの状態として置き換える（ログは残す）
@@ -204,21 +249,25 @@ export class ServerConnection {
         case 'resync':
           // すぐ後に hello から送り直される。それまでは揃っていない
           this.synced.set(false);
+          replaying = true;
           break;
       }
     }
     flush();
+    const stale =
+      (session?.staleEvents ?? 0) - (before?.id === session?.id ? (before?.staleEvents ?? 0) : 0);
     this.current.set(session);
     if (applied) this.receivedAt.set(Date.now());
+    if (stale > 0) this.notify(STALE_EVENTS_NOTICE, stale);
   }
 
-  private notify(message: string): void {
+  private notify(message: string, count = 1): void {
     this.noticeList.update((list) => {
       const same = list.find((notice) => notice.message === message);
       if (same) {
-        return [...list.filter((n) => n !== same), { ...same, count: same.count + 1 }];
+        return [...list.filter((n) => n !== same), { ...same, count: same.count + count }];
       }
-      return [...list, { id: ++this.noticeId, message, count: 1 }].slice(-MAX_NOTICES);
+      return [...list, { id: ++this.noticeId, message, count }].slice(-MAX_NOTICES);
     });
   }
 }

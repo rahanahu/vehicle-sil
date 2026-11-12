@@ -78,7 +78,9 @@ const RUN_OUTCOMES: Record<string, string> = {
   usage: $localize`引数の誤り`,
 };
 
-export const runOutcomeLabel = (result: RunOutcome): string => label(RUN_OUTCOMES, result);
+/** 結果の名前。読めなかった結果（''）は、そう言う。 */
+export const runOutcomeLabel = (result: RunOutcome): string =>
+  result === '' ? $localize`結果の名前を読めません` : label(RUN_OUTCOMES, result);
 
 const SIMULATIONS: Record<string, string> = {
   reached_stop_at: $localize`stop_at_ms まで動いた`,

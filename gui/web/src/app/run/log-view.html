@@ -29,9 +29,9 @@
 </div>
 
 <p class="count" data-testid="log-count">
-  <ng-container i18n>{{ shown().length }} 行</ng-container>
-  @if (shown().length !== visible().length) {
-    <ng-container i18n>（全 {{ visible().length }} 行）</ng-container>
+  <ng-container i18n>{{ shownCount() }} 行</ng-container>
+  @if (shownCount() !== visibleCount()) {
+    <ng-container i18n>（全 {{ visibleCount() }} 行）</ng-container>
   }
 </p>
 @if (dropped().length > 0) {

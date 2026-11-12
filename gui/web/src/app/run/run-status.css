@@ -25,9 +25,27 @@
   gap: var(--app-space-2);
 }
 
-.primary.stop {
+.stop {
   --mat-button-filled-container-color: var(--mat-sys-error);
   --mat-button-filled-label-text-color: var(--mat-sys-on-error);
+}
+
+/*
+ * 押せるようになったばかりのボタン（ACTION_GUARD_MS の間は押しても何もしない）は薄く出し、押せるようになったら
+ * 戻す（変わったことが見える）。
+ */
+.actions button[data-armed='false']:not(.mat-mdc-button-disabled) {
+  opacity: 0.6;
+}
+
+.actions button {
+  transition: opacity 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .actions button {
+    transition: none;
+  }
 }
 
 .force {
@@ -53,6 +71,11 @@
   overflow-wrap: anywhere;
 }
 
+.outcome:focus-visible {
+  outline: 2px solid var(--mat-sys-primary);
+  outline-offset: 2px;
+}
+
 .outcome[data-tone='bad'] {
   color: var(--mat-sys-error);
 }
@@ -72,13 +95,18 @@
   overflow-wrap: anywhere;
 }
 
+.silent:not(.shown) {
+  display: none;
+}
+
 .outcome .mark {
   margin-inline-end: var(--app-space-1);
 }
 
-/* 最初の誤りは 1 行。全文は title と、下の結果のカード */
-.first-error {
-  flex: 1 1 12em;
+/* 最初の誤り、読めない部分、理由は 1 行（帯を高くしない）。全文は title と、下のカード */
+.first-error,
+.unreadable,
+.blocked {
   min-inline-size: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -86,14 +114,17 @@
   color: var(--mat-sys-on-surface-variant);
 }
 
-.details {
-  flex: none;
+.first-error {
+  flex: 1 1 12em;
 }
 
+.unreadable,
 .blocked {
-  flex-basis: 100%;
-  color: var(--mat-sys-on-surface-variant);
-  overflow-wrap: anywhere;
+  flex: 1 1 100%;
+}
+
+.details {
+  flex: none;
 }
 
 .progress {

@@ -1,19 +1,45 @@
-import { Component, LOCALE_ID, computed, inject, input, output } from '@angular/core';
+import {
+  Component,
+  DOCUMENT,
+  DestroyRef,
+  ElementRef,
+  InjectionToken,
+  LOCALE_ID,
+  afterRenderEffect,
+  computed,
+  effect,
+  inject,
+  input,
+  output,
+  viewChild,
+} from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
-import { MatDialog } from '@angular/material/dialog';
+import { MatDialog, MatDialogRef } from '@angular/material/dialog';
 import { PHASES, severityRank } from '../core/api';
 import { MeasurePipe } from '../core/format/measure-pipe';
 import { RunOutcome, SessionView, phaseIndex } from '../core/session/session-state';
+import { settledAfter } from '../core/streams/stream-signals';
 import { ForceStopDialog } from './force-stop-dialog';
 import { phaseLabel, runOutcomeLabel } from './labels';
-import { RunAction } from './run-session';
-
-/** 主なボタンの役目。ボタンは 1 つの要素のまま、文言と動きだけを変える（押した後もフォーカスが残る）。 */
-type Primary = 'start' | 'again' | 'stop' | 'stopping';
+import { StopAction } from './run-session';
 
 /**
- * 状態の帯: いつも見えるところに、主な操作（開始 / 停止 / 待たずに止める / もう一度）、結果、段階、経過と仮想時刻。
+ * 操作のボタンが押せるようになってから、押しても何もしない時間（ミリ秒）。ダブルクリックの 2 回目や Enter の
+ * 連打が、押せるようになったばかりの次の操作に届かないように（キーボードの Enter と Space も同じ）。
+ */
+export const ACTION_GUARD_MS = 800;
+
+/** ACTION_GUARD_MS を差し替える口（単体試験が短くする）。 */
+export const ACTION_GUARD = new InjectionToken<number>('ACTION_GUARD', {
+  factory: () => ACTION_GUARD_MS,
+});
+
+/**
+ * 状態の帯: いつも見えるところに、操作（開始 / 停止 / 待たずに止める）、結果、段階、経過と仮想時刻。
  * 画面の上に貼り付き、スクロールしても残る。狭い幅では折り返し、段階はいまの段階だけを出す。
+ *
+ * 開始と停止は別のボタンで、帯の決まった位置にいつも置く（押している最中に意味が入れ替わらない）。使えない方は
+ * 押せなくする（フォーカスは受ける）。押せるようになったばかりのボタンは、ACTION_GUARD_MS の間は押しても何もしない。
  */
 @Component({
   selector: 'app-run-status',
@@ -24,17 +50,27 @@ type Primary = 'start' | 'again' | 'stop' | 'stopping';
 export class RunStatus {
   private readonly list = new Intl.ListFormat(inject(LOCALE_ID), { type: 'conjunction' });
   private readonly dialog = inject(MatDialog);
+  private readonly document = inject(DOCUMENT);
+  private readonly guardMs = inject(ACTION_GUARD);
+  private forceDialog: MatDialogRef<ForceStopDialog, boolean> | null = null;
 
   readonly session = input.required<SessionView | null>();
   readonly outcome = input.required<RunOutcome | null>();
-  /** サーバーと揃っている（つながっていて、再送を受け終えた）。揃っていなければ開始も停止もしない。 */
+  /** サーバーと揃っている（つながっていて、再送を受け終えた）。揃っていなければ開始しない。 */
   readonly ready = input.required<boolean>();
-  readonly pending = input.required<RunAction | null>();
+  /** 開始を送って、応答を待っている。 */
+  readonly starting = input(false);
+  /** 停止を送って、応答を待っている。 */
+  readonly stopping = input<StopAction | null>(null);
+  /** 開始の応答を待っている間に、止めるよう頼んだ。 */
+  readonly stopWhileStarting = input(false);
+  /** HTTP でサーバーに届く（届かないとわかっていたら偽）。停止は、WebSocket が切れていても HTTP で頼める。 */
+  readonly reachable = input(true);
   readonly elapsedMs = input.required<number | null>();
   /** 始められない理由（なければ空）。 */
   readonly blockedBy = input.required<readonly string[]>();
   /**
-   * 前の実行と違う構成ファイルを選んでいる（ランチャーは止まっている）。主なボタンは「開始」にし、出ている結果は
+   * 前の実行と違う構成ファイルを選んでいる（ランチャーは止まっている）。開始のボタンは「開始」にし、出ている結果は
    * 前の実行のものだと添える。
    */
   readonly otherFile = input(false);
@@ -45,34 +81,69 @@ export class RunStatus {
   /** 結果（または異常終了）の詳しい表示へ移りたい。 */
   readonly showDetails = output();
 
+  private readonly outcomeElement = viewChild.required<ElementRef<HTMLElement>>('outcome');
+  /** 待たずに止めるボタンが、最後にフォーカスを持っていた（消えたら、帯の文へフォーカスを移す）。 */
+  private forceHadFocus = false;
+
   private readonly running = computed(() => this.session()?.launcher.running ?? false);
   private readonly stopRequests = computed(() => this.session()?.stopRequests ?? 0);
 
-  protected readonly primary = computed<Primary>(() => {
-    if (this.running()) return this.stopRequests() >= 1 ? 'stopping' : 'stop';
-    return this.session() && !this.otherFile() ? 'again' : 'start';
+  /** 開始を押せない理由（押せるなら null）。 */
+  protected readonly startBlocked = computed<string | null>(() => {
+    if (this.running()) return $localize`実行中は開始できません。`;
+    if (this.starting()) return $localize`開始の応答を待っています。`;
+    if (this.stopping() !== null) return $localize`停止の応答を待っています。`;
+    if (!this.ready()) return $localize`サーバーと揃うまで、開始できません。`;
+    return this.blockedBy()[0] ?? null;
   });
 
-  /** 主なボタンを押せない理由（押せるなら null）。 */
-  protected readonly primaryBlocked = computed<string | null>(() => {
-    if (!this.ready()) return $localize`サーバーと揃うまで、開始も停止もできません。`;
-    if (this.pending() !== null) return $localize`サーバーの応答を待っています。`;
-    switch (this.primary()) {
-      case 'stopping':
-        return null;
-      case 'stop':
-        return null;
-      default:
-        return this.blockedBy()[0] ?? null;
-    }
-  });
-
-  protected readonly primaryDisabled = computed(
-    () => this.primary() === 'stopping' || this.primaryBlocked() !== null,
+  /** 止めている最中（頼んだ、頼んでいる、開始の応答の後に届ける）。停止のボタンは「止めています…」。 */
+  protected readonly stopInProgress = computed(
+    () => this.stopRequests() >= 1 || this.stopping() !== null || this.stopWhileStarting(),
   );
+
+  /**
+   * 停止が意味を持つか: ランチャーが動いている（と最後に知った）か、開始の応答を待っている。WebSocket が切れていて
+   * 最新の状態が見えなくても、HTTP で頼める（順に止める停止は何度頼んでも同じ）。
+   */
+  protected readonly stopApplies = computed(() => this.running() || this.starting());
+
+  /** 停止を押せない理由（押せるなら null）。止めている最中は、ボタンの文が言う。 */
+  protected readonly stopBlocked = computed<string | null>(() => {
+    if (!this.stopApplies()) return $localize`止める実行はありません。`;
+    if (this.stopInProgress()) return $localize`止めるよう頼みました。`;
+    if (!this.reachable()) return $localize`サーバーに届かないので、止めるよう頼めません。`;
+    return null;
+  });
 
   /** 「待たずに止める」を出すか: 順に止めるよう頼んだ後、まだ待たずに止めるよう頼んでいないとき。 */
   protected readonly canForce = computed(() => this.running() && this.stopRequests() === 1);
+  /** 「待たずに止める」を押せるか（最新の状態が見えているときだけ）。 */
+  private readonly forceEnabled = computed(
+    () => this.canForce() && this.ready() && this.stopping() === null,
+  );
+
+  protected readonly startArmed = settledAfter(
+    computed(() => this.startBlocked() === null),
+    this.guardMs,
+  );
+  protected readonly stopArmed = settledAfter(
+    computed(() => this.stopBlocked() === null),
+    this.guardMs,
+  );
+  protected readonly forceArmed = settledAfter(this.forceEnabled, this.guardMs);
+
+  /** 帯に出す理由の 1 行: 開始が関係する間は開始できない理由、止められる間は停止の事情。 */
+  protected readonly reason = computed<string | null>(() => {
+    if (this.stopApplies()) {
+      if (!this.reachable()) return this.stopBlocked();
+      if (!this.ready() && !this.stopInProgress()) {
+        return $localize`最新の状態は見えていませんが、止めるよう頼むことはできます。`;
+      }
+      return null;
+    }
+    return this.startBlocked();
+  });
 
   protected readonly elapsedSeconds = computed(() => {
     const ms = this.elapsedMs();
@@ -96,6 +167,12 @@ export class RunStatus {
       : $localize`仮想時刻の事象の欄 ${this.list.format(fields)}:fields: は、大きすぎてサーバーが省きました`;
   });
 
+  /** 読めなかった部分の名前（あれば、並べた文）。 */
+  protected readonly unreadable = computed(() => {
+    const parts = this.session()?.unreadable ?? [];
+    return parts.length === 0 ? null : this.list.format(parts);
+  });
+
   /** 結果の印と色: 成功は ✓、利用者が止めた中断は ■（失敗の色にしない）、ほかは ✕。 */
   private resultTone(result: string | undefined): { tone: string; mark: string } {
     if (result === 'passed') return { tone: 'good', mark: '✓' };
@@ -105,6 +182,15 @@ export class RunStatus {
 
   /** 結果の 1 行（色だけで伝えないよう、印と文で）。止めている間は、ボタンが「止めています…」なので、待っているものだけ。 */
   protected readonly summary = computed(() => {
+    if (this.starting()) {
+      return {
+        tone: 'active',
+        mark: '●',
+        text: this.stopWhileStarting()
+          ? $localize`開始をやめます（ランチャーが起動したところで止めます）`
+          : $localize`始めています…`,
+      };
+    }
     const session = this.session();
     const outcome = this.outcome();
     if (!session || !outcome)
@@ -207,31 +293,50 @@ export class RunStatus {
     return phase !== null && phaseIndex(phase) < 0 ? phase : null;
   });
 
-  protected readonly primaryText = computed(() => {
-    switch (this.primary()) {
-      case 'start':
-        return $localize`開始`;
-      case 'again':
-        return $localize`もう一度実行`;
-      case 'stop':
-        return $localize`停止`;
-      case 'stopping':
-        return $localize`止めています…`;
-    }
-  });
+  protected readonly startText = computed(() =>
+    this.session() && !this.otherFile() ? $localize`もう一度実行` : $localize`開始`,
+  );
+  protected readonly stopText = computed(() =>
+    this.stopInProgress() ? $localize`止めています…` : $localize`停止`,
+  );
 
-  protected press(): void {
-    if (this.primaryDisabled()) return;
-    if (this.primary() === 'stop') this.stop.emit();
-    else this.start.emit();
+  constructor() {
+    // 確かめのダイアログを開いている間に「待たずに止める」が意味を失ったら（実行が終わったなど）、閉じる
+    effect(() => {
+      if (!this.canForce()) this.forceDialog?.close(false);
+    });
+    // 「待たずに止める」がフォーカスを持ったまま消えたら、いまの状態を言う帯の文へフォーカスを移す（DOM の操作）
+    afterRenderEffect(() => {
+      if (this.canForce() || !this.forceHadFocus) return;
+      this.forceHadFocus = false;
+      const active = this.document.activeElement;
+      if (!active || active === this.document.body) this.outcomeElement().nativeElement.focus();
+    });
+    inject(DestroyRef).onDestroy(() => this.forceDialog?.close(false));
+  }
+
+  protected pressStart(): void {
+    if (this.startBlocked() === null && this.startArmed()) this.start.emit();
+  }
+
+  protected pressStop(): void {
+    if (this.stopBlocked() === null && this.stopArmed()) this.stop.emit();
+  }
+
+  protected forceFocus(focused: boolean, event?: FocusEvent): void {
+    // フォーカスが別の要素へ移ったときだけ忘れる（要素が消えたときの blur は、移り先がない）
+    if (focused) this.forceHadFocus = true;
+    else if (event?.relatedTarget) this.forceHadFocus = false;
   }
 
   protected askForceStop(): void {
-    this.dialog
-      .open<ForceStopDialog, void, boolean>(ForceStopDialog)
-      .afterClosed()
-      .subscribe((confirmed) => {
-        if (confirmed && this.canForce()) this.forceStop.emit();
-      });
+    if (!this.forceEnabled() || !this.forceArmed() || this.forceDialog) return;
+    this.forceDialog = this.dialog.open<ForceStopDialog, void, boolean>(ForceStopDialog);
+    this.forceDialog.afterClosed().subscribe((confirmed) => {
+      this.forceDialog = null;
+      if (confirmed && this.forceEnabled()) this.forceStop.emit();
+      // ボタンが消えていれば（ダイアログの間に実行が終わった）、帯の文へ
+      if (!this.canForce()) this.outcomeElement().nativeElement.focus();
+    });
   }
 }

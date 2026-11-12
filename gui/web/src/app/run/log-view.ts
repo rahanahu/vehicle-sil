@@ -16,6 +16,12 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { LogLine, LogSource } from '../core/session/session-state';
 
+function countLines(lines: readonly LogLine[]): number {
+  let count = 0;
+  for (const line of lines) if (!line.gap) count++;
+  return count;
+}
+
 /** 1 行の高さ（px）。仮想スクロールは決まった高さで並べる（CSS の .line と同じ値）。 */
 export const LOG_ROW_PX = 20;
 
@@ -38,6 +44,8 @@ export const LOG_ROW_PX = 20;
   styleUrl: './log-view.css',
 })
 export class LogView {
+  /** 実行（セッション）の番号。変わったら、追従に戻る（前の実行の行を見せ続けない）。 */
+  readonly run = input<number | null>(null);
   readonly lines = input.required<readonly LogLine[]>();
   /** 出どころごとの、持っている行と落とした行の数。 */
   readonly sources = input.required<Readonly<Record<string, LogSource>>>();
@@ -46,10 +54,10 @@ export class LogView {
 
   /** 絞る文字（大文字と小文字を区別しない）。 */
   protected readonly text = signal('');
-  /** 末尾に追従するか。 */
-  protected readonly follow = signal(true);
+  /** 末尾に追従するか。実行が変わったら、追従に戻る。 */
+  protected readonly follow = linkedSignal({ source: this.run, computation: () => true });
   protected readonly rowPx = LOG_ROW_PX;
-  protected readonly trackLine = (_index: number, line: LogLine) => `${line.seq}/${line.source}`;
+  protected readonly trackLine = (_index: number, line: LogLine) => line.key;
 
   private readonly viewport = viewChild.required(CdkVirtualScrollViewport);
   private lastScrollTop = 0;
@@ -57,14 +65,21 @@ export class LogView {
   /** 出どころの一覧。行が落ちても選択肢は消えない。 */
   protected readonly sourceNames = computed(() => Object.keys(this.sources()).sort());
 
-  /** 見せている行: 追従している間は届いた行、やめている間は、やめた時点の行。 */
+  /** 見せている行: 追従している間は届いた行、やめている間は、やめた時点の行（実行が変わったら、その実行の行）。 */
   protected readonly visible = linkedSignal<
-    { follow: boolean; lines: readonly LogLine[] },
+    { follow: boolean; run: number | null; lines: readonly LogLine[] },
     readonly LogLine[]
   >({
-    source: () => ({ follow: this.follow(), lines: this.lines() }),
-    computation: (source, previous) => (source.follow || !previous ? source.lines : previous.value),
+    source: () => ({ follow: this.follow(), run: this.run(), lines: this.lines() }),
+    computation: (source, previous) =>
+      source.follow || !previous || previous.source.run !== source.run
+        ? source.lines
+        : previous.value,
   });
+
+  /** 見せている行の数（落ちた行の印は数えない）。 */
+  protected readonly visibleCount = computed(() => countLines(this.visible()));
+  protected readonly shownCount = computed(() => countLines(this.shown()));
 
   /** 追従をやめた後に届いた行の数。 */
   protected readonly newer = computed(() => {
@@ -72,7 +87,7 @@ export class LogView {
     const last = this.visible().at(-1)?.seq ?? -1;
     const lines = this.lines();
     let count = 0;
-    for (let i = lines.length - 1; i >= 0 && lines[i].seq > last; i--) count++;
+    for (let i = lines.length - 1; i >= 0 && lines[i].seq > last; i--) if (!lines[i].gap) count++;
     return count;
   });
 

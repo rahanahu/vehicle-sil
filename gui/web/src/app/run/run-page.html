@@ -61,7 +61,10 @@
     [session]="session()"
     [outcome]="run.outcome()"
     [ready]="run.ready()"
-    [pending]="run.pending()"
+    [starting]="run.starting()"
+    [stopping]="run.stopping()"
+    [stopWhileStarting]="run.stopWhileStarting()"
+    [reachable]="reachable()"
     [elapsedMs]="run.elapsedMs()"
     [blockedBy]="blockedBy()"
     [otherFile]="otherFile()"
@@ -352,6 +355,7 @@
           </mat-card-header>
           <mat-card-content>
             <app-log-view
+              [run]="session.id"
               [lines]="session.logs"
               [sources]="session.logSources"
               [(source)]="logSource"

@@ -32,6 +32,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     log: {},
     problems: [],
     problems_omitted: 0,
+    unreadable: [],
     ...extra,
   };
 }
@@ -333,6 +334,7 @@ describe('applySummary', () => {
       reason: null,
       message: null,
       omitted_fields: [],
+      stop_requested: false,
     };
     const session = applySummary(
       emptySession(),
@@ -380,6 +382,7 @@ describe('applySummary', () => {
             reason: null,
             message: null,
             omitted_fields: ['command', 'environment'],
+            stop_requested: false,
           },
         ],
       }),
@@ -396,6 +399,95 @@ describe('applySummary', () => {
     );
     expect(later.participants[0].omittedFields).toEqual([]);
     expect(later.timeOmittedFields).toEqual([]);
+  });
+
+  it('keeps a participant that was asked to stop out of the failure colour, also from a later summary', () => {
+    const asked = applyEvents(
+      emptySession(),
+      events({ event: 'participant', name: 'A', state: 'stop_requested', pid: 7 }),
+    );
+    const participant = {
+      name: 'A',
+      state: 'ended',
+      pid: 7,
+      exit_code: 130,
+      signal: null,
+      reason: null,
+      message: null,
+      omitted_fields: [],
+    };
+    // サーバーの印がなくても、手元で知っていれば残す
+    const later = applySummary(
+      asked,
+      summary({ last_seq: 5, participants: [{ ...participant, stop_requested: false }] }),
+      true,
+    );
+    expect(later.participants[0].stopRequested).toBe(true);
+    // 再読み込み（手元に何もない）では、サーバーの印で
+    const fresh = sessionFromSummary(
+      summary({ last_seq: 5, participants: [{ ...participant, stop_requested: true }] }),
+    );
+    expect(fresh.participants[0].stopRequested).toBe(true);
+  });
+
+  it('does not take an older answer as running again, and keeps the notes of the newer state', () => {
+    const ended = sessionFromSummary(
+      summary({
+        state: 'ended',
+        last_seq: 9,
+        launcher: { running: false, exit_code: 0, signal: null, silent_s: null },
+        problems: [{ code: 'no-result', message: 'm' }],
+      }),
+    );
+    const late = applySummary(ended, summary({ last_seq: 4, stop: 'requested' }));
+    expect(late.launcher.running).toBe(false);
+    expect(late.problems.map((p) => p.code)).toEqual(['no-result']);
+  });
+
+  it('takes only the launcher and the stop from an answer when the notifications bring the rest', () => {
+    const session = applyEvents(emptySession(), events({ event: 'phase', phase: 'running' }));
+    const finding = {
+      severity: 'error',
+      code: 'x',
+      file: null,
+      line: null,
+      participant: null,
+      network: null,
+      message: 'm',
+      detail: null,
+    };
+    const answered = applySummary(
+      session,
+      summary({ last_seq: 3, phase: 'stopping', stop: 'requested', findings: [finding] }),
+      false,
+      true,
+    );
+    expect(answered.findings).toEqual([]);
+    expect(answered.phase).toBe('running');
+    expect(answered.stopRequests).toBe(1);
+    const next = applyEvents(answered, eventsFrom(1, [{ event: 'finding', ...finding }]));
+    expect(next.findings).toHaveLength(1);
+  });
+
+  it('collects the parts it could not read, from summaries and events', () => {
+    const session = sessionFromSummary(summary({ unreadable: ['result.participants'] }));
+    const next = applyEvents(
+      session,
+      events({ event: 'log', source: 'A', line: 'x', unreadable: ['log.level'], t_ms: null }),
+    );
+    expect(next.unreadable).toEqual(['result.participants', 'log.level']);
+    expect(next.elapsedMs).toBe(0);
+    // 届いた時点の正の要約で置き換わる
+    expect(applySummary(next, summary({ last_seq: 2 }), true).unreadable).toEqual([]);
+  });
+
+  it('counts the events whose seq is not after the last one', () => {
+    const session = applyEvents(emptySession(), events(...logs('A', 3)));
+    // 再送の重なりは数えない。再送でないのに戻った seq は数える
+    expect(applyEvents(session, eventsFrom(1, logs('A', 2)))).toBe(session);
+    const again = applyEvents(session, eventsFrom(1, logs('A', 2)), true);
+    expect(again.staleEvents).toBe(2);
+    expect(again.logs).toHaveLength(3);
   });
 
   it('lists the log sources of the summary, even without lines', () => {
@@ -440,9 +532,10 @@ describe('addDropped', () => {
       at_least: ['B'],
       events: 0,
     });
+    // 印は行に数えない
     expect(dropped.logSources).toEqual({
-      A: { lines: 3, dropped: 4 },
-      B: { lines: 1, dropped: 1 },
+      A: { lines: 2, dropped: 4 },
+      B: { lines: 0, dropped: 1 },
     });
     const next = applyEvents(dropped, eventsFrom(2, logs('A', 1)));
     expect(next.logs.map((l) => (l.gap ? `gap ${l.source} ${l.gap.count}` : l.line))).toEqual([
@@ -453,6 +546,43 @@ describe('addDropped', () => {
       'A 0',
     ]);
     expect(next.logs.find((l) => l.source === 'B')?.gap?.atLeast).toBe(true);
+  });
+
+  it('gives each mark its own key, also two marks at the same place', () => {
+    const dropped = (session: ReturnType<typeof emptySession>) =>
+      addDropped(session, {
+        type: 'dropped',
+        session: 1,
+        reason: 'slow-client',
+        log: { A: 2 },
+        at_least: [],
+        events: 0,
+      });
+    const twice = dropped(dropped(applyEvents(emptySession(), events(...logs('A', 1)))));
+    const keys = twice.logs.map((line) => line.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(twice.logSources['A']).toEqual({ lines: 1, dropped: 4 });
+  });
+
+  it('drops the marks before the lines it drops over the limit, and does not count them as lines', () => {
+    let session = applyEvents(emptySession(), events(...logs('A', 3)));
+    session = addDropped(session, {
+      type: 'dropped',
+      session: 1,
+      reason: 'slow-client',
+      log: { A: 7 },
+      at_least: [],
+      events: 0,
+    });
+    session = applyEvents(session, eventsFrom(3, logs('A', MAX_LOG_LINES_PER_SOURCE - 3)));
+    // 上限ちょうど（印は数えない）: 印は残る
+    expect(session.logSources['A'].lines).toBe(MAX_LOG_LINES_PER_SOURCE);
+    expect(session.logs.filter((l) => l.gap)).toHaveLength(1);
+    session = applyEvents(session, eventsFrom(MAX_LOG_LINES_PER_SOURCE, logs('A', 4)));
+    // 印をはさむ 4 行（seq 0 から 3）を落としたので、印も落ちる
+    expect(session.logs.filter((l) => l.gap)).toHaveLength(0);
+    expect(session.logs[0].seq).toBe(4);
+    expect(session.logSources['A']).toEqual({ lines: MAX_LOG_LINES_PER_SOURCE, dropped: 11 });
   });
 });
 
@@ -521,6 +651,7 @@ describe('addProblem', () => {
             reason: 'left_simulation',
             message: null,
             omitted_fields: [],
+            stop_requested: false,
           },
         ],
       }),
@@ -608,6 +739,7 @@ describe('addProblem', () => {
             reason: null,
             message: null,
             omitted_fields: [],
+            stop_requested: false,
           },
         ],
       }),

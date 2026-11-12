@@ -17,8 +17,8 @@ export const GUI_PORT = Number(process.env['VEHICLE_SIL_GUI_E2E_PORT']);
 
 /** 構成ファイルを選べる範囲: 偽のランチャーの筋書きごとの構成ファイル。 */
 export const REPOSITORY = resolve(__dirname, '../../../..');
-const CONFIGS = resolve(REPOSITORY, 'gui/server/tests/configs');
-const FAKE_LAUNCHER = resolve(REPOSITORY, 'gui/server/tests/fake_launcher.py');
+export const CONFIGS = resolve(REPOSITORY, 'gui/server/tests/configs');
+export const FAKE_LAUNCHER = resolve(REPOSITORY, 'gui/server/tests/fake_launcher.py');
 
 /** 試験が読むトークン（process.env に置くと、試験を動かすプロセスに渡る）。 */
 export function guiToken(): string {
@@ -66,6 +66,16 @@ export interface GuiServerOptions {
   root: string;
   devOrigin?: string;
   env?: Record<string, string>;
+  /** 待つポート（既定は GUI_PORT）。 */
+  port?: number;
+}
+
+/** 起動した GUI サーバー。 */
+export interface GuiServer {
+  /** 画面を開く URL（`#token=` つき）。 */
+  url: string;
+  token: string;
+  stop: () => Promise<void>;
 }
 
 export default async function startFakeGuiServer(config: FullConfig): Promise<() => Promise<void>> {
@@ -79,7 +89,14 @@ export default async function startFakeGuiServer(config: FullConfig): Promise<()
 
 /** GUI サーバーを起動してトークンを環境変数に置き、止める関数を返す。 */
 export async function startGuiServer(options: GuiServerOptions): Promise<() => Promise<void>> {
-  const { launcher, root, devOrigin } = options;
+  const server = await launchGuiServer(options);
+  process.env['VEHICLE_SIL_GUI_E2E_TOKEN'] = server.token;
+  return server.stop;
+}
+
+/** GUI サーバーを起動する（環境変数は変えない。試験ごとに新しいサーバーが要る試験も使う）。 */
+export async function launchGuiServer(options: GuiServerOptions): Promise<GuiServer> {
+  const { launcher, root, devOrigin, port = GUI_PORT } = options;
   const server = spawn(
     'uv',
     [
@@ -90,7 +107,7 @@ export async function startGuiServer(options: GuiServerOptions): Promise<() => P
       '--no-browser',
       '--json',
       '--port',
-      String(GUI_PORT),
+      String(port),
       '--launcher',
       launcher,
       '--root',
@@ -117,8 +134,7 @@ export async function startGuiServer(options: GuiServerOptions): Promise<() => P
     await stop(server);
     throw error;
   });
-  const url = new URL((JSON.parse(first) as { url: string }).url);
-  process.env['VEHICLE_SIL_GUI_E2E_TOKEN'] =
-    new URLSearchParams(url.hash.slice(1)).get('token') ?? '';
-  return () => stop(server);
+  const url = (JSON.parse(first) as { url: string }).url;
+  const token = new URLSearchParams(new URL(url).hash.slice(1)).get('token') ?? '';
+  return { url, token, stop: () => stop(server) };
 }

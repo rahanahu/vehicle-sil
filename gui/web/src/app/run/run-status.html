@@ -1,17 +1,32 @@
+<!-- 開始と停止は別のボタンで、いつもこの順に置く（押している最中に、同じ位置のボタンの意味が変わらない） -->
 <div class="actions">
   <button
     matButton="filled"
     type="button"
-    class="primary"
-    data-testid="primary"
-    [class.stop]="primary() === 'stop' || primary() === 'stopping'"
-    [attr.data-action]="primary()"
-    [disabled]="primaryDisabled()"
+    class="start"
+    data-testid="start"
+    [attr.data-armed]="startArmed()"
+    [disabled]="startBlocked() !== null"
     disabledInteractive
-    [attr.aria-describedby]="primaryBlocked() ? 'run-primary-blocked' : null"
-    (click)="press()"
+    [attr.aria-describedby]="
+      startBlocked() === null ? null : stopApplies() ? 'run-outcome' : 'run-reason'
+    "
+    (click)="pressStart()"
   >
-    {{ primaryText() }}
+    {{ startText() }}
+  </button>
+  <button
+    matButton="filled"
+    type="button"
+    class="stop"
+    data-testid="stop"
+    [attr.data-armed]="stopArmed()"
+    [disabled]="stopBlocked() !== null"
+    disabledInteractive
+    [attr.aria-describedby]="stopBlocked() === null ? null : 'run-outcome'"
+    (click)="pressStop()"
+  >
+    {{ stopText() }}
   </button>
   @if (canForce()) {
     <button
@@ -19,8 +34,11 @@
       type="button"
       class="force"
       data-testid="force-stop"
-      [disabled]="!ready() || pending() !== null"
+      [attr.data-armed]="forceArmed()"
+      [disabled]="!forceArmed()"
       disabledInteractive
+      (focus)="forceFocus(true)"
+      (blur)="forceFocus(false, $event)"
       (click)="askForceStop()"
       i18n
     >
@@ -30,27 +48,44 @@
 </div>
 
 <div class="state">
-  <p class="outcome" role="status" data-testid="outcome" [attr.data-tone]="summary().tone">
+  <p
+    #outcome
+    id="run-outcome"
+    class="outcome"
+    role="status"
+    tabindex="-1"
+    data-testid="outcome"
+    [attr.data-tone]="summary().tone"
+  >
     @if (summary().mark) {
       <span class="mark" aria-hidden="true">{{ summary().mark }}</span>
     }
     <span>{{ summary().text }}</span>
   </p>
-  @if (silentSeconds(); as seconds) {
-    <p class="silent" data-testid="silent" i18n>
-      ランチャーから {{ seconds }} 秒以上、何も届いていません（止まっているかもしれません）。
-    </p>
-  }
+  <!-- 読み上げの領域は、中身が変わる前から置いておく -->
+  <p class="silent" role="status" data-testid="silent" [class.shown]="silentSeconds() !== null">
+    @if (silentSeconds(); as seconds) {
+      <ng-container i18n
+        >ランチャーから
+        {{ seconds }} 秒以上、何も届いていません（止まっているかもしれません）。</ng-container
+      >
+    }
+  </p>
   @if (firstError(); as error) {
     <p class="first-error" lang="en" data-testid="first-error" [title]="error">{{ error }}</p>
+  }
+  @if (unreadable(); as parts) {
+    <p class="unreadable" data-testid="unreadable" [title]="parts">
+      <ng-container i18n>一部を表示できません:</ng-container> <span lang="en">{{ parts }}</span>
+    </p>
   }
   @if (hasDetails()) {
     <button matButton type="button" class="details" (click)="showDetails.emit()" i18n>
       詳しく
     </button>
   }
-  @if (primaryBlocked(); as reason) {
-    <p class="blocked" id="run-primary-blocked" data-testid="blocked">{{ reason }}</p>
+  @if (reason(); as reason) {
+    <p class="blocked" id="run-reason" data-testid="blocked" [title]="reason">{{ reason }}</p>
   }
 </div>
 
