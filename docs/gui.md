@@ -6,17 +6,27 @@
 
 - 構成ファイルを一覧から選ぶ（起動のときに渡したファイル、または `--root` の下の `.yaml` / `.yml`）。
 - 照合の結果（所見、participant の表）を見る。participant を外して（`--disable`）照合し直す。
-- 実行を始める、止める（順に止めるか、待たずに止める）。段階、participant ごとの状態と終了コード、ログ、所見、結果を見る。
+- 実行を始める、止める（順に止めるか、待たずに止める）。段階、participant ごとの状態と終了コード、ログ、所見、結果を見る。ランチャーが participant を失敗と決めたら（`failed`）、プロセスが終わる前でもすぐに失敗として出します。利用者が止めた実行は「中断」として、失敗の色にせずに出します。
+- ランチャーが 1 秒ごとの心拍も書かなくなったら（既定で 5 秒。`--silent-after`）、止まっているかもしれないことを状態の帯に出します。ランチャーが読む側の遅さで書けなかったログの行（`log_dropped`）は、その位置に落ちた行の数として出します。
 - ランチャーが結果を出さずに終わったら、異常終了と終了コード、ランチャーが標準エラーに書いた行（最初の 20 行と最後の 30 行）を見る。終わりを知らせてこなかった participant の状態は「不明」になります（ランチャーが先に終わったので、その後どうなったかは画面にはわかりません）。
 - 画面を開き直したり、別のタブで開いたりしても、同じ実行の状態を見られる。ログは、participant ごとに直近の 2000 行（1 MiB まで）を見られます。それより古い行は、落とした行の数だけを表示します。
 
+## 要るもの
+
+- `vehicle_sil_launch`（`tools/launch` をビルドしたもの）。`version --json` の `features` に `events` と `stdin-commands` があるもの（`run --events`、`run --stdin-commands`。[simulation-config.md](simulation-config.md) の「機械から使う」）。
+- 構成ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します）。
+- Python 3.11 以上と [uv](https://docs.astral.sh/uv/)（GUI サーバー）。画面のビルド（`gui/web` の `npm run build` の出力）。画面を使うだけなら Node.js は要りませんが、ビルドには要ります（[gui/web/README.md](../gui/web/README.md)）。
+
 ## 起動
 
-リポジトリの直下で `uv sync` をしてから、次のように起動します（例は、ビルドした ECU の例の隣にコピーされた構成ファイル）。
+リポジトリの直下で `uv sync` をしてから、ビルドしたランチャーを `--launcher` で渡して起動します。例は、ビルドした ECU の例（`build/<preset>/examples/ecu_main/`。CMake が構成ファイルを実行ファイルの隣にコピーします）です。
 
 ```sh
-uv run vehicle-sil-gui build/<preset>/examples/ecu_main/simulation.yaml
+uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch \
+  build/<preset>/examples/ecu_main/simulation.yaml
 ```
+
+画面で `simulation.yaml` を選ぶと、ランチャーが各 ECU の `--describe` で照合し、participant ごとの申告（ステップ幅、ネットワーク、変数の数）を出します。「開始」でシミュレーションを動かし、`stop_at_ms`（例では 1000 ms）で終わると結果を出します。構成ファイルの実行ファイルの相対パスは、構成ファイルのあるディレクトリから数えます（ランチャーの決まり）。
 
 - 起動すると、`http://127.0.0.1:<port>/#token=<...>` を 1 行表示して、ブラウザで開きます。ブラウザには URL を直接渡さず、自分だけが読める一時ファイル（URL へ移るだけのページ。30 秒後かサーバーの終わりに消す）を開かせます。ブラウザがそのファイルを開けない（一時ディレクトリを読めないブラウザなど）ときや、ブラウザが開かないときは、表示した URL をブラウザに貼ります。Ctrl+C でサーバーを止めます。実行中のシミュレーションは、先に止めます。
 - ランチャーは `--launcher <path>`、環境変数 `VEHICLE_SIL_LAUNCH`、`PATH` の順に探します。`PATH` で見つけたものがカレントディレクトリにあるときは使わず、終了コード 2 で終わります（Windows はカレントディレクトリを `PATH` より先に探すので、人から受け取ったフォルダで起動すると、そこにあるプログラムが動いてしまうため）。そのランチャーを使うときは `--launcher` で指定します。ランチャーが GUI に要る機能（`version --json` の `features` の `events` と `stdin-commands`）を持たないときは、何が足りないかを表示して終了コード 2 で終わります。
@@ -33,6 +43,7 @@ uv run vehicle-sil-gui build/<preset>/examples/ecu_main/simulation.yaml
 | `--json` | URL の代わりに `{"vehicle_sil_gui": 1, "url": ..., "port": ...}` を 1 行で表示する（道具から起動するとき） |
 | `--stop-timeout <秒>` | 終わるとき、実行中のシミュレーションが止まるのを待つ時間（既定 10）。過ぎたらランチャーを止める |
 | `--check-timeout <秒>` | 照合（各 ECU の `--describe` を含む）の時間の上限（既定 120）。過ぎたら照合を止める |
+| `--silent-after <秒>` | 動いているランチャーがこの時間より長く何も書かなければ（心拍も来なければ）、画面に知らせる（既定 5。1 以上） |
 
 終了コード: 0 は止めた（Ctrl+C、SIGTERM）、1 は動いている間の失敗、2 は引数の誤りか、ランチャーやポートを使えない。
 
@@ -62,12 +73,14 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 
 ## いまの制限
 
-- 変数の値（Control）はまだ見られません。照合の結果にある変数の一覧だけを表示します。
-- 速度と一時停止で始める（`speed`、`start_paused`）は、ランチャーが対応するまで使えません。
-- いまの `vehicle_sil_launch` は GUI に要る機能（`run --events`、`--stdin-commands`、`version --json`）をまだ持たないので、GUI は起動しません。それまでは試験用の偽のランチャー（`gui/server/tests/fake_launcher.py`）で動かせます: `uv run vehicle-sil-gui --launcher gui/server/tests/fake_launcher.py gui/server/tests/configs/simulation.yaml`。
+- 変数の値（Control）はまだ見られません。照合の結果にある変数の数だけを表示します。
+- 速度と一時停止で始める（`speed`、`start_paused`）は、ランチャーが対応するまで使えません（`features` に `speed`、`start-paused` がないと、画面に出しません）。
+- いまのランチャーは、仮想時刻を動き始め（0）と `stop_at_ms` に達したときにしか知らせないので、動いている間の進み具合は出せません。画面は、動いている間は仮想時刻を出さず、終わった後に出します。
 - Windows では確かめていません（子プロセスの止め方、Ctrl+Break、`taskkill`、一時ファイルの権限は書いてありますが、動かしていません）。Windows はコンソールを閉じると約 5 秒でプロセスを終わらせるので、`--stop-timeout` を待たずに終わります（ランチャーには標準入力の終わりが届きます）。
 
 ## 開発
 
 - サーバーは `gui/server`（Python パッケージ `vehicle_sil_gui`、uv の workspace のメンバー）、画面は `gui/web`、両者の間の形の正本は `gui/protocol`（README と実例）です。
 - 試験: `uv run pytest gui/server/tests`。画面まで含めて確かめるには `scripts/verify-gui.py`。
+- 試験は、ランチャーの代わりに偽のランチャー（`gui/server/tests/fake_launcher.py`。本物と同じ事象を、筋書きどおりに書く）を使います。偽のランチャーでも GUI を動かせます: `uv run vehicle-sil-gui --launcher gui/server/tests/fake_launcher.py gui/server/tests/configs/simulation.yaml`。
+- 本物のランチャーでも確かめるには、`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch`（または環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）。そのランチャーの隣にビルドした ecu_main の例の ECU を使い、偽のランチャーとの事象の形の比べ（`gui/server/tests/test_real_launcher.py`）と、画面の e2e（`gui/web/e2e/real/`）を回します。ランチャーを渡さなければ、この 2 つは「skipped」と出して飛ばします。
