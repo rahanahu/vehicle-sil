@@ -12,6 +12,10 @@ Before each heavy step (unit tests, build, e2e) it waits while a C++ build or te
 Windows VM (qemu-system-x86*) runs on this machine, because the browser tests are timing-sensitive and so are
 the C++ tests (scripts/busy_machine.py). It gives up after --wait-limit minutes and goes on with a warning.
 
+While working on the end-to-end tests, --e2e-grep, --e2e-repeat and --skip-checks narrow a run (they are
+passed to Playwright as --grep and --repeat-each; --skip-checks leaves out the format check, lint and unit
+tests, not the build).
+
 Exit codes: 0 every step passed, 1 a step failed, 2 usage error (missing tools, unsupported Node or npm).
 Requires Python 3.11+ (standard library only), Node and npm (gui/web/.nvmrc), and uv for the e2e steps.
 On Windows, run it with a Windows Python (python.org or MinGW, where shutil.which finds npm.cmd).
@@ -214,7 +218,8 @@ def main() -> int:
         "  scripts/verify-web.py --skip-install   # keep node_modules\n"
         "  scripts/verify-web.py --skip-e2e       # no browser, no GUI server\n"
         "  scripts/verify-web.py --tag web-ci     # logs as build/logs/web-ci-*.log\n"
-        "  scripts/verify-web.py --no-wait        # do not wait for ninja, ctest or the VM",
+        "  scripts/verify-web.py --no-wait        # do not wait for ninja, ctest or the VM\n"
+        "  scripts/verify-web.py --skip-install --skip-checks --e2e-grep 'double click' --e2e-repeat 5",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--skip-install", action="store_true", help="do not run npm ci (use the node_modules there)")
@@ -225,7 +230,13 @@ def main() -> int:
                         help="do not wait while ninja, ctest or the Windows VM (qemu-system-x86*) runs")
     parser.add_argument("--wait-limit", type=float, default=DEFAULT_LIMIT_S / 60, metavar="MIN",
                         help="stop waiting for them after MIN minutes and go on with a warning (default: %(default)g)")
+    parser.add_argument("--skip-checks", action="store_true",
+                        help="do not run the format check, lint and unit tests (the build and e2e still run)")
+    parser.add_argument("--e2e-grep", metavar="PATTERN", help="run only the e2e tests whose title matches PATTERN")
+    parser.add_argument("--e2e-repeat", type=int, default=1, metavar="N", help="run each e2e test N times")
     args = parser.parse_args()
+    if args.e2e_repeat < 1:
+        die_usage("--e2e-repeat must be 1 or more")
     if args.wait_limit < 0:
         die_usage("--wait-limit must be 0 or more minutes")
     if not re.fullmatch(r"[A-Za-z0-9._-]+", args.tag):
@@ -246,10 +257,15 @@ def main() -> int:
     steps = []
     if not args.skip_install:
         steps.append(Step("install", [npm, "ci", "--no-fund", "--no-audit"]))
-    steps += [Step("format", [npm, "run", "format:check"]), Step("lint", [npm, "run", "lint"]),
-              Step("test", [npm, "test"]), Step("build", [npm, "run", "build"])]
+    if not args.skip_checks:
+        steps += [Step("format", [npm, "run", "format:check"]), Step("lint", [npm, "run", "lint"]),
+                  Step("test", [npm, "test"])]
+    steps.append(Step("build", [npm, "run", "build"]))
     if not args.skip_e2e:
-        steps += [Step("e2e", [npm, "run", "e2e"]), Step("e2e-dev", [npm, "run", "e2e:dev"])]
+        narrow = (["--grep", args.e2e_grep] if args.e2e_grep else []) + \
+            (["--repeat-each", str(args.e2e_repeat)] if args.e2e_repeat > 1 else [])
+        extra = ["--", *narrow] if narrow else []
+        steps += [Step("e2e", [npm, "run", "e2e", *extra]), Step("e2e-dev", [npm, "run", "e2e:dev", *extra])]
 
     env = {**os.environ, "CI": "1", "NG_CLI_ANALYTICS": "false", "FORCE_COLOR": "0"}
     env.pop("NO_COLOR", None)  # Playwright warns when NO_COLOR and FORCE_COLOR are both set
