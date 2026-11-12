@@ -16,9 +16,10 @@ Windows VM (qemu-system-x86*) runs on this machine, because the browser tests ar
 the C++ tests (scripts/busy_machine.py). It gives up after --wait-limit minutes and goes on with a warning.
 
 While working on the end-to-end tests, --e2e-grep, --e2e-repeat and --skip-checks narrow a run (they are
-passed to Playwright as --grep and --repeat-each; --skip-checks leaves out the format check, lint and unit
-tests, not the build). --i18n-only runs only the i18n step; --i18n-update rewrites the translation files to
-match the extraction (new messages get "target": null, obsolete ones are dropped and printed) and stops.
+passed to Playwright as --grep and --repeat-each; --skip-checks leaves out the format check, lint, unit
+tests and the i18n step, not the build). --i18n-only runs only the i18n step; --i18n-update rewrites the
+translation files to match the extraction (new messages get "target": null, obsolete ones are dropped and
+printed) and stops.
 
 Exit codes: 0 every step passed, 1 a step failed, 2 usage error (missing tools, unsupported Node or npm).
 Requires Python 3.11+ (standard library only), Node and npm (gui/web/.nvmrc), and uv for the e2e steps.
@@ -289,7 +290,8 @@ def main() -> int:
     parser.add_argument("--wait-limit", type=float, default=DEFAULT_LIMIT_S / 60, metavar="MIN",
                         help="stop waiting for them after MIN minutes and go on with a warning (default: %(default)g)")
     parser.add_argument("--skip-checks", action="store_true",
-                        help="do not run the format check, lint and unit tests (the build and e2e still run)")
+                        help="do not run the format check, lint, unit tests and the i18n step (the build and e2e "
+                        "still run)")
     parser.add_argument("--e2e-grep", metavar="PATTERN", help="run only the e2e tests whose title matches PATTERN")
     parser.add_argument("--e2e-repeat", type=int, default=1, metavar="N", help="run each e2e test N times")
     parser.add_argument("--i18n-only", action="store_true",

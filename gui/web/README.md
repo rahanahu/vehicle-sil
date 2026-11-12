@@ -26,9 +26,9 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 | `npm run e2e`          | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する。先に `npm run build` が要る                                                          |
 | `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                                                                                       |
 | `npm run e2e:real`     | Playwright。本物のランチャー（環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）と、その隣にビルドした ecu_main の例の ECU で通す（`e2e/real/`）。先に `npm run build` が要る |
-| `npm run i18n:extract` | 翻訳する文言を `src/locale/messages.xlf` に書き出す                                                                                                              |
+| `npm run i18n:extract` | 翻訳する文言を `build/i18n/messages.json`（リポジトリの直下の `build/`）に書き出す。翻訳ファイルとの比べと更新は `scripts/verify-web.py`（下の「国際化」）       |
 
-リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、ビルド、e2e を順に回して要約だけを表示します。e2e を直している間は `--skip-checks`（書式、lint、単体試験を省く）、`--e2e-grep <名前の一部>`、`--e2e-repeat <回数>` で絞れます。
+リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、翻訳ファイルの比べ、ビルド、e2e を順に回して要約だけを表示します。e2e を直している間は `--skip-checks`（書式、lint、単体試験、翻訳ファイルの比べを省く）、`--e2e-grep <名前の一部>`、`--e2e-repeat <回数>` で絞れます。
 
 開発のときは、2 つの端末で次のように動かします。GUI サーバーは偽のランチャー（`gui/server/tests/fake_launcher.py`）を使い、`gui/server/tests/configs/` の構成ファイル（ファイルごとに筋書きが決まっている）を選べます。サーバーが表示する `dev_url`（トークンつき）を開きます。
 
@@ -38,22 +38,24 @@ uv run vehicle-sil-gui --no-browser --json --port 8765 --dev-origin http://127.0
 npm start                                                                     # 画面（127.0.0.1:4200）
 ```
 
-e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを偽のランチャーと一緒に自分で起動し（`e2e/support/gui-server.ts`。ポートは 18000 から 18999 のどれか）、終わったら止めます。`npm run e2e:real` は、本物のランチャーで同じように起動し（`e2e/support/real-server.ts`。構成ファイルは `gui/server/tests/real_configs.py` が一時ディレクトリに書く）、環境変数 `VEHICLE_SIL_GUI_SHOTS` にディレクトリを書くと、4 つの状態を 3 つの幅で撮ります。`scripts/verify-gui.py --launcher <path>` が回します。偽のランチャーの e2e も、`VEHICLE_SIL_GUI_SHOTS` を書くと、実行の画面の 6 つの状態を 360 px と 1024 px で撮ります（`e2e/shots.spec.ts`。状態ごとに新しい GUI サーバーを起動するので、前の実行は写りません）。
+e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを偽のランチャーと一緒に自分で起動し（`e2e/support/gui-server.ts`。ポートは 18000 から 18999 のどれか）、終わったら止めます。`npm run e2e:real` は、本物のランチャーで同じように起動し（`e2e/support/real-server.ts`。構成ファイルは `gui/server/tests/real_configs.py` が一時ディレクトリに書く）、環境変数 `VEHICLE_SIL_GUI_SHOTS` にディレクトリを書くと、4 つの状態を 3 つの幅で撮ります。`scripts/verify-gui.py --launcher <path>` が回します。偽のランチャーの e2e も、`VEHICLE_SIL_GUI_SHOTS` を書くと、実行の画面の 6 つの状態を 360 px と 1024 px で撮ります（`e2e/shots.spec.ts`。状態ごとに新しい GUI サーバーを起動するので、前の実行は写りません。`VEHICLE_SIL_GUI_SHOTS_LANGUAGE=en` で英語の画面を撮ります）。
 
 ## ディレクトリ
 
-| パス                                     | 内容                                                                                                                                                                                                                                                                                                              |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                                                                                                                                                                                                  |
-| `src/app/app.routes.ts`、`navigation.ts` | 経路と、ナビゲーションの項目                                                                                                                                                                                                                                                                                      |
-| `src/app/core/`                          | 画面をまたいで使うもの: サーバーとの間の型と読み取り（`api.ts`）、トークン（`auth/`）、URL（`urls.ts`）、幅の区分（`layout/`）、計測値とパスの書式（`format/`）、流れ（`streams/`）、サーバーとの接続とセッションの状態（`session/`）                                                                             |
-| `src/app/core/session/`                  | `server-connection.ts`（アプリ全体で 1 つの WebSocket の接続。認証、再接続、要約と事象を当てたセッションの状態）と `session-state.ts`（要約と事象を当てる純粋な関数）                                                                                                                                             |
-| `src/app/run/`                           | 実行の画面（`''`）。操作は `run-session.ts`（開始、停止、待たずに止める。画面と同じ寿命）、いつも見える状態の帯は `run-status.ts`                                                                                                                                                                                 |
-| `src/app/not-found/`                     | 見つからない経路の画面                                                                                                                                                                                                                                                                                            |
-| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）と、単体試験が `gui/protocol/examples/` を読む関数                                                                                                                                                                            |
-| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                                                                                                                                                                                                           |
-| `public/`                                | そのまま配信するファイル（アイコン）                                                                                                                                                                                                                                                                              |
-| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`run.spec.ts`（実行の画面）、`layout.spec.ts` と `support/layout.ts`（レイアウト）、`support/gui-server.ts`（GUI サーバーの起動）、`support/run-page.ts`（実行の画面の操作）、`shots.spec.ts`（写真）、`real/`（本物のランチャーで。`playwright.real.config.ts`） |
+| パス                                     | 内容                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                                                                                                                                                                                                                                                |
+| `src/app/app.routes.ts`、`navigation.ts` | 経路と、ナビゲーションの項目                                                                                                                                                                                                                                                                                                                                    |
+| `src/app/core/`                          | 画面をまたいで使うもの: サーバーとの間の型と読み取り（`api.ts`）、トークン（`auth/`）、URL（`urls.ts`）、幅の区分（`layout/`）、計測値とパスの書式（`format/`）、流れ（`streams/`）、サーバーとの接続とセッションの状態（`session/`）、画面の言語（`i18n/`）                                                                                                    |
+| `src/app/core/session/`                  | `server-connection.ts`（アプリ全体で 1 つの WebSocket の接続。認証、再接続、要約と事象を当てたセッションの状態）と `session-state.ts`（要約と事象を当てる純粋な関数）                                                                                                                                                                                           |
+| `src/app/run/`                           | 実行の画面（`''`）。操作は `run-session.ts`（開始、停止、待たずに止める。画面と同じ寿命）、いつも見える状態の帯は `run-status.ts`                                                                                                                                                                                                                               |
+| `src/app/not-found/`                     | 見つからない経路の画面                                                                                                                                                                                                                                                                                                                                          |
+| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）と、単体試験が `gui/protocol/examples/` を読む関数                                                                                                                                                                                                                          |
+| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                                                                                                                                                                                                                                                         |
+| `src/main.ts`、`src/start.ts`            | 起動。`main.ts` が言語を決めて翻訳を読み込み、それから `start.ts`（アプリ）を読み込む                                                                                                                                                                                                                                                                           |
+| `src/locale/`                            | 翻訳ファイル（`messages.<言語>.json`）。ビルドで `locale/` に置かれる                                                                                                                                                                                                                                                                                           |
+| `public/`                                | そのまま配信するファイル（アイコン）                                                                                                                                                                                                                                                                                                                            |
+| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`run.spec.ts`（実行の画面）、`i18n.spec.ts`（英語の画面と言語の切り替え）、`layout.spec.ts` と `support/layout.ts`（レイアウト）、`support/gui-server.ts`（GUI サーバーの起動）、`support/run-page.ts`（実行の画面の操作）、`shots.spec.ts`（写真）、`real/`（本物のランチャーで。`playwright.real.config.ts`） |
 
 ## URL と CSP
 
@@ -139,12 +141,50 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 
 ### 国際化
 
-- 画面の言葉は日本語を元にする（`angular.json` の `i18n.sourceLocale` は `ja`。`LOCALE_ID` と `<html lang>` も `ja`）。
-- テンプレートの文言には `i18n`（属性には `i18n-<属性>`）、TypeScript の文言には `$localize` を付ける。英語は、翻訳ファイルを足して後から出せる。印のない文言は lint で止まる。
-- 計測値は `measure` パイプ（`core/format/measure-pipe.ts`）で出す。桁区切りを入れず、小数の桁を決める。locale の数値の書式に任せない。
-- ECU やランチャーが出す英語の文（所見、ログ）は訳さず、そのまま出す。
-- 翻訳はビルドのときだけ。`run/labels.ts` の表のように、モジュールを読み込むときに `$localize` を評価するところがあるので、実行時に翻訳を読み込む形にはしない。
+画面の言葉は日本語を元にし（`angular.json` の `i18n.sourceLocale` は `ja`）、英語の訳を同じビルドに入れて出します。言語ごとにビルドを分けません（Python のパッケージに 1 つのディレクトリで入れて配信するため）。
+
+- 言語の決め方（`core/i18n/language.ts` の `chooseLanguage`）: 利用者が言語のメニューで選んだ言語（`localStorage` の `vehicle-sil-gui-language`）があれば、それ。なければ、ブラウザの言語（`navigator.languages`）を好みの順に見て、主な部分（`ja-JP` なら `ja`）が対応する言語の最初のもの。どれも対応しなければ英語。
+- 起動の順: `main.ts` が言語を決め、英語なら `locale/messages.en.json` を同じオリジンから読んで `loadTranslations` に渡し、`<html lang>` を合わせてから、`import()` で `start.ts`（アプリ）を読み込んで起動する。`$localize` は文を最初に評価したときに訳を決める（`run/labels.ts` の表のように、モジュールを読み込むときに評価するところがある）ので、アプリのモジュールを `main.ts` から静的に import しない。`LOCALE_ID` は選んだ言語（`Intl.ListFormat` などが従う）。日本語は元の言語なので、翻訳ファイルを読まない。
+- 言語を変えると、アプリを読み込み直す（訳は起動の前に決まる）。実行はサーバーの中で続き、画面はつなぎ直して受け直す。サーバーにない画面の値（まだ送っていない選択）は、`LanguageChoice.keep` で渡して `take` で受け取る（実行の画面は、選んだファイル、外した participant、速度、ログの出どころ）。フォーカスは言語のメニューに戻す。
+- 言語のメニューは、地球の絵と、いまの言語の名前（その言語自身の文字）を出す。名前には、どの言語でも「Language」を含める。メニューの項目は、その言語自身の文字で書き、`lang` を付ける。
+- 訳がない文（翻訳ファイルにない、`target` が `null` か空、置き場所が元の文と合わない）は、元の日本語の文で出る。id や空の文にはならない。翻訳ファイルを読めなければ、画面全体を日本語で出す。
+- テンプレートの文言には `i18n`（属性には `i18n-<属性>`）、TypeScript の文言には `$localize` を付ける。印のない文言は lint で止まる。id は抽出のときに作られるもの（元の文から決まる）を使う。
+- 文を連結して作らない（語順は言語で違う）。値は 1 つの文の中に置き場所（テンプレートの `{{ }}`、`$localize` の `${値}:名前:`）として入れる。数で語の形が変わる文（「N 行」）は、テンプレートでは ICU の `plural` で書く（日本語は `other` だけ。英語の訳が `one` を足す）。TypeScript では、数に左右されない書き方にする（「誤り: N」）。
+- 計測値は `measure` パイプ（`core/format/measure-pipe.ts`）で出す。桁区切りを入れず、小数の桁を決める。どの言語でも同じ書式で、locale の数値の書式に任せない。
+- ECU やランチャーが出す英語の文（所見、ログ）は訳さず、そのまま出す（`lang="en"` を付ける）。
 - 並べる語の区切りは `Intl.ListFormat`（`LOCALE_ID`）で作る。区切りや `:` を CSS の `content` で足さない（訳せない）。
+
+翻訳ファイル `src/locale/messages.<言語>.json` は、抽出した文ごとに元の文と訳を並べた JSON です（読み比べやすく、差分で見やすい）。`target` が `null` の文は「まだ訳していない」印です。`note` は、そのファイルについての説明です。
+
+```json
+{
+  "locale": "en",
+  "note": "…",
+  "translations": {
+    "4418433101149864838": { "source": "停止", "target": "Stop" },
+    "6952070187813782386": {
+      "source": "{VAR_PLURAL, plural, other {{INTERPOLATION} 行}}",
+      "target": "{VAR_PLURAL, plural, one {{INTERPOLATION} line} other {{INTERPOLATION} lines}}"
+    }
+  }
+}
+```
+
+`scripts/verify-web.py` の i18n の段は、文を抽出して各翻訳ファイルと比べます（`scripts/web_i18n.py`）。ファイルにない文、元の文が抽出と違うもの、空の訳、置き場所（`{$名前}`）や ICU の形が元の文と合わない訳があると失敗します。`target` が `null` の文は失敗にせず、要約に数を出します。もう抽出されない古い文は、一覧に出します（失敗にはしない）。
+
+文を足す、変える:
+
+1. 文言に印を付ける（上の決まり）。
+2. `scripts/verify-web.py --i18n-update` で翻訳ファイルを合わせる。新しい文は `"target": null` で入り、古い文は消える（消した文と訳を表示するので、言い回しを変えただけなら訳を使い回せる）。
+3. 各ファイルの `null` を訳に書き換える。すぐに訳せなければ `null` のまま残してよい（画面には日本語で出て、i18n の段の要約に数が出る）。
+4. `scripts/verify-web.py --i18n-only` で確かめる。
+
+言語を足す:
+
+1. `core/i18n/language.ts` の `LANGUAGES` に、コードとその言語自身の文字の名前を足す。
+2. `src/locale/messages.<コード>.json` を `{"locale": "<コード>", "note": "…", "translations": {}}` で作り、`scripts/verify-web.py --i18n-update` で文を入れて訳す。
+3. `en` 以外の言語なら、その locale のデータ（日付、複数形の規則）を `@angular/common/locales/<コード>` から `registerLocaleData` で登録する（日本語はビルドが、英語は Angular が持っている）。
+4. `e2e/i18n.spec.ts` のように、その言語で画面を確かめる。
 
 ### サーバーとの間の型
 
