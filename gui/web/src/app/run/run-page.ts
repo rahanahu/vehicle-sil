@@ -139,6 +139,12 @@ export class RunPage {
    */
   protected readonly selected = computed(() => this.chosen() ?? this.preferredFile());
 
+  /** 前の実行と違う構成ファイルを選んでいる（出ている結果は前の実行のもの。選ぶ、照合を先に並べる）。 */
+  protected readonly otherFile = computed(() => {
+    const session = this.session();
+    return !!session && !this.running() && this.selected() !== session.file;
+  });
+
   /** 外す participant。ファイルを変えたら、そのファイルのセッションで外したもの（なければ空）に戻す。 */
   protected readonly disabled = linkedSignal<
     { file: string | null; names: readonly string[] },
@@ -304,7 +310,6 @@ export class RunPage {
 
   /** ログで絞る出どころ（「ランチャーのログを見る」で選ぶ）。 */
   protected readonly logSource = signal('');
-  protected readonly launcherSource = LAUNCHER_SOURCE;
   protected readonly copyLabel = $localize`選べる範囲のパスをコピー`;
 
   protected selectFile(file: string): void {

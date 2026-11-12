@@ -21,6 +21,7 @@ import { RunStatus } from './run-status';
       [pending]="pending()"
       [elapsedMs]="null"
       [blockedBy]="[]"
+      [otherFile]="otherFile()"
       (start)="starts = starts + 1"
       (stop)="stops = stops + 1"
     />
@@ -30,6 +31,7 @@ class Host {
   readonly session = signal<SessionView | null>(null);
   readonly ready = signal(true);
   readonly pending = signal<RunAction | null>(null);
+  readonly otherFile = signal(false);
   starts = 0;
   stops = 0;
   outcome(): RunOutcome | null {
@@ -128,6 +130,19 @@ describe('RunStatus', () => {
     expect(phases?.textContent).toContain('実行（中断）');
     expect(phases?.querySelector('.todo')?.textContent).toContain('停止中');
     expect(query('primary')?.textContent).toContain('もう一度実行');
+  });
+
+  it('starts, not runs again, when another file is chosen, and says the result is of the run before', async () => {
+    await show(
+      sessionFromSummary(
+        summary({ state: 'ended', launcher: { running: false, exit_code: 70, signal: null } }),
+      ),
+    );
+    fixture.componentInstance.otherFile.set(true);
+    await fixture.whenStable();
+    expect(query('primary')?.textContent).toContain('開始');
+    expect(query('primary')?.getAttribute('data-action')).toBe('start');
+    expect(query('outcome')?.textContent).toContain('前の実行: 異常終了（終了コード 70）');
   });
 
   it('does not start or stop until it is in step with the server', async () => {

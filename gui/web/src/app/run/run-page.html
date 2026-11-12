@@ -64,6 +64,7 @@
     [pending]="run.pending()"
     [elapsedMs]="run.elapsedMs()"
     [blockedBy]="blockedBy()"
+    [otherFile]="otherFile()"
     (start)="start()"
     (stop)="run.stop()"
     (forceStop)="run.forceStop()"
@@ -76,8 +77,11 @@
     }
   </p>
 
-  <!-- 1 列のときは、実行した後は「結果、状態、ログ」を「構成ファイルと照合」より先に並べる（CSS の order） -->
-  <div class="columns" [class.after-run]="session() !== null">
+  <!--
+    1 列のときは、実行した後は「結果、状態、ログ」を「構成ファイルと照合」より先に並べる（CSS の order）。
+    別のファイルを選んだら、選ぶ、照合を先に戻す。
+  -->
+  <div class="columns" [class.after-run]="session() !== null && !otherFile()">
     <div class="column setup">
       <mat-card appearance="outlined" data-testid="config-card">
         <mat-card-header>
@@ -181,6 +185,7 @@
               <mat-card-title>
                 <h2 id="run-result" tabindex="-1" i18n>結果</h2>
               </mat-card-title>
+              <mat-card-subtitle data-testid="result-file">{{ session.file }}</mat-card-subtitle>
             </mat-card-header>
             <mat-card-content>
               @if (session.launcher.running) {
@@ -202,6 +207,7 @@
               <mat-card-title>
                 <h2 id="run-result" tabindex="-1" i18n>結果</h2>
               </mat-card-title>
+              <mat-card-subtitle>{{ session.file }}</mat-card-subtitle>
             </mat-card-header>
             <mat-card-content>
               <p class="crash-outcome" data-testid="crash">
@@ -222,12 +228,7 @@
                   >
                 }
               </p>
-              <p i18n>
-                理由は、ランチャーの標準エラー、ランチャーのログ（{{
-                  launcherSource
-                }}）、サーバーの知らせに出ていることがあります。participant
-                の状態は、ランチャーが終わる前に届いたところまでです。
-              </p>
+              <p i18n>理由は、次のどれかに出ていることがあります。</p>
               <div class="next">
                 @if (stderr()) {
                   <button matButton="tonal" type="button" (click)="showStderr()" i18n>

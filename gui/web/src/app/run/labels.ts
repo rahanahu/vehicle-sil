@@ -82,7 +82,7 @@ export const runOutcomeLabel = (result: RunOutcome): string => label(RUN_OUTCOME
 const SIMULATIONS: Record<string, string> = {
   reached_stop_at: $localize`stop_at_ms まで動いた`,
   ended: $localize`participant が止めた`,
-  aborted: $localize`中断した`,
+  aborted: $localize`打ち切られた`,
   interrupted: $localize`止めた`,
   not_started: $localize`始まらなかった`,
 };

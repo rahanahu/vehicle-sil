@@ -49,7 +49,11 @@ describe('ParticipantStatus', () => {
 
     fixture.componentInstance.gone.set(true);
     await fixture.whenStable();
-    expect(row('Engine')?.textContent).toContain('不明（ランチャーが先に終了）');
+    expect(row('Engine')?.textContent).toContain('不明');
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="participants-unknown"]')
+        ?.textContent,
+    ).toContain('ランチャーが先に終わった');
     expect(row('Engine')?.textContent).toContain('最後の知らせ: 参加した');
     expect(row('Engine')?.getAttribute('data-state')).toBe('unknown');
     expect(row('Late')?.textContent).toContain('不明');

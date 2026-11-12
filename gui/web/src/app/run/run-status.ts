@@ -33,6 +33,11 @@ export class RunStatus {
   readonly elapsedMs = input.required<number | null>();
   /** 始められない理由（なければ空）。 */
   readonly blockedBy = input.required<readonly string[]>();
+  /**
+   * 前の実行と違う構成ファイルを選んでいる（ランチャーは止まっている）。主なボタンは「開始」にし、出ている結果は
+   * 前の実行のものだと添える。
+   */
+  readonly otherFile = input(false);
 
   readonly start = output();
   readonly stop = output();
@@ -45,7 +50,7 @@ export class RunStatus {
 
   protected readonly primary = computed<Primary>(() => {
     if (this.running()) return this.stopRequests() >= 1 ? 'stopping' : 'stop';
-    return this.session() ? 'again' : 'start';
+    return this.session() && !this.otherFile() ? 'again' : 'start';
   });
 
   /** 主なボタンを押せない理由（押せるなら null）。 */
@@ -117,7 +122,9 @@ export class RunStatus {
         return {
           tone: result?.result === 'passed' ? 'good' : 'bad',
           mark: result?.result === 'passed' ? '✓' : '✕',
-          text: runOutcomeLabel(result?.result ?? ''),
+          text: this.otherFile()
+            ? $localize`前の実行: ${runOutcomeLabel(result?.result ?? '')}:outcome:`
+            : runOutcomeLabel(result?.result ?? ''),
         };
       case 'crashed': {
         const { exitCode, signal } = session.launcher;
@@ -127,7 +134,12 @@ export class RunStatus {
             : signal !== null
               ? $localize`シグナル ${signal}:signal:`
               : $localize`終わり方は不明`;
-        return { tone: 'bad', mark: '✕', text: $localize`異常終了（${how}:how:）` };
+        const text = $localize`異常終了（${how}:how:）`;
+        return {
+          tone: 'bad',
+          mark: '✕',
+          text: this.otherFile() ? $localize`前の実行: ${text}:outcome:` : text,
+        };
       }
     }
   });

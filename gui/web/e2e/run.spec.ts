@@ -229,8 +229,9 @@ test('a launcher that dies without a result: an abnormal end, and where to look'
   await expect(page.getByTestId('stderr-last')).toContainText('dying on purpose');
   await expect(page.getByTestId('problems-card')).not.toContainText('launcher-stderr');
   // 終わりを知らせてこなかった participant は「参加した」のままにしない
+  await expect(page.getByTestId('participants-unknown')).toBeVisible();
   for (const name of ['Engine', 'Dashboard']) {
-    await expect(page.getByTestId(`status-${name}`)).toContainText('不明（ランチャーが先に終了）');
+    await expect(page.getByTestId(`status-${name}`)).toContainText('不明');
   }
   // 次に見るところ: ランチャーのログ
   await page.getByRole('button', { name: 'ランチャーのログを見る' }).click();

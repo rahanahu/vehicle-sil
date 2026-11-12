@@ -9,6 +9,12 @@ const SETTLED: ReadonlySet<string> = new Set(['ended', 'killed', 'disabled', 'no
 @Component({
   selector: 'app-participant-status',
   template: `
+    @if (hasUnknown()) {
+      <p class="unknown-hint" data-testid="participants-unknown" i18n>
+        ランチャーが先に終わったので、終わりを知らせてこなかった participant
+        がどうなったかはわかりません。
+      </p>
+    }
     <ul class="list" aria-label="participant の状態" i18n-aria-label>
       @for (row of rows(); track row.name) {
         <li class="item" [attr.data-state]="row.tone" [attr.data-testid]="'status-' + row.name">
@@ -75,7 +81,10 @@ const SETTLED: ReadonlySet<string> = new Set(['ended', 'killed', 'disabled', 'no
     }
     .item[data-state='unknown'] .state {
       color: var(--mat-sys-on-surface-variant);
-      font-style: italic;
+    }
+    .unknown-hint {
+      margin: 0 0 var(--app-space-2);
+      color: var(--mat-sys-on-surface-variant);
     }
     .exit,
     .optional,
@@ -105,7 +114,7 @@ export class ParticipantStatus {
       if (this.launcherGone() && !SETTLED.has(p.state ?? '')) {
         return {
           name: p.name,
-          label: $localize`不明（ランチャーが先に終了）`,
+          label: $localize`不明`,
           mark: '?',
           tone: 'unknown',
           exit: null,
@@ -145,4 +154,6 @@ export class ParticipantStatus {
       };
     }),
   );
+
+  protected readonly hasUnknown = computed(() => this.rows().some((row) => row.tone === 'unknown'));
 }
