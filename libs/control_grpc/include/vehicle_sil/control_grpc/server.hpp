@@ -66,14 +66,12 @@ public:
 /// The controller must outlive the result.
 [[nodiscard]] std::unique_ptr<TimeControl> time_control_of(SimulationController& controller);
 
-/// What a client may do. Each role includes the ones before it, except Agent, which may only
-/// connect as an agent (AgentService).
+/// What a client may do. Each role includes the ones before it.
 enum class Role
 {
     Viewer,   ///< read: peers, values, operations, watch, time
     Operator, ///< and change: write variables, pause, resume, step, run until, speed
     Admin,    ///< and end the simulation: stop
-    Agent,    ///< connect an agent (only)
 };
 
 /// A client's credential: a bearer token ("authorization: Bearer <token>").
@@ -82,20 +80,13 @@ struct Credential
     std::string name;  ///< for the audit log
     std::string token; ///< a long random secret
     Role role = Role::Viewer;
-    /// Agent: the participant names it may connect as, or kAnyParticipant for any name. An
-    /// agent credential must name at least one (std::invalid_argument, a runtime_error from
-    /// load_credentials()); other roles name none.
-    std::vector<std::string> participants{};
 };
 
-/// In Credential::participants: the agent may connect as any participant name.
-inline constexpr std::string_view kAnyParticipant = "*";
-
-/// Reads credentials from a text file: one per line, "<role> <name> <token> [participant,...]"
-/// (role: viewer, operator, admin, agent). An agent line must name the participants it may
-/// connect as (separated by commas or spaces), or "*" for any; the other roles name none. A word
-/// that starts with '#' starts a comment. A token has at least 16 characters and is not
-/// repeated. std::runtime_error on errors, with the file, the line and how to fix it.
+/// Reads credentials from a text file: one per line, "<role> <name> <token>" (role: viewer,
+/// operator, admin). A word that starts with '#' starts a comment. A token has at least 16
+/// characters and is not repeated. An "agent" line (agents connected with a token once; they
+/// reach the hub over SIL Kit now) is an error that says to delete it. std::runtime_error on
+/// errors, with the file, the line and how to fix it.
 [[nodiscard]] std::vector<Credential> load_credentials(const std::string& path);
 /// load_credentials() of the text of such a file (`source`: the file's name in the messages). The
 /// messages name the line and what is wrong with it, never a word of it (one may be a token).
@@ -123,12 +114,10 @@ struct ServerOptions
     /// gRPC address to listen on; port 0 picks a free port (see ControlServer::port()).
     std::string listen = "127.0.0.1:0";
     control::HubOptions hub{};
-    /// The hub to serve instead of a hub of the server's own (`hub` is then not used), for a
-    /// caller whose other parts connect the agents (vehicle_sil_launch: over SIL Kit). Must
-    /// outlive the server.
+    /// The hub to serve instead of a hub of the server's own (`hub` is then not used). Must
+    /// outlive the server. The server does not connect agents: the caller connects them to the
+    /// hub (control_silkit::HubTransport over SIL Kit).
     control::Hub* external_hub = nullptr;
-    /// false: no AgentService (only clients call the server; the agents reach the hub otherwise).
-    bool serve_agents = true;
     /// The time operations; nullptr: GetTime reports available = false and the others fail.
     /// Must outlive the server.
     TimeControl* time = nullptr;
@@ -143,8 +132,8 @@ struct ServerOptions
     /// Writes in one Write request (INVALID_ARGUMENT beyond). Must be > 0.
     std::size_t max_writes_per_request = 4096;
     SecurityOptions security{};
-    /// Called with one line for every call that changes something (write, time operations),
-    /// agent connections, and refused calls: who, from where, what, and the outcome. Control
+    /// Called with one line for every call that changes something (write, time operations) and
+    /// for refused calls: who, from where, what, and the outcome. Control
     /// characters become '?' and a line is cut at about 1000 bytes. Refused calls are thinned
     /// out (anyone who reaches the port can make them): at most 20 lines per second, and a line
     /// with the number left out. Must be thread safe.
@@ -157,9 +146,9 @@ struct ServerOptions
 
 class SimulationMonitor;
 
-/// Serves the Control API: ControlService for clients and AgentService for agents
-/// (control_grpc::AgentClient). Starts listening in the constructor (std::runtime_error if it
-/// cannot) and stops in the destructor.
+/// Serves the Control API to clients (ControlService) for a hub whose agents someone else
+/// connects (control_silkit::HubTransport). Starts listening in the constructor
+/// (std::runtime_error if it cannot) and stops in the destructor.
 class ControlServer
 {
 public:
@@ -173,9 +162,7 @@ public:
     [[nodiscard]] control::Hub& hub() noexcept;
     /// The monitor of `time` (its snapshot and its changes); nullptr without ServerOptions::time.
     [[nodiscard]] SimulationMonitor* simulation() noexcept;
-    /// Drops every agent connection (the agents reconnect). For tests and administration.
-    void disconnect_agents();
-    /// Stops serving: open watches, waits and agent streams end. Idempotent.
+    /// Stops serving: open watches and waits end. Idempotent.
     void shutdown();
 
 private:

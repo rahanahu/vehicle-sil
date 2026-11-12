@@ -21,7 +21,8 @@ TEST_CASE(control_server_authorization_rules_match_the_proto_services)
 {
     std::set<std::pair<std::string, std::string>> in_proto;
     const auto* file = v1::PingRequest::descriptor()->file();
-    for (const auto service : {kControlService, kAgentService})
+    CHECK_EQ(file->service_count(), 1); // ControlService: another service needs its rules here
+    for (const auto service : {kControlService})
     {
         const auto* descriptor = file->FindServiceByName(std::string(service));
         CHECK(descriptor != nullptr);

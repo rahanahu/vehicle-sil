@@ -820,7 +820,7 @@ TEST_CASE(control_agent_counts_its_transports)
 TEST_CASE(control_agent_of_an_ecu_names_it_after_the_schema_is_complete)
 {
     // An ECU's agent (local Simulation): declaring after the schema was completed (as an
-    // AgentClient does) is std::logic_error naming the ECU and why.
+    // AgentTransport does) is std::logic_error naming the ECU and why.
     Simulation sim;
     Ecu& ecu = sim.add_ecu("Gauge", 10ms);
     int x = 0;

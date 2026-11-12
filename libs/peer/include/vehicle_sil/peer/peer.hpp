@@ -79,7 +79,7 @@ struct PeerOptions
     can::RealTimeClock* real_time_clock = nullptr;
     /// With a control agent (Ecu::input(), output(), agent()): it also gets the peer's monitoring
     /// outputs, after the ECU's variables, when its schema is completed (control::Agent::
-    /// complete_schema(): by a transport such as control_grpc::AgentClient, the first submit()
+    /// complete_schema(): by a transport such as control_silkit::AgentTransport, the first submit()
     /// or start(), whichever comes first), for the J1939 networks and nodes that exist then
     /// (j1939() is std::logic_error afterwards; nodes added afterwards are not monitored).
     /// Read at the agent's samples, on the step thread:
@@ -162,10 +162,9 @@ struct J1939ChannelOptions
 /// emplace()d objects (the one emplaced last first). So the emplace()d objects go after the
 /// participant: their destructors must not use SIL Kit services (the participant, controllers
 /// or Pub/Sub made through runtime()); make an object that does so after the peer instead, so
-/// that it goes first. A transport of the agent (control_silkit::AgentTransport,
-/// control_grpc::AgentClient) is made after the
-/// peer and destroyed before it (not emplace()d); stop the peer first, so that the transport
-/// still sends the cancelled writes when it stops.
+/// that it goes first. A transport of the agent (control_silkit::AgentTransport) is made after
+/// the peer and destroyed before it (not emplace()d); stop the peer first, so that the transport
+/// still sends the cancelled writes as its last word.
 ///
 /// Threading: set up, start() and wait() from one thread. The steps run on SIL Kit's thread
 /// (virtual time) or on the driver's thread (real time); handlers, the application, observers

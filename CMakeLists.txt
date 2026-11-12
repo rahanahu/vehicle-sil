@@ -19,7 +19,7 @@ option(VEHICLE_SIL_TEST_FETCHCONTENT
        "Add a (slow) test that consumes this repository via FetchContent" OFF)
 option(VEHICLE_SIL_WARNINGS_AS_ERRORS "Treat warnings in vehicle-sil targets as errors" OFF)
 option(VEHICLE_SIL_BUILD_CONTROL_SERVER
-       "Build the control server and the control agent's link to it (needs gRPC: found, or built with FetchContent)" OFF)
+       "Build the control server: vehicle_sil_launch run --control and vehicle_sil_control_server (needs gRPC: found, or built with FetchContent)" OFF)
 set(VEHICLE_SIL_SANITIZERS
     ""
     CACHE STRING "Semicolon separated -fsanitize= values, e.g. address;undefined (top-level builds only)")
@@ -118,9 +118,6 @@ if(VEHICLE_SIL_BUILD_EXAMPLES)
   add_subdirectory(examples/virtual_time)
   add_subdirectory(examples/lin)
   add_subdirectory(examples/ecu_main)
-  if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
-    add_subdirectory(examples/control)
-  endif()
 endif()
 
 if(VEHICLE_SIL_BUILD_TESTS)

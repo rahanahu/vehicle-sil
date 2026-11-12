@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// Who may call what: every RPC of both services, called by every role, by an unknown token and
+// Who may call what: every RPC of the service, called by every role, by an unknown token and
 // without a token, and whether the call leaves a line in the audit log. The expected table is
 // written out here, apart from the server's code, so that a change of the server's rules shows
 // up as a failure.
@@ -37,7 +37,6 @@ enum class Caller
     Viewer,
     Operator,
     Admin,
-    Agent,
     Anyone, ///< a server without credentials: no token, and every call is allowed
 };
 
@@ -55,8 +54,6 @@ const char* caller_name(Caller c)
         return "operator";
     case Caller::Admin:
         return "admin";
-    case Caller::Agent:
-        return "agent";
     case Caller::Anyone:
         return "server without credentials";
     }
@@ -75,8 +72,6 @@ std::optional<std::string> token_of(Caller c)
         return "operator-token-0123456789";
     case Caller::Admin:
         return "admin-token-0123456789";
-    case Caller::Agent:
-        return "agent-token-0123456789";
     default:
         return std::nullopt;
     }
@@ -109,8 +104,6 @@ const std::map<std::string, Expected>& expected()
         {"/vehicle_sil.control.v1.ControlService/SetSpeed", {Role::Operator, true}},
         {"/vehicle_sil.control.v1.ControlService/WaitPaused", {Role::Viewer, false}},
         {"/vehicle_sil.control.v1.ControlService/Stop", {Role::Admin, true}},
-        // An allowed agent that connects is audited ("connected").
-        {"/vehicle_sil.control.v1.AgentService/Connect", {Role::Agent, true}},
     };
     return table;
 }
@@ -124,14 +117,12 @@ bool may(Caller c, Role need)
     case Caller::None:
     case Caller::Unknown:
         return false;
-    case Caller::Agent:
-        return need == Role::Agent;
     case Caller::Viewer:
         return need == Role::Viewer;
     case Caller::Operator:
         return need == Role::Viewer || need == Role::Operator;
     case Caller::Admin:
-        return need != Role::Agent;
+        return true;
     }
     return false;
 }
@@ -152,7 +143,6 @@ struct Server
                 Credential{"alice", *token_of(Caller::Viewer), Role::Viewer},
                 Credential{"bob", *token_of(Caller::Operator), Role::Operator},
                 Credential{"carol", *token_of(Caller::Admin), Role::Admin},
-                Credential{"engine-ecu", *token_of(Caller::Agent), Role::Agent, {"Engine"}},
             };
         }
         o.audit = [this](const std::string& line) {
@@ -229,23 +219,6 @@ std::map<std::string, Call> calls()
         }
         return reader->Finish();
     };
-    m["/vehicle_sil.control.v1.AgentService/Connect"] = [](grpc::Channel& channel, Caller c) {
-        auto stub = v1::AgentService::NewStub(std::shared_ptr<grpc::Channel>(&channel, [](grpc::Channel*) {}));
-        grpc::ClientContext context;
-        prepare(context, c);
-        auto stream = stub->Connect(&context);
-        v1::AgentMessage hello;
-        hello.mutable_hello()->set_participant("Engine");
-        hello.mutable_hello()->set_incarnation(caller_name(c));
-        hello.mutable_hello()->set_max_pending(1);
-        stream->Write(hello);
-        stream->WritesDone();
-        v1::ServerMessage message;
-        while (stream->Read(&message))
-        {
-        }
-        return stream->Finish();
-    };
     return m;
 }
 
@@ -253,7 +226,9 @@ std::vector<std::string> methods_of_the_services()
 {
     std::vector<std::string> out;
     const auto* file = v1::PingRequest::descriptor()->file();
-    for (const auto* service : {file->FindServiceByName("ControlService"), file->FindServiceByName("AgentService")})
+    // ControlService only: a service added to the proto needs a table of its own here.
+    CHECK_EQ(file->service_count(), 1);
+    for (const auto* service : {file->FindServiceByName("ControlService")})
     {
         for (int i = 0; i < service->method_count(); ++i)
         {
@@ -290,10 +265,9 @@ TEST_CASE(control_server_authorization_table_covers_every_rpc)
 TEST_CASE(control_server_allows_and_audits_every_rpc_by_role)
 {
     const auto table = calls();
-    for (const Caller c : {Caller::None, Caller::Unknown, Caller::Viewer, Caller::Operator, Caller::Admin, Caller::Agent,
-                           Caller::Anyone})
+    for (const Caller c : {Caller::None, Caller::Unknown, Caller::Viewer, Caller::Operator, Caller::Admin, Caller::Anyone})
     {
-        // A server per caller: at most 17 refused calls, below the audit's thinning (20 a second).
+        // A server per caller: at most 16 refused calls, below the audit's thinning (20 a second).
         Server server(c != Caller::Anyone);
         for (const auto& [method, call] : table)
         {
@@ -312,12 +286,6 @@ TEST_CASE(control_server_allows_and_audits_every_rpc_by_role)
             }
             CHECK(allowed == want_allowed);
             CHECK(audited == want_audited);
-            if (method == "/vehicle_sil.control.v1.AgentService/Connect" && allowed)
-            {
-                // The line of the connection, not one of a refusal.
-                const std::lock_guard lock(server.mutex);
-                CHECK(server.audit.back().find(" agent Engine (" + std::string(caller_name(c)) + "): connected") != std::string::npos);
-            }
             if (!allowed)
             {
                 // Unauthenticated callers are told a token is needed, others that the role is not enough.

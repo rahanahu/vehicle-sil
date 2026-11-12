@@ -1,9 +1,8 @@
 # vehicle_sil::control_grpc - the Control API over gRPC: the control server (a Hub with the
-# Control API v1 services and the time gate of a SimulationController) and the agent's client.
+# Control API v1 service for clients and the time gate of a SimulationController). The agents
+# reach the hub over SIL Kit (vehicle_sil::control_silkit), not through this library.
 # Only with VEHICLE_SIL_BUILD_CONTROL_SERVER (needs gRPC).
 add_library(vehicle_sil_control_grpc STATIC
-  src/agent_client.cpp
-  src/agent_service.cpp
   src/audit.cpp
   src/auth.cpp
   src/control_service.cpp

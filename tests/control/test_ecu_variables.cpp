@@ -397,7 +397,7 @@ TEST_CASE(ecu_variables_a_transport_left_on_the_agent_is_found)
         control::TransportLease lease(agent);
         const std::string why = holder.transports_left();
         CHECK(why.find("\"Pump\"") != std::string::npos);
-        CHECK(why.find("destroy the AgentClient before the ECU") != std::string::npos);
+        CHECK(why.find("destroy the transport before the ECU") != std::string::npos);
         CHECK(why.find("do not emplace()") != std::string::npos);
     }
     CHECK(holder.transports_left().empty());

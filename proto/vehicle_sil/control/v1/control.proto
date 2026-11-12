@@ -70,102 +70,12 @@ message Event {
   string text = 3;
 }
 
-// ---- commands between the server and an agent -----------------------------------------------
-
-message Write {
-  string name = 1;
-  Value value = 2;
-}
+// ---- writes ---------------------------------------------------------------------------------
 
 enum LatePolicy {
   LATE_POLICY_UNSPECIFIED = 0; // as REJECT
   LATE_POLICY_REJECT = 1;
   LATE_POLICY_APPLY_NEXT = 2;
-}
-
-message Command {
-  uint64 seq = 1;
-  repeated Write writes = 2;
-  optional sint64 at_ns = 3; // absent: the next step
-  LatePolicy late = 4;
-}
-
-enum SubmitStatus {
-  SUBMIT_STATUS_UNSPECIFIED = 0; // treated as INVALID
-  SUBMIT_STATUS_QUEUED = 1;
-  SUBMIT_STATUS_BUSY = 2;
-  SUBMIT_STATUS_INVALID = 3;
-}
-
-enum CommandStatus {
-  COMMAND_STATUS_UNSPECIFIED = 0; // ignored by the server: the target stays open
-  COMMAND_STATUS_APPLIED = 1;
-  COMMAND_STATUS_LATE = 2;
-  COMMAND_STATUS_REJECTED = 3; // a setter failed; values it wrote before stay
-  COMMAND_STATUS_CANCELLED = 4;
-}
-
-message CommandResult {
-  uint64 seq = 1;
-  CommandStatus status = 2;
-  optional sint64 applied_at_ns = 3;
-  bool late = 4;
-  string reason = 5;
-}
-
-// ---- the agent link -------------------------------------------------------------------------
-
-message Hello {
-  string participant = 1;
-  string incarnation = 2;
-  repeated VariableInfo schema = 3;
-  uint64 max_pending = 4;
-  // On a reconnect of the same process: the commands the agent still holds.
-  bool has_open_seqs = 5;
-  repeated uint64 open_seqs = 6;
-  // New for every connection. When another connection of the same participant replaces this
-  // one, the server ends this one with ABORTED and names the new connection's identifier in the
-  // trailing metadata "vehicle-sil-replaced-by" (an agent replaced by its own newer connection
-  // goes on; one replaced by another process stops reconnecting). 1 to 64 characters, each of
-  // A-Z a-z 0-9 . _ - (the server refuses anything else with INVALID_ARGUMENT); empty: none.
-  string connection = 7;
-}
-
-message Submitted {
-  uint64 seq = 1;
-  SubmitStatus status = 2;
-  string reason = 3;
-}
-
-message PeerStatus {
-  bool failed = 1;
-  string error = 2;
-}
-
-message AgentMessage {
-  oneof kind {
-    Hello hello = 1; // first, once per connection
-    Submitted submitted = 2;
-    CommandResult result = 3;
-    Snapshot values = 4;
-    Event event = 5;
-    PeerStatus status = 6;
-  }
-}
-
-// The server's answer to a hello: the connection is accepted. It comes before any command.
-message Welcome {}
-
-message ServerMessage {
-  oneof kind {
-    Command command = 1;
-    Welcome welcome = 2; // first, once per connection
-  }
-}
-
-// Agents connect to the server with this service (one stream per connection).
-service AgentService {
-  rpc Connect(stream AgentMessage) returns (stream ServerMessage);
 }
 
 // ---- the client API -------------------------------------------------------------------------
@@ -177,6 +87,12 @@ message PingRequest {
 message PingReply {
   string text = 1;
   string server_version = 2;
+}
+
+// What a peer's agent reported about its participant.
+message PeerStatus {
+  bool failed = 1;
+  string error = 2;
 }
 
 message PeerInfo {

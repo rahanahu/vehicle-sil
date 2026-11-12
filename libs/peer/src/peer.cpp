@@ -244,8 +244,8 @@ void Peer::require_unmonitored(const std::string& network) const
     {
         throw std::logic_error("vehicle_sil::Peer \"" + options_.participant + "\": j1939(\"" + network
                                + "\") after the control agent's schema was completed with the monitoring outputs: the "
-                                 "network would not be monitored. Add the J1939 networks before an AgentClient is made "
-                                 "for the agent and before its first submit(), or set PeerOptions::monitor = false");
+                                 "network would not be monitored. Add the J1939 networks before a transport is made "
+                                 "for the agent (control_silkit::AgentTransport) and before its first submit(), or set PeerOptions::monitor = false");
     }
 }
 

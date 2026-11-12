@@ -19,14 +19,10 @@ struct Who
 {
     std::string name = "anonymous";
     Role role = Role::Admin;
-    std::vector<std::string> participants;
     bool anyone = true; ///< the server has no credentials: every client may do everything
 };
 
 bool allows(const Who& who, Role need);
-
-/// The agent `who` may connect as `participant`: its credential names it, or "*".
-bool may_connect_as(const Who& who, const std::string& participant);
 
 class Authorizer
 {
@@ -47,7 +43,7 @@ struct RpcRule
 {
     std::string_view service; ///< the service's name in the proto ("ControlService")
     std::string_view method;  ///< the RPC's name in the proto ("Write")
-    Role need;                ///< the least role (Agent: only an agent)
+    Role need;                ///< the least role
     /// An allowed call leaves a line with its outcome in the audit log. (A refused call always
     /// does.)
     bool audited;
@@ -55,9 +51,8 @@ struct RpcRule
 };
 
 inline constexpr std::string_view kControlService = "ControlService";
-inline constexpr std::string_view kAgentService = "AgentService";
 
-/// The authorization table: a rule for every RPC of both services.
+/// The authorization table: a rule for every RPC of the service.
 [[nodiscard]] const std::vector<RpcRule>& rpc_rules();
 /// The rule of `service`/`method`; nullptr if the table has none (the call is refused).
 [[nodiscard]] const RpcRule* find_rule(std::string_view service, std::string_view method);

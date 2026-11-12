@@ -4,7 +4,6 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/control/v1/control.grpc.pb.h"
-#include "vehicle_sil/control_grpc/agent_client.hpp"
 #include "vehicle_sil/control_grpc/server.hpp"
 
 #include <grpcpp/grpcpp.h>
@@ -18,7 +17,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <vector>
 
 #ifndef VEHICLE_SIL_TEST_DATA_DIR
@@ -44,7 +42,6 @@ std::string read(const std::string& name)
 const std::string kViewer = "viewer-token-0123456789";
 const std::string kOperator = "operator-token-0123456789";
 const std::string kAdmin = "admin-token-0123456789";
-const std::string kAgent = "agent-token-0123456789";
 
 struct SecureServer
 {
@@ -63,7 +60,6 @@ struct SecureServer
             Credential{"alice", kViewer, Role::Viewer},
             Credential{"bob", kOperator, Role::Operator},
             Credential{"carol", kAdmin, Role::Admin},
-            Credential{"engine-ecu", kAgent, Role::Agent, {"Engine"}},
         };
         o.audit = [this](const std::string& line) {
             const std::lock_guard lock(mutex);
@@ -130,17 +126,6 @@ grpc::StatusCode call_stop(v1::ControlService::Stub& stub, const std::string& to
     return stub.Stop(&context, v1::StopRequest{}, &reply).error_code();
 }
 
-template <typename Pred>
-bool eventually(Pred pred)
-{
-    const auto deadline = std::chrono::steady_clock::now() + 10s;
-    while (std::chrono::steady_clock::now() < deadline && !pred())
-    {
-        std::this_thread::sleep_for(10ms);
-    }
-    return pred();
-}
-
 } // namespace
 
 TEST_CASE(control_server_roles_decide_what_a_client_may_do)
@@ -150,7 +135,6 @@ TEST_CASE(control_server_roles_decide_what_a_client_may_do)
     CHECK(call_list(*stub, "") == grpc::StatusCode::UNAUTHENTICATED);
     CHECK(call_list(*stub, "wrong-token-0123456789") == grpc::StatusCode::UNAUTHENTICATED);
     CHECK(call_list(*stub, kViewer) == grpc::StatusCode::OK);
-    CHECK(call_list(*stub, kAgent) == grpc::StatusCode::PERMISSION_DENIED); // an agent is no client
     CHECK(call_write(*stub, kViewer) == grpc::StatusCode::PERMISSION_DENIED);
     CHECK(call_write(*stub, kOperator) == grpc::StatusCode::OK);
     CHECK(call_stop(*stub, kOperator) == grpc::StatusCode::PERMISSION_DENIED);
@@ -170,45 +154,6 @@ TEST_CASE(control_server_needs_tls_when_it_has_it)
     CHECK(call_list(*plain, kViewer) == grpc::StatusCode::UNAVAILABLE);
 }
 
-TEST_CASE(control_server_agents_need_an_agent_token_for_their_name)
-{
-    SecureServer s;
-    const auto roots = read("server.crt");
-    control::Agent engine;
-    double x = 0.0;
-    engine.input("x", &x);
-    engine.bind_driver();
-    control_grpc::AgentClient ok(engine, {.server = s.address, .participant = "Engine", .token = kAgent, .root_certificates_pem = roots});
-    CHECK(ok.wait_connected(10s));
-    CHECK(eventually([&] { return s.server->hub().peers().size() == 1; }));
-    CHECK(s.audited("engine-ecu@"));
-    CHECK(s.audited("agent Engine"));
-
-    // The same agent token for another participant, an operator token, and no token: refused.
-    control::Agent other;
-    other.bind_driver();
-    control_grpc::AgentClient wrong_name(other, {.server = s.address, .participant = "Body", .token = kAgent,
-                                                 .root_certificates_pem = roots});
-    control::Agent other2;
-    other2.bind_driver();
-    control_grpc::AgentClient wrong_role(other2, {.server = s.address, .participant = "Engine2", .token = kOperator,
-                                                  .root_certificates_pem = roots});
-    control::Agent other3;
-    other3.bind_driver();
-    control_grpc::AgentClient no_token(other3, {.server = s.address, .participant = "Engine3", .root_certificates_pem = roots});
-    CHECK(eventually([&] { return s.audited("agent Body: refused") && s.audited("bob@") && s.audited("unauthenticated@"); }));
-    CHECK(!wrong_name.connected());
-    CHECK(eventually([&] { return !wrong_name.last_error().empty(); })); // the server's refusal reaches the agent
-    // It names the credential, the name asked for and the names it may use.
-    CHECK(wrong_name.last_error().find("'engine-ecu' may not connect as 'Body', only as 'Engine'") != std::string::npos);
-    // The refusals above came before the hub (all three are in the audit): none of them is a peer.
-    CHECK_EQ(s.server->hub().peers().size(), std::size_t{1});
-    for (auto* c : {&ok, &wrong_name, &wrong_role, &no_token})
-    {
-        c->stop();
-    }
-}
-
 TEST_CASE(control_server_refuses_an_open_address_without_security)
 {
     CHECK(vehicle_sil::unit::throws<std::invalid_argument>([] { control_grpc::ControlServer s({.listen = "0.0.0.0:0"}); }));
@@ -224,127 +169,51 @@ TEST_CASE(control_server_reads_a_credentials_file)
     const std::string path = (std::filesystem::temp_directory_path() / ("vsil_credentials_" + std::to_string(std::random_device{}()))).string();
     {
         std::ofstream out(path);
-        out << "# role name token participants\n"
+        out << "# role name token\n"
                "viewer  alice  aaaaaaaaaaaaaaaaaaaa\n"
-               "agent   ecu    bbbbbbbbbbbbbbbbbbbb  Engine,Body   # two names\n"
+               "admin   carol  bbbbbbbbbbbbbbbbbbbb   # the lead\n"
                "\n";
     }
     const auto credentials = control_grpc::load_credentials(path);
     CHECK_EQ(credentials.size(), std::size_t{2});
-    CHECK(credentials[0].role == Role::Viewer);
-    CHECK(credentials[1].role == Role::Agent);
-    CHECK((credentials[1].participants == std::vector<std::string>{"Engine", "Body"}));
+    CHECK(credentials[0].role == Role::Viewer && credentials[0].name == "alice");
+    CHECK(credentials[1].role == Role::Admin && credentials[1].token == "bbbbbbbbbbbbbbbbbbbb");
     {
         std::ofstream out(path);
-        out << "agent ecu bbbbbbbbbbbbbbbbbbbb Engine, Body # a comma and a space\n"
-               "viewer joe tok#en-with-a-hash-0123\n";
+        out << "viewer joe tok#en-with-a-hash-0123\n";
     }
-    const auto spaced = control_grpc::load_credentials(path);
-    CHECK((spaced[0].participants == std::vector<std::string>{"Engine", "Body"}));
-    CHECK(spaced[1].token == "tok#en-with-a-hash-0123"); // '#' inside a word is part of it
-    {
-        std::ofstream out(path);
-        out << "viewer a dddddddddddddddddddd\noperator b dddddddddddddddddddd\n"; // the same token twice
-    }
-    CHECK(vehicle_sil::unit::throws<std::runtime_error>([&] { static_cast<void>(control_grpc::load_credentials(path)); }));
-    {
-        std::ofstream out(path);
-        out << "viewer a eeeeeeeeeeeeeeeeeeee Engine\n"; // participants only for agents
-    }
-    CHECK(vehicle_sil::unit::throws<std::runtime_error>([&] { static_cast<void>(control_grpc::load_credentials(path)); }));
-    {
-        std::ofstream out(path);
-        out << "agent ecu\n"; // too few fields: the message tells what an agent line needs
-    }
-    CHECK(vehicle_sil::unit::throws_if<std::runtime_error>([&] { static_cast<void>(control_grpc::load_credentials(path)); },
-                                                           [](const std::runtime_error& e) {
-                                                               return std::string(e.what()).find(
-                                                                          "and on an agent line the participant names it may connect as")
-                                                                      != std::string::npos;
-                                                           }));
-    {
-        std::ofstream out(path);
-        out << "superuser bob cccccccccccccccccccc\n";
-    }
-    CHECK(vehicle_sil::unit::throws<std::runtime_error>([&] { static_cast<void>(control_grpc::load_credentials(path)); }));
-    {
-        std::ofstream out(path);
-        out << "viewer bob short\n";
-    }
-    CHECK(vehicle_sil::unit::throws<std::runtime_error>([&] { static_cast<void>(control_grpc::load_credentials(path)); }));
-    {
-        std::ofstream out(path);
-        out << "agent ecu ffffffffffffffffffff\n"; // an agent names its participants (or *)
-    }
-    std::string why;
-    try
-    {
-        static_cast<void>(control_grpc::load_credentials(path));
-    }
-    catch (const std::runtime_error& e)
-    {
-        why = e.what();
-    }
-    CHECK(why.find(":1: the agent credential names no participant") != std::string::npos);
-    CHECK(why.find("agent ecu <token> Engine,Body") != std::string::npos && why.find("or * for any name") != std::string::npos);
-    // No word of a line is repeated in a message: a line in the wrong order has its token first.
-    const std::string token = "a-secret-token-0123456789";
-    for (const std::string& text : {token + " bob viewer\n", "agent " + token + " " + token + "x\n",
-                                    "viewer bob " + token + "\nviewer alice " + token + "\n"})
-    {
-        std::string message;
+    CHECK(control_grpc::load_credentials(path).at(0).token == "tok#en-with-a-hash-0123"); // '#' inside a word is part of it
+    const auto error_of = [](const std::string& text) {
         try
         {
             static_cast<void>(control_grpc::parse_credentials(text, "creds.txt"));
         }
         catch (const std::runtime_error& e)
         {
-            message = e.what();
+            return std::string(e.what());
         }
+        return std::string();
+    };
+    // The same token twice, a word after the token, too few words, no role, a short token.
+    CHECK(error_of("viewer a dddddddddddddddddddd\noperator b dddddddddddddddddddd\n").find("creds.txt:2: the token is used") == 0);
+    CHECK(error_of("viewer a eeeeeeeeeeeeeeeeeeee Engine\n").find("creds.txt:1: expected <role> <name> <token>") == 0);
+    CHECK(error_of("viewer bob\n").find("creds.txt:1: expected <role> <name> <token>") == 0);
+    CHECK(error_of("superuser bob cccccccccccccccccccc\n").find("the roles are viewer, operator and admin") != std::string::npos);
+    CHECK(error_of("viewer bob short\n").find("at least 16 characters") != std::string::npos);
+    // An agent line of the time when the agents connected with a token: say that it goes.
+    CHECK(error_of("viewer a aaaaaaaaaaaaaaaaaaaa\nagent ecu ffffffffffffffffffff Engine\n") ==
+          "creds.txt:2: the role agent is no longer used: the ECUs' control agents reach the server over SIL Kit, without a "
+          "token; delete this line");
+    // No word of a line is repeated in a message: a line in the wrong order has its token first.
+    const std::string token = "a-secret-token-0123456789";
+    for (const std::string& text : {token + " bob viewer\n", "agent " + token + " " + token + "x\n",
+                                    "viewer bob " + token + " " + token + "\n", "viewer bob " + token + "\nviewer alice " + token + "\n"})
+    {
+        const std::string message = error_of(text);
         CHECK(!message.empty() && message.rfind("creds.txt:", 0) == 0);
         CHECK(message.find(token) == std::string::npos);
     }
-    {
-        std::ofstream out(path);
-        out << "agent ecu ffffffffffffffffffff *\n";
-    }
-    CHECK((control_grpc::load_credentials(path).at(0).participants == std::vector<std::string>{"*"}));
     std::remove(path.c_str());
-}
-
-TEST_CASE(control_server_an_agent_credential_with_a_star_may_use_any_name)
-{
-    control_grpc::ServerOptions o;
-    o.security.credentials = {Credential{"any-ecu", kAgent, Role::Agent, {"*"}}};
-    control_grpc::ControlServer server(std::move(o));
-    control::Agent agent;
-    agent.bind_driver();
-    control_grpc::AgentClient body(agent, {.server = "127.0.0.1:" + std::to_string(server.port()), .participant = "Body",
-                                           .token = kAgent});
-    CHECK(body.wait_connected(10s));
-    body.stop();
-}
-
-TEST_CASE(control_server_refused_agents_back_off)
-{
-    // A refused agent waits reconnect_max before it tries again (not reconnect_min).
-    SecureServer s;
-    control::Agent agent;
-    agent.bind_driver();
-    control_grpc::AgentClient refused(agent, {.server = s.address, .participant = "Engine", .reconnect_min = 20ms,
-                                              .reconnect_max = 1s, .token = kViewer, .root_certificates_pem = read("server.crt")});
-    std::this_thread::sleep_for(2500ms);
-    refused.stop();
-    int refusals = 0;
-    {
-        const std::lock_guard lock(s.mutex);
-        for (const auto& line : s.audit)
-        {
-            refusals += line.find("agent: refused") != std::string::npos ? 1 : 0;
-        }
-    }
-    CHECK(refusals >= 1);
-    CHECK(refusals <= 3); // with reconnect_min it would be about 100
 }
 
 TEST_CASE(control_server_forget_peer_needs_an_operator)

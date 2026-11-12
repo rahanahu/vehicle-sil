@@ -11,39 +11,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <string_view>
 
 namespace vehicle_sil::control_grpc::detail {
 
 namespace v1 = vehicle_sil::control::v1;
 using namespace vehicle_sil::control;
-
-/// The trailing metadata of a replaced agent connection: the identifier (Hello::connection) of the
-/// connection that replaced it.
-inline constexpr std::string_view kReplacedBy = "vehicle-sil-replaced-by";
-
-/// The longest connection identifier (Hello::connection) the server accepts.
-inline constexpr std::size_t kMaxConnectionId = 64;
-
-/// A connection identifier the server accepts and may put into metadata: 1 to kMaxConnectionId
-/// characters, each of A-Z a-z 0-9 . _ -. gRPC aborts the process when the server ends a call
-/// with metadata holding bytes outside 0x20..0x7E, so nothing else from a client gets there.
-[[nodiscard]] constexpr bool valid_connection_id(std::string_view id) noexcept
-{
-    if (id.empty() || id.size() > kMaxConnectionId)
-    {
-        return false;
-    }
-    for (const char c : id)
-    {
-        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
-        if (!ok)
-        {
-            return false;
-        }
-    }
-    return true;
-}
 
 inline std::int64_t ns_of(SimTime t)
 {
@@ -93,8 +65,6 @@ inline bool from_proto(const v1::Value& in, Value& out)
 // The wire enums follow the C++ enums (shifted by the UNSPECIFIED value 0 where noted).
 static_assert(static_cast<int>(TargetStatus::Unknown) + 1 == v1::TARGET_STATUS_UNKNOWN);
 static_assert(static_cast<int>(TargetStatus::Sent) + 1 == v1::TARGET_STATUS_SENT);
-static_assert(static_cast<int>(CommandStatus::Cancelled) + 1 == v1::COMMAND_STATUS_CANCELLED);
-static_assert(static_cast<int>(CommandStatus::Applied) + 1 == v1::COMMAND_STATUS_APPLIED);
 static_assert(static_cast<int>(ValueType::Enum) + 1 == v1::VALUE_TYPE_ENUM);
 static_assert(static_cast<int>(Causality::Parameter) + 1 == v1::CAUSALITY_PARAMETER);
 static_assert(static_cast<int>(EventLevel::Error) + 1 == v1::EVENT_LEVEL_ERROR);
@@ -126,38 +96,6 @@ inline void to_proto(const VariableInfo& in, v1::VariableInfo& out)
     }
 }
 
-inline VariableInfo from_proto(const v1::VariableInfo& in)
-{
-    VariableInfo out;
-    out.name = in.name();
-    // Unknown values (from a newer peer) fall back to the safest meaning.
-    const int type = static_cast<int>(in.type());
-    out.type = type >= v1::VALUE_TYPE_BOOL && type <= v1::VALUE_TYPE_ENUM ? static_cast<ValueType>(type - 1) : ValueType::Real;
-    const int causality = static_cast<int>(in.causality());
-    out.causality = causality >= v1::CAUSALITY_INPUT && causality <= v1::CAUSALITY_PARAMETER
-                        ? static_cast<Causality>(causality - 1)
-                        : Causality::Output;
-    out.unit = in.unit();
-    if (in.has_min())
-    {
-        out.min = in.min();
-    }
-    if (in.has_max())
-    {
-        out.max = in.max();
-    }
-    if (in.has_step())
-    {
-        out.step = in.step();
-    }
-    out.description = in.description();
-    for (const auto& item : in.items())
-    {
-        out.items.push_back({item.name(), item.value()});
-    }
-    return out;
-}
-
 inline void to_proto(const Snapshot& in, v1::Snapshot& out)
 {
     out.set_time_ns(ns_of(in.time));
@@ -168,23 +106,6 @@ inline void to_proto(const Snapshot& in, v1::Snapshot& out)
     }
 }
 
-inline Snapshot from_proto(const v1::Snapshot& in)
-{
-    Snapshot out;
-    out.time = time_of(in.time_ns());
-    out.sequence = in.sequence();
-    for (const auto& v : in.values())
-    {
-        Value value;
-        if (!from_proto(v, value))
-        {
-            value = false;
-        }
-        out.values.push_back(value);
-    }
-    return out;
-}
-
 inline void to_proto(const Event& in, v1::Event& out)
 {
     out.set_time_ns(ns_of(in.time));
@@ -192,89 +113,9 @@ inline void to_proto(const Event& in, v1::Event& out)
     out.set_text(in.text);
 }
 
-inline Event from_proto(const v1::Event& in)
-{
-    Event out;
-    out.time = time_of(in.time_ns());
-    const int level = static_cast<int>(in.level());
-    out.level = level >= v1::EVENT_LEVEL_INFO && level <= v1::EVENT_LEVEL_ERROR ? static_cast<EventLevel>(level - 1) : EventLevel::Info;
-    out.text = in.text();
-    return out;
-}
-
-inline void to_proto(const Command& in, v1::Command& out)
-{
-    out.set_seq(in.seq);
-    for (const auto& w : in.writes)
-    {
-        auto* pw = out.add_writes();
-        pw->set_name(w.name);
-        to_proto(w.value, *pw->mutable_value());
-    }
-    if (in.at)
-    {
-        out.set_at_ns(ns_of(*in.at));
-    }
-    out.set_late(in.late == LatePolicy::ApplyNext ? v1::LATE_POLICY_APPLY_NEXT : v1::LATE_POLICY_REJECT);
-}
-
 inline LatePolicy late_of(v1::LatePolicy p)
 {
     return p == v1::LATE_POLICY_APPLY_NEXT ? LatePolicy::ApplyNext : LatePolicy::Reject;
-}
-
-/// @returns false if a value is empty.
-inline bool from_proto(const v1::Command& in, Command& out)
-{
-    out.seq = in.seq();
-    for (const auto& w : in.writes())
-    {
-        Value value;
-        if (!from_proto(w.value(), value))
-        {
-            return false;
-        }
-        out.writes.push_back({w.name(), value});
-    }
-    if (in.has_at_ns())
-    {
-        out.at = time_of(in.at_ns());
-    }
-    out.late = late_of(in.late());
-    return true;
-}
-
-inline void to_proto(const CommandResult& in, v1::CommandResult& out)
-{
-    out.set_seq(in.seq);
-    out.set_status(static_cast<v1::CommandStatus>(static_cast<int>(in.status) + 1));
-    if (in.applied_at)
-    {
-        out.set_applied_at_ns(ns_of(*in.applied_at));
-    }
-    out.set_late(in.late);
-    out.set_reason(in.reason);
-}
-
-/// @returns nullopt for a status this side does not know (UNSPECIFIED, or from a newer peer):
-/// it must not be taken for any outcome.
-inline std::optional<CommandResult> from_proto(const v1::CommandResult& in)
-{
-    CommandResult out;
-    out.seq = in.seq();
-    const int status = static_cast<int>(in.status());
-    if (status < v1::COMMAND_STATUS_APPLIED || status > v1::COMMAND_STATUS_CANCELLED)
-    {
-        return std::nullopt;
-    }
-    out.status = static_cast<CommandStatus>(status - 1);
-    if (in.has_applied_at_ns())
-    {
-        out.applied_at = time_of(in.applied_at_ns());
-    }
-    out.late = in.late();
-    out.reason = in.reason();
-    return out;
 }
 
 /// A peer of the hub: it has (or had) an agent.

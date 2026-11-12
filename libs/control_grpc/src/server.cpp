@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/control_grpc/server.hpp"
 
-#include "agent_service.hpp"
 #include "audit.hpp"
 #include "auth.hpp"
 #include "control_service.hpp"
@@ -73,19 +72,15 @@ ServerOptions check(ServerOptions o)
     for (std::size_t i = 0; i < sec.credentials.size(); ++i)
     {
         const auto& c = sec.credentials[i];
+        if (c.role != Role::Viewer && c.role != Role::Operator && c.role != Role::Admin)
+        {
+            throw std::invalid_argument("vehicle_sil control server: the credential of " + c.name + " has the role value " +
+                                        std::to_string(static_cast<int>(c.role)) +
+                                        ", which is no role: use Role::Viewer, Role::Operator or Role::Admin");
+        }
         if (c.token.size() < 16)
         {
             throw std::invalid_argument("vehicle_sil control server: the token of " + c.name + " has fewer than 16 characters");
-        }
-        if (!c.participants.empty() && c.role != Role::Agent)
-        {
-            throw std::invalid_argument("vehicle_sil control server: only an agent credential names participants (" + c.name + ")");
-        }
-        if (c.participants.empty() && c.role == Role::Agent)
-        {
-            throw std::invalid_argument("vehicle_sil control server: the agent credential '" + c.name
-                                        + "' names no participant; set its participants to the participant names it may "
-                                          "connect as, or to {\"*\"} (kAnyParticipant) for any name");
         }
         for (std::size_t j = 0; j < i; ++j)
         {
@@ -117,9 +112,7 @@ struct ControlServer::Impl
     control::Hub& hub;
     std::atomic<bool> stopping{false};
     Authorizer auth;
-    StreamRegistry streams;
-    std::unique_ptr<SimulationMonitor> monitor; ///< outlives the services' calls (Watch subscribes)
-    std::unique_ptr<grpc::Service> agents;
+    std::unique_ptr<SimulationMonitor> monitor; ///< outlives the service's calls (Watch subscribes)
     std::unique_ptr<grpc::Service> clients;
     std::unique_ptr<grpc::Server> server;
     int port = 0;
@@ -135,7 +128,6 @@ struct ControlServer::Impl
       monitor(options.time != nullptr
                   ? std::make_unique<SimulationMonitor>(*options.time, SimulationMonitorOptions{options.monitor_period, options.leave_grace, {}})
                   : nullptr),
-      agents(options.serve_agents ? make_agent_service(hub, auth, audit, streams, monitor.get()) : nullptr),
       clients(make_control_service(hub, options, monitor.get(), stopping, auth, audit))
     {
         const auto& sec = options.security;
@@ -165,10 +157,6 @@ struct ControlServer::Impl
         builder.AddChannelArgument(GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS, 5000);
         builder.AddChannelArgument(GRPC_ARG_HTTP2_MAX_PINGS_WITHOUT_DATA, 0);
         builder.AddListeningPort(options.listen, credentials, &port);
-        if (agents)
-        {
-            builder.RegisterService(agents.get());
-        }
         builder.RegisterService(clients.get());
         server = builder.BuildAndStart();
         if (!server || port == 0)
@@ -198,11 +186,6 @@ control::Hub& ControlServer::hub() noexcept
 SimulationMonitor* ControlServer::simulation() noexcept
 {
     return impl_->monitor.get();
-}
-
-void ControlServer::disconnect_agents()
-{
-    impl_->streams.cancel_all();
 }
 
 void ControlServer::shutdown()

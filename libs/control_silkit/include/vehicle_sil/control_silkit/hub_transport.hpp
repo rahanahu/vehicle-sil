@@ -84,6 +84,8 @@ struct HelloReport
     std::vector<std::string> mismatched; ///< a hello of another version (links() has the version)
     std::vector<std::string> ended;      ///< left the simulation (or ended its agent) without being awaited any longer
     std::vector<std::string> missing;    ///< no hello (or no answer to the probe) by the deadline, or when the wait was cancelled
+    /// wait_for_announced() only: had not said hello when it looked, and was not waited for.
+    std::vector<std::string> not_announced;
     bool cancelled = false;
 };
 
@@ -142,6 +144,15 @@ public:
     /// opens. Not from a SIL Kit handler.
     HelloReport wait_for_hellos(const std::vector<std::string>& participants, std::chrono::steady_clock::time_point deadline,
                                 const std::function<bool()>& cancelled = {});
+
+    /// wait_for_hellos() for those of `participants` that have said hello already; the others
+    /// are HelloReport::not_announced. For the window before the start of a controller that does
+    /// not know which participants offer their variables (vehicle_sil_control_server): in the
+    /// window, a required participant that published its hello before it started has been heard
+    /// (docs/dependencies.md), so one that has not offers no agent, and waiting for it would only
+    /// delay the start.
+    HelloReport wait_for_announced(const std::vector<std::string>& participants, std::chrono::steady_clock::time_point deadline,
+                                   const std::function<bool()>& cancelled = {});
 
     /// One entry per participant that has sent a hello, by name.
     [[nodiscard]] std::vector<LinkInfo> links() const;

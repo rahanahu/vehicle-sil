@@ -31,19 +31,7 @@ bool allows(const Who& who, Role need)
     {
         return true;
     }
-    const Role have = who.role;
-    if (need == Role::Agent || have == Role::Agent)
-    {
-        return have == need;
-    }
-    return static_cast<int>(have) >= static_cast<int>(need);
-}
-
-bool may_connect_as(const Who& who, const std::string& participant)
-{
-    return who.anyone || std::any_of(who.participants.begin(), who.participants.end(), [&](const std::string& p) {
-               return p == participant || p == kAnyParticipant;
-           });
+    return static_cast<int>(who.role) >= static_cast<int>(need);
 }
 
 std::optional<Who> Authorizer::identify(const grpc::ServerContextBase& context) const
@@ -79,7 +67,7 @@ std::optional<Who> Authorizer::identify(const grpc::ServerContextBase& context) 
     {
         return std::nullopt;
     }
-    return Who{found->name, found->role, found->participants, false};
+    return Who{found->name, found->role, false};
 }
 
 std::string role_name(Role role)
@@ -92,8 +80,6 @@ std::string role_name(Role role)
         return "operator";
     case Role::Admin:
         return "admin";
-    case Role::Agent:
-        return "agent";
     }
     return "?";
 }
@@ -118,7 +104,6 @@ const std::vector<RpcRule>& rpc_rules()
         {kControlService, "SetSpeed", Role::Operator, true, "set the speed"},
         {kControlService, "WaitPaused", Role::Viewer, false, "wait for a pause"},
         {kControlService, "Stop", Role::Admin, true, "stop"},
-        {kAgentService, "Connect", Role::Agent, true, "connect an agent"},
     };
     return rules;
 }
@@ -177,13 +162,17 @@ std::vector<Credential> parse_credentials(const std::string& text, const std::st
         {
             continue;
         }
-        if (fields.size() < 3)
+        const auto& role = fields[0];
+        if (role == "agent")
         {
-            throw fail("expected <role> <name> <token>, and on an agent line the participant names it may connect as "
-                       "(for example: viewer alice <token>, agent ecu <token> Engine,Body, or agent ecu <token> * for any name)");
+            throw fail("the role agent is no longer used: the ECUs' control agents reach the server over SIL Kit, "
+                       "without a token; delete this line");
+        }
+        if (fields.size() != 3)
+        {
+            throw fail("expected <role> <name> <token> (for example: viewer alice <token>)");
         }
         Credential c;
-        const auto& role = fields[0];
         if (role == "viewer")
         {
             c.role = Role::Viewer;
@@ -196,40 +185,15 @@ std::vector<Credential> parse_credentials(const std::string& text, const std::st
         {
             c.role = Role::Admin;
         }
-        else if (role == "agent")
-        {
-            c.role = Role::Agent;
-        }
         else
         {
-            throw fail("the first word is no role: the roles are viewer, operator, admin and agent (<role> <name> <token>)");
+            throw fail("the first word is no role: the roles are viewer, operator and admin (<role> <name> <token>)");
         }
         c.name = fields[1];
         c.token = fields[2];
         if (c.token.size() < 16)
         {
             throw fail("a token needs at least 16 characters");
-        }
-        // The participants: the rest of the line, separated by commas and/or spaces.
-        for (std::size_t i = 3; i < fields.size(); ++i)
-        {
-            std::istringstream list(fields[i]);
-            for (std::string p; std::getline(list, p, ',');)
-            {
-                if (!p.empty())
-                {
-                    c.participants.push_back(p);
-                }
-            }
-        }
-        if (!c.participants.empty() && c.role != Role::Agent)
-        {
-            throw fail("only an agent credential names participants");
-        }
-        if (c.participants.empty() && c.role == Role::Agent)
-        {
-            throw fail("the agent credential names no participant; write the participant names it may connect as after the "
-                       "token, separated by commas (for example: agent ecu <token> Engine,Body), or * for any name");
         }
         for (const auto& other : out)
         {

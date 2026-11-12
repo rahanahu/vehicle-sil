@@ -63,7 +63,7 @@ class EcuAgent;
 /// Variables (input(), output() and their forms): the ECU's control::Agent (agent()) holds
 /// them, made when first used; an ECU without variables has none and its steps do nothing for
 /// it. Writes come through the agent (Agent::submit(), or a transport such as
-/// control_grpc::AgentClient on agent()), values go out through Agent::latest(). The ECU drives
+/// control_silkit::AgentTransport on agent()), values go out through Agent::latest(). The ECU drives
 /// the agent: it applies the writes and samples in its steps as above. A Peer cancels the
 /// writes still waiting when it stops (stop() and its destructor; Agent::finish()), so a
 /// transport stopped after it still reports them; on LocalBench nobody receives the results of
@@ -156,8 +156,8 @@ public:
     /// Peer's monitoring outputs, on every implementation alike) and bad options;
     /// std::logic_error once the run has started or the schema is complete. A clash with the
     /// other monitoring outputs of a Peer ("j1939.<network>. ...") shows when the schema is
-    /// completed (control::Agent::complete_schema(): Peer::start(), an AgentClient's
-    /// constructor or the first submit()), as std::invalid_argument there.
+    /// completed (control::Agent::complete_schema(): Peer::start(), a transport's constructor
+    /// (control_silkit::AgentTransport) or the first submit()), as std::invalid_argument there.
     template <typename T>
     void input(std::string name, T* value, control::VariableOptions options = {})
     {
@@ -212,7 +212,7 @@ public:
     /// (control::Agent::check_options(), with the ECU named); the options stay as they were.
     void set_agent_options(control::AgentOptions options);
     /// This ECU's control agent, made on first use (input() and output() use it too). Use it to
-    /// connect a transport (control_grpc::AgentClient, which completes the schema: declare the
+    /// connect a transport (control_silkit::AgentTransport, which completes the schema: declare the
     /// variables first; the networks and nodes of a Peer that exist then are the ones its
     /// monitoring covers), to write (submit()), to read (latest(), schema()) and for events
     /// (log(), from the steps). After the run has started it returns the agent the ECU has;
@@ -341,9 +341,9 @@ public:
             return {};
         }
         return who_ + "destroyed while " + std::to_string(n)
-               + " transport(s) (e.g. control_grpc::AgentClient) still use its control agent: destroy the AgentClient "
-                 "before the ECU, Simulation or LocalBench (declare it after them), and do not emplace() it in the "
-                 "ECU\n";
+               + " transport(s) (e.g. control_silkit::AgentTransport) still use its control agent: destroy the "
+                 "transport before the ECU, Simulation or LocalBench (declare it after them), and do not emplace() it "
+                 "in the ECU\n";
     }
 
     void set_options(control::AgentOptions options)

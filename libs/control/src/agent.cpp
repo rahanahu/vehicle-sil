@@ -86,7 +86,7 @@ void Agent::require_registering(const std::string& what) const
     {
         throw std::logic_error("vehicle_sil::control::Agent: " + what
                                + " after the schema was complete (by the start of the run, the first submit() or a "
-                                 "transport such as AgentClient): declare every variable before that");
+                                 "transport such as control_silkit::AgentTransport): declare every variable before that");
     }
 }
 

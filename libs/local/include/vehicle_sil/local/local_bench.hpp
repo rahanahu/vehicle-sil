@@ -91,7 +91,7 @@ namespace vehicle_sil {
 /// (the one emplaced last first); then the driver, and last the LIN buses and the CAN buses with
 /// the endpoints. References it returns are valid as long as the LocalBench. Observers and tap
 /// listeners may outlive it (they are detached). A transport of an ECU's agent
-/// (control_grpc::AgentClient) must be destroyed before the LocalBench, so the results of the
+/// (control_silkit::AgentTransport, for an ECU on SIL Kit) must be destroyed before the LocalBench, so the results of the
 /// writes still waiting then reach nobody.
 ///
 /// Not thread safe.

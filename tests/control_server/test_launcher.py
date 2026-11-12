@@ -8,7 +8,7 @@ examples/ecu_main as processes, driven from Python.
 - The end: calls that wait (Watch, WaitOperation, WaitPaused) are still waiting while the run lasts,
   end with the run, and the run does not wait for them: at its end, on --timeout-ms, when a
   participant fails (also in the hold); a stop from standard input in the hold.
-- TLS, credentials and roles, the audit log, no AgentService; the usage errors (an empty
+- TLS, credentials and roles, the audit log, no agents over gRPC; the usage errors (an empty
   credentials file too), a port in use; version --json.
 (The limits of the start around the hold, --timeout-ms and Ctrl+C in the hold, the commands before
 the window and a Stop after the end are tested in C++: launch_control.*, launch.*.)
@@ -31,7 +31,6 @@ import unittest
 import grpc
 
 from vehicle_sil_control import Control, ControlError, Launch, LaunchError, TimeState, control_address, ms
-from vehicle_sil_control._stubs import pb, rpc
 
 EXE = ".exe" if os.name == "nt" else ""
 TOKEN = "0123456789abcdef-test-token"
@@ -301,11 +300,12 @@ class LauncherTest(unittest.TestCase):
                     o.sim.stop()
                 self.assertEqual(refused.exception.code, grpc.StatusCode.PERMISSION_DENIED)
                 o.sim.pause()
-            # No agent connects over gRPC to the launcher.
+            # No agent connects over gRPC (the agents' service of earlier versions is not there).
             channel = grpc.secure_channel(launch.address, grpc.ssl_channel_credentials(roots))
             try:
-                stream = rpc.AgentServiceStub(channel).Connect(iter([pb.AgentMessage()]), timeout=30,
-                                                               metadata=[("authorization", f"Bearer {TOKEN}")])
+                connect = channel.stream_stream("/vehicle_sil.control.v1.AgentService/Connect",
+                                                request_serializer=lambda b: b, response_deserializer=lambda b: b)
+                stream = connect(iter([b""]), timeout=30, metadata=[("authorization", f"Bearer {TOKEN}")])
                 with self.assertRaises(grpc.RpcError) as refused:
                     next(stream)
                 self.assertEqual(refused.exception.code(), grpc.StatusCode.UNIMPLEMENTED)
@@ -342,6 +342,7 @@ class LauncherTest(unittest.TestCase):
         sim = str(config("usage", 1000))
         empty = self.credentials("# nothing here\n\n", "empty.txt")
         wrong_order = self.credentials(f"{TOKEN} tester admin\n", "wrong_order.txt")
+        agent = self.credentials(f"admin tester {TOKEN}x\nagent ecu {TOKEN} Engine\n", "agent.txt")
         for arguments, message in [
             (["--control", "0.0.0.0:0"], "--control 0.0.0.0:0 is reachable from other computers: a control server there needs "
                                          "TLS and credentials (--control-tls-cert, --control-tls-key and "
@@ -355,6 +356,9 @@ class LauncherTest(unittest.TestCase):
             (["--control", "0", "--control-credentials", str(SCRATCH / "missing.txt")], "cannot read "),
             (["--control", "0", "--control-credentials", str(empty)], f"--control-credentials: {empty} has no credential"),
             (["--control", "0", "--control-credentials", str(wrong_order)], "the first word is no role"),
+            (["--control", "0", "--control-credentials", str(agent)],
+             f"--control-credentials: {agent}:2: the role agent is no longer used: the ECUs' control agents reach the "
+             "server over SIL Kit, without a token; delete this line"),
         ]:
             out = self.run_launcher("run", *arguments, sim)
             self.assertEqual(out.returncode, 4, out.stderr)

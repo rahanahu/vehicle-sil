@@ -343,8 +343,6 @@ std::unique_ptr<LauncherControlServer> make_control_server(const ControlArgument
 {
     control_grpc::ServerOptions options;
     options.listen = listen_address(arguments.address);
-    // The ECUs' agents reach the hub over SIL Kit: the server is for clients only.
-    options.serve_agents = false;
     if (arguments.tls_cert.empty() != arguments.tls_key.empty())
     {
         throw cli::UsageError("--control-tls-cert and --control-tls-key go together: TLS needs the certificate chain and "

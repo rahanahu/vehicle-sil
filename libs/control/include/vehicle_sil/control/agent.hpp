@@ -194,7 +194,7 @@ struct AgentOptions
 ///   here, so the model needs no locks. The step thread never waits for the transport side.
 /// - the transport side (the connection to a control server, or a test): submit(),
 ///   drain_results(), drain_events(), latest(), stats(). A transport that outlives the calls it
-///   makes (a thread of its own, such as control_grpc::AgentClient) holds a TransportLease on
+///   makes (one that lives beside the ECU, such as control_silkit::AgentTransport) holds a TransportLease on
 ///   the agent while it lives. These are thread safe among themselves
 ///   (a lock that the step thread never takes); they may wait briefly for finish() and for the
 ///   wake-up of a real-time driver (Host::post()).
@@ -216,7 +216,7 @@ struct AgentOptions
 /// Register the variables before the schema is complete (std::logic_error afterwards; this is a
 /// check against misuse, not a synchronisation: do not register from one thread while another
 /// submits). The schema is complete from the first of: complete_schema() (a transport such as
-/// control_grpc::AgentClient calls it before it reads schema(); the driver before the first
+/// control_silkit::AgentTransport calls it before it reads schema(); the driver before the first
 /// step), the first submit() and the first step. A pointer or function passed to input() and
 /// output() must stay valid as long as the agent is used.
 class Agent
@@ -316,7 +316,7 @@ public:
     /// (input() and output() throw std::logic_error afterwards). Once: later calls return at
     /// once; concurrent calls wait for the first. The function runs on the thread of the call
     /// that completes: a transport calls it on the set-up thread before it starts a thread of
-    /// its own or reads schema() (control_grpc::AgentClient's constructor does); otherwise its
+    /// its own or reads schema() (control_silkit::AgentTransport's constructor does); otherwise its
     /// first submit() completes on the transport's thread, which races with a set-up still in
     /// progress. The driver calls it before its first step. If the function throws, the
     /// exception propagates and the schema stays open; what makes it throw must be fixed first
@@ -467,7 +467,7 @@ private:
 /// owner of the agent checks that none is left when it destroys the agent: an ECU stops the
 /// process with a message if one is (the transport would use a destroyed agent). A transport
 /// with a thread of its own makes one before the thread starts and destroys it after the thread
-/// ended (control_grpc::AgentClient does).
+/// ended; control_silkit::AgentTransport holds one from its constructor to its destructor.
 class TransportLease
 {
 public:
