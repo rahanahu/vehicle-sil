@@ -1,8 +1,6 @@
 // 実行の画面を、本物の GUI サーバーと偽のランチャー（gui/server/tests/fake_launcher.py）で通す。
 // 構成ファイルは gui/server/tests/configs/ で、ファイルごとに偽のランチャーの筋書きが決まっている。
 // サーバーは 1 つのセッションしか動かさないので、試験は順に動き、動かしたものは止めてから終わる。
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { Page, WebSocketRoute, expect, test } from '@playwright/test';
 import { guiToken } from './support/gui-server';
 import { VIEWPORTS, findLayoutProblems } from './support/layout';
@@ -227,6 +225,13 @@ test('a launcher that dies without a result: an abnormal end, and where to look'
   ).toHaveText(/終了/);
   await expect(page.getByRole('list', { name: '段階' })).toContainText('（中断）');
   await expect(page.getByTestId('problems-card')).toContainText('no-result');
+  // ランチャーの標準エラーは、サーバーの知らせとは別のまとまりに
+  await expect(page.getByTestId('stderr-last')).toContainText('dying on purpose');
+  await expect(page.getByTestId('problems-card')).not.toContainText('launcher-stderr');
+  // 終わりを知らせてこなかった participant は「参加した」のままにしない
+  for (const name of ['Engine', 'Dashboard']) {
+    await expect(page.getByTestId(`status-${name}`)).toContainText('不明（ランチャーが先に終了）');
+  }
   // 次に見るところ: ランチャーのログ
   await page.getByRole('button', { name: 'ランチャーのログを見る' }).click();
   await expect(page.getByRole('heading', { name: 'ログ' })).toBeFocused();
@@ -235,29 +240,23 @@ test('a launcher that dies without a result: an abnormal end, and where to look'
 });
 
 test('a launcher that runs on after its result can still be stopped', async ({ page }) => {
-  // 結果を出した後も終わらないランチャーの代わりに、動いている実行へ結果の事象を差し込む
-  let route: WebSocketRoute | undefined;
-  await page.routeWebSocket(/\/ws$/, (ws) => {
-    ws.connectToServer();
-    route = ws;
-  });
-  await page.reload();
-  await choose(page, 'forever.yaml');
+  // 偽のランチャーの筋書き result-then-wait: 結果を書いた後も、止めるよう頼まれるまで終わらない
+  await choose(page, 'result-then-wait.yaml');
   const session = await start(page);
-  await expect(page.getByTestId('log-line').first()).toBeVisible({ timeout: RUN_TIMEOUT });
-  // 結果の事象は、通しの実行の例（gui/protocol/examples/ws-pass.json）から借りる
-  const example = JSON.parse(
-    readFileSync(resolve(__dirname, '../../protocol/examples/ws-pass.json'), 'utf8'),
-  ) as { server: { type: string; event?: { event: string } }[] };
-  const resultEvent = example.server.find((m) => m.type === 'event' && m.event?.event === 'result');
-  route?.send(
-    JSON.stringify({ ...resultEvent, session, event: { ...resultEvent?.event, seq: 1_000_000 } }),
-  );
+  await expect(result(page, session)).toContainText('成功', { timeout: RUN_TIMEOUT });
   await expect(page.getByTestId('outcome')).toContainText('ランチャーが終わるのを待っています');
   await expect(page.getByTestId('finishing')).toBeVisible();
+  await expect(primary(page)).toHaveAttribute('data-action', 'stop');
   await expect(primary(page)).toHaveText(/停止/);
+  // しばらく待っても、ランチャーは終わらず、停止を出したまま
+  await page.waitForTimeout(1000);
+  await expect(primary(page)).toHaveAttribute('data-action', 'stop');
+  const stop = page.waitForRequest((r) => r.url().endsWith('/api/stop'));
   await primary(page).click();
+  expect((await stop).postDataJSON()).toEqual({ force: false });
   await expect(primary(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
+  await expect(page.getByTestId('outcome')).toContainText('成功');
+  await expect(page.getByTestId('finishing')).toHaveCount(0);
 });
 
 test('a reload and a second tab show the same run', async ({ page, context }) => {
@@ -453,10 +452,14 @@ test('everything can be done with the keyboard, and the focus stays on the butto
 });
 
 test.describe('the screen at every width', () => {
-  /** 状態: ファイルを選んで所見がある、実行中でログが流れる、失敗で終わった、ランチャーが異常終了した。 */
+  /**
+   * 状態: ファイルを選んで所見がある、実行中でログが流れる、止めるよう頼んだ（待たずに止めるボタンが出る）、
+   * 失敗で終わった、ランチャーが異常終了した。
+   */
   const STATES = [
     { name: 'chosen', file: 'check-error.yaml', run: false },
     { name: 'running', file: 'forever.yaml', run: true },
+    { name: 'stopping', file: 'ignore-stop.yaml', run: true },
     { name: 'failed', file: 'participant-crash.yaml', run: true },
     { name: 'crashed', file: 'launcher-crash.yaml', run: true },
   ] as const;
@@ -469,8 +472,12 @@ test.describe('the screen at every width', () => {
       await choose(page, state.file);
       if (state.run) {
         const session = await start(page);
-        if (state.name === 'running') {
+        if (state.name === 'running' || state.name === 'stopping') {
           await expect(page.getByTestId('log-line').nth(5)).toBeVisible({ timeout: RUN_TIMEOUT });
+          if (state.name === 'stopping') {
+            await primary(page).click();
+            await expect(page.getByTestId('force-stop')).toBeVisible();
+          }
         } else {
           await expect(primary(page)).toHaveText(/もう一度実行/, { timeout: RUN_TIMEOUT });
           await expect(page.locator(`[data-session="${session}"]`).first()).toBeVisible();
@@ -512,7 +519,7 @@ test.describe('the screen at every width', () => {
     });
   }
 
-  test('running, in the dark color scheme', async ({ page }, testInfo) => {
+  test('failed, in the dark color scheme', async ({ page }, testInfo) => {
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.setViewportSize({ width: 1024, height: 768 });
     await choose(page, 'participant-crash.yaml');
