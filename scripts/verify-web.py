@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Install, check, unit-test, build and end-to-end test the web front end (gui/web), with a short summary.
 
-Steps, in order: npm ci, npm run format:check, npm run lint, npm test, npm run build, npm run e2e (the built
+Steps, in order: npm ci, npm run format:check, npm run lint, npm test, i18n (npm run i18n:extract, then the
+extracted messages are compared with each translation file gui/web/src/locale/messages.<lang>.json: a missing
+message, a changed source and a broken target fail, unless the message is marked not translated yet with
+"target": null; obsolete entries are listed; see scripts/web_i18n.py), npm run build, npm run e2e (the built
 app served by the GUI server of gui/server, which runs the fake launcher), npm run e2e:dev (the dev server with
 its proxy to the GUI server). The full output of each step goes to build/logs/<tag>-<step>.log (tag: web); the
 summary shows one line per step and, for a failed step, its first error lines and its log. Stops at the first
@@ -14,7 +17,8 @@ the C++ tests (scripts/busy_machine.py). It gives up after --wait-limit minutes 
 
 While working on the end-to-end tests, --e2e-grep, --e2e-repeat and --skip-checks narrow a run (they are
 passed to Playwright as --grep and --repeat-each; --skip-checks leaves out the format check, lint and unit
-tests, not the build).
+tests, not the build). --i18n-only runs only the i18n step; --i18n-update rewrites the translation files to
+match the extraction (new messages get "target": null, obsolete ones are dropped and printed) and stops.
 
 Exit codes: 0 every step passed, 1 a step failed, 2 usage error (missing tools, unsupported Node or npm).
 Requires Python 3.11+ (standard library only), Node and npm (gui/web/.nvmrc), and uv for the e2e steps.
@@ -35,11 +39,14 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import web_i18n
 from busy_machine import DEFAULT_LIMIT_S, wait_until_quiet
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "gui" / "web"
 LOG_DIR = ROOT / "build" / "logs"
+EXTRACTION = ROOT / "build" / "i18n" / "messages.json"  # npm run i18n:extract
+LOCALE_DIR = WEB / "src" / "locale"
 LINE_CHARS = 300
 MAX_ERROR_LINES = 12
 
@@ -52,6 +59,7 @@ ERROR_LINES = {
     "format": re.compile(r"\[warn\]|\[error\]"),
     "lint": re.compile(r"^\S.*\.(ts|html)$|^\s+\d+:\d+\s+(error|warning)\s|problems?\s*\(|Error"),
     "test": re.compile(r"\bFAIL\b|×|AssertionError|Error:|^\s+(Test Files|Tests)\s"),
+    "i18n": re.compile(r"\[ERROR\]|error TS\d+|^Error|rror:"),
     "build": re.compile(r"^\s*(✘|X)\s*\[ERROR\]|\[ERROR\]|error TS\d+|^Error|budget"),
     "e2e": E2E_ERRORS,
     "e2e-dev": E2E_ERRORS,
@@ -64,13 +72,14 @@ SUMMARY_LINES = {
     "format": re.compile(r"All matched files use Prettier code style"),
     "lint": re.compile(r"All files pass linting"),
     "test": re.compile(r"^\s+Tests\s+\d+"),
+    "i18n": re.compile(r"Extraction Complete"),
     "build": re.compile(r"Initial total"),
     "e2e": E2E_SUMMARY,
     "e2e-dev": E2E_SUMMARY,
 }
 
 # Steps that wait while timing-sensitive work runs on the machine.
-HEAVY = {"test", "build", "e2e", "e2e-dev"}
+HEAVY = {"test", "i18n", "build", "e2e", "e2e-dev"}
 
 # Warnings worth showing even when a step passes.
 NOTE_LINES = {"build": re.compile(r"budget", re.IGNORECASE)}
@@ -201,6 +210,53 @@ def run_step(step: Step, env: dict[str, str], log: Path) -> None:
         step.errors = errors[:MAX_ERROR_LINES] or [ln for ln in lines if ln.strip()][-8:]
 
 
+def check_translations(step: Step, log: Path) -> None:
+    """After the extraction: compare it with each translation file; the step fails on missing or wrong ones."""
+    try:
+        reports = web_i18n.check(EXTRACTION, LOCALE_DIR)
+    except (OSError, ValueError) as e:
+        step.ok, step.code, step.summary, step.errors = False, 1, "", [str(e)]
+        return
+    lines = []
+    for r in reports:
+        lines.append(r.summary())
+        lines += [f"  {r.language} missing: {m}" for m in r.missing]
+        lines += [f"  {r.language} wrong: {m}" for m in r.problems]
+        lines += [f"  {r.language} not translated yet: {m}" for m in r.untranslated]
+        lines += [f"  {r.language} obsolete: {m}" for m in r.obsolete]
+    with open(log, "a", encoding="utf-8") as f:
+        f.write("\n".join(["", "$ compare with gui/web/src/locale/messages.*.json", *lines]) + "\n")
+    step.summary = "; ".join(r.summary() for r in reports) if reports else "no translation files"
+    step.notes = [f"{r.language} obsolete: {m}" for r in reports for m in r.obsolete][:5]
+    if not all(r.ok for r in reports):
+        step.ok, step.code = False, 1
+        step.errors = [f"{r.language} {kind}: {m}" for r in reports
+                       for kind, items in (("missing", r.missing), ("wrong", r.problems)) for m in items]
+        step.errors = step.errors[:MAX_ERROR_LINES]
+        if any(r.missing or any("source differs" in m for m in r.problems) for r in reports):
+            step.errors.append("bring the files up to date with scripts/verify-web.py --i18n-update (new messages "
+                               "become \"target\": null), then translate them")
+        if any(r.problems for r in reports):
+            step.errors.append("fix a wrong target in gui/web/src/locale/messages.<lang>.json, or set it to null "
+                               "(not translated yet)")
+
+
+def update_translations(npm: str, env: dict[str, str]) -> int:
+    step = Step("i18n", [npm, "run", "i18n:extract"])
+    log = LOG_DIR / "i18n-update.log"
+    run_step(step, env, log)
+    if not step.ok:
+        print(f"verify-web --i18n-update: the extraction FAILED (exit {step.code}), log: {step.log}")
+        for ln in step.errors:
+            print("    " + ln)
+        return 1
+    for language, added, dropped in web_i18n.update(EXTRACTION, LOCALE_DIR):
+        print(f"{language}: {added} added as not translated yet (\"target\": null), {len(dropped)} obsolete dropped")
+        for ln in dropped:
+            print("  dropped: " + ln)
+    return 0
+
+
 def on_sigterm(_signum, _frame) -> None:
     raise KeyboardInterrupt
 
@@ -219,7 +275,9 @@ def main() -> int:
         "  scripts/verify-web.py --skip-e2e       # no browser, no GUI server\n"
         "  scripts/verify-web.py --tag web-ci     # logs as build/logs/web-ci-*.log\n"
         "  scripts/verify-web.py --no-wait        # do not wait for ninja, ctest or the VM\n"
-        "  scripts/verify-web.py --skip-install --skip-checks --e2e-grep 'double click' --e2e-repeat 5",
+        "  scripts/verify-web.py --skip-install --skip-checks --e2e-grep 'double click' --e2e-repeat 5\n"
+        "  scripts/verify-web.py --i18n-only      # only compare the messages with the translation files\n"
+        "  scripts/verify-web.py --i18n-update    # add new messages to the files as not translated yet",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--skip-install", action="store_true", help="do not run npm ci (use the node_modules there)")
@@ -234,6 +292,11 @@ def main() -> int:
                         help="do not run the format check, lint and unit tests (the build and e2e still run)")
     parser.add_argument("--e2e-grep", metavar="PATTERN", help="run only the e2e tests whose title matches PATTERN")
     parser.add_argument("--e2e-repeat", type=int, default=1, metavar="N", help="run each e2e test N times")
+    parser.add_argument("--i18n-only", action="store_true",
+                        help="run only the i18n step (extraction and comparison with the translation files)")
+    parser.add_argument("--i18n-update", action="store_true",
+                        help="rewrite the translation files to match the extraction (new messages get "
+                        "\"target\": null, obsolete ones are dropped) and stop; needs node_modules")
     args = parser.parse_args()
     if args.e2e_repeat < 1:
         die_usage("--e2e-repeat must be 1 or more")
@@ -249,19 +312,25 @@ def main() -> int:
     for tool, path in (("node", node), ("npm", npm)):
         if tool in engines:
             check_engine(tool, path, engines[tool])
-    if not args.skip_e2e and shutil.which("uv") is None:
+    i18n_alone = args.i18n_only or args.i18n_update
+    if not i18n_alone and not args.skip_e2e and shutil.which("uv") is None:
         die_usage("uv is not on PATH; the e2e tests start the GUI server with uv (or pass --skip-e2e)")
-    if args.skip_install and not (WEB / "node_modules").is_dir():
-        die_usage("gui/web/node_modules is missing; run without --skip-install")
+    if (args.skip_install or i18n_alone) and not (WEB / "node_modules").is_dir():
+        die_usage("gui/web/node_modules is missing; run npm ci in gui/web (or verify-web.py without --skip-install)")
 
     steps = []
-    if not args.skip_install:
+    if args.i18n_only:
+        steps.append(Step("i18n", [npm, "run", "i18n:extract"]))
+    elif args.i18n_update:
+        pass
+    elif not args.skip_install:
         steps.append(Step("install", [npm, "ci", "--no-fund", "--no-audit"]))
-    if not args.skip_checks:
+    if not i18n_alone and not args.skip_checks:
         steps += [Step("format", [npm, "run", "format:check"]), Step("lint", [npm, "run", "lint"]),
-                  Step("test", [npm, "test"])]
-    steps.append(Step("build", [npm, "run", "build"]))
-    if not args.skip_e2e:
+                  Step("test", [npm, "test"]), Step("i18n", [npm, "run", "i18n:extract"])]
+    if not i18n_alone:
+        steps.append(Step("build", [npm, "run", "build"]))
+    if not i18n_alone and not args.skip_e2e:
         narrow = (["--grep", args.e2e_grep] if args.e2e_grep else []) + \
             (["--repeat-each", str(args.e2e_repeat)] if args.e2e_repeat > 1 else [])
         extra = ["--", *narrow] if narrow else []
@@ -274,6 +343,12 @@ def main() -> int:
     for stale in logs.values():
         stale.unlink(missing_ok=True)
     signal.signal(signal.SIGTERM, on_sigterm)
+    if args.i18n_update:
+        try:
+            return update_translations(npm, env)
+        except KeyboardInterrupt:
+            print("verify-web: interrupted", file=sys.stderr)
+            return 130
 
     done: list[Step] = []
     try:
@@ -281,6 +356,8 @@ def main() -> int:
             if step.name in HEAVY and not args.no_wait:
                 wait_until_quiet("verify-web", args.wait_limit * 60)
             run_step(step, env, logs[step.name])
+            if step.name == "i18n" and step.ok:
+                check_translations(step, logs[step.name])
             done.append(step)
             if not args.json:
                 head = f"web {step.name}: " + ("ok" if step.ok else f"FAILED (exit {step.code})")
