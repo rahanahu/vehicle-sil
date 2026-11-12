@@ -166,6 +166,13 @@ public:
     /// Only with virtual time, and only before start(); otherwise throws std::logic_error.
     void set_step_hold(StepHold hold);
 
+    /// Sets an observer of the end of this participant's run. It is called when a stop is
+    /// requested (stop(), request_stop()) and when this participant's lifecycle is seen in a state
+    /// after Running (has_finished()), on the thread where that happens (the SIL Kit thread too),
+    /// possibly more than once, and one call at a time. It must not call into this runtime and
+    /// must not throw. Only before start(); otherwise throws std::logic_error.
+    void set_stop_observer(std::function<void()> observer);
+
     /// Completes the step that the StepHold held back; does nothing if none is held. Thread safe
     /// (not from within the StepHold). A stop does not need it: stop() and request_stop() end a
     /// simulation that stands still. Must not be called once the destructor has begun.
@@ -301,6 +308,9 @@ private:
 
     StepHandler step_handler_;
     StepHold step_hold_;
+    std::mutex stop_observer_mutex_; ///< guards stop_observer_; held while it is called
+    std::function<void()> stop_observer_;
+    void notify_stop_observer() noexcept;
     std::mutex hold_mutex_; ///< guards held_; held while the StepHold decides
     bool held_ = false;     ///< a step is held and not yet completed
     bool hold_disabled_ = false; ///< guarded by hold_mutex_; set by stop()

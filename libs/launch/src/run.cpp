@@ -15,9 +15,12 @@
 #include <silkit/vendor/CreateSilKitRegistry.hpp>
 
 #include <algorithm>
+#include <numeric>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -136,6 +139,14 @@ const char* result_name(RunResult result)
     case RunResult::Usage: return "usage";
     }
     return "failed";
+}
+
+constexpr std::int64_t kNanosPerMilli = 1'000'000;
+
+/// Nanoseconds as milliseconds in the shortest form ("10", "2.5").
+std::string millis_text(std::int64_t ns)
+{
+    return speed_text(static_cast<double>(ns) / static_cast<double>(kNanosPerMilli));
 }
 
 std::size_t count(const std::vector<Finding>& findings, Severity severity)
@@ -290,6 +301,48 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                                                   : std::string("stopped the participants before the simulation started")),
             nullptr);
     }
+    if (const RunTiming& t = outcome.timing; t.late_steps > 0)
+    {
+        const auto actual = t.actual_speed();
+        add(Severity::Warning, "behind-real-time",
+            "the simulation fell behind real time: " + std::to_string(t.late_steps) + " of " + std::to_string(t.paced_steps) +
+                " paced steps of the launcher's controller (" + std::to_string(t.time_step_ms) + " ms each) began more than " +
+                std::to_string(t.late_tolerance_ms) + " ms (late_tolerance_ms) after the real time they stand for, the latest by " +
+                std::to_string(t.max_late_ms) + " ms" +
+                (t.late_ms > 0 ? "; when the run ended, the next step was " + std::to_string(t.late_ms) +
+                                     " ms overdue (the simulation was not moving)"
+                               : std::string{}) +
+                ". The launcher does not catch up after a late step (the ECUs' periodic messages would leave in a burst): it "
+                "goes on at the speed from there, so the simulation came " +
+                std::to_string(t.slipped_ms) + " ms behind in all" +
+                (actual ? " and ran at " + speed_text(actual) + " times real time (pauses not counted)" : std::string{}) +
+                "; a device attached in real time got the ECUs' messages late by up to that. Lower the speed (speed, run "
+                "--speed), or find what is slow: an ECU whose step takes long needs a lighter step (a larger step of that "
+                "ECU does not help), and many ECUs with small steps cost a round of synchronisation per step (larger ECU "
+                "steps and a larger time_step_ms help then). The launcher cannot tell which participant is slow: leave ECUs "
+                "out one at a time (--disable <name>) and compare",
+            nullptr);
+    }
+    // Only where a speed counts: a run as fast as possible keeps no real time anyway.
+    if (const RunTiming& t = outcome.timing; (t.speed || t.paced_steps > 0) && t.step_delay_ns.value_or(0) > 0 &&
+                                             t.fine_step_ms > 0 && t.fine_step_ms < t.time_step_ms)
+    {
+        const std::string delay = millis_text(*t.step_delay_ns);
+        add(Severity::Warning, "coarse-time-step",
+            "the launcher's controller steps every " + std::to_string(t.time_step_ms) + " ms (" +
+                (t.time_step_written ? "time_step_ms" : "the default of a run that starts without a speed") + "), but " +
+                (t.ecu_step_ns && *t.ecu_step_ns < t.time_step_ms * kNanosPerMilli
+                     ? "the ECUs' steps are as small as " + millis_text(*t.ecu_step_ns) + " ms"
+                     : std::string("not every ECU step starts at one of its steps")) +
+                ": with a speed, the launcher keeps real time only at the controller's steps. An ECU step that starts "
+                "between two of them runs at the later one, up to " +
+                delay + " ms after the real time it stands for (never before it), together with the other steps in "
+                        "between; a device attached in real time gets the messages of those steps up to " +
+                delay + " ms late and in a burst. Write time_step_ms: " + std::to_string(t.fine_step_ms) +
+                (t.time_step_written ? " (or leave time_step_ms out: with a speed, the default is that)"
+                                     : " (or give the speed from the start, with speed or run --speed: the default is then that)"),
+            nullptr);
+    }
     if (outcome.simulation == SimulationEnd::Ended && outcome.stop_at_ms && outcome.controller_state.empty())
     {
         add(Severity::Note, "ended-before-stop-at",
@@ -320,6 +373,90 @@ std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
         out.push_back(std::move(f));
     }
     return out;
+}
+
+std::optional<double> RunTiming::actual_speed() const
+{
+    const std::int64_t ran = wall_ms - paused_ms;
+    if (ran < 1)
+    {
+        return std::nullopt;
+    }
+    return std::round(static_cast<double>(sim_ms) / static_cast<double>(ran) * 1000.0) / 1000.0;
+}
+
+std::string detail::timing_text(const RunTiming& timing)
+{
+    if (!timing.speed && timing.paced_steps == 0)
+    {
+        return {};
+    }
+    const auto actual = timing.actual_speed();
+    std::string out = "time: speed " + speed_text(timing.speed) + ", ran at " + (actual ? speed_text(actual) : std::string("-")) +
+                      " times real time; " + std::to_string(timing.late_steps) + " of " +
+                      std::to_string(timing.paced_steps) + " paced steps more than " +
+                      std::to_string(timing.late_tolerance_ms) + " ms late (the latest by " +
+                      std::to_string(timing.max_late_ms) + " ms), " + std::to_string(timing.slipped_ms) + " ms behind in all";
+    if (timing.paused_ms > 0)
+    {
+        out += "; paused for " + std::to_string(timing.paused_ms) + " ms (not counted)";
+    }
+    return out;
+}
+
+RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckReport& check, const std::optional<double>& speed)
+{
+    RunTiming t;
+    // The synchronised ECUs' steps (an ECU without one runs in real time: the gate does not move it).
+    bool known = true;
+    std::vector<std::int64_t> steps;
+    for (std::size_t i = 0; i < config.participants.size(); ++i)
+    {
+        if (!config.participants[i].enabled)
+        {
+            continue;
+        }
+        if (i < check.participants.size() && check.participants[i].status == ParticipantStatus::Described &&
+            check.participants[i].ecu)
+        {
+            if (const auto& step = check.participants[i].ecu->description.step)
+            {
+                steps.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(*step).count());
+            }
+        }
+        else
+        {
+            known = false;
+        }
+    }
+    SimulationConfig unwritten = config;
+    unwritten.time_step_ms.reset();
+    const std::int64_t coarsest = time_step_ms(unwritten);
+    // The step at which every ECU step starts at a controller step.
+    std::int64_t fine = coarsest * kNanosPerMilli;
+    for (const std::int64_t step : steps)
+    {
+        fine = std::gcd(fine, step);
+    }
+    t.fine_step_ms = known && fine % kNanosPerMilli == 0 ? fine / kNanosPerMilli : 1;
+    t.time_step_written = config.time_step_ms.has_value();
+    t.time_step_ms = t.time_step_written ? *config.time_step_ms : speed ? t.fine_step_ms : coarsest;
+    if (known)
+    {
+        // An ECU step at T runs when the controller's first step at or after T is due.
+        const std::int64_t gate = t.time_step_ms * kNanosPerMilli;
+        std::int64_t delay = 0;
+        for (const std::int64_t step : steps)
+        {
+            delay = std::max(delay, gate - std::gcd(gate, step));
+        }
+        t.step_delay_ns = delay;
+        if (!steps.empty())
+        {
+            t.ecu_step_ns = *std::min_element(steps.begin(), steps.end());
+        }
+    }
+    return t;
 }
 
 std::size_t RunReport::errors() const { return check.errors() + count(findings, Severity::Error); }
@@ -413,7 +550,13 @@ std::string format_run_text(const RunReport& report)
         state = "interrupted (" + run.interrupted_by + "): the simulation was stopped";
         break;
     }
-    out += "run: " + state + "\n\n";
+    out += "run: " + state + "\n";
+    if (const std::string time = run.simulation != SimulationEnd::NotStarted ? detail::timing_text(run.timing) : std::string{};
+        !time.empty())
+    {
+        out += time + "\n";
+    }
+    out += "\n";
     if (!run.participants.empty())
     {
         std::vector<std::vector<std::string>> rows{{"participant", "required", "ended"}};
@@ -477,6 +620,40 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
     else
     {
         w.null("interrupted_by");
+    }
+    if (report.run)
+    {
+        const RunTiming& t = report.run->timing;
+        w.begin_object("timing");
+        if (t.speed)
+        {
+            w.real("speed", t.speed);
+        }
+        else
+        {
+            w.string("speed", "max");
+        }
+        const auto millis = [](const std::optional<std::int64_t>& ns) {
+            return ns ? std::optional<double>(static_cast<double>(*ns) / static_cast<double>(kNanosPerMilli)) : std::nullopt;
+        };
+        w.integer("time_step_ms", t.time_step_ms);
+        w.real("ecu_step_ms", millis(t.ecu_step_ns));
+        w.real("step_delay_ms", millis(t.step_delay_ns));
+        w.integer("late_tolerance_ms", t.late_tolerance_ms);
+        w.integer("sim_ms", t.sim_ms);
+        w.integer("wall_ms", t.wall_ms);
+        w.real("actual_speed", t.actual_speed());
+        w.integer("paced_steps", static_cast<std::int64_t>(t.paced_steps));
+        w.integer("late_steps", static_cast<std::int64_t>(t.late_steps));
+        w.integer("max_late_ms", t.max_late_ms);
+        w.integer("slipped_ms", t.slipped_ms);
+        w.integer("late_ms", t.late_ms);
+        w.integer("paused_ms", t.paused_ms);
+        w.end_object();
+    }
+    else
+    {
+        w.null("timing");
     }
     w.begin_array("participants");
     if (report.run)
@@ -649,6 +826,125 @@ std::string detail::printable(std::string_view line)
     return out;
 }
 
+struct TimeCommands::State
+{
+    std::mutex mutex;
+    EventStream* events = nullptr;
+    /// A pause was asked for (or the run starts paused) and no resume since.
+    bool paused = false;
+    /// The last speed command before attach() (the inner empty: "max").
+    std::optional<std::optional<double>> speed{};
+    SimulationController* controller = nullptr;
+    std::int64_t step_ms = 1;
+    bool detached = false;
+};
+
+TimeCommands::TimeCommands(bool start_paused, EventStream* events) : state_(std::make_unique<State>())
+{
+    state_->paused = start_paused;
+    state_->events = events;
+}
+
+TimeCommands::~TimeCommands() = default;
+
+Command TimeCommands::apply(const Command& command, std::string_view source)
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    Command out = command;
+    const std::string name = command.name.value_or("");
+    const auto refuse = [&out](std::string why) {
+        out.accepted = false;
+        out.message = std::move(why);
+    };
+    if (s.detached)
+    {
+        refuse("the simulation is not running (it is over, or it did not start): " + name +
+               " works from the start of the run until the simulation ends");
+    }
+    else if (name == "step" && s.controller == nullptr)
+    {
+        refuse("the simulation has not been set up yet: step works once it stands still (a time event with paused "
+               "true), with --start-paused from the start");
+    }
+    else if (name == "step" && !s.paused)
+    {
+        refuse("step works while the simulation is paused: send {\"command\":\"pause\"} first (or run with "
+               "--start-paused)");
+    }
+    else if (name == "step")
+    {
+        // Whole steps of the controller: the simulation can stand still only at one of them.
+        out.ms = (command.ms.value_or(1) + s.step_ms - 1) / s.step_ms * s.step_ms;
+    }
+    if (s.events != nullptr)
+    {
+        s.events->command(out, source);
+    }
+    if (!out.accepted)
+    {
+        return out;
+    }
+    SimulationController* c = s.controller;
+    if (name == "pause")
+    {
+        s.paused = true;
+        if (c != nullptr)
+        {
+            c->pause();
+        }
+    }
+    else if (name == "resume")
+    {
+        s.paused = false;
+        if (c != nullptr)
+        {
+            c->resume();
+        }
+    }
+    else if (name == "speed")
+    {
+        if (c != nullptr)
+        {
+            c->set_speed(command.speed);
+        }
+        else
+        {
+            s.speed = command.speed;
+        }
+    }
+    else if (name == "step" && c != nullptr)
+    {
+        // From where it stands, or will stand after the steps asked for before.
+        const TimeState t = c->time_state();
+        const SimTime from = t.pause_target && *t.pause_target > t.now ? *t.pause_target : t.now;
+        const SimDuration d = std::chrono::milliseconds(*out.ms);
+        c->run_until(d >= SimTime::max() - from ? SimTime::max() : from + d);
+    }
+    return out;
+}
+
+void TimeCommands::attach(SimulationController& controller, std::int64_t step_ms, std::optional<double> speed)
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    s.controller = &controller;
+    s.step_ms = std::max<std::int64_t>(step_ms, 1);
+    controller.set_speed(s.speed ? *s.speed : speed);
+    if (s.paused)
+    {
+        controller.pause_at(SimTime{});
+    }
+}
+
+void TimeCommands::detach()
+{
+    State& s = *state_;
+    const std::lock_guard lock(s.mutex);
+    s.controller = nullptr;
+    s.detached = true;
+}
+
 namespace {
 
 using detail::log_name;
@@ -694,6 +990,14 @@ public:
         outcome_.start_timeout_ms = config.start_timeout_ms;
         outcome_.stop_timeout_ms = config.stop_timeout_ms;
         outcome_.stop_at_ms = config.stop_at_ms;
+        const std::optional<double> speed = options.speed ? *options.speed : config.speed;
+        outcome_.timing = detail::plan_time_step(config, check, speed);
+        outcome_.timing.speed = speed;
+        outcome_.timing.late_tolerance_ms = late_tolerance_ms(config);
+        if (options.time_commands == nullptr)
+        {
+            own_commands_ = std::make_unique<TimeCommands>(options.start_paused);
+        }
         if (options.timeout)
         {
             outcome_.timeout_ms = options.timeout->count();
@@ -715,6 +1019,17 @@ public:
 
     RunOutcome run()
     {
+        // Before the guard below, so that they go after it.
+        std::unique_ptr<SilKit::Vendor::Vector::ISilKitRegistry> registry;
+        std::unique_ptr<SimulationController> controller;
+        // Whatever happens, the time commands end with the run (they are refused from then on),
+        // and before the controller they are given to goes: the thread that reads the commands
+        // may apply one at any time.
+        struct Detach
+        {
+            TimeCommands& commands;
+            ~Detach() { commands.detach(); }
+        } const detach{commands()};
         if (interrupts() > 0)
         {
             outcome_.interrupted_by = interrupt_name();
@@ -725,8 +1040,6 @@ public:
         {
             return outcome_;
         }
-        std::unique_ptr<SilKit::Vendor::Vector::ISilKitRegistry> registry;
-        std::unique_ptr<SimulationController> controller;
         std::string uri;
         try
         {
@@ -759,7 +1072,15 @@ public:
             {
                 c.stop_at = std::chrono::milliseconds(*config_.stop_at_ms);
             }
+            // The time gate, always (also as fast as possible): one way for every run. The step
+            // divides stop_at_ms (detail::plan_time_step()), so the simulation stops at stop_at_ms
+            // itself.
+            TimeControlOptions time;
+            time.step = std::chrono::milliseconds(outcome_.timing.time_step_ms);
+            time.late_tolerance = std::chrono::milliseconds(outcome_.timing.late_tolerance_ms);
+            c.time_control = time;
             controller = std::make_unique<SimulationController>(std::move(c));
+            commands().attach(*controller, outcome_.timing.time_step_ms, outcome_.timing.speed);
         }
         catch (const std::exception& e)
         {
@@ -782,6 +1103,7 @@ public:
         publish_findings(false);
         event([](EventStream& e) { e.phase(Phase::Stopping); });
         end_children(ran);
+        commands().detach();
         controller.reset();
         registry.reset();
         return outcome_;
@@ -807,6 +1129,7 @@ public:
     }
 
 private:
+    [[nodiscard]] TimeCommands& commands() { return own_commands_ ? *own_commands_ : *options_.time_commands; }
     [[nodiscard]] int interrupts() const { return options_.interrupts != nullptr ? options_.interrupts->load() : 0; }
     [[nodiscard]] std::string interrupt_name() const
     {
@@ -1050,11 +1373,7 @@ private:
         event([](EventStream& e) { e.phase(Phase::Running); });
         say("simulation running");
         // Every participant starts at virtual time 0.
-        event([this](EventStream& e) {
-            e.time(0);
-            last_time_ms_ = 0;
-            last_time_wall_ = std::chrono::steady_clock::now();
-        });
+        note_time(controller, TimeNote::Start);
         return true;
     }
 
@@ -1102,25 +1421,113 @@ private:
         }
     }
 
-    /// run --events: the controller's virtual time if it has moved, at most every kTimeInterval
-    /// (`last`: whenever it has moved, at the end of the simulation).
-    void note_time(SimulationController& controller, bool last)
+    enum class TimeNote
+    {
+        Start, ///< the simulation runs: virtual time 0
+        Poll,  ///< a look of the watch
+        Last,  ///< the simulation is over
+    };
+
+    /// run --events: the controller's virtual time and how it goes. At the start 0; then when it
+    /// stands still or runs on, or the speed changes, at once; when it has moved, at most every
+    /// kTimeInterval; at the end, if anything changed.
+    void note_time(SimulationController& controller, TimeNote note)
     {
         if (options_.events == nullptr)
         {
             return;
         }
-        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(controller.runtime().now().time_since_epoch()).count();
-        const auto now = std::chrono::steady_clock::now();
-        const auto since = now - last_time_wall_;
-        // Never a time before the last one written: "sim_ms" does not go back.
-        if (ms <= last_time_ms_ || (!last && since < kTimeInterval))
+        const TimeState s = controller.time_state();
+        const auto wall = std::chrono::steady_clock::now();
+        const std::int64_t now = sim_ms(controller, s);
+        // Standing still is decided once the gate stops at the time it is at (start paused); an
+        // ended simulation stands still nowhere (time_state()).
+        const bool paused = s.paused || (note != TimeNote::Last && s.pause_target && *s.pause_target <= s.now);
+        const std::int64_t ms =
+            note == TimeNote::Start
+                ? 0
+                : std::max(last_time_ms_, now);
+        // The actual speed over about the last second while it ran at one speed.
+        if (paused || paused != last_paused_ || s.speed != last_speed_)
+        {
+            samples_.clear();
+        }
+        if (!paused)
+        {
+            samples_.emplace_back(wall, ms);
+            while (samples_.size() > 2 && wall - samples_[1].first >= std::chrono::seconds(1))
+            {
+                samples_.pop_front();
+            }
+        }
+        std::optional<double> actual;
+        if (samples_.size() >= 2 && samples_.back().first - samples_.front().first >= std::chrono::milliseconds(200))
+        {
+            const double seconds = std::chrono::duration<double>(samples_.back().first - samples_.front().first).count();
+            actual = std::round(static_cast<double>(samples_.back().second - samples_.front().second) / 1000.0 / seconds * 1000.0) / 1000.0;
+        }
+        // Standing still at another time (a step has ended) is news as well.
+        const bool changed = note == TimeNote::Start || paused != last_paused_ || s.speed != last_speed_ ||
+                             (paused && ms != last_time_ms_);
+        // A simulation that does not move although its real time has come (a stall) is news too,
+        // while it lasts: the time stays, the lateness grows.
+        const std::int64_t late = ceil_ms(s.current_lateness);
+        const bool stalled = late > outcome_.timing.late_tolerance_ms && late != last_late_ms_;
+        // Only that it moved, or is late: not while other events wait for a slow reader (they
+        // would pile up).
+        const bool moved = (ms > last_time_ms_ || stalled || s.late_steps != last_late_steps_) &&
+                           (note == TimeNote::Last ||
+                            (wall - last_time_wall_ >= kTimeInterval && options_.events->waiting_events() == 0));
+        if (!changed && !moved)
         {
             return;
         }
-        options_.events->time(ms);
+        TimeEvent e;
+        e.sim_ms = ms;
+        e.speed = s.speed;
+        e.paused = paused;
+        e.actual_speed = actual;
+        e.late_steps = s.late_steps;
+        e.max_late_ms = ceil_ms(s.max_lateness);
+        e.slipped_ms = ceil_ms(s.slipped);
+        e.late_ms = late;
+        options_.events->time(e);
+        last_late_ms_ = late;
+        last_late_steps_ = s.late_steps;
         last_time_ms_ = ms;
-        last_time_wall_ = now;
+        last_time_wall_ = wall;
+        last_paused_ = paused;
+        last_speed_ = s.speed;
+    }
+
+    /// The controller's virtual time: the start of its step that runs or ran last (the gate's
+    /// time, or the runtime's if that has gone on since the gate's numbers stopped).
+    static std::int64_t sim_ms(SimulationController& controller, const TimeState& s)
+    {
+        const SimTime t = std::max(s.now, controller.runtime().now());
+        return std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()).count();
+    }
+
+    static std::int64_t ceil_ms(std::chrono::nanoseconds d)
+    {
+        return std::chrono::ceil<std::chrono::milliseconds>(d).count();
+    }
+
+    /// The simulation is over: how its time went. The gate's numbers stopped when the run ended
+    /// (a stop, an abort, stop_at_ms), so the shutdown is not in them.
+    void note_timing(SimulationController& controller)
+    {
+        const TimeState s = controller.time_state();
+        RunTiming& t = outcome_.timing;
+        t.speed = s.speed;
+        t.sim_ms = sim_ms(controller, s);
+        t.paused_ms = std::chrono::duration_cast<std::chrono::milliseconds>(s.paused_for).count();
+        t.wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(s.running_for).count() + t.paused_ms;
+        t.paced_steps = s.paced_steps;
+        t.late_steps = s.late_steps;
+        t.max_late_ms = ceil_ms(s.max_lateness);
+        t.slipped_ms = ceil_ms(s.slipped);
+        t.late_ms = ceil_ms(s.current_lateness);
     }
 
     void watch(SimulationController& controller)
@@ -1133,10 +1540,12 @@ private:
             // with 0 may have stopped the simulation (the controller sees that a moment later).
             // Once the simulation stops, participants leave on purpose (a coordinated participant
             // ends only after the controller has stopped): their exit codes are judged after it.
+            // (The time gate stands still in Running: a process that ends while the simulation is
+            // paused fails the run as well.)
             const bool running = controller.runtime().state() == orch::ParticipantState::Running;
             // The events of what changed (here: the one look per poll the watch gives).
             note_joined(controller);
-            note_time(controller, false);
+            note_time(controller, TimeNote::Poll);
             if (!running)
             {
                 // Stopping: the ends of the processes are looked at after the simulation's end
@@ -1179,7 +1588,10 @@ private:
             }
         };
         const WatchResult watched = watch_simulation(controller, watch);
-        note_time(controller, true);
+        note_timing(controller);
+        note_time(controller, TimeNote::Last);
+        // No time command from here on: the simulation is over.
+        commands().detach();
         // An interrupt from here on comes while the launcher waits for the participants to end.
         interrupts_at_end_ = interrupts();
         switch (watched.end)
@@ -1233,32 +1645,15 @@ private:
         return false;
     }
 
-    enum class Waited
-    {
-        Done,
-        TimedOut,
-        Interrupted,
-    };
+    using Waited = detail::Waited;
 
     /// Waits up to `timeout` until `done()`; stops waiting once more than `interrupts_allowed`
-    /// interrupts have come.
+    /// interrupts have come (detail::wait_for()).
     template <class Done>
     Waited wait_until(std::chrono::milliseconds timeout, int interrupts_allowed, Done done)
     {
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        while (!done())
-        {
-            if (interrupts() > interrupts_allowed)
-            {
-                return Waited::Interrupted;
-            }
-            if (std::chrono::steady_clock::now() >= deadline)
-            {
-                return Waited::TimedOut;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-        return Waited::Done;
+        return detail::wait_for(timeout, std::chrono::milliseconds(5), done,
+                                [this, interrupts_allowed] { return interrupts() > interrupts_allowed; });
     }
 
     /// Ends every participant: after a simulation, first gives the required ones stop_timeout_ms
@@ -1373,7 +1768,13 @@ private:
     std::vector<bool> joined_;
     std::int64_t last_time_ms_ = -1;
     std::chrono::steady_clock::time_point last_time_wall_{};
+    bool last_paused_ = false;
+    std::int64_t last_late_ms_ = 0;
+    std::uint64_t last_late_steps_ = 0;
+    std::optional<double> last_speed_{};
+    std::deque<std::pair<std::chrono::steady_clock::time_point, std::int64_t>> samples_; ///< (wall, sim_ms)
     std::vector<Finding> published_;
+    std::unique_ptr<TimeCommands> own_commands_; ///< without RunOptions::time_commands
     std::mutex output_;
     // Last, so that it goes first: a Process ends its reader thread, which uses output_ and logs_,
     // also when run() leaves with an exception.

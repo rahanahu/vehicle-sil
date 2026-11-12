@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -23,6 +24,55 @@ class ISystemController;
 namespace vehicle_sil {
 
 /// Pausing, stepping and speed control of a coordinated virtual-time simulation (the time gate).
+///
+/// Pacing and lateness. With a speed, the gate ties virtual time to the wall clock, so that
+/// something that runs in real time and does not wait (a device) can be attached. The numbers of
+/// TimeState say how well that held; they are defined as follows.
+///
+/// - Base: a virtual time and the wall-clock time it stands for. It is taken at the first
+///   controller step (not when the speed is set before the start), on resume, and when pacing
+///   starts; a change of speed keeps the wall-clock time of the next step.
+/// - Deadline of a controller step: the wall-clock time its start stands for,
+///   base wall + (start - base virtual) / speed. No step begins before its deadline (the gate holds
+///   the step before it back until then).
+/// - A step begins when the gate has let the step before it go (from then on the participants
+///   may run their steps that start up to its start) and the controller has learnt that every
+///   participant has finished its steps that start before it. SIL Kit tells it when the
+///   participant's thread is free: a participant that goes from one step straight into the next
+///   is seen to have finished the first only after the second. A step is therefore never measured
+///   as beginning earlier than the participants could begin theirs, but possibly later, by up to
+///   the time one step of a participant takes; over a run, `slipped` is exact all the same (the
+///   time the run took beyond the time at the speed).
+/// - Lateness of a step: when it began, minus its deadline (never below 0). The gate's own late
+///   wake-up is part of it: a device cannot tell it from a slow participant (the gate waits with a
+///   precise timer instead; TimeState::max_gate_lateness shows what is left of it).
+/// - A late step: lateness > late_tolerance. Lateness within the tolerance is made up for by
+///   itself: the deadlines stay, and a step whose deadline has passed is not held back.
+/// - Slip: a late step is not caught up with. Its start becomes the new base, so the steps after
+///   it keep the speed, and all virtual time from then on comes later by its lateness, which is
+///   added to TimeState::slipped. (Catching up would run the missed steps at once: periodic
+///   messages would leave in a burst, which is further from real time than coming late.) One slow
+///   step is therefore one late step, however long it took.
+/// - What is counted: every step that began while a base was set, from the first one after the
+///   base to the last one, including the step at stop_at. A step that has not begun although its
+///   deadline has passed is counted with the lateness it has so far, as if the run ended now:
+///   time_state() shows a stall while it lasts, and a run that ends in one (a stop, an abort, a
+///   failed participant) keeps it. The numbers stop changing when a stop is requested or the
+///   controller's lifecycle leaves Running. Time stood still (paused) is not counted: resume takes
+///   a new base.
+/// - Granularity: the gate aligns the starts of the controller's steps only. A participant's
+///   step that starts between two of them at T runs when the gate lets the controller step before
+///   it go, which is the deadline of the first controller step at or after T: up to
+///   step - gcd(step, the participant's step) later than T, never earlier. A participant whose
+///   step is a multiple of the controller's is not affected; use the greatest common divisor of
+///   the participants' steps as `step` when a device is attached.
+/// - Limit of the measurement: the controller learns that a participant's step has ended when
+///   SIL Kit tells it, and a participant that goes straight into its next step tells it only
+///   after that one. The lateness of a step can so be measured larger than it was, by up to the
+///   real time one step of that participant takes, never smaller. A lateness measured above the
+///   tolerance is a late step like any other: the base moves, and the slip is then real. With a
+///   participant whose steps overrun, choose late_tolerance as what the device can wait plus
+///   the real time one of its steps takes.
 struct TimeControlOptions
 {
     /// Step of the controller in the time synchronisation. The simulation can stand still only
@@ -32,9 +82,15 @@ struct TimeControlOptions
     bool start_paused = false;
     /// Initial speed (simulation seconds per wall-clock second); empty: as fast as possible.
     std::optional<double> speed{};
+    /// Pacing: a controller step that begins more than this after its deadline is late and makes
+    /// the simulation slip (see above). Wall-clock time, whatever the speed and the step: small
+    /// against the timeouts of a device, large against the jitter of the operating system's
+    /// timers. Must not be negative.
+    std::chrono::nanoseconds late_tolerance{std::chrono::milliseconds(10)};
 };
 
-/// Where the time gate stands. See SimulationController::pause().
+/// Where the time gate stands, and how its pacing went (TimeControlOptions has the definitions).
+/// See SimulationController::pause().
 struct TimeState
 {
     /// Start time of the controller's step that runs or ran last; SimTime{} before the first.
@@ -46,6 +102,31 @@ struct TimeState
     /// step at or after it.
     std::optional<SimTime> pause_target{};
     std::optional<double> speed{};
+    /// The controller steps that were measured against a deadline (a speed and a base were set),
+    /// including one that is overdue now.
+    std::uint64_t paced_steps = 0;
+    /// The paced steps whose lateness was more than TimeControlOptions::late_tolerance: the number
+    /// of slips.
+    std::uint64_t late_steps = 0;
+    /// The largest lateness of a paced step (also of one within the tolerance).
+    std::chrono::nanoseconds max_lateness{0};
+    /// The sum of the lateness of the late steps: how much later than at the speed asked for the
+    /// simulation has come, in all (but for what is within the tolerance now).
+    std::chrono::nanoseconds slipped{0};
+    /// The lateness so far of the step that has not begun although its deadline has passed; 0 if
+    /// there is none. It is counted in the four numbers above already.
+    std::chrono::nanoseconds current_lateness{0};
+    /// The largest time by which the gate itself let a paced step go after the step's deadline
+    /// (the wake-up of its thread). It is part of the lateness of the step after; it tells the
+    /// gate's timer from slow participants.
+    std::chrono::nanoseconds max_gate_lateness{0};
+    /// Wall-clock time the simulation has stood still (`paused`) in all, up to now.
+    std::chrono::nanoseconds paused_for{0};
+    /// Wall-clock time the simulation has run for: from the beginning of the first controller step
+    /// to the beginning of the one at `now`, without the time it stood still; and on up to now
+    /// while the next step is overdue (as fast as possible: whenever the gate holds nothing).
+    /// It leaves out the start-up and the shutdown: now / running_for is the speed it ran at.
+    std::chrono::nanoseconds running_for{0};
 };
 
 struct SimulationControllerOptions
@@ -121,7 +202,8 @@ public:
 
     /// Wall-clock time between the controller's step at T = 0 and its step at stop_at, i.e. how
     /// long the simulation took to advance by stop_at (with time_control: including the time it
-    /// stood still and was paced). Empty until stop_at has been reached.
+    /// stood still and was paced; TimeState::running_for leaves the pauses out). Empty until
+    /// stop_at has been reached.
     [[nodiscard]] std::optional<std::chrono::nanoseconds> wall_time_to_stop_at() const;
 
     /// With time_control, the time gate owns the runtime's StepHold: do not call
@@ -139,7 +221,8 @@ public:
     // goes: every participant runs the same steps with the same data as without it.
     // Only participants that take part in the time synchronisation are paused; participants in
     // real time (without virtual time) keep running; and the participants' steps between two
-    // controller steps run in a burst (the gate paces per controller step). The functions are
+    // controller steps run in a burst, at the deadline of the later one (the gate paces per
+    // controller step; TimeControlOptions, "Granularity"). The functions are
     // thread safe and do not wait, so they may also be called from a step of another
     // participant of the same process; wait_until_paused() waits and must not be (the
     // simulation cannot reach the pause while that step runs).
@@ -162,9 +245,13 @@ public:
     /// (std::invalid_argument), or empty for as fast as possible. Like
     /// VirtualTimeOptions::real_time_factor, it only holds steps back: it cannot make the
     /// slowest participant faster. Setting the same speed again has no effect; a step held for
-    /// pacing keeps the part of its wait that has passed. Pacing starts anew on resume.
+    /// pacing keeps the part of its wait that has passed; between two steps the next one keeps its
+    /// deadline (and the lateness it has), and the new speed counts from there. Pacing starts
+    /// anew on resume.
     void set_speed(std::optional<double> speed);
-    /// `paused` is false once the lifecycle has ended.
+    /// `paused` is false once the lifecycle has ended. The pacing numbers are as if the run ended
+    /// now (they include a step that is overdue), and stay as they were when a stop was requested
+    /// or the lifecycle left Running.
     [[nodiscard]] TimeState time_state() const;
     /// Waits until the simulation stands still, or the lifecycle ended, or the timeout expires.
     /// @returns the time at which it stands still, or nullopt (also once the lifecycle ended).
@@ -176,13 +263,17 @@ private:
     /// The StepHold of the runtime (SIL Kit thread).
     bool hold_step(SimTime now, SimDuration step);
     void run_gate();
+    /// The pacing numbers stop here (a stop was requested, or the lifecycle left Running).
+    void end_gate() noexcept;
 
     SimulationControllerOptions options_;
+    /// Only with time_control. Before runtime_, so that it outlives it: the runtime's handlers
+    /// (the step, the hold, the stop observer) use it.
+    std::unique_ptr<Gate> gate_;
     std::unique_ptr<ParticipantRuntime> runtime_;
     SilKit::Experimental::Services::Orchestration::ISystemController* system_controller_ = nullptr;
     std::atomic<std::int64_t> wall_start_ns_{-1};
     std::atomic<std::int64_t> wall_stop_ns_{-1};
-    std::unique_ptr<Gate> gate_; ///< only with time_control
 };
 
 } // namespace vehicle_sil

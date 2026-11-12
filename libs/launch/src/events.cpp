@@ -8,6 +8,7 @@
 #include "vehicle_sil/ecu/detail/json_writer.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -142,17 +143,50 @@ std::optional<Command> parse_command(std::string_view line)
             return out;
         }
         out.name = detail::to_string(tree.val(node));
+        const auto scalar = [&](const char* key) -> std::optional<std::pair<std::string, bool>> {
+            const auto n = tree.find_child(root, ryml::to_csubstr(key));
+            if (n == ryml::NONE || !tree.has_val(n) || tree.is_container(n))
+            {
+                return std::nullopt;
+            }
+            return std::pair{detail::to_string(tree.val(n)), tree.is_val_quoted(n)};
+        };
+        if (*out.name == "step")
+        {
+            const auto ms = scalar("ms");
+            std::int64_t value = 0;
+            const char* end = ms ? ms->first.data() + ms->first.size() : nullptr;
+            if (!ms || ms->second || ms->first.empty() || std::from_chars(ms->first.data(), end, value).ptr != end ||
+                value < 1 || value > kMaxMillis)
+            {
+                out.message = "step needs \"ms\", a whole number of milliseconds of virtual time from 1 to " +
+                              std::to_string(kMaxMillis) + ", such as {\"command\":\"step\",\"ms\":100}";
+                return out;
+            }
+            out.ms = value;
+        }
+        else if (*out.name == "speed")
+        {
+            const auto value = scalar("value");
+            if (!value || value->second != (value->first == "max") || !parse_speed(value->first, out.speed))
+            {
+                out.message = "speed needs \"value\", a number of simulation seconds per wall-clock second from 0.000001 "
+                              "to 1000000 or \"max\", such as {\"command\":\"speed\",\"value\":1}";
+                return out;
+            }
+        }
     }
     catch (const detail::YamlSyntaxError&)
     {
         out.message = "the line is not valid JSON: " + kExpected;
         return out;
     }
-    if (*out.name != "stop")
+    static constexpr std::string_view kNames[] = {"stop", "pause", "resume", "step", "speed"};
+    if (std::find(std::begin(kNames), std::end(kNames), *out.name) == std::end(kNames))
     {
         // The name as far as it is worth showing.
         const std::string shown = out.name->size() > 64 ? out.name->substr(0, 64) + "..." : *out.name;
-        out.message = "unknown command '" + shown + "': the commands are stop";
+        out.message = "unknown command '" + shown + "': the commands are stop, pause, resume, step and speed";
         return out;
     }
     out.accepted = true;
@@ -567,6 +601,12 @@ bool EventStream::wait_written(std::chrono::milliseconds timeout)
     return s.changed.wait_for(lock, timeout, [&s] { return s.closed || (s.queue.empty() && !s.writing); }) && !s.closed;
 }
 
+std::size_t EventStream::waiting_events() const
+{
+    const std::lock_guard lock(state_->mutex);
+    return state_->other_events;
+}
+
 bool EventStream::closed() const
 {
     const std::lock_guard lock(state_->mutex);
@@ -690,9 +730,25 @@ void EventStream::finding(const std::string& file, const Finding& finding)
     emit("finding", object([&](Writer& w) { detail::write_finding_members(w, file, finding); }));
 }
 
-void EventStream::time(std::int64_t sim_ms)
+void EventStream::time(const TimeEvent& time)
 {
-    emit("time", object([&](Writer& w) { w.integer("sim_ms", sim_ms); }));
+    emit("time", object([&](Writer& w) {
+             w.integer("sim_ms", time.sim_ms);
+             if (time.speed)
+             {
+                 w.real("speed", time.speed);
+             }
+             else
+             {
+                 w.string("speed", "max");
+             }
+             w.boolean("paused", time.paused);
+             w.real("actual_speed", time.actual_speed);
+             w.integer("late_steps", static_cast<std::int64_t>(time.late_steps));
+             w.integer("max_late_ms", time.max_late_ms);
+             w.integer("slipped_ms", time.slipped_ms);
+             w.integer("late_ms", time.late_ms);
+         }));
 }
 
 void EventStream::command(const Command& command, std::string_view source)
@@ -709,6 +765,11 @@ void EventStream::command(const Command& command, std::string_view source)
              w.string("source", source);
              w.boolean("accepted", command.accepted);
              optional_text(w, "message", command.message);
+             // step: how far the simulation goes (a whole number of the controller's steps).
+             if (command.accepted && command.name == "step" && command.ms)
+             {
+                 w.integer("ms", *command.ms);
+             }
          }));
 }
 

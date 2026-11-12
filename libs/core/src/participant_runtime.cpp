@@ -257,6 +257,7 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
         }
     }
     stop_cv_.notify_all();
+    notify_stop_observer();
     {
         // A step that is failing now reports its error before the stop goes out (see
         // deliver_stop()). The caller may have seen the failure before the step handler
@@ -320,6 +321,7 @@ void ParticipantRuntime::request_stop(std::string_view reason) noexcept
         }
     }
     stop_cv_.notify_all(); // ends a pacing wait early
+    notify_stop_observer();
     deliver_stop(false);
 }
 
@@ -579,6 +581,33 @@ void ParticipantRuntime::set_step_hold(StepHold hold)
     step_hold_ = std::move(hold);
 }
 
+void ParticipantRuntime::set_stop_observer(std::function<void()> observer)
+{
+    if (started())
+    {
+        throw std::logic_error("ParticipantRuntime::set_stop_observer() must be called before start()");
+    }
+    // The SIL Kit thread may deliver a status (on_status()) already.
+    const std::lock_guard lock(stop_observer_mutex_);
+    stop_observer_ = std::move(observer);
+}
+
+void ParticipantRuntime::notify_stop_observer() noexcept
+{
+    const std::lock_guard lock(stop_observer_mutex_);
+    if (stop_observer_)
+    {
+        try
+        {
+            stop_observer_();
+        }
+        catch (...)
+        {
+            // An observer must not keep the stop from going on.
+        }
+    }
+}
+
 void ParticipantRuntime::release_step() noexcept
 {
     const std::lock_guard lock(hold_mutex_);
@@ -706,9 +735,16 @@ void ParticipantRuntime::on_status(const orch::ParticipantStatus& status, bool r
     peers_cv_.notify_all();
     // This participant's own status comes here too: a stop requested after a step failure
     // waited for the Error (deliver_stop()).
-    if (status.participantName == options_.participant_name && status.state == orch::ParticipantState::Error)
+    if (status.participantName == options_.participant_name)
     {
-        deliver_stop(false);
+        if (has_finished(PeerStatus{status.state}))
+        {
+            notify_stop_observer(); // also a stop that another participant asked for
+        }
+        if (status.state == orch::ParticipantState::Error)
+        {
+            deliver_stop(false);
+        }
     }
 }
 

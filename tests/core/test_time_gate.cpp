@@ -43,10 +43,17 @@ struct Recorder
     mutable std::mutex mutex;
     std::vector<SimDuration> steps;
 
-    Recorder(std::string n, SimDuration s, const std::string& uri) : name(std::move(n)), step(s)
+    /// `sleep`: wall-clock time each step that starts at or after `sleep_from` takes.
+    Recorder(std::string n, SimDuration s, const std::string& uri, std::chrono::milliseconds sleep = 0ms,
+             SimDuration sleep_from = 0ms) :
+      name(std::move(n)), step(s)
     {
         runtime = std::make_unique<ParticipantRuntime>(coordinated_options(name, uri, VirtualTimeOptions{step, std::nullopt}));
-        runtime->set_step_handler([this](SimTime now, SimDuration) {
+        runtime->set_step_handler([this, sleep, sleep_from](SimTime now, SimDuration) {
+            if (sleep > 0ms && now.time_since_epoch() >= sleep_from)
+            {
+                std::this_thread::sleep_for(sleep);
+            }
             const std::lock_guard lock(mutex);
             steps.push_back(now.time_since_epoch());
         });
@@ -64,14 +71,16 @@ struct Recorder
     }
 };
 
-/// Three recorders (1, 3 and 7 ms) and a controller with a 10 ms time gate.
+/// Three recorders (1, 3 and 7 ms; each step of B at or after `b_sleep_from` takes `b_sleep` of
+/// wall-clock time) and a controller with a 10 ms time gate.
 struct GateSim
 {
     InProcessRegistry registry;
     std::unique_ptr<SimulationController> controller;
     std::vector<std::unique_ptr<Recorder>> peers;
 
-    explicit GateSim(TimeControlOptions time_control, std::optional<SimDuration> stop_at = std::nullopt)
+    explicit GateSim(TimeControlOptions time_control, std::optional<SimDuration> stop_at = std::nullopt,
+                     std::chrono::milliseconds b_sleep = 0ms, SimDuration b_sleep_from = 0ms)
     {
         const std::vector<std::pair<std::string, SimDuration>> specs{{"A", 1ms}, {"B", 3ms}, {"C", 7ms}};
         SimulationControllerOptions options;
@@ -85,7 +94,7 @@ struct GateSim
         controller = std::make_unique<SimulationController>(options);
         for (const auto& [name, step] : specs)
         {
-            peers.push_back(std::make_unique<Recorder>(name, step, registry.uri));
+            peers.push_back(std::make_unique<Recorder>(name, step, registry.uri, name == "B" ? b_sleep : 0ms, b_sleep_from));
         }
     }
 
@@ -545,6 +554,176 @@ TEST_CASE(virtual_time_gate_stop_at_between_controller_steps)
         CHECK(last <= SimDuration(300ms));
         CHECK(last > SimDuration(300ms) - peer->step - peer->step);
         check_grid(*peer);
+    }
+}
+
+// The pacing numbers are worked out with exact times in test_time_gate_model.cpp. The cases below
+// show that the controller feeds the gate with what really happens; they use real time, so they
+// have bounds on one side only (a slower machine is later still).
+
+TEST_CASE(virtual_time_gate_counts_the_steps_that_fall_behind_the_wall_clock)
+{
+    // B takes 10 ms of wall-clock time for each 3 ms step, and three of them start between two
+    // controller steps: at speed 1 the simulation runs at a third of the speed or less, and the
+    // controller's steps begin 20 ms or more after their deadlines and slip. (Not each of them: a
+    // participant that goes from one step straight into the next tells the others only after it,
+    // so the controller sees some of its steps one step late, and the step after those on time.)
+    GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true, .speed = 1.0, .late_tolerance = 5ms}, std::nullopt, 10ms);
+    sim.start();
+    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    sim.controller->run_until(at(200ms));
+    CHECK(sim.controller->wait_until_paused(30s).has_value());
+    const TimeState s = sim.controller->time_state();
+    // Steps 10 .. 200 ms are paced (the one at 0 takes the base on resume).
+    CHECK_EQ(s.paced_steps, std::uint64_t{20});
+    CHECK(s.late_steps >= 5);
+    CHECK(s.late_steps <= s.paced_steps);
+    CHECK(s.max_lateness >= 20ms);
+    // No catching up: what the late steps were late by is the slip, and the simulation took the
+    // time at the speed asked for and the slip (200 ms took 600 ms or more).
+    CHECK(s.slipped >= 300ms);
+    CHECK(s.slipped <= s.late_steps * s.max_lateness);
+    CHECK(s.running_for >= 200ms + s.slipped);
+    CHECK_EQ(s.current_lateness.count(), 0); // it stands still
+    // As fast as possible: nothing is paced, nothing is late.
+    sim.controller->set_speed(std::nullopt);
+    sim.controller->step(50ms);
+    CHECK(sim.controller->wait_until_paused(30s).has_value());
+    CHECK_EQ(sim.controller->time_state().paced_steps, std::uint64_t{20});
+    CHECK_EQ(sim.controller->time_state().slipped.count(), s.slipped.count());
+}
+
+TEST_CASE(virtual_time_gate_does_not_count_the_time_it_stood_still_as_late)
+{
+    // Paused at 0 for 1000 ms at speed 1, then 100 ms of simulation: had the pause counted, the
+    // first step after it would be 1000 ms late. The same after a pause of 1000 ms at 100 ms and a
+    // change of speed while paused.
+    GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true, .speed = 1.0, .late_tolerance = 500ms});
+    sim.start();
+    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    std::this_thread::sleep_for(1000ms);
+    CHECK(sim.controller->time_state().paused_for >= 1000ms);
+    sim.controller->run_until(at(100ms));
+    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    std::this_thread::sleep_for(1000ms);
+    // A pause, a speed change and a resume in between do not count either.
+    sim.controller->set_speed(2.0);
+    sim.controller->step(100ms);
+    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    const TimeState s = sim.controller->time_state();
+    CHECK_EQ(s.paced_steps, std::uint64_t{20});
+    CHECK_EQ(s.late_steps, std::uint64_t{0});
+    CHECK(s.paused_for >= 2000ms);
+    // 100 ms at speed 1 and 100 ms at speed 2, and none of the 2000 ms it stood still.
+    CHECK(s.running_for >= 150ms);
+    CHECK(s.running_for < 1000ms);
+    // Standing still goes on counting while it lasts.
+    std::this_thread::sleep_for(100ms);
+    CHECK(sim.controller->time_state().paused_for >= s.paused_for + 100ms);
+    CHECK(sim.controller->time_state().paused);
+}
+
+TEST_CASE(virtual_time_gate_a_speed_set_before_the_start_paces_from_the_first_step)
+{
+    // The speed is set 1000 ms before the start: the base is taken at the first step, so that
+    // time is no lateness and is not caught up (200 ms of simulation still take 200 ms).
+    GateSim sim(TimeControlOptions{.step = 10ms, .late_tolerance = 500ms});
+    sim.controller->set_speed(1.0);
+    sim.controller->pause_at(at(200ms));
+    std::this_thread::sleep_for(1000ms);
+    sim.start();
+    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    const TimeState s = sim.controller->time_state();
+    CHECK_EQ(s.paced_steps, std::uint64_t{20});
+    CHECK_EQ(s.late_steps, std::uint64_t{0});
+    CHECK(s.running_for >= 200ms);
+}
+
+TEST_CASE(virtual_time_gate_measures_the_step_at_stop_at)
+{
+    // Only B's steps from 190 ms on are slow (300 ms each): the one controller step they delay is
+    // the last, at stop_at, which the gate does not hold.
+    GateSim sim(TimeControlOptions{.step = 10ms, .speed = 1.0, .late_tolerance = 100ms}, 200ms, 300ms, 190ms);
+    sim.start();
+    CHECK(sim.controller->wait_until_finished(30s).has_value());
+    const TimeState s = sim.controller->time_state();
+    CHECK_EQ(s.now.time_since_epoch().count(), SimDuration(200ms).count());
+    CHECK_EQ(s.paced_steps, std::uint64_t{20}); // 10 .. 200 ms
+    CHECK(s.late_steps >= 1);
+    CHECK(s.max_lateness >= 250ms);
+    CHECK(s.slipped >= 250ms);
+    CHECK(s.running_for >= 450ms);
+    // The numbers have stopped: the shutdown is not in them.
+    std::this_thread::sleep_for(200ms);
+    const TimeState later = sim.controller->time_state();
+    CHECK_EQ(later.running_for.count(), s.running_for.count());
+    CHECK_EQ(later.paced_steps, s.paced_steps);
+    CHECK_EQ(later.current_lateness.count(), 0);
+}
+
+TEST_CASE(virtual_time_gate_counts_a_stall_while_it_lasts_and_when_the_run_is_stopped_in_it)
+{
+    // From 100 ms on each step of B takes 500 ms: the controller's step at 110 ms does not begin
+    // for a second and a half.
+    GateSim sim(TimeControlOptions{.step = 10ms, .speed = 1.0, .late_tolerance = 100ms}, std::nullopt, 500ms, 100ms);
+    sim.start();
+    const auto limit = Wall::now() + 30s;
+    while (sim.controller->time_state().now < at(100ms) && Wall::now() < limit)
+    {
+        std::this_thread::sleep_for(5ms);
+    }
+    std::this_thread::sleep_for(400ms);
+    TimeState s = sim.controller->time_state();
+    if (s.now == at(100ms)) // else the machine stood still for a second: nothing to see here
+    {
+        CHECK(s.current_lateness >= 300ms);
+        CHECK(s.late_steps >= 1);
+        CHECK(s.max_lateness >= s.current_lateness);
+        CHECK(s.slipped >= s.current_lateness);
+        CHECK(s.running_for >= 400ms);
+    }
+    // Stopped in the stall (or soon after): the numbers stay as they were at the stop, and the
+    // stall is in them.
+    sim.controller->stop("test: stop in the stall");
+    s = sim.controller->time_state();
+    CHECK(s.late_steps >= 1);
+    CHECK(s.max_lateness >= 300ms);
+    std::this_thread::sleep_for(200ms);
+    const TimeState later = sim.controller->time_state();
+    CHECK_EQ(later.paced_steps, s.paced_steps);
+    CHECK_EQ(later.late_steps, s.late_steps);
+    CHECK_EQ(later.max_lateness.count(), s.max_lateness.count());
+    CHECK_EQ(later.slipped.count(), s.slipped.count());
+    CHECK_EQ(later.running_for.count(), s.running_for.count());
+}
+
+TEST_CASE(virtual_time_gate_numbers_stop_when_another_participant_or_an_abort_ends_the_run)
+{
+    // A participant stops the simulation (the controller's stop() is not called), and an abort:
+    // from then on no time is counted as lateness of a step that will never begin.
+    for (const bool abort : {false, true})
+    {
+        GateSim sim(TimeControlOptions{.step = 10ms, .speed = 1.0, .late_tolerance = 100ms});
+        sim.start();
+        std::this_thread::sleep_for(100ms);
+        if (abort)
+        {
+            sim.controller->abort();
+        }
+        else
+        {
+            sim.peers[0]->runtime->request_stop("test: a participant stops the simulation");
+        }
+        CHECK(sim.controller->wait_until_finished(30s).has_value());
+        const TimeState s = sim.controller->time_state();
+        std::this_thread::sleep_for(300ms);
+        const TimeState later = sim.controller->time_state();
+        CHECK_EQ(later.paced_steps, s.paced_steps);
+        CHECK_EQ(later.late_steps, s.late_steps);
+        CHECK_EQ(later.max_lateness.count(), s.max_lateness.count());
+        CHECK_EQ(later.running_for.count(), s.running_for.count());
+        CHECK_EQ(later.current_lateness.count(), s.current_lateness.count());
+        CHECK(s.max_gate_lateness < 10s);
     }
 }
 

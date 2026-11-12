@@ -145,10 +145,11 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
 {
     check_text(read(std::string(kExample) + "stop_at: 3\nextra: 1\n"),
                "E 18 unknown-key: unknown key 'stop_at': did you mean 'stop_at_ms'? (the keys here: "
-               "vehicle_sil_simulation, stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, networks, "
-               "participants)\n"
+               "vehicle_sil_simulation, stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, time_step_ms, speed, "
+               "late_tolerance_ms, networks, participants)\n"
                "E 19 unknown-key: unknown key 'extra': remove it, or use one of the keys here (vehicle_sil_simulation, "
-               "stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, networks, participants)\n");
+               "stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, time_step_ms, speed, late_tolerance_ms, "
+               "networks, participants)\n");
     check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
                "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
                "command, step_ms, describe, required, enabled)\n"
@@ -157,6 +158,58 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'bitrate': remove it, or use one of the keys here (name, kind)\n");
+}
+
+TEST_CASE(the_speed_the_step_of_the_controller_and_the_tolerance)
+{
+    const auto config = [](const std::string& keys) {
+        return read_config("vehicle_sil_simulation: 1\n" + keys + "networks: []\nparticipants:\n  - name: A\n    command: a\n");
+    };
+    // Not written: as fast as possible, steps of 10 ms, a tolerance of one step.
+    ConfigRead r = config("");
+    CHECK(!r.config->speed && !r.config->time_step_ms && !r.config->late_tolerance_ms);
+    CHECK_EQ(time_step_ms(*r.config), 10);
+    CHECK_EQ(late_tolerance_ms(*r.config), 10);
+    r = config("speed: 0.5\ntime_step_ms: 20\nlate_tolerance_ms: 50\nstop_at_ms: 1000\n");
+    check_text(lines(r.findings), "");
+    CHECK(r.config->speed == 0.5);
+    CHECK_EQ(time_step_ms(*r.config), 20);
+    CHECK_EQ(late_tolerance_ms(*r.config), 50);
+    CHECK(!config("speed: max\n").config->speed);
+    CHECK(!config("speed: \"max\"\n").config->speed);
+    CHECK(config("speed: 1e3\n").config->speed == 1000.0);
+    CHECK(config("speed: 2\n").config->speed == 2.0);
+    // Without time_step_ms, the step divides stop_at_ms: the simulation stops at stop_at_ms itself.
+    CHECK_EQ(time_step_ms(*config("stop_at_ms: 1005\n").config), 5);
+    CHECK_EQ(time_step_ms(*config("stop_at_ms: 1001\n").config), 1);
+    CHECK_EQ(time_step_ms(*config("stop_at_ms: 3000\n").config), 10);
+    // The tolerance does not follow the step: wall-clock time, 10 ms unless written.
+    CHECK_EQ(late_tolerance_ms(*config("stop_at_ms: 1005\n").config), 10);
+    CHECK_EQ(late_tolerance_ms(*config("stop_at_ms: 1001\ntime_step_ms: 1\n").config), 10);
+    CHECK_EQ(late_tolerance_ms(*config("time_step_ms: 50\n").config), 10);
+    // Written, it must divide stop_at_ms.
+    check_text(lines(config("stop_at_ms: 1005\ntime_step_ms: 10\n").findings),
+               "E 3 value: stop_at_ms (1005) is not a multiple of time_step_ms (10): the launcher's controller can stop the "
+               "simulation only at one of its steps; make stop_at_ms a multiple of time_step_ms, or leave time_step_ms out\n");
+    const std::string speed =
+        "speed must be simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, 2: twice as fast, "
+        "0.5: half as fast), or max (as fast as possible), not ";
+    check_text(lines(config("speed: 0\ntime_step_ms: 0\nlate_tolerance_ms: x\n").findings),
+               "E 2 value: " + speed + "'0'\n"
+               "E 3 value: time_step_ms is 0, but it must be from 1 to 1000000000000 (milliseconds of virtual time between two "
+               "steps of the launcher's controller)\n"
+               "E 4 value: late_tolerance_ms must be a whole number (wall-clock milliseconds a step may begin late before it "
+               "counts as late), not 'x'\n");
+    for (const std::string bad : {"-1", "fast", "inf", "nan", "2000000", ".5", "1/2", "Max", "0.0000001"})
+    {
+        check_text(lines(config("speed: " + bad + "\n").findings), "E 2 value: " + speed + "'" + bad + "'\n");
+    }
+    check_text(lines(config("speed: \"2\"\n").findings), "E 2 value: " + speed + "the text \"2\": write the number without quotes\n");
+    check_text(lines(config("speed: [1]\n").findings), "E 2 value: " + speed + "a list\n");
+    // The text for people and the JSON.
+    check_text(speed_text(std::nullopt), "max");
+    check_text(speed_text(0.25), "0.25");
+    check_text(speed_text(1.0), "1");
 }
 
 TEST_CASE(an_unknown_key_does_not_stop_the_participant_from_being_checked)

@@ -116,10 +116,44 @@ struct SimulationConfig
     /// Where the registry of the simulation listens ("silkit://<host>:<port>"); empty: a free port
     /// on 127.0.0.1.
     std::optional<std::string> registry_uri{};
+    /// The step of the launcher's controller in the time synchronisation (milliseconds of virtual
+    /// time) as written; empty: the default (time_step_ms()).
+    std::optional<std::int64_t> time_step_ms{};
+    /// Simulation seconds per wall-clock second; empty: as fast as possible ("max", or not written).
+    std::optional<double> speed{};
+    /// A controller step that begins more than this (wall-clock milliseconds) after the wall-clock
+    /// time its start stands for is late; empty: kDefaultLateToleranceMs (late_tolerance_ms()).
+    std::optional<std::int64_t> late_tolerance_ms{};
     std::vector<NetworkConfig> networks{};
     std::vector<ParticipantConfig> participants{};
     std::size_t participants_line = 0; ///< the line of participants (0 if it is missing)
 };
+
+/// The default step of the launcher's controller, in milliseconds: the step of a run as fast as
+/// possible, and the coarsest step of a run with a speed (see time_step_ms()).
+inline constexpr std::int64_t kDefaultTimeStepMs = 10;
+/// The default late_tolerance_ms: small against the timeouts of a device that is attached in real
+/// time, large against the jitter of an operating system's timers. It does not follow the step.
+inline constexpr std::int64_t kDefaultLateToleranceMs = 10;
+
+/// The step of the launcher's controller in milliseconds as the file alone gives it: time_step_ms
+/// if written; else kDefaultTimeStepMs, or, if that does not divide stop_at_ms, the greatest
+/// common divisor of both (the controller can stop the simulation only at one of its steps). A run
+/// with a speed makes the default finer if the ECUs' steps ask for it (run.hpp,
+/// detail::plan_time_step()).
+[[nodiscard]] std::int64_t time_step_ms(const SimulationConfig& config);
+/// late_tolerance_ms if written, else kDefaultLateToleranceMs.
+[[nodiscard]] std::int64_t late_tolerance_ms(const SimulationConfig& config);
+
+/// The range of a speed (as SimulationController takes it).
+inline constexpr double kMinSpeed = 1e-6;
+inline constexpr double kMaxSpeed = 1e6;
+/// Reads a speed as the configuration's "speed" and `run --speed` write it: "max" (`speed` is set
+/// empty: as fast as possible) or a decimal number from kMinSpeed to kMaxSpeed ("1", "0.5",
+/// "2.5e-1"). false if `text` is neither.
+[[nodiscard]] bool parse_speed(std::string_view text, std::optional<double>& speed);
+/// A speed for people and the JSON's text: "max", or the number in its shortest form.
+[[nodiscard]] std::string speed_text(const std::optional<double>& speed);
 
 /// The command line's changes to the participants' "enabled" keys: the names of the participants
 /// to leave out (--disable) and to take in (--enable).

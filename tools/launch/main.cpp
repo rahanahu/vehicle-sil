@@ -12,11 +12,14 @@
 //
 // The threads of run: main (the check, the run, the launcher's events, the result); one reader per
 // participant (its lines); with --stdin-commands, the reader of stdin (the command events, stop
-// requests); with --events, the writer of the events (the only thread that waits for their
-// reader) and their watch (a reader that does not read; says on stderr that the stream closed).
-// They meet in the event stream (a queue: no thread that makes an event waits; events.hpp says
-// what holds) and in the stop requests (atomics, as the signal handler). Only main is ever
-// waited for: the others are detached and may still wait when the process ends.
+// requests, the time commands: it hands each to the controller's time gate itself, through
+// launch::TimeCommands, waiting only for that object's and the gate's mutexes); with --events, the
+// writer of the events (the only thread that waits for their reader) and their watch (a reader
+// that does not read; says on stderr that the stream closed). SIL Kit's threads run the
+// controller's steps (the gate holds them). They meet in the event stream (a queue: no thread
+// that makes an event waits; events.hpp says what holds), in TimeCommands and in the stop
+// requests (atomics, as the signal handler). Only main is ever waited for: the others are
+// detached and may still wait when the process ends.
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/events.hpp"
@@ -35,6 +38,7 @@
 #include <exception>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -64,8 +68,9 @@ using namespace vehicle_sil;
 constexpr const char* kUsage =
     "usage: vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--disable <name>]...\n"
     "                                [--enable <name>]... [--] <file>\n"
-    "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--strict]\n"
-    "                              [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>]\n"
+    "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands [--start-paused]]\n"
+    "                              [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]\n"
+    "                              [--describe-timeout-ms <ms>]\n"
     "                              [--disable <name>]... [--enable <name>]... [--] <file>\n"
     "       vehicle_sil_launch version [--json]\n"
     "  check <file>                compare the simulation configuration <file> (YAML or JSON) with what each\n"
@@ -82,7 +87,11 @@ constexpr const char* kUsage =
     "  --events-stall-ms <ms>      run --events: give up a reader of the events that takes nothing for <ms>, and wait\n"
     "                              at most <ms> for it to take the result (1000 or more; default 30000)\n"
     "  --stdin-commands            run: read commands from stdin, one JSON object per line: {\"command\":\"stop\"}\n"
-    "                              stops in order (twice: without waiting); the end of stdin stops as well\n"
+    "                              stops in order (twice: without waiting); the end of stdin stops as well;\n"
+    "                              pause, resume, step (with \"ms\") and speed (with \"value\") control the time\n"
+    "  --start-paused              run --stdin-commands: stand still at 0 until a resume or step command\n"
+    "  --speed <speed>             run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
+    "                              or max (as fast as possible); replaces speed in <file>\n"
     "  --strict                    fail on warnings too\n"
     "  --log-dir <dir>             run: also write each participant's output to <dir>/<name>.log\n"
     "  --timeout-ms <ms>           run: abort the simulation if it has not ended <ms> after its start (wall clock)\n"
@@ -175,6 +184,8 @@ struct Shared
     /// themselves after their result).
     std::atomic<bool> finished{false};
     launch::EventStream* events = nullptr;
+    /// The time commands (run --stdin-commands): the reader of stdin hands them to the run.
+    launch::TimeCommands* time_commands = nullptr;
 };
 
 Shared& shared()
@@ -612,15 +623,20 @@ void start_reading_commands()
 {
     std::thread([] {
         launch::EventStream* events = shared().events;
-        launch::CommandInput input([events](const launch::Command& command) {
+        launch::TimeCommands* timeCommands = shared().time_commands;
+        launch::CommandInput input([events, timeCommands](const launch::Command& command) {
+            // The time commands: the run decides whether one can be done now, and writes its event
+            // before it does it (neither waits for the run or the reader of the events).
+            const launch::Command done =
+                command.is_time() && timeCommands != nullptr ? timeCommands->apply(command, "stdin") : command;
             // The event first: it comes before what the stop does (it does not wait for its reader).
-            if (events != nullptr)
+            if (events != nullptr && !command.is_time())
             {
                 events->command(command, "stdin");
             }
-            else if (!command.accepted)
+            else if (events == nullptr && !done.accepted)
             {
-                note_from_thread("vehicle_sil_launch: a line of the standard input was ignored: " + command.message);
+                note_from_thread("vehicle_sil_launch: a line of the standard input was ignored: " + done.message);
             }
             if (command.is_stop())
             {
@@ -767,7 +783,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
             optionsEnded = true;
         }
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
-                 a == "--disable" || a == "--enable")
+                 a == "--disable" || a == "--enable" || a == "--speed")
         {
             ++i;
         }
@@ -806,7 +822,7 @@ Common common(const cli::Args& args, const std::string& command)
 
 int check(const cli::Args& args)
 {
-    for (const char* runOnly : {"log-dir", "timeout-ms", "events-stall-ms", "events", "stdin-commands"})
+    for (const char* runOnly : {"log-dir", "timeout-ms", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused"})
     {
         if (args.has(runOnly) || args.flag(runOnly))
         {
@@ -861,6 +877,26 @@ int run(const cli::Args& args, launch::EventStream* events)
             throw cli::UsageError("--timeout-ms must be at least 1");
         }
     }
+    if (args.has("speed"))
+    {
+        std::optional<double> speed;
+        if (!launch::parse_speed(args.str("speed", ""), speed))
+        {
+            throw cli::UsageError("--speed must be a number of simulation seconds per wall-clock second from 0.000001 to "
+                                  "1000000 (1: real time, 2: twice as fast) or max (as fast as possible), not '" +
+                                  args.str("speed", "") + "'");
+        }
+        options.speed.emplace(speed); // also an empty one: "max" replaces the file's speed
+    }
+    if (args.flag("start-paused"))
+    {
+        if (!args.flag("stdin-commands"))
+        {
+            throw cli::UsageError("--start-paused needs --stdin-commands: without commands nothing could make the "
+                                  "simulation go on (resume, step)");
+        }
+        options.start_paused = true;
+    }
     watch_interrupts();
     if (events != nullptr)
     {
@@ -872,6 +908,9 @@ int run(const cli::Args& args, launch::EventStream* events)
     }
     if (args.flag("stdin-commands"))
     {
+        // Never destroyed: the reader of stdin may use it until the process ends.
+        shared().time_commands = new launch::TimeCommands(options.start_paused, events);
+        options.time_commands = shared().time_commands;
         start_reading_commands();
     }
     options.interrupts = &g_interrupts;
@@ -970,8 +1009,8 @@ int main(int argc, char** argv)
     int code = cli::kExitSetupFailed;
     try
     {
-        const cli::Args args(arguments, {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms"},
-                             {"json", "strict", "events", "stdin-commands"}, {"disable", "enable"});
+        const cli::Args args(arguments, {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed"},
+                             {"json", "strict", "events", "stdin-commands", "start-paused"}, {"disable", "enable"});
         if (args.positionals().empty())
         {
             code = usage_error("no command: give check <file>, run <file> or version", json, false, file, stream);

@@ -53,6 +53,16 @@
 //   stop_once    the end of input and a closed output after a stop are no second stop
 //   stdin_killed the input closes and the launcher is killed at once: no participant is left
 //   no_console_stdin (Windows) the launcher without a console is stopped in order by a command
+//   realtime     speed 1 (the file), --speed 2, max and 0.5: the wall-clock time it takes at least, the
+//                timing in the result and the line of the time in the text
+//   late         an ECU whose steps take longer than real time: the late steps are counted, a warning
+//                (not about a participant), --strict fails, the time events count them
+//   pause_step   --start-paused and the time commands: step (rounded up to the controller's steps),
+//                resume, a refused step, speed, pause, stop; it stands still where it paused
+//   paused_failures while it stands still: a process that ends fails the run, --timeout-ms aborts it,
+//                start_timeout_ms is not counted
+//   time_usage   --start-paused without --stdin-commands, a wrong --speed, the options for check, and
+//                wrong time keys in the file
 #include "launcher_support.hpp"
 #include "spawn_sleeper.hpp"
 
@@ -77,6 +87,7 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <cerrno>
 #include <csignal>
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -172,6 +183,27 @@ std::string without_versions(std::string text)
         const auto to = text.find('"', from);
         require(to != std::string::npos, "a \"vehicle_sil\" value does not end");
         text.replace(from, to - from, "<version>");
+    }
+    return text;
+}
+
+/// `text` with the values that depend on how fast the machine is as the docs show them: every
+/// "wall_ms" and "actual_speed" (in the JSON and in the events) as <wall_ms> and <actual_speed>.
+std::string without_timing(std::string text)
+{
+    for (const std::string key : {"wall_ms", "actual_speed"})
+    {
+        const std::string head = "\"" + key + "\":";
+        for (auto at = text.find(head); at != std::string::npos; at = text.find(head, at + 1))
+        {
+            auto from = at + head.size();
+            if (from < text.size() && text[from] == ' ')
+            {
+                ++from;
+            }
+            const auto to = text.find_first_of(",}\n", from);
+            text.replace(from, to - from, "<" + key + ">");
+        }
     }
     return text;
 }
@@ -301,9 +333,31 @@ void docs(const Options& o)
     const Captured json = launch(o, {"run", "simulation.yaml", "--json"}, dir);
     expect_code(json, 0, "run simulation.yaml --json");
     // Byte for byte: "\n" also on Windows.
-    expect_text(without_versions(json.standard_output),
+    expect_text(without_timing(without_versions(json.standard_output)),
                 without_versions(block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml --json -->")),
                 "run simulation.yaml --json");
+    // As fast as possible: the time as it went, never late, never paused.
+    require(contains(json.standard_output, "  \"timing\": {\n    \"speed\": \"max\",\n    \"time_step_ms\": 10,\n") &&
+                contains(json.standard_output, "    \"sim_ms\": 1000,\n") &&
+                contains(json.standard_output, "    \"paced_steps\": 0,\n    \"late_steps\": 0,\n    \"max_late_ms\": 0,\n"
+                                               "    \"slipped_ms\": 0,\n    \"late_ms\": 0,\n    \"paused_ms\": 0\n  },\n"),
+            "the timing of a run as fast as possible:\n" + json.standard_output);
+    // With a speed: the line of the time, as the manual shows it (the numbers that depend on the
+    // machine as <...>). The controller steps every 5 ms then, as Dashboard does: 200 steps.
+    const Captured paced = launch(o, {"run", "simulation.yaml", "--speed", "4"}, dir);
+    expect_code(paced, 0, "run simulation.yaml --speed 4");
+    const auto timeAt = paced.standard_output.find("\ntime: ");
+    require(timeAt != std::string::npos, "no line of the time:\n" + paced.standard_output);
+    std::string timeLine = paced.standard_output.substr(timeAt + 1, paced.standard_output.find('\n', timeAt + 1) - timeAt);
+    for (const auto& [before, name] : std::vector<std::pair<std::string, std::string>>{
+             {"ran at ", "<actual_speed>"}, {"real time; ", "<late_steps>"}, {"the latest by ", "<max_late_ms>"}, {"ms), ", "<slipped_ms>"}})
+    {
+        const auto from = timeLine.find(before);
+        require(from != std::string::npos, "the line of the time has no '" + before + "': " + timeLine);
+        timeLine.replace(from + before.size(), timeLine.find(' ', from + before.size()) - from - before.size(), name);
+    }
+    expect_text(timeLine, block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml --speed 4: the line of the time -->"),
+                "the line of the time");
 
     const fs::path logs = o.work_dir / "logs";
     const Captured logged = launch(o, {"run", "--json", "--log-dir", shown_path(logs), "simulation.yaml"}, dir);
@@ -1268,14 +1322,26 @@ void check_cut_events(const std::vector<std::string>& lines)
     }
 }
 
-/// `text` (event lines) without the heartbeat events, "seq" counted without them.
+/// `text` (event lines) without the heartbeat events and the time events between the first and
+/// the last (how many there are depends on how long the run takes), "seq" counted without them.
 std::string without_heartbeats(const std::string& text)
 {
     std::string out;
     std::size_t seq = 0;
-    for (const std::string& line : lines_of(text))
+    const std::vector<std::string> all = lines_of(text);
+    std::vector<std::size_t> times;
+    for (std::size_t i = 0; i < all.size(); ++i)
     {
-        if (value_of(line, "event") == "heartbeat")
+        if (value_of(all[i], "event") == "time")
+        {
+            times.push_back(i);
+        }
+    }
+    for (std::size_t i = 0; i < all.size(); ++i)
+    {
+        const std::string& line = all[i];
+        if (value_of(line, "event") == "heartbeat" ||
+            (value_of(line, "event") == "time" && i != times.front() && i != times.back()))
         {
             continue;
         }
@@ -1378,7 +1444,7 @@ void events(const Options& o)
     expect_code(alone, 0, "run simulation.yaml --events --disable Dashboard");
     static_cast<void>(check_events(alone.standard_output));
     // Without the heartbeats: how many there are depends on how long the run takes.
-    expect_text(with_placeholders(without_heartbeats(alone.standard_output), dir),
+    expect_text(without_timing(with_placeholders(without_heartbeats(alone.standard_output), dir)),
                 block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml --events --disable Dashboard -->"),
                 "run simulation.yaml --events --disable Dashboard");
     expect_text(alone.standard_error, "", "run --events: stderr");
@@ -1401,15 +1467,28 @@ void events(const Options& o)
                     name + " is " + state + " once:\n" + both.standard_output);
         }
     }
-    // The virtual time when it changes: 0 at the start, stop_at_ms at the end.
+    // The virtual time when it changes: 0 at the start, stop_at_ms at the end, at most every 100 ms
+    // in between (more on a slow machine), always further on.
     const auto times = events_with(lines, {"\"event\":\"time\""});
-    require(times.size() == 2 && contains(times[0], "\"sim_ms\":0}") && contains(times[1], "\"sim_ms\":1000}"),
+    require(times.size() >= 2 && contains(times.front(), "\"sim_ms\":0,") && contains(times.back(), "\"sim_ms\":1000,"),
             "the virtual time at 0 and at stop_at_ms:\n" + both.standard_output);
+    for (std::size_t i = 1; i < times.size(); ++i)
+    {
+        require(std::stoll(value_of(times[i], "sim_ms")) > std::stoll(value_of(times[i - 1], "sim_ms")) &&
+                    (i + 1 == times.size() ||
+                     // (t_ms is stamped when the event is written, a moment after the look at
+                     // the clock that spaced them: room for that.)
+                     std::stoll(value_of(times[i], "t_ms")) - std::stoll(value_of(times[i - 1], "t_ms")) >= 90),
+                "the time moves on, at most every 100 ms:\n" + times[i - 1] + "\n" + times[i]);
+        require(contains(times[i], "\"speed\":\"max\",\"paused\":false,") && contains(times[i], "\"late_steps\":0,\"max_late_ms\":0,\"slipped_ms\":0,\"late_ms\":0}"),
+                "as fast as possible, never late:\n" + times[i]);
+    }
     // The result is the JSON of --json.
     const Captured json = launch(o, {"run", "--json", "simulation.yaml"}, dir);
     expect_code(json, 0, "run --json simulation.yaml");
     const std::string& last = lines.back();
-    expect_text(last.substr(last.find(",\"result\":") + 10), compact(json.standard_output.substr(0, json.standard_output.size() - 1)) + "}",
+    expect_text(without_timing(last.substr(last.find(",\"result\":") + 10)),
+                without_timing(compact(json.standard_output.substr(0, json.standard_output.size() - 1)) + "}"),
                 "the result event as run --json");
 }
 
@@ -1653,12 +1732,12 @@ void expect_stopped_in_order(const std::optional<vehicle_sil::process::ExitStatu
 void stdin_stop(const Options& o)
 {
     const fs::path dir = two_ecus(o);
-    Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+    Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
     live.wait_for({"\"phase\":\"running\""});
-    // Nothing happens (without stop_at_ms the controller's time stays 0): a heartbeat every second.
+    // Nothing happens (it stands still at 0): a heartbeat every second.
     live.wait_for_count({"{\"event\":\"heartbeat\",\"seq\":"}, 2);
-    live.write("not a command\n{\"command\":\"pause\"}\n");
-    live.wait_for({"\"command\":\"pause\"", "\"accepted\":false"});
+    live.write("not a command\n{\"command\":\"jump\"}\n");
+    live.wait_for({"\"command\":\"jump\"", "\"accepted\":false"});
     live.write("{\"command\":\"stop\"}\n");
     live.wait_for({"\"phase\":\"stopping\""});
     // The end of input after a stop is no second stop (the ECUs still end by themselves).
@@ -1671,7 +1750,8 @@ void stdin_stop(const Options& o)
     require(contains(commands[0], "\"command\":null,\"source\":\"stdin\",\"accepted\":false,\"message\":\"the line is "
                                   "not a JSON object: "),
             "a line that is no JSON object:\n" + commands[0]);
-    require(contains(commands[1], "\"message\":\"unknown command 'pause': the commands are stop\""),
+    require(contains(commands[1], "\"message\":\"unknown command 'jump': the commands are stop, pause, resume, step and "
+                                  "speed\""),
             "an unknown command:\n" + commands[1]);
     require(contains(commands[2], "\"command\":\"stop\",\"source\":\"stdin\",\"accepted\":true,\"message\":null}"),
             "the stop:\n" + commands[2]);
@@ -1689,7 +1769,11 @@ void stdin_stop(const Options& o)
         require(started.size() == 1 && value_of(started[0], "pid") == std::to_string(read_pid((dir / (name + ".pid")).string(), 0ms)),
                 name + "'s started event has its process ID");
     }
-    require(events_with(lines, {"\"event\":\"time\""}).size() == 1, "the time is written when it changes");
+    // Standing still at 0 from the start; the end (it stands still nowhere then).
+    const auto times = events_with(lines, {"\"event\":\"time\""});
+    require(times.size() == 2 && contains(times[0], "\"sim_ms\":0,\"speed\":\"max\",\"paused\":true,") &&
+                contains(times[1], "\"sim_ms\":0,\"speed\":\"max\",\"paused\":false,"),
+            "the time is written when it changes:\n" + (times.empty() ? std::string{} : times[0]));
     const auto beats = events_with(lines, {"\"event\":\"heartbeat\""});
     require(!beats.empty() && members_of(beats[0]).empty(), "a heartbeat has no members:\n" + beats[0]);
 }
@@ -2028,6 +2112,23 @@ void events_stalled(const Options& o)
         args.insert(args.begin() + 1, {"--timeout-ms", "5000"});
         Stalled run(o, args, checks);
         checks.expect(run.participants_gone(60s), "--timeout-ms ends the run while the reader does not read");
+        // Gone here includes a process that is ending but that the launcher cannot reap yet (its
+        // first thread has ended, others have not: under a sanitizer that takes a while). A stop
+        // then comes while the launcher waits for the participants to end, which is an interrupted
+        // run (130), rightly. So wait until the launcher has reaped them: their process IDs are
+        // free then. Windows shows no such thing from outside: a second is room there.
+#ifdef _WIN32
+        std::this_thread::sleep_for(1000ms);
+#else
+        for (const long pid : {run.engine, run.brake})
+        {
+            const auto limit = std::chrono::steady_clock::now() + 30s;
+            while (!(::kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH) && std::chrono::steady_clock::now() < limit)
+            {
+                std::this_thread::sleep_for(5ms);
+            }
+        }
+#endif
         // Two: the launcher may still be ending the participants (their output), where the first
         // only ends that; a stop while it waits for the reader, or a second one, ends the wait.
         run.live->write("{\"command\":\"stop\"}\n");
@@ -2171,7 +2272,9 @@ void events_findings(const Options& o)
     // The same result as without --events.
     const Captured json = launch(o, {"run", "--json", "sim.yaml"}, dir);
     const std::string& last = lines.back();
-    expect_text(last.substr(last.find(",\"result\":") + 10), compact(json.standard_output.substr(0, json.standard_output.size() - 1)) + "}",
+    // (But for how long the two runs took.)
+    expect_text(without_timing(last.substr(last.find(",\"result\":") + 10)),
+                without_timing(compact(json.standard_output.substr(0, json.standard_output.size() - 1)) + "}"),
                 "the result event as run --json");
 
     // Engine's process ends in a step (exit code 7): the launcher learns of the failure by the end
@@ -2371,6 +2474,476 @@ void no_console_stdin(const Options& o)
 #endif
 }
 
+// --- time: speed, pause, step, lateness ---
+
+/// One test ECU, Engine (with `behaviour`), and the keys `keys` before networks.
+fs::path one_ecu(const Options& o, const std::string& keys, const std::string& behaviour = "")
+{
+    return scenario_dir(o,
+                        "vehicle_sil_simulation: 1\n" + keys +
+                            "networks: []\n"
+                            "participants:\n"
+                            "  - name: Engine\n"
+                            "    command: [" + ecu(o) + "]\n",
+                        {{"Engine", behaviour}});
+}
+
+/// The value of `key` in the pretty JSON of --json (the first), as text.
+std::string json_value(const std::string& json, const std::string& key)
+{
+    const std::string head = "\"" + key + "\": ";
+    const auto at = json.find(head);
+    require(at != std::string::npos, "no " + key + " in:\n" + json);
+    const auto from = at + head.size();
+    return json.substr(from, json.find_first_of(",\n", from) - from);
+}
+
+double json_number(const std::string& json, const std::string& key) { return std::stod(json_value(json, key)); }
+
+void realtime(const Options& o)
+{
+    // Speed 1 (from the file): 1000 ms of virtual time take at least 1 s of wall-clock time. A
+    // tolerance of 1 s: nothing that runs is that late (the test ECU's step takes no time).
+    const fs::path dir = one_ecu(o, "stop_at_ms: 1000\nspeed: 1\nlate_tolerance_ms: 1000\n");
+    Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
+    expect_code(run, 0, "run at speed 1");
+    const std::string& json = run.standard_output;
+    require(json_value(json, "speed") == "1" && json_value(json, "sim_ms") == "1000" &&
+                json_value(json, "time_step_ms") == "10" && json_value(json, "ecu_step_ms") == "10" &&
+                json_value(json, "step_delay_ms") == "0" && json_value(json, "late_tolerance_ms") == "1000",
+            "the timing of speed 1:\n" + json);
+    // From the step at 0 to the step at 1000 ms: never shorter than 1000 ms (only a lower bound).
+    require(json_number(json, "wall_ms") >= 999 && json_number(json, "actual_speed") <= 1.002,
+            "at speed 1, 1000 ms of virtual time take at least 1000 ms:\n" + json);
+    // The steps at 10 .. 1000 ms are paced (the one at 0 is the base), the one at stop_at_ms too.
+    require(json_value(json, "paced_steps") == "100" && json_value(json, "late_steps") == "0" &&
+                json_value(json, "slipped_ms") == "0" && json_value(json, "late_ms") == "0" &&
+                json_value(json, "paused_ms") == "0" && json_number(json, "max_late_ms") <= 1000,
+            "nothing late, nothing paused:\n" + json);
+    require(contains(json, "  \"findings\": [],\n"), "no finding:\n" + json);
+
+    // --speed replaces the file's speed: twice as fast takes at least half as long.
+    run = launch(o, {"run", "--json", "--speed", "2", "sim.yaml"}, dir);
+    expect_code(run, 0, "run --speed 2");
+    require(json_value(run.standard_output, "speed") == "2" && json_number(run.standard_output, "wall_ms") >= 499,
+            "--speed 2:\n" + run.standard_output);
+    // As fast as possible: nothing is paced.
+    run = launch(o, {"run", "--json", "--speed", "max", "sim.yaml"}, dir);
+    expect_code(run, 0, "run --speed max");
+    require(json_value(run.standard_output, "speed") == "\"max\"" && json_value(run.standard_output, "paced_steps") == "0",
+            "--speed max:\n" + run.standard_output);
+    // The text says how the time went, after the run's line.
+    run = launch(o, {"run", "--speed", "0.5", "sim.yaml"}, dir);
+    expect_code(run, 0, "run --speed 0.5");
+    require(contains(run.standard_output, "run: the simulation ran to stop_at_ms (1000 ms) and ended\ntime: speed 0.5, ran at "),
+            "the line of the time:\n" + run.standard_output);
+    require(contains(run.standard_output, " times real time; 0 of 100 paced steps more than 1000 ms late (the latest by "),
+            "the line of the time:\n" + run.standard_output);
+    require(contains(run.standard_output, " ms), 0 ms behind in all\n"), "the line of the time:\n" + run.standard_output);
+}
+
+void on_time(const Options& o)
+{
+    // What a user does first: run --speed 1, nothing else. An ECU that does nothing must not be
+    // told as late with the default tolerance (10 ms): the launcher's own timer has to be that
+    // good on every system. This is a bound on real time, so a machine that stands still for 10 ms
+    // fails a run: three runs, and one without a late step is enough (a timer that is too coarse
+    // is late in every run).
+    const fs::path dir = one_ecu(o, "stop_at_ms: 1000\n");
+    std::string seen;
+    bool onTime = false;
+    for (int i = 0; i < 3 && !onTime; ++i)
+    {
+        const Captured run = launch(o, {"run", "--json", "--speed", "1", "sim.yaml"}, dir);
+        expect_code(run, 0, "run --speed 1");
+        const std::string& json = run.standard_output;
+        require(json_value(json, "late_tolerance_ms") == "10" && json_value(json, "paced_steps") == "100" &&
+                    json_number(json, "wall_ms") >= 999,
+                "speed 1 with the default tolerance:\n" + json);
+        const std::string numbers = "late_steps " + json_value(json, "late_steps") + ", max_late_ms " + json_value(json, "max_late_ms") +
+                                    ", slipped_ms " + json_value(json, "slipped_ms") + ", wall_ms " + json_value(json, "wall_ms");
+        log("run --speed 1 with the default tolerance: " + numbers);
+        seen += numbers + "\n";
+        onTime = json_value(json, "late_steps") == "0" && contains(json, "  \"findings\": [],\n");
+    }
+    require(onTime, "an ECU that does nothing is late at speed 1 with the default tolerance, three times:\n" + seen);
+}
+
+void late(const Options& o)
+{
+    // Each 10 ms step of Engine takes 30 ms of wall-clock time: at speed 1 the simulation runs at
+    // a third of the speed or less, its steps begin 20 ms or more after their real time, and it
+    // does not catch up. Only lower bounds: a slower machine is later. (Not every step is late: an
+    // ECU that goes from one step straight into the next tells the others only after it, so the
+    // controller sees every other step one step late, and the one after it on time.)
+    const fs::path dir = one_ecu(o, "stop_at_ms: 300\nspeed: 1\n", "slow-ms 30");
+    const Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
+    expect_code(run, 0, "a run that falls behind real time (a warning)");
+    const std::string& json = run.standard_output;
+    require(json_value(json, "paced_steps") == "30" && json_number(json, "late_steps") >= 10 &&
+                json_number(json, "max_late_ms") >= 19 && json_number(json, "slipped_ms") >= 550 &&
+                json_number(json, "actual_speed") <= 0.35,
+            "the steps that came late:\n" + json);
+    // Nothing is caught up: the time it took is the time at the speed and what it slipped (the
+    // lateness within the tolerance at the end is not in the slip).
+    require(json_number(json, "wall_ms") >= 300 + json_number(json, "slipped_ms") - 2, "wall_ms is 300 ms and the slip:\n" + json);
+    require(contains(json, "      \"severity\": \"warning\",\n      \"code\": \"behind-real-time\",\n      \"file\": \"sim.yaml\",\n"
+                           "      \"line\": null,\n      \"participant\": null,\n"),
+            "a warning about no participant (the launcher cannot tell which one is slow):\n" + json);
+    const auto messageAt = json.find("\"message\": \"the simulation fell behind");
+    require(messageAt != std::string::npos, "the warning's message:\n" + json);
+    const std::string message = json.substr(messageAt + 11, json.find('\n', messageAt) - messageAt - 11);
+    const std::string expected = "\"the simulation fell behind real time: " + json_value(json, "late_steps") +
+                                 " of 30 paced steps of the launcher's controller (10 ms each) began more than 10 ms "
+                                 "(late_tolerance_ms) after the real time they stand for, the latest by " +
+                                 json_value(json, "max_late_ms") +
+                                 " ms. The launcher does not catch up after a late step (the ECUs' periodic messages would "
+                                 "leave in a burst): it goes on at the speed from there, so the simulation came " +
+                                 json_value(json, "slipped_ms") + " ms behind in all and ran at " + json_value(json, "actual_speed") +
+                                 " times real time (pauses not counted); ";
+    require(message.rfind(expected, 0) == 0, "the warning:\n" + message + "\nexpected to start with\n" + expected);
+    // --strict fails on it; the events have it before the participants are ended, and the time
+    // events count the late steps as they come.
+    const Captured strict = launch(o, {"run", "--strict", "--events", "sim.yaml"}, dir);
+    expect_code(strict, 1, "--strict fails a run that fell behind");
+    const auto lines = check_events(strict.standard_output);
+    const auto at = [&lines](const std::string& part) {
+        return std::find_if(lines.begin(), lines.end(), [&](const std::string& l) { return contains(l, part); }) - lines.begin();
+    };
+    require(at("\"code\":\"behind-real-time\"") < at("\"phase\":\"stopping\""), "the warning comes before stopping");
+    const auto times = events_with(lines, {"\"event\":\"time\""});
+    require(times.size() >= 3 && std::stoll(value_of(times.back(), "late_steps")) >= 10 &&
+                std::stoll(value_of(times.back(), "max_late_ms")) >= 19 && std::stoll(value_of(times.back(), "slipped_ms")) >= 550 &&
+                contains(times.back(), "\"speed\":1,"),
+            "the time events count the late steps:\n" + strict.standard_output);
+    // Last (it writes sim.yaml anew): the tolerance is the file's. As late, but within 100 s: no step is
+    // late, nothing slips (the lateness adds up instead), nothing is found.
+    const fs::path tolerant = one_ecu(o, "stop_at_ms: 300\nspeed: 1\nlate_tolerance_ms: 100000\n", "slow-ms 30");
+    const Captured within = launch(o, {"run", "--json", "sim.yaml"}, tolerant);
+    expect_code(within, 0, "a run within late_tolerance_ms");
+    require(json_value(within.standard_output, "late_steps") == "0" && json_number(within.standard_output, "max_late_ms") >= 200 &&
+                json_value(within.standard_output, "slipped_ms") == "0" && contains(within.standard_output, "  \"findings\": [],\n"),
+            "late, but within the tolerance:\n" + within.standard_output);
+}
+
+void stall(const Options& o)
+{
+    // One slow interval: Engine's step at 300 ms takes 500 ms. One late step (more on a machine
+    // that is slow elsewhere too), and the simulation goes on from there: it does not hurry
+    // through the 490 ms it lost, so the run takes them longer.
+    {
+        const fs::path dir = one_ecu(o, "stop_at_ms: 1000\nspeed: 1\n", "slow-at-ms 300 500");
+        const Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
+        expect_code(run, 0, "one slow interval (a warning)");
+        const std::string& json = run.standard_output;
+        require(json_value(json, "paced_steps") == "100" && json_number(json, "late_steps") >= 1 &&
+                    json_number(json, "max_late_ms") >= 480 && json_number(json, "slipped_ms") >= 480 &&
+                    json_number(json, "wall_ms") >= 1000 + json_number(json, "slipped_ms") - 2 && json_value(json, "late_ms") == "0",
+                "one slow interval:\n" + json);
+        require(contains(json, "\"code\": \"behind-real-time\""), "the warning:\n" + json);
+        log("one slow interval of 500 ms: late_steps " + json_value(json, "late_steps") + ", max_late_ms " +
+            json_value(json, "max_late_ms") + ", slipped_ms " + json_value(json, "slipped_ms") + ", wall_ms " +
+            json_value(json, "wall_ms"));
+    }
+    // Only the last interval is slow (the step at 990 ms): the controller's step at stop_at_ms,
+    // which nothing holds back, is the late one.
+    {
+        const fs::path dir = one_ecu(o, "stop_at_ms: 1000\nspeed: 1\n", "slow-at-ms 990 500");
+        const Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
+        expect_code(run, 0, "a slow last interval (a warning)");
+        const std::string& json = run.standard_output;
+        require(json_value(json, "paced_steps") == "100" && json_number(json, "late_steps") >= 1 &&
+                    json_number(json, "max_late_ms") >= 480 && json_number(json, "wall_ms") >= 1480 &&
+                    contains(json, "\"code\": \"behind-real-time\""),
+                "a slow last interval:\n" + json);
+    }
+    // stop_at_ms at the controller's first or second step after 0: the steps there are, are
+    // measured. (A slow step at 0 would not count: the first step is the base, and the ECU may
+    // run its own step at 0 before the controller's.)
+    {
+        fs::path dir = one_ecu(o, "stop_at_ms: 10\nspeed: 1\n");
+        Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
+        expect_code(run, 0, "a run of one step");
+        require(json_value(run.standard_output, "paced_steps") == "1" && json_number(run.standard_output, "wall_ms") >= 9,
+                "a run of one step:\n" + run.standard_output);
+        dir = one_ecu(o, "stop_at_ms: 20\nspeed: 1\n", "slow-at-ms 10 300");
+        run = launch(o, {"run", "--json", "sim.yaml"}, dir);
+        expect_code(run, 0, "a run of two steps (a warning)");
+        const std::string& json = run.standard_output;
+        require(json_value(json, "paced_steps") == "2" && json_number(json, "late_steps") >= 1 &&
+                    json_number(json, "max_late_ms") >= 280 && json_number(json, "wall_ms") >= 300,
+                "a run of two steps:\n" + json);
+    }
+    if (!can_request_stop())
+    {
+        log("no console to send Ctrl+Break through: not the run that ends in a stall");
+        return;
+    }
+    // Engine never returns from its step at 500 ms, and --timeout-ms ends the run 3 s after the
+    // start: the step at 510 ms never begins. While it lasts, the time events say how late it is
+    // by now; the result has the stall as a late step and in the time the run took.
+    {
+        const fs::path dir = one_ecu(o, "stop_timeout_ms: 300\nspeed: 1\n", "hang-at-ms 500");
+        const Captured events = launch(o, {"run", "--events", "--timeout-ms", "3000", "sim.yaml"}, dir);
+        expect_code(events, 1, "a run that ends in a stall");
+        const auto lines = check_events(events.standard_output);
+        const auto stalled = events_with(lines, {"\"event\":\"time\"", "\"sim_ms\":500,"});
+        std::int64_t last = 0;
+        std::size_t growing = 0;
+        for (const auto& line : stalled)
+        {
+            const std::int64_t late = std::stoll(value_of(line, "late_ms"));
+            require(late >= last, "the lateness of a stall only grows:\n" + events.standard_output);
+            growing += late > last ? 1 : 0;
+            if (late > 10)
+            {
+                require(std::stoll(value_of(line, "late_steps")) >= 1 && std::stoll(value_of(line, "max_late_ms")) >= late &&
+                            std::stoll(value_of(line, "slipped_ms")) >= late,
+                        "a step that is overdue is counted while it is:\n" + line);
+            }
+            last = late;
+        }
+        require(growing >= 3 && last >= 1500, "the time events show the stall while it lasts:\n" + events.standard_output);
+        const std::string& result = lines.back();
+        require(value_of(result, "sim_ms") == "500" && std::stoll(value_of(result, "late_ms")) >= 1500 &&
+                    std::stoll(value_of(result, "late_steps")) >= 1 && std::stoll(value_of(result, "max_late_ms")) >= 1500 &&
+                    std::stoll(value_of(result, "slipped_ms")) >= 1500 && std::stoll(value_of(result, "wall_ms")) >= 2000 &&
+                    std::stod(value_of(result, "actual_speed")) <= 0.25,
+                "the result of a run that ended in a stall:\n" + result);
+        require(!events_with(lines, {"\"code\":\"behind-real-time\"", "when the run ended, the next step was " +
+                                                                         value_of(result, "late_ms") + " ms overdue"})
+                     .empty(),
+                "the warning says that it ended in a stall:\n" + events.standard_output);
+        // The time of the result is the gate's: from the first step to the abort. The launcher's
+        // own end (the abort going round, the participants' end: 300 ms and more for the one that
+        // hangs) is not in it.
+        const std::int64_t ended = std::stoll(value_of(lines.back(), "t_ms"));
+        require(std::stoll(value_of(result, "wall_ms")) <= ended - 300,
+                "wall_ms ends at the abort, not when the participants have ended:\n" + result);
+    }
+}
+
+void speed_change(const Options& o)
+{
+    // Speed 1 up to 200 ms or a little further, then speed 4: the 800 ms (or a little less) that
+    // are left take a quarter of their time, counted from where the change came. Lower bounds:
+    // 1000 ms of virtual time never take less than 200 + 800 / 4 ms.
+    const fs::path dir = one_ecu(o, "stop_at_ms: 1000\nspeed: 1\nlate_tolerance_ms: 100000\n");
+    Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+    // The third time event after the one at 0: 200 ms or more have passed (they are 100 ms apart).
+    live.wait_for_count({"\"event\":\"time\"", "\"speed\":1,"}, 4);
+    const std::int64_t reached = std::stoll(value_of(events_with(live.lines(), {"\"event\":\"time\""})[3], "sim_ms"));
+    live.write("{\"command\":\"speed\",\"value\":4}\n");
+    const auto [status, lines] = live.finish();
+    require(status && status->code == 0, "a run whose speed changes on the way: 0");
+    require(reached >= 200 && reached < 1000, "200 ms or more at speed 1: " + std::to_string(reached));
+    // The change came at `reached` or later: the rest takes a quarter of its time at least.
+    const std::int64_t least = reached + (1000 - reached) / 4;
+    const std::string& result = lines.back();
+    require(value_of(result, "sim_ms") == "1000" && contains(result, "\"speed\":4,") &&
+                std::stoll(value_of(result, "wall_ms")) >= least - 1 &&
+                std::stod(value_of(result, "actual_speed")) <= 1000.0 / static_cast<double>(least - 1) + 0.001 &&
+                value_of(result, "paced_steps") == "100" && value_of(result, "slipped_ms") == "0",
+            "the time of a run that went on four times as fast from " + std::to_string(reached) + " ms or later:\n" + result);
+}
+
+void step_width(const Options& o)
+{
+    const auto step_file = [](const fs::path& dir, const std::string& ms) { write_file(dir / "test-ecu-step-ms", ms + "\n"); };
+    // An ECU that steps every millisecond. As fast as possible, the controller steps every 10 ms
+    // as ever; with a speed, as finely as the ECU, so that every ECU step runs at its real time.
+    fs::path dir = one_ecu(o, "stop_at_ms: 200\n");
+    step_file(dir, "1");
+    Captured run = launch(o, {"run", "--json", "sim.yaml"}, dir);
+    expect_code(run, 0, "1 ms steps as fast as possible");
+    require(json_value(run.standard_output, "time_step_ms") == "10" && json_value(run.standard_output, "ecu_step_ms") == "1" &&
+                json_value(run.standard_output, "step_delay_ms") == "9" && contains(run.standard_output, "  \"findings\": [],\n"),
+            "as fast as possible, the controller's step is 10 ms and nothing is found:\n" + run.standard_output);
+    run = launch(o, {"run", "--json", "--speed", "2", "sim.yaml"}, dir);
+    expect_code(run, 0, "1 ms steps at speed 2");
+    require(json_value(run.standard_output, "time_step_ms") == "1" && json_value(run.standard_output, "ecu_step_ms") == "1" &&
+                json_value(run.standard_output, "step_delay_ms") == "0" && json_value(run.standard_output, "paced_steps") == "200" &&
+                json_number(run.standard_output, "wall_ms") >= 99 && !contains(run.standard_output, "coarse-time-step"),
+            "with a speed, the controller steps as finely as the ECU:\n" + run.standard_output);
+    // time_step_ms as written stays: 10 ms over 1 ms steps at a speed is a warning that says by
+    // how much the ECU's steps run late, and what to write.
+    dir = one_ecu(o, "stop_at_ms: 200\ntime_step_ms: 10\n");
+    run = launch(o, {"run", "--json", "--speed", "2", "sim.yaml"}, dir);
+    expect_code(run, 0, "time_step_ms coarser than the ECU's step (a warning)");
+    require(json_value(run.standard_output, "time_step_ms") == "10" && json_value(run.standard_output, "step_delay_ms") == "9" &&
+                json_value(run.standard_output, "paced_steps") == "20",
+            "time_step_ms as written:\n" + run.standard_output);
+    require(contains(run.standard_output,
+                     "\"code\": \"coarse-time-step\",\n      \"file\": \"sim.yaml\",\n      \"line\": null,\n"
+                     "      \"participant\": null,\n      \"network\": null,\n      \"message\": \"the launcher's controller steps "
+                     "every 10 ms "
+                     "(time_step_ms), but the ECUs' steps are as small as 1 ms: with a speed, the launcher keeps real time "
+                     "only at the controller's steps. An ECU step that starts between two of them runs at the later one, up "
+                     "to 9 ms after the real time it stands for (never before it), together with the other steps in between; "
+                     "a device attached in real time gets the messages of those steps up to 9 ms late and in a burst. Write "
+                     "time_step_ms: 1 (or leave time_step_ms out: with a speed, the default is that)\""),
+            "the warning:\n" + run.standard_output);
+    expect_code(launch(o, {"run", "--strict", "--speed", "2", "sim.yaml"}, dir), 1, "--strict fails on coarse-time-step");
+    expect_code(launch(o, {"run", "--strict", "sim.yaml"}, dir), 0, "as fast as possible, a coarse step is nothing to warn of");
+    // A participant that does not describe itself: with a speed, 1 ms to be safe.
+    dir = scenario_dir(o,
+                       "vehicle_sil_simulation: 1\nstop_at_ms: 200\nspeed: 4\nnetworks: []\nparticipants:\n"
+                       "  - name: Engine\n    command: [" + ecu(o) + "]\n"
+                       "  - name: Logger\n    command: [" + helper(o) + ", --pid-file, logger.pid]\n"
+                       "    describe: false\n    required: false\n",
+                       {{"Engine", ""}});
+    step_file(dir, "10");
+    run = launch(o, {"run", "--json", "sim.yaml"}, dir);
+    const bool gone = all_gone(dir, {"logger.pid"}, 30s);
+    expect_code(run, 0, "a participant that does not describe itself, at a speed");
+    require(gone, "Logger has ended");
+    require(json_value(run.standard_output, "time_step_ms") == "1" && json_value(run.standard_output, "ecu_step_ms") == "null" &&
+                json_value(run.standard_output, "step_delay_ms") == "null" && !contains(run.standard_output, "coarse-time-step"),
+            "an unknown step: 1 ms\n" + run.standard_output);
+}
+
+void pause_step(const Options& o)
+{
+    // No stop_at_ms: it runs until it is stopped. Started paused, stepped, resumed, paced, paused.
+    const fs::path dir = one_ecu(o, "", "pid");
+    Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":0,", "\"paused\":true,"});
+    // A step goes the time given, in whole steps of the controller (10 ms), and stands still.
+    live.write("{\"command\":\"step\",\"ms\":50}\n");
+    live.wait_for({"\"command\":\"step\"", "\"accepted\":true,\"message\":null,\"ms\":50}"});
+    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":50,", "\"paused\":true,"});
+    std::this_thread::sleep_for(300ms);
+    require(events_with(live.lines(), {"\"sim_ms\":60,"}).empty(), "it stands still at 50 ms");
+    live.write("{\"command\":\"step\",\"ms\":15}\n");
+    live.wait_for({"\"command\":\"step\"", "\"ms\":20}"});
+    live.wait_for({"\"event\":\"time\"", "\"sim_ms\":70,", "\"paused\":true,"});
+    // Running: a step is refused; the speed changes.
+    live.write("{\"command\":\"resume\"}\n");
+    live.wait_for({"\"event\":\"time\"", "\"paused\":false,"});
+    live.write("{\"command\":\"step\",\"ms\":10}\n{\"command\":\"speed\",\"value\":1}\n");
+    live.wait_for({"\"command\":\"step\"", "\"accepted\":false"});
+    live.wait_for({"\"event\":\"time\"", "\"speed\":1,", "\"paused\":false,"});
+    live.write("{\"command\":\"pause\"}\n");
+    const std::string paused = live.wait_for({"\"event\":\"time\"", "\"speed\":1,", "\"paused\":true,"});
+    std::this_thread::sleep_for(300ms);
+    live.write("{\"command\":\"stop\"}\n");
+    const auto [status, lines] = live.finish();
+    const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
+    require(status && status->code == 130, "stopped while paused: 130");
+    require(gone, "no participant is left");
+    std::string all;
+    for (const auto& line : lines)
+    {
+        all += line + "\n";
+    }
+    // It stood still where it paused.
+    const std::int64_t where = std::stoll(value_of(paused, "sim_ms"));
+    for (const auto& time : events_with(lines, {"\"event\":\"time\""}))
+    {
+        require(std::stoll(value_of(time, "sim_ms")) <= where, "nothing moved after the pause:\n" + all);
+    }
+    // Each command comes before what it does; the refused step says why.
+    const auto at = [&lines](const std::vector<std::string>& parts) {
+        return std::find_if(lines.begin(), lines.end(),
+                            [&](const std::string& l) { return std::all_of(parts.begin(), parts.end(), [&](const std::string& p) { return contains(l, p); }); }) -
+               lines.begin();
+    };
+    require(at({"\"ms\":50}"}) < at({"\"sim_ms\":50,"}), "the step comes before the time it reaches:\n" + all);
+    require(!events_with(lines, {"\"command\":\"step\"", "\"accepted\":false,\"message\":\"step works while the simulation is "
+                                                         "paused: send {\\\"command\\\":\\\"pause\\\"} first (or run with "
+                                                         "--start-paused)\"}"})
+                 .empty(),
+            "a step while it runs is refused:\n" + all);
+    // The result: stood still for at least the waits above.
+    const std::string& result = lines.back();
+    require(std::stoll(value_of(result, "paused_ms")) >= 600 && contains(result, "\"speed\":1,"),
+            "the result counts the time it stood still:\n" + result);
+}
+
+void paused_failures(const Options& o)
+{
+    // While it stands still, a participant whose process ends fails the run (as while it runs).
+    {
+        const fs::path dir = scenario_dir(o,
+                                          "vehicle_sil_simulation: 1\n"
+                                          "networks: []\n"
+                                          "participants:\n"
+                                          "  - name: Engine\n"
+                                          "    command: [" + ecu(o) + "]\n"
+                                          "  - name: Brake\n"
+                                          "    command: [" + ecu(o) + "]\n",
+                                          {{"Engine", "exit-after-wall-ms 1500 3"}, {"Brake", "pid"}});
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "--timeout-ms", "60000", "sim.yaml"});
+        const auto [status, lines] = live.finish();
+        const bool gone = all_gone(dir, {"Brake.pid"}, 30s);
+        require(status && status->code == 1, "a participant that fails while it stands still fails the run (1)");
+        require(contains(lines.back(), "participant 'Engine': it failed while the simulation was running, and the launcher "
+                                       "aborted the simulation: its process exited with code 3"),
+                "the failure, not the timeout:\n" + lines.back());
+        require(!events_with(lines, {"\"name\":\"Engine\"", "\"state\":\"failed\"", "\"reason\":\"process_ended\""}).empty(),
+                "Engine is failed at once");
+        require(gone, "no participant is left");
+    }
+    // --timeout-ms counts the time it stands still (wall-clock time).
+    {
+        const fs::path dir = one_ecu(o, "", "pid");
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "--timeout-ms", "1500", "sim.yaml"});
+        const auto [status, lines] = live.finish();
+        const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
+        require(status && status->code == 1 && contains(lines.back(), "\"code\":\"timeout\""),
+                "a run that stands still past --timeout-ms is aborted:\n" + lines.back());
+        require(gone, "no participant is left");
+    }
+    // start_timeout_ms is for the start: standing still at 0 longer than it is fine.
+    {
+        const fs::path dir = one_ecu(o, "stop_at_ms: 100\nstart_timeout_ms: 1000\n");
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+        live.wait_for({"\"event\":\"time\"", "\"paused\":true,"});
+        std::this_thread::sleep_for(2000ms);
+        live.write("{\"command\":\"resume\"}\n");
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 0 && contains(lines.back(), "\"simulation\":\"reached_stop_at\""),
+                "a start paused for longer than start_timeout_ms runs to its end:\n" + lines.back());
+        require(std::stoll(value_of(lines.back(), "paused_ms")) >= 2000, "the time it stood still:\n" + lines.back());
+    }
+}
+
+void time_usage(const Options& o)
+{
+    const fs::path dir = one_ecu(o, "stop_at_ms: 100\n");
+    Captured run = launch(o, {"run", "--start-paused", "sim.yaml"}, dir);
+    expect_code(run, 4, "--start-paused without --stdin-commands");
+    require(contains(run.standard_error, "error: --start-paused needs --stdin-commands: without commands nothing could make "
+                                         "the simulation go on (resume, step)\n"),
+            run.standard_error);
+    run = launch(o, {"run", "--speed", "fast", "sim.yaml"}, dir);
+    expect_code(run, 4, "--speed fast");
+    require(contains(run.standard_error, "error: --speed must be a number of simulation seconds per wall-clock second from "
+                                         "0.000001 to 1000000 (1: real time, 2: twice as fast) or max (as fast as possible), "
+                                         "not 'fast'\n"),
+            run.standard_error);
+    for (const std::string option : {"--speed", "--start-paused"})
+    {
+        std::vector<std::string> args{"check", option};
+        if (option == "--speed")
+        {
+            args.push_back("1");
+        }
+        args.push_back("sim.yaml");
+        run = launch(o, args, dir);
+        expect_code(run, 4, "check " + option);
+        require(contains(run.standard_error, "error: " + option + " is for run: check starts no participant\n"), run.standard_error);
+    }
+    // In the file: an error of the check, nothing is started.
+    const fs::path bad = one_ecu(o, "stop_at_ms: 105\ntime_step_ms: 10\nspeed: 0\n");
+    run = launch(o, {"run", "sim.yaml"}, bad);
+    expect_code(run, 1, "a speed of 0 and a step that does not divide stop_at_ms");
+    require(contains(run.standard_output, "error: sim.yaml:3: stop_at_ms (105) is not a multiple of time_step_ms (10)") &&
+                contains(run.standard_output, "error: sim.yaml:4: speed must be ") &&
+                contains(run.standard_output, "nothing was started"),
+            run.standard_output);
+}
+
 int main(int argc, char** argv)
 {
 #ifndef _WIN32
@@ -2395,7 +2968,9 @@ int main(int argc, char** argv)
             {"output_closed", output_closed}, {"stdin_killed", stdin_killed}, {"no_console_stdin", no_console_stdin},
             {"stop_once", stop_once}, {"events_stalled", events_stalled}, {"events_slow", events_slow},
             {"events_findings", events_findings}, {"events_nonblocking", events_nonblocking}, {"events_output", events_output},
-            {"events_stderr", events_stderr}};
+            {"events_stderr", events_stderr}, {"realtime", realtime}, {"on_time", on_time}, {"late", late}, {"stall", stall},
+            {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
+            {"paused_failures", paused_failures}, {"time_usage", time_usage}};
         const auto it = std::find_if(scenarios.begin(), scenarios.end(), [&](const auto& s) { return s.first == o.scenario; });
         if (it == scenarios.end())
         {

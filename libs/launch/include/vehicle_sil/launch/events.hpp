@@ -28,7 +28,8 @@ inline constexpr int kEventsFormat = 1;
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
 /// versions (`version --json`'s "features"). Names are only added.
-inline constexpr std::array<std::string_view, 3> kFeatures{"events", "stdin-commands", "check-variables"};
+inline constexpr std::array<std::string_view, 6> kFeatures{"events",       "stdin-commands", "check-variables",
+                                                           "speed",        "start-paused",   "time-commands"};
 
 /// `version`: "vehicle_sil_launch <version>\n".
 [[nodiscard]] std::string format_version_text();
@@ -55,15 +56,25 @@ struct Command
     bool accepted = false;
     /// Why it was not accepted (one line), or "".
     std::string message{};
+    /// step: its "ms" as read; once applied (TimeCommands), how far the simulation goes (the
+    /// command event's "ms").
+    std::optional<std::int64_t> ms{};
+    /// speed: its "value" (empty: "max").
+    std::optional<double> speed{};
 
     [[nodiscard]] bool is_stop() const { return accepted && name == "stop"; }
+    /// pause, resume, step or speed (TimeCommands applies it).
+    [[nodiscard]] bool is_time() const { return accepted && name && *name != "stop"; }
 };
 
 /// The longest command line read; a longer one is not accepted.
 inline constexpr std::size_t kMaxCommandLine = 64 * 1024;
 
 /// Reads `line` (without its line end; a "\r" at its end is ignored) as a command: {"command":
-/// "stop"} (other keys are ignored). Empty for a line of white space only (it is skipped).
+/// "stop"}, {"command":"pause"}, {"command":"resume"}, {"command":"step","ms":<1 to kMaxMillis>},
+/// {"command":"speed","value":<a speed, parse_speed()>} (other keys are ignored). Only the form
+/// is read: whether the command can be done now is TimeCommands' part. Empty for a line of white
+/// space only (it is skipped).
 [[nodiscard]] std::optional<Command> parse_command(std::string_view line);
 
 /// Cuts the bytes of standard input into lines and reads each as a command (parse_command()). A
@@ -84,6 +95,25 @@ private:
     std::function<void(const Command&)> on_command_;
     std::string pending_;
     bool skipping_ = false; ///< in a line that was too long, until its end
+};
+
+/// The event "time".
+struct TimeEvent
+{
+    std::int64_t sim_ms = 0;
+    /// The speed set now; empty: as fast as possible ("max").
+    std::optional<double> speed{};
+    bool paused = false;
+    /// Virtual time / wall-clock time over about the last second while it ran; empty (null) if
+    /// that cannot be told (too short, or it stood still).
+    std::optional<double> actual_speed{};
+    /// The pacing numbers so far, as if the run ended now (RunTiming has their meaning): they
+    /// include a step that has not begun although its real time has come.
+    std::uint64_t late_steps = 0;
+    std::int64_t max_late_ms = 0;
+    std::int64_t slipped_ms = 0;
+    /// How late the step that has not begun yet is by now; 0 if none is overdue.
+    std::int64_t late_ms = 0;
 };
 
 /// A participant's state in the event "participant".
@@ -222,8 +252,8 @@ public:
     void log(const std::string& source, const std::string& line);
     /// One of the run's findings, with the fields of the results' "findings".
     void finding(const std::string& file, const Finding& finding);
-    /// The simulation's virtual time as the controller sees it.
-    void time(std::int64_t sim_ms);
+    /// The simulation's virtual time as the controller sees it, and how it goes.
+    void time(const TimeEvent& time);
     /// A command from standard input (`source` "stdin") or its end ("eof").
     void command(const Command& command, std::string_view source);
     /// The last event: the run's result as `run --json` writes it. Waits until it has been written
@@ -236,6 +266,10 @@ public:
     /// Waits up to `timeout` until every event given so far has been written; false if the time
     /// is over or the stream has closed.
     bool wait_written(std::chrono::milliseconds timeout);
+    /// How many events but "log" wait to be written now (takes only the queue's mutex). The run
+    /// makes no "time" event that says only that the time has moved while some wait: a reader that
+    /// falls behind is not given up because of them (max_other_events).
+    [[nodiscard]] std::size_t waiting_events() const;
     [[nodiscard]] bool closed() const;
     /// Why it closed, or "".
     [[nodiscard]] std::string close_reason() const;

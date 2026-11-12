@@ -8,6 +8,8 @@
 #include "vehicle_sil/launch/run.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <optional>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -51,6 +53,28 @@ RunOutcome passed_run()
     o.start_timeout_ms = 30000;
     o.stop_timeout_ms = 10000;
     o.participants = {exited(participant("Engine", 5), 0), exited(participant("Brake", 7), 0)};
+    o.timing.time_step_ms = 10;
+    o.timing.late_tolerance_ms = 10;
+    o.timing.sim_ms = 1000;
+    o.timing.wall_ms = 40;
+    return o;
+}
+
+/// passed_run() at speed 1 that fell behind: 37 of 100 paced steps late, by 1000 ms in all (1000 ms
+/// of simulation in 2000 ms), and paused for a second.
+RunOutcome late_run()
+{
+    RunOutcome o = passed_run();
+    o.timing.speed = 1.0;
+    o.timing.wall_ms = 3000;
+    o.timing.paused_ms = 1000;
+    o.timing.paced_steps = 100;
+    o.timing.late_steps = 37;
+    o.timing.max_late_ms = 412;
+    o.timing.slipped_ms = 1000;
+    o.timing.ecu_step_ns = 10'000'000;
+    o.timing.step_delay_ns = 0;
+    o.timing.fine_step_ms = 10;
     return o;
 }
 
@@ -542,6 +566,22 @@ TEST_CASE(the_json_report)
                "  \"notes\": 1,\n"
                "  \"simulation\": \"interrupted\",\n"
                "  \"interrupted_by\": \"SIGINT\",\n"
+               "  \"timing\": {\n"
+               "    \"speed\": \"max\",\n"
+               "    \"time_step_ms\": 10,\n"
+               "    \"ecu_step_ms\": null,\n"
+               "    \"step_delay_ms\": null,\n"
+               "    \"late_tolerance_ms\": 10,\n"
+               "    \"sim_ms\": 1000,\n"
+               "    \"wall_ms\": 40,\n"
+               "    \"actual_speed\": 25,\n"
+               "    \"paced_steps\": 0,\n"
+               "    \"late_steps\": 0,\n"
+               "    \"max_late_ms\": 0,\n"
+               "    \"slipped_ms\": 0,\n"
+               "    \"late_ms\": 0,\n"
+               "    \"paused_ms\": 0\n"
+               "  },\n"
                "  \"participants\": [\n"
                "    {\n"
                "      \"name\": \"Engine\",\n"
@@ -604,8 +644,307 @@ TEST_CASE(the_json_report)
     none.check.findings.push_back(Finding{Severity::Error, "unknown-key", "x", 3, "", ""});
     const std::string empty = format_run_json(none);
     CHECK(empty.find("  \"result\": \"check_failed\",\n") != std::string::npos);
-    CHECK(empty.find("  \"simulation\": null,\n  \"interrupted_by\": null,\n  \"participants\": [],\n  \"findings\": [],\n") !=
+    CHECK(empty.find("  \"simulation\": null,\n  \"interrupted_by\": null,\n  \"timing\": null,\n  \"participants\": [],\n"
+                     "  \"findings\": [],\n") != std::string::npos);
+    // A speed and how it went.
+    const std::string late = format_run_json(report_of(late_run()));
+    CHECK(late.find("  \"timing\": {\n    \"speed\": 1,\n    \"time_step_ms\": 10,\n    \"ecu_step_ms\": 10,\n"
+                    "    \"step_delay_ms\": 0,\n    \"late_tolerance_ms\": 10,\n"
+                    "    \"sim_ms\": 1000,\n    \"wall_ms\": 3000,\n    \"actual_speed\": 0.5,\n    \"paced_steps\": 100,\n"
+                    "    \"late_steps\": 37,\n    \"max_late_ms\": 412,\n    \"slipped_ms\": 1000,\n    \"late_ms\": 0,\n"
+                    "    \"paused_ms\": 1000\n  },\n") != std::string::npos);
+    // ECU steps of half a millisecond under a controller step of 2 ms.
+    RunOutcome fine = late_run();
+    fine.timing.time_step_ms = 2;
+    fine.timing.ecu_step_ns = 500'000;
+    fine.timing.step_delay_ns = 1'500'000;
+    CHECK(format_run_json(report_of(fine)).find("\"time_step_ms\": 2,\n    \"ecu_step_ms\": 0.5,\n    \"step_delay_ms\": 1.5,\n") !=
           std::string::npos);
+}
+
+TEST_CASE(a_run_that_fell_behind_real_time_is_a_warning_that_says_what_to_do)
+{
+    const RunReport r = report_of(late_run());
+    const std::string advice =
+        "; a device attached in real time got the ECUs' messages late by up to that. Lower the speed (speed, run --speed), "
+        "or find what is slow: an ECU whose step takes long needs a lighter step (a larger step of that ECU does not "
+        "help), and many ECUs with small steps cost a round of synchronisation per step (larger ECU steps and a larger "
+        "time_step_ms help then). The launcher cannot tell which participant is slow: leave ECUs out one at a time "
+        "(--disable <name>) and compare\n";
+    check_text(lines(r.findings),
+               "W 0 behind-real-time: the simulation fell behind real time: 37 of 100 paced steps of the launcher's "
+               "controller (10 ms each) began more than 10 ms (late_tolerance_ms) after the real time they stand for, the "
+               "latest by 412 ms. The launcher does not catch up after a late step (the ECUs' periodic messages would leave "
+               "in a burst): it goes on at the speed from there, so the simulation came 1000 ms behind in all and ran at 0.5 "
+               "times real time (pauses not counted)" + advice);
+    // A run that ended in a stall (a timeout, a failed participant, a stop): the step that never
+    // began is the late one.
+    RunOutcome stalled = late_run();
+    stalled.timing.sim_ms = 500;
+    stalled.timing.wall_ms = 5000;
+    stalled.timing.paused_ms = 0;
+    stalled.timing.paced_steps = 51;
+    stalled.timing.late_steps = 1;
+    stalled.timing.max_late_ms = 4490;
+    stalled.timing.slipped_ms = 4490;
+    stalled.timing.late_ms = 4490;
+    check_text(lines(assess_run(stalled)),
+               "W 0 behind-real-time: the simulation fell behind real time: 1 of 51 paced steps of the launcher's "
+               "controller (10 ms each) began more than 10 ms (late_tolerance_ms) after the real time they stand for, the "
+               "latest by 4490 ms; when the run ended, the next step was 4490 ms overdue (the simulation was not moving). "
+               "The launcher does not catch up after a late step (the ECUs' periodic messages would leave in a burst): it "
+               "goes on at the speed from there, so the simulation came 4490 ms behind in all and ran at 0.1 times real time "
+               "(pauses not counted)" + advice);
+    CHECK(r.result() == RunResult::Passed);
+    CHECK(report_of(late_run(), true).result() == RunResult::Failed);
+    // Settled once the simulation is over: written before the participants are ended.
+    CHECK(launch::detail::settled_findings(late_run()) == r.findings);
+    // One late step is enough.
+    RunOutcome once = late_run();
+    once.timing.late_steps = 1;
+    CHECK(lines(assess_run(once)).starts_with("W 0 behind-real-time: the simulation fell behind real time: 1 of 100 paced"));
+    // Within the tolerance, or nothing paced: no finding.
+    RunOutcome onTime = late_run();
+    onTime.timing.late_steps = 0;
+    onTime.timing.max_late_ms = 9;
+    check_text(lines(assess_run(onTime)), "");
+    check_text(lines(assess_run(passed_run())), "");
+    // How fast it ran in all: without the pauses; unknown if it did not run for a millisecond.
+    CHECK(late_run().timing.actual_speed() == 0.5);
+    RunTiming t = late_run().timing;
+    t.paused_ms = t.wall_ms;
+    CHECK(!t.actual_speed());
+    t.wall_ms = 3;
+    t.paused_ms = 0;
+    t.sim_ms = 1;
+    CHECK(t.actual_speed() == 0.333);
+}
+
+TEST_CASE(the_text_for_people_has_a_line_of_the_time_when_a_speed_was_set)
+{
+    const auto time_line = [](const RunOutcome& outcome) {
+        const std::string t = format_run_text(report_of(outcome));
+        const auto at = t.find("\ntime: ");
+        return at == std::string::npos ? std::string{} : t.substr(at + 1, t.find('\n', at + 1) - at - 1);
+    };
+    check_text(time_line(late_run()), "time: speed 1, ran at 0.5 times real time; 37 of 100 paced steps more than 10 ms late "
+                                      "(the latest by 412 ms), 1000 ms behind in all; paused for 1000 ms (not counted)");
+    RunOutcome onTime = late_run();
+    onTime.timing.speed = 2.0;
+    onTime.timing.paused_ms = 0;
+    onTime.timing.wall_ms = 500;
+    onTime.timing.late_steps = 0;
+    onTime.timing.max_late_ms = 2;
+    onTime.timing.slipped_ms = 0;
+    check_text(time_line(onTime), "time: speed 2, ran at 2 times real time; 0 of 100 paced steps more than 10 ms late (the "
+                                  "latest by 2 ms), 0 ms behind in all");
+    // After the run: the line follows the run's line.
+    CHECK(format_run_text(report_of(onTime)).find("and ended\ntime: speed 2,") != std::string::npos);
+    // A speed, but nothing paced yet (it ended at once): the line all the same.
+    RunOutcome brief = onTime;
+    brief.timing.paced_steps = 0;
+    brief.timing.max_late_ms = 0;
+    CHECK(time_line(brief).starts_with("time: speed 2, ran at 2 times real time; 0 of 0 paced steps"));
+    // As fast as possible, nothing paced: no line (the text stays the same from run to run).
+    check_text(time_line(passed_run()), "");
+    // Paced for a while, as fast as possible at the end: the line.
+    RunOutcome changed = late_run();
+    changed.timing.speed.reset();
+    CHECK(time_line(changed).starts_with("time: speed max, ran at 0.5 times real time; 37 of 100"));
+    // The simulation did not start: no line.
+    RunOutcome notStarted = late_run();
+    notStarted.simulation = SimulationEnd::NotStarted;
+    check_text(time_line(notStarted), "");
+}
+
+namespace {
+
+/// A check of `config` in which each participant described itself with the step of the same place
+/// in `steps_us` (microseconds; 0: an ECU in real time, without a step; -1: not described).
+launch::CheckReport described(const launch::SimulationConfig& config, const std::vector<std::int64_t>& steps_us)
+{
+    launch::CheckReport check;
+    check.config = config;
+    for (std::size_t i = 0; i < config.participants.size(); ++i)
+    {
+        launch::ParticipantResult r;
+        if (!config.participants[i].enabled)
+        {
+            r.status = launch::ParticipantStatus::Disabled;
+        }
+        else if (steps_us[i] < 0)
+        {
+            r.status = launch::ParticipantStatus::NotChecked;
+        }
+        else
+        {
+            r.status = launch::ParticipantStatus::Described;
+            r.ecu.emplace();
+            r.ecu->description.name = config.participants[i].name;
+            if (steps_us[i] > 0)
+            {
+                r.ecu->description.step = std::chrono::microseconds(steps_us[i]);
+            }
+        }
+        check.participants.push_back(std::move(r));
+    }
+    return check;
+}
+
+launch::SimulationConfig config_of(std::size_t participants, std::optional<std::int64_t> stop_at_ms = std::nullopt,
+                                   std::optional<std::int64_t> time_step_ms = std::nullopt)
+{
+    launch::SimulationConfig config;
+    config.stop_at_ms = stop_at_ms;
+    config.time_step_ms = time_step_ms;
+    for (std::size_t i = 0; i < participants; ++i)
+    {
+        launch::ParticipantConfig p;
+        p.name = "Ecu" + std::to_string(i);
+        config.participants.push_back(p);
+    }
+    return config;
+}
+
+struct Plan
+{
+    std::int64_t step_ms;
+    std::optional<std::int64_t> ecu_step_us;
+    std::optional<std::int64_t> delay_us;
+    std::int64_t fine_ms;
+    friend bool operator==(const Plan&, const Plan&) = default;
+};
+
+Plan plan(const launch::SimulationConfig& config, const std::vector<std::int64_t>& steps_us, std::optional<double> speed)
+{
+    const RunTiming t = launch::detail::plan_time_step(config, described(config, steps_us), speed);
+    CHECK(t.time_step_written == config.time_step_ms.has_value());
+    const auto us = [](const std::optional<std::int64_t>& ns) { return ns ? std::optional<std::int64_t>(*ns / 1000) : std::nullopt; };
+    return Plan{t.time_step_ms, us(t.ecu_step_ns), us(t.step_delay_ns), t.fine_step_ms};
+}
+
+} // namespace
+
+TEST_CASE(with_a_speed_the_controller_steps_as_finely_as_the_ecus_need)
+{
+    const std::optional<double> max{};
+    // As fast as possible: 10 ms (or what of it divides stop_at_ms), whatever the ECUs' steps. How
+    // late an ECU step may run under a speed is told all the same: 1 ms steps under 10 ms, 9 ms.
+    CHECK(plan(config_of(2), {1000, 10000}, max) == (Plan{10, 1000, 9000, 1}));
+    CHECK(plan(config_of(2, 1005), {1000, 10000}, max) == (Plan{5, 1000, 4000, 1}));
+    // With a speed: the greatest common divisor of 10 ms and the ECUs' steps, so that every ECU
+    // step starts at a controller step.
+    CHECK(plan(config_of(2), {1000, 10000}, 1.0) == (Plan{1, 1000, 0, 1}));
+    CHECK(plan(config_of(2), {5000, 10000}, 1.0) == (Plan{5, 5000, 0, 5}));
+    CHECK(plan(config_of(2), {10000, 20000}, 0.5) == (Plan{10, 10000, 0, 10}));
+    // Not the smallest step: 4 and 6 ms meet only every 2 ms.
+    CHECK(plan(config_of(2), {4000, 6000}, 1.0) == (Plan{2, 4000, 0, 2}));
+    // Larger steps than 10 ms do not make it coarser (pausing and stepping stay as fine).
+    CHECK(plan(config_of(2), {20000, 100000}, 1.0) == (Plan{10, 20000, 0, 10}));
+    // And it divides stop_at_ms.
+    CHECK(plan(config_of(1, 1005), {10000}, 1.0) == (Plan{5, 10000, 0, 5}));
+    CHECK(plan(config_of(1, 1001), {5000}, 1.0) == (Plan{1, 5000, 0, 1}));
+    // An ECU in real time has no step and does not count; no ECU with a step: 10 ms.
+    CHECK(plan(config_of(2), {0, 5000}, 1.0) == (Plan{5, 5000, 0, 5}));
+    CHECK(plan(config_of(1), {0}, 1.0) == (Plan{10, std::nullopt, 0, 10}));
+    // A participant that does not describe itself (describe: false): 1 ms, to be safe, and what
+    // the ECUs' steps are is not known.
+    CHECK(plan(config_of(2), {-1, 10000}, 1.0) == (Plan{1, std::nullopt, std::nullopt, 1}));
+    CHECK(plan(config_of(2), {-1, 10000}, max) == (Plan{10, std::nullopt, std::nullopt, 1}));
+    // A disabled participant does not count, described or not.
+    launch::SimulationConfig disabled = config_of(2);
+    disabled.participants[0].enabled = false;
+    CHECK(plan(disabled, {-1, 10000}, 1.0) == (Plan{10, 10000, 0, 10}));
+    // A step that is no whole number of milliseconds: 1 ms, and what is left is told.
+    CHECK(plan(config_of(1), {2500}, 1.0) == (Plan{1, 2500, 500, 1}));
+    // time_step_ms as written stays, with a speed too: 10 ms over 1 ms steps runs them up to 9 ms
+    // late, 10 ms over 15 ms steps up to 5 ms (15 ms waits for 20 ms), 20 ms over 10 ms steps 10 ms.
+    CHECK(plan(config_of(1, std::nullopt, 10), {1000}, 1.0) == (Plan{10, 1000, 9000, 1}));
+    CHECK(plan(config_of(1, std::nullopt, 10), {15000}, 1.0) == (Plan{10, 15000, 5000, 5}));
+    CHECK(plan(config_of(1, std::nullopt, 20), {10000}, 1.0) == (Plan{20, 10000, 10000, 10}));
+    CHECK(plan(config_of(1, std::nullopt, 2), {10000}, 1.0) == (Plan{2, 10000, 0, 10}));
+}
+
+TEST_CASE(a_controller_step_coarser_than_the_ecus_steps_is_a_warning_when_a_speed_is_set)
+{
+    // time_step_ms: 10 over an ECU of 1 ms, at speed 1.
+    RunOutcome o = passed_run();
+    o.timing.speed = 1.0;
+    o.timing.time_step_written = true;
+    o.timing.ecu_step_ns = 1'000'000;
+    o.timing.step_delay_ns = 9'000'000;
+    o.timing.fine_step_ms = 1;
+    const std::string what =
+        ": with a speed, the launcher keeps real time only at the controller's steps. An ECU step that starts between two "
+        "of them runs at the later one, up to 9 ms after the real time it stands for (never before it), together with the "
+        "other steps in between; a device attached in real time gets the messages of those steps up to 9 ms late and in a "
+        "burst. Write time_step_ms: 1";
+    check_text(lines(assess_run(o)),
+               "W 0 coarse-time-step: the launcher's controller steps every 10 ms (time_step_ms), but the ECUs' steps are as "
+               "small as 1 ms" + what + " (or leave time_step_ms out: with a speed, the default is that)\n");
+    CHECK(report_of(o).result() == RunResult::Passed);
+    CHECK(report_of(o, true).result() == RunResult::Failed);
+    CHECK(launch::detail::settled_findings(o) == assess_run(o));
+    // The run started as fast as possible (the default step is 10 ms then) and a speed command
+    // came later: at the end a speed is set, or steps were paced.
+    o.timing.time_step_written = false;
+    check_text(lines(assess_run(o)),
+               "W 0 coarse-time-step: the launcher's controller steps every 10 ms (the default of a run that starts without "
+               "a speed), but the ECUs' steps are as small as 1 ms" + what +
+                   " (or give the speed from the start, with speed or run --speed: the default is then that)\n");
+    o.timing.speed.reset();
+    o.timing.paced_steps = 3;
+    CHECK(lines(assess_run(o)).starts_with("W 0 coarse-time-step: "));
+    // As fast as possible all the way: no real time is kept, no finding.
+    o.timing.paced_steps = 0;
+    check_text(lines(assess_run(o)), "");
+    // ECU steps that are larger than the controller's but no multiple of it (15 ms under 10 ms).
+    o.timing.speed = 1.0;
+    o.timing.time_step_written = true;
+    o.timing.ecu_step_ns = 15'000'000;
+    o.timing.step_delay_ns = 5'000'000;
+    o.timing.fine_step_ms = 5;
+    CHECK(lines(assess_run(o)).starts_with("W 0 coarse-time-step: the launcher's controller steps every 10 ms (time_step_ms), "
+                                           "but not every ECU step starts at one of its steps: with a speed,"));
+    CHECK(lines(assess_run(o)).find("up to 5 ms after the real time") != std::string::npos);
+    // Nothing runs late, the steps are not known, or no step would be better: no finding.
+    o.timing.step_delay_ns = 0;
+    check_text(lines(assess_run(o)), "");
+    o.timing.step_delay_ns.reset();
+    check_text(lines(assess_run(o)), "");
+    o.timing.step_delay_ns = 500'000; // 2.5 ms steps under 1 ms
+    o.timing.time_step_ms = 1;
+    o.timing.fine_step_ms = 1;
+    check_text(lines(assess_run(o)), "");
+}
+
+TEST_CASE(what_ends_just_as_an_interrupt_comes_has_ended)
+{
+    using launch::detail::wait_for;
+    using launch::detail::Waited;
+    using namespace std::chrono_literals;
+    // The window: the launcher looks (not done), then the awaited thing happens and an interrupt
+    // comes, then the launcher looks at the interrupts. Without a second look the wait would be
+    // "interrupted" although what it waited for has happened (a participant that ended by itself
+    // would be told as stopped by the launcher instead of waited for).
+    int looks = 0;
+    bool interrupt = false;
+    CHECK(wait_for(10s, 1ms, [&] {
+              interrupt = true; // comes right after the first look ...
+              return ++looks > 1; // ... as does the end
+          },
+          [&] { return interrupt; }) == Waited::Done);
+    CHECK_EQ(looks, 2);
+    // Not done when the interrupt comes: interrupted, at once.
+    looks = 0;
+    CHECK(wait_for(10s, 1ms, [&] { ++looks; return false; }, [] { return true; }) == Waited::Interrupted);
+    CHECK_EQ(looks, 2);
+    // Done at the first look: the interrupts are not looked at. Never done: the timeout.
+    CHECK(wait_for(10s, 1ms, [] { return true; }, [] { return true; }) == Waited::Done);
+    CHECK(wait_for(20ms, 1ms, [] { return false; }, [] { return false; }) == Waited::TimedOut);
+    // Done later.
+    looks = 0;
+    CHECK(wait_for(10s, 1ms, [&] { return ++looks > 3; }, [] { return false; }) == Waited::Done);
 }
 
 TEST_CASE(the_participants_reach_a_registry_on_every_address_at_the_loopback_address)

@@ -48,6 +48,9 @@ participants:
 | `start_timeout_ms` | | 必須の participant がそろうまで待つ時間（ミリ秒、1 以上 10^12 以下の整数。書かなければ 30000）。`run` は ecu_main の実行ファイルにも `--start-timeout-ms` で同じ値を渡します |
 | `stop_timeout_ms` | | `run` が participant の終わりを待つ時間（ミリ秒、1 以上 10^12 以下の整数。書かなければ 10000）。止め方の各段で、この時間だけ待ちます |
 | `registry_uri` | | `run` が registry を立てる場所（`silkit://<host>:<port>`、ポートは 1 以上 65535 以下）。書かなければ 127.0.0.1 の空いているポートです。ほかのコンピューターの participant も参加させるときは `silkit://0.0.0.0:8500` のように書きます（このコンピューターの participant には `127.0.0.1` の URI を渡します） |
+| `speed` | | 仮想時間を進める速さ（実時間 1 秒あたりの仮想時間の秒数）。`1` が等速、`2` が 2 倍速、`0.5` が半分の速さです（0.000001 以上 1000000 以下の数）。`max` か、書かなければ最速です。`run --speed` で上書きできます（[等速で動かす](#等速で動かす)） |
+| `time_step_ms` | | controller の刻み（ミリ秒の仮想時間、1 以上 10^12 以下の整数）。一時停止とステップ送りの細かさ、速さを合わせる細かさです。書かなければ、最速のときは 10 です（`stop_at_ms` が 10 の倍数でなければ、`stop_at_ms` と 10 の最大公約数）。速さを指定したときは、さらに ECU のステップ幅との最大公約数にします（[等速で動かす](#等速で動かす)の「刻みと ECU のステップ」）。書いたときは `stop_at_ms` の約数にします（誤り `value`） |
+| `late_tolerance_ms` | | 遅れの許容（実時間のミリ秒、1 以上 10^12 以下の整数）。刻みの遅れがこれを超えたら、遅れた刻みに数えます。書かなければ 10 です（刻みと速さによりません） |
 | `networks` | はい | ネットワークの配列（空でもかまいません）。ECU が使うネットワークは、すべてここに書きます |
 | `networks[].name` | はい | ネットワークの名前（ECU の `j1939()`、`can()`、`lin_master()`、`lin_slave()` に渡す名前） |
 | `networks[].kind` | はい | `can` か `lin` |
@@ -61,7 +64,7 @@ participants:
 
 - 知らないキーはエラーです（打ち間違いを黙って無視しません）。近い名前があれば示します。同じキーを 2 回書くのもエラーです。
 - 整数は引用符なしで書きます（`"5000"` は文字列なのでエラーです）。真偽値は `true` か `false` です。
-- `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` はシミュレーションを動かすときの値です。`check` は値の形だけを確かめます。
+- `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri`、`speed`、`time_step_ms`、`late_tolerance_ms` はシミュレーションを動かすときの値です。`check` は値の形（と `stop_at_ms` と `time_step_ms` の組み合わせ）だけを確かめます。
 
 ### 実行ファイルのパス
 
@@ -143,7 +146,7 @@ passed: 0 errors, 1 warning, 1 note
 | `missing-key` | 誤り | 必須のキーがない |
 | `unknown-key` | 誤り | 知らないキー |
 | `duplicate-key` | 誤り | 同じキーが 2 回 |
-| `value` | 誤り | 型または範囲が違う値、使えない名前、実行ファイルのパスのプレースホルダー |
+| `value` | 誤り | 型または範囲が違う値、使えない名前、実行ファイルのパスのプレースホルダー、`stop_at_ms` の約数でない `time_step_ms` |
 | `duplicate-name` | 誤り | participant 名、またはネットワークの名前が 2 回 |
 | `reserved-name` | 誤り | participant 名が `SimulationController` |
 | `launcher-argument` | 誤り | ecu_main の `command` に、`ecu_main` の引数かプレースホルダーがある |
@@ -406,7 +409,7 @@ participants:
 
 1. `check` と同じ照合をします。誤りがあれば（`--strict` では警告も）、何も起動せずに照合の結果を書き、終了コード 1 です。
 2. registry をこのプロセスの中で立てます（`registry_uri`、なければ 127.0.0.1 の空いているポート）。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。
-3. controller（participant 名 `SimulationController`）をこのプロセスの中で動かします。シミュレーションが待つ（必須の）participant は、外していない `required: true` のものです。
+3. controller（participant 名 `SimulationController`）をこのプロセスの中で動かします。シミュレーションが待つ（必須の）participant は、外していない `required: true` のものです。controller は刻み（`time_step_ms` か、その既定値）で時刻同期に参加し、刻みの終わりを止めて、速さ、一時停止、ステップ送りを決めます（最速のときも同じです。刻みごとに同期が 1 回増えます）。
 4. 外していない participant を構成ファイルの順に、それぞれ別のプロセスで起動します。作業ディレクトリは構成ファイルのあるディレクトリ、標準入力は空です。
 5. 必須の participant がそろったら始めます。`stop_at_ms` があれば、仮想時間がそこに達したところで止めます。なければ、participant が止めるか、Ctrl+C まで動きます。
 6. 終わったら、すべての participant を終わらせ（下の「止め方」）、結果を書きます。
@@ -416,8 +419,48 @@ participants:
 - 始まる前: 必須の participant のプロセスが終わったら、`start_timeout_ms` を待たずにやめます（`ended-before-start`）。`start_timeout_ms` の間に参加しなかった必須の participant は、全部を挙げます（`not-joined`）。
 - 実行中: 必須の participant のプロセスが 0 でない終了コードで（またはシグナルで）終わったら、すぐにシミュレーションを中断します。controller から見て、必須の participant がシミュレーションを去ったときも中断します（Error の状態ならすぐに、ほかの状態なら 5 秒たってもシミュレーションが終わらないとき）。この規則は `vehicle_sil_sim_controller` と `vehicle_sil::Simulation` と同じです。中断の理由になった participant は `participant-failed` です。中断されても、ほかの ECU は自分で終わります（終了コード 0）。
 - `required: false` の participant は待たず、終わってもシミュレーションを止めません。0 でない終了コードは警告です。
-- `--timeout-ms <ms>` を付けると、シミュレーションが始まってから `<ms>` の実時間で終わらなければ中断し、誤り（`timeout`）にします。ステップの中で止まった ECU がいると仮想時間が進まず、`stop_at_ms` があっても終わらないためです（CI などで使います）。既定は上限なしです。
+- `--timeout-ms <ms>` を付けると、シミュレーションが始まってから `<ms>` の実時間で終わらなければ中断し、誤り（`timeout`）にします。ステップの中で止まった ECU がいると仮想時間が進まず、`stop_at_ms` があっても終わらないためです（CI などで使います）。一時停止している時間も数えます。既定は上限なしです。
+- 一時停止している間も、上の見張りはどれも同じように効きます（participant の失敗、止める要求、`--timeout-ms`）。`start_timeout_ms` は、そろうまでの時間です。`--start-paused` で 0 に止まっている時間は含みません。
 - `stop_at_ms` を書いたのに、participant がそれより前にシミュレーションを止めたときは、注記（`ended-before-stop-at`）を出します（`--strict` でも失敗にしません）。
+
+### 等速で動かす
+
+`speed`（構成ファイル）か `run --speed` を指定すると、controller は刻み（`time_step_ms`）ごとに、仮想時間を実時間に合わせます。`speed: 1` では、仮想時間 1000 ms に実時間で 1000 ms 以上かかります。実時間で動く機器と一緒に動かすとき、人が画面を見ながら操作するときに使います。
+
+実時間で動く機器は、シミュレーションを待ちません。シミュレーションが実時間に遅れると、機器から見た結果が変わります。そのため、遅れを次の定義で数えて報告します。
+
+遅れの定義:
+
+- **期限**: 刻み（仮想時刻 T に始まる controller のステップ）を始めてよい実時間です。基準の実時間 +（T − 基準の仮想時刻）÷ 速さ、で決まります。基準は最初の刻みでとり、再開のたびにとり直します。途中で速さを変えても、次の刻みの期限は動きません。どの刻みも、期限より前には始まりません。
+- **遅れ**: 刻みが実際に始まった実時間から、期限を引いたものです（負なら 0）。刻みが始まるのは、controller が前の刻みを放し、その刻みより前に始まる participant のステップが全部終わったと controller が知ったときです。controller 自身が起きるのが遅れた分も入ります（機器からは区別がつかないためです）。
+- **遅れた刻み**: 遅れが `late_tolerance_ms`（既定は実時間の 10 ms）を超えた刻みです。
+- **ずれ**: 遅れた刻みの後、シミュレーションは追いつこうとしません。その刻みを新しい基準にして、そこから指定の速さで進みます。それ以後の仮想時間は、遅れた分だけ後ろにずれたままです。ずれの合計が `slipped_ms` です。許容の内の遅れでは基準を変えないので、次の刻みで自然に取り戻します。
+- **数える範囲**: 基準をとった次の刻みから、最後の刻み（`stop_at_ms` の刻みを含みます）までです。期限を過ぎてもまだ始まっていない刻みは、そのときまでの遅れで数えます。participant が止まったまま、時間切れ、失敗、停止で実行が終わっても、その遅れは結果に残ります。一時停止していた時間は数えません。
+
+遅れたときに、実時間で動く機器から見て起きること:
+
+- ある刻みが 490 ms 遅れると、それ以後のメッセージは、すべて 490 ms 遅れて出ます。周期は変わりません（10 ms 周期のメッセージは、その後も 10 ms おきに出ます）。
+- 追いつかないのは、追いつくと、たまった分（この例では約 49 周期分）のメッセージが数 ms の間にまとめて出て、受ける側の周期やタイムアウトの判定を乱すためです。
+- 遅れた刻みの数は、遅れが起きた回数です。1 回の遅いステップは、どれだけ長くても遅れた刻み 1 つです。ECU のステップがいつも実時間に間に合わないシミュレーションは、ずれ続けます。全体でどれだけ遅れたかは、`slipped_ms` と `actual_speed` でわかります（かかった実時間は、仮想時間 ÷ 速さ に `slipped_ms` を足したものより短くなりません）。
+- 1 つの刻みの遅れ（`max_late_ms`）は、大きめに出ることがあります。participant があるステップを終えてすぐ次のステップに入ると、終わったことは次のステップの後で controller に伝わります。controller はその分（最大で、その participant の 1 ステップにかかる実時間）だけ遅く知ります。小さく出ることはありません。
+- そのため、ステップの計算が続けてステップの枠（ステップ幅 ÷ 速さ の実時間）をはみ出す ECU では、許容が、次の 1 ステップの計算時間の分だけ小さく効きます。大きめに測った遅れが許容を超えると、その刻みは遅れた刻みになり、基準をとり直すので、以後は実際にその分だけずれます。こういう ECU があるときは、`late_tolerance_ms` を「機器が待てる時間 + ECU の 1 ステップの計算時間」を目安に決めます。
+
+刻みと ECU のステップ:
+
+- 合わせるのは刻みの境目だけです。仮想時刻 T に始まる ECU のステップは、T 以後の最初の刻みの期限に動きます。刻みの間に始まるステップは、次の刻みの期限に、まとめて動きます。T にあたる実時間より遅くなり、早くはなりません。
+- 遅くなる量は、最大で「刻み −（刻みと ECU のステップ幅の最大公約数）」です。刻みが 10 ms なら、ステップ幅 1 ms の ECU で最大 9 ms、15 ms の ECU で最大 5 ms です。ステップ幅が刻みの倍数の ECU では 0 です。この量は遅れの数には入りません。結果の `timing` の `step_delay_ms` に出ます。
+- そのため、速さを指定して `time_step_ms` を書かなければ、刻みは、10 ms、`stop_at_ms`、ECU のステップ幅（外していない ECU が照合で自己申告したもの）の最大公約数になります。ECU が 10 ms と 5 ms なら 5 ms、4 ms と 6 ms なら 2 ms、20 ms だけなら 10 ms です。ステップ幅がわからない participant（`describe: false`）があるときと、最大公約数が 1 ms の倍数でないときは、1 ms です。
+- `time_step_ms` を書いたときは、その値を使います。速さの指定があり、ECU のステップが刻みの境目で始まらないときは、警告 `coarse-time-step` を出します（最大で何 ms 遅れてまとまるか、何と書けばよいか）。最速で始めて、途中で `speed` の命令を受けたときも同じです（刻みは始めに決まり、途中で変わりません）。
+- 刻みを細かくすると、時刻同期の回数が増えます。最速のときの既定が 10 ms のままなのは、そのためです。
+
+そのほか:
+
+- 合わせるために待つだけです。いちばん遅い participant より速くはなりません。
+- 遅れた刻みが 1 つでもあれば、警告 `behind-real-time` を出します（`--strict` では失敗）。数は、結果の `timing`、人向けの出力の `time:` の行、`--events` の `time` にあります。
+- 遅れたときは、速さを下げるか、遅い原因を探します。1 ステップの計算が重い ECU は、そのステップを軽くします（ステップ幅を大きくしても、1 ステップが重ければ遅れは減りません）。小さいステップの ECU が多くて同期の回数が多いときは、ECU のステップ幅と `time_step_ms` を大きくします。`vehicle_sil_launch` は、どの participant が遅いかを知りません（SIL Kit は各 participant のステップにかかった時間を controller に伝えません）。ECU を 1 つずつ外して（`--disable`）比べます。
+- `late_tolerance_ms` の既定の 10 ms は、実時間で動く機器のタイムアウトに比べて十分小さく、OS のタイマーの揺れより十分大きい値として選んでいます。実時間の長さで、刻みと速さによりません。機器が待てる時間に合わせて変えます。
+- 最速（`max`）では合わせず、遅れも数えません。
+- 一時停止、ステップ送り、途中での速さの変更は、標準入力の命令です（[標準入力の命令](#標準入力の命令run---stdin-commands)）。`run --start-paused` は、全員がそろったら仮想時間 0 で止まり、`resume` か `step` を待ちます（`--stdin-commands` と一緒に使います）。
 
 ### 止め方
 
@@ -453,9 +496,9 @@ Windows でコンソールを閉じると、Windows は数秒でプロセスを�
 - participant の標準出力と標準エラーは、行ごとに `[<participant 名>] ` を付けて、`vehicle_sil_launch` の標準エラーに流します。`vehicle_sil_launch` 自身の経過は `[vehicle_sil_launch] ` で始まります（registry の URI、起動したコマンド、始まった、終わった、止めた）。4096 バイトを超える行は、UTF-8 の文字の間で分けて流します。制御文字（タブを除く C0、DEL、U+0080 から U+009F の C1）と、UTF-8 でないバイトは `?` にします。participant は UTF-8 で書いてください（Windows のコンソールにも UTF-8 として表示するので、ほかのコードページの文字は化けます）。標準エラーを読む側が止まる（読まれないパイプ）と、`vehicle_sil_launch` も書くところで止まります。
 - `--log-dir <dir>` を付けると、participant ごとに `<dir>/<participant 名>.log` にも書きます（`[名前]` なし。名前の ASCII の英数字、`.`、`-`、`_` 以外のバイトは `_` にし、Windows の装置の名前（`NUL`、`CON`、`PRN`、`AUX`、`COM1`〜`COM9`、`LPT1`〜`LPT9`。`.` の前も）には、どの OS でも後ろに `_` を付けます。大文字と小文字だけが違う名前は重なりとみなし、`-2` などを付けます）。ディレクトリがなければ作ります。前の実行のログは、同じ名前のものだけを書き直します（今の構成にない participant のログは残ります）。JSON の `participants[].log` が、どのファイルかを示します。
 - `--events` のときは、ここに書いた行（participant の行と `vehicle_sil_launch` の経過）を標準エラーに書かず、事象として標準出力に書きます（[機械から使う](#機械から使う--events--stdin-commandsversion)）。
-- 標準出力には結果だけを書きます（人向けか `--json`。`--events` では事象）。同じ機械の上の同じ結果からは同じ出力です（時刻、所要時間、プロセス ID、registry の URI を含みません）。改行はどの OS でも LF です。Windows のコンソールに書くときは、`check` も `run` も、コンソールのコードページによらず UTF-8 の文字として表示します。
+- 標準出力には結果だけを書きます（人向けか `--json`。`--events` では事象）。同じ機械の上の同じ結果からは同じ出力です（時刻、所要時間、プロセス ID、registry の URI を含みません）。ただし、時間の進み方を示す値は実行ごとに違います（人向けの `time:` の行、JSON の `timing` の `wall_ms`、`actual_speed`、遅れの数（`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`）、`paused_ms`）。改行はどの OS でも LF です。Windows のコンソールに書くときは、`check` も `run` も、コンソールのコードページによらず UTF-8 の文字として表示します。
 
-人向けの結果は、照合の表と照合で見つけたもの、`run:` で始まるシミュレーションの 1 行、participant の表（必須か、どう終わったか）、実行で見つけたもの、最後に結果の 1 行（`passed:`、`failed:`、`interrupted:` と、照合と実行を合わせた誤り、警告、注記の数）です。照合に誤りがあるときは、照合の表と見つけたものの後に `nothing was started:` の行を書きます。
+人向けの結果は、照合の表と照合で見つけたもの、`run:` で始まるシミュレーションの 1 行（速さを指定したか、速さを合わせた刻みがあったときは、続けて `time:` の 1 行）、participant の表（必須か、どう終わったか）、実行で見つけたもの、最後に結果の 1 行（`passed:`、`failed:`、`interrupted:` と、照合と実行を合わせた誤り、警告、注記の数）です。照合に誤りがあるときは、照合の表と見つけたものの後に `nothing was started:` の行を書きます。
 
 <!-- vehicle_sil_launch run simulation.yaml -->
 ```text
@@ -475,6 +518,13 @@ Engine       yes       exit code 0
 Dashboard    yes       exit code 0
 
 passed: 0 errors, 0 warnings, 0 notes
+```
+
+`time:` の行は、速さ、全体の実際の速さ（一時停止を除く）、速さを合わせた刻みの数と、そのうち許容を超えて遅れた数、最大の遅れ、ずれの合計、一時停止していた時間（あれば）です。次は `--speed 4` で動かしたときの行です（`<` と `>` で囲んだ所は、実行ごとに違う値です。刻みは、Dashboard のステップ幅に合わせて 5 ms になるので、200 個です）。
+
+<!-- vehicle_sil_launch run simulation.yaml --speed 4: the line of the time -->
+```text
+time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced steps more than 10 ms late (the latest by <max_late_ms> ms), <slipped_ms> ms behind in all
 ```
 
 participant の表の `ended` の列:
@@ -529,6 +579,8 @@ passed: 0 errors, 1 warning, 1 note
 | `timeout` | 誤り | シミュレーションが `--timeout-ms` の実時間で終わらなかったので、中断した |
 | `simulation` | 誤り | シミュレーションが正常に終わらなかった（理由の participant がわからない） |
 | `ended-before-stop-at` | 注記 | `stop_at_ms` より前に、participant がシミュレーションを止めた |
+| `behind-real-time` | 警告 | 速さを合わせた刻みのうち、遅れが `late_tolerance_ms` を超えたものがあった（[等速で動かす](#等速で動かす)）。遅れた刻みの数、最大の遅れ、ずれの合計、全体の実際の速さ、止まったまま終わったならそのときの遅れを書きます。どの participant の所見でもありません |
+| `coarse-time-step` | 警告 | 速さの指定があり、controller の刻みが ECU のステップより粗い（ECU のステップが刻みの境目で始まらない）。ECU のステップが最大で何 ms 遅れてまとまって動くかと、`time_step_ms` に書く値を書きます（[等速で動かす](#等速で動かす)の「刻みと ECU のステップ」）。どの participant の所見でもありません |
 | `interrupted` | 注記 | 中断された |
 
 ### JSON（`run --json`）
@@ -545,9 +597,29 @@ passed: 0 errors, 1 warning, 1 note
 | `errors`、`warnings`、`notes` | 照合と実行を合わせた数 |
 | `simulation` | `"reached_stop_at"`（`stop_at_ms` まで動いた）、`"ended"`（participant が止めた）、`"aborted"`（中断した。`--timeout-ms` のときも）、`"interrupted"`、`"not_started"`。何も起動しなかったときは `null` |
 | `interrupted_by` | 中断のシグナルかキー（`"SIGINT"`、`"Ctrl+C"` など）。中断でなければ `null` |
+| `timing` | 時間の進み方（下の表）。何も起動しなかったときは `null` |
 | `participants[]` | 構成ファイルの順（外した participant も）。`name`、`required`、`enabled`（`false` なら外した participant で、`ended` は `"not_started"`、`log` は `null`。シミュレーションが待つのは `required` と `enabled` がどちらも `true` のもの）、`ended`（`"exited"`、`"stopped"`、`"killed"`、`"not_started"`）、`exit_code`（シグナルで終わったとき、強制終了したとき、起動しなかったときは `null`）、`signal`（`"SIGSEGV"` など。なければ `null`）、`left_processes`（起動したプロセスを残したか）、`log`（`--log-dir` のファイル。なければ `null`） |
 | `findings[]` | 実行で見つけたもの（照合の `findings[]` と同じ形） |
 | `check` | 照合の結果（`check --json` と同じオブジェクト） |
+
+`timing` のキー（数の定義は[等速で動かす](#等速で動かす)。時間は、controller の最初の刻み（仮想時間 0）が始まってから、最後の刻みが始まるまでのものです。participant の起動、止める処理、失敗に気づくまでの待ちは入りません。次の刻みが期限を過ぎたまま実行が終わったときと、最速のときは、実行が終わった時点までです）:
+
+| キー | 値 |
+|---|---|
+| `speed` | 終わったときの速さ（数か `"max"`） |
+| `time_step_ms` | controller の刻み（構成ファイルの値か既定値） |
+| `ecu_step_ms` | ECU のステップ幅の最小（ミリ秒）。ステップ幅がわからない participant（`describe: false`）があるとき、ステップを持つ ECU がないときは `null` |
+| `step_delay_ms` | 刻みが ECU のステップより粗いために、ECU のステップが、その仮想時刻にあたる実時間より遅く動く量の最大（ミリ秒。速さを合わせているときに意味があります。0 なら、どの ECU のステップも刻みの境目で始まります）。ステップ幅がわからない participant があるときは `null` |
+| `late_tolerance_ms` | 遅れの許容（構成ファイルの値か既定値） |
+| `sim_ms` | 進んだ仮想時間（ミリ秒。最後に始まった刻みの時刻） |
+| `wall_ms` | かかった実時間（ミリ秒。一時停止していた時間を含みます） |
+| `actual_speed` | 全体の実際の速さ（`sim_ms` ÷（`wall_ms` − `paused_ms`）、小数 3 桁）。動いた時間が 1 ms に満たなければ `null` |
+| `paced_steps` | 速さを合わせた刻みの数（期限と比べた刻み。期限を過ぎたまま始まらなかった最後の刻みを含みます） |
+| `late_steps` | そのうち、遅れが `late_tolerance_ms` を超えた刻みの数（ずれた回数） |
+| `max_late_ms` | 速さを合わせた刻みの、最大の遅れ（ミリ秒、切り上げ。許容の内のものも含みます） |
+| `slipped_ms` | ずれの合計（遅れた刻みの遅れの合計。ミリ秒、切り上げ）。シミュレーションが、指定の速さで進んだ場合より、全体でこれだけ遅れました |
+| `late_ms` | 実行が終わったとき、期限を過ぎたまま始まっていなかった刻みの遅れ（ミリ秒、切り上げ）。なければ 0。0 でなければ、シミュレーションは止まったまま終わりました（`late_steps`、`max_late_ms`、`slipped_ms` に入っています） |
+| `paused_ms` | 一時停止していた実時間（ミリ秒） |
 
 <!-- vehicle_sil_launch run simulation.yaml --json -->
 ```json
@@ -562,6 +634,22 @@ passed: 0 errors, 1 warning, 1 note
   "notes": 0,
   "simulation": "reached_stop_at",
   "interrupted_by": null,
+  "timing": {
+    "speed": "max",
+    "time_step_ms": 10,
+    "ecu_step_ms": 5,
+    "step_delay_ms": 5,
+    "late_tolerance_ms": 10,
+    "sim_ms": 1000,
+    "wall_ms": <wall_ms>,
+    "actual_speed": <actual_speed>,
+    "paced_steps": 0,
+    "late_steps": 0,
+    "max_late_ms": 0,
+    "slipped_ms": 0,
+    "late_ms": 0,
+    "paused_ms": 0
+  },
   "participants": [
     {
       "name": "Engine",
@@ -715,7 +803,7 @@ passed: 0 errors, 1 warning, 1 note
 }
 ```
 
-この節の例も、CTest の `launch_run.docs` が実際の実行と照合します（`vehicle_sil` の版を除いて、バイト単位で）。
+この節の例も、CTest の `launch_run.docs` が実際の実行と照合します（`vehicle_sil` の版と、`<wall_ms>`、`<actual_speed>` にした値を除いて、バイト単位で）。
 
 ## 機械から使う（`--events`、`--stdin-commands`、`version`）
 
@@ -747,8 +835,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `log` | participant か `vehicle_sil_launch` が 1 行書いたとき | `source`（participant 名か `vehicle_sil_launch`）、`line`（その行。[`log` の行](#log-の行)） |
 | `log_dropped` | 読む側が遅くて `log` を書けなかったとき、その場所に（[読む側が遅いとき](#読む側が遅いとき読まないとき)） | `count`（書かなかった `log` の数）、`sources`（`source` ごとの数のオブジェクト。例: `{"Engine": 120, "vehicle_sil_launch": 1}`） |
 | `finding` | 実行で見つけたものが決まったとき | 結果の `findings[]` の 1 つと同じキー（`severity`、`code`、`file`、`line`、`participant`、`network`、`message`、`detail`） |
-| `time` | シミュレーションの仮想時間が変わったとき | `sim_ms`: controller が見ている仮想時間（ミリ秒）。減りません |
-| `command` | 標準入力から命令を受けたとき（`--stdin-commands`） | `command`（命令の名前。読めなければ `null`）、`source`（`"stdin"`: 行で来た、`"eof"`: 標準入力の終わり）、`accepted`（受け付けたか）、`message`（受け付けなかった理由。受け付けたら `null`） |
+| `time` | 仮想時間が進んだとき、一時停止に入ったとき・出たとき、速さが変わったとき | `sim_ms`: controller が見ている仮想時間（ミリ秒。減りません）、`speed`: 今の速さ（数か `"max"`）、`paused`: 一時停止しているか、`actual_speed`: 直近 1 秒ほどの、進んだ仮想時間 ÷ 実時間（小数 3 桁。動いた時間が短いとき、一時停止しているときは `null`）、`late_steps`: それまでに遅れた刻みの数、`max_late_ms`: それまでの最大の遅れ、`slipped_ms`: それまでのずれの合計（どれも結果の `timing` と同じ意味で、いま実行が終わったとしたときの値）、`late_ms`: 期限を過ぎてもまだ始まっていない刻みの、いまの遅れ（なければ 0）。シミュレーションが止まっている間（仮想時間が進まず、`late_ms` が許容を超えて増えている間）も、100 ms に 1 回まで出ます。`paused` は、止まる予定の時刻に着いた時点で `true` になります（始まった直後の `--start-paused` など。controller が実際に止まるのは、その刻みの participant のステップが終わった後です） |
+| `command` | 標準入力から命令を受けたとき（`--stdin-commands`） | `command`（命令の名前。読めなければ `null`）、`source`（`"stdin"`: 行で来た、`"eof"`: 標準入力の終わり）、`accepted`（受け付けたか）、`message`（受け付けなかった理由。受け付けたら `null`）。受け付けた `step` には `ms`（実際に進む仮想時間。刻みの倍数に切り上げたもの） |
 | `heartbeat` | 1 秒のあいだ何も書かなかったとき | なし（3 つのキーだけ） |
 | `result` | 最後の行 | `result`: `run --json` と同じオブジェクト（[JSON](#jsonrun---json)） |
 
@@ -772,7 +860,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 - participant の `log` は、その participant の `started` より後に来ます。終わりの側には約束がありません。participant の出力は別のスレッドが読んでいるので、最後の何行かが、その participant の `ended` の後や、`phase` の `ended` の後に来ることがあります。`result` より後には来ません。
 - `joined` は、SIL Kit のライフサイクルで参加する participant だけです（参加しない道具の participant には来ません）。
 - `failed` は、失敗と決めた時点ですぐに書きます。ほかの participant を止める（`phase` の `stopping`）より前で、その失敗の `finding` より前です。`log` と違って、読む側が遅くても捨てません。`reason` が `left_simulation` のときは、その participant の `ended` より前に来ます。`process_ended` と `ended_before_start` は、プロセスの終わりで失敗に気づくので、`ended` の後に来ます。`failed` を知らない読む側は、無視してかまいません（結果と、ほかの事象は変わりません）。
-- `time` は、`running` になったときに 0 を書き、その後は仮想時間が進んだときに書きます（実時間で 100 ms に 1 回まで。シミュレーションが終わったときの時刻は、間隔によらず書きます）。`sim_ms` は、前に書いた値より必ず大きくなります。今の `vehicle_sil_launch` が書くのは、0 と、`stop_at_ms` まで進んだときの `stop_at_ms` だけです。進み具合の表示には使えません。実行が続いていることは `heartbeat` で確かめます。
+- `time` は、`running` になったときに 0 を書きます。その後は、仮想時間が進んだときに実時間で 100 ms に 1 回まで、一時停止に入ったとき・出たとき・速さが変わったとき・一時停止したまま時刻が変わったとき（ステップ送りの後）はすぐに書きます。シミュレーションが終わったときの状態は、間隔によらず書きます（終わったシミュレーションは一時停止していません）。`sim_ms` は減りません（一時停止や速さの変更では、前と同じ値のことがあります）。見張りが 20 ms ごとに読むので、それより短い間の変化（最速でのステップ送りの途中など）は書かないことがあります。最後の状態は必ず書きます。
 - `finding` は実行で見つけたものです。シミュレーションが終わった（または始まらなかった）ときに、その時点で決まっているものを書き、残りを participant を終わらせた後に書きます。一度書いた `finding` は、同じ内容のまま `result` の `findings` に入ります。同じものを 2 回は書きません。シミュレーションの途中で失敗した participant の `participant-failed` は、プロセスの終わり方を含むので、プロセスが終わってから書きます（失敗に気づいた時点では、`participant` の `failed` が知らせます。`vehicle_sil_launch` の `log` の行にも理由があります）。照合で見つけたものは `check` の中にあります。`result` だけを読んでも、結果はわかります。
 - `heartbeat` は、`hello` から `result` までのどの段階でも、ほかの行の間に入ります。数は実行にかかった時間で変わります。
 - `command` の事象は、その命令で起きること（`phase` の `stopping` など）より前に書きます。
@@ -809,7 +897,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 書けずに待っている事象が増えたときは、次のようにします。
 
 - `log` は、待っている `log` が 4096 行または 1 MiB を超える間は、書かずに数えます。数えた分は、その場所に `log_dropped` を 1 行書いて知らせます（読む側がまた読み始めたときに届きます）。`count` と `sources` は、その行を書く時点までに数えた分です。
-- `log` と `log_dropped` 以外の事象は、捨てません。
+- `log` と `log_dropped` 以外の事象は、捨てません。ただし、仮想時間が進んだことだけを知らせる `time` は、ほかの事象が書けずに待っている間は作りません（一時停止と速さの変化を知らせる `time` は作ります）。
 - 書き込みが 30 秒のあいだまったく進まないとき、または `log` 以外の事象が 4096 個を超えて待っているときは、読む側がいなくなったものとして扱います（次の項）。
 
 「30 秒進まない」の数え方:
@@ -850,7 +938,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 #### 例
 
-短い実行の全行です（`--disable Dashboard` で、出力の順が決まる Engine だけにしています）。時刻、プロセス ID、registry のポート、例のディレクトリ、版は、実行ごとに違うので `<t_ms>`、`<pid>`、`<port>`、`<dir>`、`<version>` にしています（Windows では、実行ファイルの名前に `.exe` が付きます）。
+短い実行の全行です（`--disable Dashboard` で、出力の順が決まる Engine だけにしています）。時刻、プロセス ID、registry のポート、例のディレクトリ、版、時間の進み方は、実行ごとに違うので `<t_ms>`、`<pid>`、`<port>`、`<dir>`、`<version>`、`<wall_ms>`、`<actual_speed>` にしています（Windows では、実行ファイルの名前に `.exe` が付きます）。
 
 <!-- vehicle_sil_launch run simulation.yaml --events --disable Dashboard -->
 ```text
@@ -868,17 +956,17 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 {"event":"participant","seq":11,"t_ms":<t_ms>,"name":"Engine","state":"joined"}
 {"event":"phase","seq":12,"t_ms":<t_ms>,"phase":"running"}
 {"event":"log","seq":13,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"simulation running"}
-{"event":"time","seq":14,"t_ms":<t_ms>,"sim_ms":0}
-{"event":"time","seq":15,"t_ms":<t_ms>,"sim_ms":1000}
+{"event":"time","seq":14,"t_ms":<t_ms>,"sim_ms":0,"speed":"max","paused":false,"actual_speed":<actual_speed>,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
+{"event":"time","seq":15,"t_ms":<t_ms>,"sim_ms":1000,"speed":"max","paused":false,"actual_speed":<actual_speed>,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0}
 {"event":"log","seq":16,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"the simulation ended"}
 {"event":"phase","seq":17,"t_ms":<t_ms>,"phase":"stopping"}
 {"event":"log","seq":18,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"Engine exited with code 0"}
 {"event":"participant","seq":19,"t_ms":<t_ms>,"name":"Engine","state":"ended","exit_code":0,"signal":null}
 {"event":"phase","seq":20,"t_ms":<t_ms>,"phase":"ended"}
-{"event":"result","seq":21,"t_ms":<t_ms>,"result":{"vehicle_sil_run":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"simulation":"reached_stop_at","interrupted_by":null,"participants":[{"name":"Engine","required":true,"enabled":true,"ended":"exited","exit_code":0,"signal":null,"left_processes":false,"log":null},{"name":"Dashboard","required":true,"enabled":false,"ended":"not_started","exit_code":null,"signal":null,"left_processes":false,"log":null}],"findings":[],"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}]}]},"variables":[{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[]},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[]}]},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"step_ms":5,"status":"disabled","reported":null,"variables":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"]}],"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}}
+{"event":"result","seq":21,"t_ms":<t_ms>,"result":{"vehicle_sil_run":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"simulation":"reached_stop_at","interrupted_by":null,"timing":{"speed":"max","time_step_ms":10,"ecu_step_ms":10,"step_delay_ms":0,"late_tolerance_ms":10,"sim_ms":1000,"wall_ms":<wall_ms>,"actual_speed":<actual_speed>,"paced_steps":0,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0,"paused_ms":0},"participants":[{"name":"Engine","required":true,"enabled":true,"ended":"exited","exit_code":0,"signal":null,"left_processes":false,"log":null},{"name":"Dashboard","required":true,"enabled":false,"ended":"not_started","exit_code":null,"signal":null,"left_processes":false,"log":null}],"findings":[],"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}]}]},"variables":[{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[]},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[]}]},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"step_ms":5,"status":"disabled","reported":null,"variables":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"]}],"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}}
 ```
 
-この例は、CTest の `launch_run.events` が、実際の出力から `heartbeat` の行を除き（`seq` は詰めます）、上の置き換えをした後で、バイト単位で照合します。
+この例は、CTest の `launch_run.events` が、実際の出力から `heartbeat` の行と、最初と最後のほかの `time` の行（遅い機械では途中の時刻も書きます）を除き（`seq` は詰めます）、上の置き換えをした後で、バイト単位で照合します。
 
 ### 標準入力の命令（`run --stdin-commands`）
 
@@ -887,13 +975,21 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | 行 | 意味 |
 |---|---|
 | `{"command":"stop"}` | 順に止めます（1 回目の Ctrl+C と同じ）。2 回目は 2 回目の Ctrl+C と同じです（待つのをやめて、残っている participant を強制終了します） |
+| `{"command":"pause"}` | 一時停止します。controller の刻みの境目で止まります（速さを合わせて待っている刻みがあれば、そこで。なければ次の刻みで） |
+| `{"command":"resume"}` | 一時停止をやめて進みます。速さは、ここから数え直します |
+| `{"command":"step","ms":<ms>}` | 一時停止している間だけ: 仮想時間を `<ms>`（1 以上 10^12 以下の整数）だけ進めて、また止まります。刻みの倍数に切り上げます（`command` の事象の `ms` が、実際に進む量です）。前の `step` の途中で送ると、その止まる時刻から数えます |
+| `{"command":"speed","value":<速さ>}` | 速さを変えます（`<速さ>` は数か `"max"`。構成ファイルの `speed` と同じ範囲）。一時停止はそのままです |
 | 標準入力の終わり（EOF） | `stop` を 1 回受けたのと同じです（起動した側がいなくなった、パイプを閉じた）。すでに止める要求（`stop`、シグナル、閉じた標準出力）を受けていれば、何もしません（2 回目に数えません。`command` の事象も書きません） |
 | 空白だけの行 | 読み飛ばします |
 | それ以外（JSON のオブジェクトでない、`command` がない、知らない命令、64 KiB を超える行） | 何もしません。`--events` なら `command` の事象（`accepted: false` と理由）、なければ標準エラーに 1 行 |
 
 - オブジェクトのほかのキーは無視します。
+- 時間の命令（`pause`、`resume`、`step`、`speed`）は、標準入力を読むスレッドが、受け付けるかを決めて `command` の事象を書き、それから controller の時間のゲートに渡します。どれも待ちません（実行を進めるスレッドも、事象を読む側も待ちません）。効くのは、controller の次の刻みの境目です。
+- 時間の命令を受け付けないのは、`step` を一時停止していないときに送ったとき（`resume` の後など）、`step` を controller ができる前（照合の間など）に送ったとき、シミュレーションが終わった後（始まらなかったときも）です。`message` に理由を書きます。一時停止しているときの `pause` と、動いているときの `resume` は、受け付けて何もしません。
+- controller ができる前（照合の間など）に受けた `pause`、`resume`、`speed` は覚えておき、controller ができたときに渡します（`pause` は `--start-paused` と同じく 0 で止まります）。
+- 一時停止しても、`phase` は `running` のままです。`time` の `paused` で知らせます。
 - 命令で止めた実行の結果は、Ctrl+C で止めたときと同じです（`result` は `"interrupted"`、終了コード 130、注記 `interrupted`）。`interrupted_by` は、`{"command":"stop"}` なら `"stop command"`、標準入力の終わりなら `"end of input"` です。
-- `command` の事象の `accepted: true` は、行が命令として正しく、処理に回したという意味です。その命令で実行が変わったとは限りません。たとえば、実行が終わった後（`phase` の `ended` の後）に受けた `stop` は、`accepted: true` ですが、結果は変わりません。
+- `command` の事象の `accepted: true` は、行が命令として正しく、処理に回したという意味です（時間の命令では、今できるという意味でもあります）。その命令で実行が変わったとは限りません。たとえば、実行が終わった後（`phase` の `ended` の後）に受けた `stop` は、`accepted: true` ですが、結果は変わりません。
 - `command` の事象は、その命令で起きること（`phase` の `stopping` など）より前に書きます。
 - 照合の間に受けた `stop` は、照合が終わってから効きます（Ctrl+C と同じ）。
 - 事象を読む側が読んでいなくても、命令は効きます。
@@ -916,7 +1012,10 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
   "features": [
     "events",
     "stdin-commands",
-    "check-variables"
+    "check-variables",
+    "speed",
+    "start-paused",
+    "time-commands"
   ]
 }
 ```
@@ -933,6 +1032,9 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `events` | `run --events` |
 | `stdin-commands` | `run --stdin-commands` と `{"command":"stop"}` |
 | `check-variables` | 照合の JSON の `participants[].variables` |
+| `speed` | 構成ファイルの `speed`、`time_step_ms`、`late_tolerance_ms`、`run --speed`、結果の `timing`、所見 `behind-real-time`、所見 `coarse-time-step`、`time` の事象の `speed`、`paused`、`actual_speed`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms` |
+| `start-paused` | `run --start-paused` |
+| `time-commands` | 標準入力の `pause`、`resume`、`step`、`speed` |
 
 この例も、CTest の `launch_cli.docs` が照合します（`vehicle_sil` の版を除いて、バイト単位で）。
 
@@ -940,9 +1042,9 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 ```text
 vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>
-vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--strict]
-                       [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>]
-                       [--disable <name>]... [--enable <name>]... [--] <file>
+vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands [--start-paused]]
+                       [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
+                       [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>
 vehicle_sil_launch version [--json]
 ```
 
@@ -952,9 +1054,11 @@ vehicle_sil_launch version [--json]
 | `--events` | `run` だけ。経過と結果を事象として書く（[機械から使う](#機械から使う--events--stdin-commandsversion)）。`--json` と一緒には使えない |
 | `--events-stall-ms <ms>` | `--events` を付けた `run` だけ。事象の書き込みがこの時間まったく進まなければ、読む側がいなくなったものとして扱う。`result` を書き終えるのを待つ時間の上限でもある（1000 以上 86400000 以下の整数。既定は 30000。[読む側が遅いとき](#読む側が遅いとき読まないとき)） |
 | `--stdin-commands` | `run` だけ。標準入力から命令を読む。標準入力の終わりも止める要求 |
+| `--start-paused` | `--stdin-commands` を付けた `run` だけ。全員がそろったら仮想時間 0 で止まり、`resume` か `step` の命令を待つ |
+| `--speed <speed>` | `run` だけ。構成ファイルの `speed` を上書きする（数か `max`。[等速で動かす](#等速で動かす)） |
 | `--strict` | 警告があっても失敗にする（注記では失敗にしない） |
 | `--log-dir <dir>` | `run` だけ。participant ごとの出力のファイルを置くディレクトリ |
-| `--timeout-ms <ms>` | `run` だけ。シミュレーションの開始から終わりまでの実時間の上限（1 以上の整数）。超えたら中断して誤り。既定は上限なし |
+| `--timeout-ms <ms>` | `run` だけ。シミュレーションの開始から終わりまでの実時間の上限（1 以上の整数。一時停止している時間も数える）。超えたら中断して誤り。既定は上限なし |
 | `--describe-timeout-ms <ms>` | 1 つの実行ファイルの `--describe` を待つ時間（1 以上の整数。既定は 10000） |
 | `--disable <name>` | participant `<name>` を外す（`enabled: false` と同じ）。繰り返せる |
 | `--enable <name>` | participant `<name>` を戻す（`enabled: true` と同じ）。繰り返せる |
@@ -967,7 +1071,7 @@ vehicle_sil_launch version [--json]
 | 0 | 誤りがない（警告と注記だけなら 0。`--strict` では警告もない）。`run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった |
 | 1 | 誤りがある（`--strict` では警告も）。`run` では、照合の誤り（何も起動しない）か、実行の誤り（participant が失敗した、そろわなかった、止めても終わらなかったなど） |
 | 3 | 構成ファイルを読めない（ファイルがない、文法の誤り、知らない形式の版など）。`run` で registry や controller を用意できないときも 3 です。結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です（標準エラーに理由。`--json` では、そのコマンドの形の JSON に `code` が `internal` の誤り） |
-| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir` と `--timeout-ms`、構成ファイルにない participant 名の `--disable` と `--enable`、同じ名前の `--disable` と `--enable`）。誤りと使い方を標準エラーに書きます |
+| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` なしの `--start-paused`、数でも `max` でもない `--speed`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、構成ファイルにない participant 名の `--disable` と `--enable`、同じ名前の `--disable` と `--enable`）。誤りと使い方を標準エラーに書きます |
 | 130 | `run` が中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力など） |
 
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。

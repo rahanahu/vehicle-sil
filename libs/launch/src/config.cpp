@@ -5,10 +5,13 @@
 #include "yaml_tree.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <cstdlib>
 #include <map>
+#include <numeric>
 #include <system_error>
 
 namespace vehicle_sil::launch {
@@ -17,7 +20,13 @@ namespace {
 
 
 const std::vector<std::string> kTopKeys = {"vehicle_sil_simulation", "stop_at_ms", "start_timeout_ms", "stop_timeout_ms",
-                                           "registry_uri", "networks", "participants"};
+                                           "registry_uri", "time_step_ms", "speed", "late_tolerance_ms", "networks",
+                                           "participants"};
+
+/// What a speed is, in messages.
+constexpr const char* kSpeedMeaning =
+    "simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, 2: twice as fast, 0.5: half as "
+    "fast), or max (as fast as possible)";
 const std::vector<std::string> kNetworkKeys = {"name", "kind"};
 const std::vector<std::string> kParticipantKeys = {"name", "command", "step_ms", "describe", "required", "enabled"};
 
@@ -182,6 +191,7 @@ public:
         bool hasNetworks = false;
         bool hasParticipants = false;
         std::size_t participantsLine = 0;
+        std::size_t timeStepLine = 0;
         std::map<std::string, std::size_t> seen;
         for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
         {
@@ -228,6 +238,21 @@ public:
             {
                 config.registry_uri = registry_uri(child);
             }
+            else if (key == "time_step_ms")
+            {
+                config.time_step_ms =
+                    millis(child, "", key, "milliseconds of virtual time between two steps of the launcher's controller");
+                timeStepLine = doc_.line(child);
+            }
+            else if (key == "speed")
+            {
+                config.speed = speed(child);
+            }
+            else if (key == "late_tolerance_ms")
+            {
+                config.late_tolerance_ms =
+                    millis(child, "", key, "wall-clock milliseconds a step may begin late before it counts as late");
+            }
             else if (key == "networks")
             {
                 hasNetworks = true;
@@ -259,6 +284,14 @@ public:
         {
             error("missing-key", 0,
                   "the file has no participants: add participants, a list of the participants with name and command");
+        }
+        if (config.time_step_ms && config.stop_at_ms && *config.stop_at_ms % *config.time_step_ms != 0)
+        {
+            error("value", timeStepLine,
+                  "stop_at_ms (" + std::to_string(*config.stop_at_ms) + ") is not a multiple of time_step_ms (" +
+                      std::to_string(*config.time_step_ms) +
+                      "): the launcher's controller can stop the simulation only at one of its steps; make stop_at_ms a "
+                      "multiple of time_step_ms, or leave time_step_ms out");
         }
         config.participants_line = participantsLine;
         return config;
@@ -414,6 +447,22 @@ private:
             }
         }
         error("value", doc_.line(node), prefix + key + " must be true or false, not " + shown_value(node), participant);
+        return std::nullopt;
+    }
+
+    /// A speed (parse_speed()); empty for "max" and for an error (with the error).
+    std::optional<double> speed(ryml::id_type node)
+    {
+        const bool quoted = is_scalar(node) && tree_.is_val_quoted(node);
+        const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree_.val(node)) : std::string{};
+        std::optional<double> value;
+        if (is_scalar(node) && !is_null(node) && parse_speed(text, value) && (!quoted || !value))
+        {
+            return value;
+        }
+        error("value", doc_.line(node),
+              "speed must be " + std::string(kSpeedMeaning) + ", not " + shown_value(node) +
+                  (quoted && value ? ": write the number without quotes" : ""));
         return std::nullopt;
     }
 
@@ -1171,6 +1220,57 @@ std::optional<Finding> check_executable(const ParticipantConfig& participant, co
         return std::nullopt;
     }
     return Finding{Severity::Error, "executable", problem, participant.command_line, participant.name, ""};
+}
+
+std::int64_t time_step_ms(const SimulationConfig& config)
+{
+    if (config.time_step_ms)
+    {
+        return *config.time_step_ms;
+    }
+    if (config.stop_at_ms)
+    {
+        return std::gcd(kDefaultTimeStepMs, *config.stop_at_ms);
+    }
+    return kDefaultTimeStepMs;
+}
+
+std::int64_t late_tolerance_ms(const SimulationConfig& config)
+{
+    return config.late_tolerance_ms.value_or(kDefaultLateToleranceMs);
+}
+
+bool parse_speed(std::string_view text, std::optional<double>& speed)
+{
+    if (text == "max")
+    {
+        speed.reset();
+        return true;
+    }
+    // A plain decimal number: digits, at most one '.', an exponent; no sign, no "inf" or "nan".
+    const bool plain = !text.empty() && std::all_of(text.begin(), text.end(), [](char c) {
+        return std::isdigit(static_cast<unsigned char>(c)) != 0 || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+';
+    }) && std::isdigit(static_cast<unsigned char>(text.front())) != 0;
+    double value = 0;
+    const auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (!plain || ec != std::errc{} || ptr != text.data() + text.size() || !std::isfinite(value) || value < kMinSpeed ||
+        value > kMaxSpeed)
+    {
+        return false;
+    }
+    speed = value;
+    return true;
+}
+
+std::string speed_text(const std::optional<double>& speed)
+{
+    if (!speed)
+    {
+        return "max";
+    }
+    std::array<char, 32> buffer{};
+    const auto result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), *speed);
+    return std::string(buffer.data(), result.ptr);
 }
 
 std::vector<std::string> expand_placeholders(const std::vector<std::string>& arguments, std::string_view registry_uri,

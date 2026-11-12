@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/core/simulation_controller.hpp"
 
+#include "deadline_waiter.hpp"
+#include "time_gate.hpp"
+
 #include <silkit/experimental/participant/ParticipantExtensions.hpp>
 #include <silkit/experimental/services/orchestration/ISystemController.hpp>
 
@@ -37,105 +40,29 @@ void check_speed(const std::optional<double>& speed)
 
 } // namespace
 
-/// State of the time gate. Every field is guarded by `mutex`.
+/// The time gate: its state (detail::TimeGate, guarded by `mutex`) and the thread that completes
+/// the steps it holds back.
 struct SimulationController::Gate
 {
     using Wall = std::chrono::steady_clock;
-    struct Anchor
+
+    explicit Gate(const TimeControlOptions& options) :
+      model(options.speed, std::chrono::duration_cast<Wall::duration>(options.late_tolerance), options.start_paused)
     {
-        SimTime sim;
-        Wall::time_point wall;
-    };
+    }
 
     mutable std::mutex mutex;
-    std::condition_variable cv;
-    TimeState state;
-    bool pause_next = false;   ///< pause() while no step was held: stand still at the next one
-    bool held = false;         ///< the step at state.now is held (paused, or paced)
-    SimDuration held_step{};   ///< size of the held step
-    std::optional<Anchor> anchor; ///< pacing: wall-clock time of a simulation time
-    Wall::time_point deadline{};  ///< pacing: when the held step may complete
+    std::condition_variable cv;    ///< wait_until_paused()
+    detail::DeadlineWaiter waiter; ///< the thread (run_gate())
+    detail::TimeGate model;
     bool quit = false;
     std::thread thread; ///< completes held steps (run_gate())
 
-    /// When the step [start, start + step) may end at the current speed (RealTimePacer's rule).
-    [[nodiscard]] Wall::time_point deadline_of(SimTime start, SimDuration step) const
+    /// After a change of `model` (made under `mutex`, called without it).
+    void wake() noexcept
     {
-        const auto simElapsed = std::chrono::duration<double, std::nano>((start + step) - anchor->sim);
-        return anchor->wall + std::chrono::duration_cast<Wall::duration>(simElapsed / *state.speed);
-    }
-
-    /// A new speed: a held step keeps the part of its wait that has passed and waits for the
-    /// rest at the new speed; between two steps, the next one is paced from now.
-    void change_speed(std::optional<double> speed)
-    {
-        if (speed == state.speed)
-        {
-            return;
-        }
-        if (held && !state.paused && state.speed && speed && anchor)
-        {
-            const auto wall = Wall::now();
-            const auto remainingWall = std::max(Wall::duration::zero(), deadline - wall);
-            const auto remainingSim = std::chrono::duration<double, std::nano>(remainingWall) * *state.speed;
-            state.speed = speed;
-            // The held step [now, now + held_step) has remainingSim left, starting from `wall`.
-            anchor = Anchor{state.now + held_step - std::chrono::duration_cast<SimDuration>(remainingSim), wall};
-            deadline = deadline_of(state.now, held_step);
-            return;
-        }
-        state.speed = speed;
-        if (!held && speed)
-        {
-            // Between two steps: pace the next step from now on, counting from the end of the
-            // last one.
-            anchor = Anchor{state.now + held_step, Wall::now()};
-            return;
-        }
-        reanchor();
-    }
-
-    /// Starts pacing anew from now: on resume, and when pacing starts.
-    void reanchor()
-    {
-        anchor.reset();
-        if (held && state.speed)
-        {
-            anchor = Anchor{state.now, Wall::now()};
-            deadline = deadline_of(state.now, held_step);
-        }
-    }
-
-    void run_until(SimTime t)
-    {
-        if (state.paused && state.now >= t)
-        {
-            return; // already there
-        }
-        pause_next = false;
-        state.pause_target = t;
-        if (std::exchange(state.paused, false))
-        {
-            reanchor();
-        }
-        else if (held && state.now >= t)
-        {
-            pause_now_or_next();
-        }
-    }
-
-    /// Stand still now if a step is held, else at the next one.
-    void pause_now_or_next()
-    {
-        if (held)
-        {
-            state.paused = true;
-            state.pause_target.reset();
-        }
-        else
-        {
-            pause_next = true;
-        }
+        cv.notify_all();
+        waiter.notify();
     }
 };
 
@@ -161,6 +88,10 @@ SimulationController::SimulationController(SimulationControllerOptions options) 
             throw std::invalid_argument("SimulationController time_control.step must be > 0");
         }
         check_speed(options_.time_control->speed);
+        if (options_.time_control->late_tolerance < std::chrono::nanoseconds::zero())
+        {
+            throw std::invalid_argument("SimulationController time_control.late_tolerance must not be negative");
+        }
     }
 
     ParticipantRuntimeOptions runtimeOptions;
@@ -182,6 +113,10 @@ SimulationController::SimulationController(SimulationControllerOptions options) 
     runtime_ = std::make_unique<ParticipantRuntime>(std::move(runtimeOptions));
     system_controller_ = SilKit::Experimental::Participant::CreateSystemController(&runtime_->participant());
 
+    if (options_.time_control)
+    {
+        gate_ = std::make_unique<Gate>(*options_.time_control);
+    }
     if (runtime_->uses_virtual_time())
     {
         runtime_->set_step_handler([this](SimTime now, SimDuration) {
@@ -193,19 +128,21 @@ SimulationController::SimulationController(SimulationControllerOptions options) 
                 && wall_stop_ns_.load(std::memory_order_acquire) < 0)
             {
                 wall_stop_ns_.store(wall_ns(), std::memory_order_release);
+                if (gate_)
+                {
+                    // The last step: the hold is not asked once a stop is requested, so its
+                    // lateness is measured here.
+                    const std::lock_guard lock(gate_->mutex);
+                    gate_->model.begin_last_step(now, Gate::Wall::now());
+                }
                 runtime_->request_stop("SimulationController: stop_at reached");
             }
         });
     }
-    if (options_.time_control)
+    if (gate_)
     {
-        gate_ = std::make_unique<Gate>();
-        gate_->state.speed = options_.time_control->speed;
-        if (options_.time_control->start_paused)
-        {
-            gate_->state.pause_target = SimTime{};
-        }
         runtime_->set_step_hold([this](SimTime now, SimDuration step) { return hold_step(now, step); });
+        runtime_->set_stop_observer([this] { end_gate(); });
         gate_->thread = std::thread([this] { run_gate(); }); // last: nothing below may throw
     }
 }
@@ -221,7 +158,7 @@ SimulationController::~SimulationController()
             const std::lock_guard lock(gate_->mutex);
             gate_->quit = true;
         }
-        gate_->cv.notify_all();
+        gate_->wake();
         gate_->thread.join();
     }
 }
@@ -238,33 +175,16 @@ SimulationController::Gate& SimulationController::gate() const
 bool SimulationController::hold_step(SimTime now, SimDuration step)
 {
     auto& g = *gate_;
-    const std::lock_guard lock(g.mutex);
-    g.state.now = now;
-    g.held_step = step;
-    if (std::exchange(g.pause_next, false) || (g.state.pause_target && now >= *g.state.pause_target))
+    bool hold = false;
     {
-        g.state.paused = true;
-        g.state.pause_target.reset();
-        g.held = true;
-        g.cv.notify_all();
-        return true;
+        const std::lock_guard lock(g.mutex);
+        hold = g.model.begin_step(now, step, Gate::Wall::now());
     }
-    if (g.state.speed)
+    if (hold)
     {
-        const auto wall = Gate::Wall::now();
-        if (!g.anchor)
-        {
-            g.anchor = Gate::Anchor{now, wall};
-        }
-        g.deadline = g.deadline_of(now, step);
-        if (g.deadline > wall)
-        {
-            g.held = true;
-            g.cv.notify_all();
-            return true;
-        }
+        g.wake();
     }
-    return false;
+    return hold;
 }
 
 void SimulationController::run_gate()
@@ -273,20 +193,31 @@ void SimulationController::run_gate()
     std::unique_lock lock(g.mutex);
     while (!g.quit)
     {
-        if (g.held && !g.state.paused)
+        const auto at = g.model.release_at();
+        if (!at)
         {
-            if (!g.state.speed || Gate::Wall::now() >= g.deadline)
-            {
-                g.held = false;
-                lock.unlock(); // release_step() takes the runtime's hold lock, which hold_step() holds while taking ours
-                runtime_->release_step();
-                lock.lock();
-                continue;
-            }
-            g.cv.wait_until(lock, g.deadline);
+            g.waiter.wait(lock);
             continue;
         }
-        g.cv.wait(lock);
+        const auto wall = Gate::Wall::now();
+        if (wall < *at)
+        {
+            g.waiter.wait_until(lock, *at);
+            continue;
+        }
+        g.model.released(wall);
+        lock.unlock(); // release_step() takes the runtime's hold lock, which hold_step() holds while taking ours
+        runtime_->release_step();
+        lock.lock();
+    }
+}
+
+void SimulationController::end_gate() noexcept
+{
+    if (gate_)
+    {
+        const std::lock_guard lock(gate_->mutex);
+        gate_->model.end(Gate::Wall::now());
     }
 }
 
@@ -295,12 +226,9 @@ void SimulationController::pause()
     auto& g = gate();
     {
         const std::lock_guard lock(g.mutex);
-        if (!g.state.paused)
-        {
-            g.pause_now_or_next();
-        }
+        g.model.pause(Gate::Wall::now());
     }
-    g.cv.notify_all();
+    g.wake();
 }
 
 void SimulationController::pause_at(SimTime t)
@@ -308,14 +236,9 @@ void SimulationController::pause_at(SimTime t)
     auto& g = gate();
     {
         const std::lock_guard lock(g.mutex);
-        g.pause_next = false;
-        g.state.pause_target = t;
-        if (!g.state.paused && g.held && g.state.now >= t)
-        {
-            g.pause_now_or_next();
-        }
+        g.model.pause_at(t, Gate::Wall::now());
     }
-    g.cv.notify_all();
+    g.wake();
 }
 
 void SimulationController::resume()
@@ -323,14 +246,9 @@ void SimulationController::resume()
     auto& g = gate();
     {
         const std::lock_guard lock(g.mutex);
-        g.pause_next = false;
-        g.state.pause_target.reset();
-        if (std::exchange(g.state.paused, false))
-        {
-            g.reanchor();
-        }
+        g.model.resume(Gate::Wall::now());
     }
-    g.cv.notify_all();
+    g.wake();
 }
 
 void SimulationController::run_until(SimTime t)
@@ -338,9 +256,9 @@ void SimulationController::run_until(SimTime t)
     auto& g = gate();
     {
         const std::lock_guard lock(g.mutex);
-        g.run_until(t);
+        g.model.run_until(t, Gate::Wall::now());
     }
-    g.cv.notify_all();
+    g.wake();
 }
 
 void SimulationController::step(SimDuration d)
@@ -352,10 +270,9 @@ void SimulationController::step(SimDuration d)
     auto& g = gate();
     {
         const std::lock_guard lock(g.mutex);
-        // Saturates: a duration from outside (the Control API) may reach past the end of time.
-        g.run_until(d >= SimTime::max() - g.state.now ? SimTime::max() : g.state.now + d);
+        g.model.step(d, Gate::Wall::now());
     }
-    g.cv.notify_all();
+    g.wake();
 }
 
 void SimulationController::set_speed(std::optional<double> speed)
@@ -364,9 +281,9 @@ void SimulationController::set_speed(std::optional<double> speed)
     auto& g = gate();
     {
         const std::lock_guard lock(g.mutex);
-        g.change_speed(speed);
+        g.model.set_speed(speed, Gate::Wall::now());
     }
-    g.cv.notify_all();
+    g.wake();
 }
 
 TimeState SimulationController::time_state() const
@@ -375,7 +292,7 @@ TimeState SimulationController::time_state() const
     TimeState state;
     {
         const std::lock_guard lock(g.mutex);
-        state = g.state;
+        state = g.model.state(Gate::Wall::now());
     }
     // A simulation that has ended no longer stands still anywhere.
     if (state.paused && runtime_->started() && has_finished(PeerStatus{runtime_->state()}))
@@ -398,9 +315,9 @@ std::optional<SimTime> SimulationController::wait_until_paused(std::chrono::mill
         }
         {
             std::unique_lock lock(g.mutex);
-            if (g.state.paused)
+            if (g.model.paused())
             {
-                return g.state.now;
+                return g.model.now();
             }
             const auto now = std::chrono::steady_clock::now();
             if (now >= deadline)
@@ -409,7 +326,7 @@ std::optional<SimTime> SimulationController::wait_until_paused(std::chrono::mill
             }
             // Short slices: the end of the lifecycle is not signalled on this condition variable.
             g.cv.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(20)),
-                            [&] { return g.state.paused; }); // checked again at the top
+                            [&] { return g.model.paused(); }); // checked again at the top
         }
     }
 }
@@ -473,6 +390,7 @@ void SimulationController::stop(std::string_view reason) noexcept
 
 void SimulationController::abort() noexcept
 {
+    end_gate(); // the run ends here, not when the abort has gone round
     try
     {
         system_controller_->AbortSimulation();

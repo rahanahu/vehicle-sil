@@ -6,7 +6,7 @@ endif()
 vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
   PREFIX launch LABELS unit launch TIMEOUT 60
   SOURCES test_config.cpp test_check.cpp test_run.cpp test_events.cpp
-  LINK vehicle_sil::launch)
+  LINK vehicle_sil::launch vehicle_sil::core) # core: the time commands with a controller (test_events.cpp)
 target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch")
 
@@ -53,10 +53,23 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     SCENARIOS docs check crash step optional not_joined quitter hang grandchild path interrupt interrupt_twice
               interrupt_ending ended_early timeout no_console killed usage disabled events events_usage stdin_stop
               stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
-              events_slow events_findings events_nonblocking events_output events_stderr
+              events_slow events_findings events_nonblocking events_output events_stderr realtime late stall
+              speed_change step_width pause_step paused_failures time_usage
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
          --docs ${PROJECT_SOURCE_DIR}/docs/simulation-config.md)
+  # Alone: it says that an idle simulation is not late at speed 1 within the default tolerance,
+  # which is a bound on real time (the other scenarios have bounds on one side only).
+  vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
+    PREFIX launch_run LABELS integration launch TIMEOUT 300
+    WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
+    SCENARIOS on_time
+    ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
+         --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
+         --helper $<TARGET_FILE:vehicle_sil_process_helper>
+         --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
+         --docs ${PROJECT_SOURCE_DIR}/docs/simulation-config.md
+    RUN_SERIAL)
 endif()

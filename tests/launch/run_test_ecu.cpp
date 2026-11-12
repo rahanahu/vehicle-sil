@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: MIT
 //
-// An ecu_main executable for the tests of vehicle_sil_launch run, without networks. What it does
-// besides stepping every 10 ms comes from the file "<name>.behaviour" in its working directory
-// (none: nothing), words separated by spaces:
+// An ecu_main executable for the tests of vehicle_sil_launch run, without networks. It steps every
+// 10 ms, or every <n> ms if the file "test-ecu-step-ms" in its working directory holds <n> (every
+// test ECU started there, and its --describe). What it does besides comes from the file
+// "<name>.behaviour" in its working directory (none: nothing), words separated by spaces:
 //   pid                     writes its process ID to "<name>.pid" in its first step
 //   exit-at-ms <t> <code>   ends the process at once with <code> in its step at <t> ms
 //   throw-at-ms <t>         its step at <t> ms throws (the ECU fails)
 //   hang-at-ms <t>          its step at <t> ms never returns
+//   slow-ms <t>             each step at a multiple of 10 ms takes <t> ms of wall-clock time (sleeps)
+//   slow-at-ms <t> <d>      its step at <t> ms takes <d> ms of wall-clock time (sleeps)
+//   exit-after-wall-ms <t> <code>  ends the process with <code> <t> ms of wall-clock time after its
+//                           first step, whatever the simulation does (also while it stands still)
 //   chatter <n>             writes <n> lines of about 100 bytes to stdout in every step, and flushes them
 //   linger-ms <t>           after the run, ends only <t> ms later (its process outlives its part in the
 //                           simulation by that long)
@@ -82,6 +87,18 @@ public:
             {
                 in >> hang_at_;
             }
+            else if (word == "slow-ms")
+            {
+                in >> slow_;
+            }
+            else if (word == "slow-at-ms")
+            {
+                in >> slow_at_ >> slow_at_for_;
+            }
+            else if (word == "exit-after-wall-ms")
+            {
+                in >> exit_after_ >> exit_after_code_;
+            }
             else if (word == "print")
             {
                 std::string text;
@@ -129,9 +146,24 @@ public:
             {
                 vehicle_sil::test::spawn_sleeper(grandchild_, name_ + "-grandchild.pid");
             }
+            if (exit_after_ >= 0)
+            {
+                std::thread([after = exit_after_, code = exit_after_code_] {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(after));
+                    std::_Exit(code);
+                }).detach();
+            }
         });
         ecu.every(10ms, [this](vehicle_sil::SimTime now) {
             const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+            if (slow_ > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(slow_));
+            }
+            if (ms == slow_at_)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(slow_at_for_));
+            }
             for (int i = 0; i < chatter_; ++i)
             {
                 std::printf("chatter %lld.%d %s\n", ms, i, std::string(80, 'x').c_str());
@@ -187,6 +219,11 @@ private:
     int exit_code_ = 0;
     long long throw_at_ = -1;
     long long hang_at_ = -1;
+    long long slow_ = 0;
+    long long slow_at_ = -1;
+    long long slow_at_for_ = 0;
+    long long exit_after_ = -1;
+    int exit_after_code_ = 0;
     bool hang_ = false;
     int chatter_ = 0;
     long long linger_ = 0;
@@ -198,5 +235,10 @@ private:
 
 int main(int argc, char** argv)
 {
-    return vehicle_sil::ecu_main<TestEcu>(argc, argv, {.name = "TestEcu", .step = 10ms});
+    long long step = 10;
+    if (std::ifstream in("test-ecu-step-ms"); in)
+    {
+        in >> step;
+    }
+    return vehicle_sil::ecu_main<TestEcu>(argc, argv, {.name = "TestEcu", .step = std::chrono::milliseconds(step)});
 }
