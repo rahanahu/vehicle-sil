@@ -96,6 +96,7 @@ const char* participant_state_name(ParticipantState state)
     case ParticipantState::NotStarted: return "not_started";
     case ParticipantState::Started: return "started";
     case ParticipantState::Joined: return "joined";
+    case ParticipantState::Failed: return "failed";
     case ParticipantState::Ended: return "ended";
     case ParticipantState::StopRequested: return "stop_requested";
     case ParticipantState::Killed: return "killed";
@@ -623,6 +624,19 @@ void EventStream::participant_not_started(const std::string& name, const std::st
              w.string("name", name);
              w.string("state", participant_state_name(ParticipantState::NotStarted));
              w.string("message", message);
+         }));
+}
+
+void EventStream::participant_failed(const std::string& name, std::string_view reason, const std::string& message)
+{
+    emit("participant", object([&](Writer& w) {
+             w.string("name", name);
+             w.string("state", participant_state_name(ParticipantState::Failed));
+             w.string("reason", reason);
+             if (!message.empty())
+             {
+                 w.string("message", message);
+             }
          }));
 }
 

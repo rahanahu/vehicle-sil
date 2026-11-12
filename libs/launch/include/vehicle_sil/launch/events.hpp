@@ -93,6 +93,7 @@ enum class ParticipantState
     NotStarted,    ///< its process could not be started ("message" says why)
     Started,       ///< its process runs ("pid", "command", "log")
     Joined,        ///< it joined the simulation (the controller saw its lifecycle)
+    Failed,        ///< the launcher decided that it failed, and ends the run ("reason", "message")
     Ended,         ///< its process ended ("exit_code", "signal")
     StopRequested, ///< the launcher asked it to stop (SIGTERM, Ctrl+Break)
     Killed,        ///< the launcher ended it with the processes it started
@@ -115,9 +116,12 @@ struct EventStreamOptions
     /// A "heartbeat" event is written when no line has been written for this long, from the
     /// first line to the result. 0: none.
     std::chrono::milliseconds heartbeat{1000};
-    /// The reader is given up (the stream closes) when a line is being written and not one byte
-    /// could be written for this long; result() waits at most this long for the result to be
-    /// written.
+    /// The reader is given up (the stream closes) when a line is being written and `write` has
+    /// taken nothing for this long. The time starts when a write begins to wait, that is when the
+    /// output is full, not when the reader stops reading; a write that waits passes on a piece of
+    /// up to 4096 bytes as a whole, so a reader must take about that much within this time to be
+    /// seen reading (one byte, if the output does not block). result() waits at most this long
+    /// for the result to be written, also for a reader that reads.
     std::chrono::milliseconds stall_timeout{30000};
     /// "log" events wait in the queue up to these limits; more are dropped and counted.
     std::size_t max_log_lines = 4096;
@@ -147,7 +151,7 @@ struct EventStreamOptions
 ///   of them wait. A "log_dropped" event stands where they would have been ("count", and "sources":
 ///   how many of which source), with the numbers known when it is written.
 /// - Any other event is written, or the stream closes. It closes (once, for good) when `write`
-///   fails; when a line is being written and no byte could be written for stall_timeout; when
+///   fails; when a line is being written and `write` has taken nothing for stall_timeout; when
 ///   more than max_other_events other events wait; when result() gives up. A closed
 ///   stream takes no more events and writes nothing more (a line may have been cut). `on_closed`
 ///   is called once, on the watch's thread, with the reason; not if the result had been given
@@ -160,7 +164,8 @@ struct EventStreamOptions
 /// What may wait, and for how long. A maker of events: no wait. The writer: in `write`, as long as
 /// the reader lets it (nothing waits for the writer without a limit; when the stream closes it is
 /// left behind). The watch: in `on_closed`. result(): until the result is written or the stream
-/// closes, at most stall_timeout, less if `give_up` says so. The destructor: at most a few seconds
+/// closes, at most stall_timeout (a reader that reads so slowly that what waits takes longer does
+/// not get the result), less if `give_up` says so. The destructor: at most a few seconds
 /// for the two threads to end (they share the stream's state, so an output that still blocks is
 /// left to them; `write` and `on_closed` must stay callable until they return).
 ///
@@ -202,6 +207,11 @@ public:
     /// Disabled, Joined, StopRequested, Killed.
     void participant(const std::string& name, ParticipantState state);
     void participant_not_started(const std::string& name, const std::string& message);
+    /// Failed. `reason`: "left_simulation" (it left the simulation while its process runs),
+    /// "process_ended" (its process ended as a failure while the simulation ran) or
+    /// "ended_before_start" (its process ended before the simulation started). `message`: its
+    /// finding's message if that is settled, or "" (no "message").
+    void participant_failed(const std::string& name, std::string_view reason, const std::string& message);
     /// `command`: the executable as started and its arguments; `log`: its log file, or "" (null).
     void participant_started(const std::string& name, long pid, const std::vector<std::string>& command,
                              const std::string& log);
@@ -217,9 +227,10 @@ public:
     /// A command from standard input (`source` "stdin") or its end ("eof").
     void command(const Command& command, std::string_view source);
     /// The last event: the run's result as `run --json` writes it. Waits until it has been written
-    /// (true) or the stream has closed (false): at most stall_timeout. While nothing could be
-    /// written for half a second, `give_up` is asked every few milliseconds, and true closes the
-    /// stream (a reader that reads gets the result whatever `give_up` says).
+    /// (true) or the stream has closed (false): at most stall_timeout, whether the reader reads
+    /// or not. While nothing could be written for half a second, `give_up` is asked every few
+    /// milliseconds, and true closes the stream (`give_up` takes the result from no reader that
+    /// reads).
     bool result(const RunReport& report, const std::function<bool()>& give_up = {});
 
     /// Waits up to `timeout` until every event given so far has been written; false if the time

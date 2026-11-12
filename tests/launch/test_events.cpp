@@ -245,6 +245,8 @@ TEST_CASE(each_event_is_one_line_with_event_seq_and_t_ms_first)
     e.participant_started("Engine", 99, {"/x/engine", "--name", "Engine"}, "");
     e.participant_started("Logged", 98, {"/x/l"}, "logs/Logged.log");
     e.participant("Engine", ParticipantState::Joined);
+    e.participant_failed("Engine", "left_simulation", "");
+    e.participant_failed("Crash", "process_ended", "participant 'Crash': ...");
     e.time(1000);
     // A participant's line may hold anything: quotes, a backslash, a tab, a line end.
     e.log("Engine", "say \"hi\"\\\tthen\nmore");
@@ -271,18 +273,20 @@ TEST_CASE(each_event_is_one_line_with_event_seq_and_t_ms_first)
 {"event":"participant","seq":5,"t_ms":7,"name":"Engine","state":"started","pid":99,"command":["/x/engine","--name","Engine"],"log":null}
 {"event":"participant","seq":6,"t_ms":7,"name":"Logged","state":"started","pid":98,"command":["/x/l"],"log":"logs/Logged.log"}
 {"event":"participant","seq":7,"t_ms":7,"name":"Engine","state":"joined"}
-{"event":"time","seq":8,"t_ms":7,"sim_ms":1000}
-{"event":"log","seq":9,"t_ms":7,"source":"Engine","line":"say \"hi\"\\\tthen\nmore"}
-{"event":"participant","seq":10,"t_ms":7,"name":"Engine","state":"ended","exit_code":0,"signal":null}
-{"event":"participant","seq":11,"t_ms":7,"name":"Crash","state":"ended","exit_code":null,"signal":")" +
+{"event":"participant","seq":8,"t_ms":7,"name":"Engine","state":"failed","reason":"left_simulation"}
+{"event":"participant","seq":9,"t_ms":7,"name":"Crash","state":"failed","reason":"process_ended","message":"participant 'Crash': ..."}
+{"event":"time","seq":10,"t_ms":7,"sim_ms":1000}
+{"event":"log","seq":11,"t_ms":7,"source":"Engine","line":"say \"hi\"\\\tthen\nmore"}
+{"event":"participant","seq":12,"t_ms":7,"name":"Engine","state":"ended","exit_code":0,"signal":null}
+{"event":"participant","seq":13,"t_ms":7,"name":"Crash","state":"ended","exit_code":null,"signal":")" +
                    process::signal_name(11) + R"("}
-{"event":"participant","seq":12,"t_ms":7,"name":"Deaf","state":"stop_requested"}
-{"event":"participant","seq":13,"t_ms":7,"name":"Deaf","state":"killed"}
-{"event":"finding","seq":14,"t_ms":7,"severity":"note","code":"interrupted","file":"sim.yaml","line":null,"participant":null,"network":null,"message":"interrupted (stop command): ...","detail":null}
-{"event":"finding","seq":15,"t_ms":7,"severity":"error","code":"exit-code","file":"sim.yaml","line":5,"participant":"A","network":null,"message":"participant 'A': ...","detail":"more"}
-{"event":"command","seq":16,"t_ms":7,"command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object"}
-{"event":"command","seq":17,"t_ms":7,"command":"stop","source":"eof","accepted":true,"message":null}
-{"event":"phase","seq":18,"t_ms":7,"phase":"ended"}
+{"event":"participant","seq":14,"t_ms":7,"name":"Deaf","state":"stop_requested"}
+{"event":"participant","seq":15,"t_ms":7,"name":"Deaf","state":"killed"}
+{"event":"finding","seq":16,"t_ms":7,"severity":"note","code":"interrupted","file":"sim.yaml","line":null,"participant":null,"network":null,"message":"interrupted (stop command): ...","detail":null}
+{"event":"finding","seq":17,"t_ms":7,"severity":"error","code":"exit-code","file":"sim.yaml","line":5,"participant":"A","network":null,"message":"participant 'A': ...","detail":"more"}
+{"event":"command","seq":18,"t_ms":7,"command":null,"source":"stdin","accepted":false,"message":"the line is not a JSON object"}
+{"event":"command","seq":19,"t_ms":7,"command":"stop","source":"eof","accepted":true,"message":null}
+{"event":"phase","seq":20,"t_ms":7,"phase":"ended"}
 )");
     CHECK(sink.closed().empty() && !e.closed());
 }

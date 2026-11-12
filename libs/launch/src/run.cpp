@@ -155,6 +155,9 @@ std::string_view stop_request_name()
 #endif
 }
 
+// A finding that is added here and that the end of the participants can still change (end_children():
+// exit, ending, stopped_after_end, stop_request_failed, left_processes, interrupted_by,
+// interrupted_while_ending) must be left out by detail::settled_findings() until it cannot.
 std::vector<Finding> assess_run(const RunOutcome& outcome)
 {
     std::vector<Finding> out;
@@ -1008,6 +1011,7 @@ private:
             if (ended >= 0 && !late)
             {
                 outcome_.failed_participant = outcome_.participants[static_cast<std::size_t>(ended)].name;
+                note_failed(outcome_.failed_participant, "ended_before_start");
                 return false;
             }
             if (missing.empty())
@@ -1054,6 +1058,27 @@ private:
         return true;
     }
 
+    /// run --events: the launcher has decided that `name` failed and ends the run because of it
+    /// (`reason`: one word that stays). Written at once, as an event that is never dropped; with
+    /// the message of its finding if that is settled already (the finding itself is written when
+    /// it is settled: publish_findings()).
+    void note_failed(const std::string& name, std::string_view reason)
+    {
+        if (options_.events == nullptr)
+        {
+            return;
+        }
+        std::string message;
+        for (const Finding& f : detail::settled_findings(outcome_))
+        {
+            if (f.participant == name && (f.code == "participant-failed" || f.code == "ended-before-start"))
+            {
+                message = f.message;
+            }
+        }
+        options_.events->participant_failed(name, reason, message);
+    }
+
     /// run --events: "joined" for each started participant whose lifecycle the controller has seen
     /// since the last look (also an optional one; not after its process has ended).
     void note_joined(SimulationController& controller)
@@ -1088,7 +1113,8 @@ private:
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(controller.runtime().now().time_since_epoch()).count();
         const auto now = std::chrono::steady_clock::now();
         const auto since = now - last_time_wall_;
-        if (ms == last_time_ms_ || (!last && since < kTimeInterval))
+        // Never a time before the last one written: "sim_ms" does not go back.
+        if (ms <= last_time_ms_ || (!last && since < kTimeInterval))
         {
             return;
         }
@@ -1147,6 +1173,7 @@ private:
             else
             {
                 const std::string who = why.failure ? why.failure->participant : outcome_.failed_participant;
+                note_failed(who, why.failure ? "left_simulation" : "process_ended");
                 say("participant '" + who + "' failed" + (why.failure ? ": it " + why.failure->reason : std::string{}) +
                     "; aborting the simulation");
             }

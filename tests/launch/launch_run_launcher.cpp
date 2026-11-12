@@ -33,10 +33,11 @@
 //   events_usage run --events with a wrong command line (also one the check finds) or a file that
 //                cannot be read: which events come
 //   events_findings a participant leaves the simulation and its process ends later: every finding
-//                event is in the result, and none comes twice
+//                event is in the result, and none comes twice; the state "failed" comes at once
 //   events_stalled a reader that does not read: the participants are not held up; a stop command, a
 //                signal and --timeout-ms work all the same; the launcher gives the reader up after
 //                its time limit
+//   events_stderr the reader reads neither the events nor stderr (one pipe): the launcher ends
 //   events_slow  a reader that falls behind and catches up: log lines are dropped and counted
 //                (log_dropped), nothing else, and the result comes last
 //   events_nonblocking (POSIX) the standard output is a pipe that does not block: nothing is lost
@@ -1422,6 +1423,8 @@ void events_usage(const Options& o)
          std::vector<std::pair<std::vector<std::string>, std::string>>{
              {{"run", "--events", "--bad", "x.yaml"}, "unknown option --bad"},
              {{"run", "--events", "--json", "x.yaml"}, "--json and --events cannot be used together"},
+             {{"run", "--events", "--events-stall-ms", "999", "x.yaml"}, "--events-stall-ms must be from 1000 to 86400000"},
+             {{"run", "--events", "--events-stall-ms", "soon", "x.yaml"}, "invalid value for --events-stall-ms: soon"},
              {{"run", "--events"}, "run needs the configuration file"}})
     {
         const Captured run = launch(o, args, dir);
@@ -1431,6 +1434,11 @@ void events_usage(const Options& o)
                 "hello and the result of a usage error:\n" + run.standard_output);
         require(contains(lf(run.standard_error), "error: " + message), "the error on stderr:\n" + run.standard_error);
     }
+    // The limit is for the events: without them it is a mistake (and no event is written).
+    const Captured alone = launch(o, {"run", "--events-stall-ms", "5000", "x.yaml"}, dir);
+    expect_code(alone, 4, "run --events-stall-ms without --events");
+    require(alone.standard_output.empty() && contains(lf(alone.standard_error), "error: --events-stall-ms is for --events"),
+            "the error on stderr:\n" + alone.standard_error);
     const Captured missing = launch(o, {"run", "--events", "missing.yaml"}, dir);
     expect_code(missing, 3, "run --events missing.yaml");
     const std::vector<std::string> lines = check_events(missing.standard_output);
@@ -1772,23 +1780,6 @@ void stdin_ending(const Options& o)
     require(gone, "Stuck has ended");
 }
 
-/// Sets an environment variable for the launchers started after it.
-void set_env(const char* name, const std::string& value)
-{
-#ifdef _WIN32
-    _putenv((std::string(name) + "=" + value).c_str());
-#else
-    ::setenv(name, value.c_str(), 1);
-#endif
-}
-
-/// How long the launcher goes on with a reader of its events that does not read (the launcher's
-/// internal setting for tests; 30 s without it).
-void set_stall_timeout(std::chrono::milliseconds timeout)
-{
-    set_env("VEHICLE_SIL_LAUNCH_EVENTS_STALL_MS", std::to_string(timeout.count()));
-}
-
 void output_closed(const Options& o)
 {
     {
@@ -2015,10 +2006,9 @@ std::string code_text(const std::optional<vehicle_sil::process::ExitStatus>& sta
 void events_stalled(const Options& o)
 {
     Checks checks;
-    const std::vector<std::string> kRun{"run", "--events", "--stdin-commands", "--log-dir", "logs", "sim.yaml"};
-    // The limit is far away: a stop command works while the reader does not read, and a second one
-    // ends the launcher's wait for the reader (it cannot write its result).
-    set_stall_timeout(600s);
+    // The limit (--events-stall-ms) is far away: a stop command works while the reader does not
+    // read, and a second one ends the launcher's wait for the reader (it cannot write its result).
+    const std::vector<std::string> kRun{"run", "--events", "--events-stall-ms", "600000", "--stdin-commands", "--log-dir", "logs", "sim.yaml"};
     {
         Stalled run(o, kRun, checks);
         const auto asked = std::chrono::steady_clock::now();
@@ -2051,7 +2041,7 @@ void events_stalled(const Options& o)
     // A signal (Windows: Ctrl+Break, if there is a console to send it through).
     if (can_request_stop())
     {
-        Stalled run(o, {"run", "--events", "--log-dir", "logs", "sim.yaml"}, checks);
+        Stalled run(o, {"run", "--events", "--events-stall-ms", "600000", "--log-dir", "logs", "sim.yaml"}, checks);
         const auto interrupt = [&run] {
 #ifdef _WIN32
             static_cast<void>(run.live->process().request_stop());
@@ -2066,9 +2056,8 @@ void events_stalled(const Options& o)
         checks.expect(status.has_value() && status->code == 130, "a second interrupt ends the wait: 130, " + code_text(status));
     }
     // The limit itself: the launcher gives the reader up, stops the run and says why.
-    set_stall_timeout(1500ms);
     {
-        Stalled run(o, {"run", "--events", "--log-dir", "logs", "sim.yaml"}, checks, false);
+        Stalled run(o, {"run", "--events", "--events-stall-ms", "1500", "--log-dir", "logs", "sim.yaml"}, checks, false);
         const auto held = std::chrono::steady_clock::now();
         const bool ended = run.live->process().wait_for(30s).has_value();
         const long long after = ms_since(held);
@@ -2091,9 +2080,8 @@ void events_slow(const Options& o)
 {
     // The reader stops for a while and reads again: the participants' lines that did not fit are
     // dropped and counted; everything else is written, and the stream ends with the result.
-    set_stall_timeout(600s);
     Checks checks;
-    Stalled run(o, {"run", "--events", "--stdin-commands", "--log-dir", "logs", "sim.yaml"}, checks);
+    Stalled run(o, {"run", "--events", "--events-stall-ms", "600000", "--stdin-commands", "--log-dir", "logs", "sim.yaml"}, checks);
     run.live->release();
     run.live->wait_for({"\"event\":\"log_dropped\""});
     run.live->write("{\"command\":\"stop\"}\n");
@@ -2159,11 +2147,107 @@ void events_findings(const Options& o)
     const auto failed = events_with(lines, {"\"event\":\"finding\"", "\"code\":\"participant-failed\""});
     require(failed.size() == 1 && contains(failed[0], "its process exited with code 1"),
             "one participant-failed finding, with how the process ended:\n" + findings);
+    // That Engine failed is an event at once (never dropped, unlike the launcher's line): before
+    // the others are stopped, before Engine's process has ended, before the finding.
+    const auto seq = [&lines](const std::vector<std::string>& parts) {
+        const auto found = events_with(lines, parts);
+        require(found.size() == 1, "one event with " + parts.back() + ", not " + std::to_string(found.size()));
+        log(found[0].substr(0, 400));
+        return std::stoll(value_of(found[0], "seq"));
+    };
+    const std::string engine = "\"name\":\"Engine\"";
+    const auto failedAt = seq({"\"event\":\"participant\"", engine, "\"state\":\"failed\",\"reason\":\"left_simulation\"}"});
+    const auto stoppingAt = seq({"\"phase\":\"stopping\""});
+    const auto endedAt = seq({"\"event\":\"participant\"", engine, "\"state\":\"ended\""});
+    const auto findingAt = seq({"\"event\":\"finding\"", "\"code\":\"participant-failed\""});
+    require(failedAt < stoppingAt && stoppingAt < endedAt && endedAt < findingAt,
+            "failed, then stopping, then Engine's ended, then the finding:\n" + run.standard_output);
+    // A reader that does not know the state "failed" misses nothing else: the states it knows
+    // come once each, as before.
+    for (const std::string state : {"started", "joined", "ended"})
+    {
+        static_cast<void>(seq({"\"event\":\"participant\"", engine, "\"state\":\"" + state + "\""}));
+    }
     // The same result as without --events.
     const Captured json = launch(o, {"run", "--json", "sim.yaml"}, dir);
     const std::string& last = lines.back();
     expect_text(last.substr(last.find(",\"result\":") + 10), compact(json.standard_output.substr(0, json.standard_output.size() - 1)) + "}",
                 "the result event as run --json");
+
+    // Engine's process ends in a step (exit code 7): the launcher learns of the failure by the end
+    // of the process, so "ended" comes first; the finding is settled, and "failed" has its message.
+    write_file(dir / "Engine.behaviour", "exit-at-ms 200 7\n");
+    const Captured crash = launch(o, {"run", "--events", "sim.yaml"}, dir);
+    expect_code(crash, 1, "run --events with an ECU whose process ends");
+    const std::vector<std::string> crashed = check_events(crash.standard_output);
+    const auto state = events_with(crashed, {"\"state\":\"failed\",\"reason\":\"process_ended\",\"message\":"});
+    const auto ended = events_with(crashed, {"\"event\":\"participant\"", "\"name\":\"Engine\"", "\"state\":\"ended\""});
+    const auto finding = events_with(crashed, {"\"event\":\"finding\"", "\"code\":\"participant-failed\""});
+    require(state.size() == 1 && ended.size() == 1 && finding.size() == 1, "failed, ended and the finding once each:\n" + crash.standard_output);
+    log(state[0]);
+    require(std::stoll(value_of(ended[0], "seq")) < std::stoll(value_of(state[0], "seq")) &&
+                std::stoll(value_of(state[0], "seq")) < std::stoll(value_of(finding[0], "seq")),
+            "ended, then failed, then the finding");
+    require(value_of(state[0], "message") == value_of(finding[0], "message") && contains(state[0], "its process exited with code 7"),
+            "failed has the finding's message:\n" + state[0] + "\n" + finding[0]);
+}
+
+void events_stderr(const Options& o)
+{
+    // The launcher's standard output and standard error are one pipe (2>&1 of a shell), and
+    // nothing reads it: the line that says why the events closed has nowhere to go either. The
+    // launcher ends all the same.
+    const fs::path dir = chatty(o, 20);
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool held = true;
+    vehicle_sil::process::ProcessOptions options;
+    options.working_directory = dir;
+    options.on_line = [&](vehicle_sil::process::Stream, std::string_view) {
+        std::unique_lock lock(mutex);
+        changed.wait(lock, [&held] { return !held; });
+    };
+    const std::vector<std::string> run{"run", "--events", "--events-stall-ms", "1500", "sim.yaml"};
+#ifdef _WIN32
+    const char* shell = std::getenv("ComSpec");
+    require(shell != nullptr, "ComSpec is not set");
+    std::vector<std::string> args{"/c", shown_path(o.launch)};
+    args.insert(args.end(), run.begin(), run.end());
+    args.push_back("2>&1");
+#else
+    const char* shell = "/bin/sh";
+    std::vector<std::string> args{"-c", "exec \"$0\" \"$@\" 2>&1", o.launch.string()};
+    args.insert(args.end(), run.begin(), run.end());
+#endif
+    const auto from = std::chrono::steady_clock::now();
+    vehicle_sil::process::Process wrapper(shell, args, std::move(options));
+    const long engine = read_pid((dir / "Engine.pid").string(), 60s);
+    const long brake = read_pid((dir / "Brake.pid").string(), 60s);
+    const auto status = wrapper.wait_for(60s);
+    const long long after = ms_since(from);
+    const bool gone = wait_gone(engine, 10s) && wait_gone(brake, 10s);
+    if (!status)
+    {
+        wrapper.kill_tree();
+    }
+    for (const long pid : {engine, brake})
+    {
+        if (process_alive(pid))
+        {
+            kill_one(pid);
+        }
+    }
+    {
+        const std::lock_guard lock(mutex);
+        held = false;
+        changed.notify_all();
+    }
+    wrapper.finish_output(10s);
+    require(engine > 0 && status.has_value() && status->code == 130,
+            "the launcher gives the reader up and ends (130) although its stderr is not read either: " + code_text(status) +
+                " after " + std::to_string(after) + " ms");
+    log("ended after " + std::to_string(after) + " ms");
+    require(gone, "no participant is left");
 }
 
 void events_nonblocking(const Options& o)
@@ -2310,7 +2394,8 @@ int main(int argc, char** argv)
             {"stdin_stop", stdin_stop}, {"stdin_eof", stdin_eof}, {"stdin_twice", stdin_twice}, {"stdin_ending", stdin_ending},
             {"output_closed", output_closed}, {"stdin_killed", stdin_killed}, {"no_console_stdin", no_console_stdin},
             {"stop_once", stop_once}, {"events_stalled", events_stalled}, {"events_slow", events_slow},
-            {"events_findings", events_findings}, {"events_nonblocking", events_nonblocking}, {"events_output", events_output}};
+            {"events_findings", events_findings}, {"events_nonblocking", events_nonblocking}, {"events_output", events_output},
+            {"events_stderr", events_stderr}};
         const auto it = std::find_if(scenarios.begin(), scenarios.end(), [&](const auto& s) { return s.first == o.scenario; });
         if (it == scenarios.end())
         {

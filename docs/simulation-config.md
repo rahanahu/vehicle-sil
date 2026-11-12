@@ -760,6 +760,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `not_started` | プロセスを起動できなかった | `message`: 理由 |
 | `started` | プロセスを起動した | `pid`（そのプロセスの ID）、`command`（起動した実行ファイルと引数の配列）、`log`（`--log-dir` のファイル。なければ `null`） |
 | `joined` | シミュレーションに参加した（controller がその participant のライフサイクルの状態を見た） | |
+| `failed` | `vehicle_sil_launch` が、この participant の失敗で実行をやめると決めた | `reason`: `left_simulation`（プロセスは動いているが、シミュレーションから抜けた）、`process_ended`（シミュレーションの途中で、プロセスが失敗として終わった）、`ended_before_start`（シミュレーションが始まる前にプロセスが終わった）。`message`: この失敗の `finding` の `message` と同じ文。その時点で文が決まっているときだけあります（`left_simulation` にはありません） |
 | `stop_requested` | 止まるよう求めた（止め方の 2） | |
 | `ended` | プロセスが終わった | `exit_code`、`signal`（結果の `participants[]` と同じ意味） |
 | `killed` | 強制終了した（それが起動したプロセスも） | |
@@ -770,8 +771,9 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 - 外した participant の `disabled` は、`check` の直後、`starting` の前に、構成ファイルの順に書きます。
 - participant の `log` は、その participant の `started` より後に来ます。終わりの側には約束がありません。participant の出力は別のスレッドが読んでいるので、最後の何行かが、その participant の `ended` の後や、`phase` の `ended` の後に来ることがあります。`result` より後には来ません。
 - `joined` は、SIL Kit のライフサイクルで参加する participant だけです（参加しない道具の participant には来ません）。
-- `time` は、`running` になったときに 0 を書き、その後は仮想時間が変わったときに書きます（実時間で 100 ms に 1 回まで。シミュレーションが終わったときの時刻は、間隔によらず書きます）。今の `vehicle_sil_launch` が書くのは、0 と、`stop_at_ms` まで進んだときの `stop_at_ms` だけです。進み具合の表示には使えません。実行が続いていることは `heartbeat` で確かめます。
-- `finding` は実行で見つけたものです。シミュレーションが終わった（または始まらなかった）ときに、その時点で決まっているものを書き、残りを participant を終わらせた後に書きます。一度書いた `finding` は、同じ内容のまま `result` の `findings` に入ります。同じものを 2 回は書きません。シミュレーションの途中で失敗した participant の `participant-failed` は、プロセスの終わり方を含むので、プロセスが終わってから書きます（失敗に気づいた時点では、`vehicle_sil_launch` の `log` の行が理由を知らせます）。照合で見つけたものは `check` の中にあります。`result` だけを読んでも、結果はわかります。
+- `failed` は、失敗と決めた時点ですぐに書きます。ほかの participant を止める（`phase` の `stopping`）より前で、その失敗の `finding` より前です。`log` と違って、読む側が遅くても捨てません。`reason` が `left_simulation` のときは、その participant の `ended` より前に来ます。`process_ended` と `ended_before_start` は、プロセスの終わりで失敗に気づくので、`ended` の後に来ます。`failed` を知らない読む側は、無視してかまいません（結果と、ほかの事象は変わりません）。
+- `time` は、`running` になったときに 0 を書き、その後は仮想時間が進んだときに書きます（実時間で 100 ms に 1 回まで。シミュレーションが終わったときの時刻は、間隔によらず書きます）。`sim_ms` は、前に書いた値より必ず大きくなります。今の `vehicle_sil_launch` が書くのは、0 と、`stop_at_ms` まで進んだときの `stop_at_ms` だけです。進み具合の表示には使えません。実行が続いていることは `heartbeat` で確かめます。
+- `finding` は実行で見つけたものです。シミュレーションが終わった（または始まらなかった）ときに、その時点で決まっているものを書き、残りを participant を終わらせた後に書きます。一度書いた `finding` は、同じ内容のまま `result` の `findings` に入ります。同じものを 2 回は書きません。シミュレーションの途中で失敗した participant の `participant-failed` は、プロセスの終わり方を含むので、プロセスが終わってから書きます（失敗に気づいた時点では、`participant` の `failed` が知らせます。`vehicle_sil_launch` の `log` の行にも理由があります）。照合で見つけたものは `check` の中にあります。`result` だけを読んでも、結果はわかります。
 - `heartbeat` は、`hello` から `result` までのどの段階でも、ほかの行の間に入ります。数は実行にかかった時間で変わります。
 - `command` の事象は、その命令で起きること（`phase` の `stopping` など）より前に書きます。
 
@@ -808,9 +810,15 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 - `log` は、待っている `log` が 4096 行または 1 MiB を超える間は、書かずに数えます。数えた分は、その場所に `log_dropped` を 1 行書いて知らせます（読む側がまた読み始めたときに届きます）。`count` と `sources` は、その行を書く時点までに数えた分です。
 - `log` と `log_dropped` 以外の事象は、捨てません。
-- 読む側が 30 秒のあいだ 1 バイトも読まないとき、または `log` 以外の事象が 4096 個を超えて待っているときは、読む側がいなくなったものとして扱います（次の項）。
+- 書き込みが 30 秒のあいだまったく進まないとき、または `log` 以外の事象が 4096 個を超えて待っているときは、読む側がいなくなったものとして扱います（次の項）。
 
-シミュレーションが終わったときに読む側が止まっていると、`vehicle_sil_launch` は `result` を書けるまで待ちます。待つのは長くて 30 秒です。待っている間に止める要求（2 回目の要求。それまで要求がなければ 1 回目）が来れば、そこでやめます。`result` を書けなかったときの終了コードは 3 です（止める要求で止めた実行は 130）。
+「30 秒進まない」の数え方:
+
+- 数え始めるのは、読む側が読むのをやめたときではなく、書き込みが待ち始めたとき（パイプがいっぱいになったとき）です。書く量が少ない実行（`heartbeat` だけ、など）では、パイプがいっぱいになるまでに長くかかります。読むのをやめて 30 秒で必ず止まるわけではありません。
+- `vehicle_sil_launch` は 4096 バイトまでの単位で書き、その単位が 1 つ入りきると「進んだ」と数えます。読む側は、30 秒のうちにおよそ 4096 バイトを読めば、読んでいると見なされます（待たない設定のパイプでは 1 バイトで足ります）。
+- 30 秒は `--events-stall-ms <ms>` で変えられます（1000 以上。デバッガーで止めることがある読む側は、長くします）。端末に書いているときも同じです（出力を止めたままにすると、実行が止まります）。
+
+シミュレーションが終わると、`vehicle_sil_launch` は `result` を書き終えるまで待ちます。待つのは、読む側が読んでいても長くて 30 秒（`--events-stall-ms` の値）です。待っている事象が多く、読む側が遅いと、`result` が届かないことがあります。書き込みが 0.5 秒進まない間に、止める要求が 2 回以上になったとき（それまで要求がなければ 1 回目が来たとき）は、そこで待つのをやめます。`result` を書けなかったときの終了コードは 3 で、標準エラーに `error: cannot write the result to the standard output (<理由>)` と書きます（止める要求で止めた実行は 130 で、この行は書きません）。
 
 #### 読む側がいなくなったとき
 
@@ -818,7 +826,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 - 事象の流れを閉じます。その後は、`result` を含めて何も書きません（書きかけの行が途中で切れることがあります）。
 - 止める要求として扱います（1 回目の Ctrl+C と同じ）。すでに止める要求を受けていれば、何もしません（2 回目に数えません）。
-- 標準エラーに理由を 1 行書きます（`vehicle_sil_launch: cannot write the events (<理由>): stopping the run`）。
+- 標準エラーに理由を 1 行書きます（`vehicle_sil_launch: cannot write the events (<理由>): stopping the run`）。すでに止める要求を受けていたときは、行の終わりが `no more events are written` です。`result` を書くのを待っている間に閉じたときは、この行ではなく、上の `error: cannot write the result ...` の行です。標準エラーも読まれていないと、この行は届きません（`vehicle_sil_launch` は、それでも終わります）。
 - 結果の `interrupted_by` は `"output closed"`、終了コードは 130 です（SIGPIPE で終わりません）。
 
 標準出力が、書き込みで待たない設定（`O_NONBLOCK` など）のパイプでも同じように動きます。いっぱいのときは、閉じたとは扱わず、空くのを待ちます。
@@ -932,8 +940,9 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 ```text
 vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>
-vehicle_sil_launch run [--json | --events] [--stdin-commands] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
-                       [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>
+vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--strict]
+                       [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>]
+                       [--disable <name>]... [--enable <name>]... [--] <file>
 vehicle_sil_launch version [--json]
 ```
 
@@ -941,6 +950,7 @@ vehicle_sil_launch version [--json]
 |---|---|
 | `--json` | 結果を JSON で書く |
 | `--events` | `run` だけ。経過と結果を事象として書く（[機械から使う](#機械から使う--events--stdin-commandsversion)）。`--json` と一緒には使えない |
+| `--events-stall-ms <ms>` | `--events` を付けた `run` だけ。事象の書き込みがこの時間まったく進まなければ、読む側がいなくなったものとして扱う。`result` を書き終えるのを待つ時間の上限でもある（1000 以上 86400000 以下の整数。既定は 30000。[読む側が遅いとき](#読む側が遅いとき読まないとき)） |
 | `--stdin-commands` | `run` だけ。標準入力から命令を読む。標準入力の終わりも止める要求 |
 | `--strict` | 警告があっても失敗にする（注記では失敗にしない） |
 | `--log-dir <dir>` | `run` だけ。participant ごとの出力のファイルを置くディレクトリ |
@@ -957,7 +967,7 @@ vehicle_sil_launch version [--json]
 | 0 | 誤りがない（警告と注記だけなら 0。`--strict` では警告もない）。`run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった |
 | 1 | 誤りがある（`--strict` では警告も）。`run` では、照合の誤り（何も起動しない）か、実行の誤り（participant が失敗した、そろわなかった、止めても終わらなかったなど） |
 | 3 | 構成ファイルを読めない（ファイルがない、文法の誤り、知らない形式の版など）。`run` で registry や controller を用意できないときも 3 です。結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です（標準エラーに理由。`--json` では、そのコマンドの形の JSON に `code` が `internal` の誤り） |
-| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir` と `--timeout-ms`、構成ファイルにない participant 名の `--disable` と `--enable`、同じ名前の `--disable` と `--enable`）。誤りと使い方を標準エラーに書きます |
+| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir` と `--timeout-ms`、構成ファイルにない participant 名の `--disable` と `--enable`、同じ名前の `--disable` と `--enable`）。誤りと使い方を標準エラーに書きます |
 | 130 | `run` が中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力など） |
 
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。

@@ -53,7 +53,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
     SCENARIOS docs check crash step optional not_joined quitter hang grandchild path interrupt interrupt_twice
               interrupt_ending ended_early timeout no_console killed usage disabled events events_usage stdin_stop
               stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
-              events_slow events_findings events_nonblocking events_output
+              events_slow events_findings events_nonblocking events_output events_stderr
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>

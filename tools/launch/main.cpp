@@ -64,8 +64,9 @@ using namespace vehicle_sil;
 constexpr const char* kUsage =
     "usage: vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--disable <name>]...\n"
     "                                [--enable <name>]... [--] <file>\n"
-    "       vehicle_sil_launch run [--json | --events] [--stdin-commands] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]\n"
-    "                              [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>\n"
+    "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--strict]\n"
+    "                              [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>]\n"
+    "                              [--disable <name>]... [--enable <name>]... [--] <file>\n"
     "       vehicle_sil_launch version [--json]\n"
     "  check <file>                compare the simulation configuration <file> (YAML or JSON) with what each\n"
     "                              ecu_main executable in it reports (--describe); list the participants,\n"
@@ -78,6 +79,8 @@ constexpr const char* kUsage =
     "  --json                      write the result as JSON\n"
     "  --events                    run: write what happens as events on stdout, one JSON object per line, the\n"
     "                              result last (nothing on stderr but the launcher's own failures)\n"
+    "  --events-stall-ms <ms>      run --events: give up a reader of the events that takes nothing for <ms>, and wait\n"
+    "                              at most <ms> for it to take the result (1000 or more; default 30000)\n"
     "  --stdin-commands            run: read commands from stdin, one JSON object per line: {\"command\":\"stop\"}\n"
     "                              stops in order (twice: without waiting); the end of stdin stops as well\n"
     "  --strict                    fail on warnings too\n"
@@ -200,6 +203,54 @@ void write_stderr_line_locked(std::string_view line)
 /// How long main waits for stderr when another thread is writing to it.
 constexpr std::chrono::seconds kStderrWait{2};
 
+/// One line on stderr from a thread other than main, without the C library's stream: a write
+/// that waits (stderr is not read: a full pipe) then holds no lock of the stream, for which
+/// exit() on the main thread could wait when it puts the streams in order. The caller holds
+/// stderr_mutex.
+void write_stderr_line_directly(std::string_view line)
+{
+    std::string data(line);
+    data += '\n';
+#ifdef _WIN32
+    const HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
+    if (write_console(err, data) || err == nullptr || err == INVALID_HANDLE_VALUE)
+    {
+        return;
+    }
+    for (std::size_t done = 0; done < data.size();)
+    {
+        DWORD written = 0;
+        if (!WriteFile(err, data.data() + done, static_cast<DWORD>(data.size() - done), &written, nullptr))
+        {
+            return;
+        }
+        if (written == 0)
+        {
+            Sleep(20);
+        }
+        done += written;
+    }
+#else
+    for (std::size_t done = 0; done < data.size();)
+    {
+        const ssize_t written = ::write(STDERR_FILENO, data.data() + done, data.size() - done);
+        if (written >= 0)
+        {
+            done += static_cast<std::size_t>(written);
+        }
+        else if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            pollfd wait{STDERR_FILENO, POLLOUT, 0};
+            static_cast<void>(::poll(&wait, 1, 100));
+        }
+        else if (errno != EINTR)
+        {
+            return;
+        }
+    }
+#endif
+}
+
 /// write_stderr_line_locked(), one line at a time. From main: the line is left out if another
 /// thread has been in a write to stderr for kStderrWait (stderr is not read).
 void write_stderr_line(std::string_view line)
@@ -212,13 +263,14 @@ void write_stderr_line(std::string_view line)
 }
 
 /// A line on stderr from a thread other than main(): nothing once the result has been written
-/// (main() may be ending the process). May wait for as long as stderr takes.
+/// (main() may be ending the process). May wait for as long as stderr takes; main waits neither
+/// for stderr_mutex without a limit nor, when the process ends, for anything this holds.
 void note_from_thread(std::string_view line)
 {
     const std::lock_guard lock(shared().stderr_mutex);
     if (!shared().finished.load())
     {
-        write_stderr_line_locked(line);
+        write_stderr_line_directly(line);
     }
 }
 
@@ -245,7 +297,7 @@ void write_stderr_line_without_waiting(std::string line)
     std::thread([done, line = std::move(line)] {
         {
             const std::lock_guard lock(shared().stderr_mutex);
-            write_stderr_line_locked(line);
+            write_stderr_line_directly(line);
         }
         const std::lock_guard lock(done->mutex);
         done->done = true;
@@ -506,21 +558,30 @@ void on_events_closed(const std::string& reason)
                      (stops ? "stopping the run" : "no more events are written"));
 }
 
-/// How long the events wait for a reader that does not read. VEHICLE_SIL_LAUNCH_EVENTS_STALL_MS
-/// (milliseconds) is for the tests: not part of the interface.
-std::chrono::milliseconds events_stall_timeout()
+/// --events-stall-ms: at least this (a reader may stop for a moment), and what fits the clocks.
+constexpr std::int64_t kMinEventsStallMs = 1000;
+constexpr std::int64_t kMaxEventsStallMs = 86'400'000;
+
+/// The value of --events-stall-ms in `arguments` if it is one the option takes; else the default
+/// (the events start before the command line is read as a whole, which then says what is wrong).
+std::chrono::milliseconds events_stall_timeout(const std::vector<std::string>& arguments)
 {
-    launch::EventStreamOptions defaults;
-    if (const char* text = std::getenv("VEHICLE_SIL_LAUNCH_EVENTS_STALL_MS"))
+    for (std::size_t i = 0; i + 1 < arguments.size() && arguments[i] != "--"; ++i)
     {
-        char* end = nullptr;
-        const long long ms = std::strtoll(text, &end, 10);
-        if (end != text && *end == '\0' && ms > 0 && ms <= 86'400'000)
+        if (arguments[i] == "--events-stall-ms")
         {
-            return std::chrono::milliseconds(ms);
+            const std::string& text = arguments[i + 1];
+            char* end = nullptr;
+            errno = 0;
+            const long long ms = std::strtoll(text.c_str(), &end, 10);
+            if (!text.empty() && *end == '\0' && errno == 0 && ms >= kMinEventsStallMs && ms <= kMaxEventsStallMs)
+            {
+                return std::chrono::milliseconds(ms);
+            }
+            break;
         }
     }
-    return defaults.stall_timeout;
+    return launch::EventStreamOptions{}.stall_timeout;
 }
 
 /// Starts the events: hello with the arguments as given. Null if there is no standard output.
@@ -531,7 +592,7 @@ launch::EventStream* start_events(const std::string& file, const std::vector<std
         return nullptr;
     }
     launch::EventStreamOptions options;
-    options.stall_timeout = events_stall_timeout();
+    options.stall_timeout = events_stall_timeout(arguments);
     shared().events = new launch::EventStream(write_events, on_events_closed, options);
 #ifdef _WIN32
     const long pid = static_cast<long>(GetCurrentProcessId());
@@ -657,9 +718,12 @@ int usage_error(const std::vector<launch::Finding>& errors, bool json, bool run,
         write_stderr_line("error: " + error.message);
     }
     {
-        const std::lock_guard lock(shared().stderr_mutex);
-        std::fputs(kUsage, stderr);
-        std::fflush(stderr);
+        const std::unique_lock lock(shared().stderr_mutex, kStderrWait);
+        if (lock.owns_lock())
+        {
+            std::fputs(kUsage, stderr);
+            std::fflush(stderr);
+        }
     }
     if (json || events != nullptr)
     {
@@ -702,8 +766,8 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         {
             optionsEnded = true;
         }
-        else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--disable" ||
-                 a == "--enable")
+        else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
+                 a == "--disable" || a == "--enable")
         {
             ++i;
         }
@@ -742,7 +806,7 @@ Common common(const cli::Args& args, const std::string& command)
 
 int check(const cli::Args& args)
 {
-    for (const char* runOnly : {"log-dir", "timeout-ms", "events", "stdin-commands"})
+    for (const char* runOnly : {"log-dir", "timeout-ms", "events-stall-ms", "events", "stdin-commands"})
     {
         if (args.has(runOnly) || args.flag(runOnly))
         {
@@ -769,6 +833,19 @@ int run(const cli::Args& args, launch::EventStream* events)
     if (args.flag("json") && args.flag("events"))
     {
         throw cli::UsageError("--json and --events cannot be used together: with --events, the last event is the result");
+    }
+    if (args.has("events-stall-ms"))
+    {
+        if (!args.flag("events"))
+        {
+            throw cli::UsageError("--events-stall-ms is for --events: without it no events are written");
+        }
+        const auto ms = static_cast<std::int64_t>(args.millis("events-stall-ms", std::chrono::milliseconds(0)).count());
+        if (ms < kMinEventsStallMs || ms > kMaxEventsStallMs)
+        {
+            throw cli::UsageError("--events-stall-ms must be from " + std::to_string(kMinEventsStallMs) + " to " +
+                                  std::to_string(kMaxEventsStallMs));
+        }
     }
     launch::RunOptions options;
     options.check = c.options;
@@ -893,7 +970,7 @@ int main(int argc, char** argv)
     int code = cli::kExitSetupFailed;
     try
     {
-        const cli::Args args(arguments, {"describe-timeout-ms", "log-dir", "timeout-ms"},
+        const cli::Args args(arguments, {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms"},
                              {"json", "strict", "events", "stdin-commands"}, {"disable", "enable"});
         if (args.positionals().empty())
         {
