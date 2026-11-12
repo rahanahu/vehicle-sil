@@ -2471,7 +2471,8 @@
               "--start-timeout-ms",
               "50000"
             ],
-            "log": null
+            "log": null,
+            "stop_requested": true
           },
           {
             "name": "Dashboard",
@@ -2486,7 +2487,8 @@
               "--start-timeout-ms",
               "50000"
             ],
-            "log": null
+            "log": null,
+            "stop_requested": true
           },
           {
             "name": "Logger",
@@ -2496,7 +2498,8 @@
               "/path/to/root/logger/can_logger",
               "silkit://127.0.0.1:8500"
             ],
-            "log": null
+            "log": null,
+            "stop_requested": true
           }
         ],
         "participants_omitted": 0,

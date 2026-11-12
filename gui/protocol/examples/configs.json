@@ -69,6 +69,18 @@
         "simulation": true
       },
       {
+        "path": "large-fields.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 484,
+        "simulation": true
+      },
+      {
+        "path": "large-result.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 484,
+        "simulation": true
+      },
+      {
         "path": "launcher-crash.yaml",
         "modified": "2026-01-01T00:00:00Z",
         "size": 486,
@@ -78,6 +90,12 @@
         "path": "log-dropped.yaml",
         "modified": "2026-01-01T00:00:00Z",
         "size": 483,
+        "simulation": true
+      },
+      {
+        "path": "loose-fields.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 484,
         "simulation": true
       },
       {

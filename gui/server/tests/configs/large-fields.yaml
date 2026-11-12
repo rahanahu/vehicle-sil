@@ -1,0 +1,16 @@
+# A configuration for the fake launcher (gui/server/tests/fake_launcher.py); the line below picks its scenario.
+# fake-launcher: large-fields
+vehicle_sil_simulation: 1
+stop_at_ms: 1000
+networks:
+  - name: J1939_CAN
+    kind: can
+participants:
+  - name: Engine
+    command: [engine/vehicle_sil_engine_ecu]
+  - name: Dashboard
+    command: [dashboard/vehicle_sil_dashboard_ecu]
+  - name: Logger
+    command: [logger/can_logger, "{registry_uri}"]
+    describe: false
+    required: false

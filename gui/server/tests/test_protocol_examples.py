@@ -34,7 +34,7 @@ EXAMPLES = {
     "error-launcher-unusable", "error-launcher-start", "error-shutting-down", "error-too-many-connections",
     "ws-pass", "ws-log-dropped", "ws-check-error", "ws-participant-crash", "ws-launcher-crash", "ws-bad-lines", "ws-bad-types",
     "ws-orphan", "ws-stop", "ws-force-stop", "ws-replay", "ws-resume", "ws-dropped", "ws-slow-client",
-    "ws-resync", "ws-unauthorized",
+    "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit",
 }
 
 
@@ -288,6 +288,13 @@ SCENARIOS = {
                                     "reported (bad-event) and not passed on; the run goes on."),
     "log-dropped": ("log-dropped.yaml", "The launcher could not write some log lines (its reader was slow): a "
                                         "log_dropped event where they were, counted in the summary's log."),
+    "large-fields": ("large-fields.yaml", "A participant event larger than 4 KiB (a long command): the event is "
+                                          "passed on whole; the summary keeps the participant without the command "
+                                          "and names it in omitted_fields (kept-limit, once)."),
+    "loose-fields": ("loose-fields.yaml", "Known events whose fields that the server does not check are missing or "
+                                          "of other types (a finding with only severity and message, a registry "
+                                          "with uri null, a participant with a number as signal and message, a log "
+                                          "without t_ms): passed on, and kept in the summary, as they are."),
 }
 
 
@@ -378,6 +385,33 @@ def test_ws_dropped_example(tmp_path: Path) -> None:
                                            "dropped (lines from from_seq on that are not sent), then the kept "
                                            "lines (here only the first of them, and the end).",
                                            resumed.sent, [hello, dropped, first, got[-1]]), gui)
+        run_async(talk, gui)
+
+
+def test_ws_kept_limit_example(tmp_path: Path) -> None:
+    # More findings than the summary keeps, and a result over its 4 MiB limit: the result in the summary is cut to
+    # its short plain fields (no participants, findings or check).
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_FLOOD": "40000"}) as gui:
+        async def talk(c: Client) -> None:
+            live = await c.ws()
+            await live.until(is_synced)
+            await c.post("api/run", {"file": "large-result.yaml"})
+            await live.until(is_ended, timeout=120)
+            await live.close()
+            later = await c.ws()
+            got = await later.until(is_synced)
+            hello, synced = got[0], got[-1]
+            summary = hello["session"]
+            assert summary["findings_omitted"] > 0 and "participants" not in summary["result"], summary["result"]
+            assert {p["detail"]["what"] for p in summary["problems"] if p["code"] == "kept-limit"} >= \
+                {"findings", "result"}
+            hello = {**hello, "session": {**summary, "findings": summary["findings"][:2]}}
+            check_example("ws-kept-limit", ws("A screen that connects after a run with more findings than the summary "
+                                              "keeps and a result larger than 4 MiB: in the summary, the result has "
+                                              "only its short plain fields, and the findings are counted in "
+                                              "findings_omitted (here the findings are cut to the first two, and "
+                                              "the log lines between hello and synced are left out).",
+                                              later.sent, [hello, synced]), gui)
         run_async(talk, gui)
 
 

@@ -2,7 +2,7 @@
 
 GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとりする形の正本です。`examples/` の JSON は、サーバーの試験（`gui/server/tests/test_protocol_examples.py`）が偽のランチャーとの実際のやりとりから作り、毎回照合します。試験が作らないファイルが `examples/` に残っていても試験は落ちます。形を変えたら `UPDATE_PROTOCOL_EXAMPLES=1 uv run pytest gui/server/tests` で書き直し、画面の型（`gui/web/src/app/core/api.ts`）と、その単体試験（同じファイルを読む）を合わせます。プロセス ID、時刻、インスタンス、この PC のパス、決まらない数は、決まった値に置き換えてあります（`t_ms` は `seq × 10`）。
 
-読む側は、知らない欄、知らない `type`、知らない事象（`event`）、知らない `code` を無視して通します。サーバーは欄を足すことがありますが、ここにある欄を消したり意味を変えたりするときは `vehicle_sil_gui`（今は 1）を上げます。ランチャーの事象（`event` の中身）は、ランチャーの `run --events` の形そのままです（[docs/simulation-config.md](../../docs/simulation-config.md) の「機械から使う」）。`heartbeat` もそのまま通します（画面は読み飛ばします。ランチャーが動いているかはサーバーが見て、要約の `launcher.silent_s` で知らせます）。participant の知らない `state`（`failed` など、ランチャーが足すもの）も、そのまま通して要約に重ねます。
+読む側は、知らない欄、知らない `type`、知らない事象（`event`）、知らない `code` を無視して通します。サーバーは欄を足すことがありますが、ここにある欄を消したり意味を変えたりするときは `vehicle_sil_gui`（今は 1）を上げます。ランチャーの事象（`event` の中身）は、ランチャーの `run --events` の形そのままです（[docs/simulation-config.md](../../docs/simulation-config.md) の「機械から使う」）。`heartbeat` もそのまま通します（画面は読み飛ばします。ランチャーが動いているかはサーバーが見て、要約の `launcher.silent_s` で知らせます）。participant の知らない `state`（`failed` など、ランチャーが足すもの）も、そのまま通して要約に重ねます。サーバーが形を確かめるのは、事象の一部の欄（下の `bad-event`）だけです。ほかの欄は、なくても型が違っても、そのまま通して要約に重ねます（`ws-loose-fields.json`）。画面は要約と事象を部分ごとに読み、読めない部分だけを読み飛ばします。
 
 ## 考え方
 
@@ -125,7 +125,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `time` | 最後の `time` 事象（そのまま。なければ `null`）。大きすぎた欄があれば `omitted_fields` |
 | `check` | `check` 事象の `check`（照合の結果を丸ごと。participant の `required`、`enabled`、`variables` を含む）。まだなければ `null` |
 | `registry` | 最後の `registry` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`）。大きすぎた欄があれば `omitted_fields` |
-| `participants` | participant ごとの今の状態。`participant` 事象の欄（`event`、`seq`、`t_ms` を除く）を名前ごとに重ねたもの（`name`、`state`、`pid`、`exit_code`、`signal` など。`failed` の `reason` は、後で `ended` が来ても残る）。初めて現れた順。`required` と `enabled` は `check` を見る。大きすぎて入れなかった欄があれば、その名前の配列 `omitted_fields`（後の事象でその欄が届けば消える） |
+| `participants` | participant ごとの今の状態。`participant` 事象の欄（`event`、`seq`、`t_ms` を除く）を名前ごとに重ねたもの（`name`、`state`、`pid`、`exit_code`、`signal` など。`failed` の `reason` は、後で `ended` が来ても残る）。初めて現れた順。`required` と `enabled` は `check` を見る。`stop_requested` の事象が来た participant には、サーバーが `stop_requested: true` を付け、後の状態でも残す（止めるよう求めた後の終わりを、失敗と区別するため）。大きすぎて入れなかった欄があれば、その名前の配列 `omitted_fields`（後の事象でその欄が届けば消える。例は `ws-large-fields.json`） |
 | `participants_omitted` | 上限（256 人）を超えたので覚えていない participant の事象の数 |
 | `findings`、`findings_omitted` | `finding` 事象（`event`、`seq`、`t_ms` を除く）と、上限を超えて覚えていない数 |
 | `last_command` | 最後の `command` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`）。大きすぎた欄があれば `omitted_fields` |
@@ -137,4 +137,4 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 
 ## 上限
 
-サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB。4 KiB を超えても、大事な欄は必ず入れます（participant の `name`、`state`、`pid`、`exit_code`、`signal`、`phase` の段階の名前、`time` の `sim_ms`、`registry` の `uri`、`command` の `command` と `accepted`。これだけで 4 KiB を超えるときは入れません）。`problems` は、ランチャーが書いたもの（標準エラーを除く）が 100 個、サーバー自身の知らせ（`kept-limit`、`no-result`、`output-left-open`、`stop-not-delivered`、`stop-escalated`、`launcher-silent`）が別に 50 個、標準エラーが別に最初の 20 行と最後の 30 行です。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。
+サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ。例は `ws-kept-limit.json`）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB。4 KiB を超えても、大事な欄は必ず入れます（participant の `name`、`state`、`pid`、`exit_code`、`signal`、`phase` の段階の名前、`time` の `sim_ms`、`registry` の `uri`、`command` の `command` と `accepted`。これだけで 4 KiB を超えるときは入れません）。`problems` は、ランチャーが書いたもの（標準エラーを除く）が 100 個、サーバー自身の知らせ（`kept-limit`、`no-result`、`output-left-open`、`stop-not-delivered`、`stop-escalated`、`launcher-silent`）が別に 50 個、標準エラーが別に最初の 20 行と最後の 30 行です。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。

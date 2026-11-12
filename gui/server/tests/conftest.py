@@ -178,7 +178,8 @@ class Client:
 
     async def ws(self, auth: dict | None = None, origin: str | None = "") -> "Socket":
         headers = {} if origin is None else {"Origin": origin or self.gui.origin}
-        ws = await self.http.ws_connect(f"ws://127.0.0.1:{self.gui.port}/ws", headers=headers)
+        # no size limit on what it reads: the server relays events as large as the launcher writes them
+        ws = await self.http.ws_connect(f"ws://127.0.0.1:{self.gui.port}/ws", headers=headers, max_msg_size=0)
         sock = Socket(ws)
         if auth is not False:
             message = {"type": "auth", "token": self.gui.token, **(auth or {})}

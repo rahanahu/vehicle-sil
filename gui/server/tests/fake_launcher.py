@@ -30,6 +30,8 @@ else `pass`:
   future-events      like pass, but hello says vehicle_sil_events 2
   flood              writes FAKE_LAUNCHER_FLOOD (default 5000) log lines at once when running starts, then passes
   finding-flood      like flood, with finding events instead of log lines
+  large-result       like finding-flood, but the findings are notes of the run that its result lists too (with
+                     FAKE_LAUNCHER_FLOOD=40000 the result is larger than the 4 MiB the GUI server keeps)
   bad-types          writes known events whose fields have the wrong types on the first step, then passes
   orphan             like pass, but before its result it starts a process in a session of its own that keeps
                      this launcher's standard output and error open for FAKE_LAUNCHER_ORPHAN_S seconds (default
@@ -42,6 +44,12 @@ else `pass`:
   log-dropped        like pass, with a log_dropped event on the second step (as a launcher whose reader was slow)
   silent             like pass, but on the second step it writes nothing at all, not even a heartbeat, for
                      FAKE_LAUNCHER_SILENT_S seconds (default 8): a launcher that hangs, then recovers
+  large-fields       like pass, but the first participant is started with a command longer than 4 KiB (the
+                     summary keeps the participant without it, and names it in omitted_fields)
+  loose-fields       like pass, but on the first step writes known events whose fields that the GUI server does
+                     not check are missing or of other types (the server passes them on as they are): a finding
+                     with only severity and message, a registry with uri null, a participant event with a number
+                     as its signal and its message, and a log event without t_ms
 
 Other environment variables: FAKE_LAUNCHER_TICK_MS (wall time of one 100 ms step at speed 1, default 100),
 FAKE_LAUNCHER_FEATURES (the features of `version --json`, comma-separated, default
@@ -73,7 +81,8 @@ from pathlib import Path
 VERSION = "0.1.0"
 SCENARIOS = ("pass", "check-error", "participant-crash", "forever", "ignore-stop", "launcher-crash",
              "bad-lines", "future-events", "flood", "finding-flood", "bad-types", "orphan", "check-garbage",
-             "non-finite", "result-then-wait", "log-dropped", "silent")
+             "non-finite", "result-then-wait", "log-dropped", "silent", "large-fields", "loose-fields",
+             "large-result")
 USAGE = next(p for p in __doc__.split("\n\n") if p.lstrip().startswith("fake_launcher.py version"))
 STEP_MS = 100
 
@@ -464,6 +473,8 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
     for p in participants:
         if p["enabled"]:
             command = started_command(file, by_name[p["name"]], uri, config)
+            if scenario == "large-fields" and not running:
+                command.append("--padding=" + "x" * 5000)
             say(f"starting {p['name']}: {' '.join(command)}")
             proc = sleeper()
             running[p["name"]] = proc
@@ -537,6 +548,9 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         if scenario == "finding-flood" and step == 1:
             for n in range(int(os.environ.get("FAKE_LAUNCHER_FLOOD", "5000"))):
                 ev.emit("finding", **finding("note", "flood", file, None, None, None, f"flood finding {n}"))
+        if scenario == "large-result" and step == 1:
+            for n in range(int(os.environ.get("FAKE_LAUNCHER_FLOOD", "5000"))):
+                note(finding("note", "flood", file, None, None, None, f"flood finding {n}"))
         if scenario == "log-dropped" and step == 2:
             first = next(iter(running))
             ev.emit("log_dropped", count=125, sources={first: 120, "vehicle_sil_launch": 5})
@@ -548,6 +562,15 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
                                  ("time", {"sim_ms": "100"}), ("phase", {"phase": {}}), ("result", {"result": []}),
                                  ("command", {"command": "stop", "accepted": "yes"}), ("finding", {"severity": 1})):
                 ev.emit(kind, **fields)
+        if scenario == "loose-fields" and step == 1:
+            first = next(iter(running))
+            ev.emit("finding", severity="note", message="a finding with only a severity and a message")
+            ev.emit("registry", uri=None)
+            ev.emit("participant", name=first, state="joined", signal=9, message=5)
+            with ev.lock:
+                ev.raw(json.dumps({"event": "log", "seq": ev.seq, "source": "vehicle_sil_launch",
+                                   "line": "a log event without t_ms"}, separators=(",", ":")))
+                ev.seq += 1
         if scenario == "non-finite" and step == 1:
             for fields in ('"event":"time","sim_ms":50,"actual_speed":1e999', '"event":"log","source":"vehicle_sil_launch",'
                            '"line":"x","level":-1e999'):

@@ -29,7 +29,7 @@ MAX_COUNT = 2 ** 53  # seq and t_ms: integers that JavaScript reads exactly
 # The fields of a small event that the summary keeps however large the event is (the others are left out of
 # the summary when the event is larger than Limits.small_bytes, and named in `omitted_fields`).
 ESSENTIAL = {
-    "participant": ("name", "state", "pid", "exit_code", "signal", "reason"),
+    "participant": ("name", "state", "pid", "exit_code", "signal", "reason", "stop_requested"),
     "time": ("event", "seq", "t_ms", "sim_ms"),
     "registry": ("uri",),
     "command": ("command", "accepted"),
@@ -378,8 +378,11 @@ class Session:
         elif kind == "participant":
             name = event["name"]
             if name in self.participants or len(self.participants) < self.limits.participants:
-                kept = self._small(kind, {k: v for k, v in event.items() if k not in ENVELOPE},
-                                   self.participants.get(name, {"name": name}))
+                fields = {k: v for k, v in event.items() if k not in ENVELOPE}
+                if event["state"] == "stop_requested":
+                    # kept after later states: a participant asked to stop that then ends is not a failure
+                    fields["stop_requested"] = True
+                kept = self._small(kind, fields, self.participants.get(name, {"name": name}))
                 if kept is not None:
                     self.participants[name] = kept
             else:
