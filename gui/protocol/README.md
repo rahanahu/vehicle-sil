@@ -84,7 +84,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `hello` | 上の 1 | `ws-*.json` の最初 |
 | `event` | `{session, event}`。ランチャーの事象そのまま（サーバーが形を確かめて通したもの） | `ws-pass.json` |
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
-| `session` | `{session}`（要約）。実行を始めたとき、止めるよう頼んだとき、ランチャーが終わったとき（`launcher.running` が `false` に）、実行が終わったとき（`state` が `ended` に） | `ws-pass.json` |
+| `session` | `{session}`（要約）。実行を始めたとき、止めるよう頼んだとき、実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後の事象の後） | `ws-pass.json` |
 | `error` | `{session, code, message, detail}`。サーバーが気づいたこと（下の表）。要約の `problems` にも残る | `ws-bad-lines.json` |
 | `dropped` | `{session, reason, log, at_least, events}`（`ws-slow-client.json` の数は例）。この画面に送らなかったものの数。`log` は source ごとの log の行の数、`at_least` はその数が下限でしかない source（もっと落ちているかもしれない）、`events` はほかの事象の数。`reason` が `not-kept` はサーバーが覚えていない（再送の前）、`slow-client` は画面の受け取りが遅く、送る分から落とした。画面は、その source のログのその位置に「ここで N 行が落ちた」を出す | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受け取りが遅く、落とせない知らせまであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
@@ -116,7 +116,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `id` | 実行の番号（サーバーの起動ごとに 1 から） |
 | `file`、`disable`、`speed`、`start_paused` | 始めたときの指定 |
 | `started_at`、`ended_at` | 時刻（UTC、ISO 8601）。`ended_at` は終わるまで `null` |
-| `state` | `running` か `ended`。`ended` は、ランチャーが終わり、その出力を読み終えた（または `output-left-open` で打ち切った） |
+| `state` | `running` か `ended`。`ended` は、ランチャーが終わり、その出力を読み終えた（または `output-left-open` で打ち切った）。その間（長くて 2 秒）は、`api/session` で `launcher.running: false` と `running` が見えることがある |
 | `launcher` | `{pid, running, exit_code, signal}`。`running` はランチャーのプロセスが動いているか。止められるかどうかはこれで決める。終わったら `exit_code`（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ） |
 | `stop` | サーバーがランチャーに頼んだ停止: `none`、`requested`（順に止める）、`forced`（待たずに止める） |
 | `phase` | 最後の `phase` 事象の段階（まだなければ `null`） |

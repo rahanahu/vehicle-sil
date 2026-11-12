@@ -181,7 +181,7 @@ def test_the_summary_says_when_the_launcher_has_ended_without_a_result(tmp_path:
             await c.post("api/run", {"file": "launcher-crash.yaml"})
             got = await sock.until(is_ended)
             sessions = [m["session"] for m in got if m["type"] == "session"]
-            assert sessions[-2]["launcher"]["running"] is False and sessions[-2]["state"] == "running"
+            assert [s["state"] for s in sessions] == ["running", "ended"]  # the start, then the end
             end = sessions[-1]
             assert end["state"] == "ended" and end["result"] is None
             assert end["launcher"] == {"pid": end["launcher"]["pid"], "running": False, "exit_code": 70,

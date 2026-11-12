@@ -449,7 +449,9 @@ class GuiServer:
         try:
             code = await proc.wait()
             process.kill_tree(proc)  # what the launcher left in its group (POSIX)
-            self.hub.broadcast(session.launcher_exited(code))
+            # Recorded now (api/session and a stop see it), sent with the end: a summary sent before the
+            # launcher's last lines are read would be older than the events that follow it.
+            session.launcher_exited(code)
             done, _ = await asyncio.wait({reader}, timeout=process.OUTPUT_GRACE_S)
             self.hub.broadcast(session.ended(output_cut=not done))
         finally:

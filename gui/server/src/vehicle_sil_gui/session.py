@@ -374,7 +374,7 @@ class Session:
 
     def launcher_exited(self, returncode: int | None) -> list[dict]:
         """The launcher process has exited (its output may still be being read). A negative returncode is the
-        POSIX signal that ended it."""
+        POSIX signal that ended it. The message is for a caller that sends it at once."""
         self.launcher_running = False
         if returncode is not None and returncode < 0:
             self.exit_code, self.signal = None, -returncode

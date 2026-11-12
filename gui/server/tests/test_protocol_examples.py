@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import signal
 import sys
@@ -66,6 +67,7 @@ class Normalizer:
             for real, fixed in self.paths.items():
                 value = value.replace(real, fixed)
             value = value.replace(f"pid {self.pid_in_log(value)}", "pid 10099") if "pid " in value else value
+            value = re.sub(r'"t_ms":\s*\d+', '"t_ms":0', value)  # a raw line in a problem's detail
             assert self.token not in value, "the token must not appear in any response"
         return value
 
