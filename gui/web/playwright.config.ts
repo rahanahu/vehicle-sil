@@ -14,6 +14,8 @@ const devOrigin = `http://127.0.0.1:${devPort}`;
 export const e2eConfig = (mode: E2eMode) =>
   defineConfig({
     testDir: 'e2e',
+    // 本物のランチャーで動かす e2e は別の設定（playwright.real.config.ts）
+    testIgnore: ['real/**'],
     fullyParallel: false,
     workers: 1,
     retries: 0,

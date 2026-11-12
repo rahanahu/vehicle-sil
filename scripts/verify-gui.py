@@ -8,6 +8,13 @@ Steps, in order:
           stopping, and the comparison of gui/protocol/examples); JUnit XML in build/logs/<tag>-server.xml
   web     scripts/verify-web.py --json: npm ci, format, lint, unit tests, build and e2e of gui/web; its steps
           are listed under this one, with their logs
+  real    with a real launcher only (--launcher <path>, or VEHICLE_SIL_GUI_LAUNCHER): npm run e2e:real, the
+          screen, the GUI server, that vehicle_sil_launch and the ecu_main example ECUs built next to it (pass,
+          a participant left out, stop, failing checks, a failing run); needs the build of gui/web (the web step,
+          or an earlier one). Without a launcher it prints "skipped: no launcher" and does not fail
+
+With a real launcher, the server step also runs gui/server/tests/test_real_launcher.py, which compares what the
+fake launcher writes with what the real one writes (without one, those tests are skipped and say why).
 
 The full output of each step goes to build/logs/<tag>-<step>.log (the web steps: build/logs/<tag>-web-*.log).
 The summary shows one line per step and, for a failed step, its first error lines and its log. Stops at the
@@ -49,11 +56,13 @@ ERROR_LINES = {
     "sync": re.compile(r"error|lockfile|needs to be updated", re.IGNORECASE),
     "server": re.compile(r"^(FAILED|ERROR) |^E\s+|Error:|^\S+\.py:\d+: "),
     "web": re.compile(r"."),
+    "real": re.compile(r"✘|^\s+\d+\) |Error:|Timed out|\d+ (failed|flaky)"),
 }
 SUMMARY_LINES = {
     "sync": re.compile(r"^(Resolved|Audited|Installed|Checked) "),
     "server": re.compile(r"^=*\s*\d+ (passed|failed)|^\d+ (passed|failed)"),
     "web": re.compile(r"$^"),
+    "real": re.compile(r"^\s+\d+ passed"),
 }
 
 
@@ -176,10 +185,16 @@ def main() -> int:
         "  scripts/verify-gui.py --skip-web         # only the server (no Node needed)\n"
         "  scripts/verify-gui.py -k security        # only the server tests whose names match\n"
         "  scripts/verify-gui.py --skip-install --skip-e2e   # passed on to verify-web.py\n"
-        "  scripts/verify-gui.py --no-wait          # do not wait for ninja, ctest or the VM",
+        "  scripts/verify-gui.py --no-wait          # do not wait for ninja, ctest or the VM\n"
+        "  scripts/verify-gui.py --launcher build/linux-gcc-release/tools/launch/vehicle_sil_launch\n"
+        "                                           # also against the real launcher and the example ECUs",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--skip-web", action="store_true", help="do not run scripts/verify-web.py")
+    parser.add_argument("--launcher", metavar="PATH",
+                        help="a real vehicle_sil_launch (build/<preset>/tools/launch/vehicle_sil_launch, with the "
+                        "ecu_main example built next to it): also run the tests against it (default: "
+                        "VEHICLE_SIL_GUI_LAUNCHER; without either they are skipped)")
     parser.add_argument("--skip-install", action="store_true", help="passed on to verify-web.py (keep node_modules)")
     parser.add_argument("--skip-e2e", action="store_true", help="passed on to verify-web.py (no browser tests)")
     parser.add_argument("-k", dest="keyword", help="only the server tests matching this pytest -k expression")
@@ -199,9 +214,12 @@ def main() -> int:
     if uv is None:
         die_usage("uv is not on PATH: install it (https://docs.astral.sh/uv/), then run this again")
 
+    launcher = args.launcher or os.environ.get("VEHICLE_SIL_GUI_LAUNCHER") or None
+    if launcher is not None and not Path(launcher).is_file():
+        die_usage(f"--launcher {launcher}: no such file (build/<preset>/tools/launch/vehicle_sil_launch)")
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     junit = LOG_DIR / f"{args.tag}-server.xml"
-    pytest = [uv, "run", "--locked", "pytest", "gui/server/tests", "-q",
+    pytest = [uv, "run", "--locked", "pytest", "gui/server/tests", "-q", "-rs",
               f"--junitxml={junit}"]
     if args.keyword:
         pytest += ["-k", args.keyword]
@@ -211,8 +229,23 @@ def main() -> int:
         web += ["--skip-install"] * args.skip_install + ["--skip-e2e"] * args.skip_e2e
         web += ["--no-wait"] if args.no_wait else ["--wait-limit", f"{args.wait_limit:g}"]
         steps.append(Step("web", web))
+    skipped_real = None
+    if launcher is None:
+        skipped_real = "no launcher (--launcher <path> or VEHICLE_SIL_GUI_LAUNCHER)"
+    elif args.skip_e2e:
+        skipped_real = "--skip-e2e"
+    elif args.keyword:
+        skipped_real = "-k (only server tests)"
+    else:
+        npm = shutil.which("npm")
+        if npm is None:
+            die_usage("npm is not on PATH: the real step runs the browser tests (gui/web/README.md)")
+        steps.append(Step("real", [npm, "--prefix", "gui/web", "run", "e2e:real"]))
 
     env = {**os.environ, "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+    env.pop("VEHICLE_SIL_GUI_LAUNCHER", None)
+    if launcher is not None:
+        env["VEHICLE_SIL_GUI_LAUNCHER"] = str(Path(launcher).resolve())
     env.pop("VIRTUAL_ENV", None)
     logs = {s.name: LOG_DIR / f"{args.tag}-{s.name}.log" for s in steps}
     for stale in [*logs.values(), junit]:
@@ -250,9 +283,13 @@ def main() -> int:
         return 130
 
     failed = [s for s in done if not s.ok]
+    if skipped_real is not None and not failed and not args.json:
+        print(f"gui real: skipped: {skipped_real}")
     if args.json:
-        print(json.dumps({"vehicle_sil_verify_gui": 1, "ok": not failed, "steps": [s.to_json() for s in done]},
-                         indent=2, ensure_ascii=False))
+        out = {"vehicle_sil_verify_gui": 1, "ok": not failed, "steps": [s.to_json() for s in done]}
+        if skipped_real is not None:
+            out["skipped"] = [{"step": "real", "reason": skipped_real}]
+        print(json.dumps(out, indent=2, ensure_ascii=False))
     elif failed:
         print(f"verify-gui: FAILED {failed[0].name}")
     else:

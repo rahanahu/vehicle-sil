@@ -15,17 +15,18 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 
 `gui/web/` で実行します。どれも終了コードで成否を返します。
 
-| コマンド               | 内容                                                                                                                                                 |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm ci`               | `package-lock.json` のとおりに入れる                                                                                                                 |
-| `npm start`            | 開発サーバー（http://127.0.0.1:4200）。`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送する（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`） |
-| `npm run build`        | 本番のビルド。出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`                                                                 |
-| `npm test`             | 単体試験（Vitest、jsdom）。1 回走って終わる                                                                                                          |
-| `npm run lint`         | ESLint（angular-eslint）。警告も失敗にする                                                                                                           |
-| `npm run format:check` | Prettier の書式の検査                                                                                                                                |
-| `npm run e2e`          | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する。先に `npm run build` が要る                                              |
-| `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                                                                           |
-| `npm run i18n:extract` | 翻訳する文言を `src/locale/messages.xlf` に書き出す                                                                                                  |
+| コマンド               | 内容                                                                                                                                                             |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm ci`               | `package-lock.json` のとおりに入れる                                                                                                                             |
+| `npm start`            | 開発サーバー（http://127.0.0.1:4200）。`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送する（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`）             |
+| `npm run build`        | 本番のビルド。出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`                                                                             |
+| `npm test`             | 単体試験（Vitest、jsdom）。1 回走って終わる                                                                                                                      |
+| `npm run lint`         | ESLint（angular-eslint）。警告も失敗にする                                                                                                                       |
+| `npm run format:check` | Prettier の書式の検査                                                                                                                                            |
+| `npm run e2e`          | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する。先に `npm run build` が要る                                                          |
+| `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                                                                                       |
+| `npm run e2e:real`     | Playwright。本物のランチャー（環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）と、その隣にビルドした ecu_main の例の ECU で通す（`e2e/real/`）。先に `npm run build` が要る |
+| `npm run i18n:extract` | 翻訳する文言を `src/locale/messages.xlf` に書き出す                                                                                                              |
 
 リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、ビルド、e2e を順に回して要約だけを表示します。
 
@@ -37,22 +38,22 @@ uv run vehicle-sil-gui --no-browser --json --port 8765 --dev-origin http://127.0
 npm start                                                                     # 画面（127.0.0.1:4200）
 ```
 
-e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを偽のランチャーと一緒に自分で起動し（`e2e/support/gui-server.ts`。ポートは 18000 から 18999 のどれか）、終わったら止めます。
+e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを偽のランチャーと一緒に自分で起動し（`e2e/support/gui-server.ts`。ポートは 18000 から 18999 のどれか）、終わったら止めます。`npm run e2e:real` は、本物のランチャーで同じように起動し（`e2e/support/real-server.ts`。構成ファイルは `gui/server/tests/real_configs.py` が一時ディレクトリに書く）、環境変数 `VEHICLE_SIL_GUI_SHOTS` にディレクトリを書くと、4 つの状態を 3 つの幅で撮ります。`scripts/verify-gui.py --launcher <path>` が回します。
 
 ## ディレクトリ
 
-| パス                                     | 内容                                                                                                                                                                                                                                  |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                                                                                                                      |
-| `src/app/app.routes.ts`、`navigation.ts` | 経路と、ナビゲーションの項目                                                                                                                                                                                                          |
-| `src/app/core/`                          | 画面をまたいで使うもの: サーバーとの間の型と読み取り（`api.ts`）、トークン（`auth/`）、URL（`urls.ts`）、幅の区分（`layout/`）、計測値とパスの書式（`format/`）、流れ（`streams/`）、サーバーとの接続とセッションの状態（`session/`） |
-| `src/app/core/session/`                  | `server-connection.ts`（アプリ全体で 1 つの WebSocket の接続。認証、再接続、要約と事象を当てたセッションの状態）と `session-state.ts`（要約と事象を当てる純粋な関数）                                                                 |
-| `src/app/run/`                           | 実行の画面（`''`）。操作は `run-session.ts`（開始、停止、待たずに止める。画面と同じ寿命）、いつも見える状態の帯は `run-status.ts`                                                                                                     |
-| `src/app/not-found/`                     | 見つからない経路の画面                                                                                                                                                                                                                |
-| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）と、単体試験が `gui/protocol/examples/` を読む関数                                                                                                |
-| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                                                                                                                               |
-| `public/`                                | そのまま配信するファイル（アイコン）                                                                                                                                                                                                  |
-| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`run.spec.ts`（実行の画面）、`layout.spec.ts` と `support/layout.ts`（レイアウト）、`support/gui-server.ts`（GUI サーバーの起動）                                                     |
+| パス                                     | 内容                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/app.*`                          | シェル（ツールバー、ナビゲーション、中身の領域）                                                                                                                                                                                                                                         |
+| `src/app/app.routes.ts`、`navigation.ts` | 経路と、ナビゲーションの項目                                                                                                                                                                                                                                                             |
+| `src/app/core/`                          | 画面をまたいで使うもの: サーバーとの間の型と読み取り（`api.ts`）、トークン（`auth/`）、URL（`urls.ts`）、幅の区分（`layout/`）、計測値とパスの書式（`format/`）、流れ（`streams/`）、サーバーとの接続とセッションの状態（`session/`）                                                    |
+| `src/app/core/session/`                  | `server-connection.ts`（アプリ全体で 1 つの WebSocket の接続。認証、再接続、要約と事象を当てたセッションの状態）と `session-state.ts`（要約と事象を当てる純粋な関数）                                                                                                                    |
+| `src/app/run/`                           | 実行の画面（`''`）。操作は `run-session.ts`（開始、停止、待たずに止める。画面と同じ寿命）、いつも見える状態の帯は `run-status.ts`                                                                                                                                                        |
+| `src/app/not-found/`                     | 見つからない経路の画面                                                                                                                                                                                                                                                                   |
+| `src/app/testing/`                       | 試験用の画面（`/_test/layout`。レイアウトの e2e が使う。ナビゲーションには出さない）と、単体試験が `gui/protocol/examples/` を読む関数                                                                                                                                                   |
+| `src/theme.scss`、`src/styles.css`       | Material のテーマ（明暗）、レイアウトの寸法（CSS のカスタムプロパティ）                                                                                                                                                                                                                  |
+| `public/`                                | そのまま配信するファイル（アイコン）                                                                                                                                                                                                                                                     |
+| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`run.spec.ts`（実行の画面）、`layout.spec.ts` と `support/layout.ts`（レイアウト）、`support/gui-server.ts`（GUI サーバーの起動）、`support/run-page.ts`（実行の画面の操作）、`real/`（本物のランチャーで。`playwright.real.config.ts`） |
 
 ## URL と CSP
 
@@ -153,7 +154,7 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 - 単体試験は TestBed。`Layout` は signal を持つ偽物に差し替える（jsdom に `matchMedia` がない）。
 - `httpResource` は `TestBed.tick()` で要求を出させ、`HttpTestingController` で `flush` してから `whenStable()`（応答していない要求があると `whenStable()` が終わらない）。
 - WebSocket は `FakeWebSockets`（`core/streams/fake-web-socket.ts`）で差し替える。時間は Vitest の偽の時計。サーバーの通知は、作らずに `gui/protocol/examples/` の例を流す（`testing/protocol-examples.ts`）。
-- e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。e2e は本物の GUI サーバーと偽のランチャーを相手にする（筋書きは構成ファイルで選ぶ）。筋書きにない状況（切断、読んでいる間に流れ続ける行）は、`page.routeWebSocket` で通知を差し込んで作る。
+- e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。e2e は本物の GUI サーバーと偽のランチャーを相手にする（筋書きは構成ファイルで選ぶ）。偽のランチャーは本物と同じ事象を書く（`gui/server/tests/test_real_launcher.py` が比べる）。本物のランチャーでしか起きないこと（例の ECU の申告、本物の止まり方）は `e2e/real/` で確かめる。筋書きにない状況（切断、読んでいる間に流れ続ける行）は、`page.routeWebSocket` で通知を差し込んで作る。
 - 見た目の確かめとスクリーンショットは、窓を伸ばさずに利用者が見る大きさのままで行う（最初の画面に何が入っているかを見るため）。
 
 ## アイコン
