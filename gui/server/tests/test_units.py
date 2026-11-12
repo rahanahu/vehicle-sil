@@ -50,7 +50,7 @@ def test_session_follows_the_events() -> None:
     assert kinds(s.launcher_exited(1)) == ["session"] and s.summary()["state"] == "running"
     out = s.ended()
     summary = s.summary()
-    assert summary["launcher"] == {"pid": None, "running": False, "exit_code": 1, "signal": None}
+    assert summary["launcher"] == {"pid": None, "running": False, "exit_code": 1, "signal": None, "silent_s": None}
     assert summary["phase"] == "running" and summary["time"]["sim_ms"] == 300 and summary["check"] == check
     assert summary["last_seq"] == 10 and summary["last_t_ms"] == 10 and summary["stop"] == "none"
     assert summary["participants"] == [{"name": "B", "state": "disabled"},
@@ -66,7 +66,7 @@ def test_session_follows_the_events() -> None:
 def test_a_signal_is_not_an_exit_code() -> None:
     s = new_session()
     s.launcher_exited(-9)
-    assert s.summary()["launcher"] == {"pid": None, "running": False, "exit_code": None, "signal": 9}
+    assert s.summary()["launcher"] == {"pid": None, "running": False, "exit_code": None, "signal": 9, "silent_s": None}
 
 
 def test_stop_requests_are_recorded_once() -> None:
@@ -309,6 +309,58 @@ def test_dropped_counts_are_exact_with_a_line_too_long_to_keep() -> None:
     assert small.replay(3)[0]["log"] == {"A": 3} and small.replay(3)[0]["at_least"] == ["A"]
 
 
+def test_log_dropped_is_counted_and_kept_where_it_came() -> None:
+    s = new_session(log_lines_per_source=3)
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("log", 1, source="A", line="a1"))
+    out = s.feed_line(line("log_dropped", 2, count=125, sources={"A": 120, "vehicle_sil_launch": 5}))
+    assert kinds(out) == ["event"]
+    s.feed_line(line("log", 3, source="A", line="a3"))
+    assert s.summary()["log"] == {"A": {"kept": 2, "dropped": 120}, "vehicle_sil_launch": {"kept": 0, "dropped": 5}}
+    _, events = s.replay(None)
+    assert [e["event"]["seq"] for e in events] == [1, 2, 3], "the marker once, in its place"
+    _, events = s.replay(3)
+    assert [e["event"]["seq"] for e in events] == [3]
+    for n in range(4, 8):  # the marker leaves with the old lines; the counts stay
+        s.feed_line(line("log", n, source="A", line=f"a{n}"))
+    assert s.summary()["log"]["A"] == {"kept": 3, "dropped": 120 + 3}
+    assert kinds(s.feed_line(line("log_dropped", 8, count="many", sources={}))) == ["error:bad-event"]
+    assert kinds(s.feed_line(line("log_dropped", 9, count=1, sources={"A": -1}))) == ["error:bad-event"]
+
+
+def test_a_launcher_that_writes_nothing_is_reported_as_silent() -> None:
+    s = new_session()
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    start = s.last_line_at
+    assert s.check_silence(start + 4.9, 5) == []
+    out = s.check_silence(start + 5.2, 5)
+    assert kinds(out) == ["error:launcher-silent", "session"] and s.summary()["launcher"]["silent_s"] == 5
+    assert s.check_silence(start + 9.0, 5) == [], "the summary changes every 5 s, not on each look"
+    assert kinds(s.check_silence(start + 10.1, 5)) == ["session"] and s.summary()["launcher"]["silent_s"] == 10
+    out = s.feed_line(line("heartbeat", 1))
+    assert kinds(out) == ["session", "event"] and s.summary()["launcher"]["silent_s"] is None
+    assert [p["code"] for p in s.problems] == ["launcher-silent"]
+    s.feed_line(line("result", 2, result={"result": "passed"}))
+    assert s.check_silence(s.last_line_at + 60, 5) == [], "nothing is promised after the result"
+    s2 = new_session()
+    s2.launcher_exited(0)
+    assert s2.check_silence(s2.last_line_at + 60, 5) == [], "nor after the launcher has exited"
+
+
+def test_a_participant_state_this_server_does_not_know_passes_through() -> None:
+    s = new_session()
+    s.feed_line(line("hello", 0, vehicle_sil_events=1))
+    s.feed_line(line("participant", 1, name="A", state="started", pid=7, command=["a"], log=None))
+    out = s.feed_line(line("participant", 2, name="A", state="failed", reason="process_ended", message="m"))
+    assert kinds(out) == ["event"]
+    s.feed_line(line("participant", 3, name="A", state="ended", exit_code=1, signal=None))
+    s.feed_line(line("participant", 4, name="B", state="sleeping", why={"x": 1}))
+    assert s.summary()["participants"] == [
+        {"name": "A", "state": "ended", "pid": 7, "command": ["a"], "log": None, "reason": "process_ended",
+         "message": "m", "exit_code": 1, "signal": None},
+        {"name": "B", "state": "sleeping", "why": {"x": 1}}]
+
+
 def test_the_essential_fields_of_a_large_small_event_are_kept() -> None:
     s = new_session()
     s.feed_line(line("hello", 0, vehicle_sil_events=1))
@@ -412,6 +464,21 @@ def test_a_slow_screen_loses_log_lines_not_the_state() -> None:
     assert all(d["reason"] == "slow-client" and d["session"] == 1 for d in dropped)
     times = [m["event"]["sim_ms"] for m in sent if m["type"] == "event" and m["event"]["event"] == "time"]
     assert times[-1] == 29 and times == sorted(times)
+
+
+def test_a_slow_screen_counts_what_the_launcher_dropped_and_loses_no_heartbeat_count() -> None:
+    messages = [log_event(n, "A") for n in range(100)]
+    messages[40] = {"type": "event", "session": 1, "event": {"event": "log_dropped", "seq": 40, "count": 1005,
+                                                             "sources": {"A": 1000, "B": 5}}}
+    messages[41] = {"type": "event", "session": 1, "event": {"event": "heartbeat", "seq": 41}}
+    sent, _ = run_hub(messages, limit=10)
+    dropped = [m for m in sent if m["type"] == "dropped"]
+    markers = [m for m in sent if m["type"] == "event" and m["event"]["event"] == "log_dropped"]
+    log_sent = [m for m in sent if m["type"] == "event" and m["event"]["event"] == "log"]
+    if not markers:  # shed: its counts are in the dropped lines of its sources, the heartbeat is not counted
+        assert sum(d["log"].get("B", 0) for d in dropped) == 5
+        assert sum(d["log"].get("A", 0) for d in dropped) + len(log_sent) == 98 + 1000
+    assert all(d["events"] == 0 for d in dropped)
 
 
 def test_a_slow_screen_gets_resync_when_dropping_is_not_enough() -> None:

@@ -2,8 +2,9 @@
 
 Each message is turned into text once, however many screens get it. A screen that reads too slowly does not
 make the server keep everything for it: when its queue is over its limit (messages or bytes), the log lines and
-the events that are not in the summary are dropped from the queue and counted in one `dropped` message, and
-`time` events are reduced to the last one. Only when that is not enough is the queue emptied, and the screen gets
+the events that are not in the summary are dropped from the queue and counted in one `dropped` message (a
+launcher's `log_dropped` adds its counts to the log lines of its sources), `time` events are reduced to the last
+one, and heartbeats are dropped without a count (the server watches them; a screen does not need them). Only when that is not enough is the queue emptied, and the screen gets
 `resync` followed by a fresh hello (what a reconnection gets).
 """
 
@@ -38,7 +39,7 @@ def encode(message: dict) -> str:
 class Outgoing:
     """One message for the screens, as text, with what a slow screen's queue needs to know about it."""
 
-    __slots__ = ("text", "size", "kind", "session", "source")
+    __slots__ = ("text", "size", "kind", "session", "source", "counts")
 
     def __init__(self, message: dict, log_key: Callable[[str], str] | None = None):
         """log_key: the name a log line's source has in the session's summary (where the `dropped` counts of
@@ -47,6 +48,7 @@ class Outgoing:
         self.size = len(self.text)
         self.session = message.get("session") if isinstance(message.get("session"), int) else None
         self.source = None
+        self.counts: dict[str, int] | None = None
         self.kind = "keep"
         if message.get("type") == "event":
             event = message["event"]["event"]
@@ -55,8 +57,15 @@ class Outgoing:
                 if isinstance(source, str) and log_key is not None:
                     source = log_key(source)
                 self.kind, self.source = "log", source
+            elif event == "log_dropped":  # the lines the launcher did not write, by source
+                self.kind, self.counts = "log", {}
+                for source, count in message["event"].get("sources", {}).items():
+                    key = log_key(source) if log_key is not None else source
+                    self.counts[key] = self.counts.get(key, 0) + count
             elif event == "time":
                 self.kind = "time"
+            elif event == "heartbeat":
+                self.kind = "beat"
             elif event not in SUMMARY_EVENTS:
                 self.kind = "other"
 
@@ -124,17 +133,18 @@ class Client:
                     (item.kind == "time" and last_time.get(item.session) is item):
                 kept.append(item)
                 continue
-            if item.kind == "time":
+            if item.kind in ("time", "beat"):
                 continue
             notice = notices.get(item.session)
             if notice is None:
                 notice = notices[item.session] = _Dropped(item.session)
                 kept.append(notice)  # where the first dropped message was
             if item.kind == "log":
-                key = item.source if isinstance(item.source, str) else "*"
-                if key not in notice.log and len(notice.log) >= DROPPED_SOURCES:
-                    key = "*"
-                notice.log[key] = notice.log.get(key, 0) + 1
+                for source, count in (item.counts if item.counts is not None else {item.source: 1}).items():
+                    key = source if isinstance(source, str) else "*"
+                    if key not in notice.log and len(notice.log) >= DROPPED_SOURCES:
+                        key = "*"
+                    notice.log[key] = notice.log.get(key, 0) + count
             else:
                 notice.events += 1
         self.items = kept

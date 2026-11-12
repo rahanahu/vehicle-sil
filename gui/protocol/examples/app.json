@@ -27,7 +27,7 @@
         "features": [
           "events",
           "stdin-commands",
-          "speed"
+          "check-variables"
         ]
       }
     },

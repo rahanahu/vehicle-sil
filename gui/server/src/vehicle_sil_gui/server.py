@@ -14,6 +14,7 @@ import itertools
 import json
 import logging
 import secrets
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from .hub import Hub, encode
 from .launcher import (SPEED_MAX, SPEED_MIN, InvalidRequest, Launcher, check_command, check_disable, check_speed,
                        run_command)
 from .paths import ConfigRoot, PathRejected
-from .session import Limits, Session
+from .session import SILENT_AFTER_S, Limits, Session
 from .static import NOT_BUILT, StaticFiles
 
 PROTOCOL = 1  # vehicle_sil_gui: the version of the shapes in gui/protocol
@@ -106,6 +107,7 @@ class Options:
     web_dir: Path | None = None
     stop_timeout_s: float = 10.0
     check_timeout_s: float = CHECK_TIMEOUT_S
+    silent_after_s: float = SILENT_AFTER_S
     limits: Limits = field(default_factory=Limits)
 
 
@@ -466,8 +468,10 @@ class GuiServer:
         the output open), then the rest for a short time."""
         session, proc = run.session, run.proc
         reader = asyncio.create_task(self._read_output(session, proc))
+        watch = asyncio.create_task(self._watch_silence(session))
         try:
             code = await proc.wait()
+            watch.cancel()
             process.kill_tree(proc)  # what the launcher left in its group (POSIX)
             # Recorded now (api/session and a stop see it), sent with the end: a summary sent before the
             # launcher's last lines are read would be older than the events that follow it.
@@ -475,10 +479,17 @@ class GuiServer:
             done, _ = await asyncio.wait({reader}, timeout=process.OUTPUT_GRACE_S)
             self.hub.broadcast(session.ended(output_cut=not done))
         finally:
+            watch.cancel()
             reader.cancel()
-            await asyncio.gather(reader, return_exceptions=True)
+            await asyncio.gather(reader, watch, return_exceptions=True)
             process.close_pipes(proc)
             self._runs.discard(run)
+
+    async def _watch_silence(self, session: Session) -> None:
+        """Tells the screens when the launcher has written nothing for silent_after_s (it may hang)."""
+        while True:
+            await asyncio.sleep(min(1.0, self.o.silent_after_s / 4))
+            self.hub.broadcast(session.check_silence(time.monotonic(), self.o.silent_after_s))
 
     async def _read_output(self, session: Session, proc: asyncio.subprocess.Process) -> None:
         async def stdout() -> None:

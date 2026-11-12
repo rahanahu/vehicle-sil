@@ -13,6 +13,7 @@ from __future__ import annotations
 import heapq
 import json
 import math
+import time
 from array import array
 from bisect import bisect_left, insort
 from collections import deque
@@ -28,7 +29,7 @@ MAX_COUNT = 2 ** 53  # seq and t_ms: integers that JavaScript reads exactly
 # The fields of a small event that the summary keeps however large the event is (the others are left out of
 # the summary when the event is larger than Limits.small_bytes, and named in `omitted_fields`).
 ESSENTIAL = {
-    "participant": ("name", "state", "pid", "exit_code", "signal"),
+    "participant": ("name", "state", "pid", "exit_code", "signal", "reason"),
     "time": ("event", "seq", "t_ms", "sim_ms"),
     "registry": ("uri",),
     "command": ("command", "accepted"),
@@ -36,7 +37,10 @@ ESSENTIAL = {
 # Problems that the server notices about the run, as opposed to what the launcher wrote: each has its own room
 # in the summary, so that a launcher that writes junk cannot push them out.
 SERVER_PROBLEMS = frozenset({"kept-limit", "no-result", "output-left-open", "stop-not-delivered",
-                             "stop-escalated"})
+                             "stop-escalated", "launcher-silent"})
+# The launcher writes a line (a heartbeat if nothing else) at least once a second from hello to its result; this
+# long without any line while its process runs, and it is reported as silent (it may hang).
+SILENT_AFTER_S = 5.0
 STDERR = "launcher-stderr"
 STOP_NONE, STOP_REQUESTED, STOP_FORCED = "none", "requested", "forced"
 
@@ -131,6 +135,12 @@ def _shape_problem(event: dict) -> str | None:
             else "severity or message is not a string"
     if kind == "time":
         return None if _is_int(event.get("sim_ms")) else "sim_ms is not an integer"
+    if kind == "log_dropped":
+        sources = event.get("sources")
+        if not _is_count(event.get("count")) or not isinstance(sources, dict) or \
+                not all(_is_count(n) for n in sources.values()):
+            return "count or sources is not a count, or an object of counts"
+        return None
     if kind == "command":
         return None if _str_or_none(event.get("command")) and isinstance(event.get("accepted"), bool) \
             else "command is not a string, or accepted is not true or false"
@@ -174,18 +184,30 @@ class _DroppedSeqs:
 
 
 class _Log:
-    __slots__ = ("lines", "bytes", "dropped", "ring")
+    """The lines kept of one source, with the launcher's log_dropped events among them (markers: where the
+    launcher could not write lines of this source; one event can stand in the logs of several sources)."""
+
+    __slots__ = ("lines", "bytes", "dropped", "ring", "markers", "launcher_dropped")
 
     def __init__(self, ring_size: int):
         self.lines: deque[tuple[int, int, dict]] = deque()  # (seq, size, event)
         self.bytes = 0
-        self.dropped = 0
+        self.dropped = 0  # lines this server did not keep
         self.ring = _DroppedSeqs(ring_size)
+        self.markers = 0  # log_dropped events in lines
+        self.launcher_dropped = 0  # lines the launcher did not write (log_dropped)
+
+    @property
+    def kept(self) -> int:
+        return len(self.lines) - self.markers
 
     def drop_oldest(self) -> int:
-        seq, size, _ = self.lines.popleft()
+        seq, size, event = self.lines.popleft()
         self.bytes -= size
-        self.drop(seq)
+        if event["event"] == "log_dropped":
+            self.markers -= 1
+        else:
+            self.drop(seq)
         return size
 
     def drop(self, seq: int) -> None:
@@ -243,11 +265,20 @@ class Session:
         self._log_bytes = 0
         self._limit_reported: set[str] = set()
         self._small_problems: list[dict] = []
+        self.last_line_at = time.monotonic()  # when the launcher last wrote a line (or started)
+        self.silent_s: int | None = None  # how long it has written nothing, once that is SILENT_AFTER_S or more
 
     # ------------------------------------------------------------ input
 
     def feed_line(self, line: str) -> list[dict]:
         """Takes one line of the launcher's standard output; returns the messages for the screens."""
+        self.last_line_at = time.monotonic()
+        if self.silent_s is not None:  # it was silent, and writes again
+            self.silent_s = None
+            return [self.message(), *self._feed(line)]
+        return self._feed(line)
+
+    def _feed(self, line: str) -> list[dict]:
         try:
             event = json.loads(line, parse_constant=_no_constant, parse_float=_finite)
         except (ValueError, RecursionError):
@@ -303,6 +334,8 @@ class Session:
                                     {"vehicle_sil_events": version if _is_int(version) else None})
         elif kind == "log":
             self._keep_log(event, size)
+        elif kind == "log_dropped":
+            self._keep_marker(event, size)
         elif kind == "check":
             if size <= self.limits.object_bytes:
                 self.check = event["check"]
@@ -394,18 +427,41 @@ class Session:
         return kept
 
     def _keep_log(self, event: dict, size: int) -> None:
-        source = event["source"]
-        if source not in self._logs and len(self._logs) >= self.limits.log_sources:
-            source = SHARED_LOG
-        log = self._logs.get(source)
-        if log is None:
-            log = self._logs[source] = _Log(self.limits.dropped_seqs)
+        log = self._log_of(event["source"])
         if size > self.limits.log_line_bytes:
             log.drop(event["seq"])
             return
         log.lines.append((event["seq"], size, event))
         log.bytes += size
         self._log_bytes += size
+        self._trim(log)
+
+    def _log_of(self, source: str) -> _Log:
+        if source not in self._logs and len(self._logs) >= self.limits.log_sources:
+            source = SHARED_LOG
+        log = self._logs.get(source)
+        if log is None:
+            log = self._logs[source] = _Log(self.limits.dropped_seqs)
+        return log
+
+    def _keep_marker(self, event: dict, size: int) -> None:
+        """A log_dropped event: counted in the dropped lines of each source it names, and kept in their logs
+        where it came (once per log), so that a screen that connects later shows the gap in the same place."""
+        counts: dict[int, list] = {}
+        for source, count in event["sources"].items():
+            log = self._log_of(source)
+            counts.setdefault(id(log), [log, 0])[1] += count
+        for log, count in counts.values():
+            log.launcher_dropped += count
+            if size > self.limits.log_line_bytes:
+                continue
+            log.lines.append((event["seq"], size, event))
+            log.markers += 1
+            log.bytes += size
+            self._log_bytes += size
+            self._trim(log)
+
+    def _trim(self, log: _Log) -> None:
         while len(log.lines) > self.limits.log_lines_per_source or log.bytes > self.limits.log_bytes_per_source:
             self._log_bytes -= log.drop_oldest()
         while self._log_bytes > self.limits.log_bytes:  # all sources: the oldest line first
@@ -482,10 +538,32 @@ class Session:
         self.stop = STOP_FORCED
         return n
 
+    def check_silence(self, now: float, after_s: float = SILENT_AFTER_S) -> list[dict]:
+        """Whether the launcher has written nothing for after_s or more while its process runs and before its
+        result (when it writes a heartbeat every second): the summary says for how long (`launcher.silent_s`,
+        updated every after_s), and a problem says so once each time it falls silent."""
+        if self.state != "running" or not self.launcher_running or self.result is not None:
+            return []
+        silent = now - self.last_line_at
+        if silent < after_s:
+            return []
+        shown = int(silent // after_s * after_s)
+        if self.silent_s is not None and shown <= self.silent_s:
+            return []
+        out = []
+        if self.silent_s is None:
+            out = self.problem("launcher-silent",
+                               f"the launcher has written nothing for {shown} s, not even the heartbeat it writes "
+                               "every second: it may hang; stop the run, or stop the GUI server if that does not "
+                               "end it", {"seconds": shown})
+        self.silent_s = shown
+        return out + [self.message()]
+
     def launcher_exited(self, returncode: int | None) -> list[dict]:
         """The launcher process has exited (its output may still be being read). A negative returncode is the
         POSIX signal that ended it. The message is for a caller that sends it at once."""
         self.launcher_running = False
+        self.silent_s = None
         if returncode is not None and returncode < 0:
             self.exit_code, self.signal = None, -returncode
         else:
@@ -522,13 +600,14 @@ class Session:
             "start_paused": self.start_paused, "started_at": self.started_at, "ended_at": self.ended_at,
             "state": self.state,
             "launcher": {"pid": self.launcher_pid, "running": self.launcher_running, "exit_code": self.exit_code,
-                         "signal": self.signal},
+                         "signal": self.signal, "silent_s": self.silent_s},
             "stop": self.stop, "phase": self.phase, "last_seq": self.last_seq, "last_t_ms": self.last_t_ms,
             "time": self.time, "check": self.check, "registry": self.registry,
             "participants": list(self.participants.values()), "participants_omitted": self.participants_omitted,
             "findings": self.findings, "findings_omitted": self.findings_omitted,
             "last_command": self.last_command, "result": self.result,
-            "log": {source: {"kept": len(log.lines), "dropped": log.dropped} for source, log in self._logs.items()},
+            "log": {source: {"kept": log.kept, "dropped": log.dropped + log.launcher_dropped}
+                    for source, log in self._logs.items()},
             "problems": self.problems, "problems_omitted": self.problems_omitted,
         }
 
@@ -550,8 +629,11 @@ class Session:
         for log in self._logs.values():
             first = bisect_left(log.lines, start, key=lambda line: line[0]) if start else 0
             streams.append([e for _, _, e in islice(log.lines, first, None)])
-        events = [{"type": "event", "session": self.id, "event": e}
-                  for e in heapq.merge(*streams, key=lambda e: e["seq"])]
+        events, last = [], None
+        for e in heapq.merge(*streams, key=lambda e: e["seq"]):
+            if e["seq"] != last:  # a log_dropped kept in the logs of several sources is sent once
+                events.append({"type": "event", "session": self.id, "event": e})
+            last = e["seq"]
         dropped = None
         if counts or at_least:
             dropped = {"type": "dropped", "session": self.id, "reason": "not-kept", "log": counts,

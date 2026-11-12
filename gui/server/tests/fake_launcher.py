@@ -2,8 +2,11 @@
 """A stand-in for vehicle_sil_launch that speaks its machine interface, for the GUI server's tests and the screen's e2e.
 
 It is not a simulation: it reads the participant names of a configuration file and plays a scenario, writing
-the same kinds of lines as `vehicle_sil_launch run --events` (one JSON object per line on standard output) and
-reading `{"command":"stop"}` lines on standard input. Standard library only.
+the same lines as `vehicle_sil_launch run --events` (docs/simulation-config.md, 「機械から使う」: the same events,
+keys, order and values, a heartbeat after a second without a line, command events with source and message,
+interrupted_by "stop command" / "end of input" / "output closed", hello and result also for a usage error or a
+file it cannot read) and reading `{"command":"stop"}` lines on standard input. test_real_launcher.py compares
+what it writes with what the real launcher writes. Standard library only.
 
     fake_launcher.py version [--json]
     fake_launcher.py check [--json] [--strict] [--disable <name>]... [--enable <name>]... [--] <file>
@@ -15,10 +18,12 @@ else `pass`:
 
   pass               checks, starts every enabled participant, runs to stop_at_ms (or until stopped), passes
   check-error        the check finds an error, so nothing is started (result check_failed, exit code 1)
-  participant-crash  the last required participant exits with code 3 on the third step (result failed, exit code 1)
+  participant-crash  the last required participant exits with code 3 on the third step: ended, then failed
+                     (reason process_ended), the finding participant-failed (result failed, exit code 1)
   forever            runs until a stop command (or the end of standard input), whatever stop_at_ms says
-  ignore-stop        like forever, but the first stop only waits; the second stop kills the participants; it
-                     also ignores SIGTERM (a launcher that is stuck), so only a kill ends it from outside
+  ignore-stop        like forever, but the participants do not end when stopped: the first stop asks them
+                     to (stop_requested) and waits; the second stop kills them; it also ignores SIGTERM (a
+                     launcher that is stuck), so only a kill ends it from outside
   launcher-crash     dies on the third step without writing a result (exit code 70)
   bad-lines          writes a line that is not JSON, a JSON array, an unknown event, an unknown field and a gap
                      in seq on the first step, then runs like pass
@@ -34,10 +39,18 @@ else `pass`:
                      valid JSON but not finite (1e999, -1e999)
   result-then-wait   like pass, but after its result it keeps running (the participants have ended) until a stop
                      command or the end of standard input, then exits with the result's code
+  log-dropped        like pass, with a log_dropped event on the second step (as a launcher whose reader was slow)
+  silent             like pass, but on the second step it writes nothing at all, not even a heartbeat, for
+                     FAKE_LAUNCHER_SILENT_S seconds (default 8): a launcher that hangs, then recovers
 
 Other environment variables: FAKE_LAUNCHER_TICK_MS (wall time of one 100 ms step at speed 1, default 100),
-FAKE_LAUNCHER_FEATURES (the features of `version --json`, comma-separated, default events,stdin-commands,speed),
-FAKE_LAUNCHER_CHECK_DELAY_MS (how long `check` takes, default 0).
+FAKE_LAUNCHER_FEATURES (the features of `version --json`, comma-separated, default
+events,stdin-commands,check-variables as the real launcher; add speed for --speed), FAKE_LAUNCHER_CHECK_DELAY_MS
+(how long `check` takes, default 0), FAKE_LAUNCHER_HEARTBEAT_MS (a heartbeat after this long without a line,
+default 1000; 0: none).
+
+Like the real launcher, it writes `time` only when running starts (0) and when stop_at_ms is reached; the log
+lines of the participants come every step.
 
 Each started participant is a real sleeping process, a child of this one, so that a test can see whether
 stopping left processes behind. The configuration is read with a small line parser, not a YAML library:
@@ -48,8 +61,8 @@ from __future__ import annotations
 
 import json
 import os
-import queue
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -60,8 +73,8 @@ from pathlib import Path
 VERSION = "0.1.0"
 SCENARIOS = ("pass", "check-error", "participant-crash", "forever", "ignore-stop", "launcher-crash",
              "bad-lines", "future-events", "flood", "finding-flood", "bad-types", "orphan", "check-garbage",
-             "non-finite", "result-then-wait")
-USAGE = __doc__.split("\n\n")[1]
+             "non-finite", "result-then-wait", "log-dropped", "silent")
+USAGE = next(p for p in __doc__.split("\n\n") if p.lstrip().startswith("fake_launcher.py version"))
 STEP_MS = 100
 
 # ---------------------------------------------------------------- configuration
@@ -250,40 +263,117 @@ def parse(argv: list[str]) -> dict:
 
 
 class Events:
+    """The event stream: seq and writing under one lock, a heartbeat after HEARTBEAT_S without a line (from hello
+    to the result), nothing after the result. A reader that has gone away closes the stream; the run then stops
+    as if told to (interrupted_by "output closed")."""
+
     def __init__(self, enabled: bool):
         self.enabled = enabled
         self.seq = 0
         self.start = time.monotonic()
         self.closed = False
+        self.sealed = False
+        self.muted_until = 0.0  # scenario silent: nothing at all is written before this time (no heartbeat either)
+        self.last_write = self.start
+        self.lock = threading.RLock()
+        self.on_closed = lambda: None
+        heartbeat_ms = int(os.environ.get("FAKE_LAUNCHER_HEARTBEAT_MS", "1000"))
+        if enabled and heartbeat_ms > 0:
+            threading.Thread(target=self._heartbeat, args=(heartbeat_ms / 1000,), daemon=True).start()
+
+    def t_ms(self) -> int:
+        return int((time.monotonic() - self.start) * 1000)
 
     def emit(self, event: str, **fields) -> None:
-        self.write({"event": event, "seq": self.seq, "t_ms": int((time.monotonic() - self.start) * 1000), **fields})
-        self.seq += 1
+        with self.lock:
+            self._wait_muted()
+            self.write({"event": event, "seq": self.seq, "t_ms": self.t_ms(), **fields})
+            self.seq += 1
+            if event == "result" and isinstance(fields.get("result"), dict):
+                self.sealed = True
 
     def raw(self, line: str) -> None:
-        if self.enabled and not self.closed:
-            self._write_line(line)
+        with self.lock:
+            if self.enabled and not self.closed and not self.sealed:
+                self._write_line(line)
 
     def write(self, obj: dict) -> None:
-        if self.enabled and not self.closed:
+        if self.enabled and not self.closed and not self.sealed:
             self._write_line(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
+
+    def _wait_muted(self) -> None:
+        while time.monotonic() < self.muted_until:
+            time.sleep(0.01)
 
     def _write_line(self, line: str) -> None:
         try:
             sys.stdout.write(line + "\n")
             sys.stdout.flush()
+            self.last_write = time.monotonic()
         except (BrokenPipeError, OSError):
             self.closed = True  # the reader is gone: stop, as a stop command would
             try:
                 sys.stdout = open(os.devnull, "w")
             except OSError:
                 pass
+            self.on_closed()
+
+    def _heartbeat(self, every_s: float) -> None:
+        while not self.sealed and not self.closed:
+            time.sleep(min(0.05, every_s / 4))
+            now = time.monotonic()
+            if now < self.muted_until or now - self.last_write < every_s:
+                continue
+            with self.lock:
+                if not self.sealed and time.monotonic() - self.last_write >= every_s:
+                    self.emit("heartbeat")
 
 
-def read_commands(lines: queue.Queue) -> None:
-    for line in sys.stdin:
-        lines.put(line)
-    lines.put(None)
+class Stops:
+    """The stop requests (stop commands, the end of standard input, a closed output): how many, and the first's
+    source as interrupted_by says it."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.count = 0
+        self.by: str | None = None
+
+    def add(self, by: str, only_first: bool = False) -> bool:
+        with self.lock:
+            if only_first and self.count:
+                return False
+            self.count += 1
+            self.by = self.by or by
+            return True
+
+
+def read_commands(ev: Events, stops: Stops) -> None:
+    """The standard input of --stdin-commands: a command event at once for every line (and for the end of the
+    input when it is the first stop request), before what the command does."""
+    for raw in sys.stdin:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            command = json.loads(line)
+        except ValueError:
+            command = None
+        name = command.get("command") if isinstance(command, dict) else None
+        name = name if isinstance(name, str) else None
+        if name == "stop":
+            with ev.lock:  # the command event before anything the stop makes happen
+                stops.add("stop command")
+                ev.emit("command", command="stop", source="stdin", accepted=True, message=None)
+        elif not isinstance(command, dict):
+            ev.emit("command", command=None, source="stdin", accepted=False,
+                    message="not a JSON object: write one object per line, such as {\"command\":\"stop\"}")
+        else:
+            ev.emit("command", command=name, source="stdin", accepted=False,
+                    message=f"unknown command {name!r}: the commands are stop" if name is not None
+                    else "no \"command\": write {\"command\":\"stop\"}")
+    with ev.lock:
+        if stops.add("end of input", only_first=True):
+            ev.emit("command", command="stop", source="eof", accepted=True, message=None)
 
 
 def sleeper() -> subprocess.Popen:
@@ -291,14 +381,29 @@ def sleeper() -> subprocess.Popen:
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def run(args: dict, file: str, config: dict, scenario: str) -> int:
+def started_command(file: str, p: dict, uri: str, config: dict) -> list[str]:
+    """The command as the launcher starts it: the executable found (relative to the file's directory, or on PATH
+    for a bare name), and for an ecu_main executable the arguments the launcher adds."""
+    command = [str(c) for c in p["command"]] or ["?"]
+    directory = os.path.dirname(os.path.abspath(file))
+    exe = command[0]
+    if os.path.isabs(exe):
+        found = exe
+    elif "/" in exe or "\\" in exe or os.path.exists(os.path.join(directory, exe)):
+        found = os.path.join(directory, exe)
+    else:
+        found = shutil.which(exe) or os.path.join(directory, exe)
+    args = [a.replace("{registry_uri}", uri).replace("{name}", p["name"]) for a in command[1:]]
+    if p["describe"]:
+        timeout = (config["start_timeout_ms"] or 30000) + (config["stop_timeout_ms"] or 10000) + 10000
+        args += ["--name", p["name"], "--registry-uri", uri, "--start-timeout-ms", str(timeout)]
+    return [found, *args]
+
+
+def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: Stops) -> int:
     if scenario == "ignore-stop":
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    ev = Events(bool(args.get("events")))
     strict = bool(args.get("strict"))
-    ev.emit("hello", vehicle_sil_events=2 if scenario == "future-events" else 1, vehicle_sil=VERSION,
-            pid=os.getpid(), file=file, arguments=sys.argv[1:])
-    ev.emit("phase", phase="checking")
     result_check = check(file, config, scenario, strict)
     ev.emit("check", check=result_check)
     participants = []
@@ -325,31 +430,53 @@ def run(args: dict, file: str, config: dict, scenario: str) -> int:
             print(json.dumps(r, indent=2, ensure_ascii=False))
         return code
 
-    if result_check["result"] != "passed":
-        return finish("check_failed", None, 1)
+    def say(line: str) -> None:
+        ev.emit("log", source="vehicle_sil_launch", line=line)
 
-    commands: queue.Queue = queue.Queue()
-    if args.get("stdin_commands"):
-        threading.Thread(target=read_commands, args=(commands,), daemon=True).start()
+    def note(f: dict) -> None:
+        run_findings.append(f)
+        ev.emit("finding", **f)
+
+    def interrupted(started: bool) -> None:
+        by = stops.by or "stop command"
+        if started:
+            say(f"interrupted ({by}): the simulation was stopped")
+        note(finding("note", "interrupted", file, None, None, None,
+                     f"interrupted ({by}): the launcher stopped the simulation and the participants" if started
+                     else f"interrupted ({by}): the launcher stopped the participants before the simulation started"))
+
+    if result_check["result"] != "passed":
+        participants.clear()  # nothing was started: the result lists no participant
+        return finish("check_failed", None, 1)
+    if stops.count:  # a stop during the check takes effect after it: nothing is started
+        interrupted(False)
+        return finish("interrupted", "not_started", 130, stops.by)
 
     for p in participants:
         if not p["enabled"]:
             ev.emit("participant", name=p["name"], state="disabled")
     ev.emit("phase", phase="starting")
-    ev.emit("registry", uri="silkit://127.0.0.1:8500")
-    ev.emit("log", source="vehicle_sil_launch", line="registry at silkit://127.0.0.1:8500")
+    uri = "silkit://127.0.0.1:8500"  # the real launcher takes a free port; a fixed one keeps the examples stable
+    ev.emit("registry", uri=uri)
+    say(f"registry at {uri}")
     running = {}
     by_name = {p["name"]: p for p in config["participants"]}
     for p in participants:
         if p["enabled"]:
+            command = started_command(file, by_name[p["name"]], uri, config)
+            say(f"starting {p['name']}: {' '.join(command)}")
             proc = sleeper()
             running[p["name"]] = proc
-            ev.emit("participant", name=p["name"], state="started", pid=proc.pid, command=by_name[p["name"]]["command"],
-                    log=None)
+            ev.emit("participant", name=p["name"], state="started", pid=proc.pid, command=command, log=None)
+        else:
+            say(f"not starting {p['name']}: disabled")
     ev.emit("phase", phase="waiting")
     for name in running:
-        ev.emit("participant", name=name, state="joined")
+        if by_name[name]["describe"]:  # only participants with a lifecycle join
+            ev.emit("participant", name=name, state="joined")
     ev.emit("phase", phase="running")
+    say("simulation running")
+    ev.emit("time", sim_ms=0)
 
     speed = args.get("speed")
     tick_s = int(os.environ.get("FAKE_LAUNCHER_TICK_MS", "100")) / 1000
@@ -358,59 +485,41 @@ def run(args: dict, file: str, config: dict, scenario: str) -> int:
     elif speed is not None:
         tick_s /= float(speed)
     stop_at = None if scenario in ("forever", "ignore-stop") else config["stop_at_ms"]
-    sim_ms, step, stops, stdin_ended, said_waiting = 0, 0, 0, False, False
+    sim_ms, step, asked = 0, 0, False
+
+    def entry(name: str) -> dict:
+        return next(p for p in participants if p["name"] == name)
 
     def end_participants(how: str) -> None:
         for name, proc in running.items():
+            if entry(name)["ended"] != "not_started":
+                continue
             proc.kill()
             proc.wait()
-            entry = next(p for p in participants if p["name"] == name)
-            if entry["ended"] != "not_started":
-                continue
             if how == "killed":
-                entry.update(ended="killed")
+                say(f"killed {name}")
+                entry(name).update(ended="killed")
                 ev.emit("participant", name=name, state="killed")
             else:
-                entry.update(ended="exited", exit_code=0)
+                say(f"{name} exited with code 0")
+                entry(name).update(ended="exited", exit_code=0)
                 ev.emit("participant", name=name, state="ended", exit_code=0, signal=None)
 
     while True:
-        # Commands first: a stop decides what this step does.
-        while True:
-            try:
-                line = commands.get_nowait()
-            except queue.Empty:
-                break
-            if line is None:
-                if not stdin_ended and stops == 0:
-                    stops = 1
-                stdin_ended = True
-                continue
-            try:
-                command = json.loads(line)
-            except ValueError:
-                command = None
-            if not isinstance(command, dict) or command.get("command") != "stop":
-                ev.emit("command", command=command.get("command") if isinstance(command, dict) else None,
-                        accepted=False, message="unknown command: the commands are {\"command\":\"stop\"}")
-                continue
-            stops += 1
-            ev.emit("command", command="stop", accepted=True)
-        if ev.closed and stops == 0:
-            stops = 1
-        if stops and scenario != "ignore-stop" or stops >= 2:
+        # A stop decides what this step does.
+        if stops.count and scenario == "ignore-stop" and not asked:
+            asked = True  # the participants do not end: the launcher asks them to stop, and waits
+            interrupted(True)
             ev.emit("phase", phase="stopping")
-            if stops >= 2:
-                end_participants("killed")
-            else:
-                end_participants("ended")
-            run_findings.append(finding("note", "interrupted", file, None, None, None,
-                                        "the simulation was interrupted (stop command)"))
-            return finish("interrupted", "interrupted", 130, "stop")
-        if stops == 1 and scenario == "ignore-stop" and not said_waiting:
-            said_waiting = True
-            ev.emit("log", source="vehicle_sil_launch",
-                    line="stopping: waiting for the participants to end (stop again to not wait)")
+            for name in running:
+                say(f"asking {name} to stop (SIGTERM)")
+                ev.emit("participant", name=name, state="stop_requested")
+        if stops.count and (scenario != "ignore-stop" or stops.count >= 2):
+            if not asked:
+                interrupted(True)
+                ev.emit("phase", phase="stopping")
+            end_participants("killed" if scenario == "ignore-stop" else "ended")
+            return finish("interrupted", "interrupted", 130, stops.by)
 
         time.sleep(tick_s)
         step += 1
@@ -419,7 +528,8 @@ def run(args: dict, file: str, config: dict, scenario: str) -> int:
             ev.raw("this line is not JSON")
             ev.raw("[1, 2, 3]")
             ev.emit("mystery", detail="an event this reader does not know")
-            ev.seq += 1  # a gap
+            with ev.lock:
+                ev.seq += 1  # a gap
             ev.emit("log", source=next(iter(running), "vehicle_sil_launch"), line="after a gap", colour="blue")
         if scenario == "flood" and step == 1:
             for n in range(int(os.environ.get("FAKE_LAUNCHER_FLOOD", "5000"))):
@@ -427,6 +537,11 @@ def run(args: dict, file: str, config: dict, scenario: str) -> int:
         if scenario == "finding-flood" and step == 1:
             for n in range(int(os.environ.get("FAKE_LAUNCHER_FLOOD", "5000"))):
                 ev.emit("finding", **finding("note", "flood", file, None, None, None, f"flood finding {n}"))
+        if scenario == "log-dropped" and step == 2:
+            first = next(iter(running))
+            ev.emit("log_dropped", count=125, sources={first: 120, "vehicle_sil_launch": 5})
+        if scenario == "silent" and step == 2:
+            ev.muted_until = time.monotonic() + float(os.environ.get("FAKE_LAUNCHER_SILENT_S", "8"))
         if scenario == "bad-types" and step == 1:
             for kind, fields in (("check", {"check": {"participants": 5}}), ("participant", {"name": 5}),
                                  ("participant", {"name": "Engine", "state": ["x"]}), ("log", {"source": None}),
@@ -436,72 +551,122 @@ def run(args: dict, file: str, config: dict, scenario: str) -> int:
         if scenario == "non-finite" and step == 1:
             for fields in ('"event":"time","sim_ms":50,"actual_speed":1e999', '"event":"log","source":"vehicle_sil_launch",'
                            '"line":"x","level":-1e999'):
-                ev.raw(f'{{{fields},"seq":{ev.seq},"t_ms":0}}')
-                ev.seq += 1
+                with ev.lock:
+                    ev.raw(f'{{{fields},"seq":{ev.seq},"t_ms":0}}')
+                    ev.seq += 1
         if scenario == "orphan" and step == 1:
             orphan = subprocess.Popen(
                 [sys.executable, "-c", f"import time; time.sleep({float(os.environ.get('FAKE_LAUNCHER_ORPHAN_S', '30'))})"],
                 stdin=subprocess.DEVNULL, start_new_session=True)
-            ev.emit("log", source="vehicle_sil_launch", line=f"left a process behind: pid {orphan.pid}")
+            say(f"left a process behind: pid {orphan.pid}")
         if scenario == "launcher-crash" and step == 3:
             sys.stderr.write("fake_launcher: dying on purpose (scenario launcher-crash)\n")
             sys.stderr.flush()
             os._exit(70)
         for name in running:
-            ev.emit("log", source=name, line=f"step {step}: t = {sim_ms} ms")
-        ev.emit("time", sim_ms=sim_ms)
+            if entry(name)["ended"] == "not_started":
+                ev.emit("log", source=name, line=f"step {step}: t = {sim_ms} ms")
         if scenario == "participant-crash" and step == 3:
             name = [p["name"] for p in participants if p["enabled"] and p["required"]][-1]
+            ev.emit("log", source=name, line="error: something went wrong, exiting with code 3")
             running[name].kill()
             running[name].wait()
-            entry = next(p for p in participants if p["name"] == name)
-            entry.update(ended="exited", exit_code=3)
-            ev.emit("log", source=name, line="error: something went wrong, exiting with code 3")
+            entry(name).update(ended="exited", exit_code=3)
+            say(f"{name} exited with code 3")
             ev.emit("participant", name=name, state="ended", exit_code=3, signal=None)
             f = finding("error", "participant-failed", file, by_name[name]["line"], name, None,
-                        f"participant '{name}' failed while the simulation was running (exit code 3), "
-                        "so the simulation was aborted: see its log")
-            run_findings.append(f)
-            ev.emit("finding", **f)
+                        f"participant '{name}': it failed while the simulation was running, and the simulation "
+                        "was aborted: see its log")
+            ev.emit("participant", name=name, state="failed", reason="process_ended", message=f["message"])
+            say(f"participant '{name}' failed; aborting the simulation")
+            note(f)
             ev.emit("phase", phase="stopping")
             end_participants("ended")
             return finish("failed", "aborted", 1)
         if stop_at is not None and sim_ms >= stop_at:
+            ev.emit("time", sim_ms=sim_ms)
+            say("the simulation ended")
             ev.emit("phase", phase="stopping")
             end_participants("ended")
             code = finish("passed", "reached_stop_at", 0)
-            while scenario == "result-then-wait":  # ended, but still running until told to stop
-                line = commands.get()
-                if line is None:
-                    break
-                try:
-                    command = json.loads(line)
-                except ValueError:
-                    command = None
-                if isinstance(command, dict) and command.get("command") == "stop":
-                    ev.emit("command", command="stop", accepted=True)
-                    break
+            while scenario == "result-then-wait" and stops.count == 0:  # ended, but runs on until told to stop
+                time.sleep(0.02)
             return code
 
 
 # ---------------------------------------------------------------- main
 
 
+def usage_result(file: str | None, outcome: str, code: str, message: str, strict: bool,
+                 checked: dict | None = None) -> dict:
+    return {"vehicle_sil_run": 1, "vehicle_sil": VERSION, "file": file, "result": outcome, "strict": strict,
+            "errors": 1, "warnings": 0, "notes": 0, "simulation": None, "interrupted_by": None, "participants": [],
+            "findings": [], "check": checked or unreadable_check(file, outcome, code, message, strict)}
+
+
+VALUED = {"--disable", "--enable", "--speed", "--log-dir", "--timeout-ms", "--describe-timeout-ms"}
+
+
+def has_flag(argv: list[str], flag: str) -> bool:
+    """Whether the flag is given as an option (not as the value of another option, not after --)."""
+    i = 1
+    while i < len(argv) and argv[i] != "--":
+        if argv[i] == flag:
+            return True
+        i += 2 if argv[i] in VALUED else 1
+    return False
+
+
+def file_argument(argv: list[str]) -> str | None:
+    """The configuration file named on the command line, as hello says it (None: none)."""
+    valued = VALUED
+    i = 1
+    while i < len(argv):
+        if argv[i] == "--":
+            return argv[i + 1] if i + 1 < len(argv) else None
+        if argv[i] in valued:
+            i += 2
+            continue
+        if not argv[i].startswith("-"):
+            return argv[i]
+        i += 1
+    return None
+
+
+def peek_scenario(file: str | None) -> str | None:
+    """The scenario line of the file, before the file is read as a configuration (hello comes first)."""
+    try:
+        m = re.search(r"^#\s*fake-launcher:\s*(\S+)", Path(file).read_text(encoding="utf-8"), re.MULTILINE)
+    except (OSError, ValueError, TypeError):
+        return None
+    return m.group(1) if m else None
+
+
 def main(argv: list[str]) -> int:
-    json_wanted = "--json" in argv
+    json_wanted = has_flag(argv, "--json")
+    events_wanted = bool(argv) and argv[0] == "run" and has_flag(argv, "--events") and not json_wanted
+    ev = Events(events_wanted)
+    stops = Stops()
+    ev.on_closed = lambda: stops.add("output closed", only_first=True)
+    file_arg = file_argument(argv)
+    if events_wanted:
+        future = (os.environ.get("FAKE_LAUNCHER_SCENARIO") or peek_scenario(file_arg)) == "future-events"
+        ev.emit("hello", vehicle_sil_events=2 if future else 1,
+                vehicle_sil=VERSION, pid=os.getpid(), file=file_arg, arguments=argv)
     try:
         args = parse(argv)
     except Usage as e:
         if json_wanted and argv and argv[0] == "check":
-            print(json.dumps(unreadable_check(None, "usage", "usage", str(e), False), indent=2))
+            print(json.dumps(unreadable_check(file_arg, "usage", "usage", str(e), False), indent=2))
         sys.stderr.write(f"error: {e}\n{USAGE}\n")
+        ev.emit("result", result=usage_result(file_arg, "usage", "usage", str(e), False))
         return 4
     if args["command"] == "version":
         if args.get("json"):
-            features = os.environ.get("FAKE_LAUNCHER_FEATURES", "events,stdin-commands,speed")
+            features = os.environ.get("FAKE_LAUNCHER_FEATURES", "events,stdin-commands,check-variables")
             print(json.dumps({"vehicle_sil_launch": 1, "vehicle_sil": VERSION,
                               "formats": {"check": 1, "run": 1, "events": 1, "describe": 1},
-                              "features": [f for f in features.split(",") if f]}))
+                              "features": [f for f in features.split(",") if f]}, indent=2))
         else:
             print(f"vehicle_sil_launch {VERSION}")
         return 0
@@ -510,23 +675,38 @@ def main(argv: list[str]) -> int:
     try:
         config = read_config(Path(file))
     except (OSError, ValueError) as e:
+        message = f"{file}: cannot read it: {e}"
+        unreadable = unreadable_check(file, "unreadable", "file", message, strict)
         if args.get("json"):
-            print(json.dumps(unreadable_check(file, "unreadable", "file", f"{file}: cannot read it: {e}", strict),
-                             indent=2))
-        sys.stderr.write(f"error: {file}: cannot read it: {e}\n")
+            print(json.dumps(unreadable if args["command"] == "check"
+                             else usage_result(file, "unreadable", "file", message, strict, unreadable), indent=2))
+        ev.emit("phase", phase="checking")
+        ev.emit("check", check=unreadable)
+        ev.emit("phase", phase="ended")
+        ev.emit("result", result=usage_result(file, "unreadable", "file", message, strict, unreadable))
+        if not ev.enabled:
+            sys.stderr.write(f"error: {message}\n")
         return 3
     scenario = os.environ.get("FAKE_LAUNCHER_SCENARIO") or config["scenario"] or "pass"
     if scenario not in SCENARIOS:
         sys.stderr.write(f"error: unknown scenario '{scenario}': the scenarios are {', '.join(SCENARIOS)}\n")
         return 4
+    if args["command"] == "run":
+        ev.emit("phase", phase="checking")
+        if args.get("stdin_commands"):  # read from here on, as the real launcher does once the file is read
+            threading.Thread(target=read_commands, args=(ev, stops), daemon=True).start()
     names = [p["name"] for p in config["participants"]]
     unknown = [n for n in args["disable"] + args["enable"] if n not in names]
     if unknown:
-        message = (f"no participant named {', '.join(repr(n) for n in unknown)} in {file}: "
-                   f"the participants are {', '.join(names)}")
-        if args["command"] == "check" and args.get("json"):
-            print(json.dumps(unreadable_check(file, "usage", "usage", message, strict), indent=2))
-        sys.stderr.write(f"error: {message}\n")
+        message = (f"--disable {unknown[0]}: the file has no participant with this name; its participants are "
+                   f"{', '.join(names)}")
+        usage = unreadable_check(file, "usage", "usage", message, strict)
+        if args.get("json"):
+            print(json.dumps(usage, indent=2))
+        sys.stderr.write(f"error: {message}\n{USAGE}\n")
+        ev.emit("check", check=usage)
+        ev.emit("phase", phase="ended")
+        ev.emit("result", result=usage_result(file, "usage", "usage", message, strict, usage))
         return 4
     for p in config["participants"]:
         if p["name"] in args["disable"]:
@@ -545,7 +725,7 @@ def main(argv: list[str]) -> int:
             print(f"{file}: {result['result']}: {result['errors']} errors, {result['warnings']} warnings, "
                   f"{result['notes']} notes")
         return 0 if result["result"] == "passed" else 1
-    return run(args, file, config, scenario)
+    return run(args, file, config, scenario, ev, stops)
 
 
 if __name__ == "__main__":

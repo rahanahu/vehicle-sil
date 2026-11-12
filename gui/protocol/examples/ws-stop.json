@@ -35,7 +35,8 @@
           "pid": 10001,
           "running": true,
           "exit_code": null,
-          "signal": null
+          "signal": null,
+          "silent_s": null
         },
         "stop": "none",
         "phase": null,
@@ -322,16 +323,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "participant",
+        "event": "log",
         "seq": 6,
         "t_ms": 60,
-        "name": "Engine",
-        "state": "started",
-        "pid": 10002,
-        "command": [
-          "engine/vehicle_sil_engine_ecu"
-        ],
-        "log": null
+        "source": "vehicle_sil_launch",
+        "line": "starting Engine: /path/to/root/engine/vehicle_sil_engine_ecu --name Engine --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 50000"
       }
     },
     {
@@ -341,11 +337,50 @@
         "event": "participant",
         "seq": 7,
         "t_ms": 70,
+        "name": "Engine",
+        "state": "started",
+        "pid": 10002,
+        "command": [
+          "/path/to/root/engine/vehicle_sil_engine_ecu",
+          "--name",
+          "Engine",
+          "--registry-uri",
+          "silkit://127.0.0.1:8500",
+          "--start-timeout-ms",
+          "50000"
+        ],
+        "log": null
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 8,
+        "t_ms": 80,
+        "source": "vehicle_sil_launch",
+        "line": "starting Dashboard: /path/to/root/dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 50000"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 9,
+        "t_ms": 90,
         "name": "Dashboard",
         "state": "started",
         "pid": 10003,
         "command": [
-          "dashboard/vehicle_sil_dashboard_ecu"
+          "/path/to/root/dashboard/vehicle_sil_dashboard_ecu",
+          "--name",
+          "Dashboard",
+          "--registry-uri",
+          "silkit://127.0.0.1:8500",
+          "--start-timeout-ms",
+          "50000"
         ],
         "log": null
       }
@@ -354,38 +389,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "participant",
-        "seq": 8,
-        "t_ms": 80,
-        "name": "Logger",
-        "state": "started",
-        "pid": 10004,
-        "command": [
-          "logger/can_logger",
-          "{registry_uri}"
-        ],
-        "log": null
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "phase",
-        "seq": 9,
-        "t_ms": 90,
-        "phase": "waiting"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "participant",
+        "event": "log",
         "seq": 10,
         "t_ms": 100,
-        "name": "Engine",
-        "state": "joined"
+        "source": "vehicle_sil_launch",
+        "line": "starting Logger: /path/to/root/logger/can_logger silkit://127.0.0.1:8500"
       }
     },
     {
@@ -395,7 +403,34 @@
         "event": "participant",
         "seq": 11,
         "t_ms": 110,
-        "name": "Dashboard",
+        "name": "Logger",
+        "state": "started",
+        "pid": 10004,
+        "command": [
+          "/path/to/root/logger/can_logger",
+          "silkit://127.0.0.1:8500"
+        ],
+        "log": null
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
+        "seq": 12,
+        "t_ms": 120,
+        "phase": "waiting"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 13,
+        "t_ms": 130,
+        "name": "Engine",
         "state": "joined"
       }
     },
@@ -404,9 +439,9 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 12,
-        "t_ms": 120,
-        "name": "Logger",
+        "seq": 14,
+        "t_ms": 140,
+        "name": "Dashboard",
         "state": "joined"
       }
     },
@@ -415,9 +450,30 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 13,
-        "t_ms": 130,
+        "seq": 15,
+        "t_ms": 150,
         "phase": "running"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 16,
+        "t_ms": 160,
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 17,
+        "t_ms": 170,
+        "sim_ms": 0
       }
     },
     {
@@ -435,13 +491,19 @@
           "pid": 10001,
           "running": true,
           "exit_code": null,
-          "signal": null
+          "signal": null,
+          "silent_s": null
         },
         "stop": "requested",
         "phase": "running",
-        "last_seq": 13,
-        "last_t_ms": 130,
-        "time": null,
+        "last_seq": 17,
+        "last_t_ms": 170,
+        "time": {
+          "event": "time",
+          "seq": 17,
+          "t_ms": 170,
+          "sim_ms": 0
+        },
         "check": {
           "vehicle_sil_check": 1,
           "vehicle_sil": "0.1.0",
@@ -644,7 +706,13 @@
             "state": "joined",
             "pid": 10002,
             "command": [
-              "engine/vehicle_sil_engine_ecu"
+              "/path/to/root/engine/vehicle_sil_engine_ecu",
+              "--name",
+              "Engine",
+              "--registry-uri",
+              "silkit://127.0.0.1:8500",
+              "--start-timeout-ms",
+              "50000"
             ],
             "log": null
           },
@@ -653,17 +721,23 @@
             "state": "joined",
             "pid": 10003,
             "command": [
-              "dashboard/vehicle_sil_dashboard_ecu"
+              "/path/to/root/dashboard/vehicle_sil_dashboard_ecu",
+              "--name",
+              "Dashboard",
+              "--registry-uri",
+              "silkit://127.0.0.1:8500",
+              "--start-timeout-ms",
+              "50000"
             ],
             "log": null
           },
           {
             "name": "Logger",
-            "state": "joined",
+            "state": "started",
             "pid": 10004,
             "command": [
-              "logger/can_logger",
-              "{registry_uri}"
+              "/path/to/root/logger/can_logger",
+              "silkit://127.0.0.1:8500"
             ],
             "log": null
           }
@@ -675,7 +749,7 @@
         "result": null,
         "log": {
           "vehicle_sil_launch": {
-            "kept": 1,
+            "kept": 5,
             "dropped": 0
           }
         },
@@ -687,9 +761,22 @@
       "type": "event",
       "session": 1,
       "event": {
+        "event": "command",
+        "seq": 18,
+        "t_ms": 180,
+        "command": "stop",
+        "source": "stdin",
+        "accepted": true,
+        "message": null
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
         "event": "log",
-        "seq": 14,
-        "t_ms": 140,
+        "seq": 19,
+        "t_ms": 190,
         "source": "Engine",
         "line": "step 1: t = 100 ms"
       }
@@ -699,8 +786,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 15,
-        "t_ms": 150,
+        "seq": 20,
+        "t_ms": 200,
         "source": "Dashboard",
         "line": "step 1: t = 100 ms"
       }
@@ -710,8 +797,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 16,
-        "t_ms": 160,
+        "seq": 21,
+        "t_ms": 210,
         "source": "Logger",
         "line": "step 1: t = 100 ms"
       }
@@ -720,21 +807,28 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
-        "seq": 17,
-        "t_ms": 170,
-        "sim_ms": 100
+        "event": "log",
+        "seq": 22,
+        "t_ms": 220,
+        "source": "vehicle_sil_launch",
+        "line": "interrupted (stop command): the simulation was stopped"
       }
     },
     {
       "type": "event",
       "session": 1,
       "event": {
-        "event": "command",
-        "seq": 18,
-        "t_ms": 180,
-        "command": "stop",
-        "accepted": true
+        "event": "finding",
+        "seq": 23,
+        "t_ms": 230,
+        "severity": "note",
+        "code": "interrupted",
+        "file": "forever.yaml",
+        "line": null,
+        "participant": null,
+        "network": null,
+        "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+        "detail": null
       }
     },
     {
@@ -742,8 +836,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 19,
-        "t_ms": 190,
+        "seq": 24,
+        "t_ms": 240,
         "phase": "stopping"
       }
     },
@@ -751,9 +845,20 @@
       "type": "event",
       "session": 1,
       "event": {
+        "event": "log",
+        "seq": 25,
+        "t_ms": 250,
+        "source": "vehicle_sil_launch",
+        "line": "Engine exited with code 0"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
         "event": "participant",
-        "seq": 20,
-        "t_ms": 200,
+        "seq": 26,
+        "t_ms": 260,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -764,9 +869,20 @@
       "type": "event",
       "session": 1,
       "event": {
+        "event": "log",
+        "seq": 27,
+        "t_ms": 270,
+        "source": "vehicle_sil_launch",
+        "line": "Dashboard exited with code 0"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
         "event": "participant",
-        "seq": 21,
-        "t_ms": 210,
+        "seq": 28,
+        "t_ms": 280,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
@@ -777,9 +893,20 @@
       "type": "event",
       "session": 1,
       "event": {
+        "event": "log",
+        "seq": 29,
+        "t_ms": 290,
+        "source": "vehicle_sil_launch",
+        "line": "Logger exited with code 0"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
         "event": "participant",
-        "seq": 22,
-        "t_ms": 220,
+        "seq": 30,
+        "t_ms": 300,
         "name": "Logger",
         "state": "ended",
         "exit_code": 0,
@@ -791,8 +918,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 23,
-        "t_ms": 230,
+        "seq": 31,
+        "t_ms": 310,
         "phase": "ended"
       }
     },
@@ -801,8 +928,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 32,
+        "t_ms": 320,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -813,7 +940,7 @@
           "warnings": 0,
           "notes": 2,
           "simulation": "interrupted",
-          "interrupted_by": "stop",
+          "interrupted_by": "stop command",
           "participants": [
             {
               "name": "Engine",
@@ -854,7 +981,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "the simulation was interrupted (stop command)",
+              "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
               "detail": null
             }
           ],
@@ -1069,17 +1196,18 @@
           "pid": 10001,
           "running": false,
           "exit_code": 130,
-          "signal": null
+          "signal": null,
+          "silent_s": null
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 24,
-        "last_t_ms": 240,
+        "last_seq": 32,
+        "last_t_ms": 320,
         "time": {
           "event": "time",
           "seq": 17,
           "t_ms": 170,
-          "sim_ms": 100
+          "sim_ms": 0
         },
         "check": {
           "vehicle_sil_check": 1,
@@ -1283,7 +1411,13 @@
             "state": "ended",
             "pid": 10002,
             "command": [
-              "engine/vehicle_sil_engine_ecu"
+              "/path/to/root/engine/vehicle_sil_engine_ecu",
+              "--name",
+              "Engine",
+              "--registry-uri",
+              "silkit://127.0.0.1:8500",
+              "--start-timeout-ms",
+              "50000"
             ],
             "log": null,
             "exit_code": 0,
@@ -1294,7 +1428,13 @@
             "state": "ended",
             "pid": 10003,
             "command": [
-              "dashboard/vehicle_sil_dashboard_ecu"
+              "/path/to/root/dashboard/vehicle_sil_dashboard_ecu",
+              "--name",
+              "Dashboard",
+              "--registry-uri",
+              "silkit://127.0.0.1:8500",
+              "--start-timeout-ms",
+              "50000"
             ],
             "log": null,
             "exit_code": 0,
@@ -1305,8 +1445,8 @@
             "state": "ended",
             "pid": 10004,
             "command": [
-              "logger/can_logger",
-              "{registry_uri}"
+              "/path/to/root/logger/can_logger",
+              "silkit://127.0.0.1:8500"
             ],
             "log": null,
             "exit_code": 0,
@@ -1314,11 +1454,24 @@
           }
         ],
         "participants_omitted": 0,
-        "findings": [],
+        "findings": [
+          {
+            "severity": "note",
+            "code": "interrupted",
+            "file": "forever.yaml",
+            "line": null,
+            "participant": null,
+            "network": null,
+            "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
+            "detail": null
+          }
+        ],
         "findings_omitted": 0,
         "last_command": {
           "command": "stop",
-          "accepted": true
+          "source": "stdin",
+          "accepted": true,
+          "message": null
         },
         "result": {
           "vehicle_sil_run": 1,
@@ -1330,7 +1483,7 @@
           "warnings": 0,
           "notes": 2,
           "simulation": "interrupted",
-          "interrupted_by": "stop",
+          "interrupted_by": "stop command",
           "participants": [
             {
               "name": "Engine",
@@ -1371,7 +1524,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "the simulation was interrupted (stop command)",
+              "message": "interrupted (stop command): the launcher stopped the simulation and the participants",
               "detail": null
             }
           ],
@@ -1571,7 +1724,7 @@
         },
         "log": {
           "vehicle_sil_launch": {
-            "kept": 1,
+            "kept": 9,
             "dropped": 0
           },
           "Engine": {

@@ -32,10 +32,16 @@ EXAMPLES = {
     "error-not-a-configuration", "error-unknown-participant", "error-unsupported", "error-file-not-found",
     "error-already-running", "error-check-busy", "error-check-timeout", "error-launcher-output",
     "error-launcher-unusable", "error-launcher-start", "error-shutting-down", "error-too-many-connections",
-    "ws-pass", "ws-check-error", "ws-participant-crash", "ws-launcher-crash", "ws-bad-lines", "ws-bad-types",
+    "ws-pass", "ws-log-dropped", "ws-check-error", "ws-participant-crash", "ws-launcher-crash", "ws-bad-lines", "ws-bad-types",
     "ws-orphan", "ws-stop", "ws-force-stop", "ws-replay", "ws-resume", "ws-dropped", "ws-slow-client",
     "ws-resync", "ws-unauthorized",
 }
+
+
+@pytest.fixture(autouse=True)
+def no_heartbeat(monkeypatch) -> None:
+    """The examples are compared as they are: a heartbeat comes when the machine is slow, so the fake writes none."""
+    monkeypatch.setenv("FAKE_LAUNCHER_HEARTBEAT_MS", "0")
 
 
 class Normalizer:
@@ -280,6 +286,8 @@ SCENARIOS = {
                                     "in seq: errors from the server, the unknown event passed on."),
     "bad-types": ("bad-types.yaml", "The launcher writes known events whose fields have the wrong types: each is "
                                     "reported (bad-event) and not passed on; the run goes on."),
+    "log-dropped": ("log-dropped.yaml", "The launcher could not write some log lines (its reader was slow): a "
+                                        "log_dropped event where they were, counted in the summary's log."),
 }
 
 

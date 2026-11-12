@@ -75,6 +75,12 @@
         "simulation": true
       },
       {
+        "path": "log-dropped.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 483,
+        "simulation": true
+      },
+      {
         "path": "orphan.yaml",
         "modified": "2026-01-01T00:00:00Z",
         "size": 478,

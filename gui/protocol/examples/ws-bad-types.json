@@ -35,7 +35,8 @@
           "pid": 10001,
           "running": true,
           "exit_code": null,
-          "signal": null
+          "signal": null,
+          "silent_s": null
         },
         "stop": "none",
         "phase": null,
@@ -322,16 +323,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "participant",
+        "event": "log",
         "seq": 6,
         "t_ms": 60,
-        "name": "Engine",
-        "state": "started",
-        "pid": 10002,
-        "command": [
-          "engine/vehicle_sil_engine_ecu"
-        ],
-        "log": null
+        "source": "vehicle_sil_launch",
+        "line": "starting Engine: /path/to/root/engine/vehicle_sil_engine_ecu --name Engine --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 50000"
       }
     },
     {
@@ -341,11 +337,50 @@
         "event": "participant",
         "seq": 7,
         "t_ms": 70,
+        "name": "Engine",
+        "state": "started",
+        "pid": 10002,
+        "command": [
+          "/path/to/root/engine/vehicle_sil_engine_ecu",
+          "--name",
+          "Engine",
+          "--registry-uri",
+          "silkit://127.0.0.1:8500",
+          "--start-timeout-ms",
+          "50000"
+        ],
+        "log": null
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 8,
+        "t_ms": 80,
+        "source": "vehicle_sil_launch",
+        "line": "starting Dashboard: /path/to/root/dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 50000"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 9,
+        "t_ms": 90,
         "name": "Dashboard",
         "state": "started",
         "pid": 10003,
         "command": [
-          "dashboard/vehicle_sil_dashboard_ecu"
+          "/path/to/root/dashboard/vehicle_sil_dashboard_ecu",
+          "--name",
+          "Dashboard",
+          "--registry-uri",
+          "silkit://127.0.0.1:8500",
+          "--start-timeout-ms",
+          "50000"
         ],
         "log": null
       }
@@ -354,38 +389,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "participant",
-        "seq": 8,
-        "t_ms": 80,
-        "name": "Logger",
-        "state": "started",
-        "pid": 10004,
-        "command": [
-          "logger/can_logger",
-          "{registry_uri}"
-        ],
-        "log": null
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "phase",
-        "seq": 9,
-        "t_ms": 90,
-        "phase": "waiting"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "participant",
+        "event": "log",
         "seq": 10,
         "t_ms": 100,
-        "name": "Engine",
-        "state": "joined"
+        "source": "vehicle_sil_launch",
+        "line": "starting Logger: /path/to/root/logger/can_logger silkit://127.0.0.1:8500"
       }
     },
     {
@@ -395,7 +403,34 @@
         "event": "participant",
         "seq": 11,
         "t_ms": 110,
-        "name": "Dashboard",
+        "name": "Logger",
+        "state": "started",
+        "pid": 10004,
+        "command": [
+          "/path/to/root/logger/can_logger",
+          "silkit://127.0.0.1:8500"
+        ],
+        "log": null
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
+        "seq": 12,
+        "t_ms": 120,
+        "phase": "waiting"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 13,
+        "t_ms": 130,
+        "name": "Engine",
         "state": "joined"
       }
     },
@@ -404,9 +439,9 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 12,
-        "t_ms": 120,
-        "name": "Logger",
+        "seq": 14,
+        "t_ms": 140,
+        "name": "Dashboard",
         "state": "joined"
       }
     },
@@ -415,105 +450,20 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 13,
-        "t_ms": 130,
+        "seq": 15,
+        "t_ms": 150,
         "phase": "running"
       }
     },
     {
-      "type": "error",
-      "session": 1,
-      "code": "bad-event",
-      "message": "the launcher wrote a 'check' event whose check.participants is not a list of objects with a name: it is ignored (not shown); the launcher and this GUI may not match",
-      "detail": "{\"event\":\"check\",\"seq\":14,\"t_ms\":0,\"check\":{\"participants\":5}}"
-    },
-    {
-      "type": "error",
-      "session": 1,
-      "code": "bad-event",
-      "message": "the launcher wrote a 'participant' event whose name or state is not a string: it is ignored (not shown); the launcher and this GUI may not match",
-      "detail": "{\"event\":\"participant\",\"seq\":15,\"t_ms\":0,\"name\":5}"
-    },
-    {
-      "type": "error",
-      "session": 1,
-      "code": "bad-event",
-      "message": "the launcher wrote a 'participant' event whose name or state is not a string: it is ignored (not shown); the launcher and this GUI may not match",
-      "detail": "{\"event\":\"participant\",\"seq\":16,\"t_ms\":0,\"name\":\"Engine\",\"state\":[\"x\"]}"
-    },
-    {
-      "type": "error",
-      "session": 1,
-      "code": "bad-event",
-      "message": "the launcher wrote a 'log' event whose source or line is not a string: it is ignored (not shown); the launcher and this GUI may not match",
-      "detail": "{\"event\":\"log\",\"seq\":17,\"t_ms\":0,\"source\":null}"
-    },
-    {
-      "type": "error",
-      "session": 1,
-      "code": "bad-event",
-      "message": "the launcher wrote a 'time' event whose sim_ms is not an integer: it is ignored (not shown); the launcher and this GUI may not match",
-      "detail": "{\"event\":\"time\",\"seq\":18,\"t_ms\":0,\"sim_ms\":\"100\"}"
-    },
-    {
-      "type": "error",
-      "session": 1,
-      "code": "bad-event",
-      "message": "the launcher wrote a 'phase' event whose phase is not a string: it is ignored (not shown); the launcher and this GUI may not match",
-      "detail": "{\"event\":\"phase\",\"seq\":19,\"t_ms\":0,\"phase\":{}}"
-    },
-    {
-      "type": "error",
-      "session": 1,
-      "code": "bad-event",
-      "message": "the launcher wrote a 'result' event whose result is not an object: it is ignored (not shown); the launcher and this GUI may not match",
-      "detail": "{\"event\":\"result\",\"seq\":20,\"t_ms\":0,\"result\":[]}"
-    },
-    {
-      "type": "error",
-      "session": 1,
-      "code": "bad-event",
-      "message": "the launcher wrote a 'command' event whose command is not a string, or accepted is not true or false: it is ignored (not shown); the launcher and this GUI may not match",
-      "detail": "{\"event\":\"command\",\"seq\":21,\"t_ms\":0,\"command\":\"stop\",\"accepted\":\"yes\"}"
-    },
-    {
-      "type": "error",
-      "session": 1,
-      "code": "bad-event",
-      "message": "the launcher wrote a 'finding' event whose severity or message is not a string: it is ignored (not shown); the launcher and this GUI may not match",
-      "detail": "{\"event\":\"finding\",\"seq\":22,\"t_ms\":0,\"severity\":1}"
-    },
-    {
       "type": "event",
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 23,
-        "t_ms": 230,
-        "source": "Engine",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 24,
-        "t_ms": 240,
-        "source": "Dashboard",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 25,
-        "t_ms": 250,
-        "source": "Logger",
-        "line": "step 1: t = 100 ms"
+        "seq": 16,
+        "t_ms": 160,
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
       }
     },
     {
@@ -521,10 +471,73 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 26,
-        "t_ms": 260,
-        "sim_ms": 100
+        "seq": 17,
+        "t_ms": 170,
+        "sim_ms": 0
       }
+    },
+    {
+      "type": "error",
+      "session": 1,
+      "code": "bad-event",
+      "message": "the launcher wrote a 'check' event whose check.participants is not a list of objects with a name: it is ignored (not shown); the launcher and this GUI may not match",
+      "detail": "{\"event\":\"check\",\"seq\":18,\"t_ms\":0,\"check\":{\"participants\":5}}"
+    },
+    {
+      "type": "error",
+      "session": 1,
+      "code": "bad-event",
+      "message": "the launcher wrote a 'participant' event whose name or state is not a string: it is ignored (not shown); the launcher and this GUI may not match",
+      "detail": "{\"event\":\"participant\",\"seq\":19,\"t_ms\":0,\"name\":5}"
+    },
+    {
+      "type": "error",
+      "session": 1,
+      "code": "bad-event",
+      "message": "the launcher wrote a 'participant' event whose name or state is not a string: it is ignored (not shown); the launcher and this GUI may not match",
+      "detail": "{\"event\":\"participant\",\"seq\":20,\"t_ms\":0,\"name\":\"Engine\",\"state\":[\"x\"]}"
+    },
+    {
+      "type": "error",
+      "session": 1,
+      "code": "bad-event",
+      "message": "the launcher wrote a 'log' event whose source or line is not a string: it is ignored (not shown); the launcher and this GUI may not match",
+      "detail": "{\"event\":\"log\",\"seq\":21,\"t_ms\":0,\"source\":null}"
+    },
+    {
+      "type": "error",
+      "session": 1,
+      "code": "bad-event",
+      "message": "the launcher wrote a 'time' event whose sim_ms is not an integer: it is ignored (not shown); the launcher and this GUI may not match",
+      "detail": "{\"event\":\"time\",\"seq\":22,\"t_ms\":0,\"sim_ms\":\"100\"}"
+    },
+    {
+      "type": "error",
+      "session": 1,
+      "code": "bad-event",
+      "message": "the launcher wrote a 'phase' event whose phase is not a string: it is ignored (not shown); the launcher and this GUI may not match",
+      "detail": "{\"event\":\"phase\",\"seq\":23,\"t_ms\":0,\"phase\":{}}"
+    },
+    {
+      "type": "error",
+      "session": 1,
+      "code": "bad-event",
+      "message": "the launcher wrote a 'result' event whose result is not an object: it is ignored (not shown); the launcher and this GUI may not match",
+      "detail": "{\"event\":\"result\",\"seq\":24,\"t_ms\":0,\"result\":[]}"
+    },
+    {
+      "type": "error",
+      "session": 1,
+      "code": "bad-event",
+      "message": "the launcher wrote a 'command' event whose command is not a string, or accepted is not true or false: it is ignored (not shown); the launcher and this GUI may not match",
+      "detail": "{\"event\":\"command\",\"seq\":25,\"t_ms\":0,\"command\":\"stop\",\"accepted\":\"yes\"}"
+    },
+    {
+      "type": "error",
+      "session": 1,
+      "code": "bad-event",
+      "message": "the launcher wrote a 'finding' event whose severity or message is not a string: it is ignored (not shown); the launcher and this GUI may not match",
+      "detail": "{\"event\":\"finding\",\"seq\":26,\"t_ms\":0,\"severity\":1}"
     },
     {
       "type": "event",
@@ -534,7 +547,7 @@
         "seq": 27,
         "t_ms": 270,
         "source": "Engine",
-        "line": "step 2: t = 200 ms"
+        "line": "step 1: t = 100 ms"
       }
     },
     {
@@ -545,7 +558,7 @@
         "seq": 28,
         "t_ms": 280,
         "source": "Dashboard",
-        "line": "step 2: t = 200 ms"
+        "line": "step 1: t = 100 ms"
       }
     },
     {
@@ -556,17 +569,18 @@
         "seq": 29,
         "t_ms": 290,
         "source": "Logger",
-        "line": "step 2: t = 200 ms"
+        "line": "step 1: t = 100 ms"
       }
     },
     {
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
+        "event": "log",
         "seq": 30,
         "t_ms": 300,
-        "sim_ms": 200
+        "source": "Engine",
+        "line": "step 2: t = 200 ms"
       }
     },
     {
@@ -576,8 +590,8 @@
         "event": "log",
         "seq": 31,
         "t_ms": 310,
-        "source": "Engine",
-        "line": "step 3: t = 300 ms"
+        "source": "Dashboard",
+        "line": "step 2: t = 200 ms"
       }
     },
     {
@@ -587,8 +601,8 @@
         "event": "log",
         "seq": 32,
         "t_ms": 320,
-        "source": "Dashboard",
-        "line": "step 3: t = 300 ms"
+        "source": "Logger",
+        "line": "step 2: t = 200 ms"
       }
     },
     {
@@ -598,7 +612,7 @@
         "event": "log",
         "seq": 33,
         "t_ms": 330,
-        "source": "Logger",
+        "source": "Engine",
         "line": "step 3: t = 300 ms"
       }
     },
@@ -606,10 +620,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
+        "event": "log",
         "seq": 34,
         "t_ms": 340,
-        "sim_ms": 300
+        "source": "Dashboard",
+        "line": "step 3: t = 300 ms"
       }
     },
     {
@@ -619,8 +634,8 @@
         "event": "log",
         "seq": 35,
         "t_ms": 350,
-        "source": "Engine",
-        "line": "step 4: t = 400 ms"
+        "source": "Logger",
+        "line": "step 3: t = 300 ms"
       }
     },
     {
@@ -630,7 +645,7 @@
         "event": "log",
         "seq": 36,
         "t_ms": 360,
-        "source": "Dashboard",
+        "source": "Engine",
         "line": "step 4: t = 400 ms"
       }
     },
@@ -641,7 +656,7 @@
         "event": "log",
         "seq": 37,
         "t_ms": 370,
-        "source": "Logger",
+        "source": "Dashboard",
         "line": "step 4: t = 400 ms"
       }
     },
@@ -649,10 +664,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
+        "event": "log",
         "seq": 38,
         "t_ms": 380,
-        "sim_ms": 400
+        "source": "Logger",
+        "line": "step 4: t = 400 ms"
       }
     },
     {
@@ -692,10 +708,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
+        "event": "log",
         "seq": 42,
         "t_ms": 420,
-        "sim_ms": 500
+        "source": "Engine",
+        "line": "step 6: t = 600 ms"
       }
     },
     {
@@ -705,7 +722,7 @@
         "event": "log",
         "seq": 43,
         "t_ms": 430,
-        "source": "Engine",
+        "source": "Dashboard",
         "line": "step 6: t = 600 ms"
       }
     },
@@ -716,7 +733,7 @@
         "event": "log",
         "seq": 44,
         "t_ms": 440,
-        "source": "Dashboard",
+        "source": "Logger",
         "line": "step 6: t = 600 ms"
       }
     },
@@ -727,18 +744,19 @@
         "event": "log",
         "seq": 45,
         "t_ms": 450,
-        "source": "Logger",
-        "line": "step 6: t = 600 ms"
+        "source": "Engine",
+        "line": "step 7: t = 700 ms"
       }
     },
     {
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
+        "event": "log",
         "seq": 46,
         "t_ms": 460,
-        "sim_ms": 600
+        "source": "Dashboard",
+        "line": "step 7: t = 700 ms"
       }
     },
     {
@@ -748,7 +766,7 @@
         "event": "log",
         "seq": 47,
         "t_ms": 470,
-        "source": "Engine",
+        "source": "Logger",
         "line": "step 7: t = 700 ms"
       }
     },
@@ -759,8 +777,8 @@
         "event": "log",
         "seq": 48,
         "t_ms": 480,
-        "source": "Dashboard",
-        "line": "step 7: t = 700 ms"
+        "source": "Engine",
+        "line": "step 8: t = 800 ms"
       }
     },
     {
@@ -770,18 +788,19 @@
         "event": "log",
         "seq": 49,
         "t_ms": 490,
-        "source": "Logger",
-        "line": "step 7: t = 700 ms"
+        "source": "Dashboard",
+        "line": "step 8: t = 800 ms"
       }
     },
     {
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
+        "event": "log",
         "seq": 50,
         "t_ms": 500,
-        "sim_ms": 700
+        "source": "Logger",
+        "line": "step 8: t = 800 ms"
       }
     },
     {
@@ -792,7 +811,7 @@
         "seq": 51,
         "t_ms": 510,
         "source": "Engine",
-        "line": "step 8: t = 800 ms"
+        "line": "step 9: t = 900 ms"
       }
     },
     {
@@ -803,7 +822,7 @@
         "seq": 52,
         "t_ms": 520,
         "source": "Dashboard",
-        "line": "step 8: t = 800 ms"
+        "line": "step 9: t = 900 ms"
       }
     },
     {
@@ -814,17 +833,18 @@
         "seq": 53,
         "t_ms": 530,
         "source": "Logger",
-        "line": "step 8: t = 800 ms"
+        "line": "step 9: t = 900 ms"
       }
     },
     {
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
+        "event": "log",
         "seq": 54,
         "t_ms": 540,
-        "sim_ms": 800
+        "source": "Engine",
+        "line": "step 10: t = 1000 ms"
       }
     },
     {
@@ -834,8 +854,8 @@
         "event": "log",
         "seq": 55,
         "t_ms": 550,
-        "source": "Engine",
-        "line": "step 9: t = 900 ms"
+        "source": "Dashboard",
+        "line": "step 10: t = 1000 ms"
       }
     },
     {
@@ -845,19 +865,8 @@
         "event": "log",
         "seq": 56,
         "t_ms": 560,
-        "source": "Dashboard",
-        "line": "step 9: t = 900 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 57,
-        "t_ms": 570,
         "source": "Logger",
-        "line": "step 9: t = 900 ms"
+        "line": "step 10: t = 1000 ms"
       }
     },
     {
@@ -865,9 +874,9 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 58,
-        "t_ms": 580,
-        "sim_ms": 900
+        "seq": 57,
+        "t_ms": 570,
+        "sim_ms": 1000
       }
     },
     {
@@ -875,10 +884,20 @@
       "session": 1,
       "event": {
         "event": "log",
+        "seq": 58,
+        "t_ms": 580,
+        "source": "vehicle_sil_launch",
+        "line": "the simulation ended"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
         "seq": 59,
         "t_ms": 590,
-        "source": "Engine",
-        "line": "step 10: t = 1000 ms"
+        "phase": "stopping"
       }
     },
     {
@@ -888,39 +907,8 @@
         "event": "log",
         "seq": 60,
         "t_ms": 600,
-        "source": "Dashboard",
-        "line": "step 10: t = 1000 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 61,
-        "t_ms": 610,
-        "source": "Logger",
-        "line": "step 10: t = 1000 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 62,
-        "t_ms": 620,
-        "sim_ms": 1000
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "phase",
-        "seq": 63,
-        "t_ms": 630,
-        "phase": "stopping"
+        "source": "vehicle_sil_launch",
+        "line": "Engine exited with code 0"
       }
     },
     {
@@ -928,8 +916,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 64,
-        "t_ms": 640,
+        "seq": 61,
+        "t_ms": 610,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -940,9 +928,20 @@
       "type": "event",
       "session": 1,
       "event": {
+        "event": "log",
+        "seq": 62,
+        "t_ms": 620,
+        "source": "vehicle_sil_launch",
+        "line": "Dashboard exited with code 0"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
         "event": "participant",
-        "seq": 65,
-        "t_ms": 650,
+        "seq": 63,
+        "t_ms": 630,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
@@ -953,9 +952,20 @@
       "type": "event",
       "session": 1,
       "event": {
+        "event": "log",
+        "seq": 64,
+        "t_ms": 640,
+        "source": "vehicle_sil_launch",
+        "line": "Logger exited with code 0"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
         "event": "participant",
-        "seq": 66,
-        "t_ms": 660,
+        "seq": 65,
+        "t_ms": 650,
         "name": "Logger",
         "state": "ended",
         "exit_code": 0,
@@ -967,8 +977,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 67,
-        "t_ms": 670,
+        "seq": 66,
+        "t_ms": 660,
         "phase": "ended"
       }
     },
@@ -977,8 +987,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 68,
-        "t_ms": 680,
+        "seq": 67,
+        "t_ms": 670,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -1234,16 +1244,17 @@
           "pid": 10001,
           "running": false,
           "exit_code": 0,
-          "signal": null
+          "signal": null,
+          "silent_s": null
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 68,
-        "last_t_ms": 680,
+        "last_seq": 67,
+        "last_t_ms": 670,
         "time": {
           "event": "time",
-          "seq": 62,
-          "t_ms": 620,
+          "seq": 57,
+          "t_ms": 570,
           "sim_ms": 1000
         },
         "check": {
@@ -1448,7 +1459,13 @@
             "state": "ended",
             "pid": 10002,
             "command": [
-              "engine/vehicle_sil_engine_ecu"
+              "/path/to/root/engine/vehicle_sil_engine_ecu",
+              "--name",
+              "Engine",
+              "--registry-uri",
+              "silkit://127.0.0.1:8500",
+              "--start-timeout-ms",
+              "50000"
             ],
             "log": null,
             "exit_code": 0,
@@ -1459,7 +1476,13 @@
             "state": "ended",
             "pid": 10003,
             "command": [
-              "dashboard/vehicle_sil_dashboard_ecu"
+              "/path/to/root/dashboard/vehicle_sil_dashboard_ecu",
+              "--name",
+              "Dashboard",
+              "--registry-uri",
+              "silkit://127.0.0.1:8500",
+              "--start-timeout-ms",
+              "50000"
             ],
             "log": null,
             "exit_code": 0,
@@ -1470,8 +1493,8 @@
             "state": "ended",
             "pid": 10004,
             "command": [
-              "logger/can_logger",
-              "{registry_uri}"
+              "/path/to/root/logger/can_logger",
+              "silkit://127.0.0.1:8500"
             ],
             "log": null,
             "exit_code": 0,
@@ -1722,7 +1745,7 @@
         },
         "log": {
           "vehicle_sil_launch": {
-            "kept": 1,
+            "kept": 9,
             "dropped": 0
           },
           "Engine": {
@@ -1742,47 +1765,47 @@
           {
             "code": "bad-event",
             "message": "the launcher wrote a 'check' event whose check.participants is not a list of objects with a name: it is ignored (not shown); the launcher and this GUI may not match",
-            "detail": "{\"event\":\"check\",\"seq\":14,\"t_ms\":0,\"check\":{\"participants\":5}}"
+            "detail": "{\"event\":\"check\",\"seq\":18,\"t_ms\":0,\"check\":{\"participants\":5}}"
           },
           {
             "code": "bad-event",
             "message": "the launcher wrote a 'participant' event whose name or state is not a string: it is ignored (not shown); the launcher and this GUI may not match",
-            "detail": "{\"event\":\"participant\",\"seq\":15,\"t_ms\":0,\"name\":5}"
+            "detail": "{\"event\":\"participant\",\"seq\":19,\"t_ms\":0,\"name\":5}"
           },
           {
             "code": "bad-event",
             "message": "the launcher wrote a 'participant' event whose name or state is not a string: it is ignored (not shown); the launcher and this GUI may not match",
-            "detail": "{\"event\":\"participant\",\"seq\":16,\"t_ms\":0,\"name\":\"Engine\",\"state\":[\"x\"]}"
+            "detail": "{\"event\":\"participant\",\"seq\":20,\"t_ms\":0,\"name\":\"Engine\",\"state\":[\"x\"]}"
           },
           {
             "code": "bad-event",
             "message": "the launcher wrote a 'log' event whose source or line is not a string: it is ignored (not shown); the launcher and this GUI may not match",
-            "detail": "{\"event\":\"log\",\"seq\":17,\"t_ms\":0,\"source\":null}"
+            "detail": "{\"event\":\"log\",\"seq\":21,\"t_ms\":0,\"source\":null}"
           },
           {
             "code": "bad-event",
             "message": "the launcher wrote a 'time' event whose sim_ms is not an integer: it is ignored (not shown); the launcher and this GUI may not match",
-            "detail": "{\"event\":\"time\",\"seq\":18,\"t_ms\":0,\"sim_ms\":\"100\"}"
+            "detail": "{\"event\":\"time\",\"seq\":22,\"t_ms\":0,\"sim_ms\":\"100\"}"
           },
           {
             "code": "bad-event",
             "message": "the launcher wrote a 'phase' event whose phase is not a string: it is ignored (not shown); the launcher and this GUI may not match",
-            "detail": "{\"event\":\"phase\",\"seq\":19,\"t_ms\":0,\"phase\":{}}"
+            "detail": "{\"event\":\"phase\",\"seq\":23,\"t_ms\":0,\"phase\":{}}"
           },
           {
             "code": "bad-event",
             "message": "the launcher wrote a 'result' event whose result is not an object: it is ignored (not shown); the launcher and this GUI may not match",
-            "detail": "{\"event\":\"result\",\"seq\":20,\"t_ms\":0,\"result\":[]}"
+            "detail": "{\"event\":\"result\",\"seq\":24,\"t_ms\":0,\"result\":[]}"
           },
           {
             "code": "bad-event",
             "message": "the launcher wrote a 'command' event whose command is not a string, or accepted is not true or false: it is ignored (not shown); the launcher and this GUI may not match",
-            "detail": "{\"event\":\"command\",\"seq\":21,\"t_ms\":0,\"command\":\"stop\",\"accepted\":\"yes\"}"
+            "detail": "{\"event\":\"command\",\"seq\":25,\"t_ms\":0,\"command\":\"stop\",\"accepted\":\"yes\"}"
           },
           {
             "code": "bad-event",
             "message": "the launcher wrote a 'finding' event whose severity or message is not a string: it is ignored (not shown); the launcher and this GUI may not match",
-            "detail": "{\"event\":\"finding\",\"seq\":22,\"t_ms\":0,\"severity\":1}"
+            "detail": "{\"event\":\"finding\",\"seq\":26,\"t_ms\":0,\"severity\":1}"
           }
         ],
         "problems_omitted": 0

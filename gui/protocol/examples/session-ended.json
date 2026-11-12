@@ -19,16 +19,17 @@
         "pid": 10001,
         "running": false,
         "exit_code": 0,
-        "signal": null
+        "signal": null,
+        "silent_s": null
       },
       "stop": "none",
       "phase": "ended",
-      "last_seq": 59,
-      "last_t_ms": 590,
+      "last_seq": 58,
+      "last_t_ms": 580,
       "time": {
         "event": "time",
-        "seq": 53,
-        "t_ms": 530,
+        "seq": 48,
+        "t_ms": 480,
         "sim_ms": 1000
       },
       "check": {
@@ -233,7 +234,13 @@
           "state": "ended",
           "pid": 10002,
           "command": [
-            "engine/vehicle_sil_engine_ecu"
+            "/path/to/root/engine/vehicle_sil_engine_ecu",
+            "--name",
+            "Engine",
+            "--registry-uri",
+            "silkit://127.0.0.1:8500",
+            "--start-timeout-ms",
+            "50000"
           ],
           "log": null,
           "exit_code": 0,
@@ -244,7 +251,13 @@
           "state": "ended",
           "pid": 10003,
           "command": [
-            "dashboard/vehicle_sil_dashboard_ecu"
+            "/path/to/root/dashboard/vehicle_sil_dashboard_ecu",
+            "--name",
+            "Dashboard",
+            "--registry-uri",
+            "silkit://127.0.0.1:8500",
+            "--start-timeout-ms",
+            "50000"
           ],
           "log": null,
           "exit_code": 0,
@@ -255,8 +268,8 @@
           "state": "ended",
           "pid": 10004,
           "command": [
-            "logger/can_logger",
-            "{registry_uri}"
+            "/path/to/root/logger/can_logger",
+            "silkit://127.0.0.1:8500"
           ],
           "log": null,
           "exit_code": 0,
@@ -507,7 +520,7 @@
       },
       "log": {
         "vehicle_sil_launch": {
-          "kept": 1,
+          "kept": 9,
           "dropped": 0
         },
         "Engine": {

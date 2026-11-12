@@ -23,6 +23,7 @@ from aiohttp import web
 from . import __version__, launcher as launcher_module
 from .paths import ConfigRoot, PathRejected
 from .server import CHECK_TIMEOUT_S, END_BUDGET_S, PROTOCOL, RUNNER_SHUTDOWN_S, GuiServer, Options
+from .session import SILENT_AFTER_S
 from .static import find_web_dir
 
 EXIT_OK, EXIT_FAILED, EXIT_USAGE = 0, 1, 2
@@ -65,6 +66,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--check-timeout", type=float, default=CHECK_TIMEOUT_S, metavar="SECONDS",
                    help=f"how long a check (check --json, which runs each ECU's --describe) may take before it "
                         f"is stopped (default {CHECK_TIMEOUT_S:g})")
+    p.add_argument("--silent-after", type=float, default=SILENT_AFTER_S, metavar="SECONDS",
+                   help="tell the screen when a running launcher has written nothing for this long (it writes a "
+                        f"heartbeat every second; default {SILENT_AFTER_S:g})")
     p.add_argument("--version", action="version", version=f"vehicle-sil-gui {__version__}")
     return p.parse_args(argv)
 
@@ -98,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
         return usage_error("--stop-timeout must be 0 or more seconds")
     if not args.check_timeout > 0:
         return usage_error("--check-timeout must be more than 0 seconds")
+    if not args.silent_after >= 1:
+        return usage_error("--silent-after must be 1 second or more (the launcher writes a heartbeat every second)")
     config = Path(args.config) if args.config else None
     if config is not None and not config.is_file():
         return usage_error(f"{config}: no such file")
@@ -137,7 +143,7 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
     token = secrets.token_urlsafe(32)
     server = GuiServer(Options(root=root, launcher=launcher, port=port, token=token, initial_file=initial,
                                dev_origin=args.dev_origin, web_dir=find_web_dir(), stop_timeout_s=args.stop_timeout,
-                               check_timeout_s=args.check_timeout))
+                               check_timeout_s=args.check_timeout, silent_after_s=args.silent_after))
     runner = web.AppRunner(server.app(), access_log=None, handle_signals=False, shutdown_timeout=RUNNER_SHUTDOWN_S)
     await runner.setup()
     stop = asyncio.Event()

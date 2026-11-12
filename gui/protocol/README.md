@@ -2,7 +2,7 @@
 
 GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとりする形の正本です。`examples/` の JSON は、サーバーの試験（`gui/server/tests/test_protocol_examples.py`）が偽のランチャーとの実際のやりとりから作り、毎回照合します。試験が作らないファイルが `examples/` に残っていても試験は落ちます。形を変えたら `UPDATE_PROTOCOL_EXAMPLES=1 uv run pytest gui/server/tests` で書き直し、画面の型（`gui/web/src/app/core/api.ts`）と、その単体試験（同じファイルを読む）を合わせます。プロセス ID、時刻、インスタンス、この PC のパス、決まらない数は、決まった値に置き換えてあります（`t_ms` は `seq × 10`）。
 
-読む側は、知らない欄、知らない `type`、知らない事象（`event`）、知らない `code` を無視して通します。サーバーは欄を足すことがありますが、ここにある欄を消したり意味を変えたりするときは `vehicle_sil_gui`（今は 1）を上げます。ランチャーの事象（`event` の中身）は、ランチャーの `run --events` の形そのままです。
+読む側は、知らない欄、知らない `type`、知らない事象（`event`）、知らない `code` を無視して通します。サーバーは欄を足すことがありますが、ここにある欄を消したり意味を変えたりするときは `vehicle_sil_gui`（今は 1）を上げます。ランチャーの事象（`event` の中身）は、ランチャーの `run --events` の形そのままです（[docs/simulation-config.md](../../docs/simulation-config.md) の「機械から使う」）。`heartbeat` もそのまま通します（画面は読み飛ばします。ランチャーが動いているかはサーバーが見て、要約の `launcher.silent_s` で知らせます）。participant の知らない `state`（`failed` など、ランチャーが足すもの）も、そのまま通して要約に重ねます。
 
 ## 考え方
 
@@ -82,14 +82,14 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `type` | 内容 | 例 |
 |---|---|---|
 | `hello` | 上の 1 | `ws-*.json` の最初 |
-| `event` | `{session, event}`。ランチャーの事象そのまま（サーバーが形を確かめて通したもの） | `ws-pass.json` |
+| `event` | `{session, event}`。ランチャーの事象そのまま（サーバーが形を確かめて通したもの） | `ws-pass.json`、`ws-log-dropped.json` |
 | `synced` | `{session, last_seq}` | `ws-pass.json` |
-| `session` | `{session}`（要約）。実行を始めたとき、止めるよう頼んだとき、実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後の事象の後） | `ws-pass.json` |
+| `session` | `{session}`（要約）。実行を始めたとき、止めるよう頼んだとき、実行が終わったとき（`launcher.running` が `false`、`state` が `ended`。ランチャーの最後の事象の後）、ランチャーが黙ったとき（`launcher.silent_s` が変わったとき）と、また書き始めたとき | `ws-pass.json` |
 | `error` | `{session, code, message, detail}`。サーバーが気づいたこと（下の表）。要約の `problems` にも残る | `ws-bad-lines.json` |
-| `dropped` | `{session, reason, log, at_least, events}`（`ws-slow-client.json` の数は例）。この画面に送らなかったものの数。`log` は source ごとの log の行の数、`at_least` はその数が下限でしかない source（もっと落ちているかもしれない）、`events` はほかの事象の数。source の名前は要約の `log` と同じです（65 個目からの source は `*`）。`reason` が `not-kept` はサーバーが覚えていない（再送の前）、`slow-client` は画面の受け取りが遅く、送る分から落とした。画面は、その source のログのその位置に「ここで N 行が落ちた」を出す | `ws-dropped.json`、`ws-slow-client.json` |
+| `dropped` | `{session, reason, log, at_least, events}`（`ws-slow-client.json` の数は例）。この画面に送らなかったものの数。`log` は source ごとの log の行の数（送らなかった `log_dropped` の数も、その source に足す）、`at_least` はその数が下限でしかない source（もっと落ちているかもしれない）、`events` はほかの事象の数。source の名前は要約の `log` と同じです（65 個目からの source は `*`）。`reason` が `not-kept` はサーバーが覚えていない（再送の前）、`slow-client` は画面の受け取りが遅く、送る分から落とした。画面は、その source のログのその位置に「ここで N 行が落ちた」を出す | `ws-dropped.json`、`ws-slow-client.json` |
 | `resync` | `{reason, message}`。画面の受け取りが遅く、落とせない知らせまであふれた。すぐ後に `hello` から送り直す | `ws-resync.json` |
 
-受け取りが遅い画面には、まず log の行と知らない事象を落とし（`dropped`）、`time` は最後の 1 つにまとめます。それでも追いつかないときだけ `resync` です。
+受け取りが遅い画面には、まず log の行、`log_dropped`、知らない事象を落とし（`dropped`）、`time` は最後の 1 つにまとめ、`heartbeat` は数えずに落とします。それでも追いつかないときだけ `resync` です。
 
 ### `error` の `code`（サーバーの知らせ）
 
@@ -97,7 +97,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 |---|---|
 | `unauthorized` | 認証の誤り（`session` は `null`。この後 4401 で閉じる） |
 | `launcher-output` | ランチャーが事象でない行を書いた（JSON のオブジェクトでない、`event` がない、`seq` が 0 から 2^53 までの整数でない）。`1e999` のような有限でない数を含む行も、ここに入る |
-| `bad-event` | 知っている事象の欄の型が違う（`t_ms` が 0 から 2^53 までの整数でない、を含む）か、サーバーがその事象を中継できなかった。その事象は捨てる（中継も要約への反映もしない） |
+| `bad-event` | 知っている事象の欄の型が違う（`t_ms` が 0 から 2^53 までの整数でない、`log_dropped` の `count` と `sources` の値が数でない、を含む）か、サーバーがその事象を中継できなかった。その事象は捨てる（中継も要約への反映もしない） |
 | `line-too-long` | 1 行が上限（16 MiB）を超えた。捨てる |
 | `seq-gap`、`seq-order` | `seq` が飛んだ、戻った |
 | `no-hello` | 最初の事象が `hello` でない |
@@ -108,6 +108,7 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `output-left-open` | ランチャーは終わったが、ランチャーが起動したプロセスが出力を開いたままなので、残りを読まずに終えた |
 | `stop-not-delivered` | 停止の命令をランチャーの標準入力に書けなかった |
 | `stop-escalated` | サーバーが終わるとき、ランチャーが時間内に止まらず、シグナルで止めるよう頼んだ |
+| `launcher-silent` | ランチャーのプロセスが動いているのに、結果の前に `--silent-after`（既定 5 秒）より長く 1 行も書かない（ランチャーは心拍 `heartbeat` を 1 秒ごとに書く）。止まっているかもしれない。黙るたびに 1 回（`detail.seconds`）。続く間は要約の `launcher.silent_s` が増え、また書いたら `null` に戻る |
 
 ## 要約（`session`）
 
@@ -117,23 +118,23 @@ GUI サーバー（`gui/server`）と画面（`gui/web`）の間でやりとり�
 | `file`、`disable`、`speed`、`start_paused` | 始めたときの指定 |
 | `started_at`、`ended_at` | 時刻（UTC、ISO 8601）。`ended_at` は終わるまで `null` |
 | `state` | `running` か `ended`。`ended` は、ランチャーが終わり、その出力を読み終えた（または `output-left-open` で打ち切った）。その間（長くて 2 秒）は、`api/session` で `launcher.running: false` と `running` が見えることがある |
-| `launcher` | `{pid, running, exit_code, signal}`。`running` はランチャーのプロセスが動いているか。止められるかどうかはこれで決める。終わったら `exit_code`（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ） |
+| `launcher` | `{pid, running, exit_code, signal, silent_s}`。`running` はランチャーのプロセスが動いているか。止められるかどうかはこれで決める。終わったら `exit_code`（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ）。`silent_s` は、動いているランチャーが何も書かない秒数（`--silent-after` を超えたときだけ、その倍数ごとに更新。書けば `null`） |
 | `stop` | サーバーがランチャーに頼んだ停止: `none`、`requested`（順に止める）、`forced`（待たずに止める） |
 | `phase` | 最後の `phase` 事象の段階（まだなければ `null`） |
 | `last_seq`、`last_t_ms` | 最後に受け取った事象の `seq` と `t_ms` |
 | `time` | 最後の `time` 事象（そのまま。なければ `null`）。大きすぎた欄があれば `omitted_fields` |
 | `check` | `check` 事象の `check`（照合の結果を丸ごと。participant の `required`、`enabled`、`variables` を含む）。まだなければ `null` |
 | `registry` | 最後の `registry` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`）。大きすぎた欄があれば `omitted_fields` |
-| `participants` | participant ごとの今の状態。`participant` 事象の欄（`event`、`seq`、`t_ms` を除く）を名前ごとに重ねたもの（`name`、`state`、`pid`、`exit_code`、`signal` など）。初めて現れた順。`required` と `enabled` は `check` を見る。大きすぎて入れなかった欄があれば、その名前の配列 `omitted_fields`（後の事象でその欄が届けば消える） |
+| `participants` | participant ごとの今の状態。`participant` 事象の欄（`event`、`seq`、`t_ms` を除く）を名前ごとに重ねたもの（`name`、`state`、`pid`、`exit_code`、`signal` など。`failed` の `reason` は、後で `ended` が来ても残る）。初めて現れた順。`required` と `enabled` は `check` を見る。大きすぎて入れなかった欄があれば、その名前の配列 `omitted_fields`（後の事象でその欄が届けば消える） |
 | `participants_omitted` | 上限（256 人）を超えたので覚えていない participant の事象の数 |
 | `findings`、`findings_omitted` | `finding` 事象（`event`、`seq`、`t_ms` を除く）と、上限を超えて覚えていない数 |
 | `last_command` | 最後の `command` 事象から `event`、`seq`、`t_ms` を除いたもの（なければ `null`）。大きすぎた欄があれば `omitted_fields` |
 | `result` | `result` 事象の `result`（なければ `null`） |
-| `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、覚えずに落とした行の数 |
+| `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、落とした行の数（サーバーが覚えずに落とした行と、ランチャーが読む側の遅さで書けなかった行。後者は `log_dropped` の `sources`）。`log_dropped` の事象は、名前の挙がった source の log の、来た位置に覚え（つなぎ直した画面にも同じ位置に届く。1 つの事象は 1 回だけ送る）、画面はそこに「ここで N 行が落ちた」を出す |
 | `problems`、`problems_omitted` | サーバーの知らせ（`error` と同じ `{code, message, detail}`）を起きた順に、と、上限を超えて覚えていない数 |
 
 ランチャーが `result` を出さずに終わったときは、`launcher.running: false` と `exit_code`、`state: ended`、知らせの `no-result` になります。
 
 ## 上限
 
-サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB。4 KiB を超えても、大事な欄は必ず入れます（participant の `name`、`state`、`pid`、`exit_code`、`signal`、`phase` の段階の名前、`time` の `sim_ms`、`registry` の `uri`、`command` の `command` と `accepted`。これだけで 4 KiB を超えるときは入れません）。`problems` は、ランチャーが書いたもの（標準エラーを除く）が 100 個、サーバー自身の知らせ（`kept-limit`、`no-result`、`output-left-open`、`stop-not-delivered`、`stop-escalated`）が別に 50 個、標準エラーが別に最初の 20 行と最後の 30 行です。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。
+サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB。4 KiB を超えても、大事な欄は必ず入れます（participant の `name`、`state`、`pid`、`exit_code`、`signal`、`phase` の段階の名前、`time` の `sim_ms`、`registry` の `uri`、`command` の `command` と `accepted`。これだけで 4 KiB を超えるときは入れません）。`problems` は、ランチャーが書いたもの（標準エラーを除く）が 100 個、サーバー自身の知らせ（`kept-limit`、`no-result`、`output-left-open`、`stop-not-delivered`、`stop-escalated`、`launcher-silent`）が別に 50 個、標準エラーが別に最初の 20 行と最後の 30 行です。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。

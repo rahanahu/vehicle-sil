@@ -36,7 +36,10 @@ async def run_to_end(c: Client, body: dict) -> list[dict]:
     return got
 
 
-def test_a_run_that_passes(gui: Gui) -> None:
+SPEED = {"FAKE_LAUNCHER_FEATURES": "events,stdin-commands,check-variables,speed"}
+
+
+def test_a_run_that_passes(tmp_path: Path) -> None:
     async def main(c: Client) -> None:
         status, app = await c.get("api/app")
         assert app["launcher"]["usable"] and app["initial_file"] is None
@@ -54,7 +57,37 @@ def test_a_run_that_passes(gui: Gui) -> None:
         assert all(not alive(pid) for pid in started_pids(got))
         status, body = await c.get("api/session")
         assert body["session"] == end
-    run_async(main, gui)
+    with gui_server(tmp_path, env=SPEED) as gui:
+        run_async(main, gui)
+
+
+def test_a_launcher_that_writes_nothing_for_a_while_is_reported(tmp_path: Path) -> None:
+    env = {"FAKE_LAUNCHER_SCENARIO": "silent", "FAKE_LAUNCHER_SILENT_S": "4"}
+    with gui_server(tmp_path, env=env, args=("--silent-after", "1.5")) as gui:
+        async def main(c: Client) -> None:
+            got = await run_to_end(c, {"file": "simulation.yaml"})
+            summaries = [m["session"] for m in got if m["type"] == "session"]
+            silent = [s["launcher"]["silent_s"] for s in summaries]
+            assert any(s is not None and s >= 1.5 for s in silent), silent
+            assert silent[-1] is None, "it wrote again: no longer silent"
+            problems = [m for m in got if m["type"] == "error"]
+            assert [p["code"] for p in problems] == ["launcher-silent"], problems
+            assert got[-1]["session"]["result"]["result"] == "passed"
+        run_async(main, gui)
+
+
+def test_lines_the_launcher_could_not_write_are_counted(tmp_path: Path) -> None:
+    with gui_server(tmp_path, env={"FAKE_LAUNCHER_SCENARIO": "log-dropped"}) as gui:
+        async def main(c: Client) -> None:
+            got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"]})
+            assert len(events(got, "log_dropped")) == 1
+            log = got[-1]["session"]["log"]
+            assert log["Engine"]["dropped"] == 120 and log["vehicle_sil_launch"]["dropped"] == 5
+            sock = await c.ws()  # a screen that connects later gets the marker in its place
+            replay = await sock.until(is_synced)
+            assert [e["seq"] for e in events(replay, "log_dropped")] == [events(got, "log_dropped")[0]["seq"]]
+            await sock.close()
+        run_async(main, gui)
 
 
 def test_check_then_run_with_a_participant_left_out(gui: Gui) -> None:
@@ -152,7 +185,8 @@ def test_a_launcher_that_runs_on_after_its_result_can_be_stopped(gui: Gui) -> No
         got = await sock.until(is_ended)
         end = got[-1]["session"]
         assert end["launcher"]["running"] is False and end["launcher"]["exit_code"] == 0
-        assert end["result"]["result"] == "passed" and end["last_command"] == {"command": "stop", "accepted": True}
+        # the launcher writes nothing after its result, not even the command event of this stop
+        assert end["result"]["result"] == "passed" and end["last_command"] is None
     run_async(main, gui)
 
 

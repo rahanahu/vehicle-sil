@@ -35,7 +35,8 @@
           "pid": 10001,
           "running": true,
           "exit_code": null,
-          "signal": null
+          "signal": null,
+          "silent_s": null
         },
         "stop": "none",
         "phase": null,
@@ -325,38 +326,7 @@
           "notes": 1,
           "simulation": null,
           "interrupted_by": null,
-          "participants": [
-            {
-              "name": "Engine",
-              "required": true,
-              "enabled": true,
-              "ended": "not_started",
-              "exit_code": null,
-              "signal": null,
-              "left_processes": false,
-              "log": null
-            },
-            {
-              "name": "Dashboard",
-              "required": true,
-              "enabled": true,
-              "ended": "not_started",
-              "exit_code": null,
-              "signal": null,
-              "left_processes": false,
-              "log": null
-            },
-            {
-              "name": "Logger",
-              "required": false,
-              "enabled": true,
-              "ended": "not_started",
-              "exit_code": null,
-              "signal": null,
-              "left_processes": false,
-              "log": null
-            }
-          ],
+          "participants": [],
           "findings": [],
           "check": {
             "vehicle_sil_check": 1,
@@ -579,7 +549,8 @@
           "pid": 10001,
           "running": false,
           "exit_code": 1,
-          "signal": null
+          "signal": null,
+          "silent_s": null
         },
         "stop": "none",
         "phase": "ended",
@@ -806,38 +777,7 @@
           "notes": 1,
           "simulation": null,
           "interrupted_by": null,
-          "participants": [
-            {
-              "name": "Engine",
-              "required": true,
-              "enabled": true,
-              "ended": "not_started",
-              "exit_code": null,
-              "signal": null,
-              "left_processes": false,
-              "log": null
-            },
-            {
-              "name": "Dashboard",
-              "required": true,
-              "enabled": true,
-              "ended": "not_started",
-              "exit_code": null,
-              "signal": null,
-              "left_processes": false,
-              "log": null
-            },
-            {
-              "name": "Logger",
-              "required": false,
-              "enabled": true,
-              "ended": "not_started",
-              "exit_code": null,
-              "signal": null,
-              "left_processes": false,
-              "log": null
-            }
-          ],
+          "participants": [],
           "findings": [],
           "check": {
             "vehicle_sil_check": 1,
