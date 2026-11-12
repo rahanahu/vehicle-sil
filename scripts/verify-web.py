@@ -8,6 +8,10 @@ summary shows one line per step and, for a failed step, its first error lines an
 failed step. A stopped run (Ctrl-C, SIGTERM) stops the whole process group of the running step, so no dev
 server or GUI server is left behind.
 
+Before each heavy step (unit tests, build, e2e) it waits while a C++ build or test run (ninja, ctest) or the
+Windows VM (qemu-system-x86*) runs on this machine, because the browser tests are timing-sensitive and so are
+the C++ tests (scripts/busy_machine.py). It gives up after --wait-limit minutes and goes on with a warning.
+
 Exit codes: 0 every step passed, 1 a step failed, 2 usage error (missing tools, unsupported Node or npm).
 Requires Python 3.11+ (standard library only), Node and npm (gui/web/.nvmrc), and uv for the e2e steps.
 On Windows, run it with a Windows Python (python.org or MinGW, where shutil.which finds npm.cmd).
@@ -26,6 +30,8 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from busy_machine import DEFAULT_LIMIT_S, wait_until_quiet
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "gui" / "web"
@@ -58,6 +64,9 @@ SUMMARY_LINES = {
     "e2e": E2E_SUMMARY,
     "e2e-dev": E2E_SUMMARY,
 }
+
+# Steps that wait while timing-sensitive work runs on the machine.
+HEAVY = {"test", "build", "e2e", "e2e-dev"}
 
 # Warnings worth showing even when a step passes.
 NOTE_LINES = {"build": re.compile(r"budget", re.IGNORECASE)}
@@ -204,14 +213,21 @@ def main() -> int:
         "  scripts/verify-web.py                  # everything, from a clean npm ci\n"
         "  scripts/verify-web.py --skip-install   # keep node_modules\n"
         "  scripts/verify-web.py --skip-e2e       # no browser, no GUI server\n"
-        "  scripts/verify-web.py --tag web-ci     # logs as build/logs/web-ci-*.log",
+        "  scripts/verify-web.py --tag web-ci     # logs as build/logs/web-ci-*.log\n"
+        "  scripts/verify-web.py --no-wait        # do not wait for ninja, ctest or the VM",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--skip-install", action="store_true", help="do not run npm ci (use the node_modules there)")
     parser.add_argument("--skip-e2e", action="store_true", help="do not run the Playwright tests")
     parser.add_argument("--tag", default="web", help="prefix of the log names (default: web)")
     parser.add_argument("--json", action="store_true", help='print the summary as JSON ({"vehicle_sil_verify_web": 1, ...})')
+    parser.add_argument("--no-wait", action="store_true",
+                        help="do not wait while ninja, ctest or the Windows VM (qemu-system-x86*) runs")
+    parser.add_argument("--wait-limit", type=float, default=DEFAULT_LIMIT_S / 60, metavar="MIN",
+                        help="stop waiting for them after MIN minutes and go on with a warning (default: %(default)g)")
     args = parser.parse_args()
+    if args.wait_limit < 0:
+        die_usage("--wait-limit must be 0 or more minutes")
     if not re.fullmatch(r"[A-Za-z0-9._-]+", args.tag):
         die_usage(f"--tag {args.tag!r}: use letters, digits, '.', '_' and '-' only (it becomes part of file names)")
 
@@ -246,6 +262,8 @@ def main() -> int:
     done: list[Step] = []
     try:
         for step in steps:
+            if step.name in HEAVY and not args.no_wait:
+                wait_until_quiet("verify-web", args.wait_limit * 60)
             run_step(step, env, logs[step.name])
             done.append(step)
             if not args.json:

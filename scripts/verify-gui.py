@@ -13,6 +13,11 @@ The full output of each step goes to build/logs/<tag>-<step>.log (the web steps:
 The summary shows one line per step and, for a failed step, its first error lines and its log. Stops at the
 first failed step. A stopped run (Ctrl-C, SIGTERM) stops the whole process group of the running step.
 
+Before the server and web steps it waits while a C++ build or test run (ninja, ctest) or the Windows VM
+(qemu-system-x86*) runs on this machine, because these tests are timing-sensitive and so are the C++ tests
+(scripts/busy_machine.py; verify-web.py also waits before each of its heavy steps). It gives up after
+--wait-limit minutes and goes on with a warning.
+
 Exit codes: 0 every step passed, 1 a step failed, 2 usage error (uv missing; verify-web.py's own usage errors,
 such as an unsupported Node, are passed on). Requires Python 3.11+ (standard library only) and uv; the web step
 also needs Node and npm (gui/web/README.md).
@@ -31,6 +36,8 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from busy_machine import DEFAULT_LIMIT_S, wait_until_quiet
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT / "build" / "logs"
@@ -168,7 +175,8 @@ def main() -> int:
         "  scripts/verify-gui.py                    # everything\n"
         "  scripts/verify-gui.py --skip-web         # only the server (no Node needed)\n"
         "  scripts/verify-gui.py -k security        # only the server tests whose names match\n"
-        "  scripts/verify-gui.py --skip-install --skip-e2e   # passed on to verify-web.py",
+        "  scripts/verify-gui.py --skip-install --skip-e2e   # passed on to verify-web.py\n"
+        "  scripts/verify-gui.py --no-wait          # do not wait for ninja, ctest or the VM",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--skip-web", action="store_true", help="do not run scripts/verify-web.py")
@@ -178,7 +186,13 @@ def main() -> int:
     parser.add_argument("--tag", default="gui", help="prefix of the log names (default: gui)")
     parser.add_argument("--json", action="store_true",
                         help='print the summary as JSON ({"vehicle_sil_verify_gui": 1, "ok": ..., "steps": [...]})')
+    parser.add_argument("--no-wait", action="store_true",
+                        help="do not wait while ninja, ctest or the Windows VM (qemu-system-x86*) runs")
+    parser.add_argument("--wait-limit", type=float, default=DEFAULT_LIMIT_S / 60, metavar="MIN",
+                        help="stop waiting for them after MIN minutes and go on with a warning (default: %(default)g)")
     args = parser.parse_args()
+    if args.wait_limit < 0:
+        die_usage("--wait-limit must be 0 or more minutes")
     if not re.fullmatch(r"[A-Za-z0-9._-]+", args.tag):
         die_usage(f"--tag {args.tag!r}: use letters, digits, '.', '_' and '-' only (it becomes part of file names)")
     uv = shutil.which("uv")
@@ -195,6 +209,7 @@ def main() -> int:
     if not args.skip_web:
         web = [sys.executable, str(ROOT / "scripts" / "verify-web.py"), "--json", "--tag", f"{args.tag}-web"]
         web += ["--skip-install"] * args.skip_install + ["--skip-e2e"] * args.skip_e2e
+        web += ["--no-wait"] if args.no_wait else ["--wait-limit", f"{args.wait_limit:g}"]
         steps.append(Step("web", web))
 
     env = {**os.environ, "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1"}
@@ -207,6 +222,8 @@ def main() -> int:
     done: list[Step] = []
     try:
         for step in steps:
+            if step.name != "sync" and not args.no_wait:
+                wait_until_quiet("verify-gui", args.wait_limit * 60)
             run_step(step, env, logs[step.name])
             done.append(step)
             if not args.json:

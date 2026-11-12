@@ -88,9 +88,11 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 | `scripts/verify.py` | プリセットごとに構成、ビルド、テストを実行して要約する。失敗した段、落ちたテストと出力の先頭、ログの場所を表示する。JUnit 形式の結果も `build/logs/` に書く |
 | `scripts/check-commits.py` | コミットメッセージの形式と、コミットしてはいけないファイル（ローカルにだけ置くもの、`CLAUDE.local.md`、`build/`）を確かめる |
 | `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる。書き換えたファイルは、中断しても元に戻す |
-| `scripts/verify-web.py` | 画面（`gui/web`）の `npm ci`、書式、lint、単体試験、ビルド、e2e を順に回して要約する。ログは `build/logs/web-*.log`。`--skip-install`、`--skip-e2e`、`--tag` |
-| `scripts/verify-gui.py` | GUI 全体: GUI サーバー（`gui/server`）の試験（pytest。偽のランチャーで API、WebSocket、安全、止め方、`gui/protocol` の例の照合）の後に `scripts/verify-web.py` を回して要約する。ログは `build/logs/gui-*.log`。`--skip-web`、`-k`、`--skip-install`、`--skip-e2e`、`--tag` |
+| `scripts/verify-web.py` | 画面（`gui/web`）の `npm ci`、書式、lint、単体試験、ビルド、e2e を順に回して要約する。ログは `build/logs/web-*.log`。`--skip-install`、`--skip-e2e`、`--tag`、`--no-wait` |
+| `scripts/verify-gui.py` | GUI 全体: GUI サーバー（`gui/server`）の試験（pytest。偽のランチャーで API、WebSocket、安全、止め方、`gui/protocol` の例の照合）の後に `scripts/verify-web.py` を回して要約する。ログは `build/logs/gui-*.log`。`--skip-web`、`-k`、`--skip-install`、`--skip-e2e`、`--tag`、`--no-wait` |
 | `scripts/verify-python.py` | uv で、Python 3.11 と `.python-version` の版の環境を `uv.lock` から作り、C++ のビルドなしで回せる Python の確認（構文、生成器の試験、スクリプトの `--help`、Control API のスタブの生成と import）をする。続けて、`pyproject.toml` の依存の下限そのものを 3.11 に入れて同じ確認をする（`--skip-lowest` で省く）。uv がなければ終了コード 2 |
+
+`verify-web.py` と `verify-gui.py` は、時間に敏感な試験を回す前に、この PC で `ninja`、`ctest`、Windows の VM（`qemu-system-x86*`）が動いている間は待ちます（`scripts/busy_machine.py`。何を待つかを 1 行で表示し、`--wait-limit` 分（既定 20 分）で諦めて警告を出して進む）。どちらの試験も、同時に回すと時間の条件で落ちるためです。GUI の試験は、pytest、ng、Playwright を直接呼ばずにこの 2 つから回します。
 
 ```sh
 scripts/verify.py --linux                            # コミット前: Linux の 5 つのプリセット
