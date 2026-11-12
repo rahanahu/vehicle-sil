@@ -139,6 +139,32 @@ TEST_CASE(process_passes_each_line_of_both_streams_without_its_line_end)
     check_lines(of(lines.take(), "err"), {"err: e1", "err: ", "err: e3"});
 }
 
+TEST_CASE(process_reads_the_null_device_or_what_is_written_to_its_input)
+{
+    Lines none;
+    Process silent(kHelper, {"--read-stdin"}, none.options());
+    CHECK(!silent.write_input("x")); // no input pipe
+    CHECK(silent.wait_for(60s).has_value());
+    CHECK(silent.finish_output(60s));
+    check_lines(of(none.take(), "out"), {"out: stdin 0"});
+
+    Lines lines;
+    ProcessOptions options = lines.options();
+    options.input = true;
+    Process p(kHelper, {"--read-stdin"}, std::move(options));
+    CHECK(p.write_input("{\"command\":\"stop\"}\n"));
+    CHECK(p.write_input("x"));
+    // It reads to the end: it has not ended before the input closes.
+    CHECK(!p.wait_for(200ms).has_value());
+    p.close_input();
+    p.close_input(); // idempotent
+    CHECK(!p.write_input("late"));
+    const auto status = p.wait_for(60s);
+    CHECK(status.has_value() && status->code == 0);
+    CHECK(p.finish_output(60s));
+    check_lines(of(lines.take(), "out"), {"out: stdin 20"});
+}
+
 TEST_CASE(process_passes_a_line_longer_than_the_limit_in_pieces)
 {
     Lines lines;

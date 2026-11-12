@@ -22,6 +22,8 @@
 
 namespace vehicle_sil::launch {
 
+class EventStream;
+
 /// The version of the JSON that format_run_json() writes (its "vehicle_sil_run" key).
 inline constexpr int kRunFormat = 1;
 
@@ -168,8 +170,13 @@ struct RunOptions
     std::filesystem::path log_dir{};
     /// Writes one line (without its end) for the person watching: the participants' output as
     /// "[<name>] <line>", the launcher's own as "[vehicle_sil_launch] <text>". Called from several
-    /// threads, one call at a time.
+    /// threads, one call at a time. Not called when `events` is set.
     std::function<void(std::string_view line)> write_line{};
+    /// run --events: what happens, as events (events.hpp) instead of write_line(): the phases, the
+    /// check, the participants, the lines, the run's findings, the virtual time. run_file() writes
+    /// every event but hello and the result (the caller writes them). No call waits for the
+    /// reader of the events. May be null.
+    EventStream* events = nullptr;
     /// How often the launcher has been interrupted (by the caller's signal handler); 1 stops the
     /// simulation in order, 2 or more skip the waits for the participants to end. May be null.
     const std::atomic<int>* interrupts = nullptr;
@@ -193,6 +200,12 @@ namespace detail {
 /// wait for the start, so that the launcher, not the ECU, decides that the start failed and names
 /// who did not join; the ECU's limit only ends it if the launcher is gone.
 [[nodiscard]] std::int64_t ecu_start_timeout_ms(const SimulationConfig& config);
+
+/// The findings of assess_run(`outcome`) that are settled while the participants are still being
+/// ended: whatever happens to them from here on, assess_run() of the final outcome has each of
+/// these unchanged. (Left out: a participant that failed while its process still runs, whose
+/// finding says how the process ended.) What run --events writes before the participants end.
+[[nodiscard]] std::vector<Finding> settled_findings(const RunOutcome& outcome);
 
 /// What the launcher learnt when it asked a running participant to stop.
 enum class StopRequest

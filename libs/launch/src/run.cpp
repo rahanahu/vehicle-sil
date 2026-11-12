@@ -3,6 +3,8 @@
 
 #include "check_format.hpp"
 
+#include "vehicle_sil/launch/events.hpp"
+
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/core/simulation_watch.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
@@ -28,6 +30,7 @@ namespace vehicle_sil::launch {
 
 namespace {
 
+constexpr std::string_view kLauncherName = "vehicle_sil_launch";
 constexpr std::string_view kLauncherTag = "[vehicle_sil_launch] ";
 
 std::string prefix_of(const ParticipantRun& p) { return "participant '" + p.name + "': "; }
@@ -295,6 +298,27 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     return out;
 }
 
+std::vector<Finding> detail::settled_findings(const RunOutcome& outcome)
+{
+    std::vector<Finding> out;
+    for (Finding& f : assess_run(outcome))
+    {
+        // What a participant that failed in the simulation did is said with how its process ended,
+        // once it has: until then the finding would still change.
+        if (f.code == "participant-failed")
+        {
+            const auto p = std::find_if(outcome.participants.begin(), outcome.participants.end(),
+                                        [&f](const ParticipantRun& run) { return run.name == f.participant; });
+            if (p == outcome.participants.end() || !(p->exit && ended_by_itself(*p)))
+            {
+                continue;
+            }
+        }
+        out.push_back(std::move(f));
+    }
+    return out;
+}
+
 std::size_t RunReport::errors() const { return check.errors() + count(findings, Severity::Error); }
 std::size_t RunReport::warnings() const { return check.warnings() + count(findings, Severity::Warning); }
 std::size_t RunReport::notes() const { return check.notes() + count(findings, Severity::Note); }
@@ -411,7 +435,15 @@ std::string format_run_text(const RunReport& report)
 std::string format_run_json(const RunReport& report)
 {
     vehicle_sil::detail::JsonWriter w;
-    w.begin_object();
+    detail::write_run_json(w, {}, report);
+    std::string out = w.take();
+    out += '\n';
+    return out;
+}
+
+void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const RunReport& report)
+{
+    w.begin_object(key);
     w.integer("vehicle_sil_run", kRunFormat);
     w.string("vehicle_sil", version());
     if (report.check.file.empty())
@@ -485,9 +517,6 @@ std::string format_run_json(const RunReport& report)
     detail::write_findings_json(w, report.check.file, report.findings);
     detail::write_check_json(w, "check", report.check);
     w.end_object();
-    std::string out = w.take();
-    out += '\n';
-    return out;
 }
 
 std::string format_internal_error_json(bool run, const std::string& message)
@@ -650,6 +679,9 @@ std::string command_text(const std::filesystem::path& executable, const std::vec
     return out;
 }
 
+/// run --events: the virtual time is written at most this often while it moves.
+constexpr std::chrono::milliseconds kTimeInterval{100};
+
 class Runner
 {
 public:
@@ -675,6 +707,7 @@ public:
         }
         children_.resize(config.participants.size());
         logs_.resize(config.participants.size());
+        joined_.resize(config.participants.size(), false);
     }
 
     RunOutcome run()
@@ -684,6 +717,7 @@ public:
             outcome_.interrupted_by = interrupt_name();
             return outcome_;
         }
+        event([](EventStream& e) { e.phase(Phase::Starting); });
         if (!open_logs())
         {
             return outcome_;
@@ -706,6 +740,7 @@ public:
                                                                  "registry_uri, or leave it out for a free port)"
                                                                : ""));
             }
+            event([&uri](EventStream& e) { e.registry(uri); });
             say("registry at " + uri);
             SimulationControllerOptions c;
             c.participant_name = std::string(kControllerName);
@@ -730,15 +765,42 @@ public:
         }
 
         bool ran = false;
-        if (start_children(uri) && wait_for_start(*controller))
+        if (start_children(uri))
         {
-            ran = true;
-            watch(*controller);
+            event([](EventStream& e) { e.phase(Phase::Waiting); });
+            if (wait_for_start(*controller))
+            {
+                ran = true;
+                watch(*controller);
+            }
         }
+        // What is known for good when the simulation is over (why it ended), before the
+        // participants end.
+        publish_findings(false);
+        event([](EventStream& e) { e.phase(Phase::Stopping); });
         end_children(ran);
         controller.reset();
         registry.reset();
         return outcome_;
+    }
+
+    /// run --events: the run's findings that have not been written yet. Before the participants
+    /// have ended (`final` false) only those that their end cannot change (settled_findings()):
+    /// what is written as an event is in the result as it was written.
+    void publish_findings(bool final)
+    {
+        if (options_.events == nullptr)
+        {
+            return;
+        }
+        for (const Finding& f : final ? assess_run(outcome_) : detail::settled_findings(outcome_))
+        {
+            if (std::find(published_.begin(), published_.end(), f) == published_.end())
+            {
+                options_.events->finding(check_.file, f);
+                published_.push_back(f);
+            }
+        }
     }
 
 private:
@@ -766,7 +828,24 @@ private:
     void say(const std::string& text)
     {
         const std::lock_guard lock(output_);
-        write(std::string(kLauncherTag) + text);
+        if (options_.events != nullptr)
+        {
+            options_.events->log(std::string(kLauncherName), text);
+        }
+        else
+        {
+            write(std::string(kLauncherTag) + text);
+        }
+    }
+
+    /// Writes an event (run --events) with what `emit` writes.
+    template <class Emit>
+    void event(Emit emit)
+    {
+        if (options_.events != nullptr)
+        {
+            emit(*options_.events);
+        }
     }
 
     bool open_logs()
@@ -811,7 +890,14 @@ private:
     void on_line(std::size_t index, std::string_view line)
     {
         const std::lock_guard lock(output_);
-        write("[" + config_.participants[index].name + "] " + printable(line));
+        if (options_.events != nullptr)
+        {
+            options_.events->log(config_.participants[index].name, printable(line));
+        }
+        else
+        {
+            write("[" + config_.participants[index].name + "] " + printable(line));
+        }
         if (logs_[index])
         {
             *logs_[index] << line << '\n' << std::flush;
@@ -850,11 +936,19 @@ private:
             options.on_line = [this, i](process::Stream, std::string_view line) { on_line(i, line); };
             try
             {
+                // Its lines wait (on_line() takes output_) until its "started" event is out.
+                const std::lock_guard lock(output_);
                 children_[i] = std::make_unique<process::Process>(executable, arguments, std::move(options));
+                event([&](EventStream& e) {
+                    std::vector<std::string> command{process::shown_path(executable)};
+                    command.insert(command.end(), arguments.begin(), arguments.end());
+                    e.participant_started(p.name, children_[i]->id(), command, run.log);
+                });
             }
             catch (const std::exception& e)
             {
                 run.start_error = one_line(e.what());
+                event([&](EventStream& stream) { stream.participant_not_started(p.name, run.start_error); });
                 say(p.name + " could not be started: " + run.start_error);
                 if (p.required)
                 {
@@ -882,6 +976,7 @@ private:
                 run.exit = status;
                 run.ending = before_start ? Ending::ExitedBeforeStart : Ending::Exited;
                 say(run.name + " " + exit_text(*status));
+                event([&](EventStream& e) { e.participant_ended(run.name, *status); });
                 if (run.required && ended < 0)
                 {
                     ended = static_cast<int>(i);
@@ -908,6 +1003,7 @@ private:
             // did not come is named even if a process ends in the same round.
             const std::vector<std::string> missing = controller.missing_participants();
             const bool late = !missing.empty() && std::chrono::steady_clock::now() >= deadline;
+            note_joined(controller);
             const int ended = look_at_children(true);
             if (ended >= 0 && !late)
             {
@@ -947,8 +1043,58 @@ private:
             say("the simulation did not start: " + outcome_.start_error);
             return false;
         }
+        event([](EventStream& e) { e.phase(Phase::Running); });
         say("simulation running");
+        // Every participant starts at virtual time 0.
+        event([this](EventStream& e) {
+            e.time(0);
+            last_time_ms_ = 0;
+            last_time_wall_ = std::chrono::steady_clock::now();
+        });
         return true;
+    }
+
+    /// run --events: "joined" for each started participant whose lifecycle the controller has seen
+    /// since the last look (also an optional one; not after its process has ended).
+    void note_joined(SimulationController& controller)
+    {
+        if (options_.events == nullptr)
+        {
+            return;
+        }
+        for (std::size_t i = 0; i < children_.size(); ++i)
+        {
+            ParticipantRun& run = outcome_.participants[i];
+            if (!children_[i] || joined_[i] || run.exit || run.ending == Ending::Killed)
+            {
+                continue;
+            }
+            if (controller.runtime().peer_status(run.name).state)
+            {
+                joined_[i] = true;
+                options_.events->participant(run.name, ParticipantState::Joined);
+            }
+        }
+    }
+
+    /// run --events: the controller's virtual time if it has moved, at most every kTimeInterval
+    /// (`last`: whenever it has moved, at the end of the simulation).
+    void note_time(SimulationController& controller, bool last)
+    {
+        if (options_.events == nullptr)
+        {
+            return;
+        }
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(controller.runtime().now().time_since_epoch()).count();
+        const auto now = std::chrono::steady_clock::now();
+        const auto since = now - last_time_wall_;
+        if (ms == last_time_ms_ || (!last && since < kTimeInterval))
+        {
+            return;
+        }
+        options_.events->time(ms);
+        last_time_ms_ = ms;
+        last_time_wall_ = now;
     }
 
     void watch(SimulationController& controller)
@@ -962,6 +1108,15 @@ private:
             // Once the simulation stops, participants leave on purpose (a coordinated participant
             // ends only after the controller has stopped): their exit codes are judged after it.
             const bool running = controller.runtime().state() == orch::ParticipantState::Running;
+            // The events of what changed (here: the one look per poll the watch gives).
+            note_joined(controller);
+            note_time(controller, false);
+            if (!running)
+            {
+                // Stopping: the ends of the processes are looked at after the simulation's end
+                // (end_children()), so that they come after it in the output.
+                return false;
+            }
             std::vector<bool> known;
             for (const auto& run : outcome_.participants)
             {
@@ -971,7 +1126,7 @@ private:
             for (std::size_t i = 0; i < known.size(); ++i)
             {
                 const ParticipantRun& run = outcome_.participants[i];
-                if (running && !known[i] && run.required && failed_exit(run))
+                if (!known[i] && run.required && failed_exit(run))
                 {
                     outcome_.failed_participant = run.name;
                     return true;
@@ -997,6 +1152,7 @@ private:
             }
         };
         const WatchResult watched = watch_simulation(controller, watch);
+        note_time(controller, true);
         // An interrupt from here on comes while the launcher waits for the participants to end.
         interrupts_at_end_ = interrupts();
         switch (watched.end)
@@ -1113,15 +1269,18 @@ private:
             {
             case detail::StopRequest::Sent:
                 say("asking " + run.name + " to stop (" + std::string(stop_request_name()) + ")");
+                event([&run](EventStream& e) { e.participant(run.name, ParticipantState::StopRequested); });
                 asked.push_back(i);
                 break;
             case detail::StopRequest::HadEnded:
                 say(run.name + " " + exit_text(*run.exit));
+                event([&run](EventStream& e) { e.participant_ended(run.name, *run.exit); });
                 break;
             case detail::StopRequest::CannotSend:
                 say("cannot ask " + run.name + " to stop: ending it");
                 children_[i]->kill_tree();
                 run.ending = Ending::Killed;
+                event([&run](EventStream& e) { e.participant(run.name, ParticipantState::Killed); });
                 break;
             }
         }
@@ -1142,12 +1301,14 @@ private:
             {
                 run.exit = status;
                 run.ending = Ending::Stopped;
+                event([&run](EventStream& e) { e.participant_ended(run.name, *run.exit); });
             }
             else
             {
                 say("ending " + run.name + " (it did not stop)");
                 children_[i]->kill_tree();
                 run.ending = Ending::Killed;
+                event([&run](EventStream& e) { e.participant(run.name, ParticipantState::Killed); });
             }
         }
         for (std::size_t i = 0; i < children_.size(); ++i)
@@ -1180,6 +1341,12 @@ private:
     RunOutcome outcome_;
     int interrupts_at_end_ = 0; ///< interrupts() when the simulation had ended
     std::vector<std::unique_ptr<std::ofstream>> logs_;
+    // run --events (main thread only): who has joined, the last virtual time written, the
+    // findings written.
+    std::vector<bool> joined_;
+    std::int64_t last_time_ms_ = -1;
+    std::chrono::steady_clock::time_point last_time_wall_{};
+    std::vector<Finding> published_;
     std::mutex output_;
     // Last, so that it goes first: a Process ends its reader thread, which uses output_ and logs_,
     // also when run() leaves with an exception.
@@ -1190,17 +1357,38 @@ private:
 
 RunReport run_file(const std::filesystem::path& path, const std::string& shown_as, const RunOptions& options)
 {
+    const auto event = [&options](auto emit) {
+        if (options.events != nullptr)
+        {
+            emit(*options.events);
+        }
+    };
     RunReport report;
     report.strict = options.check.strict;
+    event([](EventStream& e) { e.phase(Phase::Checking); });
     report.check = check_file(path, shown_as, options.check);
+    event([&report](EventStream& e) { e.check(report.check); });
     if (!report.check.config || !report.check.passed())
     {
+        event([](EventStream& e) { e.phase(Phase::Ended); });
         return report;
     }
+    // The participants that will not start, before anything starts, in the file's order.
+    event([&report](EventStream& e) {
+        for (const auto& p : report.check.config->participants)
+        {
+            if (!p.enabled)
+            {
+                e.participant(p.name, ParticipantState::Disabled);
+            }
+        }
+    });
     const std::filesystem::path base = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
     Runner runner(*report.check.config, report.check, base, options);
     report.run = runner.run();
     report.findings = assess_run(*report.run);
+    runner.publish_findings(true);
+    event([](EventStream& e) { e.phase(Phase::Ended); });
     return report;
 }
 

@@ -215,6 +215,22 @@ void docs(const Options& o)
     expect_text(without_versions(shown_as(json.standard_output, alone, "engine-alone.yaml")),
                 without_versions(block_after(o.docs, "<!-- vehicle_sil_launch check engine-alone.yaml --json -->")),
                 "check engine-alone.yaml --json");
+
+    // The version and what this launcher can do; it reads no file.
+    const Captured version = launch(o, {"version", "--json"});
+    expect_code(version, 0, "version --json");
+    expect_text(without_versions(version.standard_output),
+                without_versions(block_after(o.docs, "<!-- vehicle_sil_launch version --json -->")), "version --json");
+    for (const std::vector<std::string>& args : {std::vector<std::string>{"version"}, {"--version"}, {"check", "--version"}})
+    {
+        const Captured text = launch(o, args);
+        expect_code(text, 0, args.front() + " (text)");
+        require(text.standard_output.rfind("vehicle_sil_launch ", 0) == 0 && text.standard_output.find('\n') ==
+                                                                                   text.standard_output.size() - 1,
+                "the version is one line:\n" + text.standard_output);
+    }
+    const Captured wrong = launch(o, {"version", "--strict"});
+    expect_code(wrong, 4, "version --strict");
 }
 
 /// What vehicle_sil_launch wrote, with the helper's path as "<helper>" and the work directory as
@@ -424,8 +440,8 @@ void usage(const Options& o)
         require(err.rfind("error: " + error + "\nusage: vehicle_sil_launch check [--json]", 0) == 0,
                 "for the error '" + error + "' vehicle_sil_launch wrote:\n" + err);
     };
-    expect_usage({}, "no command: give check <file> or run <file>");
-    expect_usage({"start", "x.yaml"}, "unknown command 'start': the commands are check and run");
+    expect_usage({}, "no command: give check <file>, run <file> or version");
+    expect_usage({"start", "x.yaml"}, "unknown command 'start': the commands are check, run and version");
     expect_usage({"check"}, "check needs the configuration file: vehicle_sil_launch check <file>");
     expect_usage({"check", "a.yaml", "b.yaml"}, "check takes one file, not 2");
     expect_usage({"check", "a.yaml", "--bogus"}, "unknown option --bogus");
@@ -433,6 +449,8 @@ void usage(const Options& o)
     expect_usage({"check", "a.yaml", "--describe-timeout-ms"}, "missing value for --describe-timeout-ms");
     expect_usage({"check", "a.yaml", "--describe-timeout-ms", "0"}, "--describe-timeout-ms must be at least 1");
     expect_usage({"check", "a.yaml", "--describe-timeout-ms", "soon"}, "invalid value for --describe-timeout-ms: soon");
+    expect_usage({"check", "a.yaml", "--events"}, "--events is for run: check starts no participant");
+    expect_usage({"check", "a.yaml", "--stdin-commands"}, "--stdin-commands is for run: check starts no participant");
     for (const std::vector<std::string>& args : {std::vector<std::string>{"--help"}, {"check", "x.yaml", "-h"}})
     {
         const Captured help = launch(o, args);
@@ -482,7 +500,7 @@ void enabled(const Options& o)
     const Captured json = launch(o, {"check", "--json", c});
     expect_code(json, 0, "check --json ghost.yaml");
     require(contains(json.standard_output, "      \"required\": true,\n      \"enabled\": false,\n      \"step_ms\": null,\n"
-                                           "      \"status\": \"disabled\",\n      \"reported\": null\n") &&
+                                           "      \"status\": \"disabled\",\n      \"reported\": null,\n      \"variables\": null\n") &&
                 contains(json.standard_output, "      \"code\": \"participant-disabled\",\n"),
             "check --json ghost.yaml wrote:\n" + json.standard_output);
     // Taken in again (--enable), its missing executable is an error; Logger left out instead,

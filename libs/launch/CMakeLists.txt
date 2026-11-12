@@ -11,6 +11,7 @@ endif()
 add_library(vehicle_sil_launch_lib STATIC
   src/config.cpp
   src/check.cpp
+  src/events.cpp
   src/run.cpp)
 add_library(vehicle_sil::launch ALIAS vehicle_sil_launch_lib)
 target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

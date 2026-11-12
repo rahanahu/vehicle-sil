@@ -21,12 +21,14 @@ namespace vehicle_sil::launch {
 /// The version of the JSON that format_json() writes (its "vehicle_sil_check" key).
 inline constexpr int kCheckFormat = 1;
 
-/// What an executable reported with --describe (docs/ecu-executable.md). The variables are not
-/// read (`description.variables` stays empty).
+/// What an executable reported with --describe (docs/ecu-executable.md).
 struct ReportedEcu
 {
     std::string vehicle_sil_version; ///< "vehicle_sil": the vehicle-sil it was built with
     EcuDescription description;
+    /// The description had the key "variables" (`description.variables`, maybe empty); false: it
+    /// did not say (the check's JSON writes null).
+    bool variables_reported = false;
 
     friend bool operator==(const ReportedEcu&, const ReportedEcu&) = default;
 };

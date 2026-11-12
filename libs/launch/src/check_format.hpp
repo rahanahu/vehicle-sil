@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 //
-// The pieces of the check's output that the run's output reuses. Internal.
+// The pieces of the check's and the run's output that other outputs reuse (the run's, the
+// events). Internal.
 #pragma once
 
 #include "vehicle_sil/ecu/detail/json_writer.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/run.hpp"
 
 #include <cstddef>
 #include <string>
@@ -27,5 +29,9 @@ namespace vehicle_sil::launch::detail {
 void write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const CheckReport& report);
 /// The array "findings".
 void write_findings_json(vehicle_sil::detail::JsonWriter& w, const std::string& file, const std::vector<Finding>& findings);
+/// The members of one finding of "findings" (severity, code, file, ...), into the object `w` is in.
+void write_finding_members(vehicle_sil::detail::JsonWriter& w, const std::string& file, const Finding& finding);
+/// format_run_json()'s object, as the member `key` of the object `w` is in ("" at the top).
+void write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const RunReport& report);
 
 } // namespace vehicle_sil::launch::detail

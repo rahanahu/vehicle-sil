@@ -101,18 +101,35 @@ Process::Process(const std::filesystem::path& executable, const std::vector<std:
     Handle errWrite;
     detail::make_pipe(outRead, outWrite);
     detail::make_pipe(errRead, errWrite);
-    Handle nul(detail::open_null_for_child());
+    Handle in;      // the child's end: the null device or the read end of the input pipe
+    Handle inWrite; // ours
+    if (options_.input)
+    {
+        Handle pipeRead;
+        Handle pipeWrite;
+        detail::make_pipe(pipeRead, pipeWrite);
+        // The other way round than make_pipe(): the child inherits the read end.
+        SetHandleInformation(pipeRead.h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+        SetHandleInformation(pipeWrite.h, HANDLE_FLAG_INHERIT, 0);
+        in.h = pipeRead.release();
+        inWrite.h = pipeWrite.release();
+    }
+    else
+    {
+        in.h = detail::open_null_for_child();
+    }
     Handle job(detail::make_kill_on_close_job());
     detail::StartFlags flags;
     flags.working_directory = options_.working_directory;
     flags.new_group = true;
     flags.only_std_handles = true;
-    Handle process(detail::start(executable, arguments, nul.h, outWrite.h, errWrite.h, job.h, flags));
+    Handle process(detail::start(executable, arguments, in.h, outWrite.h, errWrite.h, job.h, flags));
     pid_ = GetProcessId(process.h);
     process_ = process.release();
     job_ = job.release();
     out_ = outRead.release();
     err_ = errRead.release();
+    in_ = inWrite.release();
     try
     {
         reader_ = std::thread([this] { read_output(); });
@@ -121,9 +138,12 @@ Process::Process(const std::filesystem::path& executable, const std::vector<std:
     {
         // The destructor does not run: end the process and close what it would have.
         kill_tree();
-        for (void* handle : {process_, job_, out_, err_})
+        for (void* handle : {process_, job_, out_, err_, in_})
         {
-            CloseHandle(handle);
+            if (handle != nullptr)
+            {
+                CloseHandle(handle);
+            }
         }
         throw;
     }
@@ -133,12 +153,40 @@ Process::~Process()
 {
     kill_tree();
     finish_output(std::chrono::milliseconds(0));
+    close_input();
     for (void* handle : {process_, job_})
     {
         if (handle != nullptr)
         {
             CloseHandle(handle);
         }
+    }
+}
+
+bool Process::write_input(std::string_view bytes)
+{
+    if (in_ == nullptr)
+    {
+        return false;
+    }
+    while (!bytes.empty())
+    {
+        DWORD written = 0;
+        if (!WriteFile(in_, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr))
+        {
+            return false;
+        }
+        bytes.remove_prefix(written);
+    }
+    return true;
+}
+
+void Process::close_input() noexcept
+{
+    if (in_ != nullptr)
+    {
+        CloseHandle(in_);
+        in_ = nullptr;
     }
 }
 
@@ -301,7 +349,7 @@ Process::Process(const std::filesystem::path& executable, const std::vector<std:
     int outWrite = -1;
     int errWrite = -1;
     const auto close_all = [&] {
-        for (int* fd : {&out_, &err_, &outWrite, &errWrite, &wake_read_, &wake_write_})
+        for (int* fd : {&out_, &err_, &outWrite, &errWrite, &wake_read_, &wake_write_, &in_})
         {
             if (*fd >= 0)
             {
@@ -315,7 +363,15 @@ Process::Process(const std::filesystem::path& executable, const std::vector<std:
         detail::make_pipe(out_, outWrite);
         detail::make_pipe(err_, errWrite);
         detail::make_pipe(wake_read_, wake_write_);
-        const int null = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+        int null = -1; // the child's standard input: the null device or the read end of the input pipe
+        if (options_.input)
+        {
+            detail::make_pipe(null, in_);
+        }
+        else
+        {
+            null = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+        }
         if (null < 0)
         {
             throw StartError(std::string("cannot open /dev/null: ") + std::strerror(errno), StartError::Cause::System);
@@ -366,12 +422,44 @@ Process::~Process()
 {
     kill_tree();
     finish_output(std::chrono::milliseconds(0));
+    close_input();
     for (int fd : {wake_read_, wake_write_})
     {
         if (fd >= 0)
         {
             ::close(fd);
         }
+    }
+}
+
+bool Process::write_input(std::string_view bytes)
+{
+    if (in_ < 0)
+    {
+        return false;
+    }
+    while (!bytes.empty())
+    {
+        const ssize_t written = ::write(in_, bytes.data(), bytes.size());
+        if (written < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return false;
+        }
+        bytes.remove_prefix(static_cast<std::size_t>(written));
+    }
+    return true;
+}
+
+void Process::close_input() noexcept
+{
+    if (in_ >= 0)
+    {
+        ::close(in_);
+        in_ = -1;
     }
 }
 

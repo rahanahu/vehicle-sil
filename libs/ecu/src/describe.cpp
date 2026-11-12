@@ -25,7 +25,11 @@ namespace {
                            " is not one of its enumerators");
 }
 
-const char* type_name(control::ValueType type)
+} // namespace
+
+namespace detail {
+
+const char* value_type_name(control::ValueType type)
 {
     switch (type)
     {
@@ -55,9 +59,33 @@ const char* causality_name(control::Causality causality)
     bad_value("control::Causality", static_cast<int>(causality));
 }
 
-} // namespace
-
-namespace detail {
+void write_variables(JsonWriter& w, std::string_view key, const std::vector<control::VariableInfo>& variables)
+{
+    w.begin_array(key);
+    for (const auto& variable : variables)
+    {
+        w.begin_object();
+        w.string("name", variable.name);
+        w.string("type", value_type_name(variable.type));
+        w.string("causality", causality_name(variable.causality));
+        w.string("unit", variable.unit);
+        w.real("min", variable.min);
+        w.real("max", variable.max);
+        w.real("step", variable.step);
+        w.string("description", variable.description);
+        w.begin_array("items");
+        for (const auto& item : variable.items)
+        {
+            w.begin_object();
+            w.string("name", item.name);
+            w.integer("value", item.value);
+            w.end_object();
+        }
+        w.end_array();
+        w.end_object();
+    }
+    w.end_array();
+}
 
 std::size_t utf8_sequence_length(std::string_view text) noexcept
 {
@@ -196,30 +224,7 @@ std::string to_json(const EcuDescription& description)
         w.end_object();
     }
     w.end_array();
-    w.begin_array("variables");
-    for (const auto& variable : description.variables)
-    {
-        w.begin_object();
-        w.string("name", variable.name);
-        w.string("type", type_name(variable.type));
-        w.string("causality", causality_name(variable.causality));
-        w.string("unit", variable.unit);
-        w.real("min", variable.min);
-        w.real("max", variable.max);
-        w.real("step", variable.step);
-        w.string("description", variable.description);
-        w.begin_array("items");
-        for (const auto& item : variable.items)
-        {
-            w.begin_object();
-            w.string("name", item.name);
-            w.integer("value", item.value);
-            w.end_object();
-        }
-        w.end_array();
-        w.end_object();
-    }
-    w.end_array();
+    detail::write_variables(w, "variables", description.variables);
     w.end_object();
     std::string out = w.take();
     out += '\n';

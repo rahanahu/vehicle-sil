@@ -7,6 +7,9 @@
 //   exit-at-ms <t> <code>   ends the process at once with <code> in its step at <t> ms
 //   throw-at-ms <t>         its step at <t> ms throws (the ECU fails)
 //   hang-at-ms <t>          its step at <t> ms never returns
+//   chatter <n>             writes <n> lines of about 100 bytes to stdout in every step, and flushes them
+//   linger-ms <t>           after the run, ends only <t> ms later (its process outlives its part in the
+//                           simulation by that long)
 //   print <word>            writes <word> and a line end to stdout with printf() when it is set up,
 //                           without flushing (for --describe too, where it goes to stderr)
 //   hang-after-end          after the run, does not end (its destructor waits for ever), until:
@@ -85,6 +88,14 @@ public:
                 in >> text;
                 std::printf("%s\n", text.c_str()); // no flush: stdout is a pipe, so it stays in the buffer
             }
+            else if (word == "chatter")
+            {
+                in >> chatter_;
+            }
+            else if (word == "linger-ms")
+            {
+                in >> linger_;
+            }
             else if (word == "hang-after-end")
             {
                 hang_ = true;
@@ -121,6 +132,14 @@ public:
         });
         ecu.every(10ms, [this](vehicle_sil::SimTime now) {
             const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+            for (int i = 0; i < chatter_; ++i)
+            {
+                std::printf("chatter %lld.%d %s\n", ms, i, std::string(80, 'x').c_str());
+            }
+            if (chatter_ > 0)
+            {
+                std::fflush(stdout);
+            }
             if (ms == exit_at_)
             {
                 std::_Exit(exit_code_);
@@ -140,6 +159,10 @@ public:
 
     ~TestEcu()
     {
+        if (ran_ && linger_ > 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(linger_));
+        }
         if (!hang_ || !ran_)
         {
             return; // also --describe constructs and destroys it
@@ -165,6 +188,8 @@ private:
     long long throw_at_ = -1;
     long long hang_at_ = -1;
     bool hang_ = false;
+    int chatter_ = 0;
+    long long linger_ = 0;
     bool ran_ = false;
     int stop_code_ = -1;
 };

@@ -16,16 +16,20 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace vehicle_sil::detail {
 
 /// Appends JSON text with a fixed layout: one member or element per line, two spaces per level.
 /// An empty key starts an element of an array; any other key a member of an object. Strings:
 /// valid UTF-8 as it is, '"', '\\' and the control characters escaped, a byte that starts no
-/// valid UTF-8 sequence as U+FFFD.
+/// valid UTF-8 sequence as U+FFFD. Compact: the same without any line end or space (one line).
 class JsonWriter
 {
 public:
+    JsonWriter() = default;
+    explicit JsonWriter(bool compact) : compact_(compact) {}
+
     [[nodiscard]] std::string take() { return std::move(out_); }
 
     void begin_object(std::string_view key = {}) { open(key, '{'); }
@@ -79,7 +83,7 @@ private:
             out_ += ',';
         }
         first_ = false;
-        if (depth_ > 0)
+        if (depth_ > 0 && !compact_)
         {
             out_ += '\n';
             out_.append(static_cast<std::size_t>(depth_) * 2, ' ');
@@ -87,7 +91,7 @@ private:
         if (!key.empty())
         {
             quoted(key);
-            out_ += ": ";
+            out_ += compact_ ? ":" : ": ";
         }
     }
     void open(std::string_view key, char bracket)
@@ -100,7 +104,7 @@ private:
     void close(char bracket)
     {
         --depth_;
-        if (!first_) // not empty: the bracket on a line of its own
+        if (!first_ && !compact_) // not empty: the bracket on a line of its own
         {
             out_ += '\n';
             out_.append(static_cast<std::size_t>(depth_) * 2, ' ');
@@ -173,7 +177,16 @@ private:
     std::string out_;
     int depth_ = 0;
     bool first_ = true;
+    bool compact_ = false;
 };
+
+/// The names to_json() uses: "bool", "integer", "real", "enum"; "input", "output", "parameter".
+/// std::logic_error for a value outside the enumerators.
+[[nodiscard]] const char* value_type_name(control::ValueType type);
+[[nodiscard]] const char* causality_name(control::Causality causality);
+
+/// The array `key` of to_json() ("variables"): each variable with its keys in to_json()'s order.
+void write_variables(JsonWriter& w, std::string_view key, const std::vector<control::VariableInfo>& variables);
 
 /// "0x" and 16 upper-case hexadecimal digits (a J1939 NAME in JSON).
 [[nodiscard]] inline std::string hex64(std::uint64_t value)

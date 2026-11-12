@@ -7,6 +7,7 @@
 
 #include "vehicle_sil/launch/run.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -110,6 +111,124 @@ TEST_CASE(the_participant_that_failed_the_run_is_named_with_how_its_process_ende
                "launcher aborted the simulation: its process was ended by signal SIGSEGV; the lines [Engine] above show "
                "what it wrote\n");
 #endif
+}
+
+TEST_CASE(what_is_settled_before_the_participants_end_is_in_the_findings_of_the_end)
+{
+    // What the launcher knows when the simulation is over, with Engine and Brake still running...
+    std::vector<RunOutcome> middles;
+    const auto running = [](RunOutcome o) {
+        o.participants = {participant("Engine", 5), participant("Brake", 7), participant("Tool", 9, false)};
+        return o;
+    };
+    RunOutcome o = passed_run();
+    middles.push_back(running(o));
+    o.simulation = SimulationEnd::Aborted;
+    o.failed_participant = "Engine";
+    o.failure_reason = "left the simulation (state Error): it failed or lost its connection; see its log for the cause";
+    middles.push_back(running(o));
+    o.failure_reason.clear();
+    middles.push_back(running(o));
+    o = passed_run();
+    o.simulation = SimulationEnd::Aborted;
+    o.timed_out = true;
+    o.timeout_ms = 500;
+    middles.push_back(running(o));
+    o = passed_run();
+    o.simulation = SimulationEnd::Interrupted;
+    o.interrupted_by = "SIGINT";
+    middles.push_back(running(o));
+    o = passed_run();
+    o.simulation = SimulationEnd::Ended;
+    o.controller_state = "Error";
+    middles.push_back(running(o));
+    o = passed_run();
+    o.simulation = SimulationEnd::NotStarted;
+    o.start_timed_out = true;
+    middles.push_back(running(o));
+    middles.back().participants[1].missing_at_start = true;
+    o.start_timed_out = false;
+    o.failed_participant = "Engine";
+    middles.push_back(running(o));
+    middles.back().participants[0] = exited(participant("Engine", 5), 3);
+    middles.back().participants[0].ending = Ending::ExitedBeforeStart;
+    o.failed_participant.clear();
+    o.start_error = "the controller said no";
+    middles.push_back(running(o));
+    // ... and every way each of them may end after that.
+    const auto ends = [](const ParticipantRun& p) {
+        std::vector<ParticipantRun> out;
+        if (p.exit)
+        {
+            return std::vector<ParticipantRun>{p}; // it had ended
+        }
+        for (const int code : {0, 1})
+        {
+            out.push_back(exited(p, code));
+            ParticipantRun stopped = exited(p, code);
+            stopped.ending = Ending::Stopped;
+            out.push_back(stopped);
+            stopped.stopped_after_end = true;
+            out.push_back(stopped);
+        }
+        ParticipantRun killed = p;
+        killed.ending = Ending::Killed;
+        out.push_back(killed);
+        killed.stopped_after_end = true;
+        killed.left_processes = true;
+        out.push_back(killed);
+        killed.stop_request_failed = true;
+        out.push_back(killed);
+        return out;
+    };
+    std::size_t compared = 0;
+    for (const RunOutcome& middle : middles)
+    {
+        const std::vector<Finding> settled = launch::detail::settled_findings(middle);
+        for (const ParticipantRun& engine : ends(middle.participants[0]))
+        {
+            for (const ParticipantRun& brake : ends(middle.participants[1]))
+            {
+                for (const ParticipantRun& tool : ends(middle.participants[2]))
+                {
+                    for (const bool lateInterrupt : {false, true})
+                    {
+                        RunOutcome end = middle;
+                        end.participants = {engine, brake, tool};
+                        if (lateInterrupt && end.interrupted_by.empty())
+                        {
+                            end.interrupted_by = "SIGINT";
+                            end.interrupted_while_ending = true;
+                        }
+                        const std::vector<Finding> final = assess_run(end);
+                        for (const Finding& f : settled)
+                        {
+                            if (std::find(final.begin(), final.end(), f) == final.end())
+                            {
+                                throw vehicle_sil::unit::Failure("a settled finding is not in the findings of the end:\n" +
+                                                                 lines({f}) + "--- the end ---\n" + lines(final));
+                            }
+                            ++compared;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    CHECK(compared > 1000);
+
+    // Left out: only the participant that failed while its process still runs. Its finding names
+    // how the process ended, so it is written when that is known.
+    check_text(lines(launch::detail::settled_findings(middles[1])), "");
+    CHECK(lines(assess_run(middles[1])).find("participant-failed") != std::string::npos);
+    RunOutcome ended = middles[1];
+    ended.participants[0] = exited(participant("Engine", 5), 7);
+    check_text(lines(launch::detail::settled_findings(ended)), lines(assess_run(ended)));
+    CHECK(lines(launch::detail::settled_findings(ended)).find("its process exited with code 7") != std::string::npos);
+    // Everything else is written at once.
+    check_text(lines(launch::detail::settled_findings(middles[3])), lines(assess_run(middles[3])));
+    check_text(lines(launch::detail::settled_findings(middles[4])), lines(assess_run(middles[4])));
+    check_text(lines(launch::detail::settled_findings(middles[6])), lines(assess_run(middles[6])));
 }
 
 TEST_CASE(a_participant_that_exits_with_another_code_is_an_error_or_for_an_optional_one_a_warning)

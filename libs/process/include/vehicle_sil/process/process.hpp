@@ -52,9 +52,12 @@ struct ProcessOptions
     /// when the stream closes. Must not throw.
     std::function<void(Stream, std::string_view line)> on_line{};
     std::size_t max_line = 4096;
+    /// true: its standard input is a pipe that write_input() writes to and close_input() closes
+    /// (else the null device).
+    bool input = false;
 };
 
-/// A process with its standard input from the null device and its standard output and standard
+/// A process with its standard input from the null device (or a pipe: ProcessOptions::input) and its standard output and standard
 /// error read line by line (ProcessOptions::on_line). It inherits no other handle or descriptor of
 /// the caller. It and every process it starts belong together, so that they can be asked to stop
 /// and ended as one:
@@ -106,6 +109,12 @@ public:
 
     /// The process ID.
     [[nodiscard]] long id() const noexcept { return static_cast<long>(pid_); }
+    /// ProcessOptions::input: writes `bytes` to its standard input (blocks while the pipe is full).
+    /// false if it cannot (no input, closed, the process has closed its end). POSIX: the caller
+    /// ignores SIGPIPE, or a write after the process has closed its end ends the caller.
+    bool write_input(std::string_view bytes);
+    /// Closes its standard input (the process reads its end). Idempotent.
+    void close_input() noexcept;
 
 private:
     void read_output();
@@ -121,6 +130,7 @@ private:
     void* job_ = nullptr;     // HANDLE
     void* out_ = nullptr;     // HANDLE, the read end of standard output
     void* err_ = nullptr;     // HANDLE, the read end of standard error
+    void* in_ = nullptr;      // HANDLE, the write end of standard input (ProcessOptions::input)
     bool stop_reading_ = false; ///< guarded by mutex_
     unsigned long pid_ = 0;
 #else
@@ -128,6 +138,7 @@ private:
     bool group_gone_ = false; ///< the process group was seen empty: its ID is not ours any more
     int out_ = -1;
     int err_ = -1;
+    int in_ = -1; ///< the write end of standard input (ProcessOptions::input)
     int wake_read_ = -1;  ///< the reader waits on it too: a byte ends the reading
     int wake_write_ = -1;
 #endif

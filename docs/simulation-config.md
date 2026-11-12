@@ -272,9 +272,10 @@ failed: 3 errors, 1 warning, 0 notes
 | `strict` | `--strict` を付けたか |
 | `errors`、`warnings`、`notes` | 誤り、警告、注記の数 |
 | `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 構成ファイルの値（読めないときと、書いていない `stop_at_ms` と `registry_uri` は `null`。`start_timeout_ms` と `stop_timeout_ms` は既定の値も） |
-| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`step_ms`（なければ `null`）、`status`、`reported` |
+| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`step_ms`（なければ `null`）、`status`、`reported`、`variables` |
 | `participants[].status` | `"described"`（自己申告を読んだ）、`"not_checked"`（`describe: false`）、`"failed"`（実行ファイルがない、`--describe` の失敗）、`"skipped"`（構成ファイルの誤りで進めなかった）、`"disabled"`（外した。項目に誤りがあっても） |
-| `participants[].reported` | 自己申告（`described` のときだけ。ほかは `null`）: `vehicle_sil`、`name`、`step_ns`、`networks`（`--describe` の JSON と同じ形。変数は含みません） |
+| `participants[].reported` | 自己申告（`described` のときだけ。ほかは `null`）: `vehicle_sil`、`name`、`step_ns`、`networks`（`--describe` の JSON と同じ形。変数は次の `variables`） |
+| `participants[].variables` | ECU が申告した変数の配列（宣言の順）。要素の形は `--describe` の JSON の `variables[]` と同じです（`name`、`type`、`causality`、`unit`、`min`、`max`、`step`、`description`、`items`。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。空の配列は「変数が 0 個」です。`null` は「わからない」です: 自己申告のない participant（`describe: false`）、外した participant、自己申告を読めなかった participant、`variables` を書かない古い vehicle-sil の ECU。実行の前に、どの ECU にどの変数があるかを見るのに使います |
 | `networks[]` | 構成ファイルの順。`name`、`kind`（読めなかったときは `null`）、`line`、`participants`（使う participant 名。構成ファイルの順） |
 | `findings[]` | 人向けと同じ順。`severity`（`"error"`、`"warning"`、`"note"`）、`code`、`file`、`line`（なければ `null`）、`participant`、`network`（関係するもの。なければ `null`）、`message`（1 行）、`detail`（添える文。なければ `null`） |
 
@@ -335,7 +336,31 @@ participants:
             ]
           }
         ]
-      }
+      },
+      "variables": [
+        {
+          "name": "engine.throttle",
+          "type": "real",
+          "causality": "input",
+          "unit": "%",
+          "min": 0,
+          "max": 100,
+          "step": null,
+          "description": "accelerator pedal position",
+          "items": []
+        },
+        {
+          "name": "engine.speed",
+          "type": "integer",
+          "causality": "output",
+          "unit": "rpm",
+          "min": null,
+          "max": null,
+          "step": null,
+          "description": "",
+          "items": []
+        }
+      ]
     }
   ],
   "networks": [
@@ -413,6 +438,8 @@ Ctrl+C（SIGINT）、SIGTERM、SIGHUP（Windows: Ctrl+C、Ctrl+Break、コンソ
 
 Windows でコンソールを閉じると、Windows は数秒でプロセスを終わらせます。participant はジョブオブジェクトが終わらせますが、結果を書けないことがあります。
 
+プログラムから `vehicle_sil_launch` を動かすときは、`--stdin-commands` を付けて、標準入力に `{"command":"stop"}` を書くか、標準入力を閉じると、Ctrl+C と同じように順に止まります（[機械から使う](#機械から使う--events--stdin-commandsversion)）。シグナルも Ctrl+Break も送れない、コンソールのない Windows の `vehicle_sil_launch` も、これで順に止められます（シミュレーションを止めると ecu_main の実行ファイルは自分で終わります。Ctrl+Break を送れないので、自分で終わらない participant は、止め方の 2 の代わりにすぐ強制終了します）。
+
 ### participant を残さないこと
 
 - `vehicle_sil_launch` は、終わる前に、起動したすべての participant を終わらせます。
@@ -425,7 +452,8 @@ Windows でコンソールを閉じると、Windows は数秒でプロセスを�
 
 - participant の標準出力と標準エラーは、行ごとに `[<participant 名>] ` を付けて、`vehicle_sil_launch` の標準エラーに流します。`vehicle_sil_launch` 自身の経過は `[vehicle_sil_launch] ` で始まります（registry の URI、起動したコマンド、始まった、終わった、止めた）。4096 バイトを超える行は、UTF-8 の文字の間で分けて流します。制御文字（タブを除く C0、DEL、U+0080 から U+009F の C1）と、UTF-8 でないバイトは `?` にします。participant は UTF-8 で書いてください（Windows のコンソールにも UTF-8 として表示するので、ほかのコードページの文字は化けます）。標準エラーを読む側が止まる（読まれないパイプ）と、`vehicle_sil_launch` も書くところで止まります。
 - `--log-dir <dir>` を付けると、participant ごとに `<dir>/<participant 名>.log` にも書きます（`[名前]` なし。名前の ASCII の英数字、`.`、`-`、`_` 以外のバイトは `_` にし、Windows の装置の名前（`NUL`、`CON`、`PRN`、`AUX`、`COM1`〜`COM9`、`LPT1`〜`LPT9`。`.` の前も）には、どの OS でも後ろに `_` を付けます。大文字と小文字だけが違う名前は重なりとみなし、`-2` などを付けます）。ディレクトリがなければ作ります。前の実行のログは、同じ名前のものだけを書き直します（今の構成にない participant のログは残ります）。JSON の `participants[].log` が、どのファイルかを示します。
-- 標準出力には結果だけを書きます（人向けか `--json`）。同じ機械の上の同じ結果からは同じ出力です（時刻、所要時間、プロセス ID、registry の URI を含みません）。改行はどの OS でも LF です。Windows のコンソールに書くときは、`check` も `run` も、コンソールのコードページによらず UTF-8 の文字として表示します。
+- `--events` のときは、ここに書いた行（participant の行と `vehicle_sil_launch` の経過）を標準エラーに書かず、事象として標準出力に書きます（[機械から使う](#機械から使う--events--stdin-commandsversion)）。
+- 標準出力には結果だけを書きます（人向けか `--json`。`--events` では事象）。同じ機械の上の同じ結果からは同じ出力です（時刻、所要時間、プロセス ID、registry の URI を含みません）。改行はどの OS でも LF です。Windows のコンソールに書くときは、`check` も `run` も、コンソールのコードページによらず UTF-8 の文字として表示します。
 
 人向けの結果は、照合の表と照合で見つけたもの、`run:` で始まるシミュレーションの 1 行、participant の表（必須か、どう終わったか）、実行で見つけたもの、最後に結果の 1 行（`passed:`、`failed:`、`interrupted:` と、照合と実行を合わせた誤り、警告、注記の数）です。照合に誤りがあるときは、照合の表と見つけたものの後に `nothing was started:` の行を書きます。
 
@@ -600,7 +628,31 @@ passed: 0 errors, 1 warning, 1 note
               ]
             }
           ]
-        }
+        },
+        "variables": [
+          {
+            "name": "engine.throttle",
+            "type": "real",
+            "causality": "input",
+            "unit": "%",
+            "min": 0,
+            "max": 100,
+            "step": null,
+            "description": "accelerator pedal position",
+            "items": []
+          },
+          {
+            "name": "engine.speed",
+            "type": "integer",
+            "causality": "output",
+            "unit": "rpm",
+            "min": null,
+            "max": null,
+            "step": null,
+            "description": "",
+            "items": []
+          }
+        ]
       },
       {
         "name": "Dashboard",
@@ -631,7 +683,20 @@ passed: 0 errors, 1 warning, 1 note
               ]
             }
           ]
-        }
+        },
+        "variables": [
+          {
+            "name": "dashboard.engine_speed",
+            "type": "integer",
+            "causality": "output",
+            "unit": "rpm",
+            "min": null,
+            "max": null,
+            "step": null,
+            "description": "the speed shown",
+            "items": []
+          }
+        ]
       }
     ],
     "networks": [
@@ -652,17 +717,231 @@ passed: 0 errors, 1 warning, 1 note
 
 この節の例も、CTest の `launch_run.docs` が実際の実行と照合します（`vehicle_sil` の版を除いて、バイト単位で）。
 
+## 機械から使う（`--events`、`--stdin-commands`、`version`）
+
+GUI やスクリプトなど、`vehicle_sil_launch` を起動して見届けるプログラム向けです。`run --events` は、実行の経過を事象として標準出力に書き、最後に結果を書きます。`run --stdin-commands` は、標準入力から命令を読みます。`version --json` は、この `vehicle_sil_launch` が書く形式の版と、できることの一覧です。
+
+```sh
+vehicle_sil_launch version --json
+vehicle_sil_launch check --json simulation.yaml
+vehicle_sil_launch run --events --stdin-commands simulation.yaml
+```
+
+### 事象（`run --events`）
+
+標準出力に、1 行に 1 つの JSON のオブジェクトを、起きた順に書きます（NDJSON）。文字コードは UTF-8、改行は `\n` で、行の中に改行はありません。1 行ごとに書き出します。事象を書くのは `run` のときだけです。どの行も、次の 3 つのキーで始まります。
+
+| キー | 値 |
+|---|---|
+| `event` | 事象の種類 |
+| `seq` | 0 から 1 ずつ増える整数。書いた行の順と同じで、抜けません。読む側は、行を取りこぼしていないことを確かめられます |
+| `t_ms` | 事象が起きたときの、`vehicle_sil_launch` が始まってからの実時間（ミリ秒、整数）。行の順に見て、戻りません |
+
+| `event` | いつ | ほかのキー |
+|---|---|---|
+| `hello` | 最初の行 | `vehicle_sil_events`（事象の形式の版。今は 1）、`vehicle_sil`（vehicle-sil の版）、`pid`（`vehicle_sil_launch` のプロセス ID）、`file`（構成ファイル。引数に書いたとおり。わからなければ `null`）、`arguments`（受け取った引数の配列） |
+| `phase` | 段階が変わったとき | `phase`: `checking`（照合）、`starting`（registry、controller、participant の起動）、`waiting`（必須の participant がそろうのを待つ）、`running`（シミュレーションが動いている）、`stopping`（participant を終わらせている）、`ended`（すべて終わった）。この順に進み、戻りません。飛ばすことがあります（照合で失敗すれば `checking` の次は `ended`） |
+| `check` | 照合が終わったとき | `check`: `check --json` と同じオブジェクト（[JSON](#json--json)） |
+| `registry` | registry が待ち受けを始めたとき | `uri`: participant が接続する URI |
+| `participant` | participant の状態が変わったとき | `name`、`state`（下の表） |
+| `log` | participant か `vehicle_sil_launch` が 1 行書いたとき | `source`（participant 名か `vehicle_sil_launch`）、`line`（その行。[`log` の行](#log-の行)） |
+| `log_dropped` | 読む側が遅くて `log` を書けなかったとき、その場所に（[読む側が遅いとき](#読む側が遅いとき読まないとき)） | `count`（書かなかった `log` の数）、`sources`（`source` ごとの数のオブジェクト。例: `{"Engine": 120, "vehicle_sil_launch": 1}`） |
+| `finding` | 実行で見つけたものが決まったとき | 結果の `findings[]` の 1 つと同じキー（`severity`、`code`、`file`、`line`、`participant`、`network`、`message`、`detail`） |
+| `time` | シミュレーションの仮想時間が変わったとき | `sim_ms`: controller が見ている仮想時間（ミリ秒）。減りません |
+| `command` | 標準入力から命令を受けたとき（`--stdin-commands`） | `command`（命令の名前。読めなければ `null`）、`source`（`"stdin"`: 行で来た、`"eof"`: 標準入力の終わり）、`accepted`（受け付けたか）、`message`（受け付けなかった理由。受け付けたら `null`） |
+| `heartbeat` | 1 秒のあいだ何も書かなかったとき | なし（3 つのキーだけ） |
+| `result` | 最後の行 | `result`: `run --json` と同じオブジェクト（[JSON](#jsonrun---json)） |
+
+`participant` の `state`:
+
+| `state` | 意味 | ほかのキー |
+|---|---|---|
+| `disabled` | 外した participant（起動しません） | |
+| `not_started` | プロセスを起動できなかった | `message`: 理由 |
+| `started` | プロセスを起動した | `pid`（そのプロセスの ID）、`command`（起動した実行ファイルと引数の配列）、`log`（`--log-dir` のファイル。なければ `null`） |
+| `joined` | シミュレーションに参加した（controller がその participant のライフサイクルの状態を見た） | |
+| `stop_requested` | 止まるよう求めた（止め方の 2） | |
+| `ended` | プロセスが終わった | `exit_code`、`signal`（結果の `participants[]` と同じ意味） |
+| `killed` | 強制終了した（それが起動したプロセスも） | |
+
+#### 順序の約束
+
+- 最初の行は `hello`、最後の行は `result` です。`result` の後には何も書きません。
+- 外した participant の `disabled` は、`check` の直後、`starting` の前に、構成ファイルの順に書きます。
+- participant の `log` は、その participant の `started` より後に来ます。終わりの側には約束がありません。participant の出力は別のスレッドが読んでいるので、最後の何行かが、その participant の `ended` の後や、`phase` の `ended` の後に来ることがあります。`result` より後には来ません。
+- `joined` は、SIL Kit のライフサイクルで参加する participant だけです（参加しない道具の participant には来ません）。
+- `time` は、`running` になったときに 0 を書き、その後は仮想時間が変わったときに書きます（実時間で 100 ms に 1 回まで。シミュレーションが終わったときの時刻は、間隔によらず書きます）。今の `vehicle_sil_launch` が書くのは、0 と、`stop_at_ms` まで進んだときの `stop_at_ms` だけです。進み具合の表示には使えません。実行が続いていることは `heartbeat` で確かめます。
+- `finding` は実行で見つけたものです。シミュレーションが終わった（または始まらなかった）ときに、その時点で決まっているものを書き、残りを participant を終わらせた後に書きます。一度書いた `finding` は、同じ内容のまま `result` の `findings` に入ります。同じものを 2 回は書きません。シミュレーションの途中で失敗した participant の `participant-failed` は、プロセスの終わり方を含むので、プロセスが終わってから書きます（失敗に気づいた時点では、`vehicle_sil_launch` の `log` の行が理由を知らせます）。照合で見つけたものは `check` の中にあります。`result` だけを読んでも、結果はわかります。
+- `heartbeat` は、`hello` から `result` までのどの段階でも、ほかの行の間に入ります。数は実行にかかった時間で変わります。
+- `command` の事象は、その命令で起きること（`phase` の `stopping` など）より前に書きます。
+
+#### 実行に進まないときの事象
+
+`--events` を付けた `run` は、引数が誤っていても `hello` を最初に、`result` を最後に書きます（`heartbeat` が間に入ることがあります）。
+
+| 場合 | 事象 | `result` の `result` | 終了コード |
+|---|---|---|---|
+| 引数の誤り（知らないオプション、構成ファイルの指定がない、`--json` と一緒に付けた、など） | `hello`、`result` | `"usage"` | 4 |
+| 構成ファイルを読んでわかる引数の誤り（`--disable` と `--enable` の名前が構成ファイルにない） | `hello`、`phase`（`checking`）、`check`、`phase`（`ended`）、`result` | `"usage"` | 4 |
+| 構成ファイルを読めない | 同じ 5 つ | `"unreadable"` | 3 |
+| 照合で誤りが見つかった | 同じ 5 つ | `"failed"` | 1 |
+| 標準出力がない（閉じた状態で起動された） | 何も書けません。標準エラーに誤りを書きます | | 4 |
+
+`run` でないコマンド（`check`、`version`、コマンドなし）に `--events` を付けたときは、事象を書きません。引数の誤りとして標準エラーに書き、終了コードは 4 です。
+
+#### `log` の行
+
+`line` は、participant が標準出力か標準エラーに書いた 1 行（行末の改行なし）、または `vehicle_sil_launch` の経過の 1 行です。`--events` なしで標準エラーに書く行から、前の `[<名前>] ` を除いたものと同じです。
+
+- 制御文字（タブを除く）と、UTF-8 として正しくないバイトは、`?` に置き換えます。
+- 4096 バイトを超える行は、4096 バイト以下の複数の `log` に分けます（UTF-8 の文字の途中では切りません）。続きであることを示すキーはありません。
+- `--log-dir` のファイルには、置き換える前のバイトをそのまま書きます。読む側が遅くて `log` を書けなかったときも、ファイルにはすべての行があります。
+
+#### 読む側が遅いとき、読まないとき
+
+`vehicle_sil_launch` は、事象を読む側を待ちません。事象を書くのは専用のスレッドで、実行を進めるスレッド、participant の出力を読むスレッド、標準入力を読むスレッドは、事象を待ち行列に積むだけです。読む側が遅くても、止まっていても、次のことは変わりません。
+
+- participant は止まりません（出力を読み続けます）。`--log-dir` のファイルも、今までどおりに書きます。
+- `--timeout-ms`、シグナル、標準入力の `stop` は効きます。
+
+書けずに待っている事象が増えたときは、次のようにします。
+
+- `log` は、待っている `log` が 4096 行または 1 MiB を超える間は、書かずに数えます。数えた分は、その場所に `log_dropped` を 1 行書いて知らせます（読む側がまた読み始めたときに届きます）。`count` と `sources` は、その行を書く時点までに数えた分です。
+- `log` と `log_dropped` 以外の事象は、捨てません。
+- 読む側が 30 秒のあいだ 1 バイトも読まないとき、または `log` 以外の事象が 4096 個を超えて待っているときは、読む側がいなくなったものとして扱います（次の項）。
+
+シミュレーションが終わったときに読む側が止まっていると、`vehicle_sil_launch` は `result` を書けるまで待ちます。待つのは長くて 30 秒です。待っている間に止める要求（2 回目の要求。それまで要求がなければ 1 回目）が来れば、そこでやめます。`result` を書けなかったときの終了コードは 3 です（止める要求で止めた実行は 130）。
+
+#### 読む側がいなくなったとき
+
+標準出力を読む側がいなくなった（パイプが閉じた）ことには、次に行を書くときに気づきます。`heartbeat` があるので、どの段階でも 1 秒以内です。上の「読まない」の条件に当てはまったときも、同じ扱いです。
+
+- 事象の流れを閉じます。その後は、`result` を含めて何も書きません（書きかけの行が途中で切れることがあります）。
+- 止める要求として扱います（1 回目の Ctrl+C と同じ）。すでに止める要求を受けていれば、何もしません（2 回目に数えません）。
+- 標準エラーに理由を 1 行書きます（`vehicle_sil_launch: cannot write the events (<理由>): stopping the run`）。
+- 結果の `interrupted_by` は `"output closed"`、終了コードは 130 です（SIGPIPE で終わりません）。
+
+標準出力が、書き込みで待たない設定（`O_NONBLOCK` など）のパイプでも同じように動きます。いっぱいのときは、閉じたとは扱わず、空くのを待ちます。
+
+#### 読む側が守ること
+
+- 標準出力を読み続けます。`result` の行が来たら、流れは終わりです。
+- 改行で終わらない最後の行は捨てます（`vehicle_sil_launch` が強制終了された、流れが閉じた）。
+- `result` が来ないまま標準出力が終わったら、`vehicle_sil_launch` が結果を書けずに終わっています（強制終了、クラッシュ、上の「いなくなった」の扱い）。プロセスの終了コードで判断します。
+- `heartbeat` を含めて何の行も数秒来なければ、`vehicle_sil_launch` が止まっています（1 秒に 1 行は書きます）。
+- 知らない `event` と知らないキーは無視します。`event`、キー、`state` と `phase` の値は、版を上げずに増えることがあります。キーの意味が変わるとき、なくなるときは `vehicle_sil_events` を上げます。
+- 標準エラーも読みます（読み捨ててもかまいません）。`--events` のとき、標準エラーに書くのは `vehicle_sil_launch` 自身の知らせ（引数の誤り、事象を書けなくなった、結果を書けない、想定外の失敗）だけで、participant の行も経過も書きません。`vehicle_sil_launch` の中のライブラリが標準出力に書いたものは、標準エラーに行きます（事象の行に混ざりません）。
+- `vehicle_sil_launch` を起動して見届けるプログラム（GUI、CI のスクリプト）は、`--stdin-commands` も付けます。そのプログラムが止まるか終わると標準入力が閉じるので、`vehicle_sil_launch` は標準出力の状態によらず、すぐに順に止まります。
+
+#### そのほかの決まり
+
+- 文字列のエスケープは `--json` と同じです（`"`、`\`、制御文字。UTF-8 でないバイトは U+FFFD）。`log` の `line` は、上のとおり先に `?` に置き換えています。
+- 行の長さに上限はありません（`check` と `result` は大きくなります）。
+- `--json` と `--events` を一緒に付けるのは引数の誤りです（事象の最後が結果なので）。
+- 終了コードは `--events` なしと同じです。
+
+#### 例
+
+短い実行の全行です（`--disable Dashboard` で、出力の順が決まる Engine だけにしています）。時刻、プロセス ID、registry のポート、例のディレクトリ、版は、実行ごとに違うので `<t_ms>`、`<pid>`、`<port>`、`<dir>`、`<version>` にしています（Windows では、実行ファイルの名前に `.exe` が付きます）。
+
+<!-- vehicle_sil_launch run simulation.yaml --events --disable Dashboard -->
+```text
+{"event":"hello","seq":0,"t_ms":<t_ms>,"vehicle_sil_events":1,"vehicle_sil":"<version>","pid":<pid>,"file":"simulation.yaml","arguments":["run","simulation.yaml","--events","--disable","Dashboard"]}
+{"event":"phase","seq":1,"t_ms":<t_ms>,"phase":"checking"}
+{"event":"check","seq":2,"t_ms":<t_ms>,"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}]}]},"variables":[{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[]},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[]}]},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"step_ms":5,"status":"disabled","reported":null,"variables":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"]}],"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}
+{"event":"participant","seq":3,"t_ms":<t_ms>,"name":"Dashboard","state":"disabled"}
+{"event":"phase","seq":4,"t_ms":<t_ms>,"phase":"starting"}
+{"event":"registry","seq":5,"t_ms":<t_ms>,"uri":"silkit://127.0.0.1:<port>"}
+{"event":"log","seq":6,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"registry at silkit://127.0.0.1:<port>"}
+{"event":"log","seq":7,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"starting Engine: <dir>/engine/vehicle_sil_engine_ecu --name Engine --registry-uri silkit://127.0.0.1:<port> --start-timeout-ms 50000"}
+{"event":"participant","seq":8,"t_ms":<t_ms>,"name":"Engine","state":"started","pid":<pid>,"command":["<dir>/engine/vehicle_sil_engine_ecu","--name","Engine","--registry-uri","silkit://127.0.0.1:<port>","--start-timeout-ms","50000"],"log":null}
+{"event":"log","seq":9,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"not starting Dashboard: disabled"}
+{"event":"phase","seq":10,"t_ms":<t_ms>,"phase":"waiting"}
+{"event":"participant","seq":11,"t_ms":<t_ms>,"name":"Engine","state":"joined"}
+{"event":"phase","seq":12,"t_ms":<t_ms>,"phase":"running"}
+{"event":"log","seq":13,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"simulation running"}
+{"event":"time","seq":14,"t_ms":<t_ms>,"sim_ms":0}
+{"event":"time","seq":15,"t_ms":<t_ms>,"sim_ms":1000}
+{"event":"log","seq":16,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"the simulation ended"}
+{"event":"phase","seq":17,"t_ms":<t_ms>,"phase":"stopping"}
+{"event":"log","seq":18,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"Engine exited with code 0"}
+{"event":"participant","seq":19,"t_ms":<t_ms>,"name":"Engine","state":"ended","exit_code":0,"signal":null}
+{"event":"phase","seq":20,"t_ms":<t_ms>,"phase":"ended"}
+{"event":"result","seq":21,"t_ms":<t_ms>,"result":{"vehicle_sil_run":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"simulation":"reached_stop_at","interrupted_by":null,"participants":[{"name":"Engine","required":true,"enabled":true,"ended":"exited","exit_code":0,"signal":null,"left_processes":false,"log":null},{"name":"Dashboard","required":true,"enabled":false,"ended":"not_started","exit_code":null,"signal":null,"left_processes":false,"log":null}],"findings":[],"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}]}]},"variables":[{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[]},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[]}]},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"step_ms":5,"status":"disabled","reported":null,"variables":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"]}],"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}}
+```
+
+この例は、CTest の `launch_run.events` が、実際の出力から `heartbeat` の行を除き（`seq` は詰めます）、上の置き換えをした後で、バイト単位で照合します。
+
+### 標準入力の命令（`run --stdin-commands`）
+
+`--stdin-commands` を付けたときだけ、標準入力を読みます。付けないときは読みません（標準入力が閉じていても空でも、止まりません）。1 行に 1 つの JSON のオブジェクトです。`--events` と一緒に使います（[読む側が守ること](#読む側が守ること)）。単独でも使えます。
+
+| 行 | 意味 |
+|---|---|
+| `{"command":"stop"}` | 順に止めます（1 回目の Ctrl+C と同じ）。2 回目は 2 回目の Ctrl+C と同じです（待つのをやめて、残っている participant を強制終了します） |
+| 標準入力の終わり（EOF） | `stop` を 1 回受けたのと同じです（起動した側がいなくなった、パイプを閉じた）。すでに止める要求（`stop`、シグナル、閉じた標準出力）を受けていれば、何もしません（2 回目に数えません。`command` の事象も書きません） |
+| 空白だけの行 | 読み飛ばします |
+| それ以外（JSON のオブジェクトでない、`command` がない、知らない命令、64 KiB を超える行） | 何もしません。`--events` なら `command` の事象（`accepted: false` と理由）、なければ標準エラーに 1 行 |
+
+- オブジェクトのほかのキーは無視します。
+- 命令で止めた実行の結果は、Ctrl+C で止めたときと同じです（`result` は `"interrupted"`、終了コード 130、注記 `interrupted`）。`interrupted_by` は、`{"command":"stop"}` なら `"stop command"`、標準入力の終わりなら `"end of input"` です。
+- `command` の事象の `accepted: true` は、行が命令として正しく、処理に回したという意味です。その命令で実行が変わったとは限りません。たとえば、実行が終わった後（`phase` の `ended` の後）に受けた `stop` は、`accepted: true` ですが、結果は変わりません。
+- `command` の事象は、その命令で起きること（`phase` の `stopping` など）より前に書きます。
+- 照合の間に受けた `stop` は、照合が終わってから効きます（Ctrl+C と同じ）。
+- 事象を読む側が読んでいなくても、命令は効きます。
+
+### 版とできること（`vehicle_sil_launch version`）
+
+`vehicle_sil_launch version`（`--version` も同じ）は、`vehicle_sil_launch <版>` の 1 行を書きます。`version --json` は、書く形式の版と、できることの一覧を書きます。どちらもファイルを読まず、終了コードは 0 です。
+
+<!-- vehicle_sil_launch version --json -->
+```json
+{
+  "vehicle_sil_launch": 1,
+  "vehicle_sil": "<version>",
+  "formats": {
+    "check": 1,
+    "run": 1,
+    "events": 1,
+    "describe": 1
+  },
+  "features": [
+    "events",
+    "stdin-commands",
+    "check-variables"
+  ]
+}
+```
+
+| キー | 値 |
+|---|---|
+| `vehicle_sil_launch` | この JSON の形式の版（今は 1） |
+| `vehicle_sil` | vehicle-sil の版 |
+| `formats` | 書く形式と読む形式の版: `check`（`check --json` の `vehicle_sil_check`）、`run`（`run --json` の `vehicle_sil_run`）、`events`（`hello` の `vehicle_sil_events`）、`describe`（読む `--describe` の JSON の `vehicle_sil_ecu`） |
+| `features` | できることの名前の配列。読む側は、版を比べずに、名前があるかで判断します。名前は増えるだけです |
+
+| `features` の名前 | できること |
+|---|---|
+| `events` | `run --events` |
+| `stdin-commands` | `run --stdin-commands` と `{"command":"stop"}` |
+| `check-variables` | 照合の JSON の `participants[].variables` |
+
+この例も、CTest の `launch_cli.docs` が照合します（`vehicle_sil` の版を除いて、バイト単位で）。
+
 ## 引数と終了コード
 
 ```text
 vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>
-vehicle_sil_launch run [--json] [--strict] [--log-dir <dir>] [--timeout-ms <ms>] [--describe-timeout-ms <ms>]
-                       [--disable <name>]... [--enable <name>]... [--] <file>
+vehicle_sil_launch run [--json | --events] [--stdin-commands] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
+                       [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>
+vehicle_sil_launch version [--json]
 ```
 
 | 引数 | 意味 |
 |---|---|
 | `--json` | 結果を JSON で書く |
+| `--events` | `run` だけ。経過と結果を事象として書く（[機械から使う](#機械から使う--events--stdin-commandsversion)）。`--json` と一緒には使えない |
+| `--stdin-commands` | `run` だけ。標準入力から命令を読む。標準入力の終わりも止める要求 |
 | `--strict` | 警告があっても失敗にする（注記では失敗にしない） |
 | `--log-dir <dir>` | `run` だけ。participant ごとの出力のファイルを置くディレクトリ |
 | `--timeout-ms <ms>` | `run` だけ。シミュレーションの開始から終わりまでの実時間の上限（1 以上の整数）。超えたら中断して誤り。既定は上限なし |
@@ -671,13 +950,14 @@ vehicle_sil_launch run [--json] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
 | `--enable <name>` | participant `<name>` を戻す（`enabled: true` と同じ）。繰り返せる |
 | `--` | これより後はファイル名（`-` で始まる名前のとき） |
 | `--help`、`-h` | 使い方を標準出力に書いて 0 で終わる（`--` より前のどこにあっても） |
+| `--version` | `version` と同じ（`--` より前のどこにあっても） |
 
 | 終了コード | 意味 |
 |---|---|
 | 0 | 誤りがない（警告と注記だけなら 0。`--strict` では警告もない）。`run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった |
 | 1 | 誤りがある（`--strict` では警告も）。`run` では、照合の誤り（何も起動しない）か、実行の誤り（participant が失敗した、そろわなかった、止めても終わらなかったなど） |
 | 3 | 構成ファイルを読めない（ファイルがない、文法の誤り、知らない形式の版など）。`run` で registry や controller を用意できないときも 3 です。結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です（標準エラーに理由。`--json` では、そのコマンドの形の JSON に `code` が `internal` の誤り） |
-| 4 | 引数の誤り（知らないコマンドや引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir` と `--timeout-ms`、構成ファイルにない participant 名の `--disable` と `--enable`、同じ名前の `--disable` と `--enable`）。誤りと使い方を標準エラーに書きます |
-| 130 | `run` が中断された（Ctrl+C など） |
+| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir` と `--timeout-ms`、構成ファイルにない participant 名の `--disable` と `--enable`、同じ名前の `--disable` と `--enable`）。誤りと使い方を標準エラーに書きます |
+| 130 | `run` が中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力など） |
 
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。

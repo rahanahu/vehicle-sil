@@ -8,6 +8,7 @@
 #include "yaml_tree.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstdio>
 #include <fstream>
@@ -67,6 +68,20 @@ public:
         {
             out.description.networks.push_back(network(item, "networks[" + std::to_string(index) + "]"));
         }
+        // An executable of a vehicle-sil without variables does not write the key: unknown, not none.
+        if (const auto variables = find(root_, "variables"); variables != ryml::NONE)
+        {
+            if (!tree_.is_seq(variables))
+            {
+                fail("variables is not an array");
+            }
+            index = 0;
+            for (auto item = tree_.first_child(variables); item != ryml::NONE; item = tree_.next_sibling(item), ++index)
+            {
+                out.description.variables.push_back(variable(item, "variables[" + std::to_string(index) + "]"));
+            }
+            out.variables_reported = true;
+        }
         return out;
     }
 
@@ -121,6 +136,81 @@ private:
             fail(what + " is not true or false");
         }
         return value == "true";
+    }
+
+    /// A number or null (min, max, step).
+    std::optional<double> real(ryml::id_type node, const std::string& what) const
+    {
+        if (is_null(node))
+        {
+            return std::nullopt;
+        }
+        const std::string value = is_scalar(node) && !tree_.is_val_quoted(node) ? detail::to_string(tree_.val(node)) : "";
+        double out = 0;
+        const char* end = value.data() + value.size();
+        const auto [ptr, ec] = std::from_chars(value.data(), end, out);
+        if (value.empty() || ec != std::errc{} || ptr != end)
+        {
+            fail(what + " is not a number or null");
+        }
+        return out;
+    }
+
+    /// The value of `names` (the enumerators' names, in the order of the enumeration) that `node` is.
+    template <class Enum, std::size_t N>
+    Enum name_of(ryml::id_type node, const std::string& what, const std::array<Enum, N>& values,
+                 const char* (*name)(Enum)) const
+    {
+        const std::string given = text(node, what);
+        std::string known;
+        for (const Enum value : values)
+        {
+            if (given == name(value))
+            {
+                return value;
+            }
+            known += std::string(known.empty() ? "" : ", ") + name(value);
+        }
+        fail(what + " is \"" + given + "\", not one of " + known);
+    }
+
+    control::VariableInfo variable(ryml::id_type node, const std::string& at) const
+    {
+        if (!tree_.is_map(node))
+        {
+            fail(at + " is not an object");
+        }
+        control::VariableInfo out;
+        out.name = text(member(node, "name", at), at + ".name");
+        out.type = name_of(member(node, "type", at), at + ".type",
+                           std::array{control::ValueType::Bool, control::ValueType::Integer, control::ValueType::Real,
+                                      control::ValueType::Enum},
+                           &vehicle_sil::detail::value_type_name);
+        out.causality = name_of(member(node, "causality", at), at + ".causality",
+                                std::array{control::Causality::Input, control::Causality::Output, control::Causality::Parameter},
+                                &vehicle_sil::detail::causality_name);
+        out.unit = text(member(node, "unit", at), at + ".unit");
+        out.min = real(member(node, "min", at), at + ".min");
+        out.max = real(member(node, "max", at), at + ".max");
+        out.step = real(member(node, "step", at), at + ".step");
+        out.description = text(member(node, "description", at), at + ".description");
+        const auto items = member(node, "items", at);
+        if (!tree_.is_seq(items))
+        {
+            fail(at + ".items is not an array");
+        }
+        std::size_t index = 0;
+        for (auto item = tree_.first_child(items); item != ryml::NONE; item = tree_.next_sibling(item), ++index)
+        {
+            const std::string itemAt = at + ".items[" + std::to_string(index) + "]";
+            if (!tree_.is_map(item))
+            {
+                fail(itemAt + " is not an object");
+            }
+            out.items.push_back(control::EnumItem{text(member(item, "name", itemAt), itemAt + ".name"),
+                                                  integer(member(item, "value", itemAt), itemAt + ".value")});
+        }
+        return out;
     }
 
     NetworkDescription network(ryml::id_type node, const std::string& at) const
@@ -1054,7 +1144,7 @@ std::string format_text(const CheckReport& report)
     return out;
 }
 
-void detail::write_findings_json(vehicle_sil::detail::JsonWriter& w, const std::string& file, const std::vector<Finding>& findings)
+void detail::write_finding_members(vehicle_sil::detail::JsonWriter& w, const std::string& file, const Finding& finding)
 {
     const auto optional_text = [&w](std::string_view key, const std::string& value) {
         if (value.empty())
@@ -1066,25 +1156,30 @@ void detail::write_findings_json(vehicle_sil::detail::JsonWriter& w, const std::
             w.string(key, value);
         }
     };
+    w.string("severity", severity_name(finding.severity));
+    w.string("code", finding.code);
+    optional_text("file", file);
+    if (finding.line > 0)
+    {
+        w.integer("line", static_cast<std::int64_t>(finding.line));
+    }
+    else
+    {
+        w.null("line");
+    }
+    optional_text("participant", finding.participant);
+    optional_text("network", finding.network);
+    w.string("message", finding.message);
+    optional_text("detail", finding.detail);
+}
+
+void detail::write_findings_json(vehicle_sil::detail::JsonWriter& w, const std::string& file, const std::vector<Finding>& findings)
+{
     w.begin_array("findings");
     for (const auto& finding : findings)
     {
         w.begin_object();
-        w.string("severity", severity_name(finding.severity));
-        w.string("code", finding.code);
-        optional_text("file", file);
-        if (finding.line > 0)
-        {
-            w.integer("line", static_cast<std::int64_t>(finding.line));
-        }
-        else
-        {
-            w.null("line");
-        }
-        optional_text("participant", finding.participant);
-        optional_text("network", finding.network);
-        w.string("message", finding.message);
-        optional_text("detail", finding.detail);
+        write_finding_members(w, file, finding);
         w.end_object();
     }
     w.end_array();
@@ -1192,6 +1287,14 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
                 }
                 w.end_array();
                 w.end_object();
+            }
+            if (result.ecu && result.ecu->variables_reported)
+            {
+                vehicle_sil::detail::write_variables(w, "variables", result.ecu->description.variables);
+            }
+            else
+            {
+                w.null("variables");
             }
             w.end_object();
         }

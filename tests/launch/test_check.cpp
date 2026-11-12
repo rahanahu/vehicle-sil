@@ -122,8 +122,8 @@ TEST_CASE(reads_what_to_json_writes)
                       NetworkDescription{"Seat", NetworkUse::LinSlave, {}}},
                      {variable("x")}};
     const ReportedEcu read = read_description(to_json(d));
-    d.variables.clear(); // not read
     CHECK(read.description == d);
+    CHECK(read.variables_reported);
     CHECK(read.vehicle_sil_version == version());
     // Real time: no step.
     d.step.reset();
@@ -138,6 +138,8 @@ TEST_CASE(ignores_unknown_keys_of_a_description)
     CHECK(read.description.name == "A" && read.vehicle_sil_version == "9.9.9");
     CHECK(read.description.step == SimDuration{1000});
     CHECK(read.description.networks.size() == 1 && read.description.networks[0].use == NetworkUse::Raw);
+    // Without "variables" (an ECU of a vehicle-sil before them): not known, not none.
+    CHECK(!read.variables_reported && read.description.variables.empty());
 }
 
 TEST_CASE(refuses_what_is_not_a_description)
@@ -176,6 +178,26 @@ TEST_CASE(refuses_what_is_not_a_description)
     check_text(refused(head + R"([{"name": "N", "kind": "can", "use": "raw", "nodes": [{"address": 1, "j1939_name": null, )"
                               R"("arbitrary_address_capable": false}]}]})"),
                "networks[0] has nodes, but only a j1939 network has them");
+    // The variables (for check --json): each key as to_json() writes it.
+    const std::string vars = head + R"([], "variables": )";
+    const std::string var = R"({"name": "v", "type": "real", "causality": "input", "unit": "", "min": null, "max": 1.5, )"
+                            R"("step": null, "description": "", )";
+    check_text(refused(vars + "{}}"), "variables is not an array");
+    check_text(refused(vars + "[5]}"), "variables[0] is not an object");
+    check_text(refused(vars + R"([{"name": "v"}]})"), "variables[0]: the key type is missing");
+    check_text(refused(vars + R"([{"name": "v", "type": "text"}]})"),
+               "variables[0].type is \"text\", not one of bool, integer, real, enum");
+    check_text(refused(vars + R"([{"name": "v", "type": "real", "causality": "local"}]})"),
+               "variables[0].causality is \"local\", not one of input, output, parameter");
+    check_text(refused(vars + "[" + var + R"("items": {}}]})"), "variables[0].items is not an array");
+    check_text(refused(vars + "[" + var + R"("items": [{"name": "a", "value": "1"}]}]})"),
+               "variables[0].items[0].value is not an integer");
+    check_text(refused(vars + R"([{"name": "v", "type": "real", "causality": "input", "unit": "", "min": "0", "max": null, )"
+                              R"("step": null, "description": "", "items": []}]})"),
+               "variables[0].min is not a number or null");
+    const ReportedEcu read = read_description(vars + "[" + var + R"("items": [], "later": 1}]})");
+    CHECK(read.variables_reported && read.description.variables.size() == 1);
+    CHECK(read.description.variables[0].max == 1.5 && !read.description.variables[0].min);
 }
 
 // --- what a run of --describe means ---------------------------------------------------------
@@ -561,6 +583,17 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
     r.participants.resize(3);
     r.config->participants[1].command = {"dash board", "--x"};
     r.findings = {r.findings[0], r.findings[1], r.findings[4]};
+    // Engine's variables as its description has them; Dashboard says it has none; Cluster failed.
+    control::VariableInfo mode;
+    mode.name = "engine.mode";
+    mode.type = control::ValueType::Enum;
+    mode.causality = control::Causality::Parameter;
+    mode.min = 0;
+    mode.description = "how it runs";
+    mode.items = {{"off", 0}, {"on", 1}};
+    r.participants[0].ecu->description.variables = {mode};
+    r.participants[0].ecu->variables_reported = true;
+    r.participants[1].ecu->variables_reported = true;
     const std::string v = version();
     check_text(format_json(r), R"({
   "vehicle_sil_check": 1,
@@ -611,7 +644,29 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
             "nodes": []
           }
         ]
-      }
+      },
+      "variables": [
+        {
+          "name": "engine.mode",
+          "type": "enum",
+          "causality": "parameter",
+          "unit": "",
+          "min": 0,
+          "max": null,
+          "step": null,
+          "description": "how it runs",
+          "items": [
+            {
+              "name": "off",
+              "value": 0
+            },
+            {
+              "name": "on",
+              "value": 1
+            }
+          ]
+        }
+      ]
     },
     {
       "name": "Dashboard",
@@ -649,7 +704,8 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
             "nodes": []
           }
         ]
-      }
+      },
+      "variables": []
     },
     {
       "name": "Cluster é",
@@ -662,7 +718,8 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "enabled": true,
       "step_ms": null,
       "status": "failed",
-      "reported": null
+      "reported": null,
+      "variables": null
     }
   ],
   "networks": [
@@ -718,6 +775,10 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
   ]
 }
 )");
+    // A description without "variables" (an older ECU): not known.
+    r.participants[1].ecu->variables_reported = false;
+    CHECK(format_json(r).find("\n        ]\n      },\n      \"variables\": null\n    },\n    {\n      \"name\": \"Cluster") !=
+          std::string::npos);
 }
 
 TEST_CASE(the_json_report_of_a_file_that_cannot_be_read)
@@ -963,7 +1024,7 @@ TEST_CASE(the_reports_show_a_disabled_participant)
     CHECK(json.find("      \"required\": true,\n      \"enabled\": true,\n      \"step_ms\": 10,\n      \"status\": "
                     "\"described\",\n") != std::string::npos);
     CHECK(json.find("      \"required\": true,\n      \"enabled\": false,\n      \"step_ms\": null,\n      \"status\": "
-                    "\"disabled\",\n      \"reported\": null\n") != std::string::npos);
+                    "\"disabled\",\n      \"reported\": null,\n      \"variables\": null\n") != std::string::npos);
     CHECK(json.find("      \"participants\": [\n        \"Engine\"\n      ]\n") != std::string::npos);
 }
 
