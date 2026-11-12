@@ -241,6 +241,12 @@ def test_open_connections_do_not_delay_the_end(tmp_path: Path, connect) -> None:
         try:
             time.sleep(0.3)
             assert stop_and_time(gui.proc) < 4
+            if connect is unauthenticated_websocket:  # told why: going away (1001), not just cut
+                s.settimeout(2)
+                rest = b""
+                while chunk := s.recv(4096):
+                    rest += chunk
+                assert b"\x88" in rest and b"\x03\xe9" in rest.split(b"\r\n\r\n", 1)[-1], rest
         finally:
             s.close()
 
@@ -253,10 +259,8 @@ def test_a_hanging_check_does_not_delay_the_end(tmp_path: Path) -> None:
             checks = children(gui.proc.pid)
             elapsed = await asyncio.to_thread(stop_and_time, gui.proc)
             assert elapsed < 5
-            try:
-                await check
-            except Exception:
-                pass
+            status, body = await check  # answered, not cut: the check was stopped by the server's end
+            assert status == 503 and body["error"]["code"] == "shutting-down", body
             return checks
         checks = run_async(main, gui)
         assert wait_until(lambda: not any(alive(p) for p in checks), 5)

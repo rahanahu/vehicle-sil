@@ -211,6 +211,10 @@ def test_memory_is_bounded_in_bytes() -> None:
     seq += 1
     assert all(log.bytes <= 1024 * 1024 for log in s._logs.values()) and s._log_bytes <= 16 * 1024 * 1024
     assert s.summary()["log"]["S0"]["dropped"] >= 1
+    one = new_session()
+    for n in range(700):  # 1.4 MiB from one source, under its line limit
+        one.feed_line(line("log", n, source="A", line="x" * 2048))
+    assert one._logs["A"].bytes <= 1024 * 1024 and one._logs["A"].dropped > 0
     small = new_session(log_bytes=100 * 1024)  # all sources together
     for n in range(200):
         small.feed_line(line("log", n, source=f"S{n % 5}", line="x" * 2048))
@@ -268,6 +272,7 @@ def run_hub(messages: list[dict], limit: int = 10, max_bytes: int = 1 << 30) -> 
 
         async def send(text: str) -> None:
             await gate.wait()
+            text.encode("utf-8")  # what a WebSocket text frame needs
             sent.append(json.loads(text))
 
         client = hub.client(send)
@@ -494,3 +499,22 @@ def test_a_compressed_neighbour_is_not_served(tmp_path: Path) -> None:
     response = asyncio.run(main())
     assert response.body == b"the file" and response.headers["Content-Type"] == "text/javascript; charset=utf-8"
     assert "Content-Encoding" not in response.headers
+
+
+def test_an_unexpected_error_is_a_500_with_the_usual_headers() -> None:
+    from aiohttp.test_utils import make_mocked_request
+    from conftest import CONFIGS, FAKE
+    from vehicle_sil_gui.launcher import Launcher
+    from vehicle_sil_gui.server import GuiServer, Options
+    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(FAKE), port=1, token="t"))
+
+    async def failing(request):
+        raise RuntimeError("a bug")
+
+    async def main():
+        return await server._headers(make_mocked_request("GET", "/api/app"), failing)
+
+    response = asyncio.run(main())
+    assert response.status == 500 and json.loads(response.body)["error"]["code"] == "internal"
+    assert "script-src 'self'" in response.headers["Content-Security-Policy"]
+    assert response.headers["Cache-Control"] == "no-store"
