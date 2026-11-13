@@ -107,6 +107,9 @@ int run(const BridgeOptions& options)
 
     std::signal(SIGINT, on_stop_signal);
     std::signal(SIGTERM, on_stop_signal);
+#ifdef SIGBREAK
+    std::signal(SIGBREAK, on_stop_signal);
+#endif
     int result = kExitOk;
     while (g_stop_requested == 0)
     {

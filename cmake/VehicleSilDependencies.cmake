@@ -117,6 +117,19 @@ function(_vehicle_sil_patched_source dependency out_var)
     file(TOUCH_NOCREATE "${file}")
   endforeach()
 
+  set(git_ceiling_directory "${CMAKE_CURRENT_BINARY_DIR}/external")
+  if(WIN32 AND DEFINED ENV{MSYSTEM})
+    find_program(_vehicle_sil_cygpath cygpath REQUIRED)
+    execute_process(
+      COMMAND "${_vehicle_sil_cygpath}" -u "${git_ceiling_directory}"
+      OUTPUT_VARIABLE git_ceiling_directory
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE cygpath_result)
+    if(NOT cygpath_result EQUAL 0)
+      message(FATAL_ERROR "vehicle-sil: failed to convert the Git ceiling directory with cygpath")
+    endif()
+  endif()
+
   foreach(patch IN LISTS patches)
     # git apply outside a repository works like patch(1):
     # - GIT_CEILING_DIRECTORIES keeps git from finding an enclosing repository

@@ -5,7 +5,7 @@
 > [!NOTE]
 > vehicle-sil は最初のリリースの前です。公開 API は、互換性を保たずに変わることがあります。わかっている制限は「[既知の制限](#既知の制限)」に、未実装の項目と制約の詳細は [docs/architecture.md](docs/architecture.md) にあります。
 
-使えるのは、vehicle-sil 自身の J1939 スタック（単一フレーム、Request と Acknowledgement、Address Claim、トランスポートプロトコル、診断、ECU アプリ向けの部品）、SIL Kit と Vector XL Driver をつなぐ CAN ブリッジ（実機は未検証）、LIN の Master/Slave（スケジュールテーブル、フレームの送受信、診断フレーム 0x3C/0x3D、応答の衝突の検出、Sleep/Wakeup）と、それらを同期させる共通仮想時間です。
+使えるのは、vehicle-sil 自身の J1939 スタック（単一フレーム、Request と Acknowledgement、Address Claim、トランスポートプロトコル、診断、ECU アプリ向けの部品）、SIL Kit と Vector XL Driver をつなぐ CAN ブリッジ（Vector Virtual CAN と VN5620 の物理 CAN ループバックで確認済み）、LIN の Master/Slave（スケジュールテーブル、フレームの送受信、診断フレーム 0x3C/0x3D、応答の衝突の検出、Sleep/Wakeup）と、それらを同期させる共通仮想時間です。
 
 ## どれを読むか
 
@@ -359,7 +359,7 @@ private:
 `vehicle_sil_vector_xl_bridge` は、SIL Kit の CAN ネットワークと Vector XL の CAN チャネルの間で、クラシック CAN のフレームを双方向に転送します。XL のチャネルには、Vector Virtual CAN と、CANcase や VN16xx などの物理 CAN を使えます。
 
 > [!WARNING]
-> Windows と Vector のハードウェアでは、まだ動作を確認していません。Linux 上で、XL ドライバのフェイクを使った自動テストだけで確認しています。
+> Windows 11 の MSYS2 UCRT64 ビルドと、実際の XL Driver Library を使った Vector Virtual CAN の送受信を確認済みです。VN5620 の Channel 5 と 6 を 250 kbit/s でつないだ物理ループバックでも、Engine から Dashboard への送受信を確認しています。他の物理 CAN 構成や機器は未確認です。
 
 ### ビルド
 
@@ -507,8 +507,8 @@ ECU の実行ファイルを、ほかのファイルなしで配りたいとき�
 - `LocalBench`（`vehicle_sil::local`）と `vehicle_sil::testkit` の API は固まっていません。
 - 対応するのはクラシック CAN（8 バイト以下）だけです。RTR、CAN FD、CAN XL のフレームは、受信時に捨てて件数を数えます。
 - `install()` とパッケージ化（`find_package`）には未対応です。使えるのは FetchContent と `add_subdirectory` だけです。
-- 物理マシンの Windows 10/11 では未確認です。
-- Vector XL CAN Bridge の、Vector のドライバとハードウェアでの動作は、まだ確認していません。
+- Windows 10 は未確認です（Windows 11 の MSYS2 UCRT64 ビルドと試験は確認済み）。
+- Vector XL CAN Bridge は Vector Virtual CAN と VN5620 の Channel 5/6 を使った物理ループバックで確認済みです。他の物理 CAN 構成や機器での動作は未確認です。
 - Vector XL CAN Bridge が扱うのはクラシック CAN だけです。CAN FD には対応していません。
 
 ## 開発者向け

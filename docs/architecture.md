@@ -840,12 +840,12 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
 - XL バックエンドは 2 つに分かれます。判断と状態を持つロジック（`xl_driver.cpp`）は、vehicle-sil 独自の内部インターフェース（`src/xl_backend.hpp`）だけに依存し、どのプラットフォームでもビルドします。XL Driver Library を呼ぶのは `xl_backend_vector.cpp` だけで、このファイルが行うのは型と値の変換だけです（Windows で XL Driver Library があるときだけビルドします）。
 - 自動テストは、内部インターフェースを実装したテスト専用のフェイク（`tests/vector_xl/fake_xl`）に対して、本番と同じ `xl_driver.cpp` と `main.cpp` を動かします。フェイクは、チャネルごとのバス、送信レシート、init 権限、受信キューのあふれ、エラーフレームを模擬します（送信レシートの設定とビットレートは init 権限が必要、送信の DLC は 0〜8、受信キューは指定した容量から 1 を引いた数、受信は 1 回に 1 件）。
 - `xl_backend_vector.cpp` の変換（関数、定数、構造体のメンバーの対応）は自動テストの対象外です。公式の XL Driver Library でのビルドとリンクで確かめます。
+- Windows 11 の MSYS2 UCRT64 で XL Driver Library を使ったビルドとチャネル列挙を確認しています。Vector Virtual CAN の Channel 1 と 2 は同じ仮想バスにつながり、別々の SIL Kit ネットワーク間での送受信、`--bitrate` による init access、送信レシートの扱いを確認しています。VN5620 の物理 Channel 5/6 を 250 kbit/s でループバック接続し、1 秒の等速シミュレーションで Engine から Dashboard への送受信も確認しています。
 - 次の点は、Vector のドライバとハードウェアでまだ確かめていません。
-  - 実際のドライバの挙動（Virtual CAN と CANcase での送受信、送信レシートの無効化）
-  - Virtual CAN の Channel 1 と 2 が同じ仮想バスにつながっているか（フェイクはチャネルごとに別のバスとして扱います）
+  - 他の物理 CAN 構成や機器での送受信。今回の VN5620 ループバックでは `own_tx_dropped=0` でしたが、物理チャネルで送信レシートが返る条件と抑止動作は未確認です。
   - 同じチャネルを使うほかのアプリケーション（CANoe など）のフレームが、ブリッジに通常の受信として届くか。フェイクはそう扱いますが、実際のドライバが送信レシートとして届ける場合、ブリッジはそれを `own_tx_dropped` として捨てます。確かめるまでは、ほかのアプリケーションとは別のチャネルを使います。
   - CAN FD モードで動いているチャネルを、クラシック CAN のポート（`XL_INTERFACE_VERSION`）で開いたときの挙動
-  - Windows では E2E テストがブリッジを正常に止められないので、統計（`own_tx_dropped` などのループ防止の確認）と終了コードを検査しません
+  - `tests/vector_xl/xl_bridge_it_launcher` は Windows で bridge を強制終了するため、その E2E テストは統計と終了コードを検査しません。`vehicle_sil_launch` が送る Ctrl+Break によるブリッジの正常終了と統計出力は確認しています。
   - `ExternalPortAdapter` で XL のチャネルにプロトコルスタックを載せた動作（自動テストは `ExternalCanPort` のフェイクに対してだけです）
 
 ## 共通仮想時間
