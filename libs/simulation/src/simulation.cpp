@@ -155,11 +155,11 @@ struct Simulation::SilKitRun
             const auto other = detail::network_kind(*peers[i], network);
             if (other && *other != kind)
             {
-                const bool lin = *other == NetworkKind::Lin;
                 throw std::invalid_argument(std::string(kWho) + call + " of the ECU \"" + ecu + "\": \"" + network +
-                                            "\" is a " + (lin ? "LIN" : "CAN") + " network of the ECU \"" + names[i] +
-                                            "\" (made by " + (lin ? "lin_master() or lin_slave()" : "j1939() or can()") +
-                                            "); a " + (lin ? "CAN" : "LIN") + " network needs a name of its own");
+                                            "\" is a " + std::string(detail::network_kind_label(*other)) + " network of the ECU \"" +
+                                            names[i] + "\" (made by " + std::string(detail::network_kind_calls(*other)) +
+                                            "); a " + std::string(detail::network_kind_label(kind)) +
+                                            " network needs a name of its own");
             }
         }
     }

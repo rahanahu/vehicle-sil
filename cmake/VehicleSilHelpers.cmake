@@ -4,6 +4,10 @@ include_guard(GLOBAL)
 function(vehicle_sil_set_warnings target)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor)
+    # Always an error, also without VEHICLE_SIL_WARNINGS_AS_ERRORS: a switch over an enumeration
+    # without a default must handle every enumerator (a new network kind or use is found where it
+    # is missing: vehicle_sil/ecu/describe.hpp). Only vehicle-sil's own targets, not a user's.
+    target_compile_options(${target} PRIVATE -Werror=switch)
     if(VEHICLE_SIL_WARNINGS_AS_ERRORS)
       target_compile_options(${target} PRIVATE -Werror)
     endif()

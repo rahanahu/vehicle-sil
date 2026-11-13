@@ -4,6 +4,7 @@
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/control_silkit/agent_transport.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
+#include "vehicle_sil/ecu/executable.hpp"
 
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/peer/peer.hpp"
@@ -46,18 +47,14 @@ namespace vehicle_sil {
 
 namespace {
 
-// The exit codes of the other tools (tools/common/include/vehicle_sil/cli/args.hpp).
-constexpr int kExitOk = 0;
-constexpr int kExitFailed = 1;
-constexpr int kExitSetupFailed = 3;
-constexpr int kExitUsage = 4;
-/// Interrupted by a signal (SIGINT, SIGTERM; Windows Ctrl+C, Ctrl+Break): 128 + SIGINT, as shells
-/// report a program that Ctrl+C ended.
-constexpr int kExitInterrupted = 130;
-
-/// The longest --run-for-ms: about 31 years, as the other tools' durations.
-// vehicle_sil_launch gives at most this as --start-timeout-ms (vehicle_sil::launch::kMaxMillis).
-constexpr std::uint64_t kMaxMillis = 1'000'000'000'000;
+// The exit codes and the longest --run-for-ms and --start-timeout-ms, as vehicle_sil_launch knows
+// them (vehicle_sil/ecu/executable.hpp).
+using ecu_executable::kExitFailed;
+using ecu_executable::kExitInterrupted;
+using ecu_executable::kExitOk;
+using ecu_executable::kExitSetupFailed;
+using ecu_executable::kExitUsage;
+constexpr auto kMaxMillis = static_cast<std::uint64_t>(ecu_executable::kMaxMillis);
 
 class UsageError : public std::runtime_error
 {

@@ -128,6 +128,17 @@ TEST_CASE(reads_what_to_json_writes)
     // Real time: no step.
     d.step.reset();
     CHECK(read_description(to_json(d)).description == d);
+    // Every use (kNetworkUses: also one added later), with nodes where it has them.
+    EcuDescription every{"All", 10ms, {}, {}};
+    for (const NetworkUse use : kNetworkUses)
+    {
+        every.networks.push_back(NetworkDescription{std::string("N_") + to_string(use), use, {}});
+        if (use == NetworkUse::J1939)
+        {
+            every.networks.back().nodes.push_back(node(0x00, kEngineName));
+        }
+    }
+    CHECK(read_description(to_json(every)).description == every);
 }
 
 TEST_CASE(ignores_unknown_keys_of_a_description)

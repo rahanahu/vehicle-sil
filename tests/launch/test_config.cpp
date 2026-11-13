@@ -269,6 +269,19 @@ TEST_CASE(values_of_the_wrong_type_or_range_are_errors)
                "E 10 value: participants is empty: list the participants of the simulation\n");
 }
 
+TEST_CASE(every_kind_of_network_is_read_by_its_name)
+{
+    // kNetworkKinds: also a kind added later is read without a change here.
+    for (const NetworkKind kind : kNetworkKinds)
+    {
+        const ConfigRead read = read_config(std::string("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: ") +
+                                            to_string(kind) + "\nparticipants:\n  - name: A\n    command: a\n");
+        CHECK(read.findings.empty());
+        CHECK(read.config && read.config->networks.size() == 1 && read.config->networks[0].valid &&
+              read.config->networks[0].kind == kind);
+    }
+}
+
 TEST_CASE(a_bad_describe_value_stops_the_participant_from_being_checked)
 {
     const ConfigRead read = read_config(with_participants("  - name: A\n    command: a\n    describe: 1\n"));

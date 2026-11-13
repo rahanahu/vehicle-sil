@@ -18,7 +18,8 @@ REQUIRED_FEATURES = ("events", "stdin-commands")
 VERSION_TIMEOUT_S = 10
 # The words of vehicle_sil_launch that this server uses, in one place (docs/simulation-config.md, 「等速で動かす」
 # and 「機械から使う」): the range of a speed (the same for --speed and the speed command), the most milliseconds
-# one step command may ask for, the time commands, and the features that say which of them a launcher has.
+# one step command may ask for, the time commands, and the features that say which of them a launcher has. The
+# launcher's tests (launch.the_gui_takes_the_launchers_limits) compare the numbers with its own.
 SPEED_MIN = 0.000001
 SPEED_MAX = 1000000.0
 STEP_MS_MAX = 10 ** 12

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "vehicle_sil/ecu/describe.hpp"
+#include "vehicle_sil/ecu/executable.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -22,17 +23,18 @@ namespace vehicle_sil::launch {
 inline constexpr int kSimulationFormat = 1;
 
 /// The longest duration in milliseconds the configuration takes (about 31 years). It is also the
-/// largest --start-timeout-ms (and --run-for-ms) that ecu_main accepts (docs/ecu-executable.md).
-inline constexpr std::int64_t kMaxMillis = 1'000'000'000'000;
+/// largest --start-timeout-ms (and --run-for-ms) that ecu_main accepts (docs/ecu-executable.md):
+/// both take it from vehicle_sil/ecu/executable.hpp.
+inline constexpr std::int64_t kMaxMillis = ecu_executable::kMaxMillis;
 
 /// The participant name of the controller that vehicle_sil_launch runs; no participant may use it.
 inline constexpr std::string_view kControllerName = "SimulationController";
 
 /// The arguments that vehicle_sil_launch gives an ecu_main executable itself; its command must
-/// not have them (also not as "--name=..."). docs/ecu-executable.md has their meaning.
-inline constexpr std::string_view kLauncherArguments[] = {"--describe",   "--name",       "--registry-uri",
-                                                          "--local",      "--run-for-ms", "--start-timeout-ms",
-                                                          "--help",       "-h"};
+/// not have them (also not as "--name=..."). docs/ecu-executable.md has their meaning. The list is
+/// ecu_executable::kLauncherArguments (vehicle_sil/ecu/executable.hpp), which ecu_main's tests
+/// hold against its arguments.
+inline constexpr const auto& kLauncherArguments = ecu_executable::kLauncherArguments;
 
 /// The placeholders of a command with describe: false, in the arguments after the executable (also
 /// inside a longer argument). Braces are special only as "{word}" (word: letters, digits, '_'):
