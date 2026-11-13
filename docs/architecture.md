@@ -917,7 +917,8 @@ SIL Kit の `ITimeSyncService` で、すべてのピアが 1 つの仮想時間�
 ### SIL Kit の構成の既定
 
 - `ParticipantRuntimeOptions::participant_configuration` が `"{}"`（既定）か空なら、`ParticipantRuntime` は `default_participant_configuration(registry_uri)`（`participant_runtime.hpp`）で participant を作ります。SIL Kit の既定から変えるのは 2 つです。
-  - registry の URI のホストがループバックのアドレス（`is_loopback_registry_uri()`: `127.x.x.x`、`::1`、`localhost`。名前は引きません）なら、`Middleware.AcceptorUris` でループバックのアドレスだけで待ち受けます（TCP の `127.0.0.1` か `::1`、ポート 0。Windows 以外では、ほかに一時ディレクトリの新しい名前の local-domain ソケット）。`ParticipantRuntimeOptions::listen_on_network`（`SimulationControllerOptions` にも同じもの）か環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK`（`kListenOnNetworkVariable`）があれば足しません。`vehicle_sil_launch run` での扱いは [simulation-config.md](simulation-config.md) の「待ち受けるアドレス」にあります。
+  - registry の URI のホストがループバックのアドレス（`is_loopback_registry_uri()`: `127.0.0.0/8` を `getaddrinfo()` が読む数の書き方で、`::1`、IPv6 に写した `127.x.x.x`、`localhost`。名前は引きません）なら、`Middleware.AcceptorUris` でループバックのアドレスだけで待ち受けます（TCP の `127.0.0.1` か `::1`、ポート 0。Windows 以外では、ほかに一時ディレクトリの新しい名前の local-domain ソケット）。
+  - `ParticipantRuntimeOptions::listen_on_network`（`std::optional<bool>`。`SimulationControllerOptions` にも同じもの）が `true` なら足さず、`false` なら URI だけで決めます。空なら環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK`（`kListenOnNetworkVariable`）を読みます: `1` なら足さない、`0`・空・なしなら URI で決める、ほかの値は `std::invalid_argument`。`vehicle_sil_launch run` は controller に値を渡し、子にはいつも変数を渡します（[simulation-config.md](simulation-config.md) の「待ち受けるアドレス」）。
   - Windows では `Middleware.EnableDomainSockets: false`（[dependencies.md](dependencies.md) の SIL Kit（Windows）の節）。
 - 自分の構成を渡したときは、それをそのまま使います（待ち受けるアドレスも、その構成のとおり）。
 - vehicle-sil が立てる registry（`vehicle_sil_launch run`、`Simulation`）は `default_registry_configuration()` で作ります。registry は自分の URI のアドレスで待ち受けます（`AcceptorUris` を使いません）。

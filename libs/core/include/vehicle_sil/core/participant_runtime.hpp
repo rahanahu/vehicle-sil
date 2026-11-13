@@ -72,42 +72,51 @@ struct VirtualTimeOptions
 };
 
 /// The environment variable that makes the participants of a process listen on every address
-/// even when their registry URI is a loopback address (any value but empty or "0"): for a
-/// registry that other computers reach although this computer's participants connect to it at a
-/// loopback address (vehicle_sil_launch run with registry_uri silkit://0.0.0.0:<port> sets it for
-/// the participants it starts).
+/// even when their registry URI is a loopback address: "1" does, "0", empty or not set does not;
+/// any other value is an error (std::invalid_argument when a participant is made). For a registry
+/// that other computers reach although this computer's participants connect to it at a loopback
+/// address: vehicle_sil_launch run with registry_uri silkit://0.0.0.0:<port> sets it to 1 for the
+/// participants it starts (and to 0 when the registry is on a loopback address). Without it, the
+/// participants of the other computers are given this computer's loopback acceptors and try them on
+/// their own loopback address, where another program may answer: the join then fails.
 inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN_ON_NETWORK";
 
-/// Whether `registry_uri` (silkit://<host>:<port>...) names its host by a loopback address:
-/// 127.x.x.x, ::1 ([::1] in the URI) or localhost (any case). The host is not resolved.
-[[nodiscard]] bool is_loopback_registry_uri(std::string_view registry_uri) noexcept;
+/// Whether `registry_uri` (silkit://<host>:<port>...) names its host by a loopback address: an IPv4
+/// address in 127.0.0.0/8 in any numeric form that getaddrinfo() reads ("127.0.0.1", "127.1"),
+/// ::1 in any IPv6 form ([::1], [0:0:0:0:0:0:0:1]), 127.x.x.x mapped to IPv6
+/// ([::ffff:127.0.0.1]), or localhost (any case, also "localhost."). Other names are not resolved:
+/// they count as not loopback.
+[[nodiscard]] bool is_loopback_registry_uri(std::string_view registry_uri);
 
 /// The SIL Kit participant configuration (JSON) for a participant of the registry at
 /// `registry_uri` that is given none. It changes two of SIL Kit's defaults:
 ///
 /// - A participant whose registry URI is a loopback address (is_loopback_registry_uri()) listens
 ///   for the other participants on loopback addresses only (Middleware.AcceptorUris: TCP on
-///   127.0.0.1, or ::1 for an IPv6 registry URI, port 0; and, but on Windows, a local-domain
+///   127.0.0.1, or ::1 for an IPv6 ::1 registry URI, port 0; and, but on Windows, a local-domain
 ///   socket of a new name in the temporary directory), instead of on every address. Then no
 ///   other computer can connect to it, and Windows's firewall does not ask whether to let one.
-///   Not with `listen_on_network` or kListenOnNetworkVariable set: a registry that listens at
-///   0.0.0.0 may be reached by other computers while this computer's participants connect to it
-///   at 127.0.0.1.
+///   Not when `listen_on_network` is true, or, when it is empty, when kListenOnNetworkVariable is
+///   1: a registry that listens at 0.0.0.0 may be reached by other computers while this computer's
+///   participants connect to it at 127.0.0.1. A `listen_on_network` that has a value decides alone
+///   (the environment is not read).
 /// - On Windows, the connections between the participants of one machine are TCP connections
 ///   (Middleware.EnableDomainSockets: false). With local-domain sockets there, closing the
 ///   socket to a process whose threads are suspended was seen not to return, and the closing
 ///   process stayed after it was told to end; with TCP connections that was not seen
 ///   (docs/dependencies.md says what was tried and what is a guess).
 ///
-/// Each call makes a new name for the local-domain socket.
-[[nodiscard]] std::string default_participant_configuration(std::string_view registry_uri, bool listen_on_network = false);
+/// Each call makes a new name for the local-domain socket. Throws std::invalid_argument for a value
+/// of kListenOnNetworkVariable other than 1, 0 or empty, when it reads it.
+[[nodiscard]] std::string default_participant_configuration(std::string_view registry_uri,
+                                                            std::optional<bool> listen_on_network = std::nullopt);
 
 /// default_participant_configuration() with more members of the top level: `members` is their
 /// JSON without the braces (`"Logging":{...}`), or empty. For a program that makes a
 /// configuration of its own, so that the defaults are made in one place. `members` must not
 /// have "Middleware".
 [[nodiscard]] std::string default_participant_configuration_with(std::string_view registry_uri, std::string_view members,
-                                                                 bool listen_on_network = false);
+                                                                 std::optional<bool> listen_on_network = std::nullopt);
 
 /// `configuration` as it is if it configures anything; default_participant_configuration() if it
 /// is "{}" or empty (white space aside). A configuration of the caller's own is used as it is: on
@@ -115,7 +124,7 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
 /// says (on every address unless it has Middleware.AcceptorUris).
 [[nodiscard]] std::string participant_configuration_or_default(std::string_view configuration,
                                                                std::string_view registry_uri,
-                                                               bool listen_on_network = false);
+                                                               std::optional<bool> listen_on_network = std::nullopt);
 
 /// The SIL Kit configuration (JSON) for a registry that vehicle-sil starts: as
 /// default_participant_configuration() on Windows (TCP connections), but without acceptors (a
@@ -130,8 +139,9 @@ struct ParticipantRuntimeOptions
     /// (participant_configuration_or_default()).
     std::string participant_configuration = "{}";
     /// With the defaults: true listens on every address even when registry_uri is a loopback
-    /// address (default_participant_configuration()); for a registry that other computers reach.
-    bool listen_on_network = false;
+    /// address, false does not, empty leaves it to kListenOnNetworkVariable
+    /// (default_participant_configuration()).
+    std::optional<bool> listen_on_network{};
     /// Upper bound for stop() and the destructor to wait for the lifecycle to shut down.
     std::chrono::milliseconds shutdown_timeout{5000};
     LifecycleMode lifecycle_mode = LifecycleMode::Autonomous;

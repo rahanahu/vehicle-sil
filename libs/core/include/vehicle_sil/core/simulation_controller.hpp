@@ -142,7 +142,7 @@ struct SimulationControllerOptions
     /// As ParticipantRuntimeOptions::participant_configuration.
     std::string participant_configuration = "{}";
     /// As ParticipantRuntimeOptions::listen_on_network.
-    bool listen_on_network = false;
+    std::optional<bool> listen_on_network{};
     /// The participants (other than the controller) that must be present before the
     /// simulation starts. They must use LifecycleMode::Coordinated.
     std::vector<std::string> required_participants;

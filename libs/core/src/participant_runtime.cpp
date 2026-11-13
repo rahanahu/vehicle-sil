@@ -5,6 +5,7 @@
 #include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <cstdint>
@@ -12,6 +13,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <system_error>
@@ -72,38 +74,148 @@ bool equals_ignoring_case(std::string_view a, std::string_view b) noexcept
            });
 }
 
-/// 127.x.x.x in dotted decimal (four numbers from 0 to 255).
-bool is_loopback_ipv4(std::string_view host) noexcept
+/// An IPv4 address in one of the numeric forms that inet_aton() and getaddrinfo() read: one to four
+/// parts, each decimal, octal (leading 0) or hexadecimal (0x), the last one filling the rest
+/// ("127.1" is 127.0.0.1, "2130706433" too). Empty if `host` is not one.
+std::optional<std::uint32_t> parse_ipv4(std::string_view host) noexcept
 {
-    if (std::count(host.begin(), host.end(), '.') != 3)
-    {
-        return false;
-    }
-    int first = -1;
+    std::uint64_t parts[4] = {};
+    std::size_t count = 0;
     while (true)
     {
-        const auto dot = host.find('.');
-        const std::string_view part = host.substr(0, dot);
-        int value = 0;
-        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value);
-        if (part.empty() || part.size() > 3 || error != std::errc{} || end != part.data() + part.size() || value < 0 || value > 255)
+        if (count == 4)
         {
-            return false;
+            return std::nullopt;
         }
-        first = first < 0 ? value : first;
+        const auto dot = host.find('.');
+        std::string_view part = host.substr(0, dot);
+        int base = 10;
+        if (part.size() > 1 && part[0] == '0' && (part[1] == 'x' || part[1] == 'X'))
+        {
+            base = 16;
+            part.remove_prefix(2);
+        }
+        else if (part.size() > 1 && part[0] == '0')
+        {
+            base = 8;
+            part.remove_prefix(1);
+        }
+        std::uint64_t value = 0;
+        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value, base);
+        if (part.empty() || error != std::errc{} || end != part.data() + part.size() || value > 0xFFFFFFFFULL)
+        {
+            return std::nullopt;
+        }
+        parts[count++] = value;
         if (dot == std::string_view::npos)
         {
-            return first == 127;
+            break;
         }
         host.remove_prefix(dot + 1);
     }
+    std::uint64_t address = 0;
+    for (std::size_t i = 0; i + 1 < count; ++i)
+    {
+        if (parts[i] > 255)
+        {
+            return std::nullopt;
+        }
+        address |= parts[i] << (8 * (3 - i));
+    }
+    const std::uint64_t last = parts[count - 1];
+    if (last > (0xFFFFFFFFULL >> (8 * (count - 1))))
+    {
+        return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(address | last);
 }
 
+/// The groups of an IPv6 address in text form ("::1", "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1"; a zone
+/// "%..." is left out). Empty if `host` is not one.
+std::optional<std::array<std::uint16_t, 8>> parse_ipv6(std::string_view host)
+{
+    host = host.substr(0, host.find('%'));
+    // The groups of one side of "::"; a dotted IPv4 address may end the address.
+    const auto groups_of = [](std::string_view text, bool last, std::vector<std::uint16_t>& out) {
+        if (text.empty())
+        {
+            return true;
+        }
+        while (true)
+        {
+            const auto colon = text.find(':');
+            const std::string_view part = text.substr(0, colon);
+            if (colon == std::string_view::npos && last && part.find('.') != std::string_view::npos)
+            {
+                if (std::count(part.begin(), part.end(), '.') != 3)
+                {
+                    return false;
+                }
+                const auto v4 = parse_ipv4(part);
+                if (!v4)
+                {
+                    return false;
+                }
+                out.push_back(static_cast<std::uint16_t>(*v4 >> 16));
+                out.push_back(static_cast<std::uint16_t>(*v4 & 0xFFFF));
+                return true;
+            }
+            unsigned value = 0;
+            const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value, 16);
+            if (part.empty() || part.size() > 4 || error != std::errc{} || end != part.data() + part.size())
+            {
+                return false;
+            }
+            out.push_back(static_cast<std::uint16_t>(value));
+            if (colon == std::string_view::npos)
+            {
+                return true;
+            }
+            text.remove_prefix(colon + 1);
+        }
+    };
+    std::vector<std::uint16_t> head;
+    std::vector<std::uint16_t> tail;
+    const auto gap = host.find("::");
+    if (gap == std::string_view::npos)
+    {
+        if (!groups_of(host, true, head) || head.size() != 8)
+        {
+            return std::nullopt;
+        }
+    }
+    else if (host.find("::", gap + 1) != std::string_view::npos || !groups_of(host.substr(0, gap), false, head) ||
+             !groups_of(host.substr(gap + 2), true, tail) || head.size() + tail.size() > 7)
+    {
+        return std::nullopt;
+    }
+    std::array<std::uint16_t, 8> groups{};
+    std::copy(head.begin(), head.end(), groups.begin());
+    std::copy(tail.begin(), tail.end(), groups.end() - static_cast<std::ptrdiff_t>(tail.size()));
+    return groups;
+}
+
+/// ::1.
+bool is_ipv6_loopback(const std::array<std::uint16_t, 8>& groups) noexcept
+{
+    return std::all_of(groups.begin(), groups.end() - 1, [](std::uint16_t g) { return g == 0; }) && groups[7] == 1;
+}
+
+/// The value of kListenOnNetworkVariable: true for "1", false when it is not set, empty or "0".
 bool listen_on_network_from_environment()
 {
     const std::string name(kListenOnNetworkVariable);
     const char* value = std::getenv(name.c_str());
-    return value != nullptr && *value != '\0' && std::string_view(value) != "0";
+    if (value == nullptr || *value == '\0' || std::string_view(value) == "0")
+    {
+        return false;
+    }
+    if (std::string_view(value) == "1")
+    {
+        return true;
+    }
+    throw std::invalid_argument(name + " must be 1 (listen on every address) or 0 (listen on the loopback address when "
+                                       "the registry URI is one), not '" + value + "'");
 }
 
 std::string json_string(std::string_view text)
@@ -153,13 +265,13 @@ std::string new_local_acceptor_uri()
 #endif
 
 /// The members of "Middleware", without the braces.
-std::string middleware_members(std::string_view registry_uri, bool listen_on_network)
+std::string middleware_members(std::string_view registry_uri, std::optional<bool> listen_on_network)
 {
     std::string members;
 #ifdef _WIN32
     members = R"("EnableDomainSockets":false)";
 #endif
-    if (listen_on_network || !is_loopback_registry_uri(registry_uri) || listen_on_network_from_environment())
+    if (!is_loopback_registry_uri(registry_uri) || (listen_on_network ? *listen_on_network : listen_on_network_from_environment()))
     {
         return members;
     }
@@ -171,8 +283,8 @@ std::string middleware_members(std::string_view registry_uri, bool listen_on_net
     }
 #endif
     // The registry's address family: an IPv6 registry URI may be all that this computer has.
-    acceptors.emplace_back(registry_host(registry_uri).find(':') != std::string_view::npos ? "tcp://[::1]:0"
-                                                                                           : "tcp://127.0.0.1:0");
+    const auto v6 = parse_ipv6(registry_host(registry_uri));
+    acceptors.emplace_back(v6 && is_ipv6_loopback(*v6) ? "tcp://[::1]:0" : "tcp://127.0.0.1:0");
     members += members.empty() ? R"("AcceptorUris":[)" : R"(,"AcceptorUris":[)";
     for (std::size_t i = 0; i < acceptors.size(); ++i)
     {
@@ -184,19 +296,34 @@ std::string middleware_members(std::string_view registry_uri, bool listen_on_net
 
 } // namespace
 
-bool is_loopback_registry_uri(std::string_view registry_uri) noexcept
+bool is_loopback_registry_uri(std::string_view registry_uri)
 {
-    const std::string_view host = registry_host(registry_uri);
-    return is_loopback_ipv4(host) || host == "::1" || equals_ignoring_case(host, "localhost");
+    std::string_view host = registry_host(registry_uri);
+    if (host.find(':') != std::string_view::npos)
+    {
+        // ::1, or 127.x.x.x mapped to IPv6 (::ffff:127.0.0.1).
+        const auto v6 = parse_ipv6(host);
+        return v6 && (is_ipv6_loopback(*v6) || (std::all_of(v6->begin(), v6->begin() + 5, [](std::uint16_t g) { return g == 0; }) &&
+                                                (*v6)[5] == 0xFFFF && ((*v6)[6] >> 8) == 127));
+    }
+    if (const auto v4 = parse_ipv4(host))
+    {
+        return (*v4 >> 24) == 127;
+    }
+    if (!host.empty() && host.back() == '.')
+    {
+        host.remove_suffix(1); // the root of the names: "localhost." is "localhost"
+    }
+    return equals_ignoring_case(host, "localhost");
 }
 
-std::string default_participant_configuration(std::string_view registry_uri, bool listen_on_network)
+std::string default_participant_configuration(std::string_view registry_uri, std::optional<bool> listen_on_network)
 {
     return default_participant_configuration_with(registry_uri, "", listen_on_network);
 }
 
 std::string default_participant_configuration_with(std::string_view registry_uri, std::string_view members,
-                                                   bool listen_on_network)
+                                                   std::optional<bool> listen_on_network)
 {
     const std::string middleware = middleware_members(registry_uri, listen_on_network);
     std::string text = "{";
@@ -214,7 +341,7 @@ std::string default_participant_configuration_with(std::string_view registry_uri
 }
 
 std::string participant_configuration_or_default(std::string_view configuration, std::string_view registry_uri,
-                                                 bool listen_on_network)
+                                                 std::optional<bool> listen_on_network)
 {
     constexpr std::string_view space = " \t\r\n";
     const auto first = configuration.find_first_not_of(space);

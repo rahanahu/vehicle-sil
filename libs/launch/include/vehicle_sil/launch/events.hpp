@@ -18,6 +18,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil::launch {
@@ -265,9 +266,11 @@ public:
                              const std::string& log);
     void participant_ended(const std::string& name, const process::ExitStatus& status);
     /// Manual: `command` the executable and its arguments, `working_directory` where to start it
-    /// (both as shown in the outputs), `command_line` the same as one line for this system's shell.
+    /// (both as shown in the outputs), `command_line` the same as one line for this system's shell,
+    /// `environment` the variables to set for it (name, value; "environment" only if there are any).
     void participant_manual(const std::string& name, const std::vector<std::string>& command,
-                            const std::string& working_directory, const std::string& command_line);
+                            const std::string& working_directory, const std::string& command_line,
+                            const std::vector<std::pair<std::string, std::string>>& environment = {});
     /// "control_link": where a started participant's control agent stands when the simulation
     /// has started: `state` is control_link_name(); "variables" with "connected" (how many its
     /// agent offers), "version" with "version_mismatch" (the version of the messages it speaks).

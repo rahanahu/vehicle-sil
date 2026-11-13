@@ -178,14 +178,21 @@ std::size_t count(const std::vector<Listen>& found, Listen what)
 
 TEST_CASE(a_registry_uri_is_loopback_by_its_written_address)
 {
-    for (const char* uri : {"silkit://127.0.0.1:8500", "silkit://127.1.2.3:0", "silkit://localhost:8500", "silkit://LocalHost:1",
-                            "silkit://[::1]:8500", "silkit://127.0.0.1:8500/simulation"})
+    // Every numeric form that getaddrinfo() reads, and localhost with or without the root's dot.
+    for (const char* uri :
+         {"silkit://127.0.0.1:8500", "silkit://127.1.2.3:0", "silkit://localhost:8500", "silkit://LocalHost:1", "silkit://localhost.:1",
+          "silkit://[::1]:8500", "silkit://127.0.0.1:8500/simulation", "silkit://127.1:8500", "silkit://127.0.1:8500",
+          "silkit://2130706433:8500", "silkit://0x7f.1:8500", "silkit://0177.0.0.1:8500", "silkit://[0:0:0:0:0:0:0:1]:8500",
+          "silkit://[0000::0001]:1", "silkit://[::ffff:127.0.0.1]:8500", "silkit://[::FFFF:127.9.9.9]:1", "silkit://[::1%lo]:1", "silkit://127.65536:1"})
     {
         CHECK(is_loopback_registry_uri(uri));
     }
     for (const char* uri : {"silkit://0.0.0.0:8500", "silkit://[::]:8500", "silkit://192.168.1.10:8500", "silkit://host:8500",
                             "silkit://127.0.0.1.5:8500", "silkit://1270.0.0.1:8500", "silkit://localhost.example:1",
-                            "tcp://127.0.0.1:8500", "", "silkit://[::1:8500"})
+                            "tcp://127.0.0.1:8500", "", "silkit://[::1:8500", "silkit://128.0.0.1:1", "silkit://256.1:1",
+                            "silkit://127.256.0.1:1", "silkit://127.0.0.256:1", "silkit://4294967296:1", "silkit://0x:1", "silkit://[::ffff:10.0.0.1]:1",
+                            "silkit://[::2]:1", "silkit://[1::1]:1", "silkit://[::1::]:1", "silkit://[0:0:0:0:0:0:0:0:1]:1", "silkit://[0:0:0:0::0:0:0:1]:1",
+                            "silkit://[::127.0.0.1]:1", "silkit://localhost..:1", "silkit://127.0.0.1.:1"})
     {
         CHECK(!is_loopback_registry_uri(uri));
     }
@@ -217,9 +224,26 @@ TEST_CASE(a_participant_given_no_configuration_gets_the_default_and_one_of_its_o
     CHECK(default_participant_configuration("silkit://127.0.0.1:8500", true) == network);
     set_variable(kListenOnNetworkVariable.data(), "1");
     CHECK(default_participant_configuration("silkit://127.0.0.1:8500") == network);
+    // A value given decides alone.
+    CHECK(contains(default_participant_configuration("silkit://127.0.0.1:8500", false), "AcceptorUris"));
     set_variable(kListenOnNetworkVariable.data(), "0");
     CHECK(contains(default_participant_configuration("silkit://127.0.0.1:8500"), "AcceptorUris"));
+    CHECK(default_participant_configuration("silkit://127.0.0.1:8500", true) == network);
+    // Only 1 and 0: anything else is an error that names the variable and the value.
+    for (const char* value : {"yes", "true", "on", "1 ", "2"})
+    {
+        set_variable(kListenOnNetworkVariable.data(), value);
+        CHECK(unit::throws_with<std::invalid_argument>([] { static_cast<void>(default_participant_configuration("silkit://127.0.0.1:1")); },
+                                                       "VEHICLE_SIL_LISTEN_ON_NETWORK must be 1 (listen on every address) or 0"));
+        // Not read when the URI or the caller decides.
+        CHECK(default_participant_configuration("silkit://0.0.0.0:1") == network);
+        CHECK(contains(default_participant_configuration("silkit://127.0.0.1:1", false), "AcceptorUris"));
+    }
     set_variable(kListenOnNetworkVariable.data(), nullptr);
+    // The address family of ::1 in any form; 127.x mapped to IPv6 listens on 127.0.0.1.
+    CHECK(contains(default_participant_configuration("silkit://[0:0:0:0:0:0:0:1]:1"), R"("tcp://[::1]:0")"));
+    CHECK(contains(default_participant_configuration("silkit://[::ffff:127.0.0.1]:1"), R"("tcp://127.0.0.1:0")"));
+    CHECK(contains(default_participant_configuration("silkit://127.1:1"), R"("tcp://127.0.0.1:0")"));
     // A registry: never acceptors (it listens at its URI).
 #ifdef _WIN32
     CHECK(std::string(default_registry_configuration()) == network);

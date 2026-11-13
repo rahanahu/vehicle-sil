@@ -190,19 +190,23 @@ std::wstring environment_block(const std::vector<std::pair<std::string, std::str
                                         TRUE) == CSTR_EQUAL;
         });
     };
-    std::wstring block;
-    if (wchar_t* strings = GetEnvironmentStringsW(); strings != nullptr)
+    // Without the caller's environment the child would have only `variables` (no SystemRoot:
+    // Winsock does not work then): an error rather than that.
+    wchar_t* strings = GetEnvironmentStringsW();
+    if (strings == nullptr)
     {
-        for (const wchar_t* entry = strings; *entry != L'\0'; entry += std::wcslen(entry) + 1)
-        {
-            if (!is_set_here(entry))
-            {
-                block.append(entry);
-                block.push_back(L'\0');
-            }
-        }
-        FreeEnvironmentStringsW(strings);
+        throw StartError(last_error_message("GetEnvironmentStringsW"), StartError::Cause::System);
     }
+    std::wstring block;
+    for (const wchar_t* entry = strings; *entry != L'\0'; entry += std::wcslen(entry) + 1)
+    {
+        if (!is_set_here(entry))
+        {
+            block.append(entry);
+            block.push_back(L'\0');
+        }
+    }
+    FreeEnvironmentStringsW(strings);
     for (std::size_t i = 0; i < variables.size(); ++i)
     {
         block += names[i] + L"=" + widen(variables[i].second);
@@ -228,6 +232,18 @@ HANDLE start(const std::filesystem::path& executable, const std::vector<std::str
     if (job == nullptr)
     {
         throw StartError(what + "no job object" + jobHint, StartError::Cause::System);
+    }
+    std::wstring environment;
+    if (!flags.environment.empty())
+    {
+        try
+        {
+            environment = environment_block(flags.environment);
+        }
+        catch (const StartError& e)
+        {
+            throw StartError(what + "cannot read the environment to pass on: " + e.what(), StartError::Cause::System);
+        }
     }
     DWORD creation = CREATE_SUSPENDED | (flags.new_group ? CREATE_NEW_PROCESS_GROUP : 0) |
                      // Without a console of this process (a service, some CI), a console
@@ -263,10 +279,8 @@ HANDLE start(const std::filesystem::path& executable, const std::vector<std::str
     // A relative path is from the caller's directory, also when the child starts in another one.
     std::error_code ec;
     const std::filesystem::path program = executable.is_relative() ? std::filesystem::absolute(executable, ec) : executable;
-    std::wstring environment;
-    if (!flags.environment.empty())
+    if (!environment.empty())
     {
-        environment = environment_block(flags.environment);
         creation |= CREATE_UNICODE_ENVIRONMENT;
     }
     const BOOL created = CreateProcessW(program.wstring().c_str(), line.data(), nullptr, nullptr, TRUE, creation,

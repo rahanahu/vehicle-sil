@@ -132,6 +132,7 @@ ECU をデバッガーから動かすときなど、ある participant を `run`
 
 - 照合は、ほかの participant と同じです（`describe: true` なら `--describe` を動かします）。manual の participant ごとに注記 `participant-manual` を出します。
 - `run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を書きます（下の例）。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`）。そのコマンドを、書いてあるディレクトリで実行します（デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します）。引数の引用は、Linux では POSIX sh（bash、zsh）に貼る形です。Windows では、コマンドプロンプト（cmd.exe）に貼る形で、C ランタイムがコマンドラインを読む決まりで引用し、`&` `|` `<` `>` `^` を含む引数も `"` で囲みます。実行ファイルのパスは `\` で区切ります。cmd.exe は `"` の中でも `%...%` を展開するので、`%` を含む引数は直して貼ります。PowerShell に貼るときは、`"` で囲んだ実行ファイルの前に `&` を足し、`$` と `` ` `` を含む引数を直します。`--events` では、事象 `participant` の `state` が `manual` の行が、同じものを持ちます。
+- `registry_uri` がループバックのアドレスでないときは、コマンドの前の行に「with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment」と書き、注記 `participant-manual` にも書きます。その変数を設定して起動します（[待ち受けるアドレス](#待ち受けるアドレス)）。
 - `registry_uri` を書いていなければ、manual の必須の participant がいる実行は、registry を `silkit://127.0.0.1:8500` で立てます。コマンドが実行ごとに変わらないので、デバッガーの設定を 1 度作れば使い回せます。そのポートを別のプログラムが使っていれば `setup` の誤りです（`registry_uri` に別のポートを書きます）。
 - 待ち方: manual の必須の participant がいる実行では、開始の時間の上限を 3 つの区間に分けます。(1) 参加するまで: `run` が起動した participant は、今までどおり `start_timeout_ms` の間に参加しなければ `not-joined` です。manual の participant は、参加するまで待ちます。manual でない必須の participant がそろうと、`waiting for <名前> to join (manual): ...` の行を 1 回書きます。(2) 全員が参加した後、manual の participant がすべて最初のステップの準備を終える（ReadyToRun）まで: 上限はありません（デバッガーで止めていてもかまいません）。(3) その後、全員が最初のステップに着くまで: `start_timeout_ms` です（`run` が起動した participant が初期化で固まれば、今までどおり `simulation-start` の誤りです）。どの区間でも、Ctrl+C、`stop` の命令、Control Server の `Stop` で止まります（終了コード 130）。
 - `--timeout-ms` は、manual の必須の participant がいる実行では、`run` が participant を待ち始めた時点から数えます（参加を待つ時間、開始を待つ時間、実行の時間の合計です）。始まる前に過ぎると `timeout` の誤りで、何を待っていたか（参加していない participant か、最初のステップに着いていない participant）を文言に挙げます。`manual: true` を書いた構成ファイルを CI で動かすときは、`--timeout-ms` を付けると、誰も起動しなくても終わります。
@@ -204,6 +205,7 @@ passed: 0 errors, 0 warnings, 1 note
 | `unknown-placeholder` | 誤り | `describe: false` の `command` に知らない `{語}` がある |
 | `no-registry-uri` | 注記 | `describe: false` の `command` に `{registry_uri}` がない |
 | `registry-on-network` | 注記 | `registry_uri` がループバックのアドレスでない（registry と participant がネットワークで待ち受け、このコンピューターに届く誰でもシミュレーションに参加できる。[待ち受けるアドレス](#待ち受けるアドレス)） |
+| `listen-variable-ignored` | 注記 | `vehicle_sil_launch` 自身の環境の `VEHICLE_SIL_LISTEN_ON_NETWORK` が、`run` が participant に渡す値と違う（その値は使わない。[待ち受けるアドレス](#待ち受けるアドレス)） |
 | `step-not-checked` | 注記 | `describe: false` の participant に `step_ms` がある |
 | `executable` | 誤り | 実行ファイルがない（区切りのない名前は `PATH` にもない）、ディレクトリ、バッチファイル、実行の許可がない |
 | `found-on-path` | 注記 | 実行ファイルを `PATH` で見つけた（その場所を示します） |
@@ -602,10 +604,14 @@ Windows でコンソールを閉じると、Windows は数秒でプロセスを�
 
 ### 待ち受けるアドレス
 
-SIL Kit の participant は、ほかの participant からの接続を待ち受けます。vehicle-sil が SIL Kit の構成を作る participant（ecu_main の実行ファイル、`ParticipantRuntime` や `Simulation` を使うプログラム、`vehicle_sil_can_bus_simulator`、Vector XL のブリッジ、`run` の controller）は、registry の URI のホストがループバックのアドレス（`127.x.x.x`、`[::1]`、`localhost`。名前は引かず、書いたとおりに見ます）なら、ループバックのアドレスだけで待ち受けます（TCP は `127.0.0.1`、IPv6 の URI なら `::1`。Windows 以外では、ほかに一時ディレクトリの local-domain ソケット）。ほかのコンピューターからはつなげず、Windows のファイアウォールは待ち受けてよいかを尋ねません。`registry_uri` を書かない実行は、いつもこれです。registry は、自分の URI のアドレスで待ち受けます。
+SIL Kit の participant は、ほかの participant からの接続を待ち受けます。vehicle-sil が SIL Kit の構成を作る participant（ecu_main の実行ファイル、`ParticipantRuntime` や `Simulation` を使うプログラム、`vehicle_sil_can_bus_simulator`、Vector XL のブリッジ、`run` の controller）は、registry の URI のホストがループバックのアドレスなら、ループバックのアドレスだけで待ち受けます（TCP は `127.0.0.1`、URI が `::1` なら `::1`。Windows 以外では、ほかに一時ディレクトリの local-domain ソケット）。ほかのコンピューターからはつなげず、Windows のファイアウォールは待ち受けてよいかを尋ねません。`registry_uri` を書かない実行は、いつもこれです。registry は、自分の URI のアドレスで待ち受けます。
 
+- ループバックのアドレスとみなすのは、`127.0.0.0/8` の IPv4 アドレス（`127.0.0.1`、`127.1` など、`getaddrinfo()` が読む数の書き方）、`::1`（`[::1]`、`[0:0:0:0:0:0:0:1]`）、IPv6 に写した `127.x.x.x`（`[::ffff:127.0.0.1]`）、`localhost`（大文字小文字を問わず、`localhost.` も）です。ほかの名前は引かずに、ループバックでないとみなします。
 - `registry_uri` がループバックのアドレスでないとき（`silkit://0.0.0.0:8500` など）は、SIL Kit の既定のとおり、全部のアドレスで待ち受けます。SIL Kit には認証がないので、このコンピューターに届く誰でもシミュレーションに参加できます（注記 `registry-on-network`）。Windows のファイアウォールは、registry と participant のプログラムに、待ち受けてよいかを尋ねます。
-- このとき `run` は、このコンピューターの participant に `127.0.0.1` の URI を渡すので、起動する participant に環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` を渡します。この変数（空と `0` 以外の値）があると、registry の URI がループバックのアドレスでも、全部のアドレスで待ち受けます。ほかのコンピューターの participant が、このコンピューターの participant につなげるようにするためです。自分で起動する participant（manual）には、自分で設定します。ほかのコンピューターの registry に、そのコンピューターの上でループバックのアドレスでつなぐ participant も同じです。
+- 環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK`: `1` なら、registry の URI がループバックのアドレスでも、全部のアドレスで待ち受けます。`0`、空、設定なしは、上の決まりのとおりです。ほかの値は誤りです（participant を作れず、変数の名前と値を挙げた文言で失敗します）。
+  - `registry_uri` が `0.0.0.0` のとき、`run` はこのコンピューターの participant に `127.0.0.1` の URI を渡します。そのままではループバックのアドレスだけで待ち受け、SIL Kit はそのアドレスを、ほかのコンピューターの participant にもそのまま渡します。受け取った側は、それを自分のループバックのアドレスで試します。そこで別のプログラムが同じポートで待ち受けていると、そこにつながって返事を待ち続け、参加に失敗します。そうならないように、全部のアドレスで待ち受けさせます。
+  - `run` は、起動する participant に、いつもこの変数を渡します。`registry_uri` がループバックのアドレスでなければ `1`、そうでなければ `0` です。`vehicle_sil_launch` 自身の環境の値は渡さず、controller も使いません。その値が `run` の渡す値と違えば、注記 `listen-variable-ignored` を出します。
+  - 自分で起動する participant（manual）には、`run` が書くコマンドの行と事象 `participant`（`manual`）の `environment` に、設定する値を示します（`1` のときだけ）。ほかのコンピューターの registry に、そのコンピューターの上でループバックのアドレスでつなぐ participant にも、自分で `1` を設定します。
 - 自分の SIL Kit の構成を渡した participant（`vehicle_sil_can_bus_simulator --participant-configuration` など）は、その構成のとおりに待ち受けます（`Middleware.AcceptorUris` がなければ全部のアドレス）。vehicle-sil を使わない SIL Kit のプログラム（`describe: false` の participant など）も、それぞれの構成のとおりです。
 
 ### 出力
@@ -1042,7 +1048,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `disabled` | 外した participant（起動しません） | |
 | `not_started` | プロセスを起動できなかった | `message`: 理由 |
 | `started` | プロセスを起動した | `pid`（そのプロセスの ID）、`command`（起動した実行ファイルと引数の配列）、`log`（`--log-dir` のファイル。なければ `null`） |
-| `manual` | 利用者が起動する participant なので、起動しなかった（`started` の代わり。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。この後、参加すれば `joined` が来ます。`ended`、`stop_requested`、`killed` は来ません | `command`（起動する実行ファイルと引数の配列）、`working_directory`（起動するディレクトリ）、`command_line`（同じものを、この OS のシェルに貼れる 1 行にしたもの。標準エラーに書く行と同じ） |
+| `manual` | 利用者が起動する participant なので、起動しなかった（`started` の代わり。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。この後、参加すれば `joined` が来ます。`ended`、`stop_requested`、`killed` は来ません | `command`（起動する実行ファイルと引数の配列）、`working_directory`（起動するディレクトリ）、`command_line`（同じものを、この OS のシェルに貼れる 1 行にしたもの。標準エラーに書く行と同じ）、`environment`（起動するときに設定する環境変数の名前と値のオブジェクト。`registry_uri` がループバックのアドレスでないときだけあり、`{"VEHICLE_SIL_LISTEN_ON_NETWORK": "1"}`。[待ち受けるアドレス](#待ち受けるアドレス)） |
 | `joined` | シミュレーションに参加した（controller がその participant のライフサイクルの状態を見た） | |
 | `failed` | `vehicle_sil_launch` が、この participant の失敗で実行をやめると決めた | `reason`: `left_simulation`（プロセスは動いているが、シミュレーションから抜けた。プロセスが終わるときは、接続が先に切れるので、終わりより先にこちらで気づくこともあります）、`process_ended`（シミュレーションの途中で、プロセスが失敗として終わった）、`ended_before_start`（シミュレーションが始まる前にプロセスが終わった）。`message`: この失敗の `finding` の `message` と同じ文。その時点で文が決まっているときだけあります（`left_simulation` にはありません） |
 | `stop_requested` | 止まるよう求めた（止め方の 2） | |

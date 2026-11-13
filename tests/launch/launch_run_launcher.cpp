@@ -3769,11 +3769,10 @@ int free_port()
 
 void network(const Options& o)
 {
-#ifndef _WIN32
-    // A registry that other computers may reach (0.0.0.0): a note, and the participants that run
-    // starts get VEHICLE_SIL_LISTEN_ON_NETWORK=1, so that they listen on every address although they
-    // connect to the registry at 127.0.0.1. On a loopback registry they do not get it. Not on
-    // Windows: there its firewall would ask whether to let the registry listen.
+    // Which VEHICLE_SIL_LISTEN_ON_NETWORK the participants get: 1 when other computers may reach
+    // the registry (0.0.0.0), so that they listen on every address although they connect to it at
+    // 127.0.0.1; else 0, also when the launcher's own environment has 1 (a note says so). A
+    // participant started by hand is told the variable in the line and the event.
     const auto config = [&o](const std::string& host) {
         return "vehicle_sil_simulation: 1\n"
                "stop_at_ms: 1000\n"
@@ -3785,10 +3784,51 @@ void network(const Options& o)
                "  - name: Env\n"
                "    command: [" + helper(o) + ", --env, VEHICLE_SIL_LISTEN_ON_NETWORK, --uri, \"{registry_uri}\"]\n"
                "    describe: false\n"
-               "    required: false\n";
+               "    required: false\n"
+               "  - name: Hand\n"
+               "    command: [" + helper(o) + ", --uri, \"{registry_uri}\"]\n"
+               "    describe: false\n"
+               "    required: false\n"
+               "    manual: true\n";
     };
-    const fs::path dir = scenario_dir(o, config("0.0.0.0"));
+    const fs::path dir = scenario_dir(o, config("127.0.0.1"));
     const std::string file = shown_path(dir / "sim.yaml");
+    {
+        const Captured local = launch(o, {"run", file}, dir);
+        expect_code(local, 0, "run with a registry on 127.0.0.1");
+        const std::string all = local.standard_output + lf(local.standard_error);
+        require(!contains(local.standard_output, "is not a loopback address"), "no note on 127.0.0.1:\n" + local.standard_output);
+        require(!contains(all, "listen-variable-ignored") && !contains(all, "in the environment of vehicle_sil_launch"),
+                "no note on the variable:\n" + all);
+        require(contains(all, "[Env] VEHICLE_SIL_LISTEN_ON_NETWORK=0\n"), "0 on 127.0.0.1:\n" + all);
+        require(contains(all, "start it yourself (manual: true, or --manual). In the directory "), "the manual line as it was:\n" + all);
+        require(!contains(all, "VEHICLE_SIL_LISTEN_ON_NETWORK=1"), "no 1 anywhere on 127.0.0.1:\n" + all);
+    }
+    // The launcher's own environment has 1: not passed on, and a note.
+#ifdef _WIN32
+    _putenv_s("VEHICLE_SIL_LISTEN_ON_NETWORK", "1");
+#else
+    ::setenv("VEHICLE_SIL_LISTEN_ON_NETWORK", "1", 1);
+#endif
+    {
+        const Captured inherited = launch(o, {"run", file}, dir);
+        expect_code(inherited, 0, "run with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in the launcher's environment");
+        const std::string all = inherited.standard_output + lf(inherited.standard_error);
+        require(contains(inherited.standard_output,
+                         "note: " + file + ": VEHICLE_SIL_LISTEN_ON_NETWORK=1 in the environment of vehicle_sil_launch is not "
+                         "used: the registry is on a loopback address, so run gives the participants it starts "
+                         "VEHICLE_SIL_LISTEN_ON_NETWORK=0"),
+                "the note on the variable:\n" + inherited.standard_output);
+        require(contains(all, "[Env] VEHICLE_SIL_LISTEN_ON_NETWORK=0\n"), "0 although the launcher has 1:\n" + all);
+    }
+#ifdef _WIN32
+    _putenv_s("VEHICLE_SIL_LISTEN_ON_NETWORK", "");
+#else
+    ::unsetenv("VEHICLE_SIL_LISTEN_ON_NETWORK");
+#endif
+#ifndef _WIN32
+    // Not on Windows: there its firewall would ask whether to let the registry listen on 0.0.0.0.
+    write_file(dir / "sim.yaml", config("0.0.0.0"));
     const Captured run = launch(o, {"run", file}, dir);
     expect_code(run, 0, "run with a registry on 0.0.0.0");
     const std::string all = run.standard_output + lf(run.standard_error);
@@ -3798,19 +3838,20 @@ void network(const Options& o)
             "the note says what it means:\n" + run.standard_output);
     // The participant's own line (the note names the variable too).
     require(contains(all, "[Env] VEHICLE_SIL_LISTEN_ON_NETWORK=1\n"), "the participant got the variable:\n" + all);
+    require(contains(all, "not starting Hand: start it yourself (manual: true, or --manual). In the directory ") &&
+                contains(all, ", with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment, run:\n"),
+            "the manual participant is told the variable:\n" + all);
+    require(contains(run.standard_output, "participant 'Hand': you start it yourself") &&
+                contains(run.standard_output, "; start it with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment, so that the "
+                                              "other computers reach it (registry_uri is not a loopback address)"),
+            "the manual note tells the variable:\n" + run.standard_output);
+    const Captured events = launch(o, {"run", file, "--events"}, dir);
+    expect_code(events, 0, "run --events with a registry on 0.0.0.0");
+    require(contains(events.standard_output, "\"environment\":{\"VEHICLE_SIL_LISTEN_ON_NETWORK\":\"1\"}"),
+            "the manual event has the variable:\n" + events.standard_output);
     const Captured checked = launch(o, {"check", file}, dir);
     expect_code(checked, 0, "check with a registry on 0.0.0.0");
     require(contains(checked.standard_output, "registry_uri silkit://0.0.0.0:"), "check has the note:\n" + checked.standard_output);
-
-    write_file(dir / "sim.yaml", config("127.0.0.1"));
-    const Captured local = launch(o, {"run", file}, dir);
-    expect_code(local, 0, "run with a registry on 127.0.0.1");
-    const std::string localAll = local.standard_output + lf(local.standard_error);
-    require(!contains(local.standard_output, "is not a loopback address"), "no note on 127.0.0.1:\n" + local.standard_output);
-    require(contains(localAll, "[Env] VEHICLE_SIL_LISTEN_ON_NETWORK is not set\n"), "no variable on 127.0.0.1:\n" + localAll);
-#else
-    static_cast<void>(o);
-    log("skipped on Windows: a registry on 0.0.0.0 would make the firewall ask");
 #endif
 }
 
