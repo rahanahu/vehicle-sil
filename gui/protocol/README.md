@@ -51,6 +51,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | `POST api/time` `{command, ms, value}` | `{session_id, command}`（ランチャーに送った命令） | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
 | `GET api/session` | `{session}`（なければ `null`） | `session-*.json` |
+| `GET api/dashboard?file=<構成ファイル>` | 構成ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}`（下の「ダッシュボードのファイル」） | `dashboard*.json` |
 
 - `disable` に書けるのは、そのファイルの照合の結果にある participant 名だけです（`unknown-participant`）。
 - `speed`（`null`、`"max"`、数）と `start_paused`（真偽）は、`api/app` の `launcher.version.features` に `speed`、`start-paused` があるときだけ値を送ります。ないときは欄を省くか `null` / `false` を送ります（ほかの値は 400 `unsupported`）。`speed` の数の範囲は `limits.speed_min` から `limits.speed_max` まで（ランチャーと同じ）。`null` は構成ファイルの `speed` のまま（ランチャーに `--speed` を渡さない）です。
@@ -59,6 +60,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 - **照合**: 同時の `api/check` は断らず、順に 1 つずつ実行します。待っている要求が多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も、participant 名を確かめるために同じ順番で照合することがあります。
 - **停止**: 本文は `{"force": 真偽}`（省略は `false`。本文なしで `Content-Type` もない要求も `false`）。`force: false` は「順に止める」（ランチャーの標準入力に `{"command":"stop"}`）で、すでに頼んであれば何もしません。`force: true` は「待たずに止める」（まだ頼んでいなければ `stop` を 2 回、頼んであればもう 1 回）で、すでに頼んであれば何もしません。どちらも、実行がない、または終わっているときは 409 にせず、今の要約を返します（何度呼んでも同じ結果）。実行が始まりかけている間（`api/run` が応答する前）の停止は、ランチャーが起動したところで届けます（応答の要約は前の実行のもの。始まった実行の要約の `stop` に出ます）。止めた経過は、要約の `stop` と、ランチャーの `command` / `phase` の事象で見えます。標準入力を読まないランチャーは、これでは止まりません（サーバーを止めると、シグナルで止めます）。
 - **書き込み**: 下の「ECU の変数」。
+- **ダッシュボードのファイル**: 下の「ダッシュボードのファイル」。`file` は `api/check` と同じ検査を通ります（`invalid-path`、`outside-root`、`not-a-configuration`、`file-not-found`）。
 - サーバーが終わり始めたら、`api/run`、`api/check`、`api/write` は 503 `shutting-down` です。
 
 ## 誤りの `code`
@@ -240,6 +242,18 @@ watch は実行をまたいで続きます。実行がないとき、変数の�
 - 状態が変わるたびに、全部の接続へ送ります（ほかのクライアントが Control Server に直接書いた操作も届きます）。受け取りの遅い接続でも、`operation` は落としません。ただし、その接続の待ち行列があふれて `resync`（`hello` からの送り直し）になったときは、要約の `operations`（未確定の操作と、最後の 32 件）にあるものだけが届き直します。それより前に確定した操作の結果は、その接続には届きません（どれがそうかは、要約の `operations_from_seq` でわかります）。
 - 実行が終わるまでに確定しなかった操作は、サーバーが `unknown`（`reason`: `the run ended before the result came`）で確定させて送ります。未確定の操作が 256 件を超えて、サーバーが古いものを覚えていられなかったとき（要約の `operations_open_omitted`）も、その操作の変化が届けば `operation` で送り、確定しないまま実行が終われば、終わりに `unknown` を送ります（そのときは `peers` が空です）。実行が終わるのと同時にランチャーが受け取った書き込みは、応答で番号を返し、`unknown` で確定させて送ります。
 - GUI サーバーと Control Server の接続が切れている間に確定した操作と、Control Server が GUI サーバーへ送りきれなかった変化は、つながり直したとき（送りきれなかったと知ったとき）に読み直して送ります。
+
+## ダッシュボードのファイル
+
+`GET api/dashboard?file=<構成ファイル>` は、構成ファイルの隣の `<名前（拡張子なし）>.dashboard.yaml` を読み、形を確かめて JSON で返します（書き方は [docs/gui.md](../../docs/gui.md) の「ダッシュボードのファイル」、JSON Schema は [dashboard.schema.json](dashboard.schema.json)）。実行がなくても読めます。
+
+- `path`: ダッシュボードのファイル（root からの相対）。`found`: あるか。ないのは誤りではありません（画面は変数を自動で並べます）。
+- `errors`: 誤りの並び（`line` と `column` は 1 から、`at` はデータの中の場所 `sections[0].items[2].widget`、`message` は直し方を含む英語の 1 文）。1 つでもあれば `dashboard` は `null` です。最大 50 個。
+- `dashboard`: `{title, panels, sections}`。`panels` は `[{module, url}]`（`url` は画面の base からの相対で、モジュールを読み込む先。パスの部分ごとにパーセントエンコードしてある）。`sections` は `[{title, collapsed, items}]`、`items` はどれか 1 つの形: `{variable: {peer, name}, widget, label, options}`（`widget` と `label` は省けば `null`）、`{panel, label, options, variables: [{peer, name}]}`、`{auto}`。読む側は、知らない形の項目を読み飛ばします。
+- 変数があるか、部品が変数に合うかは、サーバーは確かめません（画面が、いまの変数の一覧で確かめます）。
+- 読み方の上限: 256 KiB、入れ子 16 段、値 50000 個、まとまり 200 個、項目は全部で 2000 個、パネルのモジュール 16 個、1 つの値（文字列、数）1024 文字。`widget` は名前の形（小文字の英字で始まる）だけを確かめ、どの部品があるかは画面が確かめます。YAML の別名（`*name`）、2 つ目の文書、YAML の型のタグ（`!!python/...` など）は誤りです。シンボリックリンクで root の外を指すファイルは読みません。
+
+**パネルのモジュール**: `GET panels/<key>/<root からの相対パス>` が、持ち込みのパネルの ES モジュールを `text/javascript`（`X-Content-Type-Options: nosniff`、ほかの応答と同じ CSP、`Cache-Control: no-store`）で返します。`<key>` は起動ごとの乱数で、`api/dashboard` の `url` にだけ入っています（ブラウザはモジュールの import にヘッダーを付けられないので、トークンの代わりに URL に入れます。トークンとは別の値で、知っていてもパネルのモジュールを読めるだけです）。返すのは、root の下の `panels` という名前のディレクトリ（どの場所のものでも。`panels` とその上のディレクトリがシンボリックリンクでないもの）の中の `.js` / `.mjs` の通常のファイル（1 MiB まで。リンクをたどった先も、その `panels` の中）だけで、`.` で始まる名前、`..`、`\`、`:`、NUL を含むパスと、`<key>` の違う要求は 404 です。`Host` と `Origin` の検査はほかと同じです。
 
 ## 上限
 

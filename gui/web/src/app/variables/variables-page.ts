@@ -1,4 +1,13 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  inject,
+  linkedSignal,
+  resource,
+  signal,
+} from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
@@ -8,7 +17,13 @@ import { EcuVariables } from '../core/session/ecu-variables';
 import { ServerConnection } from '../core/session/server-connection';
 import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
-import { autoDashboard, countItems, filterDashboard } from '../widgets/dashboard-spec';
+import { DashboardResponse, errorMessage } from '@vehicle-sil/gui-client';
+import {
+  autoDashboard,
+  countItems,
+  fileDashboard,
+  filterDashboard,
+} from '../widgets/dashboard-spec';
 import { DashboardView } from '../widgets/dashboard-view';
 import { monitoringTitle } from '../widgets/labels';
 
@@ -20,13 +35,22 @@ interface Notice {
 }
 
 /**
- * 変数の画面: いまの実行の ECU の変数を、ECU ごとに既定の部品で並べる（自動のダッシュボード）。ECU が自分で
- * 足す監視の変数は、ECU ごとの畳んだまとまりにする（絞り込みで当たれば開く）。名前で絞り込める。部品は見えている間だけ値を受け取るので、変数が多くても重くならない。
+ * 変数の画面: 構成ファイルの隣にダッシュボードのファイル（`<名前>.dashboard.yaml`）があれば、そのとおりに並べる。
+ * なければ（読めなければ）、いまの実行の ECU の変数を、ECU ごとに既定の部品で並べる（自動のダッシュボード）。
+ * ECU が自分で足す監視の変数は、ECU ごとの畳んだまとまりにする（絞り込みで当たれば開く）。名前で絞り込める。
+ * 部品は見えている間だけ値を受け取るので、変数が多くても重くならない。
  */
 @Component({
   selector: 'app-variables-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DashboardView, MatCardModule, MatFormFieldModule, MatInputModule, RouterLink],
+  imports: [
+    DashboardView,
+    MatButtonModule,
+    MatCardModule,
+    MatFormFieldModule,
+    MatInputModule,
+    RouterLink,
+  ],
   template: `
     <h1 i18n>変数</h1>
 
@@ -58,6 +82,78 @@ interface Notice {
           }
         }
       </p>
+
+      @if (configFile()) {
+        <div class="file" data-testid="dashboard-file">
+          <p class="source">
+            @if (fileState(); as state) {
+              @switch (state.kind) {
+                @case ('used') {
+                  <ng-container i18n
+                    >ダッシュボードのファイル
+                    <code>{{ state.path }}</code> のとおりに並べています。</ng-container
+                  >
+                  @if (state.modules.length > 0) {
+                    <span data-testid="dashboard-modules">
+                      <ng-container i18n>読み込んだパネルのモジュール:</ng-container>
+                      @for (module of state.modules; track $index) {
+                        <code>{{ module }}</code>
+                      }
+                    </span>
+                  }
+                }
+                @case ('missing') {
+                  <ng-container i18n
+                    >ダッシュボードのファイル
+                    <code>{{ state.path }}</code>
+                    がないので、変数を自動で並べています。</ng-container
+                  >
+                }
+                @case ('errors') {
+                  <ng-container i18n
+                    >ダッシュボードのファイル
+                    <code>{{ state.path }}</code>
+                    に誤りがあるので、変数を自動で並べています。直したら「読み直す」を押してください。</ng-container
+                  >
+                }
+                @case ('failed') {
+                  <ng-container i18n
+                    >ダッシュボードのファイルを読めないので、変数を自動で並べています:</ng-container
+                  >
+                  <span lang="en">{{ state.message }}</span>
+                }
+              }
+            }
+          </p>
+          <button
+            mat-stroked-button
+            type="button"
+            data-testid="dashboard-reload"
+            [disabled]="dashboardFile.isLoading()"
+            (click)="reload()"
+            i18n
+          >
+            読み直す
+          </button>
+        </div>
+        @if (fileErrors().length > 0) {
+          <ul class="errors" data-testid="dashboard-errors">
+            @for (e of fileErrors(); track $index) {
+              <li>
+                <span class="mark" aria-hidden="true">⚠</span>
+                <ng-container i18n>{{ e.line }} 行 {{ e.column }} 桁</ng-container>
+                @if (e.at) {
+                  <code>{{ e.at }}</code>
+                }
+                <span lang="en">{{ e.message }}</span>
+              </li>
+            }
+          </ul>
+        }
+        @if (dashboard().title; as title) {
+          <p class="title" data-testid="dashboard-title">{{ title }}</p>
+        }
+      }
 
       @if (total() > 0) {
         <div class="tools">
@@ -141,6 +237,50 @@ interface Notice {
       margin-inline-end: var(--app-space-1);
     }
 
+    .file {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--app-space-2) var(--app-space-3);
+      align-items: center;
+      margin-block-end: var(--app-space-2);
+    }
+
+    .source code {
+      margin-inline: var(--app-space-1);
+    }
+
+    .source {
+      flex: 1 1 20rem;
+      margin: 0;
+      color: var(--mat-sys-on-surface-variant);
+      overflow-wrap: anywhere;
+    }
+
+    .errors {
+      margin: 0 0 var(--app-space-3);
+      padding: var(--app-space-2) var(--app-space-3);
+      list-style: none;
+      border-radius: var(--mat-sys-corner-small);
+      background: var(--mat-sys-error-container);
+      color: var(--mat-sys-on-error-container);
+      overflow-wrap: anywhere;
+    }
+
+    .errors li + li {
+      margin-block-start: var(--app-space-1);
+    }
+
+    .errors code,
+    .errors span[lang] {
+      margin-inline-start: var(--app-space-1);
+    }
+
+    .title {
+      font: var(--mat-sys-title-large);
+      margin: 0 0 var(--app-space-3);
+      overflow-wrap: anywhere;
+    }
+
     .tools {
       display: flex;
       flex-wrap: wrap;
@@ -175,14 +315,73 @@ export class VariablesPage {
 
   /** 絞り込みの語。 */
   protected readonly query = signal('');
-  /** 変数の一覧から作ったダッシュボード（一覧が変わったときだけ作り直す）。 */
-  private readonly dashboard = computed(() =>
-    autoDashboard(this.variables.peers(), monitoringTitle),
+  /** ダッシュボードのファイルを探す構成ファイル: いまの（最後の）実行のもの、なければ起動のときに渡したもの。 */
+  protected readonly configFile = computed(
+    () => this.server.session()?.file ?? this.info.initialFile() ?? null,
   );
+  /** いまの（最後の）実行の番号（要約が変わるたびに読み直さないよう、番号だけ）。 */
+  private readonly sessionId = computed(() => this.server.session()?.id ?? null);
+  private readonly reloads = signal(0);
+  /** ダッシュボードのファイル（構成ファイルが変わったとき、実行が替わったとき、「読み直す」で読み直す）。 */
+  protected readonly dashboardFile = resource({
+    params: () => {
+      const file = this.configFile();
+      if (!this.auth.token() || !file) return undefined;
+      return { file, session: this.sessionId(), reloads: this.reloads() };
+    },
+    loader: ({ params }) => this.info.dashboard(params.file),
+  });
+  /** 最後に読み終えた結果（読み直している間は前の結果のまま: 部品を作り直さない）。 */
+  private readonly loaded = linkedSignal<
+    { status: string; value: DashboardResponse | undefined; error: unknown },
+    { value: DashboardResponse | null; error: unknown } | null
+  >({
+    source: () => ({
+      status: this.dashboardFile.status(),
+      value: this.dashboardFile.hasValue() ? this.dashboardFile.value() : undefined,
+      error: this.dashboardFile.error(),
+    }),
+    computation: (now, previous) =>
+      now.status === 'loading' || now.status === 'reloading'
+        ? (previous?.value ?? null)
+        : { value: now.value ?? null, error: now.error ?? null },
+  });
+  /** ファイルの様子（まだ読んでいなければ null）。 */
+  protected readonly fileState = computed<
+    | { kind: 'used'; path: string; modules: string[] }
+    | { kind: 'missing' | 'errors'; path: string }
+    | { kind: 'failed'; message: string }
+    | null
+  >(() => {
+    const loaded = this.loaded();
+    if (loaded?.error) return { kind: 'failed', message: errorMessage(loaded.error) };
+    const response = loaded?.value;
+    if (!response) return null;
+    if (!response.found) return { kind: 'missing', path: response.path };
+    if (!response.dashboard) return { kind: 'errors', path: response.path };
+    // パネルは画面の中でトークンを持って動く: どのモジュールを読み込んだかを見せる
+    return {
+      kind: 'used',
+      path: response.path,
+      modules: response.dashboard.panels.map((p) => p.module),
+    };
+  });
+  protected readonly fileErrors = computed(() => this.loaded()?.value?.errors ?? []);
+  /** 描くダッシュボード: ファイルがあればそのとおり、なければ変数の一覧から自動で（一覧が変わったときだけ作り直す）。 */
+  protected readonly dashboard = computed(() => {
+    const file = this.loaded()?.value?.dashboard;
+    return file
+      ? fileDashboard(file, this.variables.peers(), monitoringTitle)
+      : autoDashboard(this.variables.peers(), monitoringTitle);
+  });
   protected readonly filtered = computed(() => filterDashboard(this.dashboard(), this.query()));
   protected readonly total = computed(() => countItems(this.dashboard()));
   protected readonly shown = computed(() => countItems(this.filtered()));
   protected readonly omitted = computed(() => this.variables.omitted());
+
+  protected reload(): void {
+    this.reloads.update((n) => n + 1);
+  }
 
   protected readonly notice = computed<Notice | null>(() => {
     if (this.server.connectionState() === 'closed') {

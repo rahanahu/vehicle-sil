@@ -21,7 +21,7 @@ from pathlib import Path
 
 from aiohttp import WSCloseCode, WSMsgType, web
 
-from . import __version__, control, process
+from . import __version__, control, dashboard, process
 from .hub import Client, Hub, Outgoing, encode
 from .launcher import (FEATURE_SPEED, FEATURE_START_PAUSED, FEATURE_TIME_COMMANDS, SPEED_MAX, SPEED_MIN, STEP_MS_MAX,
                        InvalidRequest, Launcher, check_command, check_disable, check_speed, check_time_command,
@@ -92,6 +92,11 @@ def count_or_none(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+def _read_at_most(path: Path, size: int) -> bytes:
+    with open(path, "rb") as f:
+        return f.read(size)
+
+
 class Refused(Exception):
     """A request that is refused with an HTTP error (status, code, message, detail)."""
 
@@ -146,6 +151,9 @@ class GuiServer:
         self.root = ConfigRoot(options.root)
         self.launcher = options.launcher
         self.instance = secrets.token_hex(8)
+        # The panel modules are served under panels/<key>/ (a module cannot be imported with a header): this key
+        # is not the token, gives only the reading of panel modules, and is told only with GET api/dashboard.
+        self.panel_key = secrets.token_urlsafe(18)
         self.static = StaticFiles(options.web_dir)
         self.current: Run | None = None  # the last run started (the one the screens see)
         self._runs: set[Run] = set()  # every launcher not yet followed to its end
@@ -195,8 +203,10 @@ class GuiServer:
         app.router.add_post("/api/time", self.post_time)
         app.router.add_post("/api/write", self.post_write)
         app.router.add_get("/api/session", self.get_session)
+        app.router.add_get("/api/dashboard", self.get_dashboard)
         app.router.add_get("/ws", self.websocket)
         app.router.add_route("*", "/api/{rest:.*}", self.api_not_found)
+        app.router.add_get("/panels/{key}/{path:.*}", self.get_panel)
         app.router.add_get("/{path:.*}", self.get_static)
         return app
 
@@ -324,6 +334,14 @@ class GuiServer:
         # The same encoding as the WebSocket: strict JSON (never a bare NaN or Infinity), or a 500.
         return web.Response(text=encode({"session": self.session.summary() if self.session else None}),
                             content_type="application/json")
+
+    async def get_dashboard(self, request: web.Request) -> web.Response:
+        try:
+            config = self.root.resolve(request.query.get("file"))
+        except PathRejected as e:
+            return self._refusal(e)
+        result = await asyncio.to_thread(dashboard.read_dashboard, self.root, config, f"panels/{self.panel_key}/")
+        return web.json_response(result.to_json(config.relative))
 
     async def api_not_found(self, request: web.Request) -> web.Response:
         return error(404, "not-found", f"{request.method} {request.path}: no such API")
@@ -997,6 +1015,21 @@ class GuiServer:
                 pass
 
     # ------------------------------------------------------------ the screen
+
+    async def get_panel(self, request: web.Request) -> web.StreamResponse:
+        """A panel module (dashboard.module_path): only with the panel key, as JavaScript, never sniffed."""
+        not_found = web.Response(status=404, text="not found\n", content_type="text/plain")
+        if not same_secret(request.match_info["key"], self.panel_key):
+            return not_found
+        try:
+            path = await asyncio.to_thread(dashboard.module_path, self.root, request.match_info["path"])
+            body = await asyncio.to_thread(_read_at_most, path, dashboard.MAX_MODULE_BYTES + 1)
+        except (PathRejected, OSError):
+            return not_found
+        if len(body) > dashboard.MAX_MODULE_BYTES:
+            return not_found
+        return web.Response(body=body, headers={"Content-Type": "text/javascript; charset=utf-8",
+                                                "Cache-Control": "no-store"})
 
     async def get_static(self, request: web.Request) -> web.StreamResponse:
         path, media, status = self.static.lookup(request.path)

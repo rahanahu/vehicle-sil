@@ -8,3 +8,6 @@ add_subdirectory(dashboard)
 configure_file(simulation.yaml simulation.yaml COPYONLY)
 # A scenario for the two (vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml).
 configure_file(scenarios/throttle_step.yaml scenarios/throttle_step.yaml COPYONLY)
+# The browser GUI's dashboard of simulation.yaml and the panel it loads (docs/gui.md).
+configure_file(simulation.dashboard.yaml simulation.dashboard.yaml COPYONLY)
+configure_file(panels/rpm-bar.js panels/rpm-bar.js COPYONLY)

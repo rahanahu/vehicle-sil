@@ -16,6 +16,9 @@ Standard library only; also used by the e2e of gui/web (e2e-real/).
   wrong-step.yaml          Engine's step_ms is 20, its executable says 10: the check fails (step-mismatch)
   not-joined.yaml          a required participant that never joins (sleep): the run fails (not-joined)
   broken.yaml              not YAML: the file cannot be read
+  example.yaml             the same as forever.yaml, with the ecu_main example's dashboard file
+                           (example.dashboard.yaml, from examples/ecu_main/simulation.dashboard.yaml) and its
+                           panel (panels/rpm-bar.js)
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import os
 import sys
 from pathlib import Path
 
+EXAMPLE = Path(__file__).resolve().parents[3] / "examples" / "ecu_main"  # in the repository
 ENGINE = "engine/vehicle_sil_engine_ecu"
 DASHBOARD = "dashboard/vehicle_sil_dashboard_ecu"
 
@@ -72,11 +76,15 @@ def write(directory: Path, examples: Path) -> list[Path]:
                            + NETWORKS + _participants(engine, dashboard)
                            + "  - name: Logger\n    command: [sleep, '100']\n    describe: false\n",
         "broken.yaml": "vehicle_sil_simulation: 1\nparticipants: [\n",
+        "example.yaml": "# fake-launcher: forever\n" + head + NETWORKS + _participants(engine, dashboard),
+        "example.dashboard.yaml": (EXAMPLE / "simulation.dashboard.yaml").read_text(encoding="utf-8"),
+        "panels/rpm-bar.js": (EXAMPLE / "panels" / "rpm-bar.js").read_text(encoding="utf-8"),
     }
     directory.mkdir(parents=True, exist_ok=True)
     written = []
     for name, text in files.items():
         path = directory / name
+        path.parent.mkdir(exist_ok=True)
         path.write_text(text, encoding="utf-8", newline="\n")
         written.append(path)
     return written

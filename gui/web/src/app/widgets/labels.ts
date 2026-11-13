@@ -19,7 +19,7 @@ const ROLES: Record<string, string> = {
 
 /** 変数の役割の名前（知らない役割はそのまま）。 */
 export function roleLabel(info: VariableInfo | undefined): string {
-  return info ? (ROLES[info.role] ?? info.role) : '';
+  return info ? (Object.hasOwn(ROLES, info.role) ? ROLES[info.role] : info.role) : '';
 }
 
 /** 仮想時間（ミリ秒）を秒で。 */
@@ -165,7 +165,8 @@ const WIDGET_NAMES: Record<string, string> = {
 };
 
 /** 部品の種類の名前（知らない種類はそのまま）。 */
-export const widgetName = (kind: WidgetKind | string): string => WIDGET_NAMES[kind] ?? kind;
+export const widgetName = (kind: WidgetKind | string): string =>
+  Object.hasOwn(WIDGET_NAMES, kind) ? WIDGET_NAMES[kind] : kind;
 
 /** 部品がその変数に使えない理由の文（直し方を含む）。 */
 export function itemProblemText(problem: ItemProblem, widget: string, type: string): string {
@@ -196,5 +197,33 @@ export function itemProblemText(problem: ItemProblem, widget: string, type: stri
   }
 }
 
+/** auto: に書いた participant が、いまの実行にない理由の文。 */
+export const missingParticipantText = (peer: string): string =>
+  $localize`auto: の participant「${peer}:peer:」は、この実行にありません。名前を確かめてください（実行の画面の participant の表にある名前）`;
+
 /** 監視の変数のまとまりの見出し。 */
 export const monitoringTitle = (peer: string): string => $localize`${peer}:peer: の監視`;
+
+/** 持ち込みのパネルを置けない理由（failures: 読み込めなかったモジュールの、ファイルに書いた名前と理由）。 */
+export type PanelProblem =
+  | { kind: 'not-defined'; name: string; failures: readonly { module: string; message: string }[] }
+  | { kind: 'failed'; name: string; message: string }
+  | { kind: 'load-failed'; name: string; failures: readonly { module: string; message: string }[] };
+
+/** 持ち込みのパネルを置けない理由の文（直し方を含む。モジュールの誤りの文は英語のまま）。 */
+export function panelProblemText(problem: PanelProblem): string {
+  const name = problem.name;
+  if (problem.kind === 'failed') {
+    const message = problem.message;
+    return $localize`パネル <${name}:name:> を作れませんでした: ${message}:message:`;
+  }
+  if (problem.kind === 'load-failed') {
+    const failures = problem.failures.map((f) => `${f.module}: ${f.message}`).join('; ');
+    return $localize`読み込めなかったモジュールがあります。パネル <${name}:name:> は、この画面で前に読み込んだ定義で描いています（別の構成ファイルの、同じ名前のパネルかもしれません。ページを読み直すと、このファイルのモジュールで描きます）: ${failures}:failures:`;
+  }
+  if (problem.failures.length > 0) {
+    const failures = problem.failures.map((f) => `${f.module}: ${f.message}`).join('; ');
+    return $localize`パネル <${name}:name:> のモジュールを読み込めませんでした（ブラウザの開発者ツールのコンソールに詳細があります）: ${failures}:failures:`;
+  }
+  return $localize`パネル <${name}:name:> を定義したモジュールがありません。ダッシュボードのファイルの panels: に挙げたモジュールで、この名前の custom element を定義してください（customElements.define）`;
+}

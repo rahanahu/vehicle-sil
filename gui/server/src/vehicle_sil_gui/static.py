@@ -23,7 +23,7 @@ MEDIA_TYPES = {
     ".woff2": "font/woff2",
 }
 
-RESERVED = ("api", "ws")  # never answered with index.html: a wrong API path is a 404, not the screen
+RESERVED = ("api", "ws", "panels")  # never answered with index.html: a wrong path there is a 404, not the screen
 
 NOT_BUILT = """<!doctype html>
 <html lang="ja">

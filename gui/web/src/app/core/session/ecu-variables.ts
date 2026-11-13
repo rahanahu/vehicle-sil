@@ -105,7 +105,12 @@ export class EcuVariables {
     const stop = watch.values.subscribe((next) => values.set(next));
     return {
       values: values.asReadonly(),
-      value: (ref) => values()[ref.peer]?.[ref.name],
+      // 名前は利用者が書いたもの（ダッシュボードのファイル）: 原型のキー（constructor など）に当てない
+      value: (ref) => {
+        const all = values();
+        const peer = Object.hasOwn(all, ref.peer) ? all[ref.peer] : undefined;
+        return peer && Object.hasOwn(peer, ref.name) ? peer[ref.name] : undefined;
+      },
       history: (ref) => {
         values(); // 値が届くたびに読み直させる
         return watch.history(ref);

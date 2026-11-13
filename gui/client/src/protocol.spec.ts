@@ -5,6 +5,7 @@ import {
   readAppInfo,
   readCheckResponse,
   readConfigList,
+  readDashboardResponse,
   readLauncherEvent,
   readServerMessage,
   readSessionResponse,
@@ -23,6 +24,7 @@ const READERS: Record<string, (value: unknown) => unknown> = {
   'POST api/time': readTimeResponse,
   'GET api/session': readSessionResponse,
   'POST api/write': readWriteResponse,
+  'GET api/dashboard': readDashboardResponse,
 };
 
 describe('the readers accept every example of gui/protocol', () => {
@@ -30,7 +32,7 @@ describe('the readers accept every example of gui/protocol', () => {
     const examples = await httpExamples();
     expect(examples.length).toBeGreaterThan(10);
     for (const example of examples) {
-      const key = `${example.request.method} ${example.request.path}`;
+      const key = `${example.request.method} ${example.request.path.split('?')[0]}`;
       if (example.status >= 400) {
         const error = HttpError.from(example.status, '', example.response);
         const message = (example.response as { error: { message: string } }).error.message;

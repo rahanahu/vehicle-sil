@@ -1,0 +1,15 @@
+{
+  "description": "No dashboard file: the screen lays out the variables by itself.",
+  "request": {
+    "method": "GET",
+    "path": "api/dashboard?file=forever.yaml"
+  },
+  "status": 200,
+  "response": {
+    "file": "forever.yaml",
+    "path": "forever.dashboard.yaml",
+    "found": false,
+    "errors": [],
+    "dashboard": null
+  }
+}

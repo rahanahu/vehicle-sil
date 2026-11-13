@@ -14,7 +14,7 @@ import pytest
 from conftest import CONFIGS, Client, Gui, gui_server, run_async, wait_until
 
 API = [("GET", "api/app"), ("GET", "api/configs"), ("GET", "api/session"), ("POST", "api/check"),
-       ("POST", "api/run"), ("POST", "api/stop"), ("POST", "api/time")]
+       ("POST", "api/run"), ("POST", "api/stop"), ("POST", "api/time"), ("GET", "api/dashboard")]
 
 
 async def request(c: Client, method: str, path: str, headers: dict, body: bytes = b"{}") -> aiohttp.ClientResponse:

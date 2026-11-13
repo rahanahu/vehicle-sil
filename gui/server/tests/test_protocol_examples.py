@@ -37,7 +37,7 @@ EXAMPLES = {
     "ws-orphan", "ws-stop", "ws-force-stop", "ws-replay", "ws-resume", "ws-dropped", "ws-slow-client",
     "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit", "ws-without-check",
     "write", "ws-variables", "ws-variables-failed", "error-unknown-variable", "error-not-writable", "error-session-changed",
-    "error-variables-not-ready", "error-invalid-watch",
+    "error-variables-not-ready", "error-invalid-watch", "dashboard", "dashboard-errors", "dashboard-none",
 }
 
 
@@ -77,6 +77,8 @@ class Normalizer:
             return "0123456789abcdef"
         if key in ("started_at", "ended_at") and isinstance(value, str):
             return "2026-01-01T00:00:00.000Z" if key == "started_at" else "2026-01-01T00:00:01.000Z"
+        if key == "url" and isinstance(value, str) and value.startswith("panels/"):
+            return re.sub(r"^panels/[^/]+/", "panels/<key>/", value)  # the server's panel key
         if key == "modified" and isinstance(value, str):
             return "2026-01-01T00:00:00Z"
         if isinstance(value, str):
@@ -129,6 +131,35 @@ def test_no_example_is_left_over() -> None:
 
 
 # ---------------------------------------------------------------- HTTP
+
+
+def test_dashboard_examples(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    example = DIRECTORY.parents[2] / "examples" / "ecu_main"
+    for name in ("simulation.yaml", "forever.yaml"):
+        shutil.copy(CONFIGS / name, root / name)
+    shutil.copy(CONFIGS / "simulation.yaml", root / "bench.yaml")
+    shutil.copy(example / "simulation.dashboard.yaml", root / "simulation.dashboard.yaml")
+    shutil.copytree(example / "panels", root / "panels")
+    (root / "bench.dashboard.yaml").write_text(
+        "vehicle_sil_dashboard: 1\nsections:\n  - title: Engine\n    items:\n      - variable: speed\n"
+        "      - variable: Engine.engine.speed\n        colour: red\n", encoding="utf-8")
+    with gui_server(tmp_path, root=root) as gui:
+        async def talk(c: Client) -> None:
+            for name, file, text in (
+                    ("dashboard", "simulation.yaml", "The dashboard file next to a configuration, as the server "
+                                                     "checked it (the example of examples/ecu_main)."),
+                    ("dashboard-errors", "bench.yaml", "A dashboard file with mistakes: each with its line, "
+                                                       "where, and what to do (no dashboard)."),
+                    ("dashboard-none", "forever.yaml", "No dashboard file: the screen lays out the variables "
+                                                       "by itself."),
+            ):
+                path = f"api/dashboard?file={file}"
+                status, body = await c.get(path)
+                assert status == 200, body
+                check_example(name, http(text, "GET", path, None, status, body), gui, {str(root): "/path/to/root"})
+        run_async(talk, gui)
 
 
 def test_http_examples(tmp_path: Path) -> None:

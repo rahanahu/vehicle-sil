@@ -1,5 +1,11 @@
 import { Injectable, computed, inject, resource } from '@angular/core';
-import { AppInfo, CheckRequest, CheckResult, ConfigList } from '@vehicle-sil/gui-client';
+import {
+  AppInfo,
+  CheckRequest,
+  CheckResult,
+  ConfigList,
+  DashboardResponse,
+} from '@vehicle-sil/gui-client';
 import { AuthToken } from '../auth/auth-token';
 import { GUI_CLIENT, readableSignal } from './gui-client';
 
@@ -29,6 +35,9 @@ export class ServerInfo {
    */
   readonly variables = computed(() => this.info()?.variables ?? null);
 
+  /** 起動のときに渡した構成ファイル（root からの相対。なければ null）。 */
+  readonly initialFile = computed(() => this.info()?.initial_file ?? null);
+
   /** 速さの範囲とステップ送りの上限（サーバーが言う。ランチャーと同じ）。 */
   readonly limits = readableSignal(this.client.limits);
 
@@ -45,6 +54,11 @@ export class ServerInfo {
   /** GET api/configs: root の下の構成ファイル。 */
   configs(): Promise<ConfigList> {
     return this.client.configs();
+  }
+
+  /** GET api/dashboard: 構成ファイルの隣のダッシュボードのファイル（サーバーが確かめた形）。 */
+  dashboard(file: string): Promise<DashboardResponse> {
+    return this.client.dashboard(file);
   }
 
   /** POST api/check: 構成ファイルを照合する。 */

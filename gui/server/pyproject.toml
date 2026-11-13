@@ -9,7 +9,7 @@ version = "0.1.0"
 description = "Browser GUI of vehicle-sil: a local server that runs vehicle_sil_launch and shows its progress"
 requires-python = ">=3.11"
 license = "MIT"
-dependencies = ["aiohttp>=3.14.5"]
+dependencies = ["aiohttp>=3.14.5", "pyyaml>=6.0.3"]
 
 [project.optional-dependencies]
 # The ECUs' variables: the client side of the launcher's control server (gRPC). Without it the server runs, and

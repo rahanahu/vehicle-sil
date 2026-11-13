@@ -1,0 +1,85 @@
+{
+  "description": "The dashboard file next to a configuration, as the server checked it (the example of examples/ecu_main).",
+  "request": {
+    "method": "GET",
+    "path": "api/dashboard?file=simulation.yaml"
+  },
+  "status": 200,
+  "response": {
+    "file": "simulation.yaml",
+    "path": "simulation.dashboard.yaml",
+    "found": true,
+    "errors": [],
+    "dashboard": {
+      "title": "Engine and dashboard",
+      "panels": [
+        {
+          "module": "panels/rpm-bar.js",
+          "url": "panels/<key>/panels/rpm-bar.js"
+        }
+      ],
+      "sections": [
+        {
+          "title": "Engine",
+          "collapsed": false,
+          "items": [
+            {
+              "variable": {
+                "peer": "Engine",
+                "name": "engine.throttle"
+              },
+              "widget": "slider",
+              "label": "Throttle",
+              "options": {
+                "step": 5
+              }
+            },
+            {
+              "variable": {
+                "peer": "Engine",
+                "name": "engine.speed"
+              },
+              "widget": "graph",
+              "label": "Engine speed",
+              "options": {}
+            },
+            {
+              "panel": "rpm-bar",
+              "label": "Engine speed (panel)",
+              "options": {
+                "max": 4000
+              },
+              "variables": [
+                {
+                  "peer": "Engine",
+                  "name": "engine.speed"
+                }
+              ]
+            },
+            {
+              "auto": "Engine"
+            }
+          ]
+        },
+        {
+          "title": "Dashboard",
+          "collapsed": false,
+          "items": [
+            {
+              "variable": {
+                "peer": "Dashboard",
+                "name": "dashboard.engine_speed"
+              },
+              "widget": null,
+              "label": "Speed on the dashboard",
+              "options": {}
+            },
+            {
+              "auto": "Dashboard"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

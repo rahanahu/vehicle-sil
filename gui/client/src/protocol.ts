@@ -1376,6 +1376,163 @@ export const readWriteResponse = (value: unknown): WriteAnswer => {
   };
 };
 
+// --- ダッシュボードのファイル（GET api/dashboard） ------------------------------------------------
+
+/** ダッシュボードのファイルの誤り 1 つ: 行と桁（1 から）、データの中の場所（`sections[0].items[2].widget`）、直し方を含む英語の文。 */
+export interface DashboardFileError {
+  line: number;
+  column: number;
+  at: string;
+  message: string;
+}
+
+/** ファイルに書いた変数（`<participant>.<変数名>` を分けたもの）。 */
+export interface DashboardVariable {
+  peer: string;
+  name: string;
+}
+
+/**
+ * ファイルの項目。どれか 1 つの形（知らない形の項目は、読み取りが捨てる）。
+ * - variable: 変数を部品で出す（widget が null なら既定の部品）。
+ * - panel: 持ち込みのパネル（custom element の名前）。
+ * - auto: その participant の、ファイルのほかの所に置いていない変数（既定の部品で）。
+ */
+export type DashboardFileItem =
+  | {
+      variable: DashboardVariable;
+      widget: string | null;
+      label: string | null;
+      options: Record<string, unknown>;
+    }
+  | {
+      panel: string;
+      label: string | null;
+      options: Record<string, unknown>;
+      variables: DashboardVariable[];
+    }
+  | { auto: string };
+
+/** ファイルのまとまり。 */
+export interface DashboardFileSection {
+  title: string;
+  collapsed: boolean;
+  items: DashboardFileItem[];
+}
+
+/** 持ち込みのパネルのモジュール: ファイルに書いた名前と、読み込む URL（画面の base からの相対）。 */
+export interface DashboardPanelModule {
+  module: string;
+  url: string;
+}
+
+/** サーバーが確かめたダッシュボードのファイルの中身。 */
+export interface DashboardFile {
+  title: string | null;
+  panels: DashboardPanelModule[];
+  sections: DashboardFileSection[];
+}
+
+/**
+ * `GET api/dashboard?file=<構成ファイル>`: 構成ファイルの隣の `<名前>.dashboard.yaml`。ないとき（found が偽）と、
+ * 誤りがあるとき（errors。dashboard は null）は、画面は自動のダッシュボードにする。
+ */
+export interface DashboardResponse {
+  /** 構成ファイル（root からの相対）。 */
+  file: string;
+  /** ダッシュボードのファイル（root からの相対）。 */
+  path: string;
+  found: boolean;
+  errors: DashboardFileError[];
+  dashboard: DashboardFile | null;
+}
+
+const readDashboardVariable: Reader<DashboardVariable> = (value, path) => {
+  const f = object(value, path);
+  return { peer: field(f, path, 'peer', string), name: field(f, path, 'name', string) };
+};
+
+const readOptions: Reader<Record<string, unknown>> = (value, path) => ({ ...object(value, path) });
+
+const readDashboardItem = (value: unknown, path: string): DashboardFileItem | null => {
+  const f = object(value, path);
+  const label = (): string | null => field(f, path, 'label', nullable(string));
+  if (f['variable'] !== undefined) {
+    return {
+      variable: field(f, path, 'variable', readDashboardVariable),
+      widget: field(f, path, 'widget', nullable(string)),
+      label: label(),
+      options: field(f, path, 'options', readOptions),
+    };
+  }
+  if (f['panel'] !== undefined) {
+    return {
+      panel: field(f, path, 'panel', string),
+      label: label(),
+      options: field(f, path, 'options', readOptions),
+      variables: field(f, path, 'variables', array(readDashboardVariable)),
+    };
+  }
+  if (f['auto'] !== undefined) return { auto: field(f, path, 'auto', string) };
+  return null; // 知らない形の項目
+};
+
+const readDashboardFile: Reader<DashboardFile> = (value, path) => {
+  const f = object(value, path);
+  return {
+    title: field(f, path, 'title', nullable(string)),
+    panels: field(
+      f,
+      path,
+      'panels',
+      array((item, p) => {
+        const m = object(item, p);
+        return { module: field(m, p, 'module', string), url: field(m, p, 'url', string) };
+      }),
+    ),
+    sections: field(
+      f,
+      path,
+      'sections',
+      array((item, p) => {
+        const s = object(item, p);
+        return {
+          title: field(s, p, 'title', string),
+          collapsed: field(s, p, 'collapsed', boolean),
+          items: field(s, p, 'items', array(readDashboardItem)).filter(
+            (entry): entry is DashboardFileItem => entry !== null,
+          ),
+        };
+      }),
+    ),
+  };
+};
+
+export const readDashboardResponse = (value: unknown): DashboardResponse => {
+  const path = 'response';
+  const f = object(value, path);
+  return {
+    file: field(f, path, 'file', string),
+    path: field(f, path, 'path', string),
+    found: field(f, path, 'found', boolean),
+    errors: field(
+      f,
+      path,
+      'errors',
+      array((item, p) => {
+        const e = object(item, p);
+        return {
+          line: field(e, p, 'line', integer),
+          column: field(e, p, 'column', integer),
+          at: field(e, p, 'at', string),
+          message: field(e, p, 'message', string),
+        };
+      }),
+    ),
+    dashboard: field(f, path, 'dashboard', nullable(readDashboardFile)),
+  };
+};
+
 /** 認証の後に画面が送る通知: 変数の watch を始める（同じ id なら置き換える）、やめる。 */
 export type WatchMessage =
   | {

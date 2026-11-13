@@ -1,4 +1,11 @@
-import { HISTORY_MAX, VariableInfo, VariablePeer } from '@vehicle-sil/gui-client';
+import {
+  DashboardFile,
+  DashboardPanelModule,
+  HISTORY_MAX,
+  VariableInfo,
+  VariablePeer,
+  VariableRef,
+} from '@vehicle-sil/gui-client';
 
 /**
  * 部品の種類。`WIDGETS`（widgets.ts）が種類ごとのコンポーネントを持つ。
@@ -29,10 +36,41 @@ export interface DashboardItem {
   options?: Readonly<Record<string, unknown>>;
 }
 
+/**
+ * 持ち込みのパネル 1 つ: custom element（`panel` はその名前）。画面は要素を作り、`client`（ライブラリの
+ * GuiClient）、`options`、`variables` をプロパティで渡す。要素を定義するモジュールは DashboardSpec の modules。
+ */
+export interface DashboardPanel {
+  panel: string;
+  /** 見出しに出す名前（省くと要素の名前）。 */
+  label?: string;
+  options?: Readonly<Record<string, unknown>>;
+  /** パネルが使う変数（パネルに渡すだけ。画面は確かめない）。 */
+  variables?: readonly VariableRef[];
+}
+
+/** ファイルの `auto:` に書いた participant が、いまの実行にない（その場所に理由を出す）。 */
+export interface DashboardMissing {
+  missing: string;
+}
+
+/** まとまりに置くもの: 部品、持ち込みのパネル、ない participant の知らせ。 */
+export type DashboardEntry = DashboardItem | DashboardPanel | DashboardMissing;
+
+/** 持ち込みのパネルか。 */
+export function isPanel(entry: DashboardEntry): entry is DashboardPanel {
+  return 'panel' in entry;
+}
+
+/** 変数の部品か。 */
+export function isWidget(entry: DashboardEntry): entry is DashboardItem {
+  return 'widget' in entry;
+}
+
 /** 部品のまとまり（見出しと、並べる順の部品）。 */
 export interface DashboardSection {
   title: string;
-  items: DashboardItem[];
+  items: DashboardEntry[];
   /** 最初は畳んでおく（畳んでいる間は部品を作らず、値も受け取らない）。 */
   collapsed?: boolean;
 }
@@ -43,6 +81,10 @@ export interface DashboardSection {
  */
 export interface DashboardSpec {
   sections: DashboardSection[];
+  /** 画面の上に出す題（ダッシュボードのファイルの title）。 */
+  title?: string;
+  /** 持ち込みのパネルを定義するモジュール（ファイルに書いた名前と、画面の base からの相対の URL）。パネルを描く前に読み込む。 */
+  modules?: readonly DashboardPanelModule[];
 }
 
 /** 範囲が決まっている（両端が有限で、下が上より小さい）か。 */
@@ -127,11 +169,18 @@ export function autoDashboard(
 export function filterDashboard(spec: DashboardSpec, query: string): DashboardSpec {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return spec;
-  const matches = (item: DashboardItem) => {
-    const text = `${item.peer} ${item.name} ${item.label ?? ''}`.toLowerCase();
+  const matches = (item: DashboardEntry) => {
+    const text = (
+      isPanel(item)
+        ? `${item.panel} ${item.label ?? ''} ${(item.variables ?? []).map((v) => `${v.peer} ${v.name}`).join(' ')}`
+        : isWidget(item)
+          ? `${item.peer} ${item.name} ${item.label ?? ''}`
+          : `auto ${item.missing}`
+    ).toLowerCase();
     return words.every((word) => text.includes(word));
   };
   return {
+    ...spec,
     sections: spec.sections
       .map((section) => ({ ...section, items: section.items.filter(matches) }))
       .filter((section) => section.items.length > 0),
@@ -191,13 +240,13 @@ const FITS: Readonly<Record<WidgetKind, { types: readonly string[] | null; write
  * ない）ときは、設定だけを確かめる（部品が「この実行にない変数」と出す）。
  */
 export function checkItem(item: DashboardItem, info: VariableInfo | undefined): ItemProblem | null {
-  const fit = (FITS as Partial<typeof FITS>)[item.widget];
-  if (!fit) return { kind: 'unknown-widget' };
+  // 種類と設定の名前は利用者が書いたもの: 自分のキーだけを引く（constructor や __proto__ で原型に当てない）
+  if (!Object.hasOwn(FITS, item.widget)) return { kind: 'unknown-widget' };
+  const fit = FITS[item.widget];
   const known = WIDGET_OPTIONS[item.widget];
   for (const [key, value] of Object.entries(item.options ?? {})) {
-    const check = known[key];
-    if (!check) return { kind: 'unknown-option', key };
-    if (!check(value)) return { kind: 'bad-option', key };
+    if (!Object.hasOwn(known, key)) return { kind: 'unknown-option', key };
+    if (!known[key](value)) return { kind: 'bad-option', key };
   }
   if (!info) return null;
   if (fit.types && !fit.types.includes(info.type)) return { kind: 'wrong-type', types: fit.types };
@@ -215,9 +264,92 @@ export function checkDashboard(
   const problems: { section: number; item: number; problem: ItemProblem }[] = [];
   spec.sections.forEach((section, s) =>
     section.items.forEach((item, i) => {
+      if (!isWidget(item)) return;
       const problem = checkItem(item, find(item));
       if (problem) problems.push({ section: s, item: i, problem });
     }),
   );
   return problems;
+}
+
+/**
+ * ダッシュボードのファイル（サーバーが確かめた形。`GET api/dashboard`）と、いまの変数の一覧から、描くデータを作る。
+ * - `variable`: その変数を、書いた部品で（省けば既定の部品。いまの実行にない変数は値の表示）。
+ * - `panel`: 持ち込みのパネル。
+ * - `auto: <participant>`: その participant のアプリの変数のうち、ファイルに書いていないもの（`variable` と
+ *   パネルの `variables` のどれにもないもの）を既定の部品で、その場所に。監視の変数（isMonitoring）は、その
+ *   まとまりの後の畳んだまとまり（monitoringTitle）に。同じ participant の 2 つ目の auto は何も置かない。
+ * 部品が変数に合うかは、ここでは確かめない（描くときに checkItem）。
+ */
+export function fileDashboard(
+  file: DashboardFile,
+  peers: readonly VariablePeer[],
+  monitoringTitle: (peer: string) => string,
+): DashboardSpec {
+  const key = (peer: string, name: string) => `${peer}\u0000${name}`;
+  const placed = new Set<string>();
+  for (const section of file.sections) {
+    for (const item of section.items) {
+      if ('variable' in item) placed.add(key(item.variable.peer, item.variable.name));
+      if ('panel' in item) for (const v of item.variables) placed.add(key(v.peer, v.name));
+    }
+  }
+  const infos = new Map<string, VariableInfo>();
+  for (const peer of peers) for (const v of peer.variables) infos.set(key(peer.name, v.name), v);
+  const autoDone = new Set<string>();
+  const sections: DashboardSection[] = [];
+  for (const section of file.sections) {
+    const items: DashboardEntry[] = [];
+    const monitoring: DashboardSection[] = [];
+    for (const item of section.items) {
+      if ('variable' in item) {
+        const { peer, name } = item.variable;
+        const info = infos.get(key(peer, name));
+        items.push({
+          peer,
+          name,
+          widget: (item.widget ?? (info ? defaultWidget(info) : 'value')) as WidgetKind,
+          ...(item.label !== null ? { label: item.label } : {}),
+          ...(Object.keys(item.options).length > 0 ? { options: item.options } : {}),
+        });
+      } else if ('panel' in item) {
+        items.push({
+          panel: item.panel,
+          ...(item.label !== null ? { label: item.label } : {}),
+          options: item.options,
+          variables: item.variables,
+        });
+      } else if (!autoDone.has(item.auto)) {
+        autoDone.add(item.auto);
+        const peer = peers.find((p) => p.name === item.auto);
+        if (!peer && peers.length > 0) items.push({ missing: item.auto });
+        const rest = (peer?.variables ?? []).filter((v) => !placed.has(key(item.auto, v.name)));
+        const entry = (v: VariableInfo): DashboardItem => ({
+          peer: item.auto,
+          name: v.name,
+          widget: defaultWidget(v),
+        });
+        items.push(...rest.filter((v) => !isMonitoring(v.name)).map(entry));
+        const watchers = rest.filter((v) => isMonitoring(v.name));
+        if (watchers.length > 0) {
+          monitoring.push({
+            title: monitoringTitle(item.auto),
+            items: watchers.map(entry),
+            collapsed: true,
+          });
+        }
+      }
+    }
+    sections.push({
+      title: section.title,
+      items,
+      ...(section.collapsed ? { collapsed: true } : {}),
+    });
+    sections.push(...monitoring);
+  }
+  return {
+    sections,
+    ...(file.title !== null ? { title: file.title } : {}),
+    modules: file.panels,
+  };
 }

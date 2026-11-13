@@ -6,10 +6,12 @@ import {
   CheckRequest,
   CheckResult,
   ConfigList,
+  DashboardResponse,
   SessionSummary,
   readAppInfo,
   readCheckResponse,
   readConfigList,
+  readDashboardResponse,
   readSessionResponse,
 } from './protocol';
 import { ClientRun, RunControl } from './run';
@@ -108,6 +110,11 @@ export interface GuiClient {
   check(request: CheckRequest): Promise<CheckResult>;
   /** `GET api/session`: いまのセッションの要約（なければ null）。写しにも当てる。 */
   fetchSession(): Promise<SessionSummary | null>;
+  /**
+   * `GET api/dashboard`: 構成ファイル（root からの相対）の隣のダッシュボードのファイルを、サーバーが確かめた形で
+   * 読む（ないときは found が偽、誤りは errors）。
+   */
+  dashboard(file: string): Promise<DashboardResponse>;
 }
 
 /**
@@ -248,6 +255,11 @@ export function createClient(options: ClientOptions): GuiClient {
     },
     loadApp: () => call({ method: 'GET', path: 'api/app' }, readAppInfo, (info) => app.set(info)),
     configs: () => call({ method: 'GET', path: 'api/configs' }, readConfigList),
+    dashboard: (file) =>
+      call(
+        { method: 'GET', path: `api/dashboard?file=${encodeURIComponent(file)}` },
+        readDashboardResponse,
+      ),
     check: (body) =>
       call(
         {

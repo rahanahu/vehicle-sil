@@ -927,6 +927,7 @@ version = "0.1.0"
 source = { editable = "gui/server" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "pyyaml" },
 ]
 
 [package.optional-dependencies]
@@ -940,6 +941,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.5" },
     { name = "grpcio", marker = "extra == 'variables'", specifier = ">=1.85.0" },
     { name = "protobuf", marker = "extra == 'variables'", specifier = ">=7.35.1" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 provides-extras = ["variables"]
 

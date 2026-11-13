@@ -1,0 +1,28 @@
+{
+  "description": "A dashboard file with mistakes: each with its line, where, and what to do (no dashboard).",
+  "request": {
+    "method": "GET",
+    "path": "api/dashboard?file=bench.yaml"
+  },
+  "status": 200,
+  "response": {
+    "file": "bench.yaml",
+    "path": "bench.dashboard.yaml",
+    "found": true,
+    "errors": [
+      {
+        "line": 5,
+        "column": 19,
+        "at": "sections[0].items[0].variable",
+        "message": "'speed' is not <participant>.<variable>: write the participant's name, a '.', and the variable's name (Engine.engine.speed)"
+      },
+      {
+        "line": 7,
+        "column": 9,
+        "at": "sections[0].items[1].colour",
+        "message": "unknown key 'colour' in a variable item: the keys here are variable, widget, label, options"
+      }
+    ],
+    "dashboard": null
+  }
+}

@@ -37,9 +37,10 @@ class ConfigRoot:
         if not self.root.is_dir():
             raise NotADirectoryError(f"{root} is not a directory")
 
-    def resolve(self, relative: object) -> ConfigFile:
-        """Checks a path from the screen. Raises PathRejected unless it names a .yaml/.yml file under the root,
-        also after following symbolic links."""
+    def parts(self, relative: object) -> list[str]:
+        """The parts of a root-relative path, after the checks that need no file: a non-empty string of
+        characters, not too long, no NUL, no backslash, not absolute, no drive or ':', no empty, '.' or '..' part.
+        Raises PathRejected."""
         if not isinstance(relative, str) or not relative:
             raise PathRejected("invalid-path", "file must be a non-empty string: a path relative to the root, "
                                                "as GET api/configs lists it")
@@ -61,6 +62,13 @@ class ConfigRoot:
         if any(p in ("", ".", "..") for p in parts):
             raise PathRejected("outside-root", f"{relative!r} has an empty, '.' or '..' part: write the path "
                                                "as GET api/configs lists it")
+        return parts
+
+    def resolve(self, relative: object) -> ConfigFile:
+        """Checks a path from the screen. Raises PathRejected unless it names a .yaml/.yml file under the root,
+        also after following symbolic links."""
+        parts = self.parts(relative)
+        assert isinstance(relative, str)
         if not relative.lower().endswith(SUFFIXES):
             raise PathRejected("not-a-configuration", f"{relative!r} is not a .yaml or .yml file")
         try:

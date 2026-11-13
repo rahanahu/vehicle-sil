@@ -9,19 +9,28 @@ import {
   signal,
 } from '@angular/core';
 import { EcuVariables } from '../core/session/ecu-variables';
-import { DashboardSpec, ItemProblem, WidgetKind, checkItem } from './dashboard-spec';
-import { itemProblemText } from './labels';
+import {
+  DashboardPanel,
+  DashboardSpec,
+  ItemProblem,
+  WidgetKind,
+  checkItem,
+  isPanel,
+} from './dashboard-spec';
+import { itemProblemText, missingParticipantText } from './labels';
+import { PanelHost } from './panel-host';
 import { WIDGETS } from './widgets';
 
 /** 描く部品 1 つ: 部品か、使えない理由。 */
 type Cell =
   | {
+      kind: 'widget';
       key: string;
       component: Type<unknown>;
       inputs: Record<string, unknown>;
-      problem: null;
     }
-  | { key: string; problem: string; name: string };
+  | { kind: 'panel'; key: string; panel: DashboardPanel }
+  | { kind: 'problem'; key: string; problem: string; name: string };
 
 /**
  * ダッシュボードを描く: まとまりごとに見出しと部品を、幅に合わせて並べる。描くのは DashboardSpec だけで、
@@ -32,7 +41,7 @@ type Cell =
 @Component({
   selector: 'app-dashboard-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgComponentOutlet],
+  imports: [NgComponentOutlet, PanelHost],
   template: `
     @for (section of sections(); track section.key) {
       <section class="section" [attr.aria-labelledby]="section.id + '-title'">
@@ -57,7 +66,9 @@ type Cell =
         @if (section.open) {
           <div class="grid" [id]="section.id + '-items'">
             @for (cell of section.cells; track cell.key) {
-              @if (cell.problem === null) {
+              @if (cell.kind === 'panel') {
+                <app-panel-host [panel]="cell.panel" [modules]="modules()" />
+              } @else if (cell.kind === 'widget') {
                 <ng-container
                   [ngComponentOutlet]="cell.component"
                   [ngComponentOutletInputs]="cell.inputs"
@@ -140,6 +151,9 @@ export class DashboardView {
   /** 畳んだまとまりも開いて出す（絞り込みの最中: 当たった部品を隠さない）。 */
   readonly expandAll = input(false);
 
+  /** 持ち込みのパネルを定義するモジュール。 */
+  protected readonly modules = computed(() => this.spec().modules ?? []);
+
   /** 利用者が開いた、畳んであったまとまり（見出し）。 */
   private readonly flipped = signal<ReadonlySet<string>>(new Set());
 
@@ -159,17 +173,29 @@ export class DashboardView {
       title: section.title,
       collapsed: section.collapsed === true,
       cells: section.items.map((item): Cell => {
+        if (isPanel(item))
+          return { kind: 'panel', key: unique(`panel\u0000${item.panel}`), panel: item };
+        if ('missing' in item) {
+          return {
+            kind: 'problem',
+            key: unique(`auto\u0000${item.missing}`),
+            name: `auto: ${item.missing}`,
+            problem: missingParticipantText(item.missing),
+          };
+        }
         const key = unique(`${item.peer}\u0000${item.name}\u0000${item.widget}`);
         const info = this.variables.find(item);
         const problem: ItemProblem | null = checkItem(item, info);
         if (problem) {
           return {
+            kind: 'problem',
             key,
             name: item.label ?? `${item.peer} / ${item.name}`,
             problem: itemProblemText(problem, item.widget, info?.type ?? ''),
           };
         }
         return {
+          kind: 'widget',
           key,
           component: WIDGETS[item.widget as WidgetKind],
           inputs: {
@@ -177,7 +203,6 @@ export class DashboardView {
             label: item.label ?? null,
             options: item.options ?? null,
           },
-          problem: null,
         };
       }),
     }));
