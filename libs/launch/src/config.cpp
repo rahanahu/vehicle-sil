@@ -4,7 +4,7 @@
 #include "vehicle_sil/core/participant_runtime.hpp"
 
 #include "vehicle_sil/process/child_process.hpp"
-#include "yaml_tree.hpp"
+#include "yaml_reader.hpp"
 
 #include <algorithm>
 #include <array>
@@ -32,14 +32,18 @@ constexpr const char* kSpeedMeaning =
 const std::vector<std::string> kNetworkKeys = {"name", "kind"};
 const std::vector<std::string> kParticipantKeys = {"name", "command", "step_ms", "describe", "required", "enabled", "manual"};
 
-std::string join(const std::vector<std::string>& items)
+using detail::join;
+
+/// The kinds a network may have (kNetworkKinds), each between `before` and `after`: "can or lin",
+/// "kind: can or kind: lin".
+std::string kinds_text(const std::string& before = {}, const std::string& after = {})
 {
-    std::string out;
-    for (const auto& item : items)
+    std::vector<std::string> names;
+    for (const NetworkKind kind : kNetworkKinds)
     {
-        out += (out.empty() ? "" : ", ") + item;
+        names.push_back(before + to_string(kind) + after);
     }
-    return out;
+    return detail::or_list(names);
 }
 
 std::string lower(std::string_view text)
@@ -151,10 +155,10 @@ std::string_view launcher_argument(std::string_view argument)
 }
 
 /// Reads the tree of a configuration into a SimulationConfig, collecting the findings.
-class Reader
+class Reader : detail::YamlReader
 {
 public:
-    Reader(const detail::YamlDocument& doc, std::vector<Finding>& findings) : doc_(doc), tree_(doc.tree()), findings_(findings) {}
+    Reader(const detail::YamlDocument& doc, std::vector<Finding>& findings) : YamlReader(doc, findings) {}
 
     /// Empty if the file is not a configuration of a known version (the finding says why).
     std::optional<SimulationConfig> read()
@@ -291,7 +295,8 @@ public:
         if (!hasNetworks)
         {
             error("missing-key", 0,
-                  "the file has no networks: add networks, a list of the networks with name and kind (can or lin)");
+                  "the file has no networks: add networks, a list of the networks with name and kind (" + kinds_text() +
+                      ")");
         }
         if (!hasParticipants)
         {
@@ -311,31 +316,6 @@ public:
     }
 
 private:
-    /// The lines of the anchors and aliases under `node` (and of `node` itself), in order.
-    void find_references(ryml::id_type node, std::vector<std::size_t>& lines) const
-    {
-        if (tree_.is_ref(node) || tree_.has_anchor(node) || (tree_.has_key(node) && tree_.key(node) == "<<"))
-        {
-            lines.push_back(doc_.line(node));
-        }
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
-        {
-            find_references(child, lines);
-        }
-    }
-
-    // --- findings ---
-
-    void add(Severity severity, std::string code, std::size_t line, std::string message, std::string participant = {},
-             std::string network = {})
-    {
-        findings_.push_back(Finding{severity, std::move(code), std::move(message), line, std::move(participant),
-                                    std::move(network)});
-    }
-    void error(std::string code, std::size_t line, std::string message, std::string participant = {}, std::string network = {})
-    {
-        add(Severity::Error, std::move(code), line, std::move(message), std::move(participant), std::move(network));
-    }
     void note(std::string code, std::size_t line, std::string message, std::string participant = {})
     {
         add(Severity::Note, std::move(code), line, std::move(message), std::move(participant));
@@ -346,66 +326,7 @@ private:
         error(std::move(code), line, std::move(message));
     }
 
-    /// false (and an error) if `key` was seen before in this mapping.
-    bool first_occurrence(std::map<std::string, std::size_t>& seen, const std::string& key, ryml::id_type node,
-                          const std::string& prefix)
-    {
-        const auto [it, inserted] = seen.emplace(key, doc_.line(node));
-        if (!inserted)
-        {
-            error("duplicate-key", doc_.line(node),
-                  prefix + "'" + key + "' appears twice (first at line " + std::to_string(it->second) +
-                      "); keep one of them");
-        }
-        return inserted;
-    }
-
-    void unknown_key(ryml::id_type node, const std::string& key, const std::string& prefix,
-                     const std::vector<std::string>& known)
-    {
-        const std::string guess = detail::closest(key, known);
-        error("unknown-key", doc_.line(node),
-              prefix + "unknown key '" + key + "': " +
-                  (guess.empty() ? "remove it, or use one of the keys here (" + join(known) + ")"
-                                 : "did you mean '" + guess + "'? (the keys here: " + join(known) + ")"));
-    }
-
     // --- values ---
-
-    bool is_scalar(ryml::id_type node) const { return tree_.has_val(node) && !tree_.is_container(node); }
-    bool is_null(ryml::id_type node) const { return is_scalar(node) && tree_.val_is_null(node); }
-
-    /// How a value is shown in a message: 'text', or what it is.
-    std::string shown_value(ryml::id_type node) const
-    {
-        if (tree_.is_map(node))
-        {
-            return "a mapping";
-        }
-        if (tree_.is_seq(node))
-        {
-            return "a list";
-        }
-        if (is_null(node))
-        {
-            return "empty";
-        }
-        const std::string text = detail::to_string(tree_.val(node));
-        return tree_.is_val_quoted(node) ? "the text \"" + text + "\"" : "'" + text + "'";
-    }
-
-    /// An unquoted decimal integer (with an optional '-').
-    bool plain_integer(ryml::id_type node, std::int64_t& value) const
-    {
-        if (!is_scalar(node) || tree_.is_val_quoted(node) || is_null(node))
-        {
-            return false;
-        }
-        const std::string text = detail::to_string(tree_.val(node));
-        const char* end = text.data() + text.size();
-        const auto [ptr, ec] = std::from_chars(text.data(), end, value);
-        return !text.empty() && ec == std::errc{} && ptr == end;
-    }
 
     /// A whole number of milliseconds from 1 to kMaxMillis, or empty (and an error).
     std::optional<std::int64_t> millis(ryml::id_type node, const std::string& prefix, const std::string& key,
@@ -540,7 +461,7 @@ private:
         if (!tree_.is_seq(node))
         {
             error("value", doc_.line(node),
-                  "networks must be a list of networks (\"- name: <name>\" and \"kind: can\" or \"kind: lin\"), not " +
+                  "networks must be a list of networks (\"- name: <name>\" and " + kinds_text("\"kind: ", "\"") + "), not " +
                       shown_value(node));
             return;
         }
@@ -552,7 +473,7 @@ private:
             if (!tree_.is_map(item))
             {
                 error("value", doc_.line(item),
-                      at + " must be a network with name and kind (can or lin), not " + shown_value(item));
+                      at + " must be a network with name and kind (" + kinds_text() + "), not " + shown_value(item));
                 continue;
             }
             NetworkConfig network;
@@ -590,7 +511,7 @@ private:
             }
             if (!hasKind)
             {
-                error("missing-key", network.line, prefix + "no kind: add kind: can or kind: lin", "", name.value_or(""));
+                error("missing-key", network.line, prefix + "no kind: add " + kinds_text("kind: "), "", name.value_or(""));
             }
             if (!name)
             {
@@ -616,18 +537,14 @@ private:
     std::optional<NetworkKind> read_kind(ryml::id_type node, const std::string& prefix, const std::string& network)
     {
         const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree_.val(node)) : std::string{};
-        if (text == "can")
+        if (const auto kind = network_kind_named(text))
         {
-            return NetworkKind::Can;
-        }
-        if (text == "lin")
-        {
-            return NetworkKind::Lin;
+            return kind;
         }
         const std::string low = lower(text);
         error("value", doc_.line(node),
               prefix + "kind is " + shown_value(node) + ": write " +
-                  (low == "can" || low == "lin" ? low + " (lower case)" : "can or lin (the kinds of network there are)"),
+                  (network_kind_named(low) ? low + " (lower case)" : kinds_text() + " (the kinds of network there are)"),
               "", network);
         return std::nullopt;
     }
@@ -905,9 +822,6 @@ private:
                             [](const Finding& f) { return f.severity == Severity::Error; });
     }
 
-    const detail::YamlDocument& doc_;
-    const ryml::Tree& tree_;
-    std::vector<Finding>& findings_;
 };
 
 } // namespace

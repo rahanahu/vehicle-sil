@@ -9,6 +9,7 @@
 #include "vehicle_sil/j1939/name.hpp"
 #include "vehicle_sil/j1939/types.hpp"
 
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -34,11 +35,102 @@ enum class NetworkUse
     LinSlave,  ///< Ecu::lin_slave()
 };
 
+/// Every NetworkKind and every NetworkUse, in the order of their values. The names and the kinds
+/// below are switches without a default, so a new enumerator does not build (vehicle-sil's own
+/// targets always have -Werror=switch with GCC and Clang) until each has a case for it, and the
+/// static_asserts below fail until it is in its list. Whatever reads or lists the kinds and uses
+/// (the check's messages, the readers of the configuration and of --describe, the refusals of a
+/// name of another kind) takes them from here. The steps to add a kind or a use, also where no
+/// build or test fails: docs/code-map.md, "ネットワークの種類か使い方を足す".
+inline constexpr std::array kNetworkKinds{NetworkKind::Can, NetworkKind::Lin};
+inline constexpr std::array kNetworkUses{NetworkUse::Raw, NetworkUse::J1939, NetworkUse::LinMaster, NetworkUse::LinSlave};
+
 /// The kind of network a use is on (Raw and J1939: CAN; LinMaster and LinSlave: LIN).
 [[nodiscard]] constexpr NetworkKind kind_of(NetworkUse use) noexcept
 {
-    return use == NetworkUse::Raw || use == NetworkUse::J1939 ? NetworkKind::Can : NetworkKind::Lin;
+    switch (use)
+    {
+    case NetworkUse::Raw:
+    case NetworkUse::J1939:
+        return NetworkKind::Can;
+    case NetworkUse::LinMaster:
+    case NetworkUse::LinSlave:
+        return NetworkKind::Lin;
+    }
+    return NetworkKind::Lin; // not reached: a value outside the enumerators
 }
+
+namespace detail {
+/// The names of to_string(); "" for a value outside the enumerators.
+[[nodiscard]] constexpr std::string_view network_kind_name(NetworkKind kind) noexcept
+{
+    switch (kind)
+    {
+    case NetworkKind::Can:
+        return "can";
+    case NetworkKind::Lin:
+        return "lin";
+    }
+    return {};
+}
+[[nodiscard]] constexpr std::string_view network_use_name(NetworkUse use) noexcept
+{
+    switch (use)
+    {
+    case NetworkUse::Raw:
+        return "raw";
+    case NetworkUse::J1939:
+        return "j1939";
+    case NetworkUse::LinMaster:
+        return "lin_master";
+    case NetworkUse::LinSlave:
+        return "lin_slave";
+    }
+    return {};
+}
+/// How messages name a kind of network: "CAN", "LIN".
+[[nodiscard]] constexpr std::string_view network_kind_label(NetworkKind kind) noexcept
+{
+    switch (kind)
+    {
+    case NetworkKind::Can:
+        return "CAN";
+    case NetworkKind::Lin:
+        return "LIN";
+    }
+    return {};
+}
+/// The calls of Ecu that make a network of `kind`, for messages: "j1939() or can()".
+[[nodiscard]] constexpr std::string_view network_kind_calls(NetworkKind kind) noexcept
+{
+    switch (kind)
+    {
+    case NetworkKind::Can:
+        return "j1939() or can()";
+    case NetworkKind::Lin:
+        return "lin_master() or lin_slave()";
+    }
+    return {};
+}
+/// true if `values` are the values 0, 1, ... of Enum, each with a name, and the next value has none.
+template <class Enum, std::size_t N>
+constexpr bool lists_every_value(const std::array<Enum, N>& values, std::string_view (*name)(Enum) noexcept) noexcept
+{
+    for (std::size_t i = 0; i < N; ++i)
+    {
+        if (values[i] != static_cast<Enum>(i) || name(values[i]).empty())
+        {
+            return false;
+        }
+    }
+    return name(static_cast<Enum>(N)).empty();
+}
+} // namespace detail
+
+static_assert(detail::lists_every_value(kNetworkKinds, &detail::network_kind_name),
+              "kNetworkKinds must list every NetworkKind, in the order of their values");
+static_assert(detail::lists_every_value(kNetworkUses, &detail::network_use_name),
+              "kNetworkUses must list every NetworkUse, in the order of their values");
 
 /// A node of a J1939 network as it was added (j1939::NodeOptions), not as it is now: the address
 /// is the one it asked for, also after it claimed another one.
@@ -138,6 +230,9 @@ inline constexpr int kEcuDescriptionFormat = 1;
 /// std::logic_error for a value outside the enumerators.
 [[nodiscard]] const char* to_string(NetworkKind kind);
 [[nodiscard]] const char* to_string(NetworkUse use);
+/// The kind or use that to_string() names `name` (exactly, lower case), or empty for another text.
+[[nodiscard]] std::optional<NetworkKind> network_kind_named(std::string_view name) noexcept;
+[[nodiscard]] std::optional<NetworkUse> network_use_named(std::string_view name) noexcept;
 
 namespace detail {
 /// The length of the valid UTF-8 sequence at the start of `text` (1 to 4), or 0 if it starts

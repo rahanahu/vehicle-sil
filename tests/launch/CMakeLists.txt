@@ -5,11 +5,14 @@ if(NOT TARGET vehicle_sil::launch)
 endif()
 vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
   PREFIX launch LABELS unit launch TIMEOUT 60
-  SOURCES test_config.cpp test_check.cpp test_run.cpp test_events.cpp test_scenario.cpp
-  LINK vehicle_sil::launch vehicle_sil::core) # core: the time commands with a controller (test_events.cpp)
+  SOURCES test_config.cpp test_check.cpp test_run.cpp test_events.cpp test_scenario.cpp test_shared_values.cpp
+  LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
+       vehicle_sil_cli) # the other tools' exit codes and durations (test_shared_values.cpp)
 # libs/launch/src: the run's parts that have no dependencies and are tested as written (run_start_limit.hpp).
 target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/launch/src)
-target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch")
+target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch"
+                           # test_shared_values.cpp reads the GUI's sources.
+                           VEHICLE_SIL_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 # vehicle_sil_launch check as a process: the examples of docs/simulation-config.md with the ECU
 # executables of examples/ecu_main, executables that fail --describe (the helper of

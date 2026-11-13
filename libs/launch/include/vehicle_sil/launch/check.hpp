@@ -100,9 +100,12 @@ struct ParticipantResult
 };
 
 /// Compares the configuration with what the participants reported (`results` in the order of
-/// config.participants): names, steps, networks and their kinds, J1939 addresses and NAMEs,
-/// LIN masters, unused networks and networks with one participant, participants that were not
-/// checked or are disabled, vehicle-sil versions other than `launcher_version`. A disabled
+/// config.participants): names, steps, networks and their kinds, J1939 addresses and NAMEs (on a
+/// CAN network), LIN masters (on a LIN network), unused networks and networks with one
+/// participant, participants that were not checked or are disabled, vehicle-sil versions other
+/// than `launcher_version`. The rules of a network are those of its kind only: a description
+/// with J1939 nodes on a use other than j1939 is not checked for them (read_description()
+/// refuses it). A disabled
 /// participant (ParticipantConfig::enabled, whatever its result) is not on any network and holds
 /// back no rule: the rules are about the simulation without it. Findings in a fixed order:
 /// participants in the file's order, then networks in the file's order.

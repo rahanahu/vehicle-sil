@@ -14,6 +14,16 @@ constexpr const char* kWho = "vehicle_sil::LocalBench: ";
 
 std::string in_quotes(std::string_view name) { return "\"" + std::string(name) + "\""; }
 
+/// The refusal of `what` of the ECU `ecu` because `network` is already a bus of the kind `other`.
+[[noreturn]] void refuse_other_kind(std::string_view network, std::string_view ecu, std::string_view what,
+                                    NetworkKind other, NetworkKind wanted)
+{
+    throw std::invalid_argument(std::string(kWho) + std::string(what) + " of the ECU " + in_quotes(ecu) + ": " +
+                                in_quotes(network) + " is a " + std::string(detail::network_kind_label(other)) +
+                                " bus (made by " + std::string(detail::network_kind_calls(other)) + "); a " +
+                                std::string(detail::network_kind_label(wanted)) + " bus needs a name of its own");
+}
+
 /// The port a LIN node of an ECU is made on. It reaches its bus endpoint only once the node
 /// exists (bind()), so a node whose constructor throws leaves nothing on the bus.
 class LinNodePort final : public lin::LinPort
@@ -588,10 +598,7 @@ void LocalBench::require_can_name(std::string_view network, std::string_view ecu
 {
     if (find_lin_bus(network) != nullptr)
     {
-        throw std::invalid_argument(std::string(kWho) + std::string(what) + " of the ECU " + in_quotes(ecu) + ": " +
-                                    in_quotes(network) +
-                                    " is a LIN bus (made by lin_master() or lin_slave()); a CAN bus needs a name of "
-                                    "its own");
+        refuse_other_kind(network, ecu, what, NetworkKind::Lin, NetworkKind::Can);
     }
 }
 
@@ -601,9 +608,7 @@ void LocalBench::require_lin_name(std::string_view network, std::string_view ecu
     {
         if (!b->name.empty() && b->name == network)
         {
-            throw std::invalid_argument(std::string(kWho) + std::string(what) + " of the ECU " + in_quotes(ecu) + ": " +
-                                        in_quotes(network) +
-                                        " is a CAN bus (made by j1939() or can()); a LIN bus needs a name of its own");
+            refuse_other_kind(network, ecu, what, NetworkKind::Can, NetworkKind::Lin);
         }
     }
 }

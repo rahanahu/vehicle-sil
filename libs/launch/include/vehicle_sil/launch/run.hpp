@@ -41,8 +41,8 @@ struct Command;
 inline constexpr int kRunFormat = 1;
 
 /// The exit code of a run that was interrupted (Ctrl+C, SIGINT, SIGTERM): 128 + SIGINT, as shells
-/// report a program that Ctrl+C ended.
-inline constexpr int kExitInterrupted = 130;
+/// report a program that Ctrl+C ended (the same as an ECU executable's).
+inline constexpr int kExitInterrupted = ecu_executable::kExitInterrupted;
 
 /// How the launcher asks a participant to stop, in messages: "SIGTERM" (POSIX) or "Ctrl+Break"
 /// (Windows).

@@ -2,7 +2,7 @@
 #include "vehicle_sil/launch/scenario.hpp"
 
 #include "vehicle_sil/launch/check.hpp"
-#include "yaml_tree.hpp"
+#include "yaml_reader.hpp"
 
 #include <algorithm>
 #include <array>
@@ -26,15 +26,7 @@ const std::vector<std::string> kRampKeys = {"to", "over_ms", "from"};
 
 constexpr const char* kDocs = "docs/scenario.md";
 
-std::string join(const std::vector<std::string>& items)
-{
-    std::string out;
-    for (const auto& item : items)
-    {
-        out += (out.empty() ? "" : ", ") + item;
-    }
-    return out;
-}
+using detail::join;
 
 std::string number_text(double value)
 {
@@ -93,11 +85,11 @@ std::string items_text(const std::vector<control::EnumItem>& items)
     return out;
 }
 
-class Reader
+class Reader : detail::YamlReader
 {
 public:
     Reader(const detail::YamlDocument& doc, const ScenarioCatalog& catalog, ScenarioRead& out) :
-      doc_(doc), tree_(doc.tree()), catalog_(catalog), out_(out)
+      YamlReader(doc, out.findings), catalog_(catalog), out_(out)
     {
     }
 
@@ -198,77 +190,6 @@ public:
     }
 
 private:
-    void find_references(ryml::id_type node, std::vector<std::size_t>& lines) const
-    {
-        if (tree_.is_ref(node) || tree_.has_anchor(node) || (tree_.has_key(node) && tree_.key(node) == "<<"))
-        {
-            lines.push_back(doc_.line(node));
-        }
-        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
-        {
-            find_references(child, lines);
-        }
-    }
-
-    void error(std::string code, std::size_t line, std::string message, std::string participant = {})
-    {
-        out_.findings.push_back(Finding{Severity::Error, std::move(code), std::move(message), line, std::move(participant), ""});
-    }
-
-    bool first_occurrence(std::map<std::string, std::size_t>& seen, const std::string& key, ryml::id_type node,
-                          const std::string& prefix = {})
-    {
-        const auto [it, inserted] = seen.emplace(key, doc_.line(node));
-        if (!inserted)
-        {
-            error("duplicate-key", doc_.line(node),
-                  prefix + "'" + key + "' appears twice (first at line " + std::to_string(it->second) + "); keep one of them");
-        }
-        return inserted;
-    }
-
-    void unknown_key(ryml::id_type node, const std::string& key, const std::string& prefix, const std::vector<std::string>& known)
-    {
-        const std::string guess = detail::closest(key, known);
-        error("unknown-key", doc_.line(node),
-              prefix + "unknown key '" + key + "': " +
-                  (guess.empty() ? "remove it, or use one of the keys here (" + join(known) + ")"
-                                 : "did you mean '" + guess + "'? (the keys here: " + join(known) + ")"));
-    }
-
-    bool is_scalar(ryml::id_type node) const { return tree_.has_val(node) && !tree_.is_container(node); }
-    bool is_null(ryml::id_type node) const { return is_scalar(node) && tree_.val_is_null(node); }
-
-    std::string shown_value(ryml::id_type node) const
-    {
-        if (tree_.is_map(node))
-        {
-            return "a mapping";
-        }
-        if (tree_.is_seq(node))
-        {
-            return "a list";
-        }
-        if (is_null(node))
-        {
-            return "empty";
-        }
-        const std::string text = detail::to_string(tree_.val(node));
-        return tree_.is_val_quoted(node) ? "the text \"" + text + "\"" : "'" + text + "'";
-    }
-
-    bool plain_integer(ryml::id_type node, std::int64_t& value) const
-    {
-        if (!is_scalar(node) || tree_.is_val_quoted(node) || is_null(node))
-        {
-            return false;
-        }
-        const std::string text = detail::to_string(tree_.val(node));
-        const char* end = text.data() + text.size();
-        const auto [ptr, ec] = std::from_chars(text.data(), end, value);
-        return !text.empty() && ec == std::errc{} && ptr == end;
-    }
-
     /// An unquoted finite decimal number ("1", "-2.5", "1e3").
     bool plain_number(ryml::id_type node, double& value) const
     {
@@ -1043,8 +964,6 @@ private:
         return out;
     }
 
-    const detail::YamlDocument& doc_;
-    const ryml::Tree& tree_;
     const ScenarioCatalog& catalog_;
     ScenarioRead& out_;
     Scenario scenario_;

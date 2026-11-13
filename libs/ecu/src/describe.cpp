@@ -157,30 +157,46 @@ const char* version() noexcept { return VEHICLE_SIL_VERSION; }
 
 const char* to_string(NetworkKind kind)
 {
-    switch (kind)
+    const std::string_view name = detail::network_kind_name(kind);
+    if (name.empty())
     {
-    case NetworkKind::Can:
-        return "can";
-    case NetworkKind::Lin:
-        return "lin";
+        bad_value("NetworkKind", static_cast<int>(kind));
     }
-    bad_value("NetworkKind", static_cast<int>(kind));
+    return name.data(); // a string literal: ends with '\0'
 }
 
 const char* to_string(NetworkUse use)
 {
-    switch (use)
+    const std::string_view name = detail::network_use_name(use);
+    if (name.empty())
     {
-    case NetworkUse::Raw:
-        return "raw";
-    case NetworkUse::J1939:
-        return "j1939";
-    case NetworkUse::LinMaster:
-        return "lin_master";
-    case NetworkUse::LinSlave:
-        return "lin_slave";
+        bad_value("NetworkUse", static_cast<int>(use));
     }
-    bad_value("NetworkUse", static_cast<int>(use));
+    return name.data(); // a string literal: ends with '\0'
+}
+
+std::optional<NetworkKind> network_kind_named(std::string_view name) noexcept
+{
+    for (const NetworkKind kind : kNetworkKinds)
+    {
+        if (detail::network_kind_name(kind) == name)
+        {
+            return kind;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<NetworkUse> network_use_named(std::string_view name) noexcept
+{
+    for (const NetworkUse use : kNetworkUses)
+    {
+        if (detail::network_use_name(use) == name)
+        {
+            return use;
+        }
+    }
+    return std::nullopt;
 }
 
 std::string to_json(const EcuDescription& description)

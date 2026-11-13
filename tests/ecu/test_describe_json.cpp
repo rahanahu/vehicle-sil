@@ -386,3 +386,25 @@ TEST_CASE(kind_and_use_names)
     CHECK(vehicle_sil::kind_of(NetworkUse::LinMaster) == NetworkKind::Lin);
     CHECK(vehicle_sil::kind_of(NetworkUse::LinSlave) == NetworkKind::Lin);
 }
+
+TEST_CASE(every_kind_and_use_reads_back_from_its_name)
+{
+    // The lists that the readers take the names from: each value once, its name read back to it.
+    for (const NetworkKind kind : vehicle_sil::kNetworkKinds)
+    {
+        CHECK(vehicle_sil::network_kind_named(vehicle_sil::to_string(kind)) == kind);
+    }
+    for (const NetworkUse use : vehicle_sil::kNetworkUses)
+    {
+        CHECK(vehicle_sil::network_use_named(vehicle_sil::to_string(use)) == use);
+    }
+    CHECK(!vehicle_sil::network_kind_named("CAN") && !vehicle_sil::network_kind_named("") &&
+          !vehicle_sil::network_kind_named("raw"));
+    CHECK(!vehicle_sil::network_use_named("Raw") && !vehicle_sil::network_use_named("can"));
+    // The value after the last of a list has no name: a new enumerator must go into its list
+    // (the static_asserts of describe.hpp hold the same at build time).
+    CHECK(vehicle_sil::unit::throws<std::logic_error>(
+        [] { static_cast<void>(vehicle_sil::to_string(static_cast<NetworkKind>(vehicle_sil::kNetworkKinds.size()))); }));
+    CHECK(vehicle_sil::unit::throws<std::logic_error>(
+        [] { static_cast<void>(vehicle_sil::to_string(static_cast<NetworkUse>(vehicle_sil::kNetworkUses.size()))); }));
+}

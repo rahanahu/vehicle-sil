@@ -49,6 +49,15 @@ bool has_name(const std::vector<std::unique_ptr<T>>& items, std::string_view nam
     return false;
 }
 
+/// The refusal of `call` because `network` is already a network of the kind `other` of this peer.
+[[noreturn]] void refuse_other_kind(const std::string& call, const std::string& network, NetworkKind other,
+                                    NetworkKind wanted)
+{
+    throw std::invalid_argument("vehicle_sil::Peer: " + call + ": \"" + network + "\" is a " +
+                                std::string(detail::network_kind_label(other)) + " network of this peer; a " +
+                                std::string(detail::network_kind_label(wanted)) + " network needs a name of its own");
+}
+
 } // namespace
 
 struct Peer::Channel
@@ -237,10 +246,9 @@ bool Peer::controller_is_used(const std::string& controller) const
 
 void Peer::require_can_name(const std::string& network, const char* what) const
 {
-    if (has_name(lin_, network))
+    if (const auto other = detail::network_kind(*this, network); other && *other != NetworkKind::Can)
     {
-        throw std::invalid_argument("vehicle_sil::Peer: " + std::string(what) + "(\"" + network + "\"): \"" + network +
-                                    "\" is a LIN network of this peer; a CAN network needs a name of its own");
+        refuse_other_kind(std::string(what) + "(\"" + network + "\")", network, *other, NetworkKind::Can);
     }
     if (network_check_ && !network.empty())
     {
@@ -446,10 +454,9 @@ void Peer::require_lin_name(const std::string& network, const char* what) const
         throw std::invalid_argument("vehicle_sil::Peer: " + call + ": the peer has a LIN node on \"" + network +
                                     "\" already; an ECU has one LIN node per LIN network");
     }
-    if (has_name(channels_, network) || has_name(raw_channels_, network))
+    if (const auto other = detail::network_kind(*this, network); other && *other != NetworkKind::Lin)
     {
-        throw std::invalid_argument("vehicle_sil::Peer: " + call + ": \"" + network +
-                                    "\" is a CAN network of this peer; a LIN network needs a name of its own");
+        refuse_other_kind(call, network, *other, NetworkKind::Lin);
     }
     if (controller_is_used(network))
     {

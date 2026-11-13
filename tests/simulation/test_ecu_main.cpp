@@ -12,6 +12,7 @@
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
+#include "vehicle_sil/ecu/executable.hpp"
 #include "vehicle_sil/simulation/ecu_main.hpp"
 #include "vehicle_sil/simulation/simulation.hpp"
 
@@ -317,6 +318,29 @@ TEST_CASE(ecu_main_refuses_bad_command_lines)
         require(first_line(r.err) == "error: Engine: " + c.error, "the error line " + c.error, r);
         require(contains(r.err, "\nusage: engine_ecu"), "the usage after the error", r);
         CHECK_EQ(probe.made, 0);
+    }
+}
+
+TEST_CASE(ecu_main_takes_every_argument_the_launcher_gives)
+{
+    // vehicle_sil_launch refuses these in a command because it gives them itself
+    // (ecu_executable::kLauncherArguments): ecu_main must know each one, with its value if it takes
+    // one, and answer with its exit codes (ecu_executable).
+    {
+        // What ecu_main says of an argument it does not know, which the loop must not see.
+        Probe probe;
+        const Result r = call({"--bogus"}, probe);
+        require(contains(r.err, "unknown argument \"--bogus\""), "the words for an unknown argument", r);
+    }
+    for (const std::string_view argument : vehicle_sil::ecu_executable::kLauncherArguments)
+    {
+        Probe probe;
+        const std::string arg(argument);
+        const Result r = call({arg}, probe);
+        require(!contains(r.err, "unknown argument"), arg + " is an argument of ecu_main", r);
+        // Alone: the usage (--help), the description (--describe) or what is missing with it.
+        require(r.code == vehicle_sil::ecu_executable::kExitOk || r.code == vehicle_sil::ecu_executable::kExitUsage,
+                arg + " alone: exit 0 or 4", r);
     }
 }
 
