@@ -171,7 +171,7 @@ ClusterTrace run_cluster(ClusterOptions o)
         }
         if (o.master_busy.count() > 0)
         {
-            std::this_thread::sleep_for(o.master_busy);
+            vehicle_sil::unit::busy_for(o.master_busy);
         }
     });
 
@@ -213,7 +213,7 @@ ClusterTrace run_cluster(ClusterOptions o)
         runtime.set_step_handler([&, i](SimTime now, SimDuration) {
             if (o.slave_busy.count() > 0)
             {
-                std::this_thread::sleep_for(o.slave_busy);
+                vehicle_sil::unit::busy_for(o.slave_busy);
             }
             if (o.slave_script)
             {

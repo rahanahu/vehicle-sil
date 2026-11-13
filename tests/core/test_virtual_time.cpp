@@ -105,7 +105,7 @@ std::chrono::nanoseconds run_simulation(const std::vector<PeerSpec>& peers, SimD
             log.add(peer.name, true, now);
             if (peer.busy.count() > 0)
             {
-                std::this_thread::sleep_for(peer.busy);
+                vehicle_sil::unit::busy_for(peer.busy);
             }
             result->steps.push_back(now.time_since_epoch());
             log.add(peer.name, false, now);

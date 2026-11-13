@@ -101,7 +101,7 @@ RunResult run(const RunOptions& o)
         master.step(now);
         if (o.master_busy.count() > 0)
         {
-            std::this_thread::sleep_for(o.master_busy);
+            vehicle_sil::unit::busy_for(o.master_busy);
         }
     });
 
@@ -115,7 +115,7 @@ RunResult run(const RunOptions& o)
         slave.step(now);
         if (o.slave_busy.count() > 0)
         {
-            std::this_thread::sleep_for(o.slave_busy);
+            vehicle_sil::unit::busy_for(o.slave_busy);
         }
         const auto value = sensor_value(now);
         slave.set_response(now, kSensorId, value);

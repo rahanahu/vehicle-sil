@@ -199,7 +199,7 @@ Trace run(Cluster c)
         }
         if (c.master_busy.count() > 0)
         {
-            std::this_thread::sleep_for(c.master_busy);
+            vehicle_sil::unit::busy_for(c.master_busy);
         }
     });
 
@@ -237,7 +237,7 @@ Trace run(Cluster c)
         runtime.set_step_handler([&, i](SimTime now, SimDuration) {
             if (c.slaves[i].busy.count() > 0)
             {
-                std::this_thread::sleep_for(c.slaves[i].busy);
+                vehicle_sil::unit::busy_for(c.slaves[i].busy);
             }
             slaveNow[i] = now;
             if (!c.slave_script || c.slave_script(i, now, slave))
@@ -997,8 +997,11 @@ TEST_CASE(lin_slave_inbox_overflow_is_counted_and_the_slave_recovers)
     // Slave 0's inbox holds 4096 events: 2048 headers and frames of the 2245 in 10..4500 ms.
     require(t.slave_stats[0].inbox_overflows > 0u, "no overflow counted");
     CHECK_EQ(t.slave_stats[1].inbox_overflows, 0u);
-    // After the stall, slave 0 receives every frame again, at its first step after the header.
-    for (long long ms = 4500; ms < 4580; ms += 2)
+    // After the stall, slave 0 receives every frame again, at its first step after the header. Not
+    // necessarily the one at 4500 ms: the master's step at 4500 ms may run, and its header reach
+    // slave 0, before slave 0's step at 4500 ms has emptied the inbox, and an event that comes
+    // while the inbox is full is lost. From 4502 ms on, the inbox has been emptied.
+    for (long long ms = 4502; ms < 4580; ms += 2)
     {
         const std::uint8_t value = static_cast<std::uint8_t>(ms / 2);
         require(contains(t.slaves[0], "frame t=" + std::to_string(ms) + " rx=" + std::to_string(ms + 1) +

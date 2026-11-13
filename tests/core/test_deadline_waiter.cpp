@@ -122,8 +122,12 @@ TEST_CASE(deadline_waiter_a_deadline_that_has_passed_does_not_wait)
 TEST_CASE(virtual_time_deadline_waiter_wakes_close_to_the_deadline)
 {
     std::mutex mutex;
-    const auto with = [&mutex](DeadlineWaiter& waiter) {
-        return measure(100, 10ms, [&](Wall::time_point deadline) {
+    // The checked timer is measured 100 times; the two that are only printed, for comparison,
+    // fewer (the test runs alone, and each wait takes its 10 ms).
+    constexpr int kChecked = 100;
+    constexpr int kPrinted = 30;
+    const auto with = [&mutex](DeadlineWaiter& waiter, int count) {
+        return measure(count, 10ms, [&](Wall::time_point deadline) {
             std::unique_lock lock(mutex);
             waiter.wait_until(lock, deadline);
         });
@@ -131,16 +135,16 @@ TEST_CASE(virtual_time_deadline_waiter_wakes_close_to_the_deadline)
     // First, and printed only: a plain condition variable, before anything here changes the
     // system's timer tick.
     std::condition_variable cv;
-    print("std::condition_variable", measure(100, 10ms, [&](Wall::time_point deadline) {
+    print("std::condition_variable", measure(kPrinted, 10ms, [&](Wall::time_point deadline) {
               std::unique_lock lock(mutex);
               cv.wait_until(lock, deadline);
           }));
     DeadlineWaiter best;
-    const Overshoot o = with(best);
+    const Overshoot o = with(best, kChecked);
     print(best.high_resolution() ? "the gate's timer" : "the gate's timer (no high-resolution timer here)", o);
     // A timer that ends on a 15.6 ms tick is 5 ms late or more at the median of 10 ms waits.
     CHECK(o.median < 5ms);
     // Printed only: the fallback.
     DeadlineWaiter ordinary(DeadlineWaiter::Timer::Ordinary);
-    print("the fallback timer", with(ordinary));
+    print("the fallback timer", with(ordinary, kPrinted));
 }
