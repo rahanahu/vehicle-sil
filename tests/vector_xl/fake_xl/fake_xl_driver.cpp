@@ -83,6 +83,7 @@ struct State
     int next_node = 1;
     std::map<unsigned, backend::ChipState> chip_states;
     std::map<unsigned, bool> blocked;
+    std::map<unsigned, unsigned> receipts_to_lose;
     bool device_lost = false;
     bool chip_state_refused = false;
     std::optional<std::chrono::steady_clock::time_point> lose_device_at;
@@ -264,6 +265,7 @@ void reset()
     s.nodes.clear();
     s.chip_states.clear();
     s.blocked.clear();
+    s.receipts_to_lose.clear();
     s.device_lost = false;
     s.chip_state_refused = false;
     s.lose_device_at.reset();
@@ -299,6 +301,11 @@ unsigned chip_state_requests()
 void send_from(std::int64_t handle, Port& port, const Frame& frame)
 {
     deliver_to_bus(port.channel, frame, handle, 0);
+    if (auto& lose = state().receipts_to_lose[port.channel]; lose > 0)
+    {
+        --lose;
+        return;
+    }
     if (port.tx_receipts || state().ignore_mode)
     {
         auto receipt = rx_event(frame);
@@ -327,6 +334,24 @@ void set_bus_blocked(unsigned channel_index, bool blocked)
             const Frame frame = port.tx_queue.front();
             port.tx_queue.pop_front();
             send_from(handle, port, frame);
+        }
+    }
+}
+
+void lose_next_receipt(unsigned channel_index)
+{
+    const std::lock_guard lock(state().mutex);
+    ++state().receipts_to_lose[channel_index];
+}
+
+void discard_queued_transmissions(unsigned channel_index)
+{
+    const std::lock_guard lock(state().mutex);
+    for (auto& [handle, port] : state().ports)
+    {
+        if (port.channel == channel_index)
+        {
+            port.tx_queue.clear();
         }
     }
 }

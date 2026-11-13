@@ -66,14 +66,16 @@ struct XlCanPortOptions
     ///    stops receiving.
     ///  - A full driver queue is not a refusal (the answer only comes later).
     std::chrono::milliseconds bus_state_interval{500};
-    /// When the frames the driver accepted have not reached the bus for this long (no ACK, bus
-    /// off, a cable pulled), transmit() refuses new frames (TransmitResult::Dropped) until one
-    /// reaches the bus again, so that frames do not pile up and go out late in a burst. The
-    /// frames already accepted, about this long's worth, still go out once the bus works:
-    /// the driver's xlCanFlushTransmitQueue did not remove them on a VN5620. Unset: frames
-    /// wait as long as it takes. Like drain_timeout and TransmitUnsent, this relies on the
-    /// driver's transmit receipts: they are used once the port switched them on (init access,
-    /// `bitrate`) or one arrived.
+    /// When no receipt came for this long although frames were accepted since the last one (no
+    /// ACK, bus off, a cable pulled), transmit() refuses new frames (TransmitResult::Dropped)
+    /// until a receipt comes, so that frames do not pile up and go out late in a burst. One
+    /// frame per this long still goes to the driver as a probe, in case the driver lost the
+    /// waiting frames. The frames already accepted, about this long's worth, still go out once
+    /// the bus works: the driver's xlCanFlushTransmitQueue did not remove them on a VN5620.
+    /// Unset: frames wait as long as it takes. Like drain_timeout and TransmitUnsent, this
+    /// relies on the driver's transmit receipts: they are used once the port switched them on
+    /// (init access, `bitrate`) or one arrived; without init access on a bus that never
+    /// acknowledged a frame, it does nothing.
     std::optional<std::chrono::milliseconds> transmit_timeout;
     /// stop() waits up to this long for accepted frames to reach the bus before it takes the
     /// channel off the bus; the rest is reported as ExternalEventKind::TransmitUnsent.

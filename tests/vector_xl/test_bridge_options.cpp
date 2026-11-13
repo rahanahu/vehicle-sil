@@ -97,7 +97,7 @@ TEST_CASE(options_reject_bad_command_lines)
     CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--bitrate", "2000000"}));
     CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--rx-queue-size", "1000"}));
     CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--rx-queue-size", "65536"}));
-    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--tx-timeout-ms", "0"}));
+    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--tx-timeout-ms", "9"}));
     CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--tx-timeout-ms", "60001"}));
     CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--unknown", "1"}));
     CHECK(usage_error({"--registry-uri"}));

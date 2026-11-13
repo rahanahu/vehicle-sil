@@ -95,6 +95,11 @@ unsigned chip_state_requests();
 void set_bus_blocked(unsigned channel_index, bool blocked);
 /// Frames waiting in the transmit queues of the ports on `channel_index`.
 std::size_t queued_transmissions(unsigned channel_index);
+/// The next transmit receipt on `channel_index` is not delivered (lost).
+void lose_next_receipt(unsigned channel_index);
+/// The waiting frames on `channel_index` disappear without being sent or confirmed (as a driver
+/// might after bus off).
+void discard_queued_transmissions(unsigned channel_index);
 
 struct Frame
 {

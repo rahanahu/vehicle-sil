@@ -131,16 +131,20 @@ struct XlCanPort::Impl
     bool active = false;
     EventHandler handler;
 
-    // Frames the driver accepted (transmit() Ok) and has not confirmed with a receipt yet.
-    // Changed under xl_mutex together with the driver call it accounts for, except that a
-    // receipt only decrements (never below 0).
+    // Frames the driver accepted (transmit() Ok) and has not confirmed with a receipt yet, for
+    // the wait at stop and xl_tx_unsent. Changed under xl_mutex together with the driver call
+    // it accounts for, except that a receipt only decrements (never below 0). It can drift
+    // (a receipt lost in an overrun resets it to 0), so the stuck decision does not use it.
     std::atomic<std::int64_t> pending{0};
     /// Whether receipts are known to arrive: this port switched them on (init access), or one
     /// arrived. Without init access another application may have switched them off; then the
     /// count of waiting frames means nothing and is not used.
     std::atomic<bool> receipts_known{false};
-    /// steady_clock time (ns) of the last receipt, or of the transmit that made pending non-zero.
-    std::atomic<std::int64_t> progress{0};
+    /// steady_clock time (ns) of the first frame accepted after the last receipt, 0 if none was
+    /// accepted since. A receipt clears it: the bus works.
+    std::atomic<std::int64_t> unconfirmed_since{0};
+    /// steady_clock time (ns) of the last probe frame let through while stuck.
+    std::int64_t last_probe = 0; // under xl_mutex
 
     static std::int64_t now_ns() noexcept
     {
@@ -153,14 +157,32 @@ struct XlCanPort::Impl
         while (value > 0 && !pending.compare_exchange_weak(value, value - 1))
         {
         }
-        progress.store(now_ns());
+        unconfirmed_since.store(0);
         receipts_known.store(true);
     }
-    /// Whether the accepted frames have not reached the bus for transmit_timeout.
-    [[nodiscard]] bool stuck() const noexcept
+    [[nodiscard]] std::int64_t timeout_ns() const noexcept
     {
-        return options.transmit_timeout && receipts_known.load() && pending.load() > 0 &&
-               now_ns() - progress.load() >= std::chrono::nanoseconds(*options.transmit_timeout).count();
+        return std::chrono::nanoseconds(*options.transmit_timeout).count();
+    }
+    /// Whether no receipt came for transmit_timeout although frames were accepted since the last
+    /// one. Only the receipts' timing counts, not the count of waiting frames: a lost receipt
+    /// cannot keep the port stuck, the next frame's receipt clears it.
+    [[nodiscard]] bool stuck(std::int64_t now) const noexcept
+    {
+        const auto since = unconfirmed_since.load();
+        return options.transmit_timeout && receipts_known.load() && since != 0 && now - since >= timeout_ns();
+    }
+    /// While stuck, one frame per transmit_timeout goes to the driver anyway: if the driver lost
+    /// the waiting frames (bus off), no receipt would ever come otherwise. Under xl_mutex.
+    [[nodiscard]] bool probe_due(std::int64_t now) noexcept
+    {
+        const auto stuckFrom = unconfirmed_since.load() + timeout_ns();
+        if (now - std::max(last_probe, stuckFrom) < timeout_ns())
+        {
+            return false;
+        }
+        last_probe = now;
+        return true;
     }
 
     mutable std::mutex error_mutex;
@@ -254,6 +276,7 @@ void XlCanPort::start(EventHandler handler)
         impl.active = true;
     }
     impl.pending.store(0);
+    impl.unconfirmed_since.store(0);
     impl.running.store(true);
     impl.receiving.store(true);
     impl.receive_thread = std::thread([&impl] { impl.receive_loop(); });
@@ -310,14 +333,17 @@ TransmitResult XlCanPort::transmit(const SilKit::Services::Can::CanFrame& frame)
             impl.set_last_error("XL channel is not active");
             return TransmitResult::Failed;
         }
-        if (impl.stuck())
+        const auto now = Impl::now_ns();
+        if (impl.stuck(now) && !impl.probe_due(now))
         {
             return TransmitResult::Dropped;
         }
         result = backend::transmit(impl.port, impl.access_mask, message);
-        if (result.status.ok() && result.queued && impl.pending.fetch_add(1) == 0)
+        if (result.status.ok() && result.queued)
         {
-            impl.progress.store(Impl::now_ns());
+            impl.pending.fetch_add(1);
+            std::int64_t none = 0;
+            (void)impl.unconfirmed_since.compare_exchange_strong(none, now);
         }
     }
     if (result.status.ok() && result.queued)
@@ -452,6 +478,7 @@ void XlCanPort::Impl::dispatch(const backend::ReceivedEvent& event)
     const auto classified = detail::classify_xl_event(event);
     if (classified.overrun)
     {
+        pending.store(0); // receipts may have been lost with the other events: start counting anew
         handler(ExternalCanEvent{ExternalEventKind::Overrun, {}});
     }
     switch (classified.event_class)

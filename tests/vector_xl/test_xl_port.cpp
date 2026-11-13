@@ -634,6 +634,55 @@ TEST_CASE(xl_port_refuses_frames_while_the_bus_is_stuck_longer_than_the_transmit
     CHECK(of_kind(f.sink.wait_for(100, 0ms), ExternalEventKind::TransmitUnsent).empty());
 }
 
+TEST_CASE(xl_port_a_lost_receipt_does_not_make_a_working_bus_look_stuck)
+{
+    XlCanPortOptions options;
+    options.transmit_timeout = 50ms;
+    BlockedBusFixture f(options);
+    fake_xl::lose_next_receipt(kHardware1);
+    CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    CHECK(f.node.receive(1000ms).has_value());
+    std::this_thread::sleep_for(150ms); // a gap longer than the timeout, with one receipt missing
+    for (int i = 0; i < 5; ++i)
+    {
+        CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+        CHECK(f.node.receive(1000ms).has_value());
+        std::this_thread::sleep_for(80ms);
+    }
+}
+
+TEST_CASE(xl_port_lets_a_probe_through_while_stuck)
+{
+    XlCanPortOptions options;
+    options.transmit_timeout = 50ms;
+    options.drain_timeout = 0ms;
+    BlockedBusFixture f(options);
+    fake_xl::set_bus_blocked(kHardware1, true);
+    CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    std::this_thread::sleep_for(60ms);
+    CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Dropped);
+
+    // The driver loses the waiting frame (bus off), then the bus works: no receipt would ever
+    // come for it. A probe one timeout later goes out and its receipt ends the stuck state.
+    fake_xl::discard_queued_transmissions(kHardware1);
+    fake_xl::set_bus_blocked(kHardware1, false);
+    bool probed = false;
+    const auto until = std::chrono::steady_clock::now() + 1000ms;
+    while (!probed && std::chrono::steady_clock::now() < until)
+    {
+        probed = f.port->transmit(frame_matrix()[2].to_silkit()) == TransmitResult::Ok;
+        std::this_thread::sleep_for(5ms);
+    }
+    CHECK(probed);
+    CHECK(f.node.receive(1000ms).has_value());
+    std::this_thread::sleep_for(20ms); // the receipt
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    }
+    f.port->stop();
+}
+
 TEST_CASE(xl_port_stop_is_bounded_by_the_wait_timeout_and_restartable)
 {
     fake_xl::reset();
