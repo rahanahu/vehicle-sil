@@ -10,6 +10,8 @@ Commands:
                          with VEHICLE_SIL_STATIC=ON: SIL Kit, the C++ runtime and gRPC (built here at the pinned
                          version, never a system one) linked into the launcher
               build      cmake --build --target vehicle_sil_launch
+              compiler   the build was made with GCC (MinGW-w64 included): the archive this repository hands out is
+                         not made with another compiler (anyone may build so for themselves)
               python     python/requirements.txt (uv export of the GUI server with gRPC, pinned with hashes from uv.lock)
                          and the gRPC stubs of the Control API (uv run ... python -m vehicle_sil_control.generate)
               stage      bin/ (the launcher, the libraries it needs, vehicle-sil-gui), python/ (vehicle_sil_gui with the
@@ -411,6 +413,15 @@ docs/gui.md, docs/control-api.md).
 """
 
 
+def built_with(build: Path) -> str | None:
+    """The C++ compiler of a configured build directory, as CMake names it (GNU, Clang, ...), or None."""
+    for found in sorted(build.glob("CMakeFiles/*/CMakeCXXCompiler.cmake")):
+        m = re.search(r'(?m)^set\(CMAKE_CXX_COMPILER_ID "([^"]*)"\)', found.read_text(encoding="utf-8", errors="replace"))
+        if m:
+            return m.group(1)
+    return None
+
+
 def tools_command(args: argparse.Namespace) -> int:
     version = project_version()
     top, archive_name = names(version)
@@ -526,6 +537,17 @@ def tools_command(args: argparse.Namespace) -> int:
                                          encoding="utf-8")
         (stage / "VERSION").write_text(version + "\n", encoding="ascii")
 
+    def compiler_step(s: Step) -> None:
+        # What this repository hands out is built with GCC (MinGW-w64 included): the C++ runtime linked into
+        # the launcher is passed on under the GCC Runtime Library Exception, which was checked for GCC only.
+        # Anyone may build with another compiler; the released archive is the thing that must not be.
+        found = built_with(build)
+        if found != "GNU":
+            raise StepFailed(f"the build in {build} was made with {found or 'an unknown compiler'}, and the tools "
+                             "archive is made with GCC only (its license notices are written for GCC's runtime): "
+                             "configure again with -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ "
+                             "(--cmake-arg), in a new --build directory")
+
     def portable_step(s: Step) -> None:
         # The staged launcher, with a PATH of the system's directories only: it finds its libraries next to it.
         p = s.run([stage / "bin" / launcher.name, "version", "--json"], env=dict(os.environ, PATH=minimal_path()),
@@ -588,7 +610,8 @@ def tools_command(args: argparse.Namespace) -> int:
         steps += [("configure", configure), ("build", build_step)]
     elif not launcher.is_file():
         raise Usage(f"--no-build, and there is no {launcher}: build it first (without --no-build)")
-    steps += [("python", python_step), ("stage", stage_step), ("portable", portable_step), ("archive", archive_step)]
+    steps += [("compiler", compiler_step), ("python", python_step), ("stage", stage_step), ("portable", portable_step),
+              ("archive", archive_step)]
     print(f"package: tools {version} for {PLATFORM} (build {build})", flush=True)
     if not run_steps(args.tag, steps):
         print("package: FAILED")
