@@ -322,7 +322,8 @@ bool all_gone(const fs::path& dir, const std::vector<std::string>& pid_files, st
 // --- scenarios ---
 
 /// The copies in docs/howto/*.md: the block after each line "<!-- vehicle_sil_launch {command} ... -->"
-/// there is the block after the same line in `docs` (which this test compares with the output).
+/// there is the block after the same line in `docs` or in scenario.md (which this test compares with
+/// the output).
 void howto_copies_agree(const fs::path& docs, const std::string& command)
 {
     const std::string head = "<!-- vehicle_sil_launch " + command + " ";
@@ -339,9 +340,13 @@ void howto_copies_agree(const fs::path& docs, const std::string& command)
         {
             if (line.rfind(head, 0) == 0 && line.size() > 4 && line.compare(line.size() - 4, 4, " -->") == 0)
             {
-                expect_text(block_after(entry.path(), line), block_after(docs, line),
+                // The original is in `docs`, or, for a run of a scenario, in scenario.md next to it.
+                const fs::path scenario = docs.parent_path() / "scenario.md";
+                const bool in_docs = lf(read_text(docs)).find(line + "\n") != std::string::npos;
+                const fs::path& original = in_docs ? docs : scenario;
+                expect_text(block_after(entry.path(), line), block_after(original, line),
                             "docs/howto/" + entry.path().filename().string() + ": the copy after " + line +
-                                " (copy the block after the same line in " + docs.filename().string() + ")");
+                                " (copy the block after the same line in " + original.filename().string() + ")");
                 ++copies;
             }
         }
