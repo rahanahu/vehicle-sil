@@ -208,6 +208,8 @@ def main() -> int:
                         "VEHICLE_SIL_GUI_LAUNCHER; without either they are skipped)")
     parser.add_argument("--skip-install", action="store_true", help="passed on to verify-web.py (keep node_modules)")
     parser.add_argument("--skip-e2e", action="store_true", help="passed on to verify-web.py (no browser tests)")
+    parser.add_argument("--e2e-dev", action="store_true",
+                        help="passed on to verify-web.py (also the browser tests through the dev server)")
     parser.add_argument("-k", dest="keyword", help="only the server tests matching this pytest -k expression")
     parser.add_argument("--tag", default="gui", help="prefix of the log names (default: gui)")
     parser.add_argument("--json", action="store_true",
@@ -243,7 +245,7 @@ def main() -> int:
                       "or pass --skip-web)")
     if not args.skip_web:
         web = [sys.executable, str(ROOT / "scripts" / "verify-web.py"), "--json", "--tag", f"{args.tag}-web"]
-        web += ["--skip-install"] * args.skip_install + ["--skip-e2e"] * args.skip_e2e
+        web += ["--skip-install"] * args.skip_install + ["--skip-e2e"] * args.skip_e2e + ["--e2e-dev"] * args.e2e_dev
         web += ["--no-wait"] if args.no_wait else ["--wait-limit", f"{args.wait_limit:g}"]
         steps.append(Step("web", web))
     if skipped_example is None:  # after web: it uses the library bundled there
