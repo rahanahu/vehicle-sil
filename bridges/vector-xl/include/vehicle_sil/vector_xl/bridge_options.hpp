@@ -35,6 +35,9 @@ struct BridgeOptions
     std::optional<std::chrono::milliseconds> tx_timeout;
     /// Ask the driver for the controller's error state (XlCanPortOptions::bus_state_interval).
     bool bus_monitor = true;
+    /// Restart the channel after a lasting bus off (XlCanPortOptions::bus_off_restart); 0: never.
+    /// Unset: the port's default. Used only with init access.
+    std::optional<std::chrono::milliseconds> bus_off_restart;
 };
 
 class BridgeUsageError : public std::runtime_error

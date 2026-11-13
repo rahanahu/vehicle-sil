@@ -30,8 +30,8 @@ enum class ExternalEventKind
     /// The port stopped working (device removed, driver failure); `detail` tells why. No
     /// further events follow; frames are neither sent nor received any more.
     Fault,
-    /// Reported by stop(): `count` accepted frames had not reached the bus when the port went
-    /// off the bus, and are lost: counted.
+    /// `count` accepted frames had not reached the bus when the port went off the bus, and are
+    /// lost: counted. Reported by stop(), and when the port restarts a channel to leave bus off.
     TransmitUnsent,
     /// Something the user should know that does not stop the port (e.g. the driver does not
     /// answer the bus state queries, so the bus is not monitored); `detail` tells what.
@@ -114,7 +114,7 @@ struct CanBridgeStatistics
     std::uint64_t external_transmit_failures = 0;
     std::uint64_t silkit_transmit_failures = 0;  ///< ICanController::SendFrame threw.
     std::uint64_t external_transmit_dropped = 0; ///< Frames not sent because the bus was stuck (TransmitResult::Dropped).
-    std::uint64_t external_transmit_unsent = 0;  ///< Accepted frames still unsent when the port stopped.
+    std::uint64_t external_transmit_unsent = 0;  ///< Accepted frames lost unsent (at stop, at a bus-off restart).
 };
 
 /// One line "stats silkit_to_xl=N xl_to_silkit=N ..." with every counter. The key names are

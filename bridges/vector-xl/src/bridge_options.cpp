@@ -43,6 +43,9 @@ std::string bridge_usage()
            "  --tx-timeout-ms <ms>     drop frames while the bus took none for this long, 100..60000 (no ACK,\n"
            "                           bus off, cable pulled); without it they wait and go out late.\n"
            "                           Needs --bitrate (init access), not used without it\n"
+           "  --bus-off-restart-ms <ms> after the controller was bus off for this long, take the channel\n"
+           "                           off the bus and back on to leave it (1000; 0: never; 100..60000).\n"
+           "                           Needs --bitrate (init access), not used without it\n"
            "  --no-bus-monitor         do not ask the XL driver for the bus state (a removed device goes\n"
            "                           unnoticed; 'XL bus:' lines come only from what the driver reports\n"
            "                           by itself)\n"
@@ -133,6 +136,15 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
                 throw BridgeUsageError("--rx-queue-size must be a power of two between 16 and 32768");
             }
             options.rx_queue_size = static_cast<std::uint32_t>(size);
+        }
+        else if (key == "bus-off-restart-ms")
+        {
+            const auto ms = parse_unsigned(key, value, 60'000);
+            if (ms != 0 && ms < 100)
+            {
+                throw BridgeUsageError("--bus-off-restart-ms must be 0 or between 100 and 60000");
+            }
+            options.bus_off_restart = std::chrono::milliseconds(ms);
         }
         else if (key == "tx-timeout-ms")
         {

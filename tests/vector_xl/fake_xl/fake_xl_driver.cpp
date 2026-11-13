@@ -84,6 +84,9 @@ struct State
     std::map<unsigned, backend::ChipState> chip_states;
     std::map<unsigned, bool> blocked;
     std::map<unsigned, unsigned> receipts_to_lose;
+    bool activate_fails = false;
+    std::map<unsigned, bool> bus_off_persists;
+    std::map<unsigned, unsigned> activations;
     bool device_lost = false;
     bool chip_state_refused = false;
     std::optional<std::chrono::steady_clock::time_point> lose_device_at;
@@ -266,10 +269,31 @@ void reset()
     s.chip_states.clear();
     s.blocked.clear();
     s.receipts_to_lose.clear();
+    s.activate_fails = false;
+    s.bus_off_persists.clear();
+    s.activations.clear();
     s.device_lost = false;
     s.chip_state_refused = false;
     s.lose_device_at.reset();
     s.chip_state_requests = 0;
+}
+
+void set_activate_fails(bool fails)
+{
+    const std::lock_guard lock(state().mutex);
+    state().activate_fails = fails;
+}
+
+void set_bus_off_persists(unsigned channel_index, bool persists)
+{
+    const std::lock_guard lock(state().mutex);
+    state().bus_off_persists[channel_index] = persists;
+}
+
+unsigned activations(unsigned channel_index)
+{
+    const std::lock_guard lock(state().mutex);
+    return state().activations[channel_index];
 }
 
 void set_chip_state_refused(bool refused)
@@ -648,7 +672,19 @@ Status activate(PortHandle handle, ChannelMask channels)
     {
         return status(fake_xl::kStatusBadArgument);
     }
+    if (state().activate_fails)
+    {
+        return status(fake_xl::kStatusDeviceLost);
+    }
     port->active = true;
+    ++state().activations[port->channel];
+    // Like a real controller, activation resets it: bus off ends, unless set_bus_off_persists.
+    if (auto it = state().chip_states.find(port->channel); it != state().chip_states.end() &&
+                                                            it->second.level == backend::ChipLevel::BusOff &&
+                                                            !state().bus_off_persists[port->channel])
+    {
+        it->second = backend::ChipState{backend::ChipLevel::ErrorActive, 0, 0};
+    }
     return status(fake_xl::kStatusOk);
 }
 
