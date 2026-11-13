@@ -270,7 +270,7 @@ def test_a_read_that_fails_changes_nothing_and_one_read_is_made_at_a_time() -> N
         source.time, source.values["Engine"] = standing(110), sample(100, 10)
         for error in (SourceError("timeout", "DEADLINE_EXCEEDED: no answer"), RuntimeError("a bug in a source")):
             source.read_error = error
-            v.on_time(running(105) if isinstance(error, SourceError) else standing(110))
+            v.on_time(running(100) if isinstance(error, SourceError) else standing(100))  # news; maybe old
             await v.refresh()
             assert message(v) == before
         source.read_error = None
@@ -297,34 +297,135 @@ def test_a_read_that_fails_changes_nothing_and_one_read_is_made_at_a_time() -> N
     asyncio.run(main())
 
 
-def test_values_that_do_not_fit_one_answer_are_read_in_parts_and_not_called_paused(caplog) -> None:
+def test_news_that_the_time_went_on_ends_paused_even_when_no_read_works() -> None:
+    async def main() -> None:
+        v, source, sent = make()
+        source.time, source.values["Engine"] = standing(100), sample(90, 9)
+        v.on_synced()
+        await v.refresh()
+        watch = Watch(1, None, 0.02, 0.0, lambda w: None)
+        assert v.values_message(watch)["paused"] is True
+        # Another client resumed it, and the control server does not answer the reads.
+        source.read_error = SourceError("timeout", "DEADLINE_EXCEEDED: no answer")
+        v.on_time(running(100))  # may be news from before the standstill: says nothing
+        assert v.stamp(watch) == watch.sent
+        v.on_time(running(110))  # past the standstill: that cannot be old news
+        assert v.stamp(watch) != watch.sent
+        m = message(v)
+        assert (m["paused"], m["sim_ms"], m["peers"]["Engine"]["sample_ms"]) == (False, 100, 90)
+        # The reads that keep failing are told, with the state still ready (the rest works).
+        del sent[:]
+        for n in range(3):
+            assert sent == []
+            v.on_time(running(120 + n))
+            await v.refresh()
+        assert [(m["type"], m["variables"]["state"]) for m in sent] == [("variables", "ready")]
+        assert sent[0]["variables"]["reason"].startswith(
+            "the values cannot be read from the control server (timeout: DEADLINE_EXCEEDED: no answer)")
+        v.on_time(running(130))
+        await v.refresh()
+        assert len(sent) == 1
+        source.read_error = None
+        source.time = standing(140)
+        v.on_time(standing(140))
+        await v.refresh()
+        assert (sent[-1]["variables"]["state"], sent[-1]["variables"]["reason"]) == ("ready", None) and len(sent) == 2
+        assert (message(v)["paused"], message(v)["sim_ms"]) == (True, 140)
+        # The end of the run, told while it stood: not paused, read or not.
+        source.read_error = SourceError("unavailable", "UNAVAILABLE: gone")
+        v.on_time(TimeInfo(140 * MS, True, False, True))
+        assert message(v)["paused"] is False
+        await v.close()
+    asyncio.run(main())
+
+
+def test_an_answer_from_before_a_command_does_not_say_paused_after_it() -> None:
     async def main() -> None:
         v, source, _ = make()
-        v.on_peers([BODY, PeerInfo("Cabin", "b", True, SCHEMA[:1])], [])
+        source.time = standing(100)
         v.on_synced()
+        await v.refresh()
+        assert message(v)["paused"] is True
+        await asyncio.sleep(0.3)
+        source.gate = asyncio.Event()
+        reading = asyncio.create_task(v.refresh())
+        await settle()
+        assert len(source.reads) == 2
+        v.unsettle()  # a step is passed on while the read is on its way
+        source.gate.set()
+        await reading
+        assert message(v)["paused"] is False
+        await v.refresh()  # asked after the command: it stands (the launcher has not taken the step yet)
+        assert message(v)["paused"] is True and len(source.reads) == 3
+        await v.close()
+    asyncio.run(main())
+
+
+def test_values_that_do_not_fit_one_answer_are_read_with_as_many_calls_as_it_takes(caplog) -> None:
+    async def main() -> None:
+        v, source, _ = make()
+        cabin = PeerInfo("Cabin", "b", True, SCHEMA[:1])
+        v.on_peers([BODY, cabin], [])
+        v.on_synced()
+        both, cabin_only = [("Body", "throttle"), ("Cabin", "throttle")], [("Cabin", "throttle")]
         source.time = standing(100)
         source.values = {"Engine": sample(90, 9), "Body": body(90, 9), "Cabin": body(90, 4)}
         source.room = 2
         await v.refresh()
+        # The call that did not fit is asked again in two halves. Each stands at 100: so do they all.
         m = message(v)
-        assert m["peers"].keys() == {"Engine", "Body", "Cabin"} and (m["paused"], m["sim_ms"]) == (False, 100)
-        assert [len(r) for r in source.reads] == [3, 2, 1]
-        # From then on in parts at once; a watch of one peer is one call, and that says paused.
+        assert m["peers"].keys() == {"Engine", "Body", "Cabin"} and (m["paused"], m["sim_ms"]) == (True, 100)
+        assert source.reads == [["Engine", "Body", "Cabin"], ["Engine"], ["Body", "Cabin"]]
+        # The next reads begin with calls of the size that fitted; a small watch is one call, and says paused.
         del source.reads[:]
         v.on_time(standing(100))
         await v.refresh()
-        assert sorted(len(r) for r in source.reads) == [1, 2] and message(v)["paused"] is False
-        await v.refresh({"Body"})
-        assert message(v, [("Body", "throttle")])["paused"] is True
-        # A peer whose values no answer holds is left out; the others are read.
+        assert source.reads == [["Engine"], ["Body"], ["Cabin"]] and message(v)["paused"] is True
+        v.unsettle()
+        await v.refresh({"Cabin"})
+        assert (message(v, cabin_only)["paused"], message(v)["paused"]) == (True, False)
+        await v.refresh()
+        assert message(v)["paused"] is True
+        # Calls that give different times (it runs) are not of one moment.
+        times = iter([running(110), running(120), running(130)])
+        answer = source.read_snapshot
+
+        async def moving(peers, timeout_s):
+            source.time = next(times)
+            return await answer(peers, timeout_s)
+        source.read_snapshot = moving
+        v.unsettle()
+        await v.refresh()
+        assert (message(v)["paused"], message(v)["sim_ms"]) == (False, 110)
+        source.read_snapshot = answer
+        # Other peers or variables: one call is tried again.
+        source.room, source.time = None, standing(140)
+        v.on_peers([cabin], [])
+        del source.reads[:]
+        await v.refresh()
+        assert source.reads == [["Engine", "Body", "Cabin"]] and (message(v)["paused"], message(v)["sim_ms"]) == (True, 140)
+        # A peer whose values no answer holds is left out and not asked for again; the others are read.
         source.room = 0
         source.values = {"Engine": sample(100, 10), "Body": None, "Cabin": None}
-        v.on_time(standing(110))
-        source.time = standing(110)
+        source.time = standing(150)
+        v.on_time(standing(150))
+        del source.reads[:]
         await v.refresh()
-        assert message(v)["peers"]["Engine"]["sample_ms"] == 90
+        assert source.reads == [["Engine", "Body", "Cabin"], ["Engine"], ["Body", "Cabin"]]
+        assert message(v)["peers"]["Engine"]["sample_ms"] == 90 and message(v)["paused"] is False
+        assert message(v, both)["paused"] is False  # their samples here are not what was read (none)
+        v.unsettle()
+        await v.refresh()
+        assert source.reads[3:] == [["Body"], ["Cabin"]]
         assert [r.getMessage() for r in caplog.records if "Engine" in r.getMessage()] == [
             "the values of Engine do not fit one answer of the control server: they are not read"]
+        # Until it is another process (or has other variables).
+        source.room = None
+        v.on_peers([PeerInfo("Engine", "a2", True, SCHEMA)], [])
+        del source.reads[:]
+        v.unsettle()
+        await v.refresh()
+        assert source.reads == [["Engine", "Body", "Cabin"]]
         await v.close()
     asyncio.run(main())
 

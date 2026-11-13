@@ -19,7 +19,9 @@ Its `paused` is true when every peer of the watch was last read standing still a
 read since found it standing still at that time too: then the source's promise holds for each of them (every step
 that began before `sim_ms` is in the values, none after it). Peers read by different calls are put together only
 so: each call's promise is about its own peers and the time P it names, and what is true of each peer for the same
-P is true of them together. Nothing else decides `paused`: there is no second look at the time and no trying again.
+P is true of them together. Only a read makes `paused` true (there is no second look at the time and no trying
+again); what ends it without a read is a command passed on, a lost connection, and news of the time that it has
+gone past where it stood or has ended (the time does not go back, so that news is never too old to be true).
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ FINAL = frozenset({"applied", "late", "rejected", "cancelled", "invalid", "busy"
 WRITE_KEYS = ("session", "writes", "at_ms", "late")
 FORGOTTEN_OPEN = 100_000  # numbers kept of open operations that were forgotten (they get their end with the run)
 STANDING_READ_S = 0.25  # while it stands still with every value read, the watched peers are read this often
+READ_FAILURES = 3  # reads in a row that gave nothing, before the summary says so (state ready, with a reason)
 
 log = logging.getLogger("vehicle_sil_gui")
 
@@ -191,8 +194,9 @@ class Variables:
         self.state_version = 0  # counts the changes of the state
         self._epoch = 0  # grows when a standstill that was read may be over (see _Read.epoch)
         self._last: tuple[bool, int] | None = None  # the last read: (standing, the time)
-        self._parts = 1  # the calls one read is made with (more than 1: one answer cannot hold the values)
-        self._too_large: set[str] = set()  # peers whose values no answer can hold (warned of once)
+        self._per_call: int | None = None  # at most this many peers in one call (None: any): more did not fit
+        self._too_large: set[str] = set()  # peers whose values no answer can hold: not read (until they change)
+        self._read_failures = 0  # reads in a row that gave nothing
         self.was_ready = False
         self._schema_timer: asyncio.TimerHandle | None = None
         self._reconciling: asyncio.Task | None = None
@@ -284,8 +288,10 @@ class Variables:
     # ------------------------------------------------------------ from the source (on the event loop)
 
     def on_peers(self, peers: list[PeerInfo], removed: list[str]) -> None:
+        self._per_call = None  # other peers or variables: what fits one answer is found again
         for name in removed:
             self.peers.pop(name, None)
+            self._too_large.discard(name)
             if self._since_lost is not None:
                 self._since_lost.discard(name)
         for info in peers:
@@ -299,6 +305,7 @@ class Variables:
             if peer.incarnation != info.incarnation:  # another process under the name: its values are not these
                 peer.sample, peer.decoded, peer.read = None, None, None
                 peer.version += 1
+                self._too_large.discard(peer.name)
             peer.incarnation, peer.connected = info.incarnation, info.connected
             self._take_schema(peer, info.variables)
             if self._since_lost is not None:
@@ -331,11 +338,11 @@ class Variables:
             if entry is not None:
                 peer.variables.append(entry)
                 peer.index[entry["name"]] = entry
-        if peer.sample is not None and before != (peer.types, [v["name"] if v is not None else None
-                                                               for v in peer.slots]):
-            # Other variables under the same incarnation: the sample was read with the old ones.
-            peer.sample, peer.read = None, None
-            peer.version += 1
+        if before != (peer.types, [v["name"] if v is not None else None for v in peer.slots]):
+            self._too_large.discard(peer.name)
+            if peer.sample is not None:  # other variables under the same incarnation: read with the old ones
+                peer.sample, peer.read = None, None
+                peer.version += 1
 
     def _variable(self, v: dict) -> dict | None:
         name, type_, role, items = v.get("name"), v.get("type"), v.get("role"), v.get("enum") or []
@@ -373,12 +380,13 @@ class Variables:
 
     async def refresh(self, names: set[str] | None = None) -> None:
         """Reads the time and the last sample of the peers named (None: all) from the source. A read that fails
-        changes nothing. While they stand still with their values read, at most every STANDING_READ_S (only the
-        step it stands at can still come), unless there is news of the time or a command was passed on."""
+        changes nothing (READ_FAILURES in a row: the summary says why the values are old). While they stand still
+        with their values read, at most every STANDING_READ_S (only the step it stands at can still come), unless
+        there is news of the time or a command was passed on."""
         source = self.source
         if self._closed or self.state != READY or source is None:
             return
-        peers = [p for p in self.peers.values() if names is None or p.name in names]
+        peers = [p for p in self.peers.values() if (names is None or p.name in names) and p.name not in self._too_large]
         recent = asyncio.get_running_loop().time() - STANDING_READ_S
         if not peers or (not self._news and all(self._stands(p.read) and p.read.at > recent for p in peers)):
             return
@@ -386,48 +394,77 @@ class Variables:
             if self._closed or self.source is not source or self.state != READY:
                 return
             self._news = False
+            epoch = self._epoch
             try:
-                read = await self._read(source, [p.name for p in peers])
+                read = await self._read(source, [p.name for p in peers if p.name not in self._too_large])
             except Exception:  # a source that breaks its word (SourceError only): not the end of reading
                 log.exception("reading the variables")
                 return
-            if read is not None and not self._closed and self.source is source and self.state == READY:
-                self._take_read(*read)
+            if self._closed or self.source is not source or self.state != READY:
+                return
+            time, samples, standing, error = read
+            if time is not None:
+                # A standstill that was called over while this was read (a command, news of the time) is not
+                # called standing by an answer that may be from before that.
+                self._take_read(time, samples, standing and epoch == self._epoch)
+            self._count_read(time is not None, error)
 
-    async def _read(self, source: Source, names: list[str]) -> tuple[TimeInfo, dict[str, Sample | None], bool] | None:
-        """One read: the time, the samples of the peers that could be read, and whether these are the values of
-        the moment it stands still at. None when nothing could be read. One call, unless the source says that the
-        values do not fit one answer: then (and from then on) the peers are divided among more calls, made at
-        once. The time is then the earliest of the calls' (no value is older), and nothing is said of one moment:
-        the source promises that for one call."""
+    async def _read(self, source: Source, names: list[str]) \
+            -> tuple[TimeInfo | None, dict[str, Sample | None], bool, SourceError | None]:
+        """One read: the time, the samples of the peers that could be read, whether these are the values of the
+        moment it stands still at, and an error if a call failed. The time is None when nothing could be read.
+        One call, unless the source says that the values do not fit one answer: then the peers of that call are
+        divided in two and asked for again (and the next reads begin with calls of that size). With several
+        calls the time is the earliest (no value is older), and it stands still if every call says so for the
+        same time (each call's promise is about its own peers; see the top of this file)."""
         timeout = self.limits.read_timeout_s
-        while True:
-            n = min(self._parts, len(names))
-            answers = await asyncio.gather(*(source.read_snapshot(names[i::n], timeout) for i in range(n)),
+        size = self._per_call or len(names)
+        pending = [names[i:i + size] for i in range(0, len(names), size)]
+        good: list[SnapshotInfo] = []
+        error: SourceError | None = None
+        while pending:
+            answers = await asyncio.gather(*(source.read_snapshot(group, timeout) for group in pending),
                                            return_exceptions=True)
-            large = [names[i::n] for i, a in enumerate(answers) if isinstance(a, SourceError) and a.kind == "too-large"]
-            if large and n < len(names):
-                if self._parts == 1:
-                    log.warning("the values of the watched ECUs do not fit one answer of the control server: they "
-                                "are read with several calls, and no `values` message of this run says `paused` "
-                                "for values of more than one call")
-                self._parts = min(n * 2, len(names))
-                continue
-            for name in (part[0] for part in large if part[0] not in self._too_large):
-                self._too_large.add(name)
-                log.warning("the values of %s do not fit one answer of the control server: they are not read", name)
-            good: list[SnapshotInfo] = []
-            for answer in answers:
+            again: list[list[str]] = []
+            for group, answer in zip(pending, answers):
                 if isinstance(answer, SnapshotInfo):
                     good.append(answer)
                 elif not isinstance(answer, SourceError):
                     raise answer
-            if not good:
-                return None
-            samples: dict[str, Sample | None] = {}
-            for answer in good:
-                samples.update(answer.samples)
-            return min((a.time for a in good), key=lambda time: time.now_ns), samples, n == 1 and good[0].consistent
+                elif answer.kind != "too-large":
+                    error = answer
+                elif len(group) > 1:
+                    half = len(group) // 2
+                    again += [group[:half], group[half:]]
+                    if self._per_call is None:
+                        log.warning("the values of the watched ECUs do not fit one answer of the control server: "
+                                    "they are read with several calls")
+                    self._per_call = min(self._per_call or half, half)
+                else:
+                    self._too_large.add(group[0])
+                    log.warning("the values of %s do not fit one answer of the control server: they are not read",
+                                group[0])
+            pending = again
+        if not good:
+            return None, {}, False, error
+        samples: dict[str, Sample | None] = {}
+        for answer in good:
+            samples.update(answer.samples)
+        time = min((a.time for a in good), key=lambda time: time.now_ns)
+        return time, samples, all(a.consistent and a.time.now_ns == time.now_ns for a in good), error
+
+    def _count_read(self, ok: bool, error: SourceError | None) -> None:
+        """The values that stop coming do so with a reason: after READ_FAILURES reads in a row that gave nothing,
+        the summary's reason says why (the state stays ready: the rest works), until a read gives values again."""
+        if ok:
+            self._read_failures = 0
+            if self.reason is not None:
+                self._set_state(READY, None)
+        elif error is not None:
+            self._read_failures += 1
+            if self._read_failures == READ_FAILURES:
+                self._set_state(READY, f"the values cannot be read from the control server ({error.kind}: {error}): "
+                                       "those shown are the last that were read; it is tried again")
 
     def _take_read(self, time: TimeInfo, samples: dict[str, Sample | None], standing: bool) -> None:
         if (standing, time.now_ns) != self._last:
@@ -462,11 +499,17 @@ class Variables:
 
     def on_time(self, time: TimeInfo) -> None:
         """News of the time. What a `values` message says comes from a read; the news makes the next one be read
-        without waiting (and is the time shown while there is no read)."""
+        without waiting (and is the time shown while there is no read). News that it has gone past the time it
+        was last read standing at, or has ended, ends `paused` whether or not the next read works: the time does
+        not go back, so such news is not older than that read. (News of that very time, not paused, may be older,
+        and says nothing.)"""
         if time == self.time:
             return
         self.time = time
         self._news = True
+        if self._last is not None and self._last[0] and (time.ended or time.now_ns > self._last[1]):
+            self._last = None
+            self._epoch += 1
         if time.ended:
             self.read_last()
 
