@@ -81,7 +81,9 @@ export type WriteBlock =
   | 'peer-disconnected'
   | 'parameter'
   | 'no-range'
-  | 'no-value';
+  | 'no-value'
+  /** シナリオの実行中（ランチャーが書き込みを断る。部品の bindVariable が足す）。 */
+  | 'scenario';
 
 /** writeBlock に渡すもの。 */
 export interface WriteBlockInput {

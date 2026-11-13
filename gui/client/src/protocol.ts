@@ -233,6 +233,103 @@ const readVariable: Reader<Variable> = (value, path) => {
   };
 };
 
+// --- ランチャー: シナリオ（docs/scenario.md） ---------------------------------------------------
+
+/** ランチャーの features: シナリオを回せる（`--scenario`）。 */
+export const FEATURE_SCENARIO = 'scenario';
+/**
+ * ランチャーの features: シナリオの実行中も Control Server を持てる（変数を読める。書き込みはランチャーが断る）。
+ * ないランチャーでは、シナリオの実行に変数はない。
+ */
+export const FEATURE_SCENARIO_CONTROL = 'scenario-control';
+
+/** シナリオの手順の状態。running は事象だけ（結果の手順にはない）。 */
+export type ScenarioStepStatus = Open<'running' | 'passed' | 'failed' | 'unfinished' | 'not_run'>;
+
+/** シナリオの全体の結果。 */
+export type ScenarioStatus = Open<'passed' | 'failed' | 'incomplete' | 'not_run'>;
+
+/** シナリオの手順 1 つ（事象 `scenario_step`、結果の `scenario.steps[]`、要約の `scenario.steps[]`）。 */
+export interface ScenarioStep {
+  /** 1 から。 */
+  index: number;
+  /** シナリオのファイルの行。 */
+  line: number | null;
+  kind: Open<'set' | 'ramp' | 'expect' | 'wait_until'>;
+  /** 手順の文（英語のまま出す）。 */
+  text: string;
+  status: ScenarioStepStatus;
+  /** 手順の時刻（仮想時刻、ミリ秒）。 */
+  start_ms: number | null;
+  /** 手順を決めた仮想時刻。 */
+  at_ms: number | null;
+  /** 手順が終わる仮想時刻（決まっていなければ null）。 */
+  end_ms: number | null;
+  /** 失敗の所見の code と文（英語のまま出す）。 */
+  code: string | null;
+  message: string | null;
+}
+
+const readScenarioStepFields = (f: Fields, path: string, u?: Unreadable): ScenarioStep => ({
+  index: field(f, path, 'index', integer),
+  line: field(f, path, 'line', soft(nullable(integer), null, u)),
+  kind: field(f, path, 'kind', lenient(string, '', u)),
+  text: field(f, path, 'text', lenient(string, '', u)),
+  status: field(f, path, 'status', string),
+  start_ms: field(f, path, 'start_ms', soft(nullable(number), null, u)),
+  at_ms: field(f, path, 'at_ms', soft(nullable(number), null, u)),
+  end_ms: field(f, path, 'end_ms', soft(nullable(number), null, u)),
+  code: field(f, path, 'code', soft(nullable(string), null, u)),
+  message: field(f, path, 'message', soft(nullable(string), null, u)),
+});
+
+const readScenarioStep = (value: unknown, path: string, u?: Unreadable): ScenarioStep =>
+  readScenarioStepFields(object(value, path), path, u);
+
+/** 照合の結果の `scenario`（`--scenario` を付けたときだけ）。 */
+export interface CheckScenario {
+  /** シナリオのファイル（ランチャーに渡したとおり）。 */
+  file: string;
+  name: string | null;
+  /** 手順の数。 */
+  steps: number;
+}
+
+const readCheckScenario = (value: unknown, path: string, u?: Unreadable): CheckScenario => {
+  const f = object(value, path);
+  return {
+    file: field(f, path, 'file', lenient(string, '', u)),
+    name: field(f, path, 'name', soft(nullable(string), null, u)),
+    steps: field(f, path, 'steps', lenient(integer, 0, u)),
+  };
+};
+
+/** 実行の結果の `scenario`（`--scenario` を付けたときだけ）。 */
+export interface ScenarioResult {
+  file: string;
+  name: string | null;
+  status: ScenarioStatus;
+  /** シナリオが終わった controller のステップ（passed と failed。ほかは null）。 */
+  over_at_ms: number | null;
+  steps: ScenarioStep[];
+}
+
+const readScenarioResult = (value: unknown, path: string, u?: Unreadable): ScenarioResult => {
+  const f = object(value, path);
+  return {
+    file: field(f, path, 'file', lenient(string, '', u)),
+    name: field(f, path, 'name', soft(nullable(string), null, u)),
+    status: field(f, path, 'status', lenient(string, '', u)),
+    over_at_ms: field(f, path, 'over_at_ms', soft(nullable(number), null, u)),
+    steps: field(
+      f,
+      path,
+      'steps',
+      items((v, p) => readScenarioStep(v, p, u), u),
+    ),
+  };
+};
+
 export type CheckStatus = Open<'described' | 'not_checked' | 'failed' | 'skipped' | 'disabled'>;
 
 export interface CheckParticipant {
@@ -306,6 +403,8 @@ export interface CheckResult {
   participants: CheckParticipant[];
   networks: CheckNetwork[];
   findings: Finding[];
+  /** シナリオ（`--scenario` を付けた照合だけ。ほかは null）。 */
+  scenario: CheckScenario | null;
 }
 
 /** 照合の結果を読む。u があれば部分ごとに。 */
@@ -336,6 +435,16 @@ export const readCheckResult = (value: unknown, path: string, u?: Unreadable): C
       path,
       'findings',
       items((v, p) => readFinding(v, p, u), u),
+    ),
+    scenario: field(
+      f,
+      path,
+      'scenario',
+      soft(
+        nullable((v, p) => readCheckScenario(v, p, u)),
+        null,
+        u,
+      ),
     ),
   };
 };
@@ -500,6 +609,8 @@ export interface RunResult {
   participants: RunParticipant[];
   findings: Finding[];
   check: CheckResult | null;
+  /** シナリオの結果（`--scenario` を付けた実行だけ。ほかは null）。 */
+  scenario: ScenarioResult | null;
 }
 
 /**
@@ -545,6 +656,16 @@ export const readRunResult = (value: unknown, path: string, u?: Unreadable): Run
       'check',
       soft(
         nullable((v, p) => readCheckResult(v, p, u)),
+        null,
+        u,
+      ),
+    ),
+    scenario: field(
+      f,
+      path,
+      'scenario',
+      soft(
+        nullable((v, p) => readScenarioResult(v, p, u)),
         null,
         u,
       ),
@@ -609,6 +730,8 @@ export type LauncherEvent =
   | (EventBase & { event: 'finding'; finding: Finding })
   | (EventBase & { event: 'time' } & TimeReport)
   | (EventBase & { event: 'command' } & CommandReport)
+  /** シナリオの手順が始まった（status が running）か、決まった。 */
+  | (EventBase & { event: 'scenario_step'; step: ScenarioStep })
   | (EventBase & { event: 'result'; result: RunResult });
 
 /**
@@ -775,6 +898,9 @@ function readEventFields(
       return { ...base, event: kind, ...readTimeFields(f, path, u) };
     case 'command':
       return { ...base, event: kind, ...readCommandFields(f, path, u) };
+    case 'scenario_step':
+      // 手順の欄は事象の行にそのまま並ぶ
+      return { ...base, event: kind, step: readScenarioStepFields(f, path, u) };
     case 'result':
       return {
         ...base,
@@ -942,7 +1068,93 @@ export interface CheckRequest {
   file: string;
   /** 外す participant の名前（照合の結果にある名前だけ）。 */
   disable: string[];
+  /**
+   * シナリオ（`GET api/scenarios` の `path`。その構成ファイルの一覧にあるものだけ）。省くか null なら、なし。
+   * ランチャーの `features` に `scenario` があるときだけ送る。
+   */
+  scenario?: string | null;
 }
+
+/** GET api/scenarios の 1 件。 */
+export interface ScenarioFile {
+  /** root からの相対パス（api/check と api/run の `scenario` に、このまま送る）。 */
+  path: string;
+  /** ファイルの名前。 */
+  name: string;
+}
+
+/** GET api/scenarios: 構成ファイルの隣の `scenarios` の .yaml と .yml。 */
+export interface ScenarioList {
+  /** 構成ファイル（root からの相対）。 */
+  file: string;
+  /** シナリオのディレクトリ（root からの相対）。 */
+  directory: string;
+  /** ディレクトリがあるか（シンボリックリンクのディレクトリは、ないとする）。 */
+  found: boolean;
+  scenarios: ScenarioFile[];
+  truncated: boolean;
+}
+
+export const readScenarioList = (value: unknown): ScenarioList => {
+  const path = 'scenarios';
+  const f = object(value, path);
+  return {
+    file: field(f, path, 'file', string),
+    directory: field(f, path, 'directory', string),
+    found: field(f, path, 'found', boolean),
+    scenarios: field(
+      f,
+      path,
+      'scenarios',
+      array((item, p) => {
+        const g = object(item, p);
+        return { path: field(g, p, 'path', string), name: field(g, p, 'name', string) };
+      }),
+    ),
+    truncated: field(f, path, 'truncated', boolean),
+  };
+};
+
+/**
+ * GET api/recording: いまの（または最後の）実行で、GUI サーバーを通して書き、反映された値を、シナリオの YAML に
+ * したもの。サーバーはファイルを書かない（画面がブラウザの保存として渡す）。
+ */
+export interface Recording {
+  session_id: number;
+  /** 実行の構成ファイル（root からの相対）。 */
+  file: string;
+  state: Open<'running' | 'ended'>;
+  /** この実行で記録しているか（変数のない実行と、シナリオの実行では false）。 */
+  available: boolean;
+  /** yaml がない理由（英語のまま出す）。 */
+  reason: string | null;
+  /** YAML に入れた値の数。 */
+  writes: number;
+  /** 上限を超えて入れなかった値の数。 */
+  omitted: number;
+  /** YAML の手順（`set`）の数。 */
+  steps: number;
+  /** シナリオの YAML。まだ反映された書き込みがなければ null。 */
+  yaml: string | null;
+}
+
+/** GET api/recording の応答（実行がまだなければ null）。 */
+export const readRecording = (value: unknown): Recording | null => {
+  const r = field(object(value, 'response'), 'response', 'recording', nullable(object));
+  if (r === null) return null;
+  const path = 'response.recording';
+  return {
+    session_id: field(r, path, 'session_id', integer),
+    file: field(r, path, 'file', string),
+    state: field(r, path, 'state', string),
+    available: field(r, path, 'available', boolean),
+    reason: field(r, path, 'reason', nullable(string)),
+    writes: field(r, path, 'writes', integer),
+    omitted: field(r, path, 'omitted', integer),
+    steps: field(r, path, 'steps', integer),
+    yaml: field(r, path, 'yaml', nullable(string)),
+  };
+};
 
 /** POST api/check の応答から、ランチャーの照合の結果を取り出す。 */
 export const readCheckResponse = (value: unknown): CheckResult =>
@@ -1082,12 +1294,48 @@ export interface SessionSummary {
   log: Record<string, LogCounts>;
   problems: ServerProblem[];
   problems_omitted: number;
+  /** シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では null。 */
+  scenario: SummaryScenario | null;
   /**
    * 読めなかった部分の名前（`result.participants`、`findings.code` など。画面が付ける。サーバーの欄ではない）。
    * 上限で縮めた結果の、ない欄もここに入る。
    */
   unreadable: string[];
 }
+
+/** 要約の `scenario`: 照合、`scenario_step` の事象、結果から、サーバーがまとめたもの。 */
+export interface SummaryScenario {
+  /** シナリオのファイル（root からの相対）。 */
+  file: string;
+  name: string | null;
+  /** 手順の数（照合の結果から。まだなければ null）。 */
+  step_count: number | null;
+  /** 届いた手順（index の順）。結果の後は、全部の手順（not_run を含む）。 */
+  steps: ScenarioStep[];
+  /** 上限を超えて覚えていない手順の数。 */
+  steps_omitted: number;
+  /** 結果の status（結果がまだなければ null）。 */
+  status: ScenarioStatus | null;
+  over_at_ms: number | null;
+}
+
+const readSummaryScenario = (value: unknown, path: string, u: Unreadable): SummaryScenario => {
+  const f = object(value, path);
+  return {
+    file: field(f, path, 'file', string),
+    name: field(f, path, 'name', soft(nullable(string), null, u)),
+    step_count: field(f, path, 'step_count', soft(nullable(integer), null, u)),
+    steps: field(
+      f,
+      path,
+      'steps',
+      items((v, p) => readScenarioStep(v, p, u), u),
+    ),
+    steps_omitted: field(f, path, 'steps_omitted', soft(integer, 0, u)),
+    status: field(f, path, 'status', soft(nullable(string), null, u)),
+    over_at_ms: field(f, path, 'over_at_ms', soft(nullable(number), null, u)),
+  };
+};
 
 /**
  * セッションの要約を、部分ごとに読む。芯（id、state、launcher、stop）が読めなければ投げる。ほかの部分は、
@@ -1168,6 +1416,16 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
     log: field(f, path, 'log', soft(partlyRecord(readLogCounts, u), {}, u)),
     problems: field(f, path, 'problems', items(readServerProblem, u)),
     problems_omitted: field(f, path, 'problems_omitted', soft(integer, 0, u)),
+    scenario: field(
+      f,
+      path,
+      'scenario',
+      soft(
+        nullable((v, p) => readSummaryScenario(v, p, u)),
+        null,
+        u,
+      ),
+    ),
   };
   return { ...summary, unreadable: u.parts };
 };

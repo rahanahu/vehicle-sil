@@ -12,6 +12,7 @@
   "response": {
     "file": "check-error.yaml",
     "disable": [],
+    "scenario": null,
     "exit_code": 1,
     "check": {
       "vehicle_sil_check": 1,

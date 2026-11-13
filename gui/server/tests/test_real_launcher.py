@@ -259,6 +259,8 @@ SCENARIOS = {
         (lambda e: e["event"] == "time" and not e["paused"], b'{"command":"step","ms":10}\n{"command":"pause"}\n'),
         (lambda e: e["event"] == "time" and e["paused"], b'{"command":"stop"}\n'),
     )}, None, {}),
+    "scenario": (["--scenario", "scenarios/throttle_step.yaml", "simulation.yaml"], {}, None, {}),
+    "scenario-fails": (["--scenario", "scenarios/fails.yaml", "simulation.yaml"], {}, None, {}),
 }
 
 
@@ -360,12 +362,16 @@ def test_version_and_check_json(tmp_path: Path) -> None:
     assert fake_text.replace(fake_version[1]["vehicle_sil"], "<v>") == \
         real_text.replace(real_version[1]["vehicle_sil"], "<v>"), "the same layout"
     for args in (["simulation.yaml"], ["--disable", "Dashboard", "simulation.yaml"], ["missing.yaml"],
-                 ["--disable", "Nobody", "simulation.yaml"], ["--bogus", "simulation.yaml"]):
+                 ["--disable", "Nobody", "simulation.yaml"], ["--bogus", "simulation.yaml"],
+                 ["--scenario", "scenarios/throttle_step.yaml", "simulation.yaml"],
+                 ["--scenario", "scenarios/missing.yaml", "simulation.yaml"]):
         real_code, real_check = output([LAUNCHER, "check", "--json", *args])
         fake_code, fake_check = output([sys.executable, str(FAKE), "check", "--json", *args])
         assert fake_code == real_code, args
         assert list(fake_check) == list(real_check), args
         assert fake_check["result"] == real_check["result"], args
+        assert fake_check.get("scenario") == real_check.get("scenario"), args
+        assert [f["code"] for f in fake_check["findings"]] == [f["code"] for f in real_check["findings"]], args
         for p, q in zip(fake_check["participants"], real_check["participants"]):
             assert list(p) == list(q), args
             for v, w in zip(p["variables"] or [], q["variables"] or []):

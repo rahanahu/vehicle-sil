@@ -12,8 +12,11 @@ import {
   ParticipantState,
   Phase,
   RunResult,
+  ScenarioStatus,
+  ScenarioStep,
   ServerProblem,
   SessionSummary,
+  SummaryScenario,
   Speed,
   StopRequest,
   TimeReport,
@@ -142,6 +145,43 @@ function commandView(command: CommandReport, seq: number): CommandView {
   };
 }
 
+/** シナリオの実行の経過（要約の scenario、scenario_step の事象、照合と結果の scenario から）。 */
+export interface ScenarioView {
+  /** シナリオのファイル（root からの相対）。 */
+  file: string;
+  name: string | null;
+  /** 手順の数（照合の結果から。まだなければ null）。 */
+  stepCount: number | null;
+  /** 届いた手順（index の順。手順ごとに最後の状態）。結果の後は全部の手順。 */
+  steps: readonly ScenarioStep[];
+  /** 上限を超えて、サーバーが覚えていない手順の数。 */
+  stepsOmitted: number;
+  /** シナリオの結果（passed、failed、incomplete、not_run）。結果がまだなら null。 */
+  status: ScenarioStatus | null;
+  /** シナリオが終わった仮想時刻。 */
+  overAtMs: number | null;
+}
+
+function scenarioView(summary: SummaryScenario): ScenarioView {
+  return {
+    file: summary.file,
+    name: summary.name,
+    stepCount: summary.step_count,
+    steps: summary.steps,
+    stepsOmitted: summary.steps_omitted,
+    status: summary.status,
+    overAtMs: summary.over_at_ms,
+  };
+}
+
+/** 手順を 1 つ当てる（同じ index は置き換える。index の順に並べる）。 */
+function withStep(steps: readonly ScenarioStep[], step: ScenarioStep): readonly ScenarioStep[] {
+  const i = steps.findIndex((s) => s.index >= step.index);
+  if (i < 0) return [...steps, step];
+  if (steps[i].index === step.index) return steps.map((s, j) => (j === i ? step : s));
+  return [...steps.slice(0, i), step, ...steps.slice(i)];
+}
+
 /** 1 つのセッション（ランチャーの 1 回の run）の、画面から見た状態。 */
 export interface SessionView {
   /** サーバーが付けたセッションの番号。 */
@@ -194,6 +234,8 @@ export interface SessionView {
   staleEvents: number;
   /** サーバーが送らなかった行の印（dropped）を置いた数（印の鍵に使う）。 */
   droppedMarks: number;
+  /** シナリオの経過（シナリオのない実行では null）。 */
+  scenario: ScenarioView | null;
 }
 
 /** 実行がいまどうなっているか（状態の帯と結果の表示が使う）。 */
@@ -249,6 +291,7 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     unreadable: [],
     staleEvents: 0,
     droppedMarks: 0,
+    scenario: null,
   };
   return applySummary(blank, summary, true);
 }
@@ -364,6 +407,7 @@ export function applySummary(
     findings: summary.findings,
     result,
     check,
+    scenario: summary.scenario ? scenarioView(summary.scenario) : next.scenario,
     // 必須か、外したかは照合の結果にある（並びも構成ファイルの順に）。結果があれば、終わり方（止めたか）も結果から
     participants: withResult(check ? mergeCheck(participants, check) : participants, result),
   };
@@ -493,10 +537,27 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
       if (index < 0) return { ...next, phase: event.phase };
       return index >= next.phaseRank ? { ...next, phase: event.phase, phaseRank: index } : next;
     }
-    case 'check':
+    case 'check': {
       // 読めなかった照合（null）は当てない（読めない部分として出ている）
-      return event.check
-        ? { ...next, check: event.check, participants: mergeCheck(next.participants, event.check) }
+      if (!event.check) return next;
+      const found = event.check.scenario;
+      return {
+        ...next,
+        check: event.check,
+        participants: mergeCheck(next.participants, event.check),
+        scenario:
+          next.scenario && found
+            ? { ...next.scenario, name: found.name, stepCount: found.steps }
+            : next.scenario,
+      };
+    }
+    case 'scenario_step':
+      // シナリオの実行の要約（scenario）が先に届いている。なければ当てない
+      return next.scenario
+        ? {
+            ...next,
+            scenario: { ...next.scenario, steps: withStep(next.scenario.steps, event.step) },
+          }
         : next;
     case 'participant':
       return { ...next, participants: updateParticipant(next.participants, event) };
@@ -544,6 +605,17 @@ function applyOne(session: SessionView, event: LauncherEvent, logs: LogLine[]): 
         phaseRank: phaseIndex('ended'),
         check: next.check ?? event.result.check,
         participants: mergeResult(next.participants, event.result),
+        scenario:
+          next.scenario && event.result.scenario
+            ? {
+                ...next.scenario,
+                name: event.result.scenario.name,
+                stepCount: next.scenario.stepCount ?? event.result.scenario.steps.length,
+                steps: event.result.scenario.steps,
+                status: event.result.scenario.status,
+                overAtMs: event.result.scenario.over_at_ms,
+              }
+            : next.scenario,
       };
     default:
       return next;

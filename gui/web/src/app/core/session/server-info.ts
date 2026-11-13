@@ -5,6 +5,8 @@ import {
   CheckResult,
   ConfigList,
   DashboardResponse,
+  Recording,
+  ScenarioList,
 } from '@vehicle-sil/gui-client';
 import { AuthToken } from '../auth/auth-token';
 import { GUI_CLIENT, readableSignal } from './gui-client';
@@ -59,6 +61,16 @@ export class ServerInfo {
   /** GET api/dashboard: 構成ファイルの隣のダッシュボードのファイル（サーバーが確かめた形）。 */
   dashboard(file: string): Promise<DashboardResponse> {
     return this.client.dashboard(file);
+  }
+
+  /** GET api/scenarios: 構成ファイルの隣の scenarios のシナリオのファイル。 */
+  scenarios(file: string): Promise<ScenarioList> {
+    return this.client.scenarios(file);
+  }
+
+  /** GET api/recording: いまの（最後の）実行で反映された書き込みを、シナリオの YAML にしたもの。 */
+  recording(): Promise<Recording | null> {
+    return this.client.recording();
   }
 
   /** POST api/check: 構成ファイルを照合する。 */

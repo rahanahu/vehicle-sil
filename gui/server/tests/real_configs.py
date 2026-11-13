@@ -79,6 +79,12 @@ def write(directory: Path, examples: Path) -> list[Path]:
         "example.yaml": "# fake-launcher: forever\n" + head + NETWORKS + _participants(engine, dashboard),
         "example.dashboard.yaml": (EXAMPLE / "simulation.dashboard.yaml").read_text(encoding="utf-8"),
         "panels/rpm-bar.js": (EXAMPLE / "panels" / "rpm-bar.js").read_text(encoding="utf-8"),
+        "scenarios/throttle_step.yaml": (EXAMPLE / "scenarios" / "throttle_step.yaml").read_text(encoding="utf-8"),
+        # The second step fails with the real ECUs (the speed stays far below), and in the fake by its mark
+        "scenarios/fails.yaml": "vehicle_sil_scenario: 1\nname: speed too high\nsteps:\n  - at_ms: 0\n"
+                                "    set: { Engine.engine.throttle: 50 }\n  - after_ms: 50\n"
+                                "    expect: { Engine.engine.speed: { ge: 5000 } }  # fake-launcher: fail\n"
+                                "  - expect: { Engine.engine.speed: 0 }\n",
     }
     directory.mkdir(parents=True, exist_ok=True)
     written = []

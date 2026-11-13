@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from itertools import islice
 from typing import Any
 
-from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD
+from .launcher import CONTROL_EVENT, CONTROL_SUMMARY_FIELD, SCENARIO_STEP_EVENT
 
 EVENTS_FORMAT = 1  # the `vehicle_sil_events` of hello that this server reads
 SHARED_LOG = "*"  # the source key of the log shared by the sources after Limits.log_sources
@@ -47,6 +47,8 @@ SILENT_AFTER_S = 5.0
 STDERR = "launcher-stderr"
 STOP_NONE, STOP_REQUESTED, STOP_FORCED = "none", "requested", "forced"
 # The summary's `variables` of a run without any (variables.Variables.summary makes the others).
+# The fields of a scenario step that the summary keeps (the launcher's scenario_step event and result.scenario.steps[])
+SCENARIO_STEP_FIELDS = ("index", "line", "kind", "text", "status", "start_ms", "at_ms", "end_ms", "code", "message")
 NO_VARIABLES = {"state": "off", "reason": None, "peers": [], "peers_omitted": 0, "variables_omitted": 0,
                 "operations": []}
 
@@ -70,6 +72,7 @@ class Limits:
     stderr_last: int = 30  # and the last lines, sent when the run ends
     detail_chars: int = 300  # the part of a bad line shown in a problem
     message_chars: int = 1000  # the part of a launcher's stderr line shown in a problem
+    scenario_steps: int = 1000  # steps of a scenario kept (by index); text and message are cut at message_chars
 
 
 def _size(value: object) -> int:
@@ -155,6 +158,10 @@ def _shape_problem(event: dict) -> str | None:
     if kind == CONTROL_EVENT:
         return None if isinstance(event.get("name"), str) and isinstance(event.get("state"), str) \
             else "name or state is not a string"
+    if kind == SCENARIO_STEP_EVENT:
+        index = event.get("index")
+        return None if _is_int(index) and index >= 1 and isinstance(event.get("status"), str) \
+            else "index is not a whole number from 1, or status is not a string"
     return None
 
 
@@ -243,6 +250,7 @@ class Session:
     limits: Limits = field(default_factory=Limits)
     launcher_pid: int | None = None
     started_at: str = field(default_factory=now_iso)
+    scenario: str | None = None  # the scenario file given to --scenario (root-relative), or None
 
     def __post_init__(self) -> None:
         self.ended_at: str | None = None
@@ -279,6 +287,13 @@ class Session:
         # The ECUs' variables of the run (the schema, the state, the last operations), made by the server's
         # variables.Variables when a summary is asked for. Not in the `session` messages (see message).
         self.variables: Callable[[], dict] | None = None
+        # The scenario's progress (a run with --scenario): from the check, the scenario_step events, the result.
+        self.scenario_name: str | None = None
+        self.scenario_step_count: int | None = None
+        self.scenario_steps: dict[int, dict] = {}
+        self.scenario_steps_omitted = 0
+        self.scenario_status: str | None = None
+        self.scenario_over_at_ms: float | None = None
 
     # ------------------------------------------------------------ input
 
@@ -348,13 +363,17 @@ class Session:
             self._keep_log(event, size)
         elif kind == "log_dropped":
             self._keep_marker(event, size)
+        elif kind == SCENARIO_STEP_EVENT:
+            self._keep_step(event)
         elif kind == "check":
+            self._scenario_of_check(event["check"])
             if size <= self.limits.object_bytes:
                 self.check = event["check"]
             else:
                 out += self._limit("check", f"the launcher's check is larger than {self.limits.object_bytes} "
                                             "bytes: it is shown now, but not kept for a screen opened later")
         elif kind == "result":
+            self._scenario_of_result(event["result"])
             if size <= self.limits.object_bytes:
                 self.result = event["result"]
             else:
@@ -444,6 +463,56 @@ class Session:
                                                       "that fit are kept for a screen opened later (the others "
                                                       "are named in omitted_fields)")
         return kept
+
+    def _keep_step(self, step: object) -> None:
+        if self.scenario is None or not isinstance(step, dict):
+            return
+        index = step.get("index")
+        if not _is_int(index) or index < 1:
+            return
+        if index > self.limits.scenario_steps:
+            self.scenario_steps_omitted = max(self.scenario_steps_omitted, index - self.limits.scenario_steps)
+            return
+        kept = {}
+        for k in SCENARIO_STEP_FIELDS:
+            v = step.get(k)
+            kept[k] = self._cut(v, self.limits.message_chars) if isinstance(v, str) else v \
+                if v is None or isinstance(v, (int, float)) else None
+        self.scenario_steps[index] = kept
+
+    def _scenario_of_check(self, check: dict) -> None:
+        found = check.get("scenario")
+        if self.scenario is None or not isinstance(found, dict):
+            return
+        if isinstance(found.get("name"), str):
+            self.scenario_name = self._cut(found["name"], self.limits.message_chars)
+        if _is_count(found.get("steps")):
+            self.scenario_step_count = found["steps"]
+
+    def _scenario_of_result(self, result: dict) -> None:
+        found = result.get("scenario")
+        if self.scenario is None or not isinstance(found, dict):
+            return
+        if isinstance(found.get("status"), str):
+            self.scenario_status = self._cut(found["status"], 100)
+        over = found.get("over_at_ms")
+        self.scenario_over_at_ms = over if isinstance(over, (int, float)) and not isinstance(over, bool) else None
+        if isinstance(found.get("name"), str):
+            self.scenario_name = self._cut(found["name"], self.limits.message_chars)
+        steps = found.get("steps")
+        if isinstance(steps, list):
+            for step in steps:
+                self._keep_step(step)
+            if self.scenario_step_count is None:
+                self.scenario_step_count = len(steps)
+
+    def scenario_summary(self) -> dict | None:
+        if self.scenario is None:
+            return None
+        return {"file": self.scenario, "name": self.scenario_name, "step_count": self.scenario_step_count,
+                "steps": [self.scenario_steps[i] for i in sorted(self.scenario_steps)],
+                "steps_omitted": self.scenario_steps_omitted, "status": self.scenario_status,
+                "over_at_ms": self.scenario_over_at_ms}
 
     def _keep_log(self, event: dict, size: int) -> None:
         log = self._log_of(event["source"])
@@ -607,8 +676,8 @@ class Session:
         self.ended_at = now_iso()
         return out + [self.message()]
 
-    def _cut(self, text: str) -> str:
-        n = self.limits.detail_chars
+    def _cut(self, text: str, n: int | None = None) -> str:
+        n = n or self.limits.detail_chars
         return text if len(text) <= n else text[:n] + f"... ({len(text) - n} more characters)"
 
     # ------------------------------------------------------------ output
@@ -628,6 +697,7 @@ class Session:
             "log": {source: {"kept": log.kept, "dropped": log.dropped + log.launcher_dropped}
                     for source, log in self._logs.items()},
             "problems": self.problems, "problems_omitted": self.problems_omitted,
+            "scenario": self.scenario_summary(),
         }
         if variables:
             out["variables"] = self.variables() if self.variables is not None else dict(NO_VARIABLES)

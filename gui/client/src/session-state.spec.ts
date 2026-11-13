@@ -35,6 +35,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     log: {},
     problems: [],
     problems_omitted: 0,
+    scenario: null,
     unreadable: [],
     ...extra,
   };
@@ -81,6 +82,7 @@ function check(participants: { name: string; enabled?: boolean; required?: boole
     })),
     networks: [],
     findings: [],
+    scenario: null,
   } satisfies CheckResult;
 }
 
@@ -405,6 +407,7 @@ describe('applyEvents', () => {
       ],
       findings: [finding],
       check: check([{ name: 'A' }, { name: 'B' }, { name: 'C', enabled: false }]),
+      scenario: null,
     } satisfies RunResult;
     const session = applyEvents(
       emptySession(),
@@ -418,6 +421,79 @@ describe('applyEvents', () => {
       ['B', 'ended', 3],
       ['C', 'disabled', null],
     ]);
+  });
+
+  it('follows the steps of a scenario, then takes them all from the result', () => {
+    const step = (index: number, status: string, extra: Record<string, unknown> = {}) => ({
+      index,
+      line: index + 5,
+      kind: 'expect',
+      text: `step ${index}`,
+      status,
+      start_ms: 0,
+      at_ms: null,
+      end_ms: null,
+      code: null,
+      message: null,
+      ...extra,
+    });
+    const scenario = {
+      file: 'scenarios/a.yaml',
+      name: null,
+      step_count: null,
+      steps: [],
+      steps_omitted: 0,
+      status: null,
+      over_at_ms: null,
+    };
+    // No scenario: its steps are not applied
+    expect(
+      applyEvents(emptySession(), events({ event: 'scenario_step', step: step(1, 'running') }))
+        .scenario,
+    ).toBeNull();
+    let session = sessionFromSummary(summary({ scenario }));
+    session = applyEvents(
+      session,
+      events(
+        {
+          event: 'check',
+          check: {
+            ...check([{ name: 'A' }]),
+            scenario: { file: 'scenarios/a.yaml', name: 'A', steps: 3 },
+          },
+        },
+        { event: 'scenario_step', step: step(2, 'running') },
+        { event: 'scenario_step', step: step(1, 'passed', { at_ms: 0 }) },
+        {
+          event: 'scenario_step',
+          step: step(2, 'failed', { at_ms: 50, code: 'scenario-failed', message: 'no' }),
+        },
+      ),
+    );
+    expect(session.scenario).toMatchObject({ name: 'A', stepCount: 3, status: null });
+    expect(session.scenario?.steps.map((s) => `${s.index} ${s.status}`)).toEqual([
+      '1 passed',
+      '2 failed',
+    ]);
+    const steps = [step(1, 'passed'), step(2, 'failed'), step(3, 'not_run')];
+    const result = {
+      ...(summary().result ?? {}),
+      vehicle_sil_run: 1,
+      result: 'failed',
+      errors: 1,
+      warnings: 0,
+      notes: 0,
+      simulation: 'ended',
+      interrupted_by: null,
+      timing: null,
+      participants: [],
+      findings: [],
+      check: null,
+      scenario: { file: 'scenarios/a.yaml', name: 'A', status: 'failed', over_at_ms: 55, steps },
+    };
+    session = applyEvents(session, eventsFrom(10, [{ event: 'result', result }]));
+    expect(session.scenario).toMatchObject({ status: 'failed', overAtMs: 55 });
+    expect(session.scenario?.steps).toHaveLength(3);
   });
 
   it('passes over events it does not know', () => {

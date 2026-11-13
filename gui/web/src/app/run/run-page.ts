@@ -15,6 +15,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import {
   CheckResult,
+  FEATURE_SCENARIO,
   FEATURE_SPEED,
   FEATURE_START_PAUSED,
   HttpError,
@@ -31,9 +32,11 @@ import { FindingsList } from './findings-list';
 import { STDERR_CODE, launcherStderr } from './launcher-stderr';
 import { LogView } from './log-view';
 import { ParticipantStatus } from './participant-status';
+import { RecordingPanel } from './recording-panel';
 import { ResultPanel } from './result-panel';
 import { RunSession } from './run-session';
 import { RunStatus } from './run-status';
+import { ScenarioPanel } from './scenario-panel';
 import { SpeedPicker } from './speed-picker';
 import { TimeButtons } from './time-buttons';
 import { TimePanel } from './time-panel';
@@ -122,8 +125,10 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
     FindingsList,
     LogView,
     ParticipantStatus,
+    RecordingPanel,
     ResultPanel,
     RunStatus,
+    ScenarioPanel,
     SpeedPicker,
     TimeButtons,
     TimePanel,
@@ -276,6 +281,48 @@ export class RunPage {
    */
   protected readonly startPaused = signal(this.carried?.startPaused ?? false);
 
+  /** ランチャーがシナリオを回せるか（できないときは欄を出さず、送らない）。 */
+  protected readonly scenarioSupported = computed(() =>
+    this.info.features().includes(FEATURE_SCENARIO),
+  );
+  /** 選んだ構成ファイルの隣の scenarios のシナリオ（ランチャーが動いている間は読まない）。 */
+  protected readonly scenarios = resource({
+    params: () => {
+      const file = this.selected();
+      if (!this.scenarioSupported() || !this.auth.token() || file === null || this.running()) {
+        return undefined;
+      }
+      return { file };
+    },
+    loader: ({ params }) => this.info.scenarios(params.file),
+  });
+  /**
+   * 選んだシナリオ。ファイルか実行が替わったら、その実行のもの（同じファイルのとき）か、なしに戻す（実行の知らせの
+   * たびには戻さない）。
+   */
+  private readonly scenarioSource = computed(
+    () => {
+      const file = this.selected();
+      const session = this.session();
+      return {
+        file,
+        id: session?.id ?? null,
+        scenario: session && session.file === file ? (session.scenario?.file ?? null) : null,
+      };
+    },
+    { equal: (a, b) => a.file === b.file && a.id === b.id },
+  );
+  protected readonly scenarioChoice = linkedSignal<{ scenario: string | null }, string | null>({
+    source: () => this.scenarioSource(),
+    computation: ({ scenario }) => scenario,
+  });
+  /** 送るシナリオ: 選んだもので、いまの一覧にあるもの（一覧を読むまでは null）。 */
+  protected readonly chosenScenario = computed(() => {
+    const choice = this.scenarioChoice();
+    if (choice === null || !this.scenarios.hasValue()) return null;
+    return this.scenarios.value().scenarios.some((s) => s.path === choice) ? choice : null;
+  });
+
   /** 照合し直すよう頼んだ回数（同じ組み合わせでも照合し直すため）。 */
   private readonly rechecks = signal(0);
   /** 送った照合の要求の終わり。次の照合は、前の照合の応答を待ってから送る（サーバーで重ならない）。 */
@@ -289,11 +336,20 @@ export class RunPage {
     params: () => {
       const file = this.selected();
       if (!this.auth.token() || file === null || this.running()) return undefined;
-      return { file, disable: [...this.disabled()].sort(), again: this.rechecks() };
+      return {
+        file,
+        disable: [...this.disabled()].sort(),
+        scenario: this.chosenScenario(),
+        again: this.rechecks(),
+      };
     },
     loader: async ({ params, abortSignal }) => {
       await wait(CHECK_DELAY_MS, abortSignal);
-      const body = { file: params.file, disable: params.disable };
+      const body = {
+        file: params.file,
+        disable: params.disable,
+        ...(params.scenario !== null ? { scenario: params.scenario } : {}),
+      };
       const request = this.checkChain.then(() => {
         // 待っている間に組み合わせが変わったら送らない
         abortSignal.throwIfAborted();
@@ -458,13 +514,26 @@ export class RunPage {
   protected start(): void {
     const file = this.selected();
     if (file === null) return;
+    const scenario = this.chosenScenario();
     this.run.start({
       file,
       disable: [...this.disabled()].sort(),
       speed: this.speedSupported() ? this.speed() : null,
-      start_paused: this.startPausedSupported() && this.startPaused(),
+      // シナリオは時刻 0 から自分で進むので、止めた状態では始めない（ランチャーの決まり）
+      start_paused: scenario === null && this.startPausedSupported() && this.startPaused(),
+      ...(scenario !== null ? { scenario } : {}),
     });
   }
+
+  protected selectScenario(scenario: string | null): void {
+    this.scenarioChoice.set(scenario);
+  }
+
+  /** この実行の操作をシナリオとして保存できるか（変数を読み書きできる実行で、シナリオの実行でない）。 */
+  protected readonly recordable = computed(() => {
+    const session = this.session();
+    return !!session && session.scenario === null && !!this.info.variables()?.available;
+  });
 
   protected recheck(): void {
     this.rechecks.update((n) => n + 1);

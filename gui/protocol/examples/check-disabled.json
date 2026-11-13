@@ -16,6 +16,7 @@
     "disable": [
       "Dashboard"
     ],
+    "scenario": null,
     "exit_code": 0,
     "check": {
       "vehicle_sil_check": 1,

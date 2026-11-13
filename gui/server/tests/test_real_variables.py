@@ -202,3 +202,42 @@ def test_a_run_started_paused_stands_before_its_first_step_and_is_resumed(tmp_pa
             await ws.close()
         run_async(talk, gui)
         assert gui.stderr_text() == ""
+
+
+def test_the_recorded_writes_pass_the_launchers_check_and_play_back(tmp_path: Path) -> None:
+    """GET api/recording is a scenario the real launcher takes: check --scenario passes, and a run with it passes
+    (through the GUI server, as the screen saves it into scenarios/ and runs it)."""
+    configs = tmp_path / "configs"
+    write(configs, EXAMPLES)
+    with gui_server(tmp_path, root=configs, launcher=Path(LAUNCHER)) as gui:
+        async def talk(c: Client) -> None:
+            ws = await c.ws()
+            await ws.until(is_synced)
+            _, started = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
+            sid = started["session"]["id"]
+            await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
+                           and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
+            status, body = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.throttle": 40}}})
+            assert status == 200, body
+            await c.post("api/time", {"command": "resume"})
+            await ws.until(lambda m: m["type"] == "operation" and m["seq"] == body["operation"] and m["done"])
+            status, body = await c.post("api/write", {"session": sid, "writes": {
+                "Engine": {"engine.throttle": 12.5}, "Dashboard": {"ecu.connected": False}}, "late": "apply"})
+            assert status == 200, body
+            await ws.until(lambda m: m["type"] == "operation" and m["seq"] == body["operation"] and m["done"])
+            await c.post("api/stop", {})
+            await ws.until(is_ended)
+            _, body = await c.get("api/recording")
+            r = body["recording"]
+            # Each ECU applies at its own step (Engine 10 ms, Dashboard 5 ms): one set per time
+            assert r["available"] and r["writes"] == 3 and r["steps"] in (2, 3), r
+            (configs / "scenarios" / "recorded.yaml").write_text(r["yaml"], encoding="utf-8")
+            status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": "scenarios/recorded.yaml"})
+            assert status == 200 and body["check"]["result"] == "passed", body["check"]["findings"]
+            assert body["check"]["scenario"]["steps"] == r["steps"]
+            await c.post("api/run", {"file": "simulation.yaml", "scenario": "scenarios/recorded.yaml"})
+            got = await ws.until(is_ended)
+            assert got[-1]["session"]["scenario"]["status"] == "passed", got[-1]["session"]["scenario"]
+            assert got[-1]["session"]["result"]["simulation"] == "ended"
+            await ws.close()
+        run_async(talk, gui)

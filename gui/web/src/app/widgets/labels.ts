@@ -80,6 +80,7 @@ const BLOCKS: Record<WriteBlock, string> = {
   'no-range': $localize`範囲（最小と最大）のない変数なので、スライダーは使えません（数値の入力を使ってください）`,
   'no-value': $localize`値がまだないので動かせません（値が届くと動かせます）`,
   parameter: $localize`パラメーターは、止めて始めた実行の最初のステップの前だけ書けます`,
+  scenario: $localize`シナリオの実行中は書けません（見るだけです）`,
 };
 
 /** 書けない理由の文。 */

@@ -62,9 +62,19 @@ describe('RunPage', () => {
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  /** シナリオの一覧の要求（ファイルを選ぶたび、実行が終わるたび）に、例の一覧で答える。 */
+  function answerScenarios(): void {
+    TestBed.tick();
+    for (const request of http.match((r) => r.url.startsWith('api/scenarios'))) {
+      request.flush(response('scenarios'));
+    }
+  }
+
   /** 照合を頼むまでの間を待って、照合の要求を 1 つ受け取る。 */
   async function checkRequest() {
+    answerScenarios();
     await sleep(CHECK_DELAY_MS + 20);
+    answerScenarios();
     return http.expectOne('api/check');
   }
 
@@ -210,6 +220,7 @@ describe('RunPage', () => {
     // 終わったので、選んだファイル（セッションのもの）を照合し直す
     await sleep(CHECK_DELAY_MS + 20);
     for (const request of http.match('api/check')) request.flush(response('check-passed'));
+    answerScenarios();
     await fixture.whenStable();
 
     expect(text(fixture, 'result')).toContain('失敗');

@@ -23,10 +23,12 @@ from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, control, dashboard, process
 from .hub import Client, Hub, Outgoing, encode
-from .launcher import (FEATURE_SPEED, FEATURE_START_PAUSED, FEATURE_TIME_COMMANDS, SPEED_MAX, SPEED_MIN, STEP_MS_MAX,
-                       InvalidRequest, Launcher, check_command, check_disable, check_speed, check_time_command,
+from .launcher import (FEATURE_SCENARIO, FEATURE_SCENARIO_CONTROL, FEATURE_SPEED, FEATURE_START_PAUSED,
+                       FEATURE_TIME_COMMANDS, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest, Launcher, check_command, check_disable, check_speed, check_time_command,
                        command_line, run_command)
-from .paths import ConfigRoot, PathRejected
+from .paths import ConfigFile, ConfigRoot, PathRejected
+from .recording import Recording
+from .scenarios import list_scenarios, resolve_scenario
 from .session import SILENT_AFTER_S, Limits, Session
 from .source import Source
 from .static import NOT_BUILT, StaticFiles
@@ -136,6 +138,7 @@ class Run:
     features: tuple[str, ...] = ()  # of the launcher that runs it (version --json when it started)
     credentials: Path | None = None  # the control server's credentials file, until the launcher has read it
     token: str | None = None  # of that file
+    recording: Recording = field(default_factory=Recording)  # the applied writes made through this server
 
 
 @dataclass(eq=False)
@@ -204,6 +207,8 @@ class GuiServer:
         app.router.add_post("/api/write", self.post_write)
         app.router.add_get("/api/session", self.get_session)
         app.router.add_get("/api/dashboard", self.get_dashboard)
+        app.router.add_get("/api/scenarios", self.get_scenarios)
+        app.router.add_get("/api/recording", self.get_recording)
         app.router.add_get("/ws", self.websocket)
         app.router.add_route("*", "/api/{rest:.*}", self.api_not_found)
         app.router.add_get("/panels/{key}/{path:.*}", self.get_panel)
@@ -343,6 +348,35 @@ class GuiServer:
         result = await asyncio.to_thread(dashboard.read_dashboard, self.root, config, f"panels/{self.panel_key}/")
         return web.json_response(result.to_json(config.relative))
 
+    async def get_scenarios(self, request: web.Request) -> web.Response:
+        """The scenario files of a configuration (the .yaml and .yml files in `scenarios` next to it)."""
+        try:
+            config = self.root.resolve(request.query.get("file"))
+        except PathRejected as e:
+            return self._refusal(e)
+        directory, found, files, truncated = await asyncio.to_thread(list_scenarios, self.root, config)
+        return web.json_response({"file": config.relative, "directory": directory, "found": found,
+                                  "scenarios": files, "truncated": truncated})
+
+    async def get_recording(self, request: web.Request) -> web.Response:
+        """The applied writes of the current run (running, or the last one) as a scenario's YAML. The server
+        writes no file: the screen gives the text to the browser to save."""
+        run = self.current
+        if run is None:
+            return web.json_response({"recording": None})
+        enums = {(peer, name): entry["enum"] for peer, p in run.variables.peers.items()
+                 for name, entry in p.index.items() if entry.get("enum")}
+        return web.json_response({"recording": run.recording.to_json(run.session.id, run.session.file,
+                                                                     run.session.state, enums)})
+
+    def _scenario(self, config: ConfigFile, body: dict) -> str | None:
+        """The scenario of a check or run request (None: none), when the launcher can play one."""
+        scenario = resolve_scenario(self.root, config, body.get("scenario"))
+        if scenario is not None and FEATURE_SCENARIO not in self.launcher.features:
+            raise InvalidRequest("unsupported", f"this vehicle_sil_launch has no '{FEATURE_SCENARIO}': leave "
+                                                "scenario null, or build a newer launcher")
+        return scenario
+
     async def api_not_found(self, request: web.Request) -> web.Response:
         return error(404, "not-found", f"{request.method} {request.path}: no such API")
 
@@ -352,13 +386,15 @@ class GuiServer:
             body = await self._body(request)
             config = self.root.resolve(body.get("file"))
             await self._usable()
+            scenario = self._scenario(config, body)
             wanted = body.get("disable")
             known = await self.participant_names(config.relative) if wanted else []
             disable = check_disable(wanted, known)
-            code, result = await self._check(config.relative, disable)
+            code, result = await self._check(config.relative, disable, scenario)
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
-        return web.json_response({"file": config.relative, "disable": disable, "exit_code": code, "check": result})
+        return web.json_response({"file": config.relative, "disable": disable, "scenario": scenario,
+                                  "exit_code": code, "check": result})
 
     async def post_run(self, request: web.Request) -> web.Response:
         try:
@@ -395,9 +431,19 @@ class GuiServer:
             if wanted and feature not in self.launcher.features:
                 raise InvalidRequest("unsupported", f"this vehicle_sil_launch has no '{feature}': leave {default}, "
                                                     "or build a newer launcher")
+        scenario = self._scenario(config, body)
+        if scenario is not None and start_paused:
+            raise InvalidRequest("invalid-field", "start_paused cannot be used with a scenario (the launcher plays "
+                                                  "it from time 0): leave start_paused false")
         known = await self.participant_names(config.relative)
         disable = check_disable(body.get("disable"), known)
         why_not = await self._no_variables()
+        # The one place that decides whether a scenario's run has the launcher's control server: only a launcher
+        # with scenario-control can have it (it then refuses writes); the others refuse --scenario with --control.
+        if scenario is not None and why_not is None and FEATURE_SCENARIO_CONTROL not in self.launcher.features:
+            why_not = (f"this run plays a scenario, and this vehicle_sil_launch has no '{FEATURE_SCENARIO_CONTROL}': "
+                       "it cannot have its control server during a scenario, so the variables cannot be read; "
+                       "build a newer launcher, or run without the scenario")
         self._not_closing()
         credentials = token = None
         if why_not is None:
@@ -409,7 +455,7 @@ class GuiServer:
                 raise
             except OSError as e:
                 why_not = f"the file with the control server's credentials could not be made ({e})"
-        argv = run_command(self.launcher, config.relative, disable, speed, start_paused, credentials)
+        argv = run_command(self.launcher, config.relative, disable, speed, start_paused, credentials, scenario)
         try:
             proc = await process.start(argv, cwd=self.root.root)
         except BaseException as e:
@@ -419,7 +465,7 @@ class GuiServer:
             raise Refused(502, "launcher-start", f"cannot start {self.launcher.path}: {e}") from None
         # Registered in the same step as the start returns: the server's end sees every launcher.
         session = Session(next(self._ids), config.relative, disable, speed, start_paused, limits=self.o.limits,
-                          launcher_pid=proc.pid)
+                          launcher_pid=proc.pid, scenario=scenario)
         variables = Variables(session.id, self._tell_variables, limits=self.o.variable_limits, secret=token,
                               ending=lambda: session.phase == "stopping" or session.result is not None
                               or not session.launcher_running)
@@ -428,8 +474,11 @@ class GuiServer:
         else:
             variables.set_off(why_not)
         session.variables = variables.summary
+        recording = Recording() if why_not is None and scenario is None else Recording(
+            available=False, reason="this run plays a scenario: its writes are the scenario's own" if scenario
+            is not None else f"this run has no variables to write: {why_not}")
         run = Run(session, proc, variables, features=tuple(self.launcher.features), credentials=credentials,
-                  token=token)
+                  token=token, recording=recording)
         self._runs.add(run)
         self.current = run
         run.task = asyncio.create_task(self._follow(run))
@@ -507,6 +556,11 @@ class GuiServer:
         """What a run's variables send to the screens. When their state or schema is told (a new run, ready, the
         end), every watch is due at once, whatever its period: the first and the last values do not wait for it."""
         self.hub.broadcast(messages)
+        for m in messages:  # the record of the applied writes looks at the operations as the screens do
+            if m.get("type") == "operation":
+                for run in self._runs:
+                    if run.session.id == m.get("session"):
+                        run.recording.on_operation(m)
         if any(m.get("type") == "variables" for m in messages) and self._watching:
             now = time.monotonic()
             for watch in self._watching:
@@ -534,12 +588,19 @@ class GuiServer:
                 raise Refused(409, "session-changed", f"the write is meant for the run {meant}, but the run that is "
                                                       f"running is {run.session.id}: nothing was written; look at "
                                                       "the variables of this run before writing to it")
+            if run.session.scenario is not None:
+                raise Refused(409, "scenario-running", f"the run {run.session.id} plays the scenario "
+                                                       f"{run.session.scenario}: variables cannot be written while "
+                                                       "it runs (the scenario must give the same result every "
+                                                       "time); read them, or start a run without a scenario to "
+                                                       "write")
             if control.FEATURE not in run.features:
                 raise Refused(400, "unsupported", f"the vehicle_sil_launch of this run has no '{control.FEATURE}': "
                                                   "its ECUs' variables cannot be written; build it with "
                                                   "-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON")
             writes, at_ns, late = run.variables.check_write(body)
             seq = await run.variables.write(writes, at_ns, late)
+            run.recording.wrote(seq, writes, run.variables.operations.get(seq))
         except (InvalidRequest, Refused, Rejected) as e:
             return self._refusal(e)
         return web.json_response({"session_id": run.session.id, "operation": seq})
@@ -588,7 +649,7 @@ class GuiServer:
                                                  "api/configs lists") from None
         return (st.st_mtime_ns, st.st_size)
 
-    async def _check(self, relative: str, disable: list[str]) -> tuple[int, dict]:
+    async def _check(self, relative: str, disable: list[str], scenario: str | None = None) -> tuple[int, dict]:
         """check --json, one at a time: the others wait (MAX_CHECK_WAITING of them, check_timeout_s each)."""
         self._not_closing()
         if self._check_waiting >= MAX_CHECK_WAITING:
@@ -605,14 +666,14 @@ class GuiServer:
             self._check_waiting -= 1
         try:
             self._not_closing()
-            return await self._check_locked(relative, disable)
+            return await self._check_locked(relative, disable, scenario)
         finally:
             self._check_lock.release()
 
-    async def _check_locked(self, relative: str, disable: list[str]) -> tuple[int, dict]:
+    async def _check_locked(self, relative: str, disable: list[str], scenario: str | None) -> tuple[int, dict]:
         stamp = self._stamp(relative)
         try:
-            code, out, err = await process.run_to_end(check_command(self.launcher, relative, disable),
+            code, out, err = await process.run_to_end(check_command(self.launcher, relative, disable, scenario),
                                                       cwd=self.root.root, timeout_s=self.o.check_timeout_s,
                                                       track=self._checks)
         except TimeoutError:

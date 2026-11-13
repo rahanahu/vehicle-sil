@@ -1,0 +1,19 @@
+{
+  "description": "A scenario that GET api/scenarios does not list for this configuration.",
+  "request": {
+    "method": "POST",
+    "path": "api/check",
+    "body": {
+      "file": "simulation.yaml",
+      "scenario": "forever.yaml"
+    }
+  },
+  "status": 400,
+  "response": {
+    "error": {
+      "code": "scenario-not-listed",
+      "message": "'forever.yaml' is not a scenario of simulation.yaml: choose one that GET api/scenarios?file=simulation.yaml lists (the .yaml and .yml files in scenarios, not links)",
+      "detail": null
+    }
+  }
+}

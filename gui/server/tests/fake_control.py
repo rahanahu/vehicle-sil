@@ -97,6 +97,7 @@ class FakeControl:
         self.steps = 0
         self.seq = 0
         self.stopped = False
+        self.refuse_writes: str | None = None  # every write is refused with this (a scenario runs)
         self.calls: list[str] = []
         self.server = None
         self.address = ""
@@ -308,6 +309,8 @@ class FakeControl:
         grpc = self.grpc
         if not request.writes:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "a write needs at least one value")
+        if self.refuse_writes:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, self.refuse_writes)
         with self.changed:
             self.seq += 1
             self.version += 1

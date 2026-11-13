@@ -410,8 +410,24 @@ export class VariablesPage {
     const status = this.variables.status();
     const reason = this.variables.reason();
     const app = this.info.variables();
+    const session = this.server.session();
+    const scenario = !!session?.scenario && session.launcher.running;
+    if (scenario && (status === 'off' || status === 'failed')) {
+      return {
+        text: $localize`シナリオの実行中は、変数を見られません:`,
+        english: reason,
+        tone: 'warn',
+      };
+    }
     switch (status) {
       case 'ready':
+        if (scenario) {
+          return {
+            text: $localize`シナリオの実行中です。値は見られますが、書くことはできません（シナリオの結果を変えないため）。`,
+            english: null,
+            tone: 'info',
+          };
+        }
         if (this.time.beforeStart()) {
           return {
             text: $localize`最初のステップの前で止まっています。ここで書いた値（パラメーターを含む）は、時刻 0 のステップで反映されます。再開は「実行」の画面で行います。`,

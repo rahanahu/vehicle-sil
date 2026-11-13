@@ -198,6 +198,7 @@ export class LayoutFixture {
       { name: 'J1939_CAN_WITH_A_LONG_NETWORK_NAME', kind: 'can', participants: [LONG_NAME] },
     ],
     findings: [this.finding],
+    scenario: null,
   };
   protected readonly noneDisabled: ReadonlySet<string> = new Set();
   protected readonly participants: ParticipantView[] = [

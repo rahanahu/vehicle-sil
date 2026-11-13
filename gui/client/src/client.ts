@@ -7,11 +7,15 @@ import {
   CheckResult,
   ConfigList,
   DashboardResponse,
+  Recording,
+  ScenarioList,
   SessionSummary,
   readAppInfo,
   readCheckResponse,
   readConfigList,
   readDashboardResponse,
+  readRecording,
+  readScenarioList,
   readSessionResponse,
 } from './protocol';
 import { ClientRun, RunControl } from './run';
@@ -115,6 +119,13 @@ export interface GuiClient {
    * 読む（ないときは found が偽、誤りは errors）。
    */
   dashboard(file: string): Promise<DashboardResponse>;
+  /** `GET api/scenarios`: 構成ファイル（root からの相対）の隣の `scenarios` にあるシナリオのファイル。 */
+  scenarios(file: string): Promise<ScenarioList>;
+  /**
+   * `GET api/recording`: いまの（または最後の）実行で、このサーバーを通して書いて反映された値を、シナリオの YAML に
+   * したもの（実行がまだなければ null）。ファイルには書かない。
+   */
+  recording(): Promise<Recording | null>;
 }
 
 /**
@@ -260,6 +271,12 @@ export function createClient(options: ClientOptions): GuiClient {
         { method: 'GET', path: `api/dashboard?file=${encodeURIComponent(file)}` },
         readDashboardResponse,
       ),
+    scenarios: (file) =>
+      call(
+        { method: 'GET', path: `api/scenarios?file=${encodeURIComponent(file)}` },
+        readScenarioList,
+      ),
+    recording: () => call({ method: 'GET', path: 'api/recording' }, readRecording),
     check: (body) =>
       call(
         {
