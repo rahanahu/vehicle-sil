@@ -3887,9 +3887,26 @@ void manual_frozen(const Options& o)
         const bool running = !events_with(live.lines(), {"\"phase\":\"running\""}).empty();
         log(std::string("RESULT Late frozen as it joined: ") +
             (running ? "the simulation runs (Late got to its first step)" : "the start waits for Late"));
+        // On Windows, with a participant frozen while the simulation runs, the launcher sometimes
+        // does not end after the stop: destroying its controller's SIL Kit participant does not
+        // return (a known limit of the product; docs/simulation-config.md says to let the
+        // participant go on first). There, in that branch only, Late goes on before the stop. A
+        // stop with Late still frozen is checked on Windows before the start, on POSIX in both.
+#ifdef _WIN32
+        const bool thawFirst = running;
+#else
+        const bool thawFirst = false;
+#endif
+        if (thawFirst)
+        {
+            lateByHand.thaw();
+        }
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish_unchecked(60s);
-        lateByHand.thaw();
+        if (!thawFirst)
+        {
+            lateByHand.thaw();
+        }
         require(status && status->code == 130,
                 "a stop ends a run that waits for a frozen participant (130), not " +
                     (status ? std::to_string(status->code) : std::string("still running")) + ":\n" + out_of(lines));
