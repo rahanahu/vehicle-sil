@@ -215,7 +215,8 @@ passed: 0 errors, 0 warnings, 1 note
 | `describe-timeout` | 誤り | `--describe` が時間内に終わらない |
 | `describe-failed` | 誤り | `--describe` の終了コードが 0 でない（4 は、ecu_main でない実行ファイルの見込みが高い） |
 | `describe-output` | 誤り | `--describe` の出力が自己申告の JSON でない |
-| `describe-version` | 誤り | 自己申告の形式の版（`vehicle_sil_ecu`）を読めない |
+| `describe-version` | 誤り | 自己申告の形式の版（`vehicle_sil_ecu`）を読めない（文は、ECU の vehicle-sil の版（申告があれば）と `vehicle_sil_launch` の版、新しくするのがどちらかを言う） |
+| `describe-unknown-value` | 誤り | 自己申告の、決まった値をとるキー（`kind`、`use`、`type`、`causality`）に、この `vehicle_sil_launch` が知らない値がある（新しい vehicle-sil の ECU。文は、キーと値、知っている値、両方の vehicle-sil の版を言う）。その participant だけの誤りで、ほかは照合を続ける |
 | `name-mismatch` | 誤り | 自己申告の `name` が participant 名と違う（`--name` を `ecu_main` に渡していない） |
 | `step-mismatch` | 誤り | `step_ms` が自己申告のステップ幅と違う（実時間で、ステップ幅のない ECU も） |
 | `unknown-network` | 誤り | ECU が `networks` にないネットワークを使う |

@@ -198,9 +198,10 @@ struct EcuDescription
 };
 
 /// The version of the JSON form of to_json() (its "vehicle_sil_ecu" key). It goes up when a key
-/// changes meaning or goes away, and when a key that has a fixed set of values ("kind", "use",
-/// "type", "causality") gets a new one. New keys may come without a new version. A reader
-/// refuses a version it does not know and ignores keys it does not know.
+/// changes meaning or goes away. New keys, and new values of a key that has a fixed set of values
+/// ("kind", "use", "type", "causality"), may come without a new version. A reader refuses a
+/// version it does not know, ignores keys it does not know, and refuses only the description (of
+/// one ECU) with a value it does not know.
 inline constexpr int kEcuDescriptionFormat = 1;
 
 /// The version of vehicle-sil this library was built from (the CMake project version, e.g.

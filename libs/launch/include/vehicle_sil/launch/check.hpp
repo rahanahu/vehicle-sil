@@ -10,6 +10,7 @@
 #include "vehicle_sil/launch/scenario.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -49,9 +50,56 @@ private:
     std::string context_;
 };
 
+/// The description is in another format version (what() is "format <n>").
+class DescriptionFormatError : public DescriptionError
+{
+public:
+    DescriptionFormatError(std::int64_t format, std::string vehicle_sil_version) :
+      DescriptionError("format " + std::to_string(format)), format_(format),
+      vehicle_sil_version_(std::move(vehicle_sil_version))
+    {
+    }
+    [[nodiscard]] std::int64_t format() const noexcept { return format_; }
+    /// "vehicle_sil" of the description if it has that key as a string, else "".
+    [[nodiscard]] const std::string& vehicle_sil_version() const noexcept { return vehicle_sil_version_; }
+
+private:
+    std::int64_t format_;
+    std::string vehicle_sil_version_;
+};
+
+/// A key that has a fixed set of values ("kind", "use", "type", "causality") has one this
+/// launcher does not know. A later vehicle-sil may add values without a new format version, so
+/// this means an executable of a newer vehicle-sil, not broken output. what() is as for other
+/// errors ("networks[0].use is \"ethernet\", not raw, j1939, lin_master or lin_slave").
+class DescriptionValueError : public DescriptionError
+{
+public:
+    DescriptionValueError(const std::string& message, std::string key, std::string value, std::vector<std::string> known,
+                          std::string vehicle_sil_version) :
+      DescriptionError(message), key_(std::move(key)), value_(std::move(value)), known_(std::move(known)),
+      vehicle_sil_version_(std::move(vehicle_sil_version))
+    {
+    }
+    /// Where the value is: "networks[0].use", "variables[2].type".
+    [[nodiscard]] const std::string& key() const noexcept { return key_; }
+    [[nodiscard]] const std::string& value() const noexcept { return value_; }
+    /// The values this launcher knows for the key.
+    [[nodiscard]] const std::vector<std::string>& known() const noexcept { return known_; }
+    /// "vehicle_sil" of the description, or "" if it has none.
+    [[nodiscard]] const std::string& vehicle_sil_version() const noexcept { return vehicle_sil_version_; }
+
+private:
+    std::string key_;
+    std::string value_;
+    std::vector<std::string> known_;
+    std::string vehicle_sil_version_;
+};
+
 /// Reads --describe's JSON (format kEcuDescriptionFormat; unknown keys are ignored). Throws
-/// DescriptionError, saying what is wrong, for anything else; a message that starts with
-/// "format " is an unknown format version.
+/// DescriptionError, saying what is wrong, for anything else: DescriptionFormatError for another
+/// format version, DescriptionValueError for a value it does not know of a key with a fixed set
+/// of values.
 [[nodiscard]] ReportedEcu read_description(std::string_view json);
 
 /// One run of `<command> --describe --name <name>` (process::run_captured()).

@@ -255,10 +255,57 @@ TEST_CASE(a_run_that_failed_is_an_error_with_the_end_of_its_standard_error)
                "0, but its output is not a description: the output is not a JSON object. Is it made with ecu_main, and does "
                "nothing else write to its standard output? If it is not made with ecu_main, set describe: false\n"
                "  | the start of its standard output:\nhello\n{\n");
+    const std::string mine = version();
     check_text(error(run(0, R"({"vehicle_sil_ecu": 2})")),
                "E 7 describe-version: participant 'Engine': engine/engine_ecu --describe --name Engine wrote a description "
-               "in format 2, but this vehicle_sil_launch reads format 1: build the executable and vehicle_sil_launch from "
-               "the same vehicle-sil\n");
+               "in format 2, but this vehicle_sil_launch (vehicle-sil " + mine + ") reads format 1: the executable is of a "
+               "newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a newer one\n");
+    check_text(error(run(0, R"({"vehicle_sil_ecu": 0, "vehicle_sil": "0.0.1"})")),
+               "E 7 describe-version: participant 'Engine': engine/engine_ecu --describe --name Engine wrote a description "
+               "in format 0 (vehicle-sil 0.0.1), but this vehicle_sil_launch (vehicle-sil " + mine + ") reads format 1: the "
+               "executable is of an older vehicle-sil; build it again with this vehicle-sil, or use a vehicle_sil_launch of "
+               "its vehicle-sil\n");
+}
+
+TEST_CASE(a_value_of_a_later_vehicle_sil_is_its_own_error)
+{
+    // A key with a fixed set of values may get a new one without a new format: the error names
+    // the key, the value, the versions on both sides and the fix (a newer vehicle_sil_launch).
+    const auto error = [](const std::string& json) {
+        return lines({*interpret_describe(participant("Engine", 6), run(0, json)).error});
+    };
+    const std::string mine = version();
+    const std::string head = R"({"vehicle_sil_ecu": 1, "vehicle_sil": "9.0.0", "name": "Engine", "step_ns": 1000, )";
+    const std::string tail = ". A newer vehicle-sil may add such values without a new format: use a vehicle_sil_launch "
+                             "of the executable's vehicle-sil or a newer one\n";
+    const std::string versions = "the executable was built with vehicle-sil 9.0.0, this vehicle_sil_launch with "
+                                 "vehicle-sil " + mine;
+    const std::string start = "E 7 describe-unknown-value: participant 'Engine': engine/engine_ecu --describe --name Engine "
+                              "wrote ";
+    check_text(error(head + R"("networks": [{"name": "Eth", "kind": "ethernet", "use": "ethernet", "nodes": []}]})"),
+               start + "networks[0].use \"ethernet\", which this vehicle_sil_launch does not know (it knows raw, j1939, "
+                       "lin_master and lin_slave): " + versions + tail);
+    check_text(error(head + R"("networks": [{"name": "N", "kind": "flexray", "use": "raw", "nodes": []}]})"),
+               start + "networks[0].kind \"flexray\", which this vehicle_sil_launch does not know (it knows can and "
+                       "lin): " + versions + tail);
+    const std::string var = R"("networks": [], "variables": [{"name": "v", "type": "real", "causality": "input", )"
+                            R"("unit": "", "min": null, "max": null, "step": null, "description": "", "items": []}, )";
+    check_text(error(head + var + R"({"name": "w", "type": "text", "causality": "input"}]})"),
+               start + "variables[1].type \"text\", which this vehicle_sil_launch does not know (it knows bool, integer, "
+                       "real and enum): " + versions + tail);
+    check_text(error(head + var + R"({"name": "w", "type": "bool", "causality": "local"}]})"),
+               start + "variables[1].causality \"local\", which this vehicle_sil_launch does not know (it knows input, "
+                       "output and parameter): " + versions + tail);
+    // Without "vehicle_sil", the message says so.
+    check_text(error(R"({"vehicle_sil_ecu": 1, "name": "Engine", "step_ns": 1000, "networks": [{"name": "N", )"
+                     R"("kind": "can", "use": "fd", "nodes": []}]})"),
+               start + "networks[0].use \"fd\", which this vehicle_sil_launch does not know (it knows raw, j1939, "
+                       "lin_master and lin_slave): the executable does not say which vehicle-sil it was built with, and "
+                       "this vehicle_sil_launch is of vehicle-sil " + mine + tail);
+    // A known kind that is not the use's: broken output, not a later value.
+    CHECK(interpret_describe(participant("Engine", 6),
+                             run(0, head + R"("networks": [{"name": "N", "kind": "lin", "use": "raw", "nodes": []}]})"))
+              .error->code == "describe-output");
 }
 
 // --- the rules ------------------------------------------------------------------------------

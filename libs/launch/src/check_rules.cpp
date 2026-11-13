@@ -165,17 +165,40 @@ DescribeOutcome interpret_describe(const ParticipantConfig& participant, const D
     {
         return DescribeOutcome{read_description(run.standard_output), std::nullopt};
     }
+    catch (const DescriptionFormatError& e)
+    {
+        const std::string launcher = vehicle_sil::version();
+        const std::string ecu = e.vehicle_sil_version();
+        return finding("describe-version",
+                       run.command_text + " wrote a description in format " + std::to_string(e.format()) +
+                           (ecu.empty() ? std::string() : " (vehicle-sil " + ecu + ")") +
+                           ", but this vehicle_sil_launch (vehicle-sil " + launcher + ") reads format " +
+                           std::to_string(kEcuDescriptionFormat) +
+                           (e.format() > kEcuDescriptionFormat
+                                ? ": the executable is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil "
+                                  "or a newer one"
+                                : ": the executable is of an older vehicle-sil; build it again with this vehicle-sil, or "
+                                  "use a vehicle_sil_launch of its vehicle-sil"),
+                       "");
+    }
+    catch (const DescriptionValueError& e)
+    {
+        const std::string launcher = vehicle_sil::version();
+        const std::string ecu = e.vehicle_sil_version();
+        return finding("describe-unknown-value",
+                       run.command_text + " wrote " + e.key() + " \"" + e.value() +
+                           "\", which this vehicle_sil_launch does not know (it knows " + and_list(e.known()) + "): " +
+                           (ecu.empty() ? "the executable does not say which vehicle-sil it was built with, and this "
+                                          "vehicle_sil_launch is of vehicle-sil " + launcher
+                                        : "the executable was built with vehicle-sil " + ecu +
+                                              ", this vehicle_sil_launch with vehicle-sil " + launcher) +
+                           ". A newer vehicle-sil may add such values without a new format: use a vehicle_sil_launch "
+                           "of the executable's vehicle-sil or a newer one",
+                       "");
+    }
     catch (const DescriptionError& e)
     {
         const std::string what = e.what();
-        if (what.rfind("format ", 0) == 0)
-        {
-            return finding("describe-version",
-                           run.command_text + " wrote a description in " + what + ", but this vehicle_sil_launch reads format " +
-                               std::to_string(kEcuDescriptionFormat) +
-                               ": build the executable and vehicle_sil_launch from the same vehicle-sil",
-                           "");
-        }
         const std::string head = first_lines(run.standard_output, 5);
         std::string detail;
         const auto add_detail = [&detail](const std::string& text) {
