@@ -23,6 +23,12 @@ export class ServerInfo {
   /** ランチャーの `version --json` の features（まだわからなければ空）。 */
   readonly features = computed<readonly string[]>(() => this.info()?.launcher.features ?? []);
 
+  /**
+   * いま実行を始めたら ECU の変数を読み書きできるか（`available`）と、できない理由（`reason`。英語）。
+   * まだわからなければ null。
+   */
+  readonly variables = computed(() => this.info()?.variables ?? null);
+
   /** 速さの範囲とステップ送りの上限（サーバーが言う。ランチャーと同じ）。 */
   readonly limits = readableSignal(this.client.limits);
 

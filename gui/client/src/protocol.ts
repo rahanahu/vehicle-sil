@@ -1254,7 +1254,12 @@ export interface VariablesSummary {
   peers: { name: string; connected: boolean; variables: VariableSummary[] }[];
   peers_omitted: number;
   variables_omitted: number;
+  /** 未確定の操作の全部（サーバーが覚えている分）と、最近の操作。 */
   operations: OperationReport[];
+  /** この番号以上の操作は、全部 operations に入っている（言わないサーバーでは null）。 */
+  operations_from_seq: number | null;
+  /** サーバーが覚えきれなかった未確定の操作の数（ふつうは 0）。 */
+  operations_open_omitted: number;
 }
 
 const readOperationReport: Reader<OperationReport> = (value, path) => {
@@ -1337,6 +1342,8 @@ const readVariables: Reader<VariablesSummary> = (value, path) => {
     peers_omitted: field(f, path, 'peers_omitted', optional(integer, 0)),
     variables_omitted: field(f, path, 'variables_omitted', optional(integer, 0)),
     operations: field(f, path, 'operations', optional(array(readOperationReport), [])),
+    operations_from_seq: field(f, path, 'operations_from_seq', optional(integer, null)),
+    operations_open_omitted: field(f, path, 'operations_open_omitted', optional(integer, 0)),
   };
 };
 

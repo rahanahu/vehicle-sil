@@ -155,6 +155,12 @@ export interface WriteOptions {
    * 丸める。数でない値と 0 以下は既定の時間。HTTP の答えが来てから数える。
    */
   timeoutMs?: number;
+  /**
+   * サーバーが書き込みを受け取って操作の番号を返したときに、1 回呼ぶ（結果より前。断られたとき、答えがなかった
+   * ときは呼ばない）。番号で `operations` の途中の状態（queued など）を追える。部品が「受け付けた、反映を待って
+   * いる」を見せたり、次の書き込みを送ってよいと知ったりするため。
+   */
+  onAccepted?: (operation: { session: number; seq: number }) => void;
 }
 
 /**
@@ -163,8 +169,10 @@ export interface WriteOptions {
  *   送られていないので、直して送り直してよい。
  * - failed: 受け付けたが、反映されなかった（operation に、participant ごとの状態と理由）。
  * - no-answer: 反映されたかどうかわからない。待つ時間の間に結果が来なかった（operation に、わかっている最後の
- *   状態）、HTTP の答えがなかった、サーバーが Control Server の答えを待ちきれなかった（code は `write-timeout`）か
- *   途中で切れた（`write-failed`）。**そのまま送り直すと、二重の書き込みになることがある**: 先に operations と値を見る。
+ *   状態）、HTTP の答えがなかった、サーバーが途中で失敗した（500）、Control Server の答えを待ちきれなかった（code は `write-timeout`）か
+ *   途中で切れた（`write-failed`）、答えの前に実行が替わった、つなぎ直している間に確定して結果が失われた（要約の
+ *   一覧になく、境目 operations_from_seq より古い）、サーバーが未確定の操作を覚えきれずに追うのをやめた。
+ *   **そのまま送り直すと、二重の書き込みになることがある**: 先に operations と値を見る。
  * - closed: クライアントを閉じた（反映されたかどうかはわからない）。
  */
 export class WriteError extends Error {
@@ -202,7 +210,9 @@ export interface ClientVariables {
    */
   watch(variables: readonly VariableRef[] | 'all', options?: WatchOptions): VariableWatch;
   /**
-   * 変数を書く: `write({Engine: {'engine.throttle': 50}})`。列挙は値（数）か項目の名前。反映されたら（applied）
+   * 変数を書く: `write({Engine: {'engine.throttle': 50}})`。いまの実行（state の session）に向けて送り、サーバーは
+   * その実行が動いていなければ断る（refused、code session-changed / not-running。実行がまだわからなければ、送らずに
+   * not-running）。列挙は値（数）か項目の名前。反映されたら（applied）
    * その操作で解ける。ほかは WriteError で断る（kind で分ける）。同じ書き込みを自動で送り直すことはない。
    */
   write(
@@ -455,12 +465,44 @@ interface Bucket {
 
 /** 答えを待っている書き込み。 */
 interface Pending {
-  /** 実行と操作の番号（HTTP の答えが来るまでは null）。 */
-  session: number | null;
+  /** 書き込みを向けた実行（書いた時点の実行）と、操作の番号（HTTP の答えが来るまでは null）。 */
+  session: number;
   seq: number | null;
   resolve: (operation: OperationView) => void;
   reject: (error: WriteError) => void;
   timer: ReturnType<typeof setTimeout> | undefined;
+  /** HTTP の答え（番号）を待つ間に届いた、最後の要約の操作の部分（番号がわかったときに照らす）。 */
+  summary?: Listed;
+}
+
+/** 要約の操作の部分: 一覧、境目（言わないサーバーでは null）、サーバーが覚えきれなかった未確定の操作があるか。 */
+interface Listed {
+  operations: readonly OperationView[];
+  fromSeq: number | null;
+  openOmitted: boolean;
+}
+
+/**
+ * 要約から、その番号の操作の結果がもう届かないとわかれば、その誤り（わからなければ null）。要約の一覧には、
+ * 未確定の操作の全部と、境目（operations_from_seq）以上の番号の操作の全部が入っている。だから、一覧になく、境目
+ * より古い操作は、切れている間に確定していて、その通知はもう来ない。一覧にある操作と、境目以上の番号の操作は、
+ * まだ届いていないだけなので待つ。境目を言わない要約では、見分けられないので待つ。
+ *
+ * サーバーが未確定の操作を覚えきれなかったとき（operations_open_omitted が 1 以上）は、一覧にない古い操作が確定済みか
+ * 未確定かを見分けられない。サーバーはもう追っていないので、同じく「答えが来なかった」にする（文で分ける。
+ * no-answer は「反映されたかどうかわからない」）。
+ */
+function lost(seq: number, summary: Listed): WriteError | null {
+  if (summary.fromSeq === null || seq >= summary.fromSeq) return null;
+  if (summary.operations.some((o) => o.seq === seq)) return null;
+  return new WriteError(
+    'no-answer',
+    summary.openOmitted
+      ? `the server does not keep track of the write (operation ${seq}) any more (it holds too many open ` +
+          'operations): its result may not come; look at the values before writing again'
+      : `the result of the write (operation ${seq}) was lost while the connection was down (it was settled ` +
+          'meanwhile, and the server does not list it any more): look at the values before writing again',
+  );
 }
 
 /** VariablesFeed が接続に頼むこと。 */
@@ -560,11 +602,13 @@ export class VariablesFeed implements ClientVariables {
     const touched = new Set<string>();
     let touchedAll = false;
     let operations: OperationView[] | null = null;
+    let fresh: OperationView[] = [];
     // 実行が替わる前に、それまでに届いた操作の結果を当てる（同じまとまりで届いた確定の結果を、切り替えで
     // 「わからない」にしない）
     const flush = () => {
-      if (operations) this.setOperations(operations);
+      if (operations) this.setOperations(operations, fresh);
       operations = null;
+      fresh = [];
     };
     for (const message of batch) {
       if (!isObject(message)) continue;
@@ -615,6 +659,7 @@ export class VariablesFeed implements ClientVariables {
           const operation = readOperation(message, id as number);
           if (operation) {
             operations = this.withOperation(operations ?? this.operationsValue.get(), operation);
+            fresh.push(operation);
           }
           break;
         }
@@ -646,11 +691,39 @@ export class VariablesFeed implements ClientVariables {
     this.stateValue.set(readVariables(variables, id));
     if (isObject(variables) && Array.isArray(variables['operations'])) {
       let operations = this.operationsValue.get();
+      const listed: OperationView[] = [];
       for (const entry of variables['operations']) {
         const operation = readOperation(entry, id);
-        if (operation) operations = this.withOperation(operations, operation);
+        if (operation) {
+          listed.push(operation);
+          operations = this.withOperation(operations, operation);
+        }
       }
-      this.setOperations(operations);
+      this.setOperations(operations, listed);
+      const fromSeq = variables['operations_from_seq'];
+      const openOmitted = variables['operations_open_omitted'];
+      this.forgetLost(id, {
+        operations: listed,
+        fromSeq: Number.isSafeInteger(fromSeq) ? (fromSeq as number) : null,
+        openOmitted: typeof openOmitted === 'number' && openOmitted > 0,
+      });
+    }
+  }
+
+  /**
+   * つなぎ直した要約（か api/session の要約）で、結果を待っている書き込みのうち、もう結果が届かないものを
+   * 「答えが来なかった」で確定させる（lost）。まだ番号を知らない書き込み（HTTP の答えの前）は、要約を覚えておき、
+   * 番号がわかったときに同じように照らす。
+   */
+  private forgetLost(session: number, summary: Listed): void {
+    for (const pending of [...this.pending]) {
+      if (pending.session !== session) continue;
+      if (pending.seq === null) {
+        pending.summary = summary;
+        continue;
+      }
+      const error = lost(pending.seq, summary);
+      if (error) this.settle(pending, error);
     }
   }
 
@@ -665,13 +738,14 @@ export class VariablesFeed implements ClientVariables {
     this.historyReserved = 0;
     this.operationsValue.set([]);
     for (const pending of [...this.pending]) {
-      if (pending.session !== null && pending.session !== session) {
+      if (pending.session !== session) {
         this.settle(
           pending,
           new WriteError(
             'no-answer',
             `the run ${pending.session} is over (another one has started): the result of the write ` +
-              `(operation ${pending.seq}) did not come`,
+              (pending.seq === null ? '' : `(operation ${pending.seq}) `) +
+              'did not come',
           ),
         );
       }
@@ -777,14 +851,22 @@ export class VariablesFeed implements ClientVariables {
     return next.length > OPERATIONS_KEPT ? next.slice(next.length - OPERATIONS_KEPT) : next;
   }
 
-  private setOperations(operations: readonly OperationView[]): void {
+  /**
+   * 操作の一覧を替え、結果を待っている書き込みのうち、確定したものを片づける。`fresh` は、いま届いた操作
+   * （通知のまとまり、要約の一覧）: 一覧は OPERATIONS_KEPT 件に切るので、切られて一覧に残らなかった確定も、ここ
+   * から拾う。
+   */
+  private setOperations(
+    operations: readonly OperationView[],
+    fresh: readonly OperationView[] = [],
+  ): void {
     this.operationsValue.set(operations);
     for (const pending of [...this.pending]) {
       if (pending.seq === null) continue;
-      const operation = operations.find(
-        (o) => o.seq === pending.seq && o.session === pending.session,
-      );
-      if (operation?.done) this.settle(pending, operation);
+      const mine = (o: OperationView) =>
+        o.done && o.seq === pending.seq && o.session === pending.session;
+      const operation = fresh.find(mine) ?? operations.find(mine);
+      if (operation) this.settle(pending, operation);
     }
   }
 
@@ -823,11 +905,22 @@ export class VariablesFeed implements ClientVariables {
         : typeof asked === 'number' && asked > 0
           ? Math.min(asked, TIMER_MAX_MS)
           : WRITE_TIMEOUT_MS;
-    const body: Fields = { writes };
+    // 書き込みは、いまの実行に向ける。サーバーは、その実行がもう動いていなければ断る（session-changed）
+    const session = this.stateValue.get().session;
+    if (session === null) {
+      return Promise.reject(
+        new WriteError(
+          'refused',
+          'there is no run to write to (wait for the variables of a run: client.variables.state)',
+          'not-running',
+        ),
+      );
+    }
+    const body: Fields = { session, writes };
     if (options.atMs !== undefined) body['at_ms'] = options.atMs;
     if (options.late !== undefined) body['late'] = options.late;
     return new Promise<OperationView>((resolve, reject) => {
-      const pending: Pending = { session: null, seq: null, resolve, reject, timer: undefined };
+      const pending: Pending = { session, seq: null, resolve, reject, timer: undefined };
       this.pending.add(pending);
       const known = () =>
         this.operationsValue
@@ -838,11 +931,10 @@ export class VariablesFeed implements ClientVariables {
         if (!outcome.ok) {
           const error = outcome.error;
           const code = error instanceof HttpError ? (error.problem?.code ?? null) : null;
-          // 答えがなかった（status 0）、Control Server が時間内に答えなかった（504）、途中で切れた（502）:
-          // 受け取られたかもしれない。断られた（refused）のは、送っていないとわかっているときだけ
-          const unsure =
-            error instanceof HttpError &&
-            (error.status === 0 || error.status === 502 || error.status === 504);
+          // 答えがなかった（status 0）、Control Server が時間内に答えなかった（504）、途中で切れた（502）、
+          // サーバーが途中で失敗した（500）: 受け取られたかもしれない。断られた（refused）のは、送っていないと
+          // わかっているときだけ
+          const unsure = error instanceof HttpError && [0, 500, 502, 504].includes(error.status);
           this.settle(
             pending,
             new WriteError(
@@ -858,8 +950,8 @@ export class VariablesFeed implements ClientVariables {
         }
         const answer = outcome.body;
         const seq = isObject(answer) ? answer['operation'] : null;
-        const session = isObject(answer) ? answer['session_id'] : null;
-        if (!Number.isSafeInteger(seq) || !Number.isSafeInteger(session)) {
+        const answered = isObject(answer) ? answer['session_id'] : null;
+        if (!Number.isSafeInteger(seq) || !Number.isSafeInteger(answered)) {
           this.settle(
             pending,
             new WriteError(
@@ -869,8 +961,27 @@ export class VariablesFeed implements ClientVariables {
           );
           return;
         }
-        pending.session = session as number;
+        // 答えの前に実行が替わった（ふつうは enter() が先に断る）: その実行の結果は、もう届かない
+        if (answered !== pending.session || this.stateValue.get().session !== pending.session) {
+          this.settle(
+            pending,
+            new WriteError(
+              'no-answer',
+              `the run ${pending.session} ended before the answer to the write came (operation ${String(seq)}): ` +
+                'its result will not come; look at the values before writing again',
+            ),
+          );
+          return;
+        }
         pending.seq = seq as number;
+        if (options.onAccepted) {
+          try {
+            options.onAccepted({ session: pending.session, seq: pending.seq });
+          } catch (error) {
+            this.onError(error);
+          }
+          if (!this.pending.has(pending)) return; // 呼んだ先が close() した
+        }
         if (timeoutMs !== Infinity) {
           pending.timer = setTimeout(() => {
             const last = known();
@@ -890,9 +1001,17 @@ export class VariablesFeed implements ClientVariables {
           // Node: この時計だけのために、プロセスを終わらせずに待たない
           (pending.timer as { unref?: () => void }).unref?.();
         }
-        // 結果が HTTP の答えより先に届いていることがある
-        const already = known();
+        // 結果が HTTP の答えより先に届いていることがある（通知で。または、答えを待つ間につなぎ直した要約で:
+        // その要約から、結果がもう届かないとわかることもある）
+        const summary = pending.summary;
+        const already =
+          known() ??
+          summary?.operations.find((o) => o.seq === seq && o.session === pending.session);
         if (already?.done) this.settle(pending, already);
+        else if (summary) {
+          const error = lost(pending.seq, summary);
+          if (error) this.settle(pending, error);
+        }
       });
     });
   }

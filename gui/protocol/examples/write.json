@@ -4,6 +4,7 @@
     "method": "POST",
     "path": "api/write",
     "body": {
+      "session": 1,
       "writes": {
         "Engine": {
           "engine.demand": 40,

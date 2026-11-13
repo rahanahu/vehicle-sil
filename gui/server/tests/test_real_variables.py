@@ -55,6 +55,7 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
             ws = await c.ws()
             await ws.until(is_synced)
             status, started = await c.post("api/run", {"file": "forever.yaml", "start_paused": True})
+            sid = started["session"]["id"]
             assert status == 200 and started["session"]["variables"]["state"] == "connecting"
             # Ready comes when the control server has been read; the ECUs join it one by one after that, and
             # each time the summary is told again.
@@ -76,14 +77,14 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
             await ws.send({"type": "watch", "id": 1, "variables": [THROTTLE, SPEED], "period_ms": 20})
             first = (await ws.until(is_values(1, paused=True)))[-1]
             assert first["sim_ms"] == 0  # standing still before the first step
-            status, body = await c.post("api/write", {"writes": {"Engine": {"engine.throttle": 50}}})
+            status, body = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.throttle": 50}}})
             assert status == 200, body
             seq = body["operation"]
             await ws.until(is_operation(seq, "queued"))
             for bad, code in (({"Engine": {"engine.speed": 1}}, "not-writable"),
                               ({"Engine": {"engine.throttle": 101}}, "invalid-field"),
                               ({"Engine": {"engine.nothing": 1}}, "unknown-variable")):
-                status, body = await c.post("api/write", {"writes": bad})
+                status, body = await c.post("api/write", {"session": sid, "writes": bad})
                 assert (status, body["error"]["code"]) == (400, code)
 
             # The engine runs 50 rpm per 10 ms step towards 800 rpm + 20 rpm per percent: 1800 rpm at 500 ms.
@@ -100,7 +101,7 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
             # the standstill has run is not promised for every ECU (docs/control-api.md says to write for a time
             # after the standstill), so the other outcome, made in the step at 500, is taken too. The value
             # written is the one the variable has, so the steps below read the same either way.
-            status, body = await c.post("api/write", {"writes": {"Engine": {"engine.throttle": 50}}, "at_ms": 500})
+            status, body = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.throttle": 50}}, "at_ms": 500})
             assert status == 200, body
             boundary = body["operation"]
             await ws.until(lambda m: m["type"] == "operation" and m["seq"] == boundary
@@ -108,7 +109,7 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
 
             # Step by step: each time it stands still, the values are those of the steps before that time. The
             # engine's step is 10 ms; its speed falls 50 rpm per step towards 800 rpm once the throttle is 0.
-            status, body = await c.post("api/write", {"writes": {"Engine": {"engine.throttle": 0}}, "at_ms": 501})
+            status, body = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.throttle": 0}}, "at_ms": 501})
             assert status == 200, body
             for n in range(1, 13):
                 await c.post("api/time", {"command": "step", "ms": 10})

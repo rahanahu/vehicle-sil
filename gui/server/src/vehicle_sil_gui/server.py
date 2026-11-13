@@ -496,16 +496,26 @@ class GuiServer:
             self._tick_now.set()
 
     async def post_write(self, request: web.Request) -> web.Response:
-        """Writes variables of the run that is running: {"writes": {"<peer>": {"<variable>": <value>}}, "at_ms",
-        "late"}. Checked against the schema here, then given to the launcher's control server; the answer is the
-        operation's number, and what became of it comes to every screen as `operation` messages."""
+        """Writes variables of the run that is running: {"session": <the run's id>, "writes": {"<peer>":
+        {"<variable>": <value>}}, "at_ms", "late"}. The session names the run the write is meant for: a write for
+        another run is refused (session-changed), so that a write sent while one run ends and the next begins is
+        not made in the next. Checked against the schema here, then given to the launcher's control server; the
+        answer is the operation's number, and what became of it comes to every screen as `operation` messages."""
         try:
             self._not_closing()
             body = await self._body(request)
+            meant = body.get("session") if isinstance(body, dict) else None
+            if isinstance(meant, bool) or not isinstance(meant, int):
+                raise Refused(400, "invalid-field", "a write needs session: the id of the run it is meant for (the "
+                                                    "id of the summary of GET api/session, or of hello)")
             run = self.current
             if run is None or self._starting or run.session.state != "running" or not run.session.launcher_running:
                 raise Refused(409, "not-running", "no simulation is running: variables are written to the run that "
                                                   "is running (start one with POST api/run)")
+            if meant != run.session.id:
+                raise Refused(409, "session-changed", f"the write is meant for the run {meant}, but the run that is "
+                                                      f"running is {run.session.id}: nothing was written; look at "
+                                                      "the variables of this run before writing to it")
             if control.FEATURE not in run.features:
                 raise Refused(400, "unsupported", f"the vehicle_sil_launch of this run has no '{control.FEATURE}': "
                                                   "its ECUs' variables cannot be written; build it with "
