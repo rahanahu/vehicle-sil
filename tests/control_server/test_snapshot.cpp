@@ -100,14 +100,26 @@ struct FedPeer
     control::Hub& hub;
     control::ConnectionId connection = 0;
     std::uint64_t sequence = 0;
+    std::size_t outputs = 1;
 
-    FedPeer(control::Hub& h, const std::string& name, const std::string& incarnation) : hub(h)
+    /// `virtual_time` false: an agent in real time (its hello says so); `extra`: more outputs
+    /// after "value".
+    FedPeer(control::Hub& h, const std::string& name, const std::string& incarnation, bool virtual_time = true,
+            const std::vector<std::string>& extra = {}) :
+      hub(h)
     {
         double value = 0.0;
         control::Agent agent;
         agent.output("value", &value);
+        for (const auto& output : extra)
+        {
+            agent.output(output, &value);
+        }
         agent.complete_schema();
-        connection = hub.agent_connected(control::PeerHello{name, incarnation, agent.schema(), 4}, std::make_shared<SilentLink>());
+        outputs = 1 + extra.size();
+        control::PeerHello hello{name, incarnation, agent.schema(), 4};
+        hello.virtual_time = virtual_time;
+        connection = hub.agent_connected(hello, std::make_shared<SilentLink>());
     }
 
     void sample(SimTime time, double value)
@@ -115,7 +127,7 @@ struct FedPeer
         control::Snapshot s;
         s.time = time;
         s.sequence = ++sequence;
-        s.values = {control::Value{value}};
+        s.values.assign(outputs, control::Value{value}); // every output has the value
         hub.agent_values(connection, std::move(s));
     }
 };
@@ -141,6 +153,13 @@ struct Client
         }
         reply.Clear();
         return stub->GetSnapshot(&context, request, &reply);
+    }
+    grpc::Status peers(v1::ListPeersReply& reply) const
+    {
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + 20s);
+        reply.Clear();
+        return stub->ListPeers(&context, v1::ListPeersRequest{}, &reply);
     }
 };
 
@@ -218,6 +237,47 @@ TEST_CASE(control_server_snapshot_has_the_time_and_the_values_of_the_peers_asked
     const auto failed = client.snapshot({}, reply);
     CHECK(failed.error_code() == grpc::StatusCode::FAILED_PRECONDITION);
     CHECK(failed.error_message() == "the time cannot be read now");
+}
+
+TEST_CASE(control_server_snapshot_does_not_look_at_peers_in_real_time_and_lists_which_they_are)
+{
+    SetTime time;
+    time.set(at(100ms), true);
+    control_grpc::ControlServer server({.listen = "127.0.0.1:0", .time = &time});
+    FedPeer engine(server.hub(), "Engine", "e1", true, {"ecu.connected", "peer.steps", "j1939.can0.frames_sent", "ecu_mode"});
+    FedPeer device(server.hub(), "Device", "d1", false);
+    engine.sample(at(99ms), 1.0);
+    device.sample(at(5000ms), 2.0); // its own clock: later than the simulation's time
+    const Client client(server);
+    v1::GetSnapshotReply reply;
+    CHECK(client.snapshot({}, reply).ok());
+    CHECK(reply.consistent());
+    CHECK_EQ(reply.values_size(), 2);
+    CHECK(reply.values(0).peer() == "Device" && reply.values(0).snapshot().time_ns() == ns(5000ms));
+    CHECK(client.snapshot({"Device", "Engine"}, reply).ok()); // the same with the names given
+    CHECK(reply.consistent());
+    // A peer on the simulation's time with a later sample still makes it not consistent.
+    engine.sample(at(101ms), 3.0);
+    CHECK(client.snapshot({}, reply).ok());
+    CHECK(!reply.consistent());
+
+    // ListPeers says which peer runs on the simulation's time, and which variables vehicle-sil
+    // gives (by their names).
+    v1::ListPeersReply peers;
+    CHECK(client.peers(peers).ok());
+    CHECK_EQ(peers.peers_size(), 2);
+    for (const auto& p : peers.peers())
+    {
+        CHECK(p.virtual_time() == (p.participant() == "Engine"));
+    }
+    const auto& engineInfo = peers.peers(0).participant() == "Engine" ? peers.peers(0) : peers.peers(1);
+    CHECK_EQ(engineInfo.schema_size(), 5);
+    std::string builtin;
+    for (const auto& v : engineInfo.schema())
+    {
+        builtin += v.name() + "=" + (v.builtin() ? "1" : "0") + " ";
+    }
+    CHECK(builtin == "value=0 ecu.connected=1 peer.steps=1 j1939.can0.frames_sent=1 ecu_mode=0 ");
 }
 
 TEST_CASE(control_server_snapshot_reads_the_time_before_the_values)
@@ -418,6 +478,14 @@ TEST_CASE(control_server_snapshots_are_never_older_than_their_time_while_the_sim
     CHECK(moving.load() >= kMoving);
     CHECK(consistent.load() > 0);
     CHECK_EQ(hub_link.stats().late_messages, std::uint64_t{0});
+    // Their hellos said that they run on the simulation's time.
+    v1::ListPeersReply peers;
+    CHECK(client.peers(peers).ok());
+    CHECK_EQ(peers.peers_size(), 2);
+    for (const auto& p : peers.peers())
+    {
+        CHECK(p.virtual_time());
+    }
 
     controller.stop("done");
     engine.stop();

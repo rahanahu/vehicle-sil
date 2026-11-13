@@ -169,10 +169,10 @@ public:
     std::optional<SimTime> wait_paused(std::chrono::milliseconds timeout) override { return commands_.wait_paused(timeout); }
     void stop(const std::string&) override
     {
-        // Decided and written with the time commands (refused once the run is over), then a stop
-        // request as {"command":"stop"} on standard input.
-        apply(command("stop"), false);
-        stop_();
+        // Decided and written with the time commands (refused once the run is over), and, under
+        // their mutex, a stop request as {"command":"stop"} on standard input: an accepted stop
+        // reaches the run before it detaches the commands (not while it ends the participants).
+        apply(command("stop"), false, stop_);
     }
 
     std::vector<std::pair<std::string, std::string>> participants() const override
@@ -226,12 +226,13 @@ private:
         return ns < 0 ? -1 : ceil_ms(ns);
     }
 
-    /// The command through the run's time commands (its event, its rules); a refusal as the
+    /// The command through the run's time commands (its event, its rules; `accepted` as
+    /// TimeCommands::apply() calls it); a refusal as the
     /// exception the server answers with: std::invalid_argument (INVALID_ARGUMENT) for a
     /// `bad_argument` while the run lasts, else std::logic_error (FAILED_PRECONDITION).
-    void apply(const launch::Command& c, bool bad_argument)
+    void apply(const launch::Command& c, bool bad_argument, const std::function<void()>& accepted = {})
     {
-        const launch::Command done = commands_.apply(c, kSource);
+        const launch::Command done = commands_.apply(c, kSource, accepted);
         if (!done.accepted)
         {
             if (bad_argument && commands_.inspect([](SimulationController&, bool) {}) != launch::TimeCommands::Stage::Detached)

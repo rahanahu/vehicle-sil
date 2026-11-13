@@ -321,6 +321,39 @@ bool all_gone(const fs::path& dir, const std::vector<std::string>& pid_files, st
 
 // --- scenarios ---
 
+/// The copies in docs/howto/*.md: the block after each line "<!-- vehicle_sil_launch {command} ... -->"
+/// there is the block after the same line in `docs` or in scenario.md (which this test compares with
+/// the output).
+void howto_copies_agree(const fs::path& docs, const std::string& command)
+{
+    const std::string head = "<!-- vehicle_sil_launch " + command + " ";
+    const fs::path howto = docs.parent_path() / "howto";
+    std::size_t copies = 0;
+    for (const auto& entry : fs::directory_iterator(howto))
+    {
+        if (entry.path().extension() != ".md")
+        {
+            continue;
+        }
+        std::istringstream in(lf(read_text(entry.path())));
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind(head, 0) == 0 && line.size() > 4 && line.compare(line.size() - 4, 4, " -->") == 0)
+            {
+                // The original is in `docs`, or, for a run of a scenario, in scenario.md next to it.
+                const fs::path scenario = docs.parent_path() / "scenario.md";
+                const bool in_docs = lf(read_text(docs)).find(line + "\n") != std::string::npos;
+                const fs::path& original = in_docs ? docs : scenario;
+                expect_text(block_after(entry.path(), line), block_after(original, line),
+                            "docs/howto/" + entry.path().filename().string() + ": the copy after " + line +
+                                " (copy the block after the same line in " + original.filename().string() + ")");
+                ++copies;
+            }
+        }
+    }
+    require(copies > 0, "no copy of a vehicle_sil_launch " + command + " example in " + howto.string());
+}
+
 void docs(const Options& o)
 {
     const fs::path dir = o.example_dir;
@@ -369,6 +402,7 @@ void docs(const Options& o)
     }
     expect_text(timeLine, block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml --speed 4: the line of the time -->"),
                 "the line of the time");
+    howto_copies_agree(o.docs, "run");
 
     const fs::path logs = o.work_dir / "logs";
     const Captured logged = launch(o, {"run", "--json", "--log-dir", shown_path(logs), "simulation.yaml"}, dir);
@@ -661,8 +695,9 @@ void grandchild(const Options& o)
                 "\n"
                 "passed: 0 errors, 1 warning, 0 notes\n",
                 "run with an ECU that leaves a process");
-    require(sleeper > 0, "the ECU started its process (Engine-grandchild.pid)");
-    require(gone, "the process the ECU left has ended");
+    const std::string shown = "\n--- output ---\n" + run.standard_output + "--- errors ---\n" + run.standard_error;
+    require(sleeper > 0, "the ECU started its process (Engine-grandchild.pid)" + shown);
+    require(gone, "the process the ECU left has ended (" + std::to_string(sleeper) + ")" + shown);
 }
 
 void path(const Options& o)
@@ -2896,6 +2931,34 @@ void step_width(const Options& o)
             "the warning:\n" + run.standard_output);
     expect_code(launch(o, {"run", "--strict", "--speed", "2", "sim.yaml"}, dir), 1, "--strict fails on coarse-time-step");
     expect_code(launch(o, {"run", "--strict", "sim.yaml"}, dir), 0, "as fast as possible, a coarse step is nothing to warn of");
+    // With the speed in the file too, check knows it before the run, and run reports it once (as
+    // the check's); run --speed max has no speed to warn of.
+    dir = one_ecu(o, "stop_at_ms: 200\ntime_step_ms: 10\nspeed: 2\n");
+    step_file(dir, "1");
+    const auto warnings = [](const std::string& text) {
+        std::size_t n = 0;
+        for (auto at = text.find("\"code\": \"coarse-time-step\""); at != std::string::npos;
+             at = text.find("\"code\": \"coarse-time-step\"", at + 1))
+        {
+            ++n;
+        }
+        return n;
+    };
+    Captured checked = launch(o, {"check", "--json", "sim.yaml"}, dir);
+    expect_code(checked, 0, "check of a file with speed and a coarse time_step_ms");
+    require(warnings(checked.standard_output) == 1 &&
+                contains(checked.standard_output, "but the ECUs' steps are as small as 1 ms: with a speed, the launcher keeps "
+                                                  "real time only at the controller's steps."),
+            "check warns of the coarse time_step_ms:\n" + checked.standard_output);
+    expect_code(launch(o, {"check", "--strict", "sim.yaml"}, dir), 1, "check --strict fails on coarse-time-step");
+    run = launch(o, {"run", "--json", "sim.yaml"}, dir);
+    expect_code(run, 0, "a run at the file's speed with a coarse time_step_ms");
+    require(warnings(run.standard_output) == 1, "run reports coarse-time-step once:\n" + run.standard_output);
+    run = launch(o, {"run", "--json", "--speed", "max", "sim.yaml"}, dir);
+    expect_code(run, 0, "the same file as fast as possible");
+    require(warnings(run.standard_output) == 0, "as fast as possible, nothing to warn of:\n" + run.standard_output);
+    expect_code(launch(o, {"run", "--strict", "--speed", "max", "sim.yaml"}, dir), 0,
+                "run --strict --speed max of a file with a speed and a coarse time_step_ms");
     // A participant that does not describe itself: with a speed, 1 ms to be safe.
     dir = scenario_dir(o,
                        "vehicle_sil_simulation: 1\nstop_at_ms: 200\nspeed: 4\nnetworks: []\nparticipants:\n"

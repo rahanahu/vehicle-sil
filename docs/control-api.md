@@ -54,7 +54,7 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
 - 止まっている間、`GetTime` は `now` 0、`paused` 真、`running` 偽（まだ始まっていない）、`ended` 偽です。`WaitPaused` はすぐに 0 を返します。事象の `phase` は `waiting` のままで、ランチャーは `standing still before the first step until a resume, step or run_until command ...` の行を書きます。
 - 書いたら、`wait(seq, until="queued")` で全員が受け取ったことを確かめてから進めます。受け取る前に進めると、時刻 0 に間に合わないことがあります。
 - 止まっている時間に、それだけの上限はありません。`start_timeout_ms` は、止まるまで（全員がそろい、変数を出す ECU とつながるまで）と、進んだ後（全員が最初のステップに着くまで）にそれぞれ効き、止まっている間は数えません。止まるまでか進んだ後に participant が固まると、`simulation-start` の誤りになります（着いていない participant と状態を文言に挙げます）。
-- `--timeout-ms` は、止まっている時間も数えます（一時停止している時間を数えるのと同じです）。クライアントが来ないまま `--timeout-ms` が過ぎると、時刻 0 のステップを走らせてから中断し、誤り `timeout` になります（文言に、最初のステップの前に止まっていたことを書きます）。`--timeout-ms` がなければ、止める要求が来るまで待ちます。
+- `--timeout-ms` は、止まっている時間も数えます（一時停止している時間を数えるのと同じです）。クライアントが来ないまま `--timeout-ms` が過ぎると、時刻 0 のステップを走らせてから中断し、誤り `timeout` になります（文言に、最初のステップの前に止まっていたことを書きます）。進めた後に過ぎたときも、文言に、最初のステップの前に止まっていた時間を書きます。`--timeout-ms` がなければ、止める要求が来るまで待ちます。
 - 止める要求（Ctrl+C、`stop` の命令、標準入力の終わり、クライアントの `Stop`）でも止まるのをやめます。そのときは、時刻 0 のステップを 1 つ走らせてから止まります。待っている間に必須の participant が抜けると（プロセスが終わったなど）、すぐに待つのをやめて、始まらなかった実行として終わります（`ended-before-start`）。
 - `pause` と `speed` では進みません（`speed` は、進んだ後の速さになります）。時刻を指定した `pause`（0 より後）は、`run_until` と同じく進みます。`run_until` 0 を送ると、時刻 0 のステップを走らせて 0 で止まります（`--control` なしの `--start-paused` と同じ止まり方）。
 - 止まるより前（照合や、participant がそろうのを待つ間）に受け付けた命令も効きます。止まるのは、止まる時点で 0 で止まることになっているときだけです。`resume` を受け付けていれば止まらずに始まり、`step` や `run_until` を受け付けていれば、止まらずに 0 から進んでその時刻で止まります（止まってから受けたのと同じ結果）。その後に `pause` を受け付けていれば、また止まります。標準入力から来た命令も同じです。
@@ -156,7 +156,7 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
 - `write()` は自動では送り直しません。応答を受け取る前に接続が切れた書き込みは、受け付けられているかもしれません（同じ書き込みを送り直すと、別の操作になります）。
 - 複数のクライアントが同じ変数に同じ時刻で書くと、残る値は Server に届いた順で決まります。
 - 時間の状態の購読（`watch(time=True)`）は約 100 ms ごとの最新で、短い一時停止は現れないことがあります。止まるのを待つには `c.sim.wait_paused()` を使います。
-- `peers()` と `watch()` は、同じ Peer を同じ内容で返します。`has_agent` は Agent がつながったことがあるか（既定は偽）、`simulation_state` は SIL Kit の状態です。`TimeState.running` が偽のとき、`ended` が真なら終わっていて、偽ならまだ始まっていません。
+- `peers()` と `watch()` は、同じ Peer を同じ内容で返します。`has_agent` は Agent がつながったことがあるか（既定は偽）、`simulation_state` は SIL Kit の状態、`virtual_time` は Agent がシミュレーションの時刻で動くか（Agent の hello のとおり。偽は実時間の Peer か、Agent がない）です。この欄を持たない前の版の Server では、どの Peer も偽になります。変数（`schema` の各要素）の `builtin` は、vehicle-sil が付けた変数か（名前が `ecu.`、`peer.`、`j1939.` で始まる。Server が名前で決めます）で、偽はアプリが宣言した変数です。アプリが `j1939.` で始まる名前の変数を宣言すると、それも真になります。`TimeState.running` が偽のとき、`ended` が真なら終わっていて、偽ならまだ始まっていません。
 - シミュレーションの状態の購読（`watch(simulation=True)`）は `SimulationState` を返します。必須の participant ごとの SIL Kit の状態（`participants`）、失敗した participant と理由（`failed_participant`、`failure_reason`）、終わったか（`ended`）が入ります。Server が状態を読めなかったときは、前の値に理由（`error`）が付きます。クライアントが遅くて Server が途中の状態を持ちきれなかったときは、捨てた数が gRPC の `Update.dropped` に入ります（Python の `watch()` はこの数を返しません。失敗と終わりは後の状態に残るので失われません）。`peers()` も、読めなかったときは、呼ぶたびに `ControlWarning` で知らせます（同じ箇所からの 2 回目以降も出します。出すか、例外にするか、無視するかは利用者の警告フィルターのとおりで、ライブラリはフィルターを変えません）。
 
 ### 時刻と値をまとめて読む（`snapshot()`）
@@ -177,10 +177,10 @@ if snap.consistent:                       # 値は、止まっている時刻 sn
 - 前提と限り:
   - この約束は、ECU が値をステップの中から送っているかぎりのものです（`ecu_main` で作った ECU はそうします）。破れると、ランチャーが警告 `control-link-late-values` を出します。そのときは `consistent` が真でも、値が欠けていることがあります。
   - 「ステップの値」は、その時刻より前に読んだ最後のサンプルです（Agent が読むのは `sample_period` ごとで、ステップより長いことがあります）。
-  - 実時間の Peer（シミュレーションの時刻で動かない Peer）の値には、約束がありません。どの Peer が実時間かは、この API からはわかりません。
+  - 実時間の Peer（シミュレーションの時刻で動かない Peer。`peers()` の `virtual_time` が偽）の値には、約束がありません。`consistent` は、その値を見ずに決めます。
   - 切れた Peer の最後の値は、そのまま入っています。つながっているかは `c.peers()` で見ます。
   - 止まった直後は、同じ時刻でも、ちょうどその時刻のステップの値が届く前と後の 2 通りの応答がありえます（どちらも `consistent` は真）。届いたかどうかは `Values.time` でわかります。
-- `consistent` が偽: 動いている、終わっている、呼び出しの間に進んで後のステップの値が入った、Server が時間を操作しない（`--required` のない単独の Control Server）、のどれかです。シミュレーションの時刻で動かない Peer（実時間の Peer）の値が `time.now` より後の時刻を持つときも偽です（その Peer を除いて呼べば、ほかの Peer について判定できます）。値と時刻は、偽でも入っています。
+- `consistent` が偽: 動いている、終わっている、呼び出しの間に進んで後のステップの値が入った、Server が時間を操作しない（`--required` のない単独の Control Server）、のどれかです。値と時刻は、偽でも入っています。
 - `values` には、値を持つ Peer だけが入ります。まだ値のない Peer、Agent のない participant、知らない名前は入りません。gRPC の応答（`GetSnapshotReply.values`）は、名前を挙げたときは挙げた順に 1 つずつ（同じ名前は 1 回）、挙げなければ Agent を持つ Peer を名前の順に並べ、値のない Peer は `snapshot` なし、Agent のない名前は `incarnation` も空です。値の並びは、その `incarnation` のスキーマ（`ListPeers`）の順です。
 - 役割は viewer で呼べます。1 回に挙げられる名前は 1024 個までです（`INVALID_ARGUMENT`）。応答が 1 つのメッセージの上限（4 MiB）を超えるときは `RESOURCE_EXHAUSTED` で、文言のとおり、Peer を分けて呼びます（分けた呼び出しどうしの間に約束はありません）。
 - この呼び出しを持たない前の版の Server では、`ControlError`（`code` は `UNIMPLEMENTED`）になります。そのときは `sim.time()` と `values()` を使います（2 つの間に約束はありません）。

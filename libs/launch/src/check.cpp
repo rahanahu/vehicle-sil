@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/run.hpp"
 
 #include "check_format.hpp"
 
@@ -1603,6 +1604,16 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     }
     auto compared = check_participants(*report.config, report.participants, version());
     report.findings.insert(report.findings.end(), compared.begin(), compared.end());
+    // A run at the file's speed with the file's time_step_ms: known before it runs.
+    if (report.config->speed && report.config->time_step_ms)
+    {
+        RunTiming timing = detail::plan_time_step(*report.config, report, report.config->speed);
+        timing.speed = report.config->speed;
+        if (auto f = detail::coarse_time_step(timing))
+        {
+            report.findings.push_back(std::move(*f));
+        }
+    }
     if (!options.scenario.empty())
     {
         check_scenario_file(report, options);

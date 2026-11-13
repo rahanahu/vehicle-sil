@@ -375,7 +375,14 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                      ? std::string("it stood still before its first step all that time, waiting for a resume, step or "
                                    "run_until command (--start-paused with a control server): no client let it go on")
                      : std::string("a participant may hang in a step (the lines above show what the participants "
-                                   "wrote); if it is only slow, raise --timeout-ms")),
+                                   "wrote); if it is only slow, raise --timeout-ms") +
+                           (outcome.held_before_start_ms
+                                ? ". Those " + std::to_string(outcome.timeout_ms.value_or(0)) +
+                                      " ms count from when the run began to stand still before its first step "
+                                      "(--start-paused with a control server), and " +
+                                      std::to_string(*outcome.held_before_start_ms) +
+                                      " ms of them passed before a client let it go on: allow for that time in --timeout-ms"
+                                : std::string{})),
             nullptr);
     }
     else if (outcome.simulation == SimulationEnd::Aborted && outcome.failed_participant.empty() &&
@@ -415,25 +422,12 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                 "out one at a time (--disable <name>) and compare",
             nullptr);
     }
-    // Only where a speed counts: a run as fast as possible keeps no real time anyway.
-    if (const RunTiming& t = outcome.timing; (t.speed || t.paced_steps > 0) && t.step_delay_ns.value_or(0) > 0 &&
-                                             t.fine_step_ms > 0 && t.fine_step_ms < t.time_step_ms)
+    if (!outcome.timing.coarse_step_checked)
     {
-        const std::string delay = millis_text(*t.step_delay_ns);
-        add(Severity::Warning, "coarse-time-step",
-            "the launcher's controller steps every " + std::to_string(t.time_step_ms) + " ms (" +
-                (t.time_step_written ? "time_step_ms" : "the default of a run that starts without a speed") + "), but " +
-                (t.ecu_step_ns && *t.ecu_step_ns < t.time_step_ms * kNanosPerMilli
-                     ? "the ECUs' steps are as small as " + millis_text(*t.ecu_step_ns) + " ms"
-                     : std::string("not every ECU step starts at one of its steps")) +
-                ": with a speed, the launcher keeps real time only at the controller's steps. An ECU step that starts "
-                "between two of them runs at the later one, up to " +
-                delay + " ms after the real time it stands for (never before it), together with the other steps in "
-                        "between; a device attached in real time gets the messages of those steps up to " +
-                delay + " ms late and in a burst. Write time_step_ms: " + std::to_string(t.fine_step_ms) +
-                (t.time_step_written ? " (or leave time_step_ms out: with a speed, the default is that)"
-                                     : " (or give the speed from the start, with speed or run --speed: the default is then that)"),
-            nullptr);
+        if (auto f = detail::coarse_time_step(outcome.timing))
+        {
+            out.push_back(std::move(*f));
+        }
     }
     if (outcome.scenario)
     {
@@ -585,6 +579,30 @@ RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckRepo
         }
     }
     return t;
+}
+
+std::optional<Finding> detail::coarse_time_step(const RunTiming& t)
+{
+    // Only where a speed counts: a run as fast as possible keeps no real time anyway.
+    if (!((t.speed || t.paced_steps > 0) && t.step_delay_ns.value_or(0) > 0 && t.fine_step_ms > 0 &&
+          t.fine_step_ms < t.time_step_ms))
+    {
+        return std::nullopt;
+    }
+    const std::string delay = millis_text(*t.step_delay_ns);
+    return Finding{Severity::Warning, "coarse-time-step",
+            "the launcher's controller steps every " + std::to_string(t.time_step_ms) + " ms (" +
+                (t.time_step_written ? "time_step_ms" : "the default of a run that starts without a speed") + "), but " +
+                (t.ecu_step_ns && *t.ecu_step_ns < t.time_step_ms * kNanosPerMilli
+                     ? "the ECUs' steps are as small as " + millis_text(*t.ecu_step_ns) + " ms"
+                     : std::string("not every ECU step starts at one of its steps")) +
+                ": with a speed, the launcher keeps real time only at the controller's steps. An ECU step that starts "
+                "between two of them runs at the later one, up to " +
+                delay + " ms after the real time it stands for (never before it), together with the other steps in "
+                        "between; a device attached in real time gets the messages of those steps up to " +
+                delay + " ms late and in a burst. Write time_step_ms: " + std::to_string(t.fine_step_ms) +
+                (t.time_step_written ? " (or leave time_step_ms out: with a speed, the default is that)"
+                                     : " (or give the speed from the start, with speed or run --speed: the default is then that)"), 0, "", ""};
 }
 
 std::size_t RunReport::errors() const { return check.errors() + count(findings, Severity::Error); }
@@ -1131,7 +1149,9 @@ TimeCommands::TimeCommands(bool start_paused, EventStream* events) : state_(std:
 
 TimeCommands::~TimeCommands() = default;
 
-Command TimeCommands::apply(const Command& command, std::string_view source)
+Command TimeCommands::apply(const Command& command, std::string_view source) { return apply(command, source, {}); }
+
+Command TimeCommands::apply(const Command& command, std::string_view source, const std::function<void()>& accepted)
 {
     State& s = *state_;
     const std::lock_guard lock(s.mutex);
@@ -1197,6 +1217,10 @@ Command TimeCommands::apply(const Command& command, std::string_view source)
     if (!out.accepted)
     {
         return out;
+    }
+    if (accepted)
+    {
+        accepted();
     }
     SimulationController* c = s.controller;
     // A stop is the caller's (it asks the run to stop): only its event and its refusal are here,
@@ -1467,6 +1491,8 @@ public:
         // With a scenario the step does not follow the speed: the same steps at every speed.
         outcome_.timing = detail::plan_time_step(config, check, speed, scenario_ != nullptr);
         outcome_.timing.speed = speed;
+        outcome_.timing.coarse_step_checked =
+            std::any_of(check.findings.begin(), check.findings.end(), [](const Finding& f) { return f.code == "coarse-time-step"; });
         outcome_.timing.late_tolerance_ms = late_tolerance_ms(config);
         if (options.time_commands == nullptr)
         {
@@ -1610,12 +1636,20 @@ public:
                 note_late_values(*transport);
             }
         }
+        // No time command from here on, also if the simulation did not start: a stop accepted from
+        // now on would only cut short the end of the participants.
+        commands().detach();
+        if (!ran)
+        {
+            // As watch() does: an interrupt from here on comes while the participants end (a stop
+            // accepted before the detach counts as one of the run).
+            interrupts_at_end_ = interrupts();
+        }
         // What is known for good when the simulation is over (why it ended), before the
         // participants end.
         publish_findings(false);
         event([](EventStream& e) { e.phase(Phase::Stopping); });
         end_children(ran || before_start_failed_);
-        commands().detach();
         // The agents have said their last word (their processes have ended); what is still open
         // in the hub is settled here.
         transport.reset();
@@ -1762,6 +1796,7 @@ private:
             };
             if (commands().hold_before_start(give_up, std::chrono::milliseconds(20), on_hold) != TimeCommands::Hold::None)
             {
+                hold_ms_.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count());
                 // From here on, the participants have start_timeout_ms to get to their first step.
                 const std::chrono::milliseconds limit(config_.start_timeout_ms);
                 set_start_limit(std::chrono::steady_clock::now() + limit, limit, true);
@@ -2437,6 +2472,10 @@ private:
         {
             // From the start, or from the hold before the first step (it counts as standing still).
             const std::int64_t held = hold_began_ns_.load();
+            if (const std::int64_t heldMs = hold_ms_.load(); heldMs >= 0)
+            {
+                outcome_.held_before_start_ms = heldMs;
+            }
             watch.deadline = (held >= 0 ? std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(held))
                                         : std::chrono::steady_clock::now()) +
                              *options_.timeout;
@@ -2913,6 +2952,7 @@ private:
     bool start_limit_after_hold_ = false;
     /// When the hold began (steady-clock nanoseconds), or -1 if there was none.
     std::atomic<std::int64_t> hold_began_ns_{-1};
+    std::atomic<std::int64_t> hold_ms_{-1}; ///< how long the hold before the first step lasted (-1: none)
     /// --timeout-ms ended the hold.
     std::atomic<bool> hold_timed_out_{false};
     std::unique_ptr<TimeCommands> own_commands_; ///< without RunOptions::time_commands
@@ -2953,6 +2993,11 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
     report.strict = options.check.strict;
     event([](EventStream& e) { e.phase(Phase::Checking); });
     report.check = check_file(path, shown_as, options.check);
+    if (options.speed)
+    {
+        // The check's coarse-time-step is for the file's speed: the run reports its own.
+        std::erase_if(report.check.findings, [](const Finding& f) { return f.code == "coarse-time-step"; });
+    }
     event([&report](EventStream& e) { e.check(report.check); });
     if (!report.check.config || !report.check.passed())
     {

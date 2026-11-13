@@ -231,6 +231,27 @@ inline long read_pid(const std::string& pid_file, std::chrono::milliseconds time
     }
 }
 
+/// Waits up to `timeout` until `pid_file` holds a process ID (the process of spawn_sleeper() has
+/// written it); true if it does. Unlike read_pid(), it keeps nothing open.
+inline bool pid_written(const std::string& pid_file, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (true)
+    {
+        std::ifstream in(pid_file);
+        long pid = 0;
+        if (in >> pid && pid > 0)
+        {
+            return true;
+        }
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
 /// Waits up to `timeout` for the process `pid` to be gone; true if it is.
 inline bool wait_gone(long pid, std::chrono::milliseconds timeout)
 {

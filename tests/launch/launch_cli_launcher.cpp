@@ -24,6 +24,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -180,6 +181,34 @@ std::string shown_as(std::string text, const fs::path& path, const std::string& 
     return text;
 }
 
+/// The copies in docs/howto/*.md: the block after each line "<!-- vehicle_sil_launch {command} ... -->"
+/// there is the block after the same line in `docs` (which this test compares with the output).
+void howto_copies_agree(const fs::path& docs, const std::string& command)
+{
+    const std::string head = "<!-- vehicle_sil_launch " + command + " ";
+    const fs::path howto = docs.parent_path() / "howto";
+    std::size_t copies = 0;
+    for (const auto& entry : fs::directory_iterator(howto))
+    {
+        if (entry.path().extension() != ".md")
+        {
+            continue;
+        }
+        std::istringstream in(lf(read_file(entry.path())));
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind(head, 0) == 0 && line.size() > 4 && line.compare(line.size() - 4, 4, " -->") == 0)
+            {
+                expect_text(block_after(entry.path(), line), block_after(docs, line),
+                            "docs/howto/" + entry.path().filename().string() + ": the copy after " + line +
+                                " (copy the block after the same line in " + docs.filename().string() + ")");
+                ++copies;
+            }
+        }
+    }
+    require(copies > 0, "no copy of a vehicle_sil_launch " + command + " example in " + howto.string());
+}
+
 void docs(const Options& o)
 {
     // The example file is the one the docs show.
@@ -234,6 +263,7 @@ void docs(const Options& o)
     }
     const Captured wrong = launch(o, {"version", "--strict"});
     expect_code(wrong, 4, "version --strict");
+    howto_copies_agree(o.docs, "check");
 }
 
 /// What vehicle_sil_launch wrote, with the helper's path as "<helper>" and the work directory as

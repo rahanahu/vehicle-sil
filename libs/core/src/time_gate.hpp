@@ -62,7 +62,7 @@ private:
     };
 
     [[nodiscard]] Wall::time_point wall_of(SimTime t) const;
-    void count(Wall::duration lateness);
+    void count(TimeState& s, Wall::duration lateness) const;
     void set_paused(bool paused, Wall::time_point wall);
     void rebase(Wall::time_point wall);
     void pause_now_or_next(Wall::time_point wall);
@@ -81,6 +81,9 @@ private:
     Wall::time_point paused_since_{};
     std::optional<Wall::time_point> first_; ///< when the first step began
     Wall::duration ran_{};         ///< running time up to the beginning of the step at state_.now
+    /// As fast as possible: what the next step was late by when the speed became max (counted
+    /// when it begins; a speed set before that keeps it as the step's lateness).
+    std::optional<Wall::duration> unbegun_lateness_;
     bool ended_ = false;
 };
 

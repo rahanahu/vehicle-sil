@@ -1131,6 +1131,11 @@ TEST_CASE(a_real_time_peer_is_a_peer_too_and_a_restarted_one_replaces_the_old)
         if (peer.participant == "Real")
         {
             first_incarnation = peer.incarnation;
+            CHECK(!peer.virtual_time); // as its hello said
+        }
+        else
+        {
+            CHECK(peer.virtual_time);
         }
     }
     CHECK_EQ(first_incarnation.size(), std::size_t{16});

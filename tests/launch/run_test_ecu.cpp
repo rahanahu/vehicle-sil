@@ -22,7 +22,7 @@
 //   ignore-stop               a stop request is ignored
 //   grandchild <helper>     in its first step, starts <helper> (tests/process/process_helper.cpp)
 //                           as a process that sleeps, writes "<name>-grandchild.pid", and is not
-//                           ended with the ECU
+//                           ended with the ECU; the step waits until the file is written
 //   variables               declares the input "level", the parameter "gain", and the outputs
 //                           "gain_at_0" (the parameter as the step at 0 saw it) and "ticks" (the
 //                           number of its 10 ms steps so far)
@@ -188,6 +188,13 @@ public:
             if (!grandchild_.empty())
             {
                 vehicle_sil::test::spawn_sleeper(grandchild_, name_ + "-grandchild.pid");
+                // Before the run goes on: as fast as possible, the simulation (and with it this
+                // process) may end before a slow start of the new process got to write its file.
+                if (!vehicle_sil::test::pid_written(name_ + "-grandchild.pid", std::chrono::seconds(30)))
+                {
+                    std::fprintf(stderr, "test ECU: the process it started did not write %s-grandchild.pid within 30 s\n",
+                                 name_.c_str());
+                }
             }
             if (exit_after_ >= 0)
             {

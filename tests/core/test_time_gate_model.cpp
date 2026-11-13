@@ -356,6 +356,18 @@ TEST_CASE(time_gate_model_a_change_of_speed_keeps_the_lateness_of_a_stall)
     CHECK_EQ(max.run_step(3), 403);
     check(max.gate.state(w(403)), {.paced = 11, .late = 1, .max_late_ms = 190, .slipped_ms = 190, .running_ms = 403});
 
+    // As fast as possible at 300 ms and back to speed 1 at 350 ms while the step at 110 ms has
+    // still not begun: it is one late step, 190 ms late at 300 ms and 50 ms more from 350 ms on
+    // (as fast as possible, it is due at once: the 50 ms in between are not lateness).
+    Example back = e;
+    back.gate.set_speed(std::nullopt, w(300));
+    back.gate.set_speed(1.0, w(350));
+    check(back.gate.state(w(350)), {.paced = 11, .late = 1, .max_late_ms = 190, .slipped_ms = 190, .running_ms = 350});
+    CHECK_EQ(back.run_step(300), 400);
+    check(back.gate.state(w(400)), {.paced = 11, .late = 1, .max_late_ms = 240, .slipped_ms = 240, .running_ms = 400});
+    // From there at speed 1 again: a step every 10 ms.
+    CHECK_EQ(back.run_step(), 410);
+
     // A step held for pacing keeps the part of its wait that has passed: the step at 100 ms,
     // held from 100 to 110 ms, gets speed 0.5 at 104 ms: 6 ms of simulation are left, 12 ms.
     Example held(1.0, 10ms);

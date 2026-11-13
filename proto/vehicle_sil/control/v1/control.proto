@@ -49,6 +49,11 @@ message VariableInfo {
   optional double step = 7;
   string description = 8;
   repeated EnumItem items = 9;
+  // vehicle-sil gives it to the ECU, the ECU's application did not declare it: the server decides
+  // by the name, which starts with "ecu." (every ECU's, such as "ecu.connected"), "peer." or
+  // "j1939." (a Peer's monitoring outputs). An application variable whose name starts with
+  // "j1939." is taken for one too.
+  bool builtin = 10;
 }
 
 message Snapshot {
@@ -103,6 +108,11 @@ message PeerInfo {
   PeerStatus status = 5;
   bool has_agent = 6;          // an agent has connected for it (else it is known from SIL Kit only)
   string simulation_state = 7; // its SIL Kit lifecycle state as the server sees it ("" if unknown)
+  // Its agent runs on the simulation's time (its steps are those of the time synchronisation, as
+  // its hello says); false: in real time, or no agent (has_agent false). GetSnapshotReply.consistent
+  // looks only at the peers with virtual_time. An earlier server without this field leaves it
+  // false for every peer.
+  bool virtual_time = 8;
 }
 
 message ListPeersRequest {}
@@ -283,16 +293,16 @@ message GetSnapshotReply {
   // the launcher reports the warning control-link-late-values and this does not hold). "Every
   // sample of a step" means the latest sample taken before that time: an agent samples every
   // sample period, which may be longer than its step. Whether a peer runs on the simulation's
-  // time cannot be told from this interface: for one that does not, nothing is promised.
+  // time: PeerInfo.virtual_time (ListPeers, Watch). For one that does not, nothing is promised.
   // - Always: the values are not older than the time. Every sample of a step that started before
   //   time.now_ns is in them. They may be newer.
-  // - consistent: the time stood still at time.now_ns (time.paused) and no entry has a sample of
-  //   a step after time.now_ns. The values are then those of that moment: every step before
+  // - consistent: the time stood still at time.now_ns (time.paused) and no entry of a peer on the
+  //   simulation's time has a sample of a step after time.now_ns. The values are then those of that moment: every step before
   //   now_ns, none after it. A step that starts exactly at now_ns may or may not be in them yet
   //   (see Snapshot.time_ns; its sample arrives while the time stands still).
   // Not consistent: the simulation runs or has ended, it went on during the call and a sample of
-  // a later step came in, the server does not control the time, or a peer's samples carry
-  // another clock (a peer that does not run on the simulation's time).
+  // a later step came in, or the server does not control the time. The values of a peer that
+  // does not run on the simulation's time are not looked at (they carry another clock).
   bool consistent = 3;
 }
 message PauseRequest {

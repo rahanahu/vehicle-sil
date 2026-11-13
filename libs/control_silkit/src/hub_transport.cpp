@@ -267,6 +267,7 @@ struct HubTransport::State
         peer.incarnation = hex(hello.session);
         peer.schema = std::move(hello.schema);
         peer.max_pending = hello.max_pending;
+        peer.virtual_time = hello.virtual_time;
         std::shared_ptr<Link> replaced;
         try
         {
