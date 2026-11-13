@@ -680,7 +680,7 @@ TEST_CASE(the_json_report)
                "    {\n"
                "      \"name\": \"Engine\",\n"
                "      \"required\": true,\n"
-               "      \"enabled\": true,\n"
+               "      \"enabled\": true,\n      \"manual\": false,\n"
                "      \"ended\": \"exited\",\n"
                "      \"exit_code\": 0,\n"
                "      \"signal\": null,\n"
@@ -696,7 +696,7 @@ TEST_CASE(the_json_report)
                "    {\n"
                "      \"name\": \"Brake\",\n"
                "      \"required\": true,\n"
-               "      \"enabled\": true,\n"
+               "      \"enabled\": true,\n      \"manual\": false,\n"
                "      \"ended\": \"killed\",\n"
                "      \"exit_code\": null,\n"
                "      \"signal\": null,\n"
@@ -1165,6 +1165,23 @@ TEST_CASE(the_ecu_waits_for_the_start_longer_than_the_launcher)
     CHECK_EQ(launch::detail::ecu_start_timeout_ms(c), kMaxMillis);
 }
 
+TEST_CASE(the_command_to_start_a_participant_by_hand_is_quoted_for_the_shell)
+{
+    using vehicle_sil::launch::detail::shell_command_line;
+    const std::vector<std::string> args{"--name", "Engine", "--registry-uri", "silkit://127.0.0.1:8500", "", "a b",
+                                        "it's", "say \"hi\"", "C:\\dir\\", "%PATH%", "R&D"};
+#ifdef _WIN32
+    // As CommandLineToArgvW reads it back: backslashes double only before a quote.
+    check_text(shell_command_line("C:\\My ECUs\\engine.exe", args) + "\n",
+               "\"C:\\My ECUs\\engine.exe\" --name Engine --registry-uri silkit://127.0.0.1:8500 \"\" \"a b\" it's "
+               "\"say \\\"hi\\\"\" C:\\dir\\ %PATH% \"R&D\"\n");
+#else
+    check_text(shell_command_line("/opt/my ecus/engine", args) + "\n",
+               "'/opt/my ecus/engine' --name Engine --registry-uri silkit://127.0.0.1:8500 '' 'a b' 'it'\\''s' "
+               "'say \"hi\"' 'C:\\dir\\' %PATH% 'R&D'\n");
+#endif
+}
+
 TEST_CASE(log_names_avoid_windows_devices_and_the_json_names_the_log)
 {
     CHECK(launch::detail::log_name("NUL") == "NUL_");
@@ -1217,7 +1234,7 @@ TEST_CASE(a_disabled_participant_is_shown_as_not_started_and_is_no_finding)
                                                 "\n"
                                                 "passed: 0 errors, 0 warnings, 0 notes\n");
     const std::string json = format_run_json(r);
-    CHECK(json.find("      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": false,\n      \"ended\": "
+    CHECK(json.find("      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n      \"ended\": "
                     "\"not_started\",\n      \"exit_code\": null,\n      \"signal\": null,\n      \"left_processes\": false,\n"
                     "      \"log\": null,\n      \"control_link\": {\n        \"state\": \"none\",\n        \"variables\": null,\n        \"version\": null,\n        \"late_messages\": 0\n      }\n") != std::string::npos);
 }

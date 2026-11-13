@@ -75,6 +75,11 @@
 //   scenario_failures  a wait that times out, a simulation that stops before the scenario is over, an
 //                ECU that fails in the middle, a scenario with errors (nothing is started), the
 //                command line
+//   manual       participants started by hand (--manual, manual: true), started by this test from
+//                the command the launcher writes, as a person would copy it: the example and its
+//                lines in docs/simulation-config.md; one started long after start_timeout_ms and
+//                standing still in a step (as in a debugger); one that fails while the simulation
+//                runs (the events); a stop before the start, which ends one that has joined
 #include "launcher_support.hpp"
 #include "spawn_sleeper.hpp"
 
@@ -99,8 +104,15 @@
 #include <thread>
 #include <vector>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <shellapi.h>
+#include <tlhelp32.h>
+#include <winsock2.h>
+#else
+#include <arpa/inet.h>
 #include <cerrno>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <csignal>
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -436,7 +448,7 @@ void check(const Options& o)
                 "Logger       -     not checked (describe: false)\n"
                 "\n"
                 "error: sim.yaml:7: participant 'Logger': unknown key 'requried': did you mean 'required'? (the keys "
-                "here: name, command, step_ms, describe, required, enabled)\n"
+                "here: name, command, step_ms, describe, required, enabled, manual)\n"
                 "note: sim.yaml:4: participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot "
                 "compare its name, step and networks with this file\n"
                 "note: sim.yaml:5: participant 'Logger': the command has no {registry_uri}, so the executable is not told "
@@ -1284,13 +1296,13 @@ void disabled(const Options& o)
     const Captured swapped = launch(o, {"run", "--json", "--disable", "Engine", "--enable", "Brake", "sim.yaml"}, dir);
     expect_code(swapped, 0, "run --disable Engine --enable Brake");
     const std::string json = swapped.standard_output;
-    require(contains(json, "      \"name\": \"Engine\",\n      \"required\": true,\n      \"enabled\": false,\n"
+    require(contains(json, "      \"name\": \"Engine\",\n      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n"
                            "      \"ended\": \"not_started\",\n      \"exit_code\": null,\n      \"signal\": null,\n"
                            "      \"left_processes\": false,\n      \"log\": null,\n      \"control_link\": {\n"
                            "        \"state\": \"none\",\n") &&
-                contains(json, "      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": true,\n"
+                contains(json, "      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": true,\n      \"manual\": false,\n"
                                "      \"ended\": \"exited\",\n      \"exit_code\": 0,\n") &&
-                contains(json, "        \"enabled\": false,\n        \"step_ms\": null,\n        \"status\": \"disabled\",\n"),
+                contains(json, "        \"enabled\": false,\n        \"manual\": false,\n        \"step_ms\": null,\n        \"status\": \"disabled\",\n"),
             "the run's JSON for --disable Engine --enable Brake:\n" + json);
     require(fs::exists(dir / "Brake.pid") && !fs::exists(dir / "Engine.pid"), "Brake ran, Engine did not");
 
@@ -1327,7 +1339,7 @@ void disabled(const Options& o)
     expect_code(crashed, 1, "run with a crashing ECU and a disabled one");
     require(contains(crashed.standard_output, "  \"result\": \"failed\",\n") &&
                 contains(crashed.standard_output, "      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": "
-                                                  "false,\n      \"ended\": \"not_started\",\n      \"exit_code\": null,\n"
+                                                  "false,\n      \"manual\": false,\n      \"ended\": \"not_started\",\n      \"exit_code\": null,\n"
                                                   "      \"signal\": null,\n      \"left_processes\": false,\n") &&
                 !contains(crashed.standard_output.substr(0, crashed.standard_output.find("  \"check\": {")),
                           "\"participant\": \"Brake\""),
@@ -1768,6 +1780,16 @@ public:
 
     void write(const std::string& text) { require(process_->write_input(text), "cannot write to the launcher"); }
 
+    /// Waits until its standard error makes `done` true, or it has ended; returns the standard error.
+    template <class Done>
+    std::string wait_for_error(Done done)
+    {
+        std::unique_lock lock(mutex_);
+        // Only a last line against a hang.
+        static_cast<void>(changed_.wait_for(lock, 120s, [&] { return done(err_) || process_->poll().has_value(); }));
+        return err_;
+    }
+
     /// Waits for its end and reads the rest of its output; its status and its lines, unchecked.
     std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::vector<std::string>> finish_unchecked(
         std::chrono::milliseconds timeout = 120s)
@@ -1851,7 +1873,7 @@ void expect_stopped_in_order(const std::optional<vehicle_sil::process::ExitStatu
             "the result of a run stopped by " + by + ":\n" + result);
     for (const std::string name : {"Engine", "Brake"})
     {
-        require(contains(result, "{\"name\":\"" + name + "\",\"required\":true,\"enabled\":true,\"ended\":\"exited\","
+        require(contains(result, "{\"name\":\"" + name + "\",\"required\":true,\"enabled\":true,\"manual\":false,\"ended\":\"exited\","
                                                           "\"exit_code\":0,"),
                 name + " ended by itself with 0:\n" + result);
     }
@@ -3523,6 +3545,434 @@ void scenario_failures(const Options& o)
     }
 }
 
+// --- participants started by hand ---
+
+/// Where and how the launcher's lines on `err` say to start `name` by hand: (the directory, the
+/// command line, the two lines); empty if they are not there yet.
+struct HandCommand
+{
+    std::string directory;
+    std::string line;
+    std::string text;
+};
+
+HandCommand hand_command(const std::string& err, const std::string& name)
+{
+    const auto at = err.find("[vehicle_sil_launch] not starting " + name + ": ");
+    const auto end = at == std::string::npos ? at : err.find('\n', at);
+    const auto next = end == std::string::npos ? end : err.find('\n', end + 1);
+    if (next == std::string::npos)
+    {
+        return {};
+    }
+    const std::string first = err.substr(at, end - at);
+    const std::string second = err.substr(end + 1, next - end - 1);
+    const std::string in = ". In the directory ";
+    const std::string tail = ", run:";
+    const std::string tag = "[vehicle_sil_launch]   ";
+    const auto from = first.rfind(in);
+    require(from != std::string::npos && first.size() > tail.size() &&
+                first.compare(first.size() - tail.size(), tail.size(), tail) == 0 && second.rfind(tag, 0) == 0,
+            "the lines about " + name + " say where and how to start it:\n" + first + "\n" + second);
+    return {first.substr(from + in.size(), first.size() - tail.size() - from - in.size()), second.substr(tag.size()),
+            first + "\n" + second + "\n"};
+}
+
+/// A participant started from the line the launcher wrote, as a person who copies it would: in
+/// its directory; on POSIX through sh, on Windows split as the C runtimes split a command line.
+class ByHand
+{
+public:
+    ByHand(const std::string& line, const std::string& directory)
+    {
+        vehicle_sil::process::ProcessOptions options;
+        options.working_directory = vehicle_sil::process::path_from_utf8(directory);
+        options.on_line = [this](vehicle_sil::process::Stream, std::string_view text) {
+            const std::lock_guard lock(mutex_);
+            output_ += std::string(text) + "\n";
+        };
+        log("starting by hand in " + directory + ": " + line);
+#ifdef _WIN32
+        const int size = MultiByteToWideChar(CP_UTF8, 0, line.c_str(), -1, nullptr, 0);
+        std::wstring wide(static_cast<std::size_t>(size), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, line.c_str(), -1, wide.data(), size);
+        int count = 0;
+        wchar_t** words = CommandLineToArgvW(wide.c_str(), &count);
+        require(words != nullptr && count > 0, "the command line cannot be split: " + line);
+        std::vector<std::string> args;
+        for (int i = 0; i < count; ++i)
+        {
+            const int n = WideCharToMultiByte(CP_UTF8, 0, words[i], -1, nullptr, 0, nullptr, nullptr);
+            std::string word(static_cast<std::size_t>(n > 0 ? n - 1 : 0), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, words[i], -1, word.data(), n, nullptr, nullptr);
+            args.push_back(std::move(word));
+        }
+        LocalFree(words);
+        const fs::path executable = vehicle_sil::process::path_from_utf8(args.front());
+        args.erase(args.begin());
+        process_ = std::make_unique<vehicle_sil::process::Process>(executable, args, std::move(options));
+#else
+        process_ = std::make_unique<vehicle_sil::process::Process>("/bin/sh", std::vector<std::string>{"-c", line},
+                                                                   std::move(options));
+#endif
+    }
+    ByHand(const ByHand&) = delete;
+    ByHand& operator=(const ByHand&) = delete;
+    ~ByHand() { process_.reset(); } // ends it if it still runs
+
+    /// Stops every thread of it where it is, as a debugger's pause does (POSIX SIGSTOP to its process
+    /// group, Windows each of its threads suspended); thaw() lets it go on.
+    void freeze() { suspend(true); }
+    void thaw() { suspend(false); }
+
+    /// Waits for its end (it ends by itself): its status.
+    std::optional<vehicle_sil::process::ExitStatus> wait(std::chrono::milliseconds timeout)
+    {
+        const auto status = process_->wait_for(timeout);
+        process_->finish_output(10s);
+        const std::lock_guard lock(mutex_);
+        log("output of the participant started by hand:\n" + output_);
+        return status;
+    }
+
+private:
+    void suspend(bool stop)
+    {
+        const long pid = process_->id();
+#ifdef _WIN32
+        // Started without a shell: the process is the ECU.
+        const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        require(snapshot != INVALID_HANDLE_VALUE, "cannot list the threads");
+        THREADENTRY32 entry{};
+        entry.dwSize = sizeof(entry);
+        for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry))
+        {
+            if (entry.th32OwnerProcessID != static_cast<DWORD>(pid))
+            {
+                continue;
+            }
+            if (const HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, entry.th32ThreadID); thread != nullptr)
+            {
+                static_cast<void>(stop ? SuspendThread(thread) : ResumeThread(thread));
+                CloseHandle(thread);
+            }
+        }
+        CloseHandle(snapshot);
+#else
+        // sh and the ECU it started: the process group the process library made.
+        require(::kill(-static_cast<pid_t>(pid), stop ? SIGSTOP : SIGCONT) == 0, "cannot stop or continue the process");
+#endif
+        log(std::string(stop ? "froze" : "thawed") + " the participant started by hand");
+    }
+
+    std::mutex mutex_;
+    std::string output_;
+    std::unique_ptr<vehicle_sil::process::Process> process_;
+};
+
+/// A TCP port on 127.0.0.1 that is free now (for a registry_uri of a test).
+int free_port()
+{
+#ifdef _WIN32
+    WSADATA data;
+    require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "WSAStartup failed");
+    const SOCKET s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    require(s != INVALID_SOCKET, "cannot make a socket");
+#else
+    const int s = ::socket(AF_INET, SOCK_STREAM, 0);
+    require(s >= 0, "cannot make a socket");
+#endif
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+#ifdef _WIN32
+    int size = sizeof(address);
+#else
+    socklen_t size = sizeof(address);
+#endif
+    const bool bound = ::bind(s, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+                       ::getsockname(s, reinterpret_cast<sockaddr*>(&address), &size) == 0;
+#ifdef _WIN32
+    closesocket(s);
+    WSACleanup();
+#else
+    ::close(s);
+#endif
+    require(bound, "cannot find a free port");
+    return ntohs(address.sin_port);
+}
+
+/// A string value of an event line as JSON writes it (the escapes of a path undone).
+std::string json_text(const std::string& line, const std::string& key)
+{
+    const std::string raw = value_of(line, key);
+    std::string out;
+    for (std::size_t i = 0; i < raw.size(); ++i)
+    {
+        out += raw[i] == '\\' && i + 1 < raw.size() ? raw[++i] : raw[i];
+    }
+    return out;
+}
+
+std::string joined_lines(const std::vector<std::string>& lines)
+{
+    std::string out;
+    for (const auto& line : lines)
+    {
+        out += line + "\n";
+    }
+    return out;
+}
+
+/// A directory of its own for a part of the scenario manual, with sim.yaml and behaviour files.
+fs::path hand_dir(const Options& o, const std::string& part, const std::string& config,
+                  const std::vector<std::pair<std::string, std::string>>& behaviours)
+{
+    const fs::path dir = o.work_dir / part;
+    fs::create_directories(dir);
+    write_file(dir / "sim.yaml", config);
+    for (const auto& [name, behaviour] : behaviours)
+    {
+        write_file(dir / (name + ".behaviour"), behaviour + "\n");
+    }
+    return dir;
+}
+
+/// Each line of the run's standard output, for a message.
+std::string out_of(const std::vector<std::string>& lines) { return joined_lines(lines); }
+
+void manual(const Options& o)
+{
+    // The parts with a free port of their own first; the example of the docs last, at the port a
+    // run with a participant started by hand takes by default (8500), which may be taken here.
+    const auto config = [&o](const std::string& keys, const std::string& more) {
+        return "vehicle_sil_simulation: 1\n" + keys + "registry_uri: silkit://127.0.0.1:" + std::to_string(free_port()) +
+               "\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Auto\n"
+               "    command: [" + ecu(o) + "]\n"
+               "  - name: Hand\n"
+               "    command: [" + ecu(o) + "]\n"
+               "    manual: true\n" + more;
+    };
+    const std::string late = "  - name: Late\n    command: [" + ecu(o) + "]\n    manual: true\n";
+    {
+        // Started long after start_timeout_ms (8 s for Auto to join is generous), and standing
+        // still in its step at 100 ms for 1.5 s, as in a debugger: the run passes.
+        const fs::path dir = hand_dir(o, "late", config("stop_at_ms: 300\nstart_timeout_ms: 8000\n", ""),
+                                      {{"Auto", "pid"}, {"Hand", "slow-at-ms 100 1500"}});
+        Live live(o, dir, {"run", "sim.yaml"});
+        const std::string err = live.wait_for_error(
+            [](const std::string& text) { return contains(text, "[vehicle_sil_launch] waiting for Hand to join (manual): "); });
+        const HandCommand hand = hand_command(err, "Hand");
+        require(!hand.line.empty() && contains(err, "waiting for Hand to join (manual): start it with the command above"),
+                "the launcher waits for Hand:\n" + err);
+        // The ECUs it starts wait for the start as long as it takes.
+        require(contains(err, "--name Auto --registry-uri silkit://127.0.0.1:") &&
+                    contains(err, " --start-timeout-ms 1000000000000\n") &&
+                    contains(hand.line, " --start-timeout-ms 1000000000000"),
+                "every ECU gets --start-timeout-ms 1000000000000:\n" + err);
+        std::this_thread::sleep_for(8500ms);
+        ByHand byHand(hand.line, hand.directory);
+        const auto [status, out] = live.finish_unchecked();
+        require(status && status->code == 0, "the run with Hand started late ends with 0:\n" + out_of(out));
+        expect_text(run_part(out_of(out)),
+                    "run: the simulation ran to stop_at_ms (300 ms) and ended\n"
+                    "\n"
+                    "participant  required  ended\n"
+                    "Auto         yes       exit code 0\n"
+                    "Hand         yes       started by you (manual)\n"
+                    "\n"
+                    "passed: 0 errors, 0 warnings, 1 note\n",
+                    "a participant started by hand after start_timeout_ms");
+        const auto ended = byHand.wait(30s);
+        require(ended && ended->code == 0, "Hand ends by itself with 0");
+        require(all_gone(dir, {"Auto.pid"}, 30s), "Auto has ended");
+    }
+    {
+        // It fails while the simulation runs: the launcher sees it leave the simulation.
+        const fs::path dir = hand_dir(o, "fails", config("stop_at_ms: 1000\n", ""), {{"Auto", ""}, {"Hand", "exit-at-ms 100 3"}});
+        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        const std::string event = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
+        require(contains(event, "\"command\":[\"") && contains(event, "\"--name\",\"Hand\",\"--registry-uri\","),
+                "the event manual has the command:\n" + event);
+        ByHand byHand(json_text(event, "command_line"), json_text(event, "working_directory"));
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 1, "the run ends with 1 when Hand fails");
+        require(events_with(lines, {"\"name\":\"Hand\"", "\"state\":\"joined\""}).size() == 1, "Hand joined (the event)");
+        require(events_with(lines, {"\"name\":\"Hand\"", "\"state\":\"failed\"", "\"reason\":\"left_simulation\""}).size() == 1,
+                "Hand failed: it left the simulation (the event)");
+        require(events_with(lines, {"\"name\":\"Hand\"", "\"state\":\"started\""}).empty() &&
+                    events_with(lines, {"\"name\":\"Hand\"", "\"state\":\"ended\""}).empty(),
+                "no process of Hand in the events");
+        const std::string& result = lines.back();
+        require(contains(result, "{\"name\":\"Hand\",\"required\":true,\"enabled\":true,\"manual\":true,\"ended\":\"not_started\","
+                                 "\"exit_code\":null,"),
+                "the result says that Hand was started by hand:\n" + result);
+        require(contains(result, "\"code\":\"participant-failed\"") &&
+                    contains(result, "participant 'Hand': it failed while the simulation was running") &&
+                    contains(result, "you started it (manual), so what it wrote is where you started it"),
+                "the finding about Hand:\n" + result);
+        const auto ended = byHand.wait(30s);
+        require(ended && ended->code == 3, "Hand ended with 3, as its behaviour says");
+    }
+    {
+        // A stop before the start (Late never comes): Hand, which has joined, is told to end.
+        const fs::path dir = hand_dir(o, "stop", config("", late), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+        const std::string event = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
+        ByHand byHand(json_text(event, "command_line"), json_text(event, "working_directory"));
+        live.wait_for({"\"name\":\"Hand\"", "\"state\":\"joined\""});
+        live.write("{\"command\":\"stop\"}\n");
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 130, "the run stopped before the start ends with 130");
+        const auto ended = byHand.wait(30s);
+        require(ended && ended->code == 3, "Hand, which waited for the start, ends as a start that failed (3)");
+        require(contains(lines.back(), "{\"name\":\"Late\",\"required\":true,\"enabled\":true,\"manual\":true,\"ended\":\"not_started\","),
+                "Late in the result:\n" + lines.back());
+    }
+    {
+        // Frozen (a debugger's pause) as soon as it has joined: the start has no time limit, and
+        // a stop command ends the run all the same. Late is the last to join, so the start goes on
+        // at once; whether it is frozen before its first step or the simulation runs without it
+        // stepping depends on how far it got (logged), and both must end on the stop.
+        // No stop_at_ms: if Late got to its first steps before it was frozen, the simulation must not
+        // end before the stop command.
+        const fs::path dir = hand_dir(o, "frozen", config("stop_timeout_ms: 3000\n", late),
+                                      {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+        const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
+        const std::string lateEvent = live.wait_for({"\"name\":\"Late\"", "\"state\":\"manual\""});
+        ByHand byHand(json_text(hand, "command_line"), json_text(hand, "working_directory"));
+        live.wait_for({"\"name\":\"Hand\"", "\"state\":\"joined\""});
+        ByHand lateByHand(json_text(lateEvent, "command_line"), json_text(lateEvent, "working_directory"));
+        live.wait_for({"\"name\":\"Late\"", "\"state\":\"joined\""});
+        lateByHand.freeze();
+        std::this_thread::sleep_for(2000ms);
+        const bool running = !events_with(live.lines(), {"\"phase\":\"running\""}).empty();
+        log(std::string("RESULT Late frozen as it joined: ") +
+            (running ? "the simulation runs (Late got to its first step)" : "the start waits for Late"));
+        live.write("{\"command\":\"stop\"}\n");
+        const auto [status, lines] = live.finish_unchecked(60s);
+        lateByHand.thaw();
+        require(status && status->code == 130,
+                "a stop ends a run that waits for a frozen participant (130), not " +
+                    (status ? std::to_string(status->code) : std::string("still running")) + ":\n" + out_of(lines));
+        check_events(lines);
+        require(contains(lines.back(), "\"result\":\"interrupted\"") && contains(lines.back(), "\"interrupted_by\":\"stop command\""),
+                "the run was stopped by the command:\n" + lines.back());
+        // Hand ends when it was told to (the start was aborted); if the simulation ran, it may wait
+        // in its step for Late's for ever (the launcher has gone): it is ended with the test.
+        if (!running)
+        {
+            require(byHand.wait(30s).has_value(), "Hand, which waited for the start, has ended:\n" + out_of(lines));
+        }
+    }
+    {
+        // Frozen for 3 s after it joined, before the first step (Late cannot join while it is), then
+        // going on: the run passes. Whether its variables can be used is logged (its control link
+        // at the start).
+        const fs::path dir = hand_dir(o, "thawed", config("stop_at_ms: 200\n", late), {{"Auto", ""}, {"Hand", "variables"}, {"Late", ""}});
+        Live live(o, dir, {"run", "--events", "sim.yaml"});
+        const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
+        const std::string lateEvent = live.wait_for({"\"name\":\"Late\"", "\"state\":\"manual\""});
+        ByHand byHand(json_text(hand, "command_line"), json_text(hand, "working_directory"));
+        live.wait_for({"\"name\":\"Hand\"", "\"state\":\"joined\""});
+        byHand.freeze();
+        ByHand lateByHand(json_text(lateEvent, "command_line"), json_text(lateEvent, "working_directory"));
+        std::this_thread::sleep_for(3000ms);
+        byHand.thaw();
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 0, "a participant frozen before the first step and thawed: the run passes:\n" +
+                                                 lines.back());
+        const auto links = events_with(lines, {"\"event\":\"control_link\"", "\"name\":\"Hand\""});
+        require(links.size() == 1, "one control_link of Hand");
+        log("RESULT the control link of Hand, frozen for 3 s before the start: " + links.front());
+        require(byHand.wait(30s).has_value() && lateByHand.wait(30s).has_value(), "Hand and Late have ended");
+    }
+    {
+        // Ended after it joined, before the start (to start it again): the start fails, and the
+        // finding says to start the launcher again as well.
+        const fs::path dir = hand_dir(o, "again", config("", late), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
+        Live live(o, dir, {"run", "sim.yaml"});
+        const std::string err = live.wait_for_error([](const std::string& text) {
+            return !hand_command(text, "Hand").line.empty() && !hand_command(text, "Late").line.empty();
+        });
+        auto byHand = std::make_unique<ByHand>(hand_command(err, "Hand").line, hand_command(err, "Hand").directory);
+        static_cast<void>(live.wait_for_error([](const std::string& text) {
+            return contains(text, "[vehicle_sil_launch] waiting for Late to join (manual)");
+        }));
+        byHand.reset(); // ends it
+        const HandCommand lateCommand = hand_command(err, "Late");
+        ByHand lateByHand(lateCommand.line, lateCommand.directory);
+        const auto [status, out] = live.finish_unchecked(60s);
+        require(status && status->code == 1 &&
+                    contains(out_of(out), "error: sim.yaml: the simulation did not start: ") &&
+                    contains(out_of(out), "participant 'Hand' left the simulation before it started") &&
+                    contains(out_of(out), "you started it yourself (manual), and it cannot join this run again: to start "
+                                          "it again, start vehicle_sil_launch again as well"),
+                "a participant started by hand that ended before the start:\n" + out_of(out));
+        require(lateByHand.wait(30s).has_value(), "Late, which waited for the start, has ended");
+    }
+    {
+        // --timeout-ms counts from when the launcher began to wait: Late never comes.
+        const fs::path dir = hand_dir(o, "timeout", config("", late), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
+        Live live(o, dir, {"run", "--timeout-ms", "3000", "sim.yaml"});
+        const std::string err = live.wait_for_error([](const std::string& text) { return !hand_command(text, "Hand").line.empty(); });
+        const HandCommand hand = hand_command(err, "Hand");
+        ByHand byHand(hand.line, hand.directory);
+        const auto [status, out] = live.finish_unchecked(60s);
+        require(status && status->code == 1, "--timeout-ms ends a run that waits for a participant started by hand:\n" +
+                                                 out_of(out) + "--- stderr ---\n" + live.err());
+        require(contains(out_of(out), "error: sim.yaml: the simulation did not start within 3000 ms of wall-clock time "
+                                      "(--timeout-ms"),
+                "the timeout finding:\n" + out_of(out));
+        require(contains(out_of(out), "Late (manual) has not joined"), "the finding names Late:\n" + out_of(out));
+        require(byHand.wait(30s).has_value(), "Hand, which waited for the start, has ended");
+    }
+    {
+        // The example of the docs: Engine by hand, Dashboard by the launcher.
+        Live live(o, o.example_dir, {"run", "simulation.yaml", "--manual", "Engine"});
+        HandCommand hand;
+        const std::string err = live.wait_for_error([&](const std::string& text) {
+            hand = hand_command(text, "Engine");
+            return !hand.line.empty();
+        });
+        if (contains(err, "the registry cannot listen at silkit://127.0.0.1:8500"))
+        {
+            throw Skip("another program listens at 127.0.0.1:8500: the example of the docs was not run (the other parts "
+                       "passed)");
+        }
+        require(!hand.line.empty(), "no lines about Engine:\n" + err);
+        require(fs::equivalent(vehicle_sil::process::path_from_utf8(hand.directory), o.example_dir),
+                "the directory is the example's: " + hand.directory);
+        // As the docs show them: the directory as <dir>, paths with '/' and without ".exe".
+        std::string text = hand.text;
+        for (auto at = text.find(hand.directory); at != std::string::npos; at = text.find(hand.directory, at))
+        {
+            text.replace(at, hand.directory.size(), "<dir>");
+        }
+#ifdef _WIN32
+        std::replace(text.begin(), text.end(), '\\', '/');
+        for (auto at = text.find(".exe"); at != std::string::npos; at = text.find(".exe", at))
+        {
+            text.erase(at, 4);
+        }
+#endif
+        expect_text(text, block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml --manual Engine: the lines about Engine -->"),
+                    "the lines about Engine started by hand");
+        ByHand engine(hand.line, hand.directory);
+        const auto [status, out] = live.finish_unchecked();
+        require(status && status->code == 0, "run simulation.yaml --manual Engine ends with 0:\n" + out_of(out));
+        expect_text(out_of(out), block_after(o.docs, "<!-- vehicle_sil_launch run simulation.yaml --manual Engine -->"),
+                    "run simulation.yaml --manual Engine");
+        const auto ended = engine.wait(30s);
+        require(ended && ended->code == 0 && !ended->signal, "Engine, started by hand, ends by itself with 0");
+    }
+}
+
 int main(int argc, char** argv)
 {
 #ifndef _WIN32
@@ -3551,7 +4001,7 @@ int main(int argc, char** argv)
             {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
             {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control},
             {"scenario", scenario}, {"scenario_same", scenario_same}, {"scenario_disconnect", scenario_disconnect},
-            {"scenario_failures", scenario_failures}};
+            {"scenario_failures", scenario_failures}, {"manual", manual}};
         const auto it = std::find_if(scenarios.begin(), scenarios.end(), [&](const auto& s) { return s.first == o.scenario; });
         if (it == scenarios.end())
         {

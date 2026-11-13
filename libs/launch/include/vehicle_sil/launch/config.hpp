@@ -95,6 +95,10 @@ struct ParticipantConfig
     /// false: it is not part of the simulation (its "enabled" key, or --disable): not checked, not
     /// started, not waited for. Its entry is read and checked like any other.
     bool enabled = true;
+    /// true: someone starts it (from a debugger, say), not vehicle_sil_launch run (its "manual"
+    /// key, or --manual): run prints the command to start it with and waits for it to join. It is
+    /// checked as any other.
+    bool manual = false;
     /// The step the executable must report, in milliseconds; empty: any.
     std::optional<std::int64_t> step_ms{};
     std::size_t line = 0;         ///< the line of the participant's entry
@@ -158,13 +162,18 @@ inline constexpr double kMaxSpeed = 1e6;
 /// A speed for people and the JSON's text: "max", or the number in its shortest form.
 [[nodiscard]] std::string speed_text(const std::optional<double>& speed);
 
-/// The command line's changes to the participants' "enabled" keys: the names of the participants
-/// to leave out (--disable) and to take in (--enable).
+/// The command line's changes to the participants' "enabled" and "manual" keys: the names of the
+/// participants to leave out (--disable), to take in (--enable) and to start by hand (--manual).
 struct EnabledOverrides
 {
     std::vector<std::string> disable{};
     std::vector<std::string> enable{};
+    std::vector<std::string> manual{};
 };
+
+/// true if the start waits for a participant that someone starts by hand (enabled, required and
+/// manual): the start then has no time limit for it (docs/simulation-config.md).
+[[nodiscard]] bool waits_for_manual(const SimulationConfig& config);
 
 /// What read_config() found.
 struct ConfigRead
@@ -182,7 +191,7 @@ struct ConfigRead
 };
 
 /// The overrides' usage errors that do not need the file: each name given to both --disable and
-/// --enable.
+/// --enable, or to both --disable and --manual.
 [[nodiscard]] std::vector<Finding> override_conflicts(const EnabledOverrides& overrides);
 
 /// Reads a configuration (YAML, or JSON if it starts with '{'; a UTF-8 byte order mark is

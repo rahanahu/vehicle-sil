@@ -47,7 +47,7 @@ participants:
 | `stop_at_ms` | | シミュレーションを止める仮想時間（ミリ秒、1 以上 10^12 以下の整数）。書かなければ、participant が止めるか、`run` を Ctrl+C で止めるまで動きます |
 | `start_timeout_ms` | | 必須の participant がそろうまで待つ時間（ミリ秒、1 以上 10^12 以下の整数。書かなければ 30000）。`run` は ecu_main の実行ファイルにも `--start-timeout-ms` で同じ値を渡します |
 | `stop_timeout_ms` | | `run` が participant の終わりを待つ時間（ミリ秒、1 以上 10^12 以下の整数。書かなければ 10000）。止め方の各段で、この時間だけ待ちます |
-| `registry_uri` | | `run` が registry を立てる場所（`silkit://<host>:<port>`、ポートは 1 以上 65535 以下）。書かなければ 127.0.0.1 の空いているポートです。ほかのコンピューターの participant も参加させるときは `silkit://0.0.0.0:8500` のように書きます（このコンピューターの participant には `127.0.0.1` の URI を渡します） |
+| `registry_uri` | | `run` が registry を立てる場所（`silkit://<host>:<port>`、ポートは 1 以上 65535 以下）。書かなければ 127.0.0.1 の空いているポートです（自分で起動する必須の participant がいる実行では `silkit://127.0.0.1:8500`。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。ほかのコンピューターの participant も参加させるときは `silkit://0.0.0.0:8500` のように書きます（このコンピューターの participant には `127.0.0.1` の URI を渡します） |
 | `speed` | | 仮想時間を進める速さ（実時間 1 秒あたりの仮想時間の秒数）。`1` が等速、`2` が 2 倍速、`0.5` が半分の速さです（0.000001 以上 1000000 以下の数）。`max` か、書かなければ最速です。`run --speed` で上書きできます（[等速で動かす](#等速で動かす)） |
 | `time_step_ms` | | controller の刻み（ミリ秒の仮想時間、1 以上 10^12 以下の整数）。一時停止とステップ送りの細かさ、速さを合わせる細かさです。書かなければ、最速のときは 10 です（`stop_at_ms` が 10 の倍数でなければ、`stop_at_ms` と 10 の最大公約数）。速さを指定したときは、さらに ECU のステップ幅との最大公約数にします（[等速で動かす](#等速で動かす)の「刻みと ECU のステップ」）。書いたときは `stop_at_ms` の約数にします（誤り `value`） |
 | `late_tolerance_ms` | | 遅れの許容（実時間のミリ秒、1 以上 10^12 以下の整数）。刻みの遅れがこれを超えたら、遅れた刻みに数えます。書かなければ 10 です（刻みと速さによりません） |
@@ -61,6 +61,7 @@ participants:
 | `participants[].describe` | | `true`（既定）: ecu_main の実行ファイル（照合します）。`false`: それ以外の実行ファイル（照合しません） |
 | `participants[].required` | | `true`（既定）か `false`。シミュレーションがその participant を待つか。`false` は `describe: false` の participant にだけ書けます。外していない participant のうち、少なくとも 1 つは `true` の participant が要ります（誤り `no-required-participant`） |
 | `participants[].enabled` | | `true`（既定）か `false`。`false` の participant は外します（照合も起動もしません。[participant を外す](#participant-を外すenabled--disable--enable)） |
+| `participants[].manual` | | `false`（既定）か `true`。`true` の participant は、`run` が起動せず、利用者が自分で起動します（デバッガーからなど。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)） |
 
 - 知らないキーはエラーです（打ち間違いを黙って無視しません）。近い名前があれば示します。同じキーを 2 回書くのもエラーです。
 - 整数は引用符なしで書きます（`"5000"` は文字列なのでエラーです）。真偽値は `true` か `false` です。
@@ -88,7 +89,7 @@ participants:
 
 - `command` には、`ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--help`、`-h`。`--name=X` の形も）を書けません（誤り）。
 - `--no-control` は `command` に書けます。その ECU は変数を出しません。照合の `--describe` にも同じ引数が渡るので、自己申告の `control` が `null` になり、`run` はその ECU の hello を待ちません（[変数を読み書きする口](#変数を読み書きする口)）。
-- 照合では、`command` の引数（`{{語}}` を `{語}` に戻したもの）に `--describe --name <participant 名>` を足して動かします。`run` では `--name <participant 名> --registry-uri <URI> --start-timeout-ms <ms>` を足します。`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です（開始を待つのはランチャーで、来なかった participant を挙げるのもランチャーです。ECU の制限は、ランチャーがいなくなったときのためのものです）。
+- 照合では、`command` の引数（`{{語}}` を `{語}` に戻したもの）に `--describe --name <participant 名>` を足して動かします。`run` では `--name <participant 名> --registry-uri <URI> --start-timeout-ms <ms>` を足します。`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です（開始を待つのはランチャーで、来なかった participant を挙げるのもランチャーです。ECU の制限は、ランチャーがいなくなったときのためのものです）。自分で起動する必須の participant がいる実行では、開始に上限がないので、10^12（`1000000000000`）です。
 - `required: false` は書けません（誤り `not-required-ecu`）。ecu_main の実行ファイルは coordinated の participant として参加し、SIL Kit は必須でない coordinated の participant を始めないためです。ECU を外して動かすときは、`enabled: false` を書くか、`--disable <participant 名>` を付けます（[participant を外す](#participant-を外すenabled--disable--enable)）。
 
 ### ほかの実行ファイル（`describe: false`）
@@ -123,6 +124,54 @@ warning: simulation.yaml:8: network 'J1939_CAN': only Engine is on it, so what i
 note: simulation.yaml:14: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it
 
 passed: 0 errors, 1 warning, 1 note
+```
+
+### participant を自分で起動する（`manual`、`--manual`）
+
+ECU をデバッガーから動かすときなど、ある participant を `run` ではなく自分で起動するときは、その participant に `manual: true` を書きます。ファイルを書き換えずに、その実行だけ自分で起動するときは、`check` と `run` に `--manual <participant 名>` を付けます（繰り返せます）。`run` はその participant を起動せず、起動するコマンドを書いて、参加してくるのを待ちます。
+
+- 照合は、ほかの participant と同じです（`describe: true` なら `--describe` を動かします）。manual の participant ごとに注記 `participant-manual` を出します。
+- `run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を書きます（下の例）。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`）。そのコマンドを、書いてあるディレクトリで実行します（デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します）。引数の引用は、Linux では POSIX sh（bash、zsh）に貼る形です。Windows では、コマンドプロンプト（cmd.exe）に貼る形で、C ランタイムがコマンドラインを読む決まりで引用し、`&` `|` `<` `>` `^` を含む引数も `"` で囲みます。実行ファイルのパスは `\` で区切ります。cmd.exe は `"` の中でも `%...%` を展開するので、`%` を含む引数は直して貼ります。PowerShell に貼るときは、`"` で囲んだ実行ファイルの前に `&` を足し、`$` と `` ` `` を含む引数を直します。`--events` では、事象 `participant` の `state` が `manual` の行が、同じものを持ちます。
+- `registry_uri` を書いていなければ、manual の必須の participant がいる実行は、registry を `silkit://127.0.0.1:8500` で立てます。コマンドが実行ごとに変わらないので、デバッガーの設定を 1 度作れば使い回せます。そのポートを別のプログラムが使っていれば `setup` の誤りです（`registry_uri` に別のポートを書きます）。
+- 待ち方: manual の必須の participant がいる実行では、開始の時間の上限を 3 つの区間に分けます。(1) 参加するまで: `run` が起動した participant は、今までどおり `start_timeout_ms` の間に参加しなければ `not-joined` です。manual の participant は、参加するまで待ちます。manual でない必須の participant がそろうと、`waiting for <名前> to join (manual): ...` の行を 1 回書きます。(2) 全員が参加した後、manual の participant がすべて最初のステップの準備を終える（ReadyToRun）まで: 上限はありません（デバッガーで止めていてもかまいません）。(3) その後、全員が最初のステップに着くまで: `start_timeout_ms` です（`run` が起動した participant が初期化で固まれば、今までどおり `simulation-start` の誤りです）。どの区間でも、Ctrl+C、`stop` の命令、Control Server の `Stop` で止まります（終了コード 130）。
+- `--timeout-ms` は、manual の必須の participant がいる実行では、`run` が participant を待ち始めた時点から数えます（参加を待つ時間、開始を待つ時間、実行の時間の合計です）。始まる前に過ぎると `timeout` の誤りで、何を待っていたか（参加していない participant か、最初のステップに着いていない participant）を文言に挙げます。`manual: true` を書いた構成ファイルを CI で動かすときは、`--timeout-ms` を付けると、誰も起動しなくても終わります。
+- 参加した manual の participant が、始まる前に終わる（デバッガーで止めて起動し直すなど）と、開始は失敗します（`simulation-start`。その participant はこの実行には参加し直せないので、ランチャーも起動し直します）。
+- `required: false` の manual の participant は、待ちません（コマンドを書くだけです）。
+- 実行中: 見張りは、ほかの必須の participant と同じです。ただし、`run` はそのプロセスを見ていないので、失敗は、シミュレーションから抜けたこと（接続が切れた、Error の状態）でわかります（`participant-failed`）。その participant の出力は、起動した所（端末、デバッガー）に出ます。デバッガーで止めている間は、仮想時間が進みません。速さを指定していれば、その間を遅れとして数え（`behind-real-time`）、`--timeout-ms` も数えます。
+- 止め方: `run` は manual の participant のプロセスに、止める要求も強制終了も送りません。シミュレーションが終われば、ecu_main の実行ファイルは自分で終わります。シミュレーションが始まらなかったとき（中断、ほかの participant の失敗）は、参加していた manual の participant に SIL Kit の abort を送ります（ecu_main の実行ファイルは、開始の失敗として終わります）。どちらの場合も、参加した manual の participant がシミュレーションを去るのを `stop_timeout_ms` まで待ってから、registry を閉じます。去らなければ（デバッガーで止めているなど）、そう書いて終わります（誤りにはしません）。この待ちは、Ctrl+C か `stop` の命令をもう 1 回送ると切り上げます。`run` が強制終了されたとき（SIGKILL、クラッシュ、Windows でコンソールを閉じた）は、自分で起動した participant は残ることがあります（始まる前なら、開始を待ち続けます）。自分で終わらせます。
+- 結果: participant の表の `ended` は、`started by you (manual)`（参加した）か `not joined (manual)` です。JSON の `participants[].manual` は `true`、`ended` は `"not_started"`、`exit_code` は `null` です。
+- `--disable` と `--manual` に同じ名前を書くのは、引数の誤りです（終了コード 4）。構成ファイルにない名前は、`--disable` と同じ扱いです。`--manual` は `enabled` を変えません（外した participant は、外したままです）。構成ファイルの `manual: true` を、コマンドラインで戻す引数はありません。
+
+例: [examples/ecu_main/simulation.yaml](../examples/ecu_main/simulation.yaml) の Engine を自分で起動します。`run` は、標準エラーに次の 2 行を書きます（`<dir>` は例のディレクトリです。Windows では、パスが `\` で区切られ、実行ファイルの名前に `.exe` が付きます）。2 行目の `[vehicle_sil_launch]` の後が、実行するコマンドです。
+
+<!-- vehicle_sil_launch run simulation.yaml --manual Engine: the lines about Engine -->
+```text
+[vehicle_sil_launch] not starting Engine: start it yourself (manual: true, or --manual); the simulation waits for it to join. In the directory <dir>, run:
+[vehicle_sil_launch]   <dir>/engine/vehicle_sil_engine_ecu --name Engine --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 1000000000000
+```
+
+そのコマンドで Engine を起動すると、シミュレーションが始まります。結果は次のとおりです。
+
+<!-- vehicle_sil_launch run simulation.yaml --manual Engine -->
+```text
+simulation.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+note: simulation.yaml:11: participant 'Engine': you start it yourself (manual: true, or --manual): run does not start it, but prints the command to start it with, and waits for it to join without a time limit (with --timeout-ms, at most that long)
+
+run: the simulation ran to stop_at_ms (1000 ms) and ended
+
+participant  required  ended
+Engine       yes       started by you (manual)
+Dashboard    yes       exit code 0
+
+passed: 0 errors, 0 warnings, 1 note
 ```
 
 ## 照合
@@ -176,6 +225,7 @@ passed: 0 errors, 1 warning, 1 note
 | `single-participant` | 警告（同上のときは注記） | participant が 1 つだけのネットワーク（送ったものを誰も受けない） |
 | `not-checked` | 注記 | `describe: false` の participant（照合していない） |
 | `participant-disabled` | 注記 | 外した participant（`enabled: false`、`--disable`。照合も起動もしない） |
+| `participant-manual` | 注記 | 利用者が自分で起動する participant（`manual: true`、`--manual`。`run` は起動せず、コマンドを書いて待つ） |
 | `version-mismatch` | 注記 | 実行ファイルをビルドした vehicle-sil の版が、`vehicle_sil_launch` の版と違う |
 | `coarse-time-step` | 警告 | ファイルに `speed`（数）と `time_step_ms` があり、ECU のステップが刻みの境目で始まらない（`run` の所見と同じ文言。[等速で動かす](#等速で動かす)の「刻みと ECU のステップ」） |
 | `control-link-not-offered` | 注記 | 変数のある ECU が、それをシミュレーションへ出すと申告していない（`--no-control`、申告のない古い実行ファイル）。`run` はその変数を読み書きできない（[変数を読み書きする口](#変数を読み書きする口)） |
@@ -256,7 +306,7 @@ Body_LIN   lin   -
 
 error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number)
 error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms
-error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled)
+error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual)
 warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs
 
 failed: 3 errors, 1 warning, 0 notes
@@ -279,7 +329,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `strict` | `--strict` を付けたか |
 | `errors`、`warnings`、`notes` | 誤り、警告、注記の数 |
 | `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 構成ファイルの値（読めないときと、書いていない `stop_at_ms` と `registry_uri` は `null`。`start_timeout_ms` と `stop_timeout_ms` は既定の値も） |
-| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`step_ms`（なければ `null`）、`status`、`reported`、`variables`、`control` |
+| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`manual`（`--manual` を当てた後の値）、`step_ms`（なければ `null`）、`status`、`reported`、`variables`、`control` |
 | `participants[].status` | `"described"`（自己申告を読んだ）、`"not_checked"`（`describe: false`）、`"failed"`（実行ファイルがない、`--describe` の失敗）、`"skipped"`（構成ファイルの誤りで進めなかった）、`"disabled"`（外した。項目に誤りがあっても） |
 | `participants[].reported` | 自己申告（`described` のときだけ。ほかは `null`）: `vehicle_sil`、`name`、`step_ns`、`networks`（`--describe` の JSON と同じ形。変数は次の `variables`） |
 | `participants[].variables` | ECU が申告した変数の配列（`ecu.connected`、続いて宣言の順）。要素の形は `--describe` の JSON の `variables[]` と同じです（`name`、`type`、`causality`、`unit`、`min`、`max`、`step`、`description`、`items`、`builtin`。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。空の配列は「変数が 0 個」です。`null` は「わからない」です: 自己申告のない participant（`describe: false`）、外した participant、自己申告を読めなかった participant、`variables` を書かない古い vehicle-sil の ECU。実行の前に、どの ECU にどの変数があるかを見るのに使います |
@@ -324,6 +374,7 @@ participants:
       "describe": true,
       "required": true,
       "enabled": true,
+      "manual": false,
       "step_ms": 20,
       "status": "described",
       "reported": {
@@ -433,7 +484,7 @@ participants:
 1. `check` と同じ照合をします。誤りがあれば（`--strict` では警告も）、何も起動せずに照合の結果を書き、終了コード 1 です。
 2. registry をこのプロセスの中で立てます（`registry_uri`、なければ 127.0.0.1 の空いているポート）。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。`--control` を付けたときは、その前に Control Server を立て、`[vehicle_sil_launch] control server at <address>` の行を書きます。
 3. controller（participant 名 `SimulationController`）をこのプロセスの中で動かします。シミュレーションが待つ（必須の）participant は、外していない `required: true` のものです。controller は刻み（`time_step_ms` か、その既定値）で時刻同期に参加し、刻みの終わりを止めて、速さ、一時停止、ステップ送りを決めます（最速のときも同じです。刻みごとに同期が 1 回増えます）。
-4. 外していない participant を構成ファイルの順に、それぞれ別のプロセスで起動します。作業ディレクトリは構成ファイルのあるディレクトリ、標準入力は空です。
+4. 外していない participant を構成ファイルの順に、それぞれ別のプロセスで起動します（`manual` の participant は起動せず、起動するコマンドを書きます）。作業ディレクトリは構成ファイルのあるディレクトリ、標準入力は空です。
 5. 必須の participant がそろったら、変数を出す ECU とつながるのを待ってから（下の「変数を読み書きする口」。ふつうは待ちません）始めます。`--control` と `--start-paused` を付けたときは、どの participant も時刻 0 のステップを始める前で、`resume`、`step` か `run_until` の命令を待ちます（[control-api.md](control-api.md) の「始まる前に書く」）。`stop_at_ms` があれば、仮想時間がそこに達したところで止めます。なければ、participant が止めるか、Ctrl+C まで動きます。
 6. 終わったら、すべての participant を終わらせ（下の「止め方」）、結果を書きます。
 
@@ -444,10 +495,11 @@ participants:
 - 始まる前: 必須の participant のプロセスが終わったら、`start_timeout_ms` を待たずにやめます（`ended-before-start`）。`start_timeout_ms` の間に参加しなかった必須の participant は、全部を挙げます（`not-joined`）。
 - 実行中: 必須の participant のプロセスが 0 でない終了コードで（またはシグナルで）終わったら、すぐにシミュレーションを中断します。controller から見て、必須の participant がシミュレーションを去ったときも中断します（Error の状態ならすぐに、ほかの状態なら 5 秒たってもシミュレーションが終わらないとき）。この規則は `vehicle_sil_sim_controller` と `vehicle_sil::Simulation` と同じです。中断の理由になった participant は `participant-failed` です。中断されても、ほかの ECU は自分で終わります（終了コード 0）。
 - `required: false` の participant は待たず、終わってもシミュレーションを止めません。0 でない終了コードは警告です。
-- `--timeout-ms <ms>` を付けると、シミュレーションが始まってから `<ms>` の実時間で終わらなければ中断し、誤り（`timeout`）にします。ステップの中で止まった ECU がいると仮想時間が進まず、`stop_at_ms` があっても終わらないためです（CI などで使います）。一時停止している時間も数えます。既定は上限なしです。
+- `--timeout-ms <ms>` を付けると、シミュレーションが始まってから `<ms>` の実時間で終わらなければ中断し、誤り（`timeout`）にします。ステップの中で止まった ECU がいると仮想時間が進まず、`stop_at_ms` があっても終わらないためです（CI などで使います）。一時停止している時間も数えます。既定は上限なしです。manual の必須の participant がいる実行では、participant を待ち始めた時点から数えます（[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。
 - 一時停止している間も、上の見張りはどれも同じように効きます（participant の失敗、止める要求、`--timeout-ms`）。`start_timeout_ms` は、そろうまでの時間です。`--start-paused` で 0 に止まっている時間は含みません。
 - 始まる前の窓（変数を出す ECU を待つ間と、`--control` と `--start-paused` で時刻 0 のステップの前に止まっている間）に必須の participant が抜けると（プロセスが終わった、接続が切れた）、すぐに開始をやめます（`ended-before-start`。プロセスが動いているまま抜けたときは `simulation-start`）。
 - 始まるまでの上限: `start_timeout_ms` は、そろうまでの時間で、そろった後の開始（最初のステップまで）にも、その残り（少なくとも、変数を出す ECU を待つ時間 + 1 秒）が効きます。`--control` と `--start-paused` で時刻 0 のステップの前に止まっている間は数えず、進んだ後に改めて `start_timeout_ms` が効きます。過ぎると `simulation-start` の誤りで、最初のステップに着いていない participant と状態を文言に挙げます。
+- 利用者が起動する（manual の）必須の participant がいる実行では、manual の participant が参加するまでと、全員が参加した後、manual の participant が最初のステップの準備を終えるまでは上限がありません。`run` が起動した participant が参加するまでと、manual の participant の準備が終わった後には、`start_timeout_ms` が効きます（[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。
 - `--timeout-ms` は、シミュレーションが始まってから数えます。`--control` と `--start-paused` では、時刻 0 のステップの前に止まった時点から数えます（止まっている時間も数えます）。止まったまま過ぎると、時刻 0 のステップを走らせてから中断し、`timeout` の文言に、最初のステップの前に止まっていたことを書きます。進めた後に過ぎたときは、`timeout` の文言に、そのうち何 ms 止まっていたかを書きます。
 - `stop_at_ms` を書いたのに、participant がそれより前にシミュレーションを止めたときは、注記（`ended-before-stop-at`）を出します（`--strict` でも失敗にしません）。
 
@@ -522,6 +574,8 @@ participants:
 3. さらに `stop_timeout_ms` まで、止まるよう求めた participant と、それが起動したプロセス（プロセスグループ、Windows ではジョブオブジェクト）が終わるのを待ちます。残ったものを、それが起動したプロセスごと強制終了します（Linux: プロセスグループに SIGKILL。Windows: ジョブオブジェクトの終了）。
 4. 自分で終わった participant でも、それが起動したプロセスが残っていれば終わらせ、警告にします（`left-processes`）。
 
+利用者が起動する（manual の）participant には、どの段も当てません（[participant を自分で起動する](#participant-を自分で起動するmanual--manual)の「止め方」）。
+
 シミュレーションが始まらなかったときは、1 を飛ばして 2 からです（その participant の誤りにはしません）。ecu_main の実行ファイルは、始まる前に止まるよう求められると、すぐに終わります（[ecu-executable.md](ecu-executable.md)）。
 
 各 participant は、自分のプロセスグループ（Windows ではプロセスグループとジョブオブジェクト）で動きます。端末の Ctrl+C は `vehicle_sil_launch` にだけ届き、participant には届きません。Windows で `vehicle_sil_launch` にコンソールがない（participant と共有するコンソールがない）ときは、Ctrl+Break を送れないので、2 の代わりにすぐ強制終了します（文言にそう書きます）。このとき participant は、コンソールの窓を開かないように起動します。
@@ -588,6 +642,8 @@ participant の表の `ended` の列:
 | `killed` | 強制終了した |
 | `not started` | 起動できなかった（またはその前に実行をやめた） |
 | `not started (disabled)` | 外した participant（`required` の列は `-`） |
+| `started by you (manual)` | 利用者が起動する participant で、シミュレーションに参加した（どう終わったかは、`run` にはわからない） |
+| `not joined (manual)` | 利用者が起動する participant で、参加しなかった |
 
 外した participant がいるときの例です。照合の部分は `check` と同じです（[participant を外す](#participant-を外すenabled--disable--enable)）。
 
@@ -627,7 +683,7 @@ passed: 0 errors, 1 warning, 1 note
 | `exit-code` | 誤り（`required: false` は警告） | participant の終了コードが 0 でない、またはシグナルで終わった（上のどれでもないとき） |
 | `did-not-end` | 誤り | 必須の participant が、シミュレーションの終わりから `stop_timeout_ms` たっても動いていた |
 | `left-processes` | 警告 | participant が起動したプロセスが、その participant が終わった後も動いていた |
-| `timeout` | 誤り | シミュレーションが `--timeout-ms` の実時間で終わらなかったので、中断した |
+| `timeout` | 誤り | シミュレーションが `--timeout-ms` の実時間で終わらなかったので、中断した（manual の必須の participant がいる実行では、始まらなかったときも。待っていたものを書きます） |
 | `simulation` | 誤り | シミュレーションが正常に終わらなかった（理由の participant がわからない） |
 | `ended-before-stop-at` | 注記 | `stop_at_ms` より前に、participant がシミュレーションを止めた |
 | `control-link-no-hello` | 警告 | 変数を出すと申告した ECU の hello が、始まる前に来なかった。または hello は来たが、コマンドを受け取れるという返事が来なかった（文がどちらかを言います。[変数を読み書きする口](#変数を読み書きする口)） |
@@ -654,7 +710,7 @@ passed: 0 errors, 1 warning, 1 note
 | `simulation` | `"reached_stop_at"`（`stop_at_ms` まで動いた）、`"ended"`（participant が止めた。`--scenario` では、シナリオが終わってランチャーが止めたときも）、`"aborted"`（中断した。`--timeout-ms` のときも）、`"interrupted"`、`"not_started"`。何も起動しなかったときは `null` |
 | `interrupted_by` | 中断のシグナルかキー（`"SIGINT"`、`"Ctrl+C"` など）。中断でなければ `null` |
 | `timing` | 時間の進み方（下の表）。何も起動しなかったときは `null` |
-| `participants[]` | 構成ファイルの順（外した participant も）。`name`、`required`、`enabled`（`false` なら外した participant で、`ended` は `"not_started"`、`log` は `null`。シミュレーションが待つのは `required` と `enabled` がどちらも `true` のもの）、`ended`（`"exited"`、`"stopped"`、`"killed"`、`"not_started"`）、`exit_code`（シグナルで終わったとき、強制終了したとき、起動しなかったときは `null`）、`signal`（`"SIGSEGV"` など。なければ `null`）、`left_processes`（起動したプロセスを残したか）、`log`（`--log-dir` のファイル。なければ `null`）、`control_link`（始まったときの、変数を読み書きする口のつながり方。下の表。起動しなかった participant は `state` が `"none"`） |
+| `participants[]` | 構成ファイルの順（外した participant も）。`name`、`required`、`enabled`（`false` なら外した participant で、`ended` は `"not_started"`、`log` は `null`。シミュレーションが待つのは `required` と `enabled` がどちらも `true` のもの）、`manual`（`true` なら利用者が起動する participant で、`ended` は `"not_started"`、`exit_code` は `null`。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）、`ended`（`"exited"`、`"stopped"`、`"killed"`、`"not_started"`）、`exit_code`（シグナルで終わったとき、強制終了したとき、起動しなかったときは `null`）、`signal`（`"SIGSEGV"` など。なければ `null`）、`left_processes`（起動したプロセスを残したか）、`log`（`--log-dir` のファイル。なければ `null`）、`control_link`（始まったときの、変数を読み書きする口のつながり方。下の表。起動しなかった participant は `state` が `"none"`） |
 | `participants[].control_link` | `state`（`"connected"`、`"no_hello"`、`"version_mismatch"`、`"not_offered"`、`"none"`。[変数を読み書きする口](#変数を読み書きする口)）、`variables`（`connected` のとき、その ECU が出す変数の数。ECU の実行が足す `peer.` などの出力を含むので、`--describe` の数より多いことがあります。ほかは `null`）、`version`（`version_mismatch` のとき、相手の形式の版。ほかは `null`）、`late_messages`（約束より遅れて届いたメッセージの数。ふつうは 0） |
 | `findings[]` | 実行で見つけたもの（照合の `findings[]` と同じ形） |
 | `check` | 照合の結果（`check --json` と同じオブジェクト） |
@@ -713,6 +769,7 @@ passed: 0 errors, 1 warning, 1 note
       "name": "Engine",
       "required": true,
       "enabled": true,
+      "manual": false,
       "ended": "exited",
       "exit_code": 0,
       "signal": null,
@@ -729,6 +786,7 @@ passed: 0 errors, 1 warning, 1 note
       "name": "Dashboard",
       "required": true,
       "enabled": true,
+      "manual": false,
       "ended": "exited",
       "exit_code": 0,
       "signal": null,
@@ -766,6 +824,7 @@ passed: 0 errors, 1 warning, 1 note
         "describe": true,
         "required": true,
         "enabled": true,
+        "manual": false,
         "step_ms": 10,
         "status": "described",
         "reported": {
@@ -839,6 +898,7 @@ passed: 0 errors, 1 warning, 1 note
         "describe": true,
         "required": true,
         "enabled": true,
+        "manual": false,
         "step_ms": 5,
         "status": "described",
         "reported": {
@@ -950,7 +1010,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `control_server` | `--control` の Control Server が待ち受けを始めたとき（`registry` の前） | `address`: クライアントがつなぐアドレス（ポート 0 なら選ばれたポート）、`tls`: TLS か、`credentials`: 呼び出しにトークンが要るか |
 | `registry` | registry が待ち受けを始めたとき | `uri`: participant が接続する URI |
 | `participant` | participant の状態が変わったとき | `name`、`state`（下の表） |
-| `control_link` | シミュレーションが始まった直後（`phase` の `running` の前）に、起動した participant ごとに 1 回 | `name`、`state`（結果の `participants[].control_link.state` と同じ 5 つ）。`connected` には `variables`、`version_mismatch` には `version`（結果の同じ名前のキーと同じ意味。ほかの `state` にはこの 2 つのキーがありません） |
+| `control_link` | シミュレーションが始まった直後（`phase` の `running` の前）に、起動した participant と、利用者が起動する（manual の）participant ごとに 1 回 | `name`、`state`（結果の `participants[].control_link.state` と同じ 5 つ）。`connected` には `variables`、`version_mismatch` には `version`（結果の同じ名前のキーと同じ意味。ほかの `state` にはこの 2 つのキーがありません） |
 | `log` | participant か `vehicle_sil_launch` が 1 行書いたとき | `source`（participant 名か `vehicle_sil_launch`）、`line`（その行。[`log` の行](#log-の行)） |
 | `log_dropped` | 読む側が遅くて `log` を書けなかったとき、その場所に（[読む側が遅いとき](#読む側が遅いとき読まないとき)） | `count`（書かなかった `log` の数）、`sources`（`source` ごとの数のオブジェクト。例: `{"Engine": 120, "vehicle_sil_launch": 1}`） |
 | `finding` | 実行で見つけたものが決まったとき | 結果の `findings[]` の 1 つと同じキー（`severity`、`code`、`file`、`line`、`participant`、`network`、`message`、`detail`） |
@@ -967,6 +1027,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `disabled` | 外した participant（起動しません） | |
 | `not_started` | プロセスを起動できなかった | `message`: 理由 |
 | `started` | プロセスを起動した | `pid`（そのプロセスの ID）、`command`（起動した実行ファイルと引数の配列）、`log`（`--log-dir` のファイル。なければ `null`） |
+| `manual` | 利用者が起動する participant なので、起動しなかった（`started` の代わり。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。この後、参加すれば `joined` が来ます。`ended`、`stop_requested`、`killed` は来ません | `command`（起動する実行ファイルと引数の配列）、`working_directory`（起動するディレクトリ）、`command_line`（同じものを、この OS のシェルに貼れる 1 行にしたもの。標準エラーに書く行と同じ） |
 | `joined` | シミュレーションに参加した（controller がその participant のライフサイクルの状態を見た） | |
 | `failed` | `vehicle_sil_launch` が、この participant の失敗で実行をやめると決めた | `reason`: `left_simulation`（プロセスは動いているが、シミュレーションから抜けた）、`process_ended`（シミュレーションの途中で、プロセスが失敗として終わった）、`ended_before_start`（シミュレーションが始まる前にプロセスが終わった）。`message`: この失敗の `finding` の `message` と同じ文。その時点で文が決まっているときだけあります（`left_simulation` にはありません） |
 | `stop_requested` | 止まるよう求めた（止め方の 2） | |
@@ -979,7 +1040,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 - 外した participant の `disabled` は、`check` の直後、`starting` の前に、構成ファイルの順に書きます。
 - participant の `log` は、その participant の `started` より後に来ます。終わりの側には約束がありません。participant の出力は別のスレッドが読んでいるので、最後の何行かが、その participant の `ended` の後や、`phase` の `ended` の後に来ることがあります。`result` より後には来ません。
 - `joined` は、SIL Kit のライフサイクルで参加する participant だけです（参加しない道具の participant には来ません）。
-- `control_link` は、必須の participant の `joined` がそろった後、`phase` の `running` の前に、構成ファイルの順に書きます（起動できなかった participant と、外した participant にはありません）。シミュレーションが始まらなかったときは書きません。
+- `control_link` は、必須の participant の `joined` がそろった後、`phase` の `running` の前に、構成ファイルの順に書きます（起動できなかった participant と、外した participant にはありません）。
+- `manual` は、`started` と同じ所に（構成ファイルの順に）書きます。その participant には `log` が来ません（出力は、利用者が起動した所に出ます）。シミュレーションが始まらなかったときは書きません。
 - `failed` は、失敗と決めた時点ですぐに書きます。ほかの participant を止める（`phase` の `stopping`）より前で、その失敗の `finding` より前です。`log` と違って、読む側が遅くても捨てません。`reason` が `left_simulation` のときは、その participant の `ended` より前に来ます。`process_ended` と `ended_before_start` は、プロセスの終わりで失敗に気づくので、`ended` の後に来ます。`failed` を知らない読む側は、無視してかまいません（結果と、ほかの事象は変わりません）。
 - `time` は、`running` になったときに 0 を書きます。その後は、仮想時間が進んだときに実時間で 100 ms に 1 回まで、一時停止に入ったとき・出たとき・速さが変わったとき・一時停止したまま時刻が変わったとき（ステップ送りの後）はすぐに書きます。シミュレーションが終わったときの状態は、間隔によらず書きます（終わったシミュレーションは一時停止していません）。`sim_ms` は減りません（一時停止や速さの変更では、前と同じ値のことがあります）。見張りが 20 ms ごとに読むので、それより短い間の変化（最速でのステップ送りの途中など）は書かないことがあります。最後の状態は必ず書きます。
 - `finding` は実行で見つけたものです。シミュレーションが終わった（または始まらなかった）ときに、その時点で決まっているものを書き、残りを participant を終わらせた後に書きます。一度書いた `finding` は、同じ内容のまま `result` の `findings` に入ります。同じものを 2 回は書きません。シミュレーションの途中で失敗した participant の `participant-failed` は、プロセスの終わり方を含むので、プロセスが終わってから書きます（失敗に気づいた時点では、`participant` の `failed` が知らせます。`vehicle_sil_launch` の `log` の行にも理由があります）。照合で見つけたものは `check` の中にあります。`result` だけを読んでも、結果はわかります。
@@ -1066,7 +1128,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 ```text
 {"event":"hello","seq":0,"t_ms":<t_ms>,"vehicle_sil_events":1,"vehicle_sil":"<version>","pid":<pid>,"file":"simulation.yaml","arguments":["run","simulation.yaml","--events","--disable","Dashboard"]}
 {"event":"phase","seq":1,"t_ms":<t_ms>,"phase":"checking"}
-{"event":"check","seq":2,"t_ms":<t_ms>,"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}]}]},"variables":[{"name":"ecu.connected","type":"bool","causality":"input","unit":"","min":null,"max":null,"step":null,"description":"on its buses; false: off all of them (CAN and LIN), its steps go on","items":[],"builtin":true},{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[],"builtin":false},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[],"builtin":false}],"control":{"transport":"silkit","wire_version":1}},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"step_ms":5,"status":"disabled","reported":null,"variables":null,"control":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"]}],"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}
+{"event":"check","seq":2,"t_ms":<t_ms>,"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"manual":false,"step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}]}]},"variables":[{"name":"ecu.connected","type":"bool","causality":"input","unit":"","min":null,"max":null,"step":null,"description":"on its buses; false: off all of them (CAN and LIN), its steps go on","items":[],"builtin":true},{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[],"builtin":false},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[],"builtin":false}],"control":{"transport":"silkit","wire_version":1}},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"manual":false,"step_ms":5,"status":"disabled","reported":null,"variables":null,"control":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"]}],"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}
 {"event":"participant","seq":3,"t_ms":<t_ms>,"name":"Dashboard","state":"disabled"}
 {"event":"phase","seq":4,"t_ms":<t_ms>,"phase":"starting"}
 {"event":"registry","seq":5,"t_ms":<t_ms>,"uri":"silkit://127.0.0.1:<port>"}
@@ -1086,7 +1148,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 {"event":"log","seq":19,"t_ms":<t_ms>,"source":"vehicle_sil_launch","line":"Engine exited with code 0"}
 {"event":"participant","seq":20,"t_ms":<t_ms>,"name":"Engine","state":"ended","exit_code":0,"signal":null}
 {"event":"phase","seq":21,"t_ms":<t_ms>,"phase":"ended"}
-{"event":"result","seq":22,"t_ms":<t_ms>,"result":{"vehicle_sil_run":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"simulation":"reached_stop_at","interrupted_by":null,"timing":{"speed":"max","time_step_ms":10,"ecu_step_ms":10,"step_delay_ms":0,"late_tolerance_ms":10,"sim_ms":1000,"wall_ms":<wall_ms>,"actual_speed":<actual_speed>,"paced_steps":0,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0,"paused_ms":0},"participants":[{"name":"Engine","required":true,"enabled":true,"ended":"exited","exit_code":0,"signal":null,"left_processes":false,"log":null,"control_link":{"state":"connected","variables":18,"version":null,"late_messages":0}},{"name":"Dashboard","required":true,"enabled":false,"ended":"not_started","exit_code":null,"signal":null,"left_processes":false,"log":null,"control_link":{"state":"none","variables":null,"version":null,"late_messages":0}}],"findings":[],"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}]}]},"variables":[{"name":"ecu.connected","type":"bool","causality":"input","unit":"","min":null,"max":null,"step":null,"description":"on its buses; false: off all of them (CAN and LIN), its steps go on","items":[],"builtin":true},{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[],"builtin":false},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[],"builtin":false}],"control":{"transport":"silkit","wire_version":1}},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"step_ms":5,"status":"disabled","reported":null,"variables":null,"control":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"]}],"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}}
+{"event":"result","seq":22,"t_ms":<t_ms>,"result":{"vehicle_sil_run":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"simulation":"reached_stop_at","interrupted_by":null,"timing":{"speed":"max","time_step_ms":10,"ecu_step_ms":10,"step_delay_ms":0,"late_tolerance_ms":10,"sim_ms":1000,"wall_ms":<wall_ms>,"actual_speed":<actual_speed>,"paced_steps":0,"late_steps":0,"max_late_ms":0,"slipped_ms":0,"late_ms":0,"paused_ms":0},"participants":[{"name":"Engine","required":true,"enabled":true,"manual":false,"ended":"exited","exit_code":0,"signal":null,"left_processes":false,"log":null,"control_link":{"state":"connected","variables":18,"version":null,"late_messages":0}},{"name":"Dashboard","required":true,"enabled":false,"manual":false,"ended":"not_started","exit_code":null,"signal":null,"left_processes":false,"log":null,"control_link":{"state":"none","variables":null,"version":null,"late_messages":0}}],"findings":[],"check":{"vehicle_sil_check":1,"vehicle_sil":"<version>","file":"simulation.yaml","result":"passed","strict":false,"errors":0,"warnings":1,"notes":1,"stop_at_ms":1000,"start_timeout_ms":30000,"stop_timeout_ms":10000,"registry_uri":null,"participants":[{"name":"Engine","line":11,"command":["engine/vehicle_sil_engine_ecu"],"describe":true,"required":true,"enabled":true,"manual":false,"step_ms":10,"status":"described","reported":{"vehicle_sil":"<version>","name":"Engine","step_ns":10000000,"networks":[{"name":"J1939_CAN","kind":"can","use":"j1939","nodes":[{"address":0,"j1939_name":"0x00000000FE000001","arbitrary_address_capable":false}]}]},"variables":[{"name":"ecu.connected","type":"bool","causality":"input","unit":"","min":null,"max":null,"step":null,"description":"on its buses; false: off all of them (CAN and LIN), its steps go on","items":[],"builtin":true},{"name":"engine.throttle","type":"real","causality":"input","unit":"%","min":0,"max":100,"step":null,"description":"accelerator pedal position","items":[],"builtin":false},{"name":"engine.speed","type":"integer","causality":"output","unit":"rpm","min":null,"max":null,"step":null,"description":"","items":[],"builtin":false}],"control":{"transport":"silkit","wire_version":1}},{"name":"Dashboard","line":14,"command":["dashboard/vehicle_sil_dashboard_ecu"],"describe":true,"required":true,"enabled":false,"manual":false,"step_ms":5,"status":"disabled","reported":null,"variables":null,"control":null}],"networks":[{"name":"J1939_CAN","kind":"can","line":8,"participants":["Engine"]}],"findings":[{"severity":"warning","code":"single-participant","file":"simulation.yaml","line":8,"participant":null,"network":"J1939_CAN","message":"network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it","detail":null},{"severity":"note","code":"participant-disabled","file":"simulation.yaml","line":14,"participant":"Dashboard","network":null,"message":"participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it","detail":null}]}}}
 ```
 
 この例は、CTest の `launch_run.events` が、実際の出力から `heartbeat` の行と、最初と最後のほかの `time` の行（遅い機械では途中の時刻も書きます）を除き（`seq` は詰めます）、上の置き換えをした後で、バイト単位で照合します。
@@ -1142,7 +1204,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
     "start-paused",
     "time-commands",
     "control-links",
-    "scenario"
+    "scenario",
+    "manual-participants"
   ]
 }
 ```
@@ -1163,6 +1226,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `start-paused` | `run --start-paused` |
 | `time-commands` | 標準入力の `pause`、`resume`、`step`、`speed` |
 | `control-links` | ECU の変数を読み書きする口: 事象 `control_link`、結果の `participants[].control_link`、照合の JSON の `participants[].control`、所見 `control-link-no-hello`、`control-link-version`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered` |
+| `manual-participants` | 利用者が起動する participant: 構成ファイルの `manual`、`--manual`、照合と結果の JSON の `participants[].manual`、所見 `participant-manual`、事象 `participant` の `state` の `manual` |
 | `scenario` | `check --scenario` と `run --scenario`（[scenario.md](scenario.md)）: 結果と照合の JSON の `scenario`、事象 `scenario_step`、所見 `scenario-*`、所見の `file` がシナリオのファイルになること |
 | `control-server` | `run --control`（Control Server を持つビルドだけ）: 事象 `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 
@@ -1172,12 +1236,13 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 
 ```text
 vehicle_sil_launch check [--json] [--strict] [--scenario <file>] [--describe-timeout-ms <ms>] [--disable <name>]...
-                         [--enable <name>]... [--] <file>
+                         [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
                        [--scenario <file>] [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
-                       [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--] <file>
+                       [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--manual <name>]...
+                       [--] <file>
 vehicle_sil_launch version [--json]
 ```
 
@@ -1196,10 +1261,11 @@ vehicle_sil_launch version [--json]
 | `--speed <speed>` | `run` だけ。構成ファイルの `speed` を上書きする（数か `max`。[等速で動かす](#等速で動かす)） |
 | `--strict` | 警告があっても失敗にする（注記では失敗にしない） |
 | `--log-dir <dir>` | `run` だけ。participant ごとの出力のファイルを置くディレクトリ |
-| `--timeout-ms <ms>` | `run` だけ。シミュレーションの開始から終わりまでの実時間の上限（1 以上の整数。一時停止している時間も数える。`--control` と `--start-paused` では、時刻 0 のステップの前に止まった時点から）。超えたら中断して誤り。既定は上限なし |
+| `--timeout-ms <ms>` | `run` だけ。シミュレーションの開始から終わりまでの実時間の上限（1 以上の整数。一時停止している時間も数える。`--control` と `--start-paused` では、時刻 0 のステップの前に止まった時点から。manual の必須の participant がいる実行では、participant を待ち始めた時点から）。超えたら中断して誤り。既定は上限なし |
 | `--describe-timeout-ms <ms>` | 1 つの実行ファイルの `--describe` を待つ時間（1 以上の整数。既定は 10000） |
 | `--disable <name>` | participant `<name>` を外す（`enabled: false` と同じ）。繰り返せる |
 | `--enable <name>` | participant `<name>` を戻す（`enabled: true` と同じ）。繰り返せる |
+| `--manual <name>` | participant `<name>` を自分で起動する（`manual: true` と同じ）。`run` は起動せず、コマンドを書いて待つ。繰り返せる |
 | `--` | これより後はファイル名（`-` で始まる名前のとき） |
 | `--help`、`-h` | 使い方を標準出力に書いて 0 で終わる（`--` より前のどこにあっても） |
 | `--version` | `version` と同じ（`--` より前のどこにあっても） |
@@ -1209,7 +1275,7 @@ vehicle_sil_launch version [--json]
 | 0 | 誤りがない（警告と注記だけなら 0。`--strict` では警告もない）。`run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった |
 | 1 | 誤りがある（`--strict` では警告も）。`run` では、照合の誤り（何も起動しない）か、実行の誤り（participant が失敗した、そろわなかった、止めても終わらなかったなど） |
 | 3 | 構成ファイルを読めない（ファイルがない、文法の誤り、知らない形式の版など）。`run` で registry や controller を用意できないときも 3 です。結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です（標準エラーに理由。`--json` では、そのコマンドの形の JSON に `code` が `internal` の誤り） |
-| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` も `--control` もない `--start-paused`、`--control` なしの `--control-credentials` などと Control Server を持たないビルドの `--control`、`--control` の値の誤り、読めない `--control-*` のファイル、認証情報が 1 件もない `--control-credentials` のファイル、片方だけの `--control-tls-cert` と `--control-tls-key`、TLS と認証情報のない、ループバックでない `--control`、数でも `max` でもない `--speed`、`--control` か `--start-paused` と一緒の `--scenario`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*`、構成ファイルにない participant 名の `--disable` と `--enable`、同じ名前の `--disable` と `--enable`）。誤りと使い方を標準エラーに書きます |
+| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` も `--control` もない `--start-paused`、`--control` なしの `--control-credentials` などと Control Server を持たないビルドの `--control`、`--control` の値の誤り、読めない `--control-*` のファイル、認証情報が 1 件もない `--control-credentials` のファイル、片方だけの `--control-tls-cert` と `--control-tls-key`、TLS と認証情報のない、ループバックでない `--control`、数でも `max` でもない `--speed`、`--control` か `--start-paused` と一緒の `--scenario`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*`、構成ファイルにない participant 名の `--disable`、`--enable`、`--manual`、同じ名前の `--disable` と `--enable`、同じ名前の `--disable` と `--manual`）。誤りと使い方を標準エラーに書きます |
 | 130 | `run` が中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力、Control Server のクライアントの `Stop` など） |
 
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。

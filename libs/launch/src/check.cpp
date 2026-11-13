@@ -725,6 +725,15 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
                 p.name, "");
             continue;
         }
+        if (p.manual && !p.name.empty())
+        {
+            add(Severity::Note, "participant-manual", p.line,
+                prefix + "you start it yourself (manual: true, or --manual): run does not start it, but prints the command "
+                         "to start it with" +
+                    (p.required ? std::string(", and waits for it to join without a time limit (with --timeout-ms, at most that long)")
+                                : std::string(", and does not wait for it (required: false)")),
+                p.name, "");
+        }
         if (result.status == ParticipantStatus::NotChecked)
         {
             add(Severity::Note, "not-checked", p.line,
@@ -1304,6 +1313,7 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
             w.boolean("describe", p.describe);
             w.boolean("required", p.required);
             w.boolean("enabled", p.enabled);
+            w.boolean("manual", p.manual);
             optional_integer("step_ms", p.step_ms);
             w.string("status", status_name(result.status));
             if (!result.ecu)

@@ -28,7 +28,7 @@ constexpr const char* kSpeedMeaning =
     "simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, 2: twice as fast, 0.5: half as "
     "fast), or max (as fast as possible)";
 const std::vector<std::string> kNetworkKeys = {"name", "kind"};
-const std::vector<std::string> kParticipantKeys = {"name", "command", "step_ms", "describe", "required", "enabled"};
+const std::vector<std::string> kParticipantKeys = {"name", "command", "step_ms", "describe", "required", "enabled", "manual"};
 
 std::string join(const std::vector<std::string>& items)
 {
@@ -699,6 +699,10 @@ private:
                     // Not known whether to leave it out: neither described nor started.
                     usable = usable && enabled.has_value();
                 }
+                else if (key == "manual")
+                {
+                    participant.manual = boolean(child, prefix, key, who).value_or(false);
+                }
                 else if (key != "name")
                 {
                     unknown_key(child, key, prefix, kParticipantKeys);
@@ -981,6 +985,10 @@ std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOver
     {
         unknown("--enable", name);
     }
+    for (const auto& name : overrides.manual)
+    {
+        unknown("--manual", name);
+    }
     if (!errors.empty())
     {
         return errors;
@@ -997,6 +1005,10 @@ std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOver
         else if (named(overrides.enable))
         {
             p.enabled = true;
+        }
+        if (named(overrides.manual))
+        {
+            p.manual = true;
         }
     }
     return errors;
@@ -1060,7 +1072,23 @@ std::vector<Finding> override_conflicts(const EnabledOverrides& overrides)
             out.push_back(usage("--disable and --enable both name " + name + ": give one of them"));
         }
     }
+    for (const auto& name : overrides.manual)
+    {
+        if (std::find(overrides.disable.begin(), overrides.disable.end(), name) != overrides.disable.end() &&
+            std::find(seen.begin(), seen.end(), name) == seen.end())
+        {
+            seen.push_back(name);
+            out.push_back(usage("--disable and --manual both name " + name +
+                                ": give one of them (--disable leaves it out, --manual has you start it)"));
+        }
+    }
     return out;
+}
+
+bool waits_for_manual(const SimulationConfig& config)
+{
+    return std::any_of(config.participants.begin(), config.participants.end(),
+                       [](const ParticipantConfig& p) { return p.enabled && p.required && p.manual; });
 }
 
 ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)

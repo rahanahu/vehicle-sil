@@ -28,8 +28,9 @@ inline constexpr int kEventsFormat = 1;
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
 /// versions (`version --json`'s "features"). Names are only added.
-inline constexpr std::array<std::string_view, 8> kFeatures{"events", "stdin-commands", "check-variables", "speed",
-                                                           "start-paused", "time-commands", "control-links", "scenario"};
+inline constexpr std::array<std::string_view, 9> kFeatures{"events",        "stdin-commands", "check-variables",
+                                                           "speed",         "start-paused",   "time-commands",
+                                                           "control-links", "scenario",       "manual-participants"};
 
 /// `version`: "vehicle_sil_launch <version>\n".
 [[nodiscard]] std::string format_version_text();
@@ -131,6 +132,7 @@ enum class ParticipantState
     Disabled,      ///< left out (enabled: false, --disable): not started
     NotStarted,    ///< its process could not be started ("message" says why)
     Started,       ///< its process runs ("pid", "command", "log")
+    Manual,        ///< someone starts it (manual): the launcher does not ("command", "working_directory", "command_line")
     Joined,        ///< it joined the simulation (the controller saw its lifecycle)
     Failed,        ///< the launcher decided that it failed, and ends the run ("reason", "message")
     Ended,         ///< its process ended ("exit_code", "signal")
@@ -258,6 +260,10 @@ public:
     void participant_started(const std::string& name, long pid, const std::vector<std::string>& command,
                              const std::string& log);
     void participant_ended(const std::string& name, const process::ExitStatus& status);
+    /// Manual: `command` the executable and its arguments, `working_directory` where to start it
+    /// (both as shown in the outputs), `command_line` the same as one line for this system's shell.
+    void participant_manual(const std::string& name, const std::vector<std::string>& command,
+                            const std::string& working_directory, const std::string& command_line);
     /// "control_link": where a started participant's control agent stands when the simulation
     /// has started: `state` is control_link_name(); "variables" with "connected" (how many its
     /// agent offers), "version" with "version_mismatch" (the version of the messages it speaks).

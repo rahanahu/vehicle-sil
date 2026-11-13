@@ -685,6 +685,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "describe": true,
       "required": true,
       "enabled": true,
+      "manual": false,
       "step_ms": 10,
       "status": "described",
       "reported": {
@@ -747,6 +748,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "describe": true,
       "required": true,
       "enabled": true,
+      "manual": false,
       "step_ms": null,
       "status": "described",
       "reported": {
@@ -786,6 +788,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "describe": true,
       "required": true,
       "enabled": true,
+      "manual": false,
       "step_ms": null,
       "status": "failed",
       "reported": null,
@@ -1092,9 +1095,9 @@ TEST_CASE(the_reports_show_a_disabled_participant)
     r.findings.erase(r.findings.begin());
     CHECK(r.passed());
     const std::string json = format_json(r);
-    CHECK(json.find("      \"required\": true,\n      \"enabled\": true,\n      \"step_ms\": 10,\n      \"status\": "
+    CHECK(json.find("      \"required\": true,\n      \"enabled\": true,\n      \"manual\": false,\n      \"step_ms\": 10,\n      \"status\": "
                     "\"described\",\n") != std::string::npos);
-    CHECK(json.find("      \"required\": true,\n      \"enabled\": false,\n      \"step_ms\": null,\n      \"status\": "
+    CHECK(json.find("      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n      \"step_ms\": null,\n      \"status\": "
                     "\"disabled\",\n      \"reported\": null,\n      \"variables\": null,\n      \"control\": null\n") != std::string::npos);
     CHECK(json.find("      \"participants\": [\n        \"Engine\"\n      ]\n") != std::string::npos);
 }
@@ -1162,6 +1165,6 @@ TEST_CASE(check_file_a_disabled_entry_with_errors_and_an_unreadable_enabled)
     }
     check_text(codes, "executable(Engine) missing-key(Ghost) value(Maybe) participant-disabled(Ghost) ");
     // The JSON says disabled for Ghost.
-    CHECK(format_json(r).find("      \"enabled\": false,\n      \"step_ms\": null,\n      \"status\": \"disabled\",\n") !=
+    CHECK(format_json(r).find("      \"enabled\": false,\n      \"manual\": false,\n      \"step_ms\": null,\n      \"status\": \"disabled\",\n") !=
           std::string::npos);
 }

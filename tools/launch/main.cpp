@@ -75,14 +75,14 @@ using namespace vehicle_sil;
 
 constexpr const char* kUsage =
     "usage: vehicle_sil_launch check [--json] [--strict] [--scenario <file>] [--describe-timeout-ms <ms>]\n"
-    "                                [--disable <name>]... [--enable <name>]... [--] <file>\n"
+    "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
     "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
     "                              [--scenario <file>] [--speed <speed>] [--strict] [--log-dir <dir>]\n"
     "                              [--timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>]\n"
-    "                              [--disable <name>]... [--enable <name>]... [--] <file>\n"
+    "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch version [--json]\n"
     "  check <file>                compare the simulation configuration <file> (YAML or JSON) with what each\n"
     "                              ecu_main executable in it reports (--describe); list the participants,\n"
@@ -125,6 +125,9 @@ constexpr const char* kUsage =
     "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
+    "  --manual <name>             you start the participant <name> yourself (from a debugger, say): run does not\n"
+    "                              start it, prints the command to start it with and waits for it to join, with\n"
+    "                              no time limit (as manual: true in <file>); repeatable\n"
     "  --help, -h                  this text\n"
     "  --version                   as version\n"
     "  --                          what follows is the file, also if it starts with '-'\n"
@@ -812,7 +815,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
             optionsEnded = true;
         }
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
-                 a == "--disable" || a == "--enable" || a == "--speed" || a == "--scenario" || a == "--control" ||
+                 a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
                  a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
@@ -847,6 +850,7 @@ Common common(const cli::Args& args, const std::string& command)
     c.options.strict = args.flag("strict");
     c.options.overrides.disable = args.all("disable");
     c.options.overrides.enable = args.all("enable");
+    c.options.overrides.manual = args.all("manual");
     if (args.has("scenario"))
     {
         c.options.scenario_shown = args.str("scenario", "");
@@ -1122,7 +1126,7 @@ int main(int argc, char** argv)
         const cli::Args args(arguments,
                              {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario",
                               "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"},
-                             {"json", "strict", "events", "stdin-commands", "start-paused"}, {"disable", "enable"});
+                             {"json", "strict", "events", "stdin-commands", "start-paused"}, {"disable", "enable", "manual"});
         if (args.positionals().empty())
         {
             code = usage_error("no command: give check <file>, run <file> or version", json, false, file, stream);

@@ -44,6 +44,11 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   add_executable(vehicle_sil_launch_run_launcher launch_run_launcher.cpp)
   target_include_directories(vehicle_sil_launch_run_launcher PRIVATE ${PROJECT_SOURCE_DIR}/tests/process)
   target_link_libraries(vehicle_sil_launch_run_launcher PRIVATE vehicle_sil_test_process)
+  if(WIN32)
+    # CommandLineToArgvW: the scenario manual splits a command line as a person's shell would, and
+    # finds a free port for a registry.
+    target_link_libraries(vehicle_sil_launch_run_launcher PRIVATE shell32 ws2_32)
+  endif()
   vehicle_sil_target_defaults(vehicle_sil_launch_run_launcher)
   add_dependencies(vehicle_sil_launch_run_launcher vehicle_sil_launch vehicle_sil_launch_test_ecu vehicle_sil_process_helper
                    vehicle_sil_engine_ecu vehicle_sil_dashboard_ecu)
@@ -55,7 +60,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
               stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
               events_slow events_findings events_nonblocking events_output events_stderr realtime late stall
               speed_change step_width pause_step paused_failures time_usage control scenario scenario_same
-              scenario_disconnect scenario_failures
+              scenario_disconnect scenario_failures manual
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>

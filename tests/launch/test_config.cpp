@@ -152,9 +152,9 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
                "networks, participants)\n");
     check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
                "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled)\n"
+               "command, step_ms, describe, required, enabled, manual)\n"
                "E 7 unknown-key: participant 'A': unknown key 'Step_ms': did you mean 'step_ms'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled)\n");
+               "command, step_ms, describe, required, enabled, manual)\n");
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'bitrate': remove it, or use one of the keys here (name, kind)\n");
@@ -460,7 +460,7 @@ TEST_CASE(many_errors_are_reported_at_once_in_the_order_of_the_file)
                "ecu_main executable --local itself: remove it (or set describe: false for an executable not made with "
                "ecu_main)\n"
                "E 11 unknown-key: participant 'A': unknown key 'commands': did you mean 'command'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled)\n"
+               "command, step_ms, describe, required, enabled, manual)\n"
                "E 10 missing-key: participant 'A': no command: add command: [<path of the executable>]\n"
                "E 10 duplicate-name: participant 'A' is listed twice (first at line 7); give each participant its own name "
                "(for a second copy of an ECU, e.g. A_2)\n");
@@ -786,7 +786,7 @@ TEST_CASE(a_disabled_participant_is_checked_like_any_other)
                                       "    bitrate: 1\n"
                                       "  - name: A\n    command: a\n    enabled: false\n")),
                "E 10 unknown-key: participant 'B': unknown key 'bitrate': remove it, or use one of the keys here (name, "
-               "command, step_ms, describe, required, enabled)\n"
+               "command, step_ms, describe, required, enabled, manual)\n"
                "E 7 launcher-argument: participant 'B': the command has '--local', but vehicle_sil_launch gives an ecu_main "
                "executable --local itself: remove it (or set describe: false for an executable not made with ecu_main)\n"
                "E 9 not-required-ecu: participant 'B': required: false is only for executables with describe: false: an "
@@ -880,6 +880,34 @@ TEST_CASE(the_command_line_must_name_participants_of_the_file_once)
     check_text(lines(override_conflicts(EnabledOverrides{{"A", "B"}, {"B"}})),
                "E 0 usage: --disable and --enable both name B: give one of them\n");
     CHECK(override_conflicts(EnabledOverrides{{"A"}, {"B"}}).empty());
+}
+
+TEST_CASE(a_participant_started_by_hand_from_the_file_or_the_command_line)
+{
+    const std::string text = with_participants("  - name: Engine\n    command: e\n    manual: true\n"
+                                               "  - name: Brake\n    command: b\n"
+                                               "  - name: Cluster\n    command: c\n    manual: 1\n");
+    const ConfigRead r = read_config(text, EnabledOverrides{{}, {}, {"Brake"}});
+    check_text(lines(r.findings), "E 11 value: participant 'Cluster': manual must be true or false, not '1'\n");
+    CHECK(r.config->participants[0].manual && r.config->participants[1].manual && !r.config->participants[2].manual);
+    CHECK(waits_for_manual(*r.config));
+    // --manual changes neither enabled nor required; the start waits only for an enabled required one.
+    const ConfigRead off = read_config(with_participants("  - name: A\n    command: a\n    manual: true\n    enabled: false\n"
+                                                         "  - name: B\n    command: b\n"),
+                                       EnabledOverrides{{}, {}, {"B"}});
+    CHECK(!off.config->participants[0].enabled && off.config->participants[1].manual);
+    CHECK(waits_for_manual(*off.config));
+    CHECK(!waits_for_manual(*read_config(with_participants("  - name: A\n    command: a\n    manual: true\n    enabled: false\n"
+                                                           "  - name: B\n    command: b\n"))
+                                 .config));
+    // A name the file does not have, and one given to --disable as well.
+    const std::string fine = with_participants("  - name: Engine\n    command: e\n  - name: Brake\n    command: b\n");
+    check_text(lines(read_config(fine, EnabledOverrides{{}, {}, {"Brak"}}).override_errors),
+               "E 0 usage: --manual Brak: the file has no participant with this name (did you mean 'Brake'?); its "
+               "participants are Engine, Brake\n");
+    check_text(lines(override_conflicts(EnabledOverrides{{"Brake"}, {}, {"Brake"}})),
+               "E 0 usage: --disable and --manual both name Brake: give one of them (--disable leaves it out, --manual "
+               "has you start it)\n");
 }
 
 TEST_CASE(an_error_in_the_file_comes_before_the_names_of_the_command_line)

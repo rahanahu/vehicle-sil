@@ -91,6 +91,10 @@ struct ParticipantRun
     bool describe = true;
     /// false: disabled (enabled: false, or --disable); it was not started (Ending::NotStarted).
     bool enabled = true;
+    /// true: someone starts it (manual), not the launcher; it has no process here (Ending::NotStarted).
+    bool manual = false;
+    /// manual: it joined the simulation (the controller saw its lifecycle).
+    bool manual_joined = false;
     std::size_t line = 0; ///< its entry in the configuration file
     /// Why it could not be started (Ending::NotStarted), or "".
     std::string start_error{};
@@ -202,6 +206,14 @@ struct RunOutcome
     /// --start-paused with a control server) until a command let it go on, if it did; --timeout-ms
     /// counts from the beginning of the hold.
     std::optional<std::int64_t> held_before_start_ms{};
+    /// timed_out before the simulation started: a run that waits for a participant someone starts
+    /// by hand, whose --timeout-ms counts from when the launcher began to wait for the participants.
+    bool timed_out_before_start = false;
+    /// timed_out_before_start: what the start still waited for ("Late (manual) has not joined", ...).
+    std::string timed_out_waiting_for{};
+    /// --timeout-ms counted from when the launcher began to wait for the participants (a run that
+    /// waits for a participant someone starts by hand), not from the start.
+    bool timeout_from_wait = false;
     /// What the launcher's end of the control agents dropped in the run (HubTransportStats):
     /// hellos it did not take, messages it could not decode, and messages that fit no agent it
     /// knows or no schema.
@@ -446,11 +458,24 @@ struct RunOptions
 /// when it ends (process::Process).
 [[nodiscard]] RunReport run_file(const std::filesystem::path& path, const std::string& shown_as, const RunOptions& options);
 
+/// Where the registry listens if the start waits for a participant someone starts by hand and the
+/// file has no registry_uri: a fixed port, so that the command to start it is the same in every
+/// run (the port SIL Kit's own registry takes by default).
+inline constexpr std::string_view kManualRegistryUri = "silkit://127.0.0.1:8500";
+
 namespace detail {
 /// The --start-timeout-ms the launcher gives an ecu_main executable: longer than the launcher's own
 /// wait for the start, so that the launcher, not the ECU, decides that the start failed and names
-/// who did not join; the ECU's limit only ends it if the launcher is gone.
+/// who did not join; the ECU's limit only ends it if the launcher is gone. kMaxMillis if the start
+/// waits for a participant someone starts by hand (waits_for_manual()): that may take any time.
 [[nodiscard]] std::int64_t ecu_start_timeout_ms(const SimulationConfig& config);
+
+/// One line for this system's shell that starts `executable` (as given) with `arguments`: on
+/// Windows for cmd.exe, quoted as the C runtimes read a command line back (an argument in double
+/// quotes if it has a space, a tab, a quote or one of &|<>^; %...% is not protected), elsewhere as
+/// POSIX sh reads it (an argument in single quotes unless it has only letters, digits and
+/// "%+,-./:=@_").
+[[nodiscard]] std::string shell_command_line(const std::string& executable, const std::vector<std::string>& arguments);
 
 /// The findings of assess_run(`outcome`) that are settled while the participants are still being
 /// ended: whatever happens to them from here on, assess_run() of the final outcome has each of

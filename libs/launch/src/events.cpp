@@ -100,6 +100,7 @@ const char* participant_state_name(ParticipantState state)
     case ParticipantState::Disabled: return "disabled";
     case ParticipantState::NotStarted: return "not_started";
     case ParticipantState::Started: return "started";
+    case ParticipantState::Manual: return "manual";
     case ParticipantState::Joined: return "joined";
     case ParticipantState::Failed: return "failed";
     case ParticipantState::Ended: return "ended";
@@ -729,6 +730,23 @@ void EventStream::participant_started(const std::string& name, long pid, const s
              }
              w.end_array();
              optional_text(w, "log", log);
+         }));
+}
+
+void EventStream::participant_manual(const std::string& name, const std::vector<std::string>& command,
+                                     const std::string& working_directory, const std::string& command_line)
+{
+    emit("participant", object([&](Writer& w) {
+             w.string("name", name);
+             w.string("state", participant_state_name(ParticipantState::Manual));
+             w.begin_array("command");
+             for (const auto& word : command)
+             {
+                 w.string({}, word);
+             }
+             w.end_array();
+             w.string("working_directory", working_directory);
+             w.string("command_line", command_line);
          }));
 }
 

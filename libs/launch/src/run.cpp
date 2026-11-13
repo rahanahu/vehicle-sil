@@ -74,6 +74,10 @@ std::string ending_cell(const ParticipantRun& p)
     switch (p.ending)
     {
     case Ending::NotStarted:
+        if (p.enabled && p.manual)
+        {
+            return p.manual_joined ? "started by you (manual)" : "not joined (manual)";
+        }
         return p.enabled ? "not started" : "not started (disabled)";
     case Ending::ExitedBeforeStart:
     case Ending::Exited:
@@ -102,7 +106,11 @@ std::string process_text(const ParticipantRun& p)
     return p.exit ? "its process " + exit_text(*p.exit) : std::string("its process ended");
 }
 
-std::string lines_hint(const ParticipantRun& p) { return "the lines [" + p.name + "] above show what it wrote"; }
+std::string lines_hint(const ParticipantRun& p)
+{
+    return p.manual ? "you started it (manual), so what it wrote is where you started it"
+                    : "the lines [" + p.name + "] above show what it wrote";
+}
 
 const char* ending_name(Ending ending)
 {
@@ -366,7 +374,17 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                 " instead of shutting down normally: the lines above show what the participants wrote",
             nullptr);
     }
-    if (outcome.timed_out)
+    if (outcome.timed_out && outcome.timed_out_before_start)
+    {
+        add(Severity::Error, "timeout",
+            "the simulation did not start within " + std::to_string(outcome.timeout_ms.value_or(0)) +
+                " ms of wall-clock time (--timeout-ms, which counts from when the launcher began to wait for the "
+                "participants, as the run waits for a participant you start yourself), so the launcher gave up: " +
+                outcome.timed_out_waiting_for +
+                "; start the participants started by hand (manual) in time, or leave --timeout-ms out to wait for them",
+            nullptr);
+    }
+    else if (outcome.timed_out)
     {
         add(Severity::Error, "timeout",
             "the simulation did not end within " + std::to_string(outcome.timeout_ms.value_or(0)) +
@@ -376,7 +394,11 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                                    "run_until command (--start-paused with a control server): no client let it go on")
                      : std::string("a participant may hang in a step (the lines above show what the participants "
                                    "wrote); if it is only slow, raise --timeout-ms") +
-                           (outcome.held_before_start_ms
+                           (outcome.timeout_from_wait
+                                ? ". Those " + std::to_string(outcome.timeout_ms.value_or(0)) +
+                                      " ms count from when the launcher began to wait for the participants, as the run "
+                                      "waits for a participant you start yourself (manual)"
+                            : outcome.held_before_start_ms
                                 ? ". Those " + std::to_string(outcome.timeout_ms.value_or(0)) +
                                       " ms count from when the run began to stand still before its first step "
                                       "(--start-paused with a control server), and " +
@@ -870,6 +892,7 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
             w.string("name", p.name);
             w.boolean("required", p.required);
             w.boolean("enabled", p.enabled);
+            w.boolean("manual", p.manual);
             w.string("ended", ending_name(p.ending));
             if (p.exit && !p.exit->signal)
             {
@@ -1030,6 +1053,11 @@ std::int64_t detail::ecu_start_timeout_ms(const SimulationConfig& config)
     // The launcher waits start_timeout_ms for the start and then stops the participants within
     // stop_timeout_ms; the ECU must not give up first (it would end, and the launcher would name it
     // instead of who did not join). 10 s more for a slow machine; never more than ecu_main accepts.
+    // A start that waits for someone to start a participant by hand may take any time.
+    if (waits_for_manual(config))
+    {
+        return kMaxMillis;
+    }
     return std::min(config.start_timeout_ms + config.stop_timeout_ms + 10000, kMaxMillis);
 }
 
@@ -1061,6 +1089,56 @@ std::string detail::uri_for_participants(std::string uri)
         }
     }
     return uri;
+}
+
+std::string detail::shell_command_line(const std::string& executable, const std::vector<std::string>& arguments)
+{
+    const auto quoted = [](const std::string& word) {
+#ifdef _WIN32
+        // CommandLineToArgvW and the C runtimes: backslashes are literal unless before a quote.
+        // Also in quotes: what cmd.exe would read as its own (&, |, <, >, ^); its %...% cannot be
+        // kept from it.
+        if (!word.empty() && word.find_first_of(" \t\"&|<>^") == std::string::npos)
+        {
+            return word;
+        }
+        std::string out = "\"";
+        std::size_t backslashes = 0;
+        for (const char c : word)
+        {
+            if (c == '\\')
+            {
+                ++backslashes;
+                continue;
+            }
+            out.append(c == '"' ? backslashes * 2 + 1 : backslashes, '\\');
+            backslashes = 0;
+            out += c;
+        }
+        out.append(backslashes * 2, '\\');
+        return out + "\"";
+#else
+        const bool plain = !word.empty() && std::all_of(word.begin(), word.end(), [](unsigned char c) {
+            return std::isalnum(c) != 0 || std::string_view("%+,-./:=@_").find(static_cast<char>(c)) != std::string_view::npos;
+        });
+        if (plain)
+        {
+            return word;
+        }
+        std::string out = "'";
+        for (const char c : word)
+        {
+            out += c == '\'' ? std::string("'\\''") : std::string(1, c);
+        }
+        return out + "'";
+#endif
+    };
+    std::string line = quoted(executable);
+    for (const auto& argument : arguments)
+    {
+        line += ' ' + quoted(argument);
+    }
+    return line;
 }
 
 // A child's output must not move the cursor or end the line early on the launcher's terminal.
@@ -1509,6 +1587,7 @@ public:
             run.required = p.required;
             run.describe = p.describe;
             run.enabled = p.enabled;
+            run.manual = p.manual;
             run.line = p.line;
             outcome_.participants.push_back(std::move(run));
         }
@@ -1568,17 +1647,24 @@ public:
         try
         {
             registry = SilKit::Vendor::Vector::CreateSilKitRegistry(SilKit::Config::ParticipantConfigurationFromString("{}"));
-            const std::string listen = config_.registry_uri.value_or("silkit://127.0.0.1:0");
+            // A participant started by hand gets a command that stays the same from run to run.
+            const bool fixed = !config_.registry_uri && waits_for_manual(config_);
+            const std::string listen =
+                config_.registry_uri.value_or(fixed ? std::string(kManualRegistryUri) : std::string("silkit://127.0.0.1:0"));
             try
             {
                 uri = uri_for_participants(registry->StartListening(listen));
             }
             catch (const std::exception& e)
             {
-                throw std::runtime_error("the registry cannot listen at " + listen + ": " + one_line(e.what()) +
-                                         (config_.registry_uri ? " (does another registry run there? choose another port in "
-                                                                 "registry_uri, or leave it out for a free port)"
-                                                               : ""));
+                throw std::runtime_error(
+                    "the registry cannot listen at " + listen + ": " + one_line(e.what()) +
+                    (config_.registry_uri ? " (does another registry run there? choose another port in registry_uri, or "
+                                            "leave it out for a free port)"
+                     : fixed ? " (a run with a participant you start yourself (manual) listens there if the file has no "
+                               "registry_uri, so that its command stays the same; does another registry run there? write "
+                               "another port in registry_uri)"
+                             : ""));
             }
             event([&uri](EventStream& e) { e.registry(uri); });
             say("registry at " + uri);
@@ -1650,6 +1736,7 @@ public:
         publish_findings(false);
         event([](EventStream& e) { e.phase(Phase::Stopping); });
         end_children(ran || before_start_failed_);
+        end_manual(*controller, ran || before_start_failed_);
         // The agents have said their last word (their processes have ended); what is still open
         // in the hub is settled here.
         transport.reset();
@@ -1679,6 +1766,12 @@ public:
 
 private:
     [[nodiscard]] TimeCommands& commands() { return own_commands_ ? *own_commands_ : *options_.time_commands; }
+    /// Participant `i` is part of this run: the launcher started its process, or someone starts it
+    /// by hand (manual).
+    [[nodiscard]] bool in_run(std::size_t i) const
+    {
+        return children_[i] != nullptr || (config_.participants[i].enabled && config_.participants[i].manual);
+    }
     [[nodiscard]] control::Hub& hub()
     {
         if (options_.hub != nullptr)
@@ -1783,11 +1876,15 @@ private:
                 began = std::chrono::steady_clock::now();
                 hold_began_ns_.store(began.time_since_epoch().count());
                 set_start_limit(std::chrono::steady_clock::time_point::max(), {}, false);
+                const std::lock_guard lock(start_limit_mutex_);
+                start_limit_holding_ = true;
                 say("standing still before the first step until a resume, step or run_until command (--start-paused "
                     "with a control server)");
             };
             const auto give_up = [&] {
-                if (options_.timeout && std::chrono::steady_clock::now() >= began + *options_.timeout)
+                // With a participant started by hand, --timeout-ms counts from the wait for the participants.
+                const auto from = manual_wait_began().value_or(began);
+                if (options_.timeout && std::chrono::steady_clock::now() >= from + *options_.timeout)
                 {
                     hold_timed_out_.store(true);
                     return true;
@@ -1797,9 +1894,15 @@ private:
             if (commands().hold_before_start(give_up, std::chrono::milliseconds(20), on_hold) != TimeCommands::Hold::None)
             {
                 hold_ms_.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count());
-                // From here on, the participants have start_timeout_ms to get to their first step.
+                // From here on, the participants have start_timeout_ms to get to their first step
+                // (with a participant started by hand: from when those are ready, as before the hold).
                 const std::chrono::milliseconds limit(config_.start_timeout_ms);
-                set_start_limit(std::chrono::steady_clock::now() + limit, limit, true);
+                const bool manual = waits_for_manual(config_);
+                set_start_limit(manual ? std::chrono::steady_clock::time_point::max() : std::chrono::steady_clock::now() + limit,
+                                limit, true);
+                const std::lock_guard lock(start_limit_mutex_);
+                start_limit_holding_ = false;
+                start_limit_armed_ = !manual;
             }
         }
     }
@@ -1821,17 +1924,37 @@ private:
 
     /// The give_up of the start (main thread): a required participant has left, or the start's
     /// limit has passed (the participants that hold it up named).
-    [[nodiscard]] std::string start_given_up(SimulationController& controller) const
+    [[nodiscard]] std::string start_given_up(SimulationController& controller)
     {
+        // With a participant started by hand, a stop request ends the start too: without a limit,
+        // it would wait for ever for one that stands still in a debugger. (Without one, the start
+        // has its limit and a stop takes effect once it is over, as it always did.)
+        if (waits_for_manual(config_) && interrupts() > 0)
+        {
+            return "interrupted (" + interrupt_name() + ")";
+        }
+        if (const auto from = manual_wait_began(); from && options_.timeout && std::chrono::steady_clock::now() >= *from + *options_.timeout)
+        {
+            manual_timed_out_ = "not at their first step: " + not_ready(controller);
+            return "--timeout-ms";
+        }
         if (std::string gone = gone_before_start(controller); !gone.empty())
         {
             return gone;
         }
+        // With a participant started by hand, the limit begins once every such participant is
+        // ready for its first step (not while the run stands still before it).
+        const bool manualReady = waits_for_manual(config_) && manual_ready(controller);
         std::chrono::steady_clock::time_point at;
         std::chrono::milliseconds length{};
         bool after_hold = false;
         {
             const std::lock_guard lock(start_limit_mutex_);
+            if (!start_limit_armed_ && !start_limit_holding_ && manualReady)
+            {
+                start_limit_armed_ = true;
+                start_limit_at_ = std::chrono::steady_clock::now() + start_limit_length_;
+            }
             at = start_limit_at_;
             length = start_limit_length_;
             after_hold = start_limit_after_hold_;
@@ -1840,7 +1963,16 @@ private:
         {
             return {};
         }
-        // Who is not ready yet: those that have not got to ReadyToRun (the others wait for them).
+        return "the participants did not all get to their first step within " + std::to_string(length.count()) +
+               " ms" + (after_hold ? " after the run stopped standing still before it" : "") +
+               (waits_for_manual(config_) ? " after the participants you start yourself (manual) were ready" : "") +
+               " (start_timeout_ms; a participant may hang while it starts): not ready: " + not_ready(controller);
+    }
+
+    /// The required participants that hold the start up, with their states: those that have not
+    /// got to ReadyToRun (the others wait for them), or else all that do not run yet.
+    [[nodiscard]] std::string not_ready(SimulationController& controller) const
+    {
         std::string waiting;
         std::string all;
         for (const std::string& name : controller.required_participants())
@@ -1858,10 +1990,34 @@ private:
                 waiting += (waiting.empty() ? "" : ", ") + item;
             }
         }
-        return "the participants did not all get to their first step within " + std::to_string(length.count()) +
-               " ms" + (after_hold ? " after the run stopped standing still before it" : "") +
-               " (start_timeout_ms; a participant may hang while it starts): not ready: " +
-               (waiting.empty() ? (all.empty() ? std::string("the launcher's controller") : all) : waiting);
+        return waiting.empty() ? (all.empty() ? std::string("the launcher's controller") : all) : waiting;
+    }
+
+    /// Every enabled required participant started by hand is ready for its first step (ReadyToRun
+    /// or further). Thread safe.
+    [[nodiscard]] bool manual_ready(SimulationController& controller) const
+    {
+        return std::all_of(config_.participants.begin(), config_.participants.end(), [&controller](const ParticipantConfig& p) {
+            if (!p.enabled || !p.required || !p.manual)
+            {
+                return true;
+            }
+            const auto state = controller.runtime().peer_status(p.name).state;
+            return state && (*state == orch::ParticipantState::ReadyToRun || *state == orch::ParticipantState::Running ||
+                             *state == orch::ParticipantState::Paused);
+        });
+    }
+
+    /// When the launcher began to wait for the participants, in a run that waits for one started
+    /// by hand (--timeout-ms counts from there); empty otherwise. Thread safe.
+    [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> manual_wait_began() const
+    {
+        const std::int64_t ns = manual_wait_began_ns_.load();
+        if (ns < 0)
+        {
+            return std::nullopt;
+        }
+        return std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(ns));
     }
 
     /// run --start-paused with a control server: the run holds before the first step.
@@ -1877,8 +2033,13 @@ private:
             const PeerStatus status = controller.runtime().peer_status(name);
             if (has_finished(status))
             {
+                const bool manual = std::any_of(config_.participants.begin(), config_.participants.end(),
+                                                [&name](const ParticipantConfig& p) { return p.manual && p.name == name; });
                 return "participant '" + name + "' left the simulation before it started (state " +
-                       std::string(orch::to_string(*status.state)) + ")";
+                       std::string(orch::to_string(*status.state)) + ")" +
+                       (manual ? "; you started it yourself (manual), and it cannot join this run again: to start it "
+                                 "again, start vehicle_sil_launch again as well"
+                               : "");
             }
         }
         return {};
@@ -1899,7 +2060,7 @@ private:
         for (std::size_t i = 0; i < children_.size(); ++i)
         {
             ParticipantRun& run = outcome_.participants[i];
-            if (!children_[i])
+            if (!in_run(i))
             {
                 continue;
             }
@@ -2091,6 +2252,11 @@ private:
                 arguments = expand_placeholders(rest, uri, p.name);
             }
             const std::filesystem::path executable = without_dots(std::filesystem::absolute(check_.participants[i].executable));
+            if (p.manual)
+            {
+                show_manual(p, executable, arguments, workDir);
+                continue;
+            }
             say("starting " + p.name + ": " + command_text(executable, arguments));
             process::ProcessOptions options;
             options.working_directory = workDir;
@@ -2118,6 +2284,38 @@ private:
             }
         }
         return true;
+    }
+
+    /// A participant someone starts by hand: the lines (or the event) with where and how to start it.
+    void show_manual(const ParticipantConfig& p, const std::filesystem::path& executable,
+                     const std::vector<std::string>& arguments, const std::filesystem::path& workDir)
+    {
+        std::filesystem::path native = executable;
+        native.make_preferred();
+        std::filesystem::path nativeDir = workDir;
+        nativeDir.make_preferred();
+        const std::string line = detail::shell_command_line(process::utf8_from_path(native), arguments);
+        const std::lock_guard lock(output_);
+        if (options_.events != nullptr)
+        {
+            std::vector<std::string> command{process::shown_path(executable)};
+            command.insert(command.end(), arguments.begin(), arguments.end());
+            options_.events->participant_manual(p.name, command, process::shown_path(workDir), line);
+        }
+        const std::string text =
+            "not starting " + p.name + ": start it yourself (manual: true, or --manual)" +
+            (p.required ? std::string("; the simulation waits for it to join") : std::string{}) + ". In the directory " +
+            process::utf8_from_path(nativeDir) + ", run:";
+        if (options_.events != nullptr)
+        {
+            options_.events->log(std::string(kLauncherName), text);
+            options_.events->log(std::string(kLauncherName), "  " + line);
+        }
+        else
+        {
+            write(std::string(kLauncherTag) + text);
+            write(std::string(kLauncherTag) + "  " + line);
+        }
     }
 
     /// Notes the participants whose process has ended since the last look; returns the first
@@ -2165,6 +2363,19 @@ private:
     bool wait_for_start(SimulationController& controller)
     {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(config_.start_timeout_ms);
+        // The participants someone starts by hand have no time limit: they may take any time.
+        const auto manual = [this](const std::string& name) {
+            return std::any_of(config_.participants.begin(), config_.participants.end(),
+                               [&name](const ParticipantConfig& p) { return p.manual && p.name == name; });
+        };
+        bool saidWaiting = false;
+        // A run that waits for a participant started by hand: --timeout-ms counts from here (an
+        // automatic run with manual: true in its file must end too).
+        if (waits_for_manual(config_) && options_.timeout)
+        {
+            manual_wait_began_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count());
+            outcome_.timeout_from_wait = true;
+        }
         while (true)
         {
             if (interrupts() > 0)
@@ -2173,10 +2384,21 @@ private:
                 say("interrupted (" + outcome_.interrupted_by + ") before the simulation started");
                 return false;
             }
+            if (const auto from = manual_wait_began(); from && std::chrono::steady_clock::now() >= *from + *options_.timeout)
+            {
+                std::string names;
+                const std::vector<std::string> left = controller.missing_participants();
+                for (const auto& name : left)
+                {
+                    names += (names.empty() ? "" : ", ") + name + (manual(name) ? " (manual)" : "");
+                }
+                return start_timed_out(names + (left.size() == 1 ? " has not joined" : " have not joined"));
+            }
             // Who has not joined is read before the ends of the processes: at the deadline, who
             // did not come is named even if a process ends in the same round.
             const std::vector<std::string> missing = controller.missing_participants();
-            const bool late = !missing.empty() && std::chrono::steady_clock::now() >= deadline;
+            const bool onlyManual = std::all_of(missing.begin(), missing.end(), manual);
+            const bool late = !onlyManual && std::chrono::steady_clock::now() >= deadline;
             note_joined(controller);
             const int ended = look_at_children(true);
             if (ended >= 0 && !late)
@@ -2189,13 +2411,24 @@ private:
             {
                 break;
             }
+            if (onlyManual && !saidWaiting)
+            {
+                saidWaiting = true;
+                std::string names;
+                for (const auto& name : missing)
+                {
+                    names += (names.empty() ? "" : ", ") + name;
+                }
+                say("waiting for " + names + " to join (manual): start " + (missing.size() == 1 ? "it" : "them") +
+                    " with the command above; Ctrl+C stops the run");
+            }
             if (late)
             {
                 outcome_.start_timed_out = true;
                 std::string names;
                 for (auto& run : outcome_.participants)
                 {
-                    if (std::find(missing.begin(), missing.end(), run.name) != missing.end())
+                    if (std::find(missing.begin(), missing.end(), run.name) != missing.end() && !run.manual)
                     {
                         run.missing_at_start = true;
                         names += (names.empty() ? "" : ", ") + run.name;
@@ -2214,13 +2447,38 @@ private:
             // (it ends with a command, a stop, --timeout-ms or a participant that leaves); after
             // it, start_timeout_ms anew. A required participant that leaves ends the start at
             // once: the others would wait for it until the limit.
-            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
-            const auto limit = std::max(left, options_.control_hello_timeout + std::chrono::milliseconds(1000));
-            set_start_limit(std::chrono::steady_clock::now() + limit, limit, false);
+            // With a participant started by hand, none until every such participant is ready for its
+            // first step (it may stand in a debugger before), then start_timeout_ms (start_given_up()).
+            if (waits_for_manual(config_))
+            {
+                set_start_limit(std::chrono::steady_clock::time_point::max(), std::chrono::milliseconds(config_.start_timeout_ms),
+                                false);
+                const std::lock_guard lock(start_limit_mutex_);
+                start_limit_armed_ = false;
+            }
+            else
+            {
+                const auto left =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+                const auto limit = std::max(left, options_.control_hello_timeout + std::chrono::milliseconds(1000));
+                set_start_limit(std::chrono::steady_clock::now() + limit, limit, false);
+            }
             controller.start(kNoStartLimit, [this, &controller] { return start_given_up(controller); });
         }
         catch (const std::exception& e)
         {
+            // A stop request and --timeout-ms end the start of a run with a participant started by
+            // hand as they end the wait above.
+            if (waits_for_manual(config_) && interrupts() > 0)
+            {
+                outcome_.interrupted_by = interrupt_name();
+                say("interrupted (" + outcome_.interrupted_by + ") before the simulation started");
+                return false;
+            }
+            if (!manual_timed_out_.empty())
+            {
+                return start_timed_out(manual_timed_out_);
+            }
             if (const int gone = gone_process(!gone_before_start(controller).empty()); gone >= 0)
             {
                 // A participant's process ended before the simulation started: as in the wait above.
@@ -2252,6 +2510,18 @@ private:
         // Every participant starts at virtual time 0.
         note_time(controller, TimeNote::Start);
         return true;
+    }
+
+    /// --timeout-ms passed before the simulation started (a run that waits for a participant started
+    /// by hand): `waiting_for` says for what. Returns false (it did not start).
+    bool start_timed_out(const std::string& waiting_for)
+    {
+        outcome_.timed_out = true;
+        outcome_.timed_out_before_start = true;
+        outcome_.timed_out_waiting_for = waiting_for;
+        say("the simulation did not start within --timeout-ms (" + std::to_string(options_.timeout->count()) +
+            " ms): " + waiting_for);
+        return false;
     }
 
     /// run --events: the launcher has decided that `name` failed and ends the run because of it
@@ -2286,7 +2556,7 @@ private:
         for (std::size_t i = 0; i < children_.size(); ++i)
         {
             ParticipantRun& run = outcome_.participants[i];
-            if (!children_[i] || joined_[i] || run.exit || run.ending == Ending::Killed)
+            if (!in_run(i) || joined_[i] || run.exit || run.ending == Ending::Killed)
             {
                 continue;
             }
@@ -2476,8 +2746,10 @@ private:
             {
                 outcome_.held_before_start_ms = heldMs;
             }
-            watch.deadline = (held >= 0 ? std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(held))
-                                        : std::chrono::steady_clock::now()) +
+            // With a participant started by hand: from when the launcher began to wait.
+            watch.deadline = manual_wait_began().value_or(
+                                 held >= 0 ? std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(held))
+                                           : std::chrono::steady_clock::now()) +
                              *options_.timeout;
             outcome_.timed_out_while_holding = hold_timed_out_.load();
         }
@@ -2915,6 +3187,49 @@ private:
         }
     }
 
+    /// The participants someone started by hand: the launcher cannot end their processes. If the
+    /// simulation did not start, they still wait for it: the controller aborts it, which ends them
+    /// (an ecu_main executable). Then waits up to stop_timeout_ms for each that joined to leave
+    /// the simulation, so that the registry and the controller stay until they have.
+    void end_manual(SimulationController& controller, bool ran)
+    {
+        std::vector<std::size_t> joined;
+        for (std::size_t i = 0; i < outcome_.participants.size(); ++i)
+        {
+            ParticipantRun& run = outcome_.participants[i];
+            if (run.enabled && run.manual && controller.runtime().peer_status(run.name).state)
+            {
+                run.manual_joined = true;
+                joined.push_back(i);
+            }
+        }
+        if (joined.empty())
+        {
+            return;
+        }
+        if (!ran)
+        {
+            controller.abort();
+        }
+        const auto gone = [&](std::size_t i) {
+            const auto state = controller.runtime().peer_status(outcome_.participants[i].name).state;
+            return state && (*state == orch::ParticipantState::Shutdown || *state == orch::ParticipantState::Error);
+        };
+        // As for the processes: an interrupt (one more than had come when the simulation ended)
+        // cuts the wait short.
+        static_cast<void>(wait_until(std::chrono::milliseconds(config_.stop_timeout_ms), interrupts_at_end_,
+                                     [&] { return std::all_of(joined.begin(), joined.end(), gone); }));
+        for (const std::size_t i : joined)
+        {
+            if (!gone(i))
+            {
+                say(outcome_.participants[i].name + " (started by you, manual) has not left the simulation " +
+                    std::to_string(config_.stop_timeout_ms) +
+                    " ms after it ended: the launcher cannot end it, so end it yourself");
+            }
+        }
+    }
+
     const SimulationConfig& config_;
     const CheckReport& check_;
     std::filesystem::path base_;
@@ -2950,6 +3265,16 @@ private:
     std::chrono::steady_clock::time_point start_limit_at_ = std::chrono::steady_clock::time_point::max();
     std::chrono::milliseconds start_limit_length_{};
     bool start_limit_after_hold_ = false;
+    /// Before the start limit counts in a run with participants started by hand: false until they
+    /// are ready (start_given_up()); true in a run without them. The run stands still before its
+    /// first step (holding: no limit then). Guarded by start_limit_mutex_.
+    bool start_limit_armed_ = true;
+    bool start_limit_holding_ = false;
+    /// When the launcher began to wait for the participants (steady-clock nanoseconds), in a run
+    /// that waits for one started by hand and has --timeout-ms; -1 otherwise.
+    std::atomic<std::int64_t> manual_wait_began_ns_{-1};
+    /// Main thread: --timeout-ms passed during the start (start_given_up()); what it waited for.
+    std::string manual_timed_out_;
     /// When the hold began (steady-clock nanoseconds), or -1 if there was none.
     std::atomic<std::int64_t> hold_began_ns_{-1};
     std::atomic<std::int64_t> hold_ms_{-1}; ///< how long the hold before the first step lasted (-1: none)

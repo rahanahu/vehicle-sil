@@ -192,6 +192,31 @@ passed: 0 errors, 0 warnings, 0 notes
 - `stop_at_ms` の 1000 ms で止まり、各 ECU は自分で終わります。途中で止めるときは Ctrl+C です（終了コード 130）。
 - 出力の形と終了コードは [simulation-config.md](../simulation-config.md) の「シミュレーションの実行」にあります。
 
+## デバッガーから動かす
+
+自分の ECU をデバッガーで止めながら動かすときは、その ECU だけをランチャーに起動させず、自分で起動します。構成ファイルは書き換えずに、`--manual` に participant 名を付けます。
+
+```sh
+../../tools/launch/vehicle_sil_launch run simulation.yaml --manual Engine
+```
+
+ランチャーはほかの ECU を起動し、Engine を起動するコマンドを標準エラーに書いて、Engine が参加するのを待ちます（`<dir>` は例のディレクトリです）。
+
+<!-- vehicle_sil_launch run simulation.yaml --manual Engine: the lines about Engine -->
+```text
+[vehicle_sil_launch] not starting Engine: start it yourself (manual: true, or --manual); the simulation waits for it to join. In the directory <dir>, run:
+[vehicle_sil_launch]   <dir>/engine/vehicle_sil_engine_ecu --name Engine --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 1000000000000
+```
+
+- 2 行目の `[vehicle_sil_launch]` の後が、Engine を起動するコマンドです。デバッガーには、実行ファイル、その後の引数、作業ディレクトリ（1 行目の `In the directory` の後）を設定して起動します。端末で試すときは、そのディレクトリでコマンドを貼って実行します。
+- 構成ファイルに `registry_uri` がなければ、registry のポートは 8500 に決まります。コマンドが毎回同じなので、デバッガーの設定は 1 度作れば使い回せます。8500 を別のプログラムが使っているときは、`registry_uri` に別のポートを書きます。
+- Engine が参加するまで、時間の制限なく待ちます。参加した後にブレークポイントで止めている間は、シミュレーション全体の仮想時間が止まります。
+- 参加した後、シミュレーションが始まる前に Engine を終わらせて起動し直すと、ランチャーは開始の失敗で終わります。やり直すときは、ランチャーも起動し直します。
+- 端末に貼るときは、Linux では sh（bash、zsh）、Windows ではコマンドプロンプトに貼る形です。PowerShell では、`"` で囲んだ実行ファイルの前に `&` を足します。
+- Engine の出力は、起動した側（デバッガー）に出ます。ランチャーの標準エラーには出ません。
+- シミュレーションが終われば、Engine は自分で終わります。ランチャーは Engine のプロセスを止めません。結果の表では、Engine の `ended` が `started by you (manual)` になります。
+- 待ち方と止め方の規則は、[simulation-config.md](../simulation-config.md) の「participant を自分で起動する」にあります。
+
 ## Python から変数を読み書きする
 
 ECU の側で足す作業はありません。`ecu_main` で作った ECU は、変数を宣言していれば、`run` のときにランチャーとつながります。クライアントは、ランチャーの Control Server（`vehicle_sil_launch run --control`）に gRPC でつなぎます。
