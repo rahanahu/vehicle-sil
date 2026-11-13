@@ -1288,6 +1288,30 @@ struct RawAgent
     void step(const wire::Bytes& bytes) { step_out->Publish(topics::span_of(bytes)); }
 };
 
+/// The agent of a process started anew under the name of one that has just gone. The registry
+/// learns of the end of the old connection on its own, maybe after the participants did (on a
+/// slow machine): until then it refuses the name ("a participant with the same name ... already
+/// exists"). Tried again until it takes it.
+std::unique_ptr<RawAgent> started_anew(const std::string& name, const std::string& uri, std::uint64_t session)
+{
+    const auto give_up = Wall::now() + 30s;
+    for (;;)
+    {
+        try
+        {
+            return std::make_unique<RawAgent>(name, uri, session);
+        }
+        catch (const std::exception& e)
+        {
+            if (std::string(e.what()).find("already exists") == std::string::npos || Wall::now() > give_up)
+            {
+                throw;
+            }
+        }
+        std::this_thread::sleep_for(20ms);
+    }
+}
+
 /// A sample of `variables` values of the types RawAgent::hello() announces.
 Snapshot sample_of(std::size_t variables, std::uint64_t sequence)
 {
@@ -1511,7 +1535,8 @@ TEST_CASE(a_participant_started_anew_after_it_failed_is_connected_again)
         CHECK(side.controller->runtime().peer_status("Crash").state == orch::ParticipantState::Error);
         // ... and is started anew under its name. Its hello comes before any lifecycle state of
         // the new process: what the hub knows of "Crash" then is still the old Error.
-        RawAgent second("Crash", registry.uri, 1001 + 2 * static_cast<std::uint64_t>(round));
+        const auto anew = started_anew("Crash", registry.uri, 1001 + 2 * static_cast<std::uint64_t>(round));
+        RawAgent& second = *anew;
         second.answers.store(true);
         second.hello(3);
         CHECK(eventually(connected, 30s));

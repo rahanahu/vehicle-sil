@@ -60,7 +60,8 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
               stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
               events_slow events_findings events_nonblocking events_output events_stderr realtime late stall
               speed_change step_width pause_step paused_failures time_usage control scenario scenario_same
-              scenario_disconnect scenario_failures manual
+              scenario_disconnect scenario_failures manual manual_late manual_fails manual_stop manual_frozen
+              manual_thawed manual_again manual_timeout
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
@@ -91,12 +92,20 @@ if(TARGET vehicle_sil_launch_test_ecu)
   vehicle_sil_target_defaults(vehicle_sil_launch_control_test)
   vehicle_sil_copy_runtime_dlls(vehicle_sil_launch_control_test)
   add_dependencies(vehicle_sil_launch_control_test vehicle_sil_launch_test_ecu vehicle_sil_process_helper)
-  # Also: the limits of the start before and after the hold of --start-paused with a control
-  # server (a participant of the test that never gets ready), --timeout-ms and Ctrl+C in the
-  # hold, a resume before the window.
-  add_test(NAME launch_control.a_write_in_the_start_window_reaches_each_process_before_its_first_step
-           COMMAND vehicle_sil_launch_control_test $<TARGET_FILE:vehicle_sil_launch_test_ecu>
-                   ${CMAKE_CURRENT_BINARY_DIR}/control $<TARGET_FILE:vehicle_sil_process_helper>)
-  set_tests_properties(launch_control.a_write_in_the_start_window_reaches_each_process_before_its_first_step PROPERTIES
-    LABELS "integration;launch;control" TIMEOUT 300)
+  # Each part is a test of its own, so that they run side by side: the write in the window
+  # (5 runs), what fails before the start (also with a stop), an agent that says hello and does
+  # not answer, the limits of the start before and after the hold of --start-paused with a
+  # control server (a participant of the test that never gets ready), --timeout-ms and Ctrl+C in
+  # the hold, a resume before the window.
+  foreach(part IN ITEMS a_write_in_the_start_window_reaches_each_process_before_its_first_step
+                        what_fails_before_the_start_aborts_the_simulation
+                        a_stop_while_what_is_done_before_the_start_fails_does_not_cut_the_end_short
+                        a_hello_without_an_answer_and_what_is_no_message_are_reported
+                        the_start_is_limited_before_and_after_the_hold_but_not_in_it
+                        timeout_counts_the_hold an_interrupt_ends_the_hold a_resume_before_the_window_means_no_hold)
+    add_test(NAME launch_control.${part}
+             COMMAND vehicle_sil_launch_control_test $<TARGET_FILE:vehicle_sil_launch_test_ecu>
+                     ${CMAKE_CURRENT_BINARY_DIR}/control $<TARGET_FILE:vehicle_sil_process_helper> ${part})
+    set_tests_properties(launch_control.${part} PROPERTIES LABELS "integration;launch;control" TIMEOUT 300)
+  endforeach()
 endif()
