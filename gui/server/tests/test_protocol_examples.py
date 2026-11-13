@@ -84,24 +84,34 @@ SHOWN = {
     "ws-stop": ended("interrupted", "stop command", states=["ended", "ended", "ended"]),
     "ws-force-stop": ended("interrupted", "stop command", states=["ended", "ended", "killed"]),
     "ws-resume": resumed,
-    **{name: None for name in (
-        "error-unauthorized", "error-forbidden-host", "error-forbidden-origin", "error-cors-not-allowed",
-        "error-not-found", "error-method-not-allowed", "error-too-large", "error-unsupported-media-type",
-        "error-invalid-json", "error-invalid-field", "error-invalid-path", "error-outside-root",
-        "error-not-a-configuration", "error-unknown-participant", "error-unsupported", "error-file-not-found",
-        "error-check-busy", "error-check-timeout", "error-launcher-output", "error-launcher-unusable",
-        "error-launcher-start", "error-shutting-down", "error-too-many-connections", "error-not-running",
-        "error-unknown-variable", "error-variables-not-ready")},
+    # an error: its HTTP status (also as the table of errors in gui/protocol/README.md says)
+    "error-unauthorized": 401, "error-forbidden-host": 403, "error-forbidden-origin": 403,
+    "error-cors-not-allowed": 403, "error-not-found": 404, "error-method-not-allowed": 405, "error-too-large": 413,
+    "error-unsupported-media-type": 415, "error-invalid-json": 400, "error-invalid-field": 400,
+    "error-invalid-path": 400, "error-outside-root": 400, "error-not-a-configuration": 400,
+    "error-unknown-participant": 400, "error-unsupported": 400, "error-file-not-found": 404, "error-check-busy": 503,
+    "error-check-timeout": 504, "error-launcher-output": 502, "error-launcher-unusable": 503,
+    "error-launcher-start": 502, "error-shutting-down": 503, "error-too-many-connections": 503,
+    "error-not-running": 409, "error-unknown-variable": 400, "error-variables-not-ready": 409,
 }
 
 
+# The table of errors in gui/protocol/README.md: code -> HTTP status
+ERROR_TABLE = {code: int(status) for status, code in re.findall(r"^\| (\d{3}) \| `([a-z-]+)` \|",
+                                                                 (DIRECTORY.parent / "README.md").read_text(
+                                                                     encoding="utf-8"), re.MULTILINE)}
+
+
 def shown(name: str, example: dict) -> None:
-    """What an example that is not kept as a file shows: an error's code (its name after error-) and a message."""
+    """What an example that is not kept as a file shows: an error's status and code (its name after error-), and
+    a message; for the others, what SHOWN says."""
     check = SHOWN[name]
-    if check is None:
+    if isinstance(check, int):
         error = example["response"]["error"]
-        assert example["status"] >= 400 and error["code"] == name.removeprefix("error-"), example
+        code = name.removeprefix("error-")
+        assert (example["status"], error["code"]) == (check, code), example
         assert isinstance(error["message"], str) and error["message"], example
+        assert ERROR_TABLE.get(code) == check, f"gui/protocol/README.md says {code} is {ERROR_TABLE.get(code)}"
         return
     assert check(example) is not False, f"{name}: {json.dumps(example)[:2000]}"
 

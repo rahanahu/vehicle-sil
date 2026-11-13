@@ -33,7 +33,9 @@ How it plays:
   event every 100 ms (scaled), the virtual time moved on by the recording's last move (nothing else is made up;
   REPLAY_RUN_ON=0: it stands still instead, so that what is read meanwhile does not depend on timing). Another
   command ends the replay with code 3 and a line on standard error that says which was expected. A command that
-  comes early hurries the lines before it. Commands after the last recorded one are not answered.
+  comes early hurries the lines before it. A command that no recording has (one more stop than recorded, say)
+  ends it the same way, so that a test sees every command the GUI server writes; only after the result is a
+  command not read (as the launcher reads none then).
 - The recording's marks are put back: <root> (the directory it runs in), <file> and <scenario> (the arguments),
   "<pid>" (its own pid in hello; for a started participant the pid of a sleeping child process that it starts in
   its place and ends when the participant ends, so that a test can see whether stopping left processes behind),
@@ -651,7 +653,19 @@ class Player:
         got = self.inputs.get()
         if got == SIGNAL:
             self.finish(143)
-        self.switch(got, back=False)  # else it is not answered, as after the last command of a recording
+        if self.sealed:
+            return  # after the result the launcher reads no more
+        if not self.switch(got, back=False):
+            self.unrecorded(got)
+
+    def unrecorded(self, got) -> None:
+        """A command that no recording of this command line has here: the test must see it (exit code 3)."""
+        what = "the end of standard input" if got is None else got
+        sys.stderr.write(f"replay_launcher: {what} came where no recording of this command line has a command (the "
+                         f"recording {self.case} has none left here): the GUI server wrote a command that the test "
+                         f"did not expect, or a case with it is missing in {RECORDER}\n")
+        sys.stderr.flush()
+        self.finish(3)
 
     def next_input(self):
         """The next line of standard input (None: its end); meanwhile the simulation runs on (run_on)."""

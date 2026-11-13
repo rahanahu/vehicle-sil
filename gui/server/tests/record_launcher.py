@@ -37,6 +37,7 @@ import re
 import secrets
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -55,6 +56,13 @@ RUN = ["run", "--events", "--stdin-commands"]
 STOP = '{"command":"stop"}'
 PAUSE, RESUME = '{"command":"pause"}', '{"command":"resume"}'
 TIMEOUT_S = 60
+# Findings that come from how busy the machine was, not from the launcher: a case that has one is recorded again
+BUSY = ("behind-real-time", "control-link-dropped")
+ATTEMPTS = 3
+
+
+class Busy(RuntimeError):
+    pass
 
 
 def step(ms: int) -> str:
@@ -271,6 +279,8 @@ class Recorder:
                 return text_marks(value)
             return value
 
+        if "--events" in case.argv:
+            self.stream_rules(case, lines)
         entries: list[dict] = []
         out_text = [t for _, k, t in lines if k == "out"]
         printed = None
@@ -311,10 +321,12 @@ class Recorder:
                     continue
                 if e["event"] == "heartbeat":
                     continue
-                if any(f.get("code") == "behind-real-time" for f in [e] + (e.get("result") or {}).get("findings", [])
-                       if isinstance(f, dict)):
-                    raise RuntimeError(f"{case.name}: the run came behind real time (the machine was busy): record "
-                                       "it again on a machine that is not busy")
+                found = [f.get("code") for f in [e] + (e.get("result") or {}).get("findings", [])
+                         if isinstance(f, dict)]
+                busy = [code for code in found if code in BUSY]
+                if busy:
+                    raise Busy(f"{case.name}: the run wrote {busy[0]} (the machine was busy): record it again on a "
+                               "machine that is not busy")
                 e = {k: v for k, v in e.items() if k not in ("seq", "t_ms")}
                 entries.append({"out": marks(e)})
         if printed is not None:
@@ -334,6 +346,34 @@ class Recorder:
         self.forbid(case, head, entries)
         return head, entries
 
+    @staticmethod
+    def stream_rules(case: Case, lines: list[tuple[float, str, str]]) -> None:
+        """What docs/simulation-config.md promises about the event stream, on the real launcher's own lines (the
+        recording keeps neither seq nor t_ms, and no heartbeat): every line an object that starts with event, seq,
+        t_ms; seq from 0 up by one (heartbeats counted); t_ms never back; a heartbeat has nothing else."""
+        events = []
+        for _, kind, text in lines:
+            if kind != "out":
+                continue
+            try:
+                e = json.loads(text)
+            except ValueError:
+                raise RuntimeError(f"{case.name}: the launcher wrote a line that is not JSON: {text[:200]}") from None
+            events.append(e)
+        broken = []
+        if not all(isinstance(e, dict) and list(e)[:3] == ["event", "seq", "t_ms"] for e in events):
+            broken.append("every line starts with event, seq, t_ms")
+        elif [e["seq"] for e in events] != list(range(len(events))):
+            broken.append("seq goes up by one from 0")
+        elif not all(a["t_ms"] <= b["t_ms"] for a, b in zip(events, events[1:])):
+            broken.append("t_ms does not go back")
+        elif any(e["event"] == "heartbeat" and list(e) != ["event", "seq", "t_ms"] for e in events):
+            broken.append("a heartbeat has only event, seq and t_ms")
+        if broken:
+            raise RuntimeError(f"{case.name}: the real launcher's events break the rule '{broken[0]}' that the GUI "
+                               "server relies on (docs/simulation-config.md): fix the launcher, or the GUI server and "
+                               "replay_launcher.py with it")
+
     def forbid(self, case: Case, head: dict, entries: list[dict]) -> None:
         text = json.dumps([head, entries], ensure_ascii=False)
         found = [what for what, needle in (
@@ -342,6 +382,9 @@ class Recorder:
             ("the directory of the executables", str(self.examples))) if needle and needle in text]
         if re.search(r"/home/|/Users/|/tmp/claude", text):
             found.append("a path of this computer")
+        host = socket.gethostname().split(".")[0]
+        if len(host) >= 3 and re.search(rf"\b{re.escape(host)}\b", text, re.IGNORECASE):
+            found.append("the host name")
         if found:
             raise RuntimeError(f"{case.name}: the recording still has {', '.join(found)} in it: add a mark for it "
                                "in Recorder.normalize")
@@ -357,6 +400,32 @@ def text_sha256(path: Path) -> str:
     return replay_launcher.text_sha256(str(path))
 
 
+def needs(case: Case) -> set[str]:
+    """The launcher's features (version --json) that a case uses."""
+    out = set()
+    if "--control" in case.argv:
+        out.add("control-server")
+        if "--scenario" in case.argv:
+            out.add("scenario-control")
+    return out
+
+
+def launcher_features(launcher: Path) -> set[str]:
+    p = subprocess.run([str(launcher), "version", "--json"], capture_output=True, text=True, timeout=TIMEOUT_S)
+    return set(json.loads(p.stdout).get("features") or [])
+
+
+def record_once(recorder: Recorder, case: Case) -> tuple[dict, list[dict]]:
+    """A case, recorded again (up to ATTEMPTS times) while the machine was too busy for it."""
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            return recorder.record(case)
+        except Busy:
+            if attempt == ATTEMPTS:
+                raise
+    raise AssertionError("not reached")
+
+
 def write(path: Path, head: dict, entries: list[dict]) -> None:
     path.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in [head, *entries]) + "\n", encoding="utf-8",
                     newline="\n")
@@ -365,41 +434,131 @@ def write(path: Path, head: dict, entries: list[dict]) -> None:
 # ---------------------------------------------------------------- comparing
 
 
-NOT_IN_ORDER = {"time", "log", "heartbeat", "log_dropped"}
+NOT_IN_ORDER = {"time", "log", "log_dropped"}  # how many and where depend on timing: their shapes are compared
 
 
-def types(value):
-    """The keys and JSON types of a value, as a comparable tree (lists: the types of their first item)."""
-    if isinstance(value, dict):
-        return {k: types(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [types(value[0])] if value else []
-    return "null" if value is None else type(value).__name__.replace("int", "number").replace("float", "number")
+def json_type(value) -> str:
+    return {bool: "boolean", int: "number", float: "number", str: "string", list: "array", dict: "object",
+            type(None): "null"}[type(value)]
+
+
+def decided(e: dict) -> tuple:
+    """The values of an event that the launcher decides, not the timing (compared as they are)."""
+    kind = e.get("event")
+    if kind == "finding":
+        return e.get("severity"), e.get("code"), e.get("participant")
+    if kind == "command":
+        return e.get("command"), e.get("source"), e.get("accepted"), e.get("ms")
+    if kind == "participant":
+        return e.get("name"), e.get("state"), e.get("exit_code"), e.get("signal"), e.get("reason")
+    if kind in ("phase", "control_link"):
+        return e.get("phase"), e.get("name"), e.get("state")
+    if kind == "scenario_step":
+        return e.get("index"), e.get("status"), e.get("code")
+    if kind == "check":
+        return checked(e.get("check"))
+    if kind == "result" and isinstance(e.get("result"), dict):
+        r = e["result"]
+        return (r.get("result"), r.get("simulation"), r.get("interrupted_by"),
+                tuple(f.get("code") for f in r.get("findings") or []),
+                tuple((p.get("name"), p.get("ended"), p.get("exit_code"), p.get("signal"))
+                      for p in r.get("participants") or []), checked(r.get("check")),
+                (r.get("scenario") or {}).get("status"))
+    return ()
+
+
+def checked(c) -> tuple:
+    if not isinstance(c, dict):
+        return ()
+    return (c.get("result"), tuple((f.get("severity"), f.get("code"), f.get("participant"))
+                                   for f in c.get("findings") or []),
+            tuple((p.get("name"), p.get("status"), p.get("enabled"), p.get("manual"))
+                  for p in c.get("participants") or []))
 
 
 def outline(entries: list[dict]) -> list:
-    out = []
+    """What is compared in order: the events but time, log and log_dropped, with the values the launcher decides
+    (participant events between two others in any order: that order is timing), what check --json and version
+    --json print, the commands written, the exit code, and whether anything came on standard error."""
+    out: list = []
+    group: list = []
     for e in entries:
-        if "out" in e and e["out"].get("event") not in NOT_IN_ORDER:
-            out.append(("event", e["out"]["event"], e["out"].get("state") or e["out"].get("phase"),
-                        json.dumps(types(e["out"]), sort_keys=True)))
-        elif "send" in e or "exit" in e:
-            out.append(tuple(e.items())[0])
+        if "out" in e:
+            kind = e["out"].get("event")
+            if kind in NOT_IN_ORDER:
+                continue
+            item = ("event", kind, decided(e["out"]))
+            if kind == "participant":
+                group.append(item)
+                continue
+            out += sorted(group, key=repr) + [item]
+            group = []
         elif "print" in e:
-            out.append(("print", json.dumps(types(e["print"]), sort_keys=True)))
+            p = e["print"]
+            out.append(("print", checked(p) if "vehicle_sil_check" in p else
+                        (tuple(p.get("features") or ()), p.get("formats")) if "vehicle_sil_launch" in p else ()))
+        elif "exit" in e:
+            out.append(("exit", e["exit"]))
+    out += sorted(group, key=repr)
+    out.append(("commands", tuple(e["send"] for e in entries if "send" in e)))
+    out.append(("standard error", any("err" in e for e in entries)))
     return out
 
 
-def compare(name: str, tracked: Path, fresh: Path) -> list[str]:
+class Shapes:
+    """The keys of each kind of event (participant: of each state) and of every object in it, all items of its
+    arrays too, and the JSON types seen for each key (null aside: it comes and goes with the values)."""
+
+    def __init__(self):
+        self.keys: dict[str, set] = {}
+        self.types: dict[tuple, set] = {}
+
+    def add(self, entries: list[dict]) -> None:
+        for e in entries:
+            if "out" in e:
+                kind = e["out"].get("event")
+                self.walk(f"{kind}:{e['out'].get('state')}" if kind == "participant" else str(kind), e["out"])
+            elif "print" in e:
+                self.walk("check --json" if "vehicle_sil_check" in e["print"] else "version --json", e["print"])
+
+    def walk(self, where: str, value) -> None:
+        if isinstance(value, dict):
+            self.keys.setdefault(where, set()).add(frozenset(value))
+            for k, v in value.items():
+                if v is not None:
+                    self.types.setdefault((where, k), set()).add(json_type(v))
+                self.walk(f"{where}.{k}", v)
+        elif isinstance(value, list):
+            for item in value:
+                self.walk(f"{where}[]", item)
+
+    def differences(self, other: "Shapes") -> list[str]:
+        out = []
+        for where in sorted(set(self.keys) | set(other.keys)):
+            a, b = self.keys.get(where, set()), other.keys.get(where, set())
+            if a != b:
+                out.append(f"{where}: keys recorded {sorted(map(sorted, a - b))[:3]}, "
+                           f"now {sorted(map(sorted, b - a))[:3]}")
+        for key in sorted(set(self.types) | set(other.types), key=repr):
+            a, b = self.types.get(key, set()), other.types.get(key, set())
+            if a != b:
+                out.append(f"{key[0]}.{key[1]}: types recorded {sorted(a)}, now {sorted(b)}")
+        return out
+
+
+def compare(name: str, tracked: Path, fresh: Path, shapes: tuple[Shapes, Shapes]) -> list[str]:
     import replay_launcher
     if not tracked.is_file():
         return [f"{name}: recordings/{name}.jsonl is missing: record it"]
     _, a = replay_launcher.read_recording(tracked)
     _, b = replay_launcher.read_recording(fresh)
+    shapes[0].add(a)
+    shapes[1].add(b)
     left, right = outline(a), outline(b)
     if left == right:
         return []
     at = next((i for i, (x, y) in enumerate(zip(left, right)) if x != y), min(len(left), len(right)))
+
     def show(seq):
         return str(seq[at])[:300] if at < len(seq) else "(the end)"
     return [f"{name}: differs from the real launcher at item {at + 1}: recorded {show(left)}, now {show(right)}: "
@@ -435,10 +594,17 @@ def main(argv: list[str]) -> int:
     every = cases()
     unknown = [c for c in args.cases if c not in {x.name for x in every}]
     if unknown:
-        print(f"record_launcher.py: no case {', '.join(unknown)}: the cases are in record_cases.py",
+        print(f"record_launcher.py: no case {', '.join(unknown)}: the cases are in CASES of record_launcher.py",
               file=sys.stderr)
         return 2
     chosen = [c for c in every if not args.cases or c.name in args.cases]
+    has = launcher_features(args.launcher)
+    lacking = [c for c in chosen if not needs(c) <= has]
+    if lacking:  # e.g. a launcher built without its control server (VEHICLE_SIL_BUILD_CONTROL_SERVER=OFF)
+        print(f"record_launcher: {len(lacking)} cases skipped: they need "
+              f"{', '.join(sorted(set().union(*(needs(c) for c in lacking)) - has))}, which this launcher does not "
+              "have", file=sys.stderr)
+    chosen = [c for c in chosen if c not in lacking]
     failed = []
     with tempfile.TemporaryDirectory(prefix="record-launcher-") as tmp:
         root = Path(tmp) / "root"
@@ -446,20 +612,26 @@ def main(argv: list[str]) -> int:
         recorder = Recorder(args.launcher.resolve(), examples.resolve(), root)
         recorder.prepare()
         out = Path(tmp) / "fresh" if args.compare else args.out
+        shapes = (Shapes(), Shapes())
         out.mkdir(parents=True, exist_ok=True)
         for case in chosen:
             try:
-                head, entries = recorder.record(case)
+                head, entries = record_once(recorder, case)
             except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
-                failed.append(f"{case.name}: {e}")
+                failed.append(str(e) if str(e).startswith(case.name + ":") else f"{case.name}: {e}")
                 continue
             write(out / f"{case.name}.jsonl", head, entries)
             if args.compare:
-                failed += compare(case.name, RECORDINGS / f"{case.name}.jsonl", out / f"{case.name}.jsonl")
+                failed += compare(case.name, RECORDINGS / f"{case.name}.jsonl", out / f"{case.name}.jsonl", shapes)
+        if args.compare:  # the shapes of every kind of event, over the cases compared (the same on both sides)
+            failed += [f"shapes: {d}: record again and read the diff" for d in shapes[0].differences(shapes[1])]
     for line in failed:
         print(line, file=sys.stderr)
-    print(f"record_launcher: {len(chosen) - len(failed)} of {len(chosen)} cases "
-          f"{'as recorded' if args.compare else 'recorded'}" + (f" (into {args.out})" if not args.compare else ""))
+    cases_failed = {line.split(":", 1)[0] for line in failed if not line.startswith("shapes:")}
+    shapes_differ = any(line.startswith("shapes:") for line in failed)
+    print(f"record_launcher: {len(chosen) - len(cases_failed)} of {len(chosen)} cases "
+          f"{'as recorded' if args.compare else 'recorded'}" + (f" (into {args.out})" if not args.compare else "")
+          + ("; the shapes of the events differ" if shapes_differ else ""))
     return 1 if failed else 0
 
 

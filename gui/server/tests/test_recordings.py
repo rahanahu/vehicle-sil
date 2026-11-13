@@ -10,14 +10,17 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
 from conftest import CONFIGS, REPLAY
 
 RECORDINGS = REPLAY.parent / "recordings"
+EXAMPLES = REPLAY.parents[2] / "protocol" / "examples"
 sys.path.insert(0, str(REPLAY.parent))
 import replay_launcher  # noqa: E402
 
@@ -29,17 +32,21 @@ def recording(name: str) -> tuple[dict, list[dict]]:
     return replay_launcher.read_recording(RECORDINGS / f"{name}.jsonl")
 
 
-def test_no_path_user_or_token_of_the_computer_that_recorded() -> None:
+def test_no_path_user_host_or_token_of_the_computer_that_recorded() -> None:
+    """The recordings, and the examples of gui/protocol made from them."""
     user = getpass.getuser()
-    for path in RECORDINGS.glob("*.jsonl"):
+    host = socket.gethostname().split(".")[0]
+    for path in [*RECORDINGS.glob("*.jsonl"), *EXAMPLES.glob("*.json")]:
         text = path.read_text(encoding="utf-8")
         found = [what for what, pattern in (
             ("a home directory", r"/home/|/Users/|[A-Za-z]:\\\\Users"),
             ("a temporary directory", r"/tmp/|\\\\Temp\\\\"),
             ("a control token", r"<control-token>")) if re.search(pattern, text)]
-        if len(user) >= 3 and re.search(rf"\b{re.escape(user)}\b", text):
-            found.append("the user's name")
-        assert not found, f"{path.name} has {', '.join(found)}: record it again (record_launcher.py replaces them)"
+        for what, name in (("the user's name", user), ("the host name", host)):
+            if len(name) >= 3 and re.search(rf"\b{re.escape(name)}\b", text, re.IGNORECASE):
+                found.append(what)
+        assert not found, f"{path.name} has {', '.join(found)}: record it again (record_launcher.py replaces them; " \
+                          "for an example, its normalizer in test_protocol_examples.py)"
 
 
 def test_every_recording_is_of_its_configuration_as_it_is_now() -> None:
@@ -66,21 +73,38 @@ def check_rules(events: list[dict]) -> None:
     for e in events:
         if e["event"] == "log" and e["source"] in started:
             assert e["seq"] > started[e["source"]], "a participant's log comes after its started"
+    starting = next((e["seq"] for e in events if e.get("phase") == "starting"), None)
+    check_seq = next((e["seq"] for e in events if e["event"] == "check"), None)
+    for e in events:
+        if e["event"] == "participant" and e["state"] == "disabled":
+            assert check_seq is not None and check_seq < e["seq"] and (starting is None or e["seq"] < starting), \
+                "disabled comes between the check and the phase starting"
     times = [e for e in events if e["event"] == "time"]
     running = next((e["seq"] for e in events if e.get("phase") == "running"), None)
     if running is not None:
         assert times and times[0]["seq"] > running and times[0]["sim_ms"] == 0, "time 0 when running starts"
         assert all(a["sim_ms"] <= b["sim_ms"] for a, b in zip(times, times[1:])), "sim_ms does not go back"
         assert times[-1]["paused"] is False, "an ended simulation is not paused"
+    first_command = next((e["seq"] for e in events if e["event"] == "command"), None)
+    stopping = next((e["seq"] for e in events if e.get("phase") == "stopping"), None)
+    if first_command is not None and stopping is not None and events[-1]["result"]["interrupted_by"]:
+        assert first_command < stopping, "the command comes before what it makes happen"
 
 
 def replay(argv: list[str], lines: list[str | None], env: dict | None = None, timeout: float = 20) \
         -> tuple[int, list[dict], str]:
-    """Runs the replay in configs/ with these lines on its standard input (None: the input ends there)."""
+    """Runs the replay in configs/ with these lines on its standard input (None: the input ends there; else it
+    stays open, as the GUI server keeps it, until the replay ends)."""
     proc = subprocess.Popen([sys.executable, str(REPLAY), *argv], cwd=CONFIGS, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env={**os.environ, "REPLAY_TICK_MS": "1", "REPLAY_HEARTBEAT_MS": "0",
                                  "REPLAY_FAULT": "none", **(env or {})})
+    out: list[bytes] = []
+    err: list[bytes] = []
+    readers = [threading.Thread(target=lambda: out.append(proc.stdout.read()), daemon=True),
+               threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)]
+    for r in readers:
+        r.start()
     for line in lines:
         if line is None:
             proc.stdin.close()
@@ -88,12 +112,16 @@ def replay(argv: list[str], lines: list[str | None], env: dict | None = None, ti
         proc.stdin.write(line.encode() + b"\n")
         proc.stdin.flush()
     try:
-        out, err = proc.communicate(timeout=timeout)
+        proc.wait(timeout)
     except subprocess.TimeoutExpired:
         proc.send_signal(signal.SIGTERM)
-        out, err = proc.communicate(timeout=10)
-    events = [json.loads(line) for line in out.decode().splitlines() if line.startswith("{")]
-    return proc.returncode, events, err.decode()
+        proc.wait(10)
+    for r in readers:
+        r.join(10)
+    if not proc.stdin.closed:
+        proc.stdin.close()
+    events = [json.loads(line) for line in b"".join(out).decode().splitlines() if line.startswith("{")]
+    return proc.returncode, events, b"".join(err).decode()
 
 
 def argv_of(head: dict) -> list[str]:
@@ -167,3 +195,14 @@ def test_a_stop_goes_on_with_the_recording_that_has_it() -> None:
                                ['{"command":"step","ms":10}', '{"command":"stop"}'])
     commands = [(e["command"], e["accepted"]) for e in events if e["event"] == "command"]
     assert commands == [("step", False), ("stop", True)], err
+
+
+def test_a_command_more_than_any_recording_has_ends_the_replay() -> None:
+    """One stop more than recorded (forever.yaml has recordings with one and with two): the replay does not take it
+    silently, so a test sees a GUI server that writes a command too many."""
+    stop = '{"command":"stop"}'
+    code, events, err = replay(["run", "--events", "--stdin-commands", "--", "forever.yaml"], [stop, stop])
+    assert code == 130 and [e["accepted"] for e in events if e["event"] == "command"] == [True, True], err
+    code, events, err = replay(["run", "--events", "--stdin-commands", "--", "forever.yaml"], [stop, stop, stop])
+    assert code == 3 and events[-1]["event"] != "result", err
+    assert f"{stop} came where no recording of this command line has a command" in err

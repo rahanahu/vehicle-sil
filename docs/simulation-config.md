@@ -993,6 +993,8 @@ vehicle_sil_launch check --json simulation.yaml
 vehicle_sil_launch run --events --stdin-commands simulation.yaml
 ```
 
+ブラウザの GUI の試験は、この出力を録ったもの（`gui/server/tests/recordings/`）を流し直します。ランチャーの出力を変えたら、`python3 gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch> --compare` で比べ、違う場面を録り直します（[gui.md](gui.md) の「開発」）。
+
 ### 事象（`run --events`）
 
 標準出力に、1 行に 1 つの JSON のオブジェクトを、起きた順に書きます（NDJSON）。文字コードは UTF-8、改行は `\n` で、行の中に改行はありません。1 行ごとに書き出します。事象を書くのは `run` のときだけです。どの行も、次の 3 つのキーで始まります。

@@ -189,9 +189,10 @@ def test_a_participant_named_like_an_option_is_refused_before_the_launcher(gui: 
             status, body = await c.post(path, {"file": "dash-name.yaml", "disable": ["--json"]})
             assert (status, body["error"]["code"]) == (400, "name-like-option"), body
             assert "'--json'" in body["error"]["message"] and "rename the participant" in body["error"]["message"]
-        status, body = await c.post("api/check", {"file": "dash-name.yaml", "manual": ["--json"]})
-        assert (status, body["error"]["code"]) == (400, "name-like-option"), body
-        assert "--manual" in body["error"]["message"]
+        for path in ("api/check", "api/run"):
+            status, body = await c.post(path, {"file": "dash-name.yaml", "manual": ["--json"]})
+            assert (status, body["error"]["code"]) == (400, "name-like-option"), body
+            assert "--manual" in body["error"]["message"]
         status, body = await c.get("api/session")
         assert body["session"] is None  # nothing was started
         status, body = await c.post("api/check", {"file": "dash-name.yaml", "disable": []})
