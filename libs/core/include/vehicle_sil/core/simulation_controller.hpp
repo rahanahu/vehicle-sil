@@ -139,6 +139,7 @@ struct SimulationControllerOptions
 {
     std::string participant_name = "SimulationController";
     std::string registry_uri = "silkit://localhost:8500";
+    /// As ParticipantRuntimeOptions::participant_configuration.
     std::string participant_configuration = "{}";
     /// The participants (other than the controller) that must be present before the
     /// simulation starts. They must use LifecycleMode::Coordinated.

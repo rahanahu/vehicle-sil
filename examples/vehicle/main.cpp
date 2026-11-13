@@ -9,7 +9,7 @@
 // this process; --local runs the same ECU classes on virtual CAN and LIN buses.
 //
 // To split it over processes, give each process SilKitOptions{.registry_uri = "silkit://...",
-// .controller = false} and run vehicle_sil_sim_controller once (see docs/architecture.md). Without
+// .controller = false} and run vehicle_sil_sim_controller once (see docs/internals/virtual-time.md). Without
 // the controller in the process, run_for() throws std::logic_error: wait with run() instead, and
 // let the controller decide the required participants and the end (--required ... --stop-at-ms ...).
 #include "vehicle_sil/control/agent.hpp"

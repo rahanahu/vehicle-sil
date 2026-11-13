@@ -44,14 +44,14 @@ if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
   include(VehicleSilGrpc)
 endif()
 
-# Libraries:
+# Libraries (every target and what it holds: the table in docs/architecture.md):
 #   vehicle_sil::core       SIL Kit participant and lifecycle management (protocol independent)
 #   vehicle_sil::sim_base   simulation time and the step inbox, without SIL Kit (part of libs/core)
 #   vehicle_sil::can        backend-neutral CAN: frames, ports, host, step driver, virtual bus (no SIL Kit)
 #   vehicle_sil::can_silkit vehicle_sil::can port on SIL Kit CAN (virtual or real time)
 #   vehicle_sil::can_netsim the simple CAN network simulator (SIL Kit)
-#   vehicle_sil::j1939      J1939 stack on vehicle_sil::can (no SIL Kit); its protocol parts are
-#                           vehicle_sil::j1939_broadcast_suppression and vehicle_sil::j1939_diagnostics
+#   vehicle_sil::j1939      J1939 stack on vehicle_sil::can (no SIL Kit); its protocol parts are the
+#                           vehicle_sil::j1939_* targets of libs/j1939/parts
 #   vehicle_sil::j1939_codec typed J1939 messages (header only; the types are generated from YAML by
 #                           vehicle_sil_add_j1939_codec())
 #   vehicle_sil::lin        LIN master and slave on a port, and the virtual LIN bus (no SIL Kit)

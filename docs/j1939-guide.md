@@ -2,7 +2,7 @@
 
 ECU を書く人向けです。先に README の「[最初の ECU を動かす](../README.md#最初の-ecu-を動かす)」を読みます。次は [j1939-codec.md](j1939-codec.md)（信号を値として読み書きする）と [ecu-executable.md](ecu-executable.md)（ECU を実行ファイルにする）です。
 
-vehicle-sil の J1939 スタックで ECU のノードを作り、動かし、試験する方法です。API の契約と規則の詳細は [architecture.md](architecture.md) の「J1939」にあります。API はまだ変わることがあります。
+vehicle-sil の J1939 スタックで ECU のノードを作り、動かし、試験する方法です。API の契約と規則の詳細は [internals/j1939.md](internals/j1939.md) にあります。API はまだ変わることがあります。
 
 最初に動かすなら [examples/getting_started](../examples/getting_started) です。完全な例は [examples/j1939/ecu_pair](../examples/j1939/ecu_pair) です。エンジンとキャブの 2 つの ECU を部品だけで作り、`Simulation` で仮想バスか SIL Kit の 2 つの participant として動かします。同じコードを試験でも使っています。
 
@@ -200,7 +200,7 @@ tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome ==
 
 - 送信の結果は `SendStatus` の戻り値です（`QueueFull`、`Busy`、`NoAddress` など）。部品は送信の失敗を数えて（`statistics()`）、次の機会にまた送ります。
 - 使い方の誤り（不正な PGN、範囲外の値）は、部品の生成や呼び出しの時点で `std::invalid_argument` などの例外です。タイマーの枠（`NetworkOptions::timer_capacity`、既定 64）が足りないときは部品の生成が `std::length_error` で、メッセージに `timer_capacity` と出ます。周期送信の多いノードでは、`Ecu::j1939(network, NetworkOptions{.timer_capacity = ...})`（`Peer` では `J1939ChannelOptions::network.timer_capacity`）で上げます。
-- 受けた要求ごとに部品（`PeriodicSender`、`Timer` など）をハンドラの中で作るときは、作る前に `node.network().timers_free()`（残りの枠の数）を、作る部品の `kTimers`（`PeriodicSender::kTimers` など）と比べて確かめ、足りなければ要求を断ります。ハンドラの中の `std::length_error` は `Network` を失敗させるので、確かめないと、多数のアドレスから要求を送るだけでその ECU の通信を止められます。各部品が使うタイマーの数は、部品のヘッダーのコメントと [architecture.md](architecture.md) の「プロトコル部品」にあります。
+- 受けた要求ごとに部品（`PeriodicSender`、`Timer` など）をハンドラの中で作るときは、作る前に `node.network().timers_free()`（残りの枠の数）を、作る部品の `kTimers`（`PeriodicSender::kTimers` など）と比べて確かめ、足りなければ要求を断ります。ハンドラの中の `std::length_error` は `Network` を失敗させるので、確かめないと、多数のアドレスから要求を送るだけでその ECU の通信を止められます。各部品が使うタイマーの数は、部品のヘッダーのコメントと [internals/j1939.md](internals/j1939.md) の「プロトコル部品」にあります。
 - ハンドラ、`Encoder`、コールバックから投げた例外は `Network` を失敗状態にします。`Simulation` では `SimulationError` になります（「動かす」）。`Peer` を直接使うときは、`Peer::failed()` と `error()` で分かります。
 - 通信の状態は、`Network::statistics()`、部品の `statistics()`、`Monitor` の状態で見ます。
 
@@ -352,7 +352,7 @@ void on_command(const j1939::Message& m) {
 - アプリが持つ部品（`std::unique_ptr` など）は、ハンドラやタイマーのコールバックの中で破棄してかまいません（相手の Stop を受けたら止める、など）。破棄した部品のハンドラは、同じ配送の残りでも呼ばれず、タイマーも発火しません。部品が呼ぶ関数（`PeriodicSender` の Encoder、`Monitor` と `Exchange` のコールバック）の中でも、その部品を破棄してかまいません。例外は `AddressCommander` のコールバックと `Diagnostics` の `on_clear` です。
 - ハンドラの中で部品を作るときは、`timers_free()` で枠を確かめてから作ります（「エラーの扱い」）。
 - 標準の Request（PGN 59904）を使うなら `Requester::of(node)` を使います（`Exchange` で作り直しません）。
-- 自分の利用者を呼ぶループでは、通知の前に自分の状態を確定し、通知の中で足されたものを同じループで扱いません（[architecture.md](architecture.md) の「道具箱」）。
+- 自分の利用者を呼ぶループでは、通知の前に自分の状態を確定し、通知の中で足されたものを同じループで扱いません（[internals/j1939.md](internals/j1939.md) の「道具箱」）。
 - `on_any_request` と `Network::set_observer` は使いません。
 
 ### 独自のプロトコルを試験する
@@ -398,7 +398,7 @@ sim.run_for(3s);                                               // 仮想時間�
 - ステップの例外は、`SimulationError` として `run_for()` から出ます。`what()` は `<ECU 名>: <理由>` です。仮想バスでは、失敗した後の `run_for()` も `SimulationError` です。SIL Kit では、失敗した participant があっても simulation は終わらず、仮想時間が止まるだけです。そのため `run_for()` は、失敗を見つけると simulation を終えてから投げます。
 - SIL Kit では、ステップは SIL Kit のスレッドで走ります。ステップが書いた値は、`run_for()` が戻ってから読んでください。`Simulation` の関数は 1 つのスレッドから呼びます。
 - 破棄の順序は、後から足した ECU から先に、ECU の持ち物（`emplace`）まで壊し、次に controller、最後にプロセス内の registry です。
-- LIN の Master/Slave は `Ecu::lin_master(network, schedule)` と `Ecu::lin_slave(network)` で作ります。仮想バスでも SIL Kit でも同じ結果になります（[architecture.md](architecture.md) の「LIN を仮想時間で動かす」）。
+- LIN の Master/Slave は `Ecu::lin_master(network, schedule)` と `Ecu::lin_slave(network)` で作ります。仮想バスでも SIL Kit でも同じ結果になります（[internals/lin.md](internals/lin.md)）。
 
 `SilKitOptions` で、既存の registry（`registry_uri`）や、ほかのプロセスの participant との併用を選べます。
 
@@ -411,7 +411,7 @@ sim.run_for(3s);                                               // 仮想時間�
 
 `run()` は、誰が終えてもよい simulation の終わりまで待ちます（SIL Kit だけ）。`controller` が `true` のときは、Error で離脱した participant を失敗にします。Error 以外で離脱した participant が数秒のうちに simulation を終えなければ、それも失敗です。`controller` が `false` のときに失敗にするのは、このプロセスの ECU の失敗だけです。
 
-`Peer` を直接使うのは、実時間で動かすとき、別のプロセスで 1 つの participant として動かすとき、Control Agent を組み込むときです（[architecture.md](architecture.md) の「Peer」）。`Peer` も `Ecu` なので、`install_engine(peer, model)` のように同じ関数が使えます。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`）。
+`Peer` を直接使うのは、実時間で動かすとき、別のプロセスで 1 つの participant として動かすとき、Control Agent を組み込むときです（[internals/execution.md](internals/execution.md) の「Peer」）。`Peer` も `Ecu` なので、`install_engine(peer, model)` のように同じ関数が使えます。participant を分けるときは `Coordinated` にして、`SimulationController` と一緒に起動します（1 つのプロセスなら `start_together`）。
 
 ## 試験する
 
@@ -449,7 +449,7 @@ sim.ecu("engine").agent().submit({1, {{"ecu.connected", false}}, SimTime{} + 300
 sim.ecu("engine").agent().submit({2, {{"ecu.connected", true}}, SimTime{} + 600ms});
 ```
 
-J1939 では次のように見えます（契約は [architecture.md](architecture.md) の「ECU の入口」の「バスからの切り離し」）。
+J1939 では次のように見えます（契約は [internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」）。
 
 - 外れた ECU: `send()` は `Ok` を返しますが、フレームはバスに出ず、`Network` の `send_failures` に数えて捨てます（溜めないので、戻ったときにまとめて出ることはありません）。受信はありません。周期送信、タイマー、アドレスの状態はそのままです。トランスポートプロトコルは、相手の応答が来ないので時間切れで終わります。
 - ほかの ECU: 外れた ECU のメッセージが来なくなります。`Monitor` の `Lost` など、受信の途絶で検出します。アドレス表はそのままです。

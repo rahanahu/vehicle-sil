@@ -40,6 +40,8 @@ std::string format_statistics(const CanBridgeStatistics& s)
         {"xl_queue_full", s.external_queue_full},
         {"xl_tx_failures", s.external_transmit_failures},
         {"silkit_tx_failures", s.silkit_transmit_failures},
+        {"xl_tx_dropped", s.external_transmit_dropped},
+        {"xl_tx_unsent", s.external_transmit_unsent},
     };
     std::string line = "stats";
     for (const auto& [key, value] : fields)
@@ -64,7 +66,7 @@ std::string_view to_string(ExternalBusState::Level level) noexcept
 
 namespace {
 
-using ProblemDeltas = std::array<std::pair<const char*, std::uint64_t>, 7>;
+using ProblemDeltas = std::array<std::pair<const char*, std::uint64_t>, 8>;
 
 ProblemDeltas problem_deltas(const CanBridgeStatistics& b, const CanBridgeStatistics& n) noexcept
 {
@@ -76,6 +78,7 @@ ProblemDeltas problem_deltas(const CanBridgeStatistics& b, const CanBridgeStatis
         {"xl_queue_full", n.external_queue_full - b.external_queue_full},
         {"xl_tx_failures", n.external_transmit_failures - b.external_transmit_failures},
         {"silkit_tx_failures", n.silkit_transmit_failures - b.silkit_transmit_failures},
+        {"xl_tx_dropped", n.external_transmit_dropped - b.external_transmit_dropped},
     }};
 }
 
@@ -214,12 +217,8 @@ void CanBridge::stop() noexcept
 
 void CanBridge::teardown(bool external_started, bool silkit_started) noexcept
 {
-    // 1. No more external -> SIL Kit traffic: stop() waits for the external receive handler.
-    if (external_started)
-    {
-        external_.stop();
-    }
-    // 2. No more SIL Kit -> external traffic: RemoveFrameHandler waits for a running handler.
+    // 1. No more SIL Kit -> external traffic: RemoveFrameHandler waits for a running handler.
+    //    First, so that the external port can still send what it accepted while it stops.
     try
     {
         if (silkit_handler_)
@@ -227,6 +226,20 @@ void CanBridge::teardown(bool external_started, bool silkit_started) noexcept
             silkit_.RemoveFrameHandler(*silkit_handler_);
             silkit_handler_.reset();
         }
+    }
+    catch (const std::exception& e)
+    {
+        set_last_error("stopping the SIL Kit side failed: ", e.what());
+    }
+    // 2. No more external -> SIL Kit traffic: stop() waits for the external receive handler
+    //    (and reports what it could not send as TransmitUnsent).
+    if (external_started)
+    {
+        external_.stop();
+    }
+    // 3. The controller last: nothing uses it any more.
+    try
+    {
         if (silkit_started)
         {
             silkit_.Stop();
@@ -263,6 +276,10 @@ void CanBridge::on_silkit_frame(const can::CanFrameEvent& event)
         external_transmit_failures_.fetch_add(1);
         set_last_error("external transmit failed: ", external_.last_error());
         break;
+    case TransmitResult::Dropped:
+        external_transmit_dropped_.fetch_add(1);
+        set_last_error("frame dropped: the external bus did not take the frames before it in time");
+        break;
     }
 }
 
@@ -286,6 +303,9 @@ void CanBridge::on_external_event(const ExternalCanEvent& event)
         bus_state_ = event.bus_state;
         return;
     }
+    case ExternalEventKind::TransmitUnsent:
+        external_transmit_unsent_.fetch_add(event.count);
+        return;
     case ExternalEventKind::Fault:
     {
         // The reason comes with the event: last_error() may already tell of a later transmit.
@@ -343,6 +363,8 @@ CanBridgeStatistics CanBridge::statistics() const noexcept
     stats.external_queue_full = external_queue_full_.load();
     stats.external_transmit_failures = external_transmit_failures_.load();
     stats.silkit_transmit_failures = silkit_transmit_failures_.load();
+    stats.external_transmit_dropped = external_transmit_dropped_.load();
+    stats.external_transmit_unsent = external_transmit_unsent_.load();
     return stats;
 }
 

@@ -193,6 +193,18 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
     {
         add(Severity::Error, "simulation-start", "the simulation did not start: " + outcome.start_error, nullptr);
     }
+    if (outcome.connection_not_closed_ms && !outcome.connection_close_interrupted)
+    {
+        // Not when one more interrupt cut the wait: then the launcher did what it was asked to.
+        add(Severity::Warning, "connection-not-closed",
+            "the launcher's own connection to the simulation (SIL Kit) had not closed " +
+                std::to_string(*outcome.connection_not_closed_ms) +
+                " ms after the participants had ended: the launcher ended without closing it. The result is complete. "
+                "This is not expected of any configuration: it is a defect of the launcher or of SIL Kit. Report it "
+                "with this result, the launcher's output and what the participants were doing (was one stopped in a "
+                "debugger?)",
+            nullptr);
+    }
     if (outcome.control_refused_hellos + outcome.control_undecodable + outcome.control_unknown > 0)
     {
         add(Severity::Warning, "control-link-dropped",

@@ -304,6 +304,35 @@ TEST_CASE(bridge_health_change_line)
                                      "xl_rejected +1, xl_queue_full +1, silkit_tx_failures +1"));
 }
 
+TEST_CASE(bridge_counts_dropped_and_unsent_transmissions)
+{
+    FakeCanController controller;
+    FakeExternalPort port;
+    CanBridge bridge(controller, port);
+    bridge.start();
+    port.result = TransmitResult::Dropped;
+    const std::vector<std::uint8_t> data{1, 2};
+    for (int i = 0; i < 7; ++i)
+    {
+        controller.deliver(make_frame(0x10, 0, 2, data));
+    }
+    ExternalCanEvent unsent{ExternalEventKind::TransmitUnsent, {}, {}};
+    unsent.count = 3;
+    port.deliver_event(unsent);
+    const auto stats = bridge.statistics();
+    CHECK_EQ(stats.external_transmit_dropped, 7u);
+    CHECK_EQ(stats.external_transmit_unsent, 3u);
+    CHECK_EQ(stats.silkit_to_external, 0u);
+    CHECK_EQ(stats.external_transmit_failures, 0u);
+
+    // Dropping is a problem the running bridge reports.
+    CanBridgeHealth before;
+    CanBridgeHealth now;
+    now.statistics.external_transmit_dropped = 7;
+    CHECK(format_health_change(before, now) ==
+          std::optional<std::string>("XL bus: state unknown; since the last report: xl_tx_dropped +7"));
+}
+
 TEST_CASE(bridge_reports_transmit_problems)
 {
     FakeCanController controller;
@@ -355,7 +384,9 @@ TEST_CASE(bridge_statistics_line_names_every_counter)
     s.external_queue_full = 8;
     s.external_transmit_failures = 9;
     s.silkit_transmit_failures = 10;
+    s.external_transmit_dropped = 11;
+    s.external_transmit_unsent = 12;
     CHECK(vehicle_sil::vector_xl::format_statistics(s) ==
           "stats silkit_to_xl=1 xl_to_silkit=2 own_tx_dropped=3 error_frames=4 overruns=5 silkit_rejected=6 "
-          "xl_rejected=7 xl_queue_full=8 xl_tx_failures=9 silkit_tx_failures=10");
+          "xl_rejected=7 xl_queue_full=8 xl_tx_failures=9 silkit_tx_failures=10 xl_tx_dropped=11 xl_tx_unsent=12");
 }
