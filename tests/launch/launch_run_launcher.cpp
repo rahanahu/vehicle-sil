@@ -3094,8 +3094,14 @@ void paused_failures(const Options& o)
         require(contains(lines.back(), "participant 'Engine': it failed while the simulation was running, and the launcher "
                                        "aborted the simulation: its process exited with code 3"),
                 "the failure, not the timeout:\n" + lines.back());
-        require(!events_with(lines, {"\"name\":\"Engine\"", "\"state\":\"failed\"", "\"reason\":\"process_ended\""}).empty(),
-                "Engine is failed at once");
+        // The launcher learns of it in two ways, and either may be first: its look at the process
+        // (process_ended), or the controller, which sees the connection go as the process ends, a
+        // moment before the process can be waited for (left_simulation). The result names the
+        // exit code in both (checked above).
+        const auto failed = events_with(lines, {"\"name\":\"Engine\"", "\"state\":\"failed\""});
+        require(failed.size() == 1 && (contains(failed[0], "\"reason\":\"process_ended\"") ||
+                                       contains(failed[0], "\"reason\":\"left_simulation\"")),
+                "Engine is failed at once, with one event" + (failed.empty() ? std::string() : ":\n" + failed[0]));
         require(gone, "no participant is left");
     }
     // --timeout-ms counts the time it stands still (wall-clock time).

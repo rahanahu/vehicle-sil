@@ -60,9 +60,28 @@ struct CanMessage
     std::array<std::uint8_t, kMaxDataBytes> data{};
 };
 
+/// The CAN controller's error state, from the library's answer to request_chip_state().
+enum class ChipLevel
+{
+    Unknown,      ///< the library reported none of the states below
+    ErrorActive,
+    ErrorWarning, ///< an error counter reached the warning limit (still error active)
+    ErrorPassive,
+    BusOff,
+};
+
+struct ChipState
+{
+    ChipLevel level = ChipLevel::Unknown;
+    std::uint8_t tx_errors = 0; ///< transmit error counter
+    std::uint8_t rx_errors = 0; ///< receive error counter
+};
+
 /// One entry of the library's receive queue.
 struct ReceivedEvent
 {
+    /// Set for the answer to request_chip_state() (then is_can_message is false).
+    std::optional<ChipState> chip_state;
     /// true for a CAN message event (a frame, an error frame or a transmit receipt); false for
     /// anything else the library reports (state changes, timers, ...), which the logic ignores.
     bool is_can_message = false;
@@ -116,6 +135,10 @@ bool wait_for_notification(NotificationHandle handle, std::chrono::milliseconds 
 /// Goes on bus, keeping the hardware clock running (no clock reset).
 [[nodiscard]] Status activate(PortHandle port, ChannelMask channels);
 Status deactivate(PortHandle port, ChannelMask channels) noexcept;
+
+/// Asks the library for the controller's error state; the answer arrives later as a
+/// ReceivedEvent with chip_state. Fails when the channel is gone (device removed).
+[[nodiscard]] Status request_chip_state(PortHandle port, ChannelMask channels);
 
 struct TransmitAttempt
 {
