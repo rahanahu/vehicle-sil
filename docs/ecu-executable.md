@@ -52,7 +52,7 @@ int main(int argc, char** argv)
 
 ### 変数を出す（`--registry-uri`）
 
-ECU は（変数を宣言していなくても、`ecu.connected` があります）、`--registry-uri` で参加するとき、何も書かなくても、その変数を SIL Kit の publish/subscribe でシミュレーションへ出します（`vehicle_sil::control_silkit::AgentTransport`。[architecture.md](architecture.md) の「SIL Kit の上の運び手」）。`vehicle_sil_launch run` がそれを受けて、変数を読み書きする側になります（[simulation-config.md](simulation-config.md) の「変数を読み書きする口」）。受ける側がいなければ、送ったものは誰にも届かないだけです。
+ECU は（変数を宣言していなくても、`ecu.connected` があります）、`--registry-uri` で参加するとき、何も書かなくても、その変数を SIL Kit の publish/subscribe でシミュレーションへ出します（`vehicle_sil::control_silkit::AgentTransport`。[internals/control.md](internals/control.md) の「SIL Kit の上の運び手」）。`vehicle_sil_launch run` がそれを受けて、変数を読み書きする側になります（[simulation-config.md](simulation-config.md) の「変数を読み書きする口」）。受ける側がいなければ、送ったものは誰にも届かないだけです。
 
 - gRPC も Protocol Buffers も要りません（ECU の実行ファイルは、どちらにも依存しません）。
 - 値と書き込みの結果は、ステップの中で、値を読んだ直後に送ります。送る頻度は Agent の `sample_period`（既定 10 ms。`Ecu::set_agent_options()`）です。間引きはしません。
@@ -91,7 +91,7 @@ ECU は（変数を宣言していなくても、`ecu.connected` があります
 - `step`: ステップ幅。実時間の `Peer` では空です。
 - `networks`: ECU がつながるネットワーク。`j1939()`、`can()`、`lin_master()`、`lin_slave()` を呼んだ順に、種類をまたいで並びます。1 回の呼び出しが 1 つです。同じ ECU が同じ名前で `j1939()` と `can()` を持つと、同じ CAN のネットワークに 2 つ並びます（コントローラーが 2 つあるため）。各要素は `name`、`use`（`NetworkUse`: `Raw`、`J1939`、`LinMaster`、`LinSlave`）、`kind()`（`use` から決まる `NetworkKind`: `Can` か `Lin`）、`nodes` です。
 - `nodes`（J1939 だけ）: ノードを足した順に、足したときの値（`NodeOptions`）です。`address` は求めたアドレスで、Address Claim で別のアドレスになった後も変わりません（今のアドレスは `Node::address()`、求めたアドレスは `Node::requested_address()`）。`j1939::kNullAddress`（254）は、任意アドレスの範囲から空いているものを取るノードです。`name` は NAME（NAME を持たないノードは空。JSON のキーは `j1939_name`）、`arbitrary_address_capable()` は NAME のその bit です。
-- `variables`: 変数の `control::VariableInfo` です。先頭は、どの ECU にもある入力 `ecu.connected`（bool。false の間、ECU はすべてのバスから外れます。ステップは動き続けます。[architecture.md](architecture.md) の「ECU の入口」の「バスからの切り離し」）で、Agent を作る前でも並びます。その後に、ECU が宣言した変数（`input()`、`output()` などと、`agent()` に直接登録したもの）が宣言した順に並びます。`Peer` が足す監視の出力（`PeerOptions::monitor`）は含みません。
+- `variables`: 変数の `control::VariableInfo` です。先頭は、どの ECU にもある入力 `ecu.connected`（bool。false の間、ECU はすべてのバスから外れます。ステップは動き続けます。[internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」）で、Agent を作る前でも並びます。その後に、ECU が宣言した変数（`input()`、`output()` などと、`agent()` に直接登録したもの）が宣言した順に並びます。`Peer` が足す監視の出力（`PeerOptions::monitor`）は含みません。
 - `ecu.` で始まる変数の名前は、どの ECU にもある変数のために予約しています。`peer.` で始まる変数の名前は、`Peer` の監視の出力のために予約しています。`Ecu` の `input()`、`output()` などは、どの実装でも宣言のときに `std::invalid_argument`（変数の名前と決まりを言う）にするので、`--describe` と `--local` でも見つかります。`agent()` に直接登録した名前は検査しません。それが `Peer` の監視の出力とぶつかると、SIL Kit で始めるときに見つかります（`ecu_main` では終了コード 3）。`Peer` のネットワークごとの監視の出力（`j1939.<network>.` で始まる名前）とぶつかる名前は、SIL Kit で始めるときにだけ見つかります（`PeerOptions::monitor`）。
 - `EcuDescription` とその部品は `==` で比べられます。
 - いつでも呼べます。組み立ての途中でも、実行の前でも後でもかまいません。宣言は閉じません（Agent のスキーマを確定しないので、後から変数、ネットワーク、ノードを足せます）。実行中は、その ECU のステップの中からだけ呼びます（ほかの関数と同じです）。

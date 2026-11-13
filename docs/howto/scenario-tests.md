@@ -240,7 +240,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/engine_disconnect.ya
 
 - 300 ms に Engine をバスから外し、Dashboard の出力 `dashboard.engine_lost` が 400 ms のうちに true になることを確かめます。続けて Engine を戻し、200 ms のうちに false に戻ることを確かめます。
 - 検出は Dashboard の ECU のコードです（[examples/ecu_main/dashboard/main.cpp](../../examples/ecu_main/dashboard/main.cpp) の 30〜32 行。回転数が 300 ms 来なければ true。回転数は 100 ms ごとに来る）。シナリオは、その出力を読むだけです。`within_ms` は、検出に許す遅れに合わせて決めます。
-- 外れた ECU も、ステップ、タイマー、変数は動き続けます。外れている間も変数を読み書きでき、戻すのも変数への書き込みです（契約は [architecture.md](../architecture.md) の「ECU の入口」の「バスからの切り離し」）。
+- 外れた ECU も、ステップ、タイマー、変数は動き続けます。外れている間も変数を読み書きでき、戻すのも変数への書き込みです（契約は [internals/execution.md](../internals/execution.md) の「ECU の入口」の「バスからの切り離し」）。
 - 外れている間と戻ったときに J1939 でどう見えるか（送ったものの扱い、戻ったときの Address Claim）は、[j1939-guide.md](../j1939-guide.md) の「ECU をバスから外す（`ecu.connected`）」です。
 
 ## CI で回す
