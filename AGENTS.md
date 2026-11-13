@@ -88,6 +88,7 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 | `scripts/doctor.py` | この PC に、ビルドと試験に要るものがそろっているかを 1 行ずつ出す（読むだけ）。どのビルドにも要るものが足りなければ終了コード 1。一部の機能だけに要るもの（GUI、サニタイザーのプリセット、静的リンク）は「absent」と出すだけで、終了コードを変えない。足りないものには、何に要るかと入れ方を出す。`--json` |
 | `scripts/verify.py` | プリセットごとに構成、ビルド、テストを実行して要約する。失敗した段、落ちたテストと出力の先頭、ログの場所を表示する。JUnit 形式の結果も `build/logs/` に書く |
 | `scripts/check-commits.py` | コミットメッセージの形式と、コミットしてはいけないファイル（ローカルにだけ置くもの、`CLAUDE.local.md`、`build/`）を確かめる |
+| `scripts/check-docs.py` | 追跡している Markdown の相対リンクを確かめる: リンク先のファイルがあるか、`#` の見出しがあるか、リンクの直後に「…」で挙げた節の名前がリンク先にあるか。CI でも回す |
 | `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる。書き換えたファイルは、中断しても元に戻す |
 | `scripts/verify-web.py` | 画面（`gui/web`）とクライアントのライブラリ（`gui/client`）の `npm ci`、書式、lint、単体試験、ビルド、e2e を順に回して要約する。ログは `build/logs/web-*.log`。`--skip-install`、`--skip-e2e`、`--e2e-dev`（開発サーバーを通した e2e も回す。同じ試験の繰り返しなので、既定では回さない）、`--tag`、`--no-wait` |
 | `scripts/verify-gui.py` | GUI 全体: GUI サーバー（`gui/server`）の試験（pytest。本物のランチャーの出力を録ったものを流し直すランチャーで API、WebSocket、安全、止め方、`gui/protocol` の例の照合）、最小のクライアントの例（`examples/gui_client/run.mjs`）を同じランチャーで動かす試験の後に `scripts/verify-web.py` を回して要約する。ログは `build/logs/gui-*.log`。`--skip-web`、`-k`、`--skip-install`、`--skip-e2e`、`--tag`、`--no-wait` |
@@ -102,6 +103,7 @@ scripts/verify.py --linux                            # コミット前: Linux �
 scripts/verify.py linux-gcc-debug --tests '^launch'  # 1 つのプリセットで一部のテストだけ
 scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log
 scripts/check-commits.py                             # ステージした内容
+scripts/check-docs.py                                # docs を変えたら: リンクと節の名前
 scripts/check-commits.py --range origin/main..HEAD   # 範囲の各コミット
 scripts/mutate.py mutations.toml --check             # 書き換える箇所が見つかるかだけを確かめる
 scripts/verify-python.py                             # Python のコード: 3.11、.python-version の版、3.11 と依存の下限
