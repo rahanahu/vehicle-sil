@@ -152,7 +152,14 @@ ctest --preset linux-gcc-release
 
 #### Windows（MSYS2 UCRT64）
 
-MSYS2 の「UCRT64」シェルで実行します。
+MSYS2 の GCC（MinGW-w64、UCRT 版）でビルドします。MSYS2 を入れて、その「UCRT64」シェルに入ります。UCRT64 シェルは、この GCC や CMake が `PATH` に入った bash です。PowerShell かコマンドプロンプトで次を実行します。
+
+```powershell
+winget install MSYS2.MSYS2
+C:\msys64\msys2_shell.cmd -ucrt64 -defterm -here -no-start
+```
+
+2 行目で、今のターミナルのまま、今のディレクトリで UCRT64 シェルに入ります（スタートメニューの「MSYS2 UCRT64」でも同じシェルが開きます）。`echo $MSYSTEM` が `UCRT64` を表示すれば、正しいシェルです。以降はこのシェルで実行します。
 
 ```sh
 pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
@@ -162,7 +169,7 @@ cmake --build --preset windows-mingw-release
 ctest --preset windows-mingw-release
 ```
 
-`SilKit.dll` は、ビルド後に各実行ファイルの隣へ自動でコピーされます。MinGW のランタイム DLL（`libstdc++-6.dll` など）は、UCRT64 シェルの `PATH` から読み込まれます。
+`SilKit.dll` は、ビルド後に各実行ファイルの隣へ自動でコピーされます。MinGW のランタイム DLL（`libstdc++-6.dll` など）は、UCRT64 シェルの `PATH` から読み込まれます。UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\msys64\ucrt64\bin` を `PATH` に入れます。ほかの MinGW の `bin` より前に置きます。DLL が見つからないとき（`0xC0000135`）や、別の版の GCC の DLL を先に読み込んだとき（`0xC0000139`）は、何も表示せずに終わります。
 
 ## 最初の ECU を動かす
 
