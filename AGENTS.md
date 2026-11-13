@@ -85,6 +85,7 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 
 | スクリプト | 内容 |
 |---|---|
+| `scripts/doctor.py` | この PC に、ビルドと試験に要るものがそろっているかを 1 行ずつ出す（読むだけ）。どのビルドにも要るものが足りなければ終了コード 1。一部の機能だけに要るもの（GUI、サニタイザーのプリセット、静的リンク）は「absent」と出すだけで、終了コードを変えない。足りないものには、何に要るかと入れ方を出す。`--json` |
 | `scripts/verify.py` | プリセットごとに構成、ビルド、テストを実行して要約する。失敗した段、落ちたテストと出力の先頭、ログの場所を表示する。JUnit 形式の結果も `build/logs/` に書く |
 | `scripts/check-commits.py` | コミットメッセージの形式と、コミットしてはいけないファイル（ローカルにだけ置くもの、`CLAUDE.local.md`、`build/`）を確かめる |
 | `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる。書き換えたファイルは、中断しても元に戻す |
@@ -96,6 +97,7 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 `verify-web.py` と `verify-gui.py` は、時間に敏感な試験を回す前に、この PC で `ninja`、`ctest`、Windows の VM（`qemu-system-x86*`）が動いている間は待ちます（`scripts/busy_machine.py`。何を待つかを 1 行で表示し、`--wait-limit` 分（既定 20 分）で諦めて警告を出して進む）。どちらの試験も、同時に回すと時間の条件で落ちるためです。GUI の試験は、pytest、ng、Playwright を直接呼ばずにこの 2 つから回します。
 
 ```sh
+scripts/doctor.py                                    # 最初に: 要るものがそろっているか
 scripts/verify.py --linux                            # コミット前: Linux の 5 つのプリセット
 scripts/verify.py linux-gcc-debug --tests '^launch'  # 1 つのプリセットで一部のテストだけ
 scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log
