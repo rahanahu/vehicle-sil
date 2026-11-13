@@ -12,7 +12,7 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 ### gRPC と Protocol Buffers（Control Server、任意）
 
-- `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`（既定 OFF）のときだけ使います。`vehicle_sil::control_grpc`、`proto/` の生成コード、`vehicle_sil_control_server`、`vehicle_sil_launch`（`run --control`）が対象で、ほかのライブラリ（`vehicle_sil::launch` を含む）と ECU の実行ファイルは使いません。
+- `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`（既定 OFF）のときだけ使います。`vehicle_sil::control_grpc`、`proto/` の生成コード、`vehicle_sil_launch`（`run --control`）が対象で、ほかのライブラリ（`vehicle_sil::launch` を含む）と ECU の実行ファイルは使いません。
 - `find_package(gRPC CONFIG)` で見つかればそれを使います（MSYS2 UCRT64 は `pacman -S mingw-w64-ucrt-x86_64-grpc`）。見つからなければ FetchContent で gRPC を取り込みます（GitHub の `grpc/grpc`、タグ `v1.76.0`、`VEHICLE_SIL_GRPC_VERSION` で変えられる。サブモジュールは abseil、protobuf、re2、c-ares、BoringSSL、zlib だけ）。取り込んだ gRPC はインストールのルールを作らず（abseil の export 用の設定だけ有効）、警告の対象外（`SYSTEM`）にします。FetchContent で取り込むには CMake 3.28 以上が要ります（それより古い CMake では、gRPC を入れて `find_package` で見つけさせます）。取得済みのソースは `-DFETCHCONTENT_SOURCE_DIR_GRPC=<path>` で再利用できます。
 - ライセンス: gRPC は Apache-2.0、Protocol Buffers は BSD-3-Clause、abseil は Apache-2.0、re2 は BSD-3-Clause、c-ares は MIT、BoringSSL は Apache-2.0（一部に古い OpenSSL と ISC の条項が残る）、zlib は zlib ライセンス。vehicle-sil のリポジトリには含めません。
 - Python のクライアント（`python/vehicle_sil_control`）は `grpcio` と `protobuf` を、スタブの生成には `grpcio-tools` を使います（`pyproject.toml` の `control` グループ。uv がなければ pip、MSYS2 は `mingw-w64-ucrt-x86_64-python-grpcio` と `-python-grpcio-tools`）。試験はこれらが入った Python 3.11 以上（`VEHICLE_SIL_CONTROL_PYTHON`。指定がなければ、下の「Python の探し方」の順）があるときだけ登録します。

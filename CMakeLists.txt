@@ -21,7 +21,7 @@ option(VEHICLE_SIL_WARNINGS_AS_ERRORS "Treat warnings in vehicle-sil targets as 
 option(VEHICLE_SIL_STATIC
        "Executables that link SIL Kit need no vehicle-sil library next to them: SIL Kit as a static library, and the C++ runtime linked statically (MinGW: also winpthread; glibc stays shared)" OFF)
 option(VEHICLE_SIL_BUILD_CONTROL_SERVER
-       "Build the control server: vehicle_sil_launch run --control and vehicle_sil_control_server (needs gRPC: found, or built with FetchContent)" OFF)
+       "Build the control server into vehicle_sil_launch (run --control; needs gRPC: found, or built with FetchContent)" OFF)
 set(VEHICLE_SIL_SANITIZERS
     ""
     CACHE STRING "Semicolon separated -fsanitize= values, e.g. address;undefined (top-level builds only)")
@@ -105,9 +105,6 @@ add_subdirectory(tools/sim_controller ${_vehicle_sil_exclude})
 add_subdirectory(tools/can_bus_simulator ${_vehicle_sil_exclude})
 # vehicle_sil_launch: a simulation of ECU executables from a configuration file.
 add_subdirectory(tools/launch ${_vehicle_sil_exclude})
-if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
-  add_subdirectory(tools/control_server ${_vehicle_sil_exclude})
-endif()
 
 if(VEHICLE_SIL_BUILD_EXAMPLES)
   add_subdirectory(examples/getting_started)

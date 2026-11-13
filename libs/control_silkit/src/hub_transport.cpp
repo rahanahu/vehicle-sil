@@ -652,23 +652,6 @@ HelloReport HubTransport::wait_for_hellos(const std::vector<std::string>& partic
     }
 }
 
-HelloReport HubTransport::wait_for_announced(const std::vector<std::string>& participants,
-                                             std::chrono::steady_clock::time_point deadline, const std::function<bool()>& cancelled)
-{
-    std::vector<std::string> announced;
-    std::vector<std::string> silent;
-    {
-        const std::lock_guard lock(state_->mutex);
-        for (const auto& name : participants)
-        {
-            (state_->names.count(name) != 0 ? announced : silent).push_back(name);
-        }
-    }
-    HelloReport report = wait_for_hellos(announced, deadline, cancelled);
-    report.not_announced = std::move(silent);
-    return report;
-}
-
 std::vector<LinkInfo> HubTransport::links() const
 {
     const std::lock_guard lock(state_->mutex);
