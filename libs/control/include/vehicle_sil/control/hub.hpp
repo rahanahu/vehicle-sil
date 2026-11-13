@@ -302,6 +302,18 @@ public:
     /// The current peers and their latest values are delivered first.
     std::shared_ptr<Subscription> subscribe(SubscriptionOptions options = {});
 
+    /// Every sample the hub takes, as it takes it: `participant`, the incarnation whose schema it
+    /// follows, the sample (shared, not copied).
+    using ValuesTap = std::function<void(const std::string& participant, const std::string& incarnation,
+                                         const std::shared_ptr<const Snapshot>& sample)>;
+    /// Sets the one tap of the hub (empty: none): it is called for every sample that agent_values()
+    /// takes, in the order taken, on the thread of the transport that brings it and under the
+    /// hub's lock. For a reader that must see every sample (a subscription keeps only the latest
+    /// one per peer). It must be short, must not wait and must not call the hub: with
+    /// control_silkit::HubTransport the whole simulation waits for it. Once this returns, the tap
+    /// set before is not running and is not called again.
+    void set_values_tap(ValuesTap tap);
+
 private:
     struct PeerEntry
     {
@@ -361,6 +373,7 @@ private:
     std::map<std::uint64_t, Operation> operations_;
     std::deque<std::uint64_t> finished_; ///< finished operations, oldest first
     std::vector<std::weak_ptr<Subscription>> subscriptions_;
+    ValuesTap values_tap_;
 };
 
 } // namespace vehicle_sil::control

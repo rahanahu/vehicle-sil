@@ -6,3 +6,5 @@ add_subdirectory(dashboard)
 # The simulation configuration of the two (vehicle_sil_launch check / run simulation.yaml), next
 # to the executables so that its relative paths find them.
 configure_file(simulation.yaml simulation.yaml COPYONLY)
+# A scenario for the two (vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml).
+configure_file(scenarios/throttle_step.yaml scenarios/throttle_step.yaml COPYONLY)

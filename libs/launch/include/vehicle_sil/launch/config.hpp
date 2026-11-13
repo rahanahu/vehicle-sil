@@ -63,6 +63,9 @@ struct Finding
     std::string network;     ///< the network it is about, or ""
     /// More text below the message (e.g. the end of an executable's standard error), or "".
     std::string detail{};
+    /// The file it is about if that is not the configuration file (a scenario file, as the user
+    /// named it), or "": the outputs show it instead, and `line` is a line of it.
+    std::string file{};
 
     friend bool operator==(const Finding&, const Finding&) = default;
 };

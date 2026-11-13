@@ -435,7 +435,42 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                                      : " (or give the speed from the start, with speed or run --speed: the default is then that)"),
             nullptr);
     }
-    if (outcome.simulation == SimulationEnd::Ended && outcome.stop_at_ms && outcome.controller_state.empty())
+    if (outcome.scenario)
+    {
+        const ScenarioRun& scenario = *outcome.scenario;
+        const auto add_scenario = [&](std::string code, std::string message, std::size_t line) {
+            out.push_back(Finding{Severity::Error, std::move(code), std::move(message), line, "", "", "", scenario.file});
+        };
+        for (const ScenarioStepRun& step : scenario.steps)
+        {
+            if (step.status == StepStatus::Failed)
+            {
+                add_scenario(step.code, step.text + ": " + step.message, step.line);
+            }
+        }
+        if (scenario.status == ScenarioStatus::Incomplete)
+        {
+            const auto reached = std::find_if(scenario.steps.rbegin(), scenario.steps.rend(), [](const ScenarioStepRun& step) {
+                return step.status != StepStatus::NotRun;
+            });
+            const auto passed = static_cast<std::size_t>(std::count_if(
+                scenario.steps.begin(), scenario.steps.end(), [](const ScenarioStepRun& step) { return step.status == StepStatus::Passed; }));
+            add_scenario("scenario-incomplete",
+                         "the scenario did not get to its end: the simulation ended at " + std::to_string(outcome.timing.sim_ms) +
+                             " ms when " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) +
+                             " steps had passed" +
+                             (reached != scenario.steps.rend() && reached->status == StepStatus::Unfinished
+                                  ? " and the step at line " + std::to_string(reached->line) + " (" + reached->text + ") was not decided yet"
+                                  : std::string{}) +
+                             (outcome.scenario_error.empty()
+                                  ? "; the other findings and the lines above say why the simulation ended"
+                                  : "; the launcher's scenario thread failed (" + outcome.scenario_error +
+                                        "): this is an error of vehicle_sil_launch"),
+                         reached != scenario.steps.rend() ? reached->line : 0);
+        }
+    }
+    if (outcome.simulation == SimulationEnd::Ended && outcome.stop_at_ms && outcome.controller_state.empty() &&
+        !outcome.stopped_by_scenario)
     {
         add(Severity::Note, "ended-before-stop-at",
             "the simulation ended before stop_at_ms (" + std::to_string(*outcome.stop_at_ms) +
@@ -496,7 +531,8 @@ std::string detail::timing_text(const RunTiming& timing)
     return out;
 }
 
-RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckReport& check, const std::optional<double>& speed)
+RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckReport& check, const std::optional<double>& speed,
+                                 bool fineStep)
 {
     RunTiming t;
     // The synchronised ECUs' steps (an ECU without one runs in real time: the gate does not move it).
@@ -532,7 +568,7 @@ RunTiming detail::plan_time_step(const SimulationConfig& config, const CheckRepo
     }
     t.fine_step_ms = known && fine % kNanosPerMilli == 0 ? fine / kNanosPerMilli : 1;
     t.time_step_written = config.time_step_ms.has_value();
-    t.time_step_ms = t.time_step_written ? *config.time_step_ms : speed ? t.fine_step_ms : coarsest;
+    t.time_step_ms = t.time_step_written ? *config.time_step_ms : speed || fineStep ? t.fine_step_ms : coarsest;
     if (known)
     {
         // An ECU step at T runs when the controller's first step at or after T is due.
@@ -629,8 +665,10 @@ std::string format_run_text(const RunReport& report)
         state = "the simulation ran to stop_at_ms (" + std::to_string(run.stop_at_ms.value_or(0)) + " ms) and ended";
         break;
     case SimulationEnd::Ended:
-        state = run.controller_state.empty() ? "the simulation ran until a participant ended it"
-                                             : "the simulation ended in state " + run.controller_state;
+        state = !run.controller_state.empty() ? "the simulation ended in state " + run.controller_state
+                : run.stopped_by_scenario     ? "the simulation ran until the scenario was over (" +
+                                                    std::to_string(run.timing.sim_ms) + " ms) and ended"
+                                              : "the simulation ran until a participant ended it";
         break;
     case SimulationEnd::Aborted:
         state = run.timed_out ? "the simulation was aborted: it did not end within --timeout-ms (" +
@@ -649,6 +687,10 @@ std::string format_run_text(const RunReport& report)
         out += time + "\n";
     }
     out += "\n";
+    if (run.scenario)
+    {
+        out += detail::scenario_text(*run.scenario) + "\n";
+    }
     if (!run.participants.empty())
     {
         std::vector<std::vector<std::string>> rows{{"participant", "required", "ended"}};
@@ -667,6 +709,60 @@ std::string format_run_text(const RunReport& report)
         out += "failed: " + counts + (report.errors() == 0 && run.setup_error.empty() ? " (--strict)" : "") + "\n";
         break;
     }
+    return out;
+}
+
+namespace {
+
+/// A virtual time in milliseconds for people ("300", "2.5").
+std::string sim_millis_text(SimTime t)
+{
+    return millis_text(to_ns(t));
+}
+
+const char* step_result_text(StepStatus status)
+{
+    switch (status)
+    {
+    case StepStatus::NotRun: return "not run";
+    case StepStatus::Running: return "running";
+    case StepStatus::Passed: return "ok";
+    case StepStatus::Failed: return "FAILED";
+    case StepStatus::Unfinished: return "unfinished";
+    }
+    return "not run";
+}
+
+} // namespace
+
+std::string detail::scenario_step_text(const ScenarioStepRun& step)
+{
+    return "line " + std::to_string(step.line) + ": " + step.text + ": " + step_result_text(step.status) +
+           (step.at ? " at " + sim_millis_text(*step.at) + " ms" : std::string{}) +
+           (step.status == StepStatus::Failed ? " (" + step.message + ")" : std::string{});
+}
+
+std::string detail::scenario_text(const ScenarioRun& scenario)
+{
+    const auto passed = static_cast<std::size_t>(std::count_if(
+        scenario.steps.begin(), scenario.steps.end(), [](const ScenarioStepRun& step) { return step.status == StepStatus::Passed; }));
+    std::string state;
+    switch (scenario.status)
+    {
+    case ScenarioStatus::NotRun: state = "not run"; break;
+    case ScenarioStatus::Passed: state = "passed"; break;
+    case ScenarioStatus::Failed: state = "FAILED"; break;
+    case ScenarioStatus::Incomplete: state = "incomplete"; break;
+    }
+    std::string out = "scenario " + scenario.file + (scenario.name.empty() ? "" : " (" + scenario.name + ")") + ": " + state +
+                      ", " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) + " steps passed\n\n";
+    std::vector<std::vector<std::string>> rows{{"line", "step", "result", "at"}};
+    for (const ScenarioStepRun& step : scenario.steps)
+    {
+        rows.push_back({std::to_string(step.line), step.text, step_result_text(step.status),
+                        step.at ? sim_millis_text(*step.at) + " ms" : "-"});
+    }
+    out += detail::table_text(rows);
     return out;
 }
 
@@ -808,6 +904,63 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
     w.end_array();
     detail::write_findings_json(w, report.check.file, report.findings);
     detail::write_check_json(w, "check", report.check);
+    if (report.run && report.run->scenario)
+    {
+        // Only with --scenario: a result without one is as it was before scenarios.
+        detail::write_scenario_json(w, "scenario", *report.run->scenario);
+    }
+    w.end_object();
+}
+
+void detail::write_scenario_step_members(vehicle_sil::detail::JsonWriter& w, const ScenarioStepRun& step)
+{
+    const auto time = [&w](std::string_view key, const std::optional<SimTime>& t) {
+        w.real(key, t ? std::optional<double>(static_cast<double>(to_ns(*t)) / static_cast<double>(kNanosPerMilli)) : std::nullopt);
+    };
+    w.integer("index", static_cast<std::int64_t>(step.index));
+    w.integer("line", static_cast<std::int64_t>(step.line));
+    w.string("kind", step_kind_name(step.kind));
+    w.string("text", step.text);
+    w.string("status", step_status_name(step.status));
+    time("start_ms", step.start);
+    time("at_ms", step.at);
+    time("end_ms", step.end);
+    if (step.status == StepStatus::Failed)
+    {
+        w.string("code", step.code);
+        w.string("message", step.message);
+    }
+    else
+    {
+        w.null("code");
+        w.null("message");
+    }
+}
+
+void detail::write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const ScenarioRun& scenario)
+{
+    w.begin_object(key);
+    w.string("file", scenario.file);
+    if (scenario.name.empty())
+    {
+        w.null("name");
+    }
+    else
+    {
+        w.string("name", scenario.name);
+    }
+    w.string("status", scenario_status_name(scenario.status));
+    w.real("over_at_ms", scenario.over_at ? std::optional<double>(static_cast<double>(to_ns(*scenario.over_at)) /
+                                                                  static_cast<double>(kNanosPerMilli))
+                                          : std::nullopt);
+    w.begin_array("steps");
+    for (const ScenarioStepRun& step : scenario.steps)
+    {
+        w.begin_object();
+        write_scenario_step_members(w, step);
+        w.end_object();
+    }
+    w.end_array();
     w.end_object();
 }
 
@@ -1305,7 +1458,14 @@ public:
         outcome_.control_hello_timeout_ms = options.control_hello_timeout.count();
         outcome_.stop_at_ms = config.stop_at_ms;
         const std::optional<double> speed = options.speed ? *options.speed : config.speed;
-        outcome_.timing = detail::plan_time_step(config, check, speed);
+        if (check.scenario && check.scenario->scenario)
+        {
+            scenario_ = &*check.scenario->scenario;
+            outcome_.scenario = scenario_not_run(*scenario_);
+            outcome_.scenario->file = check.scenario->file;
+        }
+        // With a scenario the step does not follow the speed: the same steps at every speed.
+        outcome_.timing = detail::plan_time_step(config, check, speed, scenario_ != nullptr);
         outcome_.timing.speed = speed;
         outcome_.timing.late_tolerance_ms = late_tolerance_ms(config);
         if (options.time_commands == nullptr)
@@ -1347,6 +1507,13 @@ public:
             TimeCommands& commands;
             ~Detach() { commands.detach(); }
         } const detach{commands()};
+        // The scenario's thread and its tap on the hub end with the run, before the controller
+        // and the transport go (declared after them).
+        struct EndScenario
+        {
+            Runner& runner;
+            ~EndScenario() { runner.scenario_end(); }
+        } const endScenario{*this};
         if (interrupts() > 0)
         {
             outcome_.interrupted_by = interrupt_name();
@@ -1418,6 +1585,12 @@ public:
                 start_window(*t, *c, window);
             });
             commands().attach(*controller, outcome_.timing.time_step_ms, outcome_.timing.speed);
+            if (scenario_ != nullptr)
+            {
+                // The scenario decides at every step of the controller, from the one at 0 on.
+                controller->guard_from(SimTime{});
+                scenario_tap();
+            }
         }
         catch (const std::exception& e)
         {
@@ -1432,6 +1605,7 @@ public:
             if (wait_for_start(*controller))
             {
                 ran = true;
+                scenario_start(*controller);
                 watch(*controller);
                 note_late_values(*transport);
             }
@@ -1511,7 +1685,11 @@ private:
         for (std::size_t i = 0; i < config_.participants.size(); ++i)
         {
             const ParticipantConfig& p = config_.participants[i];
-            if (p.enabled && p.required && described_link(i) == ControlLink::Connected)
+            // Also an optional one whose variables the scenario uses.
+            const bool used = scenario_ != nullptr &&
+                              std::any_of(scenario_->participants.begin(), scenario_->participants.end(),
+                                          [&p](const ScenarioParticipant& s) { return s.name == p.name; });
+            if (p.enabled && (p.required || used) && described_link(i) == ControlLink::Connected)
             {
                 names.push_back(p.name);
             }
@@ -1556,6 +1734,10 @@ private:
             }
             const std::lock_guard lock(control_start_mutex_);
             before_start_error_ = std::move(error);
+        }
+        if (scenario_ != nullptr && !cancelled())
+        {
+            scenario_begin(transport, cancelled);
         }
         if (holds() && !cancelled())
         {
@@ -2194,8 +2376,29 @@ private:
     {
         WatchOptions watch;
         watch.poll = options_.poll;
-        watch.interrupted = [this] { return interrupts() > 0; };
-        watch.failed = [this, &controller] {
+        // A scenario that is over stops the simulation in order, as an interrupt does (which
+        // comes first if both are there).
+        // A required participant that has failed comes before the scenario, whichever is seen
+        // first: a write to an ECU that has just gone fails its step, and the cause is the ECU.
+        bool forScenario = false;
+        bool processFailed = false;
+        watch.interrupted = [this, &forScenario, &watch, &controller] {
+            if (interrupts() > 0)
+            {
+                return true;
+            }
+            if (!scenario_over_.load() || watch.failed() || FailureCheck::left_participant(controller))
+            {
+                return false; // the checks after this one decide a failure
+            }
+            forScenario = true;
+            return true;
+        };
+        watch.failed = [this, &controller, &processFailed] {
+            if (processFailed)
+            {
+                return true; // seen in this round already
+            }
             // A required participant whose process failed fails the run at once; one that exited
             // with 0 may have stopped the simulation (the controller sees that a moment later).
             // Once the simulation stops, participants leave on purpose (a coordinated participant
@@ -2224,6 +2427,7 @@ private:
                 if (!known[i] && run.required && failed_exit(run))
                 {
                     outcome_.failed_participant = run.name;
+                    processFailed = true;
                     return true;
                 }
             }
@@ -2252,7 +2456,15 @@ private:
                     "; aborting the simulation");
             }
         };
-        const WatchResult watched = watch_simulation(controller, watch);
+        WatchTarget target;
+        target.wait_until_finished = [&controller](std::chrono::milliseconds timeout) { return controller.wait_until_finished(timeout); };
+        target.left_participant = [&controller] { return FailureCheck::left_participant(controller); };
+        target.stop = [&controller, &forScenario](std::string_view reason) {
+            controller.stop(forScenario ? std::string_view("the scenario is over") : reason);
+        };
+        target.abort = [&controller] { controller.abort(); };
+        const WatchResult watched = watch_simulation(target, watch);
+        scenario_finish(controller, watched, forScenario);
         note_timing(controller);
         note_time(controller, TimeNote::Last);
         // No time command from here on: the simulation is over.
@@ -2289,10 +2501,253 @@ private:
             say("the simulation was aborted: participant '" + outcome_.failed_participant + "' failed");
             break;
         case WatchEnd::Interrupted:
+            if (forScenario)
+            {
+                outcome_.simulation = SimulationEnd::Ended;
+                outcome_.stopped_by_scenario = true;
+                if (watched.state != orch::ParticipantState::Shutdown)
+                {
+                    outcome_.controller_state = watched.state ? orch::to_string(*watched.state) : std::string("unknown");
+                }
+                say("the scenario is over: the simulation was stopped");
+                break;
+            }
             outcome_.simulation = SimulationEnd::Interrupted;
             outcome_.interrupted_by = interrupt_name();
             say("interrupted (" + outcome_.interrupted_by + "): the simulation was stopped");
             break;
+        }
+    }
+
+    // --- run --scenario ---
+    //
+    // The threads. The start window's thread begins the scenario (scenario_begin(): the writes for
+    // 0) while every participant waits before its first step. Then the scenario's thread
+    // (scenario_loop()) handles each step of the controller in turn, while the time gate's guard
+    // holds that step: it gives the engine the samples that have arrived and lets it judge and
+    // write (ScenarioEngine::tick()), then moves the guard on. The hub's tap (the controller's SIL
+    // Kit thread) only puts each sample into scenario_samples_. The main thread watches the
+    // simulation as always; it stops it when the scenario is over, and finishes the scenario
+    // (scenario_finish()) after the scenario's thread has ended.
+
+    /// The engine's way to the ECUs: the hub, and a wait until each agent has answered.
+    class HubPort final : public ScenarioPort
+    {
+    public:
+        explicit HubPort(control::Hub& hub) : hub_(hub) {}
+        /// Ends the wait of write() (the run is ending). Set while no write runs.
+        std::function<bool()> give_up{};
+
+        std::uint64_t write(std::vector<control::PeerWrite> writes, SimTime at) override
+        {
+            control::OperationRequest request;
+            request.writes = std::move(writes);
+            request.at = at;
+            request.late = control::LatePolicy::Reject;
+            request.client = "scenario";
+            const std::uint64_t seq = hub_.write(std::move(request));
+            // No limit in real time: an agent that is gone is settled by the hub, and a run that
+            // ends gives up.
+            while (!hub_.wait_queued(seq, std::chrono::milliseconds(20)) && hub_.operation(seq) && !(give_up && give_up()))
+            {
+            }
+            return seq;
+        }
+        std::optional<control::OperationResult> result(std::uint64_t ticket) override { return hub_.operation(ticket); }
+
+    private:
+        control::Hub& hub_;
+    };
+
+    void note_scenario_step(const ScenarioStepRun& step)
+    {
+        if (step.status != StepStatus::Running)
+        {
+            say("scenario: " + detail::scenario_step_text(step));
+        }
+        event([&step](EventStream& e) { e.scenario_step(step); });
+    }
+
+    /// The tap on the hub: every sample of a scenario participant, in the order taken.
+    void scenario_tap()
+    {
+        scenario_samples_.incarnations.assign(scenario_->participants.size(), std::string{});
+        scenario_tapped_ = true;
+        hub().set_values_tap([this](const std::string& participant, const std::string& incarnation,
+                                    const std::shared_ptr<const control::Snapshot>& sample) {
+            const std::lock_guard lock(scenario_samples_.mutex);
+            for (std::size_t i = 0; i < scenario_->participants.size(); ++i)
+            {
+                if (scenario_->participants[i].name == participant && scenario_samples_.incarnations[i] == incarnation)
+                {
+                    scenario_samples_.taken.emplace_back(i, sample);
+                    return;
+                }
+            }
+        });
+    }
+
+    /// Gives the engine the samples that have arrived since the last call.
+    void scenario_drain()
+    {
+        std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> taken;
+        {
+            const std::lock_guard lock(scenario_samples_.mutex);
+            taken.swap(scenario_samples_.taken);
+        }
+        for (auto& [participant, sample] : taken)
+        {
+            scenario_engine_->sample(participant, std::move(sample));
+        }
+    }
+
+    /// In the start window (its thread): who is there, then the writes for 0.
+    void scenario_begin(control_silkit::HubTransport& transport, const std::function<bool()>& cancelled)
+    {
+        const std::vector<control::PeerInfo> peers = hub().peers();
+        const std::vector<control_silkit::LinkInfo> links = transport.links();
+        std::vector<EnginePeer> found(scenario_->participants.size());
+        {
+            const std::lock_guard lock(scenario_samples_.mutex);
+            for (std::size_t i = 0; i < found.size(); ++i)
+            {
+                const std::string& name = scenario_->participants[i].name;
+                const auto peer = std::find_if(peers.begin(), peers.end(), [&name](const control::PeerInfo& info) {
+                    return info.participant == name && info.connected;
+                });
+                const auto link = std::find_if(links.begin(), links.end(), [&name](const control_silkit::LinkInfo& info) {
+                    return info.participant == name && info.state == control_silkit::LinkState::Connected && info.ready;
+                });
+                if (peer != peers.end() && link != links.end())
+                {
+                    found[i].connected = true;
+                    found[i].schema = peer->schema;
+                    scenario_samples_.incarnations[i] = peer->incarnation;
+                }
+            }
+        }
+        scenario_port_ = std::make_unique<HubPort>(hub());
+        scenario_port_->give_up = cancelled;
+        scenario_engine_ = std::make_unique<ScenarioEngine>(*scenario_, std::chrono::milliseconds(outcome_.timing.time_step_ms),
+                                                            *scenario_port_,
+                                                            [this](const ScenarioStepRun& step) { note_scenario_step(step); });
+        scenario_engine_->begin(found);
+        scenario_port_->give_up = [this] { return scenario_quit_.load(); };
+    }
+
+    /// The simulation runs: the scenario's thread takes the steps from here.
+    void scenario_start(SimulationController& controller)
+    {
+        if (scenario_ == nullptr)
+        {
+            return;
+        }
+        if (!scenario_engine_)
+        {
+            // The window ended before the scenario began (the start was being given up): nothing
+            // moves the guard, so the simulation is stopped where it stands.
+            outcome_.scenario_error = "the scenario could not begin before the simulation started";
+            scenario_over_.store(true);
+            return;
+        }
+        scenario_thread_ = std::thread([this, &controller] { scenario_loop(controller); });
+    }
+
+    void scenario_loop(SimulationController& controller)
+    {
+        try
+        {
+            while (!scenario_quit_.load())
+            {
+                const std::optional<SimTime> p = controller.wait_guarded(std::chrono::milliseconds(50));
+                if (!p)
+                {
+                    // No step is held (yet), or the simulation is ending: the main thread says when to end.
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    continue;
+                }
+                scenario_drain();
+                if (scenario_engine_->tick(*p))
+                {
+                    // Over: the guard stays, so that the simulation stands at this step until the
+                    // main thread has stopped it.
+                    scenario_over_.store(true);
+                    return;
+                }
+                controller.guard_from(*p + SimDuration(1));
+            }
+        }
+        catch (const std::exception& e)
+        {
+            const std::lock_guard lock(scenario_error_mutex_);
+            scenario_thread_error_ = *e.what() != '\0' ? e.what() : "exception without message";
+            scenario_over_.store(true);
+        }
+    }
+
+    /// The simulation is over (main thread): ends the scenario's thread and decides what is left.
+    void scenario_finish(SimulationController& controller, const WatchResult& watched, bool for_scenario)
+    {
+        if (scenario_ == nullptr)
+        {
+            return;
+        }
+        scenario_quit_.store(true);
+        if (scenario_thread_.joinable())
+        {
+            scenario_thread_.join();
+        }
+        {
+            const std::lock_guard lock(scenario_error_mutex_);
+            if (!scenario_thread_error_.empty())
+            {
+                outcome_.scenario_error = scenario_thread_error_;
+            }
+        }
+        if (!scenario_engine_)
+        {
+            outcome_.scenario->status = ScenarioStatus::Incomplete;
+            return;
+        }
+        if (!scenario_engine_->over())
+        {
+            const bool stoppedAt = !for_scenario && watched.end == WatchEnd::Ended &&
+                                   watched.state == orch::ParticipantState::Shutdown && config_.stop_at_ms &&
+                                   controller.wall_time_to_stop_at().has_value();
+            if (stoppedAt)
+            {
+                // The controller's last step: the samples of the steps before it are all there.
+                scenario_drain();
+                scenario_engine_->stopped_at(controller.time_state().now);
+            }
+            else
+            {
+                scenario_engine_->cut_short();
+            }
+        }
+        if (watched.end == WatchEnd::Failed)
+        {
+            // A participant failed: whatever the scenario made of it (a write to it that failed),
+            // the run's result is the participant's failure and a scenario that did not finish.
+            scenario_engine_->superseded();
+        }
+        const std::string file = outcome_.scenario->file;
+        outcome_.scenario = scenario_engine_->run();
+        outcome_.scenario->file = file;
+    }
+
+    /// Whatever happened: no thread and no tap of the scenario is left.
+    void scenario_end()
+    {
+        scenario_quit_.store(true);
+        if (scenario_thread_.joinable())
+        {
+            scenario_thread_.join();
+        }
+        if (scenario_tapped_)
+        {
+            hub().set_values_tap({});
+            scenario_tapped_ = false;
         }
     }
 
@@ -2461,6 +2916,23 @@ private:
     /// --timeout-ms ended the hold.
     std::atomic<bool> hold_timed_out_{false};
     std::unique_ptr<TimeCommands> own_commands_; ///< without RunOptions::time_commands
+    // run --scenario (see scenario_begin()).
+    const Scenario* scenario_ = nullptr;
+    struct ScenarioSamples
+    {
+        std::mutex mutex;
+        std::vector<std::string> incarnations; ///< per scenario participant: the agent whose samples count
+        std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> taken;
+    };
+    ScenarioSamples scenario_samples_;
+    bool scenario_tapped_ = false;
+    std::unique_ptr<HubPort> scenario_port_;
+    std::unique_ptr<ScenarioEngine> scenario_engine_; ///< the window's thread, then the scenario's, then main
+    std::thread scenario_thread_;
+    std::atomic<bool> scenario_quit_{false}; ///< main: the simulation is over
+    std::atomic<bool> scenario_over_{false}; ///< the scenario's thread: the scenario is over, stop the simulation
+    std::mutex scenario_error_mutex_;
+    std::string scenario_thread_error_; ///< guarded by scenario_error_mutex_
     std::mutex output_;
     // Last, so that it goes first: a Process ends its reader thread, which uses output_ and logs_,
     // also when run() leaves with an exception.

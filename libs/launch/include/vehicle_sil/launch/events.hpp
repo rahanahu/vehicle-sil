@@ -28,8 +28,8 @@ inline constexpr int kEventsFormat = 1;
 inline constexpr int kVersionFormat = 1;
 /// What this launcher can do, by name, for a reader that asks "is it there" instead of comparing
 /// versions (`version --json`'s "features"). Names are only added.
-inline constexpr std::array<std::string_view, 7> kFeatures{"events", "stdin-commands", "check-variables", "speed",
-                                                           "start-paused", "time-commands", "control-links"};
+inline constexpr std::array<std::string_view, 8> kFeatures{"events", "stdin-commands", "check-variables", "speed",
+                                                           "start-paused", "time-commands", "control-links", "scenario"};
 
 /// `version`: "vehicle_sil_launch <version>\n".
 [[nodiscard]] std::string format_version_text();
@@ -263,6 +263,9 @@ public:
     /// agent offers), "version" with "version_mismatch" (the version of the messages it speaks).
     void control_link(const std::string& name, std::string_view state, std::optional<std::size_t> variables,
                       std::optional<int> version);
+    /// "scenario_step" (run --scenario): a step of the scenario began ("status": "running") or was
+    /// decided ("passed", "failed"), with the members of the result's "scenario"."steps".
+    void scenario_step(const ScenarioStepRun& step);
     /// One line of a participant's output (`source`: its name) or of the launcher
     /// ("vehicle_sil_launch"), as the text output shows it but without "[<source>] ". The only
     /// event that may be dropped (see above).

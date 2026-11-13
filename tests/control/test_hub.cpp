@@ -879,3 +879,28 @@ TEST_CASE(control_hub_reads_the_latest_values_of_several_peers_in_one_look)
     CHECK(none_after(hub.latest_of({"Engine", "Quiet", "Nobody"}), at(20ms)));
     CHECK(none_after({}, SimTime{}));
 }
+
+TEST_CASE(control_hub_tap_sees_every_sample_in_order_until_it_is_taken_away)
+{
+    Hub hub;
+    FakePeer engine("Engine", "e1", hub);
+    FakePeer body("Body", "b1", hub);
+    engine.connect();
+    body.connect();
+    std::vector<std::string> seen;
+    hub.set_values_tap([&seen](const std::string& participant, const std::string& incarnation,
+                               const std::shared_ptr<const Snapshot>& sample) {
+        seen.push_back(participant + "/" + incarnation + "@" + std::to_string(sample->time.time_since_epoch().count() / 1'000'000));
+    });
+    // A subscription keeps only the latest sample per peer; the tap gets each one.
+    const auto subscription = hub.subscribe();
+    engine.step(at(10ms));
+    engine.step(at(20ms));
+    body.step(at(20ms));
+    engine.step(at(30ms));
+    CHECK_EQ(seen.size(), std::size_t{4});
+    CHECK(seen == (std::vector<std::string>{"Engine/e1@10", "Engine/e1@20", "Body/b1@20", "Engine/e1@30"}));
+    hub.set_values_tap({});
+    engine.step(at(40ms));
+    CHECK_EQ(seen.size(), std::size_t{4});
+}

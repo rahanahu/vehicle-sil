@@ -14,7 +14,7 @@
 | 役割 | 読む順 | 読まなくてよいもの |
 |---|---|---|
 | ECU を書く人（C/C++ で 1 つの ECU を作る） | 「[最初の ECU を動かす](#最初の-ecu-を動かす)」→ [examples/getting_started](examples/getting_started) → [docs/j1939-guide.md](docs/j1939-guide.md) → [docs/j1939-codec.md](docs/j1939-codec.md) → [docs/ecu-executable.md](docs/ecu-executable.md)。LIN を使うときは「[LIN](#lin)」も | docs/simulation-config.md、docs/dependencies.md、docs/code-map.md。docs/architecture.md は、契約や制限を確かめるときに該当する節だけ |
-| まとめる人（各自の ECU の実行ファイルを 1 つのシミュレーションにする） | [docs/ecu-executable.md](docs/ecu-executable.md) → [docs/simulation-config.md](docs/simulation-config.md) | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md |
+| まとめる人（各自の ECU の実行ファイルを 1 つのシミュレーションにする） | [docs/ecu-executable.md](docs/ecu-executable.md) → [docs/simulation-config.md](docs/simulation-config.md) → 決まった手順で値を入れて確かめるなら [docs/scenario.md](docs/scenario.md) | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md |
 | 外から操作する人（Python、CLI、試験） | [docs/control-api.md](docs/control-api.md)（`vehicle_sil_launch run --control` で、ランチャーの Control Server につなぐ）→ [examples/launch_control](examples/launch_control) → [docs/simulation-config.md](docs/simulation-config.md) の「機械から使う」（事象と命令）。変数の名前は、`ecu_main` で作った ECU の実行ファイルなら `--describe` の `variables` で調べる（[docs/ecu-executable.md](docs/ecu-executable.md) の「JSON の形式」） | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md。docs/control-api.md の「単独の Control Server」は、ランチャーを使わないときだけ |
 | 実機の CAN につなぐ人 | 「[Vector XL CAN Bridge（Windows）](#vector-xl-can-bridgewindows)」→ [docs/architecture.md](docs/architecture.md) の「Vector XL CAN Bridge」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/simulation-config.md、docs/code-map.md |
 | vehicle-sil 自体を直す人 | [AGENTS.md](AGENTS.md) → [docs/code-map.md](docs/code-map.md) → [docs/architecture.md](docs/architecture.md) → [docs/dependencies.md](docs/dependencies.md) | なし（利用者向けの文書は、変える機能のものを読む） |
@@ -57,7 +57,7 @@
 | `examples/launch_control` | `vehicle_sil_launch run --control` に Python からつなぎ、始まる前に書いて読み返す例 |
 | `tools/sim_controller` | 仮想時間のシミュレーションを開始・停止する `vehicle_sil_sim_controller` |
 | `tools/can_bus_simulator` | 簡易 CAN Network Simulator の participant `vehicle_sil_can_bus_simulator` |
-| `tools/launch` | ECU の実行ファイルをまとめる構成ファイルを照合する `vehicle_sil_launch check` と、シミュレーション全体を起動して見届ける `vehicle_sil_launch run`（[docs/simulation-config.md](docs/simulation-config.md)）。ECU を外して動かすときは `run simulation.yaml --disable <participant 名>`（[participant を外す](docs/simulation-config.md#participant-を外すenabled--disable--enable)）。等速で動かすときは `run simulation.yaml --speed 1`（[等速で動かす](docs/simulation-config.md#等速で動かす)） |
+| `tools/launch` | ECU の実行ファイルをまとめる構成ファイルを照合する `vehicle_sil_launch check` と、シミュレーション全体を起動して見届ける `vehicle_sil_launch run`（[docs/simulation-config.md](docs/simulation-config.md)）。ECU を外して動かすときは `run simulation.yaml --disable <participant 名>`（[participant を外す](docs/simulation-config.md#participant-を外すenabled--disable--enable)）。等速で動かすときは `run simulation.yaml --speed 1`（[等速で動かす](docs/simulation-config.md#等速で動かす)）。決まった手順で変数に値を入れ、結果を確かめるときは `run simulation.yaml --scenario <file>`（[docs/scenario.md](docs/scenario.md)） |
 | `tools/j1939_codegen` | YAML の定義から J1939 の型付きメッセージを生成する `j1939_codegen.py` |
 | `bridges/vector-xl` | Vector XL CAN Bridge（ライブラリと実行ファイル `vehicle_sil_vector_xl_bridge`） |
 | `examples/getting_started` | 最初の例 `vehicle_sil_getting_started`: `Ecu&` を受け取る 2 つの ECU を、`Simulation` で仮想バスか SIL Kit に載せる |
@@ -70,7 +70,7 @@
 | `tests/` | ユニットテスト、複数プロセスの統合テスト、FetchContent テスト |
 | `external/` | SIL Kit（Git サブモジュール、コミット固定） |
 | `patches/` | SIL Kit に当てるパッチ（上流への提出用の形式） |
-| `docs/` | [J1939 のノードの作り方](docs/j1939-guide.md)、[J1939 の型付きメッセージ](docs/j1939-codec.md)、[Control API の使い方](docs/control-api.md)、[ECU の実行ファイル](docs/ecu-executable.md)、[構成ファイルと照合](docs/simulation-config.md)、[アーキテクチャと将来の制約](docs/architecture.md)、[依存ライブラリ](docs/dependencies.md)、[コードの地図](docs/code-map.md) |
+| `docs/` | [J1939 のノードの作り方](docs/j1939-guide.md)、[J1939 の型付きメッセージ](docs/j1939-codec.md)、[Control API の使い方](docs/control-api.md)、[ECU の実行ファイル](docs/ecu-executable.md)、[構成ファイルと照合](docs/simulation-config.md)、[シナリオ](docs/scenario.md)、[アーキテクチャと将来の制約](docs/architecture.md)、[依存ライブラリ](docs/dependencies.md)、[コードの地図](docs/code-map.md) |
 
 ## 必要なもの
 

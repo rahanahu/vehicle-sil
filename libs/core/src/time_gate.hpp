@@ -44,6 +44,10 @@ public:
     void run_until(SimTime t, Wall::time_point wall);
     void step(SimDuration d, Wall::time_point wall); ///< d > 0; saturates at the end of time
     void set_speed(std::optional<double> speed, Wall::time_point wall);
+    /// SimulationController::guard_from() at `wall`.
+    void guard_from(std::optional<SimTime> t, Wall::time_point wall);
+    /// The step at now() is held for the guard: the time it began at, for wait_guarded().
+    [[nodiscard]] bool guarded() const noexcept { return guarded_; }
 
     /// The state as if the run ended at `wall` (after end(): as it ended).
     [[nodiscard]] TimeState state(Wall::time_point wall) const;
@@ -66,7 +70,10 @@ private:
     TimeState state_;              ///< without the step in progress (state() adds it)
     Wall::duration late_tolerance_;
     bool pause_next_ = false;      ///< pause() while no step was held: stand still at the next one
-    bool held_ = false;            ///< the step at state_.now is held (paused, or paced)
+    bool held_ = false;            ///< the step at state_.now is held (paused, paced, or guarded)
+    std::optional<SimTime> guard_; ///< guard_from(): steps that start at or after it are held
+    bool guarded_ = false;         ///< the step at state_.now is held for the guard
+    bool guard_overran_ = false;   ///< the guard kept the held step beyond its deadline (not the gate's lateness)
     bool stepped_ = false;         ///< the controller has begun a step (the simulation runs)
     SimDuration held_step_{};      ///< size of the step at state_.now
     std::optional<Base> base_;     ///< pacing: the wall-clock time of a virtual time

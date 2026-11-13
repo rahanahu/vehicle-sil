@@ -1138,11 +1138,12 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "speed",
     "start-paused",
     "time-commands",
-    "control-links"
+    "control-links",
+    "scenario"
   ]
 }
 )");
     // A build with the control server adds its feature last.
     const std::string with = format_version_json({kControlServerFeature});
-    CHECK(with.find("    \"control-links\",\n    \"control-server\"\n  ]") != std::string::npos);
+    CHECK(with.find("    \"scenario\",\n    \"control-server\"\n  ]") != std::string::npos);
 }

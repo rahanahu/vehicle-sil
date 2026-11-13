@@ -598,12 +598,22 @@ void Hub::agent_values(ConnectionId id, Snapshot snapshot)
         return; // not for this schema, or not newer
     }
     entry.latest = std::make_shared<const Snapshot>(std::move(snapshot));
+    if (values_tap_)
+    {
+        values_tap_(entry.info.participant, entry.info.incarnation, entry.latest);
+    }
     for_subscribers(c->participant, [&](Subscription& s) {
         if (s.options_.values)
         {
             s.put_values(entry.info.participant, entry.info.incarnation, entry.latest);
         }
     });
+}
+
+void Hub::set_values_tap(ValuesTap tap)
+{
+    const std::lock_guard lock(mutex_);
+    values_tap_ = std::move(tap);
 }
 
 void Hub::agent_events(ConnectionId id, const std::vector<Event>& events)

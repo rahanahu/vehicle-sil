@@ -34,4 +34,14 @@ void write_finding_members(vehicle_sil::detail::JsonWriter& w, const std::string
 /// format_run_json()'s object, as the member `key` of the object `w` is in ("" at the top).
 void write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const RunReport& report);
 
+/// run --scenario, for people: one line with the result, then a table of the steps (line, what,
+/// result, the virtual time that decided it).
+[[nodiscard]] std::string scenario_text(const ScenarioRun& scenario);
+/// One step as a line of the run's output: "line 4: set ...: ok at 100 ms".
+[[nodiscard]] std::string scenario_step_text(const ScenarioStepRun& step);
+/// The result's "scenario" object, as the member `key` of the object `w` is in.
+void write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const ScenarioRun& scenario);
+/// The members of one step of "steps" (and of the event "scenario_step").
+void write_scenario_step_members(vehicle_sil::detail::JsonWriter& w, const ScenarioStepRun& step);
+
 } // namespace vehicle_sil::launch::detail

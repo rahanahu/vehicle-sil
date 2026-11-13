@@ -688,6 +688,11 @@ void EventStream::control_link(const std::string& name, std::string_view state, 
          }));
 }
 
+void EventStream::scenario_step(const ScenarioStepRun& step)
+{
+    emit("scenario_step", object([&](Writer& w) { detail::write_scenario_step_members(w, step); }));
+}
+
 void EventStream::participant_not_started(const std::string& name, const std::string& message)
 {
     emit("participant", object([&](Writer& w) {

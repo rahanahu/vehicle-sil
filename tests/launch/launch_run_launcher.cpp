@@ -63,6 +63,14 @@
 //                start_timeout_ms is not counted
 //   time_usage   --start-paused without --stdin-commands, a wrong --speed, the options for check, and
 //                wrong time keys in the file
+//   scenario     run --scenario with the example of examples/ecu_main and its output in
+//                docs/scenario.md (text, byte for byte); the scenario in the JSON and in the events
+//   scenario_same  one scenario, run as fast as possible, at a speed, with a slow ECU and with a
+//                pause in between: the same result each time; every write takes effect in the step
+//                of its time (the ECU says in which step it saw each value)
+//   scenario_failures  a wait that times out, a simulation that stops before the scenario is over, an
+//                ECU that fails in the middle, a scenario with errors (nothing is started), the
+//                command line
 #include "launcher_support.hpp"
 #include "spawn_sleeper.hpp"
 
@@ -81,6 +89,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1633,6 +1642,8 @@ public:
         vehicle_sil::process::ProcessOptions options;
         options.working_directory = dir;
         options.input = true;
+        // An event is one line, however long (the result of a run with many variables or steps).
+        options.max_line = std::size_t{1} << 20;
         options.on_line = [this](vehicle_sil::process::Stream stream, std::string_view line) {
             std::unique_lock lock(mutex_);
             if (stream == vehicle_sil::process::Stream::Output)
@@ -3060,6 +3071,344 @@ void time_usage(const Options& o)
             run.standard_output);
 }
 
+// --- run --scenario ---
+
+/// The object "scenario" of the run's pretty JSON (the last one at the top level), as text.
+std::string scenario_json(const std::string& json)
+{
+    const auto at = json.rfind("\n  \"scenario\": {");
+    require(at != std::string::npos, "the result has no scenario:\n" + json);
+    const auto end = json.find("\n  }", at + 1);
+    require(end != std::string::npos, "the scenario object does not end:\n" + json);
+    return json.substr(at + 1, end + 4 - at - 1) + "\n";
+}
+
+/// Two test ECUs with the variables for scenarios, and `keys` at the top of the configuration.
+fs::path scenario_ecus(const Options& o, const std::string& keys, const std::string& scenario, const std::string& body = "")
+{
+    const fs::path dir = scenario_dir(o,
+                                      "vehicle_sil_simulation: 1\n" + keys +
+                                          "networks: []\n"
+                                          "participants:\n"
+                                          "  - name: Body\n"
+                                          "    command: [" + ecu(o) + "]\n"
+                                          "  - name: Door\n"
+                                          "    command: [" + ecu(o) + "]\n",
+                                      {{"Body", "scenario-variables " + body}, {"Door", "scenario-variables"}});
+    write_file(dir / "s.yaml", scenario);
+    return dir;
+}
+
+void scenario(const Options& o)
+{
+    const fs::path docs = o.docs.parent_path() / "scenario.md";
+    const fs::path dir = o.example_dir;
+    const std::vector<std::string> args{"run", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"};
+    const Captured text = launch(o, args, dir);
+    expect_code(text, 0, "run simulation.yaml --scenario scenarios/throttle_step.yaml");
+    expect_text(text.standard_output,
+                block_after(docs, "<!-- vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -->"),
+                "run simulation.yaml --scenario scenarios/throttle_step.yaml");
+    const std::string err = lf(text.standard_error);
+    require(contains(err, "\n[vehicle_sil_launch] scenario: line 10: wait_until Engine.engine.speed ge 1700 (timeout 500 ms): ok at "
+                          "330 ms\n") &&
+                contains(err, "\n[vehicle_sil_launch] the scenario is over: the simulation was stopped\n"),
+            "each step's line on stderr:\n" + err);
+
+    // The JSON: the scenario with every step, and nothing else changes (no finding, passed).
+    std::vector<std::string> json_args = args;
+    json_args.push_back("--json");
+    const Captured json = launch(o, json_args, dir);
+    expect_code(json, 0, "run --scenario --json");
+    const std::string out = lf(json.standard_output);
+    const std::string scenario = scenario_json(out);
+    require(contains(scenario, "  \"scenario\": {\n    \"file\": \"scenarios/throttle_step.yaml\",\n    \"name\": \"throttle step\",\n"
+                               "    \"status\": \"passed\",\n    \"over_at_ms\": 705,\n    \"steps\": [\n") &&
+                contains(scenario, "      {\n        \"index\": 2,\n        \"line\": 10,\n        \"kind\": \"wait_until\",\n"
+                                   "        \"text\": \"wait_until Engine.engine.speed ge 1700 (timeout 500 ms)\",\n"
+                                   "        \"status\": \"passed\",\n        \"start_ms\": 0,\n        \"at_ms\": 330,\n"
+                                   "        \"end_ms\": 340,\n        \"code\": null,\n        \"message\": null\n      },\n"),
+            "the scenario in the JSON:\n" + scenario);
+    require(contains(out, "\"result\": \"passed\"") && contains(out, "\"simulation\": \"ended\"") &&
+                contains(out, "\"sim_ms\": 705,") && contains(out, "\"time_step_ms\": 5,"),
+            "the run ends with the scenario, at its last step:\n" + out);
+
+    // The events: each step begins and is decided, in the order of the virtual time.
+    std::vector<std::string> event_args = args;
+    event_args.push_back("--events");
+    const Captured events = launch(o, event_args, dir);
+    expect_code(events, 0, "run --scenario --events");
+    std::vector<std::string> steps;
+    std::istringstream in(lf(events.standard_output));
+    for (std::string line; std::getline(in, line);)
+    {
+        if (contains(line, "\"event\":\"scenario_step\""))
+        {
+            steps.push_back("line " + value_of(line, "line") + " " + value_of(line, "status") + " " + value_of(line, "at_ms"));
+        }
+    }
+    std::string all;
+    for (const auto& step : steps)
+    {
+        all += step + "\n";
+    }
+    expect_text(all,
+                "line 8 running null\nline 8 passed 0\nline 10 running null\nline 10 passed 330\nline 12 running null\n"
+                "line 12 passed 490\nline 15 running null\nline 15 passed 490\nline 17 running null\nline 17 passed 700\n"
+                "line 18 running null\nline 18 passed 700\n",
+                "the scenario_step events");
+    require(contains(events.standard_output, "\"scenario\":{\"file\":\"scenarios/throttle_step.yaml\",\"name\":\"throttle step\","
+                                             "\"status\":\"passed\",\"over_at_ms\":705,"),
+            "the result event has the scenario:\n" + events.standard_output);
+
+    // check --scenario: the scenario is checked with the configuration, nothing runs.
+    const Captured checked = launch(o, {"check", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"}, dir);
+    expect_code(checked, 0, "check --scenario");
+    require(contains(lf(checked.standard_output), "\nscenario scenarios/throttle_step.yaml (throttle step): 6 steps\n\npassed: 0 errors"),
+            checked.standard_output);
+}
+
+void scenario_same(const Options& o)
+{
+    // Every write is checked by what the ECU saw: the step in which its level changed.
+    const std::string file = "vehicle_sil_scenario: 1\n"
+                             "name: write times\n"
+                             "steps:\n"
+                             "  - set: { Body.level: 5, Body.gain: 3, Door.mode: auto }\n"
+                             "  - expect: { Body.gain_at_0: 3, Body.level_changed_at_ms: 0, Door.mode_now: auto }\n"
+                             "  - at_ms: 30\n"
+                             "    set: { Body.level: 6 }\n"
+                             "  - expect: { Body.level_changed_at_ms: 30 }\n"
+                             "  - at_ms: 70\n"
+                             "    set: { Door.level: 9 }\n"
+                             "  - at_ms: 70\n"
+                             "    expect: { Door.level_changed_at_ms: 70, Body.level_changed_at_ms: 30 }\n"
+                             "  - wait_until: { Body.pulse: true }\n"
+                             "    timeout_ms: 500\n"
+                             "  - set: { Body.level: 7 }\n"
+                             "  - expect: { Body.level_changed_at_ms: 220 }\n"
+                             "  - ramp: { Door.level: { to: 0, over_ms: 30 } }\n"
+                             "  - expect: { Door.level_changed_at_ms: 250, Door.level: 0, Body.ticks: 26 }\n";
+    const auto run = [&](const fs::path& dir, std::vector<std::string> more, const std::string& what) {
+        std::vector<std::string> args{"run", "sim.yaml", "--scenario", "s.yaml", "--json"};
+        args.insert(args.end(), more.begin(), more.end());
+        const Captured r = launch(o, args, dir);
+        expect_code(r, 0, what);
+        const std::string out = lf(r.standard_output);
+        require(contains(out, "\"late_messages\": 0") && !contains(out, "control-link-late-values"), what + ": no late message:\n" + out);
+        return scenario_json(out);
+    };
+    const fs::path dir = scenario_ecus(o, "", file);
+    const std::string fastest = run(dir, {}, "as fast as possible");
+    require(contains(fastest, "\"status\": \"passed\"") && contains(fastest, "\"over_at_ms\": 260,"),
+            "the scenario passes, and is over at 260 ms:\n" + fastest);
+    // The pulse is in the sample of 200 ms; the launcher knows at 210, the next step is at 220.
+    require(contains(fastest, "\"start_ms\": 70,\n        \"at_ms\": 200,\n        \"end_ms\": 220,"), "the wait:\n" + fastest);
+    for (int i = 0; i < 3; ++i)
+    {
+        expect_text(run(dir, {}, "as fast as possible again"), fastest, "the same run again");
+    }
+    expect_text(run(dir, {"--speed", "4"}, "at four times real time"), fastest, "at a speed");
+    expect_text(run(dir, {"--speed", "0.5"}, "at half of real time"), fastest, "at half of real time");
+    // An ECU whose every step takes 3 ms of real time, and a stop_at_ms beyond the scenario.
+    const fs::path slow = scenario_ecus(o, "stop_at_ms: 2000\n", file, "slow-ms 3");
+    expect_text(run(slow, {}, "with a slow ECU"), fastest, "with a slow ECU");
+    expect_text(run(slow, {"--speed", "8"}, "with a slow ECU at a speed"), fastest, "with a slow ECU at a speed");
+
+    // With the time commands: paused in the middle and stepped on, the result is the same. (Slow
+    // enough that the pause comes long before the end: 260 ms take 2.6 s.)
+    {
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "--scenario", "s.yaml", "--speed", "0.1", "sim.yaml"});
+        live.wait_for({"\"event\":\"scenario_step\"", "\"line\":6,", "\"status\":\"passed\""});
+        live.write("{\"command\":\"pause\"}\n");
+        live.wait_for({"\"event\":\"time\"", "\"paused\":true,"});
+        live.write("{\"command\":\"step\",\"ms\":30}\n");
+        live.wait_for({"\"command\":\"step\"", "\"accepted\":true"});
+        std::this_thread::sleep_for(100ms);
+        live.write("{\"command\":\"speed\",\"value\":\"max\"}\n{\"command\":\"resume\"}\n");
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 0, "the paused run passes");
+        const std::string& result = lines.back();
+        require(contains(result, "\"scenario\":{\"file\":\"s.yaml\",\"name\":\"write times\",\"status\":\"passed\",\"over_at_ms\":260,") &&
+                    contains(result, "\"start_ms\":70,\"at_ms\":200,\"end_ms\":220,"),
+                "the same result with a pause and a step in between:\n" + result);
+        log("CHECK a pause and a step in a scenario -> ok");
+    }
+}
+
+void scenario_failures(const Options& o)
+{
+    const std::string head = "vehicle_sil_scenario: 1\nsteps:\n";
+    {
+        // A wait that times out: the run fails, and says the line, the time and the value.
+        const fs::path dir = scenario_ecus(o, "",
+                                           head + "  - set: { Body.level: 5 }\n"
+                                                  "  - wait_until: { Body.ticks: { ge: 10 }, Body.level: 6 }\n"
+                                                  "    timeout_ms: 100\n"
+                                                  "  - set: { Body.level: 7 }\n");
+        const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml"}, dir);
+        expect_code(run, 1, "a wait that times out");
+        const std::string out = lf(run.standard_output);
+        require(contains(out, "run: the simulation ran until the scenario was over (110 ms) and ended\n") &&
+                    contains(out, "scenario s.yaml: FAILED, 1 of 3 steps passed\n") &&
+                    contains(out, "error: s.yaml:4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): timed out at 100 ms "
+                                  "(100 ms after 0 ms): Body.level eq 6, but it was 5 (its sample of 100 ms)\n") &&
+                    contains(out, "\nfailed: 1 error, 0 warnings, 0 notes\n"),
+                "the failure in the text:\n" + out);
+        const Captured json = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
+        expect_code(json, 1, "a wait that times out, --json");
+        const std::string j = lf(json.standard_output);
+        require(contains(j, "\"code\": \"scenario-timeout\",\n      \"file\": \"s.yaml\",\n      \"line\": 4,") &&
+                    contains(j, "\"status\": \"failed\",\n    \"over_at_ms\": 110,") && contains(j, "\"status\": \"not_run\","),
+                "the failure in the JSON:\n" + j);
+        // The same at a speed.
+        const Captured paced = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json", "--speed", "2"}, dir);
+        expect_code(paced, 1, "a wait that times out, at a speed");
+        expect_text(scenario_json(lf(paced.standard_output)), scenario_json(j), "the failed scenario at a speed");
+    }
+    {
+        // stop_at_ms comes first: the step that could not be decided fails, and says what to do.
+        const fs::path dir = scenario_ecus(o, "stop_at_ms: 100\n",
+                                           head + "  - at_ms: 50\n    set: { Body.level: 5 }\n"
+                                                  "  - at_ms: 90\n    expect: { Body.level: 5 }\n"
+                                                  "  - wait_until: { Body.level: 6 }\n    timeout_ms: 1000\n");
+        const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml"}, dir);
+        expect_code(run, 1, "stop_at_ms before the end of the scenario");
+        const std::string out = lf(run.standard_output);
+        require(contains(out, "run: the simulation ran to stop_at_ms (100 ms) and ended\n") &&
+                    contains(out, "scenario s.yaml: FAILED, 2 of 3 steps passed\n") &&
+                    contains(out, "error: s.yaml:7: wait_until Body.level eq 6 (timeout 1000 ms): the simulation stopped at 100 ms "
+                                  "(stop_at_ms) before this step was decided (it began at 90 ms): there was not enough time for the "
+                                  "scenario; raise stop_at_ms, or leave it out (the run then ends with the scenario)\n"),
+                "out of time:\n" + out);
+    }
+    {
+        // An ECU fails in the middle: its failure ends the run as always, and the scenario is incomplete.
+        const fs::path dir = scenario_ecus(o, "",
+                                           head + "  - set: { Body.level: 5 }\n"
+                                                  "  - wait_until: { Door.level: 6 }\n    timeout_ms: 5000\n",
+                                           "throw-at-ms 100");
+        const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml"}, dir);
+        expect_code(run, 1, "an ECU fails during the scenario");
+        const std::string out = lf(run.standard_output);
+        require(contains(out, "run: the simulation was aborted: participant 'Body' failed\n") &&
+                    contains(out, "scenario s.yaml: incomplete, 1 of 2 steps passed\n") && contains(out, "participant-failed") == false &&
+                    contains(out, "participant 'Body': it failed while the simulation was running") &&
+                    contains(out, "error: s.yaml:4: the scenario did not get to its end: the simulation ended at ") &&
+                    contains(out, " when 1 of 2 steps had passed and the step at line 4 (wait_until Door.level eq 6 (timeout 5000 "
+                                  "ms)) was not decided yet; the other findings and the lines above say why the simulation ended\n"),
+                "an incomplete scenario:\n" + out);
+    }
+    {
+        // The ECU that a ramp writes to dies (exit code 7) at some real time. As fast as possible,
+        // the scenario's next write to it fails before the launcher's look at the processes; at a
+        // slow speed, the look comes first. Either way: the participant's failure is the result,
+        // with its exit code, and the scenario did not finish.
+        const fs::path dir = scenario_ecus(o, "",
+                                           head + "  - set: { Body.level: 0 }\n"
+                                                  "  - ramp: { Body.level: { to: 100, over_ms: 3000000 } }\n",
+                                           "exit-after-wall-ms 300 7");
+        for (const std::string speed : {"max", "0.05", "max"})
+        {
+            const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--speed", speed}, dir);
+            expect_code(run, 1, "the written ECU dies, speed " + speed);
+            const std::string out = lf(run.standard_output);
+            require(contains(out, "run: the simulation was aborted: participant 'Body' failed\n") &&
+                        contains(out, "scenario s.yaml: incomplete, 1 of 2 steps passed\n") &&
+                        contains(out, "participant 'Body': it failed while the simulation was running, and the launcher aborted the "
+                                      "simulation: its process exited with code 7") &&
+                        contains(out, "error: s.yaml:4: the scenario did not get to its end: ") && !contains(out, "scenario-write") &&
+                        !contains(out, "was not taken by") && contains(out, "\nfailed: 2 errors, "),
+                    "the written ECU dies, speed " + speed + ":\n" + out + run.standard_error);
+        }
+        log("CHECK a participant's failure comes before the scenario's -> ok");
+    }
+    {
+        // A stop command in the middle: stopped in order (130), the scenario is incomplete.
+        const fs::path dir = scenario_ecus(o, "",
+                                           head + "  - set: { Body.level: 5 }\n"
+                                                  "  - wait_until: { Door.level: 6 }\n    timeout_ms: 600000\n");
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "--scenario", "s.yaml", "--speed", "1", "sim.yaml"});
+        live.wait_for({"\"event\":\"scenario_step\"", "\"line\":4,", "\"status\":\"running\""});
+        live.write("{\"command\":\"stop\"}\n");
+        const auto [status, lines] = live.finish();
+        require(status && status->code == 130, "a stop command during a scenario: 130");
+        const std::string& result = lines.back();
+        require(contains(result, "\"result\":\"interrupted\"") && contains(result, "\"simulation\":\"interrupted\"") &&
+                    contains(result, "\"code\":\"scenario-incomplete\"") &&
+                    contains(result, "\"name\":null,\"status\":\"incomplete\",\"over_at_ms\":null,") &&
+                    contains(result, "\"status\":\"unfinished\""),
+                "the stopped scenario:\n" + result);
+        log("CHECK a stop command during a scenario -> ok");
+    }
+    {
+        // An ECU hangs in a step while the scenario writes to it: --timeout-ms ends the run, and
+        // the scenario's thread with it.
+        const fs::path dir = scenario_ecus(o, "stop_timeout_ms: 500\n",
+                                           head + "  - set: { Body.level: 0 }\n"
+                                                  "  - ramp: { Body.level: { to: 100, over_ms: 2000 } }\n",
+                                           "hang-at-ms 50");
+        const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--timeout-ms", "1500"}, dir);
+        expect_code(run, 1, "--timeout-ms during a scenario");
+        const std::string out = lf(run.standard_output);
+        require(contains(out, "run: the simulation was aborted: it did not end within --timeout-ms (1500 ms)\n") &&
+                    contains(out, "scenario s.yaml: incomplete, 1 of 2 steps passed\n") &&
+                    contains(out, "error: s.yaml:4: the scenario did not get to its end: "),
+                "--timeout-ms during a scenario:\n" + out);
+    }
+    {
+        // A scenario with errors: the check fails, and nothing is started. check says the same.
+        const fs::path dir = scenario_ecus(o, "",
+                                           head + "  - set: { Body.levl: 5 }\n"
+                                                  "  - at_ms: 10\n    set: { Body.gain: 1, Door.ticks: 2 }\n");
+        const std::string errors = "error: s.yaml:3: 'Body.levl': participant 'Body' has no variable 'levl': did you mean 'Body.level'? "
+                                   "(vehicle_sil_launch check --json lists the variables)\n"
+                                   "error: s.yaml:5: Body.gain is a parameter: it can be written only before the first step, that is "
+                                   "with set in a step at 0 (at_ms: 0, or the first steps without a time), not at 10 ms\n"
+                                   "error: s.yaml:5: Door.ticks is an output of its ECU: it can be read (expect, wait_until), not "
+                                   "written; write one of the ECU's inputs instead\n";
+        const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml"}, dir);
+        expect_code(run, 1, "run with a scenario that has errors");
+        require(contains(lf(run.standard_output), errors) && contains(lf(run.standard_output), "nothing was started: the check found errors") &&
+                    !contains(run.standard_error, "starting Body"),
+                "nothing is started:\n" + run.standard_output + run.standard_error);
+        const Captured check = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml"}, dir);
+        expect_code(check, 1, "check with a scenario that has errors");
+        require(contains(lf(check.standard_output), errors) && contains(lf(check.standard_output), "\nfailed: 3 errors, 0 warnings, 0 notes\n"),
+                check.standard_output);
+        // A participant that is left out, and a file that is not there.
+        write_file(dir / "s.yaml", head + "  - expect: { Door.level: 0 }\n");
+        const Captured disabled = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml", "--disable", "Door"}, dir);
+        expect_code(disabled, 1, "a scenario that uses a disabled participant");
+        require(contains(lf(disabled.standard_output),
+                         "error: s.yaml:3: 'Door.level': participant 'Door' is left out of this run (enabled: false, or --disable): "
+                         "take it in (--enable Door), or run a scenario that does not use it\n"),
+                disabled.standard_output);
+        const Captured missing = launch(o, {"run", "sim.yaml", "--scenario", "none.yaml", "--json"}, dir);
+        expect_code(missing, 1, "a scenario file that does not exist");
+        require(contains(lf(missing.standard_output), "\"code\": \"file\",\n        \"file\": \"none.yaml\",") &&
+                    contains(lf(missing.standard_output), "the scenario file does not exist: check the path given with --scenario"),
+                missing.standard_output);
+    }
+    {
+        // The command line.
+        const fs::path dir = scenario_ecus(o, "", head + "  - set: { Body.level: 5 }\n");
+        Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--stdin-commands", "--start-paused"}, dir);
+        expect_code(run, 4, "--scenario with --start-paused");
+        require(contains(run.standard_error, "error: --scenario cannot be used with --start-paused: the scenario writes its values "
+                                             "for 0 before the first step and runs by itself; pause and step it with "
+                                             "--stdin-commands if needed\n"),
+                run.standard_error);
+        run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0"}, dir);
+        expect_code(run, 4, "--scenario with --control");
+        require(contains(run.standard_error, "--control"), run.standard_error);
+        run = launch(o, {"run", "sim.yaml", "--scenario"}, dir);
+        expect_code(run, 4, "--scenario without a file");
+        const Captured version = launch(o, {"version", "--json"}, dir);
+        require(contains(version.standard_output, "\"scenario\""), "version --json lists the feature scenario");
+    }
+}
+
 int main(int argc, char** argv)
 {
 #ifndef _WIN32
@@ -3086,7 +3435,8 @@ int main(int argc, char** argv)
             {"events_findings", events_findings}, {"events_nonblocking", events_nonblocking}, {"events_output", events_output},
             {"events_stderr", events_stderr}, {"realtime", realtime}, {"on_time", on_time}, {"late", late}, {"stall", stall},
             {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
-            {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control}};
+            {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control},
+            {"scenario", scenario}, {"scenario_same", scenario_same}, {"scenario_failures", scenario_failures}};
         const auto it = std::find_if(scenarios.begin(), scenarios.end(), [&](const auto& s) { return s.first == o.scenario; });
         if (it == scenarios.end())
         {

@@ -67,6 +67,9 @@ bool TimeGate::begin_step(SimTime now, SimDuration step, Wall::time_point wall)
             base_ = Base{now, wall}; // slip: no catching up
         }
     }
+    // The guard holds the step whatever else does: it is let go only when the guard has moved on.
+    guarded_ = guard_ && now >= *guard_;
+    guard_overran_ = false;
     if (std::exchange(pause_next_, false) || (state_.pause_target && now >= *state_.pause_target))
     {
         set_paused(true, wall);
@@ -87,7 +90,8 @@ bool TimeGate::begin_step(SimTime now, SimDuration step, Wall::time_point wall)
             return true;
         }
     }
-    return false;
+    held_ = guarded_;
+    return held_;
 }
 
 void TimeGate::begin_last_step(SimTime now, Wall::time_point wall)
@@ -97,6 +101,7 @@ void TimeGate::begin_last_step(SimTime now, Wall::time_point wall)
         return;
     }
     static_cast<void>(begin_step(now, held_step_, wall));
+    guarded_ = false;
     // Nothing comes after it: no step is in progress, whatever state() would make of the hold.
     if (state_.paused)
     {
@@ -120,7 +125,7 @@ void TimeGate::end(Wall::time_point wall)
 
 std::optional<TimeGate::Wall::time_point> TimeGate::release_at() const
 {
-    if (!held_ || state_.paused)
+    if (!held_ || state_.paused || guarded_)
     {
         return std::nullopt;
     }
@@ -129,11 +134,27 @@ std::optional<TimeGate::Wall::time_point> TimeGate::release_at() const
 
 void TimeGate::released(Wall::time_point wall)
 {
-    if (held_ && !state_.paused && state_.speed && base_ && !ended_)
+    if (held_ && !state_.paused && state_.speed && base_ && !ended_ && !guard_overran_)
     {
         state_.max_gate_lateness = std::max(state_.max_gate_lateness, nanos(wall - deadline_));
     }
     held_ = false;
+}
+
+void TimeGate::guard_from(std::optional<SimTime> t, Wall::time_point wall)
+{
+    guard_ = t;
+    if (guarded_ && (!guard_ || state_.now < *guard_))
+    {
+        guarded_ = false;
+        // What the guard's owner took beyond the step's deadline makes the next step late; it is
+        // not the gate's own late wake-up.
+        guard_overran_ = state_.speed && base_ && wall > deadline_;
+    }
+    else if (!guarded_ && held_ && guard_ && state_.now >= *guard_)
+    {
+        guarded_ = true; // the step that is held for another reason stays for the guard as well
+    }
 }
 
 void TimeGate::set_paused(bool paused, Wall::time_point wall)
@@ -303,7 +324,10 @@ TimeState TimeGate::state(Wall::time_point wall) const
     }
     out.running_for = nanos(ran_);
     out.current_lateness = Nanos::zero();
-    if (!stepped_ || state_.paused)
+    // While the guard holds the step, the next one is not overdue: its owner decides when the
+    // simulation goes on (or that it ends here). What the owner takes beyond the deadline is
+    // counted when the next step begins.
+    if (!stepped_ || state_.paused || guarded_)
     {
         return out;
     }

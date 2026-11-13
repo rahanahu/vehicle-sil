@@ -5,7 +5,7 @@ if(NOT TARGET vehicle_sil::launch)
 endif()
 vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
   PREFIX launch LABELS unit launch TIMEOUT 60
-  SOURCES test_config.cpp test_check.cpp test_run.cpp test_events.cpp
+  SOURCES test_config.cpp test_check.cpp test_run.cpp test_events.cpp test_scenario.cpp
   LINK vehicle_sil::launch vehicle_sil::core) # core: the time commands with a controller (test_events.cpp)
 target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch")
@@ -54,7 +54,8 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
               interrupt_ending ended_early timeout no_console killed usage disabled events events_usage stdin_stop
               stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
               events_slow events_findings events_nonblocking events_output events_stderr realtime late stall
-              speed_change step_width pause_step paused_failures time_usage control
+              speed_change step_width pause_step paused_failures time_usage control scenario scenario_same
+              scenario_failures
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
