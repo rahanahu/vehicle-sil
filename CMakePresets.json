@@ -270,7 +270,10 @@
     {
       "name": "linux-gcc-tsan",
       "inherits": "test-base",
-      "configurePreset": "linux-gcc-tsan"
+      "configurePreset": "linux-gcc-tsan",
+      "environment": {
+        "TSAN_OPTIONS": "suppressions=${sourceDir}/cmake/tsan-suppressions.txt"
+      }
     },
     {
       "name": "linux-clang-asan",
@@ -280,7 +283,10 @@
     {
       "name": "linux-clang-tsan",
       "inherits": "test-base",
-      "configurePreset": "linux-clang-tsan"
+      "configurePreset": "linux-clang-tsan",
+      "environment": {
+        "TSAN_OPTIONS": "suppressions=${sourceDir}/cmake/tsan-suppressions.txt"
+      }
     },
     {
       "name": "windows-mingw-debug",

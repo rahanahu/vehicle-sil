@@ -169,9 +169,11 @@ TEST_CASE(responder_acknowledgement_is_sent_only_for_a_destination_specific_requ
         Node& us = bench.add_node(kUs);
         ResponderLog log;
         std::vector<bool> sent;
-        us.on_request(Pgn{kPgnPropB}, [&, code = code](RequestContext& context) {
+        // A copy of the structured binding under another name: Clang 18 takes a capture that reuses the
+        // binding's name for shadowing it (-Wshadow).
+        us.on_request(Pgn{kPgnPropB}, [&, answer = code](RequestContext& context) {
             log.calls.push_back({context.pgn().value(), context.requester(), context.is_destination_specific(), context.time()});
-            sent.push_back(context.acknowledge(code));
+            sent.push_back(context.acknowledge(answer));
         });
         bench.inject(at(2ms), req(kTool, kUs, kPgnPropB));
         bench.steps(2);
