@@ -1,10 +1,11 @@
 # A tag v<version> makes the release's files and puts them on a draft release; a person reads it and publishes it.
-#   web       the screen and the bundled client library (scripts/verify-web.py, without the browser tests)
+#   web       the screen, the bundled client library and its npm package (scripts/verify-web.py, without the
+#             browser tests)
 #   linux     the tools archive for Linux x86_64, built on the oldest Ubuntu runner (an older glibc than the
 #             distributions it runs on), and checked as a user uses it (scripts/package.py tools, verify)
 #   windows   the same for Windows x86_64 with MSYS2 UCRT64
 #   draft     once ci.yml has passed on the same commit: the template archive with both archives' SHA-256,
-#             SHA256SUMS, and the draft release
+#             SHA256SUMS, and the draft release (with the client library's npm package on its own)
 # Security: read-only token except in the draft job (contents: write, to create the release; actions: read, to
 # see ci.yml's runs), no other secrets,
 # actions pinned by commit hash (the tag in the comment). The tag is passed to the scripts through env, never
@@ -174,6 +175,12 @@ jobs:
           pattern: tools-*
           path: build/dist
           merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web
+      # The client library's npm package, the same file the tools archives carry: on the release on its own too.
+      - name: Client library package
+        run: cp build/gui-client/vehicle-sil-gui-client-*.tgz build/dist/
       # The release workflow builds and checks the archives only; the full tests are ci.yml's, on the same commit.
       - name: ci.yml passed on this commit
         env:
@@ -197,4 +204,5 @@ jobs:
           # The notes: this version's section of CHANGELOG.md.
           awk -v v="$version" '$0 ~ "^## " { on = index($0, "## " v) == 1; next } on' CHANGELOG.md > notes.md
           gh release create "$TAG" --draft --verify-tag --title "vehicle-sil $version" --notes-file notes.md \
-            build/dist/vehicle-sil-tools-* build/dist/vehicle-sil-template-*.zip build/dist/SHA256SUMS
+            build/dist/vehicle-sil-tools-* build/dist/vehicle-sil-template-*.zip \
+            build/dist/vehicle-sil-gui-client-*.tgz build/dist/SHA256SUMS

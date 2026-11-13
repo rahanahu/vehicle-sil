@@ -689,7 +689,37 @@ def test_static_files_stay_in_their_directory(tmp_path: Path) -> None:
                  "/missing.js", "/locale/messages.xx.json", "/link.js", "/alias.js", "/linked/a.svg", "/a\\b.js",
                  "/C:/x.js"):
         assert s.lookup(path)[2] == 404, path
+    assert s.lookup("/run/some/route", page_load=False)[2] == 404  # a fetch under a route is not the page
     assert StaticFiles(None).lookup("/") == (None, None, 200)  # the page that says how to build the screen
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
+def test_a_static_file_is_read_only_when_it_is_still_the_checked_one(tmp_path: Path, monkeypatch) -> None:
+    from vehicle_sil_gui import static
+    web = tmp_path / "web"
+    (web / "assets").mkdir(parents=True)
+    (web / "index.html").write_text("<html>")
+    (web / "assets" / "a.js").write_text("inside")
+    (tmp_path / "outside.js").write_text("secret")
+    s = StaticFiles(web)
+    path = s.lookup("/assets/a.js")[0]
+    assert s.read(path) == b"inside"
+    # Between the check and the reading, the file becomes a link out of the directory: not read.
+    (web / "assets" / "a.js").unlink()
+    os.symlink(tmp_path / "outside.js", web / "assets" / "a.js")
+    assert s.read(path) is None
+    # The same with a directory above it.
+    (web / "assets" / "a.js").unlink()
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "a.js").write_text("secret")
+    os.rename(web / "assets", tmp_path / "assets-old")
+    os.symlink(tmp_path / "out", web / "assets")
+    assert s.read(path) is None
+    # A file larger than the limit is refused with its own error.
+    (web / "big.js").write_text("x" * 11)
+    monkeypatch.setattr(static, "MAX_FILE_BYTES", 10)
+    with pytest.raises(static.TooLarge):
+        s.read(s.lookup("/big.js")[0])
 
 
 def test_the_docs_show_the_csp_that_the_screens_get() -> None:

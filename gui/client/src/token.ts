@@ -2,7 +2,7 @@
  * サーバーが表示した URL（`http://127.0.0.1:<port>/#token=<...>`）からトークンを受け取る。
  *
  * GUI サーバーが配る画面（サンプルの画面も、`--web` で配る自分の画面も）は、開いた URL の `#token=` を読み、すぐに URL
- * から消し（履歴にも残さない）、タブの sessionStorage に持つ（再読み込みでは残り、タブを閉じると消える）。ブラウザの
+ * から消し（タブの戻る・進むの履歴からも。閲覧履歴には残ることがある）、タブの sessionStorage に持つ（再読み込みでは残り、タブを閉じると消える）。ブラウザの
  * ものは引数で受け取る（このライブラリは Node でも動くので、`window` を直接読まない）。ブラウザでは `takeToken(window)`。
  */
 
@@ -34,7 +34,7 @@ export function takeToken(place: TokenPlace): string | null {
   if (!match) {
     return read(storage);
   }
-  // 読めない値でも URL からは消す（履歴やブックマークに残さない）
+  // 読めない値でも URL からは消す（タブの履歴や、後で付けるブックマークに残さない）
   place.history.replaceState(
     place.history.state,
     '',
