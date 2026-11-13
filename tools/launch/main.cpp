@@ -324,6 +324,20 @@ void finish_threads()
     const std::unique_lock lock(shared().stderr_mutex, kStderrWait);
 }
 
+/// Ends the process with `code` now, when the result has been written: without the destructors of
+/// static objects and without unloading SIL Kit, which a thread of the run still uses
+/// (RunOutcome::connection_not_closed_ms). Nothing is left to flush: the result and every line on
+/// stderr are flushed where they are written, the events by their own thread before the result
+/// counts as written.
+[[noreturn]] void end_process_at_once(int code)
+{
+    finish_threads();
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
+#endif
+    std::_Exit(code);
+}
+
 /// A line on stderr from main() when stderr may not be read any more (the reader of the events
 /// has stopped reading, and stderr may go to the same place): written by a thread of its own, for
 /// which main waits kStderrWait at most.
@@ -1025,12 +1039,18 @@ int run(const cli::Args& args, launch::EventStream* events)
     {
         return usage_error(report.check.findings, args.flag("json"), true, c.file, events);
     }
-    if (events != nullptr)
+    const int code = events != nullptr
+                         ? finish_events(*events, report, report.exit_code())
+                         : write_or_fail(args.flag("json") ? launch::format_run_json(report) : launch::format_run_text(report),
+                                         report.exit_code());
+    if (report.run && report.run->connection_not_closed_ms)
     {
-        return finish_events(*events, report, report.exit_code());
+#ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
+        server.reset(); // its audit log is complete; the hub stays
+#endif
+        end_process_at_once(code);
     }
-    return write_or_fail(args.flag("json") ? launch::format_run_json(report) : launch::format_run_text(report),
-                         report.exit_code());
+    return code;
 }
 
 /// What this build adds to launch::kFeatures.

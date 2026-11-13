@@ -68,6 +68,7 @@ void ExternalPortAdapter::on_event(const ExternalCanEvent& event)
         return;
     case ExternalEventKind::BusState:
     case ExternalEventKind::Fault:
+    case ExternalEventKind::TransmitUnsent:
     case ExternalEventKind::Warning:
         // Not passed on: the adapter's users read the bus through frames and error frames only.
         return;
@@ -109,6 +110,7 @@ can::SendResult ExternalPortAdapter::send(const can::TimedFrame& frame)
         sent_.fetch_add(1, std::memory_order_relaxed);
         return can::SendResult::Accepted;
     case TransmitResult::QueueFull:
+    case TransmitResult::Dropped: // the bus does not take frames now: try later
         send_queue_full_.fetch_add(1, std::memory_order_relaxed);
         return can::SendResult::QueueFull;
     case TransmitResult::Failed:

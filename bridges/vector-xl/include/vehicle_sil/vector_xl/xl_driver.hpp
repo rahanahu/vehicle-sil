@@ -66,6 +66,22 @@ struct XlCanPortOptions
     ///    stops receiving.
     ///  - A full driver queue is not a refusal (the answer only comes later).
     std::chrono::milliseconds bus_state_interval{500};
+    /// When no receipt came for this long although frames were accepted since the last one (no
+    /// ACK, bus off, a cable pulled), transmit() refuses new frames (TransmitResult::Dropped)
+    /// until a receipt comes, so that frames do not pile up and go out late in a burst. A frame
+    /// still goes to the driver as a probe now and then, in case a receipt was lost or the
+    /// driver lost the waiting frames. The first probe comes this long after the bus was found
+    /// stuck (at least 1 s later while the controller reports error warning, error passive or
+    /// bus off), and each probe doubles the gap up to 5 s (or this long, if longer). The frames
+    /// already accepted, about this long's worth, and the probes still go out once the bus
+    /// works: the driver's xlCanFlushTransmitQueue did not remove them on a VN5620. Unset:
+    /// frames wait as long as it takes. Used only with init access (`bitrate`), where the port
+    /// switches the receipts on itself: without it another application may switch them off,
+    /// and the port would never see the bus working again.
+    std::optional<std::chrono::milliseconds> transmit_timeout;
+    /// stop() waits up to this long for accepted frames to reach the bus before it takes the
+    /// channel off the bus; the rest is reported as ExternalEventKind::TransmitUnsent.
+    std::chrono::milliseconds drain_timeout{1000};
     /// Refusals in a row, after the driver answered, that count as a lost channel.
     unsigned bus_state_failures = 3;
 };

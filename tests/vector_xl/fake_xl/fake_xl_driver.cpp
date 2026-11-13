@@ -58,6 +58,7 @@ struct Port
     bool pending_overrun = false;
     std::shared_ptr<Notification> notification = std::make_shared<Notification>();
     std::optional<unsigned long> bitrate;
+    std::deque<Frame> tx_queue; // accepted while the bus is blocked
 };
 
 struct Node
@@ -81,6 +82,8 @@ struct State
     std::map<int, Node> nodes;
     int next_node = 1;
     std::map<unsigned, backend::ChipState> chip_states;
+    std::map<unsigned, bool> blocked;
+    std::map<unsigned, unsigned> receipts_to_lose;
     bool device_lost = false;
     bool chip_state_refused = false;
     std::optional<std::chrono::steady_clock::time_point> lose_device_at;
@@ -261,6 +264,8 @@ void reset()
     s.ports.clear();
     s.nodes.clear();
     s.chip_states.clear();
+    s.blocked.clear();
+    s.receipts_to_lose.clear();
     s.device_lost = false;
     s.chip_state_refused = false;
     s.lose_device_at.reset();
@@ -290,6 +295,79 @@ unsigned chip_state_requests()
 {
     const std::lock_guard lock(state().mutex);
     return state().chip_state_requests;
+}
+
+// Sends `frame` from `port` onto its bus, with the receipt the port asked for. Caller holds the mutex.
+void send_from(std::int64_t handle, Port& port, const Frame& frame)
+{
+    deliver_to_bus(port.channel, frame, handle, 0);
+    if (auto& lose = state().receipts_to_lose[port.channel]; lose > 0)
+    {
+        --lose;
+        return;
+    }
+    if (port.tx_receipts || state().ignore_mode)
+    {
+        auto receipt = rx_event(frame);
+        receipt.transmit_receipt = true;
+        enqueue(port, receipt);
+    }
+}
+
+void set_bus_blocked(unsigned channel_index, bool blocked)
+{
+    auto& s = state();
+    const std::lock_guard lock(s.mutex);
+    s.blocked[channel_index] = blocked;
+    if (blocked)
+    {
+        return;
+    }
+    for (auto& [handle, port] : s.ports)
+    {
+        if (port.channel != channel_index)
+        {
+            continue;
+        }
+        while (!port.tx_queue.empty())
+        {
+            const Frame frame = port.tx_queue.front();
+            port.tx_queue.pop_front();
+            send_from(handle, port, frame);
+        }
+    }
+}
+
+void lose_next_receipt(unsigned channel_index)
+{
+    const std::lock_guard lock(state().mutex);
+    ++state().receipts_to_lose[channel_index];
+}
+
+void discard_queued_transmissions(unsigned channel_index)
+{
+    const std::lock_guard lock(state().mutex);
+    for (auto& [handle, port] : state().ports)
+    {
+        if (port.channel == channel_index)
+        {
+            port.tx_queue.clear();
+        }
+    }
+}
+
+std::size_t queued_transmissions(unsigned channel_index)
+{
+    const std::lock_guard lock(state().mutex);
+    std::size_t count = 0;
+    for (const auto& [handle, port] : state().ports)
+    {
+        if (port.channel == channel_index)
+        {
+            count += port.tx_queue.size();
+        }
+    }
+    return count;
 }
 
 void set_channels(std::vector<ChannelDef> channels)
@@ -584,8 +662,10 @@ Status deactivate(PortHandle handle, ChannelMask channels) noexcept
     }
     port->active = false;
     port->rx.clear();
+    port->tx_queue.clear();
     return status(fake_xl::kStatusOk);
 }
+
 
 TransmitAttempt transmit(PortHandle handle, ChannelMask channels, const CanMessage& message)
 {
@@ -628,12 +708,13 @@ TransmitAttempt transmit(PortHandle handle, ChannelMask channels, const CanMessa
         request.transmit_request = true;
         fake_xl::enqueue(*port, request);
     }
-    fake_xl::deliver_to_bus(port->channel, frame, fake_xl::key(handle), 0);
-    if (port->tx_receipts || s.ignore_mode)
+    if (s.blocked[port->channel])
     {
-        auto receipt = fake_xl::rx_event(frame);
-        receipt.transmit_receipt = true;
-        fake_xl::enqueue(*port, receipt);
+        port->tx_queue.push_back(frame);
+    }
+    else
+    {
+        fake_xl::send_from(fake_xl::key(handle), *port, frame);
     }
     result.status = status(fake_xl::kStatusOk);
     result.queued = true;

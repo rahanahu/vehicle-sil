@@ -153,13 +153,11 @@ int run_echo(const Options& options, bool forceReceipts, bool physical)
     ok = expect(sent.has_value() && *sent > 0, "peer sent " + (sent ? std::to_string(*sent) : std::string("?")) + " frames") && ok;
     ok = expect(sent && toXl == sent, "bridge silkit_to_xl == sent") && ok;
     ok = expect(sent && toSilKit == sent, "bridge xl_to_silkit == sent (one answer per frame)") && ok;
-    // TX receipts are off only with init access (--bitrate, the physical scenario) and a driver
-    // that honours xlCanSetChannelMode.
-    const bool receiptsExpected = forceReceipts || !physical;
-    ok = expect(dropped == (receiptsExpected ? sent : std::optional<unsigned long long>(0)),
-                std::string("bridge own_tx_dropped == ") + (receiptsExpected ? "sent" : "0")) && ok;
+    // TX receipts are always on (with init access the port switches them on itself): one per
+    // frame, never forwarded.
+    ok = expect(dropped == sent, "bridge own_tx_dropped == sent") && ok;
     for (const char* key : {"error_frames", "overruns", "silkit_rejected", "xl_rejected", "xl_queue_full",
-                            "xl_tx_failures", "silkit_tx_failures"})
+                            "xl_tx_failures", "silkit_tx_failures", "xl_tx_dropped", "xl_tx_unsent"})
     {
         ok = expect(stat(bridgeText, key) == std::optional<unsigned long long>(0), std::string("bridge ") + key + " == 0") && ok;
     }

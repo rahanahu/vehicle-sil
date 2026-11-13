@@ -71,11 +71,31 @@ struct VirtualTimeOptions
     std::optional<SimTime> end{};
 };
 
+/// The SIL Kit participant configuration (JSON) for a participant or a registry that is given
+/// none: SIL Kit's defaults ("{}"), except on Windows, where the connections between the
+/// participants of one machine are TCP connections (Middleware.EnableDomainSockets: false).
+/// With local-domain sockets there, closing the socket to a process whose threads are suspended
+/// was seen not to return, and the closing process stayed after it was told to end; with TCP
+/// connections that was not seen (docs/dependencies.md says what was tried and what is a guess).
+[[nodiscard]] std::string_view default_participant_configuration() noexcept;
+
+/// default_participant_configuration() with more members of the top level: `members` is their
+/// JSON without the braces (`"Logging":{...}`), or empty. For a program that makes a
+/// configuration of its own, so that the defaults are made in one place. `members` must not
+/// have "Middleware".
+[[nodiscard]] std::string default_participant_configuration_with(std::string_view members);
+
+/// `configuration` as it is if it configures anything; default_participant_configuration() if it
+/// is "{}" or empty (white space aside). A configuration of the caller's own that is used on
+/// Windows should set Middleware.EnableDomainSockets to false as well.
+[[nodiscard]] std::string participant_configuration_or_default(std::string_view configuration);
+
 struct ParticipantRuntimeOptions
 {
     std::string participant_name;
     std::string registry_uri = "silkit://localhost:8500";
-    /// SIL Kit participant configuration as YAML or JSON text. "{}" uses SIL Kit's defaults.
+    /// SIL Kit participant configuration as YAML or JSON text. "{}": the defaults
+    /// (participant_configuration_or_default()).
     std::string participant_configuration = "{}";
     /// Upper bound for stop() and the destructor to wait for the lifecycle to shut down.
     std::chrono::milliseconds shutdown_timeout{5000};

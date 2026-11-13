@@ -209,20 +209,23 @@ std::string read_file(const std::string& path)
     return content.str();
 }
 
-/// SIL Kit's participant configuration: the given file, or stdout logging at `level`.
+/// SIL Kit's participant configuration: the given file as it is, or vehicle-sil's defaults with
+/// stdout logging at `level`.
 std::string participant_configuration(const Options& options)
 {
     if (options.participant_configuration)
     {
         return read_file(*options.participant_configuration);
     }
+    // Not SIL Kit's defaults as they are: vehicle-sil's (TCP only on Windows), and the logging.
     if (options.level == "off")
     {
-        return "{}";
+        return std::string(default_participant_configuration());
     }
     static const std::map<std::string, std::string, std::less<>> kSilKitLevels{
         {"trace", "Trace"}, {"debug", "Debug"}, {"info", "Info"}, {"warn", "Warn"}, {"error", "Error"}, {"critical", "Critical"}};
-    return "{\"Logging\": {\"Sinks\": [{\"Type\": \"Stdout\", \"Level\": \"" + kSilKitLevels.at(options.level) + "\"}]}}";
+    return default_participant_configuration_with("\"Logging\": {\"Sinks\": [{\"Type\": \"Stdout\", \"Level\": \"" +
+                                                  kSilKitLevels.at(options.level) + "\"}]}");
 }
 
 } // namespace

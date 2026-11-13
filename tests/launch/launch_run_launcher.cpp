@@ -3935,38 +3935,52 @@ void manual_frozen(const Options& o)
         const bool running = !events_with(live.lines(), {"\"phase\":\"running\""}).empty();
         log(std::string("RESULT Late frozen as it joined: ") +
             (running ? "the simulation runs (Late got to its first step)" : "the start waits for Late"));
-        // On Windows, with a participant frozen while the simulation runs, the launcher sometimes
-        // does not end after the stop: destroying its controller's SIL Kit participant does not
-        // return (a known limit of the product; docs/simulation-config.md says to let the
-        // participant go on first). There, in that branch only, Late goes on before the stop. A
-        // stop with Late still frozen is checked on Windows before the start, on POSIX in both.
-#ifdef _WIN32
-        const bool thawFirst = running;
-#else
-        const bool thawFirst = false;
-#endif
-        if (thawFirst)
-        {
-            lateByHand.thaw();
-        }
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish_unchecked(60s);
-        if (!thawFirst)
-        {
-            lateByHand.thaw();
-        }
+        lateByHand.thaw();
         require(status && status->code == 130,
                 "a stop ends a run that waits for a frozen participant (130), not " +
                     (status ? std::to_string(status->code) : std::string("still running")) + ":\n" + out_of(lines));
         check_events(lines);
         require(contains(lines.back(), "\"result\":\"interrupted\"") && contains(lines.back(), "\"interrupted_by\":\"stop command\""),
                 "the run was stopped by the command:\n" + lines.back());
+        require(!contains(lines.back(), "connection-not-closed"),
+                "the launcher closed its SIL Kit connection, with Late frozen:\n" + lines.back());
         // Hand ends when it was told to (the start was aborted); if the simulation ran, it may wait
         // in its step for Late's for ever (the launcher has gone): it is ended with the test.
         if (!running)
         {
             require(byHand.wait(30s).has_value(), "Hand, which waited for the start, has ended:\n" + out_of(lines));
         }
+    }
+    {
+        // Frozen once the simulation runs (a debugger's pause in a step): a stop command ends the
+        // run all the same, with Late still frozen, and the launcher closes its connection to it
+        // (on Windows a TCP connection: closing a local-domain socket to a process that stands
+        // still may never return there, docs/dependencies.md).
+        const fs::path dir = hand_dir(o, "frozen_running", hand_config(o, "stop_timeout_ms: 3000\n", late_participant(o)),
+                                      {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
+        const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
+        const std::string lateEvent = live.wait_for({"\"name\":\"Late\"", "\"state\":\"manual\""});
+        ByHand byHand(json_text(hand, "command_line"), json_text(hand, "working_directory"));
+        live.wait_for({"\"name\":\"Hand\"", "\"state\":\"joined\""});
+        ByHand lateByHand(json_text(lateEvent, "command_line"), json_text(lateEvent, "working_directory"));
+        live.wait_for({"\"phase\":\"running\""});
+        std::this_thread::sleep_for(300ms);
+        lateByHand.freeze();
+        std::this_thread::sleep_for(2000ms);
+        live.write("{\"command\":\"stop\"}\n");
+        const auto [status, lines] = live.finish_unchecked(60s);
+        lateByHand.thaw();
+        require(status && status->code == 130,
+                "a stop ends a run with a participant frozen while the simulation runs (130), not " +
+                    (status ? std::to_string(status->code) : std::string("still running")) + ":\n" + out_of(lines));
+        check_events(lines);
+        require(contains(lines.back(), "\"result\":\"interrupted\"") && contains(lines.back(), "\"interrupted_by\":\"stop command\""),
+                "the run was stopped by the command:\n" + lines.back());
+        require(!contains(lines.back(), "connection-not-closed"),
+                "the launcher closed its SIL Kit connection, with Late frozen:\n" + lines.back());
     }
 }
 
