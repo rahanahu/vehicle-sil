@@ -56,7 +56,7 @@ const hello = (id: number | null, variables?: unknown) => ({
   session: id === null ? null : summary(id, variables),
   replay: null,
 });
-const ready = (operations: unknown[] = []) => ({
+const ready = (operations: unknown[] = [], more: object = {}) => ({
   state: 'ready',
   reason: null,
   peers: [
@@ -82,7 +82,13 @@ const ready = (operations: unknown[] = []) => ({
   peers_omitted: 0,
   variables_omitted: 0,
   operations,
+  ...more,
 });
+/** 要約の operations の 1 件（operation の通知から type と session を除いたもの）。 */
+const listed = (seq: number, state: string, done: boolean) => {
+  const sent = operation(seq, state, done);
+  return { seq, state: sent.state, done: sent.done, peers: sent.peers };
+};
 const values = (
   id: number,
   simMs: number,
@@ -369,6 +375,7 @@ describe('variables', () => {
     );
     const request = http.expectOne('api/write');
     expect(request.request.body).toEqual({
+      session: 1,
       writes: { Engine: { 'engine.demand': 40 } },
       at_ms: 100,
       late: 'apply',
@@ -396,6 +403,45 @@ describe('variables', () => {
       [8, 'applied'],
     ]);
     http.verify();
+  });
+
+  it('tells when the server took a write, before its result, and not when it refused it', async () => {
+    const { client, http, deliver, errors } = setup();
+    await deliver(hello(1, ready()));
+    const accepted: unknown[] = [];
+    const taken = client.variables.write(
+      { Engine: { 'engine.demand': 40 } },
+      { onAccepted: (operation) => accepted.push(operation) },
+    );
+    http.expectOne('api/write').flush({ session_id: 1, operation: 7 });
+    expect(accepted).toEqual([{ session: 1, seq: 7 }]);
+    await deliver(operation(7, 'applied', true, { applied_at_ms: 100 }));
+    await expect(taken).resolves.toMatchObject({ seq: 7 });
+    // 断られた書き込みでは呼ばない。呼んだ先が投げても、書き込みは進む
+    const refused = client.variables.write(
+      { Engine: { 'engine.demand': 400 } },
+      { onAccepted: (operation) => accepted.push(operation) },
+    );
+    http
+      .expectOne('api/write')
+      .flush(
+        { error: { code: 'invalid-field', message: 'out of range', detail: null } },
+        { status: 400, statusText: 'Bad Request' },
+      );
+    await expect(refused).rejects.toMatchObject({ kind: 'refused' });
+    const throwing = client.variables.write(
+      { Engine: { 'engine.demand': 41 } },
+      {
+        onAccepted: () => {
+          throw new Error('boom');
+        },
+      },
+    );
+    http.expectOne('api/write').flush({ session_id: 1, operation: 8 });
+    await deliver(operation(8, 'applied', true, { applied_at_ms: 110 }));
+    await expect(throwing).resolves.toMatchObject({ seq: 8 });
+    expect(accepted).toEqual([{ session: 1, seq: 7 }]);
+    expect(errors).toHaveLength(1);
   });
 
   it('rejects a write that was refused, not applied, or not answered, and says which', async () => {
@@ -476,6 +522,168 @@ describe('variables', () => {
     await expect(write).resolves.toMatchObject({ seq: 9, state: 'applied' });
   });
 
+  it('writes to the run it sees, and gives up a write whose answer comes after the run changed', async () => {
+    const { client, http, deliver } = setup();
+    // 実行がまだわからない: 送らずに断る
+    await expect(client.variables.write({ Engine: { 'engine.demand': 1 } })).rejects.toMatchObject({
+      kind: 'refused',
+      code: 'not-running',
+    });
+    http.expectNone('api/write');
+    await deliver(hello(1, ready()));
+    const accepted: unknown[] = [];
+    const write = client.variables
+      .write({ Engine: { 'engine.demand': 2 } }, { onAccepted: (o) => accepted.push(o) })
+      .catch((e: unknown) => e);
+    const request = http.expectOne('api/write');
+    expect(request.request.body).toMatchObject({ session: 1 });
+    // 答えの前に、次の実行が始まった
+    await deliver({ type: 'session', session: summary(2) });
+    expect(await write).toMatchObject({ kind: 'no-answer' });
+    // 遅れて届いた前の実行の答え: 受け付けたことにしない
+    request.flush({ session_id: 1, operation: 3 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(accepted).toEqual([]);
+    // 次の書き込みは、新しい実行に向ける
+    const next = client.variables.write({ Engine: { 'engine.demand': 3 } }).catch(() => undefined);
+    expect(http.expectOne('api/write').request.body).toMatchObject({ session: 2 });
+    client.close();
+    await next;
+  });
+
+  it('gives up a write whose result left the summary while the connection was down, not a newer one', async () => {
+    const { client, http, socket, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const lost = client.variables
+      .write({ Engine: { 'engine.demand': 40 } })
+      .catch((e: unknown) => e);
+    http.expectOne('api/write').flush({ session_id: 1, operation: 3 });
+    await deliver(operation(3, 'queued', false));
+    socket().fail();
+    await vi.advanceTimersByTimeAsync(500);
+    // つなぎ直す前に送った書き込みは、要約の操作より新しい番号を持つ
+    const newer = client.variables.write({ Engine: { 'engine.demand': 41 } });
+    http.expectOne('api/write').flush({ session_id: 1, operation: 80 });
+    socket().open();
+    // 間に 3 が確定し、サーバーが要約に入れる数より多くの操作が続いた: 3 は要約になく、境目（40）より古い
+    const kept = [];
+    for (let seq = 40; seq < 72; seq++) kept.push(listed(seq, 'applied', true));
+    await deliver(hello(1, ready(kept, { operations_from_seq: 40, operations_open_omitted: 0 })));
+    const error = (await lost) as WriteError;
+    expect(error).toMatchObject({ kind: 'no-answer' });
+    expect(error.message).toContain('was lost while the connection was down');
+    await deliver(operation(80, 'applied', true));
+    await expect(newer).resolves.toMatchObject({ seq: 80 });
+  });
+
+  it('keeps waiting for a write that is still open after a reconnection, however many came after it', async () => {
+    const { client, http, socket, deliver } = setup();
+    await deliver(hello(1, ready()));
+    // 止まっている間の書き込み: 進めるまで確定しない
+    let outcome: unknown = 'waiting';
+    const write = client.variables.write(
+      { Engine: { 'engine.demand': 40 } },
+      { timeoutMs: Infinity },
+    );
+    write.then(
+      (o) => (outcome = o),
+      (e: unknown) => (outcome = e),
+    );
+    http.expectOne('api/write').flush({ session_id: 1, operation: 1 });
+    await deliver(operation(1, 'queued', false));
+    socket().fail();
+    await vi.advanceTimersByTimeAsync(500);
+    socket().open();
+    // 間に 39 件の操作が続いた。要約は、未確定の 1 と、最後の 32 件（9 から 40）。境目は 9
+    const kept = [listed(1, 'queued', false)];
+    for (let seq = 9; seq <= 40; seq++) kept.push(listed(seq, 'applied', true));
+    const again = ready(kept, { operations_from_seq: 9, operations_open_omitted: 0 });
+    await deliver(hello(1, again));
+    expect(outcome).toBe('waiting');
+    // api/session の要約（fetchSession）でも同じ
+    client.fetchSession().catch(() => undefined);
+    http.expectOne('api/session').flush({ session: summary(1, again) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toBe('waiting');
+    await deliver(operation(1, 'applied', true));
+    await expect(write).resolves.toMatchObject({ seq: 1, state: 'applied' });
+  });
+
+  it('does not guess from a summary without the boundary, and takes a result out of a long summary', async () => {
+    const { client, http, socket, deliver } = setup();
+    await deliver(hello(1, ready()));
+    let first: unknown = 'waiting';
+    client.variables.write({ Engine: { 'engine.demand': 1 } }, { timeoutMs: Infinity }).then(
+      (o) => (first = o),
+      (e: unknown) => (first = e),
+    );
+    http.expectOne('api/write').flush({ session_id: 1, operation: 2 });
+    const second = client.variables.write(
+      { Engine: { 'engine.demand': 2 } },
+      { timeoutMs: Infinity },
+    );
+    http.expectOne('api/write').flush({ session_id: 1, operation: 3 });
+    socket().fail();
+    await vi.advanceTimersByTimeAsync(500);
+    socket().open();
+    // 境目を言わない要約: 2 は一覧にないが、確定済みかどうかはわからないので待つ。3 は確定して一覧の先頭に
+    // あり、後ろに OPERATIONS_KEPT 件より多くの未確定の操作が続く（手元の一覧からは切られる）
+    const kept = [listed(3, 'applied', true)];
+    for (let seq = 4; seq < 4 + OPERATIONS_KEPT + 5; seq++) kept.push(listed(seq, 'queued', false));
+    await deliver(hello(1, ready(kept)));
+    await expect(second).resolves.toMatchObject({ seq: 3, state: 'applied' });
+    expect(client.variables.operations.get().some((o) => o.seq === 3)).toBe(false);
+    expect(first).toBe('waiting');
+    client.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(first).toMatchObject({ kind: 'closed' });
+  });
+
+  it('says so when the server does not keep track of an open write any more', async () => {
+    const { client, http, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const write = client.variables
+      .write({ Engine: { 'engine.demand': 40 } }, { timeoutMs: Infinity })
+      .catch((e: unknown) => e);
+    http.expectOne('api/write').flush({ session_id: 1, operation: 1 });
+    const kept = [listed(5, 'queued', false), listed(6, 'queued', false)];
+    await deliver(hello(1, ready(kept, { operations_from_seq: 5, operations_open_omitted: 4 })));
+    const error = (await write) as WriteError;
+    expect(error).toMatchObject({ kind: 'no-answer' });
+    expect(error.message).toContain('does not keep track of the write (operation 1)');
+  });
+
+  it('checks a write against the summary that came while its answer was on the way', async () => {
+    const { client, http, socket, deliver } = setup();
+    await deliver(hello(1, ready()));
+    const accepted: number[] = [];
+    const write = (value: number) =>
+      client.variables
+        .write(
+          { Engine: { 'engine.demand': value } },
+          { timeoutMs: Infinity, onAccepted: (o) => accepted.push(o.seq) },
+        )
+        .catch((e: unknown) => e);
+    const gone = write(1);
+    const done = write(2);
+    const open = write(3);
+    const requests = http.requests.splice(0);
+    socket().fail();
+    await vi.advanceTimersByTimeAsync(500);
+    socket().open();
+    // 答えの前につなぎ直した: 3 は確定して要約から外れ、4 は確定して要約にあり、5 は未確定
+    const kept = [listed(4, 'applied', true), listed(5, 'queued', false)];
+    await deliver(hello(1, ready(kept, { operations_from_seq: 4, operations_open_omitted: 0 })));
+    requests[0].flush({ session_id: 1, operation: 3 });
+    requests[1].flush({ session_id: 1, operation: 4 });
+    requests[2].flush({ session_id: 1, operation: 5 });
+    expect(await gone).toMatchObject({ kind: 'no-answer' });
+    expect(await done).toMatchObject({ seq: 4, state: 'applied' });
+    expect(accepted).toEqual([3, 4, 5]);
+    await deliver(operation(5, 'applied', true));
+    expect(await open).toMatchObject({ seq: 5, state: 'applied' });
+  });
+
   it('keeps a bounded list of operations', async () => {
     const { client, deliver } = setup();
     await deliver(hello(1, ready()));
@@ -532,6 +740,7 @@ describe('variables: what the review found', () => {
     for (const [status, code] of [
       [504, 'write-timeout'],
       [502, 'write-failed'],
+      [500, 'internal'], // サーバーが途中で失敗した: ランチャーに渡した後かもしれない
     ] as const) {
       const write = client.variables
         .write({ Engine: { 'engine.demand': 1 } })

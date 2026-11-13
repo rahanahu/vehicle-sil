@@ -155,12 +155,16 @@ async function main() {
     start_paused: true,
   });
   console.log(`started: session ${started?.id}`);
+  // ready は Control Server につながったところ。ECU は後から加わり、そのたびに一覧が増えるので、書く ECU が
+  // 一覧に入るまで待つ（入らなければ、全体の時間切れで終わる）
   const variables = await until(
     client.variables.state,
     (v) =>
       v.session === started?.id &&
       v.status !== "unknown" &&
-      v.status !== "connecting",
+      v.status !== "connecting" &&
+      (v.status !== "ready" ||
+        v.peers.some((p) => p.name === write.peer && p.variables.length > 0)),
   );
   if (variables.status !== "ready")
     await finish(1, `no variables: ${variables.status}: ${variables.reason}`);

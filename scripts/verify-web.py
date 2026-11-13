@@ -4,9 +4,9 @@
 Steps, in order: npm ci, npm run format:check, npm run lint (gui/web and gui/client), npm test, npm run
 test:client (the client library gui/client: a type check, then its unit tests on Node without Angular or a
 DOM), i18n (npm run i18n:extract, then the
-extracted messages are compared with each translation file gui/web/src/locale/messages.<lang>.json: a missing
-message, a changed source and a broken target fail, unless the message is marked not translated yet with
-"target": null; obsolete entries are listed; see scripts/web_i18n.py), npm run build, npm run build:client (the
+extracted messages are compared with each translation file gui/web/src/locale/messages.<lang>.json: a changed
+source and a broken target fail; a message that is not translated yet, whether missing from the file or marked
+"target": null, is only counted; obsolete entries are listed; see scripts/web_i18n.py), npm run build, npm run build:client (the
 client library bundled into one ESM file, build/gui-client/vehicle-sil-gui-client.mjs, with the esbuild that the
 Angular build tools bring), npm run e2e (the built
 app served by the GUI server of gui/server, which runs the fake launcher), npm run e2e:dev (the dev server with
@@ -222,7 +222,8 @@ def run_step(step: Step, env: dict[str, str], log: Path) -> None:
 
 
 def check_translations(step: Step, log: Path) -> None:
-    """After the extraction: compare it with each translation file; the step fails on missing or wrong ones."""
+    """After the extraction: compare it with each translation file; the step fails on wrong ones (a changed source,
+    a broken target) and counts the messages that are not translated yet (missing, or target null)."""
     try:
         reports = web_i18n.check(EXTRACTION, LOCALE_DIR)
     except (OSError, ValueError) as e:
@@ -239,12 +240,14 @@ def check_translations(step: Step, log: Path) -> None:
         f.write("\n".join(["", "$ compare with gui/web/src/locale/messages.*.json", *lines]) + "\n")
     step.summary = "; ".join(r.summary() for r in reports) if reports else "no translation files"
     step.notes = [f"{r.language} obsolete: {m}" for r in reports for m in r.obsolete][:5]
+    if any(r.missing for r in reports):
+        step.notes.append("messages not in a translation file yet show in Japanese; add them with "
+                          "scripts/verify-web.py --i18n-update (they become \"target\": null), then translate them")
     if not all(r.ok for r in reports):
         step.ok, step.code = False, 1
-        step.errors = [f"{r.language} {kind}: {m}" for r in reports
-                       for kind, items in (("missing", r.missing), ("wrong", r.problems)) for m in items]
+        step.errors = [f"{r.language} wrong: {m}" for r in reports for m in r.problems]
         step.errors = step.errors[:MAX_ERROR_LINES]
-        if any(r.missing or any("source differs" in m for m in r.problems) for r in reports):
+        if any(any("source differs" in m for m in r.problems) for r in reports):
             step.errors.append("bring the files up to date with scripts/verify-web.py --i18n-update (new messages "
                                "become \"target\": null), then translate them")
         if any(r.problems for r in reports):

@@ -689,7 +689,10 @@ def test_operations_are_kept_up_to_a_limit_open_ones_last_and_get_their_end_with
                          op(3, True, ("Engine", "applied", 0)), op(4, False, ("Engine", "sent"), ("Body", "applied", 0)),
                          op(5, True, ("Engine", "late")), op(6, True, ("Engine", "late"))])
         assert list(v.operations) == [1, 4, 5, 6]  # the done ones went first
-        assert [o["seq"] for o in v.summary()["operations"]] == [5, 6]
+        # the summary: the open ones and the last two; 2 and 3 are not kept, so it is whole from 4 on
+        summary = v.summary()
+        assert [o["seq"] for o in summary["operations"]] == [1, 4, 5, 6]
+        assert (summary["operations_from_seq"], summary["operations_open_omitted"]) == (4, 0)
         # changes were lost on the way: the open ones are read again
         source.operations[1] = op(1, True, ("Engine", "applied", 10 * MS))
         del sent[:]
@@ -707,12 +710,61 @@ def test_operations_are_kept_up_to_a_limit_open_ones_last_and_get_their_end_with
     asyncio.run(main())
 
 
+def test_the_summary_has_every_open_operation_and_says_from_which_number_on_it_is_whole() -> None:
+    v, source, sent = make()  # 256 kept, the last 32 in the summary
+    v.on_synced()
+    assert v.summary()["operations"] == [] and v.summary()["operations_from_seq"] == 0
+    # a write made while it stands still stays open, and 39 more are made and applied after it
+    v.on_operations([op(3, False, ("Engine", "queued"))])
+    v.on_operations([op(n, True, ("Engine", "applied", 0)) for n in range(4, 43)])
+    summary = v.summary()
+    assert [o["seq"] for o in summary["operations"]] == [3, *range(11, 43)]
+    assert (summary["operations_from_seq"], summary["operations_open_omitted"]) == (11, 0)
+    # once it is done it is one of the old ones: not listed, and below the number
+    v.on_operations([op(3, True, ("Engine", "applied", 0))])
+    summary = v.summary()
+    assert [o["seq"] for o in summary["operations"]] == list(range(11, 43))
+    assert summary["operations_from_seq"] == 11
+    # an open one with a low number that is first seen late is listed too
+    v.on_operations([op(2, False, ("Engine", "queued")), op(43, False, ("Engine", "sent"))])
+    summary = v.summary()
+    assert [o["seq"] for o in summary["operations"]] == [*range(13, 43), 2, 43]
+    assert (summary["operations_from_seq"], summary["operations_open_omitted"]) == (13, 0)
+    # with 300 more open ones only open ones are kept, and the oldest 46 of them not any more: the summary
+    # says so, and is whole only from the number after them
+    v.on_operations([op(n, False, ("Engine", "queued")) for n in range(100, 400)])
+    summary = v.summary()
+    assert [o["seq"] for o in summary["operations"]] == list(range(144, 400))
+    assert (summary["operations_from_seq"], summary["operations_open_omitted"]) == (144, 46)
+
+
+def test_a_write_taken_while_the_run_ends_gets_its_end() -> None:
+    async def main() -> None:
+        v, source, sent = ready()
+        source.write_gate = asyncio.Event()
+        writing = asyncio.create_task(v.write([("Engine", "throttle", 1.0)], None, "reject"))
+        await settle()
+        closing = asyncio.create_task(v.close())
+        await settle()
+        del sent[:]
+        source.write_gate.set()  # the source took it, but the run is over: no result will come
+        assert await writing == 1
+        await closing
+        assert sent == [{"type": "operation", "session": 7, "seq": 1, "state": "unknown", "done": True, "peers": {
+            "Engine": {"state": "unknown", "applied_at_ms": None, "late": False,
+                       "reason": "the run ended before the result came"}}}]
+        assert [o["seq"] for o in v.summary()["operations"]] == [1]
+    asyncio.run(main())
+
+
 def test_open_operations_that_had_to_be_forgotten_still_get_their_end() -> None:
     async def main() -> None:
         v, source, sent = make(Limits(operations=2))
         v.on_synced()
         v.on_operations([op(n, False, ("Engine", "queued")) for n in (1, 2, 3, 4)])  # all open: 1 and 2 go
         assert list(v.operations) == [3, 4]
+        summary = v.summary()  # it says that open ones are missing, and is whole only from 3 on
+        assert (summary["operations_from_seq"], summary["operations_open_omitted"]) == (3, 2)
         v.on_operations([op(1, True, ("Engine", "applied", 0))])  # one of the forgotten ends by itself
         del sent[:]
         await v.close()

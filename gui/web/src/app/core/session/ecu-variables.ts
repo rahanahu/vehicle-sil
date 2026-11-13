@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, Signal, computed, inject } from '@angular/core';
+import { DestroyRef, Injectable, Signal, computed, inject, signal } from '@angular/core';
 import {
   HistoryPoint,
   OperationView,
@@ -39,6 +39,8 @@ export class EcuVariables {
   private readonly server = inject(ServerConnection);
   private readonly current = readableSignal(this.client.state);
 
+  /** どの実行のものか（実行がなければ null）。 */
+  readonly session = computed(() => this.current().session);
   /** 変数の機能の状態: unknown、off、connecting、ready、failed、ended。 */
   readonly status = computed(() => this.current().status);
   /** 使えない、つながらない理由（サーバーの英語の文。なければ null）。 */
@@ -54,11 +56,31 @@ export class EcuVariables {
   /** 最近の書き込みの結果（古い順）。 */
   readonly operations: Signal<readonly OperationView[]> = readableSignal(this.client.operations);
 
-  /** 変数の定義（なければ undefined）。 */
+  /** participant の名前と変数の名前から、定義と participant がつながっているか（多くの部品が引くので、表にしておく）。 */
+  private readonly table = computed(() => {
+    const table = new Map<string, Map<string, VariableInfo>>();
+    for (const peer of this.peers()) {
+      table.set(peer.name, new Map(peer.variables.map((variable) => [variable.name, variable])));
+    }
+    return table;
+  });
+  private readonly connectedPeers = computed(
+    () =>
+      new Set(
+        this.peers()
+          .filter((peer) => peer.connected)
+          .map((peer) => peer.name),
+      ),
+  );
+
+  /** 変数の定義（いまの実行になければ undefined）。signal を読むので、template と computed の中で使える。 */
   find(ref: VariableRef): VariableInfo | undefined {
-    return this.peers()
-      .find((peer) => peer.name === ref.peer)
-      ?.variables.find((variable) => variable.name === ref.name);
+    return this.table().get(ref.peer)?.get(ref.name);
+  }
+
+  /** その participant が、いま Control Server とつながっているか。 */
+  peerConnected(peer: string): boolean {
+    return this.connectedPeers().has(peer);
   }
 
   /**
@@ -68,17 +90,30 @@ export class EcuVariables {
   watch(variables: readonly VariableRef[] | 'all', options?: WatchOptions): WatchedVariables {
     // 先に注入の文脈を確かめる: 文脈の外で呼ばれたら、watch を作る前に投げる（作った watch が残らない）
     const destroyed = inject(DestroyRef);
-    const watch: VariableWatch = this.client.watch(variables, options);
+    const watch = this.open(variables, options);
     destroyed.onDestroy(() => watch.close());
-    const values = readableSignal(watch.values);
+    return watch;
+  }
+
+  /**
+   * watch() と同じだが、注入の文脈が要らず、部品が壊れても自分ではやめない。必ず close() する。見えている間だけ
+   * watch する部品（`variables/widgets/variable-binding.ts`）のように、後から作り直すときに使う。
+   */
+  open(variables: readonly VariableRef[] | 'all', options?: WatchOptions): WatchedVariables {
+    const watch: VariableWatch = this.client.watch(variables, options);
+    const values = signal(watch.values.get());
+    const stop = watch.values.subscribe((next) => values.set(next));
     return {
-      values,
+      values: values.asReadonly(),
       value: (ref) => values()[ref.peer]?.[ref.name],
       history: (ref) => {
         values(); // 値が届くたびに読み直させる
         return watch.history(ref);
       },
-      close: () => watch.close(),
+      close: () => {
+        stop();
+        watch.close();
+      },
     };
   }
 

@@ -76,7 +76,9 @@ with a control server: the phase stays `waiting`, no time event is written, a lo
 step command lets it go on (the control_link events, the phase `running`, the time events come then); a pause or
 a speed command is accepted and it stays; a stop ends the wait. FAKE_LAUNCHER_CONTROL chooses what goes wrong: `wrong-token` (the server wants another token than the
 file's), `unreachable` (the event names a port where nothing listens), `bad-address` (the event names another
-computer), `closes` (the server ends after the third step, the run goes on).
+computer), `closes` (the server ends after the third step, the run goes on). FAKE_LAUNCHER_VARIABLES=more gives
+every participant three more variables (fake_control.py): <name>.enabled (a bool input), <name>.warning (a bool
+output: the demand is above 50) and <name>.offset (a real input without a range, added to the speed).
 
 Other environment variables: FAKE_LAUNCHER_TICK_MS (wall time of one 100 ms step at speed 1, and of every step
 when no speed is given, default 100), FAKE_LAUNCHER_FEATURES (the features of `version --json`, comma-separated,
@@ -245,6 +247,18 @@ def variables(name: str) -> list[dict]:
         {"name": f"{base}.mode", "type": "enum", "causality": "parameter", "unit": "", "min": None, "max": None,
          "step": None, "description": "operating mode",
          "items": [{"name": "off", "value": 0}, {"name": "on", "value": 1}]},
+    ] + (more_variables(base) if os.environ.get("FAKE_LAUNCHER_VARIABLES") == "more" else [])
+
+
+def more_variables(base: str) -> list[dict]:
+    """The variables that FAKE_LAUNCHER_VARIABLES=more adds: one of each kind the screen's widgets show."""
+    return [
+        {"name": f"{base}.enabled", "type": "bool", "causality": "input", "unit": "", "min": None, "max": None,
+         "step": None, "description": "switched on", "items": []},
+        {"name": f"{base}.warning", "type": "bool", "causality": "output", "unit": "", "min": None, "max": None,
+         "step": None, "description": "the demand is above 50", "items": []},
+        {"name": f"{base}.offset", "type": "real", "causality": "input", "unit": "rpm", "min": None, "max": None,
+         "step": None, "description": "added to the speed", "items": []},
     ]
 
 

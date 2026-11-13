@@ -49,7 +49,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | `POST api/run` `{file, disable, speed, start_paused}` | `{session}`（始めた実行の要約） | `run.json` |
 | `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
 | `POST api/time` `{command, ms, value}` | `{session_id, command}`（ランチャーに送った命令） | `time.json` |
-| `POST api/write` `{writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
+| `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
 | `GET api/session` | `{session}`（なければ `null`） | `session-*.json` |
 
 - `disable` に書けるのは、そのファイルの照合の結果にある participant 名だけです（`unknown-participant`）。
@@ -86,6 +86,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | 405 | `method-not-allowed` | 画面のファイルに `GET` 以外 |
 | 409 | `already-running` | 実行が始まりかけているか動いている |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
+| 409 | `session-changed` | `api/write`: `session` が、動いている実行の id と違う（実行が替わる間に送った書き込み）。何も書いていない。例 `error-session-changed.json` |
 | 409 | `variables-not-ready` | `api/write`: 変数の機能の状態が `ready` でない（文言に、要約の `variables.reason`） |
 | 413 | `too-large` | 本文が 64 KiB を超える |
 | 415 | `unsupported-media-type` | 本文があるのに `Content-Type: application/json` でない |
@@ -187,7 +188,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 
 ### 状態と一覧（要約の `variables`、`variables` の通知）
 
-`{"state", "reason", "peers", "peers_omitted", "variables_omitted", "operations"}`
+`{"state", "reason", "peers", "peers_omitted", "variables_omitted", "operations", "operations_from_seq", "operations_open_omitted"}`
 
 | 欄 | 内容 |
 |---|---|
@@ -196,7 +197,11 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | `peers` | `[{"name", "connected", "variables": [...]}]`。Control Server が知っている participant（変数のないものも）。`connected` は、その ECU がいまつながっているか |
 | `peers[].variables[]` | `{"name", "type", "role", "writable", "unit", "min", "max", "step", "description", "enum"}`。`type` は `bool`、`integer`、`real`、`enum`。`role` は `input`（実行中も書ける）、`parameter`（最初のステップの前だけ書ける）、`output`（読むだけ）。`writable` は `role` が `output` でないこと。`min`、`max`、`step`（編集の刻みの目安）、は数か `null`。`enum` は、`type` が `enum` のとき `[{"name", "value"}]`、ほかは `null` |
 | `peers_omitted`、`variables_omitted` | 上限を超えたので入れていない participant と変数の数 |
-| `operations` | 最近の操作（下の `operation` から `type` と `session` を除いたもの。古い順に、最後の 32 件）。途中から開いた画面のため |
+| `operations` | 操作（下の `operation` から `type` と `session` を除いたもの。サーバーが初めて見た順）。サーバーが覚えている未確定の操作の全部と、最後の 32 件です。途中から開いた画面と、つなぎ直した画面のため |
+| `operations_from_seq` | この番号（`seq`）以上の操作は、全部 `operations` に入っています（0 なら、サーバーが見た操作の全部）。`operations` になく、番号がこれより小さい操作は、確定しています（`operations_open_omitted` が 0 のとき）。その `operation` の通知は、もう届きません |
+| `operations_open_omitted` | サーバーが覚えきれなかった未確定の操作の数（ふつうは 0）。1 以上のとき、`operations` になく `operations_from_seq` より小さい番号の操作は、確定済みとは限りません |
+
+結果を待っている操作があるクライアントは、つなぎ直した後の `hello`（か `api/session`）の要約で、次のように見分けます。`operations` にあれば、その状態（未確定なら、後で `operation` の通知が届きます）。なく、番号が `operations_from_seq` 以上なら、まだ届いていないだけです。なく、番号が `operations_from_seq` より小さければ、切れている間に確定していて、結果はもう届きません（`operations_open_omitted` が 1 以上なら、確定したかどうかもわかりません）。ライブラリは、この最後の場合を `no-answer` にします。
 
 participant がつながるたびに一覧が変わるので、`variables` の通知は、短い間の変化をまとめて送ります。
 
@@ -219,8 +224,9 @@ watch は実行をまたいで続きます。実行がないとき、変数の�
 
 ### 書き込み（`api/write`、`operation`）
 
-`POST api/write` `{"writes": {"<peer>": {"<name>": <値>}}, "at_ms": <整数>, "late": "reject" | "apply"}` → `{"session_id", "operation"}`
+`POST api/write` `{"session": <実行の id>, "writes": {"<peer>": {"<name>": <値>}}, "at_ms": <整数>, "late": "reject" | "apply"}` → `{"session_id", "operation"}`
 
+- `session`（必須）は、書き込みを向ける実行の id（要約の `id`）です。動いている実行の id と違えば、409 `session-changed` で断り、何も書きません。ある実行を見ながら送った書き込みが、その実行が終わって次が始まった後に届いても、次の実行に書かれないようにするためです。断られたら、いまの実行の変数を見てから書き直します。
 - `writes` の値は、変数の型に合わせます: `bool` は `true` / `false`、`integer` は整数（整数値の実数も可）、`real` は有限の数、`enum` は項目の値（数）か項目の名前（文字列）。`min` と `max` があれば、その範囲（両端を含む）。サーバーは、変数の一覧と照らして、合わないものを 400 で断ります（`invalid-field`、`unknown-variable`、`not-writable`。1 つでも合わなければ、全部を送りません）。1 回の要求は `limits.writes_per_request`（256）個までです。
 - `at_ms` は、反映する仮想時刻（0 から `limits.write_at_ms_max`）で、その時刻以後に始まる最初のステップで反映されます。省くと次のステップです。`late` は、届いたときにその時刻のステップがもう走っていたときの扱いで、`reject`（既定。反映せず、結果が `late`）か `apply`（次のステップで反映し、結果の `late` が `true`）です。
 - 1 回の要求の書き込みは、participant ごとに、同じステップでまとめて反映されます。要求は届いた順にランチャーへ渡します（1 つずつ）。
@@ -231,10 +237,10 @@ watch は実行をまたいで続きます。実行がないとき、変数の�
 
 - participant ごとの `state`: 途中は `sent`（ランチャーが ECU へ送った）、`queued`（ECU が受け取った）、`disconnected`。確定は `applied`（`applied_at_ms` のステップで反映した）、`late`、`rejected`（ECU の setter が失敗した）、`cancelled`（反映の前にシミュレーションが終わった）、`invalid`（ECU が断った: 最初のステップの後の `parameter` など。`reason` に理由）、`busy`、`unknown`（反映されたかわからない）。
 - 全体の `state`: 途中は `sent`（まだ受け取っていない ECU がある）か `queued`。確定（`done` が `true`）したら、全部の participant が同じならその状態、違えば `mixed` です。確定した操作は変わりません。
-- 状態が変わるたびに、全部の接続へ送ります（ほかのクライアントが Control Server に直接書いた操作も届きます）。受け取りの遅い接続でも、`operation` は落としません。ただし、その接続の待ち行列があふれて `resync`（`hello` からの送り直し）になったときは、要約の `operations`（最後の 32 件）にあるものだけが届き直します。それより前に確定した操作の結果は、その接続には届きません。
-- 実行が終わるまでに確定しなかった操作は、サーバーが `unknown`（`reason`: `the run ended before the result came`）で確定させて送ります。未確定の操作が 256 件を超えて、サーバーが古いものを覚えていられなかったときも、終わりに `unknown` を送ります（そのときは `peers` が空です）。
+- 状態が変わるたびに、全部の接続へ送ります（ほかのクライアントが Control Server に直接書いた操作も届きます）。受け取りの遅い接続でも、`operation` は落としません。ただし、その接続の待ち行列があふれて `resync`（`hello` からの送り直し）になったときは、要約の `operations`（未確定の操作と、最後の 32 件）にあるものだけが届き直します。それより前に確定した操作の結果は、その接続には届きません（どれがそうかは、要約の `operations_from_seq` でわかります）。
+- 実行が終わるまでに確定しなかった操作は、サーバーが `unknown`（`reason`: `the run ended before the result came`）で確定させて送ります。未確定の操作が 256 件を超えて、サーバーが古いものを覚えていられなかったとき（要約の `operations_open_omitted`）も、その操作の変化が届けば `operation` で送り、確定しないまま実行が終われば、終わりに `unknown` を送ります（そのときは `peers` が空です）。実行が終わるのと同時にランチャーが受け取った書き込みは、応答で番号を返し、`unknown` で確定させて送ります。
 - GUI サーバーと Control Server の接続が切れている間に確定した操作と、Control Server が GUI サーバーへ送りきれなかった変化は、つながり直したとき（送りきれなかったと知ったとき）に読み直して送ります。
 
 ## 上限
 
-サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ。例は `ws-kept-limit.json`）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB。4 KiB を超えても、大事な欄は必ず入れます（participant の `name`、`state`、`pid`、`exit_code`、`signal`、`reason`、`stop_requested`、`control_link`、`phase` の段階の名前、`time` の `sim_ms`、`speed`、`paused`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`、`registry` の `uri`、`command` の `seq`、`command`、`accepted`、`ms`。これだけで 4 KiB を超えるときは入れません）。`problems` は、ランチャーが書いたもの（標準エラーを除く）が 100 個、サーバー自身の知らせ（`kept-limit`、`no-result`、`output-left-open`、`stop-not-delivered`、`stop-escalated`、`launcher-silent`）が別に 50 個、標準エラーが別に最初の 20 行と最後の 30 行です。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。 ECU の変数: 一覧は participant 256 人、変数は全部で 10000 個まで（超えた分は `peers_omitted`、`variables_omitted` に数える。名前が 256 文字を超えるもの、列挙の項目が 256 個を超えるもの、知らない型のものも入れない）。単位、説明、列挙の項目の名前は 256 文字、理由の文は 500 文字で切ります。値は participant ごとに最後の 1 組だけ。操作は 256 件まで覚え（確定したものから忘れる）、要約には最後の 32 件。watch は接続ごとに 16 個、名前で挙げる変数は 1 つに 2000 個、間隔は 20 ms から 60 秒。`api/write` は 1 回に 256 個、順番を待つ要求は 32 個まで（超えたら 503 `write-busy`）、Control Server の答えを待つのは 5 秒まで。画面が送る WebSocket のメッセージは 256 KiB まで。値を読むのにかける時間は、長くても全体の半分で、同時に出す読み取りは 32 本までです（participant が多く、間隔が短いときは、頼まれたより遅くなります）。Control Server が、つないでから 10 秒たっても今の状態を送らなければ、つなぎ直します。
+サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ。例は `ws-kept-limit.json`）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB。4 KiB を超えても、大事な欄は必ず入れます（participant の `name`、`state`、`pid`、`exit_code`、`signal`、`reason`、`stop_requested`、`control_link`、`phase` の段階の名前、`time` の `sim_ms`、`speed`、`paused`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`、`registry` の `uri`、`command` の `seq`、`command`、`accepted`、`ms`。これだけで 4 KiB を超えるときは入れません）。`problems` は、ランチャーが書いたもの（標準エラーを除く）が 100 個、サーバー自身の知らせ（`kept-limit`、`no-result`、`output-left-open`、`stop-not-delivered`、`stop-escalated`、`launcher-silent`）が別に 50 個、標準エラーが別に最初の 20 行と最後の 30 行です。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。 ECU の変数: 一覧は participant 256 人、変数は全部で 10000 個まで（超えた分は `peers_omitted`、`variables_omitted` に数える。名前が 256 文字を超えるもの、列挙の項目が 256 個を超えるもの、知らない型のものも入れない）。単位、説明、列挙の項目の名前は 256 文字、理由の文は 500 文字で切ります。値は participant ごとに最後の 1 組だけ。操作は 256 件まで覚え（確定したものから忘れる）、要約には、覚えている未確定の操作の全部と最後の 32 件。watch は接続ごとに 16 個、名前で挙げる変数は 1 つに 2000 個、間隔は 20 ms から 60 秒。`api/write` は 1 回に 256 個、順番を待つ要求は 32 個まで（超えたら 503 `write-busy`）、Control Server の答えを待つのは 5 秒まで。画面が送る WebSocket のメッセージは 256 KiB まで。値を読むのにかける時間は、長くても全体の半分で、同時に出す読み取りは 32 本までです（participant が多く、間隔が短いときは、頼まれたより遅くなります）。Control Server が、つないでから 10 秒たっても今の状態を送らなければ、つなぎ直します。

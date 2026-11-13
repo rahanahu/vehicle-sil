@@ -36,7 +36,7 @@ EXAMPLES = {
     "ws-pass", "ws-log-dropped", "ws-check-error", "ws-participant-crash", "ws-launcher-crash", "ws-bad-lines", "ws-bad-types",
     "ws-orphan", "ws-stop", "ws-force-stop", "ws-replay", "ws-resume", "ws-dropped", "ws-slow-client",
     "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit", "ws-without-check",
-    "write", "ws-variables", "ws-variables-failed", "error-unknown-variable", "error-not-writable",
+    "write", "ws-variables", "ws-variables-failed", "error-unknown-variable", "error-not-writable", "error-session-changed",
     "error-variables-not-ready", "error-invalid-watch",
 }
 
@@ -431,13 +431,14 @@ def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"], "start_paused": True})
+            _, started = await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"], "start_paused": True})
+            sid = started["session"]["id"]
             await sock.until(lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready")
             await sock.send({"type": "watch", "id": 1, "period_ms": 100,
                              "variables": [{"peer": "Engine", "name": "engine.demand"},
                                            {"peer": "Engine", "name": "engine.speed"}]})
             await sock.until(lambda m: m["type"] == "values" and m["paused"])
-            req = {"writes": {"Engine": {"engine.demand": 40, "engine.mode": "on"}}}
+            req = {"session": sid, "writes": {"Engine": {"engine.demand": 40, "engine.mode": "on"}}}
             status, body = await c.post("api/write", req)
             check_example("write", http("A write: checked against the schema and given to the run's control server "
                                         "(what became of it comes as operation messages).", "POST", "api/write", req,
@@ -446,8 +447,13 @@ def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
             await c.post("api/time", {"command": "step", "ms": 200})
             await sock.until(lambda m: m["type"] == "values" and m["paused"] and m["sim_ms"] == 200)
             for code, req, text in (
-                    ("unknown-variable", {"writes": {"Engine": {"engine.torque": 1}}}, "A variable the run does not have."),
-                    ("not-writable", {"writes": {"Engine": {"engine.speed": 900}}}, "An output cannot be written.")):
+                    ("unknown-variable", {"session": sid, "writes": {"Engine": {"engine.torque": 1}}},
+                     "A variable the run does not have."),
+                    ("not-writable", {"session": sid, "writes": {"Engine": {"engine.speed": 900}}},
+                     "An output cannot be written."),
+                    ("session-changed", {"session": sid + 1, "writes": {"Engine": {"engine.demand": 1}}},
+                     "A write meant for another run than the one that is running (it was sent while one run ended "
+                     "and the next began): nothing is written.")):
                 status, body = await c.post("api/write", req)
                 check_example(f"error-{code}", http(text, "POST", "api/write", req, status, body), gui)
             await sock.send({"type": "watch", "id": 2, "variables": "all", "period_ms": 5})
@@ -471,9 +477,9 @@ def test_variables_failed_examples(tmp_path: Path, control_env: dict) -> None:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
-            await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"]})
+            _, started = await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"]})
             await sock.until(lambda m: m["type"] == "variables" and m["variables"]["reason"])
-            req = {"writes": {"Engine": {"engine.demand": 40}}}
+            req = {"session": started["session"]["id"], "writes": {"Engine": {"engine.demand": 40}}}
             status, body = await c.post("api/write", req)
             check_example("error-variables-not-ready", http("A write while the variables cannot be read (the reason "
                                                             "is the summary's variables.reason).", "POST",

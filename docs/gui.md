@@ -9,7 +9,7 @@
 - 実行を始める、止める（順に止めるか、待たずに止める）。段階、participant ごとの状態と終了コード、ログ、所見、結果を見る。ランチャーが participant を失敗と決めたら（`failed`）、プロセスが終わる前でもすぐに失敗として出します。利用者が止めた実行は「中断」として、失敗の色にせずに出します。
 - 時刻を操作する（下の「時刻の操作」）: 速度を決めて始める、止めた状態で始める、一時停止、再開、ステップ送り、速度の変更。仮想時刻、いまの速度、実際の速さ、実時間への遅れを見る。
 - participant ごとに、変数を読み書きする口のつながり方（ランチャーの `control-links`: つながった、hello が来なかった、形式の版が違う、変数はあるが口を出していない、なし）を見る。読み書きできないつながり方は、色だけでなく ⚠ と文で出します。
-- ECU の変数を読み書きする口を持ちます（下の「ECU の変数」）: GUI サーバーが、変数の一覧、値、書き込みとその結果を、サーバーの口とクライアントのライブラリで出します。画面の部品（値の表示、スイッチ、グラフ）はまだありません（下の「いまの制限」）。
+- ECU の変数を見る・書く（下の「ECU の変数」と「変数の画面と部品」）: 「変数」の画面に、いまの実行の変数が ECU ごとに、型に合った部品（値の表示、スイッチ、スライダー、グラフなど）で並びます。名前で絞り込めます。同じことは、サーバーの口とクライアントのライブラリでもできます。
 - ランチャーが 1 秒ごとの心拍も書かなくなったら（既定で 5 秒。`--silent-after`）、止まっているかもしれないことを状態の帯に出します。ランチャーが読む側の遅さで書けなかったログの行（`log_dropped`）は、その位置に落ちた行の数として出します。
 - ランチャーが結果を出さずに終わったら、異常終了と終了コード、ランチャーが標準エラーに書いた行（最初の 20 行と最後の 30 行）を見る。終わりを知らせてこなかった participant の状態は「不明」になります（ランチャーが先に終わったので、その後どうなったかは画面にはわかりません）。
 - 画面を開き直したり、別のタブで開いたりしても、同じ実行の状態を見られる。ログは、participant ごとに直近の 2000 行（1 MiB まで）を見られます。それより古い行は、落とした行の数だけを表示します。
@@ -141,10 +141,105 @@ flowchart LR
 - **一覧**: participant ごとの変数（名前、型、役割、単位、範囲、刻み、説明、列挙の項目、書けるか）。
 - **値**: 画面が変数を選んで watch すると、選んだ間隔（20 ms 以上）で最後の値が届きます。GUI サーバーは、watch されている participant の値だけを、頼まれた頻度でランチャーから読みます（シミュレーションが速くても、読む量は増えません）。値は最後の 1 組だけを持ち、履歴は持ちません（履歴は画面の側。ライブラリが環状バッファーで持ちます）。受け取りの遅い画面には、読めるようになったときの最後の値を送ります（古い値をためません）。
 - **止まっている時刻の値**: `values` の通知の `paused` が真のとき、その通知の値には、`sim_ms` より前に始まったステップの値が全部入っています。GUI サーバーは、止まっている間に時刻と値をランチャーから読み直して確かめてから、真にします（止まった知らせだけでは真にしません）。動いている間は偽です。
-- **書き込み**: `POST api/write`。サーバーが、変数の一覧と照らして型と範囲を確かめてから、ランチャーに渡します。結果（操作）は、受け付けた（`queued`）、反映された（`applied` と、そのステップの時刻）、間に合わなかった（`late`）、ECU が断った（`rejected`、`invalid`）などとして、全部の画面に届きます。結果は捨てません。実行が終わるまでに結果が来なかった操作は、`unknown` で確定します。
+- **書き込み**: `POST api/write`。書き込みを向ける実行の id（`session`）を付け、サーバーは、それが動いている実行でなければ断ります（`session-changed`。実行が替わる間に送った書き込みを、次の実行に書かないため）。サーバーが、変数の一覧と照らして型と範囲を確かめてから、ランチャーに渡します。結果（操作）は、受け付けた（`queued`）、反映された（`applied` と、そのステップの時刻）、間に合わなかった（`late`）、ECU が断った（`rejected`、`invalid`）などとして、全部の画面に届きます。結果は捨てません。実行が終わるまでに結果が来なかった操作は、`unknown` で確定します。
 - **終わった後**: 状態は `ended` になり、最後に読めた値が残ります（次の実行を始めるまで）。
 
-形と上限は [gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」、ライブラリの口は [gui/client/README.md](../gui/client/README.md) の「ECU の変数」、動く例は `examples/gui_client/variables.mjs` です。Angular の包みは `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`: `status`、`reason`、`peers`、`operations`、`find(ref)`、部品が壊れると自分でやめる `watch()`、`write()`）です。
+形と上限は [gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」、ライブラリの口は [gui/client/README.md](../gui/client/README.md) の「ECU の変数」、動く例は `examples/gui_client/variables.mjs` です。Angular の包みは `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`: `session`、`status`、`reason`、`peers`、`operations`、`find(ref)`、`peerConnected(peer)`、部品が壊れると自分でやめる `watch()`、自分でやめる `open()`、`write()`）です。
+
+## 変数の画面と部品
+
+ナビゲーションの「変数」は、いまの実行の変数を ECU ごとにまとめ、変数ごとに既定の部品を並べる画面（自動のダッシュボード）です。上の欄で名前を絞り込めます（空白で区切った語のすべてが、ECU の名前か変数の名前に入っているもの）。実行がないときと、変数を読み書きできないとき（Control Server のないランチャー、gRPC のない GUI サーバー、つながらない）は、理由を出します。止めて始めた実行が最初のステップの前で待っている間も、部品から書けます（パラメーターを含む。時刻 0 のステップで反映されます。再開は「実行」の画面で行います）。
+
+ECU の実行ファイルが自分で足す監視の変数（`peer.steps` などの `peer.` と、J1939 の統計の `j1939.<ネットワーク>.`。[architecture.md](architecture.md) の「Peer の監視」）は、ECU ごとに、アプリの変数の後の畳んだまとまり（「<ECU> の監視」）にします。畳んでいる間は部品を作らず、値も受け取りません。名前の絞り込みは畳んだまとまりの中も探し、当たった部品を開いて出します。変数の一覧には監視の変数を示す欄がまだないので、名前の前置きで分けています（`dashboard-spec.ts` の `isMonitoring`）。
+
+### 部品
+
+| 部品 | 種類（`WidgetKind`） | 中身 |
+|---|---|---|
+| 値の表示 | `value` | 最後の値と単位。列挙は項目の名前、bool はオン・オフ |
+| 数値の入力 | `number` | 書ける数。入れて Enter か「書く」で書く。整数と範囲は送る前に確かめ、合わなければ送らずに理由を出す |
+| スライダー | `slider` | 範囲（`min` と `max`）が決まっている書ける数。動かしている間は書かず、放したとき（キーボードではキーを押すたび）に書く。範囲のない変数と、値がまだない間（最初のステップの前など）は動かせない |
+| スイッチ | `switch` | 書ける bool。押すとすぐに書く |
+| ランプ | `lamp` | 読むだけの bool。点いているかを、色のほかに塗りつぶしと文字（オン・オフ）で出す |
+| 選択肢 | `select` | 書ける列挙。一覧を開いて項目を選んだときだけ書く（閉じたまま矢印キーや文字を押しても書かない） |
+| グラフ | `graph` | 数の時間の変化（横は値を読んだステップの仮想時間）。最後の値と単位も出す。履歴はクライアントのライブラリが持ち、見えている間の最後の 600 点を描く |
+
+### 既定の部品
+
+変数の型、範囲、列挙の項目、書けるか（`writable`。`role` が `input` か `parameter`）から、1 つの関数（`gui/web/src/app/widgets/dashboard-spec.ts` の `defaultWidget`）が決めます。
+
+| 型 | 書ける | 読むだけ |
+|---|---|---|
+| `bool` | スイッチ | ランプ |
+| `enum`（項目がある） | 選択肢 | 値の表示（項目の名前） |
+| `integer`、`real`（`min` と `max` があり、`min` < `max`） | スライダー | グラフ |
+| `integer`、`real`（範囲がない、片方だけ） | 数値の入力 | グラフ |
+| 知らない型、項目のない `enum` | 値の表示 | 値の表示 |
+
+`parameter` は書ける部品になりますが、書けるのは最初のステップの前だけで、その後は部品が理由を出して操作を止めます。
+
+### 部品の共通の振る舞い
+
+- **値の状態**: 値の下に、いつの値かを文で出します（色だけに頼らず、印も添えます）。動いている間は値を読んだステップの時刻、止まっているときは「止まっている時刻 … s の値」（ライブラリの `paused` が真の値）、まだ届いていなければ「値はまだありません」、いまの実行にない変数は「この実行にない変数です」。画面とサーバーの接続が切れた、ランチャーにつなぎ直している、ECU が切れたときは、値を残して「古い値」と理由を出します。実行が終わった後は「終わった実行の最後の値」です。
+- **書き込みの様子**: 送った（サーバーの答えを待つ）、受け付けた（ECU のステップで反映されるのを待つ。止まっている間はここで待ちます）、反映した（そのステップの時刻）を出します。うまくいかなかったときは、ライブラリの `WriteError` の `kind` ごとに、サーバーが断った、反映されなかった、答えが来なかった（反映されたかわからない）、接続を閉じた、を読み上げの `alert` で出し、表示を読んだ値に戻します。**答えが来なかった書き込みは、自動で送り直しません**（二重に書かないため。値を確かめてから書き直します）。
+- **書けないとき**: 読むだけの変数、実行がない、変数の機能が使えない、実行が終わった、画面とサーバーの接続が切れた、ECU がつながっていない、最初のステップの後のパラメーターは、操作を押せなくして理由を出します。
+- **書き込みをためない**: 前の書き込みをサーバーがまだ受け取っていない間に次の値が来たら（スライダーやキーの連打）、送らずに覚えておき、受け取ったら最後の値だけを送ります。送る前に、同じ実行で、まだ書けるかを確かめ直し、書けなくなっていれば送らずにそう出します。様子の欄は、最後の操作（最後に送った書き込み、または送る前に断った入力）のことを出します。送る前に断った入力（数でない文字、範囲の外）は、送っている書き込みと結果を待っている書き込みに触れません。「送った値」の表示は、最後に送った書き込みが確定したときに、様子の欄が何を出していても消えます。
+- **書き込みは変数ごとに 1 つ、実行ごと**: 書き込みの様子は部品でなく変数ごとに持つので、同じ変数を 2 つの部品に置いても重ねて送らず、絞り込みで部品が作り直されても、送っている途中・失敗の知らせは残ります。実行が替わると、前の実行の様子と「送った値」は消えます。書き込みは、そのときの実行に向けて送り（`api/write` の `session`）、サーバーに着く前に実行が替わっていれば、次の実行には書かれません。
+- **重くしない**: 部品は、画面に見えている間（と、その少し外）だけ値を watch します。数百の変数を並べても、値を受け取るのは見えている部品の分だけです。
+- **操作**: キーボードで全部を操作できます。読み上げでは、部品が変数の名前のまとまりになり、操作の名前も変数の名前です（スライダーは単位つきの値を読みます）。速く変わる値に `aria-live` を付けません。部品は自分の幅で並び、360 px の窓から全画面まで崩れません。
+
+### ダッシュボードのデータ
+
+画面は、「どの変数をどの部品でどこに置くか」を 1 つの素のオブジェクト（`DashboardSpec`）で受け取って描きます（`DashboardView`）。自動のダッシュボードは、変数の一覧からこれを作ります（`autoDashboard`）。
+
+```ts
+const spec: DashboardSpec = {
+  sections: [
+    {
+      title: 'Engine',
+      items: [
+        { peer: 'Engine', name: 'engine.throttle', widget: 'slider', options: { step: 5 } },
+        { peer: 'Engine', name: 'engine.speed', widget: 'graph', label: 'Engine speed' },
+      ],
+    },
+    { title: 'Engine の監視', collapsed: true, items: [{ peer: 'Engine', name: 'peer.steps', widget: 'graph' }] },
+  ],
+};
+```
+
+置き場所は、まとまり（`sections`）の順と、まとまりの中の部品（`items`）の順で決まります。並べ方（列の数）は画面の幅に合わせて決まります。`label` を省くと変数の名前を出します。`collapsed: true` のまとまりは畳んで始まります。
+
+部品ごとの設定は `options`（素のオブジェクト）に書きます。受け付ける欄は部品ごとに決まっています（`WIDGET_OPTIONS`）。
+
+| 部品 | 設定 |
+|---|---|
+| スライダー | `step`: 刻み（正の数。省くと宣言の刻み、なければ整数は 1、実数は範囲の 1/100） |
+| グラフ | `points`: 覚えて描く点の数（2 以上の整数。既定 600） |
+
+描く前に、部品の種類が変数に合うかを確かめます（`checkItem`、まとめては `checkDashboard`）。合わなければ、その場所に理由と直し方を出し、ほかの部品は描きます。
+
+| 部品 | 使える変数 |
+|---|---|
+| 値の表示 | どれでも |
+| ランプ | `bool` |
+| グラフ | `integer`、`real`、`bool` |
+| スイッチ | 書ける `bool` |
+| 選択肢 | 書ける `enum`（項目がある） |
+| スライダー | 書ける `integer`、`real`（範囲がある） |
+| 数値の入力 | 書ける `integer`、`real` |
+
+知らない部品の種類、部品が知らない設定、値の合わない設定も、その場所に出します。いまの実行にない変数は、確かめずに部品が「この実行にない変数です」と出します。
+
+### 部品を足す
+
+部品は `gui/web/src/app/widgets/` にあり、どれもライブラリの公開の口と Angular の包み（`EcuVariables` など）だけを使います。自分の部品も同じ方法で作れます。
+
+1. コンポーネントを作り（`ChangeDetectionStrategy.OnPush`）、input の `ref`（`VariableRef`）、`label`、`options`（設定）を持たせる。
+2. field の初期化で `bindVariable(this.ref)` を呼ぶ（`variable-binding.ts`）。返る `VariableBinding` が、定義（`info`）、最後の値（`reading`）、値の状態（`condition`）、書けない理由（`block`）、書き込み（`write(value)`）とその様子（`writeStatus`、`pending`）を signal で持ちます。値は、部品が見えている間だけ watch されます。履歴が要るときは `bindVariable(this.ref, { history: 600 })`。
+3. テンプレートを `<app-variable-frame [variable]="variable" [label]="label()" [writable]="true">` で包む（`variable-frame.ts`。名前、役割、値の状態、書き込みの様子、書けない理由を出す）。操作には `[attr.aria-labelledby]="variable.id + '-name'"` を付ける。
+4. `dashboard-spec.ts` の `WidgetKind` と `widgets.ts` の `WIDGETS` に足す（ダッシュボードのデータから使えるように）。既定にするなら `defaultWidget` と上の表も変える。
+
+値の表示（`value-widget.ts`）がいちばん小さい見本、書く部品はスイッチ（`switch-widget.ts`）が見本です。`bindVariable` は 1 つの部品で何度呼んでもかまいません（2 つの変数を描く部品など）。範囲の要る部品は `bindVariable(this.ref, { needsRange: true })`、値から動かす部品は `needsValue: true` で、条件に合わない間は `block` が理由（`no-range`、`no-value`）になります。
 
 ## 自分の画面や道具を作る
 
@@ -166,7 +261,7 @@ flowchart LR
 
 ## いまの制限
 
-- 変数を見る・書く画面の部品はまだありません（口とライブラリまで。画面は、照合の結果にある変数の数と、口のつながり方だけを表示します）。
+- 変数の画面は自動のダッシュボードだけです。部品の並べ方を変える、保存する、ファイルから読むことは、まだできません（データの形 `DashboardSpec` は決まっています）。
 - 変数の値は、GUI サーバーが読んだ時点の最後の値です。全部の値の記録ではありません（速いシミュレーションでは、間の値は届きません）。実行が終わった後に残る値は、最後に読めた値で、ランチャーが Control Server を閉じるのが早ければ、終わりの値より少し古いことがあります。
 - 変数の読み書きは、リポジトリの中で動かす GUI サーバー（`uv sync` の後の `uv run vehicle-sil-gui`）が前提です。gRPC のスタブを、リポジトリの `proto/` から `grpcio-tools` で作る（なければ `python -m vehicle_sil_control.generate` が作ったものを使う）ためです。リポジトリの外に入れた GUI サーバーは、任意の依存 `vehicle-sil-gui[variables]`（grpcio、protobuf）だけでは変数を使えません。スタブを自分で作って `VEHICLE_SIL_CONTROL_STUBS` で渡します（`PYTHONPATH` と同じく、そこに置いたコードを GUI サーバーが読み込みます。自分のディレクトリだけを指します）。スタブは、まだパッケージに入っていません。
 - 古いランチャー（`time` の事象に `paused` がない）は、仮想時刻を動き始め（0）と `stop_at_ms` に達したときにしか知らせないので、動いている間の 0 は出しません。
@@ -176,5 +271,5 @@ flowchart LR
 
 - サーバーは `gui/server`（Python パッケージ `vehicle_sil_gui`、uv の workspace のメンバー）、画面は `gui/web`、クライアントのライブラリは `gui/client`（画面はこれを通してサーバーを使う）、サーバーの口の正本は `gui/protocol`（README と実例）です。
 - 試験: `scripts/verify-gui.py`（サーバーの試験、画面の `scripts/verify-web.py`、最小の例 `examples/gui_client/` を偽のランチャーで動かす試験。ライブラリの試験は `verify-web.py` の `client` の段、1 つにまとめるのは `bundle` の段）。サーバーだけなら `--skip-web`。
-- 試験は、ランチャーの代わりに偽のランチャー（`gui/server/tests/fake_launcher.py`。本物と同じ事象を、筋書きどおりに書く。時刻の命令、`time` の事象、結果の `timing` も本物の形で、筋書き `late`（`gui/server/tests/configs/late.yaml`）は実時間への遅れを作る）を使います。偽のランチャーは、既定では Control Server を持たないランチャーの代わりです（変数は「使えない」になる）。変数の試験は、`FAKE_LAUNCHER_FEATURES` に `control-server` を足し、偽の Control Server（`gui/server/tests/fake_control.py`。gRPC）を立てさせて行います。GUI サーバーの中の変数の元（`vehicle_sil_gui/source.py` の `Source`）は差し替えられ、順序の試験（`test_variable_units.py`）は筋書きどおりに答える元を使います。偽のランチャーでも GUI を動かせます: `uv run vehicle-sil-gui --launcher gui/server/tests/fake_launcher.py gui/server/tests/configs/simulation.yaml`。
-- 本物のランチャーでも確かめるには、`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch`（または環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）。そのランチャーの隣にビルドした ecu_main の例の ECU を使い、偽のランチャーとの事象の形の比べ（`gui/server/tests/test_real_launcher.py`）、変数の読み書き（`test_real_variables.py` と、例 `examples/gui_client/variables.mjs`。Control Server を持つランチャーのとき）、画面の e2e（`gui/web/e2e/real/`）を回します。ランチャーを渡さなければ、これらは「skipped」と出して飛ばします。
+- 試験は、ランチャーの代わりに偽のランチャー（`gui/server/tests/fake_launcher.py`。本物と同じ事象を、筋書きどおりに書く。時刻の命令、`time` の事象、結果の `timing` も本物の形で、筋書き `late`（`gui/server/tests/configs/late.yaml`）は実時間への遅れを作る）を使います。偽のランチャーは、既定では Control Server を持たないランチャーの代わりです（変数は「使えない」になる）。変数の試験は、`FAKE_LAUNCHER_FEATURES` に `control-server` を足し、偽の Control Server（`gui/server/tests/fake_control.py`。gRPC）を立てさせて行います（`FAKE_LAUNCHER_VARIABLES=more` で、部品の種類が揃う変数を足します）。GUI サーバーの中の変数の元（`vehicle_sil_gui/source.py` の `Source`）は差し替えられ、順序の試験（`test_variable_units.py`）は筋書きどおりに答える元を使います。偽のランチャーでも GUI を動かせます: `uv run vehicle-sil-gui --launcher gui/server/tests/fake_launcher.py gui/server/tests/configs/simulation.yaml`。
+- 本物のランチャーでも確かめるには、`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch`（または環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）。そのランチャーの隣にビルドした ecu_main の例の ECU を使い、偽のランチャーとの事象の形の比べ（`gui/server/tests/test_real_launcher.py`）、変数の読み書き（`test_real_variables.py` と、例 `examples/gui_client/variables.mjs`。Control Server を持つランチャーのとき）、画面の e2e（`gui/web/e2e/real/`。変数の画面で Engine のスロットルを書いて回転数が変わることも）を回します。ランチャーを渡さなければ、これらは「skipped」と出して飛ばします。

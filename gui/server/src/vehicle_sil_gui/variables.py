@@ -8,7 +8,9 @@ grows without a limit:
 - of the values only the last sample of each peer is kept (a history is the screen's business), and they are
   read from the source only for the peers that a screen watches, as often as it asks (refresh);
 - of the operations (the writes and their results) the last Limits.operations are kept; every change of one is
-  sent to the screens, kept or not.
+  sent to the screens, kept or not. The summary has the open ones that are kept and the last few, and says from
+  which number on it has them all (operations_from_seq) and how many open ones are not kept
+  (operations_open_omitted): a screen that connects again can tell a result it missed from one still to come.
 
 A `values` message is made when it is sent (values_message), from the state at that moment, in one step of the
 event loop: its `paused`, `sim_ms` and values belong together. `paused` is true only after the time and the values
@@ -34,7 +36,7 @@ AT_MS_MAX = 10 ** 12  # the latest time a write may name (as a step command's mi
 TYPES = ("bool", "integer", "real", "enum")
 ROLES = ("input", "output", "parameter")
 FINAL = frozenset({"applied", "late", "rejected", "cancelled", "invalid", "busy", "unknown"})
-WRITE_KEYS = ("writes", "at_ms", "late")
+WRITE_KEYS = ("session", "writes", "at_ms", "late")
 SETTLE_RETRY_S = 0.2  # between tries to read a standstill, after the first SETTLE_TRIES in a row
 COMMAND_SETTLE_S = 0.3  # after a time command was passed on, before the standstill is read again by itself
 READS_AT_ONCE = 32  # calls to the source for values that wait for their answer at one time
@@ -54,7 +56,7 @@ class Limits:
     text_chars: int = 256  # a unit, a description, an enum item's name: cut
     reason_chars: int = 500  # a reason from the source or from an ECU: cut
     operations: int = 256  # kept for the server's own use (results that were dropped, the end of the run)
-    operations_in_summary: int = 32  # the last ones, for a screen opened later
+    operations_in_summary: int = 32  # the last ones, for a screen opened later (the open ones are all in it)
     watches: int = 16  # of one connection
     watch_variables: int = 2000  # named in one watch ("all" is not counted)
     period_ms_min: int = 20
@@ -187,6 +189,7 @@ class Variables:
         self._lost: str | None = None  # why the connection was last lost
         self._since_lost: set[str] | None = None  # the peers told since the connection came back (None: not lost)
         self._forgotten_open: set[int] = set()  # open operations that _keep_operation had no room for
+        self._forgotten_max = -1  # the highest number of an operation that is not kept any more
         self._reading = asyncio.Semaphore(READS_AT_ONCE)
         self._refreshed_at = 0.0
         self._hold_until = 0.0  # after a command was passed on: no reading of the standstill before this time
@@ -236,12 +239,21 @@ class Variables:
         return self.state in (READY, ENDED)
 
     def summary(self) -> dict:
-        kept = list(self.operations.values())[-self.limits.operations_in_summary:]
+        # the operations: every open one that is kept, and the last ones. Every operation from `from_seq` on is
+        # in the list; one that is not in it and has a lower number is done, unless open ones had to be forgotten
+        first_recent = len(self.operations) - self.limits.operations_in_summary
+        listed, left_out = [], self._forgotten_max
+        for at, entry in enumerate(self.operations.values()):
+            if at >= first_recent or not entry["done"]:
+                listed.append(entry)
+            else:
+                left_out = max(left_out, entry["seq"])
         return {"state": self.state, "reason": self.reason,
                 "peers": [{"name": p.name, "connected": p.connected, "variables": p.variables}
                           for p in self.peers.values()],
                 "peers_omitted": self.peers_omitted, "variables_omitted": self.variables_omitted,
-                "operations": kept}
+                "operations": listed, "operations_from_seq": left_out + 1,
+                "operations_open_omitted": len(self._forgotten_open)}
 
     def message(self) -> dict:
         return {"type": "variables", "session": self.session_id, "variables": self.summary()}
@@ -520,6 +532,7 @@ class Variables:
                 done = next(iter(self.operations))
                 if len(self._forgotten_open) < FORGOTTEN_OPEN:
                     self._forgotten_open.add(done)
+            self._forgotten_max = max(self._forgotten_max, done)
             del self.operations[done]
 
     def on_synced(self) -> None:
@@ -757,9 +770,12 @@ class Variables:
                                                     f"{self._clean(str(e))}") from None
         finally:
             self._writing.release()
-        if seq not in self.operations and not self._closed:
-            entry = {"seq": seq, "state": "sent", "done": False,
-                     "peers": {peer: {"state": "sent", "applied_at_ms": None, "late": False, "reason": None}
+        if seq not in self.operations:
+            # taken while the run ended: close() has given the open ones their end already, so this one gets it here
+            # (a screen that waits for the result of its write is told that none will come)
+            state, reason = ("unknown", "the run ended before the result came") if self._closed else ("sent", None)
+            entry = {"seq": seq, "state": state, "done": self._closed,
+                     "peers": {peer: {"state": state, "applied_at_ms": None, "late": False, "reason": reason}
                                for peer in dict.fromkeys(w[0] for w in writes)}}
             self._keep_operation(entry)
             self._emit([{"type": "operation", "session": self.session_id, **entry}])

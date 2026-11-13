@@ -1,0 +1,23 @@
+{
+  "description": "A write meant for another run than the one that is running (it was sent while one run ended and the next began): nothing is written.",
+  "request": {
+    "method": "POST",
+    "path": "api/write",
+    "body": {
+      "session": 2,
+      "writes": {
+        "Engine": {
+          "engine.demand": 1
+        }
+      }
+    }
+  },
+  "status": 409,
+  "response": {
+    "error": {
+      "code": "session-changed",
+      "message": "the write is meant for the run 2, but the run that is running is 1: nothing was written; look at the variables of this run before writing to it",
+      "detail": null
+    }
+  }
+}

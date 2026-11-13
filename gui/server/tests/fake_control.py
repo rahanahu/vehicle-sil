@@ -18,7 +18,8 @@ GetOperation, Watch), with the contract of the real one where the GUI server rel
 
 Each peer has the three variables of fake_launcher.variables(): <name>.demand (a real input, 0 to 100),
 <name>.speed (an integer output: ten times the demand, plus the step's time in ms) and <name>.mode (an enum
-parameter). Needs grpcio and the stubs of the Control API: those in VEHICLE_SIL_CONTROL_STUBS (conftest.py makes
+parameter); with FAKE_LAUNCHER_VARIABLES=more also <name>.enabled (a bool input), <name>.warning (a bool output:
+the demand is above 50) and <name>.offset (a real input, added to the speed). Needs grpcio and the stubs of the Control API: those in VEHICLE_SIL_CONTROL_STUBS (conftest.py makes
 them), else it makes them itself with grpcio-tools.
 """
 
@@ -170,10 +171,13 @@ class FakeControl:
                 op["version"] = self.version
             for name, variables in self.peers.items():
                 values = self.values[name]
+                demand = next((values[j] for j, w in enumerate(variables) if w["name"].endswith(".demand")), 0)
+                offset = next((values[j] for j, w in enumerate(variables) if w["name"].endswith(".offset")), 0)
                 for i, v in enumerate(variables):
                     if v["name"].endswith(".speed"):
-                        demand = next(values[j] for j, w in enumerate(variables) if w["name"].endswith(".demand"))
-                        values[i] = int(demand * 10) + start_ms
+                        values[i] = int(demand * 10 + offset) + start_ms
+                    elif v["name"].endswith(".warning"):
+                        values[i] = demand > 50
                 self.samples[name] = (start_ms * NS_PER_MS, self.steps, list(values), self.version)
             self.changed.notify_all()
 

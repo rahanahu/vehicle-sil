@@ -8,6 +8,11 @@ export const routes: Routes = [
     loadComponent: () => import('./run/run-page').then((m) => m.RunPage),
   },
   {
+    path: 'variables',
+    title: $localize`変数 - vehicle-sil`,
+    loadComponent: () => import('./variables/variables-page').then((m) => m.VariablesPage),
+  },
+  {
     // レイアウトの e2e（e2e/layout.spec.ts）が使う試験用の中身。ナビゲーションには出さない。
     path: '_test/layout',
     title: $localize`レイアウトの試験 - vehicle-sil`,

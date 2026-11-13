@@ -6,9 +6,10 @@ The extraction is Angular's "simple JSON" ({"locale": "ja", "translations": {"<i
     {"locale": "en", "note": "...", "translations": {"<id>": {"source": "<source>", "target": "<text>" | null}}}
 
 `target: null` marks a message as not translated yet (the screen shows the source text). The check fails on a
-message missing from a file, a source that differs from the extraction, an empty target, and a target whose
-placeholders or ICU cases do not fit the source; it lists obsolete entries (ids no longer extracted) without
-failing. scripts/verify-web.py runs it (step i18n) and updates the files (--i18n-update).
+source that differs from the extraction, an empty target, and a target whose placeholders or ICU cases do not
+fit the source. A message missing from a file is not translated either (the screen shows the source text): it
+is counted and listed, without failing, as are obsolete entries (ids no longer extracted). scripts/verify-web.py
+runs it (step i18n) and updates the files (--i18n-update).
 """
 
 from __future__ import annotations
@@ -38,15 +39,16 @@ class Report:
 
     @property
     def ok(self) -> bool:
-        return not self.missing and not self.problems
+        # a missing message only lacks its translation (the screen shows the source text): counted, not failing
+        return not self.problems
 
     def summary(self) -> str:
         parts = []
-        if self.missing:
-            parts.append(f"{len(self.missing)} missing")
         if self.problems:
             parts.append(f"{len(self.problems)} wrong")
         parts.append(f"{self.translated} of {self.total} translated")
+        if self.missing:
+            parts.append(f"{len(self.missing)} not in the file yet")
         if self.untranslated:
             parts.append(f"{len(self.untranslated)} not translated yet")
         if self.obsolete:

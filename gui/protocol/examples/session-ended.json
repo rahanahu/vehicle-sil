@@ -614,7 +614,9 @@
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
-        "operations": []
+        "operations": [],
+        "operations_from_seq": 0,
+        "operations_open_omitted": 0
       }
     }
   }

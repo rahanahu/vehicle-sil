@@ -74,10 +74,17 @@ describe('EcuVariables', () => {
   it('writes through HttpClient with the token, and passes on why a write was refused', async () => {
     const variables = TestBed.inject(EcuVariables);
     const refused = (await httpExamples()).find((e) => e.name === 'error-not-writable');
+    // 書き込みは、いまの実行（ここでは 1）に向ける
+    fake.sockets[0].open();
+    for (const message of server.get('ws-variables') ?? []) fake.sockets[0].send(message);
+    await vi.advanceTimersByTimeAsync(BATCH_MS);
     const write = variables.write({ Engine: { 'engine.speed': 900 } }).catch((e: unknown) => e);
     const request = http.expectOne('api/write');
     expect(request.request.headers.get('Authorization')).toBe('Bearer secret');
-    expect(request.request.body).toEqual({ writes: { Engine: { 'engine.speed': 900 } } });
+    expect(request.request.body).toEqual({
+      session: 1,
+      writes: { Engine: { 'engine.speed': 900 } },
+    });
     request.flush(refused?.response ?? null, { status: 400, statusText: 'Bad Request' });
     const error = await write;
     expect(error).toBeInstanceOf(WriteError);
