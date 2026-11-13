@@ -74,6 +74,19 @@
       }
     },
     {
+      "name": "linux-gcc-static",
+      "displayName": "Linux GCC Release, one executable per ECU (VEHICLE_SIL_STATIC)",
+      "description": "SIL Kit and libstdc++/libgcc linked statically; needs the static libstdc++ (Fedora: libstdc++-static)",
+      "inherits": [
+        "gcc",
+        "linux"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VEHICLE_SIL_STATIC": "ON"
+      }
+    },
+    {
       "name": "linux-clang-debug",
       "displayName": "Linux Clang Debug",
       "inherits": [
@@ -155,6 +168,19 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "windows-mingw-static",
+      "displayName": "Windows MSYS2 UCRT64 GCC Release, one executable per ECU (VEHICLE_SIL_STATIC)",
+      "description": "Run from an MSYS2 UCRT64 shell (gcc, g++, cmake, ninja from mingw-w64-ucrt-x86_64-*)",
+      "inherits": [
+        "gcc",
+        "windows"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VEHICLE_SIL_STATIC": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -165,6 +191,10 @@
     {
       "name": "linux-gcc-release",
       "configurePreset": "linux-gcc-release"
+    },
+    {
+      "name": "linux-gcc-static",
+      "configurePreset": "linux-gcc-static"
     },
     {
       "name": "linux-clang-debug",
@@ -193,6 +223,10 @@
     {
       "name": "windows-mingw-release",
       "configurePreset": "windows-mingw-release"
+    },
+    {
+      "name": "windows-mingw-static",
+      "configurePreset": "windows-mingw-static"
     }
   ],
   "testPresets": [
@@ -219,6 +253,11 @@
       "configurePreset": "linux-gcc-release"
     },
     {
+      "name": "linux-gcc-static",
+      "inherits": "test-base",
+      "configurePreset": "linux-gcc-static"
+    },
+    {
       "name": "linux-clang-debug",
       "inherits": "test-base",
       "configurePreset": "linux-clang-debug"
@@ -252,6 +291,11 @@
       "name": "windows-mingw-release",
       "inherits": "test-base",
       "configurePreset": "windows-mingw-release"
+    },
+    {
+      "name": "windows-mingw-static",
+      "inherits": "test-base",
+      "configurePreset": "windows-mingw-static"
     }
   ]
 }

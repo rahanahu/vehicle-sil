@@ -18,6 +18,8 @@ option(VEHICLE_SIL_BUILD_TESTS "Build the vehicle-sil tests" ${PROJECT_IS_TOP_LE
 option(VEHICLE_SIL_TEST_FETCHCONTENT
        "Add a (slow) test that consumes this repository via FetchContent" OFF)
 option(VEHICLE_SIL_WARNINGS_AS_ERRORS "Treat warnings in vehicle-sil targets as errors" OFF)
+option(VEHICLE_SIL_STATIC
+       "Executables that link SIL Kit need no vehicle-sil library next to them: SIL Kit as a static library, and the C++ runtime linked statically (MinGW: also winpthread; glibc stays shared)" OFF)
 option(VEHICLE_SIL_BUILD_CONTROL_SERVER
        "Build the control server: vehicle_sil_launch run --control and vehicle_sil_control_server (needs gRPC: found, or built with FetchContent)" OFF)
 set(VEHICLE_SIL_SANITIZERS

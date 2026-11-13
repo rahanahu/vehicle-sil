@@ -9,6 +9,7 @@
 # listed in ALLOW_UNRESOLVED (e.g. a header generated into the build tree). The check reads the
 # text: an include inside #if 0 or a comment counts, which errs on the safe side.
 # Usage: cmake -DDIR=<directory> [-DALLOW_UNRESOLVED=<path;...>] -P VehicleSilCheckNoSilKit.cmake
+cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMake 3 then rejects IN_LIST)
 if(NOT DEFINED DIR)
   message(FATAL_ERROR "VehicleSilCheckNoSilKit.cmake: DIR is required")
 endif()

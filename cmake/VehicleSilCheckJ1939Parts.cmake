@@ -7,6 +7,7 @@
 # are not parts, such as the test kit and Peer, which link other libraries too).
 # Parts also may not set an Observer (the network has one, for tests and recording; parts take
 # part through handlers): -DFORBID_OBSERVER=ON, the default without SOURCES_ONLY.
+cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMake 3 then rejects IN_LIST)
 if(NOT PARTS_DIR OR NOT IS_DIRECTORY "${PARTS_DIR}")
   message(FATAL_ERROR "PARTS_DIR is not a directory: ${PARTS_DIR}")
 endif()

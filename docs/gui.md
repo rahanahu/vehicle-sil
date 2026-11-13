@@ -20,10 +20,21 @@ GUI は、自分の画面を作るための道具一式（SDK）です。
 - 構成ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します）。
 - Python 3.11 以上と [uv](https://docs.astral.sh/uv/)（GUI サーバー）。
 - 画面: サンプルの画面のビルド（`gui/web` の `npm run build` の出力）か、自分の画面のビルド（`--web`）。画面を使うだけなら Node.js は要りませんが、ビルドには要ります（[gui/web/README.md](../gui/web/README.md)）。
+- ビルド済みの道具（README の「[取得とビルド](../README.md#取得とビルド)」）には、上のうち Python 以外の全部（Control Server を持つランチャー、GUI サーバー、ビルドした画面、gRPC のスタブ）が入っています。要るのは Python 3.11 以上だけで、uv があれば、Python とパッケージも uv が入れます。
 
 ## 起動
 
-リポジトリの直下で `uv sync` をしてから、ビルドしたランチャーを `--launcher` で渡して起動します。例は、ビルドした ECU の例（`build/<preset>/examples/ecu_main/`。CMake が構成ファイルを実行ファイルの隣にコピーします）です。
+ビルド済みの道具では、その `bin` を `PATH` に入れて、構成ファイルのあるディレクトリで起動します。
+
+```sh
+vehicle-sil-gui simulation.yaml
+```
+
+- `bin/vehicle-sil-gui`（Windows のコマンドプロンプトでは `bin\vehicle-sil-gui.cmd`）は、道具の `vehicle_sil_launch` を `VEHICLE_SIL_LAUNCH` で、gRPC のスタブを `VEHICLE_SIL_CONTROL_STUBS` で GUI サーバーに渡し、`uv run` で `python/requirements.txt` のパッケージ（版とハッシュを固定）を入れて起動します（2 回目からは uv のキャッシュを使います）。Python は、固定したパッケージの wheel がある版（3.11 から、試験している `.python-version` の版まで）を uv が選び、なければ取ってきます。パッケージをソースからビルドはしません。引数は下の表のとおりです。
+- uv がないときは、Python 3.11 以上の仮想環境に `python -m pip install --require-hashes -r <道具>/python/requirements.txt` で入れ、その Python を環境変数 `VEHICLE_SIL_PYTHON` で指定します。足りなければ、そう言って終了コード 2 で終わります。
+- GUI サーバーの Python は、カレントディレクトリのモジュールを読み込みません（`python -P`）。
+
+リポジトリの中で動かすときは、リポジトリの直下で `uv sync` をしてから、ビルドしたランチャーを `--launcher` で渡して起動します。例は、ビルドした ECU の例（`build/<preset>/examples/ecu_main/`。CMake が構成ファイルを実行ファイルの隣にコピーします）です。
 
 ```sh
 uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch \
@@ -513,7 +524,7 @@ sections:
 
 - 変数の画面で部品を並べ替えて保存することはできません。並べ方はダッシュボードのファイルに書きます。
 - 変数の値は、GUI サーバーが読んだ時点の最後の値です。全部の値の記録ではありません（速いシミュレーションでは、間の値は届きません）。実行が終わった後に残る値は、最後に読めた値で、ランチャーが Control Server を閉じるのが早ければ、終わりの値より少し古いことがあります。
-- 変数の読み書きは、リポジトリの中で動かす GUI サーバー（`uv sync` の後の `uv run vehicle-sil-gui`）が前提です。gRPC のスタブを、リポジトリの `proto/` から `grpcio-tools` で作る（なければ `python -m vehicle_sil_control.generate` が作ったものを使う）ためです。リポジトリの外に入れた GUI サーバーは、任意の依存 `vehicle-sil-gui[variables]`（grpcio、protobuf）だけでは変数を使えません。スタブを自分で作って `VEHICLE_SIL_CONTROL_STUBS` で渡します（`PYTHONPATH` と同じく、そこに置いたコードを GUI サーバーが読み込みます。自分のディレクトリだけを指します）。スタブは、まだパッケージに入っていません。
+- 変数の読み書きは、ビルド済みの道具の `vehicle-sil-gui`（スタブを同梱）か、リポジトリの中で動かす GUI サーバー（`uv sync` の後の `uv run vehicle-sil-gui`）が前提です。gRPC のスタブを、リポジトリの `proto/` から `grpcio-tools` で作る（なければ `python -m vehicle_sil_control.generate` が作ったものを使う）ためです。リポジトリの外に入れた GUI サーバーは、任意の依存 `vehicle-sil-gui[variables]`（grpcio、protobuf）だけでは変数を使えません。スタブを自分で作って `VEHICLE_SIL_CONTROL_STUBS` で渡します（`PYTHONPATH` と同じく、そこに置いたコードを GUI サーバーが読み込みます。自分のディレクトリだけを指します）。スタブは、Python のパッケージ（`vehicle-sil-gui`）には入っていません（ビルド済みの道具には入っています）。
 - 古いランチャー（`time` の事象に `paused` がない）は、仮想時刻を動き始め（0）と `stop_at_ms` に達したときにしか知らせないので、動いている間の 0 は出しません。
 - Windows では確かめていません（子プロセスの止め方、Ctrl+Break、`taskkill`、一時ファイルの権限は書いてありますが、動かしていません）。Windows はコンソールを閉じると約 5 秒でプロセスを終わらせるので、`--stop-timeout` を待たずに終わります（ランチャーには標準入力の終わりが届きます）。
 

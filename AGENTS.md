@@ -90,7 +90,8 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 | `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる。書き換えたファイルは、中断しても元に戻す |
 | `scripts/verify-web.py` | 画面（`gui/web`）とクライアントのライブラリ（`gui/client`）の `npm ci`、書式、lint、単体試験、ビルド、e2e を順に回して要約する。ログは `build/logs/web-*.log`。`--skip-install`、`--skip-e2e`、`--tag`、`--no-wait` |
 | `scripts/verify-gui.py` | GUI 全体: GUI サーバー（`gui/server`）の試験（pytest。偽のランチャーで API、WebSocket、安全、止め方、`gui/protocol` の例の照合）、最小のクライアントの例（`examples/gui_client/run.mjs`）を偽のランチャーで動かす試験の後に `scripts/verify-web.py` を回して要約する。ログは `build/logs/gui-*.log`。`--skip-web`、`-k`、`--skip-install`、`--skip-e2e`、`--tag`、`--no-wait` |
-| `scripts/verify-python.py` | uv で、Python 3.11 と `.python-version` の版の環境を `uv.lock` から作り、C++ のビルドなしで回せる Python の確認（構文、生成器の試験、スクリプトの `--help`、Control API のスタブの生成と import）をする。続けて、`pyproject.toml` の依存の下限そのものを 3.11 に入れて同じ確認をする（`--skip-lowest` で省く）。uv がなければ終了コード 2 |
+| `scripts/package.py` | ビルド済みの道具の圧縮ファイルを作る（`tools`）、使う人の手順で確かめる（`verify`: 空のディレクトリにひな形を写し、`get_tools.py` で展開し、ひな形をビルドして `check`、`run`、シナリオ、`run --control` に Python のクライアントでつなぐ、GUI サーバーの起動）、ひな形の圧縮ファイルと `SHA256SUMS` を作る（`template`）、版の番号が全部の場所で同じかを確かめる（`version`）。出力は `build/dist/`。タグ `v<版>` の GitHub Actions（`.github/workflows/release.yml`）も同じものを呼ぶ |
+| `scripts/verify-python.py` | uv で、Python 3.11 と `.python-version` の版の環境を `uv.lock` から作り、C++ のビルドなしで回せる Python の確認（構文、生成器の試験、ひな形の `get_tools.py` と `package.py template` の試験、スクリプトの `--help`、Control API のスタブの生成と import）をする。続けて、`pyproject.toml` の依存の下限そのものを 3.11 に入れて同じ確認をする（`--skip-lowest` で省く）。uv がなければ終了コード 2 |
 
 `verify-web.py` と `verify-gui.py` は、時間に敏感な試験を回す前に、この PC で `ninja`、`ctest`、Windows の VM（`qemu-system-x86*`）が動いている間は待ちます（`scripts/busy_machine.py`。何を待つかを 1 行で表示し、`--wait-limit` 分（既定 20 分）で諦めて警告を出して進む）。どちらの試験も、同時に回すと時間の条件で落ちるためです。GUI の試験は、pytest、ng、Playwright を直接呼ばずにこの 2 つから回します。
 
@@ -103,4 +104,5 @@ scripts/check-commits.py --range origin/main..HEAD   # 範囲の各コミット
 scripts/mutate.py mutations.toml --check             # 書き換える箇所が見つかるかだけを確かめる
 scripts/verify-python.py                             # Python のコード: 3.11、.python-version の版、3.11 と依存の下限
 scripts/verify-gui.py                                # GUI: サーバーの試験と画面（--skip-web でサーバーだけ）
+scripts/package.py tools && scripts/package.py verify build/dist/vehicle-sil-tools-*-linux-x86_64.tar.gz
 ```

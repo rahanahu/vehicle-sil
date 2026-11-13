@@ -14,7 +14,7 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 - `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`（既定 OFF）のときだけ使います。`vehicle_sil::control_grpc`、`proto/` の生成コード、`vehicle_sil_control_server`、`vehicle_sil_launch`（`run --control`）が対象で、ほかのライブラリ（`vehicle_sil::launch` を含む）と ECU の実行ファイルは使いません。
 - `find_package(gRPC CONFIG)` で見つかればそれを使います（MSYS2 UCRT64 は `pacman -S mingw-w64-ucrt-x86_64-grpc`）。見つからなければ FetchContent で gRPC を取り込みます（GitHub の `grpc/grpc`、タグ `v1.76.0`、`VEHICLE_SIL_GRPC_VERSION` で変えられる。サブモジュールは abseil、protobuf、re2、c-ares、BoringSSL、zlib だけ）。取り込んだ gRPC はインストールのルールを作らず（abseil の export 用の設定だけ有効）、警告の対象外（`SYSTEM`）にします。FetchContent で取り込むには CMake 3.28 以上が要ります（それより古い CMake では、gRPC を入れて `find_package` で見つけさせます）。取得済みのソースは `-DFETCHCONTENT_SOURCE_DIR_GRPC=<path>` で再利用できます。
-- ライセンス: gRPC は Apache-2.0、Protocol Buffers は BSD-3-Clause、abseil は Apache-2.0、re2 は BSD-3-Clause、c-ares は MIT、BoringSSL は OpenSSL/ISC 系、zlib は zlib ライセンス。vehicle-sil のリポジトリには含めません。
+- ライセンス: gRPC は Apache-2.0、Protocol Buffers は BSD-3-Clause、abseil は Apache-2.0、re2 は BSD-3-Clause、c-ares は MIT、BoringSSL は Apache-2.0（一部に古い OpenSSL と ISC の条項が残る）、zlib は zlib ライセンス。vehicle-sil のリポジトリには含めません。
 - Python のクライアント（`python/vehicle_sil_control`）は `grpcio` と `protobuf` を、スタブの生成には `grpcio-tools` を使います（`pyproject.toml` の `control` グループ。uv がなければ pip、MSYS2 は `mingw-w64-ucrt-x86_64-python-grpcio` と `-python-grpcio-tools`）。試験はこれらが入った Python 3.11 以上（`VEHICLE_SIL_CONTROL_PYTHON`。指定がなければ、下の「Python の探し方」の順）があるときだけ登録します。
 
 ### Python の探し方
@@ -34,7 +34,7 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 ### aiohttp（ブラウザの GUI のサーバー）
 
-- GUI サーバー（`gui/server`、配布名 `vehicle-sil-gui`、[gui.md](gui.md)）は aiohttp だけに依存します。HTTP のサーバー、WebSocket、試験で使うクライアントを 1 つで持ち、asyncio の Windows の既定のイベントループ（子プロセスを動かせる ProactorEventLoop）で動き、Windows（3.11 以降）の wheel があります。C++ のビルドは使いません。ECU の変数を読み書きするときだけ、ランチャーの Control Server のクライアントとして grpcio と protobuf を使います（任意の依存 `vehicle-sil-gui[variables]`。`gui` のグループが入れます）。なくても GUI サーバーは動き、変数だけが使えないと理由を出します。この任意の依存だけでは足りず、スタブが要ります（リポジトリの中で `uv sync` して動かすのが前提。スタブは、まだパッケージに入っていません）。gRPC のスタブは、起動のたびに `proto/` から grpcio-tools（`control` のグループ）で作るか、`python -m vehicle_sil_control.generate` が作ったもの、`VEHICLE_SIL_CONTROL_STUBS` のディレクトリのものを使います。
+- GUI サーバー（`gui/server`、配布名 `vehicle-sil-gui`、[gui.md](gui.md)）は aiohttp だけに依存します。HTTP のサーバー、WebSocket、試験で使うクライアントを 1 つで持ち、asyncio の Windows の既定のイベントループ（子プロセスを動かせる ProactorEventLoop）で動き、Windows（3.11 以降）の wheel があります。C++ のビルドは使いません。ECU の変数を読み書きするときだけ、ランチャーの Control Server のクライアントとして grpcio と protobuf を使います（任意の依存 `vehicle-sil-gui[variables]`。`gui` のグループが入れます）。なくても GUI サーバーは動き、変数だけが使えないと理由を出します。この任意の依存だけでは足りず、スタブが要ります（リポジトリの中で `uv sync` して動かすか、スタブを同梱したビルド済みの道具を使うのが前提。スタブは Python のパッケージには入っていません）。gRPC のスタブは、起動のたびに `proto/` から grpcio-tools（`control` のグループ）で作るか、`python -m vehicle_sil_control.generate` が作ったもの、`VEHICLE_SIL_CONTROL_STUBS` のディレクトリのものを使います。
 - ライセンス: aiohttp は Apache-2.0（同梱の llhttp は MIT）。依存する multidict、yarl、frozenlist、aiosignal、propcache は Apache-2.0、aiohappyeyeballs は PSF-2.0、attrs は MIT、idna は BSD-3-Clause。vehicle-sil のリポジトリには含めず、uv が入れます。
 
 ### Vector XL Driver Library（Vector XL CAN Bridge、Windows のみ）
@@ -62,7 +62,8 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
   - コピーとパッチ適用は、パッチかサブモジュールのファイル（`.git` を除く）の内容が前回の configure と違うときだけやり直します。判定には、全ファイルの SHA-256 を並べたスタンプ（`sil-kit-patched.stamp`）を使います。Git の状態は見ないので、サブモジュールが Git のチェックアウトでなくても動きます。やり直すときはコピーしたファイルをすべて touch するので、そのライブラリは全体が再ビルドされます。
   - SIL Kit のバージョン情報の Git ハッシュ（`SilKit::Version::GitHash()`）は `UNKNOWN` になります。SIL Kit は自分の `.git/HEAD` を探しますが、サブモジュールの `.git` はファイルなので、コピーしなくても同じです。
   - パッチの追加、変更、削除と、サブモジュールのファイルの変更（チェックアウトの切り替えや手元での編集）では、CMake が自動で configure をやり直します。
-  - パッチが当たらなければ configure は失敗します。`git apply` を使うので Git が必要です。親の Git リポジトリや、継承した `GIT_DIR` などの環境変数の影響は受けません。
+  - パッチが当たらなければ configure は失敗します。`git apply` を使うので Git が必要です。親の Git リポジトリや、継承した `GIT_DIR` などの環境変数の影響は受けません。ビルドツリーがリポジトリの中にあっても、`GIT_CEILING_DIRECTORIES` で、コピーの上のリポジトリを Git に見せません。この値は、Git 自身が出すパスの形で渡します（MSYS2 の `git` は `/d/a/...` の形しか読まないため）。
+  - 失敗の文には、使った Git のパスと版、`GIT_CEILING_DIRECTORIES` の値、Git がコピーの周りに見つけたリポジトリ（あれば、パッチのパスをそのリポジトリからの相対と取り違えて飛ばしたということです）、パッチが変えるファイルの改行（LF か CRLF か）が出ます。
   - `--ignore-whitespace` で当てるので、CRLF でチェックアウトしたサブモジュール（Windows の `core.autocrlf`）にも当たります。パッチファイル自体は `.gitattributes` で改行を変換しません。
 - 利用側がすでに `SilKit::SilKit` を定義している場合は追加しません。利用側の SIL Kit に「SIL Kit へのパッチ」がないと、同じ LIN ID に複数の `LinSlave` が交代で応答する構成（診断の 0x3D など）が動きません。パッチが効くのはヘッダーを送る Master のプロセスの SIL Kit なので、パッチのない SIL Kit を使う外部の Master（CANoe など）と組み合わせた場合も同じです。
 - 上流の公開インクルードディレクトリを SYSTEM 扱いにします。上流ヘッダーの警告で、vehicle-sil のターゲットが `-Werror` 付きのビルドに失敗しないようにするためです。
@@ -70,7 +71,7 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 | ライブラリ | 設定 | 理由 |
 |---|---|---|
-| SIL Kit | `SILKIT_BUILD_DEMOS/TESTS/DOCS/DASHBOARD=OFF`、`SILKIT_BUILD_STATIC=OFF`、`SILKIT_BUILD_UTILITIES=ON` | 不要なものを作らない。統合テストに `sil-kit-registry` が要る |
+| SIL Kit | `SILKIT_BUILD_DEMOS/TESTS/DOCS/DASHBOARD=OFF`、`SILKIT_BUILD_STATIC` は `VEHICLE_SIL_STATIC` と同じ（既定 OFF）、`SILKIT_BUILD_UTILITIES=ON` | 不要なものを作らない。統合テストに `sil-kit-registry` が要る。`VEHICLE_SIL_STATIC=ON` では、SIL Kit を静的なライブラリにし、`SilKit::SilKit` の `INTERFACE_LINK_OPTIONS` に C++ の実行時ライブラリの静的なリンク（Linux: `-static-libstdc++ -static-libgcc`、MinGW: `-static`）を付ける。SIL Kit をリンクする実行ファイル（利用側の ECU も）に効く。glibc は共有のまま（README の「1 つの実行ファイルにする」） |
 
 ## 使っているターゲット
 

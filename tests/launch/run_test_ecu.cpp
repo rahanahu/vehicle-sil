@@ -17,9 +17,15 @@
 //                           simulation by that long)
 //   print <word>            writes <word> and a line end to stdout with printf() when it is set up,
 //                           without flushing (for --describe too, where it goes to stderr)
-//   hang-after-end          after the run, does not end (its destructor waits for ever), until:
+//   hang-after-end          after the run, does not end (its destructor writes its process ID to
+//                           "<name>.hanging" and waits for ever), until:
 //   stop-exit <code>          a stop request (POSIX SIGTERM, Windows Ctrl+Break) ends it with <code>
 //   ignore-stop               a stop request is ignored
+//                           main() installs the handler before ecu_main, which handles stop requests
+//                           itself during the run and puts the handler back after it: no stop request
+//                           after the run meets the default effect. One that comes before
+//                           "<name>.hanging" is written may still reach ecu_main and be spent on the
+//                           run that has stopped, so a test that stops the ECU waits for the file.
 //   grandchild <helper>     in its first step, starts <helper> (tests/process/process_helper.cpp)
 //                           as a process that sleeps, writes "<name>-grandchild.pid", and is not
 //                           ended with the ECU; the step waits until the file is written
@@ -54,25 +60,38 @@ using namespace std::chrono_literals;
 
 namespace {
 
-int g_stop_code = -1;
+// What a stop request does: kStopDefault its default effect, -1 nothing (ignore-stop), else end
+// the process with this code (stop-exit). A hang-after-end ECU sets it in its first step.
+constexpr int kStopDefault = -2;
+volatile std::sig_atomic_t g_stop_code = kStopDefault;
 
 #ifdef _WIN32
 BOOL WINAPI on_stop(DWORD event)
 {
-    if (event != CTRL_BREAK_EVENT && event != CTRL_C_EVENT)
+    const int code = g_stop_code;
+    if ((event != CTRL_BREAK_EVENT && event != CTRL_C_EVENT) || code == kStopDefault)
     {
         return FALSE;
     }
-    if (g_stop_code >= 0)
+    if (code >= 0)
     {
-        TerminateProcess(GetCurrentProcess(), static_cast<UINT>(g_stop_code));
+        TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
     }
     return TRUE;
 }
 #else
-extern "C" void on_stop(int)
+extern "C" void on_stop(int signal)
 {
-    ::_exit(g_stop_code);
+    const int code = g_stop_code;
+    if (code >= 0)
+    {
+        ::_exit(code);
+    }
+    if (code == kStopDefault)
+    {
+        std::signal(signal, SIG_DFL);
+        std::raise(signal);
+    }
 }
 #endif
 
@@ -175,6 +194,10 @@ public:
         // Not in the constructor: --describe constructs the ECU too, and must start nothing.
         ecu.at(vehicle_sil::SimTime{}, [this](vehicle_sil::SimTime) {
             ran_ = true;
+            if (hang_)
+            {
+                g_stop_code = stop_code_;
+            }
             gain_at_0_ = gain_;
             if (pid_)
             {
@@ -256,11 +279,11 @@ public:
         {
             return; // also --describe constructs and destroys it
         }
-        g_stop_code = stop_code_;
+        std::ofstream(name_ + ".hanging") <<
 #ifdef _WIN32
-        SetConsoleCtrlHandler(on_stop, TRUE);
+            GetCurrentProcessId();
 #else
-        std::signal(SIGTERM, stop_code_ >= 0 ? on_stop : SIG_IGN);
+            ::getpid();
 #endif
         while (true)
         {
@@ -316,6 +339,11 @@ int main(int argc, char** argv)
     {
         args.push_back(no_control);
     }
+#ifdef _WIN32
+    SetConsoleCtrlHandler(on_stop, TRUE);
+#else
+    std::signal(SIGTERM, on_stop);
+#endif
     return vehicle_sil::ecu_main<TestEcu>(static_cast<int>(args.size()), args.data(),
                                           {.name = "TestEcu", .step = std::chrono::milliseconds(step)});
 }
