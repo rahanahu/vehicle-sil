@@ -13,6 +13,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace vehicle_sil::launch {
 
@@ -31,14 +32,20 @@ public:
             fail("it is not a JSON object");
         }
         const auto format = integer(member(root_, "vehicle_sil_ecu", ""), "vehicle_sil_ecu");
+        // The vehicle-sil it was built with, for the messages about a newer or older one.
+        const auto versionNode = find(root_, "vehicle_sil");
+        if (versionNode != ryml::NONE && is_scalar(versionNode) && tree_.is_val_quoted(versionNode))
+        {
+            version_ = detail::to_string(tree_.val(versionNode));
+        }
         if (format != kEcuDescriptionFormat)
         {
-            throw DescriptionError("format " + std::to_string(format));
+            throw DescriptionFormatError(format, version_);
         }
         ReportedEcu out;
-        if (const auto node = find(root_, "vehicle_sil"); node != ryml::NONE)
+        if (versionNode != ryml::NONE)
         {
-            out.vehicle_sil_version = text(node, "vehicle_sil");
+            out.vehicle_sil_version = text(versionNode, "vehicle_sil");
         }
         out.description.name = text(member(root_, "name", ""), "name");
         const auto step = member(root_, "step_ns", "");
@@ -172,16 +179,23 @@ private:
                  const char* (*name)(Enum)) const
     {
         const std::string given = text(node, what);
-        std::string known;
+        std::vector<std::string> known;
         for (const Enum value : values)
         {
             if (given == name(value))
             {
                 return value;
             }
-            known += std::string(known.empty() ? "" : ", ") + name(value);
+            known.emplace_back(name(value));
         }
-        fail(what + " is \"" + given + "\", not one of " + known);
+        unknown_value(what + " is \"" + given + "\", not one of " + detail::join(known), what, given, known);
+    }
+
+    /// A value this launcher does not know of a key with a fixed set of values (`known`).
+    [[noreturn]] void unknown_value(const std::string& message, const std::string& key, const std::string& value,
+                                    std::vector<std::string> known) const
+    {
+        throw DescriptionValueError(message, key, value, std::move(known), version_);
     }
 
     control::VariableInfo variable(ryml::id_type node, const std::string& at) const
@@ -235,10 +249,20 @@ private:
         const auto known = network_use_named(use);
         if (!known)
         {
-            fail(at + ".use is \"" + use + "\", not " + detail::or_list(detail::network_use_names()));
+            const auto uses = detail::network_use_names();
+            unknown_value(at + ".use is \"" + use + "\", not " + detail::or_list(uses), at + ".use", use, uses);
         }
         out.use = *known;
         const std::string kind = text(member(node, "kind", at), at + ".kind");
+        if (!network_kind_named(kind))
+        {
+            std::vector<std::string> kinds;
+            for (const NetworkKind k : kNetworkKinds)
+            {
+                kinds.emplace_back(to_string(k));
+            }
+            unknown_value(at + ".kind is \"" + kind + "\", not " + detail::or_list(kinds), at + ".kind", kind, kinds);
+        }
         if (kind != to_string(out.kind()))
         {
             fail(at + ".kind is \"" + kind + "\", but use \"" + use + "\" is on " + to_string(out.kind()));
@@ -295,6 +319,7 @@ private:
 
     const ryml::Tree& tree_;
     ryml::id_type root_;
+    std::string version_{}; ///< "vehicle_sil" of the description, or ""
 };
 
 } // namespace

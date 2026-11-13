@@ -1545,7 +1545,8 @@ TEST_CASE(a_participant_started_anew_after_it_failed_is_connected_again)
     for (int round = 0; round < 5; ++round)
     {
         // A process with a running lifecycle and an agent ...
-        auto first = std::make_unique<RawAgent>("Crash", registry.uri, 1000 + 2 * static_cast<std::uint64_t>(round));
+        // From the second round on the name was in use a moment ago: see started_anew().
+        auto first = started_anew("Crash", registry.uri, 1000 + 2 * static_cast<std::uint64_t>(round));
         auto* lifecycle = first->participant->CreateLifecycleService({orch::OperationMode::Autonomous});
         first->hello(3);
         auto done = lifecycle->StartLifecycle();

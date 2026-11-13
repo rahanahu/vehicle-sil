@@ -307,11 +307,28 @@ void describe(const Options& o)
                        "    command: [" + helper + ", --out, '{\"vehicle_sil_ecu\": 2, \"x\": {\"y\": \"{{name}}\"}}']\n"
                        "  - name: Escaped\n"
                        "    command: [\"{{odd}}/missing\", \"{registry_uri}\"]\n"
-                       "    describe: false\n");
+                       "    describe: false\n"
+                       // A value of a later vehicle-sil: only this participant's error.
+                       "  - name: Newer\n"
+                       "    command: [" + helper + ", --out, '{\"vehicle_sil_ecu\": 1, \"vehicle_sil\": \"9.0.0\", "
+                       "\"name\": \"Newer\", \"step_ns\": null, \"networks\": [{\"name\": \"Eth\", \"kind\": \"ethernet\", "
+                       "\"use\": \"ethernet\", \"nodes\": []}]}']\n"
+                       // ... and the others are still read and compared.
+                       "  - name: Good\n"
+                       "    command: [" + helper + ", --out, '{\"vehicle_sil_ecu\": 1, \"name\": \"Good\", "
+                       "\"step_ns\": 2000000, \"networks\": []}']\n"
+                       "    step_ms: 2\n");
     const Captured run = launch(o, {"check", shown_path(config)});
     expect_code(run, 1, "check failing.yaml");
-    expect_text(normalized(o, run.standard_output),
-                "<dir>/failing.yaml: 7 participants, 0 networks\n"
+    // This launcher's version is in the messages about the description's version and values.
+    std::string launcherVersion = launch(o, {"version"}).standard_output;
+    launcherVersion = launcherVersion.substr(launcherVersion.find(' ') + 1);
+    launcherVersion = launcherVersion.substr(0, launcherVersion.find_first_of("\r\n"));
+    std::string out = normalized(o, run.standard_output);
+    replace_all(out, "vehicle_sil_launch (vehicle-sil " + launcherVersion + ")", "vehicle_sil_launch (vehicle-sil <version>)");
+    replace_all(out, "vehicle_sil_launch with vehicle-sil " + launcherVersion, "vehicle_sil_launch with vehicle-sil <version>");
+    expect_text(out,
+                "<dir>/failing.yaml: 9 participants, 0 networks\n"
                 "\n"
                 "participant  step  networks\n"
                 "Usage        -     no description (see the errors)\n"
@@ -321,6 +338,8 @@ void describe(const Options& o)
                 "Logger       -     not checked (describe: false)\n"
                 "Braces       -     no description (see the errors)\n"
                 "Escaped      -     no description (see the errors)\n"
+                "Newer        -     no description (see the errors)\n"
+                "Good         2 ms  -\n"
                 "\n"
                 "error: <dir>/failing.yaml:5: participant 'Usage': <helper> --err 'error: Usage: unknown argument "
                 "--describe\\n' --exit 4 --describe --name Usage ended with exit code 4; it did not take --describe or "
@@ -334,24 +353,33 @@ void describe(const Options& o)
                 "    the start of its standard output:\n"
                 "    hello\n"
                 "error: <dir>/failing.yaml:9: participant 'Future': <helper> --out '{\"vehicle_sil_ecu\": 2}' --describe "
-                "--name Future wrote a description in format 2, but this vehicle_sil_launch reads format 1: build the "
-                "executable and vehicle_sil_launch from the same vehicle-sil\n"
+                "--name Future wrote a description in format 2, but this vehicle_sil_launch (vehicle-sil <version>) reads "
+                "format 1: the executable is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a "
+                "newer one\n"
                 "error: <dir>/failing.yaml:11: participant 'Missing': the executable missing/ecu does not exist (looked for "
                 "<dir>/missing/ecu): build it, or correct the path (a relative path is from the directory of the "
                 "configuration file)\n"
                 // A JSON argument passes byte for byte, "{{name}}" as "{name}" (also for an ecu_main executable).
                 "error: <dir>/failing.yaml:16: participant 'Braces': <helper> --out '{\"vehicle_sil_ecu\": 2, \"x\": "
                 "{\"y\": \"{name}\"}}' --describe "
-                "--name Braces wrote a description in format 2, but this vehicle_sil_launch reads format 1: build the "
-                "executable and vehicle_sil_launch from the same vehicle-sil\n"
+                "--name Braces wrote a description in format 2, but this vehicle_sil_launch (vehicle-sil <version>) reads "
+                "format 1: the executable is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a "
+                "newer one\n"
                 // "{{odd}}" in the path is the directory "{odd}".
                 "error: <dir>/failing.yaml:18: participant 'Escaped': the executable {{odd}}/missing does not exist "
                 "(looked for <dir>/{odd}/missing): build it, or correct the path (a relative path is from the directory "
                 "of the configuration file)\n"
+                "error: <dir>/failing.yaml:21: participant 'Newer': <helper> --out '{\"vehicle_sil_ecu\": 1, "
+                "\"vehicle_sil\": \"9.0.0\", \"name\": \"Newer\", \"step_ns\": null, \"networks\": [{\"name\": \"Eth\", "
+                "\"kind\": \"ethernet\", \"use\": \"ethernet\", \"nodes\": []}]}' --describe --name Newer wrote "
+                "networks[0].use \"ethernet\", which this vehicle_sil_launch does not know (it knows raw, j1939, "
+                "lin_master and lin_slave): the executable was built with vehicle-sil 9.0.0, this vehicle_sil_launch with "
+                "vehicle-sil <version>. A newer vehicle-sil may add such values without a new format: use a "
+                "vehicle_sil_launch of the executable's vehicle-sil or a newer one\n"
                 "note: <dir>/failing.yaml:12: participant 'Logger': not checked (describe: false): vehicle_sil_launch "
                 "cannot compare its name, step and networks with this file\n"
                 "\n"
-                "failed: 6 errors, 0 warnings, 1 note\n",
+                "failed: 7 errors, 0 warnings, 1 note\n",
                 "check failing.yaml");
 
     // A short time limit only for the one that does not end; also one that writes without end.

@@ -111,6 +111,8 @@ passed: 0 errors, 1 warning, 1 note
 | `step-mismatch` | 取り決めに合わないほう | `step_ms` と ECU のステップ幅のどちらが正しいかを決める |
 | `address-conflict`、`address-shared`、`name-conflict` | ECU を書く人 | アドレスの表に合わせて、ECU のノードのアドレスか NAME を変えてビルドし直す |
 | `describe-failed`、`describe-output`、`describe-timeout` | ECU を書く人 | 添えられた標準エラーの末尾を渡す。`describe-failed` で終了コード 4 なら、`ecu_main` で作った実行ファイルでない見込みが高い（`describe: false` にするか、`ecu_main` にしてもらう） |
+| `describe-unknown-value` | まとめる人 | ECU の vehicle-sil と同じか新しい版の `vehicle_sil_launch` を使う（文言に両方の版がある） |
+| `describe-version` | 版が古いほう | 文言のとおり、`vehicle_sil_launch` を新しくするか、ECU をビルドし直す |
 | `version-mismatch`、`control-link-version` | どちらか | 同じ版の vehicle-sil でビルドし直す |
 | `single-participant` | まとめる人 | 外した ECU か、まだない ECU のせいなら、そのままでよい。`--strict` では失敗になる |
 
