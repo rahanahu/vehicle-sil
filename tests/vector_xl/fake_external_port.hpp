@@ -25,6 +25,11 @@ public:
 
     void deliver(vector_xl::ExternalEventKind kind, const SilKit::Services::Can::CanFrame& frame = {})
     {
+        deliver_event(vector_xl::ExternalCanEvent{kind, frame, {}});
+    }
+
+    void deliver_event(const vector_xl::ExternalCanEvent& event)
+    {
         EventHandler handler;
         {
             const std::lock_guard lock(mutex_);
@@ -32,7 +37,7 @@ public:
         }
         if (handler)
         {
-            handler(vector_xl::ExternalCanEvent{kind, frame});
+            handler(event);
         }
     }
 

@@ -169,6 +169,11 @@ Status deactivate(PortHandle port, ChannelMask channels) noexcept
     return to_status(xlDeactivateChannel(to_xl(port), to_xl(channels)));
 }
 
+Status request_chip_state(PortHandle port, ChannelMask channels)
+{
+    return to_status(xlCanRequestChipState(to_xl(port), to_xl(channels)));
+}
+
 TransmitAttempt transmit(PortHandle port, ChannelMask channels, const CanMessage& message)
 {
     XLevent event;
@@ -202,6 +207,31 @@ ReceiveResult receive(PortHandle port)
     ReceivedEvent out;
     out.queue_overrun = (event.flags & XL_EVENT_FLAG_OVERRUN) != 0;
     out.is_can_message = event.tag == XL_RECEIVE_MSG;
+    if (event.tag == XL_CHIP_STATE)
+    {
+        const auto& chip = event.tagData.chipState;
+        ChipState state;
+        // The most severe state the library reports wins.
+        if ((chip.busStatus & XL_CHIPSTAT_BUSOFF) != 0)
+        {
+            state.level = ChipLevel::BusOff;
+        }
+        else if ((chip.busStatus & XL_CHIPSTAT_ERROR_PASSIVE) != 0)
+        {
+            state.level = ChipLevel::ErrorPassive;
+        }
+        else if ((chip.busStatus & XL_CHIPSTAT_ERROR_WARNING) != 0)
+        {
+            state.level = ChipLevel::ErrorWarning;
+        }
+        else if ((chip.busStatus & XL_CHIPSTAT_ERROR_ACTIVE) != 0)
+        {
+            state.level = ChipLevel::ErrorActive;
+        }
+        state.tx_errors = chip.txErrorCounter;
+        state.rx_errors = chip.rxErrorCounter;
+        out.chip_state = state;
+    }
     if (out.is_can_message)
     {
         const auto& msg = event.tagData.msg;

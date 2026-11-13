@@ -4,6 +4,7 @@
 #include <silkit/services/can/ICanController.hpp>
 
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <stdexcept>
 #include <utility>
@@ -48,6 +49,93 @@ std::string format_statistics(const CanBridgeStatistics& s)
     return line;
 }
 
+std::string_view to_string(ExternalBusState::Level level) noexcept
+{
+    switch (level)
+    {
+    case ExternalBusState::Level::ErrorActive: return "error active";
+    case ExternalBusState::Level::ErrorWarning: return "error warning";
+    case ExternalBusState::Level::ErrorPassive: return "error passive";
+    case ExternalBusState::Level::BusOff: return "bus off";
+    case ExternalBusState::Level::Unknown: break;
+    }
+    return "state unknown";
+}
+
+namespace {
+
+using ProblemDeltas = std::array<std::pair<const char*, std::uint64_t>, 7>;
+
+ProblemDeltas problem_deltas(const CanBridgeStatistics& b, const CanBridgeStatistics& n) noexcept
+{
+    return {{
+        {"error_frames", n.external_error_frames - b.external_error_frames},
+        {"overruns", n.external_overruns - b.external_overruns},
+        {"silkit_rejected", n.silkit_rejected - b.silkit_rejected},
+        {"xl_rejected", n.external_rejected - b.external_rejected},
+        {"xl_queue_full", n.external_queue_full - b.external_queue_full},
+        {"xl_tx_failures", n.external_transmit_failures - b.external_transmit_failures},
+        {"silkit_tx_failures", n.silkit_transmit_failures - b.silkit_transmit_failures},
+    }};
+}
+
+} // namespace
+
+bool problems_grew(const CanBridgeStatistics& before, const CanBridgeStatistics& now) noexcept
+{
+    for (const auto& [key, delta] : problem_deltas(before, now))
+    {
+        if (delta != 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string format_bus_state(const ExternalBusState& state)
+{
+    std::string text(to_string(state.level));
+    if (state.level != ExternalBusState::Level::Unknown)
+    {
+        text.append(" (tx errors ")
+            .append(std::to_string(state.tx_errors))
+            .append(", rx errors ")
+            .append(std::to_string(state.rx_errors))
+            .append(")");
+    }
+    return text;
+}
+
+std::optional<std::string> format_health_change(const CanBridgeHealth& before, const CanBridgeHealth& now,
+                                                bool problems_before)
+{
+    std::string changes;
+    for (const auto& [key, delta] : problem_deltas(before.statistics, now.statistics))
+    {
+        if (delta != 0)
+        {
+            changes.append(changes.empty() ? "; since the last report: " : ", ")
+                .append(key)
+                .append(" +")
+                .append(std::to_string(delta));
+        }
+    }
+    const auto from = before.bus_state.level;
+    const auto to = now.bus_state.level;
+    const bool firstHealthyAnswer = from == ExternalBusState::Level::Unknown && to == ExternalBusState::Level::ErrorActive;
+    const std::string line = "XL bus: " + format_bus_state(now.bus_state);
+    if (!changes.empty() || (from != to && !firstHealthyAnswer))
+    {
+        return line + changes;
+    }
+    if (problems_before)
+    {
+        return line + "; no new problems since the last report";
+    }
+    return std::nullopt;
+}
+
 std::string_view validate_classic_frame(const can::CanFrame& frame) noexcept
 {
     if ((frame.flags & ~kClassicFlags) != 0)
@@ -89,6 +177,12 @@ void CanBridge::start()
     if (running_.load())
     {
         return;
+    }
+    {
+        const std::lock_guard errors(error_mutex_);
+        bus_state_ = {};
+        fault_.reset();
+        warnings_.clear();
     }
     bool externalStarted = false;
     try
@@ -186,6 +280,31 @@ void CanBridge::on_external_event(const ExternalCanEvent& event)
         external_overruns_.fetch_add(1);
         set_last_error("external receive queue overrun, frames were lost");
         return;
+    case ExternalEventKind::BusState:
+    {
+        const std::lock_guard lock(error_mutex_);
+        bus_state_ = event.bus_state;
+        return;
+    }
+    case ExternalEventKind::Fault:
+    {
+        // The reason comes with the event: last_error() may already tell of a later transmit.
+        std::string why(event.detail);
+        if (why.empty())
+        {
+            why = "the external port stopped working";
+        }
+        const std::lock_guard lock(error_mutex_);
+        last_error_ = why;
+        fault_ = std::move(why);
+        return;
+    }
+    case ExternalEventKind::Warning:
+    {
+        const std::lock_guard lock(error_mutex_);
+        warnings_.emplace_back(event.detail);
+        return;
+    }
     case ExternalEventKind::Frame:
         break;
     }
@@ -225,6 +344,27 @@ CanBridgeStatistics CanBridge::statistics() const noexcept
     stats.external_transmit_failures = external_transmit_failures_.load();
     stats.silkit_transmit_failures = silkit_transmit_failures_.load();
     return stats;
+}
+
+CanBridgeHealth CanBridge::health() const
+{
+    CanBridgeHealth result;
+    result.statistics = statistics();
+    const std::lock_guard lock(error_mutex_);
+    result.bus_state = bus_state_;
+    return result;
+}
+
+std::optional<std::string> CanBridge::fault() const
+{
+    const std::lock_guard lock(error_mutex_);
+    return fault_;
+}
+
+std::vector<std::string> CanBridge::take_warnings()
+{
+    const std::lock_guard lock(error_mutex_);
+    return std::exchange(warnings_, {});
 }
 
 std::string CanBridge::last_error() const

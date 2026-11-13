@@ -41,6 +41,7 @@ vehicle_sil_add_scenario_tests(vehicle_sil_vector_xl_it_launcher
   PREFIX vector_xl.integration LABELS vector_xl integration TIMEOUT 120
   WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/integration
   SCENARIOS echo-roundtrip echo-roundtrip-receipts echo-roundtrip-physical list-channels bad-channel bad-usage no-driver
+            device-lost
   ARGS --registry $<TARGET_FILE:sil-kit-registry>
        --bridge $<TARGET_FILE:vehicle_sil_vector_xl_bridge_on_fake>
        --peer $<TARGET_FILE:vehicle_sil_vector_xl_it_peer>
