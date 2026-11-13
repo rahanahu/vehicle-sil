@@ -39,6 +39,10 @@ CONTROL_SUMMARY_FIELD = "control_link"
 FEATURE_SCENARIO = "scenario"
 FEATURE_SCENARIO_CONTROL = "scenario-control"
 SCENARIO_STEP_EVENT = "scenario_step"
+# Participants that the user starts (docs/simulation-config.md, 「participant を自分で起動する」): run --manual <name>
+# leaves them for the user, writes the command to start them with (the participant event of state `manual`), and
+# waits for them to join.
+FEATURE_MANUAL = "manual-participants"
 
 
 class LauncherNotFound(Exception):
@@ -164,18 +168,33 @@ def check_speed(speed: object) -> float | str | None:
 
 def check_disable(disable: object, known: list[str]) -> list[str]:
     """The names to give --disable: each must be a participant of the check result of the file."""
-    if disable is None:
+    return _check_names("disable", disable, known)
+
+
+def check_manual(manual: object, known: list[str], disable: list[str]) -> list[str]:
+    """The names to give --manual (the user starts them): participants of the check result of the file that are
+    not in disable (the launcher refuses a name given to both)."""
+    names = _check_names("manual", manual, known)
+    both = [n for n in names if n in disable]
+    if both:
+        raise InvalidRequest("invalid-field", f"disable and manual both name {', '.join(repr(n) for n in both)}: "
+                                              "give it in one of them (disable leaves it out, manual has you start it)")
+    return names
+
+
+def _check_names(key: str, value: object, known: list[str]) -> list[str]:
+    if value is None:
         return []
-    if not isinstance(disable, list) or not all(isinstance(n, str) for n in disable):
-        raise InvalidRequest("invalid-field", "disable must be a list of participant names")
-    unknown = [n for n in disable if n not in known]
+    if not isinstance(value, list) or not all(isinstance(n, str) for n in value):
+        raise InvalidRequest("invalid-field", f"{key} must be a list of participant names")
+    unknown = [n for n in value if n not in known]
     if unknown:
         raise InvalidRequest("unknown-participant",
                              f"no participant named {', '.join(repr(n) for n in unknown)} in this file: the "
                              f"participants are {', '.join(known) or 'none'}")
-    if len(set(disable)) != len(disable):
-        raise InvalidRequest("invalid-field", "disable names a participant twice")
-    return list(disable)
+    if len(set(value)) != len(value):
+        raise InvalidRequest("invalid-field", f"{key} names a participant twice")
+    return list(value)
 
 
 def speed_argument(speed: float | str) -> str:
@@ -228,14 +247,23 @@ def command_line(command: dict) -> bytes:
     return (json.dumps(command, separators=(",", ":")) + "\n").encode()
 
 
-def check_command(launcher: Launcher, file: str, disable: list[str], scenario: str | None = None) -> list[str]:
-    """scenario: a root-relative path from scenarios.resolve_scenario (the launcher runs in the root)."""
+def check_command(launcher: Launcher, file: str, disable: list[str], scenario: str | None = None,
+                  manual: list[str] = ()) -> list[str]:
+    """scenario: a root-relative path from scenarios.resolve_scenario (the launcher runs in the root). disable,
+    manual: names that check_disable and check_manual accepted."""
     argv = launcher.prefix + ["check", "--json"]
     if scenario is not None:
         argv += ["--scenario", scenario_argument(scenario)]
+    return argv + _participant_arguments(disable, manual) + ["--", file]
+
+
+def _participant_arguments(disable: list[str], manual: list[str]) -> list[str]:
+    argv = []
     for name in disable:
         argv += ["--disable", name]
-    return argv + ["--", file]
+    for name in manual:
+        argv += ["--manual", name]
+    return argv
 
 
 def scenario_argument(relative: str) -> str:
@@ -244,17 +272,17 @@ def scenario_argument(relative: str) -> str:
 
 
 def run_command(launcher: Launcher, file: str, disable: list[str], speed: float | str | None,
-                start_paused: bool, control_credentials: Path | None = None, scenario: str | None = None) -> list[str]:
+                start_paused: bool, control_credentials: Path | None = None, scenario: str | None = None,
+                manual: list[str] = ()) -> list[str]:
     """control_credentials: start the launcher's control server (the ECUs' variables) on a free port of
     127.0.0.1, with the credentials of that file (a token is never an argument: arguments are in the hello
-    event and in the list of processes). scenario: as check_command's."""
+    event and in the list of processes). scenario, disable, manual: as check_command's."""
     argv = launcher.prefix + ["run", "--events", "--stdin-commands"]
     if scenario is not None:
         argv += ["--scenario", scenario_argument(scenario)]
     if control_credentials is not None:
         argv += ["--control", "0", "--control-credentials", str(control_credentials)]
-    for name in disable:
-        argv += ["--disable", name]
+    argv += _participant_arguments(disable, manual)
     if speed is not None:
         argv += ["--speed", speed_argument(speed)]
     if start_paused:

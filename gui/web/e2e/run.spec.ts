@@ -265,7 +265,7 @@ test('quick switches are checked once, without a busy check', async ({ page }) =
   await page.getByRole('switch', { name: 'Logger を使う' }).click();
   await expect(page.getByTestId('check-participant-Dashboard')).toContainText('外した');
   await expect(startButton(page)).not.toHaveAttribute('aria-disabled', 'true');
-  expect(checks).toEqual([{ file: 'forever.yaml', disable: ['Dashboard'] }]);
+  expect(checks).toEqual([{ file: 'forever.yaml', disable: ['Dashboard'], manual: [] }]);
   expect(failures).toEqual([]);
 });
 

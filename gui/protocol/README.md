@@ -45,8 +45,8 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 |---|---|---|
 | `GET api/app` | サーバーの版、`instance`（起動ごとに変わる）、root、`initial_file`、ランチャー（`usable`、`problems`、`version --json` の内容）、変数を読み書きできるか（`variables`: `available`、できない理由 `reason`）、上限（`limits`: `speed_min`、`speed_max`、`step_ms_max`、変数の `watches`、`watch_variables`、`watch_period_ms_min`、`watch_period_ms_max`、`writes_per_request`、`write_at_ms_max`、`write_timeout_s` など） | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml`（`path` は root からの相対で `/` 区切り、`modified`、`size`、`simulation`: 先頭に `vehicle_sil_simulation` があるか）、`truncated` | `configs.json` |
-| `POST api/check` `{file, disable, scenario}` | `{file, disable, scenario, exit_code, check}`。`check` は `check --json` の結果そのまま。照合が失敗しても 200 | `check-*.json` |
-| `POST api/run` `{file, disable, speed, start_paused, scenario}` | `{session}`（始めた実行の要約） | `run.json` |
+| `POST api/check` `{file, disable, manual, scenario}` | `{file, disable, manual, scenario, exit_code, check}`。`check` は `check --json` の結果そのまま。照合が失敗しても 200 | `check-*.json` |
+| `POST api/run` `{file, disable, manual, speed, start_paused, scenario}` | `{session}`（始めた実行の要約） | `run.json` |
 | `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
 | `POST api/time` `{command, ms, value}` | `{session_id, command}`（ランチャーに送った命令） | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
@@ -55,7 +55,8 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | `GET api/scenarios?file=<構成ファイル>` | 構成ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}`（下の「シナリオ」） | `scenarios.json` |
 | `GET api/recording` | いまの（最後の）実行の、反映された書き込みをシナリオの YAML にしたもの: `{recording}`（実行がなければ `null`。下の「操作の記録」） | `recording.json` |
 
-- `disable` に書けるのは、そのファイルの照合の結果にある participant 名だけです（`unknown-participant`）。
+- `disable` と `manual` に書けるのは、そのファイルの照合の結果にある participant 名だけです（`unknown-participant`）。同じ名前を両方に書くと 400 `invalid-field` です（ランチャーも断ります）。
+- **自分で起動する participant**: `manual` に書いた participant は、ランチャーに `--manual` で渡り、ランチャーは起動せずに参加を待ちます（[docs/simulation-config.md](../../docs/simulation-config.md) の「participant を自分で起動する」。構成ファイルの `manual: true` は、照合の結果の `participants[].manual` に出ます）。`api/app` の `launcher.version.features` に `manual-participants` があるときだけ送ります（ないときは欄を省きます。送ると 400 `unsupported`）。起動するコマンドは、その participant の事象（`state` が `manual`）の `command`、`working_directory`、`command_line` で届き、要約の `participants` に残ります（例は `check-manual.json`、`ws-manual.json`）。
 - `speed`（`null`、`"max"`、数）と `start_paused`（真偽）は、`api/app` の `launcher.version.features` に `speed`、`start-paused` があるときだけ値を送ります。ないときは欄を省くか `null` / `false` を送ります（ほかの値は 400 `unsupported`）。`speed` の数の範囲は `limits.speed_min` から `limits.speed_max` まで（ランチャーと同じ）。`null` は構成ファイルの `speed` のまま（ランチャーに `--speed` を渡さない）です。
 - **時刻の命令**: `api/time` の本文は `{"command": "pause"}`、`{"command": "resume"}`、`{"command": "step", "ms": <1 から limits.step_ms_max の整数>}`、`{"command": "speed", "value": <"max" か speed と同じ範囲の数>}` のどれかです（ほかの欄は 400 `invalid-field`）。サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、応答を待たずに返します（止まっているランチャーで要求が固まらないように）。受け付けたかどうかと理由は、ランチャーの `command` の事象（`accepted`、`message`、`step` の実際に進む `ms`）で、効いたことは `time` の事象で届きます（要約の `last_command` と `time` にも残ります）。動いている実行がなければ（終わった、始まりかけ、ランチャーの入力が閉じた）409 `not-running`、その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。ランチャーが入力を読まずに詰まっているときも、要求は長くて約 2 秒で返ります（命令はランチャーの入力に残ります）。命令の意味（一時停止は刻みの境目で効く、ステップ送りは一時停止の間だけ、など）はランチャーの決まりです（[docs/simulation-config.md](../../docs/simulation-config.md) の「標準入力の命令」）。
 - **開始**: 同時に送られた `api/run` は、1 つだけが始めます。ほかは、実行が始まりかけているか動いている間、409 `already-running` です。応答の要約を、画面はその場で当てます（後から届く `session` も同じ内容です）。
@@ -73,13 +74,13 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | HTTP | `code` | いつ |
 |---|---|---|
 | 400 | `invalid-json` | 本文が JSON のオブジェクトでない |
-| 400 | `invalid-field` | 欄の型か範囲が違う（`speed`、`start_paused`、`force`、`disable`、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値。`detail` に `{peer, name}`） |
+| 400 | `invalid-field` | 欄の型か範囲が違う（`speed`、`start_paused`、`force`、`disable`、`manual`（`disable` と同じ名前も）、`api/time` の `command`、`ms`、`value`、`api/write` の `writes`、`at_ms`、`late` と、変数の型か範囲に合わない値。`detail` に `{peer, name}`） |
 | 400 | `invalid-path` | `file` が root からの相対パスの文字列でない（空、長すぎる、`\`、NUL、`:`、対のないサロゲート） |
 | 400 | `outside-root` | 絶対パス、`..`、root の外へのシンボリックリンク |
 | 400 | `not-a-configuration` | `.yaml` / `.yml` の通常のファイルでない |
-| 400 | `unknown-participant` | `disable` の名前が照合の結果にない |
+| 400 | `unknown-participant` | `disable` か `manual` の名前が照合の結果にない |
 | 400 | `scenario-not-listed` | `scenario` が、`api/scenarios` がその構成ファイルに挙げるシナリオでない（`scenarios` がない、リンク、ほかの場所のファイル） |
-| 400 | `unsupported` | ランチャーが `speed` / `start-paused` / `scenario` を持たないのに値を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った |
+| 400 | `unsupported` | ランチャーが `speed` / `start-paused` / `scenario` / `manual-participants` を持たないのに値を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った |
 | 400 | `unknown-variable` | `api/write`: その participant か変数が、実行の変数の一覧にない（`detail` に `{peer, name}`） |
 | 400 | `not-writable` | `api/write`: 出力の変数（`detail` に `{peer, name}`） |
 | 400 | `write-refused` | `api/write`: ランチャーの Control Server が断った（文言に理由） |
@@ -168,7 +169,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | 欄 | 内容 |
 |---|---|
 | `id` | 実行の番号（サーバーの起動ごとに 1 から） |
-| `file`、`disable`、`speed`、`start_paused` | 始めたときの指定（`speed` の `null` は構成ファイルのまま。いまの速さは `time.speed`） |
+| `file`、`disable`、`manual`、`speed`、`start_paused` | 始めたときの指定（`manual` は `api/run` で指定したものだけ。構成ファイルの `manual: true` は `check` にある）（`speed` の `null` は構成ファイルのまま。いまの速さは `time.speed`） |
 | `started_at`、`ended_at` | 時刻（UTC、ISO 8601）。`ended_at` は終わるまで `null` |
 | `state` | `running` か `ended`。`ended` は、ランチャーが終わり、その出力を読み終えた（または `output-left-open` で打ち切った）。その間（長くて 2 秒）は、`api/session` で `launcher.running: false` と `running` が見えることがある |
 | `launcher` | `{pid, running, exit_code, signal, silent_s}`。`running` はランチャーのプロセスが動いているか。止められるかどうかはこれで決める。終わったら `exit_code`（シグナルで終わったら `null` で、`signal` にその番号。POSIX だけ）。`silent_s` は、動いているランチャーが何も書かない秒数（`--silent-after` を超えたときだけ、その倍数ごとに更新。書けば `null`） |

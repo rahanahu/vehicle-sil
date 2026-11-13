@@ -53,6 +53,7 @@
         "disable": [
           "Logger"
         ],
+        "manual": [],
         "speed": null,
         "start_paused": true,
         "started_at": "2026-01-01T00:00:00.000Z",
@@ -310,6 +311,7 @@
         "disable": [
           "Logger"
         ],
+        "manual": [],
         "speed": null,
         "start_paused": true,
         "started_at": "2026-01-01T00:00:00.000Z",
@@ -362,6 +364,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -450,6 +453,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -539,6 +543,7 @@
               "describe": false,
               "required": false,
               "enabled": false,
+              "manual": false,
               "step_ms": null,
               "status": "disabled",
               "reported": null,
@@ -811,6 +816,7 @@
         "disable": [
           "Logger"
         ],
+        "manual": [],
         "speed": null,
         "start_paused": true,
         "started_at": "2026-01-01T00:00:00.000Z",
@@ -863,6 +869,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -951,6 +958,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -1040,6 +1048,7 @@
               "describe": false,
               "required": false,
               "enabled": false,
+              "manual": false,
               "step_ms": null,
               "status": "disabled",
               "reported": null,
@@ -1175,6 +1184,7 @@
               "name": "Engine",
               "required": true,
               "enabled": true,
+              "manual": false,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1191,6 +1201,7 @@
               "name": "Dashboard",
               "required": true,
               "enabled": true,
+              "manual": false,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1207,6 +1218,7 @@
               "name": "Logger",
               "required": false,
               "enabled": false,
+              "manual": false,
               "ended": "not_started",
               "exit_code": null,
               "signal": null,
@@ -1255,6 +1267,7 @@
                 "describe": true,
                 "required": true,
                 "enabled": true,
+                "manual": false,
                 "step_ms": null,
                 "status": "described",
                 "reported": {
@@ -1343,6 +1356,7 @@
                 "describe": true,
                 "required": true,
                 "enabled": true,
+                "manual": false,
                 "step_ms": null,
                 "status": "described",
                 "reported": {
@@ -1432,6 +1446,7 @@
                 "describe": false,
                 "required": false,
                 "enabled": false,
+                "manual": false,
                 "step_ms": null,
                 "status": "disabled",
                 "reported": null,

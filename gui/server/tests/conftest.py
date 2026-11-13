@@ -88,7 +88,7 @@ def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None,
 
 REPOSITORY = TESTS.parents[2]
 CONTROL_FEATURES = ("events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,"
-                    "scenario,control-server")
+                    "scenario,manual-participants,control-server")
 
 
 @pytest.fixture(scope="session")

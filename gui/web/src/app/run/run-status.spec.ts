@@ -48,6 +48,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     id: 1,
     file: 'sim.yaml',
     disable: [],
+    manual: [],
     speed: null,
     start_paused: false,
     state: 'running',

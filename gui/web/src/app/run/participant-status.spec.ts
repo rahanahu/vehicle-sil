@@ -16,6 +16,9 @@ function participant(name: string, extra: Partial<ParticipantView> = {}): Partic
     stopRequested: false,
     omittedFields: [],
     controlLink: null,
+    manual: false,
+    commandLine: null,
+    workingDirectory: null,
     ...extra,
   };
 }
@@ -29,11 +32,18 @@ function link(
 
 @Component({
   imports: [ParticipantStatus],
-  template: `<app-participant-status [participants]="participants()" [launcherGone]="gone()" />`,
+  template: `<app-participant-status
+    [participants]="participants()"
+    [launcherGone]="gone()"
+    [ended]="ended()"
+    [stays]="stays()"
+  />`,
 })
 class Host {
   readonly participants = signal<readonly ParticipantView[]>([]);
   readonly gone = signal(false);
+  readonly ended = signal(false);
+  readonly stays = signal<ReadonlyMap<string, string>>(new Map());
 }
 
 describe('ParticipantStatus', () => {
@@ -133,6 +143,45 @@ describe('ParticipantStatus', () => {
     expect(row('Engine')?.getAttribute('data-state')).toBe('stopped');
     expect(row('Logger')?.getAttribute('data-state')).toBe('stopped');
     expect(row('Engine')?.textContent).toContain('■');
+  });
+
+  it('shows the command to start a participant the user starts, as text, until it joins', async () => {
+    const line = '/ecu/dash --name Dashboard <b>x</b>';
+    const manual = { manual: true, commandLine: line, workingDirectory: '/root dir' };
+    fixture.componentInstance.participants.set([
+      participant('Dashboard', { state: 'manual', pid: null, ...manual }),
+    ]);
+    await fixture.whenStable();
+    expect(row('Dashboard')?.textContent).toContain('自分で起動する: 参加を待っています');
+    const command = row('Dashboard')?.querySelector('[data-testid="manual-command-Dashboard"]');
+    expect(command?.querySelector('pre')?.textContent).toBe(line); // HTML として読まない
+    expect(command?.querySelector('b')).toBeNull();
+    expect(command?.textContent).toContain('/root dir');
+
+    fixture.componentInstance.participants.set([
+      participant('Dashboard', { state: 'joined', pid: null, ...manual }),
+    ]);
+    await fixture.whenStable();
+    expect(row('Dashboard')?.textContent).toContain('参加した（自分で起動）');
+    expect(row('Dashboard')?.querySelector('[data-testid="manual-command-Dashboard"]')).toBeNull();
+
+    // 終わった後も残っているとランチャーが知らせた
+    fixture.componentInstance.ended.set(true);
+    fixture.componentInstance.stays.set(
+      new Map([['Dashboard', 'Dashboard (started by you, manual) ...']]),
+    );
+    await fixture.whenStable();
+    expect(
+      row('Dashboard')?.querySelector('[data-testid="manual-stays-Dashboard"]')?.textContent,
+    ).toContain('自分で終わらせてください');
+
+    // 参加しないまま終わった
+    fixture.componentInstance.participants.set([
+      participant('Dashboard', { state: 'manual', pid: null, ...manual }),
+    ]);
+    await fixture.whenStable();
+    expect(row('Dashboard')?.textContent).toContain('参加しなかった（自分で起動）');
+    expect(row('Dashboard')?.querySelector('[data-testid="manual-command-Dashboard"]')).toBeNull();
   });
 
   it('names the fields the server left out', async () => {

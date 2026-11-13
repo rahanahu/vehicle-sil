@@ -39,6 +39,7 @@ EXAMPLES = {
     "write", "ws-variables", "ws-variables-failed", "error-unknown-variable", "error-not-writable", "error-session-changed",
     "error-variables-not-ready", "error-invalid-watch", "dashboard", "dashboard-errors", "dashboard-none",
     "scenarios", "check-scenario", "error-scenario-not-listed", "ws-scenario", "recording", "error-scenario-running",
+    "check-manual", "ws-manual",
 }
 
 
@@ -178,6 +179,9 @@ def test_http_examples(tmp_path: Path) -> None:
                      "A check with one participant left out."),
                     ("check-failed", {"file": "check-error.yaml", "disable": []},
                      "A check that found an error (still status 200: the check ran)."),
+                    ("check-manual", {"file": "simulation.yaml", "disable": [], "manual": ["Dashboard"]},
+                     "A check with one participant that the user starts (manual): its manual is true, and a note "
+                     "participant-manual."),
             ):
                 status, body = await c.post("api/check", req)
                 check_example(name, http(text, "POST", "api/check", req, status, body), gui)
@@ -349,6 +353,10 @@ SCENARIOS = {
                                                 "offer its variables (not_offered, a note of the check), Logger has "
                                                 "none; the control_link events before running, kept in the summary's "
                                                 "participants (control_link), the warnings at the end."),
+    "manual": ("manual.yaml", "A run with a participant that the user starts (manual: true in the file): the "
+                              "participant event of state manual (command, working_directory, command_line) instead "
+                              "of started, then joined when the user has started it; at the end the launcher's log "
+                              "says that it has not left the simulation (the launcher does not end it)."),
     "loose-fields": ("loose-fields.yaml", "Known events whose fields that the server does not check are missing or "
                                           "of other types (a finding with only severity and message, a registry "
                                           "with uri null, a participant with a number as signal and message, a log "

@@ -1,0 +1,1781 @@
+{
+  "description": "A run with a participant that the user starts (manual: true in the file): the participant event of state manual (command, working_directory, command_line) instead of started, then joined when the user has started it; at the end the launcher's log says that it has not left the simulation (the launcher does not end it).",
+  "client": [
+    {
+      "type": "auth",
+      "token": "<token>"
+    }
+  ],
+  "server": [
+    {
+      "type": "hello",
+      "vehicle_sil_gui": 1,
+      "version": "0.1.0",
+      "instance": "0123456789abcdef",
+      "session": null,
+      "replay": null
+    },
+    {
+      "type": "synced",
+      "session": null,
+      "last_seq": null
+    },
+    {
+      "type": "session",
+      "session": {
+        "id": 1,
+        "file": "manual.yaml",
+        "disable": [],
+        "manual": [],
+        "speed": null,
+        "start_paused": false,
+        "started_at": "2026-01-01T00:00:00.000Z",
+        "ended_at": null,
+        "state": "running",
+        "launcher": {
+          "pid": 10001,
+          "running": true,
+          "exit_code": null,
+          "signal": null,
+          "silent_s": null
+        },
+        "stop": "none",
+        "phase": null,
+        "last_seq": null,
+        "last_t_ms": null,
+        "time": null,
+        "check": null,
+        "registry": null,
+        "participants": [],
+        "participants_omitted": 0,
+        "findings": [],
+        "findings_omitted": 0,
+        "last_command": null,
+        "result": null,
+        "log": {},
+        "problems": [],
+        "problems_omitted": 0,
+        "scenario": null
+      }
+    },
+    {
+      "type": "variables",
+      "session": 1,
+      "variables": {
+        "state": "off",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "peers": [],
+        "peers_omitted": 0,
+        "variables_omitted": 0,
+        "operations": [],
+        "operations_from_seq": 0,
+        "operations_open_omitted": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "hello",
+        "seq": 0,
+        "t_ms": 0,
+        "vehicle_sil_events": 1,
+        "vehicle_sil": "0.1.0",
+        "pid": 10001,
+        "file": "manual.yaml",
+        "arguments": [
+          "run",
+          "--events",
+          "--stdin-commands",
+          "--",
+          "manual.yaml"
+        ]
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
+        "seq": 1,
+        "t_ms": 10,
+        "phase": "checking"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "check",
+        "seq": 2,
+        "t_ms": 20,
+        "check": {
+          "vehicle_sil_check": 1,
+          "vehicle_sil": "0.1.0",
+          "file": "manual.yaml",
+          "result": "passed",
+          "strict": false,
+          "errors": 0,
+          "warnings": 0,
+          "notes": 1,
+          "stop_at_ms": 1000,
+          "start_timeout_ms": 30000,
+          "stop_timeout_ms": 10000,
+          "registry_uri": null,
+          "participants": [
+            {
+              "name": "Engine",
+              "line": 9,
+              "command": [
+                "engine/vehicle_sil_engine_ecu"
+              ],
+              "describe": true,
+              "required": true,
+              "enabled": true,
+              "manual": false,
+              "step_ms": null,
+              "status": "described",
+              "reported": {
+                "vehicle_sil": "0.1.0",
+                "name": "Engine",
+                "step_ns": 10000000,
+                "networks": [
+                  {
+                    "name": "J1939_CAN",
+                    "kind": "can",
+                    "use": "raw",
+                    "nodes": []
+                  }
+                ]
+              },
+              "variables": [
+                {
+                  "name": "ecu.connected",
+                  "type": "bool",
+                  "causality": "input",
+                  "unit": "",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "items": [],
+                  "builtin": true
+                },
+                {
+                  "name": "engine.demand",
+                  "type": "real",
+                  "causality": "input",
+                  "unit": "%",
+                  "min": 0,
+                  "max": 100,
+                  "step": null,
+                  "description": "requested level",
+                  "items": [],
+                  "builtin": false
+                },
+                {
+                  "name": "engine.speed",
+                  "type": "integer",
+                  "causality": "output",
+                  "unit": "rpm",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "",
+                  "items": [],
+                  "builtin": false
+                },
+                {
+                  "name": "engine.mode",
+                  "type": "enum",
+                  "causality": "parameter",
+                  "unit": "",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "operating mode",
+                  "items": [
+                    {
+                      "name": "off",
+                      "value": 0
+                    },
+                    {
+                      "name": "on",
+                      "value": 1
+                    }
+                  ],
+                  "builtin": false
+                }
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
+            },
+            {
+              "name": "Dashboard",
+              "line": 11,
+              "command": [
+                "dashboard/vehicle_sil_dashboard_ecu"
+              ],
+              "describe": true,
+              "required": true,
+              "enabled": true,
+              "manual": true,
+              "step_ms": null,
+              "status": "described",
+              "reported": {
+                "vehicle_sil": "0.1.0",
+                "name": "Dashboard",
+                "step_ns": 10000000,
+                "networks": [
+                  {
+                    "name": "J1939_CAN",
+                    "kind": "can",
+                    "use": "raw",
+                    "nodes": []
+                  }
+                ]
+              },
+              "variables": [
+                {
+                  "name": "ecu.connected",
+                  "type": "bool",
+                  "causality": "input",
+                  "unit": "",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "items": [],
+                  "builtin": true
+                },
+                {
+                  "name": "dashboard.demand",
+                  "type": "real",
+                  "causality": "input",
+                  "unit": "%",
+                  "min": 0,
+                  "max": 100,
+                  "step": null,
+                  "description": "requested level",
+                  "items": [],
+                  "builtin": false
+                },
+                {
+                  "name": "dashboard.speed",
+                  "type": "integer",
+                  "causality": "output",
+                  "unit": "rpm",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "",
+                  "items": [],
+                  "builtin": false
+                },
+                {
+                  "name": "dashboard.mode",
+                  "type": "enum",
+                  "causality": "parameter",
+                  "unit": "",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "operating mode",
+                  "items": [
+                    {
+                      "name": "off",
+                      "value": 0
+                    },
+                    {
+                      "name": "on",
+                      "value": 1
+                    }
+                  ],
+                  "builtin": false
+                }
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
+            }
+          ],
+          "networks": [
+            {
+              "name": "J1939_CAN",
+              "kind": "can",
+              "line": 6,
+              "participants": [
+                "Engine",
+                "Dashboard"
+              ]
+            }
+          ],
+          "findings": [
+            {
+              "severity": "note",
+              "code": "participant-manual",
+              "file": "manual.yaml",
+              "line": 11,
+              "participant": "Dashboard",
+              "network": null,
+              "message": "participant 'Dashboard': you start it yourself (manual: true, or --manual): run does not start it, but prints the command to start it with, and waits for it to join without a time limit (with --timeout-ms, at most that long)",
+              "detail": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
+        "seq": 3,
+        "t_ms": 30,
+        "phase": "starting"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "registry",
+        "seq": 4,
+        "t_ms": 40,
+        "uri": "silkit://127.0.0.1:8510"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 5,
+        "t_ms": 50,
+        "source": "vehicle_sil_launch",
+        "line": "registry at silkit://127.0.0.1:8510"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 6,
+        "t_ms": 60,
+        "source": "vehicle_sil_launch",
+        "line": "starting Engine: /path/to/root/engine/vehicle_sil_engine_ecu --name Engine --registry-uri silkit://127.0.0.1:8510 --start-timeout-ms 1000000000000"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 7,
+        "t_ms": 70,
+        "name": "Engine",
+        "state": "started",
+        "pid": 10002,
+        "command": [
+          "/path/to/root/engine/vehicle_sil_engine_ecu",
+          "--name",
+          "Engine",
+          "--registry-uri",
+          "silkit://127.0.0.1:8510",
+          "--start-timeout-ms",
+          "1000000000000"
+        ],
+        "log": null
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 8,
+        "t_ms": 80,
+        "name": "Dashboard",
+        "state": "manual",
+        "command": [
+          "/path/to/root/dashboard/vehicle_sil_dashboard_ecu",
+          "--name",
+          "Dashboard",
+          "--registry-uri",
+          "silkit://127.0.0.1:8510",
+          "--start-timeout-ms",
+          "1000000000000"
+        ],
+        "working_directory": "/path/to/root",
+        "command_line": "/path/to/root/dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://127.0.0.1:8510 --start-timeout-ms 1000000000000"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 9,
+        "t_ms": 90,
+        "source": "vehicle_sil_launch",
+        "line": "not starting Dashboard: start it yourself (manual: true, or --manual); the simulation waits for it to join. In the directory /path/to/root, run:"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 10,
+        "t_ms": 100,
+        "source": "vehicle_sil_launch",
+        "line": "  /path/to/root/dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://127.0.0.1:8510 --start-timeout-ms 1000000000000"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
+        "seq": 11,
+        "t_ms": 110,
+        "phase": "waiting"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 12,
+        "t_ms": 120,
+        "name": "Engine",
+        "state": "joined"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 13,
+        "t_ms": 130,
+        "source": "vehicle_sil_launch",
+        "line": "waiting for Dashboard to join (manual): start it with the command above; Ctrl+C stops the run"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 14,
+        "t_ms": 140,
+        "name": "Dashboard",
+        "state": "joined"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 15,
+        "t_ms": 150,
+        "name": "Engine",
+        "state": "connected",
+        "variables": 4
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 16,
+        "t_ms": 160,
+        "name": "Dashboard",
+        "state": "connected",
+        "variables": 4
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
+        "seq": 17,
+        "t_ms": 170,
+        "phase": "running"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 18,
+        "t_ms": 180,
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 19,
+        "t_ms": 190,
+        "sim_ms": 0,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 20,
+        "t_ms": 200,
+        "source": "Engine",
+        "line": "step 1: t = 100 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 21,
+        "t_ms": 210,
+        "sim_ms": 100,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 22,
+        "t_ms": 220,
+        "source": "Engine",
+        "line": "step 2: t = 200 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 23,
+        "t_ms": 230,
+        "sim_ms": 200,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 24,
+        "t_ms": 240,
+        "source": "Engine",
+        "line": "step 3: t = 300 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 25,
+        "t_ms": 250,
+        "sim_ms": 300,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 26,
+        "t_ms": 260,
+        "source": "Engine",
+        "line": "step 4: t = 400 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 27,
+        "t_ms": 270,
+        "sim_ms": 400,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 28,
+        "t_ms": 280,
+        "source": "Engine",
+        "line": "step 5: t = 500 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 29,
+        "t_ms": 290,
+        "sim_ms": 500,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 30,
+        "t_ms": 300,
+        "source": "Engine",
+        "line": "step 6: t = 600 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 31,
+        "t_ms": 310,
+        "sim_ms": 600,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 32,
+        "t_ms": 320,
+        "source": "Engine",
+        "line": "step 7: t = 700 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 33,
+        "t_ms": 330,
+        "sim_ms": 700,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 34,
+        "t_ms": 340,
+        "source": "Engine",
+        "line": "step 8: t = 800 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 35,
+        "t_ms": 350,
+        "sim_ms": 800,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 36,
+        "t_ms": 360,
+        "source": "Engine",
+        "line": "step 9: t = 900 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 37,
+        "t_ms": 370,
+        "sim_ms": 900,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 38,
+        "t_ms": 380,
+        "source": "Engine",
+        "line": "step 10: t = 1000 ms"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 39,
+        "t_ms": 390,
+        "sim_ms": 1000,
+        "speed": "max",
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 0,
+        "max_late_ms": 0,
+        "slipped_ms": 0,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 40,
+        "t_ms": 400,
+        "source": "vehicle_sil_launch",
+        "line": "the simulation ended"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
+        "seq": 41,
+        "t_ms": 410,
+        "phase": "stopping"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 42,
+        "t_ms": 420,
+        "source": "vehicle_sil_launch",
+        "line": "Engine exited with code 0"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 43,
+        "t_ms": 430,
+        "name": "Engine",
+        "state": "ended",
+        "exit_code": 0,
+        "signal": null
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 44,
+        "t_ms": 440,
+        "source": "vehicle_sil_launch",
+        "line": "Dashboard (started by you, manual) has not left the simulation 10000 ms after it ended: the launcher cannot end it, so end it yourself"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "phase",
+        "seq": 45,
+        "t_ms": 450,
+        "phase": "ended"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "result",
+        "seq": 46,
+        "t_ms": 460,
+        "result": {
+          "vehicle_sil_run": 1,
+          "vehicle_sil": "0.1.0",
+          "file": "manual.yaml",
+          "result": "passed",
+          "strict": false,
+          "errors": 0,
+          "warnings": 0,
+          "notes": 1,
+          "simulation": "reached_stop_at",
+          "interrupted_by": null,
+          "timing": {
+            "speed": "max",
+            "time_step_ms": 10,
+            "ecu_step_ms": 10,
+            "step_delay_ms": 0,
+            "late_tolerance_ms": 10,
+            "sim_ms": 1000,
+            "wall_ms": 1000,
+            "actual_speed": 1.5,
+            "paced_steps": 0,
+            "late_steps": 0,
+            "max_late_ms": 0,
+            "slipped_ms": 0,
+            "late_ms": 0,
+            "paused_ms": 0
+          },
+          "participants": [
+            {
+              "name": "Engine",
+              "required": true,
+              "enabled": true,
+              "manual": false,
+              "ended": "exited",
+              "exit_code": 0,
+              "signal": null,
+              "left_processes": false,
+              "log": null,
+              "control_link": {
+                "state": "connected",
+                "variables": 4,
+                "version": null,
+                "late_messages": 0
+              }
+            },
+            {
+              "name": "Dashboard",
+              "required": true,
+              "enabled": true,
+              "manual": true,
+              "ended": "not_started",
+              "exit_code": null,
+              "signal": null,
+              "left_processes": false,
+              "log": null,
+              "control_link": {
+                "state": "connected",
+                "variables": 4,
+                "version": null,
+                "late_messages": 0
+              }
+            }
+          ],
+          "findings": [],
+          "check": {
+            "vehicle_sil_check": 1,
+            "vehicle_sil": "0.1.0",
+            "file": "manual.yaml",
+            "result": "passed",
+            "strict": false,
+            "errors": 0,
+            "warnings": 0,
+            "notes": 1,
+            "stop_at_ms": 1000,
+            "start_timeout_ms": 30000,
+            "stop_timeout_ms": 10000,
+            "registry_uri": null,
+            "participants": [
+              {
+                "name": "Engine",
+                "line": 9,
+                "command": [
+                  "engine/vehicle_sil_engine_ecu"
+                ],
+                "describe": true,
+                "required": true,
+                "enabled": true,
+                "manual": false,
+                "step_ms": null,
+                "status": "described",
+                "reported": {
+                  "vehicle_sil": "0.1.0",
+                  "name": "Engine",
+                  "step_ns": 10000000,
+                  "networks": [
+                    {
+                      "name": "J1939_CAN",
+                      "kind": "can",
+                      "use": "raw",
+                      "nodes": []
+                    }
+                  ]
+                },
+                "variables": [
+                  {
+                    "name": "ecu.connected",
+                    "type": "bool",
+                    "causality": "input",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "items": [],
+                    "builtin": true
+                  },
+                  {
+                    "name": "engine.demand",
+                    "type": "real",
+                    "causality": "input",
+                    "unit": "%",
+                    "min": 0,
+                    "max": 100,
+                    "step": null,
+                    "description": "requested level",
+                    "items": [],
+                    "builtin": false
+                  },
+                  {
+                    "name": "engine.speed",
+                    "type": "integer",
+                    "causality": "output",
+                    "unit": "rpm",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "",
+                    "items": [],
+                    "builtin": false
+                  },
+                  {
+                    "name": "engine.mode",
+                    "type": "enum",
+                    "causality": "parameter",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "operating mode",
+                    "items": [
+                      {
+                        "name": "off",
+                        "value": 0
+                      },
+                      {
+                        "name": "on",
+                        "value": 1
+                      }
+                    ],
+                    "builtin": false
+                  }
+                ],
+                "control": {
+                  "transport": "silkit",
+                  "wire_version": 1
+                }
+              },
+              {
+                "name": "Dashboard",
+                "line": 11,
+                "command": [
+                  "dashboard/vehicle_sil_dashboard_ecu"
+                ],
+                "describe": true,
+                "required": true,
+                "enabled": true,
+                "manual": true,
+                "step_ms": null,
+                "status": "described",
+                "reported": {
+                  "vehicle_sil": "0.1.0",
+                  "name": "Dashboard",
+                  "step_ns": 10000000,
+                  "networks": [
+                    {
+                      "name": "J1939_CAN",
+                      "kind": "can",
+                      "use": "raw",
+                      "nodes": []
+                    }
+                  ]
+                },
+                "variables": [
+                  {
+                    "name": "ecu.connected",
+                    "type": "bool",
+                    "causality": "input",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "items": [],
+                    "builtin": true
+                  },
+                  {
+                    "name": "dashboard.demand",
+                    "type": "real",
+                    "causality": "input",
+                    "unit": "%",
+                    "min": 0,
+                    "max": 100,
+                    "step": null,
+                    "description": "requested level",
+                    "items": [],
+                    "builtin": false
+                  },
+                  {
+                    "name": "dashboard.speed",
+                    "type": "integer",
+                    "causality": "output",
+                    "unit": "rpm",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "",
+                    "items": [],
+                    "builtin": false
+                  },
+                  {
+                    "name": "dashboard.mode",
+                    "type": "enum",
+                    "causality": "parameter",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "operating mode",
+                    "items": [
+                      {
+                        "name": "off",
+                        "value": 0
+                      },
+                      {
+                        "name": "on",
+                        "value": 1
+                      }
+                    ],
+                    "builtin": false
+                  }
+                ],
+                "control": {
+                  "transport": "silkit",
+                  "wire_version": 1
+                }
+              }
+            ],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "line": 6,
+                "participants": [
+                  "Engine",
+                  "Dashboard"
+                ]
+              }
+            ],
+            "findings": [
+              {
+                "severity": "note",
+                "code": "participant-manual",
+                "file": "manual.yaml",
+                "line": 11,
+                "participant": "Dashboard",
+                "network": null,
+                "message": "participant 'Dashboard': you start it yourself (manual: true, or --manual): run does not start it, but prints the command to start it with, and waits for it to join without a time limit (with --timeout-ms, at most that long)",
+                "detail": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "session",
+      "session": {
+        "id": 1,
+        "file": "manual.yaml",
+        "disable": [],
+        "manual": [],
+        "speed": null,
+        "start_paused": false,
+        "started_at": "2026-01-01T00:00:00.000Z",
+        "ended_at": "2026-01-01T00:00:01.000Z",
+        "state": "ended",
+        "launcher": {
+          "pid": 10001,
+          "running": false,
+          "exit_code": 0,
+          "signal": null,
+          "silent_s": null
+        },
+        "stop": "none",
+        "phase": "ended",
+        "last_seq": 46,
+        "last_t_ms": 460,
+        "time": {
+          "event": "time",
+          "seq": 39,
+          "t_ms": 390,
+          "sim_ms": 1000,
+          "speed": "max",
+          "paused": false,
+          "actual_speed": 1.5,
+          "late_steps": 0,
+          "max_late_ms": 0,
+          "slipped_ms": 0,
+          "late_ms": 0
+        },
+        "check": {
+          "vehicle_sil_check": 1,
+          "vehicle_sil": "0.1.0",
+          "file": "manual.yaml",
+          "result": "passed",
+          "strict": false,
+          "errors": 0,
+          "warnings": 0,
+          "notes": 1,
+          "stop_at_ms": 1000,
+          "start_timeout_ms": 30000,
+          "stop_timeout_ms": 10000,
+          "registry_uri": null,
+          "participants": [
+            {
+              "name": "Engine",
+              "line": 9,
+              "command": [
+                "engine/vehicle_sil_engine_ecu"
+              ],
+              "describe": true,
+              "required": true,
+              "enabled": true,
+              "manual": false,
+              "step_ms": null,
+              "status": "described",
+              "reported": {
+                "vehicle_sil": "0.1.0",
+                "name": "Engine",
+                "step_ns": 10000000,
+                "networks": [
+                  {
+                    "name": "J1939_CAN",
+                    "kind": "can",
+                    "use": "raw",
+                    "nodes": []
+                  }
+                ]
+              },
+              "variables": [
+                {
+                  "name": "ecu.connected",
+                  "type": "bool",
+                  "causality": "input",
+                  "unit": "",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "items": [],
+                  "builtin": true
+                },
+                {
+                  "name": "engine.demand",
+                  "type": "real",
+                  "causality": "input",
+                  "unit": "%",
+                  "min": 0,
+                  "max": 100,
+                  "step": null,
+                  "description": "requested level",
+                  "items": [],
+                  "builtin": false
+                },
+                {
+                  "name": "engine.speed",
+                  "type": "integer",
+                  "causality": "output",
+                  "unit": "rpm",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "",
+                  "items": [],
+                  "builtin": false
+                },
+                {
+                  "name": "engine.mode",
+                  "type": "enum",
+                  "causality": "parameter",
+                  "unit": "",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "operating mode",
+                  "items": [
+                    {
+                      "name": "off",
+                      "value": 0
+                    },
+                    {
+                      "name": "on",
+                      "value": 1
+                    }
+                  ],
+                  "builtin": false
+                }
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
+            },
+            {
+              "name": "Dashboard",
+              "line": 11,
+              "command": [
+                "dashboard/vehicle_sil_dashboard_ecu"
+              ],
+              "describe": true,
+              "required": true,
+              "enabled": true,
+              "manual": true,
+              "step_ms": null,
+              "status": "described",
+              "reported": {
+                "vehicle_sil": "0.1.0",
+                "name": "Dashboard",
+                "step_ns": 10000000,
+                "networks": [
+                  {
+                    "name": "J1939_CAN",
+                    "kind": "can",
+                    "use": "raw",
+                    "nodes": []
+                  }
+                ]
+              },
+              "variables": [
+                {
+                  "name": "ecu.connected",
+                  "type": "bool",
+                  "causality": "input",
+                  "unit": "",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "items": [],
+                  "builtin": true
+                },
+                {
+                  "name": "dashboard.demand",
+                  "type": "real",
+                  "causality": "input",
+                  "unit": "%",
+                  "min": 0,
+                  "max": 100,
+                  "step": null,
+                  "description": "requested level",
+                  "items": [],
+                  "builtin": false
+                },
+                {
+                  "name": "dashboard.speed",
+                  "type": "integer",
+                  "causality": "output",
+                  "unit": "rpm",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "",
+                  "items": [],
+                  "builtin": false
+                },
+                {
+                  "name": "dashboard.mode",
+                  "type": "enum",
+                  "causality": "parameter",
+                  "unit": "",
+                  "min": null,
+                  "max": null,
+                  "step": null,
+                  "description": "operating mode",
+                  "items": [
+                    {
+                      "name": "off",
+                      "value": 0
+                    },
+                    {
+                      "name": "on",
+                      "value": 1
+                    }
+                  ],
+                  "builtin": false
+                }
+              ],
+              "control": {
+                "transport": "silkit",
+                "wire_version": 1
+              }
+            }
+          ],
+          "networks": [
+            {
+              "name": "J1939_CAN",
+              "kind": "can",
+              "line": 6,
+              "participants": [
+                "Engine",
+                "Dashboard"
+              ]
+            }
+          ],
+          "findings": [
+            {
+              "severity": "note",
+              "code": "participant-manual",
+              "file": "manual.yaml",
+              "line": 11,
+              "participant": "Dashboard",
+              "network": null,
+              "message": "participant 'Dashboard': you start it yourself (manual: true, or --manual): run does not start it, but prints the command to start it with, and waits for it to join without a time limit (with --timeout-ms, at most that long)",
+              "detail": null
+            }
+          ]
+        },
+        "registry": {
+          "uri": "silkit://127.0.0.1:8510"
+        },
+        "participants": [
+          {
+            "name": "Engine",
+            "state": "ended",
+            "pid": 10002,
+            "command": [
+              "/path/to/root/engine/vehicle_sil_engine_ecu",
+              "--name",
+              "Engine",
+              "--registry-uri",
+              "silkit://127.0.0.1:8510",
+              "--start-timeout-ms",
+              "1000000000000"
+            ],
+            "log": null,
+            "control_link": {
+              "state": "connected",
+              "variables": 4
+            },
+            "exit_code": 0,
+            "signal": null
+          },
+          {
+            "name": "Dashboard",
+            "state": "joined",
+            "command": [
+              "/path/to/root/dashboard/vehicle_sil_dashboard_ecu",
+              "--name",
+              "Dashboard",
+              "--registry-uri",
+              "silkit://127.0.0.1:8510",
+              "--start-timeout-ms",
+              "1000000000000"
+            ],
+            "working_directory": "/path/to/root",
+            "command_line": "/path/to/root/dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://127.0.0.1:8510 --start-timeout-ms 1000000000000",
+            "control_link": {
+              "state": "connected",
+              "variables": 4
+            }
+          }
+        ],
+        "participants_omitted": 0,
+        "findings": [],
+        "findings_omitted": 0,
+        "last_command": null,
+        "result": {
+          "vehicle_sil_run": 1,
+          "vehicle_sil": "0.1.0",
+          "file": "manual.yaml",
+          "result": "passed",
+          "strict": false,
+          "errors": 0,
+          "warnings": 0,
+          "notes": 1,
+          "simulation": "reached_stop_at",
+          "interrupted_by": null,
+          "timing": {
+            "speed": "max",
+            "time_step_ms": 10,
+            "ecu_step_ms": 10,
+            "step_delay_ms": 0,
+            "late_tolerance_ms": 10,
+            "sim_ms": 1000,
+            "wall_ms": 1000,
+            "actual_speed": 1.5,
+            "paced_steps": 0,
+            "late_steps": 0,
+            "max_late_ms": 0,
+            "slipped_ms": 0,
+            "late_ms": 0,
+            "paused_ms": 0
+          },
+          "participants": [
+            {
+              "name": "Engine",
+              "required": true,
+              "enabled": true,
+              "manual": false,
+              "ended": "exited",
+              "exit_code": 0,
+              "signal": null,
+              "left_processes": false,
+              "log": null,
+              "control_link": {
+                "state": "connected",
+                "variables": 4,
+                "version": null,
+                "late_messages": 0
+              }
+            },
+            {
+              "name": "Dashboard",
+              "required": true,
+              "enabled": true,
+              "manual": true,
+              "ended": "not_started",
+              "exit_code": null,
+              "signal": null,
+              "left_processes": false,
+              "log": null,
+              "control_link": {
+                "state": "connected",
+                "variables": 4,
+                "version": null,
+                "late_messages": 0
+              }
+            }
+          ],
+          "findings": [],
+          "check": {
+            "vehicle_sil_check": 1,
+            "vehicle_sil": "0.1.0",
+            "file": "manual.yaml",
+            "result": "passed",
+            "strict": false,
+            "errors": 0,
+            "warnings": 0,
+            "notes": 1,
+            "stop_at_ms": 1000,
+            "start_timeout_ms": 30000,
+            "stop_timeout_ms": 10000,
+            "registry_uri": null,
+            "participants": [
+              {
+                "name": "Engine",
+                "line": 9,
+                "command": [
+                  "engine/vehicle_sil_engine_ecu"
+                ],
+                "describe": true,
+                "required": true,
+                "enabled": true,
+                "manual": false,
+                "step_ms": null,
+                "status": "described",
+                "reported": {
+                  "vehicle_sil": "0.1.0",
+                  "name": "Engine",
+                  "step_ns": 10000000,
+                  "networks": [
+                    {
+                      "name": "J1939_CAN",
+                      "kind": "can",
+                      "use": "raw",
+                      "nodes": []
+                    }
+                  ]
+                },
+                "variables": [
+                  {
+                    "name": "ecu.connected",
+                    "type": "bool",
+                    "causality": "input",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "items": [],
+                    "builtin": true
+                  },
+                  {
+                    "name": "engine.demand",
+                    "type": "real",
+                    "causality": "input",
+                    "unit": "%",
+                    "min": 0,
+                    "max": 100,
+                    "step": null,
+                    "description": "requested level",
+                    "items": [],
+                    "builtin": false
+                  },
+                  {
+                    "name": "engine.speed",
+                    "type": "integer",
+                    "causality": "output",
+                    "unit": "rpm",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "",
+                    "items": [],
+                    "builtin": false
+                  },
+                  {
+                    "name": "engine.mode",
+                    "type": "enum",
+                    "causality": "parameter",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "operating mode",
+                    "items": [
+                      {
+                        "name": "off",
+                        "value": 0
+                      },
+                      {
+                        "name": "on",
+                        "value": 1
+                      }
+                    ],
+                    "builtin": false
+                  }
+                ],
+                "control": {
+                  "transport": "silkit",
+                  "wire_version": 1
+                }
+              },
+              {
+                "name": "Dashboard",
+                "line": 11,
+                "command": [
+                  "dashboard/vehicle_sil_dashboard_ecu"
+                ],
+                "describe": true,
+                "required": true,
+                "enabled": true,
+                "manual": true,
+                "step_ms": null,
+                "status": "described",
+                "reported": {
+                  "vehicle_sil": "0.1.0",
+                  "name": "Dashboard",
+                  "step_ns": 10000000,
+                  "networks": [
+                    {
+                      "name": "J1939_CAN",
+                      "kind": "can",
+                      "use": "raw",
+                      "nodes": []
+                    }
+                  ]
+                },
+                "variables": [
+                  {
+                    "name": "ecu.connected",
+                    "type": "bool",
+                    "causality": "input",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "items": [],
+                    "builtin": true
+                  },
+                  {
+                    "name": "dashboard.demand",
+                    "type": "real",
+                    "causality": "input",
+                    "unit": "%",
+                    "min": 0,
+                    "max": 100,
+                    "step": null,
+                    "description": "requested level",
+                    "items": [],
+                    "builtin": false
+                  },
+                  {
+                    "name": "dashboard.speed",
+                    "type": "integer",
+                    "causality": "output",
+                    "unit": "rpm",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "",
+                    "items": [],
+                    "builtin": false
+                  },
+                  {
+                    "name": "dashboard.mode",
+                    "type": "enum",
+                    "causality": "parameter",
+                    "unit": "",
+                    "min": null,
+                    "max": null,
+                    "step": null,
+                    "description": "operating mode",
+                    "items": [
+                      {
+                        "name": "off",
+                        "value": 0
+                      },
+                      {
+                        "name": "on",
+                        "value": 1
+                      }
+                    ],
+                    "builtin": false
+                  }
+                ],
+                "control": {
+                  "transport": "silkit",
+                  "wire_version": 1
+                }
+              }
+            ],
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "line": 6,
+                "participants": [
+                  "Engine",
+                  "Dashboard"
+                ]
+              }
+            ],
+            "findings": [
+              {
+                "severity": "note",
+                "code": "participant-manual",
+                "file": "manual.yaml",
+                "line": 11,
+                "participant": "Dashboard",
+                "network": null,
+                "message": "participant 'Dashboard': you start it yourself (manual: true, or --manual): run does not start it, but prints the command to start it with, and waits for it to join without a time limit (with --timeout-ms, at most that long)",
+                "detail": null
+              }
+            ]
+          }
+        },
+        "log": {
+          "vehicle_sil_launch": {
+            "kept": 9,
+            "dropped": 0
+          },
+          "Engine": {
+            "kept": 10,
+            "dropped": 0
+          }
+        },
+        "problems": [],
+        "problems_omitted": 0,
+        "scenario": null
+      }
+    }
+  ]
+}

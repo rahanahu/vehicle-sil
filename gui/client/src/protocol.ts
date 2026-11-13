@@ -243,6 +243,14 @@ export const FEATURE_SCENARIO = 'scenario';
  */
 export const FEATURE_SCENARIO_CONTROL = 'scenario-control';
 
+// --- ランチャー: 利用者が起動する participant（docs/simulation-config.md の「participant を自分で起動する」） -----
+
+/**
+ * ランチャーの features: 利用者が起動する participant（構成ファイルの `manual: true`、`--manual`）。ランチャーは
+ * 起動せず、起動するコマンドを participant の事象（state が `manual`）で知らせ、参加を待つ。
+ */
+export const FEATURE_MANUAL = 'manual-participants';
+
 /** シナリオの手順の状態。running は事象だけ（結果の手順にはない）。 */
 export type ScenarioStepStatus = Open<'running' | 'passed' | 'failed' | 'unfinished' | 'not_run'>;
 
@@ -338,6 +346,8 @@ export interface CheckParticipant {
   line: number | null;
   required: boolean | null;
   enabled: boolean | null;
+  /** 利用者が起動する（構成ファイルの `manual: true` か `--manual`）。古いランチャーは書かないので false。 */
+  manual: boolean;
   step_ms: number | null;
   status: CheckStatus;
   /** 自己申告の変数。null は「わからない」（申告がない、外した、読めなかった）、空の配列は「0 個」。 */
@@ -353,6 +363,7 @@ const readCheckParticipant = (value: unknown, path: string, u?: Unreadable): Che
     line: field(f, path, 'line', soft(nullable(integer), null, u)),
     required: field(f, path, 'required', lenient(nullable(boolean), null, u)),
     enabled: field(f, path, 'enabled', lenient(nullable(boolean), null, u)),
+    manual: field(f, path, 'manual', soft(boolean, false, u)),
     step_ms: field(f, path, 'step_ms', lenient(nullable(number), null, u)),
     status: field(f, path, 'status', lenient(string, '', u)),
     variables: field(
@@ -455,6 +466,8 @@ export interface RunParticipant {
   name: string;
   required: boolean;
   enabled: boolean;
+  /** 利用者が起動した（する）participant。ended は not_started のまま（参加したかは事象の joined でわかる）。 */
+  manual: boolean;
   ended: Open<'exited' | 'stopped' | 'killed' | 'not_started'>;
   exit_code: number | null;
   signal: string | null;
@@ -526,6 +539,7 @@ const readRunParticipant = (value: unknown, path: string, u?: Unreadable): RunPa
     name: field(f, path, 'name', string),
     required: field(f, path, 'required', lenient(boolean, true, u)),
     enabled: field(f, path, 'enabled', lenient(boolean, true, u)),
+    manual: field(f, path, 'manual', soft(boolean, false, u)),
     ended: field(f, path, 'ended', lenient(string, '', u)),
     exit_code: field(f, path, 'exit_code', soft(nullable(integer), null, u)),
     signal: field(f, path, 'signal', soft(nullable(string), null, u)),
@@ -683,6 +697,8 @@ export type ParticipantState = Open<
   | 'disabled'
   | 'not_started'
   | 'started'
+  /** 利用者が起動する participant なので、起動しなかった（started の代わり）。参加すれば joined が来る。 */
+  | 'manual'
   | 'joined'
   | 'failed'
   | 'ended'
@@ -721,6 +737,10 @@ export type LauncherEvent =
       reason: string | null;
       /** not_started: 起動できなかった理由。failed: その所見の文（決まっていれば）。 */
       message: string | null;
+      /** manual: 起動するコマンドを、この OS のシェルに貼れる 1 行にしたもの（ランチャーのまま）。 */
+      command_line: string | null;
+      /** manual: そのコマンドを実行するディレクトリ。 */
+      working_directory: string | null;
     })
   | (EventBase & { event: 'log'; source: string; line: string })
   /** 変数を読み書きする口のつながり方（始まる直前に、起動した participant ごとに 1 回）。 */
@@ -869,6 +889,8 @@ function readEventFields(
         signal: field(f, path, 'signal', soft(nullable(string), null, u)),
         reason: field(f, path, 'reason', soft(nullable(string), null, u)),
         message: field(f, path, 'message', soft(nullable(string), null, u)),
+        command_line: field(f, path, 'command_line', soft(nullable(string), null, u)),
+        working_directory: field(f, path, 'working_directory', soft(nullable(string), null, u)),
       };
     case 'log_dropped':
       return {
@@ -1069,6 +1091,11 @@ export interface CheckRequest {
   /** 外す participant の名前（照合の結果にある名前だけ）。 */
   disable: string[];
   /**
+   * 利用者が起動する participant の名前（照合の結果にある名前で、disable にないものだけ）。ランチャーの `features` に
+   * `manual-participants` があるときだけ送る。
+   */
+  manual?: string[];
+  /**
    * シナリオ（`GET api/scenarios` の `path`。その構成ファイルの一覧にあるものだけ）。省くか null なら、なし。
    * ランチャーの `features` に `scenario` があるときだけ送る。
    */
@@ -1181,6 +1208,10 @@ export interface SummaryParticipant {
   omitted_fields: string[];
   /** ランチャーが止めるよう求めた（stop_requested の事象が来た。後の状態でも残る）。 */
   stop_requested: boolean;
+  /** manual の事象の command_line（起動するコマンドの 1 行）。なければ null。 */
+  command_line: string | null;
+  /** manual の事象の working_directory。なければ null。 */
+  working_directory: string | null;
   /** 変数を読み書きする口のつながり方（ランチャーの control_link の事象）。まだなければ null。 */
   control_link: ControlLink | null;
 }
@@ -1201,6 +1232,8 @@ const readSummaryParticipant = (
     message: field(f, path, 'message', soft(nullable(string), null, u)),
     omitted_fields: field(f, path, 'omitted_fields', soft(items(string, u), [], u)),
     stop_requested: field(f, path, 'stop_requested', soft(boolean, false, u)),
+    command_line: field(f, path, 'command_line', soft(nullable(string), null, u)),
+    working_directory: field(f, path, 'working_directory', soft(nullable(string), null, u)),
     control_link: field(
       f,
       path,
@@ -1262,6 +1295,8 @@ export interface SessionSummary {
   /** root からの相対パス。 */
   file: string;
   disable: string[];
+  /** 画面から利用者が起動すると指定した participant（`--manual`。構成ファイルの `manual: true` は照合の結果にある）。 */
+  manual: string[];
   /** 始めたときに指定した速さ（null は構成ファイルのまま）。いまの速さは time.speed。 */
   speed: Speed;
   /** 止めた状態で始めたか。 */
@@ -1353,6 +1388,7 @@ export const readSessionSummary: Reader<SessionSummary> = (value, path) => {
     stop: field(f, path, 'stop', string),
     file: field(f, path, 'file', lenient(string, '', u)),
     disable: field(f, path, 'disable', items(string, u)),
+    manual: field(f, path, 'manual', soft(items(string, u), [], u)),
     speed: field(f, path, 'speed', lenient(readSpeed, null, u)),
     start_paused: field(f, path, 'start_paused', soft(boolean, false, u)),
     phase: field(f, path, 'phase', soft(nullable(string), null, u)),

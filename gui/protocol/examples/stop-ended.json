@@ -12,6 +12,7 @@
       "disable": [
         "Logger"
       ],
+      "manual": [],
       "speed": null,
       "start_paused": false,
       "started_at": "2026-01-01T00:00:00.000Z",
@@ -64,6 +65,7 @@
             "describe": true,
             "required": true,
             "enabled": true,
+            "manual": false,
             "step_ms": null,
             "status": "described",
             "reported": {
@@ -152,6 +154,7 @@
             "describe": true,
             "required": true,
             "enabled": true,
+            "manual": false,
             "step_ms": null,
             "status": "described",
             "reported": {
@@ -241,6 +244,7 @@
             "describe": false,
             "required": false,
             "enabled": false,
+            "manual": false,
             "step_ms": null,
             "status": "disabled",
             "reported": null,
@@ -376,6 +380,7 @@
             "name": "Engine",
             "required": true,
             "enabled": true,
+            "manual": false,
             "ended": "exited",
             "exit_code": 0,
             "signal": null,
@@ -392,6 +397,7 @@
             "name": "Dashboard",
             "required": true,
             "enabled": true,
+            "manual": false,
             "ended": "exited",
             "exit_code": 0,
             "signal": null,
@@ -408,6 +414,7 @@
             "name": "Logger",
             "required": false,
             "enabled": false,
+            "manual": false,
             "ended": "not_started",
             "exit_code": null,
             "signal": null,
@@ -456,6 +463,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -544,6 +552,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -633,6 +642,7 @@
               "describe": false,
               "required": false,
               "enabled": false,
+              "manual": false,
               "step_ms": null,
               "status": "disabled",
               "reported": null,
@@ -676,7 +686,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

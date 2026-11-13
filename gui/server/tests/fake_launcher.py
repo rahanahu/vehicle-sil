@@ -10,10 +10,11 @@ speed on standard input. test_real_launcher.py compares what it writes with what
 Standard library only.
 
     fake_launcher.py version [--json]
-    fake_launcher.py check [--json] [--strict] [--scenario <file>] [--disable <name>]... [--enable <name>]... [--]
-                           <file>
+    fake_launcher.py check [--json] [--strict] [--scenario <file>] [--disable <name>]... [--enable <name>]...
+                           [--manual <name>]... [--] <file>
     fake_launcher.py run [--events] [--json] [--stdin-commands [--start-paused]] [--strict] [--disable <name>]...
-                         [--enable <name>]... [--speed <number|max>] [--scenario <file>] [--] <file>
+                         [--enable <name>]... [--manual <name>]... [--speed <number|max>] [--scenario <file>] [--]
+                         <file>
 
 The scenario comes from FAKE_LAUNCHER_SCENARIO, else from a line `# fake-launcher: <scenario>` in the file,
 else `pass`:
@@ -65,6 +66,15 @@ else `pass`:
                      control-link-not-offered in the check)
   deaf               like forever, but it never reads its standard input (on Linux its pipe is made as small as it
                      can be): a launcher that hangs while commands are written to it; only a signal ends it
+  manual-join        like pass, but the participants the user starts (manual) join FAKE_LAUNCHER_MANUAL_JOIN_MS
+                     (default 300) after the launcher waits for them; in the other scenarios they never join
+  manual-stay        like manual-join, and at the end they do not leave the simulation (the launcher's log says so)
+
+Participants the user starts (the feature manual-participants: `manual: true` in the file, or --manual <name>) are
+not started: the participant event of state `manual` (command, working_directory, command_line) and two log lines
+come in their place, and their check entry has `manual` true and the note participant-manual. A run with a required
+one waits for it to join (only a stop ends the wait when it never does: interrupted, simulation not_started, the
+started participants asked to stop and ended with code 130), and its ECUs get --start-timeout-ms 10^12.
 
 --scenario <file> (the feature scenario) plays a scenario file of the real launcher's format (docs/scenario.md) in
 its smallest form: the file is read with a line parser (name:, and under steps: one step per `- ` item, its kind the
@@ -112,7 +122,8 @@ step it is in (as the real launcher at its next controller step). Lateness is co
 
 Each started participant is a real sleeping process, a child of this one, so that a test can see whether
 stopping left processes behind. The configuration is read with a small line parser, not a YAML library:
-top-level `stop_at_ms:`, and under `participants:` the keys name, command, describe, required, enabled, step_ms.
+top-level `stop_at_ms:`, and under `participants:` the keys name, command, describe, required, enabled, manual,
+step_ms.
 """
 
 from __future__ import annotations
@@ -134,10 +145,11 @@ VERSION = "0.1.0"
 SCENARIOS = ("pass", "check-error", "participant-crash", "forever", "ignore-stop", "launcher-crash",
              "bad-lines", "future-events", "flood", "finding-flood", "bad-types", "orphan", "check-garbage",
              "non-finite", "result-then-wait", "log-dropped", "silent", "large-fields", "loose-fields",
-             "large-result", "late", "jitter", "deaf", "control-trouble")
+             "large-result", "late", "jitter", "deaf", "control-trouble", "manual-join", "manual-stay")
 USAGE = next(p for p in __doc__.split("\n\n") if p.lstrip().startswith("fake_launcher.py version"))
 STEP_MS = 100
-FEATURES = "events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,scenario"
+FEATURES = "events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,scenario," \
+           "manual-participants"
 # The control links (the launcher's side of the ECUs' variables), all of their words: the event, its states, the
 # keys of the check's and the result's participants[], what an ECU offers, and the codes of the findings
 CONTROL_EVENT = "control_link"
@@ -151,6 +163,7 @@ CONTROL_NOT_OFFERED_CODE = "control-link-not-offered"  # a note of the check
 CONTROL_FEATURE, CONTROL_SERVER_EVENT = "control-server", "control_server"  # run --control and its event
 SCENARIO_FEATURE, SCENARIO_CONTROL_FEATURE = "scenario", "scenario-control"
 SCENARIO_KINDS = ("set", "ramp", "wait_until", "expect")
+MANUAL_FEATURE = "manual-participants"
 
 
 def control_plan(config: dict, scenario: str) -> dict[str, str]:
@@ -222,6 +235,7 @@ def read_config(path: Path) -> dict:
         p.setdefault("describe", True)
         p.setdefault("required", True)
         p.setdefault("enabled", True)
+        p.setdefault("manual", False)
         p.setdefault("step_ms", None)
         p.setdefault("name", None)
     return config
@@ -327,7 +341,7 @@ def check(file: str, config: dict, scenario: str, strict: bool, play: dict | Non
     plan = control_plan(config, scenario)
     for p in config["participants"]:
         entry = {"name": p["name"], "line": p["line"], "command": p["command"], "describe": p["describe"],
-                 "required": p["required"], "enabled": p["enabled"], "step_ms": p["step_ms"]}
+                 "required": p["required"], "enabled": p["enabled"], "manual": p["manual"], "step_ms": p["step_ms"]}
         if not p["enabled"]:
             entry.update(status="disabled", reported=None, variables=None, **{CONTROL_CHECK_KEY: None})
             findings.append(finding("note", "participant-disabled", file, p["line"], p["name"], None,
@@ -352,6 +366,11 @@ def check(file: str, config: dict, scenario: str, strict: bool, play: dict | Non
                                         f"participant '{p['name']}': it has variables but does not offer them to "
                                         "the simulation (--no-control, or an executable too old to say): run cannot "
                                         "read or write them"))
+        if p["enabled"] and p["manual"]:
+            findings.append(finding("note", "participant-manual", file, p["line"], p["name"], None,
+                                    f"participant '{p['name']}': you start it yourself (manual: true, or --manual): "
+                                    "run does not start it, but prints the command to start it with, and waits for "
+                                    "it to join without a time limit (with --timeout-ms, at most that long)"))
         participants.append(entry)
     if scenario == "check-error":
         target = next((p for p in enabled if p["describe"]), enabled[0] if enabled else None)
@@ -419,9 +438,12 @@ def parse(argv: list[str]) -> dict:
     if SCENARIO_FEATURE in features:
         valued["check"] |= {"--scenario"}
         valued["run"] |= {"--scenario"}
+    if MANUAL_FEATURE in features:
+        valued["check"] |= {"--manual"}
+        valued["run"] |= {"--manual"}
     if command not in flags:
         raise Usage(f"unknown command '{command}': write version, check or run")
-    args = {"command": command, "disable": [], "enable": [], "files": [], "speed": None}
+    args = {"command": command, "disable": [], "enable": [], "manual": [], "files": [], "speed": None}
     i = 0
     while i < len(rest):
         a = rest[i]
@@ -741,9 +763,23 @@ def started_command(file: str, p: dict, uri: str, config: dict) -> list[str]:
         found = shutil.which(exe) or os.path.join(directory, exe)
     args = [a.replace("{registry_uri}", uri).replace("{name}", p["name"]) for a in command[1:]]
     if p["describe"]:
-        timeout = (config["start_timeout_ms"] or 30000) + (config["stop_timeout_ms"] or 10000) + 10000
+        timeout = MAX_MILLIS if waits_for_manual(config) else \
+            (config["start_timeout_ms"] or 30000) + (config["stop_timeout_ms"] or 10000) + 10000
         args += ["--name", p["name"], "--registry-uri", uri, "--start-timeout-ms", str(timeout)]
     return [found, *args]
+
+
+def waits_for_manual(config: dict) -> bool:
+    """Whether the start waits for a participant that the user starts (enabled, required and manual)."""
+    return any(p["enabled"] and p["required"] and p["manual"] for p in config["participants"])
+
+
+def shell_line(command: list[str]) -> str:
+    """The command as one line for this system's shell (POSIX sh; on Windows, cmd.exe's quoting of the C runtime)."""
+    if os.name == "nt":
+        return subprocess.list2cmdline(command)
+    import shlex
+    return shlex.join(command)
 
 
 def plan_time_step(config: dict, speed) -> dict:
@@ -776,7 +812,7 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
     participants = []
     for p in config["participants"]:
         participants.append({"name": p["name"], "required": p["required"], "enabled": p["enabled"],
-                             "ended": "not_started", "exit_code": None, "signal": None, "left_processes": False,
+                             "manual": p["manual"], "ended": "not_started", "exit_code": None, "signal": None, "left_processes": False,
                              "log": None, CONTROL_RESULT_KEY: control_link(CONTROL_NONE)})
     run_findings: list[dict] = []
     timing: dict | None = None  # the result's timing, once the simulation has ended
@@ -787,6 +823,7 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
               "start_ms": None, "at_ms": None, "end_ms": None, "code": None, "message": None}
              for i, s in enumerate(play["steps"] if play else [], start=1)]
     playing = {"current": 0, "status": "not_run", "over_at_ms": None}
+    joined_manual: list[str] = []  # the participants the user started that have joined
 
     def result(outcome: str, simulation, interrupted_by=None) -> dict:
         everything = result_check["findings"] + run_findings
@@ -802,6 +839,10 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
 
     def finish(outcome: str, simulation, code: int, interrupted_by=None) -> int:
         gate.detach()
+        if scenario == "manual-stay":  # the participants the user started have not left: the launcher cannot end them
+            for name in joined_manual:
+                say(f"{name} (started by you, manual) has not left the simulation {config['stop_timeout_ms']} ms "
+                    "after it ended: the launcher cannot end it, so end it yourself")
         if control is not None and control.server is not None:  # closed before the result, clients or not
             control.set_time(clock["sim"], False, running=False, ended=True)
             control.stop()
@@ -878,7 +919,16 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
     running = {}
     by_name = {p["name"]: p for p in config["participants"]}
     for p in participants:
-        if p["enabled"]:
+        if p["enabled"] and p["manual"]:
+            command = started_command(file, by_name[p["name"]], uri, config)
+            directory = os.path.dirname(os.path.abspath(file))
+            line = shell_line(command)
+            ev.emit("participant", name=p["name"], state="manual", command=command, working_directory=directory,
+                    command_line=line)
+            say(f"not starting {p['name']}: start it yourself (manual: true, or --manual); the simulation waits for "
+                f"it to join. In the directory {directory}, run:")
+            say(f"  {line}")
+        elif p["enabled"]:
             command = started_command(file, by_name[p["name"]], uri, config)
             if scenario == "large-fields" and not running:
                 command.append("--padding=" + "x" * 5000)
@@ -892,6 +942,34 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
     for name in running:
         if by_name[name]["describe"]:  # only participants with a lifecycle join
             ev.emit("participant", name=name, state="joined")
+    manual = [p["name"] for p in participants if p["enabled"] and p["manual"]]
+    awaited = [p["name"] for p in participants if p["enabled"] and p["manual"] and p["required"]]
+    if awaited:
+        say(f"waiting for {', '.join(awaited)} to join (manual): start {'it' if len(awaited) == 1 else 'them'} "
+            "with the command above; Ctrl+C stops the run")
+    if manual and scenario in ("manual-join", "manual-stay"):
+        until = time.monotonic() + int(os.environ.get("FAKE_LAUNCHER_MANUAL_JOIN_MS", "300")) / 1000
+        while stops.count == 0 and time.monotonic() < until:
+            time.sleep(0.02)
+        if stops.count == 0:
+            for name in manual:
+                joined_manual.append(name)
+                ev.emit("participant", name=name, state="joined")
+    while awaited and not joined_manual and stops.count == 0:  # they never join: until a stop
+        time.sleep(0.02)
+    if stops.count:  # a stop while it waited for them: the simulation does not start
+        say(f"interrupted ({stops.by}) before the simulation started")
+        note(interrupted(False))
+        ev.emit("phase", phase="stopping")
+        for name, proc in running.items():
+            say(f"asking {name} to stop (SIGTERM)")
+            ev.emit("participant", name=name, state="stop_requested")
+            proc.kill()
+            proc.wait()
+            entry_of = next(q for q in participants if q["name"] == name)
+            entry_of.update(ended="stopped", exit_code=130)
+            ev.emit("participant", name=name, state="ended", exit_code=130, signal=None)
+        return finish("interrupted", "not_started", 130, stops.by)
     if control is not None and args.get("start_paused"):
         # Standing still before the first step (--start-paused with a control server): until a resume or a step.
         say("standing still before the first step until a resume, step or run_until command (--start-paused with "
@@ -906,7 +984,7 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         step_event(1, "running")
     # Where each started participant's control link stands, in the file's order, before the simulation runs
     plan = control_plan(config, scenario)
-    for name in running:
+    for name in [p["name"] for p in participants if p["name"] in running or p["name"] in joined_manual]:
         state = plan.get(name, CONTROL_NONE)
         extra = {"variables": len(variables(name))} if state == CONTROL_CONNECTED else \
             {"version": CONTROL_VERSION + 1} if state == CONTROL_VERSION_MISMATCH else {}
@@ -1242,8 +1320,8 @@ def usage_result(file: str | None, outcome: str, code: str, message: str, strict
                                                                                      strict)}
 
 
-VALUED = {"--disable", "--enable", "--speed", "--log-dir", "--timeout-ms", "--describe-timeout-ms", "--control",
-          "--control-credentials", "--scenario"}
+VALUED = {"--disable", "--enable", "--manual", "--speed", "--log-dir", "--timeout-ms", "--describe-timeout-ms",
+          "--control", "--control-credentials", "--scenario"}
 
 
 def has_flag(argv: list[str], flag: str) -> bool:
@@ -1343,10 +1421,13 @@ def main(argv: list[str]) -> int:
             except (ImportError, AttributeError, OSError):
                 pass
     names = [p["name"] for p in config["participants"]]
-    unknown = [n for n in args["disable"] + args["enable"] if n not in names]
-    if unknown:
-        message = (f"--disable {unknown[0]}: the file has no participant with this name; its participants are "
-                   f"{', '.join(names)}")
+    unknown = [(flag, n) for flag in ("disable", "enable", "manual") for n in args[flag] if n not in names]
+    both = [n for n in args["disable"] if n in args["manual"]]
+    if unknown or both:
+        message = (f"--{unknown[0][0]} {unknown[0][1]}: the file has no participant with this name; its participants "
+                   f"are {', '.join(names)}" if unknown else
+                   f"--disable and --manual both name {both[0]}: give one of them (--disable leaves it out, --manual "
+                   "has you start it)")
         usage = unreadable_check(file, "usage", "usage", message, strict)
         if args.get("json"):
             print(json.dumps(usage, indent=2))
@@ -1360,6 +1441,8 @@ def main(argv: list[str]) -> int:
             p["enabled"] = False
         if p["name"] in args["enable"]:
             p["enabled"] = True
+        if p["name"] in args["manual"]:
+            p["manual"] = True
     if args["command"] == "check":
         time.sleep(int(os.environ.get("FAKE_LAUNCHER_CHECK_DELAY_MS", "0")) / 1000)
         if scenario == "check-garbage":

@@ -1,0 +1,269 @@
+{
+  "description": "A check with one participant that the user starts (manual): its manual is true, and a note participant-manual.",
+  "request": {
+    "method": "POST",
+    "path": "api/check",
+    "body": {
+      "file": "simulation.yaml",
+      "disable": [],
+      "manual": [
+        "Dashboard"
+      ]
+    }
+  },
+  "status": 200,
+  "response": {
+    "file": "simulation.yaml",
+    "disable": [],
+    "manual": [
+      "Dashboard"
+    ],
+    "scenario": null,
+    "exit_code": 0,
+    "check": {
+      "vehicle_sil_check": 1,
+      "vehicle_sil": "0.1.0",
+      "file": "simulation.yaml",
+      "result": "passed",
+      "strict": false,
+      "errors": 0,
+      "warnings": 0,
+      "notes": 2,
+      "stop_at_ms": 1000,
+      "start_timeout_ms": 30000,
+      "stop_timeout_ms": 10000,
+      "registry_uri": null,
+      "participants": [
+        {
+          "name": "Engine",
+          "line": 9,
+          "command": [
+            "engine/vehicle_sil_engine_ecu"
+          ],
+          "describe": true,
+          "required": true,
+          "enabled": true,
+          "manual": false,
+          "step_ms": null,
+          "status": "described",
+          "reported": {
+            "vehicle_sil": "0.1.0",
+            "name": "Engine",
+            "step_ns": 10000000,
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "use": "raw",
+                "nodes": []
+              }
+            ]
+          },
+          "variables": [
+            {
+              "name": "ecu.connected",
+              "type": "bool",
+              "causality": "input",
+              "unit": "",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+              "items": [],
+              "builtin": true
+            },
+            {
+              "name": "engine.demand",
+              "type": "real",
+              "causality": "input",
+              "unit": "%",
+              "min": 0,
+              "max": 100,
+              "step": null,
+              "description": "requested level",
+              "items": [],
+              "builtin": false
+            },
+            {
+              "name": "engine.speed",
+              "type": "integer",
+              "causality": "output",
+              "unit": "rpm",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "",
+              "items": [],
+              "builtin": false
+            },
+            {
+              "name": "engine.mode",
+              "type": "enum",
+              "causality": "parameter",
+              "unit": "",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "operating mode",
+              "items": [
+                {
+                  "name": "off",
+                  "value": 0
+                },
+                {
+                  "name": "on",
+                  "value": 1
+                }
+              ],
+              "builtin": false
+            }
+          ],
+          "control": {
+            "transport": "silkit",
+            "wire_version": 1
+          }
+        },
+        {
+          "name": "Dashboard",
+          "line": 11,
+          "command": [
+            "dashboard/vehicle_sil_dashboard_ecu"
+          ],
+          "describe": true,
+          "required": true,
+          "enabled": true,
+          "manual": true,
+          "step_ms": null,
+          "status": "described",
+          "reported": {
+            "vehicle_sil": "0.1.0",
+            "name": "Dashboard",
+            "step_ns": 10000000,
+            "networks": [
+              {
+                "name": "J1939_CAN",
+                "kind": "can",
+                "use": "raw",
+                "nodes": []
+              }
+            ]
+          },
+          "variables": [
+            {
+              "name": "ecu.connected",
+              "type": "bool",
+              "causality": "input",
+              "unit": "",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+              "items": [],
+              "builtin": true
+            },
+            {
+              "name": "dashboard.demand",
+              "type": "real",
+              "causality": "input",
+              "unit": "%",
+              "min": 0,
+              "max": 100,
+              "step": null,
+              "description": "requested level",
+              "items": [],
+              "builtin": false
+            },
+            {
+              "name": "dashboard.speed",
+              "type": "integer",
+              "causality": "output",
+              "unit": "rpm",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "",
+              "items": [],
+              "builtin": false
+            },
+            {
+              "name": "dashboard.mode",
+              "type": "enum",
+              "causality": "parameter",
+              "unit": "",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "operating mode",
+              "items": [
+                {
+                  "name": "off",
+                  "value": 0
+                },
+                {
+                  "name": "on",
+                  "value": 1
+                }
+              ],
+              "builtin": false
+            }
+          ],
+          "control": {
+            "transport": "silkit",
+            "wire_version": 1
+          }
+        },
+        {
+          "name": "Logger",
+          "line": 13,
+          "command": [
+            "logger/can_logger",
+            "{registry_uri}"
+          ],
+          "describe": false,
+          "required": false,
+          "enabled": true,
+          "manual": false,
+          "step_ms": null,
+          "status": "not_checked",
+          "reported": null,
+          "variables": null,
+          "control": null
+        }
+      ],
+      "networks": [
+        {
+          "name": "J1939_CAN",
+          "kind": "can",
+          "line": 6,
+          "participants": [
+            "Engine",
+            "Dashboard",
+            "Logger"
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "severity": "note",
+          "code": "participant-manual",
+          "file": "simulation.yaml",
+          "line": 11,
+          "participant": "Dashboard",
+          "network": null,
+          "message": "participant 'Dashboard': you start it yourself (manual: true, or --manual): run does not start it, but prints the command to start it with, and waits for it to join without a time limit (with --timeout-ms, at most that long)",
+          "detail": null
+        },
+        {
+          "severity": "note",
+          "code": "not-checked",
+          "file": "simulation.yaml",
+          "line": 13,
+          "participant": "Logger",
+          "network": null,
+          "message": "participant 'Logger': describe is false, so it was not checked",
+          "detail": null
+        }
+      ]
+    }
+  }
+}

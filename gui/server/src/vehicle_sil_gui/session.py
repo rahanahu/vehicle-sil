@@ -251,6 +251,7 @@ class Session:
     launcher_pid: int | None = None
     started_at: str = field(default_factory=now_iso)
     scenario: str | None = None  # the scenario file given to --scenario (root-relative), or None
+    manual: list[str] = field(default_factory=list)  # the names given to --manual (the user starts them)
 
     def __post_init__(self) -> None:
         self.ended_at: str | None = None
@@ -684,7 +685,7 @@ class Session:
 
     def summary(self, variables: bool = True) -> dict:
         out = {
-            "id": self.id, "file": self.file, "disable": self.disable, "speed": self.speed,
+            "id": self.id, "file": self.file, "disable": self.disable, "manual": self.manual, "speed": self.speed,
             "start_paused": self.start_paused, "started_at": self.started_at, "ended_at": self.ended_at,
             "state": self.state,
             "launcher": {"pid": self.launcher_pid, "running": self.launcher_running, "exit_code": self.exit_code,

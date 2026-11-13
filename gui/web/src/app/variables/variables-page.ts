@@ -421,6 +421,14 @@ export class VariablesPage {
     }
     switch (status) {
       case 'ready':
+        // ready のまま理由があるのは、値の読み取りが失敗し続けているとき（出ている値は最後に読めたもの）
+        if (reason !== null) {
+          return {
+            text: $localize`値を読めていません。出している値は最後に読めたもので、古いかもしれません:`,
+            english: reason,
+            tone: 'warn',
+          };
+        }
         if (scenario) {
           return {
             text: $localize`シナリオの実行中です。値は見られますが、書くことはできません（シナリオの結果を変えないため）。`,

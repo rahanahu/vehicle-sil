@@ -79,6 +79,7 @@ export type {
 export {
   FEATURE_SCENARIO,
   FEATURE_SCENARIO_CONTROL,
+  FEATURE_MANUAL,
   PHASES,
   PROTOCOL_VERSION,
   ProtocolError,

@@ -226,7 +226,13 @@
                 手順）。
               </p>
             }
-            <app-check-panel [check]="check" [(disabled)]="disabled" [locked]="running()" />
+            <app-check-panel
+              [check]="check"
+              [(disabled)]="disabled"
+              [(manual)]="manual"
+              [manualAvailable]="manualSupported()"
+              [locked]="running()"
+            />
           } @else if (running()) {
             <p class="hint" i18n>この実行の照合の結果はありません。</p>
           } @else if (check.isLoading()) {
@@ -448,6 +454,8 @@
               [participants]="session.participants"
               [interrupted]="interrupted()"
               [launcherGone]="launcherGone()"
+              [ended]="!!session.result"
+              [stays]="manualStays()"
             />
           </mat-card-content>
         </mat-card>
