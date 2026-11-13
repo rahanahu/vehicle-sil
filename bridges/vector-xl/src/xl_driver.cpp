@@ -145,6 +145,9 @@ struct XlCanPort::Impl
     std::atomic<std::int64_t> unconfirmed_since{0};
     /// steady_clock time (ns) of the last probe frame let through while stuck.
     std::int64_t last_probe = 0; // under xl_mutex
+    /// Whether the controller's last reported state shows trouble (error warning, error passive,
+    /// bus off). False while unknown (no answer yet, monitoring off).
+    std::atomic<bool> bus_troubled{false};
 
     static std::int64_t now_ns() noexcept
     {
@@ -172,12 +175,17 @@ struct XlCanPort::Impl
         const auto since = unconfirmed_since.load();
         return options.transmit_timeout && receipts_known.load() && since != 0 && now - since >= timeout_ns();
     }
-    /// While stuck, one frame per transmit_timeout goes to the driver anyway: if the driver lost
-    /// the waiting frames (bus off), no receipt would ever come otherwise. Under xl_mutex.
+    /// While stuck, a frame goes to the driver now and then anyway: a receipt may just have been
+    /// lost, or the driver may have lost the waiting frames (bus off); no receipt would ever come
+    /// otherwise. Every transmit_timeout while the controller reports no trouble (a lost receipt
+    /// is the likely cause), at most once per kProbeInterval while it does, so that the probes
+    /// do not pile up into the burst the timeout is there to prevent. Under xl_mutex.
     [[nodiscard]] bool probe_due(std::int64_t now) noexcept
     {
+        constexpr std::int64_t kProbeInterval = std::chrono::nanoseconds(std::chrono::seconds(1)).count();
+        const auto interval = bus_troubled.load() ? std::max(timeout_ns(), kProbeInterval) : timeout_ns();
         const auto stuckFrom = unconfirmed_since.load() + timeout_ns();
-        if (now - std::max(last_probe, stuckFrom) < timeout_ns())
+        if (now - std::max(last_probe, stuckFrom) < interval)
         {
             return false;
         }
@@ -277,6 +285,7 @@ void XlCanPort::start(EventHandler handler)
     }
     impl.pending.store(0);
     impl.unconfirmed_since.store(0);
+    impl.bus_troubled.store(false);
     impl.running.store(true);
     impl.receiving.store(true);
     impl.receive_thread = std::thread([&impl] { impl.receive_loop(); });
@@ -473,6 +482,8 @@ void XlCanPort::Impl::dispatch(const backend::ReceivedEvent& event)
         out.bus_state.level = to_level(event.chip_state->level);
         out.bus_state.tx_errors = event.chip_state->tx_errors;
         out.bus_state.rx_errors = event.chip_state->rx_errors;
+        bus_troubled.store(out.bus_state.level != ExternalBusState::Level::ErrorActive &&
+                           out.bus_state.level != ExternalBusState::Level::Unknown);
         handler(out);
     }
     const auto classified = detail::classify_xl_event(event);

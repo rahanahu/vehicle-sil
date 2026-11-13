@@ -68,9 +68,10 @@ struct XlCanPortOptions
     std::chrono::milliseconds bus_state_interval{500};
     /// When no receipt came for this long although frames were accepted since the last one (no
     /// ACK, bus off, a cable pulled), transmit() refuses new frames (TransmitResult::Dropped)
-    /// until a receipt comes, so that frames do not pile up and go out late in a burst. One
-    /// frame per this long still goes to the driver as a probe, in case the driver lost the
-    /// waiting frames. The frames already accepted, about this long's worth, still go out once
+    /// until a receipt comes, so that frames do not pile up and go out late in a burst. A frame
+    /// still goes to the driver as a probe now and then, in case a receipt was lost or the
+    /// driver lost the waiting frames: every this long while the controller reports no trouble,
+    /// at most once a second while it does (error warning, error passive, bus off). The frames already accepted, about this long's worth, still go out once
     /// the bus works: the driver's xlCanFlushTransmitQueue did not remove them on a VN5620.
     /// Unset: frames wait as long as it takes. Like drain_timeout and TransmitUnsent, this
     /// relies on the driver's transmit receipts: they are used once the port switched them on

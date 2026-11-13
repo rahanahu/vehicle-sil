@@ -667,7 +667,7 @@ TEST_CASE(xl_port_lets_a_probe_through_while_stuck)
     fake_xl::discard_queued_transmissions(kHardware1);
     fake_xl::set_bus_blocked(kHardware1, false);
     bool probed = false;
-    const auto until = std::chrono::steady_clock::now() + 1000ms;
+    const auto until = std::chrono::steady_clock::now() + 2500ms;
     while (!probed && std::chrono::steady_clock::now() < until)
     {
         probed = f.port->transmit(frame_matrix()[2].to_silkit()) == TransmitResult::Ok;
