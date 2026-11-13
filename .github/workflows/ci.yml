@@ -145,8 +145,19 @@ jobs:
           path: .ccache
           key: ccache-windows-mingw-release-${{ github.sha }}
           restore-keys: ccache-windows-mingw-release-
+      # What the build takes: the MSYS2 packages first on PATH (path-type minimal). The runner also has a Python for
+      # Windows, without PyYAML, that CMake's find_package(Python3) finds first (registry): the build then takes the
+      # one on PATH (cmake/VehicleSilPython.cmake).
+      - name: Tools
+        run: |
+          gcc --version | head -n 1
+          cmake --version | head -n 1
+          command -v python git
+          python -c "import sys, yaml; print('Python', sys.version.split()[0], 'PyYAML', yaml.__version__)"
+      # As many tests at once as the runner has CPUs (4), not the test preset's 8: on Windows, the tests with bounds on
+      # real time have been checked with fewer tests at once than CPUs.
       - name: Configure, build and test
-        run: python scripts/verify.py windows-mingw-release --tag ci
+        run: python scripts/verify.py windows-mingw-release --tag ci --test-jobs 4
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

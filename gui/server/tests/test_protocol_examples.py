@@ -544,8 +544,9 @@ def test_scenario_examples(tmp_path: Path, control_env: dict) -> None:
                                             "file and line, the run's end; the summary's scenario keeps the steps.",
                                             sock.sent, sock.received), gui)
         run_async(talk, gui)
+    # Its second step never passes: the scenario still runs when the write comes, however slow the machine.
     env = {**control_env, "FAKE_LAUNCHER_FEATURES": CONTROL_FEATURES + ",scenario-control",
-           "FAKE_LAUNCHER_TICK_MS": "300"}
+           "FAKE_LAUNCHER_TICK_MS": "300", "FAKE_LAUNCHER_SCENARIO_HOLD": "2"}
     with gui_server(tmp_path, env=env) as gui:
         async def talk(c: Client) -> None:
             sock = await c.ws()

@@ -54,7 +54,8 @@ endfunction()
 #
 # Sets <out-var> to a Python 3.11+ that imports every <module>, or to "" if there is none. It tries
 # the repository's uv environment first (vehicle_sil_repository_python()), then the Python 3 that
-# find_package(Python3) finds (an active virtual environment first; Python3_EXECUTABLE names one).
+# find_package(Python3) finds (an active virtual environment first; Python3_EXECUTABLE names one),
+# then, unless Python3_EXECUTABLE names one, each python3 and python on PATH.
 # <out-var>_TRIED lists the Pythons that were not taken and why, for a message.
 function(vehicle_sil_find_python out)
   set(tried "")
@@ -81,6 +82,40 @@ function(vehicle_sil_find_python out)
     else()
       string(APPEND tried "find_package(Python3 3.11) found no Python 3.11+; ")
     endif()
+  endif()
+  # find_package() takes one Python, and on Windows a registered one before those on PATH (a Python
+  # for Windows without the packages, before the MSYS2 one that has them): unless Python3_EXECUTABLE
+  # names one, the python3 and python on PATH are tried too, in the order of PATH.
+  if(NOT ok AND NOT DEFINED CACHE{Python3_EXECUTABLE})
+    set(seen "")
+    if(python)
+      file(REAL_PATH "${python}" real)
+      list(APPEND seen "${real}")
+    endif()
+    set(suffix "")
+    if(CMAKE_HOST_WIN32)
+      set(suffix ".exe")
+    endif()
+    cmake_path(CONVERT "$ENV{PATH}" TO_CMAKE_PATH_LIST dirs NORMALIZE)
+    foreach(dir IN LISTS dirs)
+      foreach(name IN ITEMS python3 python)
+        set(candidate "${dir}/${name}${suffix}")
+        if(ok OR NOT EXISTS "${candidate}" OR IS_DIRECTORY "${candidate}")
+          continue()
+        endif()
+        file(REAL_PATH "${candidate}" real)
+        if(real IN_LIST seen)
+          continue()
+        endif()
+        list(APPEND seen "${real}")
+        vehicle_sil_python_can_import(ok "${candidate}" ${ARGN})
+        if(ok)
+          set(python "${candidate}")
+        else()
+          string(APPEND tried "${candidate} (${ok_REASON}); ")
+        endif()
+      endforeach()
+    endforeach()
   endif()
   string(REGEX REPLACE "; $" "" tried "${tried}")
   if(ok)
