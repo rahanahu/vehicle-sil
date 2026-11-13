@@ -11,5 +11,6 @@ vehicle-sil の版ごとの変更です。版の番号は `MAJOR.MINOR.PATCH` �
 - ECU を書くためのライブラリ（`vehicle_sil::Ecu`、`ecu_main()`、J1939 のスタックと部品、型付きメッセージ、LIN、ECU の変数）と、SIL Kit の上で ECU の実行ファイルをまとめて動かすランチャー（`vehicle_sil_launch check`、`run`、シナリオ、Control API）、ブラウザの GUI。
 - ビルド済みの道具（OS ごとに 1 つの圧縮ファイル: `vehicle_sil_launch`、GUI サーバーと画面、Control API の Python クライアント）と、ECU のプロジェクトのひな形（`template/`。リリースでは `vehicle-sil-template-0.1.0.zip`）。
 - CMake の選択肢 `VEHICLE_SIL_STATIC`: ECU の実行ファイルに SIL Kit と C++ の実行時ライブラリを静的にリンクし、1 つのファイルで配れるようにする（既定は OFF）。
+- 開発中にあった単独の Control Server（`vehicle_sil_control_server`）は、この版に入れていません。Control API には `vehicle_sil_launch run --control` でつなぎ、ランチャーに起動させない ECU は participant の `manual`（または `run --manual <name>`）で同じ実行に加えます。
 
 互換を壊す変更: なし（最初の版）。

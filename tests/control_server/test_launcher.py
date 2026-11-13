@@ -10,7 +10,8 @@ examples/ecu_main as processes, driven from Python.
 - The end: calls that wait (Watch, WaitOperation, WaitPaused) are still waiting while the run lasts,
   end with the run, and the run does not wait for them: at its end, on --timeout-ms, when a
   participant fails (also in the hold); a stop from standard input in the hold.
-- TLS, credentials and roles, the audit log, no agents over gRPC; the usage errors (an empty
+- TLS, credentials and roles (a viewer neither writes nor pauses, an operator does not stop), the
+  audit log, the CLI with a token and the server's certificate, no agents over gRPC; the usage errors (an empty
   credentials file too), a port in use; version --json.
 (The limits of the start around the hold, --timeout-ms and Ctrl+C in the hold, the commands before
 the window and a Stop after the end are tested in C++: launch_control.*, launch.*.)
@@ -404,14 +405,26 @@ class LauncherTest(unittest.TestCase):
                 self.assertEqual(refused.exception.code, grpc.StatusCode.UNAUTHENTICATED)
             with Control(launch.address, root_certificates=roots, token=viewer) as v:
                 self.assertEqual(v.sim.wait_paused(60).now, 0)
+                self.assertEqual({p.participant for p in v.peers()}, {"Engine", "Dashboard"})
                 with self.assertRaises(ControlError) as refused:
                     v.sim.pause()
+                self.assertEqual(refused.exception.code, grpc.StatusCode.PERMISSION_DENIED)
+                with self.assertRaises(ControlError) as refused:
+                    v.write({"X": {"y": 1}})
                 self.assertEqual(refused.exception.code, grpc.StatusCode.PERMISSION_DENIED)
             with Control(launch.address, root_certificates=roots, token=operator) as o:
                 with self.assertRaises(ControlError) as refused:
                     o.sim.stop()
                 self.assertEqual(refused.exception.code, grpc.StatusCode.PERMISSION_DENIED)
+                seq = o.write({"X": {"y": 1}})
+                self.assertEqual(o.operation(seq).target("X").status, "invalid")  # no such peer
                 o.sim.pause()
+            # The CLI with a token and the server's certificate.
+            cli = subprocess.run([sys.executable, "-m", "vehicle_sil_control", "--server", launch.address, "--token", viewer,
+                                  "--root-cert", str(TESTDATA / "server.crt"), "peers"],
+                                 capture_output=True, text=True, timeout=60)
+            self.assertEqual(cli.returncode, 0, cli.stderr)
+            self.assertIn("Engine\tconnected", cli.stdout)
             # No agent connects over gRPC (the agents' service of earlier versions is not there).
             channel = grpc.secure_channel(launch.address, grpc.ssl_channel_credentials(roots))
             try:
@@ -429,6 +442,7 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual(result["interrupted_by"], "control server stop")
         lines = audit.read_text().splitlines()
         self.assertTrue(any(line.startswith("o@") and "pause" in line and line.endswith(": ok") for line in lines), lines)
+        self.assertTrue(any(line.startswith("v@") for line in lines), lines)
         self.assertTrue(any(line.startswith("tester@") and "stop (the test is done)" in line for line in lines), lines)
         # The tokens are in no event, no line of standard error and no line of the audit.
         everything = json.dumps(launch.events) + launch.stderr_text + "\n".join(lines)

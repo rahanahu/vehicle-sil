@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // The Control API end to end in one process: a coordinated simulation of two J1939 peers whose
-// agents reach the hub over SIL Kit, the control server with the controller's time gate (as
-// vehicle_sil_control_server puts them together), and a gRPC client.
+// agents reach the hub over SIL Kit, the control server with the controller's time gate, and a
+// gRPC client.
 #include "silkit_test_util.hpp"
 #include "test_harness.hpp"
 
@@ -89,14 +89,12 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
     control_grpc::ControlServer server({.listen = "127.0.0.1:0", .time = time.get()});
     const std::string address = "127.0.0.1:" + std::to_string(server.port());
     // The hub's end of the agents' connections on the controller's participant, before it starts.
-    // The window before the start waits until the agents that said hello receive commands.
+    // The window before the start waits until the agents receive commands.
     control_silkit::HubTransport hub_link(server.hub(), controller.runtime());
     std::vector<std::string> announced;
-    std::vector<std::string> not_announced;
     controller.set_start_window([&](const StartWindow& window) {
-        const auto report = hub_link.wait_for_announced({"Engine", "Body"}, window.deadline(), [&] { return window.cancelled(); });
+        const auto report = hub_link.wait_for_hellos({"Engine", "Body"}, window.deadline(), [&] { return window.cancelled(); });
         announced = report.connected;
-        not_announced = report.not_announced;
     });
 
     // Models before the peers.
@@ -179,7 +177,6 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
 
     start_together(controller, {&engine, &body});
     CHECK((announced == std::vector<std::string>{"Engine", "Body"}));
-    CHECK(not_announced.empty());
     v1::TimeState state;
     v1::WaitPausedRequest wait_paused;
     wait_paused.set_timeout_ms(10000);
@@ -383,12 +380,6 @@ TEST_CASE(control_server_lists_simulation_participants_without_an_agent)
     SimulationController controller(controlOptions);
     const auto time = control_grpc::time_control_of(controller);
     control_grpc::ControlServer server({.listen = "127.0.0.1:0", .time = time.get()});
-    // The window of the standalone server: a participant without an agent is not waited for.
-    control_silkit::HubTransport hub_link(server.hub(), controller.runtime());
-    control_silkit::HelloReport report;
-    controller.set_start_window([&](const StartWindow& window) {
-        report = hub_link.wait_for_announced({"Plain"}, window.deadline(), [&] { return window.cancelled(); });
-    });
     ParticipantRuntime plain(vehicle_sil::unit::coordinated_options("Plain", registry.uri, VirtualTimeOptions{10ms}));
     const auto stub = v1::ControlService::NewStub(
         grpc::CreateChannel("127.0.0.1:" + std::to_string(server.port()), grpc::InsecureChannelCredentials()));
@@ -403,87 +394,7 @@ TEST_CASE(control_server_lists_simulation_participants_without_an_agent)
     CHECK(listed(""));
     plain.set_step_handler([](SimTime, SimDuration) {});
     vehicle_sil::unit::start_together(controller, {&plain}, 30s);
-    CHECK((report.not_announced == std::vector<std::string>{"Plain"}));
-    CHECK(report.connected.empty() && report.missing.empty() && !report.cancelled);
     CHECK(eventually([&] { return listed("Running"); }));
     controller.stop("done");
     plain.stop("done");
-}
-
-TEST_CASE(control_server_reaches_the_agents_of_a_simulation_it_does_not_coordinate)
-{
-    // As vehicle_sil_control_server without --required: the hub's end on an autonomous participant
-    // of its own, without virtual time, in a simulation that another controller coordinates (here
-    // one with a time gate, driven by the test). Joined before the ECUs start: the agent answers
-    // the probe of its first step message, so it receives commands while the simulation stands still.
-    InProcessRegistry registry;
-    SimulationControllerOptions controlOptions;
-    controlOptions.registry_uri = registry.uri;
-    controlOptions.required_participants = {"Engine"};
-    controlOptions.time_control = TimeControlOptions{.step = 10ms, .start_paused = true};
-    SimulationController controller(controlOptions);
-    const auto time = control_grpc::time_control_of(controller);
-    ParticipantRuntimeOptions own;
-    own.participant_name = "ControlServer";
-    own.registry_uri = registry.uri;
-    ParticipantRuntime runtime(own);
-    control_grpc::ControlServer server({.listen = "127.0.0.1:0"});
-    control_silkit::HubTransport hub_link(server.hub(), runtime);
-    runtime.start(10s);
-
-    double throttle = 0.0;
-    Peer engine(coordinated("Engine", registry.uri, 10ms));
-    engine.input("engine.throttle", &throttle);
-    auto engine_link = std::make_unique<control_silkit::AgentTransport>(engine.agent(), engine.runtime());
-    start_together(controller, {&engine});
-    CHECK(time->wait_paused(10s) == SimTime{});
-    CHECK(eventually([&] {
-        const auto links = hub_link.links();
-        return links.size() == 1 && links[0].participant == "Engine" && links[0].ready;
-    }));
-
-    const auto stub = v1::ControlService::NewStub(
-        grpc::CreateChannel("127.0.0.1:" + std::to_string(server.port()), grpc::InsecureChannelCredentials()));
-    const auto call = [&](auto method, const auto& request, auto& reply) {
-        grpc::ClientContext context;
-        context.set_deadline(std::chrono::system_clock::now() + 20s);
-        return (stub.get()->*method)(&context, request, &reply);
-    };
-    v1::TimeState state;
-    CHECK(call(&v1::ControlService::Stub::GetTime, v1::GetTimeRequest{}, state).ok());
-    CHECK(!state.available()); // the time is the other controller's
-    v1::WriteRequest write;
-    auto* w = write.add_writes();
-    w->set_peer("Engine");
-    w->set_name("engine.throttle");
-    w->mutable_value()->set_d(5.0);
-    write.set_at_ns(ns(50ms));
-    v1::WriteReply written;
-    CHECK(call(&v1::ControlService::Stub::Write, write, written).ok());
-    v1::WaitOperationRequest wait;
-    wait.set_seq(written.seq());
-    wait.set_until(v1::WAIT_FOR_QUEUED);
-    wait.set_timeout_ms(10000);
-    v1::Operation op;
-    CHECK(call(&v1::ControlService::Stub::WaitOperation, wait, op).ok());
-    CHECK(op.targets(0).status() == v1::TARGET_STATUS_QUEUED);
-
-    time->run_until(SimTime{} + 100ms);
-    CHECK(time->wait_paused(10s) == SimTime{} + 100ms);
-    wait.set_until(v1::WAIT_FOR_DONE);
-    CHECK(call(&v1::ControlService::Stub::WaitOperation, wait, op).ok());
-    CHECK(op.done() && op.targets(0).status() == v1::TARGET_STATUS_APPLIED);
-    CHECK_EQ(op.targets(0).applied_at_ns(), ns(50ms));
-    CHECK(eventually([&] {
-        v1::GetValuesRequest request;
-        request.set_peer("Engine");
-        v1::GetValuesReply values;
-        return call(&v1::ControlService::Stub::GetValues, request, values).ok() && values.has_values()
-               && values.snapshot().time_ns() >= ns(90ms) && values.snapshot().values(1).d() == 5.0;
-    }));
-
-    controller.stop("done");
-    engine.stop();
-    engine_link.reset();
-    CHECK(throttle == 5.0);
 }
