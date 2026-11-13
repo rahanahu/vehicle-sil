@@ -140,7 +140,7 @@ function(_vehicle_sil_patched_source dependency out_var)
     # --ignore-whitespace tolerates CRLF checkouts (core.autocrlf on Windows).
     execute_process(
       COMMAND "${CMAKE_COMMAND}" -E env --unset=GIT_DIR --unset=GIT_WORK_TREE --unset=GIT_INDEX_FILE
-              --unset=GIT_COMMON_DIR "GIT_CEILING_DIRECTORIES=${CMAKE_CURRENT_BINARY_DIR}/external"
+              --unset=GIT_COMMON_DIR "GIT_CEILING_DIRECTORIES=${git_ceiling_directory}"
               "${GIT_EXECUTABLE}" apply --ignore-whitespace --verbose "${patch}"
       WORKING_DIRECTORY "${patched}"
       RESULT_VARIABLE result
