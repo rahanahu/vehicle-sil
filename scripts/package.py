@@ -13,7 +13,9 @@ Commands:
               python     python/requirements.txt (uv export of the GUI server with gRPC, pinned with hashes from uv.lock)
                          and the gRPC stubs of the Control API (uv run ... python -m vehicle_sil_control.generate)
               stage      bin/ (the launcher, the libraries it needs, vehicle-sil-gui), python/ (vehicle_sil_gui with the
-                         built screen, vehicle_sil_control with the stubs), client/ (the bundled client library),
+                         built screen, vehicle_sil_control with the stubs), client/ (the bundled client library and
+                         its npm package), gui_starter/ (examples/gui_starter with the bundled library: a screen of
+                         your own, served with vehicle-sil-gui --web),
                          schema/, LICENSE, THIRD_PARTY_NOTICES.md, licenses/ (the license texts of what is inside),
                          README.md, VERSION. Windows: every DLL the executables load that is not Windows' own, found
                          with objdump, and the MSYS2 license files of their packages
@@ -22,7 +24,7 @@ Commands:
                          glibc symbol version they use. Windows: every DLL they load is in bin/ or Windows' own
               archive    the archive and its .sha256
             The screen and the client library are built by scripts/verify-web.py (or in gui/web: npm ci, npm run build,
-            npm run build:client); --web and --client name them.
+            npm run build:client, npm run pack:client); --web, --client and --client-package name them.
   verify    checks a tools archive as a user uses it, in a new empty directory: copies template/ there, unpacks the
             archive with the template's get_tools.py (--archive, its SHA-256), runs the launcher with a PATH of the
             system's directories only (nothing else may be needed), builds the template against this working tree
@@ -31,9 +33,13 @@ Commands:
             against `run --control` (gRPC: write before the start, step, read back), and starts the archive's
             vehicle-sil-gui (its Python packages: uv run, which may download them; on Windows both the .cmd and the
             sh entry) and asks it: the launcher usable, the variables available, the built screen, a check of
-            simulation.yaml. Keeps the directory when a step fails (--keep: always).
+            simulation.yaml; then starts it with --web gui_starter (the archive's starter screen) and gets its page
+            and its client library, and api/app with the token. Keeps the directory when a step fails (--keep:
+            always).
   template  build/dist/vehicle-sil-template-<version>.zip: template/ with the SHA-256 of both tools archives there
-            filled into get_tools.py, and build/dist/SHA256SUMS of the archives.
+            filled into get_tools.py, and build/dist/SHA256SUMS of the archives and of the client library's npm
+            package build/dist/vehicle-sil-gui-client-<version>.tgz (put there from build/gui-client), which the
+            release carries on its own (npm install <its URL>).
   version   prints the version and checks that every place that names it agrees: CMakeLists.txt (project VERSION, the
             source), pyproject.toml, gui/server/pyproject.toml, template/get_tools.py (VERSION), template/CMakeLists.txt
             (GIT_TAG v<version>), CHANGELOG.md (a "## <version>" heading). --expect v<version> also checks a tag.
@@ -255,6 +261,11 @@ def python_versions() -> str:
     return f">=3.11,<3.{int(m.group(1)) + 1}"
 
 
+def client_package_path(version: str) -> Path:
+    """The client library's npm package that gui/web's npm run pack:client makes."""
+    return ROOT / "build" / "gui-client" / f"vehicle-sil-gui-client-{version}.tgz"
+
+
 def names(version: str) -> tuple[str, str]:
     """The tools archive's top directory and file name for this platform."""
     top = f"vehicle-sil-tools-{version}-{PLATFORM}"
@@ -379,7 +390,9 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 | `bin/vehicle_sil_launch{exe}` | checks and runs a simulation configuration (`check`, `run`, `run --scenario`, `run --control`) |
 | `bin/vehicle-sil-gui`{cmd} | the browser GUI's server, with the launcher above (needs Python 3.11+; with uv, `uv run` installs its packages) |
 | `python/` | the GUI server (`vehicle_sil_gui`, with the built screen) and the Control API client (`vehicle_sil_control`, with its gRPC stubs); `requirements.txt` pins their packages with hashes |
-| `client/vehicle-sil-gui-client.mjs` | the GUI client library as one ES module |
+| `client/vehicle-sil-gui-client.mjs` | the GUI client library as one ES module (for a screen without a build: import it with a relative path) |
+| `client/vehicle-sil-gui-client-{version}.tgz` | the same library as an npm package with its types: `npm install <this file>`, then `import ... from '@vehicle-sil/gui-client'` |
+| `gui_starter/` | a screen of your own to start from (plain HTML and JavaScript, the library next to it): `vehicle-sil-gui --web gui_starter simulation.yaml` |
 | `schema/dashboard.schema.json` | the JSON Schema of `<configuration>.dashboard.yaml` |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md`, `licenses/` | the license of vehicle-sil and the notices and license texts of what these tools contain |
 
@@ -388,6 +401,7 @@ Put `bin` on PATH, then, next to your simulation.yaml:
     vehicle_sil_launch check simulation.yaml
     vehicle_sil_launch run simulation.yaml --scenario scenarios/<file>.yaml
     vehicle-sil-gui simulation.yaml
+    vehicle-sil-gui --web <your built screen, or gui_starter> simulation.yaml
 
 The Control API client from Python: put `python` on PYTHONPATH and use a Python with the packages of
 `python/requirements.txt` (for example `uv run --with-requirements python/requirements.txt python your_script.py`).
@@ -403,6 +417,7 @@ def tools_command(args: argparse.Namespace) -> int:
     build = Path(args.build_dir).resolve() if args.build_dir else ROOT / "build" / f"package-{PLATFORM}"
     web = Path(args.web).resolve()
     client = Path(args.client).resolve()
+    client_package = Path(args.client_package).resolve() if args.client_package else client_package_path(version)
     out = Path(args.out).resolve()
     stage_root = build / "stage"
     stage = stage_root / top
@@ -425,6 +440,10 @@ def tools_command(args: argparse.Namespace) -> int:
         raise Usage(f"the built screen ({web}/index.html) or the client library ({client}) is missing: build them "
                     "with scripts/verify-web.py --skip-e2e (or in gui/web: npm ci, npm run build, npm run build:client),"
                     " or name them with --web and --client")
+    if client_package.name != client_package_path(version).name or not client_package.is_file():
+        raise Usage(f"the client library's npm package {client_package_path(version).name} is missing ({client_package}):"
+                    " make it with scripts/verify-web.py --skip-e2e (or in gui/web: npm run pack:client), or name it"
+                    " with --client-package")
     web_licenses = web.parent / "3rdpartylicenses.txt"
     if not web_licenses.is_file():
         raise Usage(f"{web_licenses} is missing: the screen's build writes the licenses of the packages it bundles "
@@ -493,6 +512,10 @@ def tools_command(args: argparse.Namespace) -> int:
         shutil.copy2(python_dir / "requirements.txt", py / "requirements.txt")
         (stage / "client").mkdir()
         shutil.copy2(client, stage / "client" / "vehicle-sil-gui-client.mjs")
+        shutil.copy2(client_package, stage / "client" / client_package.name)
+        shutil.copytree(ROOT / "examples" / "gui_starter", stage / "gui_starter",
+                        ignore=shutil.ignore_patterns(".*"))
+        shutil.copy2(client, stage / "gui_starter" / "vehicle-sil-gui-client.mjs")
         (stage / "schema").mkdir()
         shutil.copy2(ROOT / "gui" / "protocol" / "dashboard.schema.json", stage / "schema")
         shutil.copy2(ROOT / "LICENSE", stage)
@@ -752,7 +775,9 @@ def verify_command(args: argparse.Namespace) -> int:
         for path in ["VERSION", "LICENSE", "THIRD_PARTY_NOTICES.md", f"bin/vehicle_sil_launch{EXE}",
                      "bin/vehicle-sil-gui", "python/requirements.txt", "python/vehicle_sil_gui/web/index.html",
                      "python/vehicle_sil_control/_generated/vehicle_sil/control/v1/control_pb2.py",
-                     "client/vehicle-sil-gui-client.mjs", "schema/dashboard.schema.json"] + (
+                     "client/vehicle-sil-gui-client.mjs", f"client/{client_package_path(version).name}",
+                     "gui_starter/index.html", "gui_starter/vehicle-sil-gui-client.mjs",
+                     "schema/dashboard.schema.json"] + (
                 ["bin/vehicle-sil-gui.cmd"] if WINDOWS else []):
             if not (tools / path).is_file():
                 raise StepFailed(f"the archive has no {top}/{path}")
@@ -788,6 +813,9 @@ def verify_command(args: argparse.Namespace) -> int:
     def gui(s: Step) -> None:
         verify_gui(s, tools, project, [str(tools / "bin" / "vehicle-sil-gui.cmd")] if WINDOWS else
                    ["/bin/sh", str(tools / "bin" / "vehicle-sil-gui")])
+        # A screen of one's own: the archive's starter, served with --web.
+        verify_gui(s, tools, project, [str(tools / "bin" / "vehicle-sil-gui.cmd")] if WINDOWS else
+                   ["/bin/sh", str(tools / "bin" / "vehicle-sil-gui")], web=tools / "gui_starter")
         if WINDOWS:  # the sh entry, as the MSYS2 UCRT64 shell starts it
             verify_gui(s, tools, project, [need("bash", "the sh entry in MSYS2"), str(tools / "bin" / "vehicle-sil-gui")])
 
@@ -801,10 +829,11 @@ def verify_command(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
-def verify_gui(s: Step, tools: Path, project: Path, entry: list[str]) -> None:
+def verify_gui(s: Step, tools: Path, project: Path, entry: list[str], web: Path | None = None) -> None:
     """Starts the archive's vehicle-sil-gui (entry: how to start it) on the project and asks it what a screen would
-    ask first."""
-    command = entry + ["--json", "--no-browser", "simulation.yaml"]
+    ask first. With web: started with --web web (a screen of one's own); asks for its page, its client library and
+    api/app."""
+    command = entry + ["--json", "--no-browser", *(["--web", str(web)] if web else []), "simulation.yaml"]
     s.write(f"$ {' '.join(command)}   (in {project})")
     flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     p = subprocess.Popen(command, cwd=project, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -834,8 +863,8 @@ def verify_gui(s: Step, tools: Path, project: Path, entry: list[str]) -> None:
         token = info["url"].split("#token=", 1)[1]
         headers = {"Authorization": f"Bearer {token}"}
 
-        def get(path: str, body: dict | None = None) -> bytes:
-            h = dict(headers)
+        def get(path: str, body: dict | None = None, token: bool = True) -> bytes:
+            h = dict(headers) if token else {"Sec-Fetch-Mode": "navigate", "Accept": "text/html"}
             data = None
             if body is not None:
                 h.update({"Origin": base.rstrip("/"), "Content-Type": "application/json"})
@@ -847,6 +876,18 @@ def verify_gui(s: Step, tools: Path, project: Path, entry: list[str]) -> None:
             except urllib.error.HTTPError as e:
                 raise StepFailed(f"{path}: HTTP {e.code} {e.read()[:300]!r}") from None
 
+        if web is not None:
+            page = get("", token=False).decode("utf-8", "replace")
+            if 'src="main.js"' not in page:
+                raise StepFailed(f"vehicle-sil-gui --web {web} does not serve the starter's index.html: {page[:300]!r}")
+            library = get("vehicle-sil-gui-client.mjs", token=False)
+            if b"createClient" not in library or b"takeToken" not in library:
+                raise StepFailed(f"vehicle-sil-gui --web {web} does not serve the client library next to the page")
+            app = json.loads(get("api/app"))
+            if not app.get("launcher", {}).get("usable"):
+                raise StepFailed(f"vehicle-sil-gui --web {web}: api/app says the launcher is not usable: {app}")
+            s.notes.append(f"{Path(entry[-1]).name} --web gui_starter: page and library served, api/app answered")
+            return
         app = json.loads(get("api/app"))
         s.write(json.dumps(app, indent=1)[:3000])
         launcher = app.get("launcher", {})
@@ -906,6 +947,11 @@ def template_command(args: argparse.Namespace) -> int:
         source, n = re.subn(rf'(?m)^(    "{plat}": )""', rf'\1"{sums[name]}"', source)
         if n != 1:
             raise Usage(f'template/get_tools.py has no line `    "{plat}": "",` in SHA256 to fill in')
+    client_package = out / client_package_path(version).name
+    if not client_package.is_file():
+        raise Usage(f"{client_package} is missing: the release carries the client library's npm package; copy it "
+                    f"there from build/gui-client/ (scripts/verify-web.py, or in gui/web: npm run pack:client)")
+    sums[client_package.name] = sha256_of(client_package)
     top = f"vehicle-sil-template-{version}"
     path = out / f"{top}.zip"
     with tempfile.TemporaryDirectory() as tmp:
@@ -951,6 +997,9 @@ def main() -> int:
                        help="the built screen (default: gui/web/dist/browser)")
     tools.add_argument("--client", default=str(ROOT / "build" / "gui-client" / "vehicle-sil-gui-client.mjs"),
                        help="the bundled client library (default: build/gui-client/vehicle-sil-gui-client.mjs)")
+    tools.add_argument("--client-package",
+                       help="the client library's npm package (default: build/gui-client/vehicle-sil-gui-client-"
+                            "<version>.tgz)")
     tools.add_argument("--out", default=str(DIST), help="where the archive goes (default: build/dist)")
     tools.add_argument("--jobs", type=int, default=os.cpu_count() or 4, help="build jobs (default: the CPUs)")
     tools.add_argument("--cmake-arg", action="append", metavar="ARG", help="one more configure argument (repeatable)")

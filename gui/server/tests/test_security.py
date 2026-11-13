@@ -137,11 +137,25 @@ def test_your_own_screen_is_served_from_its_directory_only(tmp_path: Path) -> No
         os.symlink(tmp_path, web / "up")
     with gui_server(tmp_path, args=("--web", str(web))) as gui:
         async def main(c: Client) -> None:
-            for path in ("", "index.html", "some/route"):
-                r = await request(c, "GET", path, {})
+            navigate = {"Sec-Fetch-Mode": "navigate", "Accept": "text/html"}
+            for path in ("", "index.html", "some/route", "settings/foo"):
+                r = await request(c, "GET", path, navigate)
                 assert r.status == 200 and "<title>mine</title>" in await r.text(), path
                 assert "script-src 'self'" in r.headers["Content-Security-Policy"], path
                 assert r.headers["X-Content-Type-Options"] == "nosniff", path
+            # A route is the page only when the browser loads a page; a fetch whose base URL is a route (api/app
+            # under /settings/) gets a 404, not the page in place of JSON.
+            r = await request(c, "GET", "settings/foo", {"Accept": "text/html"})  # no Sec-Fetch-Mode: Accept
+            assert r.status == 200
+            for headers in ({"Sec-Fetch-Mode": "cors", "Accept": "*/*"}, {"Accept": "application/json"}, {}):
+                for path in ("settings/api/app", "settings/ws", "some/route"):
+                    r = await request(c, "GET", path, headers)
+                    assert r.status == 404, (path, headers)
+            r = await request(c, "GET", "sw.js", {"Service-Worker": "script"})
+            assert r.status == 404 and "service worker" in await r.text()
+            (web / "sw.js").write_text("self.addEventListener('fetch', () => {});")
+            r = await request(c, "GET", "sw.js", {"Service-Worker": "script"})
+            assert r.status == 404
             r = await request(c, "GET", "assets/app.js", {})
             assert r.status == 200 and r.headers["Content-Type"] == "text/javascript; charset=utf-8"
             for path in (".env", "notes.md", "../outside.js", "%2e%2e/outside.js", "assets/../../outside.js",
@@ -156,9 +170,15 @@ def test_your_own_screen_is_served_from_its_directory_only(tmp_path: Path) -> No
             assert r.status == 403
         run_async(main, gui)
     (tmp_path / "empty").mkdir()
-    for bad in (tmp_path / "missing", tmp_path / "empty", web / "index.html"):
+    project = tmp_path / "project"  # a project, not its build: it would serve package.json and the sources
+    project.mkdir()
+    (project / "index.html").write_text("<!doctype html>")
+    (project / "package.json").write_text("{}")
+    for bad in (tmp_path / "missing", tmp_path / "empty", web / "index.html", project):
         with gui_server(tmp_path, args=("--web", str(bad)), expect_start=False) as gui:
             assert gui.proc.returncode == 2 and "--web" in gui.stderr_text(), bad
+            if bad == project:
+                assert "package.json" in gui.stderr_text() and "dist" in gui.stderr_text()
 
 
 def test_paths_outside_the_root_are_refused(tmp_path: Path) -> None:

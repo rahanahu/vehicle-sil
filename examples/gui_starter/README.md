@@ -11,7 +11,7 @@ GUI サーバー（`vehicle-sil-gui`）に配らせる、自分の画面のい�
 
 ## 動かす
 
-ライブラリを 1 つにまとめたファイルを `index.html` の隣に置き、`--web` でこのディレクトリを渡して GUI サーバーを起動します。
+ライブラリを 1 つにまとめたファイルを `index.html` の隣に置き、`--web` でこのディレクトリを渡して GUI サーバーを起動します。ビルド済みの道具の圧縮ファイルの `gui_starter/` には、ライブラリが置いてあるので、そのまま `vehicle-sil-gui --web <道具>/gui_starter simulation.yaml` で動きます。
 
 ```sh
 (cd gui/web && npm ci && npm run build:client)    # build/gui-client/vehicle-sil-gui-client.mjs
@@ -26,14 +26,15 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 
 ## TypeScript と好きな枠組みで作る
 
-ライブラリは、型つきの npm のパッケージ（`.tgz`）にもなります。`gui/web` で `npm run pack:client` を実行すると、`build/gui-client/vehicle-sil-gui-client-<版>.tgz` ができます（配布物にも入ります）。自分のプロジェクトで `npm install <その .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（依存はありません）。
+ライブラリは、型つきの npm のパッケージ（`.tgz`）にもなります。`gui/web` で `npm run pack:client` を実行すると、`build/gui-client/vehicle-sil-gui-client-<版>.tgz` ができます（リリースのページと、道具の圧縮ファイルの `client/` にもあります）。自分のプロジェクトで `npm install <その .tgz>` をすると、`@vehicle-sil/gui-client` として import できます（依存はありません）。
 
 ```ts
 import { WriteError, createClient, takeToken } from '@vehicle-sil/gui-client';
 
 const token = takeToken(window); // URL の #token= を読み、URL から消す（経路が URL を書き換える前に）
 if (token === null) throw new Error('open the URL that vehicle-sil-gui printed');
-const client = createClient({ baseUrl: document.baseURI, token });
+// 口はサーバーの根から（経路 /settings/foo の上でも api/app が /settings/api/app にならないように）
+const client = createClient({ baseUrl: new URL('/', location.href).href, token });
 await client.loadApp();
 client.connect();
 client.session.session.subscribe((session) => console.log(session?.phase, session?.result?.result));

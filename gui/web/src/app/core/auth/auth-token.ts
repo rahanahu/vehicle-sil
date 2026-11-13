@@ -5,7 +5,7 @@ import { takeToken } from '@vehicle-sil/gui-client';
  * サーバーが起動のたびに作るトークン。
  *
  * サーバーは `http://127.0.0.1:<port>/#token=<...>` を表示する。開いた URL の `#token=` を読み、すぐに URL から消し
- * （履歴にも残さない）、メモリと sessionStorage に持つ（ライブラリの `takeToken`）。API は Authorization の Bearer、
+ * （タブの戻る・進むの履歴からも。閲覧履歴には残ることがある）、メモリと sessionStorage に持つ（ライブラリの `takeToken`）。API は Authorization の Bearer、
  * WebSocket は最初のメッセージで送る。
  */
 @Injectable({ providedIn: 'root' })
