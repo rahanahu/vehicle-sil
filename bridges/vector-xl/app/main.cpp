@@ -136,6 +136,7 @@ int run(const BridgeOptions& options)
         XlCanPortOptions portOptions;
         portOptions.bitrate = options.bitrate;
         portOptions.rx_queue_size = options.rx_queue_size;
+        portOptions.transmit_timeout = options.tx_timeout;
         port = std::make_unique<XlCanPort>(*driver, channel, portOptions);
         log(kTag, "XL port open, init access: %s%s", port->has_init_access() ? "yes" : "no",
             options.bitrate ? (", bit rate " + std::to_string(*options.bitrate)).c_str() : ", bit rate unchanged");

@@ -26,6 +26,9 @@
 //    (set_chip_state; error active, 0/0 by default); kStatusNotOnBus on an inactive port.
 //  - While the device is lost, request_chip_state and transmit fail with kStatusDeviceLost and
 //    nothing is received.
+//  - While a channel's bus is blocked (set_bus_blocked; no node to acknowledge), transmit
+//    accepts frames into the port's transmit queue without sending them; unblocking sends them
+//    in order (with their receipts). deactivate discards the queue.
 #pragma once
 
 #include "xl_backend.hpp"
@@ -84,6 +87,10 @@ void set_chip_state(unsigned channel_index, vehicle_sil::vector_xl::detail::back
 void set_device_lost(bool lost);
 /// How many times request_chip_state was called (any port).
 unsigned chip_state_requests();
+/// Blocks (true) or unblocks (false) the bus of `channel_index`; see the modelled behaviour.
+void set_bus_blocked(unsigned channel_index, bool blocked);
+/// Frames waiting in the transmit queues of the ports on `channel_index`.
+std::size_t queued_transmissions(unsigned channel_index);
 
 struct Frame
 {

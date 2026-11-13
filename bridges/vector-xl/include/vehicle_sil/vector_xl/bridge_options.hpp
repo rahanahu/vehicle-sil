@@ -5,6 +5,7 @@
 
 #include "vehicle_sil/vector_xl/channel_selection.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
@@ -29,6 +30,9 @@ struct BridgeOptions
     std::optional<std::uint32_t> bitrate;
     /// XL receive queue size in events; the XL driver requires a power of two.
     std::uint32_t rx_queue_size = 16384;
+    /// Drop frames that could not reach the bus for this long (XlCanPortOptions::transmit_timeout).
+    /// Without it they wait and go out once the bus works again.
+    std::optional<std::chrono::milliseconds> tx_timeout;
 };
 
 class BridgeUsageError : public std::runtime_error

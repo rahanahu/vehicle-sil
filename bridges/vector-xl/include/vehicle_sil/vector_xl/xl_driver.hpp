@@ -62,6 +62,18 @@ struct XlCanPortOptions
     /// (device removed): the port reports ExternalEventKind::Fault once and stops receiving.
     /// 0 disables both.
     std::chrono::milliseconds bus_state_interval{500};
+    /// When the frames the driver accepted have not reached the bus for this long (no ACK, bus
+    /// off, a cable pulled), transmit() refuses new frames (TransmitResult::Dropped) until one
+    /// reaches the bus again, so that frames do not pile up and go out late in a burst. The
+    /// frames already accepted, about this long's worth, still go out once the bus works:
+    /// the driver's xlCanFlushTransmitQueue did not remove them on a VN5620. Unset: frames
+    /// wait as long as it takes. Like drain_timeout and TransmitUnsent, this relies on the
+    /// driver's transmit receipts: they are used once the port switched them on (init access,
+    /// `bitrate`) or one arrived.
+    std::optional<std::chrono::milliseconds> transmit_timeout;
+    /// stop() waits up to this long for accepted frames to reach the bus before it takes the
+    /// channel off the bus; the rest is reported as ExternalEventKind::TransmitUnsent.
+    std::chrono::milliseconds drain_timeout{1000};
 };
 
 /// One Vector XL CAN channel opened as an ExternalCanPort.

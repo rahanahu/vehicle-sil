@@ -40,6 +40,8 @@ std::string bridge_usage()
            "  --bitrate <bit/s>        configure the XL channel bit rate, 15000..1000000 (needs init access);\n"
            "                           without it the channel keeps its configuration\n"
            "  --rx-queue-size <n>      XL receive queue size in events, power of two, 16..32768 (16384)\n"
+           "  --tx-timeout-ms <ms>     drop frames that cannot reach the bus for this long, 1..60000 (no ACK,\n"
+           "                           bus off, cable pulled); without it they wait and go out late\n"
            "  --help                   this text\n";
 }
 
@@ -122,6 +124,15 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
                 throw BridgeUsageError("--rx-queue-size must be a power of two between 16 and 32768");
             }
             options.rx_queue_size = static_cast<std::uint32_t>(size);
+        }
+        else if (key == "tx-timeout-ms")
+        {
+            const auto ms = parse_unsigned(key, value, 60'000);
+            if (ms == 0)
+            {
+                throw BridgeUsageError("--tx-timeout-ms must be between 1 and 60000");
+            }
+            options.tx_timeout = std::chrono::milliseconds(ms);
         }
         else
         {

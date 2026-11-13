@@ -11,6 +11,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,6 +44,7 @@ public:
     {
         ExternalEventKind kind;
         RecordedFrame frame;
+        std::uint64_t count = 0;
     };
 
     ExternalCanPort::EventHandler handler()
@@ -56,7 +58,7 @@ public:
                 }
                 else
                 {
-                    events_.push_back({event.kind, record(event.frame)});
+                    events_.push_back({event.kind, record(event.frame), event.count});
                 }
             }
             cv_.notify_all();
@@ -251,7 +253,9 @@ TEST_CASE(xl_port_configures_bitrate_with_init_access)
     XlCanPort first(driver, channel_at(driver, kHardware1), options);
     CHECK(first.has_init_access());
     CHECK(fake_xl::port_state(kHardware1).bitrate == std::optional<unsigned long>(250000));
-    CHECK(!fake_xl::port_state(kHardware1).tx_receipts); // with init access, receipts are switched off
+    // With init access the port switches receipts on (and requests off) itself: they count the
+    // frames that reached the bus.
+    CHECK(fake_xl::port_state(kHardware1).tx_receipts);
 
     // A second application cannot get init access, so an explicit bit rate must fail loudly. The
     // open itself succeeded, so the message names no status number.
@@ -446,6 +450,125 @@ TEST_CASE(xl_port_bus_state_queries_can_be_switched_off)
     CHECK(sink.wait_for_bus_states(1, 0ms).empty());
     CHECK(sink.wait_for(1, 0ms).empty()); // without queries a lost device goes unnoticed
     port.stop();
+}
+
+namespace {
+
+/// Port with init access on the hardware channel and a test node on the same bus.
+struct BlockedBusFixture
+{
+    explicit BlockedBusFixture(XlCanPortOptions options)
+    {
+        options.bitrate = 250000;
+        port.emplace(driver, channel_at(driver, kHardware1), options);
+        port->start(sink.handler());
+    }
+
+    struct ResetFake
+    {
+        ResetFake() { fake_xl::reset(); }
+    } resetFirst; // before the members below, which register with the fake
+    XlDriver driver;
+    fake_xl::TestNode node{kHardware1};
+    EventSink sink;
+    std::optional<XlCanPort> port;
+};
+
+std::vector<EventSink::Event> of_kind(const std::vector<EventSink::Event>& events, ExternalEventKind kind)
+{
+    std::vector<EventSink::Event> result;
+    for (const auto& event : events)
+    {
+        if (event.kind == kind)
+        {
+            result.push_back(event);
+        }
+    }
+    return result;
+}
+
+} // namespace
+
+TEST_CASE(xl_port_stop_sends_what_it_accepted_before_going_off_the_bus)
+{
+    XlCanPortOptions options;
+    options.drain_timeout = 2000ms;
+    BlockedBusFixture f(options);
+    fake_xl::set_bus_blocked(kHardware1, true);
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    }
+    CHECK_EQ(fake_xl::queued_transmissions(kHardware1), 3u);
+
+    // The bus recovers while stop() waits: everything goes out and nothing is reported unsent.
+    std::thread unblock([] {
+        std::this_thread::sleep_for(200ms);
+        fake_xl::set_bus_blocked(kHardware1, false);
+    });
+    const auto begin = std::chrono::steady_clock::now();
+    f.port->stop();
+    unblock.join();
+    CHECK(std::chrono::steady_clock::now() - begin >= 150ms);
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(f.node.receive(1000ms).has_value());
+    }
+    CHECK(of_kind(f.sink.wait_for(3, 0ms), ExternalEventKind::TransmitUnsent).empty());
+}
+
+TEST_CASE(xl_port_stop_reports_what_it_could_not_send)
+{
+    XlCanPortOptions options;
+    options.drain_timeout = 100ms;
+    BlockedBusFixture f(options);
+    fake_xl::set_bus_blocked(kHardware1, true);
+    for (int i = 0; i < 4; ++i)
+    {
+        CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    }
+    const auto begin = std::chrono::steady_clock::now();
+    f.port->stop();
+    CHECK(std::chrono::steady_clock::now() - begin < 1000ms); // bounded by drain_timeout
+    const auto unsent = of_kind(f.sink.wait_for(1, 0ms), ExternalEventKind::TransmitUnsent);
+    CHECK_EQ(unsent.size(), 1u);
+    CHECK(!unsent.empty() && unsent.front().count == 4u);
+    CHECK_EQ(fake_xl::queued_transmissions(kHardware1), 0u); // gone with the channel
+}
+
+TEST_CASE(xl_port_refuses_frames_while_the_bus_is_stuck_longer_than_the_transmit_timeout)
+{
+    XlCanPortOptions options;
+    options.transmit_timeout = 100ms;
+    options.drain_timeout = 0ms;
+    BlockedBusFixture f(options);
+    fake_xl::set_bus_blocked(kHardware1, true);
+    // Within the timeout frames are accepted and wait.
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    }
+    std::this_thread::sleep_for(150ms);
+    // After it nothing new is accepted, so nothing more piles up.
+    for (int i = 0; i < 5; ++i)
+    {
+        CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Dropped);
+    }
+    CHECK_EQ(fake_xl::queued_transmissions(kHardware1), 3u);
+
+    // The bus works again: the 3 accepted frames go out, their receipts unblock the port.
+    fake_xl::set_bus_blocked(kHardware1, false);
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(f.node.receive(1000ms).has_value());
+    }
+    CHECK(!f.node.receive(100ms).has_value());
+    CHECK_EQ(of_kind(f.sink.wait_for(3, 1000ms), ExternalEventKind::OwnTransmission).size(), 3u);
+    CHECK(f.port->transmit(frame_matrix()[2].to_silkit()) == TransmitResult::Ok);
+    CHECK(f.node.receive(1000ms).has_value());
+    CHECK_EQ(of_kind(f.sink.wait_for(4, 1000ms), ExternalEventKind::OwnTransmission).size(), 4u); // its receipt
+    f.port->stop();
+    CHECK(of_kind(f.sink.wait_for(100, 0ms), ExternalEventKind::TransmitUnsent).empty());
 }
 
 TEST_CASE(xl_port_stop_is_bounded_by_the_wait_timeout_and_restartable)

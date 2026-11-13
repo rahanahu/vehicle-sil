@@ -127,8 +127,41 @@ struct XlCanPort::Impl
     std::mutex lifecycle_mutex;
     std::thread receive_thread;
     std::atomic<bool> running{false};
+    std::atomic<bool> receiving{false}; // the receive loop runs (false after a Fault)
     bool active = false;
     EventHandler handler;
+
+    // Frames the driver accepted (transmit() Ok) and has not confirmed with a receipt yet.
+    // Changed under xl_mutex together with the driver call it accounts for, except that a
+    // receipt only decrements (never below 0).
+    std::atomic<std::int64_t> pending{0};
+    /// Whether receipts are known to arrive: this port switched them on (init access), or one
+    /// arrived. Without init access another application may have switched them off; then the
+    /// count of waiting frames means nothing and is not used.
+    std::atomic<bool> receipts_known{false};
+    /// steady_clock time (ns) of the last receipt, or of the transmit that made pending non-zero.
+    std::atomic<std::int64_t> progress{0};
+
+    static std::int64_t now_ns() noexcept
+    {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
+    void on_receipt() noexcept
+    {
+        auto value = pending.load();
+        while (value > 0 && !pending.compare_exchange_weak(value, value - 1))
+        {
+        }
+        progress.store(now_ns());
+        receipts_known.store(true);
+    }
+    /// Whether the accepted frames have not reached the bus for transmit_timeout.
+    [[nodiscard]] bool stuck() const noexcept
+    {
+        return options.transmit_timeout && receipts_known.load() && pending.load() > 0 &&
+               now_ns() - progress.load() >= std::chrono::nanoseconds(*options.transmit_timeout).count();
+    }
 
     mutable std::mutex error_mutex;
     std::string last_error;
@@ -182,12 +215,14 @@ XlCanPort::XlCanPort(XlDriver& /*driver*/, const XlChannelInfo& channel, XlCanPo
             }
             check("xlCanSetChannelBitrate", backend::set_bitrate(impl.port, impl.access_mask, *impl.options.bitrate));
         }
-        // No TX receipts: the driver does not echo our own frames back to this port. This needs
-        // init access; without it the driver keeps its default (receipts on) and
-        // classify_xl_event() drops the receipts instead.
+        // TX receipts on, requests off: a receipt says that one of our frames reached the bus,
+        // which counts the frames still waiting (transmit_timeout, drain_timeout, TransmitUnsent).
+        // classify_xl_event() keeps them from being forwarded. Setting the mode needs init
+        // access; without it the driver keeps its default, which is the same.
         if ((impl.permission_mask & impl.access_mask) != 0)
         {
-            check("xlCanSetChannelMode", backend::set_transmit_receipts(impl.port, impl.access_mask, false, false));
+            check("xlCanSetChannelMode", backend::set_transmit_receipts(impl.port, impl.access_mask, true, false));
+            impl.receipts_known.store(true);
         }
         check("xlSetNotification", backend::enable_notification(impl.port, impl.notification));
     }
@@ -218,7 +253,9 @@ void XlCanPort::start(EventHandler handler)
         check("xlActivateChannel", backend::activate(impl.port, impl.access_mask));
         impl.active = true;
     }
+    impl.pending.store(0);
     impl.running.store(true);
+    impl.receiving.store(true);
     impl.receive_thread = std::thread([&impl] { impl.receive_loop(); });
 }
 
@@ -226,16 +263,38 @@ void XlCanPort::stop() noexcept
 {
     auto& impl = *impl_;
     const std::lock_guard lifecycle(impl.lifecycle_mutex);
+    // Let the frames the driver accepted reach the bus first; the receive loop counts the receipts.
+    const auto drainUntil = std::chrono::steady_clock::now() + impl.options.drain_timeout;
+    while (impl.running.load() && impl.receiving.load() && impl.receipts_known.load() && impl.pending.load() > 0 &&
+           std::chrono::steady_clock::now() < drainUntil)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
     impl.running.store(false);
     if (impl.receive_thread.joinable())
     {
         impl.receive_thread.join();
     }
-    const std::lock_guard lock(impl.xl_mutex);
-    if (impl.active)
+    std::int64_t unsent = 0;
     {
-        (void)backend::deactivate(impl.port, impl.access_mask);
-        impl.active = false;
+        const std::lock_guard lock(impl.xl_mutex);
+        if (impl.active)
+        {
+            (void)backend::deactivate(impl.port, impl.access_mask);
+            impl.active = false;
+            unsent = impl.pending.exchange(0);
+            if (!impl.receipts_known.load())
+            {
+                unsent = 0; // unknown, not "all of them"
+            }
+        }
+    }
+    // The receive thread is gone, so this is the only caller of the handler now.
+    if (unsent > 0 && impl.handler)
+    {
+        ExternalCanEvent event{ExternalEventKind::TransmitUnsent, {}, {}};
+        event.count = static_cast<std::uint64_t>(unsent);
+        impl.handler(event);
     }
 }
 
@@ -251,7 +310,15 @@ TransmitResult XlCanPort::transmit(const SilKit::Services::Can::CanFrame& frame)
             impl.set_last_error("XL channel is not active");
             return TransmitResult::Failed;
         }
+        if (impl.stuck())
+        {
+            return TransmitResult::Dropped;
+        }
         result = backend::transmit(impl.port, impl.access_mask, message);
+        if (result.status.ok() && result.queued && impl.pending.fetch_add(1) == 0)
+        {
+            impl.progress.store(Impl::now_ns());
+        }
     }
     if (result.status.ok() && result.queued)
     {
@@ -300,10 +367,12 @@ void XlCanPort::Impl::receive_loop()
             {
                 set_last_error("XL channel '" + channel.name + "' stopped working (device removed?): " +
                                "xlCanRequestChipState failed: " + status_text(status.code));
+                receiving.store(false);
                 handler(ExternalCanEvent{ExternalEventKind::Fault, {}, {}});
                 return; // no events after Fault; stop() still joins this thread
             }
         }
+
         backend::ReceiveResult received;
         {
             const std::lock_guard lock(xl_mutex);
@@ -367,6 +436,10 @@ void XlCanPort::Impl::dispatch(const backend::ReceivedEvent& event)
         handler(ExternalCanEvent{ExternalEventKind::Frame, classified.frame});
         break;
     case detail::XlEventClass::OwnTransmission:
+        if (event.transmit_receipt)
+        {
+            on_receipt();
+        }
         handler(ExternalCanEvent{ExternalEventKind::OwnTransmission, classified.frame});
         break;
     case detail::XlEventClass::ErrorFrame:
