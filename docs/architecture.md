@@ -1352,6 +1352,7 @@ flowchart LR
     grpc -- "write, read" --> hub["Hub"]
 ```
 
+- 見るだけのサーバー（`ServerOptions::observe_only`）: シナリオの実行（`run --scenario`）では、ランチャーがこれを付けます。呼び出しの表（`libs/control_grpc/src/auth.cpp` の `rpc_rules()`）の各行に、シミュレーションに何をするか（読む、変える、止める）があり、`observe_only` のサーバーは「変える」呼び出しを、権限の確認の直後、本体に入る前の 1 か所で断ります（`FAILED_PRECONDITION`、trailing metadata `vehicle-sil-reason`）。断った呼び出しは Hub にも `TimeControl` にも届きません。読む呼び出しが触るのは、Hub（スレッド安全。購読は上限つきで、運び手のスレッドを待たせない）と `TimeCommands::inspect()` だけで、シナリオの tap、書き込み、ガードとは何も共有しません。
 - 立てる時期: 照合が通った後、registry より前に、`run_file()` が `RunOptions::serve_control` を呼びます（main のスレッド）。立てられなければ、何も起動しません（`setup`）。閉じるのは、`run_file()` が戻った後、結果を書く前です（main のスレッド。`ControlServer::shutdown()`）。
 - 時間の操作: `TimeControl` の実装は `launch::TimeCommands` に渡すだけです。標準入力の命令と同じ `apply()` を、`source` を `control_server` にして呼びます。`apply()` は 1 つのミューテックスの中で、受け付けるかを決め、`command` の事象を書き、ゲートに渡すので、2 つの口の命令は 1 列に並び、事象の順が効いた順です。規則も同じです（`step` は一時停止中だけ、など）。受け付けなかった命令は、`std::invalid_argument`（引数の誤り）か `std::logic_error` にして、`ControlServer` が `INVALID_ARGUMENT` か `FAILED_PRECONDITION` で答えます。`Stop` も `apply()` で受け付けるかを決めて事象を書き（実行が終わった後は断る）、受け付けたら標準入力の `stop` と同じ止める要求にします（待たない）。
 - 読むもの（時間の状態、必須の participant と SIL Kit の状態、去った participant）: `TimeCommands::inspect()` が、controller が付いている間だけ、ミューテックスの中で関数を呼びます。外れた後（`detach()`。controller を壊す前に、どの終わり方でも呼ぶ）は、最後に読んだ値を返します（`ended` は真）。そのため、gRPC のスレッドが、壊れた controller に触れることはありません。`WaitPaused` は `TimeCommands::wait_paused()` で、ミューテックスを持たずに待ち、外れたらすぐに戻ります。

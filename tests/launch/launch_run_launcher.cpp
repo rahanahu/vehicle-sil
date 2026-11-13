@@ -3557,13 +3557,31 @@ void scenario_failures(const Options& o)
                                              "for 0 before the first step and runs by itself; pause and step it with "
                                              "--stdin-commands if needed\n"),
                 run.standard_error);
-        run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0"}, dir);
-        expect_code(run, 4, "--scenario with --control");
-        require(contains(run.standard_error, "--control"), run.standard_error);
         run = launch(o, {"run", "sim.yaml", "--scenario"}, dir);
         expect_code(run, 4, "--scenario without a file");
         const Captured version = launch(o, {"version", "--json"}, dir);
         require(contains(version.standard_output, "\"scenario\""), "version --json lists the feature scenario");
+        // With --control: a build with the control server serves it during the scenario (its
+        // clients only read; tests/control_server/test_launcher.py), and says so in its features.
+        const bool server = contains(version.standard_output, "\"control-server\"");
+        require(server == contains(version.standard_output, "\"scenario-control\""),
+                "version --json lists scenario-control exactly with control-server: " + version.standard_output);
+        run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0"}, dir);
+        if (server)
+        {
+            expect_code(run, 0, "--scenario with --control");
+            require(contains(run.standard_error, "control server at 127.0.0.1:") && contains(run.standard_error, "scenario: "),
+                    run.standard_error);
+            run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0", "--start-paused"}, dir);
+            expect_code(run, 4, "--scenario with --control and --start-paused");
+            require(contains(run.standard_error, "error: --scenario cannot be used with --start-paused: "), run.standard_error);
+        }
+        else
+        {
+            expect_code(run, 4, "--scenario with --control, without the control server");
+            require(contains(run.standard_error, "error: --control needs a vehicle_sil_launch built with the control server"),
+                    run.standard_error);
+        }
     }
 }
 

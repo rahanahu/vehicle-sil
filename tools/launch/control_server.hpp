@@ -21,7 +21,14 @@ struct ControlArguments
     std::string tls_cert;    ///< --control-tls-cert: PEM certificate chain
     std::string tls_key;     ///< --control-tls-key: PEM private key
     std::string audit_log;   ///< --control-audit-log: appended with who changed what
+    /// The run plays a scenario (run --scenario): the server only shows the run. Its clients read,
+    /// wait and stop; nothing of theirs writes a variable or moves the time (kScenarioRunning).
+    bool scenario = false;
 };
+
+/// Why a client's call was refused while a scenario plays: the trailing metadata
+/// "vehicle-sil-reason" of the refusal (FAILED_PRECONDITION).
+inline constexpr const char* kScenarioRunning = "scenario-running";
 
 /// What the server does with the run.
 struct ControlHooks

@@ -38,12 +38,22 @@ private:
 
 std::string role_name(Role role);
 
+/// What a call does to the simulation. A server that only shows it (ServerOptions::observe_only)
+/// refuses every Change.
+enum class Effect
+{
+    Read,   ///< nothing: it reads or waits
+    Change, ///< it writes variables, changes the hub's peers or moves the time
+    End,    ///< it ends the simulation (Stop): never refused for observe_only, so that a run can always be stopped
+};
+
 /// What a call needs: one row of the authorization table.
 struct RpcRule
 {
     std::string_view service; ///< the service's name in the proto ("ControlService")
     std::string_view method;  ///< the RPC's name in the proto ("Write")
     Role need;                ///< the least role
+    Effect effect;            ///< what it does to the simulation
     /// An allowed call leaves a line with its outcome in the audit log. (A refused call always
     /// does.)
     bool audited;

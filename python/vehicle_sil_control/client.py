@@ -41,11 +41,28 @@ def _warn_every_time(message: str) -> None:
 
 
 class ControlError(Exception):
-    """A call failed; `code` is the gRPC status code."""
+    """A call failed; `code` is the gRPC status code. `reason` is the server's word for why it
+    refused the call, for a program that must tell the refusals apart ("scenario-running": the run
+    plays a scenario, and a client cannot write or move the time meanwhile); "" if it gave none."""
 
-    def __init__(self, code: grpc.StatusCode, message: str):
+    def __init__(self, code: grpc.StatusCode, message: str, reason: str = ""):
         super().__init__(f"{code.name}: {message}")
         self.code = code
+        self.reason = reason
+
+
+REASON_KEY = "vehicle-sil-reason"  # the trailing metadata of a refusal (ControlError.reason)
+
+
+def _error(e: grpc.RpcError) -> ControlError:
+    reason = ""
+    try:
+        for key, value in e.trailing_metadata() or ():
+            if key == REASON_KEY:
+                reason = value if isinstance(value, str) else value.decode("ascii", "replace")
+    except Exception:  # an error that is no call's (it has no metadata)
+        pass
+    return ControlError(e.code(), e.details(), reason)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -329,7 +346,7 @@ class Control:
         try:
             return method(request, timeout=timeout or self._timeout)
         except grpc.RpcError as e:
-            raise ControlError(e.code(), e.details()) from None
+            raise _error(e) from None
 
     def ping(self, text: str = "") -> str:
         return self._call(self._stub.Ping, pb.PingRequest(text=text)).server_version
@@ -455,6 +472,6 @@ class Control:
                     yield ("initial_done",)
         except grpc.RpcError as e:
             if e.code() != grpc.StatusCode.CANCELLED:
-                raise ControlError(e.code(), e.details()) from None
+                raise _error(e) from None
         finally:
             stream.cancel()
