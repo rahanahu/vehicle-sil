@@ -531,4 +531,5 @@ TEST_CASE(xl_port_stop_is_bounded_by_the_wait_timeout_and_restartable)
     fake_xl::TestNode node(kVirtual1);
     node.send({0x66, false, false, 0, {}});
     CHECK_EQ(sink.wait_for(1).size(), 1u);
+    port.stop(); // before `sink` goes: the receive thread still reports the bus state into it
 }
