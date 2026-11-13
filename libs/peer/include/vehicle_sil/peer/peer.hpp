@@ -219,8 +219,8 @@ public:
     [[nodiscard]] can::RawChannel& raw_channel(std::string_view name) const;
 
     [[nodiscard]] ParticipantRuntime& runtime() noexcept { return *runtime_; }
-    /// The ECU's control agent if it has one (it declared a variable, or agent() was called),
-    /// else nullptr; unlike Ecu::agent(), it makes none. For whoever attaches a transport to the
+    /// The ECU's control agent if it has one (it declared a variable, agent() was called, or the
+    /// peer started), else nullptr; unlike Ecu::agent(), it makes none. For whoever attaches a transport to the
     /// agents that exist (ecu_main()).
     [[nodiscard]] control::Agent* find_agent() noexcept { return agent_.find(); }
     [[nodiscard]] can::Host& host() noexcept { return host_; }
@@ -229,10 +229,11 @@ public:
     /// virtual time.
     [[nodiscard]] can::RealTimeClock* real_time_clock() const noexcept { return clock_; }
 
-    /// Completes the schema of the control agent, if there is one (with the monitoring outputs:
-    /// std::invalid_argument for a clash, and the peer stays unstarted), starts the lifecycle and
-    /// waits until the participant runs (ParticipantRuntime::start()), then, in real time,
-    /// starts the driver. Once only (std::logic_error).
+    /// Makes the control agent if there is none yet (every ECU has its input ecu.connected) and
+    /// completes its schema (with the monitoring outputs: std::invalid_argument for a clash, and
+    /// the peer stays unstarted), starts the lifecycle and waits until the participant runs
+    /// (ParticipantRuntime::start()), then, in real time, starts the driver. Once only
+    /// (std::logic_error).
     void start(std::chrono::milliseconds timeout = std::chrono::seconds(30));
     /// Waits until the lifecycle ends (ParticipantRuntime::wait_until_finished()). Real time:
     /// then stops the driver.

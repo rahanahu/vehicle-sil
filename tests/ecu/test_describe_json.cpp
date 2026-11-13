@@ -88,6 +88,8 @@ TEST_CASE(full_description)
     d.networks.push_back({"CAN2", NetworkUse::Raw, {}});
     d.networks.push_back({"LIN1", NetworkUse::LinMaster, {}});
     d.networks.push_back({"LIN2", NetworkUse::LinSlave, {}});
+    // A variable every ECU has ("builtin": true) and the ECU's own ("builtin": false).
+    d.variables.push_back(variable("ecu.connected", control::ValueType::Bool));
     control::VariableInfo throttle = variable("engine.throttle");
     throttle.unit = "%";
     throttle.min = 0.0;
@@ -157,6 +159,18 @@ TEST_CASE(full_description)
   ],
   "variables": [
     {
+      "name": "ecu.connected",
+      "type": "bool",
+      "causality": "input",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "step": null,
+      "description": "",
+      "items": [],
+      "builtin": true
+    },
+    {
       "name": "engine.throttle",
       "type": "real",
       "causality": "input",
@@ -165,7 +179,8 @@ TEST_CASE(full_description)
       "max": 100,
       "step": 0.1,
       "description": "pedal",
-      "items": []
+      "items": [],
+      "builtin": false
     },
     {
       "name": "engine.mode",
@@ -197,7 +212,8 @@ TEST_CASE(full_description)
           "name": "lowest",
           "value": -9223372036854775808
         }
-      ]
+      ],
+      "builtin": false
     },
     {
       "name": "engine.running",
@@ -208,7 +224,8 @@ TEST_CASE(full_description)
       "max": null,
       "step": null,
       "description": "",
-      "items": []
+      "items": [],
+      "builtin": false
     },
     {
       "name": "engine.count",
@@ -219,7 +236,8 @@ TEST_CASE(full_description)
       "max": 1e+300,
       "step": null,
       "description": "",
-      "items": []
+      "items": [],
+      "builtin": false
     }
   ],
   "control": {

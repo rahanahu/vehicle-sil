@@ -461,7 +461,7 @@ TEST_CASE(values_before_a_pause_are_complete_and_a_write_while_paused_takes_effe
         CHECK(link.state == LinkState::Connected);
         CHECK(link.virtual_time);
         CHECK_EQ(link.late_messages, std::uint64_t{0});
-        CHECK_EQ(link.variables, std::size_t{4});
+        CHECK_EQ(link.variables, std::size_t{5}); // with ecu.connected
         CHECK(link.step == (link.participant == "A" ? SimDuration{1ms} : SimDuration{3ms}));
     }
     // The receive handlers are short: the simulation waits for them. A bound on the mean (wall
@@ -1080,11 +1080,11 @@ TEST_CASE(a_sample_larger_than_a_message_arrives_whole)
     CHECK(paused.has_value());
     const auto snapshot = side.hub.latest("Big");
     CHECK(snapshot != nullptr);
-    CHECK_EQ(snapshot->values.size(), std::size_t{704});
+    CHECK_EQ(snapshot->values.size(), std::size_t{705}); // ecu.connected first
     CHECK(snapshot->time >= *paused - 1ms);
     for (std::size_t i = 0; i < 700; ++i)
     {
-        CHECK(snapshot->values[4 + i] == Value{static_cast<std::int64_t>(i) * 3});
+        CHECK(snapshot->values[5 + i] == Value{static_cast<std::int64_t>(i) * 3});
     }
     const auto agent_stats = big.transport->stats();
     const auto steps = static_cast<std::uint64_t>(std::get<std::int64_t>(*value_in(side.hub, "Big", snapshot, "steps")));

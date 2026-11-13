@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // The dashboard ECU: receives the engine speed on J1939, shows it as a variable and prints it
-// every 500 ms. main() is ecu_main(), so the executable has the command line every ECU has
+// every 500 ms. It notices when the speed stops coming (dashboard.engine_lost). main() is ecu_main(), so the executable has the command line every ECU has
 // (vehicle_sil_dashboard_ecu --help).
 #include "engine_speed.hpp"
 
@@ -24,8 +24,12 @@ public:
         node.on_message(ecu_main_example::kEngineSpeed, [this](const j1939::Message& m) {
             rpm_ = ecu_main_example::decode_speed(m.data);
             ++received_;
+            last_ = m.time;
         });
         ecu.output("dashboard.engine_speed", &rpm_, {.unit = "rpm", .description = "the speed shown"});
+        ecu.output("dashboard.engine_lost", &lost_,
+                   {.description = "no engine speed for more than 300 ms (it comes every 100 ms)"});
+        ecu.on_step([this](vehicle_sil::SimTime now) { lost_ = received_ > 0 && now - last_ > 300ms; });
         ecu.every(500ms, [this](vehicle_sil::SimTime now) {
             std::printf("t=%lld ms engine speed %d rpm (%d messages)\n",
                         static_cast<long long>((now - vehicle_sil::SimTime{}) / 1ms), rpm_, received_);
@@ -36,6 +40,8 @@ public:
 private:
     int rpm_ = 0;
     int received_ = 0;
+    vehicle_sil::SimTime last_{};
+    bool lost_ = false;
 };
 
 } // namespace

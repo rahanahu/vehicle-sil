@@ -93,9 +93,10 @@ struct EcuDescription
     /// In the order of the calls that added them (j1939(), can(), lin_master(), lin_slave()),
     /// whatever their kind.
     std::vector<NetworkDescription> networks{};
-    /// The variables the ECU declared (input(), output(), ... and those registered on agent()),
-    /// in the order declared; not a Peer's monitoring outputs (PeerOptions::monitor). Empty for an
-    /// ECU without a control agent.
+    /// The variables of the ECU: first the one every ECU has ("ecu.connected",
+    /// is_builtin_variable()), then those it declared (input(), output(), ... and those
+    /// registered on agent()) in the order declared; not a Peer's monitoring outputs
+    /// (PeerOptions::monitor).
     std::vector<control::VariableInfo> variables{};
     /// Set by whoever runs the ECU with a transport for its control agent (ecu_main(), unless
     /// --no-control); Ecu::describe() leaves it empty. In the JSON: "control", null if empty.
@@ -125,6 +126,13 @@ inline constexpr int kEcuDescriptionFormat = 1;
 /// output is always valid JSON. std::logic_error for an enumeration value outside its
 /// enumerators. The keys and an example: docs/ecu-executable.md.
 [[nodiscard]] std::string to_json(const EcuDescription& description);
+
+/// true for a variable vehicle-sil gives every ECU (its name starts with "ecu.", which an
+/// application cannot declare): "builtin" in the JSON of a variable. "ecu.connected" is one.
+[[nodiscard]] constexpr bool is_builtin_variable(std::string_view name) noexcept
+{
+    return name.substr(0, 4) == "ecu.";
+}
 
 /// The names to_json() uses: "can", "lin"; "raw", "j1939", "lin_master", "lin_slave".
 /// std::logic_error for a value outside the enumerators.

@@ -836,6 +836,9 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
             describe_out.emplace();
         }
         set_up(*ecu);
+        // Every ECU has a control agent, with the input ecu.connected (made now if the set-up
+        // declared no variable).
+        static_cast<void>(ecu->agent());
     }
     catch (const std::exception& e)
     {
@@ -847,9 +850,9 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
     }
     if (c.registry_uri && !c.no_control)
     {
-        // An ECU that declared variables (or made its agent for events) has an agent; one that a
-        // transport of the application holds already is left to that transport. Making the
-        // transport completes the agent's schema, as the start would.
+        // Every ECU has an agent (above); one that a transport of the application holds already
+        // is left to that transport. Making the transport completes the agent's schema, as the
+        // start would.
         try
         {
             Peer& peer = sim->peer(name);

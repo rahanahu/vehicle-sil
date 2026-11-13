@@ -745,12 +745,13 @@ TEST_CASE(ecu_main_offers_its_variables_to_the_simulation_unless_no_control)
         CHECK_EQ(peers.size(), std::size_t{1});
         CHECK(peers.at(0).participant == "Offer");
         CHECK(!peers.at(0).connected); // it said its last word when it ended
-        CHECK(peers.at(0).schema.at(0).name == "steps");
+        CHECK(peers.at(0).schema.at(0).name == "ecu.connected"); // every ECU has it, first
+        CHECK(peers.at(0).schema.at(1).name == "steps");
         const auto latest = hub.latest("Offer");
         CHECK(latest != nullptr);
         // The step is 10 ms, as is the sample period: the last sample before the stop at 100 ms.
         CHECK(latest->time >= SimTime{} + 90ms);
-        CHECK(std::get<std::int64_t>(latest->values.at(0)) >= 10);
+        CHECK(std::get<std::int64_t>(latest->values.at(1)) >= 10);
     }
     {
         vehicle_sil::control::Hub hub;

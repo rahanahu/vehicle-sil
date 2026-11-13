@@ -140,9 +140,9 @@ Run run_pair(bool with_agents, const std::vector<Command>& engine_commands, bool
     transport.join();
     if (!with_agents)
     {
-        // No variables: the peers made no agent, also not in the run.
-        CHECK(throws<std::logic_error>([&] { static_cast<void>(engine.agent()); }));
-        CHECK(throws<std::logic_error>([&] { static_cast<void>(body.agent()); }));
+        // No variables: the peers made their agents at the start (each has ecu.connected).
+        CHECK(engine.agent().schema().front().name == "ecu.connected");
+        CHECK(body.agent().schema().front().name == "ecu.connected");
         return run;
     }
     engine.stop(); // the steps are over: the writes still waiting are cancelled
@@ -199,7 +199,7 @@ TEST_CASE(control_peer_agent_applies_before_the_application_of_its_step)
     // Sampled after the application at 0, 50, 100, 150: the last sample is at 150 with 16 steps.
     const auto snap = agent.latest();
     CHECK(snap.time == at(150ms));
-    CHECK_EQ(std::get<double>(snap.values[1]), 16.0);
+    CHECK_EQ(std::get<double>(value_of(agent.schema(), snap, "vehicle.speed")), 16.0);
 }
 
 TEST_CASE(control_peer_agent_does_not_change_the_traffic)
@@ -232,7 +232,7 @@ TEST_CASE(control_peer_agent_timed_writes_are_reproducible)
         const std::uint8_t expected = t <= 120 ? 1 : (t <= 260 ? 7 : 9);
         CHECK_EQ(static_cast<int>(v), static_cast<int>(expected));
     }
-    CHECK(std::get<std::int64_t>(first.engine_snapshot.values[0]) == 9);
+    CHECK(std::get<std::int64_t>(value_of(first.engine_schema, first.engine_snapshot, "engine.level")) == 9);
 }
 
 TEST_CASE(control_peer_agent_wakes_a_real_time_peer)
@@ -326,7 +326,7 @@ TEST_CASE(control_peer_agent_monitor_names_must_not_clash)
         // "peer." is reserved at the declaration (also without monitoring, as on the local buses).
         Peer peer(o);
         CHECK(throws_with<std::invalid_argument>([&] { peer.input("peer.speed", &x); }, "\"peer.speed\" starts with \"peer.\""));
-        CHECK(peer.agent().schema().empty());
+        CHECK_EQ(peer.agent().schema().size(), std::size_t{1}); // ecu.connected only
         // A clash with a network's monitoring output shows when the schema is completed (here:
         // start()); nothing is added, the message names the peer and the way out, and the peer is
         // not started.
@@ -334,11 +334,11 @@ TEST_CASE(control_peer_agent_monitor_names_must_not_clash)
         peer.input("j1939.CAN.bus_state", &x);
         CHECK(throws_with<std::invalid_argument>([&] { peer.start(); }, "\"Clash\""));
         CHECK(throws_with<std::invalid_argument>([&] { peer.agent().complete_schema(); }, "PeerOptions::monitor = false"));
-        CHECK_EQ(peer.agent().schema().size(), std::size_t{1});
+        CHECK_EQ(peer.agent().schema().size(), std::size_t{2});
         peer.input("still.open", &x); // the schema stayed open
         // ... and what was declared after the failed completion is the ECU's (describe()).
         const auto described = peer.describe().variables;
-        CHECK_EQ(described.size(), std::size_t{2});
+        CHECK_EQ(described.size(), std::size_t{3});
         CHECK(described.back().name == "still.open");
     }
     {
@@ -349,7 +349,7 @@ TEST_CASE(control_peer_agent_monitor_names_must_not_clash)
         static_cast<void>(peer.j1939("CAN").add_node({0x21}));
         peer.input("j1939.CAN.bus_state", &x); // no monitoring: no clash
         peer.agent().complete_schema();
-        CHECK_EQ(peer.agent().schema().size(), std::size_t{1});
+        CHECK_EQ(peer.agent().schema().size(), std::size_t{2});
         // The schema is complete: the message names the peer and why.
         CHECK(throws_with<std::logic_error>([&] { peer.input("too.late", &x); }, "\"Clash\""));
         CHECK(throws_with<std::logic_error>([&] { peer.input("too.late", &x); }, "after the schema was complete"));
@@ -359,7 +359,7 @@ TEST_CASE(control_peer_agent_monitor_names_must_not_clash)
 TEST_CASE(control_peer_agent_monitor_covers_what_exists_when_the_schema_completes)
 {
     // The agent made before the network (a variable declared first): the monitoring still covers
-    // the network and its node, and comes after the ECU's variables.
+    // the network and its node, and comes after the ECU's variables (ecu.connected first).
     InProcessRegistry registry;
     PeerOptions o;
     o.participant = "Order";
@@ -371,7 +371,7 @@ TEST_CASE(control_peer_agent_monitor_covers_what_exists_when_the_schema_complete
     peer.j1939("J1939_CAN").add_node({0x21});
     peer.agent().complete_schema();
     const auto& schema = peer.agent().schema();
-    CHECK(!schema.empty() && schema[0].name == "app.x");
+    CHECK(schema.size() > 1 && schema[0].name == "ecu.connected" && schema[1].name == "app.x");
     bool has_node = false;
     for (const auto& info : schema)
     {
@@ -417,6 +417,6 @@ TEST_CASE(control_peer_agent_refuses_a_network_the_monitoring_would_miss)
         peer.output("app.x", &x);
         peer.agent().complete_schema();
         peer.j1939("CAN1");
-        CHECK_EQ(peer.agent().schema().size(), std::size_t{1});
+        CHECK_EQ(peer.agent().schema().size(), std::size_t{2});
     }
 }

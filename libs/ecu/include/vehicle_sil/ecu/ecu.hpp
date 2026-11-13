@@ -7,6 +7,7 @@
 #include "vehicle_sil/control/agent.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
+#include "vehicle_sil/ecu/detail/bus_connection.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/lin/lin_master.hpp"
 #include "vehicle_sil/lin/lin_slave.hpp"
@@ -61,8 +62,9 @@ class EcuAgent;
 /// the application and the LIN nodes did in it.
 ///
 /// Variables (input(), output() and their forms): the ECU's control::Agent (agent()) holds
-/// them, made when first used; an ECU without variables has none and its steps do nothing for
-/// it. Writes come through the agent (Agent::submit(), or a transport such as
+/// them, made when first used, at the latest when the run starts. Every agent has the input
+/// "ecu.connected" first (detail::kConnectedVariable): false takes the ECU off all of its buses
+/// while its steps go on (detail::BusConnection says when and how). Writes come through the agent (Agent::submit(), or a transport such as
 /// control_silkit::AgentTransport on agent()), values go out through Agent::latest(). The ECU drives
 /// the agent: it applies the writes and samples in its steps as above. A Peer cancels the
 /// writes still waiting when it stops (stop() and its destructor; Agent::finish()), so a
@@ -153,7 +155,8 @@ public:
     /// `value` must stay valid as long as the ECU (a member of an emplace()d object, or of the
     /// application class that Simulation::add() makes). std::invalid_argument for an empty
     /// name, a name this ECU declared before, a name that starts with "peer." (reserved for a
-    /// Peer's monitoring outputs, on every implementation alike) and bad options;
+    /// Peer's monitoring outputs, on every implementation alike) or "ecu." (reserved for the
+    /// variables every ECU has, such as "ecu.connected") and bad options;
     /// std::logic_error once the run has started or the schema is complete. A clash with the
     /// other monitoring outputs of a Peer ("j1939.<network>. ...") shows when the schema is
     /// completed (control::Agent::complete_schema(): Peer::start(), a transport's constructor
@@ -215,8 +218,8 @@ public:
     /// connect a transport (control_silkit::AgentTransport, which completes the schema: declare the
     /// variables first; the networks and nodes of a Peer that exist then are the ones its
     /// monitoring covers), to write (submit()), to read (latest(), schema()) and for events
-    /// (log(), from the steps). After the run has started it returns the agent the ECU has;
-    /// std::logic_error if it has none. A transport must be destroyed before the ECU (Peer,
+    /// (log(), from the steps). After the run has started it returns the agent the ECU has
+    /// (every ECU has one from the start on). A transport must be destroyed before the ECU (Peer,
     /// Simulation, LocalBench), which destroys its agent: declare it after them, and do not
     /// emplace() it in the ECU (the emplaced objects go after the agent). An ECU destroyed while
     /// a transport still holds a control::TransportLease on its agent writes why to stderr and
@@ -225,7 +228,8 @@ public:
 
     /// What this ECU is (EcuDescription): its name and step, the networks it is on in the order
     /// added (with each J1939 network's nodes as they were added: the address asked for, the
-    /// NAME) and the variables declared so far. It reads the declarations without closing them
+    /// NAME) and its variables ("ecu.connected", also before the agent is made, then those
+    /// declared so far). It reads the declarations without closing them
     /// (the control agent's schema stays open; a Peer's monitoring outputs are left out), so it
     /// may be called at any point of the set-up, and before and after a run; during a run, only
     /// from a step of this ECU (like the other functions). The same ECU set up the same way gives
@@ -378,6 +382,7 @@ public:
             {
                 throw std::invalid_argument(who_ + e.what());
             }
+            connection_.declare(*agent); // first: every ECU has it
             if (bind_)
             {
                 bind_(*agent);
@@ -388,10 +393,12 @@ public:
     }
     /// The prefix of the names a Peer gives its own monitoring outputs (PeerOptions::monitor).
     static constexpr std::string_view kReservedPrefix = "peer.";
+    /// The prefix of the variables every ECU has (kConnectedVariable).
+    static constexpr std::string_view kBuiltinPrefix = "ecu.";
 
     /// Runs `add` (the registration of the variable `name`) on get(); std::invalid_argument and
     /// std::logic_error come back of the same type with `who` in front. A name that starts with
-    /// kReservedPrefix is std::invalid_argument before anything is made.
+    /// kReservedPrefix or kBuiltinPrefix is std::invalid_argument before anything is made.
     void declare(const std::string& name, const std::function<void(control::Agent&)>& add)
     {
         if (name.compare(0, kReservedPrefix.size(), kReservedPrefix) == 0)
@@ -400,6 +407,13 @@ public:
                                         std::string(kReservedPrefix) +
                                         "\", which is reserved for the monitoring outputs of a Peer (PeerOptions::monitor): "
                                         "choose a name that does not start with it");
+        }
+        if (name.compare(0, kBuiltinPrefix.size(), kBuiltinPrefix) == 0)
+        {
+            throw std::invalid_argument(who_ + "the variable name \"" + name + "\" starts with \"" +
+                                        std::string(kBuiltinPrefix) +
+                                        "\", which is reserved for the variables vehicle-sil gives every ECU (" +
+                                        std::string(kConnectedVariable) + "): choose a name that does not start with it");
         }
         auto& agent = get(); // names the ECU itself
         try
@@ -427,13 +441,16 @@ public:
     }
     [[nodiscard]] control::Agent* find() const noexcept { return agent_.get(); }
     /// The variables the ECU declared, in order: the agent's schema without what the
-    /// implementation registered after end_declarations(); empty without an agent. Does not
-    /// complete the schema.
+    /// implementation registered after end_declarations(), kConnectedVariable first (also
+    /// without an agent: the agent has it from when it is made). Does not complete the schema.
     [[nodiscard]] std::vector<control::VariableInfo> variables() const
     {
         if (!agent_)
         {
-            return {};
+            control::Agent described;
+            BusConnection unused;
+            unused.declare(described);
+            return described.schema();
         }
         const auto& schema = agent_->schema();
         const std::size_t n = declared_ ? std::min(*declared_, schema.size()) : schema.size();
@@ -461,6 +478,7 @@ public:
     /// Before the application of the step at `now`: applies the writes whose time has come.
     void begin(SimTime now)
     {
+        connection_.begin_step(now);
         if (agent_)
         {
             agent_->on_step_begin(now);
@@ -492,10 +510,17 @@ public:
         }
     }
 
+    /// The ECU's connection to its buses (the input kConnectedVariable of the agent): the
+    /// implementation puts its ports behind it (GatedCanPort, GatedLinPort) and sets what the ECU
+    /// does when it comes back.
+    [[nodiscard]] BusConnection& connection() noexcept { return connection_; }
+
 private:
     std::string who_;
     std::function<void(control::Agent&)> bind_;
     control::AgentOptions options_{};
+    /// Before agent_: the agent's input refers to it.
+    BusConnection connection_;
     std::unique_ptr<control::Agent> agent_;
     /// end_declarations(): the number of the ECU's own variables.
     std::optional<std::size_t> declared_;

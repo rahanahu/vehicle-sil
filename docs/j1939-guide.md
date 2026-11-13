@@ -440,6 +440,30 @@ CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 - 参照するときは、ECU の名前とネットワークの名前を渡します。`network("cab", "J1939_CAN")` のように 2 つ渡します。ネットワークが 1 つの ECU には 1 つの名前の形も使えます。
 - `LocalBench` を直接使うこともできます。`LocalBench::add_ecu(name, step)` は `Ecu&` を返します。`add_j1939(name, step)` は、1 つのネットワークを持つ ECU の略記です。`add_j1939()` と、`bus()`、`injector()`、`inject(time, frame)` のようにバスの名前を省く形は、ただ 1 つのバスを使います。バスがまだなければ作り、そのバスは後から来た `Ecu::j1939(network)` か `Ecu::can(network)` の名前になります。`bus(network)`、`injector(network)`、`inject(network, time, frame)` は名前でバスを引くだけで、名前を付けません（その名前のバスがなければ `std::out_of_range`）。どちらの順で書いても同じバスです。バスが 2 つ以上あるときに名前を省くと `std::logic_error` です。`add_j1939()` で ECU を足した後に 2 つ目のバスの名前を使うのも `std::logic_error` です（その ECU のバスが決まらないためです）。バスを複数使うときは、ECU を `add_ecu(name, step).j1939(network)` で足し、`inject(network, time, frame)` のようにバスの名前を渡します。
 
+### ECU をバスから外す（`ecu.connected`）
+
+どの ECU にも、bool の入力 `ecu.connected` があります。false を書くと、その ECU は動いたまま、すべてのバスから外れます。`add_outage` と違って、`Simulation()`（仮想バス）でも SIL Kit でも、シナリオ（[scenario.md](scenario.md) の「ECU をバスから外す」）、Control API、`agent()` のどれからでも同じように使えます。
+
+```cpp
+sim.ecu("engine").agent().submit({1, {{"ecu.connected", false}}, SimTime{} + 300ms});
+sim.ecu("engine").agent().submit({2, {{"ecu.connected", true}}, SimTime{} + 600ms});
+```
+
+J1939 では次のように見えます（契約は [architecture.md](architecture.md) の「ECU の入口」の「バスからの切り離し」）。
+
+- 外れた ECU: `send()` は `Ok` を返しますが、フレームはバスに出ず、`Network` の `send_failures` に数えて捨てます（溜めないので、戻ったときにまとめて出ることはありません）。受信はありません。周期送信、タイマー、アドレスの状態はそのままです。トランスポートプロトコルは、相手の応答が来ないので時間切れで終わります。
+- ほかの ECU: 外れた ECU のメッセージが来なくなります。`Monitor` の `Lost` など、受信の途絶で検出します。アドレス表はそのままです。
+- 戻ったとき: ネットワークの `NetworkOptions::on_reconnect` で選びます。どちらも規格と照らして確かめていないので、模擬する ECU のふるまいに合わせて選んでください。
+  - `j1939::OnReconnect::Announce`（既定）: NAME を持つ各ノードが、Request for Address Claimed を全体へ送り、自分の Address Claimed も送ります。ほかのノードの答えで、外れている間に同じアドレスを取ったノードとの競合が解けます。ノードは Claim の後の 250 ms の待ちをしません。
+  - `j1939::OnReconnect::Nothing`: 何も送りません。外れていたことに気づかない ECU を模擬します。
+  - Address Claim を最初からやり直す（待ちを含む）選択肢はまだありません。
+
+```cpp
+j1939::NetworkOptions options;
+options.on_reconnect = j1939::OnReconnect::Nothing;
+auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = kName});
+```
+
 ## 外から信号を操作する・読む（UI、試験）
 
 UI や試験から ECU の値を読み書きするときは、ECU に変数を宣言し、Control API を使います。Control API が扱うのは宣言した変数と時間の操作で、J1939 のフレームは扱いません。受けた信号を外に見せるときは、その値を `output` に、外から決める値は `input` にします（例: [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp)）。

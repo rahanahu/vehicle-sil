@@ -1,0 +1,15 @@
+# A scenario for the two ECUs of this directory: take the engine off the bus (the variable
+# ecu.connected that every ECU has), see that the dashboard notices that the engine speed stops
+# coming, put the engine back and see the speed come again. Run it with
+#   vehicle_sil_launch run simulation.yaml --scenario scenarios/engine_disconnect.yaml
+# (the exit code is 0 if every step passed). The format: docs/scenario.md.
+vehicle_sil_scenario: 1
+name: engine disconnect
+steps:
+  - at_ms: 300
+    set: { Engine.ecu.connected: false }
+  - expect: { Dashboard.dashboard.engine_lost: true }
+    within_ms: 400
+  - set: { Engine.ecu.connected: true }
+  - expect: { Dashboard.dashboard.engine_lost: false }
+    within_ms: 200
