@@ -242,6 +242,19 @@ struct RunOutcome
     bool stopped_by_scenario = false;
     /// The scenario's thread failed unexpectedly: why (the scenario is Incomplete).
     std::string scenario_error{};
+    /// Set if the launcher's own SIL Kit connection (the hub's transport, the controller, the
+    /// registry) had not closed when the launcher stopped waiting for it, after the participants
+    /// had ended: how long it waited, in milliseconds (the limit: the controller's shutdown
+    /// timeout and stop_timeout_ms, at least 5000 ms for the latter). A thread of the run is left
+    /// closing it, with the parts of the run it may use (they are never destroyed). The result is
+    /// complete all the same. The caller ends the process without destroying what it gave the run
+    /// (RunOptions) and without running the destructors of static objects (std::_Exit(); Windows:
+    /// TerminateProcess()) when it has written the result.
+    std::optional<std::int64_t> connection_not_closed_ms{};
+    /// connection_not_closed_ms: one more interrupt ended the wait before its limit (the person
+    /// asked for the end at once: no finding). false: the limit passed (finding
+    /// "connection-not-closed").
+    bool connection_close_interrupted = false;
 };
 
 /// Judges a run: the errors (they fail it), warnings and notes, each about the participant (with

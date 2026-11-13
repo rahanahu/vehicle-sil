@@ -61,6 +61,7 @@ struct PeerOptions
 {
     std::string participant;
     std::string registry_uri = "silkit://localhost:8500";
+    /// As ParticipantRuntimeOptions::participant_configuration.
     std::string participant_configuration = "{}";
     /// Coordinated: a SimulationController (another participant) starts and stops the
     /// simulation. Autonomous: the peer runs on its own until stop() or request_stop(), or with

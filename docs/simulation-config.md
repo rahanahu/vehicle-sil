@@ -139,7 +139,7 @@ ECU をデバッガーから動かすときなど、ある participant を `run`
 - `required: false` の manual の participant は、待ちません（コマンドを書くだけです）。
 - 実行中: 見張りは、ほかの必須の participant と同じです。ただし、`run` はそのプロセスを見ていないので、失敗は、シミュレーションから抜けたこと（接続が切れた、Error の状態）でわかります（`participant-failed`）。その participant の出力は、起動した所（端末、デバッガー）に出ます。デバッガーで止めている間は、仮想時間が進みません。速さを指定していれば、その間を遅れとして数え（`behind-real-time`）、`--timeout-ms` も数えます。
 - 止め方: `run` は manual の participant のプロセスに、止める要求も強制終了も送りません。シミュレーションが終われば、ecu_main の実行ファイルは自分で終わります。シミュレーションが始まらなかったとき（中断、ほかの participant の失敗）は、参加していた manual の participant に SIL Kit の abort を送ります（ecu_main の実行ファイルは、開始の失敗として終わります）。どちらの場合も、参加した manual の participant がシミュレーションを去るのを `stop_timeout_ms` まで待ってから、registry を閉じます。去らなければ（デバッガーで止めているなど）、そう書いて終わります（誤りにはしません）。この待ちは、Ctrl+C か `stop` の命令をもう 1 回送ると切り上げます。`run` が強制終了されたとき（SIGKILL、クラッシュ、Windows でコンソールを閉じた）は、自分で起動した participant は残ることがあります（始まる前なら、開始を待ち続けます）。自分で終わらせます。
-- Windows の制限: manual の participant を、シミュレーションが動いている途中でデバッガーで止めたまま、ランチャーを止める（Ctrl+C、`stop` の命令）と、ランチャーが結果を書かずに終わらないことがあります。先にデバッガーで続行させてから、ランチャーを止めます。終わらなくなったときは、その participant を終わらせ、ランチャーのプロセスも終わらせます。
+- participant をデバッガーで止めたままでも、`run` は止められます（Ctrl+C、`stop` の命令）。上の待ちの後、結果を書いて終わります。止めたままの participant は残るので、自分で続行させるか、終わらせます。
 - 結果: participant の表の `ended` は、`started by you (manual)`（参加した）か `not joined (manual)` です。JSON の `participants[].manual` は `true`、`ended` は `"not_started"`、`exit_code` は `null` です。
 - `--disable` と `--manual` に同じ名前を書くのは、引数の誤りです（終了コード 4）。構成ファイルにない名前は、`--disable` と同じ扱いです。`--manual` は `enabled` を変えません（外した participant は、外したままです）。構成ファイルの `manual: true` を、コマンドラインで戻す引数はありません。
 
@@ -577,6 +577,8 @@ participants:
 
 利用者が起動する（manual の）participant には、どの段も当てません（[participant を自分で起動する](#participant-を自分で起動するmanual--manual)の「止め方」）。
 
+participant を終わらせた後、`run` は自分の SIL Kit の接続（変数の口、controller、registry）を閉じてから、結果を書きます。閉じるのが期限（5 秒に、`stop_timeout_ms` と 5 秒の長い方を足した時間）のうちに終わらなければ、待つのをやめ、警告 `connection-not-closed` を足して結果を書き、接続を閉じないままプロセスを終えます（結果と終了コードの決まりは変わりません）。この待ちも、Ctrl+C か `stop` の命令をもう 1 回送ると切り上げます。切り上げたときは、そう 1 行書いて、同じように終えます（求められたとおりなので、所見にはしません）。
+
 シミュレーションが始まらなかったときは、1 を飛ばして 2 からです（その participant の誤りにはしません）。ecu_main の実行ファイルは、始まる前に止まるよう求められると、すぐに終わります（[ecu-executable.md](ecu-executable.md)）。
 
 各 participant は、自分のプロセスグループ（Windows ではプロセスグループとジョブオブジェクト）で動きます。端末の Ctrl+C は `vehicle_sil_launch` にだけ届き、participant には届きません。Windows で `vehicle_sil_launch` にコンソールがない（participant と共有するコンソールがない）ときは、Ctrl+Break を送れないので、2 の代わりにすぐ強制終了します（文言にそう書きます）。このとき participant は、コンソールの窓を開かないように起動します。
@@ -684,6 +686,7 @@ passed: 0 errors, 1 warning, 1 note
 | `exit-code` | 誤り（`required: false` は警告） | participant の終了コードが 0 でない、またはシグナルで終わった（上のどれでもないとき） |
 | `did-not-end` | 誤り | 必須の participant が、シミュレーションの終わりから `stop_timeout_ms` たっても動いていた |
 | `left-processes` | 警告 | participant が起動したプロセスが、その participant が終わった後も動いていた |
+| `connection-not-closed` | 警告 | `run` 自身の SIL Kit の接続が、participant を終わらせた後、期限（「止め方」）のうちに閉じなかった（待った時間を書きます）。結果はそろっています。どの構成でも起きないはずのことなので、`vehicle_sil_launch` か SIL Kit の不具合です。結果と `run` の出力を添えて報告してください |
 | `timeout` | 誤り | シミュレーションが `--timeout-ms` の実時間で終わらなかったので、中断した（manual の必須の participant がいる実行では、始まらなかったときも。待っていたものを書きます） |
 | `simulation` | 誤り | シミュレーションが正常に終わらなかった（理由の participant がわからない） |
 | `ended-before-stop-at` | 注記 | `stop_at_ms` より前に、participant がシミュレーションを止めた |
