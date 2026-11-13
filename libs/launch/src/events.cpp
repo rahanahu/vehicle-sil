@@ -734,7 +734,8 @@ void EventStream::participant_started(const std::string& name, long pid, const s
 }
 
 void EventStream::participant_manual(const std::string& name, const std::vector<std::string>& command,
-                                     const std::string& working_directory, const std::string& command_line)
+                                     const std::string& working_directory, const std::string& command_line,
+                                     const std::vector<std::pair<std::string, std::string>>& environment)
 {
     emit("participant", object([&](Writer& w) {
              w.string("name", name);
@@ -747,6 +748,15 @@ void EventStream::participant_manual(const std::string& name, const std::vector<
              w.end_array();
              w.string("working_directory", working_directory);
              w.string("command_line", command_line);
+             if (!environment.empty())
+             {
+                 w.begin_object("environment");
+                 for (const auto& [variable, value] : environment)
+                 {
+                     w.string(variable, value);
+                 }
+                 w.end_object();
+             }
          }));
 }
 

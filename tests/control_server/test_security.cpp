@@ -157,11 +157,19 @@ TEST_CASE(control_server_needs_tls_when_it_has_it)
 TEST_CASE(control_server_refuses_an_open_address_without_security)
 {
     CHECK(vehicle_sil::unit::throws<std::invalid_argument>([] { control_grpc::ControlServer s({.listen = "0.0.0.0:0"}); }));
-    control_grpc::ServerOptions o;
-    o.listen = "0.0.0.0:0";
-    o.security.allow_insecure = true;
-    control_grpc::ControlServer allowed(std::move(o));
-    CHECK(allowed.port() > 0);
+    // allow_insecure lets an address other than the loopback through the check. Shown without
+    // opening a port to the network (Windows's firewall would ask): 192.0.2.1 (TEST-NET-1) is on no
+    // interface here, so the server gets past the check and then cannot bind (std::runtime_error,
+    // not the check's std::invalid_argument).
+    CHECK(vehicle_sil::unit::throws_with<std::runtime_error>(
+        [] {
+            control_grpc::ServerOptions o;
+            o.listen = "192.0.2.1:0";
+            o.security.allow_insecure = true;
+            control_grpc::ControlServer allowed(std::move(o));
+        },
+        "cannot listen on 192.0.2.1:0"));
+    CHECK(vehicle_sil::unit::throws<std::invalid_argument>([] { control_grpc::ControlServer s({.listen = "192.0.2.1:0"}); }));
 }
 
 TEST_CASE(control_server_reads_a_credentials_file)

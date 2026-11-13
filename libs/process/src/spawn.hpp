@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -43,6 +44,8 @@ struct StartFlags
     /// Only `in`, `out` and `err` are inherited (PROC_THREAD_ATTRIBUTE_HANDLE_LIST; they must be
     /// inheritable and distinct). false: every inheritable handle of the caller.
     bool only_std_handles = false;
+    /// Set over the caller's environment (ProcessOptions::environment).
+    std::vector<std::pair<std::string, std::string>> environment{};
 };
 
 /// Starts the process suspended with the given standard handles, puts it in `job` and resumes
@@ -98,6 +101,8 @@ struct SpawnRequest
     bool own_group = false;
     /// Linux: SIGKILL when the calling thread ends.
     bool end_with_caller = false;
+    /// Set over the caller's environment (ProcessOptions::environment).
+    std::vector<std::pair<std::string, std::string>> environment{};
 };
 
 /// Starts `executable arguments` (fork and exec; no PATH search; the environment of the

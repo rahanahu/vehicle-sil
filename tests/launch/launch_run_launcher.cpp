@@ -3767,6 +3767,94 @@ int free_port()
     return ntohs(address.sin_port);
 }
 
+void network(const Options& o)
+{
+    // Which VEHICLE_SIL_LISTEN_ON_NETWORK the participants get: 1 when other computers may reach
+    // the registry (0.0.0.0), so that they listen on every address although they connect to it at
+    // 127.0.0.1; else 0, also when the launcher's own environment has 1 (a note says so). A
+    // participant started by hand is told the variable in the line and the event.
+    const auto config = [&o](const std::string& host) {
+        return "vehicle_sil_simulation: 1\n"
+               "stop_at_ms: 1000\n"
+               "registry_uri: silkit://" + host + ":" + std::to_string(free_port()) + "\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Engine\n"
+               "    command: [" + ecu(o) + "]\n"
+               "  - name: Env\n"
+               "    command: [" + helper(o) + ", --env, VEHICLE_SIL_LISTEN_ON_NETWORK, --uri, \"{registry_uri}\"]\n"
+               "    describe: false\n"
+               "    required: false\n"
+               "  - name: Hand\n"
+               "    command: [" + helper(o) + ", --uri, \"{registry_uri}\"]\n"
+               "    describe: false\n"
+               "    required: false\n"
+               "    manual: true\n";
+    };
+    const fs::path dir = scenario_dir(o, config("127.0.0.1"));
+    const std::string file = shown_path(dir / "sim.yaml");
+    {
+        const Captured local = launch(o, {"run", file}, dir);
+        expect_code(local, 0, "run with a registry on 127.0.0.1");
+        const std::string all = local.standard_output + lf(local.standard_error);
+        require(!contains(local.standard_output, "is not a loopback address"), "no note on 127.0.0.1:\n" + local.standard_output);
+        require(!contains(all, "listen-variable-ignored") && !contains(all, "in the environment of vehicle_sil_launch"),
+                "no note on the variable:\n" + all);
+        require(contains(all, "[Env] VEHICLE_SIL_LISTEN_ON_NETWORK=0\n"), "0 on 127.0.0.1:\n" + all);
+        require(contains(all, "start it yourself (manual: true, or --manual). In the directory "), "the manual line as it was:\n" + all);
+        require(!contains(all, "VEHICLE_SIL_LISTEN_ON_NETWORK=1"), "no 1 anywhere on 127.0.0.1:\n" + all);
+    }
+    // The launcher's own environment has 1: not passed on, and a note.
+#ifdef _WIN32
+    _putenv_s("VEHICLE_SIL_LISTEN_ON_NETWORK", "1");
+#else
+    ::setenv("VEHICLE_SIL_LISTEN_ON_NETWORK", "1", 1);
+#endif
+    {
+        const Captured inherited = launch(o, {"run", file}, dir);
+        expect_code(inherited, 0, "run with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in the launcher's environment");
+        const std::string all = inherited.standard_output + lf(inherited.standard_error);
+        require(contains(inherited.standard_output,
+                         "note: " + file + ": VEHICLE_SIL_LISTEN_ON_NETWORK=1 in the environment of vehicle_sil_launch is not "
+                         "used: the registry is on a loopback address, so run gives the participants it starts "
+                         "VEHICLE_SIL_LISTEN_ON_NETWORK=0"),
+                "the note on the variable:\n" + inherited.standard_output);
+        require(contains(all, "[Env] VEHICLE_SIL_LISTEN_ON_NETWORK=0\n"), "0 although the launcher has 1:\n" + all);
+    }
+#ifdef _WIN32
+    _putenv_s("VEHICLE_SIL_LISTEN_ON_NETWORK", "");
+#else
+    ::unsetenv("VEHICLE_SIL_LISTEN_ON_NETWORK");
+#endif
+#ifndef _WIN32
+    // Not on Windows: there its firewall would ask whether to let the registry listen on 0.0.0.0.
+    write_file(dir / "sim.yaml", config("0.0.0.0"));
+    const Captured run = launch(o, {"run", file}, dir);
+    expect_code(run, 0, "run with a registry on 0.0.0.0");
+    const std::string all = run.standard_output + lf(run.standard_error);
+    require(contains(run.standard_output, "note: " + file + ":3: registry_uri silkit://0.0.0.0:"),
+            "the note on the registry:\n" + run.standard_output);
+    require(contains(run.standard_output, " is not a loopback address: the registry and the participants listen on the network"),
+            "the note says what it means:\n" + run.standard_output);
+    // The participant's own line (the note names the variable too).
+    require(contains(all, "[Env] VEHICLE_SIL_LISTEN_ON_NETWORK=1\n"), "the participant got the variable:\n" + all);
+    require(contains(all, "not starting Hand: start it yourself (manual: true, or --manual). In the directory ") &&
+                contains(all, ", with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment, run:\n"),
+            "the manual participant is told the variable:\n" + all);
+    require(contains(run.standard_output, "participant 'Hand': you start it yourself") &&
+                contains(run.standard_output, "; start it with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment, so that the "
+                                              "other computers reach it (registry_uri is not a loopback address)"),
+            "the manual note tells the variable:\n" + run.standard_output);
+    const Captured events = launch(o, {"run", file, "--events"}, dir);
+    expect_code(events, 0, "run --events with a registry on 0.0.0.0");
+    require(contains(events.standard_output, "\"environment\":{\"VEHICLE_SIL_LISTEN_ON_NETWORK\":\"1\"}"),
+            "the manual event has the variable:\n" + events.standard_output);
+    const Captured checked = launch(o, {"check", file}, dir);
+    expect_code(checked, 0, "check with a registry on 0.0.0.0");
+    require(contains(checked.standard_output, "registry_uri silkit://0.0.0.0:"), "check has the note:\n" + checked.standard_output);
+#endif
+}
+
 /// A string value of an event line as JSON writes it (the escapes of a path undone).
 std::string json_text(const std::string& line, const std::string& key)
 {
@@ -4117,7 +4205,7 @@ int main(int argc, char** argv)
         const std::vector<std::pair<std::string, void (*)(const Options&)>> scenarios = {
             {"docs", docs},         {"check", check},     {"crash", crash},         {"step", step},
             {"optional", optional}, {"not_joined", not_joined}, {"quitter", quitter}, {"hang", hang},
-            {"grandchild", grandchild}, {"path", path},   {"interrupt", interrupt}, {"interrupt_twice", interrupt_twice},
+            {"grandchild", grandchild}, {"path", path},   {"network", network}, {"interrupt", interrupt}, {"interrupt_twice", interrupt_twice},
             {"killed", killed}, {"ended_early", ended_early}, {"interrupt_ending", interrupt_ending},
             {"timeout", timeout}, {"no_console", no_console},
             {"usage", usage}, {"disabled", disabled}, {"events", events}, {"events_usage", events_usage},

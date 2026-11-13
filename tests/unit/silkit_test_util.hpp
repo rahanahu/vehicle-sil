@@ -27,7 +27,8 @@ namespace vehicle_sil::unit {
 struct InProcessRegistry
 {
     std::unique_ptr<SilKit::Vendor::Vector::ISilKitRegistry> registry =
-        SilKit::Vendor::Vector::CreateSilKitRegistry(SilKit::Config::ParticipantConfigurationFromString("{}"));
+        SilKit::Vendor::Vector::CreateSilKitRegistry(
+            SilKit::Config::ParticipantConfigurationFromString(std::string(vehicle_sil::default_registry_configuration())));
     std::string uri = registry->StartListening("silkit://127.0.0.1:0");
 };
 
@@ -41,7 +42,8 @@ public:
     StateLog(const std::string& uri, std::string watched, const std::string& own_name = "Watcher") :
       watched_(std::move(watched))
     {
-        participant_ = SilKit::CreateParticipant(SilKit::Config::ParticipantConfigurationFromString("{}"), own_name, uri);
+        participant_ = SilKit::CreateParticipant(
+            SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(uri)), own_name, uri);
         participant_->CreateSystemMonitor()->AddParticipantStatusHandler(
             [this](const SilKit::Services::Orchestration::ParticipantStatus& status) {
                 if (status.participantName == watched_)

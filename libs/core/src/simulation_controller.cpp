@@ -119,6 +119,7 @@ SimulationController::SimulationController(SimulationControllerOptions options) 
     runtimeOptions.participant_name = options_.participant_name;
     runtimeOptions.registry_uri = options_.registry_uri;
     runtimeOptions.participant_configuration = options_.participant_configuration;
+    runtimeOptions.listen_on_network = options_.listen_on_network;
     runtimeOptions.shutdown_timeout = options_.shutdown_timeout;
     runtimeOptions.lifecycle_mode = LifecycleMode::Coordinated;
     if (options_.time_control)

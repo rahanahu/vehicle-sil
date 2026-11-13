@@ -3,6 +3,8 @@
 
 #include "run_words.hpp"
 
+#include "vehicle_sil/core/participant_runtime.hpp"
+
 #include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
@@ -174,6 +176,10 @@ bool RunParticipants::start_children(const std::string& uri)
         process::ProcessOptions options;
         options.working_directory = workDir;
         options.on_line = [this, i](process::Stream, std::string_view line) { out_.on_line(i, line); };
+        // Always, so that the value decides and not one that the launcher inherited: "1" if other
+        // computers may reach the registry, although these participants connect to it at a loopback
+        // address (uri_for_participants()), so that they do not listen on loopback only; else "0".
+        options.environment.emplace_back(kListenOnNetworkVariable, listen_variable_value(ctx_.config));
         try
         {
             // Its lines wait (RunOutput::on_line() takes the output's lock) until its "started" event is out.
@@ -207,15 +213,27 @@ void RunParticipants::show_manual(const ParticipantConfig& p, const std::filesys
     std::filesystem::path nativeDir = workDir;
     nativeDir.make_preferred();
     const std::string line = detail::shell_command_line(process::utf8_from_path(native), arguments);
+    // As run gives the participants it starts; only if it is 1 (0 is what a participant does
+    // without it), so that the command stays as it was for a simulation on this computer.
+    std::vector<std::pair<std::string, std::string>> environment;
+    if (registry_on_network(ctx_.config))
+    {
+        environment.emplace_back(kListenOnNetworkVariable, listen_variable_value(ctx_.config));
+    }
     const auto held = out_.hold();
     out_.event([&](EventStream& e) {
         std::vector<std::string> command{process::shown_path(executable)};
         command.insert(command.end(), arguments.begin(), arguments.end());
-        e.participant_manual(p.name, command, process::shown_path(workDir), line);
+        e.participant_manual(p.name, command, process::shown_path(workDir), line, environment);
     });
+    std::string with;
+    for (const auto& [name, value] : environment)
+    {
+        with += (with.empty() ? ", with " : " and ") + name + "=" + value;
+    }
     held.say("not starting " + p.name + ": start it yourself (manual: true, or --manual)" +
              (p.required ? std::string("; the simulation waits for it to join") : std::string{}) + ". In the directory " +
-             process::utf8_from_path(nativeDir) + ", run:");
+             process::utf8_from_path(nativeDir) + with + (with.empty() ? "" : " in its environment") + ", run:");
     held.say("  " + line);
 }
 

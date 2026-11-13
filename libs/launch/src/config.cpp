@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/config.hpp"
 
+#include "vehicle_sil/core/participant_runtime.hpp"
+
 #include "vehicle_sil/process/child_process.hpp"
 #include "yaml_tree.hpp"
 
@@ -237,6 +239,17 @@ public:
             else if (key == "registry_uri")
             {
                 config.registry_uri = registry_uri(child);
+                if (config.registry_uri && !is_loopback_registry_uri(*config.registry_uri))
+                {
+                    note("registry-on-network", doc_.line(child),
+                         "registry_uri " + *config.registry_uri +
+                             " is not a loopback address: the registry and the participants listen on the network, where "
+                             "anyone who reaches this computer can join the simulation (SIL Kit does not authenticate); run "
+                             "gives the participants it starts " + std::string(kListenOnNetworkVariable) +
+                             "=1 and shows it with the command of a participant you start yourself: set it for every "
+                             "participant on this computer that connects to the registry at a loopback address; to keep "
+                             "the simulation on this computer, use 127.0.0.1 or leave registry_uri out");
+                }
             }
             else if (key == "time_step_ms")
             {
@@ -1089,6 +1102,35 @@ bool waits_for_manual(const SimulationConfig& config)
 {
     return std::any_of(config.participants.begin(), config.participants.end(),
                        [](const ParticipantConfig& p) { return p.enabled && p.required && p.manual; });
+}
+
+bool registry_on_network(const SimulationConfig& config)
+{
+    return config.registry_uri && !is_loopback_registry_uri(*config.registry_uri);
+}
+
+std::string_view listen_variable_value(const SimulationConfig& config)
+{
+    return registry_on_network(config) ? "1" : "0";
+}
+
+std::optional<Finding> inherited_listen_variable(const SimulationConfig& config, const char* inherited)
+{
+    const std::string_view given = listen_variable_value(config);
+    if (inherited == nullptr || given == inherited)
+    {
+        return std::nullopt;
+    }
+    const std::string name(kListenOnNetworkVariable);
+    return Finding{Severity::Note, "listen-variable-ignored",
+                   name + "=" + inherited + " in the environment of vehicle_sil_launch is not used: " +
+                       (registry_on_network(config)
+                            ? "registry_uri " + *config.registry_uri + " is not a loopback address, so run gives the participants it starts " +
+                                  name + "=1 and they listen on every address"
+                            : "the registry is on a loopback address, so run gives the participants it starts " + name +
+                                  "=0 and they listen on the loopback address only; to let other computers join, write "
+                                  "registry_uri with an address that they reach (e.g. silkit://0.0.0.0:8500)"),
+                   0, "", ""};
 }
 
 ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)

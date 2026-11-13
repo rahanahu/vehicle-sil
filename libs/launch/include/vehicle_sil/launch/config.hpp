@@ -175,6 +175,19 @@ struct EnabledOverrides
 /// manual): the start then has no time limit for it (docs/simulation-config.md).
 [[nodiscard]] bool waits_for_manual(const SimulationConfig& config);
 
+/// true if other computers may reach the registry of `config`: registry_uri is written and not a
+/// loopback address (is_loopback_registry_uri() of vehicle_sil/core/participant_runtime.hpp).
+[[nodiscard]] bool registry_on_network(const SimulationConfig& config);
+
+/// The value of VEHICLE_SIL_LISTEN_ON_NETWORK (kListenOnNetworkVariable) that run gives the
+/// participants it starts, whatever its own environment has: "1" if registry_on_network(), else "0".
+[[nodiscard]] std::string_view listen_variable_value(const SimulationConfig& config);
+
+/// The note "listen-variable-ignored" if vehicle_sil_launch's own environment has
+/// VEHICLE_SIL_LISTEN_ON_NETWORK (`inherited`; null: not set) with another value than
+/// listen_variable_value(): run does not pass it on.
+[[nodiscard]] std::optional<Finding> inherited_listen_variable(const SimulationConfig& config, const char* inherited);
+
 /// What read_config() found.
 struct ConfigRead
 {

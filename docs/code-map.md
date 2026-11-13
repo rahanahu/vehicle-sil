@@ -222,13 +222,14 @@ flowchart TD
 | `j1939_parts.boundary` | `libs/j1939/parts` が、エンジンの公開 API と道具箱だけを使い、`vehicle_sil::j1939` とほかの部品だけをリンクする |
 | `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
 | `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
-| `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/` が文字列から作る SIL Kit の構成は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
+| `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の構成は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
 | `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |
 
 ## これを変えるならここも
 
 | 変えるもの | 合わせて直すもの |
 |---|---|
+| SIL Kit の構成の既定（`libs/core/src/participant_runtime.cpp` の `default_participant_configuration()` など: 待ち受けるアドレス、Windows の TCP）、それを使う所（`libs/launch/src/run.cpp` の controller、`run_participants.cpp` の環境変数、`config.cpp` の注記 `registry-on-network` と `inherited_listen_variable()`（注記 `listen-variable-ignored`）、manual のコマンドの `environment`） | [internals/core.md](internals/core.md) の「SIL Kit の構成の既定」、[simulation-config.md](simulation-config.md) の「待ち受けるアドレス」と所見の表、[dependencies.md](dependencies.md) の SIL Kit（Windows）の節。試験は `core.a_participant_*`、`core.a_registry_uri_*`、`launch_run.network`、`core.silkit_configuration_defaults` |
 | `vehicle_sil_launch check` と `run` の出力（`libs/launch/src`）、`examples/ecu_main/simulation.yaml` | [simulation-config.md](simulation-config.md) の、`<!-- ... -->` の行の直後のコードブロック。`launch_cli.docs` と `launch_run.docs` が、vehicle-sil の版を除いてバイト単位で照合します |
 | 同じ出力と、`examples/ecu_main`（`scenarios/` を含む）・`examples/launch_control` のコード | [howto/](howto/) の手引きにある写し（出力のコードブロックは、[simulation-config.md](simulation-config.md) と [scenario.md](scenario.md) の同じ印の例の写しです。`launch_cli.docs`（`check` の印）と `launch_run.docs`（`run` の印）が、手引きの同じ印のブロックが写しのとおりかを照合します。コードは例のファイルと行を書いて引いています。コードの写しは照合しないので、手で合わせます） |
 | `template/`（ひな形）、ECU の API | [howto/first-ecu.md](howto/first-ecu.md)（ひな形のコードを行の番号で引いている。出力のブロックは `template.check_and_run` がひな形の出力とも照合）、`template/README.md`。ひな形の 2 つの ECU は `examples/ecu_main` と同じ名前、ネットワーク、アドレス、ステップ幅にしてあり、手引きの出力は両方で同じです |

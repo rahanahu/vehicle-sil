@@ -217,14 +217,14 @@ std::string participant_configuration(const Options& options)
     {
         return read_file(*options.participant_configuration);
     }
-    // Not SIL Kit's defaults as they are: vehicle-sil's (TCP only on Windows), and the logging.
+    // Not SIL Kit's defaults as they are: vehicle-sil's (participant_runtime.hpp), and the logging.
     if (options.level == "off")
     {
-        return std::string(default_participant_configuration());
+        return default_participant_configuration(options.uri);
     }
     static const std::map<std::string, std::string, std::less<>> kSilKitLevels{
         {"trace", "Trace"}, {"debug", "Debug"}, {"info", "Info"}, {"warn", "Warn"}, {"error", "Error"}, {"critical", "Critical"}};
-    return default_participant_configuration_with("\"Logging\": {\"Sinks\": [{\"Type\": \"Stdout\", \"Level\": \"" +
+    return default_participant_configuration_with(options.uri, "\"Logging\": {\"Sinks\": [{\"Type\": \"Stdout\", \"Level\": \"" +
                                                   kSilKitLevels.at(options.level) + "\"}]}");
 }
 
