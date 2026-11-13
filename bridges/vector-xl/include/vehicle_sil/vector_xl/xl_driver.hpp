@@ -86,12 +86,20 @@ struct XlCanPortOptions
     unsigned bus_state_failures = 3;
     /// When the controller has reported bus off for this long, the port takes the channel off
     /// the bus and back on (xlDeactivateChannel, xlActivateChannel), which resets the
-    /// controller: on a VN5620 the driver did not leave bus off by itself, even long after the
-    /// bus was repaired. Reported as ExternalEventKind::Warning; the frames that were waiting
-    /// in the driver are lost and reported as ExternalEventKind::TransmitUnsent. If the bus is
-    /// still broken, the controller goes bus off again and the port restarts it again after
-    /// this long. 0 disables the restarts. Relies on the controller's state (bus_state_interval,
-    /// or what the driver reports by itself).
+    /// controller: on a VN5620 the driver did not leave bus off by itself after the bus was
+    /// repaired.
+    ///  - Only with init access (`bitrate`): on a channel another application configures, what
+    ///    taking this port off the bus does is not known.
+    ///  - The frames waiting in the driver are lost: ExternalEventKind::TransmitUnsent.
+    ///  - ExternalEventKind::Warning for the 1st, 2nd, 4th, 8th ... restart since a frame last
+    ///    reached or came from the bus.
+    ///  - If the bus is still broken, the controller goes bus off again (while frames are being
+    ///    sent) and the port restarts it again; the wait doubles with each restart since the bus
+    ///    last worked, up to 10 s (or this long, if longer).
+    ///  - If the channel cannot be taken off or put back on the bus: ExternalEventKind::Fault
+    ///    (after TransmitUnsent).
+    ///  - Relies on the controller's state: bus_state_interval, or what the driver reports by
+    ///    itself. 0 disables the restarts.
     std::chrono::milliseconds bus_off_restart{1000};
 };
 

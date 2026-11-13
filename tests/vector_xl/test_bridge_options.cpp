@@ -52,7 +52,7 @@ TEST_CASE(options_full_command_line)
 {
     const auto options = parse({"--registry-uri", "silkit://127.0.0.1:8500", "--participant", "Bridge1", "--network",
                                 "CAN2", "--xl-target", "physical", "--xl-channel", "2", "--bitrate", "500000",
-                                "--rx-queue-size", "1024", "--tx-timeout-ms", "200"});
+                                "--rx-queue-size", "1024", "--tx-timeout-ms", "200", "--bus-off-restart-ms", "0"});
     CHECK(options.registry_uri == std::string("silkit://127.0.0.1:8500"));
     CHECK(options.participant == std::string("Bridge1"));
     CHECK(options.network == std::string("CAN2"));
@@ -63,6 +63,7 @@ TEST_CASE(options_full_command_line)
     CHECK_EQ(options.rx_queue_size, 1024u);
     CHECK(options.tx_timeout == std::optional<std::chrono::milliseconds>(std::chrono::milliseconds(200)));
     CHECK(options.bus_monitor);
+    CHECK(options.bus_off_restart == std::optional<std::chrono::milliseconds>(std::chrono::milliseconds(0)));
     CHECK(!options.list_channels);
 }
 
@@ -73,6 +74,7 @@ TEST_CASE(options_defaults_and_special_modes)
     CHECK(options.participant == std::string("VectorXlBridge"));
     CHECK(options.network == std::string("J1939_CAN1"));
     CHECK(!options.bitrate.has_value());
+    CHECK(!options.bus_off_restart.has_value());
     CHECK_EQ(options.rx_queue_size, 16384u);
     CHECK(!options.tx_timeout.has_value());
 
@@ -98,6 +100,8 @@ TEST_CASE(options_reject_bad_command_lines)
     CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--rx-queue-size", "1000"}));
     CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--rx-queue-size", "65536"}));
     CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--tx-timeout-ms", "99"}));
+    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--bus-off-restart-ms", "99"}));
+    CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--bus-off-restart-ms", "60001"}));
     CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--tx-timeout-ms", "60001"}));
     CHECK(usage_error({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--unknown", "1"}));
     CHECK(usage_error({"--registry-uri"}));
