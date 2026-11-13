@@ -303,6 +303,26 @@ public:
     /// @returns the time at which it stands still, or nullopt (also once the lifecycle ended).
     std::optional<SimTime> wait_until_paused(std::chrono::milliseconds timeout);
 
+    /// The guard: a second hold beside pause and pacing, for one owner that must do something
+    /// between two steps of the controller at exact virtual times (vehicle_sil_launch's scenario).
+    /// The controller's steps that start at or after `t` are held back (also one that is held now
+    /// for pacing or a pause) until the guard is moved beyond them or cleared (empty). While the
+    /// step at P is held, the simulation stands at P as in a pause (TimeState::paused is about
+    /// pause only and stays false): every synchronised participant has run, or is running, its
+    /// steps that start at or before P, and none runs a step that starts after P; so what the
+    /// owner hands a participant now for a time after P is there before that participant's step
+    /// at that time. The guard does not change the deadlines of the pacing: the time the owner
+    /// takes beyond a step's deadline makes the next step late like a slow participant does (it is
+    /// counted when that step begins: while the guard holds a step, time_state() shows no step as
+    /// overdue, and a run that ends there has none). The
+    /// step at or after stop_at is never held (the simulation stops there). Thread safe; does not
+    /// wait. May be called before start(): the step at 0 is then held from the beginning.
+    void guard_from(std::optional<SimTime> t);
+    /// Waits until a step is held for the guard, or the lifecycle ended, or the timeout expires.
+    /// @returns the start time of the held step, or nullopt (also once the lifecycle ended). Not
+    /// from a step (see wait_until_paused()).
+    std::optional<SimTime> wait_guarded(std::chrono::milliseconds timeout);
+
 private:
     struct Gate;
     struct Window;

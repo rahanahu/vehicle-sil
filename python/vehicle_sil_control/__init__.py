@@ -6,7 +6,7 @@ gRPC stubs exist, and Launch, LaunchError and control_address (the launcher as a
 standard library only) without gRPC.
 """
 _LAUNCHER = ["Launch", "LaunchError", "control_address"]
-__all__ = ["Control", "ControlError", "ControlWarning", "EventInfo", "Operation", "Peer", "SimulationState", "Target",
+__all__ = ["Control", "ControlError", "ControlWarning", "EventInfo", "Operation", "Peer", "SimulationState", "Snapshot", "Target",
            "TimeState", "Values", "Variable",
            "ms", "s"] + _LAUNCHER
 

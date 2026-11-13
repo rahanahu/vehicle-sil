@@ -12,7 +12,9 @@ add_library(vehicle_sil_launch_lib STATIC
   src/config.cpp
   src/check.cpp
   src/events.cpp
-  src/run.cpp)
+  src/run.cpp
+  src/scenario.cpp
+  src/scenario_run.cpp)
 add_library(vehicle_sil::launch ALIAS vehicle_sil_launch_lib)
 target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::ecu vehicle_sil::process)

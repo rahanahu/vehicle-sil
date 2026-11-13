@@ -129,6 +129,27 @@ class Values:
 
 
 @dataclasses.dataclass(frozen=True)
+class Snapshot:
+    """The time state and the latest values of several peers, read by the server in one go
+    (Control.snapshot()).
+
+    For the peers that run on the simulation's time, when `time.available`: the values are never
+    older than the time (every step that started before `time.now` is in them; they may be newer).
+    With `consistent`, the time stood still at `time.now` and no value is of a step after it: the
+    values are those of that moment. A step that starts exactly at `time.now` may or may not be in
+    them yet (see `Values.time`).
+
+    This holds as long as every ECU publishes its samples from within its step (an ECU of ecu_main
+    does; otherwise the launcher warns with control-link-late-values). "Every step" means the latest
+    sample taken before that time: an agent samples every sample period. Nothing is promised for a
+    peer that does not run on the simulation's time, and the API does not say which peers those are.
+    The values of a peer that is no longer connected stay in the snapshot (see `peers()`)."""
+    time: TimeState
+    values: Dict[str, Values]  # peer -> its latest sample; a peer without a sample (or an agent) is not in it
+    consistent: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class EventInfo:
     peer: str
     time: int
@@ -285,6 +306,7 @@ class Control:
             self._channel = grpc.intercept_channel(self._channel, interceptor)
         self._stub = rpc.ControlServiceStub(self._channel)
         self._timeout = timeout
+        self._schemas: Dict[tuple, List[Variable]] = {}  # (peer, incarnation) -> schema, for snapshot()
         self.sim = _Simulation(self)
 
     def __enter__(self) -> "Control":
@@ -332,6 +354,36 @@ class Control:
             raise ControlError(grpc.StatusCode.UNAVAILABLE, f"{peer} keeps restarting")
         values = {v.name: _value(x) for v, x in zip(info.schema, reply.snapshot.values)}
         return Values(peer, reply.incarnation, reply.snapshot.time_ns, reply.snapshot.sequence, values)
+
+    def snapshot(self, peers: Sequence[str] = ()) -> Snapshot:
+        """The time state and the latest values of `peers` (empty: every peer with an agent), read
+        by the server in one go: see Snapshot for what holds between the time and the values.
+        After `sim.wait_paused()`, `consistent` says that the values are those of the time the
+        simulation stands still at. ControlError with code UNIMPLEMENTED: the server is older and
+        has no such call (read `sim.time()` and `values()` instead; nothing holds between them)."""
+        if isinstance(peers, (str, bytes)):
+            raise TypeError("peers is a sequence of names, not one name: pass [name]")
+        try:
+            reply = self._call(self._stub.GetSnapshot, pb.GetSnapshotRequest(peers=list(peers)))
+        except ControlError as e:
+            if e.code == grpc.StatusCode.UNIMPLEMENTED:
+                raise ControlError(e.code, "the server has no GetSnapshot (it is older than this client): read "
+                                           "sim.time() and values() instead; nothing holds between the two") from None
+            raise
+        sampled = [v for v in reply.values if v.HasField("snapshot")]
+        if any((v.peer, v.incarnation) not in self._schemas for v in sampled):
+            # The names of the values: a schema belongs to an incarnation and does not change.
+            for p in self._call(self._stub.ListPeers, pb.ListPeersRequest()).peers:
+                if p.has_agent:
+                    self._schemas[(p.participant, p.incarnation)] = [_variable(v) for v in p.schema]
+        values: Dict[str, Values] = {}
+        for v in sampled:
+            schema = self._schemas.get((v.peer, v.incarnation))
+            if schema is None:
+                raise ControlError(grpc.StatusCode.UNAVAILABLE, f"{v.peer} restarted during the call: ask again")
+            named = {variable.name: _value(x) for variable, x in zip(schema, v.snapshot.values)}
+            values[v.peer] = Values(v.peer, v.incarnation, v.snapshot.time_ns, v.snapshot.sequence, named)
+        return Snapshot(_time(reply.time), values, reply.consistent)
 
     def write(self, writes: Mapping[str, Mapping[str, Number]], at: Optional[int] = None, late: str = "reject") -> int:
         """Writes {peer: {variable: value}}; returns the operation's sequence number. `at` is a

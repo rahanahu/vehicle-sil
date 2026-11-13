@@ -356,6 +356,42 @@ std::optional<SimTime> SimulationController::wait_until_paused(std::chrono::mill
     }
 }
 
+void SimulationController::guard_from(std::optional<SimTime> t)
+{
+    auto& g = gate();
+    {
+        const std::lock_guard lock(g.mutex);
+        g.model.guard_from(t, Gate::Wall::now());
+    }
+    g.wake();
+}
+
+std::optional<SimTime> SimulationController::wait_guarded(std::chrono::milliseconds timeout)
+{
+    auto& g = gate();
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (true)
+    {
+        // Once the lifecycle has ended (or is being stopped), no step is held any more.
+        if (runtime_->stop_requested() || (runtime_->started() && has_finished(PeerStatus{runtime_->state()})))
+        {
+            return std::nullopt;
+        }
+        std::unique_lock lock(g.mutex);
+        if (g.model.guarded())
+        {
+            return g.model.now();
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+        {
+            return std::nullopt;
+        }
+        // Short slices: the end of the lifecycle is not signalled on this condition variable.
+        g.cv.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(20)), [&] { return g.model.guarded(); });
+    }
+}
+
 void SimulationController::set_start_window(std::function<void(const StartWindow& window)> window)
 {
     if (!window)

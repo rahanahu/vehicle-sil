@@ -841,3 +841,66 @@ TEST_CASE(control_hub_the_end_of_an_agent_settles_what_is_open_for_it)
     CHECK(status_of(hub, queued, "Brake") == TargetStatus::Unknown);
     CHECK(hub.operation(queued)->done());
 }
+
+TEST_CASE(control_hub_reads_the_latest_values_of_several_peers_in_one_look)
+{
+    Hub hub;
+    FakePeer engine("Engine", "e1", hub);
+    FakePeer body("Body", "b1", hub);
+    FakePeer quiet("Quiet", "q1", hub);
+    engine.connect();
+    body.connect();
+    quiet.connect();
+    engine.step(at(20ms));
+    body.step(at(30ms));
+
+    // Without names: every peer, by name; a peer without a sample has its incarnation only.
+    const auto all = hub.latest_of({});
+    CHECK_EQ(all.size(), std::size_t{3});
+    CHECK(all[0].participant == "Body" && all[0].incarnation == "b1");
+    CHECK(all[1].participant == "Engine" && all[1].incarnation == "e1");
+    CHECK(all[2].participant == "Quiet" && all[2].incarnation == "q1" && all[2].snapshot == nullptr);
+    CHECK(all[0].snapshot != nullptr && all[0].snapshot->time == at(30ms));
+    CHECK(all[1].snapshot != nullptr && all[1].snapshot->time == at(20ms));
+    CHECK(all[1].snapshot == hub.latest("Engine")); // the sample itself, not a copy
+
+    // With names: in the order given, a name once, and an entry for a name the hub does not know.
+    const auto some = hub.latest_of({"Engine", "Nobody", "Engine", "Body"});
+    CHECK_EQ(some.size(), std::size_t{3});
+    CHECK(some[0].participant == "Engine" && some[0].incarnation == "e1" && some[0].snapshot != nullptr);
+    CHECK(some[1].participant == "Nobody" && some[1].incarnation.empty() && some[1].snapshot == nullptr);
+    CHECK(some[2].participant == "Body" && some[2].snapshot != nullptr);
+
+    // none_after(): a sample at the time is not after it; a missing sample is none.
+    CHECK(none_after(all, at(30ms)));
+    CHECK(!none_after(all, at(30ms) - SimDuration{1}));
+    CHECK(none_after(some, at(31ms)));
+    CHECK(!none_after(some, at(25ms))); // Body's
+    CHECK(none_after(hub.latest_of({"Engine", "Quiet", "Nobody"}), at(20ms)));
+    CHECK(none_after({}, SimTime{}));
+}
+
+TEST_CASE(control_hub_tap_sees_every_sample_in_order_until_it_is_taken_away)
+{
+    Hub hub;
+    FakePeer engine("Engine", "e1", hub);
+    FakePeer body("Body", "b1", hub);
+    engine.connect();
+    body.connect();
+    std::vector<std::string> seen;
+    hub.set_values_tap([&seen](const std::string& participant, const std::string& incarnation,
+                               const std::shared_ptr<const Snapshot>& sample) {
+        seen.push_back(participant + "/" + incarnation + "@" + std::to_string(sample->time.time_since_epoch().count() / 1'000'000));
+    });
+    // A subscription keeps only the latest sample per peer; the tap gets each one.
+    const auto subscription = hub.subscribe();
+    engine.step(at(10ms));
+    engine.step(at(20ms));
+    body.step(at(20ms));
+    engine.step(at(30ms));
+    CHECK_EQ(seen.size(), std::size_t{4});
+    CHECK(seen == (std::vector<std::string>{"Engine/e1@10", "Engine/e1@20", "Body/b1@20", "Engine/e1@30"}));
+    hub.set_values_tap({});
+    engine.step(at(40ms));
+    CHECK_EQ(seen.size(), std::size_t{4});
+}

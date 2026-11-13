@@ -97,6 +97,7 @@ const std::map<std::string, Expected>& expected()
         {"/vehicle_sil.control.v1.ControlService/Watch", {Role::Viewer, false}},
         {"/vehicle_sil.control.v1.ControlService/ForgetPeer", {Role::Operator, true}},
         {"/vehicle_sil.control.v1.ControlService/GetTime", {Role::Viewer, false}},
+        {"/vehicle_sil.control.v1.ControlService/GetSnapshot", {Role::Viewer, false}},
         {"/vehicle_sil.control.v1.ControlService/Pause", {Role::Operator, true}},
         {"/vehicle_sil.control.v1.ControlService/Resume", {Role::Operator, true}},
         {"/vehicle_sil.control.v1.ControlService/RunUntil", {Role::Operator, true}},
@@ -198,6 +199,7 @@ std::map<std::string, Call> calls()
     m[p + "WaitOperation"] = unary<v1::WaitOperationRequest, v1::Operation>(&S::WaitOperation);
     m[p + "ForgetPeer"] = unary<v1::ForgetPeerRequest, v1::ForgetPeerReply>(&S::ForgetPeer);
     m[p + "GetTime"] = unary<v1::GetTimeRequest, v1::TimeState>(&S::GetTime);
+    m[p + "GetSnapshot"] = unary<v1::GetSnapshotRequest, v1::GetSnapshotReply>(&S::GetSnapshot);
     m[p + "Pause"] = unary<v1::PauseRequest, v1::TimeState>(&S::Pause);
     m[p + "Resume"] = unary<v1::ResumeRequest, v1::TimeState>(&S::Resume);
     m[p + "RunUntil"] = unary<v1::RunUntilRequest, v1::TimeState>(&S::RunUntil);

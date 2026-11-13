@@ -423,3 +423,98 @@ TEST_CASE(time_gate_model_as_fast_as_possible_nothing_is_paced)
     check(s, {.paced = 0, .late = 0, .max_late_ms = 0, .slipped_ms = 0, .running_ms = 300});
     CHECK_EQ(s.max_gate_lateness.count(), 0);
 }
+
+TEST_CASE(time_gate_model_the_guard_holds_a_step_until_it_moves_on)
+{
+    // As fast as possible: nothing holds a step but the guard.
+    TimeGate gate(std::nullopt, 10ms, false);
+    gate.guard_from(at(0ms), w(0));
+    CHECK(gate.begin_step(at(0ms), 10ms, w(1)));
+    CHECK(gate.guarded());
+    CHECK(!gate.release_at().has_value()); // not let go, however long it takes
+    CHECK(!gate.state(w(500)).paused);     // the guard is no pause
+    // Moved to a time it has not reached: the step goes at once, and the next one is held again.
+    gate.guard_from(at(0ms) + SimDuration(1), w(2));
+    CHECK(!gate.guarded());
+    CHECK(gate.release_at().has_value());
+    CHECK(*gate.release_at() <= w(2));
+    gate.released(w(2));
+    CHECK(gate.begin_step(at(10ms), 10ms, w(3)));
+    CHECK(gate.guarded());
+    // Moved beyond the next step: that one is not held.
+    gate.guard_from(at(25ms), w(4));
+    gate.released(w(4));
+    CHECK(!gate.begin_step(at(20ms), 10ms, w(5)));
+    CHECK(!gate.guarded());
+    CHECK(gate.begin_step(at(30ms), 10ms, w(6)));
+    // Cleared: no step is held any more.
+    gate.guard_from(std::nullopt, w(7));
+    CHECK(gate.release_at().has_value());
+    gate.released(w(7));
+    CHECK(!gate.begin_step(at(40ms), 10ms, w(8)));
+}
+
+TEST_CASE(time_gate_model_the_guard_keeps_the_deadlines_and_what_it_takes_is_the_next_steps_lateness)
+{
+    // Speed 1, 10 ms steps, tolerance 10 ms.
+    TimeGate gate(1.0, 10ms, false);
+    gate.guard_from(at(0ms), w(0));
+    CHECK(gate.begin_step(at(0ms), 10ms, w(0)));
+    CHECK(!gate.release_at().has_value());
+    // The guard moves on after 3 ms: the pacing still holds the step to its deadline.
+    gate.guard_from(at(0ms) + SimDuration(1), w(3));
+    CHECK(gate.release_at().has_value());
+    CHECK(*gate.release_at() == w(10));
+    gate.released(w(10));
+    CHECK(gate.begin_step(at(10ms), 10ms, w(10)));
+    // The owner of the guard takes until 35 ms: the step's deadline (20 ms) has passed. While the
+    // guard holds, nothing is overdue.
+    const TimeState held = gate.state(w(30));
+    CHECK_EQ(held.late_steps, std::uint64_t{0});
+    CHECK_EQ(held.current_lateness.count(), 0);
+    gate.guard_from(at(10ms) + SimDuration(1), w(35));
+    CHECK(gate.release_at().has_value());
+    CHECK(*gate.release_at() <= w(35));
+    gate.released(w(35));
+    // The next step begins 16 ms after its deadline: late, and not the gate's own wake-up.
+    CHECK(gate.begin_step(at(20ms), 10ms, w(36)));
+    const TimeState s = gate.state(w(36));
+    CHECK_EQ(s.late_steps, std::uint64_t{1});
+    CHECK_EQ(ms(s.max_lateness), 16);
+    CHECK_EQ(ms(s.slipped), 16);
+    CHECK_EQ(s.max_gate_lateness.count(), 0);
+    // A run that ends while the guard holds a step has no overdue step.
+    gate.end(w(500));
+    const TimeState ended = gate.state(w(900));
+    CHECK_EQ(ended.late_steps, std::uint64_t{1});
+    CHECK_EQ(ended.current_lateness.count(), 0);
+}
+
+TEST_CASE(time_gate_model_the_guard_and_a_pause_hold_a_step_together_and_the_last_step_is_not_guarded)
+{
+    TimeGate gate(std::nullopt, 10ms, false);
+    gate.guard_from(at(0ms), w(0));
+    CHECK(gate.begin_step(at(0ms), 10ms, w(1)));
+    gate.pause(w(2)); // the guarded step is held: the pause is at it
+    CHECK(gate.paused());
+    gate.guard_from(at(5ms), w(3));
+    CHECK(!gate.release_at().has_value()); // still paused
+    gate.resume(w(4));
+    CHECK(gate.release_at().has_value());
+    gate.released(w(4));
+    // A step that is held for a pause when the guard comes to cover it stays for the guard too.
+    gate.guard_from(std::nullopt, w(5));
+    gate.pause(w(5));
+    CHECK(gate.begin_step(at(10ms), 10ms, w(6)));
+    CHECK(!gate.guarded());
+    gate.guard_from(at(10ms), w(7));
+    CHECK(gate.guarded());
+    gate.resume(w(8));
+    CHECK(!gate.release_at().has_value());
+    gate.guard_from(at(20ms), w(9));
+    gate.released(w(9));
+    // The step at stop_at is the last one: nothing holds it.
+    gate.begin_last_step(at(20ms), w(10));
+    CHECK(!gate.guarded());
+    CHECK(!gate.release_at().has_value());
+}

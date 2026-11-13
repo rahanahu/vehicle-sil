@@ -1,0 +1,19 @@
+# A scenario for the two ECUs of this directory: step on the throttle, wait for the engine to
+# speed up, see that the dashboard shows it, and let the throttle go again. Run it with
+#   vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
+# (the exit code is 0 if every step passed). The format: docs/scenario.md.
+vehicle_sil_scenario: 1
+name: throttle step
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - wait_until: { Engine.engine.speed: { ge: 1700 } }
+    timeout_ms: 500
+  - after_ms: 50
+    expect: { Engine.engine.speed: { near: 1800, tolerance: 10 } }
+    hold_for_ms: 100
+  - expect: { Dashboard.dashboard.engine_speed: { ge: 1700 } }
+    within_ms: 200
+  - ramp: { Engine.engine.throttle: { to: 0, over_ms: 200 } }
+  - expect: { Engine.engine.speed: { le: 1000 } }
+    within_ms: 100

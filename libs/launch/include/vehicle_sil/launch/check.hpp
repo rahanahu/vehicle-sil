@@ -7,6 +7,7 @@
 #pragma once
 
 #include "vehicle_sil/launch/config.hpp"
+#include "vehicle_sil/launch/scenario.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -109,6 +110,17 @@ struct ParticipantResult
                                                       const std::vector<ParticipantResult>& results,
                                                       std::string_view launcher_version);
 
+/// The scenario that was checked with the configuration (--scenario).
+struct ScenarioCheck
+{
+    std::string file; ///< as the user named it
+    /// Its "name" and the number of its steps, as far as it could be read.
+    std::string name{};
+    std::size_t steps = 0;
+    /// Set if the configuration could be read and the scenario has no error: it can run.
+    std::optional<Scenario> scenario{};
+};
+
 /// The result of checking one file.
 struct CheckReport
 {
@@ -117,6 +129,8 @@ struct CheckReport
     std::optional<SimulationConfig> config{};
     std::vector<ParticipantResult> participants{}; ///< in the order of config->participants
     std::vector<Finding> findings{};               ///< in the order of sort_findings()
+    /// --scenario: the scenario file; its findings are in `findings`, with Finding::file set.
+    std::optional<ScenarioCheck> scenario{};
     /// --strict: a warning fails the check too (a note never does).
     bool strict = false;
     /// The command line was wrong (format_json(): result "usage"; the findings say why; `file` stays
@@ -131,8 +145,8 @@ struct CheckReport
     [[nodiscard]] bool passed() const;
 };
 
-/// Puts the findings in the report's order: the errors, the warnings, the notes, each by line
-/// (those without a line first), otherwise as found.
+/// Puts the findings in the report's order: the errors, the warnings, the notes, each by file (the
+/// configuration's first) and line (those without a line first), otherwise as found.
 void sort_findings(std::vector<Finding>& findings);
 
 /// The report for people: the participants and the networks as tables, then each error and
@@ -152,12 +166,17 @@ struct CheckOptions
     bool strict = false;
     /// --disable and --enable.
     EnabledOverrides overrides{};
+    /// --scenario: a scenario file to check against the configuration (`scenario_shown`: as the
+    /// user named it); empty: none.
+    std::filesystem::path scenario{};
+    std::string scenario_shown{};
 };
 
 /// Checks the file `path` (shown as `shown_as`): reads it, checks the executables, runs each
 /// --describe in turn (not in parallel), compares. A disabled participant's executable is neither
-/// looked for nor run. Never throws for a problem of the file or of an executable: they are
-/// findings.
+/// looked for nor run. With CheckOptions::scenario, the scenario file is read and checked against
+/// the participants' descriptions as well (if the configuration could be read). Never throws for a
+/// problem of a file or of an executable: they are findings.
 [[nodiscard]] CheckReport check_file(const std::filesystem::path& path, const std::string& shown_as,
                                      const CheckOptions& options);
 

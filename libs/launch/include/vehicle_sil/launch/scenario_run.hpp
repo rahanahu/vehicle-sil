@@ -1,0 +1,253 @@
+// SPDX-License-Identifier: MIT
+//
+// Running a scenario (scenario.hpp): the machine that decides, from virtual times alone, when each
+// write goes out and what each step's result is. It has no thread, no clock and no SIL Kit: the
+// run (run.cpp) calls it at every step of the launcher's controller, and tests call it with a
+// model of the ECUs. Internal; what a user sees of it: docs/scenario.md.
+#pragma once
+
+#include "vehicle_sil/control/hub.hpp"
+#include "vehicle_sil/core/sim_time.hpp"
+#include "vehicle_sil/launch/scenario.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace vehicle_sil::launch {
+
+enum class StepStatus
+{
+    NotRun,     ///< the scenario was over before its time
+    Running,    ///< begun and not decided yet (only while the scenario runs)
+    Passed,
+    Failed,
+    Unfinished, ///< begun, and the scenario was over before it was decided
+};
+/// "not_run", "running", "passed", "failed", "unfinished".
+[[nodiscard]] const char* step_status_name(StepStatus status);
+
+/// What became of one step.
+struct ScenarioStepRun
+{
+    std::size_t index = 0; ///< from 1, in the order of the file
+    std::size_t line = 0;
+    StepKind kind = StepKind::Set;
+    std::string text; ///< ScenarioStep::text
+    StepStatus status = StepStatus::NotRun;
+    /// Its time (at_ms, or after_ms from the end of the step before it), once that is known.
+    std::optional<SimTime> start{};
+    /// The virtual time that decided it. Passed: the start of the ECU step that applied a set (the
+    /// latest of them), a ramp's end, the time of an expect,
+    /// the sample at which a wait_until or an expect with within_ms became true, the end of a
+    /// hold_for_ms. Failed: the sample that broke a hold, the time a wait ran out, the time of the
+    /// write that failed; for a failure before anything happened, its start.
+    std::optional<SimTime> at{};
+    /// From where the next step's after_ms counts (Passed, and a step whose end is known before).
+    std::optional<SimTime> end{};
+    /// Failed: the code of its finding ("scenario-failed", "scenario-timeout", "scenario-write",
+    /// "scenario-out-of-time") and why, in one line with the times and the values.
+    std::string code{};
+    std::string message{};
+};
+
+enum class ScenarioStatus
+{
+    NotRun,     ///< the simulation did not start
+    Passed,     ///< every step passed
+    Failed,     ///< a step failed (the first one in virtual time; ScenarioRun::steps says which)
+    Incomplete, ///< the simulation ended for another reason before the last step was decided
+};
+/// "not_run", "passed", "failed", "incomplete".
+[[nodiscard]] const char* scenario_status_name(ScenarioStatus status);
+
+struct ScenarioRun
+{
+    std::string file; ///< as the user named it
+    std::string name;
+    ScenarioStatus status = ScenarioStatus::NotRun;
+    std::vector<ScenarioStepRun> steps{};
+    /// Passed and Failed: the step of the launcher's controller at which the scenario was over
+    /// (the simulation stands there until it is stopped).
+    std::optional<SimTime> over_at{};
+};
+
+/// The run of `scenario` before anything happened: every step NotRun (`file` is the caller's to set).
+[[nodiscard]] ScenarioRun scenario_not_run(const Scenario& scenario);
+
+/// What the engine writes through (the run: the hub; a test: a model).
+class ScenarioPort
+{
+public:
+    virtual ~ScenarioPort() = default;
+    /// Hands the writes to their agents, to take effect in each agent's first step at or after
+    /// `at`, and returns when every agent has queued or refused its part (or the run is ending).
+    /// @returns a ticket for result().
+    virtual std::uint64_t write(std::vector<control::PeerWrite> writes, SimTime at) = 0;
+    /// Where the writes of `ticket` stand now; empty if that is not known any more.
+    virtual std::optional<control::OperationResult> result(std::uint64_t ticket) = 0;
+};
+
+/// A scenario participant as the run found it when the simulation started.
+struct EnginePeer
+{
+    /// Its agent is connected and takes commands.
+    bool connected = false;
+    /// The variables its agent offers, in the order of its samples' values.
+    std::vector<control::VariableInfo> schema{};
+};
+
+/// Runs one scenario. Not thread safe: one caller at a time.
+///
+/// The contract with the caller (the launcher's controller steps every `tick`, at 0, tick, 2 tick,
+/// ...; "a step at P" is one of those):
+/// - begin(): once, while every participant waits before its first step (the start window). The
+///   engine writes what the scenario sets at 0 there.
+/// - sample(): every sample of a scenario participant, in the order its agent took them, at any
+///   time before the tick() that may use it: a sample of a step that starts before P before
+///   tick(P). Samples that arrive early (of steps at or after P) are kept and not looked at until
+///   their turn, so the result does not depend on when a sample arrives.
+/// - tick(P): at every step P of the controller in turn, while the simulation stands at P: every
+///   participant has run or is running its steps that start at or before P and runs none after
+///   P, until tick() has returned. The engine then
+///   1. judges the writes whose result must be there (below),
+///   2. looks at the samples of steps before P in the order of their times (ties: in the order of
+///      Scenario::participants) and decides the expectations and waits whose time has come,
+///   3. hands out the writes for the times in (P, P + tick] (ScenarioPort::write()), which are
+///      therefore queued in their agents before any step at those times: no write is late.
+///   It returns true once the scenario is over (passed or failed): the caller stops the
+///   simulation at P.
+/// - stopped_at(P): instead of tick(P) when the simulation stopped by itself at the step P
+///   (stop_at_ms): what can be decided from the samples before P is decided; then the first step
+///   that is not is failed ("scenario-out-of-time").
+/// - cut_short(): the simulation ended otherwise (a stop request, a failed participant, a
+///   timeout): the scenario is Incomplete.
+///
+/// Times. A step's time T is at_ms, or after_ms after the end of the step before it. The end of
+/// a set and of an expect at one time is T; of a ramp T + over_ms; of an expect with hold_for_ms
+/// T + hold_for_ms: all known when the step before ends, so such steps keep their times whatever
+/// happens. A wait_until, or an expect with within_ms, that becomes true at the sample of time t
+/// is known to the engine at the first step P of the controller after t, and ends at P + tick:
+/// the first time at which a write of the next step can still take effect.
+///
+/// Values. "The values at time T" are, per variable, those of its ECU's latest sample of a step
+/// that starts at or before T. An expect at T compares them. A wait_until or an expect with
+/// within_ms from T is true at the first time in [T, T + within] at which they compare true: at T
+/// itself, or at a later sample. An expect with hold_for_ms from T passes if they compare true at
+/// T and at every sample in (T, T + hold_for]. A variable without a sample yet compares false.
+///
+/// Writes. A set at T is one command per participant with the time T: it takes effect in that
+/// ECU's first step at or after T. A ramp from T writes, per variable, at T, T + step, T + 2 step,
+/// ... (the ECU's step) the value on the line from `from` to `to`, and `to` at T + over_ms; a
+/// `from` that is not given is the value the scenario wrote to the variable last, or the one of
+/// the latest sample the engine has looked at if that is newer. The result of a write is judged
+/// at a fixed step of the controller: the first after the ECU's step that applies it (by then it
+/// has arrived). Anything but "applied" fails the step ("scenario-write").
+///
+/// The first failure in this order ends the scenario; steps that had begun are Unfinished, later
+/// ones NotRun (their writes for times up to P + tick may have gone out).
+class ScenarioEngine
+{
+public:
+    /// Called when a step begins (status Running) and when it is decided (Passed, Failed).
+    using OnStep = std::function<void(const ScenarioStepRun& step)>;
+
+    /// `scenario` and `port` must outlive the engine. `tick` > 0.
+    ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step = {});
+
+    /// `peers` in the order of Scenario::participants.
+    void begin(const std::vector<EnginePeer>& peers);
+    void sample(std::size_t participant, std::shared_ptr<const control::Snapshot> sample);
+    bool tick(SimTime p);
+    void stopped_at(SimTime p);
+    void cut_short();
+    /// The simulation ended because a participant failed: a scenario that failed (possibly of
+    /// that) is Incomplete instead, its failed step Unfinished. Passed stays.
+    void superseded();
+
+    [[nodiscard]] bool over() const noexcept { return over_; }
+    /// The steps and the status so far (`file` and `name` are the caller's to set).
+    [[nodiscard]] const ScenarioRun& run() const noexcept { return run_; }
+
+private:
+    struct Variable
+    {
+        std::optional<std::size_t> index; ///< in its participant's samples
+        std::string problem;              ///< why it cannot be used in this run, or ""
+        std::optional<control::Value> value; ///< of the latest sample looked at
+        std::optional<SimTime> value_time;
+        std::optional<control::Value> written; ///< what the scenario wrote last
+        SimTime written_at{};
+    };
+    struct Watch
+    {
+        std::size_t step = 0;
+        SimTime from{};
+        std::optional<SimTime> until{}; ///< empty: decided at `from`
+        bool hold = false;              ///< until: true all the time (else: true at some time)
+        bool opened = false;
+    };
+    struct Write
+    {
+        std::size_t step = 0;
+        SimTime at{};
+        std::vector<ScenarioWrite> writes;
+        std::optional<std::size_t> ramp{}; ///< of ramps_: its value is worked out when it is sent
+        bool ramp_last = false;            ///< the ramp's end value
+        std::uint64_t ticket = 0;
+        SimTime judge{};
+    };
+    struct Ramp
+    {
+        std::size_t step = 0;
+        ScenarioRamp ramp;
+        SimTime from_time{};
+        SimDuration period{};
+        std::optional<double> from{};
+        std::int64_t next = 0; ///< the next write is at from_time + next * period (or the end)
+        bool done = false;
+    };
+
+    void issue();
+    void issue_step(std::size_t index, SimTime time);
+    void submit(SimTime from_exclusive, SimTime to_inclusive, bool at_start);
+    bool submit_one(Write write);
+    void judge(SimTime p);
+    void observe(SimTime p);
+    void evaluate(Watch& watch, SimTime t);
+    void close(Watch& watch, SimTime t);
+    void started(std::size_t step);
+    void pass(std::size_t step, SimTime at, SimTime end);
+    void fail(std::size_t step, SimTime at, std::string code, std::string message);
+    void finish(ScenarioStatus status);
+    [[nodiscard]] bool unusable(std::size_t step, SimTime time);
+    [[nodiscard]] std::string unmet(const ScenarioStep& step) const;
+    [[nodiscard]] SimTime judge_time(const std::vector<ScenarioWrite>& writes, SimTime at) const;
+    [[nodiscard]] SimTime next_tick_after(SimTime t) const;
+
+    const Scenario& scenario_;
+    SimDuration tick_;
+    ScenarioPort& port_;
+    OnStep on_step_;
+    ScenarioRun run_;
+    bool over_ = false;
+    bool begun_ = false;
+    SimTime now_{};                  ///< the tick being handled
+    std::vector<Variable> variables_;
+    std::vector<std::deque<std::shared_ptr<const control::Snapshot>>> samples_; ///< per participant, not looked at yet
+    std::size_t next_ = 0;           ///< the next step to issue
+    std::optional<SimTime> base_{SimTime{}}; ///< the end of the step before it; empty while that step waits
+    std::deque<Watch> watches_;      ///< in step order
+    std::deque<Write> to_send_;      ///< sets, by step
+    std::deque<Write> sent_;         ///< in the order sent
+    std::deque<Ramp> ramps_;
+    std::vector<std::size_t> open_writes_; ///< per step: writes not judged yet (and ramps not done)
+    std::size_t passed_ = 0;
+};
+
+} // namespace vehicle_sil::launch

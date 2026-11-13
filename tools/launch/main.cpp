@@ -74,12 +74,13 @@ namespace {
 using namespace vehicle_sil;
 
 constexpr const char* kUsage =
-    "usage: vehicle_sil_launch check [--json] [--strict] [--describe-timeout-ms <ms>] [--disable <name>]...\n"
-    "                                [--enable <name>]... [--] <file>\n"
+    "usage: vehicle_sil_launch check [--json] [--strict] [--scenario <file>] [--describe-timeout-ms <ms>]\n"
+    "                                [--disable <name>]... [--enable <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
     "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
-    "                              [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]\n"
+    "                              [--scenario <file>] [--speed <speed>] [--strict] [--log-dir <dir>]\n"
+    "                              [--timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>]\n"
     "                              [--disable <name>]... [--enable <name>]... [--] <file>\n"
     "       vehicle_sil_launch version [--json]\n"
@@ -111,6 +112,10 @@ constexpr const char* kUsage =
     "  --control-tls-cert <file>   run --control: PEM certificate chain of the server (with --control-tls-key: TLS)\n"
     "  --control-tls-key <file>    run --control: PEM private key of the server\n"
     "  --control-audit-log <file>  run --control: append who changed what\n"
+    "  --scenario <file>           check: also check the scenario <file> against the participants' variables;\n"
+    "                              run: then run it: write the ECUs' variables and compare their values at\n"
+    "                              virtual times, stop the simulation when the scenario is over, and fail if a\n"
+    "                              step failed (docs/scenario.md; not with --control or --start-paused)\n"
     "  --speed <speed>             run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
     "                              or max (as fast as possible); replaces speed in <file>\n"
     "  --strict                    fail on warnings too\n"
@@ -125,7 +130,7 @@ constexpr const char* kUsage =
     "  --                          what follows is the file, also if it starts with '-'\n"
     "exit codes: 0 passed, 1 errors (with --strict: or warnings; run: also a failed simulation), 3 the file\n"
     "            cannot be read (run: or the registry cannot be set up), 4 usage, 130 run was interrupted (or stopped)\n"
-    "the file format, the rules, the run and the events: docs/simulation-config.md\n";
+    "the file format, the rules, the run and the events: docs/simulation-config.md; scenarios: docs/scenario.md\n";
 
 /// The command line as UTF-8: on Windows from the wide command line (argv is in the code page).
 std::vector<std::string> utf8_arguments(int argc, char** argv)
@@ -807,7 +812,8 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
             optionsEnded = true;
         }
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
-                 a == "--disable" || a == "--enable" || a == "--speed" || a == "--control" || a == "--control-credentials" ||
+                 a == "--disable" || a == "--enable" || a == "--speed" || a == "--scenario" || a == "--control" ||
+                 a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
             ++i;
@@ -841,6 +847,15 @@ Common common(const cli::Args& args, const std::string& command)
     c.options.strict = args.flag("strict");
     c.options.overrides.disable = args.all("disable");
     c.options.overrides.enable = args.all("enable");
+    if (args.has("scenario"))
+    {
+        c.options.scenario_shown = args.str("scenario", "");
+        if (c.options.scenario_shown.empty())
+        {
+            throw cli::UsageError("--scenario needs a scenario file");
+        }
+        c.options.scenario = process::path_from_utf8(c.options.scenario_shown);
+    }
     c.file = positionals[1];
     return c;
 }
@@ -930,6 +945,14 @@ int run(const cli::Args& args, launch::EventStream* events)
                               "version --json` lists control-server in its features when it has it (docs/control-api.md)");
     }
 #endif
+    if (args.has("scenario") && (control || args.flag("start-paused")))
+    {
+        throw cli::UsageError(std::string("--scenario cannot be used with ") + (control ? "--control" : "--start-paused") +
+                              (control ? ": a control client that writes variables or holds the start would change what "
+                                         "the scenario does, and the same scenario must give the same result"
+                                       : ": the scenario writes its values for 0 before the first step and runs by "
+                                         "itself; pause and step it with --stdin-commands if needed"));
+    }
     if (args.flag("start-paused"))
     {
         if (!args.flag("stdin-commands") && !control)
@@ -1097,8 +1120,8 @@ int main(int argc, char** argv)
     try
     {
         const cli::Args args(arguments,
-                             {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "control",
-                              "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"},
+                             {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario",
+                              "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"},
                              {"json", "strict", "events", "stdin-commands", "start-paused"}, {"disable", "enable"});
         if (args.positionals().empty())
         {

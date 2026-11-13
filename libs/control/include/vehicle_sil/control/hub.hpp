@@ -150,6 +150,19 @@ struct OperationUpdate
 };
 using Update = std::variant<PeerUpdate, ValuesUpdate, EventUpdate, OperationUpdate>;
 
+/// The latest sample of a peer, as Hub::latest_of() reads it.
+struct LatestValues
+{
+    std::string participant;
+    std::string incarnation;                  ///< of the sample's schema; "" if the hub has no such peer
+    std::shared_ptr<const Snapshot> snapshot; ///< nullptr: no sample since the incarnation connected (or no such peer)
+};
+
+/// Whether no sample in `values` is of a step that started after `now`. With a time state read
+/// before the values that stood still at `now`, the values are then those of that moment (see
+/// Hub::latest_of()).
+[[nodiscard]] bool none_after(const std::vector<LatestValues>& values, SimTime now) noexcept;
+
 struct SubscriptionOptions
 {
     std::vector<std::string> peers{}; ///< empty: all
@@ -260,6 +273,16 @@ public:
     [[nodiscard]] std::vector<PeerInfo> peers() const;
     /// The latest sample of a peer (nullptr if none since its current incarnation connected).
     [[nodiscard]] std::shared_ptr<const Snapshot> latest(const std::string& peer) const;
+    /// The latest samples of several peers as they are at one moment (one look under the hub's
+    /// lock; the samples are shared, not copied). `peers` empty: every peer, by name. Else: one
+    /// entry per name in the order given (a name given again is left out), also for a name the hub
+    /// does not know (no incarnation, no sample).
+    ///
+    /// For a caller that wants the time and the values of one moment: read the time state first,
+    /// then call this. Samples only get newer, so the values then hold everything the hub had when
+    /// the time was read (with a transport on a time-synchronised participant: every step that
+    /// started before that time), and none_after() tells whether they hold anything later.
+    [[nodiscard]] std::vector<LatestValues> latest_of(const std::vector<std::string>& peers) const;
     /// Removes a disconnected peer (subscribers get a PeerUpdate with removed); its open commands
     /// become Unknown. @returns false if it is connected or unknown.
     bool forget_peer(const std::string& peer);
@@ -278,6 +301,18 @@ public:
     std::optional<OperationResult> wait_done(std::uint64_t seq, std::chrono::milliseconds timeout);
     /// The current peers and their latest values are delivered first.
     std::shared_ptr<Subscription> subscribe(SubscriptionOptions options = {});
+
+    /// Every sample the hub takes, as it takes it: `participant`, the incarnation whose schema it
+    /// follows, the sample (shared, not copied).
+    using ValuesTap = std::function<void(const std::string& participant, const std::string& incarnation,
+                                         const std::shared_ptr<const Snapshot>& sample)>;
+    /// Sets the one tap of the hub (empty: none): it is called for every sample that agent_values()
+    /// takes, in the order taken, on the thread of the transport that brings it and under the
+    /// hub's lock. For a reader that must see every sample (a subscription keeps only the latest
+    /// one per peer). It must be short, must not wait and must not call the hub: with
+    /// control_silkit::HubTransport the whole simulation waits for it. Once this returns, the tap
+    /// set before is not running and is not called again.
+    void set_values_tap(ValuesTap tap);
 
 private:
     struct PeerEntry
@@ -338,6 +373,7 @@ private:
     std::map<std::uint64_t, Operation> operations_;
     std::deque<std::uint64_t> finished_; ///< finished operations, oldest first
     std::vector<std::weak_ptr<Subscription>> subscriptions_;
+    ValuesTap values_tap_;
 };
 
 } // namespace vehicle_sil::control

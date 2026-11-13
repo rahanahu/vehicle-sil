@@ -26,6 +26,12 @@
 //   variables               declares the input "level", the parameter "gain", and the outputs
 //                           "gain_at_0" (the parameter as the step at 0 saw it) and "ticks" (the
 //                           number of its 10 ms steps so far)
+//   scenario-variables      declares the input "level" (0 to 100), the enum input "mode" (off 0, on 1,
+//                           auto 2), the parameter "gain", and the outputs "gain_at_0", "ticks",
+//                           "level_changed_at_ms" (the start of the 10 ms step that first saw the
+//                           level it has now; -1 before a change), "mode_now" (the mode, as an
+//                           enum) and "pulse" (true in the step at 200 ms only). A level of 13
+//                           is refused (the setter throws)
 // With the file "test-ecu-no-control" in its working directory, the ECUs started there run with
 // --no-control (their --describe still has the variables): an executable that describes
 // variables and never offers them.
@@ -144,6 +150,27 @@ public:
                 ecu.output("gain_at_0", &gain_at_0_);
                 ecu.output("ticks", &ticks_);
             }
+            else if (word == "scenario-variables")
+            {
+                const std::vector<vehicle_sil::control::EnumItem> modes{{"off", 0}, {"on", 1}, {"auto", 2}};
+                ecu.agent().input(
+                    "level", [this] { return level_; },
+                    [this](std::int64_t v) {
+                        if (v == 13)
+                        {
+                            throw std::runtime_error("13 is not a level");
+                        }
+                        level_ = v;
+                    },
+                    {.min = 0.0, .max = 100.0});
+                ecu.agent().input_enum("mode", &mode_, modes);
+                ecu.input("gain", &gain_, {.parameter = true});
+                ecu.output("gain_at_0", &gain_at_0_);
+                ecu.output("ticks", &ticks_);
+                ecu.output("level_changed_at_ms", &level_changed_at_);
+                ecu.agent().output_enum("mode_now", [this] { return mode_; }, modes);
+                ecu.output("pulse", &pulse_);
+            }
         }
         // Not in the constructor: --describe constructs the ECU too, and must start nothing.
         ecu.at(vehicle_sil::SimTime{}, [this](vehicle_sil::SimTime) {
@@ -173,6 +200,12 @@ public:
         ecu.every(10ms, [this](vehicle_sil::SimTime now) {
             ++ticks_;
             const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+            if (level_ != last_level_)
+            {
+                last_level_ = level_;
+                level_changed_at_ = ms;
+            }
+            pulse_ = ms == 200;
             if (slow_ > 0)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(slow_));
@@ -250,6 +283,10 @@ private:
     std::int64_t gain_ = 0;
     std::int64_t gain_at_0_ = -1;
     std::int64_t ticks_ = 0;
+    std::int64_t last_level_ = 0;
+    std::int64_t level_changed_at_ = -1;
+    std::int64_t mode_ = 0;
+    bool pulse_ = false;
 };
 
 } // namespace

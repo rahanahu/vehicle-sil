@@ -359,6 +359,26 @@ class ConversionTest(unittest.TestCase):
             self.assertEqual((type(back), back), (type(value), value))
 
 
+class OlderServerTest(unittest.TestCase):
+    """A server from before GetSnapshot (here: a gRPC server without any service)."""
+
+    def test_snapshot_says_that_the_server_has_no_such_call(self):
+        from concurrent import futures
+        import grpc
+        from vehicle_sil_control import Control, ControlError
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
+        port = server.add_insecure_port("127.0.0.1:0")
+        server.start()
+        self.addCleanup(server.stop, None)
+        with Control(f"127.0.0.1:{port}") as c:
+            with self.assertRaises(ControlError) as refused:
+                c.snapshot()
+        self.assertEqual(refused.exception.code, grpc.StatusCode.UNIMPLEMENTED)
+        self.assertEqual(str(refused.exception),
+                         "UNIMPLEMENTED: the server has no GetSnapshot (it is older than this client): read "
+                         "sim.time() and values() instead; nothing holds between the two")
+
+
 class AbortedSimulationTest(unittest.TestCase):
     """vehicle_sil_control_server without --required in a simulation that vehicle_sil_sim_controller
     coordinates: when the controller aborts the simulation (a required ECU's process was killed),

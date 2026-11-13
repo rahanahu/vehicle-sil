@@ -1062,6 +1062,10 @@ void sort_findings(std::vector<Finding>& findings)
         {
             return a.severity < b.severity; // errors, warnings, notes
         }
+        if (a.file != b.file)
+        {
+            return a.file.empty(); // the configuration's, then the scenario's
+        }
         return a.line < b.line;
     });
 }
@@ -1126,6 +1130,11 @@ std::string detail::check_text_body(const CheckReport& report)
             out += table(rows) + "\n";
         }
     }
+    if (report.scenario && report.config)
+    {
+        out += "scenario " + report.scenario->file + (report.scenario->name.empty() ? "" : " (" + report.scenario->name + ")") +
+               ": " + count_text(report.scenario->steps, "step", "steps") + "\n\n";
+    }
     out += detail::findings_text(report.file, report.findings);
     return out;
 }
@@ -1135,7 +1144,7 @@ std::string detail::findings_text(const std::string& file, const std::vector<Fin
     std::string out;
     for (const auto& finding : findings)
     {
-        out += std::string(severity_name(finding.severity)) + ": " + file +
+        out += std::string(severity_name(finding.severity)) + ": " + (finding.file.empty() ? file : finding.file) +
                (finding.line > 0 ? ":" + std::to_string(finding.line) : std::string{}) + ": " + finding.message + "\n";
         if (!finding.detail.empty())
         {
@@ -1199,7 +1208,7 @@ void detail::write_finding_members(vehicle_sil::detail::JsonWriter& w, const std
     };
     w.string("severity", severity_name(finding.severity));
     w.string("code", finding.code);
-    optional_text("file", file);
+    optional_text("file", finding.file.empty() ? file : finding.file);
     if (finding.line > 0)
     {
         w.integer("line", static_cast<std::int64_t>(finding.line));
@@ -1375,12 +1384,76 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
     }
     w.end_array();
     detail::write_findings_json(w, report.file, report.findings);
+    if (report.scenario)
+    {
+        // Only with --scenario: a result without one is as it was before scenarios.
+        w.begin_object("scenario");
+        w.string("file", report.scenario->file);
+        optional_text("name", report.scenario->name);
+        w.integer("steps", static_cast<std::int64_t>(report.scenario->steps));
+        w.end_object();
+    }
     w.end_object();
 }
 
 namespace {
 /// The largest configuration file read.
 constexpr std::uintmax_t kMaxConfigBytes = std::uintmax_t{16} << 20;
+} // namespace
+
+namespace {
+
+/// --scenario: reads the scenario file and checks it against the participants of `report`.
+void check_scenario_file(CheckReport& report, const CheckOptions& options)
+{
+    ScenarioCheck check;
+    check.file = options.scenario_shown;
+    const auto add = [&](Finding finding) {
+        finding.file = check.file;
+        report.findings.push_back(std::move(finding));
+    };
+    const std::filesystem::path& path = options.scenario;
+    std::error_code ec;
+    std::string problem;
+    std::string text;
+    if (!std::filesystem::exists(path, ec))
+    {
+        problem = "the scenario file does not exist: check the path given with --scenario";
+    }
+    else if (!std::filesystem::is_regular_file(path, ec))
+    {
+        problem = "this is not a regular file: name the scenario file with --scenario";
+    }
+    else if (std::filesystem::file_size(path, ec) > kMaxConfigBytes)
+    {
+        problem = "the file is larger than " + std::to_string(kMaxConfigBytes >> 20) + " MiB, too large for a scenario";
+    }
+    else if (std::ifstream in(path, std::ios::binary); !in)
+    {
+        problem = "cannot open the scenario file: check its permissions";
+    }
+    else
+    {
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    if (!problem.empty())
+    {
+        add(Finding{Severity::Error, "file", problem, 0, "", ""});
+    }
+    else
+    {
+        ScenarioRead read = read_scenario(text, scenario_catalog(report));
+        check.name = std::move(read.name);
+        check.steps = read.steps;
+        check.scenario = std::move(read.scenario);
+        for (Finding& finding : read.findings)
+        {
+            add(std::move(finding));
+        }
+    }
+    report.scenario = std::move(check);
+}
+
 } // namespace
 
 CheckReport check_file(const std::filesystem::path& path, const std::string& shown_as, const CheckOptions& options)
@@ -1530,6 +1603,10 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     }
     auto compared = check_participants(*report.config, report.participants, version());
     report.findings.insert(report.findings.end(), compared.begin(), compared.end());
+    if (!options.scenario.empty())
+    {
+        check_scenario_file(report, options);
+    }
     sort_findings(report.findings);
     return report;
 }

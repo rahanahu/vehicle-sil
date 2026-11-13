@@ -9,6 +9,7 @@
 
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/scenario_run.hpp"
 #include "vehicle_sil/process/process.hpp"
 
 #include <atomic>
@@ -52,7 +53,7 @@ enum class SimulationEnd
 {
     NotStarted,    ///< it never ran
     ReachedStopAt, ///< it ran to stop_at_ms and shut down
-    Ended,         ///< it ran and ended otherwise (a participant stopped it)
+    Ended,         ///< it ran and ended otherwise (a participant stopped it, or the launcher when the scenario was over)
     Aborted,       ///< it ran and a participant failed it: the launcher aborted it
     Interrupted,   ///< it ran and the launcher was interrupted: it stopped it
 };
@@ -214,6 +215,14 @@ struct RunOutcome
     std::optional<std::int64_t> stop_at_ms{};
     RunTiming timing{};
     std::vector<ParticipantRun> participants{};
+    /// run --scenario: what became of the scenario (ScenarioStatus::NotRun if the simulation did
+    /// not start).
+    std::optional<ScenarioRun> scenario{};
+    /// The scenario was over (passed or failed) and the launcher stopped the simulation for it,
+    /// at ScenarioRun::over_at (SimulationEnd::Ended).
+    bool stopped_by_scenario = false;
+    /// The scenario's thread failed unexpectedly: why (the scenario is Incomplete).
+    std::string scenario_error{};
 };
 
 /// Judges a run: the errors (they fail it), warnings and notes, each about the participant (with
@@ -417,7 +426,9 @@ struct RunOptions
     std::function<ControlServerInfo(control::Hub& hub)> serve_control{};
 };
 
-/// Runs the file `path` (shown as `shown_as`): check_file(); if it passed, the simulation. Never
+/// Runs the file `path` (shown as `shown_as`): check_file(); if it passed, the simulation; with
+/// CheckOptions::scenario (in `options.check`), the scenario in it (docs/scenario.md; the run then
+/// ends when the scenario is over). Never
 /// throws for a problem of the file, an executable or a participant: they are findings. Must be
 /// called from the thread that lives longest (the main thread): on Linux, the participants end
 /// when it ends (process::Process).
@@ -439,7 +450,9 @@ namespace detail {
 /// step was paced.
 [[nodiscard]] std::string timing_text(const RunTiming& timing);
 
-/// The step of the launcher's controller for a run at `speed` (empty: as fast as possible), and
+/// The step of the launcher's controller for a run at `speed` (empty: as fast as possible; `fine`:
+/// as with a speed, whatever the speed is: a run with a scenario, whose results must not depend on
+/// the speed), and
 /// what it means for the ECUs' steps: RunTiming's time_step_ms, time_step_written, ecu_step_ns,
 /// step_delay_ns and fine_step_ms (the rest is left as it is in the result).
 /// - time_step_ms as written, if it is.
@@ -449,7 +462,7 @@ namespace detail {
 ///   gate keeps real time only there); 1 ms if a participant's step is not known (describe: false)
 ///   or the divisor is no whole number of milliseconds.
 [[nodiscard]] RunTiming plan_time_step(const SimulationConfig& config, const CheckReport& check,
-                                       const std::optional<double>& speed);
+                                       const std::optional<double>& speed, bool fine = false);
 
 /// How a wait of the launcher ended.
 enum class Waited

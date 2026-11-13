@@ -191,6 +191,51 @@ TEST_CASE(virtual_time_gate_stands_still_at_a_controller_step)
     }
 }
 
+TEST_CASE(virtual_time_gate_guard_holds_every_step_until_its_owner_moves_it_on)
+{
+    // The guard from 0, set before the start: its owner sees every controller step in turn, and
+    // while it looks, no participant has begun a step after it.
+    GateSim sim(TimeControlOptions{.step = 10ms}, 200ms);
+    sim.controller->guard_from(at(0ms));
+    sim.start();
+    std::vector<SimDuration> seen;
+    for (int i = 0; i < 20; ++i)
+    {
+        const auto p = sim.controller->wait_guarded(10s);
+        CHECK(p.has_value());
+        if (!p)
+        {
+            break;
+        }
+        CHECK(!sim.controller->time_state().paused); // a guard, not a pause
+        seen.push_back(p->time_since_epoch());
+        if (i % 5 == 0)
+        {
+            std::this_thread::sleep_for(20ms); // steps after p would have time to run
+        }
+        for (auto& peer : sim.peers)
+        {
+            CHECK(peer->last() <= p->time_since_epoch());
+            // What starts before the controller's step has been run: its latest step is at least
+            // the last one before p.
+            CHECK(peer->last() + peer->step >= p->time_since_epoch());
+        }
+        sim.controller->guard_from(*p + SimDuration(1));
+    }
+    CHECK_EQ(seen.size(), std::size_t{20});
+    for (std::size_t i = 0; i < seen.size(); ++i)
+    {
+        CHECK_EQ(seen[i].count(), SimDuration(10ms * static_cast<int>(i)).count());
+    }
+    // The step at stop_at is not held: the simulation ends by itself, and the wait says so.
+    CHECK(sim.controller->wait_until_finished(10s).has_value());
+    CHECK(!sim.controller->wait_guarded(1s).has_value());
+    for (auto& peer : sim.peers)
+    {
+        check_grid(*peer);
+    }
+}
+
 TEST_CASE(virtual_time_gate_start_paused_runs_only_the_steps_at_zero)
 {
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true});

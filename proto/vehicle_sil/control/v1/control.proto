@@ -263,6 +263,38 @@ message SimulationState {
 }
 
 message GetTimeRequest {}
+
+message GetSnapshotRequest {
+  // Empty: every peer that has an agent. At most the server's max_peers_per_request (1024 by
+  // default).
+  repeated string peers = 1;
+}
+
+// The time state and the latest values of several peers, read in one go: the time first, then
+// all the values at one moment.
+message GetSnapshotReply {
+  TimeState time = 1; // as GetTime (available = false: the server does not control the time)
+  // With peers in the request: one entry per name, in the order given (a name given again is
+  // left out). Without: one per peer that has an agent, by name. An entry without a snapshot:
+  // the peer has no sample yet; without an incarnation too: it has no agent (or is unknown).
+  repeated PeerValues values = 2;
+  // For the peers that run on the simulation's time, when time.available, and as long as every
+  // ECU publishes its samples from within its step (an ECU of ecu_main does; if that is broken,
+  // the launcher reports the warning control-link-late-values and this does not hold). "Every
+  // sample of a step" means the latest sample taken before that time: an agent samples every
+  // sample period, which may be longer than its step. Whether a peer runs on the simulation's
+  // time cannot be told from this interface: for one that does not, nothing is promised.
+  // - Always: the values are not older than the time. Every sample of a step that started before
+  //   time.now_ns is in them. They may be newer.
+  // - consistent: the time stood still at time.now_ns (time.paused) and no entry has a sample of
+  //   a step after time.now_ns. The values are then those of that moment: every step before
+  //   now_ns, none after it. A step that starts exactly at now_ns may or may not be in them yet
+  //   (see Snapshot.time_ns; its sample arrives while the time stands still).
+  // Not consistent: the simulation runs or has ended, it went on during the call and a sample of
+  // a later step came in, the server does not control the time, or a peer's samples carry
+  // another clock (a peer that does not run on the simulation's time).
+  bool consistent = 3;
+}
 message PauseRequest {
   optional sint64 at_ns = 1; // absent: at the step held for pacing, if any, else the next gate step
 }
@@ -300,6 +332,9 @@ service ControlService {
   rpc ForgetPeer(ForgetPeerRequest) returns (ForgetPeerReply);
 
   rpc GetTime(GetTimeRequest) returns (TimeState);
+  // The time and the peers' latest values of one moment (see GetSnapshotReply.consistent).
+  // RESOURCE_EXHAUSTED if the reply would be larger than a message may be: ask for fewer peers.
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotReply);
   // Pause, Resume, RunUntil and Step: the last call wins (Resume and RunUntil drop a planned
   // pause; Pause with at_ns replaces an earlier target).
   rpc Pause(PauseRequest) returns (TimeState);

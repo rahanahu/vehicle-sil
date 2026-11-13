@@ -99,6 +99,10 @@ ServerOptions check(ServerOptions o)
     {
         throw std::invalid_argument("vehicle_sil control server: max_waiting_calls and max_writes_per_request must be > 0");
     }
+    if (o.max_peers_per_request == 0)
+    {
+        throw std::invalid_argument("vehicle_sil control server: max_peers_per_request must be > 0");
+    }
     return o;
 }
 
