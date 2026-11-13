@@ -5,7 +5,7 @@
 // before the start is accepted by every ECU and seen by its step at 0; when the simulation has
 // reached stop_at_ms, the hub has the values of the last steps before it; nothing arrived late.
 //
-// usage: vehicle_sil_launch_control_test <test ECU executable> <scratch directory>
+// usage: vehicle_sil_launch_control_test <test ECU executable> <scratch directory> <process helper> <part>
 #include "topics.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
@@ -18,6 +18,7 @@
 #include <silkit/services/orchestration/all.hpp>
 #include <silkit/services/pubsub/all.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -31,6 +32,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -455,39 +457,53 @@ void a_resume_before_the_window_means_no_hold(const fs::path& ecu, const fs::pat
 
 int main(int argc, char** argv)
 {
-    if (argc != 4)
+    // Each part is a test of its own (they run side by side), in a directory of its own.
+    using Part = std::function<void(const fs::path& ecu, const fs::path& helper, const fs::path& dir)>;
+    const std::vector<std::pair<std::string, Part>> parts = {
+        {"a_write_in_the_start_window_reaches_each_process_before_its_first_step",
+         [](const fs::path& ecu, const fs::path&, const fs::path& dir) {
+             for (int round = 1; round <= 5; ++round)
+             {
+                 one_run(ecu, dir, round);
+                 std::printf("round %d ok\n", round);
+                 std::fflush(stdout);
+             }
+         }},
+        {"what_fails_before_the_start_aborts_the_simulation", [](const fs::path& ecu, const fs::path&, const fs::path& dir) { failing_start(ecu, dir); }},
+        {"a_stop_while_what_is_done_before_the_start_fails_does_not_cut_the_end_short",
+         [](const fs::path& ecu, const fs::path&, const fs::path& dir) { failing_start_with_a_stop(ecu, dir); }},
+        {"a_hello_without_an_answer_and_what_is_no_message_are_reported", [](const fs::path& ecu, const fs::path&, const fs::path& dir) { hello_without_an_answer(ecu, dir); }},
+        {"the_start_is_limited_before_and_after_the_hold_but_not_in_it", the_start_is_limited_before_and_after_the_hold_but_not_in_it},
+        {"timeout_counts_the_hold", timeout_counts_the_hold},
+        {"an_interrupt_ends_the_hold", an_interrupt_ends_the_hold},
+        {"a_resume_before_the_window_means_no_hold", a_resume_before_the_window_means_no_hold},
+    };
+    std::string names;
+    for (const auto& [name, part] : parts)
     {
-        std::fprintf(stderr, "usage: %s <test ECU executable> <scratch directory> <process helper>\n",
-                     argc > 0 ? argv[0] : "launch_control_test");
+        names += (names.empty() ? "" : "|") + name;
+    }
+    if (argc != 5)
+    {
+        std::fprintf(stderr, "usage: %s <test ECU executable> <scratch directory> <process helper> <%s>\n",
+                     argc > 0 ? argv[0] : "launch_control_test", names.c_str());
+        return 2;
+    }
+    const auto it = std::find_if(parts.begin(), parts.end(), [&](const auto& p) { return p.first == argv[4]; });
+    if (it == parts.end())
+    {
+        std::fprintf(stderr, "launch_control_test: no part %s (the parts: %s)\n", argv[4], names.c_str());
         return 2;
     }
     try
     {
         const fs::path ecu = process::path_from_utf8(argv[1]);
-        const fs::path dir = process::path_from_utf8(argv[2]);
+        const fs::path dir = process::path_from_utf8(argv[2]) / it->first;
+        const fs::path helper = process::path_from_utf8(argv[3]);
         fs::remove_all(dir);
         fs::create_directories(dir);
-        for (int round = 1; round <= 5; ++round)
-        {
-            one_run(ecu, dir, round);
-            std::printf("round %d ok\n", round);
-            std::fflush(stdout);
-        }
-        failing_start(ecu, dir);
-        std::printf("failing start ok\n");
-        failing_start_with_a_stop(ecu, dir);
-        std::printf("failing start with a stop ok\n");
-        hello_without_an_answer(ecu, dir);
-        std::printf("hello without an answer ok\n");
-        const fs::path helper = process::path_from_utf8(argv[3]);
-        the_start_is_limited_before_and_after_the_hold_but_not_in_it(ecu, helper, dir);
-        std::printf("start limits ok\n");
-        timeout_counts_the_hold(ecu, helper, dir);
-        std::printf("timeout in the hold ok\n");
-        an_interrupt_ends_the_hold(ecu, helper, dir);
-        std::printf("interrupt in the hold ok\n");
-        a_resume_before_the_window_means_no_hold(ecu, helper, dir);
-        std::printf("resume before the window ok\n");
+        it->second(ecu, helper, dir);
+        std::printf("%s ok\n", it->first.c_str());
         return 0;
     }
     catch (const std::exception& e)
