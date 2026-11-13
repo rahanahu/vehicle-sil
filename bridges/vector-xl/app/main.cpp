@@ -141,6 +141,7 @@ int run(const BridgeOptions& options)
         XlCanPortOptions portOptions;
         portOptions.bitrate = options.bitrate;
         portOptions.rx_queue_size = options.rx_queue_size;
+        portOptions.transmit_timeout = options.tx_timeout;
         if (!options.bus_monitor)
         {
             portOptions.bus_state_interval = std::chrono::milliseconds{0};
@@ -162,6 +163,11 @@ int run(const BridgeOptions& options)
         return kExitSetupFailed;
     }
 
+    if (options.tx_timeout && !port->has_init_access())
+    {
+        log(kTag, "warning: --tx-timeout-ms is not used: it needs init access (--bitrate) to switch the "
+                  "transmit receipts on");
+    }
     log(kTag, "bridging SIL Kit network '%s' (participant '%s', %s) <-> XL '%s'; Ctrl+C to stop", options.network.c_str(),
         options.participant.c_str(), options.registry_uri.c_str(), channel.name.c_str());
 

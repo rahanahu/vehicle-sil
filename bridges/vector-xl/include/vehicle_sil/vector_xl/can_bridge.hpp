@@ -30,6 +30,9 @@ enum class ExternalEventKind
     /// The port stopped working (device removed, driver failure); `detail` tells why. No
     /// further events follow; frames are neither sent nor received any more.
     Fault,
+    /// Reported by stop(): `count` accepted frames had not reached the bus when the port went
+    /// off the bus, and are lost: counted.
+    TransmitUnsent,
     /// Something the user should know that does not stop the port (e.g. the driver does not
     /// answer the bus state queries, so the bus is not monitored); `detail` tells what.
     Warning,
@@ -62,6 +65,8 @@ struct ExternalCanEvent
     SilKit::Services::Can::CanFrame frame{};
     /// Valid for BusState.
     ExternalBusState bus_state{};
+    /// Valid for TransmitUnsent.
+    std::uint64_t count = 0;
     /// Valid for Fault and Warning, during the handler call only.
     std::string_view detail{};
 };
@@ -71,6 +76,9 @@ enum class TransmitResult
     Ok,
     QueueFull, ///< The external transmit queue is full; the frame was not sent.
     Failed,    ///< Any other error (port closed, driver error); see last_error().
+    /// Not sent on purpose: the frames sent before have not reached the bus for longer than the
+    /// port's transmit timeout (XlCanPortOptions::transmit_timeout).
+    Dropped,
 };
 
 /// The external side of a CanBridge.
@@ -105,6 +113,8 @@ struct CanBridgeStatistics
     std::uint64_t external_queue_full = 0;       ///< Frames lost because the external transmit queue was full.
     std::uint64_t external_transmit_failures = 0;
     std::uint64_t silkit_transmit_failures = 0;  ///< ICanController::SendFrame threw.
+    std::uint64_t external_transmit_dropped = 0; ///< Frames not sent because the bus was stuck (TransmitResult::Dropped).
+    std::uint64_t external_transmit_unsent = 0;  ///< Accepted frames still unsent when the port stopped.
 };
 
 /// One line "stats silkit_to_xl=N xl_to_silkit=N ..." with every counter. The key names are
@@ -208,6 +218,8 @@ private:
     std::atomic<std::uint64_t> external_queue_full_{0};
     std::atomic<std::uint64_t> external_transmit_failures_{0};
     std::atomic<std::uint64_t> silkit_transmit_failures_{0};
+    std::atomic<std::uint64_t> external_transmit_dropped_{0};
+    std::atomic<std::uint64_t> external_transmit_unsent_{0};
 
     mutable std::mutex error_mutex_; // also guards bus_state_ and fault_
     std::string last_error_;
