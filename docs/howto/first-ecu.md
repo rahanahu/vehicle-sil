@@ -256,5 +256,7 @@ python examples/launch_control/write_before_start.py \
 - 信号を YAML で定義する: [j1939-codec.md](../j1939-codec.md)
 - `ecu_main` の引数、終了コード、止まるよう求められたとき: [ecu-executable.md](../ecu-executable.md)
 - 変数の宣言とクライアントの API: [control-api.md](../control-api.md)
+- Python から変数を操作する、時間を止めて進める: [信号を外から操作する](operate-signals.md)
+- 決まった手順で値を入れて確かめる: [シナリオで試験を書く](scenario-tests.md)
 - ほかの人の ECU とまとめる: [ECU をまとめて動かす](integrate-ecus.md)
 - やりたいこと別の例: [examples/README.md](../../examples/README.md)
