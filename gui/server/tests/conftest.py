@@ -1,4 +1,4 @@
-"""Helpers of the GUI server's tests: the server as a real process (python -m vehicle_sil_gui) with the fake
+"""Helpers of the GUI server's tests: the server as a real process (python -m vehicle_sil_gui) with the stand-in
 launcher, and an HTTP and WebSocket client that sends what the screen sends."""
 
 from __future__ import annotations
@@ -20,8 +20,10 @@ import aiohttp
 import pytest
 
 TESTS = Path(__file__).resolve().parent
-FAKE = TESTS / "fake_launcher.py"
+REPLAY = TESTS / "replay_launcher.py"
 CONFIGS = TESTS / "configs"
+# Where replay_launcher.py finds its recordings, also a copy of it that a test makes elsewhere
+os.environ["REPLAY_RECORDINGS"] = str(TESTS / "recordings")
 START_TIMEOUT_S = 20
 
 
@@ -57,11 +59,12 @@ class Gui:
 
 @contextmanager
 def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None, args: tuple = (),
-               launcher: Path | None = FAKE, expect_start: bool = True, browser: bool = False,
+               launcher: Path | None = REPLAY, expect_start: bool = True, browser: bool = False,
                cwd: Path | None = None) -> Iterator[Gui]:
     environment = dict(os.environ)
-    environment.setdefault("FAKE_LAUNCHER_TICK_MS", "10")
-    environment.pop("FAKE_LAUNCHER_SCENARIO", None)
+    environment.setdefault("REPLAY_TICK_MS", "10")
+    environment.pop("REPLAY_FAULT", None)
+    environment.pop("REPLAY_CASE", None)
     environment.update(env or {})
     stderr = tmp_path / f"server-{time.monotonic_ns()}.err"
     with open(stderr, "wb") as err:
@@ -114,10 +117,10 @@ def control_stubs(tmp_path_factory) -> Path:
 
 @pytest.fixture
 def control_env(control_stubs: Path, monkeypatch) -> dict:
-    """The environment of a GUI server whose fake launcher has a control server (and of this process, for tests
+    """The environment of a GUI server whose stand-in launcher has a control server (and of this process, for tests
     that start fake_control themselves)."""
     monkeypatch.setenv("VEHICLE_SIL_CONTROL_STUBS", str(control_stubs))
-    return {"FAKE_LAUNCHER_FEATURES": CONTROL_FEATURES, "VEHICLE_SIL_CONTROL_STUBS": str(control_stubs)}
+    return {"REPLAY_FEATURES": CONTROL_FEATURES, "VEHICLE_SIL_CONTROL_STUBS": str(control_stubs)}
 
 
 def without_variables(summary: dict) -> dict:

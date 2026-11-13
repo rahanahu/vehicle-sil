@@ -33,15 +33,15 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 
 リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、クライアントのライブラリの単体試験、翻訳ファイルの比べ、ビルド、e2e を順に回して要約だけを表示します。e2e を直している間は `--skip-checks`（書式、lint、単体試験、翻訳ファイルの比べを省く）、`--e2e-grep <名前の一部>`、`--e2e-repeat <回数>` で絞れます。
 
-開発のときは、2 つの端末で次のように動かします。GUI サーバーは偽のランチャー（`gui/server/tests/fake_launcher.py`）を使い、`gui/server/tests/configs/` の構成ファイル（ファイルごとに筋書きが決まっている）を選べます。サーバーが表示する `dev_url`（トークンつき）を開きます。
+開発のときは、2 つの端末で次のように動かします。GUI サーバーは、本物のランチャーの出力を録ったものを流し直すランチャー（`gui/server/tests/replay_launcher.py`。docs/gui.md の「開発」）を使い、`gui/server/tests/configs/` の構成ファイル（録ってあるもの）を選べます。サーバーが表示する `dev_url`（トークンつき）を開きます。
 
 ```sh
 uv run vehicle-sil-gui --no-browser --json --port 8765 --dev-origin http://127.0.0.1:4200 \
-  --launcher ../server/tests/fake_launcher.py --root ../server/tests/configs   # GUI サーバー
+  --launcher ../server/tests/replay_launcher.py --root ../server/tests/configs   # GUI サーバー
 npm start                                                                     # 画面（127.0.0.1:4200）
 ```
 
-e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを偽のランチャーと一緒に自分で起動し（`e2e/support/gui-server.ts`。ポートは 18000 から 18999 のどれか）、終わったら止めます。`npm run e2e:real` は、本物のランチャーで同じように起動し（`e2e/support/real-server.ts`。構成ファイルは `gui/server/tests/real_configs.py` が一時ディレクトリに書く）、環境変数 `VEHICLE_SIL_GUI_SHOTS` にディレクトリを書くと、4 つの状態を 3 つの幅で撮ります。`scripts/verify-gui.py --launcher <path>` が回します。偽のランチャーの e2e も、`VEHICLE_SIL_GUI_SHOTS` を書くと、実行の画面の 6 つの状態を 360 px と 1024 px で撮ります（`e2e/shots.spec.ts`。状態ごとに新しい GUI サーバーを起動するので、前の実行は写りません。`VEHICLE_SIL_GUI_SHOTS_LANGUAGE=en` で英語の画面を撮ります）。
+e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを流し直すランチャーと一緒に自分で起動し（`e2e/support/gui-server.ts`。ポートは 18000 から 18999 のどれか）、終わったら止めます。`npm run e2e:real` は、本物のランチャーで同じように起動し（`e2e/support/real-server.ts`。構成ファイルは `gui/server/tests/real_configs.py` が一時ディレクトリに書く）、環境変数 `VEHICLE_SIL_GUI_SHOTS` にディレクトリを書くと、4 つの状態を 3 つの幅で撮ります。`scripts/verify-gui.py --launcher <path>` が回します。流し直すランチャーの e2e も、`VEHICLE_SIL_GUI_SHOTS` を書くと、実行の画面の 6 つの状態を 360 px と 1024 px で撮ります（`e2e/shots.spec.ts`。状態ごとに新しい GUI サーバーを起動するので、前の実行は写りません。`VEHICLE_SIL_GUI_SHOTS_LANGUAGE=en` で英語の画面を撮ります）。
 
 ## ディレクトリ
 
@@ -204,7 +204,7 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 - WebSocket は `FakeWebSockets`（`@vehicle-sil/gui-client/testing`）で差し替える（`{ provide: SOCKET_FACTORY, useValue: fake.factory }`）。HTTP は、包みが `HttpClient` で送るので `HttpTestingController` で答える。時間は Vitest の偽の時計。サーバーの通知は、作らずに `gui/protocol/examples/` の例を流す（`webSocketExamples`、`httpExamples`）。
 - 接続、セッションの写し、時刻と実行の操作の決まりは、ライブラリの試験（`gui/client/src/*.spec.ts`。Angular なし）で確かめる。包みの試験は、signal に写ること、トークン、画面の言葉だけを見る。
 - 「何かが起きないこと」を、決まった時間待ってから確かめない（遅いマシンで見落とす）。その時間が過ぎたとわかる後の出来事（後の事象、サーバーの要約の `last_seq` や `stop`）を待ってから確かめる。
-- e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。e2e は本物の GUI サーバーと偽のランチャーを相手にする（筋書きは構成ファイルで選ぶ）。偽のランチャーは本物と同じ事象を書く（`gui/server/tests/test_real_launcher.py` が比べる）。本物のランチャーでしか起きないこと（例の ECU の申告、本物の止まり方）は `e2e/real/` で確かめる。筋書きにない状況（切断、読んでいる間に流れ続ける行）は、`page.routeWebSocket` で通知を差し込んで作る。
+- e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。e2e は本物の GUI サーバーと、本物のランチャーの出力を録ったものを流し直すランチャーを相手にする（構成ファイルと、送った命令で録りが決まる。録りのない操作は、流し直すランチャーが何を録ればよいかを言って終わる）。録ったものがいまの本物と合うかは `gui/server/tests/test_real_launcher.py` が比べる。本物のランチャーでしか起きないこと（例の ECU の申告、本物の止まり方）は `e2e/real/` で確かめる。筋書きにない状況（切断、読んでいる間に流れ続ける行）は、`page.routeWebSocket` で通知を差し込んで作る。
 - 見た目の確かめとスクリーンショットは、窓を伸ばさずに利用者が見る大きさのままで行う（最初の画面に何が入っているかを見るため）。
 
 ## アイコン

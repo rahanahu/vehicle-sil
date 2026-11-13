@@ -13,12 +13,12 @@
       {
         "path": "scenarios/fails.yaml",
         "name": "fails.yaml",
-        "size": 332
+        "size": 294
       },
       {
         "path": "scenarios/throttle.yaml",
         "name": "throttle.yaml",
-        "size": 320
+        "size": 328
       }
     ],
     "truncated": false

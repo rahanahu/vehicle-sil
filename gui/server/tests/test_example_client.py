@@ -1,8 +1,8 @@
-"""The example clients of the GUI server's interface, run with Node against the GUI server and the fake launcher:
+"""The example clients of the GUI server's interface, run with Node against the GUI server and the stand-in launcher:
 examples/gui_client/run.mjs (plain JavaScript, no library) and run-with-library.mjs (the client library gui/client,
 bundled into one ESM file by `npm run build:client` in gui/web). Each checks the file, starts a run, reads what
 comes and waits for the end. variables.mjs (the library again) writes a variable of an ECU before the first step,
-steps, and checks what it reads while the simulation stands still: against the fake launcher with its stand-in for
+steps, and checks what it reads while the simulation stands still: against the stand-in launcher with its stand-in for
 the control server, and, when there is one (VEHICLE_SIL_GUI_LAUNCHER), against the real launcher and the ecu_main
 example ECUs.
 
@@ -104,7 +104,7 @@ def test_variables_example_with_the_fake_control_server(tmp_path: Path, bundle: 
 
 
 def test_variables_example_says_why_there_are_no_variables(tmp_path: Path, bundle: Path) -> None:
-    with gui_server(tmp_path) as gui:  # the fake launcher as it is: a launcher without a control server
+    with gui_server(tmp_path) as gui:  # the stand-in launcher as it is: a launcher without a control server
         out = run_example("variables.mjs", gui.url, "simulation.yaml")
     assert out.returncode == 1 and out.stdout.startswith("no variables: this vehicle_sil_launch has no "
                                                          "'control-server'"), out.stdout + out.stderr

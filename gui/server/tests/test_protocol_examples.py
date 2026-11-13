@@ -1,4 +1,6 @@
-"""gui/protocol/examples: real conversations with the server and the fake launcher, compared with the files.
+"""gui/protocol/examples: real conversations with the server and the stand-in launcher, compared with the files.
+Of each shape one or two are kept as files (and those that the docs and the other tests read); the others are
+checked by what they show (SHOWN).
 
 The values that change from run to run (process IDs, times, the instance, the paths of this computer, counts
 that depend on timing) are replaced with fixed ones before the comparison. UPDATE_PROTOCOL_EXAMPLES=1 writes the
@@ -17,7 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import CONFIGS, CONTROL_FEATURES, FAKE, Client, gui_server, is_ended, is_synced, run_async
+from conftest import CONFIGS, CONTROL_FEATURES, REPLAY, Client, gui_server, is_ended, is_synced, run_async
 
 DIRECTORY = Path(__file__).resolve().parents[2] / "protocol" / "examples"
 UPDATE = os.environ.get("UPDATE_PROTOCOL_EXAMPLES") == "1"
@@ -43,16 +45,79 @@ EXAMPLES = {
 }
 
 
+# Of these, the files are kept for one or two of each shape and for those that the docs, the client library's
+# tests and the screen's tests read. The others are of a shape a kept file has: they are compared by what they
+# show (an error's status and code; how a conversation ends), not kept as files.
+
+
+def last_session(example: dict) -> dict:
+    return [m["session"] for m in example["server"] if m["type"] == "session"][-1]
+
+
+def ended(result: str, interrupted_by=None, problems: dict | None = None, states: list | None = None):
+    def check(example: dict) -> None:
+        s = last_session(example)
+        assert (s["state"], s["result"]["result"], s["result"]["interrupted_by"]) == ("ended", result, interrupted_by)
+        assert {p["code"] for p in s["problems"]} == set(problems or {})
+        for code, n in (problems or {}).items():
+            assert sum(p["code"] == code for p in s["problems"]) >= n
+            assert sum(m["type"] == "error" and m["code"] == code for m in example["server"]) >= n
+        if states is not None:
+            assert [q["state"] for q in s["participants"]] == states
+    return check
+
+
+def resumed(example: dict) -> None:
+    kinds = [m["type"] for m in example["server"]]
+    assert kinds[0] == "hello" and kinds[-1] == "synced" and set(kinds[1:-1]) == {"event"}
+    after = example["client"][0]["from_seq"]
+    assert all(m["event"]["seq"] >= after for m in example["server"][1:-1])
+
+
+SHOWN = {
+    "session-none": lambda e: (e["status"], e["response"]) == (200, {"session": None}),
+    "dashboard-none": lambda e: e["status"] == 200 and e["response"]["found"] is False
+    and e["response"]["dashboard"] is None,
+    "ws-bad-types": ended("passed", problems={"bad-event": 9}),
+    "ws-check-error": ended("check_failed"),
+    "ws-orphan": ended("passed", problems={"output-left-open": 1}),
+    "ws-stop": ended("interrupted", "stop command", states=["ended", "ended", "ended"]),
+    "ws-force-stop": ended("interrupted", "stop command", states=["ended", "ended", "killed"]),
+    "ws-resume": resumed,
+    **{name: None for name in (
+        "error-unauthorized", "error-forbidden-host", "error-forbidden-origin", "error-cors-not-allowed",
+        "error-not-found", "error-method-not-allowed", "error-too-large", "error-unsupported-media-type",
+        "error-invalid-json", "error-invalid-field", "error-invalid-path", "error-outside-root",
+        "error-not-a-configuration", "error-unknown-participant", "error-unsupported", "error-file-not-found",
+        "error-check-busy", "error-check-timeout", "error-launcher-output", "error-launcher-unusable",
+        "error-launcher-start", "error-shutting-down", "error-too-many-connections", "error-not-running",
+        "error-unknown-variable", "error-variables-not-ready")},
+}
+
+
+def shown(name: str, example: dict) -> None:
+    """What an example that is not kept as a file shows: an error's code (its name after error-) and a message."""
+    check = SHOWN[name]
+    if check is None:
+        error = example["response"]["error"]
+        assert example["status"] >= 400 and error["code"] == name.removeprefix("error-"), example
+        assert isinstance(error["message"], str) and error["message"], example
+        return
+    assert check(example) is not False, f"{name}: {json.dumps(example)[:2000]}"
+
+
 @pytest.fixture(autouse=True)
 def no_heartbeat(monkeypatch) -> None:
-    """The examples are compared as they are: a heartbeat comes when the machine is slow, so the fake writes none."""
-    monkeypatch.setenv("FAKE_LAUNCHER_HEARTBEAT_MS", "0")
+    """The examples are compared as they are: a heartbeat comes when the machine is slow, so the stand-in writes none,
+    and while it waits for a command it does not run on (no time events that depend on timing)."""
+    monkeypatch.setenv("REPLAY_HEARTBEAT_MS", "0")
+    monkeypatch.setenv("REPLAY_RUN_ON", "0")
 
 
 class Normalizer:
     def __init__(self, gui, paths: dict[str, str] | None = None):
         self.pids: dict[int, int] = {}
-        self.paths = {str(FAKE): "/path/to/vehicle_sil_launch", str(CONFIGS): "/path/to/root",
+        self.paths = {str(REPLAY): "/path/to/vehicle_sil_launch", str(CONFIGS): "/path/to/root",
                       f"127.0.0.1:{gui.port}": "127.0.0.1:8765", **(paths or {})}
         self.token = gui.token
 
@@ -102,6 +167,9 @@ class Normalizer:
 def check_example(name: str, example: dict, gui, paths: dict[str, str] | None = None) -> None:
     assert name in EXAMPLES, f"{name}: add it to EXAMPLES"
     example = Normalizer(gui, paths)(example)
+    if name in SHOWN:
+        shown(name, example)
+        return
     path = DIRECTORY / f"{name}.json"
     text = json.dumps(example, indent=2, ensure_ascii=False) + "\n"
     if UPDATE:
@@ -128,7 +196,10 @@ def ws(description: str, client: list[dict], server: list[dict]) -> dict:
 
 def test_no_example_is_left_over() -> None:
     present = {p.stem for p in DIRECTORY.glob("*.json")}
-    assert present <= EXAMPLES, f"files that no test writes (remove them): {sorted(present - EXAMPLES)}"
+    assert present <= EXAMPLES - set(SHOWN), \
+        f"files that no test writes (remove them): {sorted(present - (EXAMPLES - set(SHOWN)))}"
+    assert present == EXAMPLES - set(SHOWN), \
+        f"examples that are missing (UPDATE_PROTOCOL_EXAMPLES=1): {sorted(EXAMPLES - set(SHOWN) - present)}"
     assert not [p.name for p in DIRECTORY.iterdir() if p.suffix != ".json"]
 
 
@@ -166,7 +237,7 @@ def test_dashboard_examples(tmp_path: Path) -> None:
 
 def test_http_examples(tmp_path: Path) -> None:
     # Slow steps, so that the summary read right after the first step is always the same.
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "600"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "600"}) as gui:
         async def talk(c: Client) -> None:
             for name, path, text in (("app", "api/app", "The server, the launcher it found, and the limits."),
                                      ("configs", "api/configs", "The configuration files under the root."),
@@ -254,7 +325,7 @@ def test_http_examples(tmp_path: Path) -> None:
 
 
 def test_errors_of_an_older_launcher(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_FEATURES": "events,stdin-commands,check-variables"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FEATURES": "events,stdin-commands,check-variables"}) as gui:
         async def talk(c: Client) -> None:
             req = {"file": "simulation.yaml", "start_paused": True}
             status, body = await c.post("api/run", req)
@@ -264,14 +335,14 @@ def test_errors_of_an_older_launcher(tmp_path: Path) -> None:
 
 
 def test_errors_of_the_launcher_and_of_load(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_CHECK_DELAY_MS": "2000"}, args=("--check-timeout", "1")) as gui:
+    with gui_server(tmp_path, env={"REPLAY_CHECK_DELAY_MS": "2000"}, args=("--check-timeout", "1")) as gui:
         async def talk(c: Client) -> None:
             req = {"file": "simulation.yaml"}
             status, body = await c.post("api/check", req)
             check_example("error-check-timeout", http("A check that did not end in time (--check-timeout).",
                                                       "POST", "api/check", req, status, body), gui)
         run_async(talk, gui)
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_CHECK_DELAY_MS": "300"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_CHECK_DELAY_MS": "300"}) as gui:
         async def talk(c: Client) -> None:
             req = {"file": "check-garbage.yaml"}
             status, body = await c.post("api/check", req)
@@ -296,7 +367,7 @@ def test_errors_of_the_launcher_and_of_load(tmp_path: Path) -> None:
 @pytest.mark.skipif(not POSIX, reason="file modes and signals")
 def test_errors_of_a_launcher_that_changed(tmp_path: Path) -> None:
     launcher = tmp_path / "vehicle_sil_launch"
-    launcher.write_text(f"#!{sys.executable}\n" + FAKE.read_text())
+    launcher.write_text(f"#!{sys.executable}\n" + REPLAY.read_text())
     launcher.chmod(0o755)
     paths = {str(launcher): "/path/to/vehicle_sil_launch"}
     with gui_server(tmp_path, launcher=launcher) as gui:
@@ -429,7 +500,7 @@ def is_time(**fields):
 
 def test_ws_time_examples(tmp_path: Path) -> None:
     # Slow steps, so that a command sent right after the time event it waits for lands before the next step.
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "600"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "600"}) as gui:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -467,7 +538,7 @@ def variables_only(messages: list[dict]) -> list[dict]:
 
 
 def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
-    with gui_server(tmp_path, env={**control_env, "FAKE_LAUNCHER_TICK_MS": "100"}) as gui:
+    with gui_server(tmp_path, env={**control_env, "REPLAY_TICK_MS": "100"}) as gui:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -544,15 +615,15 @@ def test_scenario_examples(tmp_path: Path, control_env: dict) -> None:
                                             "file and line, the run's end; the summary's scenario keeps the steps.",
                                             sock.sent, sock.received), gui)
         run_async(talk, gui)
-    # Its second step never passes: the scenario still runs when the write comes, however slow the machine.
-    env = {**control_env, "FAKE_LAUNCHER_FEATURES": CONTROL_FEATURES + ",scenario-control",
-           "FAKE_LAUNCHER_TICK_MS": "300", "FAKE_LAUNCHER_SCENARIO_HOLD": "2"}
+    # At speed 0.001 its second step runs for minutes: the scenario still runs when the write comes, however slow
+    # the machine.
+    env = {**control_env, "REPLAY_FEATURES": CONTROL_FEATURES + ",scenario-control"}
     with gui_server(tmp_path, env=env) as gui:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
             _, started = await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"],
-                                                  "scenario": "scenarios/throttle.yaml"})
+                                                  "scenario": "scenarios/throttle.yaml", "speed": 0.001})
             await sock.until(lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready")
             req = {"session": started["session"]["id"], "writes": {"Engine": {"engine.demand": 40}}}
             status, body = await c.post("api/write", req)
@@ -566,7 +637,7 @@ def test_scenario_examples(tmp_path: Path, control_env: dict) -> None:
 
 
 def test_variables_failed_examples(tmp_path: Path, control_env: dict) -> None:
-    with gui_server(tmp_path, env={**control_env, "FAKE_LAUNCHER_CONTROL": "unreachable"}) as gui:
+    with gui_server(tmp_path, env={**control_env, "REPLAY_CONTROL": "unreachable"}) as gui:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -589,7 +660,7 @@ def test_variables_failed_examples(tmp_path: Path, control_env: dict) -> None:
 
 
 def test_ws_late_example(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "600"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "600"}) as gui:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -606,7 +677,7 @@ def test_ws_late_example(tmp_path: Path) -> None:
 
 def test_ws_stop_examples(tmp_path: Path) -> None:
     # Slow steps, so that a stop sent right after "running" always lands in the first step.
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "600"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "600"}) as gui:
         async def talk(c: Client) -> None:
             for scenario, file, stops, text in (
                     ("stop", "forever.yaml", [{}], "Stopping a run in order."),
@@ -620,7 +691,9 @@ def test_ws_stop_examples(tmp_path: Path) -> None:
                 for n, body in enumerate(stops):
                     await c.post("api/stop", body)
                     if n + 1 < len(stops):
-                        await sock.until(lambda m: m.get("event", {}).get("event") == "time")
+                        # The launcher has taken the stop (its command event) before the next one: on a slow
+                        # machine a time event already on its way could come first.
+                        await sock.until(lambda m: m.get("event", {}).get("event") == "command")
                 await sock.until(is_ended)
                 await sock.close()
                 check_example(f"ws-{scenario}", ws(text, sock.sent, sock.received), gui)
@@ -629,7 +702,7 @@ def test_ws_stop_examples(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(not POSIX, reason="kills the process left behind by pid")
 def test_ws_orphan_example(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_ORPHAN_S": "30"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_ORPHAN_S": "30"}) as gui:
         async def talk(c: Client) -> int:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -649,7 +722,7 @@ def test_ws_orphan_example(tmp_path: Path) -> None:
 
 
 def test_ws_dropped_example(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_FLOOD": "2100"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FLOOD": "2100"}) as gui:
         async def talk(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -670,7 +743,7 @@ def test_ws_dropped_example(tmp_path: Path) -> None:
 def test_ws_kept_limit_example(tmp_path: Path) -> None:
     # More findings than the summary keeps, and a result over its 4 MiB limit: the result in the summary is cut to
     # its short plain fields (no participants, findings or check).
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_FLOOD": "40000"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FLOOD": "40000"}) as gui:
         async def talk(c: Client) -> None:
             live = await c.ws()
             await live.until(is_synced)
@@ -699,7 +772,7 @@ def test_ws_slow_client_examples(tmp_path: Path, kind: str) -> None:
     # A screen that reads nothing while the launcher floods: log lines are dropped for it (dropped); findings
     # cannot be, so its queue is emptied and it is sent everything again (resync).
     file = "flood.yaml" if kind == "slow-client" else "finding-flood.yaml"
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_FLOOD": "100000"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FLOOD": "100000"}) as gui:
         async def talk(c: Client) -> None:
             slow = await c.ws()
             fast = await c.ws()

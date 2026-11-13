@@ -33,12 +33,12 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 2170,
-        "last_t_ms": 21700,
+        "last_seq": 2135,
+        "last_t_ms": 21350,
         "time": {
           "event": "time",
-          "seq": 2160,
-          "t_ms": 21600,
+          "seq": 2124,
+          "t_ms": 21240,
           "sim_ms": 1000,
           "speed": "max",
           "paused": false,
@@ -64,7 +64,7 @@
           "participants": [
             {
               "name": "Engine",
-              "line": 9,
+              "line": 10,
               "command": [
                 "engine/vehicle_sil_engine_ecu"
               ],
@@ -82,8 +82,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -153,7 +159,7 @@
             },
             {
               "name": "Dashboard",
-              "line": 11,
+              "line": 12,
               "command": [
                 "dashboard/vehicle_sil_dashboard_ecu"
               ],
@@ -166,13 +172,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -242,7 +254,7 @@
             },
             {
               "name": "Logger",
-              "line": 13,
+              "line": 14,
               "command": [
                 "logger/can_logger",
                 "{registry_uri}"
@@ -262,11 +274,10 @@
             {
               "name": "J1939_CAN",
               "kind": "can",
-              "line": 6,
+              "line": 7,
               "participants": [
                 "Engine",
-                "Dashboard",
-                "Logger"
+                "Dashboard"
               ]
             }
           ],
@@ -275,10 +286,10 @@
               "severity": "note",
               "code": "not-checked",
               "file": "flood.yaml",
-              "line": 13,
+              "line": 14,
               "participant": "Logger",
               "network": null,
-              "message": "participant 'Logger': describe is false, so it was not checked",
+              "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
               "detail": null
             }
           ]
@@ -341,8 +352,9 @@
             "control_link": {
               "state": "none"
             },
-            "exit_code": 0,
-            "signal": null
+            "stop_requested": true,
+            "exit_code": null,
+            "signal": "SIGTERM"
           }
         ],
         "participants_omitted": 0,
@@ -416,9 +428,9 @@
               "required": false,
               "enabled": true,
               "manual": false,
-              "ended": "exited",
-              "exit_code": 0,
-              "signal": null,
+              "ended": "stopped",
+              "exit_code": null,
+              "signal": "SIGTERM",
               "left_processes": false,
               "log": null,
               "control_link": {
@@ -446,7 +458,7 @@
             "participants": [
               {
                 "name": "Engine",
-                "line": 9,
+                "line": 10,
                 "command": [
                   "engine/vehicle_sil_engine_ecu"
                 ],
@@ -464,8 +476,14 @@
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 0,
+                          "j1939_name": "0x00000000FE000001",
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -535,7 +553,7 @@
               },
               {
                 "name": "Dashboard",
-                "line": 11,
+                "line": 12,
                 "command": [
                   "dashboard/vehicle_sil_dashboard_ecu"
                 ],
@@ -548,13 +566,19 @@
                 "reported": {
                   "vehicle_sil": "0.1.0",
                   "name": "Dashboard",
-                  "step_ns": 10000000,
+                  "step_ns": 5000000,
                   "networks": [
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 40,
+                          "j1939_name": null,
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -624,7 +648,7 @@
               },
               {
                 "name": "Logger",
-                "line": 13,
+                "line": 14,
                 "command": [
                   "logger/can_logger",
                   "{registry_uri}"
@@ -644,11 +668,10 @@
               {
                 "name": "J1939_CAN",
                 "kind": "can",
-                "line": 6,
+                "line": 7,
                 "participants": [
                   "Engine",
-                  "Dashboard",
-                  "Logger"
+                  "Dashboard"
                 ]
               }
             ],
@@ -657,10 +680,10 @@
                 "severity": "note",
                 "code": "not-checked",
                 "file": "flood.yaml",
-                "line": 13,
+                "line": 14,
                 "participant": "Logger",
                 "network": null,
-                "message": "participant 'Logger': describe is false, so it was not checked",
+                "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
                 "detail": null
               }
             ]
@@ -671,17 +694,13 @@
             "kept": 9,
             "dropped": 0
           },
+          "Dashboard": {
+            "kept": 3,
+            "dropped": 0
+          },
           "Engine": {
             "kept": 2000,
-            "dropped": 110
-          },
-          "Dashboard": {
-            "kept": 10,
-            "dropped": 0
-          },
-          "Logger": {
-            "kept": 10,
-            "dropped": 0
+            "dropped": 100
           }
         },
         "problems": [],
@@ -707,7 +726,7 @@
       "session": 1,
       "reason": "not-kept",
       "log": {
-        "Engine": 110
+        "Engine": 100
       },
       "at_least": [],
       "events": 0
@@ -717,16 +736,16 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 131,
-        "t_ms": 1310,
-        "source": "Engine",
-        "line": "flood line 110"
+        "seq": 20,
+        "t_ms": 200,
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
       }
     },
     {
       "type": "synced",
       "session": 1,
-      "last_seq": 2170
+      "last_seq": 2135
     }
   ]
 }

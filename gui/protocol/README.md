@@ -2,7 +2,7 @@
 
 GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の契約です。サンプルの画面（`gui/web`）も、クライアントのライブラリ（`gui/client`）を通して、この口だけを使います。自分の画面や道具を作るときも、この文書と例に従えば、同じことができます（作り方は [docs/gui.md](../../docs/gui.md) の「自分の画面を作る」）。
 
-`examples/` の JSON は、サーバーの試験（`gui/server/tests/test_protocol_examples.py`）が偽のランチャーとの実際のやりとりから作り、毎回照合します。試験が作らないファイルが `examples/` に残っていても試験は落ちます。形を変えたら `UPDATE_PROTOCOL_EXAMPLES=1 scripts/verify-gui.py --skip-web` で書き直し、ライブラリの型と読み取り（`gui/client/src/protocol.ts`）と、その単体試験（同じファイルを読む）を合わせます。プロセス ID、時刻、インスタンス、この PC のパス、決まらない数は、決まった値に置き換えてあります（`t_ms` は `seq × 10`）。
+`examples/` の JSON は、サーバーの試験（`gui/server/tests/test_protocol_examples.py`）が、本物のランチャーの出力を録ったものを流し直すランチャー（`gui/server/tests/replay_launcher.py`）との実際のやりとりから作り、毎回照合します。ファイルに残すのは、形ごとに 1〜2 個と、文書や画面とライブラリの試験が読むものです。同じ形のほかの場合（ほかの誤りのコード、ほかの終わり方の実行）は、試験の中で、誤りのコードややりとりの終わり方を確かめます。試験が作らないファイルが `examples/` に残っていても試験は落ちます。形を変えたら `UPDATE_PROTOCOL_EXAMPLES=1 scripts/verify-gui.py --skip-web` で書き直し、ライブラリの型と読み取り（`gui/client/src/protocol.ts`）と、その単体試験（同じファイルを読む）を合わせます。プロセス ID、時刻、インスタンス、この PC のパス、決まらない数は、決まった値に置き換えてあります（`t_ms` は `seq × 10`）。
 
 ## 版と互換
 
@@ -24,7 +24,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 
 ## 使い方の例
 
-- 画面を使わない最小のクライアント: [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs)（素の JavaScript、依存なし、Node 22 以上）。照合して実行を始め、事象を読み、終わりを待ちます。`scripts/verify-gui.py` が、偽のランチャーを相手に動かして確かめます。
+- 画面を使わない最小のクライアント: [examples/gui_client/run.mjs](../../examples/gui_client/run.mjs)（素の JavaScript、依存なし、Node 22 以上）。照合して実行を始め、事象を読み、終わりを待ちます。`scripts/verify-gui.py` が、流し直すランチャーを相手に動かして確かめます。
 - TypeScript のクライアントのライブラリ: [gui/client](../client/README.md)。接続、再接続、要約と事象の当て方、時刻の命令、ECU の変数（watch、書き込みと結果）を持ちます。
 - ECU の変数を読み書きする例: [examples/gui_client/variables.mjs](../../examples/gui_client/variables.mjs)（ライブラリを使う）。
 

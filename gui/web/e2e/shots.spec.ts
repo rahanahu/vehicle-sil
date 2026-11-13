@@ -1,8 +1,14 @@
 // 実行の画面の写真（環境変数 VEHICLE_SIL_GUI_SHOTS にディレクトリを書いたときだけ撮る）。
-// 状態ごとに新しい GUI サーバー（偽のランチャー）を起動するので、前の試験の実行は写らない。
+// 状態ごとに新しい GUI サーバー（流し直すランチャー）を起動するので、前の試験の実行は写らない。
 // 窓は伸ばさず、利用者が見る大きさのまま撮る。
 import { Page, expect, test } from '@playwright/test';
-import { CONFIGS, FAKE_LAUNCHER, GUI_PORT, GuiServer, launchGuiServer } from './support/gui-server';
+import {
+  CONFIGS,
+  REPLAY_LAUNCHER,
+  GUI_PORT,
+  GuiServer,
+  launchGuiServer,
+} from './support/gui-server';
 import { VIEWPORTS } from './support/layout';
 import {
   Language,
@@ -58,9 +64,9 @@ test.describe('screenshots', () => {
       // 開発サーバーの形（e2e:dev）では撮らない（同じ画面を 2 回撮らない）
       test.skip(testInfo.project.name !== 'static', 'only with the built screen');
       const server: GuiServer = await launchGuiServer({
-        launcher: FAKE_LAUNCHER,
+        launcher: REPLAY_LAUNCHER,
         root: CONFIGS,
-        env: { FAKE_LAUNCHER_TICK_MS: '50' },
+        env: { REPLAY_TICK_MS: '50' },
         // 試験ごとに別のポート（前のサーバーの接続が残っていても待てるように）
         port: GUI_PORT + 100 + i,
       });

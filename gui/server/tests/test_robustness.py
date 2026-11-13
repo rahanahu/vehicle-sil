@@ -40,7 +40,7 @@ def test_events_with_wrong_types_do_not_stop_the_reading(gui: Gui) -> None:
 
 
 def test_a_number_that_is_not_finite_does_not_stop_the_reading(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_SCENARIO": "non-finite"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FAULT": "non-finite"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -180,6 +180,9 @@ def test_the_checks_that_aiohttp_makes(gui: Gui) -> None:
 # ---------------------------------------------------------------- names that look like options
 
 
+@pytest.mark.xfail(strict=True, reason="the real launcher takes a value that starts with '-' as a missing value: "
+                   "`--disable --json` is a usage error (recordings/run-dash-name.jsonl), so the GUI server cannot "
+                   "pass such a name as it does; it should refuse the name with what to do, or the launcher take it")
 def test_a_participant_named_like_an_option_is_a_value(gui: Gui) -> None:
     async def main(c: Client) -> None:
         status, body = await c.post("api/check", {"file": "dash-name.yaml", "disable": ["--json"]})
@@ -199,7 +202,7 @@ def test_a_participant_named_like_an_option_is_a_value(gui: Gui) -> None:
 
 
 def test_a_reconnection_is_told_how_many_lines_were_dropped(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_FLOOD": "5000"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FLOOD": "5000"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)

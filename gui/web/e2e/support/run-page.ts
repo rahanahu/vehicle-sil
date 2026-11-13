@@ -10,7 +10,7 @@ export function protocolExample(name: string): unknown {
   return JSON.parse(readFileSync(path, 'utf8')) as unknown;
 }
 
-/** ランチャーの 1 回の実行の上限（偽のランチャーは 1 ステップ 50 ms、stop_at_ms まで 10 ステップ。本物の例の ECU はもっと速い）。 */
+/** ランチャーの 1 回の実行の上限（流し直すランチャーは、録った時間を縮めて流す。本物の例の ECU はもっと速い）。 */
 export const RUN_TIMEOUT = 20_000;
 
 /** 画面の言語。試験は日本語（元の言語）で書く。英語の試験（i18n.spec.ts）は、ブラウザの言語を変えて en を渡す。 */

@@ -61,7 +61,7 @@ class Launcher:
 
     @property
     def prefix(self) -> list[str]:
-        """The program to start. A .py file (the fake launcher of the tests) runs with this Python."""
+        """The program to start. A .py file (the stand-in launcher of the tests) runs with this Python."""
         if self.path.suffix == ".py":
             return [sys.executable, str(self.path)]
         return [str(self.path)]

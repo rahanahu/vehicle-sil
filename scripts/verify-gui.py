@@ -4,15 +4,16 @@
 Steps, in order:
 
   sync    uv sync --locked (fails when uv.lock does not match the pyproject.toml files)
-  server  uv run pytest gui/server/tests: the GUI server against the fake launcher (API, WebSocket, security,
+  server  uv run pytest gui/server/tests: the GUI server against the stand-in launcher that replays
+          what the real one wrote (gui/server/tests/replay_launcher.py) (API, WebSocket, security,
           stopping, and the comparison of gui/protocol/examples); JUnit XML in build/logs/<tag>-server.xml
   web     scripts/verify-web.py --json: npm ci, format, lint, unit tests, build and e2e of gui/web and gui/client; its steps
           are listed under this one, with their logs
-  example the example clients in examples/gui_client (Node 22 or later) against the GUI server and the fake
+  example the example clients in examples/gui_client (Node 22 or later) against the GUI server and the stand-in
           launcher: run.mjs (plain JavaScript, no library) and run-with-library.mjs (the bundled client library from
           the web step): a run that passes, runs that fail, a refused token; and variables.mjs (the library again:
           write a variable of an ECU before the first step, step, check what is read while the simulation stands
-          still) against the fake launcher with its stand-in for the control server and, with a real launcher,
+          still) against the stand-in launcher with its stand-in for the control server and, with a real launcher,
           against that one and the ecu_main example ECUs (gui/server/tests/test_example_client.py, which the
           server step leaves out); not with --skip-web or -k
   real    with a real launcher only (--launcher <path>, or VEHICLE_SIL_GUI_LAUNCHER): npm run e2e:real, the
@@ -20,8 +21,8 @@ Steps, in order:
           a participant left out, stop, failing checks, a failing run); needs the build of gui/web (the web step,
           or an earlier one). Without a launcher it prints "skipped: no launcher" and does not fail
 
-With a real launcher, the server step also runs gui/server/tests/test_real_launcher.py, which compares what the
-fake launcher writes with what the real one writes, and test_real_variables.py, which reads and writes the
+With a real launcher, the server step also runs gui/server/tests/test_real_launcher.py, which records every case of
+the stand-in launcher again with the real one and compares (gui/server/tests/record_launcher.py --compare), and test_real_variables.py, which reads and writes the
 variables of the example ECUs through the GUI server (a launcher built with its control server); without one,
 those tests are skipped and say why.
 

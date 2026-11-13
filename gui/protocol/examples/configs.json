@@ -11,157 +11,157 @@
       {
         "path": "bad-lines.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 481,
+        "size": 558,
         "simulation": true
       },
       {
         "path": "bad-types.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 481,
+        "size": 558,
         "simulation": true
       },
       {
         "path": "check-error.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 483,
+        "size": 613,
         "simulation": true
       },
       {
         "path": "check-garbage.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 485,
+        "size": 562,
         "simulation": true
       },
       {
         "path": "control-trouble.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 746,
+        "size": 1046,
         "simulation": true
       },
       {
         "path": "dash-name.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 524,
+        "size": 580,
         "simulation": true
       },
       {
         "path": "deaf.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 537,
+        "size": 614,
         "simulation": true
       },
       {
         "path": "finding-flood.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 485,
+        "size": 562,
         "simulation": true
       },
       {
         "path": "flood.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 477,
+        "size": 554,
         "simulation": true
       },
       {
         "path": "forever.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 498,
+        "size": 551,
         "simulation": true
       },
       {
         "path": "future-events.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 485,
+        "size": 562,
         "simulation": true
       },
       {
         "path": "ignore-stop.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 502,
+        "size": 709,
         "simulation": true
       },
       {
         "path": "jitter.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 538,
+        "size": 615,
         "simulation": true
       },
       {
         "path": "large-fields.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 484,
+        "size": 561,
         "simulation": true
       },
       {
         "path": "large-result.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 484,
+        "size": 561,
         "simulation": true
       },
       {
         "path": "late.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 450,
+        "size": 527,
         "simulation": true
       },
       {
         "path": "launcher-crash.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 486,
+        "size": 563,
         "simulation": true
       },
       {
         "path": "log-dropped.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 483,
+        "size": 560,
         "simulation": true
       },
       {
         "path": "loose-fields.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 484,
+        "size": 561,
         "simulation": true
       },
       {
         "path": "manual.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 392,
+        "size": 469,
         "simulation": true
       },
       {
         "path": "orphan.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 478,
+        "size": 555,
         "simulation": true
       },
       {
         "path": "participant-crash.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 489,
+        "size": 648,
         "simulation": true
       },
       {
         "path": "result-then-wait.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 379,
+        "size": 456,
         "simulation": true
       },
       {
         "path": "scenarios/fails.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 332,
+        "size": 294,
         "simulation": false
       },
       {
         "path": "scenarios/throttle.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 320,
+        "size": 328,
         "simulation": false
       },
       {
         "path": "simulation.yaml",
         "modified": "2026-01-01T00:00:00Z",
-        "size": 476,
+        "size": 532,
         "simulation": true
       }
     ],

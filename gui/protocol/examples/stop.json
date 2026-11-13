@@ -28,12 +28,12 @@
       },
       "stop": "requested",
       "phase": "running",
-      "last_seq": 19,
-      "last_t_ms": 190,
+      "last_seq": 71,
+      "last_t_ms": 710,
       "time": {
         "event": "time",
-        "seq": 19,
-        "t_ms": 190,
+        "seq": 20,
+        "t_ms": 200,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -77,8 +77,14 @@
                 {
                   "name": "J1939_CAN",
                   "kind": "can",
-                  "use": "raw",
-                  "nodes": []
+                  "use": "j1939",
+                  "nodes": [
+                    {
+                      "address": 0,
+                      "j1939_name": "0x00000000FE000001",
+                      "arbitrary_address_capable": false
+                    }
+                  ]
                 }
               ]
             },
@@ -161,13 +167,19 @@
             "reported": {
               "vehicle_sil": "0.1.0",
               "name": "Dashboard",
-              "step_ns": 10000000,
+              "step_ns": 5000000,
               "networks": [
                 {
                   "name": "J1939_CAN",
                   "kind": "can",
-                  "use": "raw",
-                  "nodes": []
+                  "use": "j1939",
+                  "nodes": [
+                    {
+                      "address": 40,
+                      "j1939_name": null,
+                      "arbitrary_address_capable": false
+                    }
+                  ]
                 }
               ]
             },
@@ -332,6 +344,10 @@
       "log": {
         "vehicle_sil_launch": {
           "kept": 5,
+          "dropped": 0
+        },
+        "Dashboard": {
+          "kept": 52,
           "dropped": 0
         }
       },

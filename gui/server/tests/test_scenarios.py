@@ -1,5 +1,5 @@
 """Scenarios through the GUI server: the listing of a configuration's scenario files and its limits, a check and a
-run with one (the fake launcher plays it), the variables while it runs; and the record of the applied writes as a
+run with one (the stand-in launcher replays a recording of it), the variables while it runs; and the record of the applied writes as a
 scenario's YAML (GET api/recording)."""
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ def test_the_listing_and_a_check_with_a_scenario(gui) -> None:
 
 def test_a_launcher_without_scenarios_is_not_given_one(tmp_path: Path) -> None:
     features = "events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links"
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_FEATURES": features}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FEATURES": features}) as gui:
         async def talk(c: Client) -> None:
             status, body = await c.post("api/check", {"file": "simulation.yaml", "scenario": PASS})
             assert (status, body["error"]["code"]) == (400, "unsupported")
@@ -139,8 +139,8 @@ def test_a_run_with_a_scenario_keeps_its_steps_in_the_summary(gui, scenario: str
         assert body["session"]["result"]["simulation"] == "ended" and body["session"]["result"]["result"] == outcome
         if outcome == "failed":
             failed = s["steps"][1]
-            assert failed["code"] == "scenario-failed" and failed["line"] == 8 and failed["message"]
-            assert any(f["code"] == "scenario-failed" and f["file"] == FAIL and f["line"] == 8
+            assert failed["code"] == "scenario-failed" and failed["line"] == 7 and failed["message"]  # the step's line
+            assert any(f["code"] == "scenario-failed" and f["file"] == FAIL and f["line"] == 7
                        for f in body["session"]["findings"])
         # A screen opened later has the same from hello
         late = await c.ws()
@@ -167,15 +167,14 @@ def test_without_scenario_control_a_scenario_run_has_no_variables(tmp_path: Path
 
 
 def test_with_scenario_control_variables_are_read_and_writes_refused(tmp_path: Path, control_env: dict) -> None:
-    # The second step never passes and the file has no stop_at_ms: the scenario is still running when the write
-    # comes, however slow the machine.
-    env = {**control_env, "FAKE_LAUNCHER_FEATURES": CONTROL_FEATURES + ",scenario-control",
-           "FAKE_LAUNCHER_TICK_MS": "200", "FAKE_LAUNCHER_SCENARIO_HOLD": "2"}
+    # At speed 0.001 the second step (a wait of 500 ms of virtual time) runs for minutes, and the file has no
+    # stop_at_ms: the scenario is still running when the write comes, however slow the machine.
+    env = {**control_env, "REPLAY_FEATURES": CONTROL_FEATURES + ",scenario-control"}
     with gui_server(tmp_path, env=env) as gui:
         async def talk(c: Client) -> None:
             ws = await c.ws()
             await ws.until(is_synced)
-            status, body = await c.post("api/run", {"file": "forever.yaml", "scenario": PASS})
+            status, body = await c.post("api/run", {"file": "forever.yaml", "scenario": PASS, "speed": 0.001})
             assert status == 200, body
             session = body["session"]["id"]
             await ws.until(is_variables("ready"))
@@ -194,7 +193,7 @@ def test_with_scenario_control_variables_are_read_and_writes_refused(tmp_path: P
 
 
 def test_the_applied_writes_come_back_as_a_scenario(tmp_path: Path, control_env: dict) -> None:
-    with gui_server(tmp_path, env={**control_env, "FAKE_LAUNCHER_TICK_MS": "50"}) as gui:
+    with gui_server(tmp_path, env={**control_env, "REPLAY_TICK_MS": "50"}) as gui:
         async def talk(c: Client) -> None:
             _, body = await c.get("api/recording")
             assert body == {"recording": None}
@@ -233,7 +232,8 @@ def test_the_applied_writes_come_back_as_a_scenario(tmp_path: Path, control_env:
             await c.post("api/stop")
             await ws.until(is_ended)
             _, body = await c.get("api/recording")  # the run that ended last
-            assert body["recording"]["state"] == "ended" and body["recording"]["yaml"] == r["yaml"]
+            # The same steps; only the comment of how far the run went has moved on (to where it stopped)
+            assert body["recording"]["state"] == "ended" and yaml.safe_load(body["recording"]["yaml"]) == scenario
         run_async(talk, gui)
 
 

@@ -1,4 +1,4 @@
-// e2e の試験の前に GUI サーバー（gui/server）を偽のランチャーと一緒に起動し、終わったら止める（Playwright の globalSetup）。
+// e2e の試験の前に GUI サーバー（gui/server）を流し直すランチャーと一緒に起動し、終わったら止める（Playwright の globalSetup）。
 // サーバーは起動のたびにトークンを作るので、Playwright の webServer ではなく、ここで起動して 1 行の JSON からトークンを読む。
 // 本物のランチャーで動かす e2e（e2e/real/）も、ここの startGuiServer でサーバーを起動する（support/real-server.ts）。
 import { ChildProcess, spawn } from 'node:child_process';
@@ -15,10 +15,10 @@ import type { FullConfig } from '@playwright/test';
 process.env['VEHICLE_SIL_GUI_E2E_PORT'] ??= String(18000 + (process.pid % 1000));
 export const GUI_PORT = Number(process.env['VEHICLE_SIL_GUI_E2E_PORT']);
 
-/** 構成ファイルを選べる範囲: 偽のランチャーの筋書きごとの構成ファイル。 */
+/** 構成ファイルを選べる範囲: 流し直すランチャーの録りがある構成ファイル。 */
 export const REPOSITORY = resolve(__dirname, '../../../..');
 export const CONFIGS = resolve(REPOSITORY, 'gui/server/tests/configs');
-export const FAKE_LAUNCHER = resolve(REPOSITORY, 'gui/server/tests/fake_launcher.py');
+export const REPLAY_LAUNCHER = resolve(REPOSITORY, 'gui/server/tests/replay_launcher.py');
 
 /** 試験が読むトークン（process.env に置くと、試験を動かすプロセスに渡る）。 */
 export function guiToken(): string {
@@ -38,7 +38,7 @@ function groupAlive(pgid: number): boolean {
 }
 
 /**
- * サーバーを止め、子（偽のランチャーと participant）まで終わるのを待つ（次の試験が同じポートを使えるように）。
+ * サーバーを止め、子（流し直すランチャーと participant）まで終わるのを待つ（次の試験が同じポートを使えるように）。
  * POSIX: サーバーは SIGTERM で、動いているランチャーを止めてから終わる。uv と python をまとめて（プロセスグループ）送り、
  * 15 秒で終わらなければ SIGKILL。
  */
@@ -82,10 +82,10 @@ export interface GuiServer {
 
 export default async function startFakeGuiServer(config: FullConfig): Promise<() => Promise<void>> {
   return startGuiServer({
-    launcher: FAKE_LAUNCHER,
+    launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
     devOrigin: config.metadata['devOrigin'] as string | undefined,
-    env: { FAKE_LAUNCHER_TICK_MS: '50' },
+    env: { REPLAY_TICK_MS: '50' },
   });
 }
 

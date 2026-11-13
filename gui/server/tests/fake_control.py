@@ -1,6 +1,6 @@
 """A stand-in for the control server of vehicle_sil_launch (gRPC, docs/control-api.md), for the GUI server's tests.
 
-The fake launcher starts it when it is run with --control (fake_launcher.py), and tests start it by themselves.
+The stand-in launcher starts it when it is run with --control (replay_launcher.py), and tests start it by themselves.
 It serves the part of ControlService that the GUI server uses (Ping, ListPeers, GetSnapshot, Write, GetOperation,
 Watch; and GetValues and GetTime), with the contract of the real one where the GUI server relies on it:
 
@@ -23,10 +23,10 @@ Watch; and GetValues and GetTime), with the contract of the real one where the G
 - a parameter is refused once a step has run; an operation's number grows by one from 1;
 - a call needs the role its credential has: reading the role viewer, writing operator (as the real server).
 
-Each peer has the variables of fake_launcher.variables(): ecu.connected (a bool input, true at first, which
+Each peer has the variables of variables() below: ecu.connected (a bool input, true at first, which
 changes nothing else here), <name>.demand (a real input, 0 to 100),
 <name>.speed (an integer output: ten times the demand, plus the step's time in ms) and <name>.mode (an enum
-parameter); with FAKE_LAUNCHER_VARIABLES=more also <name>.enabled (a bool input), <name>.warning (a bool output:
+parameter); with REPLAY_VARIABLES=more also <name>.enabled (a bool input), <name>.warning (a bool output:
 the demand is above 50) and <name>.offset (a real input, added to the speed). Needs grpcio and the stubs of the Control API: those in VEHICLE_SIL_CONTROL_STUBS (conftest.py makes
 them), else it makes them itself with grpcio-tools.
 """
@@ -39,6 +39,36 @@ import threading
 from concurrent import futures
 
 NS_PER_MS = 1_000_000
+
+
+def variables(name: str) -> list[dict]:
+    """The variables of a peer, in the form of a check's participants[].variables: first ecu.connected (on every ECU,
+    builtin), then its own. replay_launcher.py puts these in place of the recorded ones."""
+    base = name.lower()
+    return [
+        {"name": "ecu.connected", "type": "bool", "causality": "input", "unit": "", "min": None, "max": None,
+         "step": None, "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+         "items": [], "builtin": True},
+        {"name": f"{base}.demand", "type": "real", "causality": "input", "unit": "%", "min": 0, "max": 100,
+         "step": None, "description": "requested level", "items": [], "builtin": False},
+        {"name": f"{base}.speed", "type": "integer", "causality": "output", "unit": "rpm", "min": None,
+         "max": None, "step": None, "description": "", "items": [], "builtin": False},
+        {"name": f"{base}.mode", "type": "enum", "causality": "parameter", "unit": "", "min": None, "max": None,
+         "step": None, "description": "operating mode",
+         "items": [{"name": "off", "value": 0}, {"name": "on", "value": 1}], "builtin": False},
+    ] + (more_variables(base) if os.environ.get("REPLAY_VARIABLES") == "more" else [])
+
+
+def more_variables(base: str) -> list[dict]:
+    """The variables that REPLAY_VARIABLES=more adds: one of each kind the screen's widgets show."""
+    return [
+        {"name": f"{base}.enabled", "type": "bool", "causality": "input", "unit": "", "min": None, "max": None,
+         "step": None, "description": "switched on", "items": [], "builtin": False},
+        {"name": f"{base}.warning", "type": "bool", "causality": "output", "unit": "", "min": None, "max": None,
+         "step": None, "description": "the demand is above 50", "items": [], "builtin": False},
+        {"name": f"{base}.offset", "type": "real", "causality": "input", "unit": "rpm", "min": None, "max": None,
+         "step": None, "description": "added to the speed", "items": [], "builtin": False},
+    ]
 
 
 def load():
@@ -54,7 +84,7 @@ def load():
 
 def _make_stubs() -> str:
     """The stubs, made now from the repository's proto file (needs grpcio-tools) into a directory that is removed
-    at exit: for a fake launcher that is started without VEHICLE_SIL_CONTROL_STUBS (the e2e of gui/web)."""
+    at exit: for a stand-in launcher that is started without VEHICLE_SIL_CONTROL_STUBS (the e2e of gui/web)."""
     import atexit
     import shutil
     import tempfile

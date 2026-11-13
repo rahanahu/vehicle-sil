@@ -1,7 +1,8 @@
-# A configuration for the fake launcher (gui/server/tests/fake_launcher.py); the line below picks its scenario.
-# fake-launcher: participant-crash
+# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
+# (recordings/, made by record_launcher.py: record again after changing this file).
 vehicle_sil_simulation: 1
-stop_at_ms: 1000
+# no stop_at_ms: Dashboard fails while it runs (dashboard/failing_dashboard: the example's dashboard, killed
+# after 0.2 s, and exit code 3)
 networks:
   - name: J1939_CAN
     kind: can
@@ -9,7 +10,7 @@ participants:
   - name: Engine
     command: [engine/vehicle_sil_engine_ecu]
   - name: Dashboard
-    command: [dashboard/vehicle_sil_dashboard_ecu]
+    command: [dashboard/failing_dashboard]
   - name: Logger
     command: [logger/can_logger, "{registry_uri}"]
     describe: false

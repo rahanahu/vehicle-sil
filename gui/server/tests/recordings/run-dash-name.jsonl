@@ -1,0 +1,65 @@
+{"vehicle_sil_recording": 1, "case": "run-dash-name", "about": "a run with a participant named like an option left out", "shape": ["run", "--events", "--stdin-commands", "--disable", "--json", "--", "<file>"], "config": "dash-name.yaml", "config_sha256": "b7b7a2b89f6a4b2e4611e300efc969177e7383209b7b11065377f80a6ad18ab0"}
+{"err": "error: missing value for --disable"}
+{"err": "usage: vehicle_sil_launch check [--json] [--strict] [--scenario <file>] [--describe-timeout-ms <ms>]"}
+{"err": "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>"}
+{"err": "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]"}
+{"err": "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>"}
+{"err": "                              --control-tls-key <file>] [--control-audit-log <file>]]"}
+{"err": "                              [--scenario <file>] [--speed <speed>] [--strict] [--log-dir <dir>]"}
+{"err": "                              [--timeout-ms <ms>]"}
+{"err": "                              [--describe-timeout-ms <ms>]"}
+{"err": "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>"}
+{"err": "       vehicle_sil_launch version [--json]"}
+{"err": "  check <file>                compare the simulation configuration <file> (YAML or JSON) with what each"}
+{"err": "                              ecu_main executable in it reports (--describe); list the participants,"}
+{"err": "                              the networks and every error and warning"}
+{"err": "  run <file>                  check <file>; if it passes, run the simulation: the registry and the"}
+{"err": "                              controller in this process, each participant as a process of its own"}
+{"err": "                              (its output on stderr, each line after [<name>]); then end every"}
+{"err": "                              participant and report how each ended. Ctrl+C stops it in order"}
+{"err": "  version                     the version of vehicle_sil_launch (--json: also its formats and features)"}
+{"err": "  --json                      write the result as JSON"}
+{"err": "  --events                    run: write what happens as events on stdout, one JSON object per line, the"}
+{"err": "                              result last (nothing on stderr but the launcher's own failures)"}
+{"err": "  --events-stall-ms <ms>      run --events: give up a reader of the events that takes nothing for <ms>, and wait"}
+{"err": "                              at most <ms> for it to take the result (1000 or more; default 30000)"}
+{"err": "  --stdin-commands            run: read commands from stdin, one JSON object per line: {\"command\":\"stop\"}"}
+{"err": "                              stops in order (twice: without waiting); the end of stdin stops as well;"}
+{"err": "                              pause, resume, step (with \"ms\") and speed (with \"value\") control the time"}
+{"err": "  --start-paused              run --stdin-commands or --control: stand still at 0 until a resume or step"}
+{"err": "                              command (with --control: before the first step, so that a client's writes"}
+{"err": "                              take effect at 0)"}
+{"err": "  --control <address>         run: serve the Control API (gRPC) for clients: the ECUs' variables and the"}
+{"err": "                              time; <port> (on 127.0.0.1; 0: any free port), <host>:<port> or unix:<path>;"}
+{"err": "                              the event control_server and a line say where (only in a build with"}
+{"err": "                              VEHICLE_SIL_BUILD_CONTROL_SERVER=ON)"}
+{"err": "  --control-credentials <file> run --control: tokens and roles, one per line: <role> <name> <token>"}
+{"err": "                              (every call then needs a token; never put a token on the command line)"}
+{"err": "  --control-tls-cert <file>   run --control: PEM certificate chain of the server (with --control-tls-key: TLS)"}
+{"err": "  --control-tls-key <file>    run --control: PEM private key of the server"}
+{"err": "  --control-audit-log <file>  run --control: append who changed what"}
+{"err": "  --scenario <file>           check: also check the scenario <file> against the participants' variables;"}
+{"err": "                              run: then run it: write the ECUs' variables and compare their values at"}
+{"err": "                              virtual times, stop the simulation when the scenario is over, and fail if a"}
+{"err": "                              step failed (docs/scenario.md; not with --control or --start-paused)"}
+{"err": "  --speed <speed>             run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)"}
+{"err": "                              or max (as fast as possible); replaces speed in <file>"}
+{"err": "  --strict                    fail on warnings too"}
+{"err": "  --log-dir <dir>             run: also write each participant's output to <dir>/<name>.log"}
+{"err": "  --timeout-ms <ms>           run: abort the simulation if it has not ended <ms> after its start (wall clock;"}
+{"err": "                              with --start-paused and --control, from when it stands still before the start)"}
+{"err": "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)"}
+{"err": "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable"}
+{"err": "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable"}
+{"err": "  --manual <name>             you start the participant <name> yourself (from a debugger, say): run does not"}
+{"err": "                              start it, prints the command to start it with and waits for it to join, with"}
+{"err": "                              no time limit (as manual: true in <file>); repeatable"}
+{"err": "  --help, -h                  this text"}
+{"err": "  --version                   as version"}
+{"err": "  --                          what follows is the file, also if it starts with '-'"}
+{"err": "exit codes: 0 passed, 1 errors (with --strict: or warnings; run: also a failed simulation), 3 the file"}
+{"err": "            cannot be read (run: or the registry cannot be set up), 4 usage, 130 run was interrupted (or stopped)"}
+{"err": "the file format, the rules, the run and the events: docs/simulation-config.md; scenarios: docs/scenario.md"}
+{"out": {"event": "hello", "vehicle_sil_events": 1, "vehicle_sil": "0.1.0", "pid": "<pid>", "file": "<file>", "arguments": ["run", "--events", "--stdin-commands", "--disable", "--json", "--", "<file>"]}}
+{"out": {"event": "result", "result": {"vehicle_sil_run": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "usage", "strict": false, "errors": 1, "warnings": 0, "notes": 0, "simulation": null, "interrupted_by": null, "timing": null, "participants": [], "findings": [], "check": {"vehicle_sil_check": 1, "vehicle_sil": "0.1.0", "file": "<file>", "result": "usage", "strict": false, "errors": 1, "warnings": 0, "notes": 0, "stop_at_ms": null, "start_timeout_ms": null, "stop_timeout_ms": null, "registry_uri": null, "participants": [], "networks": [], "findings": [{"severity": "error", "code": "usage", "file": "<file>", "line": null, "participant": null, "network": null, "message": "missing value for --disable", "detail": null}]}}}}
+{"exit": 4}
