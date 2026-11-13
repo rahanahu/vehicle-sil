@@ -31,7 +31,7 @@ int main(int argc, char** argv)
 | `--start-timeout-ms <ms>` | `--registry-uri` のときだけ。参加してからシミュレーションが始まるまで待つ時間（1 以上の整数。既定は 30000）です。それまでに始まらなければ、終了コード 3 です。ECU をたくさん起動するときや、遅いマシンで使います。 |
 | `--no-control` | `--registry-uri` のとき、ECU の変数をシミュレーションへ出しません（下の「変数を出す」）。ECU の動きは変わりません。`--describe` に付けると、`variables` はそのままで、`control` が `null` になります（まとめる側は、この ECU を待ちません）。`--local` に付けても何も変わりません。 |
 | `--local --run-for-ms <ms>` | この ECU だけを、プロセス内の仮想バスの上で、仮想時間で `<ms>` ミリ秒（1 以上の整数）動かします。ECU を単体で確かめるときに使います。 |
-| `--name <name>` | `EcuMainOptions::name` の代わりの participant 名です（ASCII か UTF-8）。`--describe` の `name` にも効きます。変わるのは名前だけで、J1939 の NAME、アドレス、変数の名前は同じです。同じ ECU を 2 つ載せるときは、それらがぶつからないようにしてください。 |
+| `--name <name>` | `EcuMainOptions::name` の代わりの participant 名です（ASCII か UTF-8）。`--describe` の `name` にも効きます。変わるのは名前だけで、J1939 の NAME、アドレス、変数の名前は同じです。同じ ECU を 2 つ載せるときは、それらがぶつからないようにしてください（やり方は [ECU をまとめて動かす](howto/integrate-ecus.md) の「同じ ECU を 2 つ載せる」）。 |
 | `--help`（`-h`） | 使い方を標準出力に書いて、0 で終了します。ほかの引数に誤りがあっても使い方を書きます。ただし、値を取る引数の後ろの `-h` は値です（`--name -h` は名前が `-h`）。 |
 
 - `--describe`、`--registry-uri`、`--local` のどれか 1 つが要ります。どれもなければ（引数がないときも）、何も始めずに使い方を標準エラーに書き、終了コード 4 です。

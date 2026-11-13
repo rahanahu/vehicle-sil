@@ -11,7 +11,7 @@ needs no C++ build:
   scripts  scripts/*.py --help
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help`, tests/control_server/multi_process.py --help and
-           examples/launch_control/write_before_start.py --help
+           the examples of examples/launch_control with --help
 
 Then, unless --skip-lowest, one more run on 3.11 ("3.11 lowest", build/python-envs/3.11-lowest) with
 the lower bounds of pyproject.toml instead of uv.lock: its sync step makes the environment with uv's
@@ -206,6 +206,7 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             s.run([python, "-m", "vehicle_sil_control", "--help"]),
             s.run([python, "tests/control_server/multi_process.py", "--help"]),
             s.run([python, "examples/launch_control/write_before_start.py", "--help"]),
+            s.run([python, "examples/launch_control/pause_and_step.py", "--help"]),
         ])
 
     steps = [("sync", sync), ("syntax", syntax), ("codegen", codegen), ("scripts", scripts), ("control", control)]

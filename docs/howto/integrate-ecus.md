@@ -29,8 +29,17 @@ flowchart LR
 | J1939 のアドレスと NAME | ネットワークごとに、どの ECU のノードがどのアドレスを求めるかを表にして配ります。NAME も ECU ごとに変えます（例では identity number と Manufacturer Code。Manufacturer Code の 0x7F0 は例の仮の値です）。254 は任意アドレスの範囲から取るノードで、重なりとみなしません | `address-conflict`、`address-shared`、`name-conflict` |
 | 変数の名前 | ECU の中で重ならないこと。`peer.` と `ecu.` で始められません（`ecu.connected` はどの ECU にもあります）。`j1939.<ネットワークの名前>.` で始まる名前は、監視の出力とぶつかることがあるので避けます。例では ECU の役割を前に付けています（`engine.throttle`、`dashboard.engine_speed`） | ECU の組み立ての例外（`--describe` が終了コード 3）。監視の出力とぶつかると、SIL Kit で始めるときに ECU が終了コード 3 |
 
-- 同じ ECU を 2 つ載せるとき、`--name` で変わるのは participant 名だけです。J1939 の NAME、アドレス、変数の名前は同じなので、照合が `name-conflict` を出します（[simulation-config.md](../simulation-config.md) の「人向け」の `two-engines.yaml` の例）。NAME は ECU のビルドに入っているので、ECU を書く人が直します。
+- 同じ ECU を 2 つ載せるとき、`--name` で変わるのは participant 名だけです。J1939 の NAME、アドレス、変数の名前は同じなので、照合が `name-conflict` を出します（[simulation-config.md](../simulation-config.md) の「人向け」の `two-engines.yaml` の例）。NAME は ECU のビルドに入っているので、ECU を書く人が直します（下の「同じ ECU を 2 つ載せる」）。
 - 決まりの詳細は、participant 名とネットワークが [simulation-config.md](../simulation-config.md) の「構成ファイル」、アドレスと NAME の判定が同じ文書の「照合」の表、変数の名前が [ecu-executable.md](../ecu-executable.md) の「`Ecu::describe()`」にあります。
+
+### 同じ ECU を 2 つ載せる
+
+同じ実行ファイルを 2 つの participant で動かすときは、2 つ目の J1939 の NAME とアドレスを変えます。`ecu_main` は知らない引数を受け付けない（終了コード 4）ので、ECU を書く人とまとめる人で、次のように分けます。
+
+- ECU を書く人は、`main()` で自分の引数（たとえばアドレスと identity number）を `argv` から取り出し、残りを `ecu_main()` に渡します。取り出した値は、`ecu_main<App>(argc, argv, options, args...)` の `args` で ECU のクラスのコンストラクターに渡せます（[ecu-executable.md](../ecu-executable.md) の「`ecu_main`」）。
+- まとめる人は、構成ファイルの `command` の、実行ファイルの後ろにその引数を書きます（たとえば `command: [engine/vehicle_sil_engine_ecu, --address, "0x01", --identity-number, "2"]`）。ランチャーは、照合（`--describe`）でも実行でも、`command` の引数の後ろに自分の引数を足して起動します。照合は、その引数で作ったノードを見て、重なりを判定します。
+- 自分の引数の名前は、`ecu_main` の引数（[ecu-executable.md](../ecu-executable.md) の「引数」の表）と重ねません。ランチャーが足す引数は、`command` に書くと照合の誤りです。`ecu_main` の使い方（`--help`）には、自分の引数は出ないので、ECU の説明に書いておきます。
+- 例のエンジン（`vehicle_sil_engine_ecu`）は、この引数を持ちません。
 
 ### ECU を書く人が守ること
 

@@ -155,7 +155,53 @@ ECU は、Agent の `sample_period`（既定 10 ms の仮想時間）ごとに�
 - 止める要求（Ctrl+C、`stop` の命令）、participant の失敗、`--timeout-ms` は、シナリオより優先です（[simulation-config.md](simulation-config.md) の規則のまま）。そのとき、シナリオは `incomplete` で、誤り `scenario-incomplete` が、どこまで進んだかを言います。落ちた ECU への書き込みが先に失敗しても、実行の結果は participant の失敗で、シナリオは `incomplete` です。
 - 手順ごとの `at`（JSON の `at_ms`）は、その手順を決めた仮想時刻です。`set` は値を適用した ECU のステップ、`ramp` は終わり、その時点の `expect` は T、`wait_until` と `within_ms` は成り立ったサンプルの時刻、`hold_for_ms` は終わり（失敗なら外れたサンプルの時刻）、時間切れは切れた時刻です。
 
-失敗の所見は、シナリオのファイルと行、手順、時刻、そのときの値を言います。
+失敗の所見は、シナリオのファイルと行、手順、時刻、そのときの値を言います。失敗する例です。スロットルを踏んでから 200 ms のうちに回転数が 1700 rpm に届くことを確かめますが、届くのは 330 ms です（上の例の `wait_until`）。
+
+<!-- throttle_response.yaml -->
+```yaml
+vehicle_sil_scenario: 1
+name: throttle response
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - expect: { Engine.engine.speed: { ge: 1700 } }
+    within_ms: 200
+  - expect: { Dashboard.dashboard.engine_speed: { ge: 1700 } }
+    within_ms: 200
+```
+
+<!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml -->
+```text
+simulation.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+scenario throttle_response.yaml (throttle response): 3 steps
+
+run: the simulation ran until the scenario was over (205 ms) and ended
+
+scenario throttle_response.yaml (throttle response): FAILED, 1 of 3 steps passed
+
+line  step                                                             result   at
+4     set Engine.engine.throttle = 50                                  ok       0 ms
+6     expect Engine.engine.speed ge 1700 (within 200 ms)               FAILED   200 ms
+8     expect Dashboard.dashboard.engine_speed ge 1700 (within 200 ms)  not run  -
+
+participant  required  ended
+Engine       yes       exit code 0
+Dashboard    yes       exit code 0
+
+error: throttle_response.yaml:6: expect Engine.engine.speed ge 1700 (within 200 ms): not true at any time within 200 ms (from 0 ms to 200 ms): at the end Engine.engine.speed ge 1700, but it was 1050 (its sample of 200 ms)
+
+failed: 1 error, 0 warnings, 0 notes
+```
+
+終了コードは 1 です。失敗した手順の後ろは回りません（`not run`）。`wait_until` の時間切れは、次の形です。
 
 ```text
 error: s.yaml:4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): timed out at 100 ms (100 ms after 0 ms): Body.level eq 6, but it was 5 (its sample of 100 ms)
@@ -172,6 +218,47 @@ error: s.yaml:4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): 
 ## 照合（`check --scenario`、`run --scenario` の最初）
 
 シナリオは、実行の前に全部照合します。`vehicle_sil_launch check <構成ファイル> --scenario <シナリオ>` は照合だけをします。誤りがあれば、`run` は何も起動しません。所見は、シナリオのファイル名と行を付けて、構成ファイルの所見と一緒に出ます（JSON では所見の `file`）。
+
+誤りのある例です。変数の名前を打ち間違え、出力に書き、範囲の外の値を入れ、待つ手順の後ろに `at_ms` を書き、`near` に `tolerance` を付けていません。
+
+<!-- throttle_mistakes.yaml -->
+```yaml
+vehicle_sil_scenario: 1
+name: throttle mistakes
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttel: 50 }
+  - set: { Engine.engine.speed: 1000 }
+  - set: { Engine.engine.throttle: 150 }
+  - wait_until: { Engine.engine.speed: { ge: 1700 } }
+    timeout_ms: 500
+  - at_ms: 600
+    expect: { Engine.engine.speed: { near: 1800 } }
+```
+
+<!-- vehicle_sil_launch check simulation.yaml --scenario throttle_mistakes.yaml -->
+```text
+simulation.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+scenario throttle_mistakes.yaml (throttle mistakes): 5 steps
+
+error: throttle_mistakes.yaml:5: 'Engine.engine.throttel': participant 'Engine' has no variable 'engine.throttel': did you mean 'Engine.engine.throttle'? (vehicle_sil_launch check --json lists the variables)
+error: throttle_mistakes.yaml:6: Engine.engine.speed is an output of its ECU: it can be read (expect, wait_until), not written; write one of the ECU's inputs instead
+error: throttle_mistakes.yaml:7: the value of Engine.engine.throttle (real) is 150, outside its range (from 0 to 100 %)
+error: throttle_mistakes.yaml:10: at_ms after a step that waits (line 8): when that step ends is not known before the run; give this step after_ms (from the end of the step before it) instead
+error: throttle_mistakes.yaml:11: Engine.engine.speed: near needs tolerance (how far from the value it may be): add tolerance: <number>
+
+failed: 5 errors, 0 warnings, 0 notes
+```
+
+照合は誤りを全部挙げます（最初の 1 つで止まりません）。終了コードは 1 です。
 
 | `code` | 意味 |
 |---|---|
@@ -194,6 +281,56 @@ error: s.yaml:4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): 
 | `status` | `passed`、`failed`、`incomplete`（ほかの理由で途中で終わった）、`not_run`（シミュレーションが始まらなかった） |
 | `over_at_ms` | シナリオが終わった controller のステップ（`passed` と `failed`。ほかは null） |
 | `steps[]` | 手順ごとに `index`（1 から）、`line`、`kind`（`set`、`ramp`、`expect`、`wait_until`）、`text`、`status`（`passed`、`failed`、`unfinished`、`not_run`）、`start_ms`（手順の時刻）、`at_ms`（決めた時刻）、`end_ms`（終わる時刻）、`code` と `message`（失敗のとき） |
+
+上の「結果」の失敗する例（`throttle_response.yaml`）を `run --json` で回したときの `scenario` です（ほかのキーは [simulation-config.md](simulation-config.md) の「JSON（`run --json`）」）。
+
+<!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml --json: the scenario -->
+```json
+  "scenario": {
+    "file": "throttle_response.yaml",
+    "name": "throttle response",
+    "status": "failed",
+    "over_at_ms": 205,
+    "steps": [
+      {
+        "index": 1,
+        "line": 4,
+        "kind": "set",
+        "text": "set Engine.engine.throttle = 50",
+        "status": "passed",
+        "start_ms": 0,
+        "at_ms": 0,
+        "end_ms": 0,
+        "code": null,
+        "message": null
+      },
+      {
+        "index": 2,
+        "line": 6,
+        "kind": "expect",
+        "text": "expect Engine.engine.speed ge 1700 (within 200 ms)",
+        "status": "failed",
+        "start_ms": 0,
+        "at_ms": 200,
+        "end_ms": null,
+        "code": "scenario-failed",
+        "message": "not true at any time within 200 ms (from 0 ms to 200 ms): at the end Engine.engine.speed ge 1700, but it was 1050 (its sample of 200 ms)"
+      },
+      {
+        "index": 3,
+        "line": 8,
+        "kind": "expect",
+        "text": "expect Dashboard.dashboard.engine_speed ge 1700 (within 200 ms)",
+        "status": "not_run",
+        "start_ms": null,
+        "at_ms": null,
+        "end_ms": null,
+        "code": null,
+        "message": null
+      }
+    ]
+  }
+```
 
 - 時刻はミリ秒の数です（ECU のステップが 1 ms より細かいと、小数になることがあります）。わからない時刻は null です。
 - シナリオが終わってランチャーが止めた実行の `simulation` は `ended` です。
