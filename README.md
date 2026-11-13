@@ -368,7 +368,7 @@ private:
 `vehicle_sil_vector_xl_bridge` は、SIL Kit の CAN ネットワークと Vector XL の CAN チャネルの間で、クラシック CAN のフレームを双方向に転送します。XL のチャネルには、Vector Virtual CAN と、CANcase や VN16xx などの物理 CAN を使えます。
 
 > [!WARNING]
-> Windows 11 の MSYS2 UCRT64 ビルドと、実際の XL Driver Library を使った Vector Virtual CAN の送受信を確認済みです。VN5620 の Channel 5 と 6 を 250 kbit/s でつないだ物理ループバックでも、Engine から Dashboard への送受信を確認しています。他の物理 CAN 構成や機器は未確認です。
+> Windows 11 の MSYS2 UCRT64 ビルドと、実際の XL Driver Library を使った Vector Virtual CAN の送受信を確認済みです。VN5620 の 2 つのチャネルをつないだ物理ループバックでも、送受信を確認しています。他の物理 CAN 構成や機器は未確認です。
 
 ### ビルド
 
@@ -520,7 +520,7 @@ ECU の実行ファイルを、ほかのファイルなしで配りたいとき�
 - 対応するのはクラシック CAN（8 バイト以下）だけです。RTR、CAN FD、CAN XL のフレームは、受信時に捨てて件数を数えます。
 - `install()` とパッケージ化（`find_package`）には未対応です。使えるのは FetchContent と `add_subdirectory` だけです。
 - Windows 10 は未確認です（Windows 11 の MSYS2 UCRT64 ビルドと試験は確認済み）。
-- Vector XL CAN Bridge は Vector Virtual CAN と VN5620 の Channel 5/6 を使った物理ループバックで確認済みです。他の物理 CAN 構成や機器での動作は未確認です。
+- Vector XL CAN Bridge は Vector Virtual CAN と VN5620 の物理ループバックで確認済みです。他の物理 CAN 構成や機器での動作は未確認です。
 - Vector XL CAN Bridge が扱うのはクラシック CAN だけです。CAN FD には対応していません。
 
 ## 開発者向け
