@@ -123,7 +123,17 @@ public:
         const auto found = auth_.identify(*context);
         if (rule != nullptr && found && allows(*found, rule->need))
         {
-            return body(Call{*found, rule, context});
+            const Call call{*found, rule, context};
+            if (options_.observe_only && rule->effect != Effect::Read && rule->effect != Effect::End)
+            {
+                // The one place that keeps an observe-only server's clients from changing the
+                // simulation: before the call's body, so nothing of it reaches the hub or the time.
+                const ObserveOnly& only = *options_.observe_only;
+                audit(call, std::string(rule->what), "refused (" + only.reason + ")");
+                context->AddTrailingMetadata(kRefusalReasonKey, only.reason);
+                return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "cannot " + std::string(rule->what) + ": " + only.message);
+            }
+            return body(call);
         }
         const std::string what = rule != nullptr ? std::string(rule->what) : "call " + std::string(method);
         audit_.refused((found ? found->name : std::string("unauthenticated")) + "@" + context->peer() + " " + what + ": refused");

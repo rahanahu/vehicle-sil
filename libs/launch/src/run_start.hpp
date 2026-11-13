@@ -11,6 +11,7 @@
 #include "run_output.hpp"
 #include "run_participants.hpp"
 #include "run_scenario.hpp"
+#include "run_start_limit.hpp"
 
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
@@ -27,26 +28,14 @@ namespace vehicle_sil::launch::detail {
 /// What the main thread (RunStart) and the start window's thread (RunStartWindow) share while
 /// the simulation starts. Nothing else of the run is touched by both.
 ///
-/// Locks: `limit_mutex` and `found_mutex` are independent (never held together).
-/// - While `limit_mutex` is held, the window's thread writes one line (RunOutput::say(), which
-///   takes the output's lock): the order is limit_mutex, then the output's lock.
-/// - Nothing is taken while `found_mutex` is held.
-/// Neither is taken while TimeCommands' mutex is held (TimeCommands::hold_before_start() calls
-/// on_hold and give_up without it).
+/// Locks: the limit's mutex (StartLimit) and `found_mutex` are independent, and nothing is taken
+/// while either is held. Neither is taken while TimeCommands' mutex is held
+/// (TimeCommands::hold_before_start() calls on_hold and give_up without it).
 struct StartShared
 {
-    /// The limit of the start (the give-up of SimulationController::start()): its time, how long
-    /// it was, and whether it is the one after the hold. Written by the main thread and the
-    /// window's thread, read by both. Guarded by `limit_mutex`.
-    mutable std::mutex limit_mutex;
-    std::chrono::steady_clock::time_point limit_at = std::chrono::steady_clock::time_point::max();
-    std::chrono::milliseconds limit_length{};
-    bool limit_after_hold = false;
-    /// Before the start limit counts in a run with participants started by hand: false until they
-    /// are ready (RunStart::start_given_up()); true in a run without them. Guarded by `limit_mutex`.
-    bool limit_armed = true;
-    /// The run stands still before its first step (no limit then). Guarded by `limit_mutex`.
-    bool limit_holding = false;
+    /// The limit of the start (the give-up of SimulationController::start()). Written by the main
+    /// thread and the window's thread, read by both.
+    StartLimit limit;
 
     /// What the start window found. Written by the window's thread, read by the main thread after
     /// SimulationController::start() has returned. Guarded by `found_mutex`.
@@ -65,18 +54,6 @@ struct StartShared
     /// --timeout-ms ended the hold.
     std::atomic<bool> hold_timed_out{false};
 
-    void set_limit(std::chrono::steady_clock::time_point at, std::chrono::milliseconds length, bool after_hold)
-    {
-        const std::lock_guard lock(limit_mutex);
-        limit_at = at;
-        limit_length = length;
-        limit_after_hold = after_hold;
-    }
-    [[nodiscard]] std::chrono::steady_clock::time_point limit() const
-    {
-        const std::lock_guard lock(limit_mutex);
-        return limit_at;
-    }
     /// manual_wait_began_ns as a time; empty for -1.
     [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> manual_wait_began() const
     {

@@ -10,6 +10,7 @@
 //   run_notes.*          RunNotes         run --events: what has been written already
 //   run_scenario.*       RunScenario      run --scenario: the engine between hub, gate and result
 //   run_start.*          RunStart, RunStartWindow, StartShared   the wait, the start window, the limits
+//   run_start_limit.hpp  StartLimit       when the start is given up
 //   run_watch.*          RunWatch         the watch of the running simulation
 //   time_commands.cpp    TimeCommands     pause, resume, step, run_until, speed
 //   run_assess.cpp, run_format.cpp, run_words.hpp   the findings, the result, its text and JSON
@@ -31,9 +32,14 @@
 // taken while that one is held):
 // - TimeCommands' mutex, then the event stream's, the controller's time gate's, or what
 //   RunOptions' callbacks take (on_detach, the `accepted` of a stop).
-// - StartShared::limit_mutex, then RunOutput's mutex.
 // - RunOutput's mutex, then the event stream's (and RunOptions::write_line).
-// - StartShared::found_mutex, RunScenario's samples' and error mutexes: nothing under them.
+// - StartLimit's mutex, StartShared::found_mutex, RunScenario's samples' and error mutexes:
+//   nothing under them.
+//
+// A control server (RunOptions::serve_control) has threads of its own. Of the run they touch the
+// hub (thread safe; its subscriptions are bounded and never make the simulation wait) and the
+// TimeCommands. With a scenario the server only shows the run: its clients' calls that would
+// write a variable or move the time are refused in the server, before they reach either.
 #include "vehicle_sil/launch/run.hpp"
 
 #include "run_context.hpp"

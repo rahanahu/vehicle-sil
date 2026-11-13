@@ -45,7 +45,7 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
     const auto cancelled = [this, &window] { return window.cancelled() || ctx_.interrupts() > 0; };
     // Not beyond the start's limit, and with room for the start to go on after it.
     const auto deadline = std::min(std::chrono::steady_clock::now() + ctx_.options.control_hello_timeout,
-                                   shared_.limit() - std::chrono::milliseconds(500));
+                                   shared_.limit.at() - std::chrono::milliseconds(500));
     control_silkit::HelloReport report = transport.wait_for_hellos(control_.expected_agents(), deadline, cancelled);
     {
         // The links as they are now, before any step: the simulation may be over by the time
@@ -87,9 +87,7 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
             // The start has no limit while it holds; --timeout-ms counts from here.
             began = std::chrono::steady_clock::now();
             shared_.hold_began_ns.store(began.time_since_epoch().count());
-            shared_.set_limit(std::chrono::steady_clock::time_point::max(), {}, false);
-            const std::lock_guard lock(shared_.limit_mutex);
-            shared_.limit_holding = true;
+            shared_.limit.begin_hold();
             out_.say("standing still before the first step until a resume, step or run_until command (--start-paused "
                 "with a control server)");
         };
@@ -108,13 +106,8 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
             shared_.hold_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count());
             // From here on, the participants have start_timeout_ms to get to their first step
             // (with a participant started by hand: from when those are ready, as before the hold).
-            const std::chrono::milliseconds limit(ctx_.config.start_timeout_ms);
-            const bool manual = waits_for_manual(ctx_.config);
-            shared_.set_limit(manual ? std::chrono::steady_clock::time_point::max() : std::chrono::steady_clock::now() + limit,
-                            limit, true);
-            const std::lock_guard lock(shared_.limit_mutex);
-            shared_.limit_holding = false;
-            shared_.limit_armed = !manual;
+            shared_.limit.end_hold(std::chrono::steady_clock::now(), std::chrono::milliseconds(ctx_.config.start_timeout_ms),
+                                   waits_for_manual(ctx_.config));
         }
     }
 }
@@ -147,26 +140,13 @@ std::string RunStart::start_given_up(SimulationController& controller)
     // With a participant started by hand, the limit begins once every such participant is
     // ready for its first step (not while the run stands still before it).
     const bool manualReady = waits_for_manual(ctx_.config) && manual_ready(controller);
-    std::chrono::steady_clock::time_point at;
-    std::chrono::milliseconds length{};
-    bool after_hold = false;
-    {
-        const std::lock_guard lock(shared_.limit_mutex);
-        if (!shared_.limit_armed && !shared_.limit_holding && manualReady)
-        {
-            shared_.limit_armed = true;
-            shared_.limit_at = std::chrono::steady_clock::now() + shared_.limit_length;
-        }
-        at = shared_.limit_at;
-        length = shared_.limit_length;
-        after_hold = shared_.limit_after_hold;
-    }
-    if (std::chrono::steady_clock::now() < at)
+    const StartLimit::Now limit = shared_.limit.take(std::chrono::steady_clock::now(), manualReady);
+    if (std::chrono::steady_clock::now() < limit.at)
     {
         return {};
     }
-    return "the participants did not all get to their first step within " + std::to_string(length.count()) +
-           " ms" + (after_hold ? " after the run stopped standing still before it" : "") +
+    return "the participants did not all get to their first step within " + std::to_string(limit.length.count()) +
+           " ms" + (limit.after_hold ? " after the run stopped standing still before it" : "") +
            (waits_for_manual(ctx_.config) ? " after the participants you start yourself (manual) were ready" : "") +
            " (start_timeout_ms; a participant may hang while it starts): not ready: " + not_ready(controller);
 }
@@ -298,7 +278,7 @@ bool RunStart::wait_for_start(SimulationController& controller)
     }
     try
     {
-        // The start's limits are the run's own (StartShared's limit): until the hold, what is left of
+        // The start's limits are the run's own (StartLimit): until the hold, what is left of
         // start_timeout_ms (with room for the wait for the agents' hellos); in the hold, none
         // (it ends with a command, a stop, --timeout-ms or a participant that leaves); after
         // it, start_timeout_ms anew. A required participant that leaves ends the start at
@@ -307,17 +287,14 @@ bool RunStart::wait_for_start(SimulationController& controller)
         // first step (it may stand in a debugger before), then start_timeout_ms (start_given_up()).
         if (waits_for_manual(ctx_.config))
         {
-            shared_.set_limit(std::chrono::steady_clock::time_point::max(), std::chrono::milliseconds(ctx_.config.start_timeout_ms),
-                            false);
-            const std::lock_guard lock(shared_.limit_mutex);
-            shared_.limit_armed = false;
+            shared_.limit.set_once_manual_ready(std::chrono::milliseconds(ctx_.config.start_timeout_ms));
         }
         else
         {
             const auto left =
                 std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
             const auto limit = std::max(left, ctx_.options.control_hello_timeout + std::chrono::milliseconds(1000));
-            shared_.set_limit(std::chrono::steady_clock::now() + limit, limit, false);
+            shared_.limit.set(std::chrono::steady_clock::now() + limit, limit);
         }
         controller.start(kNoStartLimit, [this, &controller] { return start_given_up(controller); });
     }

@@ -330,6 +330,11 @@ message ForgetPeerRequest {
 message ForgetPeerReply {}
 
 // Clients (GUI, CLI, Python) talk to the control server through this service.
+//
+// A server that only shows the simulation (vehicle_sil_launch while it plays a scenario) refuses
+// the calls that change it (Write, ForgetPeer, Pause, Resume, RunUntil, Step, SetSpeed) with
+// FAILED_PRECONDITION, whatever the caller's role, and says why in the trailing metadata
+// "vehicle-sil-reason" ("scenario-running"). The other calls, Stop among them, are served.
 service ControlService {
   rpc Ping(PingRequest) returns (PingReply);
   rpc ListPeers(ListPeersRequest) returns (ListPeersReply);
