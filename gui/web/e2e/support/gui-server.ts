@@ -3,7 +3,9 @@
 // 本物のランチャーで動かす e2e（e2e/real/）も、ここの startGuiServer でサーバーを起動する（support/real-server.ts）。
 import { ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { resolve } from 'node:path';
+import { readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { FullConfig } from '@playwright/test';
 
@@ -99,6 +101,11 @@ export async function startGuiServer(options: GuiServerOptions): Promise<() => P
 /** GUI サーバーを起動する（環境変数は変えない。試験ごとに新しいサーバーが要る試験も使う）。 */
 export async function launchGuiServer(options: GuiServerOptions): Promise<GuiServer> {
   const { launcher, root, devOrigin, web, port = GUI_PORT } = options;
+  // 流し直すランチャーが、試験の誤り（録りのない命令など）で終わったときに 1 行を足すファイル。止めるときに空を確かめる
+  const report = join(
+    tmpdir(),
+    `vehicle-sil-replay-report-${process.pid}-${port}-${Date.now()}.txt`,
+  );
   const server = spawn(
     'uv',
     [
@@ -121,7 +128,7 @@ export async function launchGuiServer(options: GuiServerOptions): Promise<GuiSer
       cwd: REPOSITORY,
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'inherit'],
-      env: { ...process.env, ...options.env },
+      env: { ...process.env, REPLAY_REPORT: report, ...options.env },
     },
   );
   const lines = createInterface({ input: server.stdout! });
@@ -139,5 +146,19 @@ export async function launchGuiServer(options: GuiServerOptions): Promise<GuiSer
   });
   const url = (JSON.parse(first) as { url: string }).url;
   const token = new URLSearchParams(new URL(url).hash.slice(1)).get('token') ?? '';
-  return { url, token, stop: () => stop(server) };
+  return { url, token, stop: () => stopAndCheck(server, report) };
+}
+
+/** サーバーを止め、流し直すランチャーが試験の誤りで終わっていないことを確かめる（終わっていれば、その文で落とす）。 */
+async function stopAndCheck(server: ChildProcess, report: string): Promise<void> {
+  await stop(server);
+  let text: string;
+  try {
+    text = readFileSync(report, 'utf8');
+  } catch {
+    return; // 何も書かれなかった
+  } finally {
+    rmSync(report, { force: true });
+  }
+  if (text.trim()) throw new Error(`the replaying launcher ended on a mistake of a test:\n${text}`);
 }

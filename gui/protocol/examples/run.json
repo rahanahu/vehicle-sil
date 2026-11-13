@@ -4,10 +4,8 @@
     "method": "POST",
     "path": "api/run",
     "body": {
-      "file": "forever.yaml",
-      "disable": [
-        "Logger"
-      ],
+      "file": "ignore-stop.yaml",
+      "disable": [],
       "speed": null,
       "start_paused": false
     }
@@ -16,10 +14,8 @@
   "response": {
     "session": {
       "id": 1,
-      "file": "forever.yaml",
-      "disable": [
-        "Logger"
-      ],
+      "file": "ignore-stop.yaml",
+      "disable": [],
       "manual": [],
       "speed": null,
       "start_paused": false,

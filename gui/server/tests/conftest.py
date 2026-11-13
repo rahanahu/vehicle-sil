@@ -60,11 +60,15 @@ class Gui:
 @contextmanager
 def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None, args: tuple = (),
                launcher: Path | None = REPLAY, expect_start: bool = True, browser: bool = False,
-               cwd: Path | None = None) -> Iterator[Gui]:
+               cwd: Path | None = None, replay_mistakes: bool = False) -> Iterator[Gui]:
+    """replay_mistakes: the test makes the stand-in launcher end on a mistake on purpose (else, when it does, the
+    test fails with what it wrote: a command that no recording has, one that came later than recorded, ...)."""
     environment = dict(os.environ)
     environment.setdefault("REPLAY_TICK_MS", "10")
     environment.pop("REPLAY_FAULT", None)
     environment.pop("REPLAY_CASE", None)
+    report = tmp_path / f"replay-{time.monotonic_ns()}.txt"
+    environment["REPLAY_REPORT"] = str(report)
     environment.update(env or {})
     stderr = tmp_path / f"server-{time.monotonic_ns()}.err"
     with open(stderr, "wb") as err:
@@ -87,6 +91,9 @@ def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None,
         yield gui
     finally:
         stop_server(proc)
+        mistakes = report.read_text(encoding="utf-8") if report.exists() else ""
+        if mistakes and not replay_mistakes:
+            raise AssertionError(f"the stand-in launcher (replay_launcher.py) ended on a mistake:\n{mistakes}")
 
 
 REPOSITORY = TESTS.parents[2]

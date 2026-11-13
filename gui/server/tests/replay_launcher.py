@@ -34,8 +34,9 @@ How it plays:
   REPLAY_RUN_ON=0: it stands still instead, so that what is read meanwhile does not depend on timing). Another
   command ends the replay with code 3 and a line on standard error that says which was expected. A command that
   comes early hurries the lines before it. A command that no recording has (one more stop than recorded, say)
-  ends it the same way, so that a test sees every command the GUI server writes; only after the result is a
-  command not read (as the launcher reads none then).
+  ends it the same way, so that a test sees every command the GUI server writes, and so does one that came later
+  than in the recordings that have it (going back would write their answers twice); standard error says which.
+  Only after the result is a command not read (as the launcher reads none then).
 - The recording's marks are put back: <root> (the directory it runs in), <file> and <scenario> (the arguments),
   "<pid>" (its own pid in hello; for a started participant the pid of a sleeping child process that it starts in
   its place and ends when the participant ends, so that a test can see whether stopping left processes behind),
@@ -85,6 +86,9 @@ first one after the phase running, "the next" the one after it.
   control-trouble    of the participants whose control link is connected, the first's is no_hello, the second's
                      version_mismatch (warnings at the end); the participant after them in the file gets
                      not_offered (no control in its check, a note in the check)
+
+REPLAY_REPORT names a file to which every line about a test's mistake (no recording, a command that no recording
+has, or that came later than recorded) is added too: the tests make sure it stays empty.
 
 Other environment variables: REPLAY_FEATURES (the features of version --json, comma-separated, to stand in for an
 older launcher; default: the recorded ones without control-server, a launcher built without the control server,
@@ -639,11 +643,9 @@ class Player:
         if self.switch(got, back=True):
             return
         shown = "the end of standard input" if expected is None else expected
-        sys.stderr.write(f"replay_launcher: the recording {self.case} has {shown} written to the launcher here, "
-                         f"but it got {'the end of standard input' if got is None else got}, and no recording of "
-                         f"this command line has that next: record a case with the commands that the test sends "
-                         f"({RECORDER})\n")
-        sys.stderr.flush()
+        self.report(f"replay_launcher: the recording {self.case} has {shown} written to the launcher here, but it "
+                    f"got {'the end of standard input' if got is None else got}, and no recording of this command "
+                    f"line has that next: record a case with the commands that the test sends ({RECORDER})")
         self.finish(3)
 
     def early_input(self) -> None:
@@ -661,11 +663,28 @@ class Player:
     def unrecorded(self, got) -> None:
         """A command that no recording of this command line has here: the test must see it (exit code 3)."""
         what = "the end of standard input" if got is None else got
-        sys.stderr.write(f"replay_launcher: {what} came where no recording of this command line has a command (the "
-                         f"recording {self.case} has none left here): the GUI server wrote a command that the test "
-                         f"did not expect, or a case with it is missing in {RECORDER}\n")
-        sys.stderr.flush()
+        k = len(self.consumed)
+        later = [t.case for t in self.takes if len(t.sends) > k and same_command(got, t.command(k)) and
+                 all(same_command(c, t.command(j)) for j, c in enumerate(self.consumed))]
+        if later:  # recorded, but sent sooner there (going back would write that recording's answers again)
+            why = (f"came later than in the recordings that have it next ({', '.join(later)}): record a case where "
+                   f"it comes this late in {RECORDER}, or make the test wait less")
+        else:
+            why = (f"came where no recording of this command line has a command (the recording {self.case} has none "
+                   f"left here): the GUI server wrote a command that the test did not expect, or a case with it is "
+                   f"missing in {RECORDER}")
+        self.report(f"replay_launcher: {what} {why}")
         self.finish(3)
+
+    @staticmethod
+    def report(line: str) -> None:
+        """A line on standard error, and in the file REPLAY_REPORT names (the tests make sure it stays empty)."""
+        sys.stderr.write(line + "\n")
+        sys.stderr.flush()
+        path = os.environ.get("REPLAY_REPORT")
+        if path:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
 
     def next_input(self):
         """The next line of standard input (None: its end); meanwhile the simulation runs on (run_on)."""
@@ -718,8 +737,8 @@ class Player:
             path = self.argv[self.argv.index("--control-credentials") + 1]
             mode = os.stat(path).st_mode & 0o777
             if os.name == "posix" and mode & 0o077:  # the real launcher's rule for the token file
-                sys.stderr.write(f"replay_launcher: --control-credentials {path} can be read by others "
-                                 f"(mode {mode:o}): make it readable only by its owner (chmod 600)\n")
+                self.report(f"replay_launcher: --control-credentials {path} can be read by others (mode {mode:o}): "
+                            "make it readable only by its owner (chmod 600)")
                 self.finish(3)
             lines = [ln.split() for ln in Path(path).read_text().splitlines()
                      if ln.strip() and not ln.lstrip().startswith("#")]
@@ -912,12 +931,12 @@ class Recorded(Player):
 def main(argv: list[str]) -> int:
     chosen = choose(argv)
     if isinstance(chosen, str):
-        sys.stderr.write(chosen + "\n")
+        Player.report(chosen)
         return 2
     _, file, _ = shape(argv)
     fault = fault_of(file)
     if fault is not None and fault not in FAULTS:
-        sys.stderr.write(f"replay_launcher: unknown fault '{fault}': the faults are {', '.join(FAULTS)}\n")
+        Player.report(f"replay_launcher: unknown fault '{fault}': the faults are {', '.join(FAULTS)}")
         return 2
     takes = [Take(head, apply_fault(fault, entries, head) if fault else entries) for head, entries in chosen]
     Recorded(argv, takes, fault).play()

@@ -16,10 +16,16 @@ time between lines in steps of 100 ms), how fast it went (actual_speed 1.5, wall
 stood still) and lateness (0). A recording that still has a path of this computer, the user's name or the control
 token in it is not written (the case fails with what was found).
 
---compare records into a temporary directory and compares with recordings/: the events in order (without time,
-log and heartbeat, whose number depends on timing), their keys and the JSON types of their values, the commands,
-the exit code, and what check --json and version --json print. It says which case differs and how; record again
-when the change is meant (then `git diff gui/server/tests/recordings` shows what changed for the GUI).
+--compare records into a temporary directory and compares with recordings/ (outline() and Shapes say exactly
+what): the events in order (time, log and log_dropped aside: how many and where depends on timing; of the
+participant events between two others, the order across participants is not compared, the order of one
+participant's states is), the values the launcher decides (findings' codes, commands accepted or not, states and
+exit codes, the result, the check, version's features and formats), the keys and JSON types of every kind of
+event and of everything in it, the commands written, the exit code and whether anything came on standard error.
+Cases that need a feature the launcher does not have (the control server) are skipped, and that feature is left
+out of version's features on both sides; both are said. A case whose run fell behind real time (a busy machine)
+is recorded again, up to three times; the summary line says which were. It says which case differs and how;
+record again when the change is meant (then `git diff gui/server/tests/recordings` shows what changed).
 
 When the launcher changes: record again, read the diff, and fix the GUI where it uses what changed. When a test
 needs a command line or commands that no recording has, replay_launcher.py says so: add a case here and record it.
@@ -57,7 +63,7 @@ STOP = '{"command":"stop"}'
 PAUSE, RESUME = '{"command":"pause"}', '{"command":"resume"}'
 TIMEOUT_S = 60
 # Findings that come from how busy the machine was, not from the launcher: a case that has one is recorded again
-BUSY = ("behind-real-time", "control-link-dropped")
+BUSY = ("behind-real-time",)  # a step later than its real time: only a busy machine does that to the example ECUs
 ATTEMPTS = 3
 
 
@@ -261,7 +267,7 @@ class Recorder:
         def marks(value, key=None):
             if isinstance(value, dict):
                 out = {k: marks(v, k) for k, v in value.items()}
-                if "actual_speed" in out and out["actual_speed"] is not None:
+                if isinstance(out.get("actual_speed"), (int, float)) and not isinstance(out["actual_speed"], bool):
                     out["actual_speed"] = 1.5
                 for k in ("late_ms", "late_steps", "max_late_ms", "slipped_ms"):
                     if isinstance(out.get(k), int):
@@ -325,7 +331,8 @@ class Recorder:
                          if isinstance(f, dict)]
                 busy = [code for code in found if code in BUSY]
                 if busy:
-                    raise Busy(f"{case.name}: the run wrote {busy[0]} (the machine was busy): record it again on a "
+                    raise Busy(f"{case.name}: the run wrote {busy[0]} (the machine was busy, or the launcher's timing "
+                               "has changed): record it again on a "
                                "machine that is not busy")
                 e = {k: v for k, v in e.items() if k not in ("seq", "t_ms")}
                 entries.append({"out": marks(e)})
@@ -415,14 +422,16 @@ def launcher_features(launcher: Path) -> set[str]:
     return set(json.loads(p.stdout).get("features") or [])
 
 
-def record_once(recorder: Recorder, case: Case) -> tuple[dict, list[dict]]:
-    """A case, recorded again (up to ATTEMPTS times) while the machine was too busy for it."""
+def record_once(recorder: Recorder, case: Case, again: dict[str, int]) -> tuple[dict, list[dict]]:
+    """A case, recorded again (up to ATTEMPTS times) while its run fell behind real time; again counts how often."""
     for attempt in range(1, ATTEMPTS + 1):
         try:
             return recorder.record(case)
-        except Busy:
+        except Busy as e:
             if attempt == ATTEMPTS:
-                raise
+                raise RuntimeError(f"{case.name}: {ATTEMPTS} times {', '.join(BUSY)}: unless the machine is busy, the "
+                                   "launcher's timing has changed") from e
+            again[case.name] = attempt
     raise AssertionError("not reached")
 
 
@@ -434,7 +443,8 @@ def write(path: Path, head: dict, entries: list[dict]) -> None:
 # ---------------------------------------------------------------- comparing
 
 
-NOT_IN_ORDER = {"time", "log", "log_dropped"}  # how many and where depend on timing: their shapes are compared
+NOT_IN_ORDER = {"time", "log", "log_dropped"}
+SOMETIMES = {"log_dropped"}  # a kind of event that only a slow reader makes the launcher write  # how many and where depend on timing: their shapes are compared
 
 
 def json_type(value) -> str:
@@ -476,7 +486,7 @@ def checked(c) -> tuple:
                   for p in c.get("participants") or []))
 
 
-def outline(entries: list[dict]) -> list:
+def outline(entries: list[dict], unsure: frozenset = frozenset()) -> list:
     """What is compared in order: the events but time, log and log_dropped, with the values the launcher decides
     (participant events between two others in any order: that order is timing), what check --json and version
     --json print, the commands written, the exit code, and whether anything came on standard error."""
@@ -491,15 +501,16 @@ def outline(entries: list[dict]) -> list:
             if kind == "participant":
                 group.append(item)
                 continue
-            out += sorted(group, key=repr) + [item]
+            out += sorted(group, key=lambda g: str(g[2][0])) + [item]  # stable: one participant's order stays
             group = []
         elif "print" in e:
             p = e["print"]
             out.append(("print", checked(p) if "vehicle_sil_check" in p else
-                        (tuple(p.get("features") or ()), p.get("formats")) if "vehicle_sil_launch" in p else ()))
+                        (tuple(f for f in p.get("features") or () if f not in unsure), p.get("formats"))
+                        if "vehicle_sil_launch" in p else ()))
         elif "exit" in e:
             out.append(("exit", e["exit"]))
-    out += sorted(group, key=repr)
+    out += sorted(group, key=lambda g: str(g[2][0]))
     out.append(("commands", tuple(e["send"] for e in entries if "send" in e)))
     out.append(("standard error", any("err" in e for e in entries)))
     return out
@@ -535,18 +546,24 @@ class Shapes:
     def differences(self, other: "Shapes") -> list[str]:
         out = []
         for where in sorted(set(self.keys) | set(other.keys)):
+            if where.split(".")[0] in SOMETIMES and (where not in self.keys or where not in other.keys):
+                continue  # written only when the reader is slow: compared when both sides have it
             a, b = self.keys.get(where, set()), other.keys.get(where, set())
             if a != b:
                 out.append(f"{where}: keys recorded {sorted(map(sorted, a - b))[:3]}, "
                            f"now {sorted(map(sorted, b - a))[:3]}")
         for key in sorted(set(self.types) | set(other.types), key=repr):
+            if key[0].split(".")[0] in SOMETIMES and (key not in self.types or key not in other.types):
+                continue
             a, b = self.types.get(key, set()), other.types.get(key, set())
             if a != b:
                 out.append(f"{key[0]}.{key[1]}: types recorded {sorted(a)}, now {sorted(b)}")
         return out
 
 
-def compare(name: str, tracked: Path, fresh: Path, shapes: tuple[Shapes, Shapes]) -> list[str]:
+def compare(name: str, tracked: Path, fresh: Path, shapes: tuple[Shapes, Shapes],
+            unsure: frozenset = frozenset()) -> list[str]:
+    """unsure: features of version --json left out on both sides (the ones the launcher was built without)."""
     import replay_launcher
     if not tracked.is_file():
         return [f"{name}: recordings/{name}.jsonl is missing: record it"]
@@ -554,7 +571,7 @@ def compare(name: str, tracked: Path, fresh: Path, shapes: tuple[Shapes, Shapes]
     _, b = replay_launcher.read_recording(fresh)
     shapes[0].add(a)
     shapes[1].add(b)
-    left, right = outline(a), outline(b)
+    left, right = outline(a, unsure), outline(b, unsure)
     if left == right:
         return []
     at = next((i for i, (x, y) in enumerate(zip(left, right)) if x != y), min(len(left), len(right)))
@@ -600,11 +617,13 @@ def main(argv: list[str]) -> int:
     chosen = [c for c in every if not args.cases or c.name in args.cases]
     has = launcher_features(args.launcher)
     lacking = [c for c in chosen if not needs(c) <= has]
+    missing = frozenset(set().union(*(needs(c) for c in lacking)) - has)
     if lacking:  # e.g. a launcher built without its control server (VEHICLE_SIL_BUILD_CONTROL_SERVER=OFF)
-        print(f"record_launcher: {len(lacking)} cases skipped: they need "
-              f"{', '.join(sorted(set().union(*(needs(c) for c in lacking)) - has))}, which this launcher does not "
-              "have", file=sys.stderr)
+        print(f"record_launcher: {len(lacking)} cases skipped: they need {', '.join(sorted(missing))}, which this "
+              f"launcher does not have; version --json is compared without {', '.join(sorted(missing))}",
+              file=sys.stderr)
     chosen = [c for c in chosen if c not in lacking]
+    again: dict[str, int] = {}
     failed = []
     with tempfile.TemporaryDirectory(prefix="record-launcher-") as tmp:
         root = Path(tmp) / "root"
@@ -616,13 +635,14 @@ def main(argv: list[str]) -> int:
         out.mkdir(parents=True, exist_ok=True)
         for case in chosen:
             try:
-                head, entries = record_once(recorder, case)
+                head, entries = record_once(recorder, case, again)
             except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
                 failed.append(str(e) if str(e).startswith(case.name + ":") else f"{case.name}: {e}")
                 continue
             write(out / f"{case.name}.jsonl", head, entries)
             if args.compare:
-                failed += compare(case.name, RECORDINGS / f"{case.name}.jsonl", out / f"{case.name}.jsonl", shapes)
+                failed += compare(case.name, RECORDINGS / f"{case.name}.jsonl", out / f"{case.name}.jsonl", shapes,
+                                  missing)
         if args.compare:  # the shapes of every kind of event, over the cases compared (the same on both sides)
             failed += [f"shapes: {d}: record again and read the diff" for d in shapes[0].differences(shapes[1])]
     for line in failed:
@@ -631,7 +651,10 @@ def main(argv: list[str]) -> int:
     shapes_differ = any(line.startswith("shapes:") for line in failed)
     print(f"record_launcher: {len(chosen) - len(cases_failed)} of {len(chosen)} cases "
           f"{'as recorded' if args.compare else 'recorded'}" + (f" (into {args.out})" if not args.compare else "")
-          + ("; the shapes of the events differ" if shapes_differ else ""))
+          + ("; the shapes of the events differ" if shapes_differ else "")
+          + (f"; {len(lacking)} skipped (no {', '.join(sorted(missing))})" if lacking else "")
+          + (f"; recorded again ({', '.join(BUSY)}): " + ", ".join(f"{n} {k}x" for n, k in sorted(again.items()))
+             if again else ""))
     return 1 if failed else 0
 
 
@@ -824,6 +847,10 @@ def runs() -> list[Case]:
                  extra=("--scenario", "scenarios/throttle.yaml", *control)),
         run_case("control-scenario-fails", "simulation.yaml", "a scenario that fails, with the control server",
                  extra=("--scenario", "scenarios/fails.yaml", *control)),
+        run_case("control-simulation-force", "simulation.yaml",
+                 "with the control server, started paused, stopped without waiting before the first step (two stops "
+                 "at once: the example client variables.mjs when a write is refused)", STANDS, ("sleep", 0.3), stop,
+                 stop, extra=(*control, "--start-paused")),
         run_case("control-simulation-paused", "simulation.yaml",
                  "with the control server, started paused: a pause (it stands already), a resume, to the end",
                  STANDS, ("send", PAUSE), ("until", command("pause")), ("send", RESUME),

@@ -309,7 +309,8 @@ def test_http_examples(tmp_path: Path) -> None:
 
             sock = await c.ws()
             await sock.until(is_synced)
-            req = {"file": "forever.yaml", "disable": ["Logger"], "speed": None, "start_paused": False}
+            # ignore-stop.yaml: Logger does not end when asked, so the run is still there when the second stop comes
+            req = {"file": "ignore-stop.yaml", "disable": [], "speed": None, "start_paused": False}
             status, body = await c.post("api/run", req)
             check_example("run", http("Start a run: the summary of the new run.", "POST", "api/run", req, status,
                                       body), gui)
