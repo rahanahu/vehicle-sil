@@ -56,6 +56,19 @@ export type {
   WriteOptions,
 } from './variables';
 
+// 変数 1 つと部品 1 つのつながり（client.variables.bind）: 値の状態、書けるかどうか、書き込みの様子
+export { DROPPED_MESSAGE } from './variable-binding';
+export type { BindOptions, BoundVariable, VariableBinding } from './variable-binding';
+export { hasRange, isWriteError, valueCondition, writeBlock } from './variable-state';
+export type {
+  ConditionInput,
+  ValueCondition,
+  WriteBlock,
+  WriteBlockInput,
+  WriteStatus,
+  WriteValue,
+} from './variable-state';
+
 // 読める値
 export type { Readable } from './values';
 

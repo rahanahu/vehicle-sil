@@ -1,8 +1,13 @@
 // 部品の言葉。状態の名前（機械が読む値）から、画面の言葉を作る。
-import { VariableInfo, VariablesStatus } from '@vehicle-sil/gui-client';
+import {
+  ValueCondition,
+  VariableInfo,
+  VariablesStatus,
+  WriteBlock,
+  WriteStatus,
+} from '@vehicle-sil/gui-client';
 import { formatMeasure } from '../core/format/measure-pipe';
 import { ItemProblem, WidgetKind } from './dashboard-spec';
-import { ValueCondition, WriteBlock, WriteStatus } from './variable-state';
 
 /** bool と、有限でない実数の言葉（formatValue に渡す）。 */
 export const VALUE_WORDS = {
@@ -109,8 +114,10 @@ export function writeText(status: WriteStatus): MarkedText & { english: string |
             english: null,
           };
     case 'invalid':
-    case 'dropped':
       return { mark: '✗', text: status.message, english: null };
+    case 'dropped':
+      // ライブラリの文（英語）は使わず、画面の言葉で言う
+      return { mark: '✗', text: droppedText(), english: null };
     case 'refused':
       return { mark: '✗', text: $localize`サーバーが断りました:`, english: status.message };
     case 'failed':
@@ -130,8 +137,8 @@ export function writeText(status: WriteStatus): MarkedText & { english: string |
   }
 }
 
-/** ためていた値を送らなかったときの文。 */
-export const droppedText = () =>
+/** 覚えていた値を送らなかった（書き込みの様子が dropped）ときの文。 */
+const droppedText = () =>
   $localize`書けなくなったので、待たせていた値は送っていません。値を確かめてから書き直してください`;
 
 const NUMBER_PROBLEMS = {

@@ -96,8 +96,8 @@ export class EcuVariables {
   }
 
   /**
-   * watch() と同じだが、注入の文脈が要らず、部品が壊れても自分ではやめない。必ず close() する。見えている間だけ
-   * watch する部品（`variables/widgets/variable-binding.ts`）のように、後から作り直すときに使う。
+   * watch() と同じだが、注入の文脈が要らず、部品が壊れても自分ではやめない。必ず close() する。後から作り直す
+   * ときに使う（変数 1 つを描く部品は、これでなく `widgets/variable-binding.ts` の bindVariable を使う）。
    */
   open(variables: readonly VariableRef[] | 'all', options?: WatchOptions): WatchedVariables {
     const watch: VariableWatch = this.client.watch(variables, options);

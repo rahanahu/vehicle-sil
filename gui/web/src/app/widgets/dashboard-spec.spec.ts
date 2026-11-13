@@ -10,7 +10,6 @@ import {
   filterDashboard,
   isMonitoring,
 } from './dashboard-spec';
-import { valueCondition, writeBlock } from './variable-state';
 
 const info = (fields: Partial<VariableInfo>): VariableInfo => ({
   name: 'x',
@@ -217,66 +216,6 @@ describe('which variables are the monitoring ones, and whether a widget fits a v
       { section: 0, item: 1, problem: { kind: 'read-only' } },
       { section: 1, item: 0, problem: { kind: 'wrong-type', types: ['integer', 'real'] } },
     ]);
-  });
-});
-
-describe('the condition of a value and whether it can be written', () => {
-  const reading = { value: 1, sampleMs: 100, simMs: 100, paused: false };
-  const base = { status: 'ready', known: true, connected: true, peerConnected: true } as const;
-
-  it('tells a value that is missing, waited for, live, of a stopped time, old or the last of a run', () => {
-    expect(valueCondition({ ...base, status: 'off', known: false, reading: undefined }).kind).toBe(
-      'unavailable',
-    );
-    expect(valueCondition({ ...base, known: false, reading: undefined }).kind).toBe('missing');
-    expect(valueCondition({ ...base, reading: undefined }).kind).toBe('waiting');
-    expect(valueCondition({ ...base, reading }).kind).toBe('live');
-    expect(valueCondition({ ...base, reading: { ...reading, paused: true } }).kind).toBe('paused');
-    expect(valueCondition({ ...base, reading, connected: false })).toMatchObject({
-      kind: 'stale',
-      why: 'connection',
-    });
-    expect(valueCondition({ ...base, reading, status: 'connecting' })).toMatchObject({
-      kind: 'stale',
-      why: 'reconnecting',
-    });
-    expect(valueCondition({ ...base, reading, peerConnected: false })).toMatchObject({
-      kind: 'stale',
-      why: 'peer',
-    });
-    // 値の読み取りが失敗し続けている（ready のまま理由がある）: 最後に読めた値は古い
-    expect(valueCondition({ ...base, reading, readFailing: true })).toMatchObject({
-      kind: 'stale',
-      why: 'reading',
-    });
-    expect(valueCondition({ ...base, reading, status: 'ended', readFailing: true }).kind).toBe(
-      'ended',
-    );
-    expect(valueCondition({ ...base, reading, status: 'ended', peerConnected: false }).kind).toBe(
-      'ended',
-    );
-  });
-
-  it('lets a parameter be written only before the first step', () => {
-    const parameter = info({ role: 'parameter' });
-    const ready = { status: 'ready', connected: true, peerConnected: true } as const;
-    expect(writeBlock({ ...ready, info: parameter, beforeStart: true })).toBeNull();
-    expect(writeBlock({ ...ready, info: parameter, beforeStart: false })).toBe('parameter');
-    expect(writeBlock({ ...ready, info: info({}), beforeStart: false })).toBeNull();
-    expect(writeBlock({ ...ready, info: info(OUTPUT), beforeStart: true })).toBe('read-only');
-    expect(writeBlock({ ...ready, info: undefined, beforeStart: true })).toBe('missing');
-    expect(writeBlock({ ...ready, peerConnected: false, info: info({}), beforeStart: true })).toBe(
-      'peer-disconnected',
-    );
-    expect(writeBlock({ ...ready, connected: false, info: info({}), beforeStart: true })).toBe(
-      'disconnected',
-    );
-    expect(writeBlock({ ...ready, status: 'ended', info: info({}), beforeStart: false })).toBe(
-      'ended',
-    );
-    expect(writeBlock({ ...ready, status: 'failed', info: info({}), beforeStart: false })).toBe(
-      'not-ready',
-    );
   });
 });
 

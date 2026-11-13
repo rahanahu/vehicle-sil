@@ -5,7 +5,10 @@ import {
   VariableInfo,
   VariablePeer,
   VariableRef,
+  hasRange,
 } from '@vehicle-sil/gui-client';
+
+export { hasRange };
 
 /**
  * 部品の種類。`WIDGETS`（widgets.ts）が種類ごとのコンポーネントを持つ。
@@ -89,17 +92,6 @@ export interface DashboardSpec {
   title?: string;
   /** 持ち込みのパネルを定義するモジュール（ファイルに書いた名前と、画面の base からの相対の URL）。パネルを描く前に読み込む。 */
   modules?: readonly DashboardPanelModule[];
-}
-
-/** 範囲が決まっている（両端が有限で、下が上より小さい）か。 */
-export function hasRange(info: Pick<VariableInfo, 'min' | 'max'>): boolean {
-  return (
-    info.min !== null &&
-    info.max !== null &&
-    Number.isFinite(info.min) &&
-    Number.isFinite(info.max) &&
-    info.min < info.max
-  );
 }
 
 /** vehicle-sil がどの ECU にも付ける入力: false の間、ECU はすべてのバスから外れる。 */

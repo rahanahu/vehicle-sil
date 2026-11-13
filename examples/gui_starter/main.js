@@ -1,9 +1,11 @@
 // 自分の画面の最小の形: クライアントのライブラリ（@vehicle-sil/gui-client）だけを使う、ビルドなしの素の JavaScript。
-// つなぐ、構成ファイルを照合する、実行を始めて止める、変数を 1 つ見て書く。README.md に使い方がある。
+// つなぐ、構成ファイルを照合する、実行を始めて止める、変数を 1 つ見て書く、スライダーとランプ。README.md に使い方がある。
 import {
   WriteError,
   createClient,
   errorMessage,
+  hasRange,
+  isWriteError,
   takeToken,
 } from './vehicle-sil-gui-client.mjs';
 
@@ -70,6 +72,7 @@ client.variables.state.subscribe((state) => {
   $('variable').replaceChildren(...variables.map((v) => new Option(key(v), key(v))));
   if (variables.some((v) => key(v) === chosen)) $('variable').value = chosen;
   watchChosen();
+  bindParts();
 });
 
 function chosen() {
@@ -106,4 +109,69 @@ $('write').onclick = async () => {
     // 反映されたかわからない（no-answer）書き込みは、確かめずに送り直さない
     show('write-result', error instanceof WriteError ? `${error.kind}: ${error.message}` : errorMessage(error));
   }
+};
+
+// スライダーとランプ: 部品 1 つと変数 1 つをつなぐ client.variables.bind を使う。値の状態（まだない、古い、など）、
+// 書けるかどうかと理由、書き込みの様子が 1 つの state にまとまっているので、部品はそれを描くだけでよい。
+// ここでは、範囲のある書ける数の変数をスライダーに、bool の変数（読むだけのものがあればそれ）をランプにする。
+let slider = null;
+let lamp = null;
+let dragging = false;
+
+function bindParts() {
+  const numeric = (v) => v.info.type === 'real' || v.info.type === 'integer';
+  const forSlider = variables.find((v) => v.info.writable && numeric(v) && hasRange(v.info));
+  const bools = variables.filter((v) => v.info.type === 'bool');
+  const forLamp = bools.find((v) => !v.info.writable) ?? bools[0];
+  slider = rebind(slider, forSlider, { needsRange: true, needsValue: true }, 'slider-name', showSlider);
+  lamp = rebind(lamp, forLamp, {}, 'lamp-name', showLamp);
+}
+
+/** 変数が替わったときだけ、つなぎ直す（使い終わったつながりは必ず閉じる）。 */
+function rebind(bound, v, options, nameId, draw) {
+  const same = bound && v && bound.ref.peer === v.peer && bound.ref.name === v.info.name;
+  if (same) return bound;
+  bound?.close();
+  show(nameId, v ? `${v.peer}.${v.info.name}` : '-');
+  if (!v) return null;
+  const next = client.variables.bind({ peer: v.peer, name: v.info.name }, options);
+  next.state.subscribe(draw); // 変わるたびに呼ばれる。いまの様子は get() で
+  draw(next.state.get());
+  return next;
+}
+
+function showSlider({ info, reading, pending, block, writeStatus }) {
+  const input = $('slider');
+  // block は、いま書けない理由（read-only、not-ready、ended、peer-disconnected、no-value など）。書けるなら null
+  input.disabled = block !== null;
+  show('slider-why', block === null ? '' : `(cannot write: ${block})`);
+  if (info) {
+    input.min = String(info.min);
+    input.max = String(info.max);
+    input.step = info.type === 'integer' ? '1' : String(info.step ?? 'any');
+  }
+  // pending は、送って結果を待っている値。あれば、読んだ値の代わりに出す（離したつまみが元へ戻って見えない）
+  const value = pending ?? reading?.value;
+  if (!dragging && typeof value === 'number') input.value = String(value);
+  show('slider-value', typeof value === 'number' ? `${value} ${info?.unit ?? ''}` : '-');
+  // writeStatus: idle、sending、queued、applied、または、うまくいかなかった理由（message つき）
+  show('slider-write', isWriteError(writeStatus) ? `${writeStatus.kind}: ${writeStatus.message}` : writeStatus.kind);
+}
+
+function showLamp({ reading, condition }) {
+  const value = reading?.value;
+  $('lamp').dataset.on = String(value === true);
+  show('lamp', value === undefined ? '-' : value ? 'on' : 'off');
+  // condition は値の状態: live のほかは、古い（stale）、止まっている時刻の値（paused）、終わった実行の値（ended）など
+  show('lamp-condition', condition.kind === 'live' ? '' : `(${condition.kind})`);
+}
+
+// 動かしている間は書かず、離したとき（change）に書く。続けて書いても、サーバーが前の書き込みを受け取るまでは
+// 最後の値だけを覚えておいて送る（bind がする）。結果は state の writeStatus に出る
+$('slider').oninput = () => {
+  dragging = true;
+};
+$('slider').onchange = () => {
+  dragging = false;
+  slider?.write(Number($('slider').value));
 };

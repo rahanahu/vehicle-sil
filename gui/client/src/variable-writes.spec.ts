@@ -1,15 +1,13 @@
-import { provideHttpClient, withInterceptors } from '@angular/common/http';
-import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { TestBed } from '@angular/core/testing';
-import { BATCH_MS, VariableRef } from '@vehicle-sil/gui-client';
-import { FakeWebSockets } from '@vehicle-sil/gui-client/testing';
-import { authInterceptor } from '../core/auth/auth-interceptor';
-import { SOCKET_FACTORY } from '../core/session/gui-client';
-import { VariableWrites } from './variable-writes';
+import { createClient } from './client';
+import { BATCH_MS } from './connection';
+import { FakeHttp, FakeRequest } from './testing/fake-http';
+import { FakeWebSockets } from './testing/fake-web-socket';
+import { BoundVariable, VariableBinding } from './variable-binding';
+import { VariableRef } from './variables';
 
-// 書き込みの様子（VariableWrites）の遷移を、順序を作って確かめる: 送った → 受け取られた → 確定、の間に、送る前に
-// 断る入力（reject）、次の値、実行の替わり目、つなぎ直しが挟まっても、「送った値」が残らず、次の書き込みが
-// 送られること。サーバーの通知は偽の WebSocket で、api/write は HttpTestingController で答える。
+// 書き込みの様子（client.variables.bind の writeStatus と pending）の遷移を、順序を作って確かめる: 送った →
+// 受け取られた → 確定、の間に、送る前に断る入力（reject）、次の値、実行の替わり目、つなぎ直しが挟まっても、
+// 「送った値」が残らず、次の書き込みが送られること。サーバーの通知は偽の WebSocket で、api/write は偽の HTTP で答える。
 
 const OFFSET: VariableRef = { peer: 'Engine', name: 'engine.offset' };
 
@@ -80,31 +78,37 @@ const REFUSED = {
   error: { code: 'variables-not-ready', message: 'the variables are not read yet', detail: null },
 };
 
-describe('VariableWrites', () => {
+describe('the writes of a bound variable', () => {
   let fake: FakeWebSockets;
-  let http: HttpTestingController;
-  let writes: VariableWrites;
+  let http: FakeHttp;
+  let bound: VariableBinding;
+  /** 購読者に最後に届いた様子（まだ届いていなければ、つないだときの様子）。 */
+  let told: BoundVariable;
 
   beforeEach(async () => {
     vi.useFakeTimers();
-    sessionStorage.setItem('vehicle-sil-gui-token', 'secret');
     fake = new FakeWebSockets();
-    TestBed.configureTestingModule({
-      providers: [
-        provideHttpClient(withInterceptors([authInterceptor])),
-        provideHttpClientTesting(),
-        { provide: SOCKET_FACTORY, useValue: fake.factory },
-      ],
+    http = new FakeHttp();
+    const client = createClient({
+      baseUrl: 'http://127.0.0.1:8765/',
+      token: 'secret',
+      socket: fake.factory,
+      http: http.transport,
+      onError: (error) => {
+        throw error;
+      },
     });
-    http = TestBed.inject(HttpTestingController);
-    writes = TestBed.inject(VariableWrites);
+    client.connect();
+    bound = client.variables.bind(OFFSET);
+    told = bound.state.get();
+    bound.state.subscribe((state) => (told = state));
     socket().open();
     await deliver(hello());
   });
 
   afterEach(() => {
+    bound.close();
     vi.useRealTimers();
-    sessionStorage.clear();
   });
 
   const socket = () => fake.sockets[fake.sockets.length - 1];
@@ -118,14 +122,33 @@ describe('VariableWrites', () => {
   const turn = () => vi.advanceTimersByTimeAsync(0);
 
   /** まだ答えていない api/write を取り出す。 */
-  const requests = () => http.match('api/write');
-  const valueOf = (request: { request: { body: unknown } }) =>
+  const requests = (): FakeRequest[] => {
+    const found = http.requests.filter((r) => r.request.path === 'api/write');
+    for (const request of found) http.requests.splice(http.requests.indexOf(request), 1);
+    return found;
+  };
+  const valueOf = (request: FakeRequest) =>
     (request.request.body as { writes: { Engine: Record<string, unknown> } }).writes.Engine[
       'engine.offset'
     ];
 
-  const status = () => writes.status(OFFSET);
-  const pending = () => writes.pending(OFFSET);
+  /**
+   * いまの様子。読む前に、購読者に届いている様子が同じであることを確かめる: get() は読むたびに作り直すので、
+   * 知らせの漏れ（購読している画面だけが古い様子のまま残る）は、get() だけを見ていては見つからない。
+   */
+  const now = () => {
+    const before = told;
+    const fresh = bound.state.get();
+    expect(before, 'the subscribers were not told of the last change').toEqual(fresh);
+    return fresh;
+  };
+  const status = () => now().writeStatus;
+  const pending = () => now().pending;
+  /** 試験の本文は、移す前の形（writes.write(ref, value)）のまま: 同じ変数の bind を通す。 */
+  const writes = {
+    write: (_ref: VariableRef, value: number) => bound.write(value),
+    reject: (_ref: VariableRef, message: string) => bound.reject(message),
+  };
 
   /** 次の書き込みが、覚えられずにすぐ送られる（前の書き込みで止まっていない）。 */
   function expectNextIsSent(value: number) {
@@ -147,7 +170,7 @@ describe('VariableWrites', () => {
     expect(pending()).toBeNull();
   });
 
-  // 再レビューの順序 A: 受け付けられて結果を待つ間に、送る前に断る入力をする
+  // 順序 A: 受け付けられて結果を待つ間に、送る前に断る入力をする
   for (const [result, state] of [
     ['applied', 'applied'],
     ['failed', 'late'],
@@ -174,7 +197,7 @@ describe('VariableWrites', () => {
     });
   }
 
-  // 再レビューの順序 B: 送っている途中（サーバーの答えの前）に、送る前に断る入力をし、その後で書き込みが断られる
+  // 順序 B: 送っている途中（サーバーの答えの前）に、送る前に断る入力をし、その後で書き込みが断られる
   for (const [name, answer] of [
     ['refused (409)', { status: 409, statusText: 'Conflict' }],
     ['not answered in time (504)', { status: 504, statusText: 'Gateway Timeout' }],
@@ -185,7 +208,7 @@ describe('VariableWrites', () => {
       const [first] = requests();
       writes.reject(OFFSET, 'not a number');
       expect(pending()).toBe(50);
-      if (answer.status === 0) first.error(new ProgressEvent('error'));
+      if (answer.status === 0) first.flush(null, answer);
       else first.flush(REFUSED, answer);
       await turn();
       expect(pending()).toBeNull();
