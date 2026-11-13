@@ -1030,7 +1030,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `started` | プロセスを起動した | `pid`（そのプロセスの ID）、`command`（起動した実行ファイルと引数の配列）、`log`（`--log-dir` のファイル。なければ `null`） |
 | `manual` | 利用者が起動する participant なので、起動しなかった（`started` の代わり。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。この後、参加すれば `joined` が来ます。`ended`、`stop_requested`、`killed` は来ません | `command`（起動する実行ファイルと引数の配列）、`working_directory`（起動するディレクトリ）、`command_line`（同じものを、この OS のシェルに貼れる 1 行にしたもの。標準エラーに書く行と同じ） |
 | `joined` | シミュレーションに参加した（controller がその participant のライフサイクルの状態を見た） | |
-| `failed` | `vehicle_sil_launch` が、この participant の失敗で実行をやめると決めた | `reason`: `left_simulation`（プロセスは動いているが、シミュレーションから抜けた）、`process_ended`（シミュレーションの途中で、プロセスが失敗として終わった）、`ended_before_start`（シミュレーションが始まる前にプロセスが終わった）。`message`: この失敗の `finding` の `message` と同じ文。その時点で文が決まっているときだけあります（`left_simulation` にはありません） |
+| `failed` | `vehicle_sil_launch` が、この participant の失敗で実行をやめると決めた | `reason`: `left_simulation`（プロセスは動いているが、シミュレーションから抜けた。プロセスが終わるときは、接続が先に切れるので、終わりより先にこちらで気づくこともあります）、`process_ended`（シミュレーションの途中で、プロセスが失敗として終わった）、`ended_before_start`（シミュレーションが始まる前にプロセスが終わった）。`message`: この失敗の `finding` の `message` と同じ文。その時点で文が決まっているときだけあります（`left_simulation` にはありません） |
 | `stop_requested` | 止まるよう求めた（止め方の 2） | |
 | `ended` | プロセスが終わった | `exit_code`、`signal`（結果の `participants[]` と同じ意味） |
 | `killed` | 強制終了した（それが起動したプロセスも） | |
