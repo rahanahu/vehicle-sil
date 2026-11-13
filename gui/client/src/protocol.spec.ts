@@ -299,6 +299,33 @@ describe('the readers refuse what they cannot read', () => {
     expect(readServerMessage({ type: 'later', anything: 1 })).toBeNull();
   });
 
+  it('reads a run with a scenario: its step events are skipped, its result field is passed over', async () => {
+    // vehicle_sil_launch run --scenario writes scenario_step events and a result with a scenario field
+    expect(
+      readLauncherEvent(
+        { event: 'scenario_step', seq: 7, t_ms: 0, line: 10, index: 0, state: 'ok', at_ms: 330 },
+        'e',
+      ),
+    ).toBeNull();
+    const pass = (await webSocketExamples()).find((example) => example.name === 'ws-pass');
+    const message = pass?.server.find(
+      (m) => (m as { event?: { event?: string } }).event?.event === 'result',
+    ) as { event: Record<string, unknown> & { result: Record<string, unknown> } };
+    expect(message).toBeDefined();
+    const event = {
+      ...message.event,
+      result: {
+        ...message.event.result,
+        simulation: 'ended',
+        scenario: { name: 'throttle step', result: 'passed', steps: [] },
+      },
+    };
+    expect(readLauncherEvent(event, 'e')).toMatchObject({
+      event: 'result',
+      result: { simulation: 'ended' },
+    });
+  });
+
   it('names the place of a missing or wrong field', () => {
     expect(() => readLauncherEvent({ ...finding, message: 5 }, 'e')).toThrow(
       new ProtocolError('e.message', 'a string'),
@@ -342,12 +369,14 @@ describe('the readers refuse what they cannot read', () => {
       new Set(['off', 'connecting', 'ready', 'failed', 'ended']),
     );
     const ready = read.find((v) => v.state === 'ready');
-    expect(ready?.peers[0].variables[0]).toMatchObject({
+    const variable = (name: string) => ready?.peers[0].variables.find((v) => v.name === name);
+    expect(variable('ecu.connected')).toMatchObject({ type: 'bool', writable: true });
+    expect(variable('engine.demand')).toMatchObject({
       name: 'engine.demand',
       type: 'real',
       writable: true,
     });
-    expect(ready?.peers[0].variables[2].enum).toEqual([
+    expect(variable('engine.mode')?.enum).toEqual([
       { name: 'off', value: 0 },
       { name: 'on', value: 1 },
     ]);

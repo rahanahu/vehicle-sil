@@ -347,11 +347,16 @@ def test_version_and_check_json(tmp_path: Path) -> None:
     assert fake_version[0] == real_version[0] == 0
     assert list(fake_version[1]) == list(real_version[1])
     assert fake_version[1]["formats"] == real_version[1]["formats"]
-    assert fake_version[1]["features"] == real_version[1]["features"], \
-        "the fake's default features (FAKE_LAUNCHER_FEATURES) must be the real launcher's"
+    # The fake has the features the GUI uses. A real launcher may have more (ones the GUI has no use for yet);
+    # of those the fake has, the order is the real launcher's.
+    used = [f for f in real_version[1]["features"] if f in fake_version[1]["features"]]
+    assert fake_version[1]["features"] == used, \
+        "the fake's default features (FAKE_LAUNCHER_FEATURES) must be features of the real launcher, in its order"
     real_text = subprocess.run([LAUNCHER, "version", "--json"], capture_output=True, text=True).stdout
+    # The layout is compared with the same list of features (the fake prints the ones it is given).
+    same = dict(env, FAKE_LAUNCHER_FEATURES=",".join(real_version[1]["features"]))
     fake_text = subprocess.run([sys.executable, str(FAKE), "version", "--json"], capture_output=True, text=True,
-                               env=env).stdout
+                               env=same).stdout
     assert fake_text.replace(fake_version[1]["vehicle_sil"], "<v>") == \
         real_text.replace(real_version[1]["vehicle_sil"], "<v>"), "the same layout"
     for args in (["simulation.yaml"], ["--disable", "Dashboard", "simulation.yaml"], ["missing.yaml"],

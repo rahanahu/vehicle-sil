@@ -99,11 +99,14 @@ def test_the_state_the_values_a_write_and_its_result(fake) -> None:
         assert (asked.values, asked.events, asked.operations, asked.time) == (False, False, True, True)
         assert [p.name for p in await source.read_peers(2)] == ["Engine", "Body"]
         engine = sink.peers["Engine"]
-        assert (engine.incarnation, engine.connected, len(engine.variables)) == ("1", True, 3)
-        assert engine.variables[0] == {"name": "engine.demand", "type": "real", "role": "input", "unit": "%",
+        # every ECU has ecu.connected first (vehicle-sil adds it), then its own variables
+        assert (engine.incarnation, engine.connected) == ("1", True)
+        assert [v["name"] for v in engine.variables] == ["ecu.connected", "engine.demand", "engine.speed",
+                                                         "engine.mode"]
+        assert engine.variables[1] == {"name": "engine.demand", "type": "real", "role": "input", "unit": "%",
                                        "min": 0.0, "max": 100.0, "step": None, "description": "requested level",
                                        "enum": []}
-        assert engine.variables[2]["enum"] == [("off", 0), ("on", 1)] and engine.variables[2]["role"] == "parameter"
+        assert engine.variables[3]["enum"] == [("off", 0), ("on", 1)] and engine.variables[3]["role"] == "parameter"
         assert await source.read_time(2) == TimeInfo(0, False, False, False)
         assert await source.read_values("Engine", 2) is None and await source.read_values("Nobody", 2) is None
         assert await source.read_operation(99, 2) is None
@@ -124,9 +127,9 @@ def test_the_state_the_values_a_write_and_its_result(fake) -> None:
         assert "samples" not in sink.kinds()  # the values are read when asked for, not sent along
         sample = await source.read_values("Engine", 2)
         types = [v["type"] for v in engine.variables]
-        assert (sample.incarnation, sample.time_ns, sample.count) == ("1", 100 * MS, 3)
-        assert sample.decode(types) == [12.5, 225, 1]
-        assert (await source.read_values("Engine", 2)).decode(types) == [12.5, 225, 1]
+        assert (sample.incarnation, sample.time_ns, sample.count) == ("1", 100 * MS, 4)
+        assert sample.decode(types) == [True, 12.5, 225, 1]
+        assert (await source.read_values("Engine", 2)).decode(types) == [True, 12.5, 225, 1]
         assert await source.read_time(2) == TimeInfo(200 * MS, True, True, False)
         await source.close()
         await source.close()

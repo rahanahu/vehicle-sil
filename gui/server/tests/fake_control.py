@@ -16,7 +16,8 @@ GetOperation, Watch), with the contract of the real one where the GUI server rel
 - a parameter is refused once a step has run; an operation's number grows by one from 1;
 - a call needs the role its credential has: reading the role viewer, writing operator (as the real server).
 
-Each peer has the three variables of fake_launcher.variables(): <name>.demand (a real input, 0 to 100),
+Each peer has the variables of fake_launcher.variables(): ecu.connected (a bool input, true at first, which
+changes nothing else here), <name>.demand (a real input, 0 to 100),
 <name>.speed (an integer output: ten times the demand, plus the step's time in ms) and <name>.mode (an enum
 parameter); with FAKE_LAUNCHER_VARIABLES=more also <name>.enabled (a bool input), <name>.warning (a bool output:
 the demand is above 50) and <name>.offset (a real input, added to the speed). Needs grpcio and the stubs of the Control API: those in VEHICLE_SIL_CONTROL_STUBS (conftest.py makes
@@ -90,6 +91,8 @@ class FakeControl:
 
     @staticmethod
     def _initial(variable: dict):
+        if variable["name"] == "ecu.connected":
+            return True  # an ECU starts on its buses
         return {"bool": False, "integer": 0, "real": 0.0, "enum": 0}[variable["type"]]
 
     # ------------------------------------------------------------ the launcher's side

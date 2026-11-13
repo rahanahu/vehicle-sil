@@ -213,6 +213,11 @@ export interface Variable {
   unit: string;
   min: number | null;
   max: number | null;
+  /**
+   * vehicle-sil がどの ECU にも付ける変数（`ecu.connected` など）なら true、ECU が宣言した変数なら false。
+   * 書かない古いランチャーでは null。
+   */
+  builtin: boolean | null;
 }
 
 const readVariable: Reader<Variable> = (value, path) => {
@@ -224,6 +229,7 @@ const readVariable: Reader<Variable> = (value, path) => {
     unit: field(f, path, 'unit', optional(string, '')),
     min: field(f, path, 'min', optional(nullable(number), null)),
     max: field(f, path, 'max', optional(nullable(number), null)),
+    builtin: field(f, path, 'builtin', optional(nullable(boolean), null)),
   };
 };
 

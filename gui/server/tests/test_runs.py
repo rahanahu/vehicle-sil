@@ -110,7 +110,10 @@ def test_check_then_run_with_a_participant_left_out(gui: Gui) -> None:
         dashboard = next(p for p in body["check"]["participants"] if p["name"] == "Dashboard")
         assert dashboard["status"] == "disabled" and dashboard["variables"] is None
         engine = next(p for p in body["check"]["participants"] if p["name"] == "Engine")
-        assert [v["name"] for v in engine["variables"]] == ["engine.demand", "engine.speed", "engine.mode"]
+        # every ECU has ecu.connected first (builtin: vehicle-sil adds it), then its own
+        assert [v["name"] for v in engine["variables"]] == ["ecu.connected", "engine.demand", "engine.speed",
+                                                             "engine.mode"]
+        assert [v["builtin"] for v in engine["variables"]] == [True, False, False, False]
         status, body = await c.post("api/check", {"file": "check-error.yaml"})
         assert status == 200 and body["exit_code"] == 1 and body["check"]["result"] == "failed"
         got = await run_to_end(c, {"file": "check-error.yaml"})

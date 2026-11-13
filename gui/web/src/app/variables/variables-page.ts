@@ -19,6 +19,7 @@ import { ServerInfo } from '../core/session/server-info';
 import { SimulationTime } from '../core/session/simulation-time';
 import { DashboardResponse, errorMessage } from '@vehicle-sil/gui-client';
 import {
+  BuiltinLookup,
   autoDashboard,
   countItems,
   fileDashboard,
@@ -367,12 +368,27 @@ export class VariablesPage {
     };
   });
   protected readonly fileErrors = computed(() => this.loaded()?.value?.errors ?? []);
+  /** 実行の照合の結果（要約が変わっても、照合の結果が同じなら同じもの）。 */
+  private readonly check = computed(() => this.server.session()?.check ?? null);
+  /** 変数が vehicle-sil の付けたものか（照合の結果の builtin）。監視の変数の見分けに使う。 */
+  private readonly builtin = computed<BuiltinLookup>(() => {
+    const table = new Map<string, boolean>();
+    for (const participant of this.check()?.participants ?? []) {
+      if (participant.name === null) continue;
+      for (const variable of participant.variables ?? []) {
+        if (variable.builtin !== null) {
+          table.set(`${participant.name}\u0000${variable.name}`, variable.builtin);
+        }
+      }
+    }
+    return (peer, name) => table.get(`${peer}\u0000${name}`) ?? null;
+  });
   /** 描くダッシュボード: ファイルがあればそのとおり、なければ変数の一覧から自動で（一覧が変わったときだけ作り直す）。 */
   protected readonly dashboard = computed(() => {
     const file = this.loaded()?.value?.dashboard;
     return file
-      ? fileDashboard(file, this.variables.peers(), monitoringTitle)
-      : autoDashboard(this.variables.peers(), monitoringTitle);
+      ? fileDashboard(file, this.variables.peers(), monitoringTitle, this.builtin())
+      : autoDashboard(this.variables.peers(), monitoringTitle, this.builtin());
   });
   protected readonly filtered = computed(() => filterDashboard(this.dashboard(), this.query()));
   protected readonly total = computed(() => countItems(this.dashboard()));

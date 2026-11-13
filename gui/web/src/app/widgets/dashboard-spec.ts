@@ -71,6 +71,10 @@ export function isWidget(entry: DashboardEntry): entry is DashboardItem {
 export interface DashboardSection {
   title: string;
   items: DashboardEntry[];
+  /**
+   * 見出しに置く「バスにつなぐ」のスイッチ（その ECU の `ecu.connected`）。外れている間は、まとまりに印と文が出る。
+   */
+  connection?: VariableRef;
   /** 最初は畳んでおく（畳んでいる間は部品を作らず、値も受け取らない）。 */
   collapsed?: boolean;
 }
@@ -98,16 +102,33 @@ export function hasRange(info: Pick<VariableInfo, 'min' | 'max'>): boolean {
   );
 }
 
+/** vehicle-sil がどの ECU にも付ける入力: false の間、ECU はすべてのバスから外れる。 */
+export const CONNECTED_VARIABLE = 'ecu.connected';
+
 /**
- * ECU の実行ファイルが自分で足す監視の変数か（アプリが宣言した変数ではない）。変数の一覧には、それを示す欄が
- * まだないので、名前の前置きで分ける（`peer.` は予約された名前、`j1939.<ネットワーク>.` は J1939 の統計とノード:
- * docs/architecture.md の「Peer の監視」）。見分け方はここ 1 か所だけ。
+ * 変数が vehicle-sil の付けたものか（照合の結果の `participants[].variables[].builtin`）を引く関数。照合の結果が
+ * ない、その変数が照合の結果にない（ECU の実行ファイルが実行中に足す監視の変数など）、古いランチャーでは null。
  */
-export function isMonitoring(name: string): boolean {
-  return MONITORING_PREFIXES.some((prefix) => name.startsWith(prefix));
+export type BuiltinLookup = (peer: string, name: string) => boolean | null;
+
+const UNKNOWN_BUILTIN: BuiltinLookup = () => null;
+
+/**
+ * アプリが宣言した変数でない（vehicle-sil が付けた、監視の）変数か。見分け方はここ 1 か所だけ。
+ * 照合の結果の `builtin` がわかればそれで決める。わからなければ、名前の前置きで分ける（`ecu.` と `peer.` は
+ * 予約された名前、`j1939.<ネットワーク>.` は J1939 の統計とノード: docs/architecture.md の「Peer の監視」）。
+ * 実行中に足される監視の変数（`peer.`、`j1939.`）は照合の結果にないので、前置きで分かれる。
+ */
+export function isMonitoring(name: string, builtin: boolean | null = null): boolean {
+  return builtin ?? MONITORING_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
-const MONITORING_PREFIXES = ['peer.', 'j1939.'];
+const MONITORING_PREFIXES = ['ecu.', 'peer.', 'j1939.'];
+
+/** 見出しの「バスにつなぐ」のスイッチにする変数か（書ける bool の `ecu.connected`）。 */
+function isConnection(variable: VariableInfo): boolean {
+  return variable.name === CONNECTED_VARIABLE && variable.type === 'bool' && variable.writable;
+}
 
 /**
  * 変数の既定の部品（docs/gui.md の「既定の部品」の表）。
@@ -134,12 +155,14 @@ export function defaultWidget(info: VariableInfo): WidgetKind {
 }
 
 /**
- * 変数の一覧から、ECU ごとのまとまりに既定の部品を並べる（変数のない ECU は出さない）。アプリの変数を宣言の順に
- * 並べ、監視の変数（isMonitoring）は、その後の畳んだまとまり（monitoringTitle(ECU の名前)）にする。
+ * 変数の一覧から、ECU ごとのまとまりに既定の部品を並べる（変数のない ECU は出さない）。`ecu.connected` は見出しの
+ * 「バスにつなぐ」のスイッチ（connection）にし、アプリの変数を宣言の順に並べ、監視の変数（isMonitoring）は、
+ * その後の畳んだまとまり（monitoringTitle(ECU の名前)）にする。
  */
 export function autoDashboard(
   peers: readonly VariablePeer[],
   monitoringTitle: (peer: string) => string,
+  builtin: BuiltinLookup = UNKNOWN_BUILTIN,
 ): DashboardSpec {
   const sections: DashboardSection[] = [];
   for (const peer of peers) {
@@ -148,9 +171,18 @@ export function autoDashboard(
       name: variable.name,
       widget: defaultWidget(variable),
     });
-    const app = peer.variables.filter((v) => !isMonitoring(v.name));
-    const monitoring = peer.variables.filter((v) => isMonitoring(v.name));
-    if (app.length > 0) sections.push({ title: peer.name, items: app.map(item) });
+    const connection = peer.variables.find(isConnection);
+    const rest = peer.variables.filter((v) => v !== connection);
+    const watching = (v: VariableInfo) => isMonitoring(v.name, builtin(peer.name, v.name));
+    const app = rest.filter((v) => !watching(v));
+    const monitoring = rest.filter(watching);
+    if (app.length > 0 || connection) {
+      sections.push({
+        title: peer.name,
+        items: app.map(item),
+        ...(connection ? { connection: { peer: peer.name, name: connection.name } } : {}),
+      });
+    }
     if (monitoring.length > 0) {
       sections.push({
         title: monitoringTitle(peer.name),
@@ -169,6 +201,7 @@ export function autoDashboard(
 export function filterDashboard(spec: DashboardSpec, query: string): DashboardSpec {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return spec;
+  const matchesText = (text: string) => words.every((word) => text.toLowerCase().includes(word));
   const matches = (item: DashboardEntry) => {
     const text = (
       isPanel(item)
@@ -182,14 +215,22 @@ export function filterDashboard(spec: DashboardSpec, query: string): DashboardSp
   return {
     ...spec,
     sections: spec.sections
-      .map((section) => ({ ...section, items: section.items.filter(matches) }))
-      .filter((section) => section.items.length > 0),
+      .map((section) => {
+        const { connection, ...rest } = section;
+        const kept =
+          connection && matchesText(`${connection.peer} ${connection.name}`) ? { connection } : {};
+        return { ...rest, ...kept, items: section.items.filter(matches) };
+      })
+      .filter((section) => section.items.length > 0 || section.connection),
   };
 }
 
-/** 部品の数。 */
+/** 部品の数（見出しのスイッチも 1 つと数える）。 */
 export function countItems(spec: DashboardSpec): number {
-  return spec.sections.reduce((sum, section) => sum + section.items.length, 0);
+  return spec.sections.reduce(
+    (sum, section) => sum + section.items.length + (section.connection ? 1 : 0),
+    0,
+  );
 }
 
 /** 部品ごとに受け付ける設定と、その値の確かめ方。 */
@@ -285,6 +326,7 @@ export function fileDashboard(
   file: DashboardFile,
   peers: readonly VariablePeer[],
   monitoringTitle: (peer: string) => string,
+  builtin: BuiltinLookup = UNKNOWN_BUILTIN,
 ): DashboardSpec {
   const key = (peer: string, name: string) => `${peer}\u0000${name}`;
   const placed = new Set<string>();
@@ -301,6 +343,7 @@ export function fileDashboard(
   for (const section of file.sections) {
     const items: DashboardEntry[] = [];
     const monitoring: DashboardSection[] = [];
+    let connection: VariableRef | undefined;
     for (const item of section.items) {
       if ('variable' in item) {
         const { peer, name } = item.variable;
@@ -323,14 +366,22 @@ export function fileDashboard(
         autoDone.add(item.auto);
         const peer = peers.find((p) => p.name === item.auto);
         if (!peer && peers.length > 0) items.push({ missing: item.auto });
-        const rest = (peer?.variables ?? []).filter((v) => !placed.has(key(item.auto, v.name)));
+        let rest = (peer?.variables ?? []).filter((v) => !placed.has(key(item.auto, v.name)));
+        // ecu.connected: このまとまりの見出しのスイッチ（まとまりに 1 つ。2 つ目の ECU のものは部品で並ぶ）
+        const own = connection ? undefined : rest.find(isConnection);
+        if (own) {
+          connection = { peer: item.auto, name: own.name };
+          rest = rest.filter((v) => v !== own);
+        }
         const entry = (v: VariableInfo): DashboardItem => ({
           peer: item.auto,
           name: v.name,
           widget: defaultWidget(v),
         });
-        items.push(...rest.filter((v) => !isMonitoring(v.name)).map(entry));
-        const watchers = rest.filter((v) => isMonitoring(v.name));
+        const watching = (v: VariableInfo) =>
+          !isConnection(v) && isMonitoring(v.name, builtin(item.auto, v.name));
+        items.push(...rest.filter((v) => !watching(v)).map(entry));
+        const watchers = rest.filter(watching);
         if (watchers.length > 0) {
           monitoring.push({
             title: monitoringTitle(item.auto),
@@ -344,6 +395,7 @@ export function fileDashboard(
       title: section.title,
       items,
       ...(section.collapsed ? { collapsed: true } : {}),
+      ...(connection ? { connection } : {}),
     });
     sections.push(...monitoring);
   }

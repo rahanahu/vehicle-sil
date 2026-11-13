@@ -154,6 +154,11 @@ describe('which variables are the monitoring ones, and whether a widget fits a v
     expect(isMonitoring('j1939.J1939_CAN.node0.address')).toBe(true);
     expect(isMonitoring('engine.speed')).toBe(false);
     expect(isMonitoring('peerless')).toBe(false);
+    expect(isMonitoring('ecu.connected')).toBe(true);
+    // the check's builtin decides when it is known; the prefixes only when it is not
+    expect(isMonitoring('engine.speed', true)).toBe(true);
+    expect(isMonitoring('peer.steps', false)).toBe(false);
+    expect(isMonitoring('peer.steps', null)).toBe(true);
   });
 
   it('refuses a widget that does not fit the type, a writing widget on an output, and wrong options', () => {
@@ -396,5 +401,103 @@ describe('fileDashboard before a run', () => {
       (peer) => peer,
     );
     expect(spec.sections).toEqual([{ title: 'A', items: [] }]);
+  });
+});
+
+describe('the bus connection (ecu.connected) and the builtin variables', () => {
+  const connected = info({ name: 'ecu.connected', type: 'bool' });
+  const peers: VariablePeer[] = [
+    {
+      name: 'Engine',
+      connected: true,
+      variables: [
+        connected,
+        info({ name: 'engine.speed', type: 'integer', ...OUTPUT }),
+        info({ name: 'ecu.future', type: 'integer', ...OUTPUT }),
+        info({ name: 'peer.steps', type: 'integer', ...OUTPUT }),
+      ],
+    },
+    { name: 'Logger', connected: true, variables: [connected] },
+  ];
+  const monitoring = (peer: string) => `${peer} monitoring`;
+  // as the check says: ecu.* are builtin, the declared ones are not; peer.* is not in the check
+  const builtin = (_: string, name: string) =>
+    name.startsWith('ecu.') ? true : name.startsWith('engine.') ? false : null;
+
+  it('puts ecu.connected at the heading of each ECU, also of an ECU without variables of its own', () => {
+    expect(autoDashboard(peers, monitoring, builtin)).toEqual({
+      sections: [
+        {
+          title: 'Engine',
+          items: [{ peer: 'Engine', name: 'engine.speed', widget: 'graph' }],
+          connection: { peer: 'Engine', name: 'ecu.connected' },
+        },
+        {
+          title: 'Engine monitoring',
+          collapsed: true,
+          items: [
+            { peer: 'Engine', name: 'ecu.future', widget: 'graph' },
+            { peer: 'Engine', name: 'peer.steps', widget: 'graph' },
+          ],
+        },
+        { title: 'Logger', items: [], connection: { peer: 'Logger', name: 'ecu.connected' } },
+      ],
+    });
+  });
+
+  it("a declared variable is the application's when the check says so, whatever its name", () => {
+    const odd: VariablePeer[] = [
+      { name: 'Engine', connected: true, variables: [info({ name: 'peer.like', ...OUTPUT })] },
+    ];
+    const sections = autoDashboard(odd, monitoring, () => false).sections;
+    expect(sections.map((s) => s.title)).toEqual(['Engine']);
+  });
+
+  it('keeps the switch through the filter only when its name matches, and counts it', () => {
+    const spec = autoDashboard(peers, monitoring, builtin);
+    expect(countItems(spec)).toBe(5);
+    expect(filterDashboard(spec, 'logger connected').sections).toEqual([
+      { title: 'Logger', items: [], connection: { peer: 'Logger', name: 'ecu.connected' } },
+    ]);
+    expect(filterDashboard(spec, 'engine.speed').sections[0].connection).toBeUndefined();
+  });
+
+  it("a file: the first auto gives its section the switch, a second ECU's is a switch there", () => {
+    const file = (items: DashboardFile['sections'][number]['items']): DashboardFile => ({
+      title: null,
+      panels: [],
+      sections: [{ title: 'Both', collapsed: false, items }],
+    });
+    const both = fileDashboard(
+      file([{ auto: 'Engine' }, { auto: 'Logger' }]),
+      peers,
+      monitoring,
+      builtin,
+    );
+    expect(both.sections[0].connection).toEqual({ peer: 'Engine', name: 'ecu.connected' });
+    expect(both.sections[0].items).toEqual([
+      { peer: 'Engine', name: 'engine.speed', widget: 'graph' },
+      { peer: 'Logger', name: 'ecu.connected', widget: 'switch' },
+    ]);
+    const placed = fileDashboard(
+      file([
+        {
+          variable: { peer: 'Engine', name: 'ecu.connected' },
+          widget: null,
+          label: null,
+          options: {},
+        },
+        { auto: 'Engine' },
+      ]),
+      peers,
+      monitoring,
+      builtin,
+    );
+    expect(placed.sections[0].connection).toBeUndefined();
+    expect(placed.sections[0].items[0]).toEqual({
+      peer: 'Engine',
+      name: 'ecu.connected',
+      widget: 'switch',
+    });
   });
 });

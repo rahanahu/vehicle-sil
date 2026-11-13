@@ -39,6 +39,10 @@ test('the example dashboard file: its layout, and its panel shows the engine spe
       [/^\s*Engine\s*$/, /Engine の監視/, /^\s*Dashboard\s*$/, /Dashboard の監視/],
       { timeout: RUN_TIMEOUT },
     );
+    // auto: Engine のまとまりの見出しに「バスにつなぐ」（照合の結果の builtin の ecu.connected）。つながっている
+    await expect(
+      page.locator('[data-testid="bus-connection"][data-variable="Engine/ecu.connected"]'),
+    ).toHaveAttribute('data-connected', 'true', { timeout: RUN_TIMEOUT });
     // ファイルが決めた部品と見出し
     const throttle = widget(page, 'Engine', 'engine.throttle');
     await expect(throttle.getByRole('slider', { name: 'Throttle' })).toBeAttached();

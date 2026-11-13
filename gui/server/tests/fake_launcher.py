@@ -238,15 +238,19 @@ def finding(severity, code, file, line, participant, network, message, detail=No
 
 
 def variables(name: str) -> list[dict]:
+    """As a real ECU declares them: first ecu.connected (on every ECU, builtin), then its own."""
     base = name.lower()
     return [
+        {"name": "ecu.connected", "type": "bool", "causality": "input", "unit": "", "min": None, "max": None,
+         "step": None, "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+         "items": [], "builtin": True},
         {"name": f"{base}.demand", "type": "real", "causality": "input", "unit": "%", "min": 0, "max": 100,
-         "step": None, "description": "requested level", "items": []},
+         "step": None, "description": "requested level", "items": [], "builtin": False},
         {"name": f"{base}.speed", "type": "integer", "causality": "output", "unit": "rpm", "min": None,
-         "max": None, "step": None, "description": "", "items": []},
+         "max": None, "step": None, "description": "", "items": [], "builtin": False},
         {"name": f"{base}.mode", "type": "enum", "causality": "parameter", "unit": "", "min": None, "max": None,
          "step": None, "description": "operating mode",
-         "items": [{"name": "off", "value": 0}, {"name": "on", "value": 1}]},
+         "items": [{"name": "off", "value": 0}, {"name": "on", "value": 1}], "builtin": False},
     ] + (more_variables(base) if os.environ.get("FAKE_LAUNCHER_VARIABLES") == "more" else [])
 
 
@@ -254,11 +258,11 @@ def more_variables(base: str) -> list[dict]:
     """The variables that FAKE_LAUNCHER_VARIABLES=more adds: one of each kind the screen's widgets show."""
     return [
         {"name": f"{base}.enabled", "type": "bool", "causality": "input", "unit": "", "min": None, "max": None,
-         "step": None, "description": "switched on", "items": []},
+         "step": None, "description": "switched on", "items": [], "builtin": False},
         {"name": f"{base}.warning", "type": "bool", "causality": "output", "unit": "", "min": None, "max": None,
-         "step": None, "description": "the demand is above 50", "items": []},
+         "step": None, "description": "the demand is above 50", "items": [], "builtin": False},
         {"name": f"{base}.offset", "type": "real", "causality": "input", "unit": "rpm", "min": None, "max": None,
-         "step": None, "description": "added to the speed", "items": []},
+         "step": None, "description": "added to the speed", "items": [], "builtin": False},
     ]
 
 

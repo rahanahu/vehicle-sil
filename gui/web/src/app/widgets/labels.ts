@@ -227,3 +227,6 @@ export function panelProblemText(problem: PanelProblem): string {
   }
   return $localize`パネル <${name}:name:> を定義したモジュールがありません。ダッシュボードのファイルの panels: に挙げたモジュールで、この名前の custom element を定義してください（customElements.define）`;
 }
+
+/** ECU の見出しの「バスにつなぐ」のスイッチの、読み上げの名前。 */
+export const busToggleLabel = (peer: string): string => $localize`${peer}:peer: をバスにつなぐ`;

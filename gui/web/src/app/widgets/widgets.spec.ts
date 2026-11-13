@@ -6,6 +6,7 @@ import { BATCH_MS, VariableRef } from '@vehicle-sil/gui-client';
 import { FakeWebSockets } from '@vehicle-sil/gui-client/testing';
 import { authInterceptor } from '../core/auth/auth-interceptor';
 import { SOCKET_FACTORY } from '../core/session/gui-client';
+import { BusConnection } from './bus-connection';
 import { GraphWidget } from './graph-widget';
 import { LampWidget } from './lamp-widget';
 import { NumberWidget } from './number-widget';
@@ -32,6 +33,7 @@ const variable = (name: string, fields: object) => ({
 });
 
 const SCHEMA = [
+  variable('ecu.connected', { type: 'bool' }),
   variable('engine.demand', { unit: '%', min: 0, max: 100 }),
   variable('engine.speed', { type: 'integer', role: 'output', writable: false, unit: 'rpm' }),
   variable('engine.enabled', { type: 'bool' }),
@@ -227,6 +229,32 @@ describe('variable widgets', () => {
     expect(text(fixture, 'widget-write')).toBe('✓ 0.200 s のステップで反映しました');
     expect(button.getAttribute('aria-checked')).toBe('true');
     expect(text(fixture, 'widget-error')).toBe('');
+  });
+
+  it('the bus connection: a switch named for the ECU, and words and a mark while the ECU is off its buses', async () => {
+    const fixture = await render(BusConnection, 'ecu.connected');
+    const host = fixture.nativeElement as HTMLElement;
+    await deliver(fixture, values(100, false, { 'ecu.connected': true }));
+    const button = element<HTMLButtonElement>(fixture, 'button[role="switch"]');
+    expect(button.getAttribute('aria-checked')).toBe('true');
+    expect(button.getAttribute('aria-label')).toBe('Engine をバスにつなぐ');
+    expect(host.dataset['connected']).toBe('true');
+    expect(text(fixture, 'bus-state')).toBe('');
+    button.click();
+    fixture.detectChanges();
+    const [request] = writes();
+    expect(request.request.body).toEqual({
+      session: 1,
+      writes: { Engine: { 'ecu.connected': false } },
+    });
+    request.flush({ session_id: 1, operation: 5 });
+    await deliver(fixture, operation(5, 'applied', true, { applied_at_ms: 200 }));
+    await deliver(fixture, values(200, false, { 'ecu.connected': false }));
+    expect(host.dataset['connected']).toBe('false');
+    expect(button.getAttribute('aria-checked')).toBe('false');
+    expect(text(fixture, 'bus-state')).toBe(
+      '⚠この ECU はバスから外れています（CAN と LIN に送らず、受けません。ステップは動き続けます）。',
+    );
   });
 
   it('shows why a switch was refused, as an alert, and goes back to the value read', async () => {

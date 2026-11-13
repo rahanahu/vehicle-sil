@@ -53,6 +53,18 @@
           },
           "variables": [
             {
+              "name": "ecu.connected",
+              "type": "bool",
+              "causality": "input",
+              "unit": "",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+              "items": [],
+              "builtin": true
+            },
+            {
               "name": "engine.demand",
               "type": "real",
               "causality": "input",
@@ -61,7 +73,8 @@
               "max": 100,
               "step": null,
               "description": "requested level",
-              "items": []
+              "items": [],
+              "builtin": false
             },
             {
               "name": "engine.speed",
@@ -72,7 +85,8 @@
               "max": null,
               "step": null,
               "description": "",
-              "items": []
+              "items": [],
+              "builtin": false
             },
             {
               "name": "engine.mode",
@@ -92,7 +106,8 @@
                   "name": "on",
                   "value": 1
                 }
-              ]
+              ],
+              "builtin": false
             }
           ],
           "control": {
@@ -126,6 +141,18 @@
           },
           "variables": [
             {
+              "name": "ecu.connected",
+              "type": "bool",
+              "causality": "input",
+              "unit": "",
+              "min": null,
+              "max": null,
+              "step": null,
+              "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+              "items": [],
+              "builtin": true
+            },
+            {
               "name": "dashboard.demand",
               "type": "real",
               "causality": "input",
@@ -134,7 +161,8 @@
               "max": 100,
               "step": null,
               "description": "requested level",
-              "items": []
+              "items": [],
+              "builtin": false
             },
             {
               "name": "dashboard.speed",
@@ -145,7 +173,8 @@
               "max": null,
               "step": null,
               "description": "",
-              "items": []
+              "items": [],
+              "builtin": false
             },
             {
               "name": "dashboard.mode",
@@ -165,7 +194,8 @@
                   "name": "on",
                   "value": 1
                 }
-              ]
+              ],
+              "builtin": false
             }
           ],
           "control": {

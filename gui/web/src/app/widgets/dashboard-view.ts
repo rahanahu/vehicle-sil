@@ -18,6 +18,7 @@ import {
   isPanel,
 } from './dashboard-spec';
 import { itemProblemText, missingParticipantText } from './labels';
+import { BusConnection } from './bus-connection';
 import { PanelHost } from './panel-host';
 import { WIDGETS } from './widgets';
 
@@ -41,7 +42,7 @@ type Cell =
 @Component({
   selector: 'app-dashboard-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgComponentOutlet, PanelHost],
+  imports: [BusConnection, NgComponentOutlet, PanelHost],
   template: `
     @for (section of sections(); track section.key) {
       <section class="section" [attr.aria-labelledby]="section.id + '-title'">
@@ -62,6 +63,9 @@ type Cell =
           </h2>
         } @else {
           <h2 [id]="section.id + '-title'" data-testid="dashboard-section">{{ section.title }}</h2>
+        }
+        @if (section.connection; as connection) {
+          <app-bus-connection [ref]="connection" />
         }
         @if (section.open) {
           <div class="grid" [id]="section.id + '-items'">
@@ -122,6 +126,12 @@ type Cell =
       margin-inline-end: var(--app-space-1);
     }
 
+    /* バスから外れている ECU のまとまり: 色だけでなく、スイッチの横の文と印でも出す */
+    .section:has(app-bus-connection[data-connected='false']) {
+      border-inline-start: 4px solid var(--mat-sys-error);
+      padding-inline-start: var(--app-space-3);
+    }
+
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
@@ -172,6 +182,7 @@ export class DashboardView {
       id: `dashboard-section-${s}`,
       title: section.title,
       collapsed: section.collapsed === true,
+      connection: section.connection ?? null,
       cells: section.items.map((item): Cell => {
         if (isPanel(item))
           return { kind: 'panel', key: unique(`panel\u0000${item.panel}`), panel: item };

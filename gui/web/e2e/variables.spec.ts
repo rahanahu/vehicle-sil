@@ -51,7 +51,8 @@ test('shows the values, and the switch and the slider write', async ({ page }) =
   await startRun(page, target, 'forever.yaml');
   // ECU ごとのまとまりに、既定の部品が並ぶ
   await expect(page.getByTestId('dashboard-section')).toHaveText(['Engine', 'Dashboard']);
-  await expect(page.getByTestId('variables-count')).toHaveText('12 個の変数');
+  // 6 つずつの変数と、見出しの「バスにつなぐ」（どの ECU にもある ecu.connected）
+  await expect(page.getByTestId('variables-count')).toHaveText('14 個の変数');
   const speed = widget(page, 'Engine', 'engine.speed');
   await expect(speed.getByTestId('widget-graph')).toBeVisible();
   await expect(speed.getByTestId('widget-condition')).toHaveText(/s の値\s*$/);
@@ -75,6 +76,17 @@ test('shows the values, and the switch and the slider write', async ({ page }) =
   await expect(widgetValue(page, 'Engine', 'engine.warning')).toHaveText('オン');
   await expect.poll(() => numberOf(page, 'Engine', 'engine.speed')).toBeGreaterThan(before + 1000);
 
+  // バスにつなぐ: 見出しのスイッチで外すと、外れていることを印と文で出す。つなぎ直すと消える
+  const bus = page.locator('[data-testid="bus-connection"][data-variable="Engine/ecu.connected"]');
+  const busToggle = bus.getByRole('switch', { name: 'Engine をバスにつなぐ' });
+  await expect(busToggle).toHaveAttribute('aria-checked', 'true');
+  await busToggle.click();
+  await expect(bus).toHaveAttribute('data-connected', 'false');
+  await expect(bus.getByTestId('bus-state')).toContainText('この ECU はバスから外れています');
+  await busToggle.click();
+  await expect(bus).toHaveAttribute('data-connected', 'true');
+  await expect(bus.getByTestId('bus-state')).toHaveText('');
+
   // 部品が並んだ画面も、狭い窓から広い窓まで崩れない
   for (const viewport of VIEWPORTS.filter((v) => [360, 1024, 1920].includes(v.width))) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -85,7 +97,7 @@ test('shows the values, and the switch and the slider write', async ({ page }) =
 
   // 絞り込み
   await page.getByTestId('variables-filter').fill('warning');
-  await expect(page.getByTestId('variables-count')).toHaveText('12 個中 2 個');
+  await expect(page.getByTestId('variables-count')).toHaveText('14 個中 2 個');
   await expect(page.locator('[data-variable]')).toHaveCount(2);
   await page.getByTestId('variables-filter').fill('dashboard warn');
   await expect(page.locator('[data-variable]')).toHaveCount(1);

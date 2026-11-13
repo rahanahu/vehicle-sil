@@ -69,7 +69,9 @@ def test_watch_write_and_result(tmp_path: Path, control_env: dict) -> None:
             got = await ws.until(is_variables("ready"))
             schema = got[-1]["variables"]
             assert [p["name"] for p in schema["peers"]] == ["Engine", "Dashboard"]
-            demand, speed, mode = schema["peers"][0]["variables"]
+            by_name = {v["name"]: v for v in schema["peers"][0]["variables"]}
+            demand, speed, mode = by_name["engine.demand"], by_name["engine.speed"], by_name["engine.mode"]
+            assert by_name["ecu.connected"]["writable"] is True
             assert demand == {"name": "engine.demand", "type": "real", "role": "input", "writable": True, "unit": "%",
                               "min": 0, "max": 100, "step": None, "description": "requested level", "enum": None}
             assert (speed["role"], speed["writable"], speed["type"]) == ("output", False, "integer")
@@ -95,9 +97,10 @@ def test_watch_write_and_result(tmp_path: Path, control_env: dict) -> None:
             # Standing still at 200: every step that began before it is in (and the one that begins there has
             # run too), for every peer.
             assert got[-1]["peers"] == {
-                "Engine": {"sample_ms": 200, "values": {"engine.demand": 40.0, "engine.speed": 600, "engine.mode": 1}},
-                "Dashboard": {"sample_ms": 200, "values": {"dashboard.demand": 0.0, "dashboard.speed": 200,
-                                                           "dashboard.mode": 0}}}
+                "Engine": {"sample_ms": 200, "values": {"ecu.connected": True, "engine.demand": 40.0,
+                                                        "engine.speed": 600, "engine.mode": 1}},
+                "Dashboard": {"sample_ms": 200, "values": {"ecu.connected": True, "dashboard.demand": 0.0,
+                                                           "dashboard.speed": 200, "dashboard.mode": 0}}}
             # Nothing that was sent on the way called another time paused.
             assert {(m["sim_ms"]) for m in ws.received if m["type"] == "values" and m["paused"]} == {0, 200}
             # A check meanwhile starts another process: the connection to the control server goes on.
