@@ -40,9 +40,9 @@ std::string bridge_usage()
            "  --bitrate <bit/s>        configure the XL channel bit rate, 15000..1000000 (needs init access);\n"
            "                           without it the channel keeps its configuration\n"
            "  --rx-queue-size <n>      XL receive queue size in events, power of two, 16..32768 (16384)\n"
-           "  --tx-timeout-ms <ms>     drop frames while the bus took none for this long, 10..60000 (no ACK,\n"
+           "  --tx-timeout-ms <ms>     drop frames while the bus took none for this long, 100..60000 (no ACK,\n"
            "                           bus off, cable pulled); without it they wait and go out late.\n"
-           "                           Relies on transmit receipts: use it with --bitrate\n"
+           "                           Needs --bitrate (init access), not used without it\n"
            "  --no-bus-monitor         do not ask the XL driver for the bus state (no 'XL bus:' lines,\n"
            "                           a removed device goes unnoticed)\n"
            "  --help                   this text\n";
@@ -135,11 +135,12 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
         }
         else if (key == "tx-timeout-ms")
         {
-            // Below 10 ms a healthy but busy bus would count as stuck.
+            // Shorter, a healthy but busy bus would count as stuck: at low bit rates one frame
+            // takes over 10 ms, and a frame can wait behind several of higher priority.
             const auto ms = parse_unsigned(key, value, 60'000);
-            if (ms < 10)
+            if (ms < 100)
             {
-                throw BridgeUsageError("--tx-timeout-ms must be between 10 and 60000");
+                throw BridgeUsageError("--tx-timeout-ms must be between 100 and 60000");
             }
             options.tx_timeout = std::chrono::milliseconds(ms);
         }

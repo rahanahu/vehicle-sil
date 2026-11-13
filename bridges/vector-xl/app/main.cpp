@@ -165,8 +165,8 @@ int run(const BridgeOptions& options)
 
     if (options.tx_timeout && !port->has_init_access())
     {
-        log(kTag, "warning: --tx-timeout-ms relies on transmit receipts; without init access (--bitrate) "
-                  "it only works once a first frame reached the bus");
+        log(kTag, "warning: --tx-timeout-ms is not used: it needs init access (--bitrate) to switch the "
+                  "transmit receipts on");
     }
     log(kTag, "bridging SIL Kit network '%s' (participant '%s', %s) <-> XL '%s'; Ctrl+C to stop", options.network.c_str(),
         options.participant.c_str(), options.registry_uri.c_str(), channel.name.c_str());

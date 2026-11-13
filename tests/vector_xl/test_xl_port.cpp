@@ -520,9 +520,12 @@ namespace {
 /// Port with init access on the hardware channel and a test node on the same bus.
 struct BlockedBusFixture
 {
-    explicit BlockedBusFixture(XlCanPortOptions options)
+    explicit BlockedBusFixture(XlCanPortOptions options, bool initAccess = true)
     {
-        options.bitrate = 250000;
+        if (initAccess)
+        {
+            options.bitrate = 250000;
+        }
         port.emplace(driver, channel_at(driver, kHardware1), options);
         port->start(sink.handler());
     }
@@ -677,6 +680,75 @@ TEST_CASE(xl_port_lets_a_probe_through_while_stuck)
     CHECK(f.node.receive(1000ms).has_value());
     std::this_thread::sleep_for(20ms); // the receipt
     for (int i = 0; i < 3; ++i)
+    {
+        CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    }
+    f.port->stop();
+}
+
+// Offers a frame every 5 ms for `duration` and counts the ones the port let through.
+int count_accepted(XlCanPort& port, std::chrono::milliseconds duration)
+{
+    int accepted = 0;
+    const auto until = std::chrono::steady_clock::now() + duration;
+    while (std::chrono::steady_clock::now() < until)
+    {
+        accepted += port.transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok ? 1 : 0;
+        std::this_thread::sleep_for(5ms);
+    }
+    return accepted;
+}
+
+TEST_CASE(xl_port_probes_less_often_the_longer_the_bus_is_stuck)
+{
+    XlCanPortOptions options;
+    options.transmit_timeout = 50ms;
+    options.drain_timeout = 0ms;
+    BlockedBusFixture f(options);
+    fake_xl::set_bus_blocked(kHardware1, true);
+    CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    std::this_thread::sleep_for(60ms); // stuck from here
+    // Probes about 100, 200, 400 and 800 ms after the first frame; one per timeout would be 22.
+    const auto probes = count_accepted(*f.port, 1200ms);
+    CHECK(probes >= 2);
+    CHECK(probes <= 6);
+    f.port->stop();
+}
+
+TEST_CASE(xl_port_probes_at_most_once_a_second_while_the_controller_reports_trouble)
+{
+    XlCanPortOptions options;
+    options.transmit_timeout = 50ms;
+    options.drain_timeout = 0ms;
+    options.bus_state_interval = 20ms;
+    BlockedBusFixture f(options);
+    fake_xl::set_chip_state(kHardware1, {detail::backend::ChipLevel::ErrorPassive, 128, 0});
+    std::this_thread::sleep_for(100ms); // the state reaches the port
+    fake_xl::set_bus_blocked(kHardware1, true);
+    CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    std::this_thread::sleep_for(60ms); // stuck from here
+    // The first probe about 1050 ms after the first frame, the next 2 s later.
+    const auto probes = count_accepted(*f.port, 1500ms);
+    CHECK(probes >= 1);
+    CHECK(probes <= 2);
+    f.port->stop();
+}
+
+TEST_CASE(xl_port_does_not_use_the_transmit_timeout_without_init_access)
+{
+    // Another application could switch the receipts off: the port would never see the bus
+    // working again, so it does not drop frames at all.
+    XlCanPortOptions options;
+    options.transmit_timeout = 50ms;
+    options.drain_timeout = 0ms;
+    BlockedBusFixture f(options, false);
+    CHECK(!f.port->has_init_access());
+    CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    CHECK(f.node.receive(1000ms).has_value());
+    fake_xl::set_bus_blocked(kHardware1, true);
+    CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    std::this_thread::sleep_for(150ms);
+    for (int i = 0; i < 5; ++i)
     {
         CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
     }

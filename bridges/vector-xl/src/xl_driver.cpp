@@ -135,7 +135,13 @@ struct XlCanPort::Impl
     // the wait at stop and xl_tx_unsent. Changed under xl_mutex together with the driver call
     // it accounts for, except that a receipt only decrements (never below 0). It can drift
     // (a receipt lost in an overrun resets it to 0), so the stuck decision does not use it.
+    // The reset on an overrun is not under xl_mutex: a frame accepted around it may be counted
+    // or not, so xl_tx_unsent can come out low after an overrun.
     std::atomic<std::int64_t> pending{0};
+    /// This port switched the receipts on (init access): only then is transmit_timeout used.
+    /// Without init access another application can switch them off at any time; a stuck state
+    /// would then never end.
+    bool receipts_switched_on = false;
     /// Whether receipts are known to arrive: this port switched them on (init access), or one
     /// arrived. Without init access another application may have switched them off; then the
     /// count of waiting frames means nothing and is not used.
@@ -145,6 +151,8 @@ struct XlCanPort::Impl
     std::atomic<std::int64_t> unconfirmed_since{0};
     /// steady_clock time (ns) of the last probe frame let through while stuck.
     std::int64_t last_probe = 0; // under xl_mutex
+    /// Gap before the next probe; doubles with each probe, 0 after a receipt. Under xl_mutex.
+    std::int64_t probe_gap = 0;
     /// Whether the controller's last reported state shows trouble (error warning, error passive,
     /// bus off). False while unknown (no answer yet, monitoring off).
     std::atomic<bool> bus_troubled{false};
@@ -173,23 +181,28 @@ struct XlCanPort::Impl
     [[nodiscard]] bool stuck(std::int64_t now) const noexcept
     {
         const auto since = unconfirmed_since.load();
-        return options.transmit_timeout && receipts_known.load() && since != 0 && now - since >= timeout_ns();
+        return options.transmit_timeout && receipts_switched_on && since != 0 && now - since >= timeout_ns();
     }
     /// While stuck, a frame goes to the driver now and then anyway: a receipt may just have been
     /// lost, or the driver may have lost the waiting frames (bus off); no receipt would ever come
-    /// otherwise. Every transmit_timeout while the controller reports no trouble (a lost receipt
-    /// is the likely cause), at most once per kProbeInterval while it does, so that the probes
-    /// do not pile up into the burst the timeout is there to prevent. Under xl_mutex.
+    /// otherwise. The first gap is transmit_timeout while the controller reports no trouble (a
+    /// lost receipt is the likely cause), at least kTroubledGap while it does. Each probe doubles
+    /// the gap up to kMaxGap (or transmit_timeout if longer): the probes wait in the driver's
+    /// queue while the bus takes nothing, and must not pile up into the burst the timeout is
+    /// there to prevent. Under xl_mutex.
     [[nodiscard]] bool probe_due(std::int64_t now) noexcept
     {
-        constexpr std::int64_t kProbeInterval = std::chrono::nanoseconds(std::chrono::seconds(1)).count();
-        const auto interval = bus_troubled.load() ? std::max(timeout_ns(), kProbeInterval) : timeout_ns();
+        constexpr std::int64_t kTroubledGap = std::chrono::nanoseconds(std::chrono::seconds(1)).count();
+        constexpr std::int64_t kMaxGap = std::chrono::nanoseconds(std::chrono::seconds(5)).count();
+        const auto base = bus_troubled.load() ? std::max(timeout_ns(), kTroubledGap) : timeout_ns();
+        const auto gap = std::max(base, probe_gap);
         const auto stuckFrom = unconfirmed_since.load() + timeout_ns();
-        if (now - std::max(last_probe, stuckFrom) < interval)
+        if (now - std::max(last_probe, stuckFrom) < gap)
         {
             return false;
         }
         last_probe = now;
+        probe_gap = std::min(gap * 2, std::max(kMaxGap, timeout_ns()));
         return true;
     }
 
@@ -253,6 +266,7 @@ XlCanPort::XlCanPort(XlDriver& /*driver*/, const XlChannelInfo& channel, XlCanPo
         {
             check("xlCanSetChannelMode", backend::set_transmit_receipts(impl.port, impl.access_mask, true, false));
             impl.receipts_known.store(true);
+            impl.receipts_switched_on = true;
         }
         check("xlSetNotification", backend::enable_notification(impl.port, impl.notification));
     }
@@ -352,7 +366,10 @@ TransmitResult XlCanPort::transmit(const SilKit::Services::Can::CanFrame& frame)
         {
             impl.pending.fetch_add(1);
             std::int64_t none = 0;
-            (void)impl.unconfirmed_since.compare_exchange_strong(none, now);
+            if (impl.unconfirmed_since.compare_exchange_strong(none, now))
+            {
+                impl.probe_gap = 0; // a receipt came since the last stuck state
+            }
         }
     }
     if (result.status.ok() && result.queued)
@@ -489,7 +506,10 @@ void XlCanPort::Impl::dispatch(const backend::ReceivedEvent& event)
     const auto classified = detail::classify_xl_event(event);
     if (classified.overrun)
     {
-        pending.store(0); // receipts may have been lost with the other events: start counting anew
+        // Receipts may have been lost with the other events: start counting anew, and do not
+        // call the bus stuck because of a receipt that was lost here.
+        pending.store(0);
+        unconfirmed_since.store(0);
         handler(ExternalCanEvent{ExternalEventKind::Overrun, {}});
     }
     switch (classified.event_class)
