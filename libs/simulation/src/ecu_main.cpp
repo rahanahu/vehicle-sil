@@ -109,7 +109,7 @@ std::string hex_bytes(std::string_view text)
     return out;
 }
 
-std::string quoted(std::string_view text) { return "\"" + std::string(text) + "\""; }
+std::string in_quotes(std::string_view text) { return "\"" + std::string(text) + "\""; }
 
 /// "10 ms", "500 us" or "250 ns".
 std::string duration_text(SimDuration d)
@@ -146,7 +146,7 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
            "       " + pad + " --registry-uri <uri> [--start-timeout-ms <ms>] [--no-control] [--name <name>]\n"
            "       " + pad + " --local --run-for-ms <ms> [--name <name>]\n"
            "       " + pad + " --help\n"
-           "the ECU " + quoted(options.name) + ", step " + duration_text(options.step) + "\n"
+           "the ECU " + in_quotes(options.name) + ", step " + duration_text(options.step) + "\n"
            "  --describe              write what the ECU is (networks, J1939 nodes, variables) as JSON to\n"
            "                          stdout and exit, without connecting or running anything\n"
            "  --registry-uri <uri>    join the SIL Kit simulation at <uri> and run until it ends; a controller\n"
@@ -156,7 +156,7 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
            "                          (vehicle_sil_launch then cannot read or write them); the ECU runs the same\n"
            "  --local                 run this ECU alone on local virtual buses, for --run-for-ms\n"
            "  --run-for-ms <ms>       how long --local runs (virtual time, > 0)\n"
-           "  --name <name>           the participant name instead of " + quoted(options.name) + "; only the name\n"
+           "  --name <name>           the participant name instead of " + in_quotes(options.name) + "; only the name\n"
            "                          changes (not the J1939 NAME, the addresses or the variables)\n"
            "  --help                  write this text to stdout and exit\n"
            "exit codes: 0 done, 1 the ECU failed in the run, 3 the set-up failed (the ECU's set-up, the\n"
@@ -170,7 +170,7 @@ std::chrono::milliseconds parse_millis(std::string_view option, std::string_view
     if (error != std::errc{} || end != text.data() + text.size() || value == 0 || value > kMaxMillis)
     {
         throw UsageError(std::string(option) + " needs a whole number of milliseconds from 1 to " +
-                         std::to_string(kMaxMillis) + ", not " + quoted(text) + " (e.g. " + std::string(option) +
+                         std::to_string(kMaxMillis) + ", not " + in_quotes(text) + " (e.g. " + std::string(option) +
                          " 1000)");
     }
     return std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(value));
@@ -207,7 +207,7 @@ CommandLine parse(const std::vector<std::string_view>& args)
         {
             if (before == arg)
             {
-                throw UsageError(quoted(arg) + " is given twice; give it once");
+                throw UsageError(in_quotes(arg) + " is given twice; give it once");
             }
         }
         // The value after `arg`; an option there is a missing value, not the value.
@@ -216,7 +216,7 @@ CommandLine parse(const std::vector<std::string_view>& args)
             {
                 throw UsageError(std::string(arg) + " needs " + what + " after it (e.g. " + std::string(arg) + " " +
                                  example + ")" +
-                                 (i + 1 < args.size() ? ", not the option " + quoted(args[i + 1]) : std::string()));
+                                 (i + 1 < args.size() ? ", not the option " + in_quotes(args[i + 1]) : std::string()));
             }
             return std::string(args[++i]);
         };
@@ -272,7 +272,7 @@ CommandLine parse(const std::vector<std::string_view>& args)
                            std::string(arg.substr(known.size() + 1));
                 }
             }
-            throw UsageError("unknown argument " + quoted(arg) + " (" + hint + ")");
+            throw UsageError("unknown argument " + in_quotes(arg) + " (" + hint + ")");
         }
         seen.push_back(arg);
     }
@@ -818,9 +818,9 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
                 throw;
             }
             // SIL Kit: the participant connects to the registry here.
-            throw std::runtime_error("cannot join the simulation at " + quoted(*c.registry_uri) + ": " + e.what() +
+            throw std::runtime_error("cannot join the simulation at " + in_quotes(*c.registry_uri) + ": " + e.what() +
                                      " (check the URI, e.g. silkit://localhost:8500, that sil-kit-registry runs there, "
-                                     "and that no other participant there is named " + quoted(name) + ")");
+                                     "and that no other participant there is named " + in_quotes(name) + ")");
         }
         if (stop_on_signal)
         {
@@ -922,7 +922,7 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
     {
         return fail(name, kExitSetupFailed,
                     "the simulation did not start: " + std::string(e.what()) +
-                        " (is a controller such as vehicle_sil_sim_controller running, with " + quoted(name) +
+                        " (is a controller such as vehicle_sil_sim_controller running, with " + in_quotes(name) +
                         " among its required participants? To wait longer: --start-timeout-ms)");
     }
     catch (const std::exception& e)

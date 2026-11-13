@@ -8,6 +8,8 @@ needs no C++ build:
   sync     uv sync --locked (fails when uv.lock does not match pyproject.toml)
   syntax   compiles every tracked *.py file
   codegen  tools/j1939_codegen/test_j1939_codegen.py
+  template tests/template/test_get_tools.py (the template's get_tools.py, scripts/package.py template and version,
+           with archives made there, no network)
   scripts  scripts/*.py --help
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help`, tests/control_server/multi_process.py --help and
@@ -194,6 +196,9 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
     def codegen(s: Step) -> bool:
         return s.run([python, "tools/j1939_codegen/test_j1939_codegen.py"])
 
+    def template(s: Step) -> bool:
+        return s.run([python, "tests/template/test_get_tools.py"])
+
     def scripts(s: Step) -> bool:
         return all([s.run([python, p, "--help"]) for p in files if p.startswith("scripts/")])
 
@@ -209,9 +214,10 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             s.run([python, "examples/launch_control/pause_and_step.py", "--help"]),
         ])
 
-    steps = [("sync", sync), ("syntax", syntax), ("codegen", codegen), ("scripts", scripts), ("control", control)]
-    if lowest:  # the syntax and the scripts do not depend on the packages
-        steps = [s for s in steps if s[0] not in ("syntax", "scripts")]
+    steps = [("sync", sync), ("syntax", syntax), ("codegen", codegen), ("template", template), ("scripts", scripts),
+             ("control", control)]
+    if lowest:  # the syntax, the template's script and the scripts do not depend on the packages
+        steps = [s for s in steps if s[0] not in ("syntax", "template", "scripts")]
     times = []
     for step_name, body in steps:
         log = LOG_DIR / f"{tag}-py{name}-{step_name}.log"

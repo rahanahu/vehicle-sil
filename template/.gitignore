@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: MIT-0
+/build/
+/bin/
+# The tools that get_tools.py fetches (vehicle_sil_launch and the GUI)
+/tools/
+__pycache__/

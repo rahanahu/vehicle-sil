@@ -1,0 +1,23 @@
+# The dashboard of simulation.yaml in the browser GUI (vehicle-sil-gui): which variables it shows,
+# with which widget, in which order. Without this file, the GUI lays out every variable by itself.
+# The format: docs/gui.md of vehicle-sil ("ダッシュボードのファイル"); the JSON Schema is
+# schema/dashboard.schema.json of the tools.
+vehicle_sil_dashboard: 1
+title: Engine and dashboard
+sections:
+  - title: Engine
+    items:
+      - variable: Engine.engine.throttle
+        widget: slider
+        label: Throttle
+        options: { step: 5 }
+      - variable: Engine.engine.speed
+        widget: graph
+        label: Engine speed
+      # The rest of Engine's variables, and its monitoring variables folded after this section
+      - auto: Engine
+  - title: Dashboard
+    items:
+      - variable: Dashboard.dashboard.engine_speed
+        label: Speed on the dashboard
+      - auto: Dashboard

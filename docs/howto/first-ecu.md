@@ -2,13 +2,14 @@
 
 ECU を書く人向けの手引きです。前に README の「[最初の ECU を動かす](../../README.md#最初の-ecu-を動かす)」を読んでおくと、ECU のクラスの形がわかります。次は [j1939-guide.md](../j1939-guide.md)（J1939 の送受信と部品）と、ほかの人の ECU とまとめるときは [ECU をまとめて動かす](integrate-ecus.md) です。
 
-ECU のクラスを 1 つ書き、`ecu_main` で実行ファイルにし、構成ファイルで動かして、Python から変数を読み書きするまでの順番です。手引きに書くのは手順とつまずく所だけです。引数、形式、規則の正本は、各段で示すリファレンスです。
+ひな形を写して ECU のクラスを書き、`ecu_main` で実行ファイルにし、構成ファイルで動かして、Python から変数を読み書きするまでの順番です。手引きに書くのは手順とつまずく所だけです。引数、形式、規則の正本は、各段で示すリファレンスです。
 
-例には [examples/ecu_main](../../examples/ecu_main) のエンジンの ECU（`vehicle_sil_engine_ecu`）を使います。CTest がビルドして動かしている例です。自分の ECU は、これをひな形にして書き換えます。
+例には、ECU のプロジェクトのひな形 [template/](../../template) のエンジンの ECU（`engine_ecu`）を使います。CTest がひな形をビルドして、照合と実行をしています。自分の ECU は、ひな形を写して書き換えます。ひな形のエンジンと表示の ECU は、[examples/ecu_main](../../examples/ecu_main) の 2 つと同じ ECU です（ほかの手引きは、そちらを使います）。
 
 ```mermaid
 flowchart LR
-    write["ECU のクラス"] --> main["ecu_main"]
+    copy["ひな形を写す"] --> write["ECU のクラス"]
+    write --> main["ecu_main"]
     main --> describe["--describe"]
     describe --> config["構成ファイル"]
     config --> check["check"]
@@ -16,17 +17,33 @@ flowchart LR
     run --> python["Python"]
 ```
 
+## ひな形を写して、道具を取ってくる
+
+README の「[取得とビルド](../../README.md#取得とビルド)」の「ECU を作って動かす」の手順です。
+
+```sh
+# リリースのページの vehicle-sil-template-<版>.zip を展開したディレクトリで
+python3 get_tools.py                 # Windows（UCRT64）: python get_tools.py。ビルド済みの道具を tools/ に取ってくる。表示されたコマンドで bin を PATH に入れる
+cmake --preset linux                 # Windows（MSYS2 UCRT64 シェル）: cmake --preset windows
+cmake --build --preset linux         # Windows: cmake --build --preset windows
+```
+
+- `get_tools.py` は、ひな形に書いてある版（`VERSION`）の道具を、ひな形に書いてある SHA-256 で確かめてから展開します。取れないときの手順と、リポジトリの `template/` を写したときの `--sha256` は、ひな形の [README](../../template/README.md) にあります。
+- 最初の構成で vehicle-sil と SIL Kit を取ってきて、最初のビルドで SIL Kit をコンパイルします（数分、最初の 1 回だけ）。実行ファイルは `bin/` にできます。
+- 以降のコマンドは、ひな形のディレクトリ（`simulation.yaml` のある所）で実行します。
+
 ## ECU のクラスを書く
 
 ECU は `vehicle_sil::Ecu&` を受け取るクラスです。コンストラクターで、つながるネットワーク、J1939 のノード、外から読み書きする変数、ステップごとの処理を宣言します。
 
-[examples/ecu_main/engine/main.cpp](../../examples/ecu_main/engine/main.cpp) の 21〜45 行です。
+[template/engine/main.cpp](../../template/engine/main.cpp) の 22〜47 行です。
 
 ```cpp
 class Engine
 {
 public:
     explicit Engine(vehicle_sil::Ecu& ecu) :
+      // The network's name is the one in simulation.yaml. 0x7F0 is a placeholder Manufacturer Code.
       node_(ecu.j1939("J1939_CAN").add_node(
           {.address = 0x00, .name = j1939::Name{}.set_identity_number(1).set_manufacturer_code(0x7F0)}))
     {
@@ -39,7 +56,7 @@ public:
             rpm_ += rpm_ < target ? 50 : rpm_ > target ? -50 : 0;
         });
         ecu.every(100ms, [this](vehicle_sil::SimTime) {
-            static_cast<void>(node_.send(ecu_main_example::kEngineSpeed, ecu_main_example::encode_speed(rpm_)));
+            static_cast<void>(node_.send(my_ecus::kEngineSpeed, my_ecus::encode_speed(rpm_)));
         });
     }
 
@@ -54,11 +71,11 @@ private:
 - J1939 のノードのアドレスと NAME は、同じネットワークのほかのノードと重ならないようにします（重なりは、後の照合が見つけます）。Manufacturer Code の 0x7F0 は例の仮の値です。
 - `input()` は外から書く変数、`output()` は外から読む変数です。宣言の形、型、反映の時刻は [control-api.md](../control-api.md) の「ECU の変数」にあります。
 - ステップごとの処理（`every()`）と変数の読み書きは、同じステップのスレッドで動きます。モデルにロックは要りません。
-- 2 つの ECU が取り決めるメッセージ（PGN とデータの形）は、例では共有のヘッダー [examples/ecu_main/engine_speed.hpp](../../examples/ecu_main/engine_speed.hpp) にあります。信号を YAML で定義するときは [j1939-codec.md](../j1939-codec.md) です。
+- 2 つの ECU が取り決めるメッセージ（PGN とデータの形）は、共有のヘッダー [template/engine_speed.hpp](../../template/engine_speed.hpp) にあります。信号を YAML で定義するときは [j1939-codec.md](../j1939-codec.md) です。
 
 ## `ecu_main` で実行ファイルにする
 
-`main()` は `ecu_main()` の 1 行です（同じファイルの 49〜52 行）。
+`main()` は `ecu_main()` の 1 行です（同じファイルの 51〜54 行）。
 
 ```cpp
 int main(int argc, char** argv)
@@ -69,31 +86,42 @@ int main(int argc, char** argv)
 
 `name` は SIL Kit の participant 名、`step` はステップ幅です。これで、どの ECU とも同じ引数（`--describe`、`--registry-uri`、`--local`）を持つ実行ファイルになります。`ecu_main()` は `main()` の最後で呼びます（理由は [ecu-executable.md](../ecu-executable.md) の「引数」の後の段落）。
 
-CMake は [examples/ecu_main/engine/CMakeLists.txt](../../examples/ecu_main/engine/CMakeLists.txt) の 2〜6 行です。
+CMake は [template/CMakeLists.txt](../../template/CMakeLists.txt) の 32〜36 行です。
 
 ```cmake
-add_executable(vehicle_sil_engine_ecu main.cpp)
-target_include_directories(vehicle_sil_engine_ecu PRIVATE ..)
-target_link_libraries(vehicle_sil_engine_ecu PRIVATE vehicle_sil::simulation)
-vehicle_sil_target_defaults(vehicle_sil_engine_ecu)
-vehicle_sil_copy_runtime_dlls(vehicle_sil_engine_ecu)
+add_executable(engine_ecu engine/main.cpp)
+target_include_directories(engine_ecu PRIVATE ${PROJECT_SOURCE_DIR})
+target_link_libraries(engine_ecu PRIVATE vehicle_sil::simulation)
+# Windows only: copies SilKit.dll next to the executable.
+vehicle_sil_copy_runtime_dlls(engine_ecu)
 ```
 
 - リンクするのは `vehicle_sil::simulation` です。J1939 の部品や型付きメッセージを使うときは、そのターゲットも足します（README の「[ライブラリ](../../README.md#ライブラリ)」）。
-- `vehicle_sil_target_defaults()` は、vehicle-sil の中のターゲットに警告の設定を付けるものです。`vehicle_sil_copy_runtime_dlls()` は、Windows で `SilKit.dll` を実行ファイルの隣に写します。
-- vehicle-sil の外の自分のプロジェクトで作るときは、FetchContent で取り込みます（README の「[外部プロジェクトから使う（FetchContent）](../../README.md#外部プロジェクトから使うfetchcontent)」と [examples/fetchcontent_consumer](../../examples/fetchcontent_consumer)）。
+- `vehicle_sil_copy_runtime_dlls()` は、Windows で `SilKit.dll` を実行ファイルの隣に写します。
+- ECU を足すときは、この 5 行を写して名前を変え、構成ファイルにも足します。
 
-ビルドは README の「[取得とビルド](../../README.md#取得とビルド)」のとおりです。実行ファイルは `build/<preset>/examples/ecu_main/engine/` にできます。
+vehicle-sil は、同じファイルの 15〜23 行で FetchContent で取り込んでいます。`GIT_TAG` が vehicle-sil の版で、道具の版（`get_tools.py` の `VERSION`）とそろえます。
+
+```cmake
+  include(FetchContent)
+  FetchContent_Declare(
+    vehicle_sil
+    GIT_REPOSITORY https://github.com/rahanahu/vehicle-sil.git
+    # The vehicle-sil release your ECUs are built with. Keep it the same as the version of the
+    # tools (vehicle_sil_launch version): change both together.
+    GIT_TAG v0.1.0
+    GIT_SHALLOW TRUE)
+  FetchContent_MakeAvailable(vehicle_sil)
+```
 
 ## 自己申告を見る（`--describe`）、単体で動かす（`--local`）
 
 ```sh
-E=build/linux-gcc-release/examples/ecu_main
-$E/engine/vehicle_sil_engine_ecu --describe
-$E/engine/vehicle_sil_engine_ecu --local --run-for-ms 1000
+bin/engine_ecu --describe
+bin/engine_ecu --local --run-for-ms 1000
 ```
 
-- `--describe` は、何も動かさず、どこにも接続せずに、ECU の構成を JSON で標準出力に書きます。このエンジンの出力の全文は、[ecu-executable.md](../ecu-executable.md) の「JSON の形式」の例です（試験が実際の出力と照合しています）。確かめるのは、`name`、`step_ns`、`networks`（ネットワークの名前、J1939 のアドレスと NAME）、`variables`（変数の名前、型、範囲）、`control` です。
+- `--describe` は、何も動かさず、どこにも接続せずに、ECU の構成を JSON で標準出力に書きます。このエンジンの出力の全文は、[ecu-executable.md](../ecu-executable.md) の「JSON の形式」の例と同じです（例は `examples/ecu_main` の同じ ECU の出力で、試験が照合しています）。確かめるのは、`name`、`step_ns`、`networks`（ネットワークの名前、J1939 のアドレスと NAME）、`variables`（変数の名前、型、範囲）、`control` です。
 - まとめる人は、この自己申告で照合します。ネットワーク、アドレス、変数を変えたら、`--describe` で確かめてから渡します。
 - `--local --run-for-ms 1000` は、この ECU だけを、プロセス内の仮想バスの上で、仮想時間で 1000 ms 動かします。相手がいないので何も受信しません。ステップで例外が出たら終了コード 1 です。
 - 引数と終了コードの表は [ecu-executable.md](../ecu-executable.md) の「引数」にあります（引数は `--help` でも出ます）。
@@ -106,14 +134,15 @@ $E/engine/vehicle_sil_engine_ecu --local --run-for-ms 1000
 
 ## 構成ファイルに入れる
 
-シミュレーションに入れる ECU の実行ファイルとネットワークを、構成ファイルに書きます。例は [examples/ecu_main/simulation.yaml](../../examples/ecu_main/simulation.yaml) です（エンジンと表示の 2 つの ECU）。CMake が、実行ファイルの横の `build/<preset>/examples/ecu_main/` に写します。
+シミュレーションに入れる ECU の実行ファイルとネットワークを、構成ファイルに書きます。ひな形の [simulation.yaml](../../template/simulation.yaml) です（エンジンと表示の 2 つの ECU）。
 
-<!-- examples/ecu_main/simulation.yaml -->
+<!-- template/simulation.yaml -->
 ```yaml
-# The two ECUs of this directory in one simulation. CMake copies this file next to the
-# executables (build/<preset>/examples/ecu_main/); check and run it there with
+# The two ECUs of this project in one simulation. Build them first (README.md), then, here:
 #   vehicle_sil_launch check simulation.yaml
 #   vehicle_sil_launch run simulation.yaml
+#   vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
+# The paths in command are relative to this file's directory.
 vehicle_sil_simulation: 1
 stop_at_ms: 1000
 networks:
@@ -121,10 +150,10 @@ networks:
     kind: can
 participants:
   - name: Engine
-    command: [engine/vehicle_sil_engine_ecu]
+    command: [bin/engine_ecu]
     step_ms: 10
   - name: Dashboard
-    command: [dashboard/vehicle_sil_dashboard_ecu]
+    command: [bin/dashboard_ecu]
     step_ms: 5
 ```
 
@@ -137,8 +166,7 @@ participants:
 ## 照合する（`check`）
 
 ```sh
-cd build/linux-gcc-release/examples/ecu_main
-../../tools/launch/vehicle_sil_launch check simulation.yaml
+vehicle_sil_launch check simulation.yaml
 ```
 
 照合は、各 ECU を `--describe` で起動し、構成ファイルと自己申告を突き合わせます。シミュレーションは始めません。
@@ -163,7 +191,7 @@ passed: 0 errors, 0 warnings, 0 notes
 ## 動かす（`run`）
 
 ```sh
-../../tools/launch/vehicle_sil_launch run simulation.yaml
+vehicle_sil_launch run simulation.yaml
 ```
 
 `run` は同じ照合をしてから、registry、controller、各 ECU を起動し、終わりまで見て、結果を標準出力に書きます。
@@ -197,15 +225,14 @@ passed: 0 errors, 0 warnings, 0 notes
 自分の ECU をデバッガーで止めながら動かすときは、その ECU だけをランチャーに起動させず、自分で起動します。構成ファイルは書き換えずに、`--manual` に participant 名を付けます。
 
 ```sh
-../../tools/launch/vehicle_sil_launch run simulation.yaml --manual Engine
+vehicle_sil_launch run simulation.yaml --manual Engine
 ```
 
-ランチャーはほかの ECU を起動し、Engine を起動するコマンドを標準エラーに書いて、Engine が参加するのを待ちます（`<dir>` は例のディレクトリです）。
+ランチャーはほかの ECU を起動し、Engine を起動するコマンドを標準エラーに書いて、Engine が参加するのを待ちます（`<dir>` はひな形のディレクトリです。形は [simulation-config.md](../simulation-config.md) の「participant を自分で起動する」の例と同じで、実行ファイルのパスだけが違います）。
 
-<!-- vehicle_sil_launch run simulation.yaml --manual Engine: the lines about Engine -->
 ```text
 [vehicle_sil_launch] not starting Engine: start it yourself (manual: true, or --manual); the simulation waits for it to join. In the directory <dir>, run:
-[vehicle_sil_launch]   <dir>/engine/vehicle_sil_engine_ecu --name Engine --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 1000000000000
+[vehicle_sil_launch]   <dir>/bin/engine_ecu --name Engine --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 1000000000000
 ```
 
 - 2 行目の `[vehicle_sil_launch]` の後が、Engine を起動するコマンドです。デバッガーには、実行ファイル、その後の引数、作業ディレクトリ（1 行目の `In the directory` の後）を設定して起動します。端末で試すときは、そのディレクトリでコマンドを貼って実行します。
@@ -221,17 +248,17 @@ passed: 0 errors, 0 warnings, 0 notes
 
 ECU の側で足す作業はありません。`ecu_main` で作った ECU は、変数を宣言していれば、`run` のときにランチャーとつながります。クライアントは、ランチャーの Control Server（`vehicle_sil_launch run --control`）に gRPC でつなぎます。
 
-準備:
+準備は、ビルド済みの道具に入っています。
 
-- `vehicle_sil_launch` を `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` でビルドします（[control-api.md](../control-api.md) の「ビルド」）。このオプションなしのビルドで `--control` を付けると、引数の誤り（終了コード 4）です。
-- Python 3.11 以上と gRPC のパッケージを入れ、スタブを作り、`python/` を `PYTHONPATH` に入れます（[control-api.md](../control-api.md) の「Python」）。
+- 道具の `vehicle_sil_launch` は Control Server を持っています（自分でビルドするときは `-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON`。[control-api.md](../control-api.md) の「ビルド」）。
+- 道具の `python/` に、Python のクライアント（`vehicle_sil_control`）と生成済みのスタブがあります。要るパッケージ（grpcio、protobuf）は `python/requirements.txt` に版とハッシュを固定してあり、uv があれば `uv run --with-requirements` が入れます。uv がなければ、Python 3.11 以上の仮想環境に `pip install --require-hashes -r` で入れます。
 
-例 [examples/launch_control/write_before_start.py](../../examples/launch_control/write_before_start.py) を動かします（コマンドは例の 5〜7 行）。
+例 [examples/launch_control/write_before_start.py](../../examples/launch_control/write_before_start.py) を、vehicle-sil のリポジトリからひな形のディレクトリに写して動かします（Linux の例。`T` は `get_tools.py` が展開したディレクトリ）。
 
 ```sh
-python examples/launch_control/write_before_start.py \
-    --launch build/<preset>/tools/launch/vehicle_sil_launch \
-    build/<preset>/examples/ecu_main/simulation.yaml
+T=tools/vehicle-sil-tools-<版>-linux-x86_64
+PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' --with-requirements $T/python/requirements.txt \
+    python write_before_start.py --launch $T/bin/vehicle_sil_launch simulation.yaml
 ```
 
 例は、上の構成ファイルの 2 つの ECU を、最初のステップの前で止めて起動し、エンジンのスロットルを書いて 500 ms 進め、回転数を読み返します。期待どおりなら終了コード 0 です。中心は 40〜63 行です。

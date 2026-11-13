@@ -13,8 +13,8 @@
 
 | 役割 | 読む順 | 読まなくてよいもの |
 |---|---|---|
-| ECU を書く人（C/C++ で 1 つの ECU を作る） | 「[最初の ECU を動かす](#最初の-ecu-を動かす)」→ [examples/getting_started](examples/getting_started) → 手引き「[最初の ECU を作る](docs/howto/first-ecu.md)」（実行ファイルにして、構成ファイルで動かし、Python から変数を読み書きするまで）→ [docs/j1939-guide.md](docs/j1939-guide.md) → [docs/j1939-codec.md](docs/j1939-codec.md) → [docs/ecu-executable.md](docs/ecu-executable.md)。LIN を使うときは「[LIN](#lin)」も | docs/simulation-config.md、docs/dependencies.md、docs/code-map.md。docs/architecture.md は、契約や制限を確かめるときに該当する節だけ |
-| まとめる人（各自の ECU の実行ファイルを 1 つのシミュレーションにする） | 手引き「[ECU をまとめて動かす](docs/howto/integrate-ecus.md)」→ [docs/ecu-executable.md](docs/ecu-executable.md) → [docs/simulation-config.md](docs/simulation-config.md) → 決まった手順で値を入れて確かめるなら手引き「[シナリオで試験を書く](docs/howto/scenario-tests.md)」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md |
+| ECU を書く人（C/C++ で 1 つの ECU を作る） | 「[取得とビルド](#取得とビルド)」の「ECU を作って動かす」（ひな形とビルド済みの道具）→ 「[最初の ECU を動かす](#最初の-ecu-を動かす)」→ [examples/getting_started](examples/getting_started) → 手引き「[最初の ECU を作る](docs/howto/first-ecu.md)」（実行ファイルにして、構成ファイルで動かし、Python から変数を読み書きするまで）→ [docs/j1939-guide.md](docs/j1939-guide.md) → [docs/j1939-codec.md](docs/j1939-codec.md) → [docs/ecu-executable.md](docs/ecu-executable.md)。LIN を使うときは「[LIN](#lin)」も | docs/simulation-config.md、docs/dependencies.md、docs/code-map.md。docs/architecture.md は、契約や制限を確かめるときに該当する節だけ |
+| まとめる人（各自の ECU の実行ファイルを 1 つのシミュレーションにする） | 「[取得とビルド](#取得とビルド)」の「ECU を作って動かす」（ビルド済みの道具）→ 手引き「[ECU をまとめて動かす](docs/howto/integrate-ecus.md)」→ [docs/ecu-executable.md](docs/ecu-executable.md) → [docs/simulation-config.md](docs/simulation-config.md) → 決まった手順で値を入れて確かめるなら手引き「[シナリオで試験を書く](docs/howto/scenario-tests.md)」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md |
 | 試験する人（決まった手順で値を入れて確かめる、CI で回す） | 手引き「[シナリオで試験を書く](docs/howto/scenario-tests.md)」（シナリオを書き、照合して回し、終了コードと結果を読むまで）→ [docs/scenario.md](docs/scenario.md) → [docs/simulation-config.md](docs/simulation-config.md) の「引数と終了コード」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/control-api.md（シナリオは gRPC を使わない）、docs/dependencies.md、docs/code-map.md |
 | 外から操作する人（Python、CLI、試験） | 手引き「[信号を外から操作する](docs/howto/operate-signals.md)」（どの口を使うか、読む・書く・待つ、時間の操作）→ [docs/control-api.md](docs/control-api.md)（`vehicle_sil_launch run --control` で、ランチャーの Control Server につなぐ）→ [examples/launch_control](examples/launch_control) → [docs/simulation-config.md](docs/simulation-config.md) の「機械から使う」（事象と命令）。変数の名前は、`ecu_main` で作った ECU の実行ファイルなら `--describe` の `variables` で調べる（[docs/ecu-executable.md](docs/ecu-executable.md) の「JSON の形式」） | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md。docs/control-api.md の「単独の Control Server」は、ランチャーを使わないときだけ |
 | 実機の CAN につなぐ人 | 「[Vector XL CAN Bridge（Windows）](#vector-xl-can-bridgewindows)」→ [docs/architecture.md](docs/architecture.md) の「Vector XL CAN Bridge」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/simulation-config.md、docs/code-map.md |
@@ -67,6 +67,7 @@
 | `examples/virtual_time` | 仮想時間のピア（どれも `Peer` の上）: 物理モデル、既存 ECU（共有ライブラリの `tick()`）を載せた J1939 ECU、LIN センサー、ボディコントローラー |
 | `examples/lin` | LIN クラスタのピア `vehicle_sil_lin_master` / `vehicle_sil_lin_slave`（フレームの送受信と Sleep/Wakeup） |
 | `examples/fetchcontent_consumer` | 外部 CMake プロジェクトからの利用例 |
+| `template/` | ECU のプロジェクトのひな形（2 つの ECU、構成ファイル、シナリオ、ダッシュボード、ビルド済みの道具を取ってくる `get_tools.py`）。リリースでは `vehicle-sil-template-<版>.zip` |
 | `tools/` | `vehicle_sil_sim_controller`（仮想時間のシミュレーションの開始と停止）、`vehicle_sil_launch`（構成ファイルの照合と、シミュレーション全体の実行）と、実行ファイル共通のコマンドライン処理（内部用） |
 | `tests/` | ユニットテスト、複数プロセスの統合テスト、FetchContent テスト |
 | `external/` | SIL Kit（Git サブモジュール、コミット固定） |
@@ -104,6 +105,24 @@ uv sync --only-group control   # Control API のクライアントだけ（grpci
 
 ## 取得とビルド
 
+### ECU を作って動かす（ひな形とビルド済みの道具）
+
+ECU を書く人とまとめる人は、vehicle-sil のリポジトリをビルドしなくて構いません。手順は 3 つです。Node.js は要りません。ひな形と道具は、[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)に公開した版にだけあります。公開した版がまだないときは、下の「vehicle-sil 自体をビルドする」の手順で使います。
+
+1. リリースのページから `vehicle-sil-template-<版>.zip`（ECU のプロジェクトのひな形）を取って展開し、自分のプロジェクトにします。中身は 2 つの ECU、構成ファイル、シナリオ、GUI のダッシュボードで、vehicle-sil を FetchContent で取り込みます（[template/](template/) と同じもの）。
+2. ひな形の中で `python3 get_tools.py`（Windows の UCRT64 シェルでは `python get_tools.py`）を実行します。リリースから自分の OS のビルド済みの道具（`vehicle_sil_launch` とブラウザの GUI）を取り、ひな形に書いてある SHA-256 で確かめて、`tools/` に展開します。表示されたコマンドで、その `bin` を `PATH` に入れます。
+3. ECU をビルドして（`cmake --preset linux`、`cmake --build --preset linux`。Windows は `windows`）、`vehicle_sil_launch check simulation.yaml`、`vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml`、`vehicle-sil-gui simulation.yaml` で動かします。
+
+- 必要なものと各段の詳しい説明は、ひな形の [README](template/README.md) にあります。続きは手引き「[最初の ECU を作る](docs/howto/first-ecu.md)」です。
+- 待ち時間は、最初のビルドで SIL Kit をコンパイルする数分だけです（ECU がリンクするライブラリは、ソースからビルドします）。
+- 道具の圧縮ファイル（`vehicle-sil-tools-<版>-linux-x86_64.tar.gz`、`-windows-x86_64.zip`）には、`vehicle_sil_launch`（Control Server つき）、GUI サーバーと画面、Control API の Python クライアント（gRPC のスタブつき）、GUI のクライアントのライブラリ、ダッシュボードの JSON Schema、ライセンスの表示が入っています（中身は圧縮ファイルの `README.md`、同梱する物は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）。Linux 版は x86_64 で、Ubuntu 22.04 でビルドしているので、glibc がそれと同じか新しい（2.35 以上の）ディストリビューションで動き、glibc のほかに共有ライブラリを要りません。Windows 版は MSYS2 UCRT64 の MinGW でビルドし、DLL を同梱しない 1 つの実行ファイルです（SIL Kit、gRPC、C++ の実行時ライブラリを静的にリンク）。
+- ECU と道具は同じ版でそろえます（ひな形の `GIT_TAG` と `get_tools.py` の `VERSION`）。版ごとの変更と、互換を壊す変更の直し方は [CHANGELOG.md](CHANGELOG.md) にあります。
+- 道具の圧縮ファイルは `scripts/package.py` が作ります（`tools`、使う人の手順で確かめる `verify`、ひな形の圧縮ファイルの `template`。`--help`）。タグ `v<版>` を push すると、GitHub Actions が両方の OS で作って確かめ、リリースの下書きに付けます。
+
+### vehicle-sil 自体をビルドする
+
+vehicle-sil を直す人、試験を回す人、ビルド済みの道具がない環境で使う人の手順です。
+
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git
 cd vehicle-sil
@@ -111,7 +130,7 @@ cd vehicle-sil
 git submodule update --init --recursive
 ```
 
-### Linux
+#### Linux
 
 ```sh
 cmake --preset linux-gcc-release
@@ -125,12 +144,13 @@ ctest --preset linux-gcc-release
 | `linux-clang-debug` | Clang |
 | `linux-clang-asan`, `linux-clang-tsan` | Clang と AddressSanitizer + UBSan、または ThreadSanitizer |
 | `linux-gcc-asan`, `linux-gcc-tsan` | GCC とサニタイザー。`libasan`、`libubsan`、`libtsan` のパッケージが必要 |
+| `linux-gcc-static`、`windows-mingw-static` | Release で `VEHICLE_SIL_STATIC=ON`（下の「1 つの実行ファイルにする」）。静的な libstdc++ が要る（Fedora は `libstdc++-static`）。`scripts/verify.py --linux` には入れていない（名前を指定して回す） |
 
 `-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON` を付けると、vehicle-sil 自身のターゲットの警告をエラーにします。
 
 コミット前の確認には `scripts/verify.py --linux` が使えます（[AGENTS.md](AGENTS.md) の「検証とスクリプト」）。
 
-### Windows（MSYS2 UCRT64）
+#### Windows（MSYS2 UCRT64）
 
 MSYS2 の「UCRT64」シェルで実行します。
 
@@ -380,8 +400,8 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 
 | ラベル | 内容 |
 |---|---|
-| `unit` | コマンドライン解析（`unit.*`）。`core`、`lin`、`can`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` の単体テストと境界の検査にもこのラベルが付く。付かないのは、プロセスを起動するシナリオの試験（`integration`）、サンプルの実行（`examples`。ただし `param_service.demo` には付く）、Python のクライアントの試験（`python`）、`fetchcontent` |
-| `integration` | `sil-kit-registry`、receiver、sender（実時間の `Peer` と J1939 スタック）を別プロセスで起動し、終了コードで判定する。`address-claim-and-pgn` は Address Claim と PGN の CAN ID とペイロードの一致を、`receiver-timeout` はタイムアウト処理を検証する。`receiver-detects-wrong-name` と `receiver-detects-wrong-payload` は、receiver が誤った NAME と壊れたペイロードを失敗として報告することを確かめる（`integration.*`）。このラベルは、プロセスを起動するほかのシナリオの試験にも付く: `virtual_time.*`、`lin_cluster.*`、`launch_cli.*`、`launch_run.*`、`ecu_main.*`、`vector_xl.integration.*`、`control_server.multi_process`（それぞれの行） |
+| `unit` | コマンドライン解析（`unit.*`）。`core`、`lin`、`can`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` の単体テストと境界の検査にもこのラベルが付く。`template.get_tools`（ひな形の `get_tools.py` と `scripts/package.py` の `template`、`version` を、手元で作った圧縮ファイルで確かめる）にも付く。付かないのは、プロセスを起動するシナリオの試験（`integration`）、サンプルの実行（`examples`。ただし `param_service.demo` には付く）、Python のクライアントの試験（`python`）、`fetchcontent` |
+| `integration` | `sil-kit-registry`、receiver、sender（実時間の `Peer` と J1939 スタック）を別プロセスで起動し、終了コードで判定する。`address-claim-and-pgn` は Address Claim と PGN の CAN ID とペイロードの一致を、`receiver-timeout` はタイムアウト処理を検証する。`receiver-detects-wrong-name` と `receiver-detects-wrong-payload` は、receiver が誤った NAME と壊れたペイロードを失敗として報告することを確かめる（`integration.*`）。このラベルは、プロセスを起動するほかのシナリオの試験にも付く: `virtual_time.*`、`lin_cluster.*`、`launch_cli.*`、`launch_run.*`、`ecu_main.*`、`vector_xl.integration.*`、`control_server.multi_process`（それぞれの行）、`template.check_and_run`（ひな形の ECU を本体のビルドで作り、ランチャーで照合、実行、シナリオ。照合と実行の出力を手引き「最初の ECU を作る」と照合） |
 | `vector_xl` | CAN ブリッジのテスト。全プラットフォームで、テスト専用の XL ドライバのフェイクに対して本番のコードを動かす。CanBridge の単体テスト、XL バックエンドのテスト、実際の SIL Kit を使うプロセス内のテスト、ブリッジの実行ファイルを使う E2E テストがある。E2E では、エコーノードとの往復（Virtual CAN と、ビットレートを設定する物理 CAN）、送信レシートが返ってくる場合のループ防止、`--list-channels`、存在しないチャネル、引数の誤り、ドライバがない場合を確かめる |
 | `can` | `vehicle_sil::can` の単体テスト（SIL Kit なしでビルドする）、SIL Kit のポートのテスト（`can_silkit.*`）、簡易 CAN Network Simulator のテスト（`can_netsim.*`）。フレームの検証、仮想バスの受信順序とあふれ、ホストの段階の順序と失敗、ステップドライバーの順序、送信時間と調停（11 ビット / 29 ビット）、混雑、送信キュー、受信側のステップ幅によらないこと、ポートの事象（送信の結果、受け箱のあふれ、バス状態、エラーフレーム）、故障注入と ECU 単位の通信断、`post()`、時間の領域の混在の拒否、実時間のドライバー（差し替えた時計での決定的な試験と、壁時計での到着と順序）を確かめる。簡易 CAN Network Simulator では、プロセス内の participant と実行ファイルの両方で、仮想バスと同じ受信の時刻になること、繰り返しても同じ結果になること、送信時刻のない送信者、設定ファイルの読み込みを確かめる。プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致すること（ステップ幅の組み合わせを変えて）と、送信の続く中で participant を決まった順序で止めて破棄できることを確かめる（`unit` ラベルも付く） |
 | `j1939` | `vehicle_sil::j1939` の単体テスト（SIL Kit なしでビルドする）と SIL Kit 上の試験（`j1939_silkit.*`）。PGN と識別子、単一フレームの送受信、宛先の振り分け、ローカル折り返し、同じ時刻のフレームの順序とタイマーの発火がステップ幅と到着順によらないこと、Request への応答と ACK/NACK、NAME と Address Claim（複数ノードと複数 Network の競合、任意アドレスの選択、アドレス表、アドレス違反、Commanded Address を含む）、1 つのホストの複数の Network（ゲートウェイ、片方の失敗）、再入と失敗、ステップ幅の検査、資源の上限、定常状態のステップでメモリを確保しないことを確かめる。プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致することも確かめる（簡易 CAN Network Simulator ありでも。`unit` ラベルも付く）。タイミングありの仮想バスで、プロトコルの結果が変わらないこと、混雑で転送が遅れ、バスが飽和すると時間切れになることも確かめる。1 つの ECU がバスから切り離されたとき（受信だけ、送受信とも）の TP の時間切れと回復、隠れていたアドレスの衝突の解決、時刻同期なしの SIL Kit での実時間の動作も確かめる。道具箱（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）とプロトコル部品（`j1939_parts.*`: DM13、診断、識別情報、送信の競合、後で返す ACK、ステップ幅によらない結果）も確かめ、`j1939_parts.boundary` が部品がエンジンの内部を使っていないことを検査する。型付きメッセージ（`j1939_codec.*`）は、ビット配置をビットごとの実装と照合し、raw 値と物理値の変換、丸めと範囲の端、特別な値（J1939 のプロファイル、利用者のプロファイル、継承と上書き、すべてのビットパターンを値として使う Proprietary B、raw 値の保持）、列挙、セレクター、埋め値、長さ、小さい信号のすべての raw 値の往復、ノードでの送受信を確かめる。`j1939_codec.generator` は生成器が誤った定義を止めることを確かめる。`local.boundary`、`testkit.boundary`、`peer.boundary`、`simulation.boundary`、`ecu.boundary` も、それぞれのディレクトリのソースがエンジンの内部を使っていないことを検査する（ラベルは `unit` と `j1939`） |
@@ -394,7 +414,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 | `launch` / `process` | 構成ファイルの読み込みと照合の規則（プロセスを起動しない試験。各規則の通る例と落ちる例を、文言と行番号まで照合する）、人向けと JSON の出力。`launch_cli.*` は `vehicle_sil_launch check` を実行ファイルとして動かす（[docs/simulation-config.md](docs/simulation-config.md) の例とバイト単位で照合、`--describe` に失敗する実行ファイル、`--strict`、読めないファイル、引数の誤り）。`launch_run.*` は `vehicle_sil_launch run` を実行ファイルとして動かす（docs の例との照合、失敗する ECU、そろわない participant、終わらない participant、残されたプロセス、中断、ランチャーが落ちたとき、速さと一時停止とステップ送り、実時間への遅れ）。`process.*` は子プロセスの試験（標準出力と標準エラーの取り込み、行ごとの受け渡し、時間切れ、空の標準入力、作業ディレクトリ、受け継がないハンドル、止める要求、起動したプロセスごとの終了、空白と ASCII 以外の文字を含むパスと引数） |
 | `control` | Control Agent の試験（`control.*`）。転送なしで Agent を直接動かす試験、`Ecu` で宣言した変数への時刻つきの書き込みが仮想バスと SIL Kit で同じステップに反映され、同じ時刻に読み出されること、`Peer` の Agent（SIL Kit の participant で、反映の位置、実時間、監視の出力）、プロセス内でつないだ `Hub`、ECU より長く残った転送がプロセスを止めること（`unit` ラベルも付く）。`control_server` の試験にもこのラベルが付く |
 | `control_server` | `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ。Control Server の試験（`control_server.*`）: gRPC の生成コードと呼び出し、1 つのプロセスで端から端まで（2 つの J1939 の Peer の Agent が SIL Kit でつながる Hub、時間ゲート、gRPC のクライアント。controller を兼ねない形も）、認証と役割と TLS と監査ログ、どの役割がどの RPC を呼べるか（proto の RPC と規則の表の対応も）、メッセージの変換、上限と入力の検査、`SimulationMonitor`（`unit` と `control` のラベルも付く）。grpcio と grpcio-tools のある Python があれば、`control_server.python_client` が Python のクライアントと CLI を `vehicle_sil_launch run --control` と `vehicle_sil_control_server` に対して動かし、`control_server.multi_process` が registry、`vehicle_sil_control_server`、`examples/ecu_main` の 2 つの ECU を別プロセスで動かし、`control_server.launcher` が `vehicle_sil_launch run --control` と `examples/ecu_main` の ECU を動かし（始まる前の書き込み、2 つの口の命令、終わり方、認証）、`control_server.example_write_before_start` と `control_server.example_pause_and_step` が `examples/launch_control` を動かす（どれも `control` と `python` のラベル。`multi_process` と `launcher` には `integration` も、例には `examples` も付く） |
-| `fetchcontent` | 既定では無効。このリポジトリのコミットを FetchContent で取り込み、利用例をビルドして実行する |
+| `fetchcontent` | 既定では無効。このリポジトリのコミットを FetchContent で取り込み、利用例をビルドして実行する。`fetchcontent.template` は、ひな形を別のディレクトリに写し、いまの作業ツリーを FetchContent で取り込んでビルドし、照合と実行とシナリオを通す |
 
 各プロセスのログは `build/<preset>/tests/` の下の `integration/<シナリオ>/`、`virtual_time/<シナリオ>/`、`lin_cluster/<シナリオ>/`、`vector_xl/integration/<シナリオ>/` に残ります。失敗したときは、ランチャーがすべてのログを出力します。
 
@@ -426,6 +446,8 @@ add_executable(example main.cpp)
 target_link_libraries(example PRIVATE vehicle_sil::simulation vehicle_sil::j1939_periodic_sender)   # core だけなら vehicle_sil::core
 vehicle_sil_copy_runtime_dlls(example)   # Windows: SilKit.dll をコピーする（ほかの OS では何もしない）
 ```
+
+新しく始めるときは、これを書いたひな形 [template/](template/) を写すのが早道です（「[取得とビルド](#取得とビルド)」）。
 
 SIL Kit は、vehicle-sil のサブモジュールとして自動で取得・設定されます。利用側で個別に設定する必要はありません。SIL Kit には、ビルドツリーにコピーしたソースに `patches/sil-kit/` のパッチを当てたものを使います（[docs/dependencies.md](docs/dependencies.md)）。パッチの適用に Git を使います。リンクしないライブラリはビルドされません。完全な例は [examples/fetchcontent_consumer](examples/fetchcontent_consumer) にあります。
 
@@ -461,6 +483,16 @@ int main() {
 
 受信、Request と応答、受信の監視、試験の書き方は [docs/j1939-guide.md](docs/j1939-guide.md) にあります。
 
+### 1 つの実行ファイルにする（`VEHICLE_SIL_STATIC`）
+
+ECU の実行ファイルを、ほかのファイルなしで配りたいときは、`-DVEHICLE_SIL_STATIC=ON` で構成します（既定は OFF）。SIL Kit を静的なライブラリとして作り、SIL Kit をリンクする実行ファイルに C++ の実行時ライブラリも静的にリンクします。
+
+- Linux: `libSilKit.so`、`libstdc++`、`libgcc_s` が要らなくなります。glibc は共有のままです（静的にした glibc のプログラムは、名前の解決などのモジュールを読み込めず、かえって動く環境を選ぶため）。ビルドには静的な libstdc++（Fedora は `libstdc++-static`、Debian と Ubuntu は `libstdc++-<版>-dev` に入っている）が要ります。
+- Windows（MinGW）: `-static` でリンクし、`SilKit.dll`、`libstdc++-6.dll`、`libgcc_s_seh-1.dll`、`libwinpthread-1.dll` が要らなくなります。`vehicle_sil_copy_runtime_dlls()` は、写す DLL がないので何もしません。
+- FetchContent で取り込む側でも同じです（configure に `-DVEHICLE_SIL_STATIC=ON` を渡すか、`FetchContent_MakeAvailable` の前に `set(VEHICLE_SIL_STATIC ON)`）。ひな形では `cmake --preset linux -DVEHICLE_SIL_STATIC=ON` です。
+- 実行ファイルは、SIL Kit の分だけ大きくなります。
+- 配るときは、実行ファイルの中に入ったもののライセンスの表示を添えます。何を添えるかは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) の「Distributing executables built with `VEHICLE_SIL_STATIC`」にあります。
+
 信号を YAML で定義して型付きメッセージにするときは、`vehicle_sil_add_j1939_codec(<target> <定義.yaml>)` を呼び、`<target>` をリンクします（Python 3.11 以上と PyYAML が要ります。[docs/j1939-codec.md](docs/j1939-codec.md)）。
 
 ## 既知の制限
@@ -485,7 +517,7 @@ int main() {
 
 ## ライセンス
 
-vehicle-sil は MIT License で公開しています（[LICENSE](LICENSE)）。
+vehicle-sil は MIT License で公開しています（[LICENSE](LICENSE)）。ECU のプロジェクトのひな形 `template/` のファイルだけは MIT-0（MIT No Attribution、[template/LICENSE](template/LICENSE)）で、写して作ったプロジェクトに表示を残す必要はありません。
 
 依存ライブラリのライセンスは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
 

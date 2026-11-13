@@ -15,7 +15,7 @@ const char* role_name(LinRole role) noexcept
     return role == LinRole::Master ? "master" : "slave";
 }
 
-std::string quoted(std::string_view name)
+std::string in_quotes(std::string_view name)
 {
     return "\"" + std::string(name) + "\"";
 }
@@ -29,7 +29,7 @@ public:
     {
         if (bus_.delivering_ != nullptr)
         {
-            throw std::logic_error(std::string(kWho) + call + " of the endpoint " + quoted(sender.name()) +
+            throw std::logic_error(std::string(kWho) + call + " of the endpoint " + in_quotes(sender.name()) +
                                    " while the bus delivers " + bus_.delivering_ +
                                    ": a listener or an observer must not send; send from the node's step instead");
         }
@@ -55,7 +55,7 @@ void VirtualLinBus::Endpoint::require_role(LinRole role, const char* call) const
     if (role_ != role)
     {
         throw std::logic_error(std::string(kWho) + call + " is a function of a " + role_name(role) + ", and the endpoint " +
-                               quoted(name_) + " is a " + role_name(role_) + "; attach a " + role_name(role) +
+                               in_quotes(name_) + " is a " + role_name(role_) + "; attach a " + role_name(role) +
                                " endpoint for it");
     }
 }
@@ -64,7 +64,7 @@ void VirtualLinBus::Endpoint::require_frame(LinId id, std::size_t data_length, c
 {
     if (!valid_lin_frame(id, data_length))
     {
-        throw std::invalid_argument(std::string(kWho) + call + " of the master " + quoted(name_) + " with id " +
+        throw std::invalid_argument(std::string(kWho) + call + " of the master " + in_quotes(name_) + " with id " +
                                     std::to_string(id) + " and " + std::to_string(data_length) +
                                     " bytes: a LIN id is 0..63 and a frame has 1..8 bytes");
     }
@@ -105,13 +105,13 @@ VirtualLinBus::Endpoint& VirtualLinBus::attach(LinRole role, std::string name)
 {
     if (delivering_ != nullptr)
     {
-        throw std::logic_error(std::string(kWho) + "attach(" + quoted(name) + ") while the bus delivers " + delivering_ +
+        throw std::logic_error(std::string(kWho) + "attach(" + in_quotes(name) + ") while the bus delivers " + delivering_ +
                                "; attach the endpoints before the run");
     }
     if (role == LinRole::Master && master_ != nullptr)
     {
-        throw std::logic_error(std::string(kWho) + "attach(master, " + quoted(name) + "): the bus has a master, " +
-                               quoted(master_->name()) + "; a LIN bus has one master, make " + quoted(name) +
+        throw std::logic_error(std::string(kWho) + "attach(master, " + in_quotes(name) + "): the bus has a master, " +
+                               in_quotes(master_->name()) + "; a LIN bus has one master, make " + in_quotes(name) +
                                " a slave or put it on another bus");
     }
     endpoints_.reserve(endpoints_.size() + 1);
@@ -169,12 +169,12 @@ void VirtualLinBus::accept_response(const Endpoint& slave, SimTime header_time, 
 {
     if (responding_ != &slave)
     {
-        throw std::logic_error(std::string(kWho) + "respond() of the slave " + quoted(slave.name()) +
+        throw std::logic_error(std::string(kWho) + "respond() of the slave " + in_quotes(slave.name()) +
                                " outside its on_header(): a slave answers a header only from inside on_header()");
     }
     if (header_time != header_time_ || frame.id != header_id_)
     {
-        throw std::invalid_argument(std::string(kWho) + "respond() of the slave " + quoted(slave.name()) + " with id " +
+        throw std::invalid_argument(std::string(kWho) + "respond() of the slave " + in_quotes(slave.name()) + " with id " +
                                     std::to_string(frame.id) + " at " +
                                     std::to_string(header_time.time_since_epoch().count()) + " ns to the header of id " +
                                     std::to_string(header_id_) + " at " +
@@ -183,7 +183,7 @@ void VirtualLinBus::accept_response(const Endpoint& slave, SimTime header_time, 
     }
     if (!valid_lin_frame(frame.id, frame.data_length))
     {
-        throw std::invalid_argument(std::string(kWho) + "respond() of the slave " + quoted(slave.name()) + " to id " +
+        throw std::invalid_argument(std::string(kWho) + "respond() of the slave " + in_quotes(slave.name()) + " to id " +
                                     std::to_string(frame.id) + " with " + std::to_string(frame.data_length) +
                                     " bytes: a response has 1..8 bytes");
     }
@@ -191,7 +191,7 @@ void VirtualLinBus::accept_response(const Endpoint& slave, SimTime header_time, 
     {
         if (response.slave == &slave)
         {
-            throw std::logic_error(std::string(kWho) + "respond() of the slave " + quoted(slave.name()) +
+            throw std::logic_error(std::string(kWho) + "respond() of the slave " + in_quotes(slave.name()) +
                                    " a second time to the header of id " + std::to_string(header_id_) +
                                    ": a slave answers a header once; call respond() once per on_header()");
         }

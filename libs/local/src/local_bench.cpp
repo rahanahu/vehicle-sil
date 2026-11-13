@@ -12,7 +12,7 @@ namespace vehicle_sil {
 namespace {
 constexpr const char* kWho = "vehicle_sil::LocalBench: ";
 
-std::string quoted(std::string_view name) { return "\"" + std::string(name) + "\""; }
+std::string in_quotes(std::string_view name) { return "\"" + std::string(name) + "\""; }
 
 /// The port a LIN node of an ECU is made on. It reaches its bus endpoint only once the node
 /// exists (bind()), so a node whose constructor throws leaves nothing on the bus.
@@ -116,7 +116,7 @@ class LocalBench::Site final : public Ecu
 public:
     Site(LocalBench& owner, std::string ecuName, SimDuration stepSize) :
       // No wakeup: the calling thread runs the steps, in virtual time.
-      agent_(std::string(kWho) + "ECU " + quoted(ecuName) + ": ", [](control::Agent& agent) { agent.bind_driver(); }),
+      agent_(std::string(kWho) + "ECU " + in_quotes(ecuName) + ": ", [](control::Agent& agent) { agent.bind_driver(); }),
       owner_(owner),
       name_(std::move(ecuName)),
       step_(stepSize),
@@ -235,11 +235,11 @@ public:
                 return *c;
             }
         }
-        std::string message = std::string(kWho) + "the ECU " + quoted(name_) + " has no network named " +
-                              quoted(network) + ". Its networks: " + network_list();
+        std::string message = std::string(kWho) + "the ECU " + in_quotes(name_) + " has no network named " +
+                              in_quotes(network) + ". Its networks: " + network_list();
         if (has_raw_channel(network))
         {
-            message += " (" + quoted(network) + " is a raw CAN channel of it: raw_channel(ecu, network))";
+            message += " (" + in_quotes(network) + " is a raw CAN channel of it: raw_channel(ecu, network))";
         }
         throw std::out_of_range(message);
     }
@@ -253,11 +253,11 @@ public:
                 return *r->channel;
             }
         }
-        std::string message = std::string(kWho) + "the ECU " + quoted(name_) + " has no raw CAN channel named " +
-                              quoted(network) + ". Its raw CAN channels: " + raw_channel_list();
+        std::string message = std::string(kWho) + "the ECU " + in_quotes(name_) + " has no raw CAN channel named " +
+                              in_quotes(network) + ". Its raw CAN channels: " + raw_channel_list();
         if (has_network(network))
         {
-            message += " (" + quoted(network) + " is a J1939 network of it: network(ecu, network))";
+            message += " (" + in_quotes(network) + " is a J1939 network of it: network(ecu, network))";
         }
         throw std::out_of_range(message);
     }
@@ -269,14 +269,14 @@ public:
         {
             return *channels_.front();
         }
-        std::string message = std::string(kWho) + std::string(call) + "(" + quoted(name_) + "): the ECU " + quoted(name_);
+        std::string message = std::string(kWho) + std::string(call) + "(" + in_quotes(name_) + "): the ECU " + in_quotes(name_);
         if (channels_.empty())
         {
             message += " has no J1939 network";
             if (!raw_channels_.empty())
             {
                 message += " (raw CAN channels are not J1939 networks: look its raw CAN channels " + raw_channel_list() +
-                           " up with raw_channel(" + quoted(name_) + ", network))";
+                           " up with raw_channel(" + in_quotes(name_) + ", network))";
             }
             else
             {
@@ -286,8 +286,8 @@ public:
         else
         {
             message += " has " + std::to_string(channels_.size()) + " J1939 networks (" + network_list() +
-                       "): name the network, e.g. " + std::string(call) + "(" + quoted(name_) + ", " +
-                       quoted(channels_.front()->bus->name) + ")";
+                       "): name the network, e.g. " + std::string(call) + "(" + in_quotes(name_) + ", " +
+                       in_quotes(channels_.front()->bus->name) + ")";
         }
         throw std::logic_error(message);
     }
@@ -305,10 +305,10 @@ public:
         std::string nodes;
         for (const auto& node : lin_nodes_)
         {
-            nodes += (nodes.empty() ? "" : ", ") + quoted(node->network) + (node->master ? " (master)" : " (slave)");
+            nodes += (nodes.empty() ? "" : ", ") + in_quotes(node->network) + (node->master ? " (master)" : " (slave)");
         }
-        throw std::out_of_range(std::string(kWho) + "the ECU " + quoted(name_) + " has no LIN " +
-                                (role == lin::LinRole::Master ? "master" : "slave") + " on " + quoted(network) +
+        throw std::out_of_range(std::string(kWho) + "the ECU " + in_quotes(name_) + " has no LIN " +
+                                (role == lin::LinRole::Master ? "master" : "slave") + " on " + in_quotes(network) +
                                 ". Its LIN nodes: " + (nodes.empty() ? "none" : nodes));
     }
 
@@ -331,19 +331,19 @@ public:
                 if (c->bus == existing && existing->name.empty())
                 {
                     throw std::invalid_argument(
-                        std::string(kWho) + what + ": the ECU " + quoted(name_) +
+                        std::string(kWho) + what + ": the ECU " + in_quotes(name_) +
                         " already has a network on the only bus, which has no name yet (it was added with "
                         "add_j1939()), and " +
                         what +
                         " would name that bus and give the ECU a second network on it. To name the bus, add the ECU "
                         "with add_ecu(" +
-                        quoted(name_) + ", step).j1939(" + quoted(network) + ") instead of add_j1939(), or name the "
-                        "bus with another ECU's j1939(" + quoted(network) + ")");
+                        in_quotes(name_) + ", step).j1939(" + in_quotes(network) + ") instead of add_j1939(), or name the "
+                        "bus with another ECU's j1939(" + in_quotes(network) + ")");
                 }
                 if (c->bus == existing)
                 {
-                    throw std::invalid_argument(std::string(kWho) + what + ": the ECU " + quoted(name_) +
-                                                " already has a network named " + quoted(network));
+                    throw std::invalid_argument(std::string(kWho) + what + ": the ECU " + in_quotes(name_) +
+                                                " already has a network named " + in_quotes(network));
                 }
             }
             if (existing == nullptr)
@@ -373,7 +373,7 @@ private:
         std::string out;
         for (const auto& c : channels_)
         {
-            out += (out.empty() ? "" : ", ") + quoted(c->bus->name);
+            out += (out.empty() ? "" : ", ") + in_quotes(c->bus->name);
         }
         return out.empty() ? "none" : out;
     }
@@ -384,7 +384,7 @@ private:
         std::string out;
         for (const auto& r : raw_channels_)
         {
-            out += (out.empty() ? "" : ", ") + quoted(r->bus->name);
+            out += (out.empty() ? "" : ", ") + in_quotes(r->bus->name);
         }
         return out.empty() ? "none" : out;
     }
@@ -414,8 +414,8 @@ private:
         {
             if (r->bus == existing)
             {
-                throw std::invalid_argument(std::string(kWho) + "can(" + quoted(network) + "): the ECU " + quoted(name_) +
-                                            " already has a raw CAN channel named " + quoted(network));
+                throw std::invalid_argument(std::string(kWho) + "can(" + in_quotes(network) + "): the ECU " + in_quotes(name_) +
+                                            " already has a raw CAN channel named " + in_quotes(network));
             }
         }
         if (existing == nullptr)
@@ -460,13 +460,13 @@ private:
     std::unique_ptr<LinNode> new_lin_node(const std::string& network, const std::string& call)
     {
         require_not_started((call + "()").c_str());
-        const std::string what = call + "(" + quoted(network) + ")";
+        const std::string what = call + "(" + in_quotes(network) + ")";
         for (const auto& node : lin_nodes_)
         {
             if (node->network == network)
             {
-                throw std::invalid_argument(std::string(kWho) + what + ": the ECU " + quoted(name_) +
-                                            " has a LIN node on " + quoted(network) +
+                throw std::invalid_argument(std::string(kWho) + what + ": the ECU " + in_quotes(name_) +
+                                            " has a LIN node on " + in_quotes(network) +
                                             " already; an ECU has one LIN node per LIN bus");
             }
         }
@@ -506,7 +506,7 @@ private:
     {
         if (owner_.started_)
         {
-            throw std::logic_error(std::string(kWho) + "ECU " + quoted(name_) + ": " + what
+            throw std::logic_error(std::string(kWho) + "ECU " + in_quotes(name_) + ": " + what
                                    + " after the first run (set the ECU up before the run)");
         }
     }
@@ -554,7 +554,7 @@ std::string LocalBench::lin_bus_list() const
     std::string out;
     for (const auto& b : lin_buses_)
     {
-        out += (out.empty() ? "" : ", ") + quoted(b->name);
+        out += (out.empty() ? "" : ", ") + in_quotes(b->name);
     }
     return out.empty() ? "none" : out;
 }
@@ -588,8 +588,8 @@ void LocalBench::require_can_name(std::string_view network, std::string_view ecu
 {
     if (find_lin_bus(network) != nullptr)
     {
-        throw std::invalid_argument(std::string(kWho) + std::string(what) + " of the ECU " + quoted(ecu) + ": " +
-                                    quoted(network) +
+        throw std::invalid_argument(std::string(kWho) + std::string(what) + " of the ECU " + in_quotes(ecu) + ": " +
+                                    in_quotes(network) +
                                     " is a LIN bus (made by lin_master() or lin_slave()); a CAN bus needs a name of "
                                     "its own");
     }
@@ -601,8 +601,8 @@ void LocalBench::require_lin_name(std::string_view network, std::string_view ecu
     {
         if (!b->name.empty() && b->name == network)
         {
-            throw std::invalid_argument(std::string(kWho) + std::string(what) + " of the ECU " + quoted(ecu) + ": " +
-                                        quoted(network) +
+            throw std::invalid_argument(std::string(kWho) + std::string(what) + " of the ECU " + in_quotes(ecu) + ": " +
+                                        in_quotes(network) +
                                         " is a CAN bus (made by j1939() or can()); a LIN bus needs a name of its own");
         }
     }
@@ -732,7 +732,7 @@ Ecu& LocalBench::add_ecu(std::string name, SimDuration step)
     {
         if (s->name() == name)
         {
-            throw std::invalid_argument(std::string(kWho) + "the name " + quoted(name) + " is used");
+            throw std::invalid_argument(std::string(kWho) + "the name " + in_quotes(name) + " is used");
         }
     }
     if (step <= SimDuration::zero())
@@ -791,9 +791,9 @@ LocalBench::Site& LocalBench::site(std::string_view name) const
     std::string names;
     for (const auto& s : sites_)
     {
-        names += (names.empty() ? "" : ", ") + quoted(s->name());
+        names += (names.empty() ? "" : ", ") + in_quotes(s->name());
     }
-    throw std::out_of_range(std::string(kWho) + "no ECU named " + quoted(name) + ". ECUs: " +
+    throw std::out_of_range(std::string(kWho) + "no ECU named " + in_quotes(name) + ". ECUs: " +
                             (names.empty() ? "none (add them with add_ecu() or add_j1939())" : names));
 }
 
@@ -845,14 +845,14 @@ lin::VirtualLinBus& LocalBench::lin_bus(std::string_view network) const
     {
         return *found->bus;
     }
-    std::string message = std::string(kWho) + "lin_bus(" + quoted(network) + "): no LIN bus named " + quoted(network) +
+    std::string message = std::string(kWho) + "lin_bus(" + in_quotes(network) + "): no LIN bus named " + in_quotes(network) +
                           ". LIN buses: " + lin_bus_list() + " (an ECU's lin_master(network) or lin_slave(network) "
                           "makes one)";
     for (const auto& b : buses_)
     {
         if (!b->name.empty() && b->name == network)
         {
-            message += "; " + quoted(network) + " is a CAN bus: bus(network)";
+            message += "; " + in_quotes(network) + " is a CAN bus: bus(network)";
         }
     }
     throw std::out_of_range(message);

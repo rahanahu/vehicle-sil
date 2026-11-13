@@ -41,7 +41,12 @@ function(_vehicle_sil_add_silkit)
   set(SILKIT_INSTALL_SOURCE OFF)
   set(SILKIT_WARNINGS_AS_ERRORS OFF)
   set(SILKIT_USE_SYSTEM_LIBRARIES OFF)
-  set(SILKIT_BUILD_STATIC OFF)
+  # VEHICLE_SIL_STATIC: one executable per ECU, without libSilKit.so / SilKit.dll next to it.
+  if(VEHICLE_SIL_STATIC)
+    set(SILKIT_BUILD_STATIC ON)
+  else()
+    set(SILKIT_BUILD_STATIC OFF)
+  endif()
   # Keeps the sil-kit-registry target available; EXCLUDE_FROM_ALL means it is
   # only built when something depends on it (the integration tests do).
   set(SILKIT_BUILD_UTILITIES ON)
@@ -159,6 +164,23 @@ endfunction()
 
 if(NOT TARGET SilKit::SilKit)
   _vehicle_sil_add_silkit()
+  if(VEHICLE_SIL_STATIC)
+    # Whatever links SIL Kit (the ECU executables, the tools) also links the compiler's runtime
+    # statically, so that the executable needs no DLL or .so of the toolchain either. MinGW: -static
+    # takes libstdc++, libgcc and winpthread (and static archives of other libraries where they
+    # exist). Linux: libstdc++ and libgcc; glibc stays shared (a fully static glibc program cannot
+    # load NSS modules and is not portable either).
+    get_target_property(_vehicle_sil_silkit SilKit::SilKit ALIASED_TARGET)
+    if(NOT _vehicle_sil_silkit)
+      set(_vehicle_sil_silkit SilKit::SilKit)
+    endif()
+    if(MINGW)
+      target_link_options(${_vehicle_sil_silkit} INTERFACE -static)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
+      target_link_options(${_vehicle_sil_silkit} INTERFACE -static-libstdc++ -static-libgcc)
+    endif()
+    message(STATUS "vehicle-sil: VEHICLE_SIL_STATIC: SIL Kit static, the C++ runtime linked statically")
+  endif()
   # The public headers are attached to SilKit::SilKitInterface (SilKit/include/CMakeLists.txt).
   _vehicle_sil_mark_system_includes(SilKit::SilKit SilKit::SilKitInterface)
   # SIL Kit's YAML/JSON parser, used by vehicle_sil::can_netsim for the network simulator

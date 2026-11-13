@@ -30,6 +30,8 @@ add_subdirectory(testkit)
 add_subdirectory(ecu)
 add_subdirectory(simulation)
 add_subdirectory(launch)
+# The ECU project template (template/) and its fetch script.
+add_subdirectory(template)
 add_subdirectory(peer)
 add_subdirectory(control_silkit)
 # The J1939 stack, its parts, the typed messages and the boundary checks; uses no example.
