@@ -1,6 +1,6 @@
 # 依存ライブラリ
 
-vehicle-sil 自体を直す人（SIL Kit の固定、パッチ、上流の更新）と、gRPC や XL Driver Library を用意する人向けです。直す人は、先に [architecture.md](architecture.md) を読みます。この後に読む文書はありません。
+vehicle-sil 自体を直す人（SIL Kit の固定、パッチ、上流の更新）と、gRPC や XL Driver Library を用意する人向けです。直す人は、先に [architecture.md](architecture.md) と、変える場所の [internals/](architecture.md#中の仕組み) の文書を読みます。この後に読む文書はありません。
 
 vehicle-sil は上流ライブラリの SIL Kit を Git サブモジュールとして取り込み、特定のコミットに固定しています。SIL Kit にはパッチ（「SIL Kit へのパッチ」）を当ててビルドします。サブモジュールの作業ツリーは変更しません。J1939 のスタックは vehicle-sil 自身のもの（`vehicle_sil::j1939`）で、外部のライブラリを使いません。
 

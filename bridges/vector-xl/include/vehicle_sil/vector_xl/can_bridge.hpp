@@ -118,7 +118,7 @@ struct CanBridgeStatistics
 };
 
 /// One line "stats silkit_to_xl=N xl_to_silkit=N ..." with every counter. The key names are
-/// part of the bridge's documented output (docs/architecture.md); tests parse them.
+/// part of the bridge's documented output (docs/bridges.md); tests parse them.
 [[nodiscard]] std::string format_statistics(const CanBridgeStatistics& statistics);
 
 /// What the bridge knows about the external bus at one moment (CanBridge::health()).

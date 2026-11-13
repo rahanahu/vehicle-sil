@@ -3,7 +3,7 @@
 [Vector SIL Kit](https://github.com/vectorgrp/sil-kit) の上で、車載通信のシミュレーションピアを作るための C++20 ライブラリです。J1939 over CAN と LIN に対応しています。ピアは Windows と Linux の独立したプロセスとして動きます。
 
 > [!NOTE]
-> vehicle-sil は最初のリリースの前です。公開 API は、互換性を保たずに変わることがあります。わかっている制限は「[既知の制限](#既知の制限)」に、未実装の項目と制約の詳細は [docs/architecture.md](docs/architecture.md) にあります。
+> vehicle-sil は最初のリリースの前です。公開 API は、互換性を保たずに変わることがあります。わかっている制限は「[既知の制限](#既知の制限)」に、全体の形と設計の決まりは [docs/architecture.md](docs/architecture.md) に、契約と制約の詳細は [docs/internals/](docs/architecture.md#中の仕組み) の各文書にあります。
 
 使えるのは、vehicle-sil 自身の J1939 スタック（単一フレーム、Request と Acknowledgement、Address Claim、トランスポートプロトコル、診断、ECU アプリ向けの部品）、SIL Kit と Vector XL Driver をつなぐ CAN ブリッジ（Vector Virtual CAN と VN5620 の物理 CAN ループバックで確認済み）、LIN の Master/Slave（スケジュールテーブル、フレームの送受信、診断フレーム 0x3C/0x3D、応答の衝突の検出、Sleep/Wakeup）と、それらを同期させる共通仮想時間です。
 
@@ -13,13 +13,13 @@
 
 | 役割 | 読む順 | 読まなくてよいもの |
 |---|---|---|
-| ECU を書く人（C/C++ で 1 つの ECU を作る） | 「[取得とビルド](#取得とビルド)」の「ECU を作って動かす」（ひな形とビルド済みの道具）→ 「[最初の ECU を動かす](#最初の-ecu-を動かす)」→ [examples/getting_started](examples/getting_started) → 手引き「[最初の ECU を作る](docs/howto/first-ecu.md)」（実行ファイルにして、構成ファイルで動かし、Python から変数を読み書きするまで）→ [docs/j1939-guide.md](docs/j1939-guide.md) → [docs/j1939-codec.md](docs/j1939-codec.md) → [docs/ecu-executable.md](docs/ecu-executable.md)。LIN を使うときは「[LIN](#lin)」も | docs/simulation-config.md、docs/dependencies.md、docs/code-map.md。docs/architecture.md は、契約や制限を確かめるときに該当する節だけ |
-| まとめる人（各自の ECU の実行ファイルを 1 つのシミュレーションにする） | 「[取得とビルド](#取得とビルド)」の「ECU を作って動かす」（ビルド済みの道具）→ 手引き「[ECU をまとめて動かす](docs/howto/integrate-ecus.md)」→ [docs/ecu-executable.md](docs/ecu-executable.md) → [docs/simulation-config.md](docs/simulation-config.md) → 決まった手順で値を入れて確かめるなら手引き「[シナリオで試験を書く](docs/howto/scenario-tests.md)」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md |
+| ECU を書く人（C/C++ で 1 つの ECU を作る） | 「[取得とビルド](#取得とビルド)」の「ECU を作って動かす」（ひな形とビルド済みの道具）→ 「[最初の ECU を動かす](#最初の-ecu-を動かす)」→ [examples/getting_started](examples/getting_started) → [docs/architecture.md](docs/architecture.md)（全体の形）→ 手引き「[最初の ECU を作る](docs/howto/first-ecu.md)」（実行ファイルにして、構成ファイルで動かし、Python から変数を読み書きするまで）→ [docs/j1939-guide.md](docs/j1939-guide.md) → [docs/j1939-codec.md](docs/j1939-codec.md) → [docs/ecu-executable.md](docs/ecu-executable.md)。LIN を使うときは「[LIN](#lin)」も | docs/simulation-config.md、docs/dependencies.md、docs/code-map.md。docs/internals/ は、契約や制限を確かめるときに該当する節だけ |
+| まとめる人（各自の ECU の実行ファイルを 1 つのシミュレーションにする） | 「[取得とビルド](#取得とビルド)」の「ECU を作って動かす」（ビルド済みの道具）→ [docs/architecture.md](docs/architecture.md)（全体の形）→ 手引き「[ECU をまとめて動かす](docs/howto/integrate-ecus.md)」→ [docs/ecu-executable.md](docs/ecu-executable.md) → [docs/simulation-config.md](docs/simulation-config.md) → 決まった手順で値を入れて確かめるなら手引き「[シナリオで試験を書く](docs/howto/scenario-tests.md)」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md、docs/internals/ |
 | 試験する人（決まった手順で値を入れて確かめる、CI で回す） | 手引き「[シナリオで試験を書く](docs/howto/scenario-tests.md)」（シナリオを書き、照合して回し、終了コードと結果を読むまで）→ [docs/scenario.md](docs/scenario.md) → [docs/simulation-config.md](docs/simulation-config.md) の「引数と終了コード」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/control-api.md（シナリオは gRPC を使わない）、docs/dependencies.md、docs/code-map.md |
 | 外から操作する人（Python、CLI、試験） | 手引き「[信号を外から操作する](docs/howto/operate-signals.md)」（どの口を使うか、読む・書く・待つ、時間の操作）→ [docs/control-api.md](docs/control-api.md)（`vehicle_sil_launch run --control` で、ランチャーの Control Server につなぐ）→ [examples/launch_control](examples/launch_control) → [docs/simulation-config.md](docs/simulation-config.md) の「機械から使う」（事象と命令）。変数の名前は、`ecu_main` で作った ECU の実行ファイルなら `--describe` の `variables` で調べる（[docs/ecu-executable.md](docs/ecu-executable.md) の「JSON の形式」） | docs/j1939-guide.md、docs/j1939-codec.md、docs/dependencies.md、docs/code-map.md |
 | 自分の画面を作る人（ブラウザの GUI を、好きな枠組みで） | [docs/gui.md](docs/gui.md) の「自分の画面を作る」→ ひな形 [examples/gui_starter](examples/gui_starter) → [gui/client](gui/client/README.md)（クライアントのライブラリ）→ [gui/protocol](gui/protocol/README.md)（サーバーの口） | docs/gui.md の「サンプルの画面」（Angular の部品を写して使うときだけ）、docs/j1939-guide.md、docs/j1939-codec.md |
-| 実機の CAN につなぐ人 | 「[Vector XL CAN Bridge（Windows）](#vector-xl-can-bridgewindows)」→ [docs/architecture.md](docs/architecture.md) の「Vector XL CAN Bridge」 | docs/j1939-guide.md、docs/j1939-codec.md、docs/simulation-config.md、docs/code-map.md |
-| vehicle-sil 自体を直す人 | [AGENTS.md](AGENTS.md) → [docs/code-map.md](docs/code-map.md) → [docs/architecture.md](docs/architecture.md) → [docs/dependencies.md](docs/dependencies.md) | なし（利用者向けの文書は、変える機能のものを読む） |
+| 実機の CAN につなぐ人 | 「[Vector XL CAN Bridge（Windows）](#vector-xl-can-bridgewindows)」→ [docs/bridges.md](docs/bridges.md) | docs/j1939-guide.md、docs/j1939-codec.md、docs/simulation-config.md、docs/code-map.md |
+| vehicle-sil 自体を直す人 | [AGENTS.md](AGENTS.md) → [docs/code-map.md](docs/code-map.md) → [docs/architecture.md](docs/architecture.md) → [docs/dependencies.md](docs/dependencies.md) → 変える場所の [docs/internals/](docs/architecture.md#中の仕組み) の文書 | なし（利用者向けの文書は、変える機能のものを読む） |
 
 ## ライブラリ
 
@@ -69,10 +69,12 @@
 | `examples/fetchcontent_consumer` | 外部 CMake プロジェクトからの利用例 |
 | `template/` | ECU のプロジェクトのひな形（2 つの ECU、構成ファイル、シナリオ、ダッシュボード、ビルド済みの道具を取ってくる `get_tools.py`）。リリースでは `vehicle-sil-template-<版>.zip` |
 | `tools/` | `vehicle_sil_sim_controller`（仮想時間のシミュレーションの開始と停止）、`vehicle_sil_launch`（構成ファイルの照合と、シミュレーション全体の実行）と、実行ファイル共通のコマンドライン処理（内部用） |
+| `gui/` | ブラウザの GUI: GUI サーバー（`gui/server`、Python の `vehicle-sil-gui`）、その HTTP と WebSocket の口の契約（`gui/protocol`）、クライアントのライブラリ（`gui/client`、TypeScript）、サンプルの画面（`gui/web`、Angular）。[docs/gui.md](docs/gui.md) |
+| `scripts/` | 開発と CI のスクリプト（`verify.py`、`package.py` など。[AGENTS.md](AGENTS.md) の「検証とスクリプト」） |
 | `tests/` | ユニットテスト、複数プロセスの統合テスト、FetchContent テスト |
 | `external/` | SIL Kit（Git サブモジュール、コミット固定） |
 | `patches/` | SIL Kit に当てるパッチ（上流への提出用の形式） |
-| `docs/` | 目的別の手引き（[最初の ECU を作る](docs/howto/first-ecu.md)、[ECU をまとめて動かす](docs/howto/integrate-ecus.md)、[シナリオで試験を書く](docs/howto/scenario-tests.md)、[信号を外から操作する](docs/howto/operate-signals.md)）、[J1939 のノードの作り方](docs/j1939-guide.md)、[J1939 の型付きメッセージ](docs/j1939-codec.md)、[Control API の使い方](docs/control-api.md)、[ECU の実行ファイル](docs/ecu-executable.md)、[構成ファイルと照合](docs/simulation-config.md)、[シナリオ](docs/scenario.md)、[アーキテクチャと将来の制約](docs/architecture.md)、[依存ライブラリ](docs/dependencies.md)、[コードの地図](docs/code-map.md) |
+| `docs/` | 目的別の手引き（[最初の ECU を作る](docs/howto/first-ecu.md)、[ECU をまとめて動かす](docs/howto/integrate-ecus.md)、[シナリオで試験を書く](docs/howto/scenario-tests.md)、[信号を外から操作する](docs/howto/operate-signals.md)）、[J1939 のノードの作り方](docs/j1939-guide.md)、[J1939 の型付きメッセージ](docs/j1939-codec.md)、[Control API の使い方](docs/control-api.md)、[ECU の実行ファイル](docs/ecu-executable.md)、[構成ファイルと照合](docs/simulation-config.md)、[シナリオ](docs/scenario.md)、[アーキテクチャ](docs/architecture.md)（全体の形と設計の決まり。中の仕組みは `docs/internals/`）、[Vector XL CAN Bridge](docs/bridges.md)、[依存ライブラリ](docs/dependencies.md)、[コードの地図](docs/code-map.md) |
 
 ## 必要なもの
 
@@ -287,7 +289,7 @@ peer.start(std::chrono::seconds(30));
 peer.wait(std::chrono::minutes(10));
 ```
 
-受信の扱い、J1939 と LIN の決定論性、LIN のステップ幅の制約は [docs/architecture.md](docs/architecture.md) の「共通仮想時間」を参照してください。`Peer` を使わずに `ParticipantRuntime` のステップハンドラで回すこともできます（`bind_host()`、LIN の例 `examples/lin`）。
+受信の扱い、J1939 と LIN の決定論性、LIN のステップ幅の制約は [docs/internals/virtual-time.md](docs/internals/virtual-time.md) と [docs/internals/lin.md](docs/internals/lin.md) を参照してください。`Peer` を使わずに `ParticipantRuntime` のステップハンドラで回すこともできます（`bind_host()`、LIN の例 `examples/lin`）。
 
 ## CAN バスの調停と送信時間を模擬する
 
@@ -309,7 +311,7 @@ $B/tools/sim_controller/vehicle_sil_sim_controller --registry-uri $URI --require
 - 設定ファイルとコマンドラインは、Vector SIL Kit Network Simulator と同じ形にしています。実行ファイルを Vector のもの（CANoe のライセンスが必要）に替えて動かすことは、まだ確かめていません。模擬するのは CAN のネットワークだけで、スタッフビット、エラー、CAN FD は扱いません。
 - 受信のフレームの時刻は送信の終わりになり、同じ時刻に送ったフレームは CAN ID の順に届きます（同じコントローラーのフレームは送った順）。結果は送信時刻とシミュレーターのステップ幅だけで決まります。
 - `SilKitCanPort` を使うピアでは、`SilKitCanPortOptions::transmit_queue_capacity` を `--transmit-queue`（既定 64）以下にしてください。シミュレーターの送信キューがあふれると、フレームは送られません。
-- 規則、決定論の前提、制限は [docs/architecture.md](docs/architecture.md) の「バスのタイミング」と「簡易 CAN Network Simulator」にあります。
+- 規則、決定論の前提、制限は [docs/internals/can.md](docs/internals/can.md) の「バスのタイミング」と「簡易 CAN Network Simulator」にあります。
 
 ## LIN
 
@@ -362,7 +364,7 @@ private:
 
 `Peer` を使わずに組み立てるときは、SIL Kit の LIN コントローラの上に `vehicle_sil::lin::SilKitLinPort`（`vehicle_sil::lin_silkit`）を作り、`LinMaster(port, schedule, step)` と `LinSlave(port, options)` を自分のステップハンドラで回します（`examples/lin`）。
 
-スケジュール、フレームの送受信、診断フレーム（0x3C、0x3D）、Sleep/Wakeup の規則と制約は、[docs/architecture.md](docs/architecture.md) の「LIN を仮想時間で動かす」を参照してください。
+スケジュール、フレームの送受信、診断フレーム（0x3C、0x3D）、Sleep/Wakeup の規則と制約は、[docs/internals/lin.md](docs/internals/lin.md) を参照してください。
 
 ## Vector XL CAN Bridge（Windows）
 
@@ -408,7 +410,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
   - 3: 起動の失敗（XL ドライバ、チャネル、SIL Kit）
   - 4: 引数の誤り
 
-詳しくは [docs/architecture.md](docs/architecture.md) の「Vector XL CAN Bridge」を参照してください。転送ループの防止と、同じバスに 2 つのブリッジをつなげない制約も説明しています。
+詳しくは [docs/bridges.md](docs/bridges.md) を参照してください。転送ループの防止と、同じバスに 2 つのブリッジをつなげない制約も説明しています。
 
 ## テスト
 
@@ -516,7 +518,7 @@ ECU の実行ファイルを、ほかのファイルなしで配りたいとき�
 - SIL Kit で動かすとき、LIN の Slave は、応答するフレームのスロット長より短いステップ幅で動かす必要があります。LIN の dynamic response など、SIL Kit の experimental API を使っています。
 - LIN の Slave が受信できるのは、Master が送るフレームだけです。ほかの Slave の応答（slave-to-slave）は、仮想 LIN バスでは渡されず、SIL Kit では購読した ID なら渡されますが、受け取るステップと時刻は決定論的ではありません。
 - 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。
-- J1939 スタックに ETP（1785 バイトを超えるメッセージ）はありません。制限と規格との一致を確かめていない点は [docs/architecture.md](docs/architecture.md) の「J1939 の既知の制限」と「J1939」の各節にあります。
+- J1939 スタックに ETP（1785 バイトを超えるメッセージ）はありません。制限と規格との一致を確かめていない点は [docs/internals/j1939.md](docs/internals/j1939.md) の「J1939 の既知の制限」と各節にあります。
 - 仮想 LIN バスには、故障注入と記録の道具がありません。LIN は仮想時間だけで動きます（実時間の `Peer` では `std::logic_error`）。
 - `LocalBench`（`vehicle_sil::local`）と `vehicle_sil::testkit` の API は固まっていません。
 - 対応するのはクラシック CAN（8 バイト以下）だけです。RTR、CAN FD、CAN XL のフレームは、受信時に捨てて件数を数えます。

@@ -23,7 +23,7 @@ namespace vehicle_sil::can {
 ///   releases before `now`, then process(), then (after the application ran) flush(port).
 /// The implementation has no threads and reads no clock: `now` is its only notion of time. It
 /// is called from one thread at a time (the driver's). The contract is described in
-/// docs/architecture.md ("Steppable の契約").
+/// docs/internals/can.md ("Steppable の契約").
 class Steppable
 {
 public:

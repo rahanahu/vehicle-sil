@@ -3,7 +3,7 @@
 // The vehicle-sil Control API, version 1 (under development: messages may still change).
 //
 // Times are simulation times in nanoseconds since the start of the simulation (T = 0).
-// The contract of the operations is described in docs/architecture.md ("Control Agent" and
+// The contract of the operations is described in docs/internals/control.md ("Control Agent" and
 // "Control Server の中核").
 syntax = "proto3";
 

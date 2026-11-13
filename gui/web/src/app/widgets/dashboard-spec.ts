@@ -116,7 +116,7 @@ const UNKNOWN_BUILTIN: BuiltinLookup = () => null;
 /**
  * アプリが宣言した変数でない（vehicle-sil が付けた、監視の）変数か。見分け方はここ 1 か所だけ。
  * 照合の結果の `builtin` がわかればそれで決める。わからなければ、名前の前置きで分ける（`ecu.` と `peer.` は
- * 予約された名前、`j1939.<ネットワーク>.` は J1939 の統計とノード: docs/architecture.md の「Peer の監視」）。
+ * 予約された名前、`j1939.<ネットワーク>.` は J1939 の統計とノード: docs/internals/control.md の「Peer の監視」）。
  * 実行中に足される監視の変数（`peer.`、`j1939.`）は照合の結果にないので、前置きで分かれる。
  */
 export function isMonitoring(name: string, builtin: boolean | null = null): boolean {

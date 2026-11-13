@@ -111,7 +111,7 @@ python examples/launch_control/write_before_start.py \
 ```
 
 - `c.wait(seq)` は、どの宛先も結果が決まるまで待ちます。`target(<participant>)` で宛先ごとの結果を読みます。
-- `status` の主なもの: `queued`（ECU が受け取った）、`applied`（入った。`applied_at` は入ったステップの時刻）、`late`（指定の時刻のステップに間に合わなかった）、`invalid`（名前、型、範囲、書けるかの検査で断った。つながっていない宛先も）、`rejected`（ECU の setter が断った）、`unknown`（入ったかわからない）。意味の正本は [architecture.md](../architecture.md) の「Control Agent」と「Control Server の中核」です。
+- `status` の主なもの: `queued`（ECU が受け取った）、`applied`（入った。`applied_at` は入ったステップの時刻）、`late`（指定の時刻のステップに間に合わなかった）、`invalid`（名前、型、範囲、書けるかの検査で断った。つながっていない宛先も）、`rejected`（ECU の setter が断った）、`unknown`（入ったかわからない）。意味の正本は [internals/control.md](../internals/control.md) の「Control Agent」と「Control Server の中核」です。
 - 断られた書き込みは例外になりません。`status` を確かめます。例外（`ControlError`）になるのは、呼び出しそのものの失敗です。
 - `write()` は自動では送り直しません。応答の前に接続が切れた書き込みは、受け付けられているかもしれません。
 
