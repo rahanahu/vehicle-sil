@@ -1,8 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input, linkedSignal } from '@angular/core';
 import { MatSliderModule } from '@angular/material/slider';
-import { VariableRef } from '@vehicle-sil/gui-client';
+import { VariableRef, WriteBlock } from '@vehicle-sil/gui-client';
 import { bindVariable } from './variable-binding';
-import { WriteBlock } from './variable-state';
 
 type WriteBlockKey = WriteBlock | null;
 import { VariableFrame } from './variable-frame';

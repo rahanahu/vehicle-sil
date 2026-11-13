@@ -1,6 +1,7 @@
 import { HttpError, HttpTransport, errorMessage } from './http';
 import { Open } from './protocol';
 import { ErrorSink, Readable, Writable, rethrowLater } from './values';
+import type { BindOptions, VariableBinding } from './variable-binding';
 
 /** 変数の値: 実数と整数と列挙は数、bool は真偽。有限でない実数（NaN、無限大）は null。 */
 export type VariableValue = number | boolean | null;
@@ -219,6 +220,13 @@ export interface ClientVariables {
     writes: Record<string, Record<string, number | boolean | string>>,
     options?: WriteOptions,
   ): Promise<OperationView>;
+  /**
+   * 変数 1 つと、画面の部品 1 つをつなぐ: 値の状態（古い、まだない、止まっている時刻の値、など）、書けるかどうかと
+   * 理由、書き込みの様子を 1 つの読める値（state）で出し、write(value) で書く。スライダー、スイッチ、ランプのような
+   * 部品は、これだけで作れる。同じ変数を何か所で bind しても、書き込みは変数ごと・実行ごとに 1 つにまとまる
+   * （重ねて送らない、どこからも同じ様子が見える、bind を作り直しても様子は残る）。使い終わったら close() する。
+   */
+  bind(ref: VariableRef, options?: BindOptions): VariableBinding;
 }
 
 /** 書き込みの結果を待つ時間の既定（ミリ秒）。 */
@@ -523,7 +531,7 @@ export interface VariablesLink {
  * - 書き込みの結果は、`operation` の通知で届く。HTTP の答え（操作の番号）より先に届くこともあるので、最近の操作を
  *   覚えておいて、番号がわかったところで照らす。
  */
-export class VariablesFeed implements ClientVariables {
+export class VariablesFeed implements Omit<ClientVariables, 'bind'> {
   private readonly stateValue: Writable<VariablesState>;
   private readonly operationsValue: Writable<readonly OperationView[]>;
   private readonly handles = new Set<Handle>();

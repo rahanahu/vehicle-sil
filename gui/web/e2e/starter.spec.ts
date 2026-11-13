@@ -34,7 +34,8 @@ test.beforeAll(async () => {
   server = await launchGuiServer({
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
-    env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: CONTROL_FEATURES },
+    // more: スライダーとランプに合う変数（範囲のある engine.demand、それが 50 を超えると真の engine.warning）
+    env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: CONTROL_FEATURES, REPLAY_VARIABLES: 'more' },
     port: GUI_PORT + 500,
     web: screen,
   });
@@ -68,7 +69,30 @@ test('the starter screen checks, runs, shows a variable and writes it', async ({
   await expect(page.getByTestId('write-result')).toHaveText(/^applied at \d+ ms$/);
   await expect(page.getByTestId('value')).toHaveText(/^40 % \(at \d+ ms\)$/);
 
-  await page.getByTestId('stop').click();
+  // スライダーとランプ（client.variables.bind）: 値、書き込みの様子、書けない理由
+  await expect(page.getByTestId('slider-name')).toHaveText('Engine.engine.demand');
+  await expect(page.getByTestId('lamp-name')).toHaveText('Engine.engine.warning');
+  await expect(page.getByTestId('slider-value')).toHaveText('40 %');
+  await expect(page.getByTestId('slider')).toHaveValue('40');
+  await expect(page.getByTestId('lamp')).toHaveText('off');
+  await page.getByTestId('slider').fill('80');
+  await expect(page.getByTestId('slider-write')).toHaveText('applied');
+  await expect(page.getByTestId('slider-value')).toHaveText('80 %');
+  await expect(page.getByTestId('lamp')).toHaveText('on');
+  await expect(page.getByTestId('lamp')).toHaveAttribute('data-on', 'true');
+
+  // つまみを動かしている途中で実行が終わる: 離しても書かず、つまみは読んだ値へ戻る
+  const box = (await page.getByTestId('slider').boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2, { steps: 5 });
+  await expect(page.getByTestId('slider')).not.toHaveValue('80');
+  await page.getByTestId('stop').evaluate((button: HTMLButtonElement) => button.click());
   await expect(page.getByTestId('result')).not.toHaveText('-');
+  await expect(page.getByTestId('slider')).toBeDisabled();
+  await page.mouse.up();
+  await expect(page.getByTestId('slider-value')).toHaveText('80 %');
+  await expect(page.getByTestId('slider')).toHaveValue('80');
+  await expect(page.getByTestId('slider-why')).toHaveText('(cannot write: ended)');
   expect(errors).toEqual([]);
 });

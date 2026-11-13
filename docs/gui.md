@@ -94,6 +94,21 @@ flowchart LR
 - **1 つにまとめたファイル**: `gui/web` で `npm run build:client` を実行すると、`build/gui-client/vehicle-sil-gui-client.mjs` ができます。画面のディレクトリに置いて、相対のパスで import します（ブラウザでも Node 22 以上でも読めます）。
 - 公開している口は [gui/client/README.md](../gui/client/README.md) の一覧です。
 
+### 変数の部品を作る
+
+スライダー、スイッチ、ランプのように、変数 1 つを描いて書く部品の「裏の動き」は、ライブラリの `client.variables.bind(ref, options)` が持っています。枠組みに依らないので、自分の画面の部品は、返る `state`（読める値）を描き、`write(value)` を呼ぶだけで作れます。
+
+| `state` の欄 | 中身 |
+|---|---|
+| `info`、`reading` | 変数の定義と、最後の値（いつの値かつき） |
+| `condition` | 値の状態: まだない、この実行にない、動いている途中の値、止まっている時刻の値、古い（理由つき）、終わった実行の最後の値、変数の機能が使えない |
+| `block` | いま書けない理由（書けるなら `null`）: 読むだけ、接続が切れた、実行がない・終わった、ECU が切れた、最初のステップの後のパラメーター、シナリオの実行中、範囲や値がない |
+| `writeStatus`、`pending` | 最後の書き込みの様子（送った、受け付けた、反映した、うまくいかなかった理由）と、送って結果を待っている値 |
+
+- 書き込みは、変数ごと・実行ごとに 1 つにまとめます。同じ変数を何か所で `bind` しても重ねて送らず、どこからも同じ様子が見えます。サーバーが前の書き込みを受け取るまでの次の値は、最後の 1 つだけを覚えて後から送ります。答えが来なかった書き込みを、自動で送り直すことはしません。
+- 部品が多い画面では、`{ visible: false }` で作って `setVisible()` を呼ぶと、見えている部品だけが値を受け取ります。
+- 欄の値の一覧と細かい決まりは [gui/client/README.md](../gui/client/README.md) の「部品を作る（`bind`）」、動く見本はひな形のスライダーとランプ（`examples/gui_starter/main.js`）です。サンプルの画面の部品（Angular）も、この口を signal に写して使っています（下の「部品を足す」）。
+
 ### `--web` で配る
 
 - 渡すのは、画面のビルドの出力のディレクトリ（`dist/` など）です。`index.html`（シンボリックリンクでないファイル）がないとき、`package.json` か `node_modules` があるとき（ビルドの出力でなく、プロジェクトそのもの）は、何を渡すかを表示して終了コード 2 で終わります。`--web` を付けなければ、サンプルの画面を配ります。
@@ -154,7 +169,7 @@ GUI サーバーは、開発サーバーを通す URL（`http://127.0.0.1:5173/#
 
 ### ひな形
 
-[examples/gui_starter](../examples/gui_starter/) は、ライブラリだけを使った、ビルドなしの最小の画面です（素の HTML、ES モジュール、ライブラリを 1 つにまとめたファイル）。つなぐ、構成ファイルを照合する、実行を始めて止める、変数を 1 つ選んで見て書く、までがあります。使い方は、その README にあります。`scripts/verify-gui.py` が、流し直すランチャーと偽の Control Server を相手に、`--web` で配ったこのひな形をブラウザで動かして確かめます。
+[examples/gui_starter](../examples/gui_starter/) は、ライブラリだけを使った、ビルドなしの最小の画面です（素の HTML、ES モジュール、ライブラリを 1 つにまとめたファイル）。つなぐ、構成ファイルを照合する、実行を始めて止める、変数を 1 つ選んで見て書く、`client.variables.bind` で作ったスライダーとランプ、までがあります。使い方は、その README にあります。`scripts/verify-gui.py` が、流し直すランチャーと偽の Control Server を相手に、`--web` で配ったこのひな形をブラウザで動かして確かめます。
 
 ### 画面のない道具
 
@@ -165,8 +180,8 @@ GUI サーバーは、開発サーバーを通す URL（`http://127.0.0.1:5173/#
 次の決まりは、ライブラリが肩代わりしません。サンプルの画面はこれを守っているので、自分の画面でも同じにします。
 
 - **照合と開始の要求**: ランチャーの `features`（`client.app.get()?.launcher.features`）にない機能の欄は送りません（`manual` は `manual-participants`、`speed` は `speed`、`start_paused` は `start-paused`、`scenario` は `scenario` があるときだけ）。`manual` に `disable` の名前を入れません（サーバーが 400 で断ります）。シナリオを選んだら `start_paused` は偽にします（シナリオは止めた状態では始められません）。照合は、前の照合の答えを待ってから送ります（サーバーは 1 つずつ行います）。
-- **変数を書けるか**: `writable` が偽の変数（`output`）は書けません。`parameter` は最初のステップの前（`client.time.state` の `beforeStart`）だけです。シナリオを回している実行（セッションの写しに `scenario` があり、ランチャーが動いている）と、Control Server とつながっていない participant（`client.variables.state` の `peers[].connected` が偽）にも書けません。サーバーも同じ理由で断ります（`WriteError` の `refused`）が、押せないことを先に見せるには、画面で確かめます。
-- **値が古いか**: `client.variables.state` が `ready` で `reason` があるときは、値の読み取りが失敗し続けています（値は最後に読めたもの）。participant がつながっていない間の値も古いものです。
+- **変数を書けるか**: 部品を `client.variables.bind` で作れば、`state` の `block` がこの決まりを確かめます。`write` を直接呼ぶ画面は、自分で確かめます。`writable` が偽の変数（`output`）は書けません。`parameter` は最初のステップの前（`client.time.state` の `beforeStart`）だけです。シナリオを回している実行（セッションの写しに `scenario` があり、ランチャーが動いている）と、Control Server とつながっていない participant（`client.variables.state` の `peers[].connected` が偽）にも書けません。サーバーも同じ理由で断ります（`WriteError` の `refused`）が、押せないことを先に見せるには、画面で確かめます。
+- **値が古いか**: `bind` の `state` の `condition` が `stale` と理由で知らせます。`watch` を直接使う画面は、自分で確かめます。`client.variables.state` が `ready` で `reason` があるときは、値の読み取りが失敗し続けています（値は最後に読めたもの）。participant がつながっていない間の値も古いものです。
 - **監視の変数**: ECU が宣言したのではない変数（`ecu.connected`、`peer.`、`j1939.<ネットワーク>.`）は、照合の結果の `participants[].variables[].builtin` で見分けます。`builtin` がない（実行中に足される監視の変数、古いランチャー）ときは、名前の前置き（`ecu.`、`peer.`、`j1939.`）で分けます。
 - **握手で断られた理由**: WebSocket の握手が断られると、ブラウザには理由が見えません。`client.connection.failures` が増えたら、`client.loadApp()` を呼び直すと、HTTP の答え（誤りの文）で理由がわかります。
 - **自分で起動した participant が残っている**: 実行の後も participant が残っていることは、いまはランチャーのログ（`vehicle_sil_launch` の行）の英語の文でだけ知らせます。機械が読む欄はありません。
@@ -308,7 +323,7 @@ flowchart LR
 - **書き込み**: `POST api/write`。書き込みを向ける実行の id（`session`）を付け、サーバーは、それが動いている実行でなければ断ります（`session-changed`。実行が替わる間に送った書き込みを、次の実行に書かないため）。シナリオを回している実行には書けません（`scenario-running`）。サーバーが、変数の一覧と照らして型と範囲を確かめてから、ランチャーに渡します。結果（操作）は、受け付けた（`queued`）、反映された（`applied` と、そのステップの時刻）、間に合わなかった（`late`）、ECU が断った（`rejected`、`invalid`）などとして、全部の画面に届きます。結果は捨てません。実行が終わるまでに結果が来なかった操作は、`unknown` で確定します。
 - **終わった後**: 状態は `ended` になり、最後に読めた値が残ります（次の実行を始めるまで）。
 
-形と上限は [gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」、ライブラリの口は [gui/client/README.md](../gui/client/README.md) の「ECU の変数」、動く例は `examples/gui_client/variables.mjs` です。Angular の包みは `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`: `session`、`status`、`reason`、`peers`、`operations`、`find(ref)`、`peerConnected(peer)`、部品が壊れると自分でやめる `watch()`、自分でやめる `open()`、`write()`）です。
+形と上限は [gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」、ライブラリの口は [gui/client/README.md](../gui/client/README.md) の「ECU の変数」（部品を作る口 `bind` も）、動く例は `examples/gui_client/variables.mjs` です。Angular の包みは `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`: `session`、`status`、`reason`、`peers`、`operations`、`find(ref)`、`peerConnected(peer)`、部品が壊れると自分でやめる `watch()`、自分でやめる `open()`、`write()`）です。
 
 ## サンプルの画面
 
@@ -421,10 +436,10 @@ const spec: DashboardSpec = {
 
 #### 部品を足す
 
-部品は `gui/web/src/app/widgets/` にあり、どれもライブラリの公開の口と Angular の包み（`EcuVariables` など）だけを使います。自分の部品も同じ方法で作れます。
+部品は `gui/web/src/app/widgets/` にあり、どれもライブラリの公開の口と Angular の包みだけを使います。値の状態、書けるかどうか、書き込みの管理（上の「部品の共通の振る舞い」のうち、見た目でないもの）は、ライブラリの `client.variables.bind` にあり、`bindVariable`（`variable-binding.ts`）は、それを signal に写し、部品が見えているか（IntersectionObserver）を伝え、値を画面の言葉にするだけです。自分の部品も同じ方法で作れます。
 
 1. コンポーネントを作り（`ChangeDetectionStrategy.OnPush`）、input の `ref`（`VariableRef`）、`label`、`options`（設定）を持たせる。
-2. field の初期化で `bindVariable(this.ref)` を呼ぶ（`variable-binding.ts`）。返る `VariableBinding` が、定義（`info`）、最後の値（`reading`）、値の状態（`condition`）、書けない理由（`block`）、書き込み（`write(value)`）とその様子（`writeStatus`、`pending`）を signal で持ちます。値は、部品が見えている間だけ watch されます。履歴が要るときは `bindVariable(this.ref, { history: 600 })`。
+2. field の初期化で `bindVariable(this.ref)` を呼ぶ（`variable-binding.ts`）。返る `VariableBinding` が、定義（`info`）、最後の値（`reading`）、値の状態（`condition`）、書けない理由（`block`）、書き込み（`write(value)`）とその様子（`writeStatus`、`pending`）を signal で持ちます（中身は、ライブラリの `BoundVariable` の欄）。値は、部品が見えている間だけ watch されます。履歴が要るときは `bindVariable(this.ref, { history: 600 })`。
 3. テンプレートを `<app-variable-frame [variable]="variable" [label]="label()" [writable]="true">` で包む（`variable-frame.ts`。名前、役割、値の状態、書き込みの様子、書けない理由を出す）。操作には `[attr.aria-labelledby]="variable.id + '-name'"` を付ける。
 4. `dashboard-spec.ts` の `WidgetKind` と `widgets.ts` の `WIDGETS` に足す（ダッシュボードのデータから使えるように）。既定にするなら `defaultWidget` と上の表も変える。
 
@@ -436,7 +451,7 @@ Angular で自分の画面を作るときは、サンプルの部品（スイッ
 
 | 写すもの | 中身 |
 |---|---|
-| `gui/web/src/app/widgets/` | 部品、部品の土台（`variable-binding.ts`、`variable-frame.ts`）、ダッシュボードのデータと描く部品（`dashboard-spec.ts`、`dashboard-view.ts`）、持ち込みのパネルの置き場所（`panel-host.ts`） |
+| `gui/web/src/app/widgets/` | 部品、部品の土台（`variable-binding.ts`: ライブラリの `client.variables.bind` を signal に写す。`variable-frame.ts`）、ダッシュボードのデータと描く部品（`dashboard-spec.ts`、`dashboard-view.ts`）、持ち込みのパネルの置き場所（`panel-host.ts`） |
 | `gui/web/src/app/core/session/` | ライブラリの読める値を signal にする包み（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`、`EcuVariables`）と、クライアントを作るところ（`gui-client.ts`） |
 | `gui/web/src/app/core/auth/` | トークン（`AuthToken`。中身は `takeToken`）と、API にトークンを付ける interceptor |
 | `gui/web/src/app/core/format/measure-pipe.ts` | 数と単位の書き方 |
