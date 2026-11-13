@@ -14,14 +14,18 @@ import { ServerInfo } from '../core/session/server-info';
   selector: 'app-recording-panel',
   imports: [MatButtonModule],
   template: `
-    @if (recording.hasValue() && recording.value(); as r) {
+    @if (current(); as r) {
       @if (r.yaml !== null) {
         <p data-testid="recording-count" i18n>
-          反映された書き込み {{ r.writes }} 件を、{{ r.steps }} 個の手順（set）にして保存します。
+          この実行で反映された書き込み {{ r.writes }} 件を、{{ r.steps }}
+          個の手順（set）にして保存します。この GUI
+          サーバーを通したすべての書き込みです（ほかの画面や、api/write
+          を使う道具のものも入ります）。
         </p>
         @if (r.omitted > 0) {
-          <p class="warn" role="status" i18n>
-            多すぎるので、後の {{ r.omitted }} 件は入りません（最初の {{ r.writes }} 件だけです）。
+          <p class="warn" role="status" data-testid="recording-omitted" i18n>
+            {{ r.omitted }}
+            件の書き込みは入りません。理由は、保存したファイルの先頭のコメントにあります。
           </p>
         }
         <button
@@ -35,7 +39,7 @@ import { ServerInfo } from '../core/session/server-info';
         </button>
         <p class="hint" i18n>
           保存したファイルを構成ファイルの隣の scenarios
-          に置くと、「シナリオ」で選んで回せます。確かめる手順（expect、wait_until）はエディターで足してください。一時停止やステップ送りは入りません。
+          に置くと、「シナリオ」で選んで回せます。シナリオは最後の手順の時刻で止まるので、その後も走らせたいときや、確かめる手順（expect、wait_until）は、エディターで足してください（ファイルの先頭のコメントに例があります）。一時停止やステップ送りは入りません。
         </p>
       } @else {
         <p class="hint" data-testid="recording-empty">
@@ -101,6 +105,12 @@ export class RecordingPanel {
         ? { session: this.session(), running: this.running(), settled: this.settled() }
         : undefined,
     loader: () => this.info.recording(),
+  });
+
+  /** この実行の記録（替わり目に別の実行の記録が届いたら、出さない）。 */
+  protected readonly current = computed(() => {
+    const r = this.recording.hasValue() ? this.recording.value() : null;
+    return r && r.session_id === this.session() ? r : null;
   });
 
   protected readonly saved = signal<string | null>(null);

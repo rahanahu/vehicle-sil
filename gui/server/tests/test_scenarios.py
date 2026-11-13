@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import yaml
 from conftest import CONTROL_FEATURES, Client, gui_server, is_ended, is_synced, is_variables, run_async
 
 from vehicle_sil_gui import recording
+from vehicle_sil_gui.launcher import Launcher, check_command, run_command
 from vehicle_sil_gui.paths import ConfigRoot, PathRejected
 from vehicle_sil_gui.recording import Recording, key, number, quoted, scenario_yaml
 from vehicle_sil_gui.scenarios import list_scenarios, resolve_scenario
@@ -71,6 +73,22 @@ def test_only_the_files_in_scenarios_next_to_the_configuration_are_listed_and_ta
         with pytest.raises(PathRejected) as e:
             resolve_scenario(cfg, config, "bench/scenarios/a.yaml")
         assert e.value.code == "scenario-not-listed" and "symbolic link" in str(e.value)
+        # A directory above scenarios that is a link inside the root: not read either
+        (root / "other" / "scenarios").mkdir(parents=True)
+        (root / "other" / "scenarios" / "a.yaml").write_text("vehicle_sil_scenario: 1\n")
+        (root / "other" / "sim.yaml").write_text("vehicle_sil_simulation: 1\n")
+        os.symlink(root / "other", root / "linked")
+        linked = cfg.resolve("linked/sim.yaml")  # a configuration may be reached through a link in the root
+        assert list_scenarios(cfg, linked)[1:] == (False, [], False)
+        with pytest.raises(PathRejected):
+            resolve_scenario(cfg, linked, "linked/scenarios/a.yaml")
+
+
+def test_a_path_that_starts_with_a_dash_is_not_an_option_to_the_launcher() -> None:
+    assert check_command(Launcher(Path("vehicle_sil_launch")), "-x/sim.yaml", [], "-x/scenarios/a.yaml")[-4:] == \
+        ["--scenario", "./-x/scenarios/a.yaml", "--", "-x/sim.yaml"]
+    argv = run_command(Launcher(Path("vehicle_sil_launch")), "sim.yaml", [], None, False, None, "scenarios/a.yaml")
+    assert argv[argv.index("--scenario") + 1] == "scenarios/a.yaml"
 
 
 def test_the_listing_and_a_check_with_a_scenario(gui) -> None:
@@ -224,6 +242,8 @@ def test_the_yaml_is_safe_for_any_name_and_value() -> None:
         if written != text:
             assert written.startswith('"') and all(0x20 <= ord(ch) < 0x7F for ch in written), written
         assert yaml.safe_load(f"{written}: 1") == {text: 1}, text
+        assert not re.search(r"\\x", written), written  # the launcher reads \xNN as one byte, not as U+00NN
+    assert quoted("°C µs é") == '"\\u00b0C \\u00b5s \\u00e9"'
     with pytest.raises(ValueError):
         quoted("\udc80")
     for value in (0.0, -0.0, 1.0, 62.5, 1e20, 1.5e-7, 1e300, 5e-324, -2.5e-12, 2 ** 63 - 1, -(2 ** 63), 7, 0):
@@ -245,7 +265,24 @@ def test_the_yaml_is_safe_for_any_name_and_value() -> None:
     assert data["steps"] == [{"at_ms": 0, "set": {"E.mode": "1"}},  # the last value at one time
                              {"at_ms": 5, "set": {"E.mode": 3}},  # a name that is not unique: the number
                              {"at_ms": 9, "set": {"a: b.c\nd": True, "E.mode": 4}}]
-    assert "1 more applied writes" in text
+    assert "# Left out: 1 values that a scenario cannot hold" in text
+    # A participant whose name has a '.' cannot be named in a scenario: left out, and said
+    text, steps, skipped = scenario_yaml([(0, 1, "Bench.1", "x", 1), (0, 2, "E", "mode", 1)], "n", enums, 0, 40)
+    data = yaml.safe_load(text)
+    assert (steps, skipped, data["steps"]) == (1, 1, [{"at_ms": 0, "set": {"E.mode": "on"}}])
+    assert "# Left out: 1 variables of participants whose name has a '.'" in text and "#   Bench.1.x" in text
+    # Where it ends, how far the run went, and how to keep it running
+    assert "ends at its last step (0 ms)" in text and "went on to 40 ms" in text
+    assert "#   - expect: { E.ecu.connected: true }\n#     hold_for_ms: 40\n" in text
+
+
+def test_the_example_of_the_docs_is_what_the_server_writes() -> None:
+    docs = (Path(__file__).resolve().parents[3] / "docs" / "gui.md").read_text(encoding="utf-8")
+    section = docs.split("### 操作をシナリオとして保存する", 1)[1]
+    block = section.split("```yaml\n", 1)[1].split("```", 1)[0]
+    text, _, _ = scenario_yaml([(0, 1, "Engine", "engine.throttle", 40.0), (350, 2, "Engine", "engine.throttle", 12.5)],
+                               "recorded from simulation.yaml (run 3)", {}, 0, 1000)
+    assert block == text, "docs/gui.md: write the example as scenario_yaml writes it"
 
 
 def test_the_record_is_bounded_and_waits_for_late_results() -> None:
@@ -265,4 +302,4 @@ def test_the_record_is_bounded_and_waits_for_late_results() -> None:
     assert len(r.entries) == recording.MAX_WRITES and r.omitted == 2
     out = r.to_json(1, "s.yaml", "running", {})
     assert out["writes"] == recording.MAX_WRITES and out["omitted"] == 2
-    assert "2 more applied writes are not in this file" in out["yaml"]
+    assert "# 2 more applied writes are not here: the record keeps at most 2000." in out["yaml"]

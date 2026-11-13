@@ -366,8 +366,10 @@ class GuiServer:
             return web.json_response({"recording": None})
         enums = {(peer, name): entry["enum"] for peer, p in run.variables.peers.items()
                  for name, entry in p.index.items() if entry.get("enum")}
+        sim_ms = (run.session.time or {}).get("sim_ms")  # how far the run has gone (its last time event)
+        run_ms = sim_ms if isinstance(sim_ms, int) and not isinstance(sim_ms, bool) else None
         return web.json_response({"recording": run.recording.to_json(run.session.id, run.session.file,
-                                                                     run.session.state, enums)})
+                                                                     run.session.state, enums, run_ms)})
 
     def _scenario(self, config: ConfigFile, body: dict) -> str | None:
         """The scenario of a check or run request (None: none), when the launcher can play one."""

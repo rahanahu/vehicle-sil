@@ -211,6 +211,30 @@ describe('RunPage', () => {
     expect(disabled(button(fixture, 'start'))).toBe(false);
   });
 
+  it('does not start without the scenario it has chosen while the list cannot be read', async () => {
+    const fixture = TestBed.createComponent(RunPage);
+    TestBed.tick();
+    http.expectOne('api/app').flush(response('app'));
+    http.expectOne('api/configs').flush(response('configs'));
+    fake.last().open();
+    // A run of simulation.yaml with a scenario has ended: its scenario is chosen for the next run
+    for (const message of server('ws-scenario')) fake.last().send(message);
+    await new Promise((resolve) => setTimeout(resolve, BATCH_MS + 20));
+    TestBed.tick();
+    expect(text(fixture, 'blocked')).toBe('シナリオの一覧を読んでいます。');
+    for (const request of http.match((r) => r.url.startsWith('api/scenarios'))) {
+      request.flush('', { status: 500, statusText: 'Internal Server Error' });
+    }
+    await sleep(CHECK_DELAY_MS + 20);
+    TestBed.tick();
+    for (const request of http.match('api/check')) request.flush(response('check-passed'));
+    TestBed.tick();
+    expect(text(fixture, 'blocked')).toBe(
+      'シナリオの一覧を読めないので、選んだシナリオで始められません。',
+    );
+    expect(disabled(button(fixture, 'start'))).toBe(true);
+  });
+
   it('shows the result and the reason of a failed run, and offers to run again', async () => {
     const fixture = await openWithFiles();
     (await checkRequest()).flush(response('check-passed'));

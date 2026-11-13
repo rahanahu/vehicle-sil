@@ -394,6 +394,17 @@ export class RunPage {
     if (this.speedSupported() && this.speedInvalid()) {
       return [$localize`速度の倍率が範囲の外です。`];
     }
+    // 選んだシナリオを送れないうちは始めない（シナリオなしの実行が始まらないように）
+    const scenario = this.scenarioChoice();
+    if (this.scenarioSupported() && scenario !== null && this.chosenScenario() === null) {
+      if (this.scenarios.error()) {
+        return [$localize`シナリオの一覧を読めないので、選んだシナリオで始められません。`];
+      }
+      if (!this.scenarios.hasValue() || this.scenarios.isLoading()) {
+        return [$localize`シナリオの一覧を読んでいます。`];
+      }
+      return [$localize`選んだシナリオ ${scenario}:file: が一覧にありません。選び直してください。`];
+    }
     if (this.check.isLoading()) return [$localize`照合しています。`];
     const error = this.check.error();
     if (error) return [$localize`照合できませんでした: ${errorMessage(error)}:reason:`];

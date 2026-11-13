@@ -144,10 +144,17 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 
 ### 操作をシナリオとして保存する
 
-ふつうの実行（シナリオなし、変数を読み書きできる実行）では、「操作をシナリオに」のカードに、この実行で GUI から書いて反映された値の数を出し、「この実行の操作をシナリオとして保存」でシナリオの YAML をブラウザで保存します（ファイル名は `<構成ファイルの名前>-run<実行の番号>.yaml`。置き場所はブラウザで決めます）。実行が終わった後も、次の実行を始めるまで保存できます。
+ふつうの実行（シナリオなし、変数を読み書きできる実行）では、「操作をシナリオに」のカードに、この実行で反映された書き込みの数を出し、「この実行の操作をシナリオとして保存」でシナリオの YAML をブラウザで保存します（ファイル名は `<構成ファイルの名前>-run<実行の番号>.yaml`。置き場所はブラウザで決めます）。実行が終わった後も、次の実行を始めるまで保存できます。
 
 ```yaml
-# Written by vehicle-sil-gui from the writes that were applied in one run (docs/gui.md).
+# Written by vehicle-sil-gui: the writes made through the GUI server in the run named below (from every
+# screen and tool that used it) that were applied, each at the time of the step it was applied at.
+# Not here: pauses and steps of the time, writes that were not applied (docs/gui.md).
+# This scenario ends at its last step (350 ms): the launcher stops the simulation there.
+# The recorded run went on to 1000 ms.
+# To keep it running after the last step, add a step at the end, such as
+#   - expect: { Engine.ecu.connected: true }
+#     hold_for_ms: 650
 # Add expect and wait_until steps to check what the ECUs do (docs/scenario.md).
 vehicle_sil_scenario: 1
 name: "recorded from simulation.yaml (run 3)"
@@ -160,9 +167,11 @@ steps:
       Engine.engine.throttle: 12.5
 ```
 
-- 手順は、反映したステップの仮想時刻（`at_ms`）ごとの `set` だけです。保存したファイルを `scenarios/` に置けば、そのまま照合を通り、「シナリオ」で回せます（ECU ごとにステップの時刻が違うので、同じ書き込みでも ECU ごとに手順が分かれることがあります）。
-- 入るのは、GUI サーバーを通した書き込みのうち反映されたものだけです。一時停止とステップ送り、反映されなかった書き込み、ほかのクライアントが Control Server に直接書いたもの、確かめる手順（`expect`、`wait_until`）は入りません。`ramp` にまとめることもしません。確かめる手順は、エディターで足します。
-- 1 回の実行で覚えるのは 2000 個の値までです。超えたら、カードとファイルの先頭のコメントがそう言います。
+- **だれの書き込みか**: 入るのは、この実行で GUI サーバーを通したすべての書き込みのうち、反映されたものです。同じ GUI サーバーを開いているほかの画面（ほかの人）の書き込みも、`api/write` を使う道具（`examples/gui_client/variables.mjs` など）の書き込みも入ります。画面や人ごとには分けません。GUI サーバーを通さずに Control Server に直接書いたものは入りません。
+- **どこで終わるか**: 手順は、反映したステップの仮想時刻（`at_ms`）ごとの `set` だけです。ランチャーは、シナリオの最後の手順が終わったところでシミュレーションを止めるので、保存したファイルを回すと、最後の `set` の時刻で止まります（記録した実行がもっと長く走っていても）。その後も走らせたいときは、ファイルの先頭のコメントの例のように、最後に `expect` と `hold_for_ms` の手順を足します（コメントに、記録した実行が走った時刻も書きます）。
+- 保存したファイルを `scenarios/` に置けば、そのまま照合を通り、「シナリオ」で回せます（ECU ごとにステップの時刻が違うので、同じ書き込みでも ECU ごとに手順が分かれることがあります）。
+- 入らないもの: 一時停止とステップ送り、反映されなかった書き込み、確かめる手順（`expect`、`wait_until`）。`ramp` にまとめることもしません。確かめる手順は、エディターで足します。
+- 1 回の実行で覚えるのは 2000 個の値までです。名前に `.` がある participant の変数は、シナリオで名指せない（最初の `.` までが participant の名前）ので入れません。入らなかった数はカードに、理由はファイルの先頭のコメントに出ます。
 - サーバーの口は `GET api/recording`（[gui/protocol/README.md](../gui/protocol/README.md) の「操作の記録」）、ライブラリでは `client.recording()` です。
 
 ## ECU の変数

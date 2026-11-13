@@ -93,11 +93,12 @@ const SIMULATIONS: Record<string, string> = {
 };
 
 /**
- * どう終わったか。シナリオのある実行の `ended` は、シナリオが終わってランチャーが止めたもの（participant が止めた
- * のではない）。
+ * どう終わったか。scenario はシナリオの結果の status（シナリオのない実行では null）。シナリオが終わって
+ * （passed か failed）ランチャーが止めた実行の `ended` は「シナリオが終わった」。シナリオが途中で終わった
+ * （incomplete など）実行の `ended` は、ほかの実行と同じく participant が止めたもの。
  */
-export const simulationLabel = (simulation: string, scenario = false): string =>
-  scenario && simulation === 'ended'
+export const simulationLabel = (simulation: string, scenario: string | null = null): string =>
+  simulation === 'ended' && (scenario === 'passed' || scenario === 'failed')
     ? $localize`シナリオが終わった`
     : label(SIMULATIONS, simulation);
 

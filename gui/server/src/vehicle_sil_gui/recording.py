@@ -1,19 +1,25 @@
-"""What the writes of a run became, written as a scenario (docs/scenario.md): the record behind GET api/recording.
+r"""What the writes of a run became, written as a scenario (docs/scenario.md): the record behind GET api/recording.
 
-The server keeps, for each run, the writes it gave the launcher's control server (POST api/write) and looks at the
-results of their operations as every screen sees them: each peer's part of a write that was applied is kept with
-the time of the step it was applied at. Nothing else is kept (time commands, writes of other clients, writes that
-were late, refused or whose result is unknown). The record is plain data; the YAML is made when it is asked for.
+The server keeps, for each run, every write it gave the launcher's control server (POST api/write: from every
+screen and every tool that uses this GUI server, not only one screen) and looks at the results of their operations
+as every screen sees them: each peer's part of a write that was applied is kept with the time of the step it was
+applied at. Nothing else is kept: time commands, writes that were late, refused or whose result is unknown, and
+writes that other control clients made to the launcher's control server directly. The record is plain data; the
+YAML is made when it is asked for.
 
 The YAML is made by hand, not by a YAML library, so that what is written is exactly what the launcher reads:
 - a variable `<participant>.<name>` is a plain key only when it is made of letters, digits, '_', '-' and '.',
-  starts with a letter or '_' and has a '.'; else it is a double-quoted string, with every character that is not printable ASCII
-  escaped (so that no line break, tab, BOM or control character reaches the file as itself);
+  starts with a letter or '_' and has a '.'; else it is a double-quoted string, with every character that is not
+  printable ASCII escaped as \uXXXX or \UXXXXXXXX (never \xNN: the launcher's YAML reader takes \xNN as one raw
+  byte, not as the character U+00NN), so that no line break, tab, BOM or control character reaches the file as
+  itself;
 - an enum value is its item's name, always double-quoted (a name such as `on`, `null` or `1` stays a name); when
   the name is not known (or not unique) it is the item's value (a number);
 - a real is written so that YAML 1.1 and 1.2 both read a number: with a '.' always (1.0, 1.0e+20); a number that
   is not finite is never written (the server's check of a write refuses it, and it is skipped here if it came);
-- an integer is written as it is (the check of a write keeps it in 64 bits).
+- an integer is written as it is (the check of a write keeps it in 64 bits);
+- a write to a participant whose name has a '.' is left out, and a comment says so: a scenario names a variable
+  `<participant>.<name>` and the participant's name ends at the first '.'.
 """
 
 from __future__ import annotations
@@ -86,14 +92,16 @@ class Recording:
         self._order += 1
         self.entries.append((at_ms, self._order, peer, name, value))
 
-    def to_json(self, session_id: int, file: str, state: str, enums: dict[tuple[str, str], list[dict]]) -> dict:
-        """What GET api/recording answers for this run. enums: the items of each enum variable, by (peer, name)."""
+    def to_json(self, session_id: int, file: str, state: str, enums: dict[tuple[str, str], list[dict]],
+                run_ms: int | None = None) -> dict:
+        """What GET api/recording answers for this run. enums: the items of each enum variable, by (peer, name);
+        run_ms: the virtual time the run has reached (or ended at), when known."""
         text, steps, skipped = (None, 0, 0)
         reason = self.reason
         if self.available:
             if self.entries:
                 text, steps, skipped = scenario_yaml(self.entries, f"recorded from {file} (run {session_id})",
-                                                     enums, self.omitted)
+                                                     enums, self.omitted, run_ms)
             if steps == 0:
                 reason = ("no write made through this GUI server has been applied in this run yet: write variables "
                           "(the variables screen, or POST api/write), then save again")
@@ -115,9 +123,7 @@ def _escape(text: str) -> str:
             out.append("\\\\")
         elif 0x20 <= code < 0x7F:
             out.append(ch)
-        elif code <= 0xFF:
-            out.append(f"\\x{code:02x}")
-        elif code <= 0xFFFF:
+        elif code <= 0xFFFF:  # \u00NN also below 0x100: the launcher reads \xNN as one raw byte
             out.append(f"\\u{code:04x}")
         else:
             out.append(f"\\U{code:08x}")
@@ -164,12 +170,19 @@ def value_text(value: object, items: list[dict] | None) -> str:
     return number(value)
 
 
+MAX_LEFT_OUT_LINES = 20  # comment lines that name a write left out
+
+
 def scenario_yaml(entries: list[tuple[int, int, str, str, object]], name: str,
-                  enums: dict[tuple[str, str], list[dict]], omitted: int) -> tuple[str | None, int, int]:
-    """(the scenario, its number of steps, values skipped): one `set` per time a value was applied, in the order of
-    the time (the order of the writes within one time; a variable written twice at one time keeps its last value)."""
+                  enums: dict[tuple[str, str], list[dict]], omitted: int,
+                  run_ms: int | None = None) -> tuple[str | None, int, int]:
+    """(the scenario, its number of steps, values left out): one `set` per time a value was applied, in the order
+    of the time (the order of the writes within one time; a variable written twice at one time keeps its last
+    value). The comments at the top say what was recorded, where the scenario ends and how to run on after it,
+    and what was left out and why."""
     by_time: dict[int, dict[str, str]] = {}
     skipped = 0
+    dotted: dict[str, None] = {}  # variables left out: the participant's name has a '.'
     for at_ms, _, peer, var, value in sorted(entries):
         try:
             line_key = key(f"{peer}.{var}")
@@ -177,16 +190,38 @@ def scenario_yaml(entries: list[tuple[int, int, str, str, object]], name: str,
         except ValueError:
             skipped += 1
             continue
+        if "." in peer:
+            skipped += 1
+            dotted[line_key] = None
+            continue
         writes = by_time.setdefault(at_ms, {})
         writes.pop(line_key, None)  # the last value at this time, in its place in the order
         writes[line_key] = text
     if not by_time:
         return None, 0, skipped
-    lines = ["# Written by vehicle-sil-gui from the writes that were applied in one run (docs/gui.md).",
-             "# Add expect and wait_until steps to check what the ECUs do (docs/scenario.md)."]
-    if omitted + skipped:
-        lines.append(f"# {omitted + skipped} more applied writes are not in this file (the record keeps at most "
-                     f"{MAX_WRITES}).")
+    last = max(by_time)
+    lines = ["# Written by vehicle-sil-gui: the writes made through the GUI server in the run named below (from every",
+             "# screen and tool that used it) that were applied, each at the time of the step it was applied at.",
+             "# Not here: pauses and steps of the time, writes that were not applied (docs/gui.md)."]
+    longer = run_ms is not None and run_ms > last
+    peer = next(iter(sorted({e[2] for e in entries if "." not in e[2]})), None)
+    lines.append(f"# This scenario ends at its last step ({last} ms): the launcher stops the simulation there.")
+    if longer:
+        lines.append(f"# The recorded run went on to {run_ms} ms.")
+    lines.append("# To keep it running after the last step, add a step at the end, such as")
+    hold = run_ms - last if longer else 1000
+    if peer is not None:
+        lines.append(f"#   - expect: {{ {key(f'{peer}.ecu.connected')}: true }}")
+        lines.append(f"#     hold_for_ms: {hold}")
+    lines.append("# Add expect and wait_until steps to check what the ECUs do (docs/scenario.md).")
+    if omitted:
+        lines.append(f"# {omitted} more applied writes are not here: the record keeps at most {MAX_WRITES}.")
+    if dotted:
+        lines.append(f"# Left out: {len(dotted)} variables of participants whose name has a '.' (a scenario names a "
+                     "variable <participant>.<name>, and the participant's name ends at the first '.'):")
+        lines += [f"#   {k}" for k in list(dotted)[:MAX_LEFT_OUT_LINES]]
+    if skipped > len(dotted):
+        lines.append(f"# Left out: {skipped - len(dotted)} values that a scenario cannot hold (not a finite number).")
     try:
         name_text = quoted(name)
     except ValueError:

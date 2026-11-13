@@ -2,9 +2,10 @@
 it, and nothing else (docs/scenario.md is the launcher's side).
 
 Only what the listing returns may be given to the launcher (`run --scenario`, `check --scenario`): a request names
-one of them by its root-relative path, and it is looked up in a new listing. The directory and every directory above
-it (up to the root) must not be a symbolic link, and neither may the file: what the screen chose is what the launcher
-reads, also after a link is changed in the root (the check would otherwise follow it out of the directory).
+one of them by its root-relative path, and it is looked up in a new listing. When that listing is made, the
+directory and every directory above it (up to the root) must not be a symbolic link, and neither may the file, so a
+link cannot take the name out of the directory. What is not prevented: a file replaced by a link between the listing
+and the launcher's reading of it (whoever can write in the root can write the scenario itself as well).
 """
 
 from __future__ import annotations

@@ -163,7 +163,7 @@
               <mat-form-field class="picker" subscriptSizing="dynamic">
                 <mat-label i18n>シナリオ</mat-label>
                 <mat-select
-                  [value]="chosenScenario()"
+                  [value]="scenarioChoice()"
                   (valueChange)="selectScenario($event)"
                   data-testid="scenario-select"
                 >
