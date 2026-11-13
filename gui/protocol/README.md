@@ -45,13 +45,15 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 |---|---|---|
 | `GET api/app` | サーバーの版、`instance`（起動ごとに変わる）、root、`initial_file`、ランチャー（`usable`、`problems`、`version --json` の内容）、変数を読み書きできるか（`variables`: `available`、できない理由 `reason`）、上限（`limits`: `speed_min`、`speed_max`、`step_ms_max`、変数の `watches`、`watch_variables`、`watch_period_ms_min`、`watch_period_ms_max`、`writes_per_request`、`write_at_ms_max`、`write_timeout_s` など） | `app.json` |
 | `GET api/configs` | root の下の `.yaml` / `.yml`（`path` は root からの相対で `/` 区切り、`modified`、`size`、`simulation`: 先頭に `vehicle_sil_simulation` があるか）、`truncated` | `configs.json` |
-| `POST api/check` `{file, disable}` | `{file, disable, exit_code, check}`。`check` は `check --json` の結果そのまま。照合が失敗しても 200 | `check-*.json` |
-| `POST api/run` `{file, disable, speed, start_paused}` | `{session}`（始めた実行の要約） | `run.json` |
+| `POST api/check` `{file, disable, scenario}` | `{file, disable, scenario, exit_code, check}`。`check` は `check --json` の結果そのまま。照合が失敗しても 200 | `check-*.json` |
+| `POST api/run` `{file, disable, speed, start_paused, scenario}` | `{session}`（始めた実行の要約） | `run.json` |
 | `POST api/stop` `{force}` | `{session}`（今の要約。実行がなければ `null`） | `stop*.json` |
 | `POST api/time` `{command, ms, value}` | `{session_id, command}`（ランチャーに送った命令） | `time.json` |
 | `POST api/write` `{session, writes, at_ms, late}` | `{session_id, operation}`（操作の番号。結果は WebSocket の `operation`） | `write.json` |
 | `GET api/session` | `{session}`（なければ `null`） | `session-*.json` |
 | `GET api/dashboard?file=<構成ファイル>` | 構成ファイルの隣のダッシュボードのファイル: `{file, path, found, errors, dashboard}`（下の「ダッシュボードのファイル」） | `dashboard*.json` |
+| `GET api/scenarios?file=<構成ファイル>` | 構成ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}`（下の「シナリオ」） | `scenarios.json` |
+| `GET api/recording` | いまの（最後の）実行の、反映された書き込みをシナリオの YAML にしたもの: `{recording}`（実行がなければ `null`。下の「操作の記録」） | `recording.json` |
 
 - `disable` に書けるのは、そのファイルの照合の結果にある participant 名だけです（`unknown-participant`）。
 - `speed`（`null`、`"max"`、数）と `start_paused`（真偽）は、`api/app` の `launcher.version.features` に `speed`、`start-paused` があるときだけ値を送ります。ないときは欄を省くか `null` / `false` を送ります（ほかの値は 400 `unsupported`）。`speed` の数の範囲は `limits.speed_min` から `limits.speed_max` まで（ランチャーと同じ）。`null` は構成ファイルの `speed` のまま（ランチャーに `--speed` を渡さない）です。
@@ -60,6 +62,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 - **照合**: 同時の `api/check` は断らず、順に 1 つずつ実行します。待っている要求が多すぎるか、待ちが照合の時間の上限（`api/app` の `limits.check_timeout_s`）を過ぎたら 503 `check-busy` です。`api/run` も、participant 名を確かめるために同じ順番で照合することがあります。
 - **停止**: 本文は `{"force": 真偽}`（省略は `false`。本文なしで `Content-Type` もない要求も `false`）。`force: false` は「順に止める」（ランチャーの標準入力に `{"command":"stop"}`）で、すでに頼んであれば何もしません。`force: true` は「待たずに止める」（まだ頼んでいなければ `stop` を 2 回、頼んであればもう 1 回）で、すでに頼んであれば何もしません。どちらも、実行がない、または終わっているときは 409 にせず、今の要約を返します（何度呼んでも同じ結果）。実行が始まりかけている間（`api/run` が応答する前）の停止は、ランチャーが起動したところで届けます（応答の要約は前の実行のもの。始まった実行の要約の `stop` に出ます）。止めた経過は、要約の `stop` と、ランチャーの `command` / `phase` の事象で見えます。標準入力を読まないランチャーは、これでは止まりません（サーバーを止めると、シグナルで止めます）。
 - **書き込み**: 下の「ECU の変数」。
+- **シナリオ**: 下の「シナリオ」。
 - **ダッシュボードのファイル**: 下の「ダッシュボードのファイル」。`file` は `api/check` と同じ検査を通ります（`invalid-path`、`outside-root`、`not-a-configuration`、`file-not-found`）。
 - サーバーが終わり始めたら、`api/run`、`api/check`、`api/write` は 503 `shutting-down` です。
 
@@ -75,7 +78,8 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | 400 | `outside-root` | 絶対パス、`..`、root の外へのシンボリックリンク |
 | 400 | `not-a-configuration` | `.yaml` / `.yml` の通常のファイルでない |
 | 400 | `unknown-participant` | `disable` の名前が照合の結果にない |
-| 400 | `unsupported` | ランチャーが `speed` / `start-paused` を持たないのに値を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った |
+| 400 | `scenario-not-listed` | `scenario` が、`api/scenarios` がその構成ファイルに挙げるシナリオでない（`scenarios` がない、リンク、ほかの場所のファイル） |
+| 400 | `unsupported` | ランチャーが `speed` / `start-paused` / `scenario` を持たないのに値を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った |
 | 400 | `unknown-variable` | `api/write`: その participant か変数が、実行の変数の一覧にない（`detail` に `{peer, name}`） |
 | 400 | `not-writable` | `api/write`: 出力の変数（`detail` に `{peer, name}`） |
 | 400 | `write-refused` | `api/write`: ランチャーの Control Server が断った（文言に理由） |
@@ -88,6 +92,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | 405 | `method-not-allowed` | 画面のファイルに `GET` 以外 |
 | 409 | `already-running` | 実行が始まりかけているか動いている |
 | 409 | `not-running` | `api/time`、`api/write`: 動いている実行がない |
+| 409 | `scenario-running` | `api/write`: 動いている実行がシナリオを回している（シナリオの結果を変えないため、書かない）。例 `error-scenario-running.json` |
 | 409 | `session-changed` | `api/write`: `session` が、動いている実行の id と違う（実行が替わる間に送った書き込み）。何も書いていない。例 `error-session-changed.json` |
 | 409 | `variables-not-ready` | `api/write`: 変数の機能の状態が `ready` でない（文言に、要約の `variables.reason`） |
 | 413 | `too-large` | 本文が 64 KiB を超える |
@@ -181,6 +186,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | `variables` | ECU の変数の機能の状態、participant ごとの変数、最近の操作（下の「ECU の変数」）。`hello` の要約と HTTP の応答にある。**`session` の通知の要約には、この欄がない**（大きく、めったに変わらないので、変わったときに `variables` の通知で送る。同じ実行の `session` の通知では、手元の値を使い続ける。別の実行の `session` の通知の直後には、その実行の `variables` の通知が届く） |
 | `log` | source ごとの `{kept, dropped}`: サーバーが覚えている行の数と、落とした行の数（サーバーが覚えずに落とした行と、ランチャーが読む側の遅さで書けなかった行。後者は `log_dropped` の `sources`）。`log_dropped` の事象は、名前の挙がった source の log の、来た位置に覚え（つなぎ直した画面にも同じ位置に届く。1 つの事象は 1 回だけ送る）、画面はそこに「ここで N 行が落ちた」を出す |
 | `problems`、`problems_omitted` | サーバーの知らせ（`error` と同じ `{code, message, detail}`）を起きた順に、と、上限を超えて覚えていない数 |
+| `scenario` | シナリオの実行（`api/run` の `scenario`）の経過。シナリオのない実行では `null`（下の「シナリオ」） |
 
 ランチャーが `result` を出さずに終わったときは、`launcher.running: false` と `exit_code`、`state: ended`、知らせの `no-result` になります。
 
@@ -218,9 +224,19 @@ watch は実行をまたいで続きます。実行がないとき、変数の�
 
 サーバーは `{"type": "values", "id", "session", "sim_ms", "paused", "peers": {"<peer>": {"sample_ms", "values": {"<name>": <値>}}}}` を送ります。
 
-- watch の直後に 1 回、その後は `period_ms` ごとに、**前に送ったものから変わったときだけ**（値を読んだステップが進んだ、`sim_ms` か `paused` が変わった）。止まっている間は届きません。実行が始まったとき、変数の状態か一覧が変わったとき（`variables` の通知）、実行が終わったときは、`period_ms` を待たずに送ります。ある実行の `values` は、その実行の `variables` の通知（か `hello`）より後に届きます。
+- watch の直後に 1 回、その後は `period_ms` ごとに、**前に送ったものから変わったときだけ**（値を読んだステップが進んだ、`sim_ms` か `paused` が変わった）。止まっている間は、値が変わらなければ届きません。実行が始まったとき、変数の状態か一覧が変わったとき（`variables` の通知）、実行が終わったときは、`period_ms` を待たずに送ります。ある実行の `values` は、その実行の `variables` の通知（か `hello`）より後に届きます。
 - `sample_ms` は、その participant の値を読んだステップの仮想時間です。値は、bool は真偽、整数と列挙は数、実数は数で、有限でない実数（NaN、無限大）は `null` です。2^53 を超える整数は、JSON の数として正確でないことがあります。まだ 1 回も値を読んでいない participant は `peers` にありません。
-- **`paused` と `sim_ms` と値は、同じ瞬間のもの**です。`paused` が `true` のとき、シミュレーションは `sim_ms` で止まっていて、`sim_ms` より前に始まったステップの値は、この通知に全部入っています（ちょうど `sim_ms` に始まるステップの値は、入っていることも、止まっている間に後から届くこともあります）。画面は、これを「止まっている時刻の値」として見せられます。サーバーは、止まっている間に時刻と値を読み直して確かめてから `true` にするので、止まった直後の少しの間は `false` のまま届くことがあります（止まっている限り、確かめられるまで読み直し続けます）。`api/time` で再開かステップ送りを送ると、サーバーはその場で `true` をやめます。ほかのクライアントが Control Server に直接再開を頼んだときは、サーバーがそれを知るまでの短い間（約 0.1 秒）、止まっていた時刻の値が `true` のまま届くことがあります（値は、その時刻のもので、新しい値と混ざりません）。`false` のときは、動いている途中の最後の値で、`sim_ms` はサーバーが最後に知った仮想時間です（値のほうが新しいことがあります。わからなければ `null`）。最初のステップの前で止まっている間（`start_paused`）は、`sim_ms` 0、`paused` `true` で、`peers` は空です。
+- **`paused` と `sim_ms` と値は、1 回の読み取りのもの**です。サーバーは、watch している participant の値と仮想時間を、Control Server の 1 回の呼び出し（`GetSnapshot`。[docs/control-api.md](../../docs/control-api.md) の「時刻と値をまとめて読む」）で読み、`paused` はその応答の印（`consistent`）から決めます。
+  - `paused` が `true`: シミュレーションは `sim_ms` で止まっていて、値は、その時刻のものです。`sim_ms` より前に始まったステップの値は全部入っていて、`sim_ms` より後のステップの値は 1 つも入っていません。画面は、これを「止まっている時刻の値」として見せられます。
+  - ちょうど `sim_ms` に始まるステップの値は、入っているかどうか決まりません（止まっている間に、後から届くことがあります）。届いたら、同じ `sim_ms`、`paused` `true` で、値の違う通知がもう 1 回届きます（止まっている間、サーバーが読み直すのは、watch の `period_ms` と約 0.25 秒の長いほうの間隔です。間隔の長い watch では、その分だけ後になります）。入っているかは、participant ごとの `sample_ms` でわかります。
+  - `paused` が `false`: 動いている、終わっている、読む間に進んだ、のどれかで、値は最後の値です。`sim_ms` は、値と一緒に読んだ仮想時間で、値はそれより古くありません（値のほうが新しいことはあります）。まだ読んでいなければ、サーバーが最後に知った仮想時間です（わからなければ `null`）。
+  - この約束の前提と限り（Control Server のもの）: ECU が値をステップの中から送っているかぎりです（`ecu_main` で作った ECU はそうします。破れると、ランチャーが警告 `control-link-late-values` を出し、`true` でも値が欠けていることがあります）。「ステップの値」は、その時刻より前に ECU が読んだ最後の値です。実時間で動く participant（シミュレーションの時刻で動かないもの）の値には約束がなく、`paused` はその値を見ずに決まります。切れた participant の値は、最後の値のままです（`variables` の `connected` で見ます）。
+  - 1 つの watch の participant を別々の呼び出しで読んだとき（間隔の違う watch が同じ participant を見ているとき）は、どの participant も同じ時刻で止まっていると読めていて、その後のどの読み取りもその時刻で止まっていたときだけ `true` です。
+  - `api/time` で再開かステップ送りを送ると、サーバーは、それまでに読んだ値を「止まっている時刻の値」と扱うのをやめ、watch の次の間隔で読み直した結果で決め直します。通知が届くのは、その間隔で、前に送ったものと変わったときです（ランチャーがまだ命令を受け取っていなければ、同じ時刻で止まったままと読めるので、`false` の通知は届きません）。
+  - ほかのクライアントが Control Server に直接再開やステップ送りを頼んだときは、サーバーが次に読むか、時刻の知らせ（Control Server から約 0.1 秒ごと）で、止まっていた時刻より進んだ・終わったとわかるまで、止まっていた時刻の値が最後の通知のままです。わかった後は、値を読めなくても、watch の次の間隔で `false` の通知が届きます。
+  - watch している participant の値が、Control Server の 1 つの応答の上限（4 MiB）に入らないときは、入らなかった呼び出しの participant を半分ずつに分けて読みます（サーバーのログに警告を出します）。分けて読んでも、どの呼び出しも同じ時刻で止まっていると答えれば `true` です。1 つの participant の値だけで上限を超えるときは、その値を読みません（ログに警告。その participant が別のプロセスに替わるか、変数が変わるまで）。その participant を含む watch の `paused` は `false` のままです。
+  - 値を読めないこと（Control Server が期限までに答えない、など）が 3 回続くと、変数の状態は `ready` のまま、`reason` に理由が入った `variables` の通知が届きます（値は最後に読めたもの）。読めるようになると、`reason` は `null` に戻ります。
+  - 最初のステップの前で止まっている間（`start_paused`）は、`sim_ms` 0、`paused` `true` で、`peers` は空です。
 - 値は「最後の値」です。全部の値の列ではありません（速いシミュレーションでは、間のステップの値は届きません）。サーバーは、watch されている participant の値だけを、頼まれた頻度でランチャーから読みます。履歴はサーバーが持たないので、要る画面が自分で持ちます。
 - 実行が終わると、状態は `ended` になり、最後に読めた値が 1 回届きます（`paused` は `false`）。終わった後に始めた watch にも 1 回届きます。
 
@@ -243,6 +259,30 @@ watch は実行をまたいで続きます。実行がないとき、変数の�
 - 実行が終わるまでに確定しなかった操作は、サーバーが `unknown`（`reason`: `the run ended before the result came`）で確定させて送ります。未確定の操作が 256 件を超えて、サーバーが古いものを覚えていられなかったとき（要約の `operations_open_omitted`）も、その操作の変化が届けば `operation` で送り、確定しないまま実行が終われば、終わりに `unknown` を送ります（そのときは `peers` が空です）。実行が終わるのと同時にランチャーが受け取った書き込みは、応答で番号を返し、`unknown` で確定させて送ります。
 - GUI サーバーと Control Server の接続が切れている間に確定した操作と、Control Server が GUI サーバーへ送りきれなかった変化は、つながり直したとき（送りきれなかったと知ったとき）に読み直して送ります。
 
+## シナリオ
+
+ランチャーの `run --scenario` と `check --scenario`（[docs/scenario.md](../../docs/scenario.md)）を、画面から使う口です。ランチャーの `features` に `scenario` があるときだけ使えます。例は `scenarios.json`、`check-scenario.json`、`ws-scenario.json`、`error-scenario-not-listed.json`、`error-scenario-running.json` です。
+
+- `GET api/scenarios?file=<構成ファイル>`: 構成ファイルの隣のディレクトリ `scenarios` の `.yaml` と `.yml`（名前の順。200 個まで）。`directory` はそのディレクトリ（root からの相対）、`found` はあるか、`scenarios` は `[{path, name, size}]`（`path` は root からの相対）。`file` は `api/check` と同じ検査を通ります。挙げないもの: `.` で始まる名前、サブディレクトリ、通常のファイルでないもの（シンボリックリンクを含む）、`:` や `\` を含む名前、255 文字を超える名前。`scenarios` か、その上のディレクトリ（root の下）がシンボリックリンクなら、`found` は `false` です。
+- `api/check` と `api/run` の `scenario`: 省くか `null` なら、なし。値は、その構成ファイルの `api/scenarios` の `path` のどれかだけで（サーバーが一覧を作り直して確かめます）、ほかは 400 `scenario-not-listed` です。サーバーは、それをランチャーに `--scenario` で渡します（ランチャーは root で動くので、root からの相対のまま。`-` で始まるものは `./` を付けます）。`api/check` の応答の `scenario` は、渡したシナリオです。
+- シナリオを回す実行は、止めた状態では始められません（`start_paused: true` は 400 `invalid-field`）。ランチャーの `features` に `scenario-control` があれば、変数を読めます（`--control` を付けます。書き込みはランチャーも断ります）。なければ、`--control` を付けず、変数の状態は `off` で、`reason` がそう言います。どちらでも、シナリオの実行中の `api/write` は、サーバーが 409 `scenario-running` で断ります。時刻の命令（`api/time`）と停止は、ふつうの実行と同じです。
+- 事象 `scenario_step`（手順が始まった `running` と、決まったとき）は、ランチャーが書いたまま届きます（`index` が 1 以上の整数、`status` が文字列でないものは `bad-event`）。手順の所見（`scenario-failed` など）は、シナリオの `file` と `line` を持つ `finding` です。
+- 要約の `scenario`: `{file, name, step_count, steps, steps_omitted, status, over_at_ms}`。`file` は渡したシナリオ、`name` と `step_count` は照合の結果の `scenario` から、`steps` は届いた手順（`index` の順。手順ごとに最後の状態。`steps[]` の欄は事象と同じ。`text` と `message` は 1000 文字で切る。1000 手順まで、超えた数は `steps_omitted`）、`status` と `over_at_ms` は結果の `scenario` から（結果が来るまで `null`）。結果が来たら、`steps` は結果の手順（`not_run` を含む）になります。途中から開いた画面も、これで手順の表を作れます。
+- シナリオで止まった実行の結果の `simulation` は `ended` です（結果の `scenario` があることで、participant が止めた `ended` と区別します）。
+
+## 操作の記録（`api/recording`）
+
+GUI サーバーは、実行ごとに、自分を通した書き込み（`api/write`。つないでいるどの画面からのものも、`api/write` を使う道具からのものも）のうち、反映されたもの（participant ごとの `operation` の `applied` と `applied_at_ms`）を覚えます。`GET api/recording` は、それをシナリオの YAML にして返します（いまの実行か、終わった直後の実行。次の実行を始めるまで）。**サーバーはファイルを書きません**。画面がブラウザの保存として渡し、置き場所は利用者が決めます。例は `recording.json` です。
+
+`{"recording": {"session_id", "file", "state", "available", "reason", "writes", "omitted", "steps", "yaml"}}`
+
+- `available`: この実行で覚えているか（変数のない実行と、シナリオの実行では `false`。`reason` が理由）。`yaml` が `null` のときは、`reason` がその理由（まだ反映された書き込みがない、など）です。
+- `writes` は YAML に入れた値の数、`steps` は手順（`set`）の数、`omitted` は入れなかった値の数です。入れなかった理由は YAML の先頭のコメントに書きます（上限の 2000 個を超えた、participant の名前に `.` がある（シナリオでは最初の `.` までが participant の名前なので、名指せない））。
+- YAML の先頭のコメントは、何を記録したか、シナリオが最後の手順の時刻で終わること（ランチャーはそこでシミュレーションを止めます。記録した実行がそれより先まで走っていれば、その時刻も）、最後の手順の後も走らせたいときに足す手順の例（`expect` と `hold_for_ms`）を言います。
+- YAML は `vehicle_sil_scenario: 1`、`name`、`steps` で、手順は `at_ms`（反映したステップの仮想時刻）と `set` だけです。同じ時刻に反映された値は 1 つの `set` にまとめ、同じ変数の 2 つ目はその時刻の最後の値にします。変数は `<participant>.<変数名>`、列挙は項目の名前（いつも引用符つき。名前が 1 つに決まらなければ値）です。
+- 書き方: 変数の名前は、英字か `_` で始まり、英数字、`_`、`-`、`.` だけで `.` を含むときだけ引用符なし、ほかは二重引用符で、印字できる ASCII 以外の文字（改行、タブ、BOM、制御文字、ASCII でない文字）は `\uXXXX`（と `\UXXXXXXXX`）でエスケープします（`\xNN` は使いません。ランチャーの YAML の読み方は、`\xNN` を文字 U+00NN でなく 1 バイトとして読むため）。実数はいつも `.` を含めて書きます（`1.0`、`1.0e+20`。YAML 1.1 と 1.2 のどちらでも数として読める）。有限でない数は書きません。
+- 入れないもの: 時刻の操作（一時停止、ステップ送り）、反映されなかった書き込み（`late`、`rejected` など）、GUI サーバーを通さずに Control Server に直接書いたもの、期待する値（`expect`）。書き込んだ画面や道具の区別は持ちません（1 つの実行の全部の書き込みが 1 つのシナリオになります）。書き出した後で、エディターで足します。
+
 ## ダッシュボードのファイル
 
 `GET api/dashboard?file=<構成ファイル>` は、構成ファイルの隣の `<名前（拡張子なし）>.dashboard.yaml` を読み、形を確かめて JSON で返します（書き方は [docs/gui.md](../../docs/gui.md) の「ダッシュボードのファイル」、JSON Schema は [dashboard.schema.json](dashboard.schema.json)）。実行がなくても読めます。
@@ -257,4 +297,4 @@ watch は実行をまたいで続きます。実行がないとき、変数の�
 
 ## 上限
 
-サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ。例は `ws-kept-limit.json`）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB。4 KiB を超えても、大事な欄は必ず入れます（participant の `name`、`state`、`pid`、`exit_code`、`signal`、`reason`、`stop_requested`、`control_link`、`phase` の段階の名前、`time` の `sim_ms`、`speed`、`paused`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`、`registry` の `uri`、`command` の `seq`、`command`、`accepted`、`ms`。これだけで 4 KiB を超えるときは入れません）。`problems` は、ランチャーが書いたもの（標準エラーを除く）が 100 個、サーバー自身の知らせ（`kept-limit`、`no-result`、`output-left-open`、`stop-not-delivered`、`stop-escalated`、`launcher-silent`）が別に 50 個、標準エラーが別に最初の 20 行と最後の 30 行です。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。 ECU の変数: 一覧は participant 256 人、変数は全部で 10000 個まで（超えた分は `peers_omitted`、`variables_omitted` に数える。名前が 256 文字を超えるもの、列挙の項目が 256 個を超えるもの、知らない型のものも入れない）。単位、説明、列挙の項目の名前は 256 文字、理由の文は 500 文字で切ります。値は participant ごとに最後の 1 組だけ。操作は 256 件まで覚え（確定したものから忘れる）、要約には、覚えている未確定の操作の全部と最後の 32 件。watch は接続ごとに 16 個、名前で挙げる変数は 1 つに 2000 個、間隔は 20 ms から 60 秒。`api/write` は 1 回に 256 個、順番を待つ要求は 32 個まで（超えたら 503 `write-busy`）、Control Server の答えを待つのは 5 秒まで。画面が送る WebSocket のメッセージは 256 KiB まで。値を読むのにかける時間は、長くても全体の半分で、同時に出す読み取りは 32 本までです（participant が多く、間隔が短いときは、頼まれたより遅くなります）。Control Server が、つないでから 10 秒たっても今の状態を送らなければ、つなぎ直します。
+サーバーが覚える量には上限があり、超えた分は数えて知らせます。log は source ごとに直近 2000 行と 1 MiB（64 source まで。それより後の source は共有の `*`）、全体で 16 MiB。64 KiB を超える 1 行の log は覚えません（中継はします）。`check` と `result` は 4 MiB まで（超えたら `check` は `null`、`result` は入れ子でない短い欄だけ。例は `ws-kept-limit.json`）、`findings` は 1000 個と 1 MiB、`participants` は 256 人で 1 人 4 KiB、`phase`、`time`、`registry`、`command` は 1 つ 4 KiB。4 KiB を超えても、大事な欄は必ず入れます（participant の `name`、`state`、`pid`、`exit_code`、`signal`、`reason`、`stop_requested`、`control_link`、`phase` の段階の名前、`time` の `sim_ms`、`speed`、`paused`、`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`、`registry` の `uri`、`command` の `seq`、`command`、`accepted`、`ms`。これだけで 4 KiB を超えるときは入れません）。`problems` は、ランチャーが書いたもの（標準エラーを除く）が 100 個、サーバー自身の知らせ（`kept-limit`、`no-result`、`output-left-open`、`stop-not-delivered`、`stop-escalated`、`launcher-silent`）が別に 50 個、標準エラーが別に最初の 20 行と最後の 30 行です。知らない事象は中継だけして覚えません（つなぎ直した画面には届きません）。 ECU の変数: 一覧は participant 256 人、変数は全部で 10000 個まで（超えた分は `peers_omitted`、`variables_omitted` に数える。名前が 256 文字を超えるもの、列挙の項目が 256 個を超えるもの、知らない型のものも入れない）。単位、説明、列挙の項目の名前は 256 文字、理由の文は 500 文字で切ります。値は participant ごとに最後の 1 組だけ。操作は 256 件まで覚え（確定したものから忘れる）、要約には、覚えている未確定の操作の全部と最後の 32 件。watch は接続ごとに 16 個、名前で挙げる変数は 1 つに 2000 個、間隔は 20 ms から 60 秒。`api/write` は 1 回に 256 個、順番を待つ要求は 32 個まで（超えたら 503 `write-busy`）、Control Server の答えを待つのは 5 秒まで。画面が送る WebSocket のメッセージは 256 KiB まで。値を読むのにかける時間は、長くても全体の半分で、読み取りは 1 つずつです（1 回の呼び出しで、間隔の来た watch の participant をまとめて読みます。応答の上限に入らず分けたときだけ、1 回の読み取りで複数の呼び出しを同時に出します。読むのが遅いときは、頼まれたより遅くなります）。Control Server が、つないでから 10 秒たっても今の状態を送らなければ、つなぎ直します。

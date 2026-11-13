@@ -12,10 +12,16 @@ grows without a limit:
   which number on it has them all (operations_from_seq) and how many open ones are not kept
   (operations_open_omitted): a screen that connects again can tell a result it missed from one still to come.
 
-A `values` message is made when it is sent (values_message), from the state at that moment, in one step of the
-event loop: its `paused`, `sim_ms` and values belong together. `paused` is true only after the time and the values
-were read again from the source while it stood still at one time (see _settle): then every value of a step that
-began before `sim_ms` is in the message. A sample of a later step ends that at once.
+The values and their time are read together (Source.read_snapshot: the control server's GetSnapshot), and only
+such a read says of which moment values are. Each peer remembers the read its values are from (_Read). A `values`
+message is made when it is sent (values_message), from the state at that moment, in one step of the event loop.
+Its `paused` is true when every peer of the watch was last read standing still at one and the same time, and every
+read since found it standing still at that time too: then the source's promise holds for each of them (every step
+that began before `sim_ms` is in the values, none after it). Peers read by different calls are put together only
+so: each call's promise is about its own peers and the time P it names, and what is true of each peer for the same
+P is true of them together. Only a read makes `paused` true (there is no second look at the time and no trying
+again); what ends it without a read is a command passed on, a lost connection, and news of the time that it has
+gone past where it stood or has ended (the time does not go back, so that news is never too old to be true).
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .source import LATE_POLICIES, OperationInfo, PeerInfo, Sample, Source, SourceError, TimeInfo
+from .source import LATE_POLICIES, OperationInfo, PeerInfo, Sample, SnapshotInfo, Source, SourceError, TimeInfo
 
 OFF, CONNECTING, READY, FAILED, ENDED = "off", "connecting", "ready", "failed", "ended"
 NS_PER_MS = 1_000_000
@@ -37,12 +43,9 @@ TYPES = ("bool", "integer", "real", "enum")
 ROLES = ("input", "output", "parameter")
 FINAL = frozenset({"applied", "late", "rejected", "cancelled", "invalid", "busy", "unknown"})
 WRITE_KEYS = ("session", "writes", "at_ms", "late")
-SETTLE_RETRY_S = 0.2  # between tries to read a standstill, after the first SETTLE_TRIES in a row
-COMMAND_SETTLE_S = 0.3  # after a time command was passed on, before the standstill is read again by itself
-READS_AT_ONCE = 32  # calls to the source for values that wait for their answer at one time
 FORGOTTEN_OPEN = 100_000  # numbers kept of open operations that were forgotten (they get their end with the run)
 STANDING_READ_S = 0.25  # while it stands still with every value read, the watched peers are read this often
-SETTLE_TRIES = 3
+READ_FAILURES = 3  # reads in a row that gave nothing, before the summary says so (state ready, with a reason)
 
 log = logging.getLogger("vehicle_sil_gui")
 
@@ -64,7 +67,7 @@ class Limits:
     writes_per_request: int = 256
     writes_waiting: int = 32  # api/write requests waiting for the one that is being sent
     write_timeout_s: float = 5.0  # for the source to take a write (and for a request to wait for its turn)
-    read_timeout_s: float = 2.0  # one read of the time, of a peer's values or of an operation
+    read_timeout_s: float = 2.0  # one read of the time and the values, or of an operation
 
 
 class Rejected(Exception):
@@ -80,9 +83,18 @@ def cut(text: object, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
+@dataclass(frozen=True)
+class _Read:
+    """A read of the source (Source.read_snapshot) as the peers read by it remember it."""
+    now_ns: int  # the time it gave (the values read are not older)
+    standing: bool  # it stood still at now_ns, and the values read are those of that moment
+    epoch: int  # Variables._epoch then: `standing` counts as long as that has not changed
+    at: float  # when it was taken (the event loop's clock)
+
+
 class _Peer:
     __slots__ = ("name", "incarnation", "connected", "variables", "index", "types", "slots", "sample", "decoded",
-                 "version")
+                 "version", "read")
 
     def __init__(self, name: str):
         self.name = name
@@ -95,6 +107,7 @@ class _Peer:
         self.sample: Sample | None = None
         self.decoded: dict[str, object] | None = None  # the sample's values by name (made when first asked for)
         self.version = 0  # counts the samples taken
+        self.read: _Read | None = None  # the read that `sample` (or its absence) is from (None: not from a read)
 
     def values(self) -> dict[str, object]:
         if self.decoded is None:
@@ -176,23 +189,24 @@ class Variables:
         self.peers_omitted = 0
         self._seen: dict[str, int] = {}  # how many variables the source has for each peer it named
         self.operations: dict[int, dict] = {}  # by seq, in the order they were first seen
-        self.time: TimeInfo | None = None
-        self.settled_ns: int | None = None  # standing still at this time, with every earlier step's values read
+        self.time: TimeInfo | None = None  # as the source last told by itself (the values' time comes with a read)
         self.schema_version = 0
-        self.state_version = 0  # counts the changes of the time, of `paused` and of the state
-        self._time_changes = 0  # counts the times the source told by itself
+        self.state_version = 0  # counts the changes of the state
+        self._epoch = 0  # grows when a standstill that was read may be over (see _Read.epoch)
+        self._last: tuple[bool, int] | None = None  # the last read: (standing, the time)
+        self._per_call: int | None = None  # at most this many peers in one call (None: any): more did not fit
+        self._too_large: set[str] = set()  # peers whose values no answer can hold: not read (until they change)
+        self._read_failures = 0  # reads in a row that gave nothing
         self.was_ready = False
         self._schema_timer: asyncio.TimerHandle | None = None
-        self._settling: asyncio.Task | None = None
         self._reconciling: asyncio.Task | None = None
         self._last_read: asyncio.Task | None = None
         self._lost: str | None = None  # why the connection was last lost
         self._since_lost: set[str] | None = None  # the peers told since the connection came back (None: not lost)
         self._forgotten_open: set[int] = set()  # open operations that _keep_operation had no room for
         self._forgotten_max = -1  # the highest number of an operation that is not kept any more
-        self._reading = asyncio.Semaphore(READS_AT_ONCE)
-        self._refreshed_at = 0.0
-        self._hold_until = 0.0  # after a command was passed on: no reading of the standstill before this time
+        self._reading = asyncio.Lock()  # one read at a time: they are taken in the order the source answered
+        self._news = False  # the time may have changed since the last read: the next one is not put off
         self._writing = asyncio.Lock()
         self._writes_waiting = 0
         self._closed = False
@@ -274,8 +288,10 @@ class Variables:
     # ------------------------------------------------------------ from the source (on the event loop)
 
     def on_peers(self, peers: list[PeerInfo], removed: list[str]) -> None:
+        self._per_call = None  # other peers or variables: what fits one answer is found again
         for name in removed:
             self.peers.pop(name, None)
+            self._too_large.discard(name)
             if self._since_lost is not None:
                 self._since_lost.discard(name)
         for info in peers:
@@ -287,8 +303,9 @@ class Variables:
                     continue
                 peer = self.peers[info.name] = _Peer(info.name)
             if peer.incarnation != info.incarnation:  # another process under the name: its values are not these
-                peer.sample, peer.decoded = None, None
+                peer.sample, peer.decoded, peer.read = None, None, None
                 peer.version += 1
+                self._too_large.discard(peer.name)
             peer.incarnation, peer.connected = info.incarnation, info.connected
             self._take_schema(peer, info.variables)
             if self._since_lost is not None:
@@ -321,11 +338,11 @@ class Variables:
             if entry is not None:
                 peer.variables.append(entry)
                 peer.index[entry["name"]] = entry
-        if peer.sample is not None and before != (peer.types, [v["name"] if v is not None else None
-                                                               for v in peer.slots]):
-            # Other variables under the same incarnation: the sample was read with the old ones.
-            peer.sample = None
-            peer.version += 1
+        if before != (peer.types, [v["name"] if v is not None else None for v in peer.slots]):
+            self._too_large.discard(peer.name)
+            if peer.sample is not None:  # other variables under the same incarnation: read with the old ones
+                peer.sample, peer.read = None, None
+                peer.version += 1
 
     def _variable(self, v: dict) -> dict | None:
         name, type_, role, items = v.get("name"), v.get("type"), v.get("role"), v.get("enum") or []
@@ -340,163 +357,168 @@ class Variables:
                 "enum": [{"name": cut(i[0], n), "value": i[1]} for i in items] if type_ == "enum" else None}
 
     def on_samples(self, samples: dict[str, Sample]) -> None:
+        """Samples the source tells by itself (the control server is not asked to). They are the peers' latest
+        values, but of no read: nothing is said about their moment until the peer is read."""
         for name, sample in samples.items():
-            self._take_sample(name, sample)
+            peer = self._take_sample(name, sample)
+            if peer is not None:
+                peer.read = None
 
-    def _take_sample(self, name: str, sample: Sample, settling: bool = False) -> bool:
+    def _take_sample(self, name: str, sample: Sample) -> _Peer | None:
+        """The peer whose latest sample this now is (None: not taken)."""
         peer = self.peers.get(name)
         if peer is None or sample.incarnation != peer.incarnation or sample.count != len(peer.types):
-            return False  # of a peer or a schema not known (yet): the next one fits
+            return None  # of a peer or a schema not known (yet): the next one fits
         if peer.sample is not None and sample.sequence <= peer.sample.sequence:
-            return False
+            return None
         peer.sample, peer.decoded = sample, None
         peer.version += 1
-        if self.settled_ns is not None and sample.time_ns > self.settled_ns:
-            # A step after the time it stood still at: it runs again, whatever the time state last said.
-            self.settled_ns = None
-            self.state_version += 1
-            if not settling:
-                self._kick_settle()
-        return True
+        return peer
 
-    # ---- reading from the source. Everything that asks the source for values or for the time goes through the
-    # next two methods: a source that can give several peers' values and the time of one moment in one call
-    # replaces them (then _read_standing needs no second look at the time).
-
-    async def _read_values(self, source: Source, names: list[str]) -> dict[str, Sample | None]:
-        """The last sample of each peer named, as the source has them now (None: none yet; a peer whose read
-        failed is left out). At most READS_AT_ONCE calls wait at one time."""
-        async def one(name: str) -> tuple[str, object]:
-            async with self._reading:
-                try:
-                    return name, await source.read_values(name, self.limits.read_timeout_s)
-                except SourceError as e:
-                    return name, e
-        return {name: sample for name, sample in await asyncio.gather(*(one(n) for n in names))
-                if not isinstance(sample, SourceError)}
-
-    async def _read_standing(self, source: Source) -> tuple[TimeInfo, dict[str, Sample | None] | None]:
-        """The time, and, if the source stands still, the values of every connected peer that belong to that
-        standstill: (time, samples), or (time, None) when it does not stand still, or moved or could not be read
-        completely while the values were read (the time is then the later one). SourceError when the time cannot
-        be read. The source's promise makes the samples complete: standing still at P at both ends, no step ran in
-        between, and what the source has then holds every step that began before P."""
-        timeout = self.limits.read_timeout_s
-        before = await source.read_time(timeout)
-        if not before.paused:
-            return before, None
-        names = [p.name for p in self.peers.values() if p.connected]
-        samples = await self._read_values(source, names)
-        after = await source.read_time(timeout)
-        if after != before or len(samples) != len(names):
-            return after, None
-        return before, samples
+    # ---- reading from the source. Everything that asks the source for values or for their time goes through
+    # refresh(), one read at a time.
 
     async def refresh(self, names: set[str] | None = None) -> None:
-        """Reads the last sample of the peers named (None: all) from the source, all at once. A read that
-        fails leaves the peer's sample as it is. While it stands still with every value read, at most every
-        STANDING_READ_S (only the step it stands at can still come)."""
+        """Reads the time and the last sample of the peers named (None: all) from the source. A read that fails
+        changes nothing (READ_FAILURES in a row: the summary says why the values are old). While they stand still
+        with their values read, at most every STANDING_READ_S (only the step it stands at can still come), unless
+        there is news of the time or a command was passed on."""
         source = self.source
         if self._closed or self.state != READY or source is None:
             return
-        now = asyncio.get_running_loop().time()
-        if self.settled_ns is not None and now - self._refreshed_at < STANDING_READ_S:
+        peers = [p for p in self.peers.values() if (names is None or p.name in names) and p.name not in self._too_large]
+        recent = asyncio.get_running_loop().time() - STANDING_READ_S
+        if not peers or (not self._news and all(self._stands(p.read) and p.read.at > recent for p in peers)):
             return
-        self._refreshed_at = now
-        peers = [p.name for p in self.peers.values() if p.connected and (names is None or p.name in names)]
-        samples = await self._read_values(source, peers)
-        if self._closed or self.source is not source:
-            return
+        async with self._reading:
+            if self._closed or self.source is not source or self.state != READY:
+                return
+            self._news = False
+            epoch = self._epoch
+            try:
+                read = await self._read(source, [p.name for p in peers if p.name not in self._too_large])
+            except Exception:  # a source that breaks its word (SourceError only): not the end of reading
+                log.exception("reading the variables")
+                return
+            if self._closed or self.source is not source or self.state != READY:
+                return
+            time, samples, standing, error = read
+            if time is not None:
+                # A standstill that was called over while this was read (a command, news of the time) is not
+                # called standing by an answer that may be from before that.
+                self._take_read(time, samples, standing and epoch == self._epoch)
+            self._count_read(time is not None, error)
+
+    async def _read(self, source: Source, names: list[str]) \
+            -> tuple[TimeInfo | None, dict[str, Sample | None], bool, SourceError | None]:
+        """One read: the time, the samples of the peers that could be read, whether these are the values of the
+        moment it stands still at, and an error if a call failed. The time is None when nothing could be read.
+        One call, unless the source says that the values do not fit one answer: then the peers of that call are
+        divided in two and asked for again (and the next reads begin with calls of that size). With several
+        calls the time is the earliest (no value is older), and it stands still if every call says so for the
+        same time (each call's promise is about its own peers; see the top of this file)."""
+        timeout = self.limits.read_timeout_s
+        size = self._per_call or len(names)
+        pending = [names[i:i + size] for i in range(0, len(names), size)]
+        good: list[SnapshotInfo] = []
+        error: SourceError | None = None
+        while pending:
+            answers = await asyncio.gather(*(source.read_snapshot(group, timeout) for group in pending),
+                                           return_exceptions=True)
+            again: list[list[str]] = []
+            for group, answer in zip(pending, answers):
+                if isinstance(answer, SnapshotInfo):
+                    good.append(answer)
+                elif not isinstance(answer, SourceError):
+                    raise answer
+                elif answer.kind != "too-large":
+                    error = answer
+                elif len(group) > 1:
+                    half = len(group) // 2
+                    again += [group[:half], group[half:]]
+                    if self._per_call is None:
+                        log.warning("the values of the watched ECUs do not fit one answer of the control server: "
+                                    "they are read with several calls")
+                    self._per_call = min(self._per_call or half, half)
+                else:
+                    self._too_large.add(group[0])
+                    log.warning("the values of %s do not fit one answer of the control server: they are not read",
+                                group[0])
+            pending = again
+        if not good:
+            return None, {}, False, error
+        samples: dict[str, Sample | None] = {}
+        for answer in good:
+            samples.update(answer.samples)
+        time = min((a.time for a in good), key=lambda time: time.now_ns)
+        return time, samples, all(a.consistent and a.time.now_ns == time.now_ns for a in good), error
+
+    def _count_read(self, ok: bool, error: SourceError | None) -> None:
+        """The values that stop coming do so with a reason: after READ_FAILURES reads in a row that gave nothing,
+        the summary's reason says why (the state stays ready: the rest works), until a read gives values again."""
+        if ok:
+            self._read_failures = 0
+            if self.reason is not None:
+                self._set_state(READY, None)
+        elif error is not None:
+            self._read_failures += 1
+            if self._read_failures == READ_FAILURES:
+                self._set_state(READY, f"the values cannot be read from the control server ({error.kind}: {error}): "
+                                       "those shown are the last that were read; it is tried again")
+
+    def _take_read(self, time: TimeInfo, samples: dict[str, Sample | None], standing: bool) -> None:
+        if (standing, time.now_ns) != self._last:
+            self._last = (standing, time.now_ns)
+            self._epoch += 1  # it moved, or stands elsewhere: what was read standing before is not "now" any more
+        read = _Read(time.now_ns, standing, self._epoch, asyncio.get_running_loop().time())
         for name, sample in samples.items():
+            peer = self.peers.get(name)
+            if peer is None:
+                continue
             if sample is not None:
                 self._take_sample(name, sample)
+            # The read speaks for the peer only if what is kept is what was read (not when the sample was not
+            # taken: another incarnation or schema than the one known here).
+            mine = peer.sample
+            same = mine is None if sample is None else mine is not None and \
+                (mine.incarnation, mine.sequence) == (sample.incarnation, sample.sequence)
+            peer.read = read if same else None
+
+    def _stands(self, read: _Read | None) -> bool:
+        return read is not None and read.standing and read.epoch == self._epoch
 
     def read_last(self) -> None:
         """The simulation has ended, and the source may close soon: reads every peer once more, so that the
         values kept after the run are its last ones (if the source is still there)."""
         if self._last_read is None and not self._closed and self.state == READY:
-            self._refreshed_at = 0.0
+            self._news = True
             self._last_read = asyncio.create_task(self.refresh())
 
     def peer_names(self, watch: Watch) -> list[str]:
         return [peer.name for peer, _ in self._plan(watch)]
 
     def on_time(self, time: TimeInfo) -> None:
+        """News of the time. What a `values` message says comes from a read; the news makes the next one be read
+        without waiting (and is the time shown while there is no read). News that it has gone past the time it
+        was last read standing at, or has ended, ends `paused` whether or not the next read works: the time does
+        not go back, so such news is not older than that read. (News of that very time, not paused, may be older,
+        and says nothing.)"""
         if time == self.time:
-            # Told again what is known. If it stands still and that is not confirmed yet, it is tried again.
-            self._kick_settle()
             return
         self.time = time
-        self._hold_until = 0.0  # news of the time: what a command did is known
+        self._news = True
+        if self._last is not None and self._last[0] and (time.ended or time.now_ns > self._last[1]):
+            self._last = None
+            self._epoch += 1
         if time.ended:
             self.read_last()
-        self._time_changes += 1
-        self.state_version += 1
-        if not time.paused or time.now_ns != self.settled_ns:
-            self.settled_ns = None
-        self._kick_settle()
 
     def unsettle(self) -> None:
         """A command that may end the standstill is on its way (this server passed it on): `paused` is not said
-        until it is confirmed again. Without this, the values of the time it stood at would be called paused for
-        the moment between the command and the news of the time. The standstill is not read again at once (the
-        launcher may not have taken the command yet, and would still stand): the news of the time does it, or,
-        if none comes (the command was refused), a read COMMAND_SETTLE_S later."""
-        if self.settled_ns is not None:
-            self.settled_ns = None
-            self.state_version += 1
-        loop = asyncio.get_running_loop()
-        self._hold_until = loop.time() + COMMAND_SETTLE_S
-        loop.call_later(COMMAND_SETTLE_S, self._kick_settle)
-
-    def _kick_settle(self) -> None:
-        if self._closed or self.source is None or self.state != READY or self.time is None or \
-                not self.time.paused or self.settled_ns is not None:
-            return
-        if self._hold_until and asyncio.get_running_loop().time() < self._hold_until:
-            return
-        if self._settling is None or self._settling.done():
-            self._settling = asyncio.create_task(self._settle())
-
-    async def _settle(self) -> None:
-        """As long as the source stands still and that is not confirmed: reads the standstill (_read_standing)
-        and, when the values read belong to it, says `paused` for that time. The values that come by themselves
-        cannot tell: the news of standing still may overtake the last of them. It does not give up while the
-        time last known stands still: after SETTLE_TRIES tries in a row it tries every SETTLE_RETRY_S."""
-        tries = 0
-        while not self._closed and self.state == READY and self.time is not None and self.time.paused \
-                and self.settled_ns is None:
-            source, changes = self.source, self._time_changes
-            try:
-                time, samples = await self._read_standing(source)
-            except SourceError:
-                await asyncio.sleep(SETTLE_RETRY_S)  # slow, or lost (then on_lost has changed the state)
-                continue
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # a source that breaks its word (SourceError only): not the end of trying
-                log.exception("reading the variables while the simulation stands still")
-                await asyncio.sleep(SETTLE_RETRY_S)
-                continue
-            if self._closed or self.state != READY or self.source is not source:
-                return
-            if self._time_changes != changes and self.time != time:
-                continue  # the source told of another time while it was read: what was read may be older
-            for name, sample in (samples or {}).items():
-                if sample is not None:
-                    self._take_sample(name, sample, settling=True)
-            newer = any(p.sample is not None and p.sample.time_ns > time.now_ns for p in self.peers.values())
-            if time != self.time:
-                self.time = time
-                self.state_version += 1
-            if not time.paused:
-                return
-            if samples is not None and not newer:
-                self.settled_ns = time.now_ns
-                self.state_version += 1
-                return
-            tries += 1
-            await asyncio.sleep(0 if tries < SETTLE_TRIES else SETTLE_RETRY_S)
+        until the peers are read again, which the next watch that is due does without waiting. (If the launcher
+        has not taken the command by then, the read finds it standing where it stood, which is true.)"""
+        self._epoch += 1
+        self._news = True
 
     def on_operations(self, operations: list[OperationInfo]) -> None:
         messages = []
@@ -546,7 +568,6 @@ class Variables:
             if gone:
                 self.on_peers([], gone)
         self._set_state(READY, None)
-        self._kick_settle()
         if again and any(not e["done"] for e in self.operations.values()):
             self._start_reconcile(peers=False)  # what became of the operations while it was not connected
 
@@ -582,8 +603,7 @@ class Variables:
         """The connection to the source ended. The source connects again by itself unless fatal."""
         if self._closed:
             return
-        self.settled_ns = None
-        self.state_version += 1
+        self._epoch += 1
         self._since_lost = set()
         for peer in self.peers.values():
             peer.connected = False
@@ -604,7 +624,7 @@ class Variables:
         if self._closed:
             return
         self._closed = True
-        for task in (self._settling, self._reconciling, self._last_read):
+        for task in (self._reconciling, self._last_read):
             if task is not None:
                 task.cancel()
         if self._schema_timer is not None:
@@ -629,7 +649,7 @@ class Variables:
             self._emit([{"type": "operation", "session": self.session_id, "seq": seq, "state": "unknown",
                          "done": True, "peers": {}}])
         self._forgotten_open.clear()
-        self.settled_ns = None
+        self._epoch += 1
         self.state_version += 1
         if self.state == OFF:
             return
@@ -655,7 +675,17 @@ class Variables:
     def stamp(self, watch: Watch) -> object:
         """Changes when a `values` message for the watch would differ from the last one."""
         plan = self._plan(watch)
-        return (self.session_id, self.state_version, sum(peer.version for peer, _ in plan))
+        return (self.session_id, self.state_version, self._moment(plan), sum(peer.version for peer, _ in plan))
+
+    def _moment(self, plan: list[tuple[_Peer, list[str] | None]]) -> tuple[bool, int | None]:
+        """(`paused`, `sim_ms`) of a message with these peers: see the top of this file."""
+        reads = [peer.read for peer, _ in plan]
+        times = {read.now_ns for read in reads if read is not None}
+        paused = self.state == READY and len(times) == 1 and all(self._stands(read) for read in reads)
+        # Not paused: the time of the (earliest) read, which the values are not older than; without a read, what
+        # the source last told.
+        now_ns = min(times) if times else self.time.now_ns if self.time is not None else None
+        return paused, None if now_ns is None else now_ns // NS_PER_MS
 
     def _plan(self, watch: Watch) -> list[tuple[_Peer, list[str] | None]]:
         key = (self.session_id, self.schema_version)
@@ -680,11 +710,10 @@ class Variables:
             values = peer.values()
             peers[peer.name] = {"sample_ms": peer.sample.time_ns // NS_PER_MS,
                                 "values": values if names is None else {n: values[n] for n in names if n in values}}
-        paused = self.settled_ns is not None and self.state == READY
-        now_ns = self.settled_ns if paused else self.time.now_ns if self.time is not None else None
+        paused, sim_ms = self._moment(self._plan(watch))
         watch.sent = self.stamp(watch)
-        return {"type": "values", "id": watch.id, "session": self.session_id,
-                "sim_ms": None if now_ns is None else now_ns // NS_PER_MS, "paused": paused, "peers": peers}
+        return {"type": "values", "id": watch.id, "session": self.session_id, "sim_ms": sim_ms, "paused": paused,
+                "peers": peers}
 
     # ------------------------------------------------------------ writes
 

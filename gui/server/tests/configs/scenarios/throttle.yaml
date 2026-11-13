@@ -1,0 +1,9 @@
+# A scenario for the fake launcher (gui/server/tests/fake_launcher.py plays it step by step).
+vehicle_sil_scenario: 1
+name: throttle up
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - wait_until: { Engine.engine.speed: { ge: 1700 } }
+    timeout_ms: 500
+  - expect: { Engine.engine.speed: { le: 4000 } }

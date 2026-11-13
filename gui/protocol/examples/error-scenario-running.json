@@ -1,0 +1,23 @@
+{
+  "description": "A write while the run plays a scenario (a launcher with scenario-control reads the variables then, and nothing writes them).",
+  "request": {
+    "method": "POST",
+    "path": "api/write",
+    "body": {
+      "session": 1,
+      "writes": {
+        "Engine": {
+          "engine.demand": 40
+        }
+      }
+    }
+  },
+  "status": 409,
+  "response": {
+    "error": {
+      "code": "scenario-running",
+      "message": "the run 1 plays the scenario scenarios/throttle.yaml: variables cannot be written while it runs (the scenario must give the same result every time); read them, or start a run without a scenario to write",
+      "detail": null
+    }
+  }
+}

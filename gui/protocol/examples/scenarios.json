@@ -1,0 +1,26 @@
+{
+  "description": "The scenario files of a configuration: the .yaml and .yml files in scenarios next to it.",
+  "request": {
+    "method": "GET",
+    "path": "api/scenarios?file=simulation.yaml"
+  },
+  "status": 200,
+  "response": {
+    "file": "simulation.yaml",
+    "directory": "scenarios",
+    "found": true,
+    "scenarios": [
+      {
+        "path": "scenarios/fails.yaml",
+        "name": "fails.yaml",
+        "size": 332
+      },
+      {
+        "path": "scenarios/throttle.yaml",
+        "name": "throttle.yaml",
+        "size": 320
+      }
+    ],
+    "truncated": false
+  }
+}

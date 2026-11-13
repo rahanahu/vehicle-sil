@@ -1,0 +1,9 @@
+# A scenario whose second step fails in the fake launcher (the line marked fake-launcher: fail).
+vehicle_sil_scenario: 1
+name: speed too high
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - after_ms: 100
+    expect: { Engine.engine.speed: { ge: 5000 } }  # fake-launcher: fail
+  - expect: { Engine.engine.speed: 0 }

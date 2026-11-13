@@ -1,0 +1,21 @@
+{
+  "description": "The writes of the run that were applied, as a scenario's YAML (the server writes no file: the screen saves the text).",
+  "request": {
+    "method": "GET",
+    "path": "api/recording"
+  },
+  "status": 200,
+  "response": {
+    "recording": {
+      "session_id": 1,
+      "file": "forever.yaml",
+      "state": "running",
+      "available": true,
+      "reason": null,
+      "writes": 2,
+      "omitted": 0,
+      "steps": 1,
+      "yaml": "# Written by vehicle-sil-gui: the writes made through the GUI server in the run named below (from every\n# screen and tool that used it) that were applied, each at the time of the step it was applied at.\n# Not here: pauses and steps of the time, writes that were not applied (docs/gui.md).\n# This scenario ends at its last step (0 ms): the launcher stops the simulation there.\n# The recorded run went on to 200 ms.\n# To keep it running after the last step, add a step at the end, such as\n#   - expect: { Engine.ecu.connected: true }\n#     hold_for_ms: 200\n# Add expect and wait_until steps to check what the ECUs do (docs/scenario.md).\nvehicle_sil_scenario: 1\nname: \"recorded from forever.yaml (run 1)\"\nsteps:\n  - at_ms: 0\n    set:\n      Engine.engine.demand: 40.0\n      Engine.engine.mode: \"on\"\n"
+    }
+  }
+}

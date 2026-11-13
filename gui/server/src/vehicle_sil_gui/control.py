@@ -11,13 +11,15 @@ package.
 
 Threads: one reader thread per source reads the Watch stream (the peers, the operations, the time) and keeps
 only the latest of what it reads (per peer, per operation) until the event loop takes it; it never waits for the
-loop, and the loop never waits for it. Single calls (the time, a peer's values, a write) are gRPC futures whose
+loop, and the loop never waits for it. Single calls (the time and the values, a write) are gRPC futures whose
 result is passed to the loop.
 
-The values are not taken from the stream: they are read with single calls when a screen watches them
-(variables.Variables.refresh), as often as the screens ask and no more. A stream of values comes as fast as the
-simulation runs, and what waits in it (in the connection's buffers, which this side cannot bound) would be old
-by the time it is read; a read gives the latest sample at that moment, whatever the simulation's speed.
+The values are not taken from the stream: they are read, together with the time, with one GetSnapshot when a
+screen watches them (variables.Variables.refresh), as often as the screens ask and no more. A stream of values
+comes as fast as the simulation runs, and what waits in it (in the connection's buffers, which this side cannot
+bound) would be old by the time it is read; a read gives the latest sample at that moment, whatever the
+simulation's speed. A control server without GetSnapshot (an older launcher) is not used: the connection ends
+for good, with the reason (TOO_OLD).
 
 The token of the run is in a file that only this user can read (credentials_file), never in an argument, an
 event or a message: every text that comes from the control server is cleaned of it before it is shown.
@@ -41,7 +43,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .source import OperationInfo, PeerInfo, Sink, SourceError, TargetInfo, TimeInfo
+from .source import OperationInfo, PeerInfo, Sink, SnapshotInfo, SourceError, TargetInfo, TimeInfo
 
 FEATURE = "control-server"  # of vehicle_sil_launch version --json: run --control and the event below
 EVENT = "control_server"  # {"address", "tls", "credentials"}: where the run's control server listens
@@ -54,6 +56,10 @@ MAX_MESSAGE = 64 * 1024 * 1024  # one peer with the most variables the launcher 
 OPERATIONS_WAITING = 4096  # operations read and not yet taken by the event loop
 CLOSE_WAIT_S = 2.0
 SYNC_TIMEOUT_S = 10.0  # for the control server to send what there is, once connected; then the connection is ended
+PROBE_TIMEOUT_S = 2.0
+PROBE_PEER = "vehicle-sil-gui-probe"  # no peer's name: a GetSnapshot for it is answered without values
+TOO_OLD = ("the vehicle_sil_launch of this run is too old for this GUI server: its control server has no GetSnapshot "
+           "(the time and the values of one moment), so the variables cannot be read; build a newer launcher")
 
 log = logging.getLogger("vehicle_sil_gui")
 
@@ -181,6 +187,10 @@ def check_address(address: object) -> str:
     return address
 
 
+class _TooOld(Exception):
+    """The control server has no GetSnapshot."""
+
+
 class _Snapshot:
     """A sample as it came (a protobuf Snapshot), turned into values only when a screen needs them."""
 
@@ -240,6 +250,7 @@ class GrpcSource:
         self._synced = False
         self._dropped = False
         self._lost: tuple[str, bool] | None = None
+        self._probed = False  # the control server is known to have GetSnapshot
 
     # ------------------------------------------------------------ the event loop's side
 
@@ -264,19 +275,16 @@ class GrpcSource:
         while self._thread is not None and self._thread.is_alive() and time.monotonic() < deadline:
             await asyncio.sleep(0.01)
 
-    async def read_time(self, timeout_s: float) -> TimeInfo:
-        return _time(await self._unary(self._stub.GetTime, self._pb.GetTimeRequest(), timeout_s))
-
     async def read_peers(self, timeout_s: float) -> list[PeerInfo]:
         reply = await self._unary(self._stub.ListPeers, self._pb.ListPeersRequest(), timeout_s)
         return [self._peer(p) for p in reply.peers]
 
-    async def read_values(self, peer: str, timeout_s: float):
-        reply = await self._unary(self._stub.GetValues, self._pb.GetValuesRequest(peer=peer), timeout_s,
-                                  missing=None)
-        if reply is None or not reply.has_values:
-            return None
-        return _Snapshot(reply.incarnation, reply.snapshot)
+    async def read_snapshot(self, peers: list[str], timeout_s: float) -> SnapshotInfo:
+        reply = await self._unary(self._stub.GetSnapshot, self._pb.GetSnapshotRequest(peers=peers), timeout_s,
+                                  exhausted="too-large")
+        samples = {v.peer: _Snapshot(v.incarnation, v.snapshot) if v.HasField("snapshot") else None
+                   for v in reply.values}
+        return SnapshotInfo(_time(reply.time), samples, reply.consistent)
 
     async def read_operation(self, seq: int, timeout_s: float) -> OperationInfo | None:
         reply = await self._unary(self._stub.GetOperation, self._pb.GetOperationRequest(seq=seq), timeout_s,
@@ -300,8 +308,10 @@ class GrpcSource:
 
     _NO_DEFAULT = object()
 
-    async def _unary(self, method, request, timeout_s: float, missing: object = _NO_DEFAULT):
-        """One call, without blocking the loop. missing: what NOT_FOUND gives (else it is refused)."""
+    async def _unary(self, method, request, timeout_s: float, missing: object = _NO_DEFAULT,
+                     exhausted: str = "refused"):
+        """One call, without blocking the loop. missing: what NOT_FOUND gives (else it is refused). exhausted: the
+        kind of the SourceError for RESOURCE_EXHAUSTED (GetSnapshot: the answer would be too large)."""
         grpc = self._grpc
         if self._closed:
             raise SourceError("unavailable", "the connection to the control server is closed")
@@ -338,6 +348,8 @@ class GrpcSource:
             code = e.code()
             if code == grpc.StatusCode.NOT_FOUND and missing is not self._NO_DEFAULT:
                 return missing
+            if code == grpc.StatusCode.RESOURCE_EXHAUSTED:
+                raise SourceError(exhausted, self._clean(f"{code.name}: {e.details() or 'no details'}")) from None
             raise self._error(code, e.details()) from None
 
     def _error(self, code, details: str | None) -> SourceError:
@@ -463,6 +475,9 @@ class GrpcSource:
                     reason += "cannot be reached"
                 else:
                     reason += f"ended the connection ({code.name}: {e.details()})"
+            except _TooOld:
+                reason, fatal = TOO_OLD, True
+                call.cancel()
             except Exception as e:  # the channel was closed under the call, or a message this side cannot read
                 reason = f"reading from the control server failed ({type(e).__name__}: {e})"
             if self._stop.is_set():
@@ -484,12 +499,27 @@ class GrpcSource:
                 return
             delay = min(delay * 2, RECONNECT_MAX_S)
 
+    def _probe(self) -> None:
+        """_TooOld when the control server has no GetSnapshot. Any other failure says nothing (the next connection
+        asks again)."""
+        grpc = self._grpc
+        try:
+            self._stub.GetSnapshot(self._pb.GetSnapshotRequest(peers=[PROBE_PEER]), timeout=PROBE_TIMEOUT_S,
+                                   metadata=self._metadata)
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.UNIMPLEMENTED:
+                raise _TooOld() from None
+            return
+        self._probed = True
+
     def _follow(self, call, watchdog: threading.Timer) -> bool:
         """Reads the stream to its end; whether it got as far as the first full state."""
         synced = False
         dropped_seen = 0
         for update in call:
             kind = update.WhichOneof("kind")
+            if kind == "initial_done" and not self._probed:
+                self._probe()  # before the variables are called ready: they cannot be read without GetSnapshot
             with self._lock:
                 if update.dropped > dropped_seen:
                     dropped_seen = update.dropped

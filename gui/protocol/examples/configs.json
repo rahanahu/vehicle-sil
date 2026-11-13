@@ -141,6 +141,18 @@
         "simulation": true
       },
       {
+        "path": "scenarios/fails.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 332,
+        "simulation": false
+      },
+      {
+        "path": "scenarios/throttle.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 320,
+        "simulation": false
+      },
+      {
         "path": "simulation.yaml",
         "modified": "2026-01-01T00:00:00Z",
         "size": 476,

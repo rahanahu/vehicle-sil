@@ -149,6 +149,47 @@
               </button>
             </p>
           }
+          @if (scenarioSupported()) {
+            @if (running()) {
+              <p class="file" data-testid="session-scenario">
+                <ng-container i18n>シナリオ:</ng-container>
+                @if (session()?.scenario; as scenario) {
+                  <code>{{ scenario.file }}</code>
+                } @else {
+                  <ng-container i18n>なし</ng-container>
+                }
+              </p>
+            } @else if (scenarios.hasValue()) {
+              <mat-form-field class="picker" subscriptSizing="dynamic">
+                <mat-label i18n>シナリオ</mat-label>
+                <mat-select
+                  [value]="scenarioChoice()"
+                  (valueChange)="selectScenario($event)"
+                  data-testid="scenario-select"
+                >
+                  <mat-option [value]="null" i18n>なし（自分で操作する）</mat-option>
+                  @for (scenario of scenarios.value().scenarios; track scenario.path) {
+                    <mat-option [value]="scenario.path">{{ scenario.name }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+              @if (scenarios.value().scenarios.length === 0) {
+                <p class="hint" data-testid="no-scenarios" i18n>
+                  シナリオはありません。構成ファイルの隣の
+                  <code>{{ scenarios.value().directory }}</code> に .yaml を置くと選べます。
+                </p>
+              } @else if (chosenScenario() !== null) {
+                <p class="hint" i18n>
+                  シナリオを最後まで進めると、ランチャーが止めて合否を出します。シナリオの実行中は、変数を書けません。
+                </p>
+              }
+            } @else if (scenarios.error(); as error) {
+              <p class="error" role="alert">
+                <ng-container i18n>シナリオの一覧を取得できませんでした:</ng-container>
+                <span lang="en">{{ error.message }}</span>
+              </p>
+            }
+          }
           @if (speedSupported()) {
             <app-speed-picker
               class="speed"
@@ -163,8 +204,8 @@
             <mat-checkbox
               class="start-paused"
               data-testid="start-paused"
-              [checked]="startPaused()"
-              [disabled]="running()"
+              [checked]="startPaused() && chosenScenario() === null"
+              [disabled]="running() || chosenScenario() !== null"
               (change)="startPaused.set($event.checked)"
               i18n
               >止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）</mat-checkbox
@@ -179,6 +220,12 @@
         </mat-card-header>
         <mat-card-content>
           @if (shownCheck(); as check) {
+            @if (check.scenario; as scenario) {
+              <p class="hint" data-testid="check-scenario" i18n>
+                シナリオ <code>{{ scenario.file }}</code> も照合しました（{{ scenario.steps }}
+                手順）。
+              </p>
+            }
             <app-check-panel [check]="check" [(disabled)]="disabled" [locked]="running()" />
           } @else if (running()) {
             <p class="hint" i18n>この実行の照合の結果はありません。</p>
@@ -271,6 +318,30 @@
                   </button>
                 }
               </div>
+            </mat-card-content>
+          </mat-card>
+        }
+        @if (session.scenario; as scenario) {
+          <mat-card appearance="outlined" data-testid="scenario-card">
+            <mat-card-header>
+              <mat-card-title
+                ><h2 id="run-scenario" tabindex="-1" i18n>シナリオ</h2></mat-card-title
+              >
+            </mat-card-header>
+            <mat-card-content>
+              <app-scenario-panel
+                [scenario]="scenario"
+                [running]="session.launcher.running && !session.result"
+              />
+            </mat-card-content>
+          </mat-card>
+        } @else if (recordable()) {
+          <mat-card appearance="outlined" data-testid="recording-card">
+            <mat-card-header>
+              <mat-card-title><h2 i18n>操作をシナリオに</h2></mat-card-title>
+            </mat-card-header>
+            <mat-card-content>
+              <app-recording-panel [session]="session.id" [running]="session.launcher.running" />
             </mat-card-content>
           </mat-card>
         }

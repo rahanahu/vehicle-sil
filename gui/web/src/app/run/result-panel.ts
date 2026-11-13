@@ -173,7 +173,7 @@ export class ResultPanel {
   );
 
   protected simulationText(simulation: string): string {
-    return simulationLabel(simulation);
+    return simulationLabel(simulation, this.result().scenario?.status ?? null);
   }
 
   protected interruptedBy(by: string): string {

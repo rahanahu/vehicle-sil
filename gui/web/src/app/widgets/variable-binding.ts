@@ -148,6 +148,9 @@ export function bindVariable(ref: () => VariableRef, options: BindOptions = {}):
   const block = computed<WriteBlock | null>(() => {
     const base = writes.block(current());
     if (base !== null) return base;
+    // シナリオの実行中は見るだけ（書き込みの様子は持たない。サーバーも断る）
+    const session = server.session();
+    if (session?.scenario && session.launcher.running) return 'scenario';
     const known = info();
     if (options.needsRange && known && !hasRange(known)) return 'no-range';
     if (options.needsValue && reading() === undefined && pending() === null) return 'no-value';

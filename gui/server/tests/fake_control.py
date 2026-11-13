@@ -1,9 +1,16 @@
 """A stand-in for the control server of vehicle_sil_launch (gRPC, docs/control-api.md), for the GUI server's tests.
 
 The fake launcher starts it when it is run with --control (fake_launcher.py), and tests start it by themselves.
-It serves the part of ControlService that the GUI server uses (Ping, ListPeers, GetValues, GetTime, Write,
-GetOperation, Watch), with the contract of the real one where the GUI server relies on it:
+It serves the part of ControlService that the GUI server uses (Ping, ListPeers, GetSnapshot, Write, GetOperation,
+Watch; and GetValues and GetTime), with the contract of the real one where the GUI server relies on it:
 
+- GetSnapshot reads the time first and all the values after it (between_reads, if set, is called in between: what
+  a test lets happen there), so the values are never older than the time. consistent: the time read stood still
+  and had not ended, and no sample is of a step after it. One entry per name asked for, in that order (a name
+  given again is left out); without names, every peer by name. A peer without a sample has an entry with its
+  incarnation and no snapshot, an unknown name one without either. More than max_snapshot_peers names are
+  INVALID_ARGUMENT, an answer of more than max_snapshot_bytes is RESOURCE_EXHAUSTED. With snapshot=False the
+  call is UNIMPLEMENTED, as with a launcher from before it;
 - Watch sends the peers, their last values and the time, then initial_done, then the changes; of values and of
   the time only the latest (a slow reader gets fewer, never older ones after newer ones);
 - while the time stands still at P, the values of every step that began before P are there, and the step that
@@ -66,12 +73,17 @@ def _make_stubs() -> str:
 
 
 class FakeControl:
-    def __init__(self, peers: dict[str, list[dict]], token: str | None = None, role: str = "operator"):
+    def __init__(self, peers: dict[str, list[dict]], token: str | None = None, role: str = "operator",
+                 snapshot: bool = True):
         """peers: the variables of each (the dicts of a check's `variables`). token: every call must carry it;
-        role: what the token may do (viewer: read; operator, admin: write too)."""
+        role: what the token may do (viewer: read; operator, admin: write too). snapshot: has GetSnapshot."""
         self.grpc, self.pb, self.rpc = load()
         self.token = token
         self.role = role
+        self.has_snapshot = snapshot
+        self.between_reads = None  # called by GetSnapshot after it read the time, before it reads the values
+        self.max_snapshot_peers = 1024
+        self.max_snapshot_bytes = 4 * 1024 * 1024
         self.last_step_ms: int | None = None  # the time the last step that ran began at
         self.requests: list = []  # the WatchRequests taken
         self.changed = threading.Condition()
@@ -85,6 +97,7 @@ class FakeControl:
         self.steps = 0
         self.seq = 0
         self.stopped = False
+        self.refuse_writes: str | None = None  # every write is refused with this (a scenario runs)
         self.calls: list[str] = []
         self.server = None
         self.address = ""
@@ -125,6 +138,36 @@ class FakeControl:
                 outer._enter("GetTime", context)
                 with outer.changed:
                     return outer._time()
+
+            def GetSnapshot(self, request, context):
+                outer._enter("GetSnapshot", context)
+                if not outer.has_snapshot:
+                    context.abort(grpc.StatusCode.UNIMPLEMENTED, "Method not implemented!")
+                if len(request.peers) > outer.max_snapshot_peers:
+                    context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                                  f"at most {outer.max_snapshot_peers} peers in one request")
+                with outer.changed:  # the time first ...
+                    time, now_ns = outer._time(), outer.time["now_ns"]
+                if outer.between_reads is not None:
+                    outer.between_reads()
+                with outer.changed:  # ... then all the values at one moment
+                    values, newer = [], False
+                    for name in dict.fromkeys(request.peers) if request.peers else sorted(outer.peers):
+                        sample = outer.samples.get(name)
+                        if name not in outer.peers:
+                            values.append(outer.pb.PeerValues(peer=name))
+                        elif sample is None:
+                            values.append(outer.pb.PeerValues(peer=name, incarnation="1"))
+                        else:
+                            newer = newer or sample[0] > now_ns
+                            values.append(outer.pb.PeerValues(peer=name, incarnation="1",
+                                                              snapshot=outer._snapshot(name, sample)))
+                reply = outer.pb.GetSnapshotReply(time=time, values=values,
+                                                  consistent=time.paused and not time.ended and not newer)
+                if reply.ByteSize() > outer.max_snapshot_bytes:
+                    context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED,
+                                  f"the snapshot is larger than {outer.max_snapshot_bytes} bytes: ask for fewer peers")
+                return reply
 
             def Write(self, request, context):
                 outer._enter("Write", context, writes=True)
@@ -266,6 +309,8 @@ class FakeControl:
         grpc = self.grpc
         if not request.writes:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "a write needs at least one value")
+        if self.refuse_writes:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, self.refuse_writes)
         with self.changed:
             self.seq += 1
             self.version += 1

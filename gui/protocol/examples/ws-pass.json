@@ -53,7 +53,8 @@
         "result": null,
         "log": {},
         "problems": [],
-        "problems_omitted": 0
+        "problems_omitted": 0,
+        "scenario": null
       }
     },
     {
@@ -61,7 +62,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -2157,7 +2158,8 @@
           }
         },
         "problems": [],
-        "problems_omitted": 0
+        "problems_omitted": 0,
+        "scenario": null
       }
     }
   ]

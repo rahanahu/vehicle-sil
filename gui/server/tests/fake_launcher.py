@@ -10,9 +10,10 @@ speed on standard input. test_real_launcher.py compares what it writes with what
 Standard library only.
 
     fake_launcher.py version [--json]
-    fake_launcher.py check [--json] [--strict] [--disable <name>]... [--enable <name>]... [--] <file>
+    fake_launcher.py check [--json] [--strict] [--scenario <file>] [--disable <name>]... [--enable <name>]... [--]
+                           <file>
     fake_launcher.py run [--events] [--json] [--stdin-commands [--start-paused]] [--strict] [--disable <name>]...
-                         [--enable <name>]... [--speed <number|max>] [--] <file>
+                         [--enable <name>]... [--speed <number|max>] [--scenario <file>] [--] <file>
 
 The scenario comes from FAKE_LAUNCHER_SCENARIO, else from a line `# fake-launcher: <scenario>` in the file,
 else `pass`:
@@ -64,6 +65,19 @@ else `pass`:
                      control-link-not-offered in the check)
   deaf               like forever, but it never reads its standard input (on Linux its pipe is made as small as it
                      can be): a launcher that hangs while commands are written to it; only a signal ends it
+
+--scenario <file> (the feature scenario) plays a scenario file of the real launcher's format (docs/scenario.md) in
+its smallest form: the file is read with a line parser (name:, and under steps: one step per `- ` item, its kind the
+first of set, ramp, wait_until, expect, its line that key's line); it must have `vehicle_sil_scenario: 1` (else the
+check's error not-a-scenario; a file that is not there: file). The check has `scenario` {file, name, steps}. A run
+starts step 1 before the simulation runs (status running), and on each step of the time the step in turn passes
+(scenario_step passed, then the next one running); a step with `# fake-launcher: fail` on one of its lines fails
+instead (scenario-failed). When every step has passed the simulation ends (simulation `ended`, result passed); a
+failed step ends it too (result failed, exit code 1), and so does stop_at_ms before the end (scenario-out-of-time).
+A stop meanwhile adds the error scenario-incomplete. The result has `scenario` {file, name, status, over_at_ms,
+steps}. As the real launcher, --scenario cannot be used with --start-paused, nor with --control unless the
+features have scenario-control: then the control server is there during the scenario, reads as usual and refuses
+every write (FAILED_PRECONDITION).
 
 With the feature control-server in FAKE_LAUNCHER_FEATURES (it is not there by default: the fake then stands for
 a launcher built without the control server, and refuses --control as that one does), `run --control <address>
@@ -123,7 +137,7 @@ SCENARIOS = ("pass", "check-error", "participant-crash", "forever", "ignore-stop
              "large-result", "late", "jitter", "deaf", "control-trouble")
 USAGE = next(p for p in __doc__.split("\n\n") if p.lstrip().startswith("fake_launcher.py version"))
 STEP_MS = 100
-FEATURES = "events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links"
+FEATURES = "events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,scenario"
 # The control links (the launcher's side of the ECUs' variables), all of their words: the event, its states, the
 # keys of the check's and the result's participants[], what an ECU offers, and the codes of the findings
 CONTROL_EVENT = "control_link"
@@ -135,6 +149,8 @@ CONTROL_TRANSPORT, CONTROL_VERSION = "silkit", 1
 CONTROL_NO_HELLO_CODE, CONTROL_VERSION_CODE = "control-link-no-hello", "control-link-version"  # warnings of the run
 CONTROL_NOT_OFFERED_CODE = "control-link-not-offered"  # a note of the check
 CONTROL_FEATURE, CONTROL_SERVER_EVENT = "control-server", "control_server"  # run --control and its event
+SCENARIO_FEATURE, SCENARIO_CONTROL_FEATURE = "scenario", "scenario-control"
+SCENARIO_KINDS = ("set", "ramp", "wait_until", "expect")
 
 
 def control_plan(config: dict, scenario: str) -> dict[str, str]:
@@ -211,6 +227,44 @@ def read_config(path: Path) -> dict:
     return config
 
 
+def read_scenario(path: str) -> dict:
+    """{"file", "name", "steps": [{"line", "kind", "text", "fail"}], "error": (code, line, message) or None}."""
+    play = {"file": path, "name": None, "steps": [], "error": None}
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        play["error"] = ("file", None, "the scenario file does not exist: check the path given with --scenario")
+        return play
+    if not any(re.match(r"vehicle_sil_scenario:\s*1\b", line) for line in lines):
+        play["error"] = ("not-a-scenario", 1, "this is not a scenario: write vehicle_sil_scenario: 1 at the top")
+        return play
+    in_steps, step = False, None
+    for number, line in enumerate(lines, start=1):
+        if m := re.match(r"name:\s*(.+)$", line):
+            play["name"] = scalar(m.group(1))
+        if line.startswith("steps:"):
+            in_steps = True
+            continue
+        if not in_steps:
+            continue
+        if re.match(r"\s*-\s", line):
+            step = {"line": None, "kind": None, "text": "", "fail": False}
+            play["steps"].append(step)
+        if step is None:
+            continue
+        if "# fake-launcher: fail" in line:
+            step["fail"] = True
+        m = re.match(r"\s*(?:-\s+)?(\w+):\s*(.*)$", line.split(" #", 1)[0])
+        if m and m.group(1) in SCENARIO_KINDS and step["kind"] is None:
+            words = re.sub(r"\s+", " ", re.sub(r"[{}]", "", m.group(2))).strip()
+            words = words.replace(": ", " = " if m.group(1) == "set" else " ")
+            step.update(line=number, kind=m.group(1), text=f"{m.group(1)} {words}".strip())
+    play["steps"] = [s for s in play["steps"] if s["kind"]]
+    if not play["steps"]:
+        play["error"] = ("missing-key", None, "steps: write at least one step")
+    return play
+
+
 def parse_speed(text: str) -> float | str | None:
     """A speed as the launcher reads it (a plain decimal number in range, or max); None when it is not one."""
     if text == "max":
@@ -266,7 +320,7 @@ def more_variables(base: str) -> list[dict]:
     ]
 
 
-def check(file: str, config: dict, scenario: str, strict: bool) -> dict:
+def check(file: str, config: dict, scenario: str, strict: bool, play: dict | None = None) -> dict:
     networks = config["networks"]
     participants, findings = [], []
     enabled = [p for p in config["participants"] if p["enabled"]]
@@ -305,6 +359,9 @@ def check(file: str, config: dict, scenario: str, strict: bool) -> dict:
         findings.insert(0, finding("error", "step-mismatch", file, target["line"] if target else None, name, None,
                                    f"participant '{name}': step_ms is 20, but the executable's step is 10 ms: "
                                    "write step_ms: 10, or remove step_ms"))
+    if play is not None and play["error"]:
+        code, line, message = play["error"]
+        findings.append(finding("error", code, play["file"], line, None, None, message))
     if not any(p["required"] for p in enabled):
         findings.insert(0, finding("error", "no-required-participant", file, None, None, None,
                                    "no enabled participant is required, so the simulation would wait for none: "
@@ -318,7 +375,7 @@ def check(file: str, config: dict, scenario: str, strict: bool) -> dict:
     findings.sort(key=lambda f: order[f["severity"]])
     counts = {s: sum(f["severity"] == s for f in findings) for s in order}
     failed = counts["error"] or (strict and counts["warning"])
-    return {
+    out = {
         "vehicle_sil_check": 1, "vehicle_sil": VERSION, "file": file, "result": "failed" if failed else "passed",
         "strict": strict, "errors": counts["error"], "warnings": counts["warning"], "notes": counts["note"],
         "stop_at_ms": config["stop_at_ms"], "start_timeout_ms": config["start_timeout_ms"],
@@ -328,6 +385,9 @@ def check(file: str, config: dict, scenario: str, strict: bool) -> dict:
                       "participants": [p["name"] for p in enabled]} for n in networks],
         "findings": findings,
     }
+    if play is not None:
+        out["scenario"] = {"file": play["file"], "name": play["name"], "steps": len(play["steps"])}
+    return out
 
 
 def unreadable_check(file: str | None, result: str, code: str, message: str, strict: bool) -> dict:
@@ -353,8 +413,12 @@ def parse(argv: list[str]) -> dict:
              "run": {"--json", "--events", "--stdin-commands", "--strict", "--start-paused"}}
     valued = {"version": set(), "check": {"--disable", "--enable"},
               "run": {"--disable", "--enable", "--speed"}}
-    if CONTROL_FEATURE in os.environ.get("FAKE_LAUNCHER_FEATURES", FEATURES).split(","):
+    features = os.environ.get("FAKE_LAUNCHER_FEATURES", FEATURES).split(",")
+    if CONTROL_FEATURE in features:
         valued["run"] |= {"--control", "--control-credentials"}
+    if SCENARIO_FEATURE in features:
+        valued["check"] |= {"--scenario"}
+        valued["run"] |= {"--scenario"}
     if command not in flags:
         raise Usage(f"unknown command '{command}': write version, check or run")
     args = {"command": command, "disable": [], "enable": [], "files": [], "speed": None}
@@ -379,6 +443,8 @@ def parse(argv: list[str]) -> dict:
                 args["speed"] = speed
             elif a in ("--control", "--control-credentials"):
                 args[a[2:].replace("-", "_")] = rest[i]
+            elif a == "--scenario":
+                args["scenario_file"] = rest[i]
             else:
                 args[a[2:]].append(rest[i])
         elif a.startswith("-"):
@@ -392,6 +458,12 @@ def parse(argv: list[str]) -> dict:
         raise Usage("--start-paused needs --stdin-commands (resume or step it with a command)")
     if args.get("control_credentials") and not args.get("control"):
         raise Usage("--control-credentials needs --control")
+    if args.get("scenario_file") and args.get("start_paused"):
+        raise Usage("--scenario cannot be used with --start-paused: the scenario writes its values for 0 before the "
+                    "first step and runs by itself; pause and step it with --stdin-commands if needed")
+    if args.get("scenario_file") and args.get("control") and SCENARIO_CONTROL_FEATURE not in features:
+        raise Usage("--scenario cannot be used with --control: a control client that writes variables or holds the "
+                    "start would change what the scenario does, and the same scenario must give the same result")
     if command != "version" and len(args["files"]) != 1:
         raise Usage("write one configuration file")
     return args
@@ -694,11 +766,12 @@ def finding_order(f: dict) -> tuple:
     return {"error": 0, "warning": 1, "note": 2}.get(f["severity"], 0), f["line"] is not None, f["line"] or 0
 
 
-def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: Stops, gate: TimeGate) -> int:
+def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: Stops, gate: TimeGate,
+        play: dict | None = None) -> int:
     if scenario == "ignore-stop":
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     strict = bool(args.get("strict"))
-    result_check = check(file, config, scenario, strict)
+    result_check = check(file, config, scenario, strict, play)
     ev.emit("check", check=result_check)
     participants = []
     for p in config["participants"]:
@@ -709,6 +782,11 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
     timing: dict | None = None  # the result's timing, once the simulation has ended
     control = None  # the stand-in for the control server (--control)
     clock = {"sim": 0}
+    # The scenario's steps as the result lists them, the one that runs (index from 1; 0: not begun), its status
+    steps = [{"index": i, "line": s["line"], "kind": s["kind"], "text": s["text"], "status": "not_run",
+              "start_ms": None, "at_ms": None, "end_ms": None, "code": None, "message": None}
+             for i, s in enumerate(play["steps"] if play else [], start=1)]
+    playing = {"current": 0, "status": "not_run", "over_at_ms": None}
 
     def result(outcome: str, simulation, interrupted_by=None) -> dict:
         everything = result_check["findings"] + run_findings
@@ -718,7 +796,9 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
                 "notes": sum(f["severity"] == "note" for f in everything),
                 "simulation": simulation, "interrupted_by": interrupted_by, "timing": timing,
                 "participants": participants, "findings": sorted(run_findings, key=finding_order),
-                "check": result_check}
+                "check": result_check,
+                **({"scenario": {"file": play["file"], "name": play["name"], "status": playing["status"],
+                                 "over_at_ms": playing["over_at_ms"], "steps": steps}} if play else {})}
 
     def finish(outcome: str, simulation, code: int, interrupted_by=None) -> int:
         gate.detach()
@@ -741,6 +821,27 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         for f in sorted(found, key=finding_order):
             run_findings.append(f)
             ev.emit("finding", **f)
+
+    def step_event(i: int, status: str, at_ms=None, code=None, message=None) -> None:
+        """Step i (from 1) is running, or is decided at at_ms."""
+        step = steps[i - 1]
+        if status == "running":
+            step.update(start_ms=clock["sim"], end_ms=clock["sim"] if step["kind"] == "set" else None)
+        step.update(status=status, at_ms=at_ms, code=code, message=message)
+        if status != "running" and step["end_ms"] is None:
+            step["end_ms"] = at_ms
+        ev.emit("scenario_step", **step)
+
+    def scenario_left() -> list[dict]:
+        """A stop or the end of the time before the scenario was over: the step that ran does not end."""
+        if not play or playing["status"] != "running":
+            return []
+        i = playing["current"]
+        steps[i - 1]["status"] = "unfinished"
+        playing["status"] = "incomplete"
+        return [finding("error", "scenario-incomplete", play["file"], steps[i - 1]["line"], None, None,
+                        f"the simulation ended before the scenario was over: step {i} (line {steps[i - 1]['line']}) "
+                        "had not ended")]
 
     def interrupted(started: bool) -> dict:
         by = stops.by or "stop command"
@@ -769,6 +870,8 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         control = start_control(args, config, scenario, ev, say)
         if control is None:
             return finish("setup", None, 3)
+        if play:  # scenario-control: read as usual, every write refused
+            control.refuse_writes = "a scenario runs: variables cannot be written by a control client"
     uri = "silkit://127.0.0.1:8500"  # the real launcher takes a free port; a fixed one keeps the examples stable
     ev.emit("registry", uri=uri)
     say(f"registry at {uri}")
@@ -798,6 +901,9 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
             while stops.count == 0 and gate.paused and gate.target in (0, None):
                 gate.target = 0  # a pause changes nothing here
                 gate.cond.wait(0.05)
+    if steps:  # the scenario's first step runs at 0, before the simulation does
+        playing["current"], playing["status"] = 1, "running"
+        step_event(1, "running")
     # Where each started participant's control link stands, in the file's order, before the simulation runs
     plan = control_plan(config, scenario)
     for name in running:
@@ -941,7 +1047,7 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         if stops.count and (scenario != "ignore-stop" or stops.count >= 2):
             if not asked:
                 end_simulation()
-                note(interrupted(True), *timing_findings())
+                note(interrupted(True), *scenario_left(), *timing_findings())
                 ev.emit("phase", phase="stopping")
             end_participants("killed" if scenario == "ignore-stop" else "ended")
             return finish("interrupted", "interrupted", 130, stops.by)
@@ -1060,6 +1166,30 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         for name in running:
             if entry(name)["ended"] == "not_started":
                 ev.emit("log", source=name, line=f"step {step}: t = {sim_ms} ms")
+        if playing["status"] == "running":
+            i = playing["current"]
+            if play["steps"][i - 1]["fail"]:
+                step_event(i, "failed", sim_ms, "scenario-failed", f"not true at {sim_ms} ms (fake-launcher: fail)")
+                playing.update(status="failed", over_at_ms=sim_ms)
+                end_simulation()
+                note(finding("error", "scenario-failed", play["file"], steps[i - 1]["line"], None, None,
+                             f"{steps[i - 1]['text']}: not true at {sim_ms} ms (fake-launcher: fail)"),
+                     *timing_findings())
+                ev.emit("phase", phase="stopping")
+                end_participants("ended")
+                return finish("failed", "ended", 1)
+            step_event(i, "passed", steps[i - 1]["start_ms"] if steps[i - 1]["kind"] == "set" else sim_ms)
+            if i < len(steps):
+                playing["current"] = i + 1
+                step_event(i + 1, "running")
+            else:
+                playing.update(status="passed", over_at_ms=sim_ms)
+                end_simulation()
+                say("the scenario is over: the simulation ended")
+                note(*timing_findings())
+                ev.emit("phase", phase="stopping")
+                end_participants("ended")
+                return finish("passed", "ended", 0)
         reached = stop_at is not None and sim_ms >= stop_at
         if target is not None and sim_ms >= target and not reached:
             note_time(True, speed)  # a step command has ended: it stands still here
@@ -1086,10 +1216,16 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         if reached:
             end_simulation()
             say("the simulation ended")
-            note(*timing_findings())
+            left = scenario_left()
+            if left:  # the time was over before the scenario: its step that ran fails
+                playing["status"] = "failed"
+                steps[playing["current"] - 1]["status"] = "failed"
+                left = [dict(left[0], code="scenario-out-of-time", message=left[0]["message"].replace(
+                    "the simulation ended", "stop_at_ms came"))]
+            note(*left, *timing_findings())
             ev.emit("phase", phase="stopping")
             end_participants("ended")
-            code = finish("passed", "reached_stop_at", 0)
+            code = finish("failed" if left else "passed", "reached_stop_at", 1 if left else 0)
             while scenario == "result-then-wait" and stops.count == 0:  # ended, but runs on until told to stop
                 time.sleep(0.02)
             return code
@@ -1107,7 +1243,7 @@ def usage_result(file: str | None, outcome: str, code: str, message: str, strict
 
 
 VALUED = {"--disable", "--enable", "--speed", "--log-dir", "--timeout-ms", "--describe-timeout-ms", "--control",
-          "--control-credentials"}
+          "--control-credentials", "--scenario"}
 
 
 def has_flag(argv: list[str], flag: str) -> bool:
@@ -1195,6 +1331,7 @@ def main(argv: list[str]) -> int:
         sys.stderr.write(f"error: unknown scenario '{scenario}': the scenarios are {', '.join(SCENARIOS)}\n")
         return 4
     gate = TimeGate(args["speed"] or config["speed"], bool(args.get("start_paused")))
+    play = read_scenario(args["scenario_file"]) if args.get("scenario_file") else None
     if args["command"] == "run":
         ev.emit("phase", phase="checking")
         if args.get("stdin_commands") and scenario != "deaf":  # read from here on, as the real launcher does
@@ -1228,14 +1365,14 @@ def main(argv: list[str]) -> int:
         if scenario == "check-garbage":
             print("this is not the check object")
             return 0
-        result = check(file, config, scenario, strict)
+        result = check(file, config, scenario, strict, play)
         if args.get("json"):
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             print(f"{file}: {result['result']}: {result['errors']} errors, {result['warnings']} warnings, "
                   f"{result['notes']} notes")
         return 0 if result["result"] == "passed" else 1
-    return run(args, file, config, scenario, ev, stops, gate)
+    return run(args, file, config, scenario, ev, stops, gate, play)
 
 
 if __name__ == "__main__":

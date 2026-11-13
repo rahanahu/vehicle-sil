@@ -22,7 +22,8 @@ from pathlib import Path
 
 import pytest
 from conftest import CONTROL_FEATURES, FAKE
-from real_configs import examples_dir, usable, write
+from real_configs import NETWORKS, examples_dir, executables, usable, write
+from vehicle_sil_gui.recording import scenario_yaml
 
 LAUNCHER = os.environ.get("VEHICLE_SIL_GUI_LAUNCHER")
 EXAMPLES = examples_dir(LAUNCHER)
@@ -259,6 +260,8 @@ SCENARIOS = {
         (lambda e: e["event"] == "time" and not e["paused"], b'{"command":"step","ms":10}\n{"command":"pause"}\n'),
         (lambda e: e["event"] == "time" and e["paused"], b'{"command":"stop"}\n'),
     )}, None, {}),
+    "scenario": (["--scenario", "scenarios/throttle_step.yaml", "simulation.yaml"], {}, None, {}),
+    "scenario-fails": (["--scenario", "scenarios/fails.yaml", "simulation.yaml"], {}, None, {}),
 }
 
 
@@ -360,13 +363,37 @@ def test_version_and_check_json(tmp_path: Path) -> None:
     assert fake_text.replace(fake_version[1]["vehicle_sil"], "<v>") == \
         real_text.replace(real_version[1]["vehicle_sil"], "<v>"), "the same layout"
     for args in (["simulation.yaml"], ["--disable", "Dashboard", "simulation.yaml"], ["missing.yaml"],
-                 ["--disable", "Nobody", "simulation.yaml"], ["--bogus", "simulation.yaml"]):
+                 ["--disable", "Nobody", "simulation.yaml"], ["--bogus", "simulation.yaml"],
+                 ["--scenario", "scenarios/throttle_step.yaml", "simulation.yaml"],
+                 ["--scenario", "scenarios/missing.yaml", "simulation.yaml"]):
         real_code, real_check = output([LAUNCHER, "check", "--json", *args])
         fake_code, fake_check = output([sys.executable, str(FAKE), "check", "--json", *args])
         assert fake_code == real_code, args
         assert list(fake_check) == list(real_check), args
         assert fake_check["result"] == real_check["result"], args
+        assert fake_check.get("scenario") == real_check.get("scenario"), args
+        assert [f["code"] for f in fake_check["findings"]] == [f["code"] for f in real_check["findings"]], args
         for p, q in zip(fake_check["participants"], real_check["participants"]):
             assert list(p) == list(q), args
             for v, w in zip(p["variables"] or [], q["variables"] or []):
                 assert list(v) == list(w), args
+
+
+def test_a_saved_scenario_with_names_beyond_ascii_passes_the_real_check(tmp_path: Path) -> None:
+    """The YAML of GET api/recording, read by the real launcher's YAML reader: names with characters beyond ASCII
+    (U+0080 to U+00FF among them, which must not be written as \\xNN) name the participant they are."""
+    engine, dashboard = (p.as_posix() for p in executables(EXAMPLES))
+    name = "Mot\u00f6r\u00b0\u00b5\u00e9\u4e00"
+    (tmp_path / "sim.yaml").write_text(
+        f"vehicle_sil_simulation: 1\nstop_at_ms: 1000\n{NETWORKS}participants:\n"
+        f"  - name: {name}\n    command: ['{engine}']\n    step_ms: 10\n"
+        f"  - name: Dashboard\n    command: ['{dashboard}']\n    step_ms: 5\n", encoding="utf-8")
+    text, steps, _ = scenario_yaml([(0, 1, name, "engine.throttle", 10.0), (20, 2, name, "ecu.connected", True)],
+                                   "recorded from s\u00edm.yaml (run 1)", {}, 0, 500)
+    assert steps == 2
+    (tmp_path / "rec.yaml").write_text(text, encoding="utf-8")
+    p = subprocess.run([LAUNCHER, "check", "--json", "--scenario", "rec.yaml", "--", "sim.yaml"], cwd=tmp_path,
+                       capture_output=True, timeout=RUN_TIMEOUT_S)
+    check = json.loads(p.stdout)
+    assert check["result"] == "passed", check["findings"]
+    assert check["scenario"] == {"file": "rec.yaml", "name": "recorded from s\u00edm.yaml (run 1)", "steps": 2}

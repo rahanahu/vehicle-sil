@@ -67,6 +67,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     log: {},
     problems: [],
     problems_omitted: 0,
+    scenario: null,
     unreadable: [],
     ...extra,
   };

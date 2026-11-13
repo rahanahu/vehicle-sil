@@ -7,6 +7,8 @@ import {
   readConfigList,
   readDashboardResponse,
   readLauncherEvent,
+  readRecording,
+  readScenarioList,
   readServerMessage,
   readSessionResponse,
   readTimeResponse,
@@ -25,6 +27,8 @@ const READERS: Record<string, (value: unknown) => unknown> = {
   'GET api/session': readSessionResponse,
   'POST api/write': readWriteResponse,
   'GET api/dashboard': readDashboardResponse,
+  'GET api/scenarios': readScenarioList,
+  'GET api/recording': readRecording,
 };
 
 describe('the readers accept every example of gui/protocol', () => {
@@ -299,31 +303,35 @@ describe('the readers refuse what they cannot read', () => {
     expect(readServerMessage({ type: 'later', anything: 1 })).toBeNull();
   });
 
-  it('reads a run with a scenario: its step events are skipped, its result field is passed over', async () => {
-    // vehicle_sil_launch run --scenario writes scenario_step events and a result with a scenario field
-    expect(
-      readLauncherEvent(
-        { event: 'scenario_step', seq: 7, t_ms: 0, line: 10, index: 0, state: 'ok', at_ms: 330 },
-        'e',
-      ),
-    ).toBeNull();
-    const pass = (await webSocketExamples()).find((example) => example.name === 'ws-pass');
-    const message = pass?.server.find(
-      (m) => (m as { event?: { event?: string } }).event?.event === 'result',
-    ) as { event: Record<string, unknown> & { result: Record<string, unknown> } };
-    expect(message).toBeDefined();
-    const event = {
-      ...message.event,
-      result: {
-        ...message.event.result,
-        simulation: 'ended',
-        scenario: { name: 'throttle step', result: 'passed', steps: [] },
-      },
-    };
-    expect(readLauncherEvent(event, 'e')).toMatchObject({
-      event: 'result',
-      result: { simulation: 'ended' },
+  it('reads a run with a scenario: its steps, the check, the result and the summary', async () => {
+    const run = (await webSocketExamples()).find((example) => example.name === 'ws-scenario');
+    expect(run).toBeDefined();
+    const messages = (run?.server ?? []).map((m) => readServerMessage(m));
+    const steps = messages.flatMap((m) =>
+      m?.type === 'event' && m.event.event === 'scenario_step' ? [m.event.step] : [],
+    );
+    expect(steps.map((step) => `${step.index} ${step.status}`)).toEqual([
+      '1 running',
+      '1 passed',
+      '2 running',
+      '2 failed',
+    ]);
+    expect(steps[3]).toMatchObject({ line: 8, code: 'scenario-failed', kind: 'expect' });
+    const ended = messages.filter((m) => m?.type === 'session').at(-1);
+    expect(ended?.type === 'session' && ended.session?.scenario).toMatchObject({
+      file: 'scenarios/fails.yaml',
+      name: 'speed too high',
+      step_count: 3,
+      status: 'failed',
     });
+    const result = messages.find((m) => m?.type === 'event' && m.event.event === 'result');
+    expect(
+      result?.type === 'event' && result.event.event === 'result' && result.event.result.scenario,
+    ).toMatchObject({ status: 'failed', steps: [{}, {}, { status: 'not_run' }] });
+    // A step whose index or status cannot be read is not a step
+    expect(() =>
+      readLauncherEvent({ event: 'scenario_step', seq: 7, t_ms: 0, index: 'x', status: 'ok' }, 'e'),
+    ).toThrow(ProtocolError);
   });
 
   it('names the place of a missing or wrong field', () => {

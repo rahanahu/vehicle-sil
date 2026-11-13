@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import CONFIGS, FAKE, Client, gui_server, is_ended, is_synced, run_async
+from conftest import CONFIGS, CONTROL_FEATURES, FAKE, Client, gui_server, is_ended, is_synced, run_async
 
 DIRECTORY = Path(__file__).resolve().parents[2] / "protocol" / "examples"
 UPDATE = os.environ.get("UPDATE_PROTOCOL_EXAMPLES") == "1"
@@ -38,6 +38,7 @@ EXAMPLES = {
     "ws-resync", "ws-unauthorized", "ws-large-fields", "ws-loose-fields", "ws-kept-limit", "ws-without-check",
     "write", "ws-variables", "ws-variables-failed", "error-unknown-variable", "error-not-writable", "error-session-changed",
     "error-variables-not-ready", "error-invalid-watch", "dashboard", "dashboard-errors", "dashboard-none",
+    "scenarios", "check-scenario", "error-scenario-not-listed", "ws-scenario", "recording", "error-scenario-running",
 }
 
 
@@ -477,6 +478,12 @@ def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
             await sock.until(lambda m: m["type"] == "operation" and m["state"] == "queued")
             await c.post("api/time", {"command": "step", "ms": 200})
             await sock.until(lambda m: m["type"] == "values" and m["paused"] and m["sim_ms"] == 200)
+            if not any(m["type"] == "operation" and m["done"] for m in sock.received):
+                await sock.until(lambda m: m["type"] == "operation" and m["done"])
+            status, body = await c.get("api/recording")
+            check_example("recording", http("The writes of the run that were applied, as a scenario's YAML (the "
+                                            "server writes no file: the screen saves the text).", "GET",
+                                            "api/recording", None, status, body), gui)
             for code, req, text in (
                     ("unknown-variable", {"session": sid, "writes": {"Engine": {"engine.torque": 1}}},
                      "A variable the run does not have."),
@@ -500,6 +507,52 @@ def test_variables_examples(tmp_path: Path, control_env: dict) -> None:
                 "before the first step, a step of 200 ms, the end. Left out here: the launcher's events, the values "
                 "sent while it ran (paused false), and the operation's first state (sent).",
                 sock.sent, variables_only(sock.received)), gui)
+        run_async(talk, gui)
+
+
+def test_scenario_examples(tmp_path: Path, control_env: dict) -> None:
+    with gui_server(tmp_path) as gui:
+        async def talk(c: Client) -> None:
+            path = "api/scenarios?file=simulation.yaml"
+            status, body = await c.get(path)
+            check_example("scenarios", http("The scenario files of a configuration: the .yaml and .yml files in "
+                                            "scenarios next to it.", "GET", path, None, status, body), gui)
+            req = {"file": "simulation.yaml", "disable": [], "scenario": "scenarios/throttle.yaml"}
+            status, body = await c.post("api/check", req)
+            check_example("check-scenario", http("A check with a scenario: the check's scenario (its name and "
+                                                 "number of steps); its mistakes are findings with the scenario's "
+                                                 "file and line.", "POST", "api/check", req, status, body), gui)
+            req = {"file": "simulation.yaml", "scenario": "forever.yaml"}
+            status, body = await c.post("api/check", req)
+            check_example("error-scenario-not-listed", http("A scenario that GET api/scenarios does not list for "
+                                                            "this configuration.", "POST", "api/check", req, status,
+                                                            body), gui)
+            sock = await c.ws()
+            await sock.until(is_synced)
+            await c.post("api/run", {"file": "simulation.yaml", "scenario": "scenarios/fails.yaml"})
+            await sock.until(is_ended)
+            check_example("ws-scenario", ws("A run with a scenario whose second step fails: scenario_step events as "
+                                            "the steps run and end, the finding scenario-failed with the scenario's "
+                                            "file and line, the run's end; the summary's scenario keeps the steps.",
+                                            sock.sent, sock.received), gui)
+        run_async(talk, gui)
+    env = {**control_env, "FAKE_LAUNCHER_FEATURES": CONTROL_FEATURES + ",scenario-control",
+           "FAKE_LAUNCHER_TICK_MS": "300"}
+    with gui_server(tmp_path, env=env) as gui:
+        async def talk(c: Client) -> None:
+            sock = await c.ws()
+            await sock.until(is_synced)
+            _, started = await c.post("api/run", {"file": "forever.yaml", "disable": ["Logger"],
+                                                  "scenario": "scenarios/throttle.yaml"})
+            await sock.until(lambda m: m["type"] == "variables" and m["variables"]["state"] == "ready")
+            req = {"session": started["session"]["id"], "writes": {"Engine": {"engine.demand": 40}}}
+            status, body = await c.post("api/write", req)
+            check_example("error-scenario-running", http("A write while the run plays a scenario (a launcher with "
+                                                         "scenario-control reads the variables then, and nothing "
+                                                         "writes them).", "POST", "api/write", req, status, body),
+                          gui)
+            await c.post("api/stop", {})
+            await sock.until(is_ended)
         run_async(talk, gui)
 
 

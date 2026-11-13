@@ -92,7 +92,36 @@ const SIMULATIONS: Record<string, string> = {
   not_started: $localize`始まらなかった`,
 };
 
-export const simulationLabel = (simulation: string): string => label(SIMULATIONS, simulation);
+/**
+ * どう終わったか。scenario はシナリオの結果の status（シナリオのない実行では null）。シナリオが終わって
+ * （passed か failed）ランチャーが止めた実行の `ended` は「シナリオが終わった」。シナリオが途中で終わった
+ * （incomplete など）実行の `ended` は、ほかの実行と同じく participant が止めたもの。
+ */
+export const simulationLabel = (simulation: string, scenario: string | null = null): string =>
+  simulation === 'ended' && (scenario === 'passed' || scenario === 'failed')
+    ? $localize`シナリオが終わった`
+    : label(SIMULATIONS, simulation);
+
+const SCENARIO_OUTCOMES: Record<string, string> = {
+  passed: $localize`シナリオは通りました`,
+  failed: $localize`シナリオは失敗しました`,
+  incomplete: $localize`シナリオは終わる前に止まりました`,
+  not_run: $localize`シナリオは動きませんでした`,
+};
+
+/** シナリオの結果。 */
+export const scenarioOutcomeLabel = (status: string): string => label(SCENARIO_OUTCOMES, status);
+
+const STEP_STATES: Record<string, string> = {
+  running: $localize`進行中`,
+  passed: $localize`通った`,
+  failed: $localize`失敗`,
+  unfinished: $localize`途中で終わった`,
+  not_run: $localize`動かなかった`,
+};
+
+/** シナリオの手順の状態。 */
+export const stepStateLabel = (status: string): string => label(STEP_STATES, status);
 
 const FAILURE_REASONS: Record<string, string> = {
   left_simulation: $localize`シミュレーションを去った`,

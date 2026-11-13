@@ -33,6 +33,12 @@ FEATURE_TIME_COMMANDS = "time-commands"
 FEATURE_CONTROL_LINKS = "control-links"
 CONTROL_EVENT = "control_link"
 CONTROL_SUMMARY_FIELD = "control_link"
+# Scenarios (docs/scenario.md): run --scenario plays one and ends the run with its outcome; check --scenario checks it.
+# A launcher with scenario-control also has its control server during a scenario (read, time commands; it refuses
+# writes); without it, --scenario cannot be used with --control or --start-paused.
+FEATURE_SCENARIO = "scenario"
+FEATURE_SCENARIO_CONTROL = "scenario-control"
+SCENARIO_STEP_EVENT = "scenario_step"
 
 
 class LauncherNotFound(Exception):
@@ -222,19 +228,29 @@ def command_line(command: dict) -> bytes:
     return (json.dumps(command, separators=(",", ":")) + "\n").encode()
 
 
-def check_command(launcher: Launcher, file: str, disable: list[str]) -> list[str]:
+def check_command(launcher: Launcher, file: str, disable: list[str], scenario: str | None = None) -> list[str]:
+    """scenario: a root-relative path from scenarios.resolve_scenario (the launcher runs in the root)."""
     argv = launcher.prefix + ["check", "--json"]
+    if scenario is not None:
+        argv += ["--scenario", scenario_argument(scenario)]
     for name in disable:
         argv += ["--disable", name]
     return argv + ["--", file]
 
 
+def scenario_argument(relative: str) -> str:
+    """A root-relative path as the value of --scenario: one that starts with '-' gets './' (not an option)."""
+    return f"./{relative}" if relative.startswith("-") else relative
+
+
 def run_command(launcher: Launcher, file: str, disable: list[str], speed: float | str | None,
-                start_paused: bool, control_credentials: Path | None = None) -> list[str]:
+                start_paused: bool, control_credentials: Path | None = None, scenario: str | None = None) -> list[str]:
     """control_credentials: start the launcher's control server (the ECUs' variables) on a free port of
     127.0.0.1, with the credentials of that file (a token is never an argument: arguments are in the hello
-    event and in the list of processes)."""
+    event and in the list of processes). scenario: as check_command's."""
     argv = launcher.prefix + ["run", "--events", "--stdin-commands"]
+    if scenario is not None:
+        argv += ["--scenario", scenario_argument(scenario)]
     if control_credentials is not None:
         argv += ["--control", "0", "--control-credentials", str(control_credentials)]
     for name in disable:

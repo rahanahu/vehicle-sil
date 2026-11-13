@@ -11,6 +11,8 @@
 - participant ごとに、変数を読み書きする口のつながり方（ランチャーの `control-links`: つながった、hello が来なかった、形式の版が違う、変数はあるが口を出していない、なし）を見る。読み書きできないつながり方は、色だけでなく ⚠ と文で出します。
 - ECU の変数を見る・書く（下の「ECU の変数」と「変数の画面と部品」）: 「変数」の画面に、いまの実行の変数が ECU ごとに、型に合った部品（値の表示、スイッチ、スライダー、グラフなど）で並びます。名前で絞り込めます。同じことは、サーバーの口とクライアントのライブラリでもできます。
 - 変数の並べ方をファイルに書く（下の「ダッシュボードのファイル」）: 構成ファイルの隣の `<名前>.dashboard.yaml` に、どの変数をどの部品でどの順に出すかを書くと、「変数」の画面がそのとおりに並べます。自分で書いた部品（custom element。下の「持ち込みのパネル」）も置けます。
+- シナリオを選んで回す（下の「シナリオ」）: 構成ファイルの隣の `scenarios` の `.yaml` から選ぶと、照合でシナリオも確かめ、実行では手順の表が進み、終わると合否を出します。
+- 実行中の操作をシナリオとして保存する（下の「操作をシナリオとして保存する」）: GUI で書いて反映された値を、シナリオの YAML としてブラウザで保存します。
 - ランチャーが 1 秒ごとの心拍も書かなくなったら（既定で 5 秒。`--silent-after`）、止まっているかもしれないことを状態の帯に出します。ランチャーが読む側の遅さで書けなかったログの行（`log_dropped`）は、その位置に落ちた行の数として出します。
 - ランチャーが結果を出さずに終わったら、異常終了と終了コード、ランチャーが標準エラーに書いた行（最初の 20 行と最後の 30 行）を見る。終わりを知らせてこなかった participant の状態は「不明」になります（ランチャーが先に終わったので、その後どうなったかは画面にはわかりません）。
 - 画面を開き直したり、別のタブで開いたりしても、同じ実行の状態を見られる。ログは、participant ごとに直近の 2000 行（1 MiB まで）を見られます。それより古い行は、落とした行の数だけを表示します。
@@ -63,6 +65,7 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 - ほかのウェブページからの要求を断ります（`Host` と `Origin` の検査。CORS は許しません）。
 - 画面から使えるのは `--root` の下の構成ファイルだけです。外へ出るパスや、root の外へのシンボリックリンクは、検査の時点で断ります（検査の後に root の中でリンクを差し替えることは防げませんが、root に書ける人は構成ファイルをそのまま置けます）。ランチャーに渡す引数はサーバーが決まった形で組み立て、任意のコマンドは受け取りません。
 - ECU の変数は、ランチャーの Control Server（127.0.0.1 の空いているポート）から読み書きします。実行のたびに新しいトークンを作り、自分だけが読めるファイル（一時ディレクトリの `vehicle-sil-gui-control-*.txt`。POSIX では権限 0600）でランチャーに渡します。ファイルは、ランチャーが読んだ後（Control Server が待ち受けを始めたとき）に消し、実行の終わりにも消します。このトークンは、ランチャーの引数、事象、画面への通知、誤りの文のどこにも出しません。同じ PC のほかのプロセスは、このトークンなしでは Control Server を使えません。GUI サーバーがつなぐのは、ランチャーが知らせた `127.0.0.1:<port>` だけです。画面からの書き込みは、ほかの API と同じ検査（トークン、`Host`、`Origin`）を通り、変数の一覧にある書ける変数へ、型と範囲の合う値だけを渡します。
+- シナリオ（構成ファイルの隣の `scenarios` の `.yaml` / `.yml`）は、その一覧にあるものだけをランチャーに渡します。`..`、絶対パス、NUL、長すぎる名前、`.` で始まる名前、シンボリックリンク（ファイルも、`scenarios` とその上のディレクトリも）は一覧に入らず、指定しても断ります。保存するシナリオの YAML は、サーバーが文字列として返すだけで、ファイルを書きません。
 - ダッシュボードのファイル（構成ファイルの隣の `.dashboard.yaml`）と持ち込みのパネル（`panels/` の `.js` / `.mjs`）は、構成ファイルと同じく root の中のものだけを読み、配ります。ダッシュボードのファイルは YAML の安全な読み方で、大きさと入れ子と値の数に上限を設け、別名（`*name`）を使わせません。パネルは同じ origin から配るので、CSP（`script-src 'self'`）は緩めません。パネルのモジュールの URL には、トークンの代わりに起動ごとの別の乱数が入ります（下の「持ち込みのパネル」）。
 - 実行は、サーバー 1 つにつき一度に 1 つです。同時に開始を頼まれても、始めるのは 1 つだけです。サーバーを 2 つ起動すれば、実行も 2 つ動きます。
 
@@ -128,6 +131,49 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 
 命令は `pause()`、`resume()`、`step(ms)`、`setSpeed(value)`（どれも `send(command)` を通る）です。前の命令の答えを待っている間と、実行がないときは送らず、`{sent: false, reason: 'waiting' | 'no-session'}` を返します（送ったら `{sent: true}`）。押せるかは、送る前に `canPause` などで確かめます。状態の帯に操作を足すときは、`<app-run-status>` の中に `runStatusActions` の属性を付けた要素を置きます（開始と停止の後、「待たずに止める」の前に並びます。開始と停止の位置は動きません）。
 
+## シナリオ
+
+シナリオ（[scenario.md](scenario.md)。ECU の変数に決まった手順で値を入れ、結果を確かめるファイル）を、画面から選んで回します。ランチャーの `features` に `scenario` があるときだけ、構成ファイルのカードに「シナリオ」の欄が出ます。
+
+- **置き場所**: 構成ファイルの隣の `scenarios`（`simulation.yaml` なら同じディレクトリの `scenarios/`）の `.yaml` と `.yml` が一覧に出ます。ほかの場所のファイルは選べません（上の「安全の考え方」）。
+- **照合**: シナリオを選ぶと、照合もシナリオつき（`check --scenario`）になり、シナリオの誤りは、所見としてシナリオのファイルと行を付けて出ます。
+- **実行**: シナリオを選んで始めると、ランチャーがシナリオを時刻 0 から最後まで進め、終わったところでシミュレーションを止めます。「シナリオ」のカードに、全体の合否と、手順の表（行、手順、状態、決めた仮想時刻、失敗の理由）が出ます。表は、ランチャーの事象 `scenario_step` で進み、結果が出たら、動かなかった手順を含む全部の手順になります。途中から開いた画面も同じ表を出します。結果のカードの「終わり方」は「シナリオが終わった」です。
+- **できないこと**: シナリオは止めた状態では始められません（「止めた状態で始める」は押せなくなります）。一時停止、ステップ送り、速度の変更、停止は、ふつうの実行と同じです（シナリオの結果は変わりません）。
+- **変数**: シナリオの実行中は、変数を書けません（シナリオの結果を変えないため。サーバーも `scenario-running` で断ります）。ランチャーの `features` に `scenario-control` があれば、「変数」の画面で値を見られます（書く部品は押せず、「シナリオの実行中は書けません」と出ます）。ないランチャーでは、シナリオの実行に変数はなく、「変数」の画面は「シナリオの実行中は、変数を見られません」と出します。
+- サーバーの口は `GET api/scenarios?file=<構成ファイル>` と、`api/check`、`api/run` の `scenario`（[gui/protocol/README.md](../gui/protocol/README.md) の「シナリオ」）、ライブラリでは `client.scenarios(file)` と、`check` と `run.start` の `scenario`、セッションの写しの `scenario` です。
+
+### 操作をシナリオとして保存する
+
+ふつうの実行（シナリオなし、変数を読み書きできる実行）では、「操作をシナリオに」のカードに、この実行で反映された書き込みの数を出し、「この実行の操作をシナリオとして保存」でシナリオの YAML をブラウザで保存します（ファイル名は `<構成ファイルの名前>-run<実行の番号>.yaml`。置き場所はブラウザで決めます）。実行が終わった後も、次の実行を始めるまで保存できます。
+
+```yaml
+# Written by vehicle-sil-gui: the writes made through the GUI server in the run named below (from every
+# screen and tool that used it) that were applied, each at the time of the step it was applied at.
+# Not here: pauses and steps of the time, writes that were not applied (docs/gui.md).
+# This scenario ends at its last step (350 ms): the launcher stops the simulation there.
+# The recorded run went on to 1000 ms.
+# To keep it running after the last step, add a step at the end, such as
+#   - expect: { Engine.ecu.connected: true }
+#     hold_for_ms: 650
+# Add expect and wait_until steps to check what the ECUs do (docs/scenario.md).
+vehicle_sil_scenario: 1
+name: "recorded from simulation.yaml (run 3)"
+steps:
+  - at_ms: 0
+    set:
+      Engine.engine.throttle: 40.0
+  - at_ms: 350
+    set:
+      Engine.engine.throttle: 12.5
+```
+
+- **だれの書き込みか**: 入るのは、この実行で GUI サーバーを通したすべての書き込みのうち、反映されたものです。同じ GUI サーバーを開いているほかの画面（ほかの人）の書き込みも、`api/write` を使う道具（`examples/gui_client/variables.mjs` など）の書き込みも入ります。画面や人ごとには分けません。GUI サーバーを通さずに Control Server に直接書いたものは入りません。
+- **どこで終わるか**: 手順は、反映したステップの仮想時刻（`at_ms`）ごとの `set` だけです。ランチャーは、シナリオの最後の手順が終わったところでシミュレーションを止めるので、保存したファイルを回すと、最後の `set` の時刻で止まります（記録した実行がもっと長く走っていても）。その後も走らせたいときは、ファイルの先頭のコメントの例のように、最後に `expect` と `hold_for_ms` の手順を足します（コメントに、記録した実行が走った時刻も書きます）。
+- 保存したファイルを `scenarios/` に置けば、そのまま照合を通り、「シナリオ」で回せます（ECU ごとにステップの時刻が違うので、同じ書き込みでも ECU ごとに手順が分かれることがあります）。
+- 入らないもの: 一時停止とステップ送り、反映されなかった書き込み、確かめる手順（`expect`、`wait_until`）。`ramp` にまとめることもしません。確かめる手順は、エディターで足します。
+- 1 回の実行で覚えるのは 2000 個の値までです。名前に `.` がある participant の変数は、シナリオで名指せない（最初の `.` までが participant の名前）ので入れません。入らなかった数はカードに、理由はファイルの先頭のコメントに出ます。
+- サーバーの口は `GET api/recording`（[gui/protocol/README.md](../gui/protocol/README.md) の「操作の記録」）、ライブラリでは `client.recording()` です。
+
 ## ECU の変数
 
 ECU が宣言した変数（[control-api.md](control-api.md) の「ECU の変数」）を、GUI サーバーを通して読み書きします。値を持っているのはランチャーの Control Server で、GUI サーバーは中継するだけです。
@@ -142,8 +188,8 @@ flowchart LR
 - **始め方**: ランチャーが Control Server を持てば、GUI サーバーは実行を `--control 0 --control-credentials <file>` 付きで始め、ランチャーの事象 `control_server` が知らせたアドレスへつなぎます。変数の機能の状態（`off`、`connecting`、`ready`、`failed`、`ended`）と理由は、要約の `variables` と `variables` の通知で届きます。つながらなくても、切れても、実行はそのまま続きます（変数だけが `connecting` か `failed` になり、切れたときは自分でつなぎ直します）。
 - **一覧**: participant ごとの変数（名前、型、役割、単位、範囲、刻み、説明、列挙の項目、書けるか）。
 - **値**: 画面が変数を選んで watch すると、選んだ間隔（20 ms 以上）で最後の値が届きます。GUI サーバーは、watch されている participant の値だけを、頼まれた頻度でランチャーから読みます（シミュレーションが速くても、読む量は増えません）。値は最後の 1 組だけを持ち、履歴は持ちません（履歴は画面の側。ライブラリが環状バッファーで持ちます）。受け取りの遅い画面には、読めるようになったときの最後の値を送ります（古い値をためません）。
-- **止まっている時刻の値**: `values` の通知の `paused` が真のとき、その通知の値には、`sim_ms` より前に始まったステップの値が全部入っています。GUI サーバーは、止まっている間に時刻と値をランチャーから読み直して確かめてから、真にします（止まった知らせだけでは真にしません）。動いている間は偽です。
-- **書き込み**: `POST api/write`。書き込みを向ける実行の id（`session`）を付け、サーバーは、それが動いている実行でなければ断ります（`session-changed`。実行が替わる間に送った書き込みを、次の実行に書かないため）。サーバーが、変数の一覧と照らして型と範囲を確かめてから、ランチャーに渡します。結果（操作）は、受け付けた（`queued`）、反映された（`applied` と、そのステップの時刻）、間に合わなかった（`late`）、ECU が断った（`rejected`、`invalid`）などとして、全部の画面に届きます。結果は捨てません。実行が終わるまでに結果が来なかった操作は、`unknown` で確定します。
+- **止まっている時刻の値**: `values` の通知の `paused` が真のとき、その通知の値には、`sim_ms` より前に始まったステップの値が全部入っています。`sim_ms` より後のステップの値は入っていません。GUI サーバーは、時刻と値をランチャーの Control Server から 1 回の呼び出し（`GetSnapshot`。[control-api.md](control-api.md) の「時刻と値をまとめて読む」）で読み、その応答の印（`consistent`）が真のときだけ、真にします（止まった知らせだけでは真にしません）。ちょうど `sim_ms` に始まるステップの値は、止まっている間に後から届くことがあり、そのときは同じ時刻の通知がもう 1 回届きます。動いている間は偽です。前提と限りは、`gui/protocol/README.md` の「ECU の変数」に書いてあります。`GetSnapshot` を持たない古いランチャーでは、変数の機能は `failed`（理由つき）になります。
+- **書き込み**: `POST api/write`。書き込みを向ける実行の id（`session`）を付け、サーバーは、それが動いている実行でなければ断ります（`session-changed`。実行が替わる間に送った書き込みを、次の実行に書かないため）。シナリオを回している実行には書けません（`scenario-running`）。サーバーが、変数の一覧と照らして型と範囲を確かめてから、ランチャーに渡します。結果（操作）は、受け付けた（`queued`）、反映された（`applied` と、そのステップの時刻）、間に合わなかった（`late`）、ECU が断った（`rejected`、`invalid`）などとして、全部の画面に届きます。結果は捨てません。実行が終わるまでに結果が来なかった操作は、`unknown` で確定します。
 - **終わった後**: 状態は `ended` になり、最後に読めた値が残ります（次の実行を始めるまで）。
 
 形と上限は [gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」、ライブラリの口は [gui/client/README.md](../gui/client/README.md) の「ECU の変数」、動く例は `examples/gui_client/variables.mjs` です。Angular の包みは `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`: `session`、`status`、`reason`、`peers`、`operations`、`find(ref)`、`peerConnected(peer)`、部品が壊れると自分でやめる `watch()`、自分でやめる `open()`、`write()`）です。
@@ -333,5 +379,5 @@ flowchart LR
 
 - サーバーは `gui/server`（Python パッケージ `vehicle_sil_gui`、uv の workspace のメンバー）、画面は `gui/web`、クライアントのライブラリは `gui/client`（画面はこれを通してサーバーを使う）、サーバーの口の正本は `gui/protocol`（README と実例）です。
 - 試験: `scripts/verify-gui.py`（サーバーの試験、画面の `scripts/verify-web.py`、最小の例 `examples/gui_client/` を偽のランチャーで動かす試験。ライブラリの試験は `verify-web.py` の `client` の段、1 つにまとめるのは `bundle` の段）。サーバーだけなら `--skip-web`。
-- 試験は、ランチャーの代わりに偽のランチャー（`gui/server/tests/fake_launcher.py`。本物と同じ事象を、筋書きどおりに書く。時刻の命令、`time` の事象、結果の `timing` も本物の形で、筋書き `late`（`gui/server/tests/configs/late.yaml`）は実時間への遅れを作る）を使います。偽のランチャーは、既定では Control Server を持たないランチャーの代わりです（変数は「使えない」になる）。変数の試験は、`FAKE_LAUNCHER_FEATURES` に `control-server` を足し、偽の Control Server（`gui/server/tests/fake_control.py`。gRPC）を立てさせて行います（`FAKE_LAUNCHER_VARIABLES=more` で、部品の種類が揃う変数を足します）。GUI サーバーの中の変数の元（`vehicle_sil_gui/source.py` の `Source`）は差し替えられ、順序の試験（`test_variable_units.py`）は筋書きどおりに答える元を使います。偽のランチャーでも GUI を動かせます: `uv run vehicle-sil-gui --launcher gui/server/tests/fake_launcher.py gui/server/tests/configs/simulation.yaml`。
-- 本物のランチャーでも確かめるには、`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch`（または環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）。そのランチャーの隣にビルドした ecu_main の例の ECU を使い、偽のランチャーとの事象の形の比べ（`gui/server/tests/test_real_launcher.py`）、変数の読み書き（`test_real_variables.py` と、例 `examples/gui_client/variables.mjs`。Control Server を持つランチャーのとき）、画面の e2e（`gui/web/e2e/real/`。変数の画面で Engine のスロットルを書いて回転数が変わること、例のダッシュボードのファイルのとおりに並び、持ち込みのパネルが回転数を出すことも）を回します。ランチャーを渡さなければ、これらは「skipped」と出して飛ばします。
+- 試験は、ランチャーの代わりに偽のランチャー（`gui/server/tests/fake_launcher.py`。本物と同じ事象を、筋書きどおりに書く。時刻の命令、`time` の事象、結果の `timing` も本物の形で、筋書き `late`（`gui/server/tests/configs/late.yaml`）は実時間への遅れを作る）を使います。偽のランチャーは、既定では Control Server を持たないランチャーの代わりです（変数は「使えない」になる）。変数の試験は、`FAKE_LAUNCHER_FEATURES` に `control-server` を足し、偽の Control Server（`gui/server/tests/fake_control.py`。gRPC）を立てさせて行います（`FAKE_LAUNCHER_VARIABLES=more` で、部品の種類が揃う変数を足します）。偽のランチャーは `--scenario` も最小の形で回します（手順を 1 ステップに 1 つずつ通し、`# fake-launcher: fail` の印のある手順を失敗させる。例は `gui/server/tests/configs/scenarios/`）。`FAKE_LAUNCHER_FEATURES` に `scenario-control` を足すと、シナリオの実行中も偽の Control Server を立て、書き込みを断ります。GUI サーバーの中の変数の元（`vehicle_sil_gui/source.py` の `Source`）は差し替えられ、順序の試験（`test_variable_units.py`）は筋書きどおりに答える元を使います。偽のランチャーでも GUI を動かせます: `uv run vehicle-sil-gui --launcher gui/server/tests/fake_launcher.py gui/server/tests/configs/simulation.yaml`。
+- 本物のランチャーでも確かめるには、`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch`（または環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）。そのランチャーの隣にビルドした ecu_main の例の ECU を使い、偽のランチャーとの事象の形の比べ（`gui/server/tests/test_real_launcher.py`。例のシナリオが通る実行と、失敗する実行も）、変数の読み書き（`test_real_variables.py` と、保存したシナリオが本物の照合を通って回ること、例 `examples/gui_client/variables.mjs`。Control Server を持つランチャーのとき）、画面の e2e（`gui/web/e2e/real/`。変数の画面で Engine のスロットルを書いて回転数が変わること、例のダッシュボードのファイルのとおりに並び、持ち込みのパネルが回転数を出すことも）を回します。ランチャーを渡さなければ、これらは「skipped」と出して飛ばします。
