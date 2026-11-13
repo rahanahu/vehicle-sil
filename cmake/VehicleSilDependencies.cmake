@@ -99,6 +99,7 @@ function(_vehicle_sil_patched_source dependency out_var)
   if(EXISTS "${stamp_file}")
     file(READ "${stamp_file}" previous_stamp)
     if(previous_stamp STREQUAL stamp_content AND IS_DIRECTORY "${patched}")
+      _vehicle_sil_report_patched("${dependency}" "${source}" "${patches}" "${patched}" "unchanged")
       set(${out_var} "${patched}" PARENT_SCOPE)
       return()
     endif()
@@ -166,7 +167,51 @@ function(_vehicle_sil_patched_source dependency out_var)
     endif()
   endforeach()
   file(WRITE "${stamp_file}" "${stamp_content}")
+  _vehicle_sil_report_patched("${dependency}" "${source}" "${patches}" "${patched}" "copied anew")
   set(${out_var} "${patched}" PARENT_SCOPE)
+endfunction()
+
+# Says in one line what is built: the commit of the submodule, the patches
+# applied and where the patched copy is. The patches are never applied to the
+# submodule itself, so looking there does not show them.
+function(_vehicle_sil_report_patched dependency source patches patched state)
+  set(commit "commit unknown: not a git checkout")
+  find_package(Git QUIET)
+  if(Git_FOUND)
+    # Only when <source> is a repository of its own: inside another one git
+    # would answer for that one.
+    execute_process(
+      COMMAND "${GIT_EXECUTABLE}" -C "${source}" rev-parse --show-toplevel
+      RESULT_VARIABLE result
+      OUTPUT_VARIABLE toplevel
+      ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(result EQUAL 0)
+      file(REAL_PATH "${toplevel}" toplevel)
+      file(REAL_PATH "${source}" real_source)
+      if(toplevel STREQUAL real_source)
+        execute_process(
+          COMMAND "${GIT_EXECUTABLE}" -C "${source}" rev-parse --short=12 HEAD
+          OUTPUT_VARIABLE commit
+          ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+        execute_process(
+          COMMAND "${GIT_EXECUTABLE}" -C "${source}" describe --tags --exact-match HEAD
+          RESULT_VARIABLE result
+          OUTPUT_VARIABLE tag
+          ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(result EQUAL 0 AND NOT tag STREQUAL "")
+          set(commit "${tag}, ${commit}")
+        endif()
+      endif()
+    endif()
+  endif()
+  set(names "")
+  foreach(patch IN LISTS patches)
+    cmake_path(GET patch FILENAME name)
+    list(APPEND names "${name}")
+  endforeach()
+  list(LENGTH names count)
+  list(JOIN names ", " names)
+  message(STATUS "vehicle-sil: ${dependency} (${commit}) + ${count} patch(es) [${names}] -> ${patched} (${state})")
 endfunction()
 
 # Sets <out_var> to what explains a patch that did not apply to the copy in
