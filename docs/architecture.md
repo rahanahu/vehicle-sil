@@ -805,7 +805,7 @@ SIL Kit CAN ネットワーク ── ICanController ── CanBridge ── Ext
 
 ### 実行中のバスの監視
 
-- `XlCanPort` は受信スレッドで、0.5 秒ごとに `xlCanRequestChipState` で CAN コントローラーのエラー状態（エラーアクティブ、エラーワーニング、エラーパッシブ、バスオフと、送受信のエラーカウンター）を問い合わせ、答えを `ExternalEventKind::BusState` で知らせます（`XlCanPortOptions::bus_state_interval`、0 で無効。実行ファイルでは `--no-bus-monitor`）。
+- `XlCanPort` は受信スレッドで、0.5 秒ごとに `xlCanRequestChipState` で CAN コントローラーのエラー状態（エラーアクティブ、エラーワーニング、エラーパッシブ、バスオフと、送受信のエラーカウンター）を問い合わせ、答えを `ExternalEventKind::BusState` で知らせます（`XlCanPortOptions::bus_state_interval`、0 で無効。実行ファイルでは `--no-bus-monitor`）。問い合わせを止めても、ドライバが自分から送る状態は知らせます。VN5620 では、ACK のないバスで問い合わせなしでもエラー状態が届きました。
 - 問い合わせの失敗は、送信キューが満杯の場合を除いて、次のように扱います。
   - 一度も受け付けられないうちの失敗: その構成では問い合わせが使えないとみなし、`ExternalEventKind::Warning` を 1 回知らせて問い合わせをやめます。転送は続けます。実行ファイルは `warning: ... the bus is not monitored, ...` を出します。
   - 一度受け付けられた後、3 回続けての失敗（`XlCanPortOptions::bus_state_failures`）: チャネルが使えなくなった（デバイスが外された）とみなし、`ExternalEventKind::Fault` を理由とともに 1 回知らせて受信をやめます。1 回だけの失敗では止めません。

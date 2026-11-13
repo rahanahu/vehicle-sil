@@ -395,7 +395,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 ```
 
 - Ctrl+C（Windows ではコンソールのウィンドウを閉じても）で止まり、転送の統計を出力します。
-- 実行中、CAN のバスに異常があると 1 秒に 1 行まで知らせます（例: `XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650`）。ACK を返す相手がいない、ビットレートが違う、ケーブルが抜けた、などです。直ると `no new problems since the last report` を出します。`--no-bus-monitor` で止められます（その場合、デバイスを外しても気づきません）。
+- 実行中、CAN のバスに異常があると 1 秒に 1 行まで知らせます（例: `XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650`）。ACK を返す相手がいない、ビットレートが違う、ケーブルが抜けた、などです。直ると `no new problems since the last report` を出します。`--no-bus-monitor` で問い合わせを止められます（その場合、デバイスを外しても気づきません。ドライバが自分から知らせる状態は出ます）。
 - `silkit_to_xl` は XL に渡したフレームの数、`own_tx_dropped` はそのうちバスに出た数です（名前は、XL ドライバが返す自分の送信の受領（送信レシート）を、転送せずに捨てて数えることから来ています）。バスに出られないフレームは XL の送信キューにたまり、バスが直るとまとめて送られます。止めるときは最長 1 秒待ち、それでも送れなかった数を `xl_tx_unsent` に出します。
 - `--tx-timeout-ms <ms>`（100〜60000）を付けると、フレームがその時間バスに出ないあいだ、新しいフレームを捨てて `xl_tx_dropped` に数えます。バスが直ったときに古いフレームがまとめて流れるのを抑えます。`--bitrate`（init 権限）が必要で、ないときは使いません。
 - `--bitrate`（15000〜1000000 bit/s）は init 権限が必要です。ほかのアプリケーションがチャネルを設定している場合は、起動を失敗させます。

@@ -43,8 +43,9 @@ std::string bridge_usage()
            "  --tx-timeout-ms <ms>     drop frames while the bus took none for this long, 100..60000 (no ACK,\n"
            "                           bus off, cable pulled); without it they wait and go out late.\n"
            "                           Needs --bitrate (init access), not used without it\n"
-           "  --no-bus-monitor         do not ask the XL driver for the bus state (no 'XL bus:' lines,\n"
-           "                           a removed device goes unnoticed)\n"
+           "  --no-bus-monitor         do not ask the XL driver for the bus state (a removed device goes\n"
+           "                           unnoticed; 'XL bus:' lines come only from what the driver reports\n"
+           "                           by itself)\n"
            "  --help                   this text\n";
 }
 
