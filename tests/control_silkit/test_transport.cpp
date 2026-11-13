@@ -819,7 +819,9 @@ TEST_CASE(a_hello_of_another_version_is_reported_and_makes_no_peer)
     HubSide side(registry.uri, {"A"});
     TestEcu a("A", registry.uri);
     // A participant outside the simulation's lifecycle that says hello in a later version.
-    auto old = SilKit::CreateParticipant(SilKit::Config::ParticipantConfigurationFromString("{}"), "Newer", registry.uri);
+    auto old = SilKit::CreateParticipant(
+        SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(registry.uri)), "Newer",
+        registry.uri);
     namespace detail = vehicle_sil::control_silkit::detail;
     auto* publisher = old->CreateDataPublisher(detail::kHelloTopic, detail::spec(detail::kHelloTopic), 1);
     wire::Hello hello;
@@ -874,7 +876,9 @@ TEST_CASE(a_participant_that_leaves_in_the_start_window_ends_the_wait)
     const InProcessRegistry registry;
     HubSide side(registry.uri, {"Gone"});
     // A coordinated participant that gets as far as the window and then disappears without a word.
-    auto gone = SilKit::CreateParticipant(SilKit::Config::ParticipantConfigurationFromString("{}"), "Gone", registry.uri);
+    auto gone = SilKit::CreateParticipant(
+        SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(registry.uri)), "Gone",
+        registry.uri);
     auto* lifecycle = gone->CreateLifecycleService({orch::OperationMode::Coordinated});
     auto done = lifecycle->StartLifecycle();
 
@@ -1238,7 +1242,8 @@ struct RawAgent
     RawAgent(std::string agent_name, const std::string& uri, std::uint64_t agent_session) :
       name(std::move(agent_name)), session(agent_session)
     {
-        participant = SilKit::CreateParticipant(SilKit::Config::ParticipantConfigurationFromString("{}"), name, uri);
+        participant = SilKit::CreateParticipant(
+            SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(uri)), name, uri);
         hello_out = participant->CreateDataPublisher(topics::kHelloTopic, topics::spec(topics::kHelloTopic), 1);
         step_out = participant->CreateDataPublisher(topics::kStepTopic, topics::spec(topics::kStepTopic), 0);
         submitted_out = participant->CreateDataPublisher(topics::kSubmittedTopic, topics::spec(topics::kSubmittedTopic), 0);

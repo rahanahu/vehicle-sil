@@ -123,6 +123,7 @@ Process::Process(const std::filesystem::path& executable, const std::vector<std:
     flags.working_directory = options_.working_directory;
     flags.new_group = true;
     flags.only_std_handles = true;
+    flags.environment = options_.environment;
     Handle process(detail::start(executable, arguments, in.h, outWrite.h, errWrite.h, job.h, flags));
     pid_ = GetProcessId(process.h);
     process_ = process.release();
@@ -381,6 +382,7 @@ Process::Process(const std::filesystem::path& executable, const std::vector<std:
         request.out = outWrite;
         request.err = errWrite;
         request.working_directory = options_.working_directory;
+        request.environment = options_.environment;
         request.own_group = true;
         request.end_with_caller = true;
         try

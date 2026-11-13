@@ -5,6 +5,7 @@
 #include "check_format.hpp"
 
 #include "vehicle_sil/control/wire.hpp"
+#include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/ecu/detail/json_writer.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 #include "yaml_tree.hpp"
@@ -13,6 +14,7 @@
 #include <array>
 #include <charconv>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -731,7 +733,12 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
                 prefix + "you start it yourself (manual: true, or --manual): run does not start it, but prints the command "
                          "to start it with" +
                     (p.required ? std::string(", and waits for it to join without a time limit (with --timeout-ms, at most that long)")
-                                : std::string(", and does not wait for it (required: false)")),
+                                : std::string(", and does not wait for it (required: false)")) +
+                    (registry_on_network(config)
+                         ? "; start it with " + std::string(kListenOnNetworkVariable) +
+                               "=1 in its environment, so that the other computers reach it (registry_uri is not a "
+                               "loopback address)"
+                         : std::string{}),
                 p.name, "");
         }
         if (result.status == ParticipantStatus::NotChecked)
@@ -1524,6 +1531,11 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     if (!report.config)
     {
         return report;
+    }
+    const std::string listenVariable(kListenOnNetworkVariable);
+    if (auto ignored = inherited_listen_variable(*report.config, std::getenv(listenVariable.c_str())))
+    {
+        report.findings.push_back(std::move(*ignored));
     }
     const std::filesystem::path base = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
     for (const ParticipantConfig& p : report.config->participants)

@@ -15,6 +15,7 @@
 //   --abort              ends with std::abort() (POSIX: the signal SIGABRT; Linux: without a core file)
 //   --pid-file <path>    writes its process ID to <path>
 //   --pwd                writes its working directory (generic form, '/') to stdout
+//   --env <name>         writes "<name>=<value>" of its environment to stdout, or "<name> is not set"
 //   --on-stop <code>     from now on, a stop request (POSIX SIGTERM, Windows Ctrl+Break) ends it with <code>
 //   --ignore-stop        from now on, ignores a stop request
 //   --check-handle <n>   writes "open" if the descriptor (Windows: handle) <n> is open in it, else "closed"
@@ -188,6 +189,19 @@ int main(int argc, char** argv)
 #else
             out << ::getpid();
 #endif
+        }
+        else if (arg == "--env" && hasValue)
+        {
+            const std::string name = args[++i];
+            const char* value = std::getenv(name.c_str());
+            if (value != nullptr)
+            {
+                std::printf("%s=%s\n", name.c_str(), value);
+            }
+            else
+            {
+                std::printf("%s is not set\n", name.c_str());
+            }
         }
         else if (arg == "--pwd")
         {

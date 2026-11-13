@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil::process {
@@ -55,6 +56,9 @@ struct ProcessOptions
     /// true: its standard input is a pipe that write_input() writes to and close_input() closes
     /// (else the null device).
     bool input = false;
+    /// Variables (name, value) set in its environment, over the caller's; the rest of its
+    /// environment is the caller's. A name must not be empty or have '='.
+    std::vector<std::pair<std::string, std::string>> environment{};
 };
 
 /// A process with its standard input from the null device (or a pipe: ProcessOptions::input) and its standard output and standard

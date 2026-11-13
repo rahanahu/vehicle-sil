@@ -619,9 +619,23 @@ TEST_CASE(reads_where_the_registry_listens_and_how_long_to_wait_for_the_end)
 {
     const ConfigRead read = read_config("vehicle_sil_simulation: 1\nstop_timeout_ms: 2500\nregistry_uri: silkit://0.0.0.0:8500\n"
                                         "networks: []\nparticipants:\n  - name: A\n    command: a\n");
-    check_text(lines(read.findings), "");
+    // Not a loopback address: a note.
+    check_text(lines(read.findings),
+               "N 3 registry-on-network: registry_uri silkit://0.0.0.0:8500 is not a loopback address: the registry and the "
+               "participants listen on the network, where anyone who reaches this computer can join the simulation (SIL Kit "
+               "does not authenticate); run gives the participants it starts VEHICLE_SIL_LISTEN_ON_NETWORK=1 and shows it with "
+               "the command of a participant you start yourself: set it for every participant on this computer that connects "
+               "to the registry at a loopback address; to keep the simulation on this computer, use 127.0.0.1 or leave "
+               "registry_uri out\n");
     CHECK_EQ(read.config->stop_timeout_ms, 2500);
     CHECK(read.config->registry_uri == "silkit://0.0.0.0:8500");
+    for (const char* uri : {"silkit://127.0.0.1:8500", "'silkit://[::1]:8500'", "silkit://localhost:8500"})
+    {
+        check_text(lines(read_config(std::string("vehicle_sil_simulation: 1\nregistry_uri: ") + uri +
+                                     "\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n")
+                             .findings),
+                   "");
+    }
     // Without them: 10 s, and no URI (a free port).
     const ConfigRead defaults = read_config(with_participants("  - name: A\n    command: a\n"));
     CHECK_EQ(defaults.config->stop_timeout_ms, 10000);
@@ -629,6 +643,31 @@ TEST_CASE(reads_where_the_registry_listens_and_how_long_to_wait_for_the_end)
     CHECK(read_config("vehicle_sil_simulation: 1\nregistry_uri: 'silkit://[::1]:65535'\nnetworks: []\nparticipants:\n"
                       "  - name: A\n    command: a\n")
               .config->registry_uri == "silkit://[::1]:65535");
+}
+
+TEST_CASE(run_decides_the_listen_variable_of_its_participants_and_notes_one_it_inherited)
+{
+    const auto config_with = [](const std::string& registry) {
+        return *read_config("vehicle_sil_simulation: 1\n" + registry + "networks: []\nparticipants:\n  - name: A\n    command: a\n")
+                    .config;
+    };
+    const SimulationConfig unwritten = config_with("");
+    const SimulationConfig local = config_with("registry_uri: silkit://127.0.0.1:8500\n");
+    const SimulationConfig open = config_with("registry_uri: silkit://0.0.0.0:8500\n");
+    CHECK(!registry_on_network(unwritten) && !registry_on_network(local) && registry_on_network(open));
+    CHECK(listen_variable_value(unwritten) == "0" && listen_variable_value(local) == "0" && listen_variable_value(open) == "1");
+    // Not set, or the value run gives anyway: nothing to say.
+    CHECK(!inherited_listen_variable(local, nullptr) && !inherited_listen_variable(local, "0"));
+    CHECK(!inherited_listen_variable(open, nullptr) && !inherited_listen_variable(open, "1"));
+    check_text(lines({*inherited_listen_variable(local, "1")}),
+               "N 0 listen-variable-ignored: VEHICLE_SIL_LISTEN_ON_NETWORK=1 in the environment of vehicle_sil_launch is not "
+               "used: the registry is on a loopback address, so run gives the participants it starts "
+               "VEHICLE_SIL_LISTEN_ON_NETWORK=0 and they listen on the loopback address only; to let other computers join, "
+               "write registry_uri with an address that they reach (e.g. silkit://0.0.0.0:8500)\n");
+    check_text(lines({*inherited_listen_variable(open, "yes")}),
+               "N 0 listen-variable-ignored: VEHICLE_SIL_LISTEN_ON_NETWORK=yes in the environment of vehicle_sil_launch is not "
+               "used: registry_uri silkit://0.0.0.0:8500 is not a loopback address, so run gives the participants it starts "
+               "VEHICLE_SIL_LISTEN_ON_NETWORK=1 and they listen on every address\n");
 }
 
 TEST_CASE(a_registry_uri_must_be_a_silkit_uri_with_a_port)

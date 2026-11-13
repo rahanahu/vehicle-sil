@@ -14,6 +14,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -198,6 +199,33 @@ TEST_CASE(process_starts_in_its_working_directory)
     const auto got = lines.take();
     CHECK_EQ(got.size(), std::size_t{1});
     CHECK(fs::equivalent(fs::path(got[0].substr(5)), dir));
+}
+
+TEST_CASE(process_gets_the_variables_it_is_given_over_the_callers_environment)
+{
+#ifdef _WIN32
+    CHECK(_putenv_s("VSIL_PROCESS_TEST_KEPT", "kept") == 0);
+    CHECK(_putenv_s("VSIL_PROCESS_TEST_REPLACED", "old") == 0);
+#else
+    CHECK(::setenv("VSIL_PROCESS_TEST_KEPT", "kept", 1) == 0);
+    CHECK(::setenv("VSIL_PROCESS_TEST_REPLACED", "old", 1) == 0);
+#endif
+    Lines lines;
+    ProcessOptions options = lines.options();
+    options.environment = {{"VSIL_PROCESS_TEST_REPLACED", "new"}, {"VSIL_PROCESS_TEST_ADDED", "added value"}};
+    Process p(kHelper,
+              {"--env", "VSIL_PROCESS_TEST_KEPT", "--env", "VSIL_PROCESS_TEST_REPLACED", "--env", "VSIL_PROCESS_TEST_ADDED"},
+              std::move(options));
+    CHECK(p.wait_for(60s).has_value());
+    CHECK(p.finish_output(60s));
+    check_lines(lines.take(), {"out: VSIL_PROCESS_TEST_KEPT=kept", "out: VSIL_PROCESS_TEST_REPLACED=new",
+                               "out: VSIL_PROCESS_TEST_ADDED=added value"});
+    // Without variables of its own: the caller's environment as it is.
+    Lines plainLines;
+    Process plain(kHelper, {"--env", "VSIL_PROCESS_TEST_REPLACED", "--env", "VSIL_PROCESS_TEST_ADDED"}, plainLines.options());
+    CHECK(plain.wait_for(60s).has_value());
+    CHECK(plain.finish_output(60s));
+    check_lines(plainLines.take(), {"out: VSIL_PROCESS_TEST_REPLACED=old", "out: VSIL_PROCESS_TEST_ADDED is not set"});
 }
 
 TEST_CASE(process_reports_its_exit_code_and_the_signal_that_ended_it)
