@@ -58,10 +58,16 @@ struct XlCanPortOptions
     /// Upper bound for one wait on the XL notification event; bounds how long stop() waits.
     std::chrono::milliseconds wait_timeout{50};
     /// How often the running port asks the driver for the controller's error state
-    /// (ExternalEventKind::BusState). When the driver refuses the request, the channel is gone
-    /// (device removed): the port reports ExternalEventKind::Fault once and stops receiving.
-    /// 0 disables both.
+    /// (ExternalEventKind::BusState). 0 disables the queries.
+    ///  - If the driver refuses the first queries before it ever answered one, the setup does
+    ///    not support them: the port reports ExternalEventKind::Warning once and stops asking.
+    ///  - After it answered, a query refused bus_state_failures times in a row means that the
+    ///    channel is gone (device removed): the port reports ExternalEventKind::Fault once and
+    ///    stops receiving.
+    ///  - A full driver queue is not a refusal (the answer only comes later).
     std::chrono::milliseconds bus_state_interval{500};
+    /// Refusals in a row, after the driver answered, that count as a lost channel.
+    unsigned bus_state_failures = 3;
 };
 
 /// One Vector XL CAN channel opened as an ExternalCanPort.

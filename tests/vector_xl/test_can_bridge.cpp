@@ -223,10 +223,29 @@ TEST_CASE(bridge_keeps_the_bus_state_and_the_fault)
     CHECK(bridge.health().bus_state == state.bus_state);
     CHECK(!bridge.fault());
 
-    port.deliver(ExternalEventKind::Fault);
-    CHECK(bridge.fault() == std::optional<std::string>("fake external error"));
-    CHECK(bridge.last_error() == "fake external error");
+    // The reason comes with the event, not from the port's last_error().
+    ExternalCanEvent fault{ExternalEventKind::Fault, {}, {}};
+    fault.detail = "channel gone";
+    port.deliver_event(fault);
+    CHECK(bridge.fault() == std::optional<std::string>("channel gone"));
+    CHECK(bridge.last_error() == "channel gone");
     CHECK(bridge.running()); // the caller decides to stop
+
+    // Without a reason the port's last_error() is not used either.
+    port.deliver(ExternalEventKind::Fault);
+    CHECK(bridge.fault() == std::optional<std::string>("the external port stopped working"));
+
+    ExternalCanEvent warning{ExternalEventKind::Warning, {}, {}};
+    warning.detail = "not monitored";
+    port.deliver_event(warning);
+    CHECK(bridge.take_warnings() == std::vector<std::string>{"not monitored"});
+    CHECK(bridge.take_warnings().empty());
+
+    // A new start forgets the old run.
+    bridge.stop();
+    bridge.start();
+    CHECK(!bridge.fault());
+    CHECK(bridge.health().bus_state.level == ExternalBusState::Level::Unknown);
 }
 
 TEST_CASE(bridge_health_change_line)

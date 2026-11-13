@@ -283,8 +283,10 @@ const XlChannelInfo& XlCanPort::channel() const noexcept
 
 void XlCanPort::Impl::receive_loop()
 {
-    const auto interval = options.bus_state_interval;
+    auto interval = options.bus_state_interval;
     auto nextQuery = std::chrono::steady_clock::now();
+    bool answered = false;   // a query was accepted at least once
+    unsigned refusals = 0;   // in a row, after `answered`
     while (running.load())
     {
         if (interval.count() > 0 && std::chrono::steady_clock::now() >= nextQuery)
@@ -295,13 +297,35 @@ void XlCanPort::Impl::receive_loop()
                 const std::lock_guard lock(xl_mutex);
                 status = backend::request_chip_state(port, access_mask);
             }
-            // A full driver queue only delays the answer; anything else means the channel is gone.
-            if (!status.ok() && status.outcome != backend::Outcome::TransmitQueueFull)
+            if (status.ok())
             {
-                set_last_error("XL channel '" + channel.name + "' stopped working (device removed?): " +
-                               "xlCanRequestChipState failed: " + status_text(status.code));
-                handler(ExternalCanEvent{ExternalEventKind::Fault, {}, {}});
-                return; // no events after Fault; stop() still joins this thread
+                answered = true;
+                refusals = 0;
+            }
+            else if (status.outcome != backend::Outcome::TransmitQueueFull)
+            {
+                const std::string why = "xlCanRequestChipState failed: " + status_text(status.code) + " (XL status " +
+                                        std::to_string(status.code) + ")";
+                if (!answered)
+                {
+                    // Never answered: this setup does not support the query. Not a fault.
+                    const std::string text =
+                        "XL channel '" + channel.name + "': the bus is not monitored, " + why;
+                    ExternalCanEvent warning{ExternalEventKind::Warning, {}, {}};
+                    warning.detail = text;
+                    handler(warning);
+                    interval = std::chrono::milliseconds{0};
+                }
+                else if (++refusals >= std::max(1u, options.bus_state_failures))
+                {
+                    const std::string text =
+                        "XL channel '" + channel.name + "' stopped working (device removed?): " + why;
+                    set_last_error(text);
+                    ExternalCanEvent fault{ExternalEventKind::Fault, {}, {}};
+                    fault.detail = text;
+                    handler(fault);
+                    return; // no events after Fault; stop() still joins this thread
+                }
             }
         }
         backend::ReceiveResult received;

@@ -136,6 +136,10 @@ int run(const BridgeOptions& options)
         XlCanPortOptions portOptions;
         portOptions.bitrate = options.bitrate;
         portOptions.rx_queue_size = options.rx_queue_size;
+        if (!options.bus_monitor)
+        {
+            portOptions.bus_state_interval = std::chrono::milliseconds{0};
+        }
         port = std::make_unique<XlCanPort>(*driver, channel, portOptions);
         log(kTag, "XL port open, init access: %s%s", port->has_init_access() ? "yes" : "no",
             options.bitrate ? (", bit rate " + std::to_string(*options.bitrate)).c_str() : ", bit rate unchanged");
@@ -185,6 +189,10 @@ int run(const BridgeOptions& options)
             log(kTag, "FAIL: %s", fault->c_str());
             result = cli::kExitFailed;
             break;
+        }
+        for (const auto& warning : bridge->take_warnings())
+        {
+            log(kTag, "warning: %s", warning.c_str());
         }
         if (std::chrono::steady_clock::now() >= nextReport)
         {

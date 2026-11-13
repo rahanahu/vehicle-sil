@@ -395,7 +395,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 ```
 
 - Ctrl+C（Windows ではコンソールのウィンドウを閉じても）で止まり、転送の統計を出力します。
-- 実行中、CAN のバスに異常があると 1 秒に 1 行まで知らせます（例: `XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650`）。ACK を返す相手がいない、ビットレートが違う、ケーブルが抜けた、などです。直ると `no new problems since the last report` を出します。
+- 実行中、CAN のバスに異常があると 1 秒に 1 行まで知らせます（例: `XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650`）。ACK を返す相手がいない、ビットレートが違う、ケーブルが抜けた、などです。直ると `no new problems since the last report` を出します。`--no-bus-monitor` で止められます（その場合、デバイスを外しても気づきません）。
 - `silkit_to_xl` は XL に渡したフレームの数で、バスに出た数ではありません。バスに出られないフレームは XL の送信キューにたまり、ブリッジを止めると捨てられます。
 - `--bitrate`（15000〜1000000 bit/s）は init 権限が必要です。ほかのアプリケーションがチャネルを設定している場合は、起動を失敗させます。
 - `--bitrate` を指定しないと init 権限を取らないので、XL ドライバは自分の送信の受領（TX レシート）を返してきます。ブリッジはそれを転送せずに捨て、統計の `own_tx_dropped` に数えます。

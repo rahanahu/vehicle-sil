@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace vehicle_sil::vector_xl {
 
@@ -26,9 +27,12 @@ enum class ExternalEventKind
     ErrorFrame,      ///< CAN error frame on the external bus: counted, not forwarded.
     Overrun,         ///< The external receive queue overflowed and frames were lost: counted.
     BusState,        ///< The CAN controller's error state (the port asks for it periodically): bus_state.
-    /// The port stopped working (device removed, driver failure); ExternalCanPort::last_error()
-    /// tells why. No further events follow; frames are neither sent nor received any more.
+    /// The port stopped working (device removed, driver failure); `detail` tells why. No
+    /// further events follow; frames are neither sent nor received any more.
     Fault,
+    /// Something the user should know that does not stop the port (e.g. the driver does not
+    /// answer the bus state queries, so the bus is not monitored); `detail` tells what.
+    Warning,
 };
 
 /// Error state of the external CAN controller.
@@ -58,6 +62,8 @@ struct ExternalCanEvent
     SilKit::Services::Can::CanFrame frame{};
     /// Valid for BusState.
     ExternalBusState bus_state{};
+    /// Valid for Fault and Warning, during the handler call only.
+    std::string_view detail{};
 };
 
 enum class TransmitResult
@@ -172,7 +178,10 @@ public:
     [[nodiscard]] CanBridgeHealth health() const;
     /// Set once the external port reported ExternalEventKind::Fault: why it stopped working.
     /// The bridge keeps running; the caller decides to stop (the executable exits with 1).
+    /// start() clears it.
     [[nodiscard]] std::optional<std::string> fault() const;
+    /// The ExternalEventKind::Warning texts reported since the last call, oldest first.
+    [[nodiscard]] std::vector<std::string> take_warnings();
     [[nodiscard]] std::string last_error() const;
 
 private:
@@ -204,6 +213,7 @@ private:
     std::string last_error_;
     ExternalBusState bus_state_;
     std::optional<std::string> fault_;
+    std::vector<std::string> warnings_;
 };
 
 } // namespace vehicle_sil::vector_xl
