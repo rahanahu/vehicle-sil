@@ -1,0 +1,7 @@
+# ThreadSanitizer suppressions for the test presets linux-gcc-tsan and linux-clang-tsan (CMakePresets.json).
+# One entry per known false report, with the reason. A report in our own code never belongs here.
+
+# An exception kept in a std::exception_ptr (for example inside a std::future) is freed by the last owner. The
+# owners are counted with atomics inside libstdc++.so, which is not built with ThreadSanitizer, so it does not see
+# that the thread that read the exception gave up its reference before another thread freed it.
+race:std::__exception_ptr::exception_ptr::_M_release

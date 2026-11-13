@@ -639,7 +639,15 @@ void quitter(const Options& o)
                                          "    describe: false\n");
     const Captured run = launch(o, {"run", "sim.yaml"}, dir);
     expect_code(run, 1, "run with a participant that ends before the start");
-    expect_text(run_part(run.standard_output),
+    // Engine is told to stop right after it was started. On a slow machine that is before it handles the request,
+    // and it ends by the signal itself. Both endings are right: this scenario is about Quitter.
+    std::string shown = run_part(run.standard_output);
+    const std::string by_signal = "stopped (" + kStop + "), signal " + kStop + "\n";
+    if (const auto at = shown.find(by_signal); at != std::string::npos)
+    {
+        shown.replace(at, by_signal.size(), "stopped (" + kStop + "), exit code 130\n");
+    }
+    expect_text(shown,
                 "run: the simulation did not start\n"
                 "\n"
                 "participant  required  ended\n"
