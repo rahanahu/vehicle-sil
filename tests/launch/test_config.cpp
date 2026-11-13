@@ -619,9 +619,22 @@ TEST_CASE(reads_where_the_registry_listens_and_how_long_to_wait_for_the_end)
 {
     const ConfigRead read = read_config("vehicle_sil_simulation: 1\nstop_timeout_ms: 2500\nregistry_uri: silkit://0.0.0.0:8500\n"
                                         "networks: []\nparticipants:\n  - name: A\n    command: a\n");
-    check_text(lines(read.findings), "");
+    // Not a loopback address: a note.
+    check_text(lines(read.findings),
+               "N 3 registry-on-network: registry_uri silkit://0.0.0.0:8500 is not a loopback address: the registry and the "
+               "participants listen on the network, where anyone who reaches this computer can join the simulation (SIL Kit "
+               "does not authenticate); run sets VEHICLE_SIL_LISTEN_ON_NETWORK=1 for the participants it starts, set it also "
+               "for the ones you start yourself on this computer; to keep the simulation on this computer, use 127.0.0.1 or "
+               "leave registry_uri out\n");
     CHECK_EQ(read.config->stop_timeout_ms, 2500);
     CHECK(read.config->registry_uri == "silkit://0.0.0.0:8500");
+    for (const char* uri : {"silkit://127.0.0.1:8500", "'silkit://[::1]:8500'", "silkit://localhost:8500"})
+    {
+        check_text(lines(read_config(std::string("vehicle_sil_simulation: 1\nregistry_uri: ") + uri +
+                                     "\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n")
+                             .findings),
+                   "");
+    }
     // Without them: 10 s, and no URI (a free port).
     const ConfigRead defaults = read_config(with_participants("  - name: A\n    command: a\n"));
     CHECK_EQ(defaults.config->stop_timeout_ms, 10000);

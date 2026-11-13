@@ -5,10 +5,19 @@
 #include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
+#include <cctype>
+#include <charconv>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <exception>
+#include <filesystem>
+#include <random>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace vehicle_sil {
 namespace {
@@ -35,30 +44,167 @@ bool is_terminal_or_stopping(orch::ParticipantState state) noexcept
 
 namespace {
 
-// Windows only; elsewhere nothing. The one place that says what vehicle-sil changes of SIL Kit's
-// defaults.
-#ifdef _WIN32
-constexpr std::string_view kDefaultMembers = R"("Middleware":{"EnableDomainSockets":false})";
-#else
-constexpr std::string_view kDefaultMembers = "";
+// The one place that says what vehicle-sil changes of SIL Kit's defaults (participant_runtime.hpp
+// says why).
+
+/// The host of "silkit://<host>:<port>...", without the brackets of an IPv6 address; empty if
+/// `uri` is not of that form.
+std::string_view registry_host(std::string_view uri) noexcept
+{
+    constexpr std::string_view scheme = "silkit://";
+    if (uri.substr(0, scheme.size()) != scheme)
+    {
+        return {};
+    }
+    uri.remove_prefix(scheme.size());
+    if (!uri.empty() && uri.front() == '[')
+    {
+        const auto end = uri.find(']');
+        return end == std::string_view::npos ? std::string_view{} : uri.substr(1, end - 1);
+    }
+    return uri.substr(0, uri.find_first_of(":/"));
+}
+
+bool equals_ignoring_case(std::string_view a, std::string_view b) noexcept
+{
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+           });
+}
+
+/// 127.x.x.x in dotted decimal (four numbers from 0 to 255).
+bool is_loopback_ipv4(std::string_view host) noexcept
+{
+    if (std::count(host.begin(), host.end(), '.') != 3)
+    {
+        return false;
+    }
+    int first = -1;
+    while (true)
+    {
+        const auto dot = host.find('.');
+        const std::string_view part = host.substr(0, dot);
+        int value = 0;
+        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value);
+        if (part.empty() || part.size() > 3 || error != std::errc{} || end != part.data() + part.size() || value < 0 || value > 255)
+        {
+            return false;
+        }
+        first = first < 0 ? value : first;
+        if (dot == std::string_view::npos)
+        {
+            return first == 127;
+        }
+        host.remove_prefix(dot + 1);
+    }
+}
+
+bool listen_on_network_from_environment()
+{
+    const std::string name(kListenOnNetworkVariable);
+    const char* value = std::getenv(name.c_str());
+    return value != nullptr && *value != '\0' && std::string_view(value) != "0";
+}
+
+std::string json_string(std::string_view text)
+{
+    std::string out = "\"";
+    for (const char c : text)
+    {
+        if (c == '"' || c == '\\')
+        {
+            out += '\\';
+            out += c;
+        }
+        else if (static_cast<unsigned char>(c) < 0x20)
+        {
+            constexpr char kHex[] = "0123456789abcdef";
+            out += "\\u00";
+            out += kHex[(static_cast<unsigned char>(c) >> 4) & 0xF];
+            out += kHex[static_cast<unsigned char>(c) & 0xF];
+        }
+        else
+        {
+            out += c;
+        }
+    }
+    out += '"';
+    return out;
+}
+
+#ifndef _WIN32
+/// "local://<temporary directory>/vsil-<16 random hex digits>.silkit", or empty if there is no
+/// temporary directory. SIL Kit's own name for it is made from the participant's name and the
+/// registry URI, which this does not have; a random one is as unique.
+std::string new_local_acceptor_uri()
+{
+    std::error_code error;
+    const std::filesystem::path directory = std::filesystem::temp_directory_path(error);
+    if (error || directory.empty())
+    {
+        return {};
+    }
+    std::random_device device;
+    const std::uint64_t value = (static_cast<std::uint64_t>(device()) << 32) ^ device();
+    char name[32];
+    std::snprintf(name, sizeof name, "vsil-%016llx.silkit", static_cast<unsigned long long>(value));
+    return "local://" + (directory / name).string();
+}
 #endif
+
+/// The members of "Middleware", without the braces.
+std::string middleware_members(std::string_view registry_uri, bool listen_on_network)
+{
+    std::string members;
+#ifdef _WIN32
+    members = R"("EnableDomainSockets":false)";
+#endif
+    if (listen_on_network || !is_loopback_registry_uri(registry_uri) || listen_on_network_from_environment())
+    {
+        return members;
+    }
+    std::vector<std::string> acceptors;
+#ifndef _WIN32
+    if (std::string local = new_local_acceptor_uri(); !local.empty())
+    {
+        acceptors.push_back(std::move(local));
+    }
+#endif
+    // The registry's address family: an IPv6 registry URI may be all that this computer has.
+    acceptors.emplace_back(registry_host(registry_uri).find(':') != std::string_view::npos ? "tcp://[::1]:0"
+                                                                                           : "tcp://127.0.0.1:0");
+    members += members.empty() ? R"("AcceptorUris":[)" : R"(,"AcceptorUris":[)";
+    for (std::size_t i = 0; i < acceptors.size(); ++i)
+    {
+        members += (i == 0 ? "" : ",") + json_string(acceptors[i]);
+    }
+    members += ']';
+    return members;
+}
 
 } // namespace
 
-std::string_view default_participant_configuration() noexcept
+bool is_loopback_registry_uri(std::string_view registry_uri) noexcept
 {
-#ifdef _WIN32
-    return R"({"Middleware":{"EnableDomainSockets":false}})";
-#else
-    return "{}";
-#endif
+    const std::string_view host = registry_host(registry_uri);
+    return is_loopback_ipv4(host) || host == "::1" || equals_ignoring_case(host, "localhost");
 }
 
-std::string default_participant_configuration_with(std::string_view members)
+std::string default_participant_configuration(std::string_view registry_uri, bool listen_on_network)
 {
+    return default_participant_configuration_with(registry_uri, "", listen_on_network);
+}
+
+std::string default_participant_configuration_with(std::string_view registry_uri, std::string_view members,
+                                                   bool listen_on_network)
+{
+    const std::string middleware = middleware_members(registry_uri, listen_on_network);
     std::string text = "{";
-    text += kDefaultMembers;
-    if (!kDefaultMembers.empty() && !members.empty())
+    if (!middleware.empty())
+    {
+        text += R"("Middleware":{)" + middleware + "}";
+    }
+    if (!middleware.empty() && !members.empty())
     {
         text += ',';
     }
@@ -67,13 +213,24 @@ std::string default_participant_configuration_with(std::string_view members)
     return text;
 }
 
-std::string participant_configuration_or_default(std::string_view configuration)
+std::string participant_configuration_or_default(std::string_view configuration, std::string_view registry_uri,
+                                                 bool listen_on_network)
 {
     constexpr std::string_view space = " \t\r\n";
     const auto first = configuration.find_first_not_of(space);
     const std::string_view text =
         first == std::string_view::npos ? std::string_view{} : configuration.substr(first, configuration.find_last_not_of(space) - first + 1);
-    return std::string(text.empty() || text == "{}" ? default_participant_configuration() : configuration);
+    return text.empty() || text == "{}" ? default_participant_configuration(registry_uri, listen_on_network)
+                                        : std::string(configuration);
+}
+
+std::string_view default_registry_configuration() noexcept
+{
+#ifdef _WIN32
+    return R"({"Middleware":{"EnableDomainSockets":false}})";
+#else
+    return "{}";
+#endif
 }
 
 bool is_running(const PeerStatus& status) noexcept
@@ -108,8 +265,8 @@ ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
         }
     }
 
-    auto config = SilKit::Config::ParticipantConfigurationFromString(
-        participant_configuration_or_default(options_.participant_configuration));
+    auto config = SilKit::Config::ParticipantConfigurationFromString(participant_configuration_or_default(
+        options_.participant_configuration, options_.registry_uri, options_.listen_on_network));
     participant_ = SilKit::CreateParticipant(config, options_.participant_name, options_.registry_uri);
 
     // Handlers registered below capture `this`. If a later call throws, destroy the

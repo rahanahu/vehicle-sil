@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/config.hpp"
 
+#include "vehicle_sil/core/participant_runtime.hpp"
+
 #include "vehicle_sil/process/child_process.hpp"
 #include "yaml_tree.hpp"
 
@@ -237,6 +239,16 @@ public:
             else if (key == "registry_uri")
             {
                 config.registry_uri = registry_uri(child);
+                if (config.registry_uri && !is_loopback_registry_uri(*config.registry_uri))
+                {
+                    note("registry-on-network", doc_.line(child),
+                         "registry_uri " + *config.registry_uri +
+                             " is not a loopback address: the registry and the participants listen on the network, where "
+                             "anyone who reaches this computer can join the simulation (SIL Kit does not authenticate); run "
+                             "sets " + std::string(kListenOnNetworkVariable) +
+                             "=1 for the participants it starts, set it also for the ones you start yourself on this "
+                             "computer; to keep the simulation on this computer, use 127.0.0.1 or leave registry_uri out");
+                }
             }
             else if (key == "time_step_ms")
             {

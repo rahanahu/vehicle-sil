@@ -396,7 +396,7 @@ Simulation::Simulation(std::optional<SilKitOptions> silkit)
     if (silkit_->uri.empty())
     {
         silkit_->registry = SilKit::Vendor::Vector::CreateSilKitRegistry(
-            SilKit::Config::ParticipantConfigurationFromString(std::string(default_participant_configuration())));
+            SilKit::Config::ParticipantConfigurationFromString(std::string(default_registry_configuration())));
         silkit_->uri = silkit_->registry->StartListening("silkit://127.0.0.1:0");
     }
 }

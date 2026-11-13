@@ -47,7 +47,7 @@ participants:
 | `stop_at_ms` | | シミュレーションを止める仮想時間（ミリ秒、1 以上 10^12 以下の整数）。書かなければ、participant が止めるか、`run` を Ctrl+C で止めるまで動きます |
 | `start_timeout_ms` | | 必須の participant がそろうまで待つ時間（ミリ秒、1 以上 10^12 以下の整数。書かなければ 30000）。`run` は ecu_main の実行ファイルにも `--start-timeout-ms` で同じ値を渡します |
 | `stop_timeout_ms` | | `run` が participant の終わりを待つ時間（ミリ秒、1 以上 10^12 以下の整数。書かなければ 10000）。止め方の各段で、この時間だけ待ちます |
-| `registry_uri` | | `run` が registry を立てる場所（`silkit://<host>:<port>`、ポートは 1 以上 65535 以下）。書かなければ 127.0.0.1 の空いているポートです（自分で起動する必須の participant がいる実行では `silkit://127.0.0.1:8500`。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。ほかのコンピューターの participant も参加させるときは `silkit://0.0.0.0:8500` のように書きます（このコンピューターの participant には `127.0.0.1` の URI を渡します） |
+| `registry_uri` | | `run` が registry を立てる場所（`silkit://<host>:<port>`、ポートは 1 以上 65535 以下）。書かなければ 127.0.0.1 の空いているポートです（自分で起動する必須の participant がいる実行では `silkit://127.0.0.1:8500`。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)）。ほかのコンピューターの participant も参加させるときは `silkit://0.0.0.0:8500` のように書きます（このコンピューターの participant には `127.0.0.1` の URI を渡します）。ループバックのアドレス（`127.x.x.x`、`[::1]`、`localhost`）でなければ、注記 `registry-on-network` を出し、`run` が起動する participant に環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` を渡します（[待ち受けるアドレス](#待ち受けるアドレス)） |
 | `speed` | | 仮想時間を進める速さ（実時間 1 秒あたりの仮想時間の秒数）。`1` が等速、`2` が 2 倍速、`0.5` が半分の速さです（0.000001 以上 1000000 以下の数）。`max` か、書かなければ最速です。`run --speed` で上書きできます（[等速で動かす](#等速で動かす)） |
 | `time_step_ms` | | controller の刻み（ミリ秒の仮想時間、1 以上 10^12 以下の整数）。一時停止とステップ送りの細かさ、速さを合わせる細かさです。書かなければ、最速のときは 10 です（`stop_at_ms` が 10 の倍数でなければ、`stop_at_ms` と 10 の最大公約数）。速さを指定したときは、さらに ECU のステップ幅との最大公約数にします（[等速で動かす](#等速で動かす)の「刻みと ECU のステップ」）。書いたときは `stop_at_ms` の約数にします（誤り `value`） |
 | `late_tolerance_ms` | | 遅れの許容（実時間のミリ秒、1 以上 10^12 以下の整数）。刻みの遅れがこれを超えたら、遅れた刻みに数えます。書かなければ 10 です（刻みと速さによりません） |
@@ -203,6 +203,7 @@ passed: 0 errors, 0 warnings, 1 note
 | `launcher-argument` | 誤り | ecu_main の `command` に、`ecu_main` の引数かプレースホルダーがある |
 | `unknown-placeholder` | 誤り | `describe: false` の `command` に知らない `{語}` がある |
 | `no-registry-uri` | 注記 | `describe: false` の `command` に `{registry_uri}` がない |
+| `registry-on-network` | 注記 | `registry_uri` がループバックのアドレスでない（registry と participant がネットワークで待ち受け、このコンピューターに届く誰でもシミュレーションに参加できる。[待ち受けるアドレス](#待ち受けるアドレス)） |
 | `step-not-checked` | 注記 | `describe: false` の participant に `step_ms` がある |
 | `executable` | 誤り | 実行ファイルがない（区切りのない名前は `PATH` にもない）、ディレクトリ、バッチファイル、実行の許可がない |
 | `found-on-path` | 注記 | 実行ファイルを `PATH` で見つけた（その場所を示します） |
@@ -598,6 +599,14 @@ Windows でコンソールを閉じると、Windows は数秒でプロセスを�
 - Windows: participant はそれぞれジョブオブジェクト（最後のハンドルが閉じたら、中のプロセスを終わらせる）に入ります。`vehicle_sil_launch` がどう終わっても（強制終了を含む）、participant とそれが起動したプロセスは終わります。
 - Linux: participant は、`vehicle_sil_launch` が終わると SIGKILL を受けます（親が終わったときのシグナル）。ただし、`vehicle_sil_launch` が強制終了されたとき（SIGKILL、クラッシュ）は、止め方の 3 と 4 が動かないので、participant が起動したプロセスは残ることがあります。participant のプロセスグループを抜けたプロセス（`setsid()` などを呼んだもの）は、どの場合も終わらせられません。
 - Linux 以外の POSIX は対象にしていません（親が終わったときのシグナルがないので、`vehicle_sil_launch` が強制終了されると participant が残ります）。
+
+### 待ち受けるアドレス
+
+SIL Kit の participant は、ほかの participant からの接続を待ち受けます。vehicle-sil が SIL Kit の構成を作る participant（ecu_main の実行ファイル、`ParticipantRuntime` や `Simulation` を使うプログラム、`vehicle_sil_can_bus_simulator`、Vector XL のブリッジ、`run` の controller）は、registry の URI のホストがループバックのアドレス（`127.x.x.x`、`[::1]`、`localhost`。名前は引かず、書いたとおりに見ます）なら、ループバックのアドレスだけで待ち受けます（TCP は `127.0.0.1`、IPv6 の URI なら `::1`。Windows 以外では、ほかに一時ディレクトリの local-domain ソケット）。ほかのコンピューターからはつなげず、Windows のファイアウォールは待ち受けてよいかを尋ねません。`registry_uri` を書かない実行は、いつもこれです。registry は、自分の URI のアドレスで待ち受けます。
+
+- `registry_uri` がループバックのアドレスでないとき（`silkit://0.0.0.0:8500` など）は、SIL Kit の既定のとおり、全部のアドレスで待ち受けます。SIL Kit には認証がないので、このコンピューターに届く誰でもシミュレーションに参加できます（注記 `registry-on-network`）。Windows のファイアウォールは、registry と participant のプログラムに、待ち受けてよいかを尋ねます。
+- このとき `run` は、このコンピューターの participant に `127.0.0.1` の URI を渡すので、起動する participant に環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` を渡します。この変数（空と `0` 以外の値）があると、registry の URI がループバックのアドレスでも、全部のアドレスで待ち受けます。ほかのコンピューターの participant が、このコンピューターの participant につなげるようにするためです。自分で起動する participant（manual）には、自分で設定します。ほかのコンピューターの registry に、そのコンピューターの上でループバックのアドレスでつなぐ participant も同じです。
+- 自分の SIL Kit の構成を渡した participant（`vehicle_sil_can_bus_simulator --participant-configuration` など）は、その構成のとおりに待ち受けます（`Middleware.AcceptorUris` がなければ全部のアドレス）。vehicle-sil を使わない SIL Kit のプログラム（`describe: false` の participant など）も、それぞれの構成のとおりです。
 
 ### 出力
 

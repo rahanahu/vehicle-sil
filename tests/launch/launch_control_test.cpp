@@ -10,6 +10,7 @@
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control/wire.hpp"
+#include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
 #include "vehicle_sil/process/child_process.hpp"
@@ -243,8 +244,10 @@ void hello_without_an_answer(const fs::path& ecu, const fs::path& dir)
         const std::string_view head = "[vehicle_sil_launch] registry at ";
         if (line.substr(0, head.size()) == head && !impostor)
         {
-            impostor = SilKit::CreateParticipant(SilKit::Config::ParticipantConfigurationFromString("{}"), "Impostor",
-                                                 std::string(line.substr(head.size())));
+            const std::string uri(line.substr(head.size()));
+            impostor = SilKit::CreateParticipant(
+                SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(uri)), "Impostor",
+                uri);
             auto* hello_out = impostor->CreateDataPublisher(topics::kHelloTopic, topics::spec(topics::kHelloTopic), 1);
             auto* step_out = impostor->CreateDataPublisher(topics::kStepTopic, topics::spec(topics::kStepTopic), 1);
             control::wire::Hello hello;
@@ -324,8 +327,9 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
         const std::string_view registry = "[vehicle_sil_launch] registry at ";
         if (stuck && line.substr(0, registry.size()) == registry && !participant)
         {
-            participant = SilKit::CreateParticipant(SilKit::Config::ParticipantConfigurationFromString("{}"), "Stuck",
-                                                    std::string(line.substr(registry.size())));
+            const std::string uri(line.substr(registry.size()));
+            participant = SilKit::CreateParticipant(
+                SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(uri)), "Stuck", uri);
             auto* lifecycle = participant->CreateLifecycleService(
                 {SilKit::Services::Orchestration::OperationMode::Coordinated});
             lifecycle->SetCommunicationReadyHandlerAsync([] {}); // never completed

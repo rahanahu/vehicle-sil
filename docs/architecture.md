@@ -914,6 +914,15 @@ SIL Kit の `ITimeSyncService` で、すべてのピアが 1 つの仮想時間�
 - `stop()` が戻った時点で、ステップハンドラは実行中でなく、以後も呼ばれません。実行中のハンドラがあれば終わるまで待ちます。ハンドラが使うオブジェクトは、`stop()`（またはデストラクタ）のあとに破棄します。
 - ステップハンドラの中からは `stop()` ではなく `request_stop()` を呼びます。coordinated では、どの participant が停止しても全体が止まります。
 
+### SIL Kit の構成の既定
+
+- `ParticipantRuntimeOptions::participant_configuration` が `"{}"`（既定）か空なら、`ParticipantRuntime` は `default_participant_configuration(registry_uri)`（`participant_runtime.hpp`）で participant を作ります。SIL Kit の既定から変えるのは 2 つです。
+  - registry の URI のホストがループバックのアドレス（`is_loopback_registry_uri()`: `127.x.x.x`、`::1`、`localhost`。名前は引きません）なら、`Middleware.AcceptorUris` でループバックのアドレスだけで待ち受けます（TCP の `127.0.0.1` か `::1`、ポート 0。Windows 以外では、ほかに一時ディレクトリの新しい名前の local-domain ソケット）。`ParticipantRuntimeOptions::listen_on_network`（`SimulationControllerOptions` にも同じもの）か環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK`（`kListenOnNetworkVariable`）があれば足しません。`vehicle_sil_launch run` での扱いは [simulation-config.md](simulation-config.md) の「待ち受けるアドレス」にあります。
+  - Windows では `Middleware.EnableDomainSockets: false`（[dependencies.md](dependencies.md) の SIL Kit（Windows）の節）。
+- 自分の構成を渡したときは、それをそのまま使います（待ち受けるアドレスも、その構成のとおり）。
+- vehicle-sil が立てる registry（`vehicle_sil_launch run`、`Simulation`）は `default_registry_configuration()` で作ります。registry は自分の URI のアドレスで待ち受けます（`AcceptorUris` を使いません）。
+- `libs/`、`tools/`、`bridges/`、`tests/` で文字列から SIL Kit の構成を作る所は、これらの関数を通ります（試験 `core.silkit_configuration_defaults`）。
+
 ### 実時間との結合
 
 - 何も指定しなければ、仮想時間はできるだけ速く進みます（実時間より速くなりえます）。

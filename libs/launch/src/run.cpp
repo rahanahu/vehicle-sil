@@ -200,7 +200,7 @@ public:
         try
         {
             registry = SilKit::Vendor::Vector::CreateSilKitRegistry(
-                SilKit::Config::ParticipantConfigurationFromString(std::string(default_participant_configuration())));
+                SilKit::Config::ParticipantConfigurationFromString(std::string(default_registry_configuration())));
             // A participant started by hand gets a command that stays the same from run to run.
             const bool fixed = !ctx_.config.registry_uri && waits_for_manual(ctx_.config);
             const std::string listen =
@@ -225,6 +225,8 @@ public:
             SimulationControllerOptions c;
             c.participant_name = std::string(kControllerName);
             c.registry_uri = uri;
+            // A registry that other computers may reach: they must reach the controller too.
+            c.listen_on_network = !is_loopback_registry_uri(listen);
             for (const auto& p : ctx_.config.participants)
             {
                 if (p.required && p.enabled)

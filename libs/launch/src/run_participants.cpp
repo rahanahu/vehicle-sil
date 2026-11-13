@@ -3,6 +3,8 @@
 
 #include "run_words.hpp"
 
+#include "vehicle_sil/core/participant_runtime.hpp"
+
 #include <silkit/services/orchestration/string_utils.hpp>
 
 #include <algorithm>
@@ -174,6 +176,12 @@ bool RunParticipants::start_children(const std::string& uri)
         process::ProcessOptions options;
         options.working_directory = workDir;
         options.on_line = [this, i](process::Stream, std::string_view line) { out_.on_line(i, line); };
+        if (ctx_.config.registry_uri && !is_loopback_registry_uri(*ctx_.config.registry_uri))
+        {
+            // Other computers may reach the registry, but these participants connect to it at a
+            // loopback address (uri_for_participants()): they must not listen on loopback only.
+            options.environment.emplace_back(kListenOnNetworkVariable, "1");
+        }
         try
         {
             // Its lines wait (RunOutput::on_line() takes the output's lock) until its "started" event is out.

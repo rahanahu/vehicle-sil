@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 #include "spawn.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <stdexcept>
+#include <string_view>
 #include <system_error>
 
 #ifndef _WIN32
@@ -169,6 +172,46 @@ HANDLE make_kill_on_close_job()
     return job;
 }
 
+/// The caller's environment block with `variables` set over it (names compared without case, as
+/// Windows does), for CREATE_UNICODE_ENVIRONMENT.
+std::wstring environment_block(const std::vector<std::pair<std::string, std::string>>& variables)
+{
+    std::vector<std::wstring> names;
+    for (const auto& variable : variables)
+    {
+        names.push_back(widen(variable.first));
+    }
+    const auto is_set_here = [&names](std::wstring_view entry) {
+        // "=C:=C:\..." and the like: a name that starts with '='.
+        const auto equals = entry.find(L'=', 1);
+        const std::wstring_view name = entry.substr(0, equals);
+        return std::any_of(names.begin(), names.end(), [name](const std::wstring& set) {
+            return CompareStringOrdinal(set.data(), static_cast<int>(set.size()), name.data(), static_cast<int>(name.size()),
+                                        TRUE) == CSTR_EQUAL;
+        });
+    };
+    std::wstring block;
+    if (wchar_t* strings = GetEnvironmentStringsW(); strings != nullptr)
+    {
+        for (const wchar_t* entry = strings; *entry != L'\0'; entry += std::wcslen(entry) + 1)
+        {
+            if (!is_set_here(entry))
+            {
+                block.append(entry);
+                block.push_back(L'\0');
+            }
+        }
+        FreeEnvironmentStringsW(strings);
+    }
+    for (std::size_t i = 0; i < variables.size(); ++i)
+    {
+        block += names[i] + L"=" + widen(variables[i].second);
+        block.push_back(L'\0');
+    }
+    block.push_back(L'\0');
+    return block;
+}
+
 HANDLE start(const std::filesystem::path& executable, const std::vector<std::string>& arguments, HANDLE in, HANDLE out,
              HANDLE err, HANDLE job, const StartFlags& flags)
 {
@@ -220,7 +263,14 @@ HANDLE start(const std::filesystem::path& executable, const std::vector<std::str
     // A relative path is from the caller's directory, also when the child starts in another one.
     std::error_code ec;
     const std::filesystem::path program = executable.is_relative() ? std::filesystem::absolute(executable, ec) : executable;
-    const BOOL created = CreateProcessW(program.wstring().c_str(), line.data(), nullptr, nullptr, TRUE, creation, nullptr,
+    std::wstring environment;
+    if (!flags.environment.empty())
+    {
+        environment = environment_block(flags.environment);
+        creation |= CREATE_UNICODE_ENVIRONMENT;
+    }
+    const BOOL created = CreateProcessW(program.wstring().c_str(), line.data(), nullptr, nullptr, TRUE, creation,
+                                        environment.empty() ? nullptr : environment.data(),
                                         directory.empty() ? nullptr : directory.c_str(), &startup.StartupInfo, &info);
     const std::string createError = created ? std::string{} : last_error_message("CreateProcessW");
     if (attributes != nullptr)
@@ -373,6 +423,32 @@ pid_t spawn(const std::filesystem::path& executable, const std::vector<std::stri
         argv.push_back(const_cast<char*>(argument.c_str()));
     }
     argv.push_back(nullptr);
+    // The environment: the caller's, with request.environment set over it.
+    std::vector<std::string> variables;
+    std::vector<char*> envp;
+    if (!request.environment.empty())
+    {
+        for (char** entry = environ; *entry != nullptr; ++entry)
+        {
+            const std::string_view text(*entry);
+            const std::string_view name = text.substr(0, text.find('='));
+            if (std::none_of(request.environment.begin(), request.environment.end(),
+                             [name](const auto& variable) { return variable.first == name; }))
+            {
+                envp.push_back(*entry);
+            }
+        }
+        for (const auto& [name, value] : request.environment)
+        {
+            variables.push_back(name + "=" + value);
+        }
+        for (auto& variable : variables)
+        {
+            envp.push_back(variable.data());
+        }
+        envp.push_back(nullptr);
+    }
+    char** const childEnvironment = envp.empty() ? environ : envp.data();
     std::vector<int> ignored;
     for (int sig = 1; sig < NSIG; ++sig)
     {
@@ -458,7 +534,7 @@ pid_t spawn(const std::filesystem::path& executable, const std::vector<std::stri
         {
             child_fail(errorWrite, 1);
         }
-        ::execve(program.c_str(), argv.data(), environ);
+        ::execve(program.c_str(), argv.data(), childEnvironment);
         child_fail(errorWrite, 2);
     }
     if (request.own_group)
