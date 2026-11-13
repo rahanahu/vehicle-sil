@@ -117,28 +117,100 @@ function(_vehicle_sil_patched_source dependency out_var)
     file(TOUCH_NOCREATE "${file}")
   endforeach()
 
+  # git apply outside a repository works like patch(1):
+  # - GIT_CEILING_DIRECTORIES keeps git from finding an enclosing repository
+  #   (such as vehicle-sil itself when the build tree is inside it); there,
+  #   git apply would resolve the paths against that repository and skip them.
+  #   The ceiling is the directory above the copy in git's own form, as git
+  #   prints it: MSYS2's git takes POSIX paths (/d/a/...) in a list separated
+  #   by ':', so a Windows path (D:/a/...) would not stop it.
+  # - GIT_DIR and friends, inherited for example from a git hook, would point
+  #   it at another repository.
+  set(git_env "${CMAKE_COMMAND}" -E env --unset=GIT_DIR --unset=GIT_WORK_TREE --unset=GIT_INDEX_FILE
+              --unset=GIT_COMMON_DIR)
+  set(ceiling "${CMAKE_CURRENT_BINARY_DIR}/external")
+  execute_process(
+    COMMAND ${git_env} "${GIT_EXECUTABLE}" rev-parse --show-toplevel --show-prefix
+    WORKING_DIRECTORY "${ceiling}"
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE output
+    ERROR_QUIET)
+  if(result EQUAL 0)
+    string(REPLACE "\r" "" output "${output}")
+    string(REGEX REPLACE "\n$" "" output "${output}")
+    string(REPLACE "\n" ";" output "${output}")
+    list(GET output 0 top)
+    list(LENGTH output count)
+    set(ceiling "${top}")
+    if(count GREATER 1)
+      list(GET output 1 prefix)
+      string(REGEX REPLACE "/$" "" prefix "${prefix}")
+      if(NOT prefix STREQUAL "")
+        set(ceiling "${top}/${prefix}")
+      endif()
+    endif()
+  endif()
+  list(APPEND git_env "GIT_CEILING_DIRECTORIES=${ceiling}")
+
   foreach(patch IN LISTS patches)
-    # git apply outside a repository works like patch(1):
-    # - GIT_CEILING_DIRECTORIES keeps git from finding an enclosing repository
-    #   (such as vehicle-sil itself when the build tree is inside it); there,
-    #   git apply would resolve the paths against that repository and skip them.
-    # - GIT_DIR and friends, inherited for example from a git hook, would point
-    #   it at another repository.
     # --ignore-whitespace tolerates CRLF checkouts (core.autocrlf on Windows).
     execute_process(
-      COMMAND "${CMAKE_COMMAND}" -E env --unset=GIT_DIR --unset=GIT_WORK_TREE --unset=GIT_INDEX_FILE
-              --unset=GIT_COMMON_DIR "GIT_CEILING_DIRECTORIES=${CMAKE_CURRENT_BINARY_DIR}/external"
-              "${GIT_EXECUTABLE}" apply --ignore-whitespace --verbose "${patch}"
+      COMMAND ${git_env} "${GIT_EXECUTABLE}" apply --ignore-whitespace --verbose "${patch}"
       WORKING_DIRECTORY "${patched}"
       RESULT_VARIABLE result
       OUTPUT_VARIABLE output
       ERROR_VARIABLE output)
     if(NOT result EQUAL 0 OR output MATCHES "Skipped patch")
-      message(FATAL_ERROR "vehicle-sil: ${patch} does not apply to ${source}:\n${output}")
+      _vehicle_sil_patch_failure_details("${patched}" "${patch}" "${ceiling}" "${git_env}" details)
+      message(FATAL_ERROR "vehicle-sil: ${patch} does not apply to ${source}:\n${output}\n${details}")
     endif()
   endforeach()
   file(WRITE "${stamp_file}" "${stamp_content}")
   set(${out_var} "${patched}" PARENT_SCOPE)
+endfunction()
+
+# Sets <out_var> to what explains a patch that did not apply to the copy in
+# <patched>: the git used, the ceiling, the repository git finds around the
+# copy (if any, git took the patch's paths as relative to it and skipped them)
+# and the line ends of the files the patch changes.
+function(_vehicle_sil_patch_failure_details patched patch ceiling git_env out_var)
+  execute_process(
+    COMMAND ${git_env} "${GIT_EXECUTABLE}" rev-parse --show-toplevel
+    WORKING_DIRECTORY "${patched}"
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE enclosing
+    ERROR_QUIET
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT result EQUAL 0 OR enclosing STREQUAL "")
+    set(enclosing "none (as intended)")
+  else()
+    string(APPEND enclosing " (git took the patch's paths as relative to this repository and skipped them: "
+           "the ceiling did not hide it; build outside the repository, or with another git)")
+  endif()
+  string(CONCAT text "What git saw:\n  git: ${GIT_EXECUTABLE} (version ${GIT_VERSION_STRING})\n"
+         "  GIT_CEILING_DIRECTORIES: ${ceiling}\n  repository around the copy: ${enclosing}\n"
+         "  line ends of the files the patch changes, in the copy:")
+  file(STRINGS "${patch}" targets REGEX "^diff --git a/")
+  foreach(line IN LISTS targets)
+    string(REGEX REPLACE "^diff --git a/([^ ]+) .*" "\\1" path "${line}")
+    if(NOT EXISTS "${patched}/${path}")
+      set(ends "missing")
+    else()
+      # As hex (file(READ) as text drops the CRs): byte pairs, so the match starts at an even offset.
+      file(READ "${patched}/${path}" head LIMIT 4096 HEX)
+      if(head MATCHES "^(..)*0d0a")
+        set(ends "CRLF")
+      elseif(head MATCHES "^(..)*0a")
+        set(ends "LF")
+      else()
+        set(ends "no line end in the first 4096 bytes")
+      endif()
+    endif()
+    string(APPEND text "\n    ${path}: ${ends}")
+  endforeach()
+  string(APPEND text "\nIf the files differ from what the patch expects, check that external/sil-kit is at the commit "
+         "vehicle-sil pins (git submodule update --init --recursive).")
+  set(${out_var} "${text}" PARENT_SCOPE)
 endfunction()
 
 # Marks the public include directories of a dependency built from source as

@@ -1,5 +1,5 @@
-# Checks of every push to main and every pull request: the C++ build and tests (Linux presets, Windows with
-# MSYS2 UCRT64), the browser GUI, and the Python code. Each job calls the repository's script that a developer
+# Checks of every push to main and every pull request: the C++ build and tests (Linux presets, one of them also
+# with the oldest CMake that README.md asks for, Windows with MSYS2 UCRT64), the browser GUI, and the Python code. Each job calls the repository's script that a developer
 # runs (AGENTS.md, "検証とスクリプト"); on failure, its logs (build/logs) are kept as an artifact.
 # Security: read-only token, no secrets, actions pinned by commit hash (the tag in the comment).
 name: ci
@@ -53,6 +53,56 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: logs-${{ matrix.preset }}
+          path: build/logs
+          retention-days: 14
+
+  # The oldest CMake that README.md asks for (3.21, its last release), so that every run checks that claim. Kitware's
+  # own Linux build, checked against the SHA-256 that the release lists (cmake-3.21.7-SHA-256.txt).
+  linux-oldest-cmake:
+    name: linux (linux-gcc-release, CMake 3.21.7)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 1G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CMAKE_OLDEST: 3.21.7
+      CMAKE_OLDEST_SHA256: f84e209d903a96e54f398bb8760693969b13fc50bce2f8278a9ee9dca01406b2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Install Ninja and ccache
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache
+      - name: CMake ${{ env.CMAKE_OLDEST }} instead of the runner's
+        run: |
+          archive="cmake-$CMAKE_OLDEST-linux-x86_64"
+          curl -fsSL -o "$RUNNER_TEMP/$archive.tar.gz" \
+            "https://github.com/Kitware/CMake/releases/download/v$CMAKE_OLDEST/$archive.tar.gz"
+          echo "$CMAKE_OLDEST_SHA256  $RUNNER_TEMP/$archive.tar.gz" | sha256sum --check --strict -
+          tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$archive/bin" >> "$GITHUB_PATH"
+      - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
+        run: uv sync --locked
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}-
+            ccache-linux-gcc-release-
+      - name: Configure, build and test
+        run: |
+          cmake --version | head -n 1
+          cmake --version | grep -qxF "cmake version $CMAKE_OLDEST"
+          python3 scripts/verify.py linux-gcc-release --tag ci
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}
           path: build/logs
           retention-days: 14
 

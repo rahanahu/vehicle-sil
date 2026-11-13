@@ -308,8 +308,18 @@ fs::path scenario_dir(const Options& o, const std::string& config, const std::ve
     for (const auto& [name, behaviour] : behaviours)
     {
         write_file(dir / (name + ".behaviour"), behaviour + "\n");
+        fs::remove(dir / (name + ".hanging"));
     }
     return dir;
+}
+
+/// Waits until the test ECU `name` (hang-after-end) hangs after the run: from then on its own
+/// handler answers a stop request. Before, ecu_main may still handle it, and the request is spent
+/// on a run that has already stopped.
+void wait_hanging(const fs::path& dir, const std::string& name)
+{
+    require(pid_written((dir / (name + ".hanging")).string(), 60s),
+            name + " did not reach its end after the run within 60 s (no " + name + ".hanging)");
 }
 
 std::string ecu(const Options& o) { return yaml_quote(shown_path(o.test_ecu)); }
@@ -983,6 +993,7 @@ void interrupt_ending(const Options& o)
         require(changed.wait_for(lock, 120s, [&] { return contains(err, "[vehicle_sil_launch] the simulation ended\n"); }),
                 "the simulation did not end:\n" + err);
     }
+    wait_hanging(dir, "Stuck");
 #ifdef _WIN32
     require(launcher.request_stop(), "Ctrl+Break could not be sent");
 #else
@@ -2006,6 +2017,7 @@ void stdin_ending(const Options& o)
                                       {{"Stuck", "pid hang-after-end stop-exit 9"}});
     Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
     live.wait_for({"\"phase\":\"stopping\""});
+    wait_hanging(dir, "Stuck");
     live.write("{\"command\":\"stop\"}\n");
     const auto [status, lines] = live.finish();
     const bool gone = all_gone(dir, {"Stuck.pid"}, 30s);
@@ -2074,6 +2086,7 @@ void output_closed(const Options& o)
         fs::remove(dir / "Stuck.pid");
         Live live(o, dir, {"run", "--events", "sim.yaml"});
         live.wait_for({"\"phase\":\"stopping\""});
+        wait_hanging(dir, "Stuck");
         live.process().finish_output(0ms);
         const auto status = live.process().wait_for(60s);
         const bool gone = all_gone(dir, {"Stuck.pid"}, 30s);

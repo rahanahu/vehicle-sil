@@ -7,6 +7,7 @@
 #                                (docs/scenario.md), the output is the block after the line with this command
 # With DOC, simulation.yaml is also the block after "<!-- template/simulation.yaml -->" there.
 # Invoked by CTest with cmake -P.
+cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMake 3 then rejects IN_LIST)
 foreach(var LAUNCH DIR)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "check_and_run.cmake: ${var} is required")

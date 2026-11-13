@@ -2,6 +2,7 @@
 # builds it with its own preset (linux or windows) and vehicle-sil from SOURCE_DIR instead of the
 # network (FETCHCONTENT_SOURCE_DIR_VEHICLE_SIL), then checks and runs its simulation with LAUNCH
 # (tests/template/check_and_run.cmake). Invoked by CTest with cmake -P.
+cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMake 3 then rejects IN_LIST)
 foreach(var SOURCE_DIR BINARY_DIR LAUNCH)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "run_template.cmake: ${var} is required")
