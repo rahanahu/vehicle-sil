@@ -17,7 +17,7 @@ describe('launcherStderr', () => {
     expect(stderr).toEqual({
       first: [],
       skipped: 0,
-      last: ['fake_launcher: dying on purpose (scenario launcher-crash)'],
+      last: ['replay_launcher: dying on purpose (fault launcher-crash)'],
     });
   });
 

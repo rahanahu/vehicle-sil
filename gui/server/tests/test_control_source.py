@@ -11,7 +11,7 @@ import threading
 import time
 
 import pytest
-from fake_launcher import variables
+from fake_control import variables
 from vehicle_sil_gui import control
 from vehicle_sil_gui.source import SnapshotInfo, SourceError, TimeInfo
 

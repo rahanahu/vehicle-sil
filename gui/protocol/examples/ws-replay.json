@@ -31,12 +31,12 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 70,
-        "last_t_ms": 700,
+        "last_seq": 35,
+        "last_t_ms": 350,
         "time": {
           "event": "time",
-          "seq": 60,
-          "t_ms": 600,
+          "seq": 24,
+          "t_ms": 240,
           "sim_ms": 1000,
           "speed": "max",
           "paused": false,
@@ -80,8 +80,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -164,13 +170,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -263,8 +275,7 @@
               "line": 6,
               "participants": [
                 "Engine",
-                "Dashboard",
-                "Logger"
+                "Dashboard"
               ]
             }
           ],
@@ -276,7 +287,7 @@
               "line": 13,
               "participant": "Logger",
               "network": null,
-              "message": "participant 'Logger': describe is false, so it was not checked",
+              "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
               "detail": null
             }
           ]
@@ -339,8 +350,9 @@
             "control_link": {
               "state": "none"
             },
-            "exit_code": 0,
-            "signal": null
+            "stop_requested": true,
+            "exit_code": null,
+            "signal": "SIGTERM"
           }
         ],
         "participants_omitted": 0,
@@ -414,9 +426,9 @@
               "required": false,
               "enabled": true,
               "manual": false,
-              "ended": "exited",
-              "exit_code": 0,
-              "signal": null,
+              "ended": "stopped",
+              "exit_code": null,
+              "signal": "SIGTERM",
               "left_processes": false,
               "log": null,
               "control_link": {
@@ -462,8 +474,14 @@
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 0,
+                          "j1939_name": "0x00000000FE000001",
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -546,13 +564,19 @@
                 "reported": {
                   "vehicle_sil": "0.1.0",
                   "name": "Dashboard",
-                  "step_ns": 10000000,
+                  "step_ns": 5000000,
                   "networks": [
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 40,
+                          "j1939_name": null,
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -645,8 +669,7 @@
                 "line": 6,
                 "participants": [
                   "Engine",
-                  "Dashboard",
-                  "Logger"
+                  "Dashboard"
                 ]
               }
             ],
@@ -658,7 +681,7 @@
                 "line": 13,
                 "participant": "Logger",
                 "network": null,
-                "message": "participant 'Logger': describe is false, so it was not checked",
+                "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
                 "detail": null
               }
             ]
@@ -669,16 +692,8 @@
             "kept": 9,
             "dropped": 0
           },
-          "Engine": {
-            "kept": 10,
-            "dropped": 0
-          },
           "Dashboard": {
-            "kept": 10,
-            "dropped": 0
-          },
-          "Logger": {
-            "kept": 10,
+            "kept": 3,
             "dropped": 0
           }
         },
@@ -687,7 +702,7 @@
         "scenario": null,
         "variables": {
           "state": "off",
-          "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+          "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
           "peers": [],
           "peers_omitted": 0,
           "variables_omitted": 0,
@@ -749,10 +764,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 19,
-        "t_ms": 190,
-        "source": "vehicle_sil_launch",
-        "line": "simulation running"
+        "seq": 15,
+        "t_ms": 150,
+        "source": "Dashboard",
+        "line": "t=0 ms engine speed 0 rpm (0 messages)"
       }
     },
     {
@@ -760,10 +775,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 21,
-        "t_ms": 210,
-        "source": "Engine",
-        "line": "step 1: t = 100 ms"
+        "seq": 20,
+        "t_ms": 200,
+        "source": "vehicle_sil_launch",
+        "line": "simulation running"
       }
     },
     {
@@ -774,7 +789,7 @@
         "seq": 22,
         "t_ms": 220,
         "source": "Dashboard",
-        "line": "step 1: t = 100 ms"
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -784,8 +799,8 @@
         "event": "log",
         "seq": 23,
         "t_ms": 230,
-        "source": "Logger",
-        "line": "step 1: t = 100 ms"
+        "source": "Dashboard",
+        "line": "t=1000 ms engine speed 1200 rpm (10 messages)"
       }
     },
     {
@@ -795,303 +810,6 @@
         "event": "log",
         "seq": 25,
         "t_ms": 250,
-        "source": "Engine",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 26,
-        "t_ms": 260,
-        "source": "Dashboard",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 27,
-        "t_ms": 270,
-        "source": "Logger",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 29,
-        "t_ms": 290,
-        "source": "Engine",
-        "line": "step 3: t = 300 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 30,
-        "t_ms": 300,
-        "source": "Dashboard",
-        "line": "step 3: t = 300 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 31,
-        "t_ms": 310,
-        "source": "Logger",
-        "line": "step 3: t = 300 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 33,
-        "t_ms": 330,
-        "source": "Engine",
-        "line": "step 4: t = 400 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 34,
-        "t_ms": 340,
-        "source": "Dashboard",
-        "line": "step 4: t = 400 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 35,
-        "t_ms": 350,
-        "source": "Logger",
-        "line": "step 4: t = 400 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 37,
-        "t_ms": 370,
-        "source": "Engine",
-        "line": "step 5: t = 500 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 38,
-        "t_ms": 380,
-        "source": "Dashboard",
-        "line": "step 5: t = 500 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 39,
-        "t_ms": 390,
-        "source": "Logger",
-        "line": "step 5: t = 500 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 41,
-        "t_ms": 410,
-        "source": "Engine",
-        "line": "step 6: t = 600 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 42,
-        "t_ms": 420,
-        "source": "Dashboard",
-        "line": "step 6: t = 600 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 43,
-        "t_ms": 430,
-        "source": "Logger",
-        "line": "step 6: t = 600 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 45,
-        "t_ms": 450,
-        "source": "Engine",
-        "line": "step 7: t = 700 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 46,
-        "t_ms": 460,
-        "source": "Dashboard",
-        "line": "step 7: t = 700 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 47,
-        "t_ms": 470,
-        "source": "Logger",
-        "line": "step 7: t = 700 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 49,
-        "t_ms": 490,
-        "source": "Engine",
-        "line": "step 8: t = 800 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 50,
-        "t_ms": 500,
-        "source": "Dashboard",
-        "line": "step 8: t = 800 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 51,
-        "t_ms": 510,
-        "source": "Logger",
-        "line": "step 8: t = 800 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 53,
-        "t_ms": 530,
-        "source": "Engine",
-        "line": "step 9: t = 900 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 54,
-        "t_ms": 540,
-        "source": "Dashboard",
-        "line": "step 9: t = 900 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 55,
-        "t_ms": 550,
-        "source": "Logger",
-        "line": "step 9: t = 900 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 57,
-        "t_ms": 570,
-        "source": "Engine",
-        "line": "step 10: t = 1000 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 58,
-        "t_ms": 580,
-        "source": "Dashboard",
-        "line": "step 10: t = 1000 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 59,
-        "t_ms": 590,
-        "source": "Logger",
-        "line": "step 10: t = 1000 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 61,
-        "t_ms": 610,
         "source": "vehicle_sil_launch",
         "line": "the simulation ended"
       }
@@ -1101,8 +819,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 63,
-        "t_ms": 630,
+        "seq": 27,
+        "t_ms": 270,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -1112,8 +830,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 65,
-        "t_ms": 650,
+        "seq": 29,
+        "t_ms": 290,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -1123,16 +841,16 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 67,
-        "t_ms": 670,
+        "seq": 31,
+        "t_ms": 310,
         "source": "vehicle_sil_launch",
-        "line": "Logger exited with code 0"
+        "line": "asking Logger to stop (SIGTERM)"
       }
     },
     {
       "type": "synced",
       "session": 1,
-      "last_seq": 70
+      "last_seq": 35
     }
   ]
 }

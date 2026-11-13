@@ -1,8 +1,11 @@
-# A configuration for the fake launcher (gui/server/tests/fake_launcher.py); the line below picks its scenario.
-# fake-launcher: control-trouble
+# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
+# (recordings/, made by record_launcher.py: record again after changing this file).
+# replay-fault: control-trouble
 vehicle_sil_simulation: 1
-# Engine offers its variables and does not say hello (no_hello), Dashboard says hello in another version of the
-# messages (version_mismatch), Gauge does not offer them (not_offered), Logger has none
+# The fault control-trouble: Engine offers its variables and does not say hello (no_hello), Dashboard says hello
+# in another version of the messages (version_mismatch), Gauge does not offer them (not_offered), Logger has none.
+# Gauge is a process that does not describe itself (two of the example's ECUs cannot run here at once); the fault
+# gives it the state not_offered
 stop_at_ms: 1000
 networks:
   - name: J1939_CAN
@@ -13,7 +16,9 @@ participants:
   - name: Dashboard
     command: [dashboard/vehicle_sil_dashboard_ecu]
   - name: Gauge
-    command: [gauge/vehicle_sil_gauge_ecu]
+    command: [logger/can_logger, "{registry_uri}"]
+    describe: false
+    required: false
   - name: Logger
     command: [logger/can_logger, "{registry_uri}"]
     describe: false

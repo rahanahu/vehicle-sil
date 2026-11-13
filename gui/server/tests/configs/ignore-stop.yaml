@@ -1,6 +1,8 @@
-# A configuration for the fake launcher (gui/server/tests/fake_launcher.py); the line below picks its scenario.
-# fake-launcher: ignore-stop
+# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
+# (recordings/, made by record_launcher.py: record again after changing this file).
+# replay-fault: ignore-stop
 vehicle_sil_simulation: 1
+stop_timeout_ms: 600000  # the launcher waits for Logger until a second stop
 # no stop_at_ms: runs until stopped
 networks:
   - name: J1939_CAN
@@ -11,6 +13,6 @@ participants:
   - name: Dashboard
     command: [dashboard/vehicle_sil_dashboard_ecu]
   - name: Logger
-    command: [logger/can_logger, "{registry_uri}"]
+    command: [logger/stubborn_logger, "{registry_uri}"]  # ignores SIGTERM: the first stop waits for it
     describe: false
     required: false

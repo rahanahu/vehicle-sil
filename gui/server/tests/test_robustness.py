@@ -40,7 +40,7 @@ def test_events_with_wrong_types_do_not_stop_the_reading(gui: Gui) -> None:
 
 
 def test_a_number_that_is_not_finite_does_not_stop_the_reading(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_SCENARIO": "non-finite"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FAULT": "non-finite"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -180,18 +180,23 @@ def test_the_checks_that_aiohttp_makes(gui: Gui) -> None:
 # ---------------------------------------------------------------- names that look like options
 
 
-def test_a_participant_named_like_an_option_is_a_value(gui: Gui) -> None:
+def test_a_participant_named_like_an_option_is_refused_before_the_launcher(gui: Gui) -> None:
+    """vehicle_sil_launch takes a value that starts with '-' for an option (`--disable --json` is its usage error):
+    the GUI server refuses such a name in disable and manual, says what to do instead, and starts no launcher. (The
+    launcher's check refuses such a name in the file too.)"""
     async def main(c: Client) -> None:
-        status, body = await c.post("api/check", {"file": "dash-name.yaml", "disable": ["--json"]})
-        assert status == 200 and body["disable"] == ["--json"], body
-        sock = await c.ws()
-        await sock.until(is_synced)
-        status, body = await c.post("api/run", {"file": "dash-name.yaml", "disable": ["--json"]})
-        assert status == 200, body
-        got = await sock.until(is_ended)
-        hello = event_messages(got, "hello")[0]
-        assert hello["arguments"][-4:] == ["--disable", "--json", "--", "dash-name.yaml"]
-        assert got[-1]["session"]["result"]["result"] == "passed"
+        for path in ("api/check", "api/run"):
+            status, body = await c.post(path, {"file": "dash-name.yaml", "disable": ["--json"]})
+            assert (status, body["error"]["code"]) == (400, "name-like-option"), body
+            assert "'--json'" in body["error"]["message"] and "rename the participant" in body["error"]["message"]
+        for path in ("api/check", "api/run"):
+            status, body = await c.post(path, {"file": "dash-name.yaml", "manual": ["--json"]})
+            assert (status, body["error"]["code"]) == (400, "name-like-option"), body
+            assert "--manual" in body["error"]["message"]
+        status, body = await c.get("api/session")
+        assert body["session"] is None  # nothing was started
+        status, body = await c.post("api/check", {"file": "dash-name.yaml", "disable": []})
+        assert status == 200 and [f["code"] for f in body["check"]["findings"]] == ["value"]  # the launcher's own
     run_async(main, gui)
 
 
@@ -199,7 +204,7 @@ def test_a_participant_named_like_an_option_is_a_value(gui: Gui) -> None:
 
 
 def test_a_reconnection_is_told_how_many_lines_were_dropped(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_FLOOD": "5000"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FLOOD": "5000"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)

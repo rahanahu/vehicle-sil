@@ -1,4 +1,4 @@
-# A scenario for the fake launcher (gui/server/tests/fake_launcher.py plays it step by step).
+# A scenario of the GUI server's tests (the real launcher ran it with the example ECUs: recordings/).
 vehicle_sil_scenario: 1
 name: throttle up
 steps:

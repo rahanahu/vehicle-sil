@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -125,7 +125,7 @@
           "participants": [
             {
               "name": "Engine",
-              "line": 10,
+              "line": 11,
               "command": [
                 "engine/vehicle_sil_engine_ecu"
               ],
@@ -143,8 +143,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -214,7 +220,7 @@
             },
             {
               "name": "Dashboard",
-              "line": 12,
+              "line": 13,
               "command": [
                 "dashboard/vehicle_sil_dashboard_ecu"
               ],
@@ -227,13 +233,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -306,7 +318,7 @@
             {
               "name": "J1939_CAN",
               "kind": "can",
-              "line": 7,
+              "line": 8,
               "participants": [
                 "Engine",
                 "Dashboard"
@@ -450,9 +462,20 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "control_link",
+        "event": "log",
         "seq": 13,
         "t_ms": 130,
+        "source": "Dashboard",
+        "line": "t=0 ms engine speed 0 rpm (0 messages)"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 14,
+        "t_ms": 140,
         "name": "Engine",
         "state": "connected",
         "variables": 4
@@ -463,8 +486,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 14,
-        "t_ms": 140,
+        "seq": 15,
+        "t_ms": 150,
         "name": "Dashboard",
         "state": "connected",
         "variables": 4
@@ -475,8 +498,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 15,
-        "t_ms": 150,
+        "seq": 16,
+        "t_ms": 160,
         "phase": "running"
       }
     },
@@ -485,8 +508,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 16,
-        "t_ms": 160,
+        "seq": 17,
+        "t_ms": 170,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -496,8 +519,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 17,
-        "t_ms": 170,
+        "seq": 18,
+        "t_ms": 180,
         "sim_ms": 0,
         "speed": 1,
         "paused": false,
@@ -512,88 +535,10 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
-        "seq": 18,
-        "t_ms": 180,
-        "source": "Engine",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
+        "event": "time",
         "seq": 19,
         "t_ms": 190,
-        "source": "Dashboard",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 20,
-        "t_ms": 200,
         "sim_ms": 100,
-        "speed": 1,
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 21,
-        "t_ms": 210,
-        "source": "Engine",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 22,
-        "t_ms": 220,
-        "source": "Dashboard",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 23,
-        "t_ms": 230,
-        "sim_ms": 200,
-        "speed": 1,
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 24,
-        "t_ms": 240,
-        "sim_ms": 300,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -607,32 +552,10 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
-        "seq": 25,
-        "t_ms": 250,
-        "source": "Engine",
-        "line": "step 3: t = 300 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 26,
-        "t_ms": 260,
-        "source": "Dashboard",
-        "line": "step 3: t = 300 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
         "event": "time",
-        "seq": 27,
-        "t_ms": 270,
-        "sim_ms": 300,
+        "seq": 20,
+        "t_ms": 200,
+        "sim_ms": 100,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -663,13 +586,13 @@
         },
         "stop": "requested",
         "phase": "running",
-        "last_seq": 27,
-        "last_t_ms": 270,
+        "last_seq": 20,
+        "last_t_ms": 200,
         "time": {
           "event": "time",
-          "seq": 27,
-          "t_ms": 270,
-          "sim_ms": 300,
+          "seq": 20,
+          "t_ms": 200,
+          "sim_ms": 100,
           "speed": 1,
           "paused": false,
           "actual_speed": 1.5,
@@ -694,7 +617,7 @@
           "participants": [
             {
               "name": "Engine",
-              "line": 10,
+              "line": 11,
               "command": [
                 "engine/vehicle_sil_engine_ecu"
               ],
@@ -712,8 +635,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -783,7 +712,7 @@
             },
             {
               "name": "Dashboard",
-              "line": 12,
+              "line": 13,
               "command": [
                 "dashboard/vehicle_sil_dashboard_ecu"
               ],
@@ -796,13 +725,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -875,7 +810,7 @@
             {
               "name": "J1939_CAN",
               "kind": "can",
-              "line": 7,
+              "line": 8,
               "participants": [
                 "Engine",
                 "Dashboard"
@@ -937,12 +872,8 @@
             "kept": 4,
             "dropped": 0
           },
-          "Engine": {
-            "kept": 3,
-            "dropped": 0
-          },
           "Dashboard": {
-            "kept": 3,
+            "kept": 1,
             "dropped": 0
           }
         },
@@ -955,9 +886,218 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "command",
+        "event": "time",
+        "seq": 21,
+        "t_ms": 210,
+        "sim_ms": 200,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 22,
+        "t_ms": 220,
+        "sim_ms": 305,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 23,
+        "t_ms": 230,
+        "sim_ms": 405,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 24,
+        "t_ms": 240,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 25,
+        "t_ms": 250,
+        "sim_ms": 505,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 26,
+        "t_ms": 260,
+        "sim_ms": 605,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 27,
+        "t_ms": 270,
+        "sim_ms": 710,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
         "seq": 28,
         "t_ms": 280,
+        "sim_ms": 810,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 29,
+        "t_ms": 290,
+        "sim_ms": 910,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 30,
+        "t_ms": 300,
+        "source": "Dashboard",
+        "line": "t=1000 ms engine speed 1200 rpm (10 messages)"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 31,
+        "t_ms": 310,
+        "sim_ms": 1010,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 32,
+        "t_ms": 320,
+        "sim_ms": 1110,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 33,
+        "t_ms": 330,
+        "sim_ms": 1215,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "command",
+        "seq": 34,
+        "t_ms": 340,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -968,9 +1108,26 @@
       "type": "event",
       "session": 1,
       "event": {
+        "event": "time",
+        "seq": 35,
+        "t_ms": 350,
+        "sim_ms": 1235,
+        "speed": 1,
+        "paused": false,
+        "actual_speed": 1.5,
+        "late_steps": 1,
+        "max_late_ms": 200,
+        "slipped_ms": 200,
+        "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
         "event": "log",
-        "seq": 29,
-        "t_ms": 290,
+        "seq": 36,
+        "t_ms": 360,
         "source": "vehicle_sil_launch",
         "line": "interrupted (stop command): the simulation was stopped"
       }
@@ -980,16 +1137,15 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 30,
-        "t_ms": 300,
+        "seq": 37,
+        "t_ms": 370,
         "severity": "warning",
         "code": "behind-real-time",
         "file": "late.yaml",
         "line": null,
         "participant": null,
         "network": null,
-        "message": "1 of 30 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow",
-        "detail": null
+        "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
       }
     },
     {
@@ -997,8 +1153,8 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 31,
-        "t_ms": 310,
+        "seq": 38,
+        "t_ms": 380,
         "severity": "note",
         "code": "interrupted",
         "file": "late.yaml",
@@ -1014,8 +1170,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 32,
-        "t_ms": 320,
+        "seq": 39,
+        "t_ms": 390,
         "phase": "stopping"
       }
     },
@@ -1024,8 +1180,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 33,
-        "t_ms": 330,
+        "seq": 40,
+        "t_ms": 400,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -1035,8 +1191,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 34,
-        "t_ms": 340,
+        "seq": 41,
+        "t_ms": 410,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -1048,8 +1204,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 35,
-        "t_ms": 350,
+        "seq": 42,
+        "t_ms": 420,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -1059,8 +1215,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 36,
-        "t_ms": 360,
+        "seq": 43,
+        "t_ms": 430,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
@@ -1072,8 +1228,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 37,
-        "t_ms": 370,
+        "seq": 44,
+        "t_ms": 440,
         "phase": "ended"
       }
     },
@@ -1082,8 +1238,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 38,
-        "t_ms": 380,
+        "seq": 45,
+        "t_ms": 450,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -1097,14 +1253,14 @@
           "interrupted_by": "stop command",
           "timing": {
             "speed": 1,
-            "time_step_ms": 10,
-            "ecu_step_ms": 10,
+            "time_step_ms": 5,
+            "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 300,
+            "sim_ms": 1235,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 30,
+            "paced_steps": 247,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -1155,8 +1311,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 30 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow",
-              "detail": null
+              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -1185,7 +1340,7 @@
             "participants": [
               {
                 "name": "Engine",
-                "line": 10,
+                "line": 11,
                 "command": [
                   "engine/vehicle_sil_engine_ecu"
                 ],
@@ -1203,8 +1358,14 @@
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 0,
+                          "j1939_name": "0x00000000FE000001",
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1274,7 +1435,7 @@
               },
               {
                 "name": "Dashboard",
-                "line": 12,
+                "line": 13,
                 "command": [
                   "dashboard/vehicle_sil_dashboard_ecu"
                 ],
@@ -1287,13 +1448,19 @@
                 "reported": {
                   "vehicle_sil": "0.1.0",
                   "name": "Dashboard",
-                  "step_ns": 10000000,
+                  "step_ns": 5000000,
                   "networks": [
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 40,
+                          "j1939_name": null,
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1366,7 +1533,7 @@
               {
                 "name": "J1939_CAN",
                 "kind": "can",
-                "line": 7,
+                "line": 8,
                 "participants": [
                   "Engine",
                   "Dashboard"
@@ -1399,13 +1566,13 @@
         },
         "stop": "requested",
         "phase": "ended",
-        "last_seq": 38,
-        "last_t_ms": 380,
+        "last_seq": 45,
+        "last_t_ms": 450,
         "time": {
           "event": "time",
-          "seq": 27,
-          "t_ms": 270,
-          "sim_ms": 300,
+          "seq": 35,
+          "t_ms": 350,
+          "sim_ms": 1235,
           "speed": 1,
           "paused": false,
           "actual_speed": 1.5,
@@ -1430,7 +1597,7 @@
           "participants": [
             {
               "name": "Engine",
-              "line": 10,
+              "line": 11,
               "command": [
                 "engine/vehicle_sil_engine_ecu"
               ],
@@ -1448,8 +1615,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -1519,7 +1692,7 @@
             },
             {
               "name": "Dashboard",
-              "line": 12,
+              "line": 13,
               "command": [
                 "dashboard/vehicle_sil_dashboard_ecu"
               ],
@@ -1532,13 +1705,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -1611,7 +1790,7 @@
             {
               "name": "J1939_CAN",
               "kind": "can",
-              "line": 7,
+              "line": 8,
               "participants": [
                 "Engine",
                 "Dashboard"
@@ -1676,8 +1855,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "1 of 30 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow",
-            "detail": null
+            "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
           },
           {
             "severity": "note",
@@ -1692,7 +1870,7 @@
         ],
         "findings_omitted": 0,
         "last_command": {
-          "seq": 28,
+          "seq": 34,
           "command": "stop",
           "source": "stdin",
           "accepted": true,
@@ -1711,14 +1889,14 @@
           "interrupted_by": "stop command",
           "timing": {
             "speed": 1,
-            "time_step_ms": 10,
-            "ecu_step_ms": 10,
+            "time_step_ms": 5,
+            "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 300,
+            "sim_ms": 1235,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 30,
+            "paced_steps": 247,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -1769,8 +1947,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 30 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow",
-              "detail": null
+              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -1799,7 +1976,7 @@
             "participants": [
               {
                 "name": "Engine",
-                "line": 10,
+                "line": 11,
                 "command": [
                   "engine/vehicle_sil_engine_ecu"
                 ],
@@ -1817,8 +1994,14 @@
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 0,
+                          "j1939_name": "0x00000000FE000001",
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1888,7 +2071,7 @@
               },
               {
                 "name": "Dashboard",
-                "line": 12,
+                "line": 13,
                 "command": [
                   "dashboard/vehicle_sil_dashboard_ecu"
                 ],
@@ -1901,13 +2084,19 @@
                 "reported": {
                   "vehicle_sil": "0.1.0",
                   "name": "Dashboard",
-                  "step_ns": 10000000,
+                  "step_ns": 5000000,
                   "networks": [
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 40,
+                          "j1939_name": null,
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1980,7 +2169,7 @@
               {
                 "name": "J1939_CAN",
                 "kind": "can",
-                "line": 7,
+                "line": 8,
                 "participants": [
                   "Engine",
                   "Dashboard"
@@ -1993,10 +2182,6 @@
         "log": {
           "vehicle_sil_launch": {
             "kept": 7,
-            "dropped": 0
-          },
-          "Engine": {
-            "kept": 3,
             "dropped": 0
           },
           "Dashboard": {

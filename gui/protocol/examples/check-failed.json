@@ -39,7 +39,7 @@
           "required": true,
           "enabled": true,
           "manual": false,
-          "step_ms": null,
+          "step_ms": 20,
           "status": "described",
           "reported": {
             "vehicle_sil": "0.1.0",
@@ -49,8 +49,14 @@
               {
                 "name": "J1939_CAN",
                 "kind": "can",
-                "use": "raw",
-                "nodes": []
+                "use": "j1939",
+                "nodes": [
+                  {
+                    "address": 0,
+                    "j1939_name": "0x00000000FE000001",
+                    "arbitrary_address_capable": false
+                  }
+                ]
               }
             ]
           },
@@ -120,7 +126,7 @@
         },
         {
           "name": "Dashboard",
-          "line": 11,
+          "line": 12,
           "command": [
             "dashboard/vehicle_sil_dashboard_ecu"
           ],
@@ -133,13 +139,19 @@
           "reported": {
             "vehicle_sil": "0.1.0",
             "name": "Dashboard",
-            "step_ns": 10000000,
+            "step_ns": 5000000,
             "networks": [
               {
                 "name": "J1939_CAN",
                 "kind": "can",
-                "use": "raw",
-                "nodes": []
+                "use": "j1939",
+                "nodes": [
+                  {
+                    "address": 40,
+                    "j1939_name": null,
+                    "arbitrary_address_capable": false
+                  }
+                ]
               }
             ]
           },
@@ -209,7 +221,7 @@
         },
         {
           "name": "Logger",
-          "line": 13,
+          "line": 14,
           "command": [
             "logger/can_logger",
             "{registry_uri}"
@@ -232,8 +244,7 @@
           "line": 6,
           "participants": [
             "Engine",
-            "Dashboard",
-            "Logger"
+            "Dashboard"
           ]
         }
       ],
@@ -242,7 +253,7 @@
           "severity": "error",
           "code": "step-mismatch",
           "file": "check-error.yaml",
-          "line": 9,
+          "line": 11,
           "participant": "Engine",
           "network": null,
           "message": "participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms",
@@ -252,10 +263,10 @@
           "severity": "note",
           "code": "not-checked",
           "file": "check-error.yaml",
-          "line": 13,
+          "line": 14,
           "participant": "Logger",
           "network": null,
-          "message": "participant 'Logger': describe is false, so it was not checked",
+          "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
           "detail": null
         }
       ]

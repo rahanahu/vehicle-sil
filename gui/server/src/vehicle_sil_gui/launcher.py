@@ -61,7 +61,7 @@ class Launcher:
 
     @property
     def prefix(self) -> list[str]:
-        """The program to start. A .py file (the fake launcher of the tests) runs with this Python."""
+        """The program to start. A .py file (the stand-in launcher of the tests) runs with this Python."""
         if self.path.suffix == ".py":
             return [sys.executable, str(self.path)]
         return [str(self.path)]
@@ -194,6 +194,15 @@ def _check_names(key: str, value: object, known: list[str]) -> list[str]:
                              f"participants are {', '.join(known) or 'none'}")
     if len(set(value)) != len(value):
         raise InvalidRequest("invalid-field", f"{key} names a participant twice")
+    # vehicle_sil_launch takes a value that starts with '-' for an option (`--disable --x` is a usage error), and
+    # its check refuses such a name in the file too
+    dashed = [n for n in value if n.startswith("-")]
+    if dashed:
+        raise InvalidRequest("name-like-option",
+                             f"{key} names {', '.join(repr(n) for n in dashed)}, which starts with '-': "
+                             f"vehicle_sil_launch would read it as an option, so it cannot be given to --{key} (and "
+                             "the launcher's check refuses such a name in the file too): rename the participant in "
+                             "the configuration file")
     return list(value)
 
 

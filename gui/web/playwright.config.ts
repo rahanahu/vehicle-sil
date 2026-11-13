@@ -3,7 +3,7 @@ import { GUI_PORT } from './e2e/support/gui-server';
 
 // static（npm run e2e）: GUI サーバー（gui/server）がビルド済みの画面（dist/browser）と API を同じオリジンで配信する。
 // dev（npm run e2e:dev）: 開発サーバー（ng serve）が画面を配信し、/api と /ws を GUI サーバーへ転送する。
-// どちらも GUI サーバーは e2e/support/gui-server.ts が偽のランチャーと一緒に起動する（トークンを読むため）。
+// どちらも GUI サーバーは e2e/support/gui-server.ts が流し直すランチャー（gui/server/tests/replay_launcher.py）と一緒に起動する（トークンを読むため）。
 // 切り替えは設定ファイルで行う（環境変数は Windows の npm スクリプトで書き方が変わるため）。
 export type E2eMode = 'static' | 'dev';
 

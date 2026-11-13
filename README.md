@@ -147,6 +147,8 @@ ctest --preset linux-gcc-release
 | `linux-gcc-asan`, `linux-gcc-tsan` | GCC とサニタイザー。`libasan`、`libubsan`、`libtsan` のパッケージが必要 |
 | `linux-gcc-static`、`windows-mingw-static` | Release で `VEHICLE_SIL_STATIC=ON`（下の「1 つの実行ファイルにする」）。静的な libstdc++ が要る（Fedora は `libstdc++-static`）。`scripts/verify.py --linux` には入れていない（名前を指定して回す） |
 
+ThreadSanitizer のプリセットの試験は、誤検出とわかっている報告だけを `cmake/tsan-suppressions.txt` で抑えます（1 件ごとに理由を書いています）。
+
 `-DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON` を付けると、vehicle-sil 自身のターゲットの警告をエラーにします。
 
 コミット前の確認には `scripts/verify.py --linux` が使えます（[AGENTS.md](AGENTS.md) の「検証とスクリプト」）。

@@ -1,5 +1,5 @@
-// 実行の画面を、本物の GUI サーバーと偽のランチャー（gui/server/tests/fake_launcher.py）で通す。
-// 構成ファイルは gui/server/tests/configs/ で、ファイルごとに偽のランチャーの筋書きが決まっている。
+// 実行の画面を、本物の GUI サーバーと流し直すランチャー（gui/server/tests/replay_launcher.py）で通す。
+// 構成ファイルは gui/server/tests/configs/ で、ファイルごとに本物のランチャーの出力を録ったもの（recordings/）がある。
 // サーバーは 1 つのセッションしか動かさないので、試験は順に動き、動かしたものは止めてから終わる。
 import { Locator, Page, WebSocketRoute, expect, test } from '@playwright/test';
 import { VIEWPORTS, findLayoutProblems } from './support/layout';
@@ -143,7 +143,7 @@ test('a command the launcher refuses shows its reason', async ({ page }) => {
 });
 
 test('a run behind real time says so in words, also after it ended', async ({ page }) => {
-  // 偽のランチャーの筋書き late: 構成ファイルの速度 1 で、3 つ目のステップが 200 ms 遅れて始まる
+  // 構成ファイルの replay-fault: late: 速度 1 の録りで、時刻の事象の 1 つが 200 ms 遅れる
   await choose(page, 'late.yaml');
   const session = await start(page);
   await expect(page.getByTestId('late')).toContainText('実時間に遅れました', {
@@ -167,7 +167,7 @@ test('a run behind real time says so in words, also after it ended', async ({ pa
 });
 
 test('a small lateness within the tolerance is not called late', async ({ page }) => {
-  // 偽のランチャーの筋書き jitter: 速度 1 で、1 つおきのステップが 3 ms 遅れる（許容の 10 ms の内）
+  // 構成ファイルの replay-fault: jitter: 速度 1 の録りで、時刻の事象の 1 つおきが 3 ms 遅れる（許容の 10 ms の内）
   await choose(page, 'jitter.yaml');
   await start(page);
   await expect(page.getByTestId('time-lateness')).toBeVisible({ timeout: RUN_TIMEOUT });
@@ -205,7 +205,7 @@ test('a launcher without the time features shows no time controls', async ({ pag
 });
 
 test('how each participant is linked to its variables, a trouble in words', async ({ page }) => {
-  // 偽のランチャーの筋書き control-trouble: Engine は hello が来ず、Dashboard は形式の版が違い、Gauge は口を出さない
+  // 構成ファイルの replay-fault: control-trouble: Engine は hello が来ず、Dashboard は形式の版が違い、Gauge は口を出さない
   await choose(page, 'control-trouble.yaml');
   const session = await start(page);
   await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
@@ -319,7 +319,9 @@ test('a double click on stop does not stop without waiting', async ({ page }) =>
   await expect(force).toHaveCount(0);
   await expect(page.getByTestId('outcome')).toBeFocused();
   await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
-  await expect(page.getByTestId('status-Engine')).toContainText('強制終了した');
+  // Engine と Dashboard は頼まれて終わり、止まらない Logger（SIGTERM を無視する）は強制終了される
+  await expect(page.getByTestId('status-Logger')).toContainText('強制終了した');
+  await expect(page.getByTestId('status-Engine')).not.toContainText('強制終了');
 });
 
 test('the dialog to stop without waiting closes when the run ends meanwhile', async ({ page }) => {
@@ -479,7 +481,7 @@ test('a launcher that dies without a result: an abnormal end, and where to look'
 });
 
 test('a launcher that runs on after its result can still be stopped', async ({ page }) => {
-  // 偽のランチャーの筋書き result-then-wait: 結果を書いた後も、止めるよう頼まれるまで終わらない
+  // 構成ファイルの replay-fault: result-then-wait: 結果を書いた後も、止めるよう頼まれるまで終わらない
   await choose(page, 'result-then-wait.yaml');
   const session = await start(page);
   await expect(result(page, session)).toContainText('成功', { timeout: RUN_TIMEOUT });
@@ -562,16 +564,16 @@ test('a dropped connection is shown, joined again, and the log goes on without a
   await expect(page.getByTestId('connection')).toHaveText('', { timeout: 10_000 });
   await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
 
-  // Engine の行は「step 1」から「step N」まで、重ならず抜けずに N 行
+  // Dashboard の行は仮想時刻 500 ms ごとに「t=0 ms」「t=500 ms」…と 1 行ずつ。重ならず抜けずに並ぶ
   await page.getByTestId('log-source').click();
-  await page.getByRole('option', { name: 'Engine', exact: true }).click();
+  await page.getByRole('option', { name: 'Dashboard', exact: true }).click();
   await expect(page.getByTestId('log-count')).toContainText('全');
-  // 絞った行の数と、最後の行の step の番号が同じ（重なりも抜けもない）
+  // 絞った行の数と、最後の行の時刻から数えた行の数が同じ（重なりも抜けもない）
   await expect
     .poll(async () => {
       const count = Number((await page.getByTestId('log-count').textContent())?.match(/\d+/)?.[0]);
       const last = await page.getByTestId('log-line').last().textContent();
-      return Number(last?.match(/step (\d+)/)?.[1]) - count;
+      return Number(last?.match(/t=(\d+) ms/)?.[1]) / 500 + 1 - count;
     })
     .toBe(0);
   await expect(page.getByTestId('log-gap')).toHaveCount(0);
@@ -587,7 +589,7 @@ test('a flood of lines keeps the lines of quiet participants, and counts what wa
   await page.getByTestId('log-source').click();
   await page.getByRole('option', { name: 'Dashboard', exact: true }).click();
   await page.getByTestId('log').evaluate((element) => (element.scrollTop = 0));
-  await expect(page.getByTestId('log-line').first()).toContainText('step 1:');
+  await expect(page.getByTestId('log-line').first()).toContainText('t=0 ms');
   await expect(page.getByTestId('log-dropped')).toBeHidden();
 });
 
@@ -601,7 +603,7 @@ test('a log read while lines keep coming does not move', async ({ page }) => {
   await page.reload();
   await choose(page, 'simulation.yaml');
   const session = await start(page);
-  // 実行が終わってから、その続きの seq で行を足す（偽のランチャーの事象と seq が重ならない）
+  // 実行が終わってから、その続きの seq で行を足す（ランチャーの事象と seq が重ならない）
   await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
   let seq = Number((await serverSession(page))?.['last_seq']) + 1;
   const send = (count: number) => {

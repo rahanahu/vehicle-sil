@@ -266,7 +266,10 @@ int run_scenario(const Options& o)
         check_identical(reference, paced, "paced-fast");
         // The controller's clock starts at its own first step, which may begin some ms after the
         // paced peers' first steps (about 20 ms seen in sanitizer builds): allow 50 ms below.
-        check_wall("paced-fast", paced.wall_us, simUs / 4 - 50000, simUs / 4 + simUs / 16 + 200000);
+        // The pace is a ceiling on the speed, not a promise of it: a machine that needs longer than a quarter of
+        // the simulated time without a pace (a sanitizer build on a slow machine) needs as long with one.
+        const long long unhurried = std::max(simUs / 4, reference.wall_us);
+        check_wall("paced-fast", paced.wall_us, simUs / 4 - 50000, unhurried + simUs / 16 + 200000);
         return 0;
     }
     if (o.scenario == "paced-slow")

@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -117,7 +117,7 @@
           "strict": false,
           "errors": 0,
           "warnings": 0,
-          "notes": 2,
+          "notes": 3,
           "stop_at_ms": 1000,
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
@@ -125,7 +125,7 @@
           "participants": [
             {
               "name": "Engine",
-              "line": 11,
+              "line": 14,
               "command": [
                 "engine/vehicle_sil_engine_ecu"
               ],
@@ -143,8 +143,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -214,7 +220,7 @@
             },
             {
               "name": "Dashboard",
-              "line": 13,
+              "line": 16,
               "command": [
                 "dashboard/vehicle_sil_dashboard_ecu"
               ],
@@ -227,13 +233,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -303,93 +315,24 @@
             },
             {
               "name": "Gauge",
-              "line": 15,
+              "line": 18,
               "command": [
-                "gauge/vehicle_sil_gauge_ecu"
+                "logger/can_logger",
+                "{registry_uri}"
               ],
-              "describe": true,
-              "required": true,
+              "describe": false,
+              "required": false,
               "enabled": true,
               "manual": false,
               "step_ms": null,
-              "status": "described",
-              "reported": {
-                "vehicle_sil": "0.1.0",
-                "name": "Gauge",
-                "step_ns": 10000000,
-                "networks": [
-                  {
-                    "name": "J1939_CAN",
-                    "kind": "can",
-                    "use": "raw",
-                    "nodes": []
-                  }
-                ]
-              },
-              "variables": [
-                {
-                  "name": "ecu.connected",
-                  "type": "bool",
-                  "causality": "input",
-                  "unit": "",
-                  "min": null,
-                  "max": null,
-                  "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
-                  "items": [],
-                  "builtin": true
-                },
-                {
-                  "name": "gauge.demand",
-                  "type": "real",
-                  "causality": "input",
-                  "unit": "%",
-                  "min": 0,
-                  "max": 100,
-                  "step": null,
-                  "description": "requested level",
-                  "items": [],
-                  "builtin": false
-                },
-                {
-                  "name": "gauge.speed",
-                  "type": "integer",
-                  "causality": "output",
-                  "unit": "rpm",
-                  "min": null,
-                  "max": null,
-                  "step": null,
-                  "description": "",
-                  "items": [],
-                  "builtin": false
-                },
-                {
-                  "name": "gauge.mode",
-                  "type": "enum",
-                  "causality": "parameter",
-                  "unit": "",
-                  "min": null,
-                  "max": null,
-                  "step": null,
-                  "description": "operating mode",
-                  "items": [
-                    {
-                      "name": "off",
-                      "value": 0
-                    },
-                    {
-                      "name": "on",
-                      "value": 1
-                    }
-                  ],
-                  "builtin": false
-                }
-              ],
+              "status": "not_checked",
+              "reported": null,
+              "variables": null,
               "control": null
             },
             {
               "name": "Logger",
-              "line": 17,
+              "line": 22,
               "command": [
                 "logger/can_logger",
                 "{registry_uri}"
@@ -409,35 +352,42 @@
             {
               "name": "J1939_CAN",
               "kind": "can",
-              "line": 8,
+              "line": 11,
               "participants": [
                 "Engine",
-                "Dashboard",
-                "Gauge",
-                "Logger"
+                "Dashboard"
               ]
             }
           ],
           "findings": [
             {
               "severity": "note",
-              "code": "control-link-not-offered",
+              "code": "not-checked",
               "file": "control-trouble.yaml",
-              "line": 15,
+              "line": 18,
               "participant": "Gauge",
               "network": null,
-              "message": "participant 'Gauge': it has variables but does not offer them to the simulation (--no-control, or an executable too old to say): run cannot read or write them",
+              "message": "participant 'Gauge': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
               "detail": null
             },
             {
               "severity": "note",
               "code": "not-checked",
               "file": "control-trouble.yaml",
-              "line": 17,
+              "line": 22,
               "participant": "Logger",
               "network": null,
-              "message": "participant 'Logger': describe is false, so it was not checked",
+              "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
               "detail": null
+            },
+            {
+              "severity": "note",
+              "code": "control-link-not-offered",
+              "file": "control-trouble.yaml",
+              "line": 18,
+              "participant": "Gauge",
+              "network": null,
+              "message": "participant 'Gauge': it describes variables, but its control agent is not offered, so its variables cannot be read or written"
             }
           ]
         }
@@ -548,7 +498,7 @@
         "seq": 10,
         "t_ms": 100,
         "source": "vehicle_sil_launch",
-        "line": "starting Gauge: /path/to/root/gauge/vehicle_sil_gauge_ecu --name Gauge --registry-uri silkit://127.0.0.1:8510 --start-timeout-ms 50000"
+        "line": "starting Gauge: /path/to/root/logger/can_logger silkit://127.0.0.1:8510"
       }
     },
     {
@@ -562,13 +512,8 @@
         "state": "started",
         "pid": 10004,
         "command": [
-          "/path/to/root/gauge/vehicle_sil_gauge_ecu",
-          "--name",
-          "Gauge",
-          "--registry-uri",
-          "silkit://127.0.0.1:8510",
-          "--start-timeout-ms",
-          "50000"
+          "/path/to/root/logger/can_logger",
+          "silkit://127.0.0.1:8510"
         ],
         "log": null
       }
@@ -637,22 +582,22 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "participant",
+        "event": "log",
         "seq": 17,
         "t_ms": 170,
-        "name": "Gauge",
-        "state": "joined"
+        "source": "Dashboard",
+        "line": "t=0 ms engine speed 0 rpm (0 messages)"
       }
     },
     {
       "type": "event",
       "session": 1,
       "event": {
-        "event": "control_link",
+        "event": "log",
         "seq": 18,
         "t_ms": 180,
-        "name": "Engine",
-        "state": "no_hello"
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -662,6 +607,17 @@
         "event": "control_link",
         "seq": 19,
         "t_ms": 190,
+        "name": "Engine",
+        "state": "no_hello"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 20,
+        "t_ms": 200,
         "name": "Dashboard",
         "state": "version_mismatch",
         "version": 2
@@ -672,8 +628,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 20,
-        "t_ms": 200,
+        "seq": 21,
+        "t_ms": 210,
         "name": "Gauge",
         "state": "not_offered"
       }
@@ -683,8 +639,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 21,
-        "t_ms": 210,
+        "seq": 22,
+        "t_ms": 220,
         "name": "Logger",
         "state": "none"
       }
@@ -694,8 +650,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 22,
-        "t_ms": 220,
+        "seq": 23,
+        "t_ms": 230,
         "phase": "running"
       }
     },
@@ -704,8 +660,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 23,
-        "t_ms": 230,
+        "seq": 24,
+        "t_ms": 240,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -715,8 +671,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 25,
+        "t_ms": 250,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -732,601 +688,19 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 25,
-        "t_ms": 250,
-        "source": "Engine",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
         "seq": 26,
         "t_ms": 260,
         "source": "Dashboard",
-        "line": "step 1: t = 100 ms"
+        "line": "t=1000 ms engine speed 1200 rpm (10 messages)"
       }
     },
     {
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "time",
         "seq": 27,
         "t_ms": 270,
-        "source": "Gauge",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 28,
-        "t_ms": 280,
-        "source": "Logger",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 29,
-        "t_ms": 290,
-        "sim_ms": 100,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 30,
-        "t_ms": 300,
-        "source": "Engine",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 31,
-        "t_ms": 310,
-        "source": "Dashboard",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 32,
-        "t_ms": 320,
-        "source": "Gauge",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 33,
-        "t_ms": 330,
-        "source": "Logger",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 34,
-        "t_ms": 340,
-        "sim_ms": 200,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 35,
-        "t_ms": 350,
-        "source": "Engine",
-        "line": "step 3: t = 300 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 36,
-        "t_ms": 360,
-        "source": "Dashboard",
-        "line": "step 3: t = 300 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 37,
-        "t_ms": 370,
-        "source": "Gauge",
-        "line": "step 3: t = 300 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 38,
-        "t_ms": 380,
-        "source": "Logger",
-        "line": "step 3: t = 300 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 39,
-        "t_ms": 390,
-        "sim_ms": 300,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 40,
-        "t_ms": 400,
-        "source": "Engine",
-        "line": "step 4: t = 400 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 41,
-        "t_ms": 410,
-        "source": "Dashboard",
-        "line": "step 4: t = 400 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 42,
-        "t_ms": 420,
-        "source": "Gauge",
-        "line": "step 4: t = 400 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 43,
-        "t_ms": 430,
-        "source": "Logger",
-        "line": "step 4: t = 400 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 44,
-        "t_ms": 440,
-        "sim_ms": 400,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 45,
-        "t_ms": 450,
-        "source": "Engine",
-        "line": "step 5: t = 500 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 46,
-        "t_ms": 460,
-        "source": "Dashboard",
-        "line": "step 5: t = 500 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 47,
-        "t_ms": 470,
-        "source": "Gauge",
-        "line": "step 5: t = 500 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 48,
-        "t_ms": 480,
-        "source": "Logger",
-        "line": "step 5: t = 500 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 49,
-        "t_ms": 490,
-        "sim_ms": 500,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 50,
-        "t_ms": 500,
-        "source": "Engine",
-        "line": "step 6: t = 600 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 51,
-        "t_ms": 510,
-        "source": "Dashboard",
-        "line": "step 6: t = 600 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 52,
-        "t_ms": 520,
-        "source": "Gauge",
-        "line": "step 6: t = 600 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 53,
-        "t_ms": 530,
-        "source": "Logger",
-        "line": "step 6: t = 600 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 54,
-        "t_ms": 540,
-        "sim_ms": 600,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 55,
-        "t_ms": 550,
-        "source": "Engine",
-        "line": "step 7: t = 700 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 56,
-        "t_ms": 560,
-        "source": "Dashboard",
-        "line": "step 7: t = 700 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 57,
-        "t_ms": 570,
-        "source": "Gauge",
-        "line": "step 7: t = 700 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 58,
-        "t_ms": 580,
-        "source": "Logger",
-        "line": "step 7: t = 700 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 59,
-        "t_ms": 590,
-        "sim_ms": 700,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 60,
-        "t_ms": 600,
-        "source": "Engine",
-        "line": "step 8: t = 800 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 61,
-        "t_ms": 610,
-        "source": "Dashboard",
-        "line": "step 8: t = 800 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 62,
-        "t_ms": 620,
-        "source": "Gauge",
-        "line": "step 8: t = 800 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 63,
-        "t_ms": 630,
-        "source": "Logger",
-        "line": "step 8: t = 800 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 64,
-        "t_ms": 640,
-        "sim_ms": 800,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 65,
-        "t_ms": 650,
-        "source": "Engine",
-        "line": "step 9: t = 900 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 66,
-        "t_ms": 660,
-        "source": "Dashboard",
-        "line": "step 9: t = 900 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 67,
-        "t_ms": 670,
-        "source": "Gauge",
-        "line": "step 9: t = 900 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 68,
-        "t_ms": 680,
-        "source": "Logger",
-        "line": "step 9: t = 900 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 69,
-        "t_ms": 690,
-        "sim_ms": 900,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 70,
-        "t_ms": 700,
-        "source": "Engine",
-        "line": "step 10: t = 1000 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 71,
-        "t_ms": 710,
-        "source": "Dashboard",
-        "line": "step 10: t = 1000 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 72,
-        "t_ms": 720,
-        "source": "Gauge",
-        "line": "step 10: t = 1000 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 73,
-        "t_ms": 730,
-        "source": "Logger",
-        "line": "step 10: t = 1000 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 74,
-        "t_ms": 740,
         "sim_ms": 1000,
         "speed": "max",
         "paused": false,
@@ -1342,8 +716,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 75,
-        "t_ms": 750,
+        "seq": 28,
+        "t_ms": 280,
         "source": "vehicle_sil_launch",
         "line": "the simulation ended"
       }
@@ -1352,43 +726,9 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "finding",
-        "seq": 76,
-        "t_ms": 760,
-        "severity": "warning",
-        "code": "control-link-no-hello",
-        "file": "control-trouble.yaml",
-        "line": 11,
-        "participant": "Engine",
-        "network": null,
-        "message": "participant 'Engine': it describes variables (--describe), but its control agent did not say hello before the simulation started, so its variables cannot be read or written in this run",
-        "detail": null
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "finding",
-        "seq": 77,
-        "t_ms": 770,
-        "severity": "warning",
-        "code": "control-link-version",
-        "file": "control-trouble.yaml",
-        "line": 13,
-        "participant": "Dashboard",
-        "network": null,
-        "message": "participant 'Dashboard': its control agent speaks version 2 of the control messages and this launcher version 1, so its variables cannot be read or written in this run",
-        "detail": null
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
         "event": "phase",
-        "seq": 78,
-        "t_ms": 780,
+        "seq": 29,
+        "t_ms": 290,
         "phase": "stopping"
       }
     },
@@ -1397,8 +737,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 79,
-        "t_ms": 790,
+        "seq": 30,
+        "t_ms": 300,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -1408,8 +748,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 80,
-        "t_ms": 800,
+        "seq": 31,
+        "t_ms": 310,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -1421,8 +761,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 81,
-        "t_ms": 810,
+        "seq": 32,
+        "t_ms": 320,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -1432,8 +772,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 82,
-        "t_ms": 820,
+        "seq": 33,
+        "t_ms": 330,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
@@ -1445,10 +785,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 83,
-        "t_ms": 830,
+        "seq": 34,
+        "t_ms": 340,
         "source": "vehicle_sil_launch",
-        "line": "Gauge exited with code 0"
+        "line": "asking Gauge to stop (SIGTERM)"
       }
     },
     {
@@ -1456,12 +796,10 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 84,
-        "t_ms": 840,
+        "seq": 35,
+        "t_ms": 350,
         "name": "Gauge",
-        "state": "ended",
-        "exit_code": 0,
-        "signal": null
+        "state": "stop_requested"
       }
     },
     {
@@ -1469,10 +807,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 85,
-        "t_ms": 850,
+        "seq": 36,
+        "t_ms": 360,
         "source": "vehicle_sil_launch",
-        "line": "Logger exited with code 0"
+        "line": "asking Logger to stop (SIGTERM)"
       }
     },
     {
@@ -1480,12 +818,36 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 86,
-        "t_ms": 860,
+        "seq": 37,
+        "t_ms": 370,
+        "name": "Logger",
+        "state": "stop_requested"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 38,
+        "t_ms": 380,
+        "name": "Gauge",
+        "state": "ended",
+        "exit_code": null,
+        "signal": "SIGTERM"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 39,
+        "t_ms": 390,
         "name": "Logger",
         "state": "ended",
-        "exit_code": 0,
-        "signal": null
+        "exit_code": null,
+        "signal": "SIGTERM"
       }
     },
     {
@@ -1493,8 +855,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 87,
-        "t_ms": 870,
+        "seq": 40,
+        "t_ms": 400,
         "phase": "ended"
       }
     },
@@ -1502,9 +864,41 @@
       "type": "event",
       "session": 1,
       "event": {
+        "event": "finding",
+        "seq": 41,
+        "t_ms": 410,
+        "severity": "warning",
+        "code": "control-link-no-hello",
+        "file": "control-trouble.yaml",
+        "line": null,
+        "participant": "Engine",
+        "network": null,
+        "message": "participant 'Engine': it describes variables (--describe), but its control agent did not say hello before the simulation started, so its variables cannot be read or written in this run"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "finding",
+        "seq": 42,
+        "t_ms": 420,
+        "severity": "warning",
+        "code": "control-link-version",
+        "file": "control-trouble.yaml",
+        "line": null,
+        "participant": "Dashboard",
+        "network": null,
+        "message": "participant 'Dashboard': its control agent speaks version 2 of the control messages and this launcher version 1, so its variables cannot be read or written in this run"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
         "event": "result",
-        "seq": 88,
-        "t_ms": 880,
+        "seq": 43,
+        "t_ms": 430,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -1569,12 +963,12 @@
             },
             {
               "name": "Gauge",
-              "required": true,
+              "required": false,
               "enabled": true,
               "manual": false,
-              "ended": "exited",
-              "exit_code": 0,
-              "signal": null,
+              "ended": "stopped",
+              "exit_code": null,
+              "signal": "SIGTERM",
               "left_processes": false,
               "log": null,
               "control_link": {
@@ -1589,9 +983,9 @@
               "required": false,
               "enabled": true,
               "manual": false,
-              "ended": "exited",
-              "exit_code": 0,
-              "signal": null,
+              "ended": "stopped",
+              "exit_code": null,
+              "signal": "SIGTERM",
               "left_processes": false,
               "log": null,
               "control_link": {
@@ -1607,21 +1001,19 @@
               "severity": "warning",
               "code": "control-link-no-hello",
               "file": "control-trouble.yaml",
-              "line": 11,
+              "line": null,
               "participant": "Engine",
               "network": null,
-              "message": "participant 'Engine': it describes variables (--describe), but its control agent did not say hello before the simulation started, so its variables cannot be read or written in this run",
-              "detail": null
+              "message": "participant 'Engine': it describes variables (--describe), but its control agent did not say hello before the simulation started, so its variables cannot be read or written in this run"
             },
             {
               "severity": "warning",
               "code": "control-link-version",
               "file": "control-trouble.yaml",
-              "line": 13,
+              "line": null,
               "participant": "Dashboard",
               "network": null,
-              "message": "participant 'Dashboard': its control agent speaks version 2 of the control messages and this launcher version 1, so its variables cannot be read or written in this run",
-              "detail": null
+              "message": "participant 'Dashboard': its control agent speaks version 2 of the control messages and this launcher version 1, so its variables cannot be read or written in this run"
             }
           ],
           "check": {
@@ -1632,7 +1024,7 @@
             "strict": false,
             "errors": 0,
             "warnings": 0,
-            "notes": 2,
+            "notes": 3,
             "stop_at_ms": 1000,
             "start_timeout_ms": 30000,
             "stop_timeout_ms": 10000,
@@ -1640,7 +1032,7 @@
             "participants": [
               {
                 "name": "Engine",
-                "line": 11,
+                "line": 14,
                 "command": [
                   "engine/vehicle_sil_engine_ecu"
                 ],
@@ -1658,8 +1050,14 @@
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 0,
+                          "j1939_name": "0x00000000FE000001",
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1729,7 +1127,7 @@
               },
               {
                 "name": "Dashboard",
-                "line": 13,
+                "line": 16,
                 "command": [
                   "dashboard/vehicle_sil_dashboard_ecu"
                 ],
@@ -1742,13 +1140,19 @@
                 "reported": {
                   "vehicle_sil": "0.1.0",
                   "name": "Dashboard",
-                  "step_ns": 10000000,
+                  "step_ns": 5000000,
                   "networks": [
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 40,
+                          "j1939_name": null,
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1818,93 +1222,24 @@
               },
               {
                 "name": "Gauge",
-                "line": 15,
+                "line": 18,
                 "command": [
-                  "gauge/vehicle_sil_gauge_ecu"
+                  "logger/can_logger",
+                  "{registry_uri}"
                 ],
-                "describe": true,
-                "required": true,
+                "describe": false,
+                "required": false,
                 "enabled": true,
                 "manual": false,
                 "step_ms": null,
-                "status": "described",
-                "reported": {
-                  "vehicle_sil": "0.1.0",
-                  "name": "Gauge",
-                  "step_ns": 10000000,
-                  "networks": [
-                    {
-                      "name": "J1939_CAN",
-                      "kind": "can",
-                      "use": "raw",
-                      "nodes": []
-                    }
-                  ]
-                },
-                "variables": [
-                  {
-                    "name": "ecu.connected",
-                    "type": "bool",
-                    "causality": "input",
-                    "unit": "",
-                    "min": null,
-                    "max": null,
-                    "step": null,
-                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
-                    "items": [],
-                    "builtin": true
-                  },
-                  {
-                    "name": "gauge.demand",
-                    "type": "real",
-                    "causality": "input",
-                    "unit": "%",
-                    "min": 0,
-                    "max": 100,
-                    "step": null,
-                    "description": "requested level",
-                    "items": [],
-                    "builtin": false
-                  },
-                  {
-                    "name": "gauge.speed",
-                    "type": "integer",
-                    "causality": "output",
-                    "unit": "rpm",
-                    "min": null,
-                    "max": null,
-                    "step": null,
-                    "description": "",
-                    "items": [],
-                    "builtin": false
-                  },
-                  {
-                    "name": "gauge.mode",
-                    "type": "enum",
-                    "causality": "parameter",
-                    "unit": "",
-                    "min": null,
-                    "max": null,
-                    "step": null,
-                    "description": "operating mode",
-                    "items": [
-                      {
-                        "name": "off",
-                        "value": 0
-                      },
-                      {
-                        "name": "on",
-                        "value": 1
-                      }
-                    ],
-                    "builtin": false
-                  }
-                ],
+                "status": "not_checked",
+                "reported": null,
+                "variables": null,
                 "control": null
               },
               {
                 "name": "Logger",
-                "line": 17,
+                "line": 22,
                 "command": [
                   "logger/can_logger",
                   "{registry_uri}"
@@ -1924,35 +1259,42 @@
               {
                 "name": "J1939_CAN",
                 "kind": "can",
-                "line": 8,
+                "line": 11,
                 "participants": [
                   "Engine",
-                  "Dashboard",
-                  "Gauge",
-                  "Logger"
+                  "Dashboard"
                 ]
               }
             ],
             "findings": [
               {
                 "severity": "note",
-                "code": "control-link-not-offered",
+                "code": "not-checked",
                 "file": "control-trouble.yaml",
-                "line": 15,
+                "line": 18,
                 "participant": "Gauge",
                 "network": null,
-                "message": "participant 'Gauge': it has variables but does not offer them to the simulation (--no-control, or an executable too old to say): run cannot read or write them",
+                "message": "participant 'Gauge': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
                 "detail": null
               },
               {
                 "severity": "note",
                 "code": "not-checked",
                 "file": "control-trouble.yaml",
-                "line": 17,
+                "line": 22,
                 "participant": "Logger",
                 "network": null,
-                "message": "participant 'Logger': describe is false, so it was not checked",
+                "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
                 "detail": null
+              },
+              {
+                "severity": "note",
+                "code": "control-link-not-offered",
+                "file": "control-trouble.yaml",
+                "line": 18,
+                "participant": "Gauge",
+                "network": null,
+                "message": "participant 'Gauge': it describes variables, but its control agent is not offered, so its variables cannot be read or written"
               }
             ]
           }
@@ -1980,12 +1322,12 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 88,
-        "last_t_ms": 880,
+        "last_seq": 43,
+        "last_t_ms": 430,
         "time": {
           "event": "time",
-          "seq": 74,
-          "t_ms": 740,
+          "seq": 27,
+          "t_ms": 270,
           "sim_ms": 1000,
           "speed": "max",
           "paused": false,
@@ -2003,7 +1345,7 @@
           "strict": false,
           "errors": 0,
           "warnings": 0,
-          "notes": 2,
+          "notes": 3,
           "stop_at_ms": 1000,
           "start_timeout_ms": 30000,
           "stop_timeout_ms": 10000,
@@ -2011,7 +1353,7 @@
           "participants": [
             {
               "name": "Engine",
-              "line": 11,
+              "line": 14,
               "command": [
                 "engine/vehicle_sil_engine_ecu"
               ],
@@ -2029,8 +1371,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -2100,7 +1448,7 @@
             },
             {
               "name": "Dashboard",
-              "line": 13,
+              "line": 16,
               "command": [
                 "dashboard/vehicle_sil_dashboard_ecu"
               ],
@@ -2113,13 +1461,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -2189,93 +1543,24 @@
             },
             {
               "name": "Gauge",
-              "line": 15,
+              "line": 18,
               "command": [
-                "gauge/vehicle_sil_gauge_ecu"
+                "logger/can_logger",
+                "{registry_uri}"
               ],
-              "describe": true,
-              "required": true,
+              "describe": false,
+              "required": false,
               "enabled": true,
               "manual": false,
               "step_ms": null,
-              "status": "described",
-              "reported": {
-                "vehicle_sil": "0.1.0",
-                "name": "Gauge",
-                "step_ns": 10000000,
-                "networks": [
-                  {
-                    "name": "J1939_CAN",
-                    "kind": "can",
-                    "use": "raw",
-                    "nodes": []
-                  }
-                ]
-              },
-              "variables": [
-                {
-                  "name": "ecu.connected",
-                  "type": "bool",
-                  "causality": "input",
-                  "unit": "",
-                  "min": null,
-                  "max": null,
-                  "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
-                  "items": [],
-                  "builtin": true
-                },
-                {
-                  "name": "gauge.demand",
-                  "type": "real",
-                  "causality": "input",
-                  "unit": "%",
-                  "min": 0,
-                  "max": 100,
-                  "step": null,
-                  "description": "requested level",
-                  "items": [],
-                  "builtin": false
-                },
-                {
-                  "name": "gauge.speed",
-                  "type": "integer",
-                  "causality": "output",
-                  "unit": "rpm",
-                  "min": null,
-                  "max": null,
-                  "step": null,
-                  "description": "",
-                  "items": [],
-                  "builtin": false
-                },
-                {
-                  "name": "gauge.mode",
-                  "type": "enum",
-                  "causality": "parameter",
-                  "unit": "",
-                  "min": null,
-                  "max": null,
-                  "step": null,
-                  "description": "operating mode",
-                  "items": [
-                    {
-                      "name": "off",
-                      "value": 0
-                    },
-                    {
-                      "name": "on",
-                      "value": 1
-                    }
-                  ],
-                  "builtin": false
-                }
-              ],
+              "status": "not_checked",
+              "reported": null,
+              "variables": null,
               "control": null
             },
             {
               "name": "Logger",
-              "line": 17,
+              "line": 22,
               "command": [
                 "logger/can_logger",
                 "{registry_uri}"
@@ -2295,35 +1580,42 @@
             {
               "name": "J1939_CAN",
               "kind": "can",
-              "line": 8,
+              "line": 11,
               "participants": [
                 "Engine",
-                "Dashboard",
-                "Gauge",
-                "Logger"
+                "Dashboard"
               ]
             }
           ],
           "findings": [
             {
               "severity": "note",
-              "code": "control-link-not-offered",
+              "code": "not-checked",
               "file": "control-trouble.yaml",
-              "line": 15,
+              "line": 18,
               "participant": "Gauge",
               "network": null,
-              "message": "participant 'Gauge': it has variables but does not offer them to the simulation (--no-control, or an executable too old to say): run cannot read or write them",
+              "message": "participant 'Gauge': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
               "detail": null
             },
             {
               "severity": "note",
               "code": "not-checked",
               "file": "control-trouble.yaml",
-              "line": 17,
+              "line": 22,
               "participant": "Logger",
               "network": null,
-              "message": "participant 'Logger': describe is false, so it was not checked",
+              "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
               "detail": null
+            },
+            {
+              "severity": "note",
+              "code": "control-link-not-offered",
+              "file": "control-trouble.yaml",
+              "line": 18,
+              "participant": "Gauge",
+              "network": null,
+              "message": "participant 'Gauge': it describes variables, but its control agent is not offered, so its variables cannot be read or written"
             }
           ]
         },
@@ -2377,20 +1669,16 @@
             "state": "ended",
             "pid": 10004,
             "command": [
-              "/path/to/root/gauge/vehicle_sil_gauge_ecu",
-              "--name",
-              "Gauge",
-              "--registry-uri",
-              "silkit://127.0.0.1:8510",
-              "--start-timeout-ms",
-              "50000"
+              "/path/to/root/logger/can_logger",
+              "silkit://127.0.0.1:8510"
             ],
             "log": null,
             "control_link": {
               "state": "not_offered"
             },
-            "exit_code": 0,
-            "signal": null
+            "stop_requested": true,
+            "exit_code": null,
+            "signal": "SIGTERM"
           },
           {
             "name": "Logger",
@@ -2404,8 +1692,9 @@
             "control_link": {
               "state": "none"
             },
-            "exit_code": 0,
-            "signal": null
+            "stop_requested": true,
+            "exit_code": null,
+            "signal": "SIGTERM"
           }
         ],
         "participants_omitted": 0,
@@ -2414,21 +1703,19 @@
             "severity": "warning",
             "code": "control-link-no-hello",
             "file": "control-trouble.yaml",
-            "line": 11,
+            "line": null,
             "participant": "Engine",
             "network": null,
-            "message": "participant 'Engine': it describes variables (--describe), but its control agent did not say hello before the simulation started, so its variables cannot be read or written in this run",
-            "detail": null
+            "message": "participant 'Engine': it describes variables (--describe), but its control agent did not say hello before the simulation started, so its variables cannot be read or written in this run"
           },
           {
             "severity": "warning",
             "code": "control-link-version",
             "file": "control-trouble.yaml",
-            "line": 13,
+            "line": null,
             "participant": "Dashboard",
             "network": null,
-            "message": "participant 'Dashboard': its control agent speaks version 2 of the control messages and this launcher version 1, so its variables cannot be read or written in this run",
-            "detail": null
+            "message": "participant 'Dashboard': its control agent speaks version 2 of the control messages and this launcher version 1, so its variables cannot be read or written in this run"
           }
         ],
         "findings_omitted": 0,
@@ -2497,12 +1784,12 @@
             },
             {
               "name": "Gauge",
-              "required": true,
+              "required": false,
               "enabled": true,
               "manual": false,
-              "ended": "exited",
-              "exit_code": 0,
-              "signal": null,
+              "ended": "stopped",
+              "exit_code": null,
+              "signal": "SIGTERM",
               "left_processes": false,
               "log": null,
               "control_link": {
@@ -2517,9 +1804,9 @@
               "required": false,
               "enabled": true,
               "manual": false,
-              "ended": "exited",
-              "exit_code": 0,
-              "signal": null,
+              "ended": "stopped",
+              "exit_code": null,
+              "signal": "SIGTERM",
               "left_processes": false,
               "log": null,
               "control_link": {
@@ -2535,21 +1822,19 @@
               "severity": "warning",
               "code": "control-link-no-hello",
               "file": "control-trouble.yaml",
-              "line": 11,
+              "line": null,
               "participant": "Engine",
               "network": null,
-              "message": "participant 'Engine': it describes variables (--describe), but its control agent did not say hello before the simulation started, so its variables cannot be read or written in this run",
-              "detail": null
+              "message": "participant 'Engine': it describes variables (--describe), but its control agent did not say hello before the simulation started, so its variables cannot be read or written in this run"
             },
             {
               "severity": "warning",
               "code": "control-link-version",
               "file": "control-trouble.yaml",
-              "line": 13,
+              "line": null,
               "participant": "Dashboard",
               "network": null,
-              "message": "participant 'Dashboard': its control agent speaks version 2 of the control messages and this launcher version 1, so its variables cannot be read or written in this run",
-              "detail": null
+              "message": "participant 'Dashboard': its control agent speaks version 2 of the control messages and this launcher version 1, so its variables cannot be read or written in this run"
             }
           ],
           "check": {
@@ -2560,7 +1845,7 @@
             "strict": false,
             "errors": 0,
             "warnings": 0,
-            "notes": 2,
+            "notes": 3,
             "stop_at_ms": 1000,
             "start_timeout_ms": 30000,
             "stop_timeout_ms": 10000,
@@ -2568,7 +1853,7 @@
             "participants": [
               {
                 "name": "Engine",
-                "line": 11,
+                "line": 14,
                 "command": [
                   "engine/vehicle_sil_engine_ecu"
                 ],
@@ -2586,8 +1871,14 @@
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 0,
+                          "j1939_name": "0x00000000FE000001",
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -2657,7 +1948,7 @@
               },
               {
                 "name": "Dashboard",
-                "line": 13,
+                "line": 16,
                 "command": [
                   "dashboard/vehicle_sil_dashboard_ecu"
                 ],
@@ -2670,13 +1961,19 @@
                 "reported": {
                   "vehicle_sil": "0.1.0",
                   "name": "Dashboard",
-                  "step_ns": 10000000,
+                  "step_ns": 5000000,
                   "networks": [
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 40,
+                          "j1939_name": null,
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -2746,93 +2043,24 @@
               },
               {
                 "name": "Gauge",
-                "line": 15,
+                "line": 18,
                 "command": [
-                  "gauge/vehicle_sil_gauge_ecu"
+                  "logger/can_logger",
+                  "{registry_uri}"
                 ],
-                "describe": true,
-                "required": true,
+                "describe": false,
+                "required": false,
                 "enabled": true,
                 "manual": false,
                 "step_ms": null,
-                "status": "described",
-                "reported": {
-                  "vehicle_sil": "0.1.0",
-                  "name": "Gauge",
-                  "step_ns": 10000000,
-                  "networks": [
-                    {
-                      "name": "J1939_CAN",
-                      "kind": "can",
-                      "use": "raw",
-                      "nodes": []
-                    }
-                  ]
-                },
-                "variables": [
-                  {
-                    "name": "ecu.connected",
-                    "type": "bool",
-                    "causality": "input",
-                    "unit": "",
-                    "min": null,
-                    "max": null,
-                    "step": null,
-                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
-                    "items": [],
-                    "builtin": true
-                  },
-                  {
-                    "name": "gauge.demand",
-                    "type": "real",
-                    "causality": "input",
-                    "unit": "%",
-                    "min": 0,
-                    "max": 100,
-                    "step": null,
-                    "description": "requested level",
-                    "items": [],
-                    "builtin": false
-                  },
-                  {
-                    "name": "gauge.speed",
-                    "type": "integer",
-                    "causality": "output",
-                    "unit": "rpm",
-                    "min": null,
-                    "max": null,
-                    "step": null,
-                    "description": "",
-                    "items": [],
-                    "builtin": false
-                  },
-                  {
-                    "name": "gauge.mode",
-                    "type": "enum",
-                    "causality": "parameter",
-                    "unit": "",
-                    "min": null,
-                    "max": null,
-                    "step": null,
-                    "description": "operating mode",
-                    "items": [
-                      {
-                        "name": "off",
-                        "value": 0
-                      },
-                      {
-                        "name": "on",
-                        "value": 1
-                      }
-                    ],
-                    "builtin": false
-                  }
-                ],
+                "status": "not_checked",
+                "reported": null,
+                "variables": null,
                 "control": null
               },
               {
                 "name": "Logger",
-                "line": 17,
+                "line": 22,
                 "command": [
                   "logger/can_logger",
                   "{registry_uri}"
@@ -2852,35 +2080,42 @@
               {
                 "name": "J1939_CAN",
                 "kind": "can",
-                "line": 8,
+                "line": 11,
                 "participants": [
                   "Engine",
-                  "Dashboard",
-                  "Gauge",
-                  "Logger"
+                  "Dashboard"
                 ]
               }
             ],
             "findings": [
               {
                 "severity": "note",
-                "code": "control-link-not-offered",
+                "code": "not-checked",
                 "file": "control-trouble.yaml",
-                "line": 15,
+                "line": 18,
                 "participant": "Gauge",
                 "network": null,
-                "message": "participant 'Gauge': it has variables but does not offer them to the simulation (--no-control, or an executable too old to say): run cannot read or write them",
+                "message": "participant 'Gauge': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
                 "detail": null
               },
               {
                 "severity": "note",
                 "code": "not-checked",
                 "file": "control-trouble.yaml",
-                "line": 17,
+                "line": 22,
                 "participant": "Logger",
                 "network": null,
-                "message": "participant 'Logger': describe is false, so it was not checked",
+                "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
                 "detail": null
+              },
+              {
+                "severity": "note",
+                "code": "control-link-not-offered",
+                "file": "control-trouble.yaml",
+                "line": 18,
+                "participant": "Gauge",
+                "network": null,
+                "message": "participant 'Gauge': it describes variables, but its control agent is not offered, so its variables cannot be read or written"
               }
             ]
           }
@@ -2890,20 +2125,8 @@
             "kept": 11,
             "dropped": 0
           },
-          "Engine": {
-            "kept": 10,
-            "dropped": 0
-          },
           "Dashboard": {
-            "kept": 10,
-            "dropped": 0
-          },
-          "Gauge": {
-            "kept": 10,
-            "dropped": 0
-          },
-          "Logger": {
-            "kept": 10,
+            "kept": 3,
             "dropped": 0
           }
         },

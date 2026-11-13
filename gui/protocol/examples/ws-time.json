@@ -65,7 +65,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -150,8 +150,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -234,13 +240,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -507,9 +519,20 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "control_link",
+        "event": "log",
         "seq": 15,
         "t_ms": 150,
+        "source": "Dashboard",
+        "line": "t=0 ms engine speed 0 rpm (0 messages)"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 16,
+        "t_ms": 160,
         "name": "Engine",
         "state": "connected",
         "variables": 4
@@ -520,8 +543,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 16,
-        "t_ms": 160,
+        "seq": 17,
+        "t_ms": 170,
         "name": "Dashboard",
         "state": "connected",
         "variables": 4
@@ -532,8 +555,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 17,
-        "t_ms": 170,
+        "seq": 18,
+        "t_ms": 180,
         "phase": "running"
       }
     },
@@ -542,8 +565,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 18,
-        "t_ms": 180,
+        "seq": 19,
+        "t_ms": 190,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -553,8 +576,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 19,
-        "t_ms": 190,
+        "seq": 20,
+        "t_ms": 200,
         "sim_ms": 0,
         "speed": "max",
         "paused": true,
@@ -570,8 +593,8 @@
       "session": 1,
       "event": {
         "event": "command",
-        "seq": 20,
-        "t_ms": 200,
+        "seq": 21,
+        "t_ms": 210,
         "command": "step",
         "source": "stdin",
         "accepted": true,
@@ -583,31 +606,9 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
-        "seq": 21,
-        "t_ms": 210,
-        "source": "Engine",
-        "line": "step 1: t = 30 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
+        "event": "time",
         "seq": 22,
         "t_ms": 220,
-        "source": "Dashboard",
-        "line": "step 1: t = 30 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 23,
-        "t_ms": 230,
         "sim_ms": 30,
         "speed": "max",
         "paused": true,
@@ -623,8 +624,8 @@
       "session": 1,
       "event": {
         "event": "command",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 23,
+        "t_ms": 230,
         "command": "speed",
         "source": "stdin",
         "accepted": true,
@@ -636,8 +637,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 25,
-        "t_ms": 250,
+        "seq": 24,
+        "t_ms": 240,
         "sim_ms": 30,
         "speed": 1,
         "paused": true,
@@ -653,8 +654,8 @@
       "session": 1,
       "event": {
         "event": "command",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 25,
+        "t_ms": 250,
         "command": "resume",
         "source": "stdin",
         "accepted": true,
@@ -666,9 +667,9 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 27,
-        "t_ms": 270,
-        "sim_ms": 30,
+        "seq": 26,
+        "t_ms": 260,
+        "sim_ms": 40,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -683,8 +684,8 @@
       "session": 1,
       "event": {
         "event": "command",
-        "seq": 28,
-        "t_ms": 280,
+        "seq": 27,
+        "t_ms": 270,
         "command": "step",
         "source": "stdin",
         "accepted": false,
@@ -696,8 +697,8 @@
       "session": 1,
       "event": {
         "event": "command",
-        "seq": 29,
-        "t_ms": 290,
+        "seq": 28,
+        "t_ms": 280,
         "command": "pause",
         "source": "stdin",
         "accepted": true,
@@ -709,9 +710,9 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 30,
-        "t_ms": 300,
-        "sim_ms": 30,
+        "seq": 29,
+        "t_ms": 290,
+        "sim_ms": 50,
         "speed": 1,
         "paused": true,
         "actual_speed": null,
@@ -744,13 +745,13 @@
         },
         "stop": "requested",
         "phase": "running",
-        "last_seq": 30,
-        "last_t_ms": 300,
+        "last_seq": 29,
+        "last_t_ms": 290,
         "time": {
           "event": "time",
-          "seq": 30,
-          "t_ms": 300,
-          "sim_ms": 30,
+          "seq": 29,
+          "t_ms": 290,
+          "sim_ms": 50,
           "speed": 1,
           "paused": true,
           "actual_speed": null,
@@ -793,8 +794,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -877,13 +884,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -1044,7 +1057,7 @@
         "findings": [],
         "findings_omitted": 0,
         "last_command": {
-          "seq": 29,
+          "seq": 28,
           "command": "pause",
           "source": "stdin",
           "accepted": true,
@@ -1054,10 +1067,6 @@
         "log": {
           "vehicle_sil_launch": {
             "kept": 5,
-            "dropped": 0
-          },
-          "Engine": {
-            "kept": 1,
             "dropped": 0
           },
           "Dashboard": {
@@ -1075,8 +1084,8 @@
       "session": 1,
       "event": {
         "event": "command",
-        "seq": 31,
-        "t_ms": 310,
+        "seq": 30,
+        "t_ms": 300,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -1088,9 +1097,9 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 32,
-        "t_ms": 320,
-        "sim_ms": 30,
+        "seq": 31,
+        "t_ms": 310,
+        "sim_ms": 50,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1105,10 +1114,27 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 33,
-        "t_ms": 330,
+        "seq": 32,
+        "t_ms": 320,
         "source": "vehicle_sil_launch",
         "line": "interrupted (stop command): the simulation was stopped"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "finding",
+        "seq": 33,
+        "t_ms": 330,
+        "severity": "warning",
+        "code": "coarse-time-step",
+        "file": "forever.yaml",
+        "line": null,
+        "participant": null,
+        "network": null,
+        "message": "the launcher's controller steps every 10 ms (the default of a run that starts without a speed), but the ECUs' steps are as small as 5 ms: with a speed, the launcher keeps real time only at the controller's steps. An ECU step that starts between two of them runs at the later one, up to 5 ms after the real time it stands for (never before it), together with the other steps in between; a device attached in real time gets the messages of those steps up to 5 ms late and in a burst. Write time_step_ms: 5 (or give the speed from the start, with speed or run --speed: the default is then that)",
+        "detail": null
       }
     },
     {
@@ -1210,20 +1236,20 @@
           "result": "interrupted",
           "strict": false,
           "errors": 0,
-          "warnings": 0,
+          "warnings": 1,
           "notes": 2,
           "simulation": "interrupted",
           "interrupted_by": "stop command",
           "timing": {
             "speed": 1,
             "time_step_ms": 10,
-            "ecu_step_ms": 10,
-            "step_delay_ms": 0,
+            "ecu_step_ms": 5,
+            "step_delay_ms": 5,
             "late_tolerance_ms": 10,
-            "sim_ms": 30,
+            "sim_ms": 50,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 0,
+            "paced_steps": 2,
             "late_steps": 0,
             "max_late_ms": 0,
             "slipped_ms": 0,
@@ -1285,6 +1311,16 @@
           ],
           "findings": [
             {
+              "severity": "warning",
+              "code": "coarse-time-step",
+              "file": "forever.yaml",
+              "line": null,
+              "participant": null,
+              "network": null,
+              "message": "the launcher's controller steps every 10 ms (the default of a run that starts without a speed), but the ECUs' steps are as small as 5 ms: with a speed, the launcher keeps real time only at the controller's steps. An ECU step that starts between two of them runs at the later one, up to 5 ms after the real time it stands for (never before it), together with the other steps in between; a device attached in real time gets the messages of those steps up to 5 ms late and in a burst. Write time_step_ms: 5 (or give the speed from the start, with speed or run --speed: the default is then that)",
+              "detail": null
+            },
+            {
               "severity": "note",
               "code": "interrupted",
               "file": "forever.yaml",
@@ -1329,8 +1365,14 @@
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 0,
+                          "j1939_name": "0x00000000FE000001",
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1413,13 +1455,19 @@
                 "reported": {
                   "vehicle_sil": "0.1.0",
                   "name": "Dashboard",
-                  "step_ns": 10000000,
+                  "step_ns": 5000000,
                   "networks": [
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 40,
+                          "j1939_name": null,
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1559,9 +1607,9 @@
         "last_t_ms": 410,
         "time": {
           "event": "time",
-          "seq": 32,
-          "t_ms": 320,
-          "sim_ms": 30,
+          "seq": 31,
+          "t_ms": 310,
+          "sim_ms": 50,
           "speed": 1,
           "paused": false,
           "actual_speed": 1.5,
@@ -1604,8 +1652,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -1688,13 +1742,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -1858,6 +1918,16 @@
         "participants_omitted": 0,
         "findings": [
           {
+            "severity": "warning",
+            "code": "coarse-time-step",
+            "file": "forever.yaml",
+            "line": null,
+            "participant": null,
+            "network": null,
+            "message": "the launcher's controller steps every 10 ms (the default of a run that starts without a speed), but the ECUs' steps are as small as 5 ms: with a speed, the launcher keeps real time only at the controller's steps. An ECU step that starts between two of them runs at the later one, up to 5 ms after the real time it stands for (never before it), together with the other steps in between; a device attached in real time gets the messages of those steps up to 5 ms late and in a burst. Write time_step_ms: 5 (or give the speed from the start, with speed or run --speed: the default is then that)",
+            "detail": null
+          },
+          {
             "severity": "note",
             "code": "interrupted",
             "file": "forever.yaml",
@@ -1870,7 +1940,7 @@
         ],
         "findings_omitted": 0,
         "last_command": {
-          "seq": 31,
+          "seq": 30,
           "command": "stop",
           "source": "stdin",
           "accepted": true,
@@ -1883,20 +1953,20 @@
           "result": "interrupted",
           "strict": false,
           "errors": 0,
-          "warnings": 0,
+          "warnings": 1,
           "notes": 2,
           "simulation": "interrupted",
           "interrupted_by": "stop command",
           "timing": {
             "speed": 1,
             "time_step_ms": 10,
-            "ecu_step_ms": 10,
-            "step_delay_ms": 0,
+            "ecu_step_ms": 5,
+            "step_delay_ms": 5,
             "late_tolerance_ms": 10,
-            "sim_ms": 30,
+            "sim_ms": 50,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 0,
+            "paced_steps": 2,
             "late_steps": 0,
             "max_late_ms": 0,
             "slipped_ms": 0,
@@ -1958,6 +2028,16 @@
           ],
           "findings": [
             {
+              "severity": "warning",
+              "code": "coarse-time-step",
+              "file": "forever.yaml",
+              "line": null,
+              "participant": null,
+              "network": null,
+              "message": "the launcher's controller steps every 10 ms (the default of a run that starts without a speed), but the ECUs' steps are as small as 5 ms: with a speed, the launcher keeps real time only at the controller's steps. An ECU step that starts between two of them runs at the later one, up to 5 ms after the real time it stands for (never before it), together with the other steps in between; a device attached in real time gets the messages of those steps up to 5 ms late and in a burst. Write time_step_ms: 5 (or give the speed from the start, with speed or run --speed: the default is then that)",
+              "detail": null
+            },
+            {
               "severity": "note",
               "code": "interrupted",
               "file": "forever.yaml",
@@ -2002,8 +2082,14 @@
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 0,
+                          "j1939_name": "0x00000000FE000001",
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -2086,13 +2172,19 @@
                 "reported": {
                   "vehicle_sil": "0.1.0",
                   "name": "Dashboard",
-                  "step_ns": 10000000,
+                  "step_ns": 5000000,
                   "networks": [
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 40,
+                          "j1939_name": null,
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -2206,10 +2298,6 @@
         "log": {
           "vehicle_sil_launch": {
             "kept": 8,
-            "dropped": 0
-          },
-          "Engine": {
-            "kept": 1,
             "dropped": 0
           },
           "Dashboard": {

@@ -316,7 +316,7 @@ describe('the readers refuse what they cannot read', () => {
       '2 running',
       '2 failed',
     ]);
-    expect(steps[3]).toMatchObject({ line: 8, code: 'scenario-failed', kind: 'expect' });
+    expect(steps[3]).toMatchObject({ line: 7, code: 'scenario-failed', kind: 'expect' });
     const ended = messages.filter((m) => m?.type === 'session').at(-1);
     expect(ended?.type === 'session' && ended.session?.scenario).toMatchObject({
       file: 'scenarios/fails.yaml',
