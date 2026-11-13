@@ -244,6 +244,14 @@ describe('the condition of a value and whether it can be written', () => {
       kind: 'stale',
       why: 'peer',
     });
+    // 値の読み取りが失敗し続けている（ready のまま理由がある）: 最後に読めた値は古い
+    expect(valueCondition({ ...base, reading, readFailing: true })).toMatchObject({
+      kind: 'stale',
+      why: 'reading',
+    });
+    expect(valueCondition({ ...base, reading, status: 'ended', readFailing: true }).kind).toBe(
+      'ended',
+    );
     expect(valueCondition({ ...base, reading, status: 'ended', peerConnected: false }).kind).toBe(
       'ended',
     );

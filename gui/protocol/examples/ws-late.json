@@ -26,6 +26,7 @@
         "id": 1,
         "file": "late.yaml",
         "disable": [],
+        "manual": [],
         "speed": null,
         "start_paused": false,
         "started_at": "2026-01-01T00:00:00.000Z",
@@ -62,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -131,6 +132,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -219,6 +221,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -645,6 +648,7 @@
         "id": 1,
         "file": "late.yaml",
         "disable": [],
+        "manual": [],
         "speed": null,
         "start_paused": false,
         "started_at": "2026-01-01T00:00:00.000Z",
@@ -697,6 +701,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -785,6 +790,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -1110,6 +1116,7 @@
               "name": "Engine",
               "required": true,
               "enabled": true,
+              "manual": false,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1126,6 +1133,7 @@
               "name": "Dashboard",
               "required": true,
               "enabled": true,
+              "manual": false,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1184,6 +1192,7 @@
                 "describe": true,
                 "required": true,
                 "enabled": true,
+                "manual": false,
                 "step_ms": null,
                 "status": "described",
                 "reported": {
@@ -1272,6 +1281,7 @@
                 "describe": true,
                 "required": true,
                 "enabled": true,
+                "manual": false,
                 "step_ms": null,
                 "status": "described",
                 "reported": {
@@ -1374,6 +1384,7 @@
         "id": 1,
         "file": "late.yaml",
         "disable": [],
+        "manual": [],
         "speed": null,
         "start_paused": false,
         "started_at": "2026-01-01T00:00:00.000Z",
@@ -1426,6 +1437,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -1514,6 +1526,7 @@
               "describe": true,
               "required": true,
               "enabled": true,
+              "manual": false,
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -1717,6 +1730,7 @@
               "name": "Engine",
               "required": true,
               "enabled": true,
+              "manual": false,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1733,6 +1747,7 @@
               "name": "Dashboard",
               "required": true,
               "enabled": true,
+              "manual": false,
               "ended": "exited",
               "exit_code": 0,
               "signal": null,
@@ -1791,6 +1806,7 @@
                 "describe": true,
                 "required": true,
                 "enabled": true,
+                "manual": false,
                 "step_ms": null,
                 "status": "described",
                 "reported": {
@@ -1879,6 +1895,7 @@
                 "describe": true,
                 "required": true,
                 "enabled": true,
+                "manual": false,
                 "step_ms": null,
                 "status": "described",
                 "reported": {

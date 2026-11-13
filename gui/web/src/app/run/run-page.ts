@@ -15,6 +15,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import {
   CheckResult,
+  FEATURE_MANUAL,
   FEATURE_SCENARIO,
   FEATURE_SPEED,
   FEATURE_START_PAUSED,
@@ -51,6 +52,11 @@ const EXPLAINED_PROBLEMS = ['no-result', 'launcher-silent'];
 
 /** ランチャー自身のログの出どころ。 */
 const LAUNCHER_SOURCE = 'vehicle_sil_launch';
+/**
+ * ランチャーのログの行で、自分で起動した participant が終わった後もシミュレーションに残っていると知らせるもの
+ * （`<name>` の後に続く部分。ランチャーの英語のまま）。
+ */
+const MANUAL_STAYS = ' (started by you, manual) has not left the simulation';
 
 /**
  * 言語を変えて読み込み直すときに持ち越す、この画面の選択（サーバーにまだ送っていないもの）。外す participant と
@@ -62,6 +68,8 @@ interface RunChoices {
   /** 外す participant を選んだときのファイル。 */
   file: string | null;
   disable: string[];
+  /** 自分で起動する participant（古い持ち越しにはない）。 */
+  manual?: string[];
   speed: Speed;
   /** 止めた状態で始めるか（古い持ち越しにはない）。 */
   startPaused?: boolean;
@@ -81,6 +89,7 @@ export function readRunChoices(value: unknown): RunChoices | null {
     !(v['file'] === null || isText(v['file'])) ||
     !Array.isArray(v['disable']) ||
     !v['disable'].every(isText) ||
+    !(v['manual'] === undefined || (Array.isArray(v['manual']) && v['manual'].every(isText))) ||
     !speedOk ||
     !(v['startPaused'] === undefined || typeof v['startPaused'] === 'boolean') ||
     !isText(v['logSource'])
@@ -239,6 +248,42 @@ export class RunPage {
     equal: (a, b) => a.size === b.size && [...a].every((name) => b.has(name)),
   });
 
+  /** ランチャーが、利用者が起動する participant を持てるか（できないときは切り替えを出さず、送らない）。 */
+  protected readonly manualSupported = computed(() =>
+    this.info.features().includes(FEATURE_MANUAL),
+  );
+  /**
+   * 画面で「自分で起動する」にした participant（構成ファイルの manual: true は照合の結果にある）。ファイルを変えたら、
+   * そのファイルのセッションで指定したもの（なければ空）に戻す。
+   */
+  protected readonly manual = linkedSignal<
+    { file: string | null; names: readonly string[] },
+    ReadonlySet<string>
+  >({
+    source: () => {
+      const file = this.selected();
+      const session = this.session();
+      const carried = this.carriedFor(session?.id ?? null);
+      return {
+        file,
+        names:
+          carried && carried.file === file
+            ? (carried.manual ?? [])
+            : session && session.file === file
+              ? session.manual
+              : [],
+      };
+    },
+    computation: ({ names }) => new Set(names),
+    equal: (a, b) => a.size === b.size && [...a].every((name) => b.has(name)),
+  });
+  /** 送る「自分で起動する」: ランチャーが持てるときだけ。外したものは送らない。 */
+  private readonly manualToSend = computed(() =>
+    this.manualSupported()
+      ? [...this.manual()].filter((name) => !this.disabled().has(name)).sort()
+      : null,
+  );
+
   /** ランチャーが速度を変えられるか（できないときは欄を出さず、速度を送らない）。 */
   protected readonly speedSupported = computed(() => this.info.features().includes(FEATURE_SPEED));
   /** ランチャーが止めた状態で始められるか（できないときは欄を出さず、送らない）。 */
@@ -339,6 +384,7 @@ export class RunPage {
       return {
         file,
         disable: [...this.disabled()].sort(),
+        manual: this.manualToSend(),
         scenario: this.chosenScenario(),
         again: this.rechecks(),
       };
@@ -348,6 +394,7 @@ export class RunPage {
       const body = {
         file: params.file,
         disable: params.disable,
+        ...(params.manual !== null ? { manual: params.manual } : {}),
         ...(params.scenario !== null ? { scenario: params.scenario } : {}),
       };
       const request = this.checkChain.then(() => {
@@ -493,6 +540,20 @@ export class RunPage {
     return !!session && (session.stopRequests > 0 || session.result?.result === 'interrupted');
   });
 
+  /** 自分で起動した participant のうち、終わった後も残っているとランチャーがログで知らせたもの（名前から行へ）。 */
+  protected readonly manualStays = computed(() => {
+    const stays = new Map<string, string>();
+    const session = this.session();
+    if (!session?.result) return stays;
+    const manual = session.participants.filter((p) => p.manual).map((p) => p.name);
+    for (const log of session.logs) {
+      if (log.source !== LAUNCHER_SOURCE) continue;
+      const name = manual.find((n) => log.line.startsWith(n + MANUAL_STAYS));
+      if (name !== undefined) stays.set(name, log.line);
+    }
+    return stays;
+  });
+
   /** ログで絞る出どころ（「ランチャーのログを見る」で選ぶ）。 */
   protected readonly logSource = signal(this.carried?.logSource ?? '');
   protected readonly copyLabel = $localize`選べる範囲のパスをコピー`;
@@ -505,6 +566,7 @@ export class RunPage {
         chosen: this.chosen(),
         file: this.selected(),
         disable: [...this.disabled()],
+        manual: [...this.manual()],
         speed: this.speed(),
         startPaused: this.startPaused(),
         logSource: this.logSource(),
@@ -526,9 +588,11 @@ export class RunPage {
     const file = this.selected();
     if (file === null) return;
     const scenario = this.chosenScenario();
+    const manual = this.manualToSend();
     this.run.start({
       file,
       disable: [...this.disabled()].sort(),
+      ...(manual !== null ? { manual } : {}),
       speed: this.speedSupported() ? this.speed() : null,
       // シナリオは時刻 0 から自分で進むので、止めた状態では始めない（ランチャーの決まり）
       start_paused: scenario === null && this.startPausedSupported() && this.startPaused(),

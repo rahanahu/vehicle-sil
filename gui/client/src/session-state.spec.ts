@@ -16,6 +16,7 @@ function summary(extra: Partial<SessionSummary> = {}): SessionSummary {
     id: 1,
     file: 'sim.yaml',
     disable: [],
+    manual: [],
     speed: null,
     start_paused: false,
     state: 'running',
@@ -62,7 +63,9 @@ function logs(source: string, count: number): Record<string, unknown>[] {
   }));
 }
 
-function check(participants: { name: string; enabled?: boolean; required?: boolean }[]) {
+function check(
+  participants: { name: string; enabled?: boolean; required?: boolean; manual?: boolean }[],
+) {
   return {
     file: 'sim.yaml',
     result: 'passed',
@@ -75,6 +78,7 @@ function check(participants: { name: string; enabled?: boolean; required?: boole
       line: 1,
       required: p.required ?? true,
       enabled: p.enabled ?? true,
+      manual: p.manual ?? false,
       step_ms: 10,
       status: p.enabled === false ? 'disabled' : 'described',
       variables: null,
@@ -151,6 +155,9 @@ describe('applyEvents', () => {
         stopRequested: false,
         omittedFields: [],
         controlLink: null,
+        manual: false,
+        commandLine: null,
+        workingDirectory: null,
       },
       {
         name: 'B',
@@ -164,6 +171,9 @@ describe('applyEvents', () => {
         stopRequested: false,
         omittedFields: [],
         controlLink: null,
+        manual: false,
+        commandLine: null,
+        workingDirectory: null,
       },
     ]);
     expect(runOutcome(session)).toBe('running');
@@ -257,6 +267,7 @@ describe('applyEvents', () => {
                 name: 'A',
                 required: true,
                 enabled: true,
+                manual: false,
                 ended: 'exited',
                 exit_code: 0,
                 signal: null,
@@ -271,6 +282,7 @@ describe('applyEvents', () => {
                 name: 'C',
                 required: true,
                 enabled: true,
+                manual: false,
                 ended: 'exited',
                 exit_code: 0,
                 signal: null,
@@ -288,6 +300,57 @@ describe('applyEvents', () => {
       late_messages: 0,
     });
     expect(ended.participants.find((p) => p.name === 'C')?.controlLink?.state).toBe('none');
+  });
+
+  it('keeps the command of a participant the user starts, and that it is one, after it joins', () => {
+    const session = applyEvents(
+      emptySession(),
+      events(
+        { event: 'check', check: check([{ name: 'A' }, { name: 'B', manual: true }]) },
+        {
+          event: 'participant',
+          name: 'B',
+          state: 'manual',
+          command_line: '/b --name B',
+          working_directory: '/root',
+        },
+        { event: 'participant', name: 'B', state: 'joined' },
+      ),
+    );
+    expect(
+      session.participants.map((p) => [
+        p.name,
+        p.state,
+        p.manual,
+        p.commandLine,
+        p.workingDirectory,
+      ]),
+    ).toEqual([
+      ['A', null, false, null, null],
+      ['B', 'joined', true, '/b --name B', '/root'],
+    ]);
+    // つなぎ直した画面: 要約の participant から
+    const again = sessionFromSummary(
+      summary({
+        participants: [
+          {
+            name: 'B',
+            state: 'manual',
+            pid: null,
+            exit_code: null,
+            signal: null,
+            reason: null,
+            message: null,
+            omitted_fields: [],
+            stop_requested: false,
+            command_line: '/b --name B',
+            working_directory: '/root',
+            control_link: null,
+          },
+        ],
+      }),
+    );
+    expect(again.participants[0]).toMatchObject({ manual: true, commandLine: '/b --name B' });
   });
 
   it('keeps the last command and whether the launcher took it', () => {
@@ -378,6 +441,7 @@ describe('applyEvents', () => {
           name: 'A',
           required: true,
           enabled: true,
+          manual: false,
           ended: 'exited',
           exit_code: 0,
           signal: null,
@@ -388,6 +452,7 @@ describe('applyEvents', () => {
           name: 'B',
           required: true,
           enabled: true,
+          manual: false,
           ended: 'exited',
           exit_code: 3,
           signal: null,
@@ -398,6 +463,7 @@ describe('applyEvents', () => {
           name: 'C',
           required: false,
           enabled: false,
+          manual: false,
           ended: 'not_started',
           exit_code: null,
           signal: null,
@@ -560,6 +626,8 @@ describe('applySummary', () => {
       omitted_fields: [],
       stop_requested: false,
       control_link: null,
+      command_line: null,
+      working_directory: null,
     };
     const session = applySummary(
       emptySession(),
@@ -609,6 +677,8 @@ describe('applySummary', () => {
             omitted_fields: ['command', 'environment'],
             stop_requested: false,
             control_link: null,
+            command_line: null,
+            working_directory: null,
           },
         ],
       }),
@@ -642,6 +712,8 @@ describe('applySummary', () => {
       message: null,
       omitted_fields: [],
       control_link: null,
+      command_line: null,
+      working_directory: null,
     };
     // サーバーの印がなくても、手元で知っていれば残す
     const later = applySummary(
@@ -880,6 +952,8 @@ describe('addProblem', () => {
             omitted_fields: [],
             stop_requested: false,
             control_link: null,
+            command_line: null,
+            working_directory: null,
           },
         ],
       }),
@@ -910,6 +984,7 @@ describe('addProblem', () => {
                 name: 'Engine',
                 required: true,
                 enabled: true,
+                manual: false,
                 ended: 'stopped',
                 exit_code: 130,
                 signal: null,
@@ -918,6 +993,7 @@ describe('addProblem', () => {
                 name: 'Logger',
                 required: true,
                 enabled: true,
+                manual: false,
                 ended: 'stopped',
                 exit_code: null,
                 signal: 'SIGTERM',
@@ -946,6 +1022,7 @@ describe('addProblem', () => {
           name: 'Engine',
           required: true,
           enabled: true,
+          manual: false,
           ended: 'stopped',
           exit_code: 130,
           signal: null,
@@ -969,6 +1046,8 @@ describe('addProblem', () => {
             omitted_fields: [],
             stop_requested: false,
             control_link: null,
+            command_line: null,
+            working_directory: null,
           },
         ],
       }),

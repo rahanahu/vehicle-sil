@@ -13,6 +13,7 @@
   "response": {
     "file": "simulation.yaml",
     "disable": [],
+    "manual": [],
     "scenario": "scenarios/throttle.yaml",
     "exit_code": 0,
     "check": {
@@ -38,6 +39,7 @@
           "describe": true,
           "required": true,
           "enabled": true,
+          "manual": false,
           "step_ms": null,
           "status": "described",
           "reported": {
@@ -126,6 +128,7 @@
           "describe": true,
           "required": true,
           "enabled": true,
+          "manual": false,
           "step_ms": null,
           "status": "described",
           "reported": {
@@ -215,6 +218,7 @@
           "describe": false,
           "required": false,
           "enabled": true,
+          "manual": false,
           "step_ms": null,
           "status": "not_checked",
           "reported": null,

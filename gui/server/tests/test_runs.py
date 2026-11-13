@@ -103,6 +103,39 @@ def test_lines_the_launcher_could_not_write_are_counted(tmp_path: Path) -> None:
         run_async(main, gui)
 
 
+def test_a_participant_that_the_user_starts(tmp_path: Path) -> None:
+    """manual: given to the launcher as --manual; it is not started, its command is in the summary; stopped while
+    the run waits for it, the simulation does not start. A launcher without the feature: refused."""
+    async def main(c: Client) -> None:
+        status, body = await c.post("api/check", {"file": "simulation.yaml", "manual": ["Dashboard"]})
+        assert status == 200 and body["manual"] == ["Dashboard"]
+        assert [p["manual"] for p in body["check"]["participants"]] == [False, True, False]
+        sock = await c.ws()
+        await sock.until(is_synced)
+        status, reply = await c.post("api/run", {"file": "simulation.yaml", "manual": ["Dashboard"]})
+        assert status == 200 and reply["session"]["manual"] == ["Dashboard"]
+        got = await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "participant"
+                               and m["event"]["state"] == "manual")
+        assert "--manual" in events(got, "hello")[0]["arguments"]
+        await c.post("api/stop", {})
+        got = await sock.until(is_ended)
+        end = got[-1]["session"]
+        dashboard = next(p for p in end["participants"] if p["name"] == "Dashboard")
+        assert dashboard["state"] == "manual" and "--name Dashboard" in dashboard["command_line"]
+        assert dashboard["working_directory"] and "pid" not in dashboard
+        assert end["result"]["result"] == "interrupted" and end["result"]["simulation"] == "not_started"
+        assert [p["manual"] for p in end["result"]["participants"]] == [False, True, False]
+    with gui_server(tmp_path) as gui:
+        run_async(main, gui)
+    with gui_server(tmp_path, env=OLD) as gui:
+        async def old(c: Client) -> None:
+            for path in ("api/check", "api/run"):
+                status, body = await c.post(path, {"file": "simulation.yaml", "manual": ["Dashboard"]})
+                assert status == 400 and body["error"]["code"] == "unsupported", path
+                assert "manual-participants" in body["error"]["message"]
+        run_async(old, gui)
+
+
 def test_check_then_run_with_a_participant_left_out(gui: Gui) -> None:
     async def main(c: Client) -> None:
         status, body = await c.post("api/check", {"file": "simulation.yaml", "disable": ["Dashboard"]})

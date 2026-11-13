@@ -137,13 +137,18 @@ test('switching the language during a run keeps the run and the choices', async 
 
   // まだ送っていない選択（ファイル、外した participant）も持ち越す
   await choose(page, 'simulation.yaml', 'ja');
-  const logger = page.getByTestId('check-participant-Logger').getByRole('switch');
+  // 「使う」（その後に「自分で起動する」が並ぶ）
+  const logger = page.getByTestId('check-participant-Logger').getByRole('switch').first();
   await logger.click();
   await expect(logger).not.toBeChecked();
   await switchTo(page, 'English');
   await expect(chosenFile(page, 'en')).toHaveText('simulation.yaml');
-  await expect(page.getByTestId('check-participant-Logger').getByRole('switch')).not.toBeChecked();
-  await expect(page.getByTestId('check-participant-Engine').getByRole('switch')).toBeChecked();
+  await expect(
+    page.getByTestId('check-participant-Logger').getByRole('switch').first(),
+  ).not.toBeChecked();
+  await expect(
+    page.getByTestId('check-participant-Engine').getByRole('switch').first(),
+  ).toBeChecked();
 });
 
 test('a message without a translation is shown in Japanese, not as an id', async ({ page }) => {

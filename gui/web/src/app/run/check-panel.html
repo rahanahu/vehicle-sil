@@ -20,6 +20,18 @@
         i18n
         >使う</mat-slide-toggle
       >
+      @if (manualAvailable()) {
+        <mat-slide-toggle
+          class="use"
+          [checked]="row.manual"
+          [disabled]="locked() || row.manualInFile || !row.used"
+          (change)="setManual(row.name, $event.checked)"
+          [aria-label]="manualLabel(row.name)"
+          [attr.data-testid]="'manual-' + row.name"
+          i18n
+          >自分で起動する</mat-slide-toggle
+        >
+      }
       <dl class="meta">
         <div>
           <dt i18n>照合:</dt>
@@ -52,6 +64,15 @@
       </dl>
       @if (row.disabledInFile) {
         <p class="hint" i18n>構成ファイルで外してあります（enabled: false）。</p>
+      }
+      @if (row.manual && row.used) {
+        <p class="hint" i18n>
+          ランチャーは起動しません。始めると、起動するコマンドが「participant
+          の状態」に出ます。そのコマンドを（デバッガーなどから）実行すると参加し、シミュレーションはそれまで待ちます。
+        </p>
+      }
+      @if (row.manualInFile && row.used) {
+        <p class="hint" i18n>構成ファイルで自分で起動すると指定してあります（manual: true）。</p>
       }
     </li>
   } @empty {

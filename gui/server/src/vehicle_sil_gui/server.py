@@ -23,8 +23,9 @@ from aiohttp import WSCloseCode, WSMsgType, web
 
 from . import __version__, control, dashboard, process
 from .hub import Client, Hub, Outgoing, encode
-from .launcher import (FEATURE_SCENARIO, FEATURE_SCENARIO_CONTROL, FEATURE_SPEED, FEATURE_START_PAUSED,
-                       FEATURE_TIME_COMMANDS, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest, Launcher, check_command, check_disable, check_speed, check_time_command,
+from .launcher import (FEATURE_MANUAL, FEATURE_SCENARIO, FEATURE_SCENARIO_CONTROL, FEATURE_SPEED,
+                       FEATURE_START_PAUSED, FEATURE_TIME_COMMANDS, SPEED_MAX, SPEED_MIN, STEP_MS_MAX, InvalidRequest,
+                       Launcher, check_command, check_disable, check_manual, check_speed, check_time_command,
                        command_line, run_command)
 from .paths import ConfigFile, ConfigRoot, PathRejected
 from .recording import Recording
@@ -379,6 +380,17 @@ class GuiServer:
                                                 "scenario null, or build a newer launcher")
         return scenario
 
+    async def _participants_of(self, config: ConfigFile, body: dict, always: bool) -> tuple[list[str], list[str]]:
+        """(disable, manual) of a check or run request: names of the file's participants (from its last check, or
+        a new one; always: even when the request names none)."""
+        wanted, manual = body.get("disable"), body.get("manual")
+        if manual is not None and FEATURE_MANUAL not in self.launcher.features:
+            raise InvalidRequest("unsupported", f"this vehicle_sil_launch has no '{FEATURE_MANUAL}': leave manual "
+                                                "out, or build a newer launcher")
+        known = await self.participant_names(config.relative) if always or wanted or manual else []
+        disable = check_disable(wanted, known)
+        return disable, check_manual(manual, known, disable)
+
     async def api_not_found(self, request: web.Request) -> web.Response:
         return error(404, "not-found", f"{request.method} {request.path}: no such API")
 
@@ -389,14 +401,12 @@ class GuiServer:
             config = self.root.resolve(body.get("file"))
             await self._usable()
             scenario = self._scenario(config, body)
-            wanted = body.get("disable")
-            known = await self.participant_names(config.relative) if wanted else []
-            disable = check_disable(wanted, known)
-            code, result = await self._check(config.relative, disable, scenario)
+            disable, manual = await self._participants_of(config, body, always=False)
+            code, result = await self._check(config.relative, disable, scenario, manual)
         except (PathRejected, InvalidRequest, Refused) as e:
             return self._refusal(e)
-        return web.json_response({"file": config.relative, "disable": disable, "scenario": scenario,
-                                  "exit_code": code, "check": result})
+        return web.json_response({"file": config.relative, "disable": disable, "manual": manual,
+                                  "scenario": scenario, "exit_code": code, "check": result})
 
     async def post_run(self, request: web.Request) -> web.Response:
         try:
@@ -437,8 +447,7 @@ class GuiServer:
         if scenario is not None and start_paused:
             raise InvalidRequest("invalid-field", "start_paused cannot be used with a scenario (the launcher plays "
                                                   "it from time 0): leave start_paused false")
-        known = await self.participant_names(config.relative)
-        disable = check_disable(body.get("disable"), known)
+        disable, manual = await self._participants_of(config, body, always=True)
         why_not = await self._no_variables()
         # The one place that decides whether a scenario's run has the launcher's control server: only a launcher
         # with scenario-control can have it (it then refuses writes); the others refuse --scenario with --control.
@@ -457,7 +466,8 @@ class GuiServer:
                 raise
             except OSError as e:
                 why_not = f"the file with the control server's credentials could not be made ({e})"
-        argv = run_command(self.launcher, config.relative, disable, speed, start_paused, credentials, scenario)
+        argv = run_command(self.launcher, config.relative, disable, speed, start_paused, credentials, scenario,
+                           manual)
         try:
             proc = await process.start(argv, cwd=self.root.root)
         except BaseException as e:
@@ -467,7 +477,7 @@ class GuiServer:
             raise Refused(502, "launcher-start", f"cannot start {self.launcher.path}: {e}") from None
         # Registered in the same step as the start returns: the server's end sees every launcher.
         session = Session(next(self._ids), config.relative, disable, speed, start_paused, limits=self.o.limits,
-                          launcher_pid=proc.pid, scenario=scenario)
+                          launcher_pid=proc.pid, scenario=scenario, manual=manual)
         variables = Variables(session.id, self._tell_variables, limits=self.o.variable_limits, secret=token,
                               ending=lambda: session.phase == "stopping" or session.result is not None
                               or not session.launcher_running)
@@ -651,7 +661,8 @@ class GuiServer:
                                                  "api/configs lists") from None
         return (st.st_mtime_ns, st.st_size)
 
-    async def _check(self, relative: str, disable: list[str], scenario: str | None = None) -> tuple[int, dict]:
+    async def _check(self, relative: str, disable: list[str], scenario: str | None = None,
+                     manual: list[str] = ()) -> tuple[int, dict]:
         """check --json, one at a time: the others wait (MAX_CHECK_WAITING of them, check_timeout_s each)."""
         self._not_closing()
         if self._check_waiting >= MAX_CHECK_WAITING:
@@ -668,14 +679,16 @@ class GuiServer:
             self._check_waiting -= 1
         try:
             self._not_closing()
-            return await self._check_locked(relative, disable, scenario)
+            return await self._check_locked(relative, disable, scenario, manual)
         finally:
             self._check_lock.release()
 
-    async def _check_locked(self, relative: str, disable: list[str], scenario: str | None) -> tuple[int, dict]:
+    async def _check_locked(self, relative: str, disable: list[str], scenario: str | None,
+                            manual: list[str]) -> tuple[int, dict]:
         stamp = self._stamp(relative)
         try:
-            code, out, err = await process.run_to_end(check_command(self.launcher, relative, disable, scenario),
+            code, out, err = await process.run_to_end(check_command(self.launcher, relative, disable, scenario,
+                                                                    manual),
                                                       cwd=self.root.root, timeout_s=self.o.check_timeout_s,
                                                       track=self._checks)
         except TimeoutError:

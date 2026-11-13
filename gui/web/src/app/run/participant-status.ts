@@ -1,4 +1,5 @@
-import { Component, LOCALE_ID, computed, inject, input } from '@angular/core';
+import { Component, LOCALE_ID, computed, inject, input, signal } from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
 import { ParticipantView } from '@vehicle-sil/gui-client';
 import { controlLabel, failureReasonLabel, participantStateLabel } from './labels';
 
@@ -14,6 +15,7 @@ const SETTLED: ReadonlySet<string> = new Set([
 /** 実行中の participant ごとの状態（起動、参加、終了と終了コード）。 */
 @Component({
   selector: 'app-participant-status',
+  imports: [MatButtonModule],
   template: `
     @if (hasUnknown()) {
       <p class="unknown-hint" data-testid="participants-unknown" i18n>
@@ -56,6 +58,40 @@ const SETTLED: ReadonlySet<string> = new Set([
           }
           @if (row.required === false) {
             <span class="optional" i18n>任意</span>
+          }
+          @if (row.command; as command) {
+            <div class="manual" [attr.data-testid]="'manual-command-' + row.name">
+              @if (command.directory) {
+                <span i18n>ディレクトリ</span>
+                <code class="directory">{{ command.directory }}</code>
+                <span i18n>で、次のコマンドを実行します:</span>
+              } @else {
+                <span i18n>次のコマンドを実行します:</span>
+              }
+              <pre class="command"><code>{{ command.line }}</code></pre>
+              <button
+                matButton
+                type="button"
+                (click)="copy(row.name, command.line)"
+                [attr.aria-label]="copyLabel(row.name)"
+              >
+                @if (copied() === row.name) {
+                  <ng-container i18n>コピーしました</ng-container>
+                } @else {
+                  <ng-container i18n>コピー</ng-container>
+                }
+              </button>
+            </div>
+          }
+          @if (row.stays; as stays) {
+            <span
+              class="stays"
+              [title]="stays"
+              [attr.data-testid]="'manual-stays-' + row.name"
+              i18n
+            >
+              シミュレーションが終わっても残っています。ランチャーは終わらせないので、自分で終わらせてください。
+            </span>
           }
           @if (row.omitted) {
             <span class="omitted" i18n>大きすぎて省いた欄: {{ row.omitted }}</span>
@@ -121,6 +157,23 @@ const SETTLED: ReadonlySet<string> = new Set([
       flex-basis: 100%;
       font: var(--mat-sys-body-small);
     }
+    .manual {
+      flex-basis: 100%;
+      min-inline-size: 0;
+    }
+    .command {
+      margin: var(--app-space-1) 0;
+      padding: var(--app-space-2);
+      border-radius: var(--mat-sys-corner-extra-small);
+      background: var(--mat-sys-surface-container-high);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      user-select: all;
+    }
+    .stays {
+      flex-basis: 100%;
+      color: var(--mat-sys-error);
+    }
   `,
 })
 export class ParticipantStatus {
@@ -133,6 +186,15 @@ export class ParticipantStatus {
    * など）のままでは誤りなので「不明」にする。
    */
   readonly launcherGone = input(false);
+  /** 実行が終わった（結果が出た）。参加しなかった、自分で起動する participant をそう出す。 */
+  readonly ended = input(false);
+  /**
+   * 自分で起動した participant のうち、終わった後もシミュレーションに残っているとランチャーが知らせたもの（名前から
+   * ランチャーのログの行へ）。
+   */
+  readonly stays = input<ReadonlyMap<string, string>>(new Map());
+  /** 最後にコマンドをコピーした participant。 */
+  protected readonly copied = signal<string | null>(null);
 
   protected readonly rows = computed(() =>
     this.participants().map((p) => {
@@ -156,6 +218,8 @@ export class ParticipantStatus {
           failure: null,
           failureRaw: null,
           control,
+          command: null,
+          stays: null,
         };
       }
       // ランチャーが失敗と決めた participant は、プロセスが終わる前でもすぐに失敗として出す（後の ended でも残す）
@@ -174,9 +238,17 @@ export class ParticipantStatus {
         (p.stopRequested ||
           (this.interrupted() && !(p.state === 'ended' && (p.exitCode ?? 0) !== 0)));
       const tone = stopped ? 'stopped' : failed ? 'bad' : p.state === 'joined' ? 'good' : 'plain';
+      // 自分で起動する participant: 待っている間は、起動するコマンドを出す（ランチャーのままの文字列。テキストとして出す）
+      const waiting = p.manual && p.state === 'manual' && !decided;
       return {
         name: p.name,
-        label: decided ? participantStateLabel('failed') : participantStateLabel(p.state),
+        label: decided
+          ? participantStateLabel('failed')
+          : waiting && this.ended()
+            ? $localize`参加しなかった（自分で起動）`
+            : p.manual && p.state === 'joined'
+              ? $localize`参加した（自分で起動）`
+              : participantStateLabel(p.state),
         // 色だけで伝えないための形
         mark: stopped
           ? '■'
@@ -198,9 +270,22 @@ export class ParticipantStatus {
         failure: decided ? (p.failure ? failureReasonLabel(p.failure) : null) : null,
         failureRaw: decided ? [p.failure, p.message].filter(Boolean).join(': ') : null,
         control,
+        command:
+          waiting && !this.ended() && p.commandLine !== null
+            ? { line: p.commandLine, directory: p.workingDirectory }
+            : null,
+        stays: p.manual ? (this.stays().get(p.name) ?? null) : null,
       };
     }),
   );
+
+  protected copyLabel(name: string): string {
+    return $localize`${name}:name: を起動するコマンドをコピー`;
+  }
+
+  protected copy(name: string, line: string): void {
+    void navigator.clipboard?.writeText(line).then(() => this.copied.set(name));
+  }
 
   protected readonly hasUnknown = computed(() => this.rows().some((row) => row.tone === 'unknown'));
 }

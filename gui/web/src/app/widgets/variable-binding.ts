@@ -142,6 +142,8 @@ export function bindVariable(ref: () => VariableRef, options: BindOptions = {}):
       reading: reading(),
       connected: server.connectionState() === 'open',
       peerConnected: variables.peerConnected(current().peer),
+      // ready のまま理由があるのは、値の読み取りが失敗し続けているとき（値は最後に読めたもの）
+      readFailing: variables.status() === 'ready' && variables.reason() !== null,
     }),
   );
   const pending = computed(() => writes.pending(current()));

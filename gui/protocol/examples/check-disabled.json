@@ -16,6 +16,7 @@
     "disable": [
       "Dashboard"
     ],
+    "manual": [],
     "scenario": null,
     "exit_code": 0,
     "check": {
@@ -41,6 +42,7 @@
           "describe": true,
           "required": true,
           "enabled": true,
+          "manual": false,
           "step_ms": null,
           "status": "described",
           "reported": {
@@ -129,6 +131,7 @@
           "describe": true,
           "required": true,
           "enabled": false,
+          "manual": false,
           "step_ms": null,
           "status": "disabled",
           "reported": null,
@@ -145,6 +148,7 @@
           "describe": false,
           "required": false,
           "enabled": true,
+          "manual": false,
           "step_ms": null,
           "status": "not_checked",
           "reported": null,

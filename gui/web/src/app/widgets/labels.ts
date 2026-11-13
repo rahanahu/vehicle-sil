@@ -62,6 +62,7 @@ export function conditionText(condition: ValueCondition): MarkedText {
         connection: $localize`古い値: 画面とサーバーの接続が切れています`,
         reconnecting: $localize`古い値: ランチャーにつなぎ直しています`,
         peer: $localize`古い値: ECU がつながっていません`,
+        reading: $localize`古い値: 値を読めていません`,
       }[condition.why];
       return { mark: '⚠', text: why };
     }

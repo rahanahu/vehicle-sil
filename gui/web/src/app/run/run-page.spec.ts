@@ -114,7 +114,7 @@ describe('RunPage', () => {
     const fixture = await openWithFiles();
     // 起動のときのファイルがないので、一覧の最初のファイル
     const first = await checkRequest();
-    expect(first.request.body).toEqual({ file: 'bad-lines.yaml', disable: [] });
+    expect(first.request.body).toEqual({ file: 'bad-lines.yaml', disable: [], manual: [] });
     expect(first.request.headers.get('Authorization')).toBe('Bearer secret');
     first.flush(response('check-passed'));
     await fixture.whenStable();
@@ -124,10 +124,26 @@ describe('RunPage', () => {
 
     toggle(fixture, 'Dashboard');
     const again = await checkRequest();
-    expect(again.request.body).toEqual({ file: 'bad-lines.yaml', disable: ['Dashboard'] });
+    expect(again.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: ['Dashboard'],
+      manual: [],
+    });
     again.flush(response('check-disabled'));
     await fixture.whenStable();
     expect(text(fixture, 'check-participant-Dashboard')).toContain('外した');
+
+    // 自分で起動する（ランチャーの features に manual-participants がある）
+    (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLButtonElement>('[data-testid="manual-Engine"] button[role="switch"]')
+      ?.click();
+    TestBed.tick();
+    const manual = await checkRequest();
+    expect(manual.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: ['Dashboard'],
+      manual: ['Engine'],
+    });
   });
 
   it('does not start while the check finds errors, and says why', async () => {
@@ -152,6 +168,7 @@ describe('RunPage', () => {
     expect(run.request.body).toEqual({
       file: 'bad-lines.yaml',
       disable: [],
+      manual: [],
       speed: null,
       start_paused: false,
     });
@@ -196,14 +213,22 @@ describe('RunPage', () => {
     toggle(fixture, 'Dashboard');
     toggle(fixture, 'Engine');
     const once = await checkRequest();
-    expect(once.request.body).toEqual({ file: 'bad-lines.yaml', disable: ['Dashboard', 'Engine'] });
+    expect(once.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: ['Dashboard', 'Engine'],
+      manual: [],
+    });
     // 応答の前に切り替える: 前の照合の応答が来るまで、次は送らない
     toggle(fixture, 'Engine');
     await sleep(CHECK_DELAY_MS + 20);
     http.expectNone('api/check');
     once.flush(response('check-passed'));
     const next = await checkRequest();
-    expect(next.request.body).toEqual({ file: 'bad-lines.yaml', disable: ['Dashboard'] });
+    expect(next.request.body).toEqual({
+      file: 'bad-lines.yaml',
+      disable: ['Dashboard'],
+      manual: [],
+    });
     next.flush(response('check-disabled'));
     await fixture.whenStable();
     // 古い応答（Engine も外したもの）は使わず、最後の組み合わせの結果を出す
@@ -278,5 +303,6 @@ describe('readRunChoices', () => {
     expect(readRunChoices({ ...choices, speed: 'fast' })).toBeNull();
     expect(readRunChoices({ ...choices, logSource: undefined })).toBeNull();
     expect(readRunChoices({ ...choices, startPaused: 'yes' })).toBeNull();
+    expect(readRunChoices({ ...choices, manual: ['A', 1] })).toBeNull();
   });
 });

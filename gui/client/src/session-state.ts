@@ -74,6 +74,12 @@ export interface ParticipantView {
   omittedFields: readonly string[];
   /** 変数を読み書きする口のつながり方（control_link の事象、または結果の control_link）。まだわからなければ null。 */
   controlLink: ControlLink | null;
+  /** 利用者が起動する participant（照合の結果の manual、または manual の事象）。 */
+  manual: boolean;
+  /** manual: 起動するコマンドの 1 行（ランチャーのまま）。届いていなければ null。 */
+  commandLine: string | null;
+  /** manual: そのコマンドを実行するディレクトリ。届いていなければ null。 */
+  workingDirectory: string | null;
 }
 
 /** ランチャーのプロセスの様子（サーバーが見ている）。 */
@@ -192,6 +198,8 @@ export interface SessionView {
   file: string;
   /** 外した participant。 */
   disable: readonly string[];
+  /** 画面から利用者が起動すると指定した participant（構成ファイルの manual: true は check にある）。 */
+  manual: readonly string[];
   /** 始めたときに指定した速さ（null は構成ファイルのまま）。いまの速さは time.speed。 */
   speed: Speed;
   /** 止めた状態で始めたか。 */
@@ -269,6 +277,7 @@ export function sessionFromSummary(summary: SessionSummary): SessionView {
     lastSeq: -1,
     file: summary.file,
     disable: summary.disable,
+    manual: summary.manual,
     speed: summary.speed,
     startPaused: summary.start_paused,
     phase: null,
@@ -390,6 +399,9 @@ export function applySummary(
       p.stop_requested || p.state === 'stop_requested' || !!known.get(p.name)?.stopRequested,
     omittedFields: p.omitted_fields,
     controlLink: p.control_link ?? known.get(p.name)?.controlLink ?? null,
+    manual: p.state === 'manual' || p.command_line !== null || !!known.get(p.name)?.manual,
+    commandLine: p.command_line,
+    workingDirectory: p.working_directory,
   }));
   return {
     ...next,
@@ -637,6 +649,7 @@ function mergeCheck(
       ...(known ?? blankParticipant(p.name)),
       required: p.required,
       state: known?.state ?? (p.enabled === false ? 'disabled' : null),
+      manual: p.manual || !!known?.manual,
     });
   }
   return [...ordered, ...byName.values()];
@@ -657,6 +670,11 @@ function updateParticipant(
   if (event.state === 'failed') updated.failure = event.reason ?? '';
   if (event.state === 'stop_requested') updated.stopRequested = true;
   if (event.message) updated.message = event.message;
+  if (event.state === 'manual') updated.manual = true;
+  // manual の事象だけが持つ（後の joined などには欄がないので、前のものを残す）
+  if (typeof event.command_line === 'string') updated.commandLine = event.command_line;
+  if (typeof event.working_directory === 'string')
+    updated.workingDirectory = event.working_directory;
   if (event.state === 'ended' || event.state === 'killed') {
     updated.exitCode = event.exit_code;
     updated.signal = event.signal;
@@ -697,6 +715,7 @@ function mergeResult(
       // 事象で知った口（変数の数など）を残し、なければ結果の状態だけ
       // 結果のほうが新しい（遅れて届いたメッセージの数を持つ）。結果になければ、事象で知ったもの
       controlLink: p.control_link ?? base.controlLink,
+      manual: base.manual || p.manual,
     };
     if (i >= 0) merged[i] = view;
     else merged.push(view);
@@ -717,5 +736,8 @@ function blankParticipant(name: string): ParticipantView {
     stopRequested: false,
     omittedFields: [],
     controlLink: null,
+    manual: false,
+    commandLine: null,
+    workingDirectory: null,
   };
 }

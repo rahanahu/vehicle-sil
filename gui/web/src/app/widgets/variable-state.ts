@@ -13,7 +13,8 @@ import { formatMeasure } from '../core/format/measure-pipe';
  * - waiting: いまの実行にあるが、値がまだ届いていない。
  * - live: 動いている途中の最後の値。
  * - paused: 止まっている時刻の値（その時刻より前に始まったステップの値は入っている）。
- * - stale: 古いかもしれない値（why: 画面とサーバーの接続が切れた、ランチャーにつなぎ直している、ECU が切れた）。
+ * - stale: 古いかもしれない値（why: 画面とサーバーの接続が切れた、ランチャーにつなぎ直している、ECU が切れた、
+ *   値の読み取りが失敗し続けている）。
  * - ended: 終わった実行の、最後に読めた値。
  */
 export type ValueCondition =
@@ -22,7 +23,11 @@ export type ValueCondition =
   | { kind: 'waiting' }
   | { kind: 'live'; reading: VariableReading }
   | { kind: 'paused'; reading: VariableReading }
-  | { kind: 'stale'; reading: VariableReading; why: 'connection' | 'reconnecting' | 'peer' }
+  | {
+      kind: 'stale';
+      reading: VariableReading;
+      why: 'connection' | 'reconnecting' | 'peer' | 'reading';
+    }
   | { kind: 'ended'; reading: VariableReading };
 
 /** valueCondition に渡すもの。 */
@@ -37,6 +42,10 @@ export interface ConditionInput {
   connected: boolean;
   /** その ECU が Control Server とつながっているか。 */
   peerConnected: boolean;
+  /**
+   * 値の読み取りが失敗し続けている（状態は ready のまま、要約の reason に理由がある）。届いている値は最後に読めたもの。
+   */
+  readFailing?: boolean;
 }
 
 /** 部品が出す値の状態を決める。 */
@@ -57,6 +66,7 @@ export function valueCondition(input: ConditionInput): ValueCondition {
   if (status === 'ended') return { kind: 'ended', reading };
   if (status !== 'ready') return { kind: 'stale', reading, why: 'reconnecting' };
   if (!input.peerConnected) return { kind: 'stale', reading, why: 'peer' };
+  if (input.readFailing) return { kind: 'stale', reading, why: 'reading' };
   return reading.paused ? { kind: 'paused', reading } : { kind: 'live', reading };
 }
 

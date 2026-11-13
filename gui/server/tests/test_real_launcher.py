@@ -53,16 +53,18 @@ class Run:
 
 def launch(argv: list[str], cwd: Path, *, env: dict | None = None, stop_on: str | None = None, stops: int = 1,
            stop_after_s: float = 0.0, close_stdin: bool = False, kill_on_running: str | None = None,
-           pause_reading_s: float = 0.0, script: tuple = ()) -> Run:
+           pause_reading_s: float = 0.0, script: tuple = (), start_manual: bool = False) -> Run:
     """Runs a launcher with --events and --stdin-commands and reads its events to the result. stop_on: the phase
     on which `stops` stop commands are written (stop_after_s later); close_stdin: standard input is closed at
     once; kill_on_running: the participant killed (SIGKILL) half a second after the phase running;
     pause_reading_s: how long the reading stops when the phase running comes (a slow reader); script: (condition
-    on an event, lines) in order: the lines are written when an event after the one before meets the condition."""
+    on an event, lines) in order: the lines are written when an event after the one before meets the condition;
+    start_manual: a participant the user starts (state manual) is started with its command, as a user would."""
     script = list(script)
     proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env={**os.environ, **(env or {})}, start_new_session=True)
     run = Run([], -1, "")
+    by_hand: list[subprocess.Popen] = []
     err: list[bytes] = []
     threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True).start()
     timer = threading.Timer(RUN_TIMEOUT_S, lambda: os.killpg(proc.pid, signal.SIGKILL))
@@ -75,6 +77,10 @@ def launch(argv: list[str], cwd: Path, *, env: dict | None = None, stop_on: str 
             run.events.append(event)
             if event["event"] == "participant" and event.get("state") == "started":
                 run.pids[event["name"]] = event["pid"]
+            if start_manual and event["event"] == "participant" and event.get("state") == "manual":
+                by_hand.append(subprocess.Popen(event["command"], cwd=event["working_directory"],
+                                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                                stderr=subprocess.DEVNULL, start_new_session=True))
             if event["event"] == "phase" and event["phase"] == "running":
                 if kill_on_running:
                     pid = run.pids[kill_on_running]
@@ -98,6 +104,12 @@ def launch(argv: list[str], cwd: Path, *, env: dict | None = None, stop_on: str 
         if proc.poll() is None:
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
+        for started in by_hand:  # they end with the simulation; one that does not is ended here
+            try:
+                started.wait(RUN_TIMEOUT_S / 4)
+            except subprocess.TimeoutExpired:
+                os.killpg(started.pid, signal.SIGKILL)
+                started.wait()
     time.sleep(0.05)
     run.stderr = b"".join(err).decode("utf-8", "replace")
     return run
@@ -262,6 +274,11 @@ SCENARIOS = {
     )}, None, {}),
     "scenario": (["--scenario", "scenarios/throttle_step.yaml", "simulation.yaml"], {}, None, {}),
     "scenario-fails": (["--scenario", "scenarios/fails.yaml", "simulation.yaml"], {}, None, {}),
+    # A participant the user starts: started by hand when the launcher says so (the fake's manual-join), or never
+    # and the run stopped while it waits
+    "manual-join": (["--manual", "Dashboard", "simulation.yaml"], {}, "manual-join", {"start_manual": True}),
+    "manual-stop": (["--manual", "Dashboard", "simulation.yaml"], {"stop_on": "waiting", "stop_after_s": 0.5},
+                    None, {}),
 }
 
 
@@ -365,7 +382,9 @@ def test_version_and_check_json(tmp_path: Path) -> None:
     for args in (["simulation.yaml"], ["--disable", "Dashboard", "simulation.yaml"], ["missing.yaml"],
                  ["--disable", "Nobody", "simulation.yaml"], ["--bogus", "simulation.yaml"],
                  ["--scenario", "scenarios/throttle_step.yaml", "simulation.yaml"],
-                 ["--scenario", "scenarios/missing.yaml", "simulation.yaml"]):
+                 ["--scenario", "scenarios/missing.yaml", "simulation.yaml"],
+                 ["--manual", "Dashboard", "simulation.yaml"], ["--manual", "Nobody", "simulation.yaml"],
+                 ["--manual", "Dashboard", "--disable", "Dashboard", "simulation.yaml"]):
         real_code, real_check = output([LAUNCHER, "check", "--json", *args])
         fake_code, fake_check = output([sys.executable, str(FAKE), "check", "--json", *args])
         assert fake_code == real_code, args

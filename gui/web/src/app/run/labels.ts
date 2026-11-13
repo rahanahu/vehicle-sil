@@ -49,6 +49,7 @@ export const checkStatusLabel = (status: CheckStatus): string => label(CHECK_STA
 const PARTICIPANT_STATES: Record<string, string> = {
   disabled: $localize`外した`,
   started: $localize`起動した`,
+  manual: $localize`自分で起動する: 参加を待っています`,
   joined: $localize`参加した`,
   ended: $localize`終了した`,
   stop_requested: $localize`停止を求めた`,
