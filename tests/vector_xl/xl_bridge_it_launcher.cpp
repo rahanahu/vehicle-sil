@@ -14,6 +14,9 @@
 //   bad-channel               a channel number that does not exist: exit 3 with the available list.
 //   bad-usage                 an invalid --xl-target: exit 4.
 //   no-driver                 the XL driver cannot be opened: exit 3.
+//   device-lost               the XL device disappears while the bridge runs (fake: 1.5 s after the
+//                             driver was opened): the bridge reports it and exits 1 on its own,
+//                             with its statistics.
 #include "launcher_support.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
@@ -191,6 +194,21 @@ int run_single(const Options& options, const std::vector<std::string>& args, int
     return ok ? 0 : 1;
 }
 
+int run_device_lost(const Options& options)
+{
+    const ScopedEnv lose("VEHICLE_SIL_FAKE_XL_LOSE_DEVICE_AFTER_MS", "1500");
+    RegistryProcess registry(options.registry, options.workDir);
+    log("registry listening on " + registry.uri());
+    return run_single(options,
+                      {"--registry-uri", registry.uri(), "--participant", "VectorXlBridge", "--network", "XL_IT_CAN",
+                       "--xl-target", "physical", "--xl-channel", "1"},
+                      cli::kExitFailed,
+                      {"FAIL: XL channel 'Test CAN Device Channel 1' stopped working (device removed?): "
+                       "xlCanRequestChipState failed: device lost (fake)",
+                       "stats silkit_to_xl=", "stopped"},
+                      {});
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -236,6 +254,10 @@ int main(int argc, char** argv)
         {
             const ScopedEnv fail("VEHICLE_SIL_FAKE_XL_FAIL_OPEN", "1");
             result = run_single(options, {"--list-channels"}, cli::kExitSetupFailed, {"cannot open the Vector XL driver"}, {});
+        }
+        else if (options.scenario == "device-lost")
+        {
+            result = run_device_lost(options);
         }
         else
         {
