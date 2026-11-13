@@ -144,6 +144,9 @@ struct RunTiming
     std::optional<std::int64_t> step_delay_ns{};
     /// The time_step_ms with which step_delay_ns is 0.
     std::int64_t fine_step_ms = 0;
+    /// The check found coarse-time-step already (the file has speed and time_step_ms, and the run
+    /// keeps that speed): assess_run() does not report it again.
+    bool coarse_step_checked = false;
     std::int64_t late_tolerance_ms = 0;
     /// The virtual time the simulation reached (the controller's last step).
     std::int64_t sim_ms = 0;
@@ -195,6 +198,10 @@ struct RunOutcome
     /// timed_out: --timeout-ms passed while the run stood still before the first step (the hold of
     /// --start-paused with a control server); the simulation was aborted right after it started.
     bool timed_out_while_holding = false;
+    /// With --timeout-ms: how long the run stood still before its first step (the hold of
+    /// --start-paused with a control server) until a command let it go on, if it did; --timeout-ms
+    /// counts from the beginning of the hold.
+    std::optional<std::int64_t> held_before_start_ms{};
     /// What the launcher's end of the control agents dropped in the run (HubTransportStats):
     /// hellos it did not take, messages it could not decode, and messages that fit no agent it
     /// knows or no schema.
@@ -313,6 +320,11 @@ public:
     /// from 0). A "stop" (a control server's) is only decided and written here (refused once
     /// detached); the caller asks the run to stop.
     Command apply(const Command& command, std::string_view source);
+    /// As apply(command, source), and if the command is accepted, `accepted` is called before
+    /// apply() returns, under this object's mutex (short, must not wait): before any later
+    /// command and before detach(). A control server's stop asks the run to stop there, so that
+    /// a stop that is accepted reaches the run before the simulation is over.
+    Command apply(const Command& command, std::string_view source, const std::function<void()>& accepted);
 
     /// The run's part. attach(): from now on the commands go to `controller` (its time gate,
     /// made with `step_ms`); first it is given the speed (`speed`, or the last speed command) and
@@ -463,6 +475,12 @@ namespace detail {
 ///   or the divisor is no whole number of milliseconds.
 [[nodiscard]] RunTiming plan_time_step(const SimulationConfig& config, const CheckReport& check,
                                        const std::optional<double>& speed, bool fine = false);
+
+/// The warning coarse-time-step for `timing` (plan_time_step() with speed set as the run has it),
+/// if it applies: a speed counts (timing.speed, or steps were paced) and an ECU step starts
+/// between two controller steps. assess_run() reports it after a run; check_file() before one, if
+/// the file has speed and time_step_ms.
+[[nodiscard]] std::optional<Finding> coarse_time_step(const RunTiming& timing);
 
 /// How a wait of the launcher ended.
 enum class Waited

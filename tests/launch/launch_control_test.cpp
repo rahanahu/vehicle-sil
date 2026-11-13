@@ -190,6 +190,33 @@ void failing_start(const fs::path& ecu, const fs::path& dir)
     require(report.run->participants.at(0).exit.has_value(), "Engine's process was ended and waited for" + shown);
 }
 
+/// The same, with a stop request that comes while what is to be done before the start runs: it
+/// came during the run, so it does not cut short the wait for the participants to end.
+void failing_start_with_a_stop(const fs::path& ecu, const fs::path& dir)
+{
+    std::ofstream(dir / "sim.yaml", std::ios::binary)
+        << "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: Engine\n    command: [" +
+               yaml_quote(process::shown_path(ecu)) + "]\n";
+    std::ofstream(dir / "Engine.behaviour") << "variables\n";
+    control::Hub hub;
+    std::atomic<int> interrupts{0};
+    launch::RunOptions options;
+    options.hub = &hub;
+    options.interrupts = &interrupts;
+    options.interrupt_name = [] { return std::string("control server stop"); };
+    options.before_start = [&interrupts](control::Hub&) {
+        interrupts = 1;
+        throw std::runtime_error("the scenario could not be set up");
+    };
+    std::string lines;
+    options.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };
+    const launch::RunReport report = launch::run_file(dir / "sim.yaml", "sim.yaml", options);
+    const std::string shown = "\n--- result ---\n" + launch::format_run_text(report) + "--- lines ---\n" + lines;
+    require(report.run.has_value() && !report.run->interrupted_while_ending &&
+                lines.find("no more waiting for the participants to end") == std::string::npos,
+            "the stop before the end of the run did not cut short the wait for the participants" + shown);
+}
+
 /// An ECU that offers its variables (--describe) and whose agent says hello but never answers
 /// the launcher's probe, and something on the control topics that is no message: the start waits
 /// in vain and says which of the two it was, and the run says what it dropped.
@@ -262,6 +289,9 @@ struct HoldRun
     std::string lines;
     bool held = false;
     std::chrono::steady_clock::duration took{};
+    /// A control server's stop, tried when the launcher began to ask the participants to stop:
+    /// whether it was accepted (empty: not tried).
+    std::optional<bool> stop_while_ending{};
 };
 
 HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& dir, bool stuck, bool start_paused,
@@ -298,6 +328,14 @@ HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& di
                 {SilKit::Services::Orchestration::OperationMode::Coordinated});
             lifecycle->SetCommunicationReadyHandlerAsync([] {}); // never completed
             static_cast<void>(lifecycle->StartLifecycle());
+        }
+        if ((line.find("] asking ") != std::string_view::npos || line.find("] cannot ask ") != std::string_view::npos) &&
+            !out.stop_while_ending)
+        {
+            launch::Command stop;
+            stop.name = "stop";
+            stop.accepted = true;
+            out.stop_while_ending = commands.apply(stop, "control_server").accepted;
         }
         if (line.find("standing still before the first step") != std::string_view::npos && !out.held)
         {
@@ -343,6 +381,10 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
                     run.report.run->start_error.find("after the run stopped standing still") == std::string::npos,
                 "the start ended at its limit and named who was not ready" + shown(run));
         require(run.took < 60s, "the run took too long" + shown(run));
+        // The run is over once the start has failed: a stop while it ends the participants is
+        // refused (it would cut short their end).
+        require(run.stop_while_ending == std::optional<bool>(false),
+                "a stop while the participants end after a failed start is refused" + shown(run));
     }
     {
         // With the hold: it stands still longer than start_timeout_ms (2000 ms), then the start
@@ -433,6 +475,8 @@ int main(int argc, char** argv)
         }
         failing_start(ecu, dir);
         std::printf("failing start ok\n");
+        failing_start_with_a_stop(ecu, dir);
+        std::printf("failing start with a stop ok\n");
         hello_without_an_answer(ecu, dir);
         std::printf("hello without an answer ok\n");
         const fs::path helper = process::path_from_utf8(argv[3]);

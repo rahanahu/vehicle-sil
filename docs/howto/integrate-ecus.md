@@ -177,7 +177,7 @@ time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced 
 - `<late_steps> of 200 paced steps more than 10 ms late` は、速さを合わせた刻みのうち、許容（`late_tolerance_ms`、既定 10 ms）を超えて遅れた数です。1 つでもあると警告 `behind-real-time` が出ます。
 - `ms behind in all` は、遅れて後ろにずれた合計です。シミュレーションは遅れを取り戻そうとしません。
 - 遅れたときは、速さを下げるか、遅い ECU を探します。ランチャーはどの ECU が遅いかを知らないので、ECU を 1 つずつ外して（`--disable`）比べます。
-- `time_step_ms` を書いたときと、最速で始めて途中で速さを変えたときに、ECU のステップが controller の刻みの境目で始まらないと、警告 `coarse-time-step` が出ます。文言にある値を `time_step_ms` に書きます。
+- `time_step_ms` を書いたときと、最速で始めて途中で速さを変えたときに、ECU のステップが controller の刻みの境目で始まらないと、警告 `coarse-time-step` が出ます。ファイルに `speed` と `time_step_ms` の両方があれば、`check` の時点で出ます。文言にある値を `time_step_ms` に書きます。
 - 遅れの定義、許容の決め方、刻みと ECU のステップの関係は [simulation-config.md](../simulation-config.md) の「等速で動かす」にあります。
 
 ## 次に読むもの

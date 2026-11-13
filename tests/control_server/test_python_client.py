@@ -321,6 +321,10 @@ class SecureServerTest(unittest.TestCase):
             peers = c.peers()
             self.assertEqual([(p.participant, p.connected, p.has_agent) for p in peers], [("Engine", True, True)])
             self.assertIn("engine.throttle", [v.name for v in peers[0].schema])
+            # An ECU of ecu_main runs on the simulation's time; vehicle-sil's variables are marked.
+            self.assertTrue(peers[0].virtual_time)
+            builtin = {v.name: v.builtin for v in peers[0].schema}
+            self.assertEqual((builtin.get("ecu.connected"), builtin["engine.throttle"]), (True, False))
             with self.assertRaises(ControlError) as e:
                 c.write({"X": {"y": 1}})
             self.assertEqual(e.exception.code, grpc.StatusCode.PERMISSION_DENIED)

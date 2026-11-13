@@ -419,6 +419,7 @@ ConnectionId Hub::agent_connected(PeerHello hello, std::shared_ptr<AgentLink> li
     entry.info.incarnation = std::move(hello.incarnation);
     entry.info.schema = std::move(hello.schema);
     entry.info.connected = true;
+    entry.info.virtual_time = hello.virtual_time;
     entry.connection = id;
     entry.max_pending = hello.max_pending;
     announce_peer(entry);
@@ -698,7 +699,7 @@ std::vector<LatestValues> Hub::latest_of(const std::vector<std::string>& peers) 
         out.reserve(peers_.size());
         for (const auto& [name, entry] : peers_)
         {
-            out.push_back(LatestValues{name, entry.info.incarnation, entry.latest});
+            out.push_back(LatestValues{name, entry.info.incarnation, entry.latest, entry.info.virtual_time});
         }
         return out;
     }
@@ -709,6 +710,7 @@ std::vector<LatestValues> Hub::latest_of(const std::vector<std::string>& peers) 
         {
             values.incarnation = it->second.info.incarnation;
             values.snapshot = it->second.latest;
+            values.virtual_time = it->second.info.virtual_time;
         }
     }
     return out;
@@ -717,7 +719,7 @@ std::vector<LatestValues> Hub::latest_of(const std::vector<std::string>& peers) 
 bool none_after(const std::vector<LatestValues>& values, SimTime now) noexcept
 {
     return std::none_of(values.begin(), values.end(),
-                        [&](const LatestValues& v) { return v.snapshot != nullptr && v.snapshot->time > now; });
+                        [&](const LatestValues& v) { return v.virtual_time && v.snapshot != nullptr && v.snapshot->time > now; });
 }
 
 bool Hub::forget_peer(const std::string& peer)

@@ -32,14 +32,14 @@ TimeGate::Wall::time_point TimeGate::wall_of(SimTime t) const
     return base_->wall + std::chrono::duration_cast<Wall::duration>(simElapsed / *state_.speed);
 }
 
-void TimeGate::count(Wall::duration lateness)
+void TimeGate::count(TimeState& s, Wall::duration lateness) const
 {
-    ++state_.paced_steps;
-    state_.max_lateness = std::max(state_.max_lateness, nanos(lateness));
+    ++s.paced_steps;
+    s.max_lateness = std::max(s.max_lateness, nanos(lateness));
     if (lateness > late_tolerance_)
     {
-        ++state_.late_steps;
-        state_.slipped += nanos(lateness);
+        ++s.late_steps;
+        s.slipped += nanos(lateness);
     }
 }
 
@@ -61,12 +61,17 @@ bool TimeGate::begin_step(SimTime now, SimDuration step, Wall::time_point wall)
     if (state_.speed && base_)
     {
         const auto lateness = std::max(Wall::duration::zero(), wall - wall_of(now));
-        count(lateness);
+        count(state_, lateness);
         if (lateness > late_tolerance_)
         {
             base_ = Base{now, wall}; // slip: no catching up
         }
     }
+    else if (unbegun_lateness_)
+    {
+        count(state_, *unbegun_lateness_);
+    }
+    unbegun_lateness_.reset();
     // The guard holds the step whatever else does: it is let go only when the guard has moved on.
     guarded_ = guard_ && now >= *guard_;
     guard_overran_ = false;
@@ -283,10 +288,10 @@ void TimeGate::set_speed(std::optional<double> speed, Wall::time_point wall)
         else
         {
             // As fast as possible: nothing is measured from here on, so what the next step is
-            // late by now is counted now.
+            // late by now is what it is late by when it begins (state() counts it until then).
             if (wall > due)
             {
-                count(wall - due);
+                unbegun_lateness_ = wall - due;
             }
             state_.speed = speed;
             base_.reset();
@@ -300,7 +305,10 @@ void TimeGate::set_speed(std::optional<double> speed, Wall::time_point wall)
         // is no base: the first step takes it (else the time until the start would be lateness).
         if (stepped_)
         {
-            base_ = Base{state_.now + held_step_, wall};
+            // A step late from before as fast as possible stays as late as it was then, and is
+            // counted once, when it begins.
+            base_ = Base{state_.now + held_step_, wall - unbegun_lateness_.value_or(Wall::duration::zero())};
+            unbegun_lateness_.reset();
         }
         else
         {
@@ -340,18 +348,16 @@ TimeState TimeGate::state(Wall::time_point wall) const
         {
             overdue = true;
             out.current_lateness = nanos(lateness);
-            ++out.paced_steps;
-            out.max_lateness = std::max(out.max_lateness, out.current_lateness);
-            if (lateness > late_tolerance_)
-            {
-                ++out.late_steps;
-                out.slipped += out.current_lateness;
-            }
+            count(out, lateness);
         }
     }
     else if (!state_.speed)
     {
         overdue = !held_; // as fast as possible, the next step is due at once
+        if (unbegun_lateness_)
+        {
+            count(out, *unbegun_lateness_);
+        }
     }
     if (overdue)
     {

@@ -61,6 +61,11 @@ namespace vehicle_sil {
 ///   failed participant) keeps it. The numbers stop changing when a stop is requested or the
 ///   controller's lifecycle leaves Running. Time stood still (paused) is not counted: resume takes
 ///   a new base.
+/// - As fast as possible (speed max): nothing is late, every step is due at once. A step that is
+///   overdue when the speed becomes max keeps the lateness it has then and is counted with it
+///   when it begins (once); the wall-clock time at max is not lateness. If a speed is set again
+///   before it begins, its deadline is the time of that change minus the lateness it kept (this
+///   is the one change of speed that moves a deadline: from none to one).
 /// - Granularity: the gate aligns the starts of the controller's steps only. A participant's
 ///   step that starts between two of them at T runs when the gate lets the controller step before
 ///   it go, which is the deadline of the first controller step at or after T: up to

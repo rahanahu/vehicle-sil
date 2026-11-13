@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string_view>
 
 namespace vehicle_sil::control_grpc::detail {
 
@@ -69,9 +70,19 @@ static_assert(static_cast<int>(ValueType::Enum) + 1 == v1::VALUE_TYPE_ENUM);
 static_assert(static_cast<int>(Causality::Parameter) + 1 == v1::CAUSALITY_PARAMETER);
 static_assert(static_cast<int>(EventLevel::Error) + 1 == v1::EVENT_LEVEL_ERROR);
 
+/// A variable that vehicle-sil gives an ECU, not one its application declared: its name starts
+/// with "ecu." (every ECU's, such as "ecu.connected"), "peer." (a Peer's monitoring outputs) or
+/// "j1939." (a Peer's monitoring outputs of its J1939 networks). The one place that decides
+/// VariableInfo.builtin.
+inline bool builtin_variable(std::string_view name) noexcept
+{
+    return name.starts_with("ecu.") || name.starts_with("peer.") || name.starts_with("j1939.");
+}
+
 inline void to_proto(const VariableInfo& in, v1::VariableInfo& out)
 {
     out.set_name(in.name);
+    out.set_builtin(builtin_variable(in.name));
     out.set_type(static_cast<v1::ValueType>(static_cast<int>(in.type) + 1));
     out.set_causality(static_cast<v1::Causality>(static_cast<int>(in.causality) + 1));
     out.set_unit(in.unit);
@@ -131,6 +142,7 @@ inline void to_proto(const PeerInfo& in, v1::PeerInfo& out)
     }
     out.mutable_status()->set_failed(in.status.failed);
     out.mutable_status()->set_error(in.status.error);
+    out.set_virtual_time(in.virtual_time);
 }
 
 inline void to_proto(const OperationRequest& in, v1::WriteRequest& out)

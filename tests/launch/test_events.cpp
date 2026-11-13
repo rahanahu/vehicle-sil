@@ -1147,3 +1147,29 @@ TEST_CASE(version_names_the_formats_and_the_features)
     const std::string with = format_version_json({kControlServerFeature});
     CHECK(with.find("    \"scenario\",\n    \"control-server\"\n  ]") != std::string::npos);
 }
+
+TEST_CASE(an_accepted_stop_is_asked_for_before_the_detach_and_a_refused_one_not_at_all)
+{
+    TimeCommands commands(false);
+    Command stop;
+    stop.name = "stop";
+    stop.accepted = true;
+    std::atomic<bool> detached{false};
+    std::thread detacher;
+    int asked = 0;
+    // The run detaches the commands while the stop is being asked for: it waits until it is.
+    const Command done = commands.apply(stop, "control_server", [&] {
+        ++asked;
+        detacher = std::thread([&] {
+            commands.detach();
+            detached = true;
+        });
+        std::this_thread::sleep_for(50ms);
+        CHECK(!detached.load());
+    });
+    detacher.join();
+    CHECK(done.accepted && asked == 1 && detached.load());
+    // Once detached, a stop is refused and not asked for.
+    const Command late = commands.apply(stop, "control_server", [&] { ++asked; });
+    CHECK(!late.accepted && asked == 1);
+}

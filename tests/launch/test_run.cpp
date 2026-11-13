@@ -1124,6 +1124,14 @@ TEST_CASE(a_run_that_ends_before_stop_at_ms_gets_a_note_and_a_timeout_is_an_erro
     CHECK(timed.result() == RunResult::Failed);
     CHECK(format_run_text(timed).find("\nrun: the simulation was aborted: it did not end within --timeout-ms (5000 ms)\n") !=
           std::string::npos);
+    // It stood still before its first step for a while: --timeout-ms counted that too.
+    t.held_before_start_ms = 4200;
+    check_text(lines(assess_run(t)), "E 0 timeout: the simulation did not end within 5000 ms of wall-clock time "
+                                     "(--timeout-ms), so the launcher aborted it: a participant may hang in a step (the "
+                                     "lines above show what the participants wrote); if it is only slow, raise "
+                                     "--timeout-ms. Those 5000 ms count from when the run began to stand still before its "
+                                     "first step (--start-paused with a control server), and 4200 ms of them passed "
+                                     "before a client let it go on: allow for that time in --timeout-ms\n");
 }
 
 TEST_CASE(an_interrupt_while_the_launcher_waits_for_the_end_is_no_did_not_end)

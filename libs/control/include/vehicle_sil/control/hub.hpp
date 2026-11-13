@@ -56,6 +56,9 @@ struct PeerHello
     /// connection; every other command of this incarnation that is not final becomes Unknown. Empty: the transport does not know (nothing
     /// is settled; a result that never comes leaves its command open).
     std::optional<std::vector<std::uint64_t>> open_seqs{};
+    /// The agent's steps run on the simulation's time (false: in real time; its samples carry
+    /// another clock, see none_after()).
+    bool virtual_time = true;
 };
 
 /// What the transport learns about a peer outside its steps (Peer::failed(), Peer::error()).
@@ -72,6 +75,7 @@ struct PeerInfo
     bool connected = false;
     std::vector<VariableInfo> schema;
     PeerStatus status;
+    bool virtual_time = true; ///< PeerHello::virtual_time of its incarnation
 };
 
 /// One write of a client: a variable of a peer.
@@ -156,11 +160,13 @@ struct LatestValues
     std::string participant;
     std::string incarnation;                  ///< of the sample's schema; "" if the hub has no such peer
     std::shared_ptr<const Snapshot> snapshot; ///< nullptr: no sample since the incarnation connected (or no such peer)
+    bool virtual_time = true;                 ///< PeerInfo::virtual_time (true if the hub has no such peer)
 };
 
-/// Whether no sample in `values` is of a step that started after `now`. With a time state read
-/// before the values that stood still at `now`, the values are then those of that moment (see
-/// Hub::latest_of()).
+/// Whether no sample in `values` of a peer on the simulation's time (LatestValues::virtual_time)
+/// is of a step that started after `now`. With a time state read before the values that stood
+/// still at `now`, their values are then those of that moment (see Hub::latest_of()); a peer in
+/// real time is not looked at (its samples carry another clock).
 [[nodiscard]] bool none_after(const std::vector<LatestValues>& values, SimTime now) noexcept;
 
 struct SubscriptionOptions

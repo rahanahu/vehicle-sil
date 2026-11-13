@@ -59,6 +59,8 @@ class Variable:
     step: Optional[float] = None
     description: str = ""
     items: Mapping[str, int] = dataclasses.field(default_factory=dict)
+    # vehicle-sil gives it to the ECU ("ecu.", "peer.", "j1939."), the application did not declare it
+    builtin: bool = False
 
     @property
     def writable(self) -> bool:
@@ -75,6 +77,9 @@ class Peer:
     error: str = ""
     has_agent: bool = False  # an agent has connected for it (else it is known from SIL Kit only)
     simulation_state: str = ""  # the SIL Kit lifecycle state the server sees ("" if unknown)
+    # its agent runs on the simulation's time (false: in real time, or no agent; always false from an
+    # earlier server without the field); Snapshot.consistent looks only at these peers
+    virtual_time: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -135,14 +140,15 @@ class Snapshot:
 
     For the peers that run on the simulation's time, when `time.available`: the values are never
     older than the time (every step that started before `time.now` is in them; they may be newer).
-    With `consistent`, the time stood still at `time.now` and no value is of a step after it: the
-    values are those of that moment. A step that starts exactly at `time.now` may or may not be in
+    With `consistent`, the time stood still at `time.now` and no value of such a peer is of a step
+    after it: their values are those of that moment. A step that starts exactly at `time.now` may or may not be in
     them yet (see `Values.time`).
 
     This holds as long as every ECU publishes its samples from within its step (an ECU of ecu_main
     does; otherwise the launcher warns with control-link-late-values). "Every step" means the latest
     sample taken before that time: an agent samples every sample period. Nothing is promised for a
-    peer that does not run on the simulation's time, and the API does not say which peers those are.
+    peer that does not run on the simulation's time (`Peer.virtual_time` false in `peers()`), and
+    `consistent` does not look at its values.
     The values of a peer that is no longer connected stay in the snapshot (see `peers()`)."""
     time: TimeState
     values: Dict[str, Values]  # peer -> its latest sample; a peer without a sample (or an agent) is not in it
@@ -175,12 +181,13 @@ def _variable(v) -> Variable:
         step=v.step if v.HasField("step") else None,
         description=v.description,
         items={i.name: i.value for i in v.items},
+        builtin=v.builtin,
     )
 
 
 def _peer(p) -> Peer:
     return Peer(p.participant, p.incarnation, p.connected, [_variable(v) for v in p.schema], p.status.failed,
-                p.status.error, p.has_agent, p.simulation_state)
+                p.status.error, p.has_agent, p.simulation_state, p.virtual_time)
 
 
 def _value(v) -> Number:
