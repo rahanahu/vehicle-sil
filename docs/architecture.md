@@ -41,7 +41,7 @@ vehicle-sil/
 ├── examples/j1939/   部品で作った 2 つの ECU（ecu_pair。Simulation で動かし、試験も同じコードを使う）と、最小ピア（実時間の Peer で送る sender と、SIL Kit の CAN で直接受けて照合する receiver）
 ├── examples/virtual_time/ 仮想時間のピア（Peer の上の物理モデル、tick() 型の既存 ECU を載せた J1939 ECU、LIN Master と Slave）
 ├── examples/lin/     LIN クラスタのピア（Master と、役割の違う Slave。フレームの送受信と Sleep/Wakeup）
-├── examples/launch_control/ ランチャーの Control Server に Python からつなぐ例（write_before_start.py）
+├── examples/launch_control/ ランチャーの Control Server に Python からつなぐ例（write_before_start.py、pause_and_step.py）
 ├── examples/fetchcontent_consumer/   外部プロジェクトからの利用例
 ├── tests/            ユニットテスト、統合テスト、FetchContent テスト、XL ドライバのフェイク（tests/vector_xl/fake_xl）
 ├── external/         SIL Kit（サブモジュール）

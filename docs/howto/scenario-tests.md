@@ -100,9 +100,34 @@ vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_step.yaml
 ```
 
 - 構成ファイルと一緒にシナリオを照合します。シミュレーションは始めません。
-- 見つけるのは、ファイルの形、キーの誤り、ない participant や変数、出力への書き込み、型や範囲に合わない値、時刻の誤りです。所見は、シナリオのファイル名と行を付けて、構成ファイルの所見と一緒に出ます。
 - `run --scenario` も最初に同じ照合をし、誤りがあれば何も起動しません。
-- 所見の `code` の一覧は [scenario.md](../scenario.md) の「照合」です。
+
+誤りを 5 つ入れたシナリオ（[scenario.md](../scenario.md) の「照合」の `throttle_mistakes.yaml`。変数の名前の打ち間違い、出力への書き込み、範囲の外の値、待つ手順の後ろの `at_ms`、`tolerance` のない `near`）を照合した出力です。
+
+<!-- vehicle_sil_launch check simulation.yaml --scenario throttle_mistakes.yaml -->
+```text
+simulation.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+scenario throttle_mistakes.yaml (throttle mistakes): 5 steps
+
+error: throttle_mistakes.yaml:5: 'Engine.engine.throttel': participant 'Engine' has no variable 'engine.throttel': did you mean 'Engine.engine.throttle'? (vehicle_sil_launch check --json lists the variables)
+error: throttle_mistakes.yaml:6: Engine.engine.speed is an output of its ECU: it can be read (expect, wait_until), not written; write one of the ECU's inputs instead
+error: throttle_mistakes.yaml:7: the value of Engine.engine.throttle (real) is 150, outside its range (from 0 to 100 %)
+error: throttle_mistakes.yaml:10: at_ms after a step that waits (line 8): when that step ends is not known before the run; give this step after_ms (from the end of the step before it) instead
+error: throttle_mistakes.yaml:11: Engine.engine.speed: near needs tolerance (how far from the value it may be): add tolerance: <number>
+
+failed: 5 errors, 0 warnings, 0 notes
+```
+
+- 所見は 1 行に 1 つで、`<シナリオのファイル>:<行>:` で始まり、何が違うかと直し方を言います。誤りは最初の 1 つで止めずに全部挙げます。終了コードは 1 です。
+- 構成ファイルの所見も同じ形で一緒に出ます。所見の `code` の一覧は [scenario.md](../scenario.md) の「照合」です。
 
 ## 回す（`run --scenario`）
 
@@ -151,7 +176,42 @@ passed: 0 errors, 0 warnings, 0 notes
 ## 結果を読む
 
 - 終了コードは、全部通れば 0、手順が 1 つでも失敗すれば 1 です（ほかの誤りも 1。中断は 130。表は [simulation-config.md](../simulation-config.md) の「引数と終了コード」）。
-- 失敗すると、誤りの所見が、シナリオのファイルと行、手順、時刻、そのときの値を言います。形の例は [scenario.md](../scenario.md) の「結果」です。始まっていた手順は `unfinished`、その後ろは `not_run` です。
+
+失敗するシナリオ（[scenario.md](../scenario.md) の「結果」の `throttle_response.yaml`。スロットルを踏んでから 200 ms のうちに回転数が 1700 rpm に届くことを確かめるが、届くのは 330 ms）を回した標準出力です。
+
+<!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml -->
+```text
+simulation.yaml: 2 participants, 1 network
+
+participant  step   networks
+Engine       10 ms  J1939_CAN (j1939 0x00)
+Dashboard    5 ms   J1939_CAN (j1939 0x28)
+
+network    kind  participants
+J1939_CAN  can   Engine, Dashboard
+
+scenario throttle_response.yaml (throttle response): 3 steps
+
+run: the simulation ran until the scenario was over (205 ms) and ended
+
+scenario throttle_response.yaml (throttle response): FAILED, 1 of 3 steps passed
+
+line  step                                                             result   at
+4     set Engine.engine.throttle = 50                                  ok       0 ms
+6     expect Engine.engine.speed ge 1700 (within 200 ms)               FAILED   200 ms
+8     expect Dashboard.dashboard.engine_speed ge 1700 (within 200 ms)  not run  -
+
+participant  required  ended
+Engine       yes       exit code 0
+Dashboard    yes       exit code 0
+
+error: throttle_response.yaml:6: expect Engine.engine.speed ge 1700 (within 200 ms): not true at any time within 200 ms (from 0 ms to 200 ms): at the end Engine.engine.speed ge 1700, but it was 1050 (its sample of 200 ms)
+
+failed: 1 error, 0 warnings, 0 notes
+```
+
+- 誤りの所見が、シナリオのファイルと行、手順、決めた時刻、そのときの値（どのサンプルの値か）を言います。この例では、待つ時間を延ばすか（`within_ms: 400`）、前提の待ちにするなら `wait_until` にします。
+- シミュレーションは、失敗を決めた所で止まります（`run:` の行の 205 ms）。失敗した手順の後ろは回らず、`not_run`（表では `not run`）です。そのとき始まっていた手順は `unfinished` です。
 - participant の失敗、Ctrl+C、`--timeout-ms` は、シナリオより先に効きます。そのときシナリオは `incomplete` で、誤り `scenario-incomplete` がどこまで進んだかを言います。
 - 同じ構成と同じシナリオなら、結果（どの手順が、どの時刻に、どの値で通ったか）はいつも同じです。機械の速さや `--speed` では変わりません。
 
@@ -190,7 +250,57 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/engine_disconnect.ya
 ```
 
 - 合否は終了コードで判定できます（0 が成功、1 が失敗）。
-- `--json` は、結果を 1 つの JSON で標準出力に書きます。最上位の `scenario` に、`status`（`passed`、`failed`、`incomplete`、`not_run`）と、手順ごとの `steps[]`（`line`、`kind`、`status`、`at_ms`、失敗のときの `code` と `message`）があります。キーの一覧は [scenario.md](../scenario.md) の「出力」です。
+- `--json` は、結果を 1 つの JSON で標準出力に書きます。シナリオの結果は最上位の `scenario` です。上の失敗する例を `--json` で回したときの `scenario` の部分を下に写します。`status` は `passed`、`failed`、`incomplete`、`not_run` のどれかです。キーの一覧は [scenario.md](../scenario.md) の「出力」です。
+
+<!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml --json: the scenario -->
+```json
+  "scenario": {
+    "file": "throttle_response.yaml",
+    "name": "throttle response",
+    "status": "failed",
+    "over_at_ms": 205,
+    "steps": [
+      {
+        "index": 1,
+        "line": 4,
+        "kind": "set",
+        "text": "set Engine.engine.throttle = 50",
+        "status": "passed",
+        "start_ms": 0,
+        "at_ms": 0,
+        "end_ms": 0,
+        "code": null,
+        "message": null
+      },
+      {
+        "index": 2,
+        "line": 6,
+        "kind": "expect",
+        "text": "expect Engine.engine.speed ge 1700 (within 200 ms)",
+        "status": "failed",
+        "start_ms": 0,
+        "at_ms": 200,
+        "end_ms": null,
+        "code": "scenario-failed",
+        "message": "not true at any time within 200 ms (from 0 ms to 200 ms): at the end Engine.engine.speed ge 1700, but it was 1050 (its sample of 200 ms)"
+      },
+      {
+        "index": 3,
+        "line": 8,
+        "kind": "expect",
+        "text": "expect Dashboard.dashboard.engine_speed ge 1700 (within 200 ms)",
+        "status": "not_run",
+        "start_ms": null,
+        "at_ms": null,
+        "end_ms": null,
+        "code": null,
+        "message": null
+      }
+    ]
+  }
+```
+
+- CI の道具は、`steps[]` の `status` が `failed` の手順の `line`、`code`、`message` を読めば、どこで何が違ったかを人向けの出力と同じだけ知れます。
 - 経過を 1 行ずつ読む道具は、`--json` の代わりに `--events` を付けます。手順が始まったときと決まったときに、事象 `scenario_step` が出ます。
 - シナリオの判定は仮想時刻だけで決まり、実時間の待ちはありません。ステップの中で止まった ECU がいると、いつまでも終わらないので、CI では `--timeout-ms` で実時間の上限を付けます。
 - ECU ごとの出力を残すときは `--log-dir` を付けます。警告も失敗にするときは `--strict` です。

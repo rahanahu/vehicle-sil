@@ -64,7 +64,9 @@
 //   time_usage   --start-paused without --stdin-commands, a wrong --speed, the options for check, and
 //                wrong time keys in the file
 //   scenario     run --scenario with the example of examples/ecu_main and its output in
-//                docs/scenario.md (text, byte for byte); the scenario in the JSON and in the events
+//                docs/scenario.md (text, byte for byte); the scenario in the JSON and in the events;
+//                the examples of scenario.md with mistakes (check) and that fails (text, the
+//                scenario of the JSON)
 //   scenario_same  one scenario, run as fast as possible, at a speed, with a slow ECU and with a
 //                pause in between: the same result each time; every write takes effect in the step
 //                of its time (the ECU says in which step it saw each value)
@@ -3233,6 +3235,26 @@ void scenario(const Options& o)
     expect_code(checked, 0, "check --scenario");
     require(contains(lf(checked.standard_output), "\nscenario scenarios/throttle_step.yaml (throttle step): 6 steps\n\npassed: 0 errors"),
             checked.standard_output);
+
+    // The examples in scenario.md of a scenario with mistakes and of one that fails: the files are
+    // the blocks there, and so is what the launcher writes.
+    write_file(dir / "throttle_mistakes.yaml", block_after(docs, "<!-- throttle_mistakes.yaml -->"));
+    const Captured mistakes = launch(o, {"check", "simulation.yaml", "--scenario", "throttle_mistakes.yaml"}, dir);
+    expect_code(mistakes, 1, "check --scenario throttle_mistakes.yaml");
+    expect_text(mistakes.standard_output,
+                block_after(docs, "<!-- vehicle_sil_launch check simulation.yaml --scenario throttle_mistakes.yaml -->"),
+                "check simulation.yaml --scenario throttle_mistakes.yaml");
+    write_file(dir / "throttle_response.yaml", block_after(docs, "<!-- throttle_response.yaml -->"));
+    const Captured failed = launch(o, {"run", "simulation.yaml", "--scenario", "throttle_response.yaml"}, dir);
+    expect_code(failed, 1, "run --scenario throttle_response.yaml");
+    expect_text(failed.standard_output,
+                block_after(docs, "<!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml -->"),
+                "run simulation.yaml --scenario throttle_response.yaml");
+    const Captured failed_json = launch(o, {"run", "simulation.yaml", "--scenario", "throttle_response.yaml", "--json"}, dir);
+    expect_code(failed_json, 1, "run --scenario throttle_response.yaml --json");
+    expect_text(scenario_json(lf(failed_json.standard_output)),
+                block_after(docs, "<!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml --json: the scenario -->"),
+                "the scenario of run simulation.yaml --scenario throttle_response.yaml --json");
 }
 
 void scenario_same(const Options& o)
