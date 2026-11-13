@@ -620,7 +620,9 @@ def test_ws_stop_examples(tmp_path: Path) -> None:
                 for n, body in enumerate(stops):
                     await c.post("api/stop", body)
                     if n + 1 < len(stops):
-                        await sock.until(lambda m: m.get("event", {}).get("event") == "time")
+                        # The launcher has taken the stop (its command event) before the next one: on a slow
+                        # machine a time event already on its way could come first.
+                        await sock.until(lambda m: m.get("event", {}).get("event") == "command")
                 await sock.until(is_ended)
                 await sock.close()
                 check_example(f"ws-{scenario}", ws(text, sock.sent, sock.received), gui)

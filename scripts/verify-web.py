@@ -11,8 +11,8 @@ client library bundled into one ESM file, build/gui-client/vehicle-sil-gui-clien
 Angular build tools bring), npm run pack:client (the client library as an npm package,
 build/gui-client/vehicle-sil-gui-client-<version>.tgz, with its types; it is installed and used to check it), npm
 run e2e (the built
-app served by the GUI server of gui/server, which runs the fake launcher), npm run e2e:dev (the dev server with
-its proxy to the GUI server). The full output of each step goes to build/logs/<tag>-<step>.log (tag: web); the
+app served by the GUI server of gui/server, which runs the fake launcher), and, with --e2e-dev, npm run e2e:dev (the same tests through the
+dev server with its proxy to the GUI server). The full output of each step goes to build/logs/<tag>-<step>.log (tag: web); the
 summary shows one line per step and, for a failed step, its first error lines and its log. Stops at the first
 failed step. A stopped run (Ctrl-C, SIGTERM) stops the whole process group of the running step, so no dev
 server or GUI server is left behind.
@@ -300,6 +300,9 @@ def main() -> int:
     )
     parser.add_argument("--skip-install", action="store_true", help="do not run npm ci (use the node_modules there)")
     parser.add_argument("--skip-e2e", action="store_true", help="do not run the Playwright tests")
+    parser.add_argument("--e2e-dev", action="store_true",
+                        help="also run the Playwright tests through the dev server (npm run e2e:dev); "
+                             "they repeat the e2e tests, so by default only the built app is tested")
     parser.add_argument("--tag", default="web", help="prefix of the log names (default: web)")
     parser.add_argument("--json", action="store_true", help='print the summary as JSON ({"vehicle_sil_verify_web": 1, ...})')
     parser.add_argument("--no-wait", action="store_true",
@@ -355,7 +358,9 @@ def main() -> int:
         narrow = (["--grep", args.e2e_grep] if args.e2e_grep else []) + \
             (["--repeat-each", str(args.e2e_repeat)] if args.e2e_repeat > 1 else [])
         extra = ["--", *narrow] if narrow else []
-        steps += [Step("e2e", [npm, "run", "e2e", *extra]), Step("e2e-dev", [npm, "run", "e2e:dev", *extra])]
+        steps += [Step("e2e", [npm, "run", "e2e", *extra])]
+        if args.e2e_dev:
+            steps += [Step("e2e-dev", [npm, "run", "e2e:dev", *extra])]
 
     env = {**os.environ, "CI": "1", "NG_CLI_ANALYTICS": "false", "FORCE_COLOR": "0"}
     env.pop("NO_COLOR", None)  # Playwright warns when NO_COLOR and FORCE_COLOR are both set

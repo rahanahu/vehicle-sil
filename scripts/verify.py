@@ -38,7 +38,8 @@ ERROR_CONTEXT = 3
 # ctest's status line of one test, e.g. "  12/831 Test #823: name ....***Failed  0.00 sec".
 STATUS_LINE = re.compile(r"^\s*(?:\d+/\d+\s+)?Test\s+#\d+:\s+(\S+)\s+\.*\s*(\**)(.*?)\s+[\d.]+\s+sec\s*$")
 START_LINE = re.compile(r"^\s+Start\s+\d+:\s")
-SUMMARY_LINE = re.compile(r"^\d+% tests passed, (\d+) tests? failed out of (\d+)")
+# CTest 4.4 and later leave out ", 0 tests failed" when none failed ("100% tests passed out of 12").
+SUMMARY_LINE = re.compile(r"^\d+% tests passed(?:, (\d+) tests? failed)? out of (\d+)")
 LISTED_TEST = re.compile(r"^\s*\d+ - (\S+) \(([^)]*)\)")
 BUILD_ERROR = re.compile(r"(^|[\s:])(fatal )?error:|undefined reference|ld returned|^CMake Error|^FAILED: ", re.IGNORECASE)
 
