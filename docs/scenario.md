@@ -337,8 +337,25 @@ failed: 5 errors, 0 warnings, 0 notes
 - `run --events`: 手順が始まったとき（`status` は `running`）と決まったときに、事象 `scenario_step`（`steps[]` と同じキー）。結果の事象にも `scenario` があります。
 - `vehicle_sil_launch version --json` の `features` に `scenario` があれば、この機能を使えます。
 
+## 実行中に変数を見る（`--control`）
+
+`--scenario` と `--control` を一緒に付けると、シナリオの実行中も Control Server が立ちます（[control-api.md](control-api.md) の「ランチャーにつなぐ」。Control Server を持つビルドだけ）。クライアントは、見るだけです。
+
+| クライアントの呼び出し | シナリオの実行中 |
+|---|---|
+| 読む、待つ: `Ping`、`ListPeers`、`GetValues`、`GetSnapshot`、`Watch`、`GetTime`、`WaitPaused`、`GetOperation`、`WaitOperation` | いつもどおり |
+| 変数を書く、Peer を消す: `Write`、`ForgetPeer` | 断る |
+| 時刻を動かす: `Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed` | 断る |
+| 止める: `Stop` | 受け付ける。止める要求の 1 つで、シナリオは `incomplete`（`interrupted_by` は `"control server stop"`） |
+
+- 断った呼び出しは `FAILED_PRECONDITION` で、trailing metadata の `vehicle-sil-reason` が `scenario-running` です（Python では `ControlError.reason`）。文言は、何を断ったか、なぜか、何ができるかを言います。役割（[control-api.md](control-api.md) の「認証」）によりません。断った呼び出しは、Hub にも時間のゲートにも届かず、事象 `command` にもなりません（監査の行は残ります）。
+- クライアントがいても、いなくても、シナリオの結果は同じです。読む呼び出しと購読は、シミュレーションの進みを待たせません（同じロックを短く取り合うので、読むクライアントが多いと、実時間では少し遅くなりえます。等速の実行の `timing` は、その分だけ変わりえます。シナリオの結果は変わりません）。購読は、読まないクライアントの分を上限つきで持ち、あふれた分を捨てて数えます（値は Peer ごとに最新の 1 つ）。
+- クライアントに見えるもの: シナリオの書き込みは、操作として見えます（`Watch` の操作、`client` は `scenario`）。シナリオが controller のステップを保留している間は、一時停止ではありません（`GetTime` の `paused` は偽、`GetSnapshot` の `consistent` も偽）。標準入力の `pause` で止めている間は、`paused` が真で、`consistent` もふつうの実行と同じです。
+- 標準入力の命令（`--stdin-commands`）は、Control Server があっても今までどおりです（`stop`、一時停止、ステップ送り、速さ）。
+- `vehicle_sil_launch version --json` の `features` に `scenario-control` があれば、この組み合わせを使えます。
+
 ## 一緒に使えない引数と制限
 
-- `--scenario` は `--control` と `--start-paused` と一緒に使えません（引数の誤り）。Control API のクライアントが変数を書いたり、開始を止めたりすると、同じシナリオが同じ結果にならなくなるためです。`--stdin-commands` は使えます（`stop`、一時停止、ステップ送り、速さ。止めて進めても、シナリオの結果は変わりません）。
+- `--scenario` は `--start-paused` と一緒に使えません（引数の誤り。`--control` があっても）。シナリオは、時刻 0 の書き込みを最初のステップの前に済ませて、自分で進みます。`--stdin-commands` は使えます（`stop`、一時停止、ステップ送り、速さ。止めて進めても、シナリオの結果は変わりません）。
 - シナリオが使えるのは、構成ファイルにあって外していない、`ecu_main` で作った、仮想時間で動く ECU の変数だけです。
 - フレームを直に待つ条件、式、機種ごとの切り替え、変数の対応表はありません。

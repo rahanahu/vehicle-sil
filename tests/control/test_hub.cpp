@@ -880,6 +880,61 @@ TEST_CASE(control_hub_reads_the_latest_values_of_several_peers_in_one_look)
     CHECK(none_after({}, SimTime{}));
 }
 
+TEST_CASE(control_hub_readers_that_never_read_change_nothing_for_the_tap_and_the_writer)
+{
+    // The same steps and writes on a hub nobody reads and on one with many subscriptions that
+    // are never polled (the smallest queues): the tap gets the same samples in the same order,
+    // the writes get the same numbers and results, and no call of the agent side waits.
+    const auto run = [](std::size_t readers, std::vector<std::string>& seen, std::vector<std::string>& results,
+                        std::uint64_t& dropped) {
+        Hub hub(HubOptions{.first_seq = 100});
+        FakePeer engine("Engine", "e1", hub);
+        FakePeer body("Body", "b1", hub);
+        engine.connect();
+        body.connect();
+        hub.set_values_tap([&seen](const std::string& participant, const std::string&, const std::shared_ptr<const Snapshot>& sample) {
+            seen.push_back(participant + "@" + std::to_string(sample->time.time_since_epoch().count() / 1'000'000) + "#" +
+                           std::to_string(sample->sequence));
+        });
+        std::vector<std::shared_ptr<Subscription>> stuck;
+        for (std::size_t i = 0; i < readers; ++i)
+        {
+            stuck.push_back(hub.subscribe(SubscriptionOptions{.capacity = 1 + i % 3}));
+        }
+        for (int i = 1; i <= 200; ++i)
+        {
+            const SimTime now = at(10ms * i);
+            const auto seq = hub.write(OperationRequest{{PeerWrite{"Engine", "level", static_cast<double>(i % 100)}}, now});
+            engine.step(now);
+            if (i % 2 == 0)
+            {
+                body.step(now);
+            }
+            const auto op = hub.operation(seq);
+            results.push_back(std::to_string(seq) + ":" + (op ? std::to_string(static_cast<int>(op->targets.at(0).status)) : "?") + "@" +
+                              (op && op->targets.at(0).applied_at
+                                   ? std::to_string(op->targets.at(0).applied_at->time_since_epoch().count()) : "-"));
+        }
+        hub.set_values_tap({});
+        for (const auto& sub : stuck)
+        {
+            dropped += sub->dropped();
+            // What a reader that never read holds is bounded: the peers, one sample each, and
+            // its capacity of operations.
+            CHECK(sub->poll(0, 0ms).size() <= std::size_t{2 + 2 + 3});
+        }
+    };
+    std::vector<std::string> seenAlone, seenRead, resultsAlone, resultsRead;
+    std::uint64_t droppedAlone = 0, droppedRead = 0;
+    run(0, seenAlone, resultsAlone, droppedAlone);
+    run(64, seenRead, resultsRead, droppedRead);
+    CHECK_EQ(seenAlone.size(), std::size_t{300});
+    CHECK(seenRead == seenAlone);
+    CHECK(resultsRead == resultsAlone);
+    CHECK(resultsAlone.front().rfind("100:", 0) == 0);
+    CHECK(droppedRead > 0); // the readers lost updates; the hub did not wait for them
+}
+
 TEST_CASE(control_hub_tap_sees_every_sample_in_order_until_it_is_taken_away)
 {
     Hub hub;

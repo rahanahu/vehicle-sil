@@ -21,7 +21,16 @@
 //      VEHICLE_SIL_FAKE_XL_ECHO=<index>  an echo node on that channel answers every data frame
 //                                        with the same identifier and inverted data bytes, and
 //                                        every remote frame with a data frame of DLC bytes 0,1,2...
+//      VEHICLE_SIL_FAKE_XL_LOSE_DEVICE_AFTER_MS=<ms>  like set_device_lost(true), <ms> after open_driver
+//  - request_chip_state on an active port queues a chip_state event with the channel's state
+//    (set_chip_state; error active, 0/0 by default); kStatusNotOnBus on an inactive port,
+//    kStatusQueueFull while set_transmit_queue_full, kStatusNoAccess while
+//    set_chip_state_refused.
+//  - While the device is lost, request_chip_state and transmit fail with kStatusDeviceLost and
+//    nothing is received.
 #pragma once
+
+#include "xl_backend.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -39,6 +48,7 @@ inline constexpr int kStatusBadArgument = 3;
 inline constexpr int kStatusNoAccess = 4;
 inline constexpr int kStatusDriverUnavailable = 5;
 inline constexpr int kStatusNotOnBus = 6;
+inline constexpr int kStatusDeviceLost = 7;
 
 struct ChannelDef
 {
@@ -70,6 +80,14 @@ void set_transmit_queue_full(bool full);
 void set_ignore_channel_mode(bool ignore);
 /// Every port on `channel_index` reports queue_overrun with its next event.
 void inject_overrun(unsigned channel_index);
+/// The state request_chip_state reports for `channel_index` from now on.
+void set_chip_state(unsigned channel_index, vehicle_sil::vector_xl::detail::backend::ChipState state);
+/// The hardware disappears (true) or comes back (false) for every channel.
+void set_device_lost(bool lost);
+/// request_chip_state fails with kStatusNoAccess while set (a setup without the query).
+void set_chip_state_refused(bool refused);
+/// How many times request_chip_state was called (any port).
+unsigned chip_state_requests();
 
 struct Frame
 {

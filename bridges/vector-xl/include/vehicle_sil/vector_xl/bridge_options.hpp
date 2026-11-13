@@ -29,6 +29,8 @@ struct BridgeOptions
     std::optional<std::uint32_t> bitrate;
     /// XL receive queue size in events; the XL driver requires a power of two.
     std::uint32_t rx_queue_size = 16384;
+    /// Ask the driver for the controller's error state (XlCanPortOptions::bus_state_interval).
+    bool bus_monitor = true;
 };
 
 class BridgeUsageError : public std::runtime_error

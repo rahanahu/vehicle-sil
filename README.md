@@ -5,7 +5,7 @@
 > [!NOTE]
 > vehicle-sil は最初のリリースの前です。公開 API は、互換性を保たずに変わることがあります。わかっている制限は「[既知の制限](#既知の制限)」に、未実装の項目と制約の詳細は [docs/architecture.md](docs/architecture.md) にあります。
 
-使えるのは、vehicle-sil 自身の J1939 スタック（単一フレーム、Request と Acknowledgement、Address Claim、トランスポートプロトコル、診断、ECU アプリ向けの部品）、SIL Kit と Vector XL Driver をつなぐ CAN ブリッジ（実機は未検証）、LIN の Master/Slave（スケジュールテーブル、フレームの送受信、診断フレーム 0x3C/0x3D、応答の衝突の検出、Sleep/Wakeup）と、それらを同期させる共通仮想時間です。
+使えるのは、vehicle-sil 自身の J1939 スタック（単一フレーム、Request と Acknowledgement、Address Claim、トランスポートプロトコル、診断、ECU アプリ向けの部品）、SIL Kit と Vector XL Driver をつなぐ CAN ブリッジ（Vector Virtual CAN と VN5620 の物理 CAN ループバックで確認済み）、LIN の Master/Slave（スケジュールテーブル、フレームの送受信、診断フレーム 0x3C/0x3D、応答の衝突の検出、Sleep/Wakeup）と、それらを同期させる共通仮想時間です。
 
 ## どれを読むか
 
@@ -154,7 +154,14 @@ ctest --preset linux-gcc-release
 
 #### Windows（MSYS2 UCRT64）
 
-MSYS2 の「UCRT64」シェルで実行します。
+MSYS2 の GCC（MinGW-w64、UCRT 版）でビルドします。MSYS2 を入れて、その「UCRT64」シェルに入ります。UCRT64 シェルは、この GCC や CMake が `PATH` に入った bash です。PowerShell かコマンドプロンプトで次を実行します。
+
+```powershell
+winget install MSYS2.MSYS2
+C:\msys64\msys2_shell.cmd -ucrt64 -defterm -here -no-start
+```
+
+2 行目で、今のターミナルのまま、今のディレクトリで UCRT64 シェルに入ります（スタートメニューの「MSYS2 UCRT64」でも同じシェルが開きます）。`echo $MSYSTEM` が `UCRT64` を表示すれば、正しいシェルです。以降はこのシェルで実行します。
 
 ```sh
 pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
@@ -164,7 +171,7 @@ cmake --build --preset windows-mingw-release
 ctest --preset windows-mingw-release
 ```
 
-`SilKit.dll` は、ビルド後に各実行ファイルの隣へ自動でコピーされます。MinGW のランタイム DLL（`libstdc++-6.dll` など）は、UCRT64 シェルの `PATH` から読み込まれます。
+`SilKit.dll` は、ビルド後に各実行ファイルの隣へ自動でコピーされます。MinGW のランタイム DLL（`libstdc++-6.dll` など）は、UCRT64 シェルの `PATH` から読み込まれます。UCRT64 シェルの外（PowerShell など）から実行するときは、`C:\msys64\ucrt64\bin` を `PATH` に入れます。ほかの MinGW の `bin` より前に置きます。DLL が見つからないとき（`0xC0000135`）や、別の版の GCC の DLL を先に読み込んだとき（`0xC0000139`）は、何も表示せずに終わります。
 
 ## 最初の ECU を動かす
 
@@ -361,7 +368,7 @@ private:
 `vehicle_sil_vector_xl_bridge` は、SIL Kit の CAN ネットワークと Vector XL の CAN チャネルの間で、クラシック CAN のフレームを双方向に転送します。XL のチャネルには、Vector Virtual CAN と、CANcase や VN16xx などの物理 CAN を使えます。
 
 > [!WARNING]
-> Windows と Vector のハードウェアでは、まだ動作を確認していません。Linux 上で、XL ドライバのフェイクを使った自動テストだけで確認しています。
+> Windows 11 の MSYS2 UCRT64 ビルドと、実際の XL Driver Library を使った Vector Virtual CAN の送受信を確認済みです。VN5620 の 2 つのチャネルをつないだ物理ループバックでも、送受信を確認しています。他の物理 CAN 構成や機器は未確認です。
 
 ### ビルド
 
@@ -387,12 +394,15 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1939_CAN1 --xl-target physical --xl-channel 1 --bitrate 250000
 ```
 
-- Ctrl+C で止まり、転送の統計を出力します。
+- Ctrl+C（Windows ではコンソールのウィンドウを閉じても）で止まり、転送の統計を出力します。
+- 実行中、CAN のバスに異常があると 1 秒に 1 行まで知らせます（例: `XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650`）。ACK を返す相手がいない、ビットレートが違う、ケーブルが抜けた、などです。直ると `no new problems since the last report` を出します。`--no-bus-monitor` で止められます（その場合、デバイスを外しても気づきません）。
+- `silkit_to_xl` は XL に渡したフレームの数で、バスに出た数ではありません。バスに出られないフレームは XL の送信キューにたまり、ブリッジを止めると捨てられます。
 - `--bitrate`（15000〜1000000 bit/s）は init 権限が必要です。ほかのアプリケーションがチャネルを設定している場合は、起動を失敗させます。
 - `--bitrate` を指定しないと init 権限を取らないので、XL ドライバは自分の送信の受領（TX レシート）を返してきます。ブリッジはそれを転送せずに捨て、統計の `own_tx_dropped` に数えます。
+- 実行中に CAN インターフェースの USB を抜かないでください。ブリッジは止まりますが（終了コード 1）、VN5620 では挿し直しても認識されず、電源の入れ直しが必要なことがありました。
 - 終了コードは次のとおりです。
   - 0: 正常終了
-  - 1: 実行中の SIL Kit 側の失敗（registry の停止、接続断）
+  - 1: 実行中の失敗（SIL Kit 側: registry の停止、接続断。XL 側: デバイスを外した）
   - 3: 起動の失敗（XL ドライバ、チャネル、SIL Kit）
   - 4: 引数の誤り
 
@@ -509,8 +519,8 @@ ECU の実行ファイルを、ほかのファイルなしで配りたいとき�
 - `LocalBench`（`vehicle_sil::local`）と `vehicle_sil::testkit` の API は固まっていません。
 - 対応するのはクラシック CAN（8 バイト以下）だけです。RTR、CAN FD、CAN XL のフレームは、受信時に捨てて件数を数えます。
 - `install()` とパッケージ化（`find_package`）には未対応です。使えるのは FetchContent と `add_subdirectory` だけです。
-- 物理マシンの Windows 10/11 では未確認です。
-- Vector XL CAN Bridge の、Vector のドライバとハードウェアでの動作は、まだ確認していません。
+- Windows 10 は未確認です（Windows 11 の MSYS2 UCRT64 ビルドと試験は確認済み）。
+- Vector XL CAN Bridge は Vector Virtual CAN と VN5620 の物理ループバックで確認済みです。他の物理 CAN 構成や機器での動作は未確認です。
 - Vector XL CAN Bridge が扱うのはクラシック CAN だけです。CAN FD には対応していません。
 
 ## 開発者向け

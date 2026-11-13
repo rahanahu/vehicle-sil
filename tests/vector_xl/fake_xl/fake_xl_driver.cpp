@@ -80,7 +80,23 @@ struct State
     std::int64_t next_port = 1;
     std::map<int, Node> nodes;
     int next_node = 1;
+    std::map<unsigned, backend::ChipState> chip_states;
+    bool device_lost = false;
+    bool chip_state_refused = false;
+    std::optional<std::chrono::steady_clock::time_point> lose_device_at;
+    unsigned chip_state_requests = 0;
 };
+
+// Caller holds state().mutex.
+bool device_lost(State& s)
+{
+    if (s.lose_device_at && std::chrono::steady_clock::now() >= *s.lose_device_at)
+    {
+        s.device_lost = true;
+        s.lose_device_at.reset();
+    }
+    return s.device_lost;
+}
 
 State& state()
 {
@@ -244,6 +260,36 @@ void reset()
     s.echo_channel.reset();
     s.ports.clear();
     s.nodes.clear();
+    s.chip_states.clear();
+    s.device_lost = false;
+    s.chip_state_refused = false;
+    s.lose_device_at.reset();
+    s.chip_state_requests = 0;
+}
+
+void set_chip_state_refused(bool refused)
+{
+    const std::lock_guard lock(state().mutex);
+    state().chip_state_refused = refused;
+}
+
+void set_chip_state(unsigned channel_index, backend::ChipState chip)
+{
+    const std::lock_guard lock(state().mutex);
+    state().chip_states[channel_index] = chip;
+}
+
+void set_device_lost(bool lost)
+{
+    const std::lock_guard lock(state().mutex);
+    state().device_lost = lost;
+    state().lose_device_at.reset();
+}
+
+unsigned chip_state_requests()
+{
+    const std::lock_guard lock(state().mutex);
+    return state().chip_state_requests;
 }
 
 void set_channels(std::vector<ChannelDef> channels)
@@ -375,6 +421,10 @@ Status open_driver()
     if (const char* echo = std::getenv("VEHICLE_SIL_FAKE_XL_ECHO"); echo != nullptr && *echo != '\0')
     {
         s.echo_channel = static_cast<unsigned>(std::strtoul(echo, nullptr, 10));
+    }
+    if (const char* lose = std::getenv("VEHICLE_SIL_FAKE_XL_LOSE_DEVICE_AFTER_MS"); lose != nullptr && *lose != '\0')
+    {
+        s.lose_device_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::strtoul(lose, nullptr, 10));
     }
     ++s.driver_refs;
     return status(fake_xl::kStatusOk);
@@ -553,6 +603,11 @@ TransmitAttempt transmit(PortHandle handle, ChannelMask channels, const CanMessa
         result.status = status(fake_xl::kStatusNotOnBus);
         return result;
     }
+    if (fake_xl::device_lost(s))
+    {
+        result.status = status(fake_xl::kStatusDeviceLost);
+        return result;
+    }
     if (s.queue_full)
     {
         result.status = status(fake_xl::kStatusQueueFull);
@@ -585,9 +640,43 @@ TransmitAttempt transmit(PortHandle handle, ChannelMask channels, const CanMessa
     return result;
 }
 
+Status request_chip_state(PortHandle handle, ChannelMask channels)
+{
+    auto& s = state();
+    const std::lock_guard lock(s.mutex);
+    ++s.chip_state_requests;
+    auto* port = fake_xl::find_port(handle, channels);
+    if (port == nullptr)
+    {
+        return status(fake_xl::kStatusBadArgument);
+    }
+    if (fake_xl::device_lost(s))
+    {
+        return status(fake_xl::kStatusDeviceLost);
+    }
+    if (!port->active)
+    {
+        return status(fake_xl::kStatusNotOnBus);
+    }
+    if (s.chip_state_refused)
+    {
+        return status(fake_xl::kStatusNoAccess);
+    }
+    if (s.queue_full)
+    {
+        return status(fake_xl::kStatusQueueFull);
+    }
+    ReceivedEvent answer;
+    const auto it = s.chip_states.find(port->channel);
+    answer.chip_state = it != s.chip_states.end() ? it->second : ChipState{ChipLevel::ErrorActive, 0, 0};
+    fake_xl::enqueue(*port, answer);
+    return status(fake_xl::kStatusOk);
+}
+
 ReceiveResult receive(PortHandle handle)
 {
-    const std::lock_guard lock(state().mutex);
+    auto& s = state();
+    const std::lock_guard lock(s.mutex);
     ReceiveResult result;
     auto* port = fake_xl::find_port(handle);
     if (port == nullptr)
@@ -595,7 +684,7 @@ ReceiveResult receive(PortHandle handle)
         result.status = status(fake_xl::kStatusBadArgument);
         return result;
     }
-    if (port->rx.empty())
+    if (port->rx.empty() || fake_xl::device_lost(s))
     {
         result.status = status(fake_xl::kStatusNothingToReceive);
         return result;
@@ -617,6 +706,7 @@ std::string status_text(int code)
     case fake_xl::kStatusNoAccess: return "no access (fake)";
     case fake_xl::kStatusDriverUnavailable: return "driver unavailable (fake)";
     case fake_xl::kStatusNotOnBus: return "not on bus (fake)";
+    case fake_xl::kStatusDeviceLost: return "device lost (fake)";
     default: return {};
     }
 }

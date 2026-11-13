@@ -103,6 +103,16 @@ ServerOptions check(ServerOptions o)
     {
         throw std::invalid_argument("vehicle_sil control server: max_peers_per_request must be > 0");
     }
+    if (o.observe_only)
+    {
+        // It is sent as the value of a metadata entry, and programs compare it.
+        const std::string& reason = o.observe_only->reason;
+        if (reason.empty() || reason.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") != std::string::npos)
+        {
+            throw std::invalid_argument("vehicle_sil control server: observe_only's reason must be a word of a-z, 0-9 "
+                                        "and '-' (it is sent as metadata), not '" + reason + "'");
+        }
+    }
     return o;
 }
 

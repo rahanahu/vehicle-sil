@@ -77,9 +77,12 @@
 //                command line
 //   manual       participants started by hand (--manual, manual: true), started by this test from
 //                the command the launcher writes, as a person would copy it: the example and its
-//                lines in docs/simulation-config.md; one started long after start_timeout_ms and
-//                standing still in a step (as in a debugger); one that fails while the simulation
-//                runs (the events); a stop before the start, which ends one that has joined
+//                lines in docs/simulation-config.md. The other parts, each a scenario of its own
+//                so that they run side by side: manual_late (started long after start_timeout_ms
+//                and standing still in a step, as in a debugger), manual_fails (it fails while the
+//                simulation runs: the events), manual_stop (a stop before the start ends one that
+//                has joined), manual_frozen and manual_thawed (frozen as a debugger would), manual_again
+//                (ended before the start), manual_timeout (--timeout-ms while the launcher waits)
 #include "launcher_support.hpp"
 #include "spawn_sleeper.hpp"
 
@@ -3091,8 +3094,14 @@ void paused_failures(const Options& o)
         require(contains(lines.back(), "participant 'Engine': it failed while the simulation was running, and the launcher "
                                        "aborted the simulation: its process exited with code 3"),
                 "the failure, not the timeout:\n" + lines.back());
-        require(!events_with(lines, {"\"name\":\"Engine\"", "\"state\":\"failed\"", "\"reason\":\"process_ended\""}).empty(),
-                "Engine is failed at once");
+        // The launcher learns of it in two ways, and either may be first: its look at the process
+        // (process_ended), or the controller, which sees the connection go as the process ends, a
+        // moment before the process can be waited for (left_simulation). The result names the
+        // exit code in both (checked above).
+        const auto failed = events_with(lines, {"\"name\":\"Engine\"", "\"state\":\"failed\""});
+        require(failed.size() == 1 && (contains(failed[0], "\"reason\":\"process_ended\"") ||
+                                       contains(failed[0], "\"reason\":\"left_simulation\"")),
+                "Engine is failed at once, with one event" + (failed.empty() ? std::string() : ":\n" + failed[0]));
         require(gone, "no participant is left");
     }
     // --timeout-ms counts the time it stands still (wall-clock time).
@@ -3548,13 +3557,31 @@ void scenario_failures(const Options& o)
                                              "for 0 before the first step and runs by itself; pause and step it with "
                                              "--stdin-commands if needed\n"),
                 run.standard_error);
-        run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0"}, dir);
-        expect_code(run, 4, "--scenario with --control");
-        require(contains(run.standard_error, "--control"), run.standard_error);
         run = launch(o, {"run", "sim.yaml", "--scenario"}, dir);
         expect_code(run, 4, "--scenario without a file");
         const Captured version = launch(o, {"version", "--json"}, dir);
         require(contains(version.standard_output, "\"scenario\""), "version --json lists the feature scenario");
+        // With --control: a build with the control server serves it during the scenario (its
+        // clients only read; tests/control_server/test_launcher.py), and says so in its features.
+        const bool server = contains(version.standard_output, "\"control-server\"");
+        require(server == contains(version.standard_output, "\"scenario-control\""),
+                "version --json lists scenario-control exactly with control-server: " + version.standard_output);
+        run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0"}, dir);
+        if (server)
+        {
+            expect_code(run, 0, "--scenario with --control");
+            require(contains(run.standard_error, "control server at 127.0.0.1:") && contains(run.standard_error, "scenario: "),
+                    run.standard_error);
+            run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0", "--start-paused"}, dir);
+            expect_code(run, 4, "--scenario with --control and --start-paused");
+            require(contains(run.standard_error, "error: --scenario cannot be used with --start-paused: "), run.standard_error);
+        }
+        else
+        {
+            expect_code(run, 4, "--scenario with --control, without the control server");
+            require(contains(run.standard_error, "error: --control needs a vehicle_sil_launch built with the control server"),
+                    run.standard_error);
+        }
     }
 }
 
@@ -3755,26 +3782,31 @@ fs::path hand_dir(const Options& o, const std::string& part, const std::string& 
 /// Each line of the run's standard output, for a message.
 std::string out_of(const std::vector<std::string>& lines) { return joined_lines(lines); }
 
-void manual(const Options& o)
+/// The configuration of a part of the manual scenarios: Auto, started by the launcher, Hand,
+/// started by hand, and `more`, at a free port of its own (not 8500, the port a run with a
+/// participant started by hand takes by default, which may be taken here).
+std::string hand_config(const Options& o, const std::string& keys, const std::string& more)
 {
-    // The parts with a free port of their own first; the example of the docs last, at the port a
-    // run with a participant started by hand takes by default (8500), which may be taken here.
-    const auto config = [&o](const std::string& keys, const std::string& more) {
-        return "vehicle_sil_simulation: 1\n" + keys + "registry_uri: silkit://127.0.0.1:" + std::to_string(free_port()) +
-               "\n"
-               "networks: []\n"
-               "participants:\n"
-               "  - name: Auto\n"
-               "    command: [" + ecu(o) + "]\n"
-               "  - name: Hand\n"
-               "    command: [" + ecu(o) + "]\n"
-               "    manual: true\n" + more;
-    };
-    const std::string late = "  - name: Late\n    command: [" + ecu(o) + "]\n    manual: true\n";
+    return "vehicle_sil_simulation: 1\n" + keys + "registry_uri: silkit://127.0.0.1:" + std::to_string(free_port()) +
+           "\n"
+           "networks: []\n"
+           "participants:\n"
+           "  - name: Auto\n"
+           "    command: [" + ecu(o) + "]\n"
+           "  - name: Hand\n"
+           "    command: [" + ecu(o) + "]\n"
+           "    manual: true\n" + more;
+}
+
+/// A third participant started by hand, Late, for hand_config().
+std::string late_participant(const Options& o) { return "  - name: Late\n    command: [" + ecu(o) + "]\n    manual: true\n"; }
+
+void manual_late(const Options& o)
+{
     {
         // Started long after start_timeout_ms (8 s for Auto to join is generous), and standing
         // still in its step at 100 ms for 1.5 s, as in a debugger: the run passes.
-        const fs::path dir = hand_dir(o, "late", config("stop_at_ms: 300\nstart_timeout_ms: 8000\n", ""),
+        const fs::path dir = hand_dir(o, "late", hand_config(o, "stop_at_ms: 300\nstart_timeout_ms: 8000\n", ""),
                                       {{"Auto", "pid"}, {"Hand", "slow-at-ms 100 1500"}});
         Live live(o, dir, {"run", "sim.yaml"});
         const std::string err = live.wait_for_error(
@@ -3804,9 +3836,13 @@ void manual(const Options& o)
         require(ended && ended->code == 0, "Hand ends by itself with 0");
         require(all_gone(dir, {"Auto.pid"}, 30s), "Auto has ended");
     }
+}
+
+void manual_fails(const Options& o)
+{
     {
         // It fails while the simulation runs: the launcher sees it leave the simulation.
-        const fs::path dir = hand_dir(o, "fails", config("stop_at_ms: 1000\n", ""), {{"Auto", ""}, {"Hand", "exit-at-ms 100 3"}});
+        const fs::path dir = hand_dir(o, "fails", hand_config(o, "stop_at_ms: 1000\n", ""), {{"Auto", ""}, {"Hand", "exit-at-ms 100 3"}});
         Live live(o, dir, {"run", "--events", "sim.yaml"});
         const std::string event = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         require(contains(event, "\"command\":[\"") && contains(event, "\"--name\",\"Hand\",\"--registry-uri\","),
@@ -3831,9 +3867,13 @@ void manual(const Options& o)
         const auto ended = byHand.wait(30s);
         require(ended && ended->code == 3, "Hand ended with 3, as its behaviour says");
     }
+}
+
+void manual_stop(const Options& o)
+{
     {
         // A stop before the start (Late never comes): Hand, which has joined, is told to end.
-        const fs::path dir = hand_dir(o, "stop", config("", late), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
+        const fs::path dir = hand_dir(o, "stop", hand_config(o, "", late_participant(o)), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
         Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
         const std::string event = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         ByHand byHand(json_text(event, "command_line"), json_text(event, "working_directory"));
@@ -3846,6 +3886,10 @@ void manual(const Options& o)
         require(contains(lines.back(), "{\"name\":\"Late\",\"required\":true,\"enabled\":true,\"manual\":true,\"ended\":\"not_started\","),
                 "Late in the result:\n" + lines.back());
     }
+}
+
+void manual_frozen(const Options& o)
+{
     {
         // Frozen (a debugger's pause) as soon as it has joined: the start has no time limit, and
         // a stop command ends the run all the same. Late is the last to join, so the start goes on
@@ -3853,7 +3897,7 @@ void manual(const Options& o)
         // stepping depends on how far it got (logged), and both must end on the stop.
         // No stop_at_ms: if Late got to its first steps before it was frozen, the simulation must not
         // end before the stop command.
-        const fs::path dir = hand_dir(o, "frozen", config("stop_timeout_ms: 3000\n", late),
+        const fs::path dir = hand_dir(o, "frozen", hand_config(o, "stop_timeout_ms: 3000\n", late_participant(o)),
                                       {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
         Live live(o, dir, {"run", "--events", "--stdin-commands", "sim.yaml"});
         const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
@@ -3867,9 +3911,26 @@ void manual(const Options& o)
         const bool running = !events_with(live.lines(), {"\"phase\":\"running\""}).empty();
         log(std::string("RESULT Late frozen as it joined: ") +
             (running ? "the simulation runs (Late got to its first step)" : "the start waits for Late"));
+        // On Windows, with a participant frozen while the simulation runs, the launcher sometimes
+        // does not end after the stop: destroying its controller's SIL Kit participant does not
+        // return (a known limit of the product; docs/simulation-config.md says to let the
+        // participant go on first). There, in that branch only, Late goes on before the stop. A
+        // stop with Late still frozen is checked on Windows before the start, on POSIX in both.
+#ifdef _WIN32
+        const bool thawFirst = running;
+#else
+        const bool thawFirst = false;
+#endif
+        if (thawFirst)
+        {
+            lateByHand.thaw();
+        }
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish_unchecked(60s);
-        lateByHand.thaw();
+        if (!thawFirst)
+        {
+            lateByHand.thaw();
+        }
         require(status && status->code == 130,
                 "a stop ends a run that waits for a frozen participant (130), not " +
                     (status ? std::to_string(status->code) : std::string("still running")) + ":\n" + out_of(lines));
@@ -3883,11 +3944,15 @@ void manual(const Options& o)
             require(byHand.wait(30s).has_value(), "Hand, which waited for the start, has ended:\n" + out_of(lines));
         }
     }
+}
+
+void manual_thawed(const Options& o)
+{
     {
         // Frozen for 3 s after it joined, before the first step (Late cannot join while it is), then
         // going on: the run passes. Whether its variables can be used is logged (its control link
         // at the start).
-        const fs::path dir = hand_dir(o, "thawed", config("stop_at_ms: 200\n", late), {{"Auto", ""}, {"Hand", "variables"}, {"Late", ""}});
+        const fs::path dir = hand_dir(o, "thawed", hand_config(o, "stop_at_ms: 200\n", late_participant(o)), {{"Auto", ""}, {"Hand", "variables"}, {"Late", ""}});
         Live live(o, dir, {"run", "--events", "sim.yaml"});
         const std::string hand = live.wait_for({"\"name\":\"Hand\"", "\"state\":\"manual\""});
         const std::string lateEvent = live.wait_for({"\"name\":\"Late\"", "\"state\":\"manual\""});
@@ -3905,10 +3970,14 @@ void manual(const Options& o)
         log("RESULT the control link of Hand, frozen for 3 s before the start: " + links.front());
         require(byHand.wait(30s).has_value() && lateByHand.wait(30s).has_value(), "Hand and Late have ended");
     }
+}
+
+void manual_again(const Options& o)
+{
     {
         // Ended after it joined, before the start (to start it again): the start fails, and the
         // finding says to start the launcher again as well.
-        const fs::path dir = hand_dir(o, "again", config("", late), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
+        const fs::path dir = hand_dir(o, "again", hand_config(o, "", late_participant(o)), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
         Live live(o, dir, {"run", "sim.yaml"});
         const std::string err = live.wait_for_error([](const std::string& text) {
             return !hand_command(text, "Hand").line.empty() && !hand_command(text, "Late").line.empty();
@@ -3929,9 +3998,13 @@ void manual(const Options& o)
                 "a participant started by hand that ended before the start:\n" + out_of(out));
         require(lateByHand.wait(30s).has_value(), "Late, which waited for the start, has ended");
     }
+}
+
+void manual_timeout(const Options& o)
+{
     {
         // --timeout-ms counts from when the launcher began to wait: Late never comes.
-        const fs::path dir = hand_dir(o, "timeout", config("", late), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
+        const fs::path dir = hand_dir(o, "timeout", hand_config(o, "", late_participant(o)), {{"Auto", ""}, {"Hand", ""}, {"Late", ""}});
         Live live(o, dir, {"run", "--timeout-ms", "3000", "sim.yaml"});
         const std::string err = live.wait_for_error([](const std::string& text) { return !hand_command(text, "Hand").line.empty(); });
         const HandCommand hand = hand_command(err, "Hand");
@@ -3945,6 +4018,10 @@ void manual(const Options& o)
         require(contains(out_of(out), "Late (manual) has not joined"), "the finding names Late:\n" + out_of(out));
         require(byHand.wait(30s).has_value(), "Hand, which waited for the start, has ended");
     }
+}
+
+void manual(const Options& o)
+{
     {
         // The example of the docs: Engine by hand, Dashboard by the launcher.
         Live live(o, o.example_dir, {"run", "simulation.yaml", "--manual", "Engine"});
@@ -3955,8 +4032,8 @@ void manual(const Options& o)
         });
         if (contains(err, "the registry cannot listen at silkit://127.0.0.1:8500"))
         {
-            throw Skip("another program listens at 127.0.0.1:8500: the example of the docs was not run (the other parts "
-                       "passed)");
+            throw Skip("another program listens at 127.0.0.1:8500: the example of the docs was not run (the other "
+                       "manual_* scenarios run at ports of their own)");
         }
         require(!hand.line.empty(), "no lines about Engine:\n" + err);
         require(fs::equivalent(vehicle_sil::process::path_from_utf8(hand.directory), o.example_dir),
@@ -4014,7 +4091,10 @@ int main(int argc, char** argv)
             {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
             {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control},
             {"scenario", scenario}, {"scenario_same", scenario_same}, {"scenario_disconnect", scenario_disconnect},
-            {"scenario_failures", scenario_failures}, {"manual", manual}};
+            {"scenario_failures", scenario_failures}, {"manual", manual},
+            {"manual_late", manual_late}, {"manual_fails", manual_fails}, {"manual_stop", manual_stop},
+            {"manual_frozen", manual_frozen}, {"manual_thawed", manual_thawed}, {"manual_again", manual_again},
+            {"manual_timeout", manual_timeout}};
         const auto it = std::find_if(scenarios.begin(), scenarios.end(), [&](const auto& s) { return s.first == o.scenario; });
         if (it == scenarios.end())
         {

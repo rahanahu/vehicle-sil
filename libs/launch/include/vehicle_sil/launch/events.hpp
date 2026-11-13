@@ -37,6 +37,10 @@ inline constexpr std::array<std::string_view, 9> kFeatures{"events",        "std
 /// The feature of a vehicle_sil_launch built with the control server (run --control): only such
 /// a build lists it (format_version_json()'s `more`).
 inline constexpr std::string_view kControlServerFeature = "control-server";
+/// The feature of such a build that has the control server during a scenario too (run --scenario
+/// with --control: its clients read, and cannot write or move the time). After
+/// kControlServerFeature in `more`.
+inline constexpr std::string_view kScenarioControlFeature = "scenario-control";
 
 /// `version --json`: the formats this launcher writes and reads, kFeatures, then `more` (what
 /// this build adds).
