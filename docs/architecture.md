@@ -812,6 +812,11 @@ SIL Kit CAN ネットワーク ── ICanController ── CanBridge ── Ext
   [bridge] XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650
   ```
 - 問題のカウンターが増えた次の回に何も増えなければ、`; no new problems since the last report` を付けた行を 1 回出します。送信だけをするコントローラーは受信に成功するまで受信エラーカウンターが下がらず、直った後もエラーパッシブのままのことがあるので、この行が回復の目印です。
+- バスオフからの戻り: VN5620 の XL ドライバは、チャネルを有効にしたままでは、バスが直った後もバスオフから戻りませんでした（75 秒以上）。そこで `XlCanPort` は、コントローラーがバスオフを 1 秒知らせ続けたら（`XlCanPortOptions::bus_off_restart`、0 で無効）、チャネルを無効にしてから有効にし直し（`xlDeactivateChannel`、`xlActivateChannel`）、コントローラーを戻します。
+  - `ExternalEventKind::Warning` で知らせ、実行ファイルは `warning: XL channel '...' was bus off for <ms> ms; restarted the channel ...` を出します。
+  - XL の送信キューで待っていたフレームはチャネルとともに消えるので、`ExternalEventKind::TransmitUnsent` で知らせ、`xl_tx_unsent` に数えます。
+  - バスがまだ壊れていれば、またバスオフになり、同じ間隔で有効にし直します。状態の答えは 0.5 秒ごとなので、間隔は 1〜1.5 秒です。
+  - 有効にし直せなければ、`Fault` として受信をやめます。
 - `Fault` を受けたら、`FAIL: <理由>` を出し、統計を出して終了コード 1 で終わります。
 - `ExternalPortAdapter` は `BusState`、`Fault`、`Warning`、`TransmitUnsent` を使いません。
 
@@ -877,10 +882,11 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
   - バスの監視（「実行中のバスの監視」）。ACK を返す相手がいないとき、ビットレートが違うとき、ケーブルを抜いたときに、エラーパッシブとエラーフレームの増加を 1 秒ごとに表示し、直ると「no new problems」を表示します。送信だけをするコントローラーは、受信に成功するまで受信エラーカウンターが下がらないので、直った後もエラーパッシブのままのことがあります。
   - 実行中に USB を抜くと、`xlCanRequestChipState` が `XL_ERR_INVALID_ACCESS` で失敗し続け、ブリッジは終了コード 1 で終わります。ただし VN5620 は、挿し直しても USB のデバイスとして現れないことがあり、電源の入れ直しが必要でした。実行中には USB を抜かないでください。
   - Vector Virtual CAN でも、init 権限のない物理チャネルでも、状態の問い合わせは受け付けられます（`warning:` は出ません）。
+  - 終端を外して CAN_H と CAN_L を短絡するとバスオフになり、ブリッジがチャネルを有効にし直すこと。短絡している間は 1〜1.5 秒ごとに繰り返し、直すと転送が戻ります。終端を外しただけでは、受信エラーでエラーパッシブになり、バスオフにはなりません。
+  - 受信キューのあふれ（受信側のプロセスを止めて起こした）で失われたのは受信のフレームだけで、送信レシートは全部届き、その後も送信が続くこと。
   - コンソールのウィンドウを閉じたときの統計の出力と終了コード 0、Ctrl+C での停止
   - `windows-mingw-static` のブリッジとランチャーが、`PATH` に MinGW がなくても動くこと（取り込む DLL は Windows、UCRT、`vxlapi64.dll` だけ）
 - 次の点は、Vector のドライバとハードウェアでまだ確かめていません。
-  - バスオフになった後の挙動（自動で復帰するか、`XL bus: bus off` の後に転送が戻るか）
   - 他の物理 CAN 構成や機器での送受信と送信レシート
   - CAN FD モードで動いているチャネルを、クラシック CAN のポート（`XL_INTERFACE_VERSION`）で開いたときの挙動
   - `tests/vector_xl/xl_bridge_it_launcher` は Windows で bridge を強制終了するため、その E2E テストは統計と終了コードを検査しません（`device-lost` のシナリオは、ブリッジが自分で終わるので検査します）。

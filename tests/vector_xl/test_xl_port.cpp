@@ -8,6 +8,7 @@
 #include "vehicle_sil/vector_xl/xl_driver.hpp"
 #include "xl_events.hpp" // internal: classify_xl_event, to_transmit_message
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -45,6 +46,7 @@ public:
         ExternalEventKind kind;
         RecordedFrame frame;
         std::uint64_t count = 0;
+        std::string detail; // Fault and Warning
     };
 
     ExternalCanPort::EventHandler handler()
@@ -58,7 +60,7 @@ public:
                 }
                 else
                 {
-                    events_.push_back({event.kind, record(event.frame), event.count});
+                    events_.push_back({event.kind, record(event.frame), event.count, std::string(event.detail)});
                 }
             }
             cv_.notify_all();
@@ -69,6 +71,16 @@ public:
     {
         std::unique_lock lock(mutex_);
         cv_.wait_for(lock, timeout, [&] { return events_.size() >= count; });
+        return events_;
+    }
+
+    /// Waits until an event of `kind` arrived; returns all events so far.
+    std::vector<Event> wait_for_kind(ExternalEventKind kind, std::chrono::milliseconds timeout = 2000ms)
+    {
+        std::unique_lock lock(mutex_);
+        cv_.wait_for(lock, timeout, [&] {
+            return std::any_of(events_.begin(), events_.end(), [&](const Event& e) { return e.kind == kind; });
+        });
         return events_;
     }
 
@@ -752,6 +764,52 @@ TEST_CASE(xl_port_does_not_use_the_transmit_timeout_without_init_access)
     {
         CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
     }
+    f.port->stop();
+}
+
+TEST_CASE(xl_port_restarts_the_channel_after_a_lasting_bus_off)
+{
+    using detail::backend::ChipLevel;
+    XlCanPortOptions options;
+    options.bus_state_interval = 20ms;
+    options.bus_off_restart = 100ms;
+    options.drain_timeout = 0ms;
+    BlockedBusFixture f(options);
+    fake_xl::set_bus_blocked(kHardware1, true);
+    for (int i = 0; i < 2; ++i)
+    {
+        CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
+    }
+    fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 0, 0});
+
+    const auto events = f.sink.wait_for_kind(ExternalEventKind::Warning, 1000ms);
+    const auto warnings = of_kind(events, ExternalEventKind::Warning);
+    CHECK_EQ(warnings.size(), 1u);
+    CHECK(!warnings.empty() && warnings.front().detail.find("restarted the channel") != std::string::npos);
+    CHECK(!warnings.empty() && warnings.front().detail.find("2 frames waiting") != std::string::npos);
+    const auto unsent = of_kind(f.sink.wait_for_kind(ExternalEventKind::TransmitUnsent, 1000ms),
+                                ExternalEventKind::TransmitUnsent);
+    CHECK_EQ(unsent.size(), 1u);
+    CHECK(!unsent.empty() && unsent.front().count == 2u);
+    CHECK_EQ(fake_xl::queued_transmissions(kHardware1), 0u); // gone with the deactivation
+
+    // The controller is error active again and the bus works: frames go out.
+    fake_xl::set_bus_blocked(kHardware1, false);
+    CHECK(f.port->transmit(frame_matrix()[2].to_silkit()) == TransmitResult::Ok);
+    CHECK(f.node.receive(1000ms).has_value());
+    f.port->stop();
+}
+
+TEST_CASE(xl_port_does_not_restart_the_channel_when_disabled_or_briefly_bus_off)
+{
+    using detail::backend::ChipLevel;
+    XlCanPortOptions options;
+    options.bus_state_interval = 20ms;
+    options.bus_off_restart = 0ms;
+    BlockedBusFixture f(options);
+    fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 0, 0});
+    std::this_thread::sleep_for(300ms);
+    CHECK(of_kind(f.sink.wait_for(1000, 0ms), ExternalEventKind::Warning).empty());
     f.port->stop();
 }
 

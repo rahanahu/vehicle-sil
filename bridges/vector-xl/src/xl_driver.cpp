@@ -215,8 +215,16 @@ struct XlCanPort::Impl
         last_error = std::move(message);
     }
 
+    /// steady_clock time (ns) of the first of the bus-off reports in a row, 0 if the last report
+    /// was not bus off. Receive thread only.
+    std::int64_t bus_off_since = 0;
+    bool restart_due = false; // receive thread only
+
     void receive_loop();
     void dispatch(const backend::ReceivedEvent& event);
+    /// Takes the channel off the bus and back on to leave bus off. Receive thread; false (after
+    /// reporting Fault) if the channel could not be activated again.
+    bool restart_channel();
 };
 
 XlCanPort::XlCanPort(XlDriver& /*driver*/, const XlChannelInfo& channel, XlCanPortOptions options) :
@@ -300,6 +308,8 @@ void XlCanPort::start(EventHandler handler)
     impl.pending.store(0);
     impl.unconfirmed_since.store(0);
     impl.bus_troubled.store(false);
+    impl.bus_off_since = 0;
+    impl.restart_due = false;
     impl.running.store(true);
     impl.receiving.store(true);
     impl.receive_thread = std::thread([&impl] { impl.receive_loop(); });
@@ -457,6 +467,10 @@ void XlCanPort::Impl::receive_loop()
         if (received.status.ok() && received.event)
         {
             dispatch(*received.event);
+            if (restart_due && !restart_channel())
+            {
+                return; // no events after Fault; stop() still joins this thread
+            }
             continue; // drain the queue before waiting
         }
         if (!received.status.ok() && received.status.outcome != backend::Outcome::NothingToReceive)
@@ -501,6 +515,19 @@ void XlCanPort::Impl::dispatch(const backend::ReceivedEvent& event)
         out.bus_state.rx_errors = event.chip_state->rx_errors;
         bus_troubled.store(out.bus_state.level != ExternalBusState::Level::ErrorActive &&
                            out.bus_state.level != ExternalBusState::Level::Unknown);
+        if (out.bus_state.level != ExternalBusState::Level::BusOff)
+        {
+            bus_off_since = 0;
+        }
+        else if (const auto now = now_ns(); bus_off_since == 0)
+        {
+            bus_off_since = now;
+        }
+        else if (options.bus_off_restart.count() > 0 &&
+                 now - bus_off_since >= std::chrono::nanoseconds(options.bus_off_restart).count())
+        {
+            restart_due = true;
+        }
         handler(out);
     }
     const auto classified = detail::classify_xl_event(event);
@@ -530,6 +557,61 @@ void XlCanPort::Impl::dispatch(const backend::ReceivedEvent& event)
     case detail::XlEventClass::Ignored:
         break;
     }
+}
+
+bool XlCanPort::Impl::restart_channel()
+{
+    const auto busOffMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::nanoseconds(now_ns() - bus_off_since))
+                              .count();
+    restart_due = false;
+    bus_off_since = 0;
+    backend::Status status;
+    std::int64_t lost = 0;
+    {
+        const std::lock_guard lock(xl_mutex);
+        (void)backend::deactivate(port, access_mask);
+        status = backend::activate(port, access_mask);
+        active = status.ok();
+        // The driver's transmit queue went with the deactivation: start counting anew.
+        lost = pending.exchange(0);
+        unconfirmed_since.store(0);
+        probe_gap = 0;
+        last_probe = 0;
+        bus_troubled.store(false);
+    }
+    if (!receipts_known.load())
+    {
+        lost = 0; // unknown, not "all of them"
+    }
+    if (!status.ok())
+    {
+        const std::string text = "XL channel '" + channel.name +
+                                 "' stayed bus off and could not be restarted: xlActivateChannel failed: " +
+                                 status_text(status.code) + " (XL status " + std::to_string(status.code) + ")";
+        set_last_error(text);
+        ExternalCanEvent fault{ExternalEventKind::Fault, {}, {}};
+        fault.detail = text;
+        receiving.store(false);
+        handler(fault);
+        return false;
+    }
+    std::string text = "XL channel '" + channel.name + "' was bus off for " + std::to_string(busOffMs) +
+                       " ms; restarted the channel (the driver does not leave bus off by itself)";
+    if (lost > 0)
+    {
+        text += "; " + std::to_string(lost) + " frames waiting in the driver were lost";
+    }
+    ExternalCanEvent warning{ExternalEventKind::Warning, {}, {}};
+    warning.detail = text;
+    handler(warning);
+    if (lost > 0)
+    {
+        ExternalCanEvent unsent{ExternalEventKind::TransmitUnsent, {}, {}};
+        unsent.count = static_cast<std::uint64_t>(lost);
+        handler(unsent);
+    }
+    return true;
 }
 
 } // namespace vehicle_sil::vector_xl

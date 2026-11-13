@@ -649,6 +649,13 @@ Status activate(PortHandle handle, ChannelMask channels)
         return status(fake_xl::kStatusBadArgument);
     }
     port->active = true;
+    // Like a real controller, activation resets it: bus off ends (set_chip_state() again to
+    // model a bus that is still broken).
+    if (auto it = state().chip_states.find(port->channel);
+        it != state().chip_states.end() && it->second.level == backend::ChipLevel::BusOff)
+    {
+        it->second = backend::ChipState{backend::ChipLevel::ErrorActive, 0, 0};
+    }
     return status(fake_xl::kStatusOk);
 }
 
