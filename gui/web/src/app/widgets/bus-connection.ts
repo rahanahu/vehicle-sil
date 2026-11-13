@@ -1,9 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { VariableRef } from '@vehicle-sil/gui-client';
+import { VariableRef, isWriteError } from '@vehicle-sil/gui-client';
 import { blockText, busToggleLabel, writeText } from './labels';
 import { bindVariable } from './variable-binding';
-import { isWriteError } from './variable-state';
 
 /**
  * ECU の見出しに置く「バスにつなぐ」のスイッチ（vehicle-sil がどの ECU にも付ける入力 `ecu.connected`）。

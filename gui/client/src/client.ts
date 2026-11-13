@@ -22,6 +22,7 @@ import { ClientRun, RunControl } from './run';
 import { ClientSession, SessionFeed } from './session';
 import { ANSWER_TIMEOUT_MS, ClientTime, TimeControl } from './time';
 import { webSocketUrl } from './urls';
+import { VariableBinder } from './variable-binding';
 import { ClientVariables, VariablesFeed } from './variables';
 import { ErrorSink, Readable, Writable } from './values';
 
@@ -190,6 +191,14 @@ export function createClient(options: ClientOptions): GuiClient {
     variables.state,
   );
 
+  const binder = new VariableBinder({
+    variables,
+    connection: connection.state,
+    time: time.state,
+    session: session.session,
+    onError,
+  });
+
   /** 送って読む。after は、読めた値で Promise が解ける前に（同じ呼び出しの中で）呼ぶ。 */
   const call = <T>(req: HttpRequest, read: (body: unknown) => T, after?: (value: T) => void) =>
     new Promise<T>((resolve, reject) =>
@@ -253,6 +262,7 @@ export function createClient(options: ClientOptions): GuiClient {
       watchProblem: variables.watchProblem,
       watch: (wanted, watchOptions) => variables.watch(wanted, watchOptions),
       write: (writes, writeOptions) => variables.write(writes, writeOptions),
+      bind: (ref, bindOptions) => binder.bind(ref, bindOptions),
     },
     app: app.readonly(),
     limits: limits.readonly(),

@@ -89,6 +89,13 @@ void set_chip_state(unsigned channel_index, vehicle_sil::vector_xl::detail::back
 void set_device_lost(bool lost);
 /// request_chip_state fails with kStatusNoAccess while set (a setup without the query).
 void set_chip_state_refused(bool refused);
+/// activate fails with kStatusDeviceLost while set.
+void set_activate_fails(bool fails);
+/// Activating a port on `channel_index` ends its bus off (a reset controller on a repaired bus)
+/// unless this is set (the bus is still broken).
+void set_bus_off_persists(unsigned channel_index, bool persists);
+/// How many times a port on `channel_index` was activated since reset().
+unsigned activations(unsigned channel_index);
 /// How many times request_chip_state was called (any port).
 unsigned chip_state_requests();
 /// Blocks (true) or unblocks (false) the bus of `channel_index`; see the modelled behaviour.

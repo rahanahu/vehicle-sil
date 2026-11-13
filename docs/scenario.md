@@ -73,7 +73,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 ### ECU をバスから外す
 
-`<participant>.ecu.connected` に `false` を書くと、その ECU は、動いたまま、すべてのバスから外れます（送ったものは出ず、バスのものは届きません。`true` で戻ります。[architecture.md](architecture.md) の「ECU の入口」の「バスからの切り離し」）。ほかの ECU が、相手が落ちたことを正しく検出するかを試せます。[examples/ecu_main/scenarios/engine_disconnect.yaml](../examples/ecu_main/scenarios/engine_disconnect.yaml) は、300 ms に Engine を外し、Dashboard が回転数の途絶を検出し（`dashboard.engine_lost`。回転数が 300 ms 来なければ true）、Engine を戻すと回復することを確かめます。
+`<participant>.ecu.connected` に `false` を書くと、その ECU は、動いたまま、すべてのバスから外れます（送ったものは出ず、バスのものは届きません。`true` で戻ります。[internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」）。ほかの ECU が、相手が落ちたことを正しく検出するかを試せます。[examples/ecu_main/scenarios/engine_disconnect.yaml](../examples/ecu_main/scenarios/engine_disconnect.yaml) は、300 ms に Engine を外し、Dashboard が回転数の途絶を検出し（`dashboard.engine_lost`。回転数が 300 ms 来なければ true）、Engine を戻すと回復することを確かめます。
 
 ```yaml
 steps:

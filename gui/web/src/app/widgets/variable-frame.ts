@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { isWriteError } from '@vehicle-sil/gui-client';
 import { blockText, conditionText, roleLabel, writeText } from './labels';
 import { VariableBinding } from './variable-binding';
-import { isWriteError } from './variable-state';
 
 /**
  * 部品の枠: 変数の名前、役割、単位、中身（部品が差し込む）、値の状態、書き込みの様子、書けない理由。どの部品も
