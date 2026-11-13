@@ -62,6 +62,7 @@ TEST_CASE(options_full_command_line)
     CHECK_EQ(*options.bitrate, 500000u);
     CHECK_EQ(options.rx_queue_size, 1024u);
     CHECK(options.tx_timeout == std::optional<std::chrono::milliseconds>(std::chrono::milliseconds(200)));
+    CHECK(options.bus_monitor);
     CHECK(!options.list_channels);
 }
 
@@ -75,6 +76,7 @@ TEST_CASE(options_defaults_and_special_modes)
     CHECK_EQ(options.rx_queue_size, 16384u);
     CHECK(!options.tx_timeout.has_value());
 
+    CHECK(!parse({"--registry-uri", "u", "--xl-target", "virtual", "--xl-channel", "1", "--no-bus-monitor"}).bus_monitor);
     CHECK(parse({"--list-channels"}).list_channels); // needs nothing else
     CHECK(parse({"--help"}).help);
 }

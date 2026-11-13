@@ -84,6 +84,7 @@ struct State
     std::map<unsigned, backend::ChipState> chip_states;
     std::map<unsigned, bool> blocked;
     bool device_lost = false;
+    bool chip_state_refused = false;
     std::optional<std::chrono::steady_clock::time_point> lose_device_at;
     unsigned chip_state_requests = 0;
 };
@@ -264,8 +265,15 @@ void reset()
     s.chip_states.clear();
     s.blocked.clear();
     s.device_lost = false;
+    s.chip_state_refused = false;
     s.lose_device_at.reset();
     s.chip_state_requests = 0;
+}
+
+void set_chip_state_refused(bool refused)
+{
+    const std::lock_guard lock(state().mutex);
+    state().chip_state_refused = refused;
 }
 
 void set_chip_state(unsigned channel_index, backend::ChipState chip)
@@ -705,6 +713,14 @@ Status request_chip_state(PortHandle handle, ChannelMask channels)
     if (!port->active)
     {
         return status(fake_xl::kStatusNotOnBus);
+    }
+    if (s.chip_state_refused)
+    {
+        return status(fake_xl::kStatusNoAccess);
+    }
+    if (s.queue_full)
+    {
+        return status(fake_xl::kStatusQueueFull);
     }
     ReceivedEvent answer;
     const auto it = s.chip_states.find(port->channel);

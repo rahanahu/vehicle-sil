@@ -23,7 +23,9 @@
 //                                        every remote frame with a data frame of DLC bytes 0,1,2...
 //      VEHICLE_SIL_FAKE_XL_LOSE_DEVICE_AFTER_MS=<ms>  like set_device_lost(true), <ms> after open_driver
 //  - request_chip_state on an active port queues a chip_state event with the channel's state
-//    (set_chip_state; error active, 0/0 by default); kStatusNotOnBus on an inactive port.
+//    (set_chip_state; error active, 0/0 by default); kStatusNotOnBus on an inactive port,
+//    kStatusQueueFull while set_transmit_queue_full, kStatusNoAccess while
+//    set_chip_state_refused.
 //  - While the device is lost, request_chip_state and transmit fail with kStatusDeviceLost and
 //    nothing is received.
 //  - While a channel's bus is blocked (set_bus_blocked; no node to acknowledge), transmit
@@ -85,6 +87,8 @@ void inject_overrun(unsigned channel_index);
 void set_chip_state(unsigned channel_index, vehicle_sil::vector_xl::detail::backend::ChipState state);
 /// The hardware disappears (true) or comes back (false) for every channel.
 void set_device_lost(bool lost);
+/// request_chip_state fails with kStatusNoAccess while set (a setup without the query).
+void set_chip_state_refused(bool refused);
 /// How many times request_chip_state was called (any port).
 unsigned chip_state_requests();
 /// Blocks (true) or unblocks (false) the bus of `channel_index`; see the modelled behaviour.

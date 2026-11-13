@@ -181,6 +181,12 @@ void CanBridge::start()
     {
         return;
     }
+    {
+        const std::lock_guard errors(error_mutex_);
+        bus_state_ = {};
+        fault_.reset();
+        warnings_.clear();
+    }
     bool externalStarted = false;
     try
     {
@@ -302,7 +308,8 @@ void CanBridge::on_external_event(const ExternalCanEvent& event)
         return;
     case ExternalEventKind::Fault:
     {
-        std::string why = external_.last_error();
+        // The reason comes with the event: last_error() may already tell of a later transmit.
+        std::string why(event.detail);
         if (why.empty())
         {
             why = "the external port stopped working";
@@ -310,6 +317,12 @@ void CanBridge::on_external_event(const ExternalCanEvent& event)
         const std::lock_guard lock(error_mutex_);
         last_error_ = why;
         fault_ = std::move(why);
+        return;
+    }
+    case ExternalEventKind::Warning:
+    {
+        const std::lock_guard lock(error_mutex_);
+        warnings_.emplace_back(event.detail);
         return;
     }
     case ExternalEventKind::Frame:
@@ -368,6 +381,12 @@ std::optional<std::string> CanBridge::fault() const
 {
     const std::lock_guard lock(error_mutex_);
     return fault_;
+}
+
+std::vector<std::string> CanBridge::take_warnings()
+{
+    const std::lock_guard lock(error_mutex_);
+    return std::exchange(warnings_, {});
 }
 
 std::string CanBridge::last_error() const

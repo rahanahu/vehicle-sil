@@ -424,7 +424,7 @@ TEST_CASE(xl_port_reports_a_fault_once_when_the_device_is_lost)
     CHECK(!events.empty() && events.front().kind == ExternalEventKind::Fault);
     const std::string why = port.last_error();
     CHECK(why.find("'Test CAN Device Channel 1' stopped working") != std::string::npos);
-    CHECK(why.find("device lost (fake)") != std::string::npos);
+    CHECK(why.find("device lost (fake) (XL status 7)") != std::string::npos);
 
     // No more queries and no more events after the fault; sending fails.
     const unsigned requests = fake_xl::chip_state_requests();
@@ -432,6 +432,69 @@ TEST_CASE(xl_port_reports_a_fault_once_when_the_device_is_lost)
     CHECK_EQ(fake_xl::chip_state_requests(), requests);
     CHECK_EQ(sink.wait_for(2, 0ms).size(), 1u);
     CHECK(port.transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Failed);
+    port.stop();
+}
+
+TEST_CASE(xl_port_warns_once_and_keeps_working_when_the_queries_are_never_answered)
+{
+    fake_xl::reset();
+    fake_xl::set_chip_state_refused(true); // a setup that does not support the query
+    XlDriver driver;
+    XlCanPortOptions options;
+    options.bus_state_interval = 20ms;
+    XlCanPort port(driver, channel_at(driver, kVirtual1), options);
+    fake_xl::TestNode node(kVirtual1);
+    EventSink sink;
+    port.start(sink.handler());
+
+    const auto events = sink.wait_for(1);
+    CHECK_EQ(events.size(), 1u);
+    CHECK(!events.empty() && events.front().kind == ExternalEventKind::Warning);
+    std::this_thread::sleep_for(100ms);
+    CHECK_EQ(fake_xl::chip_state_requests(), 1u); // it stopped asking
+    node.send({0x55, false, false, 1, {0x01}});
+    const auto after = sink.wait_for(2);
+    CHECK_EQ(after.size(), 2u);
+    CHECK(after.size() == 2 && after[1].kind == ExternalEventKind::Frame); // and still works
+    port.stop();
+}
+
+TEST_CASE(xl_port_does_not_take_one_refused_query_for_a_lost_device)
+{
+    fake_xl::reset();
+    XlDriver driver;
+    XlCanPortOptions options;
+    options.bus_state_interval = 20ms;
+    options.bus_state_failures = 3;
+    XlCanPort port(driver, channel_at(driver, kHardware1), options);
+    EventSink sink;
+    port.start(sink.handler());
+    CHECK(!sink.wait_for_bus_states(1).empty());
+
+    // A full driver queue is no refusal at all.
+    fake_xl::set_transmit_queue_full(true);
+    const unsigned before = fake_xl::chip_state_requests();
+    std::this_thread::sleep_for(150ms);
+    CHECK(fake_xl::chip_state_requests() >= before + 3);
+    CHECK(sink.wait_for(1, 0ms).empty());
+    fake_xl::set_transmit_queue_full(false);
+
+    // Two refusals in a row, then an answer: no fault.
+    fake_xl::set_chip_state_refused(true);
+    const unsigned refusedFrom = fake_xl::chip_state_requests();
+    while (fake_xl::chip_state_requests() < refusedFrom + 2)
+    {
+        std::this_thread::sleep_for(1ms);
+    }
+    fake_xl::set_chip_state_refused(false);
+    std::this_thread::sleep_for(100ms);
+    CHECK(sink.wait_for(1, 0ms).empty());
+
+    // Three in a row: the channel is gone.
+    fake_xl::set_chip_state_refused(true);
+    const auto events = sink.wait_for(1);
+    CHECK_EQ(events.size(), 1u);
+    CHECK(!events.empty() && events.front().kind == ExternalEventKind::Fault);
     port.stop();
 }
 

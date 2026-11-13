@@ -60,6 +60,8 @@ extern "C" void on_stop_signal(int)
 
 /// How often the main loop reports a change of the external bus (format_health_change()).
 constexpr auto kHealthInterval = std::chrono::seconds(1);
+/// Upper bound for the SIL Kit lifecycle to shut down when the bridge stops.
+constexpr auto kSilKitShutdownTimeout = std::chrono::milliseconds(2000);
 
 #ifdef _WIN32
 // Closing the console window (and logoff, shutdown) ends the process as soon as the console
@@ -130,13 +132,20 @@ int run(const BridgeOptions& options)
     std::unique_ptr<CanBridge> bridge;
     try
     {
-        runtime = std::make_unique<ParticipantRuntime>(ParticipantRuntimeOptions{options.participant, options.registry_uri});
+        ParticipantRuntimeOptions runtimeOptions{options.participant, options.registry_uri};
+        // Bounded so that stopping fits in the time Windows grants a closed console (on_console_close).
+        runtimeOptions.shutdown_timeout = kSilKitShutdownTimeout;
+        runtime = std::make_unique<ParticipantRuntime>(runtimeOptions);
         auto& controller = *runtime->participant().CreateCanController("VectorXlBridge", options.network);
 
         XlCanPortOptions portOptions;
         portOptions.bitrate = options.bitrate;
         portOptions.rx_queue_size = options.rx_queue_size;
         portOptions.transmit_timeout = options.tx_timeout;
+        if (!options.bus_monitor)
+        {
+            portOptions.bus_state_interval = std::chrono::milliseconds{0};
+        }
         port = std::make_unique<XlCanPort>(*driver, channel, portOptions);
         log(kTag, "XL port open, init access: %s%s", port->has_init_access() ? "yes" : "no",
             options.bitrate ? (", bit rate " + std::to_string(*options.bitrate)).c_str() : ", bit rate unchanged");
@@ -187,6 +196,10 @@ int run(const BridgeOptions& options)
             result = cli::kExitFailed;
             break;
         }
+        for (const auto& warning : bridge->take_warnings())
+        {
+            log(kTag, "warning: %s", warning.c_str());
+        }
         if (std::chrono::steady_clock::now() >= nextReport)
         {
             nextReport += kHealthInterval;
@@ -203,12 +216,14 @@ int run(const BridgeOptions& options)
 
     log(kTag, "stopping");
     bridge->stop();
-    runtime->stop("bridge stopped");
+    // The statistics are final once the bridge stopped: print them before the SIL Kit shutdown,
+    // which may take its time (and a closed console may not grant it).
     log(kTag, "%s", format_statistics(bridge->statistics()).c_str());
     if (const auto error = bridge->last_error(); !error.empty())
     {
         log(kTag, "last error: %s", error.c_str());
     }
+    runtime->stop("bridge stopped");
     log(kTag, "stopped");
     return result;
 }

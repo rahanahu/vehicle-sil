@@ -69,6 +69,7 @@ void ExternalPortAdapter::on_event(const ExternalCanEvent& event)
     case ExternalEventKind::BusState:
     case ExternalEventKind::Fault:
     case ExternalEventKind::TransmitUnsent:
+    case ExternalEventKind::Warning:
         // Not passed on: the adapter's users read the bus through frames and error frames only.
         return;
     }

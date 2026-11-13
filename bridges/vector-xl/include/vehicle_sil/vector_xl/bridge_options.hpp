@@ -33,6 +33,8 @@ struct BridgeOptions
     /// Drop frames that could not reach the bus for this long (XlCanPortOptions::transmit_timeout).
     /// Without it they wait and go out once the bus works again.
     std::optional<std::chrono::milliseconds> tx_timeout;
+    /// Ask the driver for the controller's error state (XlCanPortOptions::bus_state_interval).
+    bool bus_monitor = true;
 };
 
 class BridgeUsageError : public std::runtime_error

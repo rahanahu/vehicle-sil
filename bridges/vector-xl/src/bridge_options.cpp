@@ -42,6 +42,8 @@ std::string bridge_usage()
            "  --rx-queue-size <n>      XL receive queue size in events, power of two, 16..32768 (16384)\n"
            "  --tx-timeout-ms <ms>     drop frames that cannot reach the bus for this long, 1..60000 (no ACK,\n"
            "                           bus off, cable pulled); without it they wait and go out late\n"
+           "  --no-bus-monitor         do not ask the XL driver for the bus state (no 'XL bus:' lines,\n"
+           "                           a removed device goes unnoticed)\n"
            "  --help                   this text\n";
 }
 
@@ -62,6 +64,11 @@ BridgeOptions parse_bridge_options(const std::vector<std::string_view>& args)
         if (arg == "--list-channels")
         {
             options.list_channels = true;
+            continue;
+        }
+        if (arg == "--no-bus-monitor")
+        {
+            options.bus_monitor = false;
             continue;
         }
         if (arg.size() < 3 || arg.substr(0, 2) != "--")
