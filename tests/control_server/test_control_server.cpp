@@ -120,7 +120,7 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
     engine.set_agent_options(control::AgentOptions{.sample_period = 10ms});
     engine.input("engine.level", &level, {.unit = "%", .min = 0.0, .max = 200.0});
     engine.input_enum("engine.mode", &mode, {{"off", 0}, {"eco", 1}, {"sport", 2}});
-    // Body declares nothing: its agent has the peer's monitoring outputs only. The links: after
+    // Body declares nothing: its agent has ecu.connected and the peer's monitoring outputs. The links: after
     // the ECUs, before the start; destroyed before the peers, after their stop().
     auto engine_link = std::make_unique<control_silkit::AgentTransport>(engine.agent(), engine.runtime());
     auto body_link = std::make_unique<control_silkit::AgentTransport>(body.agent(), body.runtime());
@@ -166,10 +166,11 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
             CHECK(p.has_agent());
             if (p.participant() == "Engine")
             {
-                CHECK(p.schema(0).name() == "engine.level");
-                CHECK(p.schema(0).unit() == "%");
-                CHECK(p.schema(0).has_max() && p.schema(0).max() == 200.0);
-                const auto& m = p.schema(1);
+                CHECK(p.schema(0).name() == "ecu.connected"); // every ECU has it, first
+                CHECK(p.schema(1).name() == "engine.level");
+                CHECK(p.schema(1).unit() == "%");
+                CHECK(p.schema(1).has_max() && p.schema(1).max() == 200.0);
+                const auto& m = p.schema(2);
                 CHECK(m.name() == "engine.mode" && m.type() == v1::VALUE_TYPE_ENUM && m.causality() == v1::CAUSALITY_INPUT);
                 CHECK(m.items_size() == 3 && m.items(2).name() == "sport" && m.items(2).value() == 2);
             }
@@ -236,7 +237,7 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
         request.set_peer("Engine");
         v1::GetValuesReply values;
         return call(&v1::ControlService::Stub::GetValues, request, values).ok() && values.has_values()
-               && values.snapshot().values(0).i() == 7 && values.snapshot().values(1).i() == 2
+               && values.snapshot().values(1).i() == 7 && values.snapshot().values(2).i() == 2
                && values.snapshot().time_ns() >= ns(290ms);
     }));
 
@@ -478,7 +479,7 @@ TEST_CASE(control_server_reaches_the_agents_of_a_simulation_it_does_not_coordina
         request.set_peer("Engine");
         v1::GetValuesReply values;
         return call(&v1::ControlService::Stub::GetValues, request, values).ok() && values.has_values()
-               && values.snapshot().time_ns() >= ns(90ms) && values.snapshot().values(0).d() == 5.0;
+               && values.snapshot().time_ns() >= ns(90ms) && values.snapshot().values(1).d() == 5.0;
     }));
 
     controller.stop("done");

@@ -6,7 +6,7 @@
 
 同じ構成と同じシナリオなら、結果（どの手順が、どの仮想時刻に、どの値で通ったか、落ちたか）はいつも同じです。機械の速さ、最速か等速か（`speed`）、ECU の処理の重さでは変わりません。判定には仮想時刻だけを使い、実時間の待ちや時間切れは使いません。
 
-変数は、`ecu_main` で作った ECU が宣言したものです（[ecu-executable.md](ecu-executable.md) の「変数を出す」）。名前は `vehicle_sil_launch check --json` の `participants[].variables` でわかります。gRPC は使いません（Control Server のないビルドでも動きます）。
+変数は、`ecu_main` で作った ECU が宣言したものと、どの ECU にもある `ecu.connected` です（[ecu-executable.md](ecu-executable.md) の「変数を出す」）。名前は `vehicle_sil_launch check --json` の `participants[].variables` でわかります。gRPC は使いません（Control Server のないビルドでも動きます）。
 
 ## 例
 
@@ -70,6 +70,21 @@ passed: 0 errors, 0 warnings, 0 notes
 ```
 
 `at` は、その手順を決めた仮想時刻です（下の「結果」）。構成ファイルの `stop_at_ms` は 1000 ms ですが、シナリオが終わった 705 ms で止まります。
+
+### ECU をバスから外す
+
+`<participant>.ecu.connected` に `false` を書くと、その ECU は、動いたまま、すべてのバスから外れます（送ったものは出ず、バスのものは届きません。`true` で戻ります。[architecture.md](architecture.md) の「ECU の入口」の「バスからの切り離し」）。ほかの ECU が、相手が落ちたことを正しく検出するかを試せます。[examples/ecu_main/scenarios/engine_disconnect.yaml](../examples/ecu_main/scenarios/engine_disconnect.yaml) は、300 ms に Engine を外し、Dashboard が回転数の途絶を検出し（`dashboard.engine_lost`。回転数が 300 ms 来なければ true）、Engine を戻すと回復することを確かめます。
+
+```yaml
+steps:
+  - at_ms: 300
+    set: { Engine.ecu.connected: false }
+  - expect: { Dashboard.dashboard.engine_lost: true }
+    within_ms: 400
+  - set: { Engine.ecu.connected: true }
+  - expect: { Dashboard.dashboard.engine_lost: false }
+    within_ms: 200
+```
 
 ## ファイルの形式
 

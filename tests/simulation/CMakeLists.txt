@@ -1,10 +1,11 @@
 # vehicle_sil::Simulation: the same ECUs (written against vehicle_sil::Ecu) on the local virtual
-# buses and on SIL Kit (in-process registry), also LIN, failures, the rules of a run, a controller
-# elsewhere and other participants; what an ECU reports about itself (Ecu::describe()) and the
-# main() of an ECU executable (ecu_main()), called as a function.
+# buses and on SIL Kit (in-process registry), also LIN, failures, an ECU taken off its buses
+# (ecu.connected), the rules of a run, a controller elsewhere and other participants; what an ECU
+# reports about itself (Ecu::describe()) and the main() of an ECU executable (ecu_main()), called
+# as a function.
 vehicle_sil_add_harness_tests(vehicle_sil_simulation_tests
   PREFIX simulation LABELS unit simulation TIMEOUT 180
-  SOURCES test_simulation.cpp test_lin_simulation.cpp test_describe.cpp test_ecu_main.cpp
+  SOURCES test_simulation.cpp test_lin_simulation.cpp test_describe.cpp test_ecu_main.cpp test_disconnect.cpp
   LINK vehicle_sil::simulation vehicle_sil::testkit vehicle_sil::control_silkit)
 # simulation_internal.hpp: the tests shorten a wait of the library.
 target_include_directories(vehicle_sil_simulation_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/simulation/src)

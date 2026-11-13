@@ -110,8 +110,10 @@ PlantRun run_plant(std::optional<SilKitOptions> silkit)
     submit({3, {{"plant.target", 5.0}, {"plant.gear", std::int64_t{2}}}, at(72ms)});
     sim.run_for(150ms);
     CHECK_EQ(idle.steps, 15);
-    // An ECU without variables made no agent, also not in the run.
-    CHECK(throws_with<std::logic_error>([&] { static_cast<void>(idle_ecu.agent()); }, "\"Idle\""));
+    // An ECU without variables has an agent from the run on, with ecu.connected only.
+    const auto& idle_schema = idle_ecu.agent().schema();
+    CHECK(!idle_schema.empty() && idle_schema.front().name == "ecu.connected");
+    CHECK(silkit || idle_schema.size() == 1); // a peer adds its monitoring outputs
     agent.drain_results(out.results);
     out.rows = plant.rows;
     out.last = agent.latest();
@@ -156,11 +158,11 @@ void check_plant(const PlantRun& run)
     CHECK_EQ(std::get<std::int64_t>(value_of(run, "plant.gear")), std::int64_t{2});
     CHECK_EQ(std::get<double>(value_of(run, "plant.position")), 3 * 1.5 + 2 * 2.5 + 7 * 7.0);
     CHECK_EQ(std::get<std::int64_t>(value_of(run, "plant.steps")), std::int64_t{15});
-    // The ECU's variables come first, in the order declared.
-    CHECK(run.schema.size() >= 4 && run.schema[0].name == "plant.target" && run.schema[1].name == "plant.gear"
-          && run.schema[2].name == "plant.position" && run.schema[3].name == "plant.steps");
-    CHECK(run.schema[1].type == control::ValueType::Enum && run.schema[1].items.size() == 3);
-    CHECK(run.schema[3].causality == control::Causality::Output);
+    // ecu.connected first (every ECU has it), then the ECU's variables in the order declared.
+    CHECK(run.schema.size() >= 5 && run.schema[0].name == "ecu.connected" && run.schema[1].name == "plant.target"
+          && run.schema[2].name == "plant.gear" && run.schema[3].name == "plant.position" && run.schema[4].name == "plant.steps");
+    CHECK(run.schema[2].type == control::ValueType::Enum && run.schema[2].items.size() == 3);
+    CHECK(run.schema[4].causality == control::Causality::Output);
 }
 
 /// Records the times of the samples and the steps the application had run by then.
@@ -259,9 +261,10 @@ TEST_CASE(ecu_variables_are_the_same_locally_and_on_silkit)
     CHECK(local.rows == silkit.rows);
     CHECK(local.last.time == silkit.last.time);
     CHECK(local.last.sequence == silkit.last.sequence);
-    // The local agent has the ECU's variables only; the peer's adds its monitoring outputs after them.
-    CHECK_EQ(local.schema.size(), std::size_t{4});
-    CHECK(silkit.schema.size() > 4);
+    // The local agent has ecu.connected and the ECU's variables only; the peer's adds its
+    // monitoring outputs after them.
+    CHECK_EQ(local.schema.size(), std::size_t{5});
+    CHECK(silkit.schema.size() > 5);
     for (std::size_t i = 0; i < local.schema.size(); ++i)
     {
         CHECK(local.schema[i].name == silkit.schema[i].name);
@@ -330,10 +333,10 @@ TEST_CASE(ecu_variables_set_up_errors_name_the_ecu)
         CHECK(throws_with<std::logic_error>([&] { ecu.output("pump.y", &x); }, "output()"));
         CHECK(throws<std::logic_error>([&] { ecu.set_agent_options({}); }));
         CHECK(throws<std::logic_error>([&] { other.set_agent_options({}); }));
-        // The agent stays reachable; an ECU without one gets none any more.
-        CHECK(silkit ? ecu.agent().schema().size() > 1 : ecu.agent().schema().size() == 1); // the peer monitors
-        CHECK(throws_with<std::logic_error>([&] { static_cast<void>(bare.agent()); }, "\"Bare\""));
-        CHECK(throws_with<std::logic_error>([&] { static_cast<void>(bare.agent()); }, "declare its variables"));
+        // The agent stays reachable (ecu.connected and pump.x, and the peer's monitoring outputs);
+        // an ECU without variables has one too, made at the start.
+        CHECK(silkit ? ecu.agent().schema().size() > 2 : ecu.agent().schema().size() == 2);
+        CHECK(bare.agent().schema().front().name == "ecu.connected");
     }
 }
 

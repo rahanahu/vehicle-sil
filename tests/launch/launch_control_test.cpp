@@ -127,7 +127,7 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
     for (const auto& p : report.run->participants)
     {
         require(p.control == launch::ControlLink::Connected, p.name + " is not connected" + shown);
-        require(p.control_variables == 7, p.name + " offers " + std::to_string(p.control_variables) + " variables, not 7");
+        require(p.control_variables == 8, p.name + " offers " + std::to_string(p.control_variables) + " variables, not 8");
         require(p.control_late_messages == 0, p.name + ": messages arrived late");
     }
     // In the window: every agent had said hello, and each accepted the parameter.

@@ -27,7 +27,7 @@ flowchart LR
 | participant 名 | 構成ファイルの `participants[].name`。シミュレーションの中で重ならないこと。`SimulationController` は使えません。ランチャーが `--name` で ECU に渡すので、ECU の既定の名前（`EcuMainOptions::name`）と違ってもかまいません | `duplicate-name`、`reserved-name` |
 | ネットワークの名前と種類 | ECU が `j1939()`、`can()`、`lin_master()`、`lin_slave()` に渡す名前を、構成ファイルの `networks` に同じ名前と種類（`can`、`lin`）で書きます。チームで一覧を決めます | `unknown-network`、`kind-mismatch`、`unused-network` |
 | J1939 のアドレスと NAME | ネットワークごとに、どの ECU のノードがどのアドレスを求めるかを表にして配ります。NAME も ECU ごとに変えます（例では identity number と Manufacturer Code。Manufacturer Code の 0x7F0 は例の仮の値です）。254 は任意アドレスの範囲から取るノードで、重なりとみなしません | `address-conflict`、`address-shared`、`name-conflict` |
-| 変数の名前 | ECU の中で重ならないこと。`peer.` で始められません。`j1939.<ネットワークの名前>.` で始まる名前は、監視の出力とぶつかることがあるので避けます。例では ECU の役割を前に付けています（`engine.throttle`、`dashboard.engine_speed`） | ECU の組み立ての例外（`--describe` が終了コード 3）。監視の出力とぶつかると、SIL Kit で始めるときに ECU が終了コード 3 |
+| 変数の名前 | ECU の中で重ならないこと。`peer.` と `ecu.` で始められません（`ecu.connected` はどの ECU にもあります）。`j1939.<ネットワークの名前>.` で始まる名前は、監視の出力とぶつかることがあるので避けます。例では ECU の役割を前に付けています（`engine.throttle`、`dashboard.engine_speed`） | ECU の組み立ての例外（`--describe` が終了コード 3）。監視の出力とぶつかると、SIL Kit で始めるときに ECU が終了コード 3 |
 
 - 同じ ECU を 2 つ載せるとき、`--name` で変わるのは participant 名だけです。J1939 の NAME、アドレス、変数の名前は同じなので、照合が `name-conflict` を出します（[simulation-config.md](../simulation-config.md) の「人向け」の `two-engines.yaml` の例）。NAME は ECU のビルドに入っているので、ECU を書く人が直します。
 - 決まりの詳細は、participant 名とネットワークが [simulation-config.md](../simulation-config.md) の「構成ファイル」、アドレスと NAME の判定が同じ文書の「照合」の表、変数の名前が [ecu-executable.md](../ecu-executable.md) の「`Ecu::describe()`」にあります。

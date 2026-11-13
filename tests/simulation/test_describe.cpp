@@ -134,8 +134,11 @@ TEST_CASE(describe_lists_networks_nodes_and_variables_in_order)
     CHECK(nodes[2].name == std::optional<j1939::Name>(kFlexibleName));
     CHECK(nodes[2].arbitrary_address_capable());
 
-    const auto& v = d.variables;
-    CHECK_EQ(v.size(), 6u);
+    // ecu.connected first (every ECU has it), then the ECU's own in the order declared.
+    CHECK_EQ(d.variables.size(), 7u);
+    CHECK(d.variables[0].name == "ecu.connected" && d.variables[0].type == control::ValueType::Bool &&
+          d.variables[0].causality == control::Causality::Input);
+    const std::vector<control::VariableInfo> v(d.variables.begin() + 1, d.variables.end());
     CHECK(v[0].name == "a.throttle" && v[0].type == control::ValueType::Real && v[0].causality == control::Causality::Input);
     CHECK(v[0].unit == "%" && v[0].min == 0.0 && v[0].max == 100.0 && v[0].step == 0.5 && v[0].description == "pedal");
     CHECK(v[1].name == "b.enabled" && v[1].type == control::ValueType::Bool && v[1].causality == control::Causality::Parameter);
@@ -171,7 +174,7 @@ TEST_CASE(describe_is_the_same_on_local_and_silkit_before_and_after_a_run)
         const j1939::Network& net = silkit ? sim.peer("Full").network("J1939_CAN") : sim.local().network("Full", "J1939_CAN");
         CHECK(net.node(2).address() != j1939::kNullAddress);
         CHECK_EQ(net.node(2).requested_address(), j1939::kNullAddress);
-        CHECK(silkit ? ecu.agent().schema().size() > 6u : ecu.agent().schema().size() == 6u);
+        CHECK(silkit ? ecu.agent().schema().size() > 7u : ecu.agent().schema().size() == 7u);
     }
 }
 
@@ -199,18 +202,18 @@ TEST_CASE(describe_leaves_the_declarations_open)
         double a = 0.0;
         double b = 0.0;
         ecu.input("a", &a);
-        CHECK_EQ(ecu.describe().variables.size(), 1u);
+        CHECK_EQ(ecu.describe().variables.size(), 2u); // ecu.connected and a
         // Still open: one more variable, network and node after describe().
         ecu.output("b", &b);
         static_cast<void>(ecu.can("RAW"));
         static_cast<void>(ecu.j1939("CAN2").add_node({.address = 0x31}));
         const EcuDescription d = ecu.describe();
-        CHECK_EQ(d.variables.size(), 2u);
-        CHECK(d.variables[1].name == "b");
+        CHECK_EQ(d.variables.size(), 3u);
+        CHECK(d.variables[2].name == "b");
         CHECK_EQ(d.networks.size(), 3u);
         CHECK(d.networks[2].name == "CAN2");
         sim.run_for(30ms);
-        CHECK_EQ(ecu.describe().variables.size(), 2u);
+        CHECK_EQ(ecu.describe().variables.size(), 3u);
     }
 }
 
@@ -219,13 +222,18 @@ TEST_CASE(describe_an_ecu_without_variables)
     Simulation sim;
     Ecu& plain = sim.add_ecu("Plain", 1ms);
     static_cast<void>(plain.can("CAN"));
-    CHECK(plain.describe().variables.empty());
-    // An agent without variables: still none.
+    // Only the variable every ECU has, before its agent is made and after.
+    const auto connected_only = [](const EcuDescription& d) {
+        return d.variables.size() == 1 && d.variables[0].name == "ecu.connected";
+    };
+    CHECK(connected_only(plain.describe()));
+    const std::string before = to_json(plain.describe());
     static_cast<void>(plain.agent());
-    CHECK(plain.describe().variables.empty());
+    CHECK(connected_only(plain.describe()));
+    CHECK(to_json(plain.describe()) == before);
     Ecu& empty = sim.add_ecu("Empty", 2ms);
     const EcuDescription d = empty.describe();
-    CHECK(d.name == "Empty" && d.networks.empty() && d.variables.empty());
+    CHECK(d.name == "Empty" && d.networks.empty() && connected_only(d));
     CHECK(d.step == std::optional<vehicle_sil::SimDuration>(2ms));
 }
 
@@ -248,7 +256,8 @@ TEST_CASE(describe_a_real_time_peer_has_no_step)
 TEST_CASE(describe_reserved_variable_names_are_refused_alike)
 {
     // "peer." is reserved for a Peer's monitoring outputs on both implementations, at the
-    // declaration; the message names the ECU, the variable and the rule. Nothing is declared.
+    // declaration, and "ecu." for the variables every ECU has; the message names the ECU, the
+    // variable and the rule. Nothing is declared.
     for (const bool silkit : {false, true})
     {
         Simulation sim(on(silkit));
@@ -268,11 +277,21 @@ TEST_CASE(describe_reserved_variable_names_are_refused_alike)
                        what.find("reserved for the monitoring outputs of a Peer") != std::string::npos;
             }));
         }
-        CHECK(ecu.describe().variables.empty());
+        for (const auto& declare : std::vector<std::function<void()>>{[&] { ecu.input("ecu.connected", &x); },
+                                                                       [&] { ecu.output("ecu.mine", &x); }})
+        {
+            CHECK(vehicle_sil::unit::throws_if<std::invalid_argument>(declare, [](const std::invalid_argument& e) {
+                const std::string what = e.what();
+                return what.find("\"Named\"") != std::string::npos && what.find("starts with \"ecu.\"") != std::string::npos &&
+                       what.find("reserved for the variables vehicle-sil gives every ECU") != std::string::npos;
+            }));
+        }
+        CHECK_EQ(ecu.describe().variables.size(), 1u); // ecu.connected
         // Other names that only look alike are the ECU's.
         ecu.output("peers.count", &x);
         ecu.output("app.peer.x", &x);
         ecu.output("peer", &x);
-        CHECK_EQ(ecu.describe().variables.size(), 3u);
+        ecu.output("ecu", &x);
+        CHECK_EQ(ecu.describe().variables.size(), 5u);
     }
 }

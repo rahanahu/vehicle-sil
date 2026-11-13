@@ -52,13 +52,12 @@ int main(int argc, char** argv)
 
 ### 変数を出す（`--registry-uri`）
 
-変数を宣言した ECU（`input()`、`output()` など。`agent()` を呼んだだけの ECU も）は、`--registry-uri` で参加するとき、何も書かなくても、その変数を SIL Kit の publish/subscribe でシミュレーションへ出します（`vehicle_sil::control_silkit::AgentTransport`。[architecture.md](architecture.md) の「SIL Kit の上の運び手」）。`vehicle_sil_launch run` がそれを受けて、変数を読み書きする側になります（[simulation-config.md](simulation-config.md) の「変数を読み書きする口」）。ランチャーを使わないシミュレーションでは、`vehicle_sil_control_server` が受けます（[control-api.md](control-api.md) の「単独の Control Server」）。受ける側がいなければ、送ったものは誰にも届かないだけです。
+ECU は（変数を宣言していなくても、`ecu.connected` があります）、`--registry-uri` で参加するとき、何も書かなくても、その変数を SIL Kit の publish/subscribe でシミュレーションへ出します（`vehicle_sil::control_silkit::AgentTransport`。[architecture.md](architecture.md) の「SIL Kit の上の運び手」）。`vehicle_sil_launch run` がそれを受けて、変数を読み書きする側になります（[simulation-config.md](simulation-config.md) の「変数を読み書きする口」）。ランチャーを使わないシミュレーションでは、`vehicle_sil_control_server` が受けます（[control-api.md](control-api.md) の「単独の Control Server」）。受ける側がいなければ、送ったものは誰にも届かないだけです。
 
 - gRPC も Protocol Buffers も要りません（ECU の実行ファイルは、どちらにも依存しません）。
 - 値と書き込みの結果は、ステップの中で、値を読んだ直後に送ります。送る頻度は Agent の `sample_period`（既定 10 ms。`Ecu::set_agent_options()`）です。間引きはしません。
 - 出すことは `--describe` の `control` で自己申告します（`Ecu::describe()` 自体は申告しません。`ecu_main` が足します）。まとめる側は、申告した ECU だけを待ちます。
 - `--no-control` で出さなくなります（`--describe` の `control` も `null` になります）。アプリが Agent に自分の通信の側を付けるときは、`--no-control` を付けてください（`--describe` の時点で通信の側が付いていれば `ecu_main` は申告しませんが、付いていなければ「出す」と申告し、まとめる側が hello を待ちます）。アプリが自分で通信の側（`control::TransportLease` を持つもの）を Agent に付けているときも、`ecu_main` は付けません。
-- 変数のない ECU は何も出しません。
 - この区間に認証はありません（registry に参加できる者は、変数に書けます）。
 
 ### 止まるよう求められたとき（`--registry-uri`）
@@ -92,8 +91,8 @@ int main(int argc, char** argv)
 - `step`: ステップ幅。実時間の `Peer` では空です。
 - `networks`: ECU がつながるネットワーク。`j1939()`、`can()`、`lin_master()`、`lin_slave()` を呼んだ順に、種類をまたいで並びます。1 回の呼び出しが 1 つです。同じ ECU が同じ名前で `j1939()` と `can()` を持つと、同じ CAN のネットワークに 2 つ並びます（コントローラーが 2 つあるため）。各要素は `name`、`use`（`NetworkUse`: `Raw`、`J1939`、`LinMaster`、`LinSlave`）、`kind()`（`use` から決まる `NetworkKind`: `Can` か `Lin`）、`nodes` です。
 - `nodes`（J1939 だけ）: ノードを足した順に、足したときの値（`NodeOptions`）です。`address` は求めたアドレスで、Address Claim で別のアドレスになった後も変わりません（今のアドレスは `Node::address()`、求めたアドレスは `Node::requested_address()`）。`j1939::kNullAddress`（254）は、任意アドレスの範囲から空いているものを取るノードです。`name` は NAME（NAME を持たないノードは空。JSON のキーは `j1939_name`）、`arbitrary_address_capable()` は NAME のその bit です。
-- `variables`: ECU が宣言した変数（`input()`、`output()` などと、`agent()` に直接登録したもの）の `control::VariableInfo` を、宣言した順に並べたものです。`Peer` が足す監視の出力（`PeerOptions::monitor`）は含みません。Agent のない ECU では空です。
-- `peer.` で始まる変数の名前は、`Peer` の監視の出力のために予約しています。`Ecu` の `input()`、`output()` などは、どの実装でも宣言のときに `std::invalid_argument`（変数の名前と決まりを言う）にするので、`--describe` と `--local` でも見つかります。`agent()` に直接登録した名前は検査しません。それが `Peer` の監視の出力とぶつかると、SIL Kit で始めるときに見つかります（`ecu_main` では終了コード 3）。`Peer` のネットワークごとの監視の出力（`j1939.<network>.` で始まる名前）とぶつかる名前は、SIL Kit で始めるときにだけ見つかります（`PeerOptions::monitor`）。
+- `variables`: 変数の `control::VariableInfo` です。先頭は、どの ECU にもある入力 `ecu.connected`（bool。false の間、ECU はすべてのバスから外れます。ステップは動き続けます。[architecture.md](architecture.md) の「ECU の入口」の「バスからの切り離し」）で、Agent を作る前でも並びます。その後に、ECU が宣言した変数（`input()`、`output()` などと、`agent()` に直接登録したもの）が宣言した順に並びます。`Peer` が足す監視の出力（`PeerOptions::monitor`）は含みません。
+- `ecu.` で始まる変数の名前は、どの ECU にもある変数のために予約しています。`peer.` で始まる変数の名前は、`Peer` の監視の出力のために予約しています。`Ecu` の `input()`、`output()` などは、どの実装でも宣言のときに `std::invalid_argument`（変数の名前と決まりを言う）にするので、`--describe` と `--local` でも見つかります。`agent()` に直接登録した名前は検査しません。それが `Peer` の監視の出力とぶつかると、SIL Kit で始めるときに見つかります（`ecu_main` では終了コード 3）。`Peer` のネットワークごとの監視の出力（`j1939.<network>.` で始まる名前）とぶつかる名前は、SIL Kit で始めるときにだけ見つかります（`PeerOptions::monitor`）。
 - `EcuDescription` とその部品は `==` で比べられます。
 - いつでも呼べます。組み立ての途中でも、実行の前でも後でもかまいません。宣言は閉じません（Agent のスキーマを確定しないので、後から変数、ネットワーク、ノードを足せます）。実行中は、その ECU のステップの中からだけ呼びます（ほかの関数と同じです）。
 - 同じクラスで同じように組み立てた ECU は、`Peer`（仮想時間）と `LocalBench` で同じ内容を返します（`name` と `step` を含めて）。実行の前と後でも同じです。
@@ -124,7 +123,7 @@ int main(int argc, char** argv)
 | `networks[].nodes[].address` | 求めたアドレス（0〜253、254 は任意アドレスの範囲から取る） |
 | `networks[].nodes[].j1939_name` | NAME（`"0x"` と 16 桁）。NAME のないノードは `null` |
 | `networks[].nodes[].arbitrary_address_capable` | NAME の任意アドレスの bit（NAME がなければ `false`） |
-| `variables` | 変数の配列（宣言の順） |
+| `variables` | 変数の配列（`ecu.connected`、続いて宣言の順） |
 | `variables[].name` | 変数の名前 |
 | `variables[].type` | `"bool"`、`"integer"`、`"real"`、`"enum"` |
 | `variables[].causality` | `"input"`、`"output"`、`"parameter"` |
@@ -133,6 +132,7 @@ int main(int argc, char** argv)
 | `variables[].step` | 編集の刻みの目安。なければ `null` |
 | `variables[].description` | 説明（なければ `""`） |
 | `variables[].items` | `"enum"` の値の配列（`name` と、64 ビットの整数の `value`）。ほかの型では空 |
+| `variables[].builtin` | `true`: vehicle-sil がどの ECU にも付ける変数（名前が `ecu.` で始まる。`ecu.connected`）。`false`: ECU が宣言した変数。画面などが、アプリの変数と分けて見せるのに使います |
 | `control` | この実行ファイルが `--registry-uri` のときに変数をシミュレーションへ出すなら、その出し方。出さない（`--no-control`）なら `null`。このキーができる前の vehicle-sil でビルドした実行ファイルには、このキーがありません（読む側は `null` と同じに扱います） |
 | `control.transport` | 運び手。いまは `"silkit"`（SIL Kit の publish/subscribe）だけ |
 | `control.wire_version` | メッセージの形式の版（整数）。まとめる側の版と違えば、変数を読み書きできません |
@@ -162,6 +162,18 @@ int main(int argc, char** argv)
   ],
   "variables": [
     {
+      "name": "ecu.connected",
+      "type": "bool",
+      "causality": "input",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "step": null,
+      "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+      "items": [],
+      "builtin": true
+    },
+    {
       "name": "engine.throttle",
       "type": "real",
       "causality": "input",
@@ -170,7 +182,8 @@ int main(int argc, char** argv)
       "max": 100,
       "step": null,
       "description": "accelerator pedal position",
-      "items": []
+      "items": [],
+      "builtin": false
     },
     {
       "name": "engine.speed",
@@ -181,7 +194,8 @@ int main(int argc, char** argv)
       "max": null,
       "step": null,
       "description": "",
-      "items": []
+      "items": [],
+      "builtin": false
     }
   ],
   "control": {

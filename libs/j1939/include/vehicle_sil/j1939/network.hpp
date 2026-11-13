@@ -584,6 +584,22 @@ private:
     bool pending_remove_ = false; ///< Entries were marked removed during a delivery.
 };
 
+/// What the nodes of a network do when their ECU comes back to its buses (the input
+/// "ecu.connected" of vehicle_sil::Ecu; NetworkOptions::on_reconnect). The ECU's runtime does it;
+/// the network itself never goes off its bus. Neither is checked against the standard: choose
+/// what the ECU being simulated does.
+enum class OnReconnect : std::uint8_t
+{
+    /// Each node with a NAME that has started address claiming sends a Request for Address
+    /// Claimed to all nodes, which it answers itself with its Address Claimed (or Cannot Claim);
+    /// the other nodes answer with theirs, so a node that took its address meanwhile is found.
+    /// The node keeps its address and state (no wait after the claim). The default.
+    Announce,
+    /// Nothing is sent: the nodes go on as if they had never been off (a node that took their
+    /// address meanwhile is found only when it or they send).
+    Nothing,
+};
+
 /// Creation parameters and resource limits of a network. Everything is allocated when the
 /// network is created.
 struct NetworkOptions
@@ -632,6 +648,9 @@ struct NetworkOptions
     /// it loses its address or has none configured. Within 0..253, first <= last.
     Address arbitrary_address_first = 128;
     Address arbitrary_address_last = 247;
+    /// What the nodes do when their ECU comes back to its buses (OnReconnect). Read by the ECU's
+    /// runtime only.
+    OnReconnect on_reconnect = OnReconnect::Announce;
     /// Receives warnings (e.g. a step size the network should not run with). Empty: written to
     /// std::cerr.
     std::function<void(std::string_view)> warning;
@@ -778,6 +797,8 @@ public:
     /// Only reported: the network keeps running as before in every state.
     [[nodiscard]] std::optional<can::BusState> bus_state() const noexcept { return bus_state_; }
     [[nodiscard]] const NetworkStatistics& statistics() const noexcept { return statistics_; }
+    /// NetworkOptions::on_reconnect, as the network was created with.
+    [[nodiscard]] OnReconnect on_reconnect() const noexcept { return options_.on_reconnect; }
     [[nodiscard]] bool failed() const noexcept { return phase_ == Phase::Failed; }
     [[nodiscard]] const std::string& error() const noexcept { return error_; }
     /// Time of the current (or last) step.

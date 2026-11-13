@@ -99,7 +99,7 @@ private:
 - 宣言は実行の前（ECU の組み立ての中）だけです。開始後は `std::logic_error`、同じ ECU での同じ名前は `std::invalid_argument` です（どちらも文言に ECU の名前があります）。
 - ポインターと関数は、ECU が持つもの（`Simulation::add()` が作るクラス、`emplace()` したオブジェクト）を指すようにします。ECU は Agent を、ネットワークの後、`emplace()` したオブジェクトの前に破棄します。
 - `set_agent_options()` で、読み出しの周期（`sample_period`、既定 10 ms、0 で毎ステップ）とキューの大きさを選べます。最初の `input()`、`output()`、`agent()` より前だけです。不正な値はその場で `std::invalid_argument` です（文言に ECU の名前）。
-- 変数を宣言しない ECU には Agent がなく、ステップの処理も増えません。
+- どの ECU にも Agent があります（変数を宣言しなくても、どの ECU にもある入力 `ecu.connected` を持ちます）。そのため、変数を宣言しない ECU でも、ステップごとに Agent の処理（書き込みの反映と、`sample_period` ごとの値の読み出し）が走り、`ecu_main` の ECU は `sample_period` ごと（既定 10 ms）に値のメッセージを 1 通出します。`Peer` では監視の出力（`PeerOptions::monitor`）も付きます。
 - 外からの書き込みは、指定した仮想時刻以後の最初のステップで、アプリの処理の前に反映されます（そのステップの J1939 の受信処理や部品のタイマーは反映より前に動くので、それらが新しい値を使うのは次のステップから）。値は、アプリと LIN の処理の後に読み出します。SIL Kit とローカルで同じ時点です。
 - 同じプロセスからは、`ecu.agent().submit()` で書き込み、`latest()` で読めます。`Simulation::add<App>()` で足した ECU は、`sim.ecu(name).agent()` で引けます（例: `examples/vehicle`）。
 - Control Server（ランチャーの、または単独の）につながるのは、SIL Kit の participant の ECU だけです。`ecu_main` の ECU は自動でつながります。自分で書いた `Peer` は、ECU が変数を宣言した後、`start()` の前に `vehicle_sil::control_silkit::AgentTransport transport(peer.agent(), peer.runtime());` を作ってつなぎます（`peer.stop()` の後、`Peer` より先に破棄します）。ローカル（`Simulation()`、`LocalBench`）の ECU は Control Server につながりません。同じプロセスから `agent()` で読み書きします。

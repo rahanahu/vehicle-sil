@@ -130,7 +130,9 @@ int main(int argc, char** argv)
         auto& control = sim.ecu("Engine").agent();
         static_cast<void>(control.submit({.seq = 1, .writes = {{"engine.accelerating", false}}, .at = SimTime{} + 1200ms}));
         sim.run_for(1500ms);
-        const auto speed = std::get<std::int64_t>(control.latest().values.at(1)); // engine.speed, the last sample
+        // engine.speed, the last sample (the variables: ecu.connected, which every ECU has, then the
+        // engine's in the order declared)
+        const auto speed = std::get<std::int64_t>(control.latest().values.at(2));
         std::printf("engine: speed %lld km/h (stopped accelerating at 1200 ms)\n", static_cast<long long>(speed));
         std::printf("body controller: speed %u km/h from the gateway, door locked %u\n", body.speed, body.door_locked);
         std::printf("door module: speed %u km/h from the body controller over LIN\n", door.speed);

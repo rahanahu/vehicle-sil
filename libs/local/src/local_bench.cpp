@@ -61,10 +61,12 @@ private:
 /// A LIN master or slave of an ECU.
 struct LinNode
 {
-    // Destroyed bottom-up: the node, then its port.
+    // Destroyed bottom-up: the node, then the gate, then its port.
     std::string network;
     std::size_t order = 0; ///< among the ECU's networks, raw channels and LIN nodes (describe())
     LinNodePort port;
+    /// Keeps the ECU off the bus while ecu.connected is false.
+    std::unique_ptr<detail::GatedLinPort> gate;
     std::unique_ptr<lin::LinMaster> master;
     std::unique_ptr<lin::LinSlave> slave;
 };
@@ -87,10 +89,12 @@ struct LocalBench::NamedLinBus
 
 struct LocalBench::Channel
 {
-    // Destroyed bottom-up: the network, then the tap.
+    // Destroyed bottom-up: the network, then the tap, then the gate.
     NamedBus* bus = nullptr; ///< its name is the network's
     std::size_t order = 0;   ///< as LinNode::order
     can::VirtualCanBus::Endpoint* endpoint = nullptr;
+    /// Keeps the ECU off the bus while ecu.connected is false; the tap sees what the network sees.
+    std::unique_ptr<detail::GatedCanPort> gate;
     std::unique_ptr<can::TapPort> tap;
     std::unique_ptr<j1939::Network> network;
 };
@@ -101,6 +105,7 @@ struct LocalBench::RawCan
     NamedBus* bus = nullptr; ///< its name is the channel's
     std::size_t order = 0;   ///< as LinNode::order
     can::VirtualCanBus::Endpoint* endpoint = nullptr;
+    std::unique_ptr<detail::GatedCanPort> gate;
     std::unique_ptr<can::RawChannel> channel;
 };
 
@@ -135,6 +140,12 @@ public:
                 }
             }
             agent_.end(now);
+        });
+        agent_.connection().set_on_reconnect([this] {
+            for (const auto& c : channels_)
+            {
+                detail::announce_again(*c->network);
+            }
         });
     }
 
@@ -211,6 +222,8 @@ public:
 
     [[nodiscard]] const std::string& name() const noexcept { return name_; }
     [[nodiscard]] SimDuration step() const noexcept { return step_; }
+    /// Makes the control agent if the ECU has none yet (before the first run).
+    void make_agent() { static_cast<void>(agent_.get()); }
     [[nodiscard]] can::Host& host() const noexcept { return *host_; }
 
     [[nodiscard]] Channel& channel(std::string_view network) const
@@ -346,7 +359,8 @@ public:
         c->bus = &owner_.use_bus(existing, network);
         c->order = added_++;
         c->endpoint = &c->bus->bus->attach();
-        c->tap = std::make_unique<can::TapPort>(*c->endpoint);
+        c->gate = std::make_unique<detail::GatedCanPort>(*c->endpoint, agent_.connection());
+        c->tap = std::make_unique<can::TapPort>(*c->gate);
         host_->add(*c->network, *c->tap);
         channels_.push_back(std::move(c));
         return *channels_.back()->network;
@@ -416,7 +430,8 @@ private:
         r->bus = &owner_.use_bus(existing, network);
         r->order = added_++;
         r->endpoint = &r->bus->bus->attach();
-        host_->add(*r->channel, *r->endpoint);
+        r->gate = std::make_unique<detail::GatedCanPort>(*r->endpoint, agent_.connection());
+        host_->add(*r->channel, *r->gate);
         raw_channels_.push_back(std::move(r));
         return *raw_channels_.back()->channel;
     }
@@ -425,7 +440,8 @@ private:
                                    lin::LinMasterOptions options) override
     {
         auto node = new_lin_node(network, "lin_master");
-        node->master = std::make_unique<lin::LinMaster>(node->port, std::move(schedule), step_, options);
+        node->gate = std::make_unique<detail::GatedLinPort>(node->port, agent_.connection(), lin::LinRole::Master);
+        node->master = std::make_unique<lin::LinMaster>(*node->gate, std::move(schedule), step_, options);
         attach_lin_node(std::move(node), lin::LinRole::Master);
         return *lin_nodes_.back()->master;
     }
@@ -433,7 +449,8 @@ private:
     lin::LinSlave& add_lin_slave(const std::string& network, lin::LinSlaveOptions options) override
     {
         auto node = new_lin_node(network, "lin_slave");
-        node->slave = std::make_unique<lin::LinSlave>(node->port, std::move(options));
+        node->gate = std::make_unique<detail::GatedLinPort>(node->port, agent_.connection(), lin::LinRole::Slave);
+        node->slave = std::make_unique<lin::LinSlave>(*node->gate, std::move(options));
         attach_lin_node(std::move(node), lin::LinRole::Slave);
         return *lin_nodes_.back()->slave;
     }
@@ -868,6 +885,7 @@ void LocalBench::run_until(SimTime end)
         // could still be taken back (add_j1939()).
         for (const auto& s : sites_)
         {
+            s->make_agent(); // every ECU has its input ecu.connected
             driver_.add(s->host(), s->step());
         }
     }

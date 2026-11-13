@@ -82,6 +82,7 @@ void write_variables(JsonWriter& w, std::string_view key, const std::vector<cont
             w.end_object();
         }
         w.end_array();
+        w.boolean("builtin", is_builtin_variable(variable.name));
         w.end_object();
     }
     w.end_array();

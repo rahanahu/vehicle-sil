@@ -68,6 +68,8 @@
 //   scenario_same  one scenario, run as fast as possible, at a speed, with a slow ECU and with a
 //                pause in between: the same result each time; every write takes effect in the step
 //                of its time (the ECU says in which step it saw each value)
+//   scenario_disconnect  the example scenario that takes the engine off the bus (ecu.connected):
+//                the dashboard sees the speed stop and come back, at the same times at any speed
 //   scenario_failures  a wait that times out, a simulation that stops before the scenario is over, an
 //                ECU that fails in the middle, a scenario with errors (nothing is started), the
 //                command line
@@ -1109,7 +1111,7 @@ void usage(const Options& o)
 void control(const Options& o)
 {
     {
-        // Engine and Brake offer variables; Tool has none; Quiet has some and does not offer them
+        // Engine and Brake offer variables; Tool declares none (it has ecu.connected); Quiet has some and does not offer them
         // (--no-control, which its --describe says too).
         const fs::path dir = scenario_dir(o,
                                           "vehicle_sil_simulation: 1\n"
@@ -1131,14 +1133,16 @@ void control(const Options& o)
         // Nobody is waited for in vain: the hellos are there when the start looks for them.
         require(std::chrono::steady_clock::now() - begin < 60s, "the run with control agents took too long");
         const std::string out = lf(run.standard_output);
-        // The four variables and the three outputs that the ECU's run adds (peer.*).
+        // ecu.connected, the four variables and the three outputs that the ECU's run adds (peer.*).
         for (const std::string name : {"Engine", "Brake"})
         {
-            require(contains(out, "\"name\":\"" + name + "\",\"state\":\"connected\",\"variables\":7}\n"),
+            require(contains(out, "\"name\":\"" + name + "\",\"state\":\"connected\",\"variables\":8}\n"),
                     name + " is connected with its variables:\n" + out);
         }
-        require(contains(out, "\"event\":\"control_link\"") && contains(out, "\"name\":\"Tool\",\"state\":\"none\"}\n"),
-                "Tool has nothing to connect:\n" + out);
+        // An ECU that declares no variable has ecu.connected (and the outputs peer.*).
+        require(contains(out, "\"event\":\"control_link\"") &&
+                    contains(out, "\"name\":\"Tool\",\"state\":\"connected\",\"variables\":4}\n"),
+                "Tool is connected with ecu.connected:\n" + out);
         require(contains(out, "\"name\":\"Quiet\",\"state\":\"not_offered\"}\n"), "Quiet does not offer its variables:\n" + out);
         // After everyone joined, before the simulation runs.
         const auto first = out.find("{\"event\":\"control_link\"");
@@ -1148,7 +1152,7 @@ void control(const Options& o)
         require(first != std::string::npos && joined != std::string::npos && running != std::string::npos && joined < first &&
                     last < running && out.find("\"state\":\"joined\"", first) == std::string::npos,
                 "the control events come between the last joined and running:\n" + out);
-        require(contains(out, "\"log\":null,\"control_link\":{\"state\":\"connected\",\"variables\":7,\"version\":null,"
+        require(contains(out, "\"log\":null,\"control_link\":{\"state\":\"connected\",\"variables\":8,\"version\":null,"
                               "\"late_messages\":0}},{\"name\":\"Brake\"") &&
                     contains(out, "\"log\":null,\"control_link\":{\"state\":\"not_offered\",\"variables\":null,\"version\":null,"
                                   "\"late_messages\":0}}],\"findings\":[]"),
@@ -3236,6 +3240,31 @@ void scenario_same(const Options& o)
     }
 }
 
+void scenario_disconnect(const Options& o)
+{
+    // Engine off its bus at 300 ms: its last speed is the one of 200 ms, so the dashboard says it is
+    // lost after 500 ms (the sample of 510 ms). Back at 520 ms: the speed of 600 ms arrives.
+    const auto run = [&](std::vector<std::string> more, const std::string& what) {
+        std::vector<std::string> args{"run", "simulation.yaml", "--scenario", "scenarios/engine_disconnect.yaml", "--json"};
+        args.insert(args.end(), more.begin(), more.end());
+        const Captured r = launch(o, args, o.example_dir);
+        expect_code(r, 0, what);
+        return scenario_json(lf(r.standard_output));
+    };
+    const std::string fastest = run({}, "as fast as possible");
+    require(contains(fastest, "\"status\": \"passed\"") && contains(fastest, "\"over_at_ms\": 615,"),
+            "the scenario passes, and is over at 615 ms:\n" + fastest);
+    for (const auto& [line, at] : std::vector<std::pair<int, int>>{{9, 300}, {11, 510}, {13, 520}, {14, 610}})
+    {
+        const std::string expected = "\"at_ms\": " + std::to_string(at) + ",";
+        const auto step = fastest.find("\"line\": " + std::to_string(line) + ",");
+        const auto decided = step == std::string::npos ? step : fastest.find("\"at_ms\": ", step);
+        require(decided != std::string::npos && fastest.compare(decided, expected.size(), expected) == 0,
+                "line " + std::to_string(line) + " is decided at " + std::to_string(at) + " ms:\n" + fastest);
+    }
+    expect_text(run({"--speed", "4"}, "at four times real time"), fastest, "at a speed");
+}
+
 void scenario_failures(const Options& o)
 {
     const std::string head = "vehicle_sil_scenario: 1\nsteps:\n";
@@ -3436,7 +3465,8 @@ int main(int argc, char** argv)
             {"events_stderr", events_stderr}, {"realtime", realtime}, {"on_time", on_time}, {"late", late}, {"stall", stall},
             {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
             {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control},
-            {"scenario", scenario}, {"scenario_same", scenario_same}, {"scenario_failures", scenario_failures}};
+            {"scenario", scenario}, {"scenario_same", scenario_same}, {"scenario_disconnect", scenario_disconnect},
+            {"scenario_failures", scenario_failures}};
         const auto it = std::find_if(scenarios.begin(), scenarios.end(), [&](const auto& s) { return s.first == o.scenario; });
         if (it == scenarios.end())
         {

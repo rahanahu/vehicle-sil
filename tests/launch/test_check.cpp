@@ -731,7 +731,8 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
               "name": "on",
               "value": 1
             }
-          ]
+          ],
+          "builtin": false
         }
       ],
       "control": null

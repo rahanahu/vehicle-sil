@@ -53,31 +53,35 @@ bool has_name(const std::vector<std::unique_ptr<T>>& items, std::string_view nam
 
 struct Peer::Channel
 {
-    // Destroyed bottom-up: the network, then the tap, then the port.
+    // Destroyed bottom-up: the network, then the tap, then the gate, then the port.
     std::string name;
     std::size_t order = 0; ///< among the networks, raw channels and LIN nodes (describe())
     std::string controller; ///< of the SIL Kit port; empty for an external port
     std::unique_ptr<can::SilKitCanPort> silkit_port;
     std::unique_ptr<can::Port> external_port;
+    /// Keeps the ECU off the bus while ecu.connected is false; the tap sees what the network sees.
+    std::unique_ptr<detail::GatedCanPort> gate;
     std::unique_ptr<can::TapPort> tap;
     std::unique_ptr<j1939::Network> network;
 };
 
 struct Peer::RawCan
 {
-    // Destroyed bottom-up: the channel, then the port.
+    // Destroyed bottom-up: the channel, then the gate, then the port.
     std::string name;
     std::size_t order = 0; ///< as Channel::order
     std::unique_ptr<can::SilKitCanPort> port;
+    std::unique_ptr<detail::GatedCanPort> gate;
     std::unique_ptr<can::RawChannel> channel;
 };
 
 struct Peer::LinNode
 {
-    // Destroyed bottom-up: the node, then the port.
+    // Destroyed bottom-up: the node, then the gate, then the port.
     std::string name;
     std::size_t order = 0; ///< as Channel::order
     std::unique_ptr<lin::SilKitLinPort> port;
+    std::unique_ptr<detail::GatedLinPort> gate;
     std::unique_ptr<lin::LinMaster> master;
     std::unique_ptr<lin::LinSlave> slave;
 };
@@ -122,6 +126,12 @@ Peer::Peer(PeerOptions options) :
     }
     runtime_ = std::make_unique<ParticipantRuntime>(std::move(runtimeOptions));
     host_.set_application([this](SimTime now) { run_application(now); });
+    agent_.connection().set_on_reconnect([this] {
+        for (const auto& c : channels_)
+        {
+            detail::announce_again(*c->network);
+        }
+    });
     if (options_.virtual_time)
     {
         runtime_->set_step_handler([this](SimTime now, SimDuration step) {
@@ -273,7 +283,8 @@ j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions option
         options.port.real_time_clock = options_.virtual_time ? nullptr : clock_;
         c.silkit_port = std::make_unique<can::SilKitCanPort>(*canController, options.port);
         c.controller = std::move(controller);
-        c.tap = std::make_unique<can::TapPort>(*c.silkit_port);
+        c.gate = std::make_unique<detail::GatedCanPort>(*c.silkit_port, agent_.connection());
+        c.tap = std::make_unique<can::TapPort>(*c.gate);
         c.network = std::make_unique<j1939::Network>(std::move(options.network));
         host_.add(*c.network, *c.tap);
     }
@@ -302,7 +313,8 @@ j1939::Network& Peer::j1939(std::string name, std::unique_ptr<can::Port> port, j
     try
     {
         c.external_port = std::move(port);
-        c.tap = std::make_unique<can::TapPort>(*c.external_port);
+        c.gate = std::make_unique<detail::GatedCanPort>(*c.external_port, agent_.connection());
+        c.tap = std::make_unique<can::TapPort>(*c.gate);
         c.network = std::make_unique<j1939::Network>(std::move(options));
         host_.add(*c.network, *c.tap); // std::logic_error for a port of the other time domain
     }
@@ -362,7 +374,8 @@ can::RawChannel& Peer::add_can(const std::string& network, can::RawChannelOption
         can::SilKitCanPortOptions portOptions;
         portOptions.real_time_clock = options_.virtual_time ? nullptr : clock_;
         r.port = std::make_unique<can::SilKitCanPort>(*canController, portOptions);
-        host_.add(*r.channel, *r.port);
+        r.gate = std::make_unique<detail::GatedCanPort>(*r.port, agent_.connection());
+        host_.add(*r.channel, *r.gate);
     }
     catch (...)
     {
@@ -457,6 +470,7 @@ Peer::LinNode& Peer::add_lin_node(const std::string& network, lin::LinRole role)
     node->order = added_++;
     auto* controller = runtime_->participant().CreateLinController(network, network);
     node->port = std::make_unique<lin::SilKitLinPort>(*controller, role);
+    node->gate = std::make_unique<detail::GatedLinPort>(*node->port, agent_.connection(), role);
     lin_.push_back(std::move(node));
     return *lin_.back();
 }
@@ -471,7 +485,7 @@ lin::LinMaster& Peer::add_lin_master(const std::string& network, lin::LinSchedul
     LinNode& node = add_lin_node(network, lin::LinRole::Master);
     try
     {
-        node.master = std::make_unique<lin::LinMaster>(*node.port, std::move(schedule), options_.virtual_time->step, options);
+        node.master = std::make_unique<lin::LinMaster>(*node.gate, std::move(schedule), options_.virtual_time->step, options);
     }
     catch (...)
     {
@@ -491,7 +505,7 @@ lin::LinSlave& Peer::add_lin_slave(const std::string& network, lin::LinSlaveOpti
     LinNode& node = add_lin_node(network, lin::LinRole::Slave);
     try
     {
-        node.slave = std::make_unique<lin::LinSlave>(*node.port, std::move(options));
+        node.slave = std::make_unique<lin::LinSlave>(*node.gate, std::move(options));
     }
     catch (...)
     {
@@ -669,10 +683,8 @@ can::RawChannel& Peer::raw_channel(std::string_view name) const
 void Peer::start(std::chrono::milliseconds timeout)
 {
     require_not_started("start()");
-    if (auto* agent = agent_.find())
-    {
-        agent->complete_schema(); // the monitoring outputs; the peer stays unstarted if it throws
-    }
+    // Every ECU has an agent at the start: its input ecu.connected.
+    agent_.get().complete_schema(); // the monitoring outputs; the peer stays unstarted if it throws
     started_ = true;
     runtime_->start(timeout);
     if (!options_.virtual_time)
