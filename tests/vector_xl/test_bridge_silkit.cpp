@@ -227,7 +227,7 @@ TEST_CASE(silkit_bridge_bidirectional_burst_keeps_order)
         CHECK(inbox[i].data == payload(i));
     }
     // The bridge counts a frame after it handed it over: the receiver may see the last frame first.
-    CHECK(eventually(
+    CHECK(vehicle_sil::unit::eventually(
         [&] {
             const auto now = f.bridge->statistics();
             return now.silkit_to_external >= kFrames && now.external_to_silkit >= kFrames;
