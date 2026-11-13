@@ -2,8 +2,8 @@
 //
 // Running a scenario (scenario.hpp): the machine that decides, from virtual times alone, when each
 // write goes out and what each step's result is. It has no thread, no clock and no SIL Kit: the
-// run (run.cpp) calls it at every step of the launcher's controller, and tests call it with a
-// model of the ECUs. Internal; what a user sees of it: docs/scenario.md.
+// run (run_scenario.cpp) calls it at every step of the launcher's controller, and tests call it
+// with a model of the ECUs. Internal; what a user sees of it: docs/scenario.md.
 #pragma once
 
 #include "vehicle_sil/control/hub.hpp"

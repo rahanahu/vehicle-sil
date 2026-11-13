@@ -13,8 +13,18 @@ add_library(vehicle_sil_launch_lib STATIC
   src/check.cpp
   src/events.cpp
   src/run.cpp
+  src/run_assess.cpp
+  src/run_control.cpp
+  src/run_format.cpp
+  src/run_notes.cpp
+  src/run_output.cpp
+  src/run_participants.cpp
+  src/run_scenario.cpp
+  src/run_start.cpp
+  src/run_watch.cpp
   src/scenario.cpp
-  src/scenario_run.cpp)
+  src/scenario_run.cpp
+  src/time_commands.cpp)
 add_library(vehicle_sil::launch ALIAS vehicle_sil_launch_lib)
 target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::ecu vehicle_sil::process)
