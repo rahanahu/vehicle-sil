@@ -37,7 +37,7 @@ def stop_and_time(proc, how: int = signal.SIGTERM, limit: float = 60) -> float:
 @pytest.mark.parametrize("checked_first", [True, False], ids=["names-known", "names-unknown"])
 def test_concurrent_runs_start_one_launcher(tmp_path: Path, checked_first: bool) -> None:
     # The reviewer's steps: (a check,) then four api/run at once. Only one may start; the others are refused.
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_CHECK_DELAY_MS": "200"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_CHECK_DELAY_MS": "200"}) as gui:
         async def main(c: Client) -> list[int]:
             if checked_first:
                 assert (await c.post("api/check", {"file": "forever.yaml"}))[0] == 200
@@ -59,7 +59,7 @@ def test_concurrent_runs_start_one_launcher(tmp_path: Path, checked_first: bool)
 
 
 def test_stop_is_idempotent_and_answers_with_the_summary(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "50"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
         async def main(c: Client) -> None:
             status, body = await c.post("api/stop")  # nothing runs: not an error
             assert status == 200 and body == {"session": None}
@@ -87,7 +87,7 @@ def test_stop_is_idempotent_and_answers_with_the_summary(tmp_path: Path) -> None
 
 
 def test_force_stops_a_launcher_that_waits(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "50"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -102,13 +102,14 @@ def test_force_stops_a_launcher_that_waits(tmp_path: Path) -> None:
             replies = await asyncio.gather(*(c.post("api/stop", {"force": True}) for _ in range(3)))
             assert all(b["session"]["stop"] == "forced" for _, b in replies)
             got = await sock.until(is_ended)
-            assert [p["state"] for p in got[-1]["session"]["participants"]] == ["killed"] * 3
+            # Engine and Dashboard end when asked; Logger (it ignores SIGTERM) is killed by the second stop
+            assert [p["state"] for p in got[-1]["session"]["participants"]] == ["ended", "ended", "killed"]
             assert len(event_messages(sock.received, "command")) == 2
         run_async(main, gui)
 
 
 def test_force_without_a_stop_first_sends_two(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "50"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -123,7 +124,7 @@ def test_force_without_a_stop_first_sends_two(tmp_path: Path) -> None:
 
 
 def test_a_stop_while_the_run_starts_stops_it_once_started(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "50", "FAKE_LAUNCHER_CHECK_DELAY_MS": "1500"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50", "REPLAY_CHECK_DELAY_MS": "1500"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -148,7 +149,7 @@ def test_a_stop_while_the_run_starts_stops_it_once_started(tmp_path: Path) -> No
 
 
 def test_concurrent_checks_wait_their_turn(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_CHECK_DELAY_MS": "300"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_CHECK_DELAY_MS": "300"}) as gui:
         async def main(c: Client) -> None:
             replies = await asyncio.gather(*(c.post("api/check", {"file": "simulation.yaml"}) for _ in range(3)))
             assert [s for s, _ in replies] == [200, 200, 200], replies
@@ -167,7 +168,7 @@ def test_a_launcher_whose_descendant_keeps_its_output_open_still_ends(tmp_path: 
     # The reviewer's steps: a launcher that writes its result and exits, leaving a process in a session of its
     # own that holds the launcher's standard output and error.
     orphans: list[int] = []
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_ORPHAN_S": "60"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_ORPHAN_S": "60"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -274,7 +275,7 @@ def test_open_connections_do_not_delay_the_end(tmp_path: Path, connect) -> None:
 
 
 def test_a_hanging_check_does_not_delay_the_end(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_CHECK_DELAY_MS": "60000"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_CHECK_DELAY_MS": "60000"}) as gui:
         async def main(c: Client) -> list[int]:
             check = asyncio.create_task(c.post("api/check", {"file": "simulation.yaml"}))
             assert await asyncio.to_thread(wait_until, lambda: children(gui.proc.pid), 5)

@@ -1,9 +1,15 @@
-// シナリオを選んで回す、操作をシナリオとして保存する、を偽のランチャーで通す。偽のランチャーに Control Server と
+// シナリオを選んで回す、操作をシナリオとして保存する、を流し直すランチャーで通す。流し直すランチャーに Control Server と
 // scenario-control を持たせる（シナリオの実行中も変数を読める）ので、この試験だけの GUI サーバーを起動する。
 // VEHICLE_SIL_GUI_SHOTS にディレクトリを書くと、シナリオが失敗で終わった実行の画面（幅 1280）も撮る。
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { CONFIGS, FAKE_LAUNCHER, GUI_PORT, GuiServer, launchGuiServer } from './support/gui-server';
+import {
+  CONFIGS,
+  REPLAY_LAUNCHER,
+  GUI_PORT,
+  GuiServer,
+  launchGuiServer,
+} from './support/gui-server';
 import { RUN_TIMEOUT } from './support/run-page';
 import {
   Target,
@@ -25,9 +31,9 @@ let target: Target;
 test.beforeAll(async () => {
   test.skip(test.info().project.name !== 'static', 'only with the built screen');
   server = await launchGuiServer({
-    launcher: FAKE_LAUNCHER,
+    launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
-    env: { FAKE_LAUNCHER_TICK_MS: '100', FAKE_LAUNCHER_FEATURES: FEATURES },
+    env: { REPLAY_TICK_MS: '100', REPLAY_FEATURES: FEATURES },
     port: GUI_PORT + 400,
   });
   target = { base: new URL('/', server.url).href, token: server.token };
@@ -83,7 +89,7 @@ test('runs a scenario that passes, and one that fails, with its steps', async ({
   const steps = card.getByTestId('scenario-step');
   await expect(steps.nth(1)).toContainText('scenario-failed');
   await expect(steps.nth(2)).toContainText('動かなかった');
-  await expect(page.getByTestId('result-card')).toContainText('scenarios/fails.yaml:8');
+  await expect(page.getByTestId('result-card')).toContainText('scenarios/fails.yaml:7');
   if (shots) {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.locator('mat-sidenav-content').evaluate((element) => element.scrollTo(0, 0));
@@ -94,7 +100,7 @@ test('runs a scenario that passes, and one that fails, with its steps', async ({
 
 test('while a scenario runs, the variables can be read but not written', async ({ page }) => {
   await openVariables(page, target);
-  // 速さ 0.001: 偽のランチャーの 1 ステップ（100 ms）が 100 秒かかり、シナリオは確かめ終わるまで終わらない
+  // 速さ 0.001: シナリオの 2 つ目の手順（500 ms の待ち）が何分もかかり、シナリオは確かめ終わるまで終わらない
   // （速さを指定しないと、3 つの手順は 1 秒足らずで終わり、遅い機械では、確かめる前に実行が終わる）
   const response = await page.request.post(new URL('api/run', target.base).href, {
     headers: { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin },

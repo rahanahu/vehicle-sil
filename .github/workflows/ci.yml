@@ -55,6 +55,12 @@ jobs:
           restore-keys: ccache-${{ matrix.preset }}-
       - name: Configure, build and test
         run: python3 scripts/verify.py ${{ matrix.preset }} --tag ci
+      # The GUI's tests play recordings of the launcher (gui/server/tests/recordings): are they still what this
+      # launcher and the ecu_main example ECUs write? (Standard library only. Cases that need the control server
+      # are skipped and said so: the preset is built without it.)
+      - name: The GUI's recordings against this launcher
+        if: matrix.preset == 'linux-gcc-release'
+        run: python3 gui/server/tests/record_launcher.py --launcher build/linux-gcc-release/tools/launch/vehicle_sil_launch --compare
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

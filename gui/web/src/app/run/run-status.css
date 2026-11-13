@@ -204,6 +204,16 @@
   .state {
     flex-basis: 100%;
   }
+
+  /*
+   * ボタンを低くする。止めている途中はボタンが 3 行に折れることがあり（字の幅が広い書体、長い英語の名前）、帯が窓の
+   * 高さの 3 分の 1 を超えないように
+   */
+  .actions {
+    --mat-button-filled-container-height: 32px;
+    --mat-button-outlined-container-height: 32px;
+    --mat-button-tonal-container-height: 32px;
+  }
 }
 
 /* 狭い帯では、段階はいまの段階（と中断した段階）だけ。帯を 2 行に保つ */

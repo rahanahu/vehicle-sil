@@ -1,8 +1,14 @@
-// 変数の画面（自動のダッシュボード）を、偽のランチャーと偽の Control Server で通す。偽のランチャーに
-// Control Server を持たせ、部品の種類が揃う変数（FAKE_LAUNCHER_VARIABLES=more）を出させるので、この試験だけの
+// 変数の画面（自動のダッシュボード）を、流し直すランチャーと偽の Control Server で通す。流し直すランチャーに
+// Control Server を持たせ、部品の種類が揃う変数（REPLAY_VARIABLES=more）を出させるので、この試験だけの
 // GUI サーバーを起動する。
 import { expect, test } from '@playwright/test';
-import { CONFIGS, FAKE_LAUNCHER, GUI_PORT, GuiServer, launchGuiServer } from './support/gui-server';
+import {
+  CONFIGS,
+  REPLAY_LAUNCHER,
+  GUI_PORT,
+  GuiServer,
+  launchGuiServer,
+} from './support/gui-server';
 import { VIEWPORTS, findLayoutProblems } from './support/layout';
 import {
   Target,
@@ -25,12 +31,12 @@ test.beforeAll(async () => {
   // 開発サーバーの形（e2e:dev）では回さない（同じ画面。サーバーを別に起動するので、ビルドした画面で 1 回）
   test.skip(test.info().project.name !== 'static', 'only with the built screen');
   server = await launchGuiServer({
-    launcher: FAKE_LAUNCHER,
+    launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
     env: {
-      FAKE_LAUNCHER_TICK_MS: '50',
-      FAKE_LAUNCHER_FEATURES: CONTROL_FEATURES,
-      FAKE_LAUNCHER_VARIABLES: 'more',
+      REPLAY_TICK_MS: '50',
+      REPLAY_FEATURES: CONTROL_FEATURES,
+      REPLAY_VARIABLES: 'more',
     },
     port: GUI_PORT + 300,
   });

@@ -71,7 +71,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -153,8 +153,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -237,13 +243,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -336,8 +348,7 @@
               "line": 6,
               "participants": [
                 "Engine",
-                "Dashboard",
-                "Logger"
+                "Dashboard"
               ]
             }
           ],
@@ -349,7 +360,7 @@
               "line": 13,
               "participant": "Logger",
               "network": null,
-              "message": "participant 'Logger': describe is false, so it was not checked",
+              "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
               "detail": null
             }
           ],
@@ -526,7 +537,7 @@
         "seq": 15,
         "t_ms": 150,
         "index": 1,
-        "line": 6,
+        "line": 5,
         "kind": "set",
         "text": "set Engine.engine.throttle = 50",
         "status": "running",
@@ -541,12 +552,11 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "control_link",
+        "event": "log",
         "seq": 16,
         "t_ms": 160,
-        "name": "Engine",
-        "state": "connected",
-        "variables": 4
+        "source": "Dashboard",
+        "line": "t=0 ms engine speed 0 rpm (0 messages)"
       }
     },
     {
@@ -556,7 +566,7 @@
         "event": "control_link",
         "seq": 17,
         "t_ms": 170,
-        "name": "Dashboard",
+        "name": "Engine",
         "state": "connected",
         "variables": 4
       }
@@ -568,6 +578,18 @@
         "event": "control_link",
         "seq": 18,
         "t_ms": 180,
+        "name": "Dashboard",
+        "state": "connected",
+        "variables": 4
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "control_link",
+        "seq": 19,
+        "t_ms": 190,
         "name": "Logger",
         "state": "none"
       }
@@ -577,8 +599,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 19,
-        "t_ms": 190,
+        "seq": 20,
+        "t_ms": 200,
         "phase": "running"
       }
     },
@@ -587,8 +609,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 20,
-        "t_ms": 200,
+        "seq": 21,
+        "t_ms": 210,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -598,8 +620,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 21,
-        "t_ms": 210,
+        "seq": 22,
+        "t_ms": 220,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -615,32 +637,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 22,
-        "t_ms": 220,
-        "source": "Engine",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
         "seq": 23,
         "t_ms": 230,
-        "source": "Dashboard",
-        "line": "step 1: t = 100 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 24,
-        "t_ms": 240,
-        "source": "Logger",
-        "line": "step 1: t = 100 ms"
+        "source": "vehicle_sil_launch",
+        "line": "scenario: line 5: set Engine.engine.throttle = 50: ok at 0 ms"
       }
     },
     {
@@ -648,10 +648,10 @@
       "session": 1,
       "event": {
         "event": "scenario_step",
-        "seq": 25,
-        "t_ms": 250,
+        "seq": 24,
+        "t_ms": 240,
         "index": 1,
-        "line": 6,
+        "line": 5,
         "kind": "set",
         "text": "set Engine.engine.throttle = 50",
         "status": "passed",
@@ -667,16 +667,16 @@
       "session": 1,
       "event": {
         "event": "scenario_step",
-        "seq": 26,
-        "t_ms": 260,
+        "seq": 25,
+        "t_ms": 250,
         "index": 2,
-        "line": 8,
+        "line": 7,
         "kind": "expect",
         "text": "expect Engine.engine.speed ge 5000",
         "status": "running",
         "start_ms": 100,
         "at_ms": null,
-        "end_ms": null,
+        "end_ms": 100,
         "code": null,
         "message": null
       }
@@ -685,10 +685,40 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "time",
+        "event": "log",
+        "seq": 26,
+        "t_ms": 260,
+        "source": "vehicle_sil_launch",
+        "line": "scenario: line 7: expect Engine.engine.speed ge 5000: FAILED at 100 ms (not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms))"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "scenario_step",
         "seq": 27,
         "t_ms": 270,
-        "sim_ms": 100,
+        "index": 2,
+        "line": 7,
+        "kind": "expect",
+        "text": "expect Engine.engine.speed ge 5000",
+        "status": "failed",
+        "start_ms": 100,
+        "at_ms": 100,
+        "end_ms": 100,
+        "code": "scenario-failed",
+        "message": "not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms)"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "time",
+        "seq": 28,
+        "t_ms": 280,
+        "sim_ms": 101,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -696,17 +726,6 @@
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 28,
-        "t_ms": 280,
-        "source": "Engine",
-        "line": "step 2: t = 200 ms"
       }
     },
     {
@@ -716,55 +735,8 @@
         "event": "log",
         "seq": 29,
         "t_ms": 290,
-        "source": "Dashboard",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "log",
-        "seq": 30,
-        "t_ms": 300,
-        "source": "Logger",
-        "line": "step 2: t = 200 ms"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "scenario_step",
-        "seq": 31,
-        "t_ms": 310,
-        "index": 2,
-        "line": 8,
-        "kind": "expect",
-        "text": "expect Engine.engine.speed ge 5000",
-        "status": "failed",
-        "start_ms": 100,
-        "at_ms": 200,
-        "end_ms": 200,
-        "code": "scenario-failed",
-        "message": "not true at 200 ms (fake-launcher: fail)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 32,
-        "t_ms": 320,
-        "sim_ms": 200,
-        "speed": "max",
-        "paused": false,
-        "actual_speed": 1.5,
-        "late_steps": 0,
-        "max_late_ms": 0,
-        "slipped_ms": 0,
-        "late_ms": 0
+        "source": "vehicle_sil_launch",
+        "line": "the scenario is over: the simulation was stopped"
       }
     },
     {
@@ -772,15 +744,15 @@
       "session": 1,
       "event": {
         "event": "finding",
-        "seq": 33,
-        "t_ms": 330,
+        "seq": 30,
+        "t_ms": 300,
         "severity": "error",
         "code": "scenario-failed",
         "file": "scenarios/fails.yaml",
-        "line": 8,
+        "line": 7,
         "participant": null,
         "network": null,
-        "message": "expect Engine.engine.speed ge 5000: not true at 200 ms (fake-launcher: fail)",
+        "message": "expect Engine.engine.speed ge 5000: not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms)",
         "detail": null
       }
     },
@@ -789,8 +761,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 34,
-        "t_ms": 340,
+        "seq": 31,
+        "t_ms": 310,
         "phase": "stopping"
       }
     },
@@ -799,8 +771,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 35,
-        "t_ms": 350,
+        "seq": 32,
+        "t_ms": 320,
         "source": "vehicle_sil_launch",
         "line": "Engine exited with code 0"
       }
@@ -810,8 +782,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 36,
-        "t_ms": 360,
+        "seq": 33,
+        "t_ms": 330,
         "name": "Engine",
         "state": "ended",
         "exit_code": 0,
@@ -823,8 +795,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 37,
-        "t_ms": 370,
+        "seq": 34,
+        "t_ms": 340,
         "source": "vehicle_sil_launch",
         "line": "Dashboard exited with code 0"
       }
@@ -834,8 +806,8 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 38,
-        "t_ms": 380,
+        "seq": 35,
+        "t_ms": 350,
         "name": "Dashboard",
         "state": "ended",
         "exit_code": 0,
@@ -847,10 +819,10 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 39,
-        "t_ms": 390,
+        "seq": 36,
+        "t_ms": 360,
         "source": "vehicle_sil_launch",
-        "line": "Logger exited with code 0"
+        "line": "asking Logger to stop (SIGTERM)"
       }
     },
     {
@@ -858,12 +830,23 @@
       "session": 1,
       "event": {
         "event": "participant",
-        "seq": 40,
-        "t_ms": 400,
+        "seq": 37,
+        "t_ms": 370,
+        "name": "Logger",
+        "state": "stop_requested"
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "participant",
+        "seq": 38,
+        "t_ms": 380,
         "name": "Logger",
         "state": "ended",
-        "exit_code": 0,
-        "signal": null
+        "exit_code": null,
+        "signal": "SIGTERM"
       }
     },
     {
@@ -871,8 +854,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 41,
-        "t_ms": 410,
+        "seq": 39,
+        "t_ms": 390,
         "phase": "ended"
       }
     },
@@ -881,8 +864,8 @@
       "session": 1,
       "event": {
         "event": "result",
-        "seq": 42,
-        "t_ms": 420,
+        "seq": 40,
+        "t_ms": 400,
         "result": {
           "vehicle_sil_run": 1,
           "vehicle_sil": "0.1.0",
@@ -896,11 +879,11 @@
           "interrupted_by": null,
           "timing": {
             "speed": "max",
-            "time_step_ms": 10,
+            "time_step_ms": 1,
             "ecu_step_ms": null,
             "step_delay_ms": null,
             "late_tolerance_ms": 10,
-            "sim_ms": 200,
+            "sim_ms": 101,
             "wall_ms": 1000,
             "actual_speed": 1.5,
             "paced_steps": 0,
@@ -950,9 +933,9 @@
               "required": false,
               "enabled": true,
               "manual": false,
-              "ended": "exited",
-              "exit_code": 0,
-              "signal": null,
+              "ended": "stopped",
+              "exit_code": null,
+              "signal": "SIGTERM",
               "left_processes": false,
               "log": null,
               "control_link": {
@@ -968,10 +951,10 @@
               "severity": "error",
               "code": "scenario-failed",
               "file": "scenarios/fails.yaml",
-              "line": 8,
+              "line": 7,
               "participant": null,
               "network": null,
-              "message": "expect Engine.engine.speed ge 5000: not true at 200 ms (fake-launcher: fail)",
+              "message": "expect Engine.engine.speed ge 5000: not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms)",
               "detail": null
             }
           ],
@@ -1009,8 +992,14 @@
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 0,
+                          "j1939_name": "0x00000000FE000001",
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1093,13 +1082,19 @@
                 "reported": {
                   "vehicle_sil": "0.1.0",
                   "name": "Dashboard",
-                  "step_ns": 10000000,
+                  "step_ns": 5000000,
                   "networks": [
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 40,
+                          "j1939_name": null,
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1192,8 +1187,7 @@
                 "line": 6,
                 "participants": [
                   "Engine",
-                  "Dashboard",
-                  "Logger"
+                  "Dashboard"
                 ]
               }
             ],
@@ -1205,7 +1199,7 @@
                 "line": 13,
                 "participant": "Logger",
                 "network": null,
-                "message": "participant 'Logger': describe is false, so it was not checked",
+                "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
                 "detail": null
               }
             ],
@@ -1219,11 +1213,11 @@
             "file": "scenarios/fails.yaml",
             "name": "speed too high",
             "status": "failed",
-            "over_at_ms": 200,
+            "over_at_ms": 101,
             "steps": [
               {
                 "index": 1,
-                "line": 6,
+                "line": 5,
                 "kind": "set",
                 "text": "set Engine.engine.throttle = 50",
                 "status": "passed",
@@ -1235,21 +1229,21 @@
               },
               {
                 "index": 2,
-                "line": 8,
+                "line": 7,
                 "kind": "expect",
                 "text": "expect Engine.engine.speed ge 5000",
                 "status": "failed",
                 "start_ms": 100,
-                "at_ms": 200,
-                "end_ms": 200,
+                "at_ms": 100,
+                "end_ms": 100,
                 "code": "scenario-failed",
-                "message": "not true at 200 ms (fake-launcher: fail)"
+                "message": "not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms)"
               },
               {
                 "index": 3,
                 "line": 9,
                 "kind": "expect",
-                "text": "expect Engine.engine.speed 0",
+                "text": "expect Engine.engine.speed eq 0",
                 "status": "not_run",
                 "start_ms": null,
                 "at_ms": null,
@@ -1283,13 +1277,13 @@
         },
         "stop": "none",
         "phase": "ended",
-        "last_seq": 42,
-        "last_t_ms": 420,
+        "last_seq": 40,
+        "last_t_ms": 400,
         "time": {
           "event": "time",
-          "seq": 32,
-          "t_ms": 320,
-          "sim_ms": 200,
+          "seq": 28,
+          "t_ms": 280,
+          "sim_ms": 101,
           "speed": "max",
           "paused": false,
           "actual_speed": 1.5,
@@ -1332,8 +1326,14 @@
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 0,
+                        "j1939_name": "0x00000000FE000001",
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -1416,13 +1416,19 @@
               "reported": {
                 "vehicle_sil": "0.1.0",
                 "name": "Dashboard",
-                "step_ns": 10000000,
+                "step_ns": 5000000,
                 "networks": [
                   {
                     "name": "J1939_CAN",
                     "kind": "can",
-                    "use": "raw",
-                    "nodes": []
+                    "use": "j1939",
+                    "nodes": [
+                      {
+                        "address": 40,
+                        "j1939_name": null,
+                        "arbitrary_address_capable": false
+                      }
+                    ]
                   }
                 ]
               },
@@ -1515,8 +1521,7 @@
               "line": 6,
               "participants": [
                 "Engine",
-                "Dashboard",
-                "Logger"
+                "Dashboard"
               ]
             }
           ],
@@ -1528,7 +1533,7 @@
               "line": 13,
               "participant": "Logger",
               "network": null,
-              "message": "participant 'Logger': describe is false, so it was not checked",
+              "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
               "detail": null
             }
           ],
@@ -1596,8 +1601,9 @@
             "control_link": {
               "state": "none"
             },
-            "exit_code": 0,
-            "signal": null
+            "stop_requested": true,
+            "exit_code": null,
+            "signal": "SIGTERM"
           }
         ],
         "participants_omitted": 0,
@@ -1606,10 +1612,10 @@
             "severity": "error",
             "code": "scenario-failed",
             "file": "scenarios/fails.yaml",
-            "line": 8,
+            "line": 7,
             "participant": null,
             "network": null,
-            "message": "expect Engine.engine.speed ge 5000: not true at 200 ms (fake-launcher: fail)",
+            "message": "expect Engine.engine.speed ge 5000: not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms)",
             "detail": null
           }
         ],
@@ -1628,11 +1634,11 @@
           "interrupted_by": null,
           "timing": {
             "speed": "max",
-            "time_step_ms": 10,
+            "time_step_ms": 1,
             "ecu_step_ms": null,
             "step_delay_ms": null,
             "late_tolerance_ms": 10,
-            "sim_ms": 200,
+            "sim_ms": 101,
             "wall_ms": 1000,
             "actual_speed": 1.5,
             "paced_steps": 0,
@@ -1682,9 +1688,9 @@
               "required": false,
               "enabled": true,
               "manual": false,
-              "ended": "exited",
-              "exit_code": 0,
-              "signal": null,
+              "ended": "stopped",
+              "exit_code": null,
+              "signal": "SIGTERM",
               "left_processes": false,
               "log": null,
               "control_link": {
@@ -1700,10 +1706,10 @@
               "severity": "error",
               "code": "scenario-failed",
               "file": "scenarios/fails.yaml",
-              "line": 8,
+              "line": 7,
               "participant": null,
               "network": null,
-              "message": "expect Engine.engine.speed ge 5000: not true at 200 ms (fake-launcher: fail)",
+              "message": "expect Engine.engine.speed ge 5000: not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms)",
               "detail": null
             }
           ],
@@ -1741,8 +1747,14 @@
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 0,
+                          "j1939_name": "0x00000000FE000001",
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1825,13 +1837,19 @@
                 "reported": {
                   "vehicle_sil": "0.1.0",
                   "name": "Dashboard",
-                  "step_ns": 10000000,
+                  "step_ns": 5000000,
                   "networks": [
                     {
                       "name": "J1939_CAN",
                       "kind": "can",
-                      "use": "raw",
-                      "nodes": []
+                      "use": "j1939",
+                      "nodes": [
+                        {
+                          "address": 40,
+                          "j1939_name": null,
+                          "arbitrary_address_capable": false
+                        }
+                      ]
                     }
                   ]
                 },
@@ -1924,8 +1942,7 @@
                 "line": 6,
                 "participants": [
                   "Engine",
-                  "Dashboard",
-                  "Logger"
+                  "Dashboard"
                 ]
               }
             ],
@@ -1937,7 +1954,7 @@
                 "line": 13,
                 "participant": "Logger",
                 "network": null,
-                "message": "participant 'Logger': describe is false, so it was not checked",
+                "message": "participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot compare its name, step and networks with this file",
                 "detail": null
               }
             ],
@@ -1951,11 +1968,11 @@
             "file": "scenarios/fails.yaml",
             "name": "speed too high",
             "status": "failed",
-            "over_at_ms": 200,
+            "over_at_ms": 101,
             "steps": [
               {
                 "index": 1,
-                "line": 6,
+                "line": 5,
                 "kind": "set",
                 "text": "set Engine.engine.throttle = 50",
                 "status": "passed",
@@ -1967,21 +1984,21 @@
               },
               {
                 "index": 2,
-                "line": 8,
+                "line": 7,
                 "kind": "expect",
                 "text": "expect Engine.engine.speed ge 5000",
                 "status": "failed",
                 "start_ms": 100,
-                "at_ms": 200,
-                "end_ms": 200,
+                "at_ms": 100,
+                "end_ms": 100,
                 "code": "scenario-failed",
-                "message": "not true at 200 ms (fake-launcher: fail)"
+                "message": "not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms)"
               },
               {
                 "index": 3,
                 "line": 9,
                 "kind": "expect",
-                "text": "expect Engine.engine.speed 0",
+                "text": "expect Engine.engine.speed eq 0",
                 "status": "not_run",
                 "start_ms": null,
                 "at_ms": null,
@@ -1994,19 +2011,11 @@
         },
         "log": {
           "vehicle_sil_launch": {
-            "kept": 8,
-            "dropped": 0
-          },
-          "Engine": {
-            "kept": 2,
+            "kept": 11,
             "dropped": 0
           },
           "Dashboard": {
-            "kept": 2,
-            "dropped": 0
-          },
-          "Logger": {
-            "kept": 2,
+            "kept": 1,
             "dropped": 0
           }
         },
@@ -2019,7 +2028,7 @@
           "steps": [
             {
               "index": 1,
-              "line": 6,
+              "line": 5,
               "kind": "set",
               "text": "set Engine.engine.throttle = 50",
               "status": "passed",
@@ -2031,21 +2040,21 @@
             },
             {
               "index": 2,
-              "line": 8,
+              "line": 7,
               "kind": "expect",
               "text": "expect Engine.engine.speed ge 5000",
               "status": "failed",
               "start_ms": 100,
-              "at_ms": 200,
-              "end_ms": 200,
+              "at_ms": 100,
+              "end_ms": 100,
               "code": "scenario-failed",
-              "message": "not true at 200 ms (fake-launcher: fail)"
+              "message": "not true at 100 ms: Engine.engine.speed ge 5000, but it was 550 (its sample of 100 ms)"
             },
             {
               "index": 3,
               "line": 9,
               "kind": "expect",
-              "text": "expect Engine.engine.speed 0",
+              "text": "expect Engine.engine.speed eq 0",
               "status": "not_run",
               "start_ms": null,
               "at_ms": null,
@@ -2056,7 +2065,7 @@
           ],
           "steps_omitted": 0,
           "status": "failed",
-          "over_at_ms": 200
+          "over_at_ms": 101
         }
       }
     }

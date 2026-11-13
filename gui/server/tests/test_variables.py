@@ -1,4 +1,4 @@
-"""The ECUs' variables through the GUI server: the schema, watches, writes and their results, with the fake
+"""The ECUs' variables through the GUI server: the schema, watches, writes and their results, with the stand-in
 launcher and its stand-in for the control server (fake_control.py), and what a run without one looks like."""
 
 from __future__ import annotations
@@ -156,13 +156,9 @@ def test_the_token_of_the_control_server_stays_in_its_file(tmp_path: Path, contr
             path = Path(hello["arguments"][at + 1])
             # The launcher read one credential from a file only this user can read; the file is gone once the
             # control server listens, long before the run ends.
-            lines = [m["event"]["line"] for m in got if m["type"] == "event" and m["event"]["event"] == "log"]
-            said = next(line for line in lines if line.startswith("control credentials: "))
-            assert said.startswith("control credentials: 1 credential(s), file mode ")
-            if os.name == "posix":
-                assert said.endswith("file mode 600")
-            else:  # no mode bits there: the file was in the user's own temporary directory, and nowhere else
-                assert path.parent.resolve() == temp.resolve()
+            # The stand-in launcher ends the run (exit code 3, a line on standard error) when the token file can
+            # be read by others, so variables that are ready mean a file only this user could read (POSIX); the
+            # file was in the user's own temporary directory, and nowhere else.
             assert path.parent.resolve() == temp.resolve() and path.name.startswith("vehicle-sil-gui-control-")
             assert not path.exists() and not list(temp.glob("vehicle-sil-gui-control-*"))
             server = next(m["event"] for m in got if m["type"] == "event" and m["event"]["event"] == "control_server")
@@ -188,7 +184,7 @@ def test_the_token_of_the_control_server_stays_in_its_file(tmp_path: Path, contr
 def test_trouble_with_the_control_server_leaves_the_run_alone(tmp_path: Path, control_env: dict, trouble: str,
                                                               wait_for: str, states: list[str], reason: str) -> None:
     # Each state is waited for before the next thing is done: the order is the test's, not the clock's.
-    with gui_server(tmp_path, env={**control_env, "FAKE_LAUNCHER_CONTROL": trouble}) as gui:
+    with gui_server(tmp_path, env={**control_env, "REPLAY_CONTROL": trouble}) as gui:
         async def talk(c: Client) -> None:
             ws, session = await start(c, start_paused=True)
             await ws.send({"type": "watch", "id": 1, "variables": "all"})
@@ -222,7 +218,7 @@ def test_trouble_with_the_control_server_leaves_the_run_alone(tmp_path: Path, co
 
 
 def test_a_write_while_the_variables_cannot_be_reached_is_refused_with_the_reason(tmp_path: Path, control_env) -> None:
-    with gui_server(tmp_path, env={**control_env, "FAKE_LAUNCHER_CONTROL": "unreachable"}) as gui:
+    with gui_server(tmp_path, env={**control_env, "REPLAY_CONTROL": "unreachable"}) as gui:
         async def talk(c: Client) -> None:
             ws, session = await start(c)
             await ws.until(lambda m: m["type"] == "variables" and m["variables"]["reason"])
@@ -235,7 +231,7 @@ def test_a_write_while_the_variables_cannot_be_reached_is_refused_with_the_reaso
 
 
 def test_the_launcher_dying_ends_the_variables_and_the_open_operations(tmp_path: Path, control_env: dict) -> None:
-    with gui_server(tmp_path, env={**control_env, "FAKE_LAUNCHER_SCENARIO": "launcher-crash"}) as gui:
+    with gui_server(tmp_path, env={**control_env, "REPLAY_FAULT": "launcher-crash"}) as gui:
         async def talk(c: Client) -> None:
             ws, session = await start(c, start_paused=True)
             await ws.until(is_variables("ready"))
@@ -357,14 +353,16 @@ def test_watches_that_are_wrong_get_an_error_and_the_connection_goes_on(tmp_path
 
 
 def test_a_screen_that_does_not_read_gets_the_latest_values_when_it_reads_again(tmp_path: Path, control_env) -> None:
-    # A run at full speed: the values change with every step, many thousand times while the slow screen sleeps.
-    with gui_server(tmp_path, env={**control_env, "FAKE_LAUNCHER_TICK_MS": "0"}) as gui:
+    # A run at full speed (Engine alone: the recording has time events for 2.5 s): the values change with every
+    # time event, many times while the slow screen sleeps.
+    with gui_server(tmp_path, env={**control_env, "REPLAY_TICK_MS": "100"}) as gui:
         async def talk(c: Client) -> None:
             slow = await c.ws()
             await slow.until(is_synced)
             fast = await c.ws()
             await fast.until(is_synced)
-            _, session = await c.post("api/run", {"file": "forever.yaml", "speed": "max"})
+            _, session = await c.post("api/run", {"file": "forever.yaml", "speed": "max",
+                                                  "disable": ["Dashboard", "Logger"]})
             session = session["session"]
             for ws in (slow, fast):
                 await ws.send({"type": "watch", "id": 1, "variables": "all", "period_ms": 20})
@@ -401,9 +399,12 @@ def test_a_run_that_stands_before_its_first_step_is_resumed_from_the_screen(tmp_
     with gui_server(tmp_path, env=control_env) as gui:
         async def talk(c: Client) -> None:
             ws, session = await start(c, file="simulation.yaml", start_paused=True)
-            got = await ws.until(is_variables("ready"))
-            lines = [m["event"]["line"] for m in got if m["type"] == "event" and m["event"]["event"] == "log"]
-            assert any(line.startswith("standing still before the first step") for line in lines)
+            await ws.until(is_variables("ready"))
+            standing = "standing still before the first step"  # the launcher's log line, before or after ready
+            if not any(m["type"] == "event" and m["event"]["event"] == "log" and m["event"]["line"].startswith(standing)
+                       for m in ws.received):
+                await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "log"
+                               and m["event"]["line"].startswith(standing))
             # A pause changes nothing; the phase stays waiting, and there is still no time event.
             await c.post("api/time", {"command": "pause"})
             await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "command")

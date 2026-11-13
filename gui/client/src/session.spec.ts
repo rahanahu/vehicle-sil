@@ -84,7 +84,8 @@ describe('SessionFeed', () => {
     expect(session?.phase).toBe('ended');
     expect(session && runOutcome(session)).toBe('ended');
     expect(session?.participants.map((p) => [p.name, p.state])).toContainEqual(['Engine', 'ended']);
-    expect(session?.logs.some((line) => line.source === 'Engine')).toBe(true);
+    // 例の ECU では Dashboard が行を書く
+    expect(session?.logs.some((line) => line.source === 'Dashboard')).toBe(true);
     expect(session?.check?.result).toBe('passed');
   });
 
@@ -198,8 +199,9 @@ describe('SessionFeed', () => {
   it('asks for the rest after a reconnection, and keeps what it has', () => {
     const { run, socket } = open();
     const replay = examples.get('ws-replay');
+    const half = Math.floor((replay?.server.length ?? 0) / 2);
     // 実行の途中までを受け取ってから切れる
-    play(socket, 'ws-replay', 0, 30);
+    play(socket, 'ws-replay', 0, half);
     const before = run.session();
     expect(before?.lastSeq).toBeGreaterThan(0);
     socket.fail();
@@ -225,7 +227,7 @@ describe('SessionFeed', () => {
       ...(replay?.server[0] as object),
       replay: { from_seq: (before?.lastSeq ?? 0) + 1, omitted: { log: {}, events: 0 } },
     });
-    play(again, 'ws-replay', 30);
+    play(again, 'ws-replay', half);
     const logs = (replay?.server ?? []).filter(
       (message) => (message as { event?: { event: string } }).event?.event === 'log',
     );

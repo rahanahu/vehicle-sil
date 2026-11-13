@@ -1,5 +1,6 @@
-# A configuration for the fake launcher (gui/server/tests/fake_launcher.py); the line below picks its scenario.
-# fake-launcher: loose-fields
+# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
+# (recordings/, made by record_launcher.py: record again after changing this file).
+# replay-fault: loose-fields
 vehicle_sil_simulation: 1
 stop_at_ms: 1000
 networks:

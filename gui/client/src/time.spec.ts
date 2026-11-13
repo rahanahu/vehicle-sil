@@ -171,7 +171,7 @@ describe('TimeControl', () => {
     const phase = (name: string) => (m: Record<string, unknown>) =>
       (m['event'] as Record<string, unknown> | undefined)?.['phase'] === name;
     // ws-pass: stop_at_ms に着いて、ランチャーが participant を終わらせている間（結果はまだ）
-    let at = await play(socket, 'ws-pass', 0, timeEvent({ sim_ms: 100 }));
+    let at = await play(socket, 'ws-pass', 0, timeEvent({ sim_ms: 0, paused: false }));
     expect(time.controllable()).toBe(true);
     expect(time.canPause()).toBe(true);
     at = await play(socket, 'ws-pass', at, phase('stopping'));

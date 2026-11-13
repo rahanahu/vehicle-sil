@@ -10,7 +10,7 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 - **パッケージ（TypeScript と好きな枠組み）**: `gui/web` で `npm run pack:client` を実行すると、`build/gui-client/vehicle-sil-gui-client-<版>.tgz` ができます（1 つにまとめた ESM、`.d.ts`、`exports`、README、LICENSE。版は GUI サーバーと同じ。作り方は `pack.mjs`）。自分のプロジェクトで `npm install <その .tgz>` をすると、`@vehicle-sil/gui-client` として import できます。型はブラウザの型（`lib` の `DOM`）を使います。入口は `.` だけです（`testing` と `internal` は入りません）。
 - **このリポジトリの中の TypeScript のアプリ**: `tsconfig.json` の `paths` で、入口の名前を `src/` に向けます（`gui/web` がそうしています）。
-- **素の JavaScript**: 1 つの ESM のファイルにまとめたものを使います。`gui/web` で `npm run build:client` を実行すると、`build/gui-client/vehicle-sil-gui-client.mjs`（リポジトリの直下の `build/`。追跡しない）ができます。ブラウザでも Node（22 以上）でも読めます。`scripts/verify-gui.py` が、このファイルを Node から使う例を、偽のランチャーを相手に動かして確かめます。
+- **素の JavaScript**: 1 つの ESM のファイルにまとめたものを使います。`gui/web` で `npm run build:client` を実行すると、`build/gui-client/vehicle-sil-gui-client.mjs`（リポジトリの直下の `build/`。追跡しない）ができます。ブラウザでも Node（22 以上）でも読めます。`scripts/verify-gui.py` が、このファイルを Node から使う例を、録ったものを流し直すランチャーを相手に動かして確かめます。
 
 ## 入口
 
