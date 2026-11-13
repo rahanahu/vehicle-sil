@@ -503,6 +503,7 @@ ECU の実行ファイルを、ほかのファイルなしで配りたいとき�
 - Windows（MinGW）: `-static` でリンクし、`SilKit.dll`、`libstdc++-6.dll`、`libgcc_s_seh-1.dll`、`libwinpthread-1.dll` が要らなくなります。`vehicle_sil_copy_runtime_dlls()` は、写す DLL がないので何もしません。
 - FetchContent で取り込む側でも同じです（configure に `-DVEHICLE_SIL_STATIC=ON` を渡すか、`FetchContent_MakeAvailable` の前に `set(VEHICLE_SIL_STATIC ON)`）。ひな形では `cmake --preset linux -DVEHICLE_SIL_STATIC=ON` です。
 - 実行ファイルは、SIL Kit の分だけ大きくなります。
+- 使えるコンパイラーは GCC（MinGW-w64 を含む）です。ほかのコンパイラーでは、構成が誤りで止まり、理由と進め方を表示します（中に入る C++ の実行時ライブラリの条件を、GCC でビルドした場合についてだけ確かめているため）。
 - 配るときは、実行ファイルの中に入ったもののライセンスの表示を添えます。何を添えるかは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) の「Distributing executables built with `VEHICLE_SIL_STATIC`」にあります。
 
 信号を YAML で定義して型付きメッセージにするときは、`vehicle_sil_add_j1939_codec(<target> <定義.yaml>)` を呼び、`<target>` をリンクします（Python 3.11 以上と PyYAML が要ります。[docs/j1939-codec.md](docs/j1939-codec.md)）。

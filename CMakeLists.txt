@@ -20,6 +20,23 @@ option(VEHICLE_SIL_TEST_FETCHCONTENT
 option(VEHICLE_SIL_WARNINGS_AS_ERRORS "Treat warnings in vehicle-sil targets as errors" OFF)
 option(VEHICLE_SIL_STATIC
        "Executables that link SIL Kit need no vehicle-sil library next to them: SIL Kit as a static library, and the C++ runtime linked statically (MinGW: also winpthread; glibc stays shared)" OFF)
+option(VEHICLE_SIL_STATIC_ANY_COMPILER
+       "Let VEHICLE_SIL_STATIC link the C++ runtime statically with a compiler other than GCC (see the message of the check below)" OFF)
+# VEHICLE_SIL_STATIC puts libstdc++ and libgcc into the executable. They may be passed on like that
+# under the GCC Runtime Library Exception, which this project relies on for executables that GCC
+# (MinGW-w64 included) builds. Whether it holds the same way for another compiler has not been
+# settled here, so such an executable is not made by accident: whoever wants one says so.
+if(VEHICLE_SIL_STATIC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT VEHICLE_SIL_STATIC_ANY_COMPILER)
+  message(
+    FATAL_ERROR
+      "vehicle-sil: VEHICLE_SIL_STATIC is for GCC (MinGW-w64 included), and this compiler is "
+      "${CMAKE_CXX_COMPILER_ID} (${CMAKE_CXX_COMPILER}).\n"
+      "It links libstdc++ and libgcc into the executable. Passing such an executable on rests on the "
+      "GCC Runtime Library Exception, which this project has checked for GCC only.\n"
+      "Either configure with GCC (-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++), or leave "
+      "VEHICLE_SIL_STATIC off, or, after checking the terms of the C++ runtime you link for "
+      "yourself, add -DVEHICLE_SIL_STATIC_ANY_COMPILER=ON.")
+endif()
 option(VEHICLE_SIL_BUILD_CONTROL_SERVER
        "Build the control server: vehicle_sil_launch run --control and vehicle_sil_control_server (needs gRPC: found, or built with FetchContent)" OFF)
 set(VEHICLE_SIL_SANITIZERS
