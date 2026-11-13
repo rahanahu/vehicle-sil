@@ -47,7 +47,7 @@ const reportToConsole: ErrorSink = (error) =>
 export interface ClientOptions {
   /**
    * GUI サーバーの URL（`http://127.0.0.1:<port>/`。サーバーが表示した URL から `#token=...` を除いたもの）。
-   * HTTP の path と WebSocket（`ws`）は、ここからの相対。ブラウザでは `document.baseURI`。
+   * HTTP の path と WebSocket（`ws`）は、ここからの相対。ブラウザでは、サーバーの根（`new URL('/', location.href).href`）。`document.baseURI` は、`<base href="/">` のないページでは画面の経路になる。
    */
   baseUrl: string;
   /**

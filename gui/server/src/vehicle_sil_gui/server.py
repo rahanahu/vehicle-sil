@@ -32,7 +32,7 @@ from .recording import Recording
 from .scenarios import list_scenarios, resolve_scenario
 from .session import SILENT_AFTER_S, Limits, Session
 from .source import Source
-from .static import NOT_BUILT, StaticFiles
+from .static import MAX_FILE_BYTES, NOT_BUILT, StaticFiles, TooLarge
 from .variables import AT_MS_MAX, Limits as VariableLimits, Rejected, Variables, Watch, check_watch
 
 PROTOCOL = 1  # vehicle_sil_gui: the version of the shapes in gui/protocol
@@ -89,6 +89,16 @@ def same_secret(given: str, token: str) -> bool:
     """Constant time. surrogatepass: whatever the client sent (a header that is not UTF-8, a lone surrogate in
     JSON) is compared, never an error."""
     return hmac.compare_digest(given.encode("utf-8", "surrogatepass"), token.encode("utf-8", "surrogatepass"))
+
+
+def page_load(request: web.Request) -> bool:
+    """Whether the browser loads a page (an address typed, a link, a reload), not a fetch or a script: only then
+    is a route of the screen answered with its index.html. Sec-Fetch-Mode says it; a browser without it is asked
+    by its Accept, which has text/html for a page and not for a fetch of JSON."""
+    mode = request.headers.get("Sec-Fetch-Mode")
+    if mode is not None:
+        return mode == "navigate"
+    return "text/html" in request.headers.get("Accept", "")
 
 
 def count_or_none(value: object) -> int | None:
@@ -1109,14 +1119,25 @@ class GuiServer:
                                                 "Cache-Control": "no-store"})
 
     async def get_static(self, request: web.Request) -> web.StreamResponse:
-        path, media, status = self.static.lookup(request.path)
+        not_found = web.Response(status=404, text="not found\n", content_type="text/plain")
+        if request.headers.get("Service-Worker") == "script":
+            # A service worker would outlive this server: one started later on the same port would show the old
+            # screen, and that screen would be given the new token.
+            return web.Response(status=404, text="the GUI server does not serve service workers\n",
+                                content_type="text/plain")
+        path, media, status = self.static.lookup(request.path, page_load(request))
         if status != 200:
-            return web.Response(status=404, text="not found\n", content_type="text/plain")
+            return not_found
         if path is None:
             return web.Response(text=NOT_BUILT, content_type="text/html", charset="utf-8")
         # The file itself, read here: not FileResponse, which would also serve a neighbouring .gz or .br.
         try:
-            body = await asyncio.to_thread(path.read_bytes)
-        except OSError:
-            return web.Response(status=404, text="not found\n", content_type="text/plain")
+            body = await asyncio.to_thread(self.static.read, path)
+        except TooLarge:
+            message = (f"{request.path}: larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB, which the GUI server "
+                       "does not serve: make the build split it (or leave its source maps out)")
+            log.warning("%s", message)
+            return web.Response(status=404, text=message + "\n", content_type="text/plain")
+        if body is None:
+            return not_found
         return web.Response(body=body, headers={"Content-Type": media})

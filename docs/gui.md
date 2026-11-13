@@ -90,17 +90,18 @@ flowchart LR
 
 ### ライブラリを取り込む
 
-- **パッケージ**: `gui/web` で `npm run pack:client` を実行すると、`build/gui-client/vehicle-sil-gui-client-<版>.tgz` ができます（版は GUI サーバーと同じ）。中身は 1 つにまとめた ESM（`dist/index.js`）、型（`types/`）、`exports` を書いた `package.json`、README、LICENSE で、依存はありません。自分のプロジェクトで `npm install <その .tgz>` をすると、`@vehicle-sil/gui-client` として import できます。npm のレジストリには公開していません。型は、ブラウザの型（`lib` の `DOM`。`WebSocket` など）を使います。`npm run pack:client` は、作ったパッケージを入れた形で Node から import し、ひな形の README の TypeScript の例を、型の解決 `nodenext` と `bundler` で型の検査に通してから終わります。`--out <dir>` で置き場所を、`--version <版>` で版を変えられます（`node gui/client/pack.mjs --help`）。
+- **パッケージ**: `gui/web` で `npm run pack:client` を実行すると、`build/gui-client/vehicle-sil-gui-client-<版>.tgz` ができます（版は GUI サーバーと同じ）。中身は 1 つにまとめた ESM（`dist/index.js`）、型（`types/`）、`exports` を書いた `package.json`、README、LICENSE で、依存はありません。自分のプロジェクトで `npm install <その .tgz>` をすると、`@vehicle-sil/gui-client` として import できます。npm のレジストリには公開していません。リリースのページと、ビルド済みの道具の圧縮ファイル（`client/`）にも、同じ `.tgz` があります（`npm install <その URL>` でも入ります）。型は、ブラウザの型（`lib` の `DOM`。`WebSocket` など）を使います。`npm run pack:client` は、作ったパッケージを入れた形で Node から import し、ひな形の README の TypeScript の例を、型の解決 `nodenext` と `bundler` で型の検査に通してから終わります。`--out <dir>` で置き場所を、`--version <版>` で版を変えられます（`node gui/client/pack.mjs --help`）。
 - **1 つにまとめたファイル**: `gui/web` で `npm run build:client` を実行すると、`build/gui-client/vehicle-sil-gui-client.mjs` ができます。画面のディレクトリに置いて、相対のパスで import します（ブラウザでも Node 22 以上でも読めます）。
 - 公開している口は [gui/client/README.md](../gui/client/README.md) の一覧です。
 
 ### `--web` で配る
 
-- 渡すのは、画面のビルドの出力のディレクトリです。`index.html`（シンボリックリンクでないファイル）がなければ、何が要るかを表示して終了コード 2 で終わります。`--web` を付けなければ、サンプルの画面を配ります。
-- 配るのは、そのディレクトリの中のファイルだけで、種類は拡張子で決めます: `.html`、`.js`、`.mjs`、`.css`、`.json`、`.map`、`.webmanifest`、`.txt`、`.svg`、`.ico`、`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.avif`、`.woff`、`.woff2`、`.ttf`、`.otf`。ほかの拡張子、`..` と絶対パス、`.` で始まる名前（隠しファイルと隠しディレクトリの中）、シンボリックリンク（ディレクトリの中を指すものも）とジャンクション、同じファイルの別の名前（Windows の短い名前など）は、配らずに 404 を返します。隣の圧縮したファイル（`.gz`、`.br`）も使いません。
-- 拡張子のないパスで、そのファイルがなければ `index.html` を返します（画面の経路。1 つのページで動く画面のため）。拡張子のあるパスは、なければ 404 です。`api/`、`ws`、`panels/` はサーバーの口なので、画面のパスに使えません。
-- 画面のファイルには `Cache-Control: no-cache` を付けます（ブラウザは毎回確かめるので、ビルドし直したらページを読み直せば新しいものが出ます）。
-- 画面からサーバーへは、相対の URL で届きます（`createClient({ baseUrl: document.baseURI, ... })`）。
+- 渡すのは、画面のビルドの出力のディレクトリ（`dist/` など）です。`index.html`（シンボリックリンクでないファイル）がないとき、`package.json` か `node_modules` があるとき（ビルドの出力でなく、プロジェクトそのもの）は、何を渡すかを表示して終了コード 2 で終わります。`--web` を付けなければ、サンプルの画面を配ります。
+- 画面のファイルは、トークンなしで読めます（ブラウザはページとスクリプトの読み込みにトークンを付けられないため）。同じ PC のほかのプロセスも読めるので、秘密をビルドの出力に入れないでください。ほかの人が書ける場所（共有のディレクトリ、`/tmp` の下など）を `--web` にしないでください（そこに置かれたスクリプトは、画面としてトークンを持って動きます）。
+- 配るのは、そのディレクトリの中のファイルだけで、種類は拡張子で決めます: `.html`、`.js`、`.mjs`、`.css`、`.json`、`.map`、`.webmanifest`、`.txt`、`.svg`、`.ico`、`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.avif`、`.woff`、`.woff2`、`.ttf`、`.otf`。ほかの拡張子、`..` と絶対パス、`.` で始まる名前（隠しファイルと隠しディレクトリの中）、シンボリックリンク（ディレクトリの中を指すものも）とジャンクション、同じファイルの別の名前（Windows の短い名前など）は、配らずに 404 を返します。ファイルは開いてから、確かめたものと同じかを見直します（確かめた後にリンクへ差し替えられても読みません）。隣の圧縮したファイル（`.gz`、`.br`）も使いません。1 つのファイルは 64 MiB までで、超えると、そう書いた 404 を返し、標準エラーにも 1 行出します（ビルドで分けるか、ソースマップを外します）。
+- 拡張子のないパス（`/settings/foo` など）は、ブラウザがページを読み込むとき（アドレスの入力、リンク、再読み込み。`Sec-Fetch-Mode: navigate`、それを送らないブラウザでは `Accept` に `text/html`）だけ、`index.html` を返します（画面の経路。1 つのページで動く画面のため）。拡張子のないファイルは、あっても配りません。ページの読み込みでない要求（`fetch` など）は 404 です（口の URL を経路の下に作ってしまったとき、JSON の代わりにページが返らないように）。拡張子のあるパスは、なければ 404 です。根の直下の `api/`、`ws`、`panels/` はサーバーの口なので、画面のパスに使えません。
+- 画面のファイルには `Cache-Control: no-cache` を付けます（ブラウザは毎回確かめるので、ビルドし直したらページを読み直せば新しいものが出ます）。Service Worker は登録できません（`Service-Worker: script` の付いた要求は 404）。登録した Service Worker は、後で同じポートで起動したサーバーでも古い画面を出し、その画面が新しいトークンを受け取ってしまうためです。
+- クライアントの `baseUrl` は、サーバーの根にします（`createClient({ baseUrl: new URL('/', location.href).href, ... })`）。`document.baseURI` は、`<base href="/">` のないページでは、そのときの画面の経路（`/settings/foo` など）になり、口が `/settings/api/app` に向いてしまいます（サンプルの画面は `<base href="/">` を持つので、`document.baseURI` を使っています）。
 
 ### 守りの線
 
@@ -115,13 +116,13 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 - スクリプトはファイルから読みます。インラインの `<script>`、`onclick="..."` などの属性、`eval` と `new Function` は動きません。テンプレートを実行時に組み立てる作り方（Vue のテンプレートを実行時にコンパイルする版など）は使えないので、ビルドで済ませます。
 - ほかの場所（CDN など）からは、スクリプト、スタイル、フォント、画像を読めず、接続もできません。npm で入れてビルドに含めます。
 - スタイルは、ファイルのほかに `<style>` と `style` の属性も使えます。画像は同じ origin と `data:` の URL、フォントは同じ origin だけです（`data:` のフォントは読めないので、ビルドがフォントを CSS に埋め込むときは、ファイルに出す設定にします）。
-- WebAssembly、`blob:` の URL の Worker と画像、フォームの送信、ほかのページの frame の中に入ることはできません。
+- WebAssembly、`blob:` の URL の Worker と画像、フォームの送信は使えません。画面を frame に入れることはできません（ほかのページの中にも、自分の画面の `<iframe>` の中にも。どの応答にも `X-Frame-Options: DENY` と `frame-ancestors 'none'` が付きます）。Service Worker も使えません（上）。
 - CSP を変える口はありません。この範囲で動かない画面は、何が要るかを issue に書いてください。
 
 ### トークンを受け取る
 
 - サーバーは、起動のたびに作るトークンを、表示する URL（`http://127.0.0.1:<port>/#token=<トークン>`）の `#` の後ろに付けます（`#` の後ろはサーバーに送られず、アクセスのログにも残りません）。
-- 画面は、最初に `takeToken(window)` を呼びます。URL の `#token=` を読み、すぐに URL から消し（`history.replaceState`。履歴にも残しません）、タブの sessionStorage（鍵は `TOKEN_STORAGE_KEY`）に置いて返します。再読み込みのときは、sessionStorage のものを返します。どちらにもなければ `null` なので、「サーバーが表示した URL から開く」と出します。画面の経路（router）が URL を書き換えると `#token=` が消えるので、経路を始める前に呼びます。
+- 画面は、最初に `takeToken(window)` を呼びます。URL の `#token=` を読み、すぐに URL から消し（`history.replaceState`。タブの戻る・進むの履歴からも消えます。ブラウザの閲覧履歴には、開いた URL が残ることがあります）、タブの sessionStorage（鍵は `TOKEN_STORAGE_KEY`）に置いて返します。再読み込みのときは、sessionStorage のものを返します。どちらにもなければ `null` なので、「サーバーが表示した URL から開く」と出します。画面の経路（router）が URL を書き換えると `#token=` が消えるので、経路を始める前に呼びます。
 - トークンを `createClient({ token })` に渡せば、ライブラリが API には `Authorization: Bearer`、WebSocket には最初のメッセージで送ります。トークンを URL の query、ログ、画面の表示に出さないでください。
 - サーバーがトークンを断ったら（サーバーを起動し直した、など）、`client.session.rejected` が真になり（WebSocket）、HTTP の要求は状態 401 の `HttpError` で断られます。サーバーが新しく表示した URL から開き直します。
 
@@ -149,7 +150,7 @@ export default {
 uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation.yaml
 ```
 
-GUI サーバーは、開発サーバーを通す URL（`http://127.0.0.1:5173/#token=...`）を標準エラーに出し（`--json` では `dev_url`）、ブラウザでそれを開きます。開発サーバーが配るページには GUI サーバーの CSP が付かないので、仕上げはビルドして `--web` で確かめます。サンプルの画面の開発（`ng serve`）も同じ形です（`gui/web/proxy.conf.mjs`）。
+GUI サーバーは、開発サーバーを通す URL（`http://127.0.0.1:5173/#token=...`）を標準エラーに出し（`--json` では `dev_url`）、ブラウザでそれを開きます。開発サーバーのポートは、開発サーバーより先に別のプログラム（同じ PC のほかの利用者のものも）が待っていると、そのページがトークンを受け取ります。開発サーバーが `strictPort` で待ち受けを始めてから GUI サーバーを起動し、開いたページが自分の開発サーバーのものかを確かめます。開発サーバーが配るページには GUI サーバーの CSP が付かないので、仕上げはビルドして `--web` で確かめます。サンプルの画面の開発（`ng serve`）も同じ形です（`gui/web/proxy.conf.mjs`）。
 
 ### ひな形
 
@@ -453,7 +454,7 @@ Angular で自分の画面を作るときは、サンプルの部品（スイッ
 写した先で要る設定:
 
 - `provideHttpClient(withInterceptors([authInterceptor]))`（API にトークンを付ける）と、経路が URL を書き換える前にトークンを読む `provideAppInitializer(() => void inject(AuthToken))`（サンプルの `app.config.ts` と同じ）。
-- クライアントは `GUI_CLIENT`（`gui-client.ts`）が、ページの `document.baseURI` と `AuthToken` から 1 つ作ります。ほかの所で作ったクライアントを使うときは、`GUI_CLIENT` を `useValue` で差し替えます。
+- クライアントは `GUI_CLIENT`（`gui-client.ts`）が、ページの `document.baseURI` と `AuthToken` から 1 つ作ります（`index.html` に `<base href="/">` を置きます。サンプルと同じ）。ほかの所で作ったクライアントを使うときは、`GUI_CLIENT` を `useValue` で差し替えます。
 - 部品は `<app-dashboard-view [spec]="spec" />` で並べます。`spec` は、変数の一覧から作る `autoDashboard(...)` か、自分で書く `DashboardSpec`（上の「ダッシュボードのデータ」）です。1 つずつ置くときは、部品のコンポーネント（`<app-slider-widget [ref]="..." />` など。`WIDGETS` の表）を使います。
 
 空の Angular のプロジェクトへ実際に写してビルドすることは、試験では確かめていません。

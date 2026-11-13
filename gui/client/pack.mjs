@@ -181,7 +181,9 @@ function main() {
   cpSync(join(CLIENT, 'README.md'), join(packageDir, 'README.md'));
   cpSync(join(REPOSITORY, 'LICENSE'), join(packageDir, 'LICENSE'));
 
-  check(packageDir, join(args.out, 'check'), tsc);
+  const checkDir = join(args.out, 'check');
+  check(packageDir, checkDir, tsc);
+  rmSync(checkDir, { recursive: true, force: true });
 
   const npm = process.env['npm_execpath'];
   const packArgs = ['pack', '--json', '--pack-destination', args.out];

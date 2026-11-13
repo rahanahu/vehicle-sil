@@ -16,7 +16,8 @@ if (token === null) {
   throw new Error('no token');
 }
 
-const client = createClient({ baseUrl: document.baseURI, token });
+// サーバーの根からの URL で口を呼ぶ（画面の経路の上でも、api/app が /<経路>/api/app にならないように）
+const client = createClient({ baseUrl: new URL('/', location.href).href, token });
 const show = (id, text) => ($(id).textContent = text);
 const fail = (error) => show('error', errorMessage(error));
 

@@ -45,7 +45,10 @@ import { createClient, takeToken } from '@vehicle-sil/gui-client';
 
 // サーバーが表示した URL（http://127.0.0.1:<port>/#token=<token>）から開いた画面: URL の #token= を受け取って消す。
 // Node の道具では、baseUrl とトークンを、その URL から自分で取り出して渡す（examples/gui_client）。
-const client = createClient({ baseUrl: document.baseURI, token: takeToken(window) });
+const client = createClient({
+  baseUrl: new URL('/', location.href).href,
+  token: takeToken(window),
+});
 await client.loadApp(); // ランチャーの features（時刻の命令を持つか、など）
 client.connect();
 const stop = client.session.session.subscribe((session) => {

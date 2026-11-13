@@ -116,7 +116,8 @@ ECU を書く人とまとめる人は、vehicle-sil のリポジトリをビル�
 
 - 必要なものと各段の詳しい説明は、ひな形の [README](template/README.md) にあります。続きは手引き「[最初の ECU を作る](docs/howto/first-ecu.md)」です。
 - 待ち時間は、最初のビルドで SIL Kit をコンパイルする数分だけです（ECU がリンクするライブラリは、ソースからビルドします）。
-- 道具の圧縮ファイル（`vehicle-sil-tools-<版>-linux-x86_64.tar.gz`、`-windows-x86_64.zip`）には、`vehicle_sil_launch`（Control Server つき）、GUI サーバーと画面、Control API の Python クライアント（gRPC のスタブつき）、GUI のクライアントのライブラリ、ダッシュボードの JSON Schema、ライセンスの表示が入っています（中身は圧縮ファイルの `README.md`、同梱する物は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）。Linux 版は x86_64 で、Ubuntu 22.04 でビルドしているので、glibc がそれと同じか新しい（2.35 以上の）ディストリビューションで動き、glibc のほかに共有ライブラリを要りません。Windows 版は MSYS2 UCRT64 の MinGW でビルドし、DLL を同梱しない 1 つの実行ファイルです（SIL Kit、gRPC、C++ の実行時ライブラリを静的にリンク）。
+- 道具の圧縮ファイル（`vehicle-sil-tools-<版>-linux-x86_64.tar.gz`、`-windows-x86_64.zip`）には、`vehicle_sil_launch`（Control Server つき）、GUI サーバーと画面、Control API の Python クライアント（gRPC のスタブつき）、GUI のクライアントのライブラリ（1 つの ES モジュールと、型つきの npm のパッケージ）、自分の画面のひな形（`gui_starter/`。`vehicle-sil-gui --web gui_starter simulation.yaml`）、ダッシュボードの JSON Schema、ライセンスの表示が入っています（中身は圧縮ファイルの `README.md`、同梱する物は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）。Linux 版は x86_64 で、Ubuntu 22.04 でビルドしているので、glibc がそれと同じか新しい（2.35 以上の）ディストリビューションで動き、glibc のほかに共有ライブラリを要りません。Windows 版は MSYS2 UCRT64 の MinGW でビルドし、DLL を同梱しない 1 つの実行ファイルです（SIL Kit、gRPC、C++ の実行時ライブラリを静的にリンク）。
+- ブラウザの GUI に自分の画面を作るときは、リリースのページの `vehicle-sil-gui-client-<版>.tgz`（道具の圧縮ファイルの `client/` にも同じもの）を `npm install <その URL かファイル>` すると、クライアントのライブラリを `@vehicle-sil/gui-client` として使えます（[docs/gui.md](docs/gui.md) の「自分の画面を作る」）。
 - ECU と道具は同じ版でそろえます（ひな形の `GIT_TAG` と `get_tools.py` の `VERSION`）。版ごとの変更と、互換を壊す変更の直し方は [CHANGELOG.md](CHANGELOG.md) にあります。
 - 道具の圧縮ファイルは `scripts/package.py` が作ります（`tools`、使う人の手順で確かめる `verify`、ひな形の圧縮ファイルの `template`。`--help`）。タグ `v<版>` を push すると、GitHub Actions が両方の OS で作って確かめ、リリースの下書きに付けます。
 
