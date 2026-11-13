@@ -34,7 +34,8 @@ constexpr unsigned kVirtual1 = 0; // fake channel indices, see fake_xl::default_
 constexpr unsigned kHardware1 = 2;
 constexpr unsigned kLinOnly = 4;
 
-/// Collects events delivered by an XlCanPort.
+/// Collects events delivered by an XlCanPort. The periodic BusState events are kept apart, so
+/// that the other events can be checked in order.
 class EventSink
 {
 public:
@@ -49,7 +50,14 @@ public:
         return [this](const ExternalCanEvent& event) {
             {
                 const std::lock_guard lock(mutex_);
-                events_.push_back({event.kind, record(event.frame)});
+                if (event.kind == ExternalEventKind::BusState)
+                {
+                    bus_states_.push_back(event.bus_state);
+                }
+                else
+                {
+                    events_.push_back({event.kind, record(event.frame)});
+                }
             }
             cv_.notify_all();
         };
@@ -62,10 +70,18 @@ public:
         return events_;
     }
 
+    std::vector<ExternalBusState> wait_for_bus_states(std::size_t count, std::chrono::milliseconds timeout = 2000ms)
+    {
+        std::unique_lock lock(mutex_);
+        cv_.wait_for(lock, timeout, [&] { return bus_states_.size() >= count; });
+        return bus_states_;
+    }
+
 private:
     std::mutex mutex_;
     std::condition_variable cv_;
     std::vector<Event> events_;
+    std::vector<ExternalBusState> bus_states_;
 };
 
 XlChannelInfo channel_at(XlDriver& driver, unsigned index)
@@ -237,8 +253,14 @@ TEST_CASE(xl_port_configures_bitrate_with_init_access)
     CHECK(fake_xl::port_state(kHardware1).bitrate == std::optional<unsigned long>(250000));
     CHECK(!fake_xl::port_state(kHardware1).tx_receipts); // with init access, receipts are switched off
 
-    // A second application cannot get init access, so an explicit bit rate must fail loudly.
-    CHECK(throws_with<XlError>([&] { XlCanPort second(driver, channel_at(driver, kHardware1), options); }, "no init access"));
+    // A second application cannot get init access, so an explicit bit rate must fail loudly. The
+    // open itself succeeded, so the message names no status number.
+    CHECK(throws_if<XlError>([&] { XlCanPort second(driver, channel_at(driver, kHardware1), options); },
+                             [](const XlError& e) {
+                                 const std::string what = e.what();
+                                 return what.find("no init access") != std::string::npos &&
+                                        what.find("XL status") == std::string::npos;
+                             }));
     // Without a bit rate it can still join the bus.
     XlCanPort third(driver, channel_at(driver, kHardware1));
     CHECK(!third.has_init_access());
@@ -350,6 +372,79 @@ TEST_CASE(xl_port_reports_error_frames_overruns_and_full_queue)
 
     fake_xl::set_transmit_queue_full(true);
     CHECK(port.transmit(frame_matrix()[1].to_silkit()) == TransmitResult::QueueFull);
+    port.stop();
+}
+
+TEST_CASE(xl_port_reports_the_controller_state_periodically)
+{
+    fake_xl::reset();
+    XlDriver driver;
+    XlCanPortOptions options;
+    options.bus_state_interval = 20ms;
+    XlCanPort port(driver, channel_at(driver, kHardware1), options);
+    EventSink sink;
+    port.start(sink.handler());
+
+    // The first query goes out when the port starts: error active by default.
+    auto states = sink.wait_for_bus_states(1);
+    CHECK(!states.empty() && states.front() == (ExternalBusState{ExternalBusState::Level::ErrorActive, 0, 0}));
+
+    using detail::backend::ChipLevel;
+    fake_xl::set_chip_state(kHardware1, {ChipLevel::ErrorPassive, 128, 7});
+    states = sink.wait_for_bus_states(states.size() + 2);
+    CHECK(!states.empty() && states.back() == (ExternalBusState{ExternalBusState::Level::ErrorPassive, 128, 7}));
+    fake_xl::set_chip_state(kHardware1, {ChipLevel::BusOff, 255, 0});
+    states = sink.wait_for_bus_states(states.size() + 2);
+    CHECK(!states.empty() && states.back().level == ExternalBusState::Level::BusOff);
+    fake_xl::set_chip_state(kHardware1, {ChipLevel::ErrorWarning, 96, 0});
+    states = sink.wait_for_bus_states(states.size() + 2);
+    CHECK(!states.empty() && states.back().level == ExternalBusState::Level::ErrorWarning);
+    CHECK(sink.wait_for(1, 0ms).empty()); // nothing else was reported
+    port.stop();
+}
+
+TEST_CASE(xl_port_reports_a_fault_once_when_the_device_is_lost)
+{
+    fake_xl::reset();
+    XlDriver driver;
+    XlCanPortOptions options;
+    options.bus_state_interval = 20ms;
+    XlCanPort port(driver, channel_at(driver, kHardware1), options);
+    EventSink sink;
+    port.start(sink.handler());
+    CHECK(!sink.wait_for_bus_states(1).empty());
+
+    fake_xl::set_device_lost(true);
+    const auto events = sink.wait_for(1);
+    CHECK_EQ(events.size(), 1u);
+    CHECK(!events.empty() && events.front().kind == ExternalEventKind::Fault);
+    const std::string why = port.last_error();
+    CHECK(why.find("'Test CAN Device Channel 1' stopped working") != std::string::npos);
+    CHECK(why.find("device lost (fake)") != std::string::npos);
+
+    // No more queries and no more events after the fault; sending fails.
+    const unsigned requests = fake_xl::chip_state_requests();
+    std::this_thread::sleep_for(100ms);
+    CHECK_EQ(fake_xl::chip_state_requests(), requests);
+    CHECK_EQ(sink.wait_for(2, 0ms).size(), 1u);
+    CHECK(port.transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Failed);
+    port.stop();
+}
+
+TEST_CASE(xl_port_bus_state_queries_can_be_switched_off)
+{
+    fake_xl::reset();
+    XlDriver driver;
+    XlCanPortOptions options;
+    options.bus_state_interval = 0ms;
+    XlCanPort port(driver, channel_at(driver, kVirtual1), options);
+    EventSink sink;
+    port.start(sink.handler());
+    fake_xl::set_device_lost(true);
+    std::this_thread::sleep_for(150ms);
+    CHECK_EQ(fake_xl::chip_state_requests(), 0u);
+    CHECK(sink.wait_for_bus_states(1, 0ms).empty());
+    CHECK(sink.wait_for(1, 0ms).empty()); // without queries a lost device goes unnoticed
     port.stop();
 }
 

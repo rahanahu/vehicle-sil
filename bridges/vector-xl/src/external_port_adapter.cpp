@@ -66,6 +66,10 @@ void ExternalPortAdapter::on_event(const ExternalCanEvent& event)
         external_overruns_.fetch_add(1, std::memory_order_relaxed);
         receiver_.report_overflow(0);
         return;
+    case ExternalEventKind::BusState:
+    case ExternalEventKind::Fault:
+        // Not passed on: the adapter's users read the bus through frames and error frames only.
+        return;
     }
 }
 

@@ -392,12 +392,15 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1939_CAN1 --xl-target physical --xl-channel 1 --bitrate 250000
 ```
 
-- Ctrl+C で止まり、転送の統計を出力します。
+- Ctrl+C（Windows ではコンソールのウィンドウを閉じても）で止まり、転送の統計を出力します。
+- 実行中、CAN のバスに異常があると 1 秒に 1 行まで知らせます（例: `XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650`）。ACK を返す相手がいない、ビットレートが違う、ケーブルが抜けた、などです。直ると `no new problems since the last report` を出します。
+- `silkit_to_xl` は XL に渡したフレームの数で、バスに出た数ではありません。バスに出られないフレームは XL の送信キューにたまり、ブリッジを止めると捨てられます。
 - `--bitrate`（15000〜1000000 bit/s）は init 権限が必要です。ほかのアプリケーションがチャネルを設定している場合は、起動を失敗させます。
 - `--bitrate` を指定しないと init 権限を取らないので、XL ドライバは自分の送信の受領（TX レシート）を返してきます。ブリッジはそれを転送せずに捨て、統計の `own_tx_dropped` に数えます。
+- 実行中に CAN インターフェースの USB を抜かないでください。ブリッジは止まりますが（終了コード 1）、VN5620 では挿し直しても認識されず、電源の入れ直しが必要なことがありました。
 - 終了コードは次のとおりです。
   - 0: 正常終了
-  - 1: 実行中の SIL Kit 側の失敗（registry の停止、接続断）
+  - 1: 実行中の失敗（SIL Kit 側: registry の停止、接続断。XL 側: デバイスを外した）
   - 3: 起動の失敗（XL ドライバ、チャネル、SIL Kit）
   - 4: 引数の誤り
 

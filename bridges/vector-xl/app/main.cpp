@@ -3,8 +3,10 @@
 // vehicle_sil_vector_xl_bridge: forwards classic CAN frames in both directions between a SIL Kit
 // CAN network and a Vector XL CAN channel (Vector Virtual CAN or CAN hardware such as CANcase).
 //
-// Exit codes: 0 stopped normally (Ctrl+C / SIGTERM) or --list-channels/--help done,
-//             1 the SIL Kit participant failed while running (e.g. connection lost),
+// Exit codes: 0 stopped normally (Ctrl+C / Ctrl+Break / SIGTERM / console closed) or
+//               --list-channels/--help done,
+//             1 failed while running: the SIL Kit participant left Running (e.g. connection
+//               lost) or the XL channel stopped working (e.g. device removed),
 //             3 setup failed (XL driver, channel selection, SIL Kit), 4 bad command line.
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/cli/console.hpp"
@@ -27,6 +29,16 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace {
 
 using namespace vehicle_sil;
@@ -45,6 +57,45 @@ extern "C" void on_stop_signal(int)
 {
     g_stop_requested = 1;
 }
+
+/// How often the main loop reports a change of the external bus (format_health_change()).
+constexpr auto kHealthInterval = std::chrono::seconds(1);
+
+#ifdef _WIN32
+// Closing the console window (and logoff, shutdown) ends the process as soon as the console
+// control handler returns, and the C runtime's handler for SIGBREAK returns at once. This
+// handler asks the main loop to stop, waits for run() to finish (statistics printed) within
+// the about 5 s Windows grants, and then ends the process itself with run()'s exit code
+// (returning from the handler would end it with STATUS_CONTROL_C_EXIT instead).
+HANDLE g_stopped_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+std::atomic<int> g_exit_code{kExitOk};
+
+BOOL WINAPI on_console_close(DWORD event)
+{
+    if (event != CTRL_CLOSE_EVENT && event != CTRL_LOGOFF_EVENT && event != CTRL_SHUTDOWN_EVENT)
+    {
+        return FALSE; // Ctrl+C and Ctrl+Break: the C runtime's signal handlers
+    }
+    g_stop_requested = 1;
+    if (g_stopped_event != nullptr && WaitForSingleObject(g_stopped_event, 4000) == WAIT_OBJECT_0)
+    {
+        ExitProcess(static_cast<UINT>(g_exit_code.load()));
+    }
+    return TRUE;
+}
+
+/// Called with run()'s exit code: lets a waiting on_console_close() end the process with it.
+void finish_console_close(int code)
+{
+    g_exit_code = code;
+    if (g_stopped_event != nullptr)
+    {
+        (void)SetEvent(g_stopped_event);
+    }
+}
+#else
+void finish_console_close(int /*code*/) {}
+#endif
 
 int run(const BridgeOptions& options)
 {
@@ -110,7 +161,14 @@ int run(const BridgeOptions& options)
 #ifdef SIGBREAK
     std::signal(SIGBREAK, on_stop_signal);
 #endif
+#ifdef _WIN32
+    // Registered after the signal handlers so that Windows asks this handler first.
+    (void)SetConsoleCtrlHandler(on_console_close, TRUE);
+#endif
     int result = kExitOk;
+    CanBridgeHealth reported = bridge->health();
+    bool problemsBefore = false;
+    auto nextReport = std::chrono::steady_clock::now() + kHealthInterval;
     while (g_stop_requested == 0)
     {
         // The SIL Kit side can fail while running (registry gone, connection lost).
@@ -120,6 +178,24 @@ int run(const BridgeOptions& options)
                 SilKit::Services::Orchestration::to_string(state).c_str());
             result = cli::kExitFailed;
             break;
+        }
+        // The XL side can fail while running (device removed): nothing would be forwarded any more.
+        if (const auto fault = bridge->fault())
+        {
+            log(kTag, "FAIL: %s", fault->c_str());
+            result = cli::kExitFailed;
+            break;
+        }
+        if (std::chrono::steady_clock::now() >= nextReport)
+        {
+            nextReport += kHealthInterval;
+            const CanBridgeHealth now = bridge->health();
+            if (const auto line = format_health_change(reported, now, problemsBefore))
+            {
+                log(kTag, "%s", line->c_str());
+            }
+            problemsBefore = problems_grew(reported.statistics, now.statistics);
+            reported = now;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
@@ -155,13 +231,15 @@ int main(int argc, char** argv)
         std::fputs(bridge_usage().c_str(), stdout);
         return kExitOk;
     }
+    int code = kExitSetupFailed;
     try
     {
-        return run(options);
+        code = run(options);
     }
     catch (const std::exception& e)
     {
         log(kTag, "FAIL setup: %s", e.what());
-        return kExitSetupFailed;
     }
+    finish_console_close(code);
+    return code;
 }

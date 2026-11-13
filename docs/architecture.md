@@ -779,7 +779,7 @@ SIL Kit CAN ネットワーク ── ICanController ── CanBridge ── Ext
 ### プロトコルスタックから使う（`ExternalPortAdapter`）
 
 - `ExternalPortAdapter(external, clock)` は外部ポートを開始し（バスに参加）、破棄か `close()` で止めます。`RealTimeDriver` と同じ時計を渡し、そのドライバーで回します。時刻同期のホストには登録できません（構成エラー）。
-- 受信は外部ポートの受信スレッドで到着時刻を付けて受け箱に積みます（ハードウェアのタイムスタンプは別の時計なので使いません）。リモートフレームは捨てて数えます。自分の送信のレシートは捨てます（同じスタックのノードへの配送はスタックが行います）。エラーフレームは `ErrorFrame`、外部の受信キューのあふれは数の分からない `ReceiveOverflow` の事象です。バス状態は外部ポートが知らせないので出しません。
+- 受信は外部ポートの受信スレッドで到着時刻を付けて受け箱に積みます（ハードウェアのタイムスタンプは別の時計なので使いません）。リモートフレームは捨てて数えます。自分の送信のレシートは捨てます（同じスタックのノードへの配送はスタックが行います）。エラーフレームは `ErrorFrame`、外部の受信キューのあふれは数の分からない `ReceiveOverflow` の事象です。外部ポートが知らせるバス状態（`ExternalEventKind::BusState`）と `Fault` は使わず、`BusStateChanged` も出しません。
 - 送信は `transmit()` の同期の結果をそのまま返します（`Ok` は `Accepted`）。その後バスに出たかは知らせません（XL の送信レシートは init 権限の有無で変わるため）。
 - 実機での確認はしていません（「検証の範囲」）。
 
@@ -789,6 +789,20 @@ SIL Kit CAN ネットワーク ── ICanController ── CanBridge ── Ext
 - CAN FD、CAN XL、不正な ID や DLC のフレームは転送せず、`silkit_rejected` または `xl_rejected` に数えます。XL 側の ID は受信イベントから 11/29 ビットで取り出すので、`xl_rejected` に数えるのは実際には DLC が 15 を超えるフレームです。
 - XL のエラーフレームは転送せず、`error_frames` に数えます。XL の受信キューのあふれは `overruns` に数えます。
 - 統計値は終了時に 1 行で出力します。対象は次のとおりです: `silkit_to_xl`、`xl_to_silkit`、`own_tx_dropped`、`error_frames`、`overruns`、`silkit_rejected`、`xl_rejected`、`xl_queue_full`、`xl_tx_failures`、`silkit_tx_failures`。
+- `silkit_to_xl` は XL の送信キューに渡した数で、バスに出た数ではありません。バスに出られないフレーム（ACK を返す相手がいない、ビットレートが違う、ケーブルが抜けた）は、XL の送信キューに残ります。キューに残ったフレームは、バスに出られるようになった時点でまとめて送られ、チャネルを無効にしたとき（ブリッジの終了）には捨てられます。どちらも統計には現れません。
+- シミュレーションがバスより速く進んでも、押し戻しはありません。CAN の帯域を超える速さで回すと、フレームは XL の送信キューにたまります。
+
+### 実行中のバスの監視
+
+- `XlCanPort` は受信スレッドで、0.5 秒ごとに `xlCanRequestChipState` で CAN コントローラーのエラー状態（エラーアクティブ、エラーワーニング、エラーパッシブ、バスオフと、送受信のエラーカウンター）を問い合わせ、答えを `ExternalEventKind::BusState` で知らせます（`XlCanPortOptions::bus_state_interval`、0 で無効）。
+- 問い合わせが失敗したら（送信キューが満杯の場合を除く）、チャネルが使えなくなった（デバイスが外された）とみなし、`ExternalEventKind::Fault` を 1 回知らせて受信をやめます。
+- ブリッジの実行ファイルは 1 秒ごとに状態を見て、コントローラーのエラー状態が変わったとき（起動直後の最初の答えがエラーアクティブの場合を除く）、または問題を表すカウンター（`error_frames`、`overruns`、`silkit_rejected`、`xl_rejected`、`xl_queue_full`、`xl_tx_failures`、`silkit_tx_failures`）が増えたときに、次の形の行を 1 行出します（`format_health_change()`）。
+  ```
+  [bridge] XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650
+  ```
+- 問題のカウンターが増えた次の回に何も増えなければ、`; no new problems since the last report` を付けた行を 1 回出します。送信だけをするコントローラーは受信に成功するまで受信エラーカウンターが下がらず、直った後もエラーパッシブのままのことがあるので、この行が回復の目印です。
+- `Fault` を受けたら、`FAIL: <理由>` を出し、統計を出して終了コード 1 で終わります。
+- `ExternalPortAdapter` は `BusState` と `Fault` を使いません。
 
 ### 転送ループの防止
 
@@ -826,7 +840,8 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
 - `--xl-channel` は、そのターゲットの CAN 対応チャネルの中での 1 始まりの番号です。並びはドライバの設定順で、`--list-channels` の表示と同じです。CAN に対応していないチャネル（LIN 専用など）は数えません。
 - 存在しない番号を指定すると、使えるチャネルの一覧を出して終了コード 3 で終わります。
 - `--bitrate` は 15000〜1000000 bit/s です（`xlCanSetChannelBitrate` の範囲）。指定するときは、init 権限が必要です。ほかのアプリケーションが init 権限を持っている場合は、黙って別のビットレートで動かずに、起動を失敗させます。指定しなければ、チャネルの設定を変えません。
-- 終了コードは次のとおりです: 0（Ctrl+C / SIGTERM での正常終了）、1（実行中に SIL Kit の participant が Running でなくなった。registry の停止や接続断）、3（XL ドライバ、チャネル選択、SIL Kit の失敗）、4（引数の誤り）。XL 側の受信エラー（ハードウェアを抜いたなど）では終了せず、`last_error` に残ります。
+- 終了コードは次のとおりです: 0（Ctrl+C、Ctrl+Break、SIGTERM、コンソールのウィンドウを閉じたときの正常終了）、1（実行中の失敗。SIL Kit の participant が Running でなくなった（registry の停止や接続断）、または XL のチャネルが使えなくなった（デバイスを外した））、3（XL ドライバ、チャネル選択、SIL Kit の失敗）、4（引数の誤り）。
+- Windows でコンソールのウィンドウを閉じたとき（ログオフ、シャットダウンも）は、`SetConsoleCtrlHandler` のハンドラーが停止を求め、統計を出し終わるまで最長 4 秒待ちます。Windows はハンドラーが戻るとプロセスを終わらせ、待つのも 5 秒ほどまでだからです。
 
 ### ビルド
 
@@ -838,14 +853,19 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
 ### 検証の範囲
 
 - XL バックエンドは 2 つに分かれます。判断と状態を持つロジック（`xl_driver.cpp`）は、vehicle-sil 独自の内部インターフェース（`src/xl_backend.hpp`）だけに依存し、どのプラットフォームでもビルドします。XL Driver Library を呼ぶのは `xl_backend_vector.cpp` だけで、このファイルが行うのは型と値の変換だけです（Windows で XL Driver Library があるときだけビルドします）。
-- 自動テストは、内部インターフェースを実装したテスト専用のフェイク（`tests/vector_xl/fake_xl`）に対して、本番と同じ `xl_driver.cpp` と `main.cpp` を動かします。フェイクは、チャネルごとのバス、送信レシート、init 権限、受信キューのあふれ、エラーフレームを模擬します（送信レシートの設定とビットレートは init 権限が必要、送信の DLC は 0〜8、受信キューは指定した容量から 1 を引いた数、受信は 1 回に 1 件）。
+- 自動テストは、内部インターフェースを実装したテスト専用のフェイク（`tests/vector_xl/fake_xl`）に対して、本番と同じ `xl_driver.cpp` と `main.cpp` を動かします。フェイクは、チャネルごとのバス、送信レシート、init 権限、受信キューのあふれ、エラーフレーム、コントローラーのエラー状態の問い合わせ、デバイスの喪失を模擬します（送信レシートの設定とビットレートは init 権限が必要、送信の DLC は 0〜8、受信キューは指定した容量から 1 を引いた数、受信は 1 回に 1 件）。
 - `xl_backend_vector.cpp` の変換（関数、定数、構造体のメンバーの対応）は自動テストの対象外です。公式の XL Driver Library でのビルドとリンクで確かめます。
 - Windows 11 の MSYS2 UCRT64 で XL Driver Library を使ったビルドとチャネル列挙を確認しています。Vector Virtual CAN の Channel 1 と 2 は同じ仮想バスにつながり、別々の SIL Kit ネットワーク間での送受信、`--bitrate` による init access、送信レシートの扱いを確認しています。VN5620 の物理 Channel 5/6 を 250 kbit/s でループバック接続し、1 秒の等速シミュレーションで Engine から Dashboard への送受信も確認しています。
+- VN5620 のループバックで、次の点も確認しています。
+  - 同じチャネルを別のアプリケーション（init 権限を持つ別のブリッジ）と使うと、そのアプリケーションが送ったフレームは、ブリッジに通常の受信として届き、SIL Kit へ転送されます。後から `--bitrate` 付きで開いた側は、init 権限がないので起動に失敗します。
+  - バスの監視（「実行中のバスの監視」）。ACK を返す相手がいないとき、ビットレートが違うとき、ケーブルを抜いたときに、エラーパッシブとエラーフレームの増加を 1 秒ごとに表示し、直ると「no new problems」を表示します。送信だけをするコントローラーは、受信に成功するまで受信エラーカウンターが下がらないので、直った後もエラーパッシブのままのことがあります。
+  - 実行中に USB を抜くと、0.5 秒以内に `xlCanRequestChipState` が `XL_ERR_INVALID_ACCESS` で失敗し、ブリッジは終了コード 1 で終わります。ただし VN5620 は、挿し直しても USB のデバイスとして現れないことがあり、電源の入れ直しが必要でした。実行中には USB を抜かないでください。
+  - コンソールのウィンドウを閉じたときの統計の出力と終了コード 0、Ctrl+C での停止
+  - `windows-mingw-static` のブリッジとランチャーが、`PATH` に MinGW がなくても動くこと（取り込む DLL は Windows、UCRT、`vxlapi64.dll` だけ）
 - 次の点は、Vector のドライバとハードウェアでまだ確かめていません。
   - 他の物理 CAN 構成や機器での送受信。今回の VN5620 ループバックでは `own_tx_dropped=0` でしたが、物理チャネルで送信レシートが返る条件と抑止動作は未確認です。
-  - 同じチャネルを使うほかのアプリケーション（CANoe など）のフレームが、ブリッジに通常の受信として届くか。フェイクはそう扱いますが、実際のドライバが送信レシートとして届ける場合、ブリッジはそれを `own_tx_dropped` として捨てます。確かめるまでは、ほかのアプリケーションとは別のチャネルを使います。
   - CAN FD モードで動いているチャネルを、クラシック CAN のポート（`XL_INTERFACE_VERSION`）で開いたときの挙動
-  - `tests/vector_xl/xl_bridge_it_launcher` は Windows で bridge を強制終了するため、その E2E テストは統計と終了コードを検査しません。`vehicle_sil_launch` が送る Ctrl+Break によるブリッジの正常終了と統計出力は確認しています。
+  - `tests/vector_xl/xl_bridge_it_launcher` は Windows で bridge を強制終了するため、その E2E テストは統計と終了コードを検査しません（`device-lost` のシナリオは、ブリッジが自分で終わるので検査します）。
   - `ExternalPortAdapter` で XL のチャネルにプロトコルスタックを載せた動作（自動テストは `ExternalCanPort` のフェイクに対してだけです）
 
 ## 共通仮想時間

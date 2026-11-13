@@ -8,7 +8,9 @@
 
 #include "vehicle_sil/vector_xl/can_bridge.hpp"
 
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
@@ -23,7 +25,12 @@ using vehicle_sil::unit::make_frame;
 using vehicle_sil::unit::RecordedFrame;
 using vehicle_sil::unit::throws;
 using vehicle_sil::vector_xl::CanBridge;
+using vehicle_sil::vector_xl::CanBridgeHealth;
+using vehicle_sil::vector_xl::ExternalBusState;
+using vehicle_sil::vector_xl::ExternalCanEvent;
 using vehicle_sil::vector_xl::ExternalEventKind;
+using vehicle_sil::vector_xl::format_health_change;
+using vehicle_sil::vector_xl::problems_grew;
 using vehicle_sil::vector_xl::TransmitResult;
 using vehicle_sil::vector_xl::validate_classic_frame;
 
@@ -199,6 +206,83 @@ TEST_CASE(bridge_counts_error_frames_and_overruns_without_forwarding)
     const auto stats = bridge.statistics();
     CHECK_EQ(stats.external_error_frames, 2u);
     CHECK_EQ(stats.external_overruns, 1u);
+}
+
+TEST_CASE(bridge_keeps_the_bus_state_and_the_fault)
+{
+    FakeCanController controller;
+    FakeExternalPort port;
+    CanBridge bridge(controller, port);
+    bridge.start();
+    CHECK(bridge.health().bus_state.level == ExternalBusState::Level::Unknown);
+    CHECK(!bridge.fault());
+
+    ExternalCanEvent state{ExternalEventKind::BusState, {}, {}};
+    state.bus_state = {ExternalBusState::Level::ErrorPassive, 128, 3};
+    port.deliver_event(state);
+    CHECK(bridge.health().bus_state == state.bus_state);
+    CHECK(!bridge.fault());
+
+    port.deliver(ExternalEventKind::Fault);
+    CHECK(bridge.fault() == std::optional<std::string>("fake external error"));
+    CHECK(bridge.last_error() == "fake external error");
+    CHECK(bridge.running()); // the caller decides to stop
+}
+
+TEST_CASE(bridge_health_change_line)
+{
+    using Level = ExternalBusState::Level;
+    CanBridgeHealth before;
+    before.bus_state = {Level::ErrorActive, 0, 0};
+    CHECK(!format_health_change(before, before));
+
+    // Forwarded and own-transmission counts are not problems.
+    CanBridgeHealth now = before;
+    now.statistics.silkit_to_external = 10;
+    now.statistics.external_to_silkit = 10;
+    now.statistics.own_transmissions_dropped = 10;
+    CHECK(!format_health_change(before, now));
+
+    now.statistics.external_error_frames = 3650;
+    now.statistics.external_transmit_failures = 2;
+    now.bus_state = {Level::ErrorPassive, 128, 0};
+    CHECK(format_health_change(before, now) ==
+          std::optional<std::string>("XL bus: error passive (tx errors 128, rx errors 0); since the last report: "
+                                     "error_frames +3650, xl_tx_failures +2"));
+
+    CHECK(problems_grew(before.statistics, now.statistics));
+    CHECK(!problems_grew(now.statistics, now.statistics));
+
+    // A state change alone is reported, without counters that did not grow.
+    CanBridgeHealth recovered = now;
+    recovered.bus_state = {Level::ErrorActive, 5, 0};
+    CHECK(format_health_change(now, recovered) == std::optional<std::string>("XL bus: error active (tx errors 5, rx errors 0)"));
+    CHECK(!format_health_change(recovered, recovered));
+
+    // The problems stopped while the state stays: reported once, after a sample that had grown.
+    CHECK(format_health_change(now, now, true) ==
+          std::optional<std::string>("XL bus: error passive (tx errors 128, rx errors 0); no new problems since the last report"));
+    CHECK(!format_health_change(now, now, false));
+
+    // The first answer of a healthy bus is not news; any other first answer is.
+    CanBridgeHealth unknown;
+    CanBridgeHealth healthy;
+    healthy.bus_state = {Level::ErrorActive, 0, 0};
+    CHECK(!format_health_change(unknown, healthy));
+    CanBridgeHealth passive;
+    passive.bus_state = {Level::ErrorPassive, 0, 128};
+    CHECK(format_health_change(unknown, passive) == std::optional<std::string>("XL bus: error passive (tx errors 0, rx errors 128)"));
+
+    // Every problem counter is named; an unknown state has no counters.
+    CanBridgeHealth grown;
+    grown.statistics.external_overruns = 1;
+    grown.statistics.silkit_rejected = 1;
+    grown.statistics.external_rejected = 1;
+    grown.statistics.external_queue_full = 1;
+    grown.statistics.silkit_transmit_failures = 1;
+    CHECK(format_health_change(unknown, grown) ==
+          std::optional<std::string>("XL bus: state unknown; since the last report: overruns +1, silkit_rejected +1, "
+                                     "xl_rejected +1, xl_queue_full +1, silkit_tx_failures +1"));
 }
 
 TEST_CASE(bridge_reports_transmit_problems)

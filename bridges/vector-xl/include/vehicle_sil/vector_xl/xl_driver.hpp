@@ -57,6 +57,11 @@ struct XlCanPortOptions
     std::uint32_t rx_queue_size = 16384;
     /// Upper bound for one wait on the XL notification event; bounds how long stop() waits.
     std::chrono::milliseconds wait_timeout{50};
+    /// How often the running port asks the driver for the controller's error state
+    /// (ExternalEventKind::BusState). When the driver refuses the request, the channel is gone
+    /// (device removed): the port reports ExternalEventKind::Fault once and stops receiving.
+    /// 0 disables both.
+    std::chrono::milliseconds bus_state_interval{500};
 };
 
 /// One Vector XL CAN channel opened as an ExternalCanPort.

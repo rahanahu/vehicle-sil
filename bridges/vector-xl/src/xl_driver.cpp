@@ -91,7 +91,8 @@ void check(const char* call, const backend::Status& status)
 } // namespace
 
 XlError::XlError(const std::string& call, int status, const std::string& text) :
-  std::runtime_error(call + " failed: " + text + " (XL status " + std::to_string(status) + ")"),
+  // Status 0 is success: the call worked, but its result is unusable (no init access, no handle).
+  std::runtime_error(call + " failed: " + text + (status != 0 ? " (XL status " + std::to_string(status) + ")" : "")),
   status_(status)
 {
 }
@@ -282,8 +283,27 @@ const XlChannelInfo& XlCanPort::channel() const noexcept
 
 void XlCanPort::Impl::receive_loop()
 {
+    const auto interval = options.bus_state_interval;
+    auto nextQuery = std::chrono::steady_clock::now();
     while (running.load())
     {
+        if (interval.count() > 0 && std::chrono::steady_clock::now() >= nextQuery)
+        {
+            nextQuery = std::chrono::steady_clock::now() + interval;
+            backend::Status status;
+            {
+                const std::lock_guard lock(xl_mutex);
+                status = backend::request_chip_state(port, access_mask);
+            }
+            // A full driver queue only delays the answer; anything else means the channel is gone.
+            if (!status.ok() && status.outcome != backend::Outcome::TransmitQueueFull)
+            {
+                set_last_error("XL channel '" + channel.name + "' stopped working (device removed?): " +
+                               "xlCanRequestChipState failed: " + status_text(status.code));
+                handler(ExternalCanEvent{ExternalEventKind::Fault, {}, {}});
+                return; // no events after Fault; stop() still joins this thread
+            }
+        }
         backend::ReceiveResult received;
         {
             const std::lock_guard lock(xl_mutex);
@@ -298,12 +318,44 @@ void XlCanPort::Impl::receive_loop()
         {
             set_last_error("xlReceive failed: " + status_text(received.status.code));
         }
-        (void)backend::wait_for_notification(notification, options.wait_timeout);
+        auto wait = options.wait_timeout;
+        if (interval.count() > 0)
+        {
+            const auto untilQuery = std::chrono::duration_cast<std::chrono::milliseconds>(
+                nextQuery - std::chrono::steady_clock::now());
+            wait = std::clamp(untilQuery, std::chrono::milliseconds{0}, wait);
+        }
+        (void)backend::wait_for_notification(notification, wait);
     }
 }
 
+namespace {
+
+ExternalBusState::Level to_level(backend::ChipLevel level) noexcept
+{
+    switch (level)
+    {
+    case backend::ChipLevel::ErrorActive: return ExternalBusState::Level::ErrorActive;
+    case backend::ChipLevel::ErrorWarning: return ExternalBusState::Level::ErrorWarning;
+    case backend::ChipLevel::ErrorPassive: return ExternalBusState::Level::ErrorPassive;
+    case backend::ChipLevel::BusOff: return ExternalBusState::Level::BusOff;
+    case backend::ChipLevel::Unknown: break;
+    }
+    return ExternalBusState::Level::Unknown;
+}
+
+} // namespace
+
 void XlCanPort::Impl::dispatch(const backend::ReceivedEvent& event)
 {
+    if (event.chip_state)
+    {
+        ExternalCanEvent out{ExternalEventKind::BusState, {}, {}};
+        out.bus_state.level = to_level(event.chip_state->level);
+        out.bus_state.tx_errors = event.chip_state->tx_errors;
+        out.bus_state.rx_errors = event.chip_state->rx_errors;
+        handler(out);
+    }
     const auto classified = detail::classify_xl_event(event);
     if (classified.overrun)
     {
