@@ -68,6 +68,8 @@ export interface GuiServerOptions {
   env?: Record<string, string>;
   /** 待つポート（既定は GUI_PORT）。 */
   port?: number;
+  /** 配る画面のディレクトリ（`--web`。既定はサンプルの画面）。 */
+  web?: string;
 }
 
 /** 起動した GUI サーバー。 */
@@ -96,7 +98,7 @@ export async function startGuiServer(options: GuiServerOptions): Promise<() => P
 
 /** GUI サーバーを起動する（環境変数は変えない。試験ごとに新しいサーバーが要る試験も使う）。 */
 export async function launchGuiServer(options: GuiServerOptions): Promise<GuiServer> {
-  const { launcher, root, devOrigin, port = GUI_PORT } = options;
+  const { launcher, root, devOrigin, web, port = GUI_PORT } = options;
   const server = spawn(
     'uv',
     [
@@ -113,6 +115,7 @@ export async function launchGuiServer(options: GuiServerOptions): Promise<GuiSer
       '--root',
       root,
       ...(devOrigin ? ['--dev-origin', devOrigin] : []),
+      ...(web ? ['--web', web] : []),
     ],
     {
       cwd: REPOSITORY,

@@ -1,7 +1,9 @@
-"""The built screen: files of one directory only, with the media type chosen here by extension."""
+"""The screen: the files of one directory only (the sample screen, or the one given with --web), with the media
+type chosen here by extension."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 # Not the OS's registry (on Windows it can make .js text/plain). Other extensions are not served.
@@ -18,7 +20,12 @@ MEDIA_TYPES = {
     ".ico": "image/vnd.microsoft.icon",
     ".png": "image/png",
     ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
     ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
     ".woff": "font/woff",
     ".woff2": "font/woff2",
 }
@@ -53,6 +60,17 @@ def find_web_dir() -> Path | None:
     return None
 
 
+def check_web_dir(directory: Path) -> str | None:
+    """Why a directory given with --web cannot be served, or None."""
+    if not directory.is_dir():
+        return f"--web {directory}: not a directory (give the directory of your built screen, with its index.html)"
+    index = directory / "index.html"
+    if index.is_symlink() or not index.is_file():
+        return (f"--web {directory}: there is no index.html in it (a file, not a link): give the directory that "
+                "your build writes, such as dist/")
+    return None
+
+
 class StaticFiles:
     def __init__(self, directory: Path | None):
         self.directory = directory.resolve() if directory else None
@@ -84,7 +102,9 @@ class StaticFiles:
             resolved = path.resolve(strict=True)
         except (OSError, RuntimeError):
             return None, None, 404
-        if not resolved.is_relative_to(self.directory) or not resolved.is_file():
+        # The file itself, by the asked name: not through a link (a symbolic link, a junction) even to a file of
+        # this directory, nor through another name of it (a Windows short name, a trailing dot).
+        if os.path.normcase(resolved) != os.path.normcase(path) or not resolved.is_file():
             return None, None, 404
         media = MEDIA_TYPES.get(resolved.suffix.lower())
         if media is None:

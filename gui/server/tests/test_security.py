@@ -121,6 +121,46 @@ def test_response_headers(gui: Gui) -> None:
     run_async(main, gui)
 
 
+def test_your_own_screen_is_served_from_its_directory_only(tmp_path: Path) -> None:
+    # --web: the files of the given directory, with the same checks and headers as the sample screen.
+    web = tmp_path / "screen"
+    (web / "assets").mkdir(parents=True)
+    (web / "index.html").write_text("<!doctype html><title>mine</title>")
+    (web / "assets" / "app.js").write_text("export {};")
+    (web / ".env").write_text("SECRET=1")
+    (web / "notes.md").write_text("x")
+    (tmp_path / "outside.js").write_text("secret")
+    symlinks = sys.platform != "win32"
+    if symlinks:
+        os.symlink(tmp_path / "outside.js", web / "out.js")
+        os.symlink(web / "assets" / "app.js", web / "in.js")  # a link to a file of the screen is not served either
+        os.symlink(tmp_path, web / "up")
+    with gui_server(tmp_path, args=("--web", str(web))) as gui:
+        async def main(c: Client) -> None:
+            for path in ("", "index.html", "some/route"):
+                r = await request(c, "GET", path, {})
+                assert r.status == 200 and "<title>mine</title>" in await r.text(), path
+                assert "script-src 'self'" in r.headers["Content-Security-Policy"], path
+                assert r.headers["X-Content-Type-Options"] == "nosniff", path
+            r = await request(c, "GET", "assets/app.js", {})
+            assert r.status == 200 and r.headers["Content-Type"] == "text/javascript; charset=utf-8"
+            for path in (".env", "notes.md", "../outside.js", "%2e%2e/outside.js", "assets/../../outside.js",
+                         "missing.js", "out.js", "in.js", "up/outside.js", "panels/x.js"):
+                r = await request(c, "GET", path, {})
+                assert r.status == 404, path
+                assert "secret" not in await r.text(), path
+            # The API still needs the token, and Host and Origin are checked.
+            r = await request(c, "GET", "api/app", {})
+            assert r.status == 401
+            r = await request(c, "GET", "", {"Host": "localhost:" + str(gui.port)})
+            assert r.status == 403
+        run_async(main, gui)
+    (tmp_path / "empty").mkdir()
+    for bad in (tmp_path / "missing", tmp_path / "empty", web / "index.html"):
+        with gui_server(tmp_path, args=("--web", str(bad)), expect_start=False) as gui:
+            assert gui.proc.returncode == 2 and "--web" in gui.stderr_text(), bad
+
+
 def test_paths_outside_the_root_are_refused(tmp_path: Path) -> None:
     root = tmp_path / "root"
     shutil.copytree(CONFIGS, root)

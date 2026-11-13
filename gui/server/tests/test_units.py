@@ -677,6 +677,8 @@ def test_static_files_stay_in_their_directory(tmp_path: Path) -> None:
     (web / ".env").write_text("x")
     (tmp_path / "outside.js").write_text("x")
     os.symlink(tmp_path / "outside.js", web / "link.js")
+    os.symlink(web / "main.js", web / "alias.js")  # a link, even to a file of the directory
+    os.symlink(web / "assets", web / "linked")
     s = StaticFiles(web)
     assert s.lookup("/main.js")[1:] == ("text/javascript; charset=utf-8", 200)
     assert s.lookup("/assets/a.svg")[1:] == ("image/svg+xml", 200)
@@ -684,9 +686,17 @@ def test_static_files_stay_in_their_directory(tmp_path: Path) -> None:
     assert s.lookup("/")[0].name == "index.html"
     assert s.lookup("/run/some/route")[0].name == "index.html"  # the screen's routes
     for path in ("/api/x", "/api", "/ws", "/ws/x", "/secret.py", "/.env", "/../outside.js", "/assets/../../x.js",
-                 "/missing.js", "/locale/messages.xx.json", "/link.js", "/a\\b.js", "/C:/x.js"):
+                 "/missing.js", "/locale/messages.xx.json", "/link.js", "/alias.js", "/linked/a.svg", "/a\\b.js",
+                 "/C:/x.js"):
         assert s.lookup(path)[2] == 404, path
     assert StaticFiles(None).lookup("/") == (None, None, 200)  # the page that says how to build the screen
+
+
+def test_the_docs_show_the_csp_that_the_screens_get() -> None:
+    # docs/gui.md tells the authors of their own screens what the CSP allows: it shows the server's own.
+    from vehicle_sil_gui.server import CSP
+    docs = (Path(__file__).resolve().parents[3] / "docs" / "gui.md").read_text(encoding="utf-8")
+    assert f"\n{CSP}\n" in docs, "docs/gui.md, section 守りの線: copy the CSP of gui/server/.../server.py there"
 
 
 # ---------------------------------------------------------------- processes

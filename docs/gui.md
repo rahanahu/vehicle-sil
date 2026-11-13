@@ -1,30 +1,25 @@
 # ブラウザの GUI（`vehicle-sil-gui`）
 
-構成ファイルを選んで照合し、シミュレーションを始めて止め、participant の状態とログをブラウザで見る道具です。GUI サーバー（Python）が自分の PC の上で `vehicle_sil_launch` を動かし、その経過を画面に中継します。シミュレーションを動かすのはランチャーで、GUI はそれを映すだけです。試験や AI エージェントから使う正式な口は、今までどおり `vehicle_sil_launch` と Control API です。
+ブラウザからシミュレーションを動かし、見て、ECU の変数を読み書きするための道具です。GUI サーバー（Python）が自分の PC の上で `vehicle_sil_launch` を動かし、その経過と ECU の変数を、HTTP と WebSocket の口で画面に中継します。シミュレーションを動かすのはランチャーで、GUI はそれを映すだけです。試験や AI エージェントから使う正式な口は、今までどおり `vehicle_sil_launch` と Control API です。
 
-## できること
+GUI は、自分の画面を作るための道具一式（SDK）です。
 
-- 構成ファイルを一覧から選ぶ（起動のときに渡したファイル、または `--root` の下の `.yaml` / `.yml`）。
-- 照合の結果（所見、participant の表）を見る。participant を外して（`--disable`）照合し直す。
-- participant を自分で起動する（`--manual`。ランチャーの `features` に `manual-participants` があるときだけ。デバッガーから ECU を動かすときなど）: 照合の表で「自分で起動する」にして始めると、ランチャーはその participant を起動せず、「participant の状態」に、起動するコマンドとそのディレクトリを出します（選んで写せ、コピーのボタンもあります）。そのコマンドを実行すると「参加した（自分で起動）」になり、シミュレーションはそれまで待ちます。構成ファイルに `manual: true` と書いた participant は、最初からそうなっています（画面からは戻せません）。参加しないまま止めると、シミュレーションは始まらず「参加しなかった」と出します。ランチャーは自分で起動した participant を終わらせないので、終わった後も残っているとランチャーが知らせたら、そう出します。決まりは [simulation-config.md](simulation-config.md) の「participant を自分で起動する」です。
-- 実行を始める、止める（順に止めるか、待たずに止める）。段階、participant ごとの状態と終了コード、ログ、所見、結果を見る。ランチャーが participant を失敗と決めたら（`failed`）、プロセスが終わる前でもすぐに失敗として出します。利用者が止めた実行は「中断」として、失敗の色にせずに出します。
-- 時刻を操作する（下の「時刻の操作」）: 速度を決めて始める、止めた状態で始める、一時停止、再開、ステップ送り、速度の変更。仮想時刻、いまの速度、実際の速さ、実時間への遅れを見る。
-- participant ごとに、変数を読み書きする口のつながり方（ランチャーの `control-links`: つながった、hello が来なかった、形式の版が違う、変数はあるが口を出していない、なし）を見る。読み書きできないつながり方は、色だけでなく ⚠ と文で出します。
-- ECU の変数を見る・書く（下の「ECU の変数」と「変数の画面と部品」）: 「変数」の画面に、いまの実行の変数が ECU ごとに、型に合った部品（値の表示、スイッチ、スライダー、グラフなど）で並びます。名前で絞り込めます。同じことは、サーバーの口とクライアントのライブラリでもできます。
-- 変数の並べ方をファイルに書く（下の「ダッシュボードのファイル」）: 構成ファイルの隣の `<名前>.dashboard.yaml` に、どの変数をどの部品でどの順に出すかを書くと、「変数」の画面がそのとおりに並べます。自分で書いた部品（custom element。下の「持ち込みのパネル」）も置けます。
-- シナリオを選んで回す（下の「シナリオ」）: 構成ファイルの隣の `scenarios` の `.yaml` から選ぶと、照合でシナリオも確かめ、実行では手順の表が進み、終わると合否を出します。
-- 実行中の操作をシナリオとして保存する（下の「操作をシナリオとして保存する」）: GUI で書いて反映された値を、シナリオの YAML としてブラウザで保存します。
-- ランチャーが 1 秒ごとの心拍も書かなくなったら（既定で 5 秒。`--silent-after`）、止まっているかもしれないことを状態の帯に出します。ランチャーが読む側の遅さで書けなかったログの行（`log_dropped`）は、その位置に落ちた行の数として出します。
-- ランチャーが結果を出さずに終わったら、異常終了と終了コード、ランチャーが標準エラーに書いた行（最初の 20 行と最後の 30 行）を見る。終わりを知らせてこなかった participant の状態は「不明」になります（ランチャーが先に終わったので、その後どうなったかは画面にはわかりません）。
-- 画面を開き直したり、別のタブで開いたりしても、同じ実行の状態を見られる。ログは、participant ごとに直近の 2000 行（1 MiB まで）を見られます。それより古い行は、落とした行の数だけを表示します。
-- 画面の言葉は日本語と英語（ブラウザの言語で決まり、ツールバーの言語のメニューで変えられる。選んだ言語はブラウザに残る）。ランチャーと ECU が出す文（所見、ログ）は、どちらの言語でも英語のまま出します。
+| 部分 | 場所 | 役目 |
+|---|---|---|
+| GUI サーバー | `gui/server`（`vehicle-sil-gui`） | ランチャーを動かし、口を出し、画面（静的なファイル）を配る |
+| サーバーの口 | [gui/protocol](../gui/protocol/README.md) | HTTP と WebSocket の形。版と互換の決まり、認証。どの言語からでも使える |
+| クライアントのライブラリ | [gui/client](../gui/client/README.md)（`@vehicle-sil/gui-client`） | TypeScript。枠組みに依らない。接続、実行と時刻の操作、ECU の変数 |
+| サンプルの画面 | `gui/web`（Angular） | 上の 3 つだけで作った参照のアプリ。指定がなければ GUI サーバーはこれを配る |
+
+利用者は、好きな枠組みでまったく別の画面を作り、`--web` で GUI サーバーに配らせます（下の「自分の画面を作る」）。サンプルの画面は、そのまま使うことも、部品を写して使うこともできます（下の「サンプルの画面」）。
 
 ## 要るもの
 
 - `vehicle_sil_launch`（`tools/launch` をビルドしたもの）。`version --json` の `features` に `events` と `stdin-commands` があるもの（`run --events`、`run --stdin-commands`。[simulation-config.md](simulation-config.md) の「機械から使う」）。時刻の操作には `speed`、`start-paused`、`time-commands` も要ります（ないランチャーでは、その操作を出しません）。
 - ECU の変数を読み書きするには、Control Server を持つランチャー（`features` に `control-server`。`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` でビルドしたもの。[control-api.md](control-api.md)）と、GUI サーバーの Python に gRPC（`grpcio`、`protobuf`。`uv sync` が入れます）が要ります。どちらかがなくても、ほかの機能はそのまま使えます（変数だけが「使えない」になり、理由を出します）。
 - 構成ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します）。
-- Python 3.11 以上と [uv](https://docs.astral.sh/uv/)（GUI サーバー）。画面のビルド（`gui/web` の `npm run build` の出力）。画面を使うだけなら Node.js は要りませんが、ビルドには要ります（[gui/web/README.md](../gui/web/README.md)）。
+- Python 3.11 以上と [uv](https://docs.astral.sh/uv/)（GUI サーバー）。
+- 画面: サンプルの画面のビルド（`gui/web` の `npm run build` の出力）か、自分の画面のビルド（`--web`）。画面を使うだけなら Node.js は要りませんが、ビルドには要ります（[gui/web/README.md](../gui/web/README.md)）。
 
 ## 起動
 
@@ -39,7 +34,7 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 
 - 起動すると、`http://127.0.0.1:<port>/#token=<...>` を 1 行表示して、ブラウザで開きます。ブラウザには URL を直接渡さず、自分だけが読める一時ファイル（URL へ移るだけのページ。30 秒後かサーバーの終わりに消す）を開かせます。ブラウザがそのファイルを開けない（一時ディレクトリを読めないブラウザなど）ときや、ブラウザが開かないときは、表示した URL をブラウザに貼ります。Ctrl+C でサーバーを止めます。実行中のシミュレーションは、先に止めます。
 - ランチャーは `--launcher <path>`、環境変数 `VEHICLE_SIL_LAUNCH`、`PATH` の順に探します。`PATH` で見つけたものがカレントディレクトリにあるときは使わず、終了コード 2 で終わります（Windows はカレントディレクトリを `PATH` より先に探すので、人から受け取ったフォルダで起動すると、そこにあるプログラムが動いてしまうため）。そのランチャーを使うときは `--launcher` で指定します。ランチャーが GUI に要る機能（`version --json` の `features` の `events` と `stdin-commands`）を持たないときは、何が足りないかを表示して終了コード 2 で終わります。
-- 画面のビルド（`gui/web` の `npm run build`）がないときは、ビルドの手順を書いたページを表示します。
+- `--web` を付けずに起動して、サンプルの画面のビルド（`gui/web` の `npm run build`）がないときは、ビルドの手順を書いたページを表示します。
 
 | 引数 | 意味 |
 |---|---|
@@ -48,7 +43,8 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 | `--port <n>` | 待ち受けるポート（127.0.0.1）。既定の 0 は空いているポート。80 は使えない（ブラウザが `Host` からポートを省くため） |
 | `--no-browser` | ブラウザを開かない |
 | `--launcher <path>` | `vehicle_sil_launch` のパス（`.py` で終わるパスは、この Python で動かす） |
-| `--dev-origin <origin>` | 画面の開発サーバー（`http://127.0.0.1:<port>` の形だけ）からの要求も受け付ける |
+| `--web <dir>` | 自分の画面を配る: そのビルドの出力のディレクトリ（`index.html` があること）。既定はサンプルの画面（下の「`--web` で配る」） |
+| `--dev-origin <origin>` | 画面の開発サーバー（`ng serve`、Vite など。`http://127.0.0.1:<port>` の形だけ）からの要求も受け付ける（下の「開発中のやり方」） |
 | `--json` | URL の代わりに `{"vehicle_sil_gui": 1, "url": ..., "port": ...}` を 1 行で表示する（道具から起動するとき） |
 | `--stop-timeout <秒>` | 終わるとき、実行中のシミュレーションが止まるのを待つ時間（既定 10）。過ぎたらランチャーを止める |
 | `--check-timeout <秒>` | 照合（各 ECU の `--describe` を含む）の時間の上限（既定 120）。過ぎたら照合を止める |
@@ -56,6 +52,112 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
 | `--no-variables` | ランチャーの Control Server を立てない（ECU の変数を読み書きしない） |
 
 終了コード: 0 は止めた（Ctrl+C、SIGTERM）、1 は動いている間の失敗、2 は引数の誤りか、ランチャーやポートを使えない。
+
+## 自分の画面を作る
+
+自分の画面は、クライアントのライブラリを使って好きな枠組みで作り、ビルドした静的なファイルを GUI サーバーに配らせます。画面は GUI サーバーと同じ origin から開くので、サーバーの守りの線（トークン、`Host`、`Origin`、CSP）がそのまま効きます。
+
+```mermaid
+flowchart LR
+  yours["自分の画面<br/>（好きな枠組み）"] --> lib["クライアントのライブラリ<br/>@vehicle-sil/gui-client"]
+  sample["サンプルの画面<br/>gui/web（Angular）"] --> lib
+  lib -->|"HTTP と WebSocket<br/>（gui/protocol が契約）"| server["GUI サーバー"]
+  tool["画面のない道具<br/>（Node、Python など）"] -->|HTTP と WebSocket| server
+  server --> launcher["vehicle_sil_launch"]
+```
+
+1. 画面を作ってビルドし、静的なファイル（`index.html` と、スクリプト、スタイル）にします。
+2. `vehicle-sil-gui --web <ビルドの出力のディレクトリ> <構成ファイル>` で起動します。サーバーがそのディレクトリを配り、表示した URL（`#token=` つき）でブラウザに自分の画面が開きます。
+3. 画面は、URL のトークンをライブラリの `takeToken(window)` で受け取り、`createClient` でサーバーにつなぎます。
+
+| 作り方 | 使うもの | 始め方 |
+|---|---|---|
+| ビルドなしの素の JavaScript | ライブラリを 1 つにまとめたファイル（`vehicle-sil-gui-client.mjs`） | ひな形 [examples/gui_starter](../examples/gui_starter/) を写す |
+| TypeScript と好きな枠組み（React、Vue、Svelte など） | ライブラリのパッケージ（`.tgz`） | [examples/gui_starter/README.md](../examples/gui_starter/README.md) の「TypeScript と好きな枠組みで作る」 |
+| Angular | 上のパッケージと、サンプルの部品と包み | 下の「サンプルの部品を写して使う」 |
+| 画面のない道具（試験の駆動、記録） | ライブラリ、または口を直接 | 下の「画面のない道具」 |
+
+### ライブラリを取り込む
+
+- **パッケージ**: `gui/web` で `npm run pack:client` を実行すると、`build/gui-client/vehicle-sil-gui-client-<版>.tgz` ができます（版は GUI サーバーと同じ）。中身は 1 つにまとめた ESM（`dist/index.js`）、型（`types/`）、`exports` を書いた `package.json`、README、LICENSE で、依存はありません。自分のプロジェクトで `npm install <その .tgz>` をすると、`@vehicle-sil/gui-client` として import できます。npm のレジストリには公開していません。型は、ブラウザの型（`lib` の `DOM`。`WebSocket` など）を使います。`npm run pack:client` は、作ったパッケージを入れた形で Node から import し、ひな形の README の TypeScript の例を、型の解決 `nodenext` と `bundler` で型の検査に通してから終わります。`--out <dir>` で置き場所を、`--version <版>` で版を変えられます（`node gui/client/pack.mjs --help`）。
+- **1 つにまとめたファイル**: `gui/web` で `npm run build:client` を実行すると、`build/gui-client/vehicle-sil-gui-client.mjs` ができます。画面のディレクトリに置いて、相対のパスで import します（ブラウザでも Node 22 以上でも読めます）。
+- 公開している口は [gui/client/README.md](../gui/client/README.md) の一覧です。
+
+### `--web` で配る
+
+- 渡すのは、画面のビルドの出力のディレクトリです。`index.html`（シンボリックリンクでないファイル）がなければ、何が要るかを表示して終了コード 2 で終わります。`--web` を付けなければ、サンプルの画面を配ります。
+- 配るのは、そのディレクトリの中のファイルだけで、種類は拡張子で決めます: `.html`、`.js`、`.mjs`、`.css`、`.json`、`.map`、`.webmanifest`、`.txt`、`.svg`、`.ico`、`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.avif`、`.woff`、`.woff2`、`.ttf`、`.otf`。ほかの拡張子、`..` と絶対パス、`.` で始まる名前（隠しファイルと隠しディレクトリの中）、シンボリックリンク（ディレクトリの中を指すものも）とジャンクション、同じファイルの別の名前（Windows の短い名前など）は、配らずに 404 を返します。隣の圧縮したファイル（`.gz`、`.br`）も使いません。
+- 拡張子のないパスで、そのファイルがなければ `index.html` を返します（画面の経路。1 つのページで動く画面のため）。拡張子のあるパスは、なければ 404 です。`api/`、`ws`、`panels/` はサーバーの口なので、画面のパスに使えません。
+- 画面のファイルには `Cache-Control: no-cache` を付けます（ブラウザは毎回確かめるので、ビルドし直したらページを読み直せば新しいものが出ます）。
+- 画面からサーバーへは、相対の URL で届きます（`createClient({ baseUrl: document.baseURI, ... })`）。
+
+### 守りの線
+
+自分の画面にも、サンプルの画面と同じ守りの線が効きます（下の「安全の考え方」）。API と WebSocket はトークンがないと答えず、`Host` と `Origin` を確かめ、ほかの origin からの要求（CORS）には答えません。画面のファイルには、次の CSP が付きます。
+
+```text
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+```
+
+自分の画面では、次のことになります。
+
+- スクリプトはファイルから読みます。インラインの `<script>`、`onclick="..."` などの属性、`eval` と `new Function` は動きません。テンプレートを実行時に組み立てる作り方（Vue のテンプレートを実行時にコンパイルする版など）は使えないので、ビルドで済ませます。
+- ほかの場所（CDN など）からは、スクリプト、スタイル、フォント、画像を読めず、接続もできません。npm で入れてビルドに含めます。
+- スタイルは、ファイルのほかに `<style>` と `style` の属性も使えます。画像は同じ origin と `data:` の URL、フォントは同じ origin だけです（`data:` のフォントは読めないので、ビルドがフォントを CSS に埋め込むときは、ファイルに出す設定にします）。
+- WebAssembly、`blob:` の URL の Worker と画像、フォームの送信、ほかのページの frame の中に入ることはできません。
+- CSP を変える口はありません。この範囲で動かない画面は、何が要るかを issue に書いてください。
+
+### トークンを受け取る
+
+- サーバーは、起動のたびに作るトークンを、表示する URL（`http://127.0.0.1:<port>/#token=<トークン>`）の `#` の後ろに付けます（`#` の後ろはサーバーに送られず、アクセスのログにも残りません）。
+- 画面は、最初に `takeToken(window)` を呼びます。URL の `#token=` を読み、すぐに URL から消し（`history.replaceState`。履歴にも残しません）、タブの sessionStorage（鍵は `TOKEN_STORAGE_KEY`）に置いて返します。再読み込みのときは、sessionStorage のものを返します。どちらにもなければ `null` なので、「サーバーが表示した URL から開く」と出します。画面の経路（router）が URL を書き換えると `#token=` が消えるので、経路を始める前に呼びます。
+- トークンを `createClient({ token })` に渡せば、ライブラリが API には `Authorization: Bearer`、WebSocket には最初のメッセージで送ります。トークンを URL の query、ログ、画面の表示に出さないでください。
+- サーバーがトークンを断ったら（サーバーを起動し直した、など）、`client.session.rejected` が真になり（WebSocket）、HTTP の要求は状態 401 の `HttpError` で断られます。サーバーが新しく表示した URL から開き直します。
+
+### 開発中のやり方
+
+画面を作っている間は、自分の開発サーバー（Vite など。保存すると画面が変わる）で画面を配り、口（`api/` と `ws`）だけを GUI サーバーへ転送します。GUI サーバーは `--dev-origin` で、開発サーバーからの要求（開発サーバーの `Host` と `Origin`）も受け付けます。開発サーバーは `127.0.0.1` で待たせます（`--dev-origin` は `http://127.0.0.1:<port>` の形だけです）。
+
+```js
+// vite.config.js
+const gui = 'http://127.0.0.1:8765'; // GUI サーバーの --port
+export default {
+  server: {
+    host: '127.0.0.1',
+    port: 5173,
+    strictPort: true,
+    proxy: {
+      '/api/': { target: gui },
+      '^/ws$': { target: gui, ws: true },
+    },
+  },
+};
+```
+
+```sh
+uv run vehicle-sil-gui --port 8765 --dev-origin http://127.0.0.1:5173 simulation.yaml
+```
+
+GUI サーバーは、開発サーバーを通す URL（`http://127.0.0.1:5173/#token=...`）を標準エラーに出し（`--json` では `dev_url`）、ブラウザでそれを開きます。開発サーバーが配るページには GUI サーバーの CSP が付かないので、仕上げはビルドして `--web` で確かめます。サンプルの画面の開発（`ng serve`）も同じ形です（`gui/web/proxy.conf.mjs`）。
+
+### ひな形
+
+[examples/gui_starter](../examples/gui_starter/) は、ライブラリだけを使った、ビルドなしの最小の画面です（素の HTML、ES モジュール、ライブラリを 1 つにまとめたファイル）。つなぐ、構成ファイルを照合する、実行を始めて止める、変数を 1 つ選んで見て書く、までがあります。使い方は、その README にあります。`scripts/verify-gui.py` が、偽のランチャーと偽の Control Server を相手に、`--web` で配ったこのひな形をブラウザで動かして確かめます。
+
+### 画面のない道具
+
+[examples/gui_client](../examples/gui_client/) に、画面を使わずに口を叩く、素の JavaScript の 1 ファイルの例があります（Node 22 以上）。`run.mjs` はライブラリを使わず、標準の `fetch` と `WebSocket` だけで書いたもの、`run-with-library.mjs` はライブラリを 1 つにまとめたファイルを使うものです。どちらも、照合して実行を始め、事象を読み、終わりを待って、結果で終了コードを返します。`variables.mjs` は、ライブラリで ECU の変数を読み書きします（止めて始め、最初のステップの前に 1 つ書き、進めて止め、止まっている時刻の値を確かめる。期待どおりなら終了コード 0）。`VEHICLE_SIL_GUI_URL='<サーバーが表示した URL>' node examples/gui_client/run.mjs simulation.yaml`（URL は環境変数で渡す。引数に書くと、トークンがほかの利用者のプロセスの一覧に見えるため）。ブラウザの外から使うので、`Origin` をサーバー自身の origin にして送ります。
+
+### ライブラリの外にある決まり
+
+次の決まりは、ライブラリが肩代わりしません。サンプルの画面はこれを守っているので、自分の画面でも同じにします。
+
+- **照合と開始の要求**: ランチャーの `features`（`client.app.get()?.launcher.features`）にない機能の欄は送りません（`manual` は `manual-participants`、`speed` は `speed`、`start_paused` は `start-paused`、`scenario` は `scenario` があるときだけ）。`manual` に `disable` の名前を入れません（サーバーが 400 で断ります）。シナリオを選んだら `start_paused` は偽にします（シナリオは止めた状態では始められません）。照合は、前の照合の答えを待ってから送ります（サーバーは 1 つずつ行います）。
+- **変数を書けるか**: `writable` が偽の変数（`output`）は書けません。`parameter` は最初のステップの前（`client.time.state` の `beforeStart`）だけです。シナリオを回している実行（セッションの写しに `scenario` があり、ランチャーが動いている）と、Control Server とつながっていない participant（`client.variables.state` の `peers[].connected` が偽）にも書けません。サーバーも同じ理由で断ります（`WriteError` の `refused`）が、押せないことを先に見せるには、画面で確かめます。
+- **値が古いか**: `client.variables.state` が `ready` で `reason` があるときは、値の読み取りが失敗し続けています（値は最後に読めたもの）。participant がつながっていない間の値も古いものです。
+- **監視の変数**: ECU が宣言したのではない変数（`ecu.connected`、`peer.`、`j1939.<ネットワーク>.`）は、照合の結果の `participants[].variables[].builtin` で見分けます。`builtin` がない（実行中に足される監視の変数、古いランチャー）ときは、名前の前置き（`ecu.`、`peer.`、`j1939.`）で分けます。
+- **握手で断られた理由**: WebSocket の握手が断られると、ブラウザには理由が見えません。`client.connection.failures` が増えたら、`client.loadApp()` を呼び直すと、HTTP の答え（誤りの文）で理由がわかります。
+- **自分で起動した participant が残っている**: 実行の後も participant が残っていることは、いまはランチャーのログ（`vehicle_sil_launch` の行）の英語の文でだけ知らせます。機械が読む欄はありません。
 
 ## 安全の考え方
 
@@ -68,6 +170,7 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 - ECU の変数は、ランチャーの Control Server（127.0.0.1 の空いているポート）から読み書きします。実行のたびに新しいトークンを作り、自分だけが読めるファイル（一時ディレクトリの `vehicle-sil-gui-control-*.txt`。POSIX では権限 0600）でランチャーに渡します。ファイルは、ランチャーが読んだ後（Control Server が待ち受けを始めたとき）に消し、実行の終わりにも消します。このトークンは、ランチャーの引数、事象、画面への通知、誤りの文のどこにも出しません。同じ PC のほかのプロセスは、このトークンなしでは Control Server を使えません。GUI サーバーがつなぐのは、ランチャーが知らせた `127.0.0.1:<port>` だけです。画面からの書き込みは、ほかの API と同じ検査（トークン、`Host`、`Origin`）を通り、変数の一覧にある書ける変数へ、型と範囲の合う値だけを渡します。
 - シナリオ（構成ファイルの隣の `scenarios` の `.yaml` / `.yml`）は、その一覧にあるものだけをランチャーに渡します。`..`、絶対パス、NUL、長すぎる名前、`.` で始まる名前、シンボリックリンク（ファイルも、`scenarios` とその上のディレクトリも）は一覧に入らず、指定しても断ります。保存するシナリオの YAML は、サーバーが文字列として返すだけで、ファイルを書きません。
 - ダッシュボードのファイル（構成ファイルの隣の `.dashboard.yaml`）と持ち込みのパネル（`panels/` の `.js` / `.mjs`）は、構成ファイルと同じく root の中のものだけを読み、配ります。ダッシュボードのファイルは YAML の安全な読み方で、大きさと入れ子と値の数に上限を設け、別名（`*name`）を使わせません。パネルは同じ origin から配るので、CSP（`script-src 'self'`）は緩めません。パネルのモジュールの URL には、トークンの代わりに起動ごとの別の乱数が入ります（下の「持ち込みのパネル」）。
+- 画面は、起動した人が指定したディレクトリ（`--web`。なければサンプルの画面）の中のファイルだけを配ります（上の「`--web` で配る」）。その画面は、同じ origin で、トークンを持って動き、GUI でできることを全部できます。`--web` には、自分が信頼する画面だけを渡します（root と同じく、人からもらったものは先に読みます）。
 - 実行は、サーバー 1 つにつき一度に 1 つです。同時に開始を頼まれても、始めるのは 1 つだけです。サーバーを 2 つ起動すれば、実行も 2 つ動きます。
 
 守れないもの:
@@ -108,9 +211,9 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 
 `api/time` は、ほかの API と同じ検査（トークン、`Host`、`Origin`、JSON の本文）を通ります。サーバーは命令をランチャーの標準入力に 1 行で書いてすぐ返し、ランチャーの答えは待ちません（止まっているランチャーで要求が固まらないように。入力を読まないランチャーでも、長くて約 2 秒で返ります）。受け付けたかどうかは、ランチャーの `command` の事象で届きます。形と誤りの `code` は [gui/protocol/README.md](../gui/protocol/README.md) にあります。
 
-### 画面の部品から使う
+### サンプルの画面の包み（Angular）
 
-時刻の状態と命令は、アプリ全体で 1 つのサービスにあります（中身はクライアントのライブラリの `TimeControl`。下の「自分の画面や道具を作る」）。部品はここの signal を読むだけにして、状態を自分で持ちません（どの部品も同じ状態を見ます）。
+時刻の状態と命令は、アプリ全体で 1 つのサービスにあります（中身はクライアントのライブラリの `TimeControl`。上の「自分の画面を作る」）。部品はここの signal を読むだけにして、状態を自分で持ちません（どの部品も同じ状態を見ます）。
 
 - `ServerInfo`（`gui/web/src/app/core/session/server-info.ts`）: `app`（`GET api/app`）、`features`（ランチャーができること）、`has(name)`（その機能があるか）、`limits`（速度の範囲、ステップ送りの上限）。
 - `SimulationTime`（`gui/web/src/app/core/session/simulation-time.ts`）:
@@ -195,7 +298,30 @@ flowchart LR
 
 形と上限は [gui/protocol/README.md](../gui/protocol/README.md) の「ECU の変数」、ライブラリの口は [gui/client/README.md](../gui/client/README.md) の「ECU の変数」、動く例は `examples/gui_client/variables.mjs` です。Angular の包みは `EcuVariables`（`gui/web/src/app/core/session/ecu-variables.ts`: `session`、`status`、`reason`、`peers`、`operations`、`find(ref)`、`peerConnected(peer)`、部品が壊れると自分でやめる `watch()`、自分でやめる `open()`、`write()`）です。
 
-## 変数の画面と部品
+## サンプルの画面
+
+`gui/web` の Angular のアプリです。クライアントのライブラリと、その Angular の包み（`gui/web/src/app/core/session/`。ライブラリの読める値を signal にするだけの薄い層）だけで作っていて、`--web` を付けずに起動すると、GUI サーバーがこれを配ります。そのまま使うことも、部品を写して自分の Angular の画面で使うこともできます（下の「サンプルの部品を写して使う」）。画面の作り方の決まりは [gui/web/README.md](../gui/web/README.md) にあります。
+
+下の「変数の画面と部品」「ダッシュボードのファイル」「持ち込みのパネル」は、サンプルの画面の機能です。自分の画面には自動では付きません。
+
+### できること
+
+- 構成ファイルを一覧から選ぶ（起動のときに渡したファイル、または `--root` の下の `.yaml` / `.yml`）。
+- 照合の結果（所見、participant の表）を見る。participant を外して（`--disable`）照合し直す。
+- participant を自分で起動する（`--manual`。ランチャーの `features` に `manual-participants` があるときだけ。デバッガーから ECU を動かすときなど）: 照合の表で「自分で起動する」にして始めると、ランチャーはその participant を起動せず、「participant の状態」に、起動するコマンドとそのディレクトリを出します（選んで写せ、コピーのボタンもあります）。そのコマンドを実行すると「参加した（自分で起動）」になり、シミュレーションはそれまで待ちます。構成ファイルに `manual: true` と書いた participant は、最初からそうなっています（画面からは戻せません）。参加しないまま止めると、シミュレーションは始まらず「参加しなかった」と出します。ランチャーは自分で起動した participant を終わらせないので、終わった後も残っているとランチャーが知らせたら、そう出します。決まりは [simulation-config.md](simulation-config.md) の「participant を自分で起動する」です。
+- 実行を始める、止める（順に止めるか、待たずに止める）。段階、participant ごとの状態と終了コード、ログ、所見、結果を見る。ランチャーが participant を失敗と決めたら（`failed`）、プロセスが終わる前でもすぐに失敗として出します。利用者が止めた実行は「中断」として、失敗の色にせずに出します。
+- 時刻を操作する（上の「時刻の操作」）: 速度を決めて始める、止めた状態で始める、一時停止、再開、ステップ送り、速度の変更。仮想時刻、いまの速度、実際の速さ、実時間への遅れを見る。
+- participant ごとに、変数を読み書きする口のつながり方（ランチャーの `control-links`: つながった、hello が来なかった、形式の版が違う、変数はあるが口を出していない、なし）を見る。読み書きできないつながり方は、色だけでなく ⚠ と文で出します。
+- ECU の変数を見る・書く（上の「ECU の変数」と下の「変数の画面と部品」）: 「変数」の画面に、いまの実行の変数が ECU ごとに、型に合った部品（値の表示、スイッチ、スライダー、グラフなど）で並びます。名前で絞り込めます。同じことは、サーバーの口とクライアントのライブラリでもできます。
+- 変数の並べ方をファイルに書く（下の「ダッシュボードのファイル」）: 構成ファイルの隣の `<名前>.dashboard.yaml` に、どの変数をどの部品でどの順に出すかを書くと、「変数」の画面がそのとおりに並べます。自分で書いた部品（custom element。下の「持ち込みのパネル」）も置けます。
+- シナリオを選んで回す（上の「シナリオ」）: 構成ファイルの隣の `scenarios` の `.yaml` から選ぶと、照合でシナリオも確かめ、実行では手順の表が進み、終わると合否を出します。
+- 実行中の操作をシナリオとして保存する（上の「操作をシナリオとして保存する」）: GUI で書いて反映された値を、シナリオの YAML としてブラウザで保存します。
+- ランチャーが 1 秒ごとの心拍も書かなくなったら（既定で 5 秒。`--silent-after`）、止まっているかもしれないことを状態の帯に出します。ランチャーが読む側の遅さで書けなかったログの行（`log_dropped`）は、その位置に落ちた行の数として出します。
+- ランチャーが結果を出さずに終わったら、異常終了と終了コード、ランチャーが標準エラーに書いた行（最初の 20 行と最後の 30 行）を見る。終わりを知らせてこなかった participant の状態は「不明」になります（ランチャーが先に終わったので、その後どうなったかは画面にはわかりません）。
+- 画面を開き直したり、別のタブで開いたりしても、同じ実行の状態を見られる。ログは、participant ごとに直近の 2000 行（1 MiB まで）を見られます。それより古い行は、落とした行の数だけを表示します。
+- 画面の言葉は日本語と英語（ブラウザの言語で決まり、ツールバーの言語のメニューで変えられる。選んだ言語はブラウザに残る）。ランチャーと ECU が出す文（所見、ログ）は、どちらの言語でも英語のまま出します。
+
+### 変数の画面と部品
 
 ナビゲーションの「変数」は、いまの実行の変数を部品で並べる画面です。構成ファイル（いまの、または最後の実行のもの。実行がなければ起動のときに渡したもの）の隣にダッシュボードのファイルがあれば、そのとおりに並べます（下の「ダッシュボードのファイル」）。なければ、変数を ECU ごとにまとめ、変数ごとに既定の部品を並べます（自動のダッシュボード）。上の欄で名前を絞り込めます（空白で区切った語のすべてが、ECU の名前か変数の名前に入っているもの）。実行がないときと、変数を読み書きできないとき（Control Server のないランチャー、gRPC のない GUI サーバー、つながらない）は、理由を出します。止めて始めた実行が最初のステップの前で待っている間も、部品から書けます（パラメーターを含む。時刻 0 のステップで反映されます。再開は「実行」の画面で行います）。
 
@@ -203,7 +329,7 @@ ECU が宣言したのではない変数（vehicle-sil が付ける変数と、E
 
 どの ECU にもある入力 `ecu.connected`（false の間、ECU はすべてのバスから外れ、ステップは動き続けます。[architecture.md](architecture.md) の「ECU の入口」の「バスからの切り離し」）は、ECU の見出しの「バスにつなぐ」のスイッチになります（読み上げの名前は「<ECU> をバスにつなぐ」）。外れている間は、そのまとまりの横に線を引き、スイッチの横に印（⚠）と文で知らせます。ダッシュボードのファイルでは、`auto:` で並べたまとまりの見出しに付きます（1 つのまとまりに 1 つ。2 つ目の ECU の分はスイッチの部品として並びます）。`variable: Engine.ecu.connected` と書けば、ほかの変数と同じくスイッチの部品として置けます。
 
-### 部品
+#### 部品
 
 | 部品 | 種類（`WidgetKind`） | 中身 |
 |---|---|---|
@@ -215,7 +341,7 @@ ECU が宣言したのではない変数（vehicle-sil が付ける変数と、E
 | 選択肢 | `select` | 書ける列挙。一覧を開いて項目を選んだときだけ書く（閉じたまま矢印キーや文字を押しても書かない） |
 | グラフ | `graph` | 数の時間の変化（横は値を読んだステップの仮想時間）。最後の値と単位も出す。履歴はクライアントのライブラリが持ち、見えている間の最後の 600 点を描く |
 
-### 既定の部品
+#### 既定の部品
 
 変数の型、範囲、列挙の項目、書けるか（`writable`。`role` が `input` か `parameter`）から、1 つの関数（`gui/web/src/app/widgets/dashboard-spec.ts` の `defaultWidget`）が決めます。
 
@@ -229,7 +355,7 @@ ECU が宣言したのではない変数（vehicle-sil が付ける変数と、E
 
 `parameter` は書ける部品になりますが、書けるのは最初のステップの前だけで、その後は部品が理由を出して操作を止めます。
 
-### 部品の共通の振る舞い
+#### 部品の共通の振る舞い
 
 - **値の状態**: 値の下に、いつの値かを文で出します（色だけに頼らず、印も添えます）。動いている間は値を読んだステップの時刻、止まっているときは「止まっている時刻 … s の値」（ライブラリの `paused` が真の値）、まだ届いていなければ「値はまだありません」、いまの実行にない変数は「この実行にない変数です」。画面とサーバーの接続が切れた、ランチャーにつなぎ直している、ECU が切れた、値の読み取りが失敗し続けている（Control Server が期限までに答えないなど。サーバーの変数の状態は `ready` のまま `reason` に理由がある）ときは、値を残して「古い値」と理由を出します。読み取りが失敗し続けているときは、「変数」の画面の上にもその理由（サーバーの英語の文）を出します。実行が終わった後は「終わった実行の最後の値」です。
 - **書き込みの様子**: 送った（サーバーの答えを待つ）、受け付けた（ECU のステップで反映されるのを待つ。止まっている間はここで待ちます）、反映した（そのステップの時刻）を出します。うまくいかなかったときは、ライブラリの `WriteError` の `kind` ごとに、サーバーが断った、反映されなかった、答えが来なかった（反映されたかわからない）、接続を閉じた、を読み上げの `alert` で出し、表示を読んだ値に戻します。**答えが来なかった書き込みは、自動で送り直しません**（二重に書かないため。値を確かめてから書き直します）。
@@ -239,7 +365,7 @@ ECU が宣言したのではない変数（vehicle-sil が付ける変数と、E
 - **重くしない**: 部品は、画面に見えている間（と、その少し外）だけ値を watch します。数百の変数を並べても、値を受け取るのは見えている部品の分だけです。
 - **操作**: キーボードで全部を操作できます。読み上げでは、部品が変数の名前のまとまりになり、操作の名前も変数の名前です（スライダーは単位つきの値を読みます）。速く変わる値に `aria-live` を付けません。部品は自分の幅で並び、360 px の窓から全画面まで崩れません。
 
-### ダッシュボードのデータ
+#### ダッシュボードのデータ
 
 画面は、「どの変数をどの部品でどこに置くか」を 1 つの素のオブジェクト（`DashboardSpec`）で受け取って描きます（`DashboardView`）。自動のダッシュボードは、変数の一覧からこれを作ります（`autoDashboard`）。ダッシュボードのファイルは、サーバーが確かめた形と変数の一覧から、これを作ります（`fileDashboard`）。まとまりには、部品のほかに持ち込みのパネル（`{ panel, label, options, variables }`）も置けます。`title` は画面の上に出す題、`modules` はパネルを定義するモジュールの URL です。
 
@@ -281,7 +407,7 @@ const spec: DashboardSpec = {
 
 知らない部品の種類、部品が知らない設定、値の合わない設定も、その場所に出します。いまの実行にない変数は、確かめずに部品が「この実行にない変数です」と出します。
 
-### 部品を足す
+#### 部品を足す
 
 部品は `gui/web/src/app/widgets/` にあり、どれもライブラリの公開の口と Angular の包み（`EcuVariables` など）だけを使います。自分の部品も同じ方法で作れます。
 
@@ -292,7 +418,38 @@ const spec: DashboardSpec = {
 
 値の表示（`value-widget.ts`）がいちばん小さい見本、書く部品はスイッチ（`switch-widget.ts`）が見本です。`bindVariable` は 1 つの部品で何度呼んでもかまいません（2 つの変数を描く部品など）。範囲の要る部品は `bindVariable(this.ref, { needsRange: true })`、値から動かす部品は `needsValue: true` で、条件に合わない間は `block` が理由（`no-range`、`no-value`）になります。
 
-## ダッシュボードのファイル
+### サンプルの部品を写して使う
+
+Angular で自分の画面を作るときは、サンプルの部品（スイッチ、スライダー、グラフなど）と、それが頼る包みを、自分のプロジェクトへ写して使えます。部品と包みは、画面（`run/`、`variables/`）とアプリの殻（`app.ts`、経路、ナビゲーション）に頼りません（`gui/web/eslint.config.js` が import の向きを縛ります）。
+
+| 写すもの | 中身 |
+|---|---|
+| `gui/web/src/app/widgets/` | 部品、部品の土台（`variable-binding.ts`、`variable-frame.ts`）、ダッシュボードのデータと描く部品（`dashboard-spec.ts`、`dashboard-view.ts`）、持ち込みのパネルの置き場所（`panel-host.ts`） |
+| `gui/web/src/app/core/session/` | ライブラリの読める値を signal にする包み（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`、`EcuVariables`）と、クライアントを作るところ（`gui-client.ts`） |
+| `gui/web/src/app/core/auth/` | トークン（`AuthToken`。中身は `takeToken`）と、API にトークンを付ける interceptor |
+| `gui/web/src/app/core/format/measure-pipe.ts` | 数と単位の書き方 |
+
+`*.spec.ts` は写しません（試験の部品 `@vehicle-sil/gui-client/testing` は、パッケージに入っていません）。
+
+頼っているもの:
+
+- `@vehicle-sil/gui-client`（上の「ライブラリを取り込む」のパッケージ）。
+- Angular（`@angular/core`、`@angular/common`、`@angular/common/http`。サンプルと同じ版。signal と新しい制御構文を使い、zone.js なしで動きます）と RxJS（HTTP と接続の包みの中だけ）。
+- Angular Material（`button`、`form-field`、`input`、`select`、`slider`、`slide-toggle`）と、そのテーマ（Material 3 の `mat.theme`。部品は CSS の変数 `--mat-sys-*` を読みます）。
+- 間隔の CSS の変数 `--app-space-1` から `--app-space-4`（`gui/web/src/styles.css` の `:root`。写した先の全体のスタイルに置きます）。
+- `@angular/localize`（部品の文は `$localize` とテンプレートの `i18n` の印つきの日本語です）。翻訳しないなら、`@angular/localize/init` を polyfills に入れるだけで、日本語のまま出ます。訳を入れるときは、サンプルの `src/locale/` と `core/i18n/` の読み込み方を見ます。
+
+写した先で要る設定:
+
+- `provideHttpClient(withInterceptors([authInterceptor]))`（API にトークンを付ける）と、経路が URL を書き換える前にトークンを読む `provideAppInitializer(() => void inject(AuthToken))`（サンプルの `app.config.ts` と同じ）。
+- クライアントは `GUI_CLIENT`（`gui-client.ts`）が、ページの `document.baseURI` と `AuthToken` から 1 つ作ります。ほかの所で作ったクライアントを使うときは、`GUI_CLIENT` を `useValue` で差し替えます。
+- 部品は `<app-dashboard-view [spec]="spec" />` で並べます。`spec` は、変数の一覧から作る `autoDashboard(...)` か、自分で書く `DashboardSpec`（上の「ダッシュボードのデータ」）です。1 つずつ置くときは、部品のコンポーネント（`<app-slider-widget [ref]="..." />` など。`WIDGETS` の表）を使います。
+
+空の Angular のプロジェクトへ実際に写してビルドすることは、試験では確かめていません。
+
+### ダッシュボードのファイル
+
+サンプルの画面の機能です（自分の画面には自動では付きません。ファイルの中身は `client.dashboard(file)` で読めるので、自分の画面で使うこともできます）。
 
 構成ファイルの隣に `<構成ファイルの名前（拡張子なし）>.dashboard.yaml`（`simulation.yaml` なら `simulation.dashboard.yaml`）を置くと、「変数」の画面がそのとおりに並べます。手で書いても、AI に書かせてもかまいません。例は [examples/ecu_main/simulation.dashboard.yaml](../examples/ecu_main/simulation.dashboard.yaml) です。
 
@@ -336,7 +493,9 @@ sections:
 
 画面で並べ替えて保存することはできません（ファイルを書き換えます）。
 
-## 持ち込みのパネル
+### 持ち込みのパネル
+
+サンプルの画面の機能です（ダッシュボードのファイルから使います）。
 
 自分で書いた画面の部品を、ダッシュボードに置けます。部品は custom element を定義する ES モジュールで、構成ファイルの隣の `panels/` に置き、ダッシュボードのファイルの `panels:` に挙げます（挙げたものだけを読み込みます）。例は [examples/ecu_main/panels/rpm-bar.js](../examples/ecu_main/panels/rpm-bar.js)（素の JavaScript。回転数を棒で出す）です。
 
@@ -350,24 +509,6 @@ sections:
 - **信頼**: パネルは、自分の PC に置いたコードとして信頼します。パネルは画面と同じページの中で、トークンを持ったクライアントで動き、GUI でできることを全部できます: 実行を始める（root の中の構成ファイルに書いたコマンドを動かす）、止める、時刻を操作する、変数を書く。変数の画面を開いただけで読み込むので、信頼できないリポジトリを root にしないでください（上の「安全の考え方」）。読み込んだモジュールの名前は、変数の画面の「ダッシュボードのファイル … のとおりに並べています」の行に出ます。GUI サーバーは、`--root` の下の `panels` という名前のディレクトリの中の `.js` / `.mjs` しか配りません（`..`、`panels` の外を指すリンク、リンクの `panels`、`.` で始まる名前、ほかの拡張子は配りません）。パネルを同じ origin から配るので、CSP（`script-src 'self'`）はそのままで、インラインのスクリプトと `eval` は使えません。
 - **配り方**: ブラウザはモジュールの import に `Authorization` のヘッダーを付けられないので、モジュールの URL（`panels/<key>/...`）に、起動ごとの乱数 `<key>` を入れます。`<key>` はトークンとは別の値で、トークンのある `api/dashboard` の応答にだけ入っています。知った人が読めるのは、パネルのモジュールだけです（API は使えません）。
 
-## 自分の画面や道具を作る
-
-私たちの画面は、誰でも使える部品だけで作っています。同じ部品で、自分の画面（別の枠組みでも）や、画面のない道具（試験の駆動、記録）を作れます。
-
-```mermaid
-flowchart LR
-  tool["自分の道具<br/>（素の JavaScript、Python など）"] -->|HTTP と WebSocket| server["GUI サーバー<br/>gui/protocol が契約"]
-  lib["クライアントのライブラリ<br/>gui/client"] -->|HTTP と WebSocket| server
-  ours["私たちの画面<br/>gui/web（Angular の包み）"] --> lib
-  yours["自分の画面"] --> lib
-  server --> launcher["vehicle_sil_launch"]
-```
-
-- **サーバーの口**（[gui/protocol/README.md](../gui/protocol/README.md)）: HTTP と WebSocket の形、実例（`examples/`）、版と互換の決まり（足すのは互換、消す・意味を変えるのは `vehicle_sil_gui` の版を上げる。読む側は知らない欄と事象を無視する）、認証と `Origin` の決まり。どの言語からでも使えます。
-- **最小の例**（[examples/gui_client](../examples/gui_client/)）: 画面を使わずに口を叩く、素の JavaScript の 1 ファイルの例があります（Node 22 以上）。`run.mjs` はライブラリを使わず、標準の `fetch` と `WebSocket` だけで書いたもの、`run-with-library.mjs` は下のライブラリを 1 つにまとめたファイル（`gui/web` で `npm run build:client`）を使うものです。どちらも、照合して実行を始め、事象を読み、終わりを待って、結果で終了コードを返します。`variables.mjs` は、ライブラリで ECU の変数を読み書きします（止めて始め、最初のステップの前に 1 つ書き、進めて止め、止まっている時刻の値を確かめる。期待どおりなら終了コード 0）。`VEHICLE_SIL_GUI_URL='<サーバーが表示した URL>' node examples/gui_client/run.mjs simulation.yaml`（URL は環境変数で渡す。引数に書くと、トークンがほかの利用者のプロセスの一覧に見えるため）。ブラウザの外から使うので、`Origin` をサーバー自身の origin にして送ります。
-- **クライアントのライブラリ**（[gui/client/README.md](../gui/client/README.md)、`@vehicle-sil/gui-client`）: TypeScript。接続（トークン、再接続、握手の失敗の数）、セッションの写し（要約が正、再送、部分ごとの読み取り）、実行と時刻の操作、ECU の変数（一覧、watch、書き込みと結果、履歴）、口の型と読み取り。状態は「読める値」（`get()` と、解除の関数を返す `subscribe(fn)`）で出すので、枠組みに依らず使えます。公開するものは入口（`gui/client/src/index.ts`）に挙げたものだけで、README に一覧があります。TypeScript のアプリは `paths` でソースを取り込み、素の JavaScript からは 1 つにまとめたファイルを読みます。
-- **Angular の包み**（`gui/web/src/app/core/session/`）: ライブラリの読める値を signal にするだけの薄い層です（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`、`EcuVariables`。つなぐところは `gui-client.ts`）。画面（`gui/web/src/app/run/`）は包みだけを読みます。型と純粋な関数は、ライブラリから直接 import します。別の枠組みで画面を作るときは、この層に当たるものを書きます。
-
 ## いまの制限
 
 - 変数の画面で部品を並べ替えて保存することはできません。並べ方はダッシュボードのファイルに書きます。
@@ -378,7 +519,7 @@ flowchart LR
 
 ## 開発
 
-- サーバーは `gui/server`（Python パッケージ `vehicle_sil_gui`、uv の workspace のメンバー）、画面は `gui/web`、クライアントのライブラリは `gui/client`（画面はこれを通してサーバーを使う）、サーバーの口の正本は `gui/protocol`（README と実例）です。
-- 試験: `scripts/verify-gui.py`（サーバーの試験、画面の `scripts/verify-web.py`、最小の例 `examples/gui_client/` を偽のランチャーで動かす試験。ライブラリの試験は `verify-web.py` の `client` の段、1 つにまとめるのは `bundle` の段）。サーバーだけなら `--skip-web`。
+- サーバーは `gui/server`（Python パッケージ `vehicle_sil_gui`、uv の workspace のメンバー）、サンプルの画面は `gui/web`、クライアントのライブラリは `gui/client`（画面はこれを通してサーバーを使う）、サーバーの口の正本は `gui/protocol`（README と実例）です。
+- 試験: `scripts/verify-gui.py`（サーバーの試験、画面の `scripts/verify-web.py`、最小の例 `examples/gui_client/` を偽のランチャーで動かす試験。ライブラリの試験は `verify-web.py` の `client` の段、1 つにまとめるのは `bundle` の段、パッケージは `package` の段、ひな形 `examples/gui_starter` を `--web` で配ってブラウザで動かすのは e2e の `starter.spec.ts`）。サーバーだけなら `--skip-web`。
 - 試験は、ランチャーの代わりに偽のランチャー（`gui/server/tests/fake_launcher.py`。本物と同じ事象を、筋書きどおりに書く。時刻の命令、`time` の事象、結果の `timing` も本物の形で、筋書き `late`（`gui/server/tests/configs/late.yaml`）は実時間への遅れを作る）を使います。偽のランチャーは、既定では Control Server を持たないランチャーの代わりです（変数は「使えない」になる）。変数の試験は、`FAKE_LAUNCHER_FEATURES` に `control-server` を足し、偽の Control Server（`gui/server/tests/fake_control.py`。gRPC）を立てさせて行います（`FAKE_LAUNCHER_VARIABLES=more` で、部品の種類が揃う変数を足します）。偽のランチャーは `--scenario` も最小の形で回します（手順を 1 ステップに 1 つずつ通し、`# fake-launcher: fail` の印のある手順を失敗させる。例は `gui/server/tests/configs/scenarios/`）。`FAKE_LAUNCHER_FEATURES` に `scenario-control` を足すと、シナリオの実行中も偽の Control Server を立て、書き込みを断ります。GUI サーバーの中の変数の元（`vehicle_sil_gui/source.py` の `Source`）は差し替えられ、順序の試験（`test_variable_units.py`）は筋書きどおりに答える元を使います。偽のランチャーでも GUI を動かせます: `uv run vehicle-sil-gui --launcher gui/server/tests/fake_launcher.py gui/server/tests/configs/simulation.yaml`。
 - 本物のランチャーでも確かめるには、`scripts/verify-gui.py --launcher build/<preset>/tools/launch/vehicle_sil_launch`（または環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）。そのランチャーの隣にビルドした ecu_main の例の ECU を使い、偽のランチャーとの事象の形の比べ（`gui/server/tests/test_real_launcher.py`。例のシナリオが通る実行と、失敗する実行も）、変数の読み書き（`test_real_variables.py` と、保存したシナリオが本物の照合を通って回ること、例 `examples/gui_client/variables.mjs`。Control Server を持つランチャーのとき）、画面の e2e（`gui/web/e2e/real/`。変数の画面で Engine のスロットルを書いて回転数が変わること、例のダッシュボードのファイルのとおりに並び、持ち込みのパネルが回転数を出すことも）を回します。ランチャーを渡さなければ、これらは「skipped」と出して飛ばします。

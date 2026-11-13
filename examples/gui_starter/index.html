@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My vehicle-sil screen</title>
+    <link rel="stylesheet" href="style.css" />
+    <!-- インラインのスクリプトは CSP で動かないので、スクリプトはファイルに置く -->
+    <script type="module" src="main.js"></script>
+  </head>
+  <body>
+    <h1>My vehicle-sil screen</h1>
+    <p id="connection" data-testid="connection">connecting…</p>
+
+    <section>
+      <h2>Run</h2>
+      <label>Configuration <select id="config" data-testid="config"></select></label>
+      <button type="button" id="check" data-testid="check">Check</button>
+      <button type="button" id="start" data-testid="start">Start</button>
+      <button type="button" id="stop" data-testid="stop">Stop</button>
+      <p>Check: <output id="check-result" data-testid="check-result">-</output></p>
+      <p>Phase: <output id="phase" data-testid="phase">-</output></p>
+      <p>Result: <output id="result" data-testid="result">-</output></p>
+      <p id="error" data-testid="error" role="alert"></p>
+    </section>
+
+    <section>
+      <h2>Variable</h2>
+      <p>Variables: <output id="variables" data-testid="variables">-</output></p>
+      <label>Variable <select id="variable" data-testid="variable"></select></label>
+      <p>Value: <output id="value" data-testid="value">-</output></p>
+      <label>New value <input id="new-value" data-testid="new-value" size="8" /></label>
+      <button type="button" id="write" data-testid="write">Write</button>
+      <p>Write: <output id="write-result" data-testid="write-result">-</output></p>
+    </section>
+  </body>
+</html>

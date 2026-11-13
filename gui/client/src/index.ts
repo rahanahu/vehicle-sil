@@ -23,6 +23,10 @@ export {
   FEATURE_TIME_COMMANDS,
 } from './time';
 
+// トークン（サーバーが表示した URL の #token=）
+export { TOKEN_STORAGE_KEY, takeToken } from './token';
+export type { TokenPlace } from './token';
+
 // ECU の変数
 export {
   HISTORY_MAX,
