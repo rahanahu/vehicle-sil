@@ -94,12 +94,16 @@ test('runs a scenario that passes, and one that fails, with its steps', async ({
 
 test('while a scenario runs, the variables can be read but not written', async ({ page }) => {
   await openVariables(page, target);
+  // 速さ 0.001: 偽のランチャーの 1 ステップ（100 ms）が 100 秒かかり、シナリオは確かめ終わるまで終わらない
+  // （速さを指定しないと、3 つの手順は 1 秒足らずで終わり、遅い機械では、確かめる前に実行が終わる）
   const response = await page.request.post(new URL('api/run', target.base).href, {
     headers: { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin },
-    data: { file: 'forever.yaml', disable: [], scenario: 'scenarios/throttle.yaml' },
+    data: { file: 'forever.yaml', disable: [], scenario: 'scenarios/throttle.yaml', speed: 0.001 },
   });
   expect(response.status()).toBe(200);
-  await expect(page.getByTestId('variables-notice')).toContainText('シナリオの実行中です');
+  await expect(page.getByTestId('variables-notice')).toContainText('シナリオの実行中です', {
+    timeout: RUN_TIMEOUT,
+  });
   const demand = widget(page, 'Engine', 'engine.demand');
   await expect(demand.getByRole('slider', { name: 'engine.demand' })).toBeDisabled();
   await expect(demand).toContainText('シナリオの実行中は書けません');
