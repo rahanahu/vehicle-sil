@@ -1158,8 +1158,25 @@ TEST_CASE(a_real_time_peer_is_a_peer_too_and_a_restarted_one_replaces_the_old)
             return false;
         },
         30s));
-    real = std::make_unique<TestEcu>("Real", registry.uri, EcuOptions{.virtual_time = false});
-    real->peer->start(30s);
+    // The registry may still hold the name of the process that has just gone (see started_anew()).
+    for (const auto give_up = Wall::now() + 30s;;)
+    {
+        try
+        {
+            real = std::make_unique<TestEcu>("Real", registry.uri, EcuOptions{.virtual_time = false});
+            real->peer->start(30s);
+            break;
+        }
+        catch (const std::exception& e)
+        {
+            real.reset();
+            if (std::string(e.what()).find("already exists") == std::string::npos || Wall::now() > give_up)
+            {
+                throw;
+            }
+        }
+        std::this_thread::sleep_for(20ms);
+    }
     CHECK(eventually(
         [&] {
             for (const auto& peer : hub.peers())

@@ -133,6 +133,8 @@ cd vehicle-sil
 git submodule update --init --recursive
 ```
 
+SIL Kit のパッチ（`patches/sil-kit/`）は、ここでは当たりません。`cmake --preset …` の構成のときに、ビルドのディレクトリの中の写しに当てます（`external/sil-kit` は上流のままです）。構成の出力の `vehicle-sil: sil-kit (…) + … patch(es) … -> …` の行に、使うコミット、当てたパッチ、写しの場所が出ます。
+
 #### Linux
 
 ```sh
