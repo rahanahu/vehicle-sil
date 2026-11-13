@@ -1,4 +1,4 @@
-"""Runs through the API and the WebSocket with the fake launcher's scenarios, reconnection, and stopping the
+"""Runs through the API and the WebSocket with the stand-in launcher's recordings, reconnection, and stopping the
 server with a run going (no process may be left)."""
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import CONFIGS, FAKE, Client, Gui, alive, gui_server, is_ended, is_synced, run_async, wait_until, without_variables
+from conftest import CONFIGS, REPLAY, Client, Gui, alive, gui_server, is_ended, is_synced, run_async, wait_until, without_variables
 
 POSIX = sys.platform != "win32"
 
@@ -37,8 +37,8 @@ async def run_to_end(c: Client, body: dict) -> list[dict]:
     return got
 
 
-SPEED = {"FAKE_LAUNCHER_FEATURES": "events,stdin-commands,check-variables,speed"}
-OLD = {"FAKE_LAUNCHER_FEATURES": "events,stdin-commands,check-variables"}
+SPEED = {"REPLAY_FEATURES": "events,stdin-commands,check-variables,speed"}
+OLD = {"REPLAY_FEATURES": "events,stdin-commands,check-variables"}
 
 
 def is_time(**fields) -> Callable[[dict], bool]:
@@ -75,7 +75,7 @@ def test_a_run_that_passes(tmp_path: Path) -> None:
 
 
 def test_a_launcher_that_writes_nothing_for_a_while_is_reported(tmp_path: Path) -> None:
-    env = {"FAKE_LAUNCHER_SCENARIO": "silent", "FAKE_LAUNCHER_SILENT_S": "4"}
+    env = {"REPLAY_FAULT": "silent", "REPLAY_SILENT_S": "4"}
     with gui_server(tmp_path, env=env, args=("--silent-after", "1.5")) as gui:
         async def main(c: Client) -> None:
             got = await run_to_end(c, {"file": "simulation.yaml"})
@@ -90,7 +90,7 @@ def test_a_launcher_that_writes_nothing_for_a_while_is_reported(tmp_path: Path) 
 
 
 def test_lines_the_launcher_could_not_write_are_counted(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_SCENARIO": "log-dropped"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FAULT": "log-dropped"}) as gui:
         async def main(c: Client) -> None:
             got = await run_to_end(c, {"file": "simulation.yaml", "disable": ["Logger"]})
             assert len(events(got, "log_dropped")) == 1
@@ -155,7 +155,7 @@ def test_check_then_run_with_a_participant_left_out(gui: Gui) -> None:
 
 
 def test_one_run_at_a_time_and_stop(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "50"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -178,7 +178,7 @@ def test_one_run_at_a_time_and_stop(tmp_path: Path) -> None:
 
 
 def test_a_second_stop_does_not_wait(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "50"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -192,7 +192,8 @@ def test_a_second_stop_does_not_wait(tmp_path: Path) -> None:
             status, body = await c.post("api/stop", {"force": True})
             assert body["session"]["stop"] == "forced"
             got = await sock.until(is_ended)
-            assert [p["state"] for p in got[-1]["session"]["participants"]] == ["killed"] * 3
+            # Engine and Dashboard end when asked; Logger (it ignores SIGTERM) is killed by the second stop
+            assert [p["state"] for p in got[-1]["session"]["participants"]] == ["ended", "ended", "killed"]
         run_async(main, gui)
 
 
@@ -240,7 +241,7 @@ def test_a_launcher_that_runs_on_after_its_result_can_be_stopped(gui: Gui) -> No
 
 
 def test_reconnecting_replays_the_kept_log(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_FLOOD": "2500"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_FLOOD": "2500"}) as gui:
         async def main(c: Client) -> None:
             live = await run_to_end(c, {"file": "flood.yaml"})
             again = await c.ws()
@@ -282,7 +283,7 @@ def test_checks_and_configs(tmp_path: Path) -> None:
     shutil.copy(CONFIGS / "simulation.yaml", root / "nested" / "deeper" / "n.yml")
     (root / ".git").mkdir()
     (root / ".git" / "x.yaml").write_text("vehicle_sil_simulation: 1\n")
-    with gui_server(tmp_path, root=root, env={"FAKE_LAUNCHER_CHECK_DELAY_MS": "700"},
+    with gui_server(tmp_path, root=root, env={"REPLAY_CHECK_DELAY_MS": "700"},
                     args=(str(root / "nested" / "deeper" / "n.yml"),)) as gui:
         async def main(c: Client) -> None:
             status, app = await c.get("api/app")
@@ -363,8 +364,8 @@ def test_a_killed_server_leaves_no_run(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("env,args,expected", [
-    ({"FAKE_LAUNCHER_FEATURES": "events"}, (), "has no 'stdin-commands'"),
-    ({"FAKE_LAUNCHER_FEATURES": ""}, (), "has no 'events'"),
+    ({"REPLAY_FEATURES": "events"}, (), "has no 'stdin-commands'"),
+    ({"REPLAY_FEATURES": ""}, (), "has no 'events'"),
     ({}, ("--port", "70000"), "--port"),
     ({}, ("--port", "80"), "--port 80"),
     ({}, ("/nonexistent/x.yaml",), "no such file"),
@@ -405,7 +406,7 @@ def test_a_launcher_in_the_current_directory_is_not_taken_from_path(tmp_path: Pa
     here = tmp_path / "received"
     here.mkdir()
     planted = here / "vehicle_sil_launch"
-    planted.write_text(f"#!{sys.executable}\n" + FAKE.read_text())
+    planted.write_text(f"#!{sys.executable}\n" + REPLAY.read_text())
     planted.chmod(0o755)
     env = {"PATH": os.pathsep.join([".", os.environ.get("PATH", "")]), "VEHICLE_SIL_LAUNCH": ""}
     with gui_server(tmp_path, launcher=None, env=env, cwd=here, expect_start=False) as gui:
@@ -417,7 +418,7 @@ def test_a_launcher_in_the_current_directory_is_not_taken_from_path(tmp_path: Pa
 def test_pause_step_resume_and_speed(tmp_path: Path) -> None:
     """Started paused: a step (rounded up to the controller's time step), a new speed, resume, pause, stop. Each
     command goes to the launcher at once; what it did comes as its events, and the summary keeps the last."""
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "200"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "200"}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
@@ -522,7 +523,7 @@ def test_lateness_reaches_the_screen_and_the_summary(tmp_path: Path) -> None:
         assert [e["code"] for e in events(got, "finding")] == ["behind-real-time", "interrupted"]
         timing = end["result"]["timing"]
         assert (timing["late_steps"], timing["max_late_ms"], timing["slipped_ms"], timing["speed"]) == (1, 200, 200, 1)
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "50"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50"}) as gui:
         run_async(main, gui)
 
 
@@ -533,7 +534,8 @@ def test_lateness_within_the_tolerance_is_not_a_late_step(tmp_path: Path) -> Non
         sock = await c.ws()
         await sock.until(is_synced)
         await c.post("api/run", {"file": "jitter.yaml"})
-        got = await sock.until(is_time(sim_ms=1000))
+        # a second of virtual time (the real launcher's time events come about every 100 ms, not on round times)
+        got = await sock.until(lambda m: is_time()(m) and m["event"]["sim_ms"] >= 1000)
         times = events(got, "time")
         assert {t["late_ms"] for t in times} == {0, 3} and {t["late_steps"] for t in times} == {0}
         await c.post("api/stop")
@@ -541,11 +543,11 @@ def test_lateness_within_the_tolerance_is_not_a_late_step(tmp_path: Path) -> Non
         end = got[-1]["session"]
         assert [f["code"] for f in end["result"]["findings"]] == ["interrupted"]
         assert end["result"]["timing"]["late_steps"] == 0
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "20"}) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "20"}) as gui:
         run_async(main, gui)
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="the fake makes its input pipe small with F_SETPIPE_SZ")
+@pytest.mark.skipif(sys.platform != "linux", reason="the stand-in makes its input pipe small with F_SETPIPE_SZ")
 def test_a_launcher_that_does_not_read_its_input_holds_no_request(tmp_path: Path) -> None:
     """Commands to a launcher that reads nothing fill its input; a request then returns after about
     STDIN_DRAIN_S (2 s) instead of waiting, and the launcher's events go on reaching the screens meanwhile."""
@@ -567,7 +569,7 @@ def test_a_launcher_that_does_not_read_its_input_holds_no_request(tmp_path: Path
         await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "log")
         await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "log")
         assert len(events(sock.received, "log")) >= logs + 2
-    with gui_server(tmp_path, env={"FAKE_LAUNCHER_TICK_MS": "100"}, args=("--stop-timeout", "1")) as gui:
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "100"}, args=("--stop-timeout", "1")) as gui:
         run_async(main, gui)
 
 
@@ -578,8 +580,8 @@ def test_time_commands_follow_the_launcher_of_the_run(tmp_path: Path) -> None:
 
     def write(features: str) -> None:  # another size each time: the server asks the new one for its version
         launcher.write_text(f"#!{sys.executable}\n# {features}\nimport os, runpy\n"
-                            f"os.environ['FAKE_LAUNCHER_FEATURES'] = {features!r}\n"
-                            f"runpy.run_path({str(FAKE)!r}, run_name='__main__')\n")
+                            f"os.environ['REPLAY_FEATURES'] = {features!r}\n"
+                            f"runpy.run_path({str(REPLAY)!r}, run_name='__main__')\n")
         launcher.chmod(0o755)
 
     write("events,stdin-commands,check-variables")

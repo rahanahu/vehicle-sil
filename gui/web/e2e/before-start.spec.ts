@@ -1,8 +1,14 @@
 // 止めた状態で始めた実行が、最初のステップの前で待っている形（ランチャーが Control Server を持つとき: phase は
-// waiting のまま、time の事象は来ない）を、画面から再開できること。偽のランチャーに Control Server を持つ形を
+// waiting のまま、time の事象は来ない）を、画面から再開できること。流し直すランチャーに Control Server を持つ形を
 // させるので、この試験だけの GUI サーバーを起動する。
 import { expect, test } from '@playwright/test';
-import { CONFIGS, FAKE_LAUNCHER, GUI_PORT, GuiServer, launchGuiServer } from './support/gui-server';
+import {
+  CONFIGS,
+  REPLAY_LAUNCHER,
+  GUI_PORT,
+  GuiServer,
+  launchGuiServer,
+} from './support/gui-server';
 import { RUN_TIMEOUT, WORDS, choose, result, start } from './support/run-page';
 
 const CONTROL_FEATURES =
@@ -14,9 +20,9 @@ test('started paused with a control server: it waits before the first step, and 
   // 開発サーバーの形（e2e:dev）では回さない（同じ画面。サーバーを別に起動するので、ビルドした画面で 1 回）
   test.skip(testInfo.project.name !== 'static', 'only with the built screen');
   const server: GuiServer = await launchGuiServer({
-    launcher: FAKE_LAUNCHER,
+    launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
-    env: { FAKE_LAUNCHER_TICK_MS: '50', FAKE_LAUNCHER_FEATURES: CONTROL_FEATURES },
+    env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: CONTROL_FEATURES },
     port: GUI_PORT + 200,
   });
   try {

@@ -1,13 +1,13 @@
 // 自分の画面のひな形（examples/gui_starter）を、GUI サーバーの --web で配って通す。サンプルの画面を使わず、
 // クライアントのライブラリを 1 つにまとめたファイル（npm run build:client）だけで、つなぐ、照合、開始と停止、変数を
-// 見て書く、ができること。偽のランチャーと偽の Control Server が相手。
+// 見て書く、ができること。流し直すランチャーと偽の Control Server が相手。
 import { expect, test } from '@playwright/test';
 import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CONFIGS,
-  FAKE_LAUNCHER,
+  REPLAY_LAUNCHER,
   GUI_PORT,
   GuiServer,
   REPOSITORY,
@@ -32,9 +32,9 @@ test.beforeAll(async () => {
   cpSync(join(REPOSITORY, 'examples', 'gui_starter'), screen, { recursive: true });
   copyFileSync(BUNDLE, join(screen, 'vehicle-sil-gui-client.mjs'));
   server = await launchGuiServer({
-    launcher: FAKE_LAUNCHER,
+    launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
-    env: { FAKE_LAUNCHER_TICK_MS: '50', FAKE_LAUNCHER_FEATURES: CONTROL_FEATURES },
+    env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: CONTROL_FEATURES },
     port: GUI_PORT + 500,
     web: screen,
   });

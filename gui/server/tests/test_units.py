@@ -550,10 +550,10 @@ def test_a_message_that_cannot_be_sent_does_not_stop_the_others() -> None:
 
 
 def test_one_line_that_cannot_be_passed_on_does_not_stop_the_reading() -> None:
-    from conftest import CONFIGS, FAKE
+    from conftest import CONFIGS, REPLAY
     from vehicle_sil_gui.launcher import Launcher
     from vehicle_sil_gui.server import GuiServer, Options
-    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(FAKE), port=1, token="t"))
+    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(REPLAY), port=1, token="t"))
     session = new_session()
     sent: list[dict] = []
     server.hub.broadcast = lambda messages, log_key=None, real=server.hub.broadcast: (
@@ -814,10 +814,10 @@ def test_the_last_resort_kills_a_version_probe_that_hangs(tmp_path: Path) -> Non
 
 
 def test_concurrent_probes_wait_for_the_answer(tmp_path: Path) -> None:
-    from conftest import FAKE
+    from conftest import REPLAY
     from vehicle_sil_gui.launcher import Launcher
     path = tmp_path / "launcher.py"
-    path.write_text(FAKE.read_text())
+    path.write_text(REPLAY.read_text())
     launcher = Launcher(path)
 
     async def main() -> list[bool]:
@@ -837,7 +837,7 @@ def test_a_compressed_neighbour_is_not_served(tmp_path: Path) -> None:
     # aiohttp's FileResponse would answer with main.js.gz to a client that accepts gzip; the server reads the
     # file it checked instead.
     from aiohttp.test_utils import make_mocked_request
-    from conftest import CONFIGS, FAKE
+    from conftest import CONFIGS, REPLAY
     from vehicle_sil_gui.launcher import Launcher
     from vehicle_sil_gui.server import GuiServer, Options
     web = tmp_path / "web"
@@ -846,7 +846,7 @@ def test_a_compressed_neighbour_is_not_served(tmp_path: Path) -> None:
     (web / "main.js").write_text("the file")
     (web / "main.js.gz").write_bytes(b"not this one")
     (web / "main.js.br").write_bytes(b"nor this one")
-    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(FAKE), port=1, token="t", web_dir=web))
+    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(REPLAY), port=1, token="t", web_dir=web))
 
     async def main():
         request = make_mocked_request("GET", "/main.js", headers={"Accept-Encoding": "gzip, br"})
@@ -859,10 +859,10 @@ def test_a_compressed_neighbour_is_not_served(tmp_path: Path) -> None:
 
 def test_an_unexpected_error_is_a_500_with_the_usual_headers() -> None:
     from aiohttp.test_utils import make_mocked_request
-    from conftest import CONFIGS, FAKE
+    from conftest import CONFIGS, REPLAY
     from vehicle_sil_gui.launcher import Launcher
     from vehicle_sil_gui.server import GuiServer, Options
-    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(FAKE), port=1, token="t"))
+    server = GuiServer(Options(root=CONFIGS, launcher=Launcher(REPLAY), port=1, token="t"))
 
     async def failing(request):
         raise RuntimeError("a bug")

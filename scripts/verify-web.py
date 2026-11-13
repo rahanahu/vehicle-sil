@@ -11,7 +11,7 @@ client library bundled into one ESM file, build/gui-client/vehicle-sil-gui-clien
 Angular build tools bring), npm run pack:client (the client library as an npm package,
 build/gui-client/vehicle-sil-gui-client-<version>.tgz, with its types; it is installed and used to check it), npm
 run e2e (the built
-app served by the GUI server of gui/server, which runs the fake launcher), and, with --e2e-dev, npm run e2e:dev (the same tests through the
+app served by the GUI server of gui/server, which runs the stand-in launcher that replays recordings), and, with --e2e-dev, npm run e2e:dev (the same tests through the
 dev server with its proxy to the GUI server). The full output of each step goes to build/logs/<tag>-<step>.log (tag: web); the
 summary shows one line per step and, for a failed step, its first error lines and its log. Stops at the first
 failed step. A stopped run (Ctrl-C, SIGTERM) stops the whole process group of the running step, so no dev

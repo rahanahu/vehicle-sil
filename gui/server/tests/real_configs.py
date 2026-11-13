@@ -6,8 +6,7 @@
 writes the files below into <directory> (made if missing). <examples> is the build directory of the ecu_main
 example (build/<preset>/examples/ecu_main, with engine/ and dashboard/); by default the one next to the launcher
 named by VEHICLE_SIL_GUI_LAUNCHER (build/<preset>/tools/launch/vehicle_sil_launch). The commands are absolute
-paths, so the files work in any directory, and nothing is written into the build directory. Each file also has a
-`# fake-launcher:` line, so that the fake launcher plays the same thing (test_real_launcher.py compares the two).
+paths, so the files work in any directory, and nothing is written into the build directory.
 Standard library only; also used by the e2e of gui/web (e2e-real/).
 
   simulation.yaml          Engine and Dashboard, stop_at_ms 1000: passes
@@ -65,25 +64,25 @@ def write(directory: Path, examples: Path) -> list[Path]:
     engine, dashboard = (p.as_posix() for p in executables(examples))
     head = "vehicle_sil_simulation: 1\n"
     files = {
-        "simulation.yaml": "# fake-launcher: pass\n" + head + "stop_at_ms: 1000\n" + NETWORKS
+        "simulation.yaml": head + "stop_at_ms: 1000\n" + NETWORKS
                            + _participants(engine, dashboard),
-        "forever.yaml": "# fake-launcher: forever\n" + head + NETWORKS + _participants(engine, dashboard),
-        "missing-executable.yaml": "# fake-launcher: check-error\n" + head + "stop_at_ms: 1000\n" + NETWORKS
+        "forever.yaml": head + NETWORKS + _participants(engine, dashboard),
+        "missing-executable.yaml": head + "stop_at_ms: 1000\n" + NETWORKS
                                    + _participants(engine, dashboard + "-missing"),
-        "wrong-step.yaml": "# fake-launcher: check-error\n" + head + "stop_at_ms: 1000\n" + NETWORKS
+        "wrong-step.yaml": head + "stop_at_ms: 1000\n" + NETWORKS
                            + _participants(engine, dashboard, engine_step=20),
-        "not-joined.yaml": "# fake-launcher: participant-crash\n" + head + "stop_at_ms: 1000\nstart_timeout_ms: 2500\n"
+        "not-joined.yaml": head + "stop_at_ms: 1000\nstart_timeout_ms: 2500\n"
                            + NETWORKS + _participants(engine, dashboard)
                            + "  - name: Logger\n    command: [sleep, '100']\n    describe: false\n",
         "broken.yaml": "vehicle_sil_simulation: 1\nparticipants: [\n",
-        "example.yaml": "# fake-launcher: forever\n" + head + NETWORKS + _participants(engine, dashboard),
+        "example.yaml": head + NETWORKS + _participants(engine, dashboard),
         "example.dashboard.yaml": (EXAMPLE / "simulation.dashboard.yaml").read_text(encoding="utf-8"),
         "panels/rpm-bar.js": (EXAMPLE / "panels" / "rpm-bar.js").read_text(encoding="utf-8"),
         "scenarios/throttle_step.yaml": (EXAMPLE / "scenarios" / "throttle_step.yaml").read_text(encoding="utf-8"),
-        # The second step fails with the real ECUs (the speed stays far below), and in the fake by its mark
+        # The second step fails with the real ECUs (the speed stays far below)
         "scenarios/fails.yaml": "vehicle_sil_scenario: 1\nname: speed too high\nsteps:\n  - at_ms: 0\n"
                                 "    set: { Engine.engine.throttle: 50 }\n  - after_ms: 50\n"
-                                "    expect: { Engine.engine.speed: { ge: 5000 } }  # fake-launcher: fail\n"
+                                "    expect: { Engine.engine.speed: { ge: 5000 } }\n"
                                 "  - expect: { Engine.engine.speed: 0 }\n",
     }
     directory.mkdir(parents=True, exist_ok=True)
