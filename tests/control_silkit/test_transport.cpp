@@ -1034,10 +1034,19 @@ TEST_CASE(the_end_of_an_agent_settles_the_operations_that_wait_for_it)
     check_status(*all, "A", TargetStatus::Cancelled);
     check_status(*all, "B", TargetStatus::Cancelled);
     check_status(*all, "Failing", TargetStatus::Unknown);
-    for (const auto& link : side.transport->links())
-    {
-        CHECK(link.state == LinkState::Ended);
-    }
+    // The operation is settled by the agents' last words; the transport marks a link ended a moment later.
+    CHECK(eventually(
+        [&] {
+            for (const auto& link : side.transport->links())
+            {
+                if (link.state != LinkState::Ended)
+                {
+                    return false;
+                }
+            }
+            return true;
+        },
+        20s));
     for (const auto& peer : hub.peers())
     {
         CHECK(!peer.connected);
