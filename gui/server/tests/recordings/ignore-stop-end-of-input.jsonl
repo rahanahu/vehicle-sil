@@ -14,6 +14,7 @@
 {"out": {"event": "phase", "phase": "waiting"}}
 {"out": {"event": "participant", "name": "Engine", "state": "joined"}}
 {"out": {"event": "participant", "name": "Dashboard", "state": "joined"}}
+{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=0 ms engine speed 0 rpm (0 messages)"}}
 {"out": {"event": "control_link", "name": "Engine", "state": "connected", "variables": 18}}
 {"out": {"event": "control_link", "name": "Dashboard", "state": "connected", "variables": 18}}
@@ -26,7 +27,6 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=1500 ms engine speed 1200 rpm (15 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=2000 ms engine speed 1200 rpm (20 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=2500 ms engine speed 1200 rpm (25 messages)"}}
-{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=3000 ms engine speed 1200 rpm (30 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=3500 ms engine speed 1200 rpm (35 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=4000 ms engine speed 1200 rpm (40 messages)"}}
@@ -59,17 +59,17 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=17500 ms engine speed 1200 rpm (175 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=18000 ms engine speed 1200 rpm (180 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=18500 ms engine speed 1200 rpm (185 messages)"}}
-{"out": {"event": "time", "sim_ms": 18520, "speed": "max", "paused": false, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=19000 ms engine speed 1200 rpm (190 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=19500 ms engine speed 1200 rpm (195 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=20000 ms engine speed 1200 rpm (200 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=20500 ms engine speed 1200 rpm (205 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=21000 ms engine speed 1200 rpm (210 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=21500 ms engine speed 1200 rpm (215 messages)"}}
-{"out": {"event": "log", "source": "Dashboard", "line": "t=22000 ms engine speed 1200 rpm (220 messages)"}}
 {"gap_ms": 100}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=22000 ms engine speed 1200 rpm (220 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=22500 ms engine speed 1200 rpm (225 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=23000 ms engine speed 1200 rpm (230 messages)"}}
+{"out": {"event": "time", "sim_ms": 23230, "speed": "max", "paused": false, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=23500 ms engine speed 1200 rpm (235 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=24000 ms engine speed 1200 rpm (240 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=24500 ms engine speed 1200 rpm (245 messages)"}}
@@ -114,16 +114,16 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=44000 ms engine speed 1200 rpm (440 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=44500 ms engine speed 1200 rpm (445 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=45000 ms engine speed 1200 rpm (450 messages)"}}
-{"out": {"event": "time", "sim_ms": 45110, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=45500 ms engine speed 1200 rpm (455 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=46000 ms engine speed 1200 rpm (460 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=46500 ms engine speed 1200 rpm (465 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=47000 ms engine speed 1200 rpm (470 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=47500 ms engine speed 1200 rpm (475 messages)"}}
-{"out": {"event": "log", "source": "Dashboard", "line": "t=48000 ms engine speed 1200 rpm (480 messages)"}}
 {"gap_ms": 100}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=48000 ms engine speed 1200 rpm (480 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=48500 ms engine speed 1200 rpm (485 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=49000 ms engine speed 1200 rpm (490 messages)"}}
+{"out": {"event": "time", "sim_ms": 49410, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=49500 ms engine speed 1200 rpm (495 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=50000 ms engine speed 1200 rpm (500 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=50500 ms engine speed 1200 rpm (505 messages)"}}
@@ -168,7 +168,6 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=70000 ms engine speed 1200 rpm (700 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=70500 ms engine speed 1200 rpm (705 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=71000 ms engine speed 1200 rpm (710 messages)"}}
-{"out": {"event": "time", "sim_ms": 71110, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=71500 ms engine speed 1200 rpm (715 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=72000 ms engine speed 1200 rpm (720 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=72500 ms engine speed 1200 rpm (725 messages)"}}
@@ -180,6 +179,7 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=75000 ms engine speed 1200 rpm (750 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=75500 ms engine speed 1200 rpm (755 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=76000 ms engine speed 1200 rpm (760 messages)"}}
+{"out": {"event": "time", "sim_ms": 76080, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=76500 ms engine speed 1200 rpm (765 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=77000 ms engine speed 1200 rpm (770 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=77500 ms engine speed 1200 rpm (775 messages)"}}
@@ -223,21 +223,32 @@
 {"out": {"event": "log", "source": "Dashboard", "line": "t=96500 ms engine speed 1200 rpm (965 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=97000 ms engine speed 1200 rpm (970 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=97500 ms engine speed 1200 rpm (975 messages)"}}
-{"out": {"event": "time", "sim_ms": 97710, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
-{"send": null}
-{"out": {"event": "command", "command": "stop", "source": "eof", "accepted": true, "message": null}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=98000 ms engine speed 1200 rpm (980 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=98500 ms engine speed 1200 rpm (985 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=99000 ms engine speed 1200 rpm (990 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=99500 ms engine speed 1200 rpm (995 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=100000 ms engine speed 1200 rpm (1000 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=100500 ms engine speed 1200 rpm (1005 messages)"}}
+{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=101000 ms engine speed 1200 rpm (1010 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=101500 ms engine speed 1200 rpm (1015 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=102000 ms engine speed 1200 rpm (1020 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=102500 ms engine speed 1200 rpm (1025 messages)"}}
+{"out": {"event": "time", "sim_ms": 102720, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
+{"send": null}
+{"out": {"event": "command", "command": "stop", "source": "eof", "accepted": true, "message": null}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=103000 ms engine speed 1200 rpm (1030 messages)"}}
-{"out": {"event": "time", "sim_ms": 103030, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=103500 ms engine speed 1200 rpm (1035 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=104000 ms engine speed 1200 rpm (1040 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=104500 ms engine speed 1200 rpm (1045 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=105000 ms engine speed 1200 rpm (1050 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=105500 ms engine speed 1200 rpm (1055 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=106000 ms engine speed 1200 rpm (1060 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=106500 ms engine speed 1200 rpm (1065 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=107000 ms engine speed 1200 rpm (1070 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=107500 ms engine speed 1200 rpm (1075 messages)"}}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=108000 ms engine speed 1200 rpm (1080 messages)"}}
+{"out": {"event": "time", "sim_ms": 108070, "speed": "max", "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "interrupted (end of input): the simulation was stopped"}}
 {"out": {"event": "finding", "severity": "note", "code": "interrupted", "file": "<file>", "line": null, "participant": null, "network": null, "message": "interrupted (end of input): the launcher stopped the simulation and the participants", "detail": null}}
 {"out": {"event": "phase", "phase": "stopping"}}
@@ -247,6 +258,5 @@
 {"out": {"event": "participant", "name": "Dashboard", "state": "ended", "exit_code": 0, "signal": null}}
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "asking Logger to stop (SIGTERM)"}}
 {"out": {"event": "participant", "name": "Logger", "state": "stop_requested"}}
-{"gap_ms": 1000}
 {"gap_ms": 1000}
 {"hang": true}

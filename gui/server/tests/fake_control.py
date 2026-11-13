@@ -339,7 +339,8 @@ class FakeControl:
         grpc = self.grpc
         if not request.writes:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "a write needs at least one value")
-        if self.refuse_writes:
+        if self.refuse_writes:  # as the real one: the reason as the trailing metadata vehicle-sil-reason
+            context.set_trailing_metadata((("vehicle-sil-reason", "scenario-running"),))
             context.abort(grpc.StatusCode.FAILED_PRECONDITION, self.refuse_writes)
         with self.changed:
             self.seq += 1

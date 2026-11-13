@@ -63,7 +63,7 @@
       "session": 1,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,
@@ -889,7 +889,7 @@
         "event": "time",
         "seq": 21,
         "t_ms": 210,
-        "sim_ms": 205,
+        "sim_ms": 200,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1081,7 +1081,7 @@
         "event": "time",
         "seq": 33,
         "t_ms": 330,
-        "sim_ms": 1210,
+        "sim_ms": 1215,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1111,7 +1111,7 @@
         "event": "time",
         "seq": 35,
         "t_ms": 350,
-        "sim_ms": 1230,
+        "sim_ms": 1235,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1145,7 +1145,7 @@
         "line": null,
         "participant": null,
         "network": null,
-        "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+        "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
       }
     },
     {
@@ -1257,10 +1257,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1230,
+            "sim_ms": 1235,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 246,
+            "paced_steps": 247,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -1311,7 +1311,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -1572,7 +1572,7 @@
           "event": "time",
           "seq": 35,
           "t_ms": 350,
-          "sim_ms": 1230,
+          "sim_ms": 1235,
           "speed": 1,
           "paused": false,
           "actual_speed": 1.5,
@@ -1855,7 +1855,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+            "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
           },
           {
             "severity": "note",
@@ -1893,10 +1893,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1230,
+            "sim_ms": 1235,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 246,
+            "paced_steps": 247,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -1947,7 +1947,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 246 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",

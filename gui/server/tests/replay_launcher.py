@@ -24,16 +24,16 @@ How it plays:
 - SIGTERM ends it where it is, with the processes it started (the real launcher stops the run and writes its
   result; no test needs that).
 - Of several recordings of one command line, it plays the one that record_launcher.py marks as the default (else
-  the one with the fewest commands; of those, the one whose first comes latest); when a command comes that another one has next, it goes on with that one from as far as it
-  had come, and after a command with the one that has the fewest more (it stays with the one it plays when that
-  is as good). The virtual
-  time goes on from where it was: the other recording's times are moved on by the difference.
+  the one with the fewest commands; of those, the one whose first comes latest); when a command comes that another
+  one has next, it goes on with that one from as far as it had come, and after a command with the one that has
+  the fewest more (it stays with the one it plays when that is as good). The virtual time goes on from where it
+  was: the other recording's times are moved on by the difference.
 - Where the recording wrote a command, it waits for one from standard input (or for its end), and goes on when it
   is the same command. Meanwhile, when the simulation was running there, it runs on as the launcher would: a time
   event every 100 ms (scaled), the virtual time moved on by the recording's last move (nothing else is made up;
-  REPLAY_RUN_ON=0: it stands still instead, so that what is read meanwhile does not depend on timing). Another command ends the replay with code 3 and a line on standard error that says which
-  was expected. A command that comes early hurries the lines before it. Commands after the last recorded one are
-  not answered.
+  REPLAY_RUN_ON=0: it stands still instead, so that what is read meanwhile does not depend on timing). Another
+  command ends the replay with code 3 and a line on standard error that says which was expected. A command that
+  comes early hurries the lines before it. Commands after the last recorded one are not answered.
 - The recording's marks are put back: <root> (the directory it runs in), <file> and <scenario> (the arguments),
   "<pid>" (its own pid in hello; for a started participant the pid of a sleeping child process that it starts in
   its place and ends when the participant ends, so that a test can see whether stopping left processes behind),
@@ -41,10 +41,13 @@ How it plays:
 - The variables of the participants (a check's participants[].variables, the count of a control_link) are those
   of the stand-in control server (fake_control.variables), because the values come from it: with --control it
   starts that stand-in (fake_control.py, gRPC) for the participants whose control link is connected, with the token
-  of the --control-credentials file, and moves its time as the time events say.
+  of the --control-credentials file, and moves its time as the time events say. With --scenario it refuses every
+  write, as the real control server does while a scenario runs (the feature scenario-control).
 
 Faults (what the real launcher does not do on purpose, to see how the GUI server takes it): a line
-`# replay-fault: <name>` in the configuration file, or REPLAY_FAULT=<name>. "The first time event" below is the
+`# replay-fault: <name>` in the configuration file, or REPLAY_FAULT=<name>. The findings and log lines that a fault
+adds have the launcher's codes and fields; their wording is shorter than the launcher's (only manual-stay's line is
+its wording), so a test must not depend on it. "The first time event" below is the
 first one after the phase running, "the next" the one after it.
 
   bad-lines          after the first time event: a line that is not JSON, a JSON array, an unknown event, a gap
@@ -80,11 +83,6 @@ first one after the phase running, "the next" the one after it.
   control-trouble    of the participants whose control link is connected, the first's is no_hello, the second's
                      version_mismatch (warnings at the end); the participant after them in the file gets
                      not_offered (no control in its check, a note in the check)
-
-A scenario run with the control server (--scenario with --control, the feature scenario-control) that no recording
-has is played from the recording without --control, with the control_server event added; the control server
-then refuses every write, as the real one does while a scenario runs. This stands in for launchers that are
-recorded before they have the feature; a recording with it is played instead once there is one.
 
 Other environment variables: REPLAY_FEATURES (the features of version --json, comma-separated, to stand in for an
 older launcher; default: the recorded ones without control-server, a launcher built without the control server,
@@ -721,7 +719,7 @@ class Player:
             self.control.server = None
         if trouble == "bad-address":
             self.control_address = "control.example:8510"
-        if self.take.head.get("scenario_control") or "--scenario" in self.argv:
+        if "--scenario" in self.argv:  # the feature scenario-control: a client only watches a scenario's run
             self.control.refuse_writes = "a scenario runs: variables cannot be written by a control client"
         self.control.set_time(0, "--start-paused" in self.argv, running=False)
 
@@ -897,35 +895,8 @@ class Recorded(Player):
         super().emit(event)
 
 
-def without_control(argv: list[str]) -> list[str]:
-    out, i = [], 0
-    while i < len(argv):
-        if argv[i] in ("--control", "--control-credentials") and i + 1 < len(argv) and "--" not in argv[:i]:
-            i += 2
-            continue
-        out.append(argv[i])
-        i += 1
-    return out
-
-
-def scenario_control(chosen: list[tuple[dict, list[dict]]]) -> list[tuple[dict, list[dict]]]:
-    """The stand-in for the feature scenario-control (the control server during a scenario), for as long as no
-    recording has it: a recording of the scenario without --control, with the control_server event before the
-    registry's (the control server reads as usual and refuses every write while the scenario runs)."""
-    out = []
-    for head, entries in chosen:
-        at = events_at(entries, "registry")
-        event = {"out": {"event": "control_server", "address": "<control>", "tls": False, "credentials": True}}
-        out.append(({**head, "scenario_control": True}, entries[:at[0]] + [event] + entries[at[0]:] if at else entries))
-    return out
-
-
 def main(argv: list[str]) -> int:
     chosen = choose(argv)
-    if isinstance(chosen, str) and "--scenario" in argv and "--control" in argv:
-        fallback = choose(without_control(argv))
-        if not isinstance(fallback, str):
-            chosen = scenario_control(fallback)
     if isinstance(chosen, str):
         sys.stderr.write(chosen + "\n")
         return 2

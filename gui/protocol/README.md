@@ -55,7 +55,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | `GET api/scenarios?file=<構成ファイル>` | 構成ファイルの隣の `scenarios` のシナリオ: `{file, directory, found, scenarios, truncated}`（下の「シナリオ」） | `scenarios.json` |
 | `GET api/recording` | いまの（最後の）実行の、反映された書き込みをシナリオの YAML にしたもの: `{recording}`（実行がなければ `null`。下の「操作の記録」） | `recording.json` |
 
-- `disable` と `manual` に書けるのは、そのファイルの照合の結果にある participant 名だけです（`unknown-participant`）。同じ名前を両方に書くと 400 `invalid-field` です（ランチャーも断ります）。
+- `disable` と `manual` に書けるのは、そのファイルの照合の結果にある participant 名だけです（`unknown-participant`）。`-` で始まる名前は、ランチャーが引数の値として受け取れない（ランチャーの照合もそのような名前を断る）ので 400 `name-like-option` です（構成ファイルで名前を変える）。同じ名前を両方に書くと 400 `invalid-field` です（ランチャーも断ります）。
 - **自分で起動する participant**: `manual` に書いた participant は、ランチャーに `--manual` で渡り、ランチャーは起動せずに参加を待ちます（[docs/simulation-config.md](../../docs/simulation-config.md) の「participant を自分で起動する」。構成ファイルの `manual: true` は、照合の結果の `participants[].manual` に出ます）。`api/app` の `launcher.version.features` に `manual-participants` があるときだけ送ります（ないときは欄を省きます。送ると 400 `unsupported`）。起動するコマンドは、その participant の事象（`state` が `manual`）の `command`、`working_directory`、`command_line` で届き、要約の `participants` に残ります（例は `check-manual.json`、`ws-manual.json`）。
 - `speed`（`null`、`"max"`、数）と `start_paused`（真偽）は、`api/app` の `launcher.version.features` に `speed`、`start-paused` があるときだけ値を送ります。ないときは欄を省くか `null` / `false` を送ります（ほかの値は 400 `unsupported`）。`speed` の数の範囲は `limits.speed_min` から `limits.speed_max` まで（ランチャーと同じ）。`null` は構成ファイルの `speed` のまま（ランチャーに `--speed` を渡さない）です。
 - **時刻の命令**: `api/time` の本文は `{"command": "pause"}`、`{"command": "resume"}`、`{"command": "step", "ms": <1 から limits.step_ms_max の整数>}`、`{"command": "speed", "value": <"max" か speed と同じ範囲の数>}` のどれかです（ほかの欄は 400 `invalid-field`）。サーバーは、動いている実行のランチャーの標準入力に 1 行で書き、応答を待たずに返します（止まっているランチャーで要求が固まらないように）。受け付けたかどうかと理由は、ランチャーの `command` の事象（`accepted`、`message`、`step` の実際に進む `ms`）で、効いたことは `time` の事象で届きます（要約の `last_command` と `time` にも残ります）。動いている実行がなければ（終わった、始まりかけ、ランチャーの入力が閉じた）409 `not-running`、その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。ランチャーが入力を読まずに詰まっているときも、要求は長くて約 2 秒で返ります（命令はランチャーの入力に残ります）。命令の意味（一時停止は刻みの境目で効く、ステップ送りは一時停止の間だけ、など）はランチャーの決まりです（[docs/simulation-config.md](../../docs/simulation-config.md) の「標準入力の命令」）。
@@ -79,6 +79,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 | 400 | `outside-root` | 絶対パス、`..`、root の外へのシンボリックリンク |
 | 400 | `not-a-configuration` | `.yaml` / `.yml` の通常のファイルでない |
 | 400 | `unknown-participant` | `disable` か `manual` の名前が照合の結果にない |
+| 400 | `name-like-option` | `disable` か `manual` の名前が `-` で始まる（ランチャーに渡せない） |
 | 400 | `scenario-not-listed` | `scenario` が、`api/scenarios` がその構成ファイルに挙げるシナリオでない（`scenarios` がない、リンク、ほかの場所のファイル） |
 | 400 | `unsupported` | ランチャーが `speed` / `start-paused` / `scenario` / `manual-participants` を持たないのに値を送った。`time-commands` を持たないのに `api/time` を送った。`control-server` を持たないのに `api/write` を送った |
 | 400 | `unknown-variable` | `api/write`: その participant か変数が、実行の変数の一覧にない（`detail` に `{peer, name}`） |

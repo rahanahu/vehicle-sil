@@ -25,7 +25,7 @@
 {"out": {"event": "control_link", "name": "Logger", "state": "none"}}
 {"out": {"event": "phase", "phase": "running"}}
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "simulation running"}}
-{"out": {"event": "time", "sim_ms": 0, "speed": "max", "paused": false, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
+{"out": {"event": "time", "sim_ms": 0, "speed": "max", "paused": true, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "time", "sim_ms": 200, "speed": "max", "paused": true, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"send": "{\"command\":\"stop\"}"}
 {"out": {"event": "command", "command": "stop", "source": "stdin", "accepted": true, "message": null}}

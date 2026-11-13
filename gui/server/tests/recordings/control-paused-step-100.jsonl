@@ -14,7 +14,6 @@
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "starting Logger: <root>/logger/can_logger silkit://127.0.0.1:8500"}}
 {"out": {"event": "participant", "name": "Logger", "state": "started", "pid": "<pid>", "command": ["<root>/logger/can_logger", "silkit://127.0.0.1:8500"], "log": null}}
 {"out": {"event": "phase", "phase": "waiting"}}
-{"gap_ms": 100}
 {"out": {"event": "participant", "name": "Engine", "state": "joined"}}
 {"out": {"event": "participant", "name": "Dashboard", "state": "joined"}}
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "standing still before the first step until a resume, step or run_until command (--start-paused with a control server)"}}
@@ -26,7 +25,7 @@
 {"out": {"event": "control_link", "name": "Logger", "state": "none"}}
 {"out": {"event": "phase", "phase": "running"}}
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "simulation running"}}
-{"out": {"event": "time", "sim_ms": 0, "speed": "max", "paused": true, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
+{"out": {"event": "time", "sim_ms": 0, "speed": "max", "paused": false, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "time", "sim_ms": 100, "speed": "max", "paused": true, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"send": "{\"command\":\"stop\"}"}
 {"out": {"event": "command", "command": "stop", "source": "stdin", "accepted": true, "message": null}}

@@ -14,7 +14,6 @@
 {"out": {"event": "phase", "phase": "waiting"}}
 {"out": {"event": "participant", "name": "Engine", "state": "joined"}}
 {"out": {"event": "participant", "name": "Dashboard", "state": "joined"}}
-{"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=0 ms engine speed 0 rpm (0 messages)"}}
 {"out": {"event": "control_link", "name": "Engine", "state": "connected", "variables": 18}}
 {"out": {"event": "control_link", "name": "Dashboard", "state": "connected", "variables": 18}}

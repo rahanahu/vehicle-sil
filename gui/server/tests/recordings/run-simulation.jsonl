@@ -21,8 +21,8 @@
 {"out": {"event": "phase", "phase": "running"}}
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "simulation running"}}
 {"out": {"event": "time", "sim_ms": 0, "speed": "max", "paused": false, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
-{"out": {"event": "log", "source": "Dashboard", "line": "t=500 ms engine speed 1200 rpm (5 messages)"}}
 {"gap_ms": 100}
+{"out": {"event": "log", "source": "Dashboard", "line": "t=500 ms engine speed 1200 rpm (5 messages)"}}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=1000 ms engine speed 1200 rpm (10 messages)"}}
 {"out": {"event": "time", "sim_ms": 1000, "speed": "max", "paused": false, "actual_speed": null, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "the simulation ended"}}

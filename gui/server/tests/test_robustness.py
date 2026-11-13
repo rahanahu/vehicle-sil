@@ -180,21 +180,22 @@ def test_the_checks_that_aiohttp_makes(gui: Gui) -> None:
 # ---------------------------------------------------------------- names that look like options
 
 
-@pytest.mark.xfail(strict=True, reason="the real launcher takes a value that starts with '-' as a missing value: "
-                   "`--disable --json` is a usage error (recordings/run-dash-name.jsonl), so the GUI server cannot "
-                   "pass such a name as it does; it should refuse the name with what to do, or the launcher take it")
-def test_a_participant_named_like_an_option_is_a_value(gui: Gui) -> None:
+def test_a_participant_named_like_an_option_is_refused_before_the_launcher(gui: Gui) -> None:
+    """vehicle_sil_launch takes a value that starts with '-' for an option (`--disable --json` is its usage error):
+    the GUI server refuses such a name in disable and manual, says what to do instead, and starts no launcher. (The
+    launcher's check refuses such a name in the file too.)"""
     async def main(c: Client) -> None:
-        status, body = await c.post("api/check", {"file": "dash-name.yaml", "disable": ["--json"]})
-        assert status == 200 and body["disable"] == ["--json"], body
-        sock = await c.ws()
-        await sock.until(is_synced)
-        status, body = await c.post("api/run", {"file": "dash-name.yaml", "disable": ["--json"]})
-        assert status == 200, body
-        got = await sock.until(is_ended)
-        hello = event_messages(got, "hello")[0]
-        assert hello["arguments"][-4:] == ["--disable", "--json", "--", "dash-name.yaml"]
-        assert got[-1]["session"]["result"]["result"] == "passed"
+        for path in ("api/check", "api/run"):
+            status, body = await c.post(path, {"file": "dash-name.yaml", "disable": ["--json"]})
+            assert (status, body["error"]["code"]) == (400, "name-like-option"), body
+            assert "'--json'" in body["error"]["message"] and "rename the participant" in body["error"]["message"]
+        status, body = await c.post("api/check", {"file": "dash-name.yaml", "manual": ["--json"]})
+        assert (status, body["error"]["code"]) == (400, "name-like-option"), body
+        assert "--manual" in body["error"]["message"]
+        status, body = await c.get("api/session")
+        assert body["session"] is None  # nothing was started
+        status, body = await c.post("api/check", {"file": "dash-name.yaml", "disable": []})
+        assert status == 200 and [f["code"] for f in body["check"]["findings"]] == ["value"]  # the launcher's own
     run_async(main, gui)
 
 

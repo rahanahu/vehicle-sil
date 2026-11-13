@@ -26,9 +26,9 @@
 {"out": {"event": "time", "sim_ms": 410, "speed": 2, "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=500 ms engine speed 1200 rpm (5 messages)"}}
-{"out": {"event": "time", "sim_ms": 615, "speed": 2, "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
+{"out": {"event": "time", "sim_ms": 610, "speed": 2, "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"gap_ms": 100}
-{"out": {"event": "time", "sim_ms": 815, "speed": 2, "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
+{"out": {"event": "time", "sim_ms": 810, "speed": 2, "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}
 {"gap_ms": 100}
 {"out": {"event": "log", "source": "Dashboard", "line": "t=1000 ms engine speed 1200 rpm (10 messages)"}}
 {"out": {"event": "time", "sim_ms": 1000, "speed": 2, "paused": false, "actual_speed": 1.5, "late_steps": 0, "max_late_ms": 0, "slipped_ms": 0, "late_ms": 0}}

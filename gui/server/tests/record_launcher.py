@@ -94,10 +94,10 @@ class Case:
     name: str
     argv: list[str]
     about: str
+    # ("until", predicate), ("send", line), ("close",), ("start", participant): start a manual participant as its
+    # event says, ("sleep", s), ("hang",): the launcher waits on (the recording ends here; it is killed)
     script: list[tuple] = field(default_factory=list)
-    default: bool = False  # of the recordings of one command line, the one to play until a command says otherwise  # ("until", predicate), ("send", line), ("close",),
-    # ("start", participant): start a manual participant as its event says, ("sleep", s), ("hang",): the
-    # launcher waits on (the recording ends here; it is killed)
+    default: bool = False  # of the recordings of one command line, the one to play until a command says otherwise
 
 
 def run_case(name: str, file: str, about: str, *script, extra: tuple = (), default: bool = False) -> Case:
@@ -508,8 +508,6 @@ def checks() -> list[Case]:
              "the check with a participant that the user starts"),
         Case("check-simulation-scenario", ["check", "--json", "--scenario", "scenarios/throttle.yaml", "--",
                                            "simulation.yaml"], "the check with a scenario"),
-        Case("check-dash-name-disable", ["check", "--json", "--disable", "--json", "--", "dash-name.yaml"],
-             "the check with a participant named like an option left out"),
         Case("check-simulation-no-logger", ["check", "--json", "--disable", "Logger", "--", "simulation.yaml"],
              "the check without Logger"),
         Case("check-simulation-scenario-fails", ["check", "--json", "--scenario", "scenarios/fails.yaml", "--",
@@ -535,8 +533,6 @@ def runs() -> list[Case]:
         run_case("run-simulation-disable", "simulation.yaml", "a run without Logger", extra=("--disable", "Logger")),
         run_case("run-simulation-speed", "simulation.yaml", "a run without Logger at speed 2",
                  extra=("--disable", "Logger", "--speed", "2")),
-        run_case("run-dash-name", "dash-name.yaml", "a run with a participant named like an option left out",
-                 extra=("--disable", "--json")),
         run_case("run-scenario-fails", "simulation.yaml", "a scenario whose second step fails",
                  extra=("--scenario", "scenarios/fails.yaml")),
         run_case("run-scenario-passes", "simulation.yaml", "a scenario that passes",
@@ -585,17 +581,6 @@ def runs() -> list[Case]:
                  ("until", paused(30)), ("send", RESUME), ("until", last_time(paused=False)), ("send", PAUSE),
                  ("until", lambda events: command("pause")(events) and last_time(paused=True)(events)),
                  ("send", speed(2)), ("until", paused(speed=2)), stop, extra=("--start-paused",)),
-        run_case("scenario-slow", "forever.yaml",
-                 "a scenario at speed 0.001: its second step runs until the stops (two at once)",
-                 ("until", event("scenario_step", index=2, status="running")), ("sleep", 0.3), stop, stop,
-                 extra=("--scenario", "scenarios/throttle.yaml", "--speed", "0.001")),
-        run_case("scenario-slow-stop", "forever.yaml", "a scenario at speed 0.001: its second step runs until a stop",
-                 ("until", event("scenario_step", index=2, status="running")), ("sleep", 0.3), stop,
-                 extra=("--scenario", "scenarios/throttle.yaml", "--speed", "0.001")),
-        run_case("scenario-slow-no-logger", "forever.yaml",
-                 "a scenario at speed 0.001 without Logger: its second step runs until a stop",
-                 ("until", event("scenario_step", index=2, status="running")), ("sleep", 0.3), stop,
-                 extra=("--scenario", "scenarios/throttle.yaml", "--disable", "Logger", "--speed", "0.001")),
     ]
     paused_at_start = ("--disable", "Logger", "--speed", "max", "--start-paused")
     for value, small in ((2, 10), (1, 100)):
@@ -651,6 +636,22 @@ def runs() -> list[Case]:
         run_case("control-simulation-stop", "simulation.yaml",
                  "with the control server, started paused, stopped before the first step", STANDS, ("sleep", 0.3),
                  stop, extra=(*control, "--start-paused")),
+        run_case("control-scenario-slow", "forever.yaml",
+                 "a scenario at speed 0.001 with the control server (only to watch): its second step runs until a stop",
+                 ("until", event("scenario_step", index=2, status="running")), ("sleep", 0.3), stop,
+                 extra=("--scenario", "scenarios/throttle.yaml", *control, "--speed", "0.001"), default=True),
+        run_case("control-scenario-slow-force", "forever.yaml",
+                 "a scenario at speed 0.001 with the control server: two stops at once",
+                 ("until", event("scenario_step", index=2, status="running")), ("sleep", 0.3), stop, stop,
+                 extra=("--scenario", "scenarios/throttle.yaml", *control, "--speed", "0.001")),
+        run_case("control-scenario-slow-no-logger", "forever.yaml",
+                 "a scenario at speed 0.001 with the control server, without Logger: stopped",
+                 ("until", event("scenario_step", index=2, status="running")), ("sleep", 0.3), stop,
+                 extra=("--scenario", "scenarios/throttle.yaml", *control, "--disable", "Logger", "--speed", "0.001")),
+        run_case("control-scenario-passes", "simulation.yaml", "a scenario that passes, with the control server",
+                 extra=("--scenario", "scenarios/throttle.yaml", *control)),
+        run_case("control-scenario-fails", "simulation.yaml", "a scenario that fails, with the control server",
+                 extra=("--scenario", "scenarios/fails.yaml", *control)),
         run_case("control-simulation-paused", "simulation.yaml",
                  "with the control server, started paused: a pause (it stands already), a resume, to the end",
                  STANDS, ("send", PAUSE), ("until", command("pause")), ("send", RESUME),

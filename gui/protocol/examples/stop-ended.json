@@ -27,13 +27,13 @@
       },
       "stop": "forced",
       "phase": "ended",
-      "last_seq": 150,
-      "last_t_ms": 1500,
+      "last_seq": 141,
+      "last_t_ms": 1410,
       "time": {
         "event": "time",
-        "seq": 141,
-        "t_ms": 1410,
-        "sim_ms": 110620,
+        "seq": 132,
+        "t_ms": 1320,
+        "sim_ms": 108280,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -354,7 +354,7 @@
       ],
       "findings_omitted": 0,
       "last_command": {
-        "seq": 129,
+        "seq": 123,
         "command": "stop",
         "source": "stdin",
         "accepted": true,
@@ -377,7 +377,7 @@
           "ecu_step_ms": 5,
           "step_delay_ms": 5,
           "late_tolerance_ms": 10,
-          "sim_ms": 110620,
+          "sim_ms": 108280,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -705,7 +705,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 117,
+          "kept": 108,
           "dropped": 0
         }
       },
@@ -714,7 +714,7 @@
       "scenario": null,
       "variables": {
         "state": "off",
-        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
+        "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)",
         "peers": [],
         "peers_omitted": 0,
         "variables_omitted": 0,

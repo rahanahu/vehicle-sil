@@ -11,10 +11,9 @@
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "not starting Dashboard: start it yourself (manual: true, or --manual); the simulation waits for it to join. In the directory <root>, run:"}}
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "  <root>/dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://127.0.0.1:8500 --start-timeout-ms 1000000000000"}}
 {"out": {"event": "phase", "phase": "waiting"}}
-{"gap_ms": 100}
 {"out": {"event": "participant", "name": "Engine", "state": "joined"}}
 {"out": {"event": "log", "source": "vehicle_sil_launch", "line": "waiting for Dashboard to join (manual): start it with the command above; Ctrl+C stops the run"}}
-{"gap_ms": 300}
+{"gap_ms": 400}
 {"out": {"event": "participant", "name": "Dashboard", "state": "joined"}}
 {"out": {"event": "control_link", "name": "Engine", "state": "connected", "variables": 18}}
 {"out": {"event": "control_link", "name": "Dashboard", "state": "connected", "variables": 18}}
