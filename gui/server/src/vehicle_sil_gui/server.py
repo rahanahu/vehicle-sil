@@ -492,7 +492,7 @@ class GuiServer:
         except (BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
             return gone
         if command["command"] in ("resume", "step"):
-            run.variables.unsettle()  # it runs on: the values are not called paused until that is read again
+            run.variables.unsettle()  # it runs on: the values are not called paused until they are read again
         try:
             async with asyncio.timeout(STDIN_DRAIN_S):
                 await proc.stdin.drain()
@@ -982,8 +982,9 @@ class GuiServer:
         return encode(run.variables.values_message(watch))
 
     async def _tick(self) -> None:
-        """For the watches whose period has passed: reads their peers' values from the run's control server, then
-        puts each watch whose values or time have changed since it was last sent into its connection's queue.
+        """For the watches whose period has passed: reads their peers' values from the run's control server (one
+        call for all of them, one read at a time), then puts each watch whose values or time have changed since
+        it was last sent into its connection's queue.
         Reading takes at most half of the time (the next read waits as long as the last one took), however many
         peers are watched however often. Ends when there is no watch."""
         read_again = 0.0

@@ -8,7 +8,7 @@ import math
 
 import pytest
 from vehicle_sil_gui.hub import Client, Hub, Outgoing
-from vehicle_sil_gui.source import ListSample, OperationInfo, PeerInfo, SourceError, TargetInfo, TimeInfo
+from vehicle_sil_gui.source import ListSample, OperationInfo, PeerInfo, SnapshotInfo, SourceError, TargetInfo, TimeInfo
 from vehicle_sil_gui.variables import Limits, Rejected, Variables, Watch, check_watch
 
 MS = 1_000_000
@@ -40,10 +40,17 @@ def sample(ms: int, sequence: int, rpm: int = 0) -> ListSample:
     return ListSample("a", ms * MS, sequence, [0.0, rpm, 0, False, 0, 0.0])
 
 
+BODY = PeerInfo("Body", "b", True, SCHEMA[:1])
+
+
+def body(ms: int, sequence: int) -> ListSample:
+    return ListSample("b", ms * MS, sequence, [float(sequence)])
+
+
 class Scripted:
-    """A source whose answers the test sets: `time` and `values` are what a read gives. With `gate`, each read
-    waits until the test answers it (release), with what `time` and `values` are at that moment: the answer may
-    then be older than what the source tells meanwhile, as an answer on its way is."""
+    """A source whose answers the test sets: a read gives `time` and, of `values`, the peers asked for, with
+    `consistent` as the control server decides it (standing still, not ended, no sample after the time). `room`:
+    how many samples one answer holds (more: too-large). With `gate`, each read waits until the test lets it go."""
 
     def __init__(self):
         self.sink = None
@@ -54,28 +61,27 @@ class Scripted:
         self.written: list = []
         self.write_error: SourceError | None = None
         self.write_gate: asyncio.Event | None = None
-        self.gate: asyncio.Queue | None = None
-        self.reads: list[str] = []
+        self.gate: asyncio.Event | None = None
+        self.read_error: Exception | None = None
+        self.room: int | None = None
+        self.reads: list[list[str]] = []
         self.closed = False
 
     def start(self, sink) -> None:
         self.sink = sink
 
-    async def _answer(self, what: str) -> tuple:
-        self.reads.append(what)
+    async def read_snapshot(self, peers: list[str], timeout_s: float) -> SnapshotInfo:
+        self.reads.append(list(peers))
         if self.gate is not None:
-            return await self.gate.get()
-        return self.time, self.values
-
-    def release(self, n: int = 1) -> None:
-        for _ in range(n):
-            self.gate.put_nowait((self.time, dict(self.values)))
-
-    async def read_time(self, timeout_s: float) -> TimeInfo:
-        return (await self._answer("time"))[0]
-
-    async def read_values(self, peer: str, timeout_s: float):
-        return (await self._answer(f"values {peer}"))[1].get(peer)
+            await self.gate.wait()
+        if self.read_error is not None:
+            raise self.read_error
+        time = self.time
+        samples = {name: self.values.get(name) for name in peers}
+        if self.room is not None and sum(s is not None for s in samples.values()) > self.room:
+            raise SourceError("too-large", "RESOURCE_EXHAUSTED: ask for fewer peers")
+        newer = any(s is not None and s.time_ns > time.now_ns for s in samples.values())
+        return SnapshotInfo(time, samples, time.paused and not time.ended and not newer)
 
     async def read_operation(self, seq: int, timeout_s: float):
         return self.operations.get(seq)
@@ -117,123 +123,208 @@ async def settle() -> None:
 # ---------------------------------------------------------------- paused, sim_ms and the values belong together
 
 
-def test_paused_is_true_only_after_the_values_were_read_while_it_stood_still() -> None:
+def test_paused_is_what_one_read_says_of_the_time_and_the_values() -> None:
     async def main() -> None:
         v, source, _ = make()
-        source.gate = asyncio.Queue()
-        v.on_samples({"Engine": sample(80, 8, rpm=80)})
         v.on_time(running(90))
         v.on_synced()
-        assert message(v)["paused"] is False and message(v)["sim_ms"] == 90
-        # The source stands still at 100, and its last sample (the step at 90) has not come by itself yet.
-        source.time = standing(100)
-        source.values["Engine"] = sample(90, 9, rpm=90)
-        v.on_time(standing(100))
-        await settle()
-        m = message(v)  # not known to be complete yet: not called paused
-        assert (m["paused"], m["sim_ms"], m["peers"]["Engine"]["sample_ms"]) == (False, 100, 80)
-        source.release(3)  # the time, the values, the time again
-        await settle()
+        assert message(v) == {"type": "values", "id": 1, "session": 7, "sim_ms": 90, "paused": False, "peers": {}}
+        # While it runs: the values with the time they were read with (they are not older than it).
+        source.time, source.values["Engine"] = running(80), sample(80, 8, rpm=80)
+        await v.refresh({"Engine"})
         m = message(v)
-        assert (m["paused"], m["sim_ms"]) == (True, 100)
+        assert (m["paused"], m["sim_ms"], m["peers"]["Engine"]["sample_ms"]) == (False, 80, 80)
+        # It stands still at 100. The news of that says nothing of the values; the read does, in one call.
+        source.time, source.values["Engine"] = standing(100), sample(90, 9, rpm=90)
+        v.on_time(standing(100))
+        assert message(v)["paused"] is False and message(v)["sim_ms"] == 80
+        del source.reads[:]
+        await v.refresh({"Engine"})
+        m = message(v)
+        assert (m["paused"], m["sim_ms"]) == (True, 100) and source.reads == [["Engine"]]
         assert m["peers"]["Engine"] == {"sample_ms": 90, "values": {"throttle": 0.0, "rpm": 90, "gear": 0,
                                                                     "lamp": False, "count": 0, "free": 0.0}}
-        assert source.reads == ["time", "values Engine", "time"]
-        # The step at 100 itself comes while it stands still: still paused at 100.
-        v.on_samples({"Engine": sample(100, 10, rpm=100)})
-        assert message(v)["paused"] is True and message(v)["peers"]["Engine"]["sample_ms"] == 100
-        # An older sample that comes late by itself does not replace a newer one.
-        v.on_samples({"Engine": sample(90, 9, rpm=90)})
-        assert message(v)["peers"]["Engine"]["sample_ms"] == 100
-    asyncio.run(main())
-
-
-def test_a_sample_of_a_later_step_ends_paused_before_the_time_says_so() -> None:
-    async def main() -> None:
-        v, source, _ = make()
-        source.time = standing(100)
-        v.on_time(standing(100))
-        v.on_synced()
-        await settle()
-        assert message(v)["paused"] is True
-        # It runs again; the values come before the news of the time. The source still says 100 when asked.
-        source.gate = asyncio.Queue()
-        v.on_samples({"Engine": sample(110, 11)})
+        # The step at 100 itself comes while it stands still: a second answer for the same time, with other
+        # values. It is not asked for at every period (nothing else can come), but it is found, and it is news.
+        watch = Watch(1, None, 0.02, 0.0, lambda w: None)
+        v.values_message(watch)
+        source.values["Engine"] = sample(100, 10, rpm=100)
+        await v.refresh({"Engine"})
+        assert source.reads == [["Engine"]] and v.stamp(watch) == watch.sent
+        await asyncio.sleep(0.3)
+        await v.refresh({"Engine"})
         m = message(v)
-        assert m["paused"] is False and m["peers"]["Engine"]["sample_ms"] == 110
-        source.time = running(120)
-        source.release(1)
-        await settle()
-        assert message(v) == {**message(v), "paused": False, "sim_ms": 120}
+        assert (m["paused"], m["sim_ms"], m["peers"]["Engine"]["sample_ms"]) == (True, 100, 100)
+        assert v.stamp(watch) != watch.sent
+        # Standing still on, read again: the same message, so nothing to send.
+        v.values_message(watch)
+        v.on_time(TimeInfo(100 * MS, True, True, False))  # told again: no news
+        await asyncio.sleep(0.3)
+        await v.refresh({"Engine"})
+        assert v.stamp(watch) == watch.sent and len(source.reads) == 3
+        # A sample that comes by itself is of no read: nothing is said of its moment until the peer is read.
+        v.on_samples({"Engine": sample(100, 11, rpm=101)})
+        assert message(v)["paused"] is False and message(v)["peers"]["Engine"]["values"]["rpm"] == 101
+        source.values["Engine"] = sample(100, 11, rpm=101)
+        await v.refresh({"Engine"})  # not put off: the peer does not stand as read
+        assert message(v)["paused"] is True and len(source.reads) == 4
+        await v.close()
+        assert message(v)["paused"] is False  # after the run: its last values
     asyncio.run(main())
 
 
-def test_the_time_moving_while_the_values_are_read_is_not_called_paused() -> None:
+def test_a_read_that_the_simulation_went_on_during_is_not_called_paused() -> None:
     async def main() -> None:
         v, source, _ = make()
-        source.gate = asyncio.Queue()
-        source.time = standing(100)
-        v.on_time(standing(100))
         v.on_synced()
+        # The time was read standing at 100, then it was stepped on before the values were read.
+        source.time, source.values["Engine"] = standing(100), sample(110, 11)
+        await v.refresh()
+        m = message(v)
+        assert (m["paused"], m["sim_ms"], m["peers"]["Engine"]["sample_ms"]) == (False, 100, 110)
+        source.time = standing(110)
+        await v.refresh()
+        assert (message(v)["paused"], message(v)["sim_ms"]) == (True, 110)
+        # Ended: its last values, not a standstill.
+        source.time = TimeInfo(110 * MS, True, False, True)
+        v.on_time(source.time)
         await settle()
-        source.release(2)  # the time (100, standing) and the values
-        await settle()
-        source.time = standing(200)  # stepped on meanwhile: the second read of the time differs
-        source.values["Engine"] = sample(190, 19)
-        source.release(1)
-        await settle()
+        assert (message(v)["paused"], message(v)["sim_ms"]) == (False, 110)
+        await v.close()
+    asyncio.run(main())
+
+
+def test_peers_read_by_different_calls_are_paused_together_only_at_one_time() -> None:
+    async def main() -> None:
+        v, source, _ = make()
+        v.on_peers([BODY], [])
+        v.on_synced()
+        engine, both = [("Engine", "rpm")], [("Engine", "rpm"), ("Body", "throttle")]
+        source.time = standing(100)
+        source.values = {"Engine": sample(90, 9), "Body": body(90, 9)}
+        await v.refresh({"Engine"})
+        assert message(v, engine)["paused"] is True
+        assert (message(v, both)["paused"], message(v, both)["sim_ms"]) == (False, 100)  # Body was never read
+        await v.refresh({"Body"})
+        # Each was read standing at 100, by its own call: every step before 100 is in both.
+        assert (message(v, both)["paused"], message(v, both)["sim_ms"]) == (True, 100)
+        # A step to 110, and only the engine is read there: the body's values are still those of 100.
+        source.time = standing(110)
+        source.values = {"Engine": sample(100, 10), "Body": body(100, 10)}
+        v.on_time(standing(110))
+        await v.refresh({"Engine"})
+        assert (message(v, engine)["paused"], message(v, engine)["sim_ms"]) == (True, 110)
+        m = message(v, both)
+        assert (m["paused"], m["sim_ms"], m["peers"]["Body"]["sample_ms"]) == (False, 100, 90)
+        assert message(v, [("Body", "throttle")])["paused"] is False  # read at 100, and it does not stand there now
+        del source.reads[:]
+        await v.refresh({"Body"})  # not put off, although the engine was read just now
+        assert source.reads == [["Body"]] and (message(v, both)["paused"], message(v, both)["sim_ms"]) == (True, 110)
+        # A peer that is another process than the one known here: its sample is not taken, and nothing is said.
+        source.values["Body"] = ListSample("c", 100 * MS, 1, [5.0])
+        await asyncio.sleep(0.3)
+        await v.refresh({"Body", "Engine"})
+        assert message(v, engine)["paused"] is True and message(v, both)["paused"] is False
+        assert message(v, both)["peers"]["Body"]["sample_ms"] == 100
+        await v.close()
+    asyncio.run(main())
+
+
+def test_a_command_passed_on_ends_paused_until_it_is_read_again() -> None:
+    async def main() -> None:
+        v, source, _ = make()
+        source.time = standing(100)
+        v.on_synced()
+        await v.refresh()
+        watch = Watch(1, None, 0.02, 0.0, lambda w: None)
+        assert v.values_message(watch)["paused"] is True
+        # A step was written to the launcher, which has not taken it yet: the source still says standing.
+        del source.reads[:]
+        v.unsettle()
         assert message(v)["paused"] is False
-        source.release(3)  # read again, now it holds
-        await settle()
-        m = message(v)
-        assert (m["paused"], m["sim_ms"], m["peers"]["Engine"]["sample_ms"]) == (True, 200, 190)
+        await v.refresh()  # read at once, not put off
+        assert source.reads == [["Engine"]] and message(v)["paused"] is True and v.stamp(watch) == watch.sent
+        # The news of the time makes the next read find the step, without waiting.
+        source.time, source.values["Engine"] = standing(110), sample(100, 10)
+        v.on_time(standing(110))
+        assert message(v)["sim_ms"] == 100
+        await v.refresh()
+        assert (message(v)["paused"], message(v)["sim_ms"]) == (True, 110) and len(source.reads) == 2
+        # A resume: it runs.
+        v.unsettle()
+        source.time, source.values["Engine"] = running(130), sample(130, 13)
+        await v.refresh()
+        assert (message(v)["paused"], message(v)["sim_ms"]) == (False, 130)
+        await v.close()
     asyncio.run(main())
 
 
-def test_news_of_another_time_while_reading_is_not_overwritten_by_the_older_read() -> None:
-    async def main() -> None:
-        v, source, _ = make()
-        source.gate = asyncio.Queue()
-        source.time = standing(100)
-        v.on_time(standing(100))
-        v.on_synced()
-        await settle()
-        source.release(3)  # all three reads are answered with "standing at 100" ...
-        v.on_time(standing(300))  # ... but before the loop gets to them, the source tells of 300
-        source.time = standing(300)
-        await settle()
-        assert message(v)["paused"] is False and message(v)["sim_ms"] == 300
-        source.release(3)
-        await settle()
-        assert (message(v)["paused"], message(v)["sim_ms"]) == (True, 300)
-    asyncio.run(main())
-
-
-def test_a_read_that_fails_is_tried_again_and_a_lost_connection_ends_it() -> None:
+def test_a_read_that_fails_changes_nothing_and_one_read_is_made_at_a_time() -> None:
     async def main() -> None:
         v, source, sent = make()
-
-        async def failing(timeout_s):
-            raise SourceError("timeout", "DEADLINE_EXCEEDED: no answer")
-        good = source.read_time
-        source.read_time = failing
-        source.time = standing(100)
-        v.on_time(standing(100))
+        source.time, source.values["Engine"] = standing(100), sample(90, 9)
         v.on_synced()
-        await asyncio.sleep(0.05)
-        assert message(v)["paused"] is False
-        source.read_time = good
-        await asyncio.sleep(0.4)
-        assert message(v)["paused"] is True
+        await v.refresh()
+        before = message(v)
+        assert before["paused"] is True
+        source.time, source.values["Engine"] = standing(110), sample(100, 10)
+        for error in (SourceError("timeout", "DEADLINE_EXCEEDED: no answer"), RuntimeError("a bug in a source")):
+            source.read_error = error
+            v.on_time(running(105) if isinstance(error, SourceError) else standing(110))
+            await v.refresh()
+            assert message(v) == before
+        source.read_error = None
+        # A second read waits for the first, and what they give is taken in that order.
+        source.gate = asyncio.Event()
+        v.unsettle()
+        del source.reads[:]
+        first, second = asyncio.create_task(v.refresh()), asyncio.create_task(v.refresh())
+        await settle()
+        assert source.reads == [["Engine"]]
+        source.gate.set()
+        await asyncio.gather(first, second)
+        assert (message(v)["paused"], message(v)["sim_ms"]) == (True, 110) and len(source.reads) == 2
         v.on_lost("the control server at 127.0.0.1:1 cannot be reached", False)
-        assert v.state == "connecting" and not v.has_values and v.settled_ns is None
+        assert v.state == "connecting" and not v.has_values and message(v)["paused"] is False
         assert sent[-1]["variables"]["reason"].endswith("connecting again")
         assert sent[-1]["variables"]["peers"][0]["connected"] is False
         v.on_peers([PeerInfo("Engine", "a", True, SCHEMA)], [])
-        v.on_time(standing(100))
         v.on_synced()
-        await settle()
-        assert v.state == "ready" and message(v)["paused"] is True
+        assert v.state == "ready" and message(v)["paused"] is False  # read before the connection was lost
+        await v.refresh()
+        assert message(v)["paused"] is True
+        await v.close()
+    asyncio.run(main())
+
+
+def test_values_that_do_not_fit_one_answer_are_read_in_parts_and_not_called_paused(caplog) -> None:
+    async def main() -> None:
+        v, source, _ = make()
+        v.on_peers([BODY, PeerInfo("Cabin", "b", True, SCHEMA[:1])], [])
+        v.on_synced()
+        source.time = standing(100)
+        source.values = {"Engine": sample(90, 9), "Body": body(90, 9), "Cabin": body(90, 4)}
+        source.room = 2
+        await v.refresh()
+        m = message(v)
+        assert m["peers"].keys() == {"Engine", "Body", "Cabin"} and (m["paused"], m["sim_ms"]) == (False, 100)
+        assert [len(r) for r in source.reads] == [3, 2, 1]
+        # From then on in parts at once; a watch of one peer is one call, and that says paused.
+        del source.reads[:]
+        v.on_time(standing(100))
+        await v.refresh()
+        assert sorted(len(r) for r in source.reads) == [1, 2] and message(v)["paused"] is False
+        await v.refresh({"Body"})
+        assert message(v, [("Body", "throttle")])["paused"] is True
+        # A peer whose values no answer holds is left out; the others are read.
+        source.room = 0
+        source.values = {"Engine": sample(100, 10), "Body": None, "Cabin": None}
+        v.on_time(standing(110))
+        source.time = standing(110)
+        await v.refresh()
+        assert message(v)["peers"]["Engine"]["sample_ms"] == 90
+        assert [r.getMessage() for r in caplog.records if "Engine" in r.getMessage()] == [
+            "the values of Engine do not fit one answer of the control server: they are not read"]
         await v.close()
     asyncio.run(main())
 
@@ -273,97 +364,6 @@ def test_a_schema_that_changes_under_one_incarnation_drops_the_sample_read_with_
         assert message(v)["peers"]["Engine"]["values"]["rpm"] == 7
         v.on_peers([PeerInfo("Engine", "a", True, [SCHEMA[1], SCHEMA[0], *SCHEMA[2:]])], [])
         assert message(v)["peers"] == {}  # not the old values under the new names
-        await v.close()
-    asyncio.run(main())
-
-
-def test_standing_still_is_confirmed_in_the_end_however_often_the_reads_were_overtaken() -> None:
-    async def main() -> None:
-        v, source, _ = make()
-        source.gate = asyncio.Queue()
-        source.time = standing(100)
-        v.on_time(standing(100))
-        v.on_synced()
-        await settle()
-        # Steps in quick succession: each try reads a standstill that ends before its second look at the time.
-        for n in range(1, 6):
-            source.release(2)
-            source.time = standing(100 + 10 * n)
-            source.values["Engine"] = sample(100 + 10 * n, 10 + n)
-            source.release(1)
-            await asyncio.sleep(0.25)  # also past the pause between the later tries
-        assert message(v)["paused"] is False and message(v)["sim_ms"] == 150
-        # The source tells of the time it stands at, which is what the server already knows from its own reads.
-        v.on_time(standing(150))
-        source.release(3)
-        await asyncio.sleep(0.25)
-        m = message(v)
-        assert (m["paused"], m["sim_ms"], m["peers"]["Engine"]["sample_ms"]) == (True, 150, 150)
-        await v.close()
-    asyncio.run(main())
-
-
-def test_a_sample_after_the_standstill_keeps_it_unconfirmed_until_the_time_fits() -> None:
-    async def main() -> None:
-        v, source, _ = make()
-        source.time = standing(100)
-        source.values["Engine"] = sample(110, 11)  # a source that breaks its word: a step after the standstill
-        v.on_time(standing(100))
-        v.on_synced()
-        await asyncio.sleep(0.5)
-        assert message(v)["paused"] is False
-        source.time = standing(110)  # it was only the news of the time that was behind
-        await asyncio.sleep(0.5)
-        assert (message(v)["paused"], message(v)["sim_ms"]) == (True, 110)
-        await v.close()
-    asyncio.run(main())
-
-
-def test_a_command_passed_on_ends_paused_until_it_is_read_again() -> None:
-    async def main() -> None:
-        v, source, _ = make()
-        source.time = standing(100)
-        v.on_time(standing(100))
-        v.on_synced()
-        await settle()
-        assert message(v)["paused"] is True
-        # A resume was written to the launcher, which has not taken it yet: the source still says standing.
-        del source.reads[:]
-        v.unsettle()
-        assert message(v)["paused"] is False
-        await asyncio.sleep(0.05)
-        assert source.reads == [] and message(v)["paused"] is False  # not read again at once
-        v.on_time(running(110))  # the news of the time: it runs
-        await settle()
-        assert message(v)["paused"] is False
-        # A command the launcher refused: it still stands, no news comes, and that is found again by itself.
-        source.time = standing(200)
-        v.on_time(standing(200))
-        await settle()
-        assert message(v)["paused"] is True
-        v.unsettle()
-        assert message(v)["paused"] is False
-        await asyncio.sleep(0.5)
-        assert (message(v)["paused"], message(v)["sim_ms"]) == (True, 200)
-        await v.close()
-    asyncio.run(main())
-
-
-def test_a_read_that_raises_something_else_does_not_end_the_trying() -> None:
-    async def main() -> None:
-        v, source, _ = make()
-        good = source.read_time
-
-        async def broken(timeout_s):
-            raise RuntimeError("a bug in a source")
-        source.read_time = broken
-        source.time = standing(100)
-        v.on_time(standing(100))
-        v.on_synced()
-        await asyncio.sleep(0.05)
-        source.read_time = good
-        await asyncio.sleep(0.4)
-        assert message(v)["paused"] is True
         await v.close()
     asyncio.run(main())
 

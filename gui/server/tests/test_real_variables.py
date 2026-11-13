@@ -119,6 +119,15 @@ def test_write_before_the_start_and_read_while_it_stands_still(tmp_path: Path) -
                 assert 500 + 10 * n - 10 <= at <= 500 + 10 * n, (n, engine)
                 steps_with_zero = (at - 510) // 10 + 1  # the write took effect in the step at 510
                 assert engine["values"]["engine.speed"] == 1800 - 50 * max(steps_with_zero, 0), (n, engine)
+                assert engine["values"]["engine.throttle"] == (0.0 if at >= 510 else 50.0), (n, engine)
+                if n == 1 and at < 510:
+                    # Stopped, written, stepped: the step at the standstill itself (the one that took the write)
+                    # arrives while it stands still. The same time is then called paused once more, with the
+                    # values of that step.
+                    more = await ws.until(lambda m: is_values(1)(m) and m["peers"]["Engine"]["sample_ms"] == 510)
+                    assert (more[-1]["paused"], more[-1]["sim_ms"]) == (True, 510), more[-1]
+                    assert more[-1]["peers"]["Engine"]["values"] == {"engine.throttle": 0.0, "engine.speed": 1750}
+                    got += more
                 # Nothing sent while it runs claims to stand still at another time.
                 assert all(m["sim_ms"] in (500 + 10 * n - 10, 500 + 10 * n) or not m["paused"]
                            for m in got if m["type"] == "values")

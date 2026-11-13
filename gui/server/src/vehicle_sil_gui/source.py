@@ -16,7 +16,8 @@ LATE_POLICIES = ("reject", "apply")  # a write that comes after its time: not ma
 
 class SourceError(Exception):
     """A read or a write did not work. kind: "timeout" (no answer in time: a write may have been taken),
-    "refused" (the source said no: the message says why), "unavailable" (not connected, or closed)."""
+    "refused" (the source said no: the message says why), "unavailable" (not connected, or closed), "too-large"
+    (read_snapshot: the samples of the peers asked for do not fit one answer; fewer peers may)."""
 
     def __init__(self, kind: str, message: str):
         super().__init__(message)
@@ -71,6 +72,18 @@ class ListSample:
 
 
 @dataclass(frozen=True)
+class SnapshotInfo:
+    """The time and the last samples of several peers, read by the source in one go: the time first, then all the
+    samples at one moment (GetSnapshot of docs/control-api.md, whose promise this carries). The samples are never
+    older than the time. consistent: it stood still at time.now_ns and no sample is of a step after it, so the
+    samples are those of that moment (every step that began before it, none after it; the step that begins
+    exactly at it may or may not be in them yet)."""
+    time: TimeInfo
+    samples: dict[str, Sample | None]  # by peer, for every peer asked for (None: it has no sample yet, or is unknown)
+    consistent: bool
+
+
+@dataclass(frozen=True)
 class TargetInfo:
     peer: str
     status: str  # sent, queued, disconnected (open); applied, late, rejected, cancelled, invalid, busy, unknown
@@ -89,7 +102,8 @@ class OperationInfo:
 class Sink(Protocol):
     """What a source tells, on the event loop (variables.Variables). After a connection is made: on_peers,
     on_samples and on_time for what there is, then on_synced; then every change. Of values and of the time only
-    the latest need be told; of the operations every one, with its latest state. on_dropped when changes were
+    the latest need be told (the values need not be told at all: they are read with read_snapshot, and only a read
+    says of which moment they are); of the operations every one, with its latest state. on_dropped when changes were
     lost on the way. on_lost when the connection ended (fatal: the source will not connect again); after it,
     nothing of that connection is told."""
 
@@ -106,13 +120,12 @@ class Source(Protocol):
     def start(self, sink: Sink) -> None:
         """Begins (called once, on the event loop): connects, and connects again when the connection is lost."""
 
-    async def read_time(self, timeout_s: float) -> TimeInfo: ...
-
     async def read_peers(self, timeout_s: float) -> list[PeerInfo]:
         """Every peer the source knows now."""
 
-    async def read_values(self, peer: str, timeout_s: float) -> Sample | None:
-        """The peer's last sample as the source has it now (None: none yet)."""
+    async def read_snapshot(self, peers: list[str], timeout_s: float) -> SnapshotInfo:
+        """The time and the last sample of each peer named (at least one), as the source has them now. This is
+        the only way the values and their time are asked for."""
 
     async def read_operation(self, seq: int, timeout_s: float) -> OperationInfo | None:
         """None: the source does not know it (any more)."""

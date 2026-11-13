@@ -13,7 +13,7 @@ import time
 import pytest
 from fake_launcher import variables
 from vehicle_sil_gui import control
-from vehicle_sil_gui.source import SourceError, TimeInfo
+from vehicle_sil_gui.source import SnapshotInfo, SourceError, TimeInfo
 
 MS = 1_000_000
 TOKEN = "a-token-of-this-test-0123456789"
@@ -107,8 +107,10 @@ def test_the_state_the_values_a_write_and_its_result(fake) -> None:
                                        "min": 0.0, "max": 100.0, "step": None, "description": "requested level",
                                        "enum": []}
         assert engine.variables[3]["enum"] == [("off", 0), ("on", 1)] and engine.variables[3]["role"] == "parameter"
-        assert await source.read_time(2) == TimeInfo(0, False, False, False)
-        assert await source.read_values("Engine", 2) is None and await source.read_values("Nobody", 2) is None
+        # Before the first step: the time, and for every name asked for that there is no sample (a peer that
+        # has none yet, a name that is no peer's).
+        assert await source.read_snapshot(["Engine", "Nobody"], 2) == SnapshotInfo(
+            TimeInfo(0, False, False, False), {"Engine": None, "Nobody": None}, False)
         assert await source.read_operation(99, 2) is None
 
         seq = await source.write([("Engine", "engine.demand", 12.5), ("Engine", "engine.mode", 1),
@@ -125,18 +127,57 @@ def test_the_state_the_values_a_write_and_its_result(fake) -> None:
         assert done.done and [(t.status, t.applied_at_ns) for t in done.targets] == [("applied", 100 * MS)] * 2
         assert await source.read_operation(1, 2) == done
         assert "samples" not in sink.kinds()  # the values are read when asked for, not sent along
-        sample = await source.read_values("Engine", 2)
+        # Standing still at 200: the time and the values of that moment, in one call.
+        read = await source.read_snapshot(["Body", "Engine", "Body"], 2)
+        assert (read.time, read.consistent, list(read.samples)) == (TimeInfo(200 * MS, True, True, False), True,
+                                                                    ["Body", "Engine"])
+        sample = read.samples["Engine"]
         types = [v["type"] for v in engine.variables]
         assert (sample.incarnation, sample.time_ns, sample.count) == ("1", 100 * MS, 4)
         assert sample.decode(types) == [True, 12.5, 225, 1]
-        assert (await source.read_values("Engine", 2)).decode(types) == [True, 12.5, 225, 1]
-        assert await source.read_time(2) == TimeInfo(200 * MS, True, True, False)
+        # The server reads the time first: a step that runs before it reads the values is in them, and then they
+        # are not those of the time read.
+        server.between_reads = lambda: server.step(200)
+        read = await source.read_snapshot(["Engine"], 2)
+        server.between_reads = None
+        assert (read.time.now_ns, read.samples["Engine"].time_ns, read.consistent) == (200 * MS, 200 * MS, True)
+        server.between_reads = lambda: server.step(210)
+        read = await source.read_snapshot(["Engine"], 2)
+        server.between_reads = None
+        assert (read.time.now_ns, read.samples["Engine"].time_ns, read.consistent) == (200 * MS, 210 * MS, False)
+        server.set_time(210, True)
+        assert (await source.read_snapshot(["Engine"], 2)).consistent is True
+        # An answer that would be too large says so (fewer peers may fit).
+        server.max_snapshot_bytes = 10
+        with pytest.raises(SourceError) as e:
+            await source.read_snapshot(["Engine", "Body"], 2)
+        assert e.value.kind == "too-large"
+        server.max_snapshot_bytes = 4 * 1024 * 1024
+        server.set_time(220, False, running=False, ended=True)
+        assert (await source.read_snapshot(["Engine"], 2)).consistent is False
         await source.close()
         await source.close()
         assert not source._thread.is_alive()
         with pytest.raises(SourceError) as e:
-            await source.read_time(1)
+            await source.read_snapshot(["Engine"], 1)
         assert e.value.kind == "unavailable"
+    asyncio.run(main())
+
+
+def test_a_control_server_without_the_snapshot_is_not_used(fake) -> None:
+    server = fake(snapshot=False)
+
+    async def main() -> None:
+        source = control.GrpcSource(library(), server.address, None)
+        sink = Sink()
+        source.start(sink)
+        _, reason, fatal = await sink.until("lost")
+        assert fatal and reason == control.TOO_OLD and "build a newer launcher" in reason
+        assert "synced" not in sink.kinds()  # never called ready
+        await asyncio.sleep(0.5)
+        assert server.calls.count("Watch") == 1  # and not connected to again
+        await source.close()
+        assert not source._thread.is_alive()
     asyncio.run(main())
 
 
@@ -239,7 +280,7 @@ def test_a_server_that_is_not_there_yet_is_tried_again_and_one_that_goes_is_noti
         _, reason, fatal = await sink.until("lost")
         assert not fatal and reason == f"the control server at 127.0.0.1:{port} cannot be reached"
         with pytest.raises(SourceError) as e:
-            await source.read_time(0.5)
+            await source.read_snapshot(["Engine"], 0.5)
         assert e.value.kind in ("unavailable", "timeout")
         server = fake_control.FakeControl({"Engine": variables("Engine")})
         server.start(f"127.0.0.1:{port}")
@@ -272,7 +313,7 @@ def test_a_call_that_gets_no_answer_ends_in_its_time_and_does_not_hold_the_loop(
         await sink.until("synced")
         with server.changed:  # the server's calls wait for this lock: no answer
             started = time.monotonic()
-            call = asyncio.create_task(source.read_time(0.3))
+            call = asyncio.create_task(source.read_snapshot(["Engine"], 0.3))
             worst = 0.0
             while not call.done():
                 before = time.monotonic()
