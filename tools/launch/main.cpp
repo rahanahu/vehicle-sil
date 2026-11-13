@@ -115,7 +115,8 @@ constexpr const char* kUsage =
     "  --scenario <file>           check: also check the scenario <file> against the participants' variables;\n"
     "                              run: then run it: write the ECUs' variables and compare their values at\n"
     "                              virtual times, stop the simulation when the scenario is over, and fail if a\n"
-    "                              step failed (docs/scenario.md; not with --control or --start-paused)\n"
+    "                              step failed (docs/scenario.md; not with --start-paused; with --control the\n"
+    "                              clients read and stop, and cannot write or move the time)\n"
     "  --speed <speed>             run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
     "                              or max (as fast as possible); replaces speed in <file>\n"
     "  --strict                    fail on warnings too\n"
@@ -949,13 +950,13 @@ int run(const cli::Args& args, launch::EventStream* events)
                               "version --json` lists control-server in its features when it has it (docs/control-api.md)");
     }
 #endif
-    if (args.has("scenario") && (control || args.flag("start-paused")))
+    if (args.has("scenario") && args.flag("start-paused"))
     {
-        throw cli::UsageError(std::string("--scenario cannot be used with ") + (control ? "--control" : "--start-paused") +
-                              (control ? ": a control client that writes variables or holds the start would change what "
-                                         "the scenario does, and the same scenario must give the same result"
-                                       : ": the scenario writes its values for 0 before the first step and runs by "
-                                         "itself; pause and step it with --stdin-commands if needed"));
+        // Also with --control: its clients cannot move the time during a scenario, so they could
+        // not end the hold.
+        throw cli::UsageError("--scenario cannot be used with --start-paused: the scenario writes its values for 0 "
+                              "before the first step and runs by itself; pause and step it with --stdin-commands if "
+                              "needed");
     }
     if (args.flag("start-paused"))
     {
@@ -996,6 +997,7 @@ int run(const cli::Args& args, launch::EventStream* events)
         a.tls_cert = args.str("control-tls-cert", "");
         a.tls_key = args.str("control-tls-key", "");
         a.audit_log = args.str("control-audit-log", "");
+        a.scenario = args.has("scenario");
         launch_cli::ControlHooks hooks;
         hooks.commands = shared().time_commands;
         // Its event (and its refusal once the run is over) comes from the time commands.
@@ -1035,7 +1037,7 @@ int run(const cli::Args& args, launch::EventStream* events)
 std::vector<std::string_view> build_features()
 {
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
-    return {launch::kControlServerFeature};
+    return {launch::kControlServerFeature, launch::kScenarioControlFeature};
 #else
     return {};
 #endif

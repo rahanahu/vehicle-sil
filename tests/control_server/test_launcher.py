@@ -10,7 +10,8 @@ examples/ecu_main as processes, driven from Python.
 - The end: calls that wait (Watch, WaitOperation, WaitPaused) are still waiting while the run lasts,
   end with the run, and the run does not wait for them: at its end, on --timeout-ms, when a
   participant fails (also in the hold); a stop from standard input in the hold.
-- TLS, credentials and roles, the audit log, no agents over gRPC; the usage errors (an empty
+- TLS, credentials and roles (a viewer neither writes nor pauses, an operator does not stop), the
+  audit log, the CLI with a token and the server's certificate, no agents over gRPC; the usage errors (an empty
   credentials file too), a port in use; version --json.
 (The limits of the start around the hold, --timeout-ms and Ctrl+C in the hold, the commands before
 the window and a Stop after the end are tested in C++: launch_control.*, launch.*.)
@@ -57,6 +58,41 @@ def config(name: str, stop_at_ms: int) -> pathlib.Path:
     path.write_text(f"vehicle_sil_simulation: 1\nstop_at_ms: {stop_at_ms}\nnetworks:\n  - name: J1939_CAN\n    kind: can\n"
                     f"participants:\n  - name: Engine\n    command: ['{engine}']\n    step_ms: 10\n"
                     f"  - name: Dashboard\n    command: ['{dashboard}']\n    step_ms: 5\n")
+    return path
+
+
+# As examples/ecu_main/scenarios/throttle_step.yaml: writes, a ramp, waits and comparisons.
+THROTTLE_STEP = """vehicle_sil_scenario: 1
+name: throttle step
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - wait_until: { Engine.engine.speed: { ge: 1700 } }
+    timeout_ms: 500
+  - after_ms: 50
+    expect: { Engine.engine.speed: { near: 1800, tolerance: 10 } }
+    hold_for_ms: 100
+  - expect: { Dashboard.dashboard.engine_speed: { ge: 1700 } }
+    within_ms: 200
+  - ramp: { Engine.engine.throttle: { to: 0, over_ms: 200 } }
+  - expect: { Engine.engine.speed: { le: 1000 } }
+    within_ms: 100
+"""
+# One that is not over for ten minutes of the simulation's time.
+LONG = """vehicle_sil_scenario: 1
+name: long
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - at_ms: 600000
+    expect: { Engine.engine.speed: { ge: 0 } }
+"""
+
+
+def scenario(name: str, text: str) -> pathlib.Path:
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    path = SCRATCH / f"{name}.scenario.yaml"
+    path.write_text(text)
     return path
 
 
@@ -369,14 +405,26 @@ class LauncherTest(unittest.TestCase):
                 self.assertEqual(refused.exception.code, grpc.StatusCode.UNAUTHENTICATED)
             with Control(launch.address, root_certificates=roots, token=viewer) as v:
                 self.assertEqual(v.sim.wait_paused(60).now, 0)
+                self.assertEqual({p.participant for p in v.peers()}, {"Engine", "Dashboard"})
                 with self.assertRaises(ControlError) as refused:
                     v.sim.pause()
+                self.assertEqual(refused.exception.code, grpc.StatusCode.PERMISSION_DENIED)
+                with self.assertRaises(ControlError) as refused:
+                    v.write({"X": {"y": 1}})
                 self.assertEqual(refused.exception.code, grpc.StatusCode.PERMISSION_DENIED)
             with Control(launch.address, root_certificates=roots, token=operator) as o:
                 with self.assertRaises(ControlError) as refused:
                     o.sim.stop()
                 self.assertEqual(refused.exception.code, grpc.StatusCode.PERMISSION_DENIED)
+                seq = o.write({"X": {"y": 1}})
+                self.assertEqual(o.operation(seq).target("X").status, "invalid")  # no such peer
                 o.sim.pause()
+            # The CLI with a token and the server's certificate.
+            cli = subprocess.run([sys.executable, "-m", "vehicle_sil_control", "--server", launch.address, "--token", viewer,
+                                  "--root-cert", str(TESTDATA / "server.crt"), "peers"],
+                                 capture_output=True, text=True, timeout=60)
+            self.assertEqual(cli.returncode, 0, cli.stderr)
+            self.assertIn("Engine\tconnected", cli.stdout)
             # No agent connects over gRPC (the agents' service of earlier versions is not there).
             channel = grpc.secure_channel(launch.address, grpc.ssl_channel_credentials(roots))
             try:
@@ -394,6 +442,7 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual(result["interrupted_by"], "control server stop")
         lines = audit.read_text().splitlines()
         self.assertTrue(any(line.startswith("o@") and "pause" in line and line.endswith(": ok") for line in lines), lines)
+        self.assertTrue(any(line.startswith("v@") for line in lines), lines)
         self.assertTrue(any(line.startswith("tester@") and "stop (the test is done)" in line for line in lines), lines)
         # The tokens are in no event, no line of standard error and no line of the audit.
         everything = json.dumps(launch.events) + launch.stderr_text + "\n".join(lines)
@@ -411,6 +460,153 @@ class LauncherTest(unittest.TestCase):
                 self.assertEqual(c.sim.wait_paused(60).now, 0)
                 c.sim.resume()
             self.assertEqual(launch.wait()["result"], "passed")
+
+    # --- a scenario and the control server: the clients only look ---
+
+    def test_a_scenario_gives_the_same_result_with_readers_and_without(self):
+        sim, play = config("scenario_same", 5000), scenario("same", THROTTLE_STEP)
+
+        def played(result):
+            """What the scenario's promise is about: each step's times, values and outcome."""
+            self.assertEqual(result["result"], "passed", result["findings"])
+            self.assertEqual(result["scenario"]["status"], "passed")
+            return result["scenario"]
+
+        # Without a control server.
+        out = self.run_launcher("run", "--json", "--scenario", str(play), str(sim))
+        self.assertEqual(out.returncode, 0, out.stdout)
+        alone = played(json.loads(out.stdout))
+        self.assertGreater(len(alone["steps"]), 5)
+
+        # With one, and nobody there.
+        with self.launch("scenario_same", stop_at_ms=5000, arguments=["--scenario", str(play)]) as launch:
+            self.assertEqual(played(launch.wait()), alone)
+
+        for speed in ("max", "1"):
+            with self.launch("scenario_same", stop_at_ms=5000, arguments=["--scenario", str(play), "--speed", speed]) as launch:
+                address = launch.address
+                over = threading.Event()
+                seen = {"snapshots": 0, "moving": 0, "throttle": set(), "watched": 0, "errors": []}
+                stuck = []
+                # How a call ends when the run is over and the server closes.
+                closing = (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.CANCELLED)
+
+                def poll():
+                    # Asks as fast as it can, with everything that reads.
+                    try:
+                        with Control(address) as c:
+                            while not over.is_set():
+                                snap = c.snapshot()
+                                seen["snapshots"] += 1
+                                seen["moving"] += 1 if snap.time.now > 0 and not snap.time.ended else 0
+                                if "Engine" in snap.values:
+                                    seen["throttle"].add(snap.values["Engine"].values["engine.throttle"])
+                                c.peers()
+                                c.sim.time()
+                                if c.peer("Engine").connected:
+                                    c.values("Engine")
+                    except ControlError as e:
+                        if e.code not in closing:
+                            seen["errors"].append(e)
+
+                def watch():
+                    try:
+                        with Control(address) as c:
+                            for _ in c.watch(time=True, simulation=True):
+                                seen["watched"] += 1
+                    except ControlError as e:
+                        if e.code not in closing:
+                            seen["errors"].append(e)
+
+                # Readers that ask for everything and then read nothing: their streams fill up
+                # and stay full. The smallest queue too (it drops, it never waits).
+                for i in range(24):
+                    c = Control(address)
+                    stream = c.watch(time=True, simulation=True, capacity=1 if i % 2 else 0)
+                    self.assertIsNotNone(next(stream))  # it is open, and from here on nobody reads
+                    stuck.append((c, stream))
+                threads = [threading.Thread(target=poll, daemon=True) for _ in range(3)]
+                threads += [threading.Thread(target=watch, daemon=True) for _ in range(3)]
+                for thread in threads:
+                    thread.start()
+                # It ends by itself, readers that are stuck or not, and with the same result.
+                result = launch.wait(120)
+                over.set()
+                for thread in threads:
+                    thread.join(30)
+                self.assertFalse([t for t in threads if t.is_alive()])
+                for c, stream in stuck:
+                    c.close()
+            self.assertEqual(played(result), alone, f"--speed {speed}")
+            self.assertEqual(launch.returncode, 0)
+            self.assertEqual(seen["errors"], [])
+            self.assertGreater(seen["snapshots"], 0)
+            self.assertGreater(seen["watched"], 0)
+            self.assertEqual(commands_of(launch), [])
+            if speed == "1":
+                # In real time the readers were there while it played: they saw the time go on
+                # and the scenario's own writes (the throttle it sets, on its way up or down).
+                self.assertGreater(seen["moving"], 0)
+                self.assertTrue(seen["throttle"] - {20.0}, seen["throttle"])
+
+    def test_during_a_scenario_a_client_reads_and_stops_and_changes_nothing(self):
+        play = scenario("long", LONG)
+        with self.launch("scenario_only_look", stop_at_ms=3_600_000, arguments=["--scenario", str(play), "--speed", "1"]) as launch:
+            with Control(launch.address) as c:
+                launch.wait_for_event("phase", phase="running")
+                wait_until(self, "the engine's values", lambda: c.values("Engine") is not None and c.sim.time().now > ms(50))
+                refusals = {
+                    "write": lambda: c.write({"Engine": {"engine.throttle": 10.0}}),
+                    "forget a peer": lambda: c.forget_peer("Engine"),
+                    "pause": lambda: c.sim.pause(),
+                    "resume": lambda: c.sim.resume(),
+                    "step": lambda: c.sim.step(ms(10)),
+                    "run until": lambda: c.sim.run_until(ms(100_000)),
+                    "set the speed": lambda: c.sim.set_speed(2.0),
+                }
+                for what, call in refusals.items():
+                    with self.assertRaises(ControlError) as refused:
+                        call()
+                    e = refused.exception
+                    self.assertEqual((e.code, e.reason), (grpc.StatusCode.FAILED_PRECONDITION, "scenario-running"), what)
+                    self.assertIn(f"cannot {what}: this run plays a scenario (run --scenario), and until it ends only the "
+                                  "scenario writes variables and moves the time", str(e))
+                    self.assertIn("a client can read (ListPeers, GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; "
+                                  "to write or to move the time from a client, run without --scenario", str(e))
+                # Nothing of it got through: the throttle is the scenario's, the time goes on.
+                self.assertEqual(c.values("Engine").values["engine.throttle"], 50.0)
+                t = c.sim.time()
+                self.assertEqual((t.paused, t.running, t.ended), (False, True, False))
+                self.assertFalse(c.snapshot().consistent)  # it runs (the scenario's hold of a step is no pause)
+                # The commands on standard input are the run's own, as without a control server: a
+                # pause there is one the clients see, and cannot end.
+                launch.send({"command": "pause"})
+                now = c.sim.wait_paused().now
+                snap = c.snapshot()
+                self.assertEqual((snap.consistent, snap.time.now, snap.time.paused), (True, now, True))
+                with self.assertRaises(ControlError) as refused:
+                    c.sim.resume()
+                self.assertEqual(refused.exception.reason, "scenario-running")
+                self.assertTrue(c.sim.time().paused)
+                launch.send({"command": "resume"})
+                wait_until(self, "the time goes on", lambda: c.sim.time().now > now)
+                # A stop is taken: the run is the one that was stopped, the scenario did not finish.
+                c.sim.stop("enough")
+            result = launch.wait()
+        self.assertEqual(commands_of(launch), [
+            ("pause", "stdin", True, None, None),
+            ("resume", "stdin", True, None, None),
+            ("stop", "control_server", True, None, None),
+        ])
+        self.assertEqual((result["result"], result["interrupted_by"]), ("interrupted", "control server stop"))
+        self.assertEqual(launch.returncode, 130)
+        self.assertEqual(result["scenario"]["status"], "incomplete")
+        self.assertIn(("error", "scenario-incomplete", None), findings_of(result))
+        self.assertEqual([s["status"] for s in result["scenario"]["steps"]], ["passed", "not_run"])
+
+    def test_version_lists_scenario_control(self):
+        out = self.run_launcher("version", "--json")
+        self.assertEqual(json.loads(out.stdout)["features"][-2:], ["control-server", "scenario-control"])
 
     def run_launcher(self, *arguments):
         return subprocess.run([LAUNCH, *arguments], capture_output=True, text=True, timeout=120)

@@ -7,6 +7,8 @@
 
 #include "vehicle_sil/launch/run.hpp"
 
+#include "run_start_limit.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <optional>
@@ -1237,4 +1239,70 @@ TEST_CASE(a_disabled_participant_is_shown_as_not_started_and_is_no_finding)
     CHECK(json.find("      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n      \"ended\": "
                     "\"not_started\",\n      \"exit_code\": null,\n      \"signal\": null,\n      \"left_processes\": false,\n"
                     "      \"log\": null,\n      \"control_link\": {\n        \"state\": \"none\",\n        \"variables\": null,\n        \"version\": null,\n        \"late_messages\": 0\n      }\n") != std::string::npos);
+}
+
+// The limit of the start, in the orders the main thread and the start window's thread can meet
+// (no clock: the times are given).
+TEST_CASE(the_start_limit_of_a_run_without_manual_participants_is_the_one_set)
+{
+    using vehicle_sil::launch::detail::StartLimit;
+    const StartLimit::Clock::time_point t0{std::chrono::seconds(100)};
+    const std::chrono::milliseconds length(5000);
+    StartLimit limit;
+    CHECK(limit.at() == StartLimit::Clock::time_point::max());
+    limit.set(t0 + length, length);
+    // Whether participants started by hand are ready does not matter in a run without them.
+    for (const bool ready : {false, true})
+    {
+        const StartLimit::Now now = limit.take(t0 + std::chrono::seconds(1), ready);
+        CHECK(now.at == t0 + length);
+        CHECK(now.length == length);
+        CHECK(!now.after_hold);
+    }
+    // In the hold: none. After it: anew from its end, and the message says so.
+    limit.begin_hold();
+    CHECK(limit.take(t0 + std::chrono::hours(1), true).at == StartLimit::Clock::time_point::max());
+    const auto released = t0 + std::chrono::hours(2);
+    limit.end_hold(released, length, false);
+    const StartLimit::Now after = limit.take(released + std::chrono::seconds(1), false);
+    CHECK(after.at == released + length);
+    CHECK(after.length == length);
+    CHECK(after.after_hold);
+}
+
+TEST_CASE(the_start_limit_with_manual_participants_begins_when_they_are_ready_and_never_in_the_hold)
+{
+    using vehicle_sil::launch::detail::StartLimit;
+    const StartLimit::Clock::time_point t0{std::chrono::seconds(100)};
+    const auto none = StartLimit::Clock::time_point::max();
+    const std::chrono::milliseconds length(5000);
+    {
+        // Ready before the hold: the limit begins at that look, the hold takes it away.
+        StartLimit limit;
+        limit.set_once_manual_ready(length);
+        CHECK(limit.take(t0, false).at == none);
+        CHECK(limit.take(t0 + std::chrono::seconds(1), true).at == t0 + std::chrono::seconds(1) + length);
+        CHECK(limit.take(t0 + std::chrono::seconds(2), true).at == t0 + std::chrono::seconds(1) + length); // begun once
+        limit.begin_hold();
+        CHECK(limit.take(t0 + std::chrono::hours(1), true).at == none);
+    }
+    {
+        // The hold begins before the main thread has seen them ready (the window's thread was
+        // first): the first look that finds them ready comes in the hold and sets no limit. A
+        // limit set here would be one of 0 ms (the hold has no length), and the start would be
+        // given up at once.
+        StartLimit limit;
+        limit.set_once_manual_ready(length);
+        limit.begin_hold();
+        const StartLimit::Now held = limit.take(t0, true);
+        CHECK(held.at == none);
+        // After the hold: from the first look that finds them ready, with the length of the start.
+        const auto released = t0 + std::chrono::hours(1);
+        limit.end_hold(released, length, true);
+        CHECK(limit.take(released, false).at == none);
+        const StartLimit::Now after = limit.take(released + std::chrono::seconds(3), true);
+        CHECK(after.at == released + std::chrono::seconds(3) + length);
+        CHECK(after.length == length);
+        CHECK(after.after_hold);
+    }
 }

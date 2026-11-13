@@ -109,6 +109,20 @@ struct SecurityOptions
 /// (SecurityOptions::allow_insecure).
 [[nodiscard]] bool is_loopback_address(const std::string& listen);
 
+/// The name of the trailing metadata that says why a call was refused, for a client that must
+/// tell the refusals apart without reading the message (ObserveOnly::reason).
+inline constexpr const char* kRefusalReasonKey = "vehicle-sil-reason";
+
+/// A server that only shows the simulation (ServerOptions::observe_only).
+struct ObserveOnly
+{
+    /// Why, for programs: a short lower-case ASCII word ("scenario-running"), sent as the trailing
+    /// metadata kRefusalReasonKey of every refused call.
+    std::string reason;
+    /// Why, and what to do instead, for people: the refusal is "cannot <action>: <message>".
+    std::string message;
+};
+
 struct ServerOptions
 {
     /// gRPC address to listen on; port 0 picks a free port (see ControlServer::port()).
@@ -137,6 +151,11 @@ struct ServerOptions
     /// for fewer peers). The default is what a gRPC client receives unless it was told otherwise.
     std::size_t max_snapshot_bytes = std::size_t{4} * 1024 * 1024;
     SecurityOptions security{};
+    /// Set: the server only shows the simulation. Every call that changes it (Write, ForgetPeer,
+    /// Pause, Resume, RunUntil, Step, SetSpeed) is refused with FAILED_PRECONDITION for every role,
+    /// before it reaches the hub or `time`, with a line in the audit log. The calls that read or
+    /// wait are served as always, and so is Stop (a simulation can always be ended).
+    std::optional<ObserveOnly> observe_only{};
     /// Called with one line for every call that changes something (write, time operations) and
     /// for refused calls: who, from where, what, and the outcome. Control
     /// characters become '?' and a line is cut at about 1000 bytes. Refused calls are thinned

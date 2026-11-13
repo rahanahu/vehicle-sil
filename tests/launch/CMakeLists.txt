@@ -7,7 +7,8 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
   PREFIX launch LABELS unit launch TIMEOUT 60
   SOURCES test_config.cpp test_check.cpp test_run.cpp test_events.cpp test_scenario.cpp
   LINK vehicle_sil::launch vehicle_sil::core) # core: the time commands with a controller (test_events.cpp)
-target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# libs/launch/src: the run's parts that have no dependencies and are tested as written (run_start_limit.hpp).
+target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/launch/src)
 target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_SCRATCH="${CMAKE_CURRENT_BINARY_DIR}/scratch")
 
 # vehicle_sil_launch check as a process: the examples of docs/simulation-config.md with the ECU

@@ -52,7 +52,7 @@ int main(int argc, char** argv)
 
 ### 変数を出す（`--registry-uri`）
 
-ECU は（変数を宣言していなくても、`ecu.connected` があります）、`--registry-uri` で参加するとき、何も書かなくても、その変数を SIL Kit の publish/subscribe でシミュレーションへ出します（`vehicle_sil::control_silkit::AgentTransport`。[architecture.md](architecture.md) の「SIL Kit の上の運び手」）。`vehicle_sil_launch run` がそれを受けて、変数を読み書きする側になります（[simulation-config.md](simulation-config.md) の「変数を読み書きする口」）。ランチャーを使わないシミュレーションでは、`vehicle_sil_control_server` が受けます（[control-api.md](control-api.md) の「単独の Control Server」）。受ける側がいなければ、送ったものは誰にも届かないだけです。
+ECU は（変数を宣言していなくても、`ecu.connected` があります）、`--registry-uri` で参加するとき、何も書かなくても、その変数を SIL Kit の publish/subscribe でシミュレーションへ出します（`vehicle_sil::control_silkit::AgentTransport`。[architecture.md](architecture.md) の「SIL Kit の上の運び手」）。`vehicle_sil_launch run` がそれを受けて、変数を読み書きする側になります（[simulation-config.md](simulation-config.md) の「変数を読み書きする口」）。受ける側がいなければ、送ったものは誰にも届かないだけです。
 
 - gRPC も Protocol Buffers も要りません（ECU の実行ファイルは、どちらにも依存しません）。
 - 値と書き込みの結果は、ステップの中で、値を読んだ直後に送ります。送る頻度は Agent の `sample_period`（既定 10 ms。`Ecu::set_agent_options()`）です。間引きはしません。

@@ -395,6 +395,19 @@ std::unique_ptr<LauncherControlServer> make_control_server(const ControlArgument
             *audit << line << std::endl;
         };
     }
+    if (arguments.scenario)
+    {
+        // What a client writes, and when it lets the time go on, is not in the scenario's file:
+        // with it, the same scenario would not give the same result any more. Reading changes
+        // nothing (the hub's subscriptions are bounded and never make the simulation wait), and a
+        // stop is the run's to take as always.
+        options.observe_only = control_grpc::ObserveOnly{
+            kScenarioRunning,
+            "this run plays a scenario (run --scenario), and until it ends only the scenario writes variables and "
+            "moves the time, so that the same scenario always gives the same result; a client can read (ListPeers, "
+            "GetValues, GetSnapshot, Watch, GetTime, WaitPaused) and Stop; to write or to move the time from a "
+            "client, run without --scenario"};
+    }
     auto time = std::make_unique<LaunchTimeControl>(*hooks.commands, std::move(hooks.stop));
     return std::make_unique<Server>(std::move(options), std::move(time), std::move(audit));
 }

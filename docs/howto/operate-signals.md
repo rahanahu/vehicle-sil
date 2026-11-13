@@ -25,7 +25,7 @@ flowchart LR
 | CLI（`python -m vehicle_sil_control`） | Python を書かずに、1 つずつ読む、書く、進める | [control-api.md](../control-api.md) の「CLI」 |
 | GUI（`vehicle-sil-gui`） | ブラウザで値を見ながら、スライダーやスイッチで書く | [gui.md](../gui.md) の「ECU の変数」と「変数の画面と部品」 |
 
-- シナリオと Control Server は、同じ実行で一緒に使えません（`--scenario` と `--control` は引数の誤り）。外から値を書くと、シナリオが同じ結果にならなくなるためです。
+- シナリオの実行（`--scenario`）にも Control Server（`--control`）でつなげますが、その間は、読む・待つ・止めるだけです（[scenario.md](../scenario.md) の「実行中に変数を見る」）。外から値を書くと、シナリオが同じ結果にならなくなるためです。
 - GUI も、中ではランチャーの Control Server を使います。Python と同じ規則（反映の時刻、書き込みの結果）で動きます。
 
 ## 準備

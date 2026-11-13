@@ -33,7 +33,7 @@ struct ParticipantFailure
 
 /// Decides when a participant that left a running simulation has failed it, the same way for
 /// every tool that watches a simulation (vehicle_sil::Simulation, vehicle_sil_sim_controller,
-/// vehicle_sil_control_server).
+/// the control server's SimulationMonitor).
 ///
 /// A participant in Error fails the simulation at once. A participant that left in another state
 /// (it stopped) usually ends the simulation a moment later: its stop reaches the controller after

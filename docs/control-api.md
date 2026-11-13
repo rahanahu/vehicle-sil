@@ -13,7 +13,7 @@ flowchart LR
     launch -- SIL Kit --> e2["ECU (ecu_main)"]
 ```
 
-ランチャーを使わずに動かすシミュレーションには、単独の Control Server（`vehicle_sil_control_server`）を参加させます。ECU とは、ランチャーと同じく SIL Kit でつながります（下の「単独の Control Server」）。
+ECU をランチャーに起動させずに、自分で起動する（デバッガーから動かす、別の端末で起動する）ときも、構成ファイルの participant に `manual: true` を付けるか `run --manual <name>` で、同じランチャーにつなぎます（[simulation-config.md](simulation-config.md) の「participant を自分で起動する」）。
 
 ## ビルド
 
@@ -34,6 +34,7 @@ vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simu
 - 実際のアドレス（ポート 0 なら選ばれたポート）は、事象 `control_server` の `address` と、人向けの出力の `[vehicle_sil_launch] control server at <address>` の行で知らせます。照合が通った後、registry より前に立てます（照合で失敗した実行では立てません）。立てられなければ（ポートが使われているなど）、何も起動せずに設定の誤り（`setup`、終了コード 3）です。
 - サーバーが扱うのは、そのランチャーの実行だけです。ECU の変数（Peer の一覧、値、書き込み、操作の結果、購読）と、仮想時間（一時停止、再開、ステップ、指定時刻まで、速さ、停止）です。Peer の一覧には、構成ファイルの必須の participant も、Agent がなくても出ます。
 - 実行が終わると（ふつうの終わり、止める要求、`--timeout-ms`、participant の失敗、どれでも）、ランチャーは participant を終わらせてから、結果を書く前にサーバーを閉じます。待っている呼び出し（`Watch`、`WaitOperation`、`WaitPaused`）は、そこで終わります（`Watch` はストリームの終わり、`WaitPaused` は `FAILED_PRECONDITION` か `CANCELLED`）。ランチャーはクライアントを待たないので、クライアントがあっても終わるのは遅れません。シミュレーションが終わってからサーバーを閉じるまでの間は、終わった時点の値を読めます。
+- シナリオの実行（`--scenario`）では、クライアントは見るだけです。読む・待つ呼び出しと `Stop` はいつもどおりで、書く呼び出し（`Write`、`ForgetPeer`）と時刻を動かす呼び出し（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）は `FAILED_PRECONDITION` で断ります。理由は trailing metadata の `vehicle-sil-reason`（値は `scenario-running`）で見分けます。表と約束は [scenario.md](scenario.md) の「実行中に変数を見る」。
 - 例: [examples/launch_control](../examples/launch_control)（Python から起動してつなぎ、始まる前に書いて、読み返して確かめる `write_before_start.py`。動いている途中で止め、時刻を指定して書き、`snapshot()` で時刻と値をまとめて読んで確かめ、速さを変えて最後まで動かす `pause_and_step.py`）。
 
 ### 始まる前に書く（`--start-paused`）
@@ -74,8 +75,17 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
 
 - ループバック（ポート番号だけ、`localhost:<port>`、`[::1]:<port>`、数字の `127.x.y.z:<port>`、`unix:<path>`）では、`--control-credentials` を付けなければ認証はありません。同じコンピューターの誰でもつなげます。`unix:` のソケットは、ファイルの権限しだいで、同じコンピューターのほかの利用者もつなげます。
 - ほかのコンピューターからつながるアドレス（`0.0.0.0:<port>` など）では、TLS と認証情報が要ります（`--control-tls-cert`、`--control-tls-key`、`--control-credentials`）。足りなければ引数の誤り（終了コード 4）です。
-- 認証情報は、単独の Control Server と同じ形式のファイルです（下の「単独の Control Server を起動する」）。1 件もないファイル（空、コメントだけ）は引数の誤りです（付けたのに誰でもつなげる、を避けるため）。誤りの文は行番号と何が違うかだけで、行の語は出しません（トークンかもしれないため）。トークンは引数に書けません（ランチャーの引数は、事象 `hello` の `arguments` や、プロセスの一覧に出るため）。
-- `--control-audit-log <file>` で、誰が何を変えたかをファイルに追記します（書けなくなっても実行は続き、その行は失われます）。呼び出しに要る役割は、単独の Control Server と同じです（viewer は読むだけ、operator は時間の操作と書き込み、`Stop` は admin だけ）。
+- 認証情報のファイルは 1 行に 1 つで、`<role> <name> <token>` です（role は viewer、operator、admin。トークンは 16 文字以上の秘密の文字列）。`#` で始まる語から行末まではコメントです。ECU はトークンを使いません。前の版の `agent` の行は読み込みの誤りです（文言のとおり、その行を消します）。1 件もないファイル（空、コメントだけ）は引数の誤りです（付けたのに誰でもつなげる、を避けるため）。誤りの文は行番号と何が違うかだけで、行の語は出しません（トークンかもしれないため）。トークンは引数に書けません（ランチャーの引数は、事象 `hello` の `arguments` や、プロセスの一覧に出るため）。
+
+```text
+# role     name     token
+viewer     guest    5e07d2...（長い乱数）
+operator   tester   0f3c9a...
+admin      lead     7b21e4...
+```
+
+- `--control-audit-log <file>` で、誰が何を変えたかをファイルに追記します（書けなくなっても実行は続き、その行は失われます）。呼び出しに要る役割は、viewer は読むだけ、operator は時間の操作と書き込み、`Stop` は admin だけです。
+- ECU とランチャーの間（SIL Kit）には認証がありません。レジストリに参加できる者は、ECU に書き込めます。閉じたネットワークで使います。
 
 ## ECU の変数
 
@@ -102,7 +112,7 @@ private:
 - どの ECU にも Agent があります（変数を宣言しなくても、どの ECU にもある入力 `ecu.connected` を持ちます）。そのため、変数を宣言しない ECU でも、ステップごとに Agent の処理（書き込みの反映と、`sample_period` ごとの値の読み出し）が走り、`ecu_main` の ECU は `sample_period` ごと（既定 10 ms）に値のメッセージを 1 通出します。`Peer` では監視の出力（`PeerOptions::monitor`）も付きます。
 - 外からの書き込みは、指定した仮想時刻以後の最初のステップで、アプリの処理の前に反映されます（そのステップの J1939 の受信処理や部品のタイマーは反映より前に動くので、それらが新しい値を使うのは次のステップから）。値は、アプリと LIN の処理の後に読み出します。SIL Kit とローカルで同じ時点です。
 - 同じプロセスからは、`ecu.agent().submit()` で書き込み、`latest()` で読めます。`Simulation::add<App>()` で足した ECU は、`sim.ecu(name).agent()` で引けます（例: `examples/vehicle`）。
-- Control Server（ランチャーの、または単独の）につながるのは、SIL Kit の participant の ECU だけです。`ecu_main` の ECU は自動でつながります。自分で書いた `Peer` は、ECU が変数を宣言した後、`start()` の前に `vehicle_sil::control_silkit::AgentTransport transport(peer.agent(), peer.runtime());` を作ってつなぎます（`peer.stop()` の後、`Peer` より先に破棄します）。ローカル（`Simulation()`、`LocalBench`）の ECU は Control Server につながりません。同じプロセスから `agent()` で読み書きします。
+- ランチャーの Control Server につながるのは、SIL Kit の participant の ECU だけです。`ecu_main` の ECU は自動でつながります。自分で書いた `Peer` は、ECU が変数を宣言した後、`start()` の前に `vehicle_sil::control_silkit::AgentTransport transport(peer.agent(), peer.runtime());` を作ってつなぎます（`peer.stop()` の後、`Peer` より先に破棄します）。ローカル（`Simulation()`、`LocalBench`）の ECU は Control Server につながりません。同じプロセスから `agent()` で読み書きします。
 
 ## Python
 
@@ -131,7 +141,7 @@ with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulati
 - `Launch(launcher, config, address="0", start_paused=False, arguments=(), cwd=None, stderr=None)`: `arguments` は `run` のほかの引数（`--speed`、`--disable`、`--control-credentials` など）です。`events`（読んだ事象の dict の一覧）、`result`、`wait_for_event(event, timeout, **keys)`（キーの値が合う最初の事象を待つ）、`send(command)`（標準入力に命令を 1 行）、`stop()`、`wait(timeout)`、`returncode`。ランチャーが結果を書かずに終わったときや、待つ事象が来ないまま実行が終わったときは `LaunchError` です（文言に結果と誤りの所見）。
 - 自分でランチャーを起動するときは、`control_address(lines)` が、事象の行（文字列か dict）から最初の `control_server` の `address` を返します。
 
-単独の Control Server（下の「単独の Control Server」。ここでは TLS とトークンつき）にも、同じようにつなぎます。
+別のコンピューターから、TLS とトークンを付けたランチャー（上の「認証」）にも、同じようにつなぎます。
 
 ```python
 from vehicle_sil_control import Control, ms
@@ -149,7 +159,7 @@ with Control("ctrl-pc:8510", token=token, root_certificates=open("server.crt", "
         break
 ```
 
-時刻は仮想時間のナノ秒です（`ms()`、`s()` で作る）。呼び出しの失敗は `ControlError`（`code` は gRPC の状態コード）で、Agent が断った書き込みは例外ではなく、操作の結果（`invalid` など）になります。
+時刻は仮想時間のナノ秒です（`ms()`、`s()` で作る）。呼び出しの失敗は `ControlError`（`code` は gRPC の状態コード。`reason` は、サーバーが理由を付けて断ったときのその語で、なければ空。シナリオの実行中の書き込みと時刻の操作は `scenario-running`）で、Agent が断った書き込みは例外ではなく、操作の結果（`invalid` など）になります。
 
 - 止めてから書くときは、`at` を止まっている時刻（`c.sim.time().now`）より後にします（たとえば 1 ns 後）。止まっている時刻のステップは、すでに走った Peer があるので、その時刻か `at` なしの書き込みは `late` になるか、反映のステップが実行ごとに変わることがあります。例外は、ランチャーの `--start-paused` で最初のステップの前に止まっているときです（上の「始まる前に書く」）。
 - 時刻と、複数の Peer の値を、同じ瞬間のものとして読むには `c.snapshot(peers=())` を使います（下の「時刻と値をまとめて読む」）。`c.sim.time()` と `c.values()` を別々に呼ぶと、その間にシミュレーションが進むことがあり、2 つの間に約束はありません。
@@ -180,14 +190,14 @@ if snap.consistent:                       # 値は、止まっている時刻 sn
   - 実時間の Peer（シミュレーションの時刻で動かない Peer。`peers()` の `virtual_time` が偽）の値には、約束がありません。`consistent` は、その値を見ずに決めます。
   - 切れた Peer の最後の値は、そのまま入っています。つながっているかは `c.peers()` で見ます。
   - 止まった直後は、同じ時刻でも、ちょうどその時刻のステップの値が届く前と後の 2 通りの応答がありえます（どちらも `consistent` は真）。届いたかどうかは `Values.time` でわかります。
-- `consistent` が偽: 動いている、終わっている、呼び出しの間に進んで後のステップの値が入った、Server が時間を操作しない（`--required` のない単独の Control Server）、のどれかです。値と時刻は、偽でも入っています。
+- `consistent` が偽: 動いている、終わっている、呼び出しの間に進んで後のステップの値が入った、のどれかです。値と時刻は、偽でも入っています。
 - `values` には、値を持つ Peer だけが入ります。まだ値のない Peer、Agent のない participant、知らない名前は入りません。gRPC の応答（`GetSnapshotReply.values`）は、名前を挙げたときは挙げた順に 1 つずつ（同じ名前は 1 回）、挙げなければ Agent を持つ Peer を名前の順に並べ、値のない Peer は `snapshot` なし、Agent のない名前は `incarnation` も空です。値の並びは、その `incarnation` のスキーマ（`ListPeers`）の順です。
 - 役割は viewer で呼べます。1 回に挙げられる名前は 1024 個までです（`INVALID_ARGUMENT`）。応答が 1 つのメッセージの上限（4 MiB）を超えるときは `RESOURCE_EXHAUSTED` で、文言のとおり、Peer を分けて呼びます（分けた呼び出しどうしの間に約束はありません）。
 - この呼び出しを持たない前の版の Server では、`ControlError`（`code` は `UNIMPLEMENTED`）になります。そのときは `sim.time()` と `values()` を使います（2 つの間に約束はありません）。
 
 ## CLI
 
-`--server`（既定は `VEHICLE_SIL_CONTROL_SERVER`）に、ランチャーの事象 `control_server` の `address`（人向けの出力では `control server at` の行）か、単独の Control Server のアドレスを渡します。
+`--server`（既定は `VEHICLE_SIL_CONTROL_SERVER`）に、ランチャーの事象 `control_server` の `address`（人向けの出力では `control server at` の行）を渡します。
 
 ```sh
 export VEHICLE_SIL_CONTROL_SERVER=ctrl-pc:8510 VEHICLE_SIL_CONTROL_TOKEN=... VEHICLE_SIL_CONTROL_ROOT_CERT=server.crt
@@ -201,49 +211,9 @@ python -m vehicle_sil_control watch --peer Body --count 10
 python -m vehicle_sil_control stop
 ```
 
-## 単独の Control Server（`vehicle_sil_control_server`）
-
-ランチャーを使わずに動かすシミュレーション（`vehicle_sil_sim_controller` や自分のプログラムで調停するもの、ECU をそれぞれの PC で起動するもの）を、外から操作するときの形です。Server は SIL Kit のシミュレーションに participant として参加し、ECU の Agent とランチャーと同じ SIL Kit の publish/subscribe でつながります。`ecu_main` で作った ECU は、変数を宣言していれば、何も書かなくても変数を出します（`--no-control` で出さない）。ECU は Control Server へ直接つながらず、gRPC を持ちません。クライアントの API（上の「Python」と「CLI」）は、ランチャーの Control Server と同じです。
-
-### 単独の Control Server を起動する
-
-```sh
-sil-kit-registry --listen-uri silkit://0.0.0.0:8500
-vehicle_sil_control_server --registry-uri silkit://localhost:8500 --listen 0.0.0.0:8510 \
-    --required Engine,Dashboard --start-paused 1 \
-    --credentials credentials.txt --tls-cert server.crt --tls-key server.key --audit-log audit.log
-vehicle_sil_engine_ecu --registry-uri silkit://ctrl-pc:8500        # ECU ごとに（ほかの PC でも）
-vehicle_sil_dashboard_ecu --registry-uri silkit://ctrl-pc:8500
-```
-
-- `--registry-uri` は必須です。Server はそのレジストリのシミュレーションに、`--participant`（既定 `ControlServer`）の名前で参加します。
-- `--required` を付けると、Server が SimulationController を兼ね、必要な participant がそろったところでシミュレーションを始めます。止まった時点で、それより前に始まった各 ECU のステップの値と書き込みの結果がそろっています（ランチャーと同じです）。
-  - 始める直前に、変数を出す必須の ECU が書き込みを受け取れるようになるのを待ちます（最長 5 秒。ふつうは待ちません）。標準出力に、つながった ECU（`control agents connected: ...`）、hello のなかった ECU（`no hello from a control agent of ... before the start (...)`。変数がないか `--no-control`）、版の違う ECU、答えなかった ECU、始まる前に去った ECU を 1 行ずつ書きます。
-  - 必要な participant が Error で抜ける（プロセスの異常終了、ステップの失敗、切断）とすぐに、ほかの状態で抜けて 5 秒たってもシミュレーションが終わらなければ、Server はシミュレーションを止めて終わります（終了コード 1。判定は `vehicle_sil_sim_controller` と同じ）。始まる前に `stop` を呼ぶと、始まった直後に止まります（Peer によっては、最初のステップの前に終わりを見て、開始の失敗として終わります）。参加者を待つ間の Ctrl+C / SIGTERM は、待つのをやめて終了コード 1 で終わります（全員がそろってから始まるまでの間に受けると、participant を終えるのに数秒かかることがあります）。
-  - `--gate-step-ms`（既定 10）は止められる時刻の刻みです。`--start-paused 1` で、時刻 0 のステップを走らせてから 0 で止まります（ランチャーの `--control` と `--start-paused` のような、最初のステップの前の止め方はありません）。止めてから書くときは、`at` を止まっている時刻より後にします（上の「Python」）。
-- `--required` を付けなければ、Server は自分の participant（Autonomous、実時間）で参加し、ほかの controller（`vehicle_sil_sim_controller` など）が調停するシミュレーションの変数を読み書きします。時間の操作はありません（`GetTime` の `available` は偽。`--gate-step-ms`、`--start-paused`、`--speed`、`--stop-at-ms` は引数の誤り）。値と結果が届く時刻と、シミュレーションの時刻の間に約束はありません。ECU より先に Server を起動します。ECU への書き込みは、ECU が Server の問い合わせに答えるまで `invalid` です。Server は hello を受けたときと、ECU のステップのメッセージごとに問い合わせるので、ふつうはすぐに答えます（シミュレーションが止まっている間に後から参加すると、再開するまで書けないことがあります）。Server は Ctrl+C / SIGTERM まで動きます。参加したシミュレーションが止まるか中断されて、Server の participant がシミュレーションを去ったときは、理由（`FAIL: the server's participant '<name>' left the simulation (state <state>) ...`）を書いて終了コード 1 で終わります。レジストリが落ちただけでは終わりません（SIL Kit は participant どうしの接続を保ちます。新しい participant が参加できなくなるだけです）。
-- 認証情報のファイルは 1 行に 1 つで、`<role> <name> <token>` です（role は viewer、operator、admin。トークンは 16 文字以上の秘密の文字列）。ECU はトークンを使いません。前の版の `agent` の行は読み込みの誤りです（文言のとおり、その行を消します）。
-
-```text
-# role     name     token
-viewer     guest    5e07d2...（長い乱数）
-operator   tester   0f3c9a...
-admin      lead     7b21e4...
-```
-
-- ループバック以外で待ち受けるときは TLS と認証情報が必須です（試すだけなら `--allow-insecure 1`）。ECU と Server の間（SIL Kit）には認証がありません。レジストリに参加できる者は、ECU に書き込めます。閉じたネットワークで使います。
-
-### 複数の PC
-
-- SIL Kit のレジストリと Control Server を 1 台に置き、各 PC の ECU はレジストリへ外向きにつなぎます（ECU の側で待ち受けるポートは要りません。SIL Kit は participant どうしが直接つながらないとき、レジストリを中継に使います）。クライアントは Control Server につなぎます。
-- 発見: Server（`--required` のとき）は、必須の participant を SIL Kit のレジストリを通して見ているので、どの PC の ECU も、Agent がつながる前から一覧に出ます（`peers` の `has_agent` が偽、`simulation_state` に SIL Kit の状態）。Agent の hello が届くと、その変数と値が加わります。
-- ECU のプロセスが落ちて起動し直すと、Server は新しい接続として扱い、前の未完了の操作を Unknown（反映されたかわからない）にします。ただし `--required` の ECU が落ちると、シミュレーションと Server が終わります（Coordinated の participant は、始まった後のシミュレーションに戻れない）。
-- Server を起動し直すと、前の Server の操作の結果は問い合わせられません（`NOT_FOUND`）。ECU がまだ持っていた時刻つきの書き込みは、そのまま反映されます。`--required` の Server を起動し直せば、シミュレーションも終わります。
-- 試験: `tests/control_server/multi_process.py` は、レジストリ、Server、`examples/ecu_main` の 2 つの ECU をプロセスに分けて動かし、Python から操作します。`--remote-dashboard` で Dashboard を別の PC で動かせます。
-
 ## 制限
 
-- 時間の操作（一時停止、ステップ実行、速度）は、ランチャーの Control Server と、`--required` でシミュレーションを調停している単独の Control Server だけです。止まるのは仮想時間で同期している Peer だけで、実時間の Peer は走り続けます。速度を指定したとき、シミュレーションが実時間に遅れても、後から追いつこうとはしません（遅れた分だけ後ろにずれたまま、指定の速度で進みます。[architecture.md](architecture.md) の時間の操作の「遅れ」）。
+- 時間の操作（一時停止、ステップ実行、速度）で止まるのは仮想時間で同期している Peer だけで、実時間の Peer は走り続けます。速度を指定したとき、シミュレーションが実時間に遅れても、後から追いつこうとはしません（遅れた分だけ後ろにずれたまま、指定の速度で進みます。[architecture.md](architecture.md) の時間の操作の「遅れ」）。
 - リセット、participant の起動と再起動、CAN/LIN のチャネルの選択はありません。ランチャーの Control Server は、そのランチャーの 1 回の実行だけを扱い、実行が終わると閉じます。
 - Peer の `status`（Python の `Peer.failed` と `error`、CLI の `FAILED`）は、いつも空です（ECU の Agent はこれを送りません）。participant の失敗は、シミュレーションの状態（`watch(simulation=True)` の `failed_participant` と `failure_reason`）で読みます。
 - 値の購読は最新値です（読む前に来た新しい値で置き換えます）。すべての値の記録は、SIL Kit のトレースか `TapPort` を使います。

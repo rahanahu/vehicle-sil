@@ -33,7 +33,9 @@
 //   events_usage run --events with a wrong command line (also one the check finds) or a file that
 //                cannot be read: which events come
 //   events_findings a participant leaves the simulation and its process ends later: every finding
-//                event is in the result, and none comes twice; the state "failed" comes at once
+//                event is in the result, and none comes twice; the state "failed" comes at once; a
+//                process that ends in a step: one "failed" (by the end of the process or because it
+//                left the simulation), one "ended", one finding with the exit code
 //   events_stalled a reader that does not read: the participants are not held up; a stop command, a
 //                signal and --timeout-ms work all the same; the launcher gives the reader up after
 //                its time limit
@@ -639,7 +641,15 @@ void quitter(const Options& o)
                                          "    describe: false\n");
     const Captured run = launch(o, {"run", "sim.yaml"}, dir);
     expect_code(run, 1, "run with a participant that ends before the start");
-    expect_text(run_part(run.standard_output),
+    // Engine is told to stop right after it was started. On a slow machine that is before it handles the request,
+    // and it ends by the signal itself. Both endings are right: this scenario is about Quitter.
+    std::string shown = run_part(run.standard_output);
+    const std::string by_signal = "stopped (" + kStop + "), signal " + kStop + "\n";
+    if (const auto at = shown.find(by_signal); at != std::string::npos)
+    {
+        shown.replace(at, by_signal.size(), "stopped (" + kStop + "), exit code 130\n");
+    }
+    expect_text(shown,
                 "run: the simulation did not start\n"
                 "\n"
                 "participant  required  ended\n"
@@ -2463,22 +2473,36 @@ void events_findings(const Options& o)
                 comparable(compact(json.standard_output.substr(0, json.standard_output.size() - 1)) + "}"),
                 "the result event as run --json");
 
-    // Engine's process ends in a step (exit code 7): the launcher learns of the failure by the end
-    // of the process, so "ended" comes first; the finding is settled, and "failed" has its message.
+    // Engine's process ends in a step (exit code 7). The launcher learns of the failure either by
+    // the end of the process ("process_ended": "ended" comes first, and "failed" has the finding's
+    // message) or, when its connection is gone first, because it left the simulation
+    // ("left_simulation": "failed" comes before "ended", without a message). Either way: one
+    // "failed", one "ended", one finding, which says how the process ended.
     write_file(dir / "Engine.behaviour", "exit-at-ms 200 7\n");
     const Captured crash = launch(o, {"run", "--events", "sim.yaml"}, dir);
     expect_code(crash, 1, "run --events with an ECU whose process ends");
     const std::vector<std::string> crashed = check_events(crash.standard_output);
-    const auto state = events_with(crashed, {"\"state\":\"failed\",\"reason\":\"process_ended\",\"message\":"});
+    const auto state = events_with(crashed, {"\"event\":\"participant\"", "\"name\":\"Engine\"", "\"state\":\"failed\""});
     const auto ended = events_with(crashed, {"\"event\":\"participant\"", "\"name\":\"Engine\"", "\"state\":\"ended\""});
     const auto finding = events_with(crashed, {"\"event\":\"finding\"", "\"code\":\"participant-failed\""});
     require(state.size() == 1 && ended.size() == 1 && finding.size() == 1, "failed, ended and the finding once each:\n" + crash.standard_output);
     log(state[0]);
-    require(std::stoll(value_of(ended[0], "seq")) < std::stoll(value_of(state[0], "seq")) &&
-                std::stoll(value_of(state[0], "seq")) < std::stoll(value_of(finding[0], "seq")),
-            "ended, then failed, then the finding");
-    require(value_of(state[0], "message") == value_of(finding[0], "message") && contains(state[0], "its process exited with code 7"),
-            "failed has the finding's message:\n" + state[0] + "\n" + finding[0]);
+    require(contains(finding[0], "its process exited with code 7"), "the finding says how the process ended:\n" + finding[0]);
+    const auto seqOf = [](const std::string& line) { return std::stoll(value_of(line, "seq")); };
+    require(seqOf(state[0]) < seqOf(finding[0]), "failed before the finding:\n" + crash.standard_output);
+    const std::string reason = value_of(state[0], "reason");
+    if (reason == "process_ended")
+    {
+        require(seqOf(ended[0]) < seqOf(state[0]), "process_ended: ended, then failed:\n" + crash.standard_output);
+        require(value_of(state[0], "message") == value_of(finding[0], "message"),
+                "failed has the finding's message:\n" + state[0] + "\n" + finding[0]);
+    }
+    else
+    {
+        require(reason == "left_simulation", "failed with the reason process_ended or left_simulation, not " + reason + ":\n" + state[0]);
+        require(seqOf(state[0]) < seqOf(ended[0]), "left_simulation: failed, then ended:\n" + crash.standard_output);
+        require(!contains(state[0], "\"message\":"), "left_simulation: failed has no message:\n" + state[0]);
+    }
 }
 
 void events_stderr(const Options& o)
@@ -3094,8 +3118,14 @@ void paused_failures(const Options& o)
         require(contains(lines.back(), "participant 'Engine': it failed while the simulation was running, and the launcher "
                                        "aborted the simulation: its process exited with code 3"),
                 "the failure, not the timeout:\n" + lines.back());
-        require(!events_with(lines, {"\"name\":\"Engine\"", "\"state\":\"failed\"", "\"reason\":\"process_ended\""}).empty(),
-                "Engine is failed at once");
+        // The launcher learns of it in two ways, and either may be first: its look at the process
+        // (process_ended), or the controller, which sees the connection go as the process ends, a
+        // moment before the process can be waited for (left_simulation). The result names the
+        // exit code in both (checked above).
+        const auto failed = events_with(lines, {"\"name\":\"Engine\"", "\"state\":\"failed\""});
+        require(failed.size() == 1 && (contains(failed[0], "\"reason\":\"process_ended\"") ||
+                                       contains(failed[0], "\"reason\":\"left_simulation\"")),
+                "Engine is failed at once, with one event" + (failed.empty() ? std::string() : ":\n" + failed[0]));
         require(gone, "no participant is left");
     }
     // --timeout-ms counts the time it stands still (wall-clock time).
@@ -3551,13 +3581,31 @@ void scenario_failures(const Options& o)
                                              "for 0 before the first step and runs by itself; pause and step it with "
                                              "--stdin-commands if needed\n"),
                 run.standard_error);
-        run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0"}, dir);
-        expect_code(run, 4, "--scenario with --control");
-        require(contains(run.standard_error, "--control"), run.standard_error);
         run = launch(o, {"run", "sim.yaml", "--scenario"}, dir);
         expect_code(run, 4, "--scenario without a file");
         const Captured version = launch(o, {"version", "--json"}, dir);
         require(contains(version.standard_output, "\"scenario\""), "version --json lists the feature scenario");
+        // With --control: a build with the control server serves it during the scenario (its
+        // clients only read; tests/control_server/test_launcher.py), and says so in its features.
+        const bool server = contains(version.standard_output, "\"control-server\"");
+        require(server == contains(version.standard_output, "\"scenario-control\""),
+                "version --json lists scenario-control exactly with control-server: " + version.standard_output);
+        run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0"}, dir);
+        if (server)
+        {
+            expect_code(run, 0, "--scenario with --control");
+            require(contains(run.standard_error, "control server at 127.0.0.1:") && contains(run.standard_error, "scenario: "),
+                    run.standard_error);
+            run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--control", "0", "--start-paused"}, dir);
+            expect_code(run, 4, "--scenario with --control and --start-paused");
+            require(contains(run.standard_error, "error: --scenario cannot be used with --start-paused: "), run.standard_error);
+        }
+        else
+        {
+            expect_code(run, 4, "--scenario with --control, without the control server");
+            require(contains(run.standard_error, "error: --control needs a vehicle_sil_launch built with the control server"),
+                    run.standard_error);
+        }
     }
 }
 
@@ -3887,9 +3935,26 @@ void manual_frozen(const Options& o)
         const bool running = !events_with(live.lines(), {"\"phase\":\"running\""}).empty();
         log(std::string("RESULT Late frozen as it joined: ") +
             (running ? "the simulation runs (Late got to its first step)" : "the start waits for Late"));
+        // On Windows, with a participant frozen while the simulation runs, the launcher sometimes
+        // does not end after the stop: destroying its controller's SIL Kit participant does not
+        // return (a known limit of the product; docs/simulation-config.md says to let the
+        // participant go on first). There, in that branch only, Late goes on before the stop. A
+        // stop with Late still frozen is checked on Windows before the start, on POSIX in both.
+#ifdef _WIN32
+        const bool thawFirst = running;
+#else
+        const bool thawFirst = false;
+#endif
+        if (thawFirst)
+        {
+            lateByHand.thaw();
+        }
         live.write("{\"command\":\"stop\"}\n");
         const auto [status, lines] = live.finish_unchecked(60s);
-        lateByHand.thaw();
+        if (!thawFirst)
+        {
+            lateByHand.thaw();
+        }
         require(status && status->code == 130,
                 "a stop ends a run that waits for a frozen participant (130), not " +
                     (status ? std::to_string(status->code) : std::string("still running")) + ":\n" + out_of(lines));
