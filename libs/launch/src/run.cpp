@@ -11,6 +11,7 @@
 //   run_scenario.*       RunScenario      run --scenario: the engine between hub, gate and result
 //   run_start.*          RunStart, RunStartWindow, StartShared   the wait, the start window, the limits
 //   run_start_limit.hpp  StartLimit       when the start is given up
+//   run_close.hpp        close_within()   the wait for the end of the SIL Kit objects, with a limit
 //   run_watch.*          RunWatch         the watch of the running simulation
 //   time_commands.cpp    TimeCommands     pause, resume, step, run_until, speed
 //   run_assess.cpp, run_format.cpp, run_words.hpp   the findings, the result, its text and JSON
@@ -25,6 +26,9 @@
 //   until the main thread joins it, and RunOutput.
 // - The controller's SIL Kit thread: the hub's tap of the scenario (RunScenario's samples).
 // - Each participant's reader thread (process::Process): RunOutput::on_line().
+// - The closing thread (Runner::close_connection(), at the end of run()): destroys the hub's
+//   transport, the controller and the registry, and touches nothing else of the run. The main
+//   thread waits for it with a limit.
 // - Whoever applies a time command (the thread that reads commands, a control server's):
 //   TimeCommands.
 //
@@ -42,6 +46,7 @@
 // write a variable or move the time are refused in the server, before they reach either.
 #include "vehicle_sil/launch/run.hpp"
 
+#include "run_close.hpp"
 #include "run_context.hpp"
 #include "run_control.hpp"
 #include "run_notes.hpp"
@@ -194,7 +199,8 @@ public:
         std::string uri;
         try
         {
-            registry = SilKit::Vendor::Vector::CreateSilKitRegistry(SilKit::Config::ParticipantConfigurationFromString("{}"));
+            registry = SilKit::Vendor::Vector::CreateSilKitRegistry(
+                SilKit::Config::ParticipantConfigurationFromString(std::string(default_participant_configuration())));
             // A participant started by hand gets a command that stays the same from run to run.
             const bool fixed = !ctx_.config.registry_uri && waits_for_manual(ctx_.config);
             const std::string listen =
@@ -237,6 +243,10 @@ public:
             time.step = std::chrono::milliseconds(outcome_.timing.time_step_ms);
             time.late_tolerance = std::chrono::milliseconds(outcome_.timing.late_tolerance_ms);
             c.time_control = time;
+            // The controller's stop may wait that long by itself for a participant that does not
+            // answer; beyond it, stop_timeout_ms as for every other wait of the end, but never
+            // less than kCloseMargin: a small stop_timeout_ms must not cut a close that is going on.
+            close_limit_ = c.shutdown_timeout + std::max(std::chrono::milliseconds(ctx_.config.stop_timeout_ms), kCloseMargin);
             controller = std::make_unique<SimulationController>(std::move(c));
             // Before the participants start and before the controller does: SIL Kit connects the
             // publisher of the commands and the subscribers with every participant that starts.
@@ -287,9 +297,7 @@ public:
         participants_.end_manual(*controller, ran || start_.before_start_failed(), interrupts_at_end_);
         // The agents have said their last word (their processes have ended); what is still open
         // in the hub is settled here.
-        transport.reset();
-        controller.reset();
-        registry.reset();
+        close_connection(std::move(transport), std::move(controller), std::move(registry));
         return outcome_;
     }
 
@@ -299,6 +307,50 @@ public:
     void publish_findings(bool final) { notes_.publish_findings(outcome_, final); }
 
 private:
+    /// The end of what the run has of SIL Kit: destroys the hub's transport, the controller and
+    /// the registry, in this order, and waits for that close_limit_ at most (one more interrupt
+    /// ends the wait). SIL Kit joins the thread of its connections when a participant is
+    /// destroyed, and a connection that does not close would keep the run from its result for
+    /// ever (seen on Windows before its connections were TCP ones, with a participant whose
+    /// threads were suspended: docs/dependencies.md). So the three are destroyed on a thread of
+    /// their own (detail::close_within()); if it has not ended in time, it is left with them
+    /// (RunOutcome::connection_not_closed_ms), and the run goes on to its result.
+    void close_connection(std::unique_ptr<control_silkit::HubTransport> transport, std::unique_ptr<SimulationController> controller,
+                          std::unique_ptr<SilKit::Vendor::Vector::ISilKitRegistry> registry)
+    {
+        struct Closing
+        {
+            // In the order of their making: destroyed by hand below, in the reverse order.
+            std::unique_ptr<SilKit::Vendor::Vector::ISilKitRegistry> registry;
+            std::unique_ptr<SimulationController> controller;
+            std::unique_ptr<control_silkit::HubTransport> transport;
+        };
+        const auto closing = std::make_shared<Closing>();
+        closing->registry = std::move(registry);
+        closing->controller = std::move(controller);
+        closing->transport = std::move(transport);
+        const int interrupts = ctx_.interrupts();
+        // The thread keeps the three (the shared pointer). What they use of this run stays too if
+        // it is left: run_file() never destroys the Runner of such a run.
+        const auto left = detail::close_within(
+            [closing] {
+                closing->transport.reset();
+                closing->controller.reset();
+                closing->registry.reset();
+            },
+            close_limit_, ctx_.options.poll, [this, interrupts] { return ctx_.interrupts() > interrupts; });
+        if (!left)
+        {
+            return;
+        }
+        outcome_.connection_not_closed_ms = left->waited.count();
+        outcome_.connection_close_interrupted = left->interrupted;
+        out_.say("the launcher's own connection to the simulation (SIL Kit) has not closed " + std::to_string(left->waited.count()) +
+                 " ms after the participants ended" +
+                 (left->interrupted ? " and the launcher was asked to stop once more" : std::string{}) +
+                 ": the launcher ends without closing it");
+    }
+
     // The order matters. Each part keeps references to those it uses (all declared here, so they
     // outlive run()); they are destroyed in the reverse order.
     std::unique_ptr<TimeCommands> own_commands_; ///< without RunOptions::time_commands
@@ -311,6 +363,8 @@ private:
     RunStart start_;
     RunWatch watch_;
     int interrupts_at_end_ = 0; ///< ctx_.interrupts() when the simulation had ended
+    static constexpr std::chrono::milliseconds kCloseMargin{5000};
+    std::chrono::milliseconds close_limit_{0}; ///< close_connection(): how long the SIL Kit objects may take to go
     // Last, so that it goes first: a Process ends its reader thread, which uses the output (out_),
     // also when run() leaves with an exception.
     RunParticipants participants_;
@@ -352,11 +406,18 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
         }
     });
     const std::filesystem::path base = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
-    Runner runner(*report.check.config, report.check, base, options);
-    report.run = runner.run();
+    auto runner = std::make_unique<Runner>(*report.check.config, report.check, base, options);
+    report.run = runner->run();
     report.findings = assess_run(*report.run);
-    runner.publish_findings(true);
+    runner->publish_findings(true);
     event([](EventStream& e) { e.phase(Phase::Ended); });
+    if (report.run->connection_not_closed_ms)
+    {
+        // A thread of the run still closes the connection, and may use the parts of the run for
+        // as long as the process lives: they are never destroyed. The participants' processes
+        // have ended, and their logs are written line by line.
+        static_cast<void>(runner.release());
+    }
     return report;
 }
 

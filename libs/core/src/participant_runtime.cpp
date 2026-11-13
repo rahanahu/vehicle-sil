@@ -33,6 +33,49 @@ bool is_terminal_or_stopping(orch::ParticipantState state) noexcept
 
 } // namespace
 
+namespace {
+
+// Windows only; elsewhere nothing. The one place that says what vehicle-sil changes of SIL Kit's
+// defaults.
+#ifdef _WIN32
+constexpr std::string_view kDefaultMembers = R"("Middleware":{"EnableDomainSockets":false})";
+#else
+constexpr std::string_view kDefaultMembers = "";
+#endif
+
+} // namespace
+
+std::string_view default_participant_configuration() noexcept
+{
+#ifdef _WIN32
+    return R"({"Middleware":{"EnableDomainSockets":false}})";
+#else
+    return "{}";
+#endif
+}
+
+std::string default_participant_configuration_with(std::string_view members)
+{
+    std::string text = "{";
+    text += kDefaultMembers;
+    if (!kDefaultMembers.empty() && !members.empty())
+    {
+        text += ',';
+    }
+    text += members;
+    text += '}';
+    return text;
+}
+
+std::string participant_configuration_or_default(std::string_view configuration)
+{
+    constexpr std::string_view space = " \t\r\n";
+    const auto first = configuration.find_first_not_of(space);
+    const std::string_view text =
+        first == std::string_view::npos ? std::string_view{} : configuration.substr(first, configuration.find_last_not_of(space) - first + 1);
+    return std::string(text.empty() || text == "{}" ? default_participant_configuration() : configuration);
+}
+
 bool is_running(const PeerStatus& status) noexcept
 {
     return status.state == orch::ParticipantState::Running;
@@ -65,7 +108,8 @@ ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
         }
     }
 
-    auto config = SilKit::Config::ParticipantConfigurationFromString(options_.participant_configuration);
+    auto config = SilKit::Config::ParticipantConfigurationFromString(
+        participant_configuration_or_default(options_.participant_configuration));
     participant_ = SilKit::CreateParticipant(config, options_.participant_name, options_.registry_uri);
 
     // Handlers registered below capture `this`. If a later call throws, destroy the

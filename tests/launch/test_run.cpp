@@ -7,10 +7,16 @@
 
 #include "vehicle_sil/launch/run.hpp"
 
+#include "run_close.hpp"
 #include "run_start_limit.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <future>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -20,6 +26,7 @@
 #include <csignal>
 #endif
 
+using namespace std::chrono_literals;
 using namespace vehicle_sil;
 using namespace vehicle_sil::launch;
 using vehicle_sil::launch::test::check_text;
@@ -389,6 +396,73 @@ TEST_CASE(processes_left_behind_and_a_participant_that_cannot_start)
                "launcher ended them; end them in the participant before it exits\n"
                "W 9 start: participant 'Tool': cannot start /x/tool: No such file or directory: check the command in the "
                "configuration file\n");
+}
+
+TEST_CASE(a_connection_of_the_launcher_that_did_not_close_is_a_warning_beside_the_result)
+{
+    RunOutcome o = passed_run();
+    o.connection_not_closed_ms = 8000;
+    check_text(lines(assess_run(o)),
+               "W 0 connection-not-closed: the launcher's own connection to the simulation (SIL Kit) had not closed 8000 "
+               "ms after the participants had ended: the launcher ended without closing it. The result is complete. This "
+               "is not expected of any configuration: it is a defect of the launcher or of SIL Kit. Report it with this "
+               "result, the launcher's output and what the participants were doing (was one stopped in a debugger?)\n");
+    // One more interrupt ended the wait: the launcher did as it was asked, and that is no finding.
+    o.connection_close_interrupted = true;
+    check_text(lines(assess_run(o)), "");
+}
+
+TEST_CASE(a_close_that_ends_in_time_is_waited_for_and_joined)
+{
+    std::atomic<bool> ran{false};
+    const auto left = launch::detail::close_within([&ran] { ran = true; }, 10s, 1ms, [] { return false; });
+    CHECK(!left);
+    CHECK(ran.load()); // joined: it has run when close_within() returns
+}
+
+TEST_CASE(a_close_that_does_not_end_is_left_at_the_limit_and_may_end_later)
+{
+    struct Latch
+    {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool open = false;
+        bool ended = false;
+    };
+    const auto latch = std::make_shared<Latch>();
+    const auto close = [latch] {
+        std::unique_lock lock(latch->mutex);
+        latch->changed.wait(lock, [&latch] { return latch->open; });
+        latch->ended = true;
+        latch->changed.notify_all();
+    };
+    const auto began = std::chrono::steady_clock::now();
+    const auto left = launch::detail::close_within(close, 100ms, 5ms, [] { return false; });
+    const auto took = std::chrono::steady_clock::now() - began;
+    CHECK(left.has_value());
+    CHECK(left && !left->interrupted);
+    CHECK(left && left->waited >= 100ms);
+    CHECK(took >= 100ms);
+    // The thread that was left ends its close when it can, on its own.
+    std::unique_lock lock(latch->mutex);
+    latch->open = true;
+    latch->changed.notify_all();
+    CHECK(latch->changed.wait_for(lock, 30s, [&latch] { return latch->ended; }));
+}
+
+TEST_CASE(a_close_that_does_not_end_is_left_before_the_limit_when_interrupted)
+{
+    const auto open = std::make_shared<std::promise<void>>();
+    const std::shared_future<void> opened = open->get_future().share();
+    std::atomic<int> asked{0};
+    const auto began = std::chrono::steady_clock::now();
+    const auto left = launch::detail::close_within([opened] { opened.wait(); }, 60s, 2ms, [&asked] { return ++asked > 3; });
+    const auto took = std::chrono::steady_clock::now() - began;
+    open->set_value();
+    CHECK(left.has_value());
+    CHECK(left && left->interrupted);
+    CHECK(left && left->waited < 30s);
+    CHECK(took < 30s);
 }
 
 TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)

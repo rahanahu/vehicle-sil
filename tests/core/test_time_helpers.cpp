@@ -4,6 +4,7 @@
 // connection.
 #include "test_harness.hpp"
 
+#include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/periodic.hpp"
 #include "vehicle_sil/core/real_time_pacer.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
@@ -35,6 +36,37 @@ bool throws_invalid_argument(F&& f)
 }
 
 } // namespace
+
+TEST_CASE(a_participant_given_no_configuration_gets_the_default_and_one_of_its_own_stays)
+{
+    // Windows: TCP between the participants of a machine (no local-domain sockets).
+    const std::string tcpOnly = R"({"Middleware":{"EnableDomainSockets":false}})";
+#ifdef _WIN32
+    const std::string expected = tcpOnly;
+#else
+    const std::string expected = "{}";
+#endif
+    CHECK(std::string(vehicle_sil::default_participant_configuration()) == expected);
+    CHECK(vehicle_sil::participant_configuration_or_default("{}") == expected);
+    CHECK(vehicle_sil::participant_configuration_or_default("") == expected);
+    CHECK(vehicle_sil::participant_configuration_or_default(" {}\r\n") == expected);
+    const std::string own = "Logging:\n  Sinks:\n    - Type: Stdout\n";
+    CHECK(vehicle_sil::participant_configuration_or_default(own) == own);
+    // With members of the caller's: the same default, in one object.
+    const std::string logging = R"("Logging":{"Sinks":[{"Type":"Stdout","Level":"Info"}]})";
+#ifdef _WIN32
+    const std::string with = R"({"Middleware":{"EnableDomainSockets":false},)" + logging + "}";
+#else
+    const std::string with = "{" + logging + "}";
+#endif
+    CHECK(vehicle_sil::default_participant_configuration_with(logging) == with);
+    CHECK(vehicle_sil::default_participant_configuration_with("") == expected);
+    CHECK(SilKit::Config::ParticipantConfigurationFromString(with) != nullptr);
+    CHECK(SilKit::Config::ParticipantConfigurationFromString(R"({"Middleware":{"EnableDomainSockets":false},)" + logging + "}") !=
+          nullptr);
+    // SIL Kit reads it, on every system.
+    CHECK(SilKit::Config::ParticipantConfigurationFromString(tcpOnly) != nullptr);
+}
 
 TEST_CASE(sim_time_is_a_distinct_type_from_wall_clock)
 {
