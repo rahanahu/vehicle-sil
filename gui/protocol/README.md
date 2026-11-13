@@ -1,6 +1,6 @@
 # gui/protocol
 
-GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の契約です。私たちの画面（`gui/web`）も、クライアントのライブラリ（`gui/client`）を通して、この口だけを使います。自分の画面や道具を作るときも、この文書と例に従えば、同じことができます（作り方は [docs/gui.md](../../docs/gui.md) の「自分の画面や道具を作る」）。
+GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の契約です。サンプルの画面（`gui/web`）も、クライアントのライブラリ（`gui/client`）を通して、この口だけを使います。自分の画面や道具を作るときも、この文書と例に従えば、同じことができます（作り方は [docs/gui.md](../../docs/gui.md) の「自分の画面を作る」）。
 
 `examples/` の JSON は、サーバーの試験（`gui/server/tests/test_protocol_examples.py`）が偽のランチャーとの実際のやりとりから作り、毎回照合します。試験が作らないファイルが `examples/` に残っていても試験は落ちます。形を変えたら `UPDATE_PROTOCOL_EXAMPLES=1 scripts/verify-gui.py --skip-web` で書き直し、ライブラリの型と読み取り（`gui/client/src/protocol.ts`）と、その単体試験（同じファイルを読む）を合わせます。プロセス ID、時刻、インスタンス、この PC のパス、決まらない数は、決まった値に置き換えてあります（`t_ms` は `seq × 10`）。
 
@@ -18,7 +18,7 @@ GUI サーバー（`gui/server`）の HTTP と WebSocket の口の、公開の�
 ## 認証と Origin
 
 - サーバーは `127.0.0.1` だけで待ち、`Host` は `127.0.0.1:<port>`（開発のときは `--dev-origin` のホストも）だけを受け付けます。
-- トークンは起動のたびに作られ、サーバーが表示した URL の `#token=` の後ろにだけあります。HTTP は `Authorization: Bearer <token>`、WebSocket は最初のメッセージ（`auth`）で送ります。
+- トークンは起動のたびに作られ、サーバーが表示した URL の `#token=` の後ろにだけあります。HTTP は `Authorization: Bearer <token>`、WebSocket は最初のメッセージ（`auth`）で送ります。サーバーが配る画面（サンプルの画面と、`--web` で配る自分の画面）は、開いた URL の `#token=` を読んで、すぐに URL から消します（クライアントのライブラリの `takeToken`）。トークンを URL の query やログに載せません（query のトークンは受け付けません）。
 - `POST` と WebSocket の握手は、`Origin` がサーバー自身（`http://127.0.0.1:<port>`。開発のときは `--dev-origin`）のものだけを受け付けます。ブラウザは自分で付けます。ブラウザの外（Node、Python など）から使うときは、サーバー自身の origin を `Origin` に書きます（`examples/gui_client/run.mjs`）。
 - CORS は許しません。別の origin のページからは使えません。
 

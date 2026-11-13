@@ -1,6 +1,6 @@
 # gui/web
 
-ブラウザで開く画面（Angular、TypeScript）です。ビルドした画面は Python の GUI サーバーが配信します。画面を使う人に Node.js は要りません。Node.js が要るのは、画面を開発、ビルドする人だけです。
+サンプルの画面（Angular、TypeScript）です。クライアントのライブラリ（`gui/client`）とその Angular の包みだけで作った参照のアプリで、ビルドした画面は Python の GUI サーバーが配信します（`--web` を付けないとき）。自分の画面を一から作るときは [docs/gui.md](../../docs/gui.md) の「自分の画面を作る」、この画面の部品を別の Angular のアプリへ写すときは同じ文書の「サンプルの部品を写して使う」を読みます。画面を使う人に Node.js は要りません。Node.js が要るのは、画面を開発、ビルドする人だけです。
 
 ## 要るもの
 
@@ -15,20 +15,21 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 
 `gui/web/` で実行します。どれも終了コードで成否を返します。
 
-| コマンド               | 内容                                                                                                                                                                 |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm ci`               | `package-lock.json` のとおりに入れる                                                                                                                                 |
-| `npm start`            | 開発サーバー（http://127.0.0.1:4200）。`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送する（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`）                 |
-| `npm run build`        | 本番のビルド。出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`                                                                                 |
-| `npm test`             | 単体試験（Vitest、jsdom）。1 回走って終わる                                                                                                                          |
-| `npm run test:client`  | クライアントのライブラリ（`../client`）の型の検査と単体試験（Vitest、Node。Angular も DOM もなし）                                                                   |
-| `npm run build:client` | クライアントのライブラリを 1 つの ESM のファイルにまとめる（`../../build/gui-client/vehicle-sil-gui-client.mjs`。esbuild は Angular のビルドの道具が持っているもの） |
-| `npm run lint`         | ESLint（angular-eslint）。警告も失敗にする。`../client` も、その `eslint.config.js` で                                                                               |
-| `npm run format:check` | Prettier の書式の検査（`../client` も。設定は `../.prettierrc`）                                                                                                     |
-| `npm run e2e`          | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する。先に `npm run build` が要る                                                              |
-| `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                                                                                           |
-| `npm run e2e:real`     | Playwright。本物のランチャー（環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）と、その隣にビルドした ecu_main の例の ECU で通す（`e2e/real/`）。先に `npm run build` が要る     |
-| `npm run i18n:extract` | 翻訳する文言を `build/i18n/messages.json`（リポジトリの直下の `build/`）に書き出す。翻訳ファイルとの比べと更新は `scripts/verify-web.py`（下の「国際化」）           |
+| コマンド               | 内容                                                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm ci`               | `package-lock.json` のとおりに入れる                                                                                                                                  |
+| `npm start`            | 開発サーバー（http://127.0.0.1:4200）。`/api/` と `/ws` を GUI サーバー（127.0.0.1:8765）へ転送する（`proxy.conf.mjs`。ポートは環境変数 `GUI_PORT`）                  |
+| `npm run build`        | 本番のビルド。出力は `dist/browser/`、ライセンスの表示は `dist/3rdpartylicenses.txt`                                                                                  |
+| `npm test`             | 単体試験（Vitest、jsdom）。1 回走って終わる                                                                                                                           |
+| `npm run test:client`  | クライアントのライブラリ（`../client`）の型の検査と単体試験（Vitest、Node。Angular も DOM もなし）                                                                    |
+| `npm run build:client` | クライアントのライブラリを 1 つの ESM のファイルにまとめる（`../../build/gui-client/vehicle-sil-gui-client.mjs`。esbuild は Angular のビルドの道具が持っているもの）  |
+| `npm run pack:client`  | クライアントのライブラリを npm のパッケージにする（`../../build/gui-client/vehicle-sil-gui-client-<版>.tgz`。型つき。作った後に入れて確かめる。`../client/pack.mjs`） |
+| `npm run lint`         | ESLint（angular-eslint）。警告も失敗にする。`../client` も、その `eslint.config.js` で                                                                                |
+| `npm run format:check` | Prettier の書式の検査（`../client` も。設定は `../.prettierrc`）                                                                                                      |
+| `npm run e2e`          | Playwright。GUI サーバーが `dist/browser/` と API を同じオリジンで配信する。先に `npm run build` が要る                                                               |
+| `npm run e2e:dev`      | Playwright。開発サーバーと、その転送（WebSocket も）を通す                                                                                                            |
+| `npm run e2e:real`     | Playwright。本物のランチャー（環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）と、その隣にビルドした ecu_main の例の ECU で通す（`e2e/real/`）。先に `npm run build` が要る      |
+| `npm run i18n:extract` | 翻訳する文言を `build/i18n/messages.json`（リポジトリの直下の `build/`）に書き出す。翻訳ファイルとの比べと更新は `scripts/verify-web.py`（下の「国際化」）            |
 
 リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、クライアントのライブラリの単体試験、翻訳ファイルの比べ、ビルド、e2e を順に回して要約だけを表示します。e2e を直している間は `--skip-checks`（書式、lint、単体試験、翻訳ファイルの比べを省く）、`--e2e-grep <名前の一部>`、`--e2e-repeat <回数>` で絞れます。
 
@@ -94,7 +95,7 @@ API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api
 ### signal と RxJS
 
 - 状態、そこから導く値、テンプレートが読むものは signal（`signal`、`computed`、`linkedSignal`）。
-- サーバーへの要求と接続は、クライアントのライブラリ（`@vehicle-sil/gui-client`）だけが持つ。画面は `core/session/` の包み（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`）の signal とメソッドを使い、`HttpClient` や WebSocket を自分で持たない（自分の画面を作る人と同じ部品だけを使う。docs/gui.md の「自分の画面や道具を作る」）。ライブラリの HTTP は、包みが `HttpClient` で送る（interceptor がトークンを付ける）。
+- サーバーへの要求と接続は、クライアントのライブラリ（`@vehicle-sil/gui-client`）だけが持つ。画面は `core/session/` の包み（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`）の signal とメソッドを使い、`HttpClient` や WebSocket を自分で持たない（自分の画面を作る人と同じ部品だけを使う。docs/gui.md の「自分の画面を作る」）。ライブラリの HTTP は、包みが `HttpClient` で送る（interceptor がトークンを付ける）。
 - ライブラリの状態は「読める値」（`get()` と `subscribe()`）。包みは `readableSignal`（`core/session/gui-client.ts`）で signal にする。ライブラリが足りないときは、包みで近道を作らず、ライブラリの公開の入口（`@vehicle-sil/gui-client`）に足す。本番のコードは `@vehicle-sil/gui-client/internal`（互換の約束の外）と `/testing` を import しない（lint で止まる。試験は使ってよい）。購読が投げたものは、Angular の `ErrorHandler` へ渡る。
 - 1 回の取得（`api/app`、`api/configs`）は、包みの Promise を返すメソッドを `resource` の loader で呼ぶ。照合（`POST api/check`）は読み取りに近いので signal から自動で送るが、切り替えを少し待ってまとめ、前の照合の応答を待ってから次を送り、古い応答を捨てる（`run-page.ts` の `check`）。
 - RxJS は、時間とともに続く流れに演算子が要るときに使う（間引き、取り消し、いくつかの流れの組み合わせ）。サービスの中に置き、外へは signal を出す。流れそのものが要る利用者には、流れとわかる名前の Observable を出し、利用者が `toSignal`（`core/streams/stream-signals.ts` の `latestValue`、`recentValues`）で signal にする。再接続と待ち時間はライブラリの `Connection` が持つ（RxJS を使わない）。

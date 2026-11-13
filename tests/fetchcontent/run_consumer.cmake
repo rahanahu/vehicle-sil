@@ -3,6 +3,7 @@
 # hash first: with git rev-parse for a local repository, with git ls-remote for a
 # URL). PYTHON, if given, is the consumer's Python3_EXECUTABLE (for the J1939 code generator).
 # Invoked by CTest with cmake -P.
+cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMake 3 then rejects IN_LIST)
 foreach(var SOURCE_DIR BINARY_DIR REPOSITORY TAG GENERATOR)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "run_consumer.cmake: ${var} is required")

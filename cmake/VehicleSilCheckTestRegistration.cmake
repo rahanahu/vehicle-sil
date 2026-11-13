@@ -2,6 +2,7 @@
 # registered with CTest at configure time (EXPECTED, separated by '|'). Catches a TEST_CASE that
 # the configure-time scan did not recognise. EMULATOR (optional, a ';'-list) runs EXE, as
 # CMAKE_CROSSCOMPILING_EMULATOR does for the other tests in a cross build.
+cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMake 3 then rejects IN_LIST)
 execute_process(COMMAND ${EMULATOR} "${EXE}" --list OUTPUT_VARIABLE listed RESULT_VARIABLE result)
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "${EXE} --list failed with ${result}")

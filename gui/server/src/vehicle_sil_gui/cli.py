@@ -24,7 +24,7 @@ from . import __version__, launcher as launcher_module
 from .paths import ConfigRoot, PathRejected
 from .server import CHECK_TIMEOUT_S, END_BUDGET_S, PROTOCOL, RUNNER_SHUTDOWN_S, GuiServer, Options
 from .session import SILENT_AFTER_S
-from .static import find_web_dir
+from .static import check_web_dir, find_web_dir
 
 EXIT_OK, EXIT_FAILED, EXIT_USAGE = 0, 1, 2
 DEV_ORIGIN = re.compile(r"http://127\.0\.0\.1:\d{1,5}")
@@ -48,7 +48,8 @@ in this Python; without them, or with --no-variables, everything else works.
 
 examples:
   vehicle-sil-gui examples/simulation.yaml          # root: the file's directory
-  vehicle-sil-gui --root examples --no-browser --json"""
+  vehicle-sil-gui --root examples --no-browser --json
+  vehicle-sil-gui --web my-screen/dist examples/simulation.yaml   # your own screen (docs/gui.md)"""
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -60,8 +61,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--port", type=int, default=0, help="the port on 127.0.0.1 (default 0: a free one)")
     p.add_argument("--no-browser", action="store_true", help="do not open the browser")
     p.add_argument("--launcher", help="the path of vehicle_sil_launch")
+    p.add_argument("--web", metavar="DIR",
+                   help="serve your own screen: the directory of its built files, with index.html (default: the "
+                        "sample screen). Only the files in DIR are served, with the same checks and CSP")
     p.add_argument("--dev-origin", help="also accept requests from this development server, "
-                                        "http://127.0.0.1:<port> (ng serve's proxy)")
+                                        "http://127.0.0.1:<port> (the proxy of ng serve, Vite and the like)")
     p.add_argument("--json", action="store_true",
                    help='print {"vehicle_sil_gui": 1, "url": ..., "port": ...} on one line instead of the URL')
     p.add_argument("--stop-timeout", type=float, default=10.0, metavar="SECONDS",
@@ -111,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
         return usage_error("--check-timeout must be more than 0 seconds")
     if not args.silent_after >= 1:
         return usage_error("--silent-after must be 1 second or more (the launcher writes a heartbeat every second)")
+    web_dir = Path(args.web) if args.web is not None else find_web_dir()
+    if args.web is not None and (problem := check_web_dir(web_dir)):
+        return usage_error(problem)
     config = Path(args.config) if args.config else None
     if config is not None and not config.is_file():
         return usage_error(f"{config}: no such file")
@@ -130,12 +137,13 @@ def main(argv: list[str] | None = None) -> int:
     except launcher_module.LauncherNotFound as e:
         return usage_error(str(e))
     try:
-        return asyncio.run(serve(args, config_root.root, initial, launcher_module.Launcher(found)))
+        return asyncio.run(serve(args, config_root.root, initial, launcher_module.Launcher(found), web_dir))
     except KeyboardInterrupt:
         return EXIT_OK
 
 
-async def serve(args: argparse.Namespace, root: Path, initial: str | None, launcher: launcher_module.Launcher) -> int:
+async def serve(args: argparse.Namespace, root: Path, initial: str | None, launcher: launcher_module.Launcher,
+                web_dir: Path | None) -> int:
     await launcher.probe()
     if not launcher.usable:
         for p in launcher.problems:
@@ -149,7 +157,7 @@ async def serve(args: argparse.Namespace, root: Path, initial: str | None, launc
     port = sock.getsockname()[1]
     token = secrets.token_urlsafe(32)
     server = GuiServer(Options(root=root, launcher=launcher, port=port, token=token, initial_file=initial,
-                               dev_origin=args.dev_origin, web_dir=find_web_dir(), stop_timeout_s=args.stop_timeout,
+                               dev_origin=args.dev_origin, web_dir=web_dir, stop_timeout_s=args.stop_timeout,
                                check_timeout_s=args.check_timeout, silent_after_s=args.silent_after,
                                variables=not args.no_variables))
     runner = web.AppRunner(server.app(), access_log=None, handle_signals=False, shutdown_timeout=RUNNER_SHUTDOWN_S)

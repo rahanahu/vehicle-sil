@@ -84,10 +84,11 @@ starts step 1 before the simulation runs (status running), and on each step of t
 (scenario_step passed, then the next one running); a step with `# fake-launcher: fail` on one of its lines fails
 instead (scenario-failed). When every step has passed the simulation ends (simulation `ended`, result passed); a
 failed step ends it too (result failed, exit code 1), and so does stop_at_ms before the end (scenario-out-of-time).
-A stop meanwhile adds the error scenario-incomplete. The result has `scenario` {file, name, status, over_at_ms,
-steps}. As the real launcher, --scenario cannot be used with --start-paused, nor with --control unless the
-features have scenario-control: then the control server is there during the scenario, reads as usual and refuses
-every write (FAILED_PRECONDITION).
+A stop meanwhile adds the error scenario-incomplete. With FAKE_LAUNCHER_SCENARIO_HOLD=<n>, step n stays running (it
+neither passes nor fails): the scenario goes on until a stop or stop_at_ms, however slow the machine. The result has
+`scenario` {file, name, status, over_at_ms, steps}. As the real launcher, --scenario cannot be used with
+--start-paused, nor with --control unless the features have scenario-control: then the control server is there
+during the scenario, reads as usual and refuses every write (FAILED_PRECONDITION).
 
 With the feature control-server in FAKE_LAUNCHER_FEATURES (it is not there by default: the fake then stands for
 a launcher built without the control server, and refuses --control as that one does), `run --control <address>
@@ -823,6 +824,7 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
               "start_ms": None, "at_ms": None, "end_ms": None, "code": None, "message": None}
              for i, s in enumerate(play["steps"] if play else [], start=1)]
     playing = {"current": 0, "status": "not_run", "over_at_ms": None}
+    hold_step = int(os.environ.get("FAKE_LAUNCHER_SCENARIO_HOLD", "0"))  # this step stays running (0: none)
     joined_manual: list[str] = []  # the participants the user started that have joined
 
     def result(outcome: str, simulation, interrupted_by=None) -> dict:
@@ -1244,7 +1246,7 @@ def run(args: dict, file: str, config: dict, scenario: str, ev: Events, stops: S
         for name in running:
             if entry(name)["ended"] == "not_started":
                 ev.emit("log", source=name, line=f"step {step}: t = {sim_ms} ms")
-        if playing["status"] == "running":
+        if playing["status"] == "running" and playing["current"] != hold_step:
             i = playing["current"]
             if play["steps"][i - 1]["fail"]:
                 step_event(i, "failed", sim_ms, "scenario-failed", f"not true at {sim_ms} ms (fake-launcher: fail)")

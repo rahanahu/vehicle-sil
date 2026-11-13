@@ -1,6 +1,7 @@
 # Checks that codec.hpp (the typed J1939 messages) stays independent of the engine: of
 # vehicle-sil's headers it includes only vehicle_sil/j1939/types.hpp (the value types), never the
 # Network and Node. Usage: cmake -DHEADER=<codec.hpp> -P VehicleSilCheckJ1939Codec.cmake
+cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMake 3 then rejects IN_LIST)
 if(NOT DEFINED HEADER)
   message(FATAL_ERROR "VehicleSilCheckJ1939Codec.cmake: HEADER is required")
 endif()

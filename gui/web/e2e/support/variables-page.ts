@@ -54,6 +54,46 @@ export async function stopRun(page: Page, target: Target, timeout = 20_000): Pro
     .not.toBe('running');
 }
 
+/**
+ * 画面を通さずに書く前に、変数が書ける状態になるまで待つ: いまの実行の変数の状態が `ready` で、`peer` が
+ * つながって変数を出している（実行を始めた直後は `connecting` で、書くと 409 `variables-not-ready`）。
+ * いまの実行の番号を返す。
+ */
+export async function waitForVariables(
+  page: Page,
+  target: Target,
+  peer: string,
+  timeout = 20_000,
+): Promise<number> {
+  let id = 0;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(new URL('api/session', target.base).href, {
+          headers: { Authorization: `Bearer ${target.token}` },
+        });
+        const body = (await response.json()) as {
+          session: {
+            id: number;
+            variables: {
+              state: string;
+              peers: { name: string; connected: boolean; variables: unknown[] }[];
+            };
+          } | null;
+        };
+        const variables = body.session?.variables;
+        const found = variables?.peers.find((p) => p.name === peer);
+        const ready = found?.connected && found.variables.length > 0;
+        const listed = !found ? 'not listed' : ready ? 'connected' : 'not connected';
+        id = body.session?.id ?? 0;
+        return `${variables?.state ?? 'no run'}, ${peer} ${listed}`;
+      },
+      { timeout, message: `the variables of ${peer} did not become writable` },
+    )
+    .toBe(`ready, ${peer} connected`);
+  return id;
+}
+
 /** 変数の画面を開く（ナビゲーションから。経路とナビゲーションも確かめる）。 */
 export async function openVariables(page: Page, target: Target): Promise<void> {
   await page.goto(`${target.base}#token=${target.token}`);

@@ -143,13 +143,18 @@ def test_template_archive(tmp: Path) -> None:
     dist.mkdir()
     linux = tar_archive(dist / f"{LINUX}.tar.gz", LINUX)
     windows = zip_archive(dist / f"{WINDOWS}.zip", WINDOWS)
+    client = dist / f"vehicle-sil-gui-client-{VERSION}.tgz"
+    p = subprocess.run([sys.executable, str(PACKAGE), "template", "--out", str(dist)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    check(p.returncode == 2 and client.name in p.stderr,
+          f"the client library's package missing: exit code 2 ({p.returncode}: {p.stderr})")
+    client.write_bytes(b"stands for the npm package of the client library")
     p = subprocess.run([sys.executable, str(PACKAGE), "template", "--out", str(dist)], capture_output=True, text=True, encoding="utf-8", errors="replace")
     check(p.returncode == 0, f"package.py template: exit code 0 ({p.returncode}: {p.stdout} {p.stderr})")
     if p.returncode != 0:
         return
     template = dist / f"vehicle-sil-template-{VERSION}.zip"
     sums = (dist / "SHA256SUMS").read_text(encoding="utf-8")
-    for path in (linux, windows, template):
+    for path in (linux, windows, template, client):
         check(f"{sha256(path)}  {path.name}\n" in sums, f"SHA256SUMS lists {path.name}")
     unpacked = tmp / "unpacked"
     with zipfile.ZipFile(template) as z:

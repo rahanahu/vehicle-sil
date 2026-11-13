@@ -5,7 +5,14 @@ import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { CONFIGS, FAKE_LAUNCHER, GUI_PORT, GuiServer, launchGuiServer } from './support/gui-server';
 import { RUN_TIMEOUT } from './support/run-page';
-import { Target, openVariables, startRun, stopRun, widget } from './support/variables-page';
+import {
+  Target,
+  openVariables,
+  startRun,
+  stopRun,
+  waitForVariables,
+  widget,
+} from './support/variables-page';
 
 const FEATURES =
   'events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,scenario,' +
@@ -87,12 +94,16 @@ test('runs a scenario that passes, and one that fails, with its steps', async ({
 
 test('while a scenario runs, the variables can be read but not written', async ({ page }) => {
   await openVariables(page, target);
+  // 速さ 0.001: 偽のランチャーの 1 ステップ（100 ms）が 100 秒かかり、シナリオは確かめ終わるまで終わらない
+  // （速さを指定しないと、3 つの手順は 1 秒足らずで終わり、遅い機械では、確かめる前に実行が終わる）
   const response = await page.request.post(new URL('api/run', target.base).href, {
     headers: { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin },
-    data: { file: 'forever.yaml', disable: [], scenario: 'scenarios/throttle.yaml' },
+    data: { file: 'forever.yaml', disable: [], scenario: 'scenarios/throttle.yaml', speed: 0.001 },
   });
   expect(response.status()).toBe(200);
-  await expect(page.getByTestId('variables-notice')).toContainText('シナリオの実行中です');
+  await expect(page.getByTestId('variables-notice')).toContainText('シナリオの実行中です', {
+    timeout: RUN_TIMEOUT,
+  });
   const demand = widget(page, 'Engine', 'engine.demand');
   await expect(demand.getByRole('slider', { name: 'engine.demand' })).toBeDisabled();
   await expect(demand).toContainText('シナリオの実行中は書けません');
@@ -103,15 +114,11 @@ test('saves the writes of a run as a scenario', async ({ page }) => {
   await page.goto(`${target.base}#token=${target.token}`);
   const card = page.getByTestId('recording-card');
   await expect(card.getByTestId('recording-empty')).toBeVisible();
-  // 画面を通さずに書く（部品の操作は variables.spec.ts が確かめる）
-  const session = (await (
-    await page.request.get(new URL('api/session', target.base).href, {
-      headers: { Authorization: `Bearer ${target.token}` },
-    })
-  ).json()) as { session: { id: number } };
+  // 画面を通さずに書く（部品の操作は variables.spec.ts が確かめる）。変数が書ける状態になってから
+  const session = await waitForVariables(page, target, 'Engine', RUN_TIMEOUT);
   const write = await page.request.post(new URL('api/write', target.base).href, {
     headers: { Authorization: `Bearer ${target.token}`, Origin: new URL(target.base).origin },
-    data: { session: session.session.id, writes: { Engine: { 'engine.demand': 30 } } },
+    data: { session, writes: { Engine: { 'engine.demand': 30 } } },
   });
   expect(write.status(), await write.text()).toBe(200);
   await expect(card.getByTestId('recording-count')).toContainText('1 件', { timeout: RUN_TIMEOUT });

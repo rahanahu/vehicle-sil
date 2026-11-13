@@ -167,13 +167,15 @@ def test_without_scenario_control_a_scenario_run_has_no_variables(tmp_path: Path
 
 
 def test_with_scenario_control_variables_are_read_and_writes_refused(tmp_path: Path, control_env: dict) -> None:
+    # The second step never passes and the file has no stop_at_ms: the scenario is still running when the write
+    # comes, however slow the machine.
     env = {**control_env, "FAKE_LAUNCHER_FEATURES": CONTROL_FEATURES + ",scenario-control",
-           "FAKE_LAUNCHER_TICK_MS": "200"}
+           "FAKE_LAUNCHER_TICK_MS": "200", "FAKE_LAUNCHER_SCENARIO_HOLD": "2"}
     with gui_server(tmp_path, env=env) as gui:
         async def talk(c: Client) -> None:
             ws = await c.ws()
             await ws.until(is_synced)
-            status, body = await c.post("api/run", {"file": "simulation.yaml", "scenario": PASS})
+            status, body = await c.post("api/run", {"file": "forever.yaml", "scenario": PASS})
             assert status == 200, body
             session = body["session"]["id"]
             await ws.until(is_variables("ready"))
@@ -183,6 +185,7 @@ def test_with_scenario_control_variables_are_read_and_writes_refused(tmp_path: P
                                                       "writes": {"Engine": {"engine.demand": 1}}})
             assert (status, body["error"]["code"]) == (409, "scenario-running")
             assert "scenario" in body["error"]["message"] and PASS in body["error"]["message"]
+            await c.post("api/stop")
             await ws.until(is_ended)
         run_async(talk, gui)
 

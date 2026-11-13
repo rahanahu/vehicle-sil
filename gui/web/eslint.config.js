@@ -14,6 +14,30 @@ const CLIENT_SOURCES = {
   message: 'import from @vehicle-sil/gui-client (or @vehicle-sil/gui-client/testing in tests)',
 };
 
+/** 本番のコードは、ライブラリの公開の入口だけを使う。 */
+const PUBLIC_ENTRY_ONLY = {
+  group: ['@vehicle-sil/gui-client/internal', '@vehicle-sil/gui-client/testing'],
+  message:
+    'the app uses only @vehicle-sil/gui-client: internal is outside the compatibility promise and testing is for tests (add what is missing to gui/client/src/index.ts)',
+};
+
+/** 写して使える部品と包みが頼ってはいけないもの: 画面とアプリの殻。 */
+const PORTABLE_PARTS = {
+  group: [
+    '**/run',
+    '**/run/**',
+    '**/variables',
+    '**/variables/**',
+    '**/not-found/**',
+    '**/app',
+    '**/app.*',
+    '**/navigation',
+    '**/testing/**',
+  ],
+  message:
+    'widgets/ and core/ are copied into other Angular apps: they must not import the pages (run/, variables/) or the app shell',
+};
+
 module.exports = defineConfig([
   {
     files: ['**/*.ts'],
@@ -62,15 +86,35 @@ module.exports = defineConfig([
     files: ['src/**/*.ts'],
     ignores: ['src/**/*.spec.ts'],
     rules: {
+      'no-restricted-imports': ['error', { patterns: [CLIENT_SOURCES, PUBLIC_ENTRY_ONLY] }],
+    },
+  },
+  {
+    // 部品（widgets/）と包み（core/）は、別の Angular のアプリへ写して使える: 画面（run/、variables/）とアプリの殻に
+    // 頼らない（docs/gui.md の「サンプルの部品を写して使う」）
+    files: ['src/app/widgets/**/*.ts', 'src/app/core/**/*.ts'],
+    ignores: ['src/**/*.spec.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { patterns: [CLIENT_SOURCES, PUBLIC_ENTRY_ONLY, PORTABLE_PARTS] },
+      ],
+    },
+  },
+  {
+    files: ['src/app/core/**/*.ts'],
+    ignores: ['src/**/*.spec.ts'],
+    rules: {
       'no-restricted-imports': [
         'error',
         {
           patterns: [
             CLIENT_SOURCES,
+            PUBLIC_ENTRY_ONLY,
+            PORTABLE_PARTS,
             {
-              group: ['@vehicle-sil/gui-client/internal', '@vehicle-sil/gui-client/testing'],
-              message:
-                'the app uses only @vehicle-sil/gui-client: internal is outside the compatibility promise and testing is for tests (add what is missing to gui/client/src/index.ts)',
+              group: ['**/widgets', '**/widgets/**'],
+              message: 'core/ is under the widgets: it does not import them',
             },
           ],
         },

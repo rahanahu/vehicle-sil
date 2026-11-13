@@ -119,6 +119,17 @@ private:
     return options;
 }
 
+/// Keeps this thread busy for `busy` of wall time, as a model that computes would: a slow
+/// participant of a test. Not a sleep: a sleep lasts a whole timer tick on Windows (about 15.6 ms)
+/// however short it is asked to be, which made such a participant ten times slower there.
+inline void busy_for(std::chrono::microseconds busy)
+{
+    const auto end = std::chrono::steady_clock::now() + busy;
+    while (std::chrono::steady_clock::now() < end)
+    {
+    }
+}
+
 /// Starts every runtime from its own thread, the way separate processes would, then the
 /// controller, and waits until every start() has returned.
 inline void start_together(SimulationController& controller, const std::vector<ParticipantRuntime*>& runtimes,
