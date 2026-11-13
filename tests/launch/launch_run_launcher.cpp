@@ -33,7 +33,9 @@
 //   events_usage run --events with a wrong command line (also one the check finds) or a file that
 //                cannot be read: which events come
 //   events_findings a participant leaves the simulation and its process ends later: every finding
-//                event is in the result, and none comes twice; the state "failed" comes at once
+//                event is in the result, and none comes twice; the state "failed" comes at once; a
+//                process that ends in a step: one "failed" (by the end of the process or because it
+//                left the simulation), one "ended", one finding with the exit code
 //   events_stalled a reader that does not read: the participants are not held up; a stop command, a
 //                signal and --timeout-ms work all the same; the launcher gives the reader up after
 //                its time limit
@@ -639,7 +641,15 @@ void quitter(const Options& o)
                                          "    describe: false\n");
     const Captured run = launch(o, {"run", "sim.yaml"}, dir);
     expect_code(run, 1, "run with a participant that ends before the start");
-    expect_text(run_part(run.standard_output),
+    // Engine is told to stop right after it was started. On a slow machine that is before it handles the request,
+    // and it ends by the signal itself. Both endings are right: this scenario is about Quitter.
+    std::string shown = run_part(run.standard_output);
+    const std::string by_signal = "stopped (" + kStop + "), signal " + kStop + "\n";
+    if (const auto at = shown.find(by_signal); at != std::string::npos)
+    {
+        shown.replace(at, by_signal.size(), "stopped (" + kStop + "), exit code 130\n");
+    }
+    expect_text(shown,
                 "run: the simulation did not start\n"
                 "\n"
                 "participant  required  ended\n"
@@ -2463,22 +2473,36 @@ void events_findings(const Options& o)
                 comparable(compact(json.standard_output.substr(0, json.standard_output.size() - 1)) + "}"),
                 "the result event as run --json");
 
-    // Engine's process ends in a step (exit code 7): the launcher learns of the failure by the end
-    // of the process, so "ended" comes first; the finding is settled, and "failed" has its message.
+    // Engine's process ends in a step (exit code 7). The launcher learns of the failure either by
+    // the end of the process ("process_ended": "ended" comes first, and "failed" has the finding's
+    // message) or, when its connection is gone first, because it left the simulation
+    // ("left_simulation": "failed" comes before "ended", without a message). Either way: one
+    // "failed", one "ended", one finding, which says how the process ended.
     write_file(dir / "Engine.behaviour", "exit-at-ms 200 7\n");
     const Captured crash = launch(o, {"run", "--events", "sim.yaml"}, dir);
     expect_code(crash, 1, "run --events with an ECU whose process ends");
     const std::vector<std::string> crashed = check_events(crash.standard_output);
-    const auto state = events_with(crashed, {"\"state\":\"failed\",\"reason\":\"process_ended\",\"message\":"});
+    const auto state = events_with(crashed, {"\"event\":\"participant\"", "\"name\":\"Engine\"", "\"state\":\"failed\""});
     const auto ended = events_with(crashed, {"\"event\":\"participant\"", "\"name\":\"Engine\"", "\"state\":\"ended\""});
     const auto finding = events_with(crashed, {"\"event\":\"finding\"", "\"code\":\"participant-failed\""});
     require(state.size() == 1 && ended.size() == 1 && finding.size() == 1, "failed, ended and the finding once each:\n" + crash.standard_output);
     log(state[0]);
-    require(std::stoll(value_of(ended[0], "seq")) < std::stoll(value_of(state[0], "seq")) &&
-                std::stoll(value_of(state[0], "seq")) < std::stoll(value_of(finding[0], "seq")),
-            "ended, then failed, then the finding");
-    require(value_of(state[0], "message") == value_of(finding[0], "message") && contains(state[0], "its process exited with code 7"),
-            "failed has the finding's message:\n" + state[0] + "\n" + finding[0]);
+    require(contains(finding[0], "its process exited with code 7"), "the finding says how the process ended:\n" + finding[0]);
+    const auto seqOf = [](const std::string& line) { return std::stoll(value_of(line, "seq")); };
+    require(seqOf(state[0]) < seqOf(finding[0]), "failed before the finding:\n" + crash.standard_output);
+    const std::string reason = value_of(state[0], "reason");
+    if (reason == "process_ended")
+    {
+        require(seqOf(ended[0]) < seqOf(state[0]), "process_ended: ended, then failed:\n" + crash.standard_output);
+        require(value_of(state[0], "message") == value_of(finding[0], "message"),
+                "failed has the finding's message:\n" + state[0] + "\n" + finding[0]);
+    }
+    else
+    {
+        require(reason == "left_simulation", "failed with the reason process_ended or left_simulation, not " + reason + ":\n" + state[0]);
+        require(seqOf(state[0]) < seqOf(ended[0]), "left_simulation: failed, then ended:\n" + crash.standard_output);
+        require(!contains(state[0], "\"message\":"), "left_simulation: failed has no message:\n" + state[0]);
+    }
 }
 
 void events_stderr(const Options& o)

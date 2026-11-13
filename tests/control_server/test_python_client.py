@@ -3,20 +3,16 @@
 
 - LaunchedTest: against vehicle_sil_launch run --control with the two ECUs of examples/ecu_main
   (started here).
-- SecureServerTest: with a token and TLS against vehicle_sil_control_server without --required
-  (started here, with a SIL Kit registry of its own).
-- AbortedSimulationTest: that server ends when the simulation it joined is aborted.
 - ConversionTest: what the client makes of variables and values, without a server.
+- OlderServerTest: a server without GetSnapshot.
+(TLS, tokens and roles, the audit log and the CLI with them: test_launcher.py.)
 
 Environment: VEHICLE_SIL_LAUNCH_EXE, VEHICLE_SIL_EXAMPLE_DIR (examples/ecu_main in the build tree),
-VEHICLE_SIL_LAUNCH_SCRATCH (a directory to write into), VEHICLE_SIL_CONTROL_SERVER_EXE,
-VEHICLE_SIL_REGISTRY_EXE (sil-kit-registry), VEHICLE_SIL_SIM_CONTROLLER_EXE, PYTHONPATH with the repository's python/ directory,
-VEHICLE_SIL_CONTROL_STUBS (generated stubs).
+VEHICLE_SIL_LAUNCH_SCRATCH (a directory to write into), PYTHONPATH with the repository's python/
+directory, VEHICLE_SIL_CONTROL_STUBS (generated stubs).
 """
 import os
 import pathlib
-import re
-import socket
 import subprocess
 import sys
 import threading
@@ -46,90 +42,6 @@ def first(test, updates, pred, timeout=20.0):
     reader.join(timeout)
     test.assertTrue(found, f"no matching update within {timeout} s")
     return found[0]
-
-
-def free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def stop(proc):
-    """Ends a child process (terminate, then kill)."""
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(30)
-    if proc.stdout is not None:
-        proc.stdout.close()
-
-
-def start_registry(add_cleanup) -> str:
-    """A SIL Kit registry on a free port, ended by the cleanup; returns its URI once it accepts
-    connections (a participant that comes earlier fails: SIL Kit tries to connect once)."""
-    port = free_port()
-    proc = subprocess.Popen([os.environ["VEHICLE_SIL_REGISTRY_EXE"], "--listen-uri", f"silkit://127.0.0.1:{port}"],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    add_cleanup(stop, proc)
-    deadline = time.monotonic() + 30
-    while True:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=1):
-                return f"silkit://127.0.0.1:{port}"
-        except OSError:
-            if proc.poll() is not None:
-                raise AssertionError(f"the registry ended (exit code {proc.returncode}) before it listened on {port}")
-            if time.monotonic() > deadline:
-                raise AssertionError(f"the registry did not listen on {port} within 30 s")
-            time.sleep(0.05)
-
-
-class Lines:
-    """The standard output of a child process, read on a thread of its own."""
-
-    def __init__(self, proc):
-        self.lines = []
-        self._changed = threading.Condition()
-        threading.Thread(target=self._read, args=(proc,), daemon=True).start()
-
-    def _read(self, proc):
-        for line in proc.stdout:
-            with self._changed:
-                self.lines.append(line.rstrip("\n"))
-                self._changed.notify_all()
-
-    def wait_for(self, pattern, timeout=60.0):
-        """The first match of `pattern` (a regular expression) in a line; AssertionError after `timeout` s."""
-        deadline = time.monotonic() + timeout
-        with self._changed:
-            while True:
-                for line in self.lines:
-                    m = re.search(pattern, line)
-                    if m:
-                        return m
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    raise AssertionError(f"no line matching {pattern!r} within {timeout} s; the lines: {self.lines}")
-                self._changed.wait(left)
-
-
-def start_server(add_cleanup, *arguments):
-    proc = subprocess.Popen([os.environ["VEHICLE_SIL_CONTROL_SERVER_EXE"], "--listen", "127.0.0.1:0", *arguments],
-                            stdout=subprocess.PIPE, text=True)
-    add_cleanup(stop, proc)
-    return proc, Lines(proc)
-
-
-def start_engine(add_cleanup, registry_uri):
-    """The engine ECU of examples/ecu_main, as a participant of the simulation at `registry_uri`."""
-    engine = pathlib.Path(os.environ["VEHICLE_SIL_EXAMPLE_DIR"]) / "engine" / f"vehicle_sil_engine_ecu{EXE}"
-    proc = subprocess.Popen([str(engine), "--registry-uri", registry_uri, "--start-timeout-ms", "120000"],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    add_cleanup(stop, proc)
-    return proc
 
 
 class LaunchedTest(unittest.TestCase):
@@ -173,6 +85,10 @@ class LaunchedTest(unittest.TestCase):
                          ("real", "input", "%", 0.0, 100.0))
         shown = next(v for v in peers["Dashboard"].schema if v.name == "dashboard.engine_speed")
         self.assertEqual((shown.type, shown.causality, shown.unit), ("integer", "output", "rpm"))
+        # An ECU of ecu_main runs on the simulation's time; vehicle-sil's variables are marked.
+        self.assertTrue(peers["Engine"].virtual_time)
+        builtin = {v.name: v.builtin for v in peers["Engine"].schema}
+        self.assertEqual((builtin.get("ecu.connected"), builtin["engine.throttle"]), (True, False))
 
         # On to 10 ms: it runs.
         c.sim.run_until(ms(10))
@@ -283,68 +199,6 @@ class LaunchedTest(unittest.TestCase):
             self.assertEqual(caught, [])
 
 
-class SecureServerTest(unittest.TestCase):
-    """The client with a token and TLS against vehicle_sil_control_server (started here, without
-    --required: it joins the registry as a participant of its own and controls no time), and an
-    engine ECU that waits for a controller that never comes: its hello reaches the server all the
-    same."""
-
-    @classmethod
-    def setUpClass(cls):
-        import tempfile
-        cls.data = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata")
-        cls.tmp = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(cls.tmp.cleanup)
-        creds = os.path.join(cls.tmp.name, "credentials")
-        with open(creds, "w") as f:
-            f.write("viewer alice viewer-token-0123456789\noperator bob operator-token-0123456789\n")
-        registry_uri = start_registry(cls.addClassCleanup)
-        cls.server, lines = start_server(
-            cls.addClassCleanup, "--registry-uri", registry_uri, "--credentials", creds,
-            "--tls-cert", os.path.join(cls.data, "server.crt"), "--tls-key", os.path.join(cls.data, "server.key"),
-            "--audit-log", os.path.join(cls.tmp.name, "audit.log"))
-        cls.address = "127.0.0.1:" + lines.wait_for(r"listening on port (\d+)").group(1)
-        lines.wait_for("joined the simulation as ControlServer")
-        with open(os.path.join(cls.data, "server.crt"), "rb") as f:
-            cls.roots = f.read()
-        start_engine(cls.addClassCleanup, registry_uri)
-
-    def test_tokens_and_roles(self):
-        import grpc
-        with Control(self.address, token="viewer-token-0123456789", root_certificates=self.roots) as c:
-            self.assertIn("control", c.ping())
-            self.assertFalse(c.sim.time().available)  # without --required: the time is not the server's
-            # The engine's hello came over SIL Kit, before any simulation started.
-            deadline = time.time() + 60
-            while time.time() < deadline and not c.peers():
-                time.sleep(0.05)
-            peers = c.peers()
-            self.assertEqual([(p.participant, p.connected, p.has_agent) for p in peers], [("Engine", True, True)])
-            self.assertIn("engine.throttle", [v.name for v in peers[0].schema])
-            # An ECU of ecu_main runs on the simulation's time; vehicle-sil's variables are marked.
-            self.assertTrue(peers[0].virtual_time)
-            builtin = {v.name: v.builtin for v in peers[0].schema}
-            self.assertEqual((builtin.get("ecu.connected"), builtin["engine.throttle"]), (True, False))
-            with self.assertRaises(ControlError) as e:
-                c.write({"X": {"y": 1}})
-            self.assertEqual(e.exception.code, grpc.StatusCode.PERMISSION_DENIED)
-        with Control(self.address, token="operator-token-0123456789", root_certificates=self.roots) as c:
-            seq = c.write({"X": {"y": 1}})
-            self.assertEqual(c.operation(seq).target("X").status, "invalid")  # no such peer
-        with Control(self.address, root_certificates=self.roots) as c:
-            with self.assertRaises(ControlError) as e:
-                c.peers()
-            self.assertEqual(e.exception.code, grpc.StatusCode.UNAUTHENTICATED)
-        out = subprocess.run([sys.executable, "-m", "vehicle_sil_control", "--server", self.address, "--token",
-                              "viewer-token-0123456789", "--root-cert", os.path.join(self.data, "server.crt"), "peers"],
-                             capture_output=True, text=True, timeout=60)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        with open(os.path.join(self.tmp.name, "audit.log")) as f:
-            audit = f.read()
-        self.assertIn("alice@", audit)
-        self.assertIn("bob@", audit)
-
-
 class ConversionTest(unittest.TestCase):
     """What the client makes of the server's messages, without a server."""
 
@@ -381,40 +235,6 @@ class OlderServerTest(unittest.TestCase):
         self.assertEqual(str(refused.exception),
                          "UNIMPLEMENTED: the server has no GetSnapshot (it is older than this client): read "
                          "sim.time() and values() instead; nothing holds between the two")
-
-
-class AbortedSimulationTest(unittest.TestCase):
-    """vehicle_sil_control_server without --required in a simulation that vehicle_sil_sim_controller
-    coordinates: when the controller aborts the simulation (a required ECU's process was killed),
-    the server's own participant leaves too, and the server says so and ends with exit code 1."""
-
-    def test_the_server_ends_with_the_simulation_it_joined(self):
-        registry_uri = start_registry(self.addCleanup)
-        server, lines = start_server(self.addCleanup, "--registry-uri", registry_uri)
-        address = "127.0.0.1:" + lines.wait_for(r"listening on port (\d+)").group(1)
-        lines.wait_for("joined the simulation as ControlServer")
-        engine = start_engine(self.addCleanup, registry_uri)
-        controller = subprocess.Popen([os.environ["VEHICLE_SIL_SIM_CONTROLLER_EXE"], "--registry-uri", registry_uri,
-                                       "--required", "Engine"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.addCleanup(stop, controller)
-        with Control(address) as c:
-            def engine_time():
-                try:
-                    return (c.values("Engine") or _NoValues()).time
-                except ControlError:  # no such peer yet
-                    return -1
-            deadline = time.time() + 60
-            while time.time() < deadline and engine_time() <= 0:
-                time.sleep(0.05)
-            self.assertGreater(engine_time(), 0, "the engine's values did not come: the simulation did not run")
-        engine.kill()
-        self.assertEqual(controller.wait(60), 1)  # a required participant failed: it aborts
-        self.assertEqual(server.wait(60), 1)
-        lines.wait_for(r"FAIL: the server's participant 'ControlServer' left the simulation \(state ")
-
-
-class _NoValues:
-    time = -1
 
 
 if __name__ == "__main__":
