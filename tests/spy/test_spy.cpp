@@ -6,6 +6,7 @@
 
 #include "vehicle_sil/j1939/listener.hpp"
 #include "vehicle_sil/j1939/network.hpp"
+#include "vehicle_sil/simulation/simulation.hpp"
 #include "vehicle_sil/spy/spy.hpp"
 
 #include <functional>
@@ -126,7 +127,8 @@ TEST_CASE(watcher_variables_are_named_after_it_and_count_what_it_hears)
     CHECK(info_of(rig.ecu, "block.count").causality == vehicle_sil::control::Causality::Output);
     // The counters of what the Listener missed, under "spy." by default.
     for (const char* name : {"spy.missed", "spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost",
-                             "spy.conflicting_packets", "spy.receive_overflows", "spy.transport_rejected"})
+                             "spy.conflicting_packets", "spy.receive_overflows", "spy.transport_rejected",
+                             "spy.transport_bam_dropped"})
     {
         CHECK_EQ(integer_of(rig.ecu, name), 0);
         CHECK(!info_of(rig.ecu, name).description.empty());
@@ -294,7 +296,7 @@ TEST_CASE(missed_counts_each_part_and_their_sum)
     const auto check_sum = [](Rig& rig, const Spy& spy) {
         std::int64_t parts = 0;
         for (const char* name : {"spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost", "spy.conflicting_packets",
-                                 "spy.receive_overflows", "spy.transport_rejected"})
+                                 "spy.receive_overflows", "spy.transport_rejected", "spy.transport_bam_dropped"})
         {
             parts += integer_of(rig.ecu, name);
         }
@@ -397,6 +399,18 @@ TEST_CASE(missed_counts_each_part_and_their_sum)
         CHECK_EQ(integer_of(rig.ecu, "spy.transport_rejected"), 1);
         check_sum(rig, spy);
     }
+    {
+        // A broadcast the network dropped while assembling it: a packet missing.
+        Rig rig;
+        Spy& spy = make_spy(rig);
+        const Bytes message = payload(20);
+        rig.inject(at(1ms), bam(kA, 20, kPgnPropB));
+        rig.inject(at(2ms), dt(kA, kGlobal, 1, message));
+        rig.inject(at(3ms), dt(kA, kGlobal, 3, message));
+        rig.bench.run_until(at(20ms));
+        CHECK_EQ(integer_of(rig.ecu, "spy.transport_bam_dropped"), 1);
+        check_sum(rig, spy);
+    }
 }
 
 TEST_CASE(statistics_as_names_the_counters_or_leaves_them_out)
@@ -452,6 +466,13 @@ TEST_CASE(errors_say_what_is_wrong_and_how_to_fix_it)
                   "vehicle_sil::spy::Scope \"named\": output() with the name \"\": the variable is \"named.<name>\", so "
                   "give a name that is not empty and neither starts nor ends with '.' (e.g. \"count\")");
     CHECK(throws_with<std::invalid_argument>([&] { spy.add<Named>("dotted", ".x"); }, "output() with the name \".x\""));
+    struct EmptyStep
+    {
+        explicit EmptyStep(Scope& s) { s.on_step({}); }
+    };
+    CHECK_MESSAGE(message_of<std::invalid_argument>([&] { spy.add<EmptyStep>("empty_step"); }),
+                  "vehicle_sil::spy::Scope \"empty_step\": on_step() with an empty function: give the function to run "
+                  "in every step");
     CHECK(throws_with<std::invalid_argument>([] {
         Rig other;
         Spy s(other.ecu, other.network, {.statistics_as = "spy."});
@@ -490,12 +511,229 @@ TEST_CASE(errors_say_what_is_wrong_and_how_to_fix_it)
                                         "on_transfer() after the run started"));
     CHECK(throws_with<std::logic_error>([&] { late.scope.on_frame([](const ReceivedFrame&) {}); },
                                         "on_frame() after the run started"));
+    CHECK(throws_with<std::logic_error>([&] { late.scope.on_step([](SimTime) {}); }, "on_step() after the run started"));
     const int x = 0;
     CHECK(throws_with<std::logic_error>([&] { late.scope.output("x", &x); }, "output() after the run started"));
     CHECK_MESSAGE(message_of<std::logic_error>([&] { Spy s(rig.ecu, rig.network); }),
                   "vehicle_sil::spy::Spy made after the run started: make the Spy in the ECU class's constructor (a "
                   "member of the class that ecu_main() or Simulation::add() makes)");
     CHECK(!rig.network.failed());
+}
+
+namespace {
+
+/// Counts the reads of its variable through a pointer that outlives it (the getter stays with
+/// the ECU's agent when the watcher goes).
+struct Counted
+{
+    Counted(Scope& s, int* reads)
+    {
+        s.output("reads", [reads] {
+            ++*reads;
+            return *reads;
+        });
+    }
+};
+
+/// A Spy with a watcher that publishes a variable, destroyed before its ECU runs (a SIL Kit
+/// simulation runs once): the first step says so, and the variable is never read.
+void check_spy_gone_before_its_ecu(std::optional<vehicle_sil::SilKitOptions> silkit)
+{
+    vehicle_sil::Simulation sim(std::move(silkit));
+    Ecu& ecu = sim.add_ecu("Spy", 10ms);
+    Network& network = ecu.j1939(kBus);
+    int reads = 0;
+    auto spy = std::make_unique<Spy>(ecu, network, SpyOptions{.statistics_as = ""});
+    spy->add<Counted>("counted", &reads);
+    spy.reset();
+    CHECK(throws_with<vehicle_sil::SimulationError>(
+        [&] { sim.run_for(30ms); },
+        "Spy: vehicle_sil::spy::Spy was destroyed before its ECU, but its variables (\"counted.*\") are still read: "
+        "make the Spy a member of the ECU class"));
+    CHECK_EQ(reads, 0);
+}
+
+} // namespace
+
+TEST_CASE(spy_with_variables_gone_before_its_ecu_stops_the_next_step)
+{
+    check_spy_gone_before_its_ecu(std::nullopt);
+}
+
+TEST_CASE(spy_with_variables_gone_before_its_ecu_stops_the_next_step_on_silkit)
+{
+    check_spy_gone_before_its_ecu(vehicle_sil::SilKitOptions{});
+}
+
+TEST_CASE(spy_with_counters_gone_before_its_ecu_names_them)
+{
+    Rig rig;
+    auto spy = std::make_unique<Spy>(rig.ecu, rig.network);
+    rig.bench.run_until(at(10ms) + 1ns);
+    spy.reset();
+    CHECK(throws_with<std::logic_error>([&] { rig.bench.run_until(at(30ms)); }, "its variables (\"spy.*\") are still read"));
+}
+
+TEST_CASE(watcher_whose_constructor_throws_after_publishing_stops_the_next_step)
+{
+    struct Published
+    {
+        explicit Published(Scope& s)
+        {
+            s.output("value", &value);
+            throw std::runtime_error("bad settings");
+        }
+        int value = 0;
+    };
+    Rig rig;
+    Spy& spy = make_spy(rig, {.statistics_as = ""});
+    CHECK(throws_with<std::runtime_error>([&] { spy.add<Published>("published"); }, "bad settings"));
+    CHECK(throws_with<std::logic_error>([&] { rig.bench.run_until(at(10ms) + 1ns); },
+                                        "vehicle_sil::spy::Spy::add() \"published\": the watcher's constructor threw "
+                                        "after variables were published that refer to it"));
+}
+
+namespace {
+
+/// A watcher made of two others, added from its constructor.
+struct Pair
+{
+    Pair(Scope& s, Spy& spy, std::vector<std::string>& log, bool throw_after) : log_(log)
+    {
+        command = &spy.add<Logger>(s.name() + ".command", log);
+        answer = &spy.add<Logger>(s.name() + ".answer", log);
+        s.on_any_message([this](const Message&) { log_.push_back("pair"); });
+        if (throw_after)
+        {
+            throw std::runtime_error("pair failed");
+        }
+    }
+    ~Pair() { log_.push_back("pair destroyed"); }
+    Pair(const Pair&) = delete;
+    Pair& operator=(const Pair&) = delete;
+    std::vector<std::string>& log_;
+    Logger* command = nullptr;
+    Logger* answer = nullptr;
+};
+
+/// Adds a watcher whose constructor throws, catches that and goes on.
+struct Tolerant
+{
+    Tolerant(Scope& s, Spy& spy, std::vector<std::string>& log)
+    {
+        struct Failing
+        {
+            Failing(Scope& inner, std::vector<std::string>& l)
+            {
+                inner.on_any_message([&l](const Message&) { l.push_back("failing heard"); });
+                throw std::runtime_error("inner failed");
+            }
+        };
+        CHECK(throws_with<std::runtime_error>([&] { spy.add<Failing>(s.name() + ".inner", log); }, "inner failed"));
+        spy.add<Logger>(s.name() + ".inner", log); // the name is free again
+    }
+};
+
+} // namespace
+
+TEST_CASE(watcher_may_add_watchers_from_its_constructor)
+{
+    std::vector<std::string> log;
+    {
+        Rig rig;
+        auto spy = std::make_unique<Spy>(rig.ecu, rig.network, SpyOptions{.statistics_as = ""});
+        spy->add<Logger>("before", log);
+        Pair& pair = spy->add<Pair>("pair", *spy, log, false);
+        spy->add<Logger>("after", log);
+        CHECK(pair.command != nullptr && pair.answer != nullptr);
+        rig.inject(at(1ms), frame(6, kPgnPropB, kA, kGlobal, {1}));
+        rig.bench.run_until(at(10ms) + 1ns);
+        // Handlers in the order registered.
+        const std::vector<std::string> heard{"before 65296", "pair.command 65296", "pair.answer 65296", "pair",
+                                             "after 65296"};
+        CHECK(log == heard);
+        log.clear();
+        spy.reset();
+        // The one whose add() returned last first: the pair before the watchers it is made of.
+        const std::vector<std::string> destroyed{"after destroyed", "pair destroyed", "pair.answer destroyed",
+                                                 "pair.command destroyed", "before destroyed"};
+        CHECK(log == destroyed);
+    }
+    {
+        // The outer constructor throws: the watchers it added go with it, the others stay.
+        log.clear();
+        Rig rig;
+        Spy& spy = make_spy(rig, {.statistics_as = ""});
+        spy.add<Logger>("before", log);
+        CHECK(throws_with<std::runtime_error>([&] { spy.add<Pair>("pair", spy, log, true); }, "pair failed"));
+        const std::vector<std::string> destroyed{"pair.answer destroyed", "pair.command destroyed"};
+        CHECK(log == destroyed);
+        spy.add<Pair>("pair", spy, log, false); // every name is free again
+        log.clear();
+        rig.inject(at(1ms), frame(6, kPgnPropB, kA, kGlobal, {1}));
+        rig.bench.run_until(at(10ms) + 1ns);
+        const std::vector<std::string> heard{"before 65296", "pair.command 65296", "pair.answer 65296", "pair"};
+        CHECK(log == heard);
+        log.clear(); // the ECU destroys the watchers after this test's checks
+    }
+    {
+        // An inner constructor throws and the outer one goes on.
+        log.clear();
+        Rig rig;
+        Spy& spy = make_spy(rig, {.statistics_as = ""});
+        spy.add<Tolerant>("tolerant", spy, log);
+        rig.inject(at(1ms), frame(6, kPgnPropB, kA, kGlobal, {1}));
+        rig.bench.run_until(at(10ms) + 1ns);
+        const std::vector<std::string> heard{"tolerant.inner 65296"};
+        CHECK(log == heard);
+        CHECK(!rig.network.failed());
+        log.clear();
+    }
+}
+
+TEST_CASE(step_functions_run_after_the_handlers_in_the_order_registered)
+{
+    struct Stepper
+    {
+        Stepper(Scope& s, std::vector<std::string>& log) : log_(log), scope_(s)
+        {
+            s.on_any_message([this](const Message& m) { log_.push_back(scope_.name() + " heard " + std::to_string(to_ns(m.time) / 1000000)); });
+            s.on_step([this](SimTime now) {
+                log_.push_back(scope_.name() + " step " + std::to_string(to_ns(now) / 1000000) + " now " +
+                               std::to_string(to_ns(scope_.now()) / 1000000));
+            });
+        }
+        std::vector<std::string>& log_;
+        Scope& scope_;
+    };
+    std::vector<std::string> log;
+    Rig rig;
+    auto spy = std::make_unique<Spy>(rig.ecu, rig.network, SpyOptions{.statistics_as = ""});
+    spy->add<Stepper>("a", log);
+    spy->add<Stepper>("b", log);
+    rig.inject(at(5ms), frame(6, kPgnPropB, kA, kGlobal, {1}));
+    rig.bench.run_until(at(10ms) + 1ns);
+    const std::vector<std::string> expected{"a step 0 now 0",  "b step 0 now 0",  "a heard 5",
+                                            "b heard 5",       "a step 10 now 10", "b step 10 now 10"};
+    CHECK(log == expected);
+    // Gone with the Spy (it published no variable): the steps go on without them.
+    spy.reset();
+    log.clear();
+    rig.bench.run_until(at(30ms));
+    CHECK(log.empty());
+}
+
+TEST_CASE(missed_counts_a_broadcast_dropped_while_assembled)
+{
+    Rig rig;
+    Spy& spy = make_spy(rig);
+    const Bytes message = payload(20);
+    rig.inject(at(1ms), bam(kA, 20, kPgnPropB));
+    rig.inject(at(2ms), dt(kA, kGlobal, 1, message));
+    rig.inject(at(3ms), dt(kA, kGlobal, 3, message)); // packet 2 missing
+    rig.bench.run_until(at(20ms));
+    CHECK_EQ(spy.missed(), 1u);
+    CHECK_EQ(integer_of(rig.ecu, "spy.missed"), 1);
 }
 
 namespace {

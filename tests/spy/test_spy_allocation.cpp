@@ -20,7 +20,8 @@ using vehicle_sil::spy::Spy;
 
 namespace {
 
-/// Every kind of handler, a pointer variable and a getter that reads Scope::now().
+/// Every kind of handler, a step function, a pointer variable and a getter that reads
+/// Scope::now().
 class Busy
 {
 public:
@@ -36,6 +37,7 @@ public:
         s.on_any_message([this](const Message& m) { bytes_ = static_cast<int>(m.data.size()); });
         s.on_transfer([this](const SniffedTransfer&) { ++transfers_; });
         s.on_frame([this](const ReceivedFrame&) { ++frames_; });
+        s.on_step([this](SimTime now) { quiet_steps_ += now - latest_ > std::chrono::milliseconds(5) ? 1 : 0; });
         s.output("count", &count_);
         s.output("bytes", &bytes_);
         s.output("transfers", &transfers_);
@@ -50,6 +52,7 @@ private:
     int bytes_ = 0;
     std::int64_t transfers_ = 0;
     std::int64_t frames_ = 0;
+    std::int64_t quiet_steps_ = 0;
 };
 
 } // namespace

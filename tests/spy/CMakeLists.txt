@@ -4,7 +4,7 @@
 vehicle_sil_add_harness_tests(vehicle_sil_spy_tests
   PREFIX j1939_spy LABELS unit j1939 TIMEOUT 60
   SOURCES test_spy.cpp
-  LINK vehicle_sil::spy vehicle_sil::local)
+  LINK vehicle_sil::spy vehicle_sil::local vehicle_sil::simulation)
 target_include_directories(vehicle_sil_spy_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/j1939)
 
 # Replaces the global operator new to count allocations in steady-state steps: its own binary.

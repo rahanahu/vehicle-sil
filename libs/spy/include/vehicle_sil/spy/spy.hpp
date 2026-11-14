@@ -39,6 +39,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -50,11 +51,28 @@ namespace vehicle_sil::spy {
 
 namespace detail {
 
-/// The time of the ECU's latest step, written by the function a Spy gives Ecu::on_step().
-struct SpyClock
+/// A function of a watcher for every step (Scope::on_step()), with the ScopeState it belongs to.
+struct StepFunction
+{
+    const void* owner = nullptr;
+    std::function<void(SimTime now)> fn;
+};
+
+/// What a Spy shares with the function it gives Ecu::on_step(), which stays when the Spy goes
+/// before the ECU: the step's time, the watchers' step functions, and what to say if the
+/// Spy's variables refer to what is gone.
+struct SpyShared
 {
     SimTime now{};
     std::atomic<bool> started{false}; ///< set in the first step
+    /// Scope::on_step() functions in the order registered; the Spy removes them with the handlers.
+    std::vector<StepFunction> steps{};
+    /// The prefixes of the variables published so far ("\"spy.*\", \"block.*\""), for `broken`.
+    std::string published{};
+    /// Why the ECU must not step any more (written before `is_broken`): the next step throws it
+    /// as std::logic_error, before the variables are sampled.
+    std::string broken{};
+    std::atomic<bool> is_broken{false};
 };
 
 /// What one Scope uses: made and kept by its Spy (internal).
@@ -62,10 +80,11 @@ struct ScopeState
 {
     Ecu& ecu;
     j1939::Listener& listener;
-    std::shared_ptr<const SpyClock> clock;
+    std::shared_ptr<SpyShared> shared;
     std::string name;
     /// The handlers registered through the Scope; the Spy removes them before the watcher goes.
     std::vector<j1939::ListenerSubscription> handlers{};
+    bool published = false; ///< a variable was published through the Scope
 };
 
 } // namespace detail
@@ -111,6 +130,7 @@ public:
     void output(std::string_view item, const T* value, control::VariableOptions options = {})
     {
         ecu().output(variable(item, "output()"), value, std::move(options));
+        note_published();
     }
     /// The variable "<name()>.<item>" read through `get` (as Ecu::output()), called in the ECU's
     /// samples, after the handlers of that step.
@@ -119,6 +139,7 @@ public:
     void output(std::string_view item, Get get, control::VariableOptions options = {})
     {
         ecu().output(variable(item, "output()"), std::move(get), std::move(options));
+        note_published();
     }
     /// The integer variable "<name()>.<item>" that takes the values of `items` (as
     /// Ecu::output_enum()).
@@ -128,15 +149,24 @@ public:
                      control::VariableOptions options = {})
     {
         ecu().output_enum(variable(item, "output_enum()"), std::move(get), std::move(items), std::move(options));
+        note_published();
     }
 
     /// Adds a handler to the Spy's Listener (j1939::Listener::on_message() and the others: the
-    /// same messages, frames and order; handlers of all watchers run in the order they were
-    /// added). std::invalid_argument for an empty handler.
+    /// same messages, frames and order; handlers of one kind run in the order they were added,
+    /// across the watchers). std::invalid_argument for an empty handler.
     void on_message(j1939::Pgn pgn, j1939::Listener::MessageHandler handler);
     void on_any_message(j1939::Listener::MessageHandler handler);
     void on_transfer(j1939::Listener::TransferHandler handler);
     void on_frame(j1939::Listener::FrameHandler handler);
+    /// Runs `fn` in every step of the ECU, with the step's time (now() is that time too): after
+    /// the step's handlers and before its variables are sampled. For what follows from time
+    /// passing (e.g. counting that something stopped coming); the result depends on the ECU's
+    /// step size. The functions of all watchers run in the order they were registered, from
+    /// the Spy's one Ecu::on_step() function. The same conditions as on_message(); the Spy
+    /// removes it with the handlers. Like a handler, it only reads and updates the watcher's
+    /// members (it allocates nothing).
+    void on_step(std::function<void(SimTime now)> fn);
 
     /// The time of the ECU's latest step whose functions ran (SimTime{} before the first step).
     /// In a getter of a variable it is the time of the step being sampled, so a getter can say
@@ -153,6 +183,8 @@ private:
     [[nodiscard]] std::string variable(std::string_view item, const char* what) const;
     void require_set_up(const char* what) const;
     void keep(j1939::Listener::HandlerId id);
+    /// After a variable was published: the Spy says so if it goes before the ECU.
+    void note_published();
 
     detail::ScopeState& state_;
 };
@@ -162,24 +194,32 @@ private:
 ///
 /// What the Listener missed ("<SpyOptions::statistics_as>.*", by default "spy.*"; integers that
 /// only grow):
-/// - "spy.missed": the sum of the seven below. While it is 0, the Network took every frame,
-///   assembled every broadcast, the Listener followed every connection it saw announced to its
-///   end, and every message handed to the watchers has the receiver's bytes.
+/// - "spy.missed": the sum of the eight below. While it is 0, the Network dropped no frame it
+///   received, no broadcast or connection that the Network or the Listener followed was lost
+///   for a missing, repeated or out-of-order packet or for lack of a place, and every message
+///   handed to the watchers has the receiver's bytes.
 /// - "spy.no_session", "spy.incomplete", "spy.replaced", "spy.lost",
 ///   "spy.conflicting_packets": the Listener's j1939::SnifferStatistics of the same names.
-/// - "spy.receive_overflows", "spy.transport_rejected": the Network's j1939::NetworkStatistics
-///   of the same names.
-/// Not in it: NetworkStatistics::frames_ignored (11-bit frames among them, so it grows on any
-/// bus that also carries 11-bit frames), and connections whose announcement came before the
-/// Listener heard the bus (SnifferStatistics::orphan_data).
+/// - "spy.receive_overflows", "spy.transport_rejected", "spy.transport_bam_dropped": the
+///   Network's j1939::NetworkStatistics of the same names. transport_rejected counts the
+///   broadcasts the Network did not start to assemble (a malformed announcement, no free
+///   session) and the connections a node of this participant refused (busy with another
+///   group, too large, malformed, no free session).
+/// Not seen by it: frames that came while the ECU was off its buses ("ecu.connected" false:
+/// they are dropped before the Network and counted nowhere), NetworkStatistics::frames_ignored
+/// (11-bit frames among them, so it grows on any bus that also carries 11-bit frames), and
+/// connections whose announcement came before the Listener heard the bus
+/// (SnifferStatistics::orphan_data).
 ///
 /// Lifetime. Make the Spy a member of the ECU's class (the class ecu_main() or Simulation::add()
 /// makes), so that it lives as long as the ECU: the variables it and its watchers publish
-/// cannot be taken back, and the ECU reads them until it goes. A Spy that published no
-/// variable (statistics_as empty and watchers without variables) may go earlier: its handlers
-/// are removed and no handler of it is called afterwards. It destroys, in this order: for each
-/// watcher, the last added first, the watcher's handlers, then the watcher; then the Listener
-/// it made. A borrowed Listener may go before or after the Spy (it must outlive the Spy's
+/// cannot be taken back, and the ECU reads them until it goes. A Spy that published variables
+/// and goes before its ECU makes the ECU's next step throw std::logic_error (before the
+/// variables are read), saying so. A Spy that published no variable (statistics_as empty and
+/// watchers without variables) may go earlier: its handlers and step functions are removed and
+/// none of them is called afterwards. It destroys, in this order: for each watcher, the one
+/// whose add() returned last first, the watcher's handlers and step functions, then the
+/// watcher; then the Listener it made. A borrowed Listener may go before or after the Spy (it must outlive the Spy's
 /// "spy.*" variables, which read it).
 ///
 /// Make, add() and destroy it outside a step. Not copyable, not movable. Not thread safe: set it
@@ -207,26 +247,32 @@ public:
     /// the Spy's life. Watchers are called in the order they were added. Only before the run
     /// starts (the ECU class's constructor): afterwards std::logic_error, and no W is made.
     /// std::invalid_argument for an empty `as`, one that starts or ends with '.', one used
-    /// already by another watcher or by statistics_as. Exceptions of W's constructor propagate:
-    /// the handlers it registered are removed and no W is kept, but the variables it declared
-    /// stay and refer to the destroyed W (do not run the ECU after that, as Ecu::emplace()).
+    /// already by another watcher or by statistics_as.
+    ///
+    /// W's constructor may add() other watchers through a Spy& it was given (a watcher made of
+    /// others): those are destroyed after it, as the Spy destroys the watchers in the reverse
+    /// order their add() returned. Exceptions of W's constructor propagate: the handlers and
+    /// step functions it registered are removed, the watchers it added are destroyed, and no W
+    /// is kept. Variables it declared cannot be taken back and would refer to the destroyed W:
+    /// if it declared any, the ECU's next step throws std::logic_error saying so (do not run
+    /// the ECU after that, as with Ecu::emplace()).
     template <class W, class... Args>
     W& add(std::string_view as, Args&&... args)
     {
         static_assert(std::is_constructible_v<W, Scope&, Args&&...>,
                       "vehicle_sil::spy::Spy::add<W>(as, args...) makes W(scope, args...): give W a constructor that "
                       "takes vehicle_sil::spy::Scope& first, then the arguments given to add() after the name");
-        Scope& scope = begin_add(as, "add()");
+        Slot& slot = begin_add(as, "add()");
         try
         {
-            auto watcher = std::make_unique<W>(scope, std::forward<Args>(args)...);
+            auto watcher = std::make_unique<W>(slot.scope, std::forward<Args>(args)...);
             W& ref = *watcher;
-            finish_add(Owned(watcher.release(), [](void* p) noexcept { delete static_cast<W*>(p); }));
+            finish_add(slot, Owned(watcher.release(), [](void* p) noexcept { delete static_cast<W*>(p); }));
             return ref;
         }
         catch (...)
         {
-            abandon_add();
+            abandon_add(slot);
             throw;
         }
     }
@@ -249,24 +295,33 @@ private:
     };
 
     Spy(Ecu& ecu, j1939::Network& network, j1939::Listener* borrowed, SpyOptions options);
-    /// Checks `options` and registers the clock with Ecu::on_step().
-    static std::shared_ptr<detail::SpyClock> start(Ecu& ecu, const SpyOptions& options);
+    /// Checks `options` and registers the Spy's function with Ecu::on_step().
+    static std::shared_ptr<detail::SpyShared> start(Ecu& ecu, const SpyOptions& options);
     static std::unique_ptr<j1939::Listener> make_listener(j1939::Network& network, const j1939::ListenerOptions& options);
     void require_set_up(const char* who, const char* what) const;
-    Scope& begin_add(std::string_view as, const char* kind);
-    void finish_add(Owned object) noexcept;
-    void abandon_add() noexcept;
+    /// A new slot at the end of watchers_ (the watcher is made in it).
+    Slot& begin_add(std::string_view as, const char* kind);
+    /// Puts the watcher into `slot` and moves the slot to the end: after the watchers its
+    /// constructor added, so that it is destroyed before them.
+    void finish_add(Slot& slot, Owned object) noexcept;
+    /// Destroys `slot` and every slot after it (the watchers its constructor added).
+    void abandon_add(Slot& slot) noexcept;
+    /// Removes the last slot's handlers and step functions, then destroys its watcher.
+    void drop_last() noexcept;
+    /// Makes the ECU's next step throw `why` (variables refer to what is gone).
+    void break_ecu(const std::string& why) noexcept;
     void publish_statistics();
 
     Ecu& ecu_;
     j1939::Network& network_;
-    /// The clock is shared with the function the Spy gave Ecu::on_step(), which stays after a
-    /// Spy that goes before the ECU.
-    std::shared_ptr<detail::SpyClock> clock_;
+    /// Shared with the function the Spy gave Ecu::on_step(), which stays after a Spy that goes
+    /// before the ECU.
+    std::shared_ptr<detail::SpyShared> shared_;
     /// Declared before watchers_: destroyed after them (the destructor empties watchers_ first).
     std::unique_ptr<j1939::Listener> own_;
     j1939::Listener& listener_;
     std::string statistics_as_;
+    bool statistics_published_ = false;
     std::vector<std::unique_ptr<Slot>> watchers_;
 };
 

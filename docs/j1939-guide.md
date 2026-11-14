@@ -520,26 +520,36 @@ int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, arg
 - `add<W>(名前, 引数...)` は見張り `W(scope, 引数...)` を作り、`Spy` が持ちます。見張りは `spy::Scope&` を最初に取るコンストラクターを持つクラスで、何も継ぎません。見張りのハンドラは、足した順に呼ばれます（見張りをまたいでも）。`Scope` の口:
   - `on_message(pgn, handler)`、`on_any_message`、`on_transfer`、`on_frame`: `Listener` の同じ名前の口にハンドラを足します（渡るものは下の「J1939 で聞く」）。登録は `Scope` が持ち、`Spy` が見張りを壊す前に外すので、見張りは `ListenerSubscription` を持ちません。
   - `output(項目, …)`、`output_enum(項目, …)`: 変数 `<名前>.<項目>` を出します。形は `ecu.output()` と同じです。
+  - `on_step(fn)`: ECU のステップごとに、そのステップの時刻で `fn` を呼びます。そのステップのハンドラの後、変数の標本の前です。時間が過ぎたことで決まること（来なくなった回数を数えるなど）に使います。結果はステップ幅の粒で変わります。ハンドラと同じく、見張りのメンバーを書き換えるだけにします。
+
+    ```cpp
+    s.on_step([this](vehicle_sil::SimTime now) {           // 100 ms 来なかったら 1 回数える
+        if (count_ > 0 && !quiet_ && now - latest_ > 100ms) { quiet_ = true; ++silences_; }
+    });                                                     // ハンドラで受けたら quiet_ = false に戻す
+    ```
+
   - `now()`: その ECU の最後のステップの時刻です。変数の getter の中では標本を取るステップの時刻なので、「最後に聞いてから何 ms」は `now()` と最後の `Message::time` の差で出せます（結果はステップ幅の粒で変わります）。ハンドラの中では 1 つ前のステップの時刻です。ハンドラでは `Message::time` を使います。
   - 見張りの追加も、ハンドラと変数の登録も、ECU のクラスのコンストラクターの中でします。始まった後は `std::logic_error` です（「... after the run started: add the watchers in the ECU class's constructor」）。名前の誤りは `std::invalid_argument` です。同じ名前の 2 回目、空か `.` で始まる・終わる名前、聞きこぼしの前置き（下）と同じ名前が誤りで、文に直し方が出ます。
+- 見張りのコンストラクターの中から、受け取った `Spy&` で別の見張りを `add()` できます（見張りを組み合わせた見張り）。足した見張りは、組み合わせた見張りより後に壊れます（`Spy` は `add()` が返った順の逆に壊します）。コンストラクターが投げると、それまでに登録したハンドラと `on_step` の関数を外し、足した見張りも壊します。
 - 聞きこぼしの変数: `Spy` は、`Listener` と `Network` の数を、次の変数に出します（増えるだけの整数）。シナリオで `spy.missed` が 0 のままなのを確かめると、「来なかった」と「聞きこぼした」を見分けられます。
 
   | 変数 | 数えるもの |
   |---|---|
-  | `spy.missed` | 下の 7 つの和。0 のままなら、`Network` はフレームを全部受け取って BAM を全部組み立て、`Listener` は告知を見た接続を最後まで追い、渡したメッセージは全部受け手と同じバイト列です |
+  | `spy.missed` | 下の 8 つの和。0 のままなら、`Network` は受けたフレームを 1 つも落とさず、`Network` と `Listener` が追い始めた BAM と接続は、パケットの欠け・重なり・順の違いや空きのなさで失われておらず、渡したメッセージは全部受け手と同じバイト列です（見えないものは下） |
   | `spy.no_session` | 空きがなくて追わなかった接続（同時に追える数は `ListenerOptions::sniffer.sessions`、既定 32） |
   | `spy.incomplete` | パケットを見逃した接続 |
   | `spy.replaced` | 終わる前に告知し直された接続 |
   | `spy.lost` | 同じ participant のノードがそのアドレスを取ったので、追うのをやめた接続 |
   | `spy.conflicting_packets` | 同じ番号で中身の違うパケット（下の「受け手と違うかもしれないメッセージ」） |
   | `spy.receive_overflows` | `Network` が受け取れなかったフレーム（`NetworkOptions::receive_capacity`） |
-  | `spy.transport_rejected` | 空きのセッションがなくて組み立てなかった BAM（同じ participant のノードが同じ理由で断った RTS も） |
+  | `spy.transport_rejected` | `Network` が組み立てを始めなかった BAM（形の正しくない告知、空きのセッションなし）と、同じ participant のノードが断った RTS（別の PGN で話し中、大きすぎ、形の誤り、空きなし） |
+  | `spy.transport_bam_dropped` | `Network` が組み立ての途中で捨てた BAM（パケットの欠け、重なり、順の違い） |
 
-  - 入れないもの: `Network::statistics()` の `frames_ignored`（11 ビットのフレームなど。11 ビットのフレームも流れるバスではいつも増えるため）と、告知を聞く前に始まった接続（`sniffer_statistics()` の `orphan_data`）。
+  - 見えないもの: スパイの ECU をバスから外した間（`ecu.connected` が false）に来たフレームは、`Network` の手前で捨てられ、どこにも数えられません。`Network::statistics()` の `frames_ignored`（11 ビットのフレームなど。11 ビットのフレームも流れるバスではいつも増えるため）と、告知を聞く前に始まった接続（`sniffer_statistics()` の `orphan_data`）も入れません。
   - 前置きは `SpyOptions::statistics_as`（既定 `"spy"`）で変えられます。空にすると出しません。
-- 寿命: 出した変数は取り消せないので、変数を出す `Spy` は ECU のクラスのメンバーにして、ECU と同じだけ生かします（見本の形。`ecu_main` と `Simulation::add()` が作るクラスは、ECU のネットワークと変数より後に壊れます）。`Spy` は壊れるとき、見張りごとに（後に足したものから）ハンドラを外してから見張りを壊し、最後に自分で作った `Listener` を壊します。
+- 寿命: 出した変数は取り消せないので、変数を出す `Spy` は ECU のクラスのメンバーにして、ECU と同じだけ生かします（見本の形。`ecu_main` と `Simulation::add()` が作るクラスは、ECU のネットワークと変数より後に壊れます）。変数を出した `Spy` を ECU より先に壊すと、その ECU の次のステップが、変数を読む前に `std::logic_error`（「vehicle_sil::spy::Spy was destroyed before its ECU, but its variables (...) are still read: make the Spy a member of the ECU class ...」）で止まります。`Spy` は壊れるとき、見張りごとに（`add()` が後に返ったものから）ハンドラと `on_step` の関数を外してから見張りを壊し、最後に自分で作った `Listener` を壊します。
 - 1 つの `Network` に `Listener` は 1 つです（2 つ目は `std::logic_error`）。`Listener` をほかのコードと分けるときは、自分で作った `Listener` を `Spy(ecu, network, listener)` に渡します。その `Listener` に `Spy` を 2 つ置くときは、2 つ目の `SpyOptions::statistics_as` を `""` にします。
-- 見張りを試験する: `LocalBench` の ECU に見張りを足したクラスを置き、フレームを入れて回し、変数を読みます（`tests/spy` の見本の試験がこの形です）。
+- 見張りを試験する: `LocalBench` の ECU に見張りを足したクラスを置き、フレームを入れて回し、変数を読みます（`tests/spy` の見本の試験がこの形です）。見張りに参照で渡すもの（記録の `std::vector` など）は、`LocalBench` より前に宣言します。見張りは ECU と一緒に、`LocalBench` が壊れるときに壊れるためです。
 
   ```cpp
   auto& ecu = bench.add_ecu("CalSpy", 5ms); ecu.emplace<CalSpy>(ecu);
