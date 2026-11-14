@@ -20,7 +20,7 @@ flowchart LR
 
 | 口 | 向いているとき | 手引きと正本 |
 |---|---|---|
-| シナリオ（`run --scenario`） | 決まった手順で値を入れて確かめ、終了コードで合否を出す。CI で回す。同じ構成と同じシナリオなら、結果はいつも同じ | [シナリオで試験を書く](scenario-tests.md)、[scenario.md](../scenario.md) |
+| シナリオ（`run --scenario`） | 決まった手順で値を入れて確かめ、終了コードで合否を出す。CI で回す。同じ構成と同じシナリオなら、結果はいつも同じ | [シナリオでテストを書く](scenario-tests.md)、[scenario.md](../scenario.md) |
 | Python（`vehicle_sil_control`） | 値を見ながら次に書くものを決める。手順をプログラムで組み立てる。止めて、書いて、少し進めて、読む | この手引き、[control-api.md](../control-api.md) の「Python」 |
 | CLI（`python -m vehicle_sil_control`） | Python を書かずに、1 つずつ読む、書く、進める | [control-api.md](../control-api.md) の「CLI」 |
 | GUI（`vehicle-sil-gui`） | ブラウザで値を見ながら、スライダーやスイッチで書く | [gui.md](../gui.md) の「ECU の変数」と「変数の画面と部品」 |
@@ -254,6 +254,6 @@ Control API が扱うのは、ECU が宣言した変数と時間だけです。J
 
 - クライアントの API、反映の時刻、`snapshot()` の約束、CLI: [control-api.md](../control-api.md)
 - 事象と標準入力の命令、`run --json` の結果: [simulation-events.md](../simulation-events.md) の「機械から使う」
-- 決まった手順で確かめて、終了コードで合否を出す: [シナリオで試験を書く](scenario-tests.md)
+- 決まった手順で確かめて、終了コードで合否を出す: [シナリオでテストを書く](scenario-tests.md)
 - ブラウザで値を見る・書く: [gui.md](../gui.md)
 - J1939 の信号を変数に出す: [j1939-guide.md](../j1939-guide.md)
