@@ -49,11 +49,66 @@ Address address_of(std::string_view uri)
     return address;
 }
 
-/// Whether `host` is this computer by its name alone (the loopback). An empty host counts: the
-/// advice for this computer is the one that was always given.
-bool is_this_computer(std::string_view host)
+/// `text` with its ASCII letters in lower case (host names and the hex digits of an IPv6 address
+/// are compared without their case).
+std::string lower(std::string_view text)
 {
-    return host.empty() || host == "localhost" || host == "::1" || host.rfind("127.", 0) == 0;
+    std::string out(text);
+    for (char& c : out)
+    {
+        if (c >= 'A' && c <= 'Z')
+        {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return out;
+}
+
+/// Whether `text` is four numbers with dots between them.
+bool is_ipv4(std::string_view text)
+{
+    int dots = 0;
+    bool digit_before = false;
+    for (const char c : text)
+    {
+        if (c == '.')
+        {
+            if (!digit_before)
+            {
+                return false;
+            }
+            ++dots;
+            digit_before = false;
+        }
+        else if (c >= '0' && c <= '9')
+        {
+            digit_before = true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    return dots == 3 && digit_before;
+}
+
+/// Whether `host` (in lower case) is the loopback of this computer by how it is written. An
+/// empty host counts: the advice for this computer is the one that was always given.
+bool is_loopback(std::string_view host)
+{
+    constexpr std::string_view mapped = "::ffff:";
+    if (host.rfind(mapped, 0) == 0)
+    {
+        host.remove_prefix(mapped.size());
+    }
+    return host.empty() || host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1" ||
+           (host.rfind("127.", 0) == 0 && is_ipv4(host));
+}
+
+/// Whether `host` is the address that stands for every address of a computer: one to listen on.
+bool is_any_address(std::string_view host)
+{
+    return host == "0.0.0.0" || host == "::" || host == "0:0:0:0:0:0:0:0";
 }
 
 } // namespace
@@ -75,18 +130,30 @@ std::optional<std::string> registry_failure_message(std::string_view what, std::
         }
     }
     const std::string uri(registry_uri);
-    if (const Address address = address_of(registry_uri); !is_this_computer(address.host))
+    const std::string start = "cannot connect to the SIL Kit registry at " + uri + " (" + detail + "). ";
+    Address address = address_of(registry_uri);
+    address.host = lower(address.host);
+    // The port a registry listens on when its address names none.
+    const std::string port = address.port.empty() ? "8500" : address.port;
+    if (is_any_address(address.host))
     {
-        // A registry started with this address on this computer would not help: say what to look at on the other one.
-        const std::string listen = "silkit://0.0.0.0" + (address.port.empty() ? std::string() : ":" + address.port);
-        return "cannot connect to the SIL Kit registry at " + uri + " (" + detail + "). " + address.host +
-               " is another computer: check that the registry runs there, that it listens on an address this computer reaches "
-               "('sil-kit-registry --listen-uri " + listen + "' listens on all of that computer's addresses, not only on "
-               "its loopback), and that the firewall there lets the port through. If the registry is elsewhere, give its "
-               "address with --registry-uri.";
+        return start + address.host +
+               " stands for every address of a computer: a registry listens on it, a participant cannot connect to it. "
+               "Give --registry-uri the address of the computer the registry runs on (silkit://127.0.0.1:" + port +
+               " if it runs on this one).";
     }
-    return "cannot connect to the SIL Kit registry at " + uri + " (" + detail +
-           "). Start the registry first ('sil-kit-registry --listen-uri " + uri +
+    if (!is_loopback(address.host))
+    {
+        // Starting a registry with this address may not be what is missing, and whose address it is
+        // is not known here (another computer's, or one of this computer's own): say what to look at
+        // where the registry runs.
+        return start + address.host +
+               " is not the loopback address of this computer: check that the registry runs on the computer with that "
+               "address (which may be this one), that it listens on an address reached from here ('sil-kit-registry "
+               "--listen-uri silkit://0.0.0.0:" + port + "' there listens on all of its addresses, not only on its "
+               "loopback), and that its firewall lets port " + port + " through.";
+    }
+    return start + "Start the registry first ('sil-kit-registry --listen-uri " + uri +
            "'), or give the address it listens at with --registry-uri.";
 }
 

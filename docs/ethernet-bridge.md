@@ -58,10 +58,10 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
    [eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://127.0.0.1:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). Start the registry first ('sil-kit-registry --listen-uri silkit://127.0.0.1:8500'), or give the address it listens at with --registry-uri.
    ```
 
-   アドレスがこの PC（`localhost`、`127.x.y.z`、`::1`）でないときは、registry を起動せよとは言わず、その PC で確かめることを言います（文は `bridges/common` の `registry_failure_message()` が作り、Vector XL のブリッジと同じです）。
+   アドレスがこの PC のループバック（`localhost`、`127.x.y.z`、`::1`）でないときは、registry を起動せよとは言わず、そのアドレスの PC で確かめることを言います。そのアドレスが別の PC のものか、この PC 自身のものかは、調べません。`0.0.0.0` と `[::]` は待ち受けるためのアドレスなので、registry の動いている PC のアドレスを書くよう言います（文は `bridges/common` の `registry_failure_message()` が作り、Vector XL のブリッジと同じです。[docs/bridges.md](bridges.md)）。
 
    ```
-   [eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://192.168.10.5:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). 192.168.10.5 is another computer: check that the registry runs there, that it listens on an address this computer reaches ('sil-kit-registry --listen-uri silkit://0.0.0.0:8500' listens on all of that computer's addresses, not only on its loopback), and that the firewall there lets the port through. If the registry is elsewhere, give its address with --registry-uri.
+   [eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://192.168.10.5:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). 192.168.10.5 is not the loopback address of this computer: check that the registry runs on the computer with that address (which may be this one), that it listens on an address reached from here ('sil-kit-registry --listen-uri silkit://0.0.0.0:8500' there listens on all of its addresses, not only on its loopback), and that its firewall lets port 8500 through.
    ```
 4. 外のインターフェースを開き、転送を始めます（`EthernetBridge::start()`）。開けなければ、何が起きたかと直し方を言って終了コード 3 で終わります（下の「[バックエンド](#バックエンド)」の文）。
 5. participant の lifecycle を始めます。転送を先に始めるのは、ほかの participant が、ブリッジが Running になったのを見た時点で送り始めるからです。
@@ -87,7 +87,7 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 | 3 | 準備の失敗（この OS で使えないバックエンド、入っていない pcap のライブラリ、インターフェース、SIL Kit）: `FAIL setup: <理由>` |
 | 4 | 引数の誤り |
 
-プロミスキャスなしで（`packet`、`npcap`、`pcap`）、ブリッジが外へフレームを送ってから 5 秒たっても、SIL Kit の側の MAC アドレス（外へ送ったフレームの送り元）宛てのフレームが 1 つも来ないとき、手がかりを 1 回だけ警告します。プロミスキャスなしのインターフェースは、自分のアドレス宛てとグループのアドレス宛てのフレームしか渡さず、SIL Kit の機器のアドレスはインターフェースのアドレスと違うからです。ブリッジが最初に送るより前に届いた分も数えます（その宛先からブリッジが後で送れば、届いていたとみなします）。宛先で絞らないインターフェース（個別のアドレス宛てのフレームを、覚えていられる数（32）より多くの宛先について渡したもの）でも出しません。返事を待たない使い方（外へ流すだけ）でも出るので、文は条件つきです。
+プロミスキャスなしで（`packet`、`npcap`、`pcap`）、ブリッジが外へフレームを送ってから 5 秒たっても、SIL Kit の側の MAC アドレス（外へ送ったフレームの送り元）宛てのフレームが 1 つも来ないとき、手がかりを 1 回だけ警告します。プロミスキャスなしのインターフェースは、自分のアドレス宛てとグループのアドレス宛てのフレームしか渡さず、SIL Kit の機器のアドレスはインターフェースのアドレスと違うからです。ブリッジが最初に送るより前に届いた分も数えます（その宛先からブリッジが後で送れば、届いていたとみなします）。最初に送るより前の宛先は 32 個まで覚え、それより多い分は覚えません（その分は、届いていたとはみなしません）。この PC の OS が同じインターフェースから送ったフレームもブリッジに届くので、宛先の数が多いことからは、インターフェースが宛先で絞らないとは言えないためです。返事を待たない使い方（外へ流すだけ）でも出るので、文は条件つきです。
 
 ```
 no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and --promiscuous is off: without it an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, add --promiscuous.
@@ -208,7 +208,7 @@ cannot open a packet socket on 'enp3s0': Operation not permitted. A network inte
 - pcap の名前（Linux はインターフェースの名前そのもの、Windows は `\Device\NPF_{...}`）。
 - Windows では、ネットワーク接続の名前（「Ethernet 2」。`--list-interfaces` の行の先頭）と、アダプターの識別子（`{4D36E972-...}`。波括弧はあってもなくても、大文字でも小文字でもよい）も書けます。
 - 接続の名前が 2 つのアダプターに当たるときは誤りで、pcap の名前を挙げます。
-- 接続の名前は、UTF-8 の文字列として比べます（引数は UTF-8 で読み、一覧も誤りの文も UTF-8 で出します）。コンソールのコードページが UTF-8（`chcp 65001`）でなければ、ASCII 以外の文字は、画面では崩れて見えます。その場合も、引数に書いた名前は一致します。日本語の名前が日本語の Windows で一致するかは、未確認です。
+- 接続の名前は、UTF-8 の文字列として比べます（引数は UTF-8 で読みます）。一覧も誤りの文も、コンソールにはコードページによらず読める形で出し、ファイルとパイプには UTF-8 で出します（[docs/bridges.md](bridges.md) の「出力の文字コード」）。`chcp` は要りません。Npcap が返す文（デバイスの説明、誤りの文）は、Windows の ANSI コードページの文として読んで UTF-8 に直します。日本語の名前が日本語の Windows で表示され、一致するかは、未確認です。
 
 動きです。
 
@@ -514,7 +514,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 
 - `wpcap.dll` を `System32\Npcap` から読み込める（`Packet.dll` も見つかる）。ブリッジが使う関数があり、構造体の形が合う（一覧、フレームの長さと中身、捨てた数）。
 - 受信を待つイベントで、空回りせず、取りこぼしなく受ける。
-- 接続の名前が一覧に出て、`--interface` と一致する（英語の Windows、ASCII の名前）。
+- 接続の名前が一覧に出て、`--interface` と一致する（英語の Windows、ASCII の名前。引数と名前を ANSI コードページで扱っていた頃の確認で、UTF-8 で扱い、コンソールに UTF-16 で書くようにしてからは、本物の Npcap では確かめていません）。
 - SIL Kit の相手と、アダプターの先の機器との往復。`--promiscuous` なしでは、SIL Kit の機器宛てのユニキャストが届かず、手がかりの警告が出る。
 - 同じアダプターを Npcap で開いたほかのソフトと、両方向に届く（仮想の NIC でも、KM-TEST Loopback Adapter でも）。
 - Npcap は、ハンドルが送ったフレームをそのハンドルに戻す。`PCAP_OPENFLAG_NOCAPTURE_LOCAL` を付けて開いたハンドルは、自分の送信を受けず、ほかのハンドルの送信は受ける。

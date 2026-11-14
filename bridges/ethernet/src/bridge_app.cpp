@@ -87,12 +87,17 @@ void PromiscuousHint::start(EventHandler handler)
         {
             if (const auto destination = eth_link::destination_of(event.frame); destination && !destination->is_group())
             {
-                // Not known as an address of the SIL Kit side: the bridge may send from it later
-                // (take_warning() looks). No room for it: the interface passes on frames to many
-                // addresses, so it does not filter by address and the hint would mislead.
-                if (is_silkit_address(*destination) || !remember(received_for_, *destination))
+                if (is_silkit_address(*destination))
                 {
                     answered_.store(true);
+                }
+                else
+                {
+                    // Not known as an address of the SIL Kit side: the bridge may send from it
+                    // later (take_warning() looks). With no room it is not remembered, and that
+                    // says nothing about the interface: what this computer itself sends on it
+                    // comes in here too, to as many addresses as it talks to.
+                    static_cast<void>(remember(received_for_, *destination));
                 }
             }
         }
@@ -176,6 +181,7 @@ std::optional<std::string> PromiscuousHint::take_warning()
         return std::nullopt;
     }
     warned_ = true;
+    answered_.store(true); // said once: nothing more to keep track of
     return "no frame to a MAC address of the SIL Kit side has come from " + link_.describe() + " in the " +
            std::to_string(std::chrono::duration_cast<std::chrono::seconds>(after_).count()) +
            " s since the bridge first sent a frame there, and --promiscuous is off: without it an interface passes on only "

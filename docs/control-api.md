@@ -30,7 +30,7 @@ gRPC が見つからなければ FetchContent で取り込みます（初回は�
 vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simulation.yaml
 ```
 
-- `--control <address>` で、ランチャーが Control Server を立てます。`<address>` は、ポート番号だけ（127.0.0.1 で待ち受けます。0 なら空いているポート）、`<host>:<port>`、`unix:<path>` のどれかです。`unix:` のパスには OS の上限があります（Linux では 107 バイト）。長すぎると、ランチャーは待ち受ける前に、長さと上限を言って使い方の誤り（終了コード 4）で終わります（`the path of the socket is ... bytes long and this system takes ... at most: give a shorter path, for example unix:/tmp/vehicle-sil-control.sock`）。`/tmp` の下などの短いパスにします。
+- `--control <address>` で、ランチャーが Control Server を立てます。`<address>` は、ポート番号だけ（127.0.0.1 で待ち受けます。0 なら空いているポート）、`<host>:<port>`、`unix:<path>` のどれかです。`unix:` のパスには OS の上限があります（Linux では 107 バイト。`%20` のような `%XX` は、表す 1 バイトとして数えます）。長すぎると、ランチャーは待ち受ける前に、長さと上限を言って使い方の誤り（終了コード 4）で終わります（`the path of the socket is ... bytes long and this system takes ... at most: give a shorter path, for example unix:/tmp/vehicle-sil-control.sock`）。`/tmp` の下などの短いパスにします。
 - 実際のアドレス（ポート 0 なら選ばれたポート）は、事象 `control_server` の `address` と、人向けの出力の `[vehicle_sil_launch] control server at <address>` の行で知らせます。照合が通った後、registry より前に立てます（照合で失敗した実行では立てません）。立てられなければ（ポートが使われているなど）、何も起動せずに設定の誤り（`setup`、終了コード 3）です。
 - サーバーが扱うのは、そのランチャーの実行だけです。ECU の変数（Peer の一覧、値、書き込み、操作の結果、購読）と、仮想時間（一時停止、再開、ステップ、指定時刻まで、速さ、停止）です。Peer の一覧には、構成ファイルの必須の participant も、Agent がなくても出ます。
 - 実行が終わると（ふつうの終わり、止める要求、`--timeout-ms`、participant の失敗、どれでも）、ランチャーは participant を終わらせてから、結果を書く前にサーバーを閉じます。待っている呼び出し（`Watch`、`WaitOperation`、`WaitPaused`）は、そこで終わります（`Watch` はストリームの終わり、`WaitPaused` は `FAILED_PRECONDITION` か `CANCELLED`）。ランチャーはクライアントを待たないので、クライアントがあっても終わるのは遅れません。シミュレーションが終わってからサーバーを閉じるまでの間は、終わった時点の値を読めます。

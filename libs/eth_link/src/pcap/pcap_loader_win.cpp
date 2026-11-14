@@ -232,6 +232,22 @@ std::shared_ptr<PcapLibrary> load(const std::string& library, PcapFlavor flavor)
 
 } // namespace
 
+std::string pcap_text(const char* text)
+{
+    if (text == nullptr || *text == '\0')
+    {
+        return {};
+    }
+    const int size = MultiByteToWideChar(CP_ACP, 0, text, -1, nullptr, 0);
+    if (size <= 1)
+    {
+        return text; // cannot be read in the code page: better the bytes than nothing
+    }
+    std::wstring wide(static_cast<std::size_t>(size), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, text, -1, wide.data(), size);
+    return narrow(wide.c_str());
+}
+
 std::shared_ptr<PcapLibrary> load_pcap_library(const std::string& library)
 {
     return load(library, PcapFlavor::Npcap);

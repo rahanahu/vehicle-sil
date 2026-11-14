@@ -23,31 +23,61 @@ TEST_CASE(registry_failure_says_where_the_bridge_looked_and_what_to_do)
           "silkit://127.0.0.1:8500'), or give the address it listens at with --registry-uri.");
 }
 
-TEST_CASE(registry_failure_at_another_computer_says_what_to_check_there)
+TEST_CASE(registry_failure_at_an_address_that_is_not_the_loopback_says_what_to_check_where_the_registry_runs)
 {
     const std::string what = "ERROR: Failed to connect to SIL Kit Registry";
     const auto text = [&](const std::string& uri) { return registry_failure_message(what, uri).value_or(""); };
-    const auto elsewhere = [&](const std::string& uri, const std::string& host, const std::string& listen) {
+    const auto elsewhere = [&](const std::string& uri, const std::string& host, const std::string& port) {
         return "cannot connect to the SIL Kit registry at " + uri + " (" + what + "). " + host +
-               " is another computer: check that the registry runs there, that it listens on an address this computer "
-               "reaches ('sil-kit-registry --listen-uri " + listen + "' listens on all of that computer's addresses, not "
-               "only on its loopback), and that the firewall there lets the port through. If the registry is elsewhere, "
-               "give its address with --registry-uri.";
+               " is not the loopback address of this computer: check that the registry runs on the computer with that "
+               "address (which may be this one), that it listens on an address reached from here ('sil-kit-registry "
+               "--listen-uri silkit://0.0.0.0:" + port + "' there listens on all of its addresses, not only on its "
+               "loopback), and that its firewall lets port " + port + " through.";
     };
-    CHECK(text("silkit://192.168.10.5:8500") == elsewhere("silkit://192.168.10.5:8500", "192.168.10.5", "silkit://0.0.0.0:8500"));
-    CHECK(text("silkit://sim-pc:8501") == elsewhere("silkit://sim-pc:8501", "sim-pc", "silkit://0.0.0.0:8501"));
-    CHECK(text("silkit://[fe80::1]:8500") == elsewhere("silkit://[fe80::1]:8500", "fe80::1", "silkit://0.0.0.0:8500"));
-    CHECK(text("silkit://sim-pc") == elsewhere("silkit://sim-pc", "sim-pc", "silkit://0.0.0.0"));
-    CHECK(text("silkit://1270.0.0.1:8500") ==
-          elsewhere("silkit://1270.0.0.1:8500", "1270.0.0.1", "silkit://0.0.0.0:8500"));
-    // This computer, however it is written, and an address that cannot be read: start the registry.
-    for (const std::string uri : {"silkit://localhost:8500", "silkit://127.0.0.1:8500", "silkit://127.1.2.3:8500",
-                                  "silkit://[::1]:8500", "::1", "silkit://", "", "silkit://[::1"})
+    CHECK(text("silkit://192.168.10.5:8500") == elsewhere("silkit://192.168.10.5:8500", "192.168.10.5", "8500"));
+    CHECK(text("silkit://sim-pc:8501") == elsewhere("silkit://sim-pc:8501", "sim-pc", "8501"));
+    CHECK(text("silkit://[fe80::1]:8500") == elsewhere("silkit://[fe80::1]:8500", "fe80::1", "8500"));
+    // The host is named in lower case; the address is repeated as it was given.
+    CHECK(text("silkit://Sim-PC:8501") == elsewhere("silkit://Sim-PC:8501", "sim-pc", "8501"));
+    // An address without a port: the example has the port of a registry started without one.
+    CHECK(text("silkit://sim-pc") == elsewhere("silkit://sim-pc", "sim-pc", "8500"));
+    // What only looks like a loopback address.
+    CHECK(text("silkit://1270.0.0.1:8500") == elsewhere("silkit://1270.0.0.1:8500", "1270.0.0.1", "8500"));
+    CHECK(text("silkit://127.example.com:8500") == elsewhere("silkit://127.example.com:8500", "127.example.com", "8500"));
+    // The message does not say whose address it is: it may be this computer's own.
+    CHECK(text("silkit://192.168.10.5:8500").find("another computer") == std::string::npos);
+}
+
+TEST_CASE(registry_failure_at_the_loopback_says_to_start_the_registry)
+{
+    const std::string what = "ERROR: Failed to connect to SIL Kit Registry";
+    const auto text = [&](const std::string& uri) { return registry_failure_message(what, uri).value_or(""); };
+    // This computer, however it is written, and an address that cannot be read.
+    for (const std::string uri :
+         {"silkit://localhost:8500", "silkit://LOCALHOST:8500", "silkit://Localhost", "silkit://127.0.0.1:8500",
+          "silkit://127.1.2.3:8500", "silkit://[::1]:8500", "silkit://[::ffff:127.0.0.1]:8500",
+          "silkit://[::FFFF:127.0.0.1]:8500", "silkit://[0:0:0:0:0:0:0:1]:8500", "::1", "silkit://", "", "silkit://[::1"})
     {
-        CHECK(text(uri).find("). Start the registry first ('sil-kit-registry --listen-uri " + uri + "'), or give") !=
-              std::string::npos);
-        CHECK(text(uri).find("another computer") == std::string::npos);
+        CHECK(text(uri) == "cannot connect to the SIL Kit registry at " + uri + " (" + what +
+                               "). Start the registry first ('sil-kit-registry --listen-uri " + uri +
+                               "'), or give the address it listens at with --registry-uri.");
     }
+}
+
+TEST_CASE(registry_failure_at_an_address_to_listen_on_says_to_give_the_address_of_the_registry)
+{
+    const std::string what = "ERROR: Failed to connect to SIL Kit Registry";
+    const auto text = [&](const std::string& uri) { return registry_failure_message(what, uri).value_or(""); };
+    const auto any = [&](const std::string& uri, const std::string& host, const std::string& port) {
+        return "cannot connect to the SIL Kit registry at " + uri + " (" + what + "). " + host +
+               " stands for every address of a computer: a registry listens on it, a participant cannot connect to it. "
+               "Give --registry-uri the address of the computer the registry runs on (silkit://127.0.0.1:" + port +
+               " if it runs on this one).";
+    };
+    CHECK(text("silkit://0.0.0.0:8500") == any("silkit://0.0.0.0:8500", "0.0.0.0", "8500"));
+    CHECK(text("silkit://[::]:8501") == any("silkit://[::]:8501", "::", "8501"));
+    CHECK(text("silkit://::") == any("silkit://::", "::", "8500"));
+    CHECK(text("silkit://0.0.0.0") == any("silkit://0.0.0.0", "0.0.0.0", "8500"));
 }
 
 TEST_CASE(registry_failure_leaves_other_failures_as_they_are)

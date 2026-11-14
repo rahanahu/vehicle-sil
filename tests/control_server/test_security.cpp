@@ -194,6 +194,13 @@ TEST_CASE(control_server_says_when_the_path_of_a_unix_socket_is_too_long)
                                 std::to_string(most) + " at most: give a shorter path, for example unix:/tmp/vehicle-sil-control.sock";
     CHECK(unix_socket_path_problem("unix:" + longer) == problem);
     CHECK(unix_socket_path_problem("unix://" + longer) == problem);
+    // A %XX is the one byte it stands for (a space here); a '%' that starts no such triplet is itself.
+    const std::string spaced = "/tmp/a%20" + std::string(most - 7, 'a');
+    CHECK(unix_socket_path_problem("unix:" + spaced).empty());
+    CHECK(unix_socket_path_problem("unix:" + spaced + "b") == problem);
+    CHECK(unix_socket_path_problem("unix:/tmp/%2" + std::string(most - 7, 'g')).empty());
+    CHECK(unix_socket_path_problem("unix:/tmp/%2" + std::string(most - 6, 'g')) == problem);
+    CHECK(unix_socket_path_problem("unix:/tmp/" + std::string(most - 7, 'a') + "%4").empty());
     // The server says it, and the longest path that passes is one it can listen on.
     CHECK(vehicle_sil::unit::throws_with<std::runtime_error>(
         [&] { control_grpc::ControlServer s({.listen = "unix:" + longer}); },

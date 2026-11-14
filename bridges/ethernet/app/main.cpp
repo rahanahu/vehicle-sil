@@ -123,7 +123,7 @@ int run(const BridgeOptions& options)
 {
     if (options.list_interfaces)
     {
-        std::fputs(interface_list(options).c_str(), stdout);
+        cli::write_text(stdout, interface_list(options));
         return kExitOk;
     }
 
@@ -188,12 +188,12 @@ int main(int argc, char** argv)
     catch (const BridgeUsageError& e)
     {
         // Two lines: the whole usage text would push the error out of sight.
-        std::fprintf(stderr, "error: %s\nRun 'vehicle_sil_ethernet_bridge --help' for the options.\n", e.what());
+        cli::print(stderr, "error: %s\nRun 'vehicle_sil_ethernet_bridge --help' for the options.\n", e.what());
         return kExitUsage;
     }
     if (options.help)
     {
-        std::fputs(bridge_usage().c_str(), stdout);
+        cli::write_text(stdout, bridge_usage());
         return kExitOk;
     }
     int code = kExitSetupFailed;

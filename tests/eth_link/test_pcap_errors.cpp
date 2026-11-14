@@ -300,3 +300,31 @@ TEST_CASE(pcap_api_names_every_function_it_does_not_find)
     const auto [fullApi, fullMissing] = bind_pcap_api([](const char*) -> void* { return &something; }, PcapWaitKind::Event, PcapFlavor::Npcap);
     CHECK(fullMissing.empty() && fullApi.open != nullptr);
 }
+
+#ifdef _WIN32
+// The code page the library's texts are read in (windows.h is kept out of this file).
+extern "C" __declspec(dllimport) unsigned int __stdcall GetACP(void);
+#endif
+
+TEST_CASE(pcap_text_of_the_library_is_utf8)
+{
+    CHECK_TEXT(pcap_text(nullptr), "");
+    CHECK_TEXT(pcap_text(""), "");
+    // ASCII is the same in every code page, the backslash and the tilde too.
+    CHECK_TEXT(pcap_text("\\Device\\NPF_{4D36E972} ~ Ethernet adapter"), "\\Device\\NPF_{4D36E972} ~ Ethernet adapter");
+    // Two bytes that are one letter in code page 932 and two in 1252.
+    const char* const bytes = "\x83\x43";
+#ifdef _WIN32
+    if (GetACP() == 932)
+    {
+        CHECK_TEXT(pcap_text(bytes), "\xE3\x82\xA4"); // katakana "i"
+    }
+    else if (GetACP() == 1252)
+    {
+        CHECK_TEXT(pcap_text(bytes), "\xC6\x92"
+                                     "C"); // a small f with a hook, and C
+    }
+#else
+    CHECK_TEXT(pcap_text(bytes), bytes); // as it came
+#endif
+}

@@ -111,7 +111,8 @@ struct SecurityOptions
 
 /// Why the server cannot listen on `listen` when it is a unix: address whose path is longer than
 /// a socket's address holds on this system (what is wrong and what to do), or empty. The server
-/// refuses such an address with this text (std::runtime_error). Always empty on Windows.
+/// refuses such an address with this text (std::runtime_error). A %XX in the path counts as the
+/// one byte it stands for. Always empty on Windows.
 [[nodiscard]] std::string unix_socket_path_problem(const std::string& listen);
 
 /// The name of the trailing metadata that says why a call was refused, for a client that must

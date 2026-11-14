@@ -195,6 +195,11 @@ std::shared_ptr<PcapLibrary> load(const std::string& library, PcapFlavor flavor)
 
 } // namespace
 
+std::string pcap_text(const char* text)
+{
+    return text != nullptr ? std::string(text) : std::string();
+}
+
 std::shared_ptr<PcapLibrary> load_pcap_library(const std::string& library)
 {
     return load(library, PcapFlavor::Libpcap);

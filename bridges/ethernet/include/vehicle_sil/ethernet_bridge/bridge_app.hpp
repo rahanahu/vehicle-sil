@@ -50,9 +50,10 @@ enum class HostOs
 /// address and to group addresses; the SIL Kit devices have other addresses.)
 ///
 /// A frame that came in before the bridge sent from its destination counts too: the addresses
-/// frames came in for are remembered until the SIL Kit side is known. An interface that passes
-/// on frames to more addresses than are remembered does not filter by address, so the warning
-/// is not given there either.
+/// frames came in for are remembered until the SIL Kit side is known, up to kMaxAddresses of
+/// them. Frames to further addresses are not remembered and do not keep the warning back: what
+/// this computer itself sends on the interface comes in from the link as well, so many
+/// destinations do not show that the interface passes on frames to every address.
 ///
 /// Everything else is passed to the wrapped link unchanged. The contract of
 /// eth_link::ExternalLink holds: transmit() takes no lock and does not block.
@@ -63,7 +64,7 @@ public:
 
     /// How many source addresses of sent frames are remembered; with more, any frame to an
     /// individual address counts as an answer. Also how many destination addresses of received
-    /// frames are remembered; with more, the interface is taken not to filter by address.
+    /// frames are remembered; a frame to a further one is not remembered.
     static constexpr std::size_t kMaxAddresses = 32;
 
     /// `link` must outlive this object. `after`: how long after the first frame sent the warning
@@ -104,6 +105,7 @@ private:
     /// When the first frame was sent (the clock's count), kNotSent before.
     static constexpr std::int64_t kNotSent = -1;
     std::atomic<std::int64_t> first_sent_{kNotSent};
+    /// An answer came in, or the warning was given: nothing more is kept track of.
     std::atomic<bool> answered_{false};
     bool warned_ = false;
 };
