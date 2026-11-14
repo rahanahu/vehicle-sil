@@ -150,6 +150,19 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
          --docs ${PROJECT_SOURCE_DIR}/docs)
+  # The guide docs/howto/scenario-tests.md: what its reader does with the two ECUs of examples/ecu_main
+  # (the scenarios that come with them, the ones of examples/scenario_tests the guide has the reader
+  # write, check, run and test), in the guide's order; the files, the outputs and the exit codes must
+  # be what the guide shows.
+  add_test(NAME launch_run.scenario_guide
+           COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
+                   -DECU_MAIN=$<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
+                   -DECU_MAIN_SOURCE=${PROJECT_SOURCE_DIR}/examples/ecu_main
+                   -DEXAMPLE=${PROJECT_SOURCE_DIR}/examples/scenario_tests
+                   -DDOC=${PROJECT_SOURCE_DIR}/docs/howto/scenario-tests.md
+                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}/scenario_guide
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/scenario_guide.cmake)
+  set_tests_properties(launch_run.scenario_guide PROPERTIES LABELS "integration;launch" TIMEOUT 300)
   # The example of the docs with a participant started by hand: its registry is at 8500, the port
   # of such a run, which the docs show. Builds in other working trees on this machine take turns.
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher

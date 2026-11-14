@@ -413,6 +413,16 @@ registry につながらないときの文（`registry_failure_message()`）は�
   手引きの印は `<!-- examples/first_ecu/... -->`、`<!-- first ECU: ... -->`、`<!-- cooler_ecu --describe: an excerpt -->` です
 - `ctest -R`: `^template\.first_ecu`、`^control_server\.example_first_ecu`
 
+### `examples/scenario_tests`（手引き「シナリオでテストを書く」が、利用者に書かせるファイル）
+
+- 中身: `my_tests/` の 4 つのシナリオ（`throttle_up.yaml`、`response_time.yaml`、`throttle_motion.yaml`、`dashboard_speed.yaml`）と、機種を 2 つ足した `simulation.variants.yaml`。
+  手引き [howto/scenario-tests.md](howto/scenario-tests.md) のブロックと同じ内容で、利用者は手引きのとおりに、`examples/ecu_main` のビルドのディレクトリで自分で書きます。
+  ファイルの先頭のコメントは手引きのブロックにはなく、出力の行番号は、コメントのないファイルのものです
+- ビルド: しません（実行ファイルは `examples/ecu_main` の 2 つです）
+- 試験: `launch_run.scenario_guide`（`tests/launch/scenario_guide.cmake`。作業用のディレクトリで、手引きの順に、ファイルを手引きのブロックと照合して書き、`check`、`run`、`test` の出力と終了コード、`test --json` の抜粋のキーを照合。`examples/ecu_main/scenarios` の `throttle_step.yaml` と `engine_disconnect.yaml` のブロックと出力も）。
+  手引きの印は `<!-- examples/scenario_tests/... -->`、`<!-- examples/ecu_main/scenarios/... -->`、`<!-- scenario guide: ... -->` です（`<!-- vehicle_sil_launch run ... -->` の 1 つは scenario.md の同じブロックのコピーで、`launch_run.scenario` も照合します）
+- `ctest -R`: `^launch_run\.scenario_guide`
+
 ### `schema/`（構成ファイルとシナリオの JSON Schema）
 
 - 主なクラス・関数（ヘッダー）: `schema/simulation.schema.json`（構成ファイル）、`schema/scenario.schema.json`（シナリオ）。
@@ -913,7 +923,8 @@ flowchart TD
 
   合わせて直すもの: [scenario.md](scenario.md)（形式、時刻、値の見え方、書き込み、結果、所見の `code` の表、出力）と、その例（`<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` の後のブロックを `launch_run.scenario` がバイト単位で照合。
   例のファイルは `examples/ecu_main/scenarios/throttle_step.yaml`。
-  `wave` の例は `examples/ecu_main/scenarios/throttle_wave.yaml` で、[howto/scenario-tests.md](howto/scenario-tests.md) の「波形で動かす」がその行を写している（`launch_run.scenario_wave` が実行する）。
+  `wave` の例は `examples/ecu_main/scenarios/throttle_wave.yaml`（`launch_run.scenario_wave` が実行する）。
+  手引き [howto/scenario-tests.md](howto/scenario-tests.md) は、`throttle_step.yaml`、`engine_disconnect.yaml` と `examples/scenario_tests` のファイル、その出力と終了コードを載せていて、`launch_run.scenario_guide` が手引きの順に実行して照合する（下の「`examples/scenario_tests`」）。
   誤りのある例と失敗する例は、ファイルも scenario.md のブロック（`<!-- throttle_mistakes.yaml -->`、`<!-- throttle_response.yaml -->`）で、同じ試験が書き出して、`check --scenario` の出力、`run --scenario` の出力と `--json` の `scenario` を照合）、[simulation-config.md](simulation-config.md) の引数の表、事象 `scenario_step`、`features` の `scenario`、[internals/control.md](internals/control.md) の「シナリオ」。
   約束の正本は `scenario_run.hpp` の `ScenarioEngine` のコメントです。
   守ること: 判定に使うのは仮想時刻だけ（実時間の待ちと時間切れで結果を決めない）。

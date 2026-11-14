@@ -386,7 +386,7 @@ passed: 0 errors, 0 warnings, 0 notes
 | 方法 | 向いている場面 | 手順 |
 |---|---|---|
 | Python のクライアント | スクリプトから値を読み書きするとき | 手順 7 |
-| シナリオ | 値の設定と確認を、自動のテストにするとき | [シナリオで試験を書く](scenario-tests.md) |
+| シナリオ | 値の設定と確認を、自動のテストにするとき | [シナリオでテストを書く](scenario-tests.md) |
 | ブラウザの GUI | 値をグラフで見ながら、手で操作するとき | [gui.md](../gui.md) |
 
 途中で止めるときは Ctrl+C です。出力の形式と終了コードは、[simulation-run.md](../simulation-run.md) の「出力」にあります。
@@ -572,5 +572,5 @@ passed: 0 errors, 0 warnings, 1 note
 ## 次に読むもの
 
 - ほかの人が作った ECU と一緒に動かす → [ECU をまとめて動かす](integrate-ecus.md)
-- 値の設定と確認を、自動のテストにする → [シナリオで試験を書く](scenario-tests.md)
+- 値の設定と確認を、自動のテストにする → [シナリオでテストを書く](scenario-tests.md)
 - 動いている途中で止めて書き込む、時間を進める → [信号を外から操作する](operate-signals.md)

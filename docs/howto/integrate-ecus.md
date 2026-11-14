@@ -200,6 +200,6 @@ time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced 
 - 実行の規則と結果の形: [simulation-run.md](../simulation-run.md)
 - ECU の実行ファイルの引数と自己申告: [ecu-executable.md](../ecu-executable.md)
 - 実行中に変数を読み書きする、時間を止めて進める: [信号を外から操作する](operate-signals.md)、[control-api.md](../control-api.md)
-- 決まった手順で値を入れて確かめる、CI で回す: [シナリオで試験を書く](scenario-tests.md)
+- 決まった手順で値を入れて確かめる、CI で回す: [シナリオでテストを書く](scenario-tests.md)
 - ブラウザで照合と実行を見る: [gui.md](../gui.md)
 - ECU を書く人に渡す手引き: [最初の ECU を作る](first-ecu.md)

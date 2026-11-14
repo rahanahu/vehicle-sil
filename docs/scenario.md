@@ -1,6 +1,6 @@
 # シナリオ（`vehicle_sil_launch run --scenario`）
 
-まとめる人と、シミュレーションで試験をする人向けです。先に [simulation-config.md](simulation-config.md)（構成ファイル）、[simulation-check.md](simulation-check.md)（照合）、[simulation-run.md](simulation-run.md)（実行）を読みます。 次に読む文書はありません（手順を追って試すなら、手引き「[シナリオで試験を書く](howto/scenario-tests.md)」）。
+まとめる人と、シミュレーションで試験をする人向けです。先に [simulation-config.md](simulation-config.md)（構成ファイル）、[simulation-check.md](simulation-check.md)（照合）、[simulation-run.md](simulation-run.md)（実行）を読みます。 次に読む文書はありません（手順を追って試すなら、手引き「[シナリオでテストを書く](howto/scenario-tests.md)」）。
 
 シナリオは、決まった手順で ECU の変数に値を入れ、結果を確かめるファイルです。`vehicle_sil_launch run <構成ファイル> --scenario <シナリオ>` は、シミュレーションを起動し、シナリオを最後まで進めて止め、終了コードで合否を返します。そのまま自動試験になります。
 
