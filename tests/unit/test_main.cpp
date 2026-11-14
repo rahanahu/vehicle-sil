@@ -16,11 +16,16 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-    // A wrong VEHICLE_SIL_TEST_TIMEOUT_SCALE fails the run before any test, saying what to set.
-    double timeoutScale = 1.0;
+    // A wrong VEHICLE_SIL_TEST_TIMEOUT_SCALE fails the run before any test, saying what to set; a
+    // factor larger than the one CTest's TIMEOUT was made for is said before the tests.
+    const vehicle_sil::test::TimeoutScale* timeoutScale = nullptr;
     try
     {
-        timeoutScale = vehicle_sil::unit::timeout_scale();
+        timeoutScale = &vehicle_sil::test::timeout_scale_of_process();
+        if (const auto warning = vehicle_sil::test::timeout_scale_warning())
+        {
+            std::printf("%s\n", warning->c_str());
+        }
     }
     catch (const std::exception& e)
     {
@@ -52,10 +57,10 @@ int main(int argc, char** argv)
         {
             ++failures;
             std::printf("[ FAIL ] %s\n  %s\n", name.c_str(), e.what());
-            if (timeoutScale != 1.0)
+            if (timeoutScale->factor != 1.0)
             {
-                std::printf("  (the upper bounds of waiting were %g times as long: VEHICLE_SIL_TEST_TIMEOUT_SCALE)\n",
-                            timeoutScale);
+                std::printf("  (the upper bounds of waiting were %s times as long: %s)\n",
+                            vehicle_sil::test::factor_text(timeoutScale->factor).c_str(), timeoutScale->source.c_str());
             }
         }
     }

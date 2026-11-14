@@ -97,7 +97,7 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 
 `verify-web.py` と `verify-gui.py` は、時間に敏感な試験を回す前に、この PC で `ninja`、`ctest`、Windows の VM（`qemu-system-x86*`）が動いている間は待ちます（`scripts/busy_machine.py`。何を待つかを 1 行で表示し、`--wait-limit` 分（既定 20 分）で諦めて警告を出して進む）。どちらの試験も、同時に回すと時間の条件で落ちるためです。GUI の試験は、pytest、ng、Playwright を直接呼ばずにこの 2 つから回します。
 
-遅い PC や負荷のかかった PC では、環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`（例: `3`）で、試験が起きるはずのことを待つ上限だけを伸ばします（C++ の試験、GUI サーバーの試験、画面の e2e。構成のときにも与えると CTest の `TIMEOUT` も伸びる）。決まりは [docs/code-map.md](docs/code-map.md) の「試験の名前と回し方」にあります。
+遅い PC や負荷のかかった PC では、環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`（例: `3`）で、試験が起きるはずのことを待つ上限を伸ばします（C++ の試験の `eventually` などの支援の関数、GUI サーバーの試験、画面の e2e。TSan のプリセットは、変数がなければ 4）。CTest の `TIMEOUT` は構成のときの値で決まるので、値を大きくしたら構成し直します。決まりは [docs/code-map.md](docs/code-map.md) の「試験の名前と回し方」にあります。
 
 ```sh
 scripts/doctor.py                                    # 最初に: 要るものがそろっているか

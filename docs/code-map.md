@@ -10,11 +10,13 @@ vehicle-sil 自体を直す人と AI エージェント向けです。変える�
 - 試験の実行ファイルの試験は、ソースの `TEST_CASE(名前)` から設定時に登録されます（`vehicle_sil_add_harness_tests()`、`cmake/VehicleSilTestHelpers.cmake`）。既存のソースに `TEST_CASE` を足すときは、CMake を書き換えません。新しいソースのファイルは、その `CMakeLists.txt` の `SOURCES` に足します。マクロ（`TEST_CASE`、`CHECK`、`CHECK_EQ`）は `tests/unit/test_harness.hpp` にあります。
 - 1 つの試験は、試験の実行ファイルに名前を渡すと動きます（`<実行ファイル> <名前>`。ctest もそうしています）。
 - プロセスを起動する試験（シナリオ）は `vehicle_sil_add_scenario_tests()` で登録し、名前は `<前置き>.<シナリオ>` です。シナリオの一覧は `CMakeLists.txt` の `SCENARIOS`、中身は同じディレクトリの `*launcher.cpp`（`tests/integration/launcher.cpp`、`tests/launch/launch_run_launcher.cpp` など）です。共通の部品は `tests/integration/launcher_support.hpp` にあります。
+- 試験は決まったポートで待ち受けません。registry はポート 0（`RegistryProcess`、`registry_uri` を書かない構成ファイル）、Control Server は `--control 0`、GUI サーバーは `--port 0` か、e2e が起動のたびに選ぶ空いているポートです（`multi_host.two_hosts` の 18500 は、試験が作る network namespace の中）。同じ PC で、別の作業ツリーのビルドの試験と同時に回せます。文書が示す決まったポート（`manual` の 8500 など）が要るシナリオは、`vehicle_sil_add_scenario_tests()` の `MACHINE_LOCK` で PC 全体のロック（`/tmp` のファイルに `flock`。`cmake/vehicle_sil_machine_lock.sh`。Windows ではなし）を取り、順に回ります。待つ間は 1 行出し、待った時間はその試験の CTest の `TIMEOUT` に数えます。ロックのファイルを開けないとき（別の利用者のファイルなど）は、1 行言ってロックなしで回ります。
 - 前置きだけを回すときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.` にも当たります。
 - 起きるはずのことは、`eventually(条件, 上限)`（`test_harness.hpp`）か、起きたことを知らせる手段で待ちます。決まった時間だけ眠って「進んだはず」としません。
-  - 待ちの上限には、環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率（未設定なら 1）が掛かります。`eventually`、`tests/process/spawn_sleeper.hpp` の待ち、シナリオのランチャーの `--timeout-ms` と registry の起動は、中で掛けます。ほかの関数に上限を渡すときは `scaled_timeout(20s)`（`tests/unit/test_timeout_scale.hpp`）を通します。通る試験は待つものが起きた時点で進むので、倍率を上げても遅くなりません。
-  - 「起きないこと」を確かめる待ちと、製品に与える時間（周期、製品のタイムアウト）には掛けません。掛けると、試験が確かめることが変わります。
-  - TSan のプリセットは構成のときに倍率 4 を与え（`CMakePresets.json`）、CI は 3 を与えます（`.github/workflows/ci.yml`）。構成のときの値で、ハーネスの試験とシナリオの試験の CTest の `TIMEOUT` も伸びます（`cmake/VehicleSilTestHelpers.cmake`）。
+  - 待ちの上限には倍率が掛かります。倍率は、試験を動かすときの環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`、なければビルドの既定（CMake のキャッシュ変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT`。既定は 1、TSan のプリセットは 4）です。値は数字と小数点 1 つだけで書き、0 より大きくします（`3`、`2.5`）。ほかの書き方（空白、指数、16 進）は、C++ の試験、GUI サーバーの試験、e2e が変数の名前と直し方を言って止まります。CI は 3 を与えます（TSan のジョブは与えずに、プリセットの既定を使います。`.github/workflows/ci.yml`）。
+  - 倍率は `eventually`、`tests/process/spawn_sleeper.hpp` の待ち、シナリオのランチャーの `--timeout-ms` と registry の起動の中で掛かります。ほかの関数に上限を渡すときは `scaled_timeout(20s)`（`tests/unit/test_timeout_scale.hpp`）を通します。通る試験は待つものが起きた時点で進むので、倍率を上げても遅くなりません。
+  - 上限として製品に渡す時間（ランチャーが製品の `--timeout-ms` に渡す値）には掛けます。「起きないこと」を確かめる待ち、試験が時間切れになることを確かめる製品の時間（`receiver-timeout` の 1500 ms など）、周期には掛けません。掛けると、試験が確かめることが変わります。
+  - ハーネスの試験とシナリオの試験の CTest の `TIMEOUT` は、構成のときの倍率（環境変数、なければビルドの既定。切り上げた整数）で伸びます（`cmake/VehicleSilTestHelpers.cmake`）。構成の後で倍率を大きくしたら、構成し直します。そのままだと、止まった試験は自分で失敗を言う前に CTest に止められます。ハーネスとランチャーは、そのときに `warning: ... configure the build again ...` の 1 行を出します。
 
 ```sh
 ctest --preset linux-gcc-debug -R '^launch\.'
@@ -41,6 +43,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 | `launch` / `process` | 構成ファイルの読み込みと照合の規則（プロセスを起動しない試験。各規則の通る例と落ちる例を、文言と行番号まで照合する）、人向けと JSON の出力。`launch_cli.*` は `vehicle_sil_launch check` を実行ファイルとして動かす（[docs/simulation-config.md](simulation-config.md) の例とバイト単位で照合、`--describe` に失敗する実行ファイル、`--strict`、読めないファイル、引数の誤り）。`launch_run.*` は `vehicle_sil_launch run` を実行ファイルとして動かす（docs の例との照合、失敗する ECU、そろわない participant、終わらない participant、残されたプロセス、中断、ランチャーが落ちたとき、速さと一時停止とステップ送り、実時間への遅れ）。`process.*` は子プロセスの試験（標準出力と標準エラーの取り込み、行ごとの受け渡し、時間切れ、空の標準入力、作業ディレクトリ、受け継がないハンドル、止める要求、起動したプロセスごとの終了、空白と ASCII 以外の文字を含むパスと引数） |
 | `control` | Control Agent の試験（`control.*`）。転送なしで Agent を直接動かす試験、`Ecu` で宣言した変数への時刻つきの書き込みが仮想バスと SIL Kit で同じステップに反映され、同じ時刻に読み出されること、`Peer` の Agent（SIL Kit の participant で、反映の位置、実時間、監視の出力）、プロセス内でつないだ `Hub`、ECU より長く残った転送がプロセスを止めること（`unit` ラベルも付く）。`control_server` の試験にもこのラベルが付く |
 | `control_server` | `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ。Control Server の試験（`control_server.*`）: gRPC の生成コードと呼び出し、1 つのプロセスで端から端まで（2 つの J1939 の Peer の Agent が SIL Kit でつながる Hub、時間ゲート、gRPC のクライアント）、認証と役割と TLS と監査ログ、どの役割がどの RPC を呼べるか（proto の RPC と規則の表の対応も）、メッセージの変換、上限と入力の検査、`SimulationMonitor`（`unit` と `control` のラベルも付く）。grpcio と grpcio-tools のある Python があれば、`control_server.python_client` が Python のクライアントと CLI を `vehicle_sil_launch run --control` に対して動かし、`control_server.launcher` が `vehicle_sil_launch run --control` と `examples/ecu_main` の ECU を動かし（始まる前の書き込み、2 つの口の命令、終わり方、認証と TLS と監査、トークンつきの CLI）、`control_server.example_write_before_start` と `control_server.example_pause_and_step` が `examples/launch_control` を動かす（どれも `control` と `python` のラベル。`launcher` には `integration` も、例には `examples` も付く） |
+| `eth_link` / `ethernet_bridge` | イーサネットのブリッジの試験（全プラットフォーム。`unit` ラベルも付く）。`eth_link.*` は SIL Kit なしで、MAC アドレス、絞り込み（EtherType、VLAN タグの先、MAC、最大長）、MAC の表、偽の口を確かめ、`eth_link.boundary` が `libs/eth_link` に SIL Kit の include がないことを確かめる。`ethernet_bridge.*` は、偽の SIL Kit のコントローラーと偽の口で転送、絞り込み、自分のフレームの戻り、2 つのブリッジを通る輪（止まる順序と止まらない順序）、失ったフレーム、`Fault`、警告を、ほかに統計と監視の行、引数の誤りの文言を確かめる。`ethernet_bridge.silkit_*` はプロセス内のレジストリ（空いているポート）で本物の SIL Kit の側を確かめる |
 | `fetchcontent` | 既定では無効。このリポジトリのコミットを FetchContent で取り込み、利用例をビルドして実行する。`fetchcontent.template` は、ひな形を別のディレクトリに写し、いまの作業ツリーを FetchContent で取り込んでビルドし、照合と実行とシナリオを通す |
 
 各プロセスのログは `build/<preset>/tests/` の下の `integration/<シナリオ>/`、`virtual_time/<シナリオ>/`、`lin_cluster/<シナリオ>/`、`vector_xl/integration/<シナリオ>/` に残ります。失敗したときは、ランチャーがすべてのログを出力します。
@@ -85,6 +88,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 | `tools/common` | 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、`vehicle_sil/cli/console.hpp`。ターゲット `vehicle_sil_cli`） | `tests/unit` | `^unit\.` |
 | `tools/sim_controller` | `vehicle_sil_sim_controller`（`main.cpp`） | 専用の試験はなく、プロセスの試験が使う | `^virtual_time\.`、`^ecu_main\.`、`^lin_cluster\.` |
 | `bridges/vector-xl` | `CanBridge`（`vector_xl/can_bridge.hpp`）、`ExternalPortAdapter`（`vector_xl/external_port_adapter.hpp`）、`XlDriver`、`XlCanPort`（`vector_xl/xl_driver.hpp`） | `tests/vector_xl`（XL ドライバのフェイクは `tests/vector_xl/fake_xl`） | `^vector_xl\.` |
+| `libs/eth_link`、`bridges/ethernet` | `ExternalLink`、`LinkEvent`、`LinkError`（`eth_link/external_link.hpp`）、`FrameFilter`（`eth_link/frame_filter.hpp`）、`MacSideTable`（`eth_link/mac_side_table.hpp`）、`MacAddress`（`eth_link/mac_address.hpp`）、`EthernetBridge`（`ethernet_bridge/ethernet_bridge.hpp`）、`parse_bridge_options()`（`ethernet_bridge/bridge_options.hpp`） | `tests/eth_link`（偽の口は `tests/eth_link/fake_link`）、`tests/ethernet_bridge` | `^eth_link\.`、`^ethernet_bridge\.` |
 | `examples/j1939`（sender と receiver） | | `tests/integration` | `^integration\.` |
 | `examples/virtual_time` | | `tests/virtual_time` | `^virtual_time\.` |
 | FetchContent での利用 | `examples/fetchcontent_consumer` | `tests/fetchcontent`（`VEHICLE_SIL_TEST_FETCHCONTENT=ON` のときだけ） | `^fetchcontent\.` |
@@ -108,6 +112,7 @@ flowchart TD
         control["control"]
         j1939_parts["J1939 parts, j1939_codec"]
         app["ecu, local, testkit"]
+        eth_link_box["eth_link"]
     end
     subgraph with_silkit["SIL Kit"]
         bindings["core, can_silkit, eth_silkit, lin_silkit, can_netsim, control_silkit"]
@@ -115,6 +120,7 @@ flowchart TD
         launch_process["launch, process"]
         grpc["control_grpc, control_proto"]
         tools["executables, vector_xl bridge"]
+        ethernet_bridge["ethernet_bridge_core"]
     end
     j1939_parts --> protocols
     control --> protocols
@@ -134,6 +140,7 @@ flowchart TD
     tools --> bindings
     tools -.-> launch_process
     tools -.-> grpc
+    ethernet_bridge --> eth_link_box
 ```
 
 SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とその部品、`j1939_codec`、`ecu`、`local`、`testkit`、`process` です（`process` は「launch, process」の箱にありますが、SIL Kit を使いません）。
@@ -260,6 +267,18 @@ flowchart TD
     vehicle_sil_vector_xl_bridge -.-> vehicle_sil_cli
 ```
 
+### Ethernet Bridge
+
+`eth_link` は SIL Kit を使わず、vehicle-sil のほかのライブラリもリンクしません（`eth_link.boundary`）。`ethernet_bridge_core` はどのプラットフォームでも作ります。試験は `tests/eth_link` の偽の口（`vehicle_sil_eth_link_fake`）をリンクします。
+
+```mermaid
+flowchart TD
+    ethernet_bridge_core --> SilKit["SilKit::SilKit"]
+    ethernet_bridge_core --> eth_link
+    eth_link --> Threads["Threads::Threads"]
+    vehicle_sil_eth_link_fake --> eth_link
+```
+
 ### ほかの実行ファイル
 
 どれも非公開で `vehicle_sil_cli`（`tools/common`、ヘッダーのみ）をリンクします。ほかにリンクするのは、`vehicle_sil_sim_controller` が `core`、`vehicle_sil_can_bus_simulator` が `can_netsim`、`vehicle_sil_launch` が `launch` と `process`（Windows では `shell32` も。`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` では `control_grpc` と `core` も）です。
@@ -275,6 +294,7 @@ flowchart TD
 | `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 | `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の構成は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
 | `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |
+| `eth_link.boundary` | `libs/eth_link` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 
 ## これを変えるならここも
 
@@ -300,6 +320,7 @@ flowchart TD
 | `libs/` にライブラリを足す | ルートの `CMakeLists.txt` の `add_subdirectory`、[architecture.md](architecture.md) の「構成」 |
 | `proto/vehicle_sil/control/v1/control.proto` | `libs/control_grpc/src`（`convert.hpp`、`control_service.cpp`。サービスを足したら `auth.cpp` の `rpc_rules()` と `test_authorization*.cpp` も）、`python/vehicle_sil_control/client.py`、[control-api.md](control-api.md)。Python のスタブは試験のビルドで生成します（`python -m vehicle_sil_control.generate`） |
 | 使う SIL Kit の API、上流の挙動への前提 | [dependencies.md](dependencies.md) の「使っている API」と「実装が前提にしている上流の挙動」 |
+| イーサネットのブリッジの統計のキー、監視の行、警告、引数と誤りの文（`bridges/ethernet/src`、`libs/eth_link/src`） | [ethernet-bridge.md](ethernet-bridge.md) にある写し。文言は試験 `ethernet_bridge.*` が照合しますが、文書の写しは照合しないので、手で合わせます |
 | ランチャーの Control Server（`tools/launch/control_server.cpp`、`RunOptions::serve_control`、`TimeCommands` の `hold_before_start()`、`inspect()`、`wait_paused()`、`ServerOptions::external_hub`）、`python/vehicle_sil_control/launcher.py` | [control-api.md](control-api.md) の「ランチャーにつなぐ」（始まる前に書く、2 つの口の命令、認証）、[simulation-config.md](simulation-config.md) の事象 `control_server`、`command` の `source` と `at_ms`、引数の表、`features` の `control-server`（`kControlServerFeature`。この名前は Control Server を持つビルドだけが出すので、`version --json` の例には入れず、`launch_cli.docs` が除いて照合します）、[internals/control.md](internals/control.md) の「ランチャーの Control Server」（スレッド、2 つの口の順序、始まる前の窓で止めること、終わり方）。gRPC のスレッドから controller に触れるのは `TimeCommands` の中だけにします（`detach()` の後に controller が壊れるため）。`run_file()` の中で gRPC を待つものを足しません。試験は `control_server.launcher`、`control_server.example_write_before_start`、`control_server.example_pause_and_step`、`^launch\.`（`TimeCommands`）、`launch_run.time_usage`（引数の誤り） |
 | Agent と Hub の間のメッセージ（`libs/control/src/wire.cpp`） | 並びを変えたら `control/wire.hpp` の `kVersion` を上げます（復号は自分の版だけを受け付けます）。相手が知らなくても困らない種類を足すだけなら上げません（知らない種類は捨てられます。最後の知らせへの返事 `Kind::LastWordReceived` がそうです）。hello の先頭から participant 名までは、どの版でも変えません（版の違う相手の名前を読むため）。大きさの上限（`kMaxMessageBytes`、`kMaxHelloBytes`、`kMaxTextBytes`）と分け方は [internals/control.md](internals/control.md) の「SIL Kit の上の運び手」。試験は `^control\.wire_`（1 バイトずつ切る、欄を壊す、乱数の入力。境界の外を読むと sanitizer のプリセットが落とします） |
 | SIL Kit の上の運び手（`libs/control_silkit/src`）、始まる前の窓（`libs/core/src/simulation_controller.cpp` の `run_window()` と `cancel_window()`、`libs/core/src/participant_runtime.cpp` の `set_communication_ready_handler_async()`）、`ecu_main()` が運び手を付ける所（`libs/simulation/src/ecu_main.cpp`）、ランチャーの Hub（`libs/launch/src/run_start.cpp` の `RunStartWindow::run()`、`run_control.cpp` の `RunControl::note_links()`） | 契約の正本は `agent_transport.hpp` と `hub_transport.hpp` のクラスのコメントで、[internals/control.md](internals/control.md) の「SIL Kit の上の運び手」（スレッド、届く順序の約束、窓、接続の終わりと最後の知らせへの返事、認証がないこと）を合わせます。`AgentTransport` のデストラクターは Hub の返事を待ちます（`AgentTransportOptions::last_word_wait`）。待ちを長くする・なくす変更は、ECU の終わりの遅れと、実行の終わりの結果（Cancelled か Unknown か）を変えます。頼っている SIL Kit の挙動は [dependencies.md](dependencies.md) の「実装が前提にしている上流の挙動」。値と結果は、ステップのスレッドから、値を読んだ直後に送ります（別のスレッドに渡すと、順序の約束がなくなります。`HubTransportStats::late_messages` が数えます）。Hub の側の受信のハンドラーには、待つもの・重い処理を足しません（シミュレーション全体が待ちます）。ランチャーの出力（事象 `control_link`、結果の `participants[].control_link`、照合の JSON の `participants[].control`、所見 `control-link-no-hello`、`control-link-version`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered`、`before-start`）は [simulation-run.md](simulation-run.md) の「変数を読み書きする口」と表。ECU の自己申告（`--describe` の `control`。`libs/ecu/src/describe.cpp`、足すのは `ecu_main`、読むのは `libs/launch/src/describe_read.cpp`）は [ecu-executable.md](ecu-executable.md) の「JSON の形式」。上限（`kMaxVariables`、`kMaxNameBytes`、`HubTransportOptions::max_links`）を変えたら internals/control.md の同じ節。試験は `^control_silkit\.`、`^core\.`、`^launch_control\.`、`launch_run.control`、`simulation.ecu_main_offers_its_variables_to_the_simulation_unless_no_control` |

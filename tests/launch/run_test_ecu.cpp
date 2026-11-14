@@ -220,8 +220,9 @@ public:
                 // process) may end before a slow start of the new process got to write its file.
                 if (!vehicle_sil::test::pid_written(name_ + "-grandchild.pid", std::chrono::seconds(30)))
                 {
-                    std::fprintf(stderr, "test ECU: the process it started did not write %s-grandchild.pid within 30 s\n",
-                                 name_.c_str());
+                    std::fprintf(stderr, "test ECU: the process it started did not write %s-grandchild.pid within %lld ms\n",
+                                 name_.c_str(),
+                                 static_cast<long long>(vehicle_sil::test::scaled_timeout(std::chrono::seconds(30)).count()));
                 }
             }
             if (exit_after_ >= 0)

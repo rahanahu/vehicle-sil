@@ -54,6 +54,7 @@ endif()
 #   vehicle_sil::can_netsim the simple CAN network simulator (SIL Kit)
 #   vehicle_sil::eth        raw Ethernet frames: channel, port, virtual network (no SIL Kit)
 #   vehicle_sil::eth_silkit vehicle_sil::eth port on SIL Kit Ethernet (virtual time)
+#   vehicle_sil::eth_link   the external side of an Ethernet bridge: link interface, frame filter, MAC table (no SIL Kit)
 #   vehicle_sil::j1939      J1939 stack on vehicle_sil::can (no SIL Kit); its protocol parts are the
 #                           vehicle_sil::j1939_* targets of libs/j1939/parts
 #   vehicle_sil::j1939_codec typed J1939 messages (header only; the types are generated from YAML by
@@ -89,6 +90,7 @@ add_subdirectory(libs/can_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/can_netsim ${_vehicle_sil_exclude})
 add_subdirectory(libs/eth ${_vehicle_sil_exclude})
 add_subdirectory(libs/eth_silkit ${_vehicle_sil_exclude})
+add_subdirectory(libs/eth_link ${_vehicle_sil_exclude})
 add_subdirectory(libs/j1939 ${_vehicle_sil_exclude})
 add_subdirectory(libs/control ${_vehicle_sil_exclude})
 add_subdirectory(libs/control_silkit ${_vehicle_sil_exclude})
@@ -105,6 +107,8 @@ if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
 endif()
 # Vector XL CAN bridge: portable core everywhere, XL backend and executable on Windows only.
 add_subdirectory(bridges/vector-xl ${_vehicle_sil_exclude})
+# Ethernet bridge: the bridge between a SIL Kit Ethernet network and an external link (portable).
+add_subdirectory(bridges/ethernet ${_vehicle_sil_exclude})
 # Command-line helpers shared by the executables, and the system controller for coordinated
 # virtual-time simulations.
 add_subdirectory(tools/common ${_vehicle_sil_exclude})

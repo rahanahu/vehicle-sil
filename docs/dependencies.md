@@ -99,6 +99,7 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 | SIL Kit | 他参加者の監視 | `CreateSystemMonitor`、`AddParticipantStatusHandler`（`SetParticipantConnectedHandler` と `SetParticipantDisconnectedHandler` は使わない。「上流の既知の不具合」を参照） |
 | SIL Kit | CAN | `CreateCanController`、`ICanController::Start/Stop/SendFrame/SetBaudRate`、`AddFrameHandler`、`AddFrameTransmitHandler`。`SendFrame` の userContext に送信時刻を入れる（簡易 CAN Network Simulator との取り決め） |
 | SIL Kit | Ethernet（`vehicle_sil::eth_silkit`） | `CreateEthernetController`、`IEthernetController::Activate/Deactivate/SendFrame`、`AddFrameHandler`（RX だけ）、`AddFrameTransmitHandler`、`AddStateChangeHandler` |
+| SIL Kit | Ethernet（`vehicle_sil::ethernet_bridge_core`） | `CreateEthernetController`、`IEthernetController::Activate/Deactivate/SendFrame`、`AddFrameHandler`（RX の向きだけ）、`AddFrameTransmitHandler`（`Transmitted` 以外の確認だけ） |
 | SIL Kit | Network Simulator（experimental、`vehicle_sil::can_netsim`） | `Experimental::Participant::CreateNetworkSimulator`、`INetworkSimulator::SimulateNetwork/Start`、`ISimulatedNetwork`、`Can::ISimulatedCanController`、`Can::ICanEventProducer::Produce`（フレーム、送信確認、状態の変化） |
 | SIL Kit | プロセス内レジストリ（`Simulation`、`vehicle_sil_launch run`） | `Vendor::Vector::CreateSilKitRegistry`、`StartListening` |
 
@@ -124,6 +125,13 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 - 時刻同期した participant が送るメッセージのタイムスタンプは、送信時のステップの時刻です。
 - 時刻同期していない participant が送るメッセージのタイムスタンプは `std::chrono::nanoseconds::min()` です（`TimeProvider` の既定）。時刻同期している受け手の SIL Kit は、届いたメッセージのこの値を自分の今の時刻に置き換えます（`SilKitLink::DistributeRemoteSilKitMessage`）。最初のステップの前は今の時刻もこの値なので、そのまま残ります。`SilKitCanPort`（仮想時間）と `SilKitEthPort` は負の時刻を見分け、受け手の最新のステップの時刻（最初のステップの前なら 0）に寄せます（[internals/can.md](internals/can.md) の「SIL Kit のポート」、[internals/ethernet.md](internals/ethernet.md) の「時刻同期に参加していない送り手」）。試験 `j1939_silkit.j1939_on_virtual_time_receives_a_bam_from_a_participant_without_time_synchronisation*` が、始まる前と始まった後の両方を確かめます。
 - Ethernet は、Network Simulator がなければ、送ったフレームを同じネットワークのほかの全部のコントローラーに届けます（宛先のアドレスで絞らない）。送信の確認は `SendFrame()` の中で、送った時刻で返ります。`Activate()` は、その中で状態を LinkUp にします。60 バイトより短いフレームは、受け手のコントローラーが 0 で埋めてからハンドラーに渡します（`EthController::ReceiveMsgInternal`）。`VirtualEthernetBus` はこの振る舞いに合わせてあり、試験 `eth_silkit.records_match_*` が同じ記録になることを確かめます。
+- Ethernet（`EthernetBridge` が前提にしています。試験 `ethernet_bridge.silkit_*` が、埋めることと、自分の送信が RX のハンドラーに来ないことを確かめます）:
+  - `SendFrame` は、呼び出しの中でフレームのバイト列を写します。ブリッジは、外の口のハンドラーの間だけ有効なバッファーをそのまま渡します。
+  - trivial simulation では、送ったフレームはほかの participant に RX として、自分には TX として届きます。RX の向きだけで登録したハンドラーには、自分の送信は来ません。
+  - trivial simulation では、`Activate()` でコントローラーはすぐ `LinkUp` になり、送信の確認は `SendFrame` の中で同期に呼ばれます。状態は、`LinkUp` なら `Transmitted`、`LinkDown` なら `LinkDown`、`Activate()` の前なら `ControllerInactive` です。
+  - 受け手は、60 バイトより短いフレームを 0 で埋めてからハンドラーに渡します（`EthController::ReceiveMsgInternal`）。送る側には最小長の検査がありません。最大長の検査は、送る側にも受ける側にも見当たりません。
+  - `RemoveFrameHandler` は、CAN と同じく、実行中のハンドラーの終了を待ってから戻ります（ハンドラーの呼び出しと削除が同じ `recursive_mutex` で直列化されている）。
+  - コントローラーは、フレームのハンドラーを、ハンドラーの集まりの `recursive_mutex` を持ったまま呼びます（`SynchronizedHandlers::InvokeAll`）。trivial simulation の `SendFrame` は、自分への TX の配達で同じ集まりの `InvokeAll` を通るので、同じ錠を取ります。そのため、外の口の受信スレッドが呼ぶ `SendFrame` は、SIL Kit の受信スレッドが `EthernetBridge` のハンドラー（その中の `ExternalLink::transmit()`）を終えるまで待ちます。`ExternalLink` の契約（`transmit()` はブロックせず、ハンドラーの間に `transmit()` の取る錠を持たない）は、これを前提にしています。
 - CAN の `SendFrame` の userContext は、ポインタの値（64 ビット）のまま運ばれます。ネットワークシミュレーターの `CanFrameRequest` と送信確認には届き、他の受信者の RX のフレームでは `nullptr` になります（`CanController::ReceiveMsg`）。`SilKitCanPort` は送信時刻を入れ、簡易 CAN Network Simulator がそれを読みます。
 - Network Simulator API（experimental）: あるネットワークの模擬を引き受ける participant が現れると、そのネットワークの CAN コントローラーは詳細シミュレーションに切り替わり、送信の要求、ボーレート、モードの変更をその participant に送ります。コントローラーの状態（`Started` など）は、シミュレーターが返す状態の変化で初めて変わります。`ControllerDescriptor` は見つけた順の通し番号で、決定的ではありません。
 - コントローラーがシミュレーターを見つける前に呼んだ `SetBaudRate()` と `Start()` は、trivial simulation で処理され、見つけた後もシミュレーターに送り直されません。すでに見つけているシミュレーターは、コントローラーを作った時点で同じスレッドから知らされます。そのため、シミュレーターを先に起動しても、ピアのコントローラーの設定が届くとは限りません。簡易 CAN Network Simulator は、ビットレートが届かなければ `--default-bitrate` を使い、フレームの配送をモードで止めません。シミュレーションが始まった後の送信は、すべてシミュレーターを通ります。

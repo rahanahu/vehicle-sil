@@ -2,13 +2,7 @@
 // Control Server を持たせ、部品の種類が揃う変数（REPLAY_VARIABLES=more）を出させるので、この試験だけの
 // GUI サーバーを起動する。
 import { expect, test } from '@playwright/test';
-import {
-  CONFIGS,
-  REPLAY_LAUNCHER,
-  GUI_PORT,
-  GuiServer,
-  launchGuiServer,
-} from './support/gui-server';
+import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/gui-server';
 import { VIEWPORTS, findLayoutProblems } from './support/layout';
 import {
   Target,
@@ -38,7 +32,7 @@ test.beforeAll(async () => {
       REPLAY_FEATURES: CONTROL_FEATURES,
       REPLAY_VARIABLES: 'more',
     },
-    port: GUI_PORT + 300,
+    port: 0,
   });
   target = { base: new URL('/', server.url).href, token: server.token };
 });
