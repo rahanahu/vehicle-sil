@@ -90,6 +90,8 @@ steps:
 
 YAML です（`{` で始まれば JSON）。構成ファイルとは別のファイルにします。形式はまだ変わることがあります。
 
+JSON Schema は [schema/scenario.schema.json](../schema/scenario.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと、キーの補完と説明、形の検査が効きます（[例のファイル](../examples/ecu_main/scenarios/throttle_step.yaml)の 1 行目。パスは、書いているファイルのディレクトリから数えます）。スキーマが見るのは、キーと値の形だけです。変数があるか、値が型と範囲に合うか、時刻の順は、`check --scenario` が確かめます（下の「照合」）。JSON で書いたシナリオをスキーマに結び付ける方法は、構成ファイルと同じです（[simulation-config.md](simulation-config.md) の「エディターの補完」）。ひな形には `schema/` に写しが入っていて、`get_tools.py` が、取ってきた道具の版のスキーマで上書きします。道具の圧縮ファイルでは `schema/` にあります。
+
 | キー | 必須 | 意味 |
 |---|---|---|
 | `vehicle_sil_scenario` | はい | 形式の版。`1` |

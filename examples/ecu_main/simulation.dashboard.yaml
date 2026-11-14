@@ -1,7 +1,7 @@
-# The dashboard of simulation.yaml in the browser GUI (vehicle-sil-gui): which variables it shows,
-# with which widget, in which order. The GUI reads this file from next to simulation.yaml; without
-# it, the GUI lays out every variable by itself. The format: docs/gui.md ("ダッシュボードのファイル"),
-# and the JSON Schema gui/protocol/dashboard.schema.json.
+# yaml-language-server: $schema=../../gui/protocol/dashboard.schema.json
+# The dashboard of simulation.yaml in the browser GUI (vehicle-sil-gui): which variables it shows, with
+# which widget, in which order. The GUI reads this file from next to simulation.yaml; without it, the
+# GUI lays out every variable by itself. The format: docs/gui.md ("ダッシュボードのファイル").
 # CMake also copies this file as simulation.live.dashboard.yaml, the dashboard of simulation.live.yaml.
 vehicle_sil_dashboard: 1
 title: Engine and dashboard

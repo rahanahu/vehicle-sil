@@ -390,6 +390,24 @@ registry につながらないときの文（`registry_failure_message()`）は�
   `get_tools.py` と `package.py template`、`version` を手元の圧縮ファイルで）、`fetchcontent.template`（写して FetchContent で、opt-in）、`scripts/package.py verify`（道具の圧縮ファイルを使う人の手順で）
 - `ctest -R`: `^template\.`
 
+### `schema/`（構成ファイルとシナリオの JSON Schema）
+
+- 主なクラス・関数（ヘッダー）: `schema/simulation.schema.json`（構成ファイル）、`schema/scenario.schema.json`（シナリオ）。
+  エディターの補完と検査のためのもので、ランチャーは読みません（読み手は `libs/launch/src/config.cpp` と `scenario.cpp`）。
+  ダッシュボードのスキーマは `gui/protocol/dashboard.schema.json` です。
+  ひな形の `template/schema/` は 3 つの写しで、道具の圧縮ファイルの `schema/` にも同じ 3 つが入ります（`template/get_tools.py` が、道具の分をプロジェクトの `schema/` に写します）。
+  例をビルドするときは、構成のときにビルドのディレクトリにも写します（最上位の `CMakeLists.txt`。写された例の YAML の 1 行目が、そこを指します）
+- 試験: `tests/schema/test_schemas.py`（例、ひな形、文書の YAML がスキーマに通る。
+  通る見本と落ちる見本を、スキーマと `check` の両方に掛ける。
+  対応付けごとのキー、ネットワークの種類、手順の種類が、ランチャーの誤りの文が並べるものと同じ。
+  キーが文書の表にある。
+  ひな形の写しが同じ。
+  例とひな形の YAML の 1 行目がスキーマを指す。
+  ビルドのディレクトリに写された例の 1 行目の先に、スキーマの写しがある）。
+  PyYAML と jsonschema のある Python が要ります（`uv sync`。Windows は MSYS2 の `mingw-w64-ucrt-x86_64-python-jsonschema`。なければ、構成のときに理由を出して登録しません。
+  CI は、`linux-gcc-debug` で `schema.files_and_launcher` が登録されたことを確かめます）
+- `ctest -R`: `^schema\.`（ランチャーなしの分は `scripts/verify-python.py` の `schema` の段でも回る）
+
 ### `gui/server`、`gui/protocol`、`gui/client`、`gui/web`
 
 - 主なクラス・関数（ヘッダー）: GUI サーバー（`gui/server/src/vehicle_sil_gui/`。
@@ -850,6 +868,20 @@ flowchart TD
   1 組の中身は `run` のままなので、`run --json` を変えたら `runs[].run` も変わります。
   試験は `launch.the_scenarios_of_a_directory_*`、`launch.a_test_*`、`launch.the_report_of_a_test_*`、`launch.the_command_of_one_run_alone_*`（`tests/launch/test_batch.cpp`。
   プロセスを起動しない）、`launch_run.test_command`、`launch_run.test_interrupt`
+
+- 変えるもの: 構成ファイルかシナリオのキー、値の形、ネットワークの種類、手順の種類（`libs/launch/src/config.cpp`、`scenario.cpp` の読み手）
+
+  合わせて直すもの: `schema/simulation.schema.json`、`schema/scenario.schema.json`（キーには `description` を付けます。
+  エディターが、そのキーの説明として出す文です）と、ひな形の写し（`cp schema/*.schema.json template/schema/`。
+  ダッシュボードは `gui/protocol/dashboard.schema.json` から）。
+  読み手の多くは、キーを分岐（`key == "..."`）で受け、知らないキーの文には別の一覧（`config.cpp` と `scenario.cpp` の先頭の `k...Keys`）を出します。
+  分岐を足したら、一覧にも足します（試験が比べるのは一覧のほうなので、足し忘れると、スキーマが新しいキーを知らないまま通ります）。
+  手順の種類を足すときは、`scenario.schema.json` の `definitions` に `step_<種類>` を 1 つ足し（その種類のキーと、時刻の 2 つのキー）、`definitions.step` の `oneOf` に 1 行足します。
+  スキーマは、ランチャーが読むファイルを落としてはいけません（落とせない誤りは `check` が言います）。
+  迷う所は緩くし、`tests/schema/test_schemas.py` の見本（`CONFIG_SAMPLES`、`SCENARIO_SAMPLES`）に、通る形と落ちる形を足します。
+  例とひな形の YAML（`examples/`、`template/`）を足すときは、1 行目に `# yaml-language-server: $schema=<スキーマへの相対パス>` を書きます。
+  既にある例の先頭のコメントは、行数を変えません（所見と手順の行番号が、文書の出力と GUI の試験の録った出力に出ているため）。
+  試験は `schema.files_and_launcher`
 
 - 変えるもの: シナリオ（`run --scenario`、`check --scenario`。
   読み方と照合は `libs/launch/src/scenario.cpp`、手順を進める機械は `libs/launch/src/scenario_run.cpp`、ランチャーへのつなぎ込みは `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`）、時間のゲートのガードは `SimulationController::guard_from()` と `wait_guarded()`、全サンプルを受ける口は `control::Hub::set_values_tap()`）

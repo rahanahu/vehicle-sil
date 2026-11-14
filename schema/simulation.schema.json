@@ -1,0 +1,271 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "vehicle-sil simulation configuration (simulation.yaml), format 1",
+  "description": "The networks and the participants (ECU executables) of one simulation, for vehicle_sil_launch check, run and test. This schema finds unknown keys, missing keys and values of the wrong form while you write. It cannot see the executables: whether the names, the steps, the networks and the variables fit them is what `vehicle_sil_launch check <file>` says, and so is everything else this schema leaves open (a key written twice, names listed twice, combinations of keys, the arguments of a command). The manual is docs/simulation-config.md of vehicle-sil.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["vehicle_sil_simulation", "networks", "participants"],
+  "properties": {
+    "vehicle_sil_simulation": {
+      "const": 1,
+      "description": "The format version. Always 1."
+    },
+    "stop_at_ms": {
+      "$ref": "#/definitions/millis",
+      "description": "The virtual time at which the simulation stops, in milliseconds. Without it, the simulation runs until a participant stops it or until run is stopped (Ctrl+C). With time_step_ms, it must be a multiple of time_step_ms.",
+      "examples": [1000]
+    },
+    "start_timeout_ms": {
+      "$ref": "#/definitions/millis",
+      "description": "How long run waits for the required participants to join, in milliseconds.",
+      "default": 30000
+    },
+    "stop_timeout_ms": {
+      "$ref": "#/definitions/millis",
+      "description": "How long run waits for each participant to end, in milliseconds, at each stage of stopping.",
+      "default": 10000
+    },
+    "registry_uri": {
+      "type": "string",
+      "pattern": "^silkit://.+:[0-9]+$",
+      "description": "Where run starts the registry of the simulation: silkit://<host>:<port>, with a port from 1 to 65535. Without it, a free port on 127.0.0.1. For participants on other computers too, an address they reach (silkit://0.0.0.0:8500); the simulation then listens on the network, where anyone who reaches this computer can join.",
+      "examples": ["silkit://127.0.0.1:8500", "silkit://0.0.0.0:8500"]
+    },
+    "speed": {
+      "description": "How fast virtual time passes: simulation seconds per wall-clock second (1: real time, 2: twice as fast, 0.5: half as fast), or max. Without it, as fast as possible. run --speed overrides it.",
+      "oneOf": [
+        { "type": "number", "minimum": 0.000001, "maximum": 1000000 },
+        { "const": "max" }
+      ],
+      "examples": [1, 0.5, "max"]
+    },
+    "time_step_ms": {
+      "$ref": "#/definitions/millis",
+      "description": "The step of the launcher's controller, in milliseconds of virtual time: how finely the simulation can be paused, stepped and paced. Without it, the launcher chooses one (10 at full speed). stop_at_ms must be a multiple of it."
+    },
+    "late_tolerance_ms": {
+      "$ref": "#/definitions/millis",
+      "description": "How late a step may begin, in wall-clock milliseconds, before it counts as late (when a speed is given).",
+      "default": 10
+    },
+    "networks": {
+      "type": "array",
+      "description": "Every network the ECUs use. May be empty.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind"],
+        "properties": {
+          "name": {
+            "$ref": "#/definitions/name",
+            "description": "The network's name: the one the ECUs give to j1939(), can(), lin_master(), lin_slave() or ethernet().",
+            "examples": ["J1939_CAN"]
+          },
+          "kind": {
+            "enum": ["can", "lin", "ethernet"],
+            "description": "The kind of network (lower case)."
+          }
+        }
+      }
+    },
+    "participants": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The participants of the simulation: the ECU executables, and other executables that join it.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "command"],
+        "properties": {
+          "name": {
+            "$ref": "#/definitions/name",
+            "description": "The participant's name, on one line, not starting with '-'. An ecu_main executable gets it with --name. SimulationController is taken (the launcher's controller).",
+            "examples": ["Engine"]
+          },
+          "command": {
+            "$ref": "#/definitions/command",
+            "description": "The executable and its arguments. A relative path counts from this file's directory; a name without / is also looked up on PATH. On Windows, .exe may be left out."
+          },
+          "step_ms": {
+            "$ref": "#/definitions/millis",
+            "description": "The step the executable reports, in milliseconds. Compared only when written (and only with describe: true).",
+            "examples": [10]
+          },
+          "describe": {
+            "type": "boolean",
+            "description": "true: an executable made with ecu_main; check asks it what it is (--describe) and compares. false: any other executable; it is not checked, and its command may use the placeholders \"{registry_uri}\" and \"{name}\".",
+            "default": true
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether the simulation waits for this participant. false only with describe: false (a tool that only listens, such as a logger). At least one participant that is not left out must be required.",
+            "default": true
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "false leaves the participant out: it is neither checked nor started. --disable and --enable override it for one run.",
+            "default": true
+          },
+          "manual": {
+            "type": "boolean",
+            "description": "true: you start this participant yourself (from a debugger, for example); run prints the command and waits for it. --manual does the same for one run.",
+            "default": false
+          },
+          "variables": {
+            "$ref": "#/definitions/variables"
+          }
+        }
+      }
+    },
+    "variants": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "The variants of the simulation: each name with what it changes of the common part above. A file with variants needs --variant <name> for check and run; test runs them all.",
+      "propertyNames": {
+        "pattern": "^[^-]",
+        "description": "A variant's name: a text on one line that does not start with '-' (it is given with --variant)."
+      },
+      "additionalProperties": { "$ref": "#/definitions/variant" },
+      "examples": [{ "small": {}, "medium": { "participants": { "Engine": { "command": ["./engine_medium"] } }, "params": { "idle_rpm": 650 } } }]
+    },
+    "params": {
+      "$ref": "#/definitions/params",
+      "description": "Values of the parameters that scenarios use as ${name}. They replace the defaults a scenario gives in its own params; a variant's params and --param replace these."
+    }
+  },
+  "definitions": {
+    "millis": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000000000
+    },
+    "name": {
+      "type": ["string", "number", "boolean"],
+      "minLength": 1
+    },
+    "command": {
+      "oneOf": [
+        {
+          "type": ["string", "number", "boolean"],
+          "minLength": 1,
+          "description": "The executable alone (the text is not split at spaces)."
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": ["string", "number", "boolean"] },
+          "description": "The executable, then its arguments, one item each. Write a placeholder in quotes (\"{registry_uri}\")."
+        }
+      ],
+      "examples": [["engine/engine_ecu"], ["tools/logger", "--uri", "{registry_uri}"]]
+    },
+    "variables": {
+      "type": "object",
+      "description": "The variable map: the names the simulation uses (the keys), each with the executable's variable behind it. For executables whose variables differ in name, unit or values; a variable that is not listed is seen under the executable's own name.",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "$ref": "#/definitions/variable" },
+      "examples": [{ "engine.throttle": "throttle_pct", "engine.speed": { "from": "rpm_x10", "scale": 0.1, "unit": "rpm" }, "engine.gear": { "from": "gear_raw", "map": { "P": 0, "R": 1, "N": 2, "D": 3 } }, "engine.turbo": { "absent": true } }]
+    },
+    "variable": {
+      "description": "One of: the executable's name of the variable (renames it); { from, scale, offset } (the value seen is the executable's value * scale + offset); { from, map } (names for its values); { absent: true } (this executable does not have it).",
+      "oneOf": [
+        {
+          "type": ["string", "number", "boolean"],
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "type": ["string", "number", "boolean"],
+              "minLength": 1,
+              "description": "The executable's name of the variable."
+            },
+            "scale": {
+              "type": "number",
+              "not": { "const": 0 },
+              "description": "The value seen is the executable's value * scale + offset. Not 0. For an integer or a real variable; the variable seen is a real. Not together with map.",
+              "default": 1
+            },
+            "offset": {
+              "type": "number",
+              "description": "The value seen is the executable's value * scale + offset. Not together with map.",
+              "default": 0
+            },
+            "map": {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": { "minLength": 1 },
+              "additionalProperties": { "type": "integer" },
+              "description": "Names for the executable's values (whole numbers), one name a value. For an integer or an enum variable; the variable seen is an enum with these items only. Not together with scale or offset.",
+              "examples": [{ "P": 0, "R": 1, "N": 2, "D": 3 }]
+            },
+            "unit": {
+              "type": ["string", "number", "boolean", "null"],
+              "description": "The unit of the value seen.",
+              "examples": ["rpm"]
+            },
+            "absent": {
+              "const": true,
+              "description": "This executable does not have the variable: the scenario steps that use it are skipped. Takes no other key."
+            }
+          },
+          "if": { "required": ["absent"] },
+          "then": { "maxProperties": 1 },
+          "else": { "required": ["from"] },
+          "not": {
+            "anyOf": [{ "required": ["map", "scale"] }, { "required": ["map", "offset"] }],
+            "description": "scale and offset convert a number, map names the values: one of the two."
+          }
+        }
+      ]
+    },
+    "params": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+        "description": "A parameter's name: letters, digits and _ (not a digit first)."
+      },
+      "additionalProperties": {
+        "type": ["string", "number", "boolean"],
+        "not": { "type": "string", "pattern": "\\$\\{" },
+        "description": "One value: a number, true or false, or a text. It cannot use another parameter (${...})."
+      },
+      "examples": [{ "idle_rpm": 800 }]
+    },
+    "variant": {
+      "type": ["object", "null"],
+      "description": "What this variant changes of the common part; {} (or nothing) for the common part as it is.",
+      "additionalProperties": false,
+      "properties": {
+        "participants": {
+          "type": "object",
+          "description": "The participants of the common part that differ in this variant, by name. A participant of this variant only is listed in the common part with enabled: false, and gets enabled: true here.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "$ref": "#/definitions/command",
+                "description": "The executable and its arguments, instead of the common command (the whole of it)."
+              },
+              "variables": {
+                "$ref": "#/definitions/variables",
+                "description": "Variable mappings laid over the common ones: a mapping of the same name replaces the common one, another name is added."
+              },
+              "enabled": {
+                "type": "boolean",
+                "description": "Whether the participant is in this variant, instead of the common enabled."
+              }
+            }
+          }
+        },
+        "params": {
+          "$ref": "#/definitions/params",
+          "description": "Parameters laid over the common params, name by name."
+        }
+      }
+    }
+  }
+}

@@ -18,6 +18,10 @@ namespace vehicle_sil::launch {
 
 namespace {
 
+// kTopKeys is what the message of an unknown key shows; the reader takes each key in a branch of its own. A key with
+// a new branch must be added here too, or the JSON Schema (schema/) and its test (tests/schema), which compare with
+// the list in the message, pass without the key. (The keys of a step are taken from kStepKeys itself.)
+
 const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "only", "params", "steps"};
 const std::vector<std::string> kStepKeys = {"at_ms",      "after_ms", "set",       "ramp",       "wait_until",
                                             "timeout_ms", "expect",   "within_ms", "hold_for_ms"};

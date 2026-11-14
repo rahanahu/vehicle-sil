@@ -24,7 +24,14 @@ codegen = ["pyyaml>=6.0.3"]
 control = ["grpcio>=1.85.0", "grpcio-tools>=1.85.0", "protobuf>=7.35.1"]
 # gui/server: the browser GUI's server (vehicle-sil-gui, a member of this workspace) and its tests.
 gui = ["vehicle-sil-gui[variables]", "pytest>=9.2.0"]
-dev = [{ include-group = "codegen" }, { include-group = "control" }, { include-group = "gui" }]
+# tests/schema: the JSON Schemas of the configuration and of a scenario (schema/) against the examples and the launcher.
+schema = ["jsonschema>=4.26.0", "pyyaml>=6.0.3"]
+dev = [
+  { include-group = "codegen" },
+  { include-group = "control" },
+  { include-group = "gui" },
+  { include-group = "schema" },
+]
 
 [tool.uv]
 package = false

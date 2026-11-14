@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../schema/simulation.schema.json
 # The two ECUs of simulation.yaml, to watch and to touch: the simulation runs as fast as a clock
 # (speed: 1) and has no stop_at_ms, so it runs until you stop it. CMake copies this file next to
 # the executables (build/<preset>/examples/ecu_main/); there,

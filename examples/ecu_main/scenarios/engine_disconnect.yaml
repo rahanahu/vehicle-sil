@@ -1,8 +1,8 @@
-# A scenario for the two ECUs of this directory: take the engine off the bus (the variable
-# ecu.connected that every ECU has), see that the dashboard notices that the engine speed stops
-# coming, put the engine back and see the speed come again. Run it with
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# Take the engine off the bus (the variable ecu.connected that every ECU has), see that the dashboard
+# notices that the engine speed stops coming, put the engine back and see the speed come again
+# (the format: docs/scenario.md). The exit code is 0 if every step passed:
 #   vehicle_sil_launch run simulation.yaml --scenario scenarios/engine_disconnect.yaml
-# (the exit code is 0 if every step passed). The format: docs/scenario.md.
 vehicle_sil_scenario: 1
 name: engine disconnect
 steps:

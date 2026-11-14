@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vehicle-sil GUI dashboard file (<configuration>.dashboard.yaml), format 1",
+  "description": "Which ECU variables the browser GUI shows, with which widget, in which order. The GUI server checks the same rules and says the line of each mistake (docs/gui.md).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["vehicle_sil_dashboard", "sections"],
+  "properties": {
+    "vehicle_sil_dashboard": { "const": 1, "description": "The format version. Always 1." },
+    "title": { "$ref": "#/$defs/text", "description": "Shown above the dashboard." },
+    "panels": {
+      "type": "array",
+      "maxItems": 16,
+      "description": "Modules (in the panels directory next to this file) that define the custom elements of the panel items.",
+      "items": { "type": "string", "pattern": "^panels/([^/\\\\:.][^/\\\\:]*/)*[^/\\\\:.][^/\\\\:]*\\.m?js$" }
+    },
+    "sections": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "items"],
+        "properties": {
+          "title": { "$ref": "#/$defs/text" },
+          "collapsed": { "type": "boolean", "description": "Start folded (its widgets are made when opened)." },
+          "items": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "variable": {
+      "type": "string",
+      "pattern": "^[^.]+\\..+$",
+      "maxLength": 1024,
+      "description": "<participant>.<variable>: up to the first '.' is the participant (Engine.engine.speed)."
+    },
+    "options": { "type": "object", "description": "Settings of the widget or the panel." },
+    "item": {
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "A variable shown with a widget.",
+          "additionalProperties": false,
+          "required": ["variable"],
+          "properties": {
+            "variable": { "$ref": "#/$defs/variable" },
+            "widget": {
+              "enum": ["value", "number", "slider", "switch", "lamp", "select", "graph"],
+              "description": "Leave it out for the variable's default widget."
+            },
+            "label": { "$ref": "#/$defs/text", "description": "Shown instead of the variable's name." },
+            "options": {
+              "$ref": "#/$defs/options",
+              "description": "slider: {step: <positive number>}; graph: {points: <integer from 2>}."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "A panel of your own: a custom element defined by one of the panels modules.",
+          "additionalProperties": false,
+          "required": ["panel"],
+          "properties": {
+            "panel": { "type": "string", "pattern": "^[a-z][a-z0-9._]*-[a-z0-9._-]*$" },
+            "label": { "$ref": "#/$defs/text" },
+            "variables": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/variable" } },
+            "options": { "$ref": "#/$defs/options" }
+          }
+        },
+        {
+          "type": "object",
+          "description": "The participant's variables that the file does not place elsewhere, with their default widgets; its monitoring variables in a folded section after this one.",
+          "additionalProperties": false,
+          "required": ["auto"],
+          "properties": { "auto": { "$ref": "#/$defs/text" } }
+        }
+      ]
+    }
+  }
+}
