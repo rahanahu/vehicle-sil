@@ -678,7 +678,7 @@ flowchart TD
 
   合わせて直すもの: [internals/core.md](internals/core.md) の「SIL Kit の構成の既定」、[simulation-run.md](simulation-run.md) の「待ち受けるアドレス」、[simulation-check.md](simulation-check.md) の所見の表、[dependencies.md](dependencies.md) の SIL Kit（Windows）の節、[ecu-executable.md](ecu-executable.md) の「SIL Kit の構成を渡す」。
   試験は `core.a_participant_*`、`core.a_configuration_*`、`simulation.ecu_main_*silkit_configuration*`、`core.a_registry_uri_*`、`launch_run.network`、`launch_run.busy_port`、`multi_host.two_hosts`、`core.silkit_configuration_defaults`。
-  手引きは [howto/multi-pc.md](howto/multi-pc.md)
+  手引きは [howto/multi-pc.md](howto/multi-pc.md)（`multi_host.docs` が、`examples/ecu_main/simulation.two-pcs.yaml` とその `check` の出力を、手引きのブロックと照合する）
 
 - 変えるもの: `vehicle_sil_launch check` と `run` の出力（`libs/launch/src`）、`examples/ecu_main/simulation.yaml`
 

@@ -19,6 +19,9 @@ configure_file(simulation.dashboard.yaml simulation.dashboard.yaml COPYONLY)
 configure_file(simulation.live.yaml simulation.live.yaml COPYONLY)
 configure_file(simulation.dashboard.yaml simulation.live.dashboard.yaml COPYONLY)
 configure_file(panels/rpm-bar.js panels/rpm-bar.js COPYONLY)
+# The same two over two computers: the registry on the network, the Dashboard started by hand
+# (docs/howto/multi-pc.md).
+configure_file(simulation.two-pcs.yaml simulation.two-pcs.yaml COPYONLY)
 # Files with mistakes in them that the tests launch_cli.docs and launch_run.scenario once wrote here
 # (they now write to their own work directories): taken out of a build directory from before that, so
 # that nothing that fails on purpose lies next to the example. Only these four names; anything else
