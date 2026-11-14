@@ -22,7 +22,7 @@ GUI は、自分の画面を作るための道具一式（SDK）です。
 - 構成ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します）。
 - Python 3.11 以上と [uv](https://docs.astral.sh/uv/)（GUI サーバー）。
 - 画面: サンプルの画面のビルド（`gui/web` の `npm run build` の出力）か、自分の画面のビルド（`--web`）。画面を使うだけなら Node.js は要りませんが、ビルドには要ります（[gui/web/README.md](../gui/web/README.md)）。
-- ビルド済みの道具（README の「[始める](../README.md#始める)」）には、上のうち Python 以外の全部（Control Server を持つランチャー、GUI サーバー、ビルドした画面、gRPC のスタブ）が入っています。要るのは Python 3.11 以上だけで、uv があれば、Python とパッケージも uv が入れます。
+- ビルド済みの道具（README の「[クイックスタート](../README.md#クイックスタート)」）には、上のうち Python 以外の全部（Control Server を持つランチャー、GUI サーバー、ビルドした画面、gRPC のスタブ）が入っています。要るのは Python 3.11 以上だけで、uv があれば、Python とパッケージも uv が入れます。
 
 ## 起動
 

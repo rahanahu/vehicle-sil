@@ -1,6 +1,6 @@
 # ピアを別々のプロセスで動かす（`Peer`、`vehicle_sil_sim_controller`）
 
-`Simulation` や `ecu_main` を使わずに、`Peer` や SIL Kit の participant を自分で組み立て、別々のプロセスで動かす人向けです。先に README の「[ECU はこう書く](../README.md#ecu-はこう書く)」と [j1939-guide.md](j1939-guide.md) を読みます。次は [internals/virtual-time.md](internals/virtual-time.md)（仮想時間の規則）と [internals/can.md](internals/can.md)（CAN の基盤）です。
+`Simulation` や `ecu_main` を使わずに、`Peer` や SIL Kit の participant を自分で組み立て、別々のプロセスで動かす人向けです。先に README の「[ECU の書き方](../README.md#ecu-の書き方)」と [j1939-guide.md](j1939-guide.md) を読みます。次は [internals/virtual-time.md](internals/virtual-time.md)（仮想時間の規則）と [internals/can.md](internals/can.md)（CAN の基盤）です。
 
 ここに挙げる実行ファイルは、結合試験でも使います。コマンドの `B` は、ビルドのディレクトリ（`build/<プリセット>`）です。
 

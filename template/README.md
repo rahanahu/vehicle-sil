@@ -33,7 +33,7 @@ pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake min
 
 ## 1. ひな形を写す
 
-ひな形と道具は、vehicle-sil の[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)に公開した版にだけあります。使う版（この README の版）がまだ公開されていなければ、`get_tools.py` は「may not be published yet」と言って止まります。そのときは vehicle-sil のリポジトリをクローンしてビルドし（vehicle-sil の README の「リポジトリから動かす」）、そのビルドの `vehicle_sil_launch` を使います。
+ひな形と道具は、vehicle-sil の[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)に公開した版にだけあります。使う版（この README の版）がまだ公開されていなければ、`get_tools.py` は「may not be published yet」と言って止まります。そのときは vehicle-sil のリポジトリをクローンしてビルドし（vehicle-sil の README の「リポジトリからビルドする」）、そのビルドの `vehicle_sil_launch` を使います。
 
 vehicle-sil のリリースのページから `vehicle-sil-template-0.1.0.zip` を取って展開し、ディレクトリの名前を自分のプロジェクトの名前にします。Git で管理するなら、そこで `git init` します（`.gitignore` は、`build/`、`bin/`、`tools/` を除きます）。
 

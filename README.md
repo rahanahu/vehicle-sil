@@ -32,7 +32,7 @@ flowchart LR
 
 ECU は 1 つずつ別の実行ファイルです。何人かが別々に作った ECU を、内部を知らない人が設定ファイルに並べて動かせます。全体の構成は [docs/architecture.md](docs/architecture.md) に、やりたいこと別のサンプルは [examples/README.md](examples/README.md) にあります。
 
-## 動かすとこう見える
+## 実行例
 
 例は 2 つの ECU です。エンジンの ECU は、スロットルの値に合わせて回転数を変え、J1939 で送ります。表示の ECU は、それを受信して表示します。次の設定ファイルで、2 つを 1 つのシミュレーションにまとめます（[examples/ecu_main/simulation.yaml](examples/ecu_main/simulation.yaml)。コメントは省いています）。`participants` の 1 項目が、1 つの ECU の実行ファイルに対応します。
 
@@ -111,14 +111,14 @@ failed: 2 errors, 1 warning, 0 notes
 
 ![ブラウザの GUI の「変数」の画面。スロットルを 20 % から 60 % に動かした後で、回転数のグラフが 1200 rpm から 2000 rpm に上がっている](docs/images/gui-variables.png)
 
-## 始める
+## クイックスタート
 
 | 始め方 | 使える時期 | 向いている人 | 必要なもの | 得られるもの |
 |---|---|---|---|---|
-| [リポジトリから動かす](#リポジトリから動かす) | いま使えます。 | すぐ試す人と、vehicle-sil 自体を開発する人です。 | 下の表のものです。 | サンプル、テスト、すべてのツールを自分でビルドしたものです。 |
-| [テンプレートとビルド済みのツールから](#テンプレートとビルド済みのツールからリリース後) | リリース後です（まだリリースしていません）。 | 自分の ECU を作る人と、ECU をつないで動かす人です。 | コンパイラ、CMake、Ninja、Git、Python です。 | 2 つの ECU のプロジェクトと、ビルド不要のツールです。 |
+| [リポジトリからビルドする](#リポジトリからビルドする) | いま使えます。 | すぐ試す人と、vehicle-sil 自体を開発する人です。 | 下の表のものです。 | サンプル、テスト、すべてのツールを自分でビルドしたものです。 |
+| [テンプレートとビルド済みのツールを使う](#テンプレートとビルド済みのツールを使うリリース後) | リリース後です（まだリリースしていません）。 | 自分の ECU を作る人と、ECU をつないで動かす人です。 | コンパイラ、CMake、Ninja、Git、Python です。 | 2 つの ECU のプロジェクトと、ビルド不要のツールです。 |
 
-### リポジトリから動かす
+### リポジトリからビルドする
 
 | 必要なもの | バージョン | 用途 |
 |---|---|---|
@@ -138,7 +138,7 @@ uv sync                              # ビルドと GUI が使う Python のパ�
 cmake --preset linux-gcc-control     # Control API のサーバーつき（Python と GUI から値を読み書きするのに必要）
 cmake --build --preset linux-gcc-control   # 最初は SIL Kit（PC に gRPC がなければ gRPC も）をコンパイルするので時間がかかる
 
-# 「動かすとこう見える」の出力を得る
+# 「実行例」の出力を得る
 export PATH="$PWD/build/linux-gcc-control/tools/launch:$PATH"
 cd build/linux-gcc-control/examples/ecu_main
 vehicle_sil_launch check simulation.yaml
@@ -151,7 +151,7 @@ npm --prefix gui/web run build
 scripts/run-gui.py                   # 足りないものがあれば、それをビルドするコマンドを表示する
 ```
 
-### テンプレートとビルド済みのツールから（リリース後）
+### テンプレートとビルド済みのツールを使う（リリース後）
 
 リリース後は、リポジトリをビルドする必要がありません。[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)で次の 2 つを配布します。
 
@@ -173,7 +173,7 @@ vehicle-sil-gui simulation.live.yaml
 
 必要なもののバージョンと各ステップの説明は、テンプレートの [README](template/README.md) にあります。バージョンごとの変更は [CHANGELOG.md](CHANGELOG.md) にあります。
 
-## ECU はこう書く
+## ECU の書き方
 
 ECU は、`vehicle_sil::Ecu&` を受け取る普通のクラスです。上の例のうち、エンジンの ECU のクラスと `main()` をそのまま載せます（[examples/ecu_main/engine/main.cpp](examples/ecu_main/engine/main.cpp)。`#include` と名前空間の宣言は省いています）。
 
