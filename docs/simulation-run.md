@@ -1,6 +1,6 @@
 # シミュレーションの実行（`vehicle_sil_launch run`）
 
-まとめる人と、シミュレーションで試験をする人向けです。先に [simulation-config.md](simulation-config.md)（構成ファイル）と [simulation-check.md](simulation-check.md)（照合と所見）を読みます。次は、外から操作するなら [control-api.md](control-api.md)、シナリオで試験をするなら [scenario.md](scenario.md)、プログラムから動かすなら [simulation-events.md](simulation-events.md) です。引数と終了コードは [simulation-config.md](simulation-config.md) の「引数と終了コード」にあります。
+まとめる人と、シミュレーションで試験をする人向けです。先に [simulation-config.md](simulation-config.md)（構成ファイル）と [simulation-check.md](simulation-check.md)（照合と所見）を読みます。次は、外から操作するなら [control-api.md](control-api.md)、シナリオで試験をするなら [scenario.md](scenario.md)、全部の機種でシナリオをまとめて回すなら[シナリオをまとめて回す](#シナリオをまとめて回すvehicle_sil_launch-test)、プログラムから動かすなら [simulation-events.md](simulation-events.md) です。引数と終了コードは [simulation-config.md](simulation-config.md) の「引数と終了コード」にあります。
 
 `vehicle_sil_launch run <file>` は、次の順に動きます。
 
@@ -525,3 +525,83 @@ passed: 0 errors, 1 warning, 1 note
 ```
 
 この節の例も、CTest の `launch_run.docs` が実際の実行と照合します（`vehicle_sil` の版と、`<wall_ms>`、`<actual_speed>` にした値を除いて、バイト単位で）。
+
+## シナリオをまとめて回す（`vehicle_sil_launch test`）
+
+`vehicle_sil_launch test <file> --scenarios <ディレクトリかファイル>...` は、構成ファイルの機種ごとに、並べたシナリオを 1 つずつ回し、全部の結果を 1 つの表にします。CI で「全部の機種で、全部のシナリオが通るか」を 1 つのコマンドと終了コードで確かめるためのものです。
+
+```sh
+vehicle_sil_launch test simulation.yaml --scenarios scenarios/                      # 全部の機種 × ディレクトリのシナリオ
+vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.yaml  # 1 つの機種 × 並べたファイル
+```
+
+- 回す組は、機種 × シナリオの全部です。順は、機種が構成ファイルに書いた順、その中でシナリオが引数の順です。機種のない構成では、シナリオだけを並べます。`--variant <名前>` を付けると、その機種だけを回します（繰り返せます。順は構成ファイルの順のままです）。
+- 1 組は、`run <file> --variant <機種> --scenario <シナリオ> --speed max` と同じ実行です。1 組ごとに、registry、controller、participant のプロセスを作り直します（前の組の状態は残りません）。同時には回しません。速さは、構成ファイルの `speed` によらず最速です。
+- `--scenarios` には、ディレクトリかファイルを書きます。いくつでも並べられ、`--scenarios` も繰り返せます。`--scenarios` は、次の `--` で始まる引数までを全部シナリオとして読むので、構成ファイルは `--scenarios` より前に書きます（後ろに書くなら `--` の後。`test --scenarios scenarios/ -- simulation.yaml`）。
+  - ディレクトリは、その直下にある、名前が `.yaml`、`.yml`、`.json` で終わるファイルの全部です（拡張子の大文字と小文字は区別しません。下のディレクトリには入りません）。順は、ファイルの名前を UTF-8 のバイト列として比べた順で、どの OS でも同じです（大文字は小文字より前）。表には `<書いたディレクトリ>/<名前>` で出ます。シナリオでない YAML は置きません（置くと、その組は照合で失敗します）。
+  - ファイルは、拡張子によらず、書いた順のまま回します。パスは、構成ファイルと同じく、今のディレクトリからのものです。
+  - ないパス、シナリオのファイルが 1 つもないディレクトリは、引数の誤りです（何も回しません）。
+- シナリオの `only` に機種がない組は、回さずに `skipped` にします（`run` では誤り `scenario-variant` ですが、`test` では失敗にしません）。その組の構成やシナリオにほかの誤りがあれば、`skipped` ではなく失敗です。
+- `--param <名前>=<値>` は、そのパラメーターを宣言しているか使っているシナリオにだけ効きます。どのシナリオにもない名前は、引数の誤りです（打ち間違いを黙って無視しません。何も回しません）。
+- 失敗した組があっても、残りを回します。`--fail-fast` を付けると、最初の失敗の後は回しません（残りは `not run`）。
+- Ctrl+C（1 回目）は、回している組を `run` と同じ順で止め、残りを回さずに、そこまでの表を書きます（終了コード 130）。2 回目は、`run` と同じで、participant が終わるのを待たずに終わらせます。
+- ほかに付けられる引数は、`--json`、`--strict`、`--timeout-ms`（1 組ごとの上限）、`--describe-timeout-ms`、`--disable`、`--enable` です（どの組にも同じように効きます）。`--speed`、`--log-dir`、`--events`、`--stdin-commands`、`--control`、`--manual` などの `run` だけの引数と `--scenario` は、引数の誤りです。
+- 最初の組の前に、構成ファイルを読みます。読めなければ、何も回さずに終了コード 3 です。構成ファイルに照合の誤りがあるときは、どの組も失敗になります（組ごとに照合するためです）。
+
+標準エラーには、`run` と同じ行（participant の出力、ランチャーの行）が出ます。組の前後に、次の行が入ります。
+
+```text
+[vehicle_sil_launch] test 2 of 4: variant small, scenario scn/turbo.yaml
+[vehicle_sil_launch] test 2 of 4: variant small, scenario scn/turbo.yaml: skipped (the scenario is only for medium (its only))
+```
+
+標準出力は、組ごとに 1 行の表、失敗があれば 1 組だけを回し直すコマンド、最後に結果の 1 行です（時刻、所要時間、プロセス ID は入りません）。
+
+```text
+variant  scenario        result
+small    scn/idle.yaml   passed
+small    scn/turbo.yaml  skipped  the scenario is only for medium (its only)
+medium   scn/idle.yaml   FAILED   line 4: expect Engine.rpm ge 650: it was 640
+medium   scn/turbo.yaml  passed   1 of 3 steps was skipped
+
+to see a failed run in full, run it alone: vehicle_sil_launch run sim.yaml --speed max --variant medium --scenario scn/idle.yaml
+
+FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
+```
+
+| 表の `result` | 意味 | 右の列 |
+|---|---|---|
+| `passed` | その組の `run` が通った | 飛ばした手順があれば、その数 |
+| `FAILED` | 照合か実行が失敗した（`run` の終了コードが 1 か 3） | 最初の誤り（シナリオの誤りなら行つき）と、残りの数。`--strict` で警告だけなら、最初の警告 |
+| `skipped` | シナリオの `only` に、この機種がない | `only` の機種 |
+| `interrupted` | この組の途中で中断された | 中断のシグナルかキー |
+| `not run` | 中断か `--fail-fast` で、回さなかった | 理由 |
+
+最後の行は、`passed`、`FAILED`、`interrupted` のどれかと、組の数です（`interrupted` と `not run` の数は、あるときだけ。`--strict` を付けたときは末尾に `(--strict)`）。機種のない構成では、`variant` の列がありません。
+
+| 終了コード | 意味 |
+|---|---|
+| 0 | 失敗した組がない（`skipped` は失敗に数えません。全部が `skipped` でも 0 です） |
+| 1 | 失敗した組が 1 つ以上ある |
+| 3 | 構成ファイルを読めない（何も回していません）。結果を書けないとき、`vehicle_sil_launch` 自身の想定外の失敗も 3 |
+| 4 | 引数の誤り（何も回していません） |
+| 130 | 中断された（その前に失敗した組があっても 130） |
+
+### JSON（`test --json`）
+
+1 つの JSON のオブジェクトです。決まり（キーの順、`null`、字下げ、改行、版の上げ方と読む側の扱い）は照合の JSON と同じです。
+
+| キー | 値 |
+|---|---|
+| `vehicle_sil_test` | 形式の版（今は 1） |
+| `vehicle_sil` | `vehicle_sil_launch` の vehicle-sil の版 |
+| `file` | 構成ファイル（引数に書いたとおり） |
+| `result` | `"passed"`、`"failed"`、`"interrupted"`、`"unreadable"`、`"usage"` |
+| `strict` | `--strict` を付けたか |
+| `variants` | 回す機種（構成ファイルの順）。機種のない構成では空 |
+| `scenarios` | 回すシナリオ（表に出る名前、回す順） |
+| `passed`、`failed`、`skipped`、`interrupted`、`not_run` | それぞれの結果の組の数 |
+| `runs[]` | 組ごと、回す順。`variant`（機種のない構成では `null`）、`scenario`、`result`（`"passed"`、`"failed"`、`"skipped"`、`"interrupted"`、`"not_run"`）、`reason`（表の右の列。なければ `null`）、`run`（その組の `run --json` と同じオブジェクト。`skipped` と `not_run` では `null`） |
+| `findings[]` | 何も回さなかった理由（`result` が `"usage"` か `"unreadable"` のとき。照合の `findings[]` と同じ形）。ほかは空 |
+
+`version --json` の `formats` と `features` には、`test` の項目はありません。

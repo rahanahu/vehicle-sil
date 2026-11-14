@@ -176,6 +176,10 @@ struct ScenarioContext
     /// defaults. One of ParamSource::CommandLine that the scenario neither declares nor uses is an
     /// error (a typing error would otherwise change nothing, silently).
     std::vector<ParamValue> params{};
+    /// The command line's parameters are for many scenarios (vehicle_sil_launch test): one that
+    /// this scenario neither declares nor uses is left alone (no ScenarioRead::usage_errors). The
+    /// caller says it if no scenario has it (unused_test_params()).
+    bool params_for_many = false;
 };
 
 struct ScenarioRead

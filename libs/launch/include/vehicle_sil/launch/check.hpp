@@ -175,6 +175,9 @@ struct ScenarioCheck
     std::vector<ParamValue> params{};
     std::optional<std::vector<std::string>> only{};
     std::size_t skipped = 0;
+    /// ScenarioRead::not_for_variant: its "only" does not list the chosen variant (one of the
+    /// errors says so). vehicle_sil_launch test skips such a scenario instead of failing.
+    bool not_for_variant = false;
 };
 
 /// The result of checking one file.
@@ -238,6 +241,12 @@ struct CheckOptions
     /// user named it); empty: none.
     std::filesystem::path scenario{};
     std::string scenario_shown{};
+    /// `params` are for many scenarios (ScenarioContext::params_for_many): one that `scenario`
+    /// does not have is no error.
+    bool params_for_many = false;
+    /// Only read the file: no executable is looked for or run, and no scenario is read. The
+    /// report has the file's findings, its variants and the overrides' usage errors.
+    bool file_only = false;
 };
 
 /// Checks the file `path` (shown as `shown_as`): reads it, checks the executables, runs each

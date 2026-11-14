@@ -327,6 +327,10 @@ private:
     /// A --param that the scenario neither declares nor uses changes nothing: an error.
     void check_given_params()
     {
+        if (context_.params_for_many)
+        {
+            return;
+        }
         std::vector<std::string> names;
         for (const Known& k : params_)
         {

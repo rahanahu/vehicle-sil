@@ -69,6 +69,10 @@
 //                docs/scenario.md (text, byte for byte); the scenario in the JSON and in the events;
 //                the examples of scenario.md with mistakes (check) and that fails (text, the
 //                scenario of the JSON)
+//   test_command  vehicle_sil_launch test: every variant with every scenario of a directory, one
+//                run after the other; skipped, failed and passed runs in one table and as JSON;
+//                --variant, --param, --fail-fast, --strict, and what ends it before its first run
+//   test_interrupt  an interrupt during a test: the current run is stopped, the rest is not run
 //   scenario_same  one scenario, run as fast as possible, at a speed, with a slow ECU and with a
 //                pause in between: the same result each time; every write takes effect in the step
 //                of its time (the ECU says in which step it saw each value)
@@ -828,8 +832,8 @@ void path(const Options& o)
 /// Runs the launcher with `args` in `dir`, waits for "simulation running" on its stderr, then
 /// calls `act` with it.
 template <class Act>
-std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::string> run_until_running(const Options& o, const fs::path& dir,
-                                                                                         Act act)
+std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::string> run_until_running(
+    const Options& o, const fs::path& dir, Act act, const std::vector<std::string>& args = {"run", "sim.yaml"})
 {
     std::mutex mutex;
     std::condition_variable changed;
@@ -844,7 +848,7 @@ std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::string> run_unti
         running = running || line == "[vehicle_sil_launch] simulation running";
         changed.notify_all();
     };
-    vehicle_sil::process::Process launcher(o.launch, {"run", "sim.yaml"}, std::move(options));
+    vehicle_sil::process::Process launcher(o.launch, args, std::move(options));
     {
         std::unique_lock lock(mutex);
         // Only a last line against a hang: the start takes a second or two.
@@ -3835,6 +3839,223 @@ void variants(const Options& o)
     log("CHECK a scenario whose checks are all skipped: a warning, and --strict fails -> ok");
 }
 
+/// vehicle_sil_launch test: every scenario of a directory with every variant, one run after the
+/// other; a scenario that is not for a variant is skipped, a failed run does not end the test,
+/// and the table and the JSON have every run.
+void test_command(const Options& o)
+{
+    const std::string participants = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                                     "  - name: Body\n    command: [" + ecu(o) + "]\n"
+                                     "    variables:\n"
+                                     "      body.fill: level\n"
+                                     "      body.heater: { absent: true }\n";
+    const fs::path dir = scenario_dir(o, participants + "params: { fill: 5 }\n"
+                                                        "variants:\n"
+                                                        "  small: {}\n"
+                                                        "  medium:\n"
+                                                        "    participants:\n"
+                                                        "      Body: { variables: { body.heater: ticks } }\n"
+                                                        "    params: { fill: 7 }\n",
+                                      {{"Body", "scenario-variables"}});
+    write_file(dir / "plain.yaml", participants);
+    // Written in another order than their names; what is no scenario file is left alone.
+    fs::remove_all(dir / "scn");
+    fs::create_directories(dir / "scn" / "more");
+    write_file(dir / "scn" / "c_fails.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - set: { Body.body.fill: 5 }\n"
+                                             "  - after_ms: 20\n    expect: { Body.body.fill: 6 }\n");
+    write_file(dir / "scn" / "b_fill.yaml", "vehicle_sil_scenario: 1\nparams: { fill: 1 }\nsteps:\n"
+                                            "  - set: { Body.body.fill: \"${fill}\" }\n"
+                                            "  - after_ms: 20\n    expect: { Body.body.fill: \"${fill}\" }\n"
+                                            "  - expect: { Body.body.heater: { ge: 1 } }\n");
+    write_file(dir / "scn" / "a_only.yaml", "vehicle_sil_scenario: 1\nonly: [medium]\nsteps:\n"
+                                            "  - after_ms: 20\n    expect: { Body.body.heater: { ge: 1 } }\n");
+    write_file(dir / "scn" / "notes.txt", "not a scenario\n");
+    write_file(dir / "scn" / "more" / "d.yaml", "not a scenario either\n");
+
+    // Every variant with every scenario of the directory, in the order of the names.
+    const Captured all = launch(o, {"test", "sim.yaml", "--scenarios", "scn"}, dir);
+    expect_code(all, 1, "test with a scenario that fails");
+    const std::string failure = "line 4: expect Body.body.fill eq 6: ";
+    const std::string table = lf(all.standard_output);
+    require(contains(table, "variant  scenario          result\n"
+                            "small    scn/a_only.yaml   skipped  the scenario is only for medium (its only)\n"
+                            "small    scn/b_fill.yaml   passed   1 of 3 steps was skipped\n"
+                            "small    scn/c_fails.yaml  FAILED   " + failure) &&
+                contains(table, "\nmedium   scn/a_only.yaml   passed\n"
+                                "medium   scn/b_fill.yaml   passed\n"
+                                "medium   scn/c_fails.yaml  FAILED   " + failure) &&
+                contains(table, "\n\nto see a failed run in full, run it alone: vehicle_sil_launch run sim.yaml --speed max --variant "
+                                "small --scenario scn/c_fails.yaml\n\n"
+                                "FAILED: 6 runs, 3 passed, 2 failed, 1 skipped\n"),
+            "the table of the test:\n" + table);
+    const std::string said = lf(all.standard_error);
+    require(contains(said, "[vehicle_sil_launch] test 1 of 6: variant small, scenario scn/a_only.yaml\n"
+                           "[vehicle_sil_launch] test 1 of 6: variant small, scenario scn/a_only.yaml: skipped (the scenario is only "
+                           "for medium (its only))\n"
+                           "[vehicle_sil_launch] test 2 of 6: variant small, scenario scn/b_fill.yaml\n") &&
+                contains(said, "[vehicle_sil_launch] test 6 of 6: variant medium, scenario scn/c_fails.yaml: FAILED (" + failure),
+            "the lines of the test:\n" + said);
+    log("CHECK test: every variant with every scenario of a directory, in the order of the names -> ok");
+
+    // The same as JSON: the counts, and each run as run --json has it (nothing for a skipped one).
+    const Captured json = launch(o, {"test", "sim.yaml", "--scenarios", "scn", "--json"}, dir);
+    expect_code(json, 1, "test --json");
+    const std::string out = lf(json.standard_output);
+    require(out.rfind("{\n  \"vehicle_sil_test\": 1,\n  \"vehicle_sil\": \"", 0) == 0 &&
+                contains(out, "  \"file\": \"sim.yaml\",\n  \"result\": \"failed\",\n  \"strict\": false,\n"
+                              "  \"variants\": [\n    \"small\",\n    \"medium\"\n  ],\n"
+                              "  \"scenarios\": [\n    \"scn/a_only.yaml\",\n    \"scn/b_fill.yaml\",\n    \"scn/c_fails.yaml\"\n  ],\n"
+                              "  \"passed\": 3,\n  \"failed\": 2,\n  \"skipped\": 1,\n  \"interrupted\": 0,\n  \"not_run\": 0,\n"
+                              "  \"runs\": [\n    {\n      \"variant\": \"small\",\n      \"scenario\": \"scn/a_only.yaml\",\n"
+                              "      \"result\": \"skipped\",\n      \"reason\": \"the scenario is only for medium (its only)\",\n"
+                              "      \"run\": null\n    },\n    {\n      \"variant\": \"small\",\n"
+                              "      \"scenario\": \"scn/b_fill.yaml\",\n      \"result\": \"passed\",\n"
+                              "      \"reason\": \"1 of 3 steps was skipped\",\n      \"run\": {\n"
+                              "        \"vehicle_sil_run\": 1,\n") &&
+                contains(out, "        \"file\": \"sim.yaml\",\n        \"result\": \"passed\",\n") &&
+                contains(out, "          \"file\": \"scn/c_fails.yaml\",\n") &&
+                contains(out, "\n  ],\n  \"findings\": []\n}\n"),
+            "the JSON of the test:\n" + out);
+    log("CHECK test --json: the counts and every run as run --json writes it -> ok");
+
+    // --variant chooses, files come in the order given, and a --param is for the scenarios that have it.
+    const Captured chosen = launch(o, {"test", "sim.yaml", "--variant", "medium", "--param", "fill=9", "--scenarios",
+                                       "scn/b_fill.yaml", "scn/a_only.yaml", "--json"}, dir);
+    expect_code(chosen, 0, "test --variant medium with two files and --param");
+    const std::string chosenOut = lf(chosen.standard_output);
+    require(contains(chosenOut, "  \"variants\": [\n    \"medium\"\n  ],\n  \"scenarios\": [\n    \"scn/b_fill.yaml\",\n"
+                                "    \"scn/a_only.yaml\"\n  ],\n  \"passed\": 2,\n  \"failed\": 0,\n") &&
+                contains(chosenOut, "\"text\": \"set Body.body.fill = 9\",") && !contains(chosenOut, "\"variant\": \"small\""),
+            "the chosen variant, the files in the order given and the parameter:\n" + chosenOut);
+    const Captured typo = launch(o, {"test", "sim.yaml", "--param", "fil=9", "--scenarios", "scn"}, dir);
+    expect_code(typo, 4, "test with a --param no scenario has");
+    require(contains(lf(typo.standard_error), "error: --param fil=9: none of the 3 scenarios has a parameter fil (did you mean "
+                                              "fill?): their parameters are fill; remove the option or correct the name\n") &&
+                typo.standard_output.empty() && !contains(lf(typo.standard_error), "test 1 of"),
+            "the parameter no scenario has:\n" + lf(typo.standard_error));
+    log("CHECK test: --variant, files in the order given, --param for the scenarios that have it -> ok");
+
+    // --fail-fast leaves out what comes after the first failure.
+    const Captured fast = launch(o, {"test", "--fail-fast", "--scenarios", "scn", "--", "sim.yaml"}, dir);
+    expect_code(fast, 1, "test --fail-fast");
+    require(contains(lf(fast.standard_output), "medium   scn/a_only.yaml   not run  a run before it failed (--fail-fast)\n") &&
+                contains(lf(fast.standard_output), "\nFAILED: 6 runs, 1 passed, 1 failed, 1 skipped, 3 not run\n") &&
+                !contains(lf(fast.standard_error), "test 4 of 6"),
+            "--fail-fast:\n" + lf(fast.standard_output));
+
+    // A file without variants: no column for them. --strict fails on the warning of a scenario
+    // that checks nothing here, and the others still run.
+    write_file(dir / "heater.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - expect: { Body.body.heater: { ge: 0 } }\n");
+    const Captured plain = launch(o, {"test", "plain.yaml", "--scenarios", "scn/b_fill.yaml", "heater.yaml"}, dir);
+    expect_code(plain, 0, "test a file without variants");
+    require(contains(lf(plain.standard_output), "scenario         result\n"
+                                                "scn/b_fill.yaml  passed  1 of 3 steps was skipped\n"
+                                                "heater.yaml      passed  1 of 1 steps was skipped\n"
+                                                "\n"
+                                                "passed: 2 runs, 2 passed, 0 failed, 0 skipped\n"),
+            "the table without variants:\n" + lf(plain.standard_output));
+    const Captured strict = launch(o, {"test", "plain.yaml", "--strict", "--scenarios", "heater.yaml", "scn/b_fill.yaml"}, dir);
+    expect_code(strict, 1, "test --strict");
+    require(contains(lf(strict.standard_output), "heater.yaml      FAILED  the scenario checks nothing in this configuration") &&
+                contains(lf(strict.standard_output), "(a warning, and --strict fails on it)") &&
+                contains(lf(strict.standard_output), "\nFAILED: 2 runs, 1 passed, 1 failed, 0 skipped (--strict)\n"),
+            "--strict:\n" + lf(strict.standard_output));
+    log("CHECK test: --fail-fast, a file without variants, --strict -> ok");
+
+    // What ends a test before its first run.
+    const auto refused = [&](const std::vector<std::string>& args, const std::string& message, const std::string& what) {
+        const Captured run = launch(o, args, dir);
+        expect_code(run, 4, what);
+        require(contains(lf(run.standard_error), "error: " + message + "\n") && !contains(lf(run.standard_error), "test 1 of"),
+                what + ":\n" + lf(run.standard_error));
+    };
+    refused({"test", "sim.yaml"},
+            "test needs the scenarios to run: give --scenarios <directory> (every .yaml, .yml and .json file directly in it) or "
+            "--scenarios <file>... after the configuration file",
+            "test without --scenarios");
+    refused({"test", "--scenarios", "scn", "sim.yaml"},
+            "test needs the configuration file: vehicle_sil_launch test <file> --scenarios <directory or files> (the file comes "
+            "before --scenarios, which takes every path after it; or last, after --)",
+            "test with the file after --scenarios");
+    refused({"test", "sim.yaml", "--scenarios", "scn", "nowhere"},
+            "--scenarios nowhere: there is no such file or directory: check the path (it is relative to the current directory, "
+            "as the configuration file is)",
+            "test with a scenario that is not there");
+    fs::create_directories(dir / "none");
+    refused({"test", "sim.yaml", "--scenarios", "none"},
+            "--scenarios none: the directory has no scenario file (a file directly in it whose name ends in .yaml, .yml or "
+            ".json; subdirectories are not searched): name the directory that holds the scenarios, or the files themselves",
+            "test with a directory without scenarios");
+    refused({"test", "sim.yaml", "--variant", "medium", "--variant", "smal", "--scenarios", "scn"},
+            "--variant smal: the file has no variant with this name (did you mean 'small'?); its variants are small, medium",
+            "test with a variant the file does not have");
+    refused({"test", "plain.yaml", "--variant", "small", "--scenarios", "scn"},
+            "--variant small: the file defines no variants: leave --variant out, or add variants to the file "
+            "(docs/simulation-config.md)",
+            "test --variant with a file without variants");
+    refused({"test", "sim.yaml", "--scenario", "scn/b_fill.yaml"},
+            "--scenario is for check and run: test takes its scenarios with --scenarios <directory or files>",
+            "test --scenario");
+    refused({"test", "sim.yaml", "--speed", "2", "--scenarios", "scn"},
+            "--speed is for run, not for test (which runs one simulation after the other, each as fast as possible): to use "
+            "it, run one scenario with vehicle_sil_launch run --scenario <file>",
+            "test --speed");
+    const Captured usage = launch(o, {"test", "sim.yaml", "--json"}, dir);
+    expect_code(usage, 4, "test --json without --scenarios");
+    require(lf(usage.standard_output).rfind("{\n  \"vehicle_sil_test\": 1,\n", 0) == 0 &&
+                contains(lf(usage.standard_output), "  \"file\": \"sim.yaml\",\n  \"result\": \"usage\",\n") &&
+                contains(lf(usage.standard_output), "\"runs\": [],\n  \"findings\": [\n    {\n      \"severity\": \"error\",\n"
+                                                    "      \"code\": \"usage\",\n"),
+            "the JSON of a usage error of test:\n" + lf(usage.standard_output));
+    const Captured unreadable = launch(o, {"test", "nowhere.yaml", "--scenarios", "scn"}, dir);
+    expect_code(unreadable, 3, "test with a file that is not there");
+    expect_text(lf(unreadable.standard_output),
+                "error: nowhere.yaml: the file does not exist: check the path\n\ncannot read nowhere.yaml: nothing was run\n",
+                "test with a file that is not there");
+    log("CHECK test: what ends it before its first run (usage, an unreadable file) -> ok");
+}
+
+/// vehicle_sil_launch test, interrupted: the current run is stopped in order, the rest is not
+/// run, and the table says so.
+void test_interrupt(const Options& o)
+{
+#ifdef _WIN32
+    if (!can_request_stop())
+    {
+        throw Skip("no console to send Ctrl+Break through");
+    }
+    const std::string by = "Ctrl+Break";
+#else
+    const std::string by = "SIGINT";
+#endif
+    const fs::path dir = scenario_dir(o,
+                                      "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                                      "  - name: Body\n    command: [" + ecu(o) + "]\n",
+                                      {{"Body", "scenario-variables"}});
+    // Far too long to end by itself, also as fast as possible.
+    write_file(dir / "long.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - at_ms: 100000000000\n    expect: { Body.ticks: { ge: 0 } }\n");
+    write_file(dir / "short.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - at_ms: 20\n    expect: { Body.ticks: { ge: 0 } }\n");
+    const auto [status, out] = run_until_running(
+        o, dir,
+        [](vehicle_sil::process::Process& launcher) {
+#ifdef _WIN32
+            require(launcher.request_stop(), "Ctrl+Break could not be sent");
+#else
+            ::kill(static_cast<pid_t>(launcher.id()), SIGINT);
+#endif
+        },
+        {"test", "sim.yaml", "--scenarios", "long.yaml", "short.yaml"});
+    require(status.has_value() && status->code == 130 && !status->signal,
+            "the launcher ends with 130 when a test is interrupted, not " + (status ? std::to_string(status->code) : std::string("running")));
+    expect_text(lf(out),
+                "scenario    result\n"
+                "long.yaml   interrupted  by " + by + "\n"
+                "short.yaml  not run      the test was interrupted before it\n"
+                "\n"
+                "interrupted: 2 runs, 0 passed, 0 failed, 0 skipped, 1 interrupted, 1 not run\n",
+                "test interrupted");
+}
+
 void scenario_disconnect(const Options& o)
 {
     // Engine off its bus at 300 ms: its last speed is the one of 200 ms, so the dashboard says it is
@@ -4845,7 +5066,7 @@ int main(int argc, char** argv)
             {"events_stderr", events_stderr}, {"realtime", realtime}, {"on_time", on_time}, {"late", late}, {"stall", stall},
             {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
             {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control},
-            {"scenario", scenario}, {"scenario_same", scenario_same}, {"variable_map", variable_map}, {"variants", variants}, {"scenario_disconnect", scenario_disconnect},
+            {"scenario", scenario}, {"scenario_same", scenario_same}, {"variable_map", variable_map}, {"variants", variants}, {"test_command", test_command}, {"test_interrupt", test_interrupt}, {"scenario_disconnect", scenario_disconnect},
             {"ethernet", ethernet},
             {"scenario_failures", scenario_failures}, {"manual", manual},
             {"manual_late", manual_late}, {"manual_fails", manual_fails}, {"manual_stop", manual_stop},
