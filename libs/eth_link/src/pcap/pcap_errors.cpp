@@ -145,6 +145,16 @@ std::string pcap_wireless_warning(std::string_view name)
            "MAC address, and the devices of the SIL Kit side have other addresses. If frames do not pass, use a wired adapter.";
 }
 
+std::string pcap_no_wake_warning(PcapFlavor flavor, std::string_view name, std::chrono::milliseconds period)
+{
+    const std::string time = std::to_string(period.count()) + " ms";
+    return std::string(library_name(flavor)) + " does not tell when frames arrive on interface " + quoted(name) +
+           ": the bridge finds them by looking every " + time + ", so frames from this interface reach SIL Kit up to " + time +
+           " late. None is lost by this. If the delay matters, " +
+           (flavor == PcapFlavor::Npcap ? "install the current Npcap, or try another adapter."
+                                        : "update libpcap, or use --backend packet.");
+}
+
 std::string pcap_activate_warning(std::string_view name, int status, std::string_view why)
 {
     const std::string detail = "result " + std::to_string(status) + (why.empty() ? "" : ", " + std::string(why));

@@ -106,7 +106,7 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
   - Windows: [Npcap](https://npcap.com)。使える範囲と再配布の条件は Npcap のライセンスにあります。vehicle-sil の文書は、その内容を解釈しません。
   - Linux: ディストリビューションの [libpcap](https://www.tcpdump.org)（BSD ライセンス）。
 - リポジトリには、どちらのヘッダーもその写しも含めていません。関数の型、読む 3 つの構造体、結果の番号は、公開されている呼び出しの形に合わせて vehicle-sil が自分で宣言しています（`libs/eth_link/src/pcap/pcap_api.hpp`。名前は vehicle-sil のもの）。
-- ライブラリを読み込んで関数を引くのは `libs/eth_link/src/pcap/pcap_loader_win.cpp`（`LoadLibraryExW`、`GetProcAddress`）と `pcap_loader_posix.cpp`（`dlopen`、`dlsym`）だけです。待ち方（Windows はライブラリのイベントと `WaitForMultipleObjects`、Linux はライブラリのディスクリプターと `poll`）と、接続の名前（Windows の `GetAdaptersAddresses`。`iphlpapi` をリンクします）もここにあります。
+- ライブラリを読み込んで関数を引くのは `libs/eth_link/src/pcap/pcap_loader_win.cpp`（`LoadLibraryExW`、`GetProcAddress`。ライブラリが使う DLL は、ライブラリと同じディレクトリとシステムのディレクトリからだけ探させます）と `pcap_loader_posix.cpp`（`dlopen`、`dlsym`）だけです。待ち方（Windows はライブラリのイベントと `WaitForMultipleObjects`、Linux はライブラリのディスクリプターと `poll`）と、接続の名前（Windows の `GetAdaptersAddresses`。`iphlpapi` をリンクします）もここにあります。
 - 口の判断と状態（開く順、受信スレッド、誤りの文、インターフェースの選び方）は `src/pcap/pcap_link.cpp` にあります。関数の表だけに依存するので、どのプラットフォームでもビルドします。
 
 | 用途 | ライブラリの関数 |

@@ -30,7 +30,8 @@ struct EthernetBridgeOptions
     /// Which frames pass, in both directions (eth_link::FrameFilter).
     eth_link::FrameFilterOptions filter;
     /// Drop frames by the source MAC rule of eth_link::MacSideTable. Off: whoever runs the bridge
-    /// keeps frames from going around in a loop.
+    /// keeps frames from going around in a loop; and on a link that echoes its transmissions
+    /// every frame sent out comes back into SIL Kit (start() warns: only the rule drops those).
     bool mac_guard = true;
     /// Addresses the MAC table holds.
     std::size_t mac_table_size = eth_link::MacSideTable::kDefaultCapacity;
@@ -149,7 +150,8 @@ public:
     /// bridge keeps running; the caller decides to stop. start() clears it.
     [[nodiscard]] std::optional<std::string> fault() const;
     /// The warnings since the last call, oldest first: the link's, and the bridge's own (an
-    /// address on both sides, the MAC table full).
+    /// address on both sides, the MAC table full, and from start(): no MAC guard on a link that
+    /// echoes).
     [[nodiscard]] std::vector<std::string> take_warnings();
     [[nodiscard]] std::string last_error() const;
     [[nodiscard]] const eth_link::FrameFilter& filter() const noexcept { return filter_; }

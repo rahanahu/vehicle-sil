@@ -157,7 +157,7 @@ TEST_CASE(pcap_library_is_loaded_by_its_path_and_lists_its_devices)
                std::string("vehicle_sil_fake_pcap") + kSuffix);
     CHECK_TEXT(fake.library->version(), "fake pcap version 1.0 (TEST ONLY)");
     const auto devices = pcap_devices(*fake.library);
-    CHECK_EQ(devices.size(), std::size_t{12});
+    CHECK_EQ(devices.size(), std::size_t{13});
     CHECK_TEXT(devices.at(0).name, "fake0");
     CHECK_TEXT(devices.at(0).description, "Fake Ethernet adapter with a device that answers");
     CHECK_EQ(devices.at(0).flags, kPcapIfUp | kPcapIfRunning | kPcapIfConnected);
@@ -468,4 +468,65 @@ TEST_CASE(pcap_link_warns_about_a_wireless_adapter_and_about_no_promiscuous_mode
         link->stop();
         CHECK_EQ(recorder.warning_count(), std::size_t{0});
     }
+}
+
+TEST_CASE(pcap_link_receives_from_a_library_that_never_tells_that_frames_are_there)
+{
+    // A library whose event is never set (Windows) or whose descriptor never gets readable: the
+    // link looks after every wait that ran out, so the frames arrive late and not never, and it
+    // says so once.
+    const Fake fake;
+    const auto link = fake.link("fake-quiet");
+    Recorder recorder;
+    link->start(recorder.handler());
+    std::vector<Bytes> frames;
+    for (std::uint8_t i = 0; i < 4; ++i)
+    {
+        frames.push_back(make_frame(kEcu, kOutside, 0x88B5, 46, i));
+        CHECK_EQ(fake.inject("fake-quiet", frames.back()), 1);
+        CHECK(eventually([&] { return recorder.frame_count() == frames.size(); }, 10000ms));
+    }
+    CHECK(eventually([&] { return recorder.warning_count() == 1; }, 10000ms));
+    // More than the link reads in one go: it reads on to the end without another wait's sign.
+    for (std::uint8_t i = 0; i < 200; ++i)
+    {
+        frames.push_back(make_frame(kEcu, kOutside, 0x88B5, 46 + i, i));
+        CHECK_EQ(fake.inject("fake-quiet", frames.back()), 1);
+    }
+    CHECK(eventually([&] { return recorder.frame_count() == frames.size(); }, 10000ms));
+    // With nothing to read it looks once for every wait, not in a spin.
+    const auto idle_reads = [&](const char* device) {
+        const long before = fake.get(device, "reads");
+        const auto start = std::chrono::steady_clock::now();
+        std::this_thread::sleep_for(500ms);
+        const long reads = fake.get(device, "reads") - before;
+        const auto waits = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() / 100;
+        CHECK(reads >= 1);
+        CHECK(reads <= static_cast<long>(waits) + 2);
+    };
+    idle_reads("fake-quiet");
+    link->stop();
+    {
+        const std::lock_guard lock(recorder.mutex);
+        CHECK_EQ(recorder.frames.size(), frames.size());
+        for (std::size_t i = 0; i < frames.size() && i < recorder.frames.size(); ++i)
+        {
+            CHECK(recorder.frames[i] == frames[i]);
+        }
+        CHECK_EQ(recorder.warnings.size(), std::size_t{1});
+        CHECK_TEXT(recorder.warnings.at(0), pcap_no_wake_warning(fake.library->flavor(), "fake-quiet", 100ms));
+    }
+
+    // A library that tells: the same look after every wait, and no warning.
+    const auto telling = fake.link("fake1");
+    Recorder other;
+    telling->start(other.handler());
+    for (std::uint8_t i = 0; i < 4; ++i)
+    {
+        CHECK_EQ(fake.inject("fake1", make_frame(kEcu, kOutside, 0x88B5, 46, i)), 1);
+        CHECK(eventually([&] { return other.frame_count() == std::size_t{i} + 1; }, 10000ms));
+    }
+    idle_reads("fake1");
+    telling->stop();
+    CHECK_EQ(other.warning_count(), std::size_t{0});
 }

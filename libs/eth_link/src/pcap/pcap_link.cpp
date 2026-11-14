@@ -26,6 +26,9 @@ constexpr int kFramesPerWake = 64;
 /// (a library whose "packets are there" sign stays set must not make the thread spin).
 constexpr int kEmptyWakesBeforePause = 8;
 constexpr auto kEmptyWakePause = std::chrono::milliseconds(10);
+/// Waits that ran out with frames there, while the library's sign has never brought a frame,
+/// after which the link warns that the sign does not work (once).
+constexpr int kUnsignalledReadsBeforeWarning = 3;
 /// The library's read timeout. Not used for waiting (the link reads without blocking); it is set
 /// because a capture without one waits forever on some systems.
 constexpr int kReadTimeoutMs = 100;
@@ -168,6 +171,7 @@ private:
     /// Asks the OS about the interface: reports a change of the link state, and a Fault once the
     /// interface is gone.
     void look_at_interface();
+    [[nodiscard]] std::string gone_text() const;
     /// The frames the library dropped since the last call.
     std::uint64_t take_overruns() noexcept;
     void set_last_error(std::string text)
@@ -381,6 +385,11 @@ void PcapLink::report_overruns()
     }
 }
 
+std::string PcapLink::gone_text() const
+{
+    return "interface '" + options_.name + "' is gone (removed or renamed while the bridge ran)";
+}
+
 void PcapLink::look_at_interface()
 {
     if (watch_ == nullptr)
@@ -390,7 +399,7 @@ void PcapLink::look_at_interface()
     const PcapInterfaceState state = watch_->look();
     if (state == PcapInterfaceState::Gone)
     {
-        fault("interface '" + options_.name + "' is gone (removed or renamed while the bridge ran)");
+        fault(gone_text());
         return;
     }
     if (const LinkState now = state == PcapInterfaceState::Up ? LinkState::Up : LinkState::Down; now != reported_state_)
@@ -431,6 +440,9 @@ void PcapLink::run()
     auto watched = std::chrono::steady_clock::now();
     bool more = false; // the last round stopped at kFramesPerWake: read on without waiting
     int emptyWakes = 0;
+    bool signalled = false;       // this round's wait ended by the library's sign, not by its limit
+    bool signalledFrames = false; // a wake by the library's sign has brought a frame
+    int unsignalledReads = 0;     // waits that ran out after which frames were there
     for (;;)
     {
         if (faulted_.load())
@@ -442,60 +454,78 @@ void PcapLink::run()
             }
             continue;
         }
-        PcapWake wake = PcapWake::Ready;
-        if (more)
+        const bool continued = more;
+        if (continued)
         {
-            wake = waiter_->pause(std::chrono::milliseconds(0)) ? PcapWake::Stop : PcapWake::Ready;
+            if (waiter_->pause(std::chrono::milliseconds(0)))
+            {
+                return;
+            }
         }
         else
         {
-            wake = waiter_->wait(kWaitLimit);
-        }
-        if (wake == PcapWake::Stop)
-        {
-            return;
-        }
-        int frames = 0;
-        if (wake == PcapWake::Ready)
-        {
-            while (frames < kFramesPerWake)
+            const PcapWake wake = waiter_->wait(kWaitLimit);
+            if (wake == PcapWake::Stop)
             {
-                int result = 0;
-                std::size_t size = 0;
-                std::string error;
+                return;
+            }
+            signalled = wake == PcapWake::Ready;
+        }
+        // Read after a wait that ran out too, not only when the library says packets are there:
+        // a library whose sign never comes up (an event of Npcap that is not set, a descriptor
+        // that never gets readable) would otherwise receive nothing at all, and say nothing. One
+        // read without blocking for every kWaitLimit costs nothing; with such a library the
+        // frames are late by up to kWaitLimit, and the link says so once.
+        int frames = 0;
+        while (frames < kFramesPerWake)
+        {
+            int result = 0;
+            std::size_t size = 0;
+            std::string error;
+            {
+                const std::lock_guard lock(handle_mutex_);
+                PcapPacketHeader* header = nullptr;
+                const unsigned char* bytes = nullptr;
+                result = api_.next_ex(handle_, &header, &bytes);
+                if (result == 1 && header != nullptr && bytes != nullptr)
                 {
-                    const std::lock_guard lock(handle_mutex_);
-                    PcapPacketHeader* header = nullptr;
-                    const unsigned char* bytes = nullptr;
-                    result = api_.next_ex(handle_, &header, &bytes);
-                    if (result == 1 && header != nullptr && bytes != nullptr)
-                    {
-                        // The library's bytes are good until the next call on the capture, and
-                        // the handler runs without the lock: take a copy.
-                        size = std::min<std::size_t>(header->captured_bytes, buffer_.size());
-                        std::memcpy(buffer_.data(), bytes, size);
-                    }
-                    else if (result < 0)
-                    {
-                        error = trimmed(text_or_empty(api_.geterr(handle_)));
-                    }
+                    // The library's bytes are good until the next call on the capture, and
+                    // the handler runs without the lock: take a copy.
+                    size = std::min<std::size_t>(header->captured_bytes, buffer_.size());
+                    std::memcpy(buffer_.data(), bytes, size);
                 }
-                if (result == 0)
+                else if (result < 0)
                 {
-                    break;
+                    error = trimmed(text_or_empty(api_.geterr(handle_)));
                 }
-                if (result < 0)
+            }
+            if (result == 0)
+            {
+                break;
+            }
+            if (result < 0)
+            {
+                // A read fails too when the interface was removed; the OS knows whether that is it.
+                if (watch_ != nullptr && watch_->look() == PcapInterfaceState::Gone)
+                {
+                    fault(gone_text());
+                }
+                else
                 {
                     fault("reading from '" + options_.name + "' failed: " + (error.empty() ? "result " + std::to_string(result) : error));
-                    break;
                 }
-                ++frames;
-                LinkEvent event;
-                event.kind = LinkEventKind::Frame;
-                event.frame = std::span<const std::uint8_t>(buffer_.data(), size);
-                handler_(event);
+                break;
             }
-            more = frames == kFramesPerWake;
+            ++frames;
+            LinkEvent event;
+            event.kind = LinkEventKind::Frame;
+            event.frame = std::span<const std::uint8_t>(buffer_.data(), size);
+            handler_(event);
+        }
+        more = frames == kFramesPerWake;
+        if (signalled)
+        {
+            signalledFrames = signalledFrames || frames > 0;
             emptyWakes = frames == 0 ? emptyWakes + 1 : 0;
             if (emptyWakes > kEmptyWakesBeforePause && !faulted_.load() && waiter_->pause(kEmptyWakePause))
             {
@@ -505,6 +535,11 @@ void PcapLink::run()
         else
         {
             emptyWakes = 0;
+            if (frames > 0 && !continued && !signalledFrames && !faulted_.load() &&
+                ++unsignalledReads == kUnsignalledReadsBeforeWarning)
+            {
+                warn(pcap_no_wake_warning(flavor_, options_.name, kWaitLimit));
+            }
         }
         if (!faulted_.load() && std::chrono::steady_clock::now() - watched >= kWatchInterval)
         {

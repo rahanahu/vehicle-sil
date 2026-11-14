@@ -8,6 +8,7 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/time.h>
 #include <unistd.h>
 #ifdef __linux__
 #include "../linux/linux_link.hpp"
@@ -18,10 +19,17 @@
 #include <algorithm>
 #include <cerrno>
 #include <climits>
+#include <cstddef>
 #include <cstring>
 
 namespace vehicle_sil::eth_link::detail {
 namespace {
+
+// The library's packet header begins with the struct timeval of this OS's headers (sys/time.h).
+// A system where it is not two longs (a 64 bit time on a 32 bit system) needs its own header.
+static_assert(sizeof(timeval) == 2 * sizeof(long) && offsetof(timeval, tv_usec) == offsetof(PcapPacketHeader, microseconds) &&
+                  offsetof(PcapPacketHeader, captured_bytes) == sizeof(timeval) && sizeof(PcapPacketHeader) == sizeof(timeval) + 8,
+              "PcapPacketHeader (pcap_api.hpp) does not begin like this system's struct timeval: write it for this system");
 
 /// The names libpcap is installed under: the first is the library's own (Fedora and others), the
 /// second is Debian's and Ubuntu's.

@@ -4,10 +4,12 @@
 // loading, waiting and the names of the network connections are here; the link's logic is in
 // pcap_link.cpp.
 //
-// Where the library is loaded from: <system directory>\Npcap\wpcap.dll, by its full path. Not the
-// current directory, not PATH, not the directory of the program: a wpcap.dll that came with a
+// Where the library is loaded from: <system directory>\Npcap\wpcap.dll, by its full path. The
+// DLLs wpcap.dll itself needs (Packet.dll) are looked for next to it and then in the system
+// directory, and nowhere else (kLibrarySearch). Not the current directory, not PATH, not the
+// directory of the program, for wpcap.dll and for what it needs alike: a DLL that came with a
 // folder of files from someone else is never loaded. (The system directory can be written by
-// administrators only.) The DLLs wpcap.dll itself needs (Packet.dll) are looked for next to it.
+// administrators only.)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -23,9 +25,28 @@
 #include "pcap_api.hpp"
 
 #include <algorithm>
+#include <cstddef>
+
+// Older headers of the toolchain may lack these (Windows has them from 8 on, and 7 with an update).
+#ifndef LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
+#define LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR 0x00000100
+#endif
+#ifndef LOAD_LIBRARY_SEARCH_SYSTEM32
+#define LOAD_LIBRARY_SEARCH_SYSTEM32 0x00000800
+#endif
 
 namespace vehicle_sil::eth_link::detail {
 namespace {
+
+// The library's packet header begins with the struct timeval of this OS's headers (winsock2.h).
+static_assert(sizeof(timeval) == 2 * sizeof(long) && offsetof(timeval, tv_usec) == offsetof(PcapPacketHeader, microseconds) &&
+                  offsetof(PcapPacketHeader, captured_bytes) == sizeof(timeval) && sizeof(PcapPacketHeader) == sizeof(timeval) + 8,
+              "PcapPacketHeader (pcap_api.hpp) does not begin like this system's struct timeval: write it for this system");
+
+/// Where Windows looks for the DLLs the library needs: the library's own directory, then the
+/// system directory. Without these flags it would go on to the current directory and PATH. A DLL
+/// that is in the process already is used wherever it came from (Windows does not search then).
+constexpr DWORD kLibrarySearch = LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32;
 
 /// How long a wait lasts when the library has no event to wait on.
 constexpr DWORD kWaitWithoutEventMs = 10;
@@ -200,8 +221,8 @@ std::shared_ptr<PcapLibrary> load_pcap_library(const std::string& library)
     }
     // No message box of Windows for a DLL that cannot be loaded: the bridge says it itself.
     const UINT mode = SetErrorMode(SEM_FAILCRITICALERRORS);
-    // Altered search path: the DLLs wpcap.dll needs are looked for in its own directory first.
-    const HMODULE module = LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    // `path` is a full path, which these flags ask for.
+    const HMODULE module = LoadLibraryExW(path.c_str(), nullptr, kLibrarySearch);
     const DWORD error = GetLastError();
     SetErrorMode(mode);
     if (module == nullptr)

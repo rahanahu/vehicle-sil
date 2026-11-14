@@ -48,6 +48,7 @@ inline constexpr std::uint32_t kPcapIfDisconnected = 0x20;
 
 /// What the library says about one received packet (the library's pcap_pkthdr). The time is a
 /// struct timeval, which is two longs on 64 bit Linux and on Windows alike (of 8 and of 4 bytes).
+/// The files that load the library (pcap_loader_*.cpp) check this against the OS's own timeval.
 struct PcapPacketHeader
 {
     long seconds;

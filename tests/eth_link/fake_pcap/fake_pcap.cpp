@@ -21,6 +21,8 @@
 //   fake-sendfull    sending fails with the error number of a full queue
 //   fake-fault       reading fails as soon as it is opened
 //   fake-drops       counts 3 dropped frames for every frame sent
+//   fake-quiet       never tells that packets are there (its event is never set, its descriptor
+//                    never gets readable); the frames are there for whoever reads
 //
 // Built a second time with FAKE_PCAP_OLD, it is a library from before pcap_set_immediate_mode.
 //
@@ -135,11 +137,13 @@ struct Device
     bool send_fails = false;
     bool send_full = false;
     bool read_fails = false;
+    bool quiet = false;
     unsigned drops_per_send = 0;
 
     // What happened, for fake_pcap_get().
     unsigned dropped = 0;
     long closed = 0;
+    long reads = 0;
     long snaplen = -1, promisc = -1, timeout = -1, immediate = -1, nonblock = -1;
     std::vector<Bytes> sent;
     std::vector<PcapHandle*> open;
@@ -183,6 +187,7 @@ std::vector<Device>& devices()
         add("fake-sendfull", "Fake Ethernet adapter whose queue is full").send_full = true;
         add("fake-fault", "Fake Ethernet adapter that cannot be read").read_fails = true;
         add("fake-drops", "Fake Ethernet adapter that drops frames").drops_per_send = 3;
+        add("fake-quiet", "Fake Ethernet adapter that does not tell when frames arrive").quiet = true;
         return made;
     }();
     return list;
@@ -240,7 +245,10 @@ namespace {
 void deliver(PcapHandle& handle, const Bytes& frame)
 {
     handle.queue.push_back(frame);
-    handle.signal.raise();
+    if (!handle.device->quiet)
+    {
+        handle.signal.raise();
+    }
 }
 
 } // namespace
@@ -385,6 +393,7 @@ FAKE_PCAP_EXPORT int pcap_next_ex(PcapHandle* handle, PcapPacketHeader** header,
         copy_text(handle->error, sizeof(handle->error), "the capture is not activated");
         return -1;
     }
+    ++handle->device->reads;
     if (handle->device->read_fails)
     {
         copy_text(handle->error, sizeof(handle->error), "The interface disappeared (fake)");
@@ -527,7 +536,8 @@ FAKE_PCAP_EXPORT int fake_pcap_sent(const char* device, int index, unsigned char
     return static_cast<int>(frame.size());
 }
 
-/// "sent" (frames sent), "open" (open captures), "closed" (captures closed), and what the last
+/// "sent" (frames sent), "open" (open captures), "closed" (captures closed), "reads" (calls of
+/// pcap_next_ex on an activated capture), and what the last
 /// capture that was opened asked for: "snaplen", "promisc", "timeout", "immediate", "nonblock"
 /// (-1: never asked). -2 for anything else.
 FAKE_PCAP_EXPORT long fake_pcap_get(const char* device, const char* what)
@@ -542,6 +552,7 @@ FAKE_PCAP_EXPORT long fake_pcap_get(const char* device, const char* what)
     if (key == "sent") return static_cast<long>(found->sent.size());
     if (key == "open") return static_cast<long>(found->open.size());
     if (key == "closed") return found->closed;
+    if (key == "reads") return found->reads;
     if (key == "snaplen") return found->snaplen;
     if (key == "promisc") return found->promisc;
     if (key == "timeout") return found->timeout;

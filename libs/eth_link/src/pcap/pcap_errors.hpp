@@ -7,6 +7,7 @@
 
 #include "vehicle_sil/eth_link/external_link.hpp"
 
+#include <chrono>
 #include <span>
 #include <string>
 #include <string_view>
@@ -54,6 +55,9 @@ inline constexpr int kPcapWarningPromiscuousNotSupported = 2;
 
 /// The Warning for a device the library marks as wireless.
 [[nodiscard]] std::string pcap_wireless_warning(std::string_view name);
+/// The library's "packets are there" sign has never come up, and frames were found by the look
+/// the link takes every `period` anyway.
+[[nodiscard]] std::string pcap_no_wake_warning(PcapFlavor flavor, std::string_view name, std::chrono::milliseconds period);
 /// The Warning for a device that was opened with a warning of the library (`status` > 0).
 [[nodiscard]] std::string pcap_activate_warning(std::string_view name, int status, std::string_view why);
 

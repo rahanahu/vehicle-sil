@@ -18,6 +18,13 @@ using eth_link::MacSideTable;
 using eth_link::TransmitResult;
 
 /// Every status but Transmitted: the acknowledgements the bridge counts as failures.
+/// Said once at the start when nothing can tell the bridge's own frames that the link gives back.
+constexpr std::string_view kEchoWithoutMacGuardWarning =
+    "the MAC guard is off (--no-mac-guard) and this external link gives the bridge's own transmissions back to it: "
+    "every frame the bridge sends out comes back and is passed into SIL Kit again (counted in ext_to_silkit), so its "
+    "sender receives its own frame and every other participant receives it twice. A network stack that looks for "
+    "its own address in use by others then finds it. Run without --no-mac-guard unless this is what you want.";
+
 constexpr ethernet::EthernetTransmitStatusMask kFailedTransmissions =
     SilKit_EthernetTransmitStatus_ControllerInactive | SilKit_EthernetTransmitStatus_LinkDown |
     SilKit_EthernetTransmitStatus_Dropped | SilKit_EthernetTransmitStatus_InvalidFrameFormat;
@@ -160,6 +167,11 @@ void EthernetBridge::start()
     try
     {
         link_echoes_ = external_.echoes_own_transmissions();
+        if (link_echoes_ && !table_)
+        {
+            // Only the MAC table tells the bridge's own frames that come back from the others.
+            warn(std::string(kEchoWithoutMacGuardWarning));
+        }
         // The link first, so that frames arriving from SIL Kit can be sent right away.
         external_.start([this](const eth_link::LinkEvent& event) { on_external_event(event); });
         externalStarted = true;

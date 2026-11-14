@@ -121,6 +121,39 @@ TEST_CASE(bridge_without_mac_guard_forwards_what_the_link_delivers_back)
     }
     CHECK(eventually([&] { return f.silkit.sent_count() == 5; }, 5000ms));
     CHECK_EQ(f.bridge.statistics().own_tx_dropped, std::uint64_t{0});
+    // Said at the start, once, before any frame: what the frames above then showed.
+    const auto warnings = f.bridge.take_warnings();
+    CHECK_EQ(warnings.size(), std::size_t{1});
+    CHECK_TEXT(warnings.at(0),
+               "the MAC guard is off (--no-mac-guard) and this external link gives the bridge's own transmissions back to "
+               "it: every frame the bridge sends out comes back and is passed into SIL Kit again (counted in "
+               "ext_to_silkit), so its sender receives its own frame and every other participant receives it twice. A "
+               "network stack that looks for its own address in use by others then finds it. Run without --no-mac-guard "
+               "unless this is what you want.");
+}
+
+TEST_CASE(bridge_warns_of_frames_coming_back_only_without_the_mac_guard_on_a_link_that_echoes)
+{
+    {
+        EthernetBridgeOptions options;
+        options.mac_guard = false;
+        Fixture f(options, false); // the link does not give them back: nothing comes back
+        CHECK(f.bridge.take_warnings().empty());
+    }
+    {
+        Fixture f({}, true); // the MAC guard drops what comes back
+        CHECK(f.bridge.take_warnings().empty());
+    }
+    {
+        // Said again by every start: the warnings of the run before are gone by then.
+        EthernetBridgeOptions options;
+        options.mac_guard = false;
+        Fixture f(options, true);
+        CHECK_EQ(f.bridge.take_warnings().size(), std::size_t{1});
+        f.bridge.stop();
+        f.bridge.start();
+        CHECK_EQ(f.bridge.take_warnings().size(), std::size_t{1});
+    }
 }
 
 TEST_CASE(bridge_drops_frames_from_an_address_on_both_sides_and_warns_once)

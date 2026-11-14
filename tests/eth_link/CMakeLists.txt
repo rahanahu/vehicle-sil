@@ -20,8 +20,26 @@ foreach(_fake vehicle_sil_fake_pcap vehicle_sil_fake_pcap_old)
                                             LIBRARY_OUTPUT_DIRECTORY ${VEHICLE_SIL_FAKE_PCAP_DIR}
                                             RUNTIME_OUTPUT_DIRECTORY ${VEHICLE_SIL_FAKE_PCAP_DIR})
   vehicle_sil_target_defaults(${_fake})
+  if(MINGW)
+    # The pcap link has Windows look for the DLLs a library needs next to the library and in the
+    # system directory only (never in PATH, where the toolchain's libstdc++-6.dll and the others
+    # are). So the fake needs system DLLs only, as Npcap's wpcap.dll does: the toolchain's
+    # libraries are linked into it. The search of the link is not widened for the tests.
+    target_link_options(${_fake} PRIVATE -static)
+  endif()
 endforeach()
 target_compile_definitions(vehicle_sil_fake_pcap_old PRIVATE FAKE_PCAP_OLD)
+if(WIN32)
+  # Loading the fakes in a test does not show a DLL they need from PATH: the test program has the
+  # toolchain's DLLs loaded already, and Windows takes those. So the list of what each needs is
+  # checked itself, and a failure names the DLL.
+  foreach(_fake vehicle_sil_fake_pcap vehicle_sil_fake_pcap_old)
+    add_test(NAME eth_link.fake_pcap_imports.${_fake}
+             COMMAND ${CMAKE_COMMAND} "-DOBJDUMP=${CMAKE_OBJDUMP}" -DDLL=$<TARGET_FILE:${_fake}>
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/fake_pcap/check_dll_imports.cmake)
+    set_tests_properties(eth_link.fake_pcap_imports.${_fake} PROPERTIES LABELS "unit;eth_link" TIMEOUT 60)
+  endforeach()
+endif()
 
 vehicle_sil_add_harness_tests(vehicle_sil_eth_link_tests
   PREFIX eth_link LABELS unit eth_link TIMEOUT 60

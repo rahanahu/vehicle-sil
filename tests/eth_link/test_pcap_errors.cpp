@@ -156,6 +156,14 @@ TEST_CASE(pcap_warnings)
                "interface 'va' cannot be put into promiscuous mode (result 2, not supported): only frames to its own address and "
                "to group addresses arrive, as without --promiscuous.");
     CHECK_TEXT(pcap_activate_warning("va", 1, ""), "interface 'va' was opened with a warning (result 1).");
+    CHECK_TEXT(pcap_no_wake_warning(PcapFlavor::Npcap, "Ethernet 2", std::chrono::milliseconds(100)),
+               "Npcap does not tell when frames arrive on interface 'Ethernet 2': the bridge finds them by looking every "
+               "100 ms, so frames from this interface reach SIL Kit up to 100 ms late. None is lost by this. If the delay "
+               "matters, install the current Npcap, or try another adapter.");
+    CHECK_TEXT(pcap_no_wake_warning(PcapFlavor::Libpcap, "va", std::chrono::milliseconds(100)),
+               "libpcap does not tell when frames arrive on interface 'va': the bridge finds them by looking every 100 ms, so "
+               "frames from this interface reach SIL Kit up to 100 ms late. None is lost by this. If the delay matters, update "
+               "libpcap, or use --backend packet.");
 }
 
 TEST_CASE(pcap_device_is_chosen_by_pcap_name_connection_name_or_identifier)
