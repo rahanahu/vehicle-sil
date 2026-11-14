@@ -99,12 +99,18 @@ ParticipantVerdict judge_participant_state(orch::ParticipantState state) noexcep
     case orch::ParticipantState::Shutdown:
     case orch::ParticipantState::Aborting:
         return ParticipantVerdict::Ended;
-    default:
-        // Invalid, ServicesCreated, CommunicationInitializing, CommunicationInitialized,
-        // ReadyToRun: the start is still on its way (ParticipantRuntime::start() can see the
-        // start succeed a moment before the state says Running).
+    case orch::ParticipantState::Invalid:
+    case orch::ParticipantState::ServicesCreated:
+    case orch::ParticipantState::CommunicationInitializing:
+    case orch::ParticipantState::CommunicationInitialized:
+    case orch::ParticipantState::ReadyToRun:
+        // The start is still on its way (a participant other than a ParticipantRuntime after
+        // its start() can be seen here).
         return ParticipantVerdict::Starting;
     }
+    // No `default:` above, so that a state that SIL Kit adds fails the build (-Werror=switch)
+    // until it is judged there. A value that is no state at all: nothing to run a bridge on.
+    return ParticipantVerdict::Ended;
 }
 
 int run_bridge(BridgeParticipant& participant, BridgeHooks& hooks, const RunBridgeOptions& options)
@@ -157,7 +163,7 @@ int run_bridge(BridgeParticipant& participant, BridgeHooks& hooks, const RunBrid
             if (waited >= options.starting_limit)
             {
                 print("FAIL: SIL Kit participant did not reach Running within "
-                      + std::to_string(options.starting_limit.count()) + " ms after its start (state "
+                      + std::to_string(options.starting_limit.count()) + " ms (state "
                       + orch::to_string(state) + "); its SIL Kit log may say why");
                 result = cli::kExitFailed;
                 break;

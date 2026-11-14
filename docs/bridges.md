@@ -134,7 +134,7 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
 - 終了コードは次のとおりです: 0（Ctrl+C、Ctrl+Break、SIGTERM、コンソールのウィンドウを閉じたときの正常終了）、1（実行中の失敗。SIL Kit の participant が止まる途中か終わった状態になった（registry の停止や接続断）、起動の途中のまま Running にならない、または XL のチャネルが使えなくなった（デバイスを外した））、3（XL ドライバ、チャネル選択、SIL Kit の失敗）、4（引数の誤り）。
 - 実行中の participant の状態は、次のように扱います。
   - 失敗にするのは、止まる途中か終わった状態（Stopping、Stopped、Error、ShuttingDown、Shutdown、Aborting）だけです。`FAIL: SIL Kit participant left Running (state <状態>)`（Running になる前なら `FAIL: SIL Kit participant stopped before it reached Running (state <状態>)`）を出します。
-  - 起動の途中の状態（ReadyToRun など）は失敗にしません。1 秒たっても Running にならなければ `waiting for the SIL Kit participant to reach Running (state <状態>; at most 15000 ms)` を 1 回出し、15 秒たっても Running にならなければ `FAIL: SIL Kit participant did not reach Running within 15000 ms after its start (state <状態>); its SIL Kit log may say why` を出して終了コード 1 で終わります。
+  - 起動の途中の状態（ReadyToRun など）は失敗にしません。監視を始めてから 1 秒たっても Running にならなければ `waiting for the SIL Kit participant to reach Running (state <状態>; at most 15000 ms)` を 1 回出し、15 秒たっても Running にならなければ `FAIL: SIL Kit participant did not reach Running within 15000 ms (state <状態>); its SIL Kit log may say why` を出して終了コード 1 で終わります。
   - Paused は失敗にしません（ブリッジは自分では一時停止しません）。
 - Windows でコンソールのウィンドウを閉じたとき（ログオフ、シャットダウンも）は、`SetConsoleCtrlHandler` のハンドラーが停止を求め、統計を出し終わるまで最長 4 秒待ってから、ブリッジの終了コードでプロセスを終えます。Windows はハンドラーが戻るとプロセスを終わらせ、待つのも 5 秒ほどまでだからです。Windows の約 5 秒は変えられないので、統計は SIL Kit の participant を止める前に出し、participant の停止を待つのは最長 2 秒にしています。それでも 4 秒を超えると、Windows がプロセスを終わらせ、終了コードは 0 になりません（統計は出た後です）。
 - 止める要求の受け方、監視のループ、止める順（統計を SIL Kit の participant の停止より先に出す）、終了コード、コンソールを閉じたときの 4 秒は、`bridges/common` の `run_bridge()`（`vehicle_sil::bridge_runtime`）にあります。ブリッジの実行ファイルはこれを共有します。

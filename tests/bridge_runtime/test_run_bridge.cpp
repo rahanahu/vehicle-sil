@@ -291,7 +291,7 @@ TEST_CASE(run_bridge_a_participant_that_never_reaches_running_fails_at_the_start
 
     CHECK_EQ(run_bridge(participant, hooks, options), 1);
     CHECK_EVENTS(events, "bridging A <-> B; Ctrl+C to stop",
-                 "FAIL: SIL Kit participant did not reach Running within 0 ms after its start (state ReadyToRun); "
+                 "FAIL: SIL Kit participant did not reach Running within 0 ms (state ReadyToRun); "
                  "its SIL Kit log may say why",
                  "stopping", "hooks.stop", "hooks.final_statistics", "stats forwarded=3", "last error: none really",
                  "participant.stop bridge stopped", "stopped");
