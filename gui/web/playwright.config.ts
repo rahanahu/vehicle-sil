@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-import { GUI_PORT } from './e2e/support/gui-server';
+import { GUI_PORT, freePort } from './e2e/support/gui-server';
 import { scaled } from './e2e/support/timeouts';
 
 // static（npm run e2e）: GUI サーバー（gui/server）がビルド済みの画面（dist/browser）と API を同じオリジンで配信する。
@@ -8,8 +8,10 @@ import { scaled } from './e2e/support/timeouts';
 // 切り替えは設定ファイルで行う（環境変数は Windows の npm スクリプトで書き方が変わるため）。
 export type E2eMode = 'static' | 'dev';
 
-// 手元で動かしている開発サーバー（4200）とぶつからないポート。
-const devPort = 14200;
+// 開発サーバーのポート: 実行ごとに空いているポート（手元の開発サーバーや、別の作業ツリーの e2e とぶつからない）。
+// 試験を動かすプロセスも設定ファイルを読み直すので、環境変数で同じ値を渡す。
+process.env['VEHICLE_SIL_GUI_E2E_DEV_PORT'] ??= String(freePort());
+const devPort = Number(process.env['VEHICLE_SIL_GUI_E2E_DEV_PORT']);
 const devOrigin = `http://127.0.0.1:${devPort}`;
 
 export const e2eConfig = (mode: E2eMode) =>

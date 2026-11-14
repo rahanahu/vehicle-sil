@@ -8,7 +8,6 @@ import { join } from 'node:path';
 import {
   CONFIGS,
   REPLAY_LAUNCHER,
-  GUI_PORT,
   GuiServer,
   REPOSITORY,
   launchGuiServer,
@@ -36,7 +35,7 @@ test.beforeAll(async () => {
     root: CONFIGS,
     // more: スライダーとランプに合う変数（範囲のある engine.demand、それが 50 を超えると真の engine.warning）
     env: { REPLAY_TICK_MS: '50', REPLAY_FEATURES: CONTROL_FEATURES, REPLAY_VARIABLES: 'more' },
-    port: GUI_PORT + 500,
+    port: 0,
     web: screen,
   });
 });
