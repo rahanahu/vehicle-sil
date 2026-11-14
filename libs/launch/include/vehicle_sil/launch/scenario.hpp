@@ -20,6 +20,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace vehicle_sil::launch {
@@ -81,6 +83,8 @@ struct ScenarioWrite
 {
     std::size_t variable = 0;
     control::Value value{};
+    /// Of a set, as in the step's text: "Body.level = 20".
+    std::string text{};
 };
 
 /// A value over the time of a step, as a function of the virtual time since the step began and of
@@ -100,6 +104,22 @@ public:
     [[nodiscard]] virtual bool uses_base() const { return true; }
 };
 
+/// The shape of a ramp or a wave as the step's text gives it, for what shows a motion without
+/// running it (the lines of a timeline file): its name and the values the text has, with the
+/// parameters put in. What the text leaves out is not here (the defaults: docs/scenario.md), nor
+/// is the base (a ramp's or a lag's from, a wave's around: ScenarioMotion::base).
+struct ScenarioShapeText
+{
+    /// A whole number as it is (a seed keeps every digit), another number, true or false, a word.
+    using Value = std::variant<double, std::int64_t, bool, std::string>;
+    /// "ramp", or the wave's shape ("sine", "square", ..., "points").
+    std::string type;
+    /// The keys of the shape with their values, in the order the format lists them; then for_ms.
+    /// Of points: "points" (how many), "interpolate" ("linear" or "hold"), and of points from a
+    /// file "file", "value" and "time" (the names of the columns) and "time_unit", as given.
+    std::vector<std::pair<std::string, Value>> values{};
+};
+
 /// One variable of a ramp or a wave: the engine writes shape->value() at every step of the
 /// variable's ECU for length_ms, then shape->end().
 struct ScenarioMotion
@@ -114,6 +134,7 @@ struct ScenarioMotion
     std::string hint;
     /// As in the step's text: "Body.level from 10 to 20 over 100 ms".
     std::string text;
+    ScenarioShapeText described{};
 };
 
 enum class StepKind

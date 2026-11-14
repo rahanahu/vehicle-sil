@@ -6,8 +6,12 @@ engine writes for it when it runs against the model ECUs of `tests/launch/test_s
 `launch.timeline_files_are_the_references` compares them, so a change of the engine or of the file's form
 shows as a difference of these files.
 
+- Compared: `scenario.status` and `scenario.recorded_to_ms`, `variables`, `steps`, `series`, `lines`,
+  `findings`, `limits`.
 - Not compared (they differ from build to build or with the controller's step): `vehicle_sil`, `file`,
   `scenario.file`, `scenario.over_at_ms`, `tick_ms`.
+- The points of a wave may come from a CSV file beside the scenario: `<name>.csv` (the test hands it to
+  the reader under that name).
 - Never edit a reference by hand. Write them again with
 
   ```sh

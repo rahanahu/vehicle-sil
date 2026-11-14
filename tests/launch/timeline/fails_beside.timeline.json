@@ -53,6 +53,7 @@
       "end_ms": 0,
       "code": null,
       "message": null,
+      "writes": [0],
       "watch": null,
       "failed": null
     },
@@ -67,6 +68,7 @@
       "end_ms": 250,
       "code": "scenario-failed",
       "message": "not true during the ramp (from 50 ms to 250 ms): at 140 ms Body.body.speed le 200, but it was 210 (its sample of 140 ms)",
+      "writes": [1],
       "watch": {
         "mode": "during",
         "from_ms": 50,
@@ -116,6 +118,7 @@
       "end_ms": null,
       "code": null,
       "message": null,
+      "writes": [],
       "watch": {
         "mode": "at",
         "from_ms": null,
@@ -191,6 +194,36 @@
         [120, 200],
         [140, 210]
       ]
+    }
+  ],
+  "lines": [
+    {
+      "variable": "Body.level",
+      "kind": "set",
+      "line": 7,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 0,
+      "base": 14,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.level = 14"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "ramp",
+      "line": 8,
+      "step": 2,
+      "from_ms": 50,
+      "to_ms": 250,
+      "base": 14,
+      "base_source": "line",
+      "shape": {
+        "type": "ramp",
+        "to": 30,
+        "over_ms": 200
+      },
+      "text": "Body.level to 30 over 200 ms"
     }
   ],
   "findings": [

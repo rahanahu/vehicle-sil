@@ -2582,9 +2582,14 @@ TEST_CASE(scenario_first_motion_without_a_base_takes_the_sample_the_controllers_
 /// The timeline file of `text` run against the model, as `vehicle_sil_launch run --timeline`
 /// makes it (the findings: those of the failed steps, as the run's).
 std::string timeline_of(const std::string& text, SimDuration tick, const std::function<void(World&)>& setup = {},
-                        const ScenarioCatalog& described = catalog(), TimelineLimits limits = {})
+                        const ScenarioCatalog& described = catalog(), TimelineLimits limits = {}, const ScenarioContext& context = {})
 {
-    const Scenario s = read(text, described);
+    ScenarioRead r = read_scenario(text, described, context);
+    if (!r.scenario)
+    {
+        throw unit::Failure("the scenario has errors:\n" + lines(r.findings));
+    }
+    const Scenario s = *r.scenario;
     World world;
     world.tick = tick;
     if (setup)
@@ -2681,7 +2686,7 @@ TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
     {
         const std::string first = compared(timeline_of(text, 10ms, door4, catalog(10ms, 4ms)));
         CHECK(first.find("\"recorded_to_ms\": null") == std::string::npos);
-        for (const SimDuration tick : {SimDuration{20ms}, SimDuration{30ms}, SimDuration{4ms}})
+        for (const SimDuration tick : {SimDuration{20ms}, SimDuration{30ms}, SimDuration{4ms}, SimDuration{5ms}})
         {
             check_text(compared(timeline_of(text, tick, door4, catalog(10ms, 4ms))), first, "the timeline with another step");
         }
@@ -2691,6 +2696,29 @@ TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
             check_text(compared(timeline_of(text, 10ms, [&](World& w) { door4(w); w.policy = policy; }, catalog(10ms, 4ms))), first,
                        name.c_str());
         }
+    }
+    // The lines of the inputs are the same too (they are in the files compared above). Here the
+    // expect fails at 15 ms. The ramp at 25 ms is put on its line by a controller that steps
+    // every 30 ms (it sends the writes up to 30 ms at 0 ms), and not by one that steps every 5 or
+    // 10 ms (it knows of the failure at 20 ms, before the writes for 25 ms). The file has the
+    // lines put up to "recorded to" (15 ms): the set, and with no step the ramp.
+    const std::string ahead = kHead + "  - set: { Body.level: 10 }\n"
+                                      "  - at_ms: 15\n"
+                                      "    expect: { Body.body.speed: { le: 60 } }\n"
+                                      "  - at_ms: 25\n"
+                                      "    ramp: { Door.level: { from: 1, to: 9, over_ms: 30 } }\n";
+    const auto lines_of = [](const std::string& timeline) { return part(timeline, "  \"lines\": [", "  \"findings\""); };
+    for (const SimDuration tick : {SimDuration{5ms}, SimDuration{10ms}, SimDuration{30ms}})
+    {
+        const std::string made = timeline_of(ahead, tick);
+        CHECK(made.find("    \"recorded_to_ms\": 15\n") != std::string::npos);
+        check_text(lines_of(made),
+                   "  \"lines\": [\n    {\n      \"variable\": \"Body.level\",\n      \"kind\": \"set\",\n      \"line\": 3,\n"
+                   "      \"step\": 1,\n      \"from_ms\": 0,\n      \"to_ms\": 0,\n      \"base\": 10,\n"
+                   "      \"base_source\": \"written\",\n      \"shape\": null,\n      \"text\": \"Body.level = 10\"\n    }\n  ],\n",
+                   "the lines with another step");
+        // (The step's own list follows the lines of the file.)
+        CHECK(made.find("      \"writes\": [0],\n") != std::string::npos && made.find("      \"writes\": [1],\n") == std::string::npos);
     }
     // The watch beside the ramp goes to the step of Door that applies the end value (88 ms), past
     // the step's end (85 ms); the last step passed at 150 ms, and that is where the file ends.
@@ -2746,12 +2774,20 @@ TEST_CASE(timeline_files_are_the_references)
         {"fails_wait", {20ms, 30ms}},
         {"waits", {}},
         {"write_refused", {}},
+        {"points_file", {20ms, 30ms}},
     };
     for (const auto& [name, steps] : references)
     {
         const std::string scenario = file_text(directory / (name + ".yaml"));
         const std::filesystem::path reference = directory / (name + ".timeline.json");
-        const std::string made = timeline_of(scenario, 10ms);
+        // The points of a wave may be in a CSV file beside the scenario: <name>.csv.
+        ScenarioContext context;
+        if (std::filesystem::exists(directory / (name + ".csv")))
+        {
+            context = with_files({{name + ".csv", file_text(directory / (name + ".csv"))}});
+        }
+        const auto timeline = [&](SimDuration step) { return timeline_of(scenario, step, {}, catalog(), {}, context); };
+        const std::string made = timeline(10ms);
         if (writing)
         {
             std::ofstream out(reference, std::ios::binary | std::ios::trunc);
@@ -2765,7 +2801,7 @@ TEST_CASE(timeline_files_are_the_references)
                    (name + ".timeline.json (if the change is meant: tests/launch/timeline/README.md says how to write it again)").c_str());
         for (const SimDuration step : steps)
         {
-            check_text(compared(timeline_of(scenario, step)), compared(made), (name + " with another step of the controller").c_str());
+            check_text(compared(timeline(step)), compared(made), (name + " with another step of the controller").c_str());
         }
     }
 }
@@ -2781,7 +2817,7 @@ TEST_CASE(timeline_keeps_the_newest_points_at_its_limits)
                                      "  - after_ms: 20\n"
                                      "    expect: { Body.body.speed: { ge: 0 } }\n";
     const std::string limited = timeline_of(text, 10ms, {}, catalog(), TimelineLimits{8, 1000});
-    check_text(part(limited, "  \"series\": [", "  \"findings\""),
+    check_text(part(limited, "  \"series\": [", "  \"lines\""),
                "  \"series\": [\n"
                "    {\n"
                "      \"variable\": \"Body.level\",\n"
@@ -2927,7 +2963,7 @@ TEST_CASE(timeline_marks_the_write_that_was_refused)
     const auto refused = [&loose](const std::string& text, SimDuration tick) {
         const std::string timeline = timeline_of(text, tick, {}, loose);
         return part(timeline, "  \"scenario\": {", "  \"variables\"") + part(timeline, "        \"write\": {", "      }\n") +
-               part(timeline, "  \"series\": [", "  \"findings\"");
+               part(timeline, "  \"series\": [", "  \"lines\"");
     };
     // Refused at once by the agent (out of range), between two steps of the controller: over at
     // 30 ms, the write is for 40 ms.
@@ -3015,7 +3051,7 @@ TEST_CASE(timeline_of_a_failed_run_has_the_steps_as_the_controllers_step_saw_the
                 }
             }
         }
-        return out + part(timeline, "  \"series\": [", "  \"findings\"");
+        return out + part(timeline, "  \"series\": [", "  \"lines\"");
     };
     // The series and where they end are the same: they go to the failure, and the set for 20 ms
     // is no point of them, also where its step passed.
@@ -3058,7 +3094,7 @@ TEST_CASE(timeline_of_a_run_that_did_not_get_to_its_end_says_how_far_it_is_recor
     const auto head = [](const std::string& text, const std::function<void(World&)>& setup) {
         const std::string timeline = timeline_of(text, 10ms, setup);
         std::string out = part(timeline, "    \"status\"", "  },");
-        std::istringstream in(part(timeline, "  \"series\": [", "  \"findings\""));
+        std::istringstream in(part(timeline, "  \"series\": [", "  \"lines\""));
         for (std::string line; std::getline(in, line);)
         {
             if (line.rfind("      \"not_applied_from\"", 0) == 0 || line.rfind("      \"last_ms\"", 0) == 0)
@@ -3127,11 +3163,84 @@ TEST_CASE(timeline_keeps_the_writes_of_the_times_before_a_motion_that_finds_no_b
     check_text(part(made, "    \"status\": ", "  },\n  \"variables\""),
                "    \"status\": \"failed\",\n    \"over_at_ms\": 0,\n    \"recorded_to_ms\": 25\n");
     // (Sent, not applied: the simulation ended at 0 ms.) The ramp wrote nothing.
-    check_text(part(made, "  \"series\": [", "  \"findings\""),
+    check_text(part(made, "  \"series\": [", "  \"lines\""),
                "  \"series\": [\n"
                "    {\n      \"variable\": \"Door.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
                "      \"not_applied_from\": 0,\n      \"points\": [\n        [10, 3]\n      ]\n    },\n"
                "    {\n      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
                "      \"points\": []\n    }\n  ],\n");
     CHECK(made.find("      \"status\": \"unfinished\",\n      \"start_ms\": 10,") != std::string::npos);
+}
+
+TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
+{
+    // What each step put on the line of a variable, with the base of a motion and where it is
+    // from: the step ("written"), the line, or a sample.
+    const auto lines_of = [](const std::string& timeline) {
+        // "<kind> <variable> <from>-<to> base=<base> <source>" per line of the file's lines.
+        std::istringstream in(part(timeline, "  \"lines\": [", "  \"findings\""));
+        std::string out;
+        const auto value = [](const std::string& line) {
+            std::string text = line.substr(line.find(": ") + 2);
+            std::erase(text, '"');
+            std::erase(text, ',');
+            return text;
+        };
+        for (std::string line; std::getline(in, line);)
+        {
+            for (const auto& [key, after] : std::vector<std::pair<std::string, std::string>>{
+                     {"kind", " "}, {"variable", " "}, {"from_ms", "-"}, {"to_ms", " base="}, {"base", " "}, {"base_source", "\n"}})
+            {
+                if (line.rfind("      \"" + key + "\": ", 0) == 0)
+                {
+                    out += value(line) + after;
+                }
+            }
+        }
+        return out;
+    };
+    // Door.level is 0 in the model, and the scenario has not written it: the first ramp starts
+    // from the sample. The ramp of Body.level starts from the set, the wave after it swings around
+    // where the ramp ends, the lag names its start, and the square has its own values.
+    const std::string made =
+        timeline_of(kHead + "  - set: { Body.level: 20 }\n"
+                            "  - at_ms: 30\n"
+                            "    ramp: { Body.level: { to: 80, over_ms: 25 }, Door.level: { to: 4, over_ms: 20 } }\n"
+                            "  - wave: { Body.level: { triangle: { amplitude: 5, period_ms: 40 }, for_ms: 40 },\n"
+                            "            Door.ratio: { lag: { from: 0.25, to: 1, tau_ms: 20 }, for_ms: 40 },\n"
+                            "            Door.lamp: { square: { period_ms: 20 }, for_ms: 40 } }\n",
+                    10ms);
+    // (The variable comes before the kind in the file.)
+    check_text(lines_of(made), "Body.level set 0-0 base=20 written\n"
+                               "Body.level ramp 30-55 base=20 line\n"
+                               "Door.level ramp 30-50 base=0 sample\n"
+                               "Body.level wave 55-95 base=80 line\n"
+                               "Door.ratio wave 55-95 base=0.25 written\n"
+                               "Door.lamp wave 55-95 base=null null\n");
+    CHECK(made.find("      \"shape\": {\n        \"type\": \"lag\",\n        \"to\": 1,\n        \"tau_ms\": 20,\n"
+                    "        \"for_ms\": 40\n      },\n"
+                    "      \"text\": \"Door.ratio lag from 0.25 to 1 tau 20 ms for 40 ms\"") != std::string::npos);
+    CHECK(made.find("      \"writes\": [1, 2],\n") != std::string::npos && made.find("      \"writes\": [3, 4, 5],\n") != std::string::npos);
+
+    // A set that its agent refuses at once, and at the same time a ramp that does not say where
+    // it starts: the steps of a time put what they do on the lines before any write of that time
+    // goes out, so the ramp has its base (the 105 of the set) though the scenario ends at the set.
+    ScenarioCatalog loose = catalog();
+    loose[0].variables[0].max.reset();
+    const std::string refused = timeline_of(kHead + "  - at_ms: 40\n"
+                                                    "    set: { Body.level: 105 }\n"
+                                                    "  - ramp: { Body.level: { to: 50, over_ms: 20 } }\n",
+                                            10ms, {}, loose);
+    CHECK(refused.find("    \"status\": \"failed\",") != std::string::npos);
+    check_text(lines_of(refused), "Body.level set 40-40 base=105 written\n"
+                                  "Body.level ramp 40-60 base=105 line\n");
+    // A run that never began has no lines, and says so with an empty list.
+    const Scenario s = read(kHead + "  - set: { Body.level: 20 }\n");
+    ScenarioRun run = scenario_not_run(s);
+    TimelineInput input;
+    input.file = "simulation.yaml";
+    input.scenario = &s;
+    input.run = &run;
+    const std::string none = format_timeline_json(input);
+    CHECK(none.find("  \"lines\": [],\n") != std::string::npos && none.find("      \"writes\": [],\n") != std::string::npos);
 }

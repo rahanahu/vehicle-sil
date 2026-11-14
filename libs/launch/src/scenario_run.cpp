@@ -419,6 +419,7 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
             Motion motion;
             motion.step = index;
             motion.motion = r;
+            motion.part = static_cast<std::size_t>(&r - step.motions.data());
             motion.from_time = time;
             motion.period = scenario_.participants[scenario_.variables[r.variable].participant].step;
             if (motion.period <= SimDuration::zero())
@@ -771,9 +772,15 @@ void ScenarioEngine::place(const Write& write)
 {
     if (!write.motion)
     {
-        for (const ScenarioWrite& w : write.writes)
+        for (std::size_t i = 0; i < write.writes.size(); ++i)
         {
+            const ScenarioWrite& w = write.writes[i];
             lines_->lines[w.variable].set(write.at, w.value);
+            if (record_ != nullptr)
+            {
+                record_->line(TimelineRecord::Line{write.step, i, w.variable, write.at, w.value,
+                                                   detail::base_source_name(detail::BaseSource::Written)});
+            }
         }
         return;
     }
@@ -784,8 +791,23 @@ void ScenarioEngine::place(const Write& write)
     }
     const std::size_t v = motion.motion.variable;
     // A sample only if the scenario has put nothing on the line yet: the latest looked at.
-    lines_->placed[*write.motion] = lines_->lines[v].move(write.at, motion.motion.shape, std::chrono::milliseconds(motion.motion.length_ms),
-                                                         motion.motion.base, variables_[v].value);
+    const detail::LineMotion& placed = lines_->lines[v].move(write.at, motion.motion.shape, std::chrono::milliseconds(motion.motion.length_ms),
+                                                             motion.motion.base, variables_[v].value);
+    lines_->placed[*write.motion] = placed;
+    if (record_ != nullptr)
+    {
+        // The base as the file shows it: the number the step names as it is (a bool as a bool),
+        // what the line or the sample had as the variable's type has it.
+        const control::ValueType type = scenario_.variables[v].type;
+        std::optional<control::Value> base;
+        if (placed.base)
+        {
+            base = placed.source == detail::BaseSource::Written && type != control::ValueType::Bool
+                       ? control::Value{*placed.base}
+                       : detail::value_of_type(*placed.base, type);
+        }
+        record_->line(TimelineRecord::Line{write.step, motion.part, v, write.at, std::move(base), detail::base_source_name(placed.source)});
+    }
 }
 
 void ScenarioEngine::judge(SimTime p)

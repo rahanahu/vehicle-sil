@@ -468,6 +468,28 @@ private:
 
     // --- hexadecimal: the one place a scenario reads it (values of integer and enum variables) ---
 
+    /// A value of a shape as its text has it, for ScenarioShapeText (the shape was read without an
+    /// error): a whole number, a number (of an integer variable also hexadecimal), true or false,
+    /// or the word.
+    ScenarioShapeText::Value shape_value(ryml::id_type node, std::size_t variable) const
+    {
+        std::int64_t whole = 0;
+        double number = 0;
+        if (plain_integer(node, whole))
+        {
+            return whole;
+        }
+        if (number_of(node, variable, number))
+        {
+            return number;
+        }
+        const std::string text = text_of(node);
+        if (!quoted(node) && (text == "true" || text == "false"))
+        {
+            return text == "true";
+        }
+        return text;
+    }
     /// The unquoted value at `node` (or its parameter's) as hexadecimal; None if quoted.
     Hex hex_of(ryml::id_type node) const
     {
@@ -1226,7 +1248,8 @@ private:
             }
             if (const auto value = value_of(child, *v, "the value", true))
             {
-                step.writes.push_back(ScenarioWrite{*v, *value});
+                const ScenarioVariable& var = scenario_.variables[*v];
+                step.writes.push_back(ScenarioWrite{*v, *value, var.text + " = " + value_text(*value, &var)});
             }
         }
     }
@@ -1373,6 +1396,8 @@ private:
                 longest = std::max(longest, ramp.length_ms);
                 ramp.shape = detail::ramp_shape(to, std::chrono::milliseconds(ramp.length_ms));
                 ramp.hint = "give the ramp from: <value>";
+                ramp.described.type = "ramp";
+                ramp.described.values = {{"to", to}, {"over_ms", ramp.length_ms}};
                 ramp.text = var.text + (ramp.base ? " from " + number_text(*ramp.base) : "") + " to " + number_text(to) + " over " +
                             std::to_string(ramp.length_ms) + " ms";
                 step.motions.push_back(std::move(ramp));
@@ -2387,7 +2412,16 @@ private:
                     make = [=](SimDuration) { return detail::chatter_shape(*to, std::chrono::milliseconds(*interval), mixed); };
                 }
             }
+            // The shape as the text has it (what it starts from is the base, not of the shape).
+            for (const std::string& key : kShapeKeys.at(shape))
+            {
+                if (key != "from" && has(key.c_str()) && is_scalar(parts->at(key)))
+                {
+                    out.described.values.emplace_back(key, shape_value(parts->at(key), v));
+                }
+            }
         }
+        out.described.type = shape;
 
         // What stands beside the shape.
         if (top->count("interpolate") > 0 && shape != "points")
@@ -2443,6 +2477,10 @@ private:
             return std::nullopt;
         }
         out.length_ms = *length;
+        if (wantsFor)
+        {
+            out.described.values.emplace_back("for_ms", *length);
+        }
         out.shape = make(std::chrono::milliseconds(*length));
         out.text = text + (around ? " around " + number_text(*around) : "") +
                    (shape == "pulse" || shape == "points" ? "" : (shape == "chatter" && !wantsFor ? "" : " for " + std::to_string(*length) + " ms"));
@@ -2538,7 +2576,7 @@ private:
         std::string source; // " from <file> column <name>" for points from a file
         if (tree_.is_map(body))
         {
-            const bool read = file_points(body, v, what, add, source);
+            const bool read = file_points(body, v, what, add, source, out.described);
             if (!good || !read)
             {
                 return false;
@@ -2604,6 +2642,8 @@ private:
                        "the ECU gets only the value at the time of each of its steps, so it does not see every point",
                        "Put the points " + span_text(step_ns(v)) + " or more apart");
         }
+        out.described.values.insert(out.described.values.begin(),
+                                    {{"points", static_cast<std::int64_t>(points.size())}, {"interpolate", std::string(hold ? "hold" : "linear")}});
         make = [points = std::move(points), hold](SimDuration) { return detail::points_shape(points, hold); };
         return true;
     }
@@ -2752,7 +2792,8 @@ private:
     /// The points of a wave from a CSV file (`body`: { file, value, time, time_unit }), each given
     /// to `add` (read_points()). Stops at the first error. `source`: " from <file> column <name>".
     template <class Add>
-    bool file_points(ryml::id_type body, std::size_t v, const std::string& what, const Add& add, std::string& source)
+    bool file_points(ryml::id_type body, std::size_t v, const std::string& what, const Add& add, std::string& source,
+                     ScenarioShapeText& described)
     {
         const auto parts = parts_of(body, what, kPointsFileKeys, std::string("a CSV file and its column (") + kPointsFileExample + ")");
         if (!parts)
@@ -2889,6 +2930,16 @@ private:
             after = here;
         }
         source = " from " + *path + " column " + *valueName;
+        described.values.emplace_back("file", *path);
+        described.values.emplace_back("value", *valueName);
+        if (timeName)
+        {
+            described.values.emplace_back("time", *timeName);
+        }
+        if (parts->count("time_unit") > 0)
+        {
+            described.values.emplace_back("time_unit", std::string(seconds ? "s" : "ms"));
+        }
         return true;
     }
 
@@ -3103,7 +3154,7 @@ private:
         for (const auto& w : step.writes)
         {
             const ScenarioVariable& var = scenario_.variables[w.variable];
-            out += sep() + var.text + " = " + value_text(w.value, &var);
+            out += sep() + (w.text.empty() ? var.text + " = " + value_text(w.value, &var) : w.text);
         }
         for (const auto& r : step.motions)
         {

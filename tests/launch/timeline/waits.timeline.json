@@ -66,6 +66,7 @@
       "end_ms": 0,
       "code": null,
       "message": null,
+      "writes": [0],
       "watch": null,
       "failed": null
     },
@@ -80,6 +81,7 @@
       "end_ms": 30,
       "code": null,
       "message": null,
+      "writes": [],
       "watch": {
         "mode": "once",
         "from_ms": 0,
@@ -109,6 +111,7 @@
       "end_ms": 80,
       "code": null,
       "message": null,
+      "writes": [1],
       "watch": null,
       "failed": null
     },
@@ -123,6 +126,7 @@
       "end_ms": 100,
       "code": null,
       "message": null,
+      "writes": [],
       "watch": {
         "mode": "once",
         "from_ms": 80,
@@ -162,6 +166,7 @@
       "end_ms": 140,
       "code": null,
       "message": null,
+      "writes": [],
       "watch": {
         "mode": "always",
         "from_ms": 110,
@@ -223,6 +228,36 @@
       "points": [
         [0, false]
       ]
+    }
+  ],
+  "lines": [
+    {
+      "variable": "Body.level",
+      "kind": "set",
+      "line": 7,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 0,
+      "base": 10,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.level = 10"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "ramp",
+      "line": 10,
+      "step": 3,
+      "from_ms": 30,
+      "to_ms": 80,
+      "base": 10,
+      "base_source": "line",
+      "shape": {
+        "type": "ramp",
+        "to": 20,
+        "over_ms": 50
+      },
+      "text": "Body.level to 20 over 50 ms"
     }
   ],
   "findings": [],

@@ -209,11 +209,11 @@ struct EnginePeer
 ///
 /// The record (a TimelineRecord, for run --timeline; none: nothing of what follows happens, and
 /// the engine does exactly what it does without one). The engine notes in it every write it
-/// sends (submit_one()), the value of every sample it looks at (observe()), each step's watch
-/// and what a failed step failed of. When the scenario is over it closes the record at one time,
+/// sends (submit_one()), what each step puts on a line (place()), the value of every sample it
+/// looks at (observe()), each step's watch and what a failed step failed of. When the scenario is over it closes the record at one time,
 /// "recorded to": the `at` of the failed step; of a scenario that passed, the latest `at` of its
 /// steps; of one that is Incomplete, the time of the last sample looked at (0 without one).
-/// Nothing after that time stays in the record, and the samples up to it that the engine had not
+/// Nothing after that time stays in the record (no point, and no line put after it), and the samples up to it that the engine had not
 /// looked at yet (they do not decide anything any more) are noted first, if they are of steps
 /// before the controller's step being handled (those have all arrived). So what the record has
 /// of a scenario that passed, or failed at a sample, does not depend on the controller's tick
@@ -282,6 +282,7 @@ private:
     {
         std::size_t step = 0;
         ScenarioMotion motion;
+        std::size_t part = 0; ///< its index in the step's motions
         SimTime from_time{};
         SimDuration period{};
         std::int64_t next = 0; ///< the next write is at from_time + next * period (or the end)

@@ -3984,6 +3984,13 @@ void timeline(const Options& o)
             "the sampled values:\n" + file);
     require(contains(file, "        \"mode\": \"during\",\n        \"from_ms\": 100,\n        \"until_ms\": 200,\n"),
             "the watch beside the wave:\n" + file);
+    // The lines of the inputs: the wave has its values itself, so no base.
+    require(contains(file, "      \"variable\": \"Body.level\",\n      \"kind\": \"wave\",\n      \"line\": 5,\n      \"step\": 2,\n"
+                           "      \"from_ms\": 100,\n      \"to_ms\": 200,\n      \"base\": null,\n      \"base_source\": null,\n"
+                           "      \"shape\": {\n        \"type\": \"square\",\n        \"low\": 20,\n        \"high\": 30,\n"
+                           "        \"period_ms\": 40,\n        \"for_ms\": 100\n      },\n") &&
+                contains(file, "      \"writes\": [0, 1],\n") && contains(file, "      \"writes\": [2],\n"),
+            "the lines of the inputs:\n" + file);
     // The run's own output is the one without --timeline.
     const Captured without = launch(o, plain, dir);
     expect_code(without, 0, "run without --timeline");

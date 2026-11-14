@@ -40,6 +40,7 @@
       "end_ms": 0,
       "code": null,
       "message": null,
+      "writes": [0],
       "watch": null,
       "failed": null
     },
@@ -54,6 +55,7 @@
       "end_ms": 40,
       "code": "scenario-write",
       "message": "the write for 40 ms was not applied by participant 'Body': the ECU rejected it (a setter threw: 13 is not a level)",
+      "writes": [1],
       "watch": null,
       "failed": {
         "at_ms": 40,
@@ -78,6 +80,7 @@
       "end_ms": null,
       "code": null,
       "message": null,
+      "writes": [],
       "watch": {
         "mode": "once",
         "from_ms": null,
@@ -118,6 +121,32 @@
       "points": [
         [0, 7]
       ]
+    }
+  ],
+  "lines": [
+    {
+      "variable": "Body.level",
+      "kind": "set",
+      "line": 7,
+      "step": 1,
+      "from_ms": 0,
+      "to_ms": 0,
+      "base": 7,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.level = 7"
+    },
+    {
+      "variable": "Body.level",
+      "kind": "set",
+      "line": 8,
+      "step": 2,
+      "from_ms": 40,
+      "to_ms": 40,
+      "base": 13,
+      "base_source": "written",
+      "shape": null,
+      "text": "Body.level = 13"
     }
   ],
   "findings": [
