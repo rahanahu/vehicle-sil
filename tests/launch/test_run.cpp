@@ -658,8 +658,8 @@ TEST_CASE(the_text_for_people)
                "Tool         no        not started\n"
                "\n"
                "error: sim.yaml:5: participant 'Engine': it failed while the simulation was running, and the launcher "
-               "aborted the simulation: its process exited with code 7; the lines [Engine] above show what it wrote\n"
-               "warning: sim.yaml:13: participant 'Tool': cannot start t: check the command in the configuration file\n"
+               "aborted the simulation: its process exited with code 7; the lines [Engine] above show what it wrote [participant-failed]\n"
+               "warning: sim.yaml:13: participant 'Tool': cannot start t: check the command in the configuration file [start]\n"
                "\n"
                "failed: 1 error, 1 warning, 0 notes\n");
     // The line of the simulation for each end.
@@ -706,7 +706,7 @@ TEST_CASE(the_text_when_the_check_found_errors)
     r.check.findings.push_back(Finding{Severity::Error, "unknown-key", "unknown key 'x'", 3, "", ""});
     check_text(format_run_text(r), "sim.yaml: 0 participants, 0 networks\n"
                                    "\n"
-                                   "error: sim.yaml:3: unknown key 'x'\n"
+                                   "error: sim.yaml:3: unknown key 'x' [unknown-key]\n"
                                    "\n"
                                    "nothing was started: the check found errors (vehicle_sil_launch check sim.yaml shows "
                                    "the same)\n"
@@ -717,7 +717,7 @@ TEST_CASE(the_text_when_the_check_found_errors)
     r.strict = true;
     check_text(format_run_text(r), "sim.yaml: 0 participants, 0 networks\n"
                                    "\n"
-                                   "warning: sim.yaml:3: unknown key 'x'\n"
+                                   "warning: sim.yaml:3: unknown key 'x' [unknown-key]\n"
                                    "\n"
                                    "nothing was started: the check found warnings, and --strict fails on them "
                                    "(vehicle_sil_launch check sim.yaml shows the same)\n"

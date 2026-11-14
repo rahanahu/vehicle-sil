@@ -88,21 +88,21 @@ Dashboard    -      disabled
 network    kind  participants
 J1939_CAN  can   Engine
 
-warning: simulation.yaml:8: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it
-note: simulation.yaml:14: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it
+warning: simulation.yaml:8: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it [single-participant]
+note: simulation.yaml:14: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it [participant-disabled]
 
 passed: 0 errors, 1 warning, 1 note
 ```
 
 - participant の表は、各 ECU が申告したもの（ステップ幅、ネットワーク、J1939 のノードが求めるアドレス）です。構成ファイルの `step_ms` ではありません。ネットワークの表は、構成ファイルのネットワークと、それを使う participant です。
-- 所見は 1 行に 1 つで、`<重さ>: <ファイル>:<行>: <何が、どの値で、どう直すか>` の形です。行は構成ファイルの行です。
+- 所見は 1 行に 1 つで、`<重さ>: <ファイル>:<行>: <何が、どの値で、どう直すか> [<code>]` の形です。行は構成ファイルの行です。終わりの `[...]` は所見の名前で、下の「所見ごとの直す人」の表と [simulation-check.md](../simulation-check.md) の「照合」の表を、この名前で引けます。
 - 重さは 3 つです。`error` は照合を失敗にします（`run` は何も起動しません）。`warning` は `--strict` のときだけ失敗にします。`note` は失敗にしません。照合が確かめられなかったこと、外したことを知らせます。
 - 最後の行が結果と数です。終了コードは、通れば 0、誤りがあれば 1 です。
 - 誤りのある例（同じ ECU を 2 つ、ステップ幅の食い違い、キーの打ち間違い）は、[simulation-check.md](../simulation-check.md) の「人向け」の `two-engines.yaml` にあります。
 
 ### 所見ごとの直す人
 
-所見の `code` は `--json` の出力にあります（一覧と意味は [simulation-check.md](../simulation-check.md) の「照合」の表）。よく出るものと、直す人の目安です。
+所見の `code` は、人向けの行の終わりの `[...]` と、`--json` の出力にあります（一覧と意味は [simulation-check.md](../simulation-check.md) の「照合」の表）。よく出るものと、直す人の目安です。
 
 | `code` | 直す人 | すること |
 |---|---|---|
@@ -115,6 +115,8 @@ passed: 0 errors, 1 warning, 1 note
 | `describe-version` | 版が古いほう | 文言のとおり、`vehicle_sil_launch` を新しくするか、ECU をビルドし直す |
 | `version-mismatch`、`control-link-version` | どちらか | 同じ版の vehicle-sil でビルドし直す |
 | `single-participant` | まとめる人 | 外した ECU か、まだない ECU のせいなら、そのままでよい。`--strict` では失敗になる |
+
+ネットワークの名前の食い違いは、構成ファイルでは直せません。構成ファイルには、ECU が使う名前を別の名前に付け替える書き方がないからです。2 つの ECU が 1 つのバスを別の名前で呼んでいるとき（`unknown-network` や `single-participant` の文が、同じ種類のほかのネットワークを挙げているとき）は、`networks` に名前を足しても 2 つのバスに分かれるだけです。取り決めた名前に合わないほうの ECU を書いた人が、名前を直して実行ファイルを作り直します。
 
 ## 動かす（`run`）
 

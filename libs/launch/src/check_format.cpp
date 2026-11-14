@@ -234,7 +234,8 @@ std::string detail::findings_text(const std::string& file, const std::vector<Fin
     for (const auto& finding : findings)
     {
         out += std::string(severity_name(finding.severity)) + ": " + (finding.file.empty() ? file : finding.file) +
-               (finding.line > 0 ? ":" + std::to_string(finding.line) : std::string{}) + ": " + finding.message + "\n";
+               (finding.line > 0 ? ":" + std::to_string(finding.line) : std::string{}) + ": " + finding.message +
+               (finding.code.empty() ? std::string{} : " [" + finding.code + "]") + "\n";
         if (!finding.detail.empty())
         {
             std::istringstream in(finding.detail);
