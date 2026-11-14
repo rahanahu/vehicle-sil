@@ -13,6 +13,7 @@
 
 #include "vehicle_sil/eth_link/external_link.hpp"
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -65,8 +66,13 @@ public:
     void fail_start(eth_link::LinkErrorKind kind, std::string message);
     /// What transmit() returns; anything but Ok sends nothing.
     void set_transmit_result(eth_link::TransmitResult result);
-    /// Transmitted frames come back to this link's own handler too (as Npcap delivers them).
+    /// Transmitted frames come back to this link's own handler too (as Npcap is expected to
+    /// deliver them), and echoes_own_transmissions() says so. Set it before start().
     void set_echo_own(bool echo);
+    /// transmit() throws std::runtime_error (a link that breaks its contract).
+    void set_transmit_throws(bool throws);
+    /// A frame that reaches this link only (a device in front of this interface alone).
+    void receive(std::span<const std::uint8_t> frame);
     /// stop() reports this many frames lost by the OS before it returns.
     void set_overruns_at_stop(std::uint64_t count);
     /// Queues an event for the receive thread.
@@ -88,6 +94,7 @@ public:
     void start(EventHandler handler) override;
     void stop() noexcept override;
     eth_link::TransmitResult transmit(std::span<const std::uint8_t> frame) override;
+    [[nodiscard]] bool echoes_own_transmissions() const noexcept override { return echo_own_.load(); }
     [[nodiscard]] std::string describe() const override;
     [[nodiscard]] std::string last_error() const override;
 
@@ -123,7 +130,8 @@ private:
     std::vector<Bytes> transmitted_;
     std::optional<eth_link::LinkError> start_error_;
     eth_link::TransmitResult transmit_result_ = eth_link::TransmitResult::Ok;
-    bool echo_own_ = false;
+    std::atomic<bool> echo_own_{false};
+    bool transmit_throws_ = false;
     std::uint64_t overruns_at_stop_ = 0;
     int start_calls_ = 0;
     int stop_calls_ = 0;

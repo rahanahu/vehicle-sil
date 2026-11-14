@@ -27,6 +27,7 @@ TEST_CASE(format_statistics_names_every_counter)
     s.ext_to_silkit = 2;
     s.own_tx_dropped = 3;
     s.loop_suspected = 4;
+    s.mac_unguarded = 13;
     s.filtered_to_ext = 5;
     s.filtered_from_ext = 6;
     s.oversize = 7;
@@ -36,7 +37,7 @@ TEST_CASE(format_statistics_names_every_counter)
     s.ext_tx_failures = 11;
     s.silkit_tx_failures = 12;
     CHECK_TEXT(format_statistics(s),
-               "stats silkit_to_ext=1 ext_to_silkit=2 own_tx_dropped=3 loop_suspected=4 filtered_to_ext=5 "
+               "stats silkit_to_ext=1 ext_to_silkit=2 own_tx_dropped=3 loop_suspected=4 mac_unguarded=13 filtered_to_ext=5 "
                "filtered_from_ext=6 oversize=7 malformed=8 ext_overruns=9 ext_queue_full=10 ext_tx_failures=11 "
                "silkit_tx_failures=12");
 }
@@ -51,7 +52,8 @@ TEST_CASE(problems_grew_ignores_forwarded_filtered_and_own_frames)
     now.filtered_to_ext = 100;
     now.filtered_from_ext = 100;
     CHECK(!problems_grew(before, now));
-    for (auto member : {&EthernetBridgeStatistics::loop_suspected, &EthernetBridgeStatistics::oversize,
+    for (auto member : {&EthernetBridgeStatistics::loop_suspected, &EthernetBridgeStatistics::mac_unguarded,
+                        &EthernetBridgeStatistics::oversize,
                         &EthernetBridgeStatistics::malformed, &EthernetBridgeStatistics::ext_overruns,
                         &EthernetBridgeStatistics::ext_queue_full, &EthernetBridgeStatistics::ext_tx_failures,
                         &EthernetBridgeStatistics::silkit_tx_failures})

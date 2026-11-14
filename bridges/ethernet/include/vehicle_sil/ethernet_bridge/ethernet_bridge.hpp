@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -41,6 +42,8 @@ struct EthernetBridgeStatistics
     std::uint64_t ext_to_silkit = 0;      ///< Frames from the external link handed to SIL Kit.
     std::uint64_t own_tx_dropped = 0;     ///< The bridge's own frames that came back from the link.
     std::uint64_t loop_suspected = 0;     ///< Frames whose source MAC is on both sides.
+    /// Frames forwarded without the check against loops: their source did not fit in the MAC table.
+    std::uint64_t mac_unguarded = 0;
     std::uint64_t filtered_to_ext = 0;    ///< Frames from SIL Kit the filter did not let out.
     std::uint64_t filtered_from_ext = 0;  ///< Frames from the link the filter did not let in.
     std::uint64_t oversize = 0;           ///< Frames longer than the maximum (either direction).
@@ -64,8 +67,8 @@ struct EthernetBridgeHealth
     eth_link::LinkState link_state = eth_link::LinkState::Unknown;
 };
 
-/// Whether a problem counter grew from `before` to `now`: loop_suspected, oversize, malformed,
-/// ext_overruns, ext_queue_full, ext_tx_failures, silkit_tx_failures. The forwarded, filtered
+/// Whether a problem counter grew from `before` to `now`: loop_suspected, mac_unguarded, oversize,
+/// malformed, ext_overruns, ext_queue_full, ext_tx_failures, silkit_tx_failures. The forwarded, filtered
 /// and own_tx_dropped counts are not problems.
 [[nodiscard]] bool problems_grew(const EthernetBridgeStatistics& before, const EthernetBridgeStatistics& now) noexcept;
 
@@ -89,9 +92,13 @@ inline constexpr std::size_t kMaxNamedConflicts = 8;
 /// Loop prevention:
 ///  - the SIL Kit frame handler is registered for the RX direction only, so the bridge never sees
 ///    the frames it sends into SIL Kit itself;
-///  - the MAC rule (eth_link::MacSideTable) drops the bridge's own frames when the link delivers
-///    them back, and frames from an address on both sides (a second bridge, or one address on
-///    both sides), whatever the OS does.
+///  - the MAC rule (eth_link::MacSideTable) drops frames from an address seen on both sides (a
+///    second bridge between the same networks, or one address used on both) and warns. A frame
+///    from the outside whose source was seen from SIL Kit is the bridge's own coming back if the
+///    link echoes its transmissions (eth_link::ExternalLink::echoes_own_transmissions()): dropped
+///    quietly. On such a link the bridge cannot find a second bridge from that frame, and a loop
+///    through two bridges started by a device outside may go on. A second bridge is a
+///    configuration error the rule finds when it can; it does not promise to stop every loop.
 ///
 /// No queue of its own: SIL Kit -> link runs on SIL Kit's receive thread, link -> SIL Kit on the
 /// link's receive thread. Nothing pushes back; lost frames are counted.
@@ -101,6 +108,7 @@ class EthernetBridge
 {
 public:
     /// Throws std::invalid_argument for options eth_link::FrameFilter or MacSideTable rejects.
+    /// The filter's SIL Kit side MAC addresses are learned as on the SIL Kit side at once.
     EthernetBridge(SilKit::Services::Ethernet::IEthernetController& silkit, eth_link::ExternalLink& external,
                    EthernetBridgeOptions options = {});
     ~EthernetBridge();
@@ -135,12 +143,17 @@ private:
     void on_silkit_transmit(const SilKit::Services::Ethernet::EthernetFrameTransmitEvent& event);
     void on_external_event(const eth_link::LinkEvent& event);
     void on_external_frame(std::span<const std::uint8_t> frame);
+    /// Whether a frame from the outside whose source is on the SIL Kit side is the bridge's own
+    /// coming back. Today: whether the link echoes its transmissions at all. (A link that echoes
+    /// could keep a record of the frames sent and match them here, to find a second bridge.)
+    [[nodiscard]] bool is_own_frame_coming_back(std::span<const std::uint8_t> frame) const noexcept;
     /// Undoes start(): removes the SIL Kit frame handler, stops the link if it was started,
     /// removes the transmit handler and deactivates the controller if it was activated.
     void teardown(bool external_started, bool silkit_activated) noexcept;
     void set_last_error(std::string_view message, std::string_view detail = {});
     void warn(std::string text);
-    void warn_conflict(const eth_link::MacAddress& address);
+    /// `seen_first`, `seen_now`: "the external link" or "SIL Kit".
+    void warn_conflict(const eth_link::MacAddress& address, std::string_view seen_first, std::string_view seen_now);
     void warn_table_full();
 
     SilKit::Services::Ethernet::IEthernetController& silkit_;
@@ -152,11 +165,13 @@ private:
     std::optional<SilKit::Util::HandlerId> frame_handler_;
     std::optional<SilKit::Util::HandlerId> transmit_handler_;
     std::atomic<bool> running_{false};
+    bool link_echoes_ = false; // set by start() before the link starts
 
     std::atomic<std::uint64_t> silkit_to_ext_{0};
     std::atomic<std::uint64_t> ext_to_silkit_{0};
     std::atomic<std::uint64_t> own_tx_dropped_{0};
     std::atomic<std::uint64_t> loop_suspected_{0};
+    std::atomic<std::uint64_t> mac_unguarded_{0};
     std::atomic<std::uint64_t> filtered_to_ext_{0};
     std::atomic<std::uint64_t> filtered_from_ext_{0};
     std::atomic<std::uint64_t> oversize_{0};

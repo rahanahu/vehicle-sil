@@ -88,6 +88,13 @@ private:
 /// the thread that calls stop()). transmit() may be called from any thread, also concurrently
 /// with the handler and with itself.
 ///
+/// transmit() must not block, must not throw and must not wait for the receive thread; and while
+/// the link calls the handler, it must not hold a lock that transmit() takes. The bridge calls
+/// transmit() on SIL Kit's receive thread while SIL Kit holds the lock of its frame handlers, and
+/// the link's handler calls SendFrame(), which takes that same lock: a link lock held across the
+/// handler and taken in transmit() deadlocks the two threads. (The bridge still counts an
+/// exception from transmit() as a failed transmission instead of letting it through.)
+///
 /// The receive time of a frame is not reported: the OS's clock is not the simulation's.
 class ExternalLink
 {
@@ -103,8 +110,17 @@ public:
     /// longer running or called. Safe to call when not started.
     virtual void stop() noexcept = 0;
     /// Sends one frame (destination MAC to the end of the payload, no FCS). The frame is only
-    /// read during the call.
+    /// read during the call. Does not block: a full transmit queue is QueueFull.
     virtual TransmitResult transmit(std::span<const std::uint8_t> frame) = 0;
+    /// Whether the frames transmit() sends come back to the handler as received frames (some
+    /// interfaces deliver what was sent on them). Fixed for the link's lifetime.
+    ///
+    /// The bridge's loop rule depends on it. With false, a frame from the outside whose source
+    /// MAC the bridge saw from SIL Kit cannot be the bridge's own: the address is on both sides,
+    /// and the bridge drops its frames and warns. With true, the bridge takes such a frame for
+    /// its own coming back and drops it quietly, so it cannot tell a second bridge between the
+    /// same networks, or one address used on both sides, from its own frames.
+    [[nodiscard]] virtual bool echoes_own_transmissions() const noexcept = 0;
     /// What the link is, for the bridge's start line: kind, name, real or virtual
     /// (e.g. "tap 'vsil0' (virtual)").
     [[nodiscard]] virtual std::string describe() const = 0;

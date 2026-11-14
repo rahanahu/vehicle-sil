@@ -35,12 +35,13 @@ std::string_view describe_status(ethernet::EthernetTransmitStatus status) noexce
     return "unknown status";
 }
 
-using ProblemDeltas = std::array<std::pair<const char*, std::uint64_t>, 7>;
+using ProblemDeltas = std::array<std::pair<const char*, std::uint64_t>, 8>;
 
 ProblemDeltas problem_deltas(const EthernetBridgeStatistics& b, const EthernetBridgeStatistics& n) noexcept
 {
     return {{
         {"loop_suspected", n.loop_suspected - b.loop_suspected},
+        {"mac_unguarded", n.mac_unguarded - b.mac_unguarded},
         {"oversize", n.oversize - b.oversize},
         {"malformed", n.malformed - b.malformed},
         {"ext_overruns", n.ext_overruns - b.ext_overruns},
@@ -59,6 +60,7 @@ std::string format_statistics(const EthernetBridgeStatistics& s)
         {"ext_to_silkit", s.ext_to_silkit},
         {"own_tx_dropped", s.own_tx_dropped},
         {"loop_suspected", s.loop_suspected},
+        {"mac_unguarded", s.mac_unguarded},
         {"filtered_to_ext", s.filtered_to_ext},
         {"filtered_from_ext", s.filtered_from_ext},
         {"oversize", s.oversize},
@@ -124,6 +126,13 @@ EthernetBridge::EthernetBridge(ethernet::IEthernetController& silkit, eth_link::
   filter_(std::move(options.filter)),
   table_(options.mac_guard ? std::make_unique<MacSideTable>(options.mac_table_size) : nullptr)
 {
+    if (table_)
+    {
+        for (const auto& address : filter_.options().silkit_macs)
+        {
+            (void)table_->add_silkit_address(address);
+        }
+    }
 }
 
 EthernetBridge::~EthernetBridge()
@@ -148,6 +157,7 @@ void EthernetBridge::start()
     bool activated = false;
     try
     {
+        link_echoes_ = external_.echoes_own_transmissions();
         // The link first, so that frames arriving from SIL Kit can be sent right away.
         external_.start([this](const eth_link::LinkEvent& event) { on_external_event(event); });
         externalStarted = true;
@@ -252,12 +262,34 @@ void EthernetBridge::on_silkit_frame(const ethernet::EthernetFrameEvent& event)
         case MacSideTable::FromSilKit::Forward: break;
         case MacSideTable::FromSilKit::NewConflict:
             loop_suspected_.fetch_add(1);
-            warn_conflict(source);
+            warn_conflict(source, "the external link", "SIL Kit");
             return;
         case MacSideTable::FromSilKit::Blocked: loop_suspected_.fetch_add(1); return;
         }
+        if (check.not_learned)
+        {
+            mac_unguarded_.fetch_add(1);
+        }
     }
-    switch (external_.transmit(frame))
+    TransmitResult result = TransmitResult::Failed;
+    try
+    {
+        result = external_.transmit(frame);
+    }
+    catch (const std::exception& e)
+    {
+        // Breaks the link's contract; not let through into SIL Kit's receive thread.
+        ext_tx_failures_.fetch_add(1);
+        set_last_error("sending on the external link threw: ", e.what());
+        return;
+    }
+    catch (...)
+    {
+        ext_tx_failures_.fetch_add(1);
+        set_last_error("sending on the external link threw an unknown exception");
+        return;
+    }
+    switch (result)
     {
     case TransmitResult::Ok: silkit_to_ext_.fetch_add(1); break;
     case TransmitResult::QueueFull:
@@ -334,7 +366,8 @@ void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame)
     }
     if (table_)
     {
-        const auto check = table_->on_external_source(*eth_link::source_of(frame), verdict == FrameVerdict::Pass);
+        const auto source = *eth_link::source_of(frame);
+        const auto check = table_->on_external_source(source, verdict == FrameVerdict::Pass);
         if (check.table_full)
         {
             warn_table_full();
@@ -342,8 +375,24 @@ void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame)
         switch (check.outcome)
         {
         case MacSideTable::FromExternal::Forward: break;
-        case MacSideTable::FromExternal::OwnFrame: own_tx_dropped_.fetch_add(1); return;
+        case MacSideTable::FromExternal::SilKitSide:
+            if (is_own_frame_coming_back(frame))
+            {
+                own_tx_dropped_.fetch_add(1);
+                return;
+            }
+            // The link does not echo: someone else outside sends with an address of the SIL Kit side.
+            loop_suspected_.fetch_add(1);
+            if (table_->mark_both_sides(source))
+            {
+                warn_conflict(source, "SIL Kit", "the external link");
+            }
+            return;
         case MacSideTable::FromExternal::Blocked: loop_suspected_.fetch_add(1); return;
+        }
+        if (check.not_learned)
+        {
+            mac_unguarded_.fetch_add(1);
         }
     }
     if (verdict == FrameVerdict::Filtered)
@@ -362,6 +411,16 @@ void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame)
         silkit_tx_failures_.fetch_add(1);
         set_last_error("SIL Kit SendFrame failed: ", e.what());
     }
+    catch (...)
+    {
+        silkit_tx_failures_.fetch_add(1);
+        set_last_error("SIL Kit SendFrame failed with an unknown exception");
+    }
+}
+
+bool EthernetBridge::is_own_frame_coming_back(std::span<const std::uint8_t> /*frame*/) const noexcept
+{
+    return link_echoes_;
 }
 
 EthernetBridgeStatistics EthernetBridge::statistics() const noexcept
@@ -371,6 +430,7 @@ EthernetBridgeStatistics EthernetBridge::statistics() const noexcept
     s.ext_to_silkit = ext_to_silkit_.load();
     s.own_tx_dropped = own_tx_dropped_.load();
     s.loop_suspected = loop_suspected_.load();
+    s.mac_unguarded = mac_unguarded_.load();
     s.filtered_to_ext = filtered_to_ext_.load();
     s.filtered_from_ext = filtered_from_ext_.load();
     s.oversize = oversize_.load();
@@ -422,15 +482,17 @@ void EthernetBridge::warn(std::string text)
     warnings_.push_back(std::move(text));
 }
 
-void EthernetBridge::warn_conflict(const eth_link::MacAddress& address)
+void EthernetBridge::warn_conflict(const eth_link::MacAddress& address, std::string_view seen_first,
+                                   std::string_view seen_now)
 {
     const std::lock_guard lock(error_mutex_);
     if (named_conflicts_ < kMaxNamedConflicts)
     {
-        warnings_.push_back("MAC " + eth_link::to_string(address) +
-                            " is on both sides: frames from it came from the external link and now come from SIL "
-                            "Kit, so frames from it are dropped both ways (loop_suspected). Run one bridge between "
-                            "these networks, and give each device its own MAC address.");
+        warnings_.push_back("MAC " + eth_link::to_string(address) + " is on both sides: frames from it came from " +
+                            std::string(seen_first) + " and now come from " + std::string(seen_now) +
+                            ", so frames from it are dropped both ways (loop_suspected). Run one bridge between "
+                            "these networks and give each device its own MAC address, then restart the bridge: "
+                            "it keeps dropping them until it restarts.");
     }
     else if (named_conflicts_ == kMaxNamedConflicts)
     {
@@ -443,8 +505,9 @@ void EthernetBridge::warn_conflict(const eth_link::MacAddress& address)
 void EthernetBridge::warn_table_full()
 {
     warn("the MAC table is full (" + std::to_string(table_->capacity()) +
-         " addresses): frames from addresses seen from now on are forwarded without the check against loops. "
-         "Raise --mac-table-size if this many devices are expected.");
+         " addresses): frames from addresses that do not fit are forwarded without the check against loops "
+         "(mac_unguarded); addresses of the SIL Kit side take the places of the oldest addresses outside. Raise "
+         "--mac-table-size if this many devices are expected.");
 }
 
 } // namespace vehicle_sil::ethernet_bridge

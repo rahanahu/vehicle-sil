@@ -32,7 +32,7 @@ enum class Backend
 inline constexpr std::size_t kMinMaxFrameBytes = 60;
 inline constexpr std::size_t kMaxMaxFrameBytes = 65535;
 inline constexpr std::size_t kMinMacTableSize = 16;
-inline constexpr std::size_t kMaxMacTableSize = 65536;
+inline constexpr std::size_t kMaxMacTableSize = eth_link::MacSideTable::kMaxCapacity;
 
 struct BridgeOptions
 {

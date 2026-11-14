@@ -117,8 +117,18 @@ void FakeLink::set_transmit_result(TransmitResult result)
 
 void FakeLink::set_echo_own(bool echo)
 {
+    echo_own_.store(echo);
+}
+
+void FakeLink::set_transmit_throws(bool throws)
+{
     const std::lock_guard lock(mutex_);
-    echo_own_ = echo;
+    transmit_throws_ = throws;
+}
+
+void FakeLink::receive(std::span<const std::uint8_t> frame)
+{
+    enqueue_frame(frame);
 }
 
 void FakeLink::set_overruns_at_stop(std::uint64_t count)
@@ -287,12 +297,16 @@ TransmitResult FakeLink::transmit(std::span<const std::uint8_t> frame)
         {
             return TransmitResult::Failed;
         }
+        if (transmit_throws_)
+        {
+            throw std::runtime_error("fake link '" + name_ + "' threw in transmit()");
+        }
         if (transmit_result_ != TransmitResult::Ok)
         {
             return transmit_result_;
         }
         transmitted_.emplace_back(frame.begin(), frame.end());
-        echo = echo_own_;
+        echo = echo_own_.load();
     }
     segment_.transmit_from(*this, frame, echo);
     return TransmitResult::Ok;
