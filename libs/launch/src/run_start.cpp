@@ -112,6 +112,30 @@ void RunStartWindow::run(control_silkit::HubTransport& transport, SimulationCont
     }
 }
 
+namespace {
+
+/// A pause that takes effect at the time the simulation is at (--start-paused, a pause command
+/// before the start): the gate stops in the controller's step at 0, and that step may begin a
+/// moment after start() has returned. Waits for it, so that the first time event says "paused"
+/// when the simulation stands still and the time the result counts as standing still has begun.
+/// Not for long, and not once the pause has been taken back or the simulation has ended: the
+/// event then says what it said without the wait.
+void wait_for_pause_at_start(SimulationController& controller)
+{
+    const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < give_up)
+    {
+        const TimeState s = controller.time_state();
+        if (s.paused || !s.pause_target || *s.pause_target > s.now || has_finished(PeerStatus{controller.runtime().state()}) ||
+            controller.wait_until_paused(std::chrono::milliseconds(20)))
+        {
+            return;
+        }
+    }
+}
+
+} // namespace
+
 RunStart::RunStart(const RunContext& ctx, RunOutput& out, RunControl& control, RunNotes& notes, RunScenario& scenario,
                    RunParticipants& participants, RunOutcome& outcome) :
   ctx_(ctx), out_(out), control_(control), notes_(notes), participants_(participants), outcome_(outcome),
@@ -399,6 +423,7 @@ bool RunStart::wait_for_start(SimulationController& controller)
     out_.event([](EventStream& e) { e.phase(Phase::Running); });
     out_.say("simulation running");
     // Every participant starts at virtual time 0.
+    wait_for_pause_at_start(controller);
     notes_.note_time(controller, TimeNote::Start, outcome_);
     return true;
 }

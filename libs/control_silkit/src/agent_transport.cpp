@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -76,6 +77,13 @@ struct AgentTransport::State
     // The receive handler against the destructor.
     std::mutex command_mutex;
     bool command_closed = false; ///< guarded by command_mutex
+    /// Guarded by command_mutex: a hub has asked this agent (a probe) or sent it a command, so
+    /// there is one that can answer the last word.
+    bool hub_heard = false;
+    /// Guarded by command_mutex: the hub answered the last word. The destructor waits for it on
+    /// `last_word_answer` (the handler that sets it runs on SIL Kit's thread).
+    bool last_word_received = false;
+    std::condition_variable last_word_answer;
     wire::CommandMessage command;
     wire::Bytes submitted_bytes;
 
@@ -107,13 +115,20 @@ struct AgentTransport::State
     void on_command(SilKit::Util::Span<const std::uint8_t> data)
     {
         const std::lock_guard lock(command_mutex);
-        if (command_closed)
-        {
-            return;
-        }
         const std::span<const std::uint8_t> bytes(data.data(), data.size());
         // Whom it is for, before anything else is read: every agent receives every command.
         const auto to = wire::addressed(bytes);
+        if (command_closed)
+        {
+            // The transport is closing or has gone: only the hub's answer to the last word is
+            // still of interest (the destructor may be waiting for it).
+            if (to && to->kind == wire::Kind::LastWordReceived && to->session == session)
+            {
+                last_word_received = true;
+                last_word_answer.notify_all();
+            }
+            return;
+        }
         if (!to || to->kind == wire::Kind::Ready)
         {
             n_undecodable.fetch_add(1, std::memory_order_relaxed);
@@ -124,6 +139,13 @@ struct AgentTransport::State
             n_ignored.fetch_add(1, std::memory_order_relaxed);
             return;
         }
+        if (to->kind == wire::Kind::LastWordReceived)
+        {
+            // An answer to a last word this agent has not said.
+            n_undecodable.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        hub_heard = true;
         if (to->kind == wire::Kind::Probe)
         {
             // The hub's commands arrive here: say so (each time it asks).
@@ -160,6 +182,11 @@ AgentTransport::AgentTransport(control::Agent& agent, ParticipantRuntime& runtim
         throw std::invalid_argument("vehicle_sil::control_silkit::AgentTransport: max_message_bytes must be within " +
                                     std::to_string(wire::kMinMessageBytes) + ".." + std::to_string(wire::kMaxMessageBytes));
     }
+    if (options.last_word_wait < std::chrono::milliseconds::zero())
+    {
+        throw std::invalid_argument("vehicle_sil::control_silkit::AgentTransport: last_word_wait must not be negative "
+                                    "(0: do not wait for the hub's answer to the last word)");
+    }
     if (runtime.started())
     {
         throw std::logic_error("vehicle_sil::control_silkit::AgentTransport: the participant \"" + runtime.name() +
@@ -172,6 +199,7 @@ AgentTransport::AgentTransport(control::Agent& agent, ParticipantRuntime& runtim
     state->agent = &agent;
     state->session = new_session(state.get());
     state->max_bytes = options.max_message_bytes;
+    last_word_wait_ = options.last_word_wait;
 
     wire::Hello hello;
     hello.participant = runtime.name();
@@ -231,10 +259,15 @@ AgentTransport::AgentTransport(control::Agent& agent, ParticipantRuntime& runtim
 
 AgentTransport::~AgentTransport()
 {
+    // Whether there is a hub to wait for: one that has asked this agent or sent it a command.
+    // Without one (a simulation without a hub, or one whose commands do not arrive here) nothing
+    // waits for this agent, and nobody would answer.
+    bool wait = false;
     {
         // Waits for a command being submitted; later ones are ignored.
         const std::lock_guard lock(state_->command_mutex);
         state_->command_closed = true;
+        wait = state_->hub_heard && last_word_wait_ > std::chrono::milliseconds::zero();
     }
     {
         // Waits for a step being published; later steps publish nothing.
@@ -248,7 +281,18 @@ AgentTransport::~AgentTransport()
         catch (const std::exception&)
         {
             // The hub learns of the end from the participant's lifecycle.
+            wait = false;
         }
+    }
+    if (wait)
+    {
+        // The owner destroys the participant next, and SIL Kit then drops what it has not written
+        // to the socket yet: the last word, if an earlier send is still under way. So the hub's
+        // answer is waited for, for a bounded time (the hub may have gone, or be a version that
+        // does not answer). The answer arrives on SIL Kit's thread, which takes command_mutex
+        // only while this thread does not hold it.
+        std::unique_lock lock(state_->command_mutex);
+        state_->last_word_answer.wait_for(lock, last_word_wait_, [this] { return state_->last_word_received; });
     }
     lease_.reset();
 }

@@ -55,6 +55,9 @@ struct HubTransportStats
     /// Hellos that were not taken: of more participants than HubTransportOptions::max_links, or
     /// with the session number of another participant's connection.
     std::uint64_t refused_hellos = 0;
+    /// Last words of agents that were answered (each agent's transport waits for the answer
+    /// before its participant goes).
+    std::uint64_t last_words = 0;
     /// Step messages of virtual-time agents that arrived after the hub's participant had begun a
     /// step that starts after the message's step. Zero as long as every agent publishes within
     /// its steps and the hub's participant takes part in the time synchronisation: anything else
@@ -115,8 +118,15 @@ struct HelloReport
 /// - An agent's connection ends with its last word (AgentTransport's destructor), when its
 ///   participant's lifecycle goes to Error (a failed step, or a lost connection: the process
 ///   ended), and when this transport is destroyed. The commands still open for it then become
-///   final (control::Hub::agent_ended()): none waits for ever. A participant that shuts down in
-///   order and never says its last word keeps its connection until this transport is destroyed.
+///   final (control::Hub::agent_ended()): none waits for ever.
+/// - A last word is answered once its connection has been ended (also the last word of a session
+///   that has ended already), and the agent's transport waits for the answer, for a bounded time,
+///   before it lets its participant go (AgentTransportOptions::last_word_wait): as long as this
+///   transport is there and answers within that time, the last word of an agent arrives and what
+///   waited for the agent is settled when the agent's transport has been destroyed. A participant
+///   that shuts down in order and whose last word does not arrive (it has no AgentTransport of a
+///   version that waits, or the answer took longer than it waited) keeps its connection until
+///   this transport is destroyed.
 ///
 /// There is no authentication on this path: whoever can join the registry can publish commands,
 /// as it can send frames on the simulated buses.

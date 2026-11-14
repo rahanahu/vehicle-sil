@@ -19,7 +19,8 @@ namespace vehicle_sil::control::wire {
 
 /// The version of the format. A decoder accepts only its own version; every message says which
 /// version wrote it, and a hello of any version can be read far enough to name its participant
-/// (decode_hello()), so that a mismatch is reported instead of looking like silence.
+/// (decode_hello()), so that a mismatch is reported instead of looking like silence. It changes
+/// when the layout of a message changes; a new kind that the other side may ignore keeps it.
 inline constexpr std::uint16_t kVersion = 1;
 
 /// The largest command, submitted and step message. What an agent has to say in a step (results,
@@ -50,6 +51,11 @@ enum class Kind : std::uint8_t
     Step = 4,      ///< agent -> hub: what a step produced, or the agent's last word
     Probe = 5,     ///< hub -> agent: "do you receive my commands?" (sent again until answered)
     Ready = 6,     ///< agent -> hub: the answer to a probe: commands sent from now on arrive
+    /// hub -> agent: the answer to the agent's last word (a step message with StepMessage::final):
+    /// it has arrived and the hub has ended the connection. Added without a new version: an agent
+    /// that does not know it takes it for a message it cannot read and ignores it, and a hub that
+    /// does not know it never sends it.
+    LastWordReceived = 7,
 };
 
 enum class ErrorCode
@@ -136,7 +142,9 @@ struct Header
 /// false (`out` empty): the command would exceed kMaxMessageBytes.
 [[nodiscard]] bool encode_command(const CommandMessage& message, Bytes& out);
 void encode_submitted(const SubmittedMessage& message, Bytes& out);
-/// A probe for, or the ready answer of, the agent `session` (`kind`: Kind::Probe or Kind::Ready).
+/// A message that is the session of an agent and nothing else: a probe for it, its ready answer,
+/// or the answer to its last word (`kind`: Kind::Probe, Kind::Ready or Kind::LastWordReceived;
+/// std::invalid_argument otherwise).
 void encode_session(Kind kind, std::uint64_t session, Bytes& out);
 /// What a step at `time` produced, as step messages of at most `max_bytes` each (kMinMessageBytes
 /// ..kMaxMessageBytes; std::invalid_argument otherwise), given to `emit` in order: the results,
@@ -158,8 +166,9 @@ void encode_step(std::uint64_t session, SimTime time, bool final, std::span<cons
 [[nodiscard]] Error decode_command(std::span<const std::uint8_t> bytes, CommandMessage& out);
 [[nodiscard]] Error decode_submitted(std::span<const std::uint8_t> bytes, SubmittedMessage& out);
 [[nodiscard]] Error decode_step(std::span<const std::uint8_t> bytes, StepMessage& out);
-/// The session of a command, probe or ready message of this version, without decoding the rest
-/// (an agent looks at it first: every agent receives every command). Empty for anything else.
+/// The session of a command, probe, ready or last-word-received message of this version, without
+/// decoding the rest (an agent looks at it first: every agent receives every command). Empty for
+/// anything else.
 struct Addressed
 {
     Kind kind = Kind::Command;

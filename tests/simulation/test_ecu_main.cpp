@@ -772,7 +772,9 @@ TEST_CASE(ecu_main_offers_its_variables_to_the_simulation_unless_no_control)
         require(r.code == 0, "the ECU ran to the end of the simulation", r);
         require(start_error.empty(), "the controller started: " + start_error, r);
         require(probe.steps >= 10, "the ECU stepped", r);
-        // The ECU's last word reaches the hub while the controller's participant is still there.
+        // The ECU waited for the hub's answer to its last word before it let its participant go
+        // (for a bounded time: on a machine too busy to answer within it, the last word, written
+        // or not, is waited for here).
         const auto deadline = std::chrono::steady_clock::now() + 20s;
         while (std::chrono::steady_clock::now() < deadline)
         {

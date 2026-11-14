@@ -437,7 +437,7 @@ std::optional<Header> peek(std::span<const std::uint8_t> bytes, Error& error)
     Header header;
     header.version = static_cast<std::uint16_t>(bytes[4] | (bytes[5] << 8));
     error.version = header.version;
-    if (bytes[6] < static_cast<std::uint8_t>(Kind::Hello) || bytes[6] > static_cast<std::uint8_t>(Kind::Ready))
+    if (bytes[6] < static_cast<std::uint8_t>(Kind::Hello) || bytes[6] > static_cast<std::uint8_t>(Kind::LastWordReceived))
     {
         // Another version may have kinds this one does not know.
         if (header.version == kVersion)
@@ -638,9 +638,10 @@ Error decode_submitted(std::span<const std::uint8_t> bytes, SubmittedMessage& ou
 
 void encode_session(Kind kind, std::uint64_t session, Bytes& out)
 {
-    if (kind != Kind::Probe && kind != Kind::Ready)
+    if (kind != Kind::Probe && kind != Kind::Ready && kind != Kind::LastWordReceived)
     {
-        throw std::invalid_argument("vehicle_sil::control::wire::encode_session(): the kind must be Probe or Ready");
+        throw std::invalid_argument(
+            "vehicle_sil::control::wire::encode_session(): the kind must be Probe, Ready or LastWordReceived");
     }
     out.clear();
     Writer w(out);
@@ -667,12 +668,15 @@ std::optional<Addressed> addressed(std::span<const std::uint8_t> bytes)
     case static_cast<std::uint8_t>(Kind::Ready):
         out.kind = Kind::Ready;
         break;
+    case static_cast<std::uint8_t>(Kind::LastWordReceived):
+        out.kind = Kind::LastWordReceived;
+        break;
     default:
         return std::nullopt;
     }
     if (out.kind != Kind::Command && bytes.size() != kHeaderBytes + 8)
     {
-        return std::nullopt; // a probe and a ready message are their session and nothing else
+        return std::nullopt; // a probe, a ready and a last-word-received message are their session and nothing else
     }
     for (int i = 0; i < 8; ++i)
     {
