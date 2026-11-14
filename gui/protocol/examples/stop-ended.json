@@ -31,7 +31,7 @@
         "event": "time",
         "seq": 246,
         "t_ms": 2460,
-        "sim_ms": 109880,
+        "sim_ms": 109520,
         "speed": "max",
         "paused": false,
         "actual_speed": 1.5,
@@ -81,7 +81,8 @@
                       "j1939_name": "0x00000000FE000001",
                       "arbitrary_address_capable": false
                     }
-                  ]
+                  ],
+                  "mac": null
                 }
               ]
             },
@@ -94,7 +95,7 @@
                 "min": null,
                 "max": null,
                 "step": null,
-                "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                 "items": [],
                 "builtin": true
               },
@@ -176,7 +177,8 @@
                       "j1939_name": null,
                       "arbitrary_address_capable": false
                     }
-                  ]
+                  ],
+                  "mac": null
                 }
               ]
             },
@@ -189,7 +191,7 @@
                 "min": null,
                 "max": null,
                 "step": null,
-                "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                 "items": [],
                 "builtin": true
               },
@@ -385,7 +387,7 @@
           "ecu_step_ms": null,
           "step_delay_ms": null,
           "late_tolerance_ms": 10,
-          "sim_ms": 109880,
+          "sim_ms": 109520,
           "wall_ms": 1000,
           "actual_speed": 1.5,
           "paced_steps": 0,
@@ -501,7 +503,8 @@
                         "j1939_name": "0x00000000FE000001",
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -514,7 +517,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -596,7 +599,8 @@
                         "j1939_name": null,
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -609,7 +613,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },

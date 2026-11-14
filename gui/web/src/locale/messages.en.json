@@ -1270,9 +1270,9 @@
       "source": " バスにつなぐ ",
       "target": " Connect to the bus "
     },
-    "2701717060348009531": {
-      "source": "この ECU はバスから外れています（CAN と LIN に送らず、受けません。ステップは動き続けます）。",
-      "target": "This ECU is off the bus (it neither sends nor receives on CAN and LIN; its steps go on)."
+    "8065725015868127689": {
+      "source": "この ECU はバスから外れています（CAN、LIN、イーサネットに送らず、受けません。ステップは動き続けます）。",
+      "target": "This ECU is off the bus (it neither sends nor receives on CAN, LIN and Ethernet; its steps go on)."
     },
     "8398221335614319038": {
       "source": "（{$INTERPOLATION} 個）",

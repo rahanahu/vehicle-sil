@@ -35,8 +35,8 @@ import { bindVariable } from './variable-binding';
       @if (connected() === 'false') {
         <span class="mark" aria-hidden="true">⚠</span>
         <ng-container i18n
-          >この ECU はバスから外れています（CAN と LIN
-          に送らず、受けません。ステップは動き続けます）。</ng-container
+          >この ECU
+          はバスから外れています（CAN、LIN、イーサネットに送らず、受けません。ステップは動き続けます）。</ng-container
         >
       }
       @if (why(); as text) {
