@@ -644,8 +644,10 @@ TEST_CASE(virtual_time_gate_does_not_count_the_time_it_stood_still_as_late)
     // Paused at 0 for 1000 ms at speed 1, then 100 ms of simulation: had the pause counted, the
     // first step after it would be 1000 ms late. The same after a pause of 1000 ms at 100 ms and a
     // change of speed while paused.
-    // The time it stood still is the product's clock; sleep_for() is the test's. They can differ
-    // by a tick (about 16 ms on Windows), so a check that it counted the sleep allows for that.
+    // The time it stood still and the sleep are both steady_clock, but a check that it counted
+    // the sleep allows for a tick (about 16 ms on Windows): CI on Windows saw it count less than
+    // the sleep. Why is unconfirmed; perhaps sleep_for() returns a tick early there, measured by
+    // steady_clock.
     constexpr auto kTick = 20ms;
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true, .speed = 1.0, .late_tolerance = 500ms});
     sim.start();

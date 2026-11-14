@@ -1798,7 +1798,7 @@ public:
         changed_.notify_all();
     }
 
-    /// Waits for an event line that contains every one of `parts`; returns it.
+    /// Waits for an event line that contains every one of `parts` (up to 120 s, scaled); returns it.
     std::string wait_for(const std::vector<std::string>& parts)
     {
         std::unique_lock lock(mutex_);
@@ -1819,7 +1819,7 @@ public:
         return found;
     }
 
-    /// Waits until `n` event lines contain every one of `parts`.
+    /// Waits until `n` event lines contain every one of `parts` (up to 120 s, scaled).
     void wait_for_count(const std::vector<std::string>& parts, std::size_t n)
     {
         std::unique_lock lock(mutex_);
@@ -1837,7 +1837,8 @@ public:
 
     void write(const std::string& text) { require(process_->write_input(text), "cannot write to the launcher"); }
 
-    /// Waits until its standard error makes `done` true, or it has ended; returns the standard error.
+    /// Waits until its standard error makes `done` true, or it has ended (up to 120 s, scaled); returns
+    /// the standard error.
     template <class Done>
     std::string wait_for_error(Done done)
     {

@@ -45,13 +45,19 @@ def test_concurrent_runs_start_one_launcher(tmp_path: Path, checked_first: bool)
             replies = await asyncio.gather(*(c.post("api/run", {"file": "forever.yaml"}) for _ in range(4)))
             assert sorted(s for s, _ in replies) == [200, 409, 409, 409], replies
             assert all(b["error"]["code"] == "already-running" for s, b in replies if s == 409)
-            async def one_launcher() -> bool:
-                return len(children(gui.proc.pid)) == 1
-            assert await until_async(one_launcher), children(gui.proc.pid)
+            # The run's launcher is the one child (not a launcher that checks the names) ...
+            async def the_run_alone() -> bool:
+                found = children(gui.proc.pid)
+                status, body = await c.get("api/session")
+                session = body.get("session") or {}
+                return (len(found) == 1 and session.get("id") == 1
+                        and (session.get("launcher") or {}).get("pid") == found[0])
+            assert await until_async(the_run_alone), children(gui.proc.pid)
             launchers = children(gui.proc.pid)
-            assert len(launchers) == 1, launchers
-            status, body = await c.get("api/session")
-            assert body["session"]["id"] == 1 and body["session"]["launcher"]["pid"] == launchers[0]
+            # ... and stays the only one: no refused request starts another a moment later (a check that
+            # something does not happen, so the time is not scaled).
+            await asyncio.sleep(1.0)
+            assert children(gui.proc.pid) == launchers, (launchers, children(gui.proc.pid))
             return launchers
         launchers = run_async(main, gui)
         assert stop_and_time(gui.proc) < 10

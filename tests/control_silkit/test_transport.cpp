@@ -294,13 +294,13 @@ std::string text_of(TargetStatus status)
     return kNames[static_cast<std::size_t>(status)];
 }
 
-/// The result of an operation that has to settle: fails the test, instead of reading an empty
-/// optional, when it did not settle within the wait.
-OperationResult settled(const std::optional<OperationResult>& done)
+/// The result of operation `seq` (`what` it is, for the message), which has to settle: fails the
+/// test, instead of reading an empty optional, when it did not settle within the wait.
+OperationResult settled(const std::optional<OperationResult>& done, std::uint64_t seq, const std::string& what)
 {
     if (!done)
     {
-        throw std::runtime_error("the operation did not settle within the wait");
+        throw std::runtime_error("operation " + std::to_string(seq) + " (" + what + ") did not settle within the wait");
     }
     return *done;
 }
@@ -790,18 +790,20 @@ TEST_CASE(a_missing_hello_ends_the_wait_at_its_deadline_and_a_stop_request_ends_
         HubSide side(registry.uri, {"A", "Silent"});
         TestEcu a("A", registry.uri);
         TestEcu silent("Silent", registry.uri, {.transport = false});
+        HelloReport first;
         HelloReport hellos;
         Wall::duration waited{};
         side.controller->set_start_window([&](const StartWindow& window) {
-            // A's hello comes (how soon depends on the machine): first that, then the wait that
-            // only its deadline ends.
-            static_cast<void>(side.transport->wait_for_hellos({"A"}, Wall::now() + scaled_timeout(30s),
-                                                              [&window] { return window.cancelled(); }));
+            // A's hello comes (how soon depends on the machine): first that, within the window,
+            // then the wait that only its deadline ends.
+            first = side.transport->wait_for_hellos({"A"}, std::min(window.deadline(), Wall::now() + scaled_timeout(30s)),
+                                                    [&window] { return window.cancelled(); });
             const auto begin = Wall::now();
             hellos = side.transport->wait_for_hellos({"A", "Silent"}, begin + 300ms, [&window] { return window.cancelled(); });
             waited = Wall::now() - begin;
         });
         start_together(*side.controller, {a.peer.get(), silent.peer.get()});
+        CHECK(first.connected == std::vector<std::string>{"A"});
         CHECK(hellos.connected == std::vector<std::string>{"A"});
         CHECK(hellos.missing == std::vector<std::string>{"Silent"});
         CHECK(hellos.mismatched.empty());
@@ -1142,7 +1144,7 @@ TEST_CASE(closing_the_hub_transport_settles_what_is_open)
     CHECK(!side.hub.peers().at(0).connected);
     // A write now is not sent.
     const std::uint64_t later = side.hub.write(OperationRequest{{{"A", "cmd", Value{std::int64_t{2}}}}});
-    check_status(settled(side.hub.wait_done(later, scaled_timeout(20s))), "A", TargetStatus::Invalid);
+    check_status(settled(side.hub.wait_done(later, scaled_timeout(20s)), later, "a write after the hub transport was closed"), "A", TargetStatus::Invalid);
     side.controller->stop("done");
     a.end();
 }
@@ -1262,7 +1264,7 @@ TEST_CASE(a_real_time_peer_is_a_peer_too_and_a_restarted_one_replaces_the_old)
         },
         30s));
     const std::uint64_t again = hub.write(OperationRequest{{{"Real", "cmd", Value{std::int64_t{11}}}}});
-    check_status(settled(hub.wait_done(again, scaled_timeout(30s))), "Real", TargetStatus::Applied);
+    check_status(settled(hub.wait_done(again, scaled_timeout(30s)), again, "a write to the restarted Real"), "Real", TargetStatus::Applied);
     // Real-time messages are not measured against the virtual time.
     CHECK_EQ(side.transport->stats().late_messages, std::uint64_t{0});
 
@@ -1718,7 +1720,7 @@ TEST_CASE(a_participant_started_anew_after_it_failed_is_connected_again)
         // moment after the participant's own end).
         CHECK(eventually([&] { return has_finished(side.controller->runtime().peer_status("Crash")); }, 30s));
         const std::uint64_t late = hub.write(OperationRequest{{{"Crash", "v1", Value{std::int64_t{2}}}}});
-        check_status(settled(hub.wait_done(late, scaled_timeout(30s))), "Crash", TargetStatus::Invalid);
+        check_status(settled(hub.wait_done(late, scaled_timeout(30s)), late, "a write after Crash ended"), "Crash", TargetStatus::Invalid);
     }
 }
 
