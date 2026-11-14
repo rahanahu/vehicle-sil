@@ -185,7 +185,7 @@ J1939_CAN  can   Engine, Dashboard
 passed: 0 errors, 0 warnings, 0 notes
 ```
 
-- 最後の行が `passed:` なら終了コード 0 です。食い違いがあれば、`error:`、`warning:`、`note:` の行に、ファイルの行番号、何が違うか、どう直すかが出ます。読み方は [ECU をまとめて動かす](integrate-ecus.md) の「照合で食い違いを見つける」にあります。
+- 最後の行が `passed:` なら終了コード 0 です。食い違いがあれば、`error:`、`warning:`、`note:` の行に、ファイルの行番号、何が違うか、どう直すかと、行の終わりに所見の名前（`[single-participant]` など）が出ます。読み方は [ECU をまとめて動かす](integrate-ecus.md) の「照合で食い違いを見つける」にあります。
 - 自分の ECU だけで試すときは、相手を外します（`check simulation.yaml --disable Dashboard`）。ネットワークに 1 つしかいないので、警告 `single-participant` が出ます。
 
 ## 動かす（`run`）

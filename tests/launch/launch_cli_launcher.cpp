@@ -402,41 +402,41 @@ void describe(const Options& o)
                 "\n"
                 "error: <dir>/failing.yaml:5: participant 'Usage': <helper> --err 'error: Usage: unknown argument "
                 "--describe\\n' --exit 4 --describe --name Usage ended with exit code 4; it did not take --describe or "
-                "--name: if it is not made with ecu_main, set describe: false\n"
+                "--name: if it is not made with ecu_main, set describe: false [describe-failed]\n"
                 "    the end of its standard error:\n"
                 "    error: Usage: unknown argument --describe\n"
                 "error: <dir>/failing.yaml:7: participant 'Chatty': <helper> --out 'hello\\n' --describe --name Chatty "
                 "ended with exit code 0, but its output is not a description: the output is not a JSON object. Is it made "
                 "with ecu_main, and does nothing else write to its standard output? If it is not made with ecu_main, set "
-                "describe: false\n"
+                "describe: false [describe-output]\n"
                 "    the start of its standard output:\n"
                 "    hello\n"
                 "error: <dir>/failing.yaml:9: participant 'Future': <helper> --out '{\"vehicle_sil_ecu\": 2}' --describe "
                 "--name Future wrote a description in format 2, but this vehicle_sil_launch (vehicle-sil <version>) reads "
                 "format 1: the executable is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a "
-                "newer one\n"
+                "newer one [describe-version]\n"
                 "error: <dir>/failing.yaml:11: participant 'Missing': the executable missing/ecu does not exist (looked for "
                 "<dir>/missing/ecu): build it, or correct the path (a relative path is from the directory of the "
-                "configuration file)\n"
+                "configuration file) [executable]\n"
                 // A JSON argument passes byte for byte, "{{name}}" as "{name}" (also for an ecu_main executable).
                 "error: <dir>/failing.yaml:16: participant 'Braces': <helper> --out '{\"vehicle_sil_ecu\": 2, \"x\": "
                 "{\"y\": \"{name}\"}}' --describe "
                 "--name Braces wrote a description in format 2, but this vehicle_sil_launch (vehicle-sil <version>) reads "
                 "format 1: the executable is of a newer vehicle-sil; use a vehicle_sil_launch of its vehicle-sil or a "
-                "newer one\n"
+                "newer one [describe-version]\n"
                 // "{{odd}}" in the path is the directory "{odd}".
                 "error: <dir>/failing.yaml:18: participant 'Escaped': the executable {{odd}}/missing does not exist "
                 "(looked for <dir>/{odd}/missing): build it, or correct the path (a relative path is from the directory "
-                "of the configuration file)\n"
+                "of the configuration file) [executable]\n"
                 "error: <dir>/failing.yaml:21: participant 'Newer': <helper> --out '{\"vehicle_sil_ecu\": 1, "
                 "\"vehicle_sil\": \"9.0.0\", \"name\": \"Newer\", \"step_ns\": null, \"networks\": [{\"name\": \"Ray\", "
                 "\"kind\": \"flexray\", \"use\": \"flexray\", \"nodes\": []}]}' --describe --name Newer wrote "
                 "networks[0].use \"flexray\", which this vehicle_sil_launch does not know (it knows raw, j1939, "
                 "lin_master, lin_slave and ethernet): the executable was built with vehicle-sil 9.0.0, this vehicle_sil_launch with "
                 "vehicle-sil <version>. A newer vehicle-sil may add such values without a new format: use a "
-                "vehicle_sil_launch of the executable's vehicle-sil or a newer one\n"
+                "vehicle_sil_launch of the executable's vehicle-sil or a newer one [describe-unknown-value]\n"
                 "note: <dir>/failing.yaml:12: participant 'Logger': not checked (describe: false): vehicle_sil_launch "
-                "cannot compare its name, step and networks with this file\n"
+                "cannot compare its name, step and networks with this file [not-checked]\n"
                 "\n"
                 "failed: 7 errors, 0 warnings, 1 note\n",
                 "check failing.yaml");
@@ -457,7 +457,7 @@ void describe(const Options& o)
     require(contains(slowOut, "error: <dir>/slow.yaml:5: participant 'Slow': <helper> --err 'waiting for the bus\\n' "
                               "--sleep-ms 60000 --describe --name Slow did not end within " + limit + " ms and was stopped. "
                               "--describe only builds the ECU, so something in its set-up waits (a connection, input): fix "
-                              "that, or give vehicle_sil_launch check a longer --describe-timeout-ms\n"
+                              "that, or give vehicle_sil_launch check a longer --describe-timeout-ms [describe-timeout]\n"
                               "    the end of its standard error:\n"
                               "    waiting for the bus\n") &&
                 contains(slowOut, "error: <dir>/slow.yaml:7: participant 'Flood': <helper> --flood --describe --name Flood "
@@ -504,7 +504,7 @@ void unreadable(const Options& o)
     const Captured none = launch(o, {"check", m});
     expect_code(none, 3, "check nope.yaml");
     expect_text(none.standard_output,
-                "error: " + m + ": the file does not exist: check the path\n\ncannot read " + m + ": 1 error, 0 warnings, 0 notes\n",
+                "error: " + m + ": the file does not exist: check the path [file]\n\ncannot read " + m + ": 1 error, 0 warnings, 0 notes\n",
                 "check nope.yaml");
     const Captured noneJson = launch(o, {"check", m, "--json"});
     expect_code(noneJson, 3, "check nope.yaml --json");
@@ -514,13 +514,13 @@ void unreadable(const Options& o)
 
     const Captured directory = launch(o, {"check", shown_path(o.work_dir)});
     expect_code(directory, 3, "check <directory>");
-    require(contains(directory.standard_output, ": this is a directory: name the configuration file in it\n"),
+    require(contains(directory.standard_output, ": this is a directory: name the configuration file in it [file]\n"),
             "check <directory> wrote:\n" + directory.standard_output);
 
 #ifndef _WIN32
     const Captured device = launch(o, {"check", "/dev/null"});
     expect_code(device, 3, "check /dev/null");
-    require(contains(device.standard_output, ": this is not a regular file (a device or a pipe?): name the configuration file\n"),
+    require(contains(device.standard_output, ": this is not a regular file (a device or a pipe?): name the configuration file [file]\n"),
             "check /dev/null wrote:\n" + device.standard_output);
 #endif
     const fs::path big = o.work_dir / "big.yaml";
@@ -529,7 +529,7 @@ void unreadable(const Options& o)
     const Captured huge = launch(o, {"check", shown_path(big)});
     expect_code(huge, 3, "check big.yaml");
     require(contains(huge.standard_output, ": the file is larger than 16 MiB, too large for a configuration: name the "
-                                           "configuration file\n"),
+                                           "configuration file [file]\n"),
             "check big.yaml wrote:\n" + huge.standard_output);
 
     const fs::path syntax = o.work_dir / "syntax.yaml";

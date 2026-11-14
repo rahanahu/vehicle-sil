@@ -542,12 +542,12 @@ void check(const Options& o)
                 "Logger       -     not checked (describe: false)\n"
                 "\n"
                 "error: sim.yaml:7: participant 'Logger': unknown key 'requried': did you mean 'required'? (the keys "
-                "here: name, command, step_ms, describe, required, enabled, manual, role, variables)\n"
+                "here: name, command, step_ms, describe, required, enabled, manual, role, variables) [unknown-key]\n"
                 "note: sim.yaml:4: participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot "
-                "compare its name, step and networks with this file\n"
+                "compare its name, step and networks with this file [not-checked]\n"
                 "note: sim.yaml:5: participant 'Logger': the command has no {registry_uri}, so the executable is not told "
                 "where the simulation's registry is: if it needs it, add its option for the registry URI with "
-                "\"{registry_uri}\" as the value\n"
+                "\"{registry_uri}\" as the value [no-registry-uri]\n"
                 "\n"
                 "nothing was started: the check found errors (vehicle_sil_launch check sim.yaml shows the same)\n"
                 "\n"
@@ -587,7 +587,7 @@ void crash(const Options& o)
                 "Brake        yes       exit code 0\n"
                 "\n"
                 "error: sim.yaml:5: participant 'Engine': it failed while the simulation was running, and the launcher "
-                "aborted the simulation: its process exited with code 7; the lines [Engine] above show what it wrote\n"
+                "aborted the simulation: its process exited with code 7; the lines [Engine] above show what it wrote [participant-failed]\n"
                 "\n"
                 "failed: 1 error, 0 warnings, 0 notes\n",
                 "run with a crashing ECU");
@@ -616,7 +616,7 @@ void step(const Options& o)
                 "Brake        yes       exit code 0\n"
                 "\n"
                 "error: sim.yaml:5: participant 'Engine': it failed while the simulation was running, and the launcher "
-                "aborted the simulation: its process exited with code 1; the lines [Engine] above show what it wrote\n"
+                "aborted the simulation: its process exited with code 1; the lines [Engine] above show what it wrote [participant-failed]\n"
                 "\n"
                 "failed: 1 error, 0 warnings, 0 notes\n",
                 "run with an ECU whose step fails");
@@ -642,7 +642,7 @@ void optional(const Options& o)
                                  "Logger       no        exit code 5\n"
                                  "\n"
                                  "warning: sim.yaml:7: participant 'Logger': its process exited with code 5; the lines "
-                                 "[Logger] above show what it wrote\n"
+                                 "[Logger] above show what it wrote [exit-code]\n"
                                  "\n";
     const Captured run = launch(o, {"run", "sim.yaml"}, dir);
     expect_code(run, 0, "run with a failing optional participant");
@@ -685,7 +685,7 @@ void not_joined(const Options& o)
                 "error: sim.yaml:8: participant 'Ghost': it did not join the simulation within 8000 ms "
                 "(start_timeout_ms), although its process was running: it must connect to the registry given with "
                 "{registry_uri} as the participant 'Ghost' with a coordinated lifecycle (or set required: false); if it "
-                "is only slow, raise start_timeout_ms\n"
+                "is only slow, raise start_timeout_ms [not-joined]\n"
                 "\n"
                 "failed: 1 error, 0 warnings, 1 note\n",
                 "run with a participant that never joins");
@@ -736,7 +736,7 @@ void quitter(const Options& o)
                 "Quitter      yes       exit code 2\n"
                 "\n"
                 "error: sim.yaml:8: participant 'Quitter': it ended before the simulation started: its process exited "
-                "with code 2, so the simulation could not start; the lines [Quitter] above show what it wrote\n"
+                "with code 2, so the simulation could not start; the lines [Quitter] above show what it wrote [ended-before-start]\n"
                 "\n"
                 "failed: 1 error, 0 warnings, 1 note\n",
                 "run with a participant that ends before the start");
@@ -774,11 +774,11 @@ void hang(const Options& o)
                 "\n"
                 "error: sim.yaml:6: participant 'Stuck': it was still running " + stop_ms + " ms (stop_timeout_ms) after the "
                 "simulation ended: the launcher asked it to stop (" + kStop + "), and its process exited with code 9; a "
-                "participant should end when the simulation ends (the lines [Stuck] above show what it wrote)\n"
+                "participant should end when the simulation ends (the lines [Stuck] above show what it wrote) [did-not-end]\n"
                 "error: sim.yaml:8: participant 'Deaf': it was still running " + stop_ms + " ms (stop_timeout_ms) after the "
                 "simulation ended: the launcher asked it to stop (" + kStop + "), and as it did not end within " + stop_ms + " ms "
                 "either, ended it with the processes it started; a participant should end when the simulation ends (the "
-                "lines [Deaf] above show what it wrote)\n"
+                "lines [Deaf] above show what it wrote) [did-not-end]\n"
                 "\n"
                 "failed: 2 errors, 0 warnings, 0 notes\n",
                 "run with ECUs that do not end");
@@ -810,7 +810,7 @@ void grandchild(const Options& o)
                 "Engine       yes       exit code 0\n"
                 "\n"
                 "warning: sim.yaml:5: participant 'Engine': processes it started were still running after it had ended: "
-                "the launcher ended them; end them in the participant before it exits\n"
+                "the launcher ended them; end them in the participant before it exits [left-processes]\n"
                 "\n"
                 "passed: 0 errors, 1 warning, 0 notes\n",
                 "run with an ECU that leaves a process");
@@ -849,7 +849,7 @@ void path(const Options& o)
     const std::string out = run.standard_output;
     require(contains(out, "note: " + shown_path(dir / "sim.yaml") + ":8: participant 'Where': " + o.helper.stem().string() +
                               " is not in the directory of the configuration file; it runs " + shown_path(o.helper) +
-                              " (found on PATH)\n"),
+                              " (found on PATH) [found-on-path]\n"),
             "the note names where it runs from:\n" + out);
     require(contains(out, "Where        no        exit code 0\n"), "it ran:\n" + out);
     const std::string err = lf(run.standard_error);
@@ -942,7 +942,7 @@ void interrupt(const Options& o)
                 "Engine       yes       exit code 0\n"
                 "Brake        yes       exit code 0\n"
                 "\n"
-                "note: sim.yaml: interrupted (" + by + "): the launcher stopped the simulation and the participants\n"
+                "note: sim.yaml: interrupted (" + by + "): the launcher stopped the simulation and the participants [interrupted]\n"
                 "\n"
                 "interrupted: 0 errors, 0 warnings, 1 note\n",
                 "run interrupted");
@@ -1041,9 +1041,9 @@ void ended_early(const Options& o)
                 "Engine       yes       exit code 130\n"
                 "\n"
                 "error: sim.yaml:5: participant 'Engine': its process exited with code 130; the lines [Engine] above show "
-                "what it wrote\n"
+                "what it wrote [exit-code]\n"
                 "note: sim.yaml: the simulation ended before stop_at_ms (1000000000000 ms): a participant stopped it; if "
-                "that is not expected, the lines above show which one\n"
+                "that is not expected, the lines above show which one [ended-before-stop-at]\n"
                 "\n"
                 "failed: 1 error, 0 warnings, 1 note\n",
                 "run that a participant ended early");
@@ -1106,7 +1106,7 @@ void interrupt_ending(const Options& o)
                 "Stuck        yes       stopped (" + kStop + "), exit code 9\n"
                 "\n"
                 "note: sim.yaml: interrupted (" + by + "): the launcher stopped the participants instead of waiting for "
-                "them to end\n"
+                "them to end [interrupted]\n"
                 "\n"
                 "interrupted: 0 errors, 0 warnings, 1 note\n",
                 "run interrupted while it waits for the participants");
@@ -1140,11 +1140,11 @@ void timeout(const Options& o)
                 "\n"
                 "error: sim.yaml: the simulation did not end within 5000 ms of wall-clock time (--timeout-ms), so the "
                 "launcher aborted it: a participant may hang in a step (the lines above show what the participants "
-                "wrote); if it is only slow, raise --timeout-ms\n"
+                "wrote); if it is only slow, raise --timeout-ms [timeout]\n"
                 "error: sim.yaml:6: participant 'Hang': it was still running 300 ms (stop_timeout_ms) after the "
                 "simulation ended: the launcher asked it to stop (" + kStop + "), and as it did not end within 300 ms "
                 "either, ended it with the processes it started; a participant should end when the simulation ends (the "
-                "lines [Hang] above show what it wrote)\n"
+                "lines [Hang] above show what it wrote) [did-not-end]\n"
                 "\n"
                 "failed: 2 errors, 0 warnings, 0 notes\n",
                 "run with an ECU that hangs in a step");
@@ -1376,9 +1376,9 @@ void disabled(const Options& o)
                 "Ghost        -      disabled\n"
                 "\n"
                 "note: sim.yaml:7: participant 'Brake': disabled (enabled: false, or --disable): it is neither checked nor "
-                "started, and the other findings are about the simulation without it\n"
+                "started, and the other findings are about the simulation without it [participant-disabled]\n"
                 "note: sim.yaml:10: participant 'Ghost': disabled (enabled: false, or --disable): it is neither checked nor "
-                "started, and the other findings are about the simulation without it\n"
+                "started, and the other findings are about the simulation without it [participant-disabled]\n"
                 "\n"
                 "run: the simulation ran to stop_at_ms (300 ms) and ended\n"
                 "\n"
@@ -3674,7 +3674,7 @@ void variable_map(const Options& o)
     require(contains(lf(unfit.standard_output),
                      "error: sim.yaml:7: participant 'Body': variables: body.fill: the executable has no variable 'levle': "
                      "did you mean 'level'? Correct the name, or write { absent: true } if this executable does not have "
-                     "the variable\n"),
+                     "the variable [variable-map-unknown]\n"),
             "the mapping that does not fit:\n" + lf(unfit.standard_output) + lf(unfit.standard_error));
     log("CHECK a mapping that does not fit stops the run before it starts -> ok");
 
@@ -3874,7 +3874,7 @@ void variants(const Options& o)
     const Captured other = launch(o, {"run", "sim.yaml", "--variant", "small", "--scenario", "only.yaml"}, dir);
     expect_code(other, 1, "run a scenario that is only for another variant");
     require(contains(lf(other.standard_output), "error: only.yaml:2: the scenario is only for the variant medium (its only), not "
-                                                "for small: run it with --variant medium, or add small to only\n"),
+                                                "for small: run it with --variant medium, or add small to only [scenario-variant]\n"),
             "the scenario that is not for the variant:\n" + lf(other.standard_output));
     const Captured mine = launch(o, {"check", "sim.yaml", "--variant", "medium", "--scenario", "only.yaml", "--json"}, dir);
     expect_code(mine, 0, "check a scenario that is only for this variant");
@@ -3913,7 +3913,7 @@ void variants(const Options& o)
     expect_code(disabled, 1, "check a scenario that uses a participant that --disable leaves out");
     require(contains(lf(disabled.standard_output), "error: door.yaml:4: 'Door.level': participant 'Door' is left out of this run "
                                                    "(enabled: false, or --disable): take it in (--enable Door), or run a scenario "
-                                                   "that does not use it\n"),
+                                                   "that does not use it [scenario-variable]\n"),
             "the participant that --disable leaves out:\n" + lf(disabled.standard_output));
     log("CHECK a participant the variant leaves out: its steps are skipped and take their time -> ok");
 
@@ -3927,7 +3927,7 @@ void variants(const Options& o)
                      "wait_until, line 4) is skipped, so it passes whatever the ECUs do (the notes say why each is skipped). If the "
                      "scenario is not for this variant, list the variants it is for in the scenario (only: [medium, broken]); if it "
                      "is, map what the steps look at to what the variant has (variables in the variant, "
-                     "docs/simulation-config.md)\n"),
+                     "docs/simulation-config.md) [scenario-nothing-checked]\n"),
             "the warning about a scenario that checks nothing:\n" + lf(hollow.standard_output));
     expect_code(launch(o, {"check", "sim.yaml", "--variant", "small", "--scenario", "heater.yaml", "--strict"}, dir), 1,
                 "check --strict a scenario whose checks are all skipped");
@@ -4091,7 +4091,7 @@ void test_command(const Options& o)
                      "\n"
                      "warning: sim.yaml: nothing was run: the 1 run was skipped, because no scenario is for the variant small "
                      "(the only of each scenario; --variant chose what runs). Run a variant the scenarios are for, or correct "
-                     "their only. The test checked nothing: it passes (--strict would fail on that)\n"
+                     "their only. The test checked nothing: it passes (--strict would fail on that) [test-nothing-run]\n"
                      "\n"
                      "passed: 1 run, 0 passed, 0 failed, 1 skipped\n"),
             "a test in which every run is skipped:\n" + lf(nothing.standard_output));
@@ -4162,7 +4162,7 @@ void test_command(const Options& o)
     const Captured unreadable = launch(o, {"test", "nowhere.yaml", "--scenarios", "scn"}, dir);
     expect_code(unreadable, 3, "test with a file that is not there");
     expect_text(lf(unreadable.standard_output),
-                "error: nowhere.yaml: the file does not exist: check the path\n\ncannot read nowhere.yaml: nothing was run\n",
+                "error: nowhere.yaml: the file does not exist: check the path [file]\n\ncannot read nowhere.yaml: nothing was run\n",
                 "test with a file that is not there");
     log("CHECK test: what ends it before its first run (usage, an unreadable file) -> ok");
 }
@@ -4267,7 +4267,7 @@ void scenario_wave(const Options& o)
                      "\nwarning: s.yaml:12: the pulse of Body.level is 5 ms wide, shorter than the step of "
                      "participant 'Body' (10 ms): this step begins at 270 ms, so the ECU has the pulse's value for one whole step of 10 "
                      "ms (the one at 270 ms), not for 5 ms. Make width_ms 10 or more; to run it as it is without this message, add "
-                     "undersampled: ok to the step\n"),
+                     "undersampled: ok to the step [scenario-wave-undersampled]\n"),
             "the warning of the check:\n" + lf(checked.standard_output));
     expect_code(launch(o, {"check", "--strict", "sim.yaml", "--scenario", "s.yaml"}, warned), 1, "check --strict of the same");
     const std::string same = run(warned, {}, "with the warning");
@@ -4467,7 +4467,7 @@ void scenario_expect_beside(const Options& o)
     require(contains(lf(checked.standard_output), "\nscenario s.yaml: 3 steps (1 expect not checked)\n") &&
                 contains(lf(checked.standard_output), "\nnote: s.yaml:4: the ramp runs; its expect is not checked (ramp Body.level to "
                                                       "30 over 100 ms, expect not checked: Body.body.heater; Body.level le 30): " +
-                                                          reason + "\n"),
+                                                          reason + " [scenario-step-skipped]\n"),
             "the note of the check:\n" + lf(checked.standard_output));
     const Captured text = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml"}, dir);
     expect_code(text, 0, "run of an expect beside a ramp with an absent variable");
@@ -4510,7 +4510,7 @@ void scenario_failures(const Options& o)
         require(contains(out, "run: the simulation ran until the scenario was over (110 ms) and ended\n") &&
                     contains(out, "scenario s.yaml: FAILED, 1 of 3 steps passed\n") &&
                     contains(out, "error: s.yaml:4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): timed out at 100 ms "
-                                  "(100 ms after 0 ms): Body.level eq 6, but it was 5 (its sample of 100 ms)\n") &&
+                                  "(100 ms after 0 ms): Body.level eq 6, but it was 5 (its sample of 100 ms) [scenario-timeout]\n") &&
                     contains(out, "\nfailed: 1 error, 0 warnings, 0 notes\n"),
                 "the failure in the text:\n" + out);
         const Captured json = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
@@ -4537,7 +4537,7 @@ void scenario_failures(const Options& o)
                     contains(out, "scenario s.yaml: FAILED, 2 of 3 steps passed\n") &&
                     contains(out, "error: s.yaml:7: wait_until Body.level eq 6 (timeout 1000 ms): the simulation stopped at 100 ms "
                                   "(stop_at_ms) before this step was decided (it began at 90 ms): there was not enough time for the "
-                                  "scenario; raise stop_at_ms, or leave it out (the run then ends with the scenario)\n"),
+                                  "scenario; raise stop_at_ms, or leave it out (the run then ends with the scenario) [scenario-out-of-time]\n"),
                 "out of time:\n" + out);
     }
     {
@@ -4550,11 +4550,12 @@ void scenario_failures(const Options& o)
         expect_code(run, 1, "an ECU fails during the scenario");
         const std::string out = lf(run.standard_output);
         require(contains(out, "run: the simulation was aborted: participant 'Body' failed\n") &&
-                    contains(out, "scenario s.yaml: incomplete, 1 of 2 steps passed\n") && contains(out, "participant-failed") == false &&
-                    contains(out, "participant 'Body': it failed while the simulation was running") &&
+                    contains(out, "scenario s.yaml: incomplete, 1 of 2 steps passed\n") && contains(out, "participant 'Body': it failed while the simulation was running") &&
+                    contains(out, "show what it wrote [participant-failed]\n") &&
                     contains(out, "error: s.yaml:4: the scenario did not get to its end: the simulation ended at ") &&
                     contains(out, " when 1 of 2 steps had passed and the step at line 4 (wait_until Door.level eq 6 (timeout 5000 "
-                                  "ms)) was not decided yet; the other findings and the lines above say why the simulation ended\n"),
+                                  "ms)) was not decided yet; the other findings and the lines above say why the simulation ended "
+                                  "[scenario-incomplete]\n"),
                 "an incomplete scenario:\n" + out);
     }
     {
@@ -4620,11 +4621,11 @@ void scenario_failures(const Options& o)
                                            head + "  - set: { Body.levl: 5 }\n"
                                                   "  - at_ms: 10\n    set: { Body.gain: 1, Door.ticks: 2 }\n");
         const std::string errors = "error: s.yaml:3: 'Body.levl': participant 'Body' has no variable 'levl': did you mean 'Body.level'? "
-                                   "(vehicle_sil_launch check --json lists the variables)\n"
+                                   "(vehicle_sil_launch check --json lists the variables) [scenario-variable]\n"
                                    "error: s.yaml:5: Body.gain is a parameter: it can be written only before the first step, that is "
-                                   "with set in a step at 0 (at_ms: 0, or the first steps without a time), not at 10 ms\n"
+                                   "with set in a step at 0 (at_ms: 0, or the first steps without a time), not at 10 ms [scenario-not-writable]\n"
                                    "error: s.yaml:5: Door.ticks is an output of its ECU: it can be read (expect, wait_until), not "
-                                   "written; write one of the ECU's inputs instead\n";
+                                   "written; write one of the ECU's inputs instead [scenario-not-writable]\n";
         const Captured run = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml"}, dir);
         expect_code(run, 1, "run with a scenario that has errors");
         require(contains(lf(run.standard_output), errors) && contains(lf(run.standard_output), "nothing was started: the check found errors") &&
@@ -4640,7 +4641,7 @@ void scenario_failures(const Options& o)
         expect_code(disabled, 1, "a scenario that uses a disabled participant");
         require(contains(lf(disabled.standard_output),
                          "error: s.yaml:3: 'Door.level': participant 'Door' is left out of this run (enabled: false, or --disable): "
-                         "take it in (--enable Door), or run a scenario that does not use it\n"),
+                         "take it in (--enable Door), or run a scenario that does not use it [scenario-variable]\n"),
                 disabled.standard_output);
         const Captured missing = launch(o, {"run", "sim.yaml", "--scenario", "none.yaml", "--json"}, dir);
         expect_code(missing, 1, "a scenario file that does not exist");
