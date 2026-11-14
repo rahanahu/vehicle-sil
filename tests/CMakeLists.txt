@@ -1,7 +1,8 @@
 include(VehicleSilTestHelpers)
 
 # The tests of each area are listed in tests/<area>/CMakeLists.txt. This file holds only what
-# the areas share and the options that add or skip whole areas.
+# the areas share. A new area needs no line here: every directory below that has a CMakeLists.txt
+# is added (see the end of this file).
 
 # Every test sees the headers of unit/: the harness and the factor on the upper bounds of waiting
 # (unit/test_timeout_scale.hpp, also used by the process launchers and the helpers they share).
@@ -18,50 +19,28 @@ vehicle_sil_target_defaults(vehicle_sil_test_main)
 # launchers, on the child processes of vehicle_sil::process.
 add_library(vehicle_sil_test_process STATIC
   integration/launcher_support.cpp
-  integration/simulation_run.cpp)
+  integration/simulation_run.cpp
+)
 target_include_directories(vehicle_sil_test_process PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/integration)
 target_link_libraries(vehicle_sil_test_process PUBLIC vehicle_sil::process vehicle_sil_cli)
 vehicle_sil_target_defaults(vehicle_sil_test_process)
 
-add_subdirectory(unit)
-add_subdirectory(process)
-add_subdirectory(core)
-add_subdirectory(control)
-if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
-  add_subdirectory(control_server)
-endif()
-add_subdirectory(lin)
-add_subdirectory(step)
-add_subdirectory(can)
-add_subdirectory(eth)
-add_subdirectory(testkit)
-add_subdirectory(ecu)
-add_subdirectory(simulation)
-add_subdirectory(launch)
-add_subdirectory(multi_host)
-# The ECU project template (template/) and its fetch script.
-add_subdirectory(template)
-# The scripts of scripts/ with tests of their own.
-add_subdirectory(scripts)
-add_subdirectory(peer)
-add_subdirectory(control_silkit)
-# The J1939 stack, its parts, the typed messages and the boundary checks; uses no example.
-add_subdirectory(j1939)
-# What the bridge executables share: run_bridge() (every platform).
-add_subdirectory(bridge_runtime)
-# Vector XL CAN bridge (against a fake XL driver; runs on every platform).
-add_subdirectory(vector_xl)
-# Ethernet bridge: the external link library and the bridge (against fake links; every platform).
-add_subdirectory(eth_link)
-add_subdirectory(ethernet_bridge)
-if(VEHICLE_SIL_TEST_FETCHCONTENT)
-  add_subdirectory(fetchcontent)
-endif()
-
-# The remaining tests run the example peers as processes.
 if(NOT VEHICLE_SIL_BUILD_EXAMPLES)
   message(STATUS "vehicle-sil: VEHICLE_SIL_BUILD_EXAMPLES is OFF; process-level J1939 and virtual time tests are skipped")
-  return()
 endif()
-add_subdirectory(integration)
-add_subdirectory(virtual_time)
+
+# Every directory below with a CMakeLists.txt is an area, added in the order of the names (the
+# order is the same on every platform and file system). An area that exists only under a condition
+# says so at the top of its own CMakeLists.txt and returns (control_server, fetchcontent,
+# integration, virtual_time; multi_host and parts of others skip themselves the same way).
+# The order matters in one place only: eth_link sets VEHICLE_SIL_FAKE_PCAP_DIR, which
+# ethernet_bridge reads, and the names keep eth_link first. An area may not test for a target of
+# another area with if(TARGET ...), because that would depend on the order.
+file(GLOB _vehicle_sil_test_areas
+     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+     CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*/CMakeLists.txt)
+list(SORT _vehicle_sil_test_areas COMPARE STRING CASE SENSITIVE)
+foreach(_vehicle_sil_test_area IN LISTS _vehicle_sil_test_areas)
+  get_filename_component(_vehicle_sil_test_area ${_vehicle_sil_test_area} DIRECTORY)
+  add_subdirectory(${_vehicle_sil_test_area})
+endforeach()

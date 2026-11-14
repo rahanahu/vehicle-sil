@@ -2,7 +2,9 @@
 # step::Host. Links only vehicle_sil::eth, so building it checks that the library needs no SIL Kit.
 vehicle_sil_add_harness_tests(vehicle_sil_eth_tests
   PREFIX eth LABELS unit eth TIMEOUT 60
-  SOURCES test_eth_values_and_bus.cpp test_eth_channel.cpp
+  SOURCES
+    test_eth_channel.cpp
+    test_eth_values_and_bus.cpp
   LINK vehicle_sil::eth)
 target_include_directories(vehicle_sil_eth_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -23,6 +25,8 @@ set_tests_properties(eth.boundary PROPERTIES LABELS "unit;eth" TIMEOUT 60)
 # (in-process registry), where the records must equal the virtual network's.
 vehicle_sil_add_harness_tests(vehicle_sil_eth_silkit_tests
   PREFIX eth_silkit LABELS unit eth TIMEOUT 120
-  SOURCES test_silkit_eth_port.cpp test_eth_silkit_runs.cpp
+  SOURCES
+    test_eth_silkit_runs.cpp
+    test_silkit_eth_port.cpp
   LINK vehicle_sil::eth_silkit vehicle_sil::core)
 target_include_directories(vehicle_sil_eth_silkit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

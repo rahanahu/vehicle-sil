@@ -268,6 +268,30 @@ TEST_CASE(bus_model_lets_a_high_priority_frame_wait_only_for_the_frame_on_the_bu
     CHECK_EQ(txs.back().end_ns, 10'000'000 + 41 * kExt8At250k);
 }
 
+TEST_CASE(bus_model_clear_tells_the_removed_frames_in_queue_order)
+{
+    CanBusModel model(CanBusModelOptions{500'000, 3});
+    const auto a = model.add_sender();
+    const auto b = model.add_sender();
+    // Move the ring buffer's head, so that the queue wraps.
+    CHECK(model.submit(a, ext(1), at(0ms), 11));
+    CHECK(model.submit(a, ext(2), at(0ms), 12));
+    CHECK_EQ(run(model, SimTime{}, kForever).size(), 2u);
+    CHECK(model.submit(a, ext(3), at(1s), 13));
+    CHECK(model.submit(a, ext(4), at(1s), 14));
+    CHECK(model.submit(a, ext(5), at(1s), 15));
+    CHECK(model.submit(b, ext(6), at(1s), 16));
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> removed;
+    const auto note = [&removed](const CanBusModel::Removed& r) { removed.emplace_back(r.frame.id, r.context); };
+    CHECK_EQ(model.clear(a, note), 3u);
+    CHECK(removed == (std::vector<std::pair<std::uint32_t, std::uint64_t>>{{3, 13}, {4, 14}, {5, 15}}));
+    CHECK_EQ(model.queued(a), 0u);
+    CHECK_EQ(model.queued(), 1u);
+    CHECK_EQ(model.clear(a, note), 0u);
+    CHECK_EQ(removed.size(), 3u);
+    CHECK(vehicle_sil::unit::throws<std::invalid_argument>([&] { static_cast<void>(model.clear(7, note)); }));
+}
+
 TEST_CASE(bus_model_limits_each_queue_and_clears_a_sender)
 {
     CanBusModel model(CanBusModelOptions{500'000, 2});

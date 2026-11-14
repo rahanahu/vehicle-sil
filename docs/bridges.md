@@ -133,6 +133,14 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
 - `--xl-target virtual` は Vector Virtual CAN（`XL_HWTYPE_VIRTUAL`）を選びます。`physical` は、それ以外のハードウェアの CAN チャネル（CANcase、VN16xx など）を選びます。
 - `--xl-channel` は、そのターゲットの CAN 対応チャネルの中での 1 始まりの番号です。並びはドライバの設定順で、`--list-channels` の表示と同じです。CAN に対応していないチャネル（LIN 専用など）は数えません。
 - 存在しない番号を指定すると、使えるチャネルの一覧を出して終了コード 3 で終わります。
+- 引数の誤りには、誤りの 1 行と、使い方の見方の 1 行だけを標準エラーに出して、終了コード 4 で終わります（使い方の全文は `--help`）。
+
+  ```
+  error: --xl-target must be 'virtual' or 'physical', got: cancase
+  Run 'vehicle_sil_vector_xl_bridge --help' for the options.
+  ```
+- registry につながらないときは、つなごうとしたアドレスと次にすることを 1 行で出して、終了コード 3 で終わります: `[bridge] FAIL setup: cannot connect to the SIL Kit registry at <uri> (<SIL Kit の文>). Start the registry first ('sil-kit-registry --listen-uri <uri>'), or give the address it listens at with --registry-uri.`（文は `bridges/common` の `registry_failure_message()` が作ります）。
+- Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（`--participant`、`--network` に ASCII 以外の文字を使えます）。
 - チャネルとデバイスは、起動のときにこの CLI で決めます。Control API と構成ファイル（`vehicle_sil_launch`）には、チャネルとデバイスを選ぶ項目はありません。ほかの口（Control API、構成ファイル、GUI）に選ぶ手段を足すときは、CLI と同じモデル（`vehicle_sil::vector_xl::XlTarget` とチャネル番号）を使います。
 - `--bitrate` は 15000〜1000000 bit/s です（`xlCanSetChannelBitrate` の範囲）。指定するときは、init 権限が必要です。ほかのアプリケーションが init 権限を持っている場合は、黙って別のビットレートで動かずに、起動を失敗させます。指定しなければ、チャネルの設定を変えません。
 - 終了コードは次のとおりです: 0（Ctrl+C、Ctrl+Break、SIGTERM、コンソールのウィンドウを閉じたときの正常終了）、1（実行中の失敗。SIL Kit の participant が止まる途中か終わった状態になった（registry の停止や接続断）、起動の途中のまま Running にならない、または XL のチャネルが使えなくなった（デバイスを外した））、3（XL ドライバ、チャネル選択、SIL Kit の失敗）、4（引数の誤り）。

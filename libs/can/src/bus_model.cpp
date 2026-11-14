@@ -151,6 +151,21 @@ std::size_t CanBusModel::clear(std::size_t sender)
     return removed;
 }
 
+std::size_t CanBusModel::clear(std::size_t sender, SinkRef<Removed> sink)
+{
+    if (sender >= queues_.size())
+    {
+        throw std::invalid_argument("vehicle_sil::can::CanBusModel: unknown sender");
+    }
+    const Queue& queue = queues_[sender];
+    for (std::size_t i = 0; i < queue.size; ++i)
+    {
+        const Pending& pending = queue.slots[(queue.head + i) % capacity_];
+        sink(Removed{pending.frame, pending.context});
+    }
+    return clear(sender);
+}
+
 void CanBusModel::set_bitrate(std::uint32_t bitrate)
 {
     if (bitrate == 0)

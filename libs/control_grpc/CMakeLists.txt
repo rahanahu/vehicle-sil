@@ -8,7 +8,8 @@ add_library(vehicle_sil_control_grpc STATIC
   src/control_service.cpp
   src/server.cpp
   src/simulation_monitor.cpp
-  src/time_control_silkit.cpp)
+  src/time_control_silkit.cpp
+)
 add_library(vehicle_sil::control_grpc ALIAS vehicle_sil_control_grpc)
 set_target_properties(vehicle_sil_control_grpc PROPERTIES EXPORT_NAME control_grpc)
 target_include_directories(vehicle_sil_control_grpc PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

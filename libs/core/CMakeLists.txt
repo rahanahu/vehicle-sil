@@ -9,7 +9,8 @@ add_library(vehicle_sil_core STATIC
   src/simulation_controller.cpp
   src/simulation_watch.cpp
   src/tick_scheduler.cpp
-  src/time_gate.cpp)
+  src/time_gate.cpp
+)
 add_library(vehicle_sil::core ALIAS vehicle_sil_core)
 set_target_properties(vehicle_sil_core PROPERTIES EXPORT_NAME core)
 target_include_directories(vehicle_sil_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

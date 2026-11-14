@@ -5,7 +5,8 @@
 add_library(vehicle_sil_eth STATIC
   src/channel.cpp
   src/frame.cpp
-  src/virtual_ethernet_bus.cpp)
+  src/virtual_ethernet_bus.cpp
+)
 add_library(vehicle_sil::eth ALIAS vehicle_sil_eth)
 set_target_properties(vehicle_sil_eth PROPERTIES EXPORT_NAME eth)
 target_include_directories(vehicle_sil_eth PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

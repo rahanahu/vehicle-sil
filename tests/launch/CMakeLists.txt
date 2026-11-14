@@ -5,8 +5,14 @@ if(NOT TARGET vehicle_sil::launch)
 endif()
 vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
   PREFIX launch LABELS unit launch TIMEOUT 60
-  SOURCES test_config.cpp test_check.cpp test_run.cpp test_events.cpp test_scenario.cpp test_shared_values.cpp
-          test_batch.cpp
+  SOURCES
+    test_batch.cpp
+    test_check.cpp
+    test_config.cpp
+    test_events.cpp
+    test_run.cpp
+    test_scenario.cpp
+    test_shared_values.cpp
   LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
        vehicle_sil_cli) # the other tools' exit codes and durations (test_shared_values.cpp)
 # libs/launch/src: the run's parts that have no dependencies and are tested as written (run_start_limit.hpp).
@@ -27,7 +33,13 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_cli_launcher
     PREFIX launch_cli LABELS integration launch TIMEOUT 120
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/cli
-    SCENARIOS docs describe strict unreadable usage enabled
+    SCENARIOS
+      describe
+      docs
+      enabled
+      strict
+      unreadable
+      usage
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --engine $<TARGET_FILE:vehicle_sil_engine_ecu>
@@ -64,14 +76,72 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
     PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
-    SCENARIOS docs check crash step optional not_joined quitter hang grandchild path network busy_port interrupt interrupt_twice
-              interrupt_ending ended_early timeout no_console killed usage disabled events events_usage stdin_stop
-              stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
-              events_slow events_findings events_nonblocking events_output events_stderr realtime late stall stand_still
-              speed_change step_width pause_step paused_failures time_usage control scenario scenario_same variable_map variants
-              test_command test_interrupt live
-              scenario_disconnect scenario_failures manual_late manual_fails manual_stop manual_frozen
-              manual_thawed manual_again manual_timeout manual_stranger ethernet
+    SCENARIOS
+      busy_port
+      check
+      control
+      crash
+      disabled
+      docs
+      ended_early
+      ethernet
+      events
+      events_findings
+      events_nonblocking
+      events_output
+      events_slow
+      events_stalled
+      events_stderr
+      events_usage
+      grandchild
+      hang
+      interrupt
+      interrupt_ending
+      interrupt_twice
+      killed
+      late
+      live
+      manual_again
+      manual_fails
+      manual_frozen
+      manual_late
+      manual_stop
+      manual_stranger
+      manual_thawed
+      manual_timeout
+      network
+      no_console
+      no_console_stdin
+      not_joined
+      optional
+      output_closed
+      path
+      pause_step
+      paused_failures
+      quitter
+      realtime
+      scenario
+      scenario_disconnect
+      scenario_failures
+      scenario_same
+      speed_change
+      stall
+      stand_still
+      stdin_ending
+      stdin_eof
+      stdin_killed
+      stdin_stop
+      stdin_twice
+      step
+      step_width
+      stop_once
+      test_command
+      test_interrupt
+      time_usage
+      timeout
+      usage
+      variable_map
+      variants
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
