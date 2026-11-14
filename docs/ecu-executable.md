@@ -30,6 +30,7 @@ int main(int argc, char** argv)
 | `--registry-uri <uri>` | `<uri>` の registry の SIL Kit のシミュレーションに、Coordinated で仮想時間の participant として参加し、シミュレーションが終わるまで動きます。始めるのと止めるのは、ほかのプロセスの controller（`vehicle_sil_sim_controller`）です。`<uri>` のホストがループバックのアドレス（`127.0.0.1`、`localhost` など）なら、ほかの participant からの接続をループバックのアドレスだけで待ち受けます（環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` で全部のアドレス。[simulation-run.md](simulation-run.md#待ち受けるアドレス)）。 |
 | `--start-timeout-ms <ms>` | `--registry-uri` のときだけ。参加してからシミュレーションが始まるまで待つ時間（1 以上の整数。既定は 30000）です。それまでに始まらなければ、終了コード 3 です。ECU をたくさん起動するときや、遅いマシンで使います。 |
 | `--no-control` | `--registry-uri` のとき、ECU の変数をシミュレーションへ出しません（下の「変数を出す」）。ECU の動きは変わりません。`--describe` に付けると、`variables` はそのままで、`control` が `null` になります（まとめる側は、この ECU を待ちません）。`--local` に付けても何も変わりません。 |
+| `--silkit-config <file>` | `--registry-uri` のとき、この participant に SIL Kit の構成ファイル（YAML か JSON）を渡します（下の「SIL Kit の構成を渡す」）。`--describe` に付けると、ファイルを読んで確かめるだけです（誤りは終了コード 3）。`--local` には付けられません（終了コード 4）。 |
 | `--local --run-for-ms <ms>` | この ECU だけを、プロセス内の仮想バスの上で、仮想時間で `<ms>` ミリ秒（1 以上の整数）動かします。ECU を単体で確かめるときに使います。 |
 | `--name <name>` | `EcuMainOptions::name` の代わりの participant 名です（ASCII か UTF-8）。`--describe` の `name` にも効きます。変わるのは名前だけで、J1939 の NAME、アドレス、変数の名前は同じです。同じ ECU を 2 つ載せるときは、それらがぶつからないようにしてください（やり方は [ECU をまとめて動かす](howto/integrate-ecus.md) の「同じ ECU を 2 つ載せる」）。 |
 | `--help`（`-h`） | 使い方を標準出力に書いて、0 で終了します。ほかの引数に誤りがあっても使い方を書きます。ただし、値を取る引数の後ろの `-h` は値です（`--name -h` は名前が `-h`）。 |
@@ -59,6 +60,40 @@ ECU は（変数を宣言していなくても、`ecu.connected` があります
 - 出すことは `--describe` の `control` で自己申告します（`Ecu::describe()` 自体は申告しません。`ecu_main` が足します）。まとめる側は、申告した ECU だけを待ちます。
 - `--no-control` で出さなくなります（`--describe` の `control` も `null` になります）。アプリが Agent に自分の通信の側を付けるときは、`--no-control` を付けてください（`--describe` の時点で通信の側が付いていれば `ecu_main` は申告しませんが、付いていなければ「出す」と申告し、まとめる側が hello を待ちます）。アプリが自分で通信の側（`control::TransportLease` を持つもの）を Agent に付けているときも、`ecu_main` は付けません。
 - この区間に認証はありません（registry に参加できる者は、変数に書けます）。
+
+### SIL Kit の構成を渡す（`--silkit-config`）
+
+SIL Kit のミドルウェアやログの設定を変えるとき（決まったポートで待ち受ける、接続を試す回数を増やす、SIL Kit のログをファイルに書く、など）に使います。なくても動きます。
+
+```yaml
+# engine.silkit.yaml: 決まったポートで待ち受け、SIL Kit のログをファイルにも書く
+Middleware:
+  AcceptorUris: ["tcp://0.0.0.0:8601"]
+  ConnectAttempts: 5
+Logging:
+  Sinks:
+    - Type: File
+      Level: Info
+      LogName: engine_silkit
+```
+
+```sh
+engine/vehicle_sil_engine_ecu --registry-uri silkit://192.0.2.10:8500 --silkit-config engine.silkit.yaml
+```
+
+- ファイルの形式とキーは、SIL Kit の participant の構成（SIL Kit の文書の「Configuration」）です。知らないキーや値の誤りは SIL Kit が決めます（知らないキーは警告、型の違う値は誤り）。相対パスは、プロセスの作業ディレクトリから数えます。
+- 書いたものは、書いたとおりに使います。書いていないものには、vehicle-sil の既定を足します。
+  - `Middleware.AcceptorUris` がなければ、構成なしのときと同じです（registry の URI がループバックのアドレスなら、ループバックだけで待ち受ける。[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。
+  - Windows では `Middleware.EnableDomainSockets` を `false` にします。`true` と書いても `false` になります（SIL Kit の既定が `true` なので、書いたかどうかを見分けられません）。
+  - `Experimental.TimeSynchronization.DynamicSimulationStep` がなければ `false` にします。
+- 次の構成は、接続する前に誤りにして、直し方を言います（終了コード 3。`error: <名前>: --silkit-config "<file>": ...`）。
+  - `ParticipantName` が participant 名（`--name`、なければ `EcuMainOptions::name`）と違う。SIL Kit は構成の名前で参加するので、その名前を待つ側が待ち続けます。同じ名前なら通ります。
+  - `Middleware.RegistryUri` が `--registry-uri` と違う（SIL Kit は構成の URI につなぎます）。同じなら通ります。`--describe` は URI を知らないので、比べません。
+  - `DynamicSimulationStep: true`。vehicle-sil の participant は、自分の固定のステップ幅で動きます。
+- `Includes` で分けたファイルは、構成ファイルのあるディレクトリからも探します。上の検査と既定は、分けたファイルも合わせた結果を見ます（どのファイルに書いても同じです）。
+- コントローラーの節（`CanControllers` の `Network` など）は書かないでください。ネットワークの名前が `--describe` の自己申告とずれます（確かめる仕組みはありません）。
+- `vehicle_sil_launch` では、`command` に書きます（[simulation-config.md](simulation-config.md) の「ecu_main の実行ファイル」）。照合の `--describe` にも渡るので、構成の誤りは `check` で分かります。
+- ライブラリから使うときは、`SilKitOptions::participant_configuration`（`Simulation`。そのプロセスの全部の participant に渡ります）、`ParticipantRuntimeOptions::participant_configuration` に構成の文字列を渡します。ファイルから読むときは `participant_configuration_from_file()` を使います（決まりは [internals/core.md](internals/core.md) の「SIL Kit の構成の既定」）。
 
 ### 止まるよう求められたとき（`--registry-uri`）
 

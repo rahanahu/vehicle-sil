@@ -17,6 +17,14 @@ target_link_libraries(vehicle_sil_core PUBLIC SilKit::SilKit)
 if(WIN32)
   target_link_libraries(vehicle_sil_core PRIVATE winmm) # timeBeginPeriod (deadline_waiter.cpp)
 endif()
+# The YAML/JSON parser that SIL Kit builds from its ThirdParty directory (rapidyaml, MIT): adds
+# vehicle-sil's defaults to a SIL Kit participant configuration of the caller's
+# (merged_participant_configuration()). Without the target (SIL Kit not built from source), such a
+# configuration is used as it is.
+if(TARGET rapidyaml)
+  target_link_libraries(vehicle_sil_core PRIVATE rapidyaml)
+  target_compile_definitions(vehicle_sil_core PRIVATE VEHICLE_SIL_CORE_HAS_RAPIDYAML)
+endif()
 vehicle_sil_target_defaults(vehicle_sil_core)
 
 # vehicle_sil::sim_base - simulation time and the step inbox, without SIL Kit. The headers stay

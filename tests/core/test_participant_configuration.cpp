@@ -18,9 +18,11 @@
 #include "vehicle_sil/core/participant_runtime.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -198,7 +200,7 @@ TEST_CASE(a_registry_uri_is_loopback_by_its_written_address)
     }
 }
 
-TEST_CASE(a_participant_given_no_configuration_gets_the_default_and_one_of_its_own_stays)
+TEST_CASE(a_participant_given_no_configuration_gets_the_default)
 {
     set_variable(kListenOnNetworkVariable.data(), nullptr);
     // Always: no dynamic simulation steps (the fixed step is the participant's own).
@@ -249,12 +251,10 @@ TEST_CASE(a_participant_given_no_configuration_gets_the_default_and_one_of_its_o
     // A registry: never acceptors (it listens at its URI), and TCP only on every system.
     CHECK(std::string(default_registry_configuration()) == R"({"Middleware":{"EnableDomainSockets":false}})");
 
-    CHECK(participant_configuration_or_default("{}", "silkit://0.0.0.0:1") == network);
-    CHECK(participant_configuration_or_default("", "silkit://0.0.0.0:1") == network);
-    CHECK(participant_configuration_or_default(" {}\r\n", "silkit://0.0.0.0:1") == network);
-    CHECK(contains(participant_configuration_or_default("{}", "silkit://127.0.0.1:1"), "AcceptorUris"));
-    const std::string own = "Logging:\n  Sinks:\n    - Type: Stdout\n";
-    CHECK(participant_configuration_or_default(own, "silkit://127.0.0.1:1") == own);
+    CHECK(merged_participant_configuration("{}", "P", "silkit://0.0.0.0:1") == network);
+    CHECK(merged_participant_configuration("", "P", "silkit://0.0.0.0:1") == network);
+    CHECK(merged_participant_configuration(" {}\r\n", "P", "silkit://0.0.0.0:1") == network);
+    CHECK(contains(merged_participant_configuration("{}", "P", "silkit://127.0.0.1:1"), "AcceptorUris"));
     // With members of the caller's: the same default, in one object.
     const std::string logging = R"("Logging":{"Sinks":[{"Type":"Stdout","Level":"Info"}]})";
     const std::string with = default_participant_configuration_with("silkit://localhost:1", logging);
@@ -269,6 +269,265 @@ TEST_CASE(a_participant_given_no_configuration_gets_the_default_and_one_of_its_o
     CHECK(SilKit::Config::ParticipantConfigurationFromString(
               default_participant_configuration_with("silkit://localhost:1", logging)) != nullptr);
     CHECK(SilKit::Config::ParticipantConfigurationFromString(std::string(default_registry_configuration())) != nullptr);
+}
+
+namespace {
+
+std::size_t occurrences(std::string_view text, std::string_view part)
+{
+    std::size_t n = 0;
+    for (auto at = text.find(part); at != std::string_view::npos; at = text.find(part, at + part.size()))
+    {
+        ++n;
+    }
+    return n;
+}
+
+/// A new directory for the files of one test, removed with it.
+struct TemporaryDirectory
+{
+    explicit TemporaryDirectory(const std::string& name) :
+      path(std::filesystem::temp_directory_path() /
+           ("vsil-" + name + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())))
+    {
+        std::filesystem::create_directories(path);
+    }
+    ~TemporaryDirectory()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all(path, ignored);
+    }
+    void write(const std::string& file, const std::string& text) const
+    {
+        std::ofstream out(path / file, std::ios::binary);
+        out << text;
+        CHECK(out.good());
+    }
+    std::filesystem::path path;
+};
+
+/// What SIL Kit reads from the configuration that a participant given `configuration` is made
+/// with, as SIL Kit's JSON (`"Key": value`; a boolean is 1 or 0; SIL Kit's defaults are left out).
+std::string read_by_silkit(std::string_view configuration, std::string_view name, std::string_view uri,
+                           std::optional<bool> listen_on_network = std::nullopt)
+{
+    return SilKit::Config::ParticipantConfigurationToJson(SilKit::Config::ParticipantConfigurationFromString(
+        merged_participant_configuration(configuration, name, uri, listen_on_network)));
+}
+
+const std::string kFixedStep = R"("Experimental": {"TimeSynchronization": {"DynamicSimulationStep": 0}})";
+const std::string kLogging = "Logging:\n  Sinks:\n    - Type: Stdout\n      Level: Warn\n      Format: Json\n";
+
+} // namespace
+
+TEST_CASE(a_configuration_of_the_callers_gets_the_defaults_for_what_it_leaves_out)
+{
+    set_variable(kListenOnNetworkVariable.data(), nullptr);
+    // Logging only: the acceptors and the fixed step are vehicle-sil's, the sink is the caller's.
+    const std::string loopback = read_by_silkit(kLogging, "Engine", "silkit://127.0.0.1:8500");
+    CHECK(contains(loopback, R"("tcp://127.0.0.1:0"])"));
+    CHECK(!contains(loopback, "0.0.0.0"));
+    CHECK(contains(loopback, kFixedStep));
+    CHECK(contains(loopback, R"("Logging": {"Sinks": [{"Type": "Stdout","Level": "Warn"}]})"));
+    // The caller's text itself stays: also what SIL Kit's JSON does not write (the sink's format).
+    const std::string text = merged_participant_configuration(kLogging, "Engine", "silkit://127.0.0.1:8500");
+    CHECK(text.rfind(kLogging, 0) == 0);
+    CHECK(occurrences(text, "Middleware") == 1 && occurrences(text, "Experimental") == 1);
+    // The address family and the caller's choice, as without a configuration.
+    CHECK(contains(read_by_silkit(kLogging, "Engine", "silkit://[::1]:8500"), R"("tcp://[::1]:0"])"));
+    CHECK(!contains(read_by_silkit(kLogging, "Engine", "silkit://127.0.0.1:8500", true), "AcceptorUris"));
+    CHECK(!contains(read_by_silkit(kLogging, "Engine", "silkit://192.168.1.10:8500"), "AcceptorUris"));
+    CHECK(contains(read_by_silkit(kLogging, "Engine", "silkit://192.168.1.10:8500"), kFixedStep));
+    set_variable(kListenOnNetworkVariable.data(), "1");
+    CHECK(!contains(read_by_silkit(kLogging, "Engine", "silkit://127.0.0.1:8500"), "AcceptorUris"));
+    CHECK(contains(read_by_silkit(kLogging, "Engine", "silkit://127.0.0.1:8500", false), "AcceptorUris"));
+    set_variable(kListenOnNetworkVariable.data(), nullptr);
+#ifdef _WIN32
+    CHECK(contains(loopback, R"("EnableDomainSockets": 0)"));
+    CHECK(contains(read_by_silkit(kLogging, "Engine", "silkit://192.168.1.10:8500"), R"("Middleware": {"EnableDomainSockets": 0})"));
+    // SIL Kit's JSON leaves its default (true) out: a true written there becomes false as well.
+    CHECK(contains(read_by_silkit("Middleware:\n  EnableDomainSockets: true\n", "Engine", "silkit://10.0.0.1:1"),
+                   R"("EnableDomainSockets": 0)"));
+#else
+    CHECK(contains(loopback, R"("AcceptorUris": ["local://)"));
+    CHECK(!contains(loopback, "EnableDomainSockets"));
+    CHECK(!contains(read_by_silkit(kLogging, "Engine", "silkit://192.168.1.10:8500"), "Middleware"));
+#endif
+
+    // The caller's acceptors and the rest of its Middleware stay; no acceptor is added to them.
+    const std::string own_text =
+        "Middleware:\n  AcceptorUris: ['tcp://0.0.0.0:8601']\n  ConnectAttempts: 9\n  EnableDomainSockets: false\n"
+        "HealthCheck:\n  SoftResponseTimeout: 700\n  HardResponseTimeout: 5000\n"
+        "Logging:\n  Sinks:\n    - Type: File\n      Level: Debug\n      LogName: engine_log\n";
+    const std::string own = read_by_silkit(own_text, "Engine", "silkit://127.0.0.1:8500");
+    CHECK(contains(own, R"("AcceptorUris": ["tcp://0.0.0.0:8601"])"));
+    CHECK(occurrences(own, "AcceptorUris") == 1 && !contains(own, "127.0.0.1") && !contains(own, "local://"));
+    CHECK(contains(own, R"("ConnectAttempts": 9)") && occurrences(own, R"("EnableDomainSockets": 0)") == 1);
+    CHECK(contains(own, R"("SoftResponseTimeout": 700)") && contains(own, R"("HardResponseTimeout": 5000)"));
+    CHECK(contains(own, R"("Type": "File")") && contains(own, R"("LogName": "engine_log")") && contains(own, R"("Level": "Debug")"));
+    CHECK(contains(own, kFixedStep));
+
+    // A configuration that leaves nothing out is used as it is written.
+    const std::string complete = "# every member that vehicle-sil would add\nMiddleware: {AcceptorUris: ['tcp://0.0.0.0:8601'], "
+                                 "EnableDomainSockets: false}\nExperimental:\n  TimeSynchronization:\n    "
+                                 "DynamicSimulationStep: false\n";
+    CHECK(merged_participant_configuration(complete, "Engine", "silkit://127.0.0.1:8500") == complete);
+
+    // JSON, members in one line, a member with nothing set yet: the added ones go where they belong.
+    const std::string json =
+        read_by_silkit(R"({"Logging":{"Sinks":[{"Type":"Stdout"}]},"Middleware":{"ConnectAttempts":3}})", "Engine", "silkit://127.0.0.1:1");
+    CHECK(contains(json, R"("Middleware": {"ConnectAttempts": 3,)") && contains(json, R"("AcceptorUris": [)") && contains(json, kFixedStep));
+    CHECK(contains(json, R"("Logging": {"Sinks": [{"Type": "Stdout"}]})"));
+    const std::string flow = read_by_silkit("Middleware: {ConnectAttempts: 4}\nExperimental: {TimeSynchronization: {AnimationFactor: 2.0}}\n"
+                                            "Description: \"a: 'b' # c\"\n",
+                                            "Engine", "silkit://127.0.0.1:1");
+    CHECK(contains(flow, R"("Middleware": {"ConnectAttempts": 4,)") && contains(flow, R"("AcceptorUris": [)"));
+    CHECK(contains(flow, R"("Experimental": {"TimeSynchronization": {"AnimationFactor": 2,"DynamicSimulationStep": 0}})"));
+    // An empty list of acceptors is none: it is replaced, not written twice.
+    const std::string empty_list = merged_participant_configuration("Middleware:\n  AcceptorUris: []\n", "Engine", "silkit://127.0.0.1:1");
+    CHECK(occurrences(empty_list, "AcceptorUris") == 1 && contains(empty_list, "tcp://127.0.0.1:0"));
+    CHECK(contains(read_by_silkit("Middleware:\n  AcceptorUris: []\n", "Engine", "silkit://127.0.0.1:1"), R"("tcp://127.0.0.1:0"])"));
+    // Only comments: the default.
+    CHECK(contains(read_by_silkit("# nothing yet\n", "Engine", "silkit://127.0.0.1:1"), R"("tcp://127.0.0.1:0"])"));
+    // A false of the caller's stays the only one.
+    const std::string opted_out = merged_participant_configuration(
+        R"({"Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}}})", "Engine", "silkit://10.0.0.1:1");
+    CHECK(occurrences(opted_out, "DynamicSimulationStep") == 1);
+    CHECK(contains(read_by_silkit(R"({"Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}}})", "Engine", "silkit://10.0.0.1:1"),
+                   kFixedStep));
+
+    // What SIL Kit refuses is SIL Kit's error.
+    CHECK(unit::throws<SilKit::ConfigurationError>(
+        [] { static_cast<void>(merged_participant_configuration("Logging: [not, a, map", "Engine", "silkit://10.0.0.1:1")); }));
+    CHECK(unit::throws<SilKit::ConfigurationError>([] {
+        static_cast<void>(merged_participant_configuration("Middleware:\n  ConnectAttempts: many\n", "Engine", "silkit://10.0.0.1:1"));
+    }));
+}
+
+TEST_CASE(a_configuration_that_names_another_participant_or_registry_is_refused)
+{
+    set_variable(kListenOnNetworkVariable.data(), nullptr);
+    const std::string uri = "silkit://192.168.1.10:8500";
+    // The name: the same one passes (also UTF-8, and one that JSON escapes), another one is refused.
+    CHECK(contains(read_by_silkit("ParticipantName: Engine\n", "Engine", uri), R"("ParticipantName": "Engine")"));
+    CHECK(contains(read_by_silkit("ParticipantName: \"\xE3\x82\xA8\xE3\x83\xB3\xE3\x82\xB8\xE3\x83\xB3\"\n",
+                                  "\xE3\x82\xA8\xE3\x83\xB3\xE3\x82\xB8\xE3\x83\xB3", uri),
+                   "ParticipantName"));
+    CHECK(contains(read_by_silkit(R"({"ParticipantName":"a \"b\" \\ c"})", R"(a "b" \ c)", uri), "ParticipantName"));
+    CHECK(unit::throws_with<std::invalid_argument>(
+        [&] { static_cast<void>(merged_participant_configuration("ParticipantName: Motor\n", "Engine", uri)); },
+        "the SIL Kit configuration of the participant \"Engine\" sets ParticipantName to \"Motor\": SIL Kit would join the "
+        "simulation under that name, and whatever waits for \"Engine\" (the controller's required participants, "
+        "vehicle_sil_launch) would wait until its timeout. Remove ParticipantName from the configuration (the program gives "
+        "the name; --name of an ECU's executable changes it), or set it to \"Engine\""));
+    CHECK(unit::throws<std::invalid_argument>(
+        [&] { static_cast<void>(merged_participant_configuration("ParticipantName: engine\n", "Engine", uri)); }));
+
+    // The registry URI: the same one passes, another one is refused; not compared when none is known.
+    const std::string with_uri = "Middleware:\n  RegistryUri: silkit://192.168.1.10:8500\n";
+    CHECK(contains(read_by_silkit(with_uri, "Engine", uri), R"("RegistryUri": "silkit://192.168.1.10:8500")"));
+    CHECK(contains(read_by_silkit(with_uri, "Engine", ""), R"("RegistryUri": "silkit://192.168.1.10:8500")"));
+    CHECK(unit::throws_with<std::invalid_argument>(
+        [&] { static_cast<void>(merged_participant_configuration(with_uri, "Engine", "silkit://127.0.0.1:8500")); },
+        "the SIL Kit configuration of the participant \"Engine\" sets Middleware.RegistryUri to "
+        "\"silkit://192.168.1.10:8500\", but the participant is told to join \"silkit://127.0.0.1:8500\": SIL Kit would "
+        "connect to the configuration's registry. Remove Middleware.RegistryUri from the configuration (the program gives "
+        "the URI: --registry-uri, or registry_uri of vehicle_sil_launch's configuration), or write the same URI in both"));
+
+    // Dynamic simulation steps: asked for is refused before anything runs.
+    const std::string dynamic = "Experimental:\n  TimeSynchronization:\n    DynamicSimulationStep: true\n";
+    CHECK(unit::throws_with<std::invalid_argument>(
+        [&] { static_cast<void>(merged_participant_configuration(dynamic, "Engine", uri)); },
+        "the SIL Kit configuration of the participant \"Engine\" sets Experimental.TimeSynchronization.DynamicSimulationStep "
+        "to true: SIL Kit would cut this participant's steps down to the smallest step of the simulation, and vehicle-sil's "
+        "participants run on their own fixed step. Remove the key from the configuration (vehicle-sil then sets it to false "
+        "for this participant), or set it to false"));
+
+    // The participant itself refuses the same, before it connects (nothing listens at this URI).
+    ParticipantRuntimeOptions options;
+    options.participant_name = "Engine";
+    options.registry_uri = "silkit://127.0.0.1:1";
+    options.participant_configuration = "ParticipantName: Motor\n";
+    CHECK(unit::throws_with<std::invalid_argument>([&] { ParticipantRuntime participant(options); },
+                                                   "sets ParticipantName to \"Motor\""));
+    options.participant_configuration = with_uri;
+    CHECK(unit::throws_with<std::invalid_argument>([&] { ParticipantRuntime participant(options); },
+                                                   "sets Middleware.RegistryUri to"));
+    options.participant_configuration = dynamic;
+    CHECK(unit::throws_with<std::invalid_argument>([&] { ParticipantRuntime participant(options); },
+                                                   "DynamicSimulationStep to true"));
+}
+
+TEST_CASE(a_configuration_with_includes_gets_the_defaults_for_what_all_its_files_leave_out)
+{
+    set_variable(kListenOnNetworkVariable.data(), nullptr);
+    const TemporaryDirectory directory("includes");
+    directory.write("middleware.silkit.yaml", "Middleware:\n  AcceptorUris: ['tcp://127.0.0.1:8611']\n  ConnectAttempts: 7\n");
+    directory.write("root.silkit.yaml", "Includes:\n  Files: [middleware.silkit.yaml]\nLogging:\n  Sinks:\n    - Type: Stdout\n");
+
+    // As a text: the included file is found by the search path that the text gives. Its acceptors
+    // count: none is added (SIL Kit would refuse acceptors in two files).
+    const std::string text = "Includes:\n  SearchPathHints: ['" + directory.path.generic_string() +
+                             "']\n  Files: [middleware.silkit.yaml]\nLogging:\n  Sinks:\n    - Type: Stdout\n";
+    const std::string merged = read_by_silkit(text, "Engine", "silkit://127.0.0.1:8500");
+    CHECK(contains(merged, R"("AcceptorUris": ["tcp://127.0.0.1:8611"])") && occurrences(merged, "AcceptorUris") == 1);
+    CHECK(contains(merged, R"("ConnectAttempts": 7)") && contains(merged, R"("Type": "Stdout")") && contains(merged, kFixedStep));
+    // A name in an included file is the configuration's name as well.
+    directory.write("name.silkit.yaml", "ParticipantName: Motor\n");
+    CHECK(unit::throws_with<std::invalid_argument>(
+        [&] {
+            static_cast<void>(merged_participant_configuration("Includes:\n  SearchPathHints: ['" + directory.path.generic_string() +
+                                                                   "']\n  Files: [name.silkit.yaml]\n",
+                                                               "Engine", "silkit://127.0.0.1:8500"));
+        },
+        "sets ParticipantName to \"Motor\""));
+
+    // As a file: the included file is found beside it, from any working directory.
+    const std::string from_file = participant_configuration_from_file((directory.path / "root.silkit.yaml").string());
+    const std::string again = read_by_silkit(from_file, "Engine", "silkit://127.0.0.1:8500");
+    CHECK(contains(again, R"("AcceptorUris": ["tcp://127.0.0.1:8611"])") && occurrences(again, "AcceptorUris") == 1);
+    CHECK(contains(again, R"("ConnectAttempts": 7)") && contains(again, R"("Type": "Stdout")") && contains(again, kFixedStep));
+    // A file without Includes is its text.
+    directory.write("plain.silkit.yaml", kLogging);
+    CHECK(participant_configuration_from_file((directory.path / "plain.silkit.yaml").string()) == kLogging);
+
+    // No such file: said with the path.
+    const std::string missing = (directory.path / "none.silkit.yaml").string();
+    CHECK(unit::throws_with<std::invalid_argument>([&] { static_cast<void>(participant_configuration_from_file(missing)); },
+                                                   "there is no SIL Kit participant configuration file \"" + missing +
+                                                       "\": give the path of a YAML or JSON file that exists"));
+    CHECK(unit::throws_with<std::invalid_argument>(
+        [] { static_cast<void>(participant_configuration_from_file("vsil-none.silkit.yaml")); },
+        "there is no SIL Kit participant configuration file \"vsil-none.silkit.yaml\" in the working directory \""));
+    CHECK(unit::throws<std::invalid_argument>(
+        [&] { static_cast<void>(participant_configuration_from_file(directory.path.string())); })); // a directory
+    // A file that includes one that is not there: SIL Kit's error, when the text is used.
+    directory.write("broken.silkit.yaml", "Includes:\n  Files: [not-there.silkit.yaml]\n");
+    CHECK(unit::throws<SilKit::ConfigurationError>([&] {
+        static_cast<void>(merged_participant_configuration(
+            participant_configuration_from_file((directory.path / "broken.silkit.yaml").string()), "Engine", ""));
+    }));
+}
+
+TEST_CASE(a_participant_with_a_configuration_of_its_own_listens_on_loopback_only)
+{
+    if (!kCanSeeListeners)
+    {
+        throw unit::Skipped("this system's listening sockets are not read here");
+    }
+    set_variable(kListenOnNetworkVariable.data(), nullptr);
+    unit::InProcessRegistry registry; // at 127.0.0.1
+    const std::size_t before = listening_sockets().size();
+    ParticipantRuntimeOptions options;
+    options.participant_name = "Listener";
+    options.registry_uri = registry.uri;
+    // Nothing about where to listen: without the merge, SIL Kit would listen on every address.
+    options.participant_configuration = "ParticipantName: Listener\nMiddleware:\n  ConnectAttempts: 3\n";
+    ParticipantRuntime participant(std::move(options));
+    const auto found = listening_sockets();
+    CHECK(found.size() > before);
+    CHECK(count(found, Listen::Any) == 0);
+    CHECK(count(found, Listen::Other) == 0);
 }
 
 TEST_CASE(a_participant_of_a_loopback_registry_listens_on_loopback_only)

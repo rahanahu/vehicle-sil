@@ -177,6 +177,7 @@ flowchart TD
     can_netsim --> SilKit
     can_netsim -.-> can_silkit
     can_netsim -.-> rapidyaml
+    core -.-> rapidyaml
 ```
 
 ### J1939 のエンジンと部品
@@ -309,7 +310,7 @@ flowchart TD
 
 | 変えるもの | 合わせて直すもの |
 |---|---|
-| SIL Kit の構成の既定（`libs/core/src/participant_runtime.cpp` の `default_participant_configuration()` など: 待ち受けるアドレス、Windows の TCP、registry はどの OS でも TCP）、それを使う所（`libs/launch/src/run.cpp` の controller とほかのコンピューターへの行、`run_participants.cpp` の環境変数、`config.cpp` の注記 `registry-on-network` と `inherited_listen_variable()`（注記 `listen-variable-ignored`）、manual のコマンドの `environment`） | [internals/core.md](internals/core.md) の「SIL Kit の構成の既定」、[simulation-run.md](simulation-run.md) の「待ち受けるアドレス」、[simulation-check.md](simulation-check.md) の所見の表、[dependencies.md](dependencies.md) の SIL Kit（Windows）の節。試験は `core.a_participant_*`、`core.a_registry_uri_*`、`launch_run.network`、`launch_run.busy_port`、`multi_host.two_hosts`、`core.silkit_configuration_defaults`。手引きは [howto/multi-pc.md](howto/multi-pc.md) |
+| SIL Kit の構成の既定（`libs/core/src/participant_runtime.cpp` の `default_participant_configuration()` など: 待ち受けるアドレス、Windows の TCP、registry はどの OS でも TCP。渡された構成に重ねる `merged_participant_configuration()` と、ecu_main の `--silkit-config`）、それを使う所（`libs/launch/src/run.cpp` の controller とほかのコンピューターへの行、`run_participants.cpp` の環境変数、`config.cpp` の注記 `registry-on-network` と `inherited_listen_variable()`（注記 `listen-variable-ignored`）、manual のコマンドの `environment`） | [internals/core.md](internals/core.md) の「SIL Kit の構成の既定」、[simulation-run.md](simulation-run.md) の「待ち受けるアドレス」、[simulation-check.md](simulation-check.md) の所見の表、[dependencies.md](dependencies.md) の SIL Kit（Windows）の節、[ecu-executable.md](ecu-executable.md) の「SIL Kit の構成を渡す」。試験は `core.a_participant_*`、`core.a_configuration_*`、`simulation.ecu_main_*silkit_configuration*`、`core.a_registry_uri_*`、`launch_run.network`、`launch_run.busy_port`、`multi_host.two_hosts`、`core.silkit_configuration_defaults`。手引きは [howto/multi-pc.md](howto/multi-pc.md) |
 | `vehicle_sil_launch check` と `run` の出力（`libs/launch/src`）、`examples/ecu_main/simulation.yaml` | [simulation-config.md](simulation-config.md)、[simulation-check.md](simulation-check.md)、[simulation-run.md](simulation-run.md)、[simulation-events.md](simulation-events.md) の、`<!-- ... -->` の行の直後のコードブロック。`launch_cli.docs` と `launch_run.docs` が、vehicle-sil の版を除いてバイト単位で照合します。GUI の試験が流し直す録画（`gui/server/tests/recordings/`）も、`gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch>` で録り直します（`scripts/verify-gui.py --launcher <path>` が、録画と本物のランチャーの食い違いを見つけます） |
 | 同じ出力と、`examples/ecu_main`（`scenarios/` を含む）・`examples/launch_control` のコード | [howto/](howto/) の手引きにある写し（出力のコードブロックは、`docs/` の直下の文書（simulation-*.md と [scenario.md](scenario.md)）の同じ印の例の写しです。`launch_cli.docs`（`check` の印）と `launch_run.docs`（`run` の印）が、手引きの同じ印のブロックが写しのとおりかを照合します。コードは例のファイルと行を書いて引いています。コードの写しは照合しないので、手で合わせます） |
 | `template/`（ひな形）、ECU の API | [howto/first-ecu.md](howto/first-ecu.md)（ひな形のコードを行の番号で引いている。出力のブロックは `template.check_and_run` がひな形の出力とも照合）、`template/README.md`。ひな形の 2 つの ECU は `examples/ecu_main` と同じ名前、ネットワーク、アドレス、ステップ幅にしてあり、手引きの出力は両方で同じです |

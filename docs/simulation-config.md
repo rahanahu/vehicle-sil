@@ -90,6 +90,7 @@ participants:
 
 - `command` には、`ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--help`、`-h`。`--name=X` の形も）を書けません（誤り）。
 - `--no-control` は `command` に書けます。その ECU は変数を出しません。照合の `--describe` にも同じ引数が渡るので、自己申告の `control` が `null` になり、`run` はその ECU の hello を待ちません（[変数を読み書きする口](simulation-run.md#変数を読み書きする口)）。
+- `--silkit-config <file>` も `command` に書けます（`command: [engine/vehicle_sil_engine_ecu, --silkit-config, engine.silkit.yaml]`）。その ECU に SIL Kit の構成ファイルを渡します。相対パスは、構成ファイルのあるディレクトリから数えます（participant の作業ディレクトリ）。照合の `--describe` にも渡るので、ファイルがない、SIL Kit が受け付けない、participant 名と違う `ParticipantName` がある、といった誤りは、照合で `describe-failed` として分かります（[ecu-executable.md](ecu-executable.md) の「SIL Kit の構成を渡す」）。
 - 照合では、`command` の引数（`{{語}}` を `{語}` に戻したもの）に `--describe --name <participant 名>` を足して動かします。`run` では `--name <participant 名> --registry-uri <URI> --start-timeout-ms <ms>` を足します。`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です（開始を待つのはランチャーで、来なかった participant を挙げるのもランチャーです。ECU の制限は、ランチャーがいなくなったときのためのものです）。自分で起動する必須の participant がいる実行では、開始に上限がないので、10^12（`1000000000000`）です。
 - `required: false` は書けません（誤り `not-required-ecu`）。ecu_main の実行ファイルは coordinated の participant として参加し、SIL Kit は必須でない coordinated の participant を始めないためです。ECU を外して動かすときは、`enabled: false` を書くか、`--disable <participant 名>` を付けます（[participant を外す](#participant-を外すenabled--disable--enable)）。
 

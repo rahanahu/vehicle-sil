@@ -195,6 +195,7 @@ void Simulation::SilKitRun::run(std::optional<SimDuration> stop_at)
         SimulationControllerOptions c;
         c.participant_name = kControllerName;
         c.registry_uri = uri;
+        c.participant_configuration = options.participant_configuration;
         c.required_participants = names;
         c.required_participants.insert(c.required_participants.end(), options.other_participants.begin(),
                                        options.other_participants.end());
@@ -474,6 +475,7 @@ Ecu& Simulation::add_ecu(std::string name, SimDuration step)
     PeerOptions o;
     o.participant = name;
     o.registry_uri = s.uri;
+    o.participant_configuration = s.options.participant_configuration;
     o.lifecycle = LifecycleMode::Coordinated;
     o.virtual_time = VirtualTimeOptions{step, std::nullopt, std::nullopt};
     // Within the start timeout: a name still held by an earlier process is waited for no longer.
