@@ -65,7 +65,17 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
   - パッチが当たらなければ configure は失敗します。`git apply` を使うので Git が必要です。親の Git リポジトリや、継承した `GIT_DIR` などの環境変数の影響は受けません。ビルドツリーがリポジトリの中にあっても、`GIT_CEILING_DIRECTORIES` で、コピーの上のリポジトリを Git に見せません。この値は、Git 自身が出すパスの形で渡します（MSYS2 の `git` は `/d/a/...` の形しか読まないため）。
   - 失敗の文には、使った Git のパスと版、`GIT_CEILING_DIRECTORIES` の値、Git がコピーの周りに見つけたリポジトリ（あれば、パッチのパスをそのリポジトリからの相対と取り違えて飛ばしたということです）、パッチが変えるファイルの改行（LF か CRLF か）が出ます。
   - `--ignore-whitespace` で当てるので、CRLF でチェックアウトしたサブモジュール（Windows の `core.autocrlf`）にも当たります。パッチファイル自体は `.gitattributes` で改行を変換しません。
-- 利用側がすでに `SilKit::SilKit` を定義している場合は追加しません。確かめているのは v5.0.8 だけです。それより古い SIL Kit には、vehicle-sil が頼っている挙動の一部がありません（「[混ぜてよい SIL Kit の版](#混ぜてよい-sil-kit-の版)」）。利用側の SIL Kit に「SIL Kit へのパッチ」がないと、同じ LIN ID に複数の `LinSlave` が交代で応答する構成（診断の 0x3D など）が動きません。パッチが効くのはヘッダーを送る Master のプロセスの SIL Kit なので、パッチのない SIL Kit を使う外部の Master（CANoe など）と組み合わせた場合も同じです。
+- 利用側がすでに `SilKit::SilKit` を定義している場合は追加しません。確かめているのは v5.0.8 だけです。それより古い SIL Kit には、vehicle-sil が頼っている挙動の一部がありません（「[混ぜてよい SIL Kit の版](#混ぜてよい-sil-kit-の版)」）。利用側の SIL Kit には「SIL Kit へのパッチ」が当たっていません。パッチは、下の表のプロセスの SIL Kit に当たっているときだけ効きます。ほかの道具（CANoe、SIL Kit に付いてくる `sil-kit-registry` など）がそのプロセスを受け持つ構成でも、同じことが起きます。
+
+  | パッチ | 当たっている必要があるプロセス | ないと起きること |
+  |---|---|---|
+  | 0001 | LIN のヘッダーを送る Master | 同じ LIN ID に複数の `LinSlave` が交代で応答する構成（診断の 0x3D など）で、2 つ目の応答の後、その ID のヘッダーが送られなくなる |
+  | 0002 | CAN のコントローラーを持つ participant | SIL Kit のスレッドの外からコントローラーを呼ぶ所（閉じるとき、実時間のポートの送信、Vector XL CAN Bridge）が、ネットワークシミュレーターの参加・退出と重なると、データ競合になる（まれ） |
+  | 0003 | registry | 同じ名前で断られた participant が切れた後、先にいた同じ名前の participant へ、直接つなげない participant が中継でつなげなくなる |
+  | 0004 | ネットワークシミュレーターを作る participant（`vehicle_sil_can_bus_simulator`） | まれに、ネットワークが告知されず、コントローラーが全部 trivial simulation のままになる。ビットレートとモードがシミュレーターに届かず、誤りも警告も出ない |
+  | 0005 | registry | participant が終わった直後に別の participant が参加すると、まれに、5 秒（`Middleware.ConnectTimeoutSeconds`）待ってから「Timeout during connection handshake with the SIL Kit Registry」で失敗する。作り直せばつながる |
+
+  `vehicle_sil_launch run` が立てる registry と、vehicle-sil のビルドで作った実行ファイルには、全部のパッチが当たっています。
 - 上流の公開インクルードディレクトリを SYSTEM 扱いにします。上流ヘッダーの警告で、vehicle-sil のターゲットが `-Werror` 付きのビルドに失敗しないようにするためです。
 - 上流のオプションは関数スコープの通常変数で上書きします（CMP0077）。利用側のキャッシュは変えません。
 
