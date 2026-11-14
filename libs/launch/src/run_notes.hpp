@@ -37,6 +37,21 @@ enum class TimeNote
     return std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()).count();
 }
 
+/// What a "time" event says in `paused`, from one look at the gate. It stands still, or is at
+/// (or beyond) the time it is to stand still at and does so with its next step; an ended
+/// simulation stands still nowhere. The event at the start is the one of virtual time 0 (its
+/// sim_ms is 0 whatever the gate says): a simulation that has gone on by then (a step or
+/// run_until from the hold before the first step, as fast as possible) and stands still at a
+/// later time did not stand still at 0, and the next look writes where it does.
+[[nodiscard]] inline bool noted_paused(const TimeState& s, TimeNote note) noexcept
+{
+    if (note == TimeNote::Start && s.now > SimTime{})
+    {
+        return false;
+    }
+    return s.paused || (note != TimeNote::Last && s.pause_target && *s.pause_target <= s.now);
+}
+
 [[nodiscard]] inline std::int64_t ceil_ms(std::chrono::nanoseconds d)
 {
     return std::chrono::ceil<std::chrono::milliseconds>(d).count();

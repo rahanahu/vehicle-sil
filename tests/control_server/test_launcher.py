@@ -216,6 +216,24 @@ class LauncherTest(unittest.TestCase):
         self.assertIn(f"control server at {server['address']}", lines)
         self.assertEqual(control_address(json.dumps(e) for e in launch.events), server["address"])
 
+    def test_the_time_events_of_a_step_from_the_hold_say_paused_only_where_it_stands(self):
+        # As fast as possible, the step may be over before the launcher writes the time event of
+        # the start (sim_ms 0): that one must not say "paused" for the stand at 100 ms. Several
+        # runs: which of the two comes first differs from run to run.
+        for run in range(5):
+            with self.launch(f"hold_step_{run}", stop_at_ms=600_000, start_paused=True) as launch:
+                with Control(launch.address) as c:
+                    self.assertEqual(c.sim.wait_paused(60).now, 0)
+                    launch.send({"command": "step", "ms": 100})
+                    self.assertEqual(c.sim.wait_paused().now, ms(100))
+                    launch.wait_for_event("time", sim_ms=100, paused=True)
+                    launch.stop()
+                    launch.wait(120)
+            times = [(e["sim_ms"], e["paused"]) for e in launch.events if e["event"] == "time"]
+            stands = times.index((100, True))
+            self.assertEqual(times[0], (0, False), times)
+            self.assertEqual([t for t in times[:stands] if t[1]], [], times)
+
     def test_a_variable_map_is_what_a_client_sees_and_writes(self):
         path = config("mapped", 1000)
         plain = path.read_text()

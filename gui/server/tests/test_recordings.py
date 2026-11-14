@@ -85,6 +85,13 @@ def check_rules(events: list[dict]) -> None:
         assert times and times[0]["seq"] > running and times[0]["sim_ms"] == 0, "time 0 when running starts"
         assert all(a["sim_ms"] <= b["sim_ms"] for a, b in zip(times, times[1:])), "sim_ms does not go back"
         assert times[-1]["paused"] is False, "an ended simulation is not paused"
+        # The first one is of time 0: paused there means standing still at 0, so it moves on only
+        # by a command after it (not by a step that was accepted before the start).
+        later = next((e for e in times[1:] if e["sim_ms"] > 0), None)
+        if times[0]["paused"] and later is not None:
+            assert any(e["event"] == "command" and e["accepted"] and times[0]["seq"] < e["seq"] < later["seq"]
+                       for e in events), "the time event at the start says paused, but the simulation did not " \
+                                         "stand still at 0: no command between it and the next time"
     first_command = next((e["seq"] for e in events if e["event"] == "command"), None)
     stopping = next((e["seq"] for e in events if e.get("phase") == "stopping"), None)
     if first_command is not None and stopping is not None and events[-1]["result"]["interrupted_by"]:
