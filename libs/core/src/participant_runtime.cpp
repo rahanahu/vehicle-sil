@@ -556,6 +556,11 @@ void ParticipantRuntime::set_communication_ready_handler(std::function<void()> h
         throw std::logic_error("ParticipantRuntime::set_communication_ready_handler() must be called before start()");
     }
     lifecycle_->SetCommunicationReadyHandler([this, handler = std::move(handler)] {
+        const std::lock_guard gate(communication_ready_gate_);
+        if (communication_ready_disabled_)
+        {
+            return; // stop() has returned: what the handlers use may be gone
+        }
         run_added_communication_ready();
         if (handler)
         {
@@ -574,7 +579,13 @@ void ParticipantRuntime::add_communication_ready_handler(std::function<void()> h
     added_communication_ready_.push_back(std::move(handler));
     if (!communication_ready_registered_)
     {
-        lifecycle_->SetCommunicationReadyHandler([this] { run_added_communication_ready(); });
+        lifecycle_->SetCommunicationReadyHandler([this] {
+            const std::lock_guard gate(communication_ready_gate_);
+            if (!communication_ready_disabled_)
+            {
+                run_added_communication_ready();
+            }
+        });
         communication_ready_registered_ = true;
     }
 }
@@ -613,13 +624,26 @@ void ParticipantRuntime::set_communication_ready_handler_async(std::function<voi
     communication_ready_ = std::move(handler);
     communication_ready_registered_ = true;
     lifecycle_->SetCommunicationReadyHandlerAsync([this] {
-        run_added_communication_ready();
+        const std::lock_guard gate(communication_ready_gate_);
+        const bool disabled = communication_ready_disabled_;
+        if (!disabled)
+        {
+            run_added_communication_ready();
+        }
         {
             // Before the handler: a thread it wakes may complete at once. The lock also orders
             // SIL Kit's own (unsynchronised) record of the call before the completing thread's
             // read of it.
             const std::lock_guard lock(communication_ready_mutex_);
             communication_ready_state_ = CommunicationReady::Open;
+        }
+        if (disabled)
+        {
+            // stop() has returned: nobody is told, so nobody would complete. Completed here, the
+            // lifecycle goes on as after a handler that is not asynchronous, to where the stop
+            // can reach it. SIL Kit only queues the transition, so this is fine from its handler.
+            complete_communication_ready();
+            return;
         }
         if (communication_ready_)
         {
@@ -742,9 +766,9 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
     {
         return;
     }
-    // Whatever happens below, the step handler must not run once stop() returns: callers
-    // destroy what it uses. A handler that is running is waited for (a long tick() delays
-    // stop() accordingly).
+    // Whatever happens below, the step handler and the CommunicationReady handlers must not run
+    // once stop() returns: callers destroy what they use. A handler that is running is waited
+    // for (a long tick() delays stop() accordingly).
     struct DisableSteps
     {
         ParticipantRuntime& self;
@@ -755,8 +779,18 @@ void ParticipantRuntime::stop(std::string_view reason) noexcept
                 self.steps_disabled_ = true;
             }
             // Waits for a StepHold that is deciding, and keeps later ones from running.
-            const std::lock_guard hold(self.hold_mutex_);
-            self.hold_disabled_ = true;
+            {
+                const std::lock_guard hold(self.hold_mutex_);
+                self.hold_disabled_ = true;
+            }
+            // Last, when the wait for the shutdown is over: a lifecycle that gets to
+            // CommunicationReady while stop() waits (a required participant that came late) still
+            // has its controllers started and its start window opened, and goes on to where the
+            // stop reaches it. Only after stop() can it come too late: after a start that timed
+            // out, SIL Kit takes no stop and the lifecycle lives until the participant is
+            // destroyed.
+            const std::lock_guard ready(self.communication_ready_gate_);
+            self.communication_ready_disabled_ = true;
         }
     } disableSteps{*this};
     if (!lifecycle_done_)

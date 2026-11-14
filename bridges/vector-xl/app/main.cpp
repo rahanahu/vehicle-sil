@@ -142,6 +142,17 @@ int run(const BridgeOptions& options)
     catch (const std::exception& e)
     {
         log(kTag, "FAIL setup: %s", e.what());
+        // A start that timed out leaves a lifecycle that can still get to CommunicationReady. Once
+        // the runtime's stop() has returned, the handler above is not called any more, so the
+        // bridge it points at can go (in whatever order the three are destroyed).
+        if (bridge)
+        {
+            bridge->stop();
+        }
+        if (runtime)
+        {
+            runtime->stop("the setup failed");
+        }
         return kExitSetupFailed;
     }
 
