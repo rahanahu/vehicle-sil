@@ -4,6 +4,8 @@
 // its parent (a "grandchild" of the test), and tells whether a process still runs.
 #pragma once
 
+#include "test_timeout_scale.hpp"
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -205,13 +207,14 @@ inline bool process_alive(long pid)
 #endif
 }
 
-/// The process ID in `pid_file`, waiting up to `timeout` for the file to be written; 0 if none.
+/// The process ID in `pid_file`, waiting up to `timeout` (scaled: scaled_timeout()) for the file to
+/// be written; 0 if none.
 /// The file must have been written by the process itself. Windows: the process is kept open from
 /// here on, so that process_alive(), wait_gone() and kill_one() mean this process and no later one
 /// with the same ID.
 inline long read_pid(const std::string& pid_file, std::chrono::milliseconds timeout)
 {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(timeout);
     while (true)
     {
         std::ifstream in(pid_file);
@@ -231,11 +234,11 @@ inline long read_pid(const std::string& pid_file, std::chrono::milliseconds time
     }
 }
 
-/// Waits up to `timeout` until `pid_file` holds a process ID (the process of spawn_sleeper() has
-/// written it); true if it does. Unlike read_pid(), it keeps nothing open.
+/// Waits up to `timeout` (scaled: scaled_timeout()) until `pid_file` holds a process ID (the
+/// process of spawn_sleeper() has written it); true if it does. Unlike read_pid(), it keeps nothing open.
 inline bool pid_written(const std::string& pid_file, std::chrono::milliseconds timeout)
 {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(timeout);
     while (true)
     {
         std::ifstream in(pid_file);
@@ -252,10 +255,10 @@ inline bool pid_written(const std::string& pid_file, std::chrono::milliseconds t
     }
 }
 
-/// Waits up to `timeout` for the process `pid` to be gone; true if it is.
+/// Waits up to `timeout` (scaled: scaled_timeout()) for the process `pid` to be gone; true if it is.
 inline bool wait_gone(long pid, std::chrono::milliseconds timeout)
 {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(timeout);
     while (process_alive(pid))
     {
         if (std::chrono::steady_clock::now() >= deadline)

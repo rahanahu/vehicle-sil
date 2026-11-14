@@ -17,6 +17,13 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The runners are small (4 CPUs): the tests' upper bounds of waiting for something that will happen are 3
+# times as long (C++, the GUI server's and the screen's tests; a test that passes is not slower). The thread
+# sanitizer's presets set their own factor (CMakePresets.json). scripts/verify.py runs no more tests at once than the
+# runner has CPUs.
+env:
+  VEHICLE_SIL_TEST_TIMEOUT_SCALE: "3"
+
 jobs:
   # A pull request that changes only Markdown files needs only the checks that read the documents: the links
   # (python), the examples that the launcher's tests compare with the documents (linux-gcc-debug), and the format
@@ -216,10 +223,8 @@ jobs:
           cmake --version | head -n 1
           command -v python git
           python -c "import sys, yaml; print('Python', sys.version.split()[0], 'PyYAML', yaml.__version__)"
-      # As many tests at once as the runner has CPUs (4), not the test preset's 8: on Windows, the tests with bounds on
-      # real time have been checked with fewer tests at once than CPUs.
       - name: Configure, build and test
-        run: python scripts/verify.py windows-mingw-release --tag ci --test-jobs 4
+        run: python scripts/verify.py windows-mingw-release --tag ci
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

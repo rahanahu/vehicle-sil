@@ -72,12 +72,7 @@ std::shared_ptr<grpc::Channel> channel(const control_grpc::ControlServer& server
 template <typename Pred>
 bool eventually(Pred pred)
 {
-    const auto deadline = std::chrono::steady_clock::now() + 10s;
-    while (std::chrono::steady_clock::now() < deadline && !pred())
-    {
-        std::this_thread::sleep_for(10ms);
-    }
-    return pred();
+    return vehicle_sil::unit::eventually(pred, 10s, 10ms);
 }
 
 /// A time control that records the stop and reports the simulation as over.

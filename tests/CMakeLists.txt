@@ -3,6 +3,10 @@ include(VehicleSilTestHelpers)
 # The tests of each area are listed in tests/<area>/CMakeLists.txt. This file holds only what
 # the areas share and the options that add or skip whole areas.
 
+# Every test sees the headers of unit/: the harness and the factor on the upper bounds of waiting
+# (unit/test_timeout_scale.hpp, also used by the process launchers and the helpers they share).
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/unit)
+
 # main() and the registry of the in-process test harness (unit/test_harness.hpp).
 add_library(vehicle_sil_test_main OBJECT unit/test_main.cpp)
 target_include_directories(vehicle_sil_test_main PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unit)

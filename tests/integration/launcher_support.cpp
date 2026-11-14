@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "launcher_support.hpp"
 
+#include "test_timeout_scale.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
@@ -82,8 +84,8 @@ RegistryProcess::RegistryProcess(const std::filesystem::path& executable, const 
         std::vector<std::string>{"--listen-uri", "silkit://127.0.0.1:0", "--generate-configuration", generated.string()},
         log_);
 
-    constexpr auto kStartTimeout = std::chrono::seconds(15);
-    const auto deadline = std::chrono::steady_clock::now() + kStartTimeout;
+    const auto startTimeout = scaled_timeout(std::chrono::seconds(15));
+    const auto deadline = std::chrono::steady_clock::now() + startTimeout;
     const std::regex uriPattern(R"(silkit://[A-Za-z0-9.\-\[\]:]+)");
     while (true)
     {
@@ -105,7 +107,8 @@ RegistryProcess::RegistryProcess(const std::filesystem::path& executable, const 
         if (std::chrono::steady_clock::now() > deadline)
         {
             dump_log(log_);
-            throw std::runtime_error("sil-kit-registry did not publish its URI within 15 s");
+            throw std::runtime_error("sil-kit-registry did not publish its URI within " +
+                                     std::to_string(startTimeout.count()) + " ms");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }

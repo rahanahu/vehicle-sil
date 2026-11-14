@@ -18,6 +18,7 @@
 //                             driver was opened): the bridge reports it and exits 1 on its own,
 //                             with its statistics.
 #include "launcher_support.hpp"
+#include "test_timeout_scale.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
 
@@ -83,7 +84,8 @@ Options parse(int argc, char** argv)
     options.peer = args.required("peer");
     options.workDir = args.required("work-dir");
     options.scenario = args.required("scenario");
-    options.timeout = args.millis("timeout-ms", options.timeout);
+    // An upper bound of waiting: scaled by VEHICLE_SIL_TEST_TIMEOUT_SCALE.
+    options.timeout = vehicle_sil::test::scaled_timeout(args.millis("timeout-ms", options.timeout));
     return options;
 }
 

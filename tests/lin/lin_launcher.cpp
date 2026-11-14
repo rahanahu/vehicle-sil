@@ -17,6 +17,7 @@
 //                  master publishes at T must still reach the slaves before their steps after T
 #include "launcher_support.hpp"
 #include "simulation_run.hpp"
+#include "test_timeout_scale.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
 
@@ -49,7 +50,8 @@ Options parse(int argc, char** argv)
     o.setup.registry = args.required("registry");
     o.setup.controller = args.required("controller");
     o.setup.work_dir = args.required("work-dir");
-    o.setup.timeout = args.millis("timeout-ms", o.setup.timeout);
+    // An upper bound of waiting: scaled by VEHICLE_SIL_TEST_TIMEOUT_SCALE.
+    o.setup.timeout = vehicle_sil::test::scaled_timeout(args.millis("timeout-ms", o.setup.timeout));
     o.master = args.required("master");
     o.slave = args.required("slave");
     o.scenario = args.required("scenario");

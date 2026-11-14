@@ -24,7 +24,33 @@ REPLAY = TESTS / "replay_launcher.py"
 CONFIGS = TESTS / "configs"
 # Where replay_launcher.py finds its recordings, also a copy of it that a test makes elsewhere
 os.environ["REPLAY_RECORDINGS"] = str(TESTS / "recordings")
-START_TIMEOUT_S = 20
+
+
+def _timeout_scale() -> float:
+    text = os.environ.get("VEHICLE_SIL_TEST_TIMEOUT_SCALE", "")
+    try:
+        value = float(text) if text else 1.0
+    except ValueError:
+        value = 0.0
+    if not 0 < value < float("inf"):
+        raise pytest.UsageError(
+            f'VEHICLE_SIL_TEST_TIMEOUT_SCALE="{text}" is not a number greater than 0: set it to a factor such as 3 '
+            "(every upper bound of waiting in the tests 3 times as long), or unset it")
+    return value
+
+
+# The factor on the upper bounds of waiting for something that will happen (as in the C++ tests). A test that
+# passes is not slower: it goes on as soon as what it waits for happens. Never scale a wait that checks that
+# something does NOT happen, nor the times that a test gives the server or the launcher.
+TIMEOUT_SCALE = _timeout_scale()
+
+
+def scaled(seconds: float) -> float:
+    """An upper bound of waiting for something that will happen, times VEHICLE_SIL_TEST_TIMEOUT_SCALE."""
+    return seconds * TIMEOUT_SCALE
+
+
+START_TIMEOUT_S = scaled(20)
 
 
 @dataclass
@@ -151,7 +177,7 @@ def stop_server(proc: subprocess.Popen) -> int:
     if proc.poll() is None:
         proc.send_signal(signal.SIGTERM)
         try:
-            proc.wait(30)
+            proc.wait(scaled(30))
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
@@ -202,7 +228,8 @@ def raw_http(port: int, data: bytes, timeout: float = 3) -> bytes:
 
 
 def wait_until(condition: Callable[[], bool], timeout: float = 10) -> bool:
-    end = time.monotonic() + timeout
+    """Whether `condition` becomes true within `timeout` seconds (scaled)."""
+    end = time.monotonic() + scaled(timeout)
     while time.monotonic() < end:
         if condition():
             return True
@@ -251,9 +278,10 @@ class Socket:
         await self.ws.send_str(json.dumps(message))
 
     async def until(self, condition: Callable[[dict], bool], timeout: float = 20) -> list[dict]:
-        """Receives until a message meets the condition; returns the messages received by this call."""
+        """Receives until a message meets the condition, for up to `timeout` seconds (scaled); returns the messages
+        received by this call."""
         got: list[dict] = []
-        async with asyncio.timeout(timeout):
+        async with asyncio.timeout(scaled(timeout)):
             while True:
                 msg = await self.ws.receive()
                 if msg.type != aiohttp.WSMsgType.TEXT:

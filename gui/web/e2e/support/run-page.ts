@@ -3,6 +3,7 @@ import { Locator, Page, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { REPOSITORY, guiToken } from './gui-server';
+import { scaled } from './timeouts';
 
 /** gui/protocol/examples/ の例（名前は拡張子なし）。偽の通知を差し込む試験が、形を作らずに使う。 */
 export function protocolExample(name: string): unknown {
@@ -11,7 +12,7 @@ export function protocolExample(name: string): unknown {
 }
 
 /** ランチャーの 1 回の実行の上限（流し直すランチャーは、録った時間を縮めて流す。本物の例の ECU はもっと速い）。 */
-export const RUN_TIMEOUT = 20_000;
+export const RUN_TIMEOUT = scaled(20_000);
 
 /** 画面の言語。試験は日本語（元の言語）で書く。英語の試験（i18n.spec.ts）は、ブラウザの言語を変えて en を渡す。 */
 export type Language = 'ja' | 'en';
@@ -146,7 +147,7 @@ export function result(page: Page, session: number) {
 
 /** 前の試験のセッションが動いていたら止め（サーバーの API で）、画面がそれを映すまで待つ。 */
 export async function stopIfRunning(page: Page, language: Language = 'ja'): Promise<void> {
-  await expect(page.getByTestId('connection')).toHaveText('', { timeout: 10_000 });
+  await expect(page.getByTestId('connection')).toHaveText('', { timeout: scaled(10_000) });
   if ((await serverSession(page))?.state === 'running') await stopOnServer(page);
   await expect(stopButton(page)).toHaveAttribute('aria-disabled', 'true', {
     timeout: RUN_TIMEOUT,

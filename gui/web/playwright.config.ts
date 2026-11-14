@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { GUI_PORT } from './e2e/support/gui-server';
+import { scaled } from './e2e/support/timeouts';
 
 // static（npm run e2e）: GUI サーバー（gui/server）がビルド済みの画面（dist/browser）と API を同じオリジンで配信する。
 // dev（npm run e2e:dev）: 開発サーバー（ng serve）が画面を配信し、/api と /ws を GUI サーバーへ転送する。
@@ -20,6 +21,9 @@ export const e2eConfig = (mode: E2eMode) =>
     workers: 1,
     retries: 0,
     forbidOnly: true,
+    // 1 つの試験と expect の待ちの上限（Playwright の既定の 30 秒と 5 秒）に、VEHICLE_SIL_TEST_TIMEOUT_SCALE の倍率を掛ける
+    timeout: scaled(30_000),
+    expect: { timeout: scaled(5_000) },
     reporter: [['list']],
     outputDir: `test-results/${mode}`,
     globalSetup: './e2e/support/gui-server.ts',
@@ -40,7 +44,7 @@ export const e2eConfig = (mode: E2eMode) =>
               env: { GUI_PORT: String(GUI_PORT) },
               url: `${devOrigin}/`,
               reuseExistingServer: false,
-              timeout: 180_000,
+              timeout: scaled(180_000),
             },
           ]
         : [],

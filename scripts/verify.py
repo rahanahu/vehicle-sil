@@ -253,12 +253,35 @@ def load_presets() -> dict[str, dict]:
             data[key].extend(loaded.get(key, []))
     by_name = {p["name"]: p for p in data["configurePresets"]}
     builds = {p["name"] for p in data["buildPresets"]}
-    tests = {p["name"] for p in data["testPresets"]}
+    tests = {p["name"]: p for p in data["testPresets"]}
     for name, preset in by_name.items():
         if preset.get("hidden") or name not in builds or name not in tests:
             continue
-        found[name] = {"host": _required_host(preset, by_name)}
+        found[name] = {"host": _required_host(preset, by_name), "test_jobs": _test_jobs(tests[name], tests)}
     return found
+
+
+def _test_jobs(preset: dict, by_name: dict[str, dict]) -> int | None:
+    """execution.jobs of a test preset, or of the first preset it inherits that sets it."""
+    jobs = preset.get("execution", {}).get("jobs")
+    if isinstance(jobs, int):
+        return jobs
+    parents = preset.get("inherits", [])
+    for parent in [parents] if isinstance(parents, str) else parents:
+        if parent in by_name:
+            jobs = _test_jobs(by_name[parent], by_name)
+            if jobs is not None:
+                return jobs
+    return None
+
+
+def default_test_jobs(preset_jobs: int | None) -> int | None:
+    """ctest -j when --test-jobs is not given: the test preset's, but no more than this computer's CPUs (more tests
+    at once than CPUs slow down the tests that wait in real time). None: leave it to the preset."""
+    cpus = os.cpu_count()
+    if preset_jobs is not None and cpus is not None and cpus < preset_jobs:
+        return cpus
+    return None
 
 
 def _required_host(preset: dict, by_name: dict[str, dict]) -> str | None:
@@ -290,7 +313,7 @@ def rel(path: Path) -> str:
         return str(path)
 
 
-def run_preset(preset: str, args: argparse.Namespace) -> Result:
+def run_preset(preset: str, args: argparse.Namespace, test_jobs: int | None) -> Result:
     result = Result(name=preset, kind="preset")
     base = LOG_DIR / f"{args.tag}-{preset}"
     logs = {stage: Path(f"{base}-{stage}.log") for stage in ("configure", "build", "test")}
@@ -323,10 +346,11 @@ def run_preset(preset: str, args: argparse.Namespace) -> Result:
             result.note = "failed: " + "; ".join(targets)
         return result
 
-    # The test preset already sets the output on failure and the parallelism: only override on request.
+    # The test preset already sets the output on failure and the parallelism: override the parallelism on request,
+    # or when this computer has fewer CPUs than the preset runs tests at once.
     cmd = ["ctest", "--preset", preset, "--output-junit", str(junit)]
-    if args.test_jobs is not None:
-        cmd += ["-j", str(args.test_jobs)]
+    if test_jobs is not None:
+        cmd += ["-j", str(test_jobs)]
     if args.tests:
         cmd += ["-R", args.tests]
     if args.repeat > 1:
@@ -412,7 +436,7 @@ def main() -> int:
     parser.add_argument("--targets", nargs="+", metavar="T", help="build only these targets")
     parser.add_argument("--repeat", type=int, default=1, metavar="N", help="ctest --repeat until-fail:N (default: 1)")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4, metavar="N", help="build jobs (default: the number of CPUs)")
-    parser.add_argument("--test-jobs", type=int, metavar="N", help="ctest -j (default: the test preset's, 8)")
+    parser.add_argument("--test-jobs", type=int, metavar="N", help="ctest -j (default: the test preset's, 8, but no more than the number of CPUs)")
     parser.add_argument("--timeout", type=int, metavar="SEC", help="ctest --timeout (default: none, as the test preset)")
     parser.add_argument("--no-werror", action="store_true",
                         help="do not pass -DVEHICLE_SIL_WARNINGS_AS_ERRORS=ON (the CMake cache keeps its earlier value)")
@@ -447,7 +471,8 @@ def main() -> int:
         results = []
         try:
             for preset in presets:
-                r = run_preset(preset, args)
+                test_jobs = args.test_jobs if args.test_jobs is not None else default_test_jobs(known[preset]["test_jobs"])
+                r = run_preset(preset, args, test_jobs)
                 results.append(r)
                 if not args.json:
                     print_result(r)

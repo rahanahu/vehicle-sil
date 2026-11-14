@@ -4,6 +4,8 @@
 // CTest can run every test in its own process (a failure or a crash stays in its test).
 #pragma once
 
+#include "test_timeout_scale.hpp"
+
 #include <chrono>
 #include <cstdio>
 #include <functional>
@@ -95,12 +97,17 @@ bool throws_with(F&& f, const std::string& substring)
     return throws_if<E>(std::forward<F>(f), [&](const E& e) { return std::string(e.what()).find(substring) != std::string::npos; });
 }
 
-/// Polls `predicate` every `poll` until it returns true or `timeout` has passed.
+using vehicle_sil::test::scaled_timeout;
+using vehicle_sil::test::timeout_scale;
+
+/// Polls `predicate` every `poll` until it returns true or `timeout` has passed. `timeout` is an
+/// upper bound for something that will happen: it is scaled (scaled_timeout(),
+/// VEHICLE_SIL_TEST_TIMEOUT_SCALE). To check that something does not happen, do not use this.
 /// @returns the last result of `predicate`.
 template <typename Predicate>
 bool eventually(Predicate&& predicate, std::chrono::milliseconds timeout, std::chrono::milliseconds poll = std::chrono::milliseconds(1))
 {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(timeout);
     while (!predicate())
     {
         if (std::chrono::steady_clock::now() >= deadline)

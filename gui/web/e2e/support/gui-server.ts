@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { FullConfig } from '@playwright/test';
+import { scaled } from './timeouts';
 
 /**
  * GUI サーバーのポート（開発サーバーの転送先にもなる）。手元で動かしているもの（既定は空き）とぶつからない範囲で、
@@ -132,13 +133,17 @@ export async function launchGuiServer(options: GuiServerOptions): Promise<GuiSer
     },
   );
   const lines = createInterface({ input: server.stdout! });
+  const startTimeout = scaled(120_000);
   const first = await Promise.race([
     once(lines, 'line').then(([line]) => line as string),
     once(server, 'exit').then(([code]) => {
       throw new Error(`the GUI server ended (exit code ${code}) before printing its URL`);
     }),
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('the GUI server did not start in 120 s')), 120_000).unref(),
+      setTimeout(
+        () => reject(new Error(`the GUI server did not start in ${startTimeout / 1000} s`)),
+        startTimeout,
+      ).unref(),
     ),
   ]).catch(async (error: unknown) => {
     await stop(server);

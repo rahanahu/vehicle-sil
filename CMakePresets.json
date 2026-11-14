@@ -119,6 +119,9 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "VEHICLE_SIL_SANITIZERS": "thread"
+      },
+      "environment": {
+        "VEHICLE_SIL_TEST_TIMEOUT_SCALE": "4"
       }
     },
     {
@@ -143,6 +146,9 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "VEHICLE_SIL_SANITIZERS": "thread"
+      },
+      "environment": {
+        "VEHICLE_SIL_TEST_TIMEOUT_SCALE": "4"
       }
     },
     {

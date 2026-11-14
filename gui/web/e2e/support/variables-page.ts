@@ -1,5 +1,6 @@
 // 変数の画面を操る手順（e2e/variables.spec.ts と、本物のランチャーで動かす e2e/real/ が使う）。
 import { Locator, Page, expect } from '@playwright/test';
+import { scaled } from './timeouts';
 
 /** 相手の GUI サーバー: 画面の URL（`#token=` なし）とトークン。 */
 export interface Target {
@@ -35,7 +36,7 @@ export async function timeCommand(page: Page, target: Target, command: string): 
 }
 
 /** 画面を通さずに、待たずに止めて、終わるまで待つ。 */
-export async function stopRun(page: Page, target: Target, timeout = 20_000): Promise<void> {
+export async function stopRun(page: Page, target: Target, timeout = scaled(20_000)): Promise<void> {
   await page.request.post(new URL('api/stop', target.base).href, {
     headers: headers(target),
     data: { force: true },
@@ -63,7 +64,7 @@ export async function waitForVariables(
   page: Page,
   target: Target,
   peer: string,
-  timeout = 20_000,
+  timeout = scaled(20_000),
 ): Promise<number> {
   let id = 0;
   await expect
