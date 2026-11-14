@@ -6,6 +6,7 @@
 #include "allocation_counter.hpp"
 #include "codec_test_messages.hpp"
 #include "j1939_bench.hpp"
+#include "j1939_transport_util.hpp"
 #include "network_test_access.hpp"
 #include "test_harness.hpp"
 
@@ -22,6 +23,7 @@
 #include "vehicle_sil/j1939/exchange.hpp"
 #include "vehicle_sil/j1939/requester.hpp"
 #include "vehicle_sil/j1939/toolbox.hpp"
+#include "vehicle_sil/j1939/transfer_sniffer.hpp"
 
 #include <array>
 #include <optional>
@@ -865,4 +867,63 @@ TEST_CASE(typed_messages_do_not_allocate_in_steady_state)
     CHECK(resets > 300u);
     CHECK(!bench.network.failed());
     CHECK(bench.network.statistics().transport_messages_sent > 40u);
+}
+
+TEST_CASE(following_transfers_with_a_sniffer_does_not_allocate)
+{
+    // Connections and broadcasts that complete, are replaced, are aborted and time out: the
+    // sniffer reserved everything in its constructor. The frames are built before counting.
+    vehicle_sil::j1939::SnifferOptions options;
+    options.broadcasts = true;
+    options.sessions = 4;
+    vehicle_sil::j1939::TransferSniffer sniffer(options);
+    std::size_t ended = 0;
+    std::size_t bytes = 0;
+    sniffer.on_transfer([&](const vehicle_sil::j1939::SniffedTransfer& t) {
+        ++ended;
+        bytes += t.message().data.size();
+    });
+    const Bytes message = payload(100);
+    std::vector<vehicle_sil::can::TimedFrame> frames;
+    const auto add = [&](std::chrono::milliseconds time, const J1939Frame& f) {
+        frames.push_back(vehicle_sil::can::TimedFrame{at(time), to_can(f)});
+    };
+    for (int round = 0; round < 20; ++round)
+    {
+        const std::chrono::milliseconds t0{round * 3000};
+        add(t0, rts(0x10, 0x20, 100, 0xEF00));
+        add(t0, bam(0x30, 100, 0xFECA));
+        add(t0, rts(0x40, 0x20, 100, 0xEF00)); // never answered: times out
+        add(t0 + 1ms, rts(0x50, 0x20, 100, 0xEF00));
+        add(t0 + 2ms, rts(0x60, 0x20, 100, 0xEF00)); // no place
+        add(t0 + 3ms, conn_abort(0x20, 0x50, 1, 0xEF00));
+        add(t0 + 10ms, cts(0x20, 0x10, 15, 1, 0xEF00));
+        for (std::uint8_t k = 1; k <= 15; ++k)
+        {
+            add(t0 + 20ms + std::chrono::milliseconds(k), dt(0x10, 0x20, k, message));
+            add(t0 + 20ms + std::chrono::milliseconds(k), dt(0x30, 0xFF, k, message));
+        }
+        add(t0 + 50ms, eoma(0x20, 0x10, 100, 0xEF00));
+        add(t0 + 60ms, rts(0x10, 0x20, 100, 0xEF00));
+        add(t0 + 70ms, rts(0x10, 0x20, 100, 0xEF00)); // replaces; then times out
+    }
+    g_allocations.store(0);
+    g_counting.store(true);
+    for (const auto& f : frames)
+    {
+        sniffer.feed(f);
+        sniffer.advance(f.time);
+    }
+    sniffer.advance(at(100s));
+    g_counting.store(false);
+    CHECK_EQ(g_allocations.load(), 0u);
+    CHECK_EQ(sniffer.active(), 0u);
+    const auto& statistics = sniffer.statistics();
+    CHECK_EQ(statistics.completed, 40u);
+    CHECK_EQ(statistics.aborted_by_receiver, 20u);
+    CHECK_EQ(statistics.replaced, 20u);
+    CHECK_EQ(statistics.timed_out, 40u);
+    CHECK_EQ(statistics.no_session, 20u);
+    CHECK_EQ(ended, 120u);
+    CHECK_EQ(bytes, 40u * 100u);
 }

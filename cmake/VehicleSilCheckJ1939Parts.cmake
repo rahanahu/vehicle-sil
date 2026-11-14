@@ -8,6 +8,55 @@
 # Parts also may not set an Observer (the network has one, for tests and recording; parts take
 # part through handlers): -DFORBID_OBSERVER=ON, the default without SOURCES_ONLY.
 cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMake 3 then rejects IN_LIST)
+
+# The other use: inside the engine's own target (libs/j1939), the TransferSniffer stays
+# independent of the Network, so that it also runs on raw CAN frames without the stack:
+#   cmake -DENGINE_DIR=<libs/j1939> -P VehicleSilCheckJ1939Parts.cmake
+# - transfer_sniffer.hpp, transfer_sniffer.cpp and the internal transport_wire.hpp they share
+#   with the engine include only the value types (and each other), no network.hpp.
+# - No other source of the engine includes transfer_sniffer.hpp.
+if(ENGINE_DIR)
+  set(sniffer_sources
+    "${ENGINE_DIR}/include/vehicle_sil/j1939/transfer_sniffer.hpp"
+    "${ENGINE_DIR}/src/transfer_sniffer.cpp"
+    "${ENGINE_DIR}/src/transport_wire.hpp")
+  set(sniffer_may_include
+    "vehicle_sil/can/frame.hpp" "vehicle_sil/core/sim_time.hpp" "vehicle_sil/j1939/types.hpp"
+    "vehicle_sil/j1939/transfer_sniffer.hpp" "transport_wire.hpp")
+  set(include_pattern "#[ \t]*include[ \t]*[\"<]([^\">]+)[\">]")
+  set(failures "")
+  foreach(source IN LISTS sniffer_sources)
+    if(NOT EXISTS "${source}")
+      message(FATAL_ERROR "the sniffer's source is missing (renamed? update this check): ${source}")
+    endif()
+    file(READ "${source}" text)
+    string(REGEX MATCHALL "${include_pattern}" includes "${text}")
+    foreach(include IN LISTS includes)
+      string(REGEX REPLACE "${include_pattern}" "\\1" name "${include}")
+      # Headers of the standard library have no directory and no extension.
+      if(name MATCHES "[/.]" AND NOT name IN_LIST sniffer_may_include)
+        string(APPEND failures "\n  ${source}: includes ${name}")
+      endif()
+    endforeach()
+  endforeach()
+  file(GLOB_RECURSE engine_sources "${ENGINE_DIR}/src/*" "${ENGINE_DIR}/include/*")
+  foreach(source IN LISTS engine_sources)
+    if(source IN_LIST sniffer_sources)
+      continue()
+    endif()
+    file(READ "${source}" text)
+    if(text MATCHES "#[ \t]*include[ \t]*[\"<][^\">]*transfer_sniffer\\.hpp")
+      string(APPEND failures "\n  ${source}: includes transfer_sniffer.hpp")
+    endif()
+  endforeach()
+  if(failures)
+    message(FATAL_ERROR "the TransferSniffer and the J1939 engine depend on each other:${failures}\n"
+                        "The sniffer may include only: ${sniffer_may_include}. Share what both need through "
+                        "src/transport_wire.hpp, and keep the engine free of transfer_sniffer.hpp.")
+  endif()
+  message(STATUS "j1939 engine: the TransferSniffer is independent of the Network")
+  return()
+endif()
 if(NOT PARTS_DIR OR NOT IS_DIRECTORY "${PARTS_DIR}")
   message(FATAL_ERROR "PARTS_DIR is not a directory: ${PARTS_DIR}")
 endif()

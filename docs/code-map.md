@@ -106,6 +106,7 @@ PGN と識別子、単一フレームの送受信、宛先の振り分け、ロ�
 聞くだけの participant（生の CAN、ノードのない `Network`。ステップ幅はいろいろ）を足しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらず、聞くだけの participant が何も送らないことも、仮想バスと SIL Kit で確かめる（`j1939_silkit.listen_only_participants_*`）。
 タイミングありの仮想バスで、プロトコルの結果が変わらないこと、混雑で転送が遅れ、バスが飽和すると時間切れになることも確かめる。
 1 つの ECU がバスから切り離されたとき（受信だけ、送受信とも）の TP の時間切れと回復、隠れていたアドレスの衝突の解決、時刻同期なしの SIL Kit での実時間の動作も確かめる。
+`TransferSniffer`（`j1939.sniffer_*`）は、手で書いたフレームでの決まりと、同じフレームを受けたエンジンの受信側のノードとの一致（エンジンどうしの転送、種を固定した故障注入）を確かめ、`j1939.sniffer_boundary` が `Network` に依らないことを検査する。
 道具箱（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）とプロトコル部品（`j1939_parts.*`: DM13、診断、識別情報、送信の競合、後で返す ACK、ステップ幅によらない結果）も確かめ、`j1939_parts.boundary` が部品がエンジンの内部を使っていないことを検査する。
 型付きメッセージ（`j1939_codec.*`）は、ビット配置をビットごとの実装と照合し、raw 値と物理値の変換、丸めと範囲の端、特別な値（J1939 のプロファイル、利用者のプロファイル、継承と上書き、すべてのビットパターンを値として使う Proprietary B、raw 値の保持）、列挙、セレクター、埋め値、長さ、小さい信号のすべての raw 値の往復、ノードでの送受信を確かめる。
 `j1939_codec.generator` は生成器が誤った定義を止めることを確かめる。
@@ -260,8 +261,8 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 ### `libs/j1939`（エンジン）
 
-- 主なクラス・関数（ヘッダー）: `Network`、`Node`（`j1939/network.hpp`）、`Pgn`、`Identifier`（`j1939/types.hpp`）、`Name`（`j1939/name.hpp`）、`Subscription`、`Timer`（`j1939/toolbox.hpp`）、`Observer`（`j1939/observer.hpp`）。
-  Address Claim と Request は `src/node.cpp`、トランスポートプロトコルは `src/transport.cpp`
+- 主なクラス・関数（ヘッダー）: `Network`、`Node`（`j1939/network.hpp`）、`Pgn`、`Identifier`（`j1939/types.hpp`）、`Name`（`j1939/name.hpp`）、`Subscription`、`Timer`（`j1939/toolbox.hpp`）、`Observer`（`j1939/observer.hpp`）、`TransferSniffer`（`j1939/transfer_sniffer.hpp`。ほかの ECU どうしの転送をフレームから追う。`Network` に依らない）。
+  Address Claim と Request は `src/node.cpp`、トランスポートプロトコルは `src/transport.cpp`、盗み聞きは `src/transfer_sniffer.cpp`。両方が読むフレームの形（制御バイト、時間切れ、告知の形の検査）は `src/transport_wire.hpp`
 - 試験: `tests/j1939`
 - `ctest -R`: `^j1939\.`、`^j1939_silkit\.`
 

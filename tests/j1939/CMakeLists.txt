@@ -12,6 +12,8 @@ vehicle_sil_add_harness_tests(vehicle_sil_j1939_tests
     test_j1939_outage.cpp
     test_j1939_real_time.cpp
     test_j1939_request.cpp
+    test_j1939_sniffer.cpp
+    test_j1939_sniffer_faults.cpp
     test_j1939_toolbox.cpp
     test_j1939_transport_bam.cpp
     test_j1939_transport_faults.cpp
@@ -58,6 +60,23 @@ add_test(NAME j1939_parts.boundary_check_observer
                  -DSOURCES_ONLY=ON -DFORBID_OBSERVER=ON -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
 set_tests_properties(j1939_parts.boundary_check_observer PROPERTIES LABELS "unit;j1939" TIMEOUT 60
                      PASS_REGULAR_EXPRESSION "reach into the J1939 engine:.*part\\.hpp: matches 'set_observer'")
+# Inside the engine's target: the TransferSniffer does not depend on the Network (it also runs
+# on raw CAN frames), and the engine does not depend on the sniffer.
+add_test(NAME j1939.sniffer_boundary
+         COMMAND ${CMAKE_COMMAND} -DENGINE_DIR=${PROJECT_SOURCE_DIR}/libs/j1939
+                 -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
+set_tests_properties(j1939.sniffer_boundary PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
+# The check itself fails for the right reason.
+foreach(fixture IN ITEMS sniffer_includes_network engine_includes_sniffer)
+  add_test(NAME j1939.sniffer_boundary_check_${fixture}
+           COMMAND ${CMAKE_COMMAND} -DENGINE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/boundary_fixtures/${fixture}
+                   -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
+  set_tests_properties(j1939.sniffer_boundary_check_${fixture} PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
+endforeach()
+set_tests_properties(j1939.sniffer_boundary_check_sniffer_includes_network PROPERTIES PASS_REGULAR_EXPRESSION
+                     "depend on each other:.*transfer_sniffer\\.cpp: includes vehicle_sil/j1939/network\\.hpp")
+set_tests_properties(j1939.sniffer_boundary_check_engine_includes_sniffer PROPERTIES PASS_REGULAR_EXPRESSION
+                     "depend on each other:.*network\\.cpp: includes transfer_sniffer\\.hpp")
 # The local buses, the test kit, Peer, Ecu and Simulation use the engine's public API only, like
 # the parts.
 foreach(dir IN ITEMS local testkit peer ecu simulation)
