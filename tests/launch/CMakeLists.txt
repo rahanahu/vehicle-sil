@@ -190,13 +190,15 @@ if(TARGET vehicle_sil_launch_test_ecu)
   # Each part is a test of its own, so that they run side by side: the write in the window
   # (5 runs), what fails before the start (also with a stop), an agent that says hello and does
   # not answer, the limits of the start before and after the hold of --start-paused with a
-  # control server (a participant of the test that never gets ready), --timeout-ms and Ctrl+C in
+  # control server (a participant of the test that never gets ready), a hold longer than the
+  # ECUs' own limit for the start, --timeout-ms and Ctrl+C in
   # the hold, a resume before the window.
   foreach(part IN ITEMS a_write_in_the_start_window_reaches_each_process_before_its_first_step
                         what_fails_before_the_start_aborts_the_simulation
                         a_stop_while_what_is_done_before_the_start_fails_does_not_cut_the_end_short
                         a_hello_without_an_answer_and_what_is_no_message_are_reported
                         the_start_is_limited_before_and_after_the_hold_but_not_in_it
+                        the_ecus_wait_as_long_as_the_run_stands_still
                         timeout_counts_the_hold an_interrupt_ends_the_hold a_resume_before_the_window_means_no_hold)
     add_test(NAME launch_control.${part}
              COMMAND vehicle_sil_launch_control_test $<TARGET_FILE:vehicle_sil_launch_test_ecu>

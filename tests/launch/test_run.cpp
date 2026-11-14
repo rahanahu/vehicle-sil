@@ -1475,15 +1475,18 @@ TEST_CASE(the_ecu_waits_for_the_start_longer_than_the_launcher)
     SimulationConfig c;
     c.start_timeout_ms = 8000;
     c.stop_timeout_ms = 2000;
-    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c), std::int64_t{20000});
-    CHECK(launch::detail::ecu_start_timeout_ms(c) > c.start_timeout_ms + c.stop_timeout_ms);
+    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, false), std::int64_t{20000});
+    CHECK(launch::detail::ecu_start_timeout_ms(c, false) > c.start_timeout_ms + c.stop_timeout_ms);
+    // A run that stands still before the first step (--start-paused with a control server) may
+    // do so for any time: the ECU's limit must not end it.
+    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, true), kMaxMillis);
     // Never more than ecu_main takes as --start-timeout-ms.
     c.start_timeout_ms = kMaxMillis;
     c.stop_timeout_ms = kMaxMillis;
-    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c), kMaxMillis);
+    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, false), kMaxMillis);
     c.start_timeout_ms = kMaxMillis - 10000;
     c.stop_timeout_ms = 1;
-    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c), kMaxMillis);
+    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, false), kMaxMillis);
 }
 
 TEST_CASE(the_command_to_start_a_participant_by_hand_is_quoted_for_the_shell)
