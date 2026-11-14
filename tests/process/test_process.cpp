@@ -293,7 +293,8 @@ TEST_CASE(process_tells_that_processes_it_started_outlive_it)
         vehicle_sil::test::kill_one(grandchild);
     }
     CHECK(gone);
-    CHECK(!p.others_running());
+    // The grandchild is gone as a process to signal, but it counts as running until it was reaped.
+    CHECK(vehicle_sil::unit::eventually([&] { return !p.others_running(); }, 60s));
 }
 
 TEST_CASE(process_ends_with_what_it_started_when_destroyed)
