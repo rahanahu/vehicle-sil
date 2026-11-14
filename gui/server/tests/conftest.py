@@ -126,7 +126,7 @@ def gui_server(tmp_path: Path, *, root: Path = CONFIGS, env: dict | None = None,
 
 REPOSITORY = TESTS.parents[2]
 CONTROL_FEATURES = ("events,stdin-commands,check-variables,speed,start-paused,time-commands,control-links,"
-                    "scenario,manual-participants,scenario-wave,scenario-motion-expect,control-server")
+                    "scenario,manual-participants,scenario-wave,scenario-motion-expect,scenario-points-file,control-server")
 
 
 @pytest.fixture(scope="session")

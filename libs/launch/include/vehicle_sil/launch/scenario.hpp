@@ -14,6 +14,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -212,7 +214,19 @@ struct ScenarioContext
     /// this scenario neither declares nor uses is left alone (no ScenarioRead::usage_errors). The
     /// caller says it if no scenario has it (unused_test_params()).
     bool params_for_many = false;
+    /// Reads a file the scenario names (a wave's `points: { file: <path> }`). `path` is as the
+    /// scenario writes it, already checked: relative, '/' between directories, no "..". Returns the
+    /// bytes, or empty and `problem` (what is wrong and how to fix it, after "<path> ").
+    /// files_beside() gives the one of a scenario file. Not set: a scenario that names a file is an
+    /// error ("scenario-points-file").
+    std::function<std::optional<std::string>(const std::string& path, std::string& problem)> read_file{};
 };
+
+/// The ScenarioContext::read_file of the scenario file `scenario`: a path is from the directory
+/// the file is in (a UTF-8 path, also on Windows). A file larger than 16 MiB, a directory and a
+/// file that cannot be opened are problems.
+[[nodiscard]] std::function<std::optional<std::string>(const std::string&, std::string&)>
+files_beside(const std::filesystem::path& scenario);
 
 struct ScenarioRead
 {
@@ -252,7 +266,8 @@ struct ScenarioRead
 /// (it exists, its participant is usable, the value fits its type, range and enum items, a written
 /// variable is an input, or a parameter in a step at 0). Reports every problem at once, except
 /// that the steps are not read while a parameter has an error or the scenario is not for the
-/// variant. No file system access.
+/// variant. No file system access but through ScenarioContext::read_file (a wave's points from a
+/// CSV file, read once per path).
 [[nodiscard]] ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog,
                                          const ScenarioContext& context = {});
 

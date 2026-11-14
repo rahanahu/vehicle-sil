@@ -2,12 +2,14 @@
 #include "vehicle_sil/launch/scenario.hpp"
 
 #include "vehicle_sil/launch/check.hpp"
+#include "scenario_csv.hpp"
 #include "scenario_shapes.hpp"
 #include "yaml_reader.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cfloat>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -37,6 +39,9 @@ const std::vector<std::string> kWaveShapes = {"sine", "triangle", "sawtooth", "s
                                               "noise", "chirp", "lag", "chatter", "points"};
 const std::vector<std::string> kWaveKeys = {"sine",  "triangle", "sawtooth", "square", "pulse",  "noise",      "chirp",
                                             "lag",   "chatter",  "points",   "around", "for_ms", "interpolate"};
+// The keys of points from a CSV file (points: { file: ..., value: ... }).
+const std::vector<std::string> kPointsFileKeys = {"file", "value", "time", "time_unit"};
+constexpr const char* kPointsFileExample = "points: { file: traces/drive.csv, value: throttle }";
 // How a wave that an ECU cannot see as written is run anyway (in every such message).
 constexpr const char* kAsItIs = "; to run it as it is without this message, add undersampled: ok to the step";
 /// A smooth shape with fewer steps of its ECU per period is coarse (a note).
@@ -1848,6 +1853,27 @@ private:
             const ryml::id_type last = tree_.last_child(points);
             length = tree_.is_seq(last) && tree_.has_children(last) ? whole(tree_.first_child(last)) : 0;
         }
+        else if (points != ryml::NONE && tree_.is_map(points))
+        {
+            // The time on the file's last line, if it can be read.
+            const auto name = [&](const std::string& key) {
+                const auto of = child(points, key);
+                return of != ryml::NONE && is_scalar(of) && !is_null(of) ? std::optional<std::string>{text_of(of)} : std::nullopt;
+            };
+            const auto path = name("file");
+            const CsvFile* file = path && !path_problem(*path) ? &csv(*path) : nullptr;
+            if (file != nullptr && file->table)
+            {
+                const auto column = name("time");
+                const auto& columns = file->table->columns;
+                const auto at = column ? std::find(columns.begin(), columns.end(), *column) : columns.begin();
+                double ms = 0;
+                const auto end = at == columns.end() ? std::nullopt
+                                                     : cell_ms(file->table->rows.back().cells[static_cast<std::size_t>(at - columns.begin())],
+                                                               name("time_unit") == std::optional<std::string>{"s"}, ms);
+                length = end.value_or(0);
+            }
+        }
         return length;
     }
 
@@ -2484,58 +2510,77 @@ private:
                 hold = *said == "hold";
             }
         }
-        if (!tree_.is_seq(body) || !tree_.has_children(body))
-        {
-            error("value", doc_.line(body),
-                  "points of " + var.text + " must be a list of [<milliseconds since the step began>, <value>] ([[0, 0], [100, 50]]), not " +
-                      (tree_.is_seq(body) ? std::string("an empty list") : shown_value(body)));
-            return false;
-        }
         std::vector<signal::Point> points;
-        std::size_t index = 0;
+        std::vector<std::string> names; // of each point, as the messages name it
         std::optional<std::int64_t> before;
         std::optional<std::pair<std::int64_t, std::int64_t>> closest; // the two times that are closest
-        for (auto item = tree_.first_child(body); item != ryml::NONE; item = tree_.next_sibling(item))
+        // The next point (`after`: how a message names the one before it), or false and an error at `line`.
+        const auto add = [&](std::int64_t at, double value, std::string name, const std::string& after, std::size_t line) {
+            if (before && at <= *before)
+            {
+                error("value", line,
+                      "the times of " + what + " must go up: " + name + " is at " + std::to_string(at) + " ms, not after " + after + " (" +
+                          std::to_string(*before) + " ms)" +
+                          (at == *before && !hold ? "; for a value that jumps, write interpolate: hold beside the points (each value is "
+                                                    "then kept until the next point)"
+                                                  : ""));
+                return false;
+            }
+            if (before && (!closest || at - *before < closest->second - closest->first))
+            {
+                closest = std::pair{*before, at};
+            }
+            before = at;
+            points.push_back(signal::Point{std::chrono::milliseconds(at), value});
+            names.push_back(std::move(name));
+            return true;
+        };
+        std::string source; // " from <file> column <name>" for points from a file
+        if (tree_.is_map(body))
         {
-            ++index;
-            const std::string label = "point " + std::to_string(index);
-            if (!tree_.is_seq(item) || tree_.num_children(item) != 2)
+            const bool read = file_points(body, v, what, add, source);
+            if (!good || !read)
             {
-                error("value", doc_.line(item),
-                      label + " of " + what + " must be [<milliseconds since the step began>, <value>], not " + shown_value(item));
-                good = false;
-                continue;
+                return false;
             }
-            const ryml::id_type timeNode = tree_.first_child(item);
-            const ryml::id_type valueNode = tree_.last_child(item);
-            const auto at = millis(timeNode, "the time of " + label, 0, "milliseconds of virtual time since the step began");
-            const auto value = level(valueNode, v, "the value of " + label, "the points");
-            if (!at || !value)
-            {
-                good = false;
-                continue;
-            }
-            if (before && *at <= *before)
-            {
-                error("value", doc_.line(item),
-                      "the times of " + what + " must go up: " + label + " is at " + std::to_string(*at) + " ms, not after point " +
-                          std::to_string(index - 1) + " (" + std::to_string(*before) + " ms)" +
-                          (*at == *before && !hold ? "; for a value that jumps, write interpolate: hold beside the points (each value is "
-                                                     "then kept until the next point)"
-                                                   : ""));
-                good = false;
-                continue;
-            }
-            if (before && (!closest || *at - *before < closest->second - closest->first))
-            {
-                closest = std::pair{*before, *at};
-            }
-            before = *at;
-            points.push_back(signal::Point{std::chrono::milliseconds(*at), *value});
+            out.hint = "begin the file with a line at 0 ms (0,<value>)";
         }
-        if (!good)
+        else
         {
-            return false;
+            if (!tree_.is_seq(body) || !tree_.has_children(body))
+            {
+                error("value", doc_.line(body),
+                      "points of " + var.text + " must be a list of [<milliseconds since the step began>, <value>] ([[0, 0], [100, 50]]), or " +
+                          "a CSV file and its column (" + kPointsFileExample + "), not " +
+                          (tree_.is_seq(body) ? std::string("an empty list") : shown_value(body)));
+                return false;
+            }
+            std::size_t index = 0;
+            for (auto item = tree_.first_child(body); item != ryml::NONE; item = tree_.next_sibling(item))
+            {
+                ++index;
+                const std::string label = "point " + std::to_string(index);
+                if (!tree_.is_seq(item) || tree_.num_children(item) != 2)
+                {
+                    error("value", doc_.line(item),
+                          label + " of " + what + " must be [<milliseconds since the step began>, <value>], not " + shown_value(item));
+                    good = false;
+                    continue;
+                }
+                const ryml::id_type timeNode = tree_.first_child(item);
+                const ryml::id_type valueNode = tree_.last_child(item);
+                const auto at = millis(timeNode, "the time of " + label, 0, "milliseconds of virtual time since the step began");
+                const auto value = level(valueNode, v, "the value of " + label, "the points");
+                if (!at || !value || !add(*at, *value, label, "point " + std::to_string(index - 1), doc_.line(item)))
+                {
+                    good = false;
+                }
+            }
+            if (!good)
+            {
+                return false;
+            }
+            out.hint = "begin the points with one at 0 ms ([0, <value>])";
         }
         if (points.back().time <= SimDuration::zero())
         {
@@ -2544,11 +2589,10 @@ private:
             return false;
         }
         length = points.back().time.count() / 1'000'000;
-        text += " (" + std::to_string(points.size()) + (hold ? ", hold" : ", linear") + ") over " + std::to_string(*length) + " ms";
-        out.hint = "begin the points with one at 0 ms ([0, <value>])";
+        text += source + " (" + std::to_string(points.size()) + (hold ? ", hold" : ", linear") + ") over " + std::to_string(*length) + " ms";
         if (hold)
         {
-            check_held_points(v, what, doc_.line(body), quiet, points, time);
+            check_held_points(v, what, doc_.line(body), quiet, points, names, time);
         }
         else if (closest)
         {
@@ -2564,18 +2608,303 @@ private:
         return true;
     }
 
+    // --- points from a CSV file ---
+
+    /// A file the scenario names, as read once (ScenarioContext::read_file, read_csv()).
+    struct CsvFile
+    {
+        std::optional<detail::CsvTable> table;
+        std::string problem; ///< if there is no table: after the file's name
+    };
+
+    const CsvFile& csv(const std::string& path)
+    {
+        if (const auto it = files_.find(path); it != files_.end())
+        {
+            return it->second;
+        }
+        CsvFile file;
+        if (!context_.read_file)
+        {
+            file.problem = "is not read here: points from a file are read with the scenario file (check --scenario, run --scenario)";
+        }
+        else if (const auto text = context_.read_file(path, file.problem))
+        {
+            file.table = detail::read_csv(*text, file.problem);
+        }
+        return files_.emplace(path, std::move(file)).first->second;
+    }
+
+    /// What is wrong with the path of a points file (after "the file '<path>' "), or empty: it must
+    /// lead from the scenario's directory to a file in it or below it, the same on every OS.
+    static std::optional<std::string> path_problem(const std::string& path)
+    {
+        static const std::string kOnlyBelow = "a scenario reads only files in its own directory and below it";
+        if (path.empty())
+        {
+            return "is empty: give the path of the CSV file from the scenario file's directory (traces/drive.csv)";
+        }
+        if (path.find('\\') != std::string::npos)
+        {
+            return "has '\\': write '/' between directories (traces/drive.csv), which every OS reads";
+        }
+        if (path.front() == '/' || (path.size() >= 2 && path[1] == ':' && std::isalpha(static_cast<unsigned char>(path[0])) != 0))
+        {
+            return "is an absolute path: give the path from the scenario file's directory (traces/drive.csv); " + kOnlyBelow;
+        }
+        for (std::size_t at = 0; at <= path.size();)
+        {
+            const std::size_t end = std::min(path.find('/', at), path.size());
+            if (path.compare(at, end - at, "..") == 0)
+            {
+                return "goes up a directory (..): " + kOnlyBelow + "; put the file there";
+            }
+            at = end + 1;
+        }
+        return std::nullopt;
+    }
+
+    /// A time cell in milliseconds (`seconds`: the cell is in seconds): empty if it is not a
+    /// number (`ms` is then NaN), not a whole number of milliseconds, or not from 0 to kMaxMillis.
+    static std::optional<std::int64_t> cell_ms(const std::string& cell, bool seconds, double& ms)
+    {
+        double read = 0;
+        if (!read_number(cell, read))
+        {
+            ms = std::nan("");
+            return std::nullopt;
+        }
+        ms = seconds ? read * 1000.0 : read;
+        const double whole = std::round(ms);
+        // A time in seconds is whole milliseconds when it differs from them only in its last bits (0.001 * 1000).
+        if (std::abs(ms - whole) > 1e-6 + std::abs(ms) * 4 * DBL_EPSILON)
+        {
+            return std::nullopt;
+        }
+        ms = whole;
+        if (whole < 0 || whole > static_cast<double>(kMaxMillis))
+        {
+            return std::nullopt;
+        }
+        return static_cast<std::int64_t>(whole);
+    }
+
+    /// The value of a cell for the variable, as a wave writes it (level()): for a bool true, false,
+    /// 1 or 0; for an enum an item by name or by value; else a number of the range (also hexadecimal
+    /// for an integer). Empty and an error at `line` if it is not one. `where`: "line 7 of f.csv
+    /// (column throttle)".
+    std::optional<double> cell_value(const std::string& cell, std::size_t variable, const std::string& where, std::size_t line)
+    {
+        const ScenarioVariable& var = scenario_.variables[variable];
+        const control::VariableInfo& info = *info_of(variable);
+        const std::string pre = "the value on " + where + " for " + var.text + " (" + type_name(var.type) + ")";
+        const Hex hex = read_hex(cell);
+        switch (var.type)
+        {
+        case control::ValueType::Bool:
+            if (cell == "true" || cell == "1" || cell == "false" || cell == "0")
+            {
+                return cell == "true" || cell == "1" ? 1.0 : 0.0;
+            }
+            error("scenario-value", line, pre + " must be true, false, 1 or 0, not " + detail::shown_cell(cell));
+            return std::nullopt;
+        case control::ValueType::Enum:
+        {
+            std::int64_t i = 0;
+            const bool number = read_integer(cell, i) || hex.kind == Hex::Kind::Read;
+            if (hex.kind == Hex::Kind::Read)
+            {
+                i = static_cast<std::int64_t>(hex.magnitude);
+            }
+            const auto item = std::find_if(info.items.begin(), info.items.end(),
+                                           [&](const control::EnumItem& e) { return number ? e.value == i : e.name == cell; });
+            if (item != info.items.end())
+            {
+                return static_cast<double>(item->value);
+            }
+            error("scenario-value", line,
+                  pre + " must be one of its items, by name or by value, not " + detail::shown_cell(cell) + ": the items are " +
+                      items_text(info.items));
+            return std::nullopt;
+        }
+        case control::ValueType::Integer:
+        case control::ValueType::Real:
+            break;
+        }
+        double d = 0;
+        if (!read_number(cell, d))
+        {
+            if (var.type != control::ValueType::Integer || hex.kind != Hex::Kind::Read)
+            {
+                error("scenario-value", line, pre + " must be a number, not " + detail::shown_cell(cell));
+                return std::nullopt;
+            }
+            d = static_cast<double>(hex.magnitude);
+        }
+        if (!in_range(d, variable))
+        {
+            error("scenario-value", line, pre + " is " + number_text(d) + ", outside its range (" + range_text(info) + ")");
+            return std::nullopt;
+        }
+        return d;
+    }
+
+    /// The points of a wave from a CSV file (`body`: { file, value, time, time_unit }), each given
+    /// to `add` (read_points()). Stops at the first error. `source`: " from <file> column <name>".
+    template <class Add>
+    bool file_points(ryml::id_type body, std::size_t v, const std::string& what, const Add& add, std::string& source)
+    {
+        const auto parts = parts_of(body, what, kPointsFileKeys, std::string("a CSV file and its column (") + kPointsFileExample + ")");
+        if (!parts)
+        {
+            return false;
+        }
+        bool good = true;
+        // The name in `key` (a column, the file), or empty and an error.
+        const auto name = [&](const std::string& key, const std::string& meaning) -> std::optional<std::string> {
+            if (parts->count(key) == 0)
+            {
+                return std::nullopt;
+            }
+            const ryml::id_type node = parts->at(key);
+            if (!is_scalar(node) || is_null(node) || text_of(node).empty())
+            {
+                error("value", doc_.line(node), key + " of " + what + " must be " + meaning + ", not " + shown_value(node));
+                good = false;
+                return std::nullopt;
+            }
+            return text_of(node);
+        };
+        for (const auto& [key, meaning] : {std::pair<std::string, std::string>{"file", "the CSV file, from the scenario file's directory"},
+                                           {"value", "the name of the column of the values"}})
+        {
+            if (parts->count(key) == 0)
+            {
+                error("missing-key", doc_.line(body), what + " from a file need " + key + ": " + meaning + " (" + kPointsFileExample + ")");
+                good = false;
+            }
+        }
+        const auto path = name("file", "the path of the CSV file from the scenario file's directory (traces/drive.csv)");
+        const auto valueName = name("value", "the name of the column of the values");
+        const auto timeName = name("time", "the name of the column of the times (without it, the first column)");
+        bool seconds = false;
+        if (parts->count("time_unit") > 0)
+        {
+            const auto unit = choice(parts->at("time_unit"), "time_unit of " + what, {"ms", "s"});
+            good = unit.has_value() && good;
+            seconds = unit == std::optional<std::string>{"s"};
+        }
+        if (!good || !path || !valueName)
+        {
+            return false;
+        }
+        const std::size_t line = doc_.line(parts->at("file"));
+        if (const auto wrong = path_problem(*path))
+        {
+            error("scenario-points-file", line, what + ": the file '" + *path + "' " + *wrong);
+            return false;
+        }
+        const CsvFile& file = csv(*path);
+        if (!file.table)
+        {
+            error("scenario-points-file", line, what + ": " + *path + " " + file.problem);
+            return false;
+        }
+        const detail::CsvTable& table = *file.table;
+        // The index of a column, or empty and an error.
+        const auto column = [&](const std::string& wanted, const std::string& key) -> std::optional<std::size_t> {
+            std::vector<std::size_t> found;
+            for (std::size_t i = 0; i < table.columns.size(); ++i)
+            {
+                if (table.columns[i] == wanted)
+                {
+                    found.push_back(i + 1);
+                }
+            }
+            if (found.size() == 1)
+            {
+                return found.front() - 1;
+            }
+            if (found.size() > 1)
+            {
+                error("scenario-points-file", doc_.line(parts->at(key)),
+                      what + ": " + *path + " has " + std::to_string(found.size()) + " columns named " + detail::shown_cell(wanted) +
+                          " (columns " + std::to_string(found[0]) + " and " + std::to_string(found[1]) +
+                          "): give its columns different names on its first line");
+                return std::nullopt;
+            }
+            std::vector<std::string> shown;
+            for (std::size_t i = 0; i < table.columns.size() && i < 10; ++i)
+            {
+                shown.push_back(detail::shown_cell(table.columns[i]));
+            }
+            const std::string guess = detail::closest(wanted, table.columns);
+            error("scenario-points-file", doc_.line(parts->at(key)),
+                  what + ": " + *path + " has no column " + detail::shown_cell(wanted) + " on its first line (line " +
+                      std::to_string(table.header_line) + ")" +
+                      (guess.empty() ? std::string{} : ": did you mean " + detail::shown_cell(guess) + "?") + "; its columns are " +
+                      join(shown) + (table.columns.size() > shown.size() ? " and " + std::to_string(table.columns.size() - shown.size()) + " more" : ""));
+            return std::nullopt;
+        };
+        const auto valueColumn = column(*valueName, "value");
+        const auto timeColumn = timeName ? column(*timeName, "time") : std::optional<std::size_t>{0};
+        if (!valueColumn || !timeColumn)
+        {
+            return false;
+        }
+        const std::string& timeHead = table.columns[*timeColumn];
+        if (*valueColumn == *timeColumn)
+        {
+            error("scenario-points-file", doc_.line(parts->at("value")),
+                  what + ": value names the column of the times (" + detail::shown_cell(timeHead) + (timeName ? "" : ", the first column") +
+                      "): name the column of the values" + (timeName ? "" : ", or the column of the times with time"));
+            return false;
+        }
+        std::string after;
+        for (const detail::CsvRow& row : table.rows)
+        {
+            const std::string here = "line " + std::to_string(row.line);
+            const std::string at = here + " of " + *path;
+            const std::string& cell = row.cells[*timeColumn];
+            double ms = 0;
+            const auto time = cell_ms(cell, seconds, ms);
+            if (!time)
+            {
+                const std::string pre = "the time on " + at + " (column " + detail::shown_cell(timeHead) + ")";
+                const std::string unit = seconds ? "seconds" : "milliseconds";
+                error("value", line,
+                      std::isnan(ms) ? pre + " must be a number of " + unit + " since the step began, not " + detail::shown_cell(cell) +
+                                           (seconds || timeName ? "" : " (the times are in the first column unless time names another)")
+                      : std::round(ms) != ms
+                          ? pre + " is " + number_text(ms) + " ms: the times of points are whole milliseconds; round them in the file"
+                          : pre + " is " + number_text(ms) + " ms, but it must be from 0 to " + std::to_string(kMaxMillis) +
+                                " (milliseconds of virtual time since the step began)");
+                return false;
+            }
+            const auto value = cell_value(row.cells[*valueColumn], v, at + " (column " + detail::shown_cell(*valueName) + ")", line);
+            if (!value || !add(*time, *value, at, after, line))
+            {
+                return false;
+            }
+            after = here;
+        }
+        source = " from " + *path + " column " + *valueName;
+        return true;
+    }
+
     /// Points that are kept until the next (interpolate: hold): a jump is what they are for, so
     /// how close two of them are does not matter; one whose value the ECU never gets does. Says
     /// the first such point, or else the first of which that is not known before the run.
     void check_held_points(std::size_t variable, const std::string& what, std::size_t line, bool quiet,
-                           const std::vector<signal::Point>& points, const std::optional<std::int64_t>& time)
+                           const std::vector<signal::Point>& points, const std::vector<std::string>& names,
+                           const std::optional<std::int64_t>& time)
     {
         const auto step = sampling(variable, what, line, quiet);
         if (!step)
         {
             return;
         }
-        const std::string head = what + " keep point ";
+        const std::string head = what + " keep ";
         const std::string fix = ". Put the points at multiples of " + span_text(*step) + kAsItIs;
         std::string unknown;
         for (std::size_t i = 0; i + 1 < points.size(); ++i)
@@ -2584,13 +2913,13 @@ private:
             SimDuration ends{};
             const Seen seen = seen_between(*step, time, points[i].time, points[i + 1].time, points.back().time, written, ends);
             const bool last = i + 2 == points.size();
-            const std::string span = std::to_string(i + 1) + " from " + span_text(points[i].time) + " to " + span_text(points[i + 1].time) +
+            const std::string span = names[i] + " from " + span_text(points[i].time) + " to " + span_text(points[i + 1].time) +
                                      (last ? ", where they end" : "") + ", and " + takes_inputs(variable) + ": ";
             if (seen == Seen::No && written == SimDuration::zero() && ends == SimDuration::zero())
             {
                 add(Severity::Warning, "scenario-wave-undersampled", line,
                     head + span + "the wave writes a value every " + span_text(*step) + " from the step's beginning, and none of those "
-                    "times is in that span, so the value of point " + std::to_string(i + 1) + " is never applied" + fix,
+                    "times is in that span, so the value of " + names[i] + " is never applied" + fix,
                     owner_of(variable));
                 return;
             }
@@ -2598,14 +2927,14 @@ private:
             {
                 add(Severity::Warning, "scenario-wave-undersampled", line,
                     head + span + "this step begins at " + std::to_string(*time) + " ms, and none of the ECU's steps is from " +
-                        span_text(written) + " (when the value of point " + std::to_string(i + 1) + " is written) until the points end (" +
+                        span_text(written) + " (when the value of " + names[i] + " is written) until the points end (" +
                         span_text(ends) + "), so that value is never applied" + fix,
                     owner_of(variable));
                 return;
             }
             if (seen == Seen::Depends && unknown.empty())
             {
-                unknown = head + span + "the value of point " + std::to_string(i + 1) + " is applied only if one of the ECU's steps is from " +
+                unknown = head + span + "the value of " + names[i] + " is applied only if one of the ECU's steps is from " +
                           span_text(written) + " to " + span_text(ends) + " after this step begins, and when it begins is not known before the run" + fix;
             }
         }
@@ -2809,6 +3138,7 @@ private:
     const ScenarioCatalog& catalog_;
     const ScenarioContext& context_;
     ScenarioRead& out_;
+    std::map<std::string, CsvFile> files_; ///< the points files, by the path the scenario writes
     Scenario scenario_;
     std::vector<Known> params_;                         ///< every parameter that has a value
     std::map<ryml::id_type, std::size_t> substituted_;  ///< a value node that is "${name}": its index in params_

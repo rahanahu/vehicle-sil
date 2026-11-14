@@ -180,7 +180,7 @@ ECU は、Agent の `sample_period`（既定 10 ms の仮想時間）ごとに�
 | `chirp` | `amplitude`、`from_hz`、`to_hz`、`sweep` | 周波数が `for_ms` の間に `from_hz` から `to_hz` へ変わる正弦。`sweep: linear`（既定）は毎秒同じ Hz ずつ、`log` は毎秒同じ倍率ずつ。周波数は 0 以上で、`linear` は 0 Hz から始めることも 0 Hz で終わることもできる（両方 0 は誤り）。`log` はどちらも 0 より大きい数 | integer、real |
 | `lag` | `to`、`tau_ms`、`from`、`settle: true` | 一次遅れの形で `to` に寄る（`tau_ms` で 63 %、その 5 倍で 99 %）。`from` を省くと、いまの値から | integer、real |
 | `chatter` | `to`、`interval_ms`、`bounces` か横の `for_ms`、`seed`、`from` | スイッチの跳ね。`to`、元の値、`to`、元の値、… と `interval_ms` ごとに変わり、最後は `to`。`bounces` は元の値に戻る回数。`seed` を書くと、変わる時刻が `interval_ms` の 1/4 まで前後にずれる。bool は `from` を書かない（`to` の反対） | integer、real、bool |
-| `points` | `[[<ms>, <値>], ...]`、横に `interpolate` | 時刻（手順の始めからの ms、昇順）と値の表。`interpolate: linear`（数の既定）は点の間を直線で、`hold` は次の点まで値を保つ。bool と enum は `hold` だけ。値を飛ばす（段差）ときは `hold` で書く（`linear` では、同じ時刻の 2 点は誤り） | どの型でも |
+| `points` | `[[<ms>, <値>], ...]` か CSV ファイル（`{ file: <パス>, value: <列> }`。[点を CSV ファイルから読む](#点を-csv-ファイルから読む)）、横に `interpolate` | 時刻（手順の始めからの ms、昇順）と値の表。`interpolate: linear`（数の既定）は点の間を直線で、`hold` は次の点まで値を保つ。bool と enum は `hold` だけ。値を飛ばす（段差）ときは `hold` で書く（`linear` では、同じ時刻の 2 点は誤り） | どの型でも |
 
 - **周期**は `period_ms`（1 以上の整数）か `frequency_hz`（0 より大きい数）のどちらかです。1 ms より短い周期は `frequency_hz` で書きます。`phase_deg` は波形を始める位置で、90 なら 1/4 周期の所から始めます。
 - **長さ**は `for_ms` です。周期の倍数でなくてもかまいません。`pulse` と `points` は自分で長さを持つので `for_ms` を書きません。`chatter` は `bounces` か `for_ms` のどちらかです。
@@ -196,6 +196,28 @@ ECU は、Agent の `sample_period`（既定 10 ms の仮想時間）ごとに�
 - **`square` と PWM**: `square` は、値そのものを高い側と低い側に切り替えます（ECU がピンのエッジを見る入力）。ECU がデューティーや周波数を数の変数として受ける入力には、その変数に `set` や `ramp`、`sine` を使います。
 
 `vehicle_sil::signal`（[`signal/waveform.hpp`](../libs/signal/include/vehicle_sil/signal/waveform.hpp)）に同じ計算の関数があり、自分の C++ のコードからも使えます。
+
+### 点を CSV ファイルから読む
+
+`points` には、点の表の代わりに CSV ファイルとその列を書けます。記録した値の列を、そのまま入力に流すときに使います。
+次の例は、[examples/ecu_main/scenarios/throttle_trace.yaml](../examples/ecu_main/scenarios/throttle_trace.yaml) の 15 行で、同じディレクトリの `throttle_trace.csv` の列 `throttle` を、最初の列の時刻（ms）で流します。
+
+```yaml
+  - wave: { Engine.engine.throttle: { points: { file: throttle_trace.csv, value: throttle } } }
+```
+
+| キー | 書くもの |
+|---|---|
+| `file` | CSV ファイル。シナリオのファイルがあるディレクトリからのパスで、ディレクトリの区切りは `/` です。絶対パス、`..` を含むパス、`\` を含むパスは誤りです（シナリオは、自分のディレクトリとその下のファイルだけを読みます） |
+| `value` | 値の列の名前（必須） |
+| `time` | 時刻の列の名前。省くと最初の列 |
+| `time_unit` | 時刻の単位。`ms`（既定）か `s`。どちらも、手順の始めからの時刻で、整数の ms になる値を書きます（`s` の `0.25` は 250 ms） |
+
+- CSV の 1 行目は列の名前で、その下の 1 行が 1 点です。区切りは `,` で、セルを `"` で囲めます（中の `"` は `""`）。UTF-8 で、先頭の BOM、CRLF の改行、空行はかまいません。どの行も、1 行目と同じ数のセルを持ちます。
+- 読んだ点は、`[[<ms>, <値>], ...]` に書いたときと同じ決まりで照合し、同じ値を書きます（時刻は昇順、値は型と範囲、`interpolate` は横に書く、ECU のステップより細かい点の警告）。値のセルは数です。bool は `true`、`false`、`1`、`0`、enum は項目の名前か値です。integer の値には 16 進（`0x3C`）も書けます。
+- 1 つのファイルの別の列を、別の変数に使えます。ファイルは照合のときに 1 回だけ読みます。値の行は 100000 行まで、ファイルは 16 MiB までです。
+- `file`、`value`、`time`、`time_unit` には `${名前}` を書けます（同じシナリオに、別の記録を流す）。
+- 誤りは、ファイルとパスと列のことが `scenario-points-file`、セルのことは `[[<ms>, <値>], ...]` と同じ `value`（時刻）と `scenario-value`（値）です。所見の行はシナリオの `file` の行で、文が CSV の何行目のどの列かを言います（セルは 20 文字で切ります）。セルの誤りは、1 つの `points` につき最初の 1 つだけを言います。
 
 ### ECU のステップより細かい波形
 
@@ -410,6 +432,7 @@ failed: 5 errors, 0 warnings, 0 notes
 | `scenario-not-writable` | 出力に書いている。Parameter を時刻 0 の `set` 以外で書いている |
 | `scenario-value` | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている。`wave` の波形が変数の型に合わない、`around` ± `amplitude` が範囲の外 |
 | `scenario-wave-undersampled`、`scenario-wave-duty`（警告）、`scenario-wave-coarse`、`scenario-wave-not-checked`（注記） | `wave` が相手の ECU のステップより細かい（[ECU のステップより細かい波形](#ecu-のステップより細かい波形)） |
+| `scenario-points-file` | `wave` の `points` の CSV ファイル（[点を CSV ファイルから読む](#点を-csv-ファイルから読む)）のパスが、シナリオのディレクトリの下を指していない。ファイルがない、読めない、空、UTF-8 でない、行のセルの数が列の数と違う、行が多すぎる。`value` や `time` の列がない、名前が 2 つある |
 | `scenario-param` | `${名前}` に値がない。`${...}` がキーや変数名、値の一部にある（シナリオにない名前の `--param` は、引数の誤り `usage`） |
 | `scenario-variant` | シナリオの `only` に、選んだ機種がない。`only` の名前が構成の機種にない |
 | `scenario-step-skipped`（注記） | 手順が `absent: true` の変数か、機種が外した participant の変数を使うので、実行で飛ばす。`ramp` と `wave` の横の `expect` だけが使うときは、その `expect` だけを飛ばす |
@@ -484,7 +507,7 @@ failed: 5 errors, 0 warnings, 0 notes
 - 時刻はミリ秒の数です（ECU のステップが 1 ms より細かいと、小数になることがあります）。わからない時刻は null です。
 - シナリオが終わってランチャーが止めた実行の `simulation` は `ended` です。
 - `run --events`: 手順が始まったとき（`status` は `running`）と決まったときに、事象 `scenario_step`（`steps[]` と同じキー）。結果の事象にも `scenario` があります。飛ばす手順の `scenario_step`（`status` は `skipped`、`at_ms` は null）は 1 回で、その手順の時刻が決まったときに出ます（実行の前からわかっているので、仮想時間がそこへ進むより前に出ることがあります）。
-- `vehicle_sil_launch version --json` の `features` に `scenario` があれば、この機能を使えます。手順 `wave` は、`scenario-wave` があるランチャーで使えます（ないランチャーでは、`wave` は知らないキーの誤りです）。`ramp` と `wave` の横の `expect` は、`scenario-motion-expect` があるランチャーで使えます（ないランチャーでは、手順が 2 つのことをする誤りです）。
+- `vehicle_sil_launch version --json` の `features` に `scenario` があれば、この機能を使えます。手順 `wave` は、`scenario-wave` があるランチャーで使えます（ないランチャーでは、`wave` は知らないキーの誤りです）。`ramp` と `wave` の横の `expect` は、`scenario-motion-expect` があるランチャーで使えます（ないランチャーでは、手順が 2 つのことをする誤りです）。CSV ファイルの `points` は、`scenario-points-file` があるランチャーで使えます（ないランチャーでは、`points` の形の誤りです）。
 
 ## 実行中に変数を見る（`--control`）
 

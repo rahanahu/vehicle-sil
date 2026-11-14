@@ -27,6 +27,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/run_start.cpp
   src/run_watch.cpp
   src/scenario.cpp
+  src/scenario_csv.cpp
   src/scenario_run.cpp
   src/scenario_shapes.cpp
   src/test.cpp
