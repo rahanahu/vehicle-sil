@@ -85,6 +85,17 @@ def check_rules(events: list[dict]) -> None:
         assert times and times[0]["seq"] > running and times[0]["sim_ms"] == 0, "time 0 when running starts"
         assert all(a["sim_ms"] <= b["sim_ms"] for a, b in zip(times, times[1:])), "sim_ms does not go back"
         assert times[-1]["paused"] is False, "an ended simulation is not paused"
+        # The first one is of time 0: paused there means standing still at 0, so it moves on only
+        # by a command taken while it runs (not by a step that was accepted before the start). The
+        # command may come just before that event: the launcher reads the state, then writes.
+        later = next((e for e in times[1:] if e["sim_ms"] > 0), None)
+        if times[0]["paused"] and later is not None:
+            assert any(e["event"] == "command" and e["accepted"] and running < e["seq"] < later["seq"]
+                       for e in events), \
+                "the time event at the start says paused, but the simulation did not stand still at 0: no accepted " \
+                "command between the phase running and the next time event of a later time. Either the launcher " \
+                "is wrong (noted_paused() in libs/launch/src/run_notes.hpp decides this paused) or the recording " \
+                "is from an older launcher: record it again (record_launcher.py --launcher <vehicle_sil_launch> <case>)"
     first_command = next((e["seq"] for e in events if e["event"] == "command"), None)
     stopping = next((e["seq"] for e in events if e.get("phase") == "stopping"), None)
     if first_command is not None and stopping is not None and events[-1]["result"]["interrupted_by"]:
@@ -181,6 +192,27 @@ def test_a_command_that_no_recording_has_next_ends_the_replay() -> None:
                                ['{"command":"speed","value":3}'])
     assert code == 3 and events[-1]["event"] != "result"
     assert 'it got {"command":"speed","value":3}' in err and "record a case" in err
+
+
+def test_the_rule_of_the_time_event_at_the_start() -> None:
+    """Paused in the time event at the start means that it stood still at 0: what moves it on is a command taken
+    while it runs. The command may be written just before that event (the launcher reads the state, then writes
+    the event); a step taken before the start is the mistake the rule is for."""
+    def stream(*middle: dict) -> list[dict]:
+        out = [{"event": "hello"}, *middle, {"event": "time", "sim_ms": 100, "paused": True},
+               {"event": "time", "sim_ms": 100, "paused": False},
+               {"event": "result", "result": {"result": "interrupted", "interrupted_by": None}}]
+        return [{"event": e["event"], "seq": seq, "t_ms": seq, **e} for seq, e in enumerate(out)]
+
+    running = {"event": "phase", "phase": "running"}
+    step = {"event": "command", "command": "step", "ms": 100, "source": "stdin", "accepted": True}
+    at_0 = {"event": "time", "sim_ms": 0, "paused": True}
+    check_rules(stream(running, at_0, step))
+    check_rules(stream(running, step, at_0))
+    check_rules(stream(step, running, {**at_0, "paused": False}))
+    for wrong in (stream(step, running, at_0), stream(running, at_0), stream(running, {**step, "accepted": False}, at_0)):
+        with pytest.raises(AssertionError, match="says paused, but the simulation did not stand still at 0.*record it again"):
+            check_rules(wrong)
 
 
 def test_a_stop_goes_on_with_the_recording_that_has_it() -> None:

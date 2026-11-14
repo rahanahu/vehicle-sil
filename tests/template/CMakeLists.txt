@@ -22,7 +22,8 @@ foreach(target engine_ecu dashboard_ecu)
   # vehicle-sil's warnings (and -Werror with VEHICLE_SIL_WARNINGS_AS_ERRORS) on the template's code too.
   vehicle_sil_target_defaults(${target})
 endforeach()
-foreach(file simulation.yaml simulation.dashboard.yaml scenarios/throttle_step.yaml)
+foreach(file simulation.yaml simulation.dashboard.yaml simulation.live.yaml simulation.live.dashboard.yaml
+        scenarios/throttle_step.yaml)
   configure_file(${PROJECT_SOURCE_DIR}/template/${file} ${project_dir}/${file} COPYONLY)
 endforeach()
 

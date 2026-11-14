@@ -62,10 +62,12 @@ control_grpc::TimeView view_of(SimulationController& c, bool holding)
         return v;
     }
     v.now = s.now;
-    v.paused = s.paused;
     v.pause_target = s.pause_target;
     const auto state = c.runtime().state();
     const bool finished = c.runtime().started() && has_finished(PeerStatus{state});
+    // One answer from two looks: a simulation that ended between them stands still nowhere (as
+    // time_state() says of one that had ended before).
+    v.paused = s.paused && !finished;
     v.running = !finished && state == orch::ParticipantState::Running;
     v.ended = finished;
     if (finished)
