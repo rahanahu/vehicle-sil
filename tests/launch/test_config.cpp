@@ -1506,8 +1506,10 @@ TEST_CASE(a_variant_lays_its_network_names_over_the_common_ones)
     // not said again for a variant.
     const std::string findings =
         "E 27 network-map-collision: variant 'twice': participant 'Engine': network_names gives the executable's network "
-        "'J1939_CAN' two names, 'VehicleCAN' (line 10) and 'BodyCAN' (line 27), but a network of an ECU is on one bus: "
-        "keep one of the two lines\n"
+        "'J1939_CAN' two names, 'VehicleCAN' (line 10, the common part) and 'BodyCAN' (line 27, this variant), but a "
+        "network of an ECU is on one bus: to have it on 'BodyCAN' in this variant, add the line VehicleCAN: VehicleCAN to "
+        "the variant's network_names of 'Engine' (a line whose two names are the same takes the common line away), or "
+        "remove the variant's line\n"
         "E 30 network-map-undeclared: variant 'typo': participant 'Dashboard': network_names has the key 'VehicleCAM', which "
         "is not in networks: the key is the simulation's name (a name from networks), the value is the executable's name "
         "(did you mean 'VehicleCAN'?)\n";
@@ -1578,9 +1580,105 @@ TEST_CASE(map_network_is_written_as_network_names_not_in_a_command)
     CHECK(plain.config->participants[0].valid);
     CHECK(lines(plain.findings).find("E 8 launcher-argument: variant 'named': participant 'Remote': the command has "
                                      "--map-network, and the participant has network_names") == 0);
-    CHECK(lines(plain.findings).find("\nN 12 network-map-not-checked: variant 'named': participant 'Remote': ") != std::string::npos);
+    // The note says what this run gives the executable: none for the variant that has no line.
+    CHECK(lines(plain.findings).find("network-map-not-checked") == std::string::npos);
     choice.variant = "named";
-    CHECK(!read_config(with_networks(remote, variants), choice).config->participants[0].valid);
+    const ConfigRead named = read_config(with_networks(remote, variants), choice);
+    CHECK(!named.config->participants[0].valid);
+    CHECK(lines(named.findings).find("\nN 12 network-map-not-checked: participant 'Remote': network_names of a participant "
+                                     "that is not described (describe: false) cannot be checked: run gives the executable "
+                                     "--map-network BodyCAN=CAN_2 after its command") != std::string::npos);
+}
+
+TEST_CASE(the_note_of_network_names_that_are_not_checked_says_what_the_chosen_variant_gives)
+{
+    // Far is not described, so the note is the one place that says what its executable is given:
+    // the lines of the chosen variant laid over the common ones, as run builds the arguments.
+    const std::string file = with_networks("  - name: Far\n"                                    // 7
+                                           "    command: [far, \"{registry_uri}\"]\n"            // 8
+                                           "    describe: false\n"                               // 9
+                                           "    network_names: { VehicleCAN: Can_A }\n"          // 10
+                                           "  - name: Near\n"                                    // 11
+                                           "    command: near\n",                                // 12
+                                           "variants:\n"                                         // 13
+                                           "  common: {}\n"                                      // 14
+                                           "  other:\n"                                          // 15
+                                           "    participants:\n"                                 // 16
+                                           "      Far:\n"                                        // 17
+                                           "        network_names:\n"                            // 18
+                                           "          VehicleCAN: VehicleCAN\n"                  // 19
+                                           "          BodyCAN: Can_B\n"                          // 20
+                                           "  none: { participants: { Far: { network_names: { VehicleCAN: VehicleCAN } } } }\n"); // 21
+    const auto note = [&file](const EnabledOverrides& choice) {
+        const ConfigRead r = read_config(file, choice);
+        std::string out;
+        for (const Finding& f : r.findings)
+        {
+            if (f.code == "network-map-not-checked")
+            {
+                const std::string from = "run gives the executable ";
+                const auto at = f.message.find(from) + from.size();
+                out += std::to_string(f.line) + " " + f.participant + ": " + f.message.substr(0, f.message.find(':')) + ": " +
+                       f.message.substr(at, f.message.find(" after its command") - at) + "\n";
+                // The same words as the arguments of the run.
+                std::string given;
+                for (const std::string& word : map_network_arguments(r.config->participants[0]))
+                {
+                    given += (given.empty() ? "" : " ") + word;
+                }
+                CHECK(f.message.substr(at, f.message.find(" after its command") - at) == given);
+            }
+        }
+        return out;
+    };
+    EnabledOverrides choice;
+    choice.variant = "common";
+    check_text(note(choice), "10 Far: participant 'Far': --map-network VehicleCAN=Can_A\n");
+    choice.variant = "other";
+    check_text(note(choice), "20 Far: participant 'Far': --map-network BodyCAN=Can_B\n");
+    // The variant takes every line away: nothing is given, and nothing is noted.
+    choice.variant = "none";
+    check_text(note(choice), "");
+    // A participant that is left out is given nothing either.
+    choice.variant = "common";
+    choice.disable = {"Far"};
+    check_text(note(choice), "");
+}
+
+TEST_CASE(a_variant_that_moves_a_network_is_told_how_to_take_the_common_line_away)
+{
+    // The common part puts the executable's J1939_CAN on VehicleCAN; the variant wants it on
+    // BodyCAN. Its line alone gives the network two names; the message has the line to add.
+    const std::string head = "  - name: Third\n"                           // 7
+                             "    command: third\n"                        // 8
+                             "    network_names: { VehicleCAN: J1939_CAN }\n"; // 9
+    const std::string moved = "variants:\n"                                // 10
+                              "  plain: {}\n"                              // 11
+                              "  moved:\n"                                 // 12
+                              "    participants:\n"                        // 13
+                              "      Third:\n"                             // 14
+                              "        network_names:\n"                   // 15
+                              "          BodyCAN: J1939_CAN\n";            // 16
+    EnabledOverrides choice;
+    choice.variant = "moved";
+    const ConfigRead wrong = read_config(with_networks(head, moved), choice);
+    check_text(lines(wrong.findings),
+               "E 16 network-map-collision: variant 'moved': participant 'Third': network_names gives the executable's "
+               "network 'J1939_CAN' two names, 'VehicleCAN' (line 9, the common part) and 'BodyCAN' (line 16, this "
+               "variant), but a network of an ECU is on one bus: to have it on 'BodyCAN' in this variant, add the line "
+               "VehicleCAN: VehicleCAN to the variant's network_names of 'Third' (a line whose two names are the same "
+               "takes the common line away), or remove the variant's line\n");
+    CHECK(!wrong.config->participants[0].valid);
+    // With the line the message gives, the variant is right, and run gives the one name.
+    const ConfigRead right = read_config(with_networks(head, moved + "          VehicleCAN: VehicleCAN\n"), choice);
+    check_text(lines(right.findings), "");
+    check_text(words(map_network_arguments(right.config->participants[0])), "[--map-network][BodyCAN=J1939_CAN]");
+    // Two lines of one variant, or of the common part, are as before: one of them goes.
+    const ConfigRead both = read_config(with_networks(head, "variants:\n  two: { participants: { Third: { network_names: "
+                                                            "{ VehicleCAN: VehicleCAN, BodyCAN: X, Body: X } } } }\n"),
+                                        EnabledOverrides{{}, {}, {}, "two"});
+    CHECK(lines(both.findings).find("'BodyCAN' (line 11) and 'Body' (line 11), but a network of an ECU is on one bus: keep "
+                                    "one of the two lines\n") != std::string::npos);
 }
 
 TEST_CASE(network_names_of_a_disabled_participant_are_read_and_checked_like_any_other)

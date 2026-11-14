@@ -1157,8 +1157,9 @@ private:
 
     /// The lines of one participant together (`names`: the common ones, or those with a variant's
     /// laid over them; `common` and `change` are set for a variant): one name of the executable
-    /// under two keys, --map-network in the command beside them, and the note of a participant
-    /// that is not described. What the common part says already is not said again for a variant.
+    /// under two keys, and --map-network in the command beside them. What the common part says
+    /// already is not said again for a variant. (The note of a participant that is not described
+    /// is of the chosen variant only: note_unchecked_network_names().)
     void check_network_name_set(const std::string& prefix, const ParticipantConfig& participant,
                                 const std::vector<std::string>& command, std::size_t command_line,
                                 const std::vector<NetworkName>& names, const ParticipantConfig* common,
@@ -1178,7 +1179,23 @@ private:
             }
             const auto same = std::find_if(renames.begin(), renames.end(),
                                            [&entry](const NetworkName* other) { return other->from == entry.from; });
-            if (same != renames.end() && (common == nullptr || of_variant(entry) || of_variant(**same)))
+            if (same != renames.end() && common != nullptr && of_variant(entry) != of_variant(**same))
+            {
+                // A line of the variant beside a common line of another key: the variant moves the
+                // network to another bus. Removing either line is not what is meant (the common one
+                // is the other variants'), so the message has the line that takes the common one away.
+                const NetworkName& shared = of_variant(entry) ? **same : entry;
+                const NetworkName& own = of_variant(entry) ? entry : **same;
+                error("network-map-collision", own.line,
+                      prefix + "network_names gives the executable's network '" + entry.from + "' two names, '" +
+                          shared.name + "' (line " + std::to_string(shared.line) + ", the common part) and '" + own.name +
+                          "' (line " + std::to_string(own.line) + ", this variant), but a network of an ECU is on one bus: "
+                          "to have it on '" + own.name + "' in this variant, add the line " + shared.name + ": " +
+                          shared.name + " to the variant's network_names of '" + who + "' (a line whose two names are the "
+                          "same takes the common line away), or remove the variant's line",
+                      who, own.name);
+            }
+            else if (same != renames.end() && (common == nullptr || of_variant(entry)))
             {
                 const NetworkName& first = (*same)->line <= entry.line ? **same : entry;
                 const NetworkName& second = (*same)->line <= entry.line ? entry : **same;
@@ -1208,17 +1225,6 @@ private:
                       join_words(map_network_arguments(participant)) + "): remove --map-network from the command and "
                       "write every mapping in network_names (" + kNetworkNamesForm + ")",
                   who);
-        }
-        if (!commonRenames)
-        {
-            note("network-map-not-checked", renames.front()->line,
-                 prefix + "network_names of a participant that is not described (describe: false) cannot be checked: run "
-                          "gives the executable " + join_words(map_network_arguments(participant)) +
-                     " after its command (the command to start it by hand shows them too), which only an executable "
-                     "made with ecu_main that lists \"map-network\" in the features of its --describe takes. For any "
-                     "other executable (a bridge, a tool), remove network_names and give the simulation's network "
-                     "name with the executable's own argument or settings",
-                 who);
         }
     }
 
@@ -1845,6 +1851,40 @@ std::vector<std::string> map_network_arguments(const ParticipantConfig& particip
     return out;
 }
 
+namespace {
+
+/// The note "network-map-not-checked" of each participant of `config` (the chosen variant and the
+/// command line's choices applied) that is not described, is in the simulation, and has lines that
+/// rename a network: it says the arguments that run gives the executable in this run, the words of
+/// map_network_arguments(), which is what run starts it with (detail::participant_arguments()).
+void note_unchecked_network_names(const SimulationConfig& config, std::vector<Finding>& findings)
+{
+    for (const ParticipantConfig& p : config.participants)
+    {
+        const std::vector<NetworkName> renames = renamed_networks(p);
+        if (p.describe || !p.enabled || p.name.empty() || renames.empty())
+        {
+            continue;
+        }
+        std::string given;
+        for (const std::string& word : map_network_arguments(p))
+        {
+            given += (given.empty() ? "" : " ") + word;
+        }
+        findings.push_back(Finding{
+            Severity::Note, "network-map-not-checked",
+            "participant '" + p.name + "': network_names of a participant that is not described (describe: false) "
+            "cannot be checked: run gives the executable " + given +
+                " after its command (the command to start it by hand shows them too), which only an executable made "
+                "with ecu_main that lists \"map-network\" in the features of its --describe takes. For any other "
+                "executable (a bridge, a tool), remove network_names and give the simulation's network name with the "
+                "executable's own argument or settings",
+            renames.front().line, p.name, ""});
+    }
+}
+
+} // namespace
+
 std::vector<Finding> override_conflicts(const EnabledOverrides& overrides)
 {
     std::vector<Finding> out;
@@ -1994,6 +2034,7 @@ ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)
             {
                 out.override_errors = apply_overrides(*out.config, overrides, !textHasErrors);
             }
+            note_unchecked_network_names(*out.config, out.findings);
             check_required(*out.config, out.findings);
         }
     }

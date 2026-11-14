@@ -71,11 +71,11 @@
 | `variable-map-absent` | 誤り | `absent: true` と書いた名前の変数が、実行ファイルにある |
 | `variable-map-not-checked` | 注記 | `describe: false` の participant に `variables` がある（実行の前には比べられない。合わない対応は、実行の所見 `variable-map-not-applied` になる） |
 | `network-map-undeclared` | 誤り | `network_names` のキーが `networks` にない（キーはシミュレーションの名前、値は実行ファイルの名前。値のほうが `networks` にあれば、文は逆に書いた行を言う。[ネットワークの名前を合わせる](simulation-config.md#ネットワークの名前を合わせるnetwork_names)） |
-| `network-map-collision` | 誤り | `network_names` が、実行ファイルの 1 つのネットワークに 2 つの名前を付けている（1 つの値を 2 つのキーに書いた）。または、対応の後で、実行ファイルの 2 つのネットワークが同じ名前になる（替えた先の名前のネットワークを、実行ファイルが自分でも持っている） |
-| `network-map-unknown` | 誤り | `network_names` の値の名前のネットワークを、実行ファイルが使っていない（文は、実行ファイルのネットワークの一覧と、近い名前を言う） |
+| `network-map-collision` | 誤り | `network_names` が、実行ファイルの 1 つのネットワークに 2 つの名前を付けている（1 つの値を 2 つのキーに書いた。片方が共通の行、片方が機種の行のときは、機種でネットワークを別のバスへ移す書き方として、文に、機種に足す行 `VehicleCAN: VehicleCAN` を書く）。または、対応の後で、実行ファイルの 2 つのネットワークが同じ名前になる（替えた先の名前のネットワークを、実行ファイルが自分でも持っている） |
+| `network-map-unknown` | 誤り | `network_names` の値の名前のネットワークを、実行ファイルが使っていない（文は、実行ファイルのネットワークの一覧と、近い名前を言う）。この行が原因の所見は出さない: 値に近い名前の実行ファイルのネットワーク（近い名前がなければ、キーと同じ種類のもの）の `unknown-network` と、キーのネットワークの `unused-network`、`single-participant`、`lin-no-master`。ほかのネットワークの所見は出る |
 | `network-map-unsupported` | 誤り | `network_names` を書いた participant の実行ファイルが、`--map-network` を受け取れない（自己申告の `features` に `map-network` がない。前の版の vehicle-sil で作った実行ファイル）。ほかの規則は、対応を当てた名前で続ける |
 | `network-map-not-ascii` | 誤り | Windows のランチャーだけ: `network_names` の行のキーか値に、ASCII でない文字がある（Windows の ECU の実行ファイルは、その `--map-network` を断る） |
-| `network-map-not-checked` | 注記 | `describe: false` の participant に `network_names` がある（照合できない。`run` は `--map-network` を足すので、ecu_main でない実行ファイルは、起動のときに引数の誤りで終わる） |
+| `network-map-not-checked` | 注記 | `describe: false` の participant に `network_names` がある（照合できない。文は、その実行で `run` が足す引数を書く。選んだ機種と `--disable` を当てた後の構成で決まり、足す引数のない participant には出さない。`run` は `--map-network` を足すので、ecu_main でない実行ファイルは、起動のときに引数の誤りで終わる） |
 | `variant-participant` | 誤り | 機種（`variants`）の `participants` に、構成の `participants` にない名前がある |
 | `scenario-nothing-checked` | 警告 | `--scenario` のシナリオの確かめる手順（`expect`、`wait_until`）が、この構成（機種）では全部飛ぶ。シナリオは何も確かめずに通る（[scenario.md](scenario.md) の「機種とパラメーター」。シナリオのほかの `code` も scenario.md にあります） |
 | `usage` | 誤り | 引数の誤り（`--json` のときの JSON だけ）。機種を書いた構成に `--variant` がない、ない機種の名前、シナリオにない名前の `--param`、も含みます |

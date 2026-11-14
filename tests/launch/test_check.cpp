@@ -2010,6 +2010,41 @@ TEST_CASE(network_names_must_fit_what_the_executable_describes)
               "'Elsewhere', but the executable has no network of that name (its networks: 'J1939_CAN' (j1939), "
               "'J1939_CAN' (raw), 'BodyLIN' (lin_master)): correct the value, or remove the line\n") == 0);
     CHECK(network_of(found[0]) == "network-map-unknown(Engine,VehicleCAN)" && network_of(found[1]) == "network-map-unknown(Engine,Body)");
+    // One cause, one finding: the line with the wrong value is what to correct. Without it the
+    // executable's J1939_CAN is not in networks, and VehicleCAN has Dashboard alone; neither is
+    // said (following "add network_names: { VehicleCAN: J1939_CAN }" would write the key twice).
+    // What the line has nothing to do with is said as ever: the network 'Diag' of the same
+    // executable, and the network Body that no one uses.
+    Setup one;
+    one.network("VehicleCAN", NetworkKind::Can, 3)
+        .network("Body", NetworkKind::Lin, 4)
+        .described(named(participant("Engine", 6), 9, {{"VehicleCAN", "J1939_CAM"}}),
+                   taking_map(ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)})})))
+        .described(participant("Dashboard", 11), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)})}));
+    check_text(one.check(),
+               "E 9 network-map-unknown: participant 'Engine': network_names says that 'VehicleCAN' is the executable's "
+               "network 'J1939_CAM', but the executable has no network of that name (its networks: 'J1939_CAN' (j1939)): "
+               "correct the value (did you mean 'J1939_CAN'?), or remove the line\n"
+               "W 4 unused-network: network 'Body': no participant uses it: remove it, or check the network names in the "
+               "ECUs\n");
+    one.results[0].ecu->description.networks.push_back(raw("Diag"));
+    const std::string more = one.check();
+    CHECK(more.find("E 9 network-map-unknown: ") != std::string::npos);
+    CHECK(more.find("E 6 unknown-network: participant 'Engine': the executable uses the network 'Diag' (raw), which is not "
+                    "in networks") != std::string::npos);
+    CHECK(more.find("the network 'J1939_CAN'") == std::string::npos && more.find("single-participant") == std::string::npos);
+    CHECK(more.find("W 4 unused-network: network 'Body'") != std::string::npos);
+    // A value that is like none of the executable's names: its networks of the key's kind may be
+    // the one that is meant, so they wait for the line; a network of another kind does not.
+    Setup far;
+    far.network("VehicleCAN", NetworkKind::Can, 3)
+        .described(named(participant("Engine", 6), 9, {{"VehicleCAN", "Elsewhere"}}),
+                   taking_map(ecu("Engine", 10ms, {raw("CAN_1"), raw("CAN_2"), NetworkDescription{"LIN_1", NetworkUse::LinMaster, {}}})));
+    const std::string distant = far.check();
+    CHECK(distant.find("E 9 network-map-unknown: ") == 0);
+    CHECK(distant.find("'CAN_1' (raw), which") == std::string::npos && distant.find("'CAN_2' (raw), which") == std::string::npos);
+    CHECK(distant.find("E 6 unknown-network: participant 'Engine': the executable uses the network 'LIN_1' (lin_master)") != std::string::npos);
+
     Setup none;
     none.network("VehicleCAN", NetworkKind::Can, 3)
         .described(named(participant("Engine", 6), 8, {{"VehicleCAN", "J1939_CAN"}}), taking_map(ecu("Engine", 10ms, {})));

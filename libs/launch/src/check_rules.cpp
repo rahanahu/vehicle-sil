@@ -245,6 +245,11 @@ struct Rules
     /// The networks of each participant that counts (is_on_any()) as the simulation sees them
     /// (seen_networks()); empty for the others. Every rule reads the networks from here.
     std::vector<std::vector<SeenNetwork>> seen{};
+    /// The networks of the file (simulation's names) that a line of network_names of a participant
+    /// that counts gives to a network its executable does not have (network-map-unknown). That
+    /// participant is meant to be on them and is not seen there, so who is on them is not known:
+    /// the rules that count the participants of a network do not speak of these.
+    std::set<std::string> held{};
 
     void add(Severity severity, const char* code, std::size_t line, std::string message, const std::string& participant,
              const std::string& network) const
@@ -276,6 +281,47 @@ std::vector<std::string> users_of(const Rules& rules, const std::string& name, N
     return users;
 }
 
+/// The lines of the entry's network_names whose value is no network of its executable (`seen`: its
+/// networks), in the file's order: network-map-unknown.
+std::vector<NetworkName> unknown_lines(const ParticipantConfig& p, const std::vector<SeenNetwork>& seen)
+{
+    std::vector<NetworkName> out;
+    for (const NetworkName& entry : renamed_networks(p))
+    {
+        if (std::none_of(seen.begin(), seen.end(), [&entry](const SeenNetwork& n) { return n.executable_name == entry.from; }))
+        {
+            out.push_back(entry);
+        }
+    }
+    return out;
+}
+
+/// true if a line of network_names with a wrong value (unknown_lines()) is why the executable's
+/// network `network` is not under a name of the file: the value is a typing error of its name; or
+/// the value is like none of the executable's names, and the network is of the kind of the line's
+/// key (it may be the one that is meant). unknown-network is then not said of it: the line's own
+/// error says what to correct, and "add network_names: { <key>: ... }" would write the key twice.
+bool waits_for_a_line(const std::vector<NetworkName>& unknown, const std::vector<SeenNetwork>& seen,
+                      const NetworkDescription& network, const std::map<std::string, const NetworkConfig*>& networks)
+{
+    std::vector<std::string> names;
+    for (const SeenNetwork& n : seen)
+    {
+        names.push_back(n.executable_name);
+    }
+    for (const NetworkName& entry : unknown)
+    {
+        const std::string guess = detail::closest(entry.from, names);
+        const auto key = networks.find(entry.name);
+        if (guess.empty() ? key != networks.end() && key->second->valid && key->second->kind == network.kind()
+                          : guess == network.name)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// "'VehicleCAN'", and with the executable's name for a network that the entry renames:
 /// "'VehicleCAN' ('J1939_CAN' in the executable)".
 std::string both_names(const SeenNetwork& seen)
@@ -301,6 +347,12 @@ std::string unknown_network_fix(const Rules& rules, std::size_t i, const Network
     for (const auto& n : rules.seen[i])
     {
         seen.insert(n.network.name);
+    }
+    // Nor a network that a line of the entry names already (with a value the executable does not
+    // have: network-map-unknown): a second line with that key is not the fix.
+    for (const NetworkName& entry : renamed_networks(rules.config.participants[i]))
+    {
+        seen.insert(entry.name);
     }
     std::vector<std::string> others;
     std::vector<std::string> listed; // those of `others` that are in networks
@@ -526,6 +578,7 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
         }
     }
     check_network_names(rules, i, p, *result.ecu, launcher_version);
+    const std::vector<NetworkName> unknown = unknown_lines(p, rules.seen[i]);
     std::set<std::string> reported;
     for (const SeenNetwork& seen : rules.seen[i])
     {
@@ -535,7 +588,11 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
             continue;
         }
         const auto it = networks.find(network.name);
-        if (it == networks.end())
+        if (it == networks.end() && waits_for_a_line(unknown, rules.seen[i], network, networks))
+        {
+            // One cause, one finding: network-map-unknown of the line says it.
+        }
+        else if (it == networks.end())
         {
             rules.add(Severity::Error, "unknown-network", p.line,
                 prefix + "the executable uses the network '" + network.name + "' (" + to_string(network.use) +
@@ -966,7 +1023,8 @@ void check_network(const Rules& rules, const NetworkConfig& network)
             talkingTests.push_back(i);
         }
     }
-    const bool sayAll = !rules.incomplete;
+    // Not while a line of network_names with a wrong value keeps a participant from it.
+    const bool sayAll = !rules.incomplete && !rules.held.contains(network.name);
     const Severity weight = rules.unchecked ? Severity::Note : Severity::Warning;
     if (users.empty())
     {
@@ -1094,6 +1152,10 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
         if (is_on_any(config.participants[i], results[i]))
         {
             rules.seen[i] = seen_networks(config.participants[i], *results[i].ecu);
+            for (const NetworkName& entry : unknown_lines(config.participants[i], rules.seen[i]))
+            {
+                rules.held.insert(entry.name);
+            }
         }
     }
     rules.incomplete = any_enabled(ParticipantStatus::Failed) || any_enabled(ParticipantStatus::Skipped);

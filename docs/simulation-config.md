@@ -261,12 +261,32 @@ participants:
 - キーは `networks` にある名前です（ないと誤り `network-map-undeclared`）。値は、実行ファイルが `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡している名前です。
 - 対応は名前ごとに効きます。同じ名前の `j1939()` と `can()` は、両方替わります。種類は替わりません。書いていないネットワークは、実行ファイルの名前のままです。
 - 実行ファイルの 1 つのネットワークに付けられる名前は 1 つです。1 つの値を 2 つのキーに書くことも、対応の後で実行ファイルの 2 つのネットワークが同じ名前になることも誤りです（`network-map-collision`）。2 つの名前の入れ替え（`A: B` と `B: A`）は書けます。
-- キーと値が同じ行（`VehicleCAN: VehicleCAN`）は、行がないのと同じです。機種で、共通の行を消すのに使います。
+- キーと値が同じ行（`VehicleCAN: VehicleCAN`）は、行がないのと同じです。機種で、共通の行を消すのに使います（下の「機種でネットワークを別のバスへ移す」）。
 - キーは、空でなく、`=` を含まず、`-` で始まらないこと（誤り `value`。引数 `--map-network <キー>=<値>` で渡すためです）。
 - `run` は、対応のある participant の引数の最後に、`--map-network VehicleCAN=J1939_CAN` を書いた順に足します。起動した実行ファイルは、コードの `J1939_CAN` を SIL Kit の `VehicleCAN` につなぎます（[ecu-executable.md](ecu-executable.md) の「引数」）。ECU のコードから見える名前は変わりません。自分で起動する participant（`manual`）のコマンドと、事象 `participant` の `command` にも、同じ引数が出ます。
 - 照合（`check`、`run` の最初）は、自己申告のネットワークを対応の後の名前に直してから、規則を当てます。表、`check --json` の `networks[].participants`、所見の `network` は、シミュレーションの名前です。表の participant の行には `VehicleCAN <- J1939_CAN (j1939 0x00)` と両方の名前が出ます。`check --json` では、`participants[].network_map` に書いた行が、`participants[].reported.networks[].name` に実行ファイルの名前が出ます。
 - 照合は、対応を自己申告と比べます: 値の名前のネットワークを実行ファイルが使っていない（`network-map-unknown`）、実行ファイルが `--map-network` を受け取れない（`network-map-unsupported`。自己申告の `features` に `map-network` がない、前の版の vehicle-sil で作った実行ファイルです。作り直すか、`networks` の名前をその実行ファイルの名前にして、ほかの participant の側に対応を書きます）。どれも誤りで、`run` は何も起動しません。
-- `describe: false` の participant にも書けます（OS の違う別のコンピューターで自分で起動する ECU など）。照合できないので、注記 `network-map-not-checked` を出します。`--map-network` を受け取れるのは ecu_main の実行ファイルだけです。ブリッジやほかの道具には `network_names` を書かず、その実行ファイルの引数か設定に、シミュレーションの名前を書きます。`describe: false` の `command` に `--map-network` を自分で書くこともできますが、`network_names` と両方は書けません（誤り `launcher-argument`）。
+- `describe: false` の participant にも書けます（OS の違う別のコンピューターで自分で起動する ECU など）。照合できないので、注記 `network-map-not-checked` を出します。注記は、その実行（選んだ機種）で `run` が足す引数を、そのまま書きます。外した participant と、機種が行を全部消した participant には出しません。`--map-network` を受け取れるのは ecu_main の実行ファイルだけです。ブリッジやほかの道具には `network_names` を書かず、その実行ファイルの引数か設定に、シミュレーションの名前を書きます。`describe: false` の `command` に `--map-network` を自分で書くこともできますが、`network_names` と両方は書けません（誤り `launcher-argument`）。
+
+機種でネットワークを別のバスへ移す: 機種の行は、共通の行にキーごとに重なります。キーが違う行は足されるので、実行ファイルの同じネットワークを別のキーに書くだけでは、名前が 2 つになります（誤り `network-map-collision`。文に、足す行が出ます）。共通の行を、キーと値が同じ行で消します。
+
+```yaml
+participants:
+  - name: Engine
+    command: [engine/engine_ecu]
+    network_names:
+      VehicleCAN: J1939_CAN             # 共通: J1939_CAN は VehicleCAN
+variants:
+  standard: {}
+  body_bus:
+    participants:
+      Engine:
+        network_names:
+          VehicleCAN: VehicleCAN        # 共通の行を消す
+          BodyCAN: J1939_CAN            # この機種では、J1939_CAN は BodyCAN
+```
+
+`network_names` の誤りは、選んでいない機種のものも出ます（機種の `command` の誤りと同じです。`check` は、ファイルに書いた全部の機種を読みます）。
 
 制限:
 

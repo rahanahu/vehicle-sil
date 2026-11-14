@@ -5444,10 +5444,12 @@ void network_names(const Options& o)
     // "Body CAN" (a space: the argument must be quoted for a shell). Dashboard's code says
     // VehicleCAN itself. Door is not described (describe: false) and calls the second bus DoorCAN.
     // The variant "apart" takes Engine's first line away: its J1939_CAN is then a bus of its own.
-    const std::string config =
+    // The variant "moved" puts Engine's CAN_B on VehicleCAN instead of "Body CAN" (`moved`: how).
+    const auto config_with = [&o, port = free_port()](const std::string& moved) {
+    return std::string(
         "vehicle_sil_simulation: 1\n"                                                    // 1
         "stop_at_ms: 300\n"                                                              // 2
-        "registry_uri: silkit://127.0.0.1:" + std::to_string(free_port()) + "\n"         // 3
+        "registry_uri: silkit://127.0.0.1:") + std::to_string(port) + "\n"               // 3
         "networks:\n"                                                                    // 4
         "  - { name: VehicleCAN, kind: can }\n"                                          // 5
         "  - { name: \"Body CAN\", kind: can }\n"                                        // 6
@@ -5466,7 +5468,11 @@ void network_names(const Options& o)
         "    network_names: { \"Body CAN\": DoorCAN, VehicleCAN: VehicleCAN }\n"         // 19
         "variants:\n"
         "  together: {}\n"
-        "  apart: { participants: { Engine: { network_names: { VehicleCAN: VehicleCAN } } } }\n";
+        "  apart: { participants: { Engine: { network_names: { VehicleCAN: VehicleCAN } } } }\n"
+        "  moved: { participants: { Engine: { network_names: { " + moved + " } } } }\n";            // 23
+    };
+    // The line whose two names are the same takes the common line of "Body CAN" away.
+    const std::string config = config_with("VehicleCAN: CAN_B, \"Body CAN\": \"Body CAN\"");
     const fs::path dir = hand_dir(o, "names", config,
                                   {{"Engine", "talk J1939_CAN talk CAN_B"}, {"Dashboard", "hear VehicleCAN"}, {"Door", "hear DoorCAN"}});
     const auto forget = [&dir] {
@@ -5513,6 +5519,32 @@ void network_names(const Options& o)
                 "Engine is started with the one line the variant leaves:\n" + engine);
         require(!fs::exists(dir / "Dashboard.heard") && fs::exists(dir / "Door.heard"),
                 "without the line, Dashboard hears nothing; Door still does");
+    }
+    forget();
+    {
+        // The variant that moves a network to another bus: CAN_B is on VehicleCAN, where Dashboard
+        // hears it, and no longer on "Body CAN", where Door is.
+        const Captured run = launch(o, {"run", "sim.yaml", "--variant", "moved", "--events"}, dir);
+        expect_code(run, 0, "run with the variant that moves a network");
+        const std::string engine = participant_event(lf(run.standard_output), "Engine", "started");
+        require(contains(engine, "\"--start-timeout-ms\",") && contains(engine, "\",\"--map-network\",\"VehicleCAN=CAN_B\"],\"log\"") &&
+                    !contains(engine, "Body CAN="),
+                "Engine is started with the line of the variant alone:\n" + engine);
+        require(fs::exists(dir / "Dashboard.heard") && !fs::exists(dir / "Door.heard"),
+                "Dashboard hears Engine's CAN_B on VehicleCAN, and Door hears nothing");
+        // Without that line, CAN_B has two names. The message has the line to add, and the file
+        // fails for every variant (each variant of a file is checked, whichever is chosen).
+        write_file(dir / "wrong.yaml", config_with("VehicleCAN: CAN_B"));
+        const Captured wrong = launch(o, {"check", "wrong.yaml", "--variant", "together"}, dir);
+        expect_code(wrong, 1, "check of a file with a variant that gives a network two names");
+        require(contains(lf(wrong.standard_output),
+                         "error: wrong.yaml:23: variant 'moved': participant 'Engine': network_names gives the executable's "
+                         "network 'CAN_B' two names, 'Body CAN' (line 13, the common part) and 'VehicleCAN' (line 23, this "
+                         "variant), but a network of an ECU is on one bus: to have it on 'VehicleCAN' in this variant, add "
+                         "the line Body CAN: Body CAN to the variant's network_names of 'Engine' (a line whose two names "
+                         "are the same takes the common line away), or remove the variant's line "
+                         "[network-map-collision]\n"),
+                "the message says how the variant takes the common line away:\n" + lf(wrong.standard_output));
     }
     forget();
     HandCommand hand;
