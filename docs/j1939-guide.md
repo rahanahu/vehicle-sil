@@ -1,6 +1,6 @@
 # J1939 のノードの作り方
 
-ECU を書く人向けです。先に README の「[最初の ECU を動かす](../README.md#最初の-ecu-を動かす)」を読みます。次は [j1939-codec.md](j1939-codec.md)（信号を値として読み書きする）と [ecu-executable.md](ecu-executable.md)（ECU を実行ファイルにする）です。
+ECU を書く人向けです。先に README の「[ECU はこう書く](../README.md#ecu-はこう書く)」を読みます。次は [j1939-codec.md](j1939-codec.md)（信号を値として読み書きする）と [ecu-executable.md](ecu-executable.md)（ECU を実行ファイルにする）です。
 
 vehicle-sil の J1939 スタックで ECU のノードを作り、動かし、試験する方法です。API の契約と規則の詳細は [internals/j1939.md](internals/j1939.md) にあります。API はまだ変わることがあります。
 

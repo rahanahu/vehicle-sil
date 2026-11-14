@@ -1,6 +1,6 @@
 # LIN のノードの作り方
 
-LIN を使う ECU を書く人向けです。先に README の「[最初の ECU を動かす](../README.md#最初の-ecu-を動かす)」を読みます。次は [internals/lin.md](internals/lin.md)（スケジュール、送受信、診断フレーム、Sleep/Wakeup の規則と制約）です。
+LIN を使う ECU を書く人向けです。先に README の「[ECU はこう書く](../README.md#ecu-はこう書く)」を読みます。次は [internals/lin.md](internals/lin.md)（スケジュール、送受信、診断フレーム、Sleep/Wakeup の規則と制約）です。
 
 `vehicle_sil::lin` は、仮想時間で動く LIN の Master と Slave です（SIL Kit にも J1939 にも依存しません）。ECU のクラスの中で `Ecu::lin_master()` と `Ecu::lin_slave()` から使うと、`Simulation()`（プロセス内の仮想 LIN バス）でも `Simulation(SilKitOptions{})`（SIL Kit）でも同じ結果になります。例は [examples/vehicle](../examples/vehicle) です。`examples/lin` の 3 つのピアは、`Peer` を使わずに SIL Kit の上で 1 つのクラスタを作ります。
 

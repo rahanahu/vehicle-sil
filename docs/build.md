@@ -1,6 +1,6 @@
 # ビルドと取り込み
 
-vehicle-sil 自体をビルドする人（直す人、試験を回す人、ビルド済みの道具がない環境で使う人）と、自分の CMake プロジェクトに vehicle-sil を取り込む人向けです。先に README の「[取得とビルド](../README.md#取得とビルド)」を読みます。次は、直す人なら [AGENTS.md](../AGENTS.md)（検証のスクリプト）と [code-map.md](code-map.md)（試験のラベルと回し方）、ECU を書く人なら [j1939-guide.md](j1939-guide.md) です。
+vehicle-sil 自体をビルドする人（直す人、試験を回す人、ビルド済みの道具がない環境で使う人）と、自分の CMake プロジェクトに vehicle-sil を取り込む人向けです。先に README の「[始める](../README.md#始める)」を読みます。次は、直す人なら [AGENTS.md](../AGENTS.md)（検証のスクリプト）と [code-map.md](code-map.md)（試験のラベルと回し方）、ECU を書く人なら [j1939-guide.md](j1939-guide.md) です。
 
 ## 必要なもの
 
@@ -45,7 +45,7 @@ SIL Kit のパッチ（`patches/sil-kit/`）は、クローンしたときには
 
 ### Linux
 
-README の「[vehicle-sil 自体をビルドする](../README.md#vehicle-sil-自体をビルドする)」のコマンドの `linux-gcc-release` を、次のプリセットに替えられます。
+README の「[リポジトリから動かす](../README.md#リポジトリから動かす)」のコマンドの `linux-gcc-control` を、次のプリセットに替えられます。
 
 | プリセット | 内容 |
 |---|---|
@@ -100,7 +100,7 @@ target_link_libraries(example PRIVATE vehicle_sil::simulation vehicle_sil::j1939
 vehicle_sil_copy_runtime_dlls(example)   # Windows: SilKit.dll をコピーする（ほかの OS では何もしない）
 ```
 
-新しく始めるときは、これを書いたひな形 [template/](../template) を写すのが早道です（「[取得とビルド](../README.md#取得とビルド)」）。
+新しく始めるときは、これを書いたひな形 [template/](../template) を写すのが早道です（README の「[始める](../README.md#始める)」）。
 
 SIL Kit は、vehicle-sil のサブモジュールとして自動で取得・設定されます。利用側で個別に設定する必要はありません。SIL Kit には、ビルドツリーにコピーしたソースに `patches/sil-kit/` のパッチを当てたものを使います（[docs/dependencies.md](dependencies.md)）。パッチの適用に Git を使います。リンクしないライブラリはビルドされません。完全な例は [examples/fetchcontent_consumer](../examples/fetchcontent_consumer) にあります。
 
