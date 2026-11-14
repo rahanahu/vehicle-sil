@@ -61,6 +61,12 @@
 | `coarse-time-step` | 警告 | ファイルに `speed`（数）と `time_step_ms` があり、ECU のステップが刻みの境目で始まらない（`run` の所見と同じ文言。[等速で動かす](simulation-run.md#等速で動かす)の「刻みと ECU のステップ」） |
 | `control-link-not-offered` | 注記 | 変数のある ECU が、それをシミュレーションへ出すと申告していない（`--no-control`、申告のない古い実行ファイル）。`run` はその変数を読み書きできない（[変数を読み書きする口](simulation-run.md#変数を読み書きする口)） |
 | `control-link-version` | 警告 | 変数のある ECU が申告した、メッセージの形式の版（か運び手）が、`vehicle_sil_launch` と違う。`run` はその変数を読み書きできない |
+| `variable-map-unknown` | 誤り | `variables` の対応の `from` の変数が、実行ファイルにない（近い名前か、実行ファイルの変数の一覧を書きます。[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)） |
+| `variable-map-type` | 誤り | 対応の形が変数の型に合わない（`scale`、`offset` は整数か実数、`map` は整数か列挙の変数にだけ書ける） |
+| `variable-map-value` | 誤り | `map` の値を、実行ファイルの変数が取れない（列挙の項目にない、範囲の外） |
+| `variable-map-collision` | 誤り | 対応の名前が、実行ファイルのほかの変数の見える名前と同じ。または、同じ変数に対応を 2 つ書いた |
+| `variable-map-absent` | 誤り | `absent: true` と書いた名前の変数が、実行ファイルにある |
+| `variable-map-not-checked` | 注記 | `describe: false` の participant に `variables` がある（実行の前には比べられない。合わない対応は、実行の所見 `variable-map-not-applied` になる） |
 | `usage` | 誤り | 引数の誤り（`--json` のときの JSON だけ） |
 | `internal` | 誤り | `vehicle_sil_launch` 自身の想定外の失敗（`--json` のときの JSON だけ） |
 
@@ -137,7 +143,7 @@ Body_LIN   lin   -
 
 error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number)
 error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms
-error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual)
+error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, variables)
 warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs
 
 failed: 3 errors, 1 warning, 0 notes
@@ -160,10 +166,11 @@ failed: 3 errors, 1 warning, 0 notes
 | `strict` | `--strict` を付けたか |
 | `errors`、`warnings`、`notes` | 誤り、警告、注記の数 |
 | `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 構成ファイルの値（読めないときと、書いていない `stop_at_ms` と `registry_uri` は `null`。`start_timeout_ms` と `stop_timeout_ms` は既定の値も） |
-| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`manual`（`--manual` を当てた後の値）、`step_ms`（なければ `null`）、`status`、`reported`、`variables`、`control` |
+| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`manual`（`--manual` を当てた後の値）、`step_ms`（なければ `null`）、`status`、`reported`、`variables`、`variable_map`（`variables` を書いた participant だけ）、`control` |
 | `participants[].status` | `"described"`（自己申告を読んだ）、`"not_checked"`（`describe: false`）、`"failed"`（実行ファイルがない、`--describe` の失敗）、`"skipped"`（構成ファイルの誤りで進めなかった）、`"disabled"`（外した。項目に誤りがあっても） |
 | `participants[].reported` | 自己申告（`described` のときだけ。ほかは `null`）: `vehicle_sil`、`name`、`step_ns`、`networks`（`--describe` の JSON と同じ形。変数は次の `variables`） |
-| `participants[].variables` | ECU が申告した変数の配列（`ecu.connected`、続いて宣言の順）。要素の形は `--describe` の JSON の `variables[]` と同じです（`name`、`type`、`causality`、`unit`、`min`、`max`、`step`、`description`、`items`、`builtin`。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。空の配列は「変数が 0 個」です。`null` は「わからない」です: 自己申告のない participant（`describe: false`）、外した participant、自己申告を読めなかった participant、`variables` を書かない古い vehicle-sil の ECU。実行の前に、どの ECU にどの変数があるかを見るのに使います |
+| `participants[].variables` | シミュレーションから見える ECU の変数の配列（`ecu.connected`、続いて宣言の順）。構成ファイルの `variables`（対応表）を当てた後の名前、型、範囲、単位です（シナリオと Control API が見るものと同じ）。対応表がなければ、ECU が申告したままです。要素の形は `--describe` の JSON の `variables[]` と同じです（`name`、`type`、`causality`、`unit`、`min`、`max`、`step`、`description`、`items`、`builtin`。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。空の配列は「変数が 0 個」です。`null` は「わからない」です: 自己申告のない participant（`describe: false`）、外した participant、自己申告を読めなかった participant、`variables` を書かない古い vehicle-sil の ECU。実行の前に、どの ECU にどの変数があるかを見るのに使います |
+| `participants[].variable_map` | 構成ファイルの `variables` に書いた対応の配列（書いた順）。`variables` のない participant には、このキーがありません。要素は `name`（シミュレーションで使う名前）、`line`（行）、`from`（実行ファイルの変数名。`absent` なら `null`）、`absent`、`scale` と `offset`（一次式の形でなければ両方 `null`。片方だけ書いたときは、もう片方に既定の 1 か 0 が入ります）、`unit`（書いていなければ `null`）、`map`（`name` と `value` の配列。なければ `null`）。読めなかった対応（誤り `value` など）は入りません |
 | `participants[].control` | ECU が申告した、変数の出し方（`transport`: いまは `"silkit"`、`wire_version`: メッセージの形式の版）。申告がない（`--no-control`、古い実行ファイル）、照合していない、失敗した、外した participant では `null` |
 | `networks[]` | 構成ファイルの順。`name`、`kind`（読めなかったときは `null`）、`line`、`participants`（使う participant 名。構成ファイルの順） |
 | `findings[]` | 人向けと同じ順。`severity`（`"error"`、`"warning"`、`"note"`）、`code`、`file`（構成ファイル。`--scenario` のシナリオについての所見では、シナリオのファイルで、`line` はその行）、`line`（なければ `null`）、`participant`、`network`（関係するもの。なければ `null`）、`message`（1 行）、`detail`（添える文。なければ `null`） |

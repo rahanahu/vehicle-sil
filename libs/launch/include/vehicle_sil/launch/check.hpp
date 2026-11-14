@@ -198,6 +198,11 @@ struct CheckReport
 
 /// Puts the findings in the report's order: the errors, the warnings, the notes, each by file (the
 /// configuration's first) and line (those without a line first), otherwise as found.
+/// The participant's variables as the simulation sees them: what its executable described,
+/// through the variable map of its entry (ParticipantConfig::variables). The run's hub makes the
+/// same of what the executable's agent announces. problems(): the mappings that do not fit.
+[[nodiscard]] control::MappedSchema seen_variables(const ParticipantConfig& participant, const ReportedEcu& ecu);
+
 void sort_findings(std::vector<Finding>& findings);
 
 /// The report for people: the participants and the networks as tables, then each error and

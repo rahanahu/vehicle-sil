@@ -215,6 +215,48 @@ class LauncherTest(unittest.TestCase):
         self.assertIn(f"control server at {server['address']}", lines)
         self.assertEqual(control_address(json.dumps(e) for e in launch.events), server["address"])
 
+    def test_a_variable_map_is_what_a_client_sees_and_writes(self):
+        path = config("mapped", 1000)
+        plain = path.read_text()
+        mapped = plain.replace("    step_ms: 10\n",
+                               "    step_ms: 10\n    variables:\n"
+                               "      powertrain.pedal: { from: engine.throttle, scale: 0.01, unit: ratio }\n"
+                               "      powertrain.krpm: { from: engine.speed, scale: 0.001 }\n")
+        self.assertNotEqual(mapped, plain)
+        path.write_text(mapped)
+        with Launch(LAUNCH, path, start_paused=True, address="0") as launch:
+            with Control(launch.address) as c:
+                self.assertEqual(c.sim.wait_paused(30).now, 0)
+                schema = {v.name: v for v in c.peer("Engine").schema}
+                # The seen names, types, ranges and units, and the executable's name of each.
+                self.assertNotIn("engine.throttle", schema)
+                pedal, krpm = schema["powertrain.pedal"], schema["powertrain.krpm"]
+                self.assertEqual((pedal.source, pedal.type, pedal.unit, pedal.min, pedal.max, pedal.causality),
+                                 ("engine.throttle", "real", "ratio", 0.0, 1.0, "input"))
+                self.assertEqual((krpm.source, krpm.type, krpm.unit, krpm.causality), ("engine.speed", "real", "", "output"))
+                self.assertEqual(schema["ecu.connected"].source, "")
+                # A write in the seen value; the executable's own name is no name here.
+                seq = c.write({"Engine": {"powertrain.pedal": 0.5}})
+                self.assertEqual(c.wait(seq, until="queued").target("Engine").status, "queued")
+                for name, value, reason in (("engine.throttle", 50.0, "unknown variable 'engine.throttle'"),
+                                            ("powertrain.pedal", 1.5, "powertrain.pedal: 1.5 is out of range")):
+                    refused = c.wait(c.write({"Engine": {name: value}})).target("Engine")
+                    self.assertEqual((refused.status, refused.reason), ("invalid", reason))
+                c.sim.run_until(ms(400))
+                self.assertEqual(c.sim.wait_paused().now, ms(400))
+                done = c.wait(seq).target("Engine")
+                self.assertEqual((done.status, done.applied_at), ("applied", 0))
+                # Read in the seen values: the throttle as written, the speed in thousands (the
+                # engine goes towards 800 + 20 * 50 rpm).
+                values = c.values("Engine").values
+                self.assertAlmostEqual(values["powertrain.pedal"], 0.5, places=9)
+                self.assertGreater(values["powertrain.krpm"], 1.7)
+                self.assertLess(values["powertrain.krpm"], 1.81)
+                self.assertNotIn("engine.speed", values)
+                c.sim.stop("the test is done")
+            result = launch.wait()
+        self.assertEqual([f for f in findings_of(result) if f[1].startswith("variable-map")], [])
+
     def test_a_snapshot_has_the_time_and_the_values_of_one_moment(self):
         step = ms(10)  # the engine's step, its sample period and the controller's step
         throttle_at = {0: 20.0}  # the engine's step -> the throttle from then on (20 % as it starts)

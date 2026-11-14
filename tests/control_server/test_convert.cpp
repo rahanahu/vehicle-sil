@@ -59,6 +59,31 @@ TEST_CASE(control_server_peer_info_tells_whether_it_has_an_agent)
     CHECK(wire.has_agent() && wire.simulation_state().empty());
 }
 
+TEST_CASE(control_server_peer_info_names_the_source_of_a_mapped_variable)
+{
+    // The hub's seen schema, and for a mapped variable the executable's own name of it.
+    PeerInfo engine;
+    engine.participant = "Engine";
+    VariableInfo speed;
+    speed.name = "engine.speed";
+    speed.unit = "rpm";
+    speed.max = 8000.0;
+    VariableInfo lamp;
+    lamp.name = "lamp";
+    engine.schema = {speed, lamp};
+    engine.sources = {"rpm_x10", ""};
+    v1::PeerInfo wire;
+    to_proto(engine, wire);
+    CHECK_EQ(wire.schema_size(), 2);
+    CHECK(wire.schema(0).name() == "engine.speed" && wire.schema(0).source() == "rpm_x10" && wire.schema(0).max() == 8000.0);
+    CHECK(wire.schema(1).name() == "lamp" && wire.schema(1).source().empty());
+    // Without a map the hub gives no sources: none is named.
+    engine.sources.clear();
+    wire.Clear();
+    to_proto(engine, wire);
+    CHECK(wire.schema(0).source().empty() && wire.schema(1).source().empty());
+}
+
 TEST_CASE(control_server_write_request_round_trips)
 {
     OperationRequest request;

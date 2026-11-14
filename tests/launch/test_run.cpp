@@ -521,6 +521,20 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
                "ecu_main() does; a transport of its own must send from control::Agent::set_step_sink(), not from another "
                "thread)\n");
     CHECK(format_run_json(report_of(late)).find("        \"late_messages\": 3\n") != std::string::npos);
+
+    // Mappings that did not fit what the agent announced (an executable that describes one thing
+    // and announces another, or one with describe: false): the run is not to be trusted.
+    RunOutcome mapped = passed_run();
+    mapped.participants[0].control = ControlLink::Connected;
+    mapped.participants[0].variable_map_problems = {"engine.speed: the executable has no variable 'rpm'",
+                                                    "engine.gear: map names the values of an integer or an enum"};
+    check_text(lines(assess_run(mapped)),
+               "E 5 variable-map-not-applied: participant 'Engine': variables: 2 of its mappings do not fit the variables "
+               "its control agent announced and were not applied, so those variables were seen under the executable's "
+               "names and values in this run and writes to the names of these mappings were refused: engine.speed: the "
+               "executable has no variable 'rpm'; engine.gear: map names the values of an integer or an enum. Correct variables in the configuration (vehicle_sil_launch check "
+               "compares them with what an ecu_main executable describes)\n");
+    CHECK(report_of(mapped).result() == RunResult::Failed);
     CHECK(std::string(control_link_name(ControlLink::None)) == "none");
     CHECK(std::string(control_link_name(ControlLink::NotOffered)) == "not_offered");
 

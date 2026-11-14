@@ -40,7 +40,8 @@ class RunControl
 public:
     RunControl(const RunContext& ctx, RunOutput& out) : ctx_(ctx), out_(out) {}
 
-    /// RunOptions::hub, or the run's own.
+    /// RunOptions::hub, or the run's own. The first call gives it the variable maps of the
+    /// enabled participants (control::Hub::set_variable_map()), before any agent connects.
     [[nodiscard]] control::Hub& hub();
 
     /// What --describe says about participant `i`'s variables (ControlLink::None, NotOffered,
@@ -65,6 +66,7 @@ private:
     const RunContext& ctx_;
     RunOutput& out_;
     std::unique_ptr<control::Hub> own_hub_; ///< without RunOptions::hub
+    bool maps_set_ = false;                 ///< the first hub() gave the hub the participants' variable maps
 };
 
 } // namespace vehicle_sil::launch::detail
