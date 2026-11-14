@@ -741,6 +741,11 @@ export type LauncherEvent =
       command_line: string | null;
       /** manual: そのコマンドを実行するディレクトリ。 */
       working_directory: string | null;
+      /**
+       * manual: 起動するときに設定する環境変数（名前と値）。registry がループバックのアドレスでないときだけ
+       * （`{"VEHICLE_SIL_LISTEN_ON_NETWORK": "1"}`）。なければ null。
+       */
+      environment: Record<string, string> | null;
     })
   | (EventBase & { event: 'log'; source: string; line: string })
   /** 変数を読み書きする口のつながり方（始まる直前に、起動した participant ごとに 1 回）。 */
@@ -891,6 +896,7 @@ function readEventFields(
         message: field(f, path, 'message', soft(nullable(string), null, u)),
         command_line: field(f, path, 'command_line', soft(nullable(string), null, u)),
         working_directory: field(f, path, 'working_directory', soft(nullable(string), null, u)),
+        environment: field(f, path, 'environment', soft(nullable(record(string)), null, u)),
       };
     case 'log_dropped':
       return {
@@ -1212,6 +1218,8 @@ export interface SummaryParticipant {
   command_line: string | null;
   /** manual の事象の working_directory。なければ null。 */
   working_directory: string | null;
+  /** manual の事象の environment（起動するときに設定する環境変数）。なければ null。 */
+  environment: Record<string, string> | null;
   /** 変数を読み書きする口のつながり方（ランチャーの control_link の事象）。まだなければ null。 */
   control_link: ControlLink | null;
 }
@@ -1234,6 +1242,7 @@ const readSummaryParticipant = (
     stop_requested: field(f, path, 'stop_requested', soft(boolean, false, u)),
     command_line: field(f, path, 'command_line', soft(nullable(string), null, u)),
     working_directory: field(f, path, 'working_directory', soft(nullable(string), null, u)),
+    environment: field(f, path, 'environment', soft(nullable(record(string)), null, u)),
     control_link: field(
       f,
       path,

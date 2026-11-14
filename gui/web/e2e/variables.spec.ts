@@ -164,3 +164,22 @@ test('started paused: a parameter can be written before the first step, and a wr
   );
   expect(writes).toBe(1);
 });
+
+test.describe('in English', () => {
+  test.use({ locale: 'en-US' });
+
+  test('the variables page has no Japanese left, with and without a run', async ({ page }) => {
+    await page.goto(`${target.base}variables#token=${target.token}`);
+    await expect(page.getByRole('heading', { level: 1, name: 'Variables' })).toBeVisible();
+    await expect(page).toHaveTitle('Variables - vehicle-sil');
+    const content = page.locator('app-variables-page');
+    await expect(page.getByTestId('variables-no-run')).toBeVisible();
+    expect(await content.innerText()).not.toMatch(/[぀-ヿ一-鿿]/);
+
+    await startRun(page, target, 'forever.yaml');
+    await expect(page.getByTestId('dashboard-section')).toHaveText(['Engine', 'Dashboard']);
+    await expect(widgetValue(page, 'Engine', 'engine.speed')).not.toHaveText('');
+    // 変数の名前、型、値はランチャーと ECU のもの（英字）
+    expect(await content.innerText()).not.toMatch(/[぀-ヿ一-鿿]/);
+  });
+});

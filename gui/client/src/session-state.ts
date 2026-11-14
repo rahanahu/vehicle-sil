@@ -80,6 +80,11 @@ export interface ParticipantView {
   commandLine: string | null;
   /** manual: そのコマンドを実行するディレクトリ。届いていなければ null。 */
   workingDirectory: string | null;
+  /**
+   * manual: 起動するときに設定する環境変数（名前と値。ランチャーのまま）。設定するものがなければ空。
+   * registry がループバックのアドレスでないとき、`VEHICLE_SIL_LISTEN_ON_NETWORK` が `1` で入る。
+   */
+  environment: Readonly<Record<string, string>>;
 }
 
 /** ランチャーのプロセスの様子（サーバーが見ている）。 */
@@ -402,6 +407,7 @@ export function applySummary(
     manual: p.state === 'manual' || p.command_line !== null || !!known.get(p.name)?.manual,
     commandLine: p.command_line,
     workingDirectory: p.working_directory,
+    environment: p.environment ?? {},
   }));
   return {
     ...next,
@@ -675,6 +681,7 @@ function updateParticipant(
   if (typeof event.command_line === 'string') updated.commandLine = event.command_line;
   if (typeof event.working_directory === 'string')
     updated.workingDirectory = event.working_directory;
+  if (event.state === 'manual') updated.environment = event.environment ?? {};
   if (event.state === 'ended' || event.state === 'killed') {
     updated.exitCode = event.exit_code;
     updated.signal = event.signal;
@@ -739,5 +746,6 @@ function blankParticipant(name: string): ParticipantView {
     manual: false,
     commandLine: null,
     workingDirectory: null,
+    environment: {},
   };
 }

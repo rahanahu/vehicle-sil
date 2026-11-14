@@ -694,7 +694,7 @@ def checks() -> list[Case]:
     files = ["simulation", "forever", "bad-lines", "bad-types", "check-error", "check-garbage", "control-trouble",
              "dash-name", "deaf", "finding-flood", "flood", "future-events", "ignore-stop", "jitter", "large-fields",
              "large-result", "late", "launcher-crash", "log-dropped", "loose-fields", "manual", "orphan",
-             "participant-crash", "result-then-wait"]
+             "participant-crash", "result-then-wait", "network"]
     out = [Case(f"check-{f}", ["check", "--json", "--", f"{f}.yaml"], f"the check of {f}.yaml") for f in files]
     return out + [
         Case("check-simulation-disable", ["check", "--json", "--disable", "Dashboard", "--", "simulation.yaml"],
@@ -736,6 +736,9 @@ def runs() -> list[Case]:
                  ("until", paused(0)), ("send", RESUME), extra=("--start-paused",)),
         run_case("run-manual-stop", "simulation.yaml", "a participant that the user starts never joins: stopped",
                  ("until", log("to join (manual)")), ("sleep", 0.3), stop, extra=("--manual", "Dashboard")),
+        run_case("run-network-manual-stop", "network.yaml",
+                 "the registry on all addresses: Dashboard, to be started by the user with "
+                 "VEHICLE_SIL_LISTEN_ON_NETWORK=1, never joins: stopped", ("until", log("to join (manual)")), ("sleep", 0.3), stop),
         run_case("forever-stop", "forever.yaml", "stopped while it runs", RUNNING, ("until", running_time(5)), stop,
                  default=True),
         run_case("forever-stop-twice", "forever.yaml", "two stops at once", RUNNING, ("until", running_time(5)),
@@ -843,6 +846,14 @@ def runs() -> list[Case]:
                  "a scenario at speed 0.001 with the control server, without Logger: stopped",
                  ("until", event("scenario_step", index=2, status="running")), ("sleep", 0.3), stop,
                  extra=("--scenario", "scenarios/throttle.yaml", *control, "--disable", "Logger", "--speed", "0.001")),
+        run_case("control-scenario-slow-time", "forever.yaml",
+                 "a scenario at speed 0.001 with the control server: the time commands of standard input still work "
+                 "(pause, a step of 10 ms, speed 0.002, resume), then a stop",
+                 ("until", event("scenario_step", index=2, status="running")), ("send", PAUSE),
+                 ("until", lambda events: command("pause")(events) and last_time(paused=True)(events)),
+                 ("send", step(10)), ("until", command("step")), ("send", speed(0.002)),
+                 ("until", command("speed")), ("send", RESUME), ("until", command("resume")), stop,
+                 extra=("--scenario", "scenarios/throttle.yaml", *control, "--speed", "0.001")),
         run_case("control-scenario-passes", "simulation.yaml", "a scenario that passes, with the control server",
                  extra=("--scenario", "scenarios/throttle.yaml", *control)),
         run_case("control-scenario-fails", "simulation.yaml", "a scenario that fails, with the control server",

@@ -4,9 +4,9 @@
 Steps, in order: npm ci, npm run format:check, npm run lint (gui/web and gui/client), npm test, npm run
 test:client (the client library gui/client: a type check, then its unit tests on Node without Angular or a
 DOM), i18n (npm run i18n:extract, then the
-extracted messages are compared with each translation file gui/web/src/locale/messages.<lang>.json: a changed
-source and a broken target fail; a message that is not translated yet, whether missing from the file or marked
-"target": null, is only counted; obsolete entries are listed; see scripts/web_i18n.py), npm run build, npm run build:client (the
+extracted messages are compared with each translation file gui/web/src/locale/messages.<lang>.json: a missing
+message, a message not translated yet ("target": null), a changed source and a broken target fail; obsolete
+entries are listed; see scripts/web_i18n.py), npm run build, npm run build:client (the
 client library bundled into one ESM file, build/gui-client/vehicle-sil-gui-client.mjs, with the esbuild that the
 Angular build tools bring), npm run pack:client (the client library as an npm package,
 build/gui-client/vehicle-sil-gui-client-<version>.tgz, with its types; it is installed and used to check it), npm
@@ -25,7 +25,8 @@ While working on the end-to-end tests, --e2e-grep, --e2e-repeat and --skip-check
 passed to Playwright as --grep and --repeat-each; --skip-checks leaves out the format check, lint, unit
 tests and the i18n step, not the build). --i18n-only runs only the i18n step; --i18n-update rewrites the
 translation files to match the extraction (new messages get "target": null, obsolete ones are dropped and
-printed) and stops.
+printed) and stops; the i18n step fails until each null is translated. --allow-untranslated lets the i18n step
+pass with messages not translated yet, for work in progress on one's own machine (CI does not pass it).
 
 Exit codes: 0 every step passed, 1 a step failed, 2 usage error (missing tools, unsupported Node or npm).
 Requires Python 3.11+ (standard library only), Node and npm (gui/web/.nvmrc), and uv for the e2e steps.
@@ -225,9 +226,9 @@ def run_step(step: Step, env: dict[str, str], log: Path) -> None:
         step.errors = errors[:MAX_ERROR_LINES] or [ln for ln in lines if ln.strip()][-8:]
 
 
-def check_translations(step: Step, log: Path) -> None:
-    """After the extraction: compare it with each translation file; the step fails on wrong ones (a changed source,
-    a broken target) and counts the messages that are not translated yet (missing, or target null)."""
+def check_translations(step: Step, log: Path, allow_untranslated: bool) -> None:
+    """After the extraction: compare it with each translation file; the step fails on missing, not translated yet
+    (target null, unless allow_untranslated) or wrong ones (a changed source, a broken target)."""
     try:
         reports = web_i18n.check(EXTRACTION, LOCALE_DIR)
     except (OSError, ValueError) as e:
@@ -244,19 +245,22 @@ def check_translations(step: Step, log: Path) -> None:
         f.write("\n".join(["", "$ compare with gui/web/src/locale/messages.*.json", *lines]) + "\n")
     step.summary = "; ".join(r.summary() for r in reports) if reports else "no translation files"
     step.notes = [f"{r.language} obsolete: {m}" for r in reports for m in r.obsolete][:5]
-    if any(r.missing for r in reports):
-        step.notes.append("messages not in a translation file yet show in Japanese; add them with "
-                          "scripts/verify-web.py --i18n-update (they become \"target\": null), then translate them")
-    if not all(r.ok for r in reports):
+    if not all(r.passes(allow_untranslated) for r in reports):
         step.ok, step.code = False, 1
-        step.errors = [f"{r.language} wrong: {m}" for r in reports for m in r.problems]
+        step.errors = [f"{r.language} {kind}: {m}" for r in reports
+                       for kind, items in (("missing", r.missing), ("wrong", r.problems),
+                                           ("not translated yet", [] if allow_untranslated else r.untranslated))
+                       for m in items]
         step.errors = step.errors[:MAX_ERROR_LINES]
-        if any(any("source differs" in m for m in r.problems) for r in reports):
-            step.errors.append("bring the files up to date with scripts/verify-web.py --i18n-update (new messages "
-                               "become \"target\": null), then translate them")
+        if any(r.missing or any("source differs" in m for m in r.problems) for r in reports):
+            step.errors.append("add the new messages with scripts/verify-web.py --i18n-update; they come in as "
+                               "\"target\": null, and the step fails until each target is translated in "
+                               "gui/web/src/locale/messages.<lang>.json")
+        elif not allow_untranslated and any(r.untranslated for r in reports):
+            step.errors.append("translate each \"target\": null in gui/web/src/locale/messages.<lang>.json (to "
+                               "go on without translating on your own machine, pass --allow-untranslated)")
         if any(r.problems for r in reports):
-            step.errors.append("fix a wrong target in gui/web/src/locale/messages.<lang>.json, or set it to null "
-                               "(not translated yet)")
+            step.errors.append("fix a wrong target in gui/web/src/locale/messages.<lang>.json")
 
 
 def update_translations(npm: str, env: dict[str, str]) -> int:
@@ -269,7 +273,9 @@ def update_translations(npm: str, env: dict[str, str]) -> int:
             print("    " + ln)
         return 1
     for language, added, dropped in web_i18n.update(EXTRACTION, LOCALE_DIR):
-        print(f"{language}: {added} added as not translated yet (\"target\": null), {len(dropped)} obsolete dropped")
+        hint = "; translate them, the i18n step fails on null" if added else ""
+        print(f"{language}: {added} added as not translated yet (\"target\": null{hint}), "
+              f"{len(dropped)} obsolete dropped")
         for ln in dropped:
             print("  dropped: " + ln)
     return 0
@@ -295,7 +301,8 @@ def main() -> int:
         "  scripts/verify-web.py --no-wait        # do not wait for ninja, ctest or the VM\n"
         "  scripts/verify-web.py --skip-install --skip-checks --e2e-grep 'double click' --e2e-repeat 5\n"
         "  scripts/verify-web.py --i18n-only      # only compare the messages with the translation files\n"
-        "  scripts/verify-web.py --i18n-update    # add new messages to the files as not translated yet",
+        "  scripts/verify-web.py --i18n-update    # add new messages to the files as not translated yet\n"
+        "  scripts/verify-web.py --i18n-only --allow-untranslated   # work in progress: let null targets pass",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--skip-install", action="store_true", help="do not run npm ci (use the node_modules there)")
@@ -319,6 +326,9 @@ def main() -> int:
     parser.add_argument("--i18n-update", action="store_true",
                         help="rewrite the translation files to match the extraction (new messages get "
                         "\"target\": null, obsolete ones are dropped) and stop; needs node_modules")
+    parser.add_argument("--allow-untranslated", action="store_true",
+                        help="let the i18n step pass with messages marked not translated yet (\"target\": null); "
+                        "for work in progress on your own machine, CI does not pass it")
     args = parser.parse_args()
     if args.e2e_repeat < 1:
         die_usage("--e2e-repeat must be 1 or more")
@@ -383,7 +393,7 @@ def main() -> int:
                 wait_until_quiet("verify-web", args.wait_limit * 60)
             run_step(step, env, logs[step.name])
             if step.name == "i18n" and step.ok:
-                check_translations(step, logs[step.name])
+                check_translations(step, logs[step.name], args.allow_untranslated)
             done.append(step)
             if not args.json:
                 head = f"web {step.name}: " + ("ok" if step.ok else f"FAILED (exit {step.code})")

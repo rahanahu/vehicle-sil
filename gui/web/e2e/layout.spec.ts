@@ -11,8 +11,7 @@ import { VIEWPORTS, Viewport, findLayoutProblems } from './support/layout';
 const ROUTES = [
   { path: '_test/layout', heading: 'レイアウトの試験', english: 'Layout test' },
   { path: '', heading: '実行', english: 'Run' },
-  // 英訳がまだない文は、元の日本語で出る（英訳を入れたら 'Variables'）
-  { path: 'variables', heading: '変数', english: '変数' },
+  { path: 'variables', heading: '変数', english: 'Variables' },
 ];
 
 /** スクリーンショットを残す幅。 */

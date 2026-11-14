@@ -19,6 +19,7 @@ function participant(name: string, extra: Partial<ParticipantView> = {}): Partic
     manual: false,
     commandLine: null,
     workingDirectory: null,
+    environment: {},
     ...extra,
   };
 }
@@ -157,6 +158,8 @@ describe('ParticipantStatus', () => {
     expect(command?.querySelector('pre')?.textContent).toBe(line); // HTML として読まない
     expect(command?.querySelector('b')).toBeNull();
     expect(command?.textContent).toContain('/root dir');
+    // 環境変数を言われていなければ、その行はない
+    expect(command?.querySelector('[data-testid="manual-environment-Dashboard"]')).toBeNull();
 
     fixture.componentInstance.participants.set([
       participant('Dashboard', { state: 'joined', pid: null, ...manual }),
@@ -182,6 +185,53 @@ describe('ParticipantStatus', () => {
     await fixture.whenStable();
     expect(row('Dashboard')?.textContent).toContain('参加しなかった（自分で起動）');
     expect(row('Dashboard')?.querySelector('[data-testid="manual-command-Dashboard"]')).toBeNull();
+  });
+
+  it('shows each variable to set before the command, by name and value, with its own copy button', async () => {
+    const line = '/ecu/dash --name Dashboard';
+    const writeText = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    try {
+      fixture.componentInstance.participants.set([
+        participant('Dashboard', {
+          state: 'manual',
+          pid: null,
+          manual: true,
+          commandLine: line,
+          workingDirectory: '/root',
+          environment: { VEHICLE_SIL_LISTEN_ON_NETWORK: '1', OTHER: 'a b' },
+        }),
+      ]);
+      await fixture.whenStable();
+      const command = row('Dashboard')?.querySelector('[data-testid="manual-command-Dashboard"]');
+      const environment = command?.querySelector('[data-testid="manual-environment-Dashboard"]');
+      expect(environment?.textContent).toContain('環境変数を設定します');
+      // 名前と値は分けて出す（値に空白があっても、どこまでが値か読める）
+      const other = environment?.querySelector('[data-testid="manual-variable-OTHER"]');
+      expect(other?.querySelector('.variable-name')?.textContent).toBe('OTHER');
+      expect(other?.querySelector('.variable-value')?.textContent).toBe('a b');
+      expect(command?.querySelector('pre')?.textContent).toBe(line);
+
+      // 変数のボタンは 名前=値 を写し、そのボタンだけが「コピーしました」になる
+      const listen = environment?.querySelector(
+        '[data-testid="manual-variable-VEHICLE_SIL_LISTEN_ON_NETWORK"] button',
+      ) as HTMLButtonElement;
+      listen.click();
+      await fixture.whenStable();
+      expect(writeText).toHaveBeenLastCalledWith('VEHICLE_SIL_LISTEN_ON_NETWORK=1');
+      expect(listen.textContent).toContain('コピーしました');
+      expect(other?.querySelector('button')?.textContent).not.toContain('コピーしました');
+
+      // コマンドのボタンは、コマンドだけを写す
+      const commandButton = command?.querySelector(':scope > button') as HTMLButtonElement;
+      commandButton.click();
+      await fixture.whenStable();
+      expect(writeText).toHaveBeenLastCalledWith(line);
+      expect(commandButton.textContent).toContain('コピーしました');
+      expect(listen.textContent).not.toContain('コピーしました');
+    } finally {
+      Reflect.deleteProperty(navigator, 'clipboard');
+    }
   });
 
   it('names the fields the server left out', async () => {

@@ -1,0 +1,16 @@
+# A configuration of the GUI server's tests: replay_launcher.py plays what the real launcher wrote for it
+# (recordings/, made by record_launcher.py: record again after changing this file).
+# The registry on all addresses (not a loopback address): the launcher notes it, and Dashboard, started by the
+# user, is to be started with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment.
+vehicle_sil_simulation: 1
+stop_at_ms: 1000
+registry_uri: silkit://0.0.0.0:8501
+networks:
+  - name: J1939_CAN
+    kind: can
+participants:
+  - name: Engine
+    command: [engine/vehicle_sil_engine_ecu]
+  - name: Dashboard
+    command: [dashboard/vehicle_sil_dashboard_ecu]
+    manual: true

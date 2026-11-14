@@ -218,6 +218,7 @@ export class LayoutFixture {
       manual: false,
       commandLine: null,
       workingDirectory: null,
+      environment: {},
     },
     {
       name: 'Dashboard',
@@ -234,6 +235,7 @@ export class LayoutFixture {
       manual: false,
       commandLine: null,
       workingDirectory: null,
+      environment: {},
     },
   ];
 
