@@ -27,6 +27,7 @@
 #include <vector>
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using vehicle_sil::LifecycleMode;
 using vehicle_sil::Peer;
 using vehicle_sil::PeerOptions;
@@ -343,7 +344,7 @@ TEST_CASE(peer_stops_from_a_step_and_reports_failures)
             }
         });
         peer.start();
-        const auto deadline = std::chrono::steady_clock::now() + 30s;
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(30s);
         while (!peer.failed() && std::chrono::steady_clock::now() < deadline)
         {
             std::this_thread::sleep_for(5ms);
@@ -573,7 +574,7 @@ TEST_CASE(peer_stop_from_two_threads)
             static_cast<void>(ecu.send(kPgnEngineSpeed, data));
         });
         peer->start();
-        const auto deadline = std::chrono::steady_clock::now() + 20s;
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(20s);
         while (steps.load() < 5 && std::chrono::steady_clock::now() < deadline)
         {
             std::this_thread::sleep_for(1ms);
@@ -615,7 +616,7 @@ TEST_CASE(peer_wait_returns_when_another_thread_stops)
         peer.start();
         std::optional<orch::ParticipantState> waited;
         std::thread waiter([&] { waited = peer.wait(30s); });
-        const auto deadline = std::chrono::steady_clock::now() + 20s;
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(20s);
         while (steps.load() < 5 && std::chrono::steady_clock::now() < deadline)
         {
             std::this_thread::sleep_for(1ms);

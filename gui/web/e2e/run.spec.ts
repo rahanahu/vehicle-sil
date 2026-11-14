@@ -21,6 +21,7 @@ import {
   stopIfRunning,
   stopOnServer,
 } from './support/run-page';
+import { scaled } from './support/timeouts';
 import { guiToken } from './support/gui-server';
 
 test.beforeEach(async ({ page, locale }) => {
@@ -493,7 +494,7 @@ test('a launcher that runs on after its result can still be stopped', async ({ p
   const elapsed = async () =>
     Number((await page.getByTestId('elapsed').textContent())?.match(/[\d.]+/)?.[0]);
   const atResult = await elapsed();
-  await expect.poll(elapsed, { timeout: 10_000 }).toBeGreaterThan(atResult + 1);
+  await expect.poll(elapsed, { timeout: scaled(10_000) }).toBeGreaterThan(atResult + 1);
   expect((await serverSession(page))?.launcher.running).toBe(true);
   await expect(stopButton(page)).not.toHaveAttribute('aria-disabled', 'true');
   await expect(startButton(page)).toHaveAttribute('aria-disabled', 'true');
@@ -561,7 +562,7 @@ test('a dropped connection is shown, joined again, and the log goes on without a
   // 応答の要約から、止めるよう頼んだことがわかる
   await expect(stopButton(page)).toHaveText(/止めています/);
   refuse = false;
-  await expect(page.getByTestId('connection')).toHaveText('', { timeout: 10_000 });
+  await expect(page.getByTestId('connection')).toHaveText('', { timeout: scaled(10_000) });
   await expect(result(page, session)).toContainText('中断', { timeout: RUN_TIMEOUT });
 
   // Dashboard の行は仮想時刻 500 ms ごとに「t=0 ms」「t=500 ms」…と 1 行ずつ。重ならず抜けずに並ぶ

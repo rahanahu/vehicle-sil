@@ -4,6 +4,7 @@
 // scenario with single-frame broadcasts, destination-specific frames, Requests, responses,
 // acknowledgements and NACKs gives the same traces on SIL Kit as on the virtual bus, for
 // several step sizes, and repeats identically.
+#include "j1939_transport_util.hpp"
 #include "silkit_test_util.hpp"
 #include "test_harness.hpp"
 
@@ -31,10 +32,12 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 namespace orch = SilKit::Services::Orchestration;
 using vehicle_sil::ParticipantRuntime;
 using vehicle_sil::SimDuration;
@@ -629,7 +632,7 @@ Traces run_on_silkit(const std::vector<SimDuration>& steps, const EcuFactory& ma
     start_together(controller, runtimes, 30s);
     for (auto* runtime : runtimes)
     {
-        const auto state = runtime->wait_until_finished(60s);
+        const auto state = runtime->wait_until_finished(scaled_timeout(60s));
         if (!state || *state != orch::ParticipantState::Shutdown)
         {
             throw std::runtime_error(runtime->name() + " did not shut down: " + runtime->step_error());
@@ -904,7 +907,7 @@ TEST_CASE(j1939_step_size_above_200_ms_fails_the_participant)
     node.host->add(node.scenario->network, *node.port);
     vehicle_sil::can::bind_host(*node.runtime, *node.host);
     start_together(controller, {node.runtime.get()}, 30s);
-    const auto state = node.runtime->wait_until_finished(60s);
+    const auto state = node.runtime->wait_until_finished(scaled_timeout(60s));
     CHECK(state.has_value());
     CHECK(*state == orch::ParticipantState::Error);
     CHECK(node.host->failed());
@@ -1149,4 +1152,183 @@ TEST_CASE(j1939_runs_on_real_time_without_time_synchronisation)
     CHECK_EQ(b.port->statistics().receive_overflows, 0u);
     a.port->close();
     b.port->close();
+}
+
+namespace {
+
+namespace tp = vehicle_sil::unit::j1939;
+
+/// An ECU on virtual time (a J1939 node on the SIL Kit CAN port) and a participant without time
+/// synchronisation on the same network (like the Vector XL CAN bridge), which sends raw frames.
+/// SIL Kit stamps the bridge's frames with std::chrono::nanoseconds::min().
+struct EcuAndBridge
+{
+    explicit EcuAndBridge(vehicle_sil::ParticipantRuntimeOptions ecuOptions)
+    {
+        ecuOptions.registry_uri = registry.uri;
+        ecu = std::make_unique<ParticipantRuntime>(ecuOptions);
+        port = std::make_unique<SilKitCanPort>(*ecu->participant().CreateCanController("CAN", kNetwork));
+        Node& node = network.add_node(NodeOptions{0x20, Name{0x2000}});
+        node.on_any_message([this](const Message& m) {
+            if (m.pgn == Pgn{0xFF10})
+            {
+                singles.fetch_add(1);
+                single_time.store(to_ns(m.time));
+            }
+            if (m.pgn == Pgn{0xFF20} && m.data.size() == 20)
+            {
+                longs.fetch_add(1);
+            }
+        });
+        host.add(network, *port);
+        host.set_application([this](SimTime now) {
+            last_step.store(to_ns(now));
+            timeouts.store(network.statistics().transport_timeouts);
+        });
+        vehicle_sil::bind_host(*ecu, host);
+
+        vehicle_sil::ParticipantRuntimeOptions bridgeOptions;
+        bridgeOptions.participant_name = "Bridge";
+        bridgeOptions.registry_uri = registry.uri;
+        bridge = std::make_unique<ParticipantRuntime>(bridgeOptions); // no virtual time
+        bridge_can = bridge->participant().CreateCanController("CAN", kNetwork);
+        bridge_can->Start();
+    }
+    EcuAndBridge(const EcuAndBridge&) = delete;
+    EcuAndBridge& operator=(const EcuAndBridge&) = delete;
+    ~EcuAndBridge()
+    {
+        ecu->stop("test cleanup");
+        port->close();
+        bridge->stop("test cleanup");
+    }
+
+    void send(const tp::J1939Frame& f)
+    {
+        const vehicle_sil::can::Frame frame = tp::to_can(f);
+        SilKit::Services::Can::CanFrame out;
+        CHECK(vehicle_sil::can::to_silkit_frame(frame, out));
+        bridge_can->SendFrame(out);
+    }
+
+    /// Sends a single frame until the ECU's port has one (the participants have found each
+    /// other).
+    void send_until_received()
+    {
+        CHECK(vehicle_sil::unit::eventually(
+            [&] {
+                send(tp::frame(6, 0xFF10, 0x30, tp::kGlobal, tp::Bytes{1, 2, 3}));
+                return port->statistics().received > 0;
+            },
+            10s, 10ms));
+    }
+
+    /// The packets of the BAM announced by bam_announcement(), each after the ECU stepped 5 ms
+    /// more (so each one arrives in a later step than the one before).
+    void send_bam_packets()
+    {
+        for (std::uint8_t sequence = 1; sequence <= 3; ++sequence)
+        {
+            const std::int64_t before = last_step.load();
+            CHECK(vehicle_sil::unit::eventually([&] { return last_step.load() >= before + 5'000'000; }, 10s));
+            send(tp::dt(0x30, tp::kGlobal, sequence, message));
+        }
+    }
+    [[nodiscard]] tp::J1939Frame bam_announcement() const { return tp::bam(0x30, message.size(), 0xFF20); }
+
+    /// The BAM was received and no transfer timed out; the single frame had the time of an ECU
+    /// step (not -292 years).
+    void check_received()
+    {
+        CHECK(vehicle_sil::unit::eventually([&] { return longs.load() == 1 || timeouts.load() > 0; }, 10s));
+        ecu->stop("test");
+        CHECK(singles.load() > 0);
+        CHECK(single_time.load() >= 0);
+        CHECK(single_time.load() <= last_step.load());
+        CHECK_EQ(timeouts.load(), 0u);
+        CHECK_EQ(longs.load(), 1);
+        CHECK(!host.failed());
+    }
+
+    InProcessRegistry registry;
+    std::unique_ptr<ParticipantRuntime> ecu;
+    std::unique_ptr<SilKitCanPort> port;
+    Network network{[] {
+        vehicle_sil::j1939::NetworkOptions options;
+        options.warning = [](std::string_view) {};
+        return options;
+    }()};
+    Host host;
+    std::unique_ptr<ParticipantRuntime> bridge;
+    SilKit::Services::Can::ICanController* bridge_can = nullptr;
+    const tp::Bytes message = tp::payload(20);
+    std::atomic<int> singles{0};
+    std::atomic<std::int64_t> single_time{0};
+    std::atomic<int> longs{0};
+    std::atomic<std::int64_t> last_step{-1};
+    std::atomic<std::uint64_t> timeouts{0};
+};
+
+} // namespace
+
+TEST_CASE(j1939_on_virtual_time_receives_a_bam_from_a_participant_without_time_synchronisation)
+{
+    // While the ECU steps: its SIL Kit stamps the bridge's frames with its own current time.
+    vehicle_sil::ParticipantRuntimeOptions options;
+    options.participant_name = "Ecu";
+    options.lifecycle_mode = vehicle_sil::LifecycleMode::Autonomous;
+    options.virtual_time = VirtualTimeOptions{1ms, 1.0}; // paced to the wall clock
+    EcuAndBridge run(options);
+    run.ecu->start(30s);
+    run.bridge->start(30s);
+    run.send_until_received();
+    run.send(run.bam_announcement());
+    run.send_bam_packets();
+    run.check_received();
+}
+
+TEST_CASE(j1939_on_virtual_time_receives_a_bam_from_a_participant_without_time_synchronisation_that_starts_before_the_first_step)
+{
+    // The bridge sends while the ECU waits for the simulation to start (a required participant
+    // is missing): the single frame and the BAM's announcement arrive before the ECU's first
+    // step, its packets after it.
+    EcuAndBridge run(coordinated_options("Ecu", "", VirtualTimeOptions{1ms, 1.0}));
+    SimulationControllerOptions controllerOptions;
+    controllerOptions.registry_uri = run.registry.uri;
+    controllerOptions.required_participants = {"Ecu", "Late"};
+    SimulationController controller(controllerOptions);
+    auto late = std::make_unique<ParticipantRuntime>(
+        coordinated_options("Late", run.registry.uri, VirtualTimeOptions{1ms, std::nullopt}));
+    late->set_step_handler([](SimTime, SimDuration) {});
+
+    std::thread ecuStart([&] { run.ecu->start(30s); });
+    std::thread controllerStart;
+    std::thread lateStart;
+    struct JoinOnExit
+    {
+        std::vector<std::thread*> threads;
+        std::unique_ptr<ParticipantRuntime>& late;
+        ~JoinOnExit()
+        {
+            late->stop("test cleanup");
+            for (auto* t : threads)
+            {
+                if (t->joinable())
+                {
+                    t->join();
+                }
+            }
+        }
+    } joinOnExit{{&ecuStart, &controllerStart, &lateStart}, late};
+    run.bridge->start(30s);
+    controllerStart = std::thread([&] { controller.start(30s); });
+
+    run.send_until_received();
+    run.send(run.bam_announcement());
+    CHECK(vehicle_sil::unit::eventually([&] { return run.port->statistics().received >= 2; }, 10s));
+    CHECK_EQ(run.last_step.load(), -1); // no step yet
+
+    lateStart = std::thread([&] { late->start(30s); });
+    run.send_bam_packets();
+    run.check_received();
 }

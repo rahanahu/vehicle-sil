@@ -201,6 +201,8 @@ TEST_CASE(a_registry_uri_is_loopback_by_its_written_address)
 TEST_CASE(a_participant_given_no_configuration_gets_the_default_and_one_of_its_own_stays)
 {
     set_variable(kListenOnNetworkVariable.data(), nullptr);
+    // Always: no dynamic simulation steps (the fixed step is the participant's own).
+    const std::string fixed_step = R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}})";
     // Loopback registry: loopback acceptors only (port 0), in the registry's address family.
     const std::string v4 = default_participant_configuration("silkit://127.0.0.1:8500");
     const std::string v6 = default_participant_configuration("silkit://[::1]:8500");
@@ -209,14 +211,14 @@ TEST_CASE(a_participant_given_no_configuration_gets_the_default_and_one_of_its_o
     CHECK(!contains(v4, "0.0.0.0") && !contains(v6, "[::]"));
 #ifdef _WIN32
     // Windows: TCP between the participants of a machine (no local-domain sockets).
-    CHECK(v4 == R"({"Middleware":{"EnableDomainSockets":false,"AcceptorUris":["tcp://127.0.0.1:0"]}})");
-    const std::string network = R"({"Middleware":{"EnableDomainSockets":false}})";
+    CHECK(v4 == R"({"Middleware":{"EnableDomainSockets":false,"AcceptorUris":["tcp://127.0.0.1:0"]},)" + fixed_step + "}");
+    const std::string network = R"({"Middleware":{"EnableDomainSockets":false},)" + fixed_step + "}";
 #else
     // Elsewhere the local-domain socket stays, under a new name each time.
     CHECK(v4.rfind(R"({"Middleware":{"AcceptorUris":["local://)", 0) == 0);
-    CHECK(contains(v4, R"(.silkit","tcp://127.0.0.1:0"]}})"));
+    CHECK(contains(v4, R"(.silkit","tcp://127.0.0.1:0"]},)" + fixed_step + "}"));
     CHECK(default_participant_configuration("silkit://127.0.0.1:8500") != v4);
-    const std::string network = "{}";
+    const std::string network = "{" + fixed_step + "}";
 #endif
     // A registry that other computers may reach: SIL Kit's acceptors (every address).
     CHECK(default_participant_configuration("silkit://0.0.0.0:8500") == network);
@@ -256,10 +258,10 @@ TEST_CASE(a_participant_given_no_configuration_gets_the_default_and_one_of_its_o
     // With members of the caller's: the same default, in one object.
     const std::string logging = R"("Logging":{"Sinks":[{"Type":"Stdout","Level":"Info"}]})";
     const std::string with = default_participant_configuration_with("silkit://localhost:1", logging);
-    CHECK(contains(with, R"("tcp://127.0.0.1:0"]},)" + logging + "}"));
+    CHECK(contains(with, R"("tcp://127.0.0.1:0"]},)" + fixed_step + "," + logging + "}"));
     CHECK(default_participant_configuration_with("silkit://0.0.0.0:1", "") == network);
     CHECK(default_participant_configuration_with("silkit://0.0.0.0:1", logging) ==
-          (network == "{}" ? "{" + logging + "}" : network.substr(0, network.size() - 1) + "," + logging + "}"));
+          network.substr(0, network.size() - 1) + "," + logging + "}");
     // SIL Kit reads each of them, on every system.
     CHECK(SilKit::Config::ParticipantConfigurationFromString(default_participant_configuration("silkit://127.0.0.1:1")) != nullptr);
     CHECK(SilKit::Config::ParticipantConfigurationFromString(default_participant_configuration("silkit://[::1]:1")) != nullptr);

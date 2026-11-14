@@ -67,8 +67,9 @@ struct SilKitEthPortStatistics
 /// bytes with zero bytes before they arrive.
 ///
 /// A sender without time synchronisation (e.g. a bridge to a real network) has no step time:
-/// SIL Kit stamps its frames with std::chrono::nanoseconds::min(). The port does not pass that
-/// on: such a frame (any negative timestamp) gets the time of this participant's latest step
+/// SIL Kit gives its frames this participant's current step time instead, except before this
+/// participant's first step, where they keep std::chrono::nanoseconds::min(). The port does not
+/// pass that on: such a frame (any negative timestamp) gets the time of this participant's latest step
 /// when it arrives (0 before the first step), and is released at the next step, like a frame
 /// sent at that step's time. Which step that is depends on when the frame arrives, so it is not
 /// deterministic. Counted in received_without_time.

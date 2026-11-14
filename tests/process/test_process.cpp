@@ -34,6 +34,7 @@
 
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using vehicle_sil::process::ExitStatus;
 using vehicle_sil::process::Process;
 using vehicle_sil::process::ProcessOptions;
@@ -132,7 +133,7 @@ TEST_CASE(process_passes_each_line_of_both_streams_without_its_line_end)
 {
     Lines lines;
     Process p(kHelper, {"--out", "one\ntwo\r\nlast without end", "--err", "e1\n\ne3\n"}, lines.options());
-    const auto status = p.wait_for(60s);
+    const auto status = p.wait_for(scaled_timeout(60s));
     CHECK(status.has_value());
     CHECK(*status == (ExitStatus{0, std::nullopt}));
     CHECK(p.finish_output(60s));
@@ -145,7 +146,7 @@ TEST_CASE(process_reads_the_null_device_or_what_is_written_to_its_input)
     Lines none;
     Process silent(kHelper, {"--read-stdin"}, none.options());
     CHECK(!silent.write_input("x")); // no input pipe
-    CHECK(silent.wait_for(60s).has_value());
+    CHECK(silent.wait_for(scaled_timeout(60s)).has_value());
     CHECK(silent.finish_output(60s));
     check_lines(of(none.take(), "out"), {"out: stdin 0"});
 
@@ -160,7 +161,7 @@ TEST_CASE(process_reads_the_null_device_or_what_is_written_to_its_input)
     p.close_input();
     p.close_input(); // idempotent
     CHECK(!p.write_input("late"));
-    const auto status = p.wait_for(60s);
+    const auto status = p.wait_for(scaled_timeout(60s));
     CHECK(status.has_value() && status->code == 0);
     CHECK(p.finish_output(60s));
     check_lines(of(lines.take(), "out"), {"out: stdin 20"});
@@ -170,7 +171,7 @@ TEST_CASE(process_passes_a_line_longer_than_the_limit_in_pieces)
 {
     Lines lines;
     Process p(kHelper, {"--out", "abcdefghij\nabcd\r\nxy\n"}, lines.options(4));
-    CHECK(p.wait_for(60s).has_value());
+    CHECK(p.wait_for(scaled_timeout(60s)).has_value());
     CHECK(p.finish_output(60s));
     // "abcd\r\n" right at the limit is one line, not "abcd" and an empty one.
     check_lines(lines.take(), {"out: abcd", "out: efgh", "out: ij", "out: abcd", "out: xy"});
@@ -181,7 +182,7 @@ TEST_CASE(process_does_not_cut_a_utf8_character_when_it_cuts_a_long_line)
     Lines lines;
     // "ab" then "ü" (2 bytes) across the limit of 3, then "€" (3 bytes) whole, then a 4-byte one.
     Process p(kHelper, {"--out", "ab\xC3\xBC\xE2\x82\xAC\xF0\x9F\x98\x80\n"}, lines.options(3));
-    CHECK(p.wait_for(60s).has_value());
+    CHECK(p.wait_for(scaled_timeout(60s)).has_value());
     CHECK(p.finish_output(60s));
     // A piece of the limit's length cannot hold a 4-byte character: it is cut where it must be.
     check_lines(lines.take(), {"out: ab", "out: \xC3\xBC", "out: \xE2\x82\xAC", "out: \xF0\x9F\x98", "out: \x80"});
@@ -194,7 +195,7 @@ TEST_CASE(process_starts_in_its_working_directory)
     ProcessOptions options = lines.options();
     options.working_directory = dir;
     Process p(kHelper, {"--pwd"}, std::move(options));
-    CHECK(p.wait_for(60s).has_value());
+    CHECK(p.wait_for(scaled_timeout(60s)).has_value());
     CHECK(p.finish_output(60s));
     const auto got = lines.take();
     CHECK_EQ(got.size(), std::size_t{1});
@@ -216,14 +217,14 @@ TEST_CASE(process_gets_the_variables_it_is_given_over_the_callers_environment)
     Process p(kHelper,
               {"--env", "VSIL_PROCESS_TEST_KEPT", "--env", "VSIL_PROCESS_TEST_REPLACED", "--env", "VSIL_PROCESS_TEST_ADDED"},
               std::move(options));
-    CHECK(p.wait_for(60s).has_value());
+    CHECK(p.wait_for(scaled_timeout(60s)).has_value());
     CHECK(p.finish_output(60s));
     check_lines(lines.take(), {"out: VSIL_PROCESS_TEST_KEPT=kept", "out: VSIL_PROCESS_TEST_REPLACED=new",
                                "out: VSIL_PROCESS_TEST_ADDED=added value"});
     // Without variables of its own: the caller's environment as it is.
     Lines plainLines;
     Process plain(kHelper, {"--env", "VSIL_PROCESS_TEST_REPLACED", "--env", "VSIL_PROCESS_TEST_ADDED"}, plainLines.options());
-    CHECK(plain.wait_for(60s).has_value());
+    CHECK(plain.wait_for(scaled_timeout(60s)).has_value());
     CHECK(plain.finish_output(60s));
     check_lines(plainLines.take(), {"out: VSIL_PROCESS_TEST_REPLACED=old", "out: VSIL_PROCESS_TEST_ADDED is not set"});
 }
@@ -235,7 +236,7 @@ TEST_CASE(process_reports_its_exit_code_and_the_signal_that_ended_it)
     CHECK(exited.wait_for(60s) == (ExitStatus{3, std::nullopt}));
 #ifndef _WIN32
     Process aborted(kHelper, {"--abort"}, lines.options());
-    CHECK(aborted.wait_for(60s) == (ExitStatus{128 + SIGABRT, SIGABRT}));
+    CHECK(aborted.wait_for(scaled_timeout(60s)) == (ExitStatus{128 + SIGABRT, SIGABRT}));
     CHECK(vehicle_sil::process::signal_name(SIGABRT) == "SIGABRT");
 #endif
 }
@@ -398,7 +399,9 @@ TEST_CASE(run_captured_time_limit_ends_what_the_process_started)
     const fs::path dir = scratch("captured tree");
     const std::string pidFile = (dir / "grandchild.pid").string();
     vehicle_sil::process::CaptureOptions options;
-    options.timeout = 2s; // the helper sleeps for 10 minutes: only a last line against a hang
+    // The helper sleeps for 10 minutes; before the limit ends it, it has to start the grandchild
+    // and write its ID, which takes longer on a slow machine (scaled).
+    options.timeout = scaled_timeout(2s);
     const auto captured =
         vehicle_sil::process::run_captured(kHelper, {"--spawn-sleeper", pidFile, "--sleep-ms", "600000"}, options);
     CHECK(!captured.exit_code.has_value());

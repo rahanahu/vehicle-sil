@@ -4,14 +4,13 @@ that must not become a 500, connections that never authenticate, and the parts o
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from pathlib import Path
 
 import aiohttp
 import pytest
-from conftest import Client, Gui, gui_server, is_ended, is_synced, raw_http, run_async
+from conftest import Client, Gui, gui_server, is_ended, is_synced, raw_http, run_async, scaled, until_async
 
 POSIX = sys.platform != "win32"
 
@@ -106,12 +105,12 @@ def test_unauthenticated_websockets_cannot_keep_the_screen_out(gui: Gui) -> None
     async def main(c: Client) -> None:
         url = f"ws://127.0.0.1:{gui.port}/ws"
         socks = [await c.http.ws_connect(url, headers={"Origin": gui.origin}) for _ in range(40)]  # never refused
-        msg = await socks[0].receive(timeout=5)  # the oldest made room
+        msg = await socks[0].receive(timeout=scaled(5))  # the oldest made room
         assert msg.type == aiohttp.WSMsgType.CLOSE and msg.data == 1013 and msg.extra == "too-many-unauthenticated"
         screen = await c.ws()
         hello = (await screen.until(is_synced))[0]
         assert hello["type"] == "hello"
-        msg = await socks[-1].receive(timeout=10)  # no auth in time: closed
+        msg = await socks[-1].receive(timeout=scaled(10))  # no auth in time: closed
         assert msg.type == aiohttp.WSMsgType.CLOSE and msg.data == 4401 and msg.extra == "auth-timeout"
         for s in socks:
             await s.close()
@@ -129,8 +128,18 @@ def test_authenticated_websockets_have_a_limit(gui: Gui) -> None:
             await c.ws()
         assert refused.value.status == 503
         await screens[0].close()
-        await asyncio.sleep(0.2)
-        again = await c.ws()
+        made: list = []
+
+        async def room() -> bool:  # once the server has seen the close
+            try:
+                made.append(await c.ws())
+                return True
+            except aiohttp.WSServerHandshakeError as e:
+                if e.status != 503:
+                    raise
+                return False
+        assert await until_async(room)
+        again = made[0]
         assert (await again.until(is_synced))[0]["type"] == "hello"
         for s in screens[1:] + [again]:
             await s.close()

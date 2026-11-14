@@ -176,6 +176,43 @@ TEST_CASE(silkit_port_releases_frames_before_now_in_time_then_arrival_order)
     CHECK_EQ(stats.receive_overflows, 0u);
 }
 
+TEST_CASE(silkit_port_gives_frames_without_time_the_time_of_the_latest_step)
+{
+    // SIL Kit stamps the frames of a participant without time synchronisation with
+    // nanoseconds::min() when they arrive before this participant's first step (later it gives
+    // them its own current time). The port does not pass that time on.
+    constexpr std::chrono::nanoseconds kNoTime = std::chrono::nanoseconds::min();
+    FakeCanController controller;
+    SilKitCanPort port(controller);
+    const std::vector<std::uint8_t> d1{1}, d2{2}, d3{3}, d4{4};
+    // Before the first step: time 0, released at the first step after 0.
+    controller.deliver(extended_frame(0x100, d1), kNoTime);
+    CHECK(release(port, at(0ms)).empty());
+    auto out = release(port, at(5ms));
+    CHECK_EQ(out.size(), 1u);
+    CHECK(out[0].time == at(0ms));
+
+    // After the step at 5 ms started: 5 ms, in time order with the other frames.
+    controller.deliver(extended_frame(0x200, d2), 5ms);
+    controller.deliver(extended_frame(0x300, d3), kNoTime);
+    controller.deliver(extended_frame(0x400, d4), 4ms);
+    out = release(port, at(6ms));
+    CHECK_EQ(out.size(), 3u);
+    CHECK(out[0].time == at(4ms));
+    CHECK(out[1].time == at(5ms));
+    CHECK_EQ(out[1].frame.data[0], 2);
+    CHECK(out[2].time == at(5ms));
+    CHECK_EQ(out[2].frame.data[0], 3);
+    CHECK_EQ(port.statistics().received_without_time, 2u);
+
+    // Events too.
+    controller.deliver_error_state(sk::CanErrorState::ErrorPassive, kNoTime);
+    std::vector<PortEvent> events;
+    port.release_events_before(at(7ms), [&](const PortEvent& e) { events.push_back(e); });
+    CHECK_EQ(events.size(), 1u);
+    CHECK(events[0].time == at(6ms));
+}
+
 TEST_CASE(silkit_port_counts_inbox_overflow_and_close_discards_queued_frames)
 {
     FakeCanController controller;

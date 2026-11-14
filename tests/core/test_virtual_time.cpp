@@ -35,6 +35,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 namespace orch = SilKit::Services::Orchestration;
 using Wall = std::chrono::steady_clock;
@@ -121,12 +122,12 @@ std::chrono::nanoseconds run_simulation(const std::vector<PeerSpec>& peers, SimD
 
     start_together(controller, runtimePointers, 30s);
 
-    const auto controllerState = controller.wait_until_finished(60s);
+    const auto controllerState = controller.wait_until_finished(scaled_timeout(60s));
     CHECK(controllerState.has_value());
     CHECK(*controllerState == orch::ParticipantState::Shutdown);
     for (auto& runtime : runtimes)
     {
-        const auto state = runtime->wait_until_finished(30s);
+        const auto state = runtime->wait_until_finished(scaled_timeout(30s));
         CHECK(state.has_value());
         CHECK(*state == orch::ParticipantState::Shutdown);
         CHECK(runtime->step_error().empty());
@@ -217,8 +218,11 @@ TEST_CASE(virtual_time_waits_for_the_slowest_peer)
     check_nobody_ran_ahead(peers, log);
     std::printf("simulated %lld ms in %lld ms wall time\n", static_cast<long long>(kStopAt / 1ms),
                 static_cast<long long>(wall / 1ms));
-    // 150 physics steps of at least 3 ms each before the controller's step at stop_at.
-    CHECK(wall >= 450ms);
+    // The wall time runs from the controller's step at 0 to its step at stop_at. Physics' step at
+    // 0 runs alongside the controller's (granted at the same time), so it may be over before the
+    // wall time starts; the other 149 steps of at least 3 ms each lie between the two, as the
+    // controller's step at stop_at waits for Physics' step from 298 ms to end.
+    CHECK(wall >= (kStopAt / 2ms - 1) * 3ms);
     CHECK(wall > kStopAt); // slower than real time
 }
 
@@ -278,8 +282,8 @@ TEST_CASE(virtual_time_tick_scheduler_drives_a_fixed_period_tick)
     });
 
     start_together(controller, {&runtime}, 30s);
-    CHECK(controller.wait_until_finished(30s) == orch::ParticipantState::Shutdown);
-    CHECK(runtime.wait_until_finished(30s) == orch::ParticipantState::Shutdown);
+    CHECK(controller.wait_until_finished(scaled_timeout(30s)) == orch::ParticipantState::Shutdown);
+    CHECK(runtime.wait_until_finished(scaled_timeout(30s)) == orch::ParticipantState::Shutdown);
 
     const std::vector<long long> expectedTicks{0, 10, 20, 30, 40, 50, 60, 70, 80, 90};
     const std::vector<long long> expectedBackground{0, 20, 40, 60, 80};
@@ -310,7 +314,7 @@ TEST_CASE(virtual_time_step_handler_exception_is_reported)
 
     start_together(controller, {&runtime}, 30s);
 
-    const auto state = runtime.wait_until_finished(10s);
+    const auto state = runtime.wait_until_finished(scaled_timeout(10s));
     CHECK(state.has_value());
     CHECK(*state == orch::ParticipantState::Error);
     CHECK(runtime.step_error().find("ECU model diverged") != std::string::npos);
@@ -320,6 +324,103 @@ TEST_CASE(virtual_time_step_handler_exception_is_reported)
     CHECK(vehicle_sil::unit::eventually([&] { return controller.failed_participant() == std::optional<std::string>("Faulty"); }, 10s));
     CHECK(!controller.wait_until_finished(50ms).has_value()); // still waiting for time to advance
     controller.abort();
+}
+
+namespace {
+
+/// What "Ecu" (a ParticipantRuntime with a step of 10 ms and the given SIL Kit configuration) sees
+/// next to "Driver": a plain SIL Kit participant with a step of 3 ms that asks every participant
+/// for dynamic simulation steps (Experimental.TimeSynchronization.DynamicSimulationStep: true), as
+/// a network simulator of another vendor may.
+struct BesideADynamicStepDriver
+{
+    std::vector<std::pair<SimDuration, SimDuration>> steps; ///< time and size of each step of "Ecu"
+    std::optional<orch::ParticipantState> state;            ///< the state "Ecu" ended in
+    std::string step_error;
+    std::size_t driver_steps = 0;
+};
+
+BesideADynamicStepDriver run_beside_a_dynamic_step_driver(const std::string& ecu_configuration)
+{
+    BesideADynamicStepDriver result;
+    InProcessRegistry registry;
+    SimulationControllerOptions controllerOptions;
+    controllerOptions.registry_uri = registry.uri;
+    controllerOptions.required_participants = {"Ecu", "Driver"};
+    controllerOptions.stop_at = 60ms;
+    controllerOptions.shutdown_timeout = 2s;
+    SimulationController controller(controllerOptions);
+
+    auto options = coordinated_options("Ecu", registry.uri, VirtualTimeOptions{10ms, std::nullopt});
+    options.participant_configuration = ecu_configuration;
+    options.shutdown_timeout = 2s;
+    ParticipantRuntime ecu(options);
+    std::mutex mutex;
+    ecu.set_step_handler([&](SimTime now, SimDuration step) {
+        const std::lock_guard lock(mutex);
+        result.steps.emplace_back(now.time_since_epoch(), step);
+    });
+
+    std::atomic<std::size_t> driverSteps{0};
+    const auto driver = SilKit::CreateParticipant(
+        // A configuration of the test's own (participant_configuration_or_default() keeps it as it is).
+        SilKit::Config::ParticipantConfigurationFromString(participant_configuration_or_default(
+            R"({"Middleware":{"EnableDomainSockets":false,"AcceptorUris":["tcp://127.0.0.1:0"]},)"
+            R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":true}}})",
+            registry.uri)),
+        "Driver", registry.uri);
+    auto* driverLifecycle = driver->CreateLifecycleService({orch::OperationMode::Coordinated});
+    driverLifecycle->CreateTimeSyncService()->SetSimulationStepHandler(
+        [&driverSteps](std::chrono::nanoseconds, std::chrono::nanoseconds) { driverSteps.fetch_add(1); }, 3ms);
+    auto driverDone = driverLifecycle->StartLifecycle();
+
+    start_together(controller, {&ecu}, 30s);
+    CHECK(vehicle_sil::unit::eventually(
+        [&] { return controller.failed_participant().has_value() || controller.wait_until_finished(0ms).has_value(); }, 30s));
+    result.state = ecu.wait_until_finished(10s);
+    if (controller.failed_participant().has_value())
+    {
+        controller.abort(); // SIL Kit does not end the simulation for a participant in Error
+    }
+    CHECK(driverDone.wait_for(10s) == std::future_status::ready);
+    result.step_error = ecu.step_error();
+    result.driver_steps = driverSteps.load();
+    const std::lock_guard lock(mutex);
+    return result;
+}
+
+} // namespace
+
+TEST_CASE(virtual_time_keeps_its_step_when_another_participant_asks_for_dynamic_steps)
+{
+    // The default configuration opts out: the steps stay on the participant's own grid.
+    const auto result = run_beside_a_dynamic_step_driver("");
+    CHECK(result.state == std::optional(orch::ParticipantState::Shutdown));
+    CHECK(result.step_error.empty());
+    CHECK(result.driver_steps >= 20u); // 60 ms in steps of 3 ms: the driver did run beside it
+    CHECK(result.steps.size() >= 6u);
+    for (std::size_t i = 0; i < result.steps.size(); ++i)
+    {
+        CHECK_EQ(result.steps[i].first.count(), (10ms * static_cast<long long>(i)).count() * 1'000'000);
+        CHECK_EQ(result.steps[i].second.count(), SimDuration(10ms).count());
+    }
+}
+
+TEST_CASE(virtual_time_fails_the_step_that_sil_kit_shortened)
+{
+    // A configuration of the caller's that leaves the key out follows the driver: SIL Kit cuts the
+    // step of 10 ms down to the driver's 3 ms. The participant fails instead of running off its grid.
+    const auto result = run_beside_a_dynamic_step_driver(
+        R"({"Middleware":{"EnableDomainSockets":false,"AcceptorUris":["tcp://127.0.0.1:0"]}})");
+    CHECK(result.state == std::optional(orch::ParticipantState::Error));
+    CHECK(result.steps.empty()); // the first step is already the short one; the handler never ran
+    std::fprintf(stderr, "%s\n", result.step_error.c_str());
+    CHECK(result.step_error.find("SIL Kit gave this participant a step of 3000000 ns at t=0 ns, not its own 10000000 ns") !=
+          std::string::npos);
+    CHECK(result.step_error.find("this participant's SIL Kit configuration asks for dynamic simulation steps itself, or does "
+                                 "not opt out while another participant asks for them. Set "
+                                 "\"Experimental\":{\"TimeSynchronization\":{\"DynamicSimulationStep\":false}} in that "
+                                 "configuration, or pass none") != std::string::npos);
 }
 
 /// A coordinated simulation of "Faulty" alone, with a controller that ends it only by an abort,
@@ -336,7 +437,7 @@ struct HeldStep
                 // Like Peer: its Host has failed (Peer::failed() is true) before the exception
                 // leaves the step handler.
                 entered.set_value();
-                if (release_future.wait_for(10s) != std::future_status::ready)
+                if (release_future.wait_for(scaled_timeout(10s)) != std::future_status::ready)
                 {
                     throw std::runtime_error("the test did not release the step");
                 }
@@ -351,7 +452,7 @@ struct HeldStep
             }
         });
         start_together(controller, {&runtime}, 30s);
-        CHECK(entered_future.wait_for(10s) == std::future_status::ready);
+        CHECK(entered_future.wait_for(scaled_timeout(10s)) == std::future_status::ready);
     }
 
     ~HeldStep() { controller.abort(); }
@@ -431,7 +532,7 @@ TEST_CASE(virtual_time_stop_request_during_a_step_goes_out_after_it)
     HeldStep held(false);
     held.runtime.request_stop("the owner is done");
     held.release();
-    CHECK(held.runtime.wait_until_finished(10s) == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
+    CHECK(held.runtime.wait_until_finished(scaled_timeout(10s)) == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
     CHECK(held.log.after_running() == orch::ParticipantState::Stopping);
     CHECK(held.runtime.step_error().empty());
 }
@@ -472,7 +573,7 @@ TEST_CASE(virtual_time_failure_reported_before_start_is_ignored)
     });
     runtime.report_failure("too early");
     start_together(controller, {&runtime}, 30s);
-    CHECK(runtime.wait_until_finished(10s) == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
+    CHECK(runtime.wait_until_finished(scaled_timeout(10s)) == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
     CHECK(steps.load() < 50); // the request stopped it soon after 20 ms, not the controller at 60 s
     CHECK(log.after_running() == orch::ParticipantState::Stopping);
     CHECK(!log.reached(orch::ParticipantState::Error));
@@ -495,7 +596,7 @@ TEST_CASE(virtual_time_end_limits_the_handled_steps)
 
     start_together(controller, {&runtime}, 30s);
 
-    const auto state = runtime.wait_until_finished(30s);
+    const auto state = runtime.wait_until_finished(scaled_timeout(30s));
     CHECK(state.has_value());
     CHECK(*state == orch::ParticipantState::Shutdown);
     CHECK(runtime.now() >= SimTime{} + 90ms); // the steps after `end` did take place

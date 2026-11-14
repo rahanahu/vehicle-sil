@@ -22,6 +22,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 using namespace vehicle_sil::control;
 using vehicle_sil::unit::throws;
@@ -484,7 +485,7 @@ TEST_CASE(control_agent_transport_side_from_two_threads)
     a.join();
     b.join();
     // The last commands may still wait for a step.
-    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(10s);
     while (results.size() < kCommands && std::chrono::steady_clock::now() < deadline)
     {
         f.agent.drain_results(results);
@@ -666,7 +667,7 @@ TEST_CASE(control_agent_sample_grid_and_a_busy_reader)
     {
         g.step(at(t), false);
     }
-    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(5s);
     while (seen.load() != 2000 && std::chrono::steady_clock::now() < deadline)
     {
         std::this_thread::yield();
