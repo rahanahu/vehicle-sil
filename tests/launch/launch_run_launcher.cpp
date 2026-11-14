@@ -72,6 +72,8 @@
 //   test_command  vehicle_sil_launch test: every variant with every scenario of a directory, one
 //                run after the other; skipped, failed and passed runs in one table and as JSON;
 //                --variant, --param, --fail-fast, --strict, and what ends it before its first run
+//   live         examples/ecu_main/simulation.live.yaml (speed 1, no stop_at_ms): the check, a run past
+//                1000 ms and a stop command
 //   test_interrupt  an interrupt during a test: the current run is stopped, the rest is not run
 //   scenario_wave  the steps "wave": what the ECU saw of each shape, the same at a speed and with
 //                  another controller step, the warning of the check and "undersampled: ok", and
@@ -345,6 +347,37 @@ std::string run_part(const std::string& text)
     const auto at = text.find("run: ");
     require(at != std::string::npos, "the output has no run: line\n" + text);
     return text.substr(at);
+}
+
+/// The example's directory as a copy in the work directory: simulation.yaml and the ECUs of engine/
+/// and dashboard/ (hard links to the built files, copies where the file system has no links; on
+/// Windows the DLLs next to them too). The files that the docs show with mistakes in them are
+/// written here, where their relative paths find the ECUs as in the example, so that nothing that
+/// fails on purpose lies next to the example that works (build/<preset>/examples/ecu_main/).
+fs::path example_copy(const Options& o)
+{
+    const fs::path dir = o.work_dir / "example";
+    for (const std::string sub : {"engine", "dashboard"})
+    {
+        fs::create_directories(dir / sub);
+        for (const fs::directory_entry& entry : fs::directory_iterator(o.example_dir / sub))
+        {
+            if (!entry.is_regular_file())
+            {
+                continue;
+            }
+            const fs::path to = dir / sub / entry.path().filename();
+            fs::remove(to);
+            std::error_code no_link;
+            fs::create_hard_link(entry.path(), to, no_link);
+            if (no_link)
+            {
+                fs::copy_file(entry.path(), to);
+            }
+        }
+    }
+    fs::copy_file(o.example_dir / "simulation.yaml", dir / "simulation.yaml", fs::copy_options::overwrite_existing);
+    return dir;
 }
 
 /// A scenario's directory with sim.yaml and the behaviour files of the test ECU.
@@ -3386,19 +3419,21 @@ void scenario(const Options& o)
 
     // The examples in scenario.md of a scenario with mistakes and of one that fails: the files are
     // the blocks there, and so is what the launcher writes.
-    write_file(dir / "throttle_mistakes.yaml", block_after(docs, "<!-- throttle_mistakes.yaml -->"));
-    const Captured mistakes = launch(o, {"check", "simulation.yaml", "--scenario", "throttle_mistakes.yaml"}, dir);
+    // They go to a copy of the example, not next to the example that works.
+    const fs::path copy = example_copy(o);
+    write_file(copy / "throttle_mistakes.yaml", block_after(docs, "<!-- throttle_mistakes.yaml -->"));
+    const Captured mistakes = launch(o, {"check", "simulation.yaml", "--scenario", "throttle_mistakes.yaml"}, copy);
     expect_code(mistakes, 1, "check --scenario throttle_mistakes.yaml");
     expect_text(mistakes.standard_output,
                 block_after(docs, "<!-- vehicle_sil_launch check simulation.yaml --scenario throttle_mistakes.yaml -->"),
                 "check simulation.yaml --scenario throttle_mistakes.yaml");
-    write_file(dir / "throttle_response.yaml", block_after(docs, "<!-- throttle_response.yaml -->"));
-    const Captured failed = launch(o, {"run", "simulation.yaml", "--scenario", "throttle_response.yaml"}, dir);
+    write_file(copy / "throttle_response.yaml", block_after(docs, "<!-- throttle_response.yaml -->"));
+    const Captured failed = launch(o, {"run", "simulation.yaml", "--scenario", "throttle_response.yaml"}, copy);
     expect_code(failed, 1, "run --scenario throttle_response.yaml");
     expect_text(failed.standard_output,
                 block_after(docs, "<!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml -->"),
                 "run simulation.yaml --scenario throttle_response.yaml");
-    const Captured failed_json = launch(o, {"run", "simulation.yaml", "--scenario", "throttle_response.yaml", "--json"}, dir);
+    const Captured failed_json = launch(o, {"run", "simulation.yaml", "--scenario", "throttle_response.yaml", "--json"}, copy);
     expect_code(failed_json, 1, "run --scenario throttle_response.yaml --json");
     expect_text(scenario_json(lf(failed_json.standard_output)),
                 block_after(docs, "<!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml --json: the scenario -->"),
@@ -4207,6 +4242,65 @@ void scenario_wave(const Options& o)
     require(contains(lf(example.standard_output), "\nscenario scenarios/throttle_wave.yaml (throttle wave): passed, 7 of 7 steps passed\n") &&
                 contains(lf(example.standard_output), "\npassed: 0 errors, 0 warnings, 0 notes"),
             "the example with waves:\n" + lf(example.standard_output));
+}
+
+/// examples/ecu_main/simulation.live.yaml: the example's two ECUs at the speed of a clock, with no
+/// stop_at_ms. It passes the check, runs past the 1000 ms at which simulation.yaml ends, never
+/// ahead of the clock, and a stop command ends it as an interrupted run (130), both ECUs with 0.
+void live(const Options& o)
+{
+    const fs::path dir = o.example_dir;
+    // The same simulation as simulation.yaml but for the end and the speed (comments aside).
+    const auto settings = [&](const std::string& name) {
+        std::istringstream in(lf(read_text(dir / name)));
+        std::string all;
+        for (std::string line; std::getline(in, line);)
+        {
+            all += line.rfind('#', 0) == 0 ? "" : line + "\n";
+        }
+        return all;
+    };
+    std::string expected = settings("simulation.yaml");
+    const std::string end = "stop_at_ms: 1000\n";
+    require(contains(expected, end), "simulation.yaml has the line stop_at_ms: 1000");
+    expected.replace(expected.find(end), end.size(), "speed: 1\n");
+    expect_text(settings("simulation.live.yaml"), expected,
+                "simulation.live.yaml is simulation.yaml with speed: 1 in the place of stop_at_ms");
+    require(lf(read_text(dir / "simulation.live.dashboard.yaml")) == lf(read_text(dir / "simulation.dashboard.yaml")),
+            "simulation.live.dashboard.yaml in the build tree is the copy of simulation.dashboard.yaml");
+
+    const Captured checked = launch(o, {"check", "simulation.live.yaml"}, dir);
+    expect_code(checked, 0, "check simulation.live.yaml");
+    require(contains(lf(checked.standard_output), "\npassed: 0 errors, 0 warnings, 0 notes\n"),
+            "the check of simulation.live.yaml has no finding:\n" + checked.standard_output);
+
+    const auto began = std::chrono::steady_clock::now();
+    Live run(o, dir, {"run", "--events", "--stdin-commands", "simulation.live.yaml"});
+    run.wait_for({"\"phase\":\"running\""});
+    // Past the end of simulation.yaml. (Events of the time come at most every 100 ms.)
+    std::int64_t reached = 0;
+    for (std::size_t n = 1; reached <= 1000; ++n)
+    {
+        run.wait_for_count({"\"event\":\"time\"", "\"speed\":1,"}, n);
+        reached = std::stoll(value_of(events_with(run.lines(), {"\"event\":\"time\"", "\"speed\":1,"})[n - 1], "sim_ms"));
+    }
+    // Speed 1 is a bound on one side: the virtual time is never ahead of the clock.
+    const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count();
+    require(reached <= waited, "at speed 1, " + std::to_string(reached) + " ms of virtual time took only " +
+                                   std::to_string(waited) + " ms");
+    run.write("{\"command\":\"stop\"}\n");
+    const auto [status, lines] = run.finish();
+    require(status.has_value() && status->code == 130 && !status->signal,
+            "the launcher ends with 130 when stopped, not " + code_text(status));
+    const std::string& result = lines.back();
+    require(contains(result, "\"result\":\"interrupted\"") && contains(result, "\"interrupted_by\":\"stop command\""),
+            "the result of the stopped run:\n" + result);
+    for (const std::string name : {"Engine", "Dashboard"})
+    {
+        require(contains(result, "{\"name\":\"" + name + "\",\"required\":true,\"enabled\":true,\"manual\":false,\"ended\":\"exited\","
+                                                          "\"exit_code\":0,"),
+                name + " ended by itself with 0:\n" + result);
+    }
 }
 
 void scenario_disconnect(const Options& o)
@@ -5230,6 +5324,7 @@ int main(int argc, char** argv)
             {"interrupt_twice", interrupt_twice},
             {"killed", killed},
             {"late", late},
+            {"live", live},
             {"manual", manual},
             {"manual_again", manual_again},
             {"manual_fails", manual_fails},

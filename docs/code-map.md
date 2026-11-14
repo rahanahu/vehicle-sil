@@ -156,7 +156,7 @@ Slave の 1 つを実時間に結合してもトレースが一致すること�
 構成ファイルの読み込みと照合の規則（プロセスを起動しない試験。
 各規則の通る例と落ちる例を、文言と行番号まで照合する）、人向けと JSON の出力。
 `launch_cli.*` は `vehicle_sil_launch check` を実行ファイルとして動かす（[docs/simulation-config.md](simulation-config.md) の例とバイト単位で照合、`--describe` に失敗する実行ファイル、`--strict`、読めないファイル、引数の誤り）。
-`launch_run.*` は `vehicle_sil_launch run` を実行ファイルとして動かす（docs の例との照合、失敗する ECU、そろわない participant、終わらない participant、残されたプロセス、中断、ランチャーが落ちたとき、速さと一時停止とステップ送り、実時間への遅れ、`examples/ethernet` の 2 つの ECU の照合とシナリオ（`launch_run.ethernet`）、`vehicle_sil_launch test`（`launch_run.test_command`、`launch_run.test_interrupt`））。
+`launch_run.*` は `vehicle_sil_launch run` を実行ファイルとして動かす（docs の例との照合、失敗する ECU、そろわない participant、終わらない participant、残されたプロセス、中断、ランチャーが落ちたとき、速さと一時停止とステップ送り、実時間への遅れ、`examples/ethernet` の 2 つの ECU の照合とシナリオ（`launch_run.ethernet`）、`vehicle_sil_launch test`（`launch_run.test_command`、`launch_run.test_interrupt`）、止めるまで動く例の構成 `simulation.live.yaml` の照合と、1000 ms を超えて動かしてから止める実行（`launch_run.live`））。
 `process.*` は子プロセスの試験（標準出力と標準エラーの取り込み、行ごとの受け渡し、時間切れ、空の標準入力、作業ディレクトリ、受け継がないハンドル、止める要求、起動したプロセスごとの終了、空白と ASCII 以外の文字を含むパスと引数）
 
 ### `control`
@@ -440,8 +440,8 @@ registry につながらないときの文（`registry_failure_message()`）は�
 ### `scripts/`
 
 - 主なクラス・関数（ヘッダー）: 開発と CI のスクリプト（[AGENTS.md](../AGENTS.md) の「検証とスクリプト」）
-- 試験: `scripts/verify-python.py`（各スクリプトの `--help`）、`tests/template/test_get_tools.py`（`package.py template`、`version`）
-- `ctest -R`: `^template\.get_tools`
+- 試験: `scripts/verify-python.py`（各スクリプトの `--help`）、`tests/scripts/test_run_gui.py`（`scripts/run-gui.py`: ランチャーの選び方、足りないものごとの文言）、`tests/template/test_get_tools.py`（`package.py template`、`version`）
+- `ctest -R`: `^template\.get_tools`、`^scripts\.`
 
 ### `patches/sil-kit`
 
@@ -674,6 +674,10 @@ flowchart TD
 
   合わせて直すもの: [simulation-config.md](simulation-config.md)、[simulation-check.md](simulation-check.md)、[simulation-run.md](simulation-run.md)、[simulation-events.md](simulation-events.md) の、`<!-- ... -->` の行の直後のコードブロック。
   `launch_cli.docs` と `launch_run.docs` が、vehicle-sil の版を除いてバイト単位で照合します。
+  誤りのある例（`two-engines.yaml`、`engine-alone.yaml`、シナリオの `throttle_mistakes.yaml`、`throttle_response.yaml`）は文書のブロックが正本で、試験が自分の作業ディレクトリ（`build/<preset>/tests/launch/` の下。例の写しと ECU へのリンク）に書き出します。
+  動く例のディレクトリ（`build/<preset>/examples/ecu_main/`）には置きません。
+  `examples/ecu_main/simulation.live.yaml`（`stop_at_ms` なし、`speed: 1`。GUI で触るための構成）は、`simulation.yaml` と participant、ネットワークが同じであることを `launch_run.live` が確かめます（ひな形の同じファイルは `template.check_and_run`）。
+  ビルドのディレクトリの `simulation.live.dashboard.yaml` は、CMake が `simulation.dashboard.yaml` を写したものです。
   GUI の試験が流し直す録画（`gui/server/tests/recordings/`）も、`gui/server/tests/record_launcher.py --launcher <vehicle_sil_launch>` で録り直します（`scripts/verify-gui.py --launcher <path>` が、録画と本物のランチャーの食い違いを見つけます）
 
 - 変えるもの: 同じ出力と、`examples/ecu_main`（`scenarios/` を含む）・`examples/launch_control` のコード
@@ -716,7 +720,7 @@ flowchart TD
   試験は `^launch\.`（`test_events.cpp`）と `launch_run.events_stalled`、`events_slow`、`events_nonblocking`
 
 - 変えるもの: `run` の時間（速さ、一時停止、ステップ送り、遅れ。
-  `libs/launch/src/time_commands.cpp` の `TimeCommands`、`run_assess.cpp` の `detail::plan_time_step()`（controller の刻みの既定）と `RunTiming::actual_speed()`、`run_notes.cpp` の `RunNotes::note_time()`、`run_watch.cpp` の `RunWatch::note_timing()`。
+  `libs/launch/src/time_commands.cpp` の `TimeCommands`、`run_assess.cpp` の `detail::plan_time_step()`（controller の刻みの既定）と `RunTiming::actual_speed()`、`run_notes.cpp` の `RunNotes::note_time()`（`time` の `paused` の決め方は `run_notes.hpp` の `detail::noted_paused()`）、`run_watch.cpp` の `RunWatch::note_timing()`。
   時間のゲートは `libs/core/src/simulation_controller.cpp`、その状態と遅れの計算は `libs/core/src/time_gate.cpp`（時計を持たない）、期限までの待ちは `libs/core/src/deadline_waiter.cpp`）
 
   合わせて直すもの: [simulation-run.md](simulation-run.md) の「等速で動かす」（遅れの定義、遅れたときに起きること、刻みと ECU のステップ）、構成のキーの表、`time` と `command` の事象、命令の表、`timing` の表、所見の表（`behind-real-time`、`coarse-time-step`）、`features` の表。

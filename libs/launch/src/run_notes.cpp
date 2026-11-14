@@ -83,9 +83,7 @@ void RunNotes::note_time(SimulationController& controller, TimeNote note, const 
     const TimeState s = controller.time_state();
     const auto wall = std::chrono::steady_clock::now();
     const std::int64_t now = sim_ms(controller, s);
-    // Standing still is decided once the gate stops at the time it is at (start paused); an
-    // ended simulation stands still nowhere (time_state()).
-    const bool paused = s.paused || (note != TimeNote::Last && s.pause_target && *s.pause_target <= s.now);
+    const bool paused = noted_paused(s, note);
     const std::int64_t ms =
         note == TimeNote::Start
             ? 0
