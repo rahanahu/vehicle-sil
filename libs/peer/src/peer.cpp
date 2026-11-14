@@ -138,6 +138,15 @@ Peer::Peer(PeerOptions options) :
     }
     if (!simulation_names_.empty())
     {
+        if (!can_read_controller_networks(options_.participant_configuration))
+        {
+            throw std::invalid_argument(who + "network_names renames networks, and there is a SIL Kit participant "
+                                        "configuration, which this build of vehicle-sil cannot read (it was built "
+                                        "against a SIL Kit that is not built from source): a controller that the "
+                                        "configuration puts on a Network would stay there unnoticed. Leave the "
+                                        "participant configuration out, or leave network_names out and name the "
+                                        "networks in the configuration");
+        }
         if (const auto configured = configured_controller_networks(options_.participant_configuration); !configured.empty())
         {
             throw std::invalid_argument(who + "network_names renames networks, and the SIL Kit participant configuration "

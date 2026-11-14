@@ -10,6 +10,7 @@
 #include "vehicle_sil/peer/peer.hpp"
 #include "vehicle_sil/simulation/simulation.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <condition_variable>
@@ -39,6 +40,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+// After windows.h.
+#include <shellapi.h>
 #else
 #include <unistd.h>
 #endif
@@ -394,6 +397,14 @@ std::string silkit_configuration(const std::string& file, const std::string& nam
         static_cast<void>(merged_participant_configuration(text, name, registry_uri, false));
         if (renames)
         {
+            if (!can_read_controller_networks(text))
+            {
+                throw std::invalid_argument(
+                    "--map-network renames networks, and this build of vehicle-sil cannot read the configuration (it "
+                    "was built against a SIL Kit that is not built from source): a controller that the configuration "
+                    "puts on a Network would stay there unnoticed. Leave --silkit-config out, or leave --map-network "
+                    "out and name the networks in the configuration");
+            }
             if (const auto configured = configured_controller_networks(text); !configured.empty())
             {
                 throw std::invalid_argument(
@@ -859,6 +870,62 @@ private:
 
 } // namespace
 
+#ifdef _WIN32
+/// The value of the first --map-network of this process's command line that has a character that
+/// is not ASCII, as UTF-8. `argv` cannot tell: it is the command line in the code page, where a
+/// character that the code page lacks has become '?' or a similar ASCII letter, which would be the
+/// name of another network without any error. None if `argv` is not this process's command line
+/// (a caller's own arguments: where the wide command line is ASCII, the two must be the same).
+std::optional<std::string> map_network_not_ascii(int argc, const char* const* argv)
+{
+    int count = 0;
+    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (wide == nullptr)
+    {
+        return std::nullopt;
+    }
+    const auto is_ascii = [](std::wstring_view text) {
+        return std::all_of(text.begin(), text.end(), [](wchar_t c) { return c < 0x80; });
+    };
+    bool same = argv != nullptr && count == argc;
+    for (int i = 1; same && i < count; ++i)
+    {
+        const std::wstring_view w = wide[i];
+        if (argv[i] == nullptr)
+        {
+            same = false;
+        }
+        else if (is_ascii(w))
+        {
+            const std::string_view a = argv[i];
+            same = a.size() == w.size() &&
+                   std::equal(a.begin(), a.end(), w.begin(), [](char x, wchar_t y) { return static_cast<wchar_t>(static_cast<unsigned char>(x)) == y; });
+        }
+    }
+    std::optional<std::string> found;
+    for (int i = 1; same && !found && i + 1 < count; ++i)
+    {
+        if (std::wstring_view(wide[i]) == L"--map-network")
+        {
+            const std::wstring_view value = wide[++i];
+            if (!is_ascii(value))
+            {
+                const int length = static_cast<int>(value.size());
+                const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(), length, nullptr, 0, nullptr, nullptr);
+                std::string text(static_cast<std::size_t>(size > 0 ? size : 0), '\0');
+                if (size > 0)
+                {
+                    WideCharToMultiByte(CP_UTF8, 0, value.data(), length, text.data(), size, nullptr, nullptr);
+                }
+                found = std::move(text);
+            }
+        }
+    }
+    LocalFree(wide);
+    return found;
+}
+#endif
+
 int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, const std::function<void(Ecu&)>& set_up)
 {
     const std::string program = program_name(argc, argv, options.name);
@@ -878,6 +945,15 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
     CommandLine c;
     try
     {
+#ifdef _WIN32
+        if (const auto text = map_network_not_ascii(argc, argv))
+        {
+            throw UsageError("--map-network " + in_quotes(*text) + " has characters that are not ASCII: on Windows the "
+                             "arguments of an ECU executable arrive in the code page, which can turn such a name into "
+                             "another one without an error. Give the networks to rename ASCII names (in the simulation "
+                             "and in the ECU's code)");
+        }
+#endif
         c = parse(args);
     }
     catch (const UsageError& e)

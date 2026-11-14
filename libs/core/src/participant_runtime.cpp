@@ -608,6 +608,16 @@ bool is_loopback_registry_uri(std::string_view registry_uri)
     return equals_ignoring_case(host, "localhost");
 }
 
+bool can_read_controller_networks(std::string_view configuration)
+{
+#ifdef VEHICLE_SIL_CORE_HAS_RAPIDYAML
+    static_cast<void>(configuration);
+    return true;
+#else
+    return is_blank_configuration(configuration);
+#endif
+}
+
 std::vector<std::string> configured_controller_networks(std::string_view configuration)
 {
     std::vector<std::string> out;

@@ -49,7 +49,9 @@ struct EcuMainOptions
 ///                             first, split at the first '='; SilKitOptions::network_names). The
 ///                             code, --describe and the controller names keep <e>; the Peer's
 ///                             monitoring outputs are named with <s>. --describe says that the
-///                             executable takes it ("features": ["map-network"])
+///                             executable takes it ("features": ["map-network"]). On Windows the value must
+///                             be ASCII (exit code 4 otherwise: read from the wide command line,
+///                             if argc and argv are main()'s)
 ///     --local --run-for-ms <ms>  runs this ECU alone on the local virtual buses for <ms> of
 ///                             virtual time (a check of the ECU by itself)
 ///     --name <name>           the participant name instead of EcuMainOptions::name (ASCII or

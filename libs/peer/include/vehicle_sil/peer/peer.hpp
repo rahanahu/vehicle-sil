@@ -101,7 +101,8 @@ struct PeerOptions
     /// takes these as --map-network (ecu_main()).
     /// std::invalid_argument from the constructor for an empty name, for one name of the code
     /// under two names of the simulation, and, with an entry that changes a name, for a
-    /// participant_configuration that gives a controller a Network (SIL Kit would use that one);
+    /// participant_configuration that gives a controller a Network (SIL Kit would use that one;
+    /// any participant_configuration in a build that cannot read it, i.e. without rapidyaml);
     /// from the call that makes a network if two networks of the ECU would be one in the
     /// simulation, and from j1939(name, port) for a name with an entry (nothing to rename).
     std::map<std::string, std::string> network_names{};

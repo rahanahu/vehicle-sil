@@ -178,6 +178,11 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
 /// build without rapidyaml (see merged_participant_configuration(): the text is not read).
 [[nodiscard]] std::vector<std::string> configured_controller_networks(std::string_view configuration);
 
+/// Whether configured_controller_networks(configuration) can tell: false only in a build without
+/// rapidyaml for a configuration that is not blank (its text is not read there, so a Network in
+/// it would go unseen). Whoever renames networks refuses such a configuration.
+[[nodiscard]] bool can_read_controller_networks(std::string_view configuration);
+
 /// The text of the SIL Kit participant configuration file `path`, for
 /// ParticipantRuntimeOptions::participant_configuration and the like. If the file has Includes,
 /// its directory is added to Includes.SearchPathHints, so that the files it includes are found

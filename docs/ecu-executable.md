@@ -131,13 +131,13 @@ engine_ecu --registry-uri silkit://localhost:8500 --map-network VehicleCAN=J1939
 - 名前ごとに効きます。同じ名前の `j1939()` と `can()` は両方替わります。`lin_master()`、`lin_slave()`、`ethernet()` のネットワークも同じです。書いていないネットワークは、コードの名前のままです。2 つの名前が同じもの（`CAN=CAN`）は、何も替えません。
 - 替わるのは、SIL Kit のネットワークの名前と、`Peer` の監視の出力の名前（`j1939.<シミュレーションの名前>.` で始まる変数と、ノードの状態の出来事の本文）だけです。コードから見える名前（`ecu.network("J1939_CAN")` など）、SIL Kit のコントローラーの名前、`--describe` の `networks[].name` は、コードの名前のままです。
 - `--describe` と `--local` には付けられません（終了コード 4）。`--describe` の出力は引数で変わりません。この引数を受け取れる実行ファイルは、`--describe` の `features` に `"map-network"` を出します（下の「JSON の形式」）。`--local` での監視の出力は、コードの名前です。
-- 終了コード 4 になる値: `=` がない、どちらかの名前が空、同じシミュレーションの名前を 2 回、同じ実行ファイルの名前を 2 回、ASCII でも UTF-8 でもない値。
+- 終了コード 4 になる値: `=` がない、どちらかの名前が空、同じシミュレーションの名前を 2 回、同じ実行ファイルの名前を 2 回、ASCII でも UTF-8 でもない値、Windows では ASCII でない文字のある値。
 - 終了コード 3 になる場合（どれも、シミュレーションが始まる前に 1 行で言います）:
   - 実行ファイルの名前のネットワークを、ECU が持たない（文言に、ECU のネットワークを並べます）。
   - 替えた後で、ECU の 2 つのネットワークが同じ名前になる（`--map-network B=A` で、コードが `A` と `B` の両方を持つ。入れ替えの `--map-network B=A --map-network A=B` は書けます）。
-  - `--silkit-config` の構成が、コントローラー（`CanControllers`、`LinControllers`、`EthernetControllers`）に `Network` を書いている（SIL Kit は構成の `Network` を優先するので、どちらが効くか分からなくなります。名前を替えない `--map-network` だけなら断りません）。
+  - `--silkit-config` の構成が、コントローラー（`CanControllers`、`LinControllers`、`EthernetControllers`）に `Network` を書いている（SIL Kit は構成の `Network` を優先するので、どちらが効くか分からなくなります。名前を替えない `--map-network` だけなら断りません）。ソースからビルドしていない SIL Kit を使う vehicle-sil のビルドは、構成を読めないので、名前を替える `--map-network` と `--silkit-config` の併用を、構成の内容によらず断ります（`PeerOptions::network_names` と participant の構成も同じです）。
   - ECU が、替えた後の監視の出力と同じ名前の変数（`j1939.VehicleCAN.bus_state` など）を宣言している。
-- 引数は、OS から受け取ったバイト列のまま読みます（`--name` と同じ）。Windows（MinGW）では、ASCII でない名前はコードページのバイト列で届くので、UTF-8 でなければ終了コード 4 です。名前を替えるネットワークには、ASCII の名前を使ってください。
+- Windows（MinGW）では、名前を替えるネットワークに ASCII の名前を使ってください。ASCII でない文字のある `--map-network` は終了コード 4 です。Windows の引数はコードページに変換されて届き、コードページにない文字は `?` や似た文字に置き換わるので、そのまま読むと、誤りなしに別の名前のネットワークに載ってしまいます。`ecu_main` は、この引数だけを変換前のコマンドラインで確かめます（`main()` の `argc` と `argv` をそのまま渡したとき）。Linux では、ASCII か UTF-8 の名前を書けます（どちらでもないバイト列は終了コード 4）。
 - `ecu_main` を使わないプログラムは、`SilKitOptions::network_names`（`Simulation`）か `PeerOptions::network_names`（`Peer`）に、同じ向き（シミュレーションの名前 → コードの名前）で渡します。1 つのプロセスに複数の ECU を載せた `Simulation` では、全部の ECU に同じ対応が効き、その名前のネットワークを持たない ECU には何もしません（持たない名前を誤りにするのは `ecu_main` だけです）。`Peer::j1939(name, port)`（呼び出し側が作ったポート）の名前には対応を書けません（`std::invalid_argument`。SIL Kit のネットワークにつながないので、替えるものがありません）。
 
 ## `Ecu::describe()`
