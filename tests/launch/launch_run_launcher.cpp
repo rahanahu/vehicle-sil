@@ -62,6 +62,7 @@
 //   pause_step   --start-paused and the time commands: step (rounded up to the controller's steps),
 //                resume, a refused step, speed, pause, stop; it stands still where it paused
 //   paused_failures while it stands still: a process that ends fails the run, --timeout-ms aborts it,
+//                an interrupt stops it (the last time event says paused false each time),
 //                start_timeout_ms is not counted
 //   time_usage   --start-paused without --stdin-commands, a wrong --speed, the options for check, and
 //                wrong time keys in the file
@@ -3152,6 +3153,17 @@ void step_width(const Options& o)
             "an unknown step: 1 ms\n" + run.standard_output);
 }
 
+/// A run that has ended stands still nowhere: its last "time" event says `paused` false, at `sim_ms`
+/// (where it ended), however it ended.
+void require_last_time_not_paused(const std::vector<std::string>& lines, std::int64_t sim_ms, const std::string& how)
+{
+    const auto times = events_with(lines, {"\"event\":\"time\""});
+    require(!times.empty() && contains(times.back(), "\"sim_ms\":" + std::to_string(sim_ms) + ",") &&
+                contains(times.back(), "\"paused\":false,"),
+            "the last time event of a run that " + how + " while it stood still says paused false at " +
+                std::to_string(sim_ms) + " ms" + (times.empty() ? ": there is none" : ":\n" + times.back()));
+}
+
 void pause_step(const Options& o)
 {
     // No stop_at_ms: it runs until it is stopped. Started paused, stepped, resumed, paced, paused.
@@ -3181,6 +3193,7 @@ void pause_step(const Options& o)
     const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
     require(status && status->code == 130, "stopped while paused: 130");
     require(gone, "no participant is left");
+    require_last_time_not_paused(lines, std::stoll(value_of(paused, "sim_ms")), "was stopped by a command");
     std::string all;
     for (const auto& line : lines)
     {
@@ -3238,6 +3251,7 @@ void paused_failures(const Options& o)
         require(failed.size() == 1 && (contains(failed[0], "\"reason\":\"process_ended\"") ||
                                        contains(failed[0], "\"reason\":\"left_simulation\"")),
                 "Engine is failed at once, with one event" + (failed.empty() ? std::string() : ":\n" + failed[0]));
+        require_last_time_not_paused(lines, 0, "was aborted for a failed participant");
         require(gone, "no participant is left");
     }
     // --timeout-ms counts the time it stands still (wall-clock time).
@@ -3248,6 +3262,24 @@ void paused_failures(const Options& o)
         const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
         require(status && status->code == 1 && contains(lines.back(), "\"code\":\"timeout\""),
                 "a run that stands still past --timeout-ms is aborted:\n" + lines.back());
+        require_last_time_not_paused(lines, 0, "was aborted for --timeout-ms");
+        require(gone, "no participant is left");
+    }
+    // An interrupt while it stands still (Windows: Ctrl+Break, if there is a console to send it through).
+    if (can_request_stop())
+    {
+        const fs::path dir = one_ecu(o, "", "pid");
+        Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
+        live.wait_for({"\"event\":\"time\"", "\"sim_ms\":0,", "\"paused\":true,"});
+#ifdef _WIN32
+        static_cast<void>(live.process().request_stop());
+#else
+        ::kill(static_cast<pid_t>(live.process().id()), SIGINT);
+#endif
+        const auto [status, lines] = live.finish();
+        const bool gone = all_gone(dir, {"Engine.pid"}, 30s);
+        require(status && status->code == 130, "a run interrupted while it stands still: 130");
+        require_last_time_not_paused(lines, 0, "was interrupted");
         require(gone, "no participant is left");
     }
     // start_timeout_ms is for the start: standing still at 0 longer than it is fine.
