@@ -40,7 +40,11 @@ vehicle_sil_ethernet_bridge --list-interfaces
 
 1. 引数を調べます。誤りは、何が誤りかと使い方を標準エラーに出して、終了コード 4 で終わります。
 2. `--backend` がこの OS で使えるかを調べます。使えなければ、SIL Kit に接続する前に、理由と代わりを言って終了コード 3 で終わります。
-3. SIL Kit の registry に接続し、Ethernet のコントローラーを作ります。
+3. SIL Kit の registry に接続し、Ethernet のコントローラーを作ります。registry に接続できなければ、どこに接続しようとしたかと次にすることを言って、終了コード 3 で終わります（括弧の中は SIL Kit の文です）。
+
+   ```
+   [eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://127.0.0.1:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). Start the registry first ('sil-kit-registry --listen-uri silkit://127.0.0.1:8500'), or give the address it listens at with --registry-uri.
+   ```
 4. 外のインターフェースを開き、転送を始めます（`EthernetBridge::start()`）。開けなければ、何が起きたかと直し方を言って終了コード 3 で終わります（下の「[バックエンド](#バックエンド)」の文）。
 5. participant の lifecycle を始めます。転送を先に始めるのは、ほかの participant が、ブリッジが Running になったのを見た時点で送り始めるからです。
 6. 起動の 1 行を出し、止める要求か失敗まで動きます。
@@ -53,7 +57,7 @@ vehicle_sil_ethernet_bridge --list-interfaces
 
 - 何を通すかは `every frame, both ways`、`EtherType 0x88b5,0x0800 only, both ways`、`SIL Kit MAC 02:00:00:00:00:01 only, both ways`、またはその 2 つを `and` でつないだものです。
 - プロミスキャスの部分は `promiscuous on` か上の `promiscuous off (...)` で、`tap` では出しません。
-- 動いている間は、警告を `[eth-bridge] warning: <文>`、監視の行（「[監視の行](#監視の行)」）を `[eth-bridge] interface <名前>: ...` として、1 秒に 1 回まで出します。
+- 動いている間は、警告を `[eth-bridge] warning: <文>`、監視の行（「[監視の行](#監視の行)」）を `[eth-bridge] interface <名前>: ...` として、1 秒に 1 回まで出します。止める直前に出た警告は、`stopping` の後、統計の前に出します。
 - 止める要求（Ctrl+C、Ctrl+Break、SIGTERM、Windows でコンソールを閉じたとき）で、`stopping`、統計の 1 行（「[統計](#統計)」）、最後の誤りがあれば `last error: <文>`、`stopped` の順に出して終わります。止める順は、SIL Kit のハンドラーを外す、外の受信を止める（インターフェースを閉じる）、統計を出す、lifecycle を止める、です。
 
 終了コードです。participant の状態の扱いは Vector XL CAN Bridge と同じです（[bridges.md](bridges.md) の「接続先とチャネルの選択（CLI）」）。
@@ -76,7 +80,7 @@ no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (net
 | `--backend` | OS | 相手 | 仕組み | 要る権限 |
 |---|---|---|---|---|
 | `tap` | Linux | 同じ PC の OS のネットワークスタックと、その TAP デバイスを開くソフト（Wireshark など） | `/dev/net/tun` の TAP デバイス | 先に作った自分の持ち物のデバイスなら不要。`--tap-create` は `CAP_NET_ADMIN` |
-| `packet` | Linux | ネットワークのインターフェース（NIC、veth）の先の機器と、同じ PC で同じインターフェースに送るソフト | インターフェースに結び付けた packet ソケット（`AF_PACKET`） | `CAP_NET_RAW` |
+| `packet` | Linux | ネットワークのインターフェース（NIC、veth）の先の機器と、同じ PC で同じインターフェースを packet ソケットや pcap で開くソフト。同じ PC の OS のネットワークスタックは相手にできません（「[同じ PC の OS のネットワークスタックが相手のとき](#同じ-pc-の-os-のネットワークスタックが相手のとき)」） | インターフェースに結び付けた packet ソケット（`AF_PACKET`） | `CAP_NET_RAW` |
 | `npcap`、`pcap` | — | — | この版にはない（引数としては受け付け、使えないと言う） | — |
 
 どちらも Linux のカーネルの口だけを使い、外のライブラリは要りません（[dependencies.md](dependencies.md)）。ブリッジは、インターフェースに IP アドレスを振ることも、上げることもしません。インターフェースが下がっていると、起動のときに 1 回警告し、上げ方を言います。
@@ -124,11 +128,29 @@ cannot open /dev/net/tun: No such file or directory. The kernel's TUN/TAP driver
 - `CAP_NET_RAW` が要ります。実行ファイルに 1 回付けるか（`sudo setcap cap_net_raw+ep <実行ファイル>`）、root で動かします。誤りの文は、この実行ファイルのパスを入れたコマンドを言います。
 - 実のネットワークに出うるので、何を通すか（`--ethertype`、`--src-mac`、`--all-frames` のどれか）が必須です。
 - 受けるのは、インターフェースに届いたフレームと、同じ PC の OS やほかのソフトがそのインターフェースに送ったフレームです。ブリッジ自身が送ったフレームは受けません。
+- ブリッジが送ったフレームは、線の先へ出るだけです。届くのは、線の先の機器と、同じインターフェースを packet ソケットや pcap で開いているソフトです。同じ PC の OS のネットワークスタック（普通のソケットを使うソフト）には届きません。
 - 受けたフレームの外側の VLAN タグは、カーネルがフレームのバイト列から外して、別の情報として渡します。ブリッジはそれを元の位置に戻すので、タグつきのフレームはタグを保ったまま両方向に通ります。
 - `--promiscuous` は、ブリッジが動いている間だけ、自分宛てでないフレームも受けます（ソケットの設定で、止まると元に戻ります）。付けないと、実の NIC は自分の MAC アドレス宛てとグループのアドレス宛てのフレームしか渡しません。SIL Kit の機器宛てのユニキャストを外から受けるには、付けます。
 - イーサネットでないインターフェース（`lo` など）は開きません。
 - OS がソケットへ渡す前に捨てたフレームは `ext_overruns` に数えます。
 - 受信のオフロード（GRO、LRO）が効いていると、最大長より長いフレームが見えることがあります。そのフレームは `oversize` として捨てます。困るときは、インターフェースのオフロードを切ります（`sudo ethtool -K <名前> gro off lro off`）。
+
+#### 同じ PC の OS のネットワークスタックが相手のとき
+
+同じ PC のソフトが、OS の普通のソケット（UDP、TCP）で SIL Kit の機器と話すなら、`tap` を使います。`packet` では、次の 3 つが起きます。
+
+- **返事が届きません。** ソフトが送ったフレームはブリッジが受けて SIL Kit へ渡しますが、SIL Kit からの返事はブリッジが線の先へ送るだけで、同じ PC の OS のスタックには上がりません。片方向だけ通り、統計は両方向とも増えます。veth の対の片方をブリッジが開き、もう片方に IP アドレスを付けて使う形なら、両方向に届きます。
+- **チェックサムが未完成のフレームが SIL Kit へ入ります。** OS は、送る UDP と TCP のチェックサムの計算を NIC に任せます（送信のチェックサムのオフロード）。packet ソケットは NIC が計算する前のフレームを見るので、チェックサムの欄は正しい値ではありません。veth の対の向こうの端から OS が送ったフレームも同じです（計算する NIC がありません）。ブリッジはこのフレームを捨てず、チェックサムを埋めることもせず、そのまま渡して `ext_checksum_incomplete` に数え、最初の 1 回だけ警告します。チェックサムを確かめる受け手（自分の TCP/IP スタックを持つ ECU）は、このフレームを黙って捨てます。直すには、フレームを送る側のインターフェース（veth なら向こうの端）で送信のオフロードを切ります（`sudo ethtool -K <名前> tx off`）。
+- **TCP の長いフレームを `oversize` で捨てます。** OS は、TCP のデータを分けるのも NIC に任せ（送信の分割のオフロード、TSO、GSO）、packet ソケットには分ける前の、最大長より長いフレームが見えます。上と同じ `tx off` で、分けた後の長さになります。
+
+警告の文です。1 つ目はブリッジのインターフェース自身から OS が送ったフレーム、2 つ目はインターフェースに届いたフレーム（veth の向こうの端から）のときです。
+
+```
+interface 'enp3s0': a frame this computer's OS sent on it has no TCP/UDP checksum yet: the OS leaves the checksum to the network adapter (checksum offload), and the bridge sees the frame before that. The bridge passes such frames on as they are, and a receiver in SIL Kit that checks checksums drops them. Turn the offload off with 'sudo ethtool -K enp3s0 tx off'; or, if the peer is this computer's OS, use --backend tap instead. This warning is given once.
+interface 'va': a frame received on it has no TCP/UDP checksum: this computer's OS sent it through a virtual interface (the other end of a veth pair) and left the checksum to a network adapter that is not there (checksum offload). The bridge passes such frames on as they are, and a receiver in SIL Kit that checks checksums drops them. Turn the offload off on the interface the frames are sent from (for a veth pair the other end, not 'va'): 'sudo ethtool -K <that interface> tx off'; or, if the peer is this computer's OS, use --backend tap instead. This warning is given once.
+```
+
+`tap` には、チェックサムと長さの 2 つは起きません（TAP デバイスから読むフレームは、チェックサムが入っていて、分けた後の長さです）。
 
 開けないときの文です（終了コード 3）。
 
@@ -173,7 +195,7 @@ Windows では `--list-interfaces` も同じ理由（`there is no interface to l
 
 | 種類 | 意味 |
 |---|---|
-| `Frame` | 受けたフレーム（`frame`。ハンドラーの呼び出しの間だけ有効） |
+| `Frame` | 受けたフレーム（`frame`。ハンドラーの呼び出しの間だけ有効）。`checksum_incomplete` が真なら、UDP や TCP のチェックサムが未完成のフレーム（同じ PC の OS が送り、計算を NIC に任せたもの）。口はそのまま渡し、最初の 1 つの前に `Warning` を 1 回出す。ブリッジは渡して `ext_checksum_incomplete` に数える |
 | `Overrun` | OS が読み取りの前に捨てたフレームの数（`count`。前の知らせからの増分） |
 | `LinkState` | リンクが上がった、下がった（`state`: `Up`、`Down`、`Unknown`） |
 | `Fault` | リンクが動かなくなった（インターフェースがなくなった、読み取りが失敗し続ける）。理由は `detail`。この後フレームは届かず、`transmit()` は失敗する |
@@ -272,7 +294,7 @@ the MAC table is full (1024 addresses): frames from addresses that do not fit ar
 `format_statistics()` は、全部の数を 1 行にします。キーの名前と順序はこの文書の契約で、試験が読みます。
 
 ```
-stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0
+stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_unguarded=0 filtered_to_ext=0 filtered_from_ext=0 oversize=0 malformed=0 ext_overruns=0 ext_queue_full=0 ext_tx_failures=0 silkit_tx_failures=0 ext_checksum_incomplete=0
 ```
 
 | キー | 数えるもの |
@@ -289,8 +311,9 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 | `ext_queue_full` | 外の口の送信のキューがいっぱいで失ったフレーム |
 | `ext_tx_failures` | 外の口でのほかの送信の失敗（`transmit()` が投げた例外を含む） |
 | `silkit_tx_failures` | `SendFrame()` が例外を投げたもの、または SIL Kit が送れなかったと確認したもの（`ControllerInactive`、`LinkDown`、`Dropped`、`InvalidFrameFormat`）。後者のフレームは、渡した時点で `ext_to_silkit` にも数えてある |
+| `ext_checksum_incomplete` | 外から SIL Kit へ渡したフレームのうち、UDP や TCP のチェックサムが未完成のもの（`packet` で、同じ PC の OS が送ったフレーム。「[同じ PC の OS のネットワークスタックが相手のとき](#同じ-pc-の-os-のネットワークスタックが相手のとき)」）。`ext_to_silkit` にも数えてある |
 
-問題の数は `loop_suspected`、`mac_unguarded`、`oversize`、`malformed`、`ext_overruns`、`ext_queue_full`、`ext_tx_failures`、`silkit_tx_failures` です（`problems_grew()`）。転送した数、絞り込みの数、`own_tx_dropped` は問題に数えません。
+問題の数は `loop_suspected`、`mac_unguarded`、`oversize`、`malformed`、`ext_overruns`、`ext_queue_full`、`ext_tx_failures`、`silkit_tx_failures`、`ext_checksum_incomplete` です（`problems_grew()`）。転送した数、絞り込みの数、`own_tx_dropped` は問題に数えません。
 
 ## 監視の行
 
@@ -341,8 +364,8 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 確かめたこと（Linux。試験 `ethernet_bridge.netns.*` が、ユーザー名前空間の中のネットワーク名前空間で、本物の実行ファイルとカーネルに対して確かめます）:
 
 - `tap`: TAP デバイスの側の packet ソケットから送ったフレームが SIL Kit の相手にそのまま届き、返事が戻る。ブリッジが書いたフレームがブリッジに戻らない。2 つ目のブリッジは断られる。`--tap-create` で作ったデバイスが、下がった状態で作られ、ブリッジが止まるとなくなる。
-- `packet`（veth の対）: タグなし、VLAN タグ 1 つ、タグ 2 つのフレームが、タグを保ったまま両方向に通る。同じインターフェースの別のソケットが送ったフレームが SIL Kit の相手に届く。ブリッジが送ったフレームがブリッジに戻らない。`--promiscuous` がインターフェースの promiscuity を、動いている間だけ上げる。リンクの上下の監視の行。
-- 開けないときの文と終了コード 3（ない、TAP でない、イーサネットでない、すでにある、使用中、権限を落としたとき）。インターフェースを消したときの `FAIL` と終了コード 1。
+- `packet`（veth の対）: タグなし、VLAN タグ 1 つ、タグ 2 つのフレームが、タグを保ったまま両方向に通る。同じインターフェースの別のソケットが送ったフレームが SIL Kit の相手に届く。ブリッジが送ったフレームがブリッジに戻らない。`--promiscuous` がインターフェースの promiscuity を、動いている間だけ上げる。リンクの上下の監視の行。OS のスタックが送った UDP（veth の向こうの端からと、ブリッジのインターフェース自身から）が、SIL Kit の相手にそのまま届き、`ext_checksum_incomplete` に数えられ、警告が 1 回だけ出る。警告のとおりに `ethtool -K <名前> tx off` をすると、数も警告も出ない。
+- 開けないときの文と終了コード 3（ない、TAP でない、イーサネットでない、すでにある、使用中、権限を落としたとき）。インターフェースを消したときの `FAIL` と終了コード 1。registry がないときの文と終了コード 3。
 
 確かめていないこと:
 
@@ -350,6 +373,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 - `setcap cap_net_raw+ep` した実行ファイルが、共有ライブラリの SIL Kit を見つけられるか（権限を付けた実行ファイルでは、ライブラリを探す環境変数が効かないことがあります）。
 - ほかの人の持ち物の TAP デバイスにつなごうとしたときの文（文言は試験で確かめていますが、カーネルがその誤りを返す場面は作れていません）。
 - 受信のオフロードで長いフレームが見える場面、無線のアダプター。
+- 実の NIC での、チェックサムが未完成のフレームの警告と、`ethtool -K <名前> tx off` の効き方（試験は veth の対だけです）。送信の分割のオフロードで TCP の長いフレームが見えることと、それが `tx off` でなくなることは、veth の対で確かめましたが、試験にはありません。
 - ランチャーの構成ファイル（`describe: false`、`required: false`）から起動する形。
 - EtherType の位置、VLAN の TPID、最大長は、上の「絞り込み」の注のとおり、規格では確かめていません。
 
@@ -362,4 +386,4 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 - `eth_link.os_link_*`: OS の口が開けないときの文と種類、`--list-interfaces` の並べ方（文だけなので全プラットフォーム）。
 - `ethernet_bridge.app_*`: OS ごとに使えるバックエンドと使えないときの文、起動の 1 行、プロミスキャスの手がかり（時計を差し替えて、5 秒を待たずに確かめる）。
 - `ethernet_bridge.integration.*`（全プラットフォーム）: 実行ファイルに偽の口をリンクしたもの（`vehicle_sil_ethernet_bridge_on_fake`。`tests/ethernet_bridge/fake_link_factory.cpp`）を、registry と SIL Kit の相手（`eth_bridge_it_peer`。SIL Kit の `IEthernetController` を直接使う）と一緒にプロセスとして動かします。往復と統計、起動の 1 行、引数の誤り（4）、開けないインターフェース（3）、`Fault`（1）、止める要求（統計、`stopped`、0）。`backend-not-here` は本物の実行ファイルで、その OS で使えないバックエンドの文を確かめます。
-- `ethernet_bridge.netns.tap`、`ethernet_bridge.netns.packet`（Linux だけ。`tests/ethernet_bridge/bridge_netns.py`）: 上の「確かめたこと」。ユーザー名前空間を作れない所では飛ばします（終了コード 77。環境変数 `VEHICLE_SIL_REQUIRE_MULTI_HOST=1` があれば失敗）。名前空間は作れるが、その中で TAP デバイス、veth、packet ソケットを作れない所でも飛ばします（`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1` があれば失敗）。どちらで飛ばしたかは、出力の `skipped:` の行が言います。
+- `ethernet_bridge.netns.tap`、`ethernet_bridge.netns.packet`（Linux だけ。`tests/ethernet_bridge/bridge_netns.py`）: 上の「確かめたこと」。ユーザー名前空間を作れない所では飛ばします（終了コード 77。環境変数 `VEHICLE_SIL_REQUIRE_MULTI_HOST=1` があれば失敗）。名前空間は作れるが、その中で TAP デバイス、veth、packet ソケットを作れない所でも飛ばします（`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1` があれば失敗）。どちらで飛ばしたかは、出力の `skipped:` の行が言います。`setpriv` や `ethtool` がない所では、それが要る部分だけを省いて `NOT CHECKED` と言います（`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1` があれば、これも失敗）。CI は 2 つの変数を両方与えるので、飛ばしも省きも失敗になります。

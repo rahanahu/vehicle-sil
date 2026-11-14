@@ -21,15 +21,21 @@ packet  the bridge on one end of a veth pair, this script on the other: frames w
         bridge's own interface reaches the SIL Kit peer; what the bridge sends does not come back
         to it. --promiscuous sets the interface's promiscuity while the bridge runs only. The
         messages for an interface that is missing, not Ethernet, and (with the capability
-        dropped) not allowed to be opened. The link down and up: the monitor lines. The interface
-        removed: exit code 1.
+        dropped) not allowed to be opened. The link down and up: the monitor lines. UDP that the
+        OS's own stack sends (from the other end of the veth pair, and on the bridge's own
+        interface) has no checksum yet: the bridge passes it, counts it (ext_checksum_incomplete)
+        and warns once where to turn the offload off; with the offload off as the warning says,
+        neither. The interface removed: exit code 1.
+Both scenarios: no registry at --registry-uri: exit code 3 and where the bridge looked.
 
 Exit code 77 (skipped), with the reason, where this cannot be made:
  - no user namespaces (not Linux; no unshare or ip; unprivileged user namespaces turned off): as
    two_hosts.py, a failure instead with VEHICLE_SIL_REQUIRE_MULTI_HOST=1;
  - the namespace is there, but a TAP device, a veth pair or a packet socket cannot be made in it:
    a failure instead with VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1.
-Any failure after that fails the test.
+Any failure after that fails the test. A part that needs a tool that is not installed (setpriv,
+ethtool) is left out and said so ("NOT CHECKED"); with VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1 that
+fails the test too.
 
 EtherType 0x88B5 is known to be free for local experiments (not checked against the standard).
 """
@@ -71,7 +77,7 @@ WAIT = 30 * SCALE
 
 STATISTICS = ("silkit_to_ext", "ext_to_silkit", "own_tx_dropped", "loop_suspected", "mac_unguarded", "filtered_to_ext",
               "filtered_from_ext", "oversize", "malformed", "ext_overruns", "ext_queue_full", "ext_tx_failures",
-              "silkit_tx_failures")
+              "silkit_tx_failures", "ext_checksum_incomplete")
 
 
 def say(text: str) -> None:
@@ -95,6 +101,17 @@ def skip_no_interface(why: str) -> None:
         fail(f"the interfaces cannot be made, and VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1 asks for them: {why}")
     say(f"skipped: the user namespace is there, but the interfaces of the test cannot be made in it: {why}")
     sys.exit(SKIP)
+
+
+TOOL_PACKAGES = {"setpriv": "util-linux"}
+
+
+def not_checked(scenario: str, tool: str, what: str) -> None:
+    """A part of the test that needs `tool`, which is not installed here."""
+    if os.environ.get("VEHICLE_SIL_REQUIRE_ETHERNET_NETNS") == "1":
+        fail(f"{scenario}: {tool} is not installed, and VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1 asks for every part of the test; "
+             f"not checked without it: {what}. Install {tool} (the package {TOOL_PACKAGES.get(tool, tool)}).")
+    say(f"{scenario}: NOT CHECKED (no {tool}): {what}")
 
 
 def check(condition: bool, what: str) -> None:
@@ -278,8 +295,9 @@ class World:
         self.procs.append(p)
         return p
 
-    def bridge_argv(self, backend: str, interface: str, more: list[str], participant: str) -> list[str]:
-        return [self.bridge_path, "--registry-uri", REGISTRY_URI, "--participant", participant, "--network", NETWORK,
+    def bridge_argv(self, backend: str, interface: str, more: list[str], participant: str,
+                    registry_uri: str = REGISTRY_URI) -> list[str]:
+        return [self.bridge_path, "--registry-uri", registry_uri, "--participant", participant, "--network", NETWORK,
                 "--backend", backend, "--interface", interface, *more]
 
     def bridge(self, backend: str, interface: str, more: list[str], participant: str = "EthernetBridge",
@@ -299,6 +317,21 @@ class World:
         line = f"[eth-bridge] FAIL setup: {message}"
         check(code == 3 and line in b.text().splitlines(), f"the bridge is refused (exit code 3) with\n  {line}\nbut ended with "
                                                            f"{code} and:\n{b.text()}")
+
+    def no_registry(self, backend: str, interface: str) -> None:
+        """No registry at --registry-uri: exit code 3, where the bridge looked and what to do."""
+        nowhere = f"silkit://127.0.0.1:{REGISTRY_PORT + 1}"
+        b = self.run(self.bridge_argv(backend, interface, ["--all-frames"], "NoRegistry", nowhere))
+        code = b.wait()
+        lines = [line for line in b.text().splitlines() if line.startswith("[eth-bridge] FAIL setup: ")]
+        first = f"[eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at {nowhere} ("
+        last = (f"). Start the registry first ('sil-kit-registry --listen-uri {nowhere}'), or give the address it listens at "
+                "with --registry-uri.")
+        check(code == 3 and lines == b.text().splitlines() and len(lines) == 1 and lines[0].startswith(first)
+              and lines[0].endswith(last),
+              f"without a registry the bridge ends with exit code 3 and\n  {first}<SIL Kit's text>{last}\nbut ended with {code} "
+              f"and:\n{b.text()}")
+        say(f"{backend}: no registry at --registry-uri: the bridge said where it looked and what to do")
 
     def end(self) -> None:
         for p in self.procs:
@@ -392,13 +425,14 @@ def tap(world: World) -> None:
                   "Give the name as --list-interfaces prints it.", "Refused4")
     without = no_capability("net_admin")
     if without is None:
-        say("tap: NOT CHECKED (no setpriv): the message when the TAP device may not be made")
+        not_checked("tap", "setpriv", "the message when the TAP device may not be made")
     else:
         world.refused("tap", "vsil2", ["--tap-create"],
                       "cannot create TAP 'vsil2': Operation not permitted. Creating a TAP device needs CAP_NET_ADMIN: make it "
                       "first with 'sudo ip tuntap add dev vsil2 mode tap user $USER' and 'sudo ip link set vsil2 up' and leave "
                       "out --tap-create, or run as root.", "Refused5", before=without)
     say("tap: the messages for a device that is missing, not a TAP, there already, badly named, not allowed")
+    world.no_registry("tap", "vsil0")
 
     # The device removed while the bridge runs.
     last_bridge = world.bridge("tap", "vsil0", [], "LastBridge")
@@ -468,6 +502,8 @@ def packet(world: World) -> None:
     say("packet: what the bridge sent did not come back to it (loop_suspected=0, own_tx_dropped=0, no warning)")
     check("promiscuity 0" in sh("ip", "-d", "link", "show", "va"), "va is not promiscuous any more once the bridge has stopped")
 
+    os_stack_checksums(world, far)
+
     world.refused("packet", "nope0", ["--all-frames"],
                   f"no interface 'nope0' for --backend packet. Interfaces here: {interfaces_here()} (run --list-interfaces).",
                   "Refused1")
@@ -476,12 +512,13 @@ def packet(world: World) -> None:
                   "Ethernet interface (run --list-interfaces).", "Refused2")
     without = no_capability("net_raw")
     if without is None:
-        say("packet: NOT CHECKED (no setpriv): the message when the packet socket may not be opened")
+        not_checked("packet", "setpriv", "the message when the packet socket may not be opened")
     else:
         world.refused("packet", "va", ["--all-frames"],
                       "cannot open a packet socket on 'va': Operation not permitted. A network interface needs CAP_NET_RAW: run "
                       f"'sudo setcap cap_net_raw+ep {world.bridge_path}' once, or run as root.", "Refused3", before=without)
     say("packet: the messages for an interface that is missing, not Ethernet, not allowed")
+    world.no_registry("packet", "va")
 
     last_bridge = world.bridge("packet", "va", ["--all-frames"], "LastBridge")
     last_bridge.wait_for("Ctrl+C to stop")
@@ -491,6 +528,77 @@ def packet(world: World) -> None:
           and "] stats silkit_to_ext=" in last_bridge.text(),
           f"the bridge fails (exit code 1, not {code}) when its interface is removed, with its statistics:\n{last_bridge.text()}")
     say("packet: the interface removed while the bridge ran: FAIL and exit code 1")
+
+
+def checksum_warning(interface: str, sent_here: bool) -> str:
+    if sent_here:
+        return (f"[eth-bridge] warning: interface '{interface}': a frame this computer's OS sent on it has no TCP/UDP checksum yet: "
+                "the OS leaves the checksum to the network adapter (checksum offload), and the bridge sees the frame before "
+                "that. The bridge passes such frames on as they are, and a receiver in SIL Kit that checks checksums drops "
+                f"them. Turn the offload off with 'sudo ethtool -K {interface} tx off'; or, if the peer is this computer's OS, "
+                "use --backend tap instead. This warning is given once.")
+    return (f"[eth-bridge] warning: interface '{interface}': a frame received on it has no TCP/UDP checksum: this computer's OS "
+            "sent it through a virtual interface (the other end of a veth pair) and left the checksum to a network adapter "
+            "that is not there (checksum offload). The bridge passes such frames on as they are, and a receiver in SIL Kit "
+            "that checks checksums drops them. Turn the offload off on the interface the frames are sent from (for a veth "
+            f"pair the other end, not '{interface}'): 'sudo ethtool -K <that interface> tx off'; or, if the peer is this "
+            "computer's OS, use --backend tap instead. This warning is given once.")
+
+
+def os_stack_checksums(world: World, far: Wire) -> None:
+    """UDP from the OS's own stack, from the far end of the veth pair and on the bridge's own
+    interface: the kernel leaves the checksum to the network adapter, and a veth pair has none."""
+    # vb was down for a moment: the kernel left that as an error on the socket bound to it, which
+    # the next call on the socket would get. Take it off.
+    far.s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+    for interface, own, peer in (("vb", "10.9.0.1/24", "10.9.0.2"), ("va", "10.9.1.1/24", "10.9.1.2")):
+        sh("ip", "addr", "add", own, "dev", interface)
+        sh("ip", "neigh", "replace", peer, "lladdr", "02:00:00:00:00:01", "dev", interface, "nud", "permanent")
+    datagrams = 3
+    monitor_line = "[eth-bridge] interface va: link up; since the last report: ext_checksum_incomplete +"
+
+    def run(participant: str, first: int, targets: list[str], wait_for_monitor_line: bool) -> tuple[Proc, dict[str, int]]:
+        bridge = world.bridge("packet", "va", ["--all-frames"], participant)
+        bridge.wait_for("Ctrl+C to stop")
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        payloads = [bytes([0xC5, first + i]) * 16 for i in range(datagrams * len(targets))]
+        for i, payload in enumerate(payloads):
+            udp.sendto(payload, (targets[i % len(targets)], 5555))
+        udp.close()
+        # The frames reach the SIL Kit peer as they are. A frame of the test behind them, so that
+        # the bridge has seen them all when it stops.
+        for payload in payloads:
+            world.peer.wait_for(payload.hex())
+        marker = frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, first)
+        far.send(marker)
+        world.peer.wait_for(f"[peer] rx {marker.hex()}")
+        if wait_for_monitor_line:
+            bridge.wait_for(monitor_line)
+        check(bridge.stop() == 0, "the bridge stops with exit code 0:\n" + bridge.text())
+        return bridge, statistics(bridge.text())
+
+    for participant, first, target, sent_here in (("ChecksumBridge", 0x20, "10.9.0.2", False),
+                                                  ("ChecksumOwnBridge", 0x30, "10.9.1.2", True)):
+        bridge, stats = run(participant, first, [target], True)
+        warnings = [line for line in bridge.text().splitlines() if "warning:" in line]
+        check(warnings == [checksum_warning("va", sent_here)],
+              "the bridge warns once, and only, about the checksums the OS left out, and tells where to turn the offload off "
+              f"(frames sent on its own interface: {sent_here}):\n" + bridge.text())
+        check(stats["ext_checksum_incomplete"] >= datagrams and stats["ext_to_silkit"] > datagrams,
+              f"the bridge passed the {datagrams} UDP frames on and counted them as ext_checksum_incomplete: {stats}")
+    say("packet: UDP of the OS's own stack without its checksum (from the far end, and on the bridge's interface): passed on, "
+        "counted, one warning")
+
+    # What the warnings tell to do.
+    if shutil.which("ethtool") is None:
+        not_checked("packet", "ethtool", "that the warning's 'ethtool -K <interface> tx off' ends the frames without a checksum")
+        return
+    sh("ethtool", "-K", "vb", "tx", "off")
+    sh("ethtool", "-K", "va", "tx", "off")
+    bridge, stats = run("ChecksumOffBridge", 0x40, ["10.9.0.2", "10.9.1.2"], False)
+    check(stats["ext_checksum_incomplete"] == 0 and "warning:" not in bridge.text() and monitor_line not in bridge.text(),
+          f"with 'ethtool -K <interface> tx off' no frame lacks its checksum and the bridge does not warn: {stats}\n{bridge.text()}")
+    say("packet: with the offload off as the warnings say: no such frame, no warning")
 
 
 def inner(args: argparse.Namespace) -> None:

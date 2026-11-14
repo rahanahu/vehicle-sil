@@ -26,6 +26,7 @@
 #include <exception>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -98,6 +99,35 @@ private:
     bool problems_before_ = false;
 };
 
+/// The participant, connected to the registry. A registry that does not answer is the usual first
+/// failure: say where the bridge looked and what to do, not only SIL Kit's text.
+ParticipantRuntime connect_to_registry(const ParticipantRuntimeOptions& options)
+{
+    try
+    {
+        return ParticipantRuntime(options);
+    }
+    catch (const std::exception& e)
+    {
+        std::string what = e.what();
+        if (what.find("connect to SIL Kit Registry") == std::string::npos)
+        {
+            throw;
+        }
+        // SIL Kit's text has line breaks; the bridge's message is one line.
+        for (char& c : what)
+        {
+            if (c == '\n' || c == '\r')
+            {
+                c = ' ';
+            }
+        }
+        throw std::runtime_error("cannot connect to the SIL Kit registry at " + options.registry_uri + " (" + what +
+                                 "). Start the registry first ('sil-kit-registry --listen-uri " + options.registry_uri +
+                                 "'), or give the address it listens at with --registry-uri.");
+    }
+}
+
 int run(const BridgeOptions& options)
 {
     if (options.list_interfaces)
@@ -121,7 +151,7 @@ int run(const BridgeOptions& options)
     ParticipantRuntimeOptions runtimeOptions{options.participant, options.registry_uri};
     // Bounded so that stopping fits in the time Windows grants a closed console (run_bridge.hpp).
     runtimeOptions.shutdown_timeout = kSilKitShutdownTimeout;
-    ParticipantRuntime runtime(runtimeOptions);
+    ParticipantRuntime runtime = connect_to_registry(runtimeOptions);
     auto& controller = *runtime.participant().CreateEthernetController("EthernetBridge", options.network);
     EthernetBridge bridge(controller, external, options.bridge);
 
@@ -131,7 +161,10 @@ int run(const BridgeOptions& options)
     // way to fix it) and activates the controller.
     //
     // If activating the controller moves out of EthernetBridge::start() into the lifecycle's
-    // communication-ready handler, register that handler here, before runtime.start().
+    // communication-ready handler, register that handler here, before runtime.start(). The handler
+    // then uses `bridge`, which is destroyed before `runtime` (declared after it): when
+    // runtime.start() throws, call runtime.stop() before the exception leaves this function, so
+    // that the handler is not called on a bridge that is gone.
     bridge.start();
     runtime.start(std::chrono::seconds(15));
 

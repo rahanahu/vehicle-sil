@@ -72,6 +72,11 @@ struct PacketLinkOptions
 /// A network interface through a packet socket (needs CAP_NET_RAW). The link receives what
 /// arrives at the interface and what other programs and the OS on this computer send on it; a VLAN
 /// tag the OS took out of a received frame is put back where it was.
+/// What the link sends goes out on the cable only: the OS of this computer does not receive it.
+/// Its peers are the devices at the other end and programs that open the same interface with a
+/// packet socket or pcap; for a program that uses the OS's sockets on this computer, use a TAP link.
+/// A frame of this computer's OS whose TCP or UDP checksum is left to the network adapter is passed
+/// on as it is, marked LinkEvent::checksum_incomplete, with one Warning before the first.
 /// echoes_own_transmissions() is false: the socket does not get the frames it sent itself.
 [[nodiscard]] std::unique_ptr<ExternalLink> make_packet_link(PacketLinkOptions options);
 

@@ -140,6 +140,23 @@ TEST_CASE(os_link_interface_down_warning)
                "interface 'vsil0' is down: no frame passes until it is up. Bring it up with 'sudo ip link set vsil0 up'.");
 }
 
+TEST_CASE(os_link_checksum_incomplete_warning_tells_where_to_turn_the_offload_off)
+{
+    CHECK_TEXT(checksum_incomplete_warning("enp3s0", true),
+               "interface 'enp3s0': a frame this computer's OS sent on it has no TCP/UDP checksum yet: the OS leaves the "
+               "checksum to the network adapter (checksum offload), and the bridge sees the frame before that. The bridge "
+               "passes such frames on as they are, and a receiver in SIL Kit that checks checksums drops them. Turn the "
+               "offload off with 'sudo ethtool -K enp3s0 tx off'; or, if the peer is this computer's OS, use --backend tap "
+               "instead. This warning is given once.");
+    CHECK_TEXT(checksum_incomplete_warning("va", false),
+               "interface 'va': a frame received on it has no TCP/UDP checksum: this computer's OS sent it through a "
+               "virtual interface (the other end of a veth pair) and left the checksum to a network adapter that is not "
+               "there (checksum offload). The bridge passes such frames on as they are, and a receiver in SIL Kit that "
+               "checks checksums drops them. Turn the offload off on the interface the frames are sent from (for a veth "
+               "pair the other end, not 'va'): 'sudo ethtool -K <that interface> tx off'; or, if the peer is this "
+               "computer's OS, use --backend tap instead. This warning is given once.");
+}
+
 TEST_CASE(os_link_interface_list_is_one_aligned_line_per_interface)
 {
     const std::vector<InterfaceInfo> interfaces = {{"lo", false, 772, true}, {"enp3s0", true, 1, true}, {"vsil0", true, 1, false}};

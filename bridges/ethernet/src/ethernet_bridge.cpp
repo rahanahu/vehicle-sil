@@ -35,7 +35,7 @@ std::string_view describe_status(ethernet::EthernetTransmitStatus status) noexce
     return "unknown status";
 }
 
-using ProblemDeltas = std::array<std::pair<const char*, std::uint64_t>, 8>;
+using ProblemDeltas = std::array<std::pair<const char*, std::uint64_t>, 9>;
 
 ProblemDeltas problem_deltas(const EthernetBridgeStatistics& b, const EthernetBridgeStatistics& n) noexcept
 {
@@ -48,6 +48,7 @@ ProblemDeltas problem_deltas(const EthernetBridgeStatistics& b, const EthernetBr
         {"ext_queue_full", n.ext_queue_full - b.ext_queue_full},
         {"ext_tx_failures", n.ext_tx_failures - b.ext_tx_failures},
         {"silkit_tx_failures", n.silkit_tx_failures - b.silkit_tx_failures},
+        {"ext_checksum_incomplete", n.ext_checksum_incomplete - b.ext_checksum_incomplete},
     }};
 }
 
@@ -69,6 +70,7 @@ std::string format_statistics(const EthernetBridgeStatistics& s)
         {"ext_queue_full", s.ext_queue_full},
         {"ext_tx_failures", s.ext_tx_failures},
         {"silkit_tx_failures", s.silkit_tx_failures},
+        {"ext_checksum_incomplete", s.ext_checksum_incomplete},
     };
     std::string line = "stats";
     for (const auto& [key, value] : fields)
@@ -317,7 +319,7 @@ void EthernetBridge::on_external_event(const eth_link::LinkEvent& event)
 {
     switch (event.kind)
     {
-    case LinkEventKind::Frame: on_external_frame(event.frame); return;
+    case LinkEventKind::Frame: on_external_frame(event.frame, event.checksum_incomplete); return;
     case LinkEventKind::Overrun:
         ext_overruns_.fetch_add(event.count);
         set_last_error("the OS lost frames received on the external link");
@@ -344,7 +346,7 @@ void EthernetBridge::on_external_event(const eth_link::LinkEvent& event)
     }
 }
 
-void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame)
+void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame, bool checksum_incomplete)
 {
     if (!running_.load())
     {
@@ -405,6 +407,12 @@ void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame)
         // SendFrame copies the bytes: the link's buffer is only valid during this call.
         silkit_.SendFrame(ethernet::EthernetFrame{SilKit::Util::Span<const std::uint8_t>(frame.data(), frame.size())});
         ext_to_silkit_.fetch_add(1);
+        if (checksum_incomplete)
+        {
+            // Passed on as it is: whether the receiver minds is the receiver's business. The link
+            // has warned (once) and told what to do.
+            ext_checksum_incomplete_.fetch_add(1);
+        }
     }
     catch (const std::exception& e)
     {
@@ -439,6 +447,7 @@ EthernetBridgeStatistics EthernetBridge::statistics() const noexcept
     s.ext_queue_full = ext_queue_full_.load();
     s.ext_tx_failures = ext_tx_failures_.load();
     s.silkit_tx_failures = silkit_tx_failures_.load();
+    s.ext_checksum_incomplete = ext_checksum_incomplete_.load();
     return s;
 }
 

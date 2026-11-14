@@ -134,6 +134,7 @@ void LinuxLink::start(EventHandler handler)
     handler_ = std::move(handler);
     buffer_.assign(kReadBufferBytes, 0);
     reported_state_ = LinkState::Unknown;
+    checksum_warned_ = false;
     faulted_.store(false);
     {
         const std::lock_guard errors(error_mutex_);
@@ -310,9 +311,20 @@ void LinuxLink::run()
                 const ReadResult result = read_frame(fd, buffer_);
                 if (result.status == ReadStatus::Frame)
                 {
+                    if (result.checksum_incomplete && !checksum_warned_)
+                    {
+                        // Once: every frame of the OS's own TCP and UDP is like this.
+                        checksum_warned_ = true;
+                        const std::string text = checksum_incomplete_warning(name_, result.sent_here);
+                        LinkEvent warning;
+                        warning.kind = LinkEventKind::Warning;
+                        warning.detail = text;
+                        handler_(warning);
+                    }
                     LinkEvent event;
                     event.kind = LinkEventKind::Frame;
                     event.frame = result.frame;
+                    event.checksum_incomplete = result.checksum_incomplete;
                     handler_(event);
                 }
                 else if (result.status == ReadStatus::Empty)

@@ -147,7 +147,11 @@ TEST_CASE(run_bridge_stops_on_request_with_the_statistics_before_the_silkit_part
 
     Events events;
     FakeHooks hooks(events);
-    hooks.on_warnings = [](int call) {
+    hooks.on_warnings = [&events](int call) {
+        if (!events.empty() && events.back() == "hooks.stop")
+        {
+            return std::vector<std::string>{"raised just before the stop"}; // asked once more after the bridge stopped
+        }
         return call == 1 ? std::vector<std::string>{"first", "second"} : std::vector<std::string>{};
     };
     hooks.on_health = [](int call) -> std::optional<std::string> {
@@ -167,7 +171,7 @@ TEST_CASE(run_bridge_stops_on_request_with_the_statistics_before_the_silkit_part
     CHECK_EQ(code, 0);
     CHECK_EVENTS(events, "bridging A <-> B; Ctrl+C to stop", "warning: first", "warning: second",
                  "XL bus: error passive; since the last report: error_frames +3", "stopping", "hooks.stop",
-                 "hooks.final_statistics", "stats forwarded=3", "last error: none really", "stopped");
+                 "warning: raised just before the stop", "hooks.final_statistics", "stats forwarded=3", "last error: none really", "stopped");
     CHECK(stateAtStatistics == State::Running);
     // run_bridge() stopped the participant after the statistics.
     CHECK(judge_participant_state(runtime.state()) == ParticipantVerdict::Ended);
@@ -192,7 +196,7 @@ TEST_CASE(run_bridge_a_fault_fails_with_exit_code_1_after_warnings_and_with_the_
     CHECK_EQ(code, 1);
     // The fault is looked at before the warnings of the same round.
     CHECK_EVENTS(events, "bridging A <-> B; Ctrl+C to stop", "warning: w",
-                 "FAIL: XL channel 'X' stopped working (device removed?): lost", "stopping", "hooks.stop",
+                 "FAIL: XL channel 'X' stopped working (device removed?): lost", "stopping", "hooks.stop", "warning: w",
                  "hooks.final_statistics", "stats forwarded=3", "last error: none really",
                  "participant.stop bridge stopped", "stopped");
 }

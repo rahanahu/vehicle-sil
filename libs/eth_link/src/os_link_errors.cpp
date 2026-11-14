@@ -147,4 +147,33 @@ std::string interface_down_warning(std::string_view name)
            std::string(name) + " up'.";
 }
 
+std::string checksum_incomplete_warning(std::string_view name, bool sent_here)
+{
+    std::string what = "interface " + quoted(name) + ": ";
+    if (sent_here)
+    {
+        what += "a frame this computer's OS sent on it has no TCP/UDP checksum yet: the OS leaves the checksum to the "
+                "network adapter (checksum offload), and the bridge sees the frame before that. ";
+    }
+    else
+    {
+        what += "a frame received on it has no TCP/UDP checksum: this computer's OS sent it through a virtual interface "
+                "(the other end of a veth pair) and left the checksum to a network adapter that is not there (checksum "
+                "offload). ";
+    }
+    what += "The bridge passes such frames on as they are, and a receiver in SIL Kit "
+            "that checks checksums drops them. Turn the offload off ";
+    if (sent_here)
+    {
+        what += "with 'sudo ethtool -K " + std::string(name) + " tx off'";
+    }
+    else
+    {
+        what += "on the interface the frames are sent from (for a veth pair the other end, not " + quoted(name) +
+                "): 'sudo ethtool -K <that interface> tx off'";
+    }
+    what += "; or, if the peer is this computer's OS, use --backend tap instead. This warning is given once.";
+    return what;
+}
+
 } // namespace vehicle_sil::eth_link::detail

@@ -47,4 +47,9 @@ inline constexpr std::size_t kMaxInterfaceNameBytes = 15;
 /// The Warning of a link whose interface is down when it starts.
 [[nodiscard]] std::string interface_down_warning(std::string_view name);
 
+/// The Warning of a packet link at the first frame whose TCP or UDP checksum this computer's OS
+/// left to the network adapter. `sent_here`: the frame was sent on the interface `name` itself (the
+/// socket's copy of an outgoing frame); false: it arrived there (from the other end of a veth pair).
+[[nodiscard]] std::string checksum_incomplete_warning(std::string_view name, bool sent_here);
+
 } // namespace vehicle_sil::eth_link::detail

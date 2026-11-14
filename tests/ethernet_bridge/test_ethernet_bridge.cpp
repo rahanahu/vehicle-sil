@@ -505,6 +505,24 @@ TEST_CASE(bridge_counts_what_sil_kit_did_not_transmit)
     CHECK_TEXT(f.bridge.last_error(), "SIL Kit SendFrame failed: fake SendFrame failure");
 }
 
+TEST_CASE(bridge_passes_and_counts_frames_with_an_incomplete_checksum)
+{
+    EthernetBridgeOptions options;
+    options.filter.ether_types = {kExperimental};
+    Fixture f(options);
+    const auto frame = make_frame(kEcu, kOutside, kExperimental);
+    f.link.receive(frame);
+    f.link.receive_checksum_incomplete(frame);
+    f.link.receive_checksum_incomplete(make_frame(kEcu, kOutside, 0x0800)); // filtered: not handed over, not counted
+    CHECK(eventually([&] { return f.silkit.sent_count() == 2 && f.link.idle(); }, 5000ms));
+    const auto s = f.bridge.statistics();
+    CHECK_EQ(s.ext_to_silkit, std::uint64_t{2});
+    CHECK_EQ(s.ext_checksum_incomplete, std::uint64_t{1});
+    CHECK_EQ(s.filtered_from_ext, std::uint64_t{1});
+    // The warning is the link's (a packet link gives it once); the bridge adds none of its own.
+    CHECK(f.bridge.take_warnings().empty());
+}
+
 TEST_CASE(bridge_counts_overruns_also_those_reported_by_stop)
 {
     Fixture f;

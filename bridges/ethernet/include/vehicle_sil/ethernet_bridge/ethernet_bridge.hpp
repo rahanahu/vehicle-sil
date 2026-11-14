@@ -54,6 +54,9 @@ struct EthernetBridgeStatistics
     /// SendFrame threw, or SIL Kit acknowledged a frame as not transmitted (that frame was
     /// counted in ext_to_silkit when it was handed over).
     std::uint64_t silkit_tx_failures = 0;
+    /// Frames from the link handed to SIL Kit although their TCP or UDP checksum is not filled in
+    /// (eth_link::LinkEvent::checksum_incomplete; they are counted in ext_to_silkit too).
+    std::uint64_t ext_checksum_incomplete = 0;
 };
 
 /// One line "stats silkit_to_ext=N ext_to_silkit=N ..." with every counter. The key names are
@@ -68,8 +71,8 @@ struct EthernetBridgeHealth
 };
 
 /// Whether a problem counter grew from `before` to `now`: loop_suspected, mac_unguarded, oversize,
-/// malformed, ext_overruns, ext_queue_full, ext_tx_failures, silkit_tx_failures. The forwarded, filtered
-/// and own_tx_dropped counts are not problems.
+/// malformed, ext_overruns, ext_queue_full, ext_tx_failures, silkit_tx_failures, ext_checksum_incomplete.
+/// The forwarded, filtered and own_tx_dropped counts are not problems.
 [[nodiscard]] bool problems_grew(const EthernetBridgeStatistics& before, const EthernetBridgeStatistics& now) noexcept;
 
 /// One line about the link between two samples taken by the caller (once a second), or nullopt:
@@ -142,7 +145,7 @@ private:
     void on_silkit_frame(const SilKit::Services::Ethernet::EthernetFrameEvent& event);
     void on_silkit_transmit(const SilKit::Services::Ethernet::EthernetFrameTransmitEvent& event);
     void on_external_event(const eth_link::LinkEvent& event);
-    void on_external_frame(std::span<const std::uint8_t> frame);
+    void on_external_frame(std::span<const std::uint8_t> frame, bool checksum_incomplete);
     /// Whether a frame from the outside whose source is on the SIL Kit side is the bridge's own
     /// coming back. Today: whether the link echoes its transmissions at all. (A link that echoes
     /// could keep a record of the frames sent and match them here, to find a second bridge.)
@@ -180,6 +183,7 @@ private:
     std::atomic<std::uint64_t> ext_queue_full_{0};
     std::atomic<std::uint64_t> ext_tx_failures_{0};
     std::atomic<std::uint64_t> silkit_tx_failures_{0};
+    std::atomic<std::uint64_t> ext_checksum_incomplete_{0};
 
     mutable std::mutex error_mutex_; // also guards link_state_, fault_, warnings_, named_conflicts_
     std::string last_error_;

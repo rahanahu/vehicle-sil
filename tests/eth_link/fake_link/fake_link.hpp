@@ -73,6 +73,9 @@ public:
     void set_transmit_throws(bool throws);
     /// A frame that reaches this link only (a device in front of this interface alone).
     void receive(std::span<const std::uint8_t> frame);
+    /// As receive(), with LinkEvent::checksum_incomplete set (a frame of this computer's OS whose
+    /// checksum is left to the network adapter). The Warning of a real link is not made up here.
+    void receive_checksum_incomplete(std::span<const std::uint8_t> frame);
     /// stop() reports this many frames lost by the OS before it returns.
     void set_overruns_at_stop(std::uint64_t count);
     /// Queues an event for the receive thread.
@@ -109,6 +112,7 @@ private:
         std::uint64_t count = 0;
         eth_link::LinkState state = eth_link::LinkState::Unknown;
         std::string detail;
+        bool checksum_incomplete = false;
     };
 
     void enqueue(Item item);

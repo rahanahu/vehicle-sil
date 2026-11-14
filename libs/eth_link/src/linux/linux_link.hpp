@@ -101,6 +101,10 @@ protected:
         ReadStatus status = ReadStatus::Empty;
         std::span<const std::uint8_t> frame{};
         int error = 0;
+        /// Frame: the OS of this computer sent it and has not filled in its TCP or UDP checksum.
+        bool checksum_incomplete = false;
+        /// Frame: the copy of a frame sent on this interface, not one that arrived there.
+        bool sent_here = false;
     };
     /// Reads one frame into `buffer` (kReadBufferBytes). The frame may lie anywhere in it.
     virtual ReadResult read_frame(int fd, std::span<std::uint8_t> buffer) = 0;
@@ -134,6 +138,7 @@ private:
     EventHandler handler_;
     std::thread thread_;
     LinkState reported_state_ = LinkState::Unknown; // receive thread only
+    bool checksum_warned_ = false;                  // receive thread only
     std::vector<std::uint8_t> buffer_;              // receive thread only
 
     mutable std::mutex error_mutex_;

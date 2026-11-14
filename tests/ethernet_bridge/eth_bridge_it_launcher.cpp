@@ -64,7 +64,8 @@ const char* const kParticipant = "EthernetBridge";
 /// Every key of the statistics line, in its order.
 const char* const kStatisticsKeys[] = {"silkit_to_ext", "ext_to_silkit", "own_tx_dropped", "loop_suspected", "mac_unguarded",
                                        "filtered_to_ext", "filtered_from_ext", "oversize", "malformed", "ext_overruns",
-                                       "ext_queue_full", "ext_tx_failures", "silkit_tx_failures"};
+                                       "ext_queue_full", "ext_tx_failures", "silkit_tx_failures",
+                                       "ext_checksum_incomplete"};
 
 struct Options
 {

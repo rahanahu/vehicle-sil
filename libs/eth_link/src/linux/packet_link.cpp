@@ -116,6 +116,8 @@ protected:
             return {ReadStatus::Skip, {}, 0};
         }
         const auto length = static_cast<std::size_t>(received);
+        ReadResult result{ReadStatus::Frame, room.first(length), 0};
+        result.sent_here = from.sll_pkttype == PACKET_OUTGOING;
         for (cmsghdr* header = CMSG_FIRSTHDR(&message); header != nullptr; header = CMSG_NXTHDR(&message, header))
         {
             if (header->cmsg_level != SOL_PACKET || header->cmsg_type != PACKET_AUXDATA ||
@@ -125,6 +127,10 @@ protected:
             }
             tpacket_auxdata aux{};
             std::memcpy(&aux, CMSG_DATA(header), sizeof(aux));
+            // The OS of this computer sent the frame and left its TCP or UDP checksum to the
+            // network adapter: the bytes here have a checksum that is not the frame's. The link
+            // does not fill it in; it tells (LinkEvent::checksum_incomplete, one Warning).
+            result.checksum_incomplete = (aux.tp_status & TP_STATUS_CSUMNOTREADY) != 0;
             const bool tagged = (aux.tp_status & TP_STATUS_VLAN_VALID) != 0 || aux.tp_vlan_tci != 0;
             if (!tagged || length < kMacBytes)
             {
@@ -137,9 +143,10 @@ protected:
             buffer[kMacBytes + 1] = static_cast<std::uint8_t>(tpid & 0xFF);
             buffer[kMacBytes + 2] = static_cast<std::uint8_t>(aux.tp_vlan_tci >> 8);
             buffer[kMacBytes + 3] = static_cast<std::uint8_t>(aux.tp_vlan_tci & 0xFF);
-            return {ReadStatus::Frame, buffer.first(length + kVlanTagBytes), 0};
+            result.frame = buffer.first(length + kVlanTagBytes);
+            break;
         }
-        return {ReadStatus::Frame, room.first(length), 0};
+        return result;
     }
 
     long write_frame(int fd, std::span<const std::uint8_t> frame) override
