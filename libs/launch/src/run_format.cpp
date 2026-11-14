@@ -438,7 +438,7 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
     if (report.run && report.run->scenario)
     {
         // Only with --scenario: a result without one is as it was before scenarios.
-        detail::write_scenario_json(w, "scenario", *report.run->scenario);
+        detail::write_scenario_json(w, "scenario", *report.run->scenario, report.run->timeline);
     }
     w.end_object();
 }
@@ -473,7 +473,8 @@ void detail::write_scenario_step_members(vehicle_sil::detail::JsonWriter& w, con
     }
 }
 
-void detail::write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const ScenarioRun& scenario)
+void detail::write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const ScenarioRun& scenario,
+                                 const std::string& timeline)
 {
     w.begin_object(key);
     w.string("file", scenario.file);
@@ -507,6 +508,11 @@ void detail::write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string
         w.end_object();
     }
     w.end_array();
+    if (!timeline.empty())
+    {
+        // Only with --timeline: a result without it is as it was before timelines.
+        w.string("timeline", timeline);
+    }
     w.end_object();
 }
 

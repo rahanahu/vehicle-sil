@@ -1,0 +1,213 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "tick_ms": 10,
+  "scenario": {
+    "file": "scenario.yaml",
+    "name": "the expect beside a ramp fails at a sample",
+    "status": "failed",
+    "over_at_ms": 150,
+    "recorded_to_ms": 140
+  },
+  "variables": [
+    {
+      "name": "Body.level",
+      "participant": "Body",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": true
+    },
+    {
+      "name": "Body.body.speed",
+      "participant": "Body",
+      "type": "real",
+      "causality": "output",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": false,
+      "watched": true
+    }
+  ],
+  "steps": [
+    {
+      "index": 1,
+      "line": 7,
+      "kind": "set",
+      "text": "set Body.level = 14",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 0,
+      "end_ms": 0,
+      "code": null,
+      "message": null,
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 2,
+      "line": 8,
+      "kind": "ramp",
+      "text": "ramp Body.level to 30 over 200 ms, expecting Body.body.speed le 200; Body.level ge 14",
+      "status": "failed",
+      "start_ms": 50,
+      "at_ms": 140,
+      "end_ms": 250,
+      "code": "scenario-failed",
+      "message": "not true during the ramp (from 50 ms to 250 ms): at 140 ms Body.body.speed le 200, but it was 210 (its sample of 140 ms)",
+      "watch": {
+        "mode": "during",
+        "from_ms": 50,
+        "until_ms": 250,
+        "conditions": [
+          {
+            "variable": "Body.body.speed",
+            "compare": [
+              {
+                "op": "le",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "variable": "Body.level",
+            "compare": [
+              {
+                "op": "ge",
+                "value": 14
+              }
+            ]
+          }
+        ]
+      },
+      "failed": {
+        "at_ms": 140,
+        "code": "scenario-failed",
+        "conditions": [
+          {
+            "condition": 0,
+            "value": 210,
+            "sample_ms": 140
+          }
+        ],
+        "write": null
+      }
+    },
+    {
+      "index": 3,
+      "line": 11,
+      "kind": "expect",
+      "text": "expect Body.level eq 30",
+      "status": "not_run",
+      "start_ms": null,
+      "at_ms": null,
+      "end_ms": null,
+      "code": null,
+      "message": null,
+      "watch": {
+        "mode": "at",
+        "from_ms": null,
+        "until_ms": null,
+        "conditions": [
+          {
+            "variable": "Body.level",
+            "compare": [
+              {
+                "op": "eq",
+                "value": 30
+              }
+            ]
+          }
+        ]
+      },
+      "failed": null
+    }
+  ],
+  "series": [
+    {
+      "variable": "Body.level",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [0, 14],
+        [50, 14],
+        [60, 15],
+        [70, 16],
+        [80, 16],
+        [90, 17],
+        [100, 18],
+        [110, 19],
+        [120, 20],
+        [130, 20],
+        [140, 21]
+      ]
+    },
+    {
+      "variable": "Body.level",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 15,
+      "first_ms": 0,
+      "last_ms": 140,
+      "points": [
+        [0, 14],
+        [60, 15],
+        [70, 16],
+        [90, 17],
+        [100, 18],
+        [110, 19],
+        [120, 20],
+        [140, 21]
+      ]
+    },
+    {
+      "variable": "Body.body.speed",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 15,
+      "first_ms": 0,
+      "last_ms": 140,
+      "points": [
+        [0, 50],
+        [10, 100],
+        [20, 140],
+        [60, 150],
+        [70, 160],
+        [90, 170],
+        [100, 180],
+        [110, 190],
+        [120, 200],
+        [140, 210]
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "severity": "error",
+      "code": "scenario-failed",
+      "file": "scenario.yaml",
+      "line": 8,
+      "participant": null,
+      "network": null,
+      "message": "ramp Body.level to 30 over 200 ms, expecting Body.body.speed le 200; Body.level ge 14: not true during the ramp (from 50 ms to 250 ms): at 140 ms Body.body.speed le 200, but it was 210 (its sample of 140 ms)",
+      "detail": null
+    }
+  ],
+  "limits": {
+    "points_per_series": 100000,
+    "points_total": 1000000,
+    "dropped": []
+  }
+}

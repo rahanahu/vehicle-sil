@@ -484,6 +484,7 @@ failed: 5 errors, 0 warnings, 0 notes
 - 時刻はミリ秒の数です（ECU のステップが 1 ms より細かいと、小数になることがあります）。わからない時刻は null です。
 - シナリオが終わってランチャーが止めた実行の `simulation` は `ended` です。
 - `run --events`: 手順が始まったとき（`status` は `running`）と決まったときに、事象 `scenario_step`（`steps[]` と同じキー）。結果の事象にも `scenario` があります。飛ばす手順の `scenario_step`（`status` は `skipped`、`at_ms` は null）は 1 回で、その手順の時刻が決まったときに出ます（実行の前からわかっているので、仮想時間がそこへ進むより前に出ることがあります）。
+- `run --scenario` に `--timeline <file>` を付けると、シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書きます（手順の見張りの区間、失敗の値、値の列。[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。`features` に `timeline` があるランチャーで使えます。
 - `vehicle_sil_launch version --json` の `features` に `scenario` があれば、この機能を使えます。手順 `wave` は、`scenario-wave` があるランチャーで使えます（ないランチャーでは、`wave` は知らないキーの誤りです）。`ramp` と `wave` の横の `expect` は、`scenario-motion-expect` があるランチャーで使えます（ないランチャーでは、手順が 2 つのことをする誤りです）。
 
 ## 実行中に変数を見る（`--control`）

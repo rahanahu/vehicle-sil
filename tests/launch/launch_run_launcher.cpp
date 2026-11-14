@@ -79,6 +79,10 @@
 //   scenario_wave  the steps "wave": what the ECU saw of each shape, the same at a speed and with
 //                  another controller step, the warning of the check and "undersampled: ok", and
 //                  the failure of a wave that leaves the variable's range; the example with waves
+//   timeline     run --scenario --timeline: the file of a run that passes (the same file from a
+//                second run and at a speed; the run's own output is what it is without --timeline,
+//                but for the file's name), of a run that fails, a file that cannot be opened
+//                (nothing starts, exit code 3), the command line
 //   scenario_expect_beside  an expect beside a ramp: it holds, the sample that breaks it, and the
 //                note, the line and expect_skipped where its variable is absent
 //   scenario_same  one scenario, run as fast as possible, at a speed, with a slow ECU and with a
@@ -3943,6 +3947,107 @@ void variants(const Options& o)
 /// vehicle_sil_launch test: every scenario of a directory with every variant, one run after the
 /// other; a scenario that is not for a variant is skipped, a failed run does not end the test,
 /// and the table and the JSON have every run.
+void timeline(const Options& o)
+{
+    const std::string passing = "vehicle_sil_scenario: 1\n"
+                                "name: square wave\n"
+                                "steps:\n"
+                                "  - set: { Body.level: 20, Door.mode: off }\n"
+                                "  - at_ms: 100\n"
+                                "    wave: { Body.level: { square: { low: 20, high: 30, period_ms: 40 }, for_ms: 100 } }\n"
+                                "    expect: { Body.level: { ge: 20, le: 30 } }\n"
+                                "  - expect: { Body.level_changed_at_ms: 200, Door.mode_now: off }\n";
+    const fs::path dir = scenario_ecus(o, "", passing);
+    const std::vector<std::string> plain{"run", "sim.yaml", "--scenario", "s.yaml"};
+    const auto with = [&plain](std::vector<std::string> more) {
+        std::vector<std::string> args = plain;
+        args.insert(args.end(), more.begin(), more.end());
+        return args;
+    };
+    // The file is written, and said on standard error; the directory is made if it is not there.
+    const Captured first = launch(o, with({"--timeline", "out/first.json"}), dir);
+    expect_code(first, 0, "run --timeline");
+    require(contains(lf(first.standard_error), "\n[vehicle_sil_launch] timeline: out/first.json\n"),
+            "the line that says where the timeline is:\n" + lf(first.standard_error));
+    const std::string file = read_text(dir / "out" / "first.json");
+    require(!contains(file, "\r"), "the timeline has LF line ends on every system");
+    require(contains(file, "{\n  \"vehicle_sil_timeline\": 1,\n") && contains(file, "  \"stage\": \"run\",\n  \"file\": \"sim.yaml\",\n") &&
+                contains(file, "    \"file\": \"s.yaml\",\n    \"name\": \"square wave\",\n    \"status\": \"passed\",\n"),
+            "the head of the timeline:\n" + file);
+    // What the scenario wrote (the wave: one point a line, the end value last) and saw.
+    require(contains(file, "      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+                           "      \"points\": [\n        [0, 20],\n        [100, 30],\n        [110, 30],\n        [120, 20],\n"),
+            "the written values:\n" + file);
+    require(contains(file, "      \"variable\": \"Body.level\",\n      \"source\": \"sampled\",\n      \"encoding\": \"changes\",\n"),
+            "the sampled values:\n" + file);
+    require(contains(file, "        \"mode\": \"during\",\n        \"from_ms\": 100,\n        \"until_ms\": 200,\n"),
+            "the watch beside the wave:\n" + file);
+    // The run's own output is the one without --timeline.
+    const Captured without = launch(o, plain, dir);
+    expect_code(without, 0, "run without --timeline");
+    expect_text(first.standard_output, without.standard_output, "standard output with --timeline");
+    require(!contains(lf(without.standard_error), "timeline"), "no word of a timeline without --timeline:\n" + lf(without.standard_error));
+    const Captured json = launch(o, with({"--json", "--timeline", "second.json"}), dir);
+    expect_code(json, 0, "run --json --timeline");
+    require(contains(lf(json.standard_output), "\n    ],\n    \"timeline\": \"second.json\"\n  }\n}\n"),
+            "the result names the timeline, last in its scenario:\n" + lf(json.standard_output));
+    const Captured jsonWithout = launch(o, with({"--json"}), dir);
+    require(!contains(lf(jsonWithout.standard_output), "\"timeline\""), "no timeline in the result without --timeline");
+    // The same run gives the same file: nothing of the wall clock is in it, also at a speed.
+    expect_text(read_text(dir / "second.json"), file, "the timeline of a second run");
+    expect_code(launch(o, with({"--speed", "4", "--timeline", "third.json"}), dir), 0, "run --speed 4 --timeline");
+    expect_text(read_text(dir / "third.json"), file, "the timeline at a speed");
+    // With --events the line is a log event, and the result names the file.
+    const Captured events = launch(o, with({"--events", "--timeline", "fourth.json"}), dir);
+    expect_code(events, 0, "run --events --timeline");
+    require(contains(lf(events.standard_output), "\"line\":\"timeline: fourth.json\"") &&
+                contains(lf(events.standard_output), "\"timeline\":\"fourth.json\""),
+            "the events name the timeline:\n" + lf(events.standard_output));
+    expect_text(read_text(dir / "fourth.json"), file, "the timeline with --events");
+
+    // A file that cannot be opened: said before anything starts, as a set-up error.
+    const Captured closed = launch(o, with({"--timeline", "s.yaml/in-a-file.json"}), dir);
+    expect_code(closed, 3, "--timeline in a directory that is a file");
+    require(contains(lf(closed.standard_output),
+                     "cannot set up the simulation: cannot write the timeline s.yaml/in-a-file.json: check that --timeline names a "
+                     "file in a directory you can write to (the file is opened before anything starts, so that a run is not "
+                     "lost for it) [setup]"),
+            "the set-up error:\n" + lf(closed.standard_output));
+    require(!contains(lf(closed.standard_error), "registry at"), "nothing was started:\n" + lf(closed.standard_error));
+
+    // A scenario that fails: the file is written all the same, with what failed as numbers.
+    write_file(dir / "s.yaml", "vehicle_sil_scenario: 1\n"
+                               "steps:\n"
+                               "  - set: { Body.level: 20 }\n"
+                               "  - at_ms: 50\n"
+                               "    expect: { Body.level: 21 }\n"
+                               "  - after_ms: 30\n"
+                               "    set: { Body.level: 0 }\n");
+    const Captured failing = launch(o, with({"--timeline", "failed.json"}), dir);
+    expect_code(failing, 1, "a failing scenario with --timeline");
+    const std::string failed = read_text(dir / "failed.json");
+    require(contains(failed, "    \"status\": \"failed\",\n") && contains(failed, "    \"recorded_to_ms\": 50\n"),
+            "the failed scenario's timeline ends at the failure:\n" + failed);
+    require(contains(failed, "      \"failed\": {\n        \"at_ms\": 50,\n        \"code\": \"scenario-failed\",\n"
+                             "        \"conditions\": [\n          {\n            \"condition\": 0,\n            \"value\": 20,\n"
+                             "            \"sample_ms\": 50\n          }\n        ],\n        \"write\": null\n      }"),
+            "what failed, as numbers:\n" + failed);
+    require(contains(failed, "      \"code\": \"scenario-failed\",\n      \"file\": \"s.yaml\",\n      \"line\": 4,\n"),
+            "the scenario's finding is in the file:\n" + failed);
+
+    // The command line.
+    const Captured alone = launch(o, {"run", "sim.yaml", "--timeline", "x.json"}, dir);
+    expect_code(alone, 4, "--timeline without --scenario");
+    require(contains(lf(alone.standard_error), "error: --timeline writes what a scenario did over the time: give --scenario <file> "
+                                               "too, or leave --timeline out\n"),
+            "--timeline without --scenario:\n" + lf(alone.standard_error));
+    const Captured checked = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml", "--timeline", "x.json"}, dir);
+    expect_code(checked, 4, "check --timeline");
+    require(contains(lf(checked.standard_error), "error: --timeline is for run: check starts no participant\n"),
+            "check --timeline:\n" + lf(checked.standard_error));
+    require(!fs::exists(dir / "x.json"), "a wrong command line writes no file");
+}
+
 void test_command(const Options& o)
 {
     const std::string participants = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
@@ -5489,6 +5594,7 @@ int main(int argc, char** argv)
             {"scenario_failures", scenario_failures},
             {"scenario_same", scenario_same},
             {"scenario_wave", scenario_wave},
+            {"timeline", timeline},
             {"scenario_expect_beside", scenario_expect_beside},
             {"speed_change", speed_change},
             {"stall", stall},

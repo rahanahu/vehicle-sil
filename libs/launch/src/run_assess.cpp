@@ -362,6 +362,14 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                          reached != scenario.steps.rend() ? reached->line : 0);
         }
     }
+    if (!outcome.timeline_error.empty())
+    {
+        add(Severity::Error, "timeline-write",
+            "the timeline " + outcome.timeline + " could not be written: " + outcome.timeline_error +
+                "; what is in the file is not complete: do not use it. The scenario's result is not changed by this. Make "
+                "room on the disk, or name another file with --timeline, and run again",
+            nullptr);
+    }
     if (outcome.simulation == SimulationEnd::Ended && outcome.stop_at_ms && outcome.controller_state.empty() &&
         !outcome.stopped_by_scenario)
     {

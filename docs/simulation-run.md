@@ -214,7 +214,7 @@ passed: 0 errors, 1 warning, 1 note
 
 | `code` | 重さ | 内容 |
 |---|---|---|
-| `setup` | 誤り（終了コード 3） | registry を立てられない（`registry_uri` のポートが使われているなど）、controller を作れない、`--log-dir` に書けない |
+| `setup` | 誤り（終了コード 3） | registry を立てられない（`registry_uri` のポートが使われているなど）、controller を作れない、`--log-dir` に書けない、`--timeline` のファイルを開けない |
 | `start` | 誤り（`required: false` は警告） | participant を起動できない |
 | `ended-before-start` | 誤り | 必須の participant が、シミュレーションが始まる前に終わった |
 | `not-joined` | 誤り | 必須の participant が、プロセスは動いているのに `start_timeout_ms` の間に参加しなかった |
@@ -235,6 +235,7 @@ passed: 0 errors, 1 warning, 1 note
 | `before-start` | 誤り | 始まる前の窓でする処理（`run` を関数として呼ぶ側が渡すもの。内部用）が失敗した。シミュレーションは始まっていて、すぐに中断した |
 | `behind-real-time` | 警告 | 速さを合わせた刻みのうち、遅れが `late_tolerance_ms` を超えたものがあった（[等速で動かす](#等速で動かす)）。遅れた刻みの数、最大の遅れ、ずれの合計、全体の実際の速さ、止まったまま終わったならそのときの遅れを書きます。どの participant の所見でもありません |
 | `coarse-time-step` | 警告 | 速さの指定があり、controller の刻みが ECU のステップより粗い（ECU のステップが刻みの境目で始まらない）。ECU のステップが最大で何 ms 遅れてまとまって動くかと、`time_step_ms` に書く値を書きます（[等速で動かす](#等速で動かす)の「刻みと ECU のステップ」）。どの participant の所見でもありません |
+| `timeline-write` | 誤り | `--timeline` のファイルを、実行の後に書けなかった（開けたが、書き込みが失敗した）。ファイルの中身は途中までなので使わない。シナリオの結果は変わらない。空きを作るか、別のファイルを指定して、もう一度実行する（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)） |
 | `interrupted` | 注記 | 中断された |
 
 ## JSON（`run --json`）
@@ -256,7 +257,7 @@ passed: 0 errors, 1 warning, 1 note
 | `participants[].control_link` | `state`（`"connected"`、`"no_hello"`、`"version_mismatch"`、`"not_offered"`、`"none"`。[変数を読み書きする口](#変数を読み書きする口)）、`variables`（`connected` のとき、その ECU が出す変数の数。ECU の実行が足す `peer.` などの出力を含むので、`--describe` の数より多いことがあります。ほかは `null`）、`version`（`version_mismatch` のとき、相手の形式の版。ほかは `null`）、`late_messages`（約束より遅れて届いたメッセージの数。ふつうは 0） |
 | `findings[]` | 実行で見つけたもの（照合の `findings[]` と同じ形） |
 | `check` | 照合の結果（`check --json` と同じオブジェクト）。選んだ機種（`variant`）と、パラメーター（`params`、`scenario.params`）はここにあります |
-| `scenario` | `--scenario` を付けたときだけ。シナリオの結果（[scenario.md](scenario.md) の「出力」）。`check` の中にも `scenario`（`file`、`name`、`steps`）があります。`simulation` の `"ended"` は、シナリオが終わってランチャーが止めた場合を含みます。見分けるには `scenario.status` を見ます（`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です）。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です |
+| `scenario` | `--scenario` を付けたときだけ。シナリオの結果（[scenario.md](scenario.md) の「出力」）。`check` の中にも `scenario`（`file`、`name`、`steps`）があります。`simulation` の `"ended"` は、シナリオが終わってランチャーが止めた場合を含みます。見分けるには `scenario.status` を見ます（`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です）。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です。`--timeline` を付けた実行では、`scenario.timeline` に、時間の軸のファイルの名前（引数のとおり）があります（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)） |
 
 `timing` のキー（数の定義は[等速で動かす](#等速で動かす)。時間は、controller の最初の刻み（仮想時間 0）が始まってから、最後の刻みが始まるまでのものです。participant の起動、止める処理、失敗に気づくまでの待ちは入りません。次の刻みが期限を過ぎたまま実行が終わったときと、最速のときは、実行が終わった時点までです）:
 
@@ -527,6 +528,125 @@ passed: 0 errors, 1 warning, 1 note
 ```
 
 この節の例も、CTest の `launch_run.docs` が実際の実行と照合します（`vehicle_sil` の版と、`<wall_ms>`、`<actual_speed>` にした値を除いて、バイト単位で）。
+
+## シナリオの実行を時間の軸で記録する（`--timeline`）
+
+`run --scenario` に `--timeline <file>` を付けると、シナリオが書いた値と見た値を、仮想時刻の順に 1 つの JSON のファイルに書きます。グラフにする道具や、2 つの実行を比べる道具が読むためのファイルです。`vehicle_sil_launch version --json` の `features` に `timeline` があれば使えます。
+
+```sh
+vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml --timeline throttle_step.timeline.json
+```
+
+- ファイルは実行の後に書き、標準エラーに `[vehicle_sil_launch] timeline: <file>` の 1 行を出します（`--events` では `log` の事象）。`run --json` と `--events` の結果では、`scenario.timeline` にファイルの名前（引数のとおり）が入ります。**`--timeline` を付けない実行の出力は、何も変わりません。**
+- ファイルは、何かを起動する前に開きます（ディレクトリがなければ作ります）。開けなければ誤り `setup`（終了コード 3）で、何も起動しません。実行の後に書けなかったとき（ディスクがいっぱい、など）は、誤り `timeline-write` です。シナリオの結果（`scenario.status`）は変わりません。
+- シナリオが通っても、失敗しても、途中で終わっても書きます。照合の誤りで何も起動しなかったときは書きません。
+- `--scenario` のない `run` に付けると、引数の誤りです。`check` と `test` には付けられません。
+- 形は `schema/timeline.schema.json`（JSON Schema）にあります。改行はどの OS でも LF です。
+
+### ファイルの形
+
+時刻は全部、仮想時刻のミリ秒です（小数になりえます）。変数は、どこでも `"<participant>.<名前>"` の文字列で指します。
+
+| キー | 値 |
+|---|---|
+| `vehicle_sil_timeline` | この形式の版（今は 1） |
+| `vehicle_sil`、`stage` | vehicle-sil の版、`"run"`（実際の実行の記録） |
+| `file`、`variant`、`params` | 構成ファイル（引数のとおり）、機種（なければ `null`）、シナリオのパラメーターと効いた値（`check --json` の `scenario.params` と同じ形） |
+| `tick_ms` | controller の刻み |
+| `scenario` | `file`、`name`、`status`、`over_at_ms`（`run --json` と同じ）と、`recorded_to_ms`（下の「記録の終わり」） |
+| `variables[]` | シナリオが使う変数（最初に出た順）。`name`、`participant`、`type`、`causality`、`unit`、`min`、`max`、`items`（enum）、`ecu_step_ms`（その ECU のステップ幅）、`written`（シナリオが書く）、`watched`（条件が読む） |
+| `steps[]` | 手順。`run --json` の `scenario.steps[]` と同じキーに、`watch` と `failed` を足したもの |
+| `series[]` | 値の列（下） |
+| `findings[]` | 照合と実行の所見のうち、`code` が `scenario-` で始まるものと `timeline-write`（`run --json` と同じ形）。実行が遅れたことを言う所見（`control-link-late-values`、`behind-real-time`）は、`code` だけ |
+| `limits` | 点の数の上限と、捨てた点（下の「上限」） |
+
+読む側は、知らないキーを無視します。知らない値（系列の `source` と `encoding`、`watch` の `mode`、条件の `op`、手順の `kind` と `status`）は、その部分を描かずに名前と `text` を出します。形の版を上げずに、キーと値が増えることがあります。
+
+手順の `watch` は、その手順が見る条件です（条件のない手順では `null`）。
+
+| `mode` | 手順 | 見るもの | `until_ms` |
+|---|---|---|---|
+| `at` | その時点の `expect` | `from_ms` の時刻の値 | `null` |
+| `always` | `hold_for_ms` つきの `expect` | `from_ms` の値と、`until_ms` までの全部のサンプル | 手順の時刻 + `hold_for_ms` |
+| `once` | `within_ms` つきの `expect`、`wait_until` | `from_ms` の値と、その後のサンプル。成り立った時刻は手順の `at_ms` | 待つ上限 |
+| `during` | `ramp` と `wave` の横の `expect` | 時刻が `from_ms` から `until_ms` までのサンプルだけ | 終わりの値が ECU に入るステップ（手順の `end_ms` より後のことがある。[scenario.md](scenario.md) の「動かしている間ずっと確かめる」） |
+
+- `watch.conditions[]` は変数ごとで、`variable` と `compare[]`（`op` は `eq`、`ne`、`ge`、`le`、`gt`、`lt`、`near`。`value`。`near` には `tolerance`）です。
+- シナリオが届かなかった手順（`not_run`）の `from_ms` と `until_ms` は `null` です。
+
+失敗した手順の `failed` は、失敗の中身を数で持ちます（ほかの手順では `null`。人向けの文は `message`）。
+
+```json
+"failed": {
+  "at_ms": 1340,
+  "code": "scenario-failed",
+  "conditions": [
+    {
+      "condition": 0,
+      "value": 3050,
+      "sample_ms": 1340
+    }
+  ],
+  "write": null
+}
+```
+
+- `conditions[]` は、成り立たなかった条件の全部です。`condition` は `watch.conditions[]` の添字（0 から）、`value` と `sample_ms` は、そのときの値と、その値のサンプルの時刻です。値がまだなかった条件と、`during` の区間にサンプルが 1 つもなかった条件では、どちらも `null` です。
+- `write` は、適用されなかった書き込み（`variable`、`at_ms`、`value`。値を計算する前に失敗したときは `null`）です。書き込みの失敗でなければ `null` です。
+
+### 値の列（`series[]`）
+
+```json
+{
+  "variable": "Engine.engine.throttle",
+  "source": "written",
+  "encoding": "all",
+  "points": [
+    [0, 50],
+    [500, 50],
+    [510, 47.5]
+  ]
+}
+```
+
+| `source` | 中身 | `encoding` |
+|---|---|---|
+| `written` | シナリオが送った書き込みの全部。点は `[時刻, 値]` で、時刻は、その書き込みが効く時刻 | `all` |
+| `sampled` | シナリオが見たサンプルの値。条件が読む変数だけ | `changes`: 値が変わったサンプルだけが点になる。`samples`（見たサンプルの数）、`first_ms`、`last_ms`（最初と最後のサンプルの時刻）を別に持つ |
+
+- 記録するのは、シナリオが使う変数だけです。シナリオが書く変数に `written` の系列、条件が読む変数に `sampled` の系列があります（両方の変数には 2 つ）。順は `variables[]` の順で、1 つの変数では `written` が先です。
+- 点は 1 行に 1 つです。時刻は戻りません。同じ時刻の点が続くことがあり（`ramp` の終わりと次の `set`）、順は送った順です。
+- 値は、bool が `true` と `false`、enum が項目の値（名前は `variables[].items`）、数にならない real が `null` です。
+- サンプルは「ステップの終わりの値、時刻はステップの始まり」です（[scenario.md](scenario.md) の「値の見え方」）。`sampled` の値は、点から次の点まで（最後の点は `last_ms` まで）続くものとして読みます。
+- `changes` の「変わった」は、書いた文字が違うことです（`0` と `-0` は別、`null` が続けば同じ）。
+- `written` の点のうち、時刻が `scenario.over_at_ms` より後のもの（送ったが、どの ECU もその時刻まで進まなかった）があれば、系列の `not_applied_from` が、最初のその点の添字です。
+
+### 記録の終わり（`recorded_to_ms`）
+
+`scenario.recorded_to_ms` は、シナリオが決まった仮想時刻です。系列には、これ以前の点だけが入ります。
+
+| シナリオ | `recorded_to_ms` |
+|---|---|
+| 失敗した | 失敗した手順の `at_ms` |
+| 通った | 手順の `at_ms` のうち、いちばん後のもの |
+| 途中で終わった（`incomplete`） | 最後に見たサンプルの時刻（1 つも見ていなければ 0） |
+| 始まらなかった（`not_run`） | `null`（系列は空） |
+
+- controller は刻みごとにしかサンプルを見ないので、シナリオが終わったとわかる時刻（`over_at_ms`）は、決まった時刻より後です。その間のサンプルと書き込みは、ファイルに入れません。
+- **同じ実行からは、同じファイルができます。** 入っているのは仮想時刻で決まるものだけです（実時間、プロセス ID、遅れの数は入りません）。速さ（`--speed`）を変えても同じです。対象は、通った実行と、サンプルか待ち時間で失敗した実行です。ECU 自身が実時間や乱数で動くなら、値の列も変わります。
+- 通った実行と、サンプルか待ち時間で失敗した実行では、`over_at_ms` と `tick_ms` を除いて、controller の刻み（`time_step_ms`）を変えても同じファイルです。ただし、次のものは刻みによります（シナリオの結果が刻みによる所と同じです。[scenario.md](scenario.md) の「時刻」と「結果」）。
+  - 成り立った待つ手順（`wait_until`、`within_ms` つきの `expect`）の `end_ms` と、その後ろの手順の時刻。
+  - ある手順が失敗したとき、進行中だったほかの手順の `status`（`passed` か `unfinished` か）。
+  - 書き込みが適用されずに終わった実行の全部。
+- `incomplete` の実行と、`stop_at_ms` で終わった実行は、どこまで見たかが実時間で決まることがあるので、同じファイルになるとは限りません。
+
+### 上限
+
+系列の点が多すぎるときは、**古い側を捨て、新しい側を残します**（失敗のある終わりの側は、必ず全部残ります）。
+
+- 上限は、系列ごとに 100,000 点、全部の系列を合わせて 1,000,000 点です。数えるのは、`sampled` の点と、`written` のうち `ramp` と `wave` の点です。`set` の点は数えず、捨てません。
+- 全体の上限を超えたときは、点の多い系列から順に、同じ数になるまで古い側を捨てます。
+- `limits` に、上限（`points_per_series`、`points_total`）と、点を捨てた系列（`dropped[]`: `variable`、`source`、`dropped`（捨てた点の数）、`dropped_before_ms`（残った点のうち、いちばん古いものの時刻））があります。捨てていなければ `dropped` は空です。`sampled` の `samples` と `first_ms` は、捨てた点の分も含みます。
 
 ## シナリオをまとめて回す（`vehicle_sil_launch test`）
 

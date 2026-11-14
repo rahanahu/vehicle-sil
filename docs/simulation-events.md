@@ -227,7 +227,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
     "scenario",
     "manual-participants",
     "scenario-wave",
-    "scenario-motion-expect"
+    "scenario-motion-expect",
+    "timeline"
   ]
 }
 ```
@@ -252,6 +253,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `scenario` | `check --scenario` と `run --scenario`（[scenario.md](scenario.md)）: 結果と照合の JSON の `scenario`、事象 `scenario_step`、所見 `scenario-*`、所見の `file` がシナリオのファイルになること |
 | `scenario-wave` | シナリオの手順 `wave`（[scenario.md](scenario.md) の「波形で動かす（`wave`）」）、その手順の `undersampled`、所見 `scenario-wave-*`、結果と事象の手順の `kind` の `"wave"` |
 | `scenario-motion-expect` | シナリオの `ramp` と `wave` の横に書く `expect`（[scenario.md](scenario.md) の「動かしている間ずっと確かめる」）、結果と事象の手順の `expect_skipped` |
+| `timeline` | `run --scenario --timeline <file>`: シナリオの実行を時間の軸で記録したファイル（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）、結果の `scenario.timeline`、所見 `timeline-write` |
 | `control-server` | `run --control`（Control Server を持つビルドだけ）: 事象 `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ）: シナリオの実行中、クライアントは読む・待つ・止めるだけで、書く呼び出しと時刻を動かす呼び出しは `FAILED_PRECONDITION`（理由 `scenario-running`）で断る（[scenario.md](scenario.md) の「実行中に変数を見る」） |
 

@@ -141,6 +141,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       test_command
       test_interrupt
       time_usage
+      timeline
       timeout
       usage
       variable_map

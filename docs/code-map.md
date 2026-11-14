@@ -339,7 +339,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 ### `libs/launch`、`tools/launch`
 
-- 主なクラス・関数（ヘッダー）: `read_config()`（`launch/config.hpp`）、`check_file()`（`launch/check.hpp`）、`run_file()`、`TimeCommands`（`launch/run.hpp`）、`EventStream`、`parse_command()`（`launch/events.hpp`）、シナリオの `read_scenario()`、時間の関数の口 `Waveform`（`launch/scenario.hpp`）と `ScenarioEngine`（`launch/scenario_run.hpp`）。
+- 主なクラス・関数（ヘッダー）: `read_config()`（`launch/config.hpp`）、`check_file()`（`launch/check.hpp`）、`run_file()`、`TimeCommands`（`launch/run.hpp`）、`EventStream`、`parse_command()`（`launch/events.hpp`）、シナリオの `read_scenario()`、時間の関数の口 `Waveform`（`launch/scenario.hpp`）と `ScenarioEngine`（`launch/scenario_run.hpp`）、`run --timeline` の記録 `TimelineRecord` とファイルを作る `format_timeline_json()`（`launch/timeline.hpp`）。
   照合は `src/check.cpp`（段取り）、`src/describe_read.cpp`（`--describe` の JSON を読む）、`src/check_rules.cpp`（規則。
   ネットワークは種類ごとの関数）、`src/check_format.cpp`（出力）、構成とシナリオの読み手の共通の部分は `src/yaml_reader.hpp`、`run` は `src/run.cpp`（段取り）と部品の `src/run_*.cpp`、`src/time_commands.cpp`、このコンピューターのアドレス（ほかのコンピューターに示す URI）は `src/host_addresses.cpp`、仮想時間が進まないことを言う `StandStill` は `src/run_watch.cpp`（部品の分担と、どのスレッドがどの状態をどのロックで触るかは、`run.cpp` の先頭のコメントと各 `run_*.hpp` のクラスのコメント）、コマンドラインと標準入力・標準出力のスレッドは `tools/launch/main.cpp`、`run --control` の Control Server は `tools/launch/control_server.cpp`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）
 - 試験: `tests/launch`、`tests/multi_host`（2 つのコンピューター: Linux のネットワーク名前空間。
@@ -406,8 +406,8 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 ### `schema/`（構成ファイルとシナリオの JSON Schema）
 
-- 主なクラス・関数（ヘッダー）: `schema/simulation.schema.json`（構成ファイル）、`schema/scenario.schema.json`（シナリオ）。
-  エディターの補完と検査のためのもので、ランチャーは読みません（読み手は `libs/launch/src/config.cpp` と `scenario.cpp`）。
+- 主なクラス・関数（ヘッダー）: `schema/simulation.schema.json`（構成ファイル）、`schema/scenario.schema.json`（シナリオ）、`schema/timeline.schema.json`（`run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ひな形と道具の圧縮ファイルには入れていません）。
+  前の 2 つはエディターの補完と検査のためのもので、ランチャーは読みません（読み手は `libs/launch/src/config.cpp` と `scenario.cpp`）。
   ダッシュボードのスキーマは `gui/protocol/dashboard.schema.json` です。
   ひな形の `template/schema/` は 3 つの写しで、道具の圧縮ファイルの `schema/` にも同じ 3 つが入ります（`template/get_tools.py` が、道具の分をプロジェクトの `schema/` に写します）。
   例をビルドするときは、構成のときにビルドのディレクトリにも写します（最上位の `CMakeLists.txt`。写された例の YAML の 1 行目が、そこを指します）
@@ -417,7 +417,8 @@ registry につながらないときの文（`registry_failure_message()`）は�
   キーが文書の表にある。
   ひな形の写しが同じ。
   例とひな形の YAML の 1 行目がスキーマを指す。
-  ビルドのディレクトリに写された例の 1 行目の先に、スキーマの写しがある）。
+  ビルドのディレクトリに写された例の 1 行目の先に、スキーマの写しがある。
+  時間の軸のファイルは、基準のファイル（`tests/launch/timeline/`）と例の実行の出力がスキーマに通り、誤りのある形が落ちる）。
   PyYAML と jsonschema のある Python が要ります（`uv sync`。Windows は MSYS2 の `mingw-w64-ucrt-x86_64-python-jsonschema`。なければ、構成のときに理由を出して登録しません。
   CI は、`linux-gcc-debug` で `schema.files_and_launcher` が登録されたことを確かめます）
 - `ctest -R`: `^schema\.`（ランチャーなしの分は `scripts/verify-python.py` の `schema` の段でも回る）
@@ -897,6 +898,17 @@ flowchart TD
   例とひな形の YAML（`examples/`、`template/`）を足すときは、1 行目に `# yaml-language-server: $schema=<スキーマへの相対パス>` を書きます。
   既にある例の先頭のコメントは、行数を変えません（所見と手順の行番号が、文書の出力と GUI の試験の録った出力に出ているため）。
   試験は `schema.files_and_launcher`
+
+- 変えるもの: 時間の軸のファイル（`run --scenario --timeline`。
+  記録は `libs/launch/src/timeline.cpp` の `TimelineRecord`（上限と、古い側を捨てる決まりもここ）、記録に入れる所は `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`）、ファイルの形は `timeline.cpp` の `format_timeline_json()`、1 行に 1 点は `JsonWriter::begin_array_on_one_line()`（`libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp`）、ファイルを開く所と書く所は `run.cpp` の `Runner::open_timeline()` と `write_timeline()`、所見 `timeline-write` は `run_assess.cpp`、引数は `tools/launch/main.cpp`）
+
+  合わせて直すもの: `schema/timeline.schema.json`、[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」、基準のファイル `tests/launch/timeline/*.timeline.json`（手で直さない。作り直し方と比べないキーは、そのディレクトリの `README.md`）。
+  守ること: 記録は、シナリオのスレッド（と、始まる前の窓のスレッドの `begin()`）でだけ行う。Hub の tap の中では何もしない。
+  記録の口がない（`--timeline` なし）とき、エンジンの動きと `run` の出力は 1 つも変わらない。
+  ファイルに入れるのは、仮想時刻で決まるものだけ（実時間、プロセス ID、遅れの数を入れない）。
+  キーと値は足すだけにし、読む側が知らないものを無視できる形を保つ（スキーマは値を `enum` で閉じない）。
+  基準のシナリオには `sine`、`chirp`、`lag` を入れない（最後のビットが C ライブラリで違いうるので、バイト単位で比べられない）。
+  試験は `launch.timeline_*`（刻みによらないこと、基準のファイル、上限、サンプルの数え方）、`launch_run.timeline`（本物のランチャー: 2 回回して同じ、速さを変えて同じ、開けないファイル、失敗する実行、引数）、`schema.files_and_launcher`
 
 - 変えるもの: シナリオ（`run --scenario`、`check --scenario`。
   読み方と照合は `libs/launch/src/scenario.cpp`、手順を進める機械は `libs/launch/src/scenario_run.cpp`、`ramp` と `wave` の値を出す関数（`Waveform` の実装）は `libs/launch/src/scenario_shapes.cpp`、その計算は `libs/signal` の `signal/waveform.hpp`、ランチャーへのつなぎ込みは `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`）、時間のゲートのガードは `SimulationController::guard_from()` と `wait_guarded()`、全サンプルを受ける口は `control::Hub::set_values_tap()`）

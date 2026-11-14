@@ -154,8 +154,9 @@ ScenarioRun scenario_not_run(const Scenario& scenario)
     return run;
 }
 
-ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step) :
-  scenario_(scenario), tick_(tick), port_(port), on_step_(std::move(on_step))
+ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step,
+                               TimelineRecord* record) :
+  scenario_(scenario), tick_(tick), port_(port), on_step_(std::move(on_step)), record_(record)
 {
     if (tick_ <= SimDuration::zero())
     {
@@ -221,6 +222,7 @@ void ScenarioEngine::begin(const std::vector<EnginePeer>& peers)
     if (scenario_.steps.empty())
     {
         finish(ScenarioStatus::Passed);
+        close_record();
         return;
     }
     issue();
@@ -228,6 +230,7 @@ void ScenarioEngine::begin(const std::vector<EnginePeer>& peers)
     {
         submit(SimTime{} - SimDuration(1), SimTime{}, true);
     }
+    close_record();
 }
 
 void ScenarioEngine::sample(std::size_t participant, std::shared_ptr<const control::Snapshot> sample)
@@ -261,6 +264,7 @@ bool ScenarioEngine::tick(SimTime p)
     {
         run_.over_at = p;
     }
+    close_record();
     return over_;
 }
 
@@ -279,6 +283,7 @@ void ScenarioEngine::stopped_at(SimTime p)
     if (over_)
     {
         run_.over_at = p;
+        close_record();
         return;
     }
     for (std::size_t i = 0; i < run_.steps.size(); ++i)
@@ -295,6 +300,7 @@ void ScenarioEngine::stopped_at(SimTime p)
                      ": there was not enough time for the scenario; raise stop_at_ms, or leave it out (the run then ends "
                      "with the scenario)");
             run_.over_at = p;
+            close_record();
             return;
         }
     }
@@ -305,6 +311,7 @@ void ScenarioEngine::cut_short()
     if (!over_ && begun_)
     {
         finish(ScenarioStatus::Incomplete);
+        close_record();
     }
 }
 
@@ -326,6 +333,7 @@ void ScenarioEngine::superseded()
     }
     run_.over_at.reset();
     finish(ScenarioStatus::Incomplete);
+    close_record();
 }
 
 void ScenarioEngine::issue()
@@ -359,8 +367,26 @@ bool ScenarioEngine::unusable(std::size_t index, SimTime time)
     {
         if (!variables_[v].problem.empty())
         {
+            TimelineFailure failure;
+            if (writes)
+            {
+                const auto set = std::find_if(step.writes.begin(), step.writes.end(), [v = v](const ScenarioWrite& w) { return w.variable == v; });
+                failure.write = TimelineFailedWrite{
+                    v, time, set == step.writes.end() ? std::nullopt : std::optional<control::Value>(set->value)};
+            }
+            else
+            {
+                for (std::size_t c = 0; c < step.conditions.size(); ++c)
+                {
+                    if (step.conditions[c].variable == v)
+                    {
+                        failure.conditions.push_back(TimelineFailedCondition{c, std::nullopt, std::nullopt});
+                    }
+                }
+            }
             fail(index, time, writes ? "scenario-write" : "scenario-failed",
-                 scenario_.variables[v].text + " cannot be " + (writes ? "written" : "read") + ": " + variables_[v].problem);
+                 scenario_.variables[v].text + " cannot be " + (writes ? "written" : "read") + ": " + variables_[v].problem,
+                 std::move(failure));
             return true;
         }
     }
@@ -448,6 +474,10 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
             watch.hold = true;
             watch.beside = true;
             watches_.push_back(watch);
+            if (record_ != nullptr)
+            {
+                record_->watch(index, TimelineRecord::Watch{WatchMode::During, watch.from, watch.until});
+            }
             ++open_writes_[index];
         }
         break;
@@ -476,6 +506,11 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
             base_ = time;
         }
         watches_.push_back(watch);
+        if (record_ != nullptr)
+        {
+            record_->watch(index, TimelineRecord::Watch{!watch.until ? WatchMode::At : watch.hold ? WatchMode::Always : WatchMode::Once,
+                                                        watch.from, watch.until});
+        }
         break;
     }
     }
@@ -512,8 +547,12 @@ void ScenarioEngine::pass(std::size_t index, SimTime at, SimTime end)
     }
 }
 
-void ScenarioEngine::fail(std::size_t index, SimTime at, std::string code, std::string message)
+void ScenarioEngine::fail(std::size_t index, SimTime at, std::string code, std::string message, TimelineFailure failure)
 {
+    if (record_ != nullptr)
+    {
+        record_->failed(index, std::move(failure));
+    }
     started(index);
     ScenarioStepRun& step = run_.steps[index];
     step.status = StepStatus::Failed;
@@ -548,8 +587,68 @@ void ScenarioEngine::finish(ScenarioStatus status)
             step.end.reset();
         }
     }
+    if (record_ != nullptr && !record_closed_)
+    {
+        // Not looked at, and nothing is decided by them any more: for the record (close_record()).
+        for (std::size_t i = 0; i < samples_.size(); ++i)
+        {
+            for (auto& sample : samples_[i])
+            {
+                left_.emplace_back(i, std::move(sample));
+            }
+        }
+    }
     samples_.clear();
     samples_.resize(scenario_.participants.size());
+}
+
+void ScenarioEngine::close_record()
+{
+    if (record_ == nullptr || record_closed_ || !over_)
+    {
+        return;
+    }
+    record_closed_ = true;
+    // Recorded to: the time that decided the scenario.
+    SimTime to = last_seen_.value_or(SimTime{});
+    if (run_.status != ScenarioStatus::Incomplete)
+    {
+        to = SimTime{};
+        for (const ScenarioStepRun& step : run_.steps)
+        {
+            if (step.at && step.status == StepStatus::Failed)
+            {
+                to = *step.at;
+                break;
+            }
+            if (step.at && step.status == StepStatus::Passed)
+            {
+                to = std::max(to, *step.at);
+            }
+        }
+        // The samples up to it that were not looked at. Those of steps before the controller's
+        // step being handled have all arrived; a later one is there in one run and not in another.
+        std::stable_sort(left_.begin(), left_.end(), [](const auto& a, const auto& b) {
+            return a.second->time != b.second->time ? a.second->time < b.second->time : a.first < b.first;
+        });
+        for (const auto& [participant, sample] : left_)
+        {
+            if (sample->time > to || sample->time >= now_)
+            {
+                continue;
+            }
+            for (std::size_t v = 0; v < variables_.size(); ++v)
+            {
+                if (scenario_.variables[v].participant == participant && variables_[v].index &&
+                    *variables_[v].index < sample->values.size())
+                {
+                    record_->sampled(v, sample->time, sample->values[*variables_[v].index]);
+                }
+            }
+        }
+    }
+    left_.clear();
+    record_->close(to);
 }
 
 // --- writes ---
@@ -580,9 +679,12 @@ bool ScenarioEngine::submit_one(Write write)
             else
             {
                 const std::string kind = step_kind_name(scenario_.steps[write.step].kind);
+                TimelineFailure failure;
+                failure.write = TimelineFailedWrite{signal.signal.variable, write.at, std::nullopt};
                 fail(write.step, write.at, "scenario-write",
                      "the " + kind + " of " + v.text + " has no value to start from: no sample of its ECU has arrived before " +
-                         ms_text(write.at) + " ms and the scenario has not written it; " + signal.signal.hint);
+                         ms_text(write.at) + " ms and the scenario has not written it; " + signal.signal.hint,
+                     std::move(failure));
                 return false;
             }
         }
@@ -596,6 +698,10 @@ bool ScenarioEngine::submit_one(Write write)
         const ScenarioVariable& v = scenario_.variables[w.variable];
         out.push_back(control::PeerWrite{scenario_.participants[v.participant].name, v.name, w.value});
         variables_[w.variable].written = w.value;
+        if (record_ != nullptr)
+        {
+            record_->written(w.variable, write.at, w.value, write.signal.has_value());
+        }
     }
     write.ticket = port_.write(std::move(out), write.at);
     write.judge = judge_time(write.writes, write.at);
@@ -608,7 +714,8 @@ bool ScenarioEngine::submit_one(Write write)
             {
                 fail(write.step, write.at, "scenario-write",
                      "the write for " + ms_text(write.at) + " ms was not taken by participant '" + target.peer + "': " +
-                         target_status_text(target.status) + (target.reason.empty() ? "" : " (" + target.reason + ")"));
+                         target_status_text(target.status) + (target.reason.empty() ? "" : " (" + target.reason + ")"),
+                     failed_write(write.writes, write.at, target.peer));
                 return false;
             }
         }
@@ -717,7 +824,8 @@ void ScenarioEngine::judge(SimTime p)
                          (control::is_final(target.status)
                               ? ""
                               : "; at " + ms_text(p) + " ms the result of the ECU's step at or after " + ms_text(write.at) +
-                                    " ms should be there (does the ECU step as --describe says?)"));
+                                    " ms should be there (does the ECU step as --describe says?)"),
+                     failed_write(write.writes, write.at, target.peer));
                 return;
             }
             if (target.applied_at)
@@ -735,6 +843,47 @@ void ScenarioEngine::judge(SimTime p)
 
 // --- samples ---
 
+bool ScenarioEngine::is_unmet(const ScenarioCondition& condition, std::optional<SimTime> since, bool& judged) const
+{
+    const Variable& known = variables_[condition.variable];
+    judged = !(since && (!known.value_time || *known.value_time < *since));
+    if (!judged)
+    {
+        return false; // no sample of its ECU from `since` yet: not judged
+    }
+    return !(known.value && std::all_of(condition.all.begin(), condition.all.end(),
+                                        [&](const ScenarioComparison& c) { return holds(c, *known.value); }));
+}
+
+TimelineFailure ScenarioEngine::unmet_values(const ScenarioStep& step, std::optional<SimTime> since) const
+{
+    TimelineFailure out;
+    for (std::size_t i = 0; i < step.conditions.size(); ++i)
+    {
+        bool judged = false;
+        if (is_unmet(step.conditions[i], since, judged))
+        {
+            const Variable& known = variables_[step.conditions[i].variable];
+            out.conditions.push_back(TimelineFailedCondition{i, known.value, known.value ? known.value_time : std::nullopt});
+        }
+    }
+    return out;
+}
+
+TimelineFailure ScenarioEngine::failed_write(const std::vector<ScenarioWrite>& writes, SimTime at, const std::string& peer) const
+{
+    TimelineFailure out;
+    for (const ScenarioWrite& w : writes)
+    {
+        if (scenario_.participants[scenario_.variables[w.variable].participant].name == peer)
+        {
+            out.write = TimelineFailedWrite{w.variable, at, w.value};
+            break;
+        }
+    }
+    return out;
+}
+
 std::string ScenarioEngine::unmet(const ScenarioStep& step, std::optional<SimTime> since) const
 {
     std::string out;
@@ -742,14 +891,8 @@ std::string ScenarioEngine::unmet(const ScenarioStep& step, std::optional<SimTim
     {
         const Variable& known = variables_[condition.variable];
         const ScenarioVariable& v = scenario_.variables[condition.variable];
-        if (since && (!known.value_time || *known.value_time < *since))
-        {
-            continue; // no sample of its ECU from `since` yet: not judged
-        }
-        const bool met = known.value && std::all_of(condition.all.begin(), condition.all.end(), [&](const ScenarioComparison& c) {
-            return holds(c, *known.value);
-        });
-        if (met)
+        bool judged = false;
+        if (!is_unmet(condition, since, judged))
         {
             continue;
         }
@@ -773,7 +916,7 @@ void ScenarioEngine::evaluate(Watch& watch, SimTime t)
         }
         else
         {
-            fail(watch.step, t, "scenario-failed", "not true at " + ms_text(t) + " ms: " + unmetNow);
+            fail(watch.step, t, "scenario-failed", "not true at " + ms_text(t) + " ms: " + unmetNow, unmet_values(step));
         }
         watch.step = run_.steps.size(); // decided
     }
@@ -784,7 +927,8 @@ void ScenarioEngine::evaluate(Watch& watch, SimTime t)
             fail(watch.step, t, "scenario-failed",
                  (watch.beside ? "not true during the " + std::string(step_kind_name(step.kind)) + " (" + during(watch.step, watch) + ")"
                                : "not true for " + std::to_string(*step.hold_for_ms) + " ms (from " + ms_text(watch.from) + " ms)") +
-                     ": at " + ms_text(t) + " ms " + unmetNow);
+                     ": at " + ms_text(t) + " ms " + unmetNow,
+                 unmet_values(step, watch.beside ? std::optional<SimTime>(watch.from) : std::nullopt));
             watch.step = run_.steps.size();
         }
     }
@@ -808,12 +952,15 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
     {
         // A variable whose ECU sent no sample in the time was not looked at: that is no pass.
         std::string unseen;
-        for (const ScenarioCondition& condition : step.conditions)
+        TimelineFailure notSeen;
+        for (std::size_t c = 0; c < step.conditions.size(); ++c)
         {
+            const ScenarioCondition& condition = step.conditions[c];
             const Variable& known = variables_[condition.variable];
             if (!known.value_time || *known.value_time < watch.from)
             {
                 unseen += (unseen.empty() ? "" : ", ") + scenario_.variables[condition.variable].text;
+                notSeen.conditions.push_back(TimelineFailedCondition{c, std::nullopt, std::nullopt});
             }
         }
         if (!unseen.empty())
@@ -821,7 +968,8 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
             fail(index, t, "scenario-failed",
                  "not checked during the " + std::string(step_kind_name(step.kind)) + " (" + during(index, watch) + "): no sample of " +
                      unseen + " in that time (its ECU sends one every sample_period); make the " + step_kind_name(step.kind) +
-                     " longer, or check in an expect step with within_ms after it");
+                     " longer, or check in an expect step with within_ms after it",
+                 std::move(notSeen));
             return;
         }
         // The expect beside it held to the end: the step passes once its writes have, too.
@@ -839,13 +987,15 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
     {
         fail(index, t, "scenario-timeout",
              "timed out at " + ms_text(t) + " ms (" + std::to_string(*step.within_ms) + " ms after " + ms_text(watch.from) +
-                 " ms): " + unmet(step));
+                 " ms): " + unmet(step),
+             unmet_values(step));
     }
     else
     {
         fail(index, t, "scenario-failed",
              "not true at any time within " + std::to_string(*step.within_ms) + " ms (from " + ms_text(watch.from) + " ms to " +
-                 ms_text(t) + " ms): at the end " + unmet(step));
+                 ms_text(t) + " ms): at the end " + unmet(step),
+             unmet_values(step));
     }
 }
 
@@ -904,6 +1054,7 @@ void ScenarioEngine::observe(SimTime p)
             for (; next < batch.size() && batch[next].time == t; ++next)
             {
                 const Taken& taken = batch[next];
+                last_seen_ = t;
                 for (std::size_t v = 0; v < variables_.size(); ++v)
                 {
                     Variable& variable = variables_[v];
@@ -912,6 +1063,10 @@ void ScenarioEngine::observe(SimTime p)
                     {
                         variable.value = taken.sample->values[*variable.index];
                         variable.value_time = t;
+                        if (record_ != nullptr)
+                        {
+                            record_->sampled(v, t, *variable.value);
+                        }
                     }
                 }
             }
@@ -961,6 +1116,14 @@ void ScenarioEngine::observe(SimTime p)
                     issue();
                 }
             }
+        }
+    }
+    if (over_ && record_ != nullptr && !record_closed_)
+    {
+        // Taken out of samples_ above and not looked at: for the record, as finish() does.
+        for (; next < batch.size(); ++next)
+        {
+            left_.emplace_back(batch[next].participant, std::move(batch[next].sample));
         }
     }
 }
