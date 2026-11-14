@@ -683,7 +683,7 @@ flowchart TD
   試験は `^launch\.`（`test_events.cpp`）と `launch_run.events_stalled`、`events_slow`、`events_nonblocking`
 
 - 変えるもの: `run` の時間（速さ、一時停止、ステップ送り、遅れ。
-  `libs/launch/src/time_commands.cpp` の `TimeCommands`、`run_assess.cpp` の `detail::plan_time_step()`（controller の刻みの既定）と `RunTiming::actual_speed()`、`run_notes.cpp` の `RunNotes::note_time()`、`run_watch.cpp` の `RunWatch::note_timing()`。
+  `libs/launch/src/time_commands.cpp` の `TimeCommands`、`run_assess.cpp` の `detail::plan_time_step()`（controller の刻みの既定）と `RunTiming::actual_speed()`、`run_notes.cpp` の `RunNotes::note_time()`（`time` の `paused` の決め方は `run_notes.hpp` の `detail::noted_paused()`）、`run_watch.cpp` の `RunWatch::note_timing()`。
   時間のゲートは `libs/core/src/simulation_controller.cpp`、その状態と遅れの計算は `libs/core/src/time_gate.cpp`（時計を持たない）、期限までの待ちは `libs/core/src/deadline_waiter.cpp`）
 
   合わせて直すもの: [simulation-run.md](simulation-run.md) の「等速で動かす」（遅れの定義、遅れたときに起きること、刻みと ECU のステップ）、構成のキーの表、`time` と `command` の事象、命令の表、`timing` の表、所見の表（`behind-real-time`、`coarse-time-step`）、`features` の表。
