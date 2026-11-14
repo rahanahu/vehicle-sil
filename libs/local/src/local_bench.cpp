@@ -530,7 +530,9 @@ private:
         // The host must not keep a channel that is not kept here: push_back() cannot throw
         // after the reserve(). (An endpoint stays on its network once attached.)
         ethernet_.reserve(ethernet_.size() + 1);
-        eth::VirtualEthernetBus::Endpoint& endpoint = owner_.use_ethernet_bus(network).attach();
+        // Room for receive_capacity frames in every step, in whatever order the ECUs are stepped.
+        eth::VirtualEthernetBus::Endpoint& endpoint =
+            owner_.use_ethernet_bus(network).attach(eth::Channel::port_inbox_capacity(options));
         e->gate = std::make_unique<detail::GatedEthPort>(endpoint, agent_.connection());
         e->channel = std::make_unique<eth::Channel>(*e->gate, std::move(options));
         host_->add(*e->channel);

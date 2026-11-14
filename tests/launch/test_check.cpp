@@ -508,7 +508,10 @@ TEST_CASE(an_ethernet_network_has_one_mac_address_per_participant)
     s.results[1].ecu->description.networks[0].mac = one;
     check_text(s.check(), "E 3 ethernet-duplicate-mac: network 'Backbone': Camera and Display have the same MAC address "
                           "02:00:00:00:00:01, so their frames cannot be told apart: give each its own address "
-                          "(eth::ChannelOptions::mac, and the source address of the frames it sends)\n");
+                          "(eth::ChannelOptions::mac, and the source address of the frames it sends). If they share "
+                          "the address on purpose, leave ChannelOptions::mac unset on all but one of them: the check "
+                          "then only notes it (ethernet-mac-unknown), and frames they send in the same step arrive in "
+                          "an order that can differ between runs\n");
     // Two without an address: one note for both, and no guess that they are the same.
     s.results[0].ecu->description.networks[0].mac.reset();
     s.results[1].ecu->description.networks[0].mac.reset();

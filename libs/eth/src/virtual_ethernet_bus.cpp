@@ -25,8 +25,17 @@ VirtualEthernetBus::VirtualEthernetBus(VirtualEthernetBusOptions options) : opti
 
 VirtualEthernetBus::Endpoint& VirtualEthernetBus::attach()
 {
+    return attach(options_.inbox_capacity);
+}
+
+VirtualEthernetBus::Endpoint& VirtualEthernetBus::attach(std::size_t inbox_capacity)
+{
+    if (inbox_capacity == 0)
+    {
+        throw std::invalid_argument(std::string(kWho) + "attach(): inbox_capacity must be > 0");
+    }
     // Endpoint's constructor is private; make_unique cannot reach it.
-    endpoints_.push_back(std::unique_ptr<Endpoint>(new Endpoint(*this, options_.inbox_capacity)));
+    endpoints_.push_back(std::unique_ptr<Endpoint>(new Endpoint(*this, inbox_capacity)));
     return *endpoints_.back();
 }
 

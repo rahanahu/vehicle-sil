@@ -35,7 +35,8 @@ struct ChannelOptions
     /// SendStatus::QueueFull. Allocated once.
     std::size_t send_capacity = 256;
     /// Received frames kept for one step (> 0). Further frames of that step are dropped and
-    /// counted (ChannelStatistics::receive_overflows). Allocated once.
+    /// counted (ChannelStatistics::receive_overflows). Allocated once. The port below must be
+    /// able to hold more than this between two steps: Channel::port_inbox_capacity().
     std::size_t receive_capacity = 1024;
     /// Longest frame, in bytes without the frame check sequence, that send() takes and that is
     /// handed over on receiving (longer received frames are dropped and counted). From
@@ -123,6 +124,15 @@ public:
     /// Throws what the constructor throws for `options` (for a caller that must know before it
     /// makes the port).
     static void validate(const ChannelOptions& options);
+    /// The receive inbox a port needs so that it drops nothing while no step of the channel
+    /// gets more than `options.receive_capacity` frames: twice that. When a step at time t
+    /// starts, the inbox holds the frames the step takes (times before t) and, from senders
+    /// whose step at t ran first, frames with the time t, which belong to the next step. A
+    /// sender cannot be further ahead (the hosts step in time order; SIL Kit's time
+    /// synchronization does the same), so each part is at most receive_capacity, whatever the
+    /// senders' step sizes. Frames from senders outside the time synchronization are not
+    /// covered. Saturates instead of overflowing.
+    [[nodiscard]] static std::size_t port_inbox_capacity(const ChannelOptions& options) noexcept;
     Channel(const Channel&) = delete;
     Channel& operator=(const Channel&) = delete;
 

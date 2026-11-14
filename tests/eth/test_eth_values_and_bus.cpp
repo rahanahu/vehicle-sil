@@ -196,3 +196,24 @@ TEST_CASE(virtual_bus_counts_and_reports_inbox_overflow)
     CHECK_EQ(events[0].count, 2u);
     CHECK_EQ(release(b, at(10ms)).size(), 2u);
 }
+
+TEST_CASE(virtual_bus_gives_an_endpoint_the_inbox_asked_for)
+{
+    VirtualEthernetBusOptions options;
+    options.inbox_capacity = 2;
+    VirtualEthernetBus bus(options);
+    auto& a = bus.attach();
+    auto& small = bus.attach();
+    auto& large = bus.attach(3);
+    for (std::uint8_t i = 0; i < 4; ++i)
+    {
+        CHECK(a.send(TimedFrame{at(1ms), make_frame(kBroadcast, mac(1), 1, i)}) == SendResult::Accepted);
+    }
+    CHECK_EQ(small.pending(), 2u);
+    CHECK_EQ(small.overflows(), 2u);
+    CHECK_EQ(large.pending(), 3u);
+    CHECK_EQ(large.overflows(), 1u);
+    CHECK(throws_with<std::invalid_argument>(
+        [&] { bus.attach(0); }, "vehicle_sil::eth::VirtualEthernetBus: attach(): inbox_capacity must be > 0"));
+    CHECK_EQ(bus.endpoint_count(), 3u);
+}

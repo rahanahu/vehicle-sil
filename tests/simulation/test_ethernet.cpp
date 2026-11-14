@@ -133,6 +133,116 @@ Records run(std::optional<SilKitOptions> silkit)
             echo.channel.statistics().frames_sent};
 }
 
+/// A broadcast frame from `from` that carries the number `n` (16 bits).
+eth::Frame numbered(const eth::MacAddress& from, unsigned n)
+{
+    std::array<std::uint8_t, eth::kHeaderBytes + 2> bytes{};
+    std::copy(eth::kBroadcast.bytes.begin(), eth::kBroadcast.bytes.end(), bytes.begin());
+    std::copy(from.bytes.begin(), from.bytes.end(), bytes.begin() + 6);
+    bytes[12] = 0x88;
+    bytes[13] = 0xB5;
+    bytes[14] = static_cast<std::uint8_t>(n >> 8);
+    bytes[15] = static_cast<std::uint8_t>(n);
+    return *eth::Frame::from(bytes);
+}
+
+/// Sends `count` broadcast frames in every step, numbered through the run.
+class Burst
+{
+public:
+    Burst(Ecu& ecu, std::uint8_t address, int count) : channel(ecu.ethernet("ETH", {.mac = mac(address)}))
+    {
+        ecu.on_step([this, address, count](SimTime) {
+            for (int i = 0; i < count; ++i)
+            {
+                CHECK(channel.send(numbered(mac(address), next_++)) == eth::SendStatus::Ok);
+            }
+        });
+    }
+    eth::Channel& channel;
+
+private:
+    unsigned next_ = 0;
+};
+
+/// Hears everything; writes down each frame with the step it arrived in.
+/// "<step ms> from <xx> n <number> sent <ms>"
+class Sink
+{
+public:
+    Sink(Ecu& ecu, eth::ChannelOptions options) : channel(ecu.ethernet("ETH", std::move(options)))
+    {
+        channel.on_frame([this](const eth::TimedFrame& f) { arrived_.push_back(f); });
+        ecu.on_step([this](SimTime now) {
+            for (const auto& f : arrived_)
+            {
+                char text[96];
+                std::snprintf(text, sizeof text, "%lld from %02x n %u sent %lld", ms_of(now),
+                              static_cast<unsigned>(f.frame.source().bytes[5]),
+                              static_cast<unsigned>(f.frame.bytes()[14]) << 8 | f.frame.bytes()[15], ms_of(f.time));
+                log.push_back(text);
+            }
+            arrived_.clear();
+        });
+    }
+    eth::Channel& channel;
+    std::vector<std::string> log;
+
+private:
+    std::vector<eth::TimedFrame> arrived_;
+};
+
+/// A sender of a load: `frames` in every step of `step`.
+struct Load
+{
+    std::chrono::milliseconds step;
+    int frames;
+};
+
+struct Heard
+{
+    std::vector<std::string> log;
+    std::uint64_t received = 0;
+    std::uint64_t overflows = 0;      ///< the channel's: more than receive_capacity in one step
+    std::uint64_t port_overflows = 0; ///< the port's inbox
+};
+
+/// The senders (addresses 0x11, 0x12, ... in the order given) and then the sink: on the local
+/// network the sink's step runs after the senders' of the same time, so its inbox holds their
+/// frames of that time besides the ones it is about to take.
+Heard hear(const std::optional<SilKitOptions>& silkit, eth::ChannelOptions sink, std::chrono::milliseconds sinkStep,
+           const std::vector<Load>& senders, std::chrono::milliseconds duration)
+{
+    Simulation sim(silkit);
+    std::uint8_t address = 0x11;
+    for (const auto& s : senders)
+    {
+        sim.add<Burst>("Sender" + std::to_string(address), s.step, address, s.frames);
+        ++address;
+    }
+    sink.mac = mac(0x09);
+    auto& heard = sim.add<Sink>("Sink", sinkStep, std::move(sink));
+    sim.run_for(duration);
+    const auto statistics = heard.channel.statistics();
+    return {heard.log, statistics.frames_received, statistics.receive_overflows, statistics.port_receive_overflows};
+}
+
+/// The load loses nothing and leaves the same record on both runtimes.
+void check_nothing_is_lost(const eth::ChannelOptions& sink, std::chrono::milliseconds sinkStep,
+                           const std::vector<Load>& senders, std::chrono::milliseconds duration, std::uint64_t expected)
+{
+    const Heard local = hear(std::nullopt, sink, sinkStep, senders, duration);
+    CHECK_EQ(local.overflows, std::uint64_t{0});
+    CHECK_EQ(local.port_overflows, std::uint64_t{0});
+    CHECK_EQ(local.received, expected);
+    CHECK_EQ(local.log.size(), static_cast<std::size_t>(expected));
+    const Heard silkit = hear(SilKitOptions{}, sink, sinkStep, senders, duration);
+    CHECK_EQ(silkit.overflows, std::uint64_t{0});
+    CHECK_EQ(silkit.port_overflows, std::uint64_t{0});
+    CHECK_EQ(silkit.received, expected);
+    CHECK(silkit.log == local.log);
+}
+
 std::string joined(const std::vector<std::string>& lines)
 {
     std::string out;
@@ -204,6 +314,43 @@ TEST_CASE(ethernet_frames_arrive_in_the_next_step_in_the_same_order_locally_and_
     for (int i = 0; i < 3; ++i)
     {
         check(run(SilKitOptions{}));
+    }
+}
+
+TEST_CASE(ethernet_loses_no_frame_up_to_receive_capacity_frames_in_a_step)
+{
+    // Two senders, 3 frames each in every step of 1 ms, into a channel that keeps 8 for a step.
+    // Frames of 0..198 ms arrive by the step of 199 ms.
+    check_nothing_is_lost({.receive_capacity = 8}, 1ms, {{1ms, 3}, {1ms, 3}}, 200ms, 6 * 199);
+    // Eight senders, one frame each: exactly receive_capacity in every step. On SIL Kit, a sender's
+    // frame of a time often arrives before the sink's step of that time starts.
+    check_nothing_is_lost({.receive_capacity = 8}, 1ms, std::vector<Load>(8, Load{1ms, 1}), 500ms, 8 * 499);
+    // Exactly receive_capacity in every step of the sink, from senders with other steps.
+    // The sink's steps of 10..90 ms take 2 * 2 + 4 frames each.
+    check_nothing_is_lost({.receive_capacity = 8}, 10ms, {{5ms, 2}, {10ms, 4}}, 100ms, 8 * 9);
+    // The sink's steps of 5, 15, ..., 95 ms take 4 + 4 frames each.
+    check_nothing_is_lost({.receive_capacity = 8}, 5ms, {{10ms, 4}, {10ms, 4}}, 100ms, 8 * 10);
+}
+
+TEST_CASE(ethernet_loses_no_frame_with_the_default_capacities)
+{
+    // Three senders that fill their send_capacity (256) in every step: 768 of the 1024 frames the
+    // sink keeps for a step.
+    check_nothing_is_lost({}, 1ms, {{1ms, 256}, {1ms, 256}, {1ms, 256}}, 5ms, 768 * 4);
+    // More than the default: receive_capacity alone decides, also the size of the port's inbox.
+    check_nothing_is_lost({.receive_capacity = 1536}, 1ms, std::vector<Load>(6, Load{1ms, 256}), 5ms, 1536 * 4);
+}
+
+TEST_CASE(ethernet_counts_the_frames_beyond_receive_capacity)
+{
+    // 9 frames in a step for a channel that keeps 8: every frame is handed over or counted as lost
+    // (by the channel or by the port's inbox), on both runtimes.
+    for (const bool silkit : {false, true})
+    {
+        const Heard heard = hear(on(silkit), {.receive_capacity = 8}, 1ms, {{1ms, 3}, {1ms, 3}, {1ms, 3}}, 50ms);
+        CHECK(heard.overflows + heard.port_overflows >= std::uint64_t{49});
+        CHECK(heard.received <= std::uint64_t{8 * 49});
+        CHECK_EQ(heard.log.size(), static_cast<std::size_t>(heard.received));
     }
 }
 

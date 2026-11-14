@@ -647,8 +647,9 @@ eth::Channel& Peer::add_ethernet(const std::string& network, eth::ChannelOptions
     {
         auto* controller = runtime_->participant().CreateEthernetController(network, network);
         eth::SilKitEthPortOptions portOptions;
-        // What one step of the channel may hold, and an acknowledgement for each frame of a step.
-        portOptions.inbox_capacity = options.receive_capacity;
+        // Room for receive_capacity frames in every step whenever they arrive, and an
+        // acknowledgement for each frame of a step.
+        portOptions.inbox_capacity = eth::Channel::port_inbox_capacity(options);
         portOptions.event_capacity = std::max(portOptions.event_capacity, options.send_capacity);
         e.port = std::make_unique<eth::SilKitEthPort>(*controller, portOptions);
         e.gate = std::make_unique<detail::GatedEthPort>(*e.port, agent_.connection());

@@ -2,6 +2,7 @@
 #include "vehicle_sil/eth/channel.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -28,6 +29,12 @@ void Channel::validate(const ChannelOptions& options)
     {
         throw std::invalid_argument(std::string(kWho) + "Accept::Addressed needs the channel's own address (mac)");
     }
+}
+
+std::size_t Channel::port_inbox_capacity(const ChannelOptions& options) noexcept
+{
+    constexpr std::size_t kMax = std::numeric_limits<std::size_t>::max();
+    return options.receive_capacity > kMax / 2 ? kMax : options.receive_capacity * 2;
 }
 
 Channel::Channel(Port& port, ChannelOptions options) : port_(&port), options_(std::move(options))
