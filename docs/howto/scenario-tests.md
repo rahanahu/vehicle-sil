@@ -45,7 +45,7 @@ steps:
     within_ms: 100
 ```
 
-- 手順は上から順に進みます。1 つの手順に、動作（`set`、`ramp`、`wave`、`wait_until`、`expect`）を 1 つと、時刻を書きます。
+- 手順は上から順に進みます。1 つの手順に、動作（`set`、`ramp`、`wave`、`wait_until`、`expect`）を 1 つと、時刻を書きます。`ramp` と `wave` にだけは、横に `expect` を並べられます（下の表）。
 - 時刻は `at_ms`（仮想時刻）か `after_ms`（前の手順が終わった時刻から）です。どちらもなければ `after_ms: 0` です。
 - 条件は比較だけです（`ge`、`le`、`near` と `tolerance` など）。キーと条件の一覧は [scenario.md](../scenario.md) の「ファイルの形式」です。
 
@@ -60,6 +60,7 @@ steps:
 | その時刻に成り立つ | `expect` だけ | — |
 | 決めた時間のうちに 1 度でも成り立つ（応答の遅れの上限） | `expect` と `within_ms` | 15〜16、18〜19 |
 | 決めた時間のあいだずっと成り立つ | `expect` と `hold_for_ms` | 12〜14 |
+| 値を動かしている間ずっと成り立つ | `ramp` か `wave` の横に `expect` | — |
 
 - `wait_until` と、`within_ms` つきの `expect` は、どちらも成り立つまで待ちます。違いは失敗の扱いです。`wait_until` の時間切れは `scenario-timeout`、`expect` が成り立たないのは `scenario-failed` です。前提の待ちには `wait_until`、試験したい応答には `expect` を使うと、結果からどちらで落ちたかがわかります。
 - `set`、`ramp`、`wave` の値は、変数の範囲（`min`、`max`）の中にします。文面からわかる分は、外れていれば照合の誤りです。
@@ -85,7 +86,15 @@ steps:
 
 - 波形は `sine`、`triangle`、`sawtooth`、`square`、`pulse`、`noise`、`chirp`、`lag`、`chatter`、`points` です。書くものと使える型は [scenario.md](../scenario.md) の「波形で動かす（`wave`）」です。
 - `around` を省くと、いまの値を中心に動かし、終わると元の値に戻します。上の `sine` は 50 % の周り、`pulse` の後は 50 % です（`pulse` は、いつも始まる時点の値に戻ります。`around` は書けません）。
-- `wave` は、終わるまで次の手順に進みません。波形を掛けた結果は、`wave` の後の手順で確かめます。
+- `wave` は、終わるまで次の手順に進みません。波形を掛けた後の結果は、`wave` の後の手順で確かめます。
+- 動かしている間ずっと成り立つことは、`ramp` か `wave` の横に `expect` を書いて確かめます。手順の時刻から終わりまでの全部のサンプルを見て、1 つでも外れればそのサンプルの時刻で失敗です。`within_ms` と `hold_for_ms` は書けません。
+
+  ```yaml
+    - ramp: { Engine.engine.throttle: { to: 80, over_ms: 1000 } }
+      expect: { Engine.engine.speed: { le: 3000 } }
+  ```
+
+  構成に `expect` の変数がないとき（`absent: true`）は、`expect` だけを飛ばして動かします。決まりの全体は [scenario.md](../scenario.md) の「動かしている間ずっと確かめる」です。
 - ECU のステップより細かい波形（周期がステップ幅の 2 倍より短い、パルスがステップ幅より短い、など）は、照合が警告を出し、ECU に実際に見える形を言います。わかっていて流すときは、その手順に `undersampled: ok` を書きます。
 - `noise` には `seed` が要ります。同じ `seed` なら毎回同じ値なので、落ちた実行をそのまま再現できます。
 
@@ -329,7 +338,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/engine_disconnect.ya
 - 経過を 1 行ずつ読む道具は、`--json` の代わりに `--events` を付けます。手順が始まったときと決まったときに、事象 `scenario_step` が出ます。
 - シナリオの判定は仮想時刻だけで決まり、実時間の待ちはありません。ステップの中で止まった ECU がいると、いつまでも終わらないので、CI では `--timeout-ms` で実時間の上限を付けます。
 - ECU ごとの出力を残すときは `--log-dir` を付けます。警告も失敗にするときは `--strict` です。
-- 版の違うランチャーを使うときは、`vehicle_sil_launch version --json` の `features` に `scenario` があるかを確かめます（手順 `wave` は `scenario-wave`）。
+- 版の違うランチャーを使うときは、`vehicle_sil_launch version --json` の `features` に `scenario` があるかを確かめます（手順 `wave` は `scenario-wave`、`ramp` と `wave` の横の `expect` は `scenario-motion-expect`）。
 
 ## 次に読むもの
 

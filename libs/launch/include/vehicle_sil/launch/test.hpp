@@ -62,8 +62,8 @@ struct TestRun
     std::string scenario; ///< TestScenario::shown
     TestRunResult result = TestRunResult::NotRun;
     /// Why, in one line: the first error of a failed run (and how many more), what the scenario
-    /// is only for, why it was not run; how many steps a run that passed skipped and how many
-    /// warnings it has; or "".
+    /// is only for, why it was not run; how many steps a run that passed skipped, how many expects
+    /// beside a ramp or a wave it did not check and how many warnings it has; or "".
     std::string reason{};
     /// The run's report (what `run --json` writes for it); empty for Skipped and NotRun.
     std::optional<RunReport> run{};

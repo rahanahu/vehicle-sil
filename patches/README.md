@@ -9,6 +9,7 @@ upstream library is kept here as a `git format-patch` file named
 | SIL Kit | `sil-kit/0001` | LIN: several dynamic-response slaves on one identifier (`LinSlave`); see `docs/dependencies.md`, "SIL Kit へのパッチ" |
 | SIL Kit | `sil-kit/0002` | CAN: a thread-safe switch to the detailed simulation (the simple CAN network simulator); see `docs/dependencies.md`, "SIL Kit へのパッチ" |
 | SIL Kit | `sil-kit/0003` | Registry: a peer refused for its name does not remove the entry of the participant that has the name (relayed connections keep working); see `docs/dependencies.md`, "SIL Kit へのパッチ" |
+| SIL Kit | `sil-kit/0004` | Network simulation: the announcement of a simulated network is not lost when the simulator's subscriptions complete at the same moment (the simple CAN network simulator); see `docs/dependencies.md`, "SIL Kit へのパッチ" |
 | SIL Kit | `sil-kit/0005` | Registry: a participant whose connection is already closed is not advertised to a joining participant (the join no longer times out); see `docs/dependencies.md`, "SIL Kit へのパッチ" |
 
 `cmake/VehicleSilDependencies.cmake` copies a submodule that has patches into

@@ -1948,3 +1948,262 @@ TEST_CASE(scenario_times_are_the_same_whether_a_wave_is_skipped_or_not)
     // Nothing of a skipped step is written, also not the wave of the variable that is there.
     check_text(applied(a, "Body.ratio"), "");
 }
+
+// --- an expect beside a ramp or a wave ---
+
+TEST_CASE(scenario_expect_beside_a_ramp_is_read_with_the_ramp)
+{
+    const Scenario s = read(kHead + "  - set: { Body.level: 0 }\n"
+                                    "  - ramp: { Body.level: { to: 10, over_ms: 100 } }\n"
+                                    "    expect: { Body.level: { le: 10 }, Body.lamp: false }\n"
+                                    "  - wave: { Door.ratio: { sine: { amplitude: 0.1, period_ms: 100 }, around: 0.5, for_ms: 200 } }\n"
+                                    "    expect: { Door.ratio: { ge: 0.3 } }\n");
+    CHECK_EQ(s.steps.size(), std::size_t{3});
+    CHECK(s.steps[1].kind == StepKind::Ramp && s.steps[1].conditions.size() == 2 && s.steps[1].signals.size() == 1);
+    CHECK(s.steps[2].kind == StepKind::Wave && s.steps[2].conditions.size() == 1);
+    check_text(s.steps[1].text + "\n" + s.steps[2].text + "\n",
+               "ramp Body.level to 10 over 100 ms, expecting Body.level le 10; Body.lamp eq false\n"
+               "wave Door.ratio sine amplitude 0.1 period 100 ms around 0.5 for 200 ms, expecting Door.ratio ge 0.3\n");
+    // It must be true all through the ramp: no within_ms or hold_for_ms; and only beside a ramp
+    // or a wave.
+    check_text(errors_only(read_scenario(kHead + "  - ramp: { Body.level: { from: 0, to: 10, over_ms: 100 } }\n"
+                                                 "    expect: { Body.level: { le: 10 } }\n"
+                                                 "    within_ms: 50\n"
+                                                 "  - wave: { Body.level: { pulse: { value: 1, width_ms: 50 } } }\n"
+                                                 "    expect: { Body.level: { le: 10 } }\n"
+                                                 "    hold_for_ms: 50\n"
+                                                 "  - set: { Body.level: 1 }\n"
+                                                 "    expect: { Body.level: 1 }\n",
+                                         catalog())
+                               .findings),
+               "E 5 value: within_ms does not go with an expect beside a ramp: that expect must be true all through the ramp, "
+               "from its time to its end; remove within_ms, or make the expect a step of its own after the ramp\n"
+               "E 8 value: hold_for_ms does not go with an expect beside a wave: that expect must be true all through the "
+               "wave, from its time to its end; remove hold_for_ms, or make the expect a step of its own after the wave\n"
+               "E 9 value: the step has set, expect: a step does one thing; make a step of each\n");
+}
+
+namespace {
+
+/// Runs `s` with every policy() and both orders of the ECUs, and returns its one result (text_of):
+/// a test fails if two of them differ.
+std::string one_result(const Scenario& s, const std::function<void(World&)>& setup = {})
+{
+    std::optional<std::string> first;
+    for (const auto& [name, policy] : policies())
+    {
+        for (const bool reverse : {false, true})
+        {
+            World world;
+            if (setup)
+            {
+                setup(world);
+            }
+            world.policy = policy;
+            world.reverse = reverse;
+            const std::string got = text_of(world.run(s));
+            if (!first)
+            {
+                first = got;
+            }
+            check_text(got, *first, (name + (reverse ? ", the ECUs in reverse order" : "")).c_str());
+        }
+    }
+    return *first;
+}
+
+} // namespace
+
+TEST_CASE(scenario_expect_beside_a_ramp_holds_from_its_time_to_its_end_and_not_after)
+{
+    // Body.level goes 0, 1, ..., 9 at 100, 110, ..., 190 and 10 at 200, the end: each sample of
+    // Body (every 10 ms) has the value written for its time. The set at 210 is after the end.
+    const auto run = [](const std::string& expect) {
+        return one_result(read(kHead + "  - set: { Body.level: 0 }\n"
+                                       "  - at_ms: 100\n"
+                                       "    ramp: { Body.level: { to: 10, over_ms: 100 } }\n"
+                                       "    expect: { Body.level: " + expect + " }\n"
+                                       "  - after_ms: 10\n"
+                                       "    set: { Body.level: 50 }\n"));
+    };
+    // True at T, at every sample in (T, E] and not looked at after E.
+    check_text(run("{ le: 10 }"), "passed over=220\n"
+                                  "3 passed start=0 at=0 end=0\n"
+                                  "4 passed start=100 at=200 end=200\n"
+                                  "7 passed start=210 at=210 end=210\n");
+    // The sample at T is looked at (the step at T applied the first write).
+    check_text(run("{ ge: 1 }"), "failed over=110\n"
+                                 "3 passed start=0 at=0 end=0\n"
+                                 "4 failed start=100 at=100 end=200 scenario-failed: not true during the ramp (from 100 ms to 200 "
+                                 "ms): at 100 ms Body.level ge 1, but it was 0 (its sample of 100 ms)\n"
+                                 "7 not_run start=- at=- end=-\n");
+    // And the sample at E, the last one of the ramp.
+    check_text(run("{ le: 9 }"), "failed over=210\n"
+                                 "3 passed start=0 at=0 end=0\n"
+                                 "4 failed start=100 at=200 end=200 scenario-failed: not true during the ramp (from 100 ms to 200 "
+                                 "ms): at 200 ms Body.level le 9, but it was 10 (its sample of 200 ms)\n"
+                                 "7 unfinished start=210 at=- end=-\n");
+}
+
+TEST_CASE(scenario_expect_beside_a_ramp_between_the_steps_of_its_ecu_looks_from_the_first_write_to_the_end_value)
+{
+    // Door steps every 30 ms (0, 30, 60, ...), the controller every 10 ms. The ramp from 40 ms
+    // writes 0 for 40 (applied at 60), 3 for 70 (at 90) and its end, 5 for 100, at 120. The
+    // expect judges the samples of 60, 90 and 120: not that of 30 ms (50, before the ramp), and
+    // the end value although E (100 ms) is between two steps.
+    const auto run = [](const std::string& expect) {
+        return one_result(read(kHead + "  - set: { Door.level: 50 }\n"
+                                       "  - at_ms: 40\n"
+                                       "    ramp: { Door.level: { from: 0, to: 5, over_ms: 60 } }\n"
+                                       "    expect: { Door.level: " + expect + " }\n",
+                               catalog(10ms, 30ms)),
+                          [](World& w) { w.ecus[1].step = 30ms; });
+    };
+    check_text(run("{ le: 5 }"), "passed over=130\n"
+                                 "3 passed start=0 at=0 end=0\n"
+                                 "4 passed start=40 at=100 end=100\n");
+    check_text(run("{ le: 4 }"), "failed over=130\n"
+                                 "3 passed start=0 at=0 end=0\n"
+                                 "4 failed start=40 at=120 end=100 scenario-failed: not true during the ramp (from 40 ms to 120 "
+                                 "ms, where its end (100 ms) takes effect): at 120 ms Door.level le 4, but it was 5 (its sample "
+                                 "of 120 ms)\n");
+    // An expect of another ECU is judged up to the same time: Body's samples of 40 to 120 ms.
+    check_text(one_result(read(kHead + "  - set: { Door.level: 50 }\n"
+                                       "  - at_ms: 40\n"
+                                       "    ramp: { Door.level: { from: 0, to: 5, over_ms: 60 } }\n"
+                                       "    expect: { Body.body.speed: { lt: 0 } }\n",
+                               catalog(10ms, 30ms)),
+                          [](World& w) { w.ecus[1].step = 30ms; }),
+               "failed over=50\n"
+               "3 passed start=0 at=0 end=0\n"
+               "4 failed start=40 at=40 end=100 scenario-failed: not true during the ramp (from 40 ms to 120 ms, where its end "
+               "(100 ms) takes effect): at 40 ms Body.body.speed lt 0, but it was 0 (its sample of 40 ms)\n");
+    // A variable whose ECU sends no sample in that time was not looked at: the step fails. Door
+    // samples at 60 and 90; the ramp of Body from 61 ms to 71 ms looks until 80 ms.
+    check_text(one_result(read(kHead + "  - at_ms: 61\n"
+                                       "    ramp: { Body.level: { from: 0, to: 5, over_ms: 10 } }\n"
+                                       "    expect: { Door.level: 0 }\n",
+                               catalog(10ms, 30ms)),
+                          [](World& w) { w.ecus[1].step = 30ms; }),
+               "failed over=90\n"
+               "3 failed start=61 at=80 end=71 scenario-failed: not checked during the ramp (from 61 ms to 80 ms, where its end "
+               "(71 ms) takes effect): no sample of Door.level in that time (its ECU sends one every sample_period); make the "
+               "ramp longer, or check in an expect step with within_ms after it\n");
+}
+
+TEST_CASE(scenario_expect_beside_a_motion_decides_the_step_with_its_writes)
+{
+    // The step passes when both its writes and its expect have: a failing expect after it is
+    // still looked at, and an expect that fails at the end fails a ramp that is the last step.
+    check_text(one_result(read(kHead + "  - ramp: { Body.level: { from: 0, to: 10, over_ms: 100 } }\n"
+                                       "    expect: { Body.level: { le: 10 } }\n"
+                                       "  - expect: { Body.level: 0 }\n")),
+               "failed over=110\n"
+               "3 passed start=0 at=100 end=100\n"
+               "5 failed start=100 at=100 end=100 scenario-failed: not true at 100 ms: Body.level eq 0, but it was 10 (its "
+               "sample of 100 ms)\n");
+    check_text(one_result(read(kHead + "  - ramp: { Body.level: { from: 0, to: 10, over_ms: 100 } }\n"
+                                       "    expect: { Body.level: { lt: 10 } }\n")),
+               "failed over=110\n"
+               "3 failed start=0 at=100 end=100 scenario-failed: not true during the ramp (from 0 ms to 100 ms): at 100 ms "
+               "Body.level lt 10, but it was 10 (its sample of 100 ms)\n");
+    // The writes decide it too: Door steps every 30 ms, so the end of its ramp (100 ms) takes
+    // effect at 120 ms and is judged at 130 ms, after the expect on Body closed (at 120 ms, seen
+    // at 130 ms). Door rejects that last write (13): the step fails, though its expect held.
+    check_text(one_result(read(kHead + "  - ramp: { Door.level: { from: 0, to: 13, over_ms: 100 } }\n"
+                                       "    expect: { Body.level: 0 }\n",
+                               catalog(10ms, 30ms)),
+                          [](World& w) { w.ecus[1].step = 30ms; }),
+               "failed over=130\n"
+               "3 failed start=0 at=100 end=100 scenario-write: the write for 100 ms was not applied by participant 'Door': "
+               "the ECU rejected it (a setter threw: 13 is not a level)\n");
+}
+
+TEST_CASE(scenario_expect_beside_a_wave_fails_with_what_the_launcher_learns_first)
+{
+    // The wave around 90 writes 102 for 110 ms, which the agent refuses at once (out of range);
+    // the expect is already false at 100 ms. With a tick of 10 ms the write for 110 ms goes out
+    // (and is refused) at 100 ms, before the sample of 100 ms is looked at (at 110 ms); with a
+    // tick of 5 ms that sample is looked at first, at 105 ms.
+    const auto run = [](SimDuration tick) {
+        return one_result(read(kHead + "  - set: { Body.level: 90 }\n"
+                                       "  - at_ms: 100\n"
+                                       "    wave: { Body.level: { sine: { amplitude: 20, period_ms: 100 }, for_ms: 100 } }\n"
+                                       "    expect: { Body.level: { le: 80 } }\n"),
+                          [tick](World& w) { w.tick = tick; });
+    };
+    check_text(run(10ms), "failed over=100\n"
+                          "3 passed start=0 at=0 end=0\n"
+                          "4 failed start=100 at=110 end=200 scenario-write: the write for 110 ms was not taken by participant "
+                          "'Body': the ECU's agent refused it (level: out of range)\n");
+    check_text(run(5ms), "failed over=105\n"
+                         "3 passed start=0 at=0 end=0\n"
+                         "4 failed start=100 at=100 end=200 scenario-failed: not true during the wave (from 100 ms to 200 ms): at "
+                         "100 ms Body.level le 80, but it was 90 (its sample of 100 ms)\n");
+    // A variable of the expect without a link fails the step as a read, not as a write.
+    World alone;
+    alone.ecus.pop_back();
+    check_text(text_of(alone.run(read(kHead + "  - ramp: { Body.level: { from: 0, to: 10, over_ms: 100 } }\n"
+                                              "    expect: { Door.lamp: false }\n"))),
+               "failed over=0\n"
+               "3 failed start=0 at=0 end=- scenario-failed: Door.lamp cannot be read: participant 'Door' has no control "
+               "link in this run: its agent did not connect before the simulation started (the run's control-link findings "
+               "and its lines say why)\n");
+}
+
+TEST_CASE(scenario_expect_beside_a_ramp_that_uses_an_absent_variable_is_skipped_and_the_ramp_runs)
+{
+    ScenarioContext context;
+    context.variants = {"small", "large"};
+    context.variant = "small";
+    const ScenarioRead r = read_scenario(kHead + "  - ramp: { Body.level: { from: 0, to: 2, over_ms: 20 } }\n"
+                                                 "    expect: { Body.boost: 0, Body.level: { le: 2 } }\n"
+                                                 "  - ramp: { Body.boost: { to: 3, over_ms: 50 } }\n"
+                                                 "    expect: { Body.level: 2 }\n"
+                                                 "  - set: { Body.lamp: true }\n",
+                                         catalog_without_boost(), context);
+    check_text(lines(r.findings),
+               "N 3 scenario-step-skipped: the ramp runs; its expect is not checked (ramp Body.level from 0 to 2 over 20 ms, "
+               "expect not checked: Body.boost; Body.level le 2): Body.boost is absent: participant 'Body' does not have it in "
+               "the variant small (absent: true in its variables)\n"
+               "N 5 scenario-step-skipped: the step is skipped (ramp Body.boost, expecting Body.level eq 2): Body.boost is "
+               "absent: participant 'Body' does not have it in the variant small (absent: true in its variables); the other "
+               "steps run, also those that would need what this one does\n"
+               "W 0 scenario-nothing-checked: the scenario checks nothing in the variant small: all its 2 checks (expect, "
+               "wait_until, or an expect beside a ramp or a wave; lines 3, 5) are skipped or not checked, so it passes whatever "
+               "the ECUs do (the notes say why for each). If the scenario is not for this variant, list the variants it is for "
+               "in the scenario (only: [large]); if it is, map what the steps look at to what the variant has (variables in "
+               "the variant, docs/simulation-config.md)\n");
+    CHECK(r.scenario.has_value());
+    CHECK_EQ(r.skipped, std::size_t{1});
+    CHECK_EQ(r.unchecked_expects, std::size_t{1});
+    CHECK(r.scenario->steps[0].conditions.empty() && r.scenario->steps[0].skipped.empty());
+    check_text(r.scenario->steps[0].expect_skipped,
+               "Body.boost is absent: participant 'Body' does not have it in the variant small (absent: true in its variables)");
+    // The first ramp writes, unchecked; the second is skipped and takes its 50 ms.
+    World world;
+    const ScenarioRun run = world.run(*r.scenario);
+    check_text(text_of(run), "passed over=80\n"
+                             "3 passed start=0 at=20 end=20\n"
+                             "5 skipped start=20 at=- end=70 scenario-skipped: Body.boost is absent: participant 'Body' does "
+                             "not have it in the variant small (absent: true in its variables)\n"
+                             "7 passed start=70 at=70 end=70\n");
+    check_text(applied(world, "Body.level"), "0@0 1@10 2@20 ");
+    CHECK(run.steps[0].expect_skipped == r.scenario->steps[0].expect_skipped);
+    CHECK(run.steps[1].expect_skipped.empty());
+    CHECK_EQ(run.unchecked_expects(), std::size_t{1});
+    CHECK_EQ(run.skipped(), std::size_t{1});
+    // When the expect beside is the only check and is not checked, the warning says so.
+    const ScenarioRead only = read_scenario(kHead + "  - ramp: { Body.level: { from: 0, to: 2, over_ms: 20 } }\n"
+                                                    "    expect: { Body.boost: 0 }\n",
+                                            catalog_without_boost());
+    CHECK(lines(only.findings).find("W 0 scenario-nothing-checked: the scenario checks nothing in this configuration: its only "
+                                    "check (an expect beside a ramp or a wave, line 3) is not checked, so it passes whatever the "
+                                    "ECUs do (the notes say why for each). ") != std::string::npos);
+    // A scenario with another check left gets no warning.
+    const ScenarioRead checked = read_scenario(kHead + "  - ramp: { Body.level: { from: 0, to: 2, over_ms: 20 } }\n"
+                                                       "    expect: { Body.boost: 0 }\n"
+                                                       "  - expect: { Body.level: 2 }\n",
+                                               catalog_without_boost(), context);
+    CHECK(std::none_of(checked.findings.begin(), checked.findings.end(), [](const Finding& f) { return f.severity != Severity::Note; }));
+}

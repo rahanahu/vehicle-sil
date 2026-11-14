@@ -171,10 +171,11 @@ struct ScenarioCheck
     std::size_t steps = 0;
     /// Set if the configuration could be read and the scenario has no error: it can run.
     std::optional<Scenario> scenario{};
-    /// ScenarioRead::params, only and skipped.
+    /// ScenarioRead::params, only, skipped and unchecked_expects.
     std::vector<ParamValue> params{};
     std::optional<std::vector<std::string>> only{};
     std::size_t skipped = 0;
+    std::size_t unchecked_expects = 0;
     /// ScenarioRead::not_for_variant: its "only" does not list the chosen variant (one of the
     /// errors says so). vehicle_sil_launch test skips such a scenario instead of failing.
     bool not_for_variant = false;
