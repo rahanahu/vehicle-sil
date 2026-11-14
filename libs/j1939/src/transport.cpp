@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "transport.hpp"
+#include "transport_wire.hpp"
 #include "vehicle_sil/j1939/observer.hpp"
 
 #include <algorithm>
@@ -10,28 +11,9 @@ namespace vehicle_sil::j1939 {
 
 namespace {
 
-constexpr std::uint8_t kRts = 16;
-constexpr std::uint8_t kCts = 17;
-constexpr std::uint8_t kEndOfMessageAck = 19;
-constexpr std::uint8_t kBam = 32;
-constexpr std::uint8_t kAbort = 255;
-
-constexpr SimDuration kT1 = std::chrono::milliseconds(750);
-constexpr SimDuration kT2 = std::chrono::milliseconds(1250);
-constexpr SimDuration kT3 = std::chrono::milliseconds(1250);
-constexpr SimDuration kT4 = std::chrono::milliseconds(1050);
-constexpr std::uint8_t kMaxRetransmitRequests = 2;
-
-[[nodiscard]] std::uint16_t packets_for(std::size_t length) noexcept
-{
-    return static_cast<std::uint16_t>((length + 6) / 7);
-}
-
-[[nodiscard]] std::uint32_t raw_pgn_of(std::span<const std::uint8_t> data) noexcept
-{
-    return static_cast<std::uint32_t>(data[5]) | (static_cast<std::uint32_t>(data[6]) << 8) |
-           (static_cast<std::uint32_t>(data[7]) << 16);
-}
+// The control bytes, the timeouts, packets_for(), raw_pgn_of() and the shape checks: shared with
+// the TransferSniffer, which must read the frames as this receiver does.
+using namespace transport_wire;
 
 [[nodiscard]] std::array<std::uint8_t, 8> control(std::uint8_t code, std::uint8_t b1, std::uint8_t b2, std::uint8_t b3,
                                                   std::uint8_t b4, std::uint32_t rawPgn) noexcept
@@ -768,7 +750,7 @@ void Transport::on_rts(const Message& message, std::int32_t sender)
         return; // for another node on the bus
     }
     const auto node = static_cast<std::size_t>(responder);
-    const std::size_t size = static_cast<std::size_t>(message.data[1]) | (static_cast<std::size_t>(message.data[2]) << 8);
+    const std::size_t size = announced_size(message.data);
     const std::uint8_t packets = message.data[3];
     const std::uint8_t limit = message.data[4];
     const std::uint32_t raw = raw_pgn_of(message.data);
@@ -784,13 +766,16 @@ void Transport::on_rts(const Message& message, std::int32_t sender)
         end_receive(*existing, TransferResult::Cancelled, AbortReason::None, message.time); // the same group again: the new RTS replaces the connection
     }
     AbortReason reason = AbortReason::None;
-    if (size > kMaxTransportLength)
+    switch (check_rts(size, packets, limit, raw))
     {
+    case Shape::Ok:
+        break;
+    case Shape::TooLarge:
         reason = AbortReason::TooLarge;
-    }
-    else if (size <= can::kMaxPayload || packets != packets_for(size) || limit == 0 || !Pgn{raw}.is_valid())
-    {
+        break;
+    case Shape::Malformed:
         reason = AbortReason::Other;
+        break;
     }
     Session* s = reason == AbortReason::None ? allocate(Kind::RtsRx) : nullptr;
     if (s == nullptr)
@@ -917,10 +902,10 @@ void Transport::on_bam(const Message& message, std::int32_t sender)
         ++network_.statistics_.transport_frames_ignored;
         return;
     }
-    const std::size_t size = static_cast<std::size_t>(message.data[1]) | (static_cast<std::size_t>(message.data[2]) << 8);
+    const std::size_t size = announced_size(message.data);
     const std::uint8_t packets = message.data[3];
     const std::uint32_t raw = raw_pgn_of(message.data);
-    if (size <= can::kMaxPayload || size > kMaxTransportLength || packets != packets_for(size) || !Pgn{raw}.is_valid())
+    if (check_bam(size, packets, raw) != Shape::Ok)
     {
         ++network_.statistics_.transport_rejected; // the running broadcast (if any) goes on
         return;
@@ -1026,7 +1011,7 @@ bool Transport::store(Session& session, std::uint8_t sequence, std::span<const s
 void Transport::deliver(Session& session, SimTime time, std::int32_t sender)
 {
     const Pgn pgn{session.raw_pgn};
-    if (pgn == kPgnAddressClaimed || pgn == kPgnRequest)
+    if (single_frame_only(pgn))
     {
         // Single-frame groups: not taken from the transport protocol.
         end_receive(session, TransferResult::Cancelled, AbortReason::None, time);
