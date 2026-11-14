@@ -171,7 +171,7 @@ Control Agent の試験（`control.*`）。
 `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ（プリセット `linux-gcc-control`。
 CI もこれで回し、GUI サーバーの試験もこのランチャーで回す）。
 Control Server の試験（`control_server.*`）: gRPC の生成コードと呼び出し、1 つのプロセスで端から端まで（2 つの J1939 の Peer の Agent が SIL Kit でつながる Hub、時間ゲート、gRPC のクライアント）、認証と役割と TLS と監査ログ、どの役割がどの RPC を呼べるか（proto の RPC と規則の表の対応も）、メッセージの変換、上限と入力の検査、`SimulationMonitor`（`unit` と `control` のラベルも付く）。
-grpcio と grpcio-tools のある Python があれば、`control_server.python_client` が Python のクライアントと CLI を `vehicle_sil_launch run --control` に対して動かし、`control_server.launcher` が `vehicle_sil_launch run --control` と `examples/ecu_main` の ECU を動かし（始まる前の書き込み、2 つの口の命令、終わり方、認証と TLS と監査、トークンつきの CLI）、`control_server.example_write_before_start` と `control_server.example_pause_and_step` が `examples/launch_control` を動かす（どれも `control` と `python` のラベル。
+grpcio と grpcio-tools のある Python があれば、`control_server.python_client` が Python のクライアントと CLI を `vehicle_sil_launch run --control` に対して動かし、`control_server.launcher` が `vehicle_sil_launch run --control` と `examples/ecu_main` の ECU を動かし（始まる前の書き込み、2 つの口の命令、終わり方、認証と TLS と監査、トークンつきの CLI）、`control_server.example_write_before_start` と `control_server.example_pause_and_step` が `examples/launch_control` を動かし、`control_server.guide_operate_signals` がガイド [信号を外から操作する](howto/operate-signals.md) の印つきのブロックを、同じ例、CLI、標準入力の命令の出力と照合する（どれも `control` と `python` のラベル。
 `launcher` には `integration` も、例には `examples` も付く）
 
 ### `eth_link` / `ethernet_bridge`
@@ -328,7 +328,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 - 主なクラス・関数（ヘッダー）: `ControlServer`（`control_grpc/server.hpp`）、Python のクライアント（`python/vehicle_sil_control/client.py`）とランチャーを起動する助け（`python/vehicle_sil_control/launcher.py`）
 - 試験: `tests/control_server`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ。
-  `test_launcher.py` がランチャーの Control Server（認証、TLS、役割、監査も）、`test_python_client.py` が Python のクライアントと CLI、`control_server.example_write_before_start` と `control_server.example_pause_and_step` が `examples/launch_control`）
+  `test_launcher.py` がランチャーの Control Server（認証、TLS、役割、監査も）、`test_python_client.py` が Python のクライアントと CLI、`control_server.example_write_before_start` と `control_server.example_pause_and_step` が `examples/launch_control`、`test_guide_operate_signals.py` がガイド `docs/howto/operate-signals.md` と、例、CLI、標準入力の命令の照合。ガイドの印は `<!-- examples/launch_control/... -->`、`<!-- vehicle_sil_control ... -->`、`<!-- standard input of run --start-paused --stdin-commands: ... -->`、`<!-- examples/ecu_main/dashboard/main.cpp: an excerpt -->`）
 - `ctest -R`: `^control_server\.`
 
 ### `libs/process`
