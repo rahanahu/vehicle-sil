@@ -136,9 +136,14 @@ inline void to_proto(const PeerInfo& in, v1::PeerInfo& out)
     out.set_has_agent(true);
     out.set_incarnation(in.incarnation);
     out.set_connected(in.connected);
-    for (const auto& v : in.schema)
+    for (std::size_t i = 0; i < in.schema.size(); ++i)
     {
-        to_proto(v, *out.add_schema());
+        auto* v = out.add_schema();
+        to_proto(in.schema[i], *v);
+        if (i < in.sources.size())
+        {
+            v->set_source(in.sources[i]);
+        }
     }
     out.mutable_status()->set_failed(in.status.failed);
     out.mutable_status()->set_error(in.status.error);

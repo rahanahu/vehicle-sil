@@ -242,6 +242,21 @@ struct Rules
     }
 };
 
+/// The finding's code of a mapping that does not fit the executable's variables.
+const char* variable_map_code(control::MapProblemKind kind)
+{
+    switch (kind)
+    {
+    case control::MapProblemKind::Form: return "value";
+    case control::MapProblemKind::Unknown: return "variable-map-unknown";
+    case control::MapProblemKind::Type: return "variable-map-type";
+    case control::MapProblemKind::BadValue: return "variable-map-value";
+    case control::MapProblemKind::Collision: return "variable-map-collision";
+    case control::MapProblemKind::Present: return "variable-map-absent";
+    }
+    return "value";
+}
+
 /// The participant `p` (entry `i`) against its entry: name, step, networks, variables, version.
 void check_participant(const Rules& rules, std::size_t i, const ParticipantConfig& p, const ParticipantResult& result,
                        const std::map<std::string, const NetworkConfig*>& networks,
@@ -360,6 +375,31 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
                     ", so vehicle_sil_launch run cannot read or write them: build the ECU and vehicle_sil_launch from the "
                     "same version of vehicle-sil",
                 p.name, "");
+        }
+    }
+    // The variable map: every mapping must fit what the executable describes (the run applies the
+    // same rules to what its agent announces).
+    if (!p.variables.empty())
+    {
+        const control::MappedSchema seen = seen_variables(p, *result.ecu);
+        for (const control::MapProblem& problem : seen.problems())
+        {
+            std::string more;
+            if (problem.kind == control::MapProblemKind::Unknown)
+            {
+                std::vector<std::string> names;
+                for (const auto& v : ecu.variables)
+                {
+                    names.push_back(v.name);
+                }
+                const std::string guess = detail::closest(p.variables[problem.entry].from, names);
+                more = ": " +
+                       (guess.empty() ? (names.empty() ? std::string("it describes none.") : "its variables are " + detail::join(names) + ".")
+                                      : "did you mean '" + guess + "'?") +
+                       " Correct the name, or write { absent: true } if this executable does not have the variable";
+            }
+            rules.add(Severity::Error, variable_map_code(problem.kind), p.variable_lines[problem.entry],
+                prefix + "variables: " + problem.message + more, p.name, "");
         }
     }
     if (!result.ecu->vehicle_sil_version.empty() && result.ecu->vehicle_sil_version != launcher_version)
@@ -602,6 +642,11 @@ void check_network(const Rules& rules, const NetworkConfig& network)
 }
 
 } // namespace
+
+control::MappedSchema seen_variables(const ParticipantConfig& participant, const ReportedEcu& ecu)
+{
+    return control::MappedSchema::make(ecu.description.variables, participant.variables);
+}
 
 std::vector<Finding> check_participants(const SimulationConfig& config, const std::vector<ParticipantResult>& results,
                                         std::string_view launcher_version)

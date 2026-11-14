@@ -14,7 +14,8 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import Client, alive, children, gui_server, is_ended, is_synced, run_async, wait_until, without_variables
+from conftest import (Client, alive, children, gui_server, is_ended, is_synced, run_async, scaled, until_async, wait_until,
+                      without_variables)
 
 POSIX = sys.platform != "win32"
 pytestmark = pytest.mark.skipif(not POSIX, reason="signals and /proc")
@@ -27,7 +28,7 @@ def event_messages(messages: list[dict], kind: str) -> list[dict]:
 def stop_and_time(proc, how: int = signal.SIGTERM, limit: float = 60) -> float:
     start = time.monotonic()
     proc.send_signal(how)
-    proc.wait(limit)
+    proc.wait(scaled(limit))
     return time.monotonic() - start
 
 
@@ -44,11 +45,19 @@ def test_concurrent_runs_start_one_launcher(tmp_path: Path, checked_first: bool)
             replies = await asyncio.gather(*(c.post("api/run", {"file": "forever.yaml"}) for _ in range(4)))
             assert sorted(s for s, _ in replies) == [200, 409, 409, 409], replies
             assert all(b["error"]["code"] == "already-running" for s, b in replies if s == 409)
-            await asyncio.sleep(1.0)
+            # The run's launcher is the one child (not a launcher that checks the names) ...
+            async def the_run_alone() -> bool:
+                found = children(gui.proc.pid)
+                status, body = await c.get("api/session")
+                session = body.get("session") or {}
+                return (len(found) == 1 and session.get("id") == 1
+                        and (session.get("launcher") or {}).get("pid") == found[0])
+            assert await until_async(the_run_alone), children(gui.proc.pid)
             launchers = children(gui.proc.pid)
-            assert len(launchers) == 1, launchers
-            status, body = await c.get("api/session")
-            assert body["session"]["id"] == 1 and body["session"]["launcher"]["pid"] == launchers[0]
+            # ... and stays the only one: no refused request starts another a moment later (a check that
+            # something does not happen, so the time is not scaled).
+            await asyncio.sleep(1.0)
+            assert children(gui.proc.pid) == launchers, (launchers, children(gui.proc.pid))
             return launchers
         launchers = run_async(main, gui)
         assert stop_and_time(gui.proc) < 10
@@ -124,12 +133,17 @@ def test_force_without_a_stop_first_sends_two(tmp_path: Path) -> None:
 
 
 def test_a_stop_while_the_run_starts_stops_it_once_started(tmp_path: Path) -> None:
-    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50", "REPLAY_CHECK_DELAY_MS": "1500"}) as gui:
+    # The stop has to come while the names are checked: that window is scaled.
+    check_ms = str(round(scaled(1.5) * 1000))
+    with gui_server(tmp_path, env={"REPLAY_TICK_MS": "50", "REPLAY_CHECK_DELAY_MS": check_ms}) as gui:
         async def main(c: Client) -> None:
             sock = await c.ws()
             await sock.until(is_synced)
             run = asyncio.create_task(c.post("api/run", {"file": "forever.yaml"}))  # checks the names first
-            await asyncio.sleep(0.5)
+
+            async def checking() -> bool:  # the launcher that checks the names has started
+                return bool(children(gui.proc.pid))
+            assert await until_async(checking)
             status, body = await c.post("api/stop", {"force": False})
             assert status == 200 and body == {"session": None}  # no run yet: the one starting gets the stop
             status, body = await run
@@ -225,13 +239,16 @@ def test_no_new_run_or_check_once_the_server_is_ending(tmp_path: Path) -> None:
             await sock.until(lambda m: m.get("event", {}).get("event") == "time")
             launchers = children(gui.proc.pid)
             gui.proc.send_signal(signal.SIGTERM)  # waits up to 3 s for this launcher, which ignores the end
-            await asyncio.sleep(0.5)
+
+            async def ending() -> bool:  # a file outside the root: refused without starting anything, or 503
+                return (await c.post("api/check", {"file": "../outside.yaml"}))[0] == 503
+            assert await until_async(ending)
             for path, body in (("api/run", {"file": "simulation.yaml"}), ("api/check", {"file": "simulation.yaml"})):
                 status, reply = await c.post(path, body)
                 assert status == 503 and reply["error"]["code"] == "shutting-down", (path, reply)
             return launchers
         launchers = run_async(main, gui)
-        assert gui.proc.wait(30) == 0
+        assert gui.proc.wait(scaled(30)) == 0
         assert wait_until(lambda: not any(alive(p) for p in launchers), 5)
 
 

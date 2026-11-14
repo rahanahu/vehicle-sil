@@ -5,9 +5,12 @@
 // fails (the message whole), the order of the findings, and the output for people and as JSON.
 #include "launch_test_util.hpp"
 
+#include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/scenario.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -563,6 +566,129 @@ TEST_CASE(variables_that_are_not_offered_are_a_note_and_another_version_of_the_m
     CHECK(s.check().find("control-link") == std::string::npos);
 }
 
+TEST_CASE(every_mapping_of_variables_must_fit_what_the_executable_describes)
+{
+    control::VariableInfo rpm = variable("rpm_x10");
+    rpm.type = control::ValueType::Integer;
+    rpm.max = 80000;
+    control::VariableInfo gear = variable("gear_raw");
+    gear.type = control::ValueType::Enum;
+    gear.items = {{"PARK", 0}, {"DRIVE", 3}};
+    control::VariableInfo lamp = variable("lamp");
+    lamp.type = control::ValueType::Bool;
+    const auto mapping = [](const std::string& name, const std::string& from) {
+        control::VariableMapping m;
+        m.name = name;
+        m.from = from;
+        return m;
+    };
+    Setup s = good_pair();
+    s.results[0].ecu->description.variables = {rpm, gear, lamp, variable("boost")};
+    s.results[0].ecu->variables_reported = true;
+    s.results[0].ecu->description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion)};
+    ParticipantConfig& engine = s.config.participants[0];
+    control::VariableMapping speed = mapping("engine.speed", "rpm_x10");
+    speed.scale = 0.1;
+    control::VariableMapping names = mapping("engine.gear", "gear_raw");
+    names.map = std::vector<control::EnumItem>{{"P", 0}, {"D", 3}};
+    control::VariableMapping turbo;
+    turbo.name = "engine.turbo";
+    turbo.absent = true;
+    engine.variables = {speed, names, turbo, mapping("cabin.lamp", "lamp")};
+    engine.variable_lines = {20, 21, 22, 23};
+    check_text(s.check(), "");
+    // What the simulation sees: the scenario's check, the JSON and the run's hub use the same.
+    const control::MappedSchema seen = seen_variables(engine, *s.results[0].ecu);
+    CHECK(seen.schema()[0].name == "engine.speed" && seen.schema()[0].type == control::ValueType::Real);
+    CHECK(seen.schema()[0].max.has_value() && std::fabs(*seen.schema()[0].max - 8000.0) < 1e-6);
+    CHECK(seen.schema()[1].name == "engine.gear" && seen.schema()[1].items.size() == 2);
+    CHECK(seen.schema()[2].name == "cabin.lamp" && seen.schema()[3].name == "boost");
+
+    control::VariableMapping lamp_scaled = mapping("cabin.lamp", "lamp");
+    lamp_scaled.offset = 1.0;
+    control::VariableMapping wrong_value = mapping("engine.gear", "gear_raw");
+    wrong_value.map = std::vector<control::EnumItem>{{"P", 0}, {"D", 4}};
+    control::VariableMapping there;
+    there.name = "boost";
+    there.absent = true;
+    engine.variables = {mapping("engine.speed", "rpm_x1O"), lamp_scaled, wrong_value, mapping("lamp", "rpm_x10"),
+                        mapping("engine.rpm", "rpm_x10"), there, mapping("engine.torque", "torque")};
+    engine.variable_lines = {20, 21, 22, 23, 24, 25, 26};
+    const std::string p = "participant 'Engine': variables: ";
+    check_text(s.check(),
+               "E 20 variable-map-unknown: " + p + "engine.speed: the executable has no variable 'rpm_x1O': did you mean "
+               "'rpm_x10'? Correct the name, or write { absent: true } if this executable does not have the variable\n"
+               "E 21 variable-map-type: " + p + "cabin.lamp: scale and offset need a number, and the executable's 'lamp' is "
+               "a bool: remove them\n"
+               "E 22 variable-map-value: " + p + "engine.gear: map gives D the value 4, which the executable's 'gear_raw' "
+               "cannot take (its values are PARK (0), DRIVE (3)): correct the value\n"
+               "E 23 variable-map-collision: " + p + "lamp: another variable of the executable is seen under the name "
+               "'lamp' already: choose another name here, or map that variable to another name too\n"
+               "E 24 variable-map-collision: " + p + "engine.rpm: the executable's 'rpm_x10' is mapped twice (also as "
+               "lamp): keep one of the two\n"
+               "E 25 variable-map-absent: " + p + "boost: it says absent: true, but the executable has a variable 'boost': "
+               "remove this entry (a variable that is not listed is seen under its own name)\n"
+               "E 26 variable-map-unknown: " + p + "engine.torque: the executable has no variable 'torque': its variables "
+               "are rpm_x10, gear_raw, lamp, boost. Correct the name, or write { absent: true } if this executable does "
+               "not have the variable\n");
+    // A disabled participant's map is not compared.
+    engine.enabled = false;
+    CHECK(s.check().find("variable-map") == std::string::npos);
+}
+
+TEST_CASE(a_scenario_may_write_what_the_hub_takes_of_a_converted_variable)
+{
+    // The seen ends of a converted range are products, and may be off the number as written by a
+    // rounding: 4.35 * 100 is 434.99999999999994, 3 * 0.1 is 0.30000000000000004. The scenario's
+    // check asks the map, as the run's hub does.
+    control::VariableInfo bar = variable("pressure_bar");
+    bar.min = 0.0;
+    bar.max = 4.35;
+    control::VariableInfo raw = variable("raw");
+    raw.type = control::ValueType::Integer;
+    raw.min = 3;
+    raw.max = 10;
+    Setup s = good_pair();
+    s.results[0].ecu->description.variables = {bar, raw};
+    s.results[0].ecu->variables_reported = true;
+    s.results[0].ecu->description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion)};
+    control::VariableMapping pressure;
+    pressure.name = "pressure";
+    pressure.from = "pressure_bar";
+    pressure.scale = 100.0;
+    control::VariableMapping level;
+    level.name = "level";
+    level.from = "raw";
+    level.scale = 0.1;
+    s.config.participants[0].variables = {pressure, level};
+    s.config.participants[0].variable_lines = {20, 21};
+    check_text(s.check(), "");
+    CheckReport report;
+    report.file = "x.yaml";
+    report.config = s.config;
+    report.participants = s.results;
+    const ScenarioCatalog catalog = scenario_catalog(report);
+    const auto errors = [&catalog](const std::string& steps) {
+        return lines(read_scenario("vehicle_sil_scenario: 1\nsteps:\n" + steps, catalog).findings);
+    };
+    check_text(errors("  - set: { Engine.pressure: 435, Engine.level: 0.3 }\n"
+                      "  - set: { Engine.pressure: 0, Engine.level: 1 }\n"
+                      "  - ramp: { Engine.pressure: { from: 435, to: 0, over_ms: 20 } }\n"
+                      "  - ramp: { Engine.level: { from: 1, to: 0.3, over_ms: 20 } }\n"
+                      // The executable's integer is the nearest one: 0.26 is 3, as the hub writes it.
+                      "  - set: { Engine.level: 0.26 }\n"),
+               "");
+    // Beyond the ends: refused, with the range in the numbers one would write.
+    check_text(errors("  - set: { Engine.pressure: 435.01 }\n"
+                      "  - set: { Engine.level: 0.24 }\n"
+                      "  - ramp: { Engine.pressure: { to: -0.01, over_ms: 20 } }\n"
+                      "  - ramp: { Engine.level: { from: 1.06, to: 1, over_ms: 20 } }\n"),
+               "E 3 scenario-value: the value of Engine.pressure (real) is 435.01, outside its range (from 0 to 435)\n"
+               "E 4 scenario-value: the value of Engine.level (real) is 0.24, outside its range (from 0.3 to 1)\n"
+               "E 5 scenario-value: to of the ramp of Engine.pressure is -0.01, outside its range (from 0 to 435)\n"
+               "E 6 scenario-value: from of the ramp of Engine.level is 1.06, outside its range (from 0.3 to 1)\n");
+}
+
 TEST_CASE(another_vehicle_sil_version_is_a_note)
 {
     Setup s = good_pair();
@@ -1081,6 +1207,121 @@ TEST_CASE(the_json_report_writes_null_for_what_is_not_there)
     r.participants = {ParticipantResult{ParticipantStatus::Described, ecu("", 10ms, {}, "")}};
     const std::string reported = format_json(r);
     CHECK(reported.find("\n      \"reported\": {\n        \"vehicle_sil\": null,\n        \"name\": null,\n") != std::string::npos);
+}
+
+TEST_CASE(the_json_report_shows_the_seen_variables_and_the_map_of_an_entry_that_has_one)
+{
+    CheckReport r = mixed_report();
+    control::VariableInfo rpm;
+    rpm.name = "rpm_x10";
+    rpm.type = control::ValueType::Integer;
+    rpm.causality = control::Causality::Output;
+    rpm.unit = "0.1 rpm";
+    rpm.max = 80000;
+    control::VariableInfo gear;
+    gear.name = "gear_raw";
+    gear.type = control::ValueType::Integer;
+    r.participants[0].ecu->description.variables = {rpm, gear};
+    r.participants[0].ecu->variables_reported = true;
+    control::VariableMapping speed;
+    speed.name = "engine.speed";
+    speed.from = "rpm_x10";
+    speed.scale = 0.5;
+    speed.unit = "rpm";
+    control::VariableMapping names;
+    names.name = "engine.gear";
+    names.from = "gear_raw";
+    names.map = std::vector<control::EnumItem>{{"P", 0}, {"D", 3}};
+    control::VariableMapping turbo;
+    turbo.name = "engine.turbo";
+    turbo.absent = true;
+    r.config->participants[0].variables = {speed, names, turbo};
+    r.config->participants[0].variable_lines = {7, 8, 9};
+    const std::string json = format_json(r);
+    const auto from = json.find("      \"variables\": [");
+    const auto to = json.find("      \"control\":", from);
+    CHECK(from != std::string::npos && to != std::string::npos);
+    check_text(json.substr(from, to - from),
+               R"(      "variables": [
+        {
+          "name": "engine.speed",
+          "type": "real",
+          "causality": "output",
+          "unit": "rpm",
+          "min": null,
+          "max": 40000,
+          "step": null,
+          "description": "",
+          "items": [],
+          "builtin": false
+        },
+        {
+          "name": "engine.gear",
+          "type": "enum",
+          "causality": "input",
+          "unit": "",
+          "min": null,
+          "max": null,
+          "step": null,
+          "description": "",
+          "items": [
+            {
+              "name": "P",
+              "value": 0
+            },
+            {
+              "name": "D",
+              "value": 3
+            }
+          ],
+          "builtin": false
+        }
+      ],
+      "variable_map": [
+        {
+          "name": "engine.speed",
+          "line": 7,
+          "from": "rpm_x10",
+          "absent": false,
+          "scale": 0.5,
+          "offset": 0,
+          "unit": "rpm",
+          "map": null
+        },
+        {
+          "name": "engine.gear",
+          "line": 8,
+          "from": "gear_raw",
+          "absent": false,
+          "scale": null,
+          "offset": null,
+          "unit": null,
+          "map": [
+            {
+              "name": "P",
+              "value": 0
+            },
+            {
+              "name": "D",
+              "value": 3
+            }
+          ]
+        },
+        {
+          "name": "engine.turbo",
+          "line": 9,
+          "from": null,
+          "absent": true,
+          "scale": null,
+          "offset": null,
+          "unit": null,
+          "map": null
+        }
+      ],
+)");
+    // An entry without variables has no "variable_map" (the key says that the entry has a map).
+    r.config->participants[0].variables.clear();
+    CHECK(format_json(r).find("variable_map") == std::string::npos);
 }
 
 // --- disabled participants --------------------------------------------------------------------

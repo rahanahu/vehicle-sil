@@ -16,6 +16,7 @@
 //   enabled     a disabled participant whose executable does not exist (exit 0, --strict too),
 //               --enable and --disable, and the names they must have (exit 4)
 #include "launcher_support.hpp"
+#include "test_timeout_scale.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/process/child_process.hpp"
@@ -414,17 +415,20 @@ void describe(const Options& o)
                      "    command: [" + helper + ", --err, \"waiting for the bus\\n\", --sleep-ms, \"60000\"]\n"
                      "  - name: Flood\n"
                      "    command: [" + helper + ", --flood]\n");
-    const Captured slowRun = launch(o, {"check", shown_path(slow), "--describe-timeout-ms", "1000"});
+    // Slow has to write its line before the limit stops it: scaled, as its start takes longer on a
+    // slow machine.
+    const std::string limit = std::to_string(vehicle_sil::test::scaled_timeout(std::chrono::seconds(1)).count());
+    const Captured slowRun = launch(o, {"check", shown_path(slow), "--describe-timeout-ms", limit});
     expect_code(slowRun, 1, "check slow.yaml");
     const std::string slowOut = normalized(o, slowRun.standard_output);
     require(contains(slowOut, "error: <dir>/slow.yaml:5: participant 'Slow': <helper> --err 'waiting for the bus\\n' "
-                              "--sleep-ms 60000 --describe --name Slow did not end within 1000 ms and was stopped. "
+                              "--sleep-ms 60000 --describe --name Slow did not end within " + limit + " ms and was stopped. "
                               "--describe only builds the ECU, so something in its set-up waits (a connection, input): fix "
                               "that, or give vehicle_sil_launch check a longer --describe-timeout-ms\n"
                               "    the end of its standard error:\n"
                               "    waiting for the bus\n") &&
                 contains(slowOut, "error: <dir>/slow.yaml:7: participant 'Flood': <helper> --flood --describe --name Flood "
-                                  "did not end within 1000 ms and was stopped.") &&
+                                  "did not end within " + limit + " ms and was stopped.") &&
                 contains(slowOut, "\nfailed: 2 errors, 0 warnings, 0 notes\n"),
             "check slow.yaml wrote:\n" + slowOut);
     log("CHECK executables that do not end are stopped -> ok");

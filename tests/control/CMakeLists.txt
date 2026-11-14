@@ -3,7 +3,7 @@
 # Simulation on both).
 vehicle_sil_add_harness_tests(vehicle_sil_control_tests
   PREFIX control LABELS unit control TIMEOUT 120
-  SOURCES test_agent.cpp test_peer_agent.cpp test_ecu_variables.cpp test_hub.cpp test_wire.cpp
+  SOURCES test_agent.cpp test_peer_agent.cpp test_ecu_variables.cpp test_hub.cpp test_wire.cpp test_variable_map.cpp
   LINK vehicle_sil::simulation)
 
 # A transport that outlives its ECU ends the process with a message (not a use after free).

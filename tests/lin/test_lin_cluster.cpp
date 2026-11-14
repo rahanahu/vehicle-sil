@@ -29,6 +29,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 using namespace vehicle_sil::lin;
 namespace orch = SilKit::Services::Orchestration;
@@ -253,10 +254,10 @@ ClusterTrace run_cluster(ClusterOptions o)
     } stopAll{{masterRuntime.get(), slaveRuntimes[0].get(), slaveRuntimes[1].get()}};
 
     start_together(controller, {masterRuntime.get(), slaveRuntimes[0].get(), slaveRuntimes[1].get()}, 30s);
-    CHECK(controller.wait_until_finished(60s) == orch::ParticipantState::Shutdown);
+    CHECK(controller.wait_until_finished(scaled_timeout(60s)) == orch::ParticipantState::Shutdown);
     for (auto* runtime : {masterRuntime.get(), slaveRuntimes[0].get(), slaveRuntimes[1].get()})
     {
-        CHECK(runtime->wait_until_finished(30s) == orch::ParticipantState::Shutdown);
+        CHECK(runtime->wait_until_finished(scaled_timeout(30s)) == orch::ParticipantState::Shutdown);
         CHECK(runtime->step_error().empty());
     }
     out.master_stats = master.statistics();

@@ -54,6 +54,11 @@ message VariableInfo {
   // "j1939." (a Peer's monitoring outputs). An application variable whose name starts with
   // "j1939." is taken for one too.
   bool builtin = 10;
+  // The name the participant's executable declared it under, if the simulation's configuration
+  // maps it (the participant's "variables": another name, a linear conversion, names for its
+  // values). Everything else here, the values read and the values written are as mapped. Empty:
+  // not mapped.
+  string source = 11;
 }
 
 message Snapshot {

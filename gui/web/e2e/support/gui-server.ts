@@ -66,7 +66,7 @@ async function stop(server: ChildProcess): Promise<void> {
   }
   if (!groupAlive(pid)) return;
   process.kill(-pid, 'SIGTERM');
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + scaled(15_000);
   while (groupAlive(pid) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

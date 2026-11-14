@@ -171,6 +171,22 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                     "the same version of vehicle-sil",
                 &p);
         }
+        if (!p.variable_map_problems.empty())
+        {
+            std::string problems;
+            for (const std::string& problem : p.variable_map_problems)
+            {
+                problems += (problems.empty() ? "" : "; ") + problem;
+            }
+            add(Severity::Error, "variable-map-not-applied",
+                pre + "variables: " + std::to_string(p.variable_map_problems.size()) +
+                    " of its mappings do not fit the variables its control agent announced and were not applied, so "
+                    "those variables were seen under the executable's names and values in this run and writes to the names "
+                    "of these mappings were refused: " + problems +
+                    ". Correct variables in the configuration (vehicle_sil_launch check compares them with what an "
+                    "ecu_main executable describes)",
+                &p);
+        }
         if (p.control_late_messages > 0)
         {
             add(Severity::Warning, "control-link-late-values",

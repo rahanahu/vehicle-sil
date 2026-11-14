@@ -11,7 +11,10 @@
 #include "check_words.hpp"
 #include "yaml_tree.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -113,6 +116,22 @@ protected:
         const char* end = text.data() + text.size();
         const auto [ptr, ec] = std::from_chars(text.data(), end, value);
         return !text.empty() && ec == std::errc{} && ptr == end;
+    }
+
+    /// An unquoted finite decimal number ("1", "-2.5", "1e3").
+    bool plain_number(ryml::id_type node, double& value) const
+    {
+        if (!is_scalar(node) || tree_.is_val_quoted(node) || is_null(node))
+        {
+            return false;
+        }
+        const std::string text = detail::to_string(tree_.val(node));
+        const bool plain = !text.empty() && std::all_of(text.begin(), text.end(), [](char c) {
+            return std::isdigit(static_cast<unsigned char>(c)) != 0 || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+';
+        }) && (std::isdigit(static_cast<unsigned char>(text.front())) != 0 || text.front() == '-');
+        const char* end = text.data() + text.size();
+        const auto [ptr, ec] = std::from_chars(text.data(), end, value);
+        return plain && ec == std::errc{} && ptr == end && std::isfinite(value);
     }
 
     const YamlDocument& doc_;
