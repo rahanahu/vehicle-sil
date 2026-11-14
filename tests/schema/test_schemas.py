@@ -183,6 +183,7 @@ def scenario_mappings() -> dict[str, dict]:
         "ramp": definitions["step_ramp"]["properties"]["ramp"]["additionalProperties"],
         "wave": definitions["wave"],
         **{f"wave {shape}": definitions["wave"]["properties"][shape] for shape in WAVE_SHAPES_WITH_KEYS},
+        "wave points file": definitions["points_file"],
     }
 
 
@@ -392,6 +393,23 @@ SCENARIO_SAMPLES = [
      "  - wave: { Engine.engine.throttle: { sawtooth: { amplitude: \"${a}\", period_ms: \"${ms}\", falling: \"${yes}\" }, around: \"${mid}\", for_ms: \"${ms}\" } }\n"
      "  - wave: { Engine.engine.throttle: { noise: { amplitude: \"${a}\", hold_ms: \"${ms}\", seed: \"${ms}\", distribution: \"${bell}\" }, around: \"${mid}\", for_ms: \"${ms}\" } }\n"
      "params: { a: 5, hz: 2, mid: 50, ms: 400, how: hold, yes: true, bell: gaussian }\n", "valid"),
+    ("points from a CSV file",
+     S + "  - wave: { Engine.engine.throttle: { points: { file: points.csv, value: throttle } },\n"
+     "            Engine.ecu.connected: { points: { file: ./points.csv, value: connected, time: time, time_unit: ms } } }\n"
+     "  - wave: { Engine.engine.throttle: { points: { file: \"${trace}\", value: \"${column}\", time_unit: \"${unit}\" } } }\n"
+     "params: { trace: points.csv, column: throttle, unit: ms }\n", "valid"),
+    ("points from a file by an absolute path",
+     S + "  - wave: { Engine.engine.throttle: { points: { file: /tmp/points.csv, value: throttle } } }\n", "invalid"),
+    ("points from a file on a drive",
+     S + "  - wave: { Engine.engine.throttle: { points: { file: 'C:/points.csv', value: throttle } } }\n", "invalid"),
+    ("points from a file above the scenario",
+     S + "  - wave: { Engine.engine.throttle: { points: { file: sub/../../points.csv, value: throttle } } }\n", "invalid"),
+    ("points from a file with a backslash",
+     S + "  - wave: { Engine.engine.throttle: { points: { file: 'sub\\points.csv', value: throttle } } }\n", "invalid"),
+    ("points from a file without the column of the values",
+     S + "  - wave: { Engine.engine.throttle: { points: { file: points.csv } } }\n", "invalid"),
+    ("a time_unit there is not",
+     S + "  - wave: { Engine.engine.throttle: { points: { file: points.csv, value: throttle, time_unit: min } } }\n", "invalid"),
     ("a wave without a shape", S + "  - wave: { Engine.engine.throttle: { for_ms: 100 } }\n", "invalid"),
     ("a wave with two shapes",
      S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, pulse: { value: 1, width_ms: 50 }, for_ms: 100 } }\n",
@@ -525,6 +543,10 @@ SCENARIO_SAMPLES = [
     ("a parameter without a value", S + "  - at_ms: ${ms}\n" + SET.replace("  - ", "    "), "check only"),
     ("a parameter of the wrong type", S + "  - at_ms: ${ms}\n" + SET.replace("  - ", "    ") + "params: { ms: soon }\n",
      "check only"),
+    ("points from a file that is not there",
+     S + "  - wave: { Engine.engine.throttle: { points: { file: none.csv, value: throttle } } }\n", "check only"),
+    ("points from a column that is not there",
+     S + "  - wave: { Engine.engine.throttle: { points: { file: points.csv, value: speed } } }\n", "check only"),
     ("hexadecimal of a real", S + "  - set: { Engine.engine.throttle: 0x10 }\n", "check only"),
     ("hexadecimal of a real in a ramp", S + "  - ramp: { Engine.engine.throttle: { to: 0X10, over_ms: 10 } }\n", "check only"),
     ("a negative hexadecimal", S + "  - expect: { Engine.engine.speed: { ge: -0x1 } }\n", "check only"),
@@ -563,6 +585,8 @@ class Launcher:
         self.directory = directory
         self.count = 0
         self.scenario_configuration: Path | None = None
+        # The points file the samples name (points: { file: points.csv }), beside the scenarios.
+        (directory / "points.csv").write_text("time,throttle,connected\n0,0,false\n100,50,true\n", encoding="utf-8", newline="\n")
 
     def write(self, text: str) -> Path:
         self.count += 1
@@ -806,6 +830,7 @@ class SchemaAndLauncher(unittest.TestCase):
             "wave": S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, for_ms: 100, zz_probe: 1 } }\n",
             **{f"wave {shape}": S + "  - wave: { Engine.engine.throttle: { " + shape + ": { " + keys + ", zz_probe: 1 }, for_ms: 100 } }\n"
                for shape, keys in WAVE_SHAPES_WITH_KEYS.items()},
+            "wave points file": S + "  - wave: { Engine.engine.throttle: { points: { file: points.csv, value: throttle, zz_probe: 1 } } }\n",
         }
         mappings = scenario_mappings()
         self.assertEqual(set(probes), set(mappings))

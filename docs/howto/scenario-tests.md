@@ -97,6 +97,11 @@ steps:
   構成に `expect` の変数がないとき（`absent: true`）は、`expect` だけを飛ばして動かします。決まりの全体は [scenario.md](../scenario.md) の「動かしている間ずっと確かめる」です。
 - ECU のステップより細かい波形（周期がステップ幅の 2 倍より短い、パルスがステップ幅より短い、など）は、照合が警告を出し、ECU に実際に見える形を言います。わかっていて流すときは、その手順に `undersampled: ok` を書きます。
 - `noise` には `seed` が要ります。同じ `seed` なら毎回同じ値なので、落ちた実行をそのまま再現できます。
+- 記録した値は、CSV ファイルにして `points` から読めます。1 行目が列の名前、最初の列が時刻（ms）の CSV を、シナリオと同じディレクトリかその下に置き、`file` と値の列 `value` を書きます（[examples/ecu_main/scenarios/throttle_trace.yaml](../../examples/ecu_main/scenarios/throttle_trace.yaml)）。決まりは [scenario.md](../scenario.md) の「点を CSV ファイルから読む」です。
+
+  ```yaml
+    - wave: { Engine.engine.throttle: { points: { file: throttle_trace.csv, value: throttle } } }
+  ```
 
 ## つまずく所
 
@@ -338,7 +343,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/engine_disconnect.ya
 - 経過を 1 行ずつ読む道具は、`--json` の代わりに `--events` を付けます。手順が始まったときと決まったときに、事象 `scenario_step` が出ます。
 - シナリオの判定は仮想時刻だけで決まり、実時間の待ちはありません。ステップの中で止まった ECU がいると、いつまでも終わらないので、CI では `--timeout-ms` で実時間の上限を付けます。
 - ECU ごとの出力を残すときは `--log-dir` を付けます。警告も失敗にするときは `--strict` です。
-- 版の違うランチャーを使うときは、`vehicle_sil_launch version --json` の `features` に `scenario` があるかを確かめます（手順 `wave` は `scenario-wave`、`ramp` と `wave` の横の `expect` は `scenario-motion-expect`）。
+- 版の違うランチャーを使うときは、`vehicle_sil_launch version --json` の `features` に `scenario` があるかを確かめます（手順 `wave` は `scenario-wave`、`ramp` と `wave` の横の `expect` は `scenario-motion-expect`、CSV ファイルの `points` は `scenario-points-file`）。
 
 ## 次に読むもの
 
