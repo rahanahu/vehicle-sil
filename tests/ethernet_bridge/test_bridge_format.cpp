@@ -36,10 +36,11 @@ TEST_CASE(format_statistics_names_every_counter)
     s.ext_queue_full = 10;
     s.ext_tx_failures = 11;
     s.silkit_tx_failures = 12;
+    s.ext_checksum_incomplete = 14;
     CHECK_TEXT(format_statistics(s),
                "stats silkit_to_ext=1 ext_to_silkit=2 own_tx_dropped=3 loop_suspected=4 mac_unguarded=13 filtered_to_ext=5 "
                "filtered_from_ext=6 oversize=7 malformed=8 ext_overruns=9 ext_queue_full=10 ext_tx_failures=11 "
-               "silkit_tx_failures=12");
+               "silkit_tx_failures=12 ext_checksum_incomplete=14");
 }
 
 TEST_CASE(problems_grew_ignores_forwarded_filtered_and_own_frames)
@@ -56,7 +57,8 @@ TEST_CASE(problems_grew_ignores_forwarded_filtered_and_own_frames)
                         &EthernetBridgeStatistics::oversize,
                         &EthernetBridgeStatistics::malformed, &EthernetBridgeStatistics::ext_overruns,
                         &EthernetBridgeStatistics::ext_queue_full, &EthernetBridgeStatistics::ext_tx_failures,
-                        &EthernetBridgeStatistics::silkit_tx_failures})
+                        &EthernetBridgeStatistics::silkit_tx_failures,
+                        &EthernetBridgeStatistics::ext_checksum_incomplete})
     {
         auto grown = now;
         grown.*member += 1;

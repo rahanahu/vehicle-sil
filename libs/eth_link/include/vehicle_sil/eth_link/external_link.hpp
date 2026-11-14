@@ -43,6 +43,11 @@ struct LinkEvent
     LinkEventKind kind = LinkEventKind::Frame;
     /// Valid for Frame, during the handler call only.
     std::span<const std::uint8_t> frame{};
+    /// Valid for Frame: the frame's TCP or UDP checksum is not filled in. This computer's OS sent
+    /// the frame and left the checksum to the network adapter, and the link saw the frame before
+    /// that. The link passes the frame on as it is, and tells why and what to do in one Warning
+    /// before the first such frame.
+    bool checksum_incomplete = false;
     /// Valid for Overrun.
     std::uint64_t count = 0;
     /// Valid for LinkState.
@@ -122,7 +127,7 @@ public:
     /// same networks, or one address used on both sides, from its own frames.
     [[nodiscard]] virtual bool echoes_own_transmissions() const noexcept = 0;
     /// What the link is, for the bridge's start line: kind, name, real or virtual
-    /// (e.g. "tap 'vsil0' (virtual)").
+    /// (e.g. "tap 'vsil0' (TAP device in this computer)").
     [[nodiscard]] virtual std::string describe() const = 0;
     [[nodiscard]] virtual std::string last_error() const = 0;
 };

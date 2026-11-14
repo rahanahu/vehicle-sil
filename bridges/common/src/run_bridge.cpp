@@ -199,6 +199,12 @@ int run_bridge(BridgeParticipant& participant, BridgeHooks& hooks, const RunBrid
 
     print("stopping");
     hooks.stop();
+    // What the bridge had to say since the loop's last look (a warning raised just before the
+    // stop, or by the stop itself) is not lost with it.
+    for (const auto& warning : hooks.take_warnings())
+    {
+        print("warning: " + warning);
+    }
     // The statistics are final once the bridge stopped: print them before the SIL Kit shutdown,
     // which may take its time (and a closed console may not grant it).
     for (const auto& line : hooks.final_statistics())
