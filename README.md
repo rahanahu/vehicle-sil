@@ -1,6 +1,6 @@
 # vehicle-sil
 
-vehicle-sil は、車の ECU（電子制御ユニット）をソフトウェアでシミュレートし、複数の ECU をつないで PC 上で動かしてテストするためのツール一式です。ECU は C++20 で書きます。ECU の間の通信と時刻の同期には [Vector SIL Kit](https://github.com/vectorgrp/sil-kit) を使います。Linux と Windows（MinGW）で動きます。
+vehicle-sil は、車の ECU（電子制御ユニット）をソフトウェアでシミュレートし、複数の ECU をつないで PC 上で動かしてテストするためのツール一式です。ECU は C++20 で書きます。ECU の間の通信と時刻の同期には [Vector SIL Kit](https://github.com/vectorgrp/sil-kit) を使います。すべての ECU は、実際の時計ではなく、共通のシミュレーションの時刻（仮想時間）で動くので、何度実行しても同じ結果になります。Linux と Windows（MinGW）で動きます。
 
 > [!NOTE]
 > 最初のリリース（0.1.0）の前です。公開 API は、互換性を保たずに変わることがあります。
@@ -15,8 +15,8 @@ vehicle-sil は、車の ECU（電子制御ユニット）をソフトウェア�
 | テストを書いて自動で実行する | YAML のシナリオに、値の設定、待機、確認の手順を書きます。 | [シナリオで試験を書く](docs/howto/scenario-tests.md) |
 | 動いているシミュレーションの値を Python から読み書きする | Control API（gRPC）と、その Python のクライアントを使います。 | [信号を外から操作する](docs/howto/operate-signals.md) |
 | ブラウザで値を見て操作する | `vehicle-sil-gui` が、変数をスライダーやグラフで表示します。 | [gui.md](docs/gui.md) |
-| 実機の CAN やネットワークにつなぐ | Vector XL の CAN とのブリッジと、イーサネットのブリッジがあります。 | [bridges.md](docs/bridges.md)、[ethernet-bridge.md](docs/ethernet-bridge.md) |
-| ほかの PC の ECU を参加させる | 設定ファイルに、SIL Kit の registry のアドレスと、相手が自分で起動する ECU を書きます。 | [複数の PC で動かす](docs/howto/multi-pc.md) |
+| 実機の CAN やネットワークにつなぐ | シミュレーションのバスと実機のバスの間でフレームを中継するブリッジが、Vector XL の CAN 用とイーサネット用にあります。 | [bridges.md](docs/bridges.md)、[ethernet-bridge.md](docs/ethernet-bridge.md) |
+| ほかの PC の ECU を参加させる | 設定ファイルに、SIL Kit の registry（参加者どうしを引き合わせるサーバー）のアドレスと、相手が自分で起動する ECU を書きます。 | [複数の PC で動かす](docs/howto/multi-pc.md) |
 
 ```mermaid
 flowchart LR
@@ -25,8 +25,10 @@ flowchart LR
     launch["vehicle_sil_launch<br>check / run / シナリオ"] --- silkit
     bridge["ブリッジ"] --- silkit
     bridge --- real["実機の CAN、<br>外のネットワーク"]
-    client["Python、ブラウザ"] -- "値を読む、書く" --> launch
+    client["Python、ブラウザ"] --- launch
 ```
+
+図の線は、接続を表します。ECU、`vehicle_sil_launch`、ブリッジは SIL Kit でつながり、Python とブラウザは `vehicle_sil_launch` につないで値を読み書きします。
 
 ECU は 1 つずつ別の実行ファイルです。何人かが別々に作った ECU を、内部を知らない人が設定ファイルに並べて動かせます。全体の構成は [docs/architecture.md](docs/architecture.md) に、やりたいこと別のサンプルは [examples/README.md](examples/README.md) にあります。
 
@@ -54,7 +56,7 @@ participants:
 | `vehicle_sil_launch check simulation.yaml` | 各 ECU に自身の構成を出力させて、設定ファイルと照合します。 | 各 ECU を `--describe` で起動するだけで、シミュレーションは実行しません。 |
 | `vehicle_sil_launch run simulation.yaml` | シミュレーションを `stop_at_ms` まで実行します。 | SIL Kit の registry とすべての ECU を起動し、終わったら終了させます。 |
 | `vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml` | シナリオの手順どおりに値を設定して確認します。 | 同じものを起動し、すべての手順が成功すれば終了コード 0 で終わります。 |
-| `vehicle-sil-gui simulation.live.yaml` | 停止するまで実行し、ブラウザで値を見て操作します。 | GUI サーバーを起動し、画面の「開始」でシミュレーションを起動します。 |
+| `vehicle-sil-gui simulation.live.yaml` | 同じ 2 つの ECU を、時間の制限のない設定ファイル（`simulation.yaml` の隣にあります）で、停止するまで実行し、ブラウザで値を見て操作します。 | GUI サーバーを起動し、画面の「開始」でシミュレーションを起動します。 |
 
 `check` の出力です。
 
@@ -126,7 +128,7 @@ failed: 2 errors, 1 warning, 0 notes
 | [uv](https://docs.astral.sh/uv/) | 指定なし | ビルドと GUI が使う Python（3.11 以上）とパッケージをインストールします。 |
 | Node.js、npm | 24.15 以上、11.12 以上 | GUI の画面のビルドに使います。 |
 
-リポジトリをビルドして、上の例を実行し、GUI を起動します。コマンドは Linux のものです。Windows の手順、ほかのプリセット、テストの実行方法は [docs/build.md](docs/build.md) にあります。
+リポジトリをビルドして、上の例を実行し、GUI を起動します。最初の構成とビルドは、SIL Kit と（PC になければ）gRPC をダウンロードしてコンパイルするので、ネットワークへの接続と、数分から十数分の時間が必要です。コマンドは Linux のものです。Windows の手順、ほかのプリセット、テストの実行方法は [docs/build.md](docs/build.md) にあります。
 
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git
