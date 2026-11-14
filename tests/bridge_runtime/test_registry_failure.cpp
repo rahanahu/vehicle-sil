@@ -23,6 +23,33 @@ TEST_CASE(registry_failure_says_where_the_bridge_looked_and_what_to_do)
           "silkit://127.0.0.1:8500'), or give the address it listens at with --registry-uri.");
 }
 
+TEST_CASE(registry_failure_at_another_computer_says_what_to_check_there)
+{
+    const std::string what = "ERROR: Failed to connect to SIL Kit Registry";
+    const auto text = [&](const std::string& uri) { return registry_failure_message(what, uri).value_or(""); };
+    const auto elsewhere = [&](const std::string& uri, const std::string& host, const std::string& listen) {
+        return "cannot connect to the SIL Kit registry at " + uri + " (" + what + "). " + host +
+               " is another computer: check that the registry runs there, that it listens on an address this computer "
+               "reaches ('sil-kit-registry --listen-uri " + listen + "' listens on all of that computer's addresses, not "
+               "only on its loopback), and that the firewall there lets the port through. If the registry is elsewhere, "
+               "give its address with --registry-uri.";
+    };
+    CHECK(text("silkit://192.168.10.5:8500") == elsewhere("silkit://192.168.10.5:8500", "192.168.10.5", "silkit://0.0.0.0:8500"));
+    CHECK(text("silkit://sim-pc:8501") == elsewhere("silkit://sim-pc:8501", "sim-pc", "silkit://0.0.0.0:8501"));
+    CHECK(text("silkit://[fe80::1]:8500") == elsewhere("silkit://[fe80::1]:8500", "fe80::1", "silkit://0.0.0.0:8500"));
+    CHECK(text("silkit://sim-pc") == elsewhere("silkit://sim-pc", "sim-pc", "silkit://0.0.0.0"));
+    CHECK(text("silkit://1270.0.0.1:8500") ==
+          elsewhere("silkit://1270.0.0.1:8500", "1270.0.0.1", "silkit://0.0.0.0:8500"));
+    // This computer, however it is written, and an address that cannot be read: start the registry.
+    for (const std::string uri : {"silkit://localhost:8500", "silkit://127.0.0.1:8500", "silkit://127.1.2.3:8500",
+                                  "silkit://[::1]:8500", "::1", "silkit://", "", "silkit://[::1"})
+    {
+        CHECK(text(uri).find("). Start the registry first ('sil-kit-registry --listen-uri " + uri + "'), or give") !=
+              std::string::npos);
+        CHECK(text(uri).find("another computer") == std::string::npos);
+    }
+}
+
 TEST_CASE(registry_failure_leaves_other_failures_as_they_are)
 {
     CHECK(!registry_failure_message("the participant name must not be empty", "silkit://127.0.0.1:8500"));

@@ -45,12 +45,23 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 
 引数は「[引数](#引数parse_bridge_options)」にあります。ブリッジは次の順に動きます。
 
-1. 引数を調べます。誤りは、何が誤りかと使い方を標準エラーに出して、終了コード 4 で終わります。
+1. 引数を調べます。誤りには、誤りの 1 行と、使い方の見方の 1 行だけを標準エラーに出して、終了コード 4 で終わります（使い方の全文は `--help`）。Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（`--participant`、`--network`、`--interface` に ASCII 以外の文字を使えます）。
+
+   ```
+   error: --backend must be tap, packet, npcap or pcap, got: usb
+   Run 'vehicle_sil_ethernet_bridge --help' for the options.
+   ```
 2. `--backend` がこの OS で使えるかを調べます。使えなければ、SIL Kit に接続する前に、理由と代わりを言って終了コード 3 で終わります。`npcap` と `pcap` は、ここでライブラリを読み込みます。入っていなければ、入れ方を言って終了コード 3 で終わります。
 3. SIL Kit の registry に接続し、Ethernet のコントローラーを作ります。registry に接続できなければ、どこに接続しようとしたかと次にすることを言って、終了コード 3 で終わります（括弧の中は SIL Kit の文です）。
 
    ```
    [eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://127.0.0.1:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). Start the registry first ('sil-kit-registry --listen-uri silkit://127.0.0.1:8500'), or give the address it listens at with --registry-uri.
+   ```
+
+   アドレスがこの PC（`localhost`、`127.x.y.z`、`::1`）でないときは、registry を起動せよとは言わず、その PC で確かめることを言います（文は `bridges/common` の `registry_failure_message()` が作り、Vector XL のブリッジと同じです）。
+
+   ```
+   [eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://192.168.10.5:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). 192.168.10.5 is another computer: check that the registry runs there, that it listens on an address this computer reaches ('sil-kit-registry --listen-uri silkit://0.0.0.0:8500' listens on all of that computer's addresses, not only on its loopback), and that the firewall there lets the port through. If the registry is elsewhere, give its address with --registry-uri.
    ```
 4. 外のインターフェースを開き、転送を始めます（`EthernetBridge::start()`）。開けなければ、何が起きたかと直し方を言って終了コード 3 で終わります（下の「[バックエンド](#バックエンド)」の文）。
 5. participant の lifecycle を始めます。転送を先に始めるのは、ほかの participant が、ブリッジが Running になったのを見た時点で送り始めるからです。
@@ -197,7 +208,7 @@ cannot open a packet socket on 'enp3s0': Operation not permitted. A network inte
 - pcap の名前（Linux はインターフェースの名前そのもの、Windows は `\Device\NPF_{...}`）。
 - Windows では、ネットワーク接続の名前（「Ethernet 2」。`--list-interfaces` の行の先頭）と、アダプターの識別子（`{4D36E972-...}`。波括弧はあってもなくても、大文字でも小文字でもよい）も書けます。
 - 接続の名前が 2 つのアダプターに当たるときは誤りで、pcap の名前を挙げます。
-- 接続の名前は、Windows の「ANSI コードページ」の文字列として比べます（引数もコンソールの出力も、その文字コードです）。そのコードページにない文字は、一覧では `?` になります。その名前をそのまま `--interface` に渡せば開けます。日本語の名前が日本語の Windows で一致して読めるかは、未確認です。
+- 接続の名前は、UTF-8 の文字列として比べます（引数は UTF-8 で読み、一覧も誤りの文も UTF-8 で出します）。コンソールのコードページが UTF-8（`chcp 65001`）でなければ、ASCII 以外の文字は、画面では崩れて見えます。その場合も、引数に書いた名前は一致します。日本語の名前が日本語の Windows で一致するかは、未確認です。
 
 動きです。
 
@@ -503,7 +514,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 
 - `wpcap.dll` を `System32\Npcap` から読み込める（`Packet.dll` も見つかる）。ブリッジが使う関数があり、構造体の形が合う（一覧、フレームの長さと中身、捨てた数）。
 - 受信を待つイベントで、空回りせず、取りこぼしなく受ける。
-- 接続の名前が一覧に出て、`--interface` と一致する（英語の Windows）。コードページにない文字は `?` で出て、その名前で開ける。
+- 接続の名前が一覧に出て、`--interface` と一致する（英語の Windows、ASCII の名前）。
 - SIL Kit の相手と、アダプターの先の機器との往復。`--promiscuous` なしでは、SIL Kit の機器宛てのユニキャストが届かず、手がかりの警告が出る。
 - 同じアダプターを Npcap で開いたほかのソフトと、両方向に届く（仮想の NIC でも、KM-TEST Loopback Adapter でも）。
 - Npcap は、ハンドルが送ったフレームをそのハンドルに戻す。`PCAP_OPENFLAG_NOCAPTURE_LOCAL` を付けて開いたハンドルは、自分の送信を受けず、ほかのハンドルの送信は受ける。

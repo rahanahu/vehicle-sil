@@ -56,33 +56,33 @@ DWORD milliseconds_of(std::chrono::milliseconds time) noexcept
     return static_cast<DWORD>(std::clamp<std::chrono::milliseconds::rep>(time.count(), 0, 0x7fffffff));
 }
 
-/// Text of Windows in the code page the program's arguments and its console output use.
+/// Text of Windows as UTF-8, as the program's arguments and its output are.
 std::string narrow(const wchar_t* text)
 {
     if (text == nullptr)
     {
         return {};
     }
-    const int size = WideCharToMultiByte(CP_ACP, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    const int size = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
     if (size <= 1)
     {
         return {};
     }
     std::string result(static_cast<std::size_t>(size), '\0');
-    WideCharToMultiByte(CP_ACP, 0, text, -1, result.data(), size, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, text, -1, result.data(), size, nullptr, nullptr);
     result.resize(static_cast<std::size_t>(size) - 1);
     return result;
 }
 
 std::wstring widen(const std::string& text)
 {
-    const int size = MultiByteToWideChar(CP_ACP, 0, text.c_str(), -1, nullptr, 0);
+    const int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
     if (size <= 1)
     {
         return {};
     }
     std::wstring result(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_ACP, 0, text.c_str(), -1, result.data(), size);
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, result.data(), size);
     result.resize(static_cast<std::size_t>(size) - 1);
     return result;
 }

@@ -13,7 +13,10 @@ namespace vehicle_sil::bridge_runtime {
 /// The one-line message for a participant that could not be created because the registry at
 /// `registry_uri` did not answer, from `what`, the text of the exception that creating the
 /// participant threw: what happened, where the bridge looked (with SIL Kit's text, on one line),
-/// and how to go on. nullopt if `what` is another failure: report that one as it is.
+/// and how to go on. The way to go on depends on where the address points: at this computer
+/// (localhost, 127.x.y.z, ::1) it is to start the registry; at another computer it is to check
+/// that the registry runs there and can be reached (the address it listens on, the firewall).
+/// nullopt if `what` is another failure: report that one as it is.
 [[nodiscard]] std::optional<std::string> registry_failure_message(std::string_view what, std::string_view registry_uri);
 
 } // namespace vehicle_sil::bridge_runtime
