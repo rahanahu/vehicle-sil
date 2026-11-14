@@ -84,8 +84,9 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       # ethtool: ethernet_bridge.netns.packet turns an offload off with it.
-      - name: Install Ninja, ccache and ethtool
-        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache ethtool
+      # libpcap0.8: ethernet_bridge.netns.pcap loads the library at run time (nothing is built against it).
+      - name: Install Ninja, ccache, ethtool and libpcap
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache ethtool libpcap0.8
       - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
         run: uv sync --locked
       # The thread sanitizer cannot map its shadow memory when the kernel randomizes addresses with more bits.

@@ -34,10 +34,6 @@ const char* const kOtherEcu = "02:00:00:00:00:03";
 const char* const kDevice = "02:00:00:00:00:02";
 const char* const kBroadcast = "ff:ff:ff:ff:ff:ff";
 
-const std::string kNoBackendOnWindows =
-    ": this version of vehicle_sil_ethernet_bridge has no backend for Windows (tap and packet are for Linux; npcap and pcap "
-    "are not part of this version). Run the bridge on a Linux computer that reaches the same SIL Kit registry.";
-
 BridgeOptions options_for(Backend backend, std::vector<std::string_view> extra = {})
 {
     std::vector<std::string_view> args = {"--registry-uri", "silkit://127.0.0.1:8500", "--network", "ETH1", "--backend",
@@ -81,32 +77,40 @@ const std::string kHint =
 
 } // namespace
 
-TEST_CASE(app_tap_and_packet_are_for_linux)
+TEST_CASE(app_tap_packet_and_pcap_are_for_linux)
 {
     CHECK(!backend_unavailable(Backend::Tap, HostOs::Linux));
     CHECK(!backend_unavailable(Backend::Packet, HostOs::Linux));
+    CHECK(!backend_unavailable(Backend::Pcap, HostOs::Linux));
     CHECK(!backend_unavailable(std::nullopt, HostOs::Linux));
     CHECK_TEXT(backend_unavailable(Backend::Npcap, HostOs::Linux).value_or(""),
-               "--backend npcap is for Windows. On Linux use --backend packet (a network interface) or --backend tap (a TAP "
-               "device).");
-    CHECK_TEXT(backend_unavailable(Backend::Pcap, HostOs::Linux).value_or(""),
-               "--backend pcap is not part of this version. Use --backend packet (a network interface) or --backend tap (a "
-               "TAP device).");
+               "--backend npcap is for Windows. On Linux use --backend packet or --backend pcap (a network interface), or "
+               "--backend tap (a TAP device).");
 }
 
-TEST_CASE(app_no_backend_works_on_windows_and_the_message_tells_where_to_run_the_bridge)
+TEST_CASE(app_npcap_is_for_windows_and_the_message_names_it)
 {
-    for (const auto backend : {Backend::Tap, Backend::Packet, Backend::Npcap, Backend::Pcap})
+    CHECK(!backend_unavailable(Backend::Npcap, HostOs::Windows));
+    CHECK(!backend_unavailable(std::nullopt, HostOs::Windows));
+    for (const auto backend : {Backend::Tap, Backend::Packet, Backend::Pcap})
     {
         CHECK_TEXT(backend_unavailable(backend, HostOs::Windows).value_or(""),
-                   "--backend " + std::string(to_string(backend)) + " cannot be used here" + kNoBackendOnWindows);
+                   "--backend " + std::string(to_string(backend)) +
+                       " is for Linux. On Windows use --backend npcap (a network adapter through Npcap).");
     }
-    CHECK_TEXT(backend_unavailable(std::nullopt, HostOs::Windows).value_or(""),
-               "there is no interface to list here" + kNoBackendOnWindows);
-    CHECK_TEXT(backend_unavailable(Backend::Tap, HostOs::Other).value_or(""),
-               "--backend tap cannot be used here: this version of vehicle_sil_ethernet_bridge has no backend for this "
-               "operating system (tap and packet are for Linux; npcap and pcap are not part of this version). Run the bridge "
-               "on a Linux computer that reaches the same SIL Kit registry.");
+}
+
+TEST_CASE(app_no_backend_works_elsewhere_and_the_message_tells_where_to_run_the_bridge)
+{
+    const std::string why = ": vehicle_sil_ethernet_bridge has no backend for this operating system (tap, packet and pcap are for "
+                            "Linux; npcap is for Windows). Run the bridge on a Linux or Windows computer that reaches the same SIL "
+                            "Kit registry.";
+    for (const auto backend : {Backend::Tap, Backend::Packet, Backend::Npcap, Backend::Pcap})
+    {
+        CHECK_TEXT(backend_unavailable(backend, HostOs::Other).value_or(""),
+                   "--backend " + std::string(to_string(backend)) + " cannot be used here" + why);
+    }
+    CHECK_TEXT(backend_unavailable(std::nullopt, HostOs::Other).value_or(""), "there is no interface to list here" + why);
 }
 
 TEST_CASE(app_host_os_matches_the_build)

@@ -100,6 +100,28 @@ Windows では `SilKit.dll` が実行ファイルと別のディレクトリに�
 
 SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみで C API を包む構成なので、利用側を C++20 でコンパイルしても問題ありません。MinGW-w64 は上流が対応しています（`-Wa,-mbig-obj` など）。
 
+### Npcap と libpcap（イーサネットのブリッジの `npcap` と `pcap`、実行時だけ）
+
+- どちらも vehicle-sil に含めず、サブモジュールにもせず、配布物にも入れません。ビルドにも使いません（ヘッダーもインポートライブラリも要りません）。使う人が PC に入れたものを、ブリッジが実行時に読み込みます。入っていなければ、ブリッジは入れ方を言って終わります（[ethernet-bridge.md](ethernet-bridge.md) の「`npcap` と `pcap`」）。
+  - Windows: [Npcap](https://npcap.com)。使える範囲と再配布の条件は Npcap のライセンスにあります。vehicle-sil の文書は、その内容を解釈しません。
+  - Linux: ディストリビューションの [libpcap](https://www.tcpdump.org)（BSD ライセンス）。
+- リポジトリには、どちらのヘッダーもその写しも含めていません。関数の型、読む 3 つの構造体、結果の番号は、公開されている呼び出しの形に合わせて vehicle-sil が自分で宣言しています（`libs/eth_link/src/pcap/pcap_api.hpp`。名前は vehicle-sil のもの）。
+- ライブラリを読み込んで関数を引くのは `libs/eth_link/src/pcap/pcap_loader_win.cpp`（`LoadLibraryExW`、`GetProcAddress`）と `pcap_loader_posix.cpp`（`dlopen`、`dlsym`）だけです。待ち方（Windows はライブラリのイベントと `WaitForMultipleObjects`、Linux はライブラリのディスクリプターと `poll`）と、接続の名前（Windows の `GetAdaptersAddresses`。`iphlpapi` をリンクします）もここにあります。
+- 口の判断と状態（開く順、受信スレッド、誤りの文、インターフェースの選び方）は `src/pcap/pcap_link.cpp` にあります。関数の表だけに依存するので、どのプラットフォームでもビルドします。
+
+| 用途 | ライブラリの関数 |
+|---|---|
+| 一覧 | `pcap_findalldevs`、`pcap_freealldevs`、`pcap_lib_version` |
+| 開く | `pcap_create`、`pcap_set_snaplen`、`pcap_set_promisc`、`pcap_set_timeout`、`pcap_set_immediate_mode`、`pcap_activate`、`pcap_datalink`、`pcap_setnonblock`、`pcap_close` |
+| 送受信 | `pcap_next_ex`、`pcap_sendpacket`、`pcap_geterr`、`pcap_stats` |
+| 待つ | Windows は `pcap_getevent`、Linux は `pcap_get_selectable_fd` |
+
+- どれか 1 つでもなければ、ブリッジは開かずに、ライブラリの版と足りない関数の名前を言います。
+- 試験は、同じ名前の関数を持つ試験専用の偽の共有ライブラリ（`tests/eth_link/fake_pcap`。vehicle-sil の宣言からビルドします）を、本物と同じ道で読み込みます。本物の libpcap に対しては、Linux の試験 `ethernet_bridge.netns.pcap` が確かめます（入っていない PC では飛ばします）。本物の Npcap に対する試験はありません。
+- 実装が前提にしている挙動:
+  - libpcap（Linux。`ethernet_bridge.netns.pcap` が確かめます）: 送ったフレームは、送ったハンドルの受信に戻らない。受けたフレームの VLAN タグは、元の位置に戻して渡される。ブロックしない読み取りでは、インターフェースが下がったことも、なくなったことも、ライブラリは知らせない（ブリッジがカーネルに聞きます）。
+  - 確かめていない前提: `pcap_stats` の捨てた数が、開いてからの累計であること。Npcap の全部（送ったフレームが戻るか、イベントが読み取りで下がるか、構造体の形）。Npcap が送ったフレームを戻すかはわからないので、口は「戻す」と申告します（戻さなくても転送は続きます）。
+
 ## 使っている API
 
 | ライブラリ | 用途 | API |
