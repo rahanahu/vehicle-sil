@@ -45,8 +45,9 @@ struct CanBusSimulatorStatistics
     std::uint64_t requests = 0;         ///< Frames the controllers asked to send.
     std::uint64_t transmissions = 0;    ///< Frames transmitted.
     std::uint64_t untagged_requests = 0; ///< Requests without a usable send time (not deterministic).
-    std::uint64_t rejected_requests = 0; ///< Requests that are not classic CAN data frames, or
-                                         ///< from a controller that has disconnected (dropped).
+    std::uint64_t rejected_requests = 0; ///< Requests dropped: not a classic CAN data frame, from a
+                                         ///< controller that is not started or has disconnected,
+                                         ///< or cancelled by the controller (Reset()).
     std::uint64_t transmit_queue_full = 0; ///< Requests refused because the controller's queue was full.
     std::uint64_t inbox_overflows = 0;     ///< Requests dropped because the inbox was full.
     std::uint64_t bitrate_conflicts = 0;   ///< SetBaudRate() calls with another rate than the one in use.
@@ -73,9 +74,18 @@ struct CanBusSimulatorStatistics
 /// CanBusSimulatorOptions::default_bitrate. A later, different rate is counted and reported,
 /// and not used.
 ///
-/// Controller modes: a mode change (Start(), Stop(), ...) is acknowledged with a state change
-/// event at the next step. Frames reach every connected controller except the sender,
-/// whatever its mode.
+/// Controller modes, as in SIL Kit's trivial simulation: a mode change (Start(), Stop(), Sleep(),
+/// Reset()) is acknowledged with a state change event at the next step. What a controller sends
+/// after it told a mode other than Started is dropped and counted in rejected_requests, without
+/// an acknowledgement; what it sent before still goes out. A controller the simulator heard no
+/// mode of counts as started: it may have called Start() before it found the simulator, and
+/// SIL Kit does not send that again. Frames reach every connected controller except the sender,
+/// whatever the receiver's mode.
+///
+/// Reset() cancels the controller's transmit requests: its frames that were not transmitted
+/// yet never reach the bus, are counted in rejected_requests, and are acknowledged as Canceled
+/// (at the step that applies the cancellation: the first one that begins after the Reset()
+/// arrived). The request to reset the error handling has nothing to reset.
 ///
 /// Not modelled: stuff bits, CAN FD and remote frames (dropped and counted), error frames,
 /// ACK errors (also when a controller is alone on the bus), error states, the order of a
