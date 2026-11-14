@@ -18,7 +18,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A pull request that changes only Markdown files needs only the checks that read the documents: the links
+  # (python), the examples that the launcher's tests compare with the documents (linux-gcc-debug), and the format
+  # of the GUI's READMEs (gui). A push to main runs everything.
+  changes:
+    name: changes (documents only?)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.look.outputs.docs_only }}
+      presets: ${{ steps.look.outputs.presets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: look
+        env:
+          EVENT: ${{ github.event_name }}
+        # The checkout of a pull request is its merge into the base: the first parent is the base.
+        run: |
+          docs_only=false
+          if [ "$EVENT" = pull_request ]; then
+            files=$(git diff --name-only HEAD^1 HEAD)
+            echo "$files"
+            if [ -n "$files" ] && ! grep -qv '\.md$' <<<"$files"; then docs_only=true; fi
+          fi
+          if [ "$docs_only" = true ]; then
+            presets='["linux-gcc-debug"]'
+          else
+            presets='["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-clang-tsan"]'
+          fi
+          echo "docs_only=$docs_only" | tee -a "$GITHUB_OUTPUT"
+          echo "presets=$presets" | tee -a "$GITHUB_OUTPUT"
+
   linux:
+    needs: changes
     name: linux (${{ matrix.preset }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -27,7 +62,7 @@ jobs:
       matrix:
         # linux-gcc-static: VEHICLE_SIL_STATIC=ON (SIL Kit and the C++ runtime linked into each executable)
         # linux-clang-tsan: the thread sanitizer; a race in a test or in the product shows only here
-        preset: [linux-gcc-debug, linux-gcc-release, linux-gcc-static, linux-clang-tsan]
+        preset: ${{ fromJSON(needs.changes.outputs.presets) }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 1G
@@ -71,6 +106,8 @@ jobs:
   # The oldest CMake that docs/build.md asks for (3.21, its last release), so that every run checks that claim. Kitware's
   # own Linux build, checked against the SHA-256 that the release lists (cmake-3.21.7-SHA-256.txt).
   linux-oldest-cmake:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: linux (linux-gcc-release, CMake 3.21.7)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -119,6 +156,8 @@ jobs:
           retention-days: 14
 
   windows:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: windows (windows-mingw-release)
     runs-on: windows-2025
     timeout-minutes: 150
@@ -178,6 +217,7 @@ jobs:
           retention-days: 14
 
   gui:
+    needs: changes
     name: gui (server, screen, examples)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -191,12 +231,19 @@ jobs:
           cache: npm
           cache-dependency-path: gui/web/package-lock.json
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - name: Install the packages and the browser of the end-to-end tests
+      - name: Install the packages
         working-directory: gui/web
-        run: |
-          npm ci
-          npx playwright install --with-deps --only-shell chromium
+        run: npm ci
+      - name: Format of the documents (a pull request that changes only Markdown files)
+        if: needs.changes.outputs.docs_only == 'true'
+        working-directory: gui/web
+        run: npm run format:check
+      - name: Install the browser of the end-to-end tests
+        if: needs.changes.outputs.docs_only != 'true'
+        working-directory: gui/web
+        run: npx playwright install --with-deps --only-shell chromium
       - name: Server, screen and examples
+        if: needs.changes.outputs.docs_only != 'true'
         run: python3 scripts/verify-gui.py --skip-install --tag ci
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
