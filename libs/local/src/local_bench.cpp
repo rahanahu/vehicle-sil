@@ -4,6 +4,7 @@
 #include "vehicle_sil/core/periodic.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -19,9 +20,9 @@ std::string in_quotes(std::string_view name) { return "\"" + std::string(name) +
                                     NetworkKind other, NetworkKind wanted)
 {
     throw std::invalid_argument(std::string(kWho) + std::string(what) + " of the ECU " + in_quotes(ecu) + ": " +
-                                in_quotes(network) + " is a " + std::string(detail::network_kind_label(other)) +
-                                " bus (made by " + std::string(detail::network_kind_calls(other)) + "); a " +
-                                std::string(detail::network_kind_label(wanted)) + " bus needs a name of its own");
+                                in_quotes(network) + " is " + std::string(detail::network_kind_with_article(other)) +
+                                " bus (made by " + std::string(detail::network_kind_calls(other)) + "); " +
+                                std::string(detail::network_kind_with_article(wanted)) + " bus needs a name of its own");
 }
 
 /// The port a LIN node of an ECU is made on. It reaches its bus endpoint only once the node
@@ -97,6 +98,23 @@ struct LocalBench::NamedLinBus
     std::unique_ptr<lin::VirtualLinBus> bus;
 };
 
+struct LocalBench::NamedEthernetBus
+{
+    std::string name;
+    std::unique_ptr<eth::VirtualEthernetBus> bus;
+};
+
+/// An Ethernet channel of an ECU (Ecu::ethernet()) on an endpoint of its own.
+struct LocalBench::EthernetChannel
+{
+    // Destroyed bottom-up: the channel, then the gate. The endpoint stays with its bus.
+    std::string network;
+    std::size_t order = 0; ///< as LinNode::order
+    std::optional<eth::MacAddress> mac; ///< eth::ChannelOptions::mac (describe())
+    std::unique_ptr<detail::GatedEthPort> gate;
+    std::unique_ptr<eth::Channel> channel;
+};
+
 struct LocalBench::Channel
 {
     // Destroyed bottom-up: the network, then the tap, then the gate.
@@ -162,7 +180,8 @@ public:
     // The writes still waiting on the control agent are cancelled (no step runs any more; the
     // transports are gone already, so the agent's state is only consistent, not reported). Then
     // the host, then the LIN nodes (the one added last first), then the networks (the one added
-    // last first, each before its tap), then the raw channels (the one added last first); the
+    // last first, each before its tap), then the raw channels (the one added last first), then
+    // the Ethernet channels (the one added last first); the
     // control agent and last the owned objects go with the members.
     ~Site() override
     {
@@ -179,6 +198,10 @@ public:
         while (!raw_channels_.empty())
         {
             raw_channels_.pop_back();
+        }
+        while (!ethernet_.empty())
+        {
+            ethernet_.pop_back();
         }
     }
 
@@ -221,6 +244,10 @@ public:
         for (const auto& node : lin_nodes_)
         {
             networks.add(node->order, {node->network, node->master ? NetworkUse::LinMaster : NetworkUse::LinSlave, {}});
+        }
+        for (const auto& e : ethernet_)
+        {
+            networks.add(e->order, {e->network, NetworkUse::Ethernet, {}, e->mac});
         }
         EcuDescription out;
         out.name = name_;
@@ -320,6 +347,22 @@ public:
         throw std::out_of_range(std::string(kWho) + "the ECU " + in_quotes(name_) + " has no LIN " +
                                 (role == lin::LinRole::Master ? "master" : "slave") + " on " + in_quotes(network) +
                                 ". Its LIN nodes: " + (nodes.empty() ? "none" : nodes));
+    }
+
+    [[nodiscard]] eth::Channel& ethernet_channel(std::string_view network) const
+    {
+        std::string channels;
+        for (const auto& e : ethernet_)
+        {
+            if (e->network == network)
+            {
+                return *e->channel;
+            }
+            channels += (channels.empty() ? "" : ", ") + in_quotes(e->network);
+        }
+        throw std::out_of_range(std::string(kWho) + "the ECU " + in_quotes(name_) + " has no Ethernet channel on " +
+                                in_quotes(network) + ". Its Ethernet channels: " + (channels.empty() ? "none" : channels) +
+                                " (Ecu::ethernet(network) makes one)");
     }
 
     /// A J1939 network on the bus `network`, or on the only bus without a bus name (an empty
@@ -465,6 +508,37 @@ private:
         return *lin_nodes_.back()->slave;
     }
 
+    eth::Channel& add_ethernet(const std::string& network, eth::ChannelOptions options) override
+    {
+        require_not_started("ethernet()");
+        const std::string what = "ethernet(" + in_quotes(network) + ")";
+        for (const auto& e : ethernet_)
+        {
+            if (e->network == network)
+            {
+                throw std::invalid_argument(std::string(kWho) + what + ": the ECU " + in_quotes(name_) +
+                                            " has an Ethernet channel on " + in_quotes(network) +
+                                            " already; an ECU has one channel per Ethernet network (keep the "
+                                            "reference the first call returned)");
+            }
+        }
+        owner_.require_name(network, name_, what, NetworkKind::Ethernet);
+        eth::Channel::validate(options); // before a bus is made
+        auto e = std::make_unique<EthernetChannel>();
+        e->network = network;
+        e->mac = options.mac;
+        // The host must not keep a channel that is not kept here: push_back() cannot throw
+        // after the reserve(). (An endpoint stays on its network once attached.)
+        ethernet_.reserve(ethernet_.size() + 1);
+        eth::VirtualEthernetBus::Endpoint& endpoint = owner_.use_ethernet_bus(network).attach();
+        e->gate = std::make_unique<detail::GatedEthPort>(endpoint, agent_.connection());
+        e->channel = std::make_unique<eth::Channel>(*e->gate, std::move(options));
+        host_->add(*e->channel);
+        e->order = added_++;
+        ethernet_.push_back(std::move(e));
+        return *ethernet_.back()->channel;
+    }
+
     /// A LIN node on `network`, not yet on its bus; checks the name (`call`: lin_master or
     /// lin_slave).
     std::unique_ptr<LinNode> new_lin_node(const std::string& network, const std::string& call)
@@ -531,7 +605,8 @@ private:
     std::vector<std::unique_ptr<Channel>> channels_;
     std::vector<std::unique_ptr<RawCan>> raw_channels_; ///< not in channels_: the lookups are J1939 only
     std::vector<std::unique_ptr<LinNode>> lin_nodes_;   ///< stepped after the application, in this order
-    std::size_t added_ = 0; ///< numbers the networks, raw channels and LIN nodes in the order added
+    std::vector<std::unique_ptr<EthernetChannel>> ethernet_;
+    std::size_t added_ = 0; ///< numbers the networks, raw channels, LIN nodes and Ethernet channels in the order added
     std::vector<std::function<void(SimTime)>> applications_;
     std::unique_ptr<can::Host> host_;
 };
@@ -594,23 +669,68 @@ lin::VirtualLinBus& LocalBench::use_lin_bus(const std::string& network)
     return *lin_buses_.back()->bus;
 }
 
-void LocalBench::require_can_name(std::string_view network, std::string_view ecu, std::string_view what) const
+LocalBench::NamedEthernetBus* LocalBench::find_ethernet_bus(std::string_view network) const
 {
-    if (find_lin_bus(network) != nullptr)
+    for (const auto& b : ethernet_buses_)
     {
-        refuse_other_kind(network, ecu, what, NetworkKind::Lin, NetworkKind::Can);
+        if (b->name == network)
+        {
+            return b.get();
+        }
     }
+    return nullptr;
 }
 
-void LocalBench::require_lin_name(std::string_view network, std::string_view ecu, std::string_view what) const
+eth::VirtualEthernetBus& LocalBench::use_ethernet_bus(const std::string& network)
+{
+    if (auto* existing = find_ethernet_bus(network))
+    {
+        return *existing->bus;
+    }
+    auto b = std::make_unique<NamedEthernetBus>();
+    b->name = network;
+    b->bus = std::make_unique<eth::VirtualEthernetBus>();
+    ethernet_buses_.push_back(std::move(b));
+    return *ethernet_buses_.back()->bus;
+}
+
+std::optional<NetworkKind> LocalBench::bus_kind(std::string_view network) const
 {
     for (const auto& b : buses_)
     {
         if (!b->name.empty() && b->name == network)
         {
-            refuse_other_kind(network, ecu, what, NetworkKind::Can, NetworkKind::Lin);
+            return NetworkKind::Can;
         }
     }
+    if (find_lin_bus(network) != nullptr)
+    {
+        return NetworkKind::Lin;
+    }
+    if (find_ethernet_bus(network) != nullptr)
+    {
+        return NetworkKind::Ethernet;
+    }
+    return std::nullopt;
+}
+
+void LocalBench::require_name(std::string_view network, std::string_view ecu, std::string_view what,
+                              NetworkKind wanted) const
+{
+    if (const auto other = bus_kind(network); other && *other != wanted)
+    {
+        refuse_other_kind(network, ecu, what, *other, wanted);
+    }
+}
+
+void LocalBench::require_can_name(std::string_view network, std::string_view ecu, std::string_view what) const
+{
+    require_name(network, ecu, what, NetworkKind::Can);
+}
+
+void LocalBench::require_lin_name(std::string_view network, std::string_view ecu, std::string_view what) const
+{
+    require_name(network, ecu, what, NetworkKind::Lin);
 }
 
 LocalBench::NamedBus* LocalBench::bus_to_name(std::string_view network) const
@@ -843,6 +963,30 @@ lin::LinMaster& LocalBench::lin_master(std::string_view ecu, std::string_view ne
 lin::LinSlave& LocalBench::lin_slave(std::string_view ecu, std::string_view network) const
 {
     return *site(ecu).lin_node(network, lin::LinRole::Slave).slave;
+}
+eth::Channel& LocalBench::ethernet(std::string_view ecu, std::string_view network) const
+{
+    return site(ecu).ethernet_channel(network);
+}
+eth::VirtualEthernetBus& LocalBench::ethernet_bus(std::string_view network) const
+{
+    if (auto* found = find_ethernet_bus(network))
+    {
+        return *found->bus;
+    }
+    std::string names;
+    for (const auto& b : ethernet_buses_)
+    {
+        names += (names.empty() ? "" : ", ") + in_quotes(b->name);
+    }
+    std::string message = std::string(kWho) + "ethernet_bus(" + in_quotes(network) + "): no Ethernet network named " +
+                          in_quotes(network) + ". Ethernet networks: " + (names.empty() ? "none" : names) +
+                          " (an ECU's ethernet(network) makes one)";
+    if (const auto other = bus_kind(network))
+    {
+        message += "; " + in_quotes(network) + " is " + std::string(detail::network_kind_with_article(*other)) + " bus";
+    }
+    throw std::out_of_range(message);
 }
 lin::VirtualLinBus& LocalBench::lin_bus(std::string_view network) const
 {

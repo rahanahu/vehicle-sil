@@ -56,6 +56,10 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   vehicle_sil_target_defaults(vehicle_sil_launch_run_launcher)
   add_dependencies(vehicle_sil_launch_run_launcher vehicle_sil_launch vehicle_sil_launch_test_ecu vehicle_sil_process_helper
                    vehicle_sil_engine_ecu vehicle_sil_dashboard_ecu)
+  if(TARGET vehicle_sil_eth_sensor_ecu)
+    # The scenario ethernet: examples/ethernet, next to examples/ecu_main in the build tree.
+    add_dependencies(vehicle_sil_launch_run_launcher vehicle_sil_eth_sensor_ecu vehicle_sil_eth_display_ecu)
+  endif()
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
     PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
@@ -65,7 +69,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
               events_slow events_findings events_nonblocking events_output events_stderr realtime late stall stand_still
               speed_change step_width pause_step paused_failures time_usage control scenario scenario_same variable_map
               scenario_disconnect scenario_failures manual_late manual_fails manual_stop manual_frozen
-              manual_thawed manual_again manual_timeout manual_stranger
+              manual_thawed manual_again manual_timeout manual_stranger ethernet
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>

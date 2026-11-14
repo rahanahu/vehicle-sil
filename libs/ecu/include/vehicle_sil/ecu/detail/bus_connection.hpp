@@ -7,6 +7,7 @@
 #include "vehicle_sil/can/port.hpp"
 #include "vehicle_sil/control/agent.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
+#include "vehicle_sil/eth/port.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/lin/lin_port.hpp"
 
@@ -23,9 +24,9 @@ namespace vehicle_sil::detail {
 /// The input every ECU has: true while the ECU is on its buses.
 inline constexpr std::string_view kConnectedVariable = "ecu.connected";
 
-/// Whether one ECU is on its buses (all of them: CAN and LIN). The ECU's step writes it (the
+/// Whether one ECU is on its buses (all of them: CAN, LIN and Ethernet). The ECU's step writes it (the
 /// input kConnectedVariable, applied with the other writes before the application); the ports of
-/// the ECU read it (GatedCanPort, GatedLinPort).
+/// the ECU read it (GatedCanPort, GatedLinPort, GatedEthPort).
 ///
 /// - What the ECU sends in a step leaves only if it is connected in that step (after the writes
 ///   of the step).
@@ -92,6 +93,29 @@ public:
 
 private:
     can::Port& inner_;
+    const BusConnection& connection_;
+};
+
+/// An Ethernet port of an ECU that keeps the ECU off the network while it is not connected, like
+/// GatedCanPort: send() returns SendResult::Failed (nothing goes to `inner`; the channel counts
+/// the frame as dropped), and the frames received while not connected are taken from `inner` and
+/// dropped. The port's events pass. `inner` and `connection` must outlive it.
+class GatedEthPort final : public eth::Port
+{
+public:
+    GatedEthPort(eth::Port& inner, const BusConnection& connection) noexcept : inner_(inner), connection_(connection) {}
+
+    [[nodiscard]] eth::TimeDomain time_domain() const noexcept override { return inner_.time_domain(); }
+    std::size_t release_before(SimTime now, eth::FrameSink sink) override;
+    eth::SendResult send(const eth::TimedFrame& frame) override;
+    std::size_t release_events_before(SimTime now, eth::PortEventSink sink) override
+    {
+        return inner_.release_events_before(now, sink);
+    }
+    void set_wakeup(eth::Wakeup wakeup) override { inner_.set_wakeup(std::move(wakeup)); }
+
+private:
+    eth::Port& inner_;
     const BusConnection& connection_;
 };
 

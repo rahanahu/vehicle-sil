@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <utility>
@@ -565,6 +566,45 @@ void check_lin_network(const Rules& rules, const NetworkConfig& network, const s
     }
 }
 
+/// The rules of an Ethernet network: each participant has its own address. `macs` are the
+/// participants on it with the address each reported (empty: none).
+void check_ethernet_network(const Rules& rules, const NetworkConfig& network, const std::string& prefix,
+                            const std::vector<std::pair<std::string, std::optional<eth::MacAddress>>>& macs)
+{
+    std::map<eth::MacAddress, std::vector<std::string>> byAddress;
+    std::vector<std::string> unknown;
+    for (const auto& [who, mac] : macs)
+    {
+        if (!mac)
+        {
+            unknown.push_back(who);
+        }
+        else if (auto& same = byAddress[*mac]; std::find(same.begin(), same.end(), who) == same.end())
+        {
+            same.push_back(who);
+        }
+    }
+    for (const auto& [mac, same] : byAddress)
+    {
+        if (same.size() > 1)
+        {
+            rules.add(Severity::Error, "ethernet-duplicate-mac", network.line,
+                prefix + and_list(same) + " have the same MAC address " + mac.to_string() +
+                    ", so their frames cannot be told apart: give each its own address (eth::ChannelOptions::mac, "
+                    "and the source address of the frames it sends)",
+                "", network.name);
+        }
+    }
+    if (!unknown.empty())
+    {
+        rules.add(Severity::Note, "ethernet-mac-unknown", network.line,
+            prefix + and_list(unknown) + (unknown.size() == 1 ? " reports" : " report") +
+                " no MAC address, so the check cannot tell whether two participants use the same one: pass the "
+                "address to ethernet() (eth::ChannelOptions::mac), or make sure by hand that the addresses differ",
+            "", network.name);
+    }
+}
+
 /// The network `network` (of a valid kind): who is on it, then the rules of its kind.
 void check_network(const Rules& rules, const NetworkConfig& network)
 {
@@ -573,6 +613,7 @@ void check_network(const Rules& rules, const NetworkConfig& network)
     std::vector<NodeOnNetwork> nodes;
     std::vector<std::string> masters;
     std::vector<std::string> slaves;
+    std::vector<std::pair<std::string, std::optional<eth::MacAddress>>> macs;
     for (std::size_t i = 0; i < rules.config.participants.size() && i < rules.results.size(); ++i)
     {
         if (!is_on_any(rules.config.participants[i], rules.results[i]))
@@ -599,6 +640,10 @@ void check_network(const Rules& rules, const NetworkConfig& network)
             else if (used.use == NetworkUse::LinSlave && std::find(slaves.begin(), slaves.end(), who) == slaves.end())
             {
                 slaves.push_back(who);
+            }
+            else if (used.use == NetworkUse::Ethernet)
+            {
+                macs.emplace_back(who, used.mac);
             }
         }
         for (std::size_t n = 0; n < own.size(); ++n)
@@ -628,8 +673,9 @@ void check_network(const Rules& rules, const NetworkConfig& network)
             "", network.name);
     }
     // The rules of the network's kind; a new kind needs its own (or none, but a case here). Only
-    // j1939 uses have nodes (read_description() refuses nodes on another use), and only LIN uses
-    // are masters or slaves, so the rules of the other kinds would find nothing here.
+    // j1939 uses have nodes (read_description() refuses nodes on another use), only LIN uses are
+    // masters or slaves and only ethernet uses have a MAC address, so the rules of the other
+    // kinds would find nothing here.
     switch (network.kind)
     {
     case NetworkKind::Can:
@@ -637,6 +683,9 @@ void check_network(const Rules& rules, const NetworkConfig& network)
         break;
     case NetworkKind::Lin:
         check_lin_network(rules, network, prefix, masters, slaves, sayAll);
+        break;
+    case NetworkKind::Ethernet:
+        check_ethernet_network(rules, network, prefix, macs);
         break;
     }
 }

@@ -98,7 +98,7 @@ int main() {
 - メッセージ（`EngineStatus`）は YAML から生成した型です（[docs/j1939-codec.md](docs/j1939-codec.md)）。完全なコードは [examples/getting_started](examples/getting_started) にあります。
 - 動かす場所を実行時に選ぶときは、`std::optional<vehicle_sil::SilKitOptions>` を渡します。空ならプロセス内の仮想バス、値があれば SIL Kit です（`Simulation sim(silkit);`）。
 - ECU は、外から読み書きする変数も宣言できます（`ecu.input("engine.accelerating", &accelerating_, {.description = "Accelerates while true"})`、`ecu.output("engine.speed", &speed_, {.unit = "km/h"})`）。同じプロセスからは `sim.ecu("Engine").agent()` の `submit()` で時刻を指定して書き、`latest()` で読みます。Control API のクライアント（Python、CLI）からも操作できます。仮想バスでも SIL Kit でも、書き込みは同じステップで反映されます。例は [examples/vehicle](examples/vehicle)、使い方は [docs/control-api.md](docs/control-api.md) にあります。
-- やりたいこと別のサンプル（型付きメッセージ、独自プロトコル、故障注入、複数の ECU と LIN など）は [examples/README.md](examples/README.md) にまとめています。
+- やりたいこと別のサンプル（型付きメッセージ、独自プロトコル、故障注入、複数の ECU と LIN、生のイーサネットのフレームなど）は [examples/README.md](examples/README.md) にまとめています。
 - 作り方、試験の書き方、`Peer` を直接使う場合は [docs/j1939-guide.md](docs/j1939-guide.md) にあります。
 - `Peer` を別プロセスで動かす構成（ピアを手動で動かす、仮想時間で動かす、CAN バスの調停と送信時間を模擬する）は [docs/peers.md](docs/peers.md) に、LIN の使い方は [docs/lin-guide.md](docs/lin-guide.md) に、vehicle-sil を自分の CMake プロジェクトに取り込む方法は [docs/build.md](docs/build.md) の「外部プロジェクトから使う（FetchContent）」にあります。
 

@@ -130,6 +130,7 @@ if(VEHICLE_SIL_BUILD_EXAMPLES)
   add_subdirectory(examples/virtual_time)
   add_subdirectory(examples/lin)
   add_subdirectory(examples/ecu_main)
+  add_subdirectory(examples/ethernet)
 endif()
 
 if(VEHICLE_SIL_BUILD_TESTS)

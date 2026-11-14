@@ -8,6 +8,7 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/ecu/detail/bus_connection.hpp"
+#include "vehicle_sil/eth/channel.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/lin/lin_master.hpp"
 #include "vehicle_sil/lin/lin_slave.hpp"
@@ -33,7 +34,8 @@ class EcuAgent;
 } // namespace detail
 
 /// Where one ECU's application is assembled: the J1939 networks it is on (and, for other
-/// protocols, raw CAN channels), its LIN master and slaves, the variables it shows for control
+/// protocols, raw CAN channels), its LIN master and slaves, its channels of raw Ethernet frames,
+/// the variables it shows for control
 /// from outside, its work per step, and the objects it owns. A runtime implements it (Peer: a
 /// SIL Kit participant; LocalBench::add_ecu(): a host on the local virtual buses), so an
 /// application written against Ecu& runs on each of them unchanged.
@@ -47,13 +49,14 @@ class EcuAgent;
 ///         }
 ///     };
 ///
-/// One step of an ECU at `now`: its networks and raw CAN channels receive and handle what
-/// arrived (all of them in the order they were added by j1939() and can()), then the writes to
+/// One step of an ECU at `now`: its networks, raw CAN channels and Ethernet channels receive and
+/// handle what arrived (all of them in the order they were added by j1939(), can() and
+/// ethernet()), then the writes to
 /// its variables whose time has come take effect (control::Agent::on_step_begin()), then the
 /// functions of on_step(), every() and at() run (in the order added), then the LIN nodes'
 /// step(now) (in the order added by lin_master() and lin_slave()), then the variables are sampled
-/// (control::Agent::on_step_end(), every AgentOptions::sample_period), then the networks and
-/// raw channels send (in the same order as they received). A handler of one of them may send on
+/// (control::Agent::on_step_end(), every AgentOptions::sample_period), then the networks, raw
+/// channels and Ethernet channels send (in the same order as they received). A handler of one of them may send on
 /// another: the frame leaves in this step. What the application asks of a LIN node in a step
 /// (set_frame_data(), set_response(), request_sleep(), ...) takes effect in that step; what a
 /// LIN node receives is reported in its step, so the application sees it in the next one. A
@@ -73,20 +76,21 @@ class EcuAgent;
 /// outputs of its own (PeerOptions::monitor).
 ///
 /// Network names: one name is one network of one kind. j1939() and can() may name the same CAN
-/// network; a LIN network needs a name of its own, used by one LIN node of the ECU. LocalBench
+/// network; a LIN network needs a name of its own, used by one LIN node of the ECU; an Ethernet
+/// network needs a name of its own, used by one channel of the ECU. LocalBench
 /// and Simulation check the kind across their ECUs (std::invalid_argument; on SIL Kit, among the
 /// ECUs of the Simulation's process only: other processes are not seen).
 ///
-/// Set up (j1939(), can(), lin_master(), lin_slave(), input(), output(), set_agent_options(),
-/// on_step(), every(), at(), emplace(), and the networks' nodes, handlers and parts, the raw
-/// channels' and LIN nodes' handlers) before the run starts; afterwards these functions throw
+/// Set up (j1939(), can(), lin_master(), lin_slave(), ethernet(), input(), output(),
+/// set_agent_options(), on_step(), every(), at(), emplace(), and the networks' nodes, handlers and
+/// parts, the raw channels', LIN nodes' and Ethernet channels' handlers) before the run starts; afterwards these functions throw
 /// std::logic_error (nodes may still be added from a step, as j1939::Network::add_node()
 /// allows).
 ///
-/// Ownership: the ECU owns its networks, its raw channels, its LIN nodes, its control agent and
-/// the objects made by emplace(); references to them are valid as long as the ECU. It destroys
-/// its LIN nodes, then its networks (their parts first), then its raw channels, then its agent,
-/// before the emplaced objects, so handlers, parts and the variables' pointers and functions may
+/// Ownership: the ECU owns its networks, its raw channels, its LIN nodes, its Ethernet channels,
+/// its control agent and the objects made by emplace(); references to them are valid as long as
+/// the ECU. It destroys its LIN nodes, then its networks (their parts first), then its raw
+/// channels, then its Ethernet channels, then its agent, before the emplaced objects, so handlers, parts and the variables' pointers and functions may
 /// refer to those.
 ///
 /// Threading: set it up from one thread. The steps run on the runtime's thread (see the
@@ -147,6 +151,28 @@ public:
     {
         require_network_name(network);
         return add_lin_slave(network, std::move(options));
+    }
+    /// A channel of raw Ethernet frames of this ECU on the Ethernet network `network` (the ECUs
+    /// that name the same network share it): eth::Channel. The application builds and reads the
+    /// frames itself, from the destination address to the end of the payload (no frame check
+    /// sequence); vehicle-sil has no TCP/IP stack and does not interpret the bytes after the
+    /// source address. Add handlers (on_frame()) before the run, or take the frames of a step
+    /// with receive() from on_step(); send() only works in a step (a handler, on_step(), every(),
+    /// at()), and the frame leaves at the end of that step. A frame sent in the step at t reaches
+    /// every other channel of the network (whatever its destination address, like a hub) in that
+    /// ECU's first step after t. Peer: a SIL Kit Ethernet controller named `network`, virtual
+    /// time only; LocalBench: an endpoint of the virtual Ethernet network `network`.
+    ///
+    /// `options.mac` is what describe() reports as the ECU's address on this network (the
+    /// check of a simulation compares the addresses of its ECUs); the channel does not put it
+    /// into the frames. Leave it empty if the application decides its address at run time.
+    /// std::invalid_argument for an empty name, a name this ECU used before (for any network)
+    /// and invalid options (eth::Channel's constructor); std::logic_error once the run has
+    /// started and for a Peer in real time.
+    eth::Channel& ethernet(const std::string& network, eth::ChannelOptions options = {})
+    {
+        require_network_name(network);
+        return add_ethernet(network, std::move(options));
     }
     /// A variable that can be written from outside while the simulation runs, bound to
     /// `*value` (bool, an integer type up to 64 bits signed or 32 bits unsigned, or a
@@ -252,8 +278,8 @@ public:
     /// std::invalid_argument for an empty function; std::logic_error once the run has started
     /// (add every at() before the first run).
     virtual void at(SimTime time, std::function<void(SimTime now)> fn) = 0;
-    /// Constructs a T that the ECU owns: it is destroyed after the ECU's LIN nodes, networks and
-    /// raw channels (their handlers and parts may refer to it), the object emplaced last first. Use
+    /// Constructs a T that the ECU owns: it is destroyed after the ECU's LIN nodes, networks, raw
+    /// channels and Ethernet channels (their handlers and parts may refer to it), the object emplaced last first. Use
     /// it for the models and application objects the handlers refer to. Only before the run
     /// starts: afterwards std::logic_error, and no T is made. Exceptions of T's constructor
     /// propagate and the T is not kept, but what the constructor set up on the ECU (networks,
@@ -302,6 +328,8 @@ private:
     /// lin_slave() of the implementation, with a name that is not empty. Initialises the slave
     /// (init()) before its first step.
     virtual lin::LinSlave& add_lin_slave(const std::string& network, lin::LinSlaveOptions options) = 0;
+    /// ethernet() of the implementation, with a name that is not empty.
+    virtual eth::Channel& add_ethernet(const std::string& network, eth::ChannelOptions options) = 0;
     /// Takes ownership of an emplace()d object (std::logic_error once the run has started).
     virtual void keep(std::shared_ptr<void> object) = 0;
 };
@@ -511,7 +539,7 @@ public:
     }
 
     /// The ECU's connection to its buses (the input kConnectedVariable of the agent): the
-    /// implementation puts its ports behind it (GatedCanPort, GatedLinPort) and sets what the ECU
+    /// implementation puts its ports behind it (GatedCanPort, GatedLinPort, GatedEthPort) and sets what the ECU
     /// does when it comes back.
     [[nodiscard]] BusConnection& connection() noexcept { return connection_; }
 
@@ -568,8 +596,8 @@ inline NetworkDescription describe_j1939(std::string name, const j1939::Network&
     return out;
 }
 
-/// For Ecu::describe() of an implementation, which keeps its J1939 networks, raw channels and
-/// LIN nodes apart: each network with the number that orders the calls that added them
+/// For Ecu::describe() of an implementation, which keeps its J1939 networks, raw channels, LIN
+/// nodes and Ethernet channels apart: each network with the number that orders the calls that added them
 /// (a counter of the implementation); networks() returns them in that order.
 class NetworkList
 {

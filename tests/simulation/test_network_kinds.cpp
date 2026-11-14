@@ -59,6 +59,9 @@ void put_on(Ecu& ecu, NetworkUse use, const std::string& name)
     case NetworkUse::LinSlave:
         static_cast<void>(ecu.lin_slave(name));
         return;
+    case NetworkUse::Ethernet:
+        static_cast<void>(ecu.ethernet(name));
+        return;
     }
     throw unit::Failure("put_on(): a NetworkUse outside the enumerators");
 }

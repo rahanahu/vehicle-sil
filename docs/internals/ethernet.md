@@ -4,6 +4,7 @@ vehicle-sil 自体を直す人と、イーサネットのフレームを直接�
 
 - `vehicle_sil::eth` は SIL Kit に依存しません。`vehicle_sil::step` と `sim_base` だけをリンクし、`eth.boundary` が SIL Kit のヘッダーを含まないことを確かめます。
 - `vehicle_sil::eth_silkit` は、`vehicle_sil::eth` のポートを SIL Kit の Ethernet のコントローラーの上に作ります（仮想時間だけ）。
+- ECU からは `Ecu::ethernet(network, options)` で使います（`options` は `ChannelOptions`）。`Peer` と `LocalBench` がチャネルとポートを作ります（下の「ECU から使う」）。
 - vehicle-sil はフレームの中身を解釈しません。読むのは宛先と送り元のアドレスだけで、EtherType、VLAN のタグ、payload はバイト列のまま通します。TCP/IP などのスタックは持ちません。
 
 ## 値の型
@@ -101,6 +102,17 @@ CAN の仮想時間のポート（`SilKitCanPort`）も同じ決まりです。
 
 ParticipantRuntime を止める（ステップが来なくなる）、ポートを `close()` するか壊す、チャネルを壊す、ParticipantRuntime を壊す（コントローラーを持つ）の順です。
 
+## ECU から使う（`Ecu::ethernet()`）
+
+`Ecu::ethernet(network, ChannelOptions)` は、その ECU の `Channel` を返します。ECU は、1 つのイーサネットのネットワークにチャネルを 1 つ持ちます。使い方と 1 ステップの中の位置は [execution.md](execution.md) の「ECU の入口」にあります。ここは実装の決まりです。
+
+- ホスト: チャネルは `step::Member` なので、ECU のホスト（`can::Host`）に `step::Host::add(Member&)` でそのまま載せます（`can::Host` は `using step::Host::add;` で、CAN の組と同じ列に並べます）。受信と送信の段は、`j1939()`、`can()`、`ethernet()` を呼んだ順です。
+- `Peer`: ネットワーク名を名前にした SIL Kit の Ethernet コントローラー、`SilKitEthPort`、`detail::GatedEthPort`、`Channel` を作ります。ポートの受け箱は `receive_capacity`、送信の確認の列は `send_capacity` 以上（既定の 1024 より小さくはしない）です。コントローラーは、CommunicationReady のハンドラー（`ParticipantRuntime::add_communication_ready_handler()`）で CAN のポートの後、LIN の `init()` の前に `start()` し、`Peer::stop()` がステップを止めた後に `close()` します。選択肢は `Channel::validate()` で先に確かめます（SIL Kit のコントローラーは作ると外せないため）。仮想時間だけで、実時間の `Peer` では `std::logic_error` です（実時間のポートがないため）。
+- `LocalBench`: 名前ごとの `VirtualEthernetBus`（既定の選択肢。受け箱は 1024 フレーム）のエンドポイント、`GatedEthPort`、`Channel` を作ります。`receive_capacity` を 1024 より大きくしても、エンドポイントの受け箱が先にあふれます（ECU の 1 ステップの間に 1024 より多く届く構成では、`ethernet_bus(network)` で数を確かめます）。
+- `ecu.connected`: `GatedEthPort` が、切れている間の送信を `SendResult::Failed` にし（チャネルの `frames_dropped`）、切れている間の時刻のフレームを捨てます。判定の時点は CAN と同じです（`BusConnection`）。ポートの事象（送信の確認、あふれ）は通します。
+- 自己申告: `ChannelOptions::mac` を `NetworkDescription::mac` として出します（`--describe` の `networks[].mac`）。照合の規則 `ethernet-duplicate-mac` と `ethernet-mac-unknown`（[simulation-check.md](../simulation-check.md)）が使います。チャネルは、送るフレームの送り元のアドレスを確かめず、書き込みもしません（アドレスを決めるのは ECU のスタックです）。
+- SIL Kit の Network Simulator がイーサネットのネットワークを模擬しているときの振る舞い（確認の時刻、リンクの状態）は、確かめていません。
+
 ## 未確認の値
 
 次の値は、一般の資料と SIL Kit のソースの知識によるもので、規格では確かめていません。変えられる値は、利用者が変えられるようにしてあります。
@@ -111,9 +123,10 @@ ParticipantRuntime を止める（ステップが来なくなる）、ポート�
 | 最小の長さ 60 バイトへの 0 の埋め | SIL Kit の受信（上流の実装）、`VirtualEthernetBusOptions::min_frame_bytes` | 仮想ネットワークは選択肢。SIL Kit の側は変えられない |
 | 先頭の 14 バイト（宛先 6、送り元 6、EtherType か長さ 2）と、アドレスのバイトの並び | `kHeaderBytes`、`Frame::destination()`、`source()`、送れる最短のフレーム | 変えられない |
 | アドレスのグループの印（1 バイト目の最下位のビット）と、ブロードキャスト（全部 0xFF） | `MacAddress::is_multicast()`、`is_broadcast()`、`Accept::Addressed` | `Accept::All` なら使わない |
-| 試験の EtherType 0x88B5（ローカルの実験用として知られる値）と、ローカル管理のアドレス `02:00:00:...`、`03:00:00:...` | 試験だけ | — |
+| 試験と例の EtherType 0x88B5（ローカルの実験用として知られる値）と、ローカル管理のアドレス `02:00:00:...`、`03:00:00:...` | 試験と `examples/ethernet` だけ（vehicle-sil のライブラリは使わない） | 例は `--ethertype <数>`（`ethernet_example::Options::ether_type`）で変えられる。アドレスは例のヘッダーの定数 |
 
 ## 試験
 
 - `eth.*`（`tests/eth`、`vehicle_sil::eth` だけをリンク）: 値の型、仮想ネットワーク（ハブ、次のステップ、埋め、自分のフレーム、時刻の順、あふれ）、チャネル（ホストとドライバーの上で回ること、ゲートウェイ、同じ時刻の順、`receive()` と取らなかった数、送信の段、上限、絞り込み、事象、選択肢の誤り）。`eth.steps_do_not_allocate` は、ステップの中で確保しないことを、プロセスの全部の確保を数えて確かめます（専用の実行ファイル。数え方は J1939 の同じ試験と共通の `tests/unit/allocation_counter.hpp`）。`eth.boundary` は SIL Kit を含まないことを確かめます。
+- `simulation.ethernet_*`（`tests/simulation/test_ethernet.cpp`）: `Ecu::ethernet()` を仮想ネットワークと SIL Kit の両方で（次のステップで届くこと、同じ時刻の順、ハンドラーと `receive()`、`Accept::Addressed`、自己申告のアドレス、断る文言、`LocalBench::ethernet()` と `ethernet_bus()`）。`simulation.disconnect_*` は `ecu.connected` でイーサネットも切れること、`peer.*` は実時間の断り、コントローラー名の重なり、CommunicationReady で有効になることを確かめます。`launch.an_ethernet_network_has_one_mac_address_per_participant` は照合の規則です。例（`examples/ethernet`）は `ethernet_example.*` と `launch_run.ethernet` が動かします。
 - `eth_silkit.*`: 偽のコントローラーに対するポートの試験（時刻のないフレーム、あふれた送信の確認を含む）と、プロセス内の registry で、同じシナリオの記録が仮想ネットワークと SIL Kit で一致すること（ステップ幅の組み合わせを変えて。3 つの送り手が同じ時刻に送る場合、短いフレームの埋め、ハンドラーからの返事、`receive()`、`Accept::Addressed` を含む）。ノードのアドレスは登録の順と違う順にしてあり、仮想ネットワークの側だけでも、同じ時刻のフレームがアドレスの順に並んでいることを確かめます。

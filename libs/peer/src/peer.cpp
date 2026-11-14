@@ -5,8 +5,10 @@
 
 #include "vehicle_sil/can/real_time_driver.hpp"
 #include "vehicle_sil/core/periodic.hpp"
+#include "vehicle_sil/eth_silkit/silkit_eth_port.hpp"
 #include "vehicle_sil/lin_silkit/silkit_lin_port.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <exception>
 #include <memory>
@@ -53,9 +55,9 @@ bool has_name(const std::vector<std::unique_ptr<T>>& items, std::string_view nam
 [[noreturn]] void refuse_other_kind(const std::string& call, const std::string& network, NetworkKind other,
                                     NetworkKind wanted)
 {
-    throw std::invalid_argument("vehicle_sil::Peer: " + call + ": \"" + network + "\" is a " +
-                                std::string(detail::network_kind_label(other)) + " network of this peer; a " +
-                                std::string(detail::network_kind_label(wanted)) + " network needs a name of its own");
+    throw std::invalid_argument("vehicle_sil::Peer: " + call + ": \"" + network + "\" is " +
+                                std::string(detail::network_kind_with_article(other)) + " network of this peer; " +
+                                std::string(detail::network_kind_with_article(wanted)) + " network needs a name of its own");
 }
 
 } // namespace
@@ -93,6 +95,17 @@ struct Peer::LinNode
     std::unique_ptr<detail::GatedLinPort> gate;
     std::unique_ptr<lin::LinMaster> master;
     std::unique_ptr<lin::LinSlave> slave;
+};
+
+struct Peer::Ethernet
+{
+    // Destroyed bottom-up: the channel, then the gate, then the port.
+    std::string name;
+    std::size_t order = 0; ///< as Channel::order
+    std::optional<eth::MacAddress> mac; ///< eth::ChannelOptions::mac (describe())
+    std::unique_ptr<eth::SilKitEthPort> port;
+    std::unique_ptr<detail::GatedEthPort> gate;
+    std::unique_ptr<eth::Channel> channel;
 };
 
 Peer::Peer(PeerOptions options) :
@@ -187,6 +200,19 @@ Peer::Peer(PeerOptions options) :
         {
             start_can(*r->port, r->name);
         }
+        for (auto& e : ethernet_)
+        {
+            try
+            {
+                e->port->start();
+            }
+            catch (const std::exception& error)
+            {
+                // As for CAN: the participant goes to Error.
+                runtime_->report_failure("vehicle_sil::Peer: starting the Ethernet controller of the network \"" +
+                                         e->name + "\" failed: " + error.what());
+            }
+        }
         for (auto& node : lin_)
         {
             try
@@ -214,14 +240,15 @@ Peer::~Peer()
 {
     stop("vehicle_sil::Peer destroyed");
     // No more steps: the LIN nodes (each before its port; they use their controllers), then the
-    // networks, taps and ports, then the raw channels and their ports. The host, the clock and
-    // last the participant go with the members.
+    // networks, taps and ports, then the raw channels and their ports, then the Ethernet channels
+    // and their ports. The host, the clock and last the participant go with the members.
     while (!lin_.empty())
     {
         lin_.pop_back();
     }
     channels_.clear();
     raw_channels_.clear();
+    ethernet_.clear();
 }
 
 void Peer::require_not_started(const char* what) const
@@ -320,6 +347,12 @@ j1939::Network& Peer::j1939(std::string network_name, J1939ChannelOptions option
                                     "\" has the name \"" + controller +
                                     "\"; give the CAN controller another name (J1939ChannelOptions::controller_name)");
     }
+    if (has_name(ethernet_, controller))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: the Ethernet controller of the Ethernet network \"" + controller +
+                                    "\" has the name \"" + controller +
+                                    "\"; give the CAN controller another name (J1939ChannelOptions::controller_name)");
+    }
     Channel& c = add_channel(network_name);
     try
     {
@@ -406,6 +439,12 @@ can::RawChannel& Peer::add_can(const std::string& network, can::RawChannelOption
                                     "\" has a controller named \"" + controller +
                                     "\", the name of this raw channel's controller; rename one of the networks");
     }
+    if (has_name(ethernet_, controller))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: can(\"" + network + "\"): the Ethernet network \"" + controller +
+                                    "\" has a controller named \"" + controller +
+                                    "\", the name of this raw channel's controller; rename one of the networks");
+    }
     auto made = std::make_unique<RawCan>();
     made->name = network;
     made->order = added_++;
@@ -476,6 +515,10 @@ std::optional<NetworkKind> network_kind(const Peer& peer, std::string_view netwo
     if (has_name(peer.lin_, network))
     {
         return NetworkKind::Lin;
+    }
+    if (has_name(peer.ethernet_, network))
+    {
+        return NetworkKind::Ethernet;
     }
     return std::nullopt;
 }
@@ -556,6 +599,73 @@ lin::LinSlave& Peer::add_lin_slave(const std::string& network, lin::LinSlaveOpti
         throw;
     }
     return *node.slave;
+}
+
+void Peer::require_ethernet_name(const std::string& network) const
+{
+    const std::string call = "ethernet(\"" + network + "\")";
+    if (has_name(ethernet_, network))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: " + call + ": the peer has an Ethernet channel on \"" + network +
+                                    "\" already; an ECU has one channel per Ethernet network (keep the reference the "
+                                    "first call returned)");
+    }
+    if (const auto other = detail::network_kind(*this, network); other && *other != NetworkKind::Ethernet)
+    {
+        refuse_other_kind(call, network, *other, NetworkKind::Ethernet);
+    }
+    if (controller_is_used(network))
+    {
+        throw std::invalid_argument("vehicle_sil::Peer: " + call + ": a CAN controller of this peer is named \"" + network +
+                                    "\" (the Ethernet controller is named like its network); rename that controller "
+                                    "(J1939ChannelOptions::controller_name) or the Ethernet network");
+    }
+    if (network_check_)
+    {
+        network_check_(network, NetworkKind::Ethernet, call);
+    }
+}
+
+eth::Channel& Peer::add_ethernet(const std::string& network, eth::ChannelOptions options)
+{
+    require_not_started("ethernet()");
+    if (!options_.virtual_time)
+    {
+        throw std::logic_error("vehicle_sil::Peer: ethernet(\"" + network +
+                               "\") needs virtual time: a peer in real time has no Ethernet. Give the peer a step "
+                               "(PeerOptions::virtual_time)");
+    }
+    require_ethernet_name(network);
+    // Before the controller: SIL Kit cannot remove it, and a second one with its name is refused.
+    eth::Channel::validate(options);
+    auto made = std::make_unique<Ethernet>();
+    made->name = network;
+    made->mac = options.mac;
+    ethernet_.push_back(std::move(made));
+    Ethernet& e = *ethernet_.back();
+    try
+    {
+        auto* controller = runtime_->participant().CreateEthernetController(network, network);
+        eth::SilKitEthPortOptions portOptions;
+        // What one step of the channel may hold, and an acknowledgement for each frame of a step.
+        portOptions.inbox_capacity = options.receive_capacity;
+        portOptions.event_capacity = std::max(portOptions.event_capacity, options.send_capacity);
+        e.port = std::make_unique<eth::SilKitEthPort>(*controller, portOptions);
+        e.gate = std::make_unique<detail::GatedEthPort>(*e.port, agent_.connection());
+        e.channel = std::make_unique<eth::Channel>(*e.gate, std::move(options));
+        host_.add(*e.channel);
+        e.order = added_++;
+    }
+    catch (...)
+    {
+        if (e.port)
+        {
+            e.port->close();
+        }
+        ethernet_.pop_back();
+        throw;
+    }
+    return *e.channel;
 }
 
 void Peer::on_step(std::function<void(SimTime now)> fn)
@@ -679,6 +789,10 @@ EcuDescription Peer::describe() const
     {
         networks.add(node->order, {node->name, node->master ? NetworkUse::LinMaster : NetworkUse::LinSlave, {}});
     }
+    for (const auto& e : ethernet_)
+    {
+        networks.add(e->order, {e->name, NetworkUse::Ethernet, {}, e->mac});
+    }
     EcuDescription out;
     out.name = options_.participant;
     if (options_.virtual_time)
@@ -791,6 +905,10 @@ void Peer::stop(std::string_view reason) noexcept
     for (auto& r : raw_channels_)
     {
         r->port->close();
+    }
+    for (auto& e : ethernet_)
+    {
+        e->port->close();
     }
     // No step runs any more: the writes still waiting are cancelled.
     agent_.finish();

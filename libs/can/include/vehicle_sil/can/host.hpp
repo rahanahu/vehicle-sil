@@ -91,6 +91,9 @@ public:
     /// port's set_wakeup() throws (a wakeup is set), the pair is not added and the exception
     /// propagates; the same pair can be added again.
     void add(Steppable& steppable, Port& port);
+    /// step::Host::add(Member&): a member that is not a CAN pair (an eth::Channel), stepped with
+    /// the pairs in the order all of them were added.
+    using step::Host::add;
 
 private:
     class PairMember;

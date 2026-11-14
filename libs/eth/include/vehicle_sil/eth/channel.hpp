@@ -43,12 +43,12 @@ struct ChannelOptions
     std::size_t max_frame_bytes = kDefaultMaxFrameBytes;
     /// The channel's own address. Only Accept::Addressed reads it; send() does not check or
     /// fill in the source address.
-    std::optional<MacAddress> mac;
+    std::optional<MacAddress> mac{};
     /// Which received frames are handed over. Accept::Addressed needs `mac`.
     Accept accept = Accept::All;
     /// With Accept::Addressed: further destination addresses that are accepted (multicast
     /// groups).
-    std::vector<MacAddress> multicast;
+    std::vector<MacAddress> multicast{};
 };
 
 /// Outcome of Channel::send().
@@ -120,6 +120,9 @@ public:
     /// max_frame_bytes outside [kHeaderBytes, Frame::kCapacity], or Accept::Addressed without
     /// a mac.
     explicit Channel(Port& port, ChannelOptions options = {});
+    /// Throws what the constructor throws for `options` (for a caller that must know before it
+    /// makes the port).
+    static void validate(const ChannelOptions& options);
     Channel(const Channel&) = delete;
     Channel& operator=(const Channel&) = delete;
 

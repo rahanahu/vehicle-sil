@@ -1,0 +1,20 @@
+# A scenario for the two ECUs of this directory: the display shows what the sensor measures and
+# acknowledges it; while the sensor is off the network (the variable ecu.connected that every ECU
+# has) the display keeps the old value; back on the network, the new value arrives. Run it with
+#   vehicle_sil_launch run simulation.yaml --scenario scenarios/exchange.yaml
+# (the exit code is 0 if every step passed). The format: docs/scenario.md.
+vehicle_sil_scenario: 1
+name: ethernet exchange
+steps:
+  - at_ms: 0
+    set: { Sensor.sensor.value: 42 }
+  - expect: { Display.display.value: 42 }
+    within_ms: 200
+  - expect: { Sensor.sensor.acked: { ge: 1 } }
+    within_ms: 100
+  - set: { Sensor.ecu.connected: false, Sensor.sensor.value: 7 }
+  - expect: { Display.display.value: 42 }
+    hold_for_ms: 300
+  - set: { Sensor.ecu.connected: true }
+  - expect: { Display.display.value: 7 }
+    within_ms: 200

@@ -6,6 +6,7 @@
 
 #include "vehicle_sil/control/agent.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
+#include "vehicle_sil/eth/frame.hpp"
 #include "vehicle_sil/j1939/name.hpp"
 #include "vehicle_sil/j1939/types.hpp"
 
@@ -18,12 +19,14 @@
 
 namespace vehicle_sil {
 
-/// The kind of a network: CAN (Ecu::j1939(), Ecu::can()) or LIN (Ecu::lin_master(),
-/// Ecu::lin_slave()). One network name is one kind for every ECU of a simulation.
+/// The kind of a network: CAN (Ecu::j1939(), Ecu::can()), LIN (Ecu::lin_master(),
+/// Ecu::lin_slave()) or Ethernet (Ecu::ethernet()). One network name is one kind for every ECU
+/// of a simulation.
 enum class NetworkKind
 {
     Can,
     Lin,
+    Ethernet,
 };
 
 /// How an ECU is on a network: the call that put it there.
@@ -33,6 +36,7 @@ enum class NetworkUse
     J1939,     ///< Ecu::j1939(): a J1939 network with its nodes
     LinMaster, ///< Ecu::lin_master()
     LinSlave,  ///< Ecu::lin_slave()
+    Ethernet,  ///< Ecu::ethernet(): a channel of raw Ethernet frames
 };
 
 /// Every NetworkKind and every NetworkUse, in the order of their values. The names and the kinds
@@ -42,10 +46,12 @@ enum class NetworkUse
 /// (the check's messages, the readers of the configuration and of --describe, the refusals of a
 /// name of another kind) takes them from here. The steps to add a kind or a use, also where no
 /// build or test fails: docs/code-map.md, "ネットワークの種類か使い方を足す".
-inline constexpr std::array kNetworkKinds{NetworkKind::Can, NetworkKind::Lin};
-inline constexpr std::array kNetworkUses{NetworkUse::Raw, NetworkUse::J1939, NetworkUse::LinMaster, NetworkUse::LinSlave};
+inline constexpr std::array kNetworkKinds{NetworkKind::Can, NetworkKind::Lin, NetworkKind::Ethernet};
+inline constexpr std::array kNetworkUses{NetworkUse::Raw, NetworkUse::J1939, NetworkUse::LinMaster, NetworkUse::LinSlave,
+                                        NetworkUse::Ethernet};
 
-/// The kind of network a use is on (Raw and J1939: CAN; LinMaster and LinSlave: LIN).
+/// The kind of network a use is on (Raw and J1939: CAN; LinMaster and LinSlave: LIN; Ethernet:
+/// Ethernet).
 [[nodiscard]] constexpr NetworkKind kind_of(NetworkUse use) noexcept
 {
     switch (use)
@@ -56,6 +62,8 @@ inline constexpr std::array kNetworkUses{NetworkUse::Raw, NetworkUse::J1939, Net
     case NetworkUse::LinMaster:
     case NetworkUse::LinSlave:
         return NetworkKind::Lin;
+    case NetworkUse::Ethernet:
+        return NetworkKind::Ethernet;
     }
     return NetworkKind::Lin; // not reached: a value outside the enumerators
 }
@@ -70,6 +78,8 @@ namespace detail {
         return "can";
     case NetworkKind::Lin:
         return "lin";
+    case NetworkKind::Ethernet:
+        return "ethernet";
     }
     return {};
 }
@@ -85,10 +95,12 @@ namespace detail {
         return "lin_master";
     case NetworkUse::LinSlave:
         return "lin_slave";
+    case NetworkUse::Ethernet:
+        return "ethernet";
     }
     return {};
 }
-/// How messages name a kind of network: "CAN", "LIN".
+/// How messages name a kind of network: "CAN", "LIN", "Ethernet".
 [[nodiscard]] constexpr std::string_view network_kind_label(NetworkKind kind) noexcept
 {
     switch (kind)
@@ -97,6 +109,22 @@ namespace detail {
         return "CAN";
     case NetworkKind::Lin:
         return "LIN";
+    case NetworkKind::Ethernet:
+        return "Ethernet";
+    }
+    return {};
+}
+/// The same with its article, for messages: "a CAN", "a LIN", "an Ethernet".
+[[nodiscard]] constexpr std::string_view network_kind_with_article(NetworkKind kind) noexcept
+{
+    switch (kind)
+    {
+    case NetworkKind::Can:
+        return "a CAN";
+    case NetworkKind::Lin:
+        return "a LIN";
+    case NetworkKind::Ethernet:
+        return "an Ethernet";
     }
     return {};
 }
@@ -109,6 +137,8 @@ namespace detail {
         return "j1939() or can()";
     case NetworkKind::Lin:
         return "lin_master() or lin_slave()";
+    case NetworkKind::Ethernet:
+        return "ethernet()";
     }
     return {};
 }
@@ -157,6 +187,10 @@ struct NetworkDescription
     /// NetworkUse::J1939: the nodes in the order added (also those added from a step, once added).
     /// Empty for the other uses.
     std::vector<J1939NodeDescription> nodes{};
+    /// NetworkUse::Ethernet: the address the ECU said is its own on this network
+    /// (eth::ChannelOptions::mac); empty if it said none (its application decides the source
+    /// address of what it sends). Empty for the other uses. "mac" in JSON.
+    std::optional<eth::MacAddress> mac{};
 
     [[nodiscard]] NetworkKind kind() const noexcept { return kind_of(use); }
     friend bool operator==(const NetworkDescription&, const NetworkDescription&) = default;
@@ -182,8 +216,8 @@ struct EcuDescription
     std::string name;
     /// The ECU's step. Empty for a Peer in real time (stepped as frames and timers need).
     std::optional<SimDuration> step{};
-    /// In the order of the calls that added them (j1939(), can(), lin_master(), lin_slave()),
-    /// whatever their kind.
+    /// In the order of the calls that added them (j1939(), can(), lin_master(), lin_slave(),
+    /// ethernet()), whatever their kind.
     std::vector<NetworkDescription> networks{};
     /// The variables of the ECU: first the one every ECU has ("ecu.connected",
     /// is_builtin_variable()), then those it declared (input(), output(), ... and those
@@ -214,7 +248,8 @@ inline constexpr int kEcuDescriptionFormat = 1;
 /// integer), a floating-point value is written in the shortest form that reads back to the same
 /// double (std::to_chars) and as null if it is not finite. The step is in integer nanoseconds
 /// ("step_ns"; null in real time), a J1939 NAME is a string of 16 hexadecimal digits ("0x" and
-/// upper case, key "j1939_name"). Strings: valid UTF-8 as it is, with '"', '\\' and the control
+/// upper case, key "j1939_name"), a MAC address is "02:00:00:00:00:01" (lower case; key "mac",
+/// null if there is none). Strings: valid UTF-8 as it is, with '"', '\\' and the control
 /// characters below 0x20 escaped; a byte that starts no valid UTF-8 sequence becomes U+FFFD, so the
 /// output is always valid JSON. std::logic_error for an enumeration value outside its
 /// enumerators. The keys and an example: docs/ecu-executable.md.
@@ -227,7 +262,8 @@ inline constexpr int kEcuDescriptionFormat = 1;
     return name.substr(0, 4) == "ecu.";
 }
 
-/// The names to_json() uses: "can", "lin"; "raw", "j1939", "lin_master", "lin_slave".
+/// The names to_json() uses: "can", "lin", "ethernet"; "raw", "j1939", "lin_master", "lin_slave",
+/// "ethernet".
 /// std::logic_error for a value outside the enumerators.
 [[nodiscard]] const char* to_string(NetworkKind kind);
 [[nodiscard]] const char* to_string(NetworkUse use);
