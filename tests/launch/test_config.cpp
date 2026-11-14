@@ -146,10 +146,10 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
     check_text(read(std::string(kExample) + "stop_at: 3\nextra: 1\n"),
                "E 18 unknown-key: unknown key 'stop_at': did you mean 'stop_at_ms'? (the keys here: "
                "vehicle_sil_simulation, stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, time_step_ms, speed, "
-               "late_tolerance_ms, networks, participants)\n"
+               "late_tolerance_ms, networks, participants, variants, params)\n"
                "E 19 unknown-key: unknown key 'extra': remove it, or use one of the keys here (vehicle_sil_simulation, "
                "stop_at_ms, start_timeout_ms, stop_timeout_ms, registry_uri, time_step_ms, speed, late_tolerance_ms, "
-               "networks, participants)\n");
+               "networks, participants, variants, params)\n");
     check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
                "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
                "command, step_ms, describe, required, enabled, manual, variables)\n"
@@ -1086,4 +1086,203 @@ TEST_CASE(a_mapping_that_is_not_one_of_the_forms_is_an_error_and_is_left_out)
                "N 8 variable-map-not-checked: participant 'A': variables is not compared for a participant with describe: "
                "false (the launcher does not know its variables before the run): the mappings apply when its control "
                "agent connects, and vehicle_sil_launch run reports those that do not fit\n");
+}
+
+namespace {
+
+/// A file with two variants over a common part.
+constexpr const char* kVariants = R"(vehicle_sil_simulation: 1
+networks: []
+participants:
+  - name: Engine
+    command: [./engine_small, --mode, a]
+    variables:
+      engine.speed: { from: rpm_x10, scale: 0.1 }
+      engine.turbo: { absent: true }
+  - name: Dashboard
+    command: ./dashboard
+  - name: Logger
+    command: [./logger, "{registry_uri}"]
+    describe: false
+    required: false
+    enabled: false
+params: { idle_rpm: 800, gear: "D" }
+variants:
+  small: {}
+  medium:
+    participants:
+      Engine:
+        command: [./engine_medium]
+        variables: { engine.turbo: turbo_bar, engine.load: load_pct }
+      Dashboard: { enabled: false }
+      Logger: { enabled: true }
+    params: { idle_rpm: 650, boost: 1.5 }
+  plain:
+)";
+
+EnabledOverrides variant(const std::string& name)
+{
+    EnabledOverrides out;
+    out.variant = name;
+    return out;
+}
+
+std::string params_text(const std::vector<ParamValue>& params)
+{
+    std::string out;
+    for (const auto& p : params)
+    {
+        out += p.name + "=" + (p.quoted ? "\"" + p.text + "\"" : p.text) + " " + param_source_name(p.source) + " " +
+               std::to_string(p.line) + "\n";
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE(a_variant_is_laid_over_the_common_part)
+{
+    // The common part as it is.
+    const ConfigRead small = read_config(kVariants, variant("small"));
+    check_text(lines(small.findings), "");
+    CHECK(small.override_errors.empty());
+    CHECK(small.config->variant == "small");
+    CHECK_EQ(small.config->variants.size(), std::size_t{3});
+    CHECK(small.config->participants[0].command == std::vector<std::string>({"./engine_small", "--mode", "a"}));
+    CHECK(small.config->participants[1].enabled && !small.config->participants[2].enabled);
+    check_text(params_text(small.config->params), "idle_rpm=800 configuration 16\ngear=\"D\" configuration 16\n");
+    // "plain:" with nothing is the same.
+    const ConfigRead plain = read_config(kVariants, variant("plain"));
+    CHECK(plain.override_errors.empty() && plain.config->variant == "plain");
+    CHECK(plain.config->participants[0].command == small.config->participants[0].command);
+    CHECK(plain.config->participants[0].variables == small.config->participants[0].variables);
+    // The four things a variant changes: the command, the variable map (mapping by mapping),
+    // enabled, and the parameters (by name).
+    const ConfigRead medium = read_config(kVariants, variant("medium"));
+    CHECK(medium.override_errors.empty());
+    const ParticipantConfig& engine = medium.config->participants[0];
+    CHECK(engine.command == std::vector<std::string>({"./engine_medium"}));
+    CHECK_EQ(engine.command_line, std::size_t{22});
+    CHECK_EQ(engine.variables.size(), std::size_t{3});
+    CHECK(engine.variables[0].name == "engine.speed" && engine.variables[0].from == "rpm_x10" && engine.variables[0].scale == 0.1);
+    CHECK(engine.variables[1].name == "engine.turbo" && engine.variables[1].from == "turbo_bar" && !engine.variables[1].absent);
+    CHECK(engine.variables[2].name == "engine.load" && engine.variables[2].from == "load_pct");
+    CHECK(engine.variable_lines == std::vector<std::size_t>({7, 23, 23}));
+    CHECK(!medium.config->participants[1].enabled && medium.config->participants[2].enabled);
+    // Who left a participant out: the variant (Dashboard), not the common part (Logger in small).
+    CHECK(medium.config->participants[1].left_out_by_variant && !medium.config->participants[2].left_out_by_variant);
+    CHECK(!small.config->participants[2].enabled && !small.config->participants[2].left_out_by_variant);
+    check_text(params_text(medium.config->params), "idle_rpm=650 variant 26\ngear=\"D\" configuration 16\nboost=1.5 variant 26\n");
+    // The command line comes after the variant.
+    EnabledOverrides both = variant("medium");
+    both.enable = {"Dashboard"};
+    both.disable = {"Logger"};
+    const ConfigRead overridden = read_config(kVariants, both);
+    CHECK(overridden.override_errors.empty());
+    CHECK(overridden.config->participants[1].enabled && !overridden.config->participants[2].enabled);
+    // Taken in again, it is not the variant's any more; --disable is not the variant either.
+    CHECK(!overridden.config->participants[1].left_out_by_variant && !overridden.config->participants[2].left_out_by_variant);
+    // The rules that depend on enabled are those of the variant: here nothing required is left.
+    const std::string lonely = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n"
+                               "variants:\n  with: {}\n  without: { participants: { A: { enabled: false } } }\n";
+    CHECK(lines(read_config(lonely, variant("with")).findings).empty());
+    CHECK(lines(read_config(lonely, variant("without")).findings).find("E 3 no-required-participant: every participant is disabled") == 0);
+}
+
+TEST_CASE(a_file_with_variants_needs_one_and_says_which_there_are)
+{
+    const ConfigRead none = read_config(kVariants);
+    check_text(lines(none.override_errors),
+               "E 0 usage: the file defines variants, and a check or a run is of one of them: give --variant <name> with one of "
+               "small, medium, plain (none of them is the default)\n");
+    CHECK(none.config.has_value() && none.config->variant.empty());
+    check_text(lines(read_config(kVariants, variant("medum")).override_errors),
+               "E 0 usage: --variant medum: the file has no variant with this name (did you mean 'medium'?); its variants are "
+               "small, medium, plain\n");
+    check_text(lines(read_config(kExample, variant("medium")).override_errors),
+               "E 0 usage: --variant medium: the file defines no variants: leave --variant out, or add variants to the file "
+               "(docs/simulation-config.md)\n");
+    // An error in the text may be why the name is not there: the text first.
+    const ConfigRead broken = read_config(std::string(kExample) + "variants: 3\n", variant("medium"));
+    CHECK(broken.override_errors.empty());
+    CHECK_EQ(broken.findings.size(), std::size_t{1});
+    // But a name that is none of the variants the file has is said whatever else is wrong: the
+    // common part alone is no variant, and a check of it would say nothing about --variant.
+    const std::string wrong = std::string(kVariants) + "  large: { step_ms: 5 }\n";
+    check_text(lines(read_config(wrong, variant("medum")).override_errors),
+               "E 0 usage: --variant medum: the file has no variant with this name (did you mean 'medium'?); its variants are "
+               "small, medium, plain, large; the file has errors too, which a check with one of these variants reports\n");
+    const ConfigRead right = read_config(wrong, variant("medium"));
+    CHECK(right.override_errors.empty() && right.config->variant == "medium");
+    CHECK(lines(right.findings).find("unknown-key: variant 'large': unknown key 'step_ms'") != std::string::npos);
+}
+
+TEST_CASE(every_variant_is_checked_and_only_its_keys_are_read)
+{
+    const std::string head = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: Engine\n    command: ./engine\n"
+                             "  - name: Tool\n    command: [./tool, \"{registry_uri}\"]\n    describe: false\n    required: false\n";
+    const auto errors = [&head](const std::string& rest, const std::string& chosen = "a") {
+        return lines(read_config(head + rest, variant(chosen)).findings);
+    };
+    check_text(errors("variants: [a, b]\n"),
+               "E 10 value: variants must be a mapping of variant names to what each changes of the common part (variants: { "
+               "small: {}, medium: { participants: { Engine: { command: [./engine_medium] } }, params: { idle_rpm: 650 } } }), "
+               "not a list; for a simulation without variants, remove variants\n");
+    check_text(errors("variants: {}\n"),
+               "E 10 value: variants must be a mapping of variant names to what each changes of the common part (variants: { "
+               "small: {}, medium: { participants: { Engine: { command: [./engine_medium] } }, params: { idle_rpm: 650 } } }), "
+               "not an empty mapping; for a simulation without variants, remove variants\n");
+    // The variant that is not chosen is checked too.
+    check_text(errors("variants:\n"
+                      "  a: {}\n"
+                      "  -b: {}\n"
+                      "  c: 3\n"
+                      "  d:\n"
+                      "    step_ms: 5\n"
+                      "    participants:\n"
+                      "      Engin: { enabled: false }\n"
+                      "      Engine: { step_ms: 5, required: false, enabled: maybe, command: [./e, --name, x] }\n"
+                      "      Tool: { command: [./tool, \"{nam}\"], variables: { a: { from: b, scal: 2 } } }\n"
+                      "    params: { 1st: 1, idle: [1] }\n"
+                      "  e:\n"
+                      "    participants: [Engine]\n"),
+               "E 12 value: variants: a variant's name must be a text on one line that does not start with '-' (it is given with "
+               "--variant), not '-b'\n"
+               "E 13 value: variant 'c': must be a mapping of what the variant changes (participants, params), or {} for the "
+               "common part as it is, not '3'\n"
+               "E 15 unknown-key: variant 'd': unknown key 'step_ms': remove it, or use one of the keys here (participants, "
+               "params)\n"
+               "E 17 variant-participant: variant 'd': participants has 'Engin', but the file's participants has no participant "
+               "with this name (did you mean 'Engine'?): a variant changes the participants of the common part (for a "
+               "participant of this variant only, list it there with enabled: false and write enabled: true here); the "
+               "participants are Engine, Tool\n"
+               "E 18 unknown-key: variant 'd': participant 'Engine': unknown key 'step_ms': remove it, or use one of the keys "
+               "here (command, variables, enabled)\n"
+               "E 18 unknown-key: variant 'd': participant 'Engine': unknown key 'required': remove it, or use one of the keys "
+               "here (command, variables, enabled)\n"
+               "E 18 value: variant 'd': participant 'Engine': enabled must be true or false, not 'maybe'\n"
+               "E 18 launcher-argument: variant 'd': participant 'Engine': the command has '--name', but vehicle_sil_launch "
+               "gives an ecu_main executable --name itself: remove it (or set describe: false for an executable not made with "
+               "ecu_main)\n"
+               "E 19 unknown-placeholder: variant 'd': participant 'Tool': unknown placeholder {nam} in the command: did you "
+               "mean {name}? (the placeholders: {registry_uri}, {name}; write {{nam}} to pass {nam} as it is)\n"
+               "N 19 no-registry-uri: variant 'd': participant 'Tool': the command has no {registry_uri}, so the executable is "
+               "not told where the simulation's registry is: if it needs it, add its option for the registry URI with "
+               "\"{registry_uri}\" as the value\n"
+               "E 19 unknown-key: variant 'd': participant 'Tool': variables: a: unknown key 'scal': did you mean 'scale'? (the "
+               "keys here: from, scale, offset, map, unit, absent)\n"
+               "E 20 value: variant 'd': params: '1st' cannot be a parameter's name: use letters, digits and _ (not a digit "
+               "first), as a scenario writes it in ${...}\n"
+               "E 20 value: variant 'd': params: idle must be one value (a number, true or false, or a text), not a list\n"
+               "E 22 value: variant 'e': participants must be a mapping of the participants' names to what the variant changes "
+               "of each (participants: { Engine: { command: [./engine_medium] } }), not a list\n");
+    // A variant whose command has an error cannot be described or started.
+    const ConfigRead bad = read_config(head + "variants:\n  a: { participants: { Engine: { command: [./e, --name, x] } } }\n", variant("a"));
+    CHECK(!bad.config->participants[0].valid && bad.config->participants[1].valid);
+    // The common params are read as a variant's.
+    check_text(lines(read_config(head + "params: 3\n").findings),
+               "E 10 value: params must be a mapping of parameter names to values (params: { idle_rpm: 800 }), not '3'\n");
+    check_text(lines(read_config(head + "params: { a: 1, a: 2, b: }\n").findings),
+               "E 10 duplicate-key: params: 'a' appears twice (first at line 10); keep one of them\n"
+               "E 10 value: params: b must be one value (a number, true or false, or a text), not empty\n");
 }

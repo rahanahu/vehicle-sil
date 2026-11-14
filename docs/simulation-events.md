@@ -34,7 +34,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `log` | participant か `vehicle_sil_launch` が 1 行書いたとき | `source`（participant 名か `vehicle_sil_launch`）、`line`（その行。[`log` の行](#log-の行)） |
 | `log_dropped` | 読む側が遅くて `log` を書けなかったとき、その場所に（[読む側が遅いとき](#読む側が遅いとき読まないとき)） | `count`（書かなかった `log` の数）、`sources`（`source` ごとの数のオブジェクト。例: `{"Engine": 120, "vehicle_sil_launch": 1}`） |
 | `finding` | 実行で見つけたものが決まったとき | 結果の `findings[]` の 1 つと同じキー（`severity`、`code`、`file`、`line`、`participant`、`network`、`message`、`detail`） |
-| `scenario_step` | `--scenario` の手順が始まったとき、決まったとき | 結果の `scenario.steps[]` の 1 つと同じキー（[scenario.md](scenario.md) の「出力」）。始まったときの `status` は `running` |
+| `scenario_step` | `--scenario` の手順が始まったとき、決まったとき | 結果の `scenario.steps[]` の 1 つと同じキー（[scenario.md](scenario.md) の「出力」）。始まったときの `status` は `running`。飛ばす手順（`status` は `skipped`、`at_ms` は null）は 1 回だけ |
 | `time` | 仮想時間が進んだとき、一時停止に入ったとき・出たとき、速さが変わったとき | `sim_ms`: controller が見ている仮想時間（ミリ秒。減りません）、`speed`: 今の速さ（数か `"max"`）、`paused`: 一時停止しているか（`true` の事象は、ふつう、止まった後に出ます。`--start-paused` の最初の `time` も、時刻 0 で止まってから出るので、結果の `paused_ms` は、この事象より前から数えています。例外は 2 つで、どちらも、止まる予定の時刻に着いているのに、まだ止まっていない間に `true` が出ます: 始まった後 2 秒たっても時刻 0 で止まらなかったとき（待つのをやめて出します）と、時刻を指定した `pause` や `run_until` が今の時刻以下を指していて、次の刻みで止まるとき。このときの `paused_ms` は、実際に止まってから数えます）、`actual_speed`: 直近 1 秒ほどの、進んだ仮想時間 ÷ 実時間（小数 3 桁。動いた時間が短いとき、一時停止しているときは `null`）、`late_steps`: それまでに遅れた刻みの数、`max_late_ms`: それまでの最大の遅れ、`slipped_ms`: それまでのずれの合計（どれも結果の `timing` と同じ意味で、いま実行が終わったとしたときの値）、`late_ms`: 期限を過ぎてもまだ始まっていない刻みの、いまの遅れ（なければ 0）。シミュレーションが止まっている間（仮想時間が進まず、`late_ms` が許容を超えて増えている間）も、100 ms に 1 回まで出ます |
 | `command` | 標準入力から命令を受けたとき（`--stdin-commands`）、Control Server のクライアントが時間の操作か停止を呼んだとき（`--control`） | `command`（命令の名前。読めなければ `null`）、`source`（`"stdin"`: 行で来た、`"eof"`: 標準入力の終わり、`"control_server"`: クライアントの呼び出し）、`accepted`（受け付けたか）、`message`（受け付けなかった理由。受け付けたら `null`）。受け付けた `step` には `ms`（実際に進む仮想時間。刻みの倍数に切り上げたもの）。クライアントからは `run_until` と、時刻つきの `pause` も来ます。受け付けたものには `at_ms`（止まる仮想時刻。刻みの倍数に切り上げたもの） |
 | `heartbeat` | 1 秒のあいだ何も書かなかったとき | なし（3 つのキーだけ） |
@@ -76,7 +76,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | 場合 | 事象 | `result` の `result` | 終了コード |
 |---|---|---|---|
 | 引数の誤り（知らないオプション、構成ファイルの指定がない、`--json` と一緒に付けた、など） | `hello`、`result` | `"usage"` | 4 |
-| 構成ファイルを読んでわかる引数の誤り（`--disable`、`--enable`、`--manual` の名前が構成ファイルにない） | `hello`、`phase`（`checking`）、`check`、`phase`（`ended`）、`result` | `"usage"` | 4 |
+| 構成ファイルを読んでわかる引数の誤り（`--disable`、`--enable`、`--manual` の名前が構成ファイルにない、機種を書いた構成に `--variant` がない、`--variant` の名前が構成ファイルにない） | `hello`、`phase`（`checking`）、`check`、`phase`（`ended`）、`result` | `"usage"` | 4 |
 | 構成ファイルを読めない | 同じ 5 つ | `"unreadable"` | 3 |
 | 照合で誤りが見つかった | 同じ 5 つ | `"failed"` | 1 |
 | 標準出力がない（閉じた状態で起動された） | 何も書けません。標準エラーに誤りを書きます | | 4 |

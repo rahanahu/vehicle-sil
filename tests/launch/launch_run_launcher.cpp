@@ -3558,7 +3558,8 @@ void variable_map(const Options& o)
     require(contains(said, "s.yaml:3: 'Body.level': participant 'Body' has no variable 'level'") &&
                 contains(said, "s.yaml:4: ") && contains(said, "Body.body.fill") &&
                 contains(said, "s.yaml:5: ") && contains(said, "standby (0), cruise (2)") &&
-                contains(said, "s.yaml:6: 'Body.body.heater': participant 'Body' has no variable 'body.heater'"),
+                contains(said, "note: s.yaml:6: the step is skipped (set Body.body.heater): Body.body.heater is absent: "
+                               "participant 'Body' does not have it in this configuration (absent: true in its variables)"),
             "the scenario's check uses the seen variables:\n" + said);
 
     // A mapping that does not fit the executable is an error of the check, and nothing runs.
@@ -3597,6 +3598,241 @@ void variable_map(const Options& o)
                 contains(result_late, "failed: 1 error, 0 warnings, 2 notes\n"),
             "the result about the mapping:\n" + result_late);
     log("CHECK a mapping that does not fit an undescribed participant is said in the run and fails it -> ok");
+}
+
+/// Variants of one configuration: the chosen one is laid over the common part (the variable map,
+/// enabled, the parameters, the command), a scenario's ${name} takes its value from the scenario,
+/// the configuration, the variant and --param in that order, and a step that uses a variable the
+/// variant does not have, or of a participant the variant leaves out, is skipped and said so.
+void variants(const Options& o)
+{
+    const std::string config = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                               "  - name: Body\n    command: [" + ecu(o) + "]\n"
+                               "    variables:\n"
+                               "      body.fill: level\n"
+                               "      body.heater: { absent: true }\n"
+                               "  - name: Door\n    command: [" + ecu(o) + "]\n"
+                               "params: { fill: 5, wait: 30 }\n"
+                               "variants:\n"
+                               "  small: {}\n"
+                               "  medium:\n"
+                               "    participants:\n"
+                               "      Body: { variables: { body.heater: ticks } }\n"
+                               "      Door: { enabled: false }\n"
+                               "    params: { fill: 7 }\n"
+                               "  broken:\n"
+                               "    participants:\n"
+                               "      Body:\n"
+                               "        command: [./no_such_ecu]\n";
+    const fs::path dir = scenario_dir(o, config, {{"Body", "scenario-variables"}, {"Door", "scenario-variables"}});
+    write_file(dir / "s.yaml", "vehicle_sil_scenario: 1\n"
+                               "name: variants\n"
+                               "params: { fill: 1, extra: 3 }\n"
+                               "steps:\n"
+                               "  - set: { Body.body.fill: \"${fill}\" }\n"
+                               "  - after_ms: ${wait}\n"
+                               "    expect: { Body.body.fill: \"${fill}\" }\n"
+                               "  - expect: { Body.body.heater: { ge: 1 } }\n"
+                               "    within_ms: 100\n"
+                               "  - after_ms: 10\n"
+                               "    expect: { Body.level_changed_at_ms: 0 }\n");
+
+    // No variant chosen: a usage error that lists them, also for a program.
+    const Captured none = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
+    expect_code(none, 4, "run without --variant");
+    require(contains(lf(none.standard_error), "error: the file defines variants, and a check or a run is of one of them: give "
+                                              "--variant <name> with one of small, medium, broken (none of them is the default)\n"),
+            "the usage error lists the variants:\n" + lf(none.standard_error));
+    require(contains(lf(none.standard_output), "\"result\": \"usage\"") &&
+                contains(lf(none.standard_output), "\"variant\": null,\n    \"variants\": [\n      \"small\",\n      \"medium\",\n      \"broken\"\n    ],"),
+            "the usage result lists the variants:\n" + lf(none.standard_output));
+    const Captured typo = launch(o, {"check", "sim.yaml", "--variant", "smal"}, dir);
+    expect_code(typo, 4, "check with an unknown variant");
+    require(contains(lf(typo.standard_error), "error: --variant smal: the file has no variant with this name (did you mean "
+                                              "'small'?); its variants are small, medium, broken\n"),
+            "the unknown variant:\n" + lf(typo.standard_error));
+    // Also when the file has errors: the common part alone is not checked in its place.
+    write_file(dir / "bad.yaml", config + "  wrong: { step_ms: 1 }\n");
+    const Captured both = launch(o, {"check", "bad.yaml", "--variant", "smal", "--json"}, dir);
+    expect_code(both, 4, "check with an unknown variant of a file with errors");
+    require(contains(lf(both.standard_error), "error: --variant smal: the file has no variant with this name (did you mean "
+                                              "'small'?); its variants are small, medium, broken, wrong; the file has errors "
+                                              "too, which a check with one of these variants reports\n") &&
+                contains(lf(both.standard_output), "\"result\": \"usage\""),
+            "the unknown variant of a file with errors:\n" + lf(both.standard_error) + lf(both.standard_output));
+    expect_code(launch(o, {"check", "bad.yaml", "--variant", "small"}, dir), 1, "check a variant of a file with errors");
+    log("CHECK a file with variants needs --variant, and the error lists them -> ok");
+
+    // small: the common part. Body has no heater: its step is skipped (it waits, so it takes no
+    // time, and has no time at which it was decided), and the scenario passes, saying so.
+    const Captured small = launch(o, {"run", "sim.yaml", "--variant", "small", "--scenario", "s.yaml", "--json"}, dir);
+    expect_code(small, 0, "run --variant small");
+    const std::string smallOut = lf(small.standard_output);
+    const std::string smallScenario = scenario_json(smallOut);
+    require(contains(smallScenario, "\"status\": \"passed\",") && contains(smallScenario, "\"skipped_steps\": 1,") &&
+                contains(smallScenario, "\"text\": \"set Body.body.fill = 5\",") &&
+                contains(smallScenario, "\"text\": \"expect Body.body.heater (within 100 ms)\",\n        \"status\": \"skipped\",\n"
+                                        "        \"start_ms\": 30,\n        \"at_ms\": null,\n        \"end_ms\": 30,\n"
+                                        "        \"code\": \"scenario-skipped\",\n"
+                                        "        \"message\": \"Body.body.heater is absent: participant 'Body' does not have it in "
+                                        "the variant small (absent: true in its variables)\"") &&
+                contains(smallScenario, "\"status\": \"passed\",\n        \"start_ms\": 40,"),
+            "the scenario of the variant small:\n" + smallScenario);
+    require(contains(smallOut, "\"variant\": \"small\",\n    \"variants\": [") &&
+                contains(smallOut, "\"params\": [\n      {\n        \"name\": \"fill\",\n        \"value\": 5,\n"
+                                   "        \"from\": \"configuration\"\n      },") &&
+                contains(smallOut, "\"code\": \"scenario-step-skipped\","),
+            "the check of the variant small has the variant, the parameters and the note:\n" + smallOut);
+    log("CHECK the common part as a variant: the absent variable's step is skipped and reported -> ok");
+
+    // The same for people, and as events.
+    const Captured text = launch(o, {"run", "sim.yaml", "--variant", "small", "--scenario", "s.yaml"}, dir);
+    expect_code(text, 0, "run --variant small for people");
+    const std::string shown = lf(text.standard_output);
+    require(contains(shown, "expect Body.body.heater (within 100 ms)  skipped  -\n"), "the table has no time for the skipped step:\n" + shown);
+    require(contains(shown, "sim.yaml (variant small): 2 participants, 0 networks\n") &&
+                contains(shown, "scenario s.yaml (variants): 4 steps (1 skipped)\n"
+                                "parameters: fill = 5 (the configuration's params), extra = 3 (the scenario's params), wait = 30 "
+                                "(the configuration's params)\n") &&
+                contains(shown, "scenario s.yaml (variants): passed, 3 of 4 steps passed, 1 skipped\n") &&
+                contains(shown, "line 8 skipped: Body.body.heater is absent: participant 'Body' does not have it in the variant "
+                                "small (absent: true in its variables)\n"),
+            "the result for people:\n" + shown);
+    require(contains(lf(text.standard_error), "scenario: line 8: expect Body.body.heater (within 100 ms): skipped "
+                                              "(Body.body.heater is absent: participant 'Body' does not have it in the variant "
+                                              "small (absent: true in its variables))\n"),
+            "the run's line about the skipped step:\n" + lf(text.standard_error));
+    const Captured events = launch(o, {"run", "sim.yaml", "--variant", "small", "--scenario", "s.yaml", "--events"}, dir);
+    expect_code(events, 0, "run --variant small --events");
+    require(contains(lf(events.standard_output), "\"index\":3,\"line\":8,\"kind\":\"expect\",\"text\":\"expect Body.body.heater (within 100 ms)\","
+                                                 "\"status\":\"skipped\",\"start_ms\":30,\"at_ms\":null,\"end_ms\":30,"
+                                                 "\"code\":\"scenario-skipped\","),
+            "the event of the skipped step:\n" + lf(events.standard_output));
+    log("CHECK the skipped step in the text, the run's lines and the events -> ok");
+
+    // medium: the heater is there (another variable of the executable), Door is left out, and
+    // the variant's parameter replaces the common one; --param replaces both.
+    const Captured medium = launch(o, {"run", "sim.yaml", "--variant", "medium", "--scenario", "s.yaml", "--json"}, dir);
+    expect_code(medium, 0, "run --variant medium");
+    const std::string mediumOut = lf(medium.standard_output);
+    const std::string mediumScenario = scenario_json(mediumOut);
+    require(contains(mediumScenario, "\"status\": \"passed\",") && !contains(mediumScenario, "skipped") &&
+                contains(mediumScenario, "\"text\": \"set Body.body.fill = 7\",") &&
+                contains(mediumScenario, "\"text\": \"expect Body.body.heater ge 1 (within 100 ms)\",\n        \"status\": \"passed\","),
+            "the scenario of the variant medium:\n" + mediumScenario);
+    require(contains(mediumOut, "\"name\": \"Door\",\n      \"required\": true,\n      \"enabled\": false,") &&
+                contains(mediumOut, "\"name\": \"fill\",\n        \"value\": 7,\n        \"from\": \"variant\""),
+            "the variant medium leaves Door out and has its parameter:\n" + mediumOut);
+    const Captured given = launch(o, {"run", "sim.yaml", "--variant", "medium", "--scenario", "s.yaml", "--param", "fill=9",
+                                      "--param", "wait=50", "--json"}, dir);
+    expect_code(given, 0, "run --param");
+    const std::string givenOut = lf(given.standard_output);
+    require(contains(scenario_json(givenOut), "\"text\": \"set Body.body.fill = 9\",") &&
+                contains(scenario_json(givenOut), "\"text\": \"expect Body.body.fill eq 9\",\n        \"status\": \"passed\",\n"
+                                                  "        \"start_ms\": 50,") &&
+                contains(givenOut, "\"name\": \"fill\",\n          \"value\": 9,\n          \"from\": \"command_line\""),
+            "--param replaces the variant's parameter:\n" + givenOut);
+    log("CHECK a variant's variable map, enabled and params, and --param over them -> ok");
+
+    // A --param the scenario does not have, and one without a scenario.
+    const Captured unknown = launch(o, {"check", "sim.yaml", "--variant", "small", "--scenario", "s.yaml", "--param", "fil=9"}, dir);
+    expect_code(unknown, 4, "check with a --param the scenario does not have");
+    require(contains(lf(unknown.standard_error), "error: --param fil=9: the scenario has no parameter fil (did you mean "
+                                                 "fill?): its parameters are fill, extra, wait; remove the option or correct "
+                                                 "the name\n"),
+            "the unknown parameter:\n" + lf(unknown.standard_error));
+    const Captured unknownRun = launch(o, {"run", "sim.yaml", "--variant", "small", "--scenario", "s.yaml", "--param", "fil=9", "--json"}, dir);
+    expect_code(unknownRun, 4, "run with a --param the scenario does not have");
+    require(contains(lf(unknownRun.standard_output), "\"result\": \"usage\"") && !contains(lf(unknownRun.standard_output), "\"run\": {"),
+            "the unknown parameter starts nothing:\n" + lf(unknownRun.standard_output));
+    const Captured alone = launch(o, {"check", "sim.yaml", "--variant", "small", "--param", "fill=9"}, dir);
+    expect_code(alone, 4, "check --param without --scenario");
+    require(contains(lf(alone.standard_error), "error: --param sets a parameter of a scenario: give --scenario <file> too, or "
+                                               "leave --param out\n"),
+            "--param without a scenario:\n" + lf(alone.standard_error));
+    const Captured form = launch(o, {"check", "sim.yaml", "--variant", "small", "--scenario", "s.yaml", "--param", "fill"}, dir);
+    expect_code(form, 4, "check --param without a value");
+    require(contains(lf(form.standard_error), "error: --param fill: write --param <name>=<value> (the name as the scenario has it "
+                                              "in ${<name>}: letters, digits and _), e.g. --param idle_rpm=650\n"),
+            "--param without a value:\n" + lf(form.standard_error));
+
+    // The variant's command is the one that is checked and started.
+    const Captured broken = launch(o, {"run", "sim.yaml", "--variant", "broken"}, dir);
+    expect_code(broken, 1, "run --variant broken");
+    require(contains(lf(broken.standard_output), "error: sim.yaml:22: participant 'Body': ") &&
+                contains(lf(broken.standard_output), "no_such_ecu") &&
+                contains(lf(broken.standard_output), "(vehicle_sil_launch check --variant broken sim.yaml shows the same)"),
+            "the variant's command is checked:\n" + lf(broken.standard_output));
+
+    // A scenario for other variants only is not run for this one.
+    write_file(dir / "only.yaml", "vehicle_sil_scenario: 1\nonly: [medium]\nsteps:\n  - expect: { Body.body.heater: { ge: 0 } }\n");
+    const Captured other = launch(o, {"run", "sim.yaml", "--variant", "small", "--scenario", "only.yaml"}, dir);
+    expect_code(other, 1, "run a scenario that is only for another variant");
+    require(contains(lf(other.standard_output), "error: only.yaml:2: the scenario is only for the variant medium (its only), not "
+                                                "for small: run it with --variant medium, or add small to only\n"),
+            "the scenario that is not for the variant:\n" + lf(other.standard_output));
+    const Captured mine = launch(o, {"check", "sim.yaml", "--variant", "medium", "--scenario", "only.yaml", "--json"}, dir);
+    expect_code(mine, 0, "check a scenario that is only for this variant");
+    require(contains(lf(mine.standard_output), "\"steps\": 1,\n    \"only\": [\n      \"medium\"\n    ]\n"),
+            "the check's JSON has only:\n" + lf(mine.standard_output));
+    log("CHECK --param's errors, a variant's command, and only -> ok");
+
+    // A participant the variant leaves out: the steps that use it are skipped, with the time
+    // their text says (hold_for_ms), so the step after them starts when it does in small.
+    write_file(dir / "door.yaml", "vehicle_sil_scenario: 1\n"
+                                  "steps:\n"
+                                  "  - set: { Body.body.fill: 5 }\n"
+                                  "  - expect: { Door.level: 0 }\n"
+                                  "    hold_for_ms: 60\n"
+                                  "  - expect: { Body.body.fill: 5 }\n");
+    const Captured without = launch(o, {"run", "sim.yaml", "--variant", "medium", "--scenario", "door.yaml", "--json"}, dir);
+    expect_code(without, 0, "run a scenario that uses a participant the variant leaves out");
+    const std::string withoutScenario = scenario_json(lf(without.standard_output));
+    require(contains(withoutScenario, "\"text\": \"expect Door.level (for 60 ms)\",\n        \"status\": \"skipped\",\n"
+                                      "        \"start_ms\": 0,\n        \"at_ms\": null,\n        \"end_ms\": 60,\n"
+                                      "        \"code\": \"scenario-skipped\",\n"
+                                      "        \"message\": \"participant 'Door' is not in the variant medium (enabled: false in "
+                                      "that variant)\"") &&
+                contains(withoutScenario, "\"text\": \"expect Body.body.fill eq 5\",\n        \"status\": \"passed\",\n"
+                                          "        \"start_ms\": 60,") &&
+                !contains(lf(without.standard_output), "--enable"),
+            "the scenario of the variant medium, which has no Door:\n" + lf(without.standard_output));
+    const Captured with = launch(o, {"run", "sim.yaml", "--variant", "small", "--scenario", "door.yaml", "--json"}, dir);
+    expect_code(with, 0, "run the same scenario with the participant");
+    require(contains(scenario_json(lf(with.standard_output)), "\"text\": \"expect Body.body.fill eq 5\",\n        \"status\": \"passed\",\n"
+                                                              "        \"start_ms\": 60,") &&
+                !contains(scenario_json(lf(with.standard_output)), "skipped"),
+            "the same scenario in the variant small:\n" + lf(with.standard_output));
+    // Left out by the command line: an error as before, which does not speak of the variant.
+    const Captured disabled = launch(o, {"check", "sim.yaml", "--variant", "small", "--disable", "Door", "--scenario", "door.yaml"}, dir);
+    expect_code(disabled, 1, "check a scenario that uses a participant that --disable leaves out");
+    require(contains(lf(disabled.standard_output), "error: door.yaml:4: 'Door.level': participant 'Door' is left out of this run "
+                                                   "(enabled: false, or --disable): take it in (--enable Door), or run a scenario "
+                                                   "that does not use it\n"),
+            "the participant that --disable leaves out:\n" + lf(disabled.standard_output));
+    log("CHECK a participant the variant leaves out: its steps are skipped and take their time -> ok");
+
+    // Nothing left that checks: a warning, which --strict does not let pass.
+    write_file(dir / "heater.yaml", "vehicle_sil_scenario: 1\nsteps:\n  - set: { Body.body.fill: 5 }\n"
+                                    "  - expect: { Body.body.heater: { ge: 0 } }\n");
+    const Captured hollow = launch(o, {"check", "sim.yaml", "--variant", "small", "--scenario", "heater.yaml"}, dir);
+    expect_code(hollow, 0, "check a scenario whose checks are all skipped");
+    require(contains(lf(hollow.standard_output),
+                     "warning: heater.yaml: the scenario checks nothing in the variant small: its only step that checks (expect or "
+                     "wait_until, line 4) is skipped, so it passes whatever the ECUs do (the notes say why each is skipped). If the "
+                     "scenario is not for this variant, list the variants it is for in the scenario (only: [medium, broken]); if it "
+                     "is, map what the steps look at to what the variant has (variables in the variant, "
+                     "docs/simulation-config.md)\n"),
+            "the warning about a scenario that checks nothing:\n" + lf(hollow.standard_output));
+    expect_code(launch(o, {"check", "sim.yaml", "--variant", "small", "--scenario", "heater.yaml", "--strict"}, dir), 1,
+                "check --strict a scenario whose checks are all skipped");
+    const Captured strict = launch(o, {"run", "sim.yaml", "--variant", "small", "--scenario", "heater.yaml", "--strict", "--json"}, dir);
+    expect_code(strict, 1, "run --strict a scenario whose checks are all skipped");
+    require(contains(lf(strict.standard_output), "\"code\": \"scenario-nothing-checked\",") && !contains(lf(strict.standard_output), "\"status\": \"passed\""),
+            "run --strict does not run a scenario that checks nothing:\n" + lf(strict.standard_output));
+    expect_code(launch(o, {"run", "sim.yaml", "--variant", "small", "--scenario", "heater.yaml"}, dir), 0,
+                "run a scenario whose checks are all skipped");
+    log("CHECK a scenario whose checks are all skipped: a warning, and --strict fails -> ok");
 }
 
 void scenario_disconnect(const Options& o)
@@ -4609,7 +4845,7 @@ int main(int argc, char** argv)
             {"events_stderr", events_stderr}, {"realtime", realtime}, {"on_time", on_time}, {"late", late}, {"stall", stall},
             {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
             {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control},
-            {"scenario", scenario}, {"scenario_same", scenario_same}, {"variable_map", variable_map}, {"scenario_disconnect", scenario_disconnect},
+            {"scenario", scenario}, {"scenario_same", scenario_same}, {"variable_map", variable_map}, {"variants", variants}, {"scenario_disconnect", scenario_disconnect},
             {"ethernet", ethernet},
             {"scenario_failures", scenario_failures}, {"manual", manual},
             {"manual_late", manual_late}, {"manual_fails", manual_fails}, {"manual_stop", manual_stop},
