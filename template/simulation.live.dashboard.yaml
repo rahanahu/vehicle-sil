@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=schema/dashboard.schema.json
+# The dashboard of simulation.live.yaml in the browser GUI (vehicle-sil-gui): the same as
+# simulation.dashboard.yaml (the GUI reads <configuration>.dashboard.yaml, so each configuration
+# has a file of its own). Change both when you change one.
+vehicle_sil_dashboard: 1
+title: Engine and dashboard
+sections:
+  - title: Engine
+    items:
+      - variable: Engine.engine.throttle
+        widget: slider
+        label: Throttle
+        options: { step: 5 }
+      - variable: Engine.engine.speed
+        widget: graph
+        label: Engine speed
+      # The rest of Engine's variables, and its monitoring variables folded after this section
+      - auto: Engine
+  - title: Dashboard
+    items:
+      - variable: Dashboard.dashboard.engine_speed
+        label: Speed on the dashboard
+      - auto: Dashboard

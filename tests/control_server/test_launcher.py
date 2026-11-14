@@ -169,8 +169,11 @@ class LauncherTest(unittest.TestCase):
                 self.assertTrue(c.peer("Engine").connected)
                 seq = c.write({"Engine": {"engine.throttle": 50.0}})
                 self.assertEqual(c.wait(seq, until="queued").target("Engine").status, "queued")
-                # A step from standard input ends the hold.
+                # A step from standard input ends the hold. The event first: send() does not wait for
+                # the launcher to read the line, and a WaitPaused that comes before the step is taken
+                # is answered from the hold (0).
                 launch.send({"command": "step", "ms": 100})
+                launch.wait_for_event("command", command="step", accepted=True)
                 self.assertEqual(c.sim.wait_paused().now, ms(100))
                 self.assertTrue(c.sim.time().running)
                 done = c.wait(seq)
@@ -215,6 +218,26 @@ class LauncherTest(unittest.TestCase):
         lines = [e["line"] for e in launch.events if e["event"] == "log" and e["source"] == "vehicle_sil_launch"]
         self.assertIn(f"control server at {server['address']}", lines)
         self.assertEqual(control_address(json.dumps(e) for e in launch.events), server["address"])
+
+    def test_the_time_events_of_a_step_from_the_hold_say_paused_only_where_it_stands(self):
+        # As fast as possible, the step may be over before the launcher writes the time event of
+        # the start (sim_ms 0): that one must not say "paused" for the stand at 100 ms. Several
+        # runs: which of the two comes first differs from run to run.
+        for run in range(5):
+            with self.launch(f"hold_step_{run}", stop_at_ms=600_000, start_paused=True) as launch:
+                with Control(launch.address) as c:
+                    self.assertEqual(c.sim.wait_paused(60).now, 0)
+                    launch.send({"command": "step", "ms": 100})
+                    # Taken, before the client waits: until then WaitPaused answers from the hold (0).
+                    launch.wait_for_event("command", command="step", accepted=True)
+                    self.assertEqual(c.sim.wait_paused().now, ms(100))
+                    launch.wait_for_event("time", sim_ms=100, paused=True)
+                    launch.stop()
+                    launch.wait(120)
+            times = [(e["sim_ms"], e["paused"]) for e in launch.events if e["event"] == "time"]
+            stands = times.index((100, True))
+            self.assertEqual(times[0], (0, False), times)
+            self.assertEqual([t for t in times[:stands] if t[1]], [], times)
 
     def test_a_variable_map_is_what_a_client_sees_and_writes(self):
         path = config("mapped", 1000)
@@ -350,8 +373,10 @@ class LauncherTest(unittest.TestCase):
 
     def check_ended_calls(self, calls: Calls):
         self.assertTrue(calls.join(30), f"calls still wait: {calls.waiting()}")
-        initial, _ = calls.outcome["watch"]
+        initial, ended = calls.outcome["watch"]
         self.assertTrue(initial, "the watch ended without its initial state")
+        # An ended simulation stands still nowhere, also one that ended while it was paused.
+        self.assertEqual([state for state in ended if state.paused], [])
         operation = calls.outcome["operation"]
         self.assertFalse(isinstance(operation, ControlError), operation)
         self.assertTrue(operation.done and operation.target("Engine").status in ("cancelled", "unknown"), operation)

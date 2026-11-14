@@ -100,6 +100,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       interrupt_twice
       killed
       late
+      live
       manual_again
       manual_fails
       manual_frozen
