@@ -22,6 +22,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace vehicle_sil::unit::j1939;
@@ -480,6 +481,157 @@ private:
     int stepMs_;
 };
 
+/// Plays frames written by hand (tick in ms, frame) to the engine's node B, which steps every
+/// 10 ms, and records the bus until `endMs`.
+void play(Rig& rig, const std::vector<std::pair<int, J1939Frame>>& script, int endMs)
+{
+    std::size_t next = 0;
+    for (int ms = 0; ms <= endMs; ++ms)
+    {
+        rig.tick(ms);
+        for (; next < script.size() && script[next].first == ms; ++next)
+        {
+            rig.wire.send(TimedFrame{at(std::chrono::milliseconds(ms)), to_can(script[next].second)});
+        }
+        rig.wire.release_before(at(std::chrono::milliseconds(ms)) + 1ns, [](const TimedFrame&) {});
+    }
+    rig.finish(endMs);
+}
+
+[[nodiscard]] J1939Frame address_claimed(Address sa, std::uint64_t name)
+{
+    Bytes data(8);
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        data[i] = static_cast<std::uint8_t>(name >> (8 * i));
+    }
+    return frame(6, kPgnAddressClaim, sa, kGlobal, data);
+}
+
+void add(std::vector<std::pair<int, J1939Frame>>& script, int ms, const std::vector<J1939Frame>& frames)
+{
+    for (const J1939Frame& f : frames)
+    {
+        script.emplace_back(ms, f);
+    }
+}
+
+} // namespace
+
+// --- the receiver takes an announcement the sniffer ignored --------------------------------------
+
+TEST_CASE(sniffer_follows_the_next_transfer_when_the_senders_address_changes_hands)
+{
+    // Another ECU takes A's address in the middle of a transfer. The engine's receiver ends the
+    // transfer without a frame and takes the new owner's announcement for another group; its
+    // clear-to-send tells the sniffer.
+    const std::uint64_t first = 0x8000'0000'FE00'0001u;
+    const Bytes message = payload(14, 100);
+    Rig rig(10);
+    std::vector<std::pair<int, J1939Frame>> script;
+    script.emplace_back(0, address_claimed(kA, first));
+    script.emplace_back(20, rts(kA, kB, 30, kPgn));
+    add(script, 40, dts(kA, kB, payload(30), 1, 2));
+    script.emplace_back(60, address_claimed(kA, first - 1));
+    script.emplace_back(320, rts(kA, kB, 14, kOther));
+    add(script, 340, dts(kA, kB, message, 1, 2));
+    play(rig, script, 3000);
+
+    std::erase_if(rig.receiver.messages, [](const Seen& m) { return m.pgn == kPgnAddressClaim; });
+    CHECK_EQ(rig.receiver.messages.size(), 1u);
+    CHECK(rig.receiver.messages[0].data == message);
+    CHECK_EQ(rig.receiver.ends.size(), 2u);
+    CHECK(rig.receiver.ends[0].result == TransferResult::Cancelled);
+    CHECK(rig.receiver.ends[0].time == at(60ms));
+    CHECK(rig.receiver.ends[1].result == TransferResult::Completed);
+
+    for (const SimDuration step : {1ms, 10ms, 100ms})
+    {
+        Listener listener;
+        listener.replay(rig.trace, at(3s), step);
+        CHECK(listener.messages == rig.receiver.messages);
+        CHECK_EQ(listener.ends.size(), 2u);
+        CHECK(listener.ends[0].end == SniffEnd::Replaced);
+        CHECK_EQ(listener.ends[0].pgn, kPgn);
+        CHECK(listener.ends[0].time == at(320ms)); // the announcement the receiver took
+        CHECK(listener.ends[1].end == SniffEnd::Completed);
+        CHECK_EQ(listener.ends[1].pgn, kOther);
+        CHECK(listener.ends[1].time == rig.receiver.ends[1].time);
+        CHECK_EQ(listener.sniffer.statistics().announcements_ignored, 1u);
+        CHECK_EQ(listener.sniffer.statistics().orphan_control, 0u);
+        CHECK_EQ(listener.sniffer.statistics().orphan_data, 0u);
+        CHECK_EQ(listener.sniffer.active(), 0u);
+    }
+}
+
+TEST_CASE(sniffer_follows_an_announcement_between_the_last_packet_and_the_acknowledgement)
+{
+    // The sender announces another group right after its last packet. The receiver has the
+    // first message already, acknowledges it and takes the announcement.
+    const Bytes first = payload(14);
+    const Bytes second = payload(14, 100);
+    Rig rig(10);
+    std::vector<std::pair<int, J1939Frame>> script;
+    script.emplace_back(0, rts(kA, kB, 14, kPgn));
+    add(script, 20, dts(kA, kB, first, 1, 2));
+    script.emplace_back(20, rts(kA, kB, 14, kOther));
+    add(script, 40, dts(kA, kB, second, 1, 2));
+    play(rig, script, 3000);
+
+    CHECK_EQ(rig.receiver.messages.size(), 2u);
+    CHECK(rig.receiver.messages[0].data == first);
+    CHECK(rig.receiver.messages[1].data == second);
+
+    for (const SimDuration step : {1ms, 10ms, 100ms})
+    {
+        Listener listener;
+        listener.replay(rig.trace, at(3s), step);
+        CHECK(listener.messages == rig.receiver.messages);
+        CHECK_EQ(listener.ends.size(), 2u);
+        CHECK(listener.ends[0].end == SniffEnd::Completed);
+        CHECK(listener.ends[1].end == SniffEnd::Completed);
+        CHECK_EQ(listener.sniffer.statistics().announcements_ignored, 1u);
+        CHECK_EQ(listener.sniffer.statistics().orphan_control, 0u);
+        CHECK_EQ(listener.sniffer.statistics().orphan_data, 0u);
+        CHECK_EQ(listener.sniffer.active(), 0u);
+    }
+}
+
+TEST_CASE(sniffer_marks_a_message_with_a_late_packet_of_the_transfer_before)
+{
+    // The sender announces the same group again; packet 2 of the message before arrives before
+    // the receiver's clear-to-send. The receiver drops it, the sniffer cannot know and keeps
+    // it: its message differs from the receiver's, and conflicting_packets says so.
+    const Bytes before = payload(30);
+    const Bytes message = payload(30, 100);
+    Rig rig(10);
+    std::vector<std::pair<int, J1939Frame>> script;
+    script.emplace_back(0, rts(kA, kB, 30, kPgn));
+    script.emplace_back(20, dt(kA, kB, 1, before));
+    script.emplace_back(25, rts(kA, kB, 30, kPgn));
+    script.emplace_back(25, dt(kA, kB, 2, before));
+    add(script, 40, dts(kA, kB, message, 1, 5));
+    play(rig, script, 3000);
+
+    CHECK_EQ(rig.receiver.messages.size(), 1u);
+    CHECK(rig.receiver.messages[0].data == message);
+
+    Listener listener;
+    std::vector<std::uint32_t> conflicts;
+    Bytes heard;
+    listener.sniffer.on_transfer([&](const SniffedTransfer& t) {
+        conflicts.push_back(t.conflicting_packets);
+        heard.assign(t.data.begin(), t.data.end());
+    });
+    listener.replay(rig.trace, at(3s));
+    CHECK(conflicts == (std::vector<std::uint32_t>{0, 1})); // Replaced, Completed
+    CHECK(heard != message);
+    CHECK_EQ(listener.sniffer.statistics().completed, 1u);
+    CHECK_EQ(listener.sniffer.statistics().conflicting_packets, 1u);
+}
+
+namespace {
+
 /// What the talker did, to see that the runs are not empty of faults.
 struct Tally
 {
@@ -491,13 +643,15 @@ struct Tally
     int aborted = 0;
     int announced_again = 0;
     int announced_other = 0;
+    int crossed = 0;
     int malformed = 0;
 };
 
 /// Plays the sender A of connections to B: answers B's clear-to-sends with packets, with faults.
 /// It keeps two rules of a real sender, without which nobody on the bus can tell the transfers
 /// apart (see the table at same_end()): it announces or aborts only while none of its packets
-/// is on its way, and after its last packet it waits for the receiver's answer.
+/// is on its way, and after its last packet it neither aborts nor announces the same group
+/// again before the receiver has answered (another group it does announce).
 class ConnectionTalker
 {
 public:
@@ -531,6 +685,15 @@ public:
             {
                 on_cts(f.data[1], f.data[2]);
             }
+        }
+        if (active_ && sent_last_ && !crossed_ && now_ > quiet_until_ && random_.chance(2))
+        {
+            // Another group right after the last packet: the receiver refuses it if it still
+            // misses a packet, and takes it if it has the message (its acknowledgement is on
+            // its way). Taken, it gets no packets, and the receiver gives up.
+            ++tally_.crossed;
+            crossed_ = true;
+            send(now_, rts(kA, kB, 30, pgn_ == kPgn ? kOther : kPgn));
         }
         if (active_ && now_ - since_ > 4000)
         {
@@ -572,6 +735,7 @@ private:
         paced_ = random_.chance(50);
         active_ = true;
         sent_last_ = false;
+        crossed_ = false;
         since_ = now_;
         if (!sameGroup && random_.chance(3))
         {
@@ -653,6 +817,7 @@ private:
     bool active_ = false;
     bool paced_ = false;
     bool sent_last_ = false;
+    bool crossed_ = false;
     std::uint32_t pgn_ = kPgn;
     std::size_t size_ = 0;
     Bytes message_;
@@ -755,10 +920,15 @@ private:
 /// | Lost, Timeout (broadcast)              | TimedOut                       | equal               |
 ///
 /// Only the sniffer has Incomplete and, for connections, TimedOut: neither happens when it sees
-/// every frame the receiver sees. What nobody on the bus can tell apart is kept out of the runs
-/// by the talker: packets of an earlier transfer that arrive during the next one of the same
-/// sender, and a sender that announces or aborts between its last packet and the receiver's
-/// answer to it (the receiver may have the message already; the bus shows it only afterwards).
+/// every frame the receiver sees and the receiver ends no transfer without a frame (it does when
+/// the sender's address changes hands: see the test with that name).
+///
+/// An announcement for another group is in the runs at any time: the sniffer ignores it like
+/// the receiver, and follows it when the receiver takes it (it had the message already).
+/// What nobody on the bus can tell apart is kept out of the runs by the talker: packets of an
+/// earlier transfer that arrive during the next one of the same sender, and a sender that
+/// announces the same group again or aborts between its last packet and the receiver's answer
+/// to it (the receiver may have the message already; the bus shows it only afterwards).
 [[nodiscard]] bool same_end(const EngineEnd& engine, const Heard& sniffer)
 {
     if (engine.pgn != sniffer.pgn || engine.sa != sniffer.sa || engine.da != sniffer.da || engine.size != sniffer.size)
@@ -921,6 +1091,7 @@ void run_seed(std::uint64_t seed, Totals& totals)
     totals.tally.delayed += tally.delayed;
     totals.tally.stalled += tally.stalled;
     totals.tally.overlooked += tally.overlooked;
+    totals.tally.crossed += tally.crossed;
     totals.tally.aborted += tally.aborted;
     totals.tally.announced_again += tally.announced_again;
     totals.tally.announced_other += tally.announced_other;
@@ -942,6 +1113,7 @@ TEST_CASE(sniffer_agrees_with_the_receiving_node_under_seeded_faults)
     CHECK(totals.tally.delayed > 0);
     CHECK(totals.tally.stalled > 0);
     CHECK(totals.tally.overlooked > 0);
+    CHECK(totals.tally.crossed > 0);
     CHECK(totals.tally.aborted > 0);
     CHECK(totals.tally.announced_again > 0);
     CHECK(totals.tally.announced_other > 0);

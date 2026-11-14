@@ -8,7 +8,8 @@
 // (can::RawChannel) without the rest of the stack.
 //
 // NOT COMPARED WITH THE STANDARD. The rules below follow the receiver of this repository's
-// engine (a completed transfer gives the message the receiving node of the engine gets). Where
+// engine (a completed transfer without conflicting packets gives the message the receiving node
+// of the engine gets). Where
 // another stack may differ, SnifferOptions has a value to change: the timeouts, when a
 // transfer counts as complete and what a second announcement does.
 #pragma once
@@ -20,6 +21,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <span>
 #include <vector>
@@ -44,7 +46,8 @@ enum class SniffEnd : std::uint8_t
     Incomplete,        ///< The receiver acknowledged, but the sniffer missed packets.
     AbortedBySender,   ///< Connection Abort from the sender; `reason` is its reason byte.
     AbortedByReceiver, ///< Connection Abort from the receiver; `reason` is its reason byte.
-    Replaced,          ///< The sender announced again before the transfer ended.
+    Replaced,          ///< The sender announced again before the transfer ended (for another group:
+                       ///< when the receiver answered that announcement, see SniffSecondAnnouncement).
     Lost,              ///< A broadcast with a missing, repeated or out-of-order packet.
     TimedOut,          ///< No frame of the transfer for too long.
     Refused,           ///< Complete, but of a group that is single-frame only (Request, Address
@@ -76,12 +79,20 @@ struct SniffedTransfer
     SimTime time{};
     SimTime noticed{};
     std::uint8_t reason = 0;              ///< AbortedBySender, AbortedByReceiver: the reason byte; else 0.
+    /// Repeated packets of this transfer whose bytes differed from the first one seen (each is
+    /// also counted in SnifferStatistics::conflicting_packets). Not 0: the sniffer cannot know
+    /// which of the two the receiver took, so the bytes of a Completed transfer may differ from
+    /// the receiver's message (the sniffer keeps the first). It happens when a late packet of
+    /// the transfer before arrives during this one; a sender that repeats a packet repeats its
+    /// bytes.
+    std::uint32_t conflicting_packets = 0;
     /// Completed: the message (`size` bytes), valid during the handler call only. Else empty.
     std::span<const std::uint8_t> data{};
 
-    /// The transfer as a Message. For a Completed transfer it has the fields of the message the
-    /// receiving node of this repository's engine gets for the same frames: group, priority (of
-    /// the announcement), source, destination, time (of the packet that completed it) and bytes.
+    /// The transfer as a Message. For a Completed transfer whose conflicting_packets is 0 it has
+    /// the fields of the message the receiving node of this repository's engine gets for the
+    /// same frames: group, priority (of the announcement), source, destination, time (of the
+    /// packet that completed it) and bytes. With conflicting_packets not 0 the bytes may differ.
     /// Code that reads a Message from a node's handler can read this one. `data` stays valid
     /// during the handler call only.
     [[nodiscard]] Message message() const noexcept { return Message{pgn, priority, source, destination, time, data}; }
@@ -108,6 +119,15 @@ enum class SniffSecondAnnouncement : std::uint8_t
     /// announcements_ignored), as the engine's receiver refuses it. A transfer during which an
     /// announcement was ignored completes only by an acknowledgement for its group, also with
     /// SniffDelivery::WhenAllPacketsSeen: the packets may belong to the ignored message.
+    ///
+    /// The ignored announcement is remembered until the receiver refuses it (an abort for its
+    /// group). If the receiver answers it instead, the sniffer follows it:
+    /// - a clear-to-send for its group: for the receiver the running transfer is over (it ended
+    ///   it without a frame, e.g. because the sender's address changed hands). It is reported
+    ///   as Replaced with the time of the announcement, or as Incomplete if the receiver had
+    ///   acknowledged it, and the announced transfer starts.
+    /// - the receiver acknowledges or aborts the running transfer: the announced transfer
+    ///   starts when that one ends, unless the announcement is older than timeout + grace then.
     KeepRunning,
     /// The new announcement replaces the running transfer (which ends as Replaced).
     Replace,
@@ -133,7 +153,8 @@ struct SnifferOptions
     SniffDelivery delivery = SniffDelivery::WhenAcknowledged;
     SniffSecondAnnouncement other_group = SniffSecondAnnouncement::KeepRunning;
     /// Also follow broadcasts (BAM). Off by default: a Network assembles the broadcasts itself
-    /// and hands them to its handlers. Turn it on when feeding raw CAN frames.
+    /// and hands them to its handlers. Turn it on when feeding raw CAN frames. While it is off,
+    /// BAM frames and data packets to the global address are not read and not counted.
     bool broadcasts = false;
 };
 
@@ -156,7 +177,8 @@ struct SnifferStatistics
     std::uint64_t announcements_ignored = 0;   ///< An RTS for another group during a transfer (KeepRunning).
     std::uint64_t no_session = 0;              ///< No free place (SnifferOptions::sessions).
     // Frames that belong to no followed transfer: the sniffer started listening in the middle
-    // of a transfer, the transfer has ended already, or the announcement was not followed.
+    // of a transfer, the transfer has ended already (also: an abort later than timeout + grace),
+    // or the announcement was not followed (malformed, or no free place: no_session).
     std::uint64_t orphan_data = 0;    ///< TP.DT.
     std::uint64_t orphan_control = 0; ///< Clear-to-send, acknowledgement, abort.
     // Within followed transfers:
@@ -210,8 +232,10 @@ public:
 
     /// Sets the handler called for every transfer that ends, from feed() or advance(). The
     /// handler must not call feed(), advance() or on_transfer() of this sniffer
-    /// (std::logic_error). An exception of the handler leaves feed() or advance(); the transfer
-    /// it was called for has ended.
+    /// (std::logic_error). If the handler throws, feed() or advance() first finishes its work
+    /// (the frame is handled, every transfer that is due has ended and was reported) and then
+    /// passes the exception on; if several calls threw, the first one. Nothing is left for the
+    /// next call, so do not feed the frame again.
     void on_transfer(Handler handler);
 
     /// One frame of the bus. Frames other than TP.CM and TP.DT only move the time on.
@@ -230,6 +254,7 @@ public:
     [[nodiscard]] const SnifferOptions& options() const noexcept { return options_; }
 
 private:
+    struct Announcement;
     struct Session;
 
     [[nodiscard]] Session* find(Address source, Address destination) noexcept;
@@ -237,8 +262,11 @@ private:
     void move_time(SimTime time);
     [[nodiscard]] bool expired(const Session& session, SimTime time) const noexcept;
     void time_out(Session& session);
-    void start(const SniffFrame& frame, bool broadcast);
+    [[nodiscard]] static Announcement announcement(const SniffFrame& frame) noexcept;
+    void start(const Announcement& announcement, bool broadcast);
     void end(Session& session, SniffEnd how, SimTime time, std::uint8_t reason = 0);
+    void report(const Session& session, SniffEnd how, SimTime time, std::uint8_t reason);
+    void pass_on_what_the_handler_threw();
     void complete(Session& session, SimTime time);
     void on_control(const SniffFrame& frame);
     void on_rts(const SniffFrame& frame);
@@ -256,6 +284,7 @@ private:
     SimTime now_{};
     bool started_ = false; ///< a time was seen
     bool in_handler_ = false;
+    std::exception_ptr thrown_; ///< the first exception of a handler call in this feed() or advance()
 };
 
 } // namespace vehicle_sil::j1939

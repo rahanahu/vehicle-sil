@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <bitset>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -12,6 +13,18 @@
 namespace vehicle_sil::j1939 {
 
 using namespace transport_wire;
+
+/// What an RTS or BAM says, kept to start a transfer from it.
+struct TransferSniffer::Announcement
+{
+    Address source = kNullAddress;
+    Address destination = kGlobalAddress;
+    Priority priority = kDefaultPriority;
+    std::uint32_t raw_pgn = 0;
+    std::uint16_t length = 0;
+    std::uint16_t packets = 0;
+    SimTime time{};
+};
 
 struct TransferSniffer::Session
 {
@@ -23,6 +36,12 @@ struct TransferSniffer::Session
     bool acknowledged = false;
     /// `completed_at` is set (see on_data()).
     bool settled = false;
+    /// `waiting` is the latest RTS for another group that was ignored, and `unanswered` says
+    /// how many RTS for that group the receiver has not refused yet (it answers each one). Not
+    /// 0: if the receiver answers with a clear-to-send, the sniffer follows `waiting` (see
+    /// on_cts() and end()).
+    std::uint16_t unanswered = 0;
+    Announcement waiting;
     Address source = kNullAddress;
     Address destination = kGlobalAddress;
     Priority priority = kDefaultPriority;
@@ -34,6 +53,7 @@ struct TransferSniffer::Session
     std::uint16_t next = 1;          ///< broadcast: the packet expected
     std::uint16_t highest = 0;       ///< the highest sequence number seen
     std::uint16_t requested_end = 0; ///< the last packet the latest clear-to-send asked for
+    std::uint32_t conflicts = 0;     ///< repeated packets with other bytes
     SimTime started{};
     SimTime last{};            ///< the last frame that keeps the transfer alive
     SimTime last_data{};       ///< the last data packet
@@ -165,6 +185,15 @@ void TransferSniffer::advance(SimTime now)
         return;
     }
     move_time(now);
+    pass_on_what_the_handler_threw();
+}
+
+void TransferSniffer::pass_on_what_the_handler_threw()
+{
+    if (thrown_)
+    {
+        std::rethrow_exception(std::exchange(thrown_, nullptr));
+    }
 }
 
 // --- frames -------------------------------------------------------------------------------
@@ -194,6 +223,7 @@ void TransferSniffer::feed(const SniffFrame& frame)
     {
         on_data(frame);
     }
+    pass_on_what_the_handler_threw();
 }
 
 void TransferSniffer::feed(const can::TimedFrame& frame)
@@ -203,6 +233,7 @@ void TransferSniffer::feed(const can::TimedFrame& frame)
     {
         check_not_in_handler("feed()");
         move_time(frame.time);
+        pass_on_what_the_handler_threw();
         return;
     }
     feed(SniffFrame{frame.time, id->pgn, id->priority, id->source, id->destination, frame.frame.payload()});
@@ -214,6 +245,24 @@ void TransferSniffer::end(Session& session, SniffEnd how, SimTime time, std::uin
     // is until a later frame starts a transfer in it.
     session.active = false;
     --active_;
+    // An announcement the receiver neither refused nor answered while this transfer ran: if it
+    // is the receiver that says this transfer is over (it acknowledged or aborted), its next
+    // answer is for that announcement. Not after the time in which an announcement is answered.
+    const bool byReceiver = how == SniffEnd::Completed || how == SniffEnd::Refused || how == SniffEnd::Incomplete ||
+                            how == SniffEnd::AbortedByReceiver;
+    const bool follow = byReceiver && session.unanswered != 0 &&
+                        time - session.waiting.time <= options_.timeout + options_.grace;
+    const Announcement next = session.waiting;
+    session.unanswered = 0;
+    report(session, how, time, reason);
+    if (follow)
+    {
+        start(next, false);
+    }
+}
+
+void TransferSniffer::report(const Session& session, SniffEnd how, SimTime time, std::uint8_t reason)
+{
     switch (how)
     {
     case SniffEnd::Completed:
@@ -256,12 +305,25 @@ void TransferSniffer::end(Session& session, SniffEnd how, SimTime time, std::uin
     transfer.time = time;
     transfer.noticed = now_;
     transfer.reason = reason;
+    transfer.conflicting_packets = session.conflicts;
     if (how == SniffEnd::Completed)
     {
         transfer.data = std::span<const std::uint8_t>(session.buffer.data(), session.length);
     }
     const Flag calling(in_handler_);
-    handler_(transfer);
+    try
+    {
+        handler_(transfer);
+    }
+    catch (...)
+    {
+        // The frame is handled to its end first: feed() and advance() pass the first exception
+        // on when they are done, so no frame is half handled and nothing waits for the next call.
+        if (!thrown_)
+        {
+            thrown_ = std::current_exception();
+        }
+    }
 }
 
 void TransferSniffer::complete(Session& session, SimTime time)
@@ -270,7 +332,18 @@ void TransferSniffer::complete(Session& session, SimTime time)
     end(session, single_frame_only(Pgn{session.raw_pgn}) ? SniffEnd::Refused : SniffEnd::Completed, time);
 }
 
-void TransferSniffer::start(const SniffFrame& frame, bool broadcast)
+TransferSniffer::Announcement TransferSniffer::announcement(const SniffFrame& frame) noexcept
+{
+    return Announcement{frame.source,
+                        frame.destination,
+                        frame.priority,
+                        raw_pgn_of(frame.data),
+                        static_cast<std::uint16_t>(announced_size(frame.data)),
+                        frame.data[3],
+                        frame.time};
+}
+
+void TransferSniffer::start(const Announcement& a, bool broadcast)
 {
     const auto free = std::find_if(sessions_.begin(), sessions_.end(), [](const Session& s) { return !s.active; });
     if (free == sessions_.end())
@@ -284,20 +357,22 @@ void TransferSniffer::start(const SniffFrame& frame, bool broadcast)
     s.ignored = false;
     s.acknowledged = false;
     s.settled = false;
-    s.source = frame.source;
-    s.destination = frame.destination;
-    s.priority = frame.priority;
-    s.raw_pgn = raw_pgn_of(frame.data);
+    s.unanswered = 0;
+    s.source = a.source;
+    s.destination = a.destination;
+    s.priority = a.priority;
+    s.raw_pgn = a.raw_pgn;
     s.ignored_pgn = 0;
-    s.length = static_cast<std::uint16_t>(announced_size(frame.data));
-    s.packets = frame.data[3];
+    s.length = a.length;
+    s.packets = a.packets;
     s.seen = 0;
     s.next = 1;
     s.highest = 0;
     s.requested_end = s.packets;
-    s.started = frame.time;
-    s.last = frame.time;
-    s.last_data = frame.time;
+    s.conflicts = 0;
+    s.started = a.time;
+    s.last = a.time;
+    s.last_data = a.time;
     s.have.reset();
     s.latest.reset();
     ++active_;
@@ -352,6 +427,21 @@ void TransferSniffer::on_rts(const SniffFrame& frame)
                 ++statistics_.announcements_ignored;
                 existing->ignored = true;
                 existing->ignored_pgn = raw;
+                // Remembered: the receiver may have ended the running transfer without a frame
+                // (the sender's address changed hands, or it has the message already), and then
+                // it answers this announcement.
+                if (existing->unanswered != 0 && existing->waiting.raw_pgn == raw)
+                {
+                    ++existing->unanswered;
+                }
+                else if (wellFormed)
+                {
+                    existing->unanswered = 1;
+                }
+                if (wellFormed)
+                {
+                    existing->waiting = announcement(frame);
+                }
                 return;
             }
             if (!wellFormed)
@@ -367,7 +457,7 @@ void TransferSniffer::on_rts(const SniffFrame& frame)
         ++statistics_.announcements_malformed;
         return;
     }
-    start(frame, false);
+    start(announcement(frame), false);
 }
 
 void TransferSniffer::on_bam(const SniffFrame& frame)
@@ -386,14 +476,33 @@ void TransferSniffer::on_bam(const SniffFrame& frame)
     {
         end(*existing, SniffEnd::Replaced, frame.time);
     }
-    start(frame, true);
+    start(announcement(frame), true);
 }
 
 void TransferSniffer::on_cts(const SniffFrame& frame)
 {
     // From the receiver to the sender.
     Session* s = frame.destination == kGlobalAddress ? nullptr : find(frame.destination, frame.source);
-    if (s == nullptr || s->raw_pgn != raw_pgn_of(frame.data))
+    const std::uint32_t raw = raw_pgn_of(frame.data);
+    if (s != nullptr && s->raw_pgn != raw && s->unanswered != 0 && s->waiting.raw_pgn == raw)
+    {
+        // The receiver answers the announcement that was ignored here: for the receiver the
+        // running transfer is over. It ends at the time of that announcement, as when an
+        // announcement replaces a transfer (or as Incomplete, if the receiver acknowledged it).
+        const Announcement next = s->waiting;
+        s->unanswered = 0;
+        if (s->acknowledged)
+        {
+            end(*s, SniffEnd::Incomplete, s->acknowledged_at);
+        }
+        else
+        {
+            end(*s, SniffEnd::Replaced, next.time);
+        }
+        start(next, false);
+        s = find(frame.destination, frame.source);
+    }
+    if (s == nullptr || s->raw_pgn != raw)
     {
         ++statistics_.orphan_control;
         return;
@@ -461,6 +570,10 @@ void TransferSniffer::on_abort(const SniffFrame& frame)
     }
     if (toSender != nullptr && toSender->ignored && toSender->ignored_pgn == raw)
     {
+        if (toSender->unanswered != 0 && toSender->waiting.raw_pgn == raw)
+        {
+            --toSender->unanswered;
+        }
         return; // the receiver refuses the announcement that was ignored here too
     }
     ++statistics_.orphan_control;
@@ -468,6 +581,10 @@ void TransferSniffer::on_abort(const SniffFrame& frame)
 
 void TransferSniffer::on_data(const SniffFrame& frame)
 {
+    if (frame.destination == kGlobalAddress && !options_.broadcasts)
+    {
+        return; // told not to follow broadcasts: their packets are not frames without a transfer
+    }
     Session* s = find(frame.source, frame.destination);
     if (s == nullptr)
     {
@@ -513,6 +630,7 @@ void TransferSniffer::on_data(const SniffFrame& frame)
         if (!std::equal(frame.data.begin() + 1, frame.data.begin() + 1 + static_cast<std::ptrdiff_t>(count), at))
         {
             ++statistics_.conflicting_packets;
+            ++s->conflicts;
         }
     }
     else
