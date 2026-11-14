@@ -134,7 +134,9 @@ struct ScenarioStep
     std::int64_t after_ms = 0;
     std::vector<ScenarioWrite> writes{};       ///< Set
     std::vector<ScenarioSignal> signals{};     ///< Ramp, Wave
-    std::vector<ScenarioCondition> conditions{}; ///< Expect, WaitUntil: all of them
+    /// Expect, WaitUntil: all of them. Ramp, Wave: the expect beside it (empty without one), which
+    /// must be true from the step's time to its end, both included.
+    std::vector<ScenarioCondition> conditions{};
     /// Expect with within_ms, WaitUntil (its timeout_ms): true at some sample of this long.
     std::optional<std::int64_t> within_ms{};
     /// Expect with hold_for_ms: true at every sample of this long.
@@ -150,6 +152,10 @@ struct ScenarioStep
     /// the longest length of a wave, the hold_for_ms of an expect), so that the steps after it have the same times in every
     /// variant. 0 for a set and for a step that waits (when it would end is not in the text).
     std::int64_t skipped_ms = 0;
+    /// Of a ramp or a wave that runs: why the run does not check the expect beside it (it uses a
+    /// variable that is absent or of a participant the variant leaves out, as `skipped` says it), or
+    /// "". `conditions` is then empty; the ramp or wave writes as it would with the expect.
+    std::string expect_skipped{};
 
     /// Its end is not known before it runs (WaitUntil, Expect with within_ms).
     [[nodiscard]] bool waits() const noexcept { return within_ms.has_value(); }
@@ -226,7 +232,8 @@ struct ScenarioRead
     bool not_for_variant = false;
     /// How many steps the run will skip (ScenarioStep::skipped), each with a note in `findings`.
     std::size_t skipped = 0;
-    /// Every error of the text, a note for each step that is skipped and a warning
+    /// Every error of the text, a note for each step that is skipped and for each expect beside a ramp
+    /// or a wave that is not checked (ScenarioStep::expect_skipped), and a warning
     /// ("scenario-nothing-checked") if every step that checks is skipped, in the order of the file
     /// (Finding::file is not set).
     std::vector<Finding> findings;

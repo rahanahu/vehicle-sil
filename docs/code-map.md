@@ -914,7 +914,7 @@ flowchart TD
   シナリオのある実行の controller の刻みは速さによらない（`detail::plan_time_step()` の `fine`）。
   Hub の tap は controller の SIL Kit のスレッドで Hub のロックの中から呼ばれるので、待つもの・Hub を呼ぶものを足さない。
   試験は `^launch\.scenario_`（偽の ECU のモデル。
-  届く順を変えても結果が同じ。`launch.scenario_wave_*` は波形の値、終わった後の値、所見）、`^signal\.`、`launch_run.scenario`、`scenario_wave`（波形を ECU が見た時刻、刻みを変えても通る、警告と `undersampled: ok`）、`scenario_same`（最速、等速、遅い ECU、一時停止で同じ結果。
+  届く順を変えても結果が同じ。`launch.scenario_wave_*` は波形の値、終わった後の値、所見。`launch.scenario_expect_beside_*` は `ramp` と `wave` の横の `expect` の区間、手順が決まる順、機種で `expect` だけ飛ばすこと）、`^signal\.`、`launch_run.scenario`、`scenario_wave`（波形を ECU が見た時刻、刻みを変えても通る、警告と `undersampled: ok`）、`scenario_expect_beside`（横の `expect` が外れたサンプル、`expect_skipped`）、`scenario_same`（最速、等速、遅い ECU、一時停止で同じ結果。
   書き込みが効いたステップを ECU が申告する）、`scenario_failures`、`core.time_gate_model_the_guard_*`、`core.virtual_time_gate_guard_*`、`control.control_hub_tap_*`
 
 - 変えるもの: シナリオの実行中の Control Server（見るだけ。

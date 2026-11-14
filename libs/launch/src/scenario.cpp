@@ -853,6 +853,12 @@ private:
                 actions.push_back(action);
             }
         }
+        // An expect beside a ramp or a wave: true all through it.
+        const bool beside = actions.size() == 2 && (actions.front() == "ramp" || actions.front() == "wave") && actions.back() == "expect";
+        if (beside)
+        {
+            actions.pop_back();
+        }
         if (actions.size() != 1)
         {
             error("value", line,
@@ -876,6 +882,21 @@ private:
                 nodes.erase(key);
             }
         };
+        if (beside)
+        {
+            for (const char* name : {"within_ms", "hold_for_ms"})
+            {
+                const std::string key = name;
+                if (nodes.count(key) > 0)
+                {
+                    error("value", doc_.line(nodes.at(key)),
+                          key + " does not go with an expect beside a " + action + ": that expect must be true all through the " +
+                              action + ", from its time to its end; remove " + key + ", or make the expect a step of its own after the " +
+                              action);
+                    nodes.erase(key);
+                }
+            }
+        }
         only_with("timeout_ms", step.kind == StepKind::WaitUntil, "wait_until");
         only_with("within_ms", step.kind == StepKind::Expect, "expect");
         only_with("hold_for_ms", step.kind == StepKind::Expect, "expect");
@@ -943,6 +964,7 @@ private:
         }
 
         std::int64_t length = 0; // of a step whose end is known before the run
+        beside_ = beside;
         switch (step.kind)
         {
         case StepKind::Set: read_set(nodes.at("set"), step, time); break;
@@ -981,18 +1003,35 @@ private:
             }
             break;
         }
+        // The absent variables of the ramp or the wave, before those of the expect beside it.
+        motion_absent_ = absent_.size();
+        if (beside)
+        {
+            read_conditions(nodes.at("expect"), step, "expect");
+        }
         step.text = step_text(step);
-        if (step.kind == StepKind::Expect || step.kind == StepKind::WaitUntil)
+        const bool checks = beside || step.kind == StepKind::Expect || step.kind == StepKind::WaitUntil;
+        if (checks)
         {
             checks_.push_back(line);
         }
-        if (!absent_.empty())
+        if (beside && motion_absent_ == 0 && !absent_.empty())
+        {
+            // Only the expect uses what is absent: the ramp or wave runs, unchecked.
+            step.expect_skipped = skip_reason();
+            step.conditions.clear();
+            skipped_checks_.push_back(line);
+            add(Severity::Note, "scenario-step-skipped", step.line,
+                "the " + std::string(step_kind_name(step.kind)) + " runs; its expect is not checked (" + step.text +
+                    "): " + step.expect_skipped);
+        }
+        else if (!absent_.empty())
         {
             // It takes the time its text says (length), as in a configuration that has the
             // variables: the times of the steps after it do not depend on what is skipped.
             skip(step);
             step.skipped_ms = length; // 0 for a step that waits: when it would end is not in the text
-            if (step.kind == StepKind::Expect || step.kind == StepKind::WaitUntil)
+            if (checks)
             {
                 skipped_checks_.push_back(line);
             }
@@ -1026,6 +1065,20 @@ private:
     /// the run, which says so; a note says it before.
     void skip(ScenarioStep& step)
     {
+        step.skipped = skip_reason();
+        step.writes.clear();
+        step.signals.clear();
+        step.conditions.clear();
+        ++out_.skipped;
+        add(Severity::Note, "scenario-step-skipped", step.line,
+            "the step is skipped (" + step.text + "): " + step.skipped +
+                "; the other steps run, also those that would need what this one does");
+    }
+
+    /// Why the variables of absent_ cannot be used: "Body.boost is absent: participant 'Body' does
+    /// not have it in this configuration (absent: true in its variables)".
+    std::string skip_reason() const
+    {
         std::vector<std::string> names;
         std::vector<std::string> owners;
         std::vector<std::string> leftOut; // the participants the variant leaves out, once each
@@ -1047,27 +1100,21 @@ private:
         }
         owners.erase(std::unique(owners.begin(), owners.end()), owners.end());
         const bool one = names.size() == 1;
-        step.skipped.clear();
+        std::string out;
         if (!leftOut.empty())
         {
             // Not "take it in (--enable)": that would run a simulation that is none of the variants.
-            step.skipped = (leftOut.size() == 1 ? "participant " + leftOut.front() + " is" : "the participants " + join(leftOut) + " are") +
-                           " not in the variant " + context_.variant + " (enabled: false in that variant)";
+            out = (leftOut.size() == 1 ? "participant " + leftOut.front() + " is" : "the participants " + join(leftOut) + " are") +
+                  " not in the variant " + context_.variant + " (enabled: false in that variant)";
         }
         if (!names.empty())
         {
-            step.skipped += (step.skipped.empty() ? "" : "; ") + join(names) + (one ? " is absent: participant " : " are absent: ") +
-                            (one ? owners.front() + " does not have it" : "the participants " + join(owners) + " do not have them") +
-                            (context_.variant.empty() ? " in this configuration" : " in the variant " + context_.variant) +
-                            " (absent: true in " + (one ? "its" : "their") + " variables)";
+            out += (out.empty() ? "" : "; ") + join(names) + (one ? " is absent: participant " : " are absent: ") +
+                   (one ? owners.front() + " does not have it" : "the participants " + join(owners) + " do not have them") +
+                   (context_.variant.empty() ? " in this configuration" : " in the variant " + context_.variant) +
+                   " (absent: true in " + (one ? "its" : "their") + " variables)";
         }
-        step.writes.clear();
-        step.signals.clear();
-        step.conditions.clear();
-        ++out_.skipped;
-        add(Severity::Note, "scenario-step-skipped", step.line,
-            "the step is skipped (" + step.text + "): " + step.skipped +
-                "; the other steps run, also those that would need what this one does");
+        return out;
     }
 
     void read_set(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time)
@@ -2629,13 +2676,18 @@ private:
         bool first = true;
         const auto sep = [&] { return std::exchange(first, false) ? " " : "; "; };
         // The variables that are absent, by name alone (what they would be is not read), once each.
-        for (std::size_t i = 0; i < absent_.size(); ++i)
-        {
-            if (std::find(absent_.begin(), absent_.begin() + static_cast<std::ptrdiff_t>(i), absent_[i]) == absent_.begin() + static_cast<std::ptrdiff_t>(i))
+        const auto absent = [&](std::size_t from, std::size_t to) {
+            for (std::size_t i = from; i < to; ++i)
             {
-                out += sep() + absent_[i];
+                if (std::find(absent_.begin() + static_cast<std::ptrdiff_t>(from), absent_.begin() + static_cast<std::ptrdiff_t>(i), absent_[i]) ==
+                    absent_.begin() + static_cast<std::ptrdiff_t>(i))
+                {
+                    out += sep() + absent_[i];
+                }
             }
-        }
+        };
+        const std::size_t motion = beside_ ? motion_absent_ : absent_.size();
+        absent(0, motion);
         for (const auto& w : step.writes)
         {
             const ScenarioVariable& var = scenario_.variables[w.variable];
@@ -2644,6 +2696,13 @@ private:
         for (const auto& r : step.signals)
         {
             out += sep() + r.text;
+        }
+        if (beside_)
+        {
+            // "ramp Engine.engine.throttle to 80 over 1000 ms, expecting Engine.engine.speed le 3000"
+            out += ", expecting";
+            first = true;
+            absent(motion, absent_.size());
         }
         for (const auto& c : step.conditions)
         {
@@ -2673,8 +2732,10 @@ private:
     std::set<std::string> undefined_;                   ///< the parameters without a value, said once
     std::map<std::string, std::string> absent_variables_; ///< "<participant>.<name>" that is absent: its participant
     std::vector<std::string> absent_;                   ///< those the step being read uses
+    bool beside_ = false;          ///< the step being read is a ramp or a wave with an expect beside it
+    std::size_t motion_absent_ = 0; ///< of absent_, those of its ramp or wave (the others: of the expect)
     std::set<std::string> left_out_; ///< the participants of absent_variables_ that the variant leaves out
-    std::vector<std::size_t> checks_;         ///< the lines of the steps that check (expect, wait_until)
+    std::vector<std::size_t> checks_;         ///< the lines of the steps that check (expect, wait_until, an expect beside)
     std::vector<std::size_t> skipped_checks_; ///< those of them that are skipped
     std::vector<const control::VariableInfo*> infos_; ///< of scenario_.variables, in the catalog
     std::vector<const control::MappedSchema*> maps_;  ///< of scenario_.variables: its participant's map, or nullptr

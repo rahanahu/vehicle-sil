@@ -275,12 +275,17 @@ std::string detail::scenario_text(const ScenarioRun& scenario)
                         step.at ? sim_millis_text(*step.at) + " ms" : "-"});
     }
     out += detail::table_text(rows);
-    // Why, for the steps that were skipped: the table has no room for it.
+    // Why, for the steps that were skipped and the expects that were not checked: the table has no
+    // room for it.
     for (const ScenarioStepRun& step : scenario.steps)
     {
         if (step.status == StepStatus::Skipped)
         {
             out += "line " + std::to_string(step.line) + " skipped: " + step.message + "\n";
+        }
+        else if (!step.expect_skipped.empty())
+        {
+            out += "line " + std::to_string(step.line) + " expect not checked: " + step.expect_skipped + "\n";
         }
     }
     return out;
@@ -455,6 +460,11 @@ void detail::write_scenario_step_members(vehicle_sil::detail::JsonWriter& w, con
     {
         w.null("code");
         w.null("message");
+    }
+    if (!step.expect_skipped.empty())
+    {
+        // Only when there is one: the steps of a scenario without it are as they were.
+        w.string("expect_skipped", step.expect_skipped);
     }
 }
 

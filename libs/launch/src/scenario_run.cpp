@@ -135,6 +135,7 @@ ScenarioRun scenario_not_run(const Scenario& scenario)
         step.line = scenario.steps[i].line;
         step.kind = scenario.steps[i].kind;
         step.text = scenario.steps[i].text;
+        step.expect_skipped = scenario.steps[i].expect_skipped;
         if (!scenario.steps[i].skipped.empty())
         {
             step.status = StepStatus::Skipped;
@@ -334,24 +335,23 @@ void ScenarioEngine::issue()
 bool ScenarioEngine::unusable(std::size_t index, SimTime time)
 {
     const ScenarioStep& step = scenario_.steps[index];
-    std::vector<std::size_t> used;
+    std::vector<std::pair<std::size_t, bool>> used; // the variable, and whether the step writes it
     for (const auto& w : step.writes)
     {
-        used.push_back(w.variable);
+        used.emplace_back(w.variable, true);
     }
     for (const auto& r : step.signals)
     {
-        used.push_back(r.variable);
+        used.emplace_back(r.variable, true);
     }
     for (const auto& c : step.conditions)
     {
-        used.push_back(c.variable);
+        used.emplace_back(c.variable, false);
     }
-    for (const std::size_t v : used)
+    for (const auto& [v, writes] : used)
     {
         if (!variables_[v].problem.empty())
         {
-            const bool writes = step.kind == StepKind::Set || step.kind == StepKind::Ramp || step.kind == StepKind::Wave;
             fail(index, time, writes ? "scenario-write" : "scenario-failed",
                  scenario_.variables[v].text + " cannot be " + (writes ? "written" : "read") + ": " + variables_[v].problem);
             return true;
@@ -424,6 +424,17 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
         }
         run_.steps[index].end = time + std::chrono::milliseconds(longest);
         base_ = run_.steps[index].end;
+        if (!step.conditions.empty())
+        {
+            // The expect beside it: true from T to E, and one more thing that decides the step.
+            Watch watch;
+            watch.step = index;
+            watch.from = time;
+            watch.until = *run_.steps[index].end;
+            watch.hold = true;
+            watches_.push_back(watch);
+            ++open_writes_[index];
+        }
         break;
     }
     case StepKind::Expect:
@@ -751,9 +762,12 @@ void ScenarioEngine::evaluate(Watch& watch, SimTime t)
     {
         if (!ok)
         {
+            const bool beside = step.kind == StepKind::Ramp || step.kind == StepKind::Wave;
             fail(watch.step, t, "scenario-failed",
-                 "not true for " + std::to_string(*step.hold_for_ms) + " ms (from " + ms_text(watch.from) + " ms): at " +
-                     ms_text(t) + " ms " + unmetNow);
+                 (beside ? "not true during the " + std::string(step_kind_name(step.kind)) + " (from " + ms_text(watch.from) +
+                               " ms to " + ms_text(*watch.until) + " ms)"
+                         : "not true for " + std::to_string(*step.hold_for_ms) + " ms (from " + ms_text(watch.from) + " ms)") +
+                     ": at " + ms_text(t) + " ms " + unmetNow);
             watch.step = run_.steps.size();
         }
     }
@@ -773,7 +787,15 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
     const ScenarioStep& step = scenario_.steps[watch.step];
     const std::size_t index = watch.step;
     watch.step = run_.steps.size();
-    if (watch.hold)
+    if (step.kind == StepKind::Ramp || step.kind == StepKind::Wave)
+    {
+        // The expect beside it held to the end: the step passes once its writes have, too.
+        if (--open_writes_[index] == 0)
+        {
+            pass(index, t, t);
+        }
+    }
+    else if (watch.hold)
     {
         pass(index, t, t);
     }

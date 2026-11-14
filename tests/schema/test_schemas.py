@@ -432,6 +432,10 @@ SCENARIO_SAMPLES = [
     ("only, and a parameter of the configuration",
      S + "  - after_ms: ${from_configuration}\n" + SET.replace("  - ", "    ") + "only: [small, 7]\nparams: {}\n", "valid"),
     ("a step with a variable that is absent", S + SET + "  - expect: { Engine.engine.turbo: { le: 0.1 } }\n", "valid"),
+    ("an expect beside a ramp and beside a wave",
+     S + SET + "  - ramp: { Engine.engine.throttle: { to: 80, over_ms: 100 } }\n    expect: { Engine.engine.speed: { ge: 0 } }\n"
+     "  - wave: { Engine.engine.throttle: { sine: { amplitude: 5, period_ms: 100 }, for_ms: 200 } }\n"
+     "    expect: { Engine.engine.speed: { le: 100000 }, Engine.engine.turbo: { le: 0.1 } }\n", "valid"),
     ("an unknown key at the top", S + SET + "description: x\n", "invalid"),
     ("an unknown key of a step", S + SET + "    timeout: 5\n", "invalid"),
     ("an unknown comparison", S + "  - expect: { Engine.engine.speed: { min: 5 } }\n", "invalid"),
@@ -446,6 +450,15 @@ SCENARIO_SAMPLES = [
     ("wait_until without timeout_ms", S + "  - wait_until: { Engine.engine.speed: { ge: 0 } }\n", "invalid"),
     ("timeout_ms with expect", S + "  - expect: { Engine.engine.speed: { ge: 0 } }\n    timeout_ms: 5\n", "invalid"),
     ("within_ms with set", S + SET + "    within_ms: 5\n", "invalid"),
+    ("within_ms with an expect beside a ramp",
+     S + SET + "  - ramp: { Engine.engine.throttle: { to: 80, over_ms: 100 } }\n    expect: { Engine.engine.speed: { ge: 0 } }\n"
+     "    within_ms: 5\n", "invalid"),
+    ("hold_for_ms with an expect beside a wave",
+     S + SET + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 5, period_ms: 100 }, for_ms: 200 } }\n"
+     "    expect: { Engine.engine.speed: { ge: 0 } }\n    hold_for_ms: 5\n", "invalid"),
+    ("an expect beside a wait_until",
+     S + "  - wait_until: { Engine.engine.speed: { ge: 0 } }\n    timeout_ms: 5\n    expect: { Engine.engine.speed: { ge: 0 } }\n",
+     "invalid"),
     ("hold_for_ms with wait_until",
      S + "  - wait_until: { Engine.engine.speed: { ge: 0 } }\n    timeout_ms: 5\n    hold_for_ms: 5\n", "invalid"),
     ("within_ms and hold_for_ms",

@@ -57,6 +57,9 @@ struct ScenarioStepRun
     /// "scenario-skipped" and why (ScenarioStep::skipped).
     std::string code{};
     std::string message{};
+    /// A ramp or a wave whose expect is not checked in this configuration: why
+    /// (ScenarioStep::expect_skipped), or "". Known before the run, whatever its status.
+    std::string expect_skipped{};
 };
 
 enum class ScenarioStatus
@@ -159,6 +162,16 @@ struct EnginePeer
 /// values depend on those times alone, not on the controller's tick or on what arrives when. The result of a write is judged
 /// at a fixed step of the controller: the first after the ECU's step that applies it (by then it
 /// has arrived). Anything but "applied" fails the step ("scenario-write").
+///
+/// An expect beside a ramp or a wave (ScenarioStep::conditions of those) is a watch like an
+/// expect with hold_for_ms from the step's time T to its end E: true at T and at every sample in
+/// (T, E]; a sample after E is not its. The step is decided when both are over, every write judged
+/// and the watch closed: it passes at E once both passed, and fails with what the engine learns
+/// first, a write ("scenario-write") or a sample ("scenario-failed"). That is the order of tick()
+/// (results of earlier writes, samples before P, then writes up to P + tick), not the order of the
+/// virtual times: a write for P + tick that its agent refuses at once is said at P, before a
+/// sample of an earlier time in (P, P + tick) that breaks the watch. A step that passed stays
+/// passed.
 ///
 /// The first failure in this order ends the scenario; steps that had begun are Unfinished, later
 /// ones NotRun (their writes for times up to P + tick may have gone out).
@@ -264,7 +277,9 @@ private:
     std::deque<Write> to_send_;      ///< sets, by step
     std::deque<Write> sent_;         ///< in the order sent
     std::deque<Signal> signals_;
-    std::vector<std::size_t> open_writes_; ///< per step: writes not judged yet (and signals not done)
+    /// Per step: what has yet to happen before it passes: writes not judged yet (signals not done
+    /// count their writes to come), and 1 for the watch beside a ramp or a wave until it closes.
+    std::vector<std::size_t> open_writes_;
     std::size_t done_ = 0; ///< steps that passed or were skipped
 };
 
