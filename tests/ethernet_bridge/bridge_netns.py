@@ -5,7 +5,7 @@ made in a network namespace of a user namespace (as tests/multi_host/two_hosts.p
 computers), with a SIL Kit registry and a SIL Kit peer (eth_bridge_it_peer --mode answer) inside.
 The "device outside" is this script, with packet sockets of its own.
 
-  bridge_netns.py --scenario <tap|packet> --bridge <vehicle_sil_ethernet_bridge>
+  bridge_netns.py --scenario <tap|packet|pcap> --bridge <vehicle_sil_ethernet_bridge>
                   --peer <eth_bridge_it_peer> --registry <sil-kit-registry>
 
 tap     the bridge on a TAP device made before it starts: frames from a packet socket on the
@@ -26,13 +26,21 @@ packet  the bridge on one end of a veth pair, this script on the other: frames w
         interface) has no checksum yet: the bridge passes it, counts it (ext_checksum_incomplete)
         and warns once where to turn the offload off; with the offload off as the warning says,
         neither. The interface removed: exit code 1.
-Both scenarios: no registry at --registry-uri: exit code 3 and where the bridge looked.
+pcap    the same veth pair with --backend pcap, which loads the libpcap of this computer: frames
+        with no VLAN tag, one tag and two tags pass both ways with their tags; a frame another
+        socket sends on the bridge's own interface reaches the SIL Kit peer; what the bridge sends
+        does not come back to it. --promiscuous, --list-interfaces. The messages for an interface
+        that is missing, not Ethernet, down, and (with the capability dropped) not allowed to be
+        opened. The link down and up: the monitor lines. The interface removed: exit code 1.
+Every scenario: no registry at --registry-uri: exit code 3 and where the bridge looked.
 
 Exit code 77 (skipped), with the reason, where this cannot be made:
  - no user namespaces (not Linux; no unshare or ip; unprivileged user namespaces turned off): as
    two_hosts.py, a failure instead with VEHICLE_SIL_REQUIRE_MULTI_HOST=1;
  - the namespace is there, but a TAP device, a veth pair or a packet socket cannot be made in it:
-   a failure instead with VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1.
+ a failure instead with VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1;
+ - pcap: libpcap is not installed (the bridge says so): a failure instead with
+   VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1.
 Any failure after that fails the test. A part that needs a tool that is not installed (setpriv,
 ethtool) is left out and said so ("NOT CHECKED"); with VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1 that
 fails the test too.
@@ -100,6 +108,14 @@ def skip_no_interface(why: str) -> None:
     if os.environ.get("VEHICLE_SIL_REQUIRE_ETHERNET_NETNS") == "1":
         fail(f"the interfaces cannot be made, and VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1 asks for them: {why}")
     say(f"skipped: the user namespace is there, but the interfaces of the test cannot be made in it: {why}")
+    sys.exit(SKIP)
+
+
+def skip_no_libpcap(why: str) -> None:
+    if os.environ.get("VEHICLE_SIL_REQUIRE_ETHERNET_NETNS") == "1":
+        fail(f"libpcap is not installed, and VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1 asks for it (Debian and Ubuntu: the package "
+             f"libpcap0.8; Fedora: libpcap): {why}")
+    say(f"skipped: libpcap is not installed on this computer: {why}")
     sys.exit(SKIP)
 
 
@@ -601,6 +617,121 @@ def os_stack_checksums(world: World, far: Wire) -> None:
     say("packet: with the offload off as the warnings say: no such frame, no warning")
 
 
+def refused_like(world: World, interface: str, participant: str, pattern: str, what: str, before: list[str] | None = None) -> None:
+    """The bridge with --backend pcap ends with exit code 3 and a reason that matches `pattern` as a whole
+    (libpcap's own words inside it differ between its versions)."""
+    b = world.bridge("pcap", interface, ["--all-frames"], participant, before)
+    code = b.wait()
+    lines = [line.removeprefix("[eth-bridge] FAIL setup: ") for line in b.text().splitlines()
+             if line.startswith("[eth-bridge] FAIL setup: ")]
+    check(code == 3 and len(lines) == 1 and re.fullmatch(pattern, lines[0]) is not None,
+          f"{what}: the bridge is refused (exit code 3) with a reason like\n  {pattern}\nbut ended with {code} and:\n{b.text()}")
+
+
+def pcap(world: World) -> None:
+    # Is libpcap here? The bridge says so itself, before it touches anything.
+    listing = world.run([world.bridge_path, "--list-interfaces", "--backend", "pcap"])
+    code = listing.wait()
+    if code == 3 and "libpcap is not installed: cannot load " in listing.text():
+        skip_no_libpcap(listing.text().strip())
+    make("ip", "link", "add", "va", "type", "veth", "peer", "name", "vb")
+    make("ip", "link", "set", "va", "up")
+    make("ip", "link", "set", "vb", "up")
+    listing = world.run([world.bridge_path, "--list-interfaces", "--backend", "pcap"])
+    code = listing.wait()
+    check(code == 0 and re.search(r"^interfaces libpcap offers \(libpcap version .*\); --backend pcap takes the Ethernet ones:$",
+                                  listing.text(), re.M) is not None
+          and re.search(r"^  --interface va +up", listing.text(), re.M) is not None,
+          f"--list-interfaces --backend pcap lists what libpcap offers, va among it (exit code {code}):\n{listing.text()}")
+    say("pcap: " + listing.text().splitlines()[0])
+    far = Wire("vb")  # the device at the other end of the cable
+    near = Wire("va")  # another program on the bridge's own interface
+
+    check("promiscuity 0" in sh("ip", "-d", "link", "show", "va"), "va is not promiscuous before the bridge starts")
+    bridge = world.bridge("pcap", "va", ["--ethertype", "0x88b5", "--promiscuous"])
+    started = bridge.wait_for("Ctrl+C to stop")
+    check(f"(participant 'EthernetBridge', {REGISTRY_URI}) <-> pcap 'va' (network interface through libpcap): EtherType 0x88b5 "
+          "only, both ways; promiscuous on; MAC guard on; Ctrl+C to stop" in started,
+          "the start line names the interface:\n" + started)
+    check("promiscuity 1" in sh("ip", "-d", "link", "show", "va"), "--promiscuous makes va promiscuous while the bridge runs")
+    world.start_peer("EthernetBridge")
+
+    one_tag = tag(0x8100, 0x6005)  # priority 3, VLAN 5
+    requests = [frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 1),
+                frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 2, one_tag),
+                frame(BROADCAST, DEVICE_MAC, EXPERIMENTAL, 60, 3, tag(0x8100, 0x0001)),
+                frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 4, tag(0x88A8, 0x0064) + tag(0x8100, 0x0005)),
+                frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 1500, 5),
+                frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 1500, 6, one_tag)]
+    round_trips(world, far, requests, "pcap")
+    say("pcap: frames with no tag, one VLAN tag and two tags passed both ways with their tags")
+
+    local = frame(PEER_MAC, OTHER_MAC, EXPERIMENTAL, 46, 7, one_tag)
+    near.send(local)
+    world.peer.wait_for(f"[peer] rx {local.hex()}")
+    near.expect(answer_to(local), "another socket on the bridge's interface", outgoing=True)
+    far.expect(answer_to(local), "the far end, for the frame of another socket")
+    requests.append(local)
+    say("pcap: a frame another socket sent on the bridge's interface reached the SIL Kit peer")
+
+    far.send(frame(PEER_MAC, DEVICE_MAC, OTHER_ETHERTYPE, 46, 8))  # not let in
+    last = frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 9)
+    round_trips(world, far, [last], "pcap")
+    requests.append(last)
+
+    # The link down and up again: the monitor lines, and frames pass again afterwards.
+    sh("ip", "link", "set", "vb", "down")
+    bridge.wait_for("[eth-bridge] interface va: link down")
+    sh("ip", "link", "set", "vb", "up")
+    bridge.wait_for("[eth-bridge] interface va: link up")
+    far.s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)  # this script's own socket on vb: "network is down", once
+    after = frame(PEER_MAC, DEVICE_MAC, EXPERIMENTAL, 46, 10)
+    round_trips(world, far, [after], "pcap, after the link was down")
+    requests.append(after)
+    say("pcap: the link down and up again: the bridge said so, and frames pass again")
+
+    check(bridge.stop() == 0, "the bridge stops with exit code 0:\n" + bridge.text())
+    stats = statistics(bridge.text())
+    check(stats["ext_to_silkit"] == len(requests) and stats["silkit_to_ext"] == len(requests),
+          f"the bridge forwarded {len(requests)} frames each way: {stats}")
+    check(stats["filtered_from_ext"] >= 1, f"the frame of another EtherType was filtered: {stats}")
+    check(stats["loop_suspected"] == 0 and stats["own_tx_dropped"] == 0 and "warning:" not in bridge.text(),
+          f"nothing the bridge sent through libpcap came back to it:\n{bridge.text()}")
+    say("pcap: what the bridge sent did not come back to it (loop_suspected=0, own_tx_dropped=0, no warning)")
+    check("promiscuity 0" in sh("ip", "-d", "link", "show", "va"), "va is not promiscuous any more once the bridge has stopped")
+
+    refused_like(world, "nope0", "Refused1",
+                 r"no interface 'nope0' for --backend pcap\. Interfaces libpcap offers here: .*\bva\b.* "
+                 r"\(run --list-interfaces --backend pcap\)\.", "an interface that is missing")
+    refused_like(world, "any", "Refused2",
+                 r"interface 'any' is not Ethernet \(pcap link type [0-9]+\): --backend pcap carries Ethernet frames only\. "
+                 r"Choose an Ethernet interface \(run --list-interfaces --backend pcap\)\.", "libpcap's device for all interfaces")
+    without = no_capability("net_raw")
+    if without is None:
+        not_checked("pcap", "setpriv", "the message when libpcap may not open the interface")
+    else:
+        refused_like(world, "va", "Refused3",
+                     r"cannot open 'va' with libpcap \(pcap_activate: result -8, .*\)\. A network interface needs CAP_NET_RAW: "
+                     rf"run 'sudo setcap cap_net_raw\+ep {re.escape(world.bridge_path)}' once, or run as root\.",
+                     "without the capability", before=without)
+    sh("ip", "link", "set", "va", "down")
+    refused_like(world, "va", "Refused4",
+                 r"cannot open 'va' with libpcap \(pcap_activate: result -9, .*\)\. The interface is down: bring it up with "
+                 r"'sudo ip link set va up'\.", "an interface that is down")
+    sh("ip", "link", "set", "va", "up")
+    say("pcap: the messages for an interface that is missing, not Ethernet, not allowed, down")
+    world.no_registry("pcap", "va")
+
+    last_bridge = world.bridge("pcap", "va", ["--all-frames"], "LastBridge")
+    last_bridge.wait_for("Ctrl+C to stop")
+    sh("ip", "link", "del", "va")
+    code = last_bridge.wait()
+    check(code == 1 and "[eth-bridge] FAIL: interface 'va' is gone (removed or renamed while the bridge ran)" in last_bridge.text()
+          and "] stats silkit_to_ext=" in last_bridge.text(),
+          f"the bridge fails (exit code 1, not {code}) when its interface is removed, with its statistics:\n{last_bridge.text()}")
+    say("pcap: the interface removed while the bridge ran: FAIL and exit code 1")
+
+
 def inner(args: argparse.Namespace) -> None:
     # As root of the user namespace. A /tmp of its own: SIL Kit's local-domain sockets are paths there.
     r = subprocess.run(["mount", "-t", "tmpfs", "none", "/tmp"], capture_output=True, text=True)
@@ -611,8 +742,10 @@ def inner(args: argparse.Namespace) -> None:
     try:
         if args.scenario == "tap":
             tap(world)
-        else:
+        elif args.scenario == "packet":
             packet(world)
+        else:
+            pcap(world)
     finally:
         world.end()
     say("PASS")
@@ -620,7 +753,7 @@ def inner(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--scenario", required=True, choices=("tap", "packet"))
+    parser.add_argument("--scenario", required=True, choices=("tap", "packet", "pcap"))
     parser.add_argument("--bridge", required=True, help="vehicle_sil_ethernet_bridge")
     parser.add_argument("--peer", required=True, help="eth_bridge_it_peer")
     parser.add_argument("--registry", required=True, help="sil-kit-registry")

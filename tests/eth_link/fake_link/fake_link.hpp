@@ -4,7 +4,8 @@
 //
 //   test ("a device") --send()--> FakeSegment --> every started FakeLink on it --> its handler
 //   FakeLink::transmit() -------> FakeSegment --> every other started FakeLink (and itself
-//                                                 with set_echo_own(true), as Npcap does)
+//                                                 with set_echo_own(true); no link of
+//                                                 vehicle-sil does today)
 //
 // Each link delivers its events from its own thread, in the order they were queued, like a
 // backend's receive thread. Frames queued while a link is not started are dropped, as an
@@ -66,8 +67,8 @@ public:
     void fail_start(eth_link::LinkErrorKind kind, std::string message);
     /// What transmit() returns; anything but Ok sends nothing.
     void set_transmit_result(eth_link::TransmitResult result);
-    /// Transmitted frames come back to this link's own handler too (as Npcap is expected to
-    /// deliver them), and echoes_own_transmissions() says so. Set it before start().
+    /// Transmitted frames come back to this link's own handler too (no link of vehicle-sil does
+    /// this today), and echoes_own_transmissions() says so. Set it before start().
     void set_echo_own(bool echo);
     /// transmit() throws std::runtime_error (a link that breaks its contract).
     void set_transmit_throws(bool throws);
