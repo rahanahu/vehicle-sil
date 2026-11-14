@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -102,6 +103,9 @@ struct ModelEcu
     bool lamp = false, pulse = false;
     double ratio = 0.0, speed = 0.0;
     std::int64_t last_level = 0;
+    /// The ECU writes its own input `level` in its step at this time (a writer the scenario does
+    /// not know).
+    std::optional<std::pair<SimTime, std::int64_t>> own_level{};
     struct Command
     {
         std::uint64_t ticket;
@@ -333,6 +337,10 @@ private:
         if (!m.last_step)
         {
             m.gain_at_0 = m.gain;
+        }
+        if (m.own_level && m.own_level->first == now)
+        {
+            m.level = m.own_level->second;
         }
         if (m.level != m.last_level)
         {
@@ -1425,6 +1433,34 @@ TEST_CASE(scenario_wave_without_around_swings_around_the_value_the_variable_has)
     check_text(applied(own, "Door.lamp"), "true@0 false@10 ");
     check_text(applied(own, "Door.level"), "3@0 4@10 5@20 ");
     check_text(applied(own, "Body.lamp"), "true@0 false@10 true@20 ");
+}
+
+TEST_CASE(scenario_ramp_and_wave_start_from_what_the_scenario_wrote_whatever_the_samples_since_say)
+{
+    // The ECU writes 60 to its own input at 30 ms, and its samples say so. The ramp without from
+    // still starts from the 20 the scenario wrote, and the wave without around swings around the
+    // 80 the ramp left.
+    const Scenario s = read(kHead + "  - set: { Body.level: 20 }\n"
+                                    "  - at_ms: 50\n"
+                                    "    ramp: { Body.level: { to: 80, over_ms: 20 } }\n"
+                                    "  - at_ms: 100\n"
+                                    "    wave: { Body.level: { square: { amplitude: 5, period_ms: 20 }, for_ms: 20 } }\n");
+    World world;
+    world.ecus[0].own_level = std::pair{at(30ms), std::int64_t{60}};
+    World later;
+    later.ecus[0].own_level = std::pair{at(80ms), std::int64_t{60}};
+    for (World* w : {&world, &later})
+    {
+        CHECK(w->run(s).status == ScenarioStatus::Passed);
+        check_text(applied(*w, "Body.level"), "20@0 20@50 50@60 80@70 85@100 75@110 80@120 ");
+    }
+    // Before the scenario has written the variable, the sample is all there is: from the ECU's 60.
+    World first;
+    first.ecus[0].own_level = std::pair{at(30ms), std::int64_t{60}};
+    CHECK(first.run(read(kHead + "  - at_ms: 50\n"
+                                 "    ramp: { Body.level: { to: 80, over_ms: 20 } }\n"))
+              .status == ScenarioStatus::Passed);
+    check_text(applied(first, "Body.level"), "60@50 70@60 80@70 ");
 }
 
 TEST_CASE(scenario_wave_shapes_that_go_somewhere_stay_there)

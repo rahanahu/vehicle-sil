@@ -200,7 +200,6 @@ private:
         std::optional<control::Value> value; ///< of the latest sample looked at
         std::optional<SimTime> value_time;
         std::optional<control::Value> written; ///< what the scenario wrote last
-        SimTime written_at{};
     };
     struct Watch
     {

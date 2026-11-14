@@ -539,10 +539,11 @@ bool ScenarioEngine::submit_one(Write write)
         const Waveform& shape = *signal.signal.shape;
         if (!signal.base && shape.uses_base())
         {
-            // The value the variable has now, as far as the scenario knows: what it wrote last,
-            // or a later sample.
+            // Where the scenario left the variable: what it wrote last, whatever the samples
+            // since say (another writer does not move the start). A sample only if the scenario
+            // has not written the variable yet.
             const Variable& known = variables_[signal.signal.variable];
-            if (known.written && !(known.value_time && *known.value_time >= known.written_at))
+            if (known.written)
             {
                 signal.base = number_of(*known.written);
             }
@@ -569,7 +570,6 @@ bool ScenarioEngine::submit_one(Write write)
         const ScenarioVariable& v = scenario_.variables[w.variable];
         out.push_back(control::PeerWrite{scenario_.participants[v.participant].name, v.name, w.value});
         variables_[w.variable].written = w.value;
-        variables_[w.variable].written_at = write.at;
     }
     write.ticket = port_.write(std::move(out), write.at);
     write.judge = judge_time(write.writes, write.at);
