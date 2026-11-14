@@ -52,6 +52,8 @@ endif()
 #   vehicle_sil::can        backend-neutral CAN: frames, ports, host, step driver, virtual bus (no SIL Kit)
 #   vehicle_sil::can_silkit vehicle_sil::can port on SIL Kit CAN (virtual or real time)
 #   vehicle_sil::can_netsim the simple CAN network simulator (SIL Kit)
+#   vehicle_sil::eth        raw Ethernet frames: channel, port, virtual network (no SIL Kit)
+#   vehicle_sil::eth_silkit vehicle_sil::eth port on SIL Kit Ethernet (virtual time)
 #   vehicle_sil::j1939      J1939 stack on vehicle_sil::can (no SIL Kit); its protocol parts are the
 #                           vehicle_sil::j1939_* targets of libs/j1939/parts
 #   vehicle_sil::j1939_codec typed J1939 messages (header only; the types are generated from YAML by
@@ -85,6 +87,8 @@ add_subdirectory(libs/lin_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/can ${_vehicle_sil_exclude})
 add_subdirectory(libs/can_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/can_netsim ${_vehicle_sil_exclude})
+add_subdirectory(libs/eth ${_vehicle_sil_exclude})
+add_subdirectory(libs/eth_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/j1939 ${_vehicle_sil_exclude})
 add_subdirectory(libs/control ${_vehicle_sil_exclude})
 add_subdirectory(libs/control_silkit ${_vehicle_sil_exclude})
