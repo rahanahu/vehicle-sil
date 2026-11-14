@@ -21,8 +21,12 @@ vehicle_sil_copy_runtime_dlls(vehicle_sil_vector_xl_bridge_on_fake)
 # In-process tests, one CTest test per case (each in its own process).
 vehicle_sil_add_harness_tests(vehicle_sil_vector_xl_tests
   PREFIX vector_xl LABELS vector_xl unit TIMEOUT 60
-  SOURCES test_can_bridge.cpp test_bridge_options.cpp test_xl_port.cpp test_bridge_silkit.cpp
-          test_external_port_adapter.cpp
+  SOURCES
+    test_bridge_options.cpp
+    test_bridge_silkit.cpp
+    test_can_bridge.cpp
+    test_external_port_adapter.cpp
+    test_xl_port.cpp
   LINK vehicle_sil_vector_xl_on_fake vehicle_sil::core)
 
 # Process level tests of the bridge executable.
@@ -40,8 +44,17 @@ add_dependencies(vehicle_sil_vector_xl_it_launcher
 vehicle_sil_add_scenario_tests(vehicle_sil_vector_xl_it_launcher
   PREFIX vector_xl.integration LABELS vector_xl integration TIMEOUT 120
   WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/integration
-  SCENARIOS echo-roundtrip echo-roundtrip-receipts echo-roundtrip-physical list-channels bad-channel bad-usage no-registry no-driver
-            device-lost stop-request
+  SCENARIOS
+    bad-channel
+    bad-usage
+    device-lost
+    echo-roundtrip
+    echo-roundtrip-physical
+    echo-roundtrip-receipts
+    list-channels
+    no-driver
+    no-registry
+    stop-request
   ARGS --registry $<TARGET_FILE:sil-kit-registry>
        --bridge $<TARGET_FILE:vehicle_sil_vector_xl_bridge_on_fake>
        --peer $<TARGET_FILE:vehicle_sil_vector_xl_it_peer>

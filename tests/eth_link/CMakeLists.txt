@@ -45,8 +45,14 @@ endif()
 
 vehicle_sil_add_harness_tests(vehicle_sil_eth_link_tests
   PREFIX eth_link LABELS unit eth_link TIMEOUT 60
-  SOURCES test_mac_address.cpp test_frame_filter.cpp test_mac_side_table.cpp test_fake_link.cpp
-          test_os_link_errors.cpp test_pcap_errors.cpp test_pcap_link.cpp
+  SOURCES
+    test_fake_link.cpp
+    test_frame_filter.cpp
+    test_mac_address.cpp
+    test_mac_side_table.cpp
+    test_os_link_errors.cpp
+    test_pcap_errors.cpp
+    test_pcap_link.cpp
   LINK vehicle_sil_eth_link_fake)
 # The messages of the OS links and the pcap link's table are in the library's own source directory.
 target_include_directories(vehicle_sil_eth_link_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/eth_link/src

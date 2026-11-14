@@ -7,7 +7,8 @@ add_library(vehicle_sil_step STATIC
   src/host.cpp
   src/real_time_clock.cpp
   src/real_time_driver.cpp
-  src/step_driver.cpp)
+  src/step_driver.cpp
+)
 add_library(vehicle_sil::step ALIAS vehicle_sil_step)
 set_target_properties(vehicle_sil_step PROPERTIES EXPORT_NAME step)
 target_include_directories(vehicle_sil_step PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

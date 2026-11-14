@@ -9,10 +9,10 @@ if(NOT TARGET rapidyaml)
 endif()
 
 add_library(vehicle_sil_launch_lib STATIC
-  src/config.cpp
   src/check.cpp
   src/check_format.cpp
   src/check_rules.cpp
+  src/config.cpp
   src/describe_read.cpp
   src/events.cpp
   src/host_addresses.cpp
@@ -29,7 +29,8 @@ add_library(vehicle_sil_launch_lib STATIC
   src/scenario.cpp
   src/scenario_run.cpp
   src/test.cpp
-  src/time_commands.cpp)
+  src/time_commands.cpp
+)
 add_library(vehicle_sil::launch ALIAS vehicle_sil_launch_lib)
 target_include_directories(vehicle_sil_launch_lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(vehicle_sil_launch_lib PUBLIC vehicle_sil::ecu vehicle_sil::process)
