@@ -40,9 +40,6 @@ namespace detail {
 struct NetworkTestAccess;
 } // namespace detail
 
-/// The longest message the transport protocol carries.
-inline constexpr std::size_t kMaxTransportLength = 1785;
-
 /// Outcome of Node::send() and Node::request().
 enum class SendStatus : std::uint8_t
 {

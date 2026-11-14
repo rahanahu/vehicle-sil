@@ -7,6 +7,7 @@
 #include "vehicle_sil/can/frame.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -76,6 +77,9 @@ inline constexpr Pgn kPgnCommandedAddress{0xFED8u};
 /// them where frames are seen, e.g. a fault injector that drops a packet or a frame log.
 inline constexpr Pgn kPgnTransportControl{0xEC00u};
 inline constexpr Pgn kPgnTransportData{0xEB00u};
+
+/// The longest message the transport protocol carries.
+inline constexpr std::size_t kMaxTransportLength = 1785;
 
 /// The fields of a 29-bit J1939 identifier.
 struct Identifier
