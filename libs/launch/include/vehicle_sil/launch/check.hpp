@@ -219,7 +219,7 @@ struct CheckReport
 void sort_findings(std::vector<Finding>& findings);
 
 /// The report for people: the participants and the networks as tables, then each error and
-/// warning as "<severity>: <file>:<line>: <message>" (with the detail indented below), then a
+/// warning as "<severity>: <file>:<line>: <message> [<code>]" (with the detail indented below), then a
 /// summary line. LF line ends; the same report gives the same text.
 [[nodiscard]] std::string format_text(const CheckReport& report);
 

@@ -17,7 +17,8 @@ namespace vehicle_sil::launch::detail {
 
 /// format_text() without its last line: the tables and the findings.
 [[nodiscard]] std::string check_text_body(const CheckReport& report);
-/// Each finding as "<severity>: <file>[:<line>]: <message>" (the detail indented below), then an
+/// Each finding as "<severity>: <file>[:<line>]: <message> [<code>]" (the detail indented below;
+/// the code last, as GCC puts its [-W...] option, so that "error:" stays at the start), then an
 /// empty line; "" for none.
 [[nodiscard]] std::string findings_text(const std::string& file, const std::vector<Finding>& findings);
 /// "<n> errors, <n> warnings, <n> notes".

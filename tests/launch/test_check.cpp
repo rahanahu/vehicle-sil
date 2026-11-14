@@ -370,24 +370,74 @@ TEST_CASE(every_network_of_an_ecu_must_be_in_networks_with_its_kind)
     s.results[0].ecu->description.networks.push_back(NetworkDescription{"Body", NetworkUse::Raw, {}});
     s.results[0].ecu->description.networks.push_back(NetworkDescription{"Body", NetworkUse::Raw, {}}); // once
     s.results[0].ecu->description.networks.push_back(NetworkDescription{"Diag", NetworkUse::Raw, {}});
+    // Engine is on the only other CAN network itself: 'J1939CAN' is not another name for it.
     check_text(s.check(),
                "E 6 unknown-network: participant 'Engine': the executable uses the network 'J1939CAN' (j1939), which is "
-               "not in networks: add it to networks with kind: can, or correct the network's name in the ECU (did you "
-               "mean 'J1939_CAN'?)\n"
+               "not in networks: add it to networks with kind: can, or have the ECU's author correct the name in its "
+               "code (did you mean 'J1939_CAN'?)\n"
                "E 6 kind-mismatch: participant 'Engine': the executable uses the network 'Body' as can (raw), but networks "
                "says kind: lin (line 5): correct the kind, or the network in the ECU\n"
                "E 6 unknown-network: participant 'Engine': the executable uses the network 'Diag' (raw), which is not in "
-               "networks: add it to networks with kind: can, or correct the network's name in the ECU\n"
+               "networks: add it to networks with kind: can, or have the ECU's author correct the name in its code\n"
                "W 5 unused-network: network 'Body': no participant uses it: remove it, or check the network names in the "
                "ECUs\n");
     // A network whose kind could not be read is not checked (its own error says why).
     s.config.networks[1].valid = false;
     check_text(s.check(), "E 6 unknown-network: participant 'Engine': the executable uses the network 'J1939CAN' (j1939), "
-                          "which is not in networks: add it to networks with kind: can, or correct the network's name in "
-                          "the ECU (did you mean 'J1939_CAN'?)\n"
+                          "which is not in networks: add it to networks with kind: can, or have the ECU's author correct "
+                          "the name in its code (did you mean 'J1939_CAN'?)\n"
                           "E 6 unknown-network: participant 'Engine': the executable uses the network 'Diag' (raw), which "
-                          "is not in networks: add it to networks with kind: can, or correct the network's name in the "
-                          "ECU\n");
+                          "is not in networks: add it to networks with kind: can, or have the ECU's author correct the name "
+                          "in its code\n");
+}
+
+TEST_CASE(an_unknown_network_names_the_networks_of_its_kind_that_may_be_the_same_bus)
+{
+    // Dashboard calls the bus that Engine is on 'VehicleCAN'.
+    Setup s;
+    s.network("J1939_CAN", NetworkKind::Can, 3)
+        .described(participant("Engine", 6), ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)})}))
+        .described(participant("Dashboard", 9), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)})}));
+    const std::string fix = ": if 'VehicleCAN' is meant to be that bus, the names must be the same, and the configuration "
+                            "cannot rename a network, so the author of one of the ECUs changes the name in its code (the "
+                            "name passed to can() or j1939()) and builds it again; if 'VehicleCAN' is a bus of its own, add "
+                            "it to networks with kind: can\n";
+    check_text(s.check(), "E 9 unknown-network: participant 'Dashboard': the executable uses the network 'VehicleCAN' "
+                          "(j1939), which is not in networks. Another network of kind can in this simulation is "
+                          "'J1939_CAN' (line 3, used by Engine)" + fix +
+                          "W 3 single-participant: network 'J1939_CAN': only Engine is on it, so what it sends there "
+                          "reaches no one: add the other participants of this network, or remove it\n");
+
+    // Neither is in networks: each names the other's.
+    s.config.networks.clear();
+    check_text(s.check(), "E 6 unknown-network: participant 'Engine': the executable uses the network 'J1939_CAN' (j1939), "
+                          "which is not in networks. Another network of kind can in this simulation is 'VehicleCAN' (not "
+                          "in networks either, used by Dashboard): if 'J1939_CAN' is meant to be that bus, the names must "
+                          "be the same, and the configuration cannot rename a network, so the author of one of the ECUs "
+                          "changes the name in its code (the name passed to can() or j1939()) and builds it again; if "
+                          "'J1939_CAN' is a bus of its own, add it to networks with kind: can\n"
+                          "E 9 unknown-network: participant 'Dashboard': the executable uses the network 'VehicleCAN' "
+                          "(j1939), which is not in networks. Another network of kind can in this simulation is "
+                          "'J1939_CAN' (not in networks either, used by Engine)" + fix);
+
+    // Two candidates (one used by a participant for testing too); a network of another kind and a
+    // network in networks that no one uses are not.
+    Setup t;
+    t.network("J1939_CAN", NetworkKind::Can, 3)
+        .network("Diag", NetworkKind::Can, 4)
+        .network("Spare", NetworkKind::Can, 5)
+        .network("Body", NetworkKind::Lin, 6)
+        .described(participant("Engine", 8), ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)})}))
+        .described(with_role(participant("Tester", 10), ParticipantRole::Test),
+                   ecu("Tester", 10ms, {NetworkDescription{"Diag", NetworkUse::Raw, {}}}))
+        .described(participant("Door", 12), ecu("Door", 10ms, {NetworkDescription{"Body", NetworkUse::LinSlave, {}}}))
+        .described(participant("Dashboard", 14), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)})}));
+    const std::string got = t.check();
+    CHECK(got.find("E 14 unknown-network: participant 'Dashboard': the executable uses the network 'VehicleCAN' (j1939), "
+                   "which is not in networks. Other networks of kind can in this simulation are 'J1939_CAN' (line 3, used "
+                   "by Engine) and 'Diag' (line 4, used by Tester): if 'VehicleCAN' is meant to be one of those buses, the "
+                   "names must be the same,") != std::string::npos);
+    CHECK(got.find("'Spare' (line") == std::string::npos && got.find("'Body' (line") == std::string::npos);
 }
 
 TEST_CASE(networks_without_participants_or_with_one_are_warnings)
@@ -437,6 +487,62 @@ TEST_CASE(participants_for_testing_are_not_counted_as_the_ecus_of_a_network)
                 ecu("Tool", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}));
     check_text(t.check(), "W 3 single-participant: network 'A': only participants for testing (role: test: Spy and Tool) "
                           "are on it, so there is no ECU for them there: add the ECUs of this network, or remove it\n");
+}
+
+TEST_CASE(networks_of_one_kind_with_one_ecu_each_may_be_one_bus_named_twice)
+{
+    // Both names are in networks (perhaps after unknown-network said to add one): each network
+    // has one ECU, so the warning of each names the other.
+    Setup s;
+    s.network("J1939_CAN", NetworkKind::Can, 3)
+        .network("VehicleCAN", NetworkKind::Can, 5)
+        .network("Body", NetworkKind::Lin, 7)
+        .described(participant("Engine", 9), ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)})}))
+        .described(participant("Dashboard", 12), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)}),
+                                                                         NetworkDescription{"Body", NetworkUse::LinMaster, {}}}));
+    const std::string rest = ", the ECUs name it differently, and the configuration cannot rename a network, so the "
+                             "author of one of them changes the name in its code\n";
+    check_text(s.check(), "W 3 single-participant: network 'J1939_CAN': only Engine is on it, so what it sends there "
+                          "reaches no one: add the other participants of this network, or remove it; the network "
+                          "'VehicleCAN' (line 5, only Dashboard) of kind can also has one ECU: if it is meant to be the "
+                          "same bus" + rest +
+                          "W 5 single-participant: network 'VehicleCAN': only Dashboard is on it, so what it sends there "
+                          "reaches no one: add the other participants of this network, or remove it; the network "
+                          "'J1939_CAN' (line 3, only Engine) of kind can also has one ECU: if it is meant to be the same "
+                          "bus" + rest +
+                          "W 7 single-participant: network 'Body': only Dashboard is on it, so what it sends there "
+                          "reaches no one: add the other participants of this network, or remove it\n");
+
+    // Not when the other network's one ECU is the same one, nor when it has two.
+    s.results[1].ecu->description.networks.push_back(on_j1939("J1939_CAN", {node(0x28)}));
+    check_text(s.check(), "W 5 single-participant: network 'VehicleCAN': only Dashboard is on it, so what it sends there "
+                          "reaches no one: add the other participants of this network, or remove it\n"
+                          "W 7 single-participant: network 'Body': only Dashboard is on it, so what it sends there "
+                          "reaches no one: add the other participants of this network, or remove it\n");
+
+    // One ECU alone on two networks of one kind: they are two buses of that ECU, not one.
+    Setup u;
+    u.network("A", NetworkKind::Can, 3)
+        .network("B", NetworkKind::Can, 4)
+        .described(participant("P", 6), ecu("P", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}},
+                                                         NetworkDescription{"B", NetworkUse::Raw, {}}}));
+    check_text(u.check(), "W 3 single-participant: network 'A': only P is on it, so what it sends there reaches no one: add "
+                          "the other participants of this network, or remove it\n"
+                          "W 4 single-participant: network 'B': only P is on it, so what it sends there reaches no one: add "
+                          "the other participants of this network, or remove it\n");
+
+    // Three such networks: each names the two others.
+    Setup t;
+    t.network("A", NetworkKind::Can, 3)
+        .network("B", NetworkKind::Can, 4)
+        .network("C", NetworkKind::Can, 5)
+        .described(participant("P", 7), ecu("P", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}))
+        .described(participant("Q", 9), ecu("Q", 10ms, {NetworkDescription{"B", NetworkUse::Raw, {}}}))
+        .described(participant("R", 11), ecu("R", 10ms, {NetworkDescription{"C", NetworkUse::Raw, {}}}));
+    CHECK(t.check().find("W 3 single-participant: network 'A': only P is on it, so what it sends there reaches no one: add "
+                         "the other participants of this network, or remove it; the networks 'B' (line 4, only Q) and 'C' "
+                         "(line 5, only R) of kind can also have one ECU each: if one of them is meant to be the same bus, "
+                         "the ECUs name it differently") != std::string::npos);
 }
 
 TEST_CASE(a_test_participant_with_j1939_nodes_where_a_bridge_may_be_is_a_warning)
@@ -958,14 +1064,14 @@ TEST_CASE(the_text_report_shows_tables_then_the_findings)
                "J1939_CAN  can   Engine, Dashboard\n"
                "Body       lin   Engine\n"
                "\n"
-               "error: dir/simulation.yaml:13: participant 'Cluster \xC3\xA9': it failed\n"
+               "error: dir/simulation.yaml:13: participant 'Cluster \xC3\xA9': it failed [describe-failed]\n"
                "    the end of its standard error:\n"
                "    boom\n"
                "    bang\n"
-               "error: dir/simulation.yaml:15: participants[3] has no name\n"
-               "warning: dir/simulation.yaml:5: network 'Body': only Engine\n"
-               "warning: dir/simulation.yaml: no line\n"
-               "note: dir/simulation.yaml:18: participant 'Logger': not checked\n"
+               "error: dir/simulation.yaml:15: participants[3] has no name [missing-key]\n"
+               "warning: dir/simulation.yaml:5: network 'Body': only Engine [single-participant]\n"
+               "warning: dir/simulation.yaml: no line [file-level]\n"
+               "note: dir/simulation.yaml:18: participant 'Logger': not checked [not-checked]\n"
                "\n"
                "failed: 2 errors, 2 warnings, 1 note\n");
 }
@@ -992,7 +1098,7 @@ TEST_CASE(the_text_report_summary_line)
     unreadable.file = "x.yaml";
     unreadable.findings = {Finding{Severity::Error, "syntax", "syntax error: missing terminating ]", 2, "", "",
                                    "2:9: networks: [a\n            ^"}};
-    check_text(format_text(unreadable), "error: x.yaml:2: syntax error: missing terminating ]\n"
+    check_text(format_text(unreadable), "error: x.yaml:2: syntax error: missing terminating ] [syntax]\n"
                                         "    2:9: networks: [a\n"
                                         "                ^\n"
                                         "\n"
@@ -1586,9 +1692,9 @@ TEST_CASE(the_reports_show_a_disabled_participant)
                "J1939_CAN  can   Engine\n"
                "\n"
                "warning: sim.yaml:3: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add "
-               "the other participants of this network, or remove it\n"
+               "the other participants of this network, or remove it [single-participant]\n"
                "note: sim.yaml:9: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked "
-               "nor started, and the other findings are about the simulation without it\n"
+               "nor started, and the other findings are about the simulation without it [participant-disabled]\n"
                "\n"
                "passed: 0 errors, 1 warning, 1 note\n");
     // The note does not fail --strict (the warning does).
