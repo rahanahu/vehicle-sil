@@ -222,7 +222,7 @@ participants:
 
 ### 機種（`variants`、`--variant`）
 
-実行ファイルや変数の対応が機種ごとに違うときは、共通の部分を `participants` に書き、機種ごとの差分を `variants` に書きます。`check` と `run` は、`--variant <名前>` で選んだ機種の差分を共通の部分に重ねた構成を、照合し、実行します。シナリオは共通の名前だけを使うので、どの機種にも同じものを当てられます。
+実行ファイルや変数の対応が機種ごとに違うときは、共通の部分を `participants` に書き、機種ごとの差分を `variants` に書きます。`check` と `run` は、`--variant <名前>` で選んだ機種の差分を共通の部分に重ねた構成を、照合し、実行します（全部の機種を順に回すのは `test` です。[simulation-run.md](simulation-run.md#シナリオをまとめて回すvehicle_sil_launch-test)「シナリオをまとめて回す」）。シナリオは共通の名前だけを使うので、どの機種にも同じものを当てられます。
 
 ```yaml
 participants:
@@ -265,7 +265,7 @@ variants:
 
 シナリオの中の数（しきい値、待ち時間、入れる値）を機種ごとに替えるときは、シナリオに `${名前}` と書き、値を `params` に書きます。値は、数、`true`・`false`、文字列のどれかです（1 つの値。配列や対応は書けません）。名前は、英数字と `_`（数字で始めない）です。
 
-値は、後のものが前のものを置き換えます: シナリオの `params`（既定）、構成の `params`、機種の `params`、引数の `--param <名前>=<値>`。`--param` は `--scenario` と一緒にだけ使えます。シナリオが使っていない名前の `--param` は引数の誤りです（終了コード 4。打ち間違いを黙って無視しません）。構成と機種の `params` には、シナリオが使わない名前があってもかまいません（1 つの構成で、いくつものシナリオを回すため）。書き方と誤りは [scenario.md](scenario.md) の「機種とパラメーター」にあります。
+値は、後のものが前のものを置き換えます: シナリオの `params`（既定）、構成の `params`、機種の `params`、引数の `--param <名前>=<値>`。`--param` は `--scenario` と一緒にだけ使えます。シナリオが使っていない名前の `--param` は引数の誤りです（終了コード 4。打ち間違いを黙って無視しません。いくつものシナリオを回す `test` では、どのシナリオも使っていない名前だけが誤りです）。構成と機種の `params` には、シナリオが使わない名前があってもかまいません（1 つの構成で、いくつものシナリオを回すため）。書き方と誤りは [scenario.md](scenario.md) の「機種とパラメーター」にあります。
 
 ## 引数と終了コード
 
@@ -280,8 +280,13 @@ vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-com
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--manual <name>]...
                        [--] <file>
+vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...
+                        [--timeout-ms <ms>] [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]...
+                        <file> --scenarios <directory or files>...
 vehicle_sil_launch version [--json]
 ```
+
+`test` は、機種ごとにシナリオを 1 つずつ回して、全部の結果を表にします（[simulation-run.md](simulation-run.md#シナリオをまとめて回すvehicle_sil_launch-test)「シナリオをまとめて回す」）。
 
 | 引数 | 意味 |
 |---|---|
@@ -295,12 +300,14 @@ vehicle_sil_launch version [--json]
 | `--control-tls-cert <file>`、`--control-tls-key <file>` | `--control` だけ。サーバーの証明書の鎖と秘密鍵（PEM）。2 つ一緒に付けると TLS |
 | `--control-audit-log <file>` | `--control` だけ。誰が何を変えたかを追記する |
 | `--scenario <file>` | シナリオのファイル（[scenario.md](scenario.md)）。`check` では照合だけ、`run` では照合してから実行する。シナリオが終わるとシミュレーションを止め、手順が失敗していれば実行は失敗。`--start-paused` と一緒には使えない。`--control` と一緒なら、クライアントは見るだけ（[scenario.md](scenario.md) の「実行中に変数を見る」） |
-| `--variant <name>` | 構成の機種を選ぶ（[機種](#機種variants--variant)）。機種を書いた構成には必ず要る。機種のない構成には付けられない |
-| `--param <name>=<value>` | `--scenario` と一緒にだけ。シナリオのパラメーター `${name}` の値（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。繰り返せる（同じ名前は 1 回だけ） |
+| `--variant <name>` | 構成の機種を選ぶ（[機種](#機種variants--variant)）。機種を書いた構成には必ず要る。機種のない構成には付けられない。`test` では、回す機種を絞る（繰り返せる。なければ全部の機種） |
+| `--param <name>=<value>` | `--scenario` と一緒にだけ。シナリオのパラメーター `${name}` の値（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。繰り返せる（同じ名前は 1 回だけ）。`test` では、その名前のパラメーターがあるシナリオにだけ効く（どのシナリオにもなければ引数の誤り） |
+| `--scenarios <dir or files>` | `test` だけ。回すシナリオ。ディレクトリ（直下の `.yaml`、`.yml`、`.json` を名前の順に）かファイル（書いた順に）。後ろにいくつでも並べられ、繰り返せる。構成ファイルは `--scenarios` より前か、`--` の後に書く |
+| `--fail-fast` | `test` だけ。最初に失敗した組の後は回さない |
 | `--speed <speed>` | `run` だけ。構成ファイルの `speed` を上書きする（数か `max`。[等速で動かす](simulation-run.md#等速で動かす)） |
 | `--strict` | 警告があっても失敗にする（注記では失敗にしない） |
 | `--log-dir <dir>` | `run` だけ。participant ごとの出力のファイルを置くディレクトリ |
-| `--timeout-ms <ms>` | `run` だけ。シミュレーションの開始から終わりまでの実時間の上限（1 以上の整数。一時停止している時間も数える。`--control` と `--start-paused` では、時刻 0 のステップの前に止まった時点から。manual の必須の participant がいる実行では、participant を待ち始めた時点から）。超えたら中断して誤り。既定は上限なし |
+| `--timeout-ms <ms>` | `run` と `test`（1 組ごと）。シミュレーションの開始から終わりまでの実時間の上限（1 以上の整数。一時停止している時間も数える。`--control` と `--start-paused` では、時刻 0 のステップの前に止まった時点から。manual の必須の participant がいる実行では、participant を待ち始めた時点から）。超えたら中断して誤り。既定は上限なし |
 | `--describe-timeout-ms <ms>` | 1 つの実行ファイルの `--describe` を待つ時間（1 以上の整数。既定は 10000） |
 | `--disable <name>` | participant `<name>` を外す（`enabled: false` と同じ）。繰り返せる |
 | `--enable <name>` | participant `<name>` を戻す（`enabled: true` と同じ）。繰り返せる |
@@ -312,9 +319,9 @@ vehicle_sil_launch version [--json]
 | 終了コード | 意味 |
 |---|---|
 | 0 | 誤りがない（警告と注記だけなら 0。`--strict` では警告もない）。`run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった |
-| 1 | 誤りがある（`--strict` では警告も）。`run` では、照合の誤り（何も起動しない）か、実行の誤り（participant が失敗した、そろわなかった、止めても終わらなかったなど） |
+| 1 | 誤りがある（`--strict` では警告も）。`run` では、照合の誤り（何も起動しない）か、実行の誤り（participant が失敗した、そろわなかった、止めても終わらなかったなど）。`test` では、失敗した組が 1 つ以上ある、中断されていないのに回さなかった組がある、`--strict` で回した組が 1 つもない |
 | 3 | 構成ファイルを読めない（ファイルがない、文法の誤り、知らない形式の版など）。`run` で registry や controller を用意できないときも 3 です。結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です（標準エラーに理由。`--json` では、そのコマンドの形の JSON に `code` が `internal` の誤り） |
-| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` も `--control` もない `--start-paused`、`--control` なしの `--control-credentials` などと Control Server を持たないビルドの `--control`、`--control` の値の誤り、読めない `--control-*` のファイル、認証情報が 1 件もない `--control-credentials` のファイル、片方だけの `--control-tls-cert` と `--control-tls-key`、TLS と認証情報のない、ループバックでない `--control`、数でも `max` でもない `--speed`、`--start-paused` と一緒の `--scenario`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*`、構成ファイルにない participant 名の `--disable`、`--enable`、`--manual`、同じ名前の `--disable` と `--enable`、同じ名前の `--disable` と `--manual`、機種を書いた構成で `--variant` がない、機種のどれでもない名前の `--variant`、形の違う `--param`、`--scenario` なしの `--param`、シナリオにない名前の `--param`）。誤りと使い方を標準エラーに書きます |
-| 130 | `run` が中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力、Control Server のクライアントの `Stop` など） |
+| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` も `--control` もない `--start-paused`、`--control` なしの `--control-credentials` などと Control Server を持たないビルドの `--control`、`--control` の値の誤り、読めない `--control-*` のファイル、認証情報が 1 件もない `--control-credentials` のファイル、片方だけの `--control-tls-cert` と `--control-tls-key`、TLS と認証情報のない、ループバックでない `--control`、数でも `max` でもない `--speed`、`--start-paused` と一緒の `--scenario`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*`、構成ファイルにない participant 名の `--disable`、`--enable`、`--manual`、同じ名前の `--disable` と `--enable`、同じ名前の `--disable` と `--manual`、機種を書いた構成で `--variant` がない、機種のどれでもない名前の `--variant`、形の違う `--param`、`--scenario` なしの `--param`、シナリオにない名前の `--param`、`test` の `--scenarios` がない、`--scenarios` のパスがない、シナリオのファイルがないディレクトリ、`test` に付けた `run` だけの引数と `--scenario`、`test` に渡した構成の、有効で `manual: true` の participant）。誤りと使い方を標準エラーに書きます |
+| 130 | `run` か `test` が中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力、Control Server のクライアントの `Stop` など） |
 
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。

@@ -6,6 +6,7 @@ endif()
 vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
   PREFIX launch LABELS unit launch TIMEOUT 60
   SOURCES test_config.cpp test_check.cpp test_run.cpp test_events.cpp test_scenario.cpp test_shared_values.cpp
+          test_batch.cpp
   LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
        vehicle_sil_cli) # the other tools' exit codes and durations (test_shared_values.cpp)
 # libs/launch/src: the run's parts that have no dependencies and are tested as written (run_start_limit.hpp).
@@ -68,6 +69,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
               stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
               events_slow events_findings events_nonblocking events_output events_stderr realtime late stall stand_still
               speed_change step_width pause_step paused_failures time_usage control scenario scenario_same variable_map variants
+              test_command test_interrupt
               scenario_disconnect scenario_failures manual_late manual_fails manual_stop manual_frozen
               manual_thawed manual_again manual_timeout manual_stranger ethernet
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>

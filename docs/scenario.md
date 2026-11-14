@@ -190,7 +190,7 @@ steps:
 
 ### 機種を限る（`only`）
 
-- `only: [small, medium]` と書いたシナリオは、その機種のためのものです。ほかの機種（`--variant large`）で `check --scenario` か `run --scenario` に渡すと、誤り `scenario-variant` で、何も起動しません。そのとき、手順の中身は照合しません（その機種には合わないかもしれないため）。
+- `only: [small, medium]` と書いたシナリオは、その機種のためのものです。ほかの機種（`--variant large`）で `check --scenario` か `run --scenario` に渡すと、誤り `scenario-variant` で、何も起動しません。そのとき、手順の中身は照合しません（その機種には合わないかもしれないため）。全部の機種を回す `vehicle_sil_launch test` は、その組を回さずに `skipped` にします（[simulation-run.md](simulation-run.md#シナリオをまとめて回すvehicle_sil_launch-test)「シナリオをまとめて回す」）。
 - `only` の名前は、構成ファイルの `variants` にある名前だけです。機種のない構成に `only` のあるシナリオを渡すと誤りです。
 
 ## 結果
