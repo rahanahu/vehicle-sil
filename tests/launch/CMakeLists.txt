@@ -12,6 +12,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_events.cpp
     test_run.cpp
     test_scenario.cpp
+    test_scenario_line.cpp
     test_shared_values.cpp
   LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
        vehicle_sil_cli) # the other tools' exit codes and durations (test_shared_values.cpp)

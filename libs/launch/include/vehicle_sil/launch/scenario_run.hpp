@@ -159,12 +159,27 @@ struct EnginePeer
 /// Writes. A set at T is one command per participant with the time T: it takes effect in that
 /// ECU's first step at or after T. A ramp from T writes, per variable, at T, T + step, T + 2 step,
 /// ... (the ECU's step) the value on the line from `from` to `to`, and `to` at T + over_ms; a
-/// `from` that is not given is the value the scenario wrote to the variable last, or the one of
-/// the latest sample the engine has looked at if that is newer. A wave is the same with another
+/// `from` that is not given is where the scenario left the variable: the value of its line (below)
+/// at T, or, while the scenario has put nothing on that line, the one of the latest sample the
+/// engine has looked at when it sends the writes for T. A wave is the same with another
 /// function of the time since T (Waveform; the ramp's line is one): at each of those times the
 /// function's value then, worked out when the write goes out, and at the end of its length
 /// Waveform::end(); the base it swings around or starts from is found as a ramp's `from`. The
-/// values depend on those times alone, not on the controller's tick or on what arrives when. The result of a write is judged
+/// values depend on those times alone, not on the controller's tick or on what arrives when
+/// (but for a base that is a sample: which sample is the latest then depends on the tick, and
+/// with a tick so long that the writes for T go out before any sample is there, there is none).
+///
+/// Lines. Per variable the scenario writes there is a line: where the scenario left it, and the
+/// motion (ramp or wave) that moves it now. When the engine hands out the writes of a time T, it
+/// first puts on the lines what the steps that begin at T do, in the order of the steps (a set
+/// its value, a ramp or a wave its motion, which reads its base there if it names none), and then
+/// sends the writes for T. So the base of a motion is the value the line has at T: of a set at
+/// or before T, or the end value of the motion before it, as the variable's type has it (an
+/// integer rounded), also if that motion's length is not a multiple of its ECU's step. A motion
+/// that finds no base fails its step at its first write. The values a motion writes come from
+/// one function of the motion and the time (motion_value(), scenario_line.hpp).
+///
+/// The result of a write is judged
 /// at a fixed step of the controller: the first after the ECU's step that applies it (by then it
 /// has arrived). Anything but "applied" fails the step ("scenario-write").
 ///
@@ -219,6 +234,7 @@ public:
     /// `scenario`, `port` and `record` (may be null) must outlive the engine. `tick` > 0.
     ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step = {},
                    TimelineRecord* record = nullptr);
+    ~ScenarioEngine();
 
     /// `peers` in the order of Scenario::participants.
     void begin(const std::vector<EnginePeer>& peers);
@@ -241,7 +257,6 @@ private:
         std::string problem;              ///< why it cannot be used in this run, or ""
         std::optional<control::Value> value; ///< of the latest sample looked at
         std::optional<SimTime> value_time;
-        std::optional<control::Value> written; ///< what the scenario wrote last
     };
     struct Watch
     {
@@ -269,7 +284,6 @@ private:
         ScenarioMotion motion;
         SimTime from_time{};
         SimDuration period{};
-        std::optional<double> base{}; ///< found at its first write, if the step does not name it
         std::int64_t next = 0; ///< the next write is at from_time + next * period (or the end)
         bool done = false;
     };
@@ -277,6 +291,9 @@ private:
     void issue();
     void issue_step(std::size_t index, SimTime time);
     void submit(SimTime from_exclusive, SimTime to_inclusive, bool at_start);
+    /// Puts on the lines what `write` begins, if it is the first write of its step for a
+    /// variable: before any write of its time is sent.
+    void place(const Write& write);
     bool submit_one(Write write);
     void judge(SimTime p);
     void observe(SimTime p);
@@ -318,6 +335,9 @@ private:
     std::deque<Write> to_send_;      ///< sets, by step
     std::deque<Write> sent_;         ///< in the order sent
     std::deque<Motion> motions_;
+    /// The lines of the variables (scenario_line.hpp), and each of motions_ as it was put on its.
+    struct Lines;
+    std::unique_ptr<Lines> lines_;
     /// Per step: what has yet to happen before it passes: writes not judged yet (motions not done
     /// count their writes to come), and 1 for the watch beside a ramp or a wave until it closes.
     std::vector<std::size_t> open_writes_;

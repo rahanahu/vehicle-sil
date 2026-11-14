@@ -2536,6 +2536,49 @@ TEST_CASE(scenario_expect_beside_a_ramp_that_uses_an_absent_variable_is_skipped_
 
 // --- the timeline of a run (timeline.hpp) ---
 
+TEST_CASE(scenario_motion_starts_from_where_the_one_before_it_left_the_variable)
+{
+    // An integer. The lag ends at 77.7, which the ECU gets as 78; the ramp after it starts from
+    // that 78, not from 77.7: halfway to 77 it writes 77.5, which is 78 (from 77.7 it would be 77).
+    const Scenario rounded = read(kHead + "  - wave: { Body.level: { lag: { from: 0, to: 100, tau_ms: 20 }, for_ms: 30 } }\n"
+                                          "  - ramp: { Body.level: { to: 77, over_ms: 20 } }\n");
+    World world;
+    CHECK(world.run(rounded).status == ScenarioStatus::Passed);
+    check_text(applied(world, "Body.level"), "0@0 39@10 63@20 78@30 78@30 78@40 77@50 ");
+    // A ramp that ends between two steps of its ECU (25 ms, steps of 10 ms): the one after it
+    // starts from its end value (80), not from the last value on a step (68).
+    const Scenario between = read(kHead + "  - set: { Body.level: 20 }\n"
+                                          "  - ramp: { Body.level: { to: 80, over_ms: 25 } }\n"
+                                          "  - ramp: { Body.level: { to: 0, over_ms: 20 } }\n");
+    World off;
+    CHECK(off.run(between).status == ScenarioStatus::Passed);
+    check_text(applied(off, "Body.level"), "20@0 20@0 44@10 68@20 80@30 80@30 40@40 0@50 ");
+}
+
+TEST_CASE(scenario_first_motion_without_a_base_takes_the_sample_the_controllers_step_has_let_it_see)
+{
+    // A ramp at 25 ms that does not say where it starts, of a variable the scenario has not
+    // written: its base is a sample. With a controller that steps every 10 or 20 ms the samples
+    // of 0 and 10 ms were looked at before the writes for 25 ms went out. With one that steps
+    // every 30 ms those writes go out at 0 ms, before any sample: the same scenario fails. (The
+    // message says the way out: give it from.)
+    const Scenario s = read(kHead + "  - at_ms: 25\n"
+                                    "    ramp: { Body.level: { to: 80, over_ms: 20 } }\n");
+    for (const SimDuration tick : {SimDuration{10ms}, SimDuration{20ms}})
+    {
+        World world;
+        world.tick = tick;
+        CHECK(world.run(s).status == ScenarioStatus::Passed);
+        check_text(applied(world, "Body.level"), "0@30 40@40 80@50 ");
+    }
+    World coarse;
+    coarse.tick = 30ms;
+    check_text(text_of(coarse.run(s)),
+               "failed over=0\n"
+               "3 failed start=25 at=25 end=45 scenario-write: the ramp of Body.level has no value to start from: no sample of its "
+               "ECU has arrived before 25 ms and the scenario has not written it; give the ramp from: <value>\n");
+}
+
 /// The timeline file of `text` run against the model, as `vehicle_sil_launch run --timeline`
 /// makes it (the findings: those of the failed steps, as the run's).
 std::string timeline_of(const std::string& text, SimDuration tick, const std::function<void(World&)>& setup = {},
@@ -3069,4 +3112,26 @@ TEST_CASE(timeline_of_a_run_that_did_not_get_to_its_end_says_how_far_it_is_recor
                "\"last_ms\": 290,\n"
                "\"failed\": null\n"
                "\"failed\": null\n");
+}
+
+TEST_CASE(timeline_keeps_the_writes_of_the_times_before_a_motion_that_finds_no_base)
+{
+    // The controller steps every 30 ms, so the writes for 10 and for 25 ms go out together at
+    // 0 ms, before any sample. The ramp at 25 ms finds no value to start from; the set of the
+    // other variable at 10 ms was sent before that is said, and is in its series.
+    const std::string text = kHead + "  - at_ms: 10\n"
+                                     "    set: { Door.level: 3 }\n"
+                                     "  - at_ms: 25\n"
+                                     "    ramp: { Body.level: { to: 5, over_ms: 20 } }\n";
+    const std::string made = timeline_of(text, 30ms);
+    check_text(part(made, "    \"status\": ", "  },\n  \"variables\""),
+               "    \"status\": \"failed\",\n    \"over_at_ms\": 0,\n    \"recorded_to_ms\": 25\n");
+    // (Sent, not applied: the simulation ended at 0 ms.) The ramp wrote nothing.
+    check_text(part(made, "  \"series\": [", "  \"findings\""),
+               "  \"series\": [\n"
+               "    {\n      \"variable\": \"Door.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n      \"points\": [\n        [10, 3]\n      ]\n    },\n"
+               "    {\n      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+               "      \"points\": []\n    }\n  ],\n");
+    CHECK(made.find("      \"status\": \"unfinished\",\n      \"start_ms\": 10,") != std::string::npos);
 }

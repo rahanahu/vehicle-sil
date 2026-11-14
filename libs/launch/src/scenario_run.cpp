@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/launch/scenario_run.hpp"
 
+#include "scenario_line.hpp"
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -49,44 +51,6 @@ const char* target_status_text(control::TargetStatus status)
     case control::TargetStatus::Unknown: return "no result will come";
     }
     return "unknown";
-}
-
-double number_of(const control::Value& value)
-{
-    if (const auto* b = std::get_if<bool>(&value))
-    {
-        return *b ? 1.0 : 0.0;
-    }
-    if (const auto* i = std::get_if<std::int64_t>(&value))
-    {
-        return static_cast<double>(*i);
-    }
-    return std::get<double>(value);
-}
-
-/// A motion's value as a value of the variable's type: an integer is rounded to the nearest
-/// (halves away from zero), a bool is true from 0.5.
-///
-/// Before an integer is rounded, the value is put on a grid of 2^-30: a value that is a half but
-/// for the last bits of the arithmetic (a sine at 30 degrees is 0.49999999999999994 with one C
-/// library and 0.5 with another) then rounds the same way everywhere. What can still differ by
-/// one between platforms is a value that close to the middle between two points of the grid,
-/// which a scenario does not meet by writing round numbers.
-control::Value value_of_type(double value, control::ValueType type)
-{
-    switch (type)
-    {
-    case control::ValueType::Integer:
-    case control::ValueType::Enum:
-        if (std::fabs(value) < 0x1p22) // (times 2^30 it still has bits below one)
-        {
-            value = std::round(value * 0x1p30) * 0x1p-30;
-        }
-        return control::Value{static_cast<std::int64_t>(std::llround(value))};
-    case control::ValueType::Bool: return control::Value{value >= 0.5};
-    case control::ValueType::Real: break;
-    }
-    return control::Value{value};
 }
 
 } // namespace
@@ -154,9 +118,17 @@ ScenarioRun scenario_not_run(const Scenario& scenario)
     return run;
 }
 
+struct ScenarioEngine::Lines
+{
+    std::vector<detail::Line> lines;                       ///< per variable of the scenario
+    std::vector<std::optional<detail::LineMotion>> placed; ///< per motion of motions_; empty until its time
+};
+
+ScenarioEngine::~ScenarioEngine() = default;
+
 ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step,
                                TimelineRecord* record) :
-  scenario_(scenario), tick_(tick), port_(port), on_step_(std::move(on_step)), record_(record)
+  scenario_(scenario), tick_(tick), port_(port), on_step_(std::move(on_step)), lines_(std::make_unique<Lines>()), record_(record)
 {
     if (tick_ <= SimDuration::zero())
     {
@@ -166,6 +138,10 @@ ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, Scena
     variables_.resize(scenario.variables.size());
     samples_.resize(scenario.participants.size());
     open_writes_.resize(scenario.steps.size(), 0);
+    for (const ScenarioVariable& v : scenario.variables)
+    {
+        lines_->lines.emplace_back(v.type);
+    }
 }
 
 SimTime ScenarioEngine::next_tick_after(SimTime t) const
@@ -444,7 +420,6 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
             motion.step = index;
             motion.motion = r;
             motion.from_time = time;
-            motion.base = r.base;
             motion.period = scenario_.participants[scenario_.variables[r.variable].participant].step;
             if (motion.period <= SimDuration::zero())
             {
@@ -458,6 +433,7 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
             lastApplied = std::max(lastApplied, SimTime{} + SimDuration((end + motion.period.count() - 1) / motion.period.count() *
                                                                         motion.period.count()));
             motions_.push_back(std::move(motion));
+            lines_->placed.emplace_back();
             longest = std::max(longest, r.length_ms);
         }
         run_.steps[index].end = time + std::chrono::milliseconds(longest);
@@ -658,46 +634,29 @@ bool ScenarioEngine::submit_one(Write write)
     started(write.step);
     if (write.motion)
     {
-        // The motion's value at this time, now that the writes before it have gone out.
-        Motion& motion = motions_[*write.motion];
+        // The motion's value at this time. It was put on its line before the writes of its
+        // first time went out (place()); without a base it fails here, at its first write.
+        const Motion& motion = motions_[*write.motion];
         const ScenarioVariable& v = scenario_.variables[motion.motion.variable];
-        const Waveform& shape = *motion.motion.shape;
-        if (!motion.base && shape.uses_base())
+        const std::optional<detail::LineMotion>& placed = lines_->placed[*write.motion];
+        if (!placed || !placed->has_value())
         {
-            // Where the scenario left the variable: what it wrote last, whatever the samples
-            // since say (another writer does not move the start). A sample only if the scenario
-            // has not written the variable yet.
-            const Variable& known = variables_[motion.motion.variable];
-            if (known.written)
-            {
-                motion.base = number_of(*known.written);
-            }
-            else if (known.value)
-            {
-                motion.base = number_of(*known.value);
-            }
-            else
-            {
-                const std::string kind = step_kind_name(scenario_.steps[write.step].kind);
-                TimelineFailure failure;
-                failure.write = TimelineFailedWrite{motion.motion.variable, write.at, std::nullopt};
-                fail(write.step, write.at, "scenario-write",
-                     "the " + kind + " of " + v.text + " has no value to start from: no sample of its ECU has arrived before " +
-                         ms_text(write.at) + " ms and the scenario has not written it; " + motion.motion.hint,
-                     std::move(failure));
-                return false;
-            }
+            const std::string kind = step_kind_name(scenario_.steps[write.step].kind);
+            TimelineFailure failure;
+            failure.write = TimelineFailedWrite{motion.motion.variable, write.at, std::nullopt};
+            fail(write.step, write.at, "scenario-write",
+                 "the " + kind + " of " + v.text + " has no value to start from: no sample of its ECU has arrived before " +
+                     ms_text(write.at) + " ms and the scenario has not written it; " + motion.motion.hint,
+                 std::move(failure));
+            return false;
         }
-        const double base = motion.base.value_or(0.0);
-        const double value = write.motion_last ? shape.end(base) : shape.value(write.at - motion.from_time, base);
-        write.writes.push_back(ScenarioWrite{motion.motion.variable, value_of_type(value, v.type)});
+        write.writes.push_back(ScenarioWrite{motion.motion.variable, detail::motion_value(*placed, write.at)});
     }
     std::vector<control::PeerWrite> out;
     for (const ScenarioWrite& w : write.writes)
     {
         const ScenarioVariable& v = scenario_.variables[w.variable];
         out.push_back(control::PeerWrite{scenario_.participants[v.participant].name, v.name, w.value});
-        variables_[w.variable].written = w.value;
         if (record_ != nullptr)
         {
             record_->written(w.variable, write.at, w.value, write.motion.has_value());
@@ -784,13 +743,49 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
     std::stable_sort(due.begin(), due.end(), [](const Write& a, const Write& b) {
         return a.at != b.at ? a.at < b.at : a.step < b.step;
     });
-    for (Write& write : due)
+    for (std::size_t first = 0; first < due.size();)
     {
-        if (!submit_one(std::move(write)))
+        std::size_t end = first;
+        while (end < due.size() && due[end].at == due[first].at)
         {
-            return;
+            ++end;
+        }
+        // Time by time. Before any write of a time goes out, the steps that begin at it put what
+        // they do on the lines, in the order of the steps: a motion's base is where the line
+        // stands then, whether or not the write of a step before it is taken.
+        for (std::size_t i = first; i < end; ++i)
+        {
+            place(due[i]);
+        }
+        for (; first < end; ++first)
+        {
+            if (!submit_one(std::move(due[first])))
+            {
+                return;
+            }
         }
     }
+}
+
+void ScenarioEngine::place(const Write& write)
+{
+    if (!write.motion)
+    {
+        for (const ScenarioWrite& w : write.writes)
+        {
+            lines_->lines[w.variable].set(write.at, w.value);
+        }
+        return;
+    }
+    const Motion& motion = motions_[*write.motion];
+    if (write.at != motion.from_time)
+    {
+        return; // not its first write
+    }
+    const std::size_t v = motion.motion.variable;
+    // A sample only if the scenario has put nothing on the line yet: the latest looked at.
+    lines_->placed[*write.motion] = lines_->lines[v].move(write.at, motion.motion.shape, std::chrono::milliseconds(motion.motion.length_ms),
+                                                         motion.motion.base, variables_[v].value);
 }
 
 void ScenarioEngine::judge(SimTime p)

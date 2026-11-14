@@ -920,6 +920,7 @@ flowchart TD
   約束の正本は `scenario_run.hpp` の `ScenarioEngine` のコメントです。
   守ること: 判定に使うのは仮想時刻だけ（実時間の待ちと時間切れで結果を決めない）。
   `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にする（`Waveform::value()`。呼ばれた回数や順に頼らない。乱数は種、変数の名前、時刻から作る: `scenario_shapes.cpp` の `seed_of_variable()`。整数だけの計算で、どの OS でも同じ）。
+  入力ごとの線（シナリオが置いた値と、いま動かしている `ramp` や `wave`）は `libs/launch/src/scenario_line.hpp` の `Line`。`from` や `around` を省いた動きの始まりの値は、手順の時刻の書き込みを送る前に、手順の順で線から読む（`scenario_run.cpp` の `place()`）。動きの値を出す関数は `motion_value()` の 1 つで、エンジンの `submit_one()` はこれを呼ぶ（動きの値を出す所を足すときも、同じ関数を呼ぶ）。線だけの試験は `launch.scenario_line_*`（`tests/launch/test_scenario_line.cpp`）。
   ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は `scenario.cpp` の `seen_between()` の決まり 1 つに従う。
   `points` の CSV ファイル: 分けるのは `libs/launch/src/scenario_csv.cpp` の `read_csv()`、読むのはシナリオのファイルの隣から `files_beside()`（`ScenarioContext::read_file` に渡す。`read_scenario()` はこれのほかにファイルに触らない。渡すのは `check.cpp` と `test.cpp`）、パスの検査とセルの意味は `scenario.cpp` の `path_problem()`、`file_points()`、`cell_value()`。
   点を足す口（文面と CSV）は `read_points()` の 1 つで、同じ照合を通る。
