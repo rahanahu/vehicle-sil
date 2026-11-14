@@ -26,7 +26,7 @@ cd build/linux-gcc-control/examples/ecu_main
 |---|---|
 | ほかのプリセットでビルドした | 上の 2 行の `linux-gcc-control` を、そのプリセットの名前にします。シナリオは Control API のないビルドでも動きます。 |
 | Windows | MSYS2 UCRT64 のシェルで、同じコマンドを実行します。ビルドの手順は [build.md](../build.md) にあります。 |
-| テンプレートのプロジェクト（リリース後） | `simulation.yaml` のあるディレクトリで実行します。`PATH` には、`get_tools.py` が表示した行で追加します。`scenarios/` にあるのは `throttle_step.yaml` だけなので、`engine_disconnect.yaml` はこの文書のブロックから作ります。 |
+| テンプレートのプロジェクト | `simulation.yaml` のあるディレクトリで実行します。`PATH` には、`get_tools.py` が表示した行で追加します。`scenarios/` にあるのは `throttle_step.yaml` だけなので、`engine_disconnect.yaml` はこの文書のブロックから作ります。 |
 
 ## 全体の流れ
 

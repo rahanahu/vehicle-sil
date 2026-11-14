@@ -11,7 +11,7 @@
 | 決まった手順で値を設定して確認し、終了コードで合否を出す | シナリオ（YAML） | `vehicle_sil_launch run simulation.yaml --scenario <シナリオ>` | [シナリオでテストを書く](scenario-tests.md) |
 | 値を見て、次に書き込む値をプログラムで決める | Python のクライアント（`vehicle_sil_control`） | スクリプトの中の `Launch(...)` が `vehicle_sil_launch run --control` を起動する | このガイドの「最初のスクリプトを実行する」から |
 | Python を書かずに、1 つずつ読む、書き込む、進める | CLI（`python -m vehicle_sil_control`） | 自分で `vehicle_sil_launch run --control 8510 simulation.yaml` を起動する | このガイドの「コマンドで 1 つずつ操作する」 |
-| ブラウザで値を見ながら、スライダーやスイッチで書き込む | GUI（`vehicle-sil-gui`） | `scripts/run-gui.py`（リリース後は `vehicle-sil-gui simulation.live.yaml`） | [gui.md](../gui.md) の「ECU の変数」 |
+| ブラウザで値を見ながら、スライダーやスイッチで書き込む | GUI（`vehicle-sil-gui`） | `scripts/run-gui.py`（ビルド済みのツールでは `vehicle-sil-gui simulation.live.yaml`） | [gui.md](../gui.md) の「ECU の変数」 |
 
 シナリオは、同じ設定ファイルと同じシナリオなら、結果がいつも同じです。Python と CLI からの操作は、書き込みを受信した順や指定した時刻によって、結果が変わることがあります。操作した結果をテストとして残すときは、同じ手順をシナリオに書きます。
 
@@ -32,7 +32,7 @@
 | 設定ファイル | `build/linux-gcc-control/examples/ecu_main/simulation.yaml` |
 | Python のクライアント | `python/`（パッケージ `vehicle_sil_control`） |
 
-リリース後に、テンプレートのプロジェクトとビルド済みのツールを使うときは、次のように読み替えます。表の `$T` は、ツールのディレクトリ `tools/vehicle-sil-tools-<バージョン>-linux-x86_64` です。テンプレートの 2 つの ECU は、このガイドの例と同じ変数を持っています。
+テンプレートのプロジェクトとビルド済みのツールを使うときは、次のように読み替えます。表の `$T` は、ツールのディレクトリ `tools/vehicle-sil-tools-<バージョン>-linux-x86_64` です。テンプレートの 2 つの ECU は、このガイドの例と同じ変数を持っています。
 
 | もの | リポジトリでビルドしたとき | テンプレートのプロジェクトのとき |
 |---|---|---|

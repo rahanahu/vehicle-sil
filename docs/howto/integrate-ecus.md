@@ -30,7 +30,7 @@ cd build/linux-gcc-control/examples/integrate_ecus
 | `dashboard_v1/vehicle_sil_dashboard_v1_ecu` | 最初に受け取った表示の ECU です。 | 2、3 |
 | `../ecu_main/dashboard/vehicle_sil_dashboard_ecu` | 作り直した表示の ECU です。 | 4、5 |
 
-テンプレートとビルド済みのツールを使うとき（リリース後）は、場所が次のように変わります。手順は同じで、自分が受け取った ECU で進めます。
+テンプレートとビルド済みのツールを使うときは、場所が次のように変わります。手順は同じで、自分が受け取った ECU で進めます。
 
 | | リポジトリをビルドしたとき（このガイド） | テンプレートとビルド済みのツール |
 |---|---|---|
