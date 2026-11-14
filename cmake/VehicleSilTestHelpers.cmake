@@ -138,9 +138,11 @@ endfunction()
 #
 # MACHINE_LOCK: for scenarios that need something of which a machine has one, such as a fixed port
 # that a document shows. Each test first takes the lock file /tmp/vehicle-sil-test-<name>.lock
-# (flock(1)), so that the builds of several working trees on one machine run such tests one at a
-# time; RUN_SERIAL or RESOURCE_LOCK would hold only within one ctest. Not on Windows, and without
-# flock the tests run as before.
+# (flock, through cmake/vehicle_sil_machine_lock.sh), so that the builds of several working trees
+# on one machine run such tests one at a time; RUN_SERIAL or RESOURCE_LOCK would hold only within
+# one ctest. While it waits, the test says so, and the wait counts toward its TIMEOUT. Not on
+# Windows; without flock, or when the file cannot be opened (another user's), the tests run
+# without the lock (the script says so).
 function(vehicle_sil_add_scenario_tests launcher)
   cmake_parse_arguments(ARG "RUN_SERIAL" "PREFIX;TIMEOUT;WORK_DIR;MACHINE_LOCK" "LABELS;SCENARIOS;ARGS" ${ARGN})
   _vehicle_sil_scaled_ctest_timeout(timeout ${ARG_TIMEOUT})
@@ -148,7 +150,8 @@ function(vehicle_sil_add_scenario_tests launcher)
   if(ARG_MACHINE_LOCK AND NOT WIN32)
     find_program(VEHICLE_SIL_FLOCK flock)
     if(VEHICLE_SIL_FLOCK)
-      set(lock "${VEHICLE_SIL_FLOCK}" "/tmp/vehicle-sil-test-${ARG_MACHINE_LOCK}.lock")
+      set(lock /bin/sh "${PROJECT_SOURCE_DIR}/cmake/vehicle_sil_machine_lock.sh"
+               "/tmp/vehicle-sil-test-${ARG_MACHINE_LOCK}.lock" "${ARG_MACHINE_LOCK}")
     else()
       message(STATUS "vehicle-sil: no flock, so ${ARG_PREFIX}.{${ARG_SCENARIOS}} run without the lock of the machine: "
                      "the same tests of another build on this machine may run at the same time")
