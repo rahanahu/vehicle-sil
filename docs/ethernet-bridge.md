@@ -45,12 +45,23 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 
 引数は「[引数](#引数parse_bridge_options)」にあります。ブリッジは次の順に動きます。
 
-1. 引数を調べます。誤りは、何が誤りかと使い方を標準エラーに出して、終了コード 4 で終わります。
+1. 引数を調べます。誤りには、誤りの 1 行と、使い方の見方の 1 行だけを標準エラーに出して、終了コード 4 で終わります（使い方の全文は `--help`）。Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（`--participant`、`--network`、`--interface` に ASCII 以外の文字を使えます）。
+
+   ```
+   error: --backend must be tap, packet, npcap or pcap, got: usb
+   Run 'vehicle_sil_ethernet_bridge --help' for the options.
+   ```
 2. `--backend` がこの OS で使えるかを調べます。使えなければ、SIL Kit に接続する前に、理由と代わりを言って終了コード 3 で終わります。`npcap` と `pcap` は、ここでライブラリを読み込みます。入っていなければ、入れ方を言って終了コード 3 で終わります。
 3. SIL Kit の registry に接続し、Ethernet のコントローラーを作ります。registry に接続できなければ、どこに接続しようとしたかと次にすることを言って、終了コード 3 で終わります（括弧の中は SIL Kit の文です）。
 
    ```
    [eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://127.0.0.1:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). Start the registry first ('sil-kit-registry --listen-uri silkit://127.0.0.1:8500'), or give the address it listens at with --registry-uri.
+   ```
+
+   アドレスがこの PC のループバック（`localhost`、`127.x.y.z`、`::1`）でないときは、registry を起動せよとは言わず、そのアドレスの PC で確かめることを言います。そのアドレスが別の PC のものか、この PC 自身のものかは、調べません。`0.0.0.0` と `[::]` は待ち受けるためのアドレスなので、registry の動いている PC のアドレスを書くよう言います（文は `bridges/common` の `registry_failure_message()` が作り、Vector XL のブリッジと同じです。[docs/bridges.md](bridges.md)）。
+
+   ```
+   [eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at silkit://192.168.10.5:8500 (SIL Kit: An unspecified error occurred (1): ERROR: Failed to connect to SIL Kit Registry). 192.168.10.5 is not the loopback address of this computer: check that the registry runs on the computer with that address (which may be this one), that it listens on an address reached from here ('sil-kit-registry --listen-uri silkit://0.0.0.0:8500' there listens on all of its addresses, not only on its loopback), and that its firewall lets port 8500 through.
    ```
 4. 外のインターフェースを開き、転送を始めます（`EthernetBridge::start()`）。開けなければ、何が起きたかと直し方を言って終了コード 3 で終わります（下の「[バックエンド](#バックエンド)」の文）。
 5. participant の lifecycle を始めます。転送を先に始めるのは、ほかの participant が、ブリッジが Running になったのを見た時点で送り始めるからです。
@@ -76,7 +87,7 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 | 3 | 準備の失敗（この OS で使えないバックエンド、入っていない pcap のライブラリ、インターフェース、SIL Kit）: `FAIL setup: <理由>` |
 | 4 | 引数の誤り |
 
-プロミスキャスなしで（`packet`、`npcap`、`pcap`）、ブリッジが外へフレームを送ってから 5 秒たっても、SIL Kit の側の MAC アドレス（外へ送ったフレームの送り元）宛てのフレームが 1 つも来ないとき、手がかりを 1 回だけ警告します。プロミスキャスなしのインターフェースは、自分のアドレス宛てとグループのアドレス宛てのフレームしか渡さず、SIL Kit の機器のアドレスはインターフェースのアドレスと違うからです。返事を待たない使い方（外へ流すだけ）でも出るので、文は条件つきです。
+プロミスキャスなしで（`packet`、`npcap`、`pcap`）、ブリッジが外へフレームを送ってから 5 秒たっても、SIL Kit の側の MAC アドレス（外へ送ったフレームの送り元）宛てのフレームが 1 つも来ないとき、手がかりを 1 回だけ警告します。プロミスキャスなしのインターフェースは、自分のアドレス宛てとグループのアドレス宛てのフレームしか渡さず、SIL Kit の機器のアドレスはインターフェースのアドレスと違うからです。ブリッジが最初に送るより前に届いた分も数えます（その宛先からブリッジが後で送れば、届いていたとみなします）。最初に送るより前の宛先は 32 個まで覚え、それより多い分は覚えません（その分は、届いていたとはみなしません）。この PC の OS が同じインターフェースから送ったフレームもブリッジに届くので、宛先の数が多いことからは、インターフェースが宛先で絞らないとは言えないためです。返事を待たない使い方（外へ流すだけ）でも出るので、文は条件つきです。
 
 ```
 no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and --promiscuous is off: without it an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, add --promiscuous.
@@ -108,7 +119,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-`--list-interfaces --backend pcap`（Windows では `--list-interfaces` だけでも、`--backend npcap` を付けても）は、pcap のライブラリが出すインターフェースを並べます。行の先頭が `--interface` に渡す名前で、空白のある名前は `"` で囲んであります。その後ろは、ライブラリが言う状態（`up` / `down`、`connected` / `disconnected`、`wireless`、`loopback`）と、括弧の中に説明と pcap の名前です。イーサネットでないもの（Linux の `any` など）も並びます。開くときに断ります。
+`--list-interfaces --backend pcap`（Windows では `--list-interfaces` だけでも、`--backend npcap` を付けても）は、pcap のライブラリが出すインターフェースを並べます。行の先頭が `--interface` に渡す名前で、空白のある名前は `"` で囲んであります。その後ろは、ライブラリが言う状態（`up` / `down`、`connected` / `disconnected`、`wireless`、`loopback`）と、括弧の中に説明と pcap の名前です。イーサネットでないもの（Linux の `any` など）も並びます。開くときに断ります。Npcap の一覧にネットワークのアダプターが 1 つもない（`\Device\NPF_Loopback` だけ）ときは、最後に 1 行、Npcap の「管理者だけ」の入れ方と無効のアダプターのことを足します（`Npcap offers no network adapter here: ...`）。
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -197,7 +208,7 @@ cannot open a packet socket on 'enp3s0': Operation not permitted. A network inte
 - pcap の名前（Linux はインターフェースの名前そのもの、Windows は `\Device\NPF_{...}`）。
 - Windows では、ネットワーク接続の名前（「Ethernet 2」。`--list-interfaces` の行の先頭）と、アダプターの識別子（`{4D36E972-...}`。波括弧はあってもなくても、大文字でも小文字でもよい）も書けます。
 - 接続の名前が 2 つのアダプターに当たるときは誤りで、pcap の名前を挙げます。
-- 接続の名前は、Windows の「ANSI コードページ」の文字列として比べます（引数もコンソールの出力も、その文字コードです）。そのコードページにない文字は、一覧では `?` になります。その名前をそのまま `--interface` に渡せば開けます。日本語の名前が日本語の Windows で一致して読めるかは、未確認です。
+- 接続の名前は、UTF-8 の文字列として比べます（引数は UTF-8 で読みます）。一覧も誤りの文も、コンソールにはコードページによらず読める形で出し、ファイルとパイプには UTF-8 で出します（[docs/bridges.md](bridges.md) の「出力の文字コード」）。`chcp` は要りません。Npcap が返す文（デバイスの説明、誤りの文）は、Windows の ANSI コードページの文として読んで UTF-8 に直します。日本語の名前が日本語の Windows で表示され、一致するかは、未確認です。
 
 動きです。
 
@@ -212,7 +223,7 @@ cannot open a packet socket on 'enp3s0': Operation not permitted. A network inte
 - Windows の `npcap`: リンクの上下は見ません（監視の行にリンクの状態は出ません）。アダプターがなくなったことは、ライブラリの読み取りが失敗したときにだけわかります。
 - Windows の `npcap`: Npcap は、アダプターを開いたソフトに、そのソフト自身が送ったフレームも渡します。ブリッジは、それを渡さない指定（`pcap_open()` の `PCAP_OPENFLAG_NOCAPTURE_LOCAL`）でアダプターを開くので、ブリッジが送ったフレームはブリッジに戻りません（`ExternalLink::echoes_own_transmissions()` は false）。同じアダプターを開いているほかのソフトが送ったフレームは届きます。`pcap_open` のない `wpcap.dll` は、読み込むときに断ります（下の文）。
 - Windows の `npcap`: 無効にしたアダプターは、Npcap の一覧に出ません。`--interface` に書くと、「下がっている」ではなく、「ない」の誤り（`no interface ...`）になります。この誤りの文は、無効のアダプターが一覧に出ないことを言います。
-- Windows の `npcap`: Npcap を「管理者だけ」の設定で入れた PC で、管理者でない利用者がブリッジを動かすと、Npcap が昇格を求める画面を出し、その画面を閉じるまでブリッジは止まったままです（`--list-interfaces` も同じ）。閉じると、一覧には `\Device\NPF_Loopback` しか出ず、アダプターは「ない」の誤りになります。Npcap は権限がないとは言わないので、ブリッジは、一覧にネットワークのアダプターが 1 つもないときに、「ない」の誤りの文でこの場合を挙げます（下の文）。管理者として起動したコンソールから動かすか、Npcap をその制限なしで入れ直します。
+- Windows の `npcap`: Npcap を「管理者だけ」の設定で入れた PC で、管理者でない利用者がブリッジを動かすと、Npcap が昇格を求める画面を出し、その画面を閉じるまでブリッジは止まったままです（`--list-interfaces` も同じ）。閉じると、一覧には `\Device\NPF_Loopback` しか出ず、アダプターは「ない」の誤りになります。Npcap は権限がないとは言わないので、ブリッジは、一覧にネットワークのアダプターが 1 つもないときに、`--list-interfaces` の一覧の最後の行と「ない」の誤りの文でこの場合を挙げます（下の文）。管理者として起動したコンソールから動かすか、Npcap をその制限なしで入れ直します。
 - Windows の `npcap`: VLAN タグつきのフレームが通るかは、アダプターのドライバーとその設定で決まります（ブリッジも Npcap も、タグを変えません）。ドライバーが、既定の設定では、VLAN タグつきのフレームを渡さないことがあります。ドライバーの優先度と VLAN の処理を切ると届きますが、今度は、ブリッジが送ったフレームから外側のタグが 1 つ外れて出ることがあります。そのときも送信は成功を返し、統計にも警告にも出ません。VLAN タグを使う前に、そのアダプターで両方向を確かめてください。
 - 無線のアダプター（ライブラリが `wireless` と言うもの）では、起動のときに 1 回警告します。
 
@@ -503,7 +514,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 
 - `wpcap.dll` を `System32\Npcap` から読み込める（`Packet.dll` も見つかる）。ブリッジが使う関数があり、構造体の形が合う（一覧、フレームの長さと中身、捨てた数）。
 - 受信を待つイベントで、空回りせず、取りこぼしなく受ける。
-- 接続の名前が一覧に出て、`--interface` と一致する（英語の Windows）。コードページにない文字は `?` で出て、その名前で開ける。
+- 接続の名前が一覧に出て、`--interface` と一致する（英語の Windows、ASCII の名前。引数と名前を ANSI コードページで扱っていた頃の確認で、UTF-8 で扱い、コンソールに UTF-16 で書くようにしてからは、本物の Npcap では確かめていません）。
 - SIL Kit の相手と、アダプターの先の機器との往復。`--promiscuous` なしでは、SIL Kit の機器宛てのユニキャストが届かず、手がかりの警告が出る。
 - 同じアダプターを Npcap で開いたほかのソフトと、両方向に届く（仮想の NIC でも、KM-TEST Loopback Adapter でも）。
 - Npcap は、ハンドルが送ったフレームをそのハンドルに戻す。`PCAP_OPENFLAG_NOCAPTURE_LOCAL` を付けて開いたハンドルは、自分の送信を受けず、ほかのハンドルの送信は受ける。

@@ -47,7 +47,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 
 ### `unit`
 
-コマンドライン解析（`unit.*`）。
+コマンドライン解析と、標準出力・標準エラーへの書き出し（`unit.*`）。
 `core`、`lin`、`step`、`can`、`eth`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` の単体テストと境界の検査にもこのラベルが付く。
 `template.get_tools`（ひな形の `get_tools.py` と `scripts/package.py` の `template`、`version` を、手元で作った圧縮ファイルで確かめる）にも付く。
 付かないのは、プロセスを起動するシナリオの試験（`integration`）、サンプルの実行（`examples`。
@@ -103,6 +103,7 @@ SIL Kit なしでビルドする）と SIL Kit のポートのテスト（`eth_s
 PGN と識別子、単一フレームの送受信、宛先の振り分け、ローカル折り返し、同じ時刻のフレームの順序とタイマーの発火がステップ幅と到着順によらないこと、Request への応答と ACK/NACK、NAME と Address Claim（複数ノードと複数 Network の競合、任意アドレスの選択、アドレス表、アドレス違反、Commanded Address を含む）、1 つのホストの複数の Network（ゲートウェイ、片方の失敗）、再入と失敗、ステップ幅の検査、資源の上限、定常状態のステップでメモリを確保しないことを確かめる。
 プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致することも確かめる（簡易 CAN Network Simulator ありでも。
 `unit` ラベルも付く）。
+聞くだけの participant（生の CAN、ノードのない `Network`。ステップ幅はいろいろ）を足しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらず、聞くだけの participant が何も送らないことも、仮想バスと SIL Kit で確かめる（`j1939_silkit.listen_only_participants_*`）。
 タイミングありの仮想バスで、プロトコルの結果が変わらないこと、混雑で転送が遅れ、バスが飽和すると時間切れになることも確かめる。
 1 つの ECU がバスから切り離されたとき（受信だけ、送受信とも）の TP の時間切れと回復、隠れていたアドレスの衝突の解決、時刻同期なしの SIL Kit での実時間の動作も確かめる。
 道具箱（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）とプロトコル部品（`j1939_parts.*`: DM13、診断、識別情報、送信の競合、後で返す ACK、ステップ幅によらない結果）も確かめ、`j1939_parts.boundary` が部品がエンジンの内部を使っていないことを検査する。
@@ -348,7 +349,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 ### `tools/common`
 
-- 主なクラス・関数（ヘッダー）: 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、`vehicle_sil/cli/console.hpp`、引数とパスを UTF-8 で扱う `vehicle_sil/cli/utf8.hpp`。
+- 主なクラス・関数（ヘッダー）: 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、標準出力と標準エラーに UTF-8 の文を書く `write_text()`（Windows のコンソールには UTF-16 で）のある `vehicle_sil/cli/console.hpp`、引数とパスを UTF-8 で扱う `vehicle_sil/cli/utf8.hpp`。
   ターゲット `vehicle_sil_cli`）
 - 試験: `tests/unit`
 - `ctest -R`: `^unit\.`

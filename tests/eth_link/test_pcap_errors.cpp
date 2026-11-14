@@ -247,6 +247,19 @@ TEST_CASE(pcap_interface_list_shows_the_name_to_give_and_what_the_library_says)
     CHECK_TEXT(format_pcap_devices({}, PcapFlavor::Npcap, ""),
                "interfaces Npcap offers; --backend npcap takes the Ethernet ones:\n  none. If Npcap was installed for "
                "administrators only, run this from a console started as administrator.\n");
+    // The loopback device alone: what Npcap installed for administrators only gives another user.
+    const std::vector<PcapDevice> loopbackOnly = {
+        {"\\Device\\NPF_Loopback", "Adapter for loopback traffic capture", "", kPcapIfUp | kPcapIfLoopback}};
+    CHECK_TEXT(format_pcap_devices(loopbackOnly, PcapFlavor::Npcap, ""),
+               "interfaces Npcap offers; --backend npcap takes the Ethernet ones:\n"
+               "  --interface \\Device\\NPF_Loopback  up, loopback  (Adapter for loopback traffic capture)\n"
+               "  Npcap offers no network adapter here: if it was installed for administrators only, run this from a console "
+               "started as administrator, or install Npcap again without that limit. A disabled adapter is not offered "
+               "either: enable it in Windows.\n");
+    // libpcap has no such setting.
+    const std::vector<PcapDevice> lo = {{"lo", "", "", kPcapIfUp | kPcapIfLoopback}};
+    CHECK_TEXT(format_pcap_devices(lo, PcapFlavor::Libpcap, ""),
+               "interfaces libpcap offers; --backend pcap takes the Ethernet ones:\n  --interface lo  up, loopback\n");
 }
 
 TEST_CASE(pcap_api_names_every_function_it_does_not_find)
@@ -286,4 +299,32 @@ TEST_CASE(pcap_api_names_every_function_it_does_not_find)
     CHECK_EQ(asked.size(), std::size_t{18});
     const auto [fullApi, fullMissing] = bind_pcap_api([](const char*) -> void* { return &something; }, PcapWaitKind::Event, PcapFlavor::Npcap);
     CHECK(fullMissing.empty() && fullApi.open != nullptr);
+}
+
+#ifdef _WIN32
+// The code page the library's texts are read in (windows.h is kept out of this file).
+extern "C" __declspec(dllimport) unsigned int __stdcall GetACP(void);
+#endif
+
+TEST_CASE(pcap_text_of_the_library_is_utf8)
+{
+    CHECK_TEXT(pcap_text(nullptr), "");
+    CHECK_TEXT(pcap_text(""), "");
+    // ASCII is the same in every code page, the backslash and the tilde too.
+    CHECK_TEXT(pcap_text("\\Device\\NPF_{4D36E972} ~ Ethernet adapter"), "\\Device\\NPF_{4D36E972} ~ Ethernet adapter");
+    // Two bytes that are one letter in code page 932 and two in 1252.
+    const char* const bytes = "\x83\x43";
+#ifdef _WIN32
+    if (GetACP() == 932)
+    {
+        CHECK_TEXT(pcap_text(bytes), "\xE3\x82\xA4"); // katakana "i"
+    }
+    else if (GetACP() == 1252)
+    {
+        CHECK_TEXT(pcap_text(bytes), "\xC6\x92"
+                                     "C"); // a small f with a hook, and C
+    }
+#else
+    CHECK_TEXT(pcap_text(bytes), bytes); // as it came
+#endif
 }

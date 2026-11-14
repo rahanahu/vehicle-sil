@@ -94,6 +94,14 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache ethtool libpcap0.8
       - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
         run: uv sync --locked
+      # A pull request builds the control server against Ubuntu's gRPC (find_package finds it), so that it does
+      # not wait for the build of gRPC when the compiler cache has gone. A push to main installs nothing here
+      # and builds the pinned version with FetchContent, as a user without gRPC does.
+      - name: gRPC of the distribution (pull requests)
+        if: matrix.preset == 'linux-gcc-control' && github.event_name == 'pull_request'
+        run: >-
+          sudo apt-get install -y -q --no-install-recommends
+          libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
       # The thread sanitizer cannot map its shadow memory when the kernel randomizes addresses with more bits.
       - name: Address space layout for the thread sanitizer
         if: matrix.preset == 'linux-clang-tsan'

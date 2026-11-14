@@ -9,15 +9,19 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/can/host.hpp"
+#include "vehicle_sil/can/raw_channel.hpp"
 #include "vehicle_sil/can/real_time_clock.hpp"
 #include "vehicle_sil/can/real_time_driver.hpp"
 #include "vehicle_sil/can/step_driver.hpp"
+#include "vehicle_sil/can/tap_port.hpp"
 #include "vehicle_sil/can/virtual_can_bus.hpp"
 #include "vehicle_sil/can_netsim/can_bus_simulator.hpp"
 #include "vehicle_sil/can_silkit/silkit_can_port.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/j1939/network.hpp"
+#include "vehicle_sil/j1939/observer.hpp"
+#include "vehicle_sil/testkit/recorders.hpp"
 
 #include <silkit/services/can/all.hpp>
 
@@ -29,10 +33,12 @@
 #include <cstdio>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -522,8 +528,132 @@ enum class Bus
 constexpr std::uint32_t kSimulatorBitrate = 250'000;
 constexpr SimDuration kSimulatorStep = 1ms;
 
+/// How a listen-only participant listens. It never sends.
+enum class Listening
+{
+    RawCan,           ///< A raw CAN channel: every frame.
+    J1939WithoutNode, ///< A J1939 network without a node: the messages it delivers (to an observer).
+};
+
+struct ListenOnlyParticipant
+{
+    Listening kind;
+    SimDuration step;
+};
+
+/// The listen-only participants a run adds beside the ECUs, each on its own host (on SIL Kit,
+/// its own participant and CAN controller) with its own step. A run given a setup, even an
+/// empty one, also appends EcuRecords to every ECU's trace and checks every listen-only
+/// participant (ListenOnlyStack::check()).
+struct ListenOnlySetup
+{
+    std::vector<ListenOnlyParticipant> participants;
+};
+
+/// The stack of a listen-only participant on `port`, behind a tap that logs what it hands to the
+/// port and what the port releases to it.
+struct ListenOnlyStack
+{
+    ListenOnlyStack(const ListenOnlyParticipant& p, vehicle_sil::can::Port& port) : participant(p), tap(port), log(tap), events(network)
+    {
+        if (p.kind == Listening::RawCan)
+        {
+            raw.on_frame([this](const vehicle_sil::can::TimedFrame&) { ++raw_frames; });
+            host.add(raw, tap);
+        }
+        else
+        {
+            host.add(network, tap);
+        }
+    }
+
+    [[nodiscard]] std::size_t heard() const
+    {
+        return participant.kind == Listening::RawCan ? raw_frames : events.count(vehicle_sil::j1939::EventKind::MessageReceived);
+    }
+
+    /// Throws unless the participant sent nothing and heard something (a participant that hears
+    /// nothing would pass the comparison without showing anything).
+    void check() const
+    {
+        const std::string who = std::string("listen-only participant (") +
+                                (participant.kind == Listening::RawCan ? "raw CAN" : "J1939 without a node") + ", step " +
+                                std::to_string(participant.step / 1ms) + " ms)";
+        const std::size_t sent = log.count(vehicle_sil::testkit::FrameLog::Direction::Sent);
+        if (sent != 0 || raw.statistics().frames_sent != 0 || network.statistics().frames_sent != 0 ||
+            events.has(vehicle_sil::j1939::EventKind::FrameSent))
+        {
+            throw std::runtime_error(who + " handed " + std::to_string(sent) + " frames to its port; it must send nothing");
+        }
+        if (host.failed() || network.failed())
+        {
+            throw std::runtime_error(who + " failed: " + host.error() + network.error());
+        }
+        if (log.count(vehicle_sil::testkit::FrameLog::Direction::Received) == 0 || heard() == 0)
+        {
+            throw std::runtime_error(who + " heard nothing; give it a bus with traffic");
+        }
+    }
+
+    ListenOnlyParticipant participant;
+    vehicle_sil::can::TapPort tap;
+    vehicle_sil::testkit::FrameLog log;
+    vehicle_sil::can::RawChannel raw;
+    Network network;
+    vehicle_sil::testkit::J1939Events events;
+    std::size_t raw_frames = 0;
+    Host host; ///< Last: destroyed first, before what it steps.
+};
+
+/// What the ECUs' networks hand to their ports (time, identifier, result), their ports' events
+/// (transmit acknowledgements, with times) and their statistics, as trace lines.
+class EcuRecords
+{
+public:
+    void add(Network& network)
+    {
+        events_.push_back(std::make_unique<vehicle_sil::testkit::J1939Events>(network));
+        networks_.push_back(&network);
+    }
+
+    /// Appends the lines of the index-th network added to `trace`.
+    void append(std::size_t index, std::vector<std::string>& trace) const
+    {
+        using vehicle_sil::j1939::EventKind;
+        const auto& events = *events_.at(index);
+        if (events.dropped() != 0)
+        {
+            throw std::runtime_error("the record of an ECU's network is incomplete; raise its capacity");
+        }
+        char text[96];
+        for (const auto& record : events.all())
+        {
+            const auto& e = record.event;
+            if (e.kind == EventKind::FrameSent)
+            {
+                std::snprintf(text, sizeof(text), "TX %lld %08X r%d", static_cast<long long>(to_ns(e.time)),
+                              static_cast<unsigned>(e.frame.id), static_cast<int>(e.send_result));
+                trace.emplace_back(text);
+            }
+            else if (e.kind == EventKind::PortEvent)
+            {
+                std::snprintf(text, sizeof(text), "EV %lld k%d %08X", static_cast<long long>(to_ns(e.port_event.time)),
+                              static_cast<int>(e.port_event.kind), static_cast<unsigned>(e.port_event.id));
+                trace.emplace_back(text);
+            }
+        }
+        const auto& s = networks_.at(index)->statistics();
+        trace.push_back("STAT rx " + std::to_string(s.frames_received) + " tx " + std::to_string(s.frames_sent) + " done " +
+                        std::to_string(s.frames_transmitted) + " failed " + std::to_string(s.transmit_failures));
+    }
+
+private:
+    std::vector<std::unique_ptr<vehicle_sil::testkit::J1939Events>> events_;
+    std::vector<const Network*> networks_;
+};
+
 Traces run_on_virtual_bus(const std::vector<SimDuration>& steps, const EcuFactory& make = make_scenario, SimTime end = kEnd,
-                          Bus kind = Bus::Trivial)
+                          Bus kind = Bus::Trivial, const std::optional<ListenOnlySetup>& listening = std::nullopt)
 {
     vehicle_sil::can::VirtualCanBusOptions options;
     if (kind == Bus::Simulator)
@@ -533,6 +663,8 @@ Traces run_on_virtual_bus(const std::vector<SimDuration>& steps, const EcuFactor
     vehicle_sil::can::VirtualCanBus bus(options);
     std::vector<std::unique_ptr<Ecu>> scenarios;
     std::vector<std::unique_ptr<Host>> hosts;
+    EcuRecords records;
+    std::vector<std::unique_ptr<ListenOnlyStack>> listeners;
     vehicle_sil::can::StepDriver driver;
     for (std::size_t i = 0; i < steps.size(); ++i)
     {
@@ -543,12 +675,32 @@ Traces run_on_virtual_bus(const std::vector<SimDuration>& steps, const EcuFactor
         hosts.back()->set_application([s](SimTime now) { s->run(now); });
         driver.add(*hosts.back(), steps[i]);
     }
+    if (listening)
+    {
+        for (const auto& s : scenarios)
+        {
+            records.add(s->network);
+        }
+        for (const auto& p : listening->participants)
+        {
+            listeners.push_back(std::make_unique<ListenOnlyStack>(p, bus.attach()));
+            driver.add(listeners.back()->host, p.step);
+        }
+    }
     driver.run_until(end);
     Traces traces;
     for (const auto& s : scenarios)
     {
         check_network(s->network);
         traces.push_back(s->trace());
+        if (listening)
+        {
+            records.append(traces.size() - 1, traces.back());
+        }
+    }
+    for (const auto& l : listeners)
+    {
+        l->check();
     }
     return traces;
 }
@@ -578,9 +730,50 @@ struct SilKitNode
     std::unique_ptr<Host> host;
 };
 
-Traces run_on_silkit(const std::vector<SimDuration>& steps, const EcuFactory& make = make_scenario, SimTime end = kEnd,
-                     Bus kind = Bus::Trivial)
+/// A listen-only participant on its own SIL Kit participant; shuts down like SilKitNode.
+struct SilKitListener
 {
+    SilKitListener() = default;
+    SilKitListener(const SilKitListener&) = delete;
+    SilKitListener& operator=(const SilKitListener&) = delete;
+    ~SilKitListener()
+    {
+        if (runtime)
+        {
+            runtime->stop("test cleanup");
+        }
+        if (port)
+        {
+            port->close();
+        }
+    }
+
+    std::unique_ptr<ParticipantRuntime> runtime;
+    std::unique_ptr<SilKitCanPort> port;
+    std::unique_ptr<ListenOnlyStack> stack;
+};
+
+std::string listener_name(std::size_t i) { return "Listener" + std::to_string(i + 1); }
+
+/// A participant on virtual time with `step` until `end`, and its CAN port on kNetwork, started
+/// when communication is ready.
+std::pair<std::unique_ptr<ParticipantRuntime>, std::unique_ptr<SilKitCanPort>>
+make_participant_with_port(const std::string& name, const std::string& registryUri, SimDuration step, SimTime end, Bus kind)
+{
+    auto runtime = std::make_unique<ParticipantRuntime>(
+        coordinated_options(name, registryUri, VirtualTimeOptions{step, std::nullopt, end}));
+    auto* controllerPtr = runtime->participant().CreateCanController("CAN", kNetwork);
+    vehicle_sil::can::SilKitCanPortOptions portOptions;
+    portOptions.bitrate = kind == Bus::Simulator ? kSimulatorBitrate : 0;
+    auto port = std::make_unique<SilKitCanPort>(*controllerPtr, portOptions);
+    runtime->add_communication_ready_handler([p = port.get()] { p->start(); });
+    return {std::move(runtime), std::move(port)};
+}
+
+Traces run_on_silkit(const std::vector<SimDuration>& steps, const EcuFactory& make = make_scenario, SimTime end = kEnd,
+                     Bus kind = Bus::Trivial, const std::optional<ListenOnlySetup>& listening = std::nullopt)
+{
+    const std::size_t listenerCount = listening ? listening->participants.size() : 0;
     InProcessRegistry registry;
     std::vector<std::string> names;
     for (std::size_t i = 0; i < steps.size(); ++i)
@@ -594,6 +787,10 @@ Traces run_on_silkit(const std::vector<SimDuration>& steps, const EcuFactory& ma
     if (kind == Bus::Simulator)
     {
         controllerOptions.required_participants.push_back("NetworkSimulator");
+    }
+    for (std::size_t i = 0; i < listenerCount; ++i)
+    {
+        controllerOptions.required_participants.push_back(listener_name(i));
     }
     SimulationController controller(controllerOptions);
 
@@ -614,13 +811,7 @@ Traces run_on_silkit(const std::vector<SimDuration>& steps, const EcuFactory& ma
     for (std::size_t i = 0; i < steps.size(); ++i)
     {
         auto& node = nodes[i];
-        node.runtime = std::make_unique<ParticipantRuntime>(
-            coordinated_options(names[i], registry.uri, VirtualTimeOptions{steps[i], std::nullopt, end}));
-        auto* controllerPtr = node.runtime->participant().CreateCanController("CAN", kNetwork);
-        vehicle_sil::can::SilKitCanPortOptions portOptions;
-        portOptions.bitrate = kind == Bus::Simulator ? kSimulatorBitrate : 0;
-        node.port = std::make_unique<SilKitCanPort>(*controllerPtr, portOptions);
-        node.runtime->add_communication_ready_handler([p = node.port.get()] { p->start(); });
+        std::tie(node.runtime, node.port) = make_participant_with_port(names[i], registry.uri, steps[i], end, kind);
         node.scenario = make(i);
         node.host = std::make_unique<Host>();
         node.host->add(node.scenario->network, *node.port);
@@ -628,6 +819,24 @@ Traces run_on_silkit(const std::vector<SimDuration>& steps, const EcuFactory& ma
         node.host->set_application([s](SimTime now) { s->run(now); });
         vehicle_sil::can::bind_host(*node.runtime, *node.host);
         runtimes.push_back(node.runtime.get());
+    }
+    EcuRecords records;
+    if (listening)
+    {
+        for (auto& node : nodes)
+        {
+            records.add(node.scenario->network);
+        }
+    }
+    std::vector<SilKitListener> listeners(listenerCount);
+    for (std::size_t i = 0; i < listenerCount; ++i)
+    {
+        const ListenOnlyParticipant& p = listening->participants[i];
+        auto& listener = listeners[i];
+        std::tie(listener.runtime, listener.port) = make_participant_with_port(listener_name(i), registry.uri, p.step, end, kind);
+        listener.stack = std::make_unique<ListenOnlyStack>(p, *listener.port);
+        vehicle_sil::can::bind_host(*listener.runtime, listener.stack->host);
+        runtimes.push_back(listener.runtime.get());
     }
 
     start_together(controller, runtimes, 30s);
@@ -672,6 +881,25 @@ Traces run_on_silkit(const std::vector<SimDuration>& steps, const EcuFactory& ma
         node.port->close();
         check_network(node.scenario->network);
         traces.push_back(node.scenario->trace());
+        if (listening)
+        {
+            records.append(traces.size() - 1, traces.back());
+            traces.back().push_back("PORT rx " + std::to_string(stats.received) + " tx " + std::to_string(stats.sent) + " ack " +
+                                    std::to_string(stats.tx_transmitted) + " cancel " + std::to_string(stats.tx_canceled) +
+                                    " full " + std::to_string(stats.tx_queue_full));
+        }
+    }
+    for (std::size_t i = 0; i < listenerCount; ++i)
+    {
+        const auto stats = listeners[i].port->statistics();
+        listeners[i].port->close();
+        if (stats.sent != 0 || stats.receive_overflows != 0 || stats.receive_rejected != 0)
+        {
+            throw std::runtime_error(listener_name(i) + ": its port sent " + std::to_string(stats.sent) + " frames, dropped " +
+                                     std::to_string(stats.receive_overflows + stats.receive_rejected) +
+                                     " received frames; a listen-only participant sends none and drops none");
+        }
+        listeners[i].stack->check();
     }
     return traces;
 }
@@ -1343,4 +1571,102 @@ TEST_CASE(j1939_on_virtual_time_receives_a_bam_from_a_participant_without_time_s
     lateStart = std::thread([&] { late->start(30s); });
     run.send_bam_packets();
     run.check_received();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Participants that only listen (a raw CAN channel; a J1939 network without a node) change
+// nothing for the others: what every ECU receives (with times), what it hands to its port and
+// its transmit acknowledgements are the same with and without them, on the virtual bus (without
+// and with timing), on SIL Kit's trivial simulation and on the simple CAN network simulator,
+// whatever their step sizes. They send no frame: no claim, no response, no acknowledgement.
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+/// The ECUs of a run and how to compare their traces.
+struct EcuSetup
+{
+    std::vector<SimDuration> steps;
+    EcuFactory make;
+    SimTime end;
+    Bus bus = Bus::Trivial;
+    /// Sort same-time frames of different senders with the same source address (canonical()):
+    /// SIL Kit does not fix their order, with or without listeners.
+    bool canonical_order = false;
+};
+
+void check_listen_only_participants_change_nothing(const EcuSetup& ecus)
+{
+    const auto prepare = [&ecus](Traces traces) { return ecus.canonical_order ? canonical(std::move(traces)) : traces; };
+    const std::vector<ListenOnlySetup> setups{
+        {{{Listening::RawCan, 10ms}}},
+        {{{Listening::J1939WithoutNode, 10ms}}},
+        {{{Listening::RawCan, 1ms}, {Listening::J1939WithoutNode, 7ms}}},
+        {{{Listening::J1939WithoutNode, 50ms}, {Listening::RawCan, 3ms}}},
+    };
+    const ListenOnlySetup none;
+    const Traces local = prepare(run_on_virtual_bus(ecus.steps, ecus.make, ecus.end, ecus.bus, none));
+    for (const auto& trace : local)
+    {
+        CHECK(trace.size() > 10u);
+    }
+    CHECK(count_containing(local, "TX ") > 0u);
+    const Traces silkit = prepare(run_on_silkit(ecus.steps, ecus.make, ecus.end, ecus.bus, none));
+    CHECK(count_containing(silkit, "EV ") > 0u); // transmit acknowledgements are compared too
+    for (const auto& setup : setups)
+    {
+        const Traces onLocal = prepare(run_on_virtual_bus(ecus.steps, ecus.make, ecus.end, ecus.bus, setup));
+        if (onLocal != local)
+        {
+            print_first_difference(local, onLocal);
+        }
+        CHECK(onLocal == local);
+        const Traces onSilkit = prepare(run_on_silkit(ecus.steps, ecus.make, ecus.end, ecus.bus, setup));
+        if (onSilkit != silkit)
+        {
+            print_first_difference(silkit, onSilkit);
+        }
+        CHECK(onSilkit == silkit);
+    }
+}
+
+std::unique_ptr<Ecu> make_claim_scenario(std::size_t i) { return std::make_unique<ClaimScenario>(i); }
+
+} // namespace
+
+TEST_CASE(listen_only_participants_change_nothing_for_requests_and_acknowledgements)
+{
+    check_listen_only_participants_change_nothing({.steps = {1ms, 10ms, 5ms}, .make = make_scenario, .end = kEnd});
+}
+
+TEST_CASE(listen_only_participants_change_nothing_for_address_claims)
+{
+    check_listen_only_participants_change_nothing(
+        {.steps = {10ms, 1ms, 7ms}, .make = make_claim_scenario, .end = SimTime{} + 600ms, .canonical_order = true});
+}
+
+TEST_CASE(listen_only_participants_change_nothing_for_transport_transfers)
+{
+    check_listen_only_participants_change_nothing({.steps = {7ms, 3ms, 10ms}, .make = TransportScenario::make, .end = SimTime{} + 2000ms});
+}
+
+TEST_CASE(listen_only_participants_change_nothing_on_the_simulator_for_requests_and_acknowledgements)
+{
+    check_listen_only_participants_change_nothing(
+        {.steps = {1ms, 10ms, 5ms}, .make = make_scenario, .end = kEnd, .bus = Bus::Simulator});
+}
+
+TEST_CASE(listen_only_participants_change_nothing_on_the_simulator_for_address_claims)
+{
+    check_listen_only_participants_change_nothing({.steps = {10ms, 1ms, 7ms},
+                                                   .make = make_claim_scenario,
+                                                   .end = SimTime{} + 600ms,
+                                                   .bus = Bus::Simulator,
+                                                   .canonical_order = true});
+}
+
+TEST_CASE(listen_only_participants_change_nothing_on_the_simulator_for_transport_transfers)
+{
+    check_listen_only_participants_change_nothing(
+        {.steps = {10ms, 3ms, 7ms}, .make = TransportScenario::make, .end = SimTime{} + 2000ms, .bus = Bus::Simulator});
 }

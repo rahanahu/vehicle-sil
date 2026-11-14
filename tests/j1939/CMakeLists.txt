@@ -131,5 +131,5 @@ if(TARGET vehicle_sil_can_netsim)
   vehicle_sil_add_harness_tests(vehicle_sil_j1939_silkit_tests
     PREFIX j1939_silkit LABELS unit j1939 TIMEOUT 180
     SOURCES test_j1939_silkit.cpp
-    LINK vehicle_sil::j1939 vehicle_sil::can_silkit vehicle_sil::can_netsim)
+    LINK vehicle_sil::j1939 vehicle_sil::can_silkit vehicle_sil::can_netsim vehicle_sil::testkit)
 endif()
