@@ -45,7 +45,7 @@ steps:
     within_ms: 100
 ```
 
-- 手順は上から順に進みます。1 つの手順に、動作（`set`、`ramp`、`wait_until`、`expect`）を 1 つと、時刻を書きます。
+- 手順は上から順に進みます。1 つの手順に、動作（`set`、`ramp`、`wave`、`wait_until`、`expect`）を 1 つと、時刻を書きます。
 - 時刻は `at_ms`（仮想時刻）か `after_ms`（前の手順が終わった時刻から）です。どちらもなければ `after_ms: 0` です。
 - 条件は比較だけです（`ge`、`le`、`near` と `tolerance` など）。キーと条件の一覧は [scenario.md](../scenario.md) の「ファイルの形式」です。
 
@@ -55,14 +55,39 @@ steps:
 |---|---|---|
 | ある時刻に値を入れる | `set` | 8〜9 |
 | 時間をかけて値を動かす（integer と real だけ） | `ramp`（`to`、`over_ms`。`from` は省ける） | 17 |
+| 正弦、矩形波、パルス、乱数などの波形で値を動かす | `wave`（下の「波形で動かす」） | — |
 | 試験の前提がそろうまで待ち、そこから先の時刻を決める | `wait_until` と `timeout_ms`（必須） | 10〜11 |
 | その時刻に成り立つ | `expect` だけ | — |
 | 決めた時間のうちに 1 度でも成り立つ（応答の遅れの上限） | `expect` と `within_ms` | 15〜16、18〜19 |
 | 決めた時間のあいだずっと成り立つ | `expect` と `hold_for_ms` | 12〜14 |
 
 - `wait_until` と、`within_ms` つきの `expect` は、どちらも成り立つまで待ちます。違いは失敗の扱いです。`wait_until` の時間切れは `scenario-timeout`、`expect` が成り立たないのは `scenario-failed` です。前提の待ちには `wait_until`、試験したい応答には `expect` を使うと、結果からどちらで落ちたかがわかります。
-- `set` と `ramp` の値は、変数の範囲（`min`、`max`）の中にします。外れていれば照合の誤りです。
+- `set`、`ramp`、`wave` の値は、変数の範囲（`min`、`max`）の中にします。文面からわかる分は、外れていれば照合の誤りです。
 - 1 つでも失敗すると、シナリオはそこで終わります。後ろの手順は回りません。
+
+### 波形で動かす
+
+[examples/ecu_main/scenarios/throttle_wave.yaml](../../examples/ecu_main/scenarios/throttle_wave.yaml) の 13〜22 行です。
+スロットルを正弦で揺らし、回転数が元に戻ることを確かめます。次に、100 ms だけ全開にして、回転数が上がって戻ることを確かめます。
+
+```yaml
+  # 5 % up and down around the 50 % it has, ten times a second, for 200 ms. The engine takes its
+  # inputs every 10 ms, so it gets 10 values per period. At the end the throttle is at 50 % again.
+  - wave: { Engine.engine.throttle: { sine: { amplitude: 5, period_ms: 100 }, for_ms: 200 } }
+  - expect: { Engine.engine.speed: { near: 1800, tolerance: 100 } }
+    hold_for_ms: 50
+  # Full throttle for 100 ms, then back to the 50 %: the speed has risen, and comes back.
+  - wave: { Engine.engine.throttle: { pulse: { value: 100, width_ms: 100 } } }
+  - expect: { Engine.engine.speed: { ge: 2200 } }
+  - expect: { Engine.engine.speed: { near: 1800, tolerance: 50 } }
+    within_ms: 200
+```
+
+- 波形は `sine`、`triangle`、`sawtooth`、`square`、`pulse`、`noise`、`chirp`、`lag`、`chatter`、`points` です。書くものと使える型は [scenario.md](../scenario.md) の「波形で動かす（`wave`）」です。
+- `around` を省くと、いまの値を中心に動かし、終わると元の値に戻します。上の `sine` は 50 % の周り、`pulse` の後は 50 % です（`pulse` は、いつも始まる時点の値に戻ります。`around` は書けません）。
+- `wave` は、終わるまで次の手順に進みません。波形を掛けた結果は、`wave` の後の手順で確かめます。
+- ECU のステップより細かい波形（周期がステップ幅の 2 倍より短い、パルスがステップ幅より短い、など）は、照合が警告を出し、ECU に実際に見える形を言います。わかっていて流すときは、その手順に `undersampled: ok` を書きます。
+- `noise` には `seed` が要ります。同じ `seed` なら毎回同じ値なので、落ちた実行をそのまま再現できます。
 
 ## つまずく所
 
@@ -304,7 +329,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/engine_disconnect.ya
 - 経過を 1 行ずつ読む道具は、`--json` の代わりに `--events` を付けます。手順が始まったときと決まったときに、事象 `scenario_step` が出ます。
 - シナリオの判定は仮想時刻だけで決まり、実時間の待ちはありません。ステップの中で止まった ECU がいると、いつまでも終わらないので、CI では `--timeout-ms` で実時間の上限を付けます。
 - ECU ごとの出力を残すときは `--log-dir` を付けます。警告も失敗にするときは `--strict` です。
-- 版の違うランチャーを使うときは、`vehicle_sil_launch version --json` の `features` に `scenario` があるかを確かめます。
+- 版の違うランチャーを使うときは、`vehicle_sil_launch version --json` の `features` に `scenario` があるかを確かめます（手順 `wave` は `scenario-wave`）。
 
 ## 次に読むもの
 
