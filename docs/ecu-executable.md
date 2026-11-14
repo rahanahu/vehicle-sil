@@ -19,7 +19,7 @@ int main(int argc, char** argv)
 
 - `ecu_main<App>(argc, argv, EcuMainOptions, args...)` は、ECU に `App{ecu, args...}` を持たせて（`Ecu::emplace()`）、引数のとおりに動かします。`args` は `App` のコンストラクターへそのまま渡します（1 回だけ作るので、ムーブしかできない値も渡せます）。
 - `ecu_main(argc, argv, EcuMainOptions, std::function<void(Ecu&)>)` は、クラスの代わりに関数で ECU を組み立てます。関数は 1 回だけ、何かを動かす前に呼ばれます。
-- `EcuMainOptions`: `name`（ECU の名前。SIL Kit の participant 名で、`--describe` の `name`）、`step`（ステップ幅。0 より大きいこと）。
+- `EcuMainOptions`: `name`（ECU の名前。SIL Kit の participant 名で、`--describe` の `name`）、`step`（ステップ幅。0 より大きいこと）、`last_word_wait`（`--registry-uri` で終わるときに、取り消された書き込みなどを運ぶ最後の知らせへのランチャーの返事を待つ、いちばん長い時間。既定 500 ms、0 で待たない。返事はふつうすぐ来るので、変える必要があるのは、返事に 500 ms 以上かかるほど遅い機械だけです。引数にはありません）。
 - ライブラリは `vehicle_sil::simulation` です。ヘッダーは SIL Kit のヘッダーを含みません。
 
 ### 引数

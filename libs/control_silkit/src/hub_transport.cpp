@@ -193,7 +193,8 @@ struct HubTransport::State
 
     /// Tells the agent `session` that its last word has arrived: its transport waits for this
     /// before its participant is destroyed (which would drop a last word not yet written to the
-    /// socket). After the connection was ended, so that the agent finds everything settled.
+    /// socket). After the connection was ended, so that the agent finds everything settled (the
+    /// order does not rely on when SIL Kit writes what is published from one of its handlers).
     /// Also for a session that has ended already or was never connected: nothing waits here for
     /// that agent, and it need not wait either. An agent that does not know the answer ignores
     /// it. On a receive handler (handler_mutex held), as a probe.
@@ -205,8 +206,10 @@ struct HubTransport::State
             return;
         }
         wire::encode_session(wire::Kind::LastWordReceived, session, sender->bytes);
-        sender->commands->Publish(detail::span_of(sender->bytes));
+        // Counted first: whoever receives the answer may look at the count at once (this does
+        // not rely on when SIL Kit writes what is published from one of its handlers).
         n_last_words.fetch_add(1, std::memory_order_relaxed);
+        sender->commands->Publish(detail::span_of(sender->bytes));
     }
 
     void on_hello(const pubsub::DataMessageEvent& event)

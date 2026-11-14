@@ -864,6 +864,7 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
             {
                 control_silkit::AgentTransportOptions transport;
                 transport.step = options.step;
+                transport.last_word_wait = options.last_word_wait;
                 control.emplace(*agent, peer.runtime(), transport);
             }
         }

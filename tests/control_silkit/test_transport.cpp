@@ -22,6 +22,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1292,6 +1293,9 @@ struct RawAgent
     std::atomic<bool> answers{false};
     std::atomic<int> probes{0};
     std::atomic<int> last_word_answers{0}; ///< received for its session; it takes no other notice of them
+    /// Called for each of them before it is counted, on the participant's SIL Kit thread (set
+    /// before the first can come): what a test wants to see at the moment the answer arrives.
+    std::function<void()> on_last_word_answer;
     std::unique_ptr<SilKit::IParticipant> participant;
     pubsub::IDataPublisher* hello_out = nullptr;
     pubsub::IDataPublisher* step_out = nullptr;
@@ -1322,6 +1326,10 @@ struct RawAgent
                                               }
                                               if (to && to->kind == wire::Kind::LastWordReceived && to->session == session)
                                               {
+                                                  if (on_last_word_answer)
+                                                  {
+                                                      on_last_word_answer();
+                                                  }
                                                   ++last_word_answers;
                                               }
                                           });
@@ -1777,6 +1785,14 @@ TEST_CASE(a_last_word_is_answered_also_for_a_session_that_has_ended_or_was_never
     HubSide side(registry.uri, {"Unused"});
     RawAgent agent("Old", registry.uri, 55);
     agent.answers.store(true);
+    // What the hub's side shows at the moment the answer arrives (in the agent's receive handler:
+    // an AgentTransport's destructor returns from there on): the connection has ended by then.
+    std::atomic<int> ended_when_answered{0};
+    std::atomic<int> connected_when_answered{0};
+    agent.on_last_word_answer = [&] {
+        ended_when_answered += side.transport->links().at(0).state == LinkState::Ended ? 1 : 0;
+        connected_when_answered += side.hub.peers().at(0).connected ? 1 : 0;
+    };
     agent.hello(3);
     side.wait_ready({"Old"});
     const auto last_word = [](std::uint64_t session) {
@@ -1788,7 +1804,9 @@ TEST_CASE(a_last_word_is_answered_also_for_a_session_that_has_ended_or_was_never
     };
     agent.step(last_word(55));
     CHECK(eventually([&] { return agent.last_word_answers.load() == 1; }, 30s));
-    // Answered after the connection was ended.
+    // Answered after the connection was ended, not before.
+    CHECK_EQ(ended_when_answered.load(), 1);
+    CHECK_EQ(connected_when_answered.load(), 0);
     CHECK(side.transport->links().at(0).state == LinkState::Ended);
     CHECK(!side.hub.peers().at(0).connected);
     CHECK_EQ(side.transport->stats().last_words, std::uint64_t{1});

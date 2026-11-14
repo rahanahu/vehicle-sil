@@ -3197,8 +3197,10 @@ void paused_failures(const Options& o)
         const fs::path dir = one_ecu(o, "stop_at_ms: 100\nstart_timeout_ms: 1000\n");
         Live live(o, dir, {"run", "--events", "--stdin-commands", "--start-paused", "sim.yaml"});
         // The event comes once the simulation stands still: the launcher's count of that time has begun.
+        // A little longer than the 2000 ms asked for below all the same (a sleep that returns a moment
+        // early, a launcher that gave up waiting for the standstill before it wrote the event).
         live.wait_for({"\"event\":\"time\"", "\"paused\":true,"});
-        std::this_thread::sleep_for(2000ms);
+        std::this_thread::sleep_for(2200ms);
         live.write("{\"command\":\"resume\"}\n");
         const auto [status, lines] = live.finish();
         require(status && status->code == 0 && contains(lines.back(), "\"simulation\":\"reached_stop_at\""),
