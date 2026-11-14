@@ -88,6 +88,8 @@ TEST_CASE(full_description)
     d.networks.push_back({"CAN2", NetworkUse::Raw, {}});
     d.networks.push_back({"LIN1", NetworkUse::LinMaster, {}});
     d.networks.push_back({"LIN2", NetworkUse::LinSlave, {}});
+    d.networks.push_back({"ETH1", NetworkUse::Ethernet, {}, vehicle_sil::eth::MacAddress{{0x02, 0x00, 0x00, 0xAB, 0xCD, 0x01}}});
+    d.networks.push_back({"ETH2", NetworkUse::Ethernet, {}});
     // A variable every ECU has ("builtin": true) and the ECU's own ("builtin": false).
     d.variables.push_back(variable("ecu.connected", control::ValueType::Bool));
     control::VariableInfo throttle = variable("engine.throttle");
@@ -136,25 +138,43 @@ TEST_CASE(full_description)
           "j1939_name": "0x80000000FE000001",
           "arbitrary_address_capable": true
         }
-      ]
+      ],
+      "mac": null
     },
     {
       "name": "CAN2",
       "kind": "can",
       "use": "raw",
-      "nodes": []
+      "nodes": [],
+      "mac": null
     },
     {
       "name": "LIN1",
       "kind": "lin",
       "use": "lin_master",
-      "nodes": []
+      "nodes": [],
+      "mac": null
     },
     {
       "name": "LIN2",
       "kind": "lin",
       "use": "lin_slave",
-      "nodes": []
+      "nodes": [],
+      "mac": null
+    },
+    {
+      "name": "ETH1",
+      "kind": "ethernet",
+      "use": "ethernet",
+      "nodes": [],
+      "mac": "02:00:00:ab:cd:01"
+    },
+    {
+      "name": "ETH2",
+      "kind": "ethernet",
+      "use": "ethernet",
+      "nodes": [],
+      "mac": null
     }
   ],
   "variables": [
@@ -377,6 +397,7 @@ TEST_CASE(kind_and_use_names)
 {
     CHECK(std::string(vehicle_sil::to_string(NetworkKind::Can)) == "can");
     CHECK(std::string(vehicle_sil::to_string(NetworkKind::Lin)) == "lin");
+    CHECK(std::string(vehicle_sil::to_string(NetworkKind::Ethernet)) == "ethernet");
     CHECK(std::string(vehicle_sil::to_string(NetworkUse::Raw)) == "raw");
     CHECK(std::string(vehicle_sil::to_string(NetworkUse::J1939)) == "j1939");
     CHECK(std::string(vehicle_sil::to_string(NetworkUse::LinMaster)) == "lin_master");
@@ -385,6 +406,8 @@ TEST_CASE(kind_and_use_names)
     CHECK(vehicle_sil::kind_of(NetworkUse::J1939) == NetworkKind::Can);
     CHECK(vehicle_sil::kind_of(NetworkUse::LinMaster) == NetworkKind::Lin);
     CHECK(vehicle_sil::kind_of(NetworkUse::LinSlave) == NetworkKind::Lin);
+    CHECK(std::string(vehicle_sil::to_string(NetworkUse::Ethernet)) == "ethernet");
+    CHECK(vehicle_sil::kind_of(NetworkUse::Ethernet) == NetworkKind::Ethernet);
 }
 
 TEST_CASE(every_kind_and_use_reads_back_from_its_name)

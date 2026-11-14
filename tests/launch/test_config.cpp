@@ -232,14 +232,14 @@ TEST_CASE(missing_keys_are_errors)
     check_text(read("stop_at_ms: 1\n"),
                "E 0 missing-key: the file has no vehicle_sil_simulation (the format version): add "
                "vehicle_sil_simulation: 1\n"
-               "E 0 missing-key: the file has no networks: add networks, a list of the networks with name and kind (can "
-               "or lin)\n"
+               "E 0 missing-key: the file has no networks: add networks, a list of the networks with name and kind (can, "
+               "lin or ethernet)\n"
                "E 0 missing-key: the file has no participants: add participants, a list of the participants with name "
                "and command\n");
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - kind: can\n  - name: N\nparticipants:\n  - command: [a]\n  - "
                     "name: B\n"),
                "E 3 missing-key: networks[0] has no name: add name: <the network's name>\n"
-               "E 4 missing-key: network 'N': no kind: add kind: can or kind: lin\n"
+               "E 4 missing-key: network 'N': no kind: add kind: can, kind: lin or kind: ethernet\n"
                "E 6 missing-key: participants[0] has no name: add name: <the participant's name> (an ecu_main executable "
                "gets it with --name)\n"
                "E 7 missing-key: participant 'B': no command: add command: [<path of the executable>]\n");
@@ -251,7 +251,7 @@ TEST_CASE(values_of_the_wrong_type_or_range_are_errors)
                "E 2 value: stop_at_ms is 0, but it must be from 1 to 1000000000000 (milliseconds of virtual time; leave "
                "stop_at_ms out to run until stopped)\n"
                "E 3 value: start_timeout_ms must be a whole number (milliseconds to wait for the participants), not '1.5'\n"
-               "E 4 value: networks must be a list of networks (\"- name: <name>\" and \"kind: can\" or \"kind: lin\"), "
+               "E 4 value: networks must be a list of networks (\"- name: <name>\" and \"kind: can\", \"kind: lin\" or \"kind: ethernet\"), "
                "not a mapping\n"
                "E 5 value: participants must be a list of participants (\"- name: <name>\" and \"command: "
                "[<executable>]\"), not 'x'\n");
@@ -260,12 +260,12 @@ TEST_CASE(values_of_the_wrong_type_or_range_are_errors)
                "executable reports)\n"
                "E 7 value: participant 'A': describe must be true or false, not 'yes'\n"
                "E 8 value: participant 'A': required must be true or false, not empty\n");
-    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: A\n    kind: CAN\n  - name: B\n    kind: ethernet\n  - "
+    check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: A\n    kind: CAN\n  - name: B\n    kind: flexray\n  - "
                     "name: [x]\n    kind: can\n  - just text\nparticipants: []\n"),
                "E 4 value: network 'A': kind is 'CAN': write can (lower case)\n"
-               "E 6 value: network 'B': kind is 'ethernet': write can or lin (the kinds of network there are)\n"
+               "E 6 value: network 'B': kind is 'flexray': write can, lin or ethernet (the kinds of network there are)\n"
                "E 7 value: networks[2]: name must be the network's name, not a list\n"
-               "E 9 value: networks[3] must be a network with name and kind (can or lin), not 'just text'\n"
+               "E 9 value: networks[3] must be a network with name and kind (can, lin or ethernet), not 'just text'\n"
                "E 10 value: participants is empty: list the participants of the simulation\n");
 }
 

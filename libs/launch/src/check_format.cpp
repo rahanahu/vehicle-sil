@@ -80,6 +80,10 @@ std::string network_cell(const NetworkDescription& network)
             out += " " + (node.address == j1939::kNullAddress ? std::string("any") : hex2(node.address));
         }
     }
+    if (network.mac)
+    {
+        out += " " + network.mac->to_string();
+    }
     return out + ")";
 }
 
@@ -451,6 +455,7 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
                         w.end_object();
                     }
                     w.end_array();
+                    optional_text("mac", network.mac ? network.mac->to_string() : "");
                     w.end_object();
                 }
                 w.end_array();

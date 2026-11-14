@@ -11,6 +11,8 @@
 #include "vehicle_sil/can/tap_port.hpp"
 #include "vehicle_sil/can/virtual_can_bus.hpp"
 #include "vehicle_sil/ecu/ecu.hpp"
+#include "vehicle_sil/eth/channel.hpp"
+#include "vehicle_sil/eth/virtual_ethernet_bus.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/lin/lin_master.hpp"
 #include "vehicle_sil/lin/lin_slave.hpp"
@@ -18,6 +20,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -59,6 +62,13 @@ namespace vehicle_sil {
 /// LIN bus up (add observers there), lin_master() and lin_slave() an ECU's node.
 ///
 /// Look them up by the ECU's name and the network's: network() for the stack, endpoint() for
+/// Ethernet: Ecu::ethernet(network) attaches an endpoint to the virtual Ethernet network
+/// (eth::VirtualEthernetBus, a hub) named `network`, made when an ECU first names it with the
+/// default options, and makes the eth::Channel on it. An Ethernet network cannot have the name
+/// of a CAN or LIN bus (std::invalid_argument in either order). ethernet() looks an ECU's
+/// channel up, ethernet_bus() the network (attach() an endpoint of a test to it before the first
+/// run to send frames to the ECUs or to see theirs).
+///
 /// fault injection and outages (VirtualCanBus::Endpoint), tap() to listen to its raw frames,
 /// host() for the ECU's host. The one-name forms are for an ECU with exactly one network (as
 /// add_j1939() makes; also an ECU with one named network). These lookups are for the J1939
@@ -68,16 +78,17 @@ namespace vehicle_sil {
 /// network uses (injector()).
 ///
 /// Set up (add_ecu(), add_j1939(), on_step(), and the ECUs' j1939(), can(), lin_master(),
-/// lin_slave(), input(), output(), set_agent_options(), on_step(), every(), at() and emplace())
+/// lin_slave(), ethernet(), input(), output(), set_agent_options(), on_step(), every(), at() and emplace())
 /// before the first run; afterwards they throw std::logic_error. Times: every host starts at 0;
 /// run_until(t) runs every step that starts before t. A frame injected with time t reaches a
 /// network in its first step after t; t must not be earlier than now(), the end of the last run
 /// (the bus refuses the past: std::logic_error).
 ///
-/// One step of an ECU at `now`: its networks and raw channels receive and handle what arrived (in
+/// One step of an ECU at `now`: its networks, raw channels and Ethernet channels receive and handle what arrived (in
 /// the order added), then the writes to its variables whose time has come take effect, then
 /// on_step(), every() and at() (in the order added), then its LIN nodes' step(now) (in the order
-/// added), then its variables are sampled, then the networks and raw channels send. The control
+/// added), then its variables are sampled, then the networks, raw channels and Ethernet channels
+/// send. The control
 /// agent of an ECU (Ecu::agent()) runs in the calling thread's steps, with no wake-up and no
 /// monitoring outputs (those are Peer's). A frame one network
 /// of the ECU receives can be sent on to another network (or raw channel) of it in the same
@@ -87,9 +98,9 @@ namespace vehicle_sil {
 /// the LIN nodes, the hosts and the objects the ECUs emplace(). It destroys the ECUs last added
 /// first, each with its host first, then its LIN nodes (the one added last first), then its
 /// networks (the one added last first; each network's parts first, then its tap), then its raw
-/// channels (the one added last first), then its control agent, then the objects it emplace()d
-/// (the one emplaced last first); then the driver, and last the LIN buses and the CAN buses with
-/// the endpoints. References it returns are valid as long as the LocalBench. Observers and tap
+/// channels (the one added last first), then its Ethernet channels (the one added last first),
+/// then its control agent, then the objects it emplace()d (the one emplaced last first); then the
+/// driver, and last the Ethernet networks, the LIN buses and the CAN buses with the endpoints. References it returns are valid as long as the LocalBench. Observers and tap
 /// listeners may outlive it (they are detached). A transport of an ECU's agent
 /// (control_silkit::AgentTransport, for an ECU on SIL Kit) must be destroyed before the LocalBench, so the results of the
 /// writes still waiting then reach nobody.
@@ -141,6 +152,12 @@ public:
     /// The LIN slave of the ECU `ecu` on the LIN bus `network` (Ecu::lin_slave(network)).
     /// std::out_of_range for an unknown ECU or if it has no LIN slave there.
     [[nodiscard]] lin::LinSlave& lin_slave(std::string_view ecu, std::string_view network) const;
+    /// The Ethernet channel of the ECU `ecu` on the Ethernet network `network`
+    /// (Ecu::ethernet(network)). std::out_of_range for an unknown ECU or if it has none there.
+    [[nodiscard]] eth::Channel& ethernet(std::string_view ecu, std::string_view network) const;
+    /// The Ethernet network `network` (made by an ECU's ethernet()). std::out_of_range for an
+    /// unknown name (the message lists the Ethernet networks).
+    [[nodiscard]] eth::VirtualEthernetBus& ethernet_bus(std::string_view network) const;
     /// The LIN bus `network` (made by an ECU's lin_master() or lin_slave()). std::out_of_range
     /// for an unknown name (the message lists the LIN buses).
     [[nodiscard]] lin::VirtualLinBus& lin_bus(std::string_view network) const;
@@ -180,6 +197,8 @@ private:
     struct RawCan;
     struct NamedBus;
     struct NamedLinBus;
+    struct NamedEthernetBus;
+    struct EthernetChannel;
     [[nodiscard]] Site& site(std::string_view name) const;
     /// The names of the buses, quoted, for messages.
     [[nodiscard]] std::string bus_list() const;
@@ -189,8 +208,17 @@ private:
     [[nodiscard]] NamedLinBus* find_lin_bus(std::string_view network) const;
     /// The LIN bus named `network`, made now if there is none.
     lin::VirtualLinBus& use_lin_bus(const std::string& network);
-    /// std::invalid_argument for the CAN set-up `what` (naming the ECU `ecu`) if `network` is a
-    /// LIN bus, and for the LIN set-up `what` if it is a CAN bus.
+    /// The Ethernet network named `network`; nullptr if there is none.
+    [[nodiscard]] NamedEthernetBus* find_ethernet_bus(std::string_view network) const;
+    /// The Ethernet network named `network`, made now if there is none.
+    eth::VirtualEthernetBus& use_ethernet_bus(const std::string& network);
+    /// The kind of the bus named `network` (a CAN bus that has a name, a LIN bus, an Ethernet
+    /// network); empty if there is none.
+    [[nodiscard]] std::optional<NetworkKind> bus_kind(std::string_view network) const;
+    /// std::invalid_argument for the set-up `what` (naming the ECU `ecu`) of a network of the
+    /// kind `wanted` if `network` is a bus of another kind.
+    void require_name(std::string_view network, std::string_view ecu, std::string_view what, NetworkKind wanted) const;
+    /// require_name() for CAN and for LIN.
     void require_can_name(std::string_view network, std::string_view ecu, std::string_view what) const;
     void require_lin_name(std::string_view network, std::string_view ecu, std::string_view what) const;
     /// The bus an ECU's j1939(network) or can(network) uses: the bus of that name, else the bus
@@ -215,6 +243,8 @@ private:
     std::vector<std::unique_ptr<NamedBus>> buses_;
     /// The LIN buses, in the order made; destroyed after the ECUs.
     std::vector<std::unique_ptr<NamedLinBus>> lin_buses_;
+    /// The Ethernet networks, in the order made; destroyed after the ECUs.
+    std::vector<std::unique_ptr<NamedEthernetBus>> ethernet_buses_;
     /// The ECUs added without a bus name (add_j1939()), in the order added.
     std::vector<std::string> unnamed_ecus_;
     std::vector<std::unique_ptr<Site>> sites_;

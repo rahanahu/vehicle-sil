@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -401,6 +402,16 @@ TEST_CASE(channel_counts_the_ports_events)
     CHECK_EQ(channel.statistics().transmit_failed, 1u);
     CHECK_EQ(channel.statistics().port_receive_overflows, 4u);
     CHECK_EQ(channel.statistics().port_event_overflows, 3u);
+}
+
+TEST_CASE(channel_says_how_large_the_inbox_of_its_port_must_be)
+{
+    // One step's frames and the frames that carry the time of the next step.
+    CHECK_EQ(Channel::port_inbox_capacity({}), std::size_t{2048});
+    CHECK_EQ(Channel::port_inbox_capacity({.receive_capacity = 8}), std::size_t{16});
+    constexpr std::size_t kMax = std::numeric_limits<std::size_t>::max();
+    CHECK_EQ(Channel::port_inbox_capacity({.receive_capacity = kMax / 2}), kMax - 1);
+    CHECK_EQ(Channel::port_inbox_capacity({.receive_capacity = kMax / 2 + 1}), kMax);
 }
 
 TEST_CASE(channel_refuses_options_it_cannot_work_with)

@@ -14,6 +14,7 @@
 #include "vehicle_sil/testkit/recorders.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -430,6 +431,10 @@ TEST_CASE(peer_setup_errors)
     CHECK(realTime.real_time_clock() != nullptr);
     CHECK(throws<std::logic_error>([&] { static_cast<void>(realTime.lin_slave("LIN1")); }));
     CHECK(throws<std::logic_error>([&] { static_cast<void>(realTime.lin_master("LIN1", {})); }));
+    CHECK(throws_with<std::logic_error>(
+        [&] { static_cast<void>(realTime.ethernet("ETH")); },
+        "vehicle_sil::Peer: ethernet(\"ETH\") needs virtual time: a peer in real time has no Ethernet. Give the peer "
+        "a step (PeerOptions::virtual_time)"));
 }
 
 namespace {
@@ -749,6 +754,12 @@ TEST_CASE(peer_starts_its_controllers_also_when_the_application_sets_a_communica
         const std::uint8_t data[2]{1, 2};
         master.set_frame_data(kCommandId, data);
     });
+    auto& ethernet = body.ethernet("BACKBONE");
+    body.every(100ms, [&](SimTime) {
+        std::array<std::uint8_t, 60> frame{};
+        frame.fill(0xFF);
+        static_cast<void>(ethernet.send(frame));
+    });
     body.runtime().set_communication_ready_handler([&] { ++applicationCalls; });
 
     start_together(controller, {&body});
@@ -760,6 +771,11 @@ TEST_CASE(peer_starts_its_controllers_also_when_the_application_sets_a_communica
     const bool sent = std::any_of(results.begin(), results.end(),
                                   [](const auto& r) { return r.status == lin::LinResultStatus::Ok; });
     CHECK(sent); // the LIN controller was initialised
+    // The Ethernet controller was activated: SIL Kit transmitted every frame (an inactive
+    // controller fails them).
+    CHECK(ethernet.statistics().frames_sent >= 4u);
+    CHECK_EQ(ethernet.statistics().transmit_failed, std::uint64_t{0});
+    CHECK(ethernet.statistics().transmit_completed >= 4u);
 }
 
 TEST_CASE(peer_reports_a_lin_controller_that_cannot_be_initialised_and_names_the_network)
@@ -988,6 +1004,21 @@ TEST_CASE(peer_refuses_a_controller_name_it_uses)
     ecu.can("D");    // "D.raw"
     CHECK(throws<std::invalid_argument>([&] { ecu.j1939(""); }));
     CHECK(throws<std::invalid_argument>([&] { ecu.can(""); }));
+    // An Ethernet controller is named like its network.
+    static_cast<void>(ecu.ethernet("E"));
+    CHECK(throws_with<std::invalid_argument>([&] { static_cast<void>(ecu.ethernet("B2")); }, // D's controller
+                                             "ethernet(\"B2\"): a CAN controller of this peer is named \"B2\" (the "
+                                             "Ethernet controller is named like its network); rename that controller "
+                                             "(J1939ChannelOptions::controller_name) or the Ethernet network"));
+    named.controller_name = "E";
+    CHECK(throws_with<std::invalid_argument>([&] { peer.j1939("F", named); },
+                                             "the Ethernet controller of the Ethernet network \"E\" has the name \"E\"; "
+                                             "give the CAN controller another name"));
+    static_cast<void>(ecu.ethernet("G.raw"));
+    CHECK(throws_with<std::invalid_argument>([&] { ecu.can("G"); },
+                                             "can(\"G\"): the Ethernet network \"G.raw\" has a controller named "
+                                             "\"G.raw\", the name of this raw channel's controller; rename one of the "
+                                             "networks"));
     CHECK((peer.network_names() == std::vector<std::string>{"B", "D", "A"}));
     CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
     CHECK(!peer.failed());

@@ -114,13 +114,16 @@ struct J1939ChannelOptions
 };
 
 /// One SIL Kit participant and what runs in it: J1939 networks on CAN, LIN masters and slaves,
-/// and the application's work for each step. The peer creates the participant, the
+/// channels of raw Ethernet frames, and the application's work for each step. The peer creates the participant, the
 /// controllers and the ports, steps everything (with SIL Kit's time synchronisation, or in real
 /// time with a RealTimeDriver), initialises the LIN nodes when communication is ready, and tears
 /// it all down in the right order. It is an Ecu: an application written against Ecu& runs on a
 /// peer as it does on the local buses (Ecu::j1939(network) is j1939(network) with default port
 /// options). Ecu::lin_master() and Ecu::lin_slave() make a SIL Kit LIN controller named like
-/// the network, a lin::SilKitLinPort on it and the node (virtual time only).
+/// the network, a lin::SilKitLinPort on it and the node (virtual time only). Ecu::ethernet()
+/// makes a SIL Kit Ethernet controller named like the network, an eth::SilKitEthPort on it and
+/// the eth::Channel (virtual time only); the controller is activated when communication is
+/// ready.
 ///
 ///     vehicle_sil::Peer peer({.participant = "Engine", .registry_uri = uri});
 ///     auto& ecu = peer.j1939("J1939_CAN1").add_node({.address = 0x00, .name = name});
@@ -128,10 +131,11 @@ struct J1939ChannelOptions
 ///     peer.start();
 ///     peer.wait();
 ///
-/// One step at `now`, in this order (as Ecu states): the J1939 networks and the raw CAN channels
-/// (Ecu::can()) receive and handle what arrived (in the order they were added), then the
-/// application (on_step(), every() and at(), in the order added), then the LIN nodes' step(now)
-/// (in the order added), then the J1939 networks and raw channels send (in the same order). The
+/// One step at `now`, in this order (as Ecu states): the J1939 networks, the raw CAN channels
+/// (Ecu::can()) and the Ethernet channels (Ecu::ethernet()) receive and handle what arrived (in
+/// the order they were added), then the application (on_step(), every() and at(), in the order
+/// added), then the LIN nodes' step(now) (in the order added), then the J1939 networks, raw
+/// channels and Ethernet channels send (in the same order). The
 /// ECU's control agent (Ecu::agent()) applies the writes right before the application and
 /// samples right after the LIN stage (before the monitoring of PeerOptions::monitor reads the
 /// networks). In real time, a write queued on the agent wakes the driver (Host::post(), with at
@@ -143,12 +147,13 @@ struct J1939ChannelOptions
 /// initialised (init()) when communication is ready, before the first step.
 ///
 /// Names: a network name is one kind of network (J1939 and raw CAN may share a CAN network; a
-/// LIN network's name is its own), and no two SIL Kit controllers of the peer have one name
+/// LIN network's name and an Ethernet network's name are their own), and no two SIL Kit controllers of the peer have one name
 /// (std::invalid_argument).
 ///
-/// Set up (j1939(), can(), lin_master(), lin_slave(), input(), output(), set_agent_options(),
-/// on_step(), every(), at(), emplace(), and the networks' nodes, handlers, parts, observers and
-/// tap listeners, the LIN nodes' handlers) before start(); the set-up functions throw
+/// Set up (j1939(), can(), lin_master(), lin_slave(), ethernet(), input(), output(),
+/// set_agent_options(), on_step(), every(), at(), emplace(), and the networks' nodes, handlers,
+/// parts, observers and tap listeners, the LIN nodes' and Ethernet channels' handlers) before
+/// start(); the set-up functions throw
 /// std::logic_error afterwards. Nodes may still be added from a step, as Network::add_node()
 /// allows. With monitoring (PeerOptions::monitor), j1939() also throws std::logic_error once the
 /// agent's schema is complete.
@@ -161,7 +166,7 @@ struct J1939ChannelOptions
 /// ports and cancels the writes still waiting on the agent (control::Agent::finish()); the
 /// destructor then destroys the LIN nodes (each before its port), the networks (their parts
 /// first), the taps and the ports (an external port closes in its destructor), the raw CAN
-/// channels and their ports, the host, the participant, the control agent, and last the
+/// channels and their ports, the Ethernet channels and their ports, the host, the participant, the control agent, and last the
 /// emplace()d objects (the one emplaced last first). So the emplace()d objects go after the
 /// participant: their destructors must not use SIL Kit services (the participant, controllers
 /// or Pub/Sub made through runtime()); make an object that does so after the peer instead, so
@@ -189,7 +194,7 @@ public:
     /// wrapped in a TapPort (tap()). std::invalid_argument for an empty name, a name used
     /// before (also a LIN network's), or a controller name (J1939ChannelOptions::controller_name,
     /// else the network name) that a controller of this peer has, also a raw channel's
-    /// "<network>.raw" and a LIN controller's.
+    /// "<network>.raw", a LIN controller's and an Ethernet controller's.
     j1939::Network& j1939(std::string network_name, J1939ChannelOptions options = {});
     /// A J1939 network on a port the caller made (e.g. a Vector XL ExternalPortAdapter with
     /// real_time_clock()), owned by the peer from now on and destroyed before the participant.
@@ -274,6 +279,7 @@ private:
     struct Channel;
     struct RawCan;
     struct LinNode;
+    struct Ethernet;
     j1939::Network& add_j1939(const std::string& network, j1939::NetworkOptions options) override;
     /// Ecu::can(): a raw channel on a SIL Kit CAN controller of its own, named "<network>.raw"
     /// (std::invalid_argument if a controller of this peer has that name).
@@ -283,6 +289,13 @@ private:
     lin::LinMaster& add_lin_master(const std::string& network, lin::LinScheduleTable schedule,
                                    lin::LinMasterOptions options) override;
     lin::LinSlave& add_lin_slave(const std::string& network, lin::LinSlaveOptions options) override;
+    /// Ecu::ethernet(): a SIL Kit Ethernet controller named `network`, its eth::SilKitEthPort and
+    /// the channel (virtual time only; std::logic_error in real time). The options are checked
+    /// before the controller is made (it cannot be removed again).
+    eth::Channel& add_ethernet(const std::string& network, eth::ChannelOptions options) override;
+    /// Checks the name of a new Ethernet network `network`: std::invalid_argument for a name or
+    /// a controller name in use, and what the network check (detail::set_network_check()) refuses.
+    void require_ethernet_name(const std::string& network) const;
     /// Checks the name of a new LIN network `network` for the call `what` (lin_master() or
     /// lin_slave()): std::invalid_argument for a name or a controller name in use, and what the
     /// network check (detail::set_network_check()) refuses.
@@ -296,8 +309,8 @@ private:
     /// that throws.
     LinNode& add_lin_node(const std::string& network, lin::LinRole role);
     /// Checks the name of a new CAN network `network` for the call `what` (j1939 or can):
-    /// std::invalid_argument if it is the name of a LIN network of this peer, and what the
-    /// network check (detail::set_network_check()) refuses.
+    /// std::invalid_argument if it is the name of a network of another kind of this peer, and
+    /// what the network check (detail::set_network_check()) refuses.
     void require_can_name(const std::string& network, const char* what) const;
     void keep(std::shared_ptr<void> object) override;
     void require_not_started(const char* what) const override;
@@ -309,7 +322,8 @@ private:
     /// detail::set_virtual_time_end().
     void set_end(SimTime end);
     /// true if a SIL Kit CAN controller of this peer (a J1939 network's or a raw channel's) has
-    /// the name `controller`. A LIN controller is named like its LIN network (lin_).
+    /// the name `controller`. A LIN controller is named like its LIN network (lin_), an Ethernet
+    /// controller like its Ethernet network (ethernet_).
     [[nodiscard]] bool controller_is_used(const std::string& controller) const;
     void require_virtual_time(const char* what) const;
     Channel& add_channel(std::string name);
@@ -333,10 +347,13 @@ private:
     std::vector<std::unique_ptr<RawCan>> raw_channels_;
     /// The LIN nodes, in the order added.
     std::vector<std::unique_ptr<LinNode>> lin_;
+    /// The Ethernet channels (Ecu::ethernet()), in the order added.
+    std::vector<std::unique_ptr<Ethernet>> ethernet_;
     /// detail::set_network_check(); empty: none.
     std::function<void(const std::string& network, NetworkKind kind, const std::string& call)> network_check_;
     std::vector<std::function<void(SimTime)>> step_functions_;
-    /// Numbers the networks, raw channels and LIN nodes in the order added (describe()).
+    /// Numbers the networks, raw channels, LIN nodes and Ethernet channels in the order added
+    /// (describe()).
     std::size_t added_ = 0;
     /// PeerOptions::monitor: set when the agent's schema is completed (before the first step).
     std::shared_ptr<detail::PeerMonitor> monitor_;

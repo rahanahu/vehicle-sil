@@ -19,9 +19,12 @@ namespace vehicle_sil::eth {
 
 struct VirtualEthernetBusOptions
 {
-    /// Receive inbox of each endpoint, in frames (> 0). Sized for the most frames an endpoint
-    /// can receive in one step of its host. Allocated once per endpoint.
-    std::size_t inbox_capacity = 1024;
+    /// Receive inbox of an endpoint made by attach() without a capacity, in frames (> 0). It
+    /// holds the frames of one step of the endpoint's host and the frames that senders stepped
+    /// earlier have sent with the time of the next one (for a Channel on the endpoint:
+    /// Channel::port_inbox_capacity(); the default fits a Channel with its default
+    /// receive_capacity). Allocated once per endpoint.
+    std::size_t inbox_capacity = 2048;
     /// Frames shorter than this reach the receivers padded with zero bytes to this length, as
     /// SIL Kit's Ethernet controller pads them (0: no padding). At most Frame::kCapacity.
     std::size_t min_frame_bytes = kDefaultMinFrameBytes;
@@ -84,6 +87,9 @@ public:
     /// Creates an endpoint. It lives as long as the bus. It receives only frames sent after it
     /// was attached.
     Endpoint& attach();
+    /// The same, with a receive inbox of `inbox_capacity` frames instead of the options' value.
+    /// std::invalid_argument for 0.
+    Endpoint& attach(std::size_t inbox_capacity);
 
     [[nodiscard]] std::size_t endpoint_count() const noexcept { return endpoints_.size(); }
 

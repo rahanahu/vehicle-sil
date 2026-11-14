@@ -24,8 +24,11 @@ namespace vehicle_sil::eth {
 struct SilKitEthPortOptions
 {
     /// Receive inbox capacity in frames (allocated once, > 0). Sized for the most frames that
-    /// can arrive between two steps of the participant.
-    std::size_t inbox_capacity = 1024;
+    /// can arrive between two steps of the participant: the frames of one step and, from senders
+    /// that ran first, the frames with the time of the next one (for a Channel on the port:
+    /// Channel::port_inbox_capacity(); the default fits a Channel with its default
+    /// receive_capacity).
+    std::size_t inbox_capacity = 2048;
     /// Event queue capacity (> 0): transmit acknowledgements waiting for the next step. SIL Kit
     /// acknowledges every frame, so it must hold at least the frames sent in one step (the
     /// channel's send_capacity); acknowledgements that do not fit are dropped, counted and

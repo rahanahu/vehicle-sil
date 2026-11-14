@@ -74,6 +74,9 @@
 //                of its time (the ECU says in which step it saw each value)
 //   scenario_disconnect  the example scenario that takes the engine off the bus (ecu.connected):
 //                the dashboard sees the speed stop and come back, at the same times at any speed
+//   ethernet     the example of examples/ethernet: two ECU executables on an Ethernet network; the
+//                check shows their MAC addresses, and the example scenario passes with the same
+//                result at any speed (frames, acknowledgements, ecu.connected)
 //   scenario_failures  a wait that times out, a simulation that stops before the scenario is over, an
 //                ECU that fails in the middle, a scenario with errors (nothing is started), the
 //                command line
@@ -3857,6 +3860,36 @@ void scenario_disconnect(const Options& o)
     expect_text(run({"--speed", "4"}, "at four times real time"), fastest, "at a speed");
 }
 
+void ethernet(const Options& o)
+{
+    // examples/ethernet is next to examples/ecu_main in the build tree.
+    const fs::path dir = o.example_dir / ".." / "ethernet";
+    const Captured checked = launch(o, {"check", "simulation.yaml"}, dir);
+    expect_code(checked, 0, "check of the Ethernet example");
+    expect_text(lf(checked.standard_output),
+                "simulation.yaml: 2 participants, 1 network\n"
+                "\n"
+                "participant  step   networks\n"
+                "Sensor       10 ms  ETH (ethernet 02:00:00:00:00:01)\n"
+                "Display      5 ms   ETH (ethernet 02:00:00:00:00:02)\n"
+                "\n"
+                "network  kind      participants\n"
+                "ETH      ethernet  Sensor, Display\n"
+                "\n"
+                "passed: 0 errors, 0 warnings, 0 notes\n",
+                "check of the Ethernet example");
+    const auto run = [&](std::vector<std::string> more, const std::string& what) {
+        std::vector<std::string> args{"run", "simulation.yaml", "--scenario", "scenarios/exchange.yaml", "--json"};
+        args.insert(args.end(), more.begin(), more.end());
+        const Captured r = launch(o, args, dir);
+        expect_code(r, 0, what);
+        return scenario_json(lf(r.standard_output));
+    };
+    const std::string fastest = run({}, "as fast as possible");
+    require(contains(fastest, "\"status\": \"passed\""), "the scenario passes:\n" + fastest);
+    expect_text(run({"--speed", "4"}, "at four times real time"), fastest, "at a speed");
+}
+
 void scenario_failures(const Options& o)
 {
     const std::string head = "vehicle_sil_scenario: 1\nsteps:\n";
@@ -4813,6 +4846,7 @@ int main(int argc, char** argv)
             {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
             {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control},
             {"scenario", scenario}, {"scenario_same", scenario_same}, {"variable_map", variable_map}, {"variants", variants}, {"scenario_disconnect", scenario_disconnect},
+            {"ethernet", ethernet},
             {"scenario_failures", scenario_failures}, {"manual", manual},
             {"manual_late", manual_late}, {"manual_fails", manual_fails}, {"manual_stop", manual_stop},
             {"manual_frozen", manual_frozen}, {"manual_thawed", manual_thawed}, {"manual_again", manual_again},

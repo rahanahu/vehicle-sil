@@ -4,6 +4,7 @@ vehicle-sil 自体を直す人と、イーサネットのフレームを直接�
 
 - `vehicle_sil::eth` は SIL Kit に依存しません。`vehicle_sil::step` と `sim_base` だけをリンクし、`eth.boundary` が SIL Kit のヘッダーを含まないことを確かめます。
 - `vehicle_sil::eth_silkit` は、`vehicle_sil::eth` のポートを SIL Kit の Ethernet のコントローラーの上に作ります（仮想時間だけ）。
+- ECU からは `Ecu::ethernet(network, options)` で使います（`options` は `ChannelOptions`）。`Peer` と `LocalBench` がチャネルとポートを作ります（下の「ECU から使う」）。
 - vehicle-sil はフレームの中身を解釈しません。読むのは宛先と送り元のアドレスだけで、EtherType、VLAN のタグ、payload はバイト列のまま通します。TCP/IP などのスタックは持ちません。
 
 ## 値の型
@@ -60,11 +61,20 @@ SIL Kit では、違う送り手から同じ時刻に届いたフレームの到
 | 値 | 既定 | 意味 |
 |---|---|---|
 | `send_capacity` | 256 | 1 ステップで `send()` が受け取るフレームの数。超えると `SendStatus::QueueFull` |
-| `receive_capacity` | 1024 | 1 ステップで渡すフレームの数。超えた分は捨てて `receive_overflows` に数える。どれが捨てられるかは届いた順で決まるので、SIL Kit では決まらない。あふれは誤りとして扱う |
+| `receive_capacity` | 1024 | 1 ステップで渡すフレームの数（絞り込みを通ったもの）。超えた分は捨てて `receive_overflows` に数える。どれが捨てられるかは届いた順で決まるので、SIL Kit では決まらない。あふれは誤りとして扱う。ポートの受け箱は、これより大きくする（下の「ポートの受け箱の大きさ」） |
 | `max_frame_bytes` | 1522 | 送れるフレームと、渡すフレームの最大の長さ（FCS なし）。`kHeaderBytes` から `Frame::kCapacity`（2048）まで。長い受信フレームは捨てて `frames_invalid` に数える |
 | `accept` | `All` | `All` はネットワークの全部のフレーム（プロミスキャスのキャプチャと同じ見え方）。`Addressed` は `mac` 宛て、ブロードキャスト、`multicast` に挙げたアドレス宛てだけ。外したフレームは `frames_filtered` に数える |
 
-どちらの受け箱も、生成のときに 1 回だけ確保します。ステップの中では確保しません（並べ替えは、受けた順のフレームを動かさずに、添字の配列を並べます。`eth.steps_do_not_allocate` が確かめます）。1 フレームは `Frame::kCapacity` バイトを持つので、既定の大きさでは、チャネル 1 つで約 2.5 MB、仮想ネットワークと SIL Kit のポートの受け箱は、それぞれ約 4 MB（並べ替えのための写しを含む）を使います。
+どちらの受け箱も、生成のときに 1 回だけ確保します。ステップの中では確保しません（並べ替えは、受けた順のフレームを動かさずに、添字の配列を並べます。`eth.steps_do_not_allocate` が確かめます）。1 フレームは `Frame::kCapacity` バイトを持つので、既定の大きさでは、チャネル 1 つで約 2.5 MB、仮想ネットワークのエンドポイントと SIL Kit のポートの受け箱（既定 2048 フレーム）は、それぞれ約 8 MB（並べ替えのための写しを含む）を使います。
+
+### ポートの受け箱の大きさ
+
+ポートの受け箱（ステップをまたいでためる側）は、チャネルの `receive_capacity`（1 ステップで渡す側）の 2 倍にします。`Channel::port_inbox_capacity(options)` がこの値を返します。
+
+- 理由: 時刻 t のステップがフレームを取り出すとき、受け箱には、このステップで渡す分（前のステップの時刻から t より前まで）のほかに、先に時刻 t のステップを終えた送り手の「時刻 t」のフレームが入っています。こちらは次のステップで渡す分です。送り手は受け手の次のステップの時刻より先へは進まないので（`StepDriver` は時刻の順に回し、SIL Kit の時間同期も同じです）、どちらも `receive_capacity` 以下で、合わせて 2 倍に収まります。送り手のステップ幅が受け手と違っても同じです。
+- 約束: ネットワークから 1 ステップに届くフレーム（絞り込みの前）が `receive_capacity` 以下なら、ECU を回す順にも、SIL Kit のスレッドのタイミングにもよらず、ポートはフレームを落としません。記録は仮想ネットワークと SIL Kit で同じです。
+- 約束の外: 1 ステップに `receive_capacity` より多く届く構成では、チャネル（`receive_overflows`）かポート（`port_receive_overflows`）が捨てて数えます。どちらが、どのフレームを捨てるかは、回す順とタイミングで変わります。時刻同期に参加していない送り手のフレームは、届いた時点のステップに入るので、この約束に入りません。
+- `Ecu::ethernet()` は、`Peer` でも `LocalBench` でもこの大きさでポートを作ります。`VirtualEthernetBusOptions::inbox_capacity` と `SilKitEthPortOptions::inbox_capacity` の既定（2048）は、既定の `receive_capacity` に合わせた値です。チャネルを自分でポートに載せ、`receive_capacity` を大きくするときは、ポートの側も `Channel::port_inbox_capacity()` の値にします（仮想ネットワークは `attach(inbox_capacity)` でエンドポイントごとに決められます）。
 
 ### 統計（`ChannelStatistics`）
 
@@ -74,11 +84,11 @@ SIL Kit では、違う送り手から同じ時刻に届いたフレームの到
 
 プロセスの中のイーサネットです。SIL Kit の Network Simulator なしの Ethernet と同じく、ハブとして振る舞います。
 
-- `attach()` ごとに 1 つのエンドポイント（`Port`）を作ります。
+- `attach()` ごとに 1 つのエンドポイント（`Port`）を作ります。`attach(inbox_capacity)` は、そのエンドポイントの受け箱の大きさを決めます（0 は `std::invalid_argument`）。
 - 時刻 t で送ったフレームは、宛先のアドレスによらず、ほかの全部のエンドポイントに時刻 t で届きます。自分には届きません。送信の確認の事象は出しません。
 - `min_frame_bytes`（既定 60）より短いフレームは、受け手に 0 で埋めて届けます。SIL Kit と同じ記録にするためです。0 にすると埋めません。
 - 受け手がすでに渡した時刻より前のフレームは、`std::logic_error` で断ります（ホストを時刻の順に回していない）。`StepDriver` はこの順を守ります。
-- 受け箱（`inbox_capacity`、既定 1024）があふれると、捨てて数え、`ReceiveOverflow` を出します。
+- 受け箱（`inbox_capacity`、既定 2048。大きさの決め方は「ポートの受け箱の大きさ」）があふれると、捨てて数え、`ReceiveOverflow` を出します。
 - スレッド安全ではありません。1 つのスレッド（`StepDriver` のループ）から使います。
 
 ## SIL Kit のポート（`SilKitEthPort`）
@@ -101,6 +111,17 @@ CAN の仮想時間のポート（`SilKitCanPort`）も同じ決まりです。
 
 ParticipantRuntime を止める（ステップが来なくなる）、ポートを `close()` するか壊す、チャネルを壊す、ParticipantRuntime を壊す（コントローラーを持つ）の順です。
 
+## ECU から使う（`Ecu::ethernet()`）
+
+`Ecu::ethernet(network, ChannelOptions)` は、その ECU の `Channel` を返します。ECU は、1 つのイーサネットのネットワークにチャネルを 1 つ持ちます。使い方と 1 ステップの中の位置は [execution.md](execution.md) の「ECU の入口」にあります。ここは実装の決まりです。
+
+- ホスト: チャネルは `step::Member` なので、ECU のホスト（`can::Host`）に `step::Host::add(Member&)` でそのまま載せます（`can::Host` は `using step::Host::add;` で、CAN の組と同じ列に並べます）。受信と送信の段は、`j1939()`、`can()`、`ethernet()` を呼んだ順です。
+- `Peer`: ネットワーク名を名前にした SIL Kit の Ethernet コントローラー、`SilKitEthPort`、`detail::GatedEthPort`、`Channel` を作ります。ポートの受け箱は `receive_capacity` の 2 倍（`Channel::port_inbox_capacity()`。「ポートの受け箱の大きさ」）、送信の確認の列は `send_capacity` 以上（既定の 1024 より小さくはしない）です。コントローラーは、CommunicationReady のハンドラー（`ParticipantRuntime::add_communication_ready_handler()`）で CAN のポートの後、LIN の `init()` の前に `start()` し、`Peer::stop()` がステップを止めた後に `close()` します。選択肢は `Channel::validate()` で先に確かめます（SIL Kit のコントローラーは作ると外せないため）。仮想時間だけで、実時間の `Peer` では `std::logic_error` です（実時間のポートがないため）。
+- `LocalBench`: 名前ごとの `VirtualEthernetBus`（既定の選択肢）に、受け箱が `receive_capacity` の 2 倍のエンドポイント（`attach(Channel::port_inbox_capacity(options))`）を足し、その上に `GatedEthPort` と `Channel` を作ります。受け箱はエンドポイントごとなので、`receive_capacity` の違う ECU が同じネットワークに載れます。試験が `ethernet_bus(network).attach()` で足すエンドポイントは、既定の大きさです。
+- `ecu.connected`: `GatedEthPort` が、切れている間の送信を `SendResult::Failed` にし（チャネルの `frames_dropped`）、切れている間の時刻のフレームを捨てます。判定の時点は CAN と同じです（`BusConnection`）。ポートの事象（送信の確認、あふれ）は通します。
+- 自己申告: `ChannelOptions::mac` を `NetworkDescription::mac` として出します（`--describe` の `networks[].mac`）。照合の規則 `ethernet-duplicate-mac` と `ethernet-mac-unknown`（[simulation-check.md](../simulation-check.md)）が使います。チャネルは、送るフレームの送り元のアドレスを確かめず、書き込みもしません（アドレスを決めるのは ECU のスタックです）。
+- SIL Kit の Network Simulator がイーサネットのネットワークを模擬しているときの振る舞い（確認の時刻、リンクの状態）は、確かめていません。
+
 ## 未確認の値
 
 次の値は、一般の資料と SIL Kit のソースの知識によるもので、規格では確かめていません。変えられる値は、利用者が変えられるようにしてあります。
@@ -111,9 +132,10 @@ ParticipantRuntime を止める（ステップが来なくなる）、ポート�
 | 最小の長さ 60 バイトへの 0 の埋め | SIL Kit の受信（上流の実装）、`VirtualEthernetBusOptions::min_frame_bytes` | 仮想ネットワークは選択肢。SIL Kit の側は変えられない |
 | 先頭の 14 バイト（宛先 6、送り元 6、EtherType か長さ 2）と、アドレスのバイトの並び | `kHeaderBytes`、`Frame::destination()`、`source()`、送れる最短のフレーム | 変えられない |
 | アドレスのグループの印（1 バイト目の最下位のビット）と、ブロードキャスト（全部 0xFF） | `MacAddress::is_multicast()`、`is_broadcast()`、`Accept::Addressed` | `Accept::All` なら使わない |
-| 試験の EtherType 0x88B5（ローカルの実験用として知られる値）と、ローカル管理のアドレス `02:00:00:...`、`03:00:00:...` | 試験だけ | — |
+| 試験と例の EtherType 0x88B5（ローカルの実験用として知られる値）と、ローカル管理のアドレス `02:00:00:...`、`03:00:00:...` | 試験と `examples/ethernet` だけ（vehicle-sil のライブラリは使わない） | 例は `--ethertype <数>`（`ethernet_example::Options::ether_type`）で変えられる。アドレスは例のヘッダーの定数 |
 
 ## 試験
 
-- `eth.*`（`tests/eth`、`vehicle_sil::eth` だけをリンク）: 値の型、仮想ネットワーク（ハブ、次のステップ、埋め、自分のフレーム、時刻の順、あふれ）、チャネル（ホストとドライバーの上で回ること、ゲートウェイ、同じ時刻の順、`receive()` と取らなかった数、送信の段、上限、絞り込み、事象、選択肢の誤り）。`eth.steps_do_not_allocate` は、ステップの中で確保しないことを、プロセスの全部の確保を数えて確かめます（専用の実行ファイル。数え方は J1939 の同じ試験と共通の `tests/unit/allocation_counter.hpp`）。`eth.boundary` は SIL Kit を含まないことを確かめます。
+- `eth.*`（`tests/eth`、`vehicle_sil::eth` だけをリンク）: 値の型、仮想ネットワーク（ハブ、次のステップ、埋め、自分のフレーム、時刻の順、あふれ、エンドポイントごとの受け箱の大きさ）、チャネル（ホストとドライバーの上で回ること、ゲートウェイ、同じ時刻の順、`receive()` と取らなかった数、送信の段、上限、ポートの受け箱の大きさ、絞り込み、事象、選択肢の誤り）。`eth.steps_do_not_allocate` は、ステップの中で確保しないことを、プロセスの全部の確保を数えて確かめます（専用の実行ファイル。数え方は J1939 の同じ試験と共通の `tests/unit/allocation_counter.hpp`）。`eth.boundary` は SIL Kit を含まないことを確かめます。
+- `simulation.ethernet_*`（`tests/simulation/test_ethernet.cpp`）: `Ecu::ethernet()` を仮想ネットワークと SIL Kit の両方で（次のステップで届くこと、同じ時刻の順、ハンドラーと `receive()`、`Accept::Addressed`、自己申告のアドレス、断る文言、`LocalBench::ethernet()` と `ethernet_bus()`、1 ステップに `receive_capacity` までのフレームを、送り手を先に回しても、ステップ幅が違っても落とさず、両方で同じ記録になること、超えた分を数えること）。`simulation.disconnect_*` は `ecu.connected` でイーサネットも切れること、`peer.*` は実時間の断り、コントローラー名の重なり、CommunicationReady で有効になることを確かめます。`launch.an_ethernet_network_has_one_mac_address_per_participant` は照合の規則です。例（`examples/ethernet`）は `ethernet_example.*` と `launch_run.ethernet` が動かします。
 - `eth_silkit.*`: 偽のコントローラーに対するポートの試験（時刻のないフレーム、あふれた送信の確認を含む）と、プロセス内の registry で、同じシナリオの記録が仮想ネットワークと SIL Kit で一致すること（ステップ幅の組み合わせを変えて。3 つの送り手が同じ時刻に送る場合、短いフレームの埋め、ハンドラーからの返事、`receive()`、`Accept::Addressed` を含む）。ノードのアドレスは登録の順と違う順にしてあり、仮想ネットワークの側だけでも、同じ時刻のフレームがアドレスの順に並んでいることを確かめます。

@@ -238,6 +238,14 @@ std::string to_json(const EcuDescription& description)
             w.end_object();
         }
         w.end_array();
+        if (network.mac)
+        {
+            w.string("mac", network.mac->to_string());
+        }
+        else
+        {
+            w.null("mac");
+        }
         w.end_object();
     }
     w.end_array();

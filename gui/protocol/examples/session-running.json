@@ -25,8 +25,8 @@
       },
       "stop": "none",
       "phase": "running",
-      "last_seq": 21,
-      "last_t_ms": 210,
+      "last_seq": 23,
+      "last_t_ms": 230,
       "time": {
         "event": "time",
         "seq": 21,
@@ -81,7 +81,8 @@
                       "j1939_name": "0x00000000FE000001",
                       "arbitrary_address_capable": false
                     }
-                  ]
+                  ],
+                  "mac": null
                 }
               ]
             },
@@ -94,7 +95,7 @@
                 "min": null,
                 "max": null,
                 "step": null,
-                "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                 "items": [],
                 "builtin": true
               },
@@ -176,7 +177,8 @@
                       "j1939_name": null,
                       "arbitrary_address_capable": false
                     }
-                  ]
+                  ],
+                  "mac": null
                 }
               ]
             },
@@ -189,7 +191,7 @@
                 "min": null,
                 "max": null,
                 "step": null,
-                "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                 "items": [],
                 "builtin": true
               },
@@ -353,7 +355,7 @@
           "dropped": 0
         },
         "Dashboard": {
-          "kept": 1,
+          "kept": 3,
           "dropped": 0
         }
       },

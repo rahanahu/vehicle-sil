@@ -124,7 +124,8 @@ engine/vehicle_sil_engine_ecu --registry-uri silkit://192.0.2.10:8500 --silkit-c
 
 - `name`: ECU の名前（SIL Kit では participant 名）。
 - `step`: ステップ幅。実時間の `Peer` では空です。
-- `networks`: ECU がつながるネットワーク。`j1939()`、`can()`、`lin_master()`、`lin_slave()` を呼んだ順に、種類をまたいで並びます。1 回の呼び出しが 1 つです。同じ ECU が同じ名前で `j1939()` と `can()` を持つと、同じ CAN のネットワークに 2 つ並びます（コントローラーが 2 つあるため）。各要素は `name`、`use`（`NetworkUse`: `Raw`、`J1939`、`LinMaster`、`LinSlave`）、`kind()`（`use` から決まる `NetworkKind`: `Can` か `Lin`）、`nodes` です。
+- `networks`: ECU がつながるネットワーク。`j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` を呼んだ順に、種類をまたいで並びます。1 回の呼び出しが 1 つです。同じ ECU が同じ名前で `j1939()` と `can()` を持つと、同じ CAN のネットワークに 2 つ並びます（コントローラーが 2 つあるため）。各要素は `name`、`use`（`NetworkUse`: `Raw`、`J1939`、`LinMaster`、`LinSlave`、`Ethernet`）、`kind()`（`use` から決まる `NetworkKind`: `Can`、`Lin`、`Ethernet`）、`nodes`、`mac` です。
+- `mac`（イーサネットだけ）: `ethernet()` に渡した自分のアドレス（`eth::ChannelOptions::mac`）です。渡さなければ空です（アドレスをアプリケーションが実行中に決める ECU）。チャネルはこの値をフレームに書き込みません。照合が、同じネットワークの ECU のアドレスの重なりを確かめるのに使います。
 - `nodes`（J1939 だけ）: ノードを足した順に、足したときの値（`NodeOptions`）です。`address` は求めたアドレスで、Address Claim で別のアドレスになった後も変わりません（今のアドレスは `Node::address()`、求めたアドレスは `Node::requested_address()`）。`j1939::kNullAddress`（254）は、任意アドレスの範囲から空いているものを取るノードです。`name` は NAME（NAME を持たないノードは空。JSON のキーは `j1939_name`）、`arbitrary_address_capable()` は NAME のその bit です。
 - `variables`: 変数の `control::VariableInfo` です。先頭は、どの ECU にもある入力 `ecu.connected`（bool。false の間、ECU はすべてのバスから外れます。ステップは動き続けます。[internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」）で、Agent を作る前でも並びます。その後に、ECU が宣言した変数（`input()`、`output()` などと、`agent()` に直接登録したもの）が宣言した順に並びます。`Peer` が足す監視の出力（`PeerOptions::monitor`）は含みません。
 - `ecu.` で始まる変数の名前は、どの ECU にもある変数のために予約しています。`peer.` で始まる変数の名前は、`Peer` の監視の出力のために予約しています。`Ecu` の `input()`、`output()` などは、どの実装でも宣言のときに `std::invalid_argument`（変数の名前と決まりを言う）にするので、`--describe` と `--local` でも見つかります。`agent()` に直接登録した名前は検査しません。それが `Peer` の監視の出力とぶつかると、SIL Kit で始めるときに見つかります（`ecu_main` では終了コード 3）。`Peer` のネットワークごとの監視の出力（`j1939.<network>.` で始まる名前）とぶつかる名前は、SIL Kit で始めるときにだけ見つかります（`PeerOptions::monitor`）。
@@ -152,12 +153,13 @@ engine/vehicle_sil_engine_ecu --registry-uri silkit://192.0.2.10:8500 --silkit-c
 | `step_ns` | ステップ幅（ナノ秒）。実時間の `Peer` では `null` |
 | `networks` | ネットワークの配列（`describe()` の順） |
 | `networks[].name` | ネットワークの名前 |
-| `networks[].kind` | `"can"` か `"lin"` |
-| `networks[].use` | `"raw"`、`"j1939"`、`"lin_master"`、`"lin_slave"` |
+| `networks[].kind` | `"can"`、`"lin"`、`"ethernet"` |
+| `networks[].use` | `"raw"`、`"j1939"`、`"lin_master"`、`"lin_slave"`、`"ethernet"` |
 | `networks[].nodes` | J1939 のノードの配列（`use` が `"j1939"` のときだけ要素がある） |
 | `networks[].nodes[].address` | 求めたアドレス（0〜253、254 は任意アドレスの範囲から取る） |
 | `networks[].nodes[].j1939_name` | NAME（`"0x"` と 16 桁）。NAME のないノードは `null` |
 | `networks[].nodes[].arbitrary_address_capable` | NAME の任意アドレスの bit（NAME がなければ `false`） |
+| `networks[].mac` | イーサネットのネットワークでの ECU のアドレス（`"02:00:00:00:00:01"` の形、小文字）。申告していないときと、イーサネット以外のネットワークでは `null`。このキーのない JSON（前の版の ECU）は、`null` として読む |
 | `variables` | 変数の配列（`ecu.connected`、続いて宣言の順） |
 | `variables[].name` | 変数の名前 |
 | `variables[].type` | `"bool"`、`"integer"`、`"real"`、`"enum"` |
@@ -192,7 +194,8 @@ engine/vehicle_sil_engine_ecu --registry-uri silkit://192.0.2.10:8500 --silkit-c
           "j1939_name": "0x00000000FE000001",
           "arbitrary_address_capable": false
         }
-      ]
+      ],
+      "mac": null
     }
   ],
   "variables": [
@@ -204,7 +207,7 @@ engine/vehicle_sil_engine_ecu --registry-uri silkit://192.0.2.10:8500 --silkit-c
       "min": null,
       "max": null,
       "step": null,
-      "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+      "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
       "items": [],
       "builtin": true
     },
