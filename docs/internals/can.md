@@ -171,7 +171,7 @@ SimulatedNetworks:
 ```
 
 - 形式は Vector SIL Kit Network Simulator の設定ファイル（`SchemaVersion: 1`、YAML か JSON）です。`Type: CAN` のネットワークだけを模擬します。ほかの種類のネットワーク、`Switches`、知らないキーは受け付けて警告します。必須の項目がない、`SchemaVersion` が 1 でない、種類が CAN、LIN、Ethernet、FlexRay のどれでもない、名前が重複している、といったファイルは使いません。
-- コマンドラインは Vector のものと同じ形です: `vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--log <level>] [--participant-configuration <file>] <configuration>`（短い形 `-n -u -l -c` も同じ。participant 名の既定は `NetworkSimulator`）。`-c` のファイルの中の相対パスは、実行時のカレントディレクトリから解決します。`-c` の構成では、`Experimental.TimeSynchronization.DynamicSimulationStep` を `false` にします（`true` か、キーなしでほかの participant が `true` だと、SIL Kit がステップを縮め、シミュレーターはそのステップで失敗します）。この実行ファイルだけの設定（`--default-bitrate`、`--transmit-queue`、`--start-timeout-ms`）はコマンドラインで渡し、設定ファイルには書きません。Vector のものが同じファイルを読めるようにするためです。
+- コマンドラインは Vector のものと同じ形です: `vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--log <level>] [--participant-configuration <file>] <configuration>`（短い形 `-n -u -l -c` も同じ。participant 名の既定は `NetworkSimulator`）。`-c` のファイルの中の相対パスは、実行時のカレントディレクトリから解決します。`-c` の構成には、書いていないキーに vehicle-sil の既定を足します（待ち受けるアドレス、Windows の TCP、`Experimental.TimeSynchronization.DynamicSimulationStep: false`）。`ParticipantName` が `--name` と違う、`Middleware.RegistryUri` が `--connect-uri` と違う、`DynamicSimulationStep` が `true`、のどれかなら、接続する前に準備の失敗（終了コード 3）にして、直し方を言います（[core.md](core.md) の「SIL Kit の構成の既定」）。この実行ファイルだけの設定（`--default-bitrate`、`--transmit-queue`、`--start-timeout-ms`）はコマンドラインで渡し、設定ファイルには書きません。Vector のものが同じファイルを読めるようにするためです。
 - 終了コード: 0 正常に終了、1 シミュレーション中の失敗、3 準備の失敗（設定ファイル、接続）、4 使い方の誤り。
 
 Vector SIL Kit Network Simulator との差し替え:

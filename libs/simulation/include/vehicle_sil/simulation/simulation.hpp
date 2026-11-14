@@ -36,7 +36,14 @@ struct SilKitOptions
     /// before the simulation starts. Only with `controller` (std::invalid_argument otherwise).
     std::vector<std::string> other_participants{};
     /// How long the start may take (the registry, the required participants).
-    std::chrono::milliseconds start_timeout{std::chrono::seconds(30)};
+    std::chrono::milliseconds start_timeout{std::chrono::seconds(30)};    /// SIL Kit participant configuration (YAML or JSON text) for every participant of this
+    /// process: the ECUs and, with `controller`, the controller. "{}": vehicle-sil's defaults.
+    /// As ParticipantRuntimeOptions::participant_configuration: the given one is used with
+    /// vehicle-sil's defaults for what it leaves out, and one that sets ParticipantName (with
+    /// more than one participant here, no name fits them all), another Middleware.RegistryUri
+    /// or dynamic simulation steps is std::invalid_argument from add_ecu() or the start. For a
+    /// file: participant_configuration_from_file() (vehicle_sil/core/participant_runtime.hpp).
+    std::string participant_configuration = "{}";
 };
 
 /// A run failed. what(): "<ecu>: <why>" of each ECU (or other participant) that failed,
