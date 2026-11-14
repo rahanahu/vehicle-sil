@@ -78,6 +78,9 @@ class Variable:
     items: Mapping[str, int] = dataclasses.field(default_factory=dict)
     # vehicle-sil gives it to the ECU ("ecu.", "peer.", "j1939."), the application did not declare it
     builtin: bool = False
+    # the name the executable declared it under, if the simulation's configuration maps it (the
+    # participant's "variables"); "" if it is not mapped. Everything else is as mapped.
+    source: str = ""
 
     @property
     def writable(self) -> bool:
@@ -199,6 +202,7 @@ def _variable(v) -> Variable:
         description=v.description,
         items={i.name: i.value for i in v.items},
         builtin=v.builtin,
+        source=v.source,
     )
 
 

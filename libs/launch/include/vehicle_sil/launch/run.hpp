@@ -116,6 +116,9 @@ struct ParticipantRun
     ControlLink control = ControlLink::None;
     /// Connected: how many variables its agent offers (with those the ECU's run adds itself).
     std::size_t control_variables = 0;
+    /// Connected: the mappings of its entry's variables that do not fit what its agent announced
+    /// (control::PeerInfo::map_problems); they were not applied.
+    std::vector<std::string> variable_map_problems{};
     /// NoHello: its hello did arrive, but its agent did not answer that it receives commands.
     bool control_hello_seen = false;
     /// VersionMismatch: the version of the messages its agent speaks.

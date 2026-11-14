@@ -27,11 +27,12 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 
 | ラベル | 内容 |
 |---|---|
-| `unit` | コマンドライン解析（`unit.*`）。`core`、`lin`、`step`、`can`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` の単体テストと境界の検査にもこのラベルが付く。`template.get_tools`（ひな形の `get_tools.py` と `scripts/package.py` の `template`、`version` を、手元で作った圧縮ファイルで確かめる）にも付く。付かないのは、プロセスを起動するシナリオの試験（`integration`）、サンプルの実行（`examples`。ただし `param_service.demo` には付く）、Python のクライアントの試験（`python`）、`fetchcontent` |
+| `unit` | コマンドライン解析（`unit.*`）。`core`、`lin`、`step`、`can`、`eth`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` の単体テストと境界の検査にもこのラベルが付く。`template.get_tools`（ひな形の `get_tools.py` と `scripts/package.py` の `template`、`version` を、手元で作った圧縮ファイルで確かめる）にも付く。付かないのは、プロセスを起動するシナリオの試験（`integration`）、サンプルの実行（`examples`。ただし `param_service.demo` には付く）、Python のクライアントの試験（`python`）、`fetchcontent` |
 | `integration` | `sil-kit-registry`、receiver、sender（実時間の `Peer` と J1939 スタック）を別プロセスで起動し、終了コードで判定する。`address-claim-and-pgn` は Address Claim と PGN の CAN ID とペイロードの一致を、`receiver-timeout` はタイムアウト処理を検証する。`receiver-detects-wrong-name` と `receiver-detects-wrong-payload` は、receiver が誤った NAME と壊れたペイロードを失敗として報告することを確かめる（`integration.*`）。このラベルは、プロセスを起動するほかのシナリオの試験にも付く: `virtual_time.*`、`lin_cluster.*`、`launch_cli.*`、`launch_run.*`、`ecu_main.*`、`vector_xl.integration.*`、`control_server.launcher`（それぞれの行）、`template.check_and_run`（ひな形の ECU を本体のビルドで作り、ランチャーで照合、実行、シナリオ。照合と実行の出力を手引き「最初の ECU を作る」と照合） |
 | `vector_xl` | CAN ブリッジのテスト。全プラットフォームで、テスト専用の XL ドライバのフェイクに対して本番のコードを動かす。CanBridge の単体テスト、XL バックエンドのテスト、実際の SIL Kit を使うプロセス内のテスト、ブリッジの実行ファイルを使う E2E テストがある。E2E では、エコーノードとの往復（Virtual CAN と、ビットレートを設定する物理 CAN）、送信レシートが返ってくる場合のループ防止、`--list-channels`、存在しないチャネル、引数の誤り、ドライバがない場合、止める要求で止めたときの統計の 1 行と終了コード 0（Windows では共有するコンソールがなければ飛ばす）を確かめる |
 | `step` | `vehicle_sil::step` の単体テスト（CAN と SIL Kit なしでビルドする）。CAN でない試験用の参加者（`Member`）で、段の順序、`start()` が 1 回だけ最初のステップの前に呼ばれること、時間の領域の混在の拒否（ホストとドライバー）、失敗の扱い、`post()` と起こし方、`next_deadline()`、仮想時間の `StepDriver`、差し替えた時計の上の `RealTimeDriver`（締め切りと到着で起きる）を確かめる。`step.boundary` は `libs/step` が SIL Kit のヘッダーを直接にも間接にも含まないことを検査する（`unit` ラベルも付く） |
 | `can` | `vehicle_sil::can` の単体テスト（SIL Kit なしでビルドする）、SIL Kit のポートのテスト（`can_silkit.*`）、簡易 CAN Network Simulator のテスト（`can_netsim.*`）。フレームの検証、仮想バスの受信順序とあふれ、ホストの段階の順序と失敗、ステップドライバーの順序、送信時間と調停（11 ビット / 29 ビット）、混雑、送信キュー、受信側のステップ幅によらないこと、ポートの事象（送信の結果、受け箱のあふれ、バス状態、エラーフレーム）、故障注入と ECU 単位の通信断、`post()`、時間の領域の混在の拒否、実時間のドライバー（差し替えた時計での決定的な試験と、壁時計での到着と順序）を確かめる。簡易 CAN Network Simulator では、プロセス内の participant と実行ファイルの両方で、仮想バスと同じ受信の時刻になること、繰り返しても同じ結果になること、送信時刻のない送信者、設定ファイルの読み込みを確かめる。プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致すること（ステップ幅の組み合わせを変えて）と、送信の続く中で participant を決まった順序で止めて破棄できることを確かめる（`unit` ラベルも付く） |
+| `eth` | `vehicle_sil::eth` の単体テスト（`eth.*`。SIL Kit なしでビルドする）と SIL Kit のポートのテスト（`eth_silkit.*`）。フレームと MAC アドレスの型、仮想ネットワーク（ハブとしての配り方、次のステップに届くこと、短いフレームの埋め、自分のフレームを受けないこと、時刻の順、あふれ）、チャネル（`step::Host` と `StepDriver` の上で回ること、ゲートウェイ、同じ時刻のフレームを送り元のアドレスで並べること、`on_frame()` と `receive()`、送信の段、上限、絞り込み、ポートの事象、選択肢の誤り、ステップの中で確保しないこと（`eth.steps_do_not_allocate`。専用の実行ファイル））、偽のコントローラーに対するポート（時刻同期していない送り手のフレームの時刻、あふれた送信の確認を含む）、プロセス内のレジストリで同じシナリオの記録が仮想ネットワークと SIL Kit で一致すること（ステップ幅の組み合わせを変えて。3 つの送り手が同じ時刻に送る場合を含む。アドレスを登録の順とずらし、仮想ネットワークの側でもアドレスの順を確かめる）。`eth.boundary` は `libs/eth` が SIL Kit のヘッダーを直接にも間接にも含まないことを検査する（`unit` ラベルも付く） |
 | `j1939` | `vehicle_sil::j1939` の単体テスト（SIL Kit なしでビルドする）と SIL Kit 上の試験（`j1939_silkit.*`）。PGN と識別子、単一フレームの送受信、宛先の振り分け、ローカル折り返し、同じ時刻のフレームの順序とタイマーの発火がステップ幅と到着順によらないこと、Request への応答と ACK/NACK、NAME と Address Claim（複数ノードと複数 Network の競合、任意アドレスの選択、アドレス表、アドレス違反、Commanded Address を含む）、1 つのホストの複数の Network（ゲートウェイ、片方の失敗）、再入と失敗、ステップ幅の検査、資源の上限、定常状態のステップでメモリを確保しないことを確かめる。プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致することも確かめる（簡易 CAN Network Simulator ありでも。`unit` ラベルも付く）。タイミングありの仮想バスで、プロトコルの結果が変わらないこと、混雑で転送が遅れ、バスが飽和すると時間切れになることも確かめる。1 つの ECU がバスから切り離されたとき（受信だけ、送受信とも）の TP の時間切れと回復、隠れていたアドレスの衝突の解決、時刻同期なしの SIL Kit での実時間の動作も確かめる。道具箱（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）とプロトコル部品（`j1939_parts.*`: DM13、診断、識別情報、送信の競合、後で返す ACK、ステップ幅によらない結果）も確かめ、`j1939_parts.boundary` が部品がエンジンの内部を使っていないことを検査する。型付きメッセージ（`j1939_codec.*`）は、ビット配置をビットごとの実装と照合し、raw 値と物理値の変換、丸めと範囲の端、特別な値（J1939 のプロファイル、利用者のプロファイル、継承と上書き、すべてのビットパターンを値として使う Proprietary B、raw 値の保持）、列挙、セレクター、埋め値、長さ、小さい信号のすべての raw 値の往復、ノードでの送受信を確かめる。`j1939_codec.generator` は生成器が誤った定義を止めることを確かめる。`local.boundary`、`testkit.boundary`、`peer.boundary`、`simulation.boundary`、`ecu.boundary` も、それぞれのディレクトリのソースがエンジンの内部を使っていないことを検査する（ラベルは `unit` と `j1939`） |
 | `peer` / `testkit` | `Peer` をプロセス内のレジストリで動かす試験（J1939 と LIN の 3 つの participant、仮想バスと同じ結果、実時間と外部ポート、組み立ての誤り、失敗の報告）と、試験キットの試験（アドレスの喪失、Address Claimed の欠落、TP のパケットの欠落、通信断、生フレームの注入、受信側のステップ幅と記録の有無によらない結果）。`ecu_api.*` は、利用者が書く形の ECU（`examples/j1939/ecu_pair`、道具箱と `Requester` で作る独自のプロトコル、`Monitor` と `Observer` と tap で通信を確かめる試験）を仮想バスで動かす。`param_service.*` は、`examples/j1939/param_service` の独自プロトコルを仮想バスで動かし（正常な流れ、セッションの期限切れ、2 つ目のツール、応答しない ECU、アドレスの変化と喪失、拒否、動作中の部品の破棄）、`param_service.boundary` は例が公開 API だけを使うことを、`param_service.demo` は例の実行を確かめる。`ecu_api.*` と `param_service.*` のラベルは `testkit` で、`peer.*`、`testkit.*`、`ecu_api.*`、`param_service.*` には `unit` と `j1939` のラベルも付く。エンジンの内部を使っていないことの検査（`peer.boundary`、`testkit.boundary`、`local.boundary`）は `j1939` の行 |
 | `ecu` | ECU の自己申告の JSON（`to_json(EcuDescription)`）の単体テスト（SIL Kit なし。空と全部入りの全文、キーの順、数値、64 ビットの列挙の値、NAME の文字列、文字列のエスケープ、版）。`ecu.no_silkit_boundary` と `ecu.simulation_headers_boundary` は、`libs/ecu` と `libs/simulation/include` が SIL Kit のヘッダーを直接にも間接にも含まないことを、`ecu.boundary_check_*` はその検査自体を確かめる（`unit` ラベルも付く） |
@@ -70,6 +71,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 | `libs/can` | `Frame`（`can/frame.hpp`）、`Port`（`can/port.hpp`）、`Host`、`Steppable`（`can/host.hpp`。`Host` は `step::Host` の上）、`StepDriver`、`RealTimeDriver`、時計（`can/step_driver.hpp`、`can/real_time_driver.hpp`、`can/real_time_clock.hpp`。`vehicle_sil::step` のものの別名）、`RealTimeReceiver`（`can/real_time_receiver.hpp`）、`VirtualCanBus`（`can/virtual_can_bus.hpp`）、`CanBusModel`（`can/bus_model.hpp`）、`TapPort`（`can/tap_port.hpp`）、`RawChannel`（`can/raw_channel.hpp`） | `tests/can` | `^can\.` |
 | `libs/can_silkit` | `SilKitCanPort`、`bind_host()` の別名（`can_silkit/silkit_can_port.hpp`。本体は `core/bind_host.hpp`） | `tests/can` | `^can_silkit\.` |
 | `libs/can_netsim`、`tools/can_bus_simulator` | `CanBusSimulator`（`can_netsim/can_bus_simulator.hpp`）、`NetworkSimulatorConfig`（`can_netsim/network_simulator_config.hpp`） | `tests/can` | `^can_netsim\.` |
+| `libs/eth`、`libs/eth_silkit` | `Frame`、`MacAddress`（`eth/frame.hpp`）、`Port`、`PortEvent`（`eth/port.hpp`）、`Channel`（`eth/channel.hpp`）、`VirtualEthernetBus`（`eth/virtual_ethernet_bus.hpp`）、`SilKitEthPort`（`eth_silkit/silkit_eth_port.hpp`） | `tests/eth` | `^eth\.`、`^eth_silkit\.` |
 | `libs/lin`、`libs/lin_silkit` | `LinMaster`（`lin/lin_master.hpp`）、`LinSlave`（`lin/lin_slave.hpp`）、`LinPort`（`lin/lin_port.hpp`）、`VirtualLinBus`（`lin/virtual_lin_bus.hpp`）、`SilKitLinPort`（`lin_silkit/silkit_lin_port.hpp`） | `tests/lin` | `^lin_bus\.`（仮想 LIN バス）、`^lin_local\.`（`LocalBench` の上）、`^lin\.`（SIL Kit の上）、`^lin_cluster\.`（`examples/lin` のプロセス） |
 | `libs/j1939`（エンジン） | `Network`、`Node`（`j1939/network.hpp`）、`Pgn`、`Identifier`（`j1939/types.hpp`）、`Name`（`j1939/name.hpp`）、`Subscription`、`Timer`（`j1939/toolbox.hpp`）、`Observer`（`j1939/observer.hpp`）。Address Claim と Request は `src/node.cpp`、トランスポートプロトコルは `src/transport.cpp` | `tests/j1939` | `^j1939\.`、`^j1939_silkit\.` |
 | `libs/j1939/parts/<部品>` | 部品ごとに 1 つのディレクトリとターゲット。`PeriodicSender`（`j1939/periodic_sender.hpp`）、`Requester`、`Monitor`、`AddressCommander`、`Exchange`、`BroadcastSuppression`、`Diagnostics`、`Identification` | `tests/j1939` | `^j1939_parts\.` |
@@ -79,7 +81,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 | `libs/testkit` | `J1939Events`、`FrameLog`（`testkit/recorders.hpp`）、`faults`（`testkit/faults.hpp`）、`LocalCan`（`testkit/local_can.hpp`） | `tests/testkit` | `^testkit\.`、`^ecu_api\.`、`^param_service\.` |
 | `libs/peer` | `Peer`、`PeerOptions`、`start_together()`（`peer/peer.hpp`）。監視の出力は `src/peer_monitor.cpp` | `tests/peer` | `^peer\.` |
 | `libs/simulation` | `Simulation`、`SilKitOptions`、`SimulationError`（`simulation/simulation.hpp`）、`ecu_main()`、`EcuMainOptions`（`simulation/ecu_main.hpp`） | `tests/simulation` | `^simulation\.`、`^ecu_main\.`（`examples/ecu_main` のプロセス）、サンプルの実行は `getting_started.`、`typed_messages.`、`pid_stream.`、`fault_injection.`、`vehicle.`、`low_level.` で始まる |
-| `libs/control` | `Agent`（`control/agent.hpp`）、`Hub`（`control/hub.hpp`）、Agent と Hub の間のメッセージの符号化と復号（`control/wire.hpp`） | `tests/control` | `^control\.`（`wire.hpp` は `^control\.wire_`） |
+| `libs/control` | `Agent`（`control/agent.hpp`）、`Hub`（`control/hub.hpp`）、変数の対応表 `MappedSchema`（`control/variable_map.hpp`）、Agent と Hub の間のメッセージの符号化と復号（`control/wire.hpp`） | `tests/control` | `^control\.`（`wire.hpp` は `^control\.wire_`、対応表は `test_variable_map.cpp`） |
 | `libs/control_silkit` | `AgentTransport`（`control_silkit/agent_transport.hpp`）、`HubTransport`（`control_silkit/hub_transport.hpp`）。トピックの名前は `src/topics.hpp` | `tests/control_silkit`、`tests/launch`（プロセスをまたぐ窓） | `^control_silkit\.`、`^launch_control\.` |
 | `libs/control_grpc`、`proto/`、`python/` | `ControlServer`（`control_grpc/server.hpp`）、Python のクライアント（`python/vehicle_sil_control/client.py`）とランチャーを起動する助け（`python/vehicle_sil_control/launcher.py`） | `tests/control_server`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ。`test_launcher.py` がランチャーの Control Server（認証、TLS、役割、監査も）、`test_python_client.py` が Python のクライアントと CLI、`control_server.example_write_before_start` と `control_server.example_pause_and_step` が `examples/launch_control`） | `^control_server\.` |
 | `libs/process` | `ChildProcess`、`run_captured()`（`process/child_process.hpp`）、`Process`（`process/process.hpp`） | `tests/process` | `^process\.` |
@@ -108,14 +110,14 @@ ctest --preset linux-gcc-release -L fetchcontent
 ```mermaid
 flowchart TD
     subgraph no_silkit["no SIL Kit"]
-        protocols["sim_base, step, can, lin, j1939"]
+        protocols["sim_base, step, can, eth, lin, j1939"]
         control["control"]
         j1939_parts["J1939 parts, j1939_codec"]
         app["ecu, local, testkit"]
         eth_link_box["eth_link"]
     end
     subgraph with_silkit["SIL Kit"]
-        bindings["core, can_silkit, lin_silkit, can_netsim, control_silkit"]
+        bindings["core, can_silkit, eth_silkit, lin_silkit, can_netsim, control_silkit"]
         run["peer, simulation"]
         launch_process["launch, process"]
         grpc["control_grpc, control_proto"]
@@ -143,7 +145,7 @@ flowchart TD
     ethernet_bridge --> eth_link_box
 ```
 
-SIL Kit を使わないのは `sim_base`、`step`、`can`、`lin`、`control`、`j1939` とその部品、`j1939_codec`、`ecu`、`local`、`testkit`、`process` です（`process` は「launch, process」の箱にありますが、SIL Kit を使いません）。
+SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とその部品、`j1939_codec`、`ecu`、`local`、`testkit`、`process` です（`process` は「launch, process」の箱にありますが、SIL Kit を使いません）。
 
 ### 土台と SIL Kit の実装
 
@@ -156,10 +158,14 @@ flowchart TD
     step --> sim_base
     can --> step
     can --> sim_base
+    eth --> step
+    eth --> sim_base
     lin --> sim_base
     can_silkit --> can
     can_silkit --> core
     can_silkit --> SilKit
+    eth_silkit --> eth
+    eth_silkit --> SilKit
     lin_silkit --> lin
     lin_silkit --> core
     lin_silkit --> SilKit
@@ -291,7 +297,7 @@ flowchart TD
 |---|---|
 | `j1939_parts.boundary` | `libs/j1939/parts` が、エンジンの公開 API と道具箱だけを使い、`vehicle_sil::j1939` とほかの部品だけをリンクする |
 | `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
-| `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
+| `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 | `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の構成は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
 | `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |
 | `eth_link.boundary` | `libs/eth_link` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
@@ -316,6 +322,7 @@ flowchart TD
 | ネットワークの種類か使い方を足す（`NetworkKind`、`NetworkUse`） | 手順の正本はこの行です（`ecu/describe.hpp` のコメントがここを指す）。1. `ecu/describe.hpp` の `kNetworkKinds`・`kNetworkUses`、名前・`kind_of()`・文言（`detail::network_kind_label()`、`network_kind_calls()`）の `switch`。足し忘れはビルドで落ちます（`default` のない `switch` は vehicle-sil のターゲットでは常に `-Werror=switch`、一覧は `static_assert`）。2. `switch` が求める所: `libs/launch/src/check_rules.cpp` の種類ごとの規則（`check_network()`）、`tests/simulation/test_network_kinds.cpp` の `put_on()`（Ecu の呼び出し）。3. ビルドでは落ちず、`test_network_kinds.cpp` で落ちる所: 新しい種類の入れ物と、名前の種類を答える `libs/peer/src/peer.cpp` の `detail::network_kind()`、名前を確かめる `Peer::require_can_name()`・`require_lin_name()`（新しい種類にも同じ形のものを足し、ほかの種類の確かめにも新しい種類を入れる）、`libs/local/src/local_bench.cpp` の `require_can_name()`・`require_lin_name()`、両方の `describe()`。断る文言は表から作るので、直すのは名前を探す所だけです。4. 試験が見ない所（手で合わせる）: [simulation-config.md](simulation-config.md) の構成の表の `networks[].kind`、[ecu-executable.md](ecu-executable.md) の「JSON の形式」の `networks` の説明と `networks[].use` の表、`libs/launch/include/vehicle_sil/launch/check.hpp` の `check_participants()` の説明（どの規則がどの種類に効くか）。構成と `--describe` の読み手、誤りの文言の一覧は表から作るので、直しは要りません |
 | 自分で起動する participant（`manual`、`--manual`。読むのは `libs/launch/src/config.cpp`、起動の代わりにコマンドを書くのは `libs/launch/src/run_participants.cpp` の `RunParticipants::show_manual()` と `detail::shell_command_line()`、開始の待ちは `run_start.cpp` の `RunStart::wait_for_start()`、終わりは `RunParticipants::end_manual()`） | [simulation-config.md](simulation-config.md) の「participant を自分で起動する」と、その例（`launch_run.manual` が照合。標準エラーの 2 行は [howto/first-ecu.md](howto/first-ecu.md) の「デバッガーから動かす」に写し）、事象 `participant` の `manual`、`features` の `manual-participants`。開始の上限、ECU に渡す `--start-timeout-ms`（`detail::ecu_start_timeout_ms()`）、registry の既定のポート（`kManualRegistryUri`）を変えたら、同じ節と [internals/control.md](internals/control.md) の「ランチャーの Control Server」の開始の期限も直します。`run` はそのプロセスを持たないので、失敗はシミュレーションから抜けたことでだけわかります。試験は `launch_run.manual`（docs の例）と `launch_run.manual_*`（場面ごと。`ctest -R '^launch_run\.manual'`）、`launch.a_participant_started_by_hand_from_the_file_or_the_command_line`、`launch.the_command_to_start_a_participant_by_hand_is_quoted_for_the_shell` |
 | 照合の規則と `code`（`libs/launch/src/check_rules.cpp`、構成の読み手は `config.cpp`） | [simulation-check.md](simulation-check.md) の「照合」の `code` の表。試験はこの表を照合しないので、手で合わせます |
+| 変数の対応表（構成ファイルの `participants[].variables`。読むのは `libs/launch/src/config.cpp` の `read_variables()`、規則と変換は `libs/control/src/variable_map.cpp` の `MappedSchema`、掛けるのは `control::Hub`（`set_variable_map()`）、渡すのは `libs/launch/src/run_control.cpp` の `RunControl::hub()`、照合は `check_rules.cpp` の `seen_variables()` と `variable_map_code()`） | [simulation-config.md](simulation-config.md) の「変数の名前と値を合わせる」（形の表、見え方）、[simulation-check.md](simulation-check.md) の `variable-map-*` と JSON の `variables`、`variable_map`、[simulation-run.md](simulation-run.md) の `variable-map-not-applied`、[control-api.md](control-api.md) の `source`（`control.proto` の `VariableInfo.source`、Python の `Variable.source`）、[internals/control.md](internals/control.md) の Hub の「変数の対応表」（変換が掛かる 4 か所と順序）。守ること: 変換は Hub の中だけ（読む口や通信の層に足さない）。書ける値かどうかの判定は `MappedSchema::to_actual()` の 1 か所（シナリオの照合は `in_range()` で同じ判定を聞く。`libs/launch/src/scenario.cpp`）。当たらなかった対応の名前には書かせない（`not_writable()`）。値は Hub が持つ前に直す（口による食い違いを作らない）。書き込みは `write()` の検査と同じ所で直す。照合と実行は同じ `MappedSchema::make()` を使う。試験は `^control\.`（`test_variable_map.cpp`）、`^launch\.`（読み方、規則、JSON）、`launch_run.variable_map`（対応表を通したシナリオが、対応表なしと同じ時刻に進む）、`control_server.control_server_peer_info_names_the_source_of_a_mapped_variable` |
 | J1939 の部品を足す | `libs/j1939/parts/<部品>/` と、`libs/j1939/CMakeLists.txt` の `add_subdirectory`。試験は `tests/j1939/CMakeLists.txt` の `vehicle_sil_j1939_parts_tests` の `SOURCES` と `LINK`。[architecture.md](architecture.md) の「構成」と [internals/j1939.md](internals/j1939.md) の「プロトコル部品」 |
 | `libs/` にライブラリを足す | ルートの `CMakeLists.txt` の `add_subdirectory`、[architecture.md](architecture.md) の「構成」 |
 | `proto/vehicle_sil/control/v1/control.proto` | `libs/control_grpc/src`（`convert.hpp`、`control_service.cpp`。サービスを足したら `auth.cpp` の `rpc_rules()` と `test_authorization*.cpp` も）、`python/vehicle_sil_control/client.py`、[control-api.md](control-api.md)。Python のスタブは試験のビルドで生成します（`python -m vehicle_sil_control.generate`） |

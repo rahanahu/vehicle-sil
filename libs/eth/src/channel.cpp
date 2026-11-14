@@ -1,0 +1,240 @@
+// SPDX-License-Identifier: MIT
+#include "vehicle_sil/eth/channel.hpp"
+
+#include <algorithm>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+namespace vehicle_sil::eth {
+
+namespace {
+constexpr const char* kWho = "vehicle_sil::eth::Channel: ";
+} // namespace
+
+Channel::Channel(Port& port, ChannelOptions options) : port_(&port), options_(std::move(options))
+{
+    if (options_.send_capacity == 0 || options_.receive_capacity == 0)
+    {
+        throw std::invalid_argument(std::string(kWho) + "send_capacity and receive_capacity must be > 0");
+    }
+    if (options_.max_frame_bytes < kHeaderBytes || options_.max_frame_bytes > Frame::kCapacity)
+    {
+        throw std::invalid_argument(std::string(kWho) + "max_frame_bytes must be from " + std::to_string(kHeaderBytes) +
+                                    " to " + std::to_string(Frame::kCapacity) + ", not " +
+                                    std::to_string(options_.max_frame_bytes));
+    }
+    if (options_.accept == Accept::Addressed && !options_.mac)
+    {
+        throw std::invalid_argument(std::string(kWho) + "Accept::Addressed needs the channel's own address (mac)");
+    }
+    received_.reserve(options_.receive_capacity);
+    order_.reserve(options_.receive_capacity);
+    outgoing_.reserve(options_.send_capacity);
+}
+
+void Channel::on_frame(FrameHandler handler)
+{
+    if (phase_ != Phase::Setup)
+    {
+        throw std::logic_error(std::string(kWho) + "on_frame() is only allowed before the host starts");
+    }
+    if (!handler)
+    {
+        throw std::invalid_argument(std::string(kWho) + "empty handler");
+    }
+    handlers_.push_back(std::move(handler));
+}
+
+SendStatus Channel::send(const Frame& frame)
+{
+    return queue(frame.bytes());
+}
+
+SendStatus Channel::send(std::span<const std::uint8_t> bytes)
+{
+    return queue(bytes);
+}
+
+SendStatus Channel::queue(std::span<const std::uint8_t> bytes)
+{
+    if (phase_ != Phase::InStep)
+    {
+        throw std::logic_error(std::string(kWho) +
+                               "send() is only allowed inside a step (a handler or the application stage)");
+    }
+    if (bytes.size() < kHeaderBytes || bytes.size() > options_.max_frame_bytes)
+    {
+        ++statistics_.sends_rejected;
+        return SendStatus::InvalidFrame;
+    }
+    if (outgoing_.size() >= options_.send_capacity)
+    {
+        ++statistics_.sends_rejected;
+        return SendStatus::QueueFull;
+    }
+    outgoing_.emplace_back();
+    static_cast<void>(outgoing_.back().assign(bytes)); // fits: max_frame_bytes <= Frame::kCapacity
+    return SendStatus::Ok;
+}
+
+std::optional<TimedFrame> Channel::receive()
+{
+    if (phase_ != Phase::InStep)
+    {
+        throw std::logic_error(std::string(kWho) + "receive() is only allowed inside a step (a handler or the application stage)");
+    }
+    pulls_ = true;
+    if (next_taken_ >= order_.size())
+    {
+        return std::nullopt;
+    }
+    ++statistics_.frames_taken;
+    return received_[order_[next_taken_++]];
+}
+
+void Channel::start(std::optional<SimDuration> step_size)
+{
+    static_cast<void>(step_size);
+    if (phase_ == Phase::Setup)
+    {
+        phase_ = Phase::Idle;
+    }
+}
+
+void Channel::begin(SimTime now)
+{
+    if (phase_ == Phase::InStep)
+    {
+        throw std::logic_error(std::string(kWho) + "begin() before the previous step was flushed");
+    }
+    phase_ = Phase::InStep;
+    now_ = now;
+    received_.clear();
+    order_.clear();
+    next_taken_ = 0;
+    outgoing_.clear();
+}
+
+bool Channel::accepted(const Frame& frame) const noexcept
+{
+    if (options_.accept == Accept::All)
+    {
+        return true;
+    }
+    const MacAddress destination = frame.destination();
+    return destination == *options_.mac || destination.is_broadcast() ||
+           std::find(options_.multicast.begin(), options_.multicast.end(), destination) != options_.multicast.end();
+}
+
+void Channel::take_event(const PortEvent& event) noexcept
+{
+    switch (event.kind)
+    {
+    case PortEvent::Kind::TransmitCompleted:
+        ++statistics_.transmit_completed;
+        break;
+    case PortEvent::Kind::TransmitFailed:
+        ++statistics_.transmit_failed;
+        break;
+    case PortEvent::Kind::ReceiveOverflow:
+        statistics_.port_receive_overflows += event.count;
+        break;
+    case PortEvent::Kind::EventOverflow:
+        statistics_.port_event_overflows += event.count;
+        break;
+    }
+}
+
+void Channel::take_frame(const TimedFrame& frame)
+{
+    if (frame.frame.size() < kHeaderBytes || frame.frame.size() > options_.max_frame_bytes)
+    {
+        ++statistics_.frames_invalid;
+        return;
+    }
+    if (!accepted(frame.frame))
+    {
+        ++statistics_.frames_filtered;
+        return;
+    }
+    if (received_.size() >= options_.receive_capacity)
+    {
+        ++statistics_.receive_overflows;
+        return;
+    }
+    received_.push_back(frame);
+}
+
+void Channel::receive(SimTime now)
+{
+    port_->release_events_before(now, [this](const PortEvent& event) { take_event(event); });
+    port_->release_before(now, [this](const TimedFrame& frame) { take_frame(frame); });
+    // The port releases by time, then arrival. Equal times from different senders arrive in an
+    // order that depends on the backend's threads; the source address makes it deterministic
+    // (the index is the last key, so one sender's frames keep their order). std::sort on the
+    // indices neither allocates nor copies frames (std::stable_sort would allocate).
+    for (std::size_t i = 0; i < received_.size(); ++i)
+    {
+        order_.push_back(static_cast<std::uint32_t>(i));
+    }
+    std::sort(order_.begin(), order_.end(), [this](std::uint32_t ia, std::uint32_t ib) {
+        const TimedFrame& a = received_[ia];
+        const TimedFrame& b = received_[ib];
+        if (a.time != b.time)
+        {
+            return a.time < b.time;
+        }
+        const MacAddress sa = a.frame.source();
+        const MacAddress sb = b.frame.source();
+        if (sa != sb)
+        {
+            return sa < sb;
+        }
+        return ia < ib;
+    });
+}
+
+void Channel::process()
+{
+    for (const std::uint32_t index : order_)
+    {
+        const TimedFrame& frame = received_[index];
+        ++statistics_.frames_received;
+        for (const FrameHandler& handler : handlers_)
+        {
+            handler(frame);
+        }
+    }
+}
+
+void Channel::flush()
+{
+    // send() is over for this step; receive() too.
+    phase_ = Phase::Idle;
+    if (pulls_)
+    {
+        statistics_.frames_not_taken += order_.size() - next_taken_;
+    }
+    std::size_t i = 0;
+    for (; i < outgoing_.size(); ++i)
+    {
+        const SendResult result = port_->send(TimedFrame{now_, outgoing_[i]});
+        if (result == SendResult::Accepted)
+        {
+            ++statistics_.frames_sent;
+        }
+        else if (result == SendResult::QueueFull)
+        {
+            break; // this frame and the rest are dropped (no retry)
+        }
+        else
+        {
+            ++statistics_.frames_dropped;
+        }
+    }
+    statistics_.frames_dropped += outgoing_.size() - i;
+    outgoing_.clear();
+}
+
+} // namespace vehicle_sil::eth
