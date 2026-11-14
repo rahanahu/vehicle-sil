@@ -124,7 +124,7 @@ vehicle_sil_launch run simulation.yaml --log-dir logs --timeout-ms 60000
 ```
 
 - `run` は、まず `check` と同じ照合をします。誤りがあれば何も起動しません。
-- 通れば、registry と controller を自分のプロセスの中に立て、ECU を起動し、`stop_at_ms` まで動かして、結果を書きます。出力の例は [最初の ECU を作る](first-ecu.md) の「動かす」にあります。participant の表の `ended` の列で、各 ECU がどう終わったかを見ます。
+- 通れば、registry と controller を自分のプロセスの中に立て、ECU を起動し、`stop_at_ms` まで動かして、結果を書きます。出力の例は [最初の ECU を作る](first-ecu.md) の「テンプレートをビルドして動かす」にあります。participant の表の `ended` の列で、各 ECU がどう終わったかを見ます。
 - `--log-dir logs` で、ECU ごとの出力が `logs/<participant 名>.log` にも残ります。何も付けなければ、標準エラーに `[<participant 名>] ` を付けて流れます。
 - ステップの中で止まった ECU がいると、仮想時間が進まず、`stop_at_ms` があっても終わりません。CI では `--timeout-ms` で実時間の上限を付けます。
 - 実行で出る所見（`participant-failed`、`not-joined`、`did-not-end` など）と、見張りの規則は [simulation-run.md](../simulation-run.md) の「見張ること」と「出力」の表にあります。どれも、どの participant かを文言に書きます。
