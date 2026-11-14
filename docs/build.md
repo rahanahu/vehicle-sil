@@ -54,6 +54,7 @@ README の「[vehicle-sil 自体をビルドする](../README.md#vehicle-sil-自
 | `linux-clang-asan`, `linux-clang-tsan` | Clang と AddressSanitizer + UBSan、または ThreadSanitizer |
 | `linux-gcc-asan`, `linux-gcc-tsan` | GCC とサニタイザー。`libasan`、`libubsan`、`libtsan` のパッケージが必要 |
 | `linux-gcc-static`、`windows-mingw-static` | Release で `VEHICLE_SIL_STATIC=ON`（下の「1 つの実行ファイルにする」）。静的な libstdc++ が要る（Fedora は `libstdc++-static`）。`scripts/verify.py --linux` には入れていない（名前を指定して回す） |
+| `linux-gcc-control` | GCC の Debug で `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON`（Control Server と、その試験も作る。[control-api.md](control-api.md) の「ビルド」）。gRPC が見つからなければ、固定した版を FetchContent で取り込んでビルドするので、CMake 3.28 以上と、初回の構成のときに git とネットワークが要る。Python のクライアントの試験は、grpcio と grpcio-tools のある Python（`uv sync`）があるときだけ登録する。`scripts/verify.py --linux` には入れていない（名前を指定して回す） |
 
 ThreadSanitizer のプリセットの試験は、誤検出とわかっている報告だけを `cmake/tsan-suppressions.txt` で抑えます（1 件ごとに理由を書いています）。
 

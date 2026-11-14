@@ -27,6 +27,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -493,15 +494,16 @@ class LauncherTest(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "a unix: socket")
     def test_a_unix_socket(self):
-        SCRATCH.mkdir(parents=True, exist_ok=True)
-        path = SCRATCH / "control.sock"
-        path.unlink(missing_ok=True)
-        with Launch(LAUNCH, config("unix", 1000), start_paused=True, address=f"unix:{path}") as launch:
-            self.assertEqual(launch.address, f"unix:{path}")
-            with Control(launch.address) as c:
-                self.assertEqual(c.sim.wait_paused(60).now, 0)
-                c.sim.resume()
-            self.assertEqual(launch.wait()["result"], "passed")
+        # Not in SCRATCH: a socket's path has room for 107 bytes only (sockaddr_un), and the build directory's
+        # path alone can take most of them (a worktree, a CI runner's workspace).
+        with tempfile.TemporaryDirectory(prefix="vsil-") as directory:
+            path = pathlib.Path(directory) / "control.sock"
+            with Launch(LAUNCH, config("unix", 1000), start_paused=True, address=f"unix:{path}") as launch:
+                self.assertEqual(launch.address, f"unix:{path}")
+                with Control(launch.address) as c:
+                    self.assertEqual(c.sim.wait_paused(60).now, 0)
+                    c.sim.resume()
+                self.assertEqual(launch.wait()["result"], "passed")
 
     # --- a scenario and the control server: the clients only look ---
 

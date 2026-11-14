@@ -148,6 +148,19 @@
       }
     },
     {
+      "name": "linux-gcc-control",
+      "displayName": "Linux GCC Debug with the control server (VEHICLE_SIL_BUILD_CONTROL_SERVER)",
+      "description": "Also builds the control server and its tests; takes gRPC from find_package(gRPC CONFIG), else builds the pinned gRPC with FetchContent (needs CMake 3.28+, git and network on the first configure)",
+      "inherits": [
+        "gcc",
+        "linux"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VEHICLE_SIL_BUILD_CONTROL_SERVER": "ON"
+      }
+    },
+    {
       "name": "windows-mingw-debug",
       "displayName": "Windows MSYS2 UCRT64 GCC Debug",
       "description": "Run from an MSYS2 UCRT64 shell (gcc, g++, cmake, ninja from mingw-w64-ucrt-x86_64-*)",
@@ -217,6 +230,10 @@
     {
       "name": "linux-clang-tsan",
       "configurePreset": "linux-clang-tsan"
+    },
+    {
+      "name": "linux-gcc-control",
+      "configurePreset": "linux-gcc-control"
     },
     {
       "name": "windows-mingw-debug",
@@ -289,6 +306,11 @@
       "environment": {
         "TSAN_OPTIONS": "suppressions=${sourceDir}/cmake/tsan-suppressions.txt"
       }
+    },
+    {
+      "name": "linux-gcc-control",
+      "inherits": "test-base",
+      "configurePreset": "linux-gcc-control"
     },
     {
       "name": "windows-mingw-debug",

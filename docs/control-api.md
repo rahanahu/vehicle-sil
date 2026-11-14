@@ -22,7 +22,7 @@ cmake --preset linux-gcc-release -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON
 cmake --build --preset linux-gcc-release
 ```
 
-gRPC が見つからなければ FetchContent で取り込みます（初回は取得とビルドに数分かかります）。Windows（MSYS2 UCRT64）は `pacman -S mingw-w64-ucrt-x86_64-grpc` で入れておきます。詳しくは [dependencies.md](dependencies.md)。このビルドの `vehicle_sil_launch` は `--control` を持ち、`vehicle_sil_launch version --json` の `features` に `control-server` があります。持たないビルドで `--control` を付けると、引数の誤り（終了コード 4）で、作り直し方を標準エラーに書きます。
+gRPC が見つからなければ FetchContent で取り込みます（初回は取得とビルドに数分かかります）。Control Server の試験までまとめて回すときは、プリセット `linux-gcc-control`（GCC の Debug でこの設定）を `scripts/verify.py linux-gcc-control` で使えます（[build.md](build.md) の「Linux」）。Windows（MSYS2 UCRT64）は `pacman -S mingw-w64-ucrt-x86_64-grpc` で入れておきます。詳しくは [dependencies.md](dependencies.md)。このビルドの `vehicle_sil_launch` は `--control` を持ち、`vehicle_sil_launch version --json` の `features` に `control-server` があります。持たないビルドで `--control` を付けると、引数の誤り（終了コード 4）で、作り直し方を標準エラーに書きます。
 
 ## ランチャーにつなぐ
 
