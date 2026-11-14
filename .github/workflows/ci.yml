@@ -108,7 +108,7 @@ jobs:
           fi
           unshare -Urnm true
       # The compiler cache: SIL Kit and everything else compiles once per cache, then comes from here.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
           key: ccache-${{ matrix.preset }}-${{ github.sha }}
@@ -148,6 +148,14 @@ jobs:
         run: >-
           python3 scripts/verify-gui.py --skip-web --skip-e2e --no-wait --tag ci
           --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch
+      # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
+      # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
+      # of main would be the ones thrown out.
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.preset }}-${{ github.sha }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -188,7 +196,7 @@ jobs:
           echo "$RUNNER_TEMP/$archive/bin" >> "$GITHUB_PATH"
       - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
         run: uv sync --locked
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
           key: ccache-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}-${{ github.sha }}
@@ -200,6 +208,14 @@ jobs:
           cmake --version | head -n 1
           cmake --version | grep -qxF "cmake version $CMAKE_OLDEST"
           python3 scripts/verify.py linux-gcc-release --tag ci
+      # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
+      # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
+      # of main would be the ones thrown out.
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}-${{ github.sha }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -243,7 +259,7 @@ jobs:
             mingw-w64-ucrt-x86_64-python-yaml
       - name: Where ccache keeps its files
         run: echo "CCACHE_DIR=$(cygpath -m "$GITHUB_WORKSPACE/.ccache")" >> "$GITHUB_ENV"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ccache
           key: ccache-windows-mingw-release-${{ github.sha }}
@@ -259,6 +275,14 @@ jobs:
           python -c "import sys, yaml; print('Python', sys.version.split()[0], 'PyYAML', yaml.__version__)"
       - name: Configure, build and test
         run: python scripts/verify.py windows-mingw-release --tag ci
+      # Only a run on main saves the compiler cache. A pull request reads the newest one of main; if each push
+      # of each pull request saved its own, the repository would go over the size GitHub keeps and the caches
+      # of main would be the ones thrown out.
+      - if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-windows-mingw-release-${{ github.sha }}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
