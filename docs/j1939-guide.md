@@ -464,6 +464,32 @@ options.on_reconnect = j1939::OnReconnect::Nothing;
 auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = kName});
 ```
 
+### 聞くだけの participant
+
+ほかの ECU どうしのやり取りをシナリオで確かめるときは、何も送らない ECU を構成に足して、聞いたことを `output` の変数に出します（「外から信号を操作する・読む」）。送らなければ、バスには何も出ません。ほかの ECU が受けるもの、送るもの、送信確認とそれぞれの時刻は、その ECU がいてもいなくても同じで、その ECU のステップ幅にもよりません（仮想バス、SIL Kit の簡易シミュレーション、簡易 CAN Network Simulator で試験しています）。
+
+```cpp
+class BusWatch final : public j1939::Observer {
+public:
+    explicit BusWatch(vehicle_sil::Ecu& ecu) {
+        ecu.j1939("J1939_CAN").set_observer(this);   // ノードを足さない: 1 フレームも送らない
+        ecu.output("watch.status_seen", &statusSeen_);
+    }
+    void on_event(const j1939::Event& e) override {
+        if (e.kind == j1939::EventKind::MessageReceived && e.pgn == kPgnStatus) { ++statusSeen_; }
+    }
+private:
+    int statusSeen_ = 0;
+};
+
+int main(int argc, char** argv) { return vehicle_sil::ecu_main<BusWatch>(argc, argv, {.name = "Watch", .step = 10ms}); }
+```
+
+- J1939 で聞く: ノードを足さない `Network`（`ecu.j1939(network)`）は、Address Claim も、Request への応答も、ACK と NACK もしません。受けたメッセージは `Network::set_observer` の `Observer` の `MessageReceived` で、時刻つきで見えます（[internals/j1939.md](internals/j1939.md) の「観測（`Observer`）」）。宛先がほかの ECU でも見えます。BAM で送られたメッセージは、組み立てたものが見えます。
+- 生の CAN で聞く: `ecu.can(network)` の `on_frame` で、全部のフレーム（11 ビットのフレーム、TP.CM と TP.DT を含む）を受けます。`send()` を呼ばなければ何も送りません。
+- いまは、ほかの ECU どうしの、相手を指定した複数フレームのメッセージ（RTS/CTS の転送）は、組み立てたものとしては聞けません。ノードのない `Network` は、自分宛てでない接続を組み立てないためです。要るときは、生の CAN で TP.CM と TP.DT を受けて組み立てます。
+- 確かめていないこと: Vector の Network Simulator の上で、送らない CAN コントローラーがバスの動き（ACK を返す相手の数など）を変えないかどうか。
+
 ## 外から信号を操作する・読む（UI、試験）
 
 UI や試験から ECU の値を読み書きするときは、ECU に変数を宣言し、Control API を使います。Control API が扱うのは宣言した変数と時間の操作で、J1939 のフレームは扱いません。受けた信号を外に見せるときは、その値を `output` に、外から決める値は `input` にします（例: [examples/ecu_main/engine/main.cpp](../examples/ecu_main/engine/main.cpp)）。
