@@ -198,3 +198,29 @@ TEST_CASE(silkit_eth_port_reports_inbox_overflow_and_close_discards_what_is_queu
     port.close();
     CHECK(release(port, at(10ms)).empty());
 }
+
+TEST_CASE(silkit_eth_port_reports_acknowledgements_its_event_queue_could_not_keep)
+{
+    // Acknowledgements dropped by a full event queue are reported (the channel's counts of
+    // transmitted frames would otherwise fall short without a sign).
+    FakeEthernetController controller;
+    SilKitEthPortOptions options;
+    options.event_capacity = 1;
+    SilKitEthPort port(controller, options);
+    controller.now = 1ms;
+    for (std::uint8_t i = 0; i < 3; ++i)
+    {
+        CHECK(port.send(TimedFrame{at(1ms), make_frame(kBroadcast, mac(1), 1, i)}) == SendResult::Accepted);
+    }
+    controller.now = 2ms;
+    CHECK(port.send(TimedFrame{at(2ms), make_frame(kBroadcast, mac(1), 1, 3)}) == SendResult::Accepted);
+    CHECK_EQ(port.statistics().event_overflows, 3u);
+    const auto events = release_events(port, at(3ms));
+    CHECK_EQ(events.size(), 2u);
+    CHECK(events[0].kind == PortEvent::Kind::TransmitCompleted);
+    CHECK(events[0].time == at(1ms));
+    CHECK(events[1].kind == PortEvent::Kind::EventOverflow);
+    CHECK(events[1].time == at(1ms));
+    CHECK_EQ(events[1].count, 3u);
+    CHECK(release_events(port, at(10ms)).empty());
+}

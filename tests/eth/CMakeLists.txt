@@ -6,6 +6,13 @@ vehicle_sil_add_harness_tests(vehicle_sil_eth_tests
   LINK vehicle_sil::eth)
 target_include_directories(vehicle_sil_eth_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Counts every allocation of the process (unit/allocation_counter.hpp): its own binary.
+vehicle_sil_add_harness_tests(vehicle_sil_eth_allocation_tests
+  PREFIX eth LABELS unit eth TIMEOUT 60
+  SOURCES test_eth_allocation.cpp
+  LINK vehicle_sil::eth)
+target_include_directories(vehicle_sil_eth_allocation_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # vehicle_sil::eth includes no SIL Kit header, also through the vehicle-sil headers it includes.
 add_test(NAME eth.boundary
          COMMAND ${CMAKE_COMMAND} -DDIR=${PROJECT_SOURCE_DIR}/libs/eth

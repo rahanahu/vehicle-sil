@@ -43,11 +43,15 @@ struct PortEvent
         /// time of the dropped frames, `count` how many were dropped until the event was
         /// released.
         ReceiveOverflow,
+        /// The event queue was full and events about frames this port sent (transmit
+        /// acknowledgements) were dropped. `time` is the earliest time of the dropped events,
+        /// `count` how many were dropped until this event was released.
+        EventOverflow,
     };
 
     Kind kind = Kind::TransmitCompleted;
     SimTime time{};
-    std::uint64_t count = 0; ///< ReceiveOverflow: frames dropped.
+    std::uint64_t count = 0; ///< ReceiveOverflow: frames dropped. EventOverflow: events dropped.
 
     [[nodiscard]] friend bool operator==(const PortEvent&, const PortEvent&) noexcept = default;
 };

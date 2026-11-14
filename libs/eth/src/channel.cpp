@@ -29,6 +29,7 @@ Channel::Channel(Port& port, ChannelOptions options) : port_(&port), options_(st
         throw std::invalid_argument(std::string(kWho) + "Accept::Addressed needs the channel's own address (mac)");
     }
     received_.reserve(options_.receive_capacity);
+    order_.reserve(options_.receive_capacity);
     outgoing_.reserve(options_.send_capacity);
 }
 
@@ -83,12 +84,13 @@ std::optional<TimedFrame> Channel::receive()
     {
         throw std::logic_error(std::string(kWho) + "receive() is only allowed inside a step (a handler or the application stage)");
     }
-    if (next_taken_ >= received_.size())
+    pulls_ = true;
+    if (next_taken_ >= order_.size())
     {
         return std::nullopt;
     }
     ++statistics_.frames_taken;
-    return received_[next_taken_++];
+    return received_[order_[next_taken_++]];
 }
 
 void Channel::start(std::optional<SimDuration> step_size)
@@ -109,6 +111,7 @@ void Channel::begin(SimTime now)
     phase_ = Phase::InStep;
     now_ = now;
     received_.clear();
+    order_.clear();
     next_taken_ = 0;
     outgoing_.clear();
 }
@@ -136,6 +139,9 @@ void Channel::take_event(const PortEvent& event) noexcept
         break;
     case PortEvent::Kind::ReceiveOverflow:
         statistics_.port_receive_overflows += event.count;
+        break;
+    case PortEvent::Kind::EventOverflow:
+        statistics_.port_event_overflows += event.count;
         break;
     }
 }
@@ -166,20 +172,34 @@ void Channel::receive(SimTime now)
     port_->release_before(now, [this](const TimedFrame& frame) { take_frame(frame); });
     // The port releases by time, then arrival. Equal times from different senders arrive in an
     // order that depends on the backend's threads; the source address makes it deterministic
-    // (the sort is stable, so one sender's frames keep their order).
-    std::stable_sort(received_.begin(), received_.end(), [](const TimedFrame& a, const TimedFrame& b) {
+    // (the index is the last key, so one sender's frames keep their order). std::sort on the
+    // indices neither allocates nor copies frames (std::stable_sort would allocate).
+    for (std::size_t i = 0; i < received_.size(); ++i)
+    {
+        order_.push_back(static_cast<std::uint32_t>(i));
+    }
+    std::sort(order_.begin(), order_.end(), [this](std::uint32_t ia, std::uint32_t ib) {
+        const TimedFrame& a = received_[ia];
+        const TimedFrame& b = received_[ib];
         if (a.time != b.time)
         {
             return a.time < b.time;
         }
-        return a.frame.source() < b.frame.source();
+        const MacAddress sa = a.frame.source();
+        const MacAddress sb = b.frame.source();
+        if (sa != sb)
+        {
+            return sa < sb;
+        }
+        return ia < ib;
     });
 }
 
 void Channel::process()
 {
-    for (const TimedFrame& frame : received_)
+    for (const std::uint32_t index : order_)
     {
+        const TimedFrame& frame = received_[index];
         ++statistics_.frames_received;
         for (const FrameHandler& handler : handlers_)
         {
@@ -192,6 +212,10 @@ void Channel::flush()
 {
     // send() is over for this step; receive() too.
     phase_ = Phase::Idle;
+    if (pulls_)
+    {
+        statistics_.frames_not_taken += order_.size() - next_taken_;
+    }
     std::size_t i = 0;
     for (; i < outgoing_.size(); ++i)
     {

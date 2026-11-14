@@ -127,6 +127,7 @@ void SilKitEthPort::close() noexcept
     events_.clear();
     const std::lock_guard overflowLock(overflow_mutex_);
     overflow_.clear();
+    event_overflow_.clear();
 }
 
 SimTime SilKitEthPort::stamp(std::chrono::nanoseconds timestamp) const noexcept
@@ -187,7 +188,11 @@ void SilKitEthPort::on_transmit(const sk::EthernetFrameTransmitEvent& event) noe
         return;
     }
     out.time = stamp(event.timestamp);
-    static_cast<void>(events_.push(out.time, out)); // a full queue counts it
+    if (!events_.push(out.time, out)) // a full queue counts it
+    {
+        const std::lock_guard lock(overflow_mutex_);
+        event_overflow_.note(out.time);
+    }
 }
 
 std::size_t SilKitEthPort::release_before(SimTime now, FrameSink sink)
@@ -229,12 +234,17 @@ std::size_t SilKitEthPort::release_events_before(SimTime now, PortEventSink sink
         return 0;
     }
     std::optional<PortEvent> overflow;
+    std::optional<PortEvent> eventOverflow;
     {
         const std::lock_guard lock(overflow_mutex_);
         overflow = overflow_.take_before(now);
+        eventOverflow = event_overflow_.take_before(now);
     }
+    // Both overflow events at their place in time order among the queued events.
     return OverflowCollector::release_merged(overflow, sink, [&](auto&& forward) {
-        return events_.drain_before(now, [&forward](SimTime, PortEvent& event) { forward(event); });
+        return OverflowCollector::release_merged(eventOverflow, forward, [&](auto&& inner) {
+            return events_.drain_before(now, [&inner](SimTime, PortEvent& event) { inner(event); });
+        });
     });
 }
 

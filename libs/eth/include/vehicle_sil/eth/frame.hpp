@@ -148,8 +148,9 @@ private:
     std::array<std::uint8_t, kCapacity> data_; // only the first size_ bytes are set
 };
 
-/// A frame with a time: on receiving, the time the backend gave it (the sender's step time on
-/// virtual time); on sending, the time of the sending step.
+/// A frame with a time: on receiving, the time the backend gave it (on virtual time, the step
+/// time of a time-synchronised sender; see SilKitEthPort for a sender without time
+/// synchronisation); on sending, the time of the sending step.
 struct TimedFrame
 {
     SimTime time{};

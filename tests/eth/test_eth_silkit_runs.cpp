@@ -40,6 +40,7 @@ using vehicle_sil::eth::Accept;
 using vehicle_sil::eth::Channel;
 using vehicle_sil::eth::ChannelOptions;
 using vehicle_sil::eth::kBroadcast;
+using vehicle_sil::eth::MacAddress;
 using vehicle_sil::eth::Port;
 using vehicle_sil::eth::SendStatus;
 using vehicle_sil::eth::SilKitEthPort;
@@ -59,8 +60,16 @@ constexpr std::size_t kNodes = 4;
 
 using Records = std::vector<std::vector<std::string>>;
 
-/// One node of the scenario, on whatever port its channel has. Node n has the address
-/// 02:00:00:00:00:0n.
+/// The address of node n (1..4): not in the order the nodes are registered, so frames with
+/// equal times reach the receivers on the virtual network in an order the channel has to
+/// change (registration order is arrival order there).
+MacAddress address_of(std::uint8_t number)
+{
+    constexpr std::uint8_t kLastByte[kNodes] = {3, 1, 4, 2};
+    return mac(kLastByte[number - 1]);
+}
+
+/// One node of the scenario, on whatever port its channel has (addresses: address_of()).
 /// - 1 broadcasts a frame every step (every third one 20 bytes, so it arrives padded).
 /// - 2 sends a frame to 3 every step, and takes what it receives with receive().
 /// - 3 accepts only frames to itself and broadcasts (Accept::Addressed), answers each frame to
@@ -94,13 +103,13 @@ public:
         switch (number_)
         {
         case 1:
-            send(frame_bytes(kBroadcast, mac(1), 1, seq, seq % 3 == 0 ? 20 : 100));
+            send(frame_bytes(kBroadcast, address_of(1), 1, seq, seq % 3 == 0 ? 20 : 100));
             break;
         case 2:
-            send(frame_bytes(mac(3), mac(2), 1, seq, 64));
+            send(frame_bytes(address_of(3), address_of(2), 1, seq, 64));
             break;
         case 3:
-            send(frame_bytes(group(1), mac(3), 3, seq, 40));
+            send(frame_bytes(group(1), address_of(3), 3, seq, 40));
             break;
         default:
             break;
@@ -111,7 +120,7 @@ private:
     static ChannelOptions options_for(std::uint8_t number)
     {
         ChannelOptions options;
-        options.mac = mac(number);
+        options.mac = address_of(number);
         if (number == 3)
         {
             options.accept = Accept::Addressed;
@@ -130,9 +139,9 @@ private:
     void on_frame(const TimedFrame& f)
     {
         note(f);
-        if (number_ == 3 && f.frame.destination() == mac(3))
+        if (number_ == 3 && f.frame.destination() == address_of(3))
         {
-            send(frame_bytes(f.frame.source(), mac(3), 2, f.frame.bytes()[15], 64));
+            send(frame_bytes(f.frame.source(), address_of(3), 2, f.frame.bytes()[15], 64));
         }
     }
 
@@ -290,20 +299,29 @@ void print_first_difference(const Records& expected, const Records& actual)
     }
 }
 
-/// Lines of `record` whose time equals the one before and whose sender differs from it.
-std::size_t same_time_from_different_senders(const std::vector<std::string>& record)
+struct SameTime
 {
-    std::size_t count = 0;
+    std::size_t senders_differ = 0; ///< lines whose time equals the one before, from another sender
+    std::size_t out_of_order = 0;   ///< of those, lines from a sender with a lower address
+};
+
+/// Frames with equal times in `record`: how often the sender changes, and how often it goes
+/// down instead of up (the channel orders them by the sender's address; the address strings
+/// compare like the bytes).
+SameTime same_time_senders(const std::vector<std::string>& record)
+{
+    SameTime result;
     for (std::size_t i = 1; i < record.size(); ++i)
     {
         const auto time = [](const std::string& line) { return line.substr(0, line.find(' ')); };
         const auto from = [](const std::string& line) { return line.substr(line.find("from="), 22); };
         if (time(record[i]) == time(record[i - 1]) && from(record[i]) != from(record[i - 1]))
         {
-            ++count;
+            ++result.senders_differ;
+            result.out_of_order += from(record[i]) < from(record[i - 1]) ? 1 : 0;
         }
     }
-    return count;
+    return result;
 }
 
 void check_same_records(const std::vector<SimDuration>& steps)
@@ -315,7 +333,9 @@ void check_same_records(const std::vector<SimDuration>& steps)
     for (const auto& record : reference)
     {
         CHECK(!record.empty());
-        sameTime += same_time_from_different_senders(record);
+        const SameTime same = same_time_senders(record);
+        sameTime += same.senders_differ;
+        CHECK_EQ(same.out_of_order, 0u); // fails on the virtual network alone if the channel does not order
         for (const auto& line : record)
         {
             padded += line.find("len=60 tag=1") != std::string::npos ? 1 : 0;
@@ -325,7 +345,7 @@ void check_same_records(const std::vector<SimDuration>& steps)
     CHECK(sameTime > 0u); // frames from different senders with equal times
     CHECK(padded > 0u);   // short frames arrive padded
     CHECK(replies > 0u);  // answers sent from a handler
-    // Node 3 takes only frames to itself and broadcasts: nothing from node 3's group.
+    // Node 3 takes only frames to itself and broadcasts: nothing to node 3's group.
     for (const auto& line : reference[2])
     {
         CHECK(line.find("to=03:") == std::string::npos);

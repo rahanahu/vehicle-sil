@@ -5,8 +5,10 @@
 
 #include "vehicle_sil/eth/frame.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace vehicle_sil::unit {
@@ -45,11 +47,23 @@ inline std::vector<std::uint8_t> frame_bytes(const eth::MacAddress& to, const et
     return bytes;
 }
 
+/// The same as frame_bytes(), as a Frame (without allocating; `length` at most
+/// Frame::kCapacity).
 inline eth::Frame make_frame(const eth::MacAddress& to, const eth::MacAddress& from, std::uint8_t tag, std::uint8_t seq,
                              std::size_t length = 64)
 {
+    std::array<std::uint8_t, eth::Frame::kCapacity> bytes{};
+    for (std::size_t i = 0; i < 6; ++i)
+    {
+        bytes[i] = to.bytes[i];
+        bytes[6 + i] = from.bytes[i];
+    }
+    bytes[12] = static_cast<std::uint8_t>(kTestEtherType >> 8);
+    bytes[13] = static_cast<std::uint8_t>(kTestEtherType & 0xFF);
+    bytes[14] = tag;
+    bytes[15] = seq;
     eth::Frame frame;
-    static_cast<void>(frame.assign(frame_bytes(to, from, tag, seq, length)));
+    static_cast<void>(frame.assign(std::span<const std::uint8_t>(bytes.data(), length < 16 ? 16 : length)));
     return frame;
 }
 

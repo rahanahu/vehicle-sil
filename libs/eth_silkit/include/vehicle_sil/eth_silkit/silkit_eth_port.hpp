@@ -28,7 +28,8 @@ struct SilKitEthPortOptions
     std::size_t inbox_capacity = 1024;
     /// Event queue capacity (> 0): transmit acknowledgements waiting for the next step. SIL Kit
     /// acknowledges every frame, so it must hold at least the frames sent in one step (the
-    /// channel's send_capacity); acknowledgements that do not fit are dropped and counted.
+    /// channel's send_capacity); acknowledgements that do not fit are dropped, counted and
+    /// reported as a PortEvent::EventOverflow.
     std::size_t event_capacity = 1024;
 };
 
@@ -80,8 +81,8 @@ struct SilKitEthPortStatistics
 /// TransmitCompleted; ControllerInactive, LinkDown, Dropped, InvalidFrameFormat:
 /// TransmitFailed), stamped with SIL Kit's timestamp and released by release_events_before().
 /// They are not handed to the channel from SIL Kit's handler: without a network simulator they
-/// arrive inside SendFrame(). A full inbox reports PortEvent::ReceiveOverflow, which takes no
-/// place in the event queue.
+/// arrive inside SendFrame(). A full inbox reports PortEvent::ReceiveOverflow and a full event
+/// queue PortEvent::EventOverflow; neither takes a place in the event queue.
 ///
 /// Shutdown order: stop the ParticipantRuntime (no more steps), close() (or destroy) the port,
 /// destroy the channel, then destroy the ParticipantRuntime (which owns the controller).
@@ -121,8 +122,9 @@ private:
     SilKit::Services::Ethernet::IEthernetController& controller_;
     StepInbox<Frame> inbox_;
     StepInbox<PortEvent> events_;
-    std::mutex overflow_mutex_; ///< guards overflow_
+    std::mutex overflow_mutex_; ///< guards overflow_ and event_overflow_
     OverflowCollector overflow_;
+    OverflowCollector event_overflow_{PortEvent::Kind::EventOverflow};
     /// `now` of the latest release_before(), in ns (written on the driver's thread, read on
     /// SIL Kit's).
     std::atomic<std::int64_t> step_time_ns_{0};

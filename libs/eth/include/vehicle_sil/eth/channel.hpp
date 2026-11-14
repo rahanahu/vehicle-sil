@@ -64,6 +64,8 @@ struct ChannelStatistics
 {
     std::uint64_t frames_received = 0;   ///< Frames handed over (handlers and receive()).
     std::uint64_t frames_taken = 0;      ///< Frames taken with receive().
+    std::uint64_t frames_not_taken = 0;  ///< Once receive() was called: frames of a step that
+                                         ///< receive() did not return by the end of the step.
     std::uint64_t receive_overflows = 0; ///< Frames dropped because receive_capacity was reached.
     std::uint64_t frames_filtered = 0;   ///< Frames not addressed to the channel (Accept::Addressed).
     std::uint64_t frames_invalid = 0;    ///< Received frames shorter than kHeaderBytes or longer
@@ -75,6 +77,9 @@ struct ChannelStatistics
     std::uint64_t transmit_failed = 0;    ///< Port events: frames the backend did not transmit.
     std::uint64_t port_receive_overflows = 0; ///< Port events: frames the port dropped because
                                               ///< its inbox was full.
+    std::uint64_t port_event_overflows = 0; ///< Port events: events the port dropped because its
+                                            ///< event queue was full (transmit_completed and
+                                            ///< transmit_failed miss them).
 };
 
 /// Raw Ethernet frames of an application on one port: no protocol stack, no timers. It is a
@@ -89,9 +94,11 @@ struct ChannelStatistics
 ///   SIL Kit hands over the same frames in the same order.
 /// - The handlers (on_frame()) are called in the process stage, for each frame in that order,
 ///   in the order they were added.
+/// - Nothing is allocated in the steps: the storage is allocated in the constructor.
 /// - receive() takes the same frames, one by one in the same order, from the process stage
 ///   until the end of the step (e.g. from the application). What it does not take is gone at the
-///   next step. Handlers and receive() see the frames independently of each other.
+///   next step; once receive() has been called, those frames are counted (frames_not_taken).
+///   Handlers and receive() see the frames independently of each other.
 /// - send() is allowed from the start of the step until the flush. The frames leave in this
 ///   step's flush, in the order of the send() calls, with the time `now`. A frame the port does
 ///   not accept is dropped and counted (frames_dropped): when the port's queue is full, that
@@ -159,8 +166,10 @@ private:
     Port* port_;
     ChannelOptions options_;
     std::vector<FrameHandler> handlers_;
-    std::vector<TimedFrame> received_; ///< this step's frames (capacity receive_capacity)
-    std::size_t next_taken_ = 0;       ///< received_[next_taken_] is the next for receive()
+    std::vector<TimedFrame> received_;   ///< this step's frames, as they arrived (capacity receive_capacity)
+    std::vector<std::uint32_t> order_;   ///< indices into received_, in the order they are handed over
+    std::size_t next_taken_ = 0;         ///< order_[next_taken_] is the next for receive()
+    bool pulls_ = false;                 ///< receive() has been called
     std::vector<Frame> outgoing_;      ///< this step's sends (capacity send_capacity)
     ChannelStatistics statistics_;
     SimTime now_{};

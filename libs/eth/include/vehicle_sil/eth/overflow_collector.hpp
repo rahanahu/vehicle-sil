@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// Collects the frames a port drops into one PortEvent::ReceiveOverflow (vehicle_sil::eth).
+// Collects what a port drops into one PortEvent::ReceiveOverflow or EventOverflow
+// (vehicle_sil::eth).
 #pragma once
 
 #include "vehicle_sil/core/sim_time.hpp"
@@ -12,21 +13,24 @@
 
 namespace vehicle_sil::eth {
 
-/// For port implementations: collects dropped received frames into one
-/// PortEvent::ReceiveOverflow and hands it over without taking a place in the event queue, so it
-/// never pushes out a transmit acknowledgement. Its time is the earliest time of the dropped
-/// frames, its count the number dropped until it is released.
+/// For port implementations: collects dropped received frames (or dropped events) into one
+/// PortEvent of the kind given to the constructor (ReceiveOverflow or EventOverflow) and hands
+/// it over without taking a place in the event queue, so it never pushes out a transmit
+/// acknowledgement. Its time is the earliest time of what was dropped, its count the number
+/// dropped until it is released.
 ///
 /// Not thread safe: the port guards it with its own lock.
 class OverflowCollector
 {
 public:
-    /// A received frame with time `time` was dropped.
+    explicit OverflowCollector(PortEvent::Kind kind = PortEvent::Kind::ReceiveOverflow) noexcept : kind_(kind) {}
+
+    /// A received frame (or an event) with time `time` was dropped.
     void note(SimTime time) noexcept
     {
         if (!event_)
         {
-            event_ = PortEvent{PortEvent::Kind::ReceiveOverflow, time, 0};
+            event_ = PortEvent{kind_, time, 0};
         }
         else if (time < event_->time)
         {
@@ -74,6 +78,7 @@ public:
     }
 
 private:
+    PortEvent::Kind kind_;
     std::optional<PortEvent> event_;
 };
 

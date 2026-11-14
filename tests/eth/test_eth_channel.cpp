@@ -261,6 +261,14 @@ TEST_CASE(channel_receive_gives_only_this_steps_frames_and_send_and_receive_need
     CHECK(taken == expected);
     CHECK_EQ(channel.statistics().frames_received, 2u);
     CHECK_EQ(channel.statistics().frames_taken, 1u);
+    // Not counted before receive() is used (handlers only).
+    CHECK_EQ(channel.statistics().frames_not_taken, 0u);
+
+    // Step 4 ms: two frames, one taken: the other is counted.
+    port.incoming = {TimedFrame{at(3ms), make_frame(kBroadcast, mac(9), 1, 2)},
+                     TimedFrame{at(3ms), make_frame(kBroadcast, mac(9), 1, 3)}};
+    run_step(channel, at(4ms), [&] { CHECK(channel.receive().has_value()); });
+    CHECK_EQ(channel.statistics().frames_not_taken, 1u);
     // After the flush: no step.
     CHECK(throws<std::logic_error>([&] { static_cast<void>(channel.receive()); }));
 }
@@ -384,6 +392,7 @@ TEST_CASE(channel_counts_the_ports_events)
     port.events = {PortEvent{PortEvent::Kind::TransmitCompleted, at(1ms), 0},
                    PortEvent{PortEvent::Kind::TransmitFailed, at(1ms), 0},
                    PortEvent{PortEvent::Kind::ReceiveOverflow, at(1ms), 4},
+                   PortEvent{PortEvent::Kind::EventOverflow, at(1ms), 3},
                    PortEvent{PortEvent::Kind::TransmitCompleted, at(5ms), 0}};
     Channel channel(port);
     member(channel).start(std::nullopt);
@@ -391,6 +400,7 @@ TEST_CASE(channel_counts_the_ports_events)
     CHECK_EQ(channel.statistics().transmit_completed, 1u);
     CHECK_EQ(channel.statistics().transmit_failed, 1u);
     CHECK_EQ(channel.statistics().port_receive_overflows, 4u);
+    CHECK_EQ(channel.statistics().port_event_overflows, 3u);
 }
 
 TEST_CASE(channel_refuses_options_it_cannot_work_with)
