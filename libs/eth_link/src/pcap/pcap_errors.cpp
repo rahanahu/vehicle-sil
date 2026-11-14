@@ -109,26 +109,21 @@ LinkError pcap_open_failed(PcapFlavor flavor, std::string_view name, std::string
 {
     std::string what = "cannot open " + quoted(name) + " with " + std::string(library_name(flavor)) + " (" + std::string(step) +
                        ": result " + std::to_string(status) + (why.empty() ? "" : ", " + std::string(why)) + ").";
+    // Npcap's captures are opened by pcap_open() (pcap_open_refused()); with it, only steps
+    // after the activation come here.
+    if (flavor == PcapFlavor::Npcap)
+    {
+        return {LinkErrorKind::Other, what};
+    }
     if (status == kPcapErrorPermissionDenied || status == kPcapErrorPromiscuousPermissionDenied)
     {
-        if (flavor == PcapFlavor::Npcap)
-        {
-            what += " This user may not use Npcap: if Npcap was installed for administrators only, run the bridge from a "
-                    "console started as administrator, or install Npcap again without that restriction.";
-        }
-        else
-        {
-            what += " A network interface needs CAP_NET_RAW: run 'sudo setcap cap_net_raw+ep " +
-                    (executable.empty() ? std::string("<this executable>") : std::string(executable)) +
-                    "' once, or run as root.";
-        }
+        what += " A network interface needs CAP_NET_RAW: run 'sudo setcap cap_net_raw+ep " +
+                (executable.empty() ? std::string("<this executable>") : std::string(executable)) + "' once, or run as root.";
         return {LinkErrorKind::PermissionDenied, what};
     }
     if (status == kPcapErrorInterfaceNotUp)
     {
-        what += " The interface is down: ";
-        what += flavor == PcapFlavor::Npcap ? "enable the adapter in the network settings of Windows."
-                                            : "bring it up with 'sudo ip link set " + std::string(name) + " up'.";
+        what += " The interface is down: bring it up with 'sudo ip link set " + std::string(name) + " up'.";
         return {LinkErrorKind::Other, what};
     }
     if (status == kPcapErrorNoSuchDevice)
@@ -136,6 +131,15 @@ LinkError pcap_open_failed(PcapFlavor flavor, std::string_view name, std::string
         return {LinkErrorKind::NoSuchInterface, what + " Run " + list_command(flavor) + " to see the interfaces."};
     }
     return {LinkErrorKind::Other, what};
+}
+
+LinkError pcap_open_refused(std::string_view name, std::string_view why)
+{
+    const std::string list = list_command(PcapFlavor::Npcap);
+    return {LinkErrorKind::Other,
+            "cannot open " + quoted(name) + " with Npcap (" + (why.empty() ? "pcap_open gave no reason" : "pcap_open: " + std::string(why)) +
+                "). Run " + list + " to see whether Npcap still offers the adapter; if Npcap was installed for administrators only, "
+                "run the bridge from a console started as administrator."};
 }
 
 std::string pcap_wireless_warning(std::string_view name)

@@ -11,7 +11,9 @@
 //   fake0            answers every frame sent on it: to the frame's source, from 02:00:00:00:00:02,
 //                    the bytes behind the two addresses and the EtherType inverted
 //   fake1            sends and receives nothing by itself (the tests inject and read frames)
-//   fake-echo        gives every frame sent on it back to the capture that sent it
+//   fake-echo        gives every frame sent on it back to the capture that sent it, as an adapter
+//                    of Npcap does: not to a capture opened by pcap_open() with the flag
+//                    PCAP_OPENFLAG_NOCAPTURE_LOCAL (8)
 //   fake-wifi        marked as wireless
 //   fake-down        cannot be opened: the interface is down
 //   fake-denied      cannot be opened: no permission
@@ -24,7 +26,10 @@
 //   fake-quiet       never tells that packets are there (its event is never set, its descriptor
 //                    never gets readable); the frames are there for whoever reads
 //
-// Built a second time with FAKE_PCAP_OLD, it is a library from before pcap_set_immediate_mode.
+// On every device, a frame one capture sends arrives at the other captures open on the device.
+//
+// Built a second time with FAKE_PCAP_OLD, it is a library from before pcap_set_immediate_mode;
+// built a third time with FAKE_PCAP_NO_OPEN, one without pcap_open (which the link asks of Npcap).
 //
 // The tests reach the functions fake_pcap_* at the end of this file by name, like the others.
 #include "pcap_api.hpp"
@@ -144,7 +149,7 @@ struct Device
     unsigned dropped = 0;
     long closed = 0;
     long reads = 0;
-    long snaplen = -1, promisc = -1, timeout = -1, immediate = -1, nonblock = -1;
+    long snaplen = -1, promisc = -1, timeout = -1, immediate = -1, nonblock = -1, open_flags = -1;
     std::vector<Bytes> sent;
     std::vector<PcapHandle*> open;
 };
@@ -232,6 +237,8 @@ struct vehicle_sil::eth_link::detail::PcapHandle
     int timeout = 0;
     int immediate = 0;
     int nonblock = 0;
+    long open_flags = -1; // what pcap_open() got; -1: made by pcap_create()
+    bool own_transmissions = true;
     std::deque<Bytes> queue;
     Bytes current;
     PcapPacketHeader header{};
@@ -249,6 +256,35 @@ void deliver(PcapHandle& handle, const Bytes& frame)
     {
         handle.signal.raise();
     }
+}
+
+/// What pcap_activate() does. Under g_mutex.
+int activate(PcapHandle& handle)
+{
+    Device* const device = handle.device;
+    if (device == nullptr)
+    {
+        copy_text(handle.error, sizeof(handle.error), "No such device exists");
+        return -5;
+    }
+    copy_text(handle.error, sizeof(handle.error), device->activate_text);
+    if (device->activate_result < 0)
+    {
+        return device->activate_result;
+    }
+    handle.active = true;
+    device->open.push_back(&handle);
+    device->snaplen = handle.snaplen;
+    device->promisc = handle.promisc;
+    device->timeout = handle.timeout;
+    device->immediate = handle.immediate;
+    device->nonblock = handle.nonblock;
+    device->open_flags = handle.open_flags;
+    if (device->read_fails)
+    {
+        handle.signal.raise();
+    }
+    return device->activate_result == 2 && handle.promisc == 0 ? 0 : device->activate_result;
 }
 
 } // namespace
@@ -331,30 +367,35 @@ FAKE_PCAP_EXPORT int pcap_set_immediate_mode(PcapHandle* handle, int on)
 FAKE_PCAP_EXPORT int pcap_activate(PcapHandle* handle)
 {
     const std::lock_guard lock(g_mutex);
-    Device* const device = handle->device;
-    if (device == nullptr)
-    {
-        copy_text(handle->error, sizeof(handle->error), "No such device exists");
-        return -5;
-    }
-    copy_text(handle->error, sizeof(handle->error), device->activate_text);
-    if (device->activate_result < 0)
-    {
-        return device->activate_result;
-    }
-    handle->active = true;
-    device->open.push_back(handle);
-    device->snaplen = handle->snaplen;
-    device->promisc = handle->promisc;
-    device->timeout = handle->timeout;
-    device->immediate = handle->immediate;
-    device->nonblock = handle->nonblock;
-    if (device->read_fails)
-    {
-        handle->signal.raise();
-    }
-    return device->activate_result == 2 && handle->promisc == 0 ? 0 : device->activate_result;
+    return activate(*handle);
 }
+
+#ifndef FAKE_PCAP_NO_OPEN
+/// As the real one: everything pcap_create() to pcap_activate() does in one call, a failure as
+/// a text in `error` only, a warning of the activation not at all. `flags`: 1 promiscuous,
+/// 8 the capture does not get its own transmissions, 16 frames at once.
+FAKE_PCAP_EXPORT PcapHandle* pcap_open(const char* source, int snaplen, int flags, int read_timeout, void*, char* error)
+{
+    const std::lock_guard lock(g_mutex);
+    auto* const handle = new PcapHandle;
+    handle->device = find_device(source);
+    handle->snaplen = snaplen;
+    handle->promisc = (flags & 1) != 0 ? 1 : 0;
+    handle->immediate = (flags & 16) != 0 ? 1 : 0;
+    handle->timeout = read_timeout;
+    handle->open_flags = flags;
+    handle->own_transmissions = (flags & 8) == 0;
+    if (activate(*handle) < 0)
+    {
+        const std::string why = handle->device != nullptr ? std::string(handle->error)
+                                                          : std::string(source != nullptr ? source : "") + ": " + handle->error;
+        copy_text(error, 256, why);
+        delete handle;
+        return nullptr;
+    }
+    return handle;
+}
+#endif
 
 FAKE_PCAP_EXPORT int pcap_datalink(PcapHandle* handle)
 {
@@ -443,9 +484,12 @@ FAKE_PCAP_EXPORT int pcap_sendpacket(PcapHandle* handle, const unsigned char* by
     const Bytes frame(bytes, bytes + size);
     device.sent.push_back(frame);
     device.dropped += device.drops_per_send;
-    if (device.echoes)
+    for (PcapHandle* const open : device.open)
     {
-        deliver(*handle, frame);
+        if (open != handle || (device.echoes && handle->own_transmissions))
+        {
+            deliver(*open, frame);
+        }
     }
     if (device.answers && frame.size() >= 14)
     {
@@ -517,6 +561,20 @@ FAKE_PCAP_EXPORT int fake_pcap_inject(const char* device, const unsigned char* b
     return static_cast<int>(found->open.size());
 }
 
+/// A frame arrives at one open capture of `device` only: the one opened as number `capture`
+/// (from 0) of those open now. Returns 1, or -1 if there is no such device or capture.
+FAKE_PCAP_EXPORT int fake_pcap_inject_one(const char* device, int capture, const unsigned char* bytes, int size)
+{
+    const std::lock_guard lock(g_mutex);
+    Device* const found = find_device(device);
+    if (found == nullptr || capture < 0 || static_cast<std::size_t>(capture) >= found->open.size())
+    {
+        return -1;
+    }
+    deliver(*found->open[static_cast<std::size_t>(capture)], Bytes(bytes, bytes + size));
+    return 1;
+}
+
 /// Copies the frame number `index` (from 0) that was sent on `device` to `out` and returns its
 /// size; -1 if there is no such frame or it does not fit.
 FAKE_PCAP_EXPORT int fake_pcap_sent(const char* device, int index, unsigned char* out, int capacity)
@@ -539,7 +597,8 @@ FAKE_PCAP_EXPORT int fake_pcap_sent(const char* device, int index, unsigned char
 /// "sent" (frames sent), "open" (open captures), "closed" (captures closed), "reads" (calls of
 /// pcap_next_ex on an activated capture), and what the last
 /// capture that was opened asked for: "snaplen", "promisc", "timeout", "immediate", "nonblock"
-/// (-1: never asked). -2 for anything else.
+/// (-1: never asked), "open_flags" (the flags pcap_open() got; -1: the capture was made by
+/// pcap_create()). -2 for anything else.
 FAKE_PCAP_EXPORT long fake_pcap_get(const char* device, const char* what)
 {
     const std::lock_guard lock(g_mutex);
@@ -558,6 +617,7 @@ FAKE_PCAP_EXPORT long fake_pcap_get(const char* device, const char* what)
     if (key == "timeout") return found->timeout;
     if (key == "immediate") return found->immediate;
     if (key == "nonblock") return found->nonblock;
+    if (key == "open_flags") return found->open_flags;
     return -2;
 }
 

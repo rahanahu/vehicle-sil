@@ -112,7 +112,7 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 | 用途 | ライブラリの関数 |
 |---|---|
 | 一覧 | `pcap_findalldevs`、`pcap_freealldevs`、`pcap_lib_version` |
-| 開く | `pcap_create`、`pcap_set_snaplen`、`pcap_set_promisc`、`pcap_set_timeout`、`pcap_set_immediate_mode`、`pcap_activate`、`pcap_datalink`、`pcap_setnonblock`、`pcap_close` |
+| 開く | `pcap_create`、`pcap_set_snaplen`、`pcap_set_promisc`、`pcap_set_timeout`、`pcap_set_immediate_mode`、`pcap_activate`、`pcap_datalink`、`pcap_setnonblock`、`pcap_close`。Npcap では `pcap_open` も（アダプターはこれで開きます。自分の送信を受けない指定が、この関数にしかないためです。libpcap には求めません） |
 | 送受信 | `pcap_next_ex`、`pcap_sendpacket`、`pcap_geterr`、`pcap_stats` |
 | 待つ | Windows は `pcap_getevent`、Linux は `pcap_get_selectable_fd` |
 
@@ -120,7 +120,8 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 - 試験は、同じ名前の関数を持つ試験専用の偽の共有ライブラリ（`tests/eth_link/fake_pcap`。vehicle-sil の宣言からビルドします）を、本物と同じ道で読み込みます。本物の libpcap に対しては、Linux の試験 `ethernet_bridge.netns.pcap` が確かめます（入っていない PC では飛ばします）。本物の Npcap に対する試験はありません。
 - 実装が前提にしている挙動:
   - libpcap（Linux。`ethernet_bridge.netns.pcap` が確かめます）: 送ったフレームは、送ったハンドルの受信に戻らない。受けたフレームの VLAN タグは、元の位置に戻して渡される。ブロックしない読み取りでは、インターフェースが下がったことも、なくなったことも、ライブラリは知らせない（ブリッジがカーネルに聞きます）。
-  - 確かめていない前提: `pcap_stats` の捨てた数が、開いてからの累計であること。Npcap の全部（送ったフレームが戻るか、イベントが読み取りで下がるか、構造体の形）。Npcap が送ったフレームを戻すかはわからないので、口は「戻す」と申告します（戻さなくても転送は続きます）。
+  - Npcap（本物に対して手で確かめました。範囲は [ethernet-bridge.md](ethernet-bridge.md) の「確かめたことと、確かめていないこと」）: 構造体の形が合う。イベントは、読み切ると下がる。送ったフレームは、送ったハンドルの受信に戻る。`pcap_open` に `PCAP_OPENFLAG_NOCAPTURE_LOCAL` を付けて開いたハンドルには戻らず、ほかのハンドルが送ったフレームは届く。口はこの指定で開き、「戻さない」と申告します。`pcap_open` に渡す指定の番号（プロミスキャス、自分の送信を受けない、すぐ渡す）は、vehicle-sil が自分で宣言しています。
+  - 確かめていない前提: `pcap_stats` の捨てた数が、開いてからの累計であること。Npcap の `pcap_open` の「すぐ渡す」の指定が、`pcap_set_immediate_mode` と同じ速さでフレームを渡すこと。
 
 ## 使っている API
 

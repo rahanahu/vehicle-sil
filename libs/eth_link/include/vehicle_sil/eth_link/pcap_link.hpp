@@ -40,9 +40,11 @@ struct PcapLinkOptions
 /// and down (LinkState) and a Fault once the interface is removed; on Windows it reports no
 /// LinkState, and an interface that goes away shows only if reading fails.
 ///
-/// echoes_own_transmissions() is false on Linux (the test ethernet_bridge.netns.pcap holds this
-/// against libpcap) and true on Windows: whether Npcap gives the link the frames it sent is not
-/// verified, and true is the answer that keeps the bridge working either way.
+/// echoes_own_transmissions() is false. On Linux, libpcap does not give the link the frames it
+/// sent (the test ethernet_bridge.netns.pcap holds this). Npcap does give a capture its own
+/// transmissions, so the link opens its capture with pcap_open() and the flag that keeps them
+/// away (PCAP_OPENFLAG_NOCAPTURE_LOCAL); the frames other programs send on the same adapter
+/// still arrive. A wpcap.dll without pcap_open() is refused when it is loaded.
 [[nodiscard]] std::unique_ptr<ExternalLink> make_pcap_link(PcapLinkOptions options);
 
 /// What --list-interfaces prints for the pcap library: the interfaces it offers, one per line as

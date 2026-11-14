@@ -124,26 +124,35 @@ TEST_CASE(pcap_error_open_failed_tells_the_fix_for_what_it_knows)
     CHECK_TEXT(pcap_open_failed(PcapFlavor::Libpcap, "enp3s0", "pcap_activate", kPcapErrorPromiscuousPermissionDenied, "", "").what(),
                "cannot open 'enp3s0' with libpcap (pcap_activate: result -11). A network interface needs CAP_NET_RAW: run 'sudo "
                "setcap cap_net_raw+ep <this executable>' once, or run as root.");
-    const auto npcap = pcap_open_failed(PcapFlavor::Npcap, "Ethernet 2", "pcap_activate", kPcapErrorPermissionDenied, "Access is denied", "");
-    CHECK(npcap.kind() == LinkErrorKind::PermissionDenied);
-    CHECK_TEXT(npcap.what(),
-               "cannot open 'Ethernet 2' with Npcap (pcap_activate: result -8, Access is denied). This user may not use Npcap: if "
-               "Npcap was installed for administrators only, run the bridge from a console started as administrator, or install "
-               "Npcap again without that restriction.");
     const auto down = pcap_open_failed(PcapFlavor::Libpcap, "va", "pcap_activate", kPcapErrorInterfaceNotUp, "va: That device is not up", "");
     CHECK(down.kind() == LinkErrorKind::Other);
     CHECK_TEXT(down.what(), "cannot open 'va' with libpcap (pcap_activate: result -9, va: That device is not up). The interface is "
                             "down: bring it up with 'sudo ip link set va up'.");
-    CHECK_TEXT(pcap_open_failed(PcapFlavor::Npcap, "Ethernet 2", "pcap_activate", kPcapErrorInterfaceNotUp, "", "").what(),
-               "cannot open 'Ethernet 2' with Npcap (pcap_activate: result -9). The interface is down: enable the adapter in the "
-               "network settings of Windows.");
     const auto gone = pcap_open_failed(PcapFlavor::Libpcap, "va", "pcap_activate", kPcapErrorNoSuchDevice, "va: No such device exists", "");
     CHECK(gone.kind() == LinkErrorKind::NoSuchInterface);
     CHECK_TEXT(gone.what(), "cannot open 'va' with libpcap (pcap_activate: result -5, va: No such device exists). Run "
                             "--list-interfaces --backend pcap to see the interfaces.");
-    const auto other = pcap_open_failed(PcapFlavor::Npcap, "Ethernet 2", "pcap_set_immediate_mode", -1, "", "");
+    // Npcap's captures are opened by pcap_open(), which tells a failure as a text only
+    // (pcap_open_refused()): a step after it has no advice by its result.
+    const auto other = pcap_open_failed(PcapFlavor::Npcap, "Ethernet 2", "pcap_setnonblock", -1, "", "");
     CHECK(other.kind() == LinkErrorKind::Other);
-    CHECK_TEXT(other.what(), "cannot open 'Ethernet 2' with Npcap (pcap_set_immediate_mode: result -1).");
+    CHECK_TEXT(other.what(), "cannot open 'Ethernet 2' with Npcap (pcap_setnonblock: result -1).");
+    CHECK_TEXT(pcap_open_failed(PcapFlavor::Npcap, "Ethernet 2", "pcap_setnonblock", kPcapErrorPermissionDenied, "", "").what(),
+               "cannot open 'Ethernet 2' with Npcap (pcap_setnonblock: result -8).");
+}
+
+TEST_CASE(pcap_error_open_refused_by_npcap_tells_the_reason_and_what_to_look_at)
+{
+    const auto refused = pcap_open_refused("Ethernet 2", "\\Device\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}: failed to set hardware filter");
+    CHECK(refused.kind() == LinkErrorKind::Other);
+    CHECK_TEXT(refused.what(),
+               "cannot open 'Ethernet 2' with Npcap (pcap_open: \\Device\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}: failed to set "
+               "hardware filter). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter; if Npcap "
+               "was installed for administrators only, run the bridge from a console started as administrator.");
+    CHECK_TEXT(pcap_open_refused("Ethernet 2", "").what(),
+               "cannot open 'Ethernet 2' with Npcap (pcap_open gave no reason). Run --list-interfaces --backend npcap to see "
+               "whether Npcap still offers the adapter; if Npcap was installed for administrators only, run the bridge from a "
+               "console started as administrator.");
 }
 
 TEST_CASE(pcap_warnings)
@@ -230,7 +239,7 @@ TEST_CASE(pcap_api_names_every_function_it_does_not_find)
         asked.emplace_back(name);
         return std::strcmp(name, "pcap_set_immediate_mode") == 0 || std::strcmp(name, "pcap_getevent") == 0 ? nullptr : &something;
     };
-    const auto [eventApi, eventMissing] = bind_pcap_api(resolve, PcapWaitKind::Event);
+    const auto [eventApi, eventMissing] = bind_pcap_api(resolve, PcapWaitKind::Event, PcapFlavor::Libpcap);
     CHECK_EQ(eventMissing.size(), std::size_t{2});
     CHECK_TEXT(eventMissing.at(0), "pcap_set_immediate_mode");
     CHECK_TEXT(eventMissing.at(1), "pcap_getevent");
@@ -238,9 +247,25 @@ TEST_CASE(pcap_api_names_every_function_it_does_not_find)
     // The way of waiting of the other operating system is not asked for.
     CHECK(std::find(asked.begin(), asked.end(), "pcap_get_selectable_fd") == asked.end());
     asked.clear();
-    const auto [fdApi, fdMissing] = bind_pcap_api(resolve, PcapWaitKind::Descriptor);
+    const auto [fdApi, fdMissing] = bind_pcap_api(resolve, PcapWaitKind::Descriptor, PcapFlavor::Libpcap);
     CHECK_EQ(fdMissing.size(), std::size_t{1});
-    CHECK(fdApi.get_selectable_fd != nullptr && fdApi.getevent == nullptr);
+    CHECK(fdApi.get_selectable_fd != nullptr && fdApi.getevent == nullptr && fdApi.open == nullptr);
     CHECK(std::find(asked.begin(), asked.end(), "pcap_getevent") == asked.end());
+    // libpcap is not asked for pcap_open(), which not every libpcap has.
+    CHECK(std::find(asked.begin(), asked.end(), "pcap_open") == asked.end());
     CHECK_EQ(asked.size(), std::size_t{17});
+
+    // Npcap is: the link opens its captures with it.
+    asked.clear();
+    auto without_open = [&](const char* name) -> void* {
+        asked.emplace_back(name);
+        return std::strcmp(name, "pcap_open") == 0 ? nullptr : &something;
+    };
+    const auto [npcapApi, npcapMissing] = bind_pcap_api(without_open, PcapWaitKind::Event, PcapFlavor::Npcap);
+    CHECK_EQ(npcapMissing.size(), std::size_t{1});
+    CHECK_TEXT(npcapMissing.at(0), "pcap_open");
+    CHECK(npcapApi.open == nullptr && npcapApi.create != nullptr);
+    CHECK_EQ(asked.size(), std::size_t{18});
+    const auto [fullApi, fullMissing] = bind_pcap_api([](const char*) -> void* { return &something; }, PcapWaitKind::Event, PcapFlavor::Npcap);
+    CHECK(fullMissing.empty() && fullApi.open != nullptr);
 }

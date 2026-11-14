@@ -77,6 +77,13 @@ inline constexpr std::size_t kPcapErrorTextBytes = 1024;
 /// The link type of Ethernet.
 inline constexpr int kPcapLinkTypeEthernet = 1;
 
+/// What pcap_open() takes as its flags (PcapApi::open).
+inline constexpr int kPcapOpenPromiscuous = 1;
+/// The capture does not get the frames it sent itself; it gets those other captures sent.
+inline constexpr int kPcapOpenNoCaptureLocal = 8;
+/// Frames are handed over as they arrive, not in batches (what pcap_set_immediate_mode() asks for).
+inline constexpr int kPcapOpenMaxResponsiveness = 16;
+
 /// How the receive thread waits for packets: the library offers a different way on each OS.
 enum class PcapWaitKind
 {
@@ -85,7 +92,7 @@ enum class PcapWaitKind
 };
 
 /// The functions, under vehicle-sil's names. All are set after bind_pcap_api() reported nothing
-/// missing, except the one of the other PcapWaitKind.
+/// missing, except the one of the other PcapWaitKind, and open, which is asked of Npcap only.
 struct PcapApi
 {
     const char* (*lib_version)() = nullptr;
@@ -101,6 +108,11 @@ struct PcapApi
     int (*datalink)(PcapHandle*) = nullptr;
     int (*setnonblock)(PcapHandle*, int on, char* error) = nullptr;
     void (*close)(PcapHandle*) = nullptr;
+    /// PcapFlavor::Npcap only: creates, sets up and activates a capture in one call. `flags`:
+    /// kPcapOpen*. `authentication` is for captures on other computers: null. Null on failure,
+    /// with the reason in `error`; a warning of the activation is not told.
+    PcapHandle* (*open)(const char* source, int snaplen, int flags, int read_timeout_ms, void* authentication,
+                        char* error) = nullptr;
 
     /// 1: a packet; 0: none now; negative: an error (geterr() tells).
     int (*next_ex)(PcapHandle*, PcapPacketHeader** header, const unsigned char** bytes) = nullptr;
@@ -114,9 +126,9 @@ struct PcapApi
 };
 
 /// Fills the table from `resolve` (the address of the function with that name, or null) and
-/// returns the names `resolve` did not have.
+/// returns the names `resolve` did not have. `flavor`: Npcap needs pcap_open() too.
 [[nodiscard]] std::pair<PcapApi, std::vector<std::string>> bind_pcap_api(const std::function<void*(const char*)>& resolve,
-                                                                        PcapWaitKind wait);
+                                                                        PcapWaitKind wait, PcapFlavor flavor);
 
 /// Why PcapWaiter::wait() returned.
 enum class PcapWake
@@ -172,6 +184,9 @@ public:
     PcapLibrary& operator=(const PcapLibrary&) = delete;
 
     [[nodiscard]] const PcapApi& api() const noexcept { return api_; }
+    /// Which library it is taken for: how the link opens a capture (Npcap: pcap_open(), so that
+    /// the capture does not get its own transmissions; libpcap: pcap_create()), and the names
+    /// in the messages.
     [[nodiscard]] PcapFlavor flavor() const noexcept { return flavor_; }
     /// The file it was loaded from, as it was asked for.
     [[nodiscard]] const std::string& path() const noexcept { return path_; }
@@ -206,5 +221,9 @@ private:
 /// nowhere else; elsewhere: libpcap.so.1, then libpcap.so.0.8, as the system's loader finds
 /// them); else the file to load instead. Throws LinkError (LibraryMissing).
 [[nodiscard]] std::shared_ptr<PcapLibrary> load_pcap_library(const std::string& library);
+
+/// The same, with the library taken for `flavor` whatever the operating system is. For the
+/// tests: they go both ways of opening a capture on every platform. Throws LinkError.
+[[nodiscard]] std::shared_ptr<PcapLibrary> load_pcap_library_as(const std::string& library, PcapFlavor flavor);
 
 } // namespace vehicle_sil::eth_link::detail

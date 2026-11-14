@@ -55,7 +55,7 @@ struct Fixture
     FakeEthernetController silkit;
     EthernetBridge bridge;
 
-    /// `echo`: the link returns the bridge's own frames (as Npcap is expected to).
+    /// `echo`: the link returns the bridge's own frames (no link of vehicle-sil does today).
     explicit Fixture(EthernetBridgeOptions options = {}, bool echo = false) :
       bridge(silkit, link, std::move(options))
     {

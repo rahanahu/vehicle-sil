@@ -152,7 +152,7 @@ private:
 class WindowsLibrary final : public PcapLibrary
 {
 public:
-    WindowsLibrary(HMODULE module, std::string path) : PcapLibrary(PcapFlavor::Npcap, std::move(path)), module_(module)
+    WindowsLibrary(HMODULE module, std::string path, PcapFlavor flavor) : PcapLibrary(flavor, std::move(path)), module_(module)
     {
         try
         {
@@ -210,14 +210,12 @@ private:
     const HMODULE module_;
 };
 
-} // namespace
-
-std::shared_ptr<PcapLibrary> load_pcap_library(const std::string& library)
+std::shared_ptr<PcapLibrary> load(const std::string& library, PcapFlavor flavor)
 {
     const std::wstring path = library.empty() ? installed_library() : full_path(widen(library));
     if (path.empty())
     {
-        throw pcap_library_missing(PcapFlavor::Npcap, "wpcap.dll", "Windows does not tell where its system directory is");
+        throw pcap_library_missing(flavor, "wpcap.dll", "Windows does not tell where its system directory is");
     }
     // No message box of Windows for a DLL that cannot be loaded: the bridge says it itself.
     const UINT mode = SetErrorMode(SEM_FAILCRITICALERRORS);
@@ -227,9 +225,21 @@ std::shared_ptr<PcapLibrary> load_pcap_library(const std::string& library)
     SetErrorMode(mode);
     if (module == nullptr)
     {
-        throw pcap_library_missing(PcapFlavor::Npcap, narrow(path.c_str()), "Windows error " + std::to_string(error));
+        throw pcap_library_missing(flavor, narrow(path.c_str()), "Windows error " + std::to_string(error));
     }
-    return std::make_shared<WindowsLibrary>(module, narrow(path.c_str()));
+    return std::make_shared<WindowsLibrary>(module, narrow(path.c_str()), flavor);
+}
+
+} // namespace
+
+std::shared_ptr<PcapLibrary> load_pcap_library(const std::string& library)
+{
+    return load(library, PcapFlavor::Npcap);
+}
+
+std::shared_ptr<PcapLibrary> load_pcap_library_as(const std::string& library, PcapFlavor flavor)
+{
+    return load(library, flavor);
 }
 
 } // namespace vehicle_sil::eth_link::detail

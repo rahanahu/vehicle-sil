@@ -145,11 +145,10 @@ public:
     void start(EventHandler handler) override;
     void stop() noexcept override;
     TransmitResult transmit(std::span<const std::uint8_t> frame) override;
-    /// Linux: the library's socket does not get the frames it sent (held by the test
-    /// ethernet_bridge.netns.pcap). Windows: not verified; "yes" keeps the bridge forwarding
-    /// whether Npcap returns them or not, where "no" would take every returned frame for a
-    /// second bridge and stop forwarding.
-    [[nodiscard]] bool echoes_own_transmissions() const noexcept override { return flavor_ == PcapFlavor::Npcap; }
+    /// libpcap on Linux: the library's socket does not get the frames it sent (held by the test
+    /// ethernet_bridge.netns.pcap). Npcap gives a capture its own transmissions unless the
+    /// capture asks it not to, which open() does (kPcapOpenNoCaptureLocal).
+    [[nodiscard]] bool echoes_own_transmissions() const noexcept override { return false; }
     [[nodiscard]] std::string describe() const override
     {
         const std::lock_guard lock(text_mutex_);
@@ -164,6 +163,9 @@ public:
 private:
     /// Opens `device` for sending and receiving without blocking. Throws LinkError.
     PcapHandle* open(const PcapDevice& device, std::vector<std::string>& warnings);
+    /// The two ways to an activated capture; open() goes on from there.
+    PcapHandle* open_created(const PcapDevice& device, std::vector<std::string>& warnings);
+    PcapHandle* open_without_own_transmissions(const PcapDevice& device);
     void run();
     void fault(const std::string& detail);
     void warn(const std::string& detail);
@@ -206,7 +208,25 @@ private:
     std::string described_;
 };
 
-PcapHandle* PcapLink::open(const PcapDevice& device, std::vector<std::string>& warnings)
+PcapHandle* PcapLink::open_without_own_transmissions(const PcapDevice& device)
+{
+    // Npcap gives a capture the frames the capture itself sent, and only pcap_open() takes the
+    // flag against it: a capture made by pcap_create() cannot be told. Without the flag the
+    // bridge could not tell its own frames from those of a second bridge on the same adapter.
+    // The other settings are the ones open_created() makes, as arguments: the same snapshot
+    // length and read timeout, frames at once, promiscuous mode if asked for. pcap_open() tells
+    // a failure as a text only, and no warning of the activation.
+    const int flags = kPcapOpenNoCaptureLocal | kPcapOpenMaxResponsiveness | (options_.promiscuous ? kPcapOpenPromiscuous : 0);
+    char error[kPcapErrorTextBytes] = {};
+    PcapHandle* const handle = api_.open(device.name.c_str(), kSnapshotBytes, flags, kReadTimeoutMs, nullptr, error);
+    if (handle == nullptr)
+    {
+        throw pcap_open_refused(display_name(device), trimmed(error));
+    }
+    return handle;
+}
+
+PcapHandle* PcapLink::open_created(const PcapDevice& device, std::vector<std::string>& warnings)
 {
     const std::string& shown = display_name(device);
     const std::string executable = library_->executable_path();
@@ -237,13 +257,23 @@ PcapHandle* PcapLink::open(const PcapDevice& device, std::vector<std::string>& w
     {
         warnings.push_back(pcap_activate_warning(shown, activated, trimmed(text_or_empty(api_.geterr(handle)))));
     }
+    return guard.release();
+}
+
+PcapHandle* PcapLink::open(const PcapDevice& device, std::vector<std::string>& warnings)
+{
+    const std::string& shown = display_name(device);
+    PcapHandle* const handle =
+        flavor_ == PcapFlavor::Npcap ? open_without_own_transmissions(device) : open_created(device, warnings);
+    OpenGuard guard(api_, handle);
+    char error[kPcapErrorTextBytes] = {};
     if (const int type = api_.datalink(handle); type != kPcapLinkTypeEthernet)
     {
         throw pcap_not_ethernet(flavor_, shown, type);
     }
     if (api_.setnonblock(handle, 1, error) != 0)
     {
-        throw pcap_open_failed(flavor_, shown, "pcap_setnonblock", -1, trimmed(error), executable);
+        throw pcap_open_failed(flavor_, shown, "pcap_setnonblock", -1, trimmed(error), library_->executable_path());
     }
     return guard.release();
 }
@@ -555,7 +585,8 @@ void PcapLink::run()
 
 } // namespace
 
-std::pair<PcapApi, std::vector<std::string>> bind_pcap_api(const std::function<void*(const char*)>& resolve, PcapWaitKind wait)
+std::pair<PcapApi, std::vector<std::string>> bind_pcap_api(const std::function<void*(const char*)>& resolve, PcapWaitKind wait,
+                                                           PcapFlavor flavor)
 {
     PcapApi api;
     std::vector<std::string> missing;
@@ -581,6 +612,10 @@ std::pair<PcapApi, std::vector<std::string>> bind_pcap_api(const std::function<v
     bind(api.datalink, "pcap_datalink");
     bind(api.setnonblock, "pcap_setnonblock");
     bind(api.close, "pcap_close");
+    if (flavor == PcapFlavor::Npcap)
+    {
+        bind(api.open, "pcap_open");
+    }
     bind(api.next_ex, "pcap_next_ex");
     bind(api.sendpacket, "pcap_sendpacket");
     bind(api.geterr, "pcap_geterr");
@@ -598,7 +633,7 @@ std::pair<PcapApi, std::vector<std::string>> bind_pcap_api(const std::function<v
 
 void PcapLibrary::bind(PcapWaitKind wait)
 {
-    auto [api, missing] = bind_pcap_api([this](const char* name) { return symbol(name); }, wait);
+    auto [api, missing] = bind_pcap_api([this](const char* name) { return symbol(name); }, wait, flavor_);
     if (!missing.empty())
     {
         const std::string version = api.lib_version != nullptr ? text_or_empty(api.lib_version()) : std::string();

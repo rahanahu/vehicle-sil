@@ -12,7 +12,8 @@ vehicle_sil_target_defaults(vehicle_sil_eth_link_fake)
 # same library from before a function the link needs. Nothing links them: the tests load them by
 # their paths.
 set(VEHICLE_SIL_FAKE_PCAP_DIR ${CMAKE_CURRENT_BINARY_DIR}/fake_pcap CACHE INTERNAL "where the fake pcap libraries are built")
-foreach(_fake vehicle_sil_fake_pcap vehicle_sil_fake_pcap_old)
+set(_fakes vehicle_sil_fake_pcap vehicle_sil_fake_pcap_old vehicle_sil_fake_pcap_no_open)
+foreach(_fake ${_fakes})
   add_library(${_fake} MODULE fake_pcap/fake_pcap.cpp)
   target_include_directories(${_fake} PRIVATE ${PROJECT_SOURCE_DIR}/libs/eth_link/src/pcap
                                               ${PROJECT_SOURCE_DIR}/libs/eth_link/include)
@@ -29,11 +30,12 @@ foreach(_fake vehicle_sil_fake_pcap vehicle_sil_fake_pcap_old)
   endif()
 endforeach()
 target_compile_definitions(vehicle_sil_fake_pcap_old PRIVATE FAKE_PCAP_OLD)
+target_compile_definitions(vehicle_sil_fake_pcap_no_open PRIVATE FAKE_PCAP_NO_OPEN)
 if(WIN32)
   # Loading the fakes in a test does not show a DLL they need from PATH: the test program has the
   # toolchain's DLLs loaded already, and Windows takes those. So the list of what each needs is
   # checked itself, and a failure names the DLL.
-  foreach(_fake vehicle_sil_fake_pcap vehicle_sil_fake_pcap_old)
+  foreach(_fake ${_fakes})
     add_test(NAME eth_link.fake_pcap_imports.${_fake}
              COMMAND ${CMAKE_COMMAND} "-DOBJDUMP=${CMAKE_OBJDUMP}" -DDLL=$<TARGET_FILE:${_fake}>
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/fake_pcap/check_dll_imports.cmake)
@@ -50,7 +52,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_eth_link_tests
 target_include_directories(vehicle_sil_eth_link_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/eth_link/src
                                                               ${PROJECT_SOURCE_DIR}/libs/eth_link/src/pcap)
 target_compile_definitions(vehicle_sil_eth_link_tests PRIVATE VEHICLE_SIL_FAKE_PCAP_DIR="${VEHICLE_SIL_FAKE_PCAP_DIR}")
-add_dependencies(vehicle_sil_eth_link_tests vehicle_sil_fake_pcap vehicle_sil_fake_pcap_old)
+add_dependencies(vehicle_sil_eth_link_tests ${_fakes})
 
 # vehicle_sil::eth_link includes no SIL Kit header, also through the vehicle-sil headers it
 # includes (it links nothing of vehicle-sil).

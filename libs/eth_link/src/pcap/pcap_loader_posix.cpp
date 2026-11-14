@@ -123,7 +123,7 @@ private:
 class PosixLibrary final : public PcapLibrary
 {
 public:
-    PosixLibrary(void* handle, std::string path) : PcapLibrary(PcapFlavor::Libpcap, std::move(path)), handle_(handle)
+    PosixLibrary(void* handle, std::string path, PcapFlavor flavor) : PcapLibrary(flavor, std::move(path)), handle_(handle)
     {
         try
         {
@@ -167,9 +167,7 @@ private:
     void* const handle_;
 };
 
-} // namespace
-
-std::shared_ptr<PcapLibrary> load_pcap_library(const std::string& library)
+std::shared_ptr<PcapLibrary> load(const std::string& library, PcapFlavor flavor)
 {
     std::vector<std::string> names;
     if (library.empty())
@@ -186,13 +184,25 @@ std::shared_ptr<PcapLibrary> load_pcap_library(const std::string& library)
     {
         if (void* const handle = ::dlopen(name.c_str(), RTLD_NOW | RTLD_LOCAL))
         {
-            return std::make_shared<PosixLibrary>(handle, name);
+            return std::make_shared<PosixLibrary>(handle, name, flavor);
         }
         const char* const error = ::dlerror();
         tried += (tried.empty() ? "" : " or ") + name;
         why = error != nullptr ? error : "unknown error";
     }
-    throw pcap_library_missing(PcapFlavor::Libpcap, tried, why);
+    throw pcap_library_missing(flavor, tried, why);
+}
+
+} // namespace
+
+std::shared_ptr<PcapLibrary> load_pcap_library(const std::string& library)
+{
+    return load(library, PcapFlavor::Libpcap);
+}
+
+std::shared_ptr<PcapLibrary> load_pcap_library_as(const std::string& library, PcapFlavor flavor)
+{
+    return load(library, flavor);
 }
 
 } // namespace vehicle_sil::eth_link::detail

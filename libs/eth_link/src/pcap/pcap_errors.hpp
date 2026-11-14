@@ -49,9 +49,14 @@ inline constexpr int kPcapWarningPromiscuousNotSupported = 2;
 /// The device `name` does not carry Ethernet frames.
 [[nodiscard]] LinkError pcap_not_ethernet(PcapFlavor flavor, std::string_view name, int link_type);
 /// Opening the device `name` failed in `step` (the library's function) with `status` and the
-/// library's text `why` (may be empty). `executable`: this program's path, or empty.
+/// library's text `why` (may be empty). `executable`: this program's path, or empty. What to do
+/// about no permission and about an interface that is down is told for libpcap, whose way of
+/// opening tells these apart by `status`.
 [[nodiscard]] LinkError pcap_open_failed(PcapFlavor flavor, std::string_view name, std::string_view step, int status,
                                          std::string_view why, std::string_view executable);
+/// Npcap's pcap_open() could not open the device `name`. `why`: the library's text (may be
+/// empty), which is all pcap_open() tells.
+[[nodiscard]] LinkError pcap_open_refused(std::string_view name, std::string_view why);
 
 /// The Warning for a device the library marks as wireless.
 [[nodiscard]] std::string pcap_wireless_warning(std::string_view name);
