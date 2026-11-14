@@ -429,6 +429,10 @@ SCENARIO_SAMPLES = [
      "  - expect: { Engine.engine.speed: { near: \"${rpm}\", tolerance: \"${far}\" } }\n    within_ms: ${ms}\n"
      "  - expect: { Engine.engine.speed: { ge: 0 } }\n    hold_for_ms: ${ms}\n"
      "  - wait_until: { Engine.ecu.connected: \"${on}\" }\n    timeout_ms: ${ms}\n", "valid"),
+    ("hexadecimal values of an integer",
+     S + "  - expect: { Engine.engine.speed: { ge: 0x0, le: 0X1F40, ne: 0x7fffffffffffffff } }\n"
+     "  - wait_until: { Engine.engine.speed: { near: \"${rpm}\", tolerance: 16 } }\n    timeout_ms: 5\n"
+     "params: { rpm: 0X384 }\n", "valid"),
     ("only, and a parameter of the configuration",
      S + "  - after_ms: ${from_configuration}\n" + SET.replace("  - ", "    ") + "only: [small, 7]\nparams: {}\n", "valid"),
     ("a step with a variable that is absent", S + SET + "  - expect: { Engine.engine.turbo: { le: 0.1 } }\n", "valid"),
@@ -502,6 +506,10 @@ SCENARIO_SAMPLES = [
     ("a parameter without a value", S + "  - at_ms: ${ms}\n" + SET.replace("  - ", "    "), "check only"),
     ("a parameter of the wrong type", S + "  - at_ms: ${ms}\n" + SET.replace("  - ", "    ") + "params: { ms: soon }\n",
      "check only"),
+    ("hexadecimal of a real", S + "  - set: { Engine.engine.throttle: 0x10 }\n", "check only"),
+    ("hexadecimal of a real in a ramp", S + "  - ramp: { Engine.engine.throttle: { to: 0X10, over_ms: 10 } }\n", "check only"),
+    ("a negative hexadecimal", S + "  - expect: { Engine.engine.speed: { ge: -0x1 } }\n", "check only"),
+    ("hexadecimal in quotes", S + "  - expect: { Engine.engine.speed: \"0x10\" }\n", "check only"),
     ("only with a variant there is not", S + SET + "only: [large]\n", "check only"),
 ]
 

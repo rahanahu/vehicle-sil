@@ -454,6 +454,73 @@ private:
                ", from " + param_source_text(param->source) + ")";
     }
 
+    // --- hexadecimal: the one place a scenario reads it (values of integer and enum variables) ---
+
+    /// The unquoted value at `node` (or its parameter's) as hexadecimal; None if quoted.
+    Hex hex_of(ryml::id_type node) const
+    {
+        if (param_at(node) == nullptr && (!is_scalar(node) || is_null(node)))
+        {
+            return {};
+        }
+        return quoted(node) ? Hex{} : read_hex(text_of(node));
+    }
+    /// A whole number written for a value of an integer or an enum variable: decimal, or
+    /// hexadecimal (0x1F, 0X1F) without a sign and without quotes.
+    bool whole_number(ryml::id_type node, std::int64_t& value) const
+    {
+        if (plain_integer(node, value))
+        {
+            return true;
+        }
+        const Hex hex = hex_of(node);
+        if (hex.kind != Hex::Kind::Read)
+        {
+            return false;
+        }
+        value = static_cast<std::int64_t>(hex.magnitude);
+        return true;
+    }
+    /// A number of the range of the variable, as a ramp or a wave writes it: decimal, or for an
+    /// integer variable whole_number().
+    bool number_of(ryml::id_type node, std::size_t variable, double& value) const
+    {
+        std::int64_t i = 0;
+        if (plain_number(node, value))
+        {
+            return true;
+        }
+        if (scenario_.variables[variable].type != control::ValueType::Integer || !whole_number(node, i))
+        {
+            return false;
+        }
+        value = static_cast<double>(i);
+        return true;
+    }
+    /// What a message adds when the value at `node` is hexadecimal that the variable of `type`
+    /// cannot take: "" otherwise (also for a bool, whose message says true or false).
+    std::string hex_hint(ryml::id_type node, control::ValueType type) const
+    {
+        const Hex hex = hex_of(node);
+        const std::string decimal = std::to_string(hex.magnitude);
+        switch (hex.kind)
+        {
+        case Hex::Kind::None: return {};
+        case Hex::Kind::Negative: return ": write a negative number in decimal (-" + decimal + ")";
+        case Hex::Kind::TooLarge: return ": it is more than an integer holds (at most 0x7FFFFFFFFFFFFFFF)";
+        case Hex::Kind::Read:
+            return type == control::ValueType::Real ? ": hexadecimal (0x...) is for integer and enum variables only; write " + decimal
+                                                    : std::string{};
+        }
+        return {};
+    }
+    /// A value at `node` as a message shows it: the number, and for hexadecimal also as written
+    /// ("0x65 (101)"), as the range beside it is decimal.
+    std::string written(ryml::id_type node, double value) const
+    {
+        return hex_of(node).kind == Hex::Kind::Read ? text_of(node) + " (" + number_text(value) + ")" : number_text(value);
+    }
+
     // --- the variants the scenario is for ---
 
     void read_only(ryml::id_type node)
@@ -690,7 +757,7 @@ private:
         {
             std::int64_t i = 0;
             double d = 0;
-            if (plain_integer(node, i))
+            if (whole_number(node, i))
             {
                 out = control::Value{i};
             }
@@ -701,7 +768,8 @@ private:
             else
             {
                 error("scenario-value", line,
-                      pre + " must be a whole number, not " + shown_value(node) + (quoted ? ": write the number without quotes" : ""));
+                      pre + " must be a whole number, not " + shown_value(node) +
+                          (quoted ? ": write the number without quotes" : hex_hint(node, v.type)));
             }
             break;
         }
@@ -715,14 +783,15 @@ private:
             else
             {
                 error("scenario-value", line,
-                      pre + " must be a number, not " + shown_value(node) + (quoted ? ": write the number without quotes" : ""));
+                      pre + " must be a number, not " + shown_value(node) +
+                          (quoted ? ": write the number without quotes" : hex_hint(node, v.type)));
             }
             break;
         }
         case control::ValueType::Enum:
         {
             std::int64_t i = 0;
-            const bool number = plain_integer(node, i);
+            const bool number = whole_number(node, i);
             const auto item = std::find_if(info.items.begin(), info.items.end(), [&](const control::EnumItem& e) {
                 return number ? e.value == i : e.name == text;
             });
@@ -737,9 +806,11 @@ private:
                 {
                     names.push_back(e.name);
                 }
-                const std::string guess = number ? std::string{} : detail::closest(text, names);
+                const std::string hint = hex_hint(node, v.type);
+                const std::string guess = number || !hint.empty() ? std::string{} : detail::closest(text, names);
                 error("scenario-value", line,
-                      pre + " must be one of its items, by name or by value, not " + shown_value(node) + ": " +
+                      pre + " must be one of its items, by name or by value, not " + shown_value(node) +
+                          (hint.empty() ? std::string(": ") : hint + "; ") +
                           (guess.empty() ? std::string{} : "did you mean '" + guess + "'? ") + "the items are " +
                           items_text(info.items));
             }
@@ -749,7 +820,8 @@ private:
         if (out && write && v.type != control::ValueType::Bool && v.type != control::ValueType::Enum &&
             !in_range(as_number(*out), variable))
         {
-            error("scenario-value", line, pre + " is " + text + ", outside its range (" + range_text(info) + ")");
+            error("scenario-value", line, pre + " is " + (hex_of(node).kind == Hex::Kind::Read ? written(node, as_number(*out)) : text) +
+                                              ", outside its range (" + range_text(info) + ")");
             return std::nullopt;
         }
         return out;
@@ -1193,15 +1265,16 @@ private:
                     }
                     // A ramp writes numbers in between: its ends are numbers of the range, also for an integer.
                     double d = 0;
-                    if (!plain_number(part, d))
+                    if (!number_of(part, *v, d))
                     {
-                        error("scenario-value", doc_.line(part), key + " of the ramp of " + var.text + " must be a number, not " + shown_value(part));
+                        error("scenario-value", doc_.line(part),
+                              key + " of the ramp of " + var.text + " must be a number, not " + shown_value(part) + hex_hint(part, var.type));
                         good = false;
                     }
                     else if (!in_range(d, *v))
                     {
                         error("scenario-value", doc_.line(part),
-                              key + " of the ramp of " + var.text + " is " + number_text(d) + ", outside its range (" +
+                              key + " of the ramp of " + var.text + " is " + written(part, d) + ", outside its range (" +
                                   range_text(*info_of(*v)) + ")");
                         good = false;
                     }
@@ -1358,17 +1431,17 @@ private:
             return value ? std::optional<double>{as_number(*value)} : std::nullopt;
         }
         double d = 0;
-        if (!plain_number(node, d))
+        if (!number_of(node, variable, d))
         {
             error("scenario-value", doc_.line(node),
                   key + " of " + what + " of " + var.text + " must be a number, not " + shown_value(node) +
-                      (quoted(node) ? ": write the number without quotes" : ""));
+                      (quoted(node) ? ": write the number without quotes" : hex_hint(node, var.type)));
             return std::nullopt;
         }
         if (!in_range(d, variable))
         {
             error("scenario-value", doc_.line(node),
-                  key + " of " + what + " of " + var.text + " is " + number_text(d) + ", outside its range (" +
+                  key + " of " + what + " of " + var.text + " is " + written(node, d) + ", outside its range (" +
                       range_text(*info_of(variable)) + ")");
             return std::nullopt;
         }

@@ -113,6 +113,44 @@ protected:
         return !text.empty() && ec == std::errc{} && ptr == end;
     }
 
+    /// How a text reads as a hexadecimal integer.
+    struct Hex
+    {
+        enum class Kind
+        {
+            None,     ///< not hexadecimal
+            Read,     ///< "0x1F" or "0X1f": `magnitude` is its value, at most INT64_MAX
+            Negative, ///< "-0x10": `magnitude` is the value without the '-'
+            TooLarge, ///< more than INT64_MAX (with or without a '-')
+        };
+        Kind kind = Kind::None;
+        std::uint64_t magnitude = 0;
+    };
+
+    /// `text` as "0x" or "0X" and hexadecimal digits only (no '+', no '_', not empty). Other
+    /// prefixes (0o, 0b) read as None.
+    static Hex read_hex(const std::string& text)
+    {
+        const bool negative = !text.empty() && text.front() == '-';
+        const std::size_t at = negative ? 1 : 0;
+        if (text.size() < at + 3 || text[at] != '0' || (text[at + 1] != 'x' && text[at + 1] != 'X') ||
+            !std::all_of(text.begin() + static_cast<std::ptrdiff_t>(at + 2), text.end(),
+                         [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; }))
+        {
+            return {};
+        }
+        Hex out;
+        const char* end = text.data() + text.size();
+        const auto [ptr, ec] = std::from_chars(text.data() + at + 2, end, out.magnitude, 16);
+        if (ec != std::errc{} || ptr != end || out.magnitude > static_cast<std::uint64_t>(INT64_MAX))
+        {
+            out.kind = Hex::Kind::TooLarge;
+            return out;
+        }
+        out.kind = negative ? Hex::Kind::Negative : Hex::Kind::Read;
+        return out;
+    }
+
     /// `text` as a finite decimal number ("1", "-2.5", "1e3").
     static bool read_number(const std::string& text, double& value)
     {
