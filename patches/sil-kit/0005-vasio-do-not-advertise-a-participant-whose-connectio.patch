@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: rahanahu <rahanahu@gmail.com>
+Date: Sat, 14 Nov 2026 12:00:00 +0900
+Subject: [PATCH] vasio: do not advertise a participant whose connection is
+ closed
+
+When a participant's connection to the registry ends, the stream closes
+its socket at once, but the registry learns of it later: OnShutdown() is
+posted to the I/O context, and until OnPeerShutdown() runs the
+participant stays in _connectedParticipants. If the announcement of a
+joining participant is handled in between, SendKnownParticipants() asks
+TransformAcceptorUris() for the remote address of the closed socket,
+which throws std::system_error ("remote_endpoint: Bad file descriptor").
+ReceiveParticipantAnnouncement() catches only SilKitError, so the
+exception ends up in the I/O worker ("SilKit-IOWorker: Something went
+wrong"), the joining participant gets neither the known participants nor
+a reply, and its CreateParticipant() fails after ConnectTimeoutSeconds
+with "Timeout during connection handshake with the SIL Kit Registry".
+
+Leave such a participant out of the known participants: nobody can
+connect to it anymore.
+---
+ SilKit/source/core/vasio/VAsioRegistry.cpp | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/SilKit/source/core/vasio/VAsioRegistry.cpp b/SilKit/source/core/vasio/VAsioRegistry.cpp
+index a7bc41d2..46e2ce1e 100644
+--- a/SilKit/source/core/vasio/VAsioRegistry.cpp
++++ b/SilKit/source/core/vasio/VAsioRegistry.cpp
+@@ -17,6 +17,8 @@
+ 
+ #include "core/internal/traits/SilKitServiceConfigTraits.hpp"
+ 
++#include <system_error>
++
+ 
+ namespace Log = SilKit::Services::Logging;
+ 
+@@ -299,7 +301,22 @@ void VAsioRegistry::SendKnownParticipants(IVAsioPeer* peer, const std::string& s
+             continue;
+ 
+         auto peerInfo = connectedParticipant.peerInfo;
+-        peerInfo.acceptorUris = TransformAcceptorUris(GetLoggerInternal(), connectedParticipant.peer, peer);
++        try
++        {
++            peerInfo.acceptorUris = TransformAcceptorUris(GetLoggerInternal(), connectedParticipant.peer, peer);
++        }
++        catch (const std::system_error& error)
++        {
++            // The connection to the advertised participant is closed already, but its shutdown has not been
++            // processed yet (it is still in the list): the addresses of its socket cannot be read anymore.
++            // Nobody can connect to it, so it is not a known participant.
++            GetLoggerInternal()
++                ->MakeMessage(Log::Level::Debug, TopicOf(*this))
++                .SetMessage("Not advertising participant '{}' to '{}', its connection is closed: {}", pPair.first,
++                            peer->GetInfo().participantName, error.what())
++                .Dispatch();
++            continue;
++        }
+ 
+         knownParticipantsMsg.peerInfos.push_back(peerInfo);
+     }
