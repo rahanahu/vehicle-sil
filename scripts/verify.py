@@ -24,6 +24,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import job_summary
+
 ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT / "build" / "logs"
 LINUX_PRESETS = ["linux-gcc-debug", "linux-gcc-release", "linux-clang-debug", "linux-clang-asan", "linux-clang-tsan"]
@@ -497,4 +499,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(job_summary.run(main))

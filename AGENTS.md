@@ -77,7 +77,7 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 
 ## 検証とスクリプト
 
-`scripts/` に、開発と CI で使うスクリプトがあります。Python 3.11 以上の標準ライブラリだけで書いてあります。どれも、出力は要約だけで（詳細は `build/logs/` のログ。要約に場所が出る）、終了コードは 0 が成功、1 が失敗、2 が使い方の誤りです。引数と細かい動きは、それぞれの `--help` にあります。
+`scripts/` に、開発と CI で使うスクリプトがあります。Python 3.11 以上の標準ライブラリだけで書いてあります。どれも、出力は要約だけで（詳細は `build/logs/` のログ。要約に場所が出る）、終了コードは 0 が成功、1 が失敗、2 が使い方の誤りです。引数と細かい動きは、それぞれの `--help` にあります。CI（GitHub Actions）では、CI が呼ぶスクリプトが同じ要約を job の Summary にも書きます（`scripts/job_summary.py`。失敗には、ログのアーティファクトの名前を添えます）。
 
 | スクリプト | 内容 |
 |---|---|

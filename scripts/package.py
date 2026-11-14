@@ -75,6 +75,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import job_summary
+
 ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT / "build" / "logs"
 DIST = ROOT / "build" / "dist"
@@ -1058,4 +1060,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(job_summary.run(main))
