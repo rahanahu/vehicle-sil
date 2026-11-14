@@ -1,7 +1,7 @@
-# A scenario for the two ECUs: step on the throttle, wait for the engine to speed up, see that the
-# dashboard shows it, and let the throttle go again. Run it with
+# yaml-language-server: $schema=../schema/scenario.schema.json
+# Step on the throttle, wait for the engine to speed up, see that the dashboard shows it, and let the
+# throttle go again (the format: docs/scenario.md of vehicle-sil). Exit code 0 if every step passed:
 #   vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
-# (the exit code is 0 if every step passed). The format: docs/scenario.md of vehicle-sil.
 vehicle_sil_scenario: 1
 name: throttle step
 steps:

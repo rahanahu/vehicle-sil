@@ -180,6 +180,79 @@ def test_template_archive(tmp: Path) -> None:
     check(p.returncode == 2 and LINUX in p.stderr, f"a tools archive missing: exit code 2 ({p.returncode}: {p.stderr})")
 
 
+def test_schemas(tmp: Path) -> None:
+    """get_tools.py copies the JSON Schemas of the tools over the project's, and only those."""
+    def archive_with(directory: str, schemas: dict[str, bytes]) -> Path:
+        (tmp / directory).mkdir()
+        path = tmp / directory / f"{LINUX}.tar.gz"
+        with tarfile.open(path, "w:gz") as t:
+            for name, data in [("VERSION", f"{VERSION}\n".encode()), *((f"schema/{n}", d) for n, d in schemas.items())]:
+                info = tarfile.TarInfo(f"{LINUX}/{name}")
+                info.size, info.mode = len(data), 0o644
+                t.addfile(info, io.BytesIO(data))
+        return path
+
+    new = {"simulation.schema.json": b'{"title": "new simulation"}\n', "scenario.schema.json": b'{"title": "new scenario"}\n'}
+    archive = archive_with("new", {**new, "notes.txt": b"not a schema\n"})
+    tools, schema = tmp / "tools", tmp / "project" / "schema"
+    schema.mkdir(parents=True)
+    (schema / "simulation.schema.json").write_bytes(b'{"title": "old simulation"}\n')
+    (schema / "own.schema.json").write_bytes(b'{"title": "the project\'s own"}\n')
+    common = ["--platform", "linux-x86_64", "--dir", tools, "--schema-dir", schema]
+
+    def contents() -> dict[str, bytes]:
+        return {p.name: p.read_bytes() for p in sorted(schema.iterdir())}
+
+    def lines(p: subprocess.CompletedProcess) -> list[str]:
+        return [line for line in p.stdout.splitlines() if "JSON Schemas" in line]
+
+    p = get_tools(GET_TOOLS, *common, "--archive", archive, "--sha256", sha256(archive))
+    check(p.returncode == 0, f"an archive with schema/: exit code 0 ({p.returncode}: {p.stderr})")
+    check(contents() == {**new, "own.schema.json": b'{"title": "the project\'s own"}\n'},
+          f"the schemas of the tools replace the old one and add the missing one; the project's own file and the "
+          f"file that is not .json stay out of it ({contents()})")
+    said = lines(p)
+    check(len(said) == 1 and "scenario.schema.json, simulation.schema.json" in said[0] and str(schema) in said[0]
+          and "own.schema.json" not in said[0], f"one line says which schemas were copied and where: {p.stdout}")
+
+    p = get_tools(GET_TOOLS, *common)
+    check(p.returncode == 0 and "already there" in p.stdout and lines(p) == [],
+          f"a second time, the schemas are the same: nothing copied, nothing said ({p.returncode}: {p.stdout} {p.stderr})")
+
+    (schema / "scenario.schema.json").write_bytes(b"{}\n")
+    p = get_tools(GET_TOOLS, *common)
+    said = lines(p)
+    check(p.returncode == 0 and contents()["scenario.schema.json"] == new["scenario.schema.json"] and len(said) == 1
+          and "scenario.schema.json" in said[0] and "simulation.schema.json" not in said[0],
+          f"tools already there, one schema differs: that one is written again and named ({p.returncode}: {p.stdout} {p.stderr})")
+
+    absent = tmp / "absent" / "schema"
+    p = get_tools(GET_TOOLS, "--platform", "linux-x86_64", "--dir", tools, "--schema-dir", absent)
+    check(p.returncode == 0 and {x.name for x in absent.iterdir()} == set(new),
+          f"a project without schema/: the directory is made ({p.returncode}: {p.stdout} {p.stderr})")
+
+    plain = tar_archive(tmp / f"{LINUX}.tar.gz", LINUX)
+    none = tmp / "none" / "schema"
+    p = get_tools(GET_TOOLS, "--platform", "linux-x86_64", "--dir", tmp / "tools-plain", "--schema-dir", none,
+                  "--archive", plain, "--sha256", sha256(plain))
+    check(p.returncode == 0 and not none.exists() and lines(p) == [],
+          f"tools without schema/: nothing copied, no directory made ({p.returncode}: {p.stdout} {p.stderr})")
+
+    blocked = tmp / "blocked"
+    blocked.write_bytes(b"a file where the directory would be")
+    p = get_tools(GET_TOOLS, "--platform", "linux-x86_64", "--dir", tools, "--schema-dir", blocked)
+    check(p.returncode == 1 and "--schema-dir" in p.stderr and "Traceback" not in p.stderr,
+          f"schema/ cannot be written: exit code 1 and what to do, no traceback ({p.returncode}: {p.stderr})")
+
+    # What the tools archive must hold (package.py verify looks for these) covers every schema of the template, so
+    # that none of a project's copies stays at the old version.
+    template = {x.name for x in (ROOT / "template" / "schema").iterdir()}
+    packaged = set(re.findall(r'"schema/([a-z_]+\.schema\.json)"', PACKAGE.read_text(encoding="utf-8")))
+    check(template and template <= packaged,
+          f"every schema of template/schema is in the tools archive's schema/ (only in the template: "
+          f"{sorted(template - packaged)}): add it to the tools archive in scripts/package.py (tools and verify)")
+
+
 def test_version() -> None:
     p = subprocess.run([sys.executable, str(PACKAGE), "version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
     check(p.returncode == 0 and p.stdout.strip() == VERSION,
@@ -190,7 +263,7 @@ def test_version() -> None:
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
-        for test in (test_fetch, test_broken, test_unsafe, test_template_archive):
+        for test in (test_fetch, test_broken, test_unsafe, test_template_archive, test_schemas):
             d = Path(tmp) / test.__name__
             d.mkdir()
             test(d)

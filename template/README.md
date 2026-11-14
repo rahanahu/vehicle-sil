@@ -12,6 +12,7 @@
 | `scenarios/throttle_step.yaml` | スロットルを踏んで回転数と表示を確かめるシナリオ |
 | `simulation.dashboard.yaml` | GUI の「変数」の画面の並べ方 |
 | `simulation.live.yaml`、`simulation.live.dashboard.yaml` | 同じ 2 つの ECU を、等速で、止めるまで動かす構成ファイル（`stop_at_ms` なし、`speed: 1`）と、その画面の並べ方。GUI で値を見ながら触るときに使う |
+| `schema/` | 上の 3 種類の YAML の JSON Schema。YAML の言語サーバーを使うエディターで、キーの補完と説明、形の検査が効く（各ファイルの 1 行目の `# yaml-language-server: $schema=...` が指す）。自分で足す YAML にも同じ 1 行を書く。`get_tools.py` が、道具に入っているスキーマで上書きするので、手では直さない（同じ名前のファイルだけ。自分で足したファイルはそのまま） |
 | `get_tools.py` | 道具（`vehicle_sil_launch` と GUI）を、版と SHA-256 を確かめて `tools/` に取ってくる |
 
 ## 要るもの
@@ -88,7 +89,7 @@ cmake --build --preset linux
 
 ## vehicle-sil の版を上げる
 
-ECU と道具は、同じ vehicle-sil の版でそろえます（版が違うと、`check` が `version-mismatch` を出します）。新しい版のリリースのひな形から、`get_tools.py` と、`CMakeLists.txt` の `GIT_TAG` の行を写し、`python3 get_tools.py` をやり直します。変更点と直し方は vehicle-sil の `CHANGELOG.md` にあります。
+ECU と道具は、同じ vehicle-sil の版でそろえます（版が違うと、`check` が `version-mismatch` を出します）。新しい版のリリースのひな形から、`get_tools.py` と、`CMakeLists.txt` の `GIT_TAG` の行を写し、`python3 get_tools.py` をやり直します。`get_tools.py` は、道具に入っている JSON Schema を `schema/` に写し直し、写したファイルを 1 行で表示します（エディターの補完と検査が、新しい版のキーを知ります）。変更点と直し方は vehicle-sil の `CHANGELOG.md` にあります。
 
 ## 次に読むもの
 

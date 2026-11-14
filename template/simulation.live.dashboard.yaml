@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=schema/dashboard.schema.json
 # The dashboard of simulation.live.yaml in the browser GUI (vehicle-sil-gui): the same as
 # simulation.dashboard.yaml (the GUI reads <configuration>.dashboard.yaml, so each configuration
 # has a file of its own). Change both when you change one.

@@ -395,7 +395,7 @@ vehicle-sil version (the ECU project template: GIT_TAG v{version}).
 | `client/vehicle-sil-gui-client.mjs` | the GUI client library as one ES module (for a screen without a build: import it with a relative path) |
 | `client/vehicle-sil-gui-client-{version}.tgz` | the same library as an npm package with its types: `npm install <this file>`, then `import ... from '@vehicle-sil/gui-client'` |
 | `gui_starter/` | a screen of your own to start from (plain HTML and JavaScript, the library next to it): `vehicle-sil-gui --web gui_starter simulation.yaml` |
-| `schema/dashboard.schema.json` | the JSON Schema of `<configuration>.dashboard.yaml` |
+| `schema/` | the JSON Schemas of the configuration (`simulation.schema.json`), of a scenario (`scenario.schema.json`) and of `<configuration>.dashboard.yaml` (`dashboard.schema.json`): an editor with a YAML language server completes and checks a file whose first line is `# yaml-language-server: $schema=<path of the schema>`. `get_tools.py` of the project template copies them to the project's `schema/` |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md`, `licenses/` | the license of vehicle-sil and the notices and license texts of what these tools contain |
 
 Put `bin` on PATH, then, next to your simulation.yaml:
@@ -529,6 +529,8 @@ def tools_command(args: argparse.Namespace) -> int:
         shutil.copy2(client, stage / "gui_starter" / "vehicle-sil-gui-client.mjs")
         (stage / "schema").mkdir()
         shutil.copy2(ROOT / "gui" / "protocol" / "dashboard.schema.json", stage / "schema")
+        shutil.copy2(ROOT / "schema" / "simulation.schema.json", stage / "schema")
+        shutil.copy2(ROOT / "schema" / "scenario.schema.json", stage / "schema")
         shutil.copy2(ROOT / "LICENSE", stage)
         shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", stage)
         stage_licenses(s, build, stage / "licenses", web_licenses, bundled, args.allow_missing_licenses)
@@ -800,7 +802,8 @@ def verify_command(args: argparse.Namespace) -> int:
                      "python/vehicle_sil_control/_generated/vehicle_sil/control/v1/control_pb2.py",
                      "client/vehicle-sil-gui-client.mjs", f"client/{client_package_path(version).name}",
                      "gui_starter/index.html", "gui_starter/vehicle-sil-gui-client.mjs",
-                     "schema/dashboard.schema.json"] + (
+                     "schema/dashboard.schema.json", "schema/simulation.schema.json",
+                     "schema/scenario.schema.json"] + (
                 ["bin/vehicle-sil-gui.cmd"] if WINDOWS else []):
             if not (tools / path).is_file():
                 raise StepFailed(f"the archive has no {top}/{path}")

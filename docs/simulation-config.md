@@ -23,10 +23,10 @@ YAML で書きます。最初の空白でない文字が `{` なら JSON とし�
 
 <!-- examples/ecu_main/simulation.yaml -->
 ```yaml
-# The two ECUs of this directory in one simulation. CMake copies this file next to the
-# executables (build/<preset>/examples/ecu_main/); check and run it there with
-#   vehicle_sil_launch check simulation.yaml
-#   vehicle_sil_launch run simulation.yaml
+# yaml-language-server: $schema=../../schema/simulation.schema.json
+# The two ECUs of this directory in one simulation. CMake copies this file next to the executables
+# (build/<preset>/examples/ecu_main/); there, vehicle_sil_launch check simulation.yaml checks it and
+# vehicle_sil_launch run simulation.yaml runs it.
 vehicle_sil_simulation: 1
 stop_at_ms: 1000
 networks:
@@ -67,7 +67,8 @@ participants:
 | `participants[].variables` | | 変数の対応表。シミュレーションで使う名前から、この実行ファイルの変数への対応を書きます（[変数の名前と値を合わせる](#変数の名前と値を合わせるvariables)）。書いていない変数は、実行ファイルの名前のまま見えます |
 
 - 知らないキーはエラーです（打ち間違いを黙って無視しません）。近い名前があれば示します。同じキーを 2 回書くのもエラーです。
-- 整数は引用符なしで書きます（`"5000"` は文字列なのでエラーです）。真偽値は `true` か `false` です。
+- **エディターの補完**: JSON Schema は [schema/simulation.schema.json](../schema/simulation.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと、キーの補完と説明、形の検査が効きます（上の例の 1 行目。パスは、書いているファイルのディレクトリから数えます）。スキーマが見るのは、キーと値の形だけです。実行ファイルと合っているか、同じキーの 2 回目、キーの組み合わせは、`check` が確かめます。JSON で書いたファイル（最初の文字が `{`）にはコメントを書けないので、エディターの設定で、ファイルとスキーマを結び付けます（VS Code なら `json.schemas` に、ファイルの名前のパターンとスキーマのパスを書く）。ファイルの中に `"$schema"` のキーは書けません（ランチャーが、知らないキーの誤りにします）。ひな形には `schema/` に写しが入っていて、`get_tools.py` が、取ってきた道具の版のスキーマで上書きします。道具の圧縮ファイルでは `schema/` にあります。
+- 整数は引用符なしで書きます（`"5000"` は文字列なのでエラーです）。真偽値は `true` か `false` です（引用符なし。`True`、`TRUE`、`False`、`FALSE` も読みます。`yes`、`on` などは誤りです）。
 - `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri`、`speed`、`time_step_ms`、`late_tolerance_ms` はシミュレーションを動かすときの値です。`check` は値の形（と `stop_at_ms` と `time_step_ms` の組み合わせ）だけを確かめます。
 
 ### 実行ファイルのパス

@@ -11,9 +11,11 @@
 //             4 bad command line.
 #include "link_factory.hpp"
 
+#include "vehicle_sil/bridge_runtime/registry_failure.hpp"
 #include "vehicle_sil/bridge_runtime/run_bridge.hpp"
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/cli/console.hpp"
+#include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/ethernet_bridge/bridge_app.hpp"
 #include "vehicle_sil/ethernet_bridge/bridge_options.hpp"
@@ -109,22 +111,11 @@ ParticipantRuntime connect_to_registry(const ParticipantRuntimeOptions& options)
     }
     catch (const std::exception& e)
     {
-        std::string what = e.what();
-        if (what.find("connect to SIL Kit Registry") == std::string::npos)
+        if (auto message = bridge_runtime::registry_failure_message(e.what(), options.registry_uri))
         {
-            throw;
+            throw std::runtime_error(*message);
         }
-        // SIL Kit's text has line breaks; the bridge's message is one line.
-        for (char& c : what)
-        {
-            if (c == '\n' || c == '\r')
-            {
-                c = ' ';
-            }
-        }
-        throw std::runtime_error("cannot connect to the SIL Kit registry at " + options.registry_uri + " (" + what +
-                                 "). Start the registry first ('sil-kit-registry --listen-uri " + options.registry_uri +
-                                 "'), or give the address it listens at with --registry-uri.");
+        throw;
     }
 }
 
@@ -132,7 +123,7 @@ int run(const BridgeOptions& options)
 {
     if (options.list_interfaces)
     {
-        std::fputs(interface_list(options).c_str(), stdout);
+        cli::write_text(stdout, interface_list(options));
         return kExitOk;
     }
 
@@ -189,16 +180,20 @@ int main(int argc, char** argv)
     BridgeOptions options;
     try
     {
-        options = parse_bridge_options(std::vector<std::string_view>(argv + 1, argv + argc));
+        // UTF-8 on Windows too: SIL Kit takes the names and the address as UTF-8, and the links
+        // compare the interface's name as UTF-8.
+        const std::vector<std::string> arguments = cli::utf8_arguments(argc, argv);
+        options = parse_bridge_options(std::vector<std::string_view>(arguments.begin(), arguments.end()));
     }
     catch (const BridgeUsageError& e)
     {
-        std::fprintf(stderr, "error: %s\n\n%s", e.what(), bridge_usage().c_str());
+        // Two lines: the whole usage text would push the error out of sight.
+        cli::print(stderr, "error: %s\nRun 'vehicle_sil_ethernet_bridge --help' for the options.\n", e.what());
         return kExitUsage;
     }
     if (options.help)
     {
-        std::fputs(bridge_usage().c_str(), stdout);
+        cli::write_text(stdout, bridge_usage());
         return kExitOk;
     }
     int code = kExitSetupFailed;

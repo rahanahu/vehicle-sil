@@ -70,6 +70,8 @@ vehicle_sil_add_scenario_tests(vehicle_sil_ethernet_bridge_it_launcher
     list-interfaces
     no-filter
     no-interface
+    no-registry
+    non-ascii-arguments
     pcap-fault
     pcap-list
     pcap-no-interface

@@ -28,6 +28,7 @@
 // their writes and reads go to the run's hub; main ends the server after the run, before the
 // result.
 #include "vehicle_sil/cli/args.hpp"
+#include "vehicle_sil/cli/console.hpp"
 #include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/events.hpp"
@@ -165,28 +166,6 @@ constexpr const char* kUsage =
     "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;\n"
     "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md\n";
 
-#ifdef _WIN32
-/// Writes UTF-8 `text` to the console `handle` as UTF-16 (whatever its code page). false if
-/// `handle` is not a console.
-bool write_console(HANDLE handle, std::string_view text)
-{
-    DWORD mode = 0;
-    if (handle == nullptr || handle == INVALID_HANDLE_VALUE || !GetConsoleMode(handle, &mode))
-    {
-        return false;
-    }
-    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (size > 0)
-    {
-        std::wstring wide(static_cast<std::size_t>(size), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), size);
-        DWORD written = 0;
-        WriteConsoleW(handle, wide.data(), static_cast<DWORD>(wide.size()), &written, nullptr);
-    }
-    return true;
-}
-#endif
-
 /// Writes `text` with "\n" line ends on every system (also on Windows, for the report for people
 /// as for the JSON: the same bytes everywhere; a Windows console shows it as UTF-8). false if it
 /// could not be written (a closed standard output, a full disk).
@@ -194,7 +173,7 @@ bool write_stdout(const std::string& text)
 {
 #ifdef _WIN32
     std::fflush(stdout);
-    if (write_console(GetStdHandle(STD_OUTPUT_HANDLE), text))
+    if (cli::write_console(GetStdHandle(STD_OUTPUT_HANDLE), text))
     {
         return true;
     }
@@ -233,7 +212,7 @@ Shared& shared()
 void write_stderr_line_locked(std::string_view line)
 {
 #ifdef _WIN32
-    if (write_console(GetStdHandle(STD_ERROR_HANDLE), std::string(line) + "\n"))
+    if (cli::write_console(GetStdHandle(STD_ERROR_HANDLE), std::string(line) + "\n"))
     {
         return;
     }
@@ -258,7 +237,7 @@ void write_stderr_line_directly(std::string_view line)
     data += '\n';
 #ifdef _WIN32
     const HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
-    if (write_console(err, data) || err == nullptr || err == INVALID_HANDLE_VALUE)
+    if (cli::write_console(err, data) || err == nullptr || err == INVALID_HANDLE_VALUE)
     {
         return;
     }
@@ -558,7 +537,7 @@ launch::EventWrite write_events(std::string_view bytes)
     if (GetConsoleMode(g_events_handle, &mode))
     {
         // All of it: a console takes UTF-16, and the pieces end between characters.
-        static_cast<void>(write_console(g_events_handle, bytes));
+        static_cast<void>(cli::write_console(g_events_handle, bytes));
         out.bytes = bytes.size();
         return out;
     }

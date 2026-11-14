@@ -225,7 +225,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
     "time-commands",
     "control-links",
     "scenario",
-    "manual-participants"
+    "manual-participants",
+    "scenario-wave"
   ]
 }
 ```
@@ -248,6 +249,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `control-links` | ECU の変数を読み書きする口: 事象 `control_link`、結果の `participants[].control_link`、照合の JSON の `participants[].control`、所見 `control-link-no-hello`、`control-link-version`、`control-link-late-values`、`control-link-dropped`、`control-link-not-offered` |
 | `manual-participants` | 利用者が起動する participant: 構成ファイルの `manual`、`--manual`、照合と結果の JSON の `participants[].manual`、所見 `participant-manual`、事象 `participant` の `state` の `manual` |
 | `scenario` | `check --scenario` と `run --scenario`（[scenario.md](scenario.md)）: 結果と照合の JSON の `scenario`、事象 `scenario_step`、所見 `scenario-*`、所見の `file` がシナリオのファイルになること |
+| `scenario-wave` | シナリオの手順 `wave`（[scenario.md](scenario.md) の「波形で動かす（`wave`）」）、その手順の `undersampled`、所見 `scenario-wave-*`、結果と事象の手順の `kind` の `"wave"` |
 | `control-server` | `run --control`（Control Server を持つビルドだけ）: 事象 `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ）: シナリオの実行中、クライアントは読む・待つ・止めるだけで、書く呼び出しと時刻を動かす呼び出しは `FAILED_PRECONDITION`（理由 `scenario-running`）で断る（[scenario.md](scenario.md) の「実行中に変数を見る」） |
 

@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# Move the throttle in shapes (the step "wave"; the format: docs/scenario.md): a sine around the
+# value it has, then a short kick, and see each time that the engine speed comes back.
+# The exit code is 0 if every step passed:
+#   vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_wave.yaml
+vehicle_sil_scenario: 1
+name: throttle wave
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - wait_until: { Engine.engine.speed: { ge: 1800 } }
+    timeout_ms: 500
+  # 5 % up and down around the 50 % it has, ten times a second, for 200 ms. The engine takes its
+  # inputs every 10 ms, so it gets 10 values per period. At the end the throttle is at 50 % again.
+  - wave: { Engine.engine.throttle: { sine: { amplitude: 5, period_ms: 100 }, for_ms: 200 } }
+  - expect: { Engine.engine.speed: { near: 1800, tolerance: 100 } }
+    hold_for_ms: 50
+  # Full throttle for 100 ms, then back to the 50 %: the speed has risen, and comes back.
+  - wave: { Engine.engine.throttle: { pulse: { value: 100, width_ms: 100 } } }
+  - expect: { Engine.engine.speed: { ge: 2200 } }
+  - expect: { Engine.engine.speed: { near: 1800, tolerance: 50 } }
+    within_ms: 200

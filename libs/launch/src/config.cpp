@@ -20,7 +20,9 @@ namespace vehicle_sil::launch {
 
 namespace {
 
-
+// The lists of keys (k...Keys) are what the message of an unknown key shows. Most readers take a key in a branch of
+// their own (key == "..."), not from the list: a key with a new branch must be added to its list too, or the JSON
+// Schema (schema/) and its test (tests/schema), which compare with the lists in the messages, pass without the key.
 const std::vector<std::string> kTopKeys = {"vehicle_sil_simulation", "stop_at_ms", "start_timeout_ms", "stop_timeout_ms",
                                            "registry_uri", "time_step_ms", "speed", "late_tolerance_ms", "networks",
                                            "participants", "variants", "params"};

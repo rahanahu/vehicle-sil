@@ -30,7 +30,7 @@ gRPC が見つからなければ FetchContent で取り込みます（初回は�
 vehicle_sil_launch run --events --stdin-commands --start-paused --control 0 simulation.yaml
 ```
 
-- `--control <address>` で、ランチャーが Control Server を立てます。`<address>` は、ポート番号だけ（127.0.0.1 で待ち受けます。0 なら空いているポート）、`<host>:<port>`、`unix:<path>` のどれかです。
+- `--control <address>` で、ランチャーが Control Server を立てます。`<address>` は、ポート番号だけ（127.0.0.1 で待ち受けます。0 なら空いているポート）、`<host>:<port>`、`unix:<path>` のどれかです。`unix:` のパスには OS の上限があります（Linux では 107 バイト。`%20` のような `%XX` は、表す 1 バイトとして数えます）。長すぎると、ランチャーは待ち受ける前に、長さと上限を言って使い方の誤り（終了コード 4）で終わります（`the path of the socket is ... bytes long and this system takes ... at most: give a shorter path, for example unix:/tmp/vehicle-sil-control.sock`）。`/tmp` の下などの短いパスにします。
 - 実際のアドレス（ポート 0 なら選ばれたポート）は、事象 `control_server` の `address` と、人向けの出力の `[vehicle_sil_launch] control server at <address>` の行で知らせます。照合が通った後、registry より前に立てます（照合で失敗した実行では立てません）。立てられなければ（ポートが使われているなど）、何も起動せずに設定の誤り（`setup`、終了コード 3）です。
 - サーバーが扱うのは、そのランチャーの実行だけです。ECU の変数（Peer の一覧、値、書き込み、操作の結果、購読）と、仮想時間（一時停止、再開、ステップ、指定時刻まで、速さ、停止）です。Peer の一覧には、構成ファイルの必須の participant も、Agent がなくても出ます。
 - 実行が終わると（ふつうの終わり、止める要求、`--timeout-ms`、participant の失敗、どれでも）、ランチャーは participant を終わらせてから、結果を書く前にサーバーを閉じます。待っている呼び出し（`Watch`、`WaitOperation`、`WaitPaused`）は、そこで終わります（`Watch` はストリームの終わり、`WaitPaused` は `FAILED_PRECONDITION` か `CANCELLED`）。ランチャーはクライアントを待たないので、クライアントがあっても終わるのは遅れません。シミュレーションが終わってからサーバーを閉じるまでの間は、終わった時点の値を読めます。
@@ -111,6 +111,7 @@ private:
 - `set_agent_options()` で、読み出しの周期（`sample_period`、既定 10 ms、0 で毎ステップ）とキューの大きさを選べます。最初の `input()`、`output()`、`agent()` より前だけです。不正な値はその場で `std::invalid_argument` です（文言に ECU の名前）。
 - どの ECU にも Agent があります（変数を宣言しなくても、どの ECU にもある入力 `ecu.connected` を持ちます）。そのため、変数を宣言しない ECU でも、ステップごとに Agent の処理（書き込みの反映と、`sample_period` ごとの値の読み出し）が走り、`ecu_main` の ECU は `sample_period` ごと（既定 10 ms）に値のメッセージを 1 通出します。`Peer` では監視の出力（`PeerOptions::monitor`）も付きます。
 - 外からの書き込みは、指定した仮想時刻以後の最初のステップで、アプリの処理の前に反映されます（そのステップの J1939 の受信処理や部品のタイマーは反映より前に動くので、それらが新しい値を使うのは次のステップから）。値は、アプリと LIN の処理の後に読み出します。SIL Kit とローカルで同じ時点です。
+- 書き込みは、いまの値と比べません。同じ値の書き込みも 1 つずつ反映し、そのたびに setter を呼びます（同じステップに 2 つあれば、(時刻、`seq`) の順に 2 回）。そのため、「押すたびに 1 回」のような入力は、いつも false と読める getter と、呼ばれた回数を数える setter で書けます。シナリオの `set`、Control API の `Write`、`agent().submit()` は書いた数だけ届きますが、GUI の部品（`client.variables.bind`）は、サーバーが前の書き込みを受け取るまでの次の値を最後の 1 つにまとめるので、速く続けた書き込みは数が減ります（[gui.md](gui.md)）。
 - 同じプロセスからは、`ecu.agent().submit()` で書き込み、`latest()` で読めます。`Simulation::add<App>()` で足した ECU は、`sim.ecu(name).agent()` で引けます（例: `examples/vehicle`）。
 - ランチャーの Control Server につながるのは、SIL Kit の participant の ECU だけです。`ecu_main` の ECU は自動でつながります。自分で書いた `Peer` は、ECU が変数を宣言した後、`start()` の前に `vehicle_sil::control_silkit::AgentTransport transport(peer.agent(), peer.runtime());` を作ってつなぎます（`peer.stop()` の後、`Peer` より先に破棄します）。ローカル（`Simulation()`、`LocalBench`）の ECU は Control Server につながりません。同じプロセスから `agent()` で読み書きします。
 

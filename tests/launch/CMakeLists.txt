@@ -122,8 +122,10 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       realtime
       scenario
       scenario_disconnect
+      scenario_each_write
       scenario_failures
       scenario_same
+      scenario_wave
       speed_change
       stall
       stand_still

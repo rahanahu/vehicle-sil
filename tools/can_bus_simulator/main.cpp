@@ -5,6 +5,7 @@
 // same command line and network simulator configuration file as the Vector SIL Kit Network
 // Simulator, so one can replace the other by swapping the executable.
 #include "vehicle_sil/cli/args.hpp"
+#include "vehicle_sil/cli/console.hpp"
 #include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/can_netsim/can_bus_simulator.hpp"
 #include "vehicle_sil/can_netsim/network_simulator_config.hpp"
@@ -71,8 +72,7 @@ void log(Level level, const std::string& text)
         return;
     }
     const char* tag = level >= Level::Error ? "error" : level == Level::Warn ? "warn" : "info";
-    std::printf("[can-bus-simulator] %s: %s\n", tag, text.c_str());
-    std::fflush(stdout);
+    cli::write_text(stdout, std::string("[can-bus-simulator] ") + tag + ": " + text + "\n");
 }
 
 void print_usage(std::FILE* to)
@@ -248,7 +248,7 @@ int main(int argc, char** argv)
     }
     catch (const cli::UsageError& e)
     {
-        std::fprintf(stderr, "error: %s\n", e.what());
+        cli::print(stderr, "error: %s\n", e.what());
         print_usage(stderr);
         return cli::kExitUsage;
     }

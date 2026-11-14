@@ -10,6 +10,8 @@ needs no C++ build:
   codegen  tools/j1939_codegen/test_j1939_codegen.py
   template tests/template/test_get_tools.py (the template's get_tools.py, scripts/package.py template and version,
            with archives made there, no network)
+  schema   tests/schema/test_schemas.py: the JSON Schemas of schema/ against the examples and the documents (the
+           part that needs no launcher; CTest runs all of it, as schema.files_and_launcher)
   scripts  scripts/*.py --help, tests/scripts/test_run_gui.py (scripts/run-gui.py)
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help` and the examples of examples/launch_control with
@@ -18,7 +20,7 @@ needs no C++ build:
 Then, unless --skip-lowest, one more run on 3.11 ("3.11 lowest", build/python-envs/3.11-lowest) with
 the lower bounds of pyproject.toml instead of uv.lock: its sync step makes the environment with uv's
 lowest-direct resolution of the dev group and fails unless every declared "name>=version" was
-installed at exactly that version; then codegen and control as above. So a declared bound is
+installed at exactly that version; then codegen, schema and control as above. So a declared bound is
 always one that the tests ran with.
 
 The full output of every step goes to build/logs/<tag>-py<version>[-lowest]-<step>.log. The summary
@@ -199,6 +201,9 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
     def template(s: Step) -> bool:
         return s.run([python, "tests/template/test_get_tools.py"])
 
+    def schema(s: Step) -> bool:
+        return s.run([python, "tests/schema/test_schemas.py"])
+
     def scripts(s: Step) -> bool:
         return all([s.run([python, p, "--help"]) for p in files if p.startswith("scripts/")] +
                    [s.run([python, "tests/scripts/test_run_gui.py"])])
@@ -214,8 +219,8 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             s.run([python, "examples/launch_control/pause_and_step.py", "--help"]),
         ])
 
-    steps = [("sync", sync), ("syntax", syntax), ("codegen", codegen), ("template", template), ("scripts", scripts),
-             ("control", control)]
+    steps = [("sync", sync), ("syntax", syntax), ("codegen", codegen), ("template", template), ("schema", schema),
+             ("scripts", scripts), ("control", control)]
     if lowest:  # the syntax, the template's script and the scripts do not depend on the packages
         steps = [s for s in steps if s[0] not in ("syntax", "template", "scripts")]
     times = []

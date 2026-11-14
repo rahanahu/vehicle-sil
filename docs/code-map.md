@@ -47,7 +47,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 
 ### `unit`
 
-コマンドライン解析（`unit.*`）。
+コマンドライン解析と、標準出力・標準エラーへの書き出し（`unit.*`）。
 `core`、`lin`、`step`、`can`、`eth`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` の単体テストと境界の検査にもこのラベルが付く。
 `template.get_tools`（ひな形の `get_tools.py` と `scripts/package.py` の `template`、`version` を、手元で作った圧縮ファイルで確かめる）にも付く。
 付かないのは、プロセスを起動するシナリオの試験（`integration`）、サンプルの実行（`examples`。
@@ -74,6 +74,12 @@ E2E では、エコーノードとの往復（Virtual CAN と、ビットレー�
 CAN でない試験用の参加者（`Member`）で、段の順序、`start()` が 1 回だけ最初のステップの前に呼ばれること、時間の領域の混在の拒否（ホストとドライバー）、失敗の扱い、`post()` と起こし方、`next_deadline()`、仮想時間の `StepDriver`、差し替えた時計の上の `RealTimeDriver`（締め切りと到着で起きる）を確かめる。
 `step.boundary` は `libs/step` が SIL Kit のヘッダーを直接にも間接にも含まないことを検査する（`unit` ラベルも付く）
 
+### `signal`
+
+`vehicle_sil::signal` の波形の関数の単体テスト（標準ライブラリだけでビルドする）。
+時刻の表と比べた値（周期の端、位相、デューティー 0 と 100）、乱数の列がどのプラットフォームでも同じ値であること、乱数とチャタリングが時刻だけで決まること、チャープの位相が飛ばないこと、点の並びの補間を確かめる。
+`signal.boundary` は `libs/signal` が SIL Kit のヘッダーを含まないことを検査する（`unit` ラベルも付く）
+
 ### `can`
 
 `vehicle_sil::can` の単体テスト（SIL Kit なしでビルドする）、SIL Kit のポートのテスト（`can_silkit.*`）、簡易 CAN Network Simulator のテスト（`can_netsim.*`）。
@@ -97,6 +103,7 @@ SIL Kit なしでビルドする）と SIL Kit のポートのテスト（`eth_s
 PGN と識別子、単一フレームの送受信、宛先の振り分け、ローカル折り返し、同じ時刻のフレームの順序とタイマーの発火がステップ幅と到着順によらないこと、Request への応答と ACK/NACK、NAME と Address Claim（複数ノードと複数 Network の競合、任意アドレスの選択、アドレス表、アドレス違反、Commanded Address を含む）、1 つのホストの複数の Network（ゲートウェイ、片方の失敗）、再入と失敗、ステップ幅の検査、資源の上限、定常状態のステップでメモリを確保しないことを確かめる。
 プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致することも確かめる（簡易 CAN Network Simulator ありでも。
 `unit` ラベルも付く）。
+聞くだけの participant（生の CAN、ノードのない `Network`。ステップ幅はいろいろ）を足しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらず、聞くだけの participant が何も送らないことも、仮想バスと SIL Kit で確かめる（`j1939_silkit.listen_only_participants_*`）。
 タイミングありの仮想バスで、プロトコルの結果が変わらないこと、混雑で転送が遅れ、バスが飽和すると時間切れになることも確かめる。
 1 つの ECU がバスから切り離されたとき（受信だけ、送受信とも）の TP の時間切れと回復、隠れていたアドレスの衝突の解決、時刻同期なしの SIL Kit での実時間の動作も確かめる。
 道具箱（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）とプロトコル部品（`j1939_parts.*`: DM13、診断、識別情報、送信の競合、後で返す ACK、ステップ幅によらない結果）も確かめ、`j1939_parts.boundary` が部品がエンジンの内部を使っていないことを検査する。
@@ -209,6 +216,14 @@ registry につながらないときの文（`registry_failure_message()`）は�
 - 主なクラス・関数（ヘッダー）: `Member`、`Host`（`step/host.hpp`）、`StepDriver`（`step/step_driver.hpp`）、`RealTimeDriver`（`step/real_time_driver.hpp`）、`RealTimeClock`、`ManualRealTimeClock`（`step/real_time_clock.hpp`）、`TimeDomain`、`Wakeup`（`step/time_domain.hpp`）、`SinkRef`（`step/sink_ref.hpp`）
 - 試験: `tests/step`
 - `ctest -R`: `^step\.`
+
+### `libs/signal`
+
+- 主なクラス・関数（ヘッダー）: 時刻の関数としての波形 `sine()`、`triangle()`、`sawtooth()`、`square()`、`noise_uniform()`、`noise_gaussian()`、`chirp()`、`lag()`、`chatter()`、`points_linear()`、`points_hold()`、乱数の列 `unit_random()`（`signal/waveform.hpp`。
+  ヘッダーだけで、何もリンクしない。
+  シナリオの `wave` と、利用者の C++ のコードの両方から使う）
+- 試験: `tests/signal`
+- `ctest -R`: `^signal\.`
 
 ### `libs/can`
 
@@ -324,7 +339,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 ### `libs/launch`、`tools/launch`
 
-- 主なクラス・関数（ヘッダー）: `read_config()`（`launch/config.hpp`）、`check_file()`（`launch/check.hpp`）、`run_file()`、`TimeCommands`（`launch/run.hpp`）、`EventStream`、`parse_command()`（`launch/events.hpp`）、シナリオの `read_scenario()`（`launch/scenario.hpp`）と `ScenarioEngine`（`launch/scenario_run.hpp`）。
+- 主なクラス・関数（ヘッダー）: `read_config()`（`launch/config.hpp`）、`check_file()`（`launch/check.hpp`）、`run_file()`、`TimeCommands`（`launch/run.hpp`）、`EventStream`、`parse_command()`（`launch/events.hpp`）、シナリオの `read_scenario()`、時間の関数の口 `Waveform`（`launch/scenario.hpp`）と `ScenarioEngine`（`launch/scenario_run.hpp`）。
   照合は `src/check.cpp`（段取り）、`src/describe_read.cpp`（`--describe` の JSON を読む）、`src/check_rules.cpp`（規則。
   ネットワークは種類ごとの関数）、`src/check_format.cpp`（出力）、構成とシナリオの読み手の共通の部分は `src/yaml_reader.hpp`、`run` は `src/run.cpp`（段取り）と部品の `src/run_*.cpp`、`src/time_commands.cpp`、このコンピューターのアドレス（ほかのコンピューターに示す URI）は `src/host_addresses.cpp`、仮想時間が進まないことを言う `StandStill` は `src/run_watch.cpp`（部品の分担と、どのスレッドがどの状態をどのロックで触るかは、`run.cpp` の先頭のコメントと各 `run_*.hpp` のクラスのコメント）、コマンドラインと標準入力・標準出力のスレッドは `tools/launch/main.cpp`、`run --control` の Control Server は `tools/launch/control_server.cpp`（`VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ）
 - 試験: `tests/launch`、`tests/multi_host`（2 つのコンピューター: Linux のネットワーク名前空間。
@@ -334,7 +349,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 ### `tools/common`
 
-- 主なクラス・関数（ヘッダー）: 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、`vehicle_sil/cli/console.hpp`、引数とパスを UTF-8 で扱う `vehicle_sil/cli/utf8.hpp`。
+- 主なクラス・関数（ヘッダー）: 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、標準出力と標準エラーに UTF-8 の文を書く `write_text()`（Windows のコンソールには UTF-16 で）のある `vehicle_sil/cli/console.hpp`、引数とパスを UTF-8 で扱う `vehicle_sil/cli/utf8.hpp`。
   ターゲット `vehicle_sil_cli`）
 - 試験: `tests/unit`
 - `ctest -R`: `^unit\.`
@@ -388,6 +403,24 @@ registry につながらないときの文（`registry_failure_message()`）は�
 - 試験: `tests/template`（ひな形を本体のビルドに入れて照合と実行。
   `get_tools.py` と `package.py template`、`version` を手元の圧縮ファイルで）、`fetchcontent.template`（写して FetchContent で、opt-in）、`scripts/package.py verify`（道具の圧縮ファイルを使う人の手順で）
 - `ctest -R`: `^template\.`
+
+### `schema/`（構成ファイルとシナリオの JSON Schema）
+
+- 主なクラス・関数（ヘッダー）: `schema/simulation.schema.json`（構成ファイル）、`schema/scenario.schema.json`（シナリオ）。
+  エディターの補完と検査のためのもので、ランチャーは読みません（読み手は `libs/launch/src/config.cpp` と `scenario.cpp`）。
+  ダッシュボードのスキーマは `gui/protocol/dashboard.schema.json` です。
+  ひな形の `template/schema/` は 3 つの写しで、道具の圧縮ファイルの `schema/` にも同じ 3 つが入ります（`template/get_tools.py` が、道具の分をプロジェクトの `schema/` に写します）。
+  例をビルドするときは、構成のときにビルドのディレクトリにも写します（最上位の `CMakeLists.txt`。写された例の YAML の 1 行目が、そこを指します）
+- 試験: `tests/schema/test_schemas.py`（例、ひな形、文書の YAML がスキーマに通る。
+  通る見本と落ちる見本を、スキーマと `check` の両方に掛ける。
+  対応付けごとのキー、ネットワークの種類、手順の種類が、ランチャーの誤りの文が並べるものと同じ。
+  キーが文書の表にある。
+  ひな形の写しが同じ。
+  例とひな形の YAML の 1 行目がスキーマを指す。
+  ビルドのディレクトリに写された例の 1 行目の先に、スキーマの写しがある）。
+  PyYAML と jsonschema のある Python が要ります（`uv sync`。Windows は MSYS2 の `mingw-w64-ucrt-x86_64-python-jsonschema`。なければ、構成のときに理由を出して登録しません。
+  CI は、`linux-gcc-debug` で `schema.files_and_launcher` が登録されたことを確かめます）
+- `ctest -R`: `^schema\.`（ランチャーなしの分は `scripts/verify-python.py` の `schema` の段でも回る）
 
 ### `gui/server`、`gui/protocol`、`gui/client`、`gui/web`
 
@@ -466,7 +499,7 @@ flowchart TD
     ethernet_bridge --> eth_link_box
 ```
 
-SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とその部品、`j1939_codec`、`ecu`、`local`、`testkit`、`process` です（`process` は「launch, process」の箱にありますが、SIL Kit を使いません）。
+SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とその部品、`j1939_codec`、`ecu`、`local`、`testkit`、`process`、`signal` です（`process` は「launch, process」の箱にありますが、SIL Kit を使いません。`signal` はヘッダーだけで、vehicle-sil のほかのライブラリも使いません）。
 
 ### 土台と SIL Kit の実装
 
@@ -563,6 +596,7 @@ flowchart TD
     launch -.-> core
     launch -.-> control_silkit
     launch -.-> rapidyaml
+    launch -.-> signal
     process --> Threads["Threads::Threads"]
     control_silkit --> control
     control_silkit --> core
@@ -623,7 +657,7 @@ flowchart TD
 |---|---|
 | `j1939_parts.boundary` | `libs/j1939/parts` が、エンジンの公開 API と道具箱だけを使い、`vehicle_sil::j1939` とほかの部品だけをリンクする |
 | `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
-| `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
+| `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary`、`signal.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth`、`libs/signal` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 | `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の構成は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
 | `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |
 | `eth_link.boundary` | `libs/eth_link` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
@@ -850,20 +884,38 @@ flowchart TD
   試験は `launch.the_scenarios_of_a_directory_*`、`launch.a_test_*`、`launch.the_report_of_a_test_*`、`launch.the_command_of_one_run_alone_*`（`tests/launch/test_batch.cpp`。
   プロセスを起動しない）、`launch_run.test_command`、`launch_run.test_interrupt`
 
+- 変えるもの: 構成ファイルかシナリオのキー、値の形、ネットワークの種類、手順の種類（`libs/launch/src/config.cpp`、`scenario.cpp` の読み手）
+
+  合わせて直すもの: `schema/simulation.schema.json`、`schema/scenario.schema.json`（キーには `description` を付けます。
+  エディターが、そのキーの説明として出す文です）と、ひな形の写し（`cp schema/*.schema.json template/schema/`。
+  ダッシュボードは `gui/protocol/dashboard.schema.json` から）。
+  読み手の多くは、キーを分岐（`key == "..."`）で受け、知らないキーの文には別の一覧（`config.cpp` と `scenario.cpp` の先頭の `k...Keys`）を出します。
+  分岐を足したら、一覧にも足します（試験が比べるのは一覧のほうなので、足し忘れると、スキーマが新しいキーを知らないまま通ります）。
+  手順の種類を足すときは、`scenario.schema.json` の `definitions` に `step_<種類>` を 1 つ足し（その種類のキーと、時刻の 2 つのキー）、`definitions.step` の `oneOf` に 1 行足します。
+  スキーマは、ランチャーが読むファイルを落としてはいけません（落とせない誤りは `check` が言います）。
+  迷う所は緩くし、`tests/schema/test_schemas.py` の見本（`CONFIG_SAMPLES`、`SCENARIO_SAMPLES`）に、通る形と落ちる形を足します。
+  例とひな形の YAML（`examples/`、`template/`）を足すときは、1 行目に `# yaml-language-server: $schema=<スキーマへの相対パス>` を書きます。
+  既にある例の先頭のコメントは、行数を変えません（所見と手順の行番号が、文書の出力と GUI の試験の録った出力に出ているため）。
+  試験は `schema.files_and_launcher`
+
 - 変えるもの: シナリオ（`run --scenario`、`check --scenario`。
-  読み方と照合は `libs/launch/src/scenario.cpp`、手順を進める機械は `libs/launch/src/scenario_run.cpp`、ランチャーへのつなぎ込みは `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`）、時間のゲートのガードは `SimulationController::guard_from()` と `wait_guarded()`、全サンプルを受ける口は `control::Hub::set_values_tap()`）
+  読み方と照合は `libs/launch/src/scenario.cpp`、手順を進める機械は `libs/launch/src/scenario_run.cpp`、`ramp` と `wave` の値を出す関数（`Waveform` の実装）は `libs/launch/src/scenario_shapes.cpp`、その計算は `libs/signal` の `signal/waveform.hpp`、ランチャーへのつなぎ込みは `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`）、時間のゲートのガードは `SimulationController::guard_from()` と `wait_guarded()`、全サンプルを受ける口は `control::Hub::set_values_tap()`）
 
   合わせて直すもの: [scenario.md](scenario.md)（形式、時刻、値の見え方、書き込み、結果、所見の `code` の表、出力）と、その例（`<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` の後のブロックを `launch_run.scenario` がバイト単位で照合。
   例のファイルは `examples/ecu_main/scenarios/throttle_step.yaml`。
+  `wave` の例は `examples/ecu_main/scenarios/throttle_wave.yaml` で、[howto/scenario-tests.md](howto/scenario-tests.md) の「波形で動かす」がその行を写している（`launch_run.scenario_wave` が実行する）。
   誤りのある例と失敗する例は、ファイルも scenario.md のブロック（`<!-- throttle_mistakes.yaml -->`、`<!-- throttle_response.yaml -->`）で、同じ試験が書き出して、`check --scenario` の出力、`run --scenario` の出力と `--json` の `scenario` を照合）、[simulation-config.md](simulation-config.md) の引数の表、事象 `scenario_step`、`features` の `scenario`、[internals/control.md](internals/control.md) の「シナリオ」。
   約束の正本は `scenario_run.hpp` の `ScenarioEngine` のコメントです。
   守ること: 判定に使うのは仮想時刻だけ（実時間の待ちと時間切れで結果を決めない）。
+  `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にする（`Waveform::value()`。呼ばれた回数や順に頼らない。乱数は種、変数の名前、時刻から作る: `scenario_shapes.cpp` の `seed_of_variable()`。整数だけの計算で、どの OS でも同じ）。
+  ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は `scenario.cpp` の `seen_between()` の決まり 1 つに従う。
+  波形を足すときは、`signal/waveform.hpp` の関数、`scenario_shapes.cpp` の実装、`scenario.cpp` の `read_wave_of()`（キー、型、範囲、ステップ幅との比較）、`schema/scenario.schema.json` の `definitions.wave`（と `template/schema` の写し）、`tests/schema/test_schemas.py` の `WAVE_SHAPES_WITH_KEYS` と見本、[scenario.md](scenario.md) の波形の表を合わせる。
   controller のステップ P では、P より前に始まったステップのサンプルと結果だけを見る（P 以降のものは、届いていても次に回す）。
   時刻 T の書き込みは、T より前の controller のステップを止めている間に積む（時刻 0 は開始前の窓）。
   シナリオのある実行の controller の刻みは速さによらない（`detail::plan_time_step()` の `fine`）。
   Hub の tap は controller の SIL Kit のスレッドで Hub のロックの中から呼ばれるので、待つもの・Hub を呼ぶものを足さない。
   試験は `^launch\.scenario_`（偽の ECU のモデル。
-  届く順を変えても結果が同じ）、`launch_run.scenario`、`scenario_same`（最速、等速、遅い ECU、一時停止で同じ結果。
+  届く順を変えても結果が同じ。`launch.scenario_wave_*` は波形の値、終わった後の値、所見）、`^signal\.`、`launch_run.scenario`、`scenario_wave`（波形を ECU が見た時刻、刻みを変えても通る、警告と `undersampled: ok`）、`scenario_same`（最速、等速、遅い ECU、一時停止で同じ結果。
   書き込みが効いたステップを ECU が申告する）、`scenario_failures`、`core.time_gate_model_the_guard_*`、`core.virtual_time_gate_guard_*`、`control.control_hub_tap_*`
 
 - 変えるもの: シナリオの実行中の Control Server（見るだけ。

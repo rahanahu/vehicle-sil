@@ -6,6 +6,10 @@ version into tools/, after checking the archive's SHA-256.
     python get_tools.py                      download from the vehicle-sil release, check, unpack
     python get_tools.py --archive FILE       use an archive you downloaded yourself (checked the same way)
 
+It also copies the JSON Schemas of the tools (their schema/*.json) over the ones of this project (schema/,
+which the first line of each YAML file names), so that an editor knows the keys of the same version as the
+launcher. Files of other names in schema/ are left alone.
+
 The tools come only from the release named below (VERSION, URL), never "the latest". The template
 archive of a release (vehicle-sil-template-<version>.zip) has the SHA-256 of each tools archive filled
 in. A copy of the template from the vehicle-sil repository has none: give --sha256 with the value
@@ -134,6 +138,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="the archive's SHA-256, when this copy of the template has none (SHA256SUMS of the release)")
     parser.add_argument("--platform", choices=sorted(ARCHIVES), help="the tools of another platform (default: this one)")
     parser.add_argument("--dir", type=Path, default=HERE / "tools", help="where the tools go (default: %(default)s)")
+    parser.add_argument("--schema-dir", type=Path, default=HERE / "schema", metavar="DIR",
+                        help="where the JSON Schemas of the tools are copied, over the files of the same names "
+                             "(default: %(default)s)")
     args = parser.parse_args(argv)
     try:
         return fetch(args)
@@ -158,6 +165,7 @@ def fetch(args: argparse.Namespace) -> int:
     top = name.removesuffix(".zip").removesuffix(".tar.gz")
     target = args.dir / top
     if (target / "VERSION").is_file() and (target / "VERSION").read_text(encoding="utf-8").strip() == VERSION:
+        copy_schemas(target, args.schema_dir)
         report(target, plat, "already there")
         return 0
     expected = (args.sha256 or SHA256[plat]).strip().lower()
@@ -195,8 +203,36 @@ def fetch(args: argparse.Namespace) -> int:
         os.replace(found, target)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    copy_schemas(target, args.schema_dir)
     report(target, plat, "unpacked")
     return 0
+
+
+def copy_schemas(target: Path, into: Path) -> None:
+    """Copies the JSON Schemas of the tools (<target>/schema/*.json) into `into`, over the files of the same names,
+    and says which ones it wrote. Files that are the same already, and files of other names, are left alone."""
+    source = target / "schema"
+    if not source.is_dir():
+        return
+    written = []
+    for path in sorted(source.glob("*.json")):
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
+        copy = into / path.name
+        try:
+            if copy.is_file() and copy.read_bytes() == data:
+                continue
+            into.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes(data)
+        except OSError as e:
+            raise Failure(f"the JSON Schema {path} cannot be copied to {copy} ({e.strerror or e}): check that "
+                          f"{into} is a directory you can write to, or name another one with --schema-dir") from None
+        written.append(path.name)
+    if written:
+        print(f"get_tools: copied the JSON Schemas of vehicle-sil {VERSION} to {into}: {', '.join(written)} "
+              "(editors complete and check the YAML files with them; do not edit these files, the next run "
+              "writes them again)")
 
 
 def report(target: Path, plat: str, what: str) -> None:

@@ -76,6 +76,7 @@ add_subdirectory(libs/lin_silkit ${_vehicle_sil_exclude})
 add_subdirectory(libs/local ${_vehicle_sil_exclude})
 add_subdirectory(libs/peer ${_vehicle_sil_exclude})
 add_subdirectory(libs/process ${_vehicle_sil_exclude})
+add_subdirectory(libs/signal ${_vehicle_sil_exclude})
 add_subdirectory(libs/simulation ${_vehicle_sil_exclude})
 add_subdirectory(libs/step ${_vehicle_sil_exclude})
 add_subdirectory(libs/testkit ${_vehicle_sil_exclude})
@@ -113,6 +114,16 @@ if(VEHICLE_SIL_BUILD_EXAMPLES)
   add_subdirectory(examples/typed_messages)
   add_subdirectory(examples/vehicle)
   add_subdirectory(examples/virtual_time)
+  # The YAML files that the examples copy next to their executables name their JSON Schema in the first line, by a
+  # path relative to the file (# yaml-language-server: $schema=../../schema/simulation.schema.json). The schemas are
+  # copied to the same places relative to the copies, so that an editor completes and checks a copy as it does the
+  # source. A changed schema is copied again at the next build.
+  foreach(_schema IN ITEMS
+          schema/simulation.schema.json
+          schema/scenario.schema.json
+          gui/protocol/dashboard.schema.json)
+    configure_file(${_schema} ${CMAKE_CURRENT_BINARY_DIR}/${_schema} COPYONLY)
+  endforeach()
 endif()
 
 if(VEHICLE_SIL_BUILD_TESTS)
