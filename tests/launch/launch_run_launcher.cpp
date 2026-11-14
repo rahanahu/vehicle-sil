@@ -1179,7 +1179,7 @@ void no_console(const Options& o)
                 "error: sim.yaml:6: participant 'Deaf': it was still running 300 ms (stop_timeout_ms) after the "
                 "simulation ended: the launcher could not ask it to stop (no console to send Ctrl+Break through) and "
                 "ended it with the processes it started; a participant should end when the simulation ends (the lines "
-                "[Deaf] above show what it wrote)\n"
+                "[Deaf] above show what it wrote) [did-not-end]\n"
                 "\n"
                 "failed: 1 error, 0 warnings, 0 notes\n",
                 "run without a console");
