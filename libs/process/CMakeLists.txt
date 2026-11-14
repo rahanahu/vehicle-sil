@@ -3,7 +3,11 @@
 # captured and a time limit, and one that a launcher watches (its output line by line, a stop
 # request, the end of everything it started) (POSIX fork/exec and process groups, Win32
 # CreateProcessW, process groups and job objects). Internal; not part of the library API.
-add_library(vehicle_sil_process STATIC src/child_process.cpp src/process.cpp src/spawn.cpp)
+add_library(vehicle_sil_process STATIC
+  src/child_process.cpp
+  src/process.cpp
+  src/spawn.cpp
+)
 find_package(Threads REQUIRED)
 target_link_libraries(vehicle_sil_process PUBLIC Threads::Threads)
 add_library(vehicle_sil::process ALIAS vehicle_sil_process)

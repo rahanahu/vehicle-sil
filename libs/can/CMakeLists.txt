@@ -9,7 +9,8 @@ add_library(vehicle_sil_can STATIC
   src/raw_channel.cpp
   src/real_time.cpp
   src/tap_port.cpp
-  src/virtual_can_bus.cpp)
+  src/virtual_can_bus.cpp
+)
 add_library(vehicle_sil::can ALIAS vehicle_sil_can)
 set_target_properties(vehicle_sil_can PROPERTIES EXPORT_NAME can)
 target_include_directories(vehicle_sil_can PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

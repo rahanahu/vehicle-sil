@@ -2,9 +2,15 @@
 # driver. Links only vehicle_sil::can, so building it checks that the library needs no SIL Kit.
 vehicle_sil_add_harness_tests(vehicle_sil_can_tests
   PREFIX can LABELS unit can TIMEOUT 60
-  SOURCES test_can_values_and_bus.cpp test_can_host.cpp test_can_bus_model.cpp
-          test_can_real_time.cpp test_can_faults.cpp test_can_tap_port.cpp
-          test_can_raw_channel.cpp test_can_host_add.cpp
+  SOURCES
+    test_can_bus_model.cpp
+    test_can_faults.cpp
+    test_can_host.cpp
+    test_can_host_add.cpp
+    test_can_raw_channel.cpp
+    test_can_real_time.cpp
+    test_can_tap_port.cpp
+    test_can_values_and_bus.cpp
   LINK vehicle_sil::can)
 target_include_directories(vehicle_sil_can_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -12,7 +18,9 @@ target_include_directories(vehicle_sil_can_tests PRIVATE ${CMAKE_CURRENT_SOURCE_
 # (in-process registry), where the traces must equal the virtual bus's.
 vehicle_sil_add_harness_tests(vehicle_sil_can_silkit_tests
   PREFIX can_silkit LABELS unit can TIMEOUT 120
-  SOURCES test_silkit_can_port.cpp test_can_silkit_runs.cpp
+  SOURCES
+    test_can_silkit_runs.cpp
+    test_silkit_can_port.cpp
   LINK vehicle_sil::can_silkit)
 target_include_directories(vehicle_sil_can_silkit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

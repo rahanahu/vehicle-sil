@@ -3,7 +3,9 @@
 # Links no SIL Kit.
 vehicle_sil_add_harness_tests(vehicle_sil_testkit_tests
   PREFIX testkit LABELS unit testkit j1939 TIMEOUT 60
-  SOURCES test_testkit.cpp test_local_ecus.cpp
+  SOURCES
+    test_local_ecus.cpp
+    test_testkit.cpp
   LINK vehicle_sil::testkit)
 
 # The ECU application API as its users write it (examples/j1939/ecu_pair and parts of one's own)

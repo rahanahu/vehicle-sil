@@ -1,6 +1,9 @@
 # FetchContent tests (opt-in, VEHICLE_SIL_TEST_FETCHCONTENT): configures, builds and runs
 # examples/fetchcontent_consumer against a git URL + commit, and the ECU project template against
 # this working tree.
+if(NOT VEHICLE_SIL_TEST_FETCHCONTENT)
+  return()
+endif()
 set(VEHICLE_SIL_FETCHCONTENT_TEST_REPOSITORY "${PROJECT_SOURCE_DIR}"
     CACHE STRING "Git repository the FetchContent test clones (local path or URL)")
 set(VEHICLE_SIL_FETCHCONTENT_TEST_TAG "HEAD"

@@ -18,10 +18,11 @@
 # fake implementation (tests/vector_xl/fake_xl).
 
 add_library(vehicle_sil_vector_xl_bridge_core STATIC
+  src/bridge_options.cpp
   src/can_bridge.cpp
   src/channel_selection.cpp
-  src/bridge_options.cpp
-  src/external_port_adapter.cpp)
+  src/external_port_adapter.cpp
+)
 add_library(vehicle_sil::vector_xl_bridge_core ALIAS vehicle_sil_vector_xl_bridge_core)
 set_target_properties(vehicle_sil_vector_xl_bridge_core PROPERTIES EXPORT_NAME vector_xl_bridge_core)
 target_include_directories(vehicle_sil_vector_xl_bridge_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

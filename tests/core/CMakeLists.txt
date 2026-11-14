@@ -2,9 +2,18 @@
 # time cases measure wall-clock speed and run alone.
 vehicle_sil_add_harness_tests(vehicle_sil_core_tests
   PREFIX core LABELS unit core TIMEOUT 120 RUN_SERIAL "^virtual_time_"
-  SOURCES test_time_helpers.cpp test_failure_check.cpp test_simulation_watch.cpp test_virtual_time.cpp test_time_gate.cpp
-          test_time_gate_model.cpp test_deadline_waiter.cpp test_start_window.cpp test_participant_configuration.cpp
-          test_participant_start.cpp test_communication_ready_gate.cpp
+  SOURCES
+    test_communication_ready_gate.cpp
+    test_deadline_waiter.cpp
+    test_failure_check.cpp
+    test_participant_configuration.cpp
+    test_participant_start.cpp
+    test_simulation_watch.cpp
+    test_start_window.cpp
+    test_time_gate.cpp
+    test_time_gate_model.cpp
+    test_time_helpers.cpp
+    test_virtual_time.cpp
   LINK vehicle_sil::core)
 if(WIN32)
   # GetExtendedTcpTable(): where the test's participants listen.

@@ -2,7 +2,10 @@
 # its J1939 networks, raw CAN channels, LIN nodes and Ethernet channels, its control variables, its work per step
 # and the objects it owns) and what an ECU reports about itself (Ecu::describe(), to_json()).
 # Peer and LocalBench implement it. No SIL Kit.
-add_library(vehicle_sil_ecu STATIC src/describe.cpp src/bus_connection.cpp)
+add_library(vehicle_sil_ecu STATIC
+  src/bus_connection.cpp
+  src/describe.cpp
+)
 add_library(vehicle_sil::ecu ALIAS vehicle_sil_ecu)
 set_target_properties(vehicle_sil_ecu PROPERTIES EXPORT_NAME ecu)
 target_include_directories(vehicle_sil_ecu PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

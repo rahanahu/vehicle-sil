@@ -5,7 +5,8 @@
 # API may change.
 add_library(vehicle_sil_testkit STATIC
   src/faults.cpp
-  src/recorders.cpp)
+  src/recorders.cpp
+)
 add_library(vehicle_sil::testkit ALIAS vehicle_sil_testkit)
 set_target_properties(vehicle_sil_testkit PROPERTIES EXPORT_NAME testkit)
 target_include_directories(vehicle_sil_testkit PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
