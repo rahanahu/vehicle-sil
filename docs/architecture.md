@@ -34,6 +34,8 @@ vehicle-sil/
 ├── libs/can/         vehicle_sil::can    バックエンドに依存しない CAN の基盤（フレーム、ポート、vehicle_sil::step の上のホスト、仮想バス。SIL Kit に依存しない）
 ├── libs/can_silkit/  vehicle_sil::can_silkit  vehicle_sil::can のポートの SIL Kit 実装（仮想時間と実時間）
 ├── libs/can_netsim/  vehicle_sil::can_netsim  簡易 CAN Network Simulator（SIL Kit の Network Simulator API）
+├── libs/eth/         vehicle_sil::eth    生のイーサネットのフレームの基盤（フレーム、ポート、vehicle_sil::step の上のチャネル、仮想ネットワーク。SIL Kit に依存しない）
+├── libs/eth_silkit/  vehicle_sil::eth_silkit  vehicle_sil::eth のポートの SIL Kit 実装（仮想時間）
 ├── libs/eth_link/    vehicle_sil::eth_link  イーサネットのブリッジの外の側: 外のインターフェースの口、絞り込み、輪を防ぐ MAC の表（SIL Kit に依存しない）
 ├── libs/j1939/       vehicle_sil::j1939  J1939 スタック（vehicle_sil::can の上。SIL Kit に依存しない）と、そのプロトコル部品（parts/）、型付きメッセージ（codec/）
 ├── libs/ecu/         vehicle_sil::ecu    ECU のアプリケーションを組み立てる入口 Ecu（変数の宣言と、自己申告 describe() とその JSON を含む。SIL Kit に依存しない）
@@ -94,6 +96,8 @@ vehicle-sil/
 | `vehicle_sil::can` | 土台 | バックエンドに依存しない CAN の基盤。フレームの型、ポートの契約、複数のプロトコル処理をステップで回す `Host`（`step::Host` の上。`StepDriver`、`RealTimeDriver`、時計は `vehicle_sil::step` のものを同じ名前で使える）、テスト用の仮想バス（調停と送信時間の模擬、故障注入、ECU 単位の通信断を選べる）、生フレームを読み取り専用で観測する `TapPort`。SIL Kit に依存しない。J1939 スタックの土台。ほかに `vehicle_sil::can::Frame`、`Port`、`Steppable`、`VirtualCanBus`、`CanBusModel`（[internals/can.md](internals/can.md)） |
 | `vehicle_sil::can_silkit` | 土台 | `vehicle_sil::can` のポートの SIL Kit 実装（仮想時間と、時刻同期なしの実時間）。`core` の `bind_host()` を `vehicle_sil::can::bind_host` の名前でも使える。ほかに `vehicle_sil::can::SilKitCanPort` |
 | `vehicle_sil::can_netsim` | 土台 | 簡易 CAN Network Simulator: SIL Kit の Network Simulator API で、CAN の調停、送信時間、バスの占有を仮想時間で模擬する（`CanBusSimulator`）。Vector SIL Kit Network Simulator と共用の設定ファイルの読み込み（[internals/can.md](internals/can.md)） |
+| `vehicle_sil::eth` | 土台 | 生のイーサネットのフレーム（宛先から payload の終わりまで。FCS なし）の基盤。フレームと MAC アドレスの型、ポートの契約、アプリケーションがステップの中で送受信するチャネル `Channel`（`step::Member`。同じ時刻のフレームを送り元のアドレスで並べる）、ハブとして振る舞うプロセス内の仮想ネットワーク `VirtualEthernetBus`。EtherType と payload は解釈しない。SIL Kit に依存しない（[internals/ethernet.md](internals/ethernet.md)） |
+| `vehicle_sil::eth_silkit` | 土台 | `vehicle_sil::eth` のポートの SIL Kit 実装（仮想時間）。ほかに `vehicle_sil::eth::SilKitEthPort` |
 | `vehicle_sil::j1939` | 利用者向け | J1939 スタック（名前空間 `vehicle_sil::j1939`、ヘッダー `vehicle_sil/j1939/`）。単一フレームの送受信、Request、Acknowledgement、NAME と Address Claim（要求、競合、Cannot Claim、任意アドレスの選択、アドレス表、アドレス違反、Commanded Address の処理、状態の通知）、トランスポートプロトコル（BAM、RTS/CTS）、部品を作る道具箱（`Subscription`、`Timer`、`Node::attach`）、読み取り専用の観測口（`Observer`）。SIL Kit に依存しない。ほかに `vehicle_sil::j1939::Network`、`Node`、`Pgn`、`Identifier`（[internals/j1939.md](internals/j1939.md)） |
 | `vehicle_sil::j1939_broadcast_suppression`、`vehicle_sil::j1939_diagnostics` | 利用者向け | `vehicle_sil::j1939` の公開 API と道具箱だけで作ったプロトコル部品。DM13 による放送の抑制、DTC と DM1/DM2/DM3/DM11/DM22、識別情報（ソフトウェア ID、ECU ID、製品 ID、診断プロトコル ID）。ほかに `BroadcastSuppression`、`Diagnostics`、`Identification`（[internals/j1939.md](internals/j1939.md)） |
 | `vehicle_sil::j1939_periodic_sender`、`vehicle_sil::j1939_requester`、`vehicle_sil::j1939_monitor`、`vehicle_sil::j1939_address_commander`、`vehicle_sil::j1939_exchange` | 利用者向け | ECU アプリ向けの部品（同じく公開 API と道具箱だけで作る）。PG の周期送信（`PeriodicSender`）、Request の送信と応答・ACK・時間切れの報告（`Requester`）、受信の最新値と途絶（`Monitor`）、Commanded Address の送信（`AddressCommander`）、独自プロトコルのコマンドと応答（`Exchange`。例は [examples/j1939/param_service](../examples/j1939/param_service)）。使い方は [docs/j1939-guide.md](j1939-guide.md)（[internals/j1939.md](internals/j1939.md)、[j1939-guide.md](j1939-guide.md)） |
@@ -143,7 +147,7 @@ vehicle-sil/
 - `core` に置くのは、どのプロトコルでも同じになる処理だけです。具体的には、SIL Kit への接続、lifecycle、他参加者の監視、仮想時間（ステップ、受信のバッファ、周期タスク、実時間との結合、時間ゲート）、失敗の判定（`FailureCheck`）です。外部操作（Control Agent と Hub）は `control` にあります。Control API の時間の操作は `core` の時間ゲートを使います。
 - `core` は CAN、LIN、J1939 に依存しません。バスのコントローラ（`ICanController` など）は、利用側が `ParticipantRuntime::participant()` から SIL Kit の API で作ります。
 - J1939 と LIN のプロトコル処理は共通化しません。
-- ステップを回す仕組み（ホスト、ドライバー、時計、時間の領域）は、バスの種類によらない `step` に置きます。バスごとのライブラリ（`can`）は、自分のプロトコル処理とポートの組を `step::Member` にしてホストに載せます。
+- ステップを回す仕組み（ホスト、ドライバー、時計、時間の領域）は、バスの種類によらない `step` に置きます。バスごとのライブラリ（`can`、`eth`）は、自分のプロトコル処理とポートの組を `step::Member` にしてホストに載せます（`eth::Channel` はそれ自体が `step::Member`）。
 - LIN はホストに載せません。いまの 1 ステップの順序は「アプリケーション → LIN の `step(now)` → 変数の読み出し → CAN の送信」で、LIN をホストの送信の段に移すと、LIN のハンドラが書いた値を読み出す時点が 1 ステップずれるためです。LIN のポートは受け箱を持たず、仮想時間だけで動きます。
 - 将来のためだけの抽象クラスや空の実装は作りません。
 
@@ -173,6 +177,7 @@ vehicle-sil 自体を直す人と、契約や制限を確かめたい人が、�
 | [internals/can.md](internals/can.md) | CAN の共通基盤: ポート、事象、`Steppable`、ホスト、ドライバー、仮想バス、`TapPort`、SIL Kit のポート、バスのタイミング、簡易 CAN Network Simulator |
 | [internals/j1939.md](internals/j1939.md) | J1939 スタック: エンジン、Address Claim、トランスポートプロトコル、道具箱、プロトコル部品、型付きメッセージ、`Observer`、資源の上限、既知の制限 |
 | [internals/lin.md](internals/lin.md) | LIN の Master と Slave、スケジュール、診断フレーム、休止と起床、ポートと仮想 LIN バス |
+| [internals/ethernet.md](internals/ethernet.md) | イーサネットの土台: フレーム、ポート、チャネル（受信の順、時間、上限、絞り込み）、仮想ネットワーク、SIL Kit のポート（時刻同期していない送り手）、未確認の値 |
 | [internals/execution.md](internals/execution.md) | `Ecu`、`Simulation`、`Peer`、`LocalBench` と試験キット（1 ステップの順序、所有と破棄、バスからの切り離し） |
 | [internals/virtual-time.md](internals/virtual-time.md) | 共通仮想時間: 進み方、実時間との結合、時間ゲート（一時停止、ステップ実行、速度、遅れ）、受信の順序、固定周期 `tick()` の統合 |
 | [internals/control.md](internals/control.md) | Control API の中: Control Agent、Hub、SIL Kit の上の運び手、Control Server、ランチャーの Control Server、シナリオ |
