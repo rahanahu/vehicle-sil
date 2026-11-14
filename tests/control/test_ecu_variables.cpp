@@ -73,6 +73,37 @@ private:
     std::uint32_t steps_ = 0;
 };
 
+/// An input for "do it once for each write": it always reads false, and its setter counts every
+/// write it gets. Next to it, an integer input through a setter, with a range. The application
+/// records, in each step, what its setters got before it in that step: (step time, name, value).
+class Requester
+{
+public:
+    explicit Requester(Ecu& ecu)
+    {
+        ecu.input("spy.request", [] { return false; }, [this](bool v) { got_.emplace_back("spy.request", v ? 1 : 0); });
+        ecu.input(
+            "spy.limit", [this] { return limit_; },
+            [this](std::int64_t v) {
+                limit_ = v;
+                got_.emplace_back("spy.limit", v);
+            },
+            {.min = 0.0, .max = 100.0});
+        ecu.every(10ms, [this](SimTime now) {
+            for (const auto& [name, value] : got_)
+            {
+                calls.emplace_back(ms(now), name, value);
+            }
+            got_.clear();
+        });
+    }
+    std::vector<std::tuple<long long, std::string, std::int64_t>> calls;
+
+private:
+    std::int64_t limit_ = 0;
+    std::vector<std::pair<std::string, std::int64_t>> got_;
+};
+
 /// An ECU without variables.
 class Idle
 {
@@ -296,6 +327,61 @@ TEST_CASE(ecu_variables_are_sampled_after_the_application_at_the_same_times)
         }
         CHECK(run_sampled(where, SimDuration::zero()) == every_step);
         CHECK(run_sampled(where, std::nullopt) == by_default);
+    }
+}
+
+TEST_CASE(ecu_variables_call_the_setter_for_every_write_of_the_same_value)
+{
+    // The agent does not compare a write with the value the variable has: each write that is
+    // applied calls the setter once, also when two of them take effect in the same step.
+    Simulation sim;
+    Ecu& ecu = sim.add_ecu("Spy", 10ms);
+    auto& spy = ecu.emplace<Requester>(ecu);
+    auto& agent = ecu.agent();
+    const auto submit = [&](control::Command command) { return agent.submit(std::move(command)).status; };
+    using control::SubmitStatus;
+    CHECK(submit({1, {{"spy.request", true}}, std::nullopt}) == SubmitStatus::Queued); // no time: the first step
+    CHECK(submit({2, {{"spy.request", true}}, std::nullopt}) == SubmitStatus::Queued);
+    CHECK(submit({3, {{"spy.request", true}}, at(20ms)}) == SubmitStatus::Queued);    // two steps
+    CHECK(submit({4, {{"spy.request", true}}, at(40ms)}) == SubmitStatus::Queued);
+    CHECK(submit({6, {{"spy.request", true}}, at(60ms)}) == SubmitStatus::Queued);    // one time
+    CHECK(submit({5, {{"spy.request", true}}, at(60ms)}) == SubmitStatus::Queued);
+    CHECK(submit({7, {{"spy.request", true}}, at(72ms)}) == SubmitStatus::Queued);    // one step (80 ms)
+    CHECK(submit({8, {{"spy.request", true}}, at(78ms)}) == SubmitStatus::Queued);
+    CHECK(submit({9, {{"spy.limit", std::int64_t{5}}}, at(90ms)}) == SubmitStatus::Queued); // a stored value
+    CHECK(submit({10, {{"spy.limit", std::int64_t{5}}}, at(100ms)}) == SubmitStatus::Queued);
+    // Refused at submit(): the setter is not called.
+    CHECK(submit({11, {{"spy.request", std::int64_t{1}}}, at(100ms)}) == SubmitStatus::Invalid); // wrong type
+    CHECK(submit({12, {{"spy.limit", std::int64_t{101}}}, at(100ms)}) == SubmitStatus::Invalid); // > max
+    CHECK(submit({13, {{"spy.limit", true}}, at(100ms)}) == SubmitStatus::Invalid);
+    sim.run_for(120ms);
+
+    using Call = std::tuple<long long, std::string, std::int64_t>;
+    const std::vector<Call> expected{
+        {0, "spy.request", 1},  {0, "spy.request", 1},  {20, "spy.request", 1}, {40, "spy.request", 1},
+        {60, "spy.request", 1}, {60, "spy.request", 1}, {80, "spy.request", 1}, {80, "spy.request", 1},
+        {90, "spy.limit", 5},   {100, "spy.limit", 5},
+    };
+    CHECK(spy.calls == expected);
+    std::vector<control::CommandResult> results;
+    agent.drain_results(results);
+    CHECK_EQ(results.size(), std::size_t{10});
+    std::vector<std::uint64_t> order;
+    for (const auto& r : results)
+    {
+        CHECK(r.status == control::CommandStatus::Applied);
+        order.push_back(r.seq);
+    }
+    CHECK((order == std::vector<std::uint64_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})); // (at, seq) within a step
+    // The input still reads false: what the samples show does not change with the writes.
+    const auto schema = agent.schema();
+    const auto last = agent.latest();
+    for (std::size_t i = 0; i < schema.size(); ++i)
+    {
+        if (schema[i].name == "spy.request")
+        {
+            CHECK(std::get<bool>(last.values.at(i)) == false);
+        }
     }
 }
 

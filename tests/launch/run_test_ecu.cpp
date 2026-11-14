@@ -42,6 +42,9 @@
 //                           level it has now; -1 before a change), "mode_now" (the mode, as an
 //                           enum) and "pulse" (true in the step at 200 ms only). A level of 13
 //                           is refused (the setter throws)
+//   request                 declares the input "request" (a bool that always reads false; its setter
+//                           counts every write, whatever its value) and the output "requests" (the
+//                           writes counted so far)
 // With the file "test-ecu-no-control" in its working directory, the ECUs started there run with
 // --no-control (their --describe still has the variables): an executable that describes
 // variables and never offers them.
@@ -195,6 +198,11 @@ public:
                 ecu.agent().output_enum("mode_now", [this] { return mode_; }, modes);
                 ecu.output("pulse", &pulse_);
             }
+            else if (word == "request")
+            {
+                ecu.input("request", [] { return false; }, [this](bool) { ++requests_; });
+                ecu.output("requests", &requests_);
+            }
         }
         // Not in the constructor: --describe constructs the ECU too, and must start nothing.
         ecu.at(vehicle_sil::SimTime{}, [this](vehicle_sil::SimTime) {
@@ -323,6 +331,7 @@ private:
     std::int64_t level_changed_at_ = -1;
     std::int64_t mode_ = 0;
     bool pulse_ = false;
+    std::int64_t requests_ = 0;
 };
 
 } // namespace

@@ -325,6 +325,97 @@ TEST_CASE(control_server_drives_a_simulation_end_to_end)
     body_link.reset();
 }
 
+TEST_CASE(control_server_applies_each_write_of_the_same_value)
+{
+    // An input that always reads false, whose setter counts its writes: the same value written
+    // through the API four times (two times, then twice for one time) is four operations, each
+    // applied, and four setter calls. Nothing on the way drops a write of an unchanged value.
+    InProcessRegistry registry;
+    SimulationControllerOptions controlOptions;
+    controlOptions.registry_uri = registry.uri;
+    controlOptions.required_participants = {"Spy"};
+    controlOptions.time_control = TimeControlOptions{.step = 10ms, .start_paused = true};
+    SimulationController controller(controlOptions);
+    const auto time = control_grpc::time_control_of(controller);
+    control_grpc::ControlServer server({.listen = "127.0.0.1:0", .time = time.get()});
+    control_silkit::HubTransport hub_link(server.hub(), controller.runtime());
+    controller.set_start_window([&](const StartWindow& window) {
+        static_cast<void>(hub_link.wait_for_hellos({"Spy"}, window.deadline(), [&] { return window.cancelled(); }));
+    });
+
+    std::mutex calls_mutex;
+    std::vector<std::int64_t> calls; // the time of each setter call, in ms
+    Peer spy(coordinated("Spy", registry.uri, 10ms));
+    spy.input("spy.request", [] { return false; }, [&](bool) {
+        const std::lock_guard lock(calls_mutex);
+        calls.push_back(ms_of(spy.runtime().now()));
+    });
+    auto spy_link = std::make_unique<control_silkit::AgentTransport>(spy.agent(), spy.runtime());
+
+    const auto stub = v1::ControlService::NewStub(
+        grpc::CreateChannel("127.0.0.1:" + std::to_string(server.port()), grpc::InsecureChannelCredentials()));
+    const auto call = [&](auto method, const auto& request, auto& reply) {
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + 20s);
+        return (stub.get()->*method)(&context, request, &reply);
+    };
+    start_together(controller, {&spy});
+    v1::TimeState state;
+    v1::WaitPausedRequest wait_paused;
+    wait_paused.set_timeout_ms(10000);
+    CHECK(call(&v1::ControlService::Stub::WaitPaused, wait_paused, state).ok());
+    CHECK(state.paused() && state.now_ns() == 0);
+
+    const auto write = [&](std::chrono::milliseconds at) {
+        v1::WriteRequest request;
+        auto* w = request.add_writes();
+        w->set_peer("Spy");
+        w->set_name("spy.request");
+        w->mutable_value()->set_b(true);
+        request.set_at_ns(ns(at));
+        v1::WriteReply reply;
+        CHECK(call(&v1::ControlService::Stub::Write, request, reply).ok());
+        return reply.seq();
+    };
+    const std::vector<std::pair<std::uint64_t, std::chrono::milliseconds>> written{
+        {write(20ms), 20ms}, {write(40ms), 40ms}, {write(60ms), 60ms}, {write(60ms), 60ms}};
+    v1::RunUntilRequest run;
+    run.set_at_ns(ns(100ms));
+    CHECK(call(&v1::ControlService::Stub::RunUntil, run, state).ok());
+    CHECK(call(&v1::ControlService::Stub::WaitPaused, wait_paused, state).ok());
+    CHECK_EQ(state.now_ns(), ns(100ms));
+
+    for (const auto& [seq, at] : written)
+    {
+        v1::WaitOperationRequest wait_done;
+        wait_done.set_seq(seq);
+        wait_done.set_timeout_ms(10000);
+        v1::Operation op;
+        CHECK(call(&v1::ControlService::Stub::WaitOperation, wait_done, op).ok());
+        CHECK(op.done() && op.targets_size() == 1);
+        CHECK(op.targets(0).status() == v1::TARGET_STATUS_APPLIED);
+        CHECK_EQ(op.targets(0).applied_at_ns(), ns(at));
+    }
+    {
+        const std::lock_guard lock(calls_mutex);
+        CHECK((calls == std::vector<std::int64_t>{20, 40, 60, 60}));
+    }
+    // The input still reads false.
+    v1::GetValuesRequest get;
+    get.set_peer("Spy");
+    v1::GetValuesReply values;
+    CHECK(call(&v1::ControlService::Stub::GetValues, get, values).ok() && values.has_values());
+    CHECK(values.snapshot().values(1).has_b() && !values.snapshot().values(1).b()); // after ecu.connected
+
+    v1::StopRequest stop;
+    stop.set_reason("test done");
+    CHECK(call(&v1::ControlService::Stub::Stop, stop, state).ok());
+    const auto finished = spy.wait(30s);
+    CHECK(finished.has_value() && *finished == orch::ParticipantState::Shutdown);
+    spy.stop();
+    spy_link.reset();
+}
+
 TEST_CASE(control_server_shutdown_ends_waiting_calls)
 {
     // A client waits for an operation that will not finish (the agent never answers); shutting
