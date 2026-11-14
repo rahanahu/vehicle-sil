@@ -60,5 +60,5 @@ if(NOT code STREQUAL "0")
   message(FATAL_ERROR "vehicle_sil_launch check simulation.two-pcs.yaml (in ${EXAMPLE_DIR}) ended with ${code}, not 0\n"
                       "--- standard output:\n${out}--- standard error:\n${err}")
 endif()
-block_after(shown "vehicle_sil_launch check simulation.two-pcs.yaml")
+block_after(shown "multi-pc guide: check simulation.two-pcs.yaml")
 expect_same("the output of vehicle_sil_launch check simulation.two-pcs.yaml" "${out}" "${shown}")

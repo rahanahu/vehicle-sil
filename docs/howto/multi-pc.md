@@ -115,7 +115,7 @@ vehicle_sil_launch check simulation.two-pcs.yaml
 
 最後の行が `passed:` で、`note:` が 2 行あれば成功です。終了コードは 0 です。
 
-<!-- vehicle_sil_launch check simulation.two-pcs.yaml -->
+<!-- multi-pc guide: check simulation.two-pcs.yaml -->
 ```text
 simulation.two-pcs.yaml: 2 participants, 1 network
 
