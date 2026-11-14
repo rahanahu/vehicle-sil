@@ -217,8 +217,9 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
             return False
         return all([
             s.run([python, "-c", "import vehicle_sil_control as c; c.Control; print('imported', c.__name__)"]),
-            s.run([python, "-c", "import test_python_client, test_launcher"], cwd=ROOT / "tests" / "control_server"),
+            s.run([python, "-c", "import test_python_client, test_launcher, test_guide_operate_signals"], cwd=ROOT / "tests" / "control_server"),
             s.run([python, "-m", "vehicle_sil_control", "--help"]),
+            s.run([python, "-m", "py_compile", "examples/launch_control/write_and_read.py"]),
             s.run([python, "examples/launch_control/write_before_start.py", "--help"]),
             s.run([python, "examples/launch_control/pause_and_step.py", "--help"]),
         ])
