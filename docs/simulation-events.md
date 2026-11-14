@@ -230,7 +230,8 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
     "scenario-motion-expect",
     "scenario-points-file",
     "timeline",
-    "timeline-lines"
+    "timeline-lines",
+    "scenario-inputs"
   ]
 }
 ```
@@ -258,6 +259,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 | `scenario-points-file` | シナリオの `wave` の `points` を CSV ファイルから読む（`points: { file, value, time, time_unit }`。[scenario.md](scenario.md) の「点を CSV ファイルから読む」）、所見 `scenario-points-file` |
 | `timeline` | `run --scenario --timeline <file>`: シナリオの実行を時間の軸で記録したファイル（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）、結果の `scenario.timeline`、所見 `timeline-write` と `timeline-limit` |
 | `timeline-lines` | `--timeline` のファイルの `lines[]`（入力ごとの線: 手順が置いた値と動き、動きの始まりの値とその出どころ）と、手順の `writes[]`（[simulation-run.md](simulation-run.md) の同じ節） |
+| `scenario-inputs` | シナリオの最上位の `inputs`（入力に重ねる `dither`）と手順 `dither`（[scenario.md](scenario.md) の「細かい揺れを重ねる（`dither`）」）、所見 `scenario-dither-*` と `scenario-input-skipped`、結果と事象の手順の `kind` の `"dither"`、照合と結果の JSON の `scenario.inputs` と `scenario.lines`、`--timeline` のファイルの `lines[]` の `kind` の `"dither"` と、`series` の 3 列目（`columns`） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ）: 事象 `control_server`、`command` の `source` の `"control_server"` と `at_ms`、`--control-credentials`、`--control-tls-cert`、`--control-tls-key`、`--control-audit-log`、`interrupted_by` の `"control server stop"`、`--start-paused` で時刻 0 のステップの前に止まること |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ）: シナリオの実行中、クライアントは読む・待つ・止めるだけで、書く呼び出しと時刻を動かす呼び出しは `FAILED_PRECONDITION`（理由 `scenario-running`）で断る（[scenario.md](scenario.md) の「実行中に変数を見る」） |
 

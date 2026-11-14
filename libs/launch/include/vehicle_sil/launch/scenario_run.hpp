@@ -144,7 +144,7 @@ struct EnginePeer
 ///   timeout): the scenario is Incomplete.
 ///
 /// Times. A step's time T is at_ms, or after_ms after the end of the step before it. The end of
-/// a set and of an expect at one time is T; of a ramp T + over_ms; of a wave T + its longest
+/// a set, of a dither and of an expect at one time is T; of a ramp T + over_ms; of a wave T + its longest
 /// length (ScenarioMotion::length_ms); of an expect with hold_for_ms T + hold_for_ms: all known when the step before ends, so such steps keep their times whatever
 /// happens. A wait_until, or an expect with within_ms, that becomes true at the sample of time t
 /// is known to the engine at the first step P of the controller after t, and ends at P + tick:
@@ -177,8 +177,30 @@ struct EnginePeer
 /// or before T, or the end value of the motion before it, as the variable's type has it (an
 /// integer rounded), also if that motion's length is not a multiple of its ECU's step. A motion
 /// that finds no base fails its step at its first write. The values a motion writes come from
-/// one function of the motion and the time (motion_value(), which is motion_number() as the
-/// variable's type has it: scenario_line.hpp).
+/// one function of the motion and the time (motion_number()), and every value that is written
+/// goes through one function of the line (Line::written(): scenario_line.hpp).
+///
+/// Dithers. On top of a line there may be a dither (ScenarioOverlay): from the start for what
+/// Scenario::inputs declares, and from a dither step's time T for what that step puts (or takes
+/// off). The value of a write at t is the number of what is written (a set's value, a motion's
+/// value at t before it is rounded) plus the dither's value at the virtual time t itself, as the
+/// variable's type has it. A dither is put with the other things of its time, before any write
+/// of that time goes out: every write of T carries the dither that was put last at T.
+/// - The writes of the steps keep their times and carry the dither.
+/// - A dither step writes once at T the inputs of it that have a value on their line (their
+///   value at T with the dither it put; with none the value alone), and ends at T. If none of
+///   its inputs has a value yet it writes nothing, and passes (at T) at the controller's first
+///   step after T.
+/// - Where a dither is all that moves an input, the engine writes it at the steps of its ECU,
+///   k x step: at every such time at which the line has a value, no step writes the input, and
+///   no motion of it runs (from a motion's time to its end, both included, the motion's own
+///   writes carry the dither). So an input without a dither is written exactly as in a scenario
+///   without any. These writes are no step's: of one time they go out after the steps' writes of
+///   that time, as one command per participant (in the order of Scenario::variables); they are
+///   not waited for when the last step is decided; and one that is refused or not applied fails
+///   the first step that is not decided then ("scenario-write": which dither wrote what when).
+///   Which step that is, and whether a refused write of the controller's last step before the
+///   scenario is over is sent at all, depends on the controller's tick.
 ///
 /// The result of a write is judged
 /// at a fixed step of the controller: the first after the ECU's step that applies it (by then it
@@ -276,6 +298,13 @@ private:
         std::vector<ScenarioWrite> writes;
         std::optional<std::size_t> motion{}; ///< of motions_: its value is worked out when it is sent
         bool motion_last = false;            ///< the motion's end value
+        /// A dither step's one write: its values (of the inputs that have one) are worked out
+        /// when it is sent. It may have none, and is then decided at `judge` all the same.
+        bool dither = false;
+        /// Of no step (`step` is not used): what the dithers of one time write, where nothing
+        /// else writes their inputs. Not counted in open_writes_; refused, it fails the first
+        /// step that is not decided (fail_grid()).
+        bool grid = false;
         std::uint64_t ticket = 0;
         SimTime judge{};
     };
@@ -298,6 +327,11 @@ private:
     /// variable: before any write of its time is sent.
     void place(const Write& write);
     bool submit_one(Write write);
+    /// A write of no step (Write::grid) that `target` refused or did not apply (`did_not`: which,
+    /// as the message says it): the first step that is not decided yet fails.
+    void fail_grid(const Write& write, const control::TargetResult& target, const std::string& did_not);
+    /// The step of the variable's ECU (the controller's, if that is not known).
+    [[nodiscard]] SimDuration step_of(std::size_t variable) const;
     void judge(SimTime p);
     void observe(SimTime p);
     void evaluate(Watch& watch, SimTime t);

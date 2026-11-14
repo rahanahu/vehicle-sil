@@ -189,6 +189,8 @@ def scenario_mappings() -> dict[str, dict]:
         "wave": definitions["wave"],
         **{f"wave {shape}": definitions["wave"]["properties"][shape] for shape in WAVE_SHAPES_WITH_KEYS},
         "wave points file": definitions["points_file"],
+        "input": SCENARIO["properties"]["inputs"]["additionalProperties"],
+        "dither": definitions["overlay"],
     }
 
 
@@ -403,6 +405,40 @@ SCENARIO_SAMPLES = [
      "            Engine.ecu.connected: { points: { file: ./points.csv, value: connected, time: time, time_unit: ms } } }\n"
      "  - wave: { Engine.engine.throttle: { points: { file: \"${trace}\", value: \"${column}\", time_unit: \"${unit}\" } } }\n"
      "params: { trace: points.csv, column: throttle, unit: ms }\n", "valid"),
+    ("a dither in the inputs and in a step",
+     "vehicle_sil_scenario: 1\ninputs:\n"
+     "  Engine.engine.throttle: { dither: { triangle: { amplitude: 2, period_ms: 40, phase_deg: 90 } }, undersampled: ok }\n"
+     "steps:\n" + SET +
+     "  - after_ms: 10\n    dither: { Engine.engine.throttle: none }\n"
+     "  - dither: { Engine.engine.throttle: { sine: { amplitude: 1, frequency_hz: 5 } } }\n"
+     "  - dither: { Engine.engine.throttle: { sawtooth: { amplitude: 1, period_ms: 100, falling: true } } }\n"
+     "  - dither: { Engine.engine.throttle: { square: { amplitude: 1, period_ms: 100, duty: 30 } } }\n"
+     "  - at_ms: 500\n    dither: { Engine.engine.throttle: { noise: { amplitude: \"${a}\", hold_ms: 2, seed: 7, distribution: gaussian } } }\n"
+     "    undersampled: ok\n"
+     "params: { a: 1 }\n", "valid"),
+    ("JSON with a dither",
+     '{"vehicle_sil_scenario": 1, "inputs": {"Engine.engine.throttle": {"dither": {"triangle": {"amplitude": 2, "period_ms": 40}}}}, '
+     '"steps": [{"set": {"Engine.engine.throttle": 50}}, {"dither": {"Engine.engine.throttle": "none"}}]}', "valid"),
+    ("a dither with a length", S + "  - dither: { Engine.engine.throttle: { triangle: { amplitude: 1, period_ms: 100 }, for_ms: 500 } }\n",
+     "invalid"),
+    ("a dither with a middle", S + "  - dither: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, around: 50 } }\n",
+     "invalid"),
+    ("a dither of a shape that has a length", S + "  - dither: { Engine.engine.throttle: { pulse: { value: 1, width_ms: 50 } } }\n",
+     "invalid"),
+    ("a dither that is a square with low and high",
+     S + "  - dither: { Engine.engine.throttle: { square: { low: 0, high: 1, period_ms: 100 } } }\n", "invalid"),
+    ("a dither with two shapes",
+     S + "  - dither: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, noise: { amplitude: 1, hold_ms: 10, seed: 1 } } }\n",
+     "invalid"),
+    ("a dither that is off", S + "  - dither: { Engine.engine.throttle: off }\n", "invalid"),
+    ("a dither step with a hold", S + "  - dither: { Engine.engine.throttle: none }\n    hold_for_ms: 10\n", "invalid"),
+    ("an input with a clip", "vehicle_sil_scenario: 1\ninputs: { Engine.engine.throttle: { dither: { triangle: { amplitude: 1, "
+                             "period_ms: 100 } }, clip: true } }\nsteps:\n" + SET, "invalid"),
+    ("an input without a dither", "vehicle_sil_scenario: 1\ninputs: { Engine.engine.throttle: { undersampled: ok } }\nsteps:\n" + SET,
+     "invalid"),
+    ("an input whose dither is none", "vehicle_sil_scenario: 1\ninputs: { Engine.engine.throttle: { dither: none } }\nsteps:\n" + SET,
+     "invalid"),
+    ("a dither of a bool", S + "  - dither: { Engine.ecu.connected: { square: { amplitude: 1, period_ms: 100 } } }\n", "check only"),
     ("points from a file by an absolute path",
      S + "  - wave: { Engine.engine.throttle: { points: { file: /tmp/points.csv, value: throttle } } }\n", "invalid"),
     ("points from a file on a drive",
@@ -918,6 +954,9 @@ class SchemaAndLauncher(unittest.TestCase):
             **{f"wave {shape}": S + "  - wave: { Engine.engine.throttle: { " + shape + ": { " + keys + ", zz_probe: 1 }, for_ms: 100 } }\n"
                for shape, keys in WAVE_SHAPES_WITH_KEYS.items()},
             "wave points file": S + "  - wave: { Engine.engine.throttle: { points: { file: points.csv, value: throttle, zz_probe: 1 } } }\n",
+            "input": "vehicle_sil_scenario: 1\ninputs: { Engine.engine.throttle: { dither: { triangle: { amplitude: 1, period_ms: 100 } }, "
+                     "zz_probe: 1 } }\nsteps:\n" + SET,
+            "dither": S + "  - dither: { Engine.engine.throttle: { triangle: { amplitude: 1, period_ms: 100 }, zz_probe: 1 } }\n",
         }
         mappings = scenario_mappings()
         self.assertEqual(set(probes), set(mappings))

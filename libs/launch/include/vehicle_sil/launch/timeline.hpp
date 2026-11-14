@@ -151,10 +151,13 @@ public:
         bool sent = false;
     };
 
+    /// The `step` of a write that is no step's (a dither alone moved the input).
+    static constexpr std::size_t kNoStep = static_cast<std::size_t>(-1);
+
     explicit TimelineRecord(const Scenario& scenario, TimelineLimits limits = {});
 
     // --- the engine's side ---
-    /// A write that is sent, of `step` (index in Scenario::steps): a point of the variable's
+    /// A write that is sent, of `step` (index in Scenario::steps; kNoStep: of none): a point of the variable's
     /// series, and the line that step put at `at` on the variable has happened (Line::sent).
     void written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion);
     /// A sample of `variable` (kept if a condition reads the variable).

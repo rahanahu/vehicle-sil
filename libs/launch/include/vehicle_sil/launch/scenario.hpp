@@ -42,6 +42,11 @@ struct ScenarioVariable
 
     /// "<participant>.<name>".
     std::string text;
+    /// The ends of its range as its ECU describes them (empty: none), for the messages of the run
+    /// (which end a refused value is beyond). Whether a value is taken is the hub's and the
+    /// agent's to say, not these.
+    std::optional<double> min{};
+    std::optional<double> max{};
 };
 
 /// A participant whose variables a scenario uses.
@@ -140,6 +145,23 @@ struct ScenarioMotion
     ScenarioShapeText described{};
 };
 
+/// A dither of one input: a shape around 0 without an end that is on top of whatever the scenario
+/// puts on the input. The value written is that of the input's line (a set's value, a ramp's or a
+/// wave's value then) plus the shape's value at the virtual time itself, as the variable's type
+/// has it. An input has one; a dither step puts another in its place or takes it off.
+struct ScenarioOverlay
+{
+    std::size_t variable = 0;
+    /// Asked with the virtual time itself and the base 0 (Waveform::value()); null: none (the
+    /// step takes the dither off).
+    std::shared_ptr<const Waveform> shape{};
+    std::size_t line = 0; ///< where the file has it
+    /// As in the step's text: "Body.ratio triangle amplitude 0.1 period 40 ms", "Body.ratio none".
+    std::string text;
+    /// The shape as the text gives it; `type` is "" for none.
+    ScenarioShapeText described{};
+};
+
 enum class StepKind
 {
     Set,
@@ -147,8 +169,9 @@ enum class StepKind
     Wave,
     Expect,
     WaitUntil,
+    Dither,
 };
-/// "set", "ramp", "wave", "expect", "wait_until".
+/// "set", "ramp", "wave", "expect", "wait_until", "dither".
 [[nodiscard]] const char* step_kind_name(StepKind kind);
 
 struct ScenarioStep
@@ -160,6 +183,7 @@ struct ScenarioStep
     std::int64_t after_ms = 0;
     std::vector<ScenarioWrite> writes{};       ///< Set
     std::vector<ScenarioMotion> motions{};     ///< Ramp, Wave
+    std::vector<ScenarioOverlay> overlays{};   ///< Dither: per variable the dither from the step's time on
     /// Expect, WaitUntil: all of them. Ramp, Wave: the expect beside it (empty without one), which
     /// must be true from the step's time to its end, both included.
     std::vector<ScenarioCondition> conditions{};
@@ -172,7 +196,7 @@ struct ScenarioStep
     /// Why the run skips it, or "" if it runs: it uses a variable that its participant does not
     /// have in this configuration (absent: true in its variable map), or a variable of a
     /// participant that the chosen variant leaves out. A skipped step writes and compares nothing
-    /// (`writes`, `motions` and `conditions` are empty) and ends `skipped_ms` after its own time.
+    /// (`writes`, `motions`, `overlays` and `conditions` are empty) and ends `skipped_ms` after its own time.
     std::string skipped{};
     /// Of a skipped step: the time it takes as the text says it (the longest over_ms of a ramp,
     /// the longest length of a wave, the hold_for_ms of an expect), so that the steps after it have the same times in every
@@ -193,6 +217,10 @@ struct Scenario
     std::string name; ///< its "name", or ""
     std::vector<ScenarioParticipant> participants{};
     std::vector<ScenarioVariable> variables{};
+    /// The dithers the file declares (its "inputs"), in the order of the file: each is on its
+    /// input from the start. Those of variables this configuration does not have are left out
+    /// (a note of the check says so).
+    std::vector<ScenarioOverlay> inputs{};
     std::vector<ScenarioStep> steps{};
 };
 

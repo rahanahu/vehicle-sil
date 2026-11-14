@@ -53,6 +53,13 @@ const char* target_status_text(control::TargetStatus status)
     return "unknown";
 }
 
+/// "0 to 100", "100 at most", "0 at least".
+std::string range_text(const ScenarioVariable& v)
+{
+    const auto text = [&v](double end) { return value_text(v.type == control::ValueType::Real ? control::Value{end} : control::Value{static_cast<std::int64_t>(end)}); };
+    return v.min && v.max ? text(*v.min) + " to " + text(*v.max) : v.max ? "(" + text(*v.max) + " at most)" : v.min ? "(" + text(*v.min) + " at least)" : std::string{};
+}
+
 } // namespace
 
 const char* step_status_name(StepStatus status)
@@ -122,6 +129,10 @@ struct ScenarioEngine::Lines
 {
     std::vector<detail::Line> lines;                       ///< per variable of the scenario
     std::vector<std::optional<detail::LineMotion>> placed; ///< per motion of motions_; empty until its time
+    /// Per variable: the dither that is on its line (the line's overlay is its shape), or null.
+    std::vector<const ScenarioOverlay*> dither;
+    /// The variables that the scenario ever puts a dither on, in the order of Scenario::variables.
+    std::vector<std::size_t> dithered;
 };
 
 ScenarioEngine::~ScenarioEngine() = default;
@@ -142,6 +153,35 @@ ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, Scena
     {
         lines_->lines.emplace_back(v.type);
     }
+    // What "inputs" declares is on the lines from the start.
+    lines_->dither.resize(scenario.variables.size(), nullptr);
+    std::vector<bool> dithered(scenario.variables.size(), false);
+    for (const ScenarioOverlay& input : scenario.inputs)
+    {
+        lines_->lines[input.variable].overlay(input.shape);
+        lines_->dither[input.variable] = &input;
+        dithered[input.variable] = true;
+    }
+    for (const ScenarioStep& step : scenario.steps)
+    {
+        for (const ScenarioOverlay& overlay : step.overlays)
+        {
+            dithered[overlay.variable] = dithered[overlay.variable] || overlay.shape != nullptr;
+        }
+    }
+    for (std::size_t v = 0; v < dithered.size(); ++v)
+    {
+        if (dithered[v])
+        {
+            lines_->dithered.push_back(v);
+        }
+    }
+}
+
+SimDuration ScenarioEngine::step_of(std::size_t variable) const
+{
+    const SimDuration step = scenario_.participants[scenario_.variables[variable].participant].step;
+    return step > SimDuration::zero() ? step : tick_;
 }
 
 SimTime ScenarioEngine::next_tick_after(SimTime t) const
@@ -335,6 +375,10 @@ bool ScenarioEngine::unusable(std::size_t index, SimTime time)
     {
         used.emplace_back(r.variable, true);
     }
+    for (const auto& o : step.overlays)
+    {
+        used.emplace_back(o.variable, true);
+    }
     for (const auto& c : step.conditions)
     {
         used.emplace_back(c.variable, false);
@@ -403,6 +447,19 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
         write.step = index;
         write.at = time;
         write.writes = step.writes;
+        to_send_.push_back(std::move(write));
+        open_writes_[index] = 1;
+        run_.steps[index].end = time;
+        base_ = time;
+        break;
+    }
+    case StepKind::Dither:
+    {
+        // One write at its time, whose values are worked out when it is sent (the lines then).
+        Write write;
+        write.step = index;
+        write.at = time;
+        write.dither = true;
         to_send_.push_back(std::move(write));
         open_writes_[index] = 1;
         run_.steps[index].end = time;
@@ -632,8 +689,36 @@ void ScenarioEngine::close_record()
 
 bool ScenarioEngine::submit_one(Write write)
 {
-    started(write.step);
-    if (write.motion)
+    if (!write.grid)
+    {
+        started(write.step);
+    }
+    if (write.grid)
+    {
+        // Its values were worked out when it was made (submit()).
+    }
+    else if (write.dither)
+    {
+        // The step's inputs that have something to swing around: the line as it stands now, with
+        // the dither the step put (none: the line's value alone). An input the scenario has put
+        // nothing on yet is not written: its dither waits for the first set, ramp or wave.
+        for (const ScenarioOverlay& overlay : scenario_.steps[write.step].overlays)
+        {
+            if (const auto value = lines_->lines[overlay.variable].written_value(write.at))
+            {
+                write.writes.push_back(ScenarioWrite{overlay.variable, *value});
+            }
+        }
+        if (write.writes.empty())
+        {
+            // Nothing to send. Decided like a write all the same, at the controller's first step
+            // after its time (judge()): not now, when its time may still be ahead.
+            write.judge = next_tick_after(write.at);
+            sent_.push_back(std::move(write));
+            return true;
+        }
+    }
+    else if (write.motion)
     {
         // The motion's value at this time. It was put on its line before the writes of its
         // first time went out (place()); without a base it fails here, at its first write.
@@ -669,7 +754,8 @@ bool ScenarioEngine::submit_one(Write write)
         out.push_back(control::PeerWrite{scenario_.participants[v.participant].name, v.name, w.value});
         if (record_ != nullptr)
         {
-            record_->written(write.step, w.variable, write.at, w.value, write.motion.has_value());
+            record_->written(write.grid ? TimelineRecord::kNoStep : write.step, w.variable, write.at, w.value,
+                             write.motion.has_value() || write.grid);
         }
     }
     write.ticket = port_.write(std::move(out), write.at);
@@ -681,6 +767,11 @@ bool ScenarioEngine::submit_one(Write write)
         {
             if (control::is_final(target.status) && target.status != control::TargetStatus::Applied)
             {
+                if (write.grid)
+                {
+                    fail_grid(write, target, "did not take the write");
+                    return false;
+                }
                 fail(write.step, write.at, "scenario-write",
                      "the write for " + ms_text(write.at) + " ms was not taken by participant '" + target.peer + "': " +
                          target_status_text(target.status) + (target.reason.empty() ? "" : " (" + target.reason + ")"),
@@ -753,19 +844,63 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
     std::stable_sort(due.begin(), due.end(), [](const Write& a, const Write& b) {
         return a.at != b.at ? a.at < b.at : a.step < b.step;
     });
-    for (std::size_t first = 0; first < due.size();)
+    // The times at which a dither alone may write: the steps of the ECUs of the inputs that ever
+    // have one, k x step. (None without a dither in the scenario: the loop below is then the
+    // writes of the steps alone.)
+    std::vector<SimTime> grid;
+    for (const std::size_t v : lines_->dithered)
     {
+        const std::int64_t step = step_of(v).count();
+        const std::int64_t from = to_ns(from_exclusive);
+        // The first multiple of the step after `from` (which is -1 at the start: 0).
+        for (std::int64_t t = from < 0 ? 0 : (from / step + 1) * step; t <= to_ns(to_inclusive); t += step)
+        {
+            grid.push_back(SimTime{} + SimDuration(t));
+        }
+    }
+    std::sort(grid.begin(), grid.end());
+    grid.erase(std::unique(grid.begin(), grid.end()), grid.end());
+
+    std::vector<bool> stepWrites(scenario_.variables.size(), false); // per variable: a step writes it at the time at hand
+    for (std::size_t first = 0, next = 0; first < due.size() || next < grid.size();)
+    {
+        const SimTime t = first < due.size() && (next == grid.size() || due[first].at <= grid[next]) ? due[first].at : grid[next];
         std::size_t end = first;
-        while (end < due.size() && due[end].at == due[first].at)
+        while (end < due.size() && due[end].at == t)
         {
             ++end;
         }
         // Time by time. Before any write of a time goes out, the steps that begin at it put what
         // they do on the lines, in the order of the steps: a motion's base is where the line
-        // stands then, whether or not the write of a step before it is taken.
+        // stands then, whether or not the write of a step before it is taken; and every write of
+        // the time carries the dither that was put last at it.
         for (std::size_t i = first; i < end; ++i)
         {
             place(due[i]);
+        }
+        const bool onGrid = next < grid.size() && grid[next] == t;
+        if (onGrid)
+        {
+            ++next;
+            std::fill(stepWrites.begin(), stepWrites.end(), false);
+            for (std::size_t i = first; i < end; ++i)
+            {
+                for (const ScenarioWrite& w : due[i].writes)
+                {
+                    stepWrites[w.variable] = true;
+                }
+                if (due[i].motion)
+                {
+                    stepWrites[motions_[*due[i].motion].motion.variable] = true;
+                }
+                if (due[i].dither)
+                {
+                    for (const ScenarioOverlay& overlay : scenario_.steps[due[i].step].overlays)
+                    {
+                        stepWrites[overlay.variable] = true;
+                    }
+                }
+            }
         }
         for (; first < end; ++first)
         {
@@ -774,11 +909,112 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
                 return;
             }
         }
+        if (onGrid)
+        {
+            // After the steps' writes of this time: the inputs whose dither is all that moves
+            // them now, in the order of the variables, as one command per participant.
+            Write write;
+            write.at = t;
+            write.grid = true;
+            for (const std::size_t v : lines_->dithered)
+            {
+                const detail::Line& line = lines_->lines[v];
+                if (!line.overlay() || stepWrites[v] || to_ns(t) % step_of(v).count() != 0)
+                {
+                    continue;
+                }
+                // While a motion runs (from its time to its end, both included) its own writes
+                // carry the dither.
+                if (line.motion() && t <= line.motion()->from + line.motion()->length)
+                {
+                    continue;
+                }
+                if (const auto value = line.written_value(t))
+                {
+                    write.writes.push_back(ScenarioWrite{v, *value});
+                }
+            }
+            if (!write.writes.empty() && !submit_one(std::move(write)))
+            {
+                return;
+            }
+        }
     }
+}
+
+void ScenarioEngine::fail_grid(const Write& write, const control::TargetResult& target, const std::string& did_not)
+{
+    // The write of the command that its participant refused: the first whose value is outside
+    // the range its ECU describes, else the first of that participant.
+    const ScenarioWrite* blamed = nullptr;
+    bool above = false;
+    bool below = false;
+    std::size_t together = 0;
+    for (const ScenarioWrite& w : write.writes)
+    {
+        const ScenarioVariable& v = scenario_.variables[w.variable];
+        if (scenario_.participants[v.participant].name != target.peer)
+        {
+            continue;
+        }
+        ++together;
+        const double number = detail::number_of(w.value);
+        const bool over = v.max && number > *v.max;
+        const bool under = v.min && number < *v.min;
+        if (blamed == nullptr || (!(above || below) && (over || under)))
+        {
+            blamed = &w;
+            above = over;
+            below = under;
+        }
+    }
+    if (blamed == nullptr)
+    {
+        blamed = &write.writes.front();
+        together = 1;
+    }
+    const bool outside = above || below;
+    const ScenarioVariable& v = scenario_.variables[blamed->variable];
+    const ScenarioOverlay* dither = lines_->dither[blamed->variable];
+    std::string message = "the dither of " + v.text + (dither != nullptr ? " (line " + std::to_string(dither->line) + ")" : "") + " wrote " +
+                          value_text(blamed->value, &v) + " at " + ms_text(write.at) + " ms, ";
+    if (outside)
+    {
+        message += std::string(above ? "above" : "below") + " its range " + range_text(v) +
+                   ": lower its amplitude, or keep the value further from the end of the range";
+    }
+    else
+    {
+        message += "and participant '" + target.peer + "' " + did_not + ": " + target_status_text(target.status) +
+                   (target.reason.empty() ? "" : " (" + target.reason + ")") +
+                   (together > 1 ? "; the write was one command with those of " + std::to_string(together - 1) +
+                                       " other dithered input" + (together > 2 ? "s" : "") + " of that participant"
+                                 : "");
+    }
+    // It is no step's write: the first step that is not decided yet fails (as when the
+    // simulation stops by itself, stopped_at()). There is one: the scenario is not over.
+    std::size_t index = 0;
+    while (index + 1 < run_.steps.size() &&
+           (run_.steps[index].status == StepStatus::Passed || run_.steps[index].status == StepStatus::Skipped))
+    {
+        ++index;
+    }
+    TimelineFailure failure;
+    failure.write = TimelineFailedWrite{blamed->variable, write.at, blamed->value};
+    fail(index, write.at, "scenario-write", std::move(message), std::move(failure));
 }
 
 void ScenarioEngine::place(const Write& write)
 {
+    if (write.dither)
+    {
+        for (const ScenarioOverlay& overlay : scenario_.steps[write.step].overlays)
+        {
+            lines_->lines[overlay.variable].overlay(overlay.shape);
+            lines_->dither[overlay.variable] = overlay.shape ? &overlay : nullptr;
+        }
+        return;
+    }
     if (!write.motion)
     {
         for (std::size_t i = 0; i < write.writes.size(); ++i)
@@ -831,9 +1067,23 @@ void ScenarioEngine::judge(SimTime p)
         }
         const Write write = std::move(*it);
         sent_.erase(it);
+        if (write.writes.empty())
+        {
+            // A dither step that had nothing to write (no input of it had a value yet).
+            if (--open_writes_[write.step] == 0)
+            {
+                pass(write.step, write.at, *run_.steps[write.step].end);
+            }
+            continue;
+        }
         const auto result = port_.result(write.ticket);
         if (!result)
         {
+            if (write.grid)
+            {
+                fail_grid(write, control::TargetResult{}, "gave no result (it is not known any more: this is an error of vehicle_sil_launch)");
+                return;
+            }
             fail(write.step, write.at, "scenario-write",
                  "the result of the write for " + ms_text(write.at) + " ms is not known any more: this is an error of "
                                                                       "vehicle_sil_launch");
@@ -842,6 +1092,15 @@ void ScenarioEngine::judge(SimTime p)
         SimTime applied = write.at;
         for (const control::TargetResult& target : result->targets)
         {
+            if (target.status != control::TargetStatus::Applied && write.grid)
+            {
+                fail_grid(write, target,
+                          std::string("did not apply the write") +
+                              (control::is_final(target.status)
+                                   ? ""
+                                   : " (at " + ms_text(p) + " ms the result of the ECU's step at " + ms_text(write.at) + " ms should be there)"));
+                return;
+            }
             if (target.status != control::TargetStatus::Applied)
             {
                 fail(write.step, write.at, "scenario-write",
@@ -859,7 +1118,8 @@ void ScenarioEngine::judge(SimTime p)
                 applied = std::max(applied, *target.applied_at);
             }
         }
-        if (--open_writes_[write.step] == 0)
+        // (A dither's write of no step decides nothing: it is no step's.)
+        if (!write.grid && --open_writes_[write.step] == 0)
         {
             const ScenarioStepRun& step = run_.steps[write.step];
             pass(write.step, step.kind == StepKind::Ramp || step.kind == StepKind::Wave ? *step.end : applied, *step.end);

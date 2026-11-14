@@ -28,10 +28,10 @@ namespace {
 // a new branch must be added here too, or the JSON Schema (schema/) and its test (tests/schema), which compare with
 // the list in the message, pass without the key. (The keys of a step are taken from kStepKeys itself.)
 
-const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "only", "params", "steps"};
-const std::vector<std::string> kStepKeys = {"at_ms",      "after_ms", "set",       "ramp",        "wave",        "wait_until",
-                                            "timeout_ms", "expect",   "within_ms", "hold_for_ms", "undersampled"};
-const std::vector<std::string> kActionKeys = {"set", "ramp", "wave", "wait_until", "expect"};
+const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "only", "params", "inputs", "steps"};
+const std::vector<std::string> kStepKeys = {"at_ms",      "after_ms", "set",       "ramp",        "wave",         "dither",
+                                            "wait_until", "timeout_ms", "expect",  "within_ms",   "hold_for_ms", "undersampled"};
+const std::vector<std::string> kActionKeys = {"set", "ramp", "wave", "dither", "wait_until", "expect"};
 const std::vector<std::string> kCompareKeys = {"eq", "ne", "ge", "le", "gt", "lt", "near", "tolerance"};
 const std::vector<std::string> kRampKeys = {"to", "over_ms", "from"};
 // A wave: the shapes (one per variable) and the keys beside the shape.
@@ -39,11 +39,17 @@ const std::vector<std::string> kWaveShapes = {"sine", "triangle", "sawtooth", "s
                                               "noise", "chirp", "lag", "chatter", "points"};
 const std::vector<std::string> kWaveKeys = {"sine",  "triangle", "sawtooth", "square", "pulse",  "noise",      "chirp",
                                             "lag",   "chatter",  "points",   "around", "for_ms", "interpolate"};
+// A dither: what an entry of "inputs" may have, and the shapes that can be one (around 0, without an end).
+const std::vector<std::string> kInputKeys = {"dither", "undersampled"};
+const std::vector<std::string> kDitherShapes = {"sine", "triangle", "sawtooth", "square", "noise"};
+constexpr const char* kDitherExample = "{ triangle: { amplitude: 1, period_ms: 100 } }";
 // The keys of points from a CSV file (points: { file: ..., value: ... }).
 const std::vector<std::string> kPointsFileKeys = {"file", "value", "time", "time_unit"};
 constexpr const char* kPointsFileExample = "points: { file: traces/drive.csv, value: throttle }";
 // How a wave that an ECU cannot see as written is run anyway (in every such message).
 constexpr const char* kAsItIs = "; to run it as it is without this message, add undersampled: ok to the step";
+// The same for a dither that "inputs" declares.
+constexpr const char* kAsItIsInput = "; to run it as it is without this message, add undersampled: ok to the input's entry in inputs";
 /// A smooth shape with fewer steps of its ECU per period is coarse (a note).
 constexpr std::int64_t kSmoothSteps = 8;
 /// Two values of a shape (as a share of its amplitude) that are this close are the same value.
@@ -151,6 +157,7 @@ public:
         ryml::id_type paramsNode = ryml::NONE;
         ryml::id_type onlyNode = ryml::NONE;
         ryml::id_type stepsNode = ryml::NONE;
+        ryml::id_type inputsNode = ryml::NONE;
         std::map<std::string, std::size_t> seen;
         for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
         {
@@ -202,6 +209,10 @@ public:
             {
                 stepsNode = child;
             }
+            else if (key == "inputs")
+            {
+                inputsNode = child;
+            }
             else
             {
                 unknown_key(child, key, "", kTopKeys);
@@ -215,10 +226,17 @@ public:
             read_only(onlyNode);
         }
         const bool hasSteps = stepsNode != ryml::NONE;
+        // The inputs before the steps, wherever the file has them: what they declare is there
+        // from the start. (Both are looked through for parameters before either is read.)
+        const bool inputsOk = inputsNode == ryml::NONE || out_.not_for_variant || resolve_params(inputsNode);
         if (hasSteps)
         {
-            if (!out_.not_for_variant && resolve_params(stepsNode))
+            if (!out_.not_for_variant && resolve_params(stepsNode) && inputsOk)
             {
+                if (inputsNode != ryml::NONE)
+                {
+                    read_inputs(inputsNode);
+                }
                 read_steps(stepsNode);
                 check_given_params();
                 check_something_is_checked();
@@ -244,7 +262,7 @@ public:
         if (!hasSteps)
         {
             error("missing-key", 0,
-                  "the file has no steps: add steps, a list of what to do in order (set, ramp, wave, wait_until, expect)");
+                  "the file has no steps: add steps, a list of what to do in order (set, ramp, wave, dither, wait_until, expect)");
         }
         if (std::none_of(out_.findings.begin(), out_.findings.end(), [](const Finding& f) { return f.severity == Severity::Error; }))
         {
@@ -740,6 +758,8 @@ private:
         out.type = v->type;
         out.items = v->items;
         out.text = text;
+        out.min = v->min;
+        out.max = v->max;
         scenario_.variables.push_back(std::move(out));
         infos_.push_back(&*v);
         maps_.push_back(p->map.get());
@@ -977,6 +997,7 @@ private:
         step.kind = action == "set"      ? StepKind::Set
                     : action == "ramp"   ? StepKind::Ramp
                     : action == "wave"   ? StepKind::Wave
+                    : action == "dither" ? StepKind::Dither
                     : action == "expect" ? StepKind::Expect
                                          : StepKind::WaitUntil;
 
@@ -1006,7 +1027,7 @@ private:
         only_with("timeout_ms", step.kind == StepKind::WaitUntil, "wait_until");
         only_with("within_ms", step.kind == StepKind::Expect, "expect");
         only_with("hold_for_ms", step.kind == StepKind::Expect, "expect");
-        only_with("undersampled", step.kind == StepKind::Wave, "wave");
+        only_with("undersampled", step.kind == StepKind::Wave || step.kind == StepKind::Dither, "wave and dither");
         bool undersampledOk = false;
         if (nodes.count("undersampled") > 0)
         {
@@ -1015,8 +1036,8 @@ private:
             if (!undersampledOk)
             {
                 error("value", doc_.line(said),
-                      "undersampled must be ok (run the step's waves as they are, also where they change faster than their ECU "
-                      "steps), not " + shown_value(said) + ": write undersampled: ok, or remove it");
+                      std::string("undersampled must be ok (run the step's ") + (step.kind == StepKind::Dither ? "dithers" : "waves") +
+                          " as they are, also where they change faster than their ECU steps), not " + shown_value(said) + ": write undersampled: ok, or remove it");
             }
         }
 
@@ -1076,6 +1097,7 @@ private:
         case StepKind::Set: read_set(nodes.at("set"), step, time); break;
         case StepKind::Ramp: length = read_ramp(nodes.at("ramp"), step, time); break;
         case StepKind::Wave: length = read_wave(nodes.at("wave"), step, time, undersampledOk); break;
+        case StepKind::Dither: read_dither(nodes.at("dither"), step, undersampledOk); break;
         case StepKind::Expect:
         case StepKind::WaitUntil:
             read_conditions(nodes.at(action), step, action);
@@ -1177,6 +1199,7 @@ private:
         step.skipped = skip_reason();
         step.writes.clear();
         step.motions.clear();
+        step.overlays.clear();
         step.conditions.clear();
         ++out_.skipped;
         add(Severity::Note, "scenario-step-skipped", step.line,
@@ -1665,7 +1688,7 @@ private:
             add(Severity::Warning, "scenario-wave-undersampled", line,
                 what + " has a period of " + span_text(period) + ", but " + takes_inputs(variable) +
                     ": with fewer than two values per period the ECU sees a slower shape or a constant, not this one. " + longer +
-                    kAsItIs,
+                    as_it_is_,
                 owner_of(variable));
             return true;
         }
@@ -1689,7 +1712,7 @@ private:
                     add(Severity::Warning, "scenario-wave-undersampled", line,
                         what + " has a period of " + span_text(period) + ", and " + takes_inputs(variable) + ": at each of those times " +
                             shape + " is at " + (std::fabs(low) <= kSameValue ? "its middle" : "the same value") +
-                            ", so the ECU sees a constant, not " + shape + ". " + longer + kAsItIs,
+                            ", so the ECU sees a constant, not " + shape + ". " + longer + as_it_is_,
                         owner_of(variable));
                     return true;
                 }
@@ -1698,7 +1721,7 @@ private:
                 what + " has a period of " + span_text(period) + ", and " + takes_inputs(variable) + ": the ECU sees " +
                     rounded_text(static_cast<double>(period.count()) / static_cast<double>(step->count())) +
                     " values per period, so it can miss the highest and the lowest. A period of " +
-                    span_text(kSmoothSteps * *step) + " or more gives it " + std::to_string(kSmoothSteps) + kAsItIs,
+                    span_text(kSmoothSteps * *step) + " or more gives it " + std::to_string(kSmoothSteps) + as_it_is_,
                 owner_of(variable));
         }
         return false;
@@ -1719,7 +1742,7 @@ private:
             add(Severity::Warning, "scenario-wave-duty", line,
                 what + " has a period of " + span_text(periodic.period) + ", which is not a multiple of " + step_of(variable) +
                     ": the ECU sees high and low times that change from period to period. Make the period a multiple of " +
-                    span_text(SimDuration{step}) + kAsItIs,
+                    span_text(SimDuration{step}) + as_it_is_,
                 owner_of(variable));
             return;
         }
@@ -1734,7 +1757,7 @@ private:
                     number_text(duty) + " %), but " + takes_inputs(variable) + ": the ECU sees it high for " +
                     span_text(SimDuration{seen}) + " of each period (" +
                     rounded_text(100.0 * static_cast<double>(seen) / static_cast<double>(period)) +
-                    " %). Make the high time (period x duty / 100) a multiple of " + span_text(SimDuration{step}) + kAsItIs,
+                    " %). Make the high time (period x duty / 100) a multiple of " + span_text(SimDuration{step}) + as_it_is_,
                 owner_of(variable));
         }
     }
@@ -1749,7 +1772,7 @@ private:
         if (step && span < *step)
         {
             add(Severity::Warning, "scenario-wave-undersampled", line,
-                what + " " + is + " " + step_of(variable) + ": " + sees + ". " + make + kAsItIs, owner_of(variable));
+                what + " " + is + " " + step_of(variable) + ": " + sees + ". " + make + as_it_is_, owner_of(variable));
         }
     }
 
@@ -1828,7 +1851,7 @@ private:
         }
         add(Severity::Warning, "scenario-wave-undersampled", line,
             what + " is " + span_text(width) + " wide, shorter than " + step_of(variable) + ": " + sees + ". Make width_ms " +
-                whole_ms(*step) + " or more" + kAsItIs,
+                whole_ms(*step) + " or more" + as_it_is_,
             owner_of(variable));
     }
 
@@ -1937,6 +1960,233 @@ private:
             }
         }
         return longest;
+    }
+
+    // --- dithers ---
+
+    /// The file's "inputs": per input what is on top of it from the start (its dither).
+    void read_inputs(ryml::id_type node)
+    {
+        if (!tree_.is_map(node))
+        {
+            error("value", doc_.line(node),
+                  "inputs must be a mapping of inputs to what is on top of them ({ " + example_variable() + ": { dither: " +
+                      kDitherExample + " } }), not " + shown_value(node));
+            return;
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            const std::string name = detail::to_string(tree_.key(child));
+            if (!first_occurrence(seen, name, child, "inputs: "))
+            {
+                continue;
+            }
+            absent_.clear();
+            const auto v = variable(child);
+            const auto parts = parts_of(child, "inputs: " + name, kInputKeys,
+                                        std::string("a mapping with the input's dither ({ dither: ") + kDitherExample + " })");
+            if (!parts)
+            {
+                continue;
+            }
+            bool quiet = false;
+            if (parts->count("undersampled") > 0)
+            {
+                const ryml::id_type said = parts->at("undersampled");
+                quiet = is_scalar(said) && !is_null(said) && text_of(said) == "ok";
+                if (!quiet)
+                {
+                    error("value", doc_.line(said),
+                          "undersampled must be ok (run the input's dither as it is, also where it changes faster than its ECU "
+                          "steps), not " + shown_value(said) + ": write undersampled: ok, or remove it");
+                }
+            }
+            if (parts->count("dither") == 0)
+            {
+                error("missing-key", doc_.line(child),
+                      "inputs: " + name + " has no dither: say what is on top of the input (dither: " + kDitherExample +
+                          "), or remove the entry");
+                continue;
+            }
+            if (!v)
+            {
+                if (!absent_.empty())
+                {
+                    // As a step that uses the variable: not in this configuration, and said.
+                    add(Severity::Note, "scenario-input-skipped", doc_.line(child),
+                        "the dither of " + name + " is not used: " + skip_reason() +
+                            "; the steps that write " + name + " are skipped too");
+                }
+                continue;
+            }
+            as_it_is_ = kAsItIsInput;
+            auto overlay = read_overlay(parts->at("dither"), *v, quiet, false);
+            as_it_is_ = kAsItIs;
+            if (overlay)
+            {
+                scenario_.inputs.push_back(std::move(*overlay));
+            }
+        }
+        absent_.clear();
+    }
+
+    /// The step "dither": per variable none, or the shape that is on top of it from the step's time.
+    void read_dither(ryml::id_type node, ScenarioStep& step, bool quiet)
+    {
+        if (!tree_.is_map(node) || !tree_.has_children(node))
+        {
+            error("value", doc_.line(node),
+                  "dither must be a mapping of inputs to a shape or none ({ " + example_variable() + ": " + kDitherExample + " }, or { " +
+                      example_variable() + ": none } to take a dither off), not " + shown_value(node));
+            return;
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            if (!first_occurrence(seen, detail::to_string(tree_.key(child)), child, "dither: "))
+            {
+                continue;
+            }
+            if (const auto v = variable(child))
+            {
+                if (auto overlay = read_overlay(child, *v, quiet, true))
+                {
+                    step.overlays.push_back(std::move(*overlay));
+                }
+            }
+        }
+    }
+
+    /// The dither of the variable `v` (`node`: a shape, or in a step none), or empty (and its errors).
+    std::optional<ScenarioOverlay> read_overlay(ryml::id_type node, std::size_t v, bool quiet, bool in_step)
+    {
+        const std::size_t line = doc_.line(node);
+        const ScenarioVariable& var = scenario_.variables[v];
+        const std::string& name = var.text;
+        const std::string what = "the dither of " + name;
+        bool good = writable(v, line, std::nullopt, "a dither");
+        if (!good)
+        {
+            return std::nullopt; // (what else is wrong with it does not matter: it cannot be written)
+        }
+        ScenarioOverlay out;
+        out.variable = v;
+        out.line = line;
+        if (var.type == control::ValueType::Bool || var.type == control::ValueType::Enum)
+        {
+            error("scenario-value", line,
+                  name + " is " + (var.type == control::ValueType::Bool ? "a bool" : "an enum") +
+                      ": a dither needs a number (an integer or a real input); remove it");
+            return std::nullopt;
+        }
+        if (!tree_.is_map(node))
+        {
+            // none takes it off. (Not "off": a YAML 1.1 tool reads that as false.)
+            const bool none = is_scalar(node) && !is_null(node) && param_at(node) == nullptr && text_of(node) == "none";
+            if (none && in_step)
+            {
+                out.text = name + " none";
+                return good ? std::optional<ScenarioOverlay>(std::move(out)) : std::nullopt;
+            }
+            if (const ParamValue* param = param_at(node))
+            {
+                error("value", line,
+                      what + " is the parameter " + param->name + ": a parameter cannot stand for none or for a shape; write " +
+                          (in_step ? "none or " : "") + "the shape here (its numbers can be parameters)");
+                return std::nullopt;
+            }
+            error("value", line,
+                  none ? what + " in inputs is none: an input without a dither needs no entry; remove it"
+                       : what + " must be " + (in_step ? "none (which takes the dither off) or " : "") + "a shape (" + kDitherExample +
+                             "), not " + shown_value(node) + (in_step ? ": write none, or a shape" : ": write a shape"));
+            return std::nullopt;
+        }
+        // The keys by hand: what a wave has and a dither cannot have gets a sentence of its own.
+        Parts parts;
+        std::vector<std::string> shapes;
+        std::map<std::string, std::size_t> seen;
+        for (auto part = tree_.first_child(node); part != ryml::NONE; part = tree_.next_sibling(part))
+        {
+            const std::string key = detail::to_string(tree_.key(part));
+            if (!first_occurrence(seen, key, part, "dither of " + name + ": "))
+            {
+                continue;
+            }
+            if (std::find(kDitherShapes.begin(), kDitherShapes.end(), key) != kDitherShapes.end())
+            {
+                parts.emplace(key, part);
+                shapes.push_back(key);
+                continue;
+            }
+            good = false;
+            if (key == "for_ms")
+            {
+                error("value", doc_.line(part),
+                      what + " has for_ms: a dither has no end, it stays until a dither step changes it; remove for_ms (dither: { " +
+                          name + ": none } takes it off)");
+            }
+            else if (key == "around")
+            {
+                error("value", doc_.line(part),
+                      what + " has around: a dither swings around the value the scenario puts on the input (set, ramp, wave); "
+                             "remove around");
+            }
+            else if (std::find(kWaveShapes.begin(), kWaveShapes.end(), key) != kWaveShapes.end())
+            {
+                error("value", doc_.line(part),
+                      key + " cannot be a dither (it has a length): use sine, triangle, sawtooth, square with amplitude or noise, or "
+                            "write it as a wave step");
+            }
+            else
+            {
+                unknown_key(part, key, "dither of " + name + ": ", kDitherShapes);
+            }
+        }
+        if (shapes.size() != 1)
+        {
+            if (good || shapes.size() > 1)
+            {
+                error("value", line,
+                      shapes.empty() ? what + " names no shape: give it one of " + join(kDitherShapes)
+                                     : what + " has " + join(shapes) + ": an input has one dither; keep one of them");
+            }
+            return std::nullopt;
+        }
+        const std::string& shape = shapes.front();
+        const ryml::id_type body = parts.at(shape);
+        if (shape == "square" && tree_.is_map(body))
+        {
+            for (auto part = tree_.first_child(body); part != ryml::NONE; part = tree_.next_sibling(part))
+            {
+                const std::string key = detail::to_string(tree_.key(part));
+                if (key == "low" || key == "high")
+                {
+                    error("value", doc_.line(part),
+                          what + " is a square with " + key + ": a dither swings around the value of the input, it has no values of "
+                                 "its own; give the square amplitude instead (square: { amplitude: 1, period_ms: 100 })");
+                    return std::nullopt;
+                }
+            }
+        }
+        ScenarioMotion read; // what a wave of this shape would be: the parts a dither has too
+        std::string text = name + " " + shape;
+        std::optional<std::int64_t> length;
+        bool wantsFor = true;
+        std::string noAround;
+        std::optional<double> swing;
+        MakeShape make;
+        if (!read_shape(shape, body, Parts{}, v, "the " + shape + " dither of " + name, line, std::nullopt, quiet, good, read, text, length,
+                        wantsFor, noAround, swing, make) ||
+            !good || !make)
+        {
+            return std::nullopt;
+        }
+        out.shape = make(SimDuration{});
+        out.text = std::move(text);
+        out.described = std::move(read.described);
+        out.described.type = shape;
+        return out;
     }
 
     /// What makes a wave's shape once everything is read: given the wave's length.
@@ -2529,7 +2779,7 @@ private:
                 what + " goes up to " + number_text(top_hz) + " Hz (a period of " + rounded_text(period / 1e6) + " ms), but " +
                     takes_inputs(variable) + ": above " + hz_at(2) +
                     " Hz (two steps per period) the ECU sees a slower shape, not the sweep. Keep from_hz and to_hz at " + hz_at(2) +
-                    " or less" + kAsItIs,
+                    " or less" + as_it_is_,
                 owner_of(variable));
         }
         else if (steps < static_cast<double>(kSmoothSteps))
@@ -2538,7 +2788,7 @@ private:
                 what + " goes up to " + number_text(top_hz) + " Hz (a period of " + rounded_text(period / 1e6) + " ms), and " +
                     takes_inputs(variable) + ": at that frequency the ECU sees " + rounded_text(steps) +
                     " values per period, so it can miss the highest and the lowest. Up to " + hz_at(kSmoothSteps) + " Hz it gets " +
-                    std::to_string(kSmoothSteps) + " or more" + kAsItIs,
+                    std::to_string(kSmoothSteps) + " or more" + as_it_is_,
                 owner_of(variable));
         }
     }
@@ -3185,6 +3435,10 @@ private:
         {
             out += sep() + r.text;
         }
+        for (const auto& o : step.overlays)
+        {
+            out += sep() + o.text;
+        }
         if (beside_)
         {
             // "ramp Engine.engine.throttle to 80 over 1000 ms, expecting Engine.engine.speed le 3000"
@@ -3220,6 +3474,8 @@ private:
     std::map<ryml::id_type, std::size_t> substituted_;  ///< a value node that is "${name}": its index in params_
     std::set<std::string> undefined_;                   ///< the parameters without a value, said once
     std::map<std::string, std::string> absent_variables_; ///< "<participant>.<name>" that is absent: its participant
+    /// How the messages say to run a wave or a dither as it is (kAsItIs; kAsItIsInput while "inputs" is read).
+    const char* as_it_is_ = kAsItIs;
     std::vector<std::string> absent_;                   ///< those the step being read uses
     bool beside_ = false;          ///< the step being read is a ramp or a wave with an expect beside it
     bool unchecked_ = false;       ///< and only its expect uses what is absent: the expect is not checked
@@ -3252,6 +3508,7 @@ const char* step_kind_name(StepKind kind)
     case StepKind::Wave: return "wave";
     case StepKind::Expect: return "expect";
     case StepKind::WaitUntil: return "wait_until";
+    case StepKind::Dither: return "dither";
     }
     return "set";
 }
