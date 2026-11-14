@@ -25,6 +25,19 @@ std::string number_text(double value)
     return result.ec == std::errc{} ? std::string(text.data(), result.ptr) : std::string("?");
 }
 
+/// `value` as its 15 significant decimal digits read back (every double keeps that many).
+double rounded_to_15_digits(double value)
+{
+    std::array<char, 40> text{};
+    const auto written = std::to_chars(text.data(), text.data() + text.size(), value, std::chars_format::scientific, 14);
+    double out = value;
+    if (written.ec != std::errc{} || std::from_chars(text.data(), written.ptr, out).ec != std::errc{})
+    {
+        return value;
+    }
+    return out;
+}
+
 std::string type_text(ValueType type)
 {
     switch (type)
@@ -145,13 +158,7 @@ MappedSchema MappedSchema::make(const std::vector<VariableInfo>& actual, const V
         }
         if (m.absent)
         {
-            if (index.count(m.name) > 0)
-            {
-                problem(e, MapProblemKind::Present,
-                        "it says absent: true, but the executable has a variable '" + m.name +
-                            "': remove this entry (a variable that is not listed is seen under its own name)");
-            }
-            continue;
+            continue; // compared with the seen names below
         }
         const auto it = index.find(m.from);
         if (it == index.end())
@@ -220,9 +227,45 @@ MappedSchema MappedSchema::make(const std::vector<VariableInfo>& actual, const V
             break;
         }
     }
+    // absent: no variable may be seen under that name (the executable's own, if it is not seen
+    // under another name, or one that another mapping gives the name).
+    for (std::size_t e = 0; e < map.size(); ++e)
+    {
+        if (!map[e].absent || !form_error(map[e]).empty())
+        {
+            continue;
+        }
+        for (std::size_t i = 0; i < actual.size(); ++i)
+        {
+            const std::string& seen_name = entry_of[i] == kNone ? actual[i].name : map[entry_of[i]].name;
+            if (seen_name != map[e].name)
+            {
+                continue;
+            }
+            problem(e, MapProblemKind::Present,
+                    entry_of[i] == kNone
+                        ? "it says absent: true, but the executable has a variable '" + map[e].name +
+                              "': remove this entry (a variable that is not listed is seen under its own name)"
+                        : "it says absent: true, but the executable's '" + actual[i].name +
+                              "' is mapped to this name: remove one of the two entries");
+            break;
+        }
+    }
     std::sort(out.problems_.begin(), out.problems_.end(),
               [](const MapProblem& a, const MapProblem& b) { return a.entry < b.entry; });
 
+    for (const MapProblem& p : out.problems_)
+    {
+        const VariableMapping& m = map[p.entry];
+        const std::string reason = "the mapping " + m.name + " of this participant's variables was not applied (" + p.message +
+                                   "), so this name is not what the configuration says it is: correct variables in the "
+                                   "configuration and run again";
+        out.not_writable_.emplace(m.name, reason);
+        if (!m.from.empty())
+        {
+            out.not_writable_.emplace(m.from, reason);
+        }
+    }
     out.schema_ = actual;
     out.sources_.resize(actual.size());
     out.rules_.resize(actual.size());
@@ -252,8 +295,11 @@ MappedSchema MappedSchema::make(const std::vector<VariableInfo>& actual, const V
             rule.integer = actual[i].type == ValueType::Integer;
             rule.min = actual[i].min;
             rule.max = actual[i].max;
+            // The ends as one would write them: the product may be off by a rounding (4.35 * 100
+            // is 434.99999999999994). What may be written is decided in the executable's values
+            // (to_actual()), not by these.
             const auto seen = [&](const std::optional<double>& v) {
-                return v ? std::optional<double>(*v * rule.scale + rule.offset) : std::nullopt;
+                return v ? std::optional<double>(rounded_to_15_digits(*v * rule.scale + rule.offset)) : std::nullopt;
             };
             info.type = ValueType::Real;
             info.min = seen(rule.scale > 0 ? actual[i].min : actual[i].max);
@@ -352,7 +398,7 @@ std::optional<std::string> MappedSchema::to_actual(Write& write) const
         const std::string out_of_range = number_text(seen) + " is out of range";
         if (rule.integer)
         {
-            actual = std::nearbyint(actual);
+            actual = std::round(actual); // a half away from zero, in every rounding mode
             if (!std::isfinite(actual) || actual < -kTwoPow63 || actual >= kTwoPow63 ||
                 (rule.min && actual < std::ceil(*rule.min)) || (rule.max && actual > std::floor(*rule.max)))
             {
@@ -391,6 +437,23 @@ std::optional<std::string> MappedSchema::to_actual(Write& write) const
     }
     write.name = actual_names_[i];
     return std::nullopt;
+}
+
+std::optional<bool> MappedSchema::in_range(std::string_view name, double value) const
+{
+    const auto it = seen_index_.find(name);
+    if (it == seen_index_.end() || rules_[it->second].convert != Convert::Linear)
+    {
+        return std::nullopt;
+    }
+    Write write{std::string(name), value};
+    return !to_actual(write).has_value();
+}
+
+const std::string* MappedSchema::not_writable(std::string_view name) const
+{
+    const auto it = not_writable_.find(name);
+    return it == not_writable_.end() ? nullptr : &it->second;
 }
 
 std::string MappedSchema::reason_to_seen(std::string reason) const

@@ -835,6 +835,12 @@ std::uint64_t Hub::write(OperationRequest request)
             const auto& schema = entry->second.info.schema;
             for (auto& w : t.command.writes)
             {
+                // A name of a mapping that was not applied is not what its writer takes it for.
+                if (const std::string* unfit = entry->second.mapped ? entry->second.mapped->not_writable(w.name) : nullptr)
+                {
+                    why = w.name + ": not written: " + *unfit;
+                    break;
+                }
                 const auto v = std::find_if(schema.begin(), schema.end(), [&](const VariableInfo& i) { return i.name == w.name; });
                 if (v == schema.end())
                 {

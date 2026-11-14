@@ -293,6 +293,7 @@ private:
         out.text = text;
         scenario_.variables.push_back(std::move(out));
         infos_.push_back(&*v);
+        maps_.push_back(p->map.get());
         variable_index_.emplace(text, scenario_.variables.size() - 1);
         return scenario_.variables.size() - 1;
     }
@@ -398,7 +399,7 @@ private:
         }
         }
         if (out && write && v.type != control::ValueType::Bool && v.type != control::ValueType::Enum &&
-            !in_range(as_number(*out), info))
+            !in_range(as_number(*out), variable))
         {
             error("scenario-value", line, pre + " is " + text + ", outside its range (" + range_text(info) + ")");
             return std::nullopt;
@@ -406,8 +407,18 @@ private:
         return out;
     }
 
-    static bool in_range(double value, const control::VariableInfo& info)
+    /// Whether `value` may be written to the variable: as the run's hub decides for a converted
+    /// variable (the seen ends of its range are products), else within min and max.
+    bool in_range(double value, std::size_t variable) const
     {
+        const control::VariableInfo& info = *info_of(variable);
+        if (maps_[variable] != nullptr)
+        {
+            if (const auto decided = maps_[variable]->in_range(info.name, value))
+            {
+                return *decided;
+            }
+        }
         return !(info.min && value < *info.min) && !(info.max && value > *info.max);
     }
 
@@ -732,7 +743,7 @@ private:
                         error("scenario-value", doc_.line(part), key + " of the ramp of " + var.text + " must be a number, not " + shown_value(part));
                         good = false;
                     }
-                    else if (!in_range(d, *info_of(*v)))
+                    else if (!in_range(d, *v))
                     {
                         error("scenario-value", doc_.line(part),
                               key + " of the ramp of " + var.text + " is " + number_text(d) + ", outside its range (" +
@@ -952,6 +963,7 @@ private:
     ScenarioRead& out_;
     Scenario scenario_;
     std::vector<const control::VariableInfo*> infos_; ///< of scenario_.variables, in the catalog
+    std::vector<const control::MappedSchema*> maps_;  ///< of scenario_.variables: its participant's map, or nullptr
     std::map<std::string, std::size_t> variable_index_;
     std::map<std::string, std::size_t> bad_variables_;
     /// The end of the step before, in milliseconds, if it is known before the run.
@@ -1051,7 +1063,13 @@ ScenarioCatalog scenario_catalog(const CheckReport& check)
         else
         {
             const EcuDescription& d = result->ecu->description;
-            c.variables = seen_variables(p, *result->ecu).schema(); // as the run's hub shows them
+            // As the run's hub shows them.
+            auto seen = std::make_shared<const control::MappedSchema>(seen_variables(p, *result->ecu));
+            c.variables = seen->schema();
+            if (!p.variables.empty())
+            {
+                c.map = std::move(seen);
+            }
             if (!d.step)
             {
                 c.unusable = "runs in real time (it has no step): a scenario needs the virtual time of its steps";

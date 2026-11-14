@@ -208,7 +208,7 @@ TEST_CASE(a_sample_is_converted_place_by_place)
     const MappedSchema s = MappedSchema::make(
         executable(), {linear("engine.speed", "rpm_x10", 0.1), linear("coolant.temperature", "temp_k", 1.0, -273.15),
                        named("gear", "gear_raw", {{"P", 0}, {"D", 3}}), linear("boost.kpa", "boost", 100.0, 5.0),
-                       renamed("ticks", "count")});
+                       linear("ticks", "count", 2.0, 1.0)});
     Snapshot sample;
     sample.time = SimTime{} + 30ms;
     sample.sequence = 7;
@@ -222,7 +222,7 @@ TEST_CASE(a_sample_is_converted_place_by_place)
     CHECK_EQ(std::get<std::int64_t>(sample.values[3]), std::int64_t{2});
     CHECK(std::get<bool>(sample.values[4]));
     CHECK(near(std::get<double>(sample.values[5]), 130.0)); // scale, then offset
-    CHECK_EQ(std::get<std::int64_t>(sample.values[6]), std::int64_t{42}); // renamed only
+    CHECK(near(std::get<double>(sample.values[6]), 85.0)); // an integer too: scale, then offset
     // A sample of another schema is left alone.
     Snapshot other;
     other.values = {std::int64_t{8005}};
@@ -283,6 +283,88 @@ TEST_CASE(a_linear_conversion_without_a_range_keeps_integers_within_their_type)
     same(written(s, "x", 4e18), std::string("raw=8000000000000000000"));
     same(written(s, "x", 5e18), std::string("refused: x: 5e+18 is out of range")); // 1e19 is not an int64
     same(written(s, "x", 1e300), std::string("refused: x: 1e+300 is out of range"));
+}
+
+TEST_CASE(a_value_for_an_integer_of_the_executable_is_the_nearest_one_a_half_away_from_zero)
+{
+    VariableInfo raw = info("raw", ValueType::Integer);
+    raw.min = -10;
+    raw.max = 10;
+    const MappedSchema s = MappedSchema::make({raw}, {linear("x", "raw", 0.5, 10.0)});
+    same(written(s, "x", 12.0), "raw=4"); // (12 - 10) / 0.5: the offset first, then the scale
+    same(written(s, "x", 12.2), "raw=4");
+    same(written(s, "x", 12.3), "raw=5");
+    // Exactly between two integers: away from zero, on both sides of it.
+    same(written(s, "x", 10.25), "raw=1");
+    same(written(s, "x", 10.75), "raw=2");
+    same(written(s, "x", 11.25), "raw=3");
+    same(written(s, "x", 9.75), "raw=-1");
+    same(written(s, "x", 9.25), "raw=-2");
+    same(written(s, "x", 10.24), "raw=0");
+    same(written(s, "x", 9.76), "raw=0");
+    // The range is the executable's, after the rounding: 15.2 is 10, 15.3 would be 11.
+    same(written(s, "x", 15.2), "raw=10");
+    same(written(s, "x", 15.3), "refused: x: 15.3 is out of range");
+    CHECK(s.in_range("x", 15.2) == std::optional<bool>(true));
+    CHECK(s.in_range("x", 15.3) == std::optional<bool>(false));
+    CHECK(!s.in_range("raw", 1.0).has_value()); // not a seen name
+}
+
+TEST_CASE(the_seen_ends_of_a_range_are_the_numbers_one_would_write_and_the_executable_decides)
+{
+    // 4.35 * 100 is 434.99999999999994 and 3 * 0.1 is 0.30000000000000004 in doubles.
+    VariableInfo bar = info("pressure_bar", ValueType::Real);
+    bar.min = 0.0;
+    bar.max = 4.35;
+    VariableInfo raw = info("raw", ValueType::Integer);
+    raw.min = 3;
+    raw.max = 10;
+    const MappedSchema s = MappedSchema::make({bar, raw, info("lamp", ValueType::Bool)},
+                                              {linear("pressure", "pressure_bar", 100.0), linear("level", "raw", 0.1),
+                                               renamed("cabin.lamp", "lamp")});
+    CHECK(seen(s, "pressure").max == std::optional<double>(435.0));
+    CHECK(seen(s, "level").min == std::optional<double>(0.3));
+    CHECK(seen(s, "level").max == std::optional<double>(1.0));
+    same(written(s, "pressure", 435.0), "pressure_bar=4.35 (real)");
+    same(written(s, "level", 0.3), "raw=3");
+    CHECK(s.in_range("pressure", 435.0) == std::optional<bool>(true));
+    CHECK(s.in_range("pressure", 435.001) == std::optional<bool>(false));
+    CHECK(s.in_range("pressure", 0.0) == std::optional<bool>(true));
+    CHECK(s.in_range("pressure", -0.001) == std::optional<bool>(false));
+    CHECK(s.in_range("level", 0.3) == std::optional<bool>(true));
+    CHECK(s.in_range("level", 0.24) == std::optional<bool>(false));
+    // Without a linear conversion the map does not decide.
+    CHECK(!s.in_range("cabin.lamp", 1.0).has_value());
+}
+
+TEST_CASE(a_variable_that_is_seen_under_another_name_may_be_absent_under_its_own)
+{
+    const MappedSchema moved = MappedSchema::make(executable(), {absent("boost"), renamed("turbo.boost", "boost")});
+    same(problems(moved), "");
+    // But not a name that a mapping gives, or that the executable still has.
+    const MappedSchema given = MappedSchema::make(executable(), {renamed("turbo", "boost"), absent("turbo"), absent("lamp")});
+    same(problems(given), "1 5 turbo: it says absent: true, but the executable's 'boost' is mapped to this name: remove one "
+                          "of the two entries\n"
+                          "2 5 lamp: it says absent: true, but the executable has a variable 'lamp': remove this entry (a "
+                          "variable that is not listed is seen under its own name)\n");
+}
+
+TEST_CASE(the_names_of_a_mapping_that_was_not_applied_are_not_writable)
+{
+    // "boost" could not become "lamp" (the executable has a lamp), and "torque" is not there.
+    const MappedSchema s = MappedSchema::make(
+        executable(), {linear("lamp", "boost", 2.0), renamed("engine.torque", "torque"), renamed("ticks", "count")});
+    CHECK_EQ(s.problems().size(), std::size_t{2});
+    const std::string why = "the mapping lamp of this participant's variables was not applied (lamp: another variable of the "
+                            "executable is seen under the name 'lamp' already: choose another name here, or map that "
+                            "variable to another name too), so this name is not what the configuration says it is: correct "
+                            "variables in the configuration and run again";
+    CHECK(s.not_writable("lamp") != nullptr && s.not_writable("boost") != nullptr);
+    same(*s.not_writable("lamp"), why);  // the executable's own lamp, not the scaled boost
+    same(*s.not_writable("boost"), why); // boost, but without the conversion
+    CHECK(s.not_writable("engine.torque") != nullptr && s.not_writable("torque") != nullptr);
+    CHECK(s.not_writable("ticks") == nullptr && s.not_writable("count") == nullptr && s.not_writable("mode") == nullptr);
+    CHECK(MappedSchema::make(executable(), {renamed("ticks", "count")}).not_writable("ticks") == nullptr);
 }
 
 TEST_CASE(mappings_that_do_not_fit_are_left_out_and_said)
@@ -572,6 +654,43 @@ TEST_CASE(control_hub_writes_a_mapped_peer_in_the_executables_names_and_values)
     same(refused({"Engine", "gear", true}), std::string("invalid: gear (the executable's gear_raw): needs an integer"));
 }
 
+TEST_CASE(control_hub_refuses_a_write_to_a_variable_whose_mapping_was_not_applied)
+{
+    // The map wants "temp_k" to be the scaled boost, but the executable has a temp_k of its own:
+    // the mapping is left out, and temp_k is the executable's temperature, boost the raw boost.
+    Hub hub(HubOptions{.first_seq = 1});
+    hub.set_variable_map("Engine", {linear("temp_k", "boost", 2.0), linear("engine.speed", "rpm_x10", 0.1)});
+    Executable engine(hub, "a");
+    CHECK_EQ(hub.peers().at(0).map_problems.size(), std::size_t{1});
+    engine.step(SimTime{} + 10ms);
+    const auto status = [&](PeerWrite write) {
+        const auto seq = hub.write(request({std::move(write)}));
+        const TargetResult t = hub.operation(seq)->targets.at(0);
+        return std::string(t.status == TargetStatus::Invalid ? "invalid: " : "other: ") + t.reason.substr(0, t.reason.find('('));
+    };
+    // Neither name of the mapping is written: a client that means the mapped variable would put
+    // its value into another variable, or without the conversion.
+    same(status({"Engine", "temp_k", 350.0}),
+         "invalid: temp_k: not written: the mapping temp_k of this participant's variables was not applied ");
+    same(status({"Engine", "boost", 1.0}),
+         "invalid: boost: not written: the mapping temp_k of this participant's variables was not applied ");
+    // One such write refuses the whole command.
+    const auto mixed = hub.write(request({{"Engine", "engine.speed", 100.0}, {"Engine", "temp_k", 350.0}}));
+    CHECK(hub.operation(mixed)->targets.at(0).status == TargetStatus::Invalid);
+    engine.step(SimTime{} + 20ms);
+    CHECK(engine.received.empty());
+    CHECK(near(engine.temp_k, 300.0));
+    CHECK_EQ(engine.rpm_x10, 0);
+    // They are read, as the executable announced them; the mapping that fits works.
+    const PeerInfo peer = hub.peers().at(0);
+    CHECK(peer.schema.at(1).name == "temp_k" && peer.schema.at(3).name == "boost" && peer.sources.at(1).empty());
+    CHECK(near(real_at(*hub.latest("Engine"), 1), 300.0));
+    const auto seq = hub.write(request({{"Engine", "engine.speed", 100.0}}));
+    engine.step(SimTime{} + 30ms);
+    CHECK(hub.operation(seq)->targets.at(0).status == TargetStatus::Applied);
+    CHECK_EQ(engine.rpm_x10, 1000);
+}
+
 TEST_CASE(control_hub_applies_a_variable_map_per_connection_and_says_what_does_not_fit)
 {
     Hub hub(HubOptions{.first_seq = 1});
@@ -598,7 +717,14 @@ TEST_CASE(control_hub_applies_a_variable_map_per_connection_and_says_what_does_n
     const PeerInfo peer = hub.peers().at(0);
     same(peer.schema.at(0).name, std::string("engine.speed"));
     CHECK_EQ(peer.map_problems.size(), std::size_t{1});
-    same(peer.map_problems.at(0), std::string("engine.torque: the executable has no variable 'torque'"));
+    same(peer.map_problems.at(0), "engine.torque: the executable has no variable 'torque'");
+    // A write to a name of that mapping is refused with the reason; the others are written.
+    const auto unfit = hub.write(request({{"Engine", "engine.torque", 1.0}}));
+    same(hub.operation(unfit)->targets.at(0).reason,
+         "engine.torque: not written: the mapping engine.torque of this participant's variables was not applied "
+         "(engine.torque: the executable has no variable 'torque'), so this name is not what the configuration says it is: "
+         "correct variables in the configuration and run again");
+    CHECK(hub.operation(unfit)->targets.at(0).status == TargetStatus::Invalid);
     engine.rpm_x10 = 500;
     engine.step(SimTime{} + 10ms);
     CHECK(near(real_at(*hub.latest("Engine"), 0), 50.0));

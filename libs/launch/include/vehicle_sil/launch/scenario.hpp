@@ -7,12 +7,14 @@
 // docs/scenario.md.
 #pragma once
 
+#include "vehicle_sil/control/variable_map.hpp"
 #include "vehicle_sil/control/agent.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/config.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -136,6 +138,10 @@ struct CatalogParticipant
     std::string unusable{};
     SimDuration step{};
     std::vector<control::VariableInfo> variables{};
+    /// Its variable map applied to what it describes (`variables` is its schema()), or null if
+    /// its entry has none. The range of a written value is the map's to say
+    /// (control::MappedSchema::in_range()): the run's hub decides with the same code.
+    std::shared_ptr<const control::MappedSchema> map{};
 };
 using ScenarioCatalog = std::vector<CatalogParticipant>;
 

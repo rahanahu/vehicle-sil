@@ -13,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace vehicle_sil::control {
@@ -20,6 +21,8 @@ namespace vehicle_sil::control {
 /// How one variable of an executable is seen: under `name`, and in one of four forms.
 /// - a new name only (`from`);
 /// - a linear conversion (`scale`, `offset`): seen value = executable's value * scale + offset;
+///   written to an integer of the executable, a value becomes the nearest integer (a half goes
+///   away from zero, whatever the floating-point rounding mode);
 /// - names for its values (`map`): the variable is seen as an enum with these items, and the
 ///   numbers stay the executable's;
 /// - `absent`: the executable has no such variable (said on purpose; nothing is converted).
@@ -54,7 +57,8 @@ enum class MapProblemKind
 };
 
 /// A mapping that does not fit the executable's variables. It is not applied: the variable (if
-/// any) is seen under the executable's name, unchanged.
+/// any) is seen under the executable's name, unchanged, and the names of the mapping (`name` and
+/// `from`) are not writable (MappedSchema::not_writable()).
 struct MapProblem
 {
     std::size_t entry = 0; ///< index in the VariableMap
@@ -92,6 +96,18 @@ public:
     /// not in schema() is left alone.
     [[nodiscard]] std::optional<std::string> to_actual(Write& write) const;
 
+    /// Whether a write of `value` to the seen variable `name` is within its range, by the rule of
+    /// to_actual() (the one place that decides it: the launcher's check of a scenario asks here,
+    /// so that it refuses what the hub refuses and nothing else). Empty: the map does not decide
+    /// (no linear conversion applies to `name`); compare with min and max of schema() then.
+    [[nodiscard]] std::optional<bool> in_range(std::string_view name, double value) const;
+
+    /// Why `name` must not be written, or nullptr: it is the name or the `from` of a mapping that
+    /// was not applied (problems()). Under such a name the clients see no variable, or one that
+    /// is not what the map says (another variable, or the same one without its conversion), so a
+    /// write would put a value where its writer does not mean it. Reading is not affected.
+    [[nodiscard]] const std::string* not_writable(std::string_view name) const;
+
     /// A reason the executable's agent gave ("<its name>: ..."), with the seen name in front.
     [[nodiscard]] std::string reason_to_seen(std::string reason) const;
 
@@ -120,6 +136,7 @@ private:
     std::map<std::string, std::size_t, std::less<>> seen_index_;   ///< of the variables with a mapping
     std::map<std::string, std::size_t, std::less<>> actual_index_; ///< of the variables seen under another name
     std::vector<MapProblem> problems_;
+    std::map<std::string, std::string, std::less<>> not_writable_; ///< name -> the reason
 };
 
 } // namespace vehicle_sil::control

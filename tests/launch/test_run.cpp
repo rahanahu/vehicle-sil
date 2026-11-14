@@ -531,8 +531,8 @@ TEST_CASE(a_control_agent_that_is_not_connected_is_told_apart_from_none)
     check_text(lines(assess_run(mapped)),
                "E 5 variable-map-not-applied: participant 'Engine': variables: 2 of its mappings do not fit the variables "
                "its control agent announced and were not applied, so those variables were seen under the executable's "
-               "names and values in this run: engine.speed: the executable has no variable 'rpm'; engine.gear: map names "
-               "the values of an integer or an enum. Correct variables in the configuration (vehicle_sil_launch check "
+               "names and values in this run and writes to the names of these mappings were refused: engine.speed: the "
+               "executable has no variable 'rpm'; engine.gear: map names the values of an integer or an enum. Correct variables in the configuration (vehicle_sil_launch check "
                "compares them with what an ecu_main executable describes)\n");
     CHECK(report_of(mapped).result() == RunResult::Failed);
     CHECK(std::string(control_link_name(ControlLink::None)) == "none");

@@ -256,14 +256,18 @@ public:
     /// It takes effect when an agent of the participant connects; set it before (a connection
     /// that is there keeps what it had).
     ///
-    /// Where it applies, each under the hub's lock and with the map of the incarnation concerned:
+    /// Where it applies, with the map of the incarnation concerned (the seen schema is made
+    /// outside the hub's lock and put in place under it; the other three run under the lock):
     /// - agent_connected(): the announced schema becomes the seen one (PeerInfo::schema, sources,
     ///   map_problems), once per connection.
     /// - agent_values(): a sample is converted before the hub keeps it, so latest(), latest_of(),
     ///   the values tap and every subscription share one converted sample. Its time and sequence
     ///   are the agent's.
     /// - write(): where the names are checked, each write becomes the executable's name and value
-    ///   (MappedSchema::to_actual()); a value that cannot be converted makes the target Invalid.
+    ///   (MappedSchema::to_actual()); a value that cannot be converted makes the target Invalid,
+    ///   and so does a write to a name of a mapping that was not applied (map_problems: the name
+    ///   and the `from` of each; MappedSchema::not_writable()). Such a variable is still read, as
+    ///   the executable announced it.
     ///   The request kept for the record has the names and values as the client gave them. The
     ///   converted command goes only to the incarnation it was converted for.
     /// - agent_submitted(), agent_result(): a reason that starts with the executable's name of a

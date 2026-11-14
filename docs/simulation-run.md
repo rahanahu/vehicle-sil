@@ -231,7 +231,7 @@ passed: 0 errors, 1 warning, 1 note
 | `control-link-dropped` | 警告 | `vehicle_sil_launch` が、変数の口のメッセージを捨てた（受け付けなかった hello、読めなかったメッセージ、知っている ECU やその変数に合わなかったメッセージの数を書きます）。考えられる原因: 変数を出す participant が上限（256）を超えた、版の違う vehicle-sil の ECU がいる、別のプログラムが同じトピック（`vehicle_sil.control.*`）に書いている、実行中に参加した participant の hello がまだ届いていなかった。該当する participant の変数は、欠けているか古いことがあります |
 | `control-link-version` | 警告 | 届いた hello の、メッセージの形式の版が `vehicle_sil_launch` と違う（申告の版が違うときは、照合の同じ `code` の所見で、実行では繰り返しません）。同じ版の vehicle-sil でビルドする |
 | `control-link-late-values` | 警告 | ECU の値か結果が、仮想時刻の約束より遅れて届いた（ステップの外から送っている。自作の通信の側の誤り） |
-| `variable-map-not-applied` | 誤り | 構成ファイルの `variables` の対応のうち、ECU の変数の口が知らせた変数に合わないものがあった（どれが、なぜ合わないかを書きます）。その対応は当てず、変数は実行ファイルの名前と値のまま見えていた。照合が実行の前に見つけるので、出るのは `describe: false` の participant か、自己申告と違う変数を知らせた実行ファイルのときだけ（[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)） |
+| `variable-map-not-applied` | 誤り | 構成ファイルの `variables` の対応のうち、ECU の変数の口が知らせた変数に合わないものがあった（どれが、なぜ合わないかを書きます）。その対応は当てず、変数は実行ファイルの名前と値のまま見えていて、その対応の名前への書き込みは断った。同じ内容を、つながった時点で実行の行（`log`）にも 1 回出します。照合が実行の前に見つけるので、出るのは `describe: false` の participant か、自己申告と違う変数を知らせた実行ファイルのときだけ（[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables)） |
 | `before-start` | 誤り | 始まる前の窓でする処理（`run` を関数として呼ぶ側が渡すもの。内部用）が失敗した。シミュレーションは始まっていて、すぐに中断した |
 | `behind-real-time` | 警告 | 速さを合わせた刻みのうち、遅れが `late_tolerance_ms` を超えたものがあった（[等速で動かす](#等速で動かす)）。遅れた刻みの数、最大の遅れ、ずれの合計、全体の実際の速さ、止まったまま終わったならそのときの遅れを書きます。どの participant の所見でもありません |
 | `coarse-time-step` | 警告 | 速さの指定があり、controller の刻みが ECU のステップより粗い（ECU のステップが刻みの境目で始まらない）。ECU のステップが最大で何 ms 遅れてまとまって動くかと、`time_step_ms` に書く値を書きます（[等速で動かす](#等速で動かす)の「刻みと ECU のステップ」）。どの participant の所見でもありません |

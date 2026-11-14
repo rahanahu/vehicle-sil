@@ -99,6 +99,19 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
             {
                 run.variable_map_problems = peer->map_problems;
             }
+            if (!run.variable_map_problems.empty())
+            {
+                // Said now, not only with the result: clients are reading and writing meanwhile.
+                std::string problems;
+                for (const std::string& problem : run.variable_map_problems)
+                {
+                    problems += (problems.empty() ? "" : "; ") + problem;
+                }
+                out_.say("participant '" + run.name + "': variables: " + std::to_string(run.variable_map_problems.size()) +
+                         " of its mappings do not fit the variables its control agent announced and are not applied: " +
+                         problems + ". In this run those variables are read under the executable's names and values, and "
+                         "a write to a name of these mappings is refused");
+            }
         }
         else if (described == ControlLink::VersionMismatch)
         {

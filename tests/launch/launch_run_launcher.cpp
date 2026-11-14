@@ -3556,6 +3556,32 @@ void variable_map(const Options& o)
                      "the variable\n"),
             "the mapping that does not fit:\n" + lf(unfit.standard_output) + lf(unfit.standard_error));
     log("CHECK a mapping that does not fit stops the run before it starts -> ok");
+
+    // A participant that does not describe itself cannot be compared before the run: what does
+    // not fit is said when its agent has connected (a line of the run), and with the result.
+    write_file(dir / "sim.yaml", std::string("vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n") +
+                                     "  - name: Body\n    command: [" + ecu(o) +
+                                     ", --registry-uri, \"{registry_uri}\", --name, \"{name}\"]\n    describe: false\n"
+                                     "    variables:\n      body.fill: { from: levle, scale: 0.01 }\n"
+                                     "      changed_ms: level_changed_at_ms\n" +
+                                     door);
+    const Captured late = launch(o, {"run", "sim.yaml"}, dir);
+    expect_code(late, 1, "run with a mapping that the agent's variables do not fit");
+    const std::string said_late = lf(late.standard_error);
+    const std::string result_late = lf(late.standard_output);
+    require(contains(said_late,
+                     "[vehicle_sil_launch] participant 'Body': variables: 1 of its mappings do not fit the variables its "
+                     "control agent announced and are not applied: body.fill: the executable has no variable 'levle'. In "
+                     "this run those variables are read under the executable's names and values, and a write to a name of "
+                     "these mappings is refused\n"),
+            "the line of the run about the mapping:\n" + said_late);
+    require(contains(result_late, "note: sim.yaml:9: participant 'Body': variables is not compared for a participant with "
+                                  "describe: false") &&
+                contains(result_late, "error: sim.yaml:5: participant 'Body': variables: 1 of its mappings do not fit the "
+                                      "variables its control agent announced and were not applied") &&
+                contains(result_late, "failed: 1 error, 0 warnings, 2 notes\n"),
+            "the result about the mapping:\n" + result_late);
+    log("CHECK a mapping that does not fit an undescribed participant is said in the run and fails it -> ok");
 }
 
 void scenario_disconnect(const Options& o)

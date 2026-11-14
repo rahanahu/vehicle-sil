@@ -7,6 +7,7 @@
 
 #include "vehicle_sil/control/wire.hpp"
 #include "vehicle_sil/launch/check.hpp"
+#include "vehicle_sil/launch/scenario.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -633,6 +634,59 @@ TEST_CASE(every_mapping_of_variables_must_fit_what_the_executable_describes)
     // A disabled participant's map is not compared.
     engine.enabled = false;
     CHECK(s.check().find("variable-map") == std::string::npos);
+}
+
+TEST_CASE(a_scenario_may_write_what_the_hub_takes_of_a_converted_variable)
+{
+    // The seen ends of a converted range are products, and may be off the number as written by a
+    // rounding: 4.35 * 100 is 434.99999999999994, 3 * 0.1 is 0.30000000000000004. The scenario's
+    // check asks the map, as the run's hub does.
+    control::VariableInfo bar = variable("pressure_bar");
+    bar.min = 0.0;
+    bar.max = 4.35;
+    control::VariableInfo raw = variable("raw");
+    raw.type = control::ValueType::Integer;
+    raw.min = 3;
+    raw.max = 10;
+    Setup s = good_pair();
+    s.results[0].ecu->description.variables = {bar, raw};
+    s.results[0].ecu->variables_reported = true;
+    s.results[0].ecu->description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion)};
+    control::VariableMapping pressure;
+    pressure.name = "pressure";
+    pressure.from = "pressure_bar";
+    pressure.scale = 100.0;
+    control::VariableMapping level;
+    level.name = "level";
+    level.from = "raw";
+    level.scale = 0.1;
+    s.config.participants[0].variables = {pressure, level};
+    s.config.participants[0].variable_lines = {20, 21};
+    check_text(s.check(), "");
+    CheckReport report;
+    report.file = "x.yaml";
+    report.config = s.config;
+    report.participants = s.results;
+    const ScenarioCatalog catalog = scenario_catalog(report);
+    const auto errors = [&catalog](const std::string& steps) {
+        return lines(read_scenario("vehicle_sil_scenario: 1\nsteps:\n" + steps, catalog).findings);
+    };
+    check_text(errors("  - set: { Engine.pressure: 435, Engine.level: 0.3 }\n"
+                      "  - set: { Engine.pressure: 0, Engine.level: 1 }\n"
+                      "  - ramp: { Engine.pressure: { from: 435, to: 0, over_ms: 20 } }\n"
+                      "  - ramp: { Engine.level: { from: 1, to: 0.3, over_ms: 20 } }\n"
+                      // The executable's integer is the nearest one: 0.26 is 3, as the hub writes it.
+                      "  - set: { Engine.level: 0.26 }\n"),
+               "");
+    // Beyond the ends: refused, with the range in the numbers one would write.
+    check_text(errors("  - set: { Engine.pressure: 435.01 }\n"
+                      "  - set: { Engine.level: 0.24 }\n"
+                      "  - ramp: { Engine.pressure: { to: -0.01, over_ms: 20 } }\n"
+                      "  - ramp: { Engine.level: { from: 1.06, to: 1, over_ms: 20 } }\n"),
+               "E 3 scenario-value: the value of Engine.pressure (real) is 435.01, outside its range (from 0 to 435)\n"
+               "E 4 scenario-value: the value of Engine.level (real) is 0.24, outside its range (from 0.3 to 1)\n"
+               "E 5 scenario-value: to of the ramp of Engine.pressure is -0.01, outside its range (from 0 to 435)\n"
+               "E 6 scenario-value: from of the ramp of Engine.level is 1.06, outside its range (from 0.3 to 1)\n");
 }
 
 TEST_CASE(another_vehicle_sil_version_is_a_note)

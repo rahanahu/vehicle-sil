@@ -181,7 +181,8 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
             add(Severity::Error, "variable-map-not-applied",
                 pre + "variables: " + std::to_string(p.variable_map_problems.size()) +
                     " of its mappings do not fit the variables its control agent announced and were not applied, so "
-                    "those variables were seen under the executable's names and values in this run: " + problems +
+                    "those variables were seen under the executable's names and values in this run and writes to the names "
+                    "of these mappings were refused: " + problems +
                     ". Correct variables in the configuration (vehicle_sil_launch check compares them with what an "
                     "ecu_main executable describes)",
                 &p);
