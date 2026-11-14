@@ -301,6 +301,7 @@ int main(int argc, char** argv)
     set_log_tag("vt-launcher");
     try
     {
+        vehicle_sil::test::check_timeout_scale();
         const Options options = parse(argc, argv);
         fs::create_directories(options.workDir);
         log("scenario " + options.scenario + ", " + std::to_string(options.endMs) + " ms of simulation time");

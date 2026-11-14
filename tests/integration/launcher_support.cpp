@@ -35,6 +35,14 @@ void log(const std::string& text)
     std::fflush(stdout);
 }
 
+void check_timeout_scale()
+{
+    if (const auto warning = timeout_scale_warning())
+    {
+        log(*warning);
+    }
+}
+
 bool expect(bool condition, const std::string& what)
 {
     log("CHECK " + what + " -> " + (condition ? "ok" : "MISMATCH"));

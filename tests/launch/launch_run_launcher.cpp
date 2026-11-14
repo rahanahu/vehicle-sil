@@ -357,7 +357,8 @@ fs::path scenario_dir(const Options& o, const std::string& config, const std::ve
 void wait_hanging(const fs::path& dir, const std::string& name)
 {
     require(pid_written((dir / (name + ".hanging")).string(), 60s),
-            name + " did not reach its end after the run within 60 s (no " + name + ".hanging)");
+            name + " did not reach its end after the run within " +
+                std::to_string(vehicle_sil::test::scaled_timeout(60s).count()) + " ms (no " + name + ".hanging)");
 }
 
 std::string ecu(const Options& o) { return yaml_quote(shown_path(o.test_ecu)); }
@@ -1839,8 +1840,13 @@ public:
     std::string wait_for_error(Done done)
     {
         std::unique_lock lock(mutex_);
-        // Only a last line against a hang.
-        static_cast<void>(changed_.wait_for(lock, 120s, [&] { return done(err_) || process_->poll().has_value(); }));
+        // Only a last line against a hang. It looks every 100 ms whether the launcher has ended:
+        // that comes with no line that would wake it.
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(120s);
+        while (!done(err_) && !process_->poll().has_value() && std::chrono::steady_clock::now() < deadline)
+        {
+            static_cast<void>(changed_.wait_for(lock, 100ms));
+        }
         return err_;
     }
 
@@ -4493,16 +4499,22 @@ void manual(const Options& o)
         // The example of the docs: Engine by hand, Dashboard by the launcher.
         Live live(o, o.example_dir, {"run", "simulation.yaml", "--manual", "Engine"});
         HandCommand hand;
-        const std::string err = live.wait_for_error([&](const std::string& text) {
+        static_cast<void>(live.wait_for_error([&](const std::string& text) {
             hand = hand_command(text, "Engine");
             return !hand.line.empty();
-        });
-        if (contains(err, "the registry cannot listen at silkit://127.0.0.1:8500"))
+        }));
+        if (hand.line.empty())
         {
-            throw Skip("another program listens at 127.0.0.1:8500: the example of the docs was not run (the other "
-                       "manual_* scenarios run at ports of their own)");
+            // The launcher ended: its error is in its output (standard output).
+            const auto [status, out] = live.finish_unchecked();
+            const std::string all = out_of(out) + "--- stderr ---\n" + live.err();
+            if (contains(all, "the registry cannot listen at silkit://127.0.0.1:8500"))
+            {
+                throw Skip("another program listens at 127.0.0.1:8500: the example of the docs was not run (the other "
+                           "manual_* scenarios run at ports of their own)");
+            }
+            require(false, "no lines about Engine:\n" + all);
         }
-        require(!hand.line.empty(), "no lines about Engine:\n" + err);
         require(fs::equivalent(vehicle_sil::process::path_from_utf8(hand.directory), o.example_dir),
                 "the directory is the example's: " + hand.directory);
         // As the docs show them: the directory as <dir>, paths with '/' and without ".exe".
@@ -4539,6 +4551,7 @@ int main(int argc, char** argv)
     set_log_tag("launch-run");
     try
     {
+        vehicle_sil::test::check_timeout_scale();
         const Options o = parse(argc, argv);
         fs::remove_all(o.work_dir);
         fs::create_directories(o.work_dir);

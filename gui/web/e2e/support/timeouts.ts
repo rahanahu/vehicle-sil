@@ -5,11 +5,14 @@
 
 function readScale(): number {
   const text = process.env['VEHICLE_SIL_TEST_TIMEOUT_SCALE'] ?? '';
-  const value = text === '' ? 1 : Number(text);
-  if (!Number.isFinite(value) || value <= 0) {
+  if (text === '') return 1;
+  // 数字と小数点 1 つだけ（空白、符号、指数、16 進、Infinity は断る）。C++ の試験（tests/unit/test_timeout_scale.hpp）、
+  // CMake、GUI サーバーの試験と同じ規則
+  const value = /^[0-9]*\.?[0-9]*$/.test(text) && /[0-9]/.test(text) ? Number(text) : 0;
+  if (!(value > 0 && Number.isFinite(value))) {
     throw new Error(
-      `VEHICLE_SIL_TEST_TIMEOUT_SCALE="${text}" is not a number greater than 0: set it to a factor such as 3 ` +
-        '(every upper bound of waiting in the tests 3 times as long), or unset it',
+      `VEHICLE_SIL_TEST_TIMEOUT_SCALE="${text}" is not a number greater than 0 in digits (such as 3 or 2.5): set it ` +
+        'to a factor such as 3 (every upper bound of waiting in the tests 3 times as long), or unset it',
     );
   }
   return value;

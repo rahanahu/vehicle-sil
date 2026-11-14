@@ -41,7 +41,7 @@ uv run vehicle-sil-gui --no-browser --json --port 8765 --dev-origin http://127.0
 npm start                                                                     # 画面（127.0.0.1:4200）
 ```
 
-e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを流し直すランチャーと一緒に自分で起動し（`e2e/support/gui-server.ts`。ポートは 18000 から 18999 のどれか）、終わったら止めます。`npm run e2e:real` は、本物のランチャーで同じように起動し（`e2e/support/real-server.ts`。構成ファイルは `gui/server/tests/real_configs.py` が一時ディレクトリに書く）、環境変数 `VEHICLE_SIL_GUI_SHOTS` にディレクトリを書くと、4 つの状態を 3 つの幅で撮ります。`scripts/verify-gui.py --launcher <path>` が回します。流し直すランチャーの e2e も、`VEHICLE_SIL_GUI_SHOTS` を書くと、実行の画面の 6 つの状態を 360 px と 1024 px で撮ります（`e2e/shots.spec.ts`。状態ごとに新しい GUI サーバーを起動するので、前の実行は写りません。`VEHICLE_SIL_GUI_SHOTS_LANGUAGE=en` で英語の画面を撮ります）。
+e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを流し直すランチャーと一緒に自分で起動し（`e2e/support/gui-server.ts`。ポートは実行ごとに OS が選ぶ空いているポートで、開発サーバーも同じ）、終わったら止めます。`npm run e2e:real` は、本物のランチャーで同じように起動し（`e2e/support/real-server.ts`。構成ファイルは `gui/server/tests/real_configs.py` が一時ディレクトリに書く）、環境変数 `VEHICLE_SIL_GUI_SHOTS` にディレクトリを書くと、4 つの状態を 3 つの幅で撮ります。`scripts/verify-gui.py --launcher <path>` が回します。流し直すランチャーの e2e も、`VEHICLE_SIL_GUI_SHOTS` を書くと、実行の画面の 6 つの状態を 360 px と 1024 px で撮ります（`e2e/shots.spec.ts`。状態ごとに新しい GUI サーバーを起動するので、前の実行は写りません。`VEHICLE_SIL_GUI_SHOTS_LANGUAGE=en` で英語の画面を撮ります）。
 
 ## ディレクトリ
 

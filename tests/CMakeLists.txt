@@ -6,6 +6,8 @@ include(VehicleSilTestHelpers)
 # Every test sees the headers of unit/: the harness and the factor on the upper bounds of waiting
 # (unit/test_timeout_scale.hpp, also used by the process launchers and the helpers they share).
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/unit)
+# The factor when VEHICLE_SIL_TEST_TIMEOUT_SCALE is not set where a test runs (VehicleSilTestHelpers.cmake).
+add_compile_definitions(VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT="${VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT}")
 
 # main() and the registry of the in-process test harness (unit/test_harness.hpp).
 add_library(vehicle_sil_test_main OBJECT unit/test_main.cpp)
