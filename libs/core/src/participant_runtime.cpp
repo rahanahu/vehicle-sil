@@ -700,8 +700,17 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
         // Only now does SIL Kit take a reported error (report_failure()). Not held across
         // StartLifecycle(): that registers status handlers under SIL Kit's handler lock, which
         // the SIL Kit thread holds while it calls on_status(), which takes this lock.
+        start_probe(detail::StartProbePoint::AfterStartLifecycle);
         const std::lock_guard lock(control_mutex_);
         error_reportable_ = true;
+        if (early_failure_)
+        {
+            // A handler on the SIL Kit thread (CommunicationReady of an autonomous participant)
+            // failed before this thread came back from StartLifecycle(): report it now.
+            lifecycle_->ReportError(std::move(*early_failure_));
+            early_failure_.reset();
+            failed_ = true;
+        }
     }
 
     const auto deadline = timeout == kNoStartLimit ? std::chrono::steady_clock::time_point::max()
@@ -1036,7 +1045,14 @@ void ParticipantRuntime::report_failure(std::string_view reason) noexcept
         const std::lock_guard lock(control_mutex_);
         if (!error_reportable_)
         {
-            return; // SIL Kit ignores an error before StartLifecycle(); so does the stop logic
+            // SIL Kit ignores an error before StartLifecycle(); so does the stop logic. One that
+            // comes while start() is in StartLifecycle() (from a handler SIL Kit already calls)
+            // is kept, and start() reports it.
+            if (lifecycle_started_.load(std::memory_order_acquire) && !early_failure_)
+            {
+                early_failure_ = std::move(text);
+            }
+            return;
         }
         if (failed_)
         {

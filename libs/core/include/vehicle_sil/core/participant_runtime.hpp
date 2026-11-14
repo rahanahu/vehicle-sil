@@ -393,8 +393,10 @@ public:
     /// (SIL Kit does not end the simulation; the system controller has to abort it), and stop()
     /// and request_stop() wait for that Error. Only the first failure (this or the step
     /// handler's) is reported. Callable from any thread, but not once the destructor has begun.
-    /// Until start() has started the lifecycle it does nothing (SIL Kit would ignore the error;
-    /// a call made while start() is doing so counts as made before or after). Never throws.
+    /// Before start() it does nothing (SIL Kit would ignore the error). A call made while start()
+    /// is starting the lifecycle (from a CommunicationReady handler of an autonomous participant,
+    /// which SIL Kit can call before start() is back from it) is kept, and start() reports it.
+    /// Never throws.
     /// step_error() does not change.
     void report_failure(std::string_view reason) noexcept;
 
@@ -510,6 +512,8 @@ private:
     /// under the lock).
     bool failed_ = false;
     bool error_reportable_ = false; ///< guarded by control_mutex_; start() is past StartLifecycle()
+    /// guarded by control_mutex_; a failure reported while start() was in StartLifecycle()
+    std::optional<std::string> early_failure_;
 
     mutable std::mutex peers_mutex_;
     mutable std::condition_variable peers_cv_;
