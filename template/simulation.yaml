@@ -1,7 +1,7 @@
+# yaml-language-server: $schema=schema/simulation.schema.json
 # The two ECUs of this project in one simulation. Build them first (README.md), then, here:
 #   vehicle_sil_launch check simulation.yaml
-#   vehicle_sil_launch run simulation.yaml
-#   vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
+#   vehicle_sil_launch run simulation.yaml [--scenario scenarios/throttle_step.yaml]
 # The paths in command are relative to this file's directory.
 vehicle_sil_simulation: 1
 stop_at_ms: 1000

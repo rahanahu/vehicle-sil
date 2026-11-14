@@ -1,0 +1,235 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "vehicle-sil scenario (vehicle_sil_launch run --scenario), format 1",
+  "description": "Steps that write the ECUs' inputs and check their outputs at given virtual times. This schema finds unknown keys, missing keys and values of the wrong form while you write. It cannot see the ECUs: whether a variable exists, may be written, and takes the value is what `vehicle_sil_launch check <configuration> --scenario <file>` says, and so is everything else this schema leaves open (a key written twice, the order of the times, whether a ${parameter} has a value, the variants in only). The manual is docs/scenario.md of vehicle-sil.",
+  "$comment": "A new kind of step is one definition (step_<kind>, with the keys that go with it and the two keys of the time) and one line in the oneOf of definitions.step.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["vehicle_sil_scenario", "steps"],
+  "properties": {
+    "vehicle_sil_scenario": {
+      "const": 1,
+      "description": "The format version. Always 1."
+    },
+    "name": {
+      "type": ["string", "number", "boolean"],
+      "description": "What the scenario is about. Shown in the output.",
+      "examples": ["throttle step"]
+    },
+    "only": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": ["string", "number", "boolean"], "minLength": 1 },
+      "description": "The variants (of the configuration) this scenario is for. Without it, the scenario is for every variant.",
+      "examples": [["small", "medium"]]
+    },
+    "params": {
+      "type": "object",
+      "description": "The default values of the scenario's parameters. A step uses one as ${name} where a value stands. The params of the configuration, then of the variant, then --param replace these.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+        "description": "A parameter's name: letters, digits and _ (not a digit first)."
+      },
+      "additionalProperties": {
+        "type": ["string", "number", "boolean"],
+        "not": { "type": "string", "pattern": "\\$\\{" },
+        "description": "One value: a number, true or false, or a text. It cannot use another parameter (${...})."
+      },
+      "examples": [{ "idle_rpm": 800, "settle_ms": 500 }]
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "What to do, in order. A step does one thing (set, ramp, wait_until or expect) at its time: at_ms, or after_ms from the end of the step before it (without either: after_ms: 0).",
+      "items": { "$ref": "#/definitions/step" }
+    }
+  },
+  "definitions": {
+    "step": {
+      "type": "object",
+      "not": {
+        "required": ["at_ms", "after_ms"],
+        "description": "A step has one time: at_ms or after_ms, not both."
+      },
+      "oneOf": [
+        { "$ref": "#/definitions/step_set" },
+        { "$ref": "#/definitions/step_ramp" },
+        { "$ref": "#/definitions/step_wait_until" },
+        { "$ref": "#/definitions/step_expect" }
+      ]
+    },
+    "step_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["set"],
+      "properties": {
+        "at_ms": { "$ref": "#/definitions/at_ms" },
+        "after_ms": { "$ref": "#/definitions/after_ms" },
+        "set": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/definitions/variable_name" },
+          "additionalProperties": { "$ref": "#/definitions/value" },
+          "description": "Writes values: each variable (<participant>.<variable>) with its value. Inputs only, within the variable's range; a parameter of an ECU only at time 0.",
+          "examples": [{ "Engine.engine.throttle": 50 }]
+        }
+      }
+    },
+    "step_ramp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ramp"],
+      "properties": {
+        "at_ms": { "$ref": "#/definitions/at_ms" },
+        "after_ms": { "$ref": "#/definitions/after_ms" },
+        "ramp": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/definitions/variable_name" },
+          "description": "Moves values in a straight line: each variable (<participant>.<variable>, an integer or a real input) with { to, over_ms } and, if wanted, from. The step ends after the longest over_ms.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["to", "over_ms"],
+            "properties": {
+              "to": {
+                "$ref": "#/definitions/number",
+                "description": "The value at the end of the ramp."
+              },
+              "over_ms": {
+                "$ref": "#/definitions/duration_ms",
+                "description": "How long the ramp takes, in milliseconds of virtual time."
+              },
+              "from": {
+                "$ref": "#/definitions/number",
+                "description": "The value at the start of the ramp. Without it, the value the variable has then."
+              }
+            }
+          },
+          "examples": [{ "Engine.engine.throttle": { "to": 0, "over_ms": 200 } }]
+        }
+      }
+    },
+    "step_wait_until": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wait_until", "timeout_ms"],
+      "properties": {
+        "at_ms": { "$ref": "#/definitions/at_ms" },
+        "after_ms": { "$ref": "#/definitions/after_ms" },
+        "wait_until": {
+          "$ref": "#/definitions/conditions",
+          "description": "Waits until every condition is true: each variable (<participant>.<variable>) with what it must be. Needs timeout_ms. When the step ends is not known before the run, so the steps after it take after_ms, not at_ms.",
+          "examples": [{ "Engine.engine.speed": { "ge": 1700 } }]
+        },
+        "timeout_ms": {
+          "$ref": "#/definitions/duration_ms",
+          "description": "How long wait_until waits at most, in milliseconds of virtual time. When it passes, the step fails."
+        }
+      }
+    },
+    "step_expect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expect"],
+      "not": {
+        "required": ["within_ms", "hold_for_ms"],
+        "description": "within_ms (true at some time) or hold_for_ms (true all the time), not both: make a step of each."
+      },
+      "properties": {
+        "at_ms": { "$ref": "#/definitions/at_ms" },
+        "after_ms": { "$ref": "#/definitions/after_ms" },
+        "expect": {
+          "$ref": "#/definitions/conditions",
+          "description": "Checks that every condition is true: each variable (<participant>.<variable>) with what it must be. At the step's time; with within_ms, at some time within it; with hold_for_ms, all that time.",
+          "examples": [{ "Engine.engine.speed": { "near": 1800, "tolerance": 10 } }]
+        },
+        "within_ms": {
+          "$ref": "#/definitions/duration_ms",
+          "description": "expect passes as soon as the conditions are true within this many milliseconds of virtual time, and the next step follows. The steps after it take after_ms, not at_ms."
+        },
+        "hold_for_ms": {
+          "$ref": "#/definitions/duration_ms",
+          "description": "expect passes if the conditions stay true for this many milliseconds of virtual time."
+        }
+      }
+    },
+    "at_ms": {
+      "description": "The virtual time of the step, in milliseconds. Not before the end of the step before it, and not after a step that waits (wait_until, expect with within_ms).",
+      "anyOf": [
+        { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+        { "$ref": "#/definitions/parameter" }
+      ]
+    },
+    "after_ms": {
+      "description": "The time of the step, in milliseconds of virtual time after the end of the step before it.",
+      "default": 0,
+      "anyOf": [
+        { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+        { "$ref": "#/definitions/parameter" }
+      ]
+    },
+    "duration_ms": {
+      "anyOf": [
+        { "type": "integer", "minimum": 1, "maximum": 1000000000000 },
+        { "$ref": "#/definitions/parameter" }
+      ]
+    },
+    "parameter": {
+      "type": "string",
+      "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
+      "description": "A parameter, ${name}, as the whole value: it reads as the parameter's value. Inside { } or [ ], write it in quotes (\"${name}\")."
+    },
+    "number": {
+      "anyOf": [
+        { "type": "number" },
+        { "$ref": "#/definitions/parameter" }
+      ]
+    },
+    "variable_name": {
+      "pattern": "^[^.]+\\..+",
+      "description": "A variable: <participant>.<variable>. The participant's name ends at the first '.'; the variable's name may have more (Engine.engine.speed)."
+    },
+    "value": {
+      "type": ["number", "boolean", "string"],
+      "description": "A value of the variable's type: true or false for a bool, a whole number for an integer, a number for a real, an item's name or its number for an enum. Or a parameter, ${name}."
+    },
+    "conditions": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/definitions/variable_name" },
+      "additionalProperties": { "$ref": "#/definitions/condition" }
+    },
+    "condition": {
+      "description": "What the variable must be: a value (equal to it), or comparisons, all of which must hold ({ ge: 1700, le: 1900 }).",
+      "anyOf": [
+        { "$ref": "#/definitions/value" },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "eq": { "$ref": "#/definitions/value", "description": "Equal to." },
+            "ne": { "$ref": "#/definitions/value", "description": "Not equal to." },
+            "ge": { "$ref": "#/definitions/value", "description": "Greater than or equal to (numbers only)." },
+            "le": { "$ref": "#/definitions/value", "description": "Less than or equal to (numbers only)." },
+            "gt": { "$ref": "#/definitions/value", "description": "Greater than (numbers only)." },
+            "lt": { "$ref": "#/definitions/value", "description": "Less than (numbers only)." },
+            "near": { "$ref": "#/definitions/value", "description": "At most tolerance away from this value (numbers only). Needs tolerance." },
+            "tolerance": {
+              "description": "How far from near the value may be. Goes with near.",
+              "anyOf": [
+                { "type": "number", "minimum": 0 },
+                { "$ref": "#/definitions/parameter" }
+              ]
+            }
+          },
+          "allOf": [
+            { "if": { "required": ["near"] }, "then": { "required": ["tolerance"] } },
+            { "if": { "required": ["tolerance"] }, "then": { "required": ["near"] } }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -11,6 +11,7 @@
 | `simulation.yaml` | 2 つの ECU を 1 つのシミュレーションにする構成ファイル |
 | `scenarios/throttle_step.yaml` | スロットルを踏んで回転数と表示を確かめるシナリオ |
 | `simulation.dashboard.yaml` | GUI の「変数」の画面の並べ方 |
+| `schema/` | 上の 3 種類の YAML の JSON Schema。YAML の言語サーバーを使うエディターで、キーの補完と説明、形の検査が効く（各ファイルの 1 行目の `# yaml-language-server: $schema=...` が指す）。自分で足す YAML にも同じ 1 行を書く |
 | `get_tools.py` | 道具（`vehicle_sil_launch` と GUI）を、版と SHA-256 を確かめて `tools/` に取ってくる |
 
 ## 要るもの
