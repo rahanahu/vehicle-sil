@@ -1,0 +1,19 @@
+# The two ECUs of simulation.yaml, to watch and to touch: the simulation runs as fast as a clock
+# (speed: 1) and has no stop_at_ms, so it runs until you stop it. CMake copies this file next to
+# the executables (build/<preset>/examples/ecu_main/); there,
+#   vehicle_sil_launch run simulation.live.yaml    # Ctrl+C stops it (the exit code is then 130)
+#   vehicle-sil-gui simulation.live.yaml           # the browser GUI: start and stop on the screen
+# From the repository, scripts/run-gui.py starts the GUI with this file.
+# simulation.yaml is the one for scenarios and tests: as fast as possible, over at 1000 ms.
+vehicle_sil_simulation: 1
+speed: 1
+networks:
+  - name: J1939_CAN
+    kind: can
+participants:
+  - name: Engine
+    command: [engine/vehicle_sil_engine_ecu]
+    step_ms: 10
+  - name: Dashboard
+    command: [dashboard/vehicle_sil_dashboard_ecu]
+    step_ms: 5
