@@ -579,6 +579,109 @@ TEST_CASE(virtual_time_failure_reported_before_start_is_ignored)
     CHECK(!log.reached(orch::ParticipantState::Error));
 }
 
+namespace {
+
+/// What an Autonomous participant with virtual time saw until its first steps: "a", "b" for the
+/// added handlers, "set" for the one that was set, "step" for the first step.
+struct ReadyOrder
+{
+    std::vector<std::string> events;
+    bool one_thread = true; ///< every handler ran on the thread of the first step
+    std::optional<orch::ParticipantState> state;
+};
+
+ReadyOrder run_ready_handlers(bool set_async, bool second_throws)
+{
+    ReadyOrder result;
+    InProcessRegistry registry;
+    ParticipantRuntimeOptions options;
+    options.participant_name = "Alone";
+    options.registry_uri = registry.uri;
+    options.virtual_time = VirtualTimeOptions{1ms};
+    options.shutdown_timeout = 2s;
+    ParticipantRuntime runtime(options);
+    std::mutex mutex;
+    std::vector<std::thread::id> threads;
+    const auto note = [&](const char* what) {
+        const std::lock_guard lock(mutex);
+        if (what != std::string("step") || std::find(result.events.begin(), result.events.end(), "step") == result.events.end())
+        {
+            result.events.emplace_back(what);
+            threads.push_back(std::this_thread::get_id());
+        }
+    };
+    runtime.set_step_handler([&](SimTime, SimDuration) { note("step"); });
+    runtime.add_communication_ready_handler([&] { note("a"); });
+    if (set_async)
+    {
+        runtime.set_communication_ready_handler_async([&] { note("set"); });
+    }
+    else
+    {
+        runtime.set_communication_ready_handler([&] { note("set"); });
+    }
+    // Added after the one that was set: still before it, and neither replaces the other.
+    runtime.add_communication_ready_handler([&] {
+        note("b");
+        if (second_throws)
+        {
+            throw std::runtime_error("controller refused");
+        }
+    });
+    runtime.add_communication_ready_handler([&] { note("c"); });
+    std::thread starter([&] {
+        try
+        {
+            runtime.start(30s);
+        }
+        catch (const std::exception&)
+        {
+            // second_throws: the participant goes to Error instead of Running
+        }
+    });
+    if (set_async)
+    {
+        CHECK(vehicle_sil::unit::eventually([&] { return runtime.complete_communication_ready(); }, 30s));
+    }
+    starter.join();
+    if (second_throws)
+    {
+        result.state = runtime.wait_until_finished(10s);
+    }
+    else
+    {
+        CHECK(vehicle_sil::unit::eventually([&] { return runtime.steps_completed() > 0; }, 30s));
+    }
+    runtime.stop("test done");
+    CHECK(throws<std::logic_error>([&] { runtime.add_communication_ready_handler([] {}); }));
+    const std::lock_guard lock(mutex);
+    result.one_thread = std::all_of(threads.begin(), threads.end(), [&](std::thread::id id) { return id == threads.front(); });
+    return result;
+}
+
+} // namespace
+
+TEST_CASE(communication_ready_handlers_that_were_added_run_in_order_before_the_one_that_was_set_and_the_first_step)
+{
+    const std::vector<std::string> expected{"a", "b", "c", "set", "step"};
+    for (const bool set_async : {false, true})
+    {
+        const auto result = run_ready_handlers(set_async, false);
+        CHECK(result.events == expected);
+        // SIL Kit's thread, for an Autonomous participant too: where it wants controllers started.
+        CHECK(result.one_thread);
+    }
+}
+
+TEST_CASE(an_added_communication_ready_handler_that_throws_fails_the_participant_and_the_others_still_run)
+{
+    const auto result = run_ready_handlers(false, true);
+    CHECK(result.events.size() >= 4u);
+    CHECK((std::vector<std::string>(result.events.begin(), result.events.begin() + 4) ==
+           std::vector<std::string>{"a", "b", "c", "set"}));
+    CHECK(result.state == std::optional(orch::ParticipantState::Error));
+}
+
 TEST_CASE(virtual_time_end_limits_the_handled_steps)
 {
     // The simulation runs past `end`; the handler must see exactly the steps before it.

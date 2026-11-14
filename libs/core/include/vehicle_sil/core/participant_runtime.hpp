@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace vehicle_sil {
 
@@ -247,8 +248,22 @@ public:
     /// Sets a handler that SIL Kit calls once, on its own thread, when this participant's
     /// subscriptions with all connected participants are established and before the first step.
     /// Use it for controller initialisation that the other participants must see, such as
-    /// ILinController::Init(). Only before start(); otherwise throws std::logic_error.
+    /// ILinController::Init(). Not called once stop() has returned (see stop()). Only before
+    /// start(); otherwise throws std::logic_error.
     void set_communication_ready_handler(std::function<void()> handler);
+
+    /// Adds a handler for the same moment: SIL Kit's CommunicationReady, on its own thread, before
+    /// the first step. The added handlers run in the order added, before the one of
+    /// set_communication_ready_handler() or set_communication_ready_handler_async() (which this
+    /// does not replace, nor they it). For what each controller needs there, without one place
+    /// that knows them all: `runtime.add_communication_ready_handler([&port] { port.start(); })`
+    /// for a vehicle_sil::can::SilKitCanPort. What the handler uses must live until stop() has
+    /// returned (or the ParticipantRuntime is destroyed): no handler is called after that, also
+    /// when the lifecycle lives on (see stop()). An exception from an added handler is
+    /// reported as a failure of the participant (report_failure(), "CommunicationReady handler
+    /// failed: ..."); the handlers after it still run. Only before start(); otherwise throws
+    /// std::logic_error.
+    void add_communication_ready_handler(std::function<void()> handler);
 
     /// Like set_communication_ready_handler(), but the participant stays where the handler found
     /// it (CommunicationInitialized) after the handler has returned, until
@@ -257,8 +272,10 @@ public:
     /// services are connected, and this participant can exchange messages with them (the handler
     /// itself must return at once: SIL Kit delivers nothing while it runs). Nobody's first step
     /// runs before the completion, so start() of every participant waits for it: complete in
-    /// every case, also when what the window was for failed. Replaces
-    /// set_communication_ready_handler(). Only before start(); otherwise throws std::logic_error.
+    /// every case, also when what the window was for failed. If the window would open once stop()
+    /// has returned, the handler is not called and the runtime completes the window itself.
+    /// Replaces set_communication_ready_handler(). Only before start(); otherwise throws
+    /// std::logic_error.
     void set_communication_ready_handler_async(std::function<void()> handler);
 
     /// Lets the lifecycle go on after the handler of set_communication_ready_handler_async().
@@ -317,8 +334,16 @@ public:
     /// In Coordinated mode this stops the whole simulation. Once it returns, the step handler is
     /// not running and is never called again, so objects it uses may be destroyed; a handler
     /// that is running when stop() is called is waited for (without a bound), and no handler
-    /// starts after that. Safe to call more than once, but not from two threads at the same time;
-    /// never throws. Must not be called from a SIL Kit handler (use request_stop() there).
+    /// starts after that. The same holds for the CommunicationReady handlers (set, added and
+    /// asynchronous): one that runs is waited for, and none is called once stop() has returned.
+    /// That matters after a start that failed before Running (a timeout, `give_up`): SIL Kit takes
+    /// no stop there, so the lifecycle lives on until the ParticipantRuntime is destroyed and gets
+    /// to CommunicationReady if the participants it waited for come after all. It then goes on
+    /// without the handlers (no controller is started; no step runs either) to where the stop
+    /// reaches it. While stop() still waits for the shutdown, the handlers are called as usual.
+    /// Safe to call more than once, but not from two threads at the same time; never throws. Must
+    /// not be called from a SIL Kit handler, the CommunicationReady handlers among them: it would
+    /// wait for itself (use request_stop() there).
     /// After a failure (of the step handler, or report_failure()), the stop goes to the lifecycle
     /// only once the participant is in Error, so that the others see the failure and not an
     /// ordinary stop. The wait for the Error and the wait for the shutdown share one
@@ -368,8 +393,10 @@ public:
     /// (SIL Kit does not end the simulation; the system controller has to abort it), and stop()
     /// and request_stop() wait for that Error. Only the first failure (this or the step
     /// handler's) is reported. Callable from any thread, but not once the destructor has begun.
-    /// Until start() has started the lifecycle it does nothing (SIL Kit would ignore the error;
-    /// a call made while start() is doing so counts as made before or after). Never throws.
+    /// Before start() it does nothing (SIL Kit would ignore the error). A call made while start()
+    /// is starting the lifecycle (from a CommunicationReady handler of an autonomous participant,
+    /// which SIL Kit can call before start() is back from it) is kept, and start() reports it.
+    /// Never throws.
     /// step_error() does not change.
     void report_failure(std::string_view reason) noexcept;
 
@@ -383,8 +410,8 @@ public:
     [[nodiscard]] std::vector<std::string> peer_names() const;
 
     /// Re-reads the statuses SIL Kit's system monitor knows, so that peer_status() also reports
-    /// one whose notification was missed (see resync_peers()). Must not be called from a SIL Kit
-    /// handler.
+    /// one whose notification was missed (see resync_peers()). Thread safe (callers take turns,
+    /// also with wait_for_peer()). Must not be called from a SIL Kit handler.
     void refresh_peer_statuses() { resync_peers(); }
     /// Blocks until `predicate(peer_status(name))` holds or the timeout expires.
     /// While waiting it periodically re-reads the statuses SIL Kit knows (see resync_peers()).
@@ -415,7 +442,9 @@ private:
     /// Re-reads the current status of every connected participant from the system monitor.
     /// Works around a SIL Kit v5.0.8 race in which a status received while
     /// AddParticipantStatusHandler() is registering the handler is never delivered to it.
+    /// One caller at a time (resync_mutex_).
     void resync_peers();
+    std::mutex resync_mutex_; ///< guards the adding and removing of status handlers in resync_peers()
 
     struct PeerRecord
     {
@@ -440,6 +469,10 @@ private:
 
     StepHandler step_handler_;
     StepHold step_hold_;
+    /// Runs added_communication_ready_ (the SIL Kit thread).
+    void run_added_communication_ready();
+    std::vector<std::function<void()>> added_communication_ready_; ///< add_communication_ready_handler()
+    bool communication_ready_registered_ = false; ///< SIL Kit has a handler that runs the added ones
     std::function<void()> communication_ready_; ///< set_communication_ready_handler_async()
     std::mutex communication_ready_mutex_;      ///< guards communication_ready_state_
     enum class CommunicationReady
@@ -465,6 +498,8 @@ private:
     std::atomic<bool> starting_entered_{false}; ///< without virtual time: SIL Kit's starting handler ran
     std::atomic<bool> lifecycle_started_{false}; // set by start() just before StartLifecycle()
 
+    std::mutex communication_ready_gate_;      // held while the CommunicationReady handlers run
+    bool communication_ready_disabled_ = false; // guarded by communication_ready_gate_; set by stop()
     std::mutex step_gate_;       // held while the step handler runs
     bool steps_disabled_ = false; // guarded by step_gate_; set by stop()
     mutable std::mutex control_mutex_; // guards stop_requested_, and writes of step_error_ (only the step thread writes it)
@@ -477,6 +512,8 @@ private:
     /// under the lock).
     bool failed_ = false;
     bool error_reportable_ = false; ///< guarded by control_mutex_; start() is past StartLifecycle()
+    /// guarded by control_mutex_; a failure reported while start() was in StartLifecycle()
+    std::optional<std::string> early_failure_;
 
     mutable std::mutex peers_mutex_;
     mutable std::condition_variable peers_cv_;

@@ -91,7 +91,9 @@ struct Fixture
         bridgeRuntime = std::make_unique<ParticipantRuntime>(ParticipantRuntimeOptions{"Bridge", registry.uri});
         auto& bridgeEth = *bridgeRuntime->participant().CreateEthernetController("ETH", kNetwork);
         bridge = std::make_unique<EthernetBridge>(bridgeEth, link);
-        bridge->start(); // before the lifecycle, as the CAN bridge does
+        // As the CAN bridge does: forwarding before the lifecycle, the controller at CommunicationReady.
+        bridgeRuntime->add_communication_ready_handler([b = bridge.get()] { b->start_controller(); });
+        bridge->start();
         bridgeRuntime->start(10s);
 
         peerRuntime = std::make_unique<ParticipantRuntime>(ParticipantRuntimeOptions{"Peer", registry.uri});

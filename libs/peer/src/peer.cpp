@@ -160,16 +160,51 @@ Peer::Peer(PeerOptions options) :
             }
         });
     }
-    runtime_->set_communication_ready_handler([this] {
+    // Where SIL Kit wants the controllers configured and started: on its thread, before the first
+    // step, and (Coordinated) once every participant's services are known. Added, not set: a
+    // handler that the application sets through runtime() does not replace this one.
+    runtime_->add_communication_ready_handler([this] {
+        const auto start_can = [this](can::SilKitCanPort& port, const std::string& network) {
+            try
+            {
+                port.start();
+            }
+            catch (const std::exception& e)
+            {
+                // Not out of a SIL Kit handler: the participant goes to Error instead.
+                runtime_->report_failure("vehicle_sil::Peer: starting the CAN controller of the network \"" + network +
+                                         "\" failed: " + e.what());
+            }
+        };
+        for (auto& c : channels_)
+        {
+            if (c->silkit_port)
+            {
+                start_can(*c->silkit_port, c->name);
+            }
+        }
+        for (auto& r : raw_channels_)
+        {
+            start_can(*r->port, r->name);
+        }
         for (auto& node : lin_)
         {
-            if (node->master)
+            try
             {
-                node->master->init();
+                if (node->master)
+                {
+                    node->master->init();
+                }
+                else
+                {
+                    node->slave->init();
+                }
             }
-            else
+            catch (const std::exception& e)
             {
-                node->slave->init();
+                // As for CAN: the participant goes to Error, and the other nodes are still initialised.
+                runtime_->report_failure("vehicle_sil::Peer: initialising the LIN controller of the network \"" +
+                                         node->name + "\" failed: " + e.what());
             }
         }
     });

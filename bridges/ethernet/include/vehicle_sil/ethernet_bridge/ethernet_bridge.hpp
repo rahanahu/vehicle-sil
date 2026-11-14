@@ -121,9 +121,22 @@ public:
     EthernetBridge(EthernetBridge&&) = delete;
     EthernetBridge& operator=(EthernetBridge&&) = delete;
 
-    /// Starts the external link, registers the SIL Kit handlers and activates the controller.
-    /// Throws on failure (eth_link::LinkError from the link) and leaves the bridge stopped.
+    /// Starts the external link and registers the SIL Kit handlers: frames from SIL Kit go to the
+    /// link from here on. Call it before the participant's lifecycle starts. The SIL Kit
+    /// controller is activated by start_controller(); a start() after start_controller() was
+    /// called (a restart) activates the controller as well. Throws on failure (eth_link::LinkError
+    /// from the link) and leaves the bridge stopped.
     void start();
+
+    /// Activates the SIL Kit controller: frames from the link go to SIL Kit from here on (those
+    /// that came before are not forwarded and not counted). Call it from the participant's
+    /// CommunicationReady handler (ParticipantRuntime::add_communication_ready_handler()), where
+    /// SIL Kit wants IEthernetController::Activate() called: on its thread, before Running. A
+    /// network simulator that the controller has not found yet does not learn of an earlier
+    /// Activate(), and a second Activate() does nothing. Before start(), it only notes that the
+    /// time has come. Nothing a second time. If the controller cannot be activated, fault() tells
+    /// why.
+    void start_controller() noexcept;
 
     /// Stops forwarding in both directions. Safe to call more than once.
     void stop() noexcept;
@@ -168,6 +181,8 @@ private:
     std::optional<SilKit::Util::HandlerId> frame_handler_;
     std::optional<SilKit::Util::HandlerId> transmit_handler_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> controller_started_{false}; ///< the controller is activated (until stop())
+    bool communication_ready_ = false;            ///< start_controller() was called; guarded by lifecycle_mutex_
     bool link_echoes_ = false; // set by start() before the link starts
 
     std::atomic<std::uint64_t> silkit_to_ext_{0};

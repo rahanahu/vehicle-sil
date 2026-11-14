@@ -21,7 +21,7 @@ vehicle-sil 自体を直す人と、LIN の Master と Slave の規則と制約�
 - 作り方: `LinMaster(port, schedule, step, options)`（`step` はノードを回すステップ幅）、`LinSlave(port, options)`。ポートはノードより長く生きなければなりません。ノードはコンストラクタからデストラクタまでポートのリスナーです。ハンドラ（`LinMaster::on_result()`、`on_state()`、`LinSlave::on_frame()`、`on_state()`）は、最初のステップの前に設定します（スレッドセーフではありません）。空の関数は「なし」です。`Ecu` を通すと、ポートとステップ幅は実装が決めます。
 - 状態の変化は `StateHandler(time, state)` に、時刻付きで通知します。Slave は受け取ったイベントの時刻（自分の操作ならそのステップの時刻）、Master は状態が変わったステップの時刻です。
 - `init()`、`step()`、`request_*()` はノードのステップから呼びます。ポートはスレッドセーフではありませんが、SIL Kit はステップハンドラと受信ハンドラを同じ I/O スレッドで呼び、仮想バスは送った側のステップの中で配るので、ポートの呼び出しは 1 つのスレッドに収まります。`LinSlave::set_response()`、`clear_response()`、`set_slave_response()` は、どのスレッドから呼んでもかまいません。
-- 両方の `init()` は、最初のステップの前に 1 回呼びます（`Ecu` を通すと実装が呼びます）。SIL Kit のポートの上で自分で組み立てるときは、`ParticipantRuntime::set_communication_ready_handler()` から呼びます。購読が確立する前に初期化すると、ほかの参加者がその設定を受け取れないためです。
+- 両方の `init()` は、最初のステップの前に 1 回呼びます（`Ecu` を通すと実装が呼びます）。SIL Kit のポートの上で自分で組み立てるときは、`ParticipantRuntime::add_communication_ready_handler()`（か `set_communication_ready_handler()`）から呼びます。購読が確立する前に初期化すると、ほかの参加者がその設定を受け取れないためです。
 - 例外の文言は `vehicle_sil::lin::LinMaster: `、`vehicle_sil::lin::LinSlave: `、`vehicle_sil::lin: `（スケジュール）で始まり、値と直し方を含みます。
 
 ## スケジュールテーブル（`LinMaster`）
@@ -87,7 +87,7 @@ LIN 2.x の診断用のフレームを、通常のフレームとは別の規則
 - 引数: `send_header()` と `send_frame()` は、ID が 63 を超えるか長さが 1〜8 の外なら `std::invalid_argument` です（両方の実装。`LinMaster` はそうした値を送りません）。
 - 時刻: `now` は呼び出したステップの時刻です。SIL Kit のポートは使わず、SIL Kit が participant の時刻を付けます。
 - スレッド: SIL Kit のポートは、リスナーを SIL Kit の I/O スレッドから呼びます。仮想バスは、送った側の呼び出しの中で同期に呼びます。`set_listener()` は、イベントが来ない間（実行の前と後）にだけ呼びます。
-- `SilKitLinPort(controller, role)`: コンストラクタで SIL Kit のハンドラを登録し（Slave はヘッダーのハンドラも）、デストラクタで外します。コントローラを所有しないので、participant より先に破棄します。`open()` は、Master では `Init`（フレームの応答の設定は空）、Slave では `InitDynamic` です。`send_header()` は、その ID をまだ受信用に設定していなければ、ヘッダーの長さとチェックサムモデルで設定（`SetFrameResponse`）してからヘッダーを送ります。最初のスケジュールの ID も同じ経路で設定します。型の変換（`LinFrame`、チェックサムモデル、状態）はこのポートの中だけにあります。
+- `SilKitLinPort(controller, role)`: コンストラクタで SIL Kit のハンドラを登録し、デストラクタで外します。Slave のヘッダーのハンドラだけは、`open()` の `InitDynamic` の後に登録します（SIL Kit の C API は、その前の登録を状態の誤りとしています。同じハンドラーの中なので、間にヘッダーは届きません）。コントローラを所有しないので、participant より先に破棄します。`open()` は、Master では `Init`（フレームの応答の設定は空）、Slave では `InitDynamic` です。`send_header()` は、その ID をまだ受信用に設定していなければ、ヘッダーの長さとチェックサムモデルで設定（`SetFrameResponse`）してからヘッダーを送ります。最初のスケジュールの ID も同じ経路で設定します。型の変換（`LinFrame`、チェックサムモデル、状態）はこのポートの中だけにあります。
 
 `VirtualLinBus` はプロセス内の LIN バスです。Master 1 つと Slave をいくつでも付けられ（`attach(role, name)`。2 つ目の Master は両方の名前を言う `std::logic_error`）、エンドポイント（`VirtualLinBus::Endpoint`、`LinPort`）はバスが持ちます。スレッドもキューも持たず、すべてを送った側の呼び出しの中で、付けた順に配ります。
 

@@ -243,6 +243,7 @@ Records run_on_silkit(const std::vector<SimDuration>& steps)
             coordinated_options(names[i], registry.uri, VirtualTimeOptions{steps[i], std::nullopt, kEnd}));
         auto* ethernet = n.runtime->participant().CreateEthernetController(kNetwork, kNetwork);
         n.port = std::make_unique<SilKitEthPort>(*ethernet);
+        n.runtime->add_communication_ready_handler([p = n.port.get()] { p->start(); });
         n.node = std::make_unique<Node>(static_cast<std::uint8_t>(i + 1), *n.port);
         n.host = std::make_unique<vehicle_sil::step::Host>();
         n.host->add(n.node->channel());

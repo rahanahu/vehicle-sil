@@ -31,7 +31,10 @@ struct ArrivalOrder
 /// SIL Kit guarantees that at the step for time T every message stamped earlier than T has been
 /// received, but it does not fix whether a message stamped exactly T arrives before or after
 /// that step. drain_before(T) therefore releases only messages stamped strictly before T. A
-/// message stamped T is released at the next step.
+/// message stamped T is released at the next step. SIL Kit promises this only for messages that
+/// were sent within a simulation step of the sender: one that another program sends outside its
+/// step (from another thread, or from a receive handler) may arrive after the step for a later
+/// time has begun, and which step it is released at then differs from run to run.
 ///
 /// Released messages are ordered by timestamp, then by `TieBreak` (a strict weak ordering on
 /// T, e.g. the sender's address), then by arrival. SIL Kit keeps the order of messages from one

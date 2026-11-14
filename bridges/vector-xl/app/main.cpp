@@ -132,15 +132,27 @@ int run(const BridgeOptions& options)
             options.bitrate ? (", bit rate " + std::to_string(*options.bitrate)).c_str() : ", bit rate unchanged");
 
         // Start forwarding before the lifecycle reaches Running: peers may start sending as soon as
-        // they see this participant Running, and the SIL Kit handler and controller must be ready
-        // by then (frames sent to a controller that is not started are lost).
+        // they see this participant Running, and the SIL Kit handler must be ready by then. The
+        // controller is started where SIL Kit wants it, before Running.
         bridge = std::make_unique<CanBridge>(controller, *port);
+        runtime->add_communication_ready_handler([b = bridge.get()] { b->start_controller(); });
         bridge->start();
         runtime->start(std::chrono::seconds(15));
     }
     catch (const std::exception& e)
     {
         log(kTag, "FAIL setup: %s", e.what());
+        // A start that timed out leaves a lifecycle that can still get to CommunicationReady. Once
+        // the runtime's stop() has returned, the handler above is not called any more, so the
+        // bridge it points at can go (in whatever order the three are destroyed).
+        if (bridge)
+        {
+            bridge->stop();
+        }
+        if (runtime)
+        {
+            runtime->stop("the setup failed");
+        }
         return kExitSetupFailed;
     }
 

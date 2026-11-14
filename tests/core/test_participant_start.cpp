@@ -20,6 +20,8 @@
 #include <condition_variable>
 #include <exception>
 #include <mutex>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -126,6 +128,10 @@ TEST_CASE(participant_start_does_not_return_while_the_starting_handler_runs)
             }
             return;
         }
+        if (point != StartProbePoint::StartingHandlerEntered)
+        {
+            return;
+        }
         meeting.handlerEntered = true;
         meeting.changed.notify_all();
         // The first of those rounds read its flags after the handler's; when the second begins,
@@ -223,4 +229,45 @@ TEST_CASE(participant_start_takes_a_run_that_ended_between_its_two_looks_for_a_s
         throw vehicle_sil::unit::Failure("start() threw for a participant that was Running and then stopped: " + thrown);
     }
     CHECK(state != orch::ParticipantState::Running && state != orch::ParticipantState::ReadyToRun);
+}
+
+TEST_CASE(participant_start_reports_a_failure_that_a_handler_reported_before_start_was_back_from_the_lifecycle)
+{
+    // An autonomous participant's CommunicationReady handlers run on the SIL Kit thread as soon as
+    // StartLifecycle() has queued the start, which can be before start() notes that SIL Kit takes
+    // an error. The probe holds start() there until the handlers are through; the failure of the
+    // first one must not be lost.
+    InProcessRegistry registry;
+    Meeting meeting;
+    const ProbeInPlace probe([&meeting](StartProbePoint point) {
+        if (point == StartProbePoint::AfterStartLifecycle)
+        {
+            std::unique_lock lock(meeting.mutex);
+            meeting.wait_for(lock, [&meeting] { return meeting.handlerEntered; });
+        }
+    });
+    ParticipantRuntime runtime(ParticipantRuntimeOptions{"Starter", registry.uri});
+    runtime.add_communication_ready_handler([] { throw std::runtime_error("the controller did not start"); });
+    // Runs after the first one's failure has been reported.
+    runtime.add_communication_ready_handler([&meeting] {
+        {
+            const std::lock_guard lock(meeting.mutex);
+            meeting.handlerEntered = true;
+        }
+        meeting.changed.notify_all();
+    });
+
+    try
+    {
+        runtime.start(unit::scaled_timeout(30s));
+    }
+    catch (const std::exception&)
+    {
+        // start() may say that the participant failed; what counts is the state.
+    }
+    const auto state = runtime.wait_until_finished(unit::scaled_timeout(10s));
+    runtime.stop("test");
+
+    CHECK(!meeting.waitRanOut);
+    CHECK(state == std::optional(orch::ParticipantState::Error));
 }

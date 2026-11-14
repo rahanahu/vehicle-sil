@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// A way for tests to stand at the two places where ParticipantRuntime::start() and the SIL Kit
+// A way for tests to stand at the places where ParticipantRuntime::start() and the SIL Kit
 // thread can overtake each other, so that a test decides the order instead of the scheduler.
 // Internal to vehicle_sil::core and not installed: nothing but the tests of the library sets a
 // probe. Without one, each place costs one atomic load.
@@ -19,6 +19,9 @@ enum class StartProbePoint
     /// On the thread that calls start(), in every round of its wait: after it has read whether
     /// the starting handler (or a step) ran, and before it reads the lifecycle state.
     BetweenFlagsAndState,
+    /// On the thread that calls start(), after StartLifecycle() has returned and before the
+    /// runtime notes that SIL Kit takes a reported error from now on.
+    AfterStartLifecycle,
 };
 
 using StartProbe = std::function<void(StartProbePoint)>;

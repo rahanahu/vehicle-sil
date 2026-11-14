@@ -13,6 +13,7 @@
 #include "vehicle_sil/testkit/local_can.hpp"
 #include "vehicle_sil/testkit/recorders.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -722,6 +723,78 @@ TEST_CASE(peer_real_time_stop_request_right_after_the_failure_leaves_through_err
     CHECK(peer.failed());
     peer.stop("the end of the test");
     controller.abort();
+}
+
+TEST_CASE(peer_starts_its_controllers_also_when_the_application_sets_a_communication_ready_handler)
+{
+    // runtime() is public, and SIL Kit keeps one CommunicationReady handler: one that the
+    // application sets must not take the place of the peer's own (CAN start(), LIN init()).
+    // Without them, the first step fails ("a step ran before start()").
+    InProcessRegistry registry;
+    SimulationControllerOptions control;
+    control.registry_uri = registry.uri;
+    control.required_participants = {"Body"};
+    control.stop_at = 500ms; // past the address claim
+    SimulationController controller(control);
+    std::vector<lin::LinScheduleResult> results;
+    std::atomic<int> applicationCalls{0};
+
+    Peer body(coordinated("Body", registry.uri, 5ms));
+    auto& ecu = body.j1939("J1939_CAN").add_node(
+        {0x21, j1939::Name{}.set_identity_number(0x2346).set_manufacturer_code(0x7F0)});
+    auto& master =
+        body.lin_master("BODY_LIN", {{kCommandId, 2, lin::LinChecksumModel::Enhanced, 20ms, lin::LinPublisher::Master}});
+    master.on_result([&](const lin::LinScheduleResult& r) { results.push_back(r); });
+    body.on_step([&](SimTime) {
+        const std::uint8_t data[2]{1, 2};
+        master.set_frame_data(kCommandId, data);
+    });
+    body.runtime().set_communication_ready_handler([&] { ++applicationCalls; });
+
+    start_together(controller, {&body});
+    const auto state = body.wait(60s);
+    CHECK(state.has_value() && *state == orch::ParticipantState::Shutdown);
+    CHECK(!body.failed());
+    CHECK_EQ(applicationCalls.load(), 1);
+    CHECK(ecu.address_state() == j1939::AddressState::Claimed); // the CAN controller was started
+    const bool sent = std::any_of(results.begin(), results.end(),
+                                  [](const auto& r) { return r.status == lin::LinResultStatus::Ok; });
+    CHECK(sent); // the LIN controller was initialised
+}
+
+TEST_CASE(peer_reports_a_lin_controller_that_cannot_be_initialised_and_names_the_network)
+{
+    // SIL Kit refuses a second Init(): the application's own init() here makes the peer's fail.
+    // The exception does not leave SIL Kit's handler: the participant fails with the network's name.
+    InProcessRegistry registry;
+    vehicle_sil::unit::StateLog log(registry.uri, "Body");
+    SimulationControllerOptions control;
+    control.registry_uri = registry.uri;
+    control.required_participants = {"Body"};
+    control.stop_at = 200ms;
+    control.shutdown_timeout = 2s;
+    SimulationController controller(control);
+    auto options = coordinated("Body", registry.uri, 5ms);
+    Peer body(options);
+    auto& master =
+        body.lin_master("BODY_LIN", {{kCommandId, 2, lin::LinChecksumModel::Enhanced, 20ms, lin::LinPublisher::Master}});
+    master.init();
+    try
+    {
+        start_together(controller, {&body}, 30s);
+    }
+    catch (const std::exception&) // NOLINT(bugprone-empty-catch)
+    {
+        // The start fails with the participant; what is checked is how the failure is reported.
+    }
+    CHECK(vehicle_sil::unit::eventually([&] { return log.reached(orch::ParticipantState::Error); }, 20s));
+    const std::string reason = log.reason_of(orch::ParticipantState::Error);
+    if (reason.find("vehicle_sil::Peer: initialising the LIN controller of the network \"BODY_LIN\" failed: ") ==
+        std::string::npos)
+    {
+        throw vehicle_sil::unit::Failure("the reason of the Error does not name the network: " + reason);
+    }
+    body.stop("test done");
 }
 
 TEST_CASE(peer_start_together_reports_a_failed_start)

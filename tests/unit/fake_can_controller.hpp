@@ -26,6 +26,7 @@ public:
 
     // --- test controls
     bool throw_on_start = false;
+    bool throw_on_add_transmit_handler = false;
     bool throw_on_send = false;
     /// Status of the transmit acknowledgement SendFrame() reports.
     SilKit::Services::Can::CanTransmitStatus ack_status = SilKit::Services::Can::CanTransmitStatus::Transmitted;
@@ -103,7 +104,23 @@ public:
     }
 
     // --- ICanController
-    void SetBaudRate(uint32_t, uint32_t, uint32_t) override {}
+    void SetBaudRate(uint32_t rate, uint32_t, uint32_t) override
+    {
+        const std::lock_guard lock(mutex_);
+        baud_rate_ = rate;
+    }
+    /// The rate of the last SetBaudRate() (0: never called).
+    uint32_t baud_rate() const
+    {
+        const std::lock_guard lock(mutex_);
+        return baud_rate_;
+    }
+    /// What baud_rate() was when Start() was called last.
+    uint32_t baud_rate_at_start() const
+    {
+        const std::lock_guard lock(mutex_);
+        return baud_rate_at_start_;
+    }
     void Reset() override {}
     void Start() override
     {
@@ -113,6 +130,7 @@ public:
         }
         const std::lock_guard lock(mutex_);
         started_ = true;
+        baud_rate_at_start_ = baud_rate_;
     }
     void Stop() override
     {
@@ -173,6 +191,10 @@ public:
     auto AddFrameTransmitHandler(FrameTransmitHandler handler, SilKit::Services::Can::CanTransmitStatusMask mask)
         -> HandlerId override
     {
+        if (throw_on_add_transmit_handler)
+        {
+            throw std::runtime_error("fake AddFrameTransmitHandler failure");
+        }
         const std::lock_guard lock(mutex_);
         const auto id = next_id();
         transmit_handlers_.emplace(id, TransmitHandler{std::move(handler), mask});
@@ -199,6 +221,8 @@ private:
     std::map<HandlerId, ErrorStateChangeHandler> error_state_handlers_;
     std::vector<RecordedFrame> sent_;
     bool started_ = false;
+    uint32_t baud_rate_ = 0;
+    uint32_t baud_rate_at_start_ = 0;
     std::uint64_t next_id_ = 1;
 };
 

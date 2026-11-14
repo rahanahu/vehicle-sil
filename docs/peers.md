@@ -74,7 +74,7 @@ peer.wait(std::chrono::minutes(10));
 ```
 
 > [!NOTE]
-> `PeerOptions` の既定は、autonomous の lifecycle で仮想時間です。この組み合わせのピアを先に起動して仮想時間が進んでいると、後から始まる coordinated の participant（`vehicle_sil_launch run` が起動する ECU など）は Error になります（SIL Kit の決まりです）。coordinated の participant と一緒に動かすピアは、上の例のように `Coordinated` にして必須の participant に入れるか、coordinated の participant が全部始まった後に起動します。
+> `PeerOptions` の既定は、autonomous の lifecycle で仮想時間です。この組み合わせのピアを先に起動して仮想時間が進んでいると、後から coordinated の participant（`vehicle_sil_launch run` が起動する ECU など）が始まった時点で、SIL Kit がシミュレーション全体を abort します（先にいたピアも終わります）。coordinated の participant と一緒に動かすピアは、上の例のように `Coordinated` にして必須の participant に入れるか、coordinated の participant が全部始まった後に起動します。
 
 受信の扱い、J1939 と LIN の決定論性、LIN のステップ幅の制約は [docs/internals/virtual-time.md](internals/virtual-time.md) と [docs/internals/lin.md](internals/lin.md) を参照してください。`Peer` を使わずに `ParticipantRuntime` のステップハンドラで回すこともできます（`bind_host()`、LIN の例 `examples/lin`）。
 
