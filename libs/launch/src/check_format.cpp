@@ -8,6 +8,10 @@
 #include "check_words.hpp"
 #include "vehicle_sil/ecu/detail/json_writer.hpp"
 
+#include <system_error>
+#include <cctype>
+#include <cmath>
+#include <charconv>
 #include <algorithm>
 #include <sstream>
 
@@ -123,7 +127,8 @@ std::string detail::check_text_body(const CheckReport& report)
         const SimulationConfig& config = *report.config;
         const auto disabled = static_cast<std::size_t>(std::count_if(
             config.participants.begin(), config.participants.end(), [](const ParticipantConfig& p) { return !p.enabled; }));
-        out += report.file + ": " + count_text(config.participants.size(), "participant", "participants") +
+        out += report.file + (config.variant.empty() ? std::string{} : " (variant " + config.variant + ")") + ": " +
+               count_text(config.participants.size(), "participant", "participants") +
                (disabled > 0 ? " (" + std::to_string(disabled) + " disabled)" : std::string{}) + ", " +
                count_text(config.networks.size(), "network", "networks") + "\n\n";
         std::vector<std::vector<std::string>> rows{{"participant", "step", "networks"}};
@@ -178,7 +183,18 @@ std::string detail::check_text_body(const CheckReport& report)
     if (report.scenario && report.config)
     {
         out += "scenario " + report.scenario->file + (report.scenario->name.empty() ? "" : " (" + report.scenario->name + ")") +
-               ": " + count_text(report.scenario->steps, "step", "steps") + "\n\n";
+               ": " + count_text(report.scenario->steps, "step", "steps") +
+               (report.scenario->skipped > 0 ? " (" + std::to_string(report.scenario->skipped) + " skipped)" : std::string{}) + "\n";
+        if (!report.scenario->params.empty())
+        {
+            std::string params;
+            for (const ParamValue& param : report.scenario->params)
+            {
+                params += (params.empty() ? "" : ", ") + param.name + " = " + param.text + " (" + param_source_text(param.source) + ")";
+            }
+            out += "parameters: " + params + "\n";
+        }
+        out += "\n";
     }
     out += detail::findings_text(report.file, report.findings);
     return out;
@@ -268,6 +284,46 @@ void detail::write_finding_members(vehicle_sil::detail::JsonWriter& w, const std
     optional_text("detail", finding.detail);
 }
 
+void detail::write_params_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const std::vector<ParamValue>& params)
+{
+    w.begin_array(key);
+    for (const ParamValue& param : params)
+    {
+        w.begin_object();
+        w.string("name", param.name);
+        // As a scenario reads it: true, false, a whole number, a number, or a text.
+        const std::string& text = param.text;
+        std::int64_t integer = 0;
+        double number = 0;
+        const char* end = text.data() + text.size();
+        const bool plain = !param.quoted && !text.empty() &&
+                           (std::isdigit(static_cast<unsigned char>(text.front())) != 0 || text.front() == '-') &&
+                           std::all_of(text.begin(), text.end(), [](char c) {
+                               return std::isdigit(static_cast<unsigned char>(c)) != 0 || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+';
+                           });
+        if (!param.quoted && (text == "true" || text == "false"))
+        {
+            w.boolean("value", text == "true");
+        }
+        else if (const auto [ptr, ec] = std::from_chars(text.data(), end, integer); plain && ec == std::errc{} && ptr == end)
+        {
+            w.integer("value", integer);
+        }
+        else if (const auto [at, bad] = std::from_chars(text.data(), end, number);
+                 plain && bad == std::errc{} && at == end && std::isfinite(number))
+        {
+            w.real("value", number);
+        }
+        else
+        {
+            w.string("value", text);
+        }
+        w.string("from", param_source_name(param.source));
+        w.end_object();
+    }
+    w.end_array();
+}
+
 void detail::write_findings_json(vehicle_sil::detail::JsonWriter& w, const std::string& file, const std::vector<Finding>& findings)
 {
     w.begin_array("findings");
@@ -329,6 +385,22 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
     optional_integer("stop_timeout_ms",
                      report.config ? std::optional<std::int64_t>(report.config->stop_timeout_ms) : std::nullopt);
     optional_text("registry_uri", report.config ? report.config->registry_uri.value_or("") : std::string{});
+    if (!report.variants.empty())
+    {
+        // Only for a file with variants: the chosen one (null with result "usage") and all of them.
+        optional_text("variant", report.config ? report.config->variant : std::string{});
+        w.begin_array("variants");
+        for (const std::string& name : report.variants)
+        {
+            w.string({}, name);
+        }
+        w.end_array();
+    }
+    if (report.config && !report.config->params.empty())
+    {
+        // Only for a file with params: those of the common part with the variant's over them.
+        write_params_json(w, "params", report.config->params);
+    }
     w.begin_array("participants");
     if (report.config)
     {
@@ -480,6 +552,24 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
         w.string("file", report.scenario->file);
         optional_text("name", report.scenario->name);
         w.integer("steps", static_cast<std::int64_t>(report.scenario->steps));
+        // Each only if the scenario has it.
+        if (report.scenario->only)
+        {
+            w.begin_array("only");
+            for (const std::string& name : *report.scenario->only)
+            {
+                w.string({}, name);
+            }
+            w.end_array();
+        }
+        if (!report.scenario->params.empty())
+        {
+            write_params_json(w, "params", report.scenario->params);
+        }
+        if (report.scenario->skipped > 0)
+        {
+            w.integer("skipped_steps", static_cast<std::int64_t>(report.scenario->skipped));
+        }
         w.end_object();
     }
     w.end_object();

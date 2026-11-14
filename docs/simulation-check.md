@@ -6,7 +6,7 @@
 
 `vehicle_sil_launch check <file>` は、次の順に確かめ、見つけたものを全部まとめて出します。見つけたものには 3 つの重さがあります。誤り（error）は照合を失敗にします。警告（warning）は `--strict` のときだけ失敗にします。注記（note）は失敗にしません（照合が確かめられなかったことを伝えます）。
 
-1. 構成ファイルの文面: 形式の版、知らないキーと足りないキー、値の型と範囲、名前、`command` の引数と波括弧。誤りのある participant（名前がない・使えない、`command` が使えない、名前が重複している、`describe` が真偽値でない、`command` の引数の誤り）は、次の段に進めません。知らないキーや `step_ms` の誤りは、照合を止めません。
+1. 構成ファイルの文面: 形式の版、知らないキーと足りないキー、値の型と範囲、名前、`command` の引数と波括弧。機種（`variants`）は、選んでいないものも含めて全部の形を確かめ、その後、`--variant` で選んだ機種の差分を共通の部分に重ねます。ここから先は、重ねた後の構成を確かめます（[simulation-config.md](simulation-config.md) の「機種」。人向けの出力の最初の行に `(variant <名前>)` が付きます）。誤りのある participant（名前がない・使えない、`command` が使えない、名前が重複している、`describe` が真偽値でない、`command` の引数の誤り）は、次の段に進めません。知らないキーや `step_ms` の誤りは、照合を止めません。
 2. 実行ファイル: あること、ディレクトリでないこと、バッチファイルでないこと、（Linux では）実行の許可があること。外した participant（`enabled: false`、`--disable`）は、ここから先を飛ばします。
 3. `describe: true` の各実行ファイルを `--describe --name <participant 名>` で 1 つずつ順に動かし（並列にしません）、標準出力の JSON を読みます。作業ディレクトリは構成ファイルのあるディレクトリで、標準入力は空です。終了コードが 0 でない（シグナルや例外で終わったときは、そう書きます）、時間内に終わらない（`--describe-timeout-ms`、既定 10000 ms。過ぎたら止めます。出力を書き続ける実行ファイルも止めます）、JSON でない、形式の版が違う、は、その participant の誤りです。標準エラーの最後の 10 行を添えます。読むのは標準出力の最初の 1 MiB と標準エラーの最後の 1 MiB です。標準出力を切ったときは自己申告の誤りの添え書きで、標準エラーを切ったときはその末尾を添えるところで、そう書きます。
 4. 構成と自己申告の突き合わせ。
@@ -67,7 +67,9 @@
 | `variable-map-collision` | 誤り | 対応の名前が、実行ファイルのほかの変数の見える名前と同じ。または、同じ変数に対応を 2 つ書いた |
 | `variable-map-absent` | 誤り | `absent: true` と書いた名前の変数が、実行ファイルにある |
 | `variable-map-not-checked` | 注記 | `describe: false` の participant に `variables` がある（実行の前には比べられない。合わない対応は、実行の所見 `variable-map-not-applied` になる） |
-| `usage` | 誤り | 引数の誤り（`--json` のときの JSON だけ） |
+| `variant-participant` | 誤り | 機種（`variants`）の `participants` に、構成の `participants` にない名前がある |
+| `scenario-nothing-checked` | 警告 | `--scenario` のシナリオの確かめる手順（`expect`、`wait_until`）が、この構成（機種）では全部飛ぶ。シナリオは何も確かめずに通る（[scenario.md](scenario.md) の「機種とパラメーター」。シナリオのほかの `code` も scenario.md にあります） |
+| `usage` | 誤り | 引数の誤り（`--json` のときの JSON だけ）。機種を書いた構成に `--variant` がない、ない機種の名前、シナリオにない名前の `--param`、も含みます |
 | `internal` | 誤り | `vehicle_sil_launch` 自身の想定外の失敗（`--json` のときの JSON だけ） |
 
 - アドレスは、ノードを足したときに求めたアドレスです（[ecu-executable.md](ecu-executable.md) の `nodes`）。254（任意アドレスの範囲から空いているものを取る）は重なりとみなしません。同じアドレスを求めるノードについては、vehicle-sil の J1939 スタックの Address Claim で起きることを判定します。
@@ -165,6 +167,8 @@ failed: 3 errors, 1 warning, 0 notes
 | `result` | `"passed"`、`"failed"`、`"unreadable"`、`"usage"` |
 | `strict` | `--strict` を付けたか |
 | `errors`、`warnings`、`notes` | 誤り、警告、注記の数 |
+| `variant`、`variants` | 機種を書いた構成（`variants`）のときだけあります。`variant` は選んだ機種（`--variant`）、`variants` は構成にある機種の名前の配列。`--variant` がない、または名前が違うとき（`result` が `"usage"`）は、`variant` が `null` で、`variants` に選べる名前が出ます |
+| `params` | 構成に `params` があるときだけあります。共通の `params` に、選んだ機種の `params` を重ねたもの。要素は `name`、`value`（`true`・`false`、数、文字列）、`from`（`configuration` か `variant`） |
 | `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 構成ファイルの値（読めないときと、書いていない `stop_at_ms` と `registry_uri` は `null`。`start_timeout_ms` と `stop_timeout_ms` は既定の値も） |
 | `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`manual`（`--manual` を当てた後の値）、`step_ms`（なければ `null`）、`status`、`reported`、`variables`、`variable_map`（`variables` を書いた participant だけ）、`control` |
 | `participants[].status` | `"described"`（自己申告を読んだ）、`"not_checked"`（`describe: false`）、`"failed"`（実行ファイルがない、`--describe` の失敗）、`"skipped"`（構成ファイルの誤りで進めなかった）、`"disabled"`（外した。項目に誤りがあっても） |

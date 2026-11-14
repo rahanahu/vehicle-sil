@@ -62,6 +62,8 @@ participants:
 | `participants[].required` | | `true`（既定）か `false`。シミュレーションがその participant を待つか。`false` は `describe: false` の participant にだけ書けます。外していない participant のうち、少なくとも 1 つは `true` の participant が要ります（誤り `no-required-participant`） |
 | `participants[].enabled` | | `true`（既定）か `false`。`false` の participant は外します（照合も起動もしません。[participant を外す](#participant-を外すenabled--disable--enable)） |
 | `participants[].manual` | | `false`（既定）か `true`。`true` の participant は、`run` が起動せず、利用者が自分で起動します（デバッガーからなど。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)） |
+| `variants` | | 機種の対応（機種の名前 → 共通の部分との差分）。書いた構成は、`check` と `run` に `--variant <名前>` が要ります（[機種](#機種variants--variant)） |
+| `params` | | シナリオのパラメーターの値（名前 → 値）。シナリオの `${名前}` に入ります（[シナリオのパラメーター](#シナリオのパラメーターparams--param)） |
 | `participants[].variables` | | 変数の対応表。シミュレーションで使う名前から、この実行ファイルの変数への対応を書きます（[変数の名前と値を合わせる](#変数の名前と値を合わせるvariables)）。書いていない変数は、実行ファイルの名前のまま見えます |
 
 - 知らないキーはエラーです（打ち間違いを黙って無視しません）。近い名前があれば示します。同じキーを 2 回書くのもエラーです。
@@ -211,21 +213,70 @@ participants:
 - 書き込みは逆に直します（実行ファイルの値 = (書いた値 − `offset`) ÷ `scale`）。実行ファイルの変数が整数なら、最も近い整数に丸めます（ちょうど半分は 0 から遠いほうへ: 2.5 は 3、−2.5 は −3）。そのため、書いた値と読み戻した値は、丸めの分だけ違うことがあります。シナリオで比べるときは `near` と `tolerance` を使います。範囲の外の値は、実行ファイルに届く前に断ります。範囲に入っているかは、直した後の実行ファイルの値で決めます（シナリオの照合も同じ決め方です）。一覧に出る範囲の両端は、有効数字 15 桁に丸めた値です。
 - `map`: 型は列挙になり、項目は `map` に書いたものだけです。数は実行ファイルの値のままです。実行ファイルによって数が違っても、シナリオに名前で書けば（`engine.gear: D`）同じシナリオが使えます。`map` にない値は書けません。
 - 入力、出力、パラメーターの別は変わりません。
-- `absent: true` の変数は、どこにも見えません。その変数を使うシナリオは、照合で誤りになります。
+- `absent: true` の変数は、どこにも見えません。その変数を使うシナリオの手順は飛ばします（[scenario.md](scenario.md) の「機種とパラメーター」）。対応も `absent` も書いていない変数が実行ファイルになければ、シナリオの照合で誤りになります。
 
 照合（`check`、`run` の最初）は、対応の全部を実行ファイルの自己申告と比べます（`from` の変数があるか、形が型に合うか、`map` の値を変数が取れるか、名前がほかの変数と重ならないか。所見は [simulation-check.md](simulation-check.md) の `variable-map-*`）。合わない対応が 1 つでもあれば、`run` は何も起動しません。`check --json` の `participants[].variables` は対応の後の変数で、`participants[].variable_map` に両方の名前が出ます。
 
 `describe: false` の participant にも `variables` は書けますが、実行の前には比べられません（注記 `variable-map-not-checked`）。対応は、その participant の変数の口がつながったときに当てます。合わなかった対応は当てず、そのときに実行の行（`[vehicle_sil_launch] participant ...: variables: ...`、事象では `log`）で知らせ、終わりに実行の所見 `variable-map-not-applied`（誤り）にします。その実行の間、合わなかった対応の変数は実行ファイルの名前と値のまま読めますが、その対応の名前（キーと `from`）への書き込みは断ります（共通の名前のつもりで書いた値が、別の変数や変換なしの値として入るのを防ぐためです）。
 
+### 機種（`variants`、`--variant`）
+
+実行ファイルや変数の対応が機種ごとに違うときは、共通の部分を `participants` に書き、機種ごとの差分を `variants` に書きます。`check` と `run` は、`--variant <名前>` で選んだ機種の差分を共通の部分に重ねた構成を、照合し、実行します。シナリオは共通の名前だけを使うので、どの機種にも同じものを当てられます。
+
+```yaml
+participants:
+  - name: Engine
+    command: [./engine_small]
+    variables:
+      engine.turbo: { absent: true }
+  - name: Dashboard
+    command: [./dashboard]
+params: { idle_rpm: 800 }
+variants:
+  small: {}                           # 共通の部分のまま
+  medium:
+    participants:
+      Engine:
+        command: [./engine_medium]                   # 実行ファイルを替える
+        variables: { engine.turbo: turbo_bar }       # 対応を重ねる
+      Dashboard: { enabled: false }                  # この機種にはいない
+    params: { idle_rpm: 650 }                        # パラメーターを替える
+```
+
+| キー | 値 |
+|---|---|
+| `variants.<機種>` | その機種の差分。`{}`（か、値なし）は共通の部分のままです。機種の名前は、空でなく、1 行で、`-` で始まらないこと |
+| `variants.<機種>.participants.<participant>` | 共通の部分の participant の、この機種での違い。キーは participant 名で、`participants` にある名前だけを書けます（誤り `variant-participant`） |
+| `…<participant>.command` | 実行ファイルと引数。共通の `command` の全体を置き換えます。書き方と決まりは `participants[].command` と同じです |
+| `…<participant>.variables` | 変数の対応表。共通の `variables` に、対応 1 つずつ重ねます: 同じ名前（キー）の対応は置き換え、ない名前は足します |
+| `…<participant>.enabled` | `true` か `false`。共通の `enabled` を置き換えます |
+| `variants.<機種>.params` | パラメーター。共通の `params` に、名前ごとに重ねます |
+
+- 機種で変えられるのは、この 4 つ（`command`、`variables`、`enabled`、`params`）だけです。ほかのキーは誤りです（`unknown-key`）。ネットワーク、`step_ms`、`describe`、`required` などは、どの機種でも同じです。
+- 機種を書いた構成で `--variant` を省くと、引数の誤りです（終了コード 4。文に機種の一覧が出ます）。既定の機種はありません。機種のどれでもない名前の `--variant` も、引数の誤りです。構成ファイルの文面にほかの誤りがあっても、先にこれを出します（共通の部分だけを、機種の代わりに照合することはしません。文には、ファイルにも誤りがあることを足します）。機種のない構成への `--variant` も引数の誤りですが、こちらは `--disable` と同じで、文面に誤りがある間は言いません（`variants` を読めなかったせいかもしれないため）。
+- ある機種にだけいる participant は、`participants` に `enabled: false` で書き、その機種で `enabled: true` にします。
+- 対応を共通の部分より減らすことはできません。共通の対応が要らない機種では、同じ名前に、その機種の対応を書きます（`engine.speed: engine.speed` は、名前も値もそのままです）。
+- 読むときには、選んでいない機種も含めて、全部の機種の形を確かめます。実行ファイルとの照合は、選んだ機種だけです。
+- `--disable`、`--enable`、`--manual` は、機種を重ねた後に効きます。
+- `check --json` には、`variant`（選んだ機種）と `variants`（全部の名前）が出ます。`participants` は、機種を重ねた後のものです。
+
+### シナリオのパラメーター（`params`、`--param`）
+
+シナリオの中の数（しきい値、待ち時間、入れる値）を機種ごとに替えるときは、シナリオに `${名前}` と書き、値を `params` に書きます。値は、数、`true`・`false`、文字列のどれかです（1 つの値。配列や対応は書けません）。名前は、英数字と `_`（数字で始めない）です。
+
+値は、後のものが前のものを置き換えます: シナリオの `params`（既定）、構成の `params`、機種の `params`、引数の `--param <名前>=<値>`。`--param` は `--scenario` と一緒にだけ使えます。シナリオが使っていない名前の `--param` は引数の誤りです（終了コード 4。打ち間違いを黙って無視しません）。構成と機種の `params` には、シナリオが使わない名前があってもかまいません（1 つの構成で、いくつものシナリオを回すため）。書き方と誤りは [scenario.md](scenario.md) の「機種とパラメーター」にあります。
+
 ## 引数と終了コード
 
 ```text
-vehicle_sil_launch check [--json] [--strict] [--scenario <file>] [--describe-timeout-ms <ms>] [--disable <name>]...
+vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
+                         [--describe-timeout-ms <ms>] [--disable <name>]...
                          [--enable <name>]... [--manual <name>]... [--] <file>
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
-                       [--scenario <file>] [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
+                       [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
+                       [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--manual <name>]...
                        [--] <file>
 vehicle_sil_launch version [--json]
@@ -243,6 +294,8 @@ vehicle_sil_launch version [--json]
 | `--control-tls-cert <file>`、`--control-tls-key <file>` | `--control` だけ。サーバーの証明書の鎖と秘密鍵（PEM）。2 つ一緒に付けると TLS |
 | `--control-audit-log <file>` | `--control` だけ。誰が何を変えたかを追記する |
 | `--scenario <file>` | シナリオのファイル（[scenario.md](scenario.md)）。`check` では照合だけ、`run` では照合してから実行する。シナリオが終わるとシミュレーションを止め、手順が失敗していれば実行は失敗。`--start-paused` と一緒には使えない。`--control` と一緒なら、クライアントは見るだけ（[scenario.md](scenario.md) の「実行中に変数を見る」） |
+| `--variant <name>` | 構成の機種を選ぶ（[機種](#機種variants--variant)）。機種を書いた構成には必ず要る。機種のない構成には付けられない |
+| `--param <name>=<value>` | `--scenario` と一緒にだけ。シナリオのパラメーター `${name}` の値（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。繰り返せる（同じ名前は 1 回だけ） |
 | `--speed <speed>` | `run` だけ。構成ファイルの `speed` を上書きする（数か `max`。[等速で動かす](simulation-run.md#等速で動かす)） |
 | `--strict` | 警告があっても失敗にする（注記では失敗にしない） |
 | `--log-dir <dir>` | `run` だけ。participant ごとの出力のファイルを置くディレクトリ |
@@ -260,7 +313,7 @@ vehicle_sil_launch version [--json]
 | 0 | 誤りがない（警告と注記だけなら 0。`--strict` では警告もない）。`run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった |
 | 1 | 誤りがある（`--strict` では警告も）。`run` では、照合の誤り（何も起動しない）か、実行の誤り（participant が失敗した、そろわなかった、止めても終わらなかったなど） |
 | 3 | 構成ファイルを読めない（ファイルがない、文法の誤り、知らない形式の版など）。`run` で registry や controller を用意できないときも 3 です。結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です（標準エラーに理由。`--json` では、そのコマンドの形の JSON に `code` が `internal` の誤り） |
-| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` も `--control` もない `--start-paused`、`--control` なしの `--control-credentials` などと Control Server を持たないビルドの `--control`、`--control` の値の誤り、読めない `--control-*` のファイル、認証情報が 1 件もない `--control-credentials` のファイル、片方だけの `--control-tls-cert` と `--control-tls-key`、TLS と認証情報のない、ループバックでない `--control`、数でも `max` でもない `--speed`、`--start-paused` と一緒の `--scenario`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*`、構成ファイルにない participant 名の `--disable`、`--enable`、`--manual`、同じ名前の `--disable` と `--enable`、同じ名前の `--disable` と `--manual`）。誤りと使い方を標準エラーに書きます |
+| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` も `--control` もない `--start-paused`、`--control` なしの `--control-credentials` などと Control Server を持たないビルドの `--control`、`--control` の値の誤り、読めない `--control-*` のファイル、認証情報が 1 件もない `--control-credentials` のファイル、片方だけの `--control-tls-cert` と `--control-tls-key`、TLS と認証情報のない、ループバックでない `--control`、数でも `max` でもない `--speed`、`--start-paused` と一緒の `--scenario`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*`、構成ファイルにない participant 名の `--disable`、`--enable`、`--manual`、同じ名前の `--disable` と `--enable`、同じ名前の `--disable` と `--manual`、機種を書いた構成で `--variant` がない、機種のどれでもない名前の `--variant`、形の違う `--param`、`--scenario` なしの `--param`、シナリオにない名前の `--param`）。誤りと使い方を標準エラーに書きます |
 | 130 | `run` が中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力、Control Server のクライアントの `Stop` など） |
 
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。

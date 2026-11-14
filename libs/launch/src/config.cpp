@@ -23,7 +23,15 @@ namespace {
 
 const std::vector<std::string> kTopKeys = {"vehicle_sil_simulation", "stop_at_ms", "start_timeout_ms", "stop_timeout_ms",
                                            "registry_uri", "time_step_ms", "speed", "late_tolerance_ms", "networks",
-                                           "participants"};
+                                           "participants", "variants", "params"};
+/// What a variant may write: its own keys, and the keys of one participant in it. A new thing a
+/// variant can change gets its key here, a member of VariantParticipant (or VariantConfig), a
+/// branch in read_variant() and a line in apply_variant().
+const std::vector<std::string> kVariantKeys = {"participants", "params"};
+const std::vector<std::string> kVariantParticipantKeys = {"command", "variables", "enabled"};
+constexpr const char* kVariantsForm =
+    "variants: { small: {}, medium: { participants: { Engine: { command: [./engine_medium] } }, params: { idle_rpm: "
+    "650 } } }";
 
 /// What a speed is, in messages.
 constexpr const char* kSpeedMeaning =
@@ -206,6 +214,7 @@ public:
         bool hasParticipants = false;
         std::size_t participantsLine = 0;
         std::size_t timeStepLine = 0;
+        ryml::id_type variantsNode = ryml::NONE;
         std::map<std::string, std::size_t> seen;
         for (auto child = tree_.first_child(root); child != ryml::NONE; child = tree_.next_sibling(child))
         {
@@ -214,7 +223,15 @@ public:
             {
                 continue;
             }
-            if (key == "vehicle_sil_simulation")
+            if (key == "variants")
+            {
+                variantsNode = child; // read after the participants it changes
+            }
+            else if (key == "params")
+            {
+                config.params = read_params(child, "", ParamSource::Configuration);
+            }
+            else if (key == "vehicle_sil_simulation")
             {
                 hasVersion = true;
                 std::int64_t version = 0;
@@ -320,6 +337,10 @@ public:
                       "multiple of time_step_ms, or leave time_step_ms out");
         }
         config.participants_line = participantsLine;
+        if (variantsNode != ryml::NONE)
+        {
+            read_variants(variantsNode, config);
+        }
         return config;
     }
 
@@ -719,6 +740,174 @@ private:
             participant.name = who;
             participant.valid = usable;
             config.participants.push_back(std::move(participant));
+        }
+    }
+
+    // --- variants ---
+
+    void read_variants(ryml::id_type node, SimulationConfig& config)
+    {
+        if (!tree_.is_map(node) || tree_.num_children(node) == 0)
+        {
+            error("value", doc_.line(node),
+                  std::string("variants must be a mapping of variant names to what each changes of the common part (") +
+                      kVariantsForm + "), not " + (tree_.is_map(node) ? std::string("an empty mapping") : shown_value(node)) +
+                      "; for a simulation without variants, remove variants");
+            return;
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            VariantConfig variant;
+            variant.name = detail::to_string(tree_.key(child));
+            variant.line = doc_.line(child);
+            if (!first_occurrence(seen, variant.name, child, "variants: "))
+            {
+                continue;
+            }
+            const bool plain = std::none_of(variant.name.begin(), variant.name.end(), [](char c) {
+                return static_cast<unsigned char>(c) < 0x20 || c == 0x7F;
+            });
+            if (variant.name.empty() || variant.name.front() == '-' || !plain)
+            {
+                error("value", variant.line,
+                      "variants: a variant's name must be a text on one line that does not start with '-' (it is given "
+                      "with --variant), not '" + variant.name + "'");
+                continue;
+            }
+            read_variant(child, "variant '" + variant.name + "': ", config, variant);
+            config.variants.push_back(std::move(variant));
+        }
+    }
+
+    /// What one variant changes. A variant with an error stays in the list (its name is known).
+    void read_variant(ryml::id_type node, const std::string& prefix, const SimulationConfig& config, VariantConfig& variant)
+    {
+        if (is_null(node))
+        {
+            return; // "small:" is the common part as it is, as "small: {}"
+        }
+        if (!tree_.is_map(node))
+        {
+            error("value", doc_.line(node),
+                  prefix + "must be a mapping of what the variant changes (" + join(kVariantKeys) +
+                      "), or {} for the common part as it is, not " + shown_value(node));
+            return;
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            const std::string key = detail::to_string(tree_.key(child));
+            if (!first_occurrence(seen, key, child, prefix))
+            {
+                continue;
+            }
+            if (key == "participants")
+            {
+                read_variant_participants(child, prefix, config, variant);
+            }
+            else if (key == "params")
+            {
+                variant.params = read_params(child, prefix, ParamSource::Variant);
+            }
+            else
+            {
+                unknown_key(child, key, prefix, kVariantKeys);
+            }
+        }
+    }
+
+    void read_variant_participants(ryml::id_type node, const std::string& prefix, const SimulationConfig& config,
+                                   VariantConfig& variant)
+    {
+        if (!tree_.is_map(node))
+        {
+            error("value", doc_.line(node),
+                  prefix + "participants must be a mapping of the participants' names to what the variant changes of each "
+                           "(participants: { Engine: { command: [./engine_medium] } }), not " + shown_value(node));
+            return;
+        }
+        std::vector<std::string> names;
+        for (const auto& p : config.participants)
+        {
+            if (!p.name.empty())
+            {
+                names.push_back(p.name);
+            }
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            VariantParticipant change;
+            change.name = detail::to_string(tree_.key(child));
+            change.line = doc_.line(child);
+            if (!first_occurrence(seen, change.name, child, prefix + "participants: "))
+            {
+                continue;
+            }
+            const auto base = std::find_if(config.participants.begin(), config.participants.end(),
+                                           [&change](const ParticipantConfig& p) { return !p.name.empty() && p.name == change.name; });
+            if (base == config.participants.end())
+            {
+                const std::string guess = detail::closest(change.name, names);
+                error("variant-participant", change.line,
+                      prefix + "participants has '" + change.name + "', but the file's participants has no participant with "
+                               "this name" + (guess.empty() ? "" : " (did you mean '" + guess + "'?)") +
+                          ": a variant changes the participants of the common part (for a participant of this variant "
+                          "only, list it there with enabled: false and write enabled: true here)" +
+                          (names.empty() ? std::string{} : "; the participants are " + join(names)));
+                continue;
+            }
+            const std::string who = change.name;
+            const std::string at = prefix + "participant '" + who + "': ";
+            if (!tree_.is_map(child))
+            {
+                error("value", change.line,
+                      at + "must be a mapping of what the variant changes of it (" + join(kVariantParticipantKeys) + "), not " +
+                          shown_value(child),
+                      who);
+                continue;
+            }
+            std::map<std::string, std::size_t> keys;
+            for (auto part = tree_.first_child(child); part != ryml::NONE; part = tree_.next_sibling(part))
+            {
+                const std::string key = detail::to_string(tree_.key(part));
+                if (!first_occurrence(keys, key, part, at))
+                {
+                    continue;
+                }
+                if (key == "command")
+                {
+                    // Read and checked as the common one, for the participant's describe.
+                    ParticipantConfig with;
+                    with.name = who;
+                    with.describe = base->describe;
+                    with.command_line = doc_.line(part);
+                    read_command(part, at, who, with);
+                    change.command_line = with.command_line;
+                    change.valid = !with.command.empty() && check_arguments(at, who, with);
+                    if (!with.command.empty())
+                    {
+                        change.command = std::move(with.command);
+                    }
+                }
+                else if (key == "variables")
+                {
+                    ParticipantConfig with;
+                    read_variables(part, at, who, with);
+                    change.variables = std::move(with.variables);
+                    change.variable_lines = std::move(with.variable_lines);
+                }
+                else if (key == "enabled")
+                {
+                    change.enabled = boolean(part, at, key, who);
+                }
+                else
+                {
+                    unknown_key(part, key, at, kVariantParticipantKeys);
+                }
+            }
+            variant.participants.push_back(std::move(change));
         }
     }
 
@@ -1141,6 +1330,7 @@ std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOver
         else if (named(overrides.enable))
         {
             p.enabled = true;
+            p.left_out_by_variant = false;
         }
         if (named(overrides.manual))
         {
@@ -1148,6 +1338,106 @@ std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOver
         }
     }
     return errors;
+}
+
+/// Lays `variant` over the common part of `config`: every key a variant may write (see
+/// kVariantParticipantKeys).
+void apply_variant(SimulationConfig& config, const VariantConfig& variant)
+{
+    config.variant = variant.name;
+    for (const VariantParticipant& change : variant.participants)
+    {
+        const auto p = std::find_if(config.participants.begin(), config.participants.end(),
+                                    [&change](const ParticipantConfig& c) { return c.name == change.name; });
+        if (p == config.participants.end())
+        {
+            continue;
+        }
+        if (change.command)
+        {
+            p->command = *change.command;
+            p->command_line = change.command_line;
+        }
+        p->valid = p->valid && change.valid;
+        for (std::size_t i = 0; i < change.variables.size(); ++i)
+        {
+            const auto same = std::find_if(p->variables.begin(), p->variables.end(), [&](const control::VariableMapping& m) {
+                return m.name == change.variables[i].name;
+            });
+            if (same == p->variables.end())
+            {
+                p->variables.push_back(change.variables[i]);
+                p->variable_lines.push_back(change.variable_lines[i]);
+            }
+            else
+            {
+                p->variable_lines[static_cast<std::size_t>(same - p->variables.begin())] = change.variable_lines[i];
+                *same = change.variables[i];
+            }
+        }
+        if (change.enabled)
+        {
+            p->enabled = *change.enabled;
+            p->left_out_by_variant = !*change.enabled;
+        }
+    }
+    for (const ParamValue& param : variant.params)
+    {
+        const auto same = std::find_if(config.params.begin(), config.params.end(),
+                                       [&param](const ParamValue& c) { return c.name == param.name; });
+        if (same == config.params.end())
+        {
+            config.params.push_back(param);
+        }
+        else
+        {
+            *same = param;
+        }
+    }
+}
+
+/// Applies --variant to `config` and returns its usage errors. A file that defines variants needs
+/// one of them: no --variant and a name that is none of them are errors whatever else is wrong
+/// with the text (checking the common part alone would be a check of no variant). A --variant
+/// for a file without variants is an error only if `check_names` (as for apply_overrides()).
+std::vector<Finding> choose_variant(SimulationConfig& config, const std::optional<std::string>& variant, bool check_names)
+{
+    std::vector<std::string> names;
+    for (const auto& v : config.variants)
+    {
+        names.push_back(v.name);
+    }
+    if (!variant)
+    {
+        if (names.empty())
+        {
+            return {};
+        }
+        return {usage("the file defines variants, and a check or a run is of one of them: give --variant <name> with one of " +
+                      join(names) + " (none of them is the default)")};
+    }
+    const auto chosen = std::find_if(config.variants.begin(), config.variants.end(),
+                                     [&variant](const VariantConfig& v) { return v.name == *variant; });
+    if (chosen != config.variants.end())
+    {
+        apply_variant(config, *chosen);
+        return {};
+    }
+    if (names.empty())
+    {
+        if (!check_names)
+        {
+            return {}; // the errors of the text may be why no variant could be read
+        }
+        return {usage("--variant " + *variant +
+                      ": the file defines no variants: leave --variant out, or add variants to the file "
+                      "(docs/simulation-config.md)")};
+    }
+    const std::string guess = detail::closest(*variant, names);
+    return {usage("--variant " + *variant + ": the file has no variant with this name" +
+                  (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its variants are " + join(names) +
+                  // Not said by anything else: a usage error stands alone.
+                  (check_names ? "" : "; the file has errors too, which a check with one of these variants reports"))};
 }
 
 /// The simulation waits for its required participants: at least one enabled participant must be
@@ -1221,6 +1511,36 @@ std::vector<Finding> override_conflicts(const EnabledOverrides& overrides)
     return out;
 }
 
+const char* param_source_name(ParamSource source)
+{
+    switch (source)
+    {
+    case ParamSource::Scenario: return "scenario";
+    case ParamSource::Configuration: return "configuration";
+    case ParamSource::Variant: return "variant";
+    case ParamSource::CommandLine: return "command_line";
+    }
+    return "configuration";
+}
+
+const char* param_source_text(ParamSource source)
+{
+    switch (source)
+    {
+    case ParamSource::Scenario: return "the scenario's params";
+    case ParamSource::Configuration: return "the configuration's params";
+    case ParamSource::Variant: return "the variant's params";
+    case ParamSource::CommandLine: return "--param";
+    }
+    return "the configuration's params";
+}
+
+bool is_param_name(std::string_view name)
+{
+    return !name.empty() && std::isdigit(static_cast<unsigned char>(name.front())) == 0 &&
+           std::all_of(name.begin(), name.end(), [](char c) { return is_word_char(c); });
+}
+
 bool waits_for_manual(const SimulationConfig& config)
 {
     return std::any_of(config.participants.begin(), config.participants.end(),
@@ -1283,7 +1603,11 @@ ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides)
         {
             const bool textHasErrors = std::any_of(out.findings.begin(), out.findings.end(),
                                                    [](const Finding& f) { return f.severity == Severity::Error; });
-            out.override_errors = apply_overrides(*out.config, overrides, !textHasErrors);
+            out.override_errors = choose_variant(*out.config, overrides.variant, !textHasErrors);
+            if (out.override_errors.empty())
+            {
+                out.override_errors = apply_overrides(*out.config, overrides, !textHasErrors);
+            }
             check_required(*out.config, out.findings);
         }
     }
