@@ -14,7 +14,7 @@ target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_S
                            # test_shared_values.cpp reads the GUI's sources.
                            VEHICLE_SIL_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
-# vehicle_sil_launch check as a process: the examples of docs/simulation-config.md with the ECU
+# vehicle_sil_launch check as a process: the examples of docs/simulation-*.md with the ECU
 # executables of examples/ecu_main, executables that fail --describe (the helper of
 # tests/process), --strict, files that cannot be read, the command line.
 if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
@@ -32,10 +32,10 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --engine $<TARGET_FILE:vehicle_sil_engine_ecu>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
          --example-config ${PROJECT_SOURCE_DIR}/examples/ecu_main/simulation.yaml
-         --docs ${PROJECT_SOURCE_DIR}/docs/simulation-config.md)
+         --docs ${PROJECT_SOURCE_DIR}/docs)
 endif()
 
-# vehicle_sil_launch run as a process: the example of examples/ecu_main and docs/simulation-config.md,
+# vehicle_sil_launch run as a process: the example of examples/ecu_main and docs/simulation-*.md,
 # and an ecu_main executable that misbehaves as a file in its working directory says
 # (run_test_ecu.cpp), with the helper of tests/process.
 if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
@@ -70,7 +70,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
-         --docs ${PROJECT_SOURCE_DIR}/docs/simulation-config.md)
+         --docs ${PROJECT_SOURCE_DIR}/docs)
   # Alone: it says that an idle simulation is not late at speed 1 within the default tolerance,
   # which is a bound on real time (the other scenarios have bounds on one side only).
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
@@ -81,7 +81,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
-         --docs ${PROJECT_SOURCE_DIR}/docs/simulation-config.md
+         --docs ${PROJECT_SOURCE_DIR}/docs
     RUN_SERIAL)
 endif()
 

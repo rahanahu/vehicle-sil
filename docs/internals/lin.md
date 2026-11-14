@@ -1,6 +1,6 @@
 # LIN を仮想時間で動かす（`vehicle_sil::lin`）
 
-vehicle-sil 自体を直す人と、LIN の Master と Slave の規則と制約を確かめたい人向けです。使い方の例は README の「[LIN](../../README.md#lin)」にあります。
+vehicle-sil 自体を直す人と、LIN の Master と Slave の規則と制約を確かめたい人向けです。使い方の例は [lin-guide.md](../lin-guide.md) にあります。 先に [architecture.md](../architecture.md)（全体の形）と [code-map.md](../code-map.md)（どこに何があるか）を読みます。ほかの中の仕組みの文書は、architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」にあります。
 
 `vehicle_sil::lin` は `vehicle_sil::sim_base` だけに依存し、SIL Kit にも J1939 にも依存しません（CTest の `lin.boundary` が、ソースとヘッダーが SIL Kit を含まないことを確かめます）。エンジン（`LinMaster`、`LinSlave`）は、ポート（`LinPort`）だけを通してバスに触れます。ポートの実装は 2 つです。プロセス内の `VirtualLinBus`（同じライブラリ）と、SIL Kit の LIN コントローラ（trivial simulation）の上の `SilKitLinPort`（`vehicle_sil::lin_silkit`）です。`Ecu::lin_master()` と `Ecu::lin_slave()` は、実行する場所に合ったポートの上にノードを作ります（`LocalBench` は仮想バス、`Peer` は SIL Kit）。ファイルは役割ごとに分けています。
 

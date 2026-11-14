@@ -2,7 +2,7 @@
 //
 // The machine interface of vehicle_sil_launch: the events of `run --events` (one JSON object per
 // line), the commands of `run --stdin-commands` (one JSON object per line on standard input) and
-// `version --json`. Internal; the format: docs/simulation-config.md ("機械から使う").
+// `version --json`. Internal; the format: docs/simulation-events.md.
 #pragma once
 
 #include "vehicle_sil/launch/check.hpp"

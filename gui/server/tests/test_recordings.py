@@ -1,5 +1,5 @@
 """The recordings (recordings/) and the program that plays them (replay_launcher.py), without a real launcher: what
-a recording may hold, that each replays as the event stream docs/simulation-config.md promises, that each is of
+a recording may hold, that each replays as the event stream docs/simulation-events.md promises, that each is of
 the text of its configuration as it is now, and what the program says when no recording fits.
 (test_real_launcher.py compares the recordings with the real launcher when there is one.)"""
 
@@ -61,7 +61,7 @@ def test_every_recording_is_of_its_configuration_as_it_is_now() -> None:
 
 
 def check_rules(events: list[dict]) -> None:
-    """What docs/simulation-config.md promises about every stream."""
+    """What docs/simulation-events.md promises about every stream."""
     assert events and events[0]["event"] == "hello" and events[-1]["event"] == "result"
     assert [e["seq"] for e in events] == list(range(len(events))), "seq goes up by one from 0"
     assert all(a["t_ms"] <= b["t_ms"] for a, b in zip(events, events[1:])), "t_ms does not go back"

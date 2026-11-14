@@ -5,8 +5,8 @@ ECU を書く人向けです。先に [j1939-guide.md](j1939-guide.md)（ノー�
 PG の信号を YAML で定義すると、ビルドのときに C++ の型ができます。アプリはビット位置やスケーリングを書かずに、信号を値として読み書きします。送受信はこれまでどおりノードと部品（`PeriodicSender`、`Monitor` など）が行い、Codec はバイト列との変換だけを受け持ちます。API はまだ変わることがあります。
 
 ```cpp
-codec::attach_sender<EngineStatus>(ecu, 20ms, [&](EngineStatus& m) { m.speed.set(engine.rpm); });
-codec::on_message<SpeedRequest>(ecu, [&](const SpeedRequest& m) {
+codec::attach_sender<EngineStatus>(node, 20ms, [&](EngineStatus& m) { m.speed.set(engine.rpm); });
+codec::on_message<SpeedRequest>(node, [&](const SpeedRequest& m) {
     if (const auto rpm = m.speed.value()) { engine.requested = static_cast<std::uint16_t>(*rpm); }   // "not available" なら値はない
 });
 ```
@@ -160,7 +160,7 @@ indicator_profiles:
 | 32 ビット unsigned | 0x00000000〜0xFAFFFFFF | 0xFB000000〜0xFBFFFFFF | 0xFC000000〜0xFDFFFFFF | 0xFE000000〜0xFEFFFFFF（0xFE000000） | 0xFF000000〜0xFFFFFFFF（0xFFFFFFFF） |
 | 2 ビット unsigned | 0、1 | — | — | 2 | 3 |
 
-ほかの長さ（1 ビット、3〜7 ビット、24 ビット、64 ビットなど）と signed の信号には規則がありません。規格での扱いを確かめていない長さに、推測した規則は当てません。要るときは、ファイルで `j1939` を定義し直すか、信号に `special_values` を書きます。表の値は広く使われている慣行に合わせたもので、規格の本文とは照合していません（末尾の「確かめていない点」）。
+ほかの長さ（1 ビット、3〜7 ビット、24 ビット、64 ビットなど）と signed の信号には規則がありません。規格での扱いを確かめていない長さに、推測した規則は当てません。要るときは、ファイルで `j1939` を定義し直すか、信号に `special_values` を書きます。表の値は広く使われている慣行に合わせたもので、規格の本文とは照合していません（末尾の「規格との一致」）。
 
 #### 標準の J1939 と Proprietary B の使い分け
 
@@ -287,7 +287,7 @@ if (const auto v = m.speed.value()) {
 | `codec::attach_sender<M>(node, period, fill, options)` | `PeriodicSender` を付ける。送るたびに新しい `M`（Not Available のある信号は Not Available、ない信号は raw 0）を作り、`fill(M&)` で信号を設定して送る。優先度は `M::kPriority` で、`options.priority` は既定値（6）のままか `M::kPriority` にする（違えば `std::invalid_argument`）。バッファは `M::kLength` 以上にする |
 | `codec::encoder<M>(fill)` | 同じことをする `PeriodicSender::Encoder`（自分で `PeriodicSender` を作るとき。`max_length` は `M::kLength` 以上にする） |
 | `codec::on_message<M>(node, handler)` | `M` の PGN を受けて decode できたものだけを `handler(const M&)` か `handler(const M&, const Message&)` に渡す。短いものとセレクターの違うものは渡さない（見るときは `node.on_message()` と `M::decode()`）。戻り値の `HandlerId` で解除する |
-| `codec::send(node, message, destination)` | `node.send(M::kPgn, message.bytes(), destination, M::kPriority)` |
+| `codec::send(node, message, destination, when_busy)` | `node.send(M::kPgn, message.bytes(), destination, M::kPriority, when_busy)`（`when_busy` の既定は `WhenBusy::Fail`） |
 | `codec::decode<M>(message)` | `message.pgn` が `M::kPgn` のときだけ `M::decode(message.data)`（ほかは空）。いろいろな PGN が来る所（`Exchange` の `match` など）で使う |
 
 - `Monitor` の最新の受信は `M::decode(monitor.data())`（同じ PGN に別の型が載るなら、`MonitorOptions::accept` で `codec::decode<M>(message)` が通るものだけにする）、`Requester` の応答は `M::decode(result.data)` で読みます（まだ受けていなければ空）。

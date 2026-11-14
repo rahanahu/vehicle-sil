@@ -1,8 +1,8 @@
 # ECU をまとめて動かす
 
-まとめる人向けの手引きです。前に読む文書はありません（ECU の実行ファイルが持つ引数と `--describe` は、[ecu-executable.md](../ecu-executable.md) の冒頭と「引数」にあります）。次は [simulation-config.md](../simulation-config.md)（構成ファイルのキー、照合と実行の規則の正本）で、外から操作するなら [control-api.md](../control-api.md)、ブラウザで見るなら [gui.md](../gui.md) です。
+まとめる人向けの手引きです。前に読む文書はありません（ECU の実行ファイルが持つ引数と `--describe` は、[ecu-executable.md](../ecu-executable.md) の冒頭と「引数」にあります）。次は [simulation-config.md](../simulation-config.md)（構成ファイルのキー）、[simulation-check.md](../simulation-check.md)（照合）、[simulation-run.md](../simulation-run.md)（実行）の規則の正本で、外から操作するなら [control-api.md](../control-api.md)、ブラウザで見るなら [gui.md](../gui.md) です。
 
-何人かが別々に作った ECU の実行ファイルを、構成ファイル 1 つにまとめ、照合して食い違いを見つけ、動かして止めるまでの順番です。手引きに書くのは手順と読み方だけです。キー、`code`、出力の形の正本は simulation-config.md です。
+何人かが別々に作った ECU の実行ファイルを、構成ファイル 1 つにまとめ、照合して食い違いを見つけ、動かして止めるまでの順番です。手引きに書くのは手順と読み方だけです。キー、`code`、出力の形の正本は simulation-config.md、simulation-check.md、simulation-run.md です。
 
 例には [examples/ecu_main](../../examples/ecu_main) の 2 つの ECU（`vehicle_sil_engine_ecu`、`vehicle_sil_dashboard_ecu`）と、それをまとめる [examples/ecu_main/simulation.yaml](../../examples/ecu_main/simulation.yaml) を使います。ECU の書き方は [最初の ECU を作る](first-ecu.md) にあります。
 
@@ -29,7 +29,7 @@ flowchart LR
 | J1939 のアドレスと NAME | ネットワークごとに、どの ECU のノードがどのアドレスを求めるかを表にして配ります。NAME も ECU ごとに変えます（例では identity number と Manufacturer Code。Manufacturer Code の 0x7F0 は例の仮の値です）。254 は任意アドレスの範囲から取るノードで、重なりとみなしません | `address-conflict`、`address-shared`、`name-conflict` |
 | 変数の名前 | ECU の中で重ならないこと。`peer.` と `ecu.` で始められません（`ecu.connected` はどの ECU にもあります）。`j1939.<ネットワークの名前>.` で始まる名前は、監視の出力とぶつかることがあるので避けます。例では ECU の役割を前に付けています（`engine.throttle`、`dashboard.engine_speed`） | ECU の組み立ての例外（`--describe` が終了コード 3）。監視の出力とぶつかると、SIL Kit で始めるときに ECU が終了コード 3 |
 
-- 同じ ECU を 2 つ載せるとき、`--name` で変わるのは participant 名だけです。J1939 の NAME、アドレス、変数の名前は同じなので、照合が `name-conflict` を出します（[simulation-config.md](../simulation-config.md) の「人向け」の `two-engines.yaml` の例）。NAME は ECU のビルドに入っているので、ECU を書く人が直します（下の「同じ ECU を 2 つ載せる」）。
+- 同じ ECU を 2 つ載せるとき、`--name` で変わるのは participant 名だけです。J1939 の NAME、アドレス、変数の名前は同じなので、照合が `name-conflict` を出します（[simulation-check.md](../simulation-check.md) の「人向け」の `two-engines.yaml` の例）。NAME は ECU のビルドに入っているので、ECU を書く人が直します（下の「同じ ECU を 2 つ載せる」）。
 - 決まりの詳細は、participant 名とネットワークが [simulation-config.md](../simulation-config.md) の「構成ファイル」、アドレスと NAME の判定が同じ文書の「照合」の表、変数の名前が [ecu-executable.md](../ecu-executable.md) の「`Ecu::describe()`」にあります。
 
 ### 同じ ECU を 2 つ載せる
@@ -58,7 +58,7 @@ flowchart LR
 
 ## 構成ファイルを書く
 
-例の [examples/ecu_main/simulation.yaml](../../examples/ecu_main/simulation.yaml) が、2 つの ECU をまとめる最小の形です（全文は [最初の ECU を作る](first-ecu.md) の「構成ファイルに入れる」にあります）。
+例の [examples/ecu_main/simulation.yaml](../../examples/ecu_main/simulation.yaml) が、2 つの ECU をまとめる最小の形です（全文は [simulation-config.md](../simulation-config.md) の「構成ファイル」にあります）。
 
 - `participants[].command` の相対パスは、構成ファイルのあるディレクトリから数えます。構成ファイルと実行ファイルを同じディレクトリの下にまとめておけば、置き場所を変えても同じファイルが使えます。Windows では `.exe` を書かなくても見つけます。
 - `participants[].step_ms` を書くと、ECU が申告するステップ幅と照合します。ECU を書く人から聞いた値を書いておくと、ECU が変わったときに気づけます。
@@ -98,11 +98,11 @@ passed: 0 errors, 1 warning, 1 note
 - 所見は 1 行に 1 つで、`<重さ>: <ファイル>:<行>: <何が、どの値で、どう直すか>` の形です。行は構成ファイルの行です。
 - 重さは 3 つです。`error` は照合を失敗にします（`run` は何も起動しません）。`warning` は `--strict` のときだけ失敗にします。`note` は失敗にしません。照合が確かめられなかったこと、外したことを知らせます。
 - 最後の行が結果と数です。終了コードは、通れば 0、誤りがあれば 1 です。
-- 誤りのある例（同じ ECU を 2 つ、ステップ幅の食い違い、キーの打ち間違い）は、[simulation-config.md](../simulation-config.md) の「人向け」の `two-engines.yaml` にあります。
+- 誤りのある例（同じ ECU を 2 つ、ステップ幅の食い違い、キーの打ち間違い）は、[simulation-check.md](../simulation-check.md) の「人向け」の `two-engines.yaml` にあります。
 
 ### 所見ごとの直す人
 
-所見の `code` は `--json` の出力にあります（一覧と意味は [simulation-config.md](../simulation-config.md) の「照合」の表）。よく出るものと、直す人の目安です。
+所見の `code` は `--json` の出力にあります（一覧と意味は [simulation-check.md](../simulation-check.md) の「照合」の表）。よく出るものと、直す人の目安です。
 
 | `code` | 直す人 | すること |
 |---|---|---|
@@ -127,7 +127,7 @@ vehicle_sil_launch run simulation.yaml --log-dir logs --timeout-ms 60000
 - 通れば、registry と controller を自分のプロセスの中に立て、ECU を起動し、`stop_at_ms` まで動かして、結果を書きます。出力の例は [最初の ECU を作る](first-ecu.md) の「動かす」にあります。participant の表の `ended` の列で、各 ECU がどう終わったかを見ます。
 - `--log-dir logs` で、ECU ごとの出力が `logs/<participant 名>.log` にも残ります。何も付けなければ、標準エラーに `[<participant 名>] ` を付けて流れます。
 - ステップの中で止まった ECU がいると、仮想時間が進まず、`stop_at_ms` があっても終わりません。CI では `--timeout-ms` で実時間の上限を付けます。
-- 実行で出る所見（`participant-failed`、`not-joined`、`did-not-end` など）と、見張りの規則は [simulation-config.md](../simulation-config.md) の「見張ること」と「出力」の表にあります。どれも、どの participant かを文言に書きます。
+- 実行で出る所見（`participant-failed`、`not-joined`、`did-not-end` など）と、見張りの規則は [simulation-run.md](../simulation-run.md) の「見張ること」と「出力」の表にあります。どれも、どの participant かを文言に書きます。
 
 ## ECU を外す（`enabled`、`--disable`）
 
@@ -150,7 +150,7 @@ vehicle_sil_launch run simulation.yaml --disable Dashboard
 - Ctrl+C で、シミュレーションを順に止め、ECU を終わらせて、結果を書きます（終了コード 130）。2 回目の Ctrl+C は待たずに強制終了します。
 - プログラムから止めるときは、`--stdin-commands` を付けて、標準入力に `{"command":"stop"}` を書くか、標準入力を閉じます。
 - どの止め方でも、ランチャーは起動した ECU と、ECU が起動したプロセスを終わらせてから終わります。シミュレーションが終わっても自分で終わらない必須の ECU は、止まるよう求めてから強制終了し、`did-not-end` の誤りにします。
-- 順番と待つ時間は [simulation-config.md](../simulation-config.md) の「止め方」「中断（Ctrl+C）」「participant を残さないこと」にあります。
+- 順番と待つ時間は [simulation-run.md](../simulation-run.md) の「止め方」「中断（Ctrl+C）」「participant を残さないこと」にあります。
 
 ## 機械から使う（`--json`、`--events`）
 
@@ -167,7 +167,7 @@ vehicle_sil_launch run --events --stdin-commands simulation.yaml
 - `run --events` は、経過を 1 行に 1 つの JSON（NDJSON）で書きます。最初が `hello`、最後が `result` で、`result` は `run --json` と同じです。`--json` と一緒には付けられません。
 - 見届けるプログラムは `--stdin-commands` も付けます。プログラムが止まると標準入力が閉じ、ランチャーも順に止まります。
 - 版の違うランチャーを相手にするときは、`version --json` の `features` に名前があるかで、できることを確かめます。
-- 事象の種類、順序の約束、読む側が守ることは [simulation-config.md](../simulation-config.md) の「機械から使う」にあります。Python からは `Launch`（[control-api.md](../control-api.md) の「Python」）が、この形でランチャーを起動します。
+- 事象の種類、順序の約束、読む側が守ることは [simulation-events.md](../simulation-events.md) の「機械から使う」にあります。Python からは `Launch`（[control-api.md](../control-api.md) の「Python」）が、この形でランチャーを起動します。
 
 ## 等速で動かす（`--speed`）と遅れの見方
 
@@ -189,11 +189,13 @@ time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced 
 - `ms behind in all` は、遅れて後ろにずれた合計です。シミュレーションは遅れを取り戻そうとしません。
 - 遅れたときは、速さを下げるか、遅い ECU を探します。ランチャーはどの ECU が遅いかを知らないので、ECU を 1 つずつ外して（`--disable`）比べます。
 - `time_step_ms` を書いたときと、最速で始めて途中で速さを変えたときに、ECU のステップが controller の刻みの境目で始まらないと、警告 `coarse-time-step` が出ます。ファイルに `speed` と `time_step_ms` の両方があれば、`check` の時点で出ます。文言にある値を `time_step_ms` に書きます。
-- 遅れの定義、許容の決め方、刻みと ECU のステップの関係は [simulation-config.md](../simulation-config.md) の「等速で動かす」にあります。
+- 遅れの定義、許容の決め方、刻みと ECU のステップの関係は [simulation-run.md](../simulation-run.md) の「等速で動かす」にあります。
 
 ## 次に読むもの
 
-- 構成ファイルのキー、照合と実行の規則、出力の形: [simulation-config.md](../simulation-config.md)
+- 構成ファイルのキー: [simulation-config.md](../simulation-config.md)
+- 照合の規則と所見、その出力の形: [simulation-check.md](../simulation-check.md)
+- 実行の規則と結果の形: [simulation-run.md](../simulation-run.md)
 - ECU の実行ファイルの引数と自己申告: [ecu-executable.md](../ecu-executable.md)
 - 実行中に変数を読み書きする、時間を止めて進める: [信号を外から操作する](operate-signals.md)、[control-api.md](../control-api.md)
 - 決まった手順で値を入れて確かめる、CI で回す: [シナリオで試験を書く](scenario-tests.md)

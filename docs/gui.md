@@ -1,5 +1,7 @@
 # ブラウザの GUI（`vehicle-sil-gui`）
 
+ブラウザでシミュレーションを動かして見る人と、自分の画面を作る人向けです。先に読む文書はありません（ランチャーの言葉は [simulation-run.md](simulation-run.md) にあります）。次は、自分の画面を作るなら、下の「自分の画面を作る」の後に [gui/client/README.md](../gui/client/README.md)（クライアントのライブラリ）と [gui/protocol/README.md](../gui/protocol/README.md)（サーバーの口）です。
+
 ブラウザからシミュレーションを動かし、見て、ECU の変数を読み書きするための道具です。GUI サーバー（Python）が自分の PC の上で `vehicle_sil_launch` を動かし、その経過と ECU の変数を、HTTP と WebSocket の口で画面に中継します。シミュレーションを動かすのはランチャーで、GUI はそれを映すだけです。試験や AI エージェントから使う正式な口は、今までどおり `vehicle_sil_launch` と Control API です。
 
 GUI は、自分の画面を作るための道具一式（SDK）です。
@@ -15,7 +17,7 @@ GUI は、自分の画面を作るための道具一式（SDK）です。
 
 ## 要るもの
 
-- `vehicle_sil_launch`（`tools/launch` をビルドしたもの）。`version --json` の `features` に `events` と `stdin-commands` があるもの（`run --events`、`run --stdin-commands`。[simulation-config.md](simulation-config.md) の「機械から使う」）。時刻の操作には `speed`、`start-paused`、`time-commands` も要ります（ないランチャーでは、その操作を出しません）。
+- `vehicle_sil_launch`（`tools/launch` をビルドしたもの）。`version --json` の `features` に `events` と `stdin-commands` があるもの（`run --events`、`run --stdin-commands`。[simulation-events.md](simulation-events.md) の「機械から使う」）。時刻の操作には `speed`、`start-paused`、`time-commands` も要ります（ないランチャーでは、その操作を出しません）。
 - ECU の変数を読み書きするには、Control Server を持つランチャー（`features` に `control-server`。`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` でビルドしたもの。[control-api.md](control-api.md)）と、GUI サーバーの Python に gRPC（`grpcio`、`protobuf`。`uv sync` が入れます）が要ります。どちらかがなくても、ほかの機能はそのまま使えます（変数だけが「使えない」になり、理由を出します）。
 - 構成ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します）。
 - Python 3.11 以上と [uv](https://docs.astral.sh/uv/)（GUI サーバー）。
@@ -216,7 +218,7 @@ GUI サーバーはプロセスを起動できます（構成ファイルに書�
 
 ## 時刻の操作
 
-時刻を進めるのはランチャーで、GUI は命令を渡して、その結果を映すだけです。命令の意味と遅れの数え方は、ランチャーの決まりのとおりです（[simulation-config.md](simulation-config.md) の「等速で動かす」と「標準入力の命令」）。
+時刻を進めるのはランチャーで、GUI は命令を渡して、その結果を映すだけです。命令の意味と遅れの数え方は、ランチャーの決まりのとおりです（[simulation-run.md](simulation-run.md) の「等速で動かす」と、[simulation-events.md](simulation-events.md) の「標準入力の命令」）。
 
 - **始める前**: 構成ファイルのカードで、速度（構成のとおり、最速、等速、倍率）と「止めた状態で始める」を選びます。止めた状態で始めると、全員がそろったところで仮想時間 0 に止まり、再開かステップ送りを待ちます。速度は前の実行のものから始めますが、「止めた状態で始める」は前の実行から持ち越しません（気づかずに止まったまま始まらないように）。
 - **実行中**: 状態の帯の「一時停止」と「再開」は別のボタンで、始めてから結果が出るまで、いつも開始と停止の後の同じ場所にあり（開始と停止の位置は動きません。止めるよう頼んだ後も、押せないまま残ります）、使えない方は押せません（押している最中に、同じ場所のボタンの意味が入れ替わりません）。とても狭い窓では、ボタンは印（‖ と ▶）だけになります（名前は読み上げに残ります）。「時刻」のカードで、仮想時刻、いまの速度、実際の速さ、一時停止しているかを見て、ステップ送り（ミリ秒を入れる）と速度の変更をします。ステップ送りは一時停止している間だけで（ステップ送りの途中も、ランチャーと同じく一時停止の扱いで、再開とステップ送りができます）、ランチャーが刻みの倍数に切り上げた、実際に進む量を出します。送った命令にランチャーが答える（`command` の事象が届く）までは、次の命令を送りません（ダブルクリックで 2 回進まないように）。5 秒たっても答えがなければ（入力を読まないランチャー）、待つのをやめて操作を押せるように戻し、答えが来ないことを出します（帯のボタンの説明も同じ理由を指します）。シミュレーションが終わりに入ったら（段階が「停止中」）、時刻の操作はできません。ランチャーが受け付けなかった命令は、その理由を出します。
@@ -542,7 +544,7 @@ sections:
 - 変数の値は、GUI サーバーが読んだ時点の最後の値です。全部の値の記録ではありません（速いシミュレーションでは、間の値は届きません）。実行が終わった後に残る値は、最後に読めた値で、ランチャーが Control Server を閉じるのが早ければ、終わりの値より少し古いことがあります。
 - 変数の読み書きは、ビルド済みの道具の `vehicle-sil-gui`（スタブを同梱）か、リポジトリの中で動かす GUI サーバー（`uv sync` の後の `uv run vehicle-sil-gui`）が前提です。gRPC のスタブを、リポジトリの `proto/` から `grpcio-tools` で作る（なければ `python -m vehicle_sil_control.generate` が作ったものを使う）ためです。リポジトリの外に入れた GUI サーバーは、任意の依存 `vehicle-sil-gui[variables]`（grpcio、protobuf）だけでは変数を使えません。スタブを自分で作って `VEHICLE_SIL_CONTROL_STUBS` で渡します（`PYTHONPATH` と同じく、そこに置いたコードを GUI サーバーが読み込みます。自分のディレクトリだけを指します）。スタブは、Python のパッケージ（`vehicle-sil-gui`）には入っていません（ビルド済みの道具には入っています）。
 - 古いランチャー（`time` の事象に `paused` がない）は、仮想時刻を動き始め（0）と `stop_at_ms` に達したときにしか知らせないので、動いている間の 0 は出しません。
-- Windows では確かめていません（子プロセスの止め方、Ctrl+Break、`taskkill`、一時ファイルの権限は書いてありますが、動かしていません）。Windows はコンソールを閉じると約 5 秒でプロセスを終わらせるので、`--stop-timeout` を待たずに終わります（ランチャーには標準入力の終わりが届きます）。
+- Windows では、起動と照合だけを確かめています（`scripts/package.py verify`）。実行中のランチャーの止め方（Ctrl+Break、`taskkill`）と一時ファイルの権限は、動かしていません。Windows はコンソールを閉じると約 5 秒でプロセスを終わらせるので、`--stop-timeout` を待たずに終わります（ランチャーには標準入力の終わりが届きます）。
 
 ## 開発
 

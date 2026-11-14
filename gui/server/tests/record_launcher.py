@@ -355,7 +355,7 @@ class Recorder:
 
     @staticmethod
     def stream_rules(case: Case, lines: list[tuple[float, str, str]]) -> None:
-        """What docs/simulation-config.md promises about the event stream, on the real launcher's own lines (the
+        """What docs/simulation-events.md promises about the event stream, on the real launcher's own lines (the
         recording keeps neither seq nor t_ms, and no heartbeat): every line an object that starts with event, seq,
         t_ms; seq from 0 up by one (heartbeats counted); t_ms never back; a heartbeat has nothing else."""
         events = []
@@ -378,7 +378,7 @@ class Recorder:
             broken.append("a heartbeat has only event, seq and t_ms")
         if broken:
             raise RuntimeError(f"{case.name}: the real launcher's events break the rule '{broken[0]}' that the GUI "
-                               "server relies on (docs/simulation-config.md): fix the launcher, or the GUI server and "
+                               "server relies on (docs/simulation-events.md): fix the launcher, or the GUI server and "
                                "replay_launcher.py with it")
 
     def forbid(self, case: Case, head: dict, entries: list[dict]) -> None:

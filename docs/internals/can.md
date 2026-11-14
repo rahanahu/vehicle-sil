@@ -1,6 +1,6 @@
 # CAN の共通基盤
 
-vehicle-sil 自体を直す人と、CAN の上に自分のプロトコルを作る人向けです。ポート、ホスト、ドライバー、仮想バス、SIL Kit のポート、バスのタイミング、簡易 CAN Network Simulator の契約を扱います。
+vehicle-sil 自体を直す人と、CAN の上に自分のプロトコルを作る人向けです。ポート、ホスト、ドライバー、仮想バス、SIL Kit のポート、バスのタイミング、簡易 CAN Network Simulator の契約を扱います。 先に [architecture.md](../architecture.md)（全体の形）と [code-map.md](../code-map.md)（どこに何があるか）を読みます。ほかの中の仕組みの文書は、architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」にあります。
 
 `vehicle_sil::can` と `vehicle_sil::can_silkit` は、J1939 スタック（`vehicle_sil::j1939`）の土台です。CAN の 11 ビットと 29 ビットのフレームを扱い、J1939 以外のプロトコルも載せられます。API はまだ変わることがあります。
 

@@ -309,7 +309,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/engine_disconnect.ya
 ## 次に読むもの
 
 - シナリオの形式、時刻、値の見え方、書き込み、結果、所見の `code`: [scenario.md](../scenario.md)
-- ランチャーの引数、終了コード、`--json` と `--events`: [simulation-config.md](../simulation-config.md)
+- ランチャーの引数と終了コード: [simulation-config.md](../simulation-config.md) の「引数と終了コード」。`--json`: [simulation-run.md](../simulation-run.md)。`--events`: [simulation-events.md](../simulation-events.md)
 - 探りながら値を書く・読む、時間を止めて進める: [信号を外から操作する](operate-signals.md)
 - ECU を書く人に頼むこと（変数の宣言、`sample_period`）: [control-api.md](../control-api.md) の「ECU の変数」
 - バスから外したときの J1939 の振る舞い: [j1939-guide.md](../j1939-guide.md) の「ECU をバスから外す（`ecu.connected`）」

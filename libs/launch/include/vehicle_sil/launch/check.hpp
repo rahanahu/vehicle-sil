@@ -3,7 +3,7 @@
 // vehicle_sil_launch check: compares the configuration with what each ecu_main executable
 // reports about itself (--describe) and writes the result for people and as JSON. The rules
 // are pure functions (no process, no file); check_file() runs them on a file and the
-// executables. Internal; the rules and the output: docs/simulation-config.md.
+// executables. Internal; the rules and the output: docs/simulation-check.md.
 #pragma once
 
 #include "vehicle_sil/launch/config.hpp"
@@ -206,7 +206,7 @@ void sort_findings(std::vector<Finding>& findings);
 [[nodiscard]] std::string format_text(const CheckReport& report);
 
 /// The report as JSON (format kCheckFormat): fixed keys in a fixed order, the layout of
-/// to_json(). docs/simulation-config.md has the keys.
+/// to_json(). docs/simulation-check.md has the keys.
 [[nodiscard]] std::string format_json(const CheckReport& report);
 
 struct CheckOptions

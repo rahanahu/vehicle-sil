@@ -1,6 +1,6 @@
 # Checks of every push to main and every pull request: the C++ build and tests (Linux presets, one with the thread
 # sanitizer and one of them also
-# with the oldest CMake that README.md asks for, Windows with MSYS2 UCRT64), the browser GUI, and the Python code. Each job calls the repository's script that a developer
+# with the oldest CMake that docs/build.md asks for, Windows with MSYS2 UCRT64), the browser GUI, and the Python code. Each job calls the repository's script that a developer
 # runs (AGENTS.md, "検証とスクリプト"); on failure, its logs (build/logs) are kept as an artifact.
 # Security: read-only token, no secrets, actions pinned by commit hash (the tag in the comment).
 name: ci
@@ -68,7 +68,7 @@ jobs:
           path: build/logs
           retention-days: 14
 
-  # The oldest CMake that README.md asks for (3.21, its last release), so that every run checks that claim. Kitware's
+  # The oldest CMake that docs/build.md asks for (3.21, its last release), so that every run checks that claim. Kitware's
   # own Linux build, checked against the SHA-256 that the release lists (cmake-3.21.7-SHA-256.txt).
   linux-oldest-cmake:
     name: linux (linux-gcc-release, CMake 3.21.7)

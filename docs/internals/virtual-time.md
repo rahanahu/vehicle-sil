@@ -1,6 +1,6 @@
 # 共通仮想時間
 
-vehicle-sil 自体を直す人と、仮想時間の進み方、時間ゲート、受信の順序の約束を確かめたい人向けです。
+vehicle-sil 自体を直す人と、仮想時間の進み方、時間ゲート、受信の順序の約束を確かめたい人向けです。 先に [architecture.md](../architecture.md)（全体の形）と [code-map.md](../code-map.md)（どこに何があるか）を読みます。ほかの中の仕組みの文書は、architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」にあります。
 
 SIL Kit の `ITimeSyncService` で、すべてのピアが 1 つの仮想時間を共有します。ピアごとにステップ幅を決められます（例: 物理モデル 1 ms、LIN Slave 2 ms、LIN Master 5 ms、J1939 ECU 10 ms）。ピアはそれぞれ独立したプロセスで、同じ PC でも別の PC でも動きます。
 

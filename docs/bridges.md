@@ -1,6 +1,11 @@
 # Vector XL CAN Bridge
 
-実機の CAN（Vector の XL Driver Library で使える機器と Vector Virtual CAN）につなぐ人と、ブリッジを直す人向けです。ビルドと起動の例は README の「[Vector XL CAN Bridge（Windows）](../README.md#vector-xl-can-bridgewindows)」にあります。
+実機の CAN（Vector の XL Driver Library で使える機器と Vector Virtual CAN）につなぐ人と、ブリッジを直す人向けです。前に読む文書はありません。ブリッジを直す人は、次に [code-map.md](code-map.md) の「Vector XL CAN Bridge」を読みます。
+
+`vehicle_sil_vector_xl_bridge` は、SIL Kit の CAN ネットワークと Vector XL の CAN チャネルの間で、クラシック CAN のフレームを双方向に転送します。XL のチャネルには、Vector Virtual CAN と、CANcase や VN16xx などの物理 CAN を使えます。
+
+> [!WARNING]
+> Windows 11 の MSYS2 UCRT64 ビルドと、実際の XL Driver Library を使った Vector Virtual CAN の送受信を確認済みです。VN5620 の 2 つのチャネルをつないだ物理ループバックでも、送受信を確認しています。他の物理 CAN 構成や機器は未確認です。
 
 ```
 SIL Kit CAN ネットワーク ── ICanController ── CanBridge ── ExternalCanPort ── XlCanPort ── XL Driver ── Virtual CAN / CANcase
@@ -14,6 +19,23 @@ SIL Kit CAN ネットワーク ── ICanController ── CanBridge ── Ext
 | `vehicle_sil::vector_xl::XlDriver` | `xlOpenDriver` / `xlCloseDriver` を RAII で管理し、`xlGetDriverConfig` からチャネルを列挙する |
 | `vehicle_sil::vector_xl::XlCanPort` | XL のチャネル 1 つを開き（`xlOpenPort`）、送信（`xlCanTransmit`）と受信スレッド（`xlReceive` と通知イベント）を担う |
 | `vehicle_sil::vector_xl::ExternalPortAdapter` | `ExternalCanPort` を CAN の共通基盤のポート（`RealTime`）にする。プロトコルスタックを XL のチャネルに直接載せるときに使う。プラットフォームに依存しない |
+
+## 使い方
+
+```sh
+# XL ドライバが提供する CAN チャネルを、接続先ごとに番号付きで表示する
+vehicle_sil_vector_xl_bridge --list-channels
+
+# Vector Virtual CAN の 1 番目のチャネルにつなぐ
+vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1939_CAN1 --xl-target virtual --xl-channel 1
+
+# 物理 CAN（CANcase など）の 1 番目のチャネルに、250 kbit/s でつなぐ
+vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1939_CAN1 --xl-target physical --xl-channel 1 --bitrate 250000
+```
+
+- Ctrl+C（Windows ではコンソールのウィンドウを閉じても）で止まり、転送の統計を出力します。
+- 実行中に CAN インターフェースの USB を抜かないでください。ブリッジは止まりますが（終了コード 1）、VN5620 では挿し直しても認識されず、電源の入れ直しが必要なことがありました。
+- 終了コードと引数は「[接続先とチャネルの選択（CLI）](#接続先とチャネルの選択cli)」、統計の意味は「[転送の契約](#転送の契約)」にあります。
 
 ## 物理 CAN と仮想時間
 
@@ -55,7 +77,7 @@ SIL Kit CAN ネットワーク ── ICanController ── CanBridge ── Ext
 - 問い合わせの失敗は、送信キューが満杯の場合を除いて、次のように扱います。
   - 一度も受け付けられないうちの失敗: その構成では問い合わせが使えないとみなし、`ExternalEventKind::Warning` を 1 回知らせて問い合わせをやめます。転送は続けます。実行ファイルは `warning: ... the bus is not monitored, ...` を出します。
   - 一度受け付けられた後、3 回続けての失敗（`XlCanPortOptions::bus_state_failures`）: チャネルが使えなくなった（デバイスが外された）とみなし、`ExternalEventKind::Fault` を理由とともに 1 回知らせて受信をやめます。1 回だけの失敗では止めません。
-- ブリッジの実行ファイルは 1 秒ごとに状態を見て、コントローラーのエラー状態が変わったとき（起動直後の最初の答えがエラーアクティブの場合を除く）、または問題を表すカウンター（`error_frames`、`overruns`、`silkit_rejected`、`xl_rejected`、`xl_queue_full`、`xl_tx_failures`、`silkit_tx_failures`）が増えたときに、次の形の行を 1 行出します（`format_health_change()`）。
+- ブリッジの実行ファイルは 1 秒ごとに状態を見て、コントローラーのエラー状態が変わったとき（起動直後の最初の答えがエラーアクティブの場合を除く）、または問題を表すカウンター（`error_frames`、`overruns`、`silkit_rejected`、`xl_rejected`、`xl_queue_full`、`xl_tx_failures`、`silkit_tx_failures`、`xl_tx_dropped`）が増えたときに、次の形の行を 1 行出します（`format_health_change()`）。
   ```
   [bridge] XL bus: error passive (tx errors 128, rx errors 0); since the last report: error_frames +3650
   ```
@@ -101,7 +123,7 @@ SIL Kit CAN ネットワーク ── ICanController ── CanBridge ── Ext
 
 ```
 vehicle_sil_vector_xl_bridge --list-channels
-vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>]
+vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical> --xl-channel <n> [--bitrate <bit/s>] [--network <name>] [--participant <name>] [--rx-queue-size <n>] [--tx-timeout-ms <ms>] [--bus-off-restart-ms <ms>] [--no-bus-monitor]
 ```
 
 - `--xl-target virtual` は Vector Virtual CAN（`XL_HWTYPE_VIRTUAL`）を選びます。`physical` は、それ以外のハードウェアの CAN チャネル（CANcase、VN16xx など）を選びます。
@@ -118,6 +140,16 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
 - XL Driver Library は vehicle-sil に含めません。`VEHICLE_SIL_VECTOR_XL_DIR` で場所を指定します。
 - 見つからない場合は、ブリッジをビルドせずに続けます。`VEHICLE_SIL_REQUIRE_VECTOR_XL=ON` を指定すると、その場合に構成を失敗させます。
 - Linux のビルドに XL Driver Library は不要です。
+
+[XL Driver Library](https://www.vector.com/)（`vxlapi.h` と `vxlapi64.lib`）は Vector Informatik GmbH のソフトウェアで、vehicle-sil には含まれていません。利用者が Vector から入手し、Vector のライセンス条件に従って使います。ビルドでは、その場所を指定します。
+
+```sh
+cmake --preset windows-mingw-release -DVEHICLE_SIL_VECTOR_XL_DIR="C:/path/to/XL Driver Library/bin"
+cmake --build --preset windows-mingw-release
+```
+
+
+XL Driver Library が見つかれば、`vxlapi64.dll` を実行ファイルの隣にコピーします。
 
 ## 検証の範囲
 

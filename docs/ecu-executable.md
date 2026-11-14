@@ -1,6 +1,6 @@
 # ECU の実行ファイル（`ecu_main`）と自己申告（`--describe`）
 
-ECU を書く人（自分の ECU を実行ファイルにする）と、まとめる人（実行ファイルの引数と `--describe` を知る）向けです。ECU を書く人は、先に [j1939-guide.md](j1939-guide.md) を読みます。次は、まとめる人なら [simulation-config.md](simulation-config.md)（構成ファイル、照合、実行）です。
+ECU を書く人（自分の ECU を実行ファイルにする）と、まとめる人（実行ファイルの引数と `--describe` を知る）向けです。ECU を書く人は、先に [j1939-guide.md](j1939-guide.md) を読みます。次は、まとめる人なら [simulation-config.md](simulation-config.md)（構成ファイル）、[simulation-check.md](simulation-check.md)（照合）、[simulation-run.md](simulation-run.md)（実行）です。
 
 ECU のクラス（`Ecu&` を受け取るクラス）を 1 つの実行ファイルにする `main()` のひな形と、ECU が自分の構成を JSON で報告する形式です。各自が自分の ECU を実行ファイルとしてビルドし、別の人がそれを 1 つの SIL Kit のシミュレーションにまとめる、という分担に使います。どの ECU の実行ファイルも同じ引数を持つので、まとめる人は中身を知らなくても動かせます。API はまだ変わることがあります。
 
@@ -27,7 +27,7 @@ int main(int argc, char** argv)
 | 引数 | すること |
 |---|---|
 | `--describe` | ECU をプロセス内の仮想バスの上で組み立て、何も動かさず、どこにも接続せずに、`to_json(Ecu::describe())` を標準出力に書いて終了します。 |
-| `--registry-uri <uri>` | `<uri>` の registry の SIL Kit のシミュレーションに、Coordinated で仮想時間の participant として参加し、シミュレーションが終わるまで動きます。始めるのと止めるのは、ほかのプロセスの controller（`vehicle_sil_sim_controller`）です。`<uri>` のホストがループバックのアドレス（`127.0.0.1`、`localhost` など）なら、ほかの participant からの接続をループバックのアドレスだけで待ち受けます（環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` で全部のアドレス。[simulation-config.md](simulation-config.md#待ち受けるアドレス)）。 |
+| `--registry-uri <uri>` | `<uri>` の registry の SIL Kit のシミュレーションに、Coordinated で仮想時間の participant として参加し、シミュレーションが終わるまで動きます。始めるのと止めるのは、ほかのプロセスの controller（`vehicle_sil_sim_controller`）です。`<uri>` のホストがループバックのアドレス（`127.0.0.1`、`localhost` など）なら、ほかの participant からの接続をループバックのアドレスだけで待ち受けます（環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK=1` で全部のアドレス。[simulation-run.md](simulation-run.md#待ち受けるアドレス)）。 |
 | `--start-timeout-ms <ms>` | `--registry-uri` のときだけ。参加してからシミュレーションが始まるまで待つ時間（1 以上の整数。既定は 30000）です。それまでに始まらなければ、終了コード 3 です。ECU をたくさん起動するときや、遅いマシンで使います。 |
 | `--no-control` | `--registry-uri` のとき、ECU の変数をシミュレーションへ出しません（下の「変数を出す」）。ECU の動きは変わりません。`--describe` に付けると、`variables` はそのままで、`control` が `null` になります（まとめる側は、この ECU を待ちません）。`--local` に付けても何も変わりません。 |
 | `--local --run-for-ms <ms>` | この ECU だけを、プロセス内の仮想バスの上で、仮想時間で `<ms>` ミリ秒（1 以上の整数）動かします。ECU を単体で確かめるときに使います。 |
@@ -52,7 +52,7 @@ int main(int argc, char** argv)
 
 ### 変数を出す（`--registry-uri`）
 
-ECU は（変数を宣言していなくても、`ecu.connected` があります）、`--registry-uri` で参加するとき、何も書かなくても、その変数を SIL Kit の publish/subscribe でシミュレーションへ出します（`vehicle_sil::control_silkit::AgentTransport`。[internals/control.md](internals/control.md) の「SIL Kit の上の運び手」）。`vehicle_sil_launch run` がそれを受けて、変数を読み書きする側になります（[simulation-config.md](simulation-config.md) の「変数を読み書きする口」）。受ける側がいなければ、送ったものは誰にも届かないだけです。
+ECU は（変数を宣言していなくても、`ecu.connected` があります）、`--registry-uri` で参加するとき、何も書かなくても、その変数を SIL Kit の publish/subscribe でシミュレーションへ出します（`vehicle_sil::control_silkit::AgentTransport`。[internals/control.md](internals/control.md) の「SIL Kit の上の運び手」）。`vehicle_sil_launch run` がそれを受けて、変数を読み書きする側になります（[simulation-run.md](simulation-run.md) の「変数を読み書きする口」）。受ける側がいなければ、送ったものは誰にも届かないだけです。
 
 - gRPC も Protocol Buffers も要りません（ECU の実行ファイルは、どちらにも依存しません）。
 - 値と書き込みの結果は、ステップの中で、値を読んだ直後に送ります。送る頻度は Agent の `sample_period`（既定 10 ms。`Ecu::set_agent_options()`）です。間引きはしません。
@@ -70,7 +70,7 @@ ECU は（変数を宣言していなくても、`ecu.connected` があります
 - 受けるのは `ecu_main` の中で `--registry-uri` のシミュレーションが動いている間だけです。`App` のデストラクターが動くときには、前の設定に戻しています。`--describe` と `--local` では扱いません（既定の動作ですぐに終わります）。
 - その間、これらのシグナルは `ecu_main` のものです（`SA_RESTART` で、`App` の `read()` などを途中で戻しません）。起動した側が無視するように設定したシグナル（`nohup`）は、無視したままです。シグナルを自分で扱いたい ECU は、`ecu_main` を使わず、`Simulation` を直接使います。
 - Windows でコンソールを閉じたときは、順に止める処理が終わるのを、最大 4 秒待ちます（その後 Windows がプロセスを終わらせます）。
-- `vehicle_sil_launch run` は、シミュレーションが終わっても終わらない participant や、始まらなかったときの participant に、この方法で止まるよう求めます（[simulation-config.md](simulation-config.md) の「止め方」）。
+- `vehicle_sil_launch run` は、シミュレーションが終わっても終わらない participant や、始まらなかったときの participant に、この方法で止まるよう求めます（[simulation-run.md](simulation-run.md) の「止め方」）。
 
 ### 実行中にほかの参加者がいなくなったとき（`--registry-uri`）
 
@@ -79,7 +79,7 @@ ECU は（変数を宣言していなくても、`ecu.connected` があります
 - controller のプロセスがなくなると、シミュレーションは止まらずに、仮想時間が進み続けます。ECU は自分では終わりません。
 - registry のプロセスがなくなると、participant の間の接続によっては、ほかの participant から見てこの ECU が Error になり、この ECU は仮想時間が進まないまま待ち続けることがあります。
 - ほかの participant が失敗し、controller がシミュレーションを中断すると、この ECU は終了コード 0 で終わります。どれが失敗したかは、controller（`vehicle_sil_sim_controller` の出力と終了コード 1）が知らせます。
-- どの場合も、ECU を起動した側が、controller の終わりを見てプロセスを止めてください。`vehicle_sil_launch run` はこれをします（[simulation-config.md](simulation-config.md)）。自分で起動するときの決まりは次の 2 つです。
+- どの場合も、ECU を起動した側が、controller の終わりを見てプロセスを止めてください。`vehicle_sil_launch run` はこれをします（[simulation-run.md](simulation-run.md)）。自分で起動するときの決まりは次の 2 つです。
   - シミュレーションの結果は controller の終了コードです。ECU の終了コードだけで決めません（ほかの participant が失敗しても、ECU は 0 で終わることがあります）。ECU の終了コード 1 は、その ECU のステップが失敗したことだけを示します。
   - controller のプロセスが結果を出さずになくなったら、すべての ECU を止めます（自分では終わりません）。controller が終わった後もしばらく動いている ECU（registry がなくなった場合など）も止めます。まず SIGTERM（Windows: Ctrl+Break）で止まるよう求め（上の「止まるよう求められたとき」）、それでも終わらなければ強制終了します。
 
@@ -207,7 +207,7 @@ ECU は（変数を宣言していなくても、`ecu.connected` があります
 
 ## まとめて動かす
 
-2 つの ECU の実行ファイルを 1 つの SIL Kit のシミュレーションで動かすには、構成ファイルを書いて `vehicle_sil_launch run` に渡します（[simulation-config.md](simulation-config.md)）。照合してから、registry、controller、各 ECU を起動し、終わりまで見て、各 ECU がどう終わったかを出します。
+2 つの ECU の実行ファイルを 1 つの SIL Kit のシミュレーションで動かすには、構成ファイルを書いて `vehicle_sil_launch run` に渡します（[simulation-config.md](simulation-config.md)、[simulation-run.md](simulation-run.md)）。照合してから、registry、controller、各 ECU を起動し、終わりまで見て、各 ECU がどう終わったかを出します。
 
 ```sh
 cd build/<preset>/examples/ecu_main
@@ -225,4 +225,4 @@ vehicle_sil_sim_controller --registry-uri silkit://localhost:8500 --required Eng
 
 `--required` には、各 ECU の名前（`--describe` の `name`）を並べます。
 
-動かす前に、まとめる ECU の名前、ステップ幅、ネットワーク、J1939 のアドレスと NAME が食い違っていないかを、構成ファイルと `vehicle_sil_launch check` で確かめられます（[simulation-config.md](simulation-config.md)）。
+動かす前に、まとめる ECU の名前、ステップ幅、ネットワーク、J1939 のアドレスと NAME が食い違っていないかを、構成ファイルと `vehicle_sil_launch check` で確かめられます（[simulation-check.md](simulation-check.md)）。

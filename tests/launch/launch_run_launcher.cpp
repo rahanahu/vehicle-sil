@@ -4,7 +4,7 @@
 // ecu_main executable that misbehaves as a file in its working directory says (run_test_ecu.cpp)
 // and the helper of tests/process:
 //
-//   docs         the run of the example and its output in docs/simulation-config.md (text and
+//   docs         the run of the example and its output in docs/simulation-run.md (text and
 //                JSON, byte for byte but for the version; also without Dashboard), the
 //                participants' lines on stderr, --log-dir
 //   check        a configuration with an error: nothing is started (exit 1)
@@ -138,7 +138,7 @@ struct Options
     fs::path test_ecu;
     fs::path helper;
     fs::path example_dir; ///< the example's directory in the build tree (simulation.yaml, engine/, dashboard/)
-    fs::path docs;
+    fs::path docs; ///< the directory docs/ (each example is in the one document that has its marker line)
     fs::path work_dir;
     std::string scenario;
 };
@@ -238,9 +238,35 @@ std::string without_timing(std::string text)
     return text;
 }
 
-/// The fenced block after the line `marker` in the Markdown file, without the fences.
+/// The Markdown file directly in the directory `docs` that has the line `marker` (exactly one has it).
+fs::path marked_file(const fs::path& docs, const std::string& marker)
+{
+    std::vector<fs::path> found;
+    for (const auto& entry : fs::directory_iterator(docs))
+    {
+        if (entry.path().extension() == ".md" && lf(read_text(entry.path())).find(marker + "\n") != std::string::npos)
+        {
+            found.push_back(entry.path());
+        }
+    }
+    require(!found.empty(), "no document in " + docs.string() + " has the line " + marker);
+    if (found.size() > 1)
+    {
+        require(false, "two documents in " + docs.string() + " have the line " + marker + ": " +
+                           found[0].filename().string() + ", " + found[1].filename().string() +
+                           " (keep the line in one of them)");
+    }
+    return found[0];
+}
+
+/// The fenced block after the line `marker` in the Markdown file, or in the one document of the
+/// directory that has the line, without the fences.
 std::string block_after(const fs::path& path, const std::string& marker)
 {
+    if (fs::is_directory(path))
+    {
+        return block_after(marked_file(path, marker), marker);
+    }
     const std::string text = lf(read_text(path));
     const auto at = text.find(marker + "\n");
     require(at != std::string::npos, path.string() + " has no line " + marker);
@@ -351,12 +377,12 @@ bool all_gone(const fs::path& dir, const std::vector<std::string>& pid_files, st
 // --- scenarios ---
 
 /// The copies in docs/howto/*.md: the block after each line "<!-- vehicle_sil_launch {command} ... -->"
-/// there is the block after the same line in `docs` or in scenario.md (which this test compares with
-/// the output).
+/// there is the block after the same line in a document directly in `docs` (which this test compares
+/// with the output).
 void howto_copies_agree(const fs::path& docs, const std::string& command)
 {
     const std::string head = "<!-- vehicle_sil_launch " + command + " ";
-    const fs::path howto = docs.parent_path() / "howto";
+    const fs::path howto = docs / "howto";
     std::size_t copies = 0;
     for (const auto& entry : fs::directory_iterator(howto))
     {
@@ -369,10 +395,7 @@ void howto_copies_agree(const fs::path& docs, const std::string& command)
         {
             if (line.rfind(head, 0) == 0 && line.size() > 4 && line.compare(line.size() - 4, 4, " -->") == 0)
             {
-                // The original is in `docs`, or, for a run of a scenario, in scenario.md next to it.
-                const fs::path scenario = docs.parent_path() / "scenario.md";
-                const bool in_docs = lf(read_text(docs)).find(line + "\n") != std::string::npos;
-                const fs::path& original = in_docs ? docs : scenario;
+                const fs::path original = marked_file(docs, line);
                 expect_text(block_after(entry.path(), line), block_after(original, line),
                             "docs/howto/" + entry.path().filename().string() + ": the copy after " + line +
                                 " (copy the block after the same line in " + original.filename().string() + ")");
@@ -1141,7 +1164,7 @@ void killed(const Options& o)
     // Windows: the job objects end what the participants started too.
     const bool grandchildGone = wait_gone(pids[2], 60s);
 #else
-    // Linux: what a participant started itself is not ended (docs/simulation-config.md says so).
+    // Linux: what a participant started itself is not ended (docs/simulation-run.md says so).
     const bool grandchildGone = true;
     log(process_alive(pids[2]) ? "the grandchild was left, as documented (ended by the test)" : "the grandchild ended too");
 #endif
@@ -3240,7 +3263,7 @@ fs::path scenario_ecus(const Options& o, const std::string& keys, const std::str
 
 void scenario(const Options& o)
 {
-    const fs::path docs = o.docs.parent_path() / "scenario.md";
+    const fs::path docs = o.docs / "scenario.md";
     const fs::path dir = o.example_dir;
     const std::vector<std::string> args{"run", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"};
     const Captured text = launch(o, args, dir);
