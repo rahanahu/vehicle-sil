@@ -79,6 +79,9 @@
 //   scenario_wave  the steps "wave": what the ECU saw of each shape, the same at a speed and with
 //                  another controller step, the warning of the check and "undersampled: ok", and
 //                  the failure of a wave that leaves the variable's range; the example with waves
+//   scenario_dither  a dither on an input (the scenario's "inputs" and the step "dither"): what the
+//                  ECU saw, the same with another controller step and at a speed; the failure of a
+//                  dither that leaves the variable's range; the example with a dither and its timeline
 //   timeline     run --scenario --timeline: the file of a run that passes (the same file from a
 //                second run and at a speed; the run's own output is what it is without --timeline,
 //                but for the file's name), of a run that fails, a file that cannot be opened
@@ -4509,6 +4512,93 @@ void scenario_wave(const Options& o)
             "the example with points from a file:\n" + lf(trace.standard_output));
 }
 
+void scenario_dither(const Options& o)
+{
+    // A square of 5 on Body.level, high for the first 20 ms of every 40 ms. What the ECU saw: the
+    // level, and the step in which it changed last.
+    const std::string text = "vehicle_sil_scenario: 1\n"
+                             "name: dither\n"
+                             "inputs:\n"
+                             "  Body.level: { dither: { square: { amplitude: 5, period_ms: 40 } } }\n"
+                             "steps:\n"
+                             // 25 at 0 and 10, 15 at 20 and 30, ...: low again from 100.
+                             "  - set: { Body.level: 20 }\n"
+                             "  - at_ms: 100\n"
+                             "    expect: { Body.level: 15, Body.level_changed_at_ms: 100 }\n"
+                             // A ramp between two steps of the ECU; its end value (60, low: 55) is for
+                             // 193 ms, and the step at 200 ms gets it and then the dither's 65.
+                             "  - at_ms: 107\n"
+                             "    ramp: { Body.level: { to: 60, over_ms: 86 } }\n"
+                             "  - at_ms: 215\n"
+                             "    expect: { Body.level: 65, Body.level_changed_at_ms: 200 }\n"
+                             // Taken off at 240 ms (the level was 55 from 220 ms): one write of 60, and no more.
+                             "  - at_ms: 240\n"
+                             "    dither: { Body.level: none }\n"
+                             "  - at_ms: 300\n"
+                             "    expect: { Body.level: 60, Body.level_changed_at_ms: 240 }\n";
+    const auto run = [&](const fs::path& dir, std::vector<std::string> more, const std::string& what) {
+        std::vector<std::string> args{"run", "sim.yaml", "--scenario", "s.yaml", "--json"};
+        args.insert(args.end(), more.begin(), more.end());
+        const Captured r = launch(o, args, dir);
+        expect_code(r, 0, what);
+        const std::string out = lf(r.standard_output);
+        require(contains(out, "\"late_messages\": 0") && !contains(out, "control-link-late-values"), what + ": no late message:\n" + out);
+        return scenario_json(out);
+    };
+    const fs::path dir = scenario_ecus(o, "", text);
+    const std::string fastest = run(dir, {}, "as fast as possible");
+    require(contains(fastest, "\"status\": \"passed\"") && contains(fastest, "\"over_at_ms\": 310,"),
+            "the scenario passes, and is over at 310 ms:\n" + fastest);
+    require(contains(fastest, "        \"kind\": \"dither\",\n        \"text\": \"dither Body.level none\",\n        \"status\": \"passed\",\n"
+                              "        \"start_ms\": 240,\n        \"at_ms\": 240,\n        \"end_ms\": 240,\n"),
+            "the dither step in the result:\n" + fastest);
+    // The same with a coarser step of the controller, and at a speed.
+    const std::string coarse = run(scenario_ecus(o, "time_step_ms: 30\n", text), {}, "with a controller step of 30 ms");
+    require(contains(coarse, "\"status\": \"passed\""), "with a controller step of 30 ms:\n" + coarse);
+    const std::string paced = run(dir, {"--speed", "4"}, "at four times the speed of a clock");
+    require(contains(paced, "\"status\": \"passed\""), "at a speed:\n" + paced);
+
+    // A dither that takes the value out of the variable's range: the ECU's agent refuses the
+    // write when it gets it. It is no step's write, so the step that fails is the first that is
+    // not decided, and the message says which dither wrote what.
+    const fs::path outside = scenario_ecus(o, "",
+                                           "vehicle_sil_scenario: 1\n"
+                                           "inputs:\n"
+                                           "  Body.level: { dither: { square: { amplitude: 5, period_ms: 40, phase_deg: 180 } } }\n"
+                                           "steps:\n"
+                                           "  - set: { Body.level: 97 }\n"
+                                           "  - at_ms: 100\n"
+                                           "    expect: { Body.level: 92 }\n");
+    const Captured failed = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, outside);
+    expect_code(failed, 1, "a dither that leaves the range");
+    const std::string why = scenario_json(lf(failed.standard_output));
+    require(contains(why, "\"code\": \"scenario-write\"") &&
+                contains(why, "the dither of Body.level (line 3) wrote 102 at 20 ms, above its range 0 to 100: lower its amplitude, or keep "
+                              "the value further from the end of the range") &&
+                contains(why, "        \"line\": 5,\n        \"kind\": \"set\",\n        \"text\": \"set Body.level = 97\",\n        \"status\": \"passed\","),
+            "the failure of the dither:\n" + why);
+
+    // The example with a dither (examples/ecu_main/scenarios/throttle_dither.yaml) passes, without
+    // a finding; its timeline has the dither as a line of no step, and the base of every point.
+    const fs::path timeline = dir / "throttle_dither.timeline.json";
+    const Captured example = launch(o, {"run", "--strict", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml", "--timeline",
+                                        timeline.string()},
+                                    o.example_dir);
+    expect_code(example, 0, "run --strict simulation.yaml --scenario scenarios/throttle_dither.yaml");
+    require(contains(lf(example.standard_output), "\nscenario scenarios/throttle_dither.yaml (throttle dither): passed, 8 of 8 steps passed\n") &&
+                contains(lf(example.standard_output), "\npassed: 0 errors, 0 warnings, 0 notes"),
+            "the example with a dither:\n" + lf(example.standard_output));
+    const std::string file = lf(read_text(timeline));
+    require(contains(file, "      \"variable\": \"Engine.engine.throttle\",\n      \"kind\": \"dither\",\n      \"line\": 10,\n"
+                           "      \"step\": null,\n      \"from_ms\": 0,\n      \"to_ms\": null,\n      \"base\": null,\n"
+                           "      \"base_source\": null,\n      \"shape\": {\n        \"type\": \"triangle\",\n        \"amplitude\": 2,\n"
+                           "        \"period_ms\": 80\n      },\n") &&
+                contains(file, "      \"columns\": [\"t_ms\", \"value\", \"base\"],\n      \"points\": [\n        [0, 50, 50],\n"
+                               "        [10, 51, 50],\n        [20, 52, 50],\n") &&
+                contains(file, "      \"shape\": null,\n      \"text\": \"Engine.engine.throttle none\"\n"),
+            "the timeline of the example with a dither:\n" + file);
+}
+
 /// examples/ecu_main/simulation.live.yaml: the example's two ECUs at the speed of a clock, with no
 /// stop_at_ms. It passes the check, runs past the 1000 ms at which simulation.yaml ends, never
 /// ahead of the clock, and a stop command ends it as an interrupted run (130), both ECUs with 0.
@@ -5691,6 +5781,7 @@ int main(int argc, char** argv)
             {"scenario_failures", scenario_failures},
             {"scenario_same", scenario_same},
             {"scenario_wave", scenario_wave},
+            {"scenario_dither", scenario_dither},
             {"timeline", timeline},
             {"scenario_expect_beside", scenario_expect_beside},
             {"speed_change", speed_change},

@@ -2025,6 +2025,7 @@ private:
             as_it_is_ = kAsItIs;
             if (overlay)
             {
+                overlay->line = doc_.line(child); // (the entry's line, also if its dither is on a line below)
                 scenario_.inputs.push_back(std::move(*overlay));
             }
         }
@@ -2052,6 +2053,7 @@ private:
             {
                 if (auto overlay = read_overlay(child, *v, quiet, true))
                 {
+                    overlay->line = step.line; // (as everything of a step: the step's line)
                     step.overlays.push_back(std::move(*overlay));
                 }
             }

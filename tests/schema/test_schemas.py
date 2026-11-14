@@ -867,6 +867,8 @@ class TimelineSchema(unittest.TestCase):
             "a line whose step is a text": lambda d: d["lines"][0].update(step="1"),
             "a shape without its type": lambda d: d["lines"][-1].update(shape={"to": 1}),
             "writes that are no positions": lambda d: d["steps"][0].update(writes=["0"]),
+            "columns that are no names": lambda d: d["series"][0].update(columns=[0, 1, 2]),
+            "a line whose end is a text": lambda d: d["lines"][0].update(to_ms="never"),
         }
         for what, change in mistakes.items():
             self.assertNotEqual(changed(change), [], f"the schema passes a timeline with {what}")
@@ -879,6 +881,10 @@ class TimelineSchema(unittest.TestCase):
             "no lines and no writes": lambda d: (d.pop("lines"), [step.pop("writes") for step in d["steps"]]),
             "a source it does not know": lambda d: d["series"][0].update(source="computed", encoding="minmax"),
             "a third column of a point": lambda d: d["series"][0]["points"].append([10, 1, 2]),
+            # A dither: a line of no step and without an end, and the columns of its input's points.
+            "a line of no step that has no end": lambda d: d["lines"][0].update(kind="dither", step=None, to_ms=None, base=None,
+                                                                              base_source=None),
+            "the columns of a series": lambda d: d["series"][0].update(columns=["t_ms", "value", "base"]),
         }
         for what, change in additions.items():
             self.assertEqual(changed(change), [], f"the schema refuses a timeline with {what}")
@@ -906,6 +912,27 @@ class TimelineOfARun(unittest.TestCase):
                          {("Engine.engine.throttle", "written"), ("Engine.engine.speed", "sampled"),
                           ("Dashboard.dashboard.engine_speed", "sampled")})
         self.assertTrue(all(s["points"] for s in data["series"]))
+
+    def test_the_timeline_of_the_example_with_a_dither_is_valid(self):
+        example = Path(EXAMPLE_DIR)
+        with tempfile.TemporaryDirectory(prefix="vehicle-sil-timeline-") as directory:
+            out = Path(directory) / "throttle_dither.timeline.json"
+            proc = subprocess.run([LAUNCH, "run", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml",
+                                   "--timeline", str(out)], cwd=example, capture_output=True, text=True,
+                                  encoding="utf-8", stdin=subprocess.DEVNULL, timeout=120)
+            self.assertEqual(proc.returncode, 0, f"the example's scenario did not pass:\n{proc.stdout[-2000:]}\n"
+                                                 f"{proc.stderr[-2000:]}")
+            data = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(problems(TIMELINE, data), [],
+                         "the timeline file of a run with a dither is not valid for schema/timeline.schema.json: correct the "
+                         "schema, or the launcher if it writes what docs/simulation-run.md does not say")
+        # The dither is a line of no step and without an end, and its input's points have their base.
+        dithers = [line for line in data["lines"] if line["kind"] == "dither"]
+        self.assertEqual([(line["step"], line["to_ms"], line["shape"] is None) for line in dithers],
+                         [(None, None, False), (6, None, True)])
+        throttle = next(s for s in data["series"] if s["source"] == "written")
+        self.assertEqual(throttle["columns"], ["t_ms", "value", "base"])
+        self.assertTrue(all(len(point) == 3 for point in throttle["points"]))
 
 
 @needs_launcher

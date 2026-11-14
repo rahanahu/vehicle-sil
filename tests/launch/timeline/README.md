@@ -20,5 +20,5 @@ shows as a difference of these files.
 
   and look at the difference: it must be what the change means to change.
 - The scenarios use `set`, `ramp` and the waves that are worked out with whole-number arithmetic
-  (`triangle`, `square`, `points`). No `sine`, `chirp` or `lag`: their last bit may differ between C
-  libraries, and a reference is compared byte for byte.
+  (`triangle`, `square`, `points`, and for a dither also the uniform `noise`). No `sine`, `chirp` or
+  `lag`: their last bit may differ between C libraries, and a reference is compared byte for byte.

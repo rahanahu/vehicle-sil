@@ -161,6 +161,14 @@ ScenarioEngine::ScenarioEngine(const Scenario& scenario, SimDuration tick, Scena
         lines_->lines[input.variable].overlay(input.shape);
         lines_->dither[input.variable] = &input;
         dithered[input.variable] = true;
+        if (record_ != nullptr)
+        {
+            TimelineRecord::Line line;
+            line.step = TimelineRecord::kNoStep;
+            line.part = static_cast<std::size_t>(&input - scenario.inputs.data());
+            line.variable = input.variable;
+            record_->dither(std::move(line));
+        }
     }
     for (const ScenarioStep& step : scenario.steps)
     {
@@ -707,6 +715,7 @@ bool ScenarioEngine::submit_one(Write write)
             if (const auto value = lines_->lines[overlay.variable].written_value(write.at))
             {
                 write.writes.push_back(ScenarioWrite{overlay.variable, *value});
+                write.bases.push_back(*lines_->lines[overlay.variable].number(write.at));
             }
         }
         if (write.writes.empty())
@@ -736,26 +745,29 @@ bool ScenarioEngine::submit_one(Write write)
                  std::move(failure));
             return false;
         }
-        write.writes.push_back(ScenarioWrite{motion.motion.variable, lines_->lines[motion.motion.variable].written(
-                                                                         detail::motion_number(*placed, write.at), write.at)});
+        const double number = detail::motion_number(*placed, write.at);
+        write.writes.push_back(ScenarioWrite{motion.motion.variable, lines_->lines[motion.motion.variable].written(number, write.at)});
+        write.bases.push_back(number);
     }
     else
     {
         // A set: its value, with what is on top of the line at this time (written()).
         for (ScenarioWrite& w : write.writes)
         {
+            write.bases.push_back(detail::number_of(w.value));
             w.value = lines_->lines[w.variable].written(w.value, write.at);
         }
     }
     std::vector<control::PeerWrite> out;
-    for (const ScenarioWrite& w : write.writes)
+    for (std::size_t i = 0; i < write.writes.size(); ++i)
     {
+        const ScenarioWrite& w = write.writes[i];
         const ScenarioVariable& v = scenario_.variables[w.variable];
         out.push_back(control::PeerWrite{scenario_.participants[v.participant].name, v.name, w.value});
         if (record_ != nullptr)
         {
             record_->written(write.grid ? TimelineRecord::kNoStep : write.step, w.variable, write.at, w.value,
-                             write.motion.has_value() || write.grid);
+                             write.motion.has_value() || write.grid, write.bases[i], lines_->lines[w.variable].overlay() != nullptr);
         }
     }
     write.ticket = port_.write(std::move(out), write.at);
@@ -932,6 +944,7 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
                 if (const auto value = line.written_value(t))
                 {
                     write.writes.push_back(ScenarioWrite{v, *value});
+                    write.bases.push_back(*line.number(t));
                 }
             }
             if (!write.writes.empty() && !submit_one(std::move(write)))
@@ -1008,10 +1021,20 @@ void ScenarioEngine::place(const Write& write)
 {
     if (write.dither)
     {
-        for (const ScenarioOverlay& overlay : scenario_.steps[write.step].overlays)
+        const std::vector<ScenarioOverlay>& overlays = scenario_.steps[write.step].overlays;
+        for (std::size_t i = 0; i < overlays.size(); ++i)
         {
+            const ScenarioOverlay& overlay = overlays[i];
             lines_->lines[overlay.variable].overlay(overlay.shape);
             lines_->dither[overlay.variable] = overlay.shape ? &overlay : nullptr;
+            if (record_ != nullptr)
+            {
+                TimelineRecord::Line line;
+                line.step = write.step;
+                line.part = i;
+                line.variable = overlay.variable;
+                record_->dither(std::move(line));
+            }
         }
         return;
     }

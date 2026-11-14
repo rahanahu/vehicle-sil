@@ -155,7 +155,7 @@ struct ScenarioOverlay
     /// Asked with the virtual time itself and the base 0 (Waveform::value()); null: none (the
     /// step takes the dither off).
     std::shared_ptr<const Waveform> shape{};
-    std::size_t line = 0; ///< where the file has it
+    std::size_t line = 0; ///< of a dither step the step's line, of one that "inputs" declares its entry's
     /// As in the step's text: "Body.ratio triangle amplitude 0.1 period 40 ms", "Body.ratio none".
     std::string text;
     /// The shape as the text gives it; `type` is "" for none.

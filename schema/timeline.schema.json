@@ -522,9 +522,16 @@
             "minimum": 0,
             "description": "written, only if there are such points: the index in points from which on the points were sent and not applied by the ECU. They are the write that was refused (failed.write.point of the failed step) with what was sent after it, and the points for a time after scenario.over_at_ms (no ECU got to that time). Do not draw them as values the variable took. In a run that did not pass, a point before it may still not have been applied (the run ended before its result was looked at)."
           },
+          "columns": {
+            "type": "array",
+            "description": "written, only for an input that a dither was on: what a point is, [\"t_ms\", \"value\", \"base\"]. base is what the value was made of before the dither was added and the variable's type applied: the value of a set, the value of a ramp or a wave at that time. Without columns a point is [t_ms, value]. A reader takes the columns it knows by name.",
+            "items": {
+              "type": "string"
+            }
+          },
           "points": {
             "type": "array",
-            "description": "[t_ms, value], one per line of the file. t_ms never goes back; points of one time are in the order sent. A bool is true or false, an enum the value of its item, a real that is no number null.",
+            "description": "[t_ms, value], one per line of the file. t_ms never goes back; points of one time are in the order sent. A bool is true or false, an enum the value of its item, a real that is no number null. With columns, every point has what columns says.",
             "items": {
               "type": "array",
               "minItems": 2,
@@ -547,7 +554,7 @@
     },
     "lines": {
       "type": "array",
-      "description": "The lines of the inputs: what each step put on the line of a variable it writes when its time came (a set its value, a ramp or a wave its motion), in the order put: by time, then by step, then in the order within the step. Only those put at or before scenario.recorded_to_ms of which a write was sent (also one that was refused): a line whose first write the scenario did not get to, because a write before it failed, is not here. Empty for a run that never began. Not in a file of a launcher without the feature timeline-lines.",
+      "description": "The lines of the inputs: what each step put on the line of a variable it writes when its time came (a set its value, a ramp or a wave its motion), in the order put: by time, then by step, then in the order within the step. A dither is a line too (kind \"dither\"): from the first write that carried it, after the lines that the steps put at that time; the next dither line of its variable is where it ends. Only those put at or before scenario.recorded_to_ms of which a write was sent (also one that was refused): a line whose first write the scenario did not get to, because a write before it failed, is not here. Empty for a run that never began. Not in a file of a launcher without the feature timeline-lines.",
       "items": {
         "type": "object",
         "required": [
@@ -569,24 +576,30 @@
           },
           "kind": {
             "type": "string",
-            "description": "The kind of the step: \"set\", \"ramp\" or \"wave\". A reader skips a line of a kind it does not know."
+            "description": "The kind of the step: \"set\", \"ramp\" or \"wave\"; \"dither\" for a dither (of a dither step, or one that the scenario's inputs declare). A reader skips a line of a kind it does not know."
           },
           "line": {
             "type": "integer",
-            "description": "The step's line in the scenario file."
+            "description": "The step's line in the scenario file; of a dither that the inputs declare, the line of its entry."
           },
           "step": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1,
-            "description": "The step's index (steps[].index)."
+            "description": "The step's index (steps[].index); null for a dither that the inputs declare (it is no step's)."
           },
           "from_ms": {
             "type": "number",
-            "description": "The step's time: from here the line has this value or motion."
+            "description": "The step's time: from here the line has this value or motion. Of a dither: the time of the first write that carried it (a dither waits for the first value a step puts on its input)."
           },
           "to_ms": {
-            "type": "number",
-            "description": "The end of the motion as the text says it (from_ms and its length); of a set from_ms. A run that ended earlier wrote the points up to scenario.recorded_to_ms only."
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The end of the motion as the text says it (from_ms and its length); of a set from_ms. A run that ended earlier wrote the points up to scenario.recorded_to_ms only. null for a dither: the text gives it no end, and it is there until the next dither line of its variable."
           },
           "base": {
             "type": [
@@ -608,7 +621,7 @@
               "object",
               "null"
             ],
-            "description": "Of a ramp or a wave: the shape with the values the step's text gives, the parameters put in (what the text leaves out is not here, nor from and around: see base); null for a set.",
+            "description": "Of a ramp, a wave or a dither: the shape with the values the text gives, the parameters put in (what the text leaves out is not here, nor from and around: see base). It is for showing the line; the values are in the series. null for a set, and for a dither step's none (the dither is taken off).",
             "required": [
               "type"
             ],

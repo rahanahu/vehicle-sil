@@ -124,6 +124,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       realtime
       scenario
       scenario_disconnect
+      scenario_dither
       scenario_each_write
       scenario_expect_beside
       scenario_failures

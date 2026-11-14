@@ -232,7 +232,7 @@ struct EnginePeer
 ///
 /// The record (a TimelineRecord, for run --timeline; none: nothing of what follows happens, and
 /// the engine does exactly what it does without one). The engine notes in it every write it
-/// sends (submit_one()), what each step puts on a line (place()), the value of every sample it
+/// sends (submit_one()), what each step puts on a line and each dither that is put (place()), the value of every sample it
 /// looks at (observe()), each step's watch and what a failed step failed of. When the scenario is over it closes the record at one time,
 /// "recorded to": the `at` of the failed step; of a scenario that passed, the latest `at` of its
 /// steps; of one that is Incomplete, the time of the last sample looked at (0 without one).
@@ -296,6 +296,9 @@ private:
         std::size_t step = 0;
         SimTime at{};
         std::vector<ScenarioWrite> writes;
+        /// Per write, once its value is worked out: what it was made of before the dither and
+        /// the variable's type (TimelineRecord::Written::base).
+        std::vector<double> bases{};
         std::optional<std::size_t> motion{}; ///< of motions_: its value is worked out when it is sent
         bool motion_last = false;            ///< the motion's end value
         /// A dither step's one write: its values (of the inputs that have one) are worked out

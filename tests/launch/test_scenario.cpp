@@ -2791,6 +2791,7 @@ TEST_CASE(timeline_files_are_the_references)
         {"waits", {}},
         {"write_refused", {}},
         {"points_file", {20ms, 30ms}},
+        {"dither", {5ms, 20ms, 30ms}},
     };
     for (const auto& [name, steps] : references)
     {
@@ -3404,7 +3405,7 @@ TEST_CASE(scenario_dither_is_read_from_the_inputs_and_from_its_step)
     CHECK(s.variables[0].text == "Body.ratio" && s.variables[1].text == "Door.level");
     CHECK(s.inputs[0].variable == 0 && s.inputs[0].line == 3 && s.inputs[0].shape != nullptr);
     CHECK(s.inputs[0].text == "Body.ratio noise amplitude 0.05 hold 10 ms seed 7");
-    CHECK(s.inputs[1].variable == 1 && s.inputs[1].line == 5);
+    CHECK(s.inputs[1].variable == 1 && s.inputs[1].line == 4); // (the entry's line, not the line of its dither)
     CHECK(s.inputs[1].text == "Door.level triangle amplitude 2 period 80 ms");
     CHECK(s.inputs[1].described.type == "triangle" && s.inputs[1].described.values.size() == 2);
     CHECK(s.steps[1].kind == StepKind::Dither && std::string(step_kind_name(s.steps[1].kind)) == "dither");
@@ -3807,4 +3808,135 @@ TEST_CASE(scenario_dither_of_a_variable_the_configuration_does_not_have_is_skipp
                              "9 passed start=40 at=40 end=40\n");
     // The skipped step took nothing off: the dither goes on.
     check_text(written_to(world, "Body.level", 40ms), "6@0>0 4@10>10 6@20>20 4@30>30 6@40>40 ");
+}
+
+TEST_CASE(timeline_has_the_dithers_as_lines_and_the_base_of_every_point_they_were_on)
+{
+    const auto lines_of = [](const std::string& timeline) {
+        // "<variable> <kind> line <line> step <step> <from>-<to> <text>" per line of the file's lines.
+        std::istringstream in(part(timeline, "  \"lines\": [", "  \"findings\""));
+        std::string out;
+        for (std::string line; std::getline(in, line);)
+        {
+            for (const auto& [key, after] : std::vector<std::pair<std::string, std::string>>{
+                     {"variable", " "}, {"kind", " line "}, {"line", " step "}, {"step", " "}, {"from_ms", "-"}, {"to_ms", " "}, {"text", "\n"}})
+            {
+                if (line.rfind("      \"" + key + "\": ", 0) == 0)
+                {
+                    std::string text = line.substr(line.find(": ") + 2);
+                    std::erase(text, '"');
+                    std::erase(text, ',');
+                    out += text + after;
+                }
+            }
+        }
+        return out;
+    };
+    const auto writes_of = [](const std::string& timeline) {
+        std::istringstream in(timeline);
+        std::string out;
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind("      \"writes\": ", 0) == 0)
+            {
+                out += line.substr(16) + " ";
+            }
+        }
+        return out;
+    };
+    // The declared dither of Body.level is a line from the first write that carries it (the set
+    // at 30 ms), without a step and without an end. The dither step at 20 ms puts one on
+    // Body.ratio, which has no value: its line begins with the set at 60 ms, and is of that step.
+    // none at 90 ms is a line too (no shape): where the dither before it ends. The dither of
+    // Door.level never carried anything, and the one that the step at 20 ms put on Door.ratio is
+    // replaced at 60 ms before a write: neither is a line.
+    const std::string text = kDitherHead + "inputs:\n"
+                                           "  Body.level: { dither: { triangle: { amplitude: 2, frequency_hz: 25 } } }\n"
+                                           "  Door.level: { dither: { triangle: { amplitude: 2, period_ms: 40 } } }\n"
+                                           "params: { swing: 0.05, pick: 12345678901234567 }\n"
+                                           "steps:\n"
+                                           "  - at_ms: 20\n"
+                                           "    dither: { Body.ratio: { noise: { amplitude: \"${swing}\", hold_ms: 10, seed: \"${pick}\" } },\n"
+                                           "              Door.ratio: { square: { amplitude: 0.1, period_ms: 20 } } }\n"
+                                           "  - at_ms: 30\n"
+                                           "    set: { Body.level: 50 }\n"
+                                           "  - at_ms: 60\n"
+                                           "    dither: { Door.ratio: { sawtooth: { amplitude: 0.1, period_ms: 20, falling: true } } }\n"
+                                           "  - at_ms: 60\n"
+                                           "    set: { Body.ratio: 0.5, Door.ratio: 0.5 }\n"
+                                           "  - at_ms: 90\n"
+                                           "    dither: { Body.level: none }\n"
+                                           "  - at_ms: 110\n"
+                                           "    expect: { Body.level: 50 }\n";
+    const std::string made = timeline_of(text, 10ms);
+    CHECK(made.find("    \"status\": \"passed\",") != std::string::npos);
+    // (After the lines that the steps put at a time come the dithers that begin at it, in the
+    // order of their first writes: the step at 60 ms that puts Door.ratio's is before the set.)
+    check_text(lines_of(made), "Body.level set line 10 step 2 30-30 Body.level = 50\n"
+                               "Body.level dither line 3 step null 30-null Body.level triangle amplitude 2 frequency 25 Hz\n"
+                               "Body.ratio set line 14 step 4 60-60 Body.ratio = 0.5\n"
+                               "Door.ratio set line 14 step 4 60-60 Door.ratio = 0.5\n"
+                               "Door.ratio dither line 12 step 3 60-null Door.ratio sawtooth amplitude 0.1 period 20 ms falling\n"
+                               "Body.ratio dither line 7 step 1 60-null Body.ratio noise amplitude 0.05 hold 10 ms seed 12345678901234567\n"
+                               "Body.level dither line 16 step 5 90-null Body.level none\n");
+    // The steps' writes are the places of their lines; a dither step's are its dithers' lines.
+    check_text(writes_of(made), "[5], [0], [4], [2, 3], [6], [], ");
+    // A dither line has no base; its shape is what the text has, with the parameters put in (a
+    // seed keeps every digit); none has no shape.
+    CHECK(made.find("      \"kind\": \"dither\",\n      \"line\": 7,\n      \"step\": 1,\n      \"from_ms\": 60,\n      \"to_ms\": null,\n"
+                    "      \"base\": null,\n      \"base_source\": null,\n      \"shape\": {\n        \"type\": \"noise\",\n"
+                    "        \"amplitude\": 0.05,\n        \"hold_ms\": 10,\n        \"seed\": 12345678901234567\n      },\n") != std::string::npos);
+    CHECK(made.find("      \"shape\": {\n        \"type\": \"triangle\",\n        \"amplitude\": 2,\n        \"frequency_hz\": 25\n      },\n") !=
+          std::string::npos);
+    CHECK(made.find("      \"shape\": {\n        \"type\": \"sawtooth\",\n        \"amplitude\": 0.1,\n        \"period_ms\": 20,\n"
+                    "        \"falling\": true\n      },\n") != std::string::npos);
+    CHECK(made.find("      \"to_ms\": null,\n      \"base\": null,\n      \"base_source\": null,\n      \"shape\": null,\n"
+                    "      \"text\": \"Body.level none\"\n") != std::string::npos);
+    // The series of an input that a dither was on has a third column: what each value was made
+    // of, before the dither and the rounding. Also for the points after the dither was taken off.
+    check_text(part(made, "      \"variable\": \"Body.level\",\n      \"source\": \"written\"", "    },\n"),
+               "      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+               "      \"columns\": [\"t_ms\", \"value\", \"base\"],\n"
+               "      \"points\": [\n"
+               "        [30, 48, 50],\n        [40, 50, 50],\n        [50, 52, 50],\n        [60, 50, 50],\n        [70, 48, 50],\n"
+               "        [80, 50, 50],\n        [90, 50, 50]\n      ]\n");
+    // A file without a dither is as it was: two columns and no "columns".
+    const std::string plain = timeline_of(kHead + "  - set: { Body.level: 50 }\n", 10ms);
+    CHECK(plain.find("\"columns\"") == std::string::npos && plain.find("        [0, 50]\n") != std::string::npos);
+    // A dither whose first write is refused was sent: it is a line, and the point is marked.
+    const std::string refused = timeline_of(kDitherHead + "inputs:\n  Body.level: { dither: { square: { amplitude: 2, period_ms: 40 } } }\n"
+                                                          "steps:\n  - at_ms: 20\n    set: { Body.level: 99 }\n"
+                                                          "  - at_ms: 60\n    expect: { Body.level: 99 }\n",
+                                            10ms);
+    check_text(lines_of(refused), "Body.level set line 5 step 1 20-20 Body.level = 99\n"
+                                  "Body.level dither line 3 step null 20-null Body.level square amplitude 2 period 40 ms\n");
+    CHECK(refused.find("      \"not_applied_from\": 2,\n") != std::string::npos);
+    check_text(part(refused, "      \"points\": [\n", "      ]\n"), "      \"points\": [\n        [20, 97, 99],\n        [30, 97, 99],\n        [40, 101, 99]\n");
+    // The step that failed is the first that was not decided, with the dither's write as what failed.
+    CHECK(refused.find("\"write\": {\n") != std::string::npos);
+}
+
+TEST_CASE(timeline_line_has_the_base_as_the_step_names_it_and_the_shape_with_the_parameters_put_in)
+{
+    // The base a step names is written as it is: 10.5 for an integer (the line and the sample
+    // give what the variable's type has), and a bool as a bool. The shape has the values of the
+    // text with the parameters put in: a number as a number, a seed with every digit, a word.
+    const std::string made =
+        timeline_of(kDitherHead + "params: { hz: 12.5, pick: 9007199254740993, bell: gaussian, hold: 20 }\n"
+                                  "steps:\n"
+                                  "  - ramp: { Body.level: { from: 10.5, to: 20, over_ms: 20 } }\n"
+                                  "  - wave: { Body.lamp: { chatter: { to: true, interval_ms: 10, bounces: 1 } },\n"
+                                  "            Body.ratio: { sine: { amplitude: 0.1, frequency_hz: \"${hz}\" }, around: 0.5, for_ms: 20 },\n"
+                                  "            Body.level: { noise: { amplitude: 1, hold_ms: \"${hold}\", seed: \"${pick}\", distribution: \"${bell}\" }, for_ms: 20 } }\n",
+                    10ms);
+    CHECK(made.find("    \"status\": \"passed\",") != std::string::npos);
+    CHECK(made.find("      \"kind\": \"ramp\",\n      \"line\": 4,\n      \"step\": 1,\n      \"from_ms\": 0,\n      \"to_ms\": 20,\n"
+                    "      \"base\": 10.5,\n      \"base_source\": \"written\",\n") != std::string::npos);
+    CHECK(made.find("      \"base\": false,\n      \"base_source\": \"written\",\n      \"shape\": {\n        \"type\": \"chatter\",\n") !=
+          std::string::npos);
+    CHECK(made.find("      \"base\": 20,\n      \"base_source\": \"line\",\n      \"shape\": {\n        \"type\": \"noise\",\n"
+                    "        \"amplitude\": 1,\n        \"hold_ms\": 20,\n        \"seed\": 9007199254740993,\n"
+                    "        \"distribution\": \"gaussian\",\n        \"for_ms\": 20\n      },\n") != std::string::npos);
+    CHECK(made.find("        \"type\": \"sine\",\n        \"amplitude\": 0.1,\n        \"frequency_hz\": 12.5,\n        \"for_ms\": 20\n") !=
+          std::string::npos);
 }
