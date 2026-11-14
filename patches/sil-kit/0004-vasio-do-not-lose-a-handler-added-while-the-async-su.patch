@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: rahanahu <rahanahu@gmail.com>
+Date: Sat, 14 Nov 2026 21:25:51 +0900
+Subject: [PATCH] vasio: do not lose a handler added while the async
+ subscriptions complete
+
+AddAsyncSubscriptionsCompletionHandler() checks
+_hasPendingAsyncSubscriptions and then adds the handler, on the caller's
+thread. AsyncSubscriptionsCompleted() calls the handlers, clears the
+list and then resets the flag, on the IO thread. When the last
+subscription acknowledge arrives between the check and the Add(), the
+handler is added after the handlers were called, and nobody calls it.
+
+SimulatedNetworkRouter registers its simulator and then announces the
+simulated network from such a handler, in the constructor, on the
+user's thread. When the handler is lost, the network is never
+announced: the controllers on that network stay in the trivial
+simulation for the whole run, and nothing tells. Their frames still
+reach the network simulator, because it subscribed to them, so the
+simulator works on frames that the controllers also exchange directly,
+and it never receives SetBaudRate() or the controller modes.
+
+Guard the flag and the list of handlers with one mutex:
+AsyncSubscriptionsCompleted() takes the handlers and resets the flag in
+one step and calls the handlers without the lock, so a handler is
+either among the ones it calls, or
+AddAsyncSubscriptionsCompletionHandler() sees the reset flag and calls
+the handler itself.
+---
+ SilKit/source/core/vasio/VAsioConnection.cpp | 27 +++++++++++++-------
+ SilKit/source/core/vasio/VAsioConnection.hpp |  2 ++
+ 2 files changed, 20 insertions(+), 9 deletions(-)
+
+diff --git a/SilKit/source/core/vasio/VAsioConnection.cpp b/SilKit/source/core/vasio/VAsioConnection.cpp
+index ec0ab8ec..90ec65e8 100644
+--- a/SilKit/source/core/vasio/VAsioConnection.cpp
++++ b/SilKit/source/core/vasio/VAsioConnection.cpp
+@@ -1856,14 +1856,17 @@ void VAsioConnection::ReceiveRegistryMessage(IVAsioPeer* from, SerializedMessage
+ 
+ void VAsioConnection::AddAsyncSubscriptionsCompletionHandler(std::function<void()> handler)
+ {
+-    if (_hasPendingAsyncSubscriptions)
+     {
+-        _asyncSubscriptionsCompletionHandlers.Add(std::move(handler));
+-    }
+-    else
+-    {
+-        handler();
++        // The check and the Add() are one step for AsyncSubscriptionsCompleted() on the IO thread:
++        // a handler added after its InvokeAll() would never be called.
++        std::lock_guard<std::mutex> lock{_asyncSubscriptionsCompletionMx};
++        if (_hasPendingAsyncSubscriptions)
++        {
++            _asyncSubscriptionsCompletionHandlers.Add(std::move(handler));
++            return;
++        }
+     }
++    handler();
+ }
+ 
+ std::vector<std::string> VAsioConnection::GetConnectedParticipantsNames()
+@@ -1947,9 +1950,15 @@ void VAsioConnection::SyncSubscriptionsCompleted()
+ 
+ void VAsioConnection::AsyncSubscriptionsCompleted()
+ {
+-    _asyncSubscriptionsCompletionHandlers.InvokeAll();
+-    _asyncSubscriptionsCompletionHandlers.Clear();
+-    _hasPendingAsyncSubscriptions = false;
++    // Take the handlers and reset the flag in one step: a handler is either among the ones called
++    // here, or its AddAsyncSubscriptionsCompletionHandler() sees the reset flag and calls it.
++    Util::SynchronizedHandlers<std::function<void()>> handlers;
++    {
++        std::lock_guard<std::mutex> lock{_asyncSubscriptionsCompletionMx};
++        swap(handlers, _asyncSubscriptionsCompletionHandlers);
++        _hasPendingAsyncSubscriptions = false;
++    }
++    handlers.InvokeAll();
+ }
+ 
+ bool VAsioConnection::ParticipantHasCapability(const std::string& participantName, const std::string& capability) const
+diff --git a/SilKit/source/core/vasio/VAsioConnection.hpp b/SilKit/source/core/vasio/VAsioConnection.hpp
+index ef6f0f0e..ccedc164 100644
+--- a/SilKit/source/core/vasio/VAsioConnection.hpp
++++ b/SilKit/source/core/vasio/VAsioConnection.hpp
+@@ -549,6 +549,8 @@ private:
+     std::vector<PendingAcksIdentifier> _pendingAsyncSubscriptionAcknowledges;
+     Util::SynchronizedHandlers<std::function<void()>> _asyncSubscriptionsCompletionHandlers;
+     std::atomic<bool> _hasPendingAsyncSubscriptions{false};
++    // Guards _hasPendingAsyncSubscriptions together with the list of completion handlers
++    std::mutex _asyncSubscriptionsCompletionMx;
+ 
+     // The worker thread should be the last members in this class. This ensures
+     // that no callback is destroyed before the thread finishes.
