@@ -38,8 +38,11 @@ enum class TimeNote
 }
 
 /// What a "time" event says in `paused`, from one look at the gate. It stands still, or is at
-/// (or beyond) the time it is to stand still at and does so with its next step; an ended
-/// simulation stands still nowhere. The event at the start is the one of virtual time 0 (its
+/// (or beyond) the time it is to stand still at and does so with its next step. An ended
+/// simulation stands still nowhere, however it ended: the look at the end says false whatever
+/// the gate says (an aborted simulation's gate keeps `paused` until the abort has gone round,
+/// which the launcher does not wait for), so a run whose last event said true gets one more
+/// that says false. The event at the start is the one of virtual time 0 (its
 /// sim_ms is 0 whatever the gate says): a simulation that has gone on by then (a step or
 /// run_until from the hold before the first step, as fast as possible) and stands still at a
 /// later time did not stand still at 0, and the next look writes where it does.
@@ -49,7 +52,11 @@ enum class TimeNote
     {
         return false;
     }
-    return s.paused || (note != TimeNote::Last && s.pause_target && *s.pause_target <= s.now);
+    if (note == TimeNote::Last)
+    {
+        return false;
+    }
+    return s.paused || (s.pause_target && *s.pause_target <= s.now);
 }
 
 [[nodiscard]] inline std::int64_t ceil_ms(std::chrono::nanoseconds d)

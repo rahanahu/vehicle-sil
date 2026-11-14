@@ -1185,7 +1185,11 @@ TEST_CASE(the_time_event_at_the_start_says_paused_only_if_it_stands_still_at_0)
     // At the target, standing still with the next step; not once the simulation is over.
     CHECK(noted_paused(state(zero + 100ms, false, zero + 100ms), TimeNote::Poll));
     CHECK(!noted_paused(state(zero + 100ms, false, zero + 100ms), TimeNote::Last));
-    CHECK(noted_paused(state(zero + 100ms, true, std::nullopt), TimeNote::Last));
+    // An ended simulation stands still nowhere, whatever its gate says (one aborted while it stood
+    // still: the gate keeps paused until the abort has gone round, at 0 or later).
+    CHECK(!noted_paused(state(zero + 100ms, true, std::nullopt), TimeNote::Last));
+    CHECK(!noted_paused(state(zero, true, std::nullopt), TimeNote::Last));
+    CHECK(!noted_paused(state(zero, true, zero), TimeNote::Last));
 }
 
 TEST_CASE(a_simulation_that_stands_still_is_told_of_at_10_s_60_s_and_10_min)
