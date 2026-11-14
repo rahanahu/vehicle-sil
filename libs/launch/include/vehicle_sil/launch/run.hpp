@@ -182,6 +182,63 @@ struct RunTiming
     [[nodiscard]] std::optional<double> actual_speed() const;
 };
 
+/// Why a participant's frames on a network were not counted (TrafficParticipant).
+enum class TrafficNotCounted
+{
+    None,          ///< counted
+    NoControlLink, ///< no control agent of it said hello: nothing came from it
+    Restarted,     ///< more than one process ran under its name: its counters began again
+    RealTime,      ///< it does not run in virtual time: its samples have no place in the run's time
+    NoCounters,    ///< its control agent has no J1939 counters for the network (another use of it)
+    Mapped,        ///< the entry's `variables` map the counters: their values are not the executable's
+    QueueFull,     ///< the launcher could not keep up with its samples and dropped some
+    NoSample,      ///< no sample of a step before the end came
+};
+/// "no-control-link", "restarted", "real-time", "no-counters", "mapped", "queue-full",
+/// "no-sample" (the result's "not_counted"); None: "".
+[[nodiscard]] const char* traffic_not_counted_name(TrafficNotCounted why);
+
+/// One participant on one network: the J1939 frames it had sent and received there, as its last
+/// step that began before the run's end said (RunTraffic).
+struct TrafficParticipant
+{
+    std::string name;
+    TrafficNotCounted not_counted = TrafficNotCounted::NoControlLink;
+    /// Whether it runs in virtual time; empty if no control agent of it said hello.
+    std::optional<bool> virtual_time{};
+    /// Counted only: the start of the step the numbers are of, and the numbers. `frames_sent`:
+    /// the frames the port had accepted before that step (not: that were on the bus);
+    /// `frames_received`: the J1939 frames of other participants taken from the port.
+    std::optional<SimTime> at{};
+    std::optional<std::int64_t> frames_sent{};
+    std::optional<std::int64_t> frames_received{};
+    [[nodiscard]] bool counted() const { return not_counted == TrafficNotCounted::None; }
+};
+
+/// One network of the configuration and the participants the launcher knows to be on it.
+struct TrafficNetwork
+{
+    std::string name;
+    std::string kind; ///< "can", "lin", "ethernet"
+    std::vector<TrafficParticipant> participants{}; ///< in the order of the configuration
+    /// How many of them were counted, and how many of those had received a frame.
+    [[nodiscard]] std::size_t counted() const;
+    [[nodiscard]] std::size_t received() const;
+};
+
+/// What went over the networks of a run that started: per network of the configuration that a
+/// participant of the run is known to be on (a `describe: true` participant: what --describe
+/// says, under the simulation's names; another one: the networks its control agent has J1939
+/// counters for), each such participant's counters. A participant's numbers are those of its
+/// last step that began before `before_ms`: the samples of the steps from then on come or do not
+/// come before the run is over, so they are left out, and a run that ends at the same virtual
+/// time with the same steps has the same numbers.
+struct RunTraffic
+{
+    std::int64_t before_ms = 0; ///< the run's end (RunTiming::sim_ms)
+    std::vector<TrafficNetwork> per_network{}; ///< in the order of the configuration
+};
+
 /// What a run saw.
 struct RunOutcome
 {
@@ -238,6 +295,8 @@ struct RunOutcome
     std::optional<std::int64_t> stop_at_ms{};
     RunTiming timing{};
     std::vector<ParticipantRun> participants{};
+    /// What went over the networks; empty if the simulation did not start.
+    std::optional<RunTraffic> traffic{};
     /// run --scenario: what became of the scenario (ScenarioStatus::NotRun if the simulation did
     /// not start).
     std::optional<ScenarioRun> scenario{};

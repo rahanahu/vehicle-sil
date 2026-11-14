@@ -126,6 +126,12 @@ int RunWatch::watch(SimulationController& controller)
         notes_.note_joined(controller, outcome_);
         notes_.note_time(controller, TimeNote::Poll, outcome_);
         const TimeState time = controller.time_state();
+        if (ctx_.scenario == nullptr)
+        {
+            // With a scenario its thread takes them, at every step of the controller. The time
+            // was read before the take: the samples of the steps before it are all there.
+            samples_.take(controller_time(controller, time));
+        }
         if (!running)
         {
             // It moved again just before it stopped (a simulation that ends soon after).
@@ -208,6 +214,9 @@ int RunWatch::watch(SimulationController& controller)
     }
     scenario_.finish(controller, watched, forScenario, outcome_);
     note_timing(controller);
+    // The run's end is known: what the participants' steps before it said of the networks. The
+    // hub's tap goes with it.
+    outcome_.traffic = samples_.finish(outcome_.timing.sim_ms);
     notes_.note_time(controller, TimeNote::Last, outcome_);
     // No time command from here on: the simulation is over.
     ctx_.commands.detach();

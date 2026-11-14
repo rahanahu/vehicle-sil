@@ -8,6 +8,8 @@
 //   run_control.*        RunControl       the hub, the participants' control links
 //   run_participants.*   RunParticipants  the participants' processes: start, look, end
 //   run_notes.*          RunNotes         run --events: what has been written already
+//   run_samples.*        RunSamples       the hub's tap: every sample, for the scenario and the traffic
+//   run_traffic.*        TrafficCount     the result's traffic, counted from the samples
 //   run_scenario.*       RunScenario      run --scenario: the engine between hub, gate and result
 //   run_start.*          RunStart, RunStartWindow, StartShared   the wait, the start window, the limits
 //   run_start_limit.hpp  StartLimit       when the start is given up
@@ -23,8 +25,8 @@
 //   its SIL Kit thread; RunStartWindow::run()): the StartShared, RunScenario::begin(),
 //   RunControl::expected_agents() and hub(), TimeCommands::hold_before_start(), and RunOutput.
 // - The scenario's thread (RunScenario::loop()): the scenario's engine, from RunScenario::start()
-//   until the main thread joins it, and RunOutput.
-// - The controller's SIL Kit thread: the hub's tap of the scenario (RunScenario's samples).
+//   until the main thread joins it, RunSamples::take(), and RunOutput.
+// - The controller's SIL Kit thread: the hub's tap (RunSamples' queue).
 // - Each participant's reader thread (process::Process): RunOutput::on_line().
 // - The closing thread (Runner::close_connection(), at the end of run()): destroys the hub's
 //   transport, the controller and the registry, and touches nothing else of the run. The main
@@ -37,8 +39,11 @@
 // - TimeCommands' mutex, then the event stream's, the controller's time gate's, or what
 //   RunOptions' callbacks take (on_detach, the `accepted` of a stop).
 // - RunOutput's mutex, then the event stream's (and RunOptions::write_line).
-// - StartLimit's mutex, StartShared::found_mutex, RunScenario's samples' and error mutexes:
-//   nothing under them.
+// - RunSamples' take mutex, then the hub's or RunSamples' queue mutex (and what the scenario's
+//   engine does with a sample: no lock).
+// - The hub's mutex, then RunSamples' queue mutex (the tap).
+// - StartLimit's mutex, StartShared::found_mutex, RunSamples' queue mutex, RunScenario's error
+//   mutex: nothing under them.
 //
 // A control server (RunOptions::serve_control) has threads of its own. Of the run they touch the
 // hub (thread safe; its subscriptions are bounded and never make the simulation wait) and the
@@ -52,6 +57,7 @@
 #include "run_notes.hpp"
 #include "run_output.hpp"
 #include "run_participants.hpp"
+#include "run_samples.hpp"
 #include "run_scenario.hpp"
 #include "run_start.hpp"
 #include "run_watch.hpp"
@@ -73,6 +79,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace vehicle_sil::launch {
 
@@ -97,6 +104,7 @@ using detail::RunControl;
 using detail::RunNotes;
 using detail::RunOutput;
 using detail::RunParticipants;
+using detail::RunSamples;
 using detail::RunScenario;
 using detail::RunStart;
 using detail::RunWatch;
@@ -107,14 +115,26 @@ using detail::uri_for_participants;
 /// it.
 class Runner
 {
+    static std::vector<std::string> participant_names(const SimulationConfig& config)
+    {
+        std::vector<std::string> names;
+        for (const auto& p : config.participants)
+        {
+            names.push_back(p.name);
+        }
+        return names;
+    }
+
 public:
     Runner(const SimulationConfig& config, const CheckReport& check, std::filesystem::path base, const RunOptions& options) :
       own_commands_(options.time_commands == nullptr ? std::make_unique<TimeCommands>(options.start_paused) : nullptr),
       ctx_{config, check, options, check.scenario && check.scenario->scenario ? &*check.scenario->scenario : nullptr,
            own_commands_ ? *own_commands_ : *options.time_commands},
-      out_(ctx_), control_(ctx_, out_), notes_(ctx_, participants_), scenario_(ctx_, out_, control_),
+      out_(ctx_), control_(ctx_, out_), samples_(participant_names(config), detail::traffic_plan(config, check)),
+      notes_(ctx_, participants_), scenario_(ctx_, out_, control_, samples_),
       start_(ctx_, out_, control_, notes_, scenario_, participants_, outcome_),
-      watch_(ctx_, out_, notes_, scenario_, start_, participants_, outcome_), participants_(ctx_, out_, outcome_, std::move(base))
+      watch_(ctx_, out_, notes_, samples_, scenario_, start_, participants_, outcome_),
+      participants_(ctx_, out_, outcome_, std::move(base))
     {
         outcome_.start_timeout_ms = config.start_timeout_ms;
         outcome_.stop_timeout_ms = config.stop_timeout_ms;
@@ -165,8 +185,13 @@ public:
             TimeCommands& commands;
             ~Detach() { commands.detach(); }
         } const detach{ctx_.commands};
-        // The scenario's thread and its tap on the hub end with the run, before the controller
-        // and the transport go (declared after them).
+        // The hub's tap and the scenario's thread end with the run, before the controller and the
+        // transport go (declared after them); the thread first, which takes the samples.
+        struct EndSamples
+        {
+            Runner& runner;
+            ~EndSamples() { runner.samples_.untap(); }
+        } const endSamples{*this};
         struct EndScenario
         {
             Runner& runner;
@@ -266,11 +291,14 @@ public:
                 start_.window(*t, *c, window);
             });
             ctx_.commands.attach(*controller, outcome_.timing.time_step_ms, outcome_.timing.speed);
+            // Every sample the hub takes, in every run: for the traffic of the result, and for
+            // the scenario.
+            samples_.tap(control_.hub());
             if (ctx_.scenario != nullptr)
             {
                 // The scenario decides at every step of the controller, from the one at 0 on.
                 controller->guard_from(SimTime{});
-                scenario_.tap(std::chrono::milliseconds(outcome_.timing.time_step_ms));
+                scenario_.prepare(std::chrono::milliseconds(outcome_.timing.time_step_ms));
             }
         }
         catch (const std::exception& e)
@@ -308,7 +336,9 @@ public:
         participants_.end_manual(*controller, ran || start_.before_start_failed(), interrupts_at_end_);
         // The agents have said their last word and waited for this side's answer (their processes
         // have ended); what is still open in the hub (of a process that was killed, or whose last
-        // word did not arrive within its wait) is settled here.
+        // word did not arrive within its wait) is settled here. No sample is taken any more: the
+        // tap goes before the transport does (a run that did not get to its watch still has it).
+        samples_.untap();
         close_connection(std::move(transport), std::move(controller), std::move(registry));
         return outcome_;
     }
@@ -370,6 +400,7 @@ private:
     RunOutcome outcome_; ///< the main thread's: the other threads of the run never see it
     RunOutput out_;
     RunControl control_; ///< before scenario_: the scenario's engine and port use its hub
+    RunSamples samples_; ///< after control_ (its tap is on the hub), before scenario_ (which takes from it)
     RunNotes notes_;
     RunScenario scenario_;
     RunStart start_;

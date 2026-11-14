@@ -141,9 +141,9 @@ SIL Kit の participant は、ほかの participant からの接続を待ち受�
 - participant の標準出力と標準エラーは、行ごとに `[<participant 名>] ` を付けて、`vehicle_sil_launch` の標準エラーに流します。`vehicle_sil_launch` 自身の経過は `[vehicle_sil_launch] ` で始まります（registry の URI、ほかのコンピューターから参加する URI、起動したコマンド、始まった、仮想時間が進まない、終わった、止めた）。4096 バイトを超える行は、UTF-8 の文字の間で分けて流します。制御文字（タブを除く C0、DEL、U+0080 から U+009F の C1）と、UTF-8 でないバイトは `?` にします。participant は UTF-8 で書いてください（Windows のコンソールにも UTF-8 として表示するので、ほかのコードページの文字は化けます）。標準エラーを読む側が止まる（読まれないパイプ）と、`vehicle_sil_launch` も書くところで止まります。
 - `--log-dir <dir>` を付けると、participant ごとに `<dir>/<participant 名>.log` にも書きます（`[名前]` なし。名前の ASCII の英数字、`.`、`-`、`_` 以外のバイトは `_` にし、Windows の装置の名前（`NUL`、`CON`、`PRN`、`AUX`、`COM1`〜`COM9`、`LPT1`〜`LPT9`。`.` の前も）には、どの OS でも後ろに `_` を付けます。大文字と小文字だけが違う名前は重なりとみなし、`-2` などを付けます）。ディレクトリがなければ作ります。前の実行のログは、同じ名前のものだけを書き直します（今の構成にない participant のログは残ります）。JSON の `participants[].log` が、どのファイルかを示します。
 - `--events` のときは、ここに書いた行（participant の行と `vehicle_sil_launch` の経過）を標準エラーに書かず、事象として標準出力に書きます（[機械から使う](simulation-events.md)）。
-- 標準出力には結果だけを書きます（人向けか `--json`。`--events` では事象）。同じ機械の上の同じ結果からは同じ出力です（時刻、所要時間、プロセス ID、registry の URI を含みません）。ただし、時間の進み方を示す値は実行ごとに違います（人向けの `time:` の行、JSON の `timing` の `wall_ms`、`actual_speed`、遅れの数（`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`）、`paused_ms`）。改行はどの OS でも LF です。Windows のコンソールに書くときは、`check` も `run` も、コンソールのコードページによらず UTF-8 の文字として表示します。
+- 標準出力には結果だけを書きます（人向けか `--json`。`--events` では事象）。同じ機械の上の同じ結果からは同じ出力です（時刻、所要時間、プロセス ID、registry の URI を含みません）。ただし、時間の進み方を示す値は実行ごとに違います（人向けの `time:` の行、JSON の `timing` の `wall_ms`、`actual_speed`、遅れの数（`late_steps`、`max_late_ms`、`slipped_ms`、`late_ms`）、`paused_ms`）。ネットワークの送受信の数（人向けの `traffic:` の行と表、JSON の `traffic`）は、`stop_at_ms` かシナリオの終わりで終わった実行では実行ごとに同じです。止める要求、`--timeout-ms`、participant の失敗、participant が止めたことで終わった実行では、終わった仮想時刻（`sim_ms`）が実行ごとに違うので、数も違います。改行はどの OS でも LF です。Windows のコンソールに書くときは、`check` も `run` も、コンソールのコードページによらず UTF-8 の文字として表示します。
 
-人向けの結果は、照合の表と照合で見つけたもの、`run:` で始まるシミュレーションの 1 行（速さを指定したか、速さを合わせた刻みがあったときは、続けて `time:` の 1 行）、participant の表（必須か、どう終わったか）、実行で見つけたもの、最後に結果の 1 行（`passed:`、`failed:`、`interrupted:` と、照合と実行を合わせた誤り、警告、注記の数）です。照合に誤りがあるときは、照合の表と見つけたものの後に `nothing was started:` の行を書きます。
+人向けの結果は、照合の表と照合で見つけたもの、`run:` で始まるシミュレーションの 1 行（速さを指定したか、速さを合わせた刻みがあったときは、続けて `time:` の 1 行）、participant の表（必須か、どう終わったか）、ネットワークごとの送受信（`traffic:` の 1 行と表。下の「ネットワークの送受信（`traffic:`）」）、実行で見つけたもの、最後に結果の 1 行（`passed:`、`failed:`、`interrupted:` と、照合と実行を合わせた誤り、警告、注記の数）です。照合に誤りがあるときは、照合の表と見つけたものの後に `nothing was started:` の行を書きます。
 
 <!-- vehicle_sil_launch run simulation.yaml -->
 ```text
@@ -161,6 +161,12 @@ run: the simulation ran to stop_at_ms (1000 ms) and ended
 participant  required  ended
 Engine       yes       exit code 0
 Dashboard    yes       exit code 0
+
+traffic: J1939_CAN: 1 of 2 participants received (steps before 1000 ms)
+
+network    participant  sent  received
+J1939_CAN  Engine         11         0
+J1939_CAN  Dashboard       0        11
 
 passed: 0 errors, 0 warnings, 0 notes
 ```
@@ -185,6 +191,26 @@ participant の表の `ended` の列:
 | `started by you (manual)` | 利用者が起動する participant で、シミュレーションに参加した（どう終わったかは、`run` にはわからない） |
 | `not joined (manual)` | 利用者が起動する participant で、参加しなかった |
 
+### ネットワークの送受信（`traffic:`）
+
+シミュレーションが始まった実行は、participant の表の後に、ネットワークごとに J1939 のフレームが届いたかを書きます。数は、各 ECU の変数の口（[変数を読み書きする口](#変数を読み書きする口)）が送ってくる監視用の出力 `j1939.<ネットワーク名>.frames_sent` と `frames_received` です。
+
+- `traffic:` の行は、ネットワークごとに「数えた participant のうち、1 つ以上受信したものの数」です（`J1939_CAN: 1 of 2 participants received`）。上の例の Dashboard は受信するだけで何も送らないので、Engine は受信が 0 で、`1 of 2` になります。数えなかった participant がいれば `(1 not counted)` と続けます。どのネットワークにも participant がいなければ `traffic: no network in use` の 1 行だけです。
+- 表は、ネットワークと participant ごとの 1 行です。ネットワークの名前は、シミュレーションでの名前です（`network_names` で付け替えた後の名前）。載るのは、ランチャーがそのネットワークにいると知っている participant だけです（`--describe` がそのネットワークを言うもの。`describe: false` では、変数の口がそのネットワークの数を持つもの）。
+- 数え方: 各 participant の「実行が終わった仮想時刻（行の `steps before <ms> ms`、JSON の `before_ms`）より前に始まった最後のステップ」の値です。その時刻以後のステップの値は、実行が終わるまでに届くことも届かないこともあるので、使いません。
+- `sent` は、そのステップより前に、ポートが送信として受け付けたフレームの数です（バスに出た数ではありません。Address Claimed も入ります）。`received` は、ポートから受け取った、ほかの participant の J1939 のフレームの数です（同じ participant の別のノードのものと、J1939 でないフレームは入りません）。
+- 数えなかった participant は、数が `-` で、行の右に理由があります。
+
+| 行の右の表示 | JSON の `not_counted` | 意味 |
+|---|---|---|
+| `not counted: no control link` | `"no-control-link"` | 変数の口がつながらなかった（`--no-control`、変数の口のない実行ファイル） |
+| `not counted: restarted` | `"restarted"` | 同じ名前のプロセスが起動し直された（数が 0 からやり直しになるため） |
+| `not counted: real time` | `"real-time"` | 仮想時間で動いていない（値の時刻がシミュレーションの時刻と別のため） |
+| `not counted: no J1939 counters` | `"no-counters"` | そのネットワークの数を持たない（生の CAN、LIN、イーサネットとして使っている） |
+| `not counted: counters mapped by variables` | `"mapped"` | 構成の `variables` が、その数の出力に対応を当てている（値が実行ファイルのものと違うため） |
+| `not counted: samples dropped` | `"queue-full"` | ランチャーが値を受け取り切れずに捨てた（標準出力の読み手が止まっている間など） |
+| `not counted: no sample before the end` | `"no-sample"` | 終わりより前のステップの値が 1 つも届かなかった |
+
 外した participant がいるときの例です。照合の部分は `check` と同じです（[participant を外す](simulation-config.md#participant-を外すenabled--disable--enable)）。
 
 <!-- vehicle_sil_launch run simulation.yaml --disable Dashboard -->
@@ -206,6 +232,11 @@ run: the simulation ran to stop_at_ms (1000 ms) and ended
 participant  required  ended
 Engine       yes       exit code 0
 Dashboard    -         not started (disabled)
+
+traffic: J1939_CAN: 0 of 1 participants received (steps before 1000 ms)
+
+network    participant  sent  received
+J1939_CAN  Engine         11         0
 
 passed: 0 errors, 1 warning, 1 note
 ```
@@ -254,6 +285,7 @@ passed: 0 errors, 1 warning, 1 note
 | `timing` | 時間の進み方（下の表）。何も起動しなかったときは `null` |
 | `participants[]` | 構成ファイルの順（外した participant も）。`name`、`required`、`enabled`（`false` なら外した participant で、`ended` は `"not_started"`、`log` は `null`。シミュレーションが待つのは `required` と `enabled` がどちらも `true` のもの）、`manual`（`true` なら利用者が起動する participant で、`ended` は `"not_started"`、`exit_code` は `null`。[participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)）、`ended`（`"exited"`、`"stopped"`、`"killed"`、`"not_started"`）、`exit_code`（シグナルで終わったとき、強制終了したとき、起動しなかったときは `null`）、`signal`（`"SIGSEGV"` など。なければ `null`）、`left_processes`（起動したプロセスを残したか）、`log`（`--log-dir` のファイル。なければ `null`）、`control_link`（始まったときの、変数を読み書きする口のつながり方。下の表。起動しなかった participant は `state` が `"none"`） |
 | `participants[].control_link` | `state`（`"connected"`、`"no_hello"`、`"version_mismatch"`、`"not_offered"`、`"none"`。[変数を読み書きする口](#変数を読み書きする口)）、`variables`（`connected` のとき、その ECU が出す変数の数。ECU の実行が足す `peer.` などの出力を含むので、`--describe` の数より多いことがあります。ほかは `null`）、`version`（`version_mismatch` のとき、相手の形式の版。ほかは `null`）、`late_messages`（約束より遅れて届いたメッセージの数。ふつうは 0） |
+| `traffic` | ネットワークごとの送受信（上の「ネットワークの送受信（`traffic:`）」。下の表）。シミュレーションが始まらなかったときは `null` |
 | `findings[]` | 実行で見つけたもの（照合の `findings[]` と同じ形） |
 | `check` | 照合の結果（`check --json` と同じオブジェクト）。選んだ機種（`variant`）と、パラメーター（`params`、`scenario.params`）はここにあります |
 | `scenario` | `--scenario` を付けたときだけ。シナリオの結果（[scenario.md](scenario.md) の「出力」）。`check` の中にも `scenario`（`file`、`name`、`steps`）があります。`simulation` の `"ended"` は、シナリオが終わってランチャーが止めた場合を含みます。見分けるには `scenario.status` を見ます（`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です）。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です |
@@ -276,6 +308,16 @@ passed: 0 errors, 1 warning, 1 note
 | `slipped_ms` | ずれの合計（遅れた刻みの遅れの合計。ミリ秒、切り上げ）。シミュレーションが、指定の速さで進んだ場合より、全体でこれだけ遅れました |
 | `late_ms` | 実行が終わったとき、期限を過ぎたまま始まっていなかった刻みの遅れ（ミリ秒、切り上げ）。なければ 0。0 でなければ、シミュレーションは止まったまま終わりました（`late_steps`、`max_late_ms`、`slipped_ms` に入っています） |
 | `paused_ms` | 一時停止していた実時間（ミリ秒） |
+
+`traffic` のキー:
+
+| キー | 値 |
+|---|---|
+| `before_ms` | 実行が終わった仮想時刻（`timing.sim_ms`）。数は、これより前に始まったステップのものです |
+| `networks[]` | participant がいるとわかっているネットワーク（構成ファイルの順）。`name`（シミュレーションでの名前）、`kind`、`counted`（数えた participant の数）、`received`（そのうち 1 つ以上受信したものの数） |
+| `networks[].participants[]` | 構成ファイルの順。`name`、`counted`、`not_counted`（数えたときは `null`。ほかは上の表の文字列）、`virtual_time`（仮想時間で動いているか。変数の口がつながらなかったときは `null`）、`at_ms`（数を読んだステップの時刻）、`frames_sent`、`frames_received`（数えなかったときは、この 3 つは `null`） |
+
+届いたかどうかを機械が判断するときは、ネットワークごとの `received` と `counted`、participant ごとの `not_counted` と `frames_received` を見ます。
 
 <!-- vehicle_sil_launch run simulation.yaml --json -->
 ```json
@@ -342,6 +384,37 @@ passed: 0 errors, 1 warning, 1 note
       }
     }
   ],
+  "traffic": {
+    "before_ms": 1000,
+    "networks": [
+      {
+        "name": "J1939_CAN",
+        "kind": "can",
+        "counted": 2,
+        "received": 1,
+        "participants": [
+          {
+            "name": "Engine",
+            "counted": true,
+            "not_counted": null,
+            "virtual_time": true,
+            "at_ms": 990,
+            "frames_sent": 11,
+            "frames_received": 0
+          },
+          {
+            "name": "Dashboard",
+            "counted": true,
+            "not_counted": null,
+            "virtual_time": true,
+            "at_ms": 990,
+            "frames_sent": 0,
+            "frames_received": 11
+          }
+        ]
+      }
+    ]
+  },
   "findings": [],
   "check": {
     "vehicle_sil_check": 1,

@@ -13,7 +13,9 @@ vehicle_sil_add_harness_tests(vehicle_sil_launch_tests
     test_run.cpp
     test_scenario.cpp
     test_shared_values.cpp
+    test_traffic.cpp
   LINK vehicle_sil::launch vehicle_sil::core # core: the time commands with a controller (test_events.cpp)
+       vehicle_sil::control # the hub that the run's samples come from (test_traffic.cpp)
        vehicle_sil_cli) # the other tools' exit codes and durations (test_shared_values.cpp)
 # libs/launch/src: the run's parts that have no dependencies and are tested as written (run_start_limit.hpp).
 target_include_directories(vehicle_sil_launch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/libs/launch/src)
@@ -21,12 +23,13 @@ target_compile_definitions(vehicle_sil_launch_tests PRIVATE VEHICLE_SIL_LAUNCH_S
                            # test_shared_values.cpp reads the GUI's sources.
                            VEHICLE_SIL_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
-# The sources of the launcher read the networks of a description in one place (seen_networks(),
-# which applies a participant's network_names), and where --describe's JSON is read and written
-# back; the check itself must reject a read anywhere else, and pass the networks of the file.
+# The sources of the launcher (its library and its tool) read the networks of a description in
+# one place (seen_networks(), which applies a participant's network_names), and where --describe's
+# JSON is read and written back; the check itself must reject a read anywhere else (also one
+# through a pointer to the member), and pass the networks of the file.
 add_test(NAME launch.described_networks_are_read_in_one_place
-         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR}/libs -DDIR=launch
-                 -DFILES=launch/src/check_networks.cpp,launch/src/describe_read.cpp
+         COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DDIR=libs/launch,tools/launch
+                 -DFILES=libs/launch/src/check_networks.cpp,libs/launch/src/describe_read.cpp
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckDescribedNetworks.cmake)
 add_test(NAME launch.described_networks_check_rejects_a_direct_read
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/network_fixtures/direct -DDIR=launch
@@ -35,7 +38,7 @@ add_test(NAME launch.described_networks_check_rejects_a_direct_read
 set_tests_properties(launch.described_networks_are_read_in_one_place launch.described_networks_check_rejects_a_direct_read
                      PROPERTIES LABELS "unit;launch" TIMEOUT 60)
 set_tests_properties(launch.described_networks_check_rejects_a_direct_read PROPERTIES
-                     PASS_REGULAR_EXPRESSION "launch/src/rules\\.cpp: for \\(const auto& network : result\\.ecu->description\\.networks\\)"
+                     PASS_REGULAR_EXPRESSION "launch/src/rules\\.cpp: if \\(\\(result\\.ecu->description\\.\\*\\(&EcuDescription::networks\\)\\)\\.empty\\(\\)\\)[^:]*launch/src/rules\\.cpp: for \\(const auto& network : result\\.ecu->description\\.networks\\)"
                      FAIL_REGULAR_EXPRESSION "check_networks\\.cpp: |config\\.networks")
 
 # vehicle_sil_launch check as a process: the examples of docs/simulation-*.md with the ECU
@@ -160,6 +163,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
       test_interrupt
       time_usage
       timeout
+      traffic
       usage
       variable_map
       variants

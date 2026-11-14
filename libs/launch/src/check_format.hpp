@@ -41,6 +41,11 @@ void write_finding_members(vehicle_sil::detail::JsonWriter& w, const std::string
 /// format_run_json()'s object, as the member `key` of the object `w` is in ("" at the top).
 void write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const RunReport& report);
 
+/// The result's traffic, for people: the line "traffic: ..." (per network how many of the counted
+/// participants received, and before which virtual time), an empty line, and the table (network,
+/// participant, sent, received; a row that is not counted has "-" and says why to its right).
+/// Without a network in use, one line.
+[[nodiscard]] std::string traffic_text(const RunTraffic& traffic);
 /// run --scenario, for people: one line with the result, then a table of the steps (line, what,
 /// result, the virtual time that decided it).
 [[nodiscard]] std::string scenario_text(const ScenarioRun& scenario);

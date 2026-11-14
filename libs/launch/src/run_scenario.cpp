@@ -46,7 +46,21 @@ private:
     control::Hub& hub_;
 };
 
-RunScenario::RunScenario(const RunContext& ctx, RunOutput& out, RunControl& control) : ctx_(ctx), out_(out), control_(control) {}
+RunScenario::RunScenario(const RunContext& ctx, RunOutput& out, RunControl& control, RunSamples& samples) :
+  ctx_(ctx), out_(out), control_(control), samples_(samples)
+{
+    if (ctx_.scenario != nullptr)
+    {
+        for (const ParticipantConfig& p : ctx_.config.participants)
+        {
+            const auto used = std::find_if(ctx_.scenario->participants.begin(), ctx_.scenario->participants.end(),
+                                           [&p](const ScenarioParticipant& s) { return s.name == p.name; });
+            places_.push_back(used != ctx_.scenario->participants.end()
+                                  ? std::optional<std::size_t>(static_cast<std::size_t>(used - ctx_.scenario->participants.begin()))
+                                  : std::nullopt);
+        }
+    }
+}
 
 RunScenario::~RunScenario() = default;
 
@@ -59,35 +73,13 @@ void RunScenario::note_step(const ScenarioStepRun& step)
     out_.event([&step](EventStream& e) { e.scenario_step(step); });
 }
 
-void RunScenario::tap(std::chrono::milliseconds step)
+void RunScenario::sample(std::size_t participant, const std::string& incarnation,
+                         const std::shared_ptr<const control::Snapshot>& sample)
 {
-    step_ = step;
-    samples_.incarnations.assign(ctx_.scenario->participants.size(), std::string{});
-    tapped_ = true;
-    control_.hub().set_values_tap([this](const std::string& participant, const std::string& incarnation,
-                                const std::shared_ptr<const control::Snapshot>& sample) {
-        const std::lock_guard lock(samples_.mutex);
-        for (std::size_t i = 0; i < ctx_.scenario->participants.size(); ++i)
-        {
-            if (ctx_.scenario->participants[i].name == participant && samples_.incarnations[i] == incarnation)
-            {
-                samples_.taken.emplace_back(i, sample);
-                return;
-            }
-        }
-    });
-}
-
-void RunScenario::drain()
-{
-    std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> taken;
+    // Only of the control agents that were there when the scenario began.
+    if (const std::optional<std::size_t>& place = places_[participant]; place && incarnations_[*place] == incarnation)
     {
-        const std::lock_guard lock(samples_.mutex);
-        taken.swap(samples_.taken);
-    }
-    for (auto& [participant, sample] : taken)
-    {
-        engine_->sample(participant, std::move(sample));
+        engine_->sample(*place, sample);
     }
 }
 
@@ -96,8 +88,8 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     const std::vector<control::PeerInfo> peers = control_.hub().peers();
     const std::vector<control_silkit::LinkInfo> links = transport.links();
     std::vector<EnginePeer> found(ctx_.scenario->participants.size());
+    incarnations_.assign(found.size(), std::string{});
     {
-        const std::lock_guard lock(samples_.mutex);
         for (std::size_t i = 0; i < found.size(); ++i)
         {
             const std::string& name = ctx_.scenario->participants[i].name;
@@ -111,7 +103,7 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
             {
                 found[i].connected = true;
                 found[i].schema = peer->schema;
-                samples_.incarnations[i] = peer->incarnation;
+                incarnations_[i] = peer->incarnation;
             }
         }
     }
@@ -120,6 +112,10 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     engine_ = std::make_unique<ScenarioEngine>(*ctx_.scenario, step_,
                                                         *port_,
                                                         [this](const ScenarioStepRun& step) { note_step(step); });
+    // From here on the scenario gets the samples: none that was in the queue before (of a
+    // participant that does not wait for the start).
+    samples_.scenario_begins([this](std::size_t participant, const std::string& incarnation,
+                                    const std::shared_ptr<const control::Snapshot>& taken) { sample(participant, incarnation, taken); });
     engine_->begin(found);
     port_->give_up = [this] { return quit_.load(); };
 }
@@ -154,7 +150,7 @@ void RunScenario::loop(SimulationController& controller)
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
-            drain();
+            samples_.take(*p);
             if (engine_->tick(*p))
             {
                 // Over: the guard stays, so that the simulation stands at this step until the
@@ -196,6 +192,12 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
         outcome.scenario->status = ScenarioStatus::Incomplete;
         return;
     }
+    // Whatever is taken from here on is not the scenario's (below: once more, for a stop_at_ms).
+    const struct Ends
+    {
+        RunSamples& samples;
+        ~Ends() { samples.scenario_ends(); }
+    } ends{samples_};
     if (!engine_->over())
     {
         const bool stoppedAt = !for_scenario && watched.end == WatchEnd::Ended &&
@@ -204,8 +206,9 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
         if (stoppedAt)
         {
             // The controller's last step: the samples of the steps before it are all there.
-            drain();
-            engine_->stopped_at(controller.time_state().now);
+            const SimTime last = controller.time_state().now;
+            samples_.take(last);
+            engine_->stopped_at(last);
         }
         else
         {
@@ -230,11 +233,7 @@ void RunScenario::end()
     {
         thread_.join();
     }
-    if (tapped_)
-    {
-        control_.hub().set_values_tap({});
-        tapped_ = false;
-    }
+    samples_.scenario_ends();
 }
 
 } // namespace vehicle_sil::launch::detail

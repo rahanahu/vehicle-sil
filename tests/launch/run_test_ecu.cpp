@@ -50,6 +50,9 @@
 //                           there in every 10 ms step (may be given for several networks)
 //   hear <network>          has the raw CAN network <network> and writes "<name>.heard" in its working
 //                           directory when the first frame arrives there
+//   j1939 <network> <address>  has the J1939 network <network> (the name in its code) with one node at
+//                           <address> (decimal, no NAME), which sends one message (PGN 0xFF20, to all)
+//                           in every 10 ms step (may be given for several networks)
 // With the file "test-ecu-old" in its working directory, the participants it names (words separated
 // by spaces) are executables of a vehicle-sil before --map-network: their --describe has no
 // "features" (and the raw CAN network "OLD_CAN"), and started for a run they write
@@ -62,6 +65,7 @@
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/simulation/ecu_main.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <csignal>
@@ -213,6 +217,13 @@ public:
                 in >> network;
                 talk_.push_back(&ecu.can(network));
             }
+            else if (word == "j1939")
+            {
+                std::string network;
+                int address = 0;
+                in >> network >> address;
+                nodes_.push_back(&ecu.j1939(network).add_node({.address = static_cast<std::uint8_t>(address)}));
+            }
             else if (word == "hear")
             {
                 std::string network;
@@ -277,6 +288,11 @@ public:
                 frame.length = 1;
                 frame.data[0] = static_cast<std::uint8_t>(ticks_);
                 static_cast<void>(channel->send(frame));
+            }
+            for (vehicle_sil::j1939::Node* node : nodes_)
+            {
+                const std::array<std::uint8_t, 1> data{static_cast<std::uint8_t>(ticks_)};
+                static_cast<void>(node->send(vehicle_sil::j1939::Pgn{0xFF20}, data));
             }
             const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
             if (level_ != last_level_)
@@ -368,6 +384,7 @@ private:
     bool pulse_ = false;
     std::int64_t requests_ = 0;
     std::vector<vehicle_sil::can::RawChannel*> talk_{};
+    std::vector<vehicle_sil::j1939::Node*> nodes_{};
     bool heard_ = false;
 };
 

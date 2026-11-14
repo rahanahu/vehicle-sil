@@ -586,6 +586,8 @@ void crash(const Options& o)
                 "Engine       yes       exit code 7\n"
                 "Brake        yes       exit code 0\n"
                 "\n"
+                "traffic: no network in use\n"
+                "\n"
                 "error: sim.yaml:5: participant 'Engine': it failed while the simulation was running, and the launcher "
                 "aborted the simulation: its process exited with code 7; the lines [Engine] above show what it wrote [participant-failed]\n"
                 "\n"
@@ -615,6 +617,8 @@ void step(const Options& o)
                 "Engine       yes       exit code 1\n"
                 "Brake        yes       exit code 0\n"
                 "\n"
+                "traffic: no network in use\n"
+                "\n"
                 "error: sim.yaml:5: participant 'Engine': it failed while the simulation was running, and the launcher "
                 "aborted the simulation: its process exited with code 1; the lines [Engine] above show what it wrote [participant-failed]\n"
                 "\n"
@@ -640,6 +644,8 @@ void optional(const Options& o)
                                  "participant  required  ended\n"
                                  "Engine       yes       exit code 0\n"
                                  "Logger       no        exit code 5\n"
+                                 "\n"
+                                 "traffic: no network in use\n"
                                  "\n"
                                  "warning: sim.yaml:7: participant 'Logger': its process exited with code 5; the lines "
                                  "[Logger] above show what it wrote [exit-code]\n"
@@ -772,6 +778,8 @@ void hang(const Options& o)
                 "Stuck        yes       stopped (" + kStop + "), exit code 9\n"
                 "Deaf         yes       killed\n"
                 "\n"
+                "traffic: no network in use\n"
+                "\n"
                 "error: sim.yaml:6: participant 'Stuck': it was still running " + stop_ms + " ms (stop_timeout_ms) after the "
                 "simulation ended: the launcher asked it to stop (" + kStop + "), and its process exited with code 9; a "
                 "participant should end when the simulation ends (the lines [Stuck] above show what it wrote) [did-not-end]\n"
@@ -808,6 +816,8 @@ void grandchild(const Options& o)
                 "\n"
                 "participant  required  ended\n"
                 "Engine       yes       exit code 0\n"
+                "\n"
+                "traffic: no network in use\n"
                 "\n"
                 "warning: sim.yaml:5: participant 'Engine': processes it started were still running after it had ended: "
                 "the launcher ended them; end them in the participant before it exits [left-processes]\n"
@@ -942,6 +952,8 @@ void interrupt(const Options& o)
                 "Engine       yes       exit code 0\n"
                 "Brake        yes       exit code 0\n"
                 "\n"
+                "traffic: no network in use\n"
+                "\n"
                 "note: sim.yaml: interrupted (" + by + "): the launcher stopped the simulation and the participants [interrupted]\n"
                 "\n"
                 "interrupted: 0 errors, 0 warnings, 1 note\n",
@@ -1040,6 +1052,8 @@ void ended_early(const Options& o)
                 "participant  required  ended\n"
                 "Engine       yes       exit code 130\n"
                 "\n"
+                "traffic: no network in use\n"
+                "\n"
                 "error: sim.yaml:5: participant 'Engine': its process exited with code 130; the lines [Engine] above show "
                 "what it wrote [exit-code]\n"
                 "note: sim.yaml: the simulation ended before stop_at_ms (1000000000000 ms): a participant stopped it; if "
@@ -1105,6 +1119,8 @@ void interrupt_ending(const Options& o)
                 "participant  required  ended\n"
                 "Stuck        yes       stopped (" + kStop + "), exit code 9\n"
                 "\n"
+                "traffic: no network in use\n"
+                "\n"
                 "note: sim.yaml: interrupted (" + by + "): the launcher stopped the participants instead of waiting for "
                 "them to end [interrupted]\n"
                 "\n"
@@ -1137,6 +1153,8 @@ void timeout(const Options& o)
                 "\n"
                 "participant  required  ended\n"
                 "Hang         yes       killed\n"
+                "\n"
+                "traffic: no network in use\n"
                 "\n"
                 "error: sim.yaml: the simulation did not end within 5000 ms of wall-clock time (--timeout-ms), so the "
                 "launcher aborted it: a participant may hang in a step (the lines above show what the participants "
@@ -1175,6 +1193,8 @@ void no_console(const Options& o)
                 "\n"
                 "participant  required  ended\n"
                 "Deaf         yes       killed\n"
+                "\n"
+                "traffic: no network in use\n"
                 "\n"
                 "error: sim.yaml:6: participant 'Deaf': it was still running 300 ms (stop_timeout_ms) after the "
                 "simulation ended: the launcher could not ask it to stop (no console to send Ctrl+Break through) and "
@@ -1310,7 +1330,7 @@ void control(const Options& o)
         require(contains(out, "\"log\":null,\"control_link\":{\"state\":\"connected\",\"variables\":8,\"version\":null,"
                               "\"late_messages\":0}},{\"name\":\"Brake\"") &&
                     contains(out, "\"log\":null,\"control_link\":{\"state\":\"not_offered\",\"variables\":null,\"version\":null,"
-                                  "\"late_messages\":0}}],\"findings\":[]"),
+                                  "\"late_messages\":0}}],\"traffic\":{\"before_ms\":"),
                 "the result has each participant's control link:\n" + out);
         // The check notes the variables that are not offered, and says what each executable offers.
         require(contains(out, "\"code\":\"control-link-not-offered\"") &&
@@ -1386,6 +1406,8 @@ void disabled(const Options& o)
                 "Engine       yes       exit code 0\n"
                 "Brake        -         not started (disabled)\n"
                 "Ghost        -         not started (disabled)\n"
+                "\n"
+                "traffic: no network in use\n"
                 "\n"
                 "passed: 0 errors, 0 warnings, 2 notes\n",
                 "run with disabled participants");
@@ -5077,6 +5099,8 @@ void manual_late(const Options& o)
                     "Auto         yes       exit code 0\n"
                     "Hand         yes       started by you (manual)\n"
                     "\n"
+                    "traffic: no network in use\n"
+                    "\n"
                     "passed: 0 errors, 0 warnings, 1 note\n",
                     "a participant started by hand after start_timeout_ms");
         const auto ended = byHand.wait(30s);
@@ -5438,6 +5462,174 @@ std::string participant_event(const std::string& events, const std::string& name
     return {};
 }
 
+/// The part of the run's text from "traffic:" to the empty line after it (the line alone, or the
+/// line, an empty line and the table).
+std::string traffic_part(const std::string& text)
+{
+    const auto at = text.find("\ntraffic: ");
+    require(at != std::string::npos, "the output has no traffic: line\n" + text);
+    const std::string from = text.substr(at + 1);
+    const bool table = from.find("\n\nnetwork ") == from.find('\n');
+    const auto end = table ? from.find("\n\n", from.find('\n') + 2) : from.find("\n\n");
+    require(end != std::string::npos, "nothing after the traffic\n" + text);
+    return from.substr(0, end + 1);
+}
+
+void traffic(const Options& o)
+{
+    // The example: Engine sends, Dashboard only listens. The same output from run to run.
+    const fs::path example = example_copy(o);
+    const Captured first = launch(o, {"run", "simulation.yaml"}, example);
+    expect_code(first, 0, "run simulation.yaml");
+    expect_text(traffic_part(first.standard_output),
+                "traffic: J1939_CAN: 1 of 2 participants received (steps before 1000 ms)\n"
+                "\n"
+                "network    participant  sent  received\n"
+                "J1939_CAN  Engine         11         0\n"
+                "J1939_CAN  Dashboard       0        11\n",
+                "the traffic of the example");
+    for (int again = 0; again < 3; ++again)
+    {
+        const Captured next = launch(o, {"run", "simulation.yaml"}, example);
+        expect_text(next.standard_output, first.standard_output, "the output of the example, run again");
+    }
+    const auto with_names = [](const std::string& more_networks, const std::string& engine, const std::string& dashboard) {
+        return "vehicle_sil_simulation: 1\n"
+               "stop_at_ms: 1000\n"
+               "networks:\n"
+               "  - { name: J1939_CAN, kind: can }\n" +
+               more_networks +
+               "participants:\n"
+               "  - name: Engine\n"
+               "    command: [engine/vehicle_sil_engine_ecu]\n" +
+               engine +
+               "  - name: Dashboard\n"
+               "    command: [dashboard/vehicle_sil_dashboard_ecu]\n" +
+               dashboard;
+    };
+    // The file gives Dashboard's bus another name: two buses with one participant each, and
+    // nobody receives. The names are the simulation's.
+    write_file(example / "apart.yaml",
+               with_names("  - { name: VehicleCAN, kind: can }\n", "", "    network_names: { VehicleCAN: J1939_CAN }\n"));
+    const Captured apart = launch(o, {"run", "apart.yaml"}, example);
+    expect_code(apart, 0, "run apart.yaml");
+    expect_text(traffic_part(apart.standard_output),
+                "traffic: J1939_CAN: 0 of 1 participants received; VehicleCAN: 0 of 1 participants received (steps before "
+                "1000 ms)\n"
+                "\n"
+                "network     participant  sent  received\n"
+                "J1939_CAN   Engine         11         0\n"
+                "VehicleCAN  Dashboard       0         0\n",
+                "the traffic of two buses that are one in the code");
+    // Both renamed: the counters are found under the simulation's name, and the frames arrive.
+    write_file(example / "renamed.yaml",
+               with_names("  - { name: VehicleCAN, kind: can }\n", "    network_names: { VehicleCAN: J1939_CAN }\n",
+                          "    network_names: { VehicleCAN: J1939_CAN }\n"));
+    const Captured renamed = launch(o, {"run", "renamed.yaml"}, example);
+    expect_code(renamed, 0, "run renamed.yaml");
+    expect_text(traffic_part(renamed.standard_output),
+                "traffic: VehicleCAN: 1 of 2 participants received (steps before 1000 ms)\n"
+                "\n"
+                "network     participant  sent  received\n"
+                "VehicleCAN  Engine         11         0\n"
+                "VehicleCAN  Dashboard       0        11\n",
+                "the traffic of a bus that both call by another name");
+
+    // An ECU without a network.
+    const fs::path alone = scenario_dir(o, "vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n"
+                                           "  - name: Engine\n    command: [" + ecu(o) + "]\n");
+    const Captured none = launch(o, {"run", "sim.yaml"}, alone);
+    expect_code(none, 0, "run without a network");
+    expect_text(traffic_part(none.standard_output), "traffic: no network in use\n", "the traffic without a network");
+    require(contains(launch(o, {"run", "sim.yaml", "--json"}, alone).standard_output,
+                     "  \"traffic\": {\n    \"before_ms\": 100,\n    \"networks\": []\n  },\n"),
+            "the JSON's traffic without a network");
+
+    // ECUs that declare no variable (the launcher does not wait for the hello of such a one), one
+    // that uses the bus in another way, one without --describe whose counters the file maps, one
+    // without --describe that is counted by what its control agent says, and one that is disabled.
+    const std::string undescribed = ", --registry-uri, \"{registry_uri}\", --name, \"{name}\"]\n    describe: false\n";
+    const fs::path mixed = scenario_dir(o,
+                                        "vehicle_sil_simulation: 1\n"
+                                        "stop_at_ms: 200\n"
+                                        "networks:\n"
+                                        "  - { name: BUS, kind: can }\n"
+                                        "  - { name: Empty, kind: can }\n"
+                                        "participants:\n"
+                                        "  - name: A\n    command: [" + ecu(o) + "]\n"
+                                        "  - name: B\n    command: [" + ecu(o) + "]\n"
+                                        "  - name: Raw\n    command: [" + ecu(o) + "]\n"
+                                        "  - name: Door\n    command: [" + ecu(o) + undescribed +
+                                        "    variables:\n      door.sent: j1939.BUS.frames_sent\n"
+                                        "  - name: Tool\n    command: [" + ecu(o) + undescribed +
+                                        "  - name: Off\n    command: [" + ecu(o) + "]\n    enabled: false\n",
+                                        {{"A", "j1939 BUS 10"},
+                                         {"B", "j1939 BUS 11"},
+                                         {"Raw", "talk BUS"},
+                                         {"Door", "j1939 BUS 12"},
+                                         {"Tool", "j1939 BUS 13"},
+                                         {"Off", "j1939 BUS 14"}});
+    const Captured mix = launch(o, {"run", "sim.yaml"}, mixed);
+    expect_code(mix, 0, "run with ECUs that are counted and not counted");
+    // Four of them send a frame in each of the 19 steps before the one at 190 ms.
+    expect_text(traffic_part(mix.standard_output),
+                "traffic: BUS: 3 of 3 participants received (2 not counted) (steps before 200 ms)\n"
+                "\n"
+                "network  participant  sent  received\n"
+                "BUS      A              19        76\n"
+                "BUS      B              19        76\n"
+                "BUS      Raw             -         -  not counted: no J1939 counters\n"
+                "BUS      Door            -         -  not counted: counters mapped by variables\n"
+                "BUS      Tool           19        76\n",
+                "the traffic of ECUs that are counted and not counted");
+    for (int again = 0; again < 3; ++again)
+    {
+        expect_text(launch(o, {"run", "sim.yaml"}, mixed).standard_output, mix.standard_output,
+                    "the output with ECUs that declare no variable, run again");
+    }
+    const std::string json = launch(o, {"run", "sim.yaml", "--json"}, mixed).standard_output;
+    const auto from = json.find("  \"traffic\": {\n");
+    const auto to = json.find("  \"findings\": [");
+    require(from != std::string::npos && to != std::string::npos && from < to, "the JSON has no traffic before the findings:\n" + json);
+    const auto member = [](const std::string& name, const std::string& why, const std::string& numbers) {
+        return "          {\n            \"name\": \"" + name + "\",\n            \"counted\": " + (why.empty() ? "true" : "false") +
+               ",\n            \"not_counted\": " + (why.empty() ? "null" : "\"" + why + "\"") +
+               ",\n            \"virtual_time\": true,\n" + numbers + "          }";
+    };
+    const std::string counted = "            \"at_ms\": 190,\n            \"frames_sent\": 19,\n            \"frames_received\": 76\n";
+    const std::string not_counted = "            \"at_ms\": null,\n            \"frames_sent\": null,\n            \"frames_received\": null\n";
+    expect_text(json.substr(from, to - from),
+                "  \"traffic\": {\n"
+                "    \"before_ms\": 200,\n"
+                "    \"networks\": [\n"
+                "      {\n"
+                "        \"name\": \"BUS\",\n"
+                "        \"kind\": \"can\",\n"
+                "        \"counted\": 3,\n"
+                "        \"received\": 3,\n"
+                "        \"participants\": [\n" +
+                    member("A", "", counted) + ",\n" + member("B", "", counted) + ",\n" + member("Raw", "no-counters", not_counted) +
+                    ",\n" + member("Door", "mapped", not_counted) + ",\n" + member("Tool", "", counted) +
+                    "\n"
+                    "        ]\n"
+                    "      }\n"
+                    "    ]\n"
+                    "  },\n",
+                "the JSON's traffic");
+
+    // A run that did not start has none.
+    const fs::path missing = scenario_dir(o, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                                             "  - name: Engine\n    command: [" + ecu(o) + "]\n"
+                                             "  - name: Quitter\n    command: [" + helper(o) + ", --exit, \"2\", --uri, \"{registry_uri}\"]\n"
+                                             "    describe: false\n");
+    const Captured unstarted = launch(o, {"run", "sim.yaml", "--json"}, missing);
+    require(contains(unstarted.standard_output, "  \"simulation\": \"not_started\",\n") &&
+                contains(unstarted.standard_output, "  \"traffic\": null,\n"),
+            "a run that did not start has no traffic:\n" + unstarted.standard_output);
+    require(!contains(launch(o, {"run", "sim.yaml"}, missing).standard_output, "traffic:"),
+            "a run that did not start says nothing of the traffic");
+}
+
 void network_names(const Options& o)
 {
     // Engine's code names its buses J1939_CAN and CAN_B; the file calls them VehicleCAN and
@@ -5677,6 +5869,7 @@ int main(int argc, char** argv)
             {"manual_timeout", manual_timeout},
             {"network", network},
             {"network_names", network_names},
+            {"traffic", traffic},
             {"no_console", no_console},
             {"no_console_stdin", no_console_stdin},
             {"not_joined", not_joined},

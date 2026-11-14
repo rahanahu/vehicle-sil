@@ -660,7 +660,7 @@ flowchart TD
 | `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary`、`signal.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth`、`libs/signal` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 | `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の構成は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
 | `peer.controllers_are_made_on_the_simulation_name` | `libs/` で SIL Kit のバスのコントローラーを作るのは `libs/peer/src/peer.cpp` だけで、どの呼び出しも `simulation_name()` を通した名前のネットワークに作る（`cmake/VehicleSilCheckControllerNetworks.cmake`） |
-| `launch.described_networks_are_read_in_one_place` | `libs/launch` で自己申告のネットワーク（`description.networks`）を読むのは `src/check_networks.cpp`（対応を当てる `seen_networks()` と、JSON の `reported` を書く所）と `src/describe_read.cpp` だけ（`cmake/VehicleSilCheckDescribedNetworks.cmake`。構成の `config.networks` は数えない） |
+| `launch.described_networks_are_read_in_one_place` | `libs/launch` と `tools/launch` で自己申告のネットワーク（`description.networks`。メンバーへのポインター `::networks` も）を読むのは `src/check_networks.cpp`（対応を当てる `seen_networks()` と、JSON の `reported` を書く所）と `src/describe_read.cpp` だけ（`cmake/VehicleSilCheckDescribedNetworks.cmake`。構成の `config.networks` は数えない） |
 | `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |
 | `eth_link.boundary` | `libs/eth_link` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 
@@ -759,7 +759,7 @@ flowchart TD
 
   合わせて直すもの: 照合の規則、表、JSON の `networks` は、自己申告のネットワークを `seen_networks()`（`libs/launch/src/check_networks.cpp`。対応を当てるただ 1 つの関数）からだけ読みます。
   `description.networks` を自分で読む規則は、名前を替えたネットワークを実行ファイルの名前で見てしまいます。
-  `launch.described_networks_are_read_in_one_place`（`cmake/VehicleSilCheckDescribedNetworks.cmake`）が、`libs/launch` の `.networks` の行を読んで確かめます。規則や出力を足したら、名前を替えたネットワークの場合を `tests/launch/test_check.cpp` に足します。
+  `launch.described_networks_are_read_in_one_place`（`cmake/VehicleSilCheckDescribedNetworks.cmake`）が、`libs/launch` と `tools/launch` の `.networks`、`->networks`、`::networks` の行を読んで確かめます（構成の `config.networks` だけは数えないので、ほかの構造体のメンバーに `networks` という名前を付けると落ちます。別の名前にします）。規則や出力を足したら、名前を替えたネットワークの場合を `tests/launch/test_check.cpp` に足します。
   `run` の引数は `detail::participant_arguments()`（`libs/launch/src/run_participants.cpp`）の 1 か所で作り、起動、`manual` のコマンド、事象 `participant` が同じ列を使います（`--map-network` は最後。`describe: false` ではプレースホルダーを置き換えた後）。
   文書は [simulation-config.md](simulation-config.md) の「ネットワークの名前を合わせる」とキーの表・機種の表、[simulation-check.md](simulation-check.md) の `network-map-*`・`unknown-network`・`single-participant` と JSON の `network_map`、[simulation-events.md](simulation-events.md) の `features` の `network-names`、スキーマ（`schema/simulation.schema.json` とひな形の写し）。
   試験は `^launch\.`（`test_config.cpp`、`test_check.cpp`、`test_run.cpp`）、`launch_run.network_names`（名前の違う ECU が 1 つのバスで通信する、機種で対応が替わる、`manual` のコマンドと事象、`--map-network` を受け取れない実行ファイル）、`schema.files_and_launcher`
@@ -920,7 +920,7 @@ flowchart TD
   試験は `schema.files_and_launcher`
 
 - 変えるもの: シナリオ（`run --scenario`、`check --scenario`。
-  読み方と照合は `libs/launch/src/scenario.cpp`、手順を進める機械は `libs/launch/src/scenario_run.cpp`、`ramp` と `wave` の値を出す関数（`Waveform` の実装）は `libs/launch/src/scenario_shapes.cpp`、その計算は `libs/signal` の `signal/waveform.hpp`、ランチャーへのつなぎ込みは `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`）、時間のゲートのガードは `SimulationController::guard_from()` と `wait_guarded()`、全サンプルを受ける口は `control::Hub::set_values_tap()`）
+  読み方と照合は `libs/launch/src/scenario.cpp`、手順を進める機械は `libs/launch/src/scenario_run.cpp`、`ramp` と `wave` の値を出す関数（`Waveform` の実装）は `libs/launch/src/scenario_shapes.cpp`、その計算は `libs/signal` の `signal/waveform.hpp`、ランチャーへのつなぎ込みは `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`）、時間のゲートのガードは `SimulationController::guard_from()` と `wait_guarded()`、全サンプルを受ける口は `control::Hub::set_values_tap()` で、tap を持つのは `libs/launch/src/run_samples.cpp` の `RunSamples`。シナリオはそこから取り出す）
 
   合わせて直すもの: [scenario.md](scenario.md)（形式、時刻、値の見え方、書き込み、結果、所見の `code` の表、出力）と、その例（`<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` の後のブロックを `launch_run.scenario` がバイト単位で照合。
   例のファイルは `examples/ecu_main/scenarios/throttle_step.yaml`。
@@ -939,6 +939,17 @@ flowchart TD
   届く順を変えても結果が同じ。`launch.scenario_wave_*` は波形の値、終わった後の値、所見。`launch.scenario_expect_beside_*` は `ramp` と `wave` の横の `expect` の区間、手順が決まる順、機種で `expect` だけ飛ばすこと）、`^signal\.`、`launch_run.scenario`、`scenario_wave`（波形を ECU が見た時刻、刻みを変えても通る、警告と `undersampled: ok`）、`scenario_expect_beside`（横の `expect` が外れたサンプル、`expect_skipped`）、`scenario_same`（最速、等速、遅い ECU、一時停止で同じ結果。
   書き込みが効いたステップを ECU が申告する）、`scenario_failures`、`core.time_gate_model_the_guard_*`、`core.virtual_time_gate_guard_*`、`control.control_hub_tap_*`
 
+- 変えるもの: 実行の結果の `traffic`（ネットワークごとの J1939 の送受信の数。
+  tap と列と取り出しは `libs/launch/src/run_samples.cpp` の `RunSamples`、数え方は `libs/launch/src/run_traffic.cpp` の `TrafficCount`、hello のスキーマからネットワーク名と数の出力の位置を取り出すのは `traffic_schema()`、誰がどのネットワークにいるかは `traffic_plan()`（`seen_networks()` から）、取り出す所は `run_scenario.cpp` の `RunScenario::loop()` と `finish()`、`run_watch.cpp` の `RunWatch::watch()`、文と JSON は `run_format.cpp` の `traffic_text()` と `write_run_json()`）
+
+  合わせて直すもの: [simulation-run.md](simulation-run.md) の「ネットワークの送受信（`traffic:`）」（数え方、`sent` の意味、数えない理由の表、実行ごとに変わる終わり方）と「JSON」の `traffic` の表、`run` の出力例（`launch_run.docs`、`launch_run.scenario` などが照合する `simulation-run.md`、`scenario.md`、`simulation-config.md`、`simulation-events.md`、`howto/first-ecu.md`、`howto/scenario-tests.md` のブロック）、`features` の `run-traffic`、[internals/control.md](internals/control.md) の「ランチャーが受け取るサンプル」、GUI の録り（`gui/server/tests/recordings/`）と `gui/protocol/examples/`。
+  守ること: tap の中は列に積むだけ（待たない、Hub を呼ばない）。
+  取り出す人は、先に controller の時刻を読んでから取り出す。
+  数は「終わりの時刻より前に始まった最後のステップ」の値で、それ以後のサンプルは捨てる（届いたかどうかで出力が変わらないように）。
+  数の出力は、Agent が申告した名前（`PeerInfo::sources`）で探し、対応が当たっているものは数えない。
+  シナリオに渡すサンプルを変えない（シナリオが始まった後に tap が受け取った、始まったときの Agent のものだけ。`RunSamples::scenario_begins()`）。
+  試験は `launch.the_numbers_are_those_of_the_last_step_*`、`launch.where_the_takes_fall_*`、`launch.a_participant_that_is_not_counted_says_why`、`launch.the_samples_of_a_hub_go_to_the_count_*`（`tests/launch/test_traffic.cpp`）、`launch.the_text_for_people`、`launch.the_json_report`、`launch_run.traffic`（例の 2 つの ECU で実行ごとに同じ出力、`network_names` で分かれたバスとそろえたバス、変数を宣言しない ECU、数えない participant）、`^launch_run\.scenario`、`control_server.launcher`
+
 - 変えるもの: シナリオの実行中の Control Server（見るだけ。
   `ServerOptions::observe_only`、`libs/control_grpc/src/auth.hpp` の `Effect` と `auth.cpp` の `rpc_rules()`、断る所は `control_service.cpp` の `guarded()`、付けるのは `tools/launch/control_server.cpp`）
 
@@ -946,7 +957,7 @@ flowchart TD
   `control-server` と同じく、持つビルドだけが出す）と引数の表、[internals/control.md](internals/control.md) の「ランチャーの Control Server」。
   RPC を足したら、表の行に種類を書きます（変えるものは `Effect::Change`）。
   守ること: 断るのは本体に入る前の 1 か所。
-  クライアントの呼び出しから、シナリオの tap、書き込み、ガードに触る道を足さない。
+  クライアントの呼び出しから、実行の tap（`RunSamples`）、書き込み、ガードに触る道を足さない。
   Hub の購読と tap に、待つものを足さない。
   試験は `control_server.control_server_observe_only_*`、`control_server.control_server_that_only_observes_*`（呼び出しごとの表は試験の側にも書いてある）、`control_server.launcher`（読み手あり・なしでシナリオの結果が同じ、読まない読み手がいても終わる）、`control.control_hub_readers_that_never_read_*`
 

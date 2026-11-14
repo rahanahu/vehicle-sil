@@ -8,6 +8,7 @@
 #include "run_notes.hpp"
 #include "run_output.hpp"
 #include "run_participants.hpp"
+#include "run_samples.hpp"
 #include "run_scenario.hpp"
 #include "run_start.hpp"
 
@@ -21,12 +22,16 @@ namespace vehicle_sil::launch::detail {
 /// a simulation that stands still (StandStill). What it reads of
 /// other threads is atomic (RunScenario::over(), the hold's times of RunStart) or the
 /// controller's. It ends the time commands (TimeCommands::detach()) once the simulation is over.
+/// It takes the run's samples (RunSamples, which keeps itself): at every look in a run without a
+/// scenario (with one, the scenario's thread takes them), and once more when the simulation is
+/// over, for the traffic of the result.
 class RunWatch
 {
 public:
-    RunWatch(const RunContext& ctx, RunOutput& out, RunNotes& notes, RunScenario& scenario, const RunStart& start,
-             RunParticipants& participants, RunOutcome& outcome) :
-      ctx_(ctx), out_(out), notes_(notes), scenario_(scenario), start_(start), participants_(participants), outcome_(outcome)
+    RunWatch(const RunContext& ctx, RunOutput& out, RunNotes& notes, RunSamples& samples, RunScenario& scenario,
+             const RunStart& start, RunParticipants& participants, RunOutcome& outcome) :
+      ctx_(ctx), out_(out), notes_(notes), samples_(samples), scenario_(scenario), start_(start), participants_(participants),
+      outcome_(outcome)
     {
     }
 
@@ -43,6 +48,7 @@ private:
     const RunContext& ctx_;
     RunOutput& out_;
     RunNotes& notes_;
+    RunSamples& samples_;
     RunScenario& scenario_;
     const RunStart& start_;
     RunParticipants& participants_;

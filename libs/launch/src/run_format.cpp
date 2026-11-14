@@ -210,6 +210,10 @@ std::string format_run_text(const RunReport& report)
         }
         out += detail::table_text(rows) + "\n";
     }
+    if (run.traffic)
+    {
+        out += detail::traffic_text(*run.traffic) + "\n";
+    }
     out += detail::findings_text(report.check.file, report.findings);
     switch (result)
     {
@@ -245,6 +249,62 @@ const char* step_result_text(StepStatus status)
 }
 
 } // namespace
+
+std::string detail::traffic_text(const RunTraffic& traffic)
+{
+    if (traffic.per_network.empty())
+    {
+        return "traffic: no network in use\n";
+    }
+    const auto why = [](TrafficNotCounted reason) -> std::string {
+        switch (reason)
+        {
+        case TrafficNotCounted::None: return {};
+        case TrafficNotCounted::NoControlLink: return "not counted: no control link";
+        case TrafficNotCounted::Restarted: return "not counted: restarted";
+        case TrafficNotCounted::RealTime: return "not counted: real time";
+        case TrafficNotCounted::NoCounters: return "not counted: no J1939 counters";
+        case TrafficNotCounted::Mapped: return "not counted: counters mapped by variables";
+        case TrafficNotCounted::QueueFull: return "not counted: samples dropped";
+        case TrafficNotCounted::NoSample: return "not counted: no sample before the end";
+        }
+        return {};
+    };
+    std::string line;
+    std::vector<std::vector<std::string>> rows{{"network", "participant", "sent", "received"}};
+    for (const TrafficNetwork& network : traffic.per_network)
+    {
+        const std::size_t counted = network.counted();
+        const std::size_t others = network.participants.size() - counted;
+        line += (line.empty() ? "" : "; ") + network.name + ": " + std::to_string(network.received()) + " of " +
+                std::to_string(counted) + " participants received" +
+                (others > 0 ? " (" + std::to_string(others) + " not counted)" : std::string{});
+        for (const TrafficParticipant& p : network.participants)
+        {
+            std::vector<std::string> row{network.name, p.name, p.frames_sent ? std::to_string(*p.frames_sent) : "-",
+                                         p.frames_received ? std::to_string(*p.frames_received) : "-"};
+            if (!p.counted())
+            {
+                row.push_back(why(p.not_counted));
+            }
+            rows.push_back(std::move(row));
+        }
+    }
+    // The numbers to the right.
+    for (const std::size_t column : {std::size_t{2}, std::size_t{3}})
+    {
+        std::size_t width = 0;
+        for (const auto& row : rows)
+        {
+            width = std::max(width, row[column].size());
+        }
+        for (std::size_t i = 1; i < rows.size(); ++i)
+        {
+            rows[i][column].insert(0, width - rows[i][column].size(), ' ');
+        }
+    }
+    return "traffic: " + line + " (steps before " + std::to_string(traffic.before_ms) + " ms)\n\n" + detail::table_text(rows);
+}
 
 std::string detail::scenario_step_text(const ScenarioStepRun& step)
 {
@@ -433,6 +493,67 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
         }
     }
     w.end_array();
+    if (report.run && report.run->traffic)
+    {
+        const RunTraffic& traffic = *report.run->traffic;
+        w.begin_object("traffic");
+        w.integer("before_ms", traffic.before_ms);
+        w.begin_array("networks");
+        for (const TrafficNetwork& network : traffic.per_network)
+        {
+            w.begin_object();
+            w.string("name", network.name);
+            w.string("kind", network.kind);
+            w.integer("counted", static_cast<std::int64_t>(network.counted()));
+            w.integer("received", static_cast<std::int64_t>(network.received()));
+            w.begin_array("participants");
+            for (const TrafficParticipant& p : network.participants)
+            {
+                const auto number = [&w](std::string_view member, const std::optional<std::int64_t>& value) {
+                    if (value)
+                    {
+                        w.integer(member, *value);
+                    }
+                    else
+                    {
+                        w.null(member);
+                    }
+                };
+                w.begin_object();
+                w.string("name", p.name);
+                w.boolean("counted", p.counted());
+                if (p.counted())
+                {
+                    w.null("not_counted");
+                }
+                else
+                {
+                    w.string("not_counted", traffic_not_counted_name(p.not_counted));
+                }
+                if (p.virtual_time)
+                {
+                    w.boolean("virtual_time", *p.virtual_time);
+                }
+                else
+                {
+                    w.null("virtual_time");
+                }
+                w.real("at_ms", p.at ? std::optional<double>(static_cast<double>(to_ns(*p.at)) / static_cast<double>(kNanosPerMilli))
+                                     : std::nullopt);
+                number("frames_sent", p.frames_sent);
+                number("frames_received", p.frames_received);
+                w.end_object();
+            }
+            w.end_array();
+            w.end_object();
+        }
+        w.end_array();
+        w.end_object();
+    }
+    else
+    {
+        w.null("traffic");
+    }
     detail::write_findings_json(w, report.check.file, report.findings);
     detail::write_check_json(w, "check", report.check);
     if (report.run && report.run->scenario)
