@@ -15,7 +15,7 @@ vehicle-sil 自体を直す人と AI エージェント向けです。変える�
 - 1 つの試験は、試験の実行ファイルに名前を渡すと動きます（`<実行ファイル> <名前>`。ctest もそうしています）。
 - プロセスを起動する試験（シナリオ）は `vehicle_sil_add_scenario_tests()` で登録し、名前は `<前置き>.<シナリオ>` です。シナリオの一覧は `CMakeLists.txt` の `SCENARIOS`、中身は同じディレクトリの `*launcher.cpp`（`tests/integration/launcher.cpp`、`tests/launch/launch_run_launcher.cpp` など）です。共通の部品は `tests/integration/launcher_support.hpp` にあります。
 - 試験は決まったポートで待ち受けません。registry はポート 0（`RegistryProcess`、`registry_uri` を書かない構成ファイル）、Control Server は `--control 0`、GUI サーバーは `--port 0` か、e2e が起動のたびに選ぶ空いているポートです（`multi_host.two_hosts` の 18500 は、試験が作る network namespace の中）。同じ PC で、別の作業ツリーのビルドの試験と同時に回せます。文書が示す決まったポート（`manual` の 8500 など）が要るシナリオは、`vehicle_sil_add_scenario_tests()` の `MACHINE_LOCK` で PC 全体のロック（`/tmp` のファイルに `flock`。`cmake/vehicle_sil_machine_lock.sh`。Windows ではなし）を取り、順に回ります。待つ間は 1 行出し、待った時間はその試験の CTest の `TIMEOUT` に数えます。ロックのファイルを開けないとき（別の利用者のファイルなど）は、1 行言ってロックなしで回ります。
-- 前置きだけを回すときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.` にも当たります。
+- 前置きだけを回すときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.`、`j1939_spy.` にも当たります。
 - 起きるはずのことは、`eventually(条件, 上限)`（`test_harness.hpp`）か、起きたことを知らせる手段で待ちます。決まった時間だけ眠って「進んだはず」としません。
   - 待ちの上限には倍率が掛かります。倍率は、試験を動かすときの環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`、なければビルドの既定（CMake のキャッシュ変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT`。既定は 1、TSan のプリセットは 4）です。値は数字と小数点 1 つだけで書き、0 より大きくします（`3`、`2.5`）。ほかの書き方（空白、指数、16 進）は、C++ の試験、GUI サーバーの試験、e2e が変数の名前と直し方を言って止まります。CI は 3 を与えます（TSan のジョブは与えずに、プリセットの既定を使います。`.github/workflows/ci.yml`）。
   - 倍率を掛けるかどうかは、値の種類で決まります。
@@ -112,6 +112,7 @@ PGN と識別子、単一フレームの送受信、宛先の振り分け、ロ�
 道具箱（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）とプロトコル部品（`j1939_parts.*`: DM13、診断、識別情報、送信の競合、後で返す ACK、ステップ幅によらない結果）も確かめ、`j1939_parts.boundary` が部品がエンジンの内部を使っていないことを検査する。
 型付きメッセージ（`j1939_codec.*`）は、ビット配置をビットごとの実装と照合し、raw 値と物理値の変換、丸めと範囲の端、特別な値（J1939 のプロファイル、利用者のプロファイル、継承と上書き、すべてのビットパターンを値として使う Proprietary B、raw 値の保持）、列挙、セレクター、埋め値、長さ、小さい信号のすべての raw 値の往復、ノードでの送受信を確かめる。
 `j1939_codec.generator` は生成器が誤った定義を止めることを確かめる。
+`Spy`（`j1939_spy.*`、`tests/spy`）は、`LocalBench` の ECU で、見張りの変数の名前と値、見張りの呼ばれる順、ハンドラの後に getter と `Scope::now()` の時刻が来ること、壊す順（ハンドラを外してから見張り、最後に `Listener`）、聞きこぼしの変数の内訳と和、誤りの文、`Spy` があってもほかの ECU の記録が変わらず何も送らないこと、定常状態のステップで確保しないこと、手引きの見本を確かめる。`j1939_spy.boundary` は `libs/spy` がエンジンの内部を使っていないことを、`j1939.sniffer_boundary` はエンジンが `vehicle_sil::spy` を知らないことを検査する。
 `local.boundary`、`testkit.boundary`、`peer.boundary`、`simulation.boundary`、`ecu.boundary` も、それぞれのディレクトリのソースがエンジンの内部を使っていないことを検査する（ラベルは `unit` と `j1939`）
 
 ### `peer` / `testkit`
@@ -288,6 +289,12 @@ registry につながらないときの文（`registry_failure_message()`）は�
   `BusConnection`、`GatedCanPort`、`GatedLinPort`、`GatedEthPort`、`ecu/detail/bus_connection.hpp`）
 - 試験: `tests/ecu`、`tests/simulation`（`test_disconnect.cpp`）
 - `ctest -R`: `^ecu\.`、`^simulation\.disconnect`
+
+### `libs/spy`
+
+- 主なクラス・関数（ヘッダー）: `Spy`、`Scope`、`SpyOptions`（`spy/spy.hpp`。聞くだけの participant が、聞いたことを ECU の変数に出す。見張りは `Scope&` を取るクラス）
+- 試験: `tests/spy`
+- `ctest -R`: `^j1939_spy\.`
 
 ### `libs/local`
 
@@ -568,6 +575,8 @@ flowchart TD
     testkit --> can
     testkit --> j1939
     testkit --> ecu
+    spy --> ecu
+    spy --> j1939
 ```
 
 ### Peer と Simulation
@@ -659,7 +668,7 @@ flowchart TD
 | 試験 | 検査すること |
 |---|---|
 | `j1939_parts.boundary` | `libs/j1939/parts` が、エンジンの公開 API と道具箱だけを使い、`vehicle_sil::j1939` とほかの部品だけをリンクする |
-| `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
+| `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary`、`j1939_spy.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
 | `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary`、`signal.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth`、`libs/signal` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 | `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の構成は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
 | `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |

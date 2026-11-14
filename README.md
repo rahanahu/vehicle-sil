@@ -112,7 +112,7 @@ int main() {
 - 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。
 - J1939 スタックに ETP（1785 バイトを超えるメッセージ）はありません。制限と規格との一致を確かめていない点は [docs/internals/j1939.md](docs/internals/j1939.md) の「J1939 の既知の制限」と各節にあります。
 - 試験キットに LIN の故障注入と記録の道具はありません（記録は仮想 LIN バスの観測、ECU ごとの通信断は `ecu.connected` でできます）。LIN は仮想時間だけで動きます（実時間の `Peer` では `std::logic_error`）。
-- `LocalBench`（`vehicle_sil::local`）と `vehicle_sil::testkit` の API は固まっていません。
+- `LocalBench`（`vehicle_sil::local`）、`vehicle_sil::testkit`、`vehicle_sil::spy` の API は固まっていません。
 - 対応するのはクラシック CAN（8 バイト以下）だけです。RTR、CAN FD、CAN XL のフレームは、受信時に捨てて件数を数えます。
 - `install()` とパッケージ化（`find_package`）には未対応です。使えるのは FetchContent と `add_subdirectory` だけです。
 - Windows 10 は未確認です（Windows 11 の MSYS2 UCRT64 ビルドと試験は確認済み）。

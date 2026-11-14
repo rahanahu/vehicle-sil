@@ -43,6 +43,7 @@ vehicle-sil/
 ├── libs/testkit/     vehicle_sil::testkit  LocalBench の上の J1939 の試験の記録と故障注入（SIL Kit に依存しない）
 ├── libs/peer/        vehicle_sil::peer   1 つの participant と、その J1939、生の CAN、LIN のノード、Control Agent（監視の出力を含む）の組み立てと実行。Ecu の実装
 ├── libs/simulation/  vehicle_sil::simulation  ECU を仮想バスか SIL Kit で動かす Simulation と、ECU の実行ファイルの main()（ecu_main）
+├── libs/spy/         vehicle_sil::spy  聞くだけの participant が、J1939 で聞いたことを ECU の変数に出す Spy（SIL Kit に依存しない）
 ├── libs/process/     vehicle_sil::process  子プロセス（ログファイルへの出力、標準出力と標準エラーの取り込みと時間切れ、行ごとの受け渡しと止める要求とプロセスの木ごとの終了。POSIX と Win32。内部用）
 ├── libs/launch/      vehicle_sil::launch  シミュレーションの構成ファイル、ECU の実行ファイルの自己申告との照合、シミュレーション全体の実行（内部用）
 ├── libs/control/     vehicle_sil::control  Control Agent と Control Server の中核（Hub）、両者の間のメッセージのバイト列の形式。通信と SIL Kit に依存しない
@@ -109,6 +110,7 @@ vehicle-sil/
 | `vehicle_sil::testkit` | 試験用 | `LocalBench` の上の J1939 の試験の道具: 出来事と生フレームの記録（`J1939Events`、`FrameLog`）、故障注入の関数（`faults`）。`testkit::LocalCan` は `LocalBench` の別名（[internals/execution.md](internals/execution.md)） |
 | `vehicle_sil::peer` | 土台 | 1 つの SIL Kit participant と、その J1939 の `Network`（SIL Kit の CAN か外部のポート）、生の CAN、LIN の Master/Slave、イーサネットのチャネル（SIL Kit の Ethernet。仮想時間だけ）、Control Agent（J1939 の通信状態の監視の出力を含む）をまとめて作り、仮想時間か実時間で動かす `vehicle_sil::Peer`。`Ecu` を実装する。ほかに `start_together()`（[internals/execution.md](internals/execution.md)） |
 | `vehicle_sil::simulation` | 利用者向け | `vehicle_sil::Simulation`: ECU をプロセス内の仮想バスか、SIL Kit の participant として仮想時間で動かし、失敗を例外で報告する。動かす場所はコンストラクターで選ぶ（SIL Kit では、registry をプロセス内に立てられる）。入門は [examples/getting_started](../examples/getting_started)。ECU のクラスを 1 つの実行ファイルにする `ecu_main()`（どの ECU も同じ引数: `--describe`、`--registry-uri`、`--local`。[docs/ecu-executable.md](ecu-executable.md)）。ほかに `SilKitOptions`、`SimulationError`、`EcuMainOptions`（[internals/execution.md](internals/execution.md)、[ecu-executable.md](ecu-executable.md)） |
+| `vehicle_sil::spy` | 利用者向け | 聞くだけの participant が、J1939 で聞いたことを ECU の変数に出す `vehicle_sil::spy::Spy`: `Network` に `j1939::Listener` を作り（借りることもできる）、利用者が書く見張りのクラスに `spy::Scope`（変数の前置き、ハンドラの登録と解除、ステップの時刻）を渡す。聞きこぼしの数も変数に出す。`vehicle_sil::j1939` と `vehicle_sil::ecu` の公開 API だけで作る。SIL Kit に依存しない（[j1939-guide.md](j1939-guide.md) の「聞くだけの participant」） |
 | `vehicle_sil_sim_controller`（実行ファイル） | — | system controller の CLI |
 | `vehicle_sil::process`（内部用） | — | 子プロセス: `ChildProcess`（ログファイルへ）、`run_captured()`（標準出力と標準エラーを別々に取り込み、時間切れで止める）、`Process`（標準出力と標準エラーを行ごとに渡す。作業ディレクトリ、止める要求、起動したプロセスごとの終了）。`run_captured()` と `Process` の子は、自分のプロセスグループ（Windows ではプロセスグループとジョブオブジェクト）で動き、標準の 3 つのほかにハンドルを受け継がず、Linux では呼んだスレッドが終わると SIGKILL を受けます。POSIX は `fork` と `exec`（`ChildProcess` は `posix_spawn`）、Windows は `CreateProcessW`（パスと引数は UTF-8 から変換する） |
 | `vehicle_sil::launch`（内部用。SIL Kit をサブモジュールからビルドしたとき） | — | 構成ファイルの読み込み、`--describe` の JSON の読み込み、照合の規則（プロセスを起動しない関数）、実行（registry と `SimulationController` をプロセスの中に持ち、participant を子プロセスで動かす。実行の判定はプロセスを起動しない関数）、人向けと JSON の出力（[simulation-config.md](simulation-config.md)） |

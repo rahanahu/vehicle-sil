@@ -484,68 +484,83 @@ auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = 
 
 ### 聞くだけの participant
 
-ほかの ECU どうしのやり取りをシナリオで確かめるときは、何も送らない ECU を構成に足して、聞いたことを `output` の変数に出します（「外から信号を操作する・読む」）。送らなければ、バスには何も出ません。ほかの ECU が受けるもの、送るもの、送信確認とそれぞれの時刻は、その ECU がいてもいなくても同じで、その ECU のステップ幅にもよりません（仮想バス、SIL Kit の簡易シミュレーション、簡易 CAN Network Simulator で試験しています）。
+ほかの ECU どうしのやり取りをシナリオで確かめるときは、何も送らない ECU を構成に足して、聞いたことを変数に出します（「外から信号を操作する・読む」）。送らなければ、バスには何も出ません。ほかの ECU が受けるもの、送るもの、送信確認とそれぞれの時刻は、その ECU がいてもいなくても同じで、その ECU のステップ幅にもよりません（仮想バス、SIL Kit の簡易シミュレーション、簡易 CAN Network Simulator で試験しています）。
+
+聞いたことを変数にするのは `vehicle_sil::spy::Spy` です（ヘッダー `vehicle_sil/spy/spy.hpp`、ターゲット `vehicle_sil::spy` をリンクします）。何を見るかは、見張り（watch）のクラスに書いて `Spy` に足します。
 
 ```cpp
-// 見張り: Listener を作らず、受け取ってハンドラを足す。登録はメンバーに持つ（壊れると外れる）
-class StatusWatch {
-public:
-    StatusWatch(vehicle_sil::Ecu& ecu, j1939::Listener& listener)
-      : status_(listener, listener.on_message(kPgnStatus, [this](const j1939::Message& m) {   // 宛先が誰でも渡る。長いメッセージも
-            if (m.time < latest_) { return; }   // 渡る順は前後しうる。新しさは時刻で比べる
-            latest_ = m.time;
-            ++seen_;
-            to_ = m.destination;
-        })) {
-        ecu.output("watch.status_seen", &seen_);
-        ecu.output("watch.status_to", &to_);
-    }
+namespace cal {
+inline constexpr j1939::Pgn kPgn{0xEF00}; // Proprietary A
+}
 
-private:
-    vehicle_sil::SimTime latest_{};
-    int seen_ = 0;
-    int to_ = 0;
-    j1939::ListenerSubscription status_;   // 最後に置く: 先に壊れて、ハンドラが外れる
-};
-
-class BusWatch {
+class BlockWatch {                                   // 見張り: Scope& と自分の設定を取る。継がない、Listener を作らない
 public:
-    explicit BusWatch(vehicle_sil::Ecu& ecu)
-      : network_(ecu.j1939("J1939_CAN")),   // ノードを足さない: 1 フレームも送らない
-        listener_(network_),
-        status_(ecu, listener_) {
-        // 聞きこぼしと、受け手と違うかもしれないメッセージを、シナリオから見えるようにする
-        ecu.output("watch.missed", [this] {
-            const auto& s = listener_.sniffer_statistics();
-            return static_cast<std::int64_t>(s.no_session + s.incomplete + s.replaced + s.lost + s.conflicting_packets +
-                                             network_.statistics().receive_overflows);
+    BlockWatch(vehicle_sil::spy::Scope& s, j1939::Address from) {
+        s.on_message(cal::kPgn, [this, from](const j1939::Message& m) {   // 登録は Scope が持つ（解除を書かなくてよい）
+            if (m.source != from || m.time < latest_) { return; }        // 渡る順は前後しうる。新しさは時刻で比べる
+            latest_ = m.time; ++count_; bytes_ = static_cast<int>(m.data.size());
         });
+        s.output("count", &count_); s.output("bytes", &bytes_, {.unit = "bytes"});   // "block.count" になる
     }
-
-private:
-    j1939::Network& network_;
-    j1939::Listener listener_;
-    StatusWatch status_;
+private: vehicle_sil::SimTime latest_{}; std::int64_t count_ = 0; int bytes_ = 0;
 };
 
-int main(int argc, char** argv) { return vehicle_sil::ecu_main<BusWatch>(argc, argv, {.name = "Watch", .step = 10ms}); }
+class CalSpy {
+public:
+    explicit CalSpy(vehicle_sil::Ecu& ecu) : spy_(ecu, ecu.j1939("J1939_CAN")) {    // ノードなし: 何も送らない
+        spy_.add<BlockWatch>("block", j1939::Address{0x21});                        // block.count、block.bytes
+    }                                                                               // spy.missed と内訳は Spy が出す
+private: vehicle_sil::spy::Spy spy_;
+};
+
+int main(int argc, char** argv) { return vehicle_sil::ecu_main<CalSpy>(argc, argv, {.name = "CalSpy", .step = 5ms}); }
 ```
 
-- J1939 で聞く: ノードを足さない `Network`（`ecu.j1939(network)`）は、Address Claim も、Request への応答も、ACK と NACK もしません。その `Network` に `j1939::Listener`（ヘッダー `vehicle_sil/j1939/listener.hpp`）を 1 つ作り、ハンドラを足します。`Listener` は聞くだけで、何も送りません。
+- `Spy(ecu, network)` は、その `Network` に `j1939::Listener`（ヘッダー `vehicle_sil/j1939/listener.hpp`）を 1 つ作ります。ノードを足さない `Network` は、Address Claim も、Request への応答も、ACK と NACK もしません。`Listener` も聞くだけで、何も送りません。
+- `add<W>(名前, 引数...)` は見張り `W(scope, 引数...)` を作り、`Spy` が持ちます。見張りは `spy::Scope&` を最初に取るコンストラクターを持つクラスで、何も継ぎません。見張りのハンドラは、足した順に呼ばれます（見張りをまたいでも）。`Scope` の口:
+  - `on_message(pgn, handler)`、`on_any_message`、`on_transfer`、`on_frame`: `Listener` の同じ名前の口にハンドラを足します（渡るものは下の「J1939 で聞く」）。登録は `Scope` が持ち、`Spy` が見張りを壊す前に外すので、見張りは `ListenerSubscription` を持ちません。
+  - `output(項目, …)`、`output_enum(項目, …)`: 変数 `<名前>.<項目>` を出します。形は `ecu.output()` と同じです。
+  - `now()`: その ECU の最後のステップの時刻です。変数の getter の中では標本を取るステップの時刻なので、「最後に聞いてから何 ms」は `now()` と最後の `Message::time` の差で出せます（結果はステップ幅の粒で変わります）。ハンドラの中では 1 つ前のステップの時刻です。ハンドラでは `Message::time` を使います。
+  - 見張りの追加も、ハンドラと変数の登録も、ECU のクラスのコンストラクターの中でします。始まった後は `std::logic_error` です（「... after the run started: add the watchers in the ECU class's constructor」）。名前の誤りは `std::invalid_argument` です。同じ名前の 2 回目、空か `.` で始まる・終わる名前、聞きこぼしの前置き（下）と同じ名前が誤りで、文に直し方が出ます。
+- 聞きこぼしの変数: `Spy` は、`Listener` と `Network` の数を、次の変数に出します（増えるだけの整数）。シナリオで `spy.missed` が 0 のままなのを確かめると、「来なかった」と「聞きこぼした」を見分けられます。
+
+  | 変数 | 数えるもの |
+  |---|---|
+  | `spy.missed` | 下の 7 つの和。0 のままなら、`Network` はフレームを全部受け取って BAM を全部組み立て、`Listener` は告知を見た接続を最後まで追い、渡したメッセージは全部受け手と同じバイト列です |
+  | `spy.no_session` | 空きがなくて追わなかった接続（同時に追える数は `ListenerOptions::sniffer.sessions`、既定 32） |
+  | `spy.incomplete` | パケットを見逃した接続 |
+  | `spy.replaced` | 終わる前に告知し直された接続 |
+  | `spy.lost` | 同じ participant のノードがそのアドレスを取ったので、追うのをやめた接続 |
+  | `spy.conflicting_packets` | 同じ番号で中身の違うパケット（下の「受け手と違うかもしれないメッセージ」） |
+  | `spy.receive_overflows` | `Network` が受け取れなかったフレーム（`NetworkOptions::receive_capacity`） |
+  | `spy.transport_rejected` | 空きのセッションがなくて組み立てなかった BAM（同じ participant のノードが同じ理由で断った RTS も） |
+
+  - 入れないもの: `Network::statistics()` の `frames_ignored`（11 ビットのフレームなど。11 ビットのフレームも流れるバスではいつも増えるため）と、告知を聞く前に始まった接続（`sniffer_statistics()` の `orphan_data`）。
+  - 前置きは `SpyOptions::statistics_as`（既定 `"spy"`）で変えられます。空にすると出しません。
+- 寿命: 出した変数は取り消せないので、変数を出す `Spy` は ECU のクラスのメンバーにして、ECU と同じだけ生かします（見本の形。`ecu_main` と `Simulation::add()` が作るクラスは、ECU のネットワークと変数より後に壊れます）。`Spy` は壊れるとき、見張りごとに（後に足したものから）ハンドラを外してから見張りを壊し、最後に自分で作った `Listener` を壊します。
+- 1 つの `Network` に `Listener` は 1 つです（2 つ目は `std::logic_error`）。`Listener` をほかのコードと分けるときは、自分で作った `Listener` を `Spy(ecu, network, listener)` に渡します。その `Listener` に `Spy` を 2 つ置くときは、2 つ目の `SpyOptions::statistics_as` を `""` にします。
+- 見張りを試験する: `LocalBench` の ECU に見張りを足したクラスを置き、フレームを入れて回し、変数を読みます（`tests/spy` の見本の試験がこの形です）。
+
+  ```cpp
+  auto& ecu = bench.add_ecu("CalSpy", 5ms); ecu.emplace<CalSpy>(ecu);
+  bench.inject("J1939_CAN", t, frame); bench.run_until(end);
+  // 値: ecu.agent().schema() で名前の位置 i を探し、ecu.agent().latest().values[i] を読む
+  ```
+
+- `Listener` を直に使う: `Spy` を使わずに、`Network` に `j1939::Listener` を作ってハンドラを足し、`ecu.output()` で出すこともできます。見張りのコードは `Listener&` を受け取ってハンドラを足し、`Listener` を自分で作りません。足したハンドラは、外すか `Listener` を壊すまで呼ばれるので、`Listener` より先に壊れうる見張りは、登録の戻り値（`Listener::HandlerId`）を `j1939::ListenerSubscription` のメンバーに持ちます（ノードのハンドラの `j1939::Subscription` と同じ形）。`ListenerSubscription` は、壊れるか `reset()` でハンドラを外します。ステップの中でも、そのハンドラ自身の中からでも外せ、`Listener` が先に壊れた後に壊しても安全です。聞きこぼしの数は `Listener::sniffer_statistics()` と `Network::statistics()` にあります。
+- J1939 で聞く（`Listener` が渡すもの）:
   - `on_message(pgn, handler)` と `on_any_message(handler)`: ほかの participant が送ったメッセージが、宛先が誰でも渡ります。単一フレーム、BAM で送られたもの、2 つの ECU の間の接続（RTS/CTS）で送られたものです。ハンドラが受け取る型はノードのハンドラと同じ `j1939::Message` なので、読む関数をノードと共用できます。同じ PGN に複数のハンドラを足せます（登録の順に呼ばれます）。
   - `on_transfer(handler)`: ほかの ECU どうしの接続がどう終わったか（`SniffedTransfer`。完了のほか、Abort、時間切れ、聞きこぼし）。
   - `on_frame(handler)`: フレーム 1 つずつ（TP.CM と TP.DT、ほかのアドレス宛てを含む）。自分で組み立てるときに使います。
 - 聞こえないもの:
-  - 同じ `Network` のノードが送ったもの。`Listener` が渡すのは「ほかの participant が言ったこと」です。自分のノードの送信は、送った側の結果（`Node::on_transfer_end`、`Requester` の結果）で数えます。`ListenerOptions::hear_local` を入れると、同じ `Network` のノードどうしで折り返したフレームとメッセージも渡りますが（`ReceivedFrame::local` が立ちます）、折り返しはノードが 2 つ以上のときにしか起きないので、ノードが 1 つの `Network` では何も増えません。
-  - 11 ビットのフレームと、`Network` が受け取らなかったフレーム（`Network::statistics()` の `receive_overflows`）。11 ビットを見るときは生の CAN で聞きます。
-  - `Listener` が追えなかった接続。同時に追える数（`ListenerOptions::sniffer.sessions`、既定 32）を超えた告知は `no_session`、パケットを見逃した転送は `incomplete`、途中で告知し直された転送は `replaced` に数えます（`Listener::sniffer_statistics()`）。上の見本のように変数に出しておくと、「来なかった」と「聞きこぼした」をシナリオで見分けられます。
-- 受け手と違うかもしれないメッセージ: ほかの ECU どうしの接続のメッセージが受け手のノードのものと同じバイト列なのは、その転送の `conflicting_packets`（同じ番号で中身の違うパケットを見た数）が 0 のときです。0 でなければ、受け手がどちらを取ったかはバスからは分かりません（`Listener` は先に見たほうを渡します）。`Message` にはその印がありません。見分け方は 2 つです。統計の `sniffer_statistics().conflicting_packets` を見本のように変数に出し、0 のままなら渡ったメッセージは全部受け手と同じ、と確かめる。または、`on_message` のハンドラでは値を控えるだけにし、同じ転送について直後に呼ばれる `on_transfer` のハンドラで `SniffedTransfer::conflicting_packets` が 0 なのを見てから使う。
+  - 同じ `Network` のノードが送ったもの。`Listener` が渡すのは「ほかの participant が言ったこと」です。自分のノードの送信は、送った側の結果（`Node::on_transfer_end`、`Requester` の結果）で数えます。`ListenerOptions::hear_local` を入れると、同じ `Network` のノードどうしで折り返したフレームとメッセージも渡りますが（`ReceivedFrame::local` が立ちます）、折り返しはノードが 2 つ以上のときにしか起きないので、ノードが 1 つの `Network` では何も増えません。`hear_local` を入れても、ノードからほかの participant 宛ての接続（RTS/CTS）はフレームだけが渡り、メッセージは渡りません。
+  - `Network` が無視するフレーム（`frames_ignored`。11 ビットのフレーム、送り元が 255 のフレーム、送り元が 254 で Address Claimed と Request 以外のフレーム、形の正しくないフレーム）と、`Network` が受け取らなかったフレーム（`receive_overflows`）。11 ビットを見るときは生の CAN で聞きます。
+  - 組み立てなかったもの、追えなかった接続: 上の聞きこぼしの変数の内訳です。
+- 受け手と違うかもしれないメッセージ: ほかの ECU どうしの接続のメッセージが受け手のノードのものと同じバイト列なのは、その転送の `conflicting_packets`（同じ番号で中身の違うパケットを見た数）が 0 のときです。0 でなければ、受け手がどちらを取ったかはバスからは分かりません（`Listener` は先に見たほうを渡します）。`Message` にはその印がありません。見分け方は 2 つです。`spy.conflicting_packets`（`spy.missed` に含まれます）が 0 のままなら、渡ったメッセージは全部受け手と同じです。または、`on_message` のハンドラでは値を控えるだけにし、同じ転送について直後に呼ばれる `on_transfer` のハンドラで `SniffedTransfer::conflicting_packets` が 0 なのを見てから使います。
 - 自分のノードを持つ participant でも使えます。ノード宛ての接続とノードが送る接続は `Network` が扱い、ノード宛てのメッセージは 1 回だけ渡ります（`on_transfer` には出ません）。
-- ハンドラは読むだけです。ハンドラの中から送信やハンドラの登録をすると `std::logic_error` で、その participant は失敗して止まります（例外を握りつぶしても止まります）。ハンドラでは変数を更新し、送るのは `ecu.on_step` からにします。ハンドラの登録は、シミュレーションが始まる前（コンストラクター）に済ませます。
+- ハンドラは読むだけです。ハンドラの中から送信やハンドラの登録をすると `std::logic_error` で、その participant は失敗して止まります（例外を握りつぶしても止まります）。ハンドラでは変数を更新し、送るのは `ecu.on_step` からにします。
 - 時刻と順: 接続で送られたメッセージの `Message::time` は、受け手がメッセージを受け取った時点（最後のパケット）の時刻で、受け手のノードが見る時刻と同じです。ただしハンドラが呼ばれるのは、受け手が「受け取った」と返した後です。そのため、後の時刻のメッセージより後に、前の時刻のメッセージが渡ることがあります。最後の値や周期を出すときは、呼ばれた順ではなく `time` を比べます。フレームから決まること（メッセージ、Abort）は、聞く participant のステップ幅によりません。時間の経過から決まること（`TimedOut` など）は、`time` はステップ幅によりませんが、ハンドラが呼ばれるステップは変わるので、これも `time` で比べます。
-- 見張りの書き方: 1 つの `Network` に `Listener` は 1 つです（2 つ目は `std::logic_error`）。見張りのクラスや関数は `Listener` を自分で作らず、`Listener&` を受け取ってハンドラを足す形にします。こうしておくと、1 つの participant に見張りをいくつ入れても書き換えずに済みます。
-- ハンドラの寿命: 足したハンドラは、外すか `Listener` を壊すまで呼ばれます。ハンドラが捕まえたもの（`this` など）は、その間生きていなければなりません。`Listener` より先に壊れうる見張りは、登録の戻り値（`Listener::HandlerId`）を `j1939::ListenerSubscription` のメンバーに持ちます（見本の `StatusWatch`。ノードのハンドラの `j1939::Subscription` と同じ形）。`ListenerSubscription` は、壊れるか `reset()` でハンドラを外します。ステップの中でも、そのハンドラ自身の中からでも外せ、外した後は呼ばれません。`Listener` が先に壊れた後に壊しても安全です。戻り値を捨てたハンドラは、`Listener` が壊れるまで登録されたままです。
-- 接続を追う決まりは、このリポジトリのエンジンの受信側に合わせたもので、規格とは照らしていません。ほかのスタックで違いうる値（時間切れ、完了とする時点など）は `ListenerOptions::sniffer` で変えられます（[internals/j1939.md](internals/j1939.md) の「ほかの participant が言ったことを聞く（`Listener`）」と「ほかの ECU の転送を追う（`TransferSniffer`）」）。実機のブリッジがいるネットワークでは、時刻も順も正確ではありません（[bridges.md](bridges.md) の「物理 CAN と仮想時間」）。
+- 接続を追う決まりは、このリポジトリのエンジンの受信側に合わせたもので、規格とは照らしていません。ほかのスタックで違いうる値（時間切れ、完了とする時点など）は `ListenerOptions::sniffer`（`Spy` では `SpyOptions::listener.sniffer`）で変えられます（[internals/j1939.md](internals/j1939.md) の「ほかの participant が言ったことを聞く（`Listener`）」と「ほかの ECU の転送を追う（`TransferSniffer`）」）。実機のブリッジがいるネットワークでは、時刻も順も正確ではありません（[bridges.md](bridges.md) の「物理 CAN と仮想時間」）。
 - 記録や試験のために `Network` の出来事（送信、アドレスの変化を含む）を見るなら `j1939::Observer` です（[internals/j1939.md](internals/j1939.md) の「観測（`Observer`）」）。`Listener` と同時に付けられます。
 - 生の CAN で聞く: `ecu.can(network)` の `on_frame` で、全部のフレーム（11 ビットのフレーム、TP.CM と TP.DT を含む）を受けます。`send()` を呼ばなければ何も送りません。独自の組み立てをするときに、接続だけを追わせたいなら `j1939::TransferSniffer` にフレームを渡します。
 - 確かめていないこと: Vector の Network Simulator の上で、送らない CAN コントローラーがバスの動き（ACK を返す相手の数など）を変えないかどうか。

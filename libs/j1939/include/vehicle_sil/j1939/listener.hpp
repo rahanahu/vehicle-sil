@@ -57,7 +57,10 @@ struct ListenerOptions
     /// nodes: with a single node nothing of it is heard, whatever this says. So this is not
     /// the way to count what a node sent; use the node's own results for that
     /// (Node::on_transfer_end(), the result of a Requester). The connections of the Network's
-    /// own nodes are not reported by on_transfer() either way.
+    /// own nodes are not reported by on_transfer() either way, and a connection (RTS/CTS) from
+    /// a node of this Network to another participant gives its frames only, no message: the
+    /// Network assembles only what is addressed to its nodes, and the frames of its own nodes
+    /// are not followed.
     bool hear_local = false;
 };
 
@@ -73,11 +76,15 @@ struct ListenerOptions
 /// - on_frame(): every frame, before anything else that follows from it.
 ///
 /// What it does not hear: what the nodes of its own Network sent (ListenerOptions::hear_local),
-/// 11-bit frames, and frames the Network did not take (NetworkOptions::receive_capacity:
+/// frames the Network ignores (NetworkStatistics::frames_ignored: 11-bit frames, frames from
+/// address 255, frames from address 254 but Address Claimed and Request, and frames it cannot
+/// read), and frames the Network did not take (NetworkOptions::receive_capacity:
 /// NetworkStatistics::receive_overflows). A broadcast the Network had no free session for is
-/// not assembled (NetworkStatistics::transport_rejected). Connections the sniffer had no place
-/// for or lost track of are counted in sniffer_statistics() (no_session, incomplete, replaced,
-/// lost): publish those counters, so that a test sees when the Listener missed something.
+/// not assembled, and neither is a connection to a node of this Network that the node refused
+/// for lack of a session (both NetworkStatistics::transport_rejected). Connections the sniffer
+/// had no place for or lost track of are counted in sniffer_statistics() (no_session,
+/// incomplete, replaced, lost): publish those counters, so that a test sees when the Listener
+/// missed something (vehicle_sil::spy::Spy publishes them).
 ///
 /// The message of a connection between two other ECUs is, for a transfer whose
 /// SniffedTransfer::conflicting_packets is 0, the message the receiving node of this

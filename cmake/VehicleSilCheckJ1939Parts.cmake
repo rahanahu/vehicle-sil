@@ -16,9 +16,11 @@ cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMa
 #   with the engine include only the value types (and each other), no network.hpp.
 # - No other source of the engine includes transfer_sniffer.hpp, but the Listener, which is
 #   built on both: listener.hpp and listener.cpp.
-# - listener.cpp includes no internal header but frame_seat.hpp (its seat in the Network) and
-#   transport_wire.hpp, and no source of the engine includes listener.hpp: the Listener stays
-#   on top of the engine and the sniffer.
+# - listener.cpp includes no internal header but frame_seat.hpp (its seat in the Network), and
+#   no source of the engine includes listener.hpp: the Listener stays on top of the engine and
+#   the sniffer.
+# - No source of the engine includes a header of vehicle_sil::spy (vehicle_sil/spy/...), which
+#   is built on top of the engine.
 if(ENGINE_DIR)
   set(sniffer_sources
     "${ENGINE_DIR}/include/vehicle_sil/j1939/transfer_sniffer.hpp"
@@ -46,7 +48,7 @@ if(ENGINE_DIR)
   set(listener_sources
     "${ENGINE_DIR}/include/vehicle_sil/j1939/listener.hpp"
     "${ENGINE_DIR}/src/listener.cpp")
-  set(listener_may_include_internal "frame_seat.hpp" "transport_wire.hpp")
+  set(listener_may_include_internal "frame_seat.hpp")
   foreach(source IN LISTS listener_sources)
     if(NOT EXISTS "${source}")
       message(FATAL_ERROR "the Listener's source is missing (renamed? update this check): ${source}")
@@ -64,10 +66,13 @@ if(ENGINE_DIR)
   endforeach()
   file(GLOB_RECURSE engine_sources "${ENGINE_DIR}/src/*" "${ENGINE_DIR}/include/*")
   foreach(source IN LISTS engine_sources)
+    file(READ "${source}" text)
+    if(text MATCHES "#[ \t]*include[ \t]*[\"<]vehicle_sil/spy/")
+      string(APPEND failures "\n  ${source}: includes a header of vehicle_sil::spy")
+    endif()
     if(source IN_LIST listener_sources)
       continue()
     endif()
-    file(READ "${source}" text)
     if(text MATCHES "#[ \t]*include[ \t]*[\"<][^\">]*listener\\.hpp")
       string(APPEND failures "\n  ${source}: includes listener.hpp")
     endif()
@@ -81,7 +86,8 @@ if(ENGINE_DIR)
   if(failures)
     message(FATAL_ERROR "the TransferSniffer and the J1939 engine depend on each other:${failures}\n"
                         "The sniffer may include only: ${sniffer_may_include}. Share what both need through "
-                        "src/transport_wire.hpp, and keep the engine free of transfer_sniffer.hpp and listener.hpp. "
+                        "src/transport_wire.hpp, and keep the engine free of transfer_sniffer.hpp, listener.hpp and "
+                        "the headers of vehicle_sil::spy (which is built on the engine). "
                         "listener.cpp may include these internal headers only: ${listener_may_include_internal} "
                         "(it uses the Network's public API apart from its seat).")
   endif()
