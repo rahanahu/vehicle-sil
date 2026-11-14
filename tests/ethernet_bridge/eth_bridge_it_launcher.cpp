@@ -58,6 +58,15 @@ namespace cli = vehicle_sil::cli;
 
 namespace {
 
+/// A log without '\r': what a process prints in text mode has "\r\n" on Windows, and the texts
+/// this launcher looks for have "\n".
+std::string read_text(const fs::path& path)
+{
+    std::string text = read_file(path);
+    std::erase(text, '\r');
+    return text;
+}
+
 const char* const kNetwork = "ETH_IT";
 const char* const kParticipant = "EthernetBridge";
 
@@ -129,8 +138,8 @@ int run_echo(const Options& options)
     bridge.kill();
     [[maybe_unused]] const auto bridgeCode = bridge.poll(); // not checked on Windows (below)
 
-    const std::string peerText = read_file(peerLog);
-    const std::string bridgeText = read_file(bridgeLog);
+    const std::string peerText = read_text(peerLog);
+    const std::string bridgeText = read_text(bridgeLog);
     bool ok = expect(peerCode == 0, "peer exit code " + exit_code_text(peerCode) + ", expected 0");
     const std::string startLine = "[eth-bridge] bridging SIL Kit network 'ETH_IT' (participant 'EthernetBridge', " + registry.uri() +
                                   ") <-> fake 'fake0' (virtual): EtherType 0x88b5 only, both ways; promiscuous off (only frames "
@@ -172,7 +181,7 @@ int run_single(const Options& options, const fs::path& executable, const std::ve
     const fs::path bridgeLog = options.workDir / "bridge.log";
     ChildProcess bridge(executable, args, bridgeLog);
     const auto code = wait_or_kill(bridge, std::chrono::steady_clock::now() + options.timeout);
-    const std::string text = read_file(bridgeLog);
+    const std::string text = read_text(bridgeLog);
     bool ok = expect(code == expectedCode, "bridge exit code " + exit_code_text(code) + ", expected " + std::to_string(expectedCode));
     for (const auto& needle : mustContain)
     {
