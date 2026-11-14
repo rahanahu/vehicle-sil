@@ -218,8 +218,11 @@ TEST_CASE(virtual_time_waits_for_the_slowest_peer)
     check_nobody_ran_ahead(peers, log);
     std::printf("simulated %lld ms in %lld ms wall time\n", static_cast<long long>(kStopAt / 1ms),
                 static_cast<long long>(wall / 1ms));
-    // 150 physics steps of at least 3 ms each before the controller's step at stop_at.
-    CHECK(wall >= 450ms);
+    // The wall time runs from the controller's step at 0 to its step at stop_at. Physics' step at
+    // 0 runs alongside the controller's (granted at the same time), so it may be over before the
+    // wall time starts; the other 149 steps of at least 3 ms each lie between the two, as the
+    // controller's step at stop_at waits for Physics' step from 298 ms to end.
+    CHECK(wall >= (kStopAt / 2ms - 1) * 3ms);
     CHECK(wall > kStopAt); // slower than real time
 }
 
