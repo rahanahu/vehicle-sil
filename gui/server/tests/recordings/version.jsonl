@@ -1,3 +1,3 @@
 {"vehicle_sil_recording": 1, "case": "version", "about": "version --json", "shape": ["version", "--json"]}
-{"print": {"vehicle_sil_launch": 1, "vehicle_sil": "0.1.0", "formats": {"check": 1, "run": 1, "events": 1, "describe": 1}, "features": ["events", "stdin-commands", "check-variables", "speed", "start-paused", "time-commands", "control-links", "scenario", "manual-participants", "scenario-wave", "control-server", "scenario-control"]}}
+{"print": {"vehicle_sil_launch": 1, "vehicle_sil": "0.1.0", "formats": {"check": 1, "run": 1, "events": 1, "describe": 1}, "features": ["events", "stdin-commands", "check-variables", "speed", "start-paused", "time-commands", "control-links", "scenario", "manual-participants", "scenario-wave", "scenario-motion-expect", "control-server", "scenario-control"]}}
 {"exit": 0}

@@ -267,7 +267,12 @@ std::string detail::scenario_text(const ScenarioRun& scenario)
     }
     std::string out = "scenario " + scenario.file + (scenario.name.empty() ? "" : " (" + scenario.name + ")") + ": " + state +
                       ", " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) + " steps passed" +
-                      (scenario.skipped() > 0 ? ", " + std::to_string(scenario.skipped()) + " skipped" : std::string{}) + "\n\n";
+                      (scenario.skipped() > 0 ? ", " + std::to_string(scenario.skipped()) + " skipped" : std::string{}) +
+                      (scenario.unchecked_expects() > 0
+                           ? ", " + std::to_string(scenario.unchecked_expects()) +
+                                 (scenario.unchecked_expects() == 1 ? " expect not checked" : " expects not checked")
+                           : std::string{}) +
+                      "\n\n";
     std::vector<std::vector<std::string>> rows{{"line", "step", "result", "at"}};
     for (const ScenarioStepRun& step : scenario.steps)
     {
@@ -275,12 +280,17 @@ std::string detail::scenario_text(const ScenarioRun& scenario)
                         step.at ? sim_millis_text(*step.at) + " ms" : "-"});
     }
     out += detail::table_text(rows);
-    // Why, for the steps that were skipped: the table has no room for it.
+    // Why, for the steps that were skipped and the expects that were not checked: the table has no
+    // room for it.
     for (const ScenarioStepRun& step : scenario.steps)
     {
         if (step.status == StepStatus::Skipped)
         {
             out += "line " + std::to_string(step.line) + " skipped: " + step.message + "\n";
+        }
+        else if (!step.expect_skipped.empty())
+        {
+            out += "line " + std::to_string(step.line) + " expect not checked: " + step.expect_skipped + "\n";
         }
     }
     return out;
@@ -456,6 +466,11 @@ void detail::write_scenario_step_members(vehicle_sil::detail::JsonWriter& w, con
         w.null("code");
         w.null("message");
     }
+    if (!step.expect_skipped.empty())
+    {
+        // Only when there is one: the steps of a scenario without it are as they were.
+        w.string("expect_skipped", step.expect_skipped);
+    }
 }
 
 void detail::write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const ScenarioRun& scenario)
@@ -478,6 +493,11 @@ void detail::write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string
     {
         // Only then: a result without skipped steps is as it was before them.
         w.integer("skipped_steps", static_cast<std::int64_t>(scenario.skipped()));
+    }
+    if (scenario.unchecked_expects() > 0)
+    {
+        // Only then, as skipped_steps.
+        w.integer("unchecked_expects", static_cast<std::int64_t>(scenario.unchecked_expects()));
     }
     w.begin_array("steps");
     for (const ScenarioStepRun& step : scenario.steps)
