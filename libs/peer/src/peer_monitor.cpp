@@ -48,7 +48,8 @@ std::vector<std::string> monitoring_names(Peer& peer)
     std::vector<std::string> names{"peer.steps", "peer.speed", "peer.app_time_max_us"};
     for (const auto& name : peer.network_names())
     {
-        const std::string prefix = "j1939." + name + ".";
+        // Looked up by the code's name, named by the simulation's (PeerOptions::network_names).
+        const std::string prefix = "j1939." + simulation_network_name(peer, name) + ".";
         for (const char* field : {"bus_state", "frames_received", "frames_sent", "send_failures", "send_queue_full",
                                   "receive_overflows", "held_dropped", "address_violations", "transport_aborts_sent",
                                   "transport_aborts_received"})
@@ -79,7 +80,8 @@ void add_monitoring(Peer& peer, Agent& agent, const std::shared_ptr<PeerMonitor>
     for (const auto& name : peer.network_names())
     {
         auto& network = peer.network(name);
-        const std::string prefix = "j1939." + name + ".";
+        // As in monitoring_names(): also the events of the nodes (PeerMonitor::after_step()).
+        const std::string prefix = "j1939." + simulation_network_name(peer, name) + ".";
         agent.output_enum(prefix + "bus_state",
                           [&network] { return network.bus_state() ? static_cast<int>(*network.bus_state()) : -1; },
                           {{"unknown", -1}, {"error_active", 0}, {"error_passive", 1}, {"bus_off", 2}},
@@ -151,9 +153,19 @@ std::shared_ptr<PeerMonitor> add_peer_monitoring(Peer& peer, Agent& agent, const
         {
             if (info.name == name)
             {
+                std::string renamed;
+                for (const auto& network : peer.network_names())
+                {
+                    const std::string& simulation = simulation_network_name(peer, network);
+                    if (simulation != network && name.rfind("j1939." + simulation + ".", 0) == 0)
+                    {
+                        renamed = "; the monitoring outputs of the network \"" + network + "\" have its name in the "
+                                  "simulation, \"" + simulation + "\" (network_names, --map-network)";
+                    }
+                }
                 throw std::invalid_argument(who + "the ECU declares a variable '" + name
                                             + "', the name of a monitoring output of the peer (rename the variable, or "
-                                              "set PeerOptions::monitor = false)");
+                                              "set PeerOptions::monitor = false" + renamed + ")");
             }
         }
     }

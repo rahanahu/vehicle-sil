@@ -422,3 +422,59 @@ TEST_CASE(control_peer_agent_refuses_a_network_the_monitoring_would_miss)
         CHECK_EQ(peer.agent().schema().size(), std::size_t{2});
     }
 }
+
+TEST_CASE(control_peer_agent_monitoring_names_a_renamed_network_as_the_simulation_does)
+{
+    // PeerOptions::network_names: the outputs and the events of the network that the code names
+    // "J1939_CAN" carry the simulation's name; the code still finds it by its own.
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Renamed";
+    o.registry_uri = registry.uri;
+    o.virtual_time = VirtualTimeOptions{10ms, std::nullopt, at(400ms)};
+    o.network_names = {{"VehicleCAN", "J1939_CAN"}, {"NotOfThisEcu", "OtherCAN"}};
+    double x = 0.0;
+    {
+        Peer peer(o);
+        peer.set_agent_options(AgentOptions{.sample_period = SimDuration::zero()});
+        peer.j1939("J1939_CAN").add_node({0x00, j1939::Name{}.set_identity_number(0x2345).set_manufacturer_code(0x7F0)});
+        peer.j1939("Plain");
+        peer.input("j1939.J1939_CAN.bus_state", &x); // the code's name is free for the ECU's own variables
+        CHECK(&peer.network("J1939_CAN") == &peer.network(peer.network_names().front()));
+        CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
+        CHECK(!peer.failed());
+        std::vector<std::string> names;
+        for (const auto& info : peer.agent().schema())
+        {
+            names.push_back(info.name);
+        }
+        const auto has = [&](const char* name) { return std::find(names.begin(), names.end(), name) != names.end(); };
+        CHECK(has("j1939.VehicleCAN.bus_state") && has("j1939.VehicleCAN.frames_sent") &&
+              has("j1939.VehicleCAN.node0.address") && has("j1939.VehicleCAN.node0.address_state"));
+        CHECK(has("j1939.Plain.bus_state"));
+        CHECK(!has("j1939.J1939_CAN.frames_sent") && !has("j1939.J1939_CAN.node0.address"));
+        CHECK(std::get<std::int64_t>(value_of(peer.agent().schema(), peer.agent().latest(), "j1939.VehicleCAN.frames_sent")) > 0);
+        std::vector<Event> events;
+        peer.agent().drain_events(events);
+        bool claimed = false;
+        for (const auto& e : events)
+        {
+            claimed = claimed || e.text == "j1939.VehicleCAN.node0: claimed at address 0";
+            CHECK(e.text.find("J1939_CAN") == std::string::npos);
+        }
+        CHECK(claimed);
+        // describe() says the code's names.
+        CHECK(peer.describe().networks.front().name == "J1939_CAN");
+    }
+    {
+        // A variable of the ECU with the simulation's name clashes: the message says where the name comes from.
+        Peer peer(o);
+        static_cast<void>(peer.j1939("J1939_CAN").add_node({0x21}));
+        peer.input("j1939.VehicleCAN.bus_state", &x);
+        CHECK(throws_with<std::invalid_argument>(
+            [&] { peer.agent().complete_schema(); },
+            "the ECU declares a variable 'j1939.VehicleCAN.bus_state', the name of a monitoring output of the peer (rename "
+            "the variable, or set PeerOptions::monitor = false; the monitoring outputs of the network \"J1939_CAN\" have "
+            "its name in the simulation, \"VehicleCAN\" (network_names, --map-network))"));
+    }
+}

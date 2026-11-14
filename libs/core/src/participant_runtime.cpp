@@ -406,6 +406,21 @@ public:
         return is_map(parent) ? tree_.find_child(parent, key) : ryml::NONE;
     }
 
+    /// The items of the list `key` of `parent`, in their order; none if there is no such list.
+    [[nodiscard]] std::vector<ryml::id_type> items(ryml::id_type parent, ryml::csubstr key) const
+    {
+        std::vector<ryml::id_type> out;
+        const ryml::id_type list = member(parent, key);
+        if (list != ryml::NONE && tree_.is_seq(list))
+        {
+            for (ryml::id_type item = tree_.first_child(list); item != ryml::NONE; item = tree_.next_sibling(item))
+            {
+                out.push_back(item);
+            }
+        }
+        return out;
+    }
+
     /// The scalar that the member `key` of `parent` is; empty if there is no such member, or it is no scalar.
     [[nodiscard]] std::optional<std::string> scalar(ryml::id_type parent, ryml::csubstr key) const
     {
@@ -591,6 +606,56 @@ bool is_loopback_registry_uri(std::string_view registry_uri)
         host.remove_suffix(1); // the root of the names: "localhost." is "localhost"
     }
     return equals_ignoring_case(host, "localhost");
+}
+
+bool can_read_controller_networks(std::string_view configuration)
+{
+#ifdef VEHICLE_SIL_CORE_HAS_RAPIDYAML
+    static_cast<void>(configuration);
+    return true;
+#else
+    return is_blank_configuration(configuration);
+#endif
+}
+
+std::vector<std::string> configured_controller_networks(std::string_view configuration)
+{
+    std::vector<std::string> out;
+    if (is_blank_configuration(configuration))
+    {
+        return out;
+    }
+#ifdef VEHICLE_SIL_CORE_HAS_RAPIDYAML
+    try
+    {
+        // As merged_participant_configuration(): what the configuration says once SIL Kit has read
+        // it, whatever file a member came from.
+        const std::string json = SilKit::Config::ParticipantConfigurationToJson(
+            SilKit::Config::ParticipantConfigurationFromString(std::string(configuration) /* only read, as in merged_participant_configuration(): the participant is not made from it */));
+        const ConfigurationText said(json);
+        for (const char* section : {"CanControllers", "LinControllers", "EthernetControllers", "FlexrayControllers"})
+        {
+            const ryml::csubstr key = ryml::to_csubstr(section);
+            std::size_t index = 0;
+            for (const ryml::id_type item : said.items(said.root(), key))
+            {
+                if (const auto network = said.scalar(item, "Network"))
+                {
+                    const auto name = said.scalar(item, "Name");
+                    out.push_back(std::string(section) + "[" + std::to_string(index) + "]" +
+                                  (name ? " (Name " + in_quotes(*name) + ")" : std::string()) + ": Network " +
+                                  in_quotes(*network));
+                }
+                ++index;
+            }
+        }
+    }
+    catch (const std::exception&)
+    {
+        out.clear(); // not for this function to say: whoever makes the participant does
+    }
+#endif
+    return out;
 }
 
 std::string default_participant_configuration(std::string_view registry_uri, std::optional<bool> listen_on_network)

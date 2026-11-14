@@ -78,6 +78,9 @@ peer.wait(std::chrono::minutes(10));
 
 受信の扱い、J1939 と LIN の決定論性、LIN のステップ幅の制約は [docs/internals/virtual-time.md](internals/virtual-time.md) と [docs/internals/lin.md](internals/lin.md) を参照してください。`Peer` を使わずに `ParticipantRuntime` のステップハンドラで回すこともできます（`bind_host()`、LIN の例 `examples/lin`）。
 
+シミュレーションでのネットワークの名前がコードの名前と違うときは、`options.network_names = {{"VehicleCAN", "J1939_CAN1"}};`（シミュレーションの名前 → コードの名前）で、コードを変えずに合わせられます。
+替わるのは SIL Kit のネットワークの名前と監視の出力の名前だけです。決まりは [ecu-executable.md](ecu-executable.md) の「ネットワークの名前を替える」にあります（ECU の実行ファイルでは `--map-network`）。
+
 ## CAN バスの調停と送信時間を模擬する
 
 SIL Kit の標準の CAN は、送ったフレームを送った時刻のまま全員に届けます。調停と送信時間を仮想時間で再現するには、簡易 CAN Network Simulator を participant として加えます。各ピアのコードは変わりません。

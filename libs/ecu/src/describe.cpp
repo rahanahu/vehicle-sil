@@ -261,6 +261,12 @@ std::string to_json(const EcuDescription& description)
     {
         w.null("control");
     }
+    w.begin_array("features");
+    for (const auto& feature : description.features)
+    {
+        w.string({}, feature);
+    }
+    w.end_array();
     w.end_object();
     std::string out = w.take();
     out += '\n';
