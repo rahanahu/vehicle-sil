@@ -1,6 +1,6 @@
 # シナリオ（`vehicle_sil_launch run --scenario`）
 
-まとめる人と、シミュレーションで試験をする人向けです。先に [simulation-config.md](simulation-config.md)（構成ファイル、照合、実行）を読みます。
+まとめる人と、シミュレーションで試験をする人向けです。先に [simulation-config.md](simulation-config.md)（構成ファイル）、[simulation-check.md](simulation-check.md)（照合）、[simulation-run.md](simulation-run.md)（実行）を読みます。 次に読む文書はありません（手順を追って試すなら、手引き「[シナリオで試験を書く](howto/scenario-tests.md)」）。
 
 シナリオは、決まった手順で ECU の変数に値を入れ、結果を確かめるファイルです。`vehicle_sil_launch run <構成ファイル> --scenario <シナリオ>` は、シミュレーションを起動し、シナリオを最後まで進めて止め、終了コードで合否を返します。そのまま自動試験になります。
 
@@ -128,7 +128,7 @@ YAML です（`{` で始まれば JSON）。構成ファイルとは別のファ
 - 上の 3 つは、実行の前に終わる時刻がわかります。これらの手順は、前の結果によらず、書いた時刻どおりに進みます。
 - `wait_until` と `within_ms` つきの `expect` は、終わる時刻が実行するまで決まりません。ランチャーは、時刻 t のサンプルを、その次の controller のステップ P で確かに持っています。次の手順の書き込みが間に合う最初の時刻が P + 刻みなので、そこを終わりとします。例では、回転数が 1700 になったサンプルが 330 ms、P が 335 ms、終わりが 340 ms です。
 - そのため、これらの手順より後ろには `at_ms` を書けません（`after_ms` で書きます）。時刻が戻る `at_ms` も誤りです。
-- controller の刻みは、構成ファイルの `time_step_ms` です。書いていなければ、ECU のステップがすべて controller のステップから始まる刻み（結果の `timing.time_step_ms`。[simulation-config.md](simulation-config.md) の「等速で動かす」の、速さを決めたときの既定と同じ）です。シナリオのある実行では、速さによらずこの刻みです。
+- controller の刻みは、構成ファイルの `time_step_ms` です。書いていなければ、ECU のステップがすべて controller のステップから始まる刻み（結果の `timing.time_step_ms`。[simulation-run.md](simulation-run.md) の「等速で動かす」の、速さを決めたときの既定と同じ）です。シナリオのある実行では、速さによらずこの刻みです。
 
 ## 値の見え方
 
@@ -152,7 +152,7 @@ ECU は、Agent の `sample_period`（既定 10 ms の仮想時間）ごとに�
 - 手順が 1 つ失敗すると、シナリオはそこで終わりです（仮想時刻の順で最初の失敗）。ランチャーはシミュレーションを止め、実行は失敗します（終了コード 1）。始まっていた手順は `unfinished`、その後ろは `not_run` です。後ろの手順の書き込みのうち、次の刻みまでの分は、すでに ECU に渡っていることがあります。
 - 全部通ると、ランチャーはその controller のステップでシミュレーションを止め、実行は成功します（ほかに誤りがなければ終了コード 0）。構成ファイルに `stop_at_ms` がなくても回せます。
 - `stop_at_ms` に先に着くと、決められる所まで決めて、決まっていない最初の手順が失敗です（`scenario-out-of-time`。`stop_at_ms` を大きくするか、消します）。
-- 止める要求（Ctrl+C、`stop` の命令）、participant の失敗、`--timeout-ms` は、シナリオより優先です（[simulation-config.md](simulation-config.md) の規則のまま）。そのとき、シナリオは `incomplete` で、誤り `scenario-incomplete` が、どこまで進んだかを言います。落ちた ECU への書き込みが先に失敗しても、実行の結果は participant の失敗で、シナリオは `incomplete` です。
+- 止める要求（Ctrl+C、`stop` の命令）、participant の失敗、`--timeout-ms` は、シナリオより優先です（[simulation-run.md](simulation-run.md) の規則のまま）。そのとき、シナリオは `incomplete` で、誤り `scenario-incomplete` が、どこまで進んだかを言います。落ちた ECU への書き込みが先に失敗しても、実行の結果は participant の失敗で、シナリオは `incomplete` です。
 - 手順ごとの `at`（JSON の `at_ms`）は、その手順を決めた仮想時刻です。`set` は値を適用した ECU のステップ、`ramp` は終わり、その時点の `expect` は T、`wait_until` と `within_ms` は成り立ったサンプルの時刻、`hold_for_ms` は終わり（失敗なら外れたサンプルの時刻）、時間切れは切れた時刻です。
 
 失敗の所見は、シナリオのファイルと行、手順、時刻、そのときの値を言います。失敗する例です。スロットルを踏んでから 200 ms のうちに回転数が 1700 rpm に届くことを確かめますが、届くのは 330 ms です（上の例の `wait_until`）。
@@ -282,7 +282,7 @@ failed: 5 errors, 0 warnings, 0 notes
 | `over_at_ms` | シナリオが終わった controller のステップ（`passed` と `failed`。ほかは null） |
 | `steps[]` | 手順ごとに `index`（1 から）、`line`、`kind`（`set`、`ramp`、`expect`、`wait_until`）、`text`、`status`（`passed`、`failed`、`unfinished`、`not_run`）、`start_ms`（手順の時刻）、`at_ms`（決めた時刻）、`end_ms`（終わる時刻）、`code` と `message`（失敗のとき） |
 
-上の「結果」の失敗する例（`throttle_response.yaml`）を `run --json` で回したときの `scenario` です（ほかのキーは [simulation-config.md](simulation-config.md) の「JSON（`run --json`）」）。
+上の「結果」の失敗する例（`throttle_response.yaml`）を `run --json` で回したときの `scenario` です（ほかのキーは [simulation-run.md](simulation-run.md) の「JSON（`run --json`）」）。
 
 <!-- vehicle_sil_launch run simulation.yaml --scenario throttle_response.yaml --json: the scenario -->
 ```json

@@ -1,6 +1,6 @@
 # 外部操作（Control API）
 
-vehicle-sil 自体を直す人と、Control API の契約（反映の時刻、順序、上限、スレッド）を確かめたい人向けです。使い方は [control-api.md](../control-api.md) にあります。
+vehicle-sil 自体を直す人と、Control API の契約（反映の時刻、順序、上限、スレッド）を確かめたい人向けです。使い方は [control-api.md](../control-api.md) にあります。 先に [architecture.md](../architecture.md)（全体の形）と [code-map.md](../code-map.md)（どこに何があるか）を読みます。ほかの中の仕組みの文書は、architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」にあります。
 
 Control API は、外からシミュレーションを操作・監視する口です。担当は次のように分けています。
 

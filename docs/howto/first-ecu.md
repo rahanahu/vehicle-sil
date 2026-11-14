@@ -96,7 +96,7 @@ target_link_libraries(engine_ecu PRIVATE vehicle_sil::simulation)
 vehicle_sil_copy_runtime_dlls(engine_ecu)
 ```
 
-- リンクするのは `vehicle_sil::simulation` です。J1939 の部品や型付きメッセージを使うときは、そのターゲットも足します（README の「[ライブラリ](../../README.md#ライブラリ)」）。
+- リンクするのは `vehicle_sil::simulation` です。J1939 の部品や型付きメッセージを使うときは、そのターゲットも足します（[architecture.md](../architecture.md) の「構成」）。
 - `vehicle_sil_copy_runtime_dlls()` は、Windows で `SilKit.dll` を実行ファイルの隣に写します。
 - ECU を足すときは、この 5 行を写して名前を変え、構成ファイルにも足します。
 
@@ -218,7 +218,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 - 標準エラーには、ランチャーの経過（`[vehicle_sil_launch] ` で始まる行）と、ECU が書いた行（`[<participant 名>] ` を付けたもの）が流れます。表示の ECU が 500 ms ごとに書く行は `[Dashboard] ` 付きで出ます。
 - `stop_at_ms` の 1000 ms で止まり、各 ECU は自分で終わります。途中で止めるときは Ctrl+C です（終了コード 130）。
-- 出力の形と終了コードは [simulation-config.md](../simulation-config.md) の「シミュレーションの実行」にあります。
+- 出力の形と終了コードは [simulation-run.md](../simulation-run.md) の「シミュレーションの実行」にあります。
 
 ## デバッガーから動かす
 

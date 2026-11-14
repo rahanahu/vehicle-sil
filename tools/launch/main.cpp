@@ -8,7 +8,8 @@
 //                  participant and reports how each ended; with --events as events (one JSON
 //                  object per line), with --stdin-commands stopped by commands on stdin.
 //   version        its version (--json: also the formats it writes and what it can do).
-// The file format, the rules, the output and the events: docs/simulation-config.md.
+// The file format: docs/simulation-config.md; the rules and the output of check: docs/simulation-check.md;
+// the run: docs/simulation-run.md; the events: docs/simulation-events.md.
 //
 // The threads of run: main (the check, the run, the launcher's events, the result); one reader per
 // participant (its lines); with --stdin-commands, the reader of stdin (the command events, stop
@@ -134,7 +135,8 @@ constexpr const char* kUsage =
     "  --                          what follows is the file, also if it starts with '-'\n"
     "exit codes: 0 passed, 1 errors (with --strict: or warnings; run: also a failed simulation), 3 the file\n"
     "            cannot be read (run: or the registry cannot be set up), 4 usage, 130 run was interrupted (or stopped)\n"
-    "the file format, the rules, the run and the events: docs/simulation-config.md; scenarios: docs/scenario.md\n";
+    "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;\n"
+    "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md\n";
 
 /// The command line as UTF-8: on Windows from the wide command line (argv is in the code page).
 std::vector<std::string> utf8_arguments(int argc, char** argv)

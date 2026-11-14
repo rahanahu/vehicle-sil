@@ -2,7 +2,7 @@
 # check of the ecu_main executables against it (what they report with --describe) and the run of
 # the whole simulation: reading, the rules (pure functions), the run (registry, controller, child
 # processes) and the output for people and as JSON. Internal; not part of the
-# library API. The file format and the rules: docs/simulation-config.md.
+# library API. The file format: docs/simulation-config.md; the rules: docs/simulation-check.md.
 if(NOT TARGET rapidyaml)
   message(STATUS "vehicle-sil: SIL Kit's rapidyaml target is not available (SIL Kit not built from source); vehicle_sil_launch is skipped")
   return()

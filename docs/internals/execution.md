@@ -1,8 +1,8 @@
 # 実行と試験の基盤
 
-vehicle-sil 自体を直す人と、`Ecu`、`Simulation`、`Peer`、`LocalBench` の契約を確かめたい人向けです。ECU の書き方は [j1939-guide.md](../j1939-guide.md) と [ecu-executable.md](../ecu-executable.md) にあります。
+vehicle-sil 自体を直す人と、`Ecu`、`Simulation`、`Peer`、`LocalBench` の契約を確かめたい人向けです。ECU の書き方は [j1939-guide.md](../j1939-guide.md) と [ecu-executable.md](../ecu-executable.md) にあります。 先に [architecture.md](../architecture.md)（全体の形）と [code-map.md](../code-map.md)（どこに何があるか）を読みます。ほかの中の仕組みの文書は、architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」にあります。
 
-この文書で扱うのは、ECU のアプリケーションの入口（`Ecu`）、J1939 と LIN のノードを動かす participant（`Peer`）、プロセス内の仮想バスでの実行（`LocalBench`）と試験の道具、それらを選んで動かす `Simulation` です。`Peer` と `LocalBench` は、どちらもエンジン（`vehicle_sil::j1939`）の公開 API だけを使います（CTest の `local.boundary`、`testkit.boundary`、`peer.boundary` が、内部ヘッダーや試験用の入口を使っていないことを確かめます）。区分（[architecture.md](../architecture.md) の「構成」の表）は、`Ecu` と `Simulation` が利用者向け、`Peer` と `LocalBench` が土台、試験キットが試験用です。
+この文書で扱うのは、ECU のアプリケーションの入口（`Ecu`）、J1939 と LIN のノードを動かす participant（`Peer`）、プロセス内の仮想バスでの実行（`LocalBench`）と試験の道具、それらを選んで動かす `Simulation` です。`Peer` と `LocalBench` は、どちらもエンジン（`vehicle_sil::j1939`）の公開 API だけを使います（CTest の `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary` が、内部ヘッダーや試験用の入口を使っていないことを確かめます）。区分（[architecture.md](../architecture.md) の「構成」の表）は、`Ecu` と `Simulation` が利用者向け、`Peer` と `LocalBench` が土台、試験キットが試験用です。
 
 ## ECU の入口（`vehicle_sil::Ecu`）
 
@@ -112,7 +112,7 @@ CHECK(events.has(j1939::EventKind::AddressChanged));
 - 破棄の順は、後に足した ECU から順に、ホスト、LIN のノード（後に足したものから）、`Network`（後に足したものから。各 `Network` の後にその `TapPort`）、生チャネル、Control Agent、`emplace` したオブジェクト（最後に足したものから先）です。その後にドライバー、最後に LIN バスと CAN バスと端点を破棄します。
 - `J1939Events`（Observer）と `FrameLog`（TapListener）は、出来事と生フレームをコピーして持ちます。容量（既定 100000 件）を超えた分は持たずに数えます（`dropped()`）。問い合わせは種類（向き）と述語で数えたり取り出したりします（`count`、`of`、`first`、`last`）。
 - `faults`: 仮想バスの `FaultInjector` を作る小さな関数です。`when(pred, action)`、`between(from, until, action)`、`nth(n, action)`、`sequence({...})`、`first_of({...})` と、述語 `j1939_pgn(pgn)`、`j1939_source(sa)`、`can_id(id, format)` です。どれも、状態は選んだフレームの数だけなので決定的です。`nth` と `sequence` のコピーは数を共有するので、端点ごとに作ります。故障注入の仕組みそのものは仮想バスにあり（[can.md](can.md) の「仮想バス」）、試験キットは新しい注入の仕組みを持ちません。
-- LIN の試験は、仮想 LIN バスの上（`LocalBench`）でも、`Peer` と in-process の registry の上でも行えます。結果は同じです（[lin.md](lin.md) の決定性）。LIN の故障注入と記録の道具はありません。
+- LIN の試験は、仮想 LIN バスの上（`LocalBench`）でも、`Peer` と in-process の registry の上でも行えます。結果は同じです（[lin.md](lin.md) の決定性）。試験キットに LIN の故障注入と記録の道具はありません。記録は仮想 LIN バスの観測（`LocalBench::lin_bus(network).add_observer()`）で、通信断は `ecu.connected` で行います。
 
 ## 検証の範囲
 

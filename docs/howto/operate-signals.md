@@ -220,7 +220,7 @@ python examples/launch_control/write_before_start.py \
            f"the run passed ({result['result']}, {result['simulation']})")
 ```
 
-- `launch.wait()` は、ランチャーが終わるのを待ち、`run --json` と同じ結果を返します。読み方は [simulation-config.md](../simulation-config.md) の「JSON（`run --json`）」です。
+- `launch.wait()` は、ランチャーが終わるのを待ち、`run --json` と同じ結果を返します。読み方は [simulation-run.md](../simulation-run.md) の「JSON（`run --json`）」です。
 - 途中で止めるときは `launch.stop()` です。`with` を出るときも、動いていれば止めます。
 - 実行が終わると、ランチャーは Control Server を閉じます。待っている呼び出しは、そこで終わります。
 
@@ -253,7 +253,7 @@ Control API が扱うのは、ECU が宣言した変数と時間だけです。J
 ## 次に読むもの
 
 - クライアントの API、反映の時刻、`snapshot()` の約束、CLI: [control-api.md](../control-api.md)
-- 事象と標準入力の命令、`run --json` の結果: [simulation-config.md](../simulation-config.md) の「機械から使う」
+- 事象と標準入力の命令、`run --json` の結果: [simulation-events.md](../simulation-events.md) の「機械から使う」
 - 決まった手順で確かめて、終了コードで合否を出す: [シナリオで試験を書く](scenario-tests.md)
 - ブラウザで値を見る・書く: [gui.md](../gui.md)
 - J1939 の信号を変数に出す: [j1939-guide.md](../j1939-guide.md)

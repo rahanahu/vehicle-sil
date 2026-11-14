@@ -32,9 +32,9 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 - PyYAML は YAML 1.1 で読みます。生成器は `on`、`off`、`yes`、`no` を真偽値にせず文字列として読み、整数は 10 進（先頭の 0 なし）、16 進、2 進だけを受け付け（8 進と、整数と小数の 60 進を誤りにする）、同じキーの重複を誤りにします（マージキーで取り込んだキーの上書きは可）。
 - Python や PyYAML が見つからなかった configure の結果はキャッシュに残りません。入れたあとで configure し直せば見つけます。
 
-### aiohttp（ブラウザの GUI のサーバー）
+### aiohttp と PyYAML（ブラウザの GUI のサーバー）
 
-- GUI サーバー（`gui/server`、配布名 `vehicle-sil-gui`、[gui.md](gui.md)）は aiohttp だけに依存します。HTTP のサーバー、WebSocket、試験で使うクライアントを 1 つで持ち、asyncio の Windows の既定のイベントループ（子プロセスを動かせる ProactorEventLoop）で動き、Windows（3.11 以降）の wheel があります。C++ のビルドは使いません。ECU の変数を読み書きするときだけ、ランチャーの Control Server のクライアントとして grpcio と protobuf を使います（任意の依存 `vehicle-sil-gui[variables]`。`gui` のグループが入れます）。なくても GUI サーバーは動き、変数だけが使えないと理由を出します。この任意の依存だけでは足りず、スタブが要ります（リポジトリの中で `uv sync` して動かすか、スタブを同梱したビルド済みの道具を使うのが前提。スタブは Python のパッケージには入っていません）。gRPC のスタブは、起動のたびに `proto/` から grpcio-tools（`control` のグループ）で作るか、`python -m vehicle_sil_control.generate` が作ったもの、`VEHICLE_SIL_CONTROL_STUBS` のディレクトリのものを使います。
+- GUI サーバー（`gui/server`、配布名 `vehicle-sil-gui`、[gui.md](gui.md)）は aiohttp と PyYAML（ダッシュボードのファイルの読み込み）に依存します。HTTP のサーバー、WebSocket、試験で使うクライアントを 1 つで持ち、asyncio の Windows の既定のイベントループ（子プロセスを動かせる ProactorEventLoop）で動き、Windows（3.11 以降）の wheel があります。C++ のビルドは使いません。ECU の変数を読み書きするときだけ、ランチャーの Control Server のクライアントとして grpcio と protobuf を使います（任意の依存 `vehicle-sil-gui[variables]`。`gui` のグループが入れます）。なくても GUI サーバーは動き、変数だけが使えないと理由を出します。この任意の依存だけでは足りず、スタブが要ります（リポジトリの中で `uv sync` して動かすか、スタブを同梱したビルド済みの道具を使うのが前提。スタブは Python のパッケージには入っていません）。gRPC のスタブは、起動のたびに `proto/` から grpcio-tools（`control` のグループ）で作るか、`python -m vehicle_sil_control.generate` が作ったもの、`VEHICLE_SIL_CONTROL_STUBS` のディレクトリのものを使います。
 - ライセンス: aiohttp は Apache-2.0（同梱の llhttp は MIT）。依存する multidict、yarl、frozenlist、aiosignal、propcache は Apache-2.0、aiohappyeyeballs は PSF-2.0、attrs は MIT、idna は BSD-3-Clause。vehicle-sil のリポジトリには含めず、uv が入れます。
 
 ### Vector XL Driver Library（Vector XL CAN Bridge、Windows のみ）
@@ -48,7 +48,7 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 |---|---|
 | ドライバ | `xlOpenDriver`、`xlCloseDriver`、`xlGetDriverConfig`、`xlGetErrorString` |
 | ポート | `xlOpenPort`、`xlClosePort`、`xlActivateChannel`（`XL_ACTIVATE_NONE`）、`xlDeactivateChannel` |
-| 設定 | `xlCanSetChannelBitrate`（init 権限が要る、15000〜1000000 bit/s）、`xlCanSetChannelMode(tx=0, txrq=0)`（init 権限が要る。権限があるときだけ呼ぶ） |
+| 設定 | `xlCanSetChannelBitrate`（init 権限が要る、15000〜1000000 bit/s）、`xlCanSetChannelMode(tx=1, txrq=0)`（送信レシートを有効にし、送信要求の通知を無効にする。init 権限が要る。権限があるときだけ呼ぶ） |
 | 送受信 | `xlCanTransmit`（`XL_TRANSMIT_MSG`、DLC 0〜8）、`xlReceive`（`XL_RECEIVE_MSG`、1 回に 1 件）、`xlSetNotification` と `WaitForSingleObject` |
 
 - 上の API を呼ぶのは `bridges/vector-xl/src/xl_backend_vector.cpp` だけです。このファイルは、vehicle-sil 独自の内部インターフェース（`src/xl_backend.hpp`。名前、型、値は vehicle-sil のもの）を XL Driver Library の呼び出しで実装します。行うのは型と値の変換だけで、判断も状態も持ちません。Windows で XL Driver Library が見つかったときだけビルドされます。
@@ -71,13 +71,13 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 | ライブラリ | 設定 | 理由 |
 |---|---|---|
-| SIL Kit | `SILKIT_BUILD_DEMOS/TESTS/DOCS/DASHBOARD=OFF`、`SILKIT_BUILD_STATIC` は `VEHICLE_SIL_STATIC` と同じ（既定 OFF）、`SILKIT_BUILD_UTILITIES=ON` | 不要なものを作らない。統合テストに `sil-kit-registry` が要る。`VEHICLE_SIL_STATIC=ON` では、SIL Kit を静的なライブラリにし、`SilKit::SilKit` の `INTERFACE_LINK_OPTIONS` に C++ の実行時ライブラリの静的なリンク（Linux: `-static-libstdc++ -static-libgcc`、MinGW: `-static`）を付ける。SIL Kit をリンクする実行ファイル（利用側の ECU も）に効く。glibc は共有のまま（README の「1 つの実行ファイルにする」） |
+| SIL Kit | `SILKIT_BUILD_DEMOS/TESTS/DOCS/DASHBOARD=OFF`、`SILKIT_BUILD_STATIC` は `VEHICLE_SIL_STATIC` と同じ（既定 OFF）、`SILKIT_BUILD_UTILITIES=ON` | 不要なものを作らない。統合テストに `sil-kit-registry` が要る。`VEHICLE_SIL_STATIC=ON` では、SIL Kit を静的なライブラリにし、`SilKit::SilKit` の `INTERFACE_LINK_OPTIONS` に C++ の実行時ライブラリの静的なリンク（Linux: `-static-libstdc++ -static-libgcc`、MinGW: `-static`）を付ける。SIL Kit をリンクする実行ファイル（利用側の ECU も）に効く。glibc は共有のまま（[build.md](build.md) の「1 つの実行ファイルにする（`VEHICLE_SIL_STATIC`）」） |
 
 ## 使っているターゲット
 
 | ターゲット | 中身 |
 |---|---|
-| `SilKit::SilKit` | SIL Kit 本体。共有ライブラリで、Debug では `libSilKitd.so` / `SilKitd.dll` になる。出力先は `${CMAKE_BINARY_DIR}/$<CONFIG>` |
+| `SilKit::SilKit` | SIL Kit 本体。既定では共有ライブラリ（`VEHICLE_SIL_STATIC=ON` では静的）で、Debug では `libSilKitd.so` / `SilKitd.dll` になる。出力先は `${CMAKE_BINARY_DIR}/$<CONFIG>` |
 | `sil-kit-registry` | レジストリの実行ファイル。SIL Kit を静的にリンクしているので、共有ライブラリは不要 |
 | `rapidyaml` | SIL Kit が `ThirdParty/rapidyaml` からビルドする YAML/JSON パーサー（MIT。静的ライブラリ）。`vehicle_sil::can_netsim` と `vehicle_sil::launch` が設定ファイルの読み込みに使う。SIL Kit をサブモジュールから追加しないとき（利用側が `SilKit::SilKit` を定義済み）はこのターゲットがないので、`vehicle_sil::can_netsim`、`vehicle_sil_can_bus_simulator`、`vehicle_sil::launch`、`vehicle_sil_launch` を作らない |
 
@@ -99,7 +99,7 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 | SIL Kit | 他参加者の監視 | `CreateSystemMonitor`、`AddParticipantStatusHandler`（`SetParticipantConnectedHandler` と `SetParticipantDisconnectedHandler` は使わない。「上流の既知の不具合」を参照） |
 | SIL Kit | CAN | `CreateCanController`、`ICanController::Start/Stop/SendFrame/SetBaudRate`、`AddFrameHandler`、`AddFrameTransmitHandler`。`SendFrame` の userContext に送信時刻を入れる（簡易 CAN Network Simulator との取り決め） |
 | SIL Kit | Network Simulator（experimental、`vehicle_sil::can_netsim`） | `Experimental::Participant::CreateNetworkSimulator`、`INetworkSimulator::SimulateNetwork/Start`、`ISimulatedNetwork`、`Can::ISimulatedCanController`、`Can::ICanEventProducer::Produce`（フレーム、送信確認、状態の変化） |
-| SIL Kit | プロセス内レジストリ（FetchContent の例） | `Vendor::Vector::CreateSilKitRegistry`、`StartListening` |
+| SIL Kit | プロセス内レジストリ（`Simulation`、`vehicle_sil_launch run`） | `Vendor::Vector::CreateSilKitRegistry`、`StartListening` |
 
 ## 実装が前提にしている上流の挙動
 
@@ -169,7 +169,7 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 - **影響**: 推測のとおりなら、1 つの participant をデバッガーで止めたまま全体を止めると、まれに、ほかの participant やランチャーが終わらなくなります。
 - **対応**: vehicle-sil の participant（`ParticipantRuntime`）と、vehicle-sil が立てる registry（`vehicle_sil_launch run`、`Simulation`）は、Windows では、構成を渡されなければ `Middleware.EnableDomainSockets: false` で作ります。既定を作るのは 1 か所です（`default_participant_configuration()`、`default_participant_configuration_with()`、`participant_configuration_or_default()`、registry は `default_registry_configuration()`。ほかに変える所は [internals/core.md](internals/core.md) の「SIL Kit の構成の既定」）。`vehicle_sil_can_bus_simulator` が自分で作る構成（ログの設定）も、これに足して作ります。相手が local-domain の口を持っていても、こちらが使わないので TCP でつながります。自分の SIL Kit の構成を渡すとき（`participant_configuration`、`vehicle_sil_can_bus_simulator --participant-configuration`）は、渡した構成をそのまま使うので、Windows ではその構成にも `Middleware: {EnableDomainSockets: false}` を書いてください。vehicle-sil を使わない SIL Kit の participant どうしの接続には、この対応は効きません。
 - **守り方**: `libs/`、`tools/`、`bridges/`、`tests/` で、文字列から SIL Kit の構成を作る所（`ParticipantConfigurationFromString(`）が上の関数を通っていることを、試験 `core.silkit_configuration_defaults`（`cmake/VehicleSilCheckSilKitConfiguration.cmake`）が確かめます。
-- **安全網**: `vehicle_sil_launch run` は、自分の SIL Kit の物（変数の口、controller、registry）を専用のスレッドで破棄し、期限まで待ちます。戻らなければ、所見 `connection-not-closed` を足して結果を書き、静的なオブジェクトの破棄をせずにプロセスを終えます（`RunOutcome::connection_not_closed_ms`、[simulation-config.md](simulation-config.md) の「止め方」）。上の「見たこと」の場面では、結果は書けましたが、プロセスは残りました。
+- **安全網**: `vehicle_sil_launch run` は、自分の SIL Kit の物（変数の口、controller、registry）を専用のスレッドで破棄し、期限まで待ちます。戻らなければ、所見 `connection-not-closed` を足して結果を書き、静的なオブジェクトの破棄をせずにプロセスを終えます（`RunOutcome::connection_not_closed_ms`、[simulation-run.md](simulation-run.md) の「止め方」）。上の「見たこと」の場面では、結果は書けましたが、プロセスは残りました。
 - **上流への報告**: 未報告です。
 
 ## SIL Kit へのパッチ

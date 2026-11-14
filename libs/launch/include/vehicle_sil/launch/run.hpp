@@ -4,7 +4,7 @@
 // controller in this process and every participant as a child process, watches the simulation
 // until it ends, ends every child and writes the result for people and as JSON. What the run
 // saw (RunOutcome) is judged by a pure function (assess_run()). Internal; the behaviour and the
-// output: docs/simulation-config.md.
+// output: docs/simulation-run.md.
 #pragma once
 
 #include "vehicle_sil/core/sim_time.hpp"

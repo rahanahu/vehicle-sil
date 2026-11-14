@@ -31,7 +31,7 @@ Windows でも同じコマンドで動かす想定です。Node.js は Windows �
 | `npm run e2e:real`     | Playwright。本物のランチャー（環境変数 `VEHICLE_SIL_GUI_LAUNCHER`）と、その隣にビルドした ecu_main の例の ECU で通す（`e2e/real/`）。先に `npm run build` が要る      |
 | `npm run i18n:extract` | 翻訳する文言を `build/i18n/messages.json`（リポジトリの直下の `build/`）に書き出す。翻訳ファイルとの比べと更新は `scripts/verify-web.py`（下の「国際化」）            |
 
-リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、クライアントのライブラリの単体試験、翻訳ファイルの比べ、ビルド、e2e を順に回して要約だけを表示します。e2e を直している間は `--skip-checks`（書式、lint、単体試験、翻訳ファイルの比べを省く）、`--e2e-grep <名前の一部>`、`--e2e-repeat <回数>` で絞れます。
+リポジトリの直下から `scripts/verify-web.py` を実行すると、`npm ci`、書式、lint、単体試験、クライアントのライブラリの単体試験、翻訳ファイルの比べ、ビルド、ライブラリを 1 つにまとめる（`bundle`）、パッケージ（`package`）、e2e を順に回して要約だけを表示します。e2e を直している間は `--skip-checks`（書式、lint、単体試験、翻訳ファイルの比べを省く）、`--e2e-grep <名前の一部>`、`--e2e-repeat <回数>` で絞れます。
 
 開発のときは、2 つの端末で次のように動かします。GUI サーバーは、本物のランチャーの出力を録ったものを流し直すランチャー（`gui/server/tests/replay_launcher.py`。docs/gui.md の「開発」）を使い、`gui/server/tests/configs/` の構成ファイル（録ってあるもの）を選べます。サーバーが表示する `dev_url`（トークンつき）を開きます。
 
@@ -60,11 +60,11 @@ e2e の試験（`npm run e2e`、`npm run e2e:dev`）は、GUI サーバーを流
 | `src/main.ts`、`src/start.ts`            | 起動。`main.ts` が言語を決めて翻訳を読み込み、それから `start.ts`（アプリ）を読み込む                                                                                                                                                                                                                                                                                                                                                                                        |
 | `src/locale/`                            | 翻訳ファイル（`messages.<言語>.json`）。ビルドで `locale/` に置かれる                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `public/`                                | そのまま配信するファイル（アイコン）                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`run.spec.ts`（実行の画面）、`i18n.spec.ts`（英語の画面と言語の切り替え）、`layout.spec.ts` と `support/layout.ts`（レイアウト）、`support/gui-server.ts`（GUI サーバーの起動）、`support/run-page.ts`（実行の画面の操作）、`variables.spec.ts` と `support/variables-page.ts`（変数の画面）、`shots.spec.ts`（写真）、`real/`（本物のランチャーで。`playwright.real.config.ts`）                                            |
+| `e2e/`                                   | Playwright の試験。`app.spec.ts`（配信と経路）、`run.spec.ts`（実行の画面）、`before-start.spec.ts`（最初のステップの前）、`manual.spec.ts`（自分で起動する participant）、`scenario.spec.ts`（シナリオ）、`starter.spec.ts`（ひな形 `examples/gui_starter` を `--web` で配る）、`i18n.spec.ts`（英語の画面と言語の切り替え）、`layout.spec.ts` と `support/layout.ts`（レイアウト）、`support/gui-server.ts`（GUI サーバーの起動）、`support/run-page.ts`（実行の画面の操作）、`variables.spec.ts` と `support/variables-page.ts`（変数の画面）、`shots.spec.ts`（写真）、`real/`（本物のランチャーで。`playwright.real.config.ts`）                                            |
 
 ## URL と CSP
 
-API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api/health`、`ws`）。`index.html` の `<base href>` からの相対になるので、`/` 以外のパスに置いても動きます。そのときは `ng build --base-href /gui/` でビルドします。WebSocket の URL は `document.baseURI` から作ります（クライアントのライブラリの `webSocketUrl`。`core/session/gui-client.ts` が `baseUrl` に `document.baseURI` を渡す）。
+API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api/app`、`ws`）。`index.html` の `<base href>` からの相対になるので、`/` 以外のパスに置いても動きます。そのときは `ng build --base-href /gui/` でビルドします。WebSocket の URL は `document.baseURI` から作ります（クライアントのライブラリの `webSocketUrl`。`core/session/gui-client.ts` が `baseUrl` に `document.baseURI` を渡す）。
 
 本番のビルドは inline の script を出しません（`angular.json` で `inlineCritical: false`）。`script-src 'self'` の CSP で動きます。コンポーネントのスタイルは `<style>` で入るので、`style-src` には `'unsafe-inline'`（または nonce）が要ります。
 
@@ -95,7 +95,7 @@ API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api
 ### signal と RxJS
 
 - 状態、そこから導く値、テンプレートが読むものは signal（`signal`、`computed`、`linkedSignal`）。
-- サーバーへの要求と接続は、クライアントのライブラリ（`@vehicle-sil/gui-client`）だけが持つ。画面は `core/session/` の包み（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`）の signal とメソッドを使い、`HttpClient` や WebSocket を自分で持たない（自分の画面を作る人と同じ部品だけを使う。docs/gui.md の「自分の画面を作る」）。ライブラリの HTTP は、包みが `HttpClient` で送る（interceptor がトークンを付ける）。
+- サーバーへの要求と接続は、クライアントのライブラリ（`@vehicle-sil/gui-client`）だけが持つ。画面は `core/session/` の包み（`ServerConnection`、`ServerInfo`、`SimulationTime`、`RunCommands`、`EcuVariables`）の signal とメソッドを使い、`HttpClient` や WebSocket を自分で持たない（自分の画面を作る人と同じ部品だけを使う。docs/gui.md の「自分の画面を作る」）。ライブラリの HTTP は、包みが `HttpClient` で送る（interceptor がトークンを付ける）。
 - ライブラリの状態は「読める値」（`get()` と `subscribe()`）。包みは `readableSignal`（`core/session/gui-client.ts`）で signal にする。ライブラリが足りないときは、包みで近道を作らず、ライブラリの公開の入口（`@vehicle-sil/gui-client`）に足す。本番のコードは `@vehicle-sil/gui-client/internal`（互換の約束の外）と `/testing` を import しない（lint で止まる。試験は使ってよい）。購読が投げたものは、Angular の `ErrorHandler` へ渡る。
 - 1 回の取得（`api/app`、`api/configs`）は、包みの Promise を返すメソッドを `resource` の loader で呼ぶ。照合（`POST api/check`）は読み取りに近いので signal から自動で送るが、切り替えを少し待ってまとめ、前の照合の応答を待ってから次を送り、古い応答を捨てる（`run-page.ts` の `check`）。
 - RxJS は、時間とともに続く流れに演算子が要るときに使う（間引き、取り消し、いくつかの流れの組み合わせ）。サービスの中に置き、外へは signal を出す。流れそのものが要る利用者には、流れとわかる名前の Observable を出し、利用者が `toSignal`（`core/streams/stream-signals.ts` の `latestValue`、`recentValues`）で signal にする。再接続と待ち時間はライブラリの `Connection` が持つ（RxJS を使わない）。
