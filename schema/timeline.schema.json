@@ -1,0 +1,645 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "vehicle-sil timeline (vehicle_sil_launch run --scenario --timeline), format 1",
+  "description": "What a scenario did over the virtual time of one run: its steps, the values it wrote and the values it saw. Written by vehicle_sil_launch, read by tools that draw or compare a run. Every time is in milliseconds of virtual time and may have a fraction. A variable is named \"<participant>.<name>\" everywhere. A reader ignores keys it does not know, and does not draw (but names) a series, a watch or a step whose source, encoding, mode, op, kind or status it does not know: this schema therefore lists the values written today in the descriptions and does not close them, and allows more keys everywhere. The manual is docs/simulation-run.md of vehicle-sil.",
+  "type": "object",
+  "required": [
+    "vehicle_sil_timeline",
+    "vehicle_sil",
+    "stage",
+    "file",
+    "variant",
+    "params",
+    "tick_ms",
+    "scenario",
+    "variables",
+    "steps",
+    "series",
+    "findings",
+    "limits"
+  ],
+  "properties": {
+    "vehicle_sil_timeline": {
+      "const": 1,
+      "description": "The format version. Always 1."
+    },
+    "vehicle_sil": {
+      "type": "string",
+      "description": "The version of vehicle-sil that wrote the file."
+    },
+    "stage": {
+      "const": "run",
+      "description": "What the file is of: \"run\", a run that took place."
+    },
+    "file": {
+      "type": "string",
+      "description": "The simulation configuration, as it was named on the command line."
+    },
+    "variant": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The variant of the configuration that ran; null for a configuration without variants."
+    },
+    "params": {
+      "type": "array",
+      "description": "The scenario's parameters with the values in effect, as in `check --json`.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "value",
+          "from"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The parameter's name."
+          },
+          "value": {
+            "type": [
+              "boolean",
+              "number",
+              "string"
+            ],
+            "description": "Its value, as a scenario reads it."
+          },
+          "from": {
+            "type": "string",
+            "description": "Where the value comes from (the scenario, the configuration, the command line)."
+          }
+        }
+      }
+    },
+    "tick_ms": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "The step of the launcher's controller: how often the scenario's engine looked at the samples and sent writes."
+    },
+    "scenario": {
+      "type": "object",
+      "description": "The scenario and its result, as in `run --json`, and up to when the series go.",
+      "required": [
+        "file",
+        "name",
+        "status",
+        "over_at_ms",
+        "recorded_to_ms"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "The scenario file, as it was named on the command line."
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The scenario's name; null without one."
+        },
+        "status": {
+          "type": "string",
+          "description": "\"passed\", \"failed\", \"incomplete\" (the simulation ended for another reason) or \"not_run\" (the simulation did not start)."
+        },
+        "over_at_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "The step of the controller at which the scenario was over; null if it was not (incomplete, not_run)."
+        },
+        "recorded_to_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "The time that decided the scenario, and the right end of the series: no point is later. Failed: the at_ms of the failed step. Passed: the latest at_ms of its steps. Incomplete: the time of the last sample that was looked at. null if the scenario did not begin."
+        }
+      }
+    },
+    "variables": {
+      "type": "array",
+      "description": "The variables the scenario uses, in the order of their first use.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "participant",
+          "type",
+          "written",
+          "watched"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "\"<participant>.<name>\": how every other part of the file names the variable."
+          },
+          "participant": {
+            "type": "string",
+            "description": "The participant that has the variable."
+          },
+          "type": {
+            "type": "string",
+            "description": "\"bool\", \"integer\", \"real\" or \"enum\"."
+          },
+          "causality": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "\"input\", \"output\" or \"parameter\"; null if the participant's description is not known."
+          },
+          "unit": {
+            "type": "string",
+            "description": "Its unit, or \"\"."
+          },
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The least value it takes, if it says one."
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The greatest value it takes, if it says one."
+          },
+          "items": {
+            "type": "array",
+            "description": "enum: its items.",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "value"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "The item's name."
+                },
+                "value": {
+                  "type": "integer",
+                  "description": "The value that stands for it in the series."
+                }
+              }
+            }
+          },
+          "ecu_step_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The step of its ECU (not the step of the variable's values)."
+          },
+          "written": {
+            "type": "boolean",
+            "description": "A step of the scenario writes it: it has a series with the source \"written\"."
+          },
+          "watched": {
+            "type": "boolean",
+            "description": "A condition of the scenario reads it: it has a series with the source \"sampled\"."
+          }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "description": "The steps, in the order of the file: the keys of `run --json`'s scenario.steps[], and watch and failed.",
+      "items": {
+        "type": "object",
+        "required": [
+          "index",
+          "line",
+          "kind",
+          "text",
+          "status",
+          "start_ms",
+          "at_ms",
+          "end_ms",
+          "watch",
+          "failed"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "From 1, in the order of the file."
+          },
+          "line": {
+            "type": "integer",
+            "description": "Its line in the scenario file."
+          },
+          "kind": {
+            "type": "string",
+            "description": "\"set\", \"ramp\", \"wave\", \"expect\" or \"wait_until\"."
+          },
+          "text": {
+            "type": "string",
+            "description": "What it does, in one line, for people."
+          },
+          "status": {
+            "type": "string",
+            "description": "\"passed\", \"failed\", \"unfinished\", \"not_run\" or \"skipped\"."
+          },
+          "start_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Its time; null if the scenario was over before it."
+          },
+          "at_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The time that decided it; null if it was not decided."
+          },
+          "end_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "From where the next step counts; null if that is not known."
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "failed, skipped: the code of its finding."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "failed, skipped: why, for people."
+          },
+          "expect_skipped": {
+            "type": "string",
+            "description": "A ramp or a wave whose expect is not checked in this configuration: why."
+          },
+          "watch": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The conditions the step looks at and when; null for a step without conditions.",
+            "required": [
+              "mode",
+              "from_ms",
+              "until_ms",
+              "conditions"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "description": "\"at\": the values at from_ms (until_ms is null). \"always\": at from_ms and at every sample until until_ms (hold_for_ms). \"once\": at from_ms or at some sample until until_ms (within_ms, wait_until; when it became true is the step's at_ms). \"during\": at every sample of a time from from_ms to until_ms, and no value from before (the expect beside a ramp or a wave; until_ms is the ECU step that applies the end value, which may be later than the step's end_ms)."
+              },
+              "from_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Where the watch begins: the step's time. null if the scenario did not get to the step."
+              },
+              "until_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Where the watch ends; null for the mode \"at\", and if the scenario did not get to the step."
+              },
+              "conditions": {
+                "type": "array",
+                "description": "One per variable: all must be true.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "variable",
+                    "compare"
+                  ],
+                  "properties": {
+                    "variable": {
+                      "type": "string",
+                      "description": "The variable that is read."
+                    },
+                    "compare": {
+                      "type": "array",
+                      "description": "The comparisons of its value: all must be true.",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "op",
+                          "value"
+                        ],
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "description": "\"eq\", \"ne\", \"ge\", \"le\", \"gt\", \"lt\" or \"near\" (within tolerance of value)."
+                          },
+                          "value": {
+                            "type": [
+                              "boolean",
+                              "number"
+                            ],
+                            "description": "What the value is compared with."
+                          },
+                          "tolerance": {
+                            "type": "number",
+                            "description": "near only."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "failed": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "A failed step: what failed, as numbers (message says the same for people); null for any other step.",
+            "required": [
+              "at_ms",
+              "code",
+              "conditions",
+              "write"
+            ],
+            "properties": {
+              "at_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "The time of the failure: the sample that broke a condition, the time a wait ran out, the time of the write."
+              },
+              "code": {
+                "type": "string",
+                "description": "The code of the finding (scenario-failed, scenario-timeout, scenario-write, scenario-out-of-time)."
+              },
+              "conditions": {
+                "type": "array",
+                "description": "The conditions that were not met (all of them, as the message joins them).",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "condition",
+                    "value",
+                    "sample_ms"
+                  ],
+                  "properties": {
+                    "condition": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Index in watch.conditions, from 0."
+                    },
+                    "value": {
+                      "type": [
+                        "boolean",
+                        "number",
+                        "null"
+                      ],
+                      "description": "The value the variable had; null if it had none (no sample, or none in the time of a \"during\" watch)."
+                    },
+                    "sample_ms": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "description": "The time of the sample with that value; null with value."
+                    }
+                  }
+                }
+              },
+              "write": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "The write that was not made or not applied; null if the step did not fail of a write.",
+                "required": [
+                  "variable",
+                  "at_ms",
+                  "value"
+                ],
+                "properties": {
+                  "variable": {
+                    "type": "string",
+                    "description": "The variable that was to be written."
+                  },
+                  "at_ms": {
+                    "type": "number",
+                    "description": "The time the write was for."
+                  },
+                  "value": {
+                    "type": [
+                      "boolean",
+                      "number",
+                      "null"
+                    ],
+                    "description": "The value; null if it was never worked out."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "series": {
+      "type": "array",
+      "description": "The values over the time, in the order of variables[] (of one variable the written series first). Only variables the scenario uses have series.",
+      "items": {
+        "type": "object",
+        "required": [
+          "variable",
+          "source",
+          "encoding",
+          "points"
+        ],
+        "properties": {
+          "variable": {
+            "type": "string",
+            "description": "The variable."
+          },
+          "source": {
+            "type": "string",
+            "description": "\"written\": the values the scenario sent, each with the time it was for. \"sampled\": the values of the ECU's samples that the scenario looked at; a sample has the value at the end of an ECU step and the time of its start, so a value holds from its point to the next."
+          },
+          "encoding": {
+            "type": "string",
+            "description": "\"all\": every value is a point (written). \"changes\": a point only where the written text of the value differs from the one before (sampled)."
+          },
+          "samples": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "sampled: how many samples there were up to recorded_to_ms (also those whose points a limit dropped)."
+          },
+          "first_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "sampled: the time of the first sample."
+          },
+          "last_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "sampled: the time of the last sample (the last point holds until there)."
+          },
+          "not_applied_from": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "written, only if there are such points: the index in points of the first one for a time after scenario.over_at_ms: sent, and no ECU got to that time."
+          },
+          "points": {
+            "type": "array",
+            "description": "[t_ms, value], one per line of the file. t_ms never goes back; points of one time are in the order sent. A bool is true or false, an enum the value of its item, a real that is no number null.",
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": [
+                    "boolean",
+                    "number",
+                    "null"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "The findings of the check and of the run that are about the scenario (code scenario-...) or this file (timeline-write), as in `run --json`; and, with their code alone, those that say the run was late (control-link-late-values, behind-real-time): what such a run recorded may differ from run to run.",
+      "items": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "description": "\"error\", \"warning\" or \"note\"."
+          },
+          "code": {
+            "type": "string",
+            "description": "The fixed name of the finding."
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file it is about."
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The line in that file."
+          },
+          "participant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The participant it is about."
+          },
+          "network": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The network it is about."
+          },
+          "message": {
+            "type": "string",
+            "description": "What is wrong and what to do, for people."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "More text."
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "description": "How many points the file keeps, and what went. Beyond a limit the oldest points of a series go and the newest stay. Counted are the points of samples and the written points of a ramp or a wave; the written points of a set always stay.",
+      "required": [
+        "points_per_series",
+        "points_total",
+        "dropped"
+      ],
+      "properties": {
+        "points_per_series": {
+          "type": "integer",
+          "description": "The most points of one series."
+        },
+        "points_total": {
+          "type": "integer",
+          "description": "The most points of all series together; beyond it the series with the most points give first."
+        },
+        "dropped": {
+          "type": "array",
+          "description": "The series that lost points; empty if none did.",
+          "items": {
+            "type": "object",
+            "required": [
+              "variable",
+              "source",
+              "dropped",
+              "dropped_before_ms"
+            ],
+            "properties": {
+              "variable": {
+                "type": "string",
+                "description": "The variable of the series."
+              },
+              "source": {
+                "type": "string",
+                "description": "The source of the series."
+              },
+              "dropped": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "How many points went."
+              },
+              "dropped_before_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "The time of the oldest point that stayed (of a written series: of a ramp or a wave)."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

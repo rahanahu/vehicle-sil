@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# A scenario of the timeline references (see README.md here): the engine runs it against the model
+# ECUs of tests/launch/test_scenario.cpp, not against real ones.
+vehicle_sil_scenario: 1
+name: the expect beside a ramp fails at a sample
+steps:
+  - set: { Body.level: 14 }
+  - at_ms: 50
+    ramp: { Body.level: { to: 30, over_ms: 200 } }
+    expect: { Body.body.speed: { le: 200 }, Body.level: { ge: 14 } }
+  - expect: { Body.level: 30 }

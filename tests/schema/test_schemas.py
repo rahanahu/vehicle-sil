@@ -10,7 +10,9 @@ Without the launcher (the files only):
     shows (docs/, the READMEs), is valid; the samples below are valid or not as they say;
   - every key of the schemas is in the document of its file (docs/simulation-config.md, docs/scenario.md);
   - the copies in template/schema/ are the files they are copies of, and the first line of each YAML file of examples/
-    and template/ names the schema of its kind (# yaml-language-server: $schema=<relative path>).
+    and template/ names the schema of its kind (# yaml-language-server: $schema=<relative path>);
+  - the timeline files of tests/launch/timeline/ (what the scenario's engine writes for `run --timeline`) are valid
+    for schema/timeline.schema.json, every key of that schema is described, and files with a mistake are not valid.
 
 With the built examples (VEHICLE_SIL_EXAMPLE_DIR):
   - the first line of each copy of an example's YAML file in the build directory leads to a copy of its schema.
@@ -21,7 +23,8 @@ both, as schema.files_and_launcher):
     its message lists the keys there;
   - the kinds of network and the kinds of step are the launcher's;
   - `check` passes every sample the schema passes (unless the sample says the schema cannot tell), and fails every
-    sample the schema fails: the schema never refuses a file that the launcher reads.
+    sample the schema fails: the schema never refuses a file that the launcher reads;
+  - the timeline file of a run of the example (`run --scenario --timeline`) is valid for schema/timeline.schema.json.
 
 Needs PyYAML and jsonschema (the `schema` dependency group of pyproject.toml).
 """
@@ -45,6 +48,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DIR = ROOT / "schema"
 SIMULATION = json.loads((SCHEMA_DIR / "simulation.schema.json").read_text(encoding="utf-8"))
 SCENARIO = json.loads((SCHEMA_DIR / "scenario.schema.json").read_text(encoding="utf-8"))
+TIMELINE = json.loads((SCHEMA_DIR / "timeline.schema.json").read_text(encoding="utf-8"))
+TIMELINE_REFERENCES = ROOT / "tests" / "launch" / "timeline"
 MODELINE = re.compile(r"^# yaml-language-server: \$schema=(\S+)$")
 LAUNCH = os.environ.get("VEHICLE_SIL_LAUNCH_EXE", "")
 EXAMPLE_DIR = os.environ.get("VEHICLE_SIL_EXAMPLE_DIR", "")
@@ -606,7 +611,7 @@ class SchemaFiles(unittest.TestCase):
     maxDiff = None
 
     def test_the_schemas_are_json_schemas(self):
-        for schema in (SIMULATION, SCENARIO):
+        for schema in (SIMULATION, SCENARIO, TIMELINE):
             jsonschema.Draft7Validator.check_schema(schema)
             self.assertEqual(schema["$schema"], "http://json-schema.org/draft-07/schema#")
 
@@ -759,6 +764,80 @@ class SchemaFiles(unittest.TestCase):
                             f"{relative}: the first line must be '# yaml-language-server: $schema={wanted}' (editors "
                             "complete and check the file with it); it is " + repr(first))
         self.assertGreater(seen, 6)
+
+
+class TimelineSchema(unittest.TestCase):
+    maxDiff = None
+
+    def test_every_key_is_described(self):
+        def walk(node, where):
+            for key, value in node.get("properties", {}).items():
+                self.assertTrue(value.get("description"), f"timeline.schema.json: {where}{key} has no description")
+                walk(value, f"{where}{key}.")
+                if isinstance(value.get("items"), dict):
+                    walk(value["items"], f"{where}{key}[].")
+        walk(TIMELINE, "")
+
+    def test_the_references_are_valid(self):
+        files = sorted(TIMELINE_REFERENCES.glob("*.timeline.json"))
+        self.assertGreater(len(files), 3, f"{TIMELINE_REFERENCES} has no timeline files any more")
+        for path in files:
+            self.assertEqual(problems(TIMELINE, json.loads(path.read_text(encoding="utf-8"))), [],
+                             f"{path.relative_to(ROOT)} is not valid for schema/timeline.schema.json: the launcher "
+                             "wrote it, so correct the schema (and docs/simulation-run.md)")
+
+    def test_a_file_with_a_mistake_is_not_valid(self):
+        good = json.loads((TIMELINE_REFERENCES / "fails_beside.timeline.json").read_text(encoding="utf-8"))
+
+        def changed(change) -> list[str]:
+            data = json.loads(json.dumps(good))
+            change(data)
+            return problems(TIMELINE, data)
+
+        self.assertEqual(changed(lambda d: None), [])
+        mistakes = {
+            "another format version": lambda d: d.update(vehicle_sil_timeline=2),
+            "no series": lambda d: d.pop("series"),
+            "a point that is no pair": lambda d: d["series"][0]["points"].append([10]),
+            "a time that is a text": lambda d: d["series"][0]["points"].append(["10", 1]),
+            "a step without its watch": lambda d: d["steps"][0].pop("watch"),
+            "a variable that is an index": lambda d: d["series"][0].update(variable=0),
+            "no recorded_to_ms": lambda d: d["scenario"].pop("recorded_to_ms"),
+        }
+        for what, change in mistakes.items():
+            self.assertNotEqual(changed(change), [], f"the schema passes a timeline with {what}")
+        # What a later version may add is no mistake: keys, and values of the open lists.
+        additions = {
+            "a key it does not know": lambda d: d.update(lines=[]),
+            "a source it does not know": lambda d: d["series"][0].update(source="computed", encoding="minmax"),
+            "a third column of a point": lambda d: d["series"][0]["points"].append([10, 1, 2]),
+        }
+        for what, change in additions.items():
+            self.assertEqual(changed(change), [], f"the schema refuses a timeline with {what}")
+
+
+@needs_launcher
+class TimelineOfARun(unittest.TestCase):
+    maxDiff = None
+
+    def test_the_timeline_of_the_example_is_valid(self):
+        example = Path(EXAMPLE_DIR)
+        with tempfile.TemporaryDirectory(prefix="vehicle-sil-timeline-") as directory:
+            out = Path(directory) / "throttle_step.timeline.json"
+            proc = subprocess.run([LAUNCH, "run", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml",
+                                   "--timeline", str(out)], cwd=example, capture_output=True, text=True,
+                                  encoding="utf-8", stdin=subprocess.DEVNULL, timeout=120)
+            self.assertEqual(proc.returncode, 0, f"the example's scenario did not pass:\n{proc.stdout[-2000:]}\n"
+                                                 f"{proc.stderr[-2000:]}")
+            data = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(problems(TIMELINE, data), [],
+                         "the timeline file of a run is not valid for schema/timeline.schema.json: correct the schema, "
+                         "or the launcher if it writes what docs/simulation-run.md does not say")
+        self.assertEqual(data["scenario"]["status"], "passed")
+        self.assertEqual({(s["variable"], s["source"]) for s in data["series"]},
+                         {("Engine.engine.throttle", "written"), ("Engine.engine.speed", "sampled"),
+                          ("Dashboard.dashboard.engine_speed", "sampled")})
+        self.assertTrue(all(s["points"] for s in data["series"]))
 
 
 @needs_launcher

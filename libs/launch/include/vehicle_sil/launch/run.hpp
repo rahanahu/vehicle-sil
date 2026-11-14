@@ -10,6 +10,7 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/launch/timeline.hpp"
 #include "vehicle_sil/process/process.hpp"
 
 #include <atomic>
@@ -246,6 +247,14 @@ struct RunOutcome
     bool stopped_by_scenario = false;
     /// The scenario's thread failed unexpectedly: why (the scenario is Incomplete).
     std::string scenario_error{};
+    /// run --timeline: the timeline file as the user named it (RunOptions::timeline_shown), once
+    /// it was opened; "" without one.
+    std::string timeline{};
+    /// What the scenario's engine noted for the timeline; null if the scenario did not begin.
+    std::shared_ptr<const TimelineRecord> timeline_record{};
+    /// The timeline file could be opened, but not written when the run was over: why (finding
+    /// "timeline-write"; the scenario's result stands).
+    std::string timeline_error{};
     /// Set if the launcher's own SIL Kit connection (the hub's transport, the controller, the
     /// registry) had not closed when the launcher stopped waiting for it, after the participants
     /// had ended: how long it waited, in milliseconds (the limit: the controller's shutdown
@@ -422,6 +431,12 @@ struct RunOptions
     TimeCommands* time_commands = nullptr;
     /// A file of each participant's output in this directory (created if needed); empty: none.
     std::filesystem::path log_dir{};
+    /// run --timeline, with a scenario: the timeline file of the run (timeline.hpp; its directory
+    /// is created if needed), and its name as the user gave it; empty: none. The file is opened
+    /// before anything starts (RunOutcome::setup_error if that fails) and written when the run
+    /// is over, whatever became of the scenario.
+    std::filesystem::path timeline{};
+    std::string timeline_shown{};
     /// Writes one line (without its end) for the person watching: the participants' output as
     /// "[<name>] <line>", the launcher's own as "[vehicle_sil_launch] <text>". Called from several
     /// threads, one call at a time. Not called when `events` is set.

@@ -3,21 +3,28 @@
 // The scenario file (scenario.hpp: reading and checking, the wording of its errors) and the
 // engine that runs a scenario (scenario_run.hpp) against a model of ECUs that steps in virtual
 // time: when the writes take effect, that no sample is skipped, the wording of the failures, and
-// that the result is the same whenever the samples and results of a step arrive.
+// that the result is the same whenever the samples and results of a step arrive. At the end: the
+// timeline of a run (timeline.hpp) that the engine notes against the same model, compared with
+// the files of tests/launch/timeline.
 #include "launch_test_util.hpp"
 #include "test_harness.hpp"
 
 #include "vehicle_sil/launch/scenario.hpp"
 #include "vehicle_sil/launch/scenario_run.hpp"
+#include "vehicle_sil/launch/timeline.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -136,6 +143,8 @@ public:
     std::vector<std::string> log;
     ScenarioEngine* engine = nullptr;
     const Scenario* scenario = nullptr;
+    /// What the engine notes for a timeline, if set (run()).
+    TimelineRecord* record = nullptr;
 
     World()
     {
@@ -192,7 +201,7 @@ public:
     ScenarioRun run(const Scenario& s, SimDuration limit = 5s)
     {
         scenario = &s;
-        ScenarioEngine e(s, tick, *this);
+        ScenarioEngine e(s, tick, *this, {}, record);
         engine = &e;
         std::vector<EnginePeer> peers;
         for (const auto& p : s.participants)
@@ -1017,7 +1026,7 @@ TEST_CASE(scenario_parameter_errors_say_what_to_write)
     check_text(lines(near.usage_errors),
                "E 0 usage: --param leve=1: the scenario has no parameter leve (did you mean level?): its parameters "
                "are level; remove the option or correct the name\n");
-    const ScenarioRead none = read_scenario(kHead + "  - set: { Body.level: 1 }\n", catalog(), context);
+    const ScenarioRead none = read_scenario(kHead + "  - set: { Body.level: 2 }\n", catalog(), context);
     check_text(lines(none.findings), "");
     check_text(lines(none.usage_errors),
                "E 0 usage: --param leve=1: the scenario has no parameter leve: it uses none (a step uses one as "
@@ -2279,4 +2288,331 @@ TEST_CASE(scenario_expect_beside_a_ramp_that_uses_an_absent_variable_is_skipped_
                                                        "  - expect: { Body.level: 2 }\n",
                                                catalog_without_boost(), context);
     CHECK(std::none_of(checked.findings.begin(), checked.findings.end(), [](const Finding& f) { return f.severity != Severity::Note; }));
+}
+
+// --- the timeline of a run (timeline.hpp) ---
+
+/// The timeline file of `text` run against the model, as `vehicle_sil_launch run --timeline`
+/// makes it (the findings: those of the failed steps, as the run's).
+std::string timeline_of(const std::string& text, SimDuration tick, const std::function<void(World&)>& setup = {},
+                        const ScenarioCatalog& described = catalog(), TimelineLimits limits = {})
+{
+    const Scenario s = read(text, described);
+    World world;
+    world.tick = tick;
+    if (setup)
+    {
+        setup(world);
+    }
+    TimelineRecord record(s, limits);
+    world.record = &record;
+    ScenarioRun run = world.run(s);
+    run.file = "scenario.yaml";
+    TimelineInput input;
+    input.file = "simulation.yaml";
+    input.tick_ms = ms_of(at(tick));
+    input.scenario = &s;
+    input.run = &run;
+    input.catalog = &described;
+    input.record = &record;
+    for (const ScenarioStepRun& step : run.steps)
+    {
+        if (step.status == StepStatus::Failed)
+        {
+            input.findings.push_back(Finding{Severity::Error, step.code, step.text + ": " + step.message, step.line, "", "", "", run.file});
+        }
+    }
+    return format_timeline_json(input);
+}
+
+/// A timeline file without what is not compared between runs with different steps of the
+/// controller and between builds: the version, the files' names, when the controller saw the
+/// scenario over, its step.
+std::string compared(const std::string& timeline)
+{
+    std::istringstream in(timeline);
+    std::string out;
+    for (std::string line; std::getline(in, line);)
+    {
+        if (!line.empty() && line.back() == '\r')
+        {
+            line.pop_back();
+        }
+        const bool left_out = std::ranges::any_of(
+            std::vector<std::string>{"  \"vehicle_sil\": ", "  \"file\": ", "  \"tick_ms\": ", "    \"file\": ", "    \"over_at_ms\": "},
+            [&line](const std::string& start) { return line.rfind(start, 0) == 0; });
+        if (!left_out)
+        {
+            out += line + "\n";
+        }
+    }
+    return out;
+}
+
+/// The part of a timeline file from `from` up to (not with) `to`.
+std::string part(const std::string& timeline, const std::string& from, const std::string& to)
+{
+    const auto begin = timeline.find(from);
+    const auto end = begin == std::string::npos ? begin : timeline.find(to, begin);
+    if (end == std::string::npos)
+    {
+        throw unit::Failure("the timeline has no '" + from + "' ... '" + to + "':\n" + timeline);
+    }
+    return timeline.substr(begin, end - begin);
+}
+
+TEST_CASE(timeline_of_a_run_does_not_depend_on_the_controllers_step)
+{
+    // A scenario that passes, one that fails at a sample and one whose wait runs out: the file is
+    // the same whether the controller steps every 10, 20, 30 or 4 ms, though the engine then looks
+    // at the samples and learns the results at other times. Door steps every 4 ms (it samples
+    // every 20 ms then). None has a step that waits and becomes true: such a step ends one step
+    // of the controller after the engine knows (ScenarioEngine), so it and the steps after it
+    // have other times with another step.
+    const std::string passes = kHead + "  - set: { Body.level: 10, Door.level: 3 }\n"
+                                       "  - at_ms: 20\n"
+                                       "    expect: { Body.body.speed: { ge: 100 } }\n"
+                                       "  - after_ms: 15\n"
+                                       "    ramp: { Door.level: { to: 9, over_ms: 50 }, Body.level: { to: 12, over_ms: 35 } }\n"
+                                       "    expect: { Door.level: { ge: 3 }, Body.body.speed: { le: 120 } }\n"
+                                       "  - set: { Door.lamp: true }\n"
+                                       "  - after_ms: 20\n"
+                                       "    expect: { Door.level: 9 }\n"
+                                       "    hold_for_ms: 45\n"
+                                       "  - set: { Body.level: 0 }\n";
+    const std::string fails = kHead + "  - set: { Body.level: 10 }\n"
+                                      "  - at_ms: 15\n"
+                                      "    expect: { Body.body.speed: { le: 60 }, Door.level: 0 }\n"
+                                      "    hold_for_ms: 100\n"
+                                      "  - set: { Body.level: 0 }\n";
+    const std::string times_out = kHead + "  - wave: { Door.level: { square: { low: 1, high: 2, period_ms: 16 }, for_ms: 64 } }\n"
+                                          "    expect: { Door.level: { ge: 0 } }\n"
+                                          "  - wait_until: { Body.body.speed: { gt: 0 }, Door.level: 2 }\n"
+                                          "    timeout_ms: 75\n";
+    const auto door4 = [](World& w) { w.ecus[1].step = 4ms; };
+    for (const std::string& text : {passes, fails, times_out})
+    {
+        const std::string first = compared(timeline_of(text, 10ms, door4, catalog(10ms, 4ms)));
+        CHECK(first.find("\"recorded_to_ms\": null") == std::string::npos);
+        for (const SimDuration tick : {SimDuration{20ms}, SimDuration{30ms}, SimDuration{4ms}})
+        {
+            check_text(compared(timeline_of(text, tick, door4, catalog(10ms, 4ms))), first, "the timeline with another step");
+        }
+        // Nor on when what a step makes arrives.
+        for (const auto& [name, policy] : policies())
+        {
+            check_text(compared(timeline_of(text, 10ms, [&](World& w) { door4(w); w.policy = policy; }, catalog(10ms, 4ms))), first,
+                       name.c_str());
+        }
+    }
+    // The watch beside the ramp goes to the step of Door that applies the end value (88 ms), past
+    // the step's end (85 ms); the last step passed at 150 ms, and that is where the file ends.
+    const std::string passed = timeline_of(passes, 20ms, door4, catalog(10ms, 4ms));
+    check_text(part(passed, "        \"mode\": \"during\",", "        \"conditions\""),
+               "        \"mode\": \"during\",\n        \"from_ms\": 35,\n        \"until_ms\": 88,\n");
+    CHECK(passed.find("      \"start_ms\": 35,\n      \"at_ms\": 85,\n      \"end_ms\": 85,\n") != std::string::npos);
+    check_text(part(passed, "  \"scenario\": {", "  \"variables\""),
+               "  \"scenario\": {\n    \"file\": \"scenario.yaml\",\n    \"name\": null,\n    \"status\": \"passed\",\n"
+               "    \"over_at_ms\": 160,\n    \"recorded_to_ms\": 150\n  },\n");
+    // What is in it: the hold from 15 ms fails at once with the sample of 10 ms, so the file has
+    // what was written and sampled up to 15 ms and nothing after it, though the controller (every
+    // 30 ms) saw the scenario over at 30 ms, with the samples of 20 ms there.
+    const std::string failed = timeline_of(fails, 30ms, door4, catalog(10ms, 4ms));
+    CHECK(failed.find("    \"over_at_ms\": 30,\n    \"recorded_to_ms\": 15\n") != std::string::npos);
+    CHECK(failed.find("      \"variable\": \"Body.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+                      "      \"points\": [\n        [0, 10]\n      ]") != std::string::npos);
+    CHECK(failed.find("      \"variable\": \"Body.body.speed\",\n      \"source\": \"sampled\",\n      \"encoding\": \"changes\",\n"
+                      "      \"samples\": 2,\n      \"first_ms\": 0,\n      \"last_ms\": 10,\n      \"points\": [\n"
+                      "        [0, 50],\n        [10, 100]\n      ]") != std::string::npos);
+    CHECK(failed.find("      \"failed\": {\n        \"at_ms\": 15,\n        \"code\": \"scenario-failed\",\n        \"conditions\": [\n"
+                      "          {\n            \"condition\": 0,\n            \"value\": 100,\n            \"sample_ms\": 10\n          }\n"
+                      "        ],\n        \"write\": null\n      }") != std::string::npos);
+}
+
+std::string file_text(const std::filesystem::path& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+    {
+        throw unit::Failure("cannot read " + path.string());
+    }
+    std::ostringstream text;
+    text << in.rdbuf();
+    std::string out = text.str();
+    std::erase(out, '\r');
+    return out;
+}
+
+TEST_CASE(timeline_files_are_the_references)
+{
+    // tests/launch/timeline: each scenario with the timeline file the engine writes for it against
+    // the model (README.md there: what is not compared, and how to write the references again).
+    // The second list: the other steps of the controller that give the same file (none for a
+    // scenario with a step that waits and becomes true, or with a write that an ECU refuses: what
+    // the engine learns first then depends on the step).
+    const std::filesystem::path directory = std::filesystem::path(VEHICLE_SIL_SOURCE_DIR) / "tests" / "launch" / "timeline";
+    const char* update = std::getenv("VEHICLE_SIL_UPDATE_TIMELINE_REFERENCES");
+    const bool writing = update != nullptr && std::string(update) == "1";
+    const std::vector<std::pair<std::string, std::vector<SimDuration>>> references = {
+        {"motions", {20ms, 30ms}},
+        {"fails_beside", {20ms, 30ms}},
+        {"fails_wait", {20ms, 30ms}},
+        {"waits", {}},
+        {"write_refused", {}},
+    };
+    for (const auto& [name, steps] : references)
+    {
+        const std::string scenario = file_text(directory / (name + ".yaml"));
+        const std::filesystem::path reference = directory / (name + ".timeline.json");
+        const std::string made = timeline_of(scenario, 10ms);
+        if (writing)
+        {
+            std::ofstream out(reference, std::ios::binary | std::ios::trunc);
+            out << made;
+            if (!out.flush())
+            {
+                throw unit::Failure("cannot write " + reference.string());
+            }
+        }
+        check_text(compared(made), compared(file_text(reference)),
+                   (name + ".timeline.json (if the change is meant: tests/launch/timeline/README.md says how to write it again)").c_str());
+        for (const SimDuration step : steps)
+        {
+            check_text(compared(timeline_of(scenario, step)), compared(made), (name + " with another step of the controller").c_str());
+        }
+    }
+}
+
+TEST_CASE(timeline_keeps_the_newest_points_at_its_limits)
+{
+    // A ramp of 300 ms (a write every 10 ms) between two sets, and its speed in every sample: with
+    // 8 points a series, the 8 newest of the ramp stay, and both sets; of the samples the 8 newest.
+    const std::string text = kHead + "  - set: { Body.level: 2 }\n"
+                                     "  - ramp: { Body.level: { to: 92, over_ms: 300 } }\n"
+                                     "    expect: { Body.body.speed: { ge: 0 } }\n"
+                                     "  - set: { Body.level: 0 }\n"
+                                     "  - after_ms: 20\n"
+                                     "    expect: { Body.body.speed: { ge: 0 } }\n";
+    const std::string limited = timeline_of(text, 10ms, {}, catalog(), TimelineLimits{8, 1000});
+    check_text(part(limited, "  \"series\": [", "  \"findings\""),
+               "  \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"points\": [\n"
+               "        [0, 2],\n"
+               "        [230, 71],\n"
+               "        [240, 74],\n"
+               "        [250, 77],\n"
+               "        [260, 80],\n"
+               "        [270, 83],\n"
+               "        [280, 86],\n"
+               "        [290, 89],\n"
+               "        [300, 92],\n"
+               "        [300, 0]\n"
+               "      ]\n"
+               "    },\n"
+               "    {\n"
+               "      \"variable\": \"Body.body.speed\",\n"
+               "      \"source\": \"sampled\",\n"
+               "      \"encoding\": \"changes\",\n"
+               "      \"samples\": 33,\n"
+               "      \"first_ms\": 0,\n"
+               "      \"last_ms\": 320,\n"
+               "      \"points\": [\n"
+               "        [250, 770],\n"
+               "        [260, 800],\n"
+               "        [270, 830],\n"
+               "        [280, 860],\n"
+               "        [290, 890],\n"
+               "        [300, 840],\n"
+               "        [310, 790],\n"
+               "        [320, 740]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n");
+    check_text(part(limited, "  \"limits\": {", "\n}\n"),
+               "  \"limits\": {\n"
+               "    \"points_per_series\": 8,\n"
+               "    \"points_total\": 1000,\n"
+               "    \"dropped\": [\n"
+               "      {\n"
+               "        \"variable\": \"Body.level\",\n"
+               "        \"source\": \"written\",\n"
+               "        \"dropped\": 23,\n"
+               "        \"dropped_before_ms\": 230\n"
+               "      },\n"
+               "      {\n"
+               "        \"variable\": \"Body.body.speed\",\n"
+               "        \"source\": \"sampled\",\n"
+               "        \"dropped\": 25,\n"
+               "        \"dropped_before_ms\": 250\n"
+               "      }\n"
+               "    ]\n"
+               "  }");
+    // The same with another step of the controller, which has looked further ahead when the
+    // scenario is over.
+    check_text(compared(timeline_of(text, 30ms, {}, catalog(), TimelineLimits{8, 1000})), compared(limited), "limited, another step");
+    // All series together: the ones with the most points give first, down to the same number.
+    const std::string total = timeline_of(text, 10ms, {}, catalog(), TimelineLimits{1000, 10});
+    check_text(part(total, "  \"limits\": {", "\n}\n"),
+               "  \"limits\": {\n"
+               "    \"points_per_series\": 1000,\n"
+               "    \"points_total\": 10,\n"
+               "    \"dropped\": [\n"
+               "      {\n"
+               "        \"variable\": \"Body.level\",\n"
+               "        \"source\": \"written\",\n"
+               "        \"dropped\": 26,\n"
+               "        \"dropped_before_ms\": 260\n"
+               "      },\n"
+               "      {\n"
+               "        \"variable\": \"Body.body.speed\",\n"
+               "        \"source\": \"sampled\",\n"
+               "        \"dropped\": 28,\n"
+               "        \"dropped_before_ms\": 280\n"
+               "      }\n"
+               "    ]\n"
+               "  }");
+    check_text(compared(timeline_of(text, 30ms, {}, catalog(), TimelineLimits{1000, 10})), compared(total), "total, another step");
+}
+
+TEST_CASE(timeline_counts_the_samples_up_to_the_time_it_is_closed_at)
+{
+    // Samples of one value are kept as one point with their number; closed at a time between
+    // them, the record has the samples up to that time, also where they do not come evenly.
+    const Scenario s = read(kHead + "  - expect: { Body.level: 0, Body.body.speed: 0 }\n");
+    const auto closed_at = [&s](SimDuration to) {
+        TimelineRecord record(s);
+        for (const std::int64_t t : {0, 10, 20, 25, 35, 45, 55})
+        {
+            record.sampled(0, at(std::chrono::milliseconds(t)), control::Value{std::int64_t{7}});
+            record.sampled(1, at(std::chrono::milliseconds(t)), t < 35 ? control::Value{0.0} : control::Value{-0.0});
+        }
+        record.close(at(to));
+        std::string out;
+        for (const auto& series : record.series())
+        {
+            out += std::to_string(series.sample_count) + " samples, last " + time_text(series.last_sample) + ":";
+            for (const auto& point : series.samples)
+            {
+                out += point.repeats ? "" : " " + std::to_string(ms_of(point.first)) + "=" + value_text(point.value);
+            }
+            out += "\n";
+        }
+        return out;
+    };
+    // 0 and -0 are written differently: a point each.
+    check_text(closed_at(100ms), "7 samples, last 55: 0=7\n7 samples, last 55: 0=0 35=-0\n");
+    check_text(closed_at(54ms), "6 samples, last 45: 0=7\n6 samples, last 45: 0=0 35=-0\n");
+    check_text(closed_at(35ms), "5 samples, last 35: 0=7\n5 samples, last 35: 0=0 35=-0\n");
+    check_text(closed_at(34ms), "4 samples, last 25: 0=7\n4 samples, last 25: 0=0\n");
+    check_text(closed_at(19ms), "2 samples, last 10: 0=7\n2 samples, last 10: 0=0\n");
+    check_text(closed_at(0ms), "1 samples, last 0: 0=7\n1 samples, last 0: 0=0\n");
+    // Nothing is noted once it is closed.
+    TimelineRecord record(s);
+    record.close(at(10ms));
+    record.sampled(0, at(0ms), control::Value{std::int64_t{1}});
+    CHECK(record.series()[0].samples.empty());
 }

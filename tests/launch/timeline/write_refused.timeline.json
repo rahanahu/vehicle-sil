@@ -1,0 +1,138 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "tick_ms": 10,
+  "scenario": {
+    "file": "scenario.yaml",
+    "name": "an ECU refuses a write",
+    "status": "failed",
+    "over_at_ms": 50,
+    "recorded_to_ms": 40
+  },
+  "variables": [
+    {
+      "name": "Body.level",
+      "participant": "Body",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": true
+    }
+  ],
+  "steps": [
+    {
+      "index": 1,
+      "line": 7,
+      "kind": "set",
+      "text": "set Body.level = 7",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 0,
+      "end_ms": 0,
+      "code": null,
+      "message": null,
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 2,
+      "line": 8,
+      "kind": "set",
+      "text": "set Body.level = 13",
+      "status": "failed",
+      "start_ms": 40,
+      "at_ms": 40,
+      "end_ms": 40,
+      "code": "scenario-write",
+      "message": "the write for 40 ms was not applied by participant 'Body': the ECU rejected it (a setter threw: 13 is not a level)",
+      "watch": null,
+      "failed": {
+        "at_ms": 40,
+        "code": "scenario-write",
+        "conditions": [],
+        "write": {
+          "variable": "Body.level",
+          "at_ms": 40,
+          "value": 13
+        }
+      }
+    },
+    {
+      "index": 3,
+      "line": 10,
+      "kind": "expect",
+      "text": "expect Body.level eq 13 (within 100 ms)",
+      "status": "not_run",
+      "start_ms": null,
+      "at_ms": null,
+      "end_ms": null,
+      "code": null,
+      "message": null,
+      "watch": {
+        "mode": "once",
+        "from_ms": null,
+        "until_ms": null,
+        "conditions": [
+          {
+            "variable": "Body.level",
+            "compare": [
+              {
+                "op": "eq",
+                "value": 13
+              }
+            ]
+          }
+        ]
+      },
+      "failed": null
+    }
+  ],
+  "series": [
+    {
+      "variable": "Body.level",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [0, 7],
+        [40, 13]
+      ]
+    },
+    {
+      "variable": "Body.level",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 5,
+      "first_ms": 0,
+      "last_ms": 40,
+      "points": [
+        [0, 7]
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "severity": "error",
+      "code": "scenario-write",
+      "file": "scenario.yaml",
+      "line": 8,
+      "participant": null,
+      "network": null,
+      "message": "set Body.level = 13: the write for 40 ms was not applied by participant 'Body': the ECU rejected it (a setter threw: 13 is not a level)",
+      "detail": null
+    }
+  ],
+  "limits": {
+    "points_per_series": 100000,
+    "points_total": 1000000,
+    "dropped": []
+  }
+}

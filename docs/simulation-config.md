@@ -293,7 +293,7 @@ vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <fil
 vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]
                        [--control <address> [--control-credentials <file>] [--control-tls-cert <file> --control-tls-key <file>]
                        [--control-audit-log <file>]]
-                       [--variant <name>] [--scenario <file> [--param <name>=<value>]...]
+                       [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]
                        [--speed <speed>] [--strict] [--log-dir <dir>] [--timeout-ms <ms>]
                        [--describe-timeout-ms <ms>] [--disable <name>]... [--enable <name>]... [--manual <name>]...
                        [--] <file>
@@ -319,6 +319,7 @@ vehicle_sil_launch version [--json]
 | `--scenario <file>` | シナリオのファイル（[scenario.md](scenario.md)）。`check` では照合だけ、`run` では照合してから実行する。シナリオが終わるとシミュレーションを止め、手順が失敗していれば実行は失敗。`--start-paused` と一緒には使えない。`--control` と一緒なら、クライアントは見るだけ（[scenario.md](scenario.md) の「実行中に変数を見る」） |
 | `--variant <name>` | 構成の機種を選ぶ（[機種](#機種variants--variant)）。機種を書いた構成には必ず要る。機種のない構成には付けられない。`test` では、回す機種を絞る（繰り返せる。なければ全部の機種） |
 | `--param <name>=<value>` | `--scenario` と一緒にだけ。シナリオのパラメーター `${name}` の値（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。繰り返せる（同じ名前は 1 回だけ）。`test` では、その名前のパラメーターがあるシナリオにだけ効く（どのシナリオにもなければ引数の誤り） |
+| `--timeline <file>` | `run` だけ、`--scenario` と一緒にだけ。シナリオが書いた値と見た値を、仮想時刻の順に JSON のファイルに書く（[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」）。開けなければ、何も起動せずに終了コード 3 |
 | `--scenarios <dir or files>` | `test` だけ。回すシナリオ。ディレクトリ（直下の `.yaml`、`.yml`、`.json` を名前の順に）かファイル（書いた順に）。後ろにいくつでも並べられ、繰り返せる。構成ファイルは `--scenarios` より前か、`--` の後に書く |
 | `--fail-fast` | `test` だけ。最初に失敗した組の後は回さない |
 | `--speed <speed>` | `run` だけ。構成ファイルの `speed` を上書きする（数か `max`。[等速で動かす](simulation-run.md#等速で動かす)） |

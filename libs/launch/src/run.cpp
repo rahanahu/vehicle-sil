@@ -15,6 +15,8 @@
 //   run_watch.*          RunWatch         the watch of the running simulation
 //   time_commands.cpp    TimeCommands     pause, resume, step, run_until, speed
 //   run_assess.cpp, run_format.cpp, run_words.hpp   the findings, the result, its text and JSON
+//   timeline.cpp         TimelineRecord, format_timeline_json()   run --timeline: what the scenario's
+//                        engine notes, and the file made of it (Runner::open_timeline(), write_timeline())
 //
 // The threads of a run, and what each may touch:
 // - The main thread (run_file()'s caller): everything, and alone the RunOutcome, RunParticipants,
@@ -22,8 +24,11 @@
 // - The start window's thread (one that SimulationController::start() makes for the window, not
 //   its SIL Kit thread; RunStartWindow::run()): the StartShared, RunScenario::begin(),
 //   RunControl::expected_agents() and hub(), TimeCommands::hold_before_start(), and RunOutput.
-// - The scenario's thread (RunScenario::loop()): the scenario's engine, from RunScenario::start()
-//   until the main thread joins it, and RunOutput.
+// - The scenario's thread (RunScenario::loop()): the scenario's engine and, with --timeline, the
+//   TimelineRecord it fills, from RunScenario::start() until the main thread joins it, and
+//   RunOutput. The record is filled on this thread (and on the window's, in begin()) only: never
+//   in the hub's tap, and nothing of it is touched under a lock. The timeline file is the main
+//   thread's (opened before anything starts, written after the participants have ended).
 // - The controller's SIL Kit thread: the hub's tap of the scenario (RunScenario's samples).
 // - Each participant's reader thread (process::Process): RunOutput::on_line().
 // - The closing thread (Runner::close_connection(), at the end of run()): destroys the hub's
@@ -68,6 +73,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -178,7 +184,7 @@ public:
             return outcome_;
         }
         out_.event([](EventStream& e) { e.phase(Phase::Starting); });
-        if (!out_.open_logs(outcome_))
+        if (!out_.open_logs(outcome_) || !open_timeline())
         {
             return outcome_;
         }
@@ -318,7 +324,65 @@ public:
     /// what is written as an event is in the result as it was written.
     void publish_findings(bool final) { notes_.publish_findings(outcome_, final); }
 
+    /// run --timeline: writes the timeline file of the run that is over, with `findings` (the
+    /// check's and the run's), and says where it is. Nothing if the file was not opened (no
+    /// --timeline, or the run ended before it got there). If it cannot be written: why (also in
+    /// the outcome: RunOutcome::timeline_error), else "".
+    std::string write_timeline(const CheckReport& check, std::vector<Finding> findings)
+    {
+        if (!timeline_file_.is_open())
+        {
+            return {};
+        }
+        const ScenarioCatalog catalog = scenario_catalog(check);
+        TimelineInput input;
+        input.file = check.file;
+        input.variant = ctx_.config.variant;
+        input.params = check.scenario->params;
+        input.tick_ms = outcome_.timing.time_step_ms;
+        input.scenario = ctx_.scenario;
+        input.run = &*outcome_.scenario;
+        input.catalog = &catalog;
+        input.record = outcome_.timeline_record.get();
+        input.findings = std::move(findings);
+        const std::string text = format_timeline_json(input);
+        timeline_file_.write(text.data(), static_cast<std::streamsize>(text.size()));
+        timeline_file_.close();
+        if (timeline_file_.fail())
+        {
+            outcome_.timeline_error = "writing " + std::to_string(text.size()) + " bytes to it failed (is the disk full?)";
+            return outcome_.timeline_error;
+        }
+        out_.say("timeline: " + outcome_.timeline);
+        return {};
+    }
+
 private:
+    /// run --timeline: opens the timeline file, before anything starts. false (with
+    /// outcome_.setup_error) if it cannot be written.
+    [[nodiscard]] bool open_timeline()
+    {
+        if (ctx_.options.timeline.empty() || ctx_.scenario == nullptr)
+        {
+            return true;
+        }
+        std::error_code ec;
+        if (ctx_.options.timeline.has_parent_path())
+        {
+            std::filesystem::create_directories(ctx_.options.timeline.parent_path(), ec);
+        }
+        timeline_file_.open(ctx_.options.timeline, std::ios::binary | std::ios::trunc);
+        if (!timeline_file_)
+        {
+            outcome_.setup_error = "cannot write the timeline " + ctx_.options.timeline_shown +
+                                   ": check that --timeline names a file in a directory you can write to (the file is opened "
+                                   "before anything starts, so that a run is not lost for it)";
+            return false;
+        }
+        outcome_.timeline = ctx_.options.timeline_shown;
+        return true;
+    }
+
     /// The end of what the run has of SIL Kit: destroys the hub's transport, the controller and
     /// the registry, in this order, and waits for that close_limit_ at most (one more interrupt
     /// ends the wait). SIL Kit joins the thread of its connections when a participant is
@@ -375,6 +439,7 @@ private:
     RunStart start_;
     RunWatch watch_;
     int interrupts_at_end_ = 0; ///< ctx_.interrupts() when the simulation had ended
+    std::ofstream timeline_file_; ///< run --timeline: open from open_timeline() to write_timeline(); the main thread's
     static constexpr std::chrono::milliseconds kCloseMargin{5000};
     std::chrono::milliseconds close_limit_{0}; ///< close_connection(): how long the SIL Kit objects may take to go
     // Last, so that it goes first: a Process ends its reader thread, which uses the output (out_),
@@ -421,6 +486,16 @@ RunReport run_file(const std::filesystem::path& path, const std::string& shown_a
     auto runner = std::make_unique<Runner>(*report.check.config, report.check, base, options);
     report.run = runner->run();
     report.findings = assess_run(*report.run);
+    {
+        // run --timeline: the file has the scenario's findings of the check and of the run.
+        std::vector<Finding> findings = report.check.findings;
+        findings.insert(findings.end(), report.findings.begin(), report.findings.end());
+        if (const std::string error = runner->write_timeline(report.check, std::move(findings)); !error.empty())
+        {
+            report.run->timeline_error = error;
+            report.findings = assess_run(*report.run);
+        }
+    }
     runner->publish_findings(true);
     event([](EventStream& e) { e.phase(Phase::Ended); });
     if (report.run->connection_not_closed_ms)

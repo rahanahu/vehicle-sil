@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# A scenario of the timeline references (see README.md here): the engine runs it against the model
+# ECUs of tests/launch/test_scenario.cpp, not against real ones.
+vehicle_sil_scenario: 1
+name: set, ramp and waves, with an expect beside
+steps:
+  - set: { Body.level: 20, Door.lamp: true }
+  - at_ms: 20
+    expect: { Body.body.speed: 150 }
+  - ramp: { Body.level: { to: 40, over_ms: 100 }, Door.ratio: { from: 0, to: 1, over_ms: 50 } }
+    expect: { Body.body.speed: { le: 400 }, Body.level: { ge: 20 } }
+  - wave: { Door.level: { triangle: { amplitude: 5, period_ms: 80 }, around: 50, for_ms: 100 },
+            Body.level: { square: { low: 38, high: 40, period_ms: 40 }, for_ms: 100 } }
+  - wave: { Door.mode: { points: [[0, off], [30, auto], [60, on]] } }
+  - after_ms: 10
+    expect: { Body.body.speed: { ge: 380 }, Door.mode: on }
+    hold_for_ms: 50

@@ -1,0 +1,193 @@
+{
+  "vehicle_sil_timeline": 1,
+  "vehicle_sil": "0.1.0",
+  "stage": "run",
+  "file": "simulation.yaml",
+  "variant": null,
+  "params": [],
+  "tick_ms": 10,
+  "scenario": {
+    "file": "scenario.yaml",
+    "name": "a wait runs out",
+    "status": "failed",
+    "over_at_ms": 110,
+    "recorded_to_ms": 100
+  },
+  "variables": [
+    {
+      "name": "Body.level",
+      "participant": "Body",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": false
+    },
+    {
+      "name": "Door.level",
+      "participant": "Door",
+      "type": "integer",
+      "causality": "input",
+      "unit": "",
+      "min": 0,
+      "max": 100,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": true,
+      "watched": true
+    },
+    {
+      "name": "Body.body.speed",
+      "participant": "Body",
+      "type": "real",
+      "causality": "output",
+      "unit": "",
+      "min": null,
+      "max": null,
+      "items": [],
+      "ecu_step_ms": 10,
+      "written": false,
+      "watched": true
+    }
+  ],
+  "steps": [
+    {
+      "index": 1,
+      "line": 7,
+      "kind": "set",
+      "text": "set Body.level = 5; Door.level = 1",
+      "status": "passed",
+      "start_ms": 0,
+      "at_ms": 0,
+      "end_ms": 0,
+      "code": null,
+      "message": null,
+      "watch": null,
+      "failed": null
+    },
+    {
+      "index": 2,
+      "line": 8,
+      "kind": "wait_until",
+      "text": "wait_until Body.body.speed ge 1000; Door.level eq 1 (timeout 100 ms)",
+      "status": "failed",
+      "start_ms": 0,
+      "at_ms": 100,
+      "end_ms": null,
+      "code": "scenario-timeout",
+      "message": "timed out at 100 ms (100 ms after 0 ms): Body.body.speed ge 1000, but it was 50 (its sample of 100 ms)",
+      "watch": {
+        "mode": "once",
+        "from_ms": 0,
+        "until_ms": 100,
+        "conditions": [
+          {
+            "variable": "Body.body.speed",
+            "compare": [
+              {
+                "op": "ge",
+                "value": 1000
+              }
+            ]
+          },
+          {
+            "variable": "Door.level",
+            "compare": [
+              {
+                "op": "eq",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "failed": {
+        "at_ms": 100,
+        "code": "scenario-timeout",
+        "conditions": [
+          {
+            "condition": 0,
+            "value": 50,
+            "sample_ms": 100
+          }
+        ],
+        "write": null
+      }
+    },
+    {
+      "index": 3,
+      "line": 10,
+      "kind": "set",
+      "text": "set Body.level = 0",
+      "status": "not_run",
+      "start_ms": null,
+      "at_ms": null,
+      "end_ms": null,
+      "code": null,
+      "message": null,
+      "watch": null,
+      "failed": null
+    }
+  ],
+  "series": [
+    {
+      "variable": "Body.level",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [0, 5]
+      ]
+    },
+    {
+      "variable": "Door.level",
+      "source": "written",
+      "encoding": "all",
+      "points": [
+        [0, 1]
+      ]
+    },
+    {
+      "variable": "Door.level",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 11,
+      "first_ms": 0,
+      "last_ms": 100,
+      "points": [
+        [0, 1]
+      ]
+    },
+    {
+      "variable": "Body.body.speed",
+      "source": "sampled",
+      "encoding": "changes",
+      "samples": 11,
+      "first_ms": 0,
+      "last_ms": 100,
+      "points": [
+        [0, 50]
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "severity": "error",
+      "code": "scenario-timeout",
+      "file": "scenario.yaml",
+      "line": 8,
+      "participant": null,
+      "network": null,
+      "message": "wait_until Body.body.speed ge 1000; Door.level eq 1 (timeout 100 ms): timed out at 100 ms (100 ms after 0 ms): Body.body.speed ge 1000, but it was 50 (its sample of 100 ms)",
+      "detail": null
+    }
+  ],
+  "limits": {
+    "points_per_series": 100000,
+    "points_total": 1000000,
+    "dropped": []
+  }
+}

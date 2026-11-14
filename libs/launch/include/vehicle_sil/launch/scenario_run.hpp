@@ -9,6 +9,7 @@
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/launch/scenario.hpp"
+#include "vehicle_sil/launch/timeline.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil::launch {
@@ -189,14 +191,29 @@ struct EnginePeer
 /// are those of a configuration that skips nothing, except after a skipped step that waits. They
 /// are reported (OnStep, once) when their time is known, with `start` and `end` and no `at`: the
 /// scenario may be over before the simulation reaches those times.
+///
+/// The record (a TimelineRecord, for run --timeline; none: nothing of what follows happens, and
+/// the engine does exactly what it does without one). The engine notes in it every write it
+/// sends (submit_one()), the value of every sample it looks at (observe()), each step's watch
+/// and what a failed step failed of. When the scenario is over it closes the record at one time,
+/// "recorded to": the `at` of the failed step; of a scenario that passed, the latest `at` of its
+/// steps; of one that is Incomplete, the time of the last sample looked at (0 without one).
+/// Nothing after that time stays in the record, and the samples up to it that the engine had not
+/// looked at yet (they do not decide anything any more) are noted first, if they are of steps
+/// before the controller's step being handled (those have all arrived). So what the record has
+/// of a scenario that passed, or failed at a sample, does not depend on the controller's tick
+/// (while no limit of the record drops points). What may depend on it then is the status of a
+/// step that was under way when another step failed, and everything of a run that a write ended
+/// (see "fails with what the engine learns first" above).
 class ScenarioEngine
 {
 public:
     /// Called when a step begins (status Running) and when it is decided (Passed, Failed, Skipped).
     using OnStep = std::function<void(const ScenarioStepRun& step)>;
 
-    /// `scenario` and `port` must outlive the engine. `tick` > 0.
-    ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step = {});
+    /// `scenario`, `port` and `record` (may be null) must outlive the engine. `tick` > 0.
+    ScenarioEngine(const Scenario& scenario, SimDuration tick, ScenarioPort& port, OnStep on_step = {},
+                   TimelineRecord* record = nullptr);
 
     /// `peers` in the order of Scenario::participants.
     void begin(const std::vector<EnginePeer>& peers);
@@ -262,12 +279,19 @@ private:
     void close(Watch& watch, SimTime t);
     void started(std::size_t step);
     void pass(std::size_t step, SimTime at, SimTime end);
-    void fail(std::size_t step, SimTime at, std::string code, std::string message);
+    void fail(std::size_t step, SimTime at, std::string code, std::string message, TimelineFailure failure = {});
     void finish(ScenarioStatus status);
     [[nodiscard]] bool unusable(std::size_t step, SimTime time);
     /// The conditions of `step` that the values do not meet ("" if none); with `since`, only those
     /// whose latest sample is at or after it are judged.
     [[nodiscard]] std::string unmet(const ScenarioStep& step, std::optional<SimTime> since = std::nullopt) const;
+    /// The same conditions, for the record: which, with the value and the time of its sample.
+    [[nodiscard]] TimelineFailure unmet_values(const ScenarioStep& step, std::optional<SimTime> since = std::nullopt) const;
+    [[nodiscard]] bool is_unmet(const ScenarioCondition& condition, std::optional<SimTime> since, bool& judged) const;
+    /// The write of `writes` to `peer` that was not made, for the record.
+    [[nodiscard]] TimelineFailure failed_write(const std::vector<ScenarioWrite>& writes, SimTime at, const std::string& peer) const;
+    /// Once the scenario is over: closes the record (see the class comment).
+    void close_record();
     /// The time of the watch beside a ramp or a wave, for the messages: "from 40 ms to 120 ms, ...".
     [[nodiscard]] std::string during(std::size_t step, const Watch& watch) const;
     [[nodiscard]] SimTime judge_time(const std::vector<ScenarioWrite>& writes, SimTime at) const;
@@ -293,6 +317,11 @@ private:
     /// count their writes to come), and 1 for the watch beside a ramp or a wave until it closes.
     std::vector<std::size_t> open_writes_;
     std::size_t done_ = 0; ///< steps that passed or were skipped
+    TimelineRecord* record_ = nullptr;
+    bool record_closed_ = false;
+    std::optional<SimTime> last_seen_{}; ///< the time of the last sample looked at
+    /// With a record, once the scenario is over: the samples that were not looked at.
+    std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> left_;
 };
 
 } // namespace vehicle_sil::launch

@@ -86,7 +86,7 @@ constexpr const char* kUsage =
     "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
     "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
-    "                              [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
+    "                              [--variant <name>] [--scenario <file> [--param <name>=<value>]... [--timeline <file>]]\n"
     "                              [--speed <speed>] [--strict] [--log-dir <dir>]\n"
     "                              [--timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>]\n"
@@ -143,6 +143,9 @@ constexpr const char* kUsage =
     "  --scenarios <dir or files>  test: the scenarios: a directory (the files directly in it that end in .yaml,\n"
     "                              .yml or .json, in the order of their names) or files, in the order given;\n"
     "                              several after one --scenarios (so <file> comes first, or after --); repeatable\n"
+    "  --timeline <file>           run --scenario: write what the scenario wrote and saw over the virtual time\n"
+    "                              (its steps, the written and the sampled values) to <file> as JSON\n"
+    "                              (docs/simulation-run.md; schema/timeline.schema.json)\n"
     "  --fail-fast                 test: do not run what comes after the first run that fails\n"
     "  --speed <speed>             run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
     "                              or max (as fast as possible); replaces speed in <file>\n"
@@ -831,7 +834,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         }
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
                  a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
-                 a == "--variant" || a == "--param" || a == "--scenarios" ||
+                 a == "--variant" || a == "--param" || a == "--scenarios" || a == "--timeline" ||
                  a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
@@ -927,7 +930,8 @@ Common common(const cli::Args& args, const std::string& command)
 int check(const cli::Args& args)
 {
     for (const char* runOnly : {"log-dir", "timeout-ms", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused",
-                                "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"})
+                                "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log",
+                                "timeline"})
     {
         if (args.has(runOnly) || args.flag(runOnly))
         {
@@ -973,6 +977,20 @@ int run(const cli::Args& args, launch::EventStream* events)
     if (args.has("log-dir"))
     {
         options.log_dir = process::path_from_utf8(args.str("log-dir", ""));
+    }
+    if (args.has("timeline"))
+    {
+        options.timeline_shown = args.str("timeline", "");
+        if (options.timeline_shown.empty())
+        {
+            throw cli::UsageError("--timeline needs a file to write: --timeline <file>.json");
+        }
+        if (!args.has("scenario"))
+        {
+            throw cli::UsageError("--timeline writes what a scenario did over the time: give --scenario <file> too, or leave "
+                                  "--timeline out");
+        }
+        options.timeline = process::path_from_utf8(options.timeline_shown);
     }
     if (args.has("timeout-ms"))
     {
@@ -1151,7 +1169,7 @@ int test(const cli::Args& args)
         throw cli::UsageError("--scenario is for check and run: test takes its scenarios with --scenarios <directory or files>");
     }
     for (const char* runOnly : {"log-dir", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused", "manual", "control",
-                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"})
+                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"})
     {
         if (args.has(runOnly) || args.flag(runOnly))
         {
@@ -1317,12 +1335,13 @@ int main(int argc, char** argv)
         const cli::Args args =
             isTest ? cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
-                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"},
+                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "timeline"},
                                {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast"},
                                {"disable", "enable", "manual", "param", "variant", "scenarios"})
                    : cli::Args(arguments,
                                {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
-                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant"},
+                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant",
+                                "timeline"},
                                {"json", "strict", "events", "stdin-commands", "start-paused"},
                                {"disable", "enable", "manual", "param"});
         if (args.positionals().empty())
