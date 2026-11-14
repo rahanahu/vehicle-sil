@@ -169,8 +169,11 @@ class LauncherTest(unittest.TestCase):
                 self.assertTrue(c.peer("Engine").connected)
                 seq = c.write({"Engine": {"engine.throttle": 50.0}})
                 self.assertEqual(c.wait(seq, until="queued").target("Engine").status, "queued")
-                # A step from standard input ends the hold.
+                # A step from standard input ends the hold. The event first: send() does not wait for
+                # the launcher to read the line, and a WaitPaused that comes before the step is taken
+                # is answered from the hold (0).
                 launch.send({"command": "step", "ms": 100})
+                launch.wait_for_event("command", command="step", accepted=True)
                 self.assertEqual(c.sim.wait_paused().now, ms(100))
                 self.assertTrue(c.sim.time().running)
                 done = c.wait(seq)
@@ -225,6 +228,8 @@ class LauncherTest(unittest.TestCase):
                 with Control(launch.address) as c:
                     self.assertEqual(c.sim.wait_paused(60).now, 0)
                     launch.send({"command": "step", "ms": 100})
+                    # Taken, before the client waits: until then WaitPaused answers from the hold (0).
+                    launch.wait_for_event("command", command="step", accepted=True)
                     self.assertEqual(c.sim.wait_paused().now, ms(100))
                     launch.wait_for_event("time", sim_ms=100, paused=True)
                     launch.stop()
@@ -368,8 +373,10 @@ class LauncherTest(unittest.TestCase):
 
     def check_ended_calls(self, calls: Calls):
         self.assertTrue(calls.join(30), f"calls still wait: {calls.waiting()}")
-        initial, _ = calls.outcome["watch"]
+        initial, ended = calls.outcome["watch"]
         self.assertTrue(initial, "the watch ended without its initial state")
+        # An ended simulation stands still nowhere, also one that ended while it was paused.
+        self.assertEqual([state for state in ended if state.paused], [])
         operation = calls.outcome["operation"]
         self.assertFalse(isinstance(operation, ControlError), operation)
         self.assertTrue(operation.done and operation.target("Engine").status in ("cancelled", "unknown"), operation)
