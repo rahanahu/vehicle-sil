@@ -960,10 +960,10 @@ bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
                 fail_step("SIL Kit gave this participant a step of " + std::to_string(duration.count()) + " ns at t=" +
                           std::to_string(to_ns(time)) + " ns, not its own " +
                           std::to_string(std::chrono::nanoseconds(options_.virtual_time->step).count()) +
-                          " ns: another participant asked for dynamic simulation steps and this participant's SIL Kit "
-                          "configuration does not opt out. Add "
+                          " ns: this participant's SIL Kit configuration asks for dynamic simulation steps itself, or "
+                          "does not opt out while another participant asks for them. Set "
                           R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}})"
-                          " to that configuration, or pass none (the default configuration has it)");
+                          " in that configuration, or pass none (the default configuration has it)");
             }
             else
             {

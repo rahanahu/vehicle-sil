@@ -62,7 +62,7 @@ flowchart LR
 
 - `participants[].command` の相対パスは、構成ファイルのあるディレクトリから数えます。構成ファイルと実行ファイルを同じディレクトリの下にまとめておけば、置き場所を変えても同じファイルが使えます。Windows では `.exe` を書かなくても見つけます。
 - `participants[].step_ms` を書くと、ECU が申告するステップ幅と照合します。ECU を書く人から聞いた値を書いておくと、ECU が変わったときに気づけます。
-- `ecu_main` でない道具は `describe: false` で入れます。引数に `{registry_uri}` と `{name}` を書けます。シミュレーションが待たない道具は `required: false` にします。そういう道具が、SIL Kit の autonomous の lifecycle で仮想時間に参加するもの（既定のままの `Peer` など）なら、ECU が始まった後に起動します。先に起動して仮想時間が進んでいると、後から始まる ECU が Error になります。
+- `ecu_main` でない道具は `describe: false` で入れます。引数に `{registry_uri}` と `{name}` を書けます。シミュレーションが待たない道具は `required: false` にします。SIL Kit の autonomous の lifecycle で仮想時間に参加する道具（既定のままの `Peer` など）は、ECU より先に仮想時間を進めると、後から始まる ECU が Error になります。`run` は構成の participant を続けて起動するので、そういう道具は、coordinated にして `required: true` にするか、`manual: true`（`required: false` のまま。`run` はコマンドを書くだけで、待ちません）にして、シミュレーションが始まった後に手で起動します。
 - キーの一覧と既定の値は [simulation-config.md](../simulation-config.md) の「構成ファイル」にあります。
 
 ## 照合で食い違いを見つける（`check`）

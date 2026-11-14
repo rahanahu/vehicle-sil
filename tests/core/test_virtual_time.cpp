@@ -361,7 +361,7 @@ BesideADynamicStepDriver run_beside_a_dynamic_step_driver(const std::string& ecu
     const auto driver = SilKit::CreateParticipant(
         // A configuration of the test's own (participant_configuration_or_default() keeps it as it is).
         SilKit::Config::ParticipantConfigurationFromString(participant_configuration_or_default(
-            R"({"Middleware":{"EnableDomainSockets":false},)"
+            R"({"Middleware":{"EnableDomainSockets":false,"AcceptorUris":["tcp://127.0.0.1:0"]},)"
             R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":true}}})",
             registry.uri)),
         "Driver", registry.uri);
@@ -406,14 +406,17 @@ TEST_CASE(virtual_time_fails_the_step_that_sil_kit_shortened)
 {
     // A configuration of the caller's that leaves the key out follows the driver: SIL Kit cuts the
     // step of 10 ms down to the driver's 3 ms. The participant fails instead of running off its grid.
-    const auto result = run_beside_a_dynamic_step_driver(R"({"Middleware":{"EnableDomainSockets":false}})");
+    const auto result = run_beside_a_dynamic_step_driver(
+        R"({"Middleware":{"EnableDomainSockets":false,"AcceptorUris":["tcp://127.0.0.1:0"]}})");
     CHECK(result.state == std::optional(orch::ParticipantState::Error));
     CHECK(result.steps.empty()); // the first step is already the short one; the handler never ran
     std::fprintf(stderr, "%s\n", result.step_error.c_str());
     CHECK(result.step_error.find("SIL Kit gave this participant a step of 3000000 ns at t=0 ns, not its own 10000000 ns") !=
           std::string::npos);
-    CHECK(result.step_error.find("\"Experimental\":{\"TimeSynchronization\":{\"DynamicSimulationStep\":false}}") !=
-          std::string::npos);
+    CHECK(result.step_error.find("this participant's SIL Kit configuration asks for dynamic simulation steps itself, or does "
+                                 "not opt out while another participant asks for them. Set "
+                                 "\"Experimental\":{\"TimeSynchronization\":{\"DynamicSimulationStep\":false}} in that "
+                                 "configuration, or pass none") != std::string::npos);
 }
 
 /// A coordinated simulation of "Faulty" alone, with a controller that ends it only by an abort,
