@@ -139,7 +139,11 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
   error: --xl-target must be 'virtual' or 'physical', got: cancase
   Run 'vehicle_sil_vector_xl_bridge --help' for the options.
   ```
-- registry につながらないときは、つなごうとしたアドレスと次にすることを 1 行で出して、終了コード 3 で終わります: `[bridge] FAIL setup: cannot connect to the SIL Kit registry at <uri> (<SIL Kit の文>). Start the registry first ('sil-kit-registry --listen-uri <uri>'), or give the address it listens at with --registry-uri.`（文は `bridges/common` の `registry_failure_message()` が作ります）。
+- registry につながらないときは、つなごうとしたアドレスと次にすることを 1 行で出して、終了コード 3 で終わります: `[bridge] FAIL setup: cannot connect to the SIL Kit registry at <uri> (<SIL Kit の文>). Start the registry first ('sil-kit-registry --listen-uri <uri>'), or give the address it listens at with --registry-uri.`（文は `bridges/common` の `registry_failure_message()` が作ります）。後ろの部分は、アドレスの書き方で決まります（ホストの大文字と小文字は区別しません）。
+  - この PC のループバック（`localhost`、`127.x.y.z`、`::1`）と、読めないアドレス: 上の文です。
+  - それ以外のホスト: registry のある PC で確かめること（registry が動いているか、ここから届くアドレスで待ち受けているか、ファイアウォール）を言います。そのアドレスがどの PC のものか（別の PC か、この PC 自身の LAN のアドレスか）は調べないので、言い切りません: `... <host> is not the loopback address of this computer: check that the registry runs on the computer with that address (which may be this one), that it listens on an address reached from here ('sil-kit-registry --listen-uri silkit://0.0.0.0:<port>' there listens on all of its addresses, not only on its loopback), and that its firewall lets port <port> through.`
+  - `0.0.0.0` と `::`（`[::]`）: 待ち受けるためのアドレスで、つなぐ先には書けません。registry の動いている PC のアドレスを書くよう言います: `... 0.0.0.0 stands for every address of a computer: a registry listens on it, a participant cannot connect to it. Give --registry-uri the address of the computer the registry runs on (silkit://127.0.0.1:<port> if it runs on this one).`
+  - アドレスにポートがなければ、例の `<port>` は 8500（ポートを書かずに起動した registry のポート）です。
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（`--participant`、`--network` に ASCII 以外の文字を使えます）。
 - チャネルとデバイスは、起動のときにこの CLI で決めます。Control API と構成ファイル（`vehicle_sil_launch`）には、チャネルとデバイスを選ぶ項目はありません。ほかの口（Control API、構成ファイル、GUI）に選ぶ手段を足すときは、CLI と同じモデル（`vehicle_sil::vector_xl::XlTarget` とチャネル番号）を使います。
 - `--bitrate` は 15000〜1000000 bit/s です（`xlCanSetChannelBitrate` の範囲）。指定するときは、init 権限が必要です。ほかのアプリケーションが init 権限を持っている場合は、黙って別のビットレートで動かずに、起動を失敗させます。指定しなければ、チャネルの設定を変えません。
@@ -150,6 +154,14 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
   - Paused は失敗にしません（ブリッジは自分では一時停止しません）。
 - Windows でコンソールのウィンドウを閉じたとき（ログオフ、シャットダウンも）は、`SetConsoleCtrlHandler` のハンドラーが停止を求め、統計を出し終わるまで最長 4 秒待ってから、ブリッジの終了コードでプロセスを終えます。Windows はハンドラーが戻るとプロセスを終わらせ、待つのも 5 秒ほどまでだからです。Windows の約 5 秒は変えられないので、統計は SIL Kit の participant を止める前に出し、participant の停止を待つのは最長 2 秒にしています。それでも 4 秒を超えると、Windows がプロセスを終わらせ、終了コードは 0 になりません（統計は出た後です）。
 - 止める要求の受け方、監視のループ、止める順（止める直前に出た警告、統計の順に、SIL Kit の participant の停止より先に出す）、終了コード、コンソールを閉じたときの 4 秒は、`bridges/common` の `run_bridge()`（`vehicle_sil::bridge_runtime`）にあります。ブリッジの実行ファイルはこれを共有します。
+
+### 出力の文字コード
+
+ブリッジ（`vehicle_sil_vector_xl_bridge`、`vehicle_sil_ethernet_bridge`）と `vehicle_sil_can_bus_simulator` の標準出力と標準エラーの文は UTF-8 です。Windows では、出力先で書き方を変えます（`tools/common` の `cli::write_text()`。`vehicle_sil_launch` も同じ書き方です）。
+
+- コンソール（コマンドプロンプト、PowerShell）には、UTF-16 で書きます（`WriteConsoleW`）。コンソールのコードページ（日本語の Windows では 932）によらず、ASCII 以外の文字（`--participant` の名前、ネットワーク接続の名前）が読めます。コードページは変えないので、`chcp` は要りません。
+- ファイルとパイプには、UTF-8 のバイト列を書きます。MSYS2 のシェル（mintty）はパイプなので、こちらです。読む側は UTF-8 として読みます。Windows PowerShell 5.1 の `>` と `|` は、受けたバイト列を `[Console]::OutputEncoding`（既定はコンソールのコードページ）で読み直すので、ASCII 以外の文字が崩れます。その前に `[Console]::OutputEncoding = [Text.Encoding]::UTF8` とするか、コマンドプロンプトの `>` を使います。
+- SIL Kit 自身のログは、この書き方を通りません。
 
 ## ビルド
 

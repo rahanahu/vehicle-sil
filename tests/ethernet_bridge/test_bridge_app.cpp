@@ -171,6 +171,62 @@ TEST_CASE(app_promiscuous_hint_is_quiet_once_a_frame_to_the_silkit_side_arrived)
     CHECK(!h.hint.take_warning());
 }
 
+TEST_CASE(app_promiscuous_hint_is_quiet_when_the_frame_to_the_silkit_side_arrived_before_the_first_one_sent)
+{
+    // The frame came while the address was not known as one of the SIL Kit side; the bridge sent from it later.
+    Hinted h;
+    h.receive(kEcu, kDevice);
+    h.send(kDevice, kEcu);
+    h.now_ms += 3600000;
+    CHECK(!h.hint.take_warning());
+}
+
+TEST_CASE(app_promiscuous_hint_warns_when_the_earlier_frames_were_to_other_addresses)
+{
+    Hinted h;
+    h.receive(kOtherEcu, kDevice); // the bridge never sends from this address
+    h.receive(kBroadcast, kDevice);
+    h.send(kDevice, kEcu);
+    h.now_ms += 5000;
+    CHECK_TEXT(h.hint.take_warning().value_or(""), kHint);
+}
+
+TEST_CASE(app_promiscuous_hint_warns_also_when_frames_to_more_addresses_than_it_remembers_came_in)
+{
+    // What this computer sends on the interface comes in from the link too, to as many addresses as it talks to:
+    // many destinations, none of them of the SIL Kit side, are no answer.
+    const auto flood = [](Hinted& h) {
+        for (std::size_t i = 0; i < 2 * PromiscuousHint::kMaxAddresses; ++i)
+        {
+            std::vector<std::uint8_t> frame = make_frame(kOtherEcu, kDevice, kExperimental);
+            frame[5] = static_cast<std::uint8_t>(0x40 + i); // a destination of its own
+            const int before = h.frames.load();
+            h.segment.send(frame);
+            CHECK(eventually([&] { return h.frames.load() == before + 1; }, 10s));
+        }
+    };
+    Hinted h;
+    flood(h);
+    h.send(kDevice, kEcu);
+    flood(h);
+    h.now_ms += 5000;
+    CHECK_TEXT(h.hint.take_warning().value_or(""), kHint);
+    // An address that was remembered before the others still counts once the bridge sends from it...
+    Hinted early;
+    early.receive(kEcu, kDevice);
+    flood(early);
+    early.send(kDevice, kEcu);
+    early.now_ms += 3600000;
+    CHECK(!early.hint.take_warning());
+    // ...and so does a frame to the SIL Kit side that comes in after the others.
+    Hinted late;
+    flood(late);
+    late.send(kDevice, kEcu);
+    late.receive(kEcu, kDevice);
+    late.now_ms += 3600000;
+    CHECK(!late.hint.take_warning());
+}
+
 TEST_CASE(app_promiscuous_hint_does_not_count_frames_that_were_not_sent)
 {
     Hinted h;

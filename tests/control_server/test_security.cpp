@@ -19,6 +19,10 @@
 #include <string>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/un.h>
+#endif
+
 #ifndef VEHICLE_SIL_TEST_DATA_DIR
 #error VEHICLE_SIL_TEST_DATA_DIR must name tests/control_server/testdata
 #endif
@@ -170,6 +174,49 @@ TEST_CASE(control_server_refuses_an_open_address_without_security)
         },
         "cannot listen on 192.0.2.1:0"));
     CHECK(vehicle_sil::unit::throws<std::invalid_argument>([] { control_grpc::ControlServer s({.listen = "192.0.2.1:0"}); }));
+}
+
+TEST_CASE(control_server_says_when_the_path_of_a_unix_socket_is_too_long)
+{
+    using control_grpc::unix_socket_path_problem;
+    CHECK(unix_socket_path_problem("127.0.0.1:0").empty());
+    CHECK(unix_socket_path_problem("unix:/tmp/control.sock").empty());
+#ifdef _WIN32
+    CHECK(unix_socket_path_problem("unix:/" + std::string(500, 'a')).empty());
+#else
+    // 107 bytes on Linux: one less than the address holds. Both ways of writing the address count the path only.
+    const std::size_t most = sizeof(sockaddr_un{}.sun_path) - 1;
+    const std::string fits = "/tmp/" + std::string(most - 5, 'a');
+    const std::string longer = fits + "b";
+    CHECK(unix_socket_path_problem("unix:" + fits).empty());
+    CHECK(unix_socket_path_problem("unix://" + fits).empty());
+    const std::string problem = "the path of the socket is " + std::to_string(most + 1) + " bytes long and this system takes " +
+                                std::to_string(most) + " at most: give a shorter path, for example unix:/tmp/vehicle-sil-control.sock";
+    CHECK(unix_socket_path_problem("unix:" + longer) == problem);
+    CHECK(unix_socket_path_problem("unix://" + longer) == problem);
+    // A %XX is the one byte it stands for (a space here); a '%' that starts no such triplet is itself.
+    const std::string spaced = "/tmp/a%20" + std::string(most - 7, 'a');
+    CHECK(unix_socket_path_problem("unix:" + spaced).empty());
+    CHECK(unix_socket_path_problem("unix:" + spaced + "b") == problem);
+    CHECK(unix_socket_path_problem("unix:/tmp/%2" + std::string(most - 7, 'g')).empty());
+    CHECK(unix_socket_path_problem("unix:/tmp/%2" + std::string(most - 6, 'g')) == problem);
+    CHECK(unix_socket_path_problem("unix:/tmp/" + std::string(most - 7, 'a') + "%4").empty());
+    // The server says it, and the longest path that passes is one it can listen on.
+    CHECK(vehicle_sil::unit::throws_with<std::runtime_error>(
+        [&] { control_grpc::ControlServer s({.listen = "unix:" + longer}); },
+        "vehicle_sil control server: cannot listen on unix:" + longer + ": " + problem));
+    const std::string dir = (std::filesystem::temp_directory_path() / ("vsil_" + std::to_string(std::random_device{}()))).string();
+    if (dir.size() + 2 <= most)
+    {
+        std::filesystem::create_directory(dir);
+        const std::string socket = dir + "/" + std::string(most - dir.size() - 1, 's');
+        {
+            control_grpc::ControlServer s({.listen = "unix:" + socket});
+            CHECK(std::filesystem::exists(socket));
+        }
+        std::filesystem::remove_all(dir);
+    }
+#endif
 }
 
 TEST_CASE(control_server_reads_a_credentials_file)

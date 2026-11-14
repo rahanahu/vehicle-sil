@@ -216,6 +216,14 @@ private:
     const std::string path_;
 };
 
+/// A text the library gave (the description of a device, the text of an error, its version) as
+/// UTF-8, which the messages and the list of interfaces are in; empty for null. On Windows the
+/// library writes its texts in the ANSI code page of the process (932 on a Japanese Windows: the
+/// OS's own error texts are in them), and a byte that is no character there becomes U+FFFD.
+/// Elsewhere the text is returned as it is. Not for a device's pcap name: that goes back to the
+/// library as it came.
+[[nodiscard]] std::string pcap_text(const char* text);
+
 /// Loads the pcap library of this operating system. `library`: empty for the installed one
 /// (Windows: wpcap.dll in the Npcap directory of the system directory, by its full path, and
 /// nowhere else; elsewhere: libpcap.so.1, then libpcap.so.0.8, as the system's loader finds

@@ -7,7 +7,12 @@
 //                      statistics (forwarded counts, the one frame of another EtherType filtered,
 //                      no problem counted, no warning).
 //   list-interfaces    --list-interfaces prints the factory's list: exit 0.
-//   bad-usage          an unknown --backend: exit 4 with the usage text.
+//   bad-usage          an unknown --backend: exit 4, with the error and where the options are,
+//                      not the whole usage text.
+//   no-registry        no registry at the address: exit 3, with the address and what to do.
+//   non-ascii-arguments  names in another script (the participant, the network, the interface)
+//                      arrive as UTF-8, on Windows too: the link's message has the interface's
+//                      name as it was given.
 //   no-filter          --backend packet without --ethertype, --src-mac or --all-frames: exit 4.
 //   no-interface       an interface the link cannot open: exit 3 with the link's message.
 //   link-fault         the link reports a fault while the bridge runs: the bridge reports it and
@@ -451,7 +456,32 @@ int main(int argc, char** argv)
         {
             result = run_single(options, options.bridge, bridge_args("silkit://127.0.0.1:1", "fake0", {"--backend", "usb"}),
                                 cli::kExitUsage,
-                                {"error: --backend must be tap, packet, npcap or pcap, got: usb", "usage:\n  vehicle_sil_ethernet_bridge"});
+                                {"error: --backend must be tap, packet, npcap or pcap, got: usb\n",
+                                 "Run 'vehicle_sil_ethernet_bridge --help' for the options."},
+                                {"usage:", "--ethertype <type>"});
+        }
+        else if (options.scenario == "no-registry")
+        {
+            const std::string nowhere = "silkit://127.0.0.1:1";
+            result = run_single(options, options.bridge, bridge_args(nowhere, "fake0"), cli::kExitSetupFailed,
+                                {"[eth-bridge] FAIL setup: cannot connect to the SIL Kit registry at " + nowhere + " (",
+                                 "). Start the registry first ('sil-kit-registry --listen-uri " + nowhere +
+                                     "'), or give the address it listens at with --registry-uri."},
+                                {"Ctrl+C to stop"});
+        }
+        else if (options.scenario == "non-ascii-arguments")
+        {
+            // "kairo 2" (line 2), "burijji" (bridge) and "sharyo-mo" (vehicle network) in Japanese, as UTF-8.
+            const std::string interface_name = "\xE5\x9B\x9E\xE7\xB7\x9A 2";
+            RegistryProcess registry(options.registry, options.workDir);
+            result = run_single(options, options.bridge,
+                                {"--registry-uri", registry.uri(), "--participant", "\xE3\x83\x96\xE3\x83\xAA\xE3\x83\x83\xE3\x82\xB8",
+                                 "--network", "\xE8\xBB\x8A\xE4\xB8\xA1\xE7\xB6\xB2", "--backend", "packet", "--interface",
+                                 interface_name, "--ethertype", "0x88b5"},
+                                cli::kExitSetupFailed,
+                                {"[eth-bridge] FAIL setup: no interface '" + interface_name +
+                                 "' (fake). Interfaces here: fake0, fake-fault."},
+                                {"Ctrl+C to stop"});
         }
         else if (options.scenario == "no-filter")
         {

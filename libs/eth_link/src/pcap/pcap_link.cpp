@@ -36,11 +36,6 @@ constexpr int kReadTimeoutMs = 100;
 /// pass (65535), so a longer frame is cut and is still longer than every limit of the frame filter.
 constexpr int kSnapshotBytes = 65536;
 
-std::string text_or_empty(const char* text)
-{
-    return text != nullptr ? std::string(text) : std::string();
-}
-
 /// The library's texts may end in a line break or a full stop; the messages add their own.
 std::string trimmed(std::string text)
 {
@@ -221,7 +216,7 @@ PcapHandle* PcapLink::open_without_own_transmissions(const PcapDevice& device)
     PcapHandle* const handle = api_.open(device.name.c_str(), kSnapshotBytes, flags, kReadTimeoutMs, nullptr, error);
     if (handle == nullptr)
     {
-        throw pcap_open_refused(display_name(device), trimmed(error), options_.promiscuous);
+        throw pcap_open_refused(display_name(device), trimmed(pcap_text(error)), options_.promiscuous);
     }
     return handle;
 }
@@ -234,13 +229,13 @@ PcapHandle* PcapLink::open_created(const PcapDevice& device, std::vector<std::st
     PcapHandle* const handle = api_.create(device.name.c_str(), error);
     if (handle == nullptr)
     {
-        throw pcap_open_failed(flavor_, shown, "pcap_create", -1, trimmed(error), executable);
+        throw pcap_open_failed(flavor_, shown, "pcap_create", -1, trimmed(pcap_text(error)), executable);
     }
     OpenGuard guard(api_, handle);
     auto must = [&](int result, const char* step) {
         if (result != 0)
         {
-            throw pcap_open_failed(flavor_, shown, step, result, trimmed(text_or_empty(api_.geterr(handle))), executable);
+            throw pcap_open_failed(flavor_, shown, step, result, trimmed(pcap_text(api_.geterr(handle))), executable);
         }
     };
     must(api_.set_snaplen(handle, kSnapshotBytes), "pcap_set_snaplen");
@@ -255,7 +250,7 @@ PcapHandle* PcapLink::open_created(const PcapDevice& device, std::vector<std::st
     }
     if (activated > 0)
     {
-        warnings.push_back(pcap_activate_warning(shown, activated, trimmed(text_or_empty(api_.geterr(handle)))));
+        warnings.push_back(pcap_activate_warning(shown, activated, trimmed(pcap_text(api_.geterr(handle)))));
     }
     return guard.release();
 }
@@ -273,7 +268,7 @@ PcapHandle* PcapLink::open(const PcapDevice& device, std::vector<std::string>& w
     }
     if (api_.setnonblock(handle, 1, error) != 0)
     {
-        throw pcap_open_failed(flavor_, shown, "pcap_setnonblock", -1, trimmed(error), library_->executable_path());
+        throw pcap_open_failed(flavor_, shown, "pcap_setnonblock", -1, trimmed(pcap_text(error)), library_->executable_path());
     }
     return guard.release();
 }
@@ -382,7 +377,7 @@ TransmitResult PcapLink::transmit(std::span<const std::uint8_t> frame)
             {
                 return TransmitResult::QueueFull;
             }
-            const std::string why = trimmed(text_or_empty(api_.geterr(handle_)));
+            const std::string why = trimmed(pcap_text(api_.geterr(handle_)));
             error = "sending on '" + options_.name + "' failed: " + (why.empty() ? "result " + std::to_string(result) : why);
         }
     }
@@ -526,7 +521,7 @@ void PcapLink::run()
                 }
                 else if (result < 0)
                 {
-                    error = trimmed(text_or_empty(api_.geterr(handle_)));
+                    error = trimmed(pcap_text(api_.geterr(handle_)));
                 }
             }
             if (result == 0)
@@ -636,7 +631,7 @@ void PcapLibrary::bind(PcapWaitKind wait)
     auto [api, missing] = bind_pcap_api([this](const char* name) { return symbol(name); }, wait, flavor_);
     if (!missing.empty())
     {
-        const std::string version = api.lib_version != nullptr ? text_or_empty(api.lib_version()) : std::string();
+        const std::string version = api.lib_version != nullptr ? pcap_text(api.lib_version()) : std::string();
         throw pcap_functions_missing(flavor_, path_, version, missing);
     }
     api_ = api;
@@ -644,7 +639,7 @@ void PcapLibrary::bind(PcapWaitKind wait)
 
 std::string PcapLibrary::version() const
 {
-    return trimmed(text_or_empty(api_.lib_version()));
+    return trimmed(pcap_text(api_.lib_version()));
 }
 
 std::vector<PcapDevice> pcap_devices(const PcapLibrary& library)
@@ -654,7 +649,7 @@ std::vector<PcapDevice> pcap_devices(const PcapLibrary& library)
     PcapInterface* list = nullptr;
     if (api.findalldevs(&list, error) != 0)
     {
-        throw pcap_list_failed(library.flavor(), trimmed(error));
+        throw pcap_list_failed(library.flavor(), trimmed(pcap_text(error)));
     }
     std::vector<PcapDevice> devices;
     for (const PcapInterface* entry = list; entry != nullptr; entry = entry->next)
@@ -665,7 +660,7 @@ std::vector<PcapDevice> pcap_devices(const PcapLibrary& library)
         }
         PcapDevice device;
         device.name = entry->name;
-        device.description = text_or_empty(entry->description);
+        device.description = pcap_text(entry->description);
         device.flags = entry->flags;
         devices.push_back(std::move(device));
     }
@@ -763,6 +758,14 @@ std::string format_pcap_devices(std::span<const PcapDevice> devices, PcapFlavor 
         text += flavor == PcapFlavor::Npcap
                     ? "  none. If Npcap was installed for administrators only, run this from a console started as administrator.\n"
                     : "  none\n";
+    }
+    else if (flavor == PcapFlavor::Npcap &&
+             std::ranges::all_of(devices, [](const PcapDevice& device) { return (device.flags & kPcapIfLoopback) != 0; }))
+    {
+        // Seen with the real Npcap installed for administrators only: another user gets the loopback device alone.
+        text += "  Npcap offers no network adapter here: if it was installed for administrators only, run this from a console "
+                "started as administrator, or install Npcap again without that limit. A disabled adapter is not offered "
+                "either: enable it in Windows.\n";
     }
     return text;
 }

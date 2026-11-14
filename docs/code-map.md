@@ -47,7 +47,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 
 ### `unit`
 
-コマンドライン解析（`unit.*`）。
+コマンドライン解析と、標準出力・標準エラーへの書き出し（`unit.*`）。
 `core`、`lin`、`step`、`can`、`eth`、`j1939`、`peer`、`testkit`、`ecu`、`simulation`、`control`、`control_server`、`launch`、`process`、`vector_xl` の単体テストと境界の検査にもこのラベルが付く。
 `template.get_tools`（ひな形の `get_tools.py` と `scripts/package.py` の `template`、`version` を、手元で作った圧縮ファイルで確かめる）にも付く。
 付かないのは、プロセスを起動するシナリオの試験（`integration`）、サンプルの実行（`examples`。
@@ -335,7 +335,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 ### `tools/common`
 
-- 主なクラス・関数（ヘッダー）: 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、`vehicle_sil/cli/console.hpp`、引数とパスを UTF-8 で扱う `vehicle_sil/cli/utf8.hpp`。
+- 主なクラス・関数（ヘッダー）: 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、標準出力と標準エラーに UTF-8 の文を書く `write_text()`（Windows のコンソールには UTF-16 で）のある `vehicle_sil/cli/console.hpp`、引数とパスを UTF-8 で扱う `vehicle_sil/cli/utf8.hpp`。
   ターゲット `vehicle_sil_cli`）
 - 試験: `tests/unit`
 - `ctest -R`: `^unit\.`
