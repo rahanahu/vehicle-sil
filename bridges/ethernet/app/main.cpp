@@ -156,17 +156,24 @@ int run(const BridgeOptions& options)
     EthernetBridge bridge(controller, external, options.bridge);
 
     // Start forwarding before the lifecycle reaches Running: peers may start sending as soon as
-    // they see this participant Running, and the link, the SIL Kit handlers and the controller
-    // must be ready by then. start() opens the interface (it throws eth_link::LinkError with the
-    // way to fix it) and activates the controller.
-    //
-    // If activating the controller moves out of EthernetBridge::start() into the lifecycle's
-    // communication-ready handler, register that handler here, before runtime.start(). The handler
-    // then uses `bridge`, which is destroyed before `runtime` (declared after it): when
-    // runtime.start() throws, call runtime.stop() before the exception leaves this function, so
-    // that the handler is not called on a bridge that is gone.
+    // they see this participant Running, and the link and the SIL Kit handlers must be ready by
+    // then. start() opens the interface (it throws eth_link::LinkError with the way to fix it).
+    // The controller is activated where SIL Kit wants it, in the CommunicationReady handler.
+    runtime.add_communication_ready_handler([&bridge] { bridge.start_controller(); });
     bridge.start();
-    runtime.start(std::chrono::seconds(15));
+    try
+    {
+        runtime.start(std::chrono::seconds(15));
+    }
+    catch (...)
+    {
+        // `bridge` is destroyed before `runtime` (declared after it), and a participant whose
+        // start timed out can still reach CommunicationReady. After stop() the handler is not
+        // called, so it never meets a bridge that is gone.
+        bridge.stop();
+        runtime.stop("the setup failed");
+        throw;
+    }
 
     bridge_runtime::RunBridgeOptions runOptions;
     runOptions.tag = kTag;
