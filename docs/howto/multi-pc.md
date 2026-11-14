@@ -72,6 +72,19 @@ flowchart LR
 
    `--name` は構成ファイルの名前と同じにします（大文字と小文字も）。`VEHICLE_SIL_LISTEN_ON_NETWORK` は要りません（ループバックでない URI につなぐ ECU は、全部のアドレスで待ち受けます）。
 
+   決まったポートで待ち受けたいとき（ファイアウォールやポートの転送で、開けるポートを決めるとき）や、接続を試す回数を増やしたいときは、SIL Kit の構成ファイルを `--silkit-config` で渡します。書いていない設定は、いつもの既定のままです（[ecu-executable.md](../ecu-executable.md) の「SIL Kit の構成を渡す」）。
+
+   ```yaml
+   # dashboard.silkit.yaml
+   Middleware:
+     AcceptorUris: ["tcp://0.0.0.0:8601"]
+     ConnectAttempts: 5
+   ```
+
+   ```sh
+   dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://192.0.2.10:8500 --start-timeout-ms 1000000000000 --silkit-config dashboard.silkit.yaml
+   ```
+
 2. 参加する側の PC のファイアウォールの許可は、確かめた構成では要りませんでした（Windows の仮想マシンでも）。ECU は自分からまとめる人の PC につなぎます。
 
 3. シミュレーションが終われば、ECU は自分で終わります。まとめる人の `vehicle_sil_launch` が強制終了された（クラッシュ、電源断、SIGKILL）ときは、ECU は待ち続けます。Ctrl+C で止めます。

@@ -69,6 +69,7 @@ struct CommandLine
     bool no_control = false;
     std::optional<std::string> registry_uri;
     std::optional<std::string> name;
+    std::optional<std::string> silkit_config;
     std::optional<std::chrono::milliseconds> run_for;
     std::optional<std::chrono::milliseconds> start_timeout;
 };
@@ -77,7 +78,8 @@ struct CommandLine
 constexpr std::chrono::milliseconds kDefaultStartTimeout{30000};
 
 /// The options that take a value.
-constexpr std::string_view kValueOptions[] = {"--registry-uri", "--name", "--run-for-ms", "--start-timeout-ms"};
+constexpr std::string_view kValueOptions[] = {"--registry-uri", "--name", "--run-for-ms", "--start-timeout-ms",
+                                              "--silkit-config"};
 
 bool takes_value(std::string_view arg)
 {
@@ -139,8 +141,9 @@ std::string program_name(int argc, const char* const* argv, const std::string& f
 std::string usage(const std::string& program, const EcuMainOptions& options)
 {
     const std::string pad(program.size(), ' ');
-    return "usage: " + program + " --describe [--name <name>]\n"
+    return "usage: " + program + " --describe [--name <name>] [--silkit-config <file>]\n"
            "       " + pad + " --registry-uri <uri> [--start-timeout-ms <ms>] [--no-control] [--name <name>]\n"
+           "       " + pad + "                      [--silkit-config <file>]\n"
            "       " + pad + " --local --run-for-ms <ms> [--name <name>]\n"
            "       " + pad + " --help\n"
            "the ECU " + in_quotes(options.name) + ", step " + duration_text(options.step) + "\n"
@@ -151,6 +154,9 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
            "  --start-timeout-ms <ms> with --registry-uri: how long to wait for the start (default 30000)\n"
            "  --no-control            with --registry-uri: do not offer the ECU's variables to the simulation\n"
            "                          (vehicle_sil_launch then cannot read or write them); the ECU runs the same\n"
+           "  --silkit-config <file>  with --registry-uri: a SIL Kit participant configuration (YAML or JSON)\n"
+           "                          for this participant, e.g. Logging or Middleware; vehicle-sil's defaults\n"
+           "                          fill in what it leaves out. With --describe: only checked\n"
            "  --local                 run this ECU alone on local virtual buses, for --run-for-ms\n"
            "  --run-for-ms <ms>       how long --local runs (virtual time, > 0)\n"
            "  --name <name>           the participant name instead of " + in_quotes(options.name) + "; only the name\n"
@@ -250,6 +256,14 @@ CommandLine parse(const std::vector<std::string_view>& args)
                                  " (a name in another encoding, e.g. a Windows code page)");
             }
         }
+        else if (arg == "--silkit-config")
+        {
+            c.silkit_config = value("the path of a SIL Kit participant configuration file", "engine.silkit.yaml");
+            if (c.silkit_config->empty())
+            {
+                throw UsageError("--silkit-config needs a path that is not empty (e.g. --silkit-config engine.silkit.yaml)");
+            }
+        }
         else if (arg == "--start-timeout-ms")
         {
             c.start_timeout = parse_millis(arg, value("a duration in milliseconds", "60000"));
@@ -298,7 +312,37 @@ CommandLine parse(const std::vector<std::string_view>& args)
         throw UsageError("--start-timeout-ms is for --registry-uri: " +
                          std::string(c.describe ? "--describe" : "--local") + " starts nothing to wait for");
     }
+    if (c.silkit_config && c.local)
+    {
+        throw UsageError("--silkit-config is for --registry-uri: --local runs the ECU on local virtual buses, without "
+                         "SIL Kit; leave --silkit-config out");
+    }
     return c;
+}
+
+/// --silkit-config: the configuration in `file` as JSON text for SilKitOptions, read and checked
+/// by SIL Kit and by vehicle-sil for the participant `name` (`registry_uri` empty: --describe,
+/// which knows none). A failure says the option and the file.
+std::string silkit_configuration(const std::string& file, const std::string& name, const std::string& registry_uri)
+{
+    const std::string where = "--silkit-config " + in_quotes(file) + ": ";
+    try
+    {
+        std::string text = participant_configuration_from_file(file);
+        // Only the check: the participant makes its own (where it listens is decided there).
+        static_cast<void>(merged_participant_configuration(text, name, registry_uri, false));
+        return text;
+    }
+    catch (const SilKit::ConfigurationError& e)
+    {
+        throw std::invalid_argument(where + "SIL Kit does not accept the configuration: " + e.what() +
+                                    " (correct the file, or a file it includes; SIL Kit's documentation of the "
+                                    "participant configuration lists the keys and their values)");
+    }
+    catch (const std::exception& e)
+    {
+        throw std::invalid_argument(where + e.what());
+    }
 }
 
 /// `what` of a SimulationError of the ECU `name` without the "<name>: " it starts with.
@@ -793,6 +837,10 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
             silkit.registry_uri = *c.registry_uri;
             silkit.controller = false;
             silkit.start_timeout = c.start_timeout.value_or(kDefaultStartTimeout);
+            if (c.silkit_config)
+            {
+                silkit.participant_configuration = silkit_configuration(*c.silkit_config, name, *c.registry_uri);
+            }
             sim.emplace(silkit);
             stop_on_signal.emplace(name);
         }
@@ -838,6 +886,13 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
         if (c.describe)
         {
             describe_out.emplace();
+            if (c.silkit_config)
+            {
+                // What --registry-uri would refuse is said now (vehicle_sil_launch check passes the
+                // arguments of `command` to --describe). SIL Kit writes its warnings to stdout: after
+                // describe_out, they go to stderr.
+                static_cast<void>(silkit_configuration(*c.silkit_config, name, {}));
+            }
         }
         set_up(*ecu);
         // Every ECU has a control agent, with the input ecu.connected (made now if the set-up

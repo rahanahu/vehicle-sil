@@ -340,6 +340,14 @@ struct BesideADynamicStepDriver
     std::size_t driver_steps = 0;
 };
 
+std::string with_dynamic_steps(std::string configuration)
+{
+    const std::string off = "\"DynamicSimulationStep\":false";
+    const auto at = configuration.find(off);
+    CHECK(at != std::string::npos);
+    return configuration.replace(at, off.size(), "\"DynamicSimulationStep\":true");
+}
+
 BesideADynamicStepDriver run_beside_a_dynamic_step_driver(const std::string& ecu_configuration)
 {
     BesideADynamicStepDriver result;
@@ -363,11 +371,9 @@ BesideADynamicStepDriver run_beside_a_dynamic_step_driver(const std::string& ecu
 
     std::atomic<std::size_t> driverSteps{0};
     const auto driver = SilKit::CreateParticipant(
-        // A configuration of the test's own (participant_configuration_or_default() keeps it as it is).
-        SilKit::Config::ParticipantConfigurationFromString(participant_configuration_or_default(
-            R"({"Middleware":{"EnableDomainSockets":false,"AcceptorUris":["tcp://127.0.0.1:0"]},)"
-            R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":true}}})",
-            registry.uri)),
+        // vehicle-sil's default, but asking for dynamic steps (a ParticipantRuntime refuses to).
+        SilKit::Config::ParticipantConfigurationFromString(
+            with_dynamic_steps(default_participant_configuration(registry.uri))),
         "Driver", registry.uri);
     auto* driverLifecycle = driver->CreateLifecycleService({orch::OperationMode::Coordinated});
     driverLifecycle->CreateTimeSyncService()->SetSimulationStepHandler(
@@ -406,21 +412,20 @@ TEST_CASE(virtual_time_keeps_its_step_when_another_participant_asks_for_dynamic_
     }
 }
 
-TEST_CASE(virtual_time_fails_the_step_that_sil_kit_shortened)
+TEST_CASE(virtual_time_keeps_its_step_with_a_configuration_of_its_own)
 {
-    // A configuration of the caller's that leaves the key out follows the driver: SIL Kit cuts the
-    // step of 10 ms down to the driver's 3 ms. The participant fails instead of running off its grid.
-    const auto result = run_beside_a_dynamic_step_driver(
-        R"({"Middleware":{"EnableDomainSockets":false,"AcceptorUris":["tcp://127.0.0.1:0"]}})");
-    CHECK(result.state == std::optional(orch::ParticipantState::Error));
-    CHECK(result.steps.empty()); // the first step is already the short one; the handler never ran
-    std::fprintf(stderr, "%s\n", result.step_error.c_str());
-    CHECK(result.step_error.find("SIL Kit gave this participant a step of 3000000 ns at t=0 ns, not its own 10000000 ns") !=
-          std::string::npos);
-    CHECK(result.step_error.find("this participant's SIL Kit configuration asks for dynamic simulation steps itself, or does "
-                                 "not opt out while another participant asks for them. Set "
-                                 "\"Experimental\":{\"TimeSynchronization\":{\"DynamicSimulationStep\":false}} in that "
-                                 "configuration, or pass none") != std::string::npos);
+    // A configuration of the caller's that leaves the key out gets the opt-out as well: without it,
+    // SIL Kit would cut the step of 10 ms down to the driver's 3 ms.
+    const auto result = run_beside_a_dynamic_step_driver("Middleware:\n  ConnectAttempts: 3\n");
+    CHECK(result.state == std::optional(orch::ParticipantState::Shutdown));
+    CHECK(result.step_error.empty());
+    CHECK(result.driver_steps >= 20u);
+    CHECK(result.steps.size() >= 6u);
+    for (std::size_t i = 0; i < result.steps.size(); ++i)
+    {
+        CHECK_EQ(result.steps[i].first.count(), (10ms * static_cast<long long>(i)).count() * 1'000'000);
+        CHECK_EQ(result.steps[i].second.count(), SimDuration(10ms).count());
+    }
 }
 
 /// A coordinated simulation of "Faulty" alone, with a controller that ends it only by an abort,
@@ -786,10 +791,10 @@ TEST_CASE(a_refused_name_leaves_the_registry_able_to_relay_to_the_participant_th
     InProcessRegistry registry;
     const std::string socket =
         (std::filesystem::temp_directory_path() / ("vsil-relay-" + std::to_string(::getpid()) + ".sock")).string();
-    // Configurations of the test's own (participant_configuration_or_default() keeps them as they are).
+    // Configurations of the test's own (merged_participant_configuration() keeps their acceptors).
     const auto config = [&registry](const std::string& middleware) {
         return SilKit::Config::ParticipantConfigurationFromString(
-            participant_configuration_or_default("{\"Middleware\":{" + middleware + "}}", registry.uri));
+            merged_participant_configuration("{\"Middleware\":{" + middleware + "}}", "", registry.uri));
     };
     const auto engine = create_participant(
         config("\"EnableDomainSockets\":true,\"AcceptorUris\":[\"local://" + socket + "\"]"), "Engine", registry.uri, 0ms);

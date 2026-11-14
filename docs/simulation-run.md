@@ -134,7 +134,7 @@ SIL Kit の participant は、ほかの participant からの接続を待ち受�
   - `registry_uri` が `0.0.0.0`（または `[::]`）のとき、`run` はこのコンピューターの participant に `127.0.0.1`（`[::1]`）の URI を渡します。そのままではループバックのアドレスだけで待ち受け、SIL Kit はそのアドレスを、ほかのコンピューターの participant にもそのまま渡します。受け取った側は、それを自分のループバックのアドレスで試します。そこで別のプログラムが同じポートで待ち受けていると、そこにつながって返事を待ち続け、参加に失敗します。そうならないように、全部のアドレスで待ち受けさせます。
   - `run` は、起動する participant に、いつもこの変数を渡します。`registry_uri` がループバックのアドレスでなければ `1`、そうでなければ `0` です。`vehicle_sil_launch` 自身の環境の値は渡さず、controller も使いません。その値が `run` の渡す値と違えば、注記 `listen-variable-ignored` を出します。
   - 自分で起動する participant（manual）には、`run` が書くコマンドの行と事象 `participant`（`manual`）の `environment` に、設定する値を示します（`1` のときだけ）。ほかのコンピューターの registry に、そのコンピューターの上でループバックのアドレスでつなぐ participant にも、自分で `1` を設定します。
-- 自分の SIL Kit の構成を渡した participant（`vehicle_sil_can_bus_simulator --participant-configuration` など）は、その構成のとおりに待ち受けます（`Middleware.AcceptorUris` がなければ全部のアドレス）。vehicle-sil を使わない SIL Kit のプログラム（`describe: false` の participant など）も、それぞれの構成のとおりです。
+- 自分の SIL Kit の構成を渡した participant（ecu_main の `--silkit-config`、`vehicle_sil_can_bus_simulator --participant-configuration` など）は、構成に `Middleware.AcceptorUris` があれば、そのとおりに待ち受けます。なければ、上の決まりのとおりです（vehicle-sil が、構成に足します。[ecu-executable.md](ecu-executable.md) の「SIL Kit の構成を渡す」）。vehicle-sil を使わない SIL Kit のプログラム（`describe: false` の participant など）は、それぞれの構成のとおりです（`Middleware.AcceptorUris` がなければ全部のアドレス）。
 
 ## 出力
 

@@ -124,15 +124,62 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
 [[nodiscard]] std::string default_participant_configuration_with(std::string_view registry_uri, std::string_view members,
                                                                  std::optional<bool> listen_on_network = std::nullopt);
 
-/// `configuration` as it is if it configures anything; default_participant_configuration() if it
-/// is "{}" or empty (white space aside). A configuration of the caller's own is used as it is: on
-/// Windows it should set Middleware.EnableDomainSockets to false as well, it listens where it
-/// says (on every address unless it has Middleware.AcceptorUris), and it should set
-/// Experimental.TimeSynchronization.DynamicSimulationStep to false (a ParticipantRuntime whose
-/// step SIL Kit cut fails that step).
-[[nodiscard]] std::string participant_configuration_or_default(std::string_view configuration,
-                                                               std::string_view registry_uri,
-                                                               std::optional<bool> listen_on_network = std::nullopt);
+/// The SIL Kit participant configuration (YAML or JSON text) that the participant
+/// `participant_name` of the registry at `registry_uri` is made with, from the `configuration` it
+/// is given (YAML or JSON text): default_participant_configuration() if that is "{}" or empty
+/// (white space aside, or only comments); otherwise the given text with vehicle-sil's defaults
+/// for what it leaves out.
+///
+/// - SIL Kit reads `configuration` first (its schema, its Includes; an included file is looked
+///   for from the working directory and in Includes.SearchPathHints). What SIL Kit refuses is SIL
+///   Kit's exception (SilKit::ConfigurationError), with SIL Kit's words; for a text that is not
+///   YAML, " (at line <n>, column <n> of the configuration text)" is added to them. What the
+///   configuration says is taken from that reading, so a member counts whichever file it is in.
+/// - Middleware.AcceptorUris: the given ones; without them, as default_participant_configuration()
+///   (loopback only for a loopback registry URI, unless `listen_on_network` or
+///   kListenOnNetworkVariable says otherwise).
+/// - Middleware.EnableDomainSockets on Windows: false, unless the configuration says false
+///   itself. A `true` written there cannot be told from none (it is SIL Kit's default) and
+///   becomes false as well.
+/// - Experimental.TimeSynchronization.DynamicSimulationStep: false when it is left out.
+/// - Everything else (Logging, HealthCheck, the other members of Middleware, ...) stays as it is
+///   written: the members above are added to the given text, in its first file (a member with
+///   nothing under it, as "Experimental:", is one that is left out). A configuration that leaves
+///   none of them out is returned as it is.
+///
+/// std::invalid_argument, with what to change, for a configuration that would make the
+/// participant another one than the program says: a ParticipantName other than
+/// `participant_name`, a Middleware.RegistryUri other than `registry_uri` (SIL Kit takes the
+/// configuration's value for both; the same value is accepted), and DynamicSimulationStep: true
+/// (ParticipantRuntime runs on its own fixed step). An empty `registry_uri` means that it is not
+/// known (a check before the run): the configuration's URI is not compared.
+///
+/// std::runtime_error if the text that SIL Kit accepted cannot be read again to add the members
+/// (an error of vehicle-sil; the message says how to go on without it).
+///
+/// All of this needs the YAML library that SIL Kit builds (rapidyaml). In a build against a SIL
+/// Kit that vehicle-sil did not build from source, a configuration that is not "{}" or empty is
+/// returned as it is, unread: nothing is added, and none of the checks above is made (SIL Kit
+/// reads it when the participant is made). It should then set Middleware.EnableDomainSockets to
+/// false on Windows and DynamicSimulationStep to false (a ParticipantRuntime whose step SIL Kit
+/// cut fails that step), it listens where it says, and it should not set ParticipantName or
+/// Middleware.RegistryUri.
+[[nodiscard]] std::string merged_participant_configuration(std::string_view configuration,
+                                                           std::string_view participant_name,
+                                                           std::string_view registry_uri,
+                                                           std::optional<bool> listen_on_network = std::nullopt);
+
+/// The text of the SIL Kit participant configuration file `path`, for
+/// ParticipantRuntimeOptions::participant_configuration and the like. If the file has Includes,
+/// its directory is added to Includes.SearchPathHints, so that the files it includes are found
+/// beside it from any working directory (not in a build without rapidyaml, see
+/// merged_participant_configuration(): they are then looked for from the working directory).
+/// The text is not checked here (merged_participant_configuration() and ParticipantRuntime do):
+/// a file that is not YAML, or whose Includes or SearchPathHints is not what SIL Kit wants, is
+/// returned as it is, and SIL Kit says what is wrong when the text is used.
+/// std::invalid_argument if there is no such file (with the directory a relative path was taken
+/// from) or it cannot be read; nothing else is thrown for what the file says.
+[[nodiscard]] std::string participant_configuration_from_file(const std::string& path);
 
 /// The SIL Kit configuration (JSON) for a registry that vehicle-sil starts: without local-domain
 /// sockets on every system (TCP only, so that StartListening() fails when its port is taken instead
@@ -155,8 +202,11 @@ struct ParticipantRuntimeOptions
 {
     std::string participant_name;
     std::string registry_uri = "silkit://localhost:8500";
-    /// SIL Kit participant configuration as YAML or JSON text. "{}": the defaults
-    /// (participant_configuration_or_default()).
+    /// SIL Kit participant configuration as YAML or JSON text (of a file:
+    /// participant_configuration_from_file()). "{}": the defaults. Otherwise the participant
+    /// is made with this one and vehicle-sil's defaults for what it leaves out; one that names
+    /// another participant or registry, or asks for dynamic simulation steps, is
+    /// std::invalid_argument in the constructor (merged_participant_configuration()).
     std::string participant_configuration = "{}";
     /// With the defaults: true listens on every address even when registry_uri is a loopback
     /// address, false does not, empty leaves it to kListenOnNetworkVariable

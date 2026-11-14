@@ -247,7 +247,7 @@ TEST_CASE(ecu_main_without_arguments_writes_the_usage_and_returns_4)
                 "error: Engine: no arguments: give --describe, --registry-uri <uri> or --local --run-for-ms <ms>",
             "the error line", r);
     // The usage names the program (without its directory), the ECU and its step.
-    require(contains(r.err, "\nusage: engine_ecu --describe [--name <name>]\n"), "the usage", r);
+    require(contains(r.err, "\nusage: engine_ecu --describe [--name <name>] [--silkit-config <file>]\n"), "the usage", r);
     require(contains(r.err, "the ECU \"Engine\", step 10 ms\n"), "the ECU in the usage", r);
     CHECK_EQ(probe.made, 0);
 }
@@ -263,6 +263,9 @@ TEST_CASE(ecu_main_help_writes_the_usage_to_stdout)
         require(r.err.empty(), "nothing on stderr", r);
         require(r.out.rfind("usage: engine_ecu --describe", 0) == 0, "the usage on stdout", r);
         require(contains(r.out, "exit codes: 0 done, 1 the ECU failed in the run, 3 the set-up failed"), "exit codes", r);
+        require(contains(r.out, " --describe [--name <name>] [--silkit-config <file>]\n") &&
+                    contains(r.out, "  --silkit-config <file>  with --registry-uri: a SIL Kit participant configuration (YAML or JSON)\n"),
+                "the usage has --silkit-config", r);
         CHECK_EQ(probe.made, 0);
     }
 }
@@ -311,6 +314,16 @@ TEST_CASE(ecu_main_refuses_bad_command_lines)
         {{"--describe", "--name", "\x83G\x83\x93"},
          "--name needs ASCII or UTF-8 text, not the bytes 83 47 83 93 (a name in another encoding, e.g. a Windows code page)"},
         {{"--start-timeout-ms=5", "--describe"}, "unknown argument \"--start-timeout-ms=5\" (write the value after a space: --start-timeout-ms 5)"},
+        {{"--describe", "--silkit-config"},
+         "--silkit-config needs the path of a SIL Kit participant configuration file after it (e.g. --silkit-config "
+         "engine.silkit.yaml)"},
+        {{"--describe", "--silkit-config", ""},
+         "--silkit-config needs a path that is not empty (e.g. --silkit-config engine.silkit.yaml)"},
+        {{"--silkit-config=a.yaml", "--describe"},
+         "unknown argument \"--silkit-config=a.yaml\" (write the value after a space: --silkit-config a.yaml)"},
+        {{"--local", "--run-for-ms", "10", "--silkit-config", "a.yaml"},
+         "--silkit-config is for --registry-uri: --local runs the ECU on local virtual buses, without SIL Kit; leave "
+         "--silkit-config out"},
     };
     for (const auto& c : cases)
     {
@@ -619,6 +632,149 @@ TEST_CASE(ecu_main_describe_keeps_stdout_for_the_json)
     CHECK(contains(err, "Engine ready (cout)\n"));
     CHECK(contains(err, "Engine stopped (destructor)\n"));
     CHECK(contains(err, "after ecu_main\n"));
+}
+
+namespace {
+
+/// A new directory with SIL Kit participant configuration files for one test, removed with it.
+struct ConfigurationFiles
+{
+    ConfigurationFiles() :
+      directory(std::filesystem::temp_directory_path() /
+                ("vsil-ecu-main-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())))
+    {
+        std::filesystem::create_directories(directory);
+    }
+    ~ConfigurationFiles()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all(directory, ignored);
+    }
+    /// Writes `text` to `name` there; returns the file's path.
+    std::string write(const std::string& name, const std::string& text) const
+    {
+        std::ofstream out(directory / name, std::ios::binary);
+        out << text;
+        CHECK(out.good());
+        return (directory / name).string();
+    }
+    std::filesystem::path directory;
+};
+
+} // namespace
+
+TEST_CASE(ecu_main_describe_checks_the_silkit_configuration_and_keeps_stdout_for_the_json)
+{
+    // vehicle_sil_launch check gives --describe the arguments of the participant's command: the
+    // configuration file is read and checked, nothing connects, and stdout carries the JSON only
+    // (SIL Kit writes its warning about a key it does not know to stdout).
+    vehicle_sil::Simulation sim;
+    node_only(sim.add_ecu("Engine", 10ms));
+    const std::string expected = to_json(offered(sim.ecu("Engine").describe()));
+    const ConfigurationFiles files;
+    const std::string file = files.write("engine.silkit.yaml", "NotAKeyOfSilKit: 1\nMiddleware:\n  ConnectAttempts: 3\n");
+
+    const std::vector<std::string> args{"--describe", "--silkit-config", file};
+    const auto argv = argv_of(args);
+    std::string out;
+    std::string err;
+    int code = -1;
+    {
+        FdToFile capturedErr(2, "stderr");
+        FdToFile capturedOut(1, "stdout");
+        code = vehicle_sil::ecu_main(static_cast<int>(argv.size()), argv.data(), kOptions, [](Ecu& ecu) { node_only(ecu); });
+        std::cout.flush();
+        out = capturedOut.text();
+        err = capturedErr.text();
+    }
+    CHECK_EQ(code, 0);
+    if (out != expected)
+    {
+        throw vehicle_sil::unit::Failure("stdout is not the JSON:\n" + out);
+    }
+    CHECK(contains(err, "NotAKeyOfSilKit")); // SIL Kit's warning
+
+    // What the run would refuse is said now, with the option and the file, and exit code 3.
+    const std::string missing = (files.directory / "none.silkit.yaml").string();
+    const Result none = call({"--describe", "--silkit-config", missing});
+    require(none.code == 3 && none.out.empty() && lines(none.err) == 1, "exit 3, one line", none);
+    require(none.err == "error: Engine: --silkit-config \"" + missing + "\": there is no SIL Kit participant configuration file \"" +
+                            missing + "\": give the path of a YAML or JSON file that exists (a relative path is taken from "
+                            "the working directory of the process)\n",
+            "the missing file", none);
+
+    const std::string named = files.write("named.silkit.yaml", "ParticipantName: Motor\n");
+    const Result other = call({"--describe", "--silkit-config", named});
+    require(other.code == 3 && other.out.empty(), "exit 3", other);
+    require(other.err.rfind("error: Engine: --silkit-config \"" + named + "\": the SIL Kit configuration of the participant "
+                            "\"Engine\" sets ParticipantName to \"Motor\": ", 0) == 0 &&
+                contains(other.err, "or set it to \"Engine\"\n"),
+            "the other name", other);
+    require(call({"--describe", "--silkit-config", named, "--name", "Motor"}).code == 0, "the same name passes",
+            call({"--describe", "--silkit-config", named, "--name", "Motor"}));
+
+    const std::string broken = files.write("broken.silkit.yaml", "Middleware:\n  ConnectAttempts: many\n");
+    const Result refused = call({"--describe", "--silkit-config", broken});
+    require(refused.code == 3 && refused.out.empty() && lines(refused.err) >= 1, "exit 3", refused);
+    require(refused.err.rfind("error: Engine: --silkit-config \"" + broken + "\": SIL Kit does not accept the configuration: ", 0) == 0 &&
+                contains(refused.err, "(correct the file, or a file it includes; SIL Kit's documentation of the participant "
+                                      "configuration lists the keys and their values)\n"),
+            "SIL Kit's refusal", refused);
+
+    // A file that is not YAML: SIL Kit's refusal as well, with the place in the text.
+    const std::string not_yaml = files.write("not-yaml.silkit.yaml", "Description: x\nLogging: [not, a, map\n");
+    const Result unread = call({"--describe", "--silkit-config", not_yaml});
+    require(unread.code == 3 && unread.out.empty(), "exit 3", unread);
+    require(unread.err.rfind("error: Engine: --silkit-config \"" + not_yaml + "\": SIL Kit does not accept the configuration: ", 0) == 0 &&
+                contains(unread.err, "(at line 3, column 1 of the configuration text) ") && contains(unread.err, "(correct the file, or a file it includes;"),
+            "SIL Kit's refusal of a text that is not YAML", unread);
+
+    // A member with nothing under it is fine, and nothing else is written to stderr (the YAML
+    // library's own error handler would write a line there).
+    const std::string empty_member = files.write("empty-member.silkit.yaml", "Experimental:\n  TimeSynchronization:\n    # AnimationFactor: 2\n");
+    const Result accepted = call({"--describe", "--silkit-config", empty_member});
+    require(accepted.code == 0 && accepted.err.empty(), "exit 0, nothing on stderr", accepted);
+
+    // A URI in the file is not compared by --describe (it knows none); --registry-uri compares it,
+    // before it connects (nothing listens at this URI: the error would be another one).
+    const std::string elsewhere = files.write("uri.silkit.yaml", "Middleware:\n  RegistryUri: silkit://192.0.2.10:8500\n");
+    require(call({"--describe", "--silkit-config", elsewhere}).code == 0, "--describe does not compare the URI",
+            call({"--describe", "--silkit-config", elsewhere}));
+    const Result uri = call({"--registry-uri", "silkit://127.0.0.1:9", "--silkit-config", elsewhere});
+    require(uri.code == 3 && lines(uri.err) == 1, "exit 3, one line", uri);
+    require(uri.err.rfind("error: Engine: --silkit-config \"" + elsewhere + "\": the SIL Kit configuration of the participant "
+                          "\"Engine\" sets Middleware.RegistryUri to \"silkit://192.0.2.10:8500\", but the participant is told "
+                          "to join \"silkit://127.0.0.1:9\": ", 0) == 0,
+            "the other URI", uri);
+    const std::string dynamic =
+        files.write("dynamic.silkit.yaml", "Experimental:\n  TimeSynchronization:\n    DynamicSimulationStep: true\n");
+    const Result steps = call({"--registry-uri", "silkit://127.0.0.1:9", "--silkit-config", dynamic});
+    require(steps.code == 3 && contains(steps.err, "DynamicSimulationStep to true: "), "dynamic steps", steps);
+}
+
+TEST_CASE(ecu_main_gives_the_silkit_configuration_to_its_participant)
+{
+    // A file sink for SIL Kit's log, in a file that includes another one beside it: the
+    // participant writes its log there (here it joins a registry without a controller, and gives up).
+    vehicle_sil::Simulation registry(vehicle_sil::SilKitOptions{});
+    const ConfigurationFiles files;
+    const std::string log_name = (files.directory / "engine_log").generic_string();
+    files.write("logging.silkit.yaml", "Logging:\n  Sinks:\n    - Type: File\n      Level: Debug\n      LogName: '" + log_name + "'\n");
+    const std::string file = files.write("engine.silkit.yaml", "Includes:\n  Files: [logging.silkit.yaml]\nMiddleware:\n  ConnectAttempts: 2\n");
+    const Result r = call_with({"--registry-uri", registry.registry_uri(), "--start-timeout-ms", "300", "--silkit-config", file},
+                               [](Ecu& ecu) { node_only(ecu); });
+    require(r.code == 3 && r.err.rfind("error: Engine: the simulation did not start: ", 0) == 0, "it joined and gave up", r);
+    std::size_t logs = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(files.directory))
+    {
+        const std::string name = entry.path().filename().string();
+        if (name.rfind("engine_log", 0) == 0)
+        {
+            ++logs;
+            CHECK(entry.file_size() > 0);
+        }
+    }
+    CHECK_EQ(logs, std::size_t{1});
 }
 
 TEST_CASE(ecu_main_describe_with_stderr_closed_keeps_stdout_for_the_json)

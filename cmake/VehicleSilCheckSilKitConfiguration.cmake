@@ -1,7 +1,7 @@
 # Checks that every SIL Kit participant configuration that the sources under DIRS make from a text
 # goes through vehicle-sil's defaults (vehicle_sil/core/participant_runtime.hpp): each call of
 # ParticipantConfigurationFromString( must name default_participant_configuration (also ..._with),
-# participant_configuration_or_default or default_registry_configuration in its statement (up to
+# merged_participant_configuration or default_registry_configuration in its statement (up to
 # the next ';'). A "{}" or another text given directly would take SIL Kit's defaults, which
 # vehicle-sil changes (the participants of a loopback registry listen on loopback only; TCP only on
 # Windows: docs/dependencies.md). The check reads the text: a call in a comment counts, which errs
@@ -52,7 +52,7 @@ foreach(file IN LISTS files)
     string(SUBSTRING "${rest}" ${after} -1 rest)
     string(FIND "${rest}" ";" end)
     string(SUBSTRING "${rest}" 0 ${end} statement)
-    if(NOT statement MATCHES "default_participant_configuration|participant_configuration_or_default|default_registry_configuration")
+    if(NOT statement MATCHES "default_participant_configuration|merged_participant_configuration|default_registry_configuration")
       string(REGEX REPLACE "[ \t\r\n]+" " " shown "${statement}")
       get_filename_component(name "${file}" NAME)
       list(APPEND bad "${name}: ${call}${shown}")
@@ -63,6 +63,6 @@ if(bad)
   list(JOIN bad "\n  " text)
   message(FATAL_ERROR "SIL Kit participant configurations that do not go through vehicle-sil's defaults "
                       "(use default_participant_configuration(), default_participant_configuration_with(), "
-                      "participant_configuration_or_default() or default_registry_configuration() of "
+                      "merged_participant_configuration() or default_registry_configuration() of "
                       "vehicle_sil/core/participant_runtime.hpp):\n  ${text}")
 endif()
