@@ -75,12 +75,14 @@ namespace {
 using namespace vehicle_sil;
 
 constexpr const char* kUsage =
-    "usage: vehicle_sil_launch check [--json] [--strict] [--scenario <file>] [--describe-timeout-ms <ms>]\n"
+    "usage: vehicle_sil_launch check [--json] [--strict] [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
+    "                                [--describe-timeout-ms <ms>]\n"
     "                                [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
     "       vehicle_sil_launch run [--json | --events [--events-stall-ms <ms>]] [--stdin-commands] [--start-paused]\n"
     "                              [--control <address> [--control-credentials <file>] [--control-tls-cert <file>\n"
     "                              --control-tls-key <file>] [--control-audit-log <file>]]\n"
-    "                              [--scenario <file>] [--speed <speed>] [--strict] [--log-dir <dir>]\n"
+    "                              [--variant <name>] [--scenario <file> [--param <name>=<value>]...]\n"
+    "                              [--speed <speed>] [--strict] [--log-dir <dir>]\n"
     "                              [--timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>]\n"
     "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
@@ -118,6 +120,11 @@ constexpr const char* kUsage =
     "                              virtual times, stop the simulation when the scenario is over, and fail if a\n"
     "                              step failed (docs/scenario.md; not with --start-paused; with --control the\n"
     "                              clients read and stop, and cannot write or move the time)\n"
+    "  --variant <name>            the variant of <file> to check or run (its variants: the common part with the\n"
+    "                              variant's commands, variable maps, params and enabled laid over it); a file\n"
+    "                              that defines variants needs it: none is the default\n"
+    "  --param <name>=<value>      with --scenario: the value of the scenario's parameter ${<name>}, over the\n"
+    "                              scenario's, the file's and the variant's params; repeatable\n"
     "  --speed <speed>             run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
     "                              or max (as fast as possible); replaces speed in <file>\n"
     "  --strict                    fail on warnings too\n"
@@ -775,8 +782,9 @@ int finish_events(launch::EventStream& events, const launch::RunReport& report, 
 /// A wrong command line: each error and the usage on stderr; with --json also the JSON (result
 /// "usage") on stdout, with --events the result event, so that a program that reads it gets an
 /// answer. `file`: the configuration file if the arguments name one, else "" (null in the JSON).
+/// `variants`: the variants the file defines, if it was read (the JSON lists what --variant takes).
 int usage_error(const std::vector<launch::Finding>& errors, bool json, bool run, const std::string& file,
-                launch::EventStream* events)
+                launch::EventStream* events, const std::vector<std::string>& variants = {})
 {
     for (const auto& error : errors)
     {
@@ -795,6 +803,7 @@ int usage_error(const std::vector<launch::Finding>& errors, bool json, bool run,
         launch::CheckReport check;
         check.file = file;
         check.usage = true;
+        check.variants = variants;
         check.findings = errors;
         if (run)
         {
@@ -833,6 +842,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         }
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
                  a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
+                 a == "--variant" || a == "--param" ||
                  a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
@@ -868,6 +878,41 @@ Common common(const cli::Args& args, const std::string& command)
     c.options.overrides.disable = args.all("disable");
     c.options.overrides.enable = args.all("enable");
     c.options.overrides.manual = args.all("manual");
+    if (args.has("variant"))
+    {
+        c.options.overrides.variant = args.str("variant", "");
+        if (c.options.overrides.variant->empty())
+        {
+            throw cli::UsageError("--variant needs the name of a variant of the file");
+        }
+    }
+    for (const std::string& given : args.all("param"))
+    {
+        // <name>=<value>; the value is the rest, also with a '=' in it, also empty.
+        const auto equals = given.find('=');
+        launch::ParamValue param;
+        param.name = given.substr(0, equals);
+        param.source = launch::ParamSource::CommandLine;
+        if (equals == std::string::npos || !launch::is_param_name(param.name))
+        {
+            throw cli::UsageError("--param " + given + ": write --param <name>=<value> (the name as the scenario has it in "
+                                  "${<name>}: letters, digits and _), e.g. --param idle_rpm=650");
+        }
+        param.text = given.substr(equals + 1);
+        for (const launch::ParamValue& before : c.options.params)
+        {
+            if (before.name == param.name)
+            {
+                throw cli::UsageError("--param " + param.name + " is given twice (" + before.text + " and " + param.text +
+                                      "): give each parameter one value");
+            }
+        }
+        c.options.params.push_back(std::move(param));
+    }
+    if (!c.options.params.empty() && !args.has("scenario"))
+    {
+        throw cli::UsageError("--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out");
+    }
     if (args.has("scenario"))
     {
         c.options.scenario_shown = args.str("scenario", "");
@@ -895,7 +940,7 @@ int check(const cli::Args& args)
     const launch::CheckReport report = launch::check_file(process::path_from_utf8(c.file), c.file, c.options);
     if (report.usage)
     {
-        return usage_error(report.findings, args.flag("json"), false, c.file, nullptr);
+        return usage_error(report.findings, args.flag("json"), false, c.file, nullptr, report.variants);
     }
     const int code = !report.config ? cli::kExitSetupFailed : report.passed() ? cli::kExitOk : cli::kExitFailed;
     return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), code);
@@ -1039,7 +1084,7 @@ int run(const cli::Args& args, launch::EventStream* events)
 #endif
     if (report.check.usage)
     {
-        return usage_error(report.check.findings, args.flag("json"), true, c.file, events);
+        return usage_error(report.check.findings, args.flag("json"), true, c.file, events, report.check.variants);
     }
     const int code = events != nullptr
                          ? finish_events(*events, report, report.exit_code())
@@ -1149,8 +1194,10 @@ int main(int argc, char** argv)
     {
         const cli::Args args(arguments,
                              {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario",
-                              "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"},
-                             {"json", "strict", "events", "stdin-commands", "start-paused"}, {"disable", "enable", "manual"});
+                              "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log",
+                              "variant"},
+                             {"json", "strict", "events", "stdin-commands", "start-paused"},
+                             {"disable", "enable", "manual", "param"});
         if (args.positionals().empty())
         {
             code = usage_error("no command: give check <file>, run <file> or version", json, false, file, stream);

@@ -4,14 +4,14 @@
 
 `vehicle_sil_launch run <file>` は、次の順に動きます。
 
-1. `check` と同じ照合をします。誤りがあれば（`--strict` では警告も）、何も起動せずに照合の結果を書き、終了コード 1 です。
+1. `check` と同じ照合をします。誤りがあれば（`--strict` では警告も）、何も起動せずに照合の結果を書き、終了コード 1 です。機種（`variants`）を書いた構成では、`--variant <名前>` で選んだ機種を照合し、その機種の実行ファイル、変数の対応、participant で動かします（[simulation-config.md](simulation-config.md) の「機種」。`--variant` がなければ引数の誤りで、何も起動しません）。
 2. registry をこのプロセスの中で立てます（`registry_uri`、なければ 127.0.0.1 の空いているポート）。標準エラーの最初の行が、その URI です（`[vehicle_sil_launch] registry at silkit://127.0.0.1:<port>`）。`--control` を付けたときは、その前に Control Server を立て、`[vehicle_sil_launch] control server at <address>` の行を書きます。
 3. controller（participant 名 `SimulationController`）をこのプロセスの中で動かします。シミュレーションが待つ（必須の）participant は、外していない `required: true` のものです。controller は刻み（`time_step_ms` か、その既定値）で時刻同期に参加し、刻みの終わりを止めて、速さ、一時停止、ステップ送りを決めます（最速のときも同じです。刻みごとに同期が 1 回増えます）。
 4. 外していない participant を構成ファイルの順に、それぞれ別のプロセスで起動します（`manual` の participant は起動せず、起動するコマンドを書きます）。作業ディレクトリは構成ファイルのあるディレクトリ、標準入力は空です。
 5. 必須の participant がそろったら、変数を出す ECU とつながるのを待ってから（下の「変数を読み書きする口」。ふつうは待ちません）始めます。`--control` と `--start-paused` を付けたときは、どの participant も時刻 0 のステップを始める前で、`resume`、`step` か `run_until` の命令を待ちます（[control-api.md](control-api.md) の「始まる前に書く」）。`stop_at_ms` があれば、仮想時間がそこに達したところで止めます。なければ、participant が止めるか、Ctrl+C まで動きます。
 6. 終わったら、すべての participant を終わらせ（下の「止め方」）、結果を書きます。
 
-`--scenario <file>` を付けると、照合でシナリオも確かめ、始まった後はシナリオの手順を進めて、シナリオが終わった所でシミュレーションを止めます（[scenario.md](scenario.md)）。このとき、controller の刻みは、速さを決めたときの既定（`time_step_ms` か、ECU のステップがすべて controller のステップから始まる刻み）です。
+`--scenario <file>` を付けると、照合でシナリオも確かめ、始まった後はシナリオの手順を進めて、シナリオが終わった所でシミュレーションを止めます（[scenario.md](scenario.md)）。このとき、controller の刻みは、速さを決めたときの既定（`time_step_ms` か、ECU のステップがすべて controller のステップから始まる刻み）です。シナリオのパラメーター（`${名前}`）の値は、構成の `params`、機種の `params`、`--param <名前>=<値>` で替えられます。その機種にない変数（`absent: true`）や、機種が外した participant の変数を使う手順は飛ばし、結果に出します（飛ばした手順の `at_ms` は null。確かめる手順が全部飛ぶと、照合の警告 `scenario-nothing-checked`）（[scenario.md](scenario.md) の「機種とパラメーター」）。
 
 ## 見張ること
 
@@ -255,8 +255,8 @@ passed: 0 errors, 1 warning, 1 note
 | `participants[]` | 構成ファイルの順（外した participant も）。`name`、`required`、`enabled`（`false` なら外した participant で、`ended` は `"not_started"`、`log` は `null`。シミュレーションが待つのは `required` と `enabled` がどちらも `true` のもの）、`manual`（`true` なら利用者が起動する participant で、`ended` は `"not_started"`、`exit_code` は `null`。[participant を自分で起動する](simulation-config.md#participant-を自分で起動するmanual--manual)）、`ended`（`"exited"`、`"stopped"`、`"killed"`、`"not_started"`）、`exit_code`（シグナルで終わったとき、強制終了したとき、起動しなかったときは `null`）、`signal`（`"SIGSEGV"` など。なければ `null`）、`left_processes`（起動したプロセスを残したか）、`log`（`--log-dir` のファイル。なければ `null`）、`control_link`（始まったときの、変数を読み書きする口のつながり方。下の表。起動しなかった participant は `state` が `"none"`） |
 | `participants[].control_link` | `state`（`"connected"`、`"no_hello"`、`"version_mismatch"`、`"not_offered"`、`"none"`。[変数を読み書きする口](#変数を読み書きする口)）、`variables`（`connected` のとき、その ECU が出す変数の数。ECU の実行が足す `peer.` などの出力を含むので、`--describe` の数より多いことがあります。ほかは `null`）、`version`（`version_mismatch` のとき、相手の形式の版。ほかは `null`）、`late_messages`（約束より遅れて届いたメッセージの数。ふつうは 0） |
 | `findings[]` | 実行で見つけたもの（照合の `findings[]` と同じ形） |
-| `check` | 照合の結果（`check --json` と同じオブジェクト） |
-| `scenario` | `--scenario` を付けたときだけ。シナリオの結果（[scenario.md](scenario.md) の「出力」）。`check` の中にも `scenario`（`file`、`name`、`steps`）があります。`simulation` の `"ended"` は、シナリオが終わってランチャーが止めた場合を含みます。見分けるには `scenario.status` を見ます（`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です） |
+| `check` | 照合の結果（`check --json` と同じオブジェクト）。選んだ機種（`variant`）と、パラメーター（`params`、`scenario.params`）はここにあります |
+| `scenario` | `--scenario` を付けたときだけ。シナリオの結果（[scenario.md](scenario.md) の「出力」）。`check` の中にも `scenario`（`file`、`name`、`steps`）があります。`simulation` の `"ended"` は、シナリオが終わってランチャーが止めた場合を含みます。見分けるには `scenario.status` を見ます（`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です）。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です |
 
 `timing` のキー（数の定義は[等速で動かす](#等速で動かす)。時間は、controller の最初の刻み（仮想時間 0）が始まってから、最後の刻みが始まるまでのものです。participant の起動、止める処理、失敗に気づくまでの待ちは入りません。次の刻みが期限を過ぎたまま実行が終わったときと、最速のときは、実行が終わった時点までです）:
 

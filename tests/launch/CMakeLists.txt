@@ -63,7 +63,7 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
               interrupt_ending ended_early timeout no_console killed usage disabled events events_usage stdin_stop
               stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
               events_slow events_findings events_nonblocking events_output events_stderr realtime late stall stand_still
-              speed_change step_width pause_step paused_failures time_usage control scenario scenario_same variable_map
+              speed_change step_width pause_step paused_failures time_usage control scenario scenario_same variable_map variants
               scenario_disconnect scenario_failures manual_late manual_fails manual_stop manual_frozen
               manual_thawed manual_again manual_timeout manual_stranger
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>

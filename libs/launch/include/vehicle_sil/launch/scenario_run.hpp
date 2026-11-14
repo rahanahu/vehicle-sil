@@ -28,8 +28,9 @@ enum class StepStatus
     Passed,
     Failed,
     Unfinished, ///< begun, and the scenario was over before it was decided
+    Skipped,    ///< not for this configuration (ScenarioStep::skipped): known before the run
 };
-/// "not_run", "running", "passed", "failed", "unfinished".
+/// "not_run", "running", "passed", "failed", "unfinished", "skipped".
 [[nodiscard]] const char* step_status_name(StepStatus status);
 
 /// What became of one step.
@@ -47,11 +48,13 @@ struct ScenarioStepRun
     /// the sample at which a wait_until or an expect with within_ms became true, the end of a
     /// hold_for_ms. Failed: the sample that broke a hold, the time a wait ran out, the time of the
     /// write that failed; for a failure before anything happened, its start.
+    /// Skipped: none (nothing happened at a time of the simulation).
     std::optional<SimTime> at{};
     /// From where the next step's after_ms counts (Passed, and a step whose end is known before).
     std::optional<SimTime> end{};
     /// Failed: the code of its finding ("scenario-failed", "scenario-timeout", "scenario-write",
-    /// "scenario-out-of-time") and why, in one line with the times and the values.
+    /// "scenario-out-of-time") and why, in one line with the times and the values. Skipped:
+    /// "scenario-skipped" and why (ScenarioStep::skipped).
     std::string code{};
     std::string message{};
 };
@@ -59,7 +62,7 @@ struct ScenarioStepRun
 enum class ScenarioStatus
 {
     NotRun,     ///< the simulation did not start
-    Passed,     ///< every step passed
+    Passed,     ///< every step passed or was skipped (ScenarioRun::skipped() says how many)
     Failed,     ///< a step failed (the first one in virtual time; ScenarioRun::steps says which)
     Incomplete, ///< the simulation ended for another reason before the last step was decided
 };
@@ -75,9 +78,13 @@ struct ScenarioRun
     /// Passed and Failed: the step of the launcher's controller at which the scenario was over
     /// (the simulation stands there until it is stopped).
     std::optional<SimTime> over_at{};
+
+    /// How many steps are skipped: a scenario that passed with some did not look at everything.
+    [[nodiscard]] std::size_t skipped() const;
 };
 
-/// The run of `scenario` before anything happened: every step NotRun (`file` is the caller's to set).
+/// The run of `scenario` before anything happened: every step NotRun, or Skipped with its reason
+/// (`file` is the caller's to set).
 [[nodiscard]] ScenarioRun scenario_not_run(const Scenario& scenario);
 
 /// What the engine writes through (the run: the hub; a test: a model).
@@ -151,10 +158,17 @@ struct EnginePeer
 ///
 /// The first failure in this order ends the scenario; steps that had begun are Unfinished, later
 /// ones NotRun (their writes for times up to P + tick may have gone out).
+///
+/// Skipped steps (ScenarioStep::skipped) write and compare nothing. One at T ends at T +
+/// ScenarioStep::skipped_ms (the time its text says it takes; 0 for a set and for a step that
+/// waits), and the step after it counts its after_ms from there: the times of the steps that run
+/// are those of a configuration that skips nothing, except after a skipped step that waits. They
+/// are reported (OnStep, once) when their time is known, with `start` and `end` and no `at`: the
+/// scenario may be over before the simulation reaches those times.
 class ScenarioEngine
 {
 public:
-    /// Called when a step begins (status Running) and when it is decided (Passed, Failed).
+    /// Called when a step begins (status Running) and when it is decided (Passed, Failed, Skipped).
     using OnStep = std::function<void(const ScenarioStepRun& step)>;
 
     /// `scenario` and `port` must outlive the engine. `tick` > 0.
@@ -247,7 +261,7 @@ private:
     std::deque<Write> sent_;         ///< in the order sent
     std::deque<Ramp> ramps_;
     std::vector<std::size_t> open_writes_; ///< per step: writes not judged yet (and ramps not done)
-    std::size_t passed_ = 0;
+    std::size_t done_ = 0; ///< steps that passed or were skipped
 };
 
 } // namespace vehicle_sil::launch

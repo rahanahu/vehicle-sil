@@ -107,7 +107,9 @@ constexpr std::uintmax_t kMaxConfigBytes = std::uintmax_t{16} << 20;
 namespace {
 
 /// --scenario: reads the scenario file and checks it against the participants of `report`.
-void check_scenario_file(CheckReport& report, const CheckOptions& options)
+/// @returns the usage errors that only the scenario can tell (ScenarioRead::usage_errors); then
+/// `report` has no scenario.
+[[nodiscard]] std::vector<Finding> check_scenario_file(CheckReport& report, const CheckOptions& options)
 {
     ScenarioCheck check;
     check.file = options.scenario_shown;
@@ -145,16 +147,29 @@ void check_scenario_file(CheckReport& report, const CheckOptions& options)
     }
     else
     {
-        ScenarioRead read = read_scenario(text, scenario_catalog(report));
+        ScenarioContext context;
+        context.variant = report.config->variant;
+        context.variants = report.variants;
+        context.params = report.config->params;
+        context.params.insert(context.params.end(), options.params.begin(), options.params.end());
+        ScenarioRead read = read_scenario(text, scenario_catalog(report), context);
         check.name = std::move(read.name);
         check.steps = read.steps;
         check.scenario = std::move(read.scenario);
+        check.params = std::move(read.params);
+        check.only = std::move(read.only);
+        check.skipped = read.skipped;
+        if (!read.usage_errors.empty())
+        {
+            return std::move(read.usage_errors);
+        }
         for (Finding& finding : read.findings)
         {
             add(std::move(finding));
         }
     }
     report.scenario = std::move(check);
+    return {};
 }
 
 } // namespace
@@ -205,6 +220,13 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         return report;
     }
     ConfigRead read = read_config(text, options.overrides);
+    if (read.config)
+    {
+        for (const VariantConfig& variant : read.config->variants)
+        {
+            report.variants.push_back(variant.name);
+        }
+    }
     if (!read.override_errors.empty())
     {
         report.usage = true;
@@ -323,7 +345,17 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     }
     if (!options.scenario.empty())
     {
-        check_scenario_file(report, options);
+        if (auto wrong = check_scenario_file(report, options); !wrong.empty())
+        {
+            // As for the other usage errors: the findings alone, and no configuration.
+            CheckReport usage;
+            usage.file = std::move(report.file);
+            usage.strict = report.strict;
+            usage.variants = std::move(report.variants);
+            usage.usage = true;
+            usage.findings = std::move(wrong);
+            return usage;
+        }
     }
     sort_findings(report.findings);
     return report;
