@@ -2,6 +2,8 @@
 
 テンプレートのプロジェクトに自分の ECU を 1 つ追加し、ほかの ECU と一緒にシミュレーションで実行する手順です。最後に、その ECU の変数を Python から読み書きします。追加するのは、水温が目標の温度に近づいていくだけの小さな ECU（`Cooler`）です。CAN での通信は、手順の後の「J1939 で通信させる」で追加します。
 
+手順のとおりに書いたファイルの完成形は、[examples/first_ecu](../../examples/first_ecu) にあります。
+
 > [!NOTE]
 > テンプレートとビルド済みのツールは、最初のリリース（0.1.0）から配布します。まだリリースしていません。
 
@@ -12,13 +14,13 @@
 | OS | Linux か、Windows の MSYS2 UCRT64 シェルで作業します。 |
 | コンパイラ、CMake、Ninja、Git | バージョンは、テンプレートの [README](../../template/README.md) の「要るもの」の表にあります。 |
 | Python | `get_tools.py` の実行に、3.9 以上を使います。 |
-| [uv](https://docs.astral.sh/uv/) | 段 7 で、Python のクライアントを実行するのに使います。 |
+| [uv](https://docs.astral.sh/uv/) | 手順 7 で、Python のクライアントを実行するのに使います。 |
 
-コマンドは Linux のものです。Windows で変わるコマンドは、段 1 の表にあります。
+コマンドは Linux のものです。Windows で変わるコマンドは、手順 1 の表にあります。
 
 ## 全体の流れ
 
-| 段 | すること | できるもの |
+| 手順 | すること | できるもの |
 |---|---|---|
 | 1 | テンプレートをビルドして、そのまま動かす | 2 つの ECU の実行ファイルと、`check` と `run` の出力 |
 | 2 | ECU のクラスと `main()` を書く | `cooler/main.cpp` |
@@ -28,9 +30,9 @@
 | 6 | シミュレーションを実行する | 3 つの ECU が終了コード 0 で終わったことを示す表 |
 | 7 | Python から変数を読み書きする | 書き込んだ目標の温度と、読み出した水温 |
 
-段 1〜7 は順に進めます。その後の「J1939 で通信させる」と「デバッガーから動かす」は、必要になったときに読みます。
+手順 1〜7 は順に進めます。この文書の「ステップ」は、シミュレーションが仮想時間を 1 回進める単位のことで、手順の番号ではありません。その後の「J1939 で通信させる」と「デバッガーから動かす」は、必要になったときに読みます。
 
-## 1. テンプレートをビルドして動かす
+## 手順 1: テンプレートをビルドして動かす
 
 テンプレートに入っている 2 つの ECU（エンジンと表示）をそのまま動かして、ビルドと実行の環境がそろっていることを確認します。
 
@@ -105,7 +107,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 ### 実行した設定ファイル
 
-`check` と `run` に渡した `simulation.yaml` は、シミュレーションに参加する ECU の実行ファイルとネットワークを並べた設定ファイルです。段 5 で、ここに自分の ECU を追加します。
+`check` と `run` に渡した `simulation.yaml` は、シミュレーションに参加する ECU の実行ファイルとネットワークを並べた設定ファイルです。手順 5 で、ここに自分の ECU を追加します。
 
 <!-- template/simulation.yaml -->
 ```yaml
@@ -138,10 +140,11 @@ participants:
 
 ネットワークからダウンロードできないときの手順は、テンプレートの [README](../../template/README.md) にあります。
 
-## 2. ECU のクラスと `main()` を書く
+## 手順 2: ECU のクラスと `main()` を書く
 
 ディレクトリ `cooler` を作り、その中の `main.cpp` に次の内容を書きます。これがファイルの全文です。
 
+<!-- examples/first_ecu/cooler/main.cpp -->
 ```cpp
 // The cooler ECU: the coolant temperature moves towards a target that is written from outside.
 #include "vehicle_sil/simulation/ecu_main.hpp"
@@ -198,12 +201,13 @@ ECU は、`vehicle_sil::Ecu&` を受け取る普通のクラスです。コン�
 - `ecu_main()` は、`main()` の最後で呼びます。`--describe` のときに標準出力を標準エラーに切り替え、戻った後も元に戻さないためです。
 - この ECU のように、ネットワークを宣言せず、変数だけを持つ ECU も作れます。
 
-変数に使える型と宣言の種類は、[control-api.md](../control-api.md) の「ECU の変数」にあります。書いたコードは、次の段のビルドで確認します。
+変数に使える型と宣言の種類は、[control-api.md](../control-api.md) の「ECU の変数」にあります。書いたコードは、次の手順のビルドで確認します。
 
-## 3. CMake に追加してビルドする
+## 手順 3: CMake に追加してビルドする
 
 `CMakeLists.txt` の末尾に、次の 4 行を追加します。エンジンの ECU の 4 行（[template/CMakeLists.txt](../../template/CMakeLists.txt) の 32〜36 行からコメントを除いたもの）の、名前とソースファイルを変えたものです。
 
+<!-- examples/first_ecu/CMakeLists.txt -->
 ```cmake
 add_executable(cooler_ecu cooler/main.cpp)
 target_include_directories(cooler_ecu PRIVATE ${PROJECT_SOURCE_DIR})
@@ -233,7 +237,7 @@ ls bin
 cooler_ecu  dashboard_ecu  engine_ecu
 ```
 
-## 4. ECU を単体で確認する
+## 手順 4: ECU を単体で確認する
 
 シミュレーションに追加する前に、実行ファイルだけで、宣言した内容と、例外なく動くことを確認します。
 
@@ -244,57 +248,19 @@ bin/cooler_ecu --local --run-for-ms 1000; echo "exit code $?"
 
 ### 確認
 
-`--describe` は、何も実行せず、どこにも接続せずに、ECU の構成を JSON で標準出力に表示します。
+`--describe` は、何も実行せず、どこにも接続せずに、ECU の構成を JSON で標準出力に表示します。次は、その出力から、この手順で見るキーだけを抜き出したものです（変数は 1 行にまとめています）。
 
+<!-- cooler_ecu --describe: an excerpt -->
 ```json
 {
-  "vehicle_sil_ecu": 1,
-  "vehicle_sil": "0.1.0",
   "name": "Cooler",
   "step_ns": 100000000,
   "networks": [],
   "variables": [
-    {
-      "name": "ecu.connected",
-      "type": "bool",
-      "causality": "input",
-      "unit": "",
-      "min": null,
-      "max": null,
-      "step": null,
-      "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
-      "items": [],
-      "builtin": true
-    },
-    {
-      "name": "cooler.target",
-      "type": "real",
-      "causality": "input",
-      "unit": "degC",
-      "min": 0,
-      "max": 120,
-      "step": null,
-      "description": "target coolant temperature",
-      "items": [],
-      "builtin": false
-    },
-    {
-      "name": "cooler.temperature",
-      "type": "real",
-      "causality": "output",
-      "unit": "degC",
-      "min": null,
-      "max": null,
-      "step": null,
-      "description": "",
-      "items": [],
-      "builtin": false
-    }
-  ],
-  "control": {
-    "transport": "silkit",
-    "wire_version": 1
-  }
+    { "name": "ecu.connected", "type": "bool", "causality": "input", "builtin": true },
+    { "name": "cooler.target", "type": "real", "causality": "input", "unit": "degC", "min": 0, "max": 120, "builtin": false },
+    { "name": "cooler.temperature", "type": "real", "causality": "output", "unit": "degC", "min": null, "max": null, "builtin": false }
+  ]
 }
 ```
 
@@ -305,7 +271,7 @@ bin/cooler_ecu --local --run-for-ms 1000; echo "exit code $?"
 | `networks` | `[]` | 宣言したネットワークで、この ECU にはありません。 |
 | `variables` | `ecu.connected`、`cooler.target`、`cooler.temperature` | 宣言した 2 つの変数と、どの ECU にも自動で付く `ecu.connected`（`builtin` が `true`）です。 |
 
-Python やシナリオから変数を指定するときの名前は、この `variables` の `name` です。ほかの人が作った ECU の変数の名前も、同じ `--describe` で調べられます。
+Python やシナリオから変数を指定するときの名前は、この `variables` の `name` です。ほかの人が作った ECU の変数の名前も、同じ `--describe` で調べられます。すべてのキーと出力の全体の形式は、[ecu-executable.md](../ecu-executable.md) の「JSON の形式」にあります。
 
 `--local --run-for-ms 1000` は、この ECU だけを仮想時間で 1000 ms 動かします。成功したときは何も表示しないので、終了コードで確認します。
 
@@ -323,10 +289,11 @@ exit code 0
 
 引数と終了コードの一覧は、[ecu-executable.md](../ecu-executable.md) の「引数」にあります。
 
-## 5. 設定ファイルに追加して照合する
+## 手順 5: 設定ファイルに追加して照合する
 
 `simulation.yaml` の `participants` の末尾に、次の 3 行を追加します。
 
+<!-- examples/first_ecu/simulation.yaml: the lines added -->
 ```yaml
   - name: Cooler
     command: [bin/cooler_ecu]
@@ -349,6 +316,7 @@ vehicle_sil_launch check simulation.yaml
 
 表に `Cooler` の行が増え、最後の行が `passed:` になります。`networks` の列の `-` は、ネットワークを使わないことを表します。
 
+<!-- first ECU: vehicle_sil_launch check simulation.yaml -->
 ```text
 simulation.yaml: 3 participants, 1 network
 
@@ -367,6 +335,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 設定ファイルと ECU の不整合は、`error:`、`warning:`、`note:` で始まる行で報告されます。1 行に、ファイルの行番号、不整合の内容、直し方、指摘のコードが入っています。`step_ms` を `10` と書き間違えたときの出力は、次のとおりです。
 
+<!-- first ECU: vehicle_sil_launch check simulation.yaml with step_ms: 10, the end -->
 ```text
 error: simulation.yaml:20: participant 'Cooler': step_ms is 10, but the executable's step is 100 ms: write step_ms: 100, or remove step_ms [step-mismatch]
 
@@ -381,13 +350,14 @@ failed: 1 error, 0 warnings, 0 notes
 
 ほかの ECU を外して試すときは、設定ファイルを変更せずに、`--disable` に participant 名を指定します。たとえば `vehicle_sil_launch check simulation.yaml --disable Dashboard` とすると、`J1939_CAN` に `Engine` だけが残るので、次の警告が出ます。警告だけなら、最後の行は `passed:` のままです。
 
+<!-- first ECU: vehicle_sil_launch check simulation.yaml --disable Dashboard, the warning -->
 ```text
 warning: simulation.yaml:9: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it [single-participant]
 ```
 
 指摘のコードの一覧は、[simulation-check.md](../simulation-check.md) にあります。
 
-## 6. シミュレーションを実行する
+## 手順 6: シミュレーションを実行する
 
 3 つの ECU を、`stop_at_ms` に書いた 1000 ms まで実行します。
 
@@ -399,6 +369,7 @@ vehicle_sil_launch run simulation.yaml
 
 標準出力の最後の表で、`Cooler` の `ended` が `exit code 0` になっていることを確認します。
 
+<!-- first ECU: vehicle_sil_launch run simulation.yaml, after the tables of the check -->
 ```text
 run: the simulation ran to stop_at_ms (1000 ms) and ended
 
@@ -414,18 +385,19 @@ passed: 0 errors, 0 warnings, 0 notes
 
 | 方法 | 向いている場面 | 手順 |
 |---|---|---|
-| Python のクライアント | スクリプトから値を読み書きするとき | 次の段 |
+| Python のクライアント | スクリプトから値を読み書きするとき | 手順 7 |
 | シナリオ | 値の設定と確認を、自動のテストにするとき | [シナリオで試験を書く](scenario-tests.md) |
 | ブラウザの GUI | 値をグラフで見ながら、手で操作するとき | [gui.md](../gui.md) |
 
 途中で止めるときは Ctrl+C です。出力の形式と終了コードは、[simulation-run.md](../simulation-run.md) の「出力」にあります。
 
-## 7. Python から変数を読み書きする
+## 手順 7: Python から変数を読み書きする
 
 `Cooler` の目標の温度を書き込み、500 ms 進めてから、水温を読み出します。ECU のコードに追加するものはありません。`ecu_main()` で作った ECU の変数は、そのまま外から読み書きできます。
 
 `read_cooler.py` に次の内容を書きます。これがファイルの全文です。
 
+<!-- examples/first_ecu/read_cooler.py -->
 ```python
 from vehicle_sil_control import Control, Launch, ms
 
@@ -461,6 +433,7 @@ PYTHONPATH=$T/python uv run --no-project --no-build --python '>=3.11,<3.15' \
 
 ### 確認
 
+<!-- examples/first_ecu/read_cooler.py: the output -->
 ```text
 at 500 ms: cooler.target = 22.0, cooler.temperature = 22.0
 ```
@@ -486,7 +459,7 @@ at 500 ms: cooler.target = 22.0, cooler.temperature = 22.0
 | 症状 | 原因 | 直し方 |
 |---|---|---|
 | `ModuleNotFoundError: No module named 'vehicle_sil_control'` | `PYTHONPATH` を指定していません。 | コマンドの先頭に `PYTHONPATH=$T/python` を付けます。 |
-| `FileNotFoundError: ... 'vehicle_sil_launch'` | `vehicle_sil_launch` が `PATH` にありません。 | 段 1 の `export` の行を実行します。 |
+| `FileNotFoundError: ... 'vehicle_sil_launch'` | `vehicle_sil_launch` が `PATH` にありません。 | 手順 1 の `export` の行を実行します。 |
 | `AttributeError: 'NoneType' object has no attribute 'values'` | ステップを 1 回も進めていない間は値がなく、`c.values()` が `None` を返します。 | `c.sim.step()` で進めてから読み出します。 |
 | 書き込んだ値が反映されない | 範囲の外の値（`cooler.target` は 0〜120）や、`output()` の変数への書き込みは、例外にならず、結果が `invalid` になります。 | `c.wait(seq).target("Cooler").status` で結果を確認します。 |
 | dict に `peer.steps` などの知らない名前がある | vehicle-sil が自動で追加する監視用の変数です。 | 自分の変数は、`--describe` で `builtin` が `false` のものです。 |
@@ -504,7 +477,7 @@ at 500 ms: cooler.target = 22.0, cooler.temperature = 22.0
 | ネットワークへの接続と、J1939 のノード | 同じファイルの 27〜28 行 |
 | 周期的な送信（`node_.send()`） | 同じファイルの 38〜40 行 |
 | 受信（`node.on_message()`） | [template/dashboard/main.cpp](../../template/dashboard/main.cpp) の 22〜27 行 |
-| 設定ファイルの `networks` の項目 | 段 1 の `simulation.yaml` の `J1939_CAN` |
+| 設定ファイルの `networks` の項目 | 手順 1 の `simulation.yaml` の `J1939_CAN` |
 
 エンジンの ECU のクラスは、次のとおりです（`template/engine/main.cpp` の 22〜47 行）。
 

@@ -93,7 +93,7 @@ ECU と道具は、同じ vehicle-sil の版でそろえます（版が違うと
 
 ## 次に読むもの
 
-- 手引き「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md)」: このひな形の ECU を例に、書き方、照合、実行、デバッガーからの起動、Python からの読み書き
+- 手引き「[最初の ECU を作る](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/howto/first-ecu.md)」: このひな形に ECU を 1 つ足す手順（書き方、単体での確認、照合、実行、Python からの読み書き）と、J1939 での通信、デバッガーからの起動
 - [J1939 のノードの作り方](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/j1939-guide.md)、[型付きメッセージ](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/j1939-codec.md)
 - [構成ファイル](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-config.md)、[照合](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-check.md)、[実行](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/simulation-run.md)、[シナリオ](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/scenario.md)、[ブラウザの GUI](https://github.com/rahanahu/vehicle-sil/blob/v0.1.0/docs/gui.md)
 

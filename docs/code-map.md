@@ -404,6 +404,15 @@ registry につながらないときの文（`registry_failure_message()`）は�
   `get_tools.py` と `package.py template`、`version` を手元の圧縮ファイルで）、`fetchcontent.template`（写して FetchContent で、opt-in）、`scripts/package.py verify`（道具の圧縮ファイルを使う人の手順で）
 - `ctest -R`: `^template\.`
 
+### `examples/first_ecu`（手引き「最初の ECU を作る」が、ひな形に足す ECU）
+
+- 中身: `cooler/main.cpp`（ECU の `Cooler`）、`CMakeLists.txt`（ひな形の `CMakeLists.txt` に足す 4 行）、`simulation.yaml`（ひな形の 2 つと `Cooler`）、`read_cooler.py`（Python から読み書きするスクリプト）。
+  手引き [howto/first-ecu.md](howto/first-ecu.md) のコードのブロックと同じ内容で、利用者は手引きのとおりに自分で書きます
+- ビルド: `tests/template` が、ひな形のプロジェクト（`build/<preset>/tests/template/project/bin/`）に `cooler_ecu` を足します（`VEHICLE_SIL_BUILD_EXAMPLES` だけのビルドには入りません）
+- 試験: `template.first_ecu`（`tests/template/first_ecu.cmake`。4 つのファイルと手引きのブロック、`--describe` の抜粋のキー、`--local`、3 つの ECU での `check` と `run` の出力、`step_ms` を間違えたときと `--disable Dashboard` の出力を照合）、`control_server.example_first_ecu`（Control Server のあるビルドで、gRPC のある Python があるとき。`read_cooler.py` の出力を照合）。
+  手引きの印は `<!-- examples/first_ecu/... -->`、`<!-- first ECU: ... -->`、`<!-- cooler_ecu --describe: an excerpt -->` です
+- `ctest -R`: `^template\.first_ecu`、`^control_server\.example_first_ecu`
+
 ### `schema/`（構成ファイルとシナリオの JSON Schema）
 
 - 主なクラス・関数（ヘッダー）: `schema/simulation.schema.json`（構成ファイル）、`schema/scenario.schema.json`（シナリオ）。
@@ -690,8 +699,9 @@ flowchart TD
 
 - 変えるもの: `template/`（ひな形）、ECU の API
 
-  合わせて直すもの: [howto/first-ecu.md](howto/first-ecu.md)（ひな形のコードを行の番号で引いている。
-  出力のブロックは `template.check_and_run` がひな形の出力とも照合）、`template/README.md`。
+  合わせて直すもの: [howto/first-ecu.md](howto/first-ecu.md)（「J1939 で通信させる」が、ひな形のコードを行の番号で引いている。照合しないので、手で合わせます。
+  ひな形だけの出力のブロックは `template.check_and_run` がひな形の出力と照合）、`template/README.md`。
+  手引きがひな形に足す ECU（`examples/first_ecu`）は、ひな形の `simulation.yaml` と `CMakeLists.txt` の続きなので、`template.first_ecu` が落ちたら、例と手引きを合わせます（ひな形の `simulation.yaml` のコメントの行数を変えたら、例の同じファイルも同じ行数にします。出力の行番号が変わるためです）。
   ひな形の 2 つの ECU は `examples/ecu_main` と同じ名前、ネットワーク、アドレス、ステップ幅にしてあり、手引きの出力は両方で同じです
 
 - 変えるもの: 版の番号（ルートの `CMakeLists.txt` の `project(... VERSION)`）
@@ -773,7 +783,7 @@ flowchart TD
   読むのは `libs/launch/src/config.cpp`、起動の代わりにコマンドを書くのは `libs/launch/src/run_participants.cpp` の `RunParticipants::show_manual()` と `detail::shell_command_line()`、開始の待ちは `run_start.cpp` の `RunStart::wait_for_start()`、終わりは `RunParticipants::end_manual()`）
 
   合わせて直すもの: [simulation-config.md](simulation-config.md) の「participant を自分で起動する」と、その例（`launch_run.manual` が照合。
-  標準エラーの 2 行は [howto/first-ecu.md](howto/first-ecu.md) の「デバッガーから動かす」に写し）、事象 `participant` の `manual`、`features` の `manual-participants`。
+  [howto/first-ecu.md](howto/first-ecu.md) の「デバッガーから動かす」は、同じ標準エラーの行と結果の表を、手引きが足す ECU（Cooler）の名前で載せている。照合しないので、手で合わせます）、事象 `participant` の `manual`、`features` の `manual-participants`。
   開始の上限、ECU に渡す `--start-timeout-ms`（`detail::ecu_start_timeout_ms()`）、registry の既定のポート（`kManualRegistryUri`）を変えたら、同じ節と [internals/control.md](internals/control.md) の「ランチャーの Control Server」の開始の期限も直します。
   `run` はそのプロセスを持たないので、失敗はシミュレーションから抜けたことでだけわかります。
   試験は `launch_run.manual`（docs の例）と `launch_run.manual_*`（場面ごと。
