@@ -145,10 +145,18 @@ void check_scenario_file(CheckReport& report, const CheckOptions& options)
     }
     else
     {
-        ScenarioRead read = read_scenario(text, scenario_catalog(report));
+        ScenarioContext context;
+        context.variant = report.config->variant;
+        context.variants = report.variants;
+        context.params = report.config->params;
+        context.params.insert(context.params.end(), options.params.begin(), options.params.end());
+        ScenarioRead read = read_scenario(text, scenario_catalog(report), context);
         check.name = std::move(read.name);
         check.steps = read.steps;
         check.scenario = std::move(read.scenario);
+        check.params = std::move(read.params);
+        check.only = std::move(read.only);
+        check.skipped = read.skipped;
         for (Finding& finding : read.findings)
         {
             add(std::move(finding));
@@ -205,6 +213,13 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
         return report;
     }
     ConfigRead read = read_config(text, options.overrides);
+    if (read.config)
+    {
+        for (const VariantConfig& variant : read.config->variants)
+        {
+            report.variants.push_back(variant.name);
+        }
+    }
     if (!read.override_errors.empty())
     {
         report.usage = true;

@@ -170,6 +170,10 @@ struct ScenarioCheck
     std::size_t steps = 0;
     /// Set if the configuration could be read and the scenario has no error: it can run.
     std::optional<Scenario> scenario{};
+    /// ScenarioRead::params, only and skipped.
+    std::vector<ParamValue> params{};
+    std::optional<std::vector<std::string>> only{};
+    std::size_t skipped = 0;
 };
 
 /// The result of checking one file.
@@ -178,6 +182,9 @@ struct CheckReport
     std::string file; ///< the file as the user named it (in messages)
     /// Empty if the file could not be read as a configuration.
     std::optional<SimulationConfig> config{};
+    /// The names of the variants the file defines, also when `usage` (no --variant, or an unknown
+    /// one: the outputs then list what can be chosen); `config->variant` is the chosen one.
+    std::vector<std::string> variants{};
     std::vector<ParticipantResult> participants{}; ///< in the order of config->participants
     std::vector<Finding> findings{};               ///< in the order of sort_findings()
     /// --scenario: the scenario file; its findings are in `findings`, with Finding::file set.
@@ -220,8 +227,11 @@ struct CheckOptions
     std::chrono::milliseconds describe_timeout{10000};
     /// CheckReport::strict.
     bool strict = false;
-    /// --disable and --enable.
+    /// --variant, --disable, --enable and --manual.
     EnabledOverrides overrides{};
+    /// --param <name>=<value>, each once (ParamSource::CommandLine): over the scenario's and the
+    /// configuration's parameters. Only with `scenario`.
+    std::vector<ParamValue> params{};
     /// --scenario: a scenario file to check against the configuration (`scenario_shown`: as the
     /// user named it); empty: none.
     std::filesystem::path scenario{};

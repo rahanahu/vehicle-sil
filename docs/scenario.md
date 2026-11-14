@@ -94,6 +94,8 @@ YAML です（`{` で始まれば JSON）。構成ファイルとは別のファ
 |---|---|---|
 | `vehicle_sil_scenario` | はい | 形式の版。`1` |
 | `name` | いいえ | シナリオの名前（出力に出る） |
+| `only` | いいえ | このシナリオを回す機種の名前の並び（`only: [small, medium]`）。書かなければ、どの機種でも回す（[機種とパラメーター](#機種とパラメーター)） |
+| `params` | いいえ | パラメーターの既定の値（名前 → 値）。手順の値の位置に `${名前}` と書いて使う（[機種とパラメーター](#機種とパラメーター)） |
 | `steps` | はい | 手順の並び（1 つ以上）。上から順に進む |
 
 1 つの手順は、`set`、`ramp`、`wait_until`、`expect` のどれか 1 つと、時刻を持ちます。
@@ -147,6 +149,44 @@ ECU は、Agent の `sample_period`（既定 10 ms の仮想時間）ごとに�
 - 1 つの `set` に同じ participant の変数を複数書くと、同じステップでまとめて入ります。
 - `ramp` は、変数ごとに、T、T + ステップ、T + 2 ステップ、…（その ECU のステップ）に、`from` から `to` への直線の上の値を書き、T + `over_ms` に `to` を書きます。`from` を省くと、シナリオがその変数に最後に書いた値（それより新しいサンプルがあれば、その値）から始めます。どちらもなければ失敗です（`from` を書きます）。
 - 書き込みの結果は、適用する ECU のステップの次の controller のステップで確かめます。適用されなかった書き込み（ECU の setter が拒んだ、相手がつながっていない、など）は、その手順の失敗です。
+
+## 機種とパラメーター
+
+構成ファイルに機種（`variants`）があるとき、同じシナリオをどの機種にも当てられるように、次の 3 つがあります。機種の違いは構成の側に書き、シナリオには、機種の名前で分かれる手順を書きません（構成の側の書き方は [simulation-config.md](simulation-config.md) の「機種」と「シナリオのパラメーター」）。
+
+```yaml
+vehicle_sil_scenario: 1
+name: idle
+params: { idle_rpm: 800, settle_ms: 500 }      # 既定の値
+steps:
+  - set: { Engine.engine.throttle: 0 }
+  - after_ms: ${settle_ms}
+    expect: { Engine.engine.speed: { near: "${idle_rpm}", tolerance: 50 } }
+  - expect: { Engine.engine.turbo: { le: 0.1 } }    # turbo のない機種では飛ばす
+```
+
+### パラメーター（`params`、`${名前}`）
+
+- `${名前}` は、手順の中の値の位置（`set` の値、条件の値と `tolerance`、`ramp` の `to`・`from`・`over_ms`、`at_ms`、`after_ms`、`timeout_ms`、`within_ms`、`hold_for_ms`）に、値の全体として書きます。その位置に、パラメーターの値を書いたのと同じに読みます（型と範囲の照合も同じで、誤りの文には、どのパラメーターのどこから来た値かが出ます）。
+- キー、変数名、値の一部（`"${a} rpm"`）には書けません。式（`${a+1}`）もありません（誤り `scenario-param`）。計算した値が要るときは、その値を別のパラメーターにします。
+- `{ ... }` や `[ ... ]` の中では、引用符で囲みます（`{ near: "${idle_rpm}" }`。YAML が、引用符のない `${` をそこでは読めないためです）。JSON でも文字列で書きます。引用符で囲んでも、値はパラメーターに書いたとおりに読みます（数は数です）。
+- 値は、後のものが前のものを置き換えます: シナリオの `params`、構成ファイルの `params`、選んだ機種の `params`、引数の `--param <名前>=<値>`。シナリオの `params` に書いていない名前も、ほかから値が来れば使えます。
+- どこからも値が来ない `${名前}` は、照合の誤りです（実行の前。`scenario-param`）。シナリオが使っても宣言してもいない名前の `--param` も誤りです。
+- パラメーターに誤りがある間は、手順の中身の照合をしません（まずパラメーターを直します）。
+- `params` の値は 1 つの値（数、`true`・`false`、文字列）で、ほかのパラメーターは使えません。名前は英数字と `_`（数字で始めない）です。
+
+### ない変数を使う手順は飛ばす
+
+- 構成の対応表で `absent: true` とした変数（その実行ファイルにはない、と書いた変数）を使う手順は、実行で飛ばします。照合では、手順ごとに注記 `scenario-step-skipped` が出ます（誤りではありません）。
+- 飛ばすのは、その変数を使う手順だけです。1 つの手順に、ある変数とない変数の両方があれば、手順の全体を飛ばします（ある変数にも書きません）。飛ばした `set` に頼る後ろの手順は、飛ばさずに回ります。機種によって成り立たない手順は、ない変数を使う形にするか、シナリオを分けて `only` を書きます。
+- 飛ばした手順は時間を使いません。手順の時刻（`at_ms`、または前の手順の終わりから `after_ms`）で終わったことにし、次の手順の `after_ms` はそこから数えます（`ramp` の `over_ms`、`hold_for_ms`、待つ時間は数えません）。ファイルの読み方は機種で変わりません: 待つ手順（`wait_until`、`within_ms`）を飛ばしても、その後ろに `at_ms` は書けません。
+- 結果では、手順の `status` が `skipped`（人向けは `skipped`）で、理由が付きます。シナリオの結果は、ほかの手順が全部通れば `passed` のままで、飛ばした数が出ます（人向けは `passed, 3 of 4 steps passed, 1 skipped`、JSON は `skipped_steps`）。全部の手順を飛ばしたシナリオも `passed` です（何も確かめていないことは、飛ばした数でわかります）。
+- 対応も `absent` も書いていない変数が実行ファイルになければ、今までどおり照合の誤り（`scenario-variable`）です。黙って飛ばしません。
+
+### 機種を限る（`only`）
+
+- `only: [small, medium]` と書いたシナリオは、その機種のためのものです。ほかの機種（`--variant large`）で `check --scenario` か `run --scenario` に渡すと、誤り `scenario-variant` で、何も起動しません。そのとき、手順の中身は照合しません（その機種には合わないかもしれないため）。
+- `only` の名前は、構成ファイルの `variants` にある名前だけです。機種のない構成に `only` のあるシナリオを渡すと誤りです。
 
 ## 結果
 
@@ -268,12 +308,15 @@ failed: 5 errors, 0 warnings, 0 notes
 | `scenario-variable` | 変数が `<participant>.<変数名>` でない、participant か変数がない、participant を使えない（外している、`describe: false`、実時間で動く、変数を出していない） |
 | `scenario-not-writable` | 出力に書いている。Parameter を時刻 0 の `set` 以外で書いている |
 | `scenario-value` | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている |
+| `scenario-param` | `${名前}` に値がない。`${...}` がキーや変数名、値の一部にある。シナリオにない名前の `--param` |
+| `scenario-variant` | シナリオの `only` に、選んだ機種がない。`only` の名前が構成の機種にない |
+| `scenario-step-skipped`（注記） | 手順が `absent: true` の変数を使うので、実行で飛ばす |
 | `scenario-time` | `at_ms` が前の手順の終わりより前。待つ手順より後ろに `at_ms` がある。手順の時間を足すと、時刻の上限（1000000000000 ms）を超える |
 
 ## 出力
 
-- 人向け: 照合の部分に `scenario <ファイル> (<name>): <n> steps`、実行の部分に、合否の 1 行と手順の表（行、手順、結果、決めた仮想時刻）。実行中は、手順が決まるたびに 1 行（標準エラー）。
-- `check --json` と `run --json` の `check`: `scenario` に `file`、`name`、`steps`（手順の数）。`--scenario` を付けたときだけあります。
+- 人向け: 照合の部分に `scenario <ファイル> (<name>): <n> steps`（飛ばす手順があれば ` (<n> skipped)`）と、パラメーターがあれば `parameters: <名前> = <値> (<どこから>), ...` の行。実行の部分に、合否の 1 行と手順の表（行、手順、結果、決めた仮想時刻）、飛ばした手順ごとに `line <行> skipped: <理由>`。実行中は、手順が決まるたびに 1 行（標準エラー）。
+- `check --json` と `run --json` の `check`: `scenario` に `file`、`name`、`steps`（手順の数）。`--scenario` を付けたときだけあります。シナリオにあるときだけ、次のキーが続きます: `only`（機種の名前の配列）、`params`（シナリオが宣言したか使ったパラメーターごとに `name`、`value`（効いている値。`true`・`false`、数、文字列）、`from`（`scenario`、`configuration`、`variant`、`command_line`））、`skipped_steps`（飛ばす手順の数）。
 - `run --json`: 最上位に `scenario`（`--scenario` を付けたときだけ）。
 
 | キー | 意味 |
@@ -281,7 +324,8 @@ failed: 5 errors, 0 warnings, 0 notes
 | `file`、`name` | シナリオのファイル（引数のとおり）と名前（なければ null） |
 | `status` | `passed`、`failed`、`incomplete`（ほかの理由で途中で終わった）、`not_run`（シミュレーションが始まらなかった） |
 | `over_at_ms` | シナリオが終わった controller のステップ（`passed` と `failed`。ほかは null） |
-| `steps[]` | 手順ごとに `index`（1 から）、`line`、`kind`（`set`、`ramp`、`expect`、`wait_until`）、`text`、`status`（`passed`、`failed`、`unfinished`、`not_run`）、`start_ms`（手順の時刻）、`at_ms`（決めた時刻）、`end_ms`（終わる時刻）、`code` と `message`（失敗のとき） |
+| `skipped_steps` | 飛ばした手順の数。1 つ以上あるときだけ、このキーがあります |
+| `steps[]` | 手順ごとに `index`（1 から）、`line`、`kind`（`set`、`ramp`、`expect`、`wait_until`）、`text`、`status`（`passed`、`failed`、`unfinished`、`not_run`、`skipped`）、`start_ms`（手順の時刻）、`at_ms`（決めた時刻）、`end_ms`（終わる時刻）、`code` と `message`（失敗のときと、飛ばしたとき。飛ばした手順の `code` は `scenario-skipped`、`message` は理由） |
 
 上の「結果」の失敗する例（`throttle_response.yaml`）を `run --json` で回したときの `scenario` です（ほかのキーは [simulation-run.md](simulation-run.md) の「JSON（`run --json`）」）。
 
@@ -335,7 +379,7 @@ failed: 5 errors, 0 warnings, 0 notes
 
 - 時刻はミリ秒の数です（ECU のステップが 1 ms より細かいと、小数になることがあります）。わからない時刻は null です。
 - シナリオが終わってランチャーが止めた実行の `simulation` は `ended` です。
-- `run --events`: 手順が始まったとき（`status` は `running`）と決まったときに、事象 `scenario_step`（`steps[]` と同じキー）。結果の事象にも `scenario` があります。
+- `run --events`: 手順が始まったとき（`status` は `running`）と決まったときに、事象 `scenario_step`（`steps[]` と同じキー）。結果の事象にも `scenario` があります。飛ばす手順の `scenario_step`（`status` は `skipped`）は 1 回で、その手順の時刻が決まったときに出ます（実行の前からわかっているので、仮想時間がそこへ進むより前に出ることがあります）。
 - `vehicle_sil_launch version --json` の `features` に `scenario` があれば、この機能を使えます。
 
 ## 実行中に変数を見る（`--control`）

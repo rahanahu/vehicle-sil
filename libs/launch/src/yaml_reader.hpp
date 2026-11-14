@@ -105,33 +105,91 @@ protected:
         return tree_.is_val_quoted(node) ? "the text \"" + text + "\"" : "'" + text + "'";
     }
 
-    /// An unquoted decimal integer (with an optional '-').
-    bool plain_integer(ryml::id_type node, std::int64_t& value) const
+    /// `text` as a decimal integer (with an optional '-').
+    static bool read_integer(const std::string& text, std::int64_t& value)
     {
-        if (!is_scalar(node) || tree_.is_val_quoted(node) || is_null(node))
-        {
-            return false;
-        }
-        const std::string text = detail::to_string(tree_.val(node));
         const char* end = text.data() + text.size();
         const auto [ptr, ec] = std::from_chars(text.data(), end, value);
         return !text.empty() && ec == std::errc{} && ptr == end;
     }
 
-    /// An unquoted finite decimal number ("1", "-2.5", "1e3").
-    bool plain_number(ryml::id_type node, double& value) const
+    /// `text` as a finite decimal number ("1", "-2.5", "1e3").
+    static bool read_number(const std::string& text, double& value)
     {
-        if (!is_scalar(node) || tree_.is_val_quoted(node) || is_null(node))
-        {
-            return false;
-        }
-        const std::string text = detail::to_string(tree_.val(node));
         const bool plain = !text.empty() && std::all_of(text.begin(), text.end(), [](char c) {
             return std::isdigit(static_cast<unsigned char>(c)) != 0 || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+';
         }) && (std::isdigit(static_cast<unsigned char>(text.front())) != 0 || text.front() == '-');
         const char* end = text.data() + text.size();
         const auto [ptr, ec] = std::from_chars(text.data(), end, value);
         return plain && ec == std::errc{} && ptr == end && std::isfinite(value);
+    }
+
+    /// An unquoted decimal integer (with an optional '-').
+    bool plain_integer(ryml::id_type node, std::int64_t& value) const
+    {
+        return is_scalar(node) && !tree_.is_val_quoted(node) && !is_null(node) &&
+               read_integer(detail::to_string(tree_.val(node)), value);
+    }
+
+    /// An unquoted finite decimal number ("1", "-2.5", "1e3").
+    bool plain_number(ryml::id_type node, double& value) const
+    {
+        return is_scalar(node) && !tree_.is_val_quoted(node) && !is_null(node) &&
+               read_number(detail::to_string(tree_.val(node)), value);
+    }
+
+    // --- parameters ---
+
+    /// A "params" mapping (of the configuration, of a variant, of a scenario): each name with its
+    /// value as written. An entry with an error is left out (and reported).
+    std::vector<ParamValue> read_params(ryml::id_type node, const std::string& prefix, ParamSource source)
+    {
+        std::vector<ParamValue> out;
+        if (!tree_.is_map(node))
+        {
+            error("value", doc_.line(node),
+                  prefix + "params must be a mapping of parameter names to values (params: { idle_rpm: 800 }), not " +
+                      shown_value(node));
+            return out;
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            ParamValue param;
+            param.name = detail::to_string(tree_.key(child));
+            param.source = source;
+            param.line = doc_.line(child);
+            if (!first_occurrence(seen, param.name, child, prefix + "params: "))
+            {
+                continue;
+            }
+            if (!is_param_name(param.name))
+            {
+                error("value", param.line,
+                      prefix + "params: '" + param.name +
+                          "' cannot be a parameter's name: use letters, digits and _ (not a digit first), as a scenario "
+                          "writes it in ${...}");
+                continue;
+            }
+            if (!is_scalar(child) || is_null(child))
+            {
+                error("value", param.line,
+                      prefix + "params: " + param.name + " must be one value (a number, true or false, or a text), not " +
+                          shown_value(child));
+                continue;
+            }
+            param.text = detail::to_string(tree_.val(child));
+            param.quoted = tree_.is_val_quoted(child);
+            if (param.text.find("${") != std::string::npos)
+            {
+                error("value", param.line,
+                      prefix + "params: " + param.name + " is " + shown_value(child) +
+                          ", but a parameter's value cannot use another parameter (${...}): write the value out");
+                continue;
+            }
+            out.push_back(std::move(param));
+        }
+        return out;
     }
 
     const YamlDocument& doc_;

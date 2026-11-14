@@ -115,6 +115,11 @@ struct ScenarioStep
     std::optional<std::int64_t> hold_for_ms{};
     /// What it does, in one line: "set Engine.engine.throttle = 50".
     std::string text;
+    /// Why the run skips it, or "" if it runs: it uses a variable that its participant does not
+    /// have in this configuration (absent: true in its variable map). A skipped step writes and
+    /// compares nothing (`writes`, `ramps` and `conditions` are empty) and takes no time: it ends
+    /// at its own time.
+    std::string skipped{};
 
     /// Its end is not known before it runs (WaitUntil, Expect with within_ms).
     [[nodiscard]] bool waits() const noexcept { return within_ms.has_value(); }
@@ -138,6 +143,9 @@ struct CatalogParticipant
     std::string unusable{};
     SimDuration step{};
     std::vector<control::VariableInfo> variables{};
+    /// The names its variable map says it does not have (absent: true): a step that uses one is
+    /// skipped.
+    std::vector<std::string> absent{};
     /// Its variable map applied to what it describes (`variables` is its schema()), or null if
     /// its entry has none. The range of a written value is the map's to say
     /// (control::MappedSchema::in_range()): the run's hub decides with the same code.
@@ -148,6 +156,20 @@ using ScenarioCatalog = std::vector<CatalogParticipant>;
 /// The catalog of a checked configuration (CheckReport::config must be set).
 [[nodiscard]] ScenarioCatalog scenario_catalog(const CheckReport& check);
 
+/// What a scenario is read for, besides the participants: the variant and the parameters.
+struct ScenarioContext
+{
+    /// The variant of the configuration that was chosen, or "".
+    std::string variant{};
+    /// The variants the configuration defines (what a scenario's "only" may name).
+    std::vector<std::string> variants{};
+    /// The parameters from outside the scenario, a later one over an earlier one of its name: the
+    /// configuration's (with the variant's), then the command line's. They replace the scenario's
+    /// defaults. One of ParamSource::CommandLine that the scenario neither declares nor uses is an
+    /// error (a typing error would otherwise change nothing, silently).
+    std::vector<ParamValue> params{};
+};
+
 struct ScenarioRead
 {
     /// Set if the text has no error.
@@ -155,15 +177,31 @@ struct ScenarioRead
     /// Its "name" and the number of its steps, as far as the text could be read.
     std::string name{};
     std::size_t steps = 0;
-    /// Every error of the text, in the order of the file (Finding::file is not set).
+    /// The parameters the scenario declares ("params") or uses ("${name}"), each with the value in
+    /// effect and where it comes from; in the order of "params", then of first use.
+    std::vector<ParamValue> params{};
+    /// Its "only" (the variants it is for), if written and readable.
+    std::optional<std::vector<std::string>> only{};
+    /// The scenario is not for the chosen variant (`only` does not list it): an error
+    /// ("scenario-variant"), and its steps were not checked. A caller that runs many scenarios
+    /// skips it instead.
+    bool not_for_variant = false;
+    /// How many steps the run will skip (ScenarioStep::skipped), each with a note in `findings`.
+    std::size_t skipped = 0;
+    /// Every error of the text, and a note for each step that is skipped, in the order of the file
+    /// (Finding::file is not set).
     std::vector<Finding> findings;
 };
 
 /// Reads a scenario (YAML, or JSON if it starts with '{') and checks all of it: the form, unknown
-/// keys, the times and their order, and against `catalog` every variable (it exists, its
-/// participant is usable, the value fits its type, range and enum items, a written variable is an
-/// input, or a parameter in a step at 0). Reports every problem at once. No file system access.
-[[nodiscard]] ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog);
+/// keys, its parameters ("${name}" as a whole value; each needs a value from the scenario's
+/// "params" or from `context`), the times and their order, and against `catalog` every variable
+/// (it exists, its participant is usable, the value fits its type, range and enum items, a written
+/// variable is an input, or a parameter in a step at 0). Reports every problem at once, except
+/// that the steps are not read while a parameter has an error or the scenario is not for the
+/// variant. No file system access.
+[[nodiscard]] ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog,
+                                         const ScenarioContext& context = {});
 
 /// A value as the messages show it: true, 42, 1.5, or an enum's item ("on (1)").
 [[nodiscard]] std::string value_text(const control::Value& value, const ScenarioVariable* variable = nullptr);

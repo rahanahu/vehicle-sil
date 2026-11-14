@@ -75,8 +75,16 @@ const char* step_status_name(StepStatus status)
     case StepStatus::Passed: return "passed";
     case StepStatus::Failed: return "failed";
     case StepStatus::Unfinished: return "unfinished";
+    case StepStatus::Skipped: return "skipped";
     }
     return "not_run";
+}
+
+std::size_t ScenarioRun::skipped() const
+{
+    return static_cast<std::size_t>(std::count_if(steps.begin(), steps.end(), [](const ScenarioStepRun& step) {
+        return step.status == StepStatus::Skipped;
+    }));
 }
 
 const char* scenario_status_name(ScenarioStatus status)
@@ -102,6 +110,12 @@ ScenarioRun scenario_not_run(const Scenario& scenario)
         step.line = scenario.steps[i].line;
         step.kind = scenario.steps[i].kind;
         step.text = scenario.steps[i].text;
+        if (!scenario.steps[i].skipped.empty())
+        {
+            step.status = StepStatus::Skipped;
+            step.code = "scenario-skipped";
+            step.message = scenario.steps[i].skipped;
+        }
         run.steps.push_back(std::move(step));
     }
     return run;
@@ -236,7 +250,7 @@ void ScenarioEngine::stopped_at(SimTime p)
     }
     for (std::size_t i = 0; i < run_.steps.size(); ++i)
     {
-        if (run_.steps[i].status != StepStatus::Passed)
+        if (run_.steps[i].status != StepStatus::Passed && run_.steps[i].status != StepStatus::Skipped)
         {
             const ScenarioStepRun& step = run_.steps[i];
             fail(i, p, "scenario-out-of-time",
@@ -325,6 +339,23 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
 {
     const ScenarioStep& step = scenario_.steps[index];
     run_.steps[index].start = time;
+    if (!step.skipped.empty())
+    {
+        // Nothing to do, and no time taken: the next step counts from this one's time.
+        run_.steps[index].at = time;
+        run_.steps[index].end = time;
+        base_ = time;
+        ++done_;
+        if (on_step_)
+        {
+            on_step_(run_.steps[index]);
+        }
+        if (done_ == run_.steps.size())
+        {
+            finish(ScenarioStatus::Passed);
+        }
+        return;
+    }
     if (unusable(index, time))
     {
         return;
@@ -417,12 +448,12 @@ void ScenarioEngine::pass(std::size_t index, SimTime at, SimTime end)
     step.status = StepStatus::Passed;
     step.at = at;
     step.end = end;
-    ++passed_;
+    ++done_;
     if (on_step_)
     {
         on_step_(step);
     }
-    if (passed_ == run_.steps.size())
+    if (done_ == run_.steps.size())
     {
         finish(ScenarioStatus::Passed);
     }

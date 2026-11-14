@@ -488,7 +488,7 @@ TEST_CASE(scenario_file_errors_say_the_line_what_is_wrong_and_how_to_fix_it)
                "E 1 format-version: vehicle_sil_scenario is 2, but this vehicle_sil_launch reads format 1 only: use the "
                "vehicle-sil that the file was written for\n");
     check_text(errors("steps:\n  - set: { Body.level: 1 }\nstep: 1\n"),
-               "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, steps)\n"
+               "E 3 unknown-key: unknown key 'step': did you mean 'steps'? (the keys here: vehicle_sil_scenario, name, only, params, steps)\n"
                "E 0 missing-key: the file has no vehicle_sil_scenario (the format version): add vehicle_sil_scenario: 1\n");
     check_text(errors(kHead + "  - sets: { Body.level: 1 }\n"),
                "E 3 unknown-key: unknown key 'sets': did you mean 'set'? (the keys here: at_ms, after_ms, set, ramp, wait_until, "
@@ -871,4 +871,257 @@ TEST_CASE(scenario_ramp_writes_a_line_in_the_steps_of_its_ecu)
                "failed over=0\n"
                "3 failed start=0 at=0 end=20 scenario-write: the ramp of Body.level has no value to start from: no sample of its "
                "ECU has arrived before 0 ms and the scenario has not written it; give the ramp from: <value>\n");
+}
+
+namespace {
+
+ParamValue param(std::string name, std::string text, ParamSource source, bool quoted = false)
+{
+    ParamValue out;
+    out.name = std::move(name);
+    out.text = std::move(text);
+    out.source = source;
+    out.quoted = quoted;
+    return out;
+}
+
+/// "name=text from", one per line.
+std::string params_text(const std::vector<ParamValue>& params)
+{
+    std::string out;
+    for (const auto& p : params)
+    {
+        out += p.name + "=" + (p.quoted ? "\"" + p.text + "\"" : p.text) + " " + param_source_name(p.source) + "\n";
+    }
+    return out;
+}
+
+/// The catalog with Body.boost and Door.boost said to be absent.
+ScenarioCatalog catalog_without_boost()
+{
+    ScenarioCatalog c = catalog();
+    c[0].absent = {"boost"};
+    c[1].absent = {"boost"};
+    return c;
+}
+
+} // namespace
+
+TEST_CASE(scenario_parameters_stand_for_values_and_the_later_source_wins)
+{
+    const std::string text = "vehicle_sil_scenario: 1\n"
+                             "params: { level: 5, mode: auto, wait: 100, unused: 1 }\n"
+                             "steps:\n"
+                             "  - set: { Body.level: \"${level}\", Door.mode: \"${mode}\", Door.lamp: \"${lamp}\" }\n"
+                             "  - at_ms: ${wait}\n"
+                             "    ramp:\n"
+                             "      Body.ratio: { to: \"${ratio}\", over_ms: \"${wait}\" }\n"
+                             "  - expect:\n"
+                             "      Body.body.speed: { near: \"${level}\", tolerance: \"${ratio}\" }\n"
+                             "    within_ms: ${wait}\n";
+    ScenarioContext context;
+    context.params = {param("level", "7", ParamSource::Configuration), param("lamp", "true", ParamSource::Configuration),
+                      param("ratio", "0.25", ParamSource::Configuration), param("elsewhere", "1", ParamSource::Configuration),
+                      param("level", "9", ParamSource::Variant), param("wait", "40", ParamSource::CommandLine)};
+    const ScenarioRead r = read_scenario(text, catalog(), context);
+    check_text(lines(r.findings), "");
+    CHECK(r.scenario.has_value());
+    std::string texts;
+    for (const auto& step : r.scenario->steps)
+    {
+        texts += std::to_string(step.line) + ": " + step.text + "\n";
+    }
+    check_text(texts, "4: set Body.level = 9; Door.mode = auto (2); Door.lamp = true\n"
+                      "5: ramp Body.ratio to 0.25 over 40 ms\n"
+                      "8: expect Body.body.speed near 9 (tolerance 0.25) (within 40 ms)\n");
+    CHECK_EQ(*r.scenario->steps[1].at_ms, std::int64_t{40});
+    // What the scenario declares, then what it uses besides; not what only the configuration has.
+    check_text(params_text(r.params), "level=9 variant\n"
+                                      "mode=auto scenario\n"
+                                      "wait=40 command_line\n"
+                                      "unused=1 scenario\n"
+                                      "lamp=true configuration\n"
+                                      "ratio=0.25 configuration\n");
+    // Without the context the defaults count, and what has none is an error once.
+    const ScenarioRead alone = read_scenario(text, catalog());
+    CHECK(!alone.scenario.has_value());
+    check_text(lines(alone.findings),
+               "E 4 scenario-param: ${lamp} has no value: give it a default in the scenario (params: { lamp: <value> }), or a "
+               "value in the configuration's params, in a variant's params or with --param lamp=<value>\n"
+               "E 7 scenario-param: ${ratio} has no value: give it a default in the scenario (params: { ratio: <value> }), or a "
+               "value in the configuration's params, in a variant's params or with --param ratio=<value>\n");
+    CHECK_EQ(alone.steps, std::size_t{3});
+}
+
+TEST_CASE(scenario_parameter_errors_say_what_to_write)
+{
+    const auto errors = [](const std::string& text, const ScenarioContext& context = {}) {
+        return lines(read_scenario(text, catalog(), context).findings);
+    };
+    // Only a whole value; not a key, not a part, no expression.
+    check_text(errors("vehicle_sil_scenario: 1\n"
+                      "params: { n: 5, 2nd: 1, list: [1], other: \"${n}\" }\n"
+                      "steps:\n"
+                      "  - set: { \"Body.${n}\": 1 }\n"
+                      "  - set: { Body.level: \"${n} \" }\n"
+                      "  - set: { Body.level: \"${n+1}\" }\n"
+                      "  - at_ms: \"${m}\"\n"
+                      "    set: { Body.level: \"${m}\" }\n"),
+               "E 2 value: params: '2nd' cannot be a parameter's name: use letters, digits and _ (not a digit first), as a "
+               "scenario writes it in ${...}\n"
+               "E 2 value: params: list must be one value (a number, true or false, or a text), not a list\n"
+               "E 2 value: params: other is the text \"${n}\", but a parameter's value cannot use another parameter (${...}): "
+               "write the value out\n"
+               "E 4 scenario-param: 'Body.${n}': a parameter (${...}) stands for a value, not for a key or for a variable's "
+               "name: write the name out\n"
+               "E 5 scenario-param: '${n} ': a parameter is written ${name} (letters, digits and _) and is the whole value: it "
+               "cannot be a part of a text, and there are no expressions; work the value out and give it as a parameter of "
+               "its own\n"
+               "E 6 scenario-param: '${n+1}': a parameter is written ${name} (letters, digits and _) and is the whole value: "
+               "it cannot be a part of a text, and there are no expressions; work the value out and give it as a parameter "
+               "of its own\n"
+               "E 7 scenario-param: ${m} has no value (did you mean ${n}?): give it a default in the scenario (params: { m: "
+               "<value> }), or a value in the configuration's params, in a variant's params or with --param m=<value>\n");
+    // A value that does not fit says where it comes from.
+    ScenarioContext context;
+    context.params = {param("n", "high", ParamSource::CommandLine), param("t", "10", ParamSource::Variant, true)};
+    check_text(errors("vehicle_sil_scenario: 1\n"
+                      "params: { n: 5 }\n"
+                      "steps:\n"
+                      "  - set: { Body.level: \"${n}\" }\n"
+                      "  - after_ms: \"${t}\"\n"
+                      "    set: { Body.level: 1 }\n",
+                      context),
+               "E 4 scenario-value: the value of Body.level (integer) must be a whole number, not 'high' (the parameter n, from "
+               "--param)\n"
+               "E 5 value: after_ms must be a whole number (milliseconds of virtual time from the end of the step before it), "
+               "not the text \"10\" (the parameter t, from the variant's params): write the number without quotes\n");
+    // A --param that the scenario does not have changes nothing: an error, not silence.
+    context.params = {param("leve", "1", ParamSource::CommandLine), param("elsewhere", "1", ParamSource::Configuration)};
+    check_text(errors("vehicle_sil_scenario: 1\n"
+                      "params: { level: 5 }\n"
+                      "steps:\n"
+                      "  - set: { Body.level: \"${level}\" }\n",
+                      context),
+               "E 0 scenario-param: --param leve=1: the scenario has no parameter leve (did you mean level?): its parameters "
+               "are level; remove the option or correct the name\n");
+    check_text(errors(kHead + "  - set: { Body.level: 1 }\n", context),
+               "E 0 scenario-param: --param leve=1: the scenario has no parameter leve: it uses none (a step uses one as "
+               "${name}); remove the option or correct the name\n");
+}
+
+TEST_CASE(scenario_only_names_the_variants_it_is_for)
+{
+    const std::string text = "vehicle_sil_scenario: 1\n"
+                             "only: [small, medium]\n"
+                             "steps:\n"
+                             "  - set: { Body.nothing: 1 }\n";
+    ScenarioContext context;
+    context.variants = {"small", "medium", "large"};
+    context.variant = "large";
+    // Not for this variant: said, and the steps are not checked (they may not fit it).
+    const ScenarioRead other = read_scenario(text, catalog(), context);
+    CHECK(other.not_for_variant && !other.scenario.has_value());
+    CHECK(other.only == std::vector<std::string>({"small", "medium"}));
+    CHECK_EQ(other.steps, std::size_t{1});
+    check_text(lines(other.findings),
+               "E 2 scenario-variant: the scenario is only for the variants small, medium (its only), not for large: run it "
+               "with --variant small or --variant medium, or add large to only\n");
+    // For this variant: read as any other.
+    context.variant = "medium";
+    const ScenarioRead mine = read_scenario(text, catalog(), context);
+    CHECK(!mine.not_for_variant);
+    CHECK(lines(mine.findings).find("E 4 scenario-variable: 'Body.nothing'") == 0);
+    // The names must be variants of the configuration.
+    context.variants = {"small", "large"};
+    context.variant = "small";
+    check_text(lines(read_scenario("vehicle_sil_scenario: 1\nonly: [small, medum, larg]\nsteps:\n  - set: { Body.level: 1 }\n", catalog(), context).findings),
+               "E 2 scenario-variant: only names the variant 'medum', which the configuration does not define; its variants are "
+               "small, large\n"
+               "E 2 scenario-variant: only names the variant 'larg', which the configuration does not define (did you mean "
+               "'large'?); its variants are small, large\n");
+    check_text(lines(read_scenario("vehicle_sil_scenario: 1\nonly: [small]\nsteps:\n  - set: { Body.level: 1 }\n", catalog()).findings),
+               "E 2 scenario-variant: only names small, but the configuration defines no variants: remove only, or add variants "
+               "to the configuration (docs/simulation-config.md)\n");
+    check_text(lines(read_scenario("vehicle_sil_scenario: 1\nonly: small\nsteps:\n  - set: { Body.level: 1 }\n", catalog(), context).findings),
+               "E 2 value: only must be a list of the variants the scenario is for (only: [small, medium]), not 'small'; remove "
+               "it for a scenario for every variant\n");
+}
+
+TEST_CASE(scenario_steps_that_use_an_absent_variable_are_skipped_and_the_others_run)
+{
+    ScenarioContext context;
+    context.variant = "small";
+    const ScenarioRead r = read_scenario(kHead + "  - set: { Body.level: 5 }\n"
+                                                 "  - after_ms: 30\n"
+                                                 "    set: { Body.boost: 2, Door.level: 7 }\n"
+                                                 "  - after_ms: 20\n"
+                                                 "    wait_until: { Body.boost: { ge: 1 }, Door.boost: 1 }\n"
+                                                 "    timeout_ms: 500\n"
+                                                 "  - after_ms: 10\n"
+                                                 "    ramp: { Body.boost: { to: 3, over_ms: 100 } }\n"
+                                                 "  - after_ms: 10\n"
+                                                 "    expect: { Body.level: 5, Door.level: 0 }\n",
+                                         catalog_without_boost(), context);
+    check_text(lines(r.findings),
+               "N 4 scenario-step-skipped: the step is skipped (set Body.boost; Door.level = 7): Body.boost is absent: participant "
+               "'Body' does not have it in the variant small (absent: true in its variables); the other steps run, also "
+               "those that would need what this one does\n"
+               "N 6 scenario-step-skipped: the step is skipped (wait_until Body.boost; Door.boost (timeout 500 ms)): Body.boost, "
+               "Door.boost are absent: the participants 'Body', 'Door' do not have them in the variant small (absent: true in "
+               "their variables); the other steps run, also those that would need what this one does\n"
+               "N 9 scenario-step-skipped: the step is skipped (ramp Body.boost): Body.boost is absent: participant 'Body' does "
+               "not have it in the variant small (absent: true in its variables); the other steps run, also those that would "
+               "need what this one does\n");
+    CHECK(r.scenario.has_value());
+    CHECK_EQ(r.skipped, std::size_t{3});
+    // A skipped step takes no time and writes nothing (Door.level stays 0): the later steps
+    // count from its time.
+    World world;
+    std::vector<std::string> events;
+    const ScenarioRun run = world.run(*r.scenario);
+    check_text(text_of(run),
+               "passed over=80\n"
+               "3 passed start=0 at=0 end=0\n"
+               "4 skipped start=30 at=30 end=30 scenario-skipped: Body.boost is absent: participant 'Body' does not have it in "
+               "the variant small (absent: true in its variables)\n"
+               "6 skipped start=50 at=50 end=50 scenario-skipped: Body.boost, Door.boost are absent: the participants 'Body', "
+               "'Door' do not have them in the variant small (absent: true in their variables)\n"
+               "9 skipped start=60 at=60 end=60 scenario-skipped: Body.boost is absent: participant 'Body' does not have it in "
+               "the variant small (absent: true in its variables)\n"
+               "11 passed start=70 at=70 end=70\n");
+    CHECK_EQ(run.skipped(), std::size_t{3});
+    check_text(joined(world.log), "Body.level=5 for 0 applied at 0\n");
+    // A variable that is not said to be absent is an error as before.
+    CHECK(lines(read_scenario(kHead + "  - set: { Body.boost: 2 }\n", catalog()).findings).find("E 3 scenario-variable: 'Body.boost': participant 'Body' has no variable 'boost'") == 0);
+    // Only skipped steps: the scenario passes, and says that it looked at nothing.
+    const ScenarioRead none = read_scenario(kHead + "  - set: { Body.boost: 2 }\n", catalog_without_boost());
+    CHECK(none.scenario.has_value());
+    World empty;
+    const ScenarioRun nothing = empty.run(*none.scenario);
+    check_text(text_of(nothing), "passed over=0\n"
+                                 "3 skipped start=0 at=0 end=0 scenario-skipped: Body.boost is absent: participant 'Body' does not "
+                                 "have it in this configuration (absent: true in its variables)\n");
+    // A failure before a skipped step leaves it skipped; the simulation's end does not fail it.
+    World stopped;
+    stopped.stop_at = at(40ms);
+    const ScenarioRead late = read_scenario(kHead + "  - set: { Body.level: 5 }\n"
+                                                    "  - at_ms: 100\n"
+                                                    "    set: { Body.boost: 2 }\n"
+                                                    "  - at_ms: 200\n"
+                                                    "    expect: { Body.level: 5 }\n",
+                                            catalog_without_boost());
+    CHECK(late.scenario.has_value());
+    const ScenarioRun cut = stopped.run(*late.scenario);
+    CHECK(cut.status == ScenarioStatus::Failed);
+    CHECK(cut.steps[1].status == StepStatus::Skipped && cut.steps[2].status == StepStatus::Failed);
+}
+
+TEST_CASE(scenario_parameter_without_quotes_in_braces_gets_a_hint)
+{
+    // YAML does not take "${" in { ... } without quotes: the syntax error says what to write.
+    const ScenarioRead r = read_scenario(kHead + "  - set: { Body.level: ${n} }\n", catalog());
+    CHECK_EQ(r.findings.size(), std::size_t{1});
+    CHECK(r.findings[0].code == "syntax" && r.findings[0].line == 3);
+    CHECK(r.findings[0].message.find(": inside { ... } or [ ... ], write a parameter in quotes (\"${name}\")") != std::string::npos);
 }

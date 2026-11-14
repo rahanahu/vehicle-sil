@@ -157,7 +157,9 @@ std::string format_run_text(const RunReport& report)
     {
         out += "nothing was started: the check found " +
                std::string(report.check.errors() > 0 ? "errors" : "warnings, and --strict fails on them") +
-               " (vehicle_sil_launch check " + report.check.file + " shows the same)\n\nfailed: " + counts + "\n";
+               " (vehicle_sil_launch check " +
+               (report.check.config && !report.check.config->variant.empty() ? "--variant " + report.check.config->variant + " " : std::string{}) +
+               report.check.file + " shows the same)\n\nfailed: " + counts + "\n";
         return out;
     }
     const RunOutcome& run = *report.run;
@@ -237,6 +239,7 @@ const char* step_result_text(StepStatus status)
     case StepStatus::Passed: return "ok";
     case StepStatus::Failed: return "FAILED";
     case StepStatus::Unfinished: return "unfinished";
+    case StepStatus::Skipped: return "skipped";
     }
     return "not run";
 }
@@ -247,7 +250,7 @@ std::string detail::scenario_step_text(const ScenarioStepRun& step)
 {
     return "line " + std::to_string(step.line) + ": " + step.text + ": " + step_result_text(step.status) +
            (step.at ? " at " + sim_millis_text(*step.at) + " ms" : std::string{}) +
-           (step.status == StepStatus::Failed ? " (" + step.message + ")" : std::string{});
+           (step.status == StepStatus::Failed || step.status == StepStatus::Skipped ? " (" + step.message + ")" : std::string{});
 }
 
 std::string detail::scenario_text(const ScenarioRun& scenario)
@@ -263,7 +266,8 @@ std::string detail::scenario_text(const ScenarioRun& scenario)
     case ScenarioStatus::Incomplete: state = "incomplete"; break;
     }
     std::string out = "scenario " + scenario.file + (scenario.name.empty() ? "" : " (" + scenario.name + ")") + ": " + state +
-                      ", " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) + " steps passed\n\n";
+                      ", " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) + " steps passed" +
+                      (scenario.skipped() > 0 ? ", " + std::to_string(scenario.skipped()) + " skipped" : std::string{}) + "\n\n";
     std::vector<std::vector<std::string>> rows{{"line", "step", "result", "at"}};
     for (const ScenarioStepRun& step : scenario.steps)
     {
@@ -271,6 +275,14 @@ std::string detail::scenario_text(const ScenarioRun& scenario)
                         step.at ? sim_millis_text(*step.at) + " ms" : "-"});
     }
     out += detail::table_text(rows);
+    // Why, for the steps that were skipped: the table has no room for it.
+    for (const ScenarioStepRun& step : scenario.steps)
+    {
+        if (step.status == StepStatus::Skipped)
+        {
+            out += "line " + std::to_string(step.line) + " skipped: " + step.message + "\n";
+        }
+    }
     return out;
 }
 
@@ -434,7 +446,7 @@ void detail::write_scenario_step_members(vehicle_sil::detail::JsonWriter& w, con
     time("start_ms", step.start);
     time("at_ms", step.at);
     time("end_ms", step.end);
-    if (step.status == StepStatus::Failed)
+    if (step.status == StepStatus::Failed || step.status == StepStatus::Skipped)
     {
         w.string("code", step.code);
         w.string("message", step.message);
@@ -462,6 +474,11 @@ void detail::write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string
     w.real("over_at_ms", scenario.over_at ? std::optional<double>(static_cast<double>(to_ns(*scenario.over_at)) /
                                                                   static_cast<double>(kNanosPerMilli))
                                           : std::nullopt);
+    if (scenario.skipped() > 0)
+    {
+        // Only then: a result without skipped steps is as it was before them.
+        w.integer("skipped_steps", static_cast<std::int64_t>(scenario.skipped()));
+    }
     w.begin_array("steps");
     for (const ScenarioStepRun& step : scenario.steps)
     {

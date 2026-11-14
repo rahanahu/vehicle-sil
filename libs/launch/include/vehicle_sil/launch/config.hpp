@@ -120,6 +120,65 @@ struct ParticipantConfig
     bool valid = true;
 };
 
+/// Where a parameter's value comes from; a later one replaces an earlier one of the same name.
+enum class ParamSource
+{
+    Scenario,      ///< the scenario's "params" (its default)
+    Configuration, ///< the configuration's "params"
+    Variant,       ///< the chosen variant's "params"
+    CommandLine,   ///< --param <name>=<value>
+};
+/// "scenario", "configuration", "variant", "command_line" (the outputs' "from").
+[[nodiscard]] const char* param_source_name(ParamSource source);
+/// For a message: "the scenario's params", "the configuration's params", "the variant's params", "--param".
+[[nodiscard]] const char* param_source_text(ParamSource source);
+
+/// A parameter of the scenarios: a name ("idle_rpm": letters, digits and '_', not a digit first)
+/// and the value a scenario's "${idle_rpm}" stands for, as it was written.
+struct ParamValue
+{
+    std::string name;
+    std::string text;    ///< the value as written, without its quotes
+    bool quoted = false; ///< written in quotes: a text, also if it reads as a number
+    ParamSource source = ParamSource::Configuration;
+    std::size_t line = 0; ///< in its file (0: the command line)
+
+    friend bool operator==(const ParamValue&, const ParamValue&) = default;
+};
+
+/// true if `name` can be a parameter's name.
+[[nodiscard]] bool is_param_name(std::string_view name);
+
+/// What a variant changes of one participant of the common part. The keys a variant may write
+/// are these (kVariantParticipantKeys in config.cpp): a new one gets a member here, a line in that
+/// list, in the reader and in apply_variant().
+struct VariantParticipant
+{
+    std::string name;
+    std::size_t line = 0;
+    /// "command": the executable and its arguments instead of the common ones.
+    std::optional<std::vector<std::string>> command{};
+    std::size_t command_line = 0;
+    /// "variables": laid over the common variable map, mapping by mapping (by the name the
+    /// simulation uses).
+    control::VariableMap variables{};
+    std::vector<std::size_t> variable_lines{};
+    /// "enabled".
+    std::optional<bool> enabled{};
+    /// false if its command has an error (reported when reading): the participant cannot be
+    /// described or started in this variant.
+    bool valid = true;
+};
+
+/// One variant of the simulation ("variants"): the common part with these changes.
+struct VariantConfig
+{
+    std::string name;
+    std::size_t line = 0;
+    std::vector<VariantParticipant> participants{};
+    std::vector<ParamValue> params{}; ///< over the common "params", by name
+};
+
 struct SimulationConfig
 {
     /// When to stop, in milliseconds of virtual time; empty: when someone stops it.
@@ -143,6 +202,12 @@ struct SimulationConfig
     std::vector<NetworkConfig> networks{};
     std::vector<ParticipantConfig> participants{};
     std::size_t participants_line = 0; ///< the line of participants (0 if it is missing)
+    /// The variants the file defines ("variants"), in the file's order; empty: it has none.
+    std::vector<VariantConfig> variants{};
+    /// The variant that was applied to `participants` and `params` (--variant), or "".
+    std::string variant{};
+    /// The scenarios' parameters ("params"); with a variant, its params laid over them.
+    std::vector<ParamValue> params{};
 };
 
 /// The default step of the launcher's controller, in milliseconds: the step of a run as fast as
@@ -171,13 +236,17 @@ inline constexpr double kMaxSpeed = 1e6;
 /// A speed for people and the JSON's text: "max", or the number in its shortest form.
 [[nodiscard]] std::string speed_text(const std::optional<double>& speed);
 
-/// The command line's changes to the participants' "enabled" and "manual" keys: the names of the
-/// participants to leave out (--disable), to take in (--enable) and to start by hand (--manual).
+/// The command line's choices about the file: the variant (--variant), and the changes to the
+/// participants' "enabled" and "manual" keys: the names of the participants to leave out
+/// (--disable), to take in (--enable) and to start by hand (--manual). They come after the variant.
 struct EnabledOverrides
 {
     std::vector<std::string> disable{};
     std::vector<std::string> enable{};
     std::vector<std::string> manual{};
+    /// --variant: the variant to apply. A file that defines variants needs one (none is the
+    /// default); a file without variants takes none.
+    std::optional<std::string> variant{};
 };
 
 /// true if the start waits for a participant that someone starts by hand (enabled, required and
@@ -209,6 +278,9 @@ struct ConfigRead
     /// --enable (always); a name that the file does not have (only if the text has no error: an
     /// error in the text may be why the name is not there, so it is corrected first; meanwhile the
     /// overrides of the names the file has are applied). If there is one, no override is applied.
+    /// The variant's come first, and alone: no --variant for a file that defines variants
+    /// (always; the message lists them), a --variant the file does not have or for a file without
+    /// variants (only if the text has no error).
     std::vector<Finding> override_errors{};
 };
 
@@ -220,8 +292,10 @@ struct ConfigRead
 /// skipped) and checks what the text alone can tell: the format version, unknown and missing
 /// keys, the types and ranges of the values, duplicate and reserved names, launcher arguments
 /// and placeholders in the commands. Reports every problem at once. No file system access.
-/// `overrides` change the participants' "enabled" before the rules that depend on it (a required
-/// participant among the enabled ones).
+/// Every variant is read and checked, also the ones that are not chosen. `overrides` choose the
+/// variant, which is laid over the common part (ConfigRead::config is the simulation of that
+/// variant), and then change the participants' "enabled", before the rules that depend on it (a
+/// required participant among the enabled ones).
 [[nodiscard]] ConfigRead read_config(std::string_view text, const EnabledOverrides& overrides = {});
 
 /// Where a participant's executable is: command[0], relative to `base_dir` unless absolute
