@@ -153,6 +153,7 @@ namespace {
         context.params = report.config->params;
         context.params.insert(context.params.end(), options.params.begin(), options.params.end());
         context.params_for_many = options.params_for_many;
+        context.read_file = files_beside(path);
         ScenarioRead read = read_scenario(text, scenario_catalog(report), context);
         check.name = std::move(read.name);
         check.steps = read.steps;

@@ -1143,6 +1143,7 @@ TEST_CASE(version_names_the_formats_and_the_features)
     "manual-participants",
     "scenario-wave",
     "scenario-motion-expect",
+    "scenario-points-file",
     "timeline"
   ]
 }
