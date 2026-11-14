@@ -28,7 +28,8 @@ public:
     /// Why the external side stopped working (device removed, interface gone), or nullopt. A
     /// fault ends the run: "FAIL: <fault>", exit code 1.
     [[nodiscard]] virtual std::optional<std::string> fault() = 0;
-    /// The warnings since the last call, each printed as "warning: <text>".
+    /// The warnings since the last call, each printed as "warning: <text>". Asked while the bridge
+    /// runs and once more after stop(), before the statistics.
     [[nodiscard]] virtual std::vector<std::string> take_warnings() = 0;
     /// Called once per health interval (RunBridgeOptions::health_interval): the monitor line to
     /// print, or nullopt when there is nothing new to say.

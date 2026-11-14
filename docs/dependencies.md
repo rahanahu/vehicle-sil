@@ -83,6 +83,21 @@ SIL Kit は自身のサブモジュール（`ThirdParty/asio`、`fmt`、`spdlog`
 
 Windows では `SilKit.dll` が実行ファイルと別のディレクトリに出力されます。`vehicle_sil_copy_runtime_dlls(<target>)` を呼ぶと、ビルド後に DLL が実行ファイルの隣へコピーされます。
 
+### Linux のカーネルの口（イーサネットのブリッジの `tap` と `packet`、Linux のみ）
+
+- 外のライブラリは使いません。使うのはカーネルと libc のヘッダーだけで、ビルドにも実行にも、入れるものはありません。
+- 呼ぶのは `libs/eth_link/src/linux` だけです（`vehicle_sil::eth_link` の中。Linux でだけビルドします）。
+
+| 用途 | 口 |
+|---|---|
+| `tap` | `/dev/net/tun` を開き、`ioctl(TUNSETIFF)`（`IFF_TAP`、`IFF_NO_PI`。`--tap-create` では `IFF_TUN_EXCL` も）。`read` と `write` が 1 回に 1 フレーム |
+| `packet` | `socket(AF_PACKET, SOCK_RAW)` をインターフェースに `bind`（`ETH_P_ALL`）。`recvmsg` と `send`。`PACKET_AUXDATA`（外された VLAN タグ）、`PACKET_ADD_MEMBERSHIP` の `PACKET_MR_PROMISC`、`PACKET_STATISTICS`（捨てた数） |
+| インターフェース | `if_nameindex`、`if_nametoindex`、`ioctl(SIOCGIFFLAGS)`、`ioctl(SIOCGIFHWADDR)`（リンクの種類） |
+| 受信スレッド | `poll`、`eventfd`（止める合図） |
+
+- 実装が前提にしているカーネルの挙動（試験 `ethernet_bridge.netns.*` が確かめます）: TAP デバイスに書いたフレームは、書いた側の読み取りに戻らない。packet ソケットは、自分が送ったフレームを受けず、同じインターフェースのほかのソケットが送ったフレームは受ける。受けたフレームの外側の VLAN タグは、フレームのバイト列から外され、`PACKET_AUXDATA` で渡される。
+- 試験していない前提: グループのアドレス宛てに送ったフレームを、カーネルが同じ PC の受け手のために渡し直した写し（`PACKET_LOOPBACK`）は、送ったときの写しと重なるので、`packet` は捨てます。
+
 SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみで C API を包む構成なので、利用側を C++20 でコンパイルしても問題ありません。MinGW-w64 は上流が対応しています（`-Wa,-mbig-obj` など）。
 
 ## 使っている API
