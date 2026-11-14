@@ -135,6 +135,11 @@ void judge(TestRun& run, RunReport report)
             run.reason = std::to_string(skipped) + " of " + std::to_string(report.run->scenario->steps.size()) +
                          (skipped == 1 ? " steps was skipped" : " steps were skipped");
         }
+        // It passed with warnings (no --strict): how many, so that the table does not hide them.
+        if (const std::size_t warnings = report.warnings(); warnings > 0)
+        {
+            run.reason += (run.reason.empty() ? "" : ", ") + std::to_string(warnings) + (warnings == 1 ? " warning" : " warnings");
+        }
         break;
     case RunResult::Interrupted:
         run.result = TestRunResult::Interrupted;
@@ -213,6 +218,109 @@ std::vector<Finding> unused_params(const std::vector<TestScenario>& scenarios, c
     return errors;
 }
 
+/// The participants that someone starts by hand (enabled and manual) in a configuration a test
+/// would run: a usage error each. test starts every run by itself, and each run would wait for a
+/// person (without --timeout-ms: for ever). `configs`: the variant ("" without variants) and its
+/// configuration, after --disable and --enable.
+std::vector<Finding> manual_participants(const std::vector<std::pair<std::string, const SimulationConfig*>>& configs)
+{
+    std::vector<std::pair<std::string, std::vector<std::string>>> found; // the participant, the variants it is manual in
+    for (const auto& [variant, config] : configs)
+    {
+        for (const ParticipantConfig& p : config->participants)
+        {
+            if (!p.enabled || !p.manual)
+            {
+                continue;
+            }
+            auto it = std::find_if(found.begin(), found.end(), [&p](const auto& one) { return one.first == p.name; });
+            it = it == found.end() ? found.insert(found.end(), {p.name, {}}) : it;
+            if (!variant.empty())
+            {
+                it->second.push_back(variant);
+            }
+        }
+    }
+    std::vector<Finding> errors;
+    for (const auto& [name, variants] : found)
+    {
+        errors.push_back(usage("participant '" + name + "' is manual (manual: true in the file" +
+                               (variants.empty() ? std::string{}
+                                                 : std::string(variants.size() == 1 ? ", in the variant " : ", in the variants ") +
+                                                       detail::and_list(variants)) +
+                               "): someone starts it by hand, and test starts every run by itself, so each run would wait "
+                               "for it: leave it out with --disable " + name +
+                               " (a scenario with a step that uses its variables then fails its check), or run one scenario "
+                               "with it yourself: vehicle_sil_launch run <file> --scenario <file>"));
+    }
+    return errors;
+}
+
+/// `text` as one word of a POSIX shell: as it is if it has only letters, digits and _@%+=:,./-
+/// (ASCII), in single quotes otherwise.
+std::string shell_word(std::string_view text)
+{
+    const auto plain = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+               std::string_view("_@%+=:,./-").find(c) != std::string_view::npos;
+    };
+    if (!text.empty() && std::all_of(text.begin(), text.end(), plain))
+    {
+        return std::string(text);
+    }
+    std::string out = "'";
+    for (const char c : text)
+    {
+        out += c == '\'' ? std::string("'\\''") : std::string(1, c);
+    }
+    return out + "'";
+}
+
+/// The command that runs `run` alone as the test ran it: the options of the test that a run
+/// takes. A --param only if the run's scenario has a parameter of that name (run refuses one it
+/// does not have); none if the scenario was not read that far.
+std::string run_alone(const TestReport& report, const TestRun& run)
+{
+    std::string out = "vehicle_sil_launch run " + shell_word(report.file) + " --speed max" +
+                      (run.variant.empty() ? std::string{} : " --variant " + shell_word(run.variant)) + " --scenario " +
+                      shell_word(run.scenario);
+    if (run.run && run.run->check.scenario)
+    {
+        const std::vector<ParamValue>& has = run.run->check.scenario->params;
+        for (const ParamValue& param : report.given.params)
+        {
+            if (std::any_of(has.begin(), has.end(), [&param](const ParamValue& one) { return one.name == param.name; }))
+            {
+                out += " --param " + shell_word(param.name + "=" + param.text);
+            }
+        }
+    }
+    for (const std::string& name : report.given.disable)
+    {
+        out += " --disable " + shell_word(name);
+    }
+    for (const std::string& name : report.given.enable)
+    {
+        out += " --enable " + shell_word(name);
+    }
+    out += report.strict ? " --strict" : "";
+    if (report.given.timeout)
+    {
+        out += " --timeout-ms " + std::to_string(report.given.timeout->count());
+    }
+    if (report.given.describe_timeout)
+    {
+        out += " --describe-timeout-ms " + std::to_string(report.given.describe_timeout->count());
+    }
+    return out;
+}
+
+/// "variant small" / "variants small and medium".
+std::string variants_text(const std::vector<std::string>& variants)
+{
+    return (variants.size() == 1 ? "variant " : "variants ") + detail::and_list(variants);
+}
+
 } // namespace
 
 ScenarioList list_scenarios(const std::vector<std::string>& given)
@@ -275,13 +383,63 @@ std::size_t TestReport::count(TestRunResult result) const
     return static_cast<std::size_t>(std::count_if(runs.begin(), runs.end(), [result](const TestRun& run) { return run.result == result; }));
 }
 
+std::size_t TestReport::ran() const
+{
+    return count(TestRunResult::Passed) + count(TestRunResult::Failed) + count(TestRunResult::Interrupted);
+}
+
+std::vector<Finding> TestReport::remarks() const
+{
+    std::vector<Finding> out;
+    if (usage || unreadable || interrupted)
+    {
+        return out;
+    }
+    if (const std::size_t left = count(TestRunResult::NotRun); left > 0 && connection_not_closed)
+    {
+        // The run that left the connection open: the one before the first that was not run.
+        const auto first = std::find_if(runs.begin(), runs.end(), [](const TestRun& run) { return run.result == TestRunResult::NotRun; });
+        const std::string after = first == runs.begin() ? std::string{}
+                                                        : " after the run of scenario " + std::prev(first)->scenario +
+                                                              (std::prev(first)->variant.empty()
+                                                                   ? std::string{}
+                                                                   : " (variant " + std::prev(first)->variant + ")");
+        out.push_back(Finding{Severity::Error, "test-runs-left",
+                              std::to_string(left) + " of " + std::to_string(runs.size()) + (left == 1 ? " runs was" : " runs were") +
+                                  " not run: the launcher's connection to the simulation did not close" + after +
+                                  ", and the launcher ends its process rather than start another simulation in it. Run the "
+                                  "test again for the runs that are 'not run' (--variant and --scenarios choose them), and "
+                                  "see that run's warning connection-not-closed",
+                              0, "", ""});
+    }
+    if (ran() == 0 && count(TestRunResult::NotRun) == 0)
+    {
+        std::string why = "there is no scenario to run";
+        if (!runs.empty())
+        {
+            why = (runs.size() == 1 ? std::string("the 1 run was skipped") : "all " + std::to_string(runs.size()) + " runs were skipped") +
+                  ", because no scenario is for " + (variants.empty() ? std::string("this configuration") : "the " + variants_text(variants)) +
+                  " (the only of each scenario" + (given.variants.empty() ? "" : "; --variant chose what runs") +
+                  "). Run a variant the scenarios are for, or correct their only";
+        }
+        out.push_back(Finding{Severity::Warning, "test-nothing-run",
+                              "nothing was run: " + why + ". The test checked nothing" +
+                                  (strict ? ", and --strict fails on that" : ": it passes (--strict would fail on that)"),
+                              0, "", ""});
+    }
+    return out;
+}
+
 TestResult TestReport::result() const
 {
-    return usage                                  ? TestResult::Usage
-           : unreadable                           ? TestResult::Unreadable
-           : interrupted                          ? TestResult::Interrupted
-           : count(TestRunResult::Failed) > 0     ? TestResult::Failed
-                                                  : TestResult::Passed;
+    if (usage || unreadable || interrupted)
+    {
+        return usage ? TestResult::Usage : unreadable ? TestResult::Unreadable : TestResult::Interrupted;
+    }
+    // Not interrupted, and yet runs are left: the test did not do what it was asked to, whatever
+    // the runs before did. With --strict: a test that ran nothing (a warning) fails too.
+    const bool failed = count(TestRunResult::Failed) > 0 || count(TestRunResult::NotRun) > 0 || (strict && ran() == 0);
+    return failed ? TestResult::Failed : TestResult::Passed;
 }
 
 int TestReport::exit_code() const
@@ -302,6 +460,15 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
     TestReport report;
     report.file = shown_as;
     report.strict = options.run.check.strict;
+    report.given.variants = options.variants;
+    report.given.params = options.run.check.params;
+    report.given.disable = options.run.check.overrides.disable;
+    report.given.enable = options.run.check.overrides.enable;
+    report.given.timeout = options.run.timeout;
+    if (options.run.check.describe_timeout != CheckOptions{}.describe_timeout)
+    {
+        report.given.describe_timeout = options.run.check.describe_timeout;
+    }
     for (const TestScenario& scenario : options.scenarios)
     {
         report.scenarios.push_back(scenario.shown);
@@ -348,16 +515,41 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
             }
         }
     }
+    // The configuration of each variant that runs (the file's own if it defines none), after
+    // --disable and --enable. One that cannot be read is left out here: its runs say why.
+    std::vector<CheckReport> chosen;
+    for (const std::string& variant : report.variants)
+    {
+        read.overrides.variant = variant;
+        chosen.push_back(check_file(path, shown_as, read));
+        if (chosen.back().usage)
+        {
+            // Of the command line (--disable <no such name>), so of every run.
+            return refuse(std::move(chosen.back().findings));
+        }
+    }
+    std::vector<std::pair<std::string, const SimulationConfig*>> configs;
+    if (!hasVariants && file.config)
+    {
+        configs.emplace_back(std::string{}, &*file.config);
+    }
+    for (std::size_t i = 0; i < chosen.size(); ++i)
+    {
+        if (chosen[i].config)
+        {
+            configs.emplace_back(report.variants[i], &*chosen[i].config);
+        }
+    }
+    if (auto manual = manual_participants(configs); !manual.empty())
+    {
+        return refuse(std::move(manual));
+    }
     if (!options.run.check.params.empty())
     {
-        std::vector<ParamValue> configured = file.config ? file.config->params : std::vector<ParamValue>{};
-        for (const std::string& variant : report.variants)
+        std::vector<ParamValue> configured;
+        for (const auto& [variant, config] : configs)
         {
-            read.overrides.variant = variant;
-            if (const CheckReport chosen = check_file(path, shown_as, read); chosen.config)
-            {
-                configured.insert(configured.end(), chosen.config->params.begin(), chosen.config->params.end());
-            }
+            configured.insert(configured.end(), config->params.begin(), config->params.end());
         }
         if (auto unused = unused_params(options.scenarios, configured, options.run.check.params); !unused.empty())
         {
@@ -413,7 +605,7 @@ TestReport test_file(const std::filesystem::path& path, const std::string& shown
         else if (notClosed)
         {
             report.connection_not_closed = true;
-            left = "the launcher's connection to the simulation did not close in a run before it, and the launcher ends";
+            left = "the launcher's connection to the simulation did not close in the run before it";
         }
         else if (options.fail_fast && run.result == TestRunResult::Failed)
         {
@@ -457,9 +649,9 @@ std::string format_test_text(const TestReport& report)
     std::string out = detail::table_text(rows) + "\n";
     if (failed != nullptr)
     {
-        out += "to see a failed run in full, run it alone: vehicle_sil_launch run " + report.file + " --speed max" +
-               (failed->variant.empty() ? "" : " --variant " + failed->variant) + " --scenario " + failed->scenario + "\n\n";
+        out += "to see a failed run in full, run it alone: " + run_alone(report, *failed) + "\n\n";
     }
+    out += detail::findings_text(report.file, report.remarks());
     const auto count = [&report](TestRunResult which, const char* word, bool always) {
         const std::size_t n = report.count(which);
         return n > 0 || always ? ", " + std::to_string(n) + " " + word : std::string{};
@@ -468,6 +660,9 @@ std::string format_test_text(const TestReport& report)
            (report.runs.size() == 1 ? " run" : " runs") + count(TestRunResult::Passed, "passed", true) +
            count(TestRunResult::Failed, "failed", true) + count(TestRunResult::Skipped, "skipped", true) +
            count(TestRunResult::Interrupted, "interrupted", false) + count(TestRunResult::NotRun, "not run", false) +
+           (result == TestResult::Failed && report.connection_not_closed && report.count(TestRunResult::NotRun) > 0
+                ? " (the launcher's connection to the simulation did not close)"
+                : "") +
            (report.strict ? " (--strict)" : "") + "\n";
     return out;
 }
@@ -536,7 +731,12 @@ std::string format_test_json(const TestReport& report)
         w.end_object();
     }
     w.end_array();
-    detail::write_findings_json(w, report.file, report.findings);
+    std::vector<Finding> findings = report.findings;
+    for (Finding& remark : report.remarks())
+    {
+        findings.push_back(std::move(remark));
+    }
+    detail::write_findings_json(w, report.file, findings);
     w.end_object();
     std::string out = w.take();
     out += '\n';

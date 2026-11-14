@@ -9,6 +9,7 @@
 #include "vehicle_sil/launch/test.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -132,6 +133,48 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
     CHECK(format_test_json(unused).find("\"result\": \"usage\",") != std::string::npos);
     options.run.check.params = {ParamValue{"fill", "3", false, ParamSource::CommandLine}};
     CHECK(test_file(dir / "sim.yaml", "sim.yaml", options).result() == TestResult::Failed);
+    options.run.check.params.clear();
+
+    // A participant that someone starts by hand: every run would wait for a person. Refused
+    // before the first run, with what to do; left out with --disable, the test runs.
+    write(dir / "manual.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                               "  - name: Engine\n    command: [missing/engine]\n"
+                               "  - name: Hil\n    command: [missing/hil]\n    manual: true\n"
+                               "  - name: Off\n    command: [missing/off]\n    manual: true\n    enabled: false\n");
+    std::vector<std::string> lines;
+    options.run.write_line = [&lines](std::string_view line) { lines.emplace_back(line); };
+    const TestReport manual = test_file(dir / "manual.yaml", "manual.yaml", options);
+    CHECK(manual.result() == TestResult::Usage && manual.exit_code() == 4 && manual.runs.empty() && lines.empty());
+    CHECK(manual.findings.size() == 1);
+    if (!(manual.findings.size() == 1))
+    {
+        return;
+    }
+    check_text(manual.findings[0].message,
+             "participant 'Hil' is manual (manual: true in the file): someone starts it by hand, and test starts every run by "
+             "itself, so each run would wait for it: leave it out with --disable Hil (a scenario with a step that uses its "
+             "variables then fails its check), or run one scenario with it yourself: vehicle_sil_launch run <file> --scenario "
+             "<file>");
+    options.run.check.overrides.disable = {"Hil"};
+    const TestReport without = test_file(dir / "manual.yaml", "manual.yaml", options);
+    CHECK(without.result() == TestResult::Failed && without.runs.size() == 2 && lines.size() == 4);
+    // Taken in with --enable: refused as one that the file enables. With variants: which ones.
+    options.run.check.overrides.disable = {"Hil"};
+    options.run.check.overrides.enable = {"Off"};
+    const TestReport enabled = test_file(dir / "manual.yaml", "manual.yaml", options);
+    CHECK(enabled.result() == TestResult::Usage && enabled.findings.size() == 1 &&
+          enabled.findings[0].message.rfind("participant 'Off' is manual (manual: true in the file): ", 0) == 0);
+    options.run.check.overrides = {};
+    write(dir / "manual-variants.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                                        "  - name: Hil\n    command: [missing/hil]\n    manual: true\n"
+                                        "variants:\n  small: {}\n  medium: { participants: { Hil: { enabled: false } } }\n"
+                                        "  large: {}\n");
+    const TestReport some = test_file(dir / "manual-variants.yaml", "manual-variants.yaml", options);
+    CHECK(some.result() == TestResult::Usage && some.findings.size() == 1 &&
+          some.findings[0].message.rfind("participant 'Hil' is manual (manual: true in the file, in the variants small and large): ", 0) == 0);
+    // Only the variants that run count.
+    options.variants = {"medium"};
+    CHECK(test_file(dir / "manual-variants.yaml", "manual-variants.yaml", options).result() == TestResult::Failed);
 }
 
 TEST_CASE(a_test_runs_every_variant_with_every_scenario_in_order)
@@ -190,15 +233,18 @@ TEST_CASE(the_report_of_a_test_for_people_and_as_json)
     report.scenarios = {"scn/idle.yaml", "scn/turbo.yaml"};
     report.runs = {{"small", "scn/idle.yaml", TestRunResult::Passed, "", RunReport{}},
                    {"small", "scn/turbo.yaml", TestRunResult::Skipped, "the scenario is only for medium (its only)", {}},
-                   {"medium", "scn/idle.yaml", TestRunResult::Failed, "line 4: expect Engine.rpm ge 650: it was 640", RunReport{}},
-                   {"medium", "scn/turbo.yaml", TestRunResult::Passed, "1 of 3 steps was skipped", RunReport{}}};
+                   {"medium", "scn/idle.yaml", TestRunResult::Failed,
+                    "line 4: expect Engine.rpm ge 650: not true at 100 ms: Engine.rpm ge 650, but it was 640 (its sample of 100 ms)",
+                    RunReport{}},
+                   {"medium", "scn/turbo.yaml", TestRunResult::Passed, "1 of 3 steps was skipped, 1 warning", RunReport{}}};
     CHECK(report.result() == TestResult::Failed);
     check_text(format_test_text(report),
              "variant  scenario        result\n"
              "small    scn/idle.yaml   passed\n"
              "small    scn/turbo.yaml  skipped  the scenario is only for medium (its only)\n"
-             "medium   scn/idle.yaml   FAILED   line 4: expect Engine.rpm ge 650: it was 640\n"
-             "medium   scn/turbo.yaml  passed   1 of 3 steps was skipped\n"
+             "medium   scn/idle.yaml   FAILED   line 4: expect Engine.rpm ge 650: not true at 100 ms: Engine.rpm ge 650, but it was "
+             "640 (its sample of 100 ms)\n"
+             "medium   scn/turbo.yaml  passed   1 of 3 steps was skipped, 1 warning\n"
              "\n"
              "to see a failed run in full, run it alone: vehicle_sil_launch run sim.yaml --speed max --variant medium --scenario "
              "scn/idle.yaml\n"
@@ -230,4 +276,126 @@ TEST_CASE(the_report_of_a_test_for_people_and_as_json)
                                       "interrupted: 2 runs, 0 passed, 0 failed, 0 skipped, 1 interrupted, 1 not run (--strict)\n");
     CHECK(format_test_json(plain).find("\"variants\": [],") != std::string::npos);
     CHECK(format_test_json(plain).find("      \"variant\": null,\n") != std::string::npos);
+    CHECK(plain.remarks().empty());
+}
+
+TEST_CASE(the_command_of_one_run_alone_has_the_options_of_the_test)
+{
+    // The scenario of the failed run has the parameters fill and depth; the test was also given
+    // one for another scenario (rpm), which run would refuse for this one.
+    RunReport failed;
+    failed.check.scenario.emplace();
+    failed.check.scenario->params = {ParamValue{"fill", "1", false, ParamSource::Scenario},
+                                     ParamValue{"depth", "x", false, ParamSource::CommandLine}};
+    TestReport report;
+    report.file = "my sims/sim.yaml";
+    report.strict = true;
+    report.variants = {"it's"};
+    report.scenarios = {"scn/a b.yaml"};
+    report.given.params = {ParamValue{"rpm", "650", false, ParamSource::CommandLine},
+                           ParamValue{"depth", "a b", false, ParamSource::CommandLine},
+                           ParamValue{"fill", "", false, ParamSource::CommandLine}};
+    report.given.disable = {"Dashboard", "Rear Axle"};
+    report.given.enable = {"Hil"};
+    report.given.timeout = std::chrono::milliseconds(60000);
+    report.given.describe_timeout = std::chrono::milliseconds(500);
+    report.runs = {{"it's", "scn/a b.yaml", TestRunResult::Failed, "why", failed}};
+    const std::string text = format_test_text(report);
+    const std::string begin = "to see a failed run in full, run it alone: ";
+    const auto from = text.find(begin);
+    CHECK(from != std::string::npos);
+    if (from == std::string::npos)
+    {
+        return;
+    }
+    check_text(text.substr(from + begin.size(), text.find('\n', from) - from - begin.size()),
+             "vehicle_sil_launch run 'my sims/sim.yaml' --speed max --variant 'it'\\''s' --scenario 'scn/a b.yaml' "
+             "--param 'depth=a b' --param fill= --disable Dashboard --disable 'Rear Axle' --enable Hil --strict "
+             "--timeout-ms 60000 --describe-timeout-ms 500");
+
+    // A scenario that the check did not read: no --param (the run says what is wrong with it).
+    report.runs[0].run = RunReport{};
+    report.strict = false;
+    report.given.timeout.reset();
+    report.given.describe_timeout.reset();
+    CHECK(format_test_text(report).find("--scenario 'scn/a b.yaml' --disable Dashboard --disable 'Rear Axle' --enable Hil\n") !=
+          std::string::npos);
+}
+
+TEST_CASE(a_test_that_left_runs_out_or_ran_nothing_does_not_just_pass)
+{
+    // A run left the launcher's connection open: the rest was not run. No run failed, and yet
+    // the test did: it did not run what it was asked to.
+    TestReport left;
+    left.file = "sim.yaml";
+    left.variants = {"small", "medium"};
+    left.scenarios = {"a.yaml", "b.yaml"};
+    left.connection_not_closed = true;
+    left.runs = {{"small", "a.yaml", TestRunResult::Passed, "", RunReport{}},
+                 {"small", "b.yaml", TestRunResult::Passed, "1 warning", RunReport{}},
+                 {"medium", "a.yaml", TestRunResult::NotRun, "the launcher's connection to the simulation did not close in the run before it", {}},
+                 {"medium", "b.yaml", TestRunResult::NotRun, "the launcher's connection to the simulation did not close in the run before it", {}}};
+    CHECK(left.result() == TestResult::Failed && left.exit_code() == 1);
+    const std::string leftMessage =
+        "2 of 4 runs were not run: the launcher's connection to the simulation did not close after the run of scenario b.yaml "
+        "(variant small), and the launcher ends its process rather than start another simulation in it. Run the test again for "
+        "the runs that are 'not run' (--variant and --scenarios choose them), and see that run's warning "
+        "connection-not-closed";
+    check_text(format_test_text(left),
+             "variant  scenario  result\n"
+             "small    a.yaml    passed\n"
+             "small    b.yaml    passed   1 warning\n"
+             "medium   a.yaml    not run  the launcher's connection to the simulation did not close in the run before it\n"
+             "medium   b.yaml    not run  the launcher's connection to the simulation did not close in the run before it\n"
+             "\n"
+             "error: sim.yaml: " + leftMessage + "\n"
+             "\n"
+             "FAILED: 4 runs, 2 passed, 0 failed, 0 skipped, 2 not run (the launcher's connection to the simulation did not close)\n");
+    const std::string leftJson = format_test_json(left);
+    CHECK(leftJson.find("  \"result\": \"failed\",\n") != std::string::npos);
+    CHECK(leftJson.find("  \"findings\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"test-runs-left\",\n") !=
+          std::string::npos);
+    CHECK(leftJson.find(leftMessage) != std::string::npos);
+    // Left out by an interrupt: interrupted, as before; by --fail-fast: failed by the run that failed, no remark.
+    left.connection_not_closed = false;
+    left.interrupted = true;
+    CHECK(left.result() == TestResult::Interrupted && left.exit_code() == kExitInterrupted && left.remarks().empty());
+    left.interrupted = false;
+    left.runs[1].result = TestRunResult::Failed;
+    CHECK(left.result() == TestResult::Failed && left.remarks().empty());
+
+    // Every run skipped: nothing was checked. A warning, and a failure with --strict.
+    TestReport none;
+    none.file = "sim.yaml";
+    none.variants = {"small"};
+    none.given.variants = {"small"};
+    none.scenarios = {"a.yaml", "b.yaml"};
+    none.runs = {{"small", "a.yaml", TestRunResult::Skipped, "the scenario is only for medium (its only)", {}},
+                 {"small", "b.yaml", TestRunResult::Skipped, "the scenario is only for medium (its only)", {}}};
+    CHECK(none.result() == TestResult::Passed && none.exit_code() == 0);
+    check_text(format_test_text(none),
+             "variant  scenario  result\n"
+             "small    a.yaml    skipped  the scenario is only for medium (its only)\n"
+             "small    b.yaml    skipped  the scenario is only for medium (its only)\n"
+             "\n"
+             "warning: sim.yaml: nothing was run: all 2 runs were skipped, because no scenario is for the variant small (the only "
+             "of each scenario; --variant chose what runs). Run a variant the scenarios are for, or correct their only. The test "
+             "checked nothing: it passes (--strict would fail on that)\n"
+             "\n"
+             "passed: 2 runs, 0 passed, 0 failed, 2 skipped\n");
+    none.strict = true;
+    CHECK(none.result() == TestResult::Failed && none.exit_code() == 1);
+    const std::string strictText = format_test_text(none);
+    CHECK(strictText.find("The test checked nothing, and --strict fails on that\n\nFAILED: 2 runs, 0 passed, 0 failed, 2 skipped (--strict)\n") !=
+          std::string::npos);
+    CHECK(format_test_json(none).find("      \"severity\": \"warning\",\n      \"code\": \"test-nothing-run\",\n") != std::string::npos);
+    // One run that ran is enough, also with --strict; and without --variant the remark does not name it.
+    none.runs[1] = {"small", "b.yaml", TestRunResult::Passed, "", RunReport{}};
+    CHECK(none.result() == TestResult::Passed && none.remarks().empty());
+    none.runs.pop_back();
+    none.given.variants.clear();
+    none.variants = {"small", "large"};
+    CHECK(none.remarks().size() == 1 &&
+          none.remarks()[0].message.find("nothing was run: the 1 run was skipped, because no scenario is for the variants small and "
+                                         "large (the only of each scenario). Run a variant") == 0);
 }

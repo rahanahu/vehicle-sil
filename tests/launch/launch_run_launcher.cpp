@@ -3950,7 +3950,7 @@ void test_command(const Options& o)
     expect_code(plain, 0, "test a file without variants");
     require(contains(lf(plain.standard_output), "scenario         result\n"
                                                 "scn/b_fill.yaml  passed  1 of 3 steps was skipped\n"
-                                                "heater.yaml      passed  1 of 1 steps was skipped\n"
+                                                "heater.yaml      passed  1 of 1 steps was skipped, 1 warning\n"
                                                 "\n"
                                                 "passed: 2 runs, 2 passed, 0 failed, 0 skipped\n"),
             "the table without variants:\n" + lf(plain.standard_output));
@@ -3961,6 +3961,46 @@ void test_command(const Options& o)
                 contains(lf(strict.standard_output), "\nFAILED: 2 runs, 1 passed, 1 failed, 0 skipped (--strict)\n"),
             "--strict:\n" + lf(strict.standard_output));
     log("CHECK test: --fail-fast, a file without variants, --strict -> ok");
+
+    // The command of one failed run alone has the options of the test that the run takes, quoted
+    // for a shell: a --param only for a scenario that has it. It is the same run: it fails as the
+    // test's did (here by --strict, on the warning), where the bare command would pass.
+    fs::create_directories(dir / "more scn");
+    write_file(dir / "more scn" / "heat it.yaml", "vehicle_sil_scenario: 1\nparams: { fill: 1 }\nsteps:\n"
+                                                    "  - set: { Body.body.fill: \"${fill}\" }\n"
+                                                    "  - expect: { Body.body.heater: { ge: 0 } }\n");
+    const Captured again = launch(o, {"test", "plain.yaml", "--strict", "--timeout-ms", "60000", "--param", "fill=4 5", "--scenarios",
+                                      "more scn"}, dir);
+    expect_code(again, 1, "test --strict with a scenario in a directory with a space");
+    require(contains(lf(again.standard_output),
+                     "\nto see a failed run in full, run it alone: vehicle_sil_launch run plain.yaml --speed max --scenario "
+                     "'more scn/heat it.yaml' --param 'fill=4 5' --strict --timeout-ms 60000\n\n"),
+            "the command of the failed run alone:\n" + lf(again.standard_output));
+    const Captured alone = launch(o, {"run", "plain.yaml", "--speed", "max", "--scenario", "more scn/heat it.yaml", "--param",
+                                      "fill=4 5", "--strict", "--timeout-ms", "60000"}, dir);
+    expect_code(alone, 1, "the failed run of a test, alone with the options of the test");
+    log("CHECK test: the command of one failed run alone has the options of the test -> ok");
+
+    // Every run skipped (the chosen variant, and the scenario's only): nothing was checked. It
+    // says so and passes; --strict fails.
+    const Captured nothing = launch(o, {"test", "sim.yaml", "--variant", "small", "--scenarios", "scn/a_only.yaml"}, dir);
+    expect_code(nothing, 0, "test in which every run is skipped");
+    require(contains(lf(nothing.standard_output),
+                     "small    scn/a_only.yaml  skipped  the scenario is only for medium (its only)\n"
+                     "\n"
+                     "warning: sim.yaml: nothing was run: the 1 run was skipped, because no scenario is for the variant small "
+                     "(the only of each scenario; --variant chose what runs). Run a variant the scenarios are for, or correct "
+                     "their only. The test checked nothing: it passes (--strict would fail on that)\n"
+                     "\n"
+                     "passed: 1 run, 0 passed, 0 failed, 1 skipped\n"),
+            "a test in which every run is skipped:\n" + lf(nothing.standard_output));
+    const Captured nothingStrict = launch(o, {"test", "sim.yaml", "--variant", "small", "--strict", "--json", "--scenarios",
+                                              "scn/a_only.yaml"}, dir);
+    expect_code(nothingStrict, 1, "test --strict in which every run is skipped");
+    require(contains(lf(nothingStrict.standard_output), "  \"result\": \"failed\",\n") &&
+                contains(lf(nothingStrict.standard_output), "      \"code\": \"test-nothing-run\",\n"),
+            "a --strict test in which every run is skipped:\n" + lf(nothingStrict.standard_output));
+    log("CHECK test: every run skipped -> a warning, and a failure with --strict -> ok");
 
     // What ends a test before its first run.
     const auto refused = [&](const std::vector<std::string>& args, const std::string& message, const std::string& what) {
@@ -4000,6 +4040,17 @@ void test_command(const Options& o)
             "--speed is for run, not for test (which runs one simulation after the other, each as fast as possible): to use "
             "it, run one scenario with vehicle_sil_launch run --scenario <file>",
             "test --speed");
+    // A participant that someone starts by hand: refused before the first run (each run would
+    // wait for a person); left out with --disable, the test runs.
+    write_file(dir / "manual.yaml", participants + "  - name: Hil\n    command: [" + ecu(o) + "]\n    manual: true\n");
+    refused({"test", "manual.yaml", "--scenarios", "scn/b_fill.yaml"},
+            "participant 'Hil' is manual (manual: true in the file): someone starts it by hand, and test starts every run by "
+            "itself, so each run would wait for it: leave it out with --disable Hil (a scenario with a step that uses its "
+            "variables then fails its check), or run one scenario with it yourself: vehicle_sil_launch run <file> --scenario "
+            "<file>",
+            "test with a manual participant");
+    const Captured unmanned = launch(o, {"test", "manual.yaml", "--disable", "Hil", "--scenarios", "scn/b_fill.yaml"}, dir);
+    expect_code(unmanned, 0, "test with the manual participant left out");
     const Captured usage = launch(o, {"test", "sim.yaml", "--json"}, dir);
     expect_code(usage, 4, "test --json without --scenarios");
     require(lf(usage.standard_output).rfind("{\n  \"vehicle_sil_test\": 1,\n", 0) == 0 &&

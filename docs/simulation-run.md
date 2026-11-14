@@ -542,10 +542,12 @@ vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.ya
   - ファイルは、拡張子によらず、書いた順のまま回します。パスは、構成ファイルと同じく、今のディレクトリからのものです。
   - ないパス、シナリオのファイルが 1 つもないディレクトリは、引数の誤りです（何も回しません）。
 - シナリオの `only` に機種がない組は、回さずに `skipped` にします（`run` では誤り `scenario-variant` ですが、`test` では失敗にしません）。その組の構成やシナリオにほかの誤りがあれば、`skipped` ではなく失敗です。
+- 全部の組が `skipped` のとき（`--variant` で絞った機種が、どのシナリオの `only` にもないときなど）は、何も確かめていません。表の後に警告 `test-nothing-run`（`nothing was run: ...`）を 1 行書きます。既定では通り（終了コード 0）、`--strict` では失敗です（終了コード 1）。
 - `--param <名前>=<値>` は、そのパラメーターを宣言しているか使っているシナリオにだけ効きます。どのシナリオにもない名前は、引数の誤りです（打ち間違いを黙って無視しません。何も回しません）。
 - 失敗した組があっても、残りを回します。`--fail-fast` を付けると、最初の失敗の後は回しません（残りは `not run`）。
 - Ctrl+C（1 回目）は、回している組を `run` と同じ順で止め、残りを回さずに、そこまでの表を書きます（終了コード 130）。2 回目は、`run` と同じで、participant が終わるのを待たずに終わらせます。
 - ほかに付けられる引数は、`--json`、`--strict`、`--timeout-ms`（1 組ごとの上限）、`--describe-timeout-ms`、`--disable`、`--enable` です（どの組にも同じように効きます）。`--speed`、`--log-dir`、`--events`、`--stdin-commands`、`--control`、`--manual` などの `run` だけの引数と `--scenario` は、引数の誤りです。
+- `test` は、どの組も自分で起動します。回す機種の構成に、有効で `manual: true` の participant（人が起動するもの）がいると、組ごとに人を待つことになるので、最初の組の前に引数の誤りにします（終了コード 4。participant の名前を言います）。`--disable <名前>` で外せば回せます（その participant の変数を使う手順のあるシナリオは、その組の照合で失敗します）。その participant と一緒に動かすなら、`run --scenario` で 1 つずつ回します。
 - 最初の組の前に、構成ファイルを読みます。読めなければ、何も回さずに終了コード 3 です。構成ファイルに照合の誤りがあるときは、どの組も失敗になります（組ごとに照合するためです）。
 
 標準エラーには、`run` と同じ行（participant の出力、ランチャーの行）が出ます。組の前後に、次の行が入ります。
@@ -555,14 +557,14 @@ vehicle_sil_launch test simulation.yaml --variant medium --scenarios a.yaml b.ya
 [vehicle_sil_launch] test 2 of 4: variant small, scenario scn/turbo.yaml: skipped (the scenario is only for medium (its only))
 ```
 
-標準出力は、組ごとに 1 行の表、失敗があれば 1 組だけを回し直すコマンド、最後に結果の 1 行です（時刻、所要時間、プロセス ID は入りません）。
+標準出力は、組ごとに 1 行の表、失敗があれば 1 組だけを回し直すコマンド、`test` 全体の所見（あれば）、最後に結果の 1 行です（時刻、所要時間、プロセス ID は入りません）。
 
 ```text
 variant  scenario        result
 small    scn/idle.yaml   passed
 small    scn/turbo.yaml  skipped  the scenario is only for medium (its only)
-medium   scn/idle.yaml   FAILED   line 4: expect Engine.rpm ge 650: it was 640
-medium   scn/turbo.yaml  passed   1 of 3 steps was skipped
+medium   scn/idle.yaml   FAILED   line 4: expect Engine.rpm ge 650: not true at 100 ms: Engine.rpm ge 650, but it was 640 (its sample of 100 ms)
+medium   scn/turbo.yaml  passed   1 of 3 steps was skipped, 1 warning
 
 to see a failed run in full, run it alone: vehicle_sil_launch run sim.yaml --speed max --variant medium --scenario scn/idle.yaml
 
@@ -571,20 +573,29 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 
 | 表の `result` | 意味 | 右の列 |
 |---|---|---|
-| `passed` | その組の `run` が通った | 飛ばした手順があれば、その数 |
+| `passed` | その組の `run` が通った | 飛ばした手順があれば、その数。警告があれば、その数（中身は、その組を 1 つだけ回すか、`--json` の `runs[].run` で見ます） |
 | `FAILED` | 照合か実行が失敗した（`run` の終了コードが 1 か 3） | 最初の誤り（シナリオの誤りなら行つき）と、残りの数。`--strict` で警告だけなら、最初の警告 |
 | `skipped` | シナリオの `only` に、この機種がない | `only` の機種 |
 | `interrupted` | この組の途中で中断された | 中断のシグナルかキー |
-| `not run` | 中断か `--fail-fast` で、回さなかった | 理由 |
+| `not run` | 回さなかった: 中断、`--fail-fast`、または前の組でランチャーの SIL Kit の接続が閉じなかった | 理由 |
 
-最後の行は、`passed`、`FAILED`、`interrupted` のどれかと、組の数です（`interrupted` と `not run` の数は、あるときだけ。`--strict` を付けたときは末尾に `(--strict)`）。機種のない構成では、`variant` の列がありません。
+1 組だけを回し直すコマンド（`to see a failed run in full, ...`）は、最初に失敗した組のものです。`test` に付けた引数のうち、その組に効くものを並べるので、同じ実行になります: `--param`（その組のシナリオにある名前だけ）、`--disable`、`--enable`、`--strict`、`--timeout-ms`、`--describe-timeout-ms`。空白などを含むパスと値は、POSIX のシェル（sh、bash）に貼れるように `'...'` で囲みます（Windows のコマンドプロンプトでは `'` が引用にならないので、`"..."` に書き換えます）。
+
+`test` 全体の所見は、表の後に `<重大度>: <構成ファイル>: <文>` の 1 行で出ます（`--json` では `findings[]`）。
+
+| コード | 重大度 | 意味 |
+|---|---|---|
+| `test-nothing-run` | 警告 | 回した組が 1 つもない（全部が `skipped`）。何も確かめていません。`--strict` では失敗 |
+| `test-runs-left` | 誤り | 中断されていないのに、回さなかった組がある。ある組の後でランチャー自身の SIL Kit の接続が閉じなかったので（その組の警告 `connection-not-closed`。[止め方](#止め方)）、同じプロセスで次のシミュレーションを始めずに終わりました。`not run` の組を、`--variant` と `--scenarios` で選んで回し直します |
+
+最後の行は、`passed`、`FAILED`、`interrupted` のどれかと、組の数です（`interrupted` と `not run` の数は、あるときだけ。接続が閉じなかったので残りを回さなかったときは `(the launcher's connection to the simulation did not close)`、`--strict` を付けたときは `(--strict)` が末尾に付きます）。機種のない構成では、`variant` の列がありません。
 
 | 終了コード | 意味 |
 |---|---|
-| 0 | 失敗した組がない（`skipped` は失敗に数えません。全部が `skipped` でも 0 です） |
-| 1 | 失敗した組が 1 つ以上ある |
+| 0 | 失敗した組も、回さなかった組もない（`skipped` は失敗に数えません。全部が `skipped` でも、`--strict` がなければ 0 です） |
+| 1 | 失敗した組が 1 つ以上ある。中断されていないのに回さなかった組がある（`test-runs-left`）。`--strict` で、回した組が 1 つもない（`test-nothing-run`） |
 | 3 | 構成ファイルを読めない（何も回していません）。結果を書けないとき、`vehicle_sil_launch` 自身の想定外の失敗も 3 |
-| 4 | 引数の誤り（何も回していません） |
+| 4 | 引数の誤り（何も回していません）。構成の `manual: true` の participant もここです |
 | 130 | 中断された（その前に失敗した組があっても 130） |
 
 ### JSON（`test --json`）
@@ -596,12 +607,12 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 | `vehicle_sil_test` | 形式の版（今は 1） |
 | `vehicle_sil` | `vehicle_sil_launch` の vehicle-sil の版 |
 | `file` | 構成ファイル（引数に書いたとおり） |
-| `result` | `"passed"`、`"failed"`、`"interrupted"`、`"unreadable"`、`"usage"` |
+| `result` | `"passed"`、`"failed"`（終了コード 1 の全部）、`"interrupted"`、`"unreadable"`、`"usage"` |
 | `strict` | `--strict` を付けたか |
 | `variants` | 回す機種（構成ファイルの順）。機種のない構成では空 |
 | `scenarios` | 回すシナリオ（表に出る名前、回す順） |
 | `passed`、`failed`、`skipped`、`interrupted`、`not_run` | それぞれの結果の組の数 |
 | `runs[]` | 組ごと、回す順。`variant`（機種のない構成では `null`）、`scenario`、`result`（`"passed"`、`"failed"`、`"skipped"`、`"interrupted"`、`"not_run"`）、`reason`（表の右の列。なければ `null`）、`run`（その組の `run --json` と同じオブジェクト。`skipped` と `not_run` では `null`） |
-| `findings[]` | 何も回さなかった理由（`result` が `"usage"` か `"unreadable"` のとき。照合の `findings[]` と同じ形）。ほかは空 |
+| `findings[]` | 何も回さなかった理由（`result` が `"usage"` か `"unreadable"` のとき）と、`test` 全体の所見（`test-nothing-run`、`test-runs-left`）。照合の `findings[]` と同じ形。なければ空 |
 
 `version --json` の `formats` と `features` には、`test` の項目はありません。
