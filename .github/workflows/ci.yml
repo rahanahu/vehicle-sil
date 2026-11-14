@@ -14,8 +14,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push replaces the run of a pull request. On main every merge keeps its own run (its group is
+  # the commit): a merge that follows another within minutes must not cancel the run of the one before.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The runners are small (4 CPUs): the tests' upper bounds of waiting for something that will happen are 3
 # times as long (C++, the GUI server's and the screen's tests; a test that passes is not slower). The thread
