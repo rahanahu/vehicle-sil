@@ -50,13 +50,23 @@ void Host::add(Member& member)
         throw std::logic_error("vehicle_sil::step::Host: a member can be added only once");
     }
     members_.push_back(&member);
+    const std::optional<TimeDomain> previous = domain_;
     domain_ = domain;
+    // Strong guarantee: if the member does not take the wakeup, it is not added (a caller such
+    // as can::Host may then destroy it; nothing here may point to it).
+    try
     {
         const std::lock_guard lock(post_mutex_);
         if (wakeup_)
         {
             member.set_wakeup(wakeup_);
         }
+    }
+    catch (...)
+    {
+        members_.pop_back();
+        domain_ = previous;
+        throw;
     }
 }
 

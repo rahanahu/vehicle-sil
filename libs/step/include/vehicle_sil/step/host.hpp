@@ -101,7 +101,8 @@ public:
     /// Registers a member. Only before the first step; a member can be added once; its time
     /// domain must be the one of the members added before and the one the driver requires.
     /// Throws std::logic_error otherwise. A member must not be added to another host as well
-    /// (not detected).
+    /// (not detected). If a wakeup is set, add() passes it to the member (Member::set_wakeup());
+    /// if that throws, the member is not added and the exception propagates.
     void add(Member& member);
 
     /// Called by a driver: the members must belong to `domain`. Throws std::logic_error if a

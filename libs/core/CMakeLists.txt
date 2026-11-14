@@ -29,4 +29,7 @@ set_target_properties(vehicle_sil_sim_base PROPERTIES EXPORT_NAME sim_base)
 target_include_directories(vehicle_sil_sim_base INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_compile_features(vehicle_sil_sim_base INTERFACE cxx_std_20)
 target_link_libraries(vehicle_sil_sim_base INTERFACE Threads::Threads)
-target_link_libraries(vehicle_sil_core PUBLIC vehicle_sil::sim_base vehicle_sil::step)
+target_link_libraries(vehicle_sil_core PUBLIC vehicle_sil::sim_base)
+# Only src/bind_host.cpp includes vehicle_sil::step's headers (core/bind_host.hpp declares
+# step::Host ahead): its callers link vehicle_sil::step (or vehicle_sil::can) themselves.
+target_link_libraries(vehicle_sil_core PRIVATE vehicle_sil::step)

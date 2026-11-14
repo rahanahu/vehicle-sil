@@ -143,7 +143,7 @@ flowchart TD
     sim_base --> Threads["Threads::Threads"]
     core --> SilKit["SilKit::SilKit"]
     core --> sim_base
-    core --> step
+    core -.-> step
     step --> sim_base
     can --> step
     can --> sim_base

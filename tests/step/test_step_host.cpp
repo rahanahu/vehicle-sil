@@ -59,6 +59,15 @@ public:
     std::optional<SimTime> deadline;      ///< next_deadline()
     std::optional<SimDuration> step_size; ///< what start() was given
     int starts = 0;
+    bool refuse_wakeup = false; ///< set_wakeup() with a function throws
+
+    void set_wakeup(Wakeup wakeup) override
+    {
+        if (refuse_wakeup && wakeup)
+        {
+            throw std::runtime_error(name_ + " refuses the wakeup");
+        }
+    }
 
     [[nodiscard]] TimeDomain time_domain() const noexcept override { return domain_; }
     void start(std::optional<SimDuration> size) override
@@ -287,9 +296,9 @@ TEST_CASE(step_driver_steps_members_on_virtual_time)
     driver.add(host, 2ms);
     driver.run_until(at(5ms));
     CHECK(a.step_size == std::optional<SimDuration>(2ms));
+    CHECK_EQ(log.size(), 13u); // start, then 3 steps of 4 stages
     const std::vector<std::string> begins{log[1], log[5], log[9]};
     CHECK((begins == std::vector<std::string>{"a.begin@0ms", "a.begin@2ms", "a.begin@4ms"}));
-    CHECK_EQ(log.size(), 13u); // start, then 3 steps of 4 stages
     CHECK(driver.next_step_time() == at(6ms));
 }
 
@@ -323,4 +332,40 @@ TEST_CASE(real_time_driver_steps_a_member_after_its_deadline_and_after_an_arriva
     driver.stop();
     CHECK(!inbox.has_wakeup()); // stop() removes the wakeup from the members
     CHECK(!driver.failed());
+}
+
+TEST_CASE(host_add_that_fails_at_the_wakeup_leaves_the_host_as_it_was)
+{
+    std::vector<std::string> log;
+    Recorder refusing("refusing", log, TimeDomain::RealTime);
+    refusing.refuse_wakeup = true;
+    refusing.deadline = at(7ms);
+    {
+        // The member is not added, and the time domain it brought is forgotten: a member of the
+        // other domain can be added, and the steps do not call the refused member.
+        Host host;
+        host.set_wakeup([](SimTime) {});
+        CHECK(throws_with<std::runtime_error>([&] { host.add(refusing); }, "refusing refuses the wakeup"));
+        CHECK(host.time_domain() == std::nullopt);
+        CHECK(host.next_deadline() == std::nullopt);
+        Recorder a("a", log);
+        host.add(a);
+        CHECK(host.time_domain() == std::optional<TimeDomain>(TimeDomain::Virtual));
+        host.step(at(0ms));
+        CHECK_EQ(log.size(), 5u);
+        CHECK((log == std::vector<std::string>{"a.start", "a.begin@0ms", "a.receive@0ms", "a.process", "a.flush"}));
+    }
+    log.clear();
+    {
+        // The same member can be added again once it takes the wakeup, and is then added once.
+        Host host;
+        host.set_wakeup([](SimTime) {});
+        CHECK(throws<std::runtime_error>([&] { host.add(refusing); }));
+        refusing.refuse_wakeup = false;
+        host.add(refusing);
+        CHECK(host.next_deadline() == std::optional<SimTime>(at(7ms)));
+        host.step(at(0ms));
+        CHECK((log == std::vector<std::string>{"refusing.start", "refusing.begin@0ms", "refusing.receive@0ms", "refusing.process",
+                                               "refusing.flush"}));
+    }
 }

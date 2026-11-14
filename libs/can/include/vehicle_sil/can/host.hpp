@@ -87,7 +87,9 @@ public:
     /// Registers a Steppable with the port it sends and receives on. Only before the first step;
     /// a port can belong to one Steppable only; the port's time domain must be the one of the
     /// ports added before and the one the driver requires. Throws std::logic_error otherwise. A
-    /// port or Steppable must not be registered with another host as well (not detected).
+    /// port or Steppable must not be registered with another host as well (not detected). If the
+    /// port's set_wakeup() throws (a wakeup is set), the pair is not added and the exception
+    /// propagates; the same pair can be added again.
     void add(Steppable& steppable, Port& port);
 
 private:
