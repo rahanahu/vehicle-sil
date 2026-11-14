@@ -43,7 +43,7 @@ uv run vehicle-sil-gui --launcher build/<preset>/tools/launch/vehicle_sil_launch
   build/<preset>/examples/ecu_main/simulation.yaml
 ```
 
-リポジトリの直下の `scripts/run-gui.py` は、この起動を 1 つのコマンドにしたものです。`build/` の下から Control Server を持つランチャーを探し、その隣の例の `simulation.live.yaml`（同じ 2 つの ECU を、`stop_at_ms` なし、`speed: 1` で動かす構成。止めるまで動くので、画面で値を見ながら触れます）で GUI サーバーを起動します。ビルドはしません。ランチャー、例、画面のビルド、uv のどれかがなければ、作るコマンドを表示して終了コード 1 で終わります（`--dry-run` は、探した結果と起動するコマンドだけを表示します）。
+リポジトリの直下の `scripts/run-gui.py` は、この起動を 1 つのコマンドにしたものです。`build/` の下から Control Server を持つランチャーを探し、その隣の例の `simulation.live.yaml`（同じ 2 つの ECU を、`stop_at_ms` なし、`speed: 1` で動かす構成。止めるまで動くので、画面で値を見ながら触れます）で GUI サーバーを起動します。ビルドはしません。ランチャー、例、画面のビルド、uv のどれかがなければ、作るコマンドを表示して終了コード 1 で終わります（コマンドはリポジトリの直下で打つ形です。ほかのディレクトリから呼んだときは、打つ場所を最初の行で言います）。`--launcher` や構成ファイルに渡したファイルがないときは、引数の誤り（終了コード 2）です。`build/` の外のランチャー（展開した道具のものなど）を `--launcher` で渡すときは、隣に例がないので、構成ファイルも渡します。`--dry-run` は、探した結果と起動するコマンドだけを表示します。Windows では、Ctrl+C で全部が止まりますが、このスクリプトのプロセスだけを終わらせると（道具からの終了、タスクの終了）、GUI サーバーと実行中のシミュレーションが残ります。道具から止めるときは、プロセスの木ごと止めます（`taskkill /T /PID <pid>`）。
 
 ```sh
 scripts/run-gui.py

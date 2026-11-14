@@ -66,11 +66,14 @@ def arguments(*argv: str) -> argparse.Namespace:
     return run_gui.parse(list(argv))
 
 
-def planned(root: Path, features: dict[str, list[str] | None], *argv: str, uv=lambda: "/bin/uv"):
-    """(command, notes) or the text of what is missing."""
+def planned(root: Path, features: dict[str, list[str] | None], *argv: str, uv=lambda: "/bin/uv", cwd: Path | None = None,
+            windows: bool = False, kind: type | None = None):
+    """(command, notes) or the text of what is missing. `kind`: the exception that text must come as."""
     try:
-        return run_gui.plan(arguments(*argv), root, probe(features), uv)
-    except run_gui.Missing as e:
+        return run_gui.plan(arguments(*argv), root, probe(features), uv, cwd or root, windows)
+    except (run_gui.Missing, run_gui.Usage) as e:
+        if kind is not None:
+            check(type(e) is kind, f"{' '.join(argv)}: {kind.__name__}, not {type(e).__name__} ({e})")
         return str(e)
 
 
@@ -97,8 +100,13 @@ def test_takes_the_newest_launcher_with_the_control_server(root: Path) -> None:
 
 def test_nothing_built(root: Path) -> None:
     web(root)
-    said = planned(root, {})
+    said = planned(root, {}, kind=run_gui.Missing)
     check(isinstance(said, str) and "nothing is built yet" in said, f"no build at all: it says so ({said})")
+    check(isinstance(said, str) and said.startswith("run-gui: no "), f"from the repository's directory: no line about where ({said})")
+    # From another directory: where to type the commands, first.
+    said = planned(root, {}, cwd=root / "build", kind=run_gui.Missing)
+    check(isinstance(said, str) and said.startswith(f"run-gui: run the commands below in {root} (cd {root})\nrun-gui: no "),
+          f"from another directory: the directory to run the commands in comes first ({said})")
     for windows, lines in ((False, ["  cmake --preset linux-gcc-control\n", "  cmake --build --preset linux-gcc-control\n"]),
                            (True, ["  cmake --preset windows-mingw-debug -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON\n",
                                    "  cmake --build --preset windows-mingw-debug\n"])):
@@ -107,6 +115,8 @@ def test_nothing_built(root: Path) -> None:
             check(False, "find_launcher raises when nothing is built")
         except run_gui.Missing as e:
             check(all(line in str(e) for line in lines), f"the commands to type, each on a line (windows={windows}): {e}")
+            check("downloads and builds gRPC" in str(e) and ("pacman -S mingw-w64-ucrt-x86_64-grpc" in str(e)) == windows,
+                  f"where gRPC comes from; the MSYS2 package on Windows only (windows={windows}): {e}")
 
 
 def test_no_control_server(root: Path) -> None:
@@ -129,11 +139,13 @@ def test_no_control_server(root: Path) -> None:
 def test_example_not_built(root: Path) -> None:
     web(root)
     build(root, "linux-gcc-control", example=False)
-    said = planned(root, {"linux-gcc-control": ALL})
+    touch(root / "build" / "linux-gcc-control" / "CMakeCache.txt")
+    said = planned(root, {"linux-gcc-control": ALL}, kind=run_gui.Missing)
     check(isinstance(said, str) and said.startswith("run-gui: build/linux-gcc-control/examples/ecu_main/simulation.live.yaml is not there")
           and "\n  cmake --build build/linux-gcc-control\n" in said, f"the example is not built: the command that builds it ({said})")
     # The configuration alone (copied when CMake configured) is not enough: its ECUs are looked for too.
     launcher = build(root, "half")
+    touch(root / "build" / "half" / "CMakeCache.txt")
     (root / "build" / "half" / "examples" / "ecu_main" / "engine" / f"vehicle_sil_engine_ecu{launcher.suffix}").unlink()
     said = planned(root, {"half": ALL, "linux-gcc-control": None})
     check(isinstance(said, str) and f"run-gui: build/half/examples/ecu_main/engine/vehicle_sil_engine_ecu{launcher.suffix} is not there"
@@ -142,8 +154,16 @@ def test_example_not_built(root: Path) -> None:
     mine = touch(root / "mine" / "simulation.yaml")
     result = planned(root, {"linux-gcc-control": ALL}, str(mine))
     check(isinstance(result, tuple) and result[0][-1] == str(mine), f"a configuration given by hand is the one shown ({result})")
-    said = planned(root, {"linux-gcc-control": ALL}, str(root / "nowhere.yaml"))
+    said = planned(root, {"linux-gcc-control": ALL}, str(root / "nowhere.yaml"), kind=run_gui.Usage)
     check(isinstance(said, str) and "nowhere.yaml: no such file" in said, f"a configuration that is not there ({said})")
+    # A launcher that is not in a build directory (unpacked tools): no cmake --build, the configuration is asked for.
+    tools = touch(root / "tools" / "vehicle-sil" / "bin" / NAME)
+    said = planned(root, {"tools": ALL}, "--launcher", str(tools), kind=run_gui.Usage)
+    check(isinstance(said, str) and said == f"run-gui: --launcher tools/vehicle-sil/bin/{NAME} is not in a build directory of this "
+          "repository, so there is no example next to it. Give the configuration to show: scripts/run-gui.py --launcher "
+          f"tools/vehicle-sil/bin/{NAME} <simulation.yaml>", f"a launcher outside a build directory, no configuration ({said})")
+    result = planned(root, {"tools": ALL}, "--launcher", str(tools), str(mine))
+    check(isinstance(result, tuple) and result[0][-1] == str(mine), f"that launcher with a configuration ({result})")
 
 
 def test_everything_missing_is_said_at_once(root: Path) -> None:
@@ -152,17 +172,34 @@ def test_everything_missing_is_said_at_once(root: Path) -> None:
     def no_uv() -> str:
         raise run_gui.Missing("uv is not on the PATH")
 
-    said = planned(root, {"linux-gcc-control": ALL}, uv=no_uv)
+    said = planned(root, {"linux-gcc-control": ALL}, uv=no_uv, kind=run_gui.Missing)
     check(isinstance(said, str) and "run-gui: the screen is not built (gui/web/dist/browser/index.html is not there)" in said
-          and "  cd gui/web\n  npm ci\n  npm run build\n" in said, f"the screen is not built: the commands ({said})")
+          and "  npm --prefix gui/web ci\n  npm --prefix gui/web run build\n" in said and "cd gui/web" not in said,
+          f"the screen is not built: commands that leave the directory as it is ({said})")
     check("\nrun-gui: uv is not on the PATH" in said, f"and uv, in the same run ({said})")
-    said = planned(root, {}, "--launcher", str(root / "no" / NAME))
+    said = planned(root, {}, "--launcher", str(root / "no" / NAME), kind=run_gui.Usage)
     check(isinstance(said, str) and "--launcher " in said and "no such file" in said and "the screen is not built" in said,
           f"--launcher that is not there, and the screen ({said})")
+    # uv alone has no command to type: no line about the directory, even from elsewhere.
+    web(root)
+    said = planned(root, {"linux-gcc-control": ALL}, uv=no_uv, cwd=root / "build", kind=run_gui.Missing)
+    check(said == "run-gui: uv is not on the PATH", f"only uv is missing, from another directory ({said})")
+
+
+def test_windows_launcher_without_exe(root: Path) -> None:
+    """--launcher as the docs of Linux write it: on Windows the .exe next to that name is taken."""
+    web(root)
+    exe = touch(root / "build" / "windows-mingw-debug" / "tools" / "launch" / "vehicle_sil_launch.exe")
+    mine = touch(root / "mine" / "simulation.yaml")
+    given = str(exe.with_suffix(""))
+    result = planned(root, {"windows-mingw-debug": ALL}, "--launcher", given, str(mine), windows=True)
+    check(isinstance(result, tuple) and result[0][6] == str(exe), f"Windows: the .exe of the given name ({result})")
+    said = planned(root, {"windows-mingw-debug": ALL}, "--launcher", given, str(mine), windows=False, kind=run_gui.Usage)
+    check(isinstance(said, str) and "no such file" in said, f"elsewhere the name is taken as given ({said})")
 
 
 def test_command_line(root: Path) -> None:
-    """The script as a process: exit code 1 and the text on stderr; --help; a usage error is 2."""
+    """The script as a process: the exit code and the text on stderr; --help; a usage error is 2."""
     def run(*argv: str) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, "-B", str(SCRIPT), *argv], capture_output=True, text=True, encoding="utf-8",
                               errors="replace", stdin=subprocess.DEVNULL)
@@ -172,8 +209,12 @@ def test_command_line(root: Path) -> None:
     p = run("--no-such-argument")
     check(p.returncode == 2, f"an unknown argument: exit code 2 ({p.returncode})")
     p = run("--dry-run", "--launcher", str(root / "no" / NAME))
-    check(p.returncode == 1 and p.stdout == "" and "run-gui: --launcher " in p.stderr,
-          f"something missing: exit code 1, the text on stderr, nothing on stdout ({p.returncode}: {p.stdout} {p.stderr})")
+    check(p.returncode == 2 and p.stdout == "" and "run-gui: --launcher " in p.stderr,
+          f"a --launcher that is not there: exit code 2, the text on stderr, nothing on stdout ({p.returncode}: {p.stdout} {p.stderr})")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        code = run_gui.main(["--dry-run"], root, probe=lambda launcher: None, uv=lambda: "/bin/uv")
+    check(code == 1 and "nothing is built yet" in err.getvalue(), f"nothing built: exit code 1 ({code}: {err.getvalue()})")
     # main() with everything there and --dry-run: the command on stderr, nothing started.
     web(root)
     build(root, "linux-gcc-control")
@@ -201,7 +242,8 @@ def test_features_of(root: Path) -> None:
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         for test in (test_takes_the_newest_launcher_with_the_control_server, test_nothing_built, test_no_control_server,
-                     test_example_not_built, test_everything_missing_is_said_at_once, test_command_line, test_features_of):
+                     test_example_not_built, test_everything_missing_is_said_at_once, test_windows_launcher_without_exe,
+                     test_command_line, test_features_of):
             d = Path(tmp).resolve() / test.__name__
             d.mkdir()
             test(d)
