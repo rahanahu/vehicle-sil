@@ -5,6 +5,7 @@ vehicle-sil 自体を直す人と、CAN の上に自分のプロトコルを作�
 `vehicle_sil::can` と `vehicle_sil::can_silkit` は、J1939 スタック（`vehicle_sil::j1939`）の土台です。CAN の 11 ビットと 29 ビットのフレームを扱い、J1939 以外のプロトコルも載せられます。API はまだ変わることがあります。
 
 - `vehicle_sil::can` は SIL Kit と Vector XL に依存しません。SIL Kit をリンクしない単体テストの実行ファイルをビルドすることで、毎回確かめます。
+- ステップを回す仕組み（ホスト、ドライバー、時計、時間の領域）は、バスの種類によらない `vehicle_sil::step` にあります。`vehicle_sil::can` の `Host` はその上に作ってあり、`StepDriver`、`RealTimeDriver`、`RealTimeClock`、`TimeDomain` などは `vehicle_sil::step` のものの別名です（どちらの名前でも同じ型です）。
 - 時刻はすべて `SimTime` です。プロトコル処理はスレッドを持たず、時計を読みません。仮想時間では SIL Kit または `StepDriver` の時刻、実時間では `RealTimeDriver` の時計（開始からの経過時間）です。
 
 ## 値の型
@@ -62,10 +63,12 @@ CAN の上にプロトコルスタックを作るときの拡張点です。J193
 
 ## ホスト（`Host`）
 
+- `vehicle_sil::step::Host` は、ステップの参加者（`step::Member`）を登録順に持ち、段階ごとに進めます。`Member` は 1 つのチャネルのプロトコル処理とそのポートの組で、`begin(now)`、`receive(now)`（ポートから `now` より前のものを受け取る）、`process()`、`flush()`、`start(step_size)`、`next_deadline()`、`time_domain()`、`set_wakeup()` を持ちます。バスの種類を知りません。
+- `vehicle_sil::can::Host` は `step::Host` の派生で、`add(Steppable&, Port&)` で渡された組を中で `Member` にします（`receive(now)` は、ポートの事象を `on_port_event()` に、フレームを `receive()` に渡します）。組の入れ物はホストが持ちますが、`Steppable` とポートは持ちません。以下は CAN の組で見た契約です。
 - 1 つの participant（またはテストのループ）の、プロトコル処理（`Steppable`）とポートの組を登録順に持ちます。1 ステップは、全部の組に対して段階ごとに進めます。(1) `begin(now)`、(2) ポートが渡す事象の `on_port_event()` とフレームの `receive()`、(3) `process()`、(4) アプリの処理を 1 回、(5) `flush(port)`。
 - ステップの時刻は前のステップより大きくなければなりません。
 - `step()` から例外が出ると（プロトコル処理、アプリ、ポートのどれからでも、使い方の誤りでも）、ホストは失敗状態になり、例外を呼び出し元に返します。以後の `step()` はすべて `std::logic_error` です。回復するには作り直します。
-- 登録は最初のステップの前だけです。ホストは `Steppable` とポートを所有しません。
+- 登録は最初のステップの前だけです。ホストは `Steppable` とポートを所有しません。起こし方が設定された後の登録では、ホストがポートの `set_wakeup()` を呼びます。それが例外を投げると、組は登録されずに例外が返ります（同じ組をもう一度登録できます）。
 - ステップ幅: `set_step_size()` で受け取ったステップ幅を、最初のステップの `begin()` の前に、各 `Steppable` の `start()` に登録順で 1 回渡します（設定がなければ値なし）。`StepDriver::add()`、`bind_host()`、`RealTimeDriver` が設定します。`start()` が例外を投げると、ホストは失敗状態になります（そのプロトコルが動けないステップ幅の構成エラー）。
 - `post(fn)`: ステップの外（別のスレッド、SIL Kit の他のハンドラ）からプロトコルスタックに処理を渡します。どのスレッドからでも呼べます。`fn` は次のステップの段階 4 の最初（アプリの処理の前）に、渡された順でドライバーのスレッドで実行します。ステップの中で渡した処理は次のステップです。`fn` の例外はアプリの例外と同じくホストを失敗させ、失敗したホストに渡した処理は実行しません。仮想時間でも使えますが、どのステップで実行されるかは `post()` を呼んだ時点で決まるので、決定的に扱いたいデータは受け箱（`StepInbox`）で受けてステップの中で処理します。
 - 時間の領域: 1 つのホストのポートは同じ領域でなければなりません。ドライバーは自分の領域を要求します（`StepDriver` と `bind_host()` は `Virtual`、`RealTimeDriver` は `RealTime`）。混在は登録の時点で `std::logic_error` です（例: Vector XL のポートを SIL Kit の時刻同期で回すホストに入れる）。
@@ -73,13 +76,13 @@ CAN の上にプロトコルスタックを作るときの拡張点です。J193
 
 ## 仮想時間での駆動
 
-- `StepDriver` は、SIL Kit を使わずに複数のホストを仮想時間で進めます。各ホストのステップ幅は別々でよく、ステップは（開始時刻、登録順）の順に実行します。SIL Kit の時刻同期が許す順序の 1 つです。
+- `StepDriver`（`vehicle_sil::step`）は、SIL Kit を使わずに複数のホストを仮想時間で進めます。各ホストのステップ幅は別々でよく、ステップは（開始時刻、登録順）の順に実行します。SIL Kit の時刻同期が許す順序の 1 つです。
 - テストのループでの終了の順序: そのホストを進める `StepDriver` を使うのをやめる → プロトコル処理とホストを破棄 → ポート（仮想バスが所有）を破棄。
-- SIL Kit では `bind_host(runtime, host)` を使います。`ParticipantRuntime` のステップハンドラから `host.step(now)` を呼びます。仮想時間を使わない `ParticipantRuntime` には結び付けられません。
+- SIL Kit では `bind_host(runtime, host)` を使います。`ParticipantRuntime` のステップハンドラから `host.step(now)` を呼びます。仮想時間を使わない `ParticipantRuntime` には結び付けられません。本体は `vehicle_sil::core` の `vehicle_sil::bind_host()`（`step::Host` を受ける）で、`vehicle_sil::can::bind_host` は同じ関数です。
 
 ## 実時間での駆動（`RealTimeDriver`）
 
-- 時刻同期なしの SIL Kit や Vector XL のポートを持つホストを、壁時計で回します。participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコルスタックにはロックがなく、触るのはこのスレッドだけです。アプリはホストの `post()` とアプリの処理で関わります。
+- `RealTimeDriver` と時計は `vehicle_sil::step` のもので、どの `step::Host` も回せます。時刻同期なしの SIL Kit や Vector XL のポートを持つホストを、壁時計で回します。participant ごとに 1 つ、スレッドを 1 本持ちます。プロトコルスタックにはロックがなく、触るのはこのスレッドだけです。アプリはホストの `post()` とアプリの処理で関わります。
 - 時計（`RealTimeClock`）は差し替えられます。製品では `SteadyRealTimeClock`（生成時からの経過時間）、試験では `ManualRealTimeClock`（`advance_to()` で進めるとドライバーを起こす）を使います。ドライバーとホストのポートは同じ時計を使います。
 - 登録（`Host::add()`、`set_application()`）は `start()` の前に済ませます。`start()` の直後に、ドライバーのスレッドで最初のステップが回ります。
 - ステップを回すのは、開始の直後、ポートへの到着や `post()` のとき、ホストの `next_deadline()` の 1 ns 後（期限より後で発火するタイムアウトのため）、前のステップから `max_idle`（既定 10 ms）が過ぎたときです。

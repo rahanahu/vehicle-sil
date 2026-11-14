@@ -4,7 +4,7 @@ vehicle_sil_add_harness_tests(vehicle_sil_can_tests
   PREFIX can LABELS unit can TIMEOUT 60
   SOURCES test_can_values_and_bus.cpp test_can_host.cpp test_can_bus_model.cpp
           test_can_real_time.cpp test_can_faults.cpp test_can_tap_port.cpp
-          test_can_raw_channel.cpp
+          test_can_raw_channel.cpp test_can_host_add.cpp
   LINK vehicle_sil::can)
 target_include_directories(vehicle_sil_can_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

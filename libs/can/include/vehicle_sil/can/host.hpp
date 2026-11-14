@@ -6,12 +6,10 @@
 #include "vehicle_sil/can/frame.hpp"
 #include "vehicle_sil/can/port.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
+#include "vehicle_sil/step/host.hpp"
 
-#include <atomic>
-#include <functional>
-#include <mutex>
+#include <memory>
 #include <optional>
-#include <string>
 #include <vector>
 
 namespace vehicle_sil::can {
@@ -61,7 +59,8 @@ protected:
     Steppable& operator=(const Steppable&) = default;
 };
 
-/// Steps a fixed set of (Steppable, Port) pairs of one participant (or one test loop) together.
+/// Steps a fixed set of (Steppable, Port) pairs of one participant (or one test loop) together:
+/// a vehicle_sil::step::Host whose members are those pairs.
 ///
 /// Before the first step, the host calls start() of every Steppable in registration order.
 /// One step at `now` runs five stages, each over all pairs in registration order:
@@ -72,106 +71,31 @@ protected:
 /// So a receive handler of one Steppable may send on another Steppable of the same host: both
 /// are inside the same step and the frame leaves in stage 5.
 ///
-/// Time domain: all ports of a host belong to one TimeDomain, and the driver requires its
-/// domain (require_time_domain()): StepDriver and bind_host() Virtual, RealTimeDriver RealTime.
-/// Mixing them is a configuration error (std::logic_error), e.g. a Vector XL port in a host that
-/// SIL Kit's time synchronisation steps.
-///
-/// Failure: if step() throws (from a Steppable, the application or a port, or because it was
-/// misused), the host becomes failed and rethrows. Every later step() throws std::logic_error.
-/// Only a new host recovers.
+/// Time domain, failure, post(), set_wakeup() and threading are those of step::Host: all ports
+/// of a host belong to one TimeDomain, the one the driver requires (std::logic_error otherwise).
 ///
 /// The host does not own the Steppables and ports. Destroy them after the host is no longer
 /// stepped (stop the driver first).
-///
-/// Not thread safe, except post() and set_wakeup(): call everything else from the driver's
-/// thread.
-class Host
+class Host : public step::Host
 {
 public:
-    using Application = std::function<void(SimTime now)>;
-
-    Host() = default;
+    Host();
+    ~Host() override;
     Host(const Host&) = delete;
     Host& operator=(const Host&) = delete;
 
     /// Registers a Steppable with the port it sends and receives on. Only before the first step;
     /// a port can belong to one Steppable only; the port's time domain must be the one of the
     /// ports added before and the one the driver requires. Throws std::logic_error otherwise. A
-    /// port or Steppable must not be registered with another host as well (not detected).
+    /// port or Steppable must not be registered with another host as well (not detected). If the
+    /// port's set_wakeup() throws (a wakeup is set), the pair is not added and the exception
+    /// propagates; the same pair can be added again.
     void add(Steppable& steppable, Port& port);
 
-    /// Called by a driver: the ports must belong to `domain`. Throws std::logic_error if a port
-    /// added before does not, or if another domain was required before; add() checks the later
-    /// ports. Only before the first step.
-    void require_time_domain(TimeDomain domain);
-
-    /// The time domain of the ports (or the required one), empty if neither is known.
-    [[nodiscard]] std::optional<TimeDomain> time_domain() const noexcept;
-
-    /// Queues `fn` to run on the driver's thread at the start of stage 4 of the next step (in
-    /// the order of the post() calls), before the application. Use it to hand work to the
-    /// protocol stacks from another thread or from outside the step (e.g. a SIL Kit handler);
-    /// the stacks have no locks. Thread safe. A function posted during a step runs in the next
-    /// step. If `fn` throws, the step fails like it does for the application. A failed host
-    /// discards the functions posted to it. With virtual time, the step a function runs in depends on when
-    /// it was posted; data that must be handled deterministically belongs in a StepInbox.
-    void post(std::function<void()> fn);
-
-    /// Sets (or with an empty function removes) the wakeup of a real-time driver: the host
-    /// passes it to every port (Port::set_wakeup()) and calls it after post() (with the time
-    /// zero). Thread safe.
-    void set_wakeup(Wakeup wakeup);
-
-    /// The earliest Steppable::next_deadline() of the Steppables (empty: none).
-    [[nodiscard]] std::optional<SimTime> next_deadline() const noexcept;
-
-    /// The application's work for each step (stage 4). Optional. Only before the first step.
-    void set_application(Application application);
-
-    /// The size of the steps the driver runs (StepDriver::add() and bind_host() set it). Only
-    /// before the first step; must be > 0 (std::invalid_argument). Passed to every
-    /// Steppable::start() before the first step.
-    void set_step_size(SimDuration step_size);
-
-    /// Runs the step at `now`. `now` must be greater than the previous step's.
-    void step(SimTime now);
-
-    /// Thread safe.
-    [[nodiscard]] bool failed() const noexcept { return failed_.load(std::memory_order_acquire); }
-    /// What made the host fail (empty while it has not failed). Once failed() returned true,
-    /// it is set and no longer changes, so another thread may read it then.
-    [[nodiscard]] const std::string& error() const noexcept { return error_; }
-    /// Time of the last step that started, if any.
-    [[nodiscard]] std::optional<SimTime> last_step() const noexcept { return last_step_; }
-
 private:
-    struct Channel
-    {
-        Steppable* steppable;
-        Port* port;
-    };
+    class PairMember;
 
-    void run_step(SimTime now);
-    void require_not_started(const char* what) const;
-
-    void run_posted();
-    void discard_posted() noexcept;
-
-    std::vector<Channel> channels_;
-    Application application_;
-    std::optional<TimeDomain> domain_;
-    std::optional<TimeDomain> required_domain_;
-
-    mutable std::mutex post_mutex_; ///< guards posted_ and wakeup_
-    std::vector<std::function<void()>> posted_;
-    std::vector<std::function<void()>> running_; ///< driver's thread only
-    Wakeup wakeup_;
-    std::optional<SimDuration> step_size_;
-    std::optional<SimTime> last_step_;
-    bool in_step_ = false;
-    std::atomic<bool> failed_{false};
-    std::string error_;
+    std::vector<std::unique_ptr<PairMember>> pairs_;
 };
 
 } // namespace vehicle_sil::can

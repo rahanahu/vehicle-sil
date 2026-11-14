@@ -17,22 +17,42 @@
 //   device-lost               the XL device disappears while the bridge runs (fake: 1.5 s after the
 //                             driver was opened): the bridge reports it and exits 1 on its own,
 //                             with its statistics.
+//   stop-request              registry + bridge: once the bridge says "Ctrl+C to stop", the
+//                             launcher asks it to stop (POSIX SIGTERM, Windows Ctrl+Break to its
+//                             process group). The bridge stops in order: one statistics line,
+//                             "stopped", exit code 0. Skipped on Windows without a console the
+//                             processes share (the request cannot be sent).
 #include "launcher_support.hpp"
 #include "test_timeout_scale.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
+#include "vehicle_sil/process/process.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <regex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
@@ -209,6 +229,115 @@ int run_device_lost(const Options& options)
                       {});
 }
 
+/// The scenario cannot run on this machine: main() exits with 77 (CTest's SKIP_RETURN_CODE).
+struct Skip : std::runtime_error
+{
+    using std::runtime_error::runtime_error;
+};
+
+std::size_t count(const std::string& text, const std::string& part)
+{
+    std::size_t n = 0;
+    for (auto at = text.find(part); at != std::string::npos; at = text.find(part, at + part.size()))
+    {
+        ++n;
+    }
+    return n;
+}
+
+/// The bridge in a process group of its own (so that it can be asked to stop), its lines collected.
+class StoppableBridge
+{
+public:
+    StoppableBridge(const fs::path& executable, const std::vector<std::string>& args)
+    {
+        vehicle_sil::process::ProcessOptions processOptions;
+        processOptions.on_line = [this](vehicle_sil::process::Stream, std::string_view line) {
+            const std::lock_guard lock(mutex_);
+            lines_ += std::string(line) + "\n";
+        };
+        process_ = std::make_unique<vehicle_sil::process::Process>(executable, args, std::move(processOptions));
+    }
+
+    vehicle_sil::process::Process& process() { return *process_; }
+
+    /// What it wrote so far.
+    std::string lines()
+    {
+        const std::lock_guard lock(mutex_);
+        return lines_;
+    }
+
+    /// Everything it wrote, after its end.
+    std::string all_lines()
+    {
+        process_->finish_output(10s);
+        return lines();
+    }
+
+private:
+    std::mutex mutex_;
+    std::string lines_;
+    std::unique_ptr<vehicle_sil::process::Process> process_;
+};
+
+int run_stop_request(const Options& options)
+{
+#ifdef _WIN32
+    if (GetConsoleWindow() == nullptr && GetConsoleCP() == 0)
+    {
+        throw Skip("no console to send Ctrl+Break through");
+    }
+#endif
+    RegistryProcess registry(options.registry, options.workDir);
+    log("registry listening on " + registry.uri());
+    const auto deadline = std::chrono::steady_clock::now() + options.timeout;
+    StoppableBridge bridge(options.bridge, {"--registry-uri", registry.uri(), "--participant", "VectorXlBridge", "--network",
+                                            "XL_IT_CAN", "--xl-target", "virtual", "--xl-channel", "1"});
+    // The bridge says "Ctrl+C to stop" once its stop handlers are in place.
+    while (bridge.lines().find("Ctrl+C to stop") == std::string::npos)
+    {
+        if (bridge.process().poll() || std::chrono::steady_clock::now() >= deadline)
+        {
+            const std::string text = bridge.all_lines();
+            dump_log(registry.log_file());
+            throw std::runtime_error("the bridge did not get ready to bridge:\n" + text);
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    if (!bridge.process().request_stop())
+    {
+        throw std::runtime_error("the stop request could not be sent");
+    }
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+    const auto status = bridge.process().wait_for(std::max(remaining, std::chrono::milliseconds::zero()));
+    const std::string text = bridge.all_lines();
+    bool ok = expect(status && status->code == cli::kExitOk && !status->signal,
+                     "bridge exit code " + (status ? std::to_string(status->code) : std::string("none (still running)")) +
+                         ", expected 0");
+    const auto stopping = text.find("stopping\n");
+    const auto stats = text.find("stats silkit_to_xl=");
+    const auto stopped = text.find("stopped\n");
+    ok = expect(count(text, "stats silkit_to_xl=") == 1, "bridge printed one statistics line") && ok;
+    ok = expect(stopping != std::string::npos && stats != std::string::npos && stopped != std::string::npos &&
+                    stopping < stats && stats < stopped,
+                "bridge printed 'stopping', the statistics and 'stopped', in this order") &&
+         ok;
+    // Nothing was bridged: every counter of the statistics line is 0.
+    for (const char* key : {"silkit_to_xl", "xl_to_silkit", "own_tx_dropped", "error_frames", "overruns", "silkit_rejected",
+                            "xl_rejected", "xl_queue_full", "xl_tx_failures", "silkit_tx_failures", "xl_tx_dropped", "xl_tx_unsent"})
+    {
+        ok = expect(stat(text, key) == std::optional<unsigned long long>(0), std::string("bridge ") + key + " == 0") && ok;
+    }
+    ok = expect(text.find("FAIL") == std::string::npos, "bridge reported no failure") && ok;
+    if (!ok)
+    {
+        dump_log(registry.log_file());
+    }
+    log("bridge output:\n" + text);
+    return ok ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -259,12 +388,21 @@ int main(int argc, char** argv)
         {
             result = run_device_lost(options);
         }
+        else if (options.scenario == "stop-request")
+        {
+            result = run_stop_request(options);
+        }
         else
         {
             throw std::invalid_argument("unknown scenario " + options.scenario);
         }
         log(result == 0 ? "PASS" : "FAIL");
         return result;
+    }
+    catch (const Skip& e)
+    {
+        log(std::string("SKIP: ") + e.what());
+        return 77;
     }
     catch (const std::exception& e)
     {

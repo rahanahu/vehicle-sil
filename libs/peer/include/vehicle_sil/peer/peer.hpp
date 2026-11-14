@@ -26,9 +26,9 @@
 
 namespace vehicle_sil {
 
-namespace can {
+namespace step {
 class RealTimeDriver;
-} // namespace can
+} // namespace step
 
 class Peer;
 
@@ -336,10 +336,10 @@ private:
     /// PeerOptions::monitor: set when the agent's schema is completed (before the first step).
     std::shared_ptr<detail::PeerMonitor> monitor_;
     std::mutex mutex_; ///< serialises stop(); guards driver_ and stopping_ against start()
-    std::unique_ptr<can::RealTimeDriver> driver_;
+    std::unique_ptr<step::RealTimeDriver> driver_;
     /// driver_ once it runs (set once in start()), for failed(), error() and wait() without the
     /// lock: a step may call them while stop() holds the lock and waits for the step.
-    std::atomic<can::RealTimeDriver*> running_driver_{nullptr};
+    std::atomic<step::RealTimeDriver*> running_driver_{nullptr};
     bool stopping_ = false;
     bool started_ = false;
 };

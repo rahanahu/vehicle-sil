@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: MIT
-#include "vehicle_sil/can/step_driver.hpp"
+#include "vehicle_sil/step/step_driver.hpp"
 
 #include <stdexcept>
 
-namespace vehicle_sil::can {
+namespace vehicle_sil::step {
 
 void StepDriver::add(Host& host, SimDuration step)
 {
     if (started_)
     {
-        throw std::logic_error("vehicle_sil::can::StepDriver: add() is only allowed before the first run_until()");
+        throw std::logic_error("vehicle_sil::step::StepDriver: add() is only allowed before the first run_until()");
     }
     if (step <= SimDuration::zero())
     {
-        throw std::invalid_argument("vehicle_sil::can::StepDriver: the step size must be > 0");
+        throw std::invalid_argument("vehicle_sil::step::StepDriver: the step size must be > 0");
     }
     for (const auto& entry : entries_)
     {
         if (entry.host == &host)
         {
-            throw std::logic_error("vehicle_sil::can::StepDriver: a host can be added only once");
+            throw std::logic_error("vehicle_sil::step::StepDriver: a host can be added only once");
         }
     }
     host.require_time_domain(TimeDomain::Virtual);
@@ -31,7 +31,7 @@ SimTime StepDriver::next_step_time() const
 {
     if (entries_.empty())
     {
-        throw std::logic_error("vehicle_sil::can::StepDriver: no host added");
+        throw std::logic_error("vehicle_sil::step::StepDriver: no host added");
     }
     SimTime earliest = entries_.front().next;
     for (const auto& entry : entries_)
@@ -72,4 +72,4 @@ void StepDriver::run_until(SimTime end)
     }
 }
 
-} // namespace vehicle_sil::can
+} // namespace vehicle_sil::step

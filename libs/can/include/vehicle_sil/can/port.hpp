@@ -5,26 +5,18 @@
 
 #include "vehicle_sil/can/frame.hpp"
 #include "vehicle_sil/core/sim_time.hpp"
+#include "vehicle_sil/step/sink_ref.hpp"
+#include "vehicle_sil/step/time_domain.hpp"
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
-#include <memory>
 #include <optional>
-#include <type_traits>
 #include <utility>
 
 namespace vehicle_sil::can {
 
-/// The time base a port's frame times belong to.
-enum class TimeDomain
-{
-    /// Simulation time that only advances step by step (SIL Kit time synchronisation, the
-    /// virtual bus). Deterministic.
-    Virtual,
-    /// Wall-clock time of a real-time driver (SIL Kit without time synchronisation, Vector XL).
-    RealTime,
-};
+/// The time base a port's frame times belong to (vehicle_sil::step::TimeDomain).
+using TimeDomain = step::TimeDomain;
 
 /// Synchronous outcome of Port::send().
 enum class SendResult
@@ -39,30 +31,10 @@ enum class SendResult
     Failed,
 };
 
-/// Non-owning reference to a callable object `void(const T&)` (e.g. a lambda), valid for one
-/// call.
-///
-/// Used instead of std::function so that handing values over never allocates. The referenced
-/// callable must outlive the SinkRef; pass it directly as an argument.
+/// Non-owning reference to a callable object `void(const T&)`, valid for one call
+/// (vehicle_sil::step::SinkRef).
 template <typename T>
-class SinkRef
-{
-public:
-    template <typename F>
-        requires(!std::is_same_v<std::remove_cvref_t<F>, SinkRef> && std::is_object_v<std::remove_reference_t<F>> &&
-                 std::is_invocable_v<F&, const T&>)
-    SinkRef(F&& f) noexcept
-      : object_(const_cast<void*>(static_cast<const void*>(std::addressof(f)))),
-        call_([](void* object, const T& value) { (*static_cast<std::remove_reference_t<F>*>(object))(value); })
-    {
-    }
-
-    void operator()(const T& value) const { call_(object_, value); }
-
-private:
-    void* object_;
-    void (*call_)(void*, const T&);
-};
+using SinkRef = step::SinkRef<T>;
 
 /// Receives the frames a port releases.
 using FrameSink = SinkRef<TimedFrame>;
@@ -116,11 +88,8 @@ struct PortEvent
 /// Receives the events a port releases.
 using PortEventSink = SinkRef<PortEvent>;
 
-/// Wakes a real-time driver because a frame or an event arrived with time `arrival` (the
-/// driver's next step is later than `arrival`, so the port can release it). Called from any
-/// thread, with the port's lock held: it must return quickly and must not call back into the
-/// port or the host.
-using Wakeup = std::function<void(SimTime arrival)>;
+/// Wakes a real-time driver because a frame or an event arrived (vehicle_sil::step::Wakeup).
+using Wakeup = step::Wakeup;
 
 /// One CAN controller as a protocol stack sees it.
 ///

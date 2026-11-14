@@ -1,6 +1,8 @@
-# vehicle_sil::core - SIL Kit participant, registry connection and lifecycle.
+# vehicle_sil::core - SIL Kit participant, registry connection and lifecycle, and the binding of
+# a vehicle_sil::step::Host to the participant's steps (bind_host()).
 # Protocol independent: must not depend on CAN, LIN or J1939 specifics.
 add_library(vehicle_sil_core STATIC
+  src/bind_host.cpp
   src/deadline_waiter.cpp
   src/failure_check.cpp
   src/participant_runtime.cpp
@@ -28,3 +30,6 @@ target_include_directories(vehicle_sil_sim_base INTERFACE $<BUILD_INTERFACE:${CM
 target_compile_features(vehicle_sil_sim_base INTERFACE cxx_std_20)
 target_link_libraries(vehicle_sil_sim_base INTERFACE Threads::Threads)
 target_link_libraries(vehicle_sil_core PUBLIC vehicle_sil::sim_base)
+# Only src/bind_host.cpp includes vehicle_sil::step's headers (core/bind_host.hpp declares
+# step::Host ahead): its callers link vehicle_sil::step (or vehicle_sil::can) themselves.
+target_link_libraries(vehicle_sil_core PRIVATE vehicle_sil::step)

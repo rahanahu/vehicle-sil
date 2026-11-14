@@ -9,6 +9,7 @@
 #include "vehicle_sil/can/port.hpp"
 #include "vehicle_sil/can/real_time_clock.hpp"
 #include "vehicle_sil/can/real_time_receiver.hpp"
+#include "vehicle_sil/core/bind_host.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/step_inbox.hpp"
 
@@ -184,12 +185,8 @@ private:
     std::atomic<std::uint64_t> error_state_changes_{0};
 };
 
-/// Steps `host` from the step handler of `runtime`: each SIL Kit step at `now` runs
-/// host.step(now). Requires TimeDomain::Virtual of the host's ports
-/// (Host::require_time_domain(), std::logic_error). Before the first step it passes the
-/// participant's step size to Host::set_step_size(). `runtime` must use virtual time (std::invalid_argument otherwise) and must
-/// not have started. An exception from the host makes the participant go to Error (see
-/// ParticipantRuntime). `host` must outlive the runtime's steps: stop the runtime first.
-void bind_host(ParticipantRuntime& runtime, Host& host);
+/// Steps `host` from the step handler of `runtime` (vehicle_sil::bind_host(), which a
+/// vehicle_sil::can::Host is passed to as a step::Host).
+using ::vehicle_sil::bind_host;
 
 } // namespace vehicle_sil::can
