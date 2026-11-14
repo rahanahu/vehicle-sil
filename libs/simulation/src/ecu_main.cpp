@@ -72,6 +72,8 @@ struct CommandLine
     std::optional<std::string> silkit_config;
     std::optional<std::chrono::milliseconds> run_for;
     std::optional<std::chrono::milliseconds> start_timeout;
+    /// --map-network, in the order given: the simulation's name and the executable's.
+    std::vector<std::pair<std::string, std::string>> network_map;
 };
 
 /// The start timeout without --start-timeout-ms (SilKitOptions::start_timeout).
@@ -79,7 +81,12 @@ constexpr std::chrono::milliseconds kDefaultStartTimeout{30000};
 
 /// The options that take a value.
 constexpr std::string_view kValueOptions[] = {"--registry-uri", "--name", "--run-for-ms", "--start-timeout-ms",
-                                              "--silkit-config"};
+                                              "--silkit-config", ecu_executable::kMapNetworkArgument};
+
+/// An example of --map-network with what it means, for the messages.
+constexpr const char* kMapNetworkExample =
+    "e.g. --map-network VehicleCAN=J1939_CAN: the network that the ECU's code names J1939_CAN is VehicleCAN in the "
+    "simulation";
 
 bool takes_value(std::string_view arg)
 {
@@ -144,6 +151,7 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
     return "usage: " + program + " --describe [--name <name>] [--silkit-config <file>]\n"
            "       " + pad + " --registry-uri <uri> [--start-timeout-ms <ms>] [--no-control] [--name <name>]\n"
            "       " + pad + "                      [--silkit-config <file>]\n"
+           "       " + pad + "                      [--map-network <simulation's name>=<executable's name>]...\n"
            "       " + pad + " --local --run-for-ms <ms> [--name <name>]\n"
            "       " + pad + " --help\n"
            "the ECU " + in_quotes(options.name) + ", step " + duration_text(options.step) + "\n"
@@ -157,6 +165,9 @@ std::string usage(const std::string& program, const EcuMainOptions& options)
            "  --silkit-config <file>  with --registry-uri: a SIL Kit participant configuration (YAML or JSON)\n"
            "                          for this participant, e.g. Logging or Middleware; vehicle-sil's defaults\n"
            "                          fill in what it leaves out. With --describe: only checked\n"
+           "  --map-network <s>=<e>   with --registry-uri, any number of times: the network that this ECU's code\n"
+           "                          names <e> is the network <s> of the simulation (split at the first '=').\n"
+           "                          Only the SIL Kit network changes; the code and --describe keep <e>\n"
            "  --local                 run this ECU alone on local virtual buses, for --run-for-ms\n"
            "  --run-for-ms <ms>       how long --local runs (virtual time, > 0)\n"
            "  --name <name>           the participant name instead of " + in_quotes(options.name) + "; only the name\n"
@@ -208,7 +219,7 @@ CommandLine parse(const std::vector<std::string_view>& args)
         const std::string_view arg = args[i];
         for (const auto& before : seen)
         {
-            if (before == arg)
+            if (before == arg && arg != ecu_executable::kMapNetworkArgument) // that one: once for each network
             {
                 throw UsageError(in_quotes(arg) + " is given twice; give it once");
             }
@@ -264,6 +275,45 @@ CommandLine parse(const std::vector<std::string_view>& args)
                 throw UsageError("--silkit-config needs a path that is not empty (e.g. --silkit-config engine.silkit.yaml)");
             }
         }
+        else if (arg == ecu_executable::kMapNetworkArgument)
+        {
+            const std::string text = value("<simulation's name>=<executable's name>", "VehicleCAN=J1939_CAN");
+            if (!detail::is_utf8(text))
+            {
+                throw UsageError("--map-network needs ASCII or UTF-8 text, not the bytes " + hex_bytes(text) +
+                                 " (names in another encoding, e.g. a Windows code page)");
+            }
+            const auto split = text.find('=');
+            if (split == std::string::npos)
+            {
+                throw UsageError("--map-network needs <simulation's name>=<executable's name>, not " + in_quotes(text) +
+                                 " (" + kMapNetworkExample + ")");
+            }
+            std::string simulation = text.substr(0, split);
+            std::string executable = text.substr(split + 1);
+            if (simulation.empty() || executable.empty())
+            {
+                throw UsageError("--map-network " + in_quotes(text) + " has an empty name: it needs the simulation's name "
+                                 "before the first '=' and the executable's name after it (" + kMapNetworkExample + ")");
+            }
+            for (const auto& [otherSimulation, otherExecutable] : c.network_map)
+            {
+                if (otherSimulation == simulation)
+                {
+                    throw UsageError("--map-network gives the simulation's network " + in_quotes(simulation) +
+                                     " twice (" + in_quotes(otherSimulation + "=" + otherExecutable) + " and " +
+                                     in_quotes(text) + "): one network of the simulation is one network of the ECU; "
+                                     "keep one of the two");
+                }
+                if (otherExecutable == executable)
+                {
+                    throw UsageError("--map-network gives the executable's network " + in_quotes(executable) +
+                                     " two names in the simulation (" + in_quotes(otherSimulation + "=" + otherExecutable) +
+                                     " and " + in_quotes(text) + "): a network of an ECU is on one bus; keep one of the two");
+                }
+            }
+            c.network_map.emplace_back(std::move(simulation), std::move(executable));
+        }
         else if (arg == "--start-timeout-ms")
         {
             c.start_timeout = parse_millis(arg, value("a duration in milliseconds", "60000"));
@@ -312,6 +362,14 @@ CommandLine parse(const std::vector<std::string_view>& args)
         throw UsageError("--start-timeout-ms is for --registry-uri: " +
                          std::string(c.describe ? "--describe" : "--local") + " starts nothing to wait for");
     }
+    if (!c.network_map.empty() && !c.registry_uri)
+    {
+        throw UsageError(c.describe
+                             ? "--map-network is for --registry-uri: --describe says what the ECU's code names its "
+                               "networks, whatever a simulation calls them; leave --map-network out"
+                             : "--map-network is for --registry-uri: --local runs the ECU alone on local virtual buses, "
+                               "where there is no other name for a network; leave --map-network out");
+    }
     if (c.silkit_config && c.local)
     {
         throw UsageError("--silkit-config is for --registry-uri: --local runs the ECU on local virtual buses, without "
@@ -322,8 +380,11 @@ CommandLine parse(const std::vector<std::string_view>& args)
 
 /// --silkit-config: the configuration in `file` as JSON text for SilKitOptions, read and checked
 /// by SIL Kit and by vehicle-sil for the participant `name` (`registry_uri` empty: --describe,
-/// which knows none). A failure says the option and the file.
-std::string silkit_configuration(const std::string& file, const std::string& name, const std::string& registry_uri)
+/// which knows none). With `renames` (--map-network changes a name), a configuration that puts a
+/// controller on a network is refused: SIL Kit would use that network. A failure says the option
+/// and the file.
+std::string silkit_configuration(const std::string& file, const std::string& name, const std::string& registry_uri,
+                                 bool renames = false)
 {
     const std::string where = "--silkit-config " + in_quotes(file) + ": ";
     try
@@ -331,6 +392,17 @@ std::string silkit_configuration(const std::string& file, const std::string& nam
         std::string text = participant_configuration_from_file(file);
         // Only the check: the participant makes its own (where it listens is decided there).
         static_cast<void>(merged_participant_configuration(text, name, registry_uri, false));
+        if (renames)
+        {
+            if (const auto configured = configured_controller_networks(text); !configured.empty())
+            {
+                throw std::invalid_argument(
+                    "the configuration puts a controller on a network itself (" + configured.front() +
+                    "), and --map-network renames networks: SIL Kit would use the configuration's network, whatever "
+                    "--map-network says. Remove Network from the controllers of the configuration, or leave "
+                    "--map-network out and name the networks there");
+            }
+        }
         return text;
     }
     catch (const SilKit::ConfigurationError& e)
@@ -837,9 +909,15 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
             silkit.registry_uri = *c.registry_uri;
             silkit.controller = false;
             silkit.start_timeout = c.start_timeout.value_or(kDefaultStartTimeout);
+            bool renames = false;
+            for (const auto& [simulation, executable] : c.network_map)
+            {
+                silkit.network_names.emplace(simulation, executable);
+                renames = renames || simulation != executable;
+            }
             if (c.silkit_config)
             {
-                silkit.participant_configuration = silkit_configuration(*c.silkit_config, name, *c.registry_uri);
+                silkit.participant_configuration = silkit_configuration(*c.silkit_config, name, *c.registry_uri, renames);
             }
             sim.emplace(silkit);
             stop_on_signal.emplace(name);
@@ -898,6 +976,30 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
         // Every ECU has a control agent, with the input ecu.connected (made now if the set-up
         // declared no variable).
         static_cast<void>(ecu->agent());
+        // A --map-network for a network the ECU does not have is a mistake of this command line.
+        // Checked here and not by the Peer: its options may serve several ECUs (Simulation).
+        if (!c.network_map.empty())
+        {
+            const EcuDescription made = ecu->describe();
+            for (const auto& [simulation, executable] : c.network_map)
+            {
+                bool found = false;
+                std::string networks;
+                for (const auto& network : made.networks)
+                {
+                    found = found || network.name == executable;
+                    networks += (networks.empty() ? "'" : ", '") + network.name + "' (" + to_string(network.use) + ")";
+                }
+                if (!found)
+                {
+                    throw std::invalid_argument(
+                        "--map-network " + simulation + "=" + executable + ": the ECU has no network '" + executable +
+                        "' (its networks: " + (networks.empty() ? std::string("none") : networks) +
+                        "): after the '=' goes the name that the ECU's code gives the network; correct it, or leave "
+                        "this --map-network out");
+                }
+            }
+        }
     }
     catch (const std::exception& e)
     {
@@ -940,6 +1042,8 @@ int ecu_main(int argc, const char* const* argv, const EcuMainOptions& options, c
         {
             description.control = ControlOffer{"silkit", static_cast<int>(control::wire::kVersion)};
         }
+        // What this executable takes from whoever starts it (the same for every way to call it).
+        description.features = {std::string(ecu_executable::kFeatureMapNetwork)};
         if (!describe_out->write(to_json(description)))
         {
             return fail(name, kExitSetupFailed, "could not write the description to stdout (is it closed?)");

@@ -227,13 +227,20 @@ struct EcuDescription
     /// Set by whoever runs the ECU with a transport for its control agent (ecu_main(), unless
     /// --no-control); Ecu::describe() leaves it empty. In the JSON: "control", null if empty.
     std::optional<ControlOffer> control{};
+    /// What the executable of the ECU takes from whoever starts it, beyond what every ECU
+    /// executable takes: names such as ecu_executable::kFeatureMapNetwork ("map-network": it takes
+    /// --map-network). Set by ecu_main(); Ecu::describe() leaves it empty. In the JSON: "features",
+    /// a list of strings (empty: []). An open list: a reader ignores the names it does not know,
+    /// and reads a description without the key as one with an empty list.
+    std::vector<std::string> features{};
 
     friend bool operator==(const EcuDescription&, const EcuDescription&) = default;
 };
 
 /// The version of the JSON form of to_json() (its "vehicle_sil_ecu" key). It goes up when a key
-/// changes meaning or goes away. New keys, and new values of a key that has a fixed set of values
-/// ("kind", "use", "type", "causality"), may come without a new version. A reader refuses a
+/// changes meaning or goes away. New keys, new values of a key that has a fixed set of values
+/// ("kind", "use", "type", "causality"), and new names in "features" (an open list) may come
+/// without a new version. A reader refuses a
 /// version it does not know, ignores keys it does not know, and refuses only the description (of
 /// one ECU) with a value it does not know.
 inline constexpr int kEcuDescriptionFormat = 1;

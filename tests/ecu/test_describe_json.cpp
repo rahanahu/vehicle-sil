@@ -60,7 +60,8 @@ TEST_CASE(empty_description_has_every_key)
                "  \"step_ns\": 1000000,\n"
                "  \"networks\": [],\n"
                "  \"variables\": [],\n"
-               "  \"control\": null\n"
+               "  \"control\": null,\n"
+               "  \"features\": []\n"
                "}\n");
 }
 
@@ -74,7 +75,8 @@ TEST_CASE(real_time_step_is_null)
                "  \"step_ns\": null,\n"
                "  \"networks\": [],\n"
                "  \"variables\": [],\n"
-               "  \"control\": null\n"
+               "  \"control\": null,\n"
+               "  \"features\": []\n"
                "}\n");
 }
 
@@ -114,6 +116,7 @@ TEST_CASE(full_description)
     count.min = -9007199254740993.0; // not exact as a double: written as the double it is
     count.max = 1e300;
     d.variables.push_back(count);
+    d.features = {"map-network", "a \"later\" one"};
 
     d.control = vehicle_sil::ControlOffer{"silkit", 1};
     check_text(to_json(d),
@@ -263,7 +266,11 @@ TEST_CASE(full_description)
   "control": {
     "transport": "silkit",
     "wire_version": 1
-  }
+  },
+  "features": [
+    "map-network",
+    "a \"later\" one"
+  ]
 }
 )");
 }

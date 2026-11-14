@@ -21,6 +21,14 @@ inline constexpr std::string_view kLauncherArguments[] = {"--describe",   "--nam
                                                           "--local",      "--run-for-ms", "--start-timeout-ms",
                                                           "--help",       "-h"};
 
+/// The argument that renames the networks of an ECU executable for one run (with --registry-uri,
+/// any number of times): `--map-network <simulation's name>=<executable's name>`, split at the
+/// first '='. The network that the executable's code names <executable's name> is the SIL Kit
+/// network <simulation's name>. An executable that takes it says so in its --describe:
+/// kFeatureMapNetwork in "features".
+inline constexpr std::string_view kMapNetworkArgument = "--map-network";
+inline constexpr std::string_view kFeatureMapNetwork = "map-network";
+
 /// The exit codes of an ECU executable (the same as those of the other tools of vehicle-sil).
 inline constexpr int kExitOk = 0;
 inline constexpr int kExitFailed = 1;      ///< the ECU failed in the run

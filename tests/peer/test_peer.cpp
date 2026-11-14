@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -1061,4 +1062,101 @@ TEST_CASE(peer_passes_on_how_long_it_waits_for_a_name_in_use)
     Peer first(o);
     o.name_in_use_wait = 200ms;
     CHECK(throws_with<SilKit::ProtocolError>([&] { Peer second(o); }, "refused the name \"Taken\" for 200 ms"));
+}
+
+TEST_CASE(peer_refuses_network_names_that_cannot_be_applied)
+{
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Renamed";
+    o.registry_uri = registry.uri;
+    const auto with = [&](std::map<std::string, std::string> names, std::string configuration = "{}") {
+        PeerOptions made = o;
+        made.network_names = std::move(names);
+        made.participant_configuration = std::move(configuration);
+        return made;
+    };
+    // The options themselves: before the participant is made.
+    CHECK(throws_with<std::invalid_argument>([&] { Peer peer(with({{"", "CAN"}})); },
+                                             "vehicle_sil::Peer \"Renamed\": network_names has an entry with an empty name "
+                                             "(\"\" -> \"CAN\"): give the network's name in the simulation and the name "
+                                             "this ECU's code gives it"));
+    CHECK(throws_with<std::invalid_argument>([&] { Peer peer(with({{"VehicleCAN", ""}})); }, "an entry with an empty name"));
+    CHECK(throws_with<std::invalid_argument>(
+        [&] { Peer peer(with({{"VehicleCAN", "CAN"}, {"BodyCAN", "CAN"}})); },
+        "vehicle_sil::Peer \"Renamed\": network_names gives the network \"CAN\" of this ECU's code two names in the "
+        "simulation, \"BodyCAN\" and \"VehicleCAN\", but a network of an ECU is on one bus: keep one of the two entries"));
+    // A configuration that puts a controller on a network would win over the other name.
+    const std::string configured = R"({"CanControllers":[{"Name":"CAN","Network":"PowertrainCAN"}]})";
+    CHECK(throws_with<std::invalid_argument>(
+        [&] { Peer peer(with({{"VehicleCAN", "CAN"}}, configured)); },
+        "vehicle_sil::Peer \"Renamed\": network_names renames networks, and the SIL Kit participant configuration puts a "
+        "controller on a network itself (CanControllers[0] (Name \"CAN\"): Network \"PowertrainCAN\"): SIL Kit would use "
+        "the configuration's network, whatever network_names says. Remove Network from the controllers of the "
+        "configuration, or leave network_names out and name the networks there"));
+    CHECK(throws_with<std::invalid_argument>(
+        [&] { Peer peer(with({{"BodyLIN", "LIN"}}, R"({"LinControllers":[{"Name":"L","Network":"X"}]})")); },
+        "(LinControllers[0] (Name \"L\"): Network \"X\")"));
+    CHECK(throws_with<std::invalid_argument>(
+        [&] { Peer peer(with({{"Backbone", "ETH"}}, R"({"EthernetControllers":[{"Name":"E","Network":"X"}]})")); },
+        "(EthernetControllers[0] (Name \"E\"): Network \"X\")"));
+    {
+        // Without an entry that changes a name, and with a controller that has no Network: as before.
+        Peer same(with({{"CAN", "CAN"}}, configured));
+        same.j1939("CAN");
+    }
+    {
+        Peer unnamed(with({{"VehicleCAN", "CAN"}}, R"({"CanControllers":[{"Name":"CAN"}]})"));
+        unnamed.j1939("CAN");
+    }
+    {
+        // A network on a port of the caller's is on no SIL Kit network: nothing to rename.
+        Peer peer(with({{"VehicleCAN", "XL1"}, {"BodyCAN", "CAN"}}));
+        CHECK(throws_with<std::invalid_argument>(
+            [&] { peer.j1939("XL1", std::make_unique<FakeRealTimePort>()); },
+            "vehicle_sil::Peer \"Renamed\": j1939(\"XL1\") on a port of the caller's: network_names says that \"XL1\" is "
+            "\"VehicleCAN\" in the simulation, but a network on a port that the caller made is on no SIL Kit network that "
+            "could have another name. Remove the entry \"VehicleCAN\" -> \"XL1\" from network_names (--map-network "
+            "VehicleCAN=XL1)"));
+        // ... and it counts as a network of the ECU with its own name.
+        peer.j1939("CAN");
+        CHECK(throws_with<std::invalid_argument>([&] { peer.j1939("BodyCAN", std::make_unique<FakeRealTimePort>()); },
+                                                 "so two networks of the ECU would be one bus"));
+    }
+}
+
+TEST_CASE(peer_names_both_names_of_a_renamed_network_when_its_controller_fails)
+{
+    // As peer_reports_a_lin_controller_that_cannot_be_initialised_and_names_the_network, with
+    // another name in the simulation: whoever reads the failure knows one of the two.
+    InProcessRegistry registry;
+    vehicle_sil::unit::StateLog log(registry.uri, "Body");
+    SimulationControllerOptions control;
+    control.registry_uri = registry.uri;
+    control.required_participants = {"Body"};
+    control.stop_at = 200ms;
+    control.shutdown_timeout = 2s;
+    SimulationController controller(control);
+    auto options = coordinated("Body", registry.uri, 5ms);
+    options.network_names = {{"BodyLIN", "BODY_LIN"}};
+    Peer body(options);
+    auto& master =
+        body.lin_master("BODY_LIN", {{kCommandId, 2, lin::LinChecksumModel::Enhanced, 20ms, lin::LinPublisher::Master}});
+    master.init();
+    try
+    {
+        start_together(controller, {&body}, 30s);
+    }
+    catch (const std::exception&) // NOLINT(bugprone-empty-catch)
+    {
+        // The start fails with the participant; what is checked is how the failure is reported.
+    }
+    CHECK(vehicle_sil::unit::eventually([&] { return log.reached(orch::ParticipantState::Error); }, 20s));
+    const std::string reason = log.reason_of(orch::ParticipantState::Error);
+    if (reason.find("vehicle_sil::Peer: initialising the LIN controller of the network \"BODY_LIN\" (\"BodyLIN\" in the "
+                    "simulation) failed: ") == std::string::npos)
+    {
+        throw vehicle_sil::unit::Failure("the reason of the Error does not name both names: " + reason);
+    }
+    body.stop("test done");
 }

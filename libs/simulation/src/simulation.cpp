@@ -141,8 +141,9 @@ struct Simulation::SilKitRun
     }
 
     /// The network check of the ECU `ecu` (its peer `self`, see detail::set_network_check()):
-    /// std::invalid_argument if another ECU of this process has a network named `network` of the
-    /// other kind. The participants of other processes are not seen.
+    /// std::invalid_argument if another ECU of this process has a network of another kind whose
+    /// name in the simulation is `network` (the names after SilKitOptions::network_names). The
+    /// participants of other processes are not seen.
     void require_network_kind(const Peer& self, const std::string& ecu, const std::string& network,
                               NetworkKind kind, const std::string& call) const
     {
@@ -152,7 +153,7 @@ struct Simulation::SilKitRun
             {
                 continue;
             }
-            const auto other = detail::network_kind(*peers[i], network);
+            const auto other = detail::simulation_network_kind(*peers[i], network);
             if (other && *other != kind)
             {
                 throw std::invalid_argument(std::string(kWho) + call + " of the ECU \"" + ecu + "\": \"" + network +
@@ -477,6 +478,7 @@ Ecu& Simulation::add_ecu(std::string name, SimDuration step)
     o.participant = name;
     o.registry_uri = s.uri;
     o.participant_configuration = s.options.participant_configuration;
+    o.network_names = s.options.network_names;
     o.lifecycle = LifecycleMode::Coordinated;
     o.virtual_time = VirtualTimeOptions{step, std::nullopt, std::nullopt};
     // Within the start timeout: a name still held by an earlier process is waited for no longer.

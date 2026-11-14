@@ -169,6 +169,15 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
                                                            std::string_view registry_uri,
                                                            std::optional<bool> listen_on_network = std::nullopt);
 
+/// The controllers of `configuration` (a SIL Kit participant configuration, YAML or JSON text,
+/// with what it includes) that are given a network: one text for each, e.g.
+/// `CanControllers[0] (Name "CAN1"): Network "PowertrainCAN"`. SIL Kit puts such a controller on
+/// that network whatever name the program gives when it makes the controller, so whoever renames
+/// networks (PeerOptions::network_names) asks this first. Empty if there is none, for a text that
+/// SIL Kit does not accept (whoever makes the participant says what is wrong with it), and in a
+/// build without rapidyaml (see merged_participant_configuration(): the text is not read).
+[[nodiscard]] std::vector<std::string> configured_controller_networks(std::string_view configuration);
+
 /// The text of the SIL Kit participant configuration file `path`, for
 /// ParticipantRuntimeOptions::participant_configuration and the like. If the file has Includes,
 /// its directory is added to Includes.SearchPathHints, so that the files it includes are found

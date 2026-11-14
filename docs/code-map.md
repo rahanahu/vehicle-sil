@@ -659,6 +659,7 @@ flowchart TD
 | `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
 | `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary`、`signal.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth`、`libs/signal` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 | `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の構成は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
+| `peer.controllers_are_made_on_the_simulation_name` | `libs/` で SIL Kit のバスのコントローラーを作るのは `libs/peer/src/peer.cpp` だけで、どの呼び出しも `simulation_name()` を通した名前のネットワークに作る（`cmake/VehicleSilCheckControllerNetworks.cmake`） |
 | `j1939_codec.independent_of_the_engine` | `codec.hpp` が含む vehicle-sil のヘッダーは `j1939/types.hpp`（値の型）だけで、`Network` と `Node` を含まない |
 | `eth_link.boundary` | `libs/eth_link` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 
@@ -742,6 +743,15 @@ flowchart TD
   合わせて直すもの: [internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」（効く時点、CAN、J1939 で戻ったとき、LIN）、[j1939-guide.md](j1939-guide.md) の「ECU をバスから外す」、[scenario.md](scenario.md) の「ECU をバスから外す」と例 `examples/ecu_main/scenarios/engine_disconnect.yaml`。
   受信の判定は事象の時刻で行い、ECU 自身のステップと事象の届く順に頼りません。
   試験は `simulation.disconnect_*`（仮想バスの 2 つの ECU の順と SIL Kit で同じ記録、LIN の Master をスロットの途中で切る、戻したときのアドレスの競合）、`launch_run.scenario_disconnect`
+
+- 変えるもの: SIL Kit のコントローラーを作る所（`libs/peer/src/peer.cpp`。ネットワークの使い方を足すときも）、ネットワークの名前の対応（`PeerOptions::network_names`、`SilKitOptions::network_names`、`--map-network`）
+
+  合わせて直すもの: コントローラーは、`Peer::simulation_name(<コードの名前>)`（対応を引くただ 1 つの関数）の名前のネットワークに作ります。
+  `peer.controllers_are_made_on_the_simulation_name`（`cmake/VehicleSilCheckControllerNetworks.cmake`）が、`libs/` の `Create(Can|Lin|Ethernet|Flexray)Controller(` の行を読んで確かめます。
+  `tests/simulation/test_network_kinds.cpp` の `speak_on()` と `hear_on()`（使い方ごとに、名前を替えたネットワークがシミュレーションの名前の側にだけ届くことを SIL Kit の上で確かめる）に、新しい使い方を足します。
+  監視の出力の名前（`libs/peer/src/peer_monitor.cpp`）も同じ関数を通します。
+  対応が使われないことを誤りにするのは `ecu_main` だけです（`Peer` と `Simulation` は、同じ対応を複数の ECU に渡せるので、誤りにしません）。
+  文書は [ecu-executable.md](ecu-executable.md) の「ネットワークの名前を替える」、[internals/control.md](internals/control.md) の「Peer の監視」。
 
 - 変えるもの: `ecu_main` の引数と終了コード（`libs/simulation/src/ecu_main.cpp`）
 

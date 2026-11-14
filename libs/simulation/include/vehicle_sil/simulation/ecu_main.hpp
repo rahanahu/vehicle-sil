@@ -44,6 +44,12 @@ struct EcuMainOptions
 ///                             (vehicle_sil_sim_controller) starts and stops it
 ///                             (Simulation(SilKitOptions{.registry_uri, .controller = false}).run())
 ///     --start-timeout-ms <ms> with --registry-uri: how long to wait for the start (30000)
+///     --map-network <s>=<e>   with --registry-uri, any number of times: the network that the ECU's
+///                             code names <e> is the SIL Kit network <s> (the simulation's name
+///                             first, split at the first '='; SilKitOptions::network_names). The
+///                             code, --describe and the controller names keep <e>; the Peer's
+///                             monitoring outputs are named with <s>. --describe says that the
+///                             executable takes it ("features": ["map-network"])
 ///     --local --run-for-ms <ms>  runs this ECU alone on the local virtual buses for <ms> of
 ///                             virtual time (a check of the ECU by itself)
 ///     --name <name>           the participant name instead of EcuMainOptions::name (ASCII or
@@ -56,7 +62,10 @@ struct EcuMainOptions
 /// codes, as the other tools: 0 done, 1 the ECU failed in the run (SimulationError), 3 the set-up
 /// failed (the application's constructor threw, EcuMainOptions is wrong, the registry could not be
 /// reached, the simulation did not start, stdout could not be written), 4 a bad command line (an
-/// unknown argument, a missing or bad value, an argument given twice, two of the three modes),
+/// unknown argument, a missing or bad value, an argument given twice (--map-network may be given
+/// for each network, but not twice for one name), two of the three modes); a --map-network for a
+/// network the ECU does not have, or with a --silkit-config that puts a controller on a network,
+/// is a failed set-up (3),
 /// 130 stopped by a signal (below).
 /// With --registry-uri, SIGINT and SIGTERM (Windows: Ctrl+C, Ctrl+Break, closing the console)
 /// stop the participant once the simulation runs (which stops the coordinated simulation in
