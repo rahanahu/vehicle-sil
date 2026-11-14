@@ -1475,15 +1475,18 @@ TEST_CASE(the_ecu_waits_for_the_start_longer_than_the_launcher)
     SimulationConfig c;
     c.start_timeout_ms = 8000;
     c.stop_timeout_ms = 2000;
-    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c), std::int64_t{20000});
-    CHECK(launch::detail::ecu_start_timeout_ms(c) > c.start_timeout_ms + c.stop_timeout_ms);
+    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, false), std::int64_t{20000});
+    CHECK(launch::detail::ecu_start_timeout_ms(c, false) > c.start_timeout_ms + c.stop_timeout_ms);
+    // A run that stands still before the first step (--start-paused with a control server) may
+    // do so for any time: the ECU's limit must not end it.
+    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, true), kMaxMillis);
     // Never more than ecu_main takes as --start-timeout-ms.
     c.start_timeout_ms = kMaxMillis;
     c.stop_timeout_ms = kMaxMillis;
-    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c), kMaxMillis);
+    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, false), kMaxMillis);
     c.start_timeout_ms = kMaxMillis - 10000;
     c.stop_timeout_ms = 1;
-    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c), kMaxMillis);
+    CHECK_EQ(launch::detail::ecu_start_timeout_ms(c, false), kMaxMillis);
 }
 
 TEST_CASE(a_participant_is_started_with_its_network_names_after_everything_else)
@@ -1502,25 +1505,25 @@ TEST_CASE(a_participant_is_started_with_its_network_names_after_everything_else)
     ParticipantConfig p;
     p.name = "Engine";
     p.command = {"engine/engine_ecu", "--verbose"};
-    const std::string timeout = std::to_string(vehicle_sil::launch::detail::ecu_start_timeout_ms(config));
+    const std::string timeout = std::to_string(vehicle_sil::launch::detail::ecu_start_timeout_ms(config, false));
     const std::string own = "[--verbose][--name][Engine][--registry-uri][silkit://127.0.0.1:8500][--start-timeout-ms][" + timeout + "]";
     // Without network_names: what it was.
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500")), own + "\n");
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)), own + "\n");
     // In the file's order and direction (<simulation's name>=<executable's name>), after the
     // launcher's own arguments; a line whose two names are the same is not given.
     p.network_names = {NetworkName{"VehicleCAN", "J1939_CAN", 5}, NetworkName{"Body", "Body", 6},
                        NetworkName{"Body CAN", "CAN_B", 7}};
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500")),
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)),
                own + "[--map-network][VehicleCAN=J1939_CAN][--map-network][Body CAN=CAN_B]\n");
     // describe: false: after its command with the placeholders replaced, and a name that looks
     // like a placeholder stays as it is.
     p.describe = false;
     p.command = {"tools/remote", "--uri", "{registry_uri}", "--as", "{name}"};
     p.network_names = {NetworkName{"{name}", "{registry_uri}", 5}};
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500")),
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)),
                "[--uri][silkit://127.0.0.1:8500][--as][Engine][--map-network][{name}={registry_uri}]\n");
     p.network_names.clear();
-    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500")), "[--uri][silkit://127.0.0.1:8500][--as][Engine]\n");
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500", false)), "[--uri][silkit://127.0.0.1:8500][--as][Engine]\n");
 }
 
 TEST_CASE(the_command_to_start_a_participant_by_hand_is_quoted_for_the_shell)

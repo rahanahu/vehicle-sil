@@ -484,17 +484,22 @@ namespace detail {
 /// The --start-timeout-ms the launcher gives an ecu_main executable: longer than the launcher's own
 /// wait for the start, so that the launcher, not the ECU, decides that the start failed and names
 /// who did not join; the ECU's limit only ends it if the launcher is gone. kMaxMillis if the start
-/// waits for a participant someone starts by hand (waits_for_manual()): that may take any time.
-[[nodiscard]] std::int64_t ecu_start_timeout_ms(const SimulationConfig& config);
+/// waits for a participant someone starts by hand (waits_for_manual()) or, with
+/// `stands_still_before_start`, stands still before the first step until a command (--start-paused
+/// with a control server): either may take any time, and the ECU is not Running until it is over.
+/// The launcher's own limits (before and after the wait) still end a start that does not come.
+[[nodiscard]] std::int64_t ecu_start_timeout_ms(const SimulationConfig& config, bool stands_still_before_start);
 
 /// The arguments that run starts the participant with, after its executable; the command to start
 /// it by hand (manual) and the events show the same ones. An ecu_main executable (describe:
 /// true): its command's arguments, then --name, --registry-uri `registry_uri` and
-/// --start-timeout-ms, then map_network_arguments() of its entry. Any other: its command's
+/// --start-timeout-ms (ecu_start_timeout_ms() with `stands_still_before_start`), then
+/// map_network_arguments() of its entry. Any other: its command's
 /// arguments with the placeholders replaced, then map_network_arguments() (a --map-network after
 /// what the file wrote, never inside it).
 [[nodiscard]] std::vector<std::string> participant_arguments(const SimulationConfig& config, const ParticipantConfig& participant,
-                                                             const std::string& registry_uri);
+                                                             const std::string& registry_uri,
+                                                             bool stands_still_before_start);
 
 /// One line for this system's shell that starts `executable` (as given) with `arguments`: on
 /// Windows for cmd.exe, quoted as the C runtimes read a command line back (an argument in double

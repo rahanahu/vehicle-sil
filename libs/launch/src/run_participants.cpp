@@ -14,13 +14,15 @@
 
 namespace vehicle_sil::launch {
 
-std::int64_t detail::ecu_start_timeout_ms(const SimulationConfig& config)
+std::int64_t detail::ecu_start_timeout_ms(const SimulationConfig& config, bool stands_still_before_start)
 {
     // The launcher waits start_timeout_ms for the start and then stops the participants within
     // stop_timeout_ms; the ECU must not give up first (it would end, and the launcher would name it
     // instead of who did not join). 10 s more for a slow machine; never more than ecu_main accepts.
-    // A start that waits for someone to start a participant by hand may take any time.
-    if (waits_for_manual(config))
+    // A start that waits for someone to start a participant by hand may take any time, and so may
+    // one that stands still before the first step until a control client's command: the ECUs are
+    // not Running before it, and a limit of theirs would end the run while it stands still.
+    if (waits_for_manual(config) || stands_still_before_start)
     {
         return kMaxMillis;
     }
@@ -130,7 +132,7 @@ std::string command_text(const std::filesystem::path& executable, const std::vec
 } // namespace
 
 std::vector<std::string> participant_arguments(const SimulationConfig& config, const ParticipantConfig& participant,
-                                               const std::string& registry_uri)
+                                               const std::string& registry_uri, bool stands_still_before_start)
 {
     const std::vector<std::string> rest(participant.command.begin() + (participant.command.empty() ? 0 : 1),
                                         participant.command.end());
@@ -139,7 +141,7 @@ std::vector<std::string> participant_arguments(const SimulationConfig& config, c
     {
         arguments = expand_placeholders(rest, "", "");
         arguments.insert(arguments.end(), {"--name", participant.name, "--registry-uri", registry_uri, "--start-timeout-ms",
-                                           std::to_string(ecu_start_timeout_ms(config))});
+                                           std::to_string(ecu_start_timeout_ms(config, stands_still_before_start))});
     }
     else
     {
@@ -177,7 +179,7 @@ bool RunParticipants::start_children(const std::string& uri)
             continue;
         }
         // The one list for the process, the command to start it by hand and the events.
-        const std::vector<std::string> arguments = participant_arguments(ctx_.config, p, uri);
+        const std::vector<std::string> arguments = participant_arguments(ctx_.config, p, uri, ctx_.holds());
         const std::filesystem::path executable = without_dots(std::filesystem::absolute(ctx_.check.participants[i].executable));
         if (p.manual)
         {
