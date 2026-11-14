@@ -7,6 +7,8 @@
 #include "vehicle_sil/cli/utf8.hpp"
 
 #include <chrono>
+#include <cstddef>
+#include <cstdlib> // __argc, __argv (Windows)
 #include <string>
 #include <vector>
 
@@ -47,9 +49,14 @@ TEST_CASE(cli_utf8_arguments_are_the_arguments_after_the_program_name)
     CHECK(vehicle_sil::cli::utf8_arguments(1, argv.data()).empty());
     CHECK(vehicle_sil::cli::utf8_arguments(0, argv.data()).empty());
 #else
-    // The test's own command line: whatever it is, it is valid UTF-8 and has no program name.
+    // The test's own command line: the arguments the test runner gave this process, which are
+    // ASCII, so the C runtime's argv (in the code page) says the same.
     const auto own = vehicle_sil::cli::utf8_arguments(static_cast<int>(argv.size()), argv.data());
-    CHECK(own.empty() || own.front().find("program") == std::string::npos);
+    CHECK_EQ(own.size(), static_cast<std::size_t>(__argc > 0 ? __argc - 1 : 0));
+    for (std::size_t i = 0; i < own.size() && i + 1 < static_cast<std::size_t>(__argc); ++i)
+    {
+        CHECK(own[i] == std::string(__argv[i + 1]));
+    }
     CHECK(vehicle_sil::cli::utf8_from_wide(L"\u8ECA\u4E21 a") == "\xE8\xBB\x8A\xE4\xB8\xA1 a");
     CHECK(vehicle_sil::cli::utf8_from_wide(L"").empty());
 #endif

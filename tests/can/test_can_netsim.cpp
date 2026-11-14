@@ -244,6 +244,9 @@ struct Foreign
     /// Called in each step; `send(first data byte)` sends one frame with the step's time as
     /// its send time.
     std::function<void(sk::ICanController& controller, SimTime now, const std::function<void(std::uint8_t)>& send)> on_step;
+    /// With it, F has a second raw controller on the network (started), driven like the first
+    /// in each step, after `on_step`.
+    std::function<void(sk::ICanController& controller, SimTime now, const std::function<void(std::uint8_t)>& send)> on_step_second;
 };
 
 /// The identifier of the frames a Foreign's `send` sends.
@@ -256,6 +259,7 @@ struct SilKitRun
     std::vector<vehicle_sil::can::SilKitCanPortStatistics> ports;
     std::size_t started_controllers = 0; ///< peers whose controller the simulator reported as Started
     std::vector<std::string> foreign_acks;  ///< the Foreign's transmit acknowledgements: "<status> <first data byte>"
+    std::vector<std::string> simulator_warnings; ///< InProcess only: what the simulator logged as a warning, in order
 };
 
 std::filesystem::path scratch_dir()
@@ -296,6 +300,8 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
     std::mutex foreignMutex;
     std::vector<std::string> foreignAcks;
     std::atomic<std::size_t> startedControllers{0};
+    std::mutex warningsMutex;
+    std::vector<std::string> simulatorWarnings;
     std::unique_ptr<ParticipantRuntime> simulatorRuntime;
     std::unique_ptr<vehicle_sil::process::ChildProcess> child;
     const auto logFile = scratch_dir() / ("simulator-" + std::to_string(to_ns(at(simulatorStep))) + ".log");
@@ -304,7 +310,15 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
             coordinated_options("NetworkSimulator", registry.uri, VirtualTimeOptions{simulatorStep, std::nullopt, kEnd}));
         // A second network that no controller joins: it must not disturb the run.
         simulator = std::make_unique<CanBusSimulator>(simulatorRuntime->participant(),
-                                                      std::vector<std::string>{kNetwork, "UnusedCAN"}, simulatorOptions);
+                                                      std::vector<std::string>{kNetwork, "UnusedCAN"}, simulatorOptions,
+                                                      [&warningsMutex, &simulatorWarnings](CanBusSimulator::LogLevel level,
+                                                                                           std::string_view message) {
+                                                          if (level == CanBusSimulator::LogLevel::Warning)
+                                                          {
+                                                              const std::lock_guard lock(warningsMutex);
+                                                              simulatorWarnings.emplace_back(message);
+                                                          }
+                                                      });
         simulatorRuntime->set_step_handler([&simulator](SimTime now, SimDuration step) { simulator->step(now, step); });
         runtimes.push_back(simulatorRuntime.get());
     };
@@ -412,18 +426,31 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
         {
             raw->Start();
         }
-        foreignRuntime->set_step_handler([raw, foreign, &localObject](SimTime now, SimDuration) {
-            if (foreign->on_step)
-            {
-                foreign->on_step(*raw, now, [raw, now](std::uint8_t first) {
+        sk::ICanController* second = nullptr;
+        if (foreign->on_step_second)
+        {
+            second = foreignRuntime->participant().CreateCanController("CAN2", kNetwork);
+            second->Start();
+        }
+        foreignRuntime->set_step_handler([raw, second, foreign, &localObject](SimTime now, SimDuration) {
+            const auto sender = [now](sk::ICanController* from) {
+                return [from, now](std::uint8_t first) {
                     sk::CanFrame f{};
                     f.canId = kForeignId;
                     f.flags = static_cast<sk::CanFrameFlagMask>(sk::CanFrameFlag::Ide);
                     const std::uint8_t data[1] = {first};
                     f.dlc = 1;
                     f.dataField = SilKit::Util::Span<const std::uint8_t>(data, 1);
-                    raw->SendFrame(f, vehicle_sil::can::encode_send_time(now + std::chrono::nanoseconds(first)));
-                });
+                    from->SendFrame(f, vehicle_sil::can::encode_send_time(now + std::chrono::nanoseconds(first)));
+                };
+            };
+            if (foreign->on_step)
+            {
+                foreign->on_step(*raw, now, sender(raw));
+                if (second)
+                {
+                    foreign->on_step_second(*second, now, sender(second));
+                }
                 return;
             }
             if (now == at(30ms))
@@ -476,6 +503,10 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
     }
     if (simulator)
     {
+        {
+            const std::lock_guard lock(warningsMutex);
+            run.simulator_warnings = simulatorWarnings;
+        }
         run.statistics = simulator->statistics(kNetwork);
         const auto unused = simulator->statistics("UnusedCAN");
         if (unused.controllers != 0 || unused.requests != 0)
@@ -754,6 +785,80 @@ TEST_CASE(simulator_drops_what_a_controller_sends_while_it_is_not_started)
     CHECK_EQ(run.statistics.requests, 6u);
     CHECK_EQ(run.statistics.rejected_requests, 3u);
     CHECK_EQ(run.statistics.transmissions, 3u);
+}
+
+/// The simulator's warning of the first frame it drops of a controller that is not started,
+/// with `<n>` in place of the controller's number (SIL Kit gives the numbers in the order the
+/// simulator finds the controllers, which is not fixed). Empty: the two places of the number
+/// in `warning` do not agree. `number`: the number.
+std::string without_controller_number(const std::string& warning, std::string& number)
+{
+    const std::string mark = " of controller ";
+    const auto at = warning.find(mark);
+    if (at == std::string::npos)
+    {
+        return warning;
+    }
+    const auto end = warning.find_first_not_of("0123456789", at + mark.size());
+    number = warning.substr(at + mark.size(), end - at - mark.size());
+    std::string out = warning.substr(0, at) + mark + "<n>" + warning.substr(end);
+    const std::string again = " Controller " + number + " ";
+    const auto second = out.find(again);
+    if (number.empty() || second == std::string::npos)
+    {
+        return {};
+    }
+    return out.replace(second, again.size(), " Controller <n> ");
+}
+
+TEST_CASE(simulator_warns_once_per_controller_that_sends_while_it_is_not_started)
+{
+    // The warning is the only sign of frames that vanish without an acknowledgement, so each
+    // controller gets its own, with the mode the simulator heard; not one per frame, and not
+    // again after a Start() and another mode.
+    Foreign f;
+    f.on_step = [](sk::ICanController& c, SimTime now, const std::function<void(std::uint8_t)>& send) {
+        if (now == at(20ms))
+        {
+            c.Stop();
+            send(1);
+            send(2);
+        }
+        if (now == at(40ms))
+        {
+            c.Start();
+            send(3);
+            c.Sleep();
+            send(4);
+        }
+    };
+    f.on_step_second = [](sk::ICanController& c, SimTime now, const std::function<void(std::uint8_t)>& send) {
+        if (now == at(30ms))
+        {
+            c.Reset();
+            send(5);
+            send(6);
+        }
+    };
+    const std::vector<PeerSpec> peers{{"R1", 1ms, {}}};
+    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, &f);
+    CHECK(foreign_frames(run.traces[0]) == (std::vector<int>{3}));
+    CHECK_EQ(run.statistics.rejected_requests, 5u);
+    CHECK_EQ(run.simulator_warnings.size(), 2u);
+    if (run.simulator_warnings.size() == 2)
+    {
+        const auto expected = [](const char* mode) {
+            return "network 'CAN1': dropped frame 0x18FF4070 of controller <n>, which is " + std::string(mode) +
+                   "; the frame gets no acknowledgement. Call Start() on that controller before it sends. Controller <n> is "
+                   "the number SIL Kit gave it: the simulator numbers the controllers it finds from 1, over all networks. "
+                   "This is said once per controller; the later frames are only counted (rejected)";
+        };
+        std::string first;
+        std::string second;
+        CHECK(without_controller_number(run.simulator_warnings[0], first) == expected("stopped (Stop())"));
+        CHECK(without_controller_number(run.simulator_warnings[1], second) == expected("reset (Reset()) and not started again"));
+        CHECK(first != second);
+    }
 }
 
 TEST_CASE(simulator_takes_a_controller_it_heard_no_mode_of_as_started)

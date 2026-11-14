@@ -46,6 +46,22 @@ std::string describe(const Frame& frame)
     return text;
 }
 
+/// A mode other than Started, as the warning of a dropped frame says it.
+const char* describe(sk::CanControllerState state)
+{
+    switch (state)
+    {
+    case sk::CanControllerState::Stopped:
+        return "stopped (Stop())";
+    case sk::CanControllerState::Sleep:
+        return "asleep (Sleep())";
+    case sk::CanControllerState::Uninit:
+        return "reset (Reset()) and not started again";
+    default:
+        return "not started";
+    }
+}
+
 } // namespace
 
 /// The state of one simulated CAN network, shared by SIL Kit's callbacks (any thread) and
@@ -153,12 +169,19 @@ public:
                 if (it->second.state && *it->second.state != sk::CanControllerState::Started)
                 {
                     rejected_.fetch_add(1, std::memory_order_relaxed);
-                    if (!warned_not_started_)
+                    // Once per controller, also after a Start() and another Stop(): a tool that
+                    // changes its mode again and again must not fill the log.
+                    if (!it->second.warned_not_started)
                     {
-                        warned_not_started_ = true;
-                        warnings_.push_back("network '" + name_ + "': dropped frame " + describe(*frame) +
-                                            " of a controller that is not started (stopped, asleep or reset); "
-                                            "it gets no acknowledgement. Call Start() on the controller before sending");
+                        it->second.warned_not_started = true;
+                        const std::string number = std::to_string(sender);
+                        warnings_.push_back("network '" + name_ + "': dropped frame " + describe(*frame) + " of controller " +
+                                            number + ", which is " + describe(*it->second.state) +
+                                            "; the frame gets no acknowledgement. Call Start() on that controller before "
+                                            "it sends. Controller " + number +
+                                            " is the number SIL Kit gave it: the simulator numbers the controllers it "
+                                            "finds from 1, over all networks. This is said once per controller; the "
+                                            "later frames are only counted (rejected)");
                     }
                     return;
                 }
@@ -383,6 +406,7 @@ private:
         std::optional<sk::CanControllerState> state;         ///< the last mode the controller told; none: not heard
         std::uint64_t cancel_generation = 0;                 ///< counts the controller's cancellations of its requests
         bool cancel_pending = false;                         ///< a cancellation the next step applies to the model
+        bool warned_not_started = false;                     ///< said once that its frames are dropped
         bool removed = false;
     };
 
@@ -426,7 +450,6 @@ private:
     std::optional<std::uint32_t> pending_bitrate_;
     bool warned_untagged_ = false;
     bool warned_rejected_ = false;
-    bool warned_not_started_ = false;
     std::vector<std::string> warnings_;
 
     StepInbox<Request> inbox_; // thread safe
