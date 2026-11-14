@@ -854,7 +854,15 @@ Traces run_on_silkit(const std::vector<SimDuration>& steps, const EcuFactory& ma
         if (stats.untagged_requests != 0 || stats.rejected_requests != 0 || stats.inbox_overflows != 0 ||
             stats.transmit_queue_full != 0 || stats.bitrate != kSimulatorBitrate || stats.transmissions == 0)
         {
-            throw std::runtime_error("unexpected simulator statistics");
+            // Which of them it was: the next failure on a slow machine has to say it by itself.
+            throw std::runtime_error(
+                "unexpected simulator statistics: untagged_requests " + std::to_string(stats.untagged_requests) +
+                ", rejected_requests " + std::to_string(stats.rejected_requests) + ", inbox_overflows " +
+                std::to_string(stats.inbox_overflows) + ", transmit_queue_full " +
+                std::to_string(stats.transmit_queue_full) + " (all expected 0), bitrate " +
+                std::to_string(stats.bitrate) + " (expected " + std::to_string(kSimulatorBitrate) +
+                "), transmissions " + std::to_string(stats.transmissions) + " (expected more than 0), requests " +
+                std::to_string(stats.requests));
         }
     }
 

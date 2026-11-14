@@ -11,6 +11,7 @@
 | `simulation.yaml` | 2 つの ECU を 1 つのシミュレーションにする構成ファイル |
 | `scenarios/throttle_step.yaml` | スロットルを踏んで回転数と表示を確かめるシナリオ |
 | `simulation.dashboard.yaml` | GUI の「変数」の画面の並べ方 |
+| `simulation.live.yaml`、`simulation.live.dashboard.yaml` | 同じ 2 つの ECU を、等速で、止めるまで動かす構成ファイル（`stop_at_ms` なし、`speed: 1`）と、その画面の並べ方。GUI で値を見ながら触るときに使う |
 | `get_tools.py` | 道具（`vehicle_sil_launch` と GUI）を、版と SHA-256 を確かめて `tools/` に取ってくる |
 
 ## 要るもの
@@ -57,7 +58,7 @@ cmake --build --preset linux     # Windows: cmake --build --preset windows
 vehicle_sil_launch check simulation.yaml
 vehicle_sil_launch run simulation.yaml
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
-vehicle-sil-gui simulation.yaml
+vehicle-sil-gui simulation.live.yaml   # 等速で、止めるまで動く構成（simulation.yaml は 1000 ms で終わる）
 ```
 
 - 最初の構成で vehicle-sil と SIL Kit を取ってきて、最初のビルドで SIL Kit をコンパイルします（数分、最初の 1 回だけ）。

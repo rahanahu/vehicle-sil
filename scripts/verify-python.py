@@ -10,7 +10,7 @@ needs no C++ build:
   codegen  tools/j1939_codegen/test_j1939_codegen.py
   template tests/template/test_get_tools.py (the template's get_tools.py, scripts/package.py template and version,
            with archives made there, no network)
-  scripts  scripts/*.py --help
+  scripts  scripts/*.py --help, tests/scripts/test_run_gui.py (scripts/run-gui.py)
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help` and the examples of examples/launch_control with
            --help
@@ -200,7 +200,8 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
         return s.run([python, "tests/template/test_get_tools.py"])
 
     def scripts(s: Step) -> bool:
-        return all([s.run([python, p, "--help"]) for p in files if p.startswith("scripts/")])
+        return all([s.run([python, p, "--help"]) for p in files if p.startswith("scripts/")] +
+                   [s.run([python, "tests/scripts/test_run_gui.py"])])
 
     def control(s: Step) -> bool:
         if not s.run([python, "-m", "vehicle_sil_control.generate", "--out", str(stubs)]):

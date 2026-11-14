@@ -72,4 +72,22 @@ launch(0 run simulation.yaml)
 same_as_doc("${DOC}" "run simulation.yaml")
 launch(0 run simulation.yaml --scenario scenarios/throttle_step.yaml)
 same_as_doc("${SCENARIO_DOC}" "run simulation.yaml --scenario scenarios/throttle_step.yaml")
+# The configuration without an end (it is run in the GUI or until Ctrl+C): the check, and that it is
+# simulation.yaml with speed: 1 in the place of stop_at_ms, and its dashboard the same one.
+launch(0 check simulation.live.yaml)
+foreach(name simulation.yaml simulation.live.yaml simulation.dashboard.yaml simulation.live.dashboard.yaml)
+  # (Not file(STRINGS): it splits a line at characters that are not ASCII.)
+  file(READ "${DIR}/${name}" text)
+  string(REPLACE "\r\n" "\n" text "${text}")
+  string(REGEX REPLACE "(^|\n)#[^\n]*" "" lines_${name} "${text}")
+endforeach()
+string(REPLACE "stop_at_ms: 1000" "speed: 1" expected_live "${lines_simulation.yaml}")
+if(NOT "${lines_simulation.live.yaml}" STREQUAL "${expected_live}")
+  message(FATAL_ERROR "template/simulation.live.yaml is not simulation.yaml with 'speed: 1' in the place of "
+                      "'stop_at_ms: 1000' (comments aside). Make the participants and networks of the two the same")
+endif()
+if(NOT "${lines_simulation.live.dashboard.yaml}" STREQUAL "${lines_simulation.dashboard.yaml}")
+  message(FATAL_ERROR "template/simulation.live.dashboard.yaml is not the same as simulation.dashboard.yaml "
+                      "(comments aside). Copy the change of one to the other")
+endif()
 message(STATUS "the template's simulation: check, run and run --scenario passed")

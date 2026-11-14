@@ -131,6 +131,8 @@ endfunction()
 
 # Scenario tests of a process launcher: one CTest test <PREFIX>.<scenario> per scenario, running
 #   <launcher> <ARGS>... --work-dir <WORK_DIR>/<scenario> --scenario <scenario>
+# A launcher empties its work directory when it starts, so one build directory takes one ctest at a
+# time: a second run of the same scenario there would delete the files of the first.
 #
 #   vehicle_sil_add_scenario_tests(<launcher>
 #     PREFIX <prefix> LABELS <label>... TIMEOUT <seconds> WORK_DIR <dir>
