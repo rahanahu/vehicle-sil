@@ -268,7 +268,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 ### `libs/j1939/parts/<部品>`
 
 - 主なクラス・関数（ヘッダー）: 部品ごとに 1 つのディレクトリとターゲット。
-  `PeriodicSender`（`j1939/periodic_sender.hpp`）、`Requester`、`Monitor`、`AddressCommander`、`Exchange`、`BroadcastSuppression`、`Diagnostics`、`Identification`
+  `PeriodicSender`（`j1939/periodic_sender.hpp`）、`Requester`、`Monitor`、`AddressCommander`、`Exchange`、`BroadcastSuppression`、`Diagnostics`、`parse_dtc_list`（受けた DM1、DM2 を読む）、`Identification`
 - 試験: `tests/j1939`
 - `ctest -R`: `^j1939_parts\.`
 

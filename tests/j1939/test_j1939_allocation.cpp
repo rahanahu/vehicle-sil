@@ -140,6 +140,31 @@ TEST_CASE(the_counter_sees_allocations)
     CHECK_EQ(g_allocations.load(), 1u);
 }
 
+TEST_CASE(reading_a_dtc_list_does_not_allocate)
+{
+    // A DM1 of three DTCs as Diagnostics sends it: read in place, also its lamps and DTCs.
+    const std::array<std::uint8_t, 14> data{0x04, 0xFF, 0xF0, 0x07, 0x02, 0x01, 0xF1, 0x07, 0x03, 0x02, 0xF2, 0x07, 0x04, 0x83};
+    std::size_t read = 0;
+    std::uint32_t spns = 0;
+    g_allocations.store(0);
+    g_counting.store(true);
+    for (int i = 0; i < 100; ++i)
+    {
+        const auto list = vehicle_sil::j1939::parse_dtc_list(data);
+        for (const auto& dtc : list)
+        {
+            spns += dtc.spn;
+            ++read;
+        }
+        read += list.has(0x7F1, 3) ? 1u : 0u;
+        read += list.lamp(vehicle_sil::j1939::Lamp::AmberWarning).has_value() ? 1u : 0u;
+    }
+    g_counting.store(false);
+    CHECK_EQ(g_allocations.load(), 0u);
+    CHECK_EQ(read, 500u);
+    CHECK_EQ(spns, 100u * (0x7F0u + 0x7F1u + 0x7F2u));
+}
+
 namespace {
 
 /// Forwards to a bus port but answers QueueFull to every 5th and Failed to every 7th send.

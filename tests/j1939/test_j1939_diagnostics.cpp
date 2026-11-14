@@ -2,14 +2,20 @@
 //
 // The diagnostics part of the J1939 stack (DM1, DM2, DM3, DM11, DM22): when DM1 goes out,
 // the DTC encoding, answers to requests, clearing (also deferred by the application), DM22, the
-// broadcasts competing for the node's transfer, and the claim.
+// broadcasts competing for the node's transfer, and the claim; reading a DTC list
+// (parse_dtc_list) back.
 #include "j1939_parts_util.hpp"
 #include "network_test_access.hpp"
 #include "test_harness.hpp"
 #include "vehicle_sil/j1939/diagnostics.hpp"
 #include "vehicle_sil/j1939/name.hpp"
 
+#include <array>
+#include <iterator>
 #include <optional>
+#include <ranges>
+#include <span>
+#include <type_traits>
 #include <vector>
 
 using namespace vehicle_sil::unit::j1939;
@@ -22,12 +28,15 @@ using vehicle_sil::j1939::Diagnostics;
 using vehicle_sil::j1939::DiagnosticsOptions;
 using vehicle_sil::j1939::Dtc;
 using vehicle_sil::j1939::DtcClear;
+using vehicle_sil::j1939::DtcListView;
 using vehicle_sil::j1939::Lamp;
 using vehicle_sil::j1939::LampFlash;
 using vehicle_sil::j1939::Name;
 using vehicle_sil::j1939::NetworkOptions;
 using vehicle_sil::j1939::Node;
 using vehicle_sil::j1939::NodeOptions;
+using vehicle_sil::j1939::parse_dtc_list;
+using vehicle_sil::j1939::ReadDtc;
 using vehicle_sil::j1939::Timer;
 using vehicle_sil::unit::throws;
 
@@ -755,4 +764,253 @@ TEST_CASE(a_dtc_changed_from_a_timer_with_an_old_deadline_does_not_flood_dm1)
     // The timer fires at 10010, its change at the next chance (10020), then one DM1 a second
     // from there (not one per step to catch up from 0).
     CHECK(times_of(dm1) == (std::vector<long long>{10020, 11020, 12020}));
+}
+
+// --- Reading a DTC list (parse_dtc_list)
+
+namespace {
+
+/// The DM1s the node sent in `frames`: single frames and broadcasts (BAM), in the order sent.
+[[nodiscard]] std::vector<Bytes> dm1_data(const std::vector<Sent>& frames)
+{
+    std::vector<Bytes> out;
+    for (const auto& s : only(frames, kPgnDm1))
+    {
+        out.push_back(s.frame.data);
+    }
+    for (auto& m : bam_messages(frames, kUs, kPgnDm1))
+    {
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
+[[nodiscard]] std::vector<ReadDtc> dtcs_of(const DtcListView& list)
+{
+    std::vector<ReadDtc> out;
+    for (const ReadDtc& dtc : list)
+    {
+        out.push_back(dtc);
+    }
+    return out;
+}
+
+[[nodiscard]] ReadDtc read_dtc(std::uint32_t spn, std::uint8_t fmi, std::uint8_t occurrences)
+{
+    const Bytes b = dtc_bytes(spn, fmi, occurrences);
+    return ReadDtc{spn, fmi, occurrences, false, {b[0], b[1], b[2], b[3]}};
+}
+
+constexpr std::array kLamps = {Lamp::MalfunctionIndicator, Lamp::RedStop, Lamp::AmberWarning, Lamp::Protect};
+
+} // namespace
+
+// A view: it holds the span it reads (and what it found), copies for free, and iterates
+// without a container.
+static_assert(std::is_trivially_copyable_v<DtcListView>);
+static_assert(std::is_trivially_destructible_v<DtcListView>);
+static_assert(std::is_nothrow_default_constructible_v<DtcListView>);
+static_assert(std::forward_iterator<DtcListView::iterator>);
+static_assert(std::ranges::forward_range<const DtcListView>);
+static_assert(std::is_same_v<std::iter_value_t<DtcListView::iterator>, ReadDtc>);
+static_assert(noexcept(parse_dtc_list(std::span<const std::uint8_t>{})));
+
+TEST_CASE(a_dtc_list_without_dtcs_reads_back_as_valid_and_empty)
+{
+    Ecu ecu;
+    const auto sent = dm1_data(record(ecu.bench, 1));
+    CHECK_EQ(sent.size(), 1u);
+    CHECK(sent[0] == kNoDtcs);
+    const DtcListView list = parse_dtc_list(sent[0]);
+    CHECK(list.valid());
+    CHECK_EQ(list.size(), 0u);
+    CHECK(list.empty());
+    CHECK(list.begin() == list.end());
+    CHECK(!list.has(0, 0));
+    for (const Lamp lamp : kLamps)
+    {
+        CHECK(!list.lamp(lamp).has_value());
+    }
+    CHECK_EQ(list.data().size(), 8u);
+}
+
+TEST_CASE(a_dtc_list_with_one_dtc_reads_back_what_diagnostics_sent)
+{
+    Ecu ecu;
+    ecu.bench.steps(5);
+    (void)ecu.bench.take_sent();
+    // Its occurrence count is 2: active, inactive, active again.
+    CHECK(ecu.diag.set_active(Dtc{0x6D2B1, 3, Lamp::AmberWarning, LampFlash::Slow}, true));
+    CHECK(ecu.diag.set_active(Dtc{0x6D2B1, 3}, false));
+    CHECK(ecu.diag.set_active(Dtc{0x6D2B1, 3, Lamp::AmberWarning, LampFlash::Slow}, true));
+    const auto sent = dm1_data(record(ecu.bench, 1));
+    CHECK_EQ(sent.size(), 1u);
+    CHECK_EQ(sent[0].size(), 8u); // one frame, padded
+    const DtcListView list = parse_dtc_list(sent[0]);
+    CHECK(list.valid());
+    CHECK_EQ(list.size(), 1u);
+    CHECK(dtcs_of(list) == std::vector<ReadDtc>{read_dtc(0x6D2B1, 3, 2)});
+    CHECK(list.has(0x6D2B1, 3));
+    CHECK(!list.has(0x6D2B1, 4));
+    CHECK(!list.has(0x0D2B1, 3)); // the top 3 bits of the SPN count
+    CHECK(list.lamp(Lamp::AmberWarning) == std::optional<LampFlash>(LampFlash::Slow));
+    CHECK(!list.lamp(Lamp::MalfunctionIndicator).has_value());
+    CHECK(!list.lamp(Lamp::RedStop).has_value());
+    CHECK(!list.lamp(Lamp::Protect).has_value());
+    CHECK(!list.lamp(Lamp::None).has_value());
+}
+
+TEST_CASE(a_dtc_list_with_several_dtcs_and_all_lamps_reads_back_what_diagnostics_sent)
+{
+    Ecu ecu;
+    ecu.bench.steps(5);
+    (void)ecu.bench.take_sent();
+    const std::vector<Dtc> dtcs = {Dtc{0x7F001, 2, Lamp::MalfunctionIndicator, LampFlash::Slow},
+                                   Dtc{0x7F002, 31, Lamp::RedStop, LampFlash::Fast}, Dtc{0x7F003, 0, Lamp::AmberWarning, LampFlash::Solid},
+                                   Dtc{0x7F004, 9, Lamp::Protect, LampFlash::Fast}, Dtc{0x7F005, 9, Lamp::Protect, LampFlash::Slow},
+                                   Dtc{0x7FFFF, 17, Lamp::None}};
+    std::vector<ReadDtc> expected;
+    for (const auto& dtc : dtcs)
+    {
+        CHECK(ecu.diag.set_active(dtc, true));
+        expected.push_back(read_dtc(dtc.spn, dtc.fmi, 1));
+    }
+    const auto sent = dm1_data(record(ecu.bench, 30));
+    CHECK_EQ(sent.size(), 1u);
+    CHECK_EQ(sent[0].size(), 2u + 4u * dtcs.size()); // a broadcast (BAM), not padded
+    const DtcListView list = parse_dtc_list(sent[0]);
+    CHECK(list.valid());
+    CHECK_EQ(list.size(), dtcs.size());
+    CHECK(dtcs_of(list) == expected);
+    CHECK_EQ(static_cast<std::size_t>(std::ranges::distance(list)), dtcs.size());
+    for (const auto& dtc : dtcs)
+    {
+        CHECK(list.has(dtc.spn, dtc.fmi));
+    }
+    CHECK(!list.has(0x7F006, 2));
+    // Each lamp as Diagnostics combined it (fast > slow > solid).
+    CHECK(list.lamp(Lamp::MalfunctionIndicator) == std::optional<LampFlash>(LampFlash::Slow));
+    CHECK(list.lamp(Lamp::RedStop) == std::optional<LampFlash>(LampFlash::Fast));
+    CHECK(list.lamp(Lamp::AmberWarning) == std::optional<LampFlash>(LampFlash::Solid));
+    CHECK(list.lamp(Lamp::Protect) == std::optional<LampFlash>(LampFlash::Fast));
+    CHECK(!list.lamp(Lamp::None).has_value());
+}
+
+TEST_CASE(a_dm2_and_the_longest_list_read_back)
+{
+    Ecu ecu;
+    ecu.bench.steps(5);
+    CHECK(ecu.diag.set_active(Dtc{0x7F0, 4, Lamp::RedStop, LampFlash::Fast}, true));
+    CHECK(ecu.diag.set_active(Dtc{0x7F0, 4}, false)); // previously active
+    (void)ecu.bench.take_sent();
+    ecu.bench.inject(req(kTool, kUs, kPgnDm2));
+    const auto dm2 = only(record(ecu.bench, 5), kPgnDm2);
+    CHECK_EQ(dm2.size(), 1u);
+    const DtcListView list = parse_dtc_list(dm2[0].frame.data);
+    CHECK(dtcs_of(list) == std::vector<ReadDtc>{read_dtc(0x7F0, 4, 1)});
+    CHECK(list.lamp(Lamp::RedStop) == std::optional<LampFlash>(LampFlash::Fast));
+
+    std::vector<Bytes> encoded;
+    std::vector<ReadDtc> expected;
+    for (std::uint32_t spn = 1; spn <= vehicle_sil::j1939::kMaxDtcs; ++spn)
+    {
+        encoded.push_back(dtc_bytes(spn * 1171u, static_cast<std::uint8_t>(spn % 32), static_cast<std::uint8_t>(spn % 127)));
+        expected.push_back(read_dtc(spn * 1171u, static_cast<std::uint8_t>(spn % 32), static_cast<std::uint8_t>(spn % 127)));
+    }
+    const Bytes longest = dm_payload(0x00, 0xFF, encoded);
+    const DtcListView all = parse_dtc_list(longest);
+    CHECK(all.valid());
+    CHECK(dtcs_of(all) == expected);
+}
+
+TEST_CASE(a_dtc_list_of_any_length_is_read_without_failing)
+{
+    // Every length up to 41 bytes, with zeros, 0xFF and a mixed pattern: the list is valid for
+    // 6 .. 8 bytes (one DTC) and 2 + 4 * n bytes, and then reads exactly that many DTCs.
+    for (std::size_t length = 0; length <= 41; ++length)
+    {
+        for (const int fill : {0x00, 0xFF, -1})
+        {
+            Bytes data(length);
+            for (std::size_t i = 0; i < length; ++i)
+            {
+                data[i] = static_cast<std::uint8_t>(fill >= 0 ? fill : static_cast<int>(i * 37 + 11));
+            }
+            const DtcListView list = parse_dtc_list(data);
+            const bool shaped = length >= 6 && (length <= 8 || (length - 2) % 4 == 0);
+            CHECK_EQ(list.valid(), shaped);
+            const std::size_t dtcs = !shaped ? 0 : (fill == 0x00 && length <= 8) ? 0 : (length - 2) / 4;
+            CHECK_EQ(list.size(), dtcs);
+            CHECK_EQ(dtcs_of(list).size(), dtcs);
+            CHECK_EQ(list.data().size(), length);
+            if (!shaped)
+            {
+                CHECK(list.begin() == list.end());
+                CHECK(!list.has(0, 0));
+                for (const Lamp lamp : kLamps)
+                {
+                    CHECK(!list.lamp(lamp).has_value());
+                }
+            }
+        }
+    }
+    // Zero DTCs among others are DTCs; only a list whose single DTC is 4 zero bytes is empty.
+    const Bytes twoZeros = dm_payload(0x00, 0xFF, {Bytes{0, 0, 0, 0}, Bytes{0, 0, 0, 0}});
+    CHECK_EQ(parse_dtc_list(twoZeros).size(), 2u);
+    const DtcListView none;
+    CHECK(!none.valid());
+    CHECK_EQ(none.size(), 0u);
+    CHECK(none.begin() == none.end());
+}
+
+TEST_CASE(the_top_bit_of_the_fourth_byte_is_passed_on_raw)
+{
+    // Not interpreted: the occurrence count is the low 7 bits, the top bit and the four bytes
+    // come as they were.
+    Bytes data = dm_payload(0x04, 0xFF, {dtc_bytes(0x6D2B1, 3, 5)});
+    data[5] = 0x85;
+    const DtcListView list = parse_dtc_list(data);
+    CHECK(list.valid());
+    const auto dtcs = dtcs_of(list);
+    CHECK_EQ(dtcs.size(), 1u);
+    CHECK_EQ(dtcs[0].spn, 0x6D2B1u);
+    CHECK_EQ(dtcs[0].fmi, 3);
+    CHECK_EQ(dtcs[0].occurrences, 5);
+    CHECK(dtcs[0].byte4_high_bit);
+    CHECK(dtcs[0].raw == (std::array<std::uint8_t, 4>{0xB1, 0xD2, 0xC3, 0x85}));
+    // With only the top bit set the DTC is not the empty list's 4 zero bytes.
+    const Bytes topBitOnly = dm_payload(0x00, 0xFF, {Bytes{0, 0, 0, 0x80}});
+    const auto topBit = dtcs_of(parse_dtc_list(topBitOnly));
+    CHECK_EQ(topBit.size(), 1u);
+    CHECK_EQ(topBit[0].spn, 0u);
+    CHECK_EQ(topBit[0].occurrences, 0);
+    CHECK(topBit[0].byte4_high_bit);
+    // What Diagnostics sends has it clear (also at the most occurrences).
+    Ecu ecu;
+    for (int i = 0; i < 130; ++i)
+    {
+        CHECK(ecu.diag.set_active(Dtc{523, 6}, true));
+        CHECK(ecu.diag.set_active(Dtc{523, 6}, false));
+    }
+    CHECK(ecu.diag.set_active(Dtc{523, 6}, true));
+    const auto sent = dm1_data(record(ecu.bench, 1));
+    CHECK_EQ(sent.size(), 1u);
+    const auto read = dtcs_of(parse_dtc_list(sent[0]));
+    CHECK_EQ(read.size(), 1u);
+    CHECK_EQ(read[0].occurrences, 126);
+    CHECK(!read[0].byte4_high_bit);
+}
+
+TEST_CASE(lamp_values_diagnostics_does_not_send_read_as_off_or_solid)
+{
+    // Status: MIL 1 (on), red stop 2, amber 3 (both off), protect 1 (on).
+    // Flash: MIL 2 (solid), protect 0 (slow).
+    const Bytes data = dm_payload(0x6D, 0xBC, {dtc_bytes(1, 1, 1)});
+    const DtcListView list = parse_dtc_list(data);
+    CHECK(list.lamp(Lamp::MalfunctionIndicator) == std::optional<LampFlash>(LampFlash::Solid));
+    CHECK(!list.lamp(Lamp::RedStop).has_value());
+    CHECK(!list.lamp(Lamp::AmberWarning).has_value());
+    CHECK(list.lamp(Lamp::Protect) == std::optional<LampFlash>(LampFlash::Slow));
+    CHECK_EQ(list.data()[0], 0x6D); // the raw bytes for another reading
+    CHECK_EQ(list.data()[1], 0xBC);
 }

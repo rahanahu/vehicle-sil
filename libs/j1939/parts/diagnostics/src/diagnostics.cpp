@@ -476,4 +476,55 @@ void Diagnostics::on_dm22(const Message& message)
     }
 }
 
+// --- Reading a DTC list (the inverse of encode())
+
+ReadDtc DtcListView::iterator::operator*() const noexcept
+{
+    ReadDtc dtc;
+    dtc.spn = static_cast<std::uint32_t>(at_[0]) | (static_cast<std::uint32_t>(at_[1]) << 8) |
+              (static_cast<std::uint32_t>(at_[2] >> 5) << 16);
+    dtc.fmi = static_cast<std::uint8_t>(at_[2] & 0x1Fu);
+    dtc.occurrences = static_cast<std::uint8_t>(at_[3] & 0x7Fu);
+    dtc.byte4_high_bit = (at_[3] & 0x80u) != 0;
+    dtc.raw = {at_[0], at_[1], at_[2], at_[3]};
+    return dtc;
+}
+
+std::optional<LampFlash> DtcListView::lamp(Lamp which) const noexcept
+{
+    if (!valid_ || which == Lamp::None)
+    {
+        return std::nullopt;
+    }
+    const unsigned shift = shift_of(which);
+    if (((data_[0] >> shift) & 0x3u) != 0x1u)
+    {
+        return std::nullopt;
+    }
+    const unsigned flash = (data_[1] >> shift) & 0x3u;
+    return flash == 0x1u ? LampFlash::Fast : flash == 0x0u ? LampFlash::Slow : LampFlash::Solid;
+}
+
+bool DtcListView::has(std::uint32_t spn, std::uint8_t fmi) const noexcept
+{
+    return std::any_of(begin(), end(), [&](const ReadDtc& dtc) { return dtc.spn == spn && dtc.fmi == fmi; });
+}
+
+DtcListView::DtcListView(std::span<const std::uint8_t> data) noexcept : data_(data)
+{
+    // Up to 8 bytes: one DTC and padding. Longer: exactly 2 + 4 * n bytes.
+    if (data.size() < 6 || (data.size() > 8 && (data.size() - 2) % 4 != 0))
+    {
+        return;
+    }
+    valid_ = true;
+    count_ = (data.size() - 2) / 4;
+    if (count_ == 1 && data[2] == 0 && data[3] == 0 && data[4] == 0 && data[5] == 0)
+    {
+        count_ = 0; // the list without DTCs
+    }
+}
+
+DtcListView parse_dtc_list(std::span<const std::uint8_t> data) noexcept { return DtcListView(data); }
+
 } // namespace vehicle_sil::j1939
