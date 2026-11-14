@@ -4,8 +4,11 @@
 #include "test_harness.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
+#include "vehicle_sil/cli/utf8.hpp"
 
 #include <chrono>
+#include <cstddef>
+#include <cstdlib> // __argc, __argv (Windows)
 #include <string>
 #include <vector>
 
@@ -28,6 +31,45 @@ Args make(std::vector<std::string> words)
 }
 
 } // namespace
+
+TEST_CASE(cli_utf8_arguments_are_the_arguments_after_the_program_name)
+{
+    // Where argv is UTF-8 already, it is taken as it is. On Windows the arguments come from the
+    // wide command line of the process (here: the test's own), not from what is passed in; the
+    // launcher's tests start the executables with names in other scripts.
+    std::vector<std::string> words{"program", "--name", "\xE8\xBB\x8A\xE4\xB8\xA1", "", "a b"};
+    std::vector<char*> argv;
+    for (auto& word : words)
+    {
+        argv.push_back(word.data());
+    }
+#ifndef _WIN32
+    CHECK(vehicle_sil::cli::utf8_arguments(static_cast<int>(argv.size()), argv.data()) ==
+          (std::vector<std::string>{"--name", "\xE8\xBB\x8A\xE4\xB8\xA1", "", "a b"}));
+    CHECK(vehicle_sil::cli::utf8_arguments(1, argv.data()).empty());
+    CHECK(vehicle_sil::cli::utf8_arguments(0, argv.data()).empty());
+#else
+    // The test's own command line: the arguments the test runner gave this process, which are
+    // ASCII, so the C runtime's argv (in the code page) says the same.
+    const auto own = vehicle_sil::cli::utf8_arguments(static_cast<int>(argv.size()), argv.data());
+    CHECK_EQ(own.size(), static_cast<std::size_t>(__argc > 0 ? __argc - 1 : 0));
+    for (std::size_t i = 0; i < own.size() && i + 1 < static_cast<std::size_t>(__argc); ++i)
+    {
+        CHECK(own[i] == std::string(__argv[i + 1]));
+    }
+    CHECK(vehicle_sil::cli::utf8_from_wide(L"\u8ECA\u4E21 a") == "\xE8\xBB\x8A\xE4\xB8\xA1 a");
+    CHECK(vehicle_sil::cli::utf8_from_wide(L"").empty());
+#endif
+}
+
+TEST_CASE(cli_utf8_path_names_the_file_whatever_the_code_page)
+{
+    const std::string name = "\xE8\xBB\x8A\xE4\xB8\xA1.yaml";
+    const auto path = vehicle_sil::cli::utf8_path("dir/" + name);
+    CHECK(path.filename().u8string() == std::u8string(name.begin(), name.end()));
+    CHECK(path.parent_path() == std::filesystem::path("dir"));
+    CHECK(vehicle_sil::cli::utf8_path("").empty());
+}
 
 TEST_CASE(cli_args_reject_malformed_command_lines)
 {
