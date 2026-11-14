@@ -111,6 +111,11 @@
             "description": "true: you start this participant yourself (from a debugger, for example); run prints the command and waits for it. --manual does the same for one run.",
             "default": false
           },
+          "role": {
+            "enum": ["ecu", "test", "bridge"],
+            "description": "What the participant is for; only check reads it, a run is the same for every role. ecu: an ECU of the vehicle. test: a participant for testing (a spy, a tool that talks to the ECUs); it does not count as an ECU of a network. bridge: it carries networks to real buses; check warns of a test participant with J1939 nodes on a network that a bridge may carry. Variants cannot change it.",
+            "default": "ecu"
+          },
           "variables": {
             "$ref": "#/definitions/variables"
           }

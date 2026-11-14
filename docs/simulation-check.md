@@ -55,7 +55,8 @@
 | `ethernet-duplicate-mac` | 誤り | 1 つのイーサネットのネットワークで、2 つ以上の participant が同じ MAC アドレスを申告している（文は participant とアドレスを言う）。同じアドレスをわざと使う構成（待機系と現用系など）では、1 つを残してほかの participant の `eth::ChannelOptions::mac` を渡さずにおくと、`ethernet-mac-unknown` の注記だけになる（`mac` のないチャネルは `Accept::Addressed` を使えない。同じステップで送ったフレームの順は、SIL Kit では実行ごとに変わりうる） |
 | `ethernet-mac-unknown` | 注記 | イーサネットのネットワークに、MAC アドレスを申告しない participant がいる（`ethernet()` にアドレスを渡していない ECU。アドレスの重なりを確かめられない） |
 | `unused-network` | 警告（同上のときは注記） | どの participant も使わないネットワーク |
-| `single-participant` | 警告（同上のときは注記） | participant が 1 つだけのネットワーク（送ったものを誰も受けない） |
+| `single-participant` | 警告（同上のときは注記） | participant が 1 つだけのネットワーク（送ったものを誰も受けない）。`role: test` の participant は数えない（ECU が 1 つと spy なら出る。試験用の participant だけのネットワークも出る） |
+| `test-participant-talks-on-bridged-network` | 警告 | `role: test` で J1939 のノードを申告した participant と、ブリッジ（`role: bridge`。なければ `role` を書いていない `describe: false` の participant）が同じネットワークにいるかもしれない。その participant の送信とアドレスの主張が実機のバスに出る（文は、ブリッジが確かにいるのか、いるかもしれないのかと、直し方を言う。[試験のための participant とブリッジ](simulation-config.md#試験のための-participant-とブリッジrole)） |
 | `not-checked` | 注記 | `describe: false` の participant（照合していない） |
 | `participant-disabled` | 注記 | 外した participant（`enabled: false`、`--disable`。照合も起動もしない） |
 | `participant-manual` | 注記 | 利用者が自分で起動する participant（`manual: true`、`--manual`。`run` は起動せず、コマンドを書いて待つ） |
@@ -95,7 +96,7 @@
 
 ### 人向け
 
-participant の表（申告されたステップ幅とネットワーク。J1939 はノードの求めたアドレス、`any` は 254）、ネットワークの表（使う participant）、見つけたもの、最後に結果の 1 行（誤り、警告、注記の数）です。見つけたものは 1 つが 1 行で、`error:`、`warning:`、`note:` で始まり、`<ファイル>:<行>: <何が、どの値で、どう直すか>` の形です（行のないものはファイル名だけ）。誤り、警告、注記の順に、それぞれ行の順です。添える文（標準エラーの末尾、文法の誤りの場所など）は、次の行から 4 文字下げて書きます。ファイル名は、引数に書いたとおりです。表の幅は文字の数で揃えます（全角の文字があるとずれます）。
+participant の表（申告されたステップ幅とネットワーク。J1939 はノードの求めたアドレス、`any` は 254。`role` が `ecu` でない participant は、名前の後に `(role: test)` などと書く）、ネットワークの表（使う participant）、見つけたもの、最後に結果の 1 行（誤り、警告、注記の数）です。見つけたものは 1 つが 1 行で、`error:`、`warning:`、`note:` で始まり、`<ファイル>:<行>: <何が、どの値で、どう直すか>` の形です（行のないものはファイル名だけ）。誤り、警告、注記の順に、それぞれ行の順です。添える文（標準エラーの末尾、文法の誤りの場所など）は、次の行から 4 文字下げて書きます。ファイル名は、引数に書いたとおりです。表の幅は文字の数で揃えます（全角の文字があるとずれます）。
 
 <!-- vehicle_sil_launch check simulation.yaml -->
 ```text
@@ -148,7 +149,7 @@ Body_LIN   lin   -
 
 error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number)
 error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms
-error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, variables)
+error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables)
 warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs
 
 failed: 3 errors, 1 warning, 0 notes
@@ -173,7 +174,7 @@ failed: 3 errors, 1 warning, 0 notes
 | `variant`、`variants` | 機種を書いた構成（`variants`）のときだけあります。`variant` は選んだ機種（`--variant`）、`variants` は構成にある機種の名前の配列。`--variant` がない、または名前が違うとき（`result` が `"usage"`）は、`variant` が `null` で、`variants` に選べる名前が出ます |
 | `params` | 構成に `params` があるときだけあります。共通の `params` に、選んだ機種の `params` を重ねたもの。要素は `name`、`value`（`true`・`false`、数、文字列）、`from`（`configuration` か `variant`） |
 | `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 構成ファイルの値（読めないときと、書いていない `stop_at_ms` と `registry_uri` は `null`。`start_timeout_ms` と `stop_timeout_ms` は既定の値も） |
-| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`manual`（`--manual` を当てた後の値）、`step_ms`（なければ `null`）、`status`、`reported`、`variables`、`variable_map`（`variables` を書いた participant だけ）、`control` |
+| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`manual`（`--manual` を当てた後の値）、`role`（`"ecu"`、`"test"`、`"bridge"`）、`step_ms`（なければ `null`）、`status`、`reported`、`variables`、`variable_map`（`variables` を書いた participant だけ）、`control` |
 | `participants[].status` | `"described"`（自己申告を読んだ）、`"not_checked"`（`describe: false`）、`"failed"`（実行ファイルがない、`--describe` の失敗）、`"skipped"`（構成ファイルの誤りで進めなかった）、`"disabled"`（外した。項目に誤りがあっても） |
 | `participants[].reported` | 自己申告（`described` のときだけ。ほかは `null`）: `vehicle_sil`、`name`、`step_ns`、`networks`（`--describe` の JSON と同じ形。変数は次の `variables`） |
 | `participants[].variables` | シミュレーションから見える ECU の変数の配列（`ecu.connected`、続いて宣言の順）。構成ファイルの `variables`（対応表）を当てた後の名前、型、範囲、単位です（シナリオと Control API が見るものと同じ）。対応表がなければ、ECU が申告したままです。要素の形は `--describe` の JSON の `variables[]` と同じです（`name`、`type`、`causality`、`unit`、`min`、`max`、`step`、`description`、`items`、`builtin`。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。空の配列は「変数が 0 個」です。`null` は「わからない」です: 自己申告のない participant（`describe: false`）、外した participant、自己申告を読めなかった participant、`variables` を書かない古い vehicle-sil の ECU。実行の前に、どの ECU にどの変数があるかを見るのに使います |
@@ -220,6 +221,7 @@ participants:
       "required": true,
       "enabled": true,
       "manual": false,
+      "role": "ecu",
       "step_ms": 20,
       "status": "described",
       "reported": {

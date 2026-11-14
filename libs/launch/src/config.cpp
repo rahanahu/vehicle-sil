@@ -40,8 +40,12 @@ constexpr const char* kSpeedMeaning =
     "simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, 2: twice as fast, 0.5: half as "
     "fast), or max (as fast as possible)";
 const std::vector<std::string> kNetworkKeys = {"name", "kind"};
-const std::vector<std::string> kParticipantKeys = {"name",     "command", "step_ms", "describe",
-                                                   "required", "enabled", "manual",  "variables"};
+const std::vector<std::string> kParticipantKeys = {"name",    "command", "step_ms", "describe", "required",
+                                                   "enabled", "manual",  "role",    "variables"};
+/// What each role is for, in the message of a role that is none of them.
+constexpr const char* kRoleMeanings =
+    "ecu: an ECU of the vehicle, the default; test: a participant for testing, such as a spy or a tool that talks to "
+    "the ECUs, not counted as an ECU; bridge: it carries networks to real buses";
 /// The keys of one mapping of a participant's variables (control::VariableMapping). A new form of
 /// mapping gets its key here and in read_variable().
 const std::vector<std::string> kVariableMapKeys = {"from", "scale", "offset", "map", "unit", "absent"};
@@ -60,6 +64,17 @@ std::string kinds_text(const std::string& before = {}, const std::string& after 
     for (const NetworkKind kind : kNetworkKinds)
     {
         names.push_back(before + to_string(kind) + after);
+    }
+    return detail::or_list(names);
+}
+
+/// The roles a participant may have (kParticipantRoles): "ecu, test or bridge".
+std::string roles_text()
+{
+    std::vector<std::string> names;
+    for (const ParticipantRole role : kParticipantRoles)
+    {
+        names.emplace_back(to_string(role));
     }
     return detail::or_list(names);
 }
@@ -580,6 +595,21 @@ private:
         return std::nullopt;
     }
 
+    std::optional<ParticipantRole> read_role(ryml::id_type node, const std::string& prefix, const std::string& participant)
+    {
+        const std::string text = is_scalar(node) && !is_null(node) ? detail::to_string(tree_.val(node)) : std::string{};
+        if (const auto role = participant_role_named(text))
+        {
+            return role;
+        }
+        const std::string low = lower(text);
+        error("value", doc_.line(node),
+              prefix + "role is " + shown_value(node) + ": write " +
+                  (participant_role_named(low) ? low + " (lower case)" : roles_text() + " (" + kRoleMeanings + ")"),
+              participant);
+        return std::nullopt;
+    }
+
     // --- participants ---
 
     void read_participants(ryml::id_type node, SimulationConfig& config)
@@ -663,6 +693,12 @@ private:
                 else if (key == "manual")
                 {
                     participant.manual = boolean(child, prefix, key, who).value_or(false);
+                }
+                else if (key == "role")
+                {
+                    const auto role = read_role(child, prefix, who);
+                    participant.role = role.value_or(ParticipantRole::Ecu);
+                    participant.role_written = role.has_value();
                 }
                 else if (key == "variables")
                 {
@@ -1511,6 +1547,32 @@ std::vector<Finding> override_conflicts(const EnabledOverrides& overrides)
         }
     }
     return out;
+}
+
+const char* to_string(ParticipantRole role)
+{
+    switch (role)
+    {
+    case ParticipantRole::Ecu:
+        return "ecu";
+    case ParticipantRole::Test:
+        return "test";
+    case ParticipantRole::Bridge:
+        return "bridge";
+    }
+    return "";
+}
+
+std::optional<ParticipantRole> participant_role_named(std::string_view name) noexcept
+{
+    for (const ParticipantRole role : kParticipantRoles)
+    {
+        if (name == to_string(role))
+        {
+            return role;
+        }
+    }
+    return std::nullopt;
 }
 
 const char* param_source_name(ParamSource source)

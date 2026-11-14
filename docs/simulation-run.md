@@ -367,6 +367,7 @@ passed: 0 errors, 1 warning, 1 note
         "required": true,
         "enabled": true,
         "manual": false,
+        "role": "ecu",
         "step_ms": 10,
         "status": "described",
         "reported": {
@@ -442,6 +443,7 @@ passed: 0 errors, 1 warning, 1 note
         "required": true,
         "enabled": true,
         "manual": false,
+        "role": "ecu",
         "step_ms": 5,
         "status": "described",
         "reported": {

@@ -62,6 +62,7 @@ participants:
 | `participants[].required` | | `true`（既定）か `false`。シミュレーションがその participant を待つか。`false` は `describe: false` の participant にだけ書けます。外していない participant のうち、少なくとも 1 つは `true` の participant が要ります（誤り `no-required-participant`） |
 | `participants[].enabled` | | `true`（既定）か `false`。`false` の participant は外します（照合も起動もしません。[participant を外す](#participant-を外すenabled--disable--enable)） |
 | `participants[].manual` | | `false`（既定）か `true`。`true` の participant は、`run` が起動せず、利用者が自分で起動します（デバッガーからなど。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)） |
+| `participants[].role` | | `ecu`（既定）、`test`、`bridge`。その participant が何のためのものか。照合だけが読み、実行の動きは変わりません（[試験のための participant とブリッジ](#試験のための-participant-とブリッジrole)） |
 | `variants` | | 機種の対応（機種の名前 → 共通の部分との差分）。書いた構成は、`check` と `run` に `--variant <名前>` が要ります（[機種](#機種variants--variant)） |
 | `params` | | シナリオのパラメーターの値（名前 → 値）。シナリオの `${名前}` に入ります（[シナリオのパラメーター](#シナリオのパラメーターparams--param)） |
 | `participants[].variables` | | 変数の対応表。シミュレーションで使う名前から、この実行ファイルの変数への対応を書きます（[変数の名前と値を合わせる](#変数の名前と値を合わせるvariables)）。書いていない変数は、実行ファイルの名前のまま見えます |
@@ -182,6 +183,21 @@ Dashboard    yes       exit code 0
 passed: 0 errors, 0 warnings, 1 note
 ```
 
+### 試験のための participant とブリッジ（`role`）
+
+`role` は、participant が何のためのものかを照合に伝えます。照合の規則と表示だけが使い、`run` は、どの値でも同じに起動し、同じに参加させます（`--describe` の JSON と、シミュレーションの通信には入りません）。
+
+| 値 | 意味 | 照合で変わること |
+|---|---|---|
+| `ecu`（既定） | 車両の ECU | なし |
+| `test` | 試験のための participant（聞くだけの spy、ECU に送る道具など） | ネットワークの ECU として数えません（`single-participant` は、spy を足しても消えません）。J1939 のノードを申告していて、ブリッジがいるかもしれないネットワークにいると、警告 `test-participant-talks-on-bridged-network` です |
+| `bridge` | ネットワークを実機のバスへ運ぶ participant（[bridges.md](bridges.md)） | 上の警告で、ブリッジとして扱います |
+
+- ブリッジ: `role: bridge` の participant がいれば、それだけをブリッジとして扱います。自己申告した（`describe: true`）ブリッジは、使うと申告したネットワークだけを運びます。`describe: false` のブリッジは、どのネットワークを運ぶかが照合にはわからないので、どのネットワークも運ぶかもしれないとみなします。`role: bridge` の participant が 1 つもなければ、`role` を書いていない `describe: false` の participant を「ブリッジかもしれない」とみなします（警告の文もそう言い分けます）。ブリッジでない道具には `role: ecu` か `role: test` を書くと、そうみなしません。
+- 警告の理由: ブリッジは、SIL Kit の側で送られたものを実機のバスへ出します。J1939 のノードを持つ試験用の participant の送信、とくにアドレスの主張（Address Claimed）も実機に出て、同じアドレスの実機の ECU とアドレスを取り合います。直し方は、その participant をそのネットワークでは聞くだけにする（J1939 のノードを作らない）か、その participant を使う実行ではブリッジを外す（`--disable <ブリッジ>`、機種の `enabled: false`）かです。生の CAN で送る participant は、自己申告からはわからないので、警告しません。
+- 人向けの participant の表では、`ecu` でない participant の名前の後に `(role: test)` のように書きます。`check --json` の `participants[].role` に出ます。
+- 機種（`variants`）では変えられません（`describe`、`required` と同じです）。
+
 ### 変数の名前と値を合わせる（`variables`）
 
 同じ役目の ECU でも、実行ファイルによって変数の名前、単位、値の表し方が違うことがあります（他人の ECU、古い版、機種ごとの違い）。`variables` に対応を書くと、シミュレーションの側（シナリオ、`check --json`、Control API とその先の GUI）からは、どの実行ファイルも同じ名前と値で見えます。実行ファイルは変えません。名前を ECU の側でそろえられるなら、そのほうが簡単です。対応表は、そろえられないもののためにあります。
@@ -254,7 +270,7 @@ variants:
 | `…<participant>.enabled` | `true` か `false`。共通の `enabled` を置き換えます |
 | `variants.<機種>.params` | パラメーター。共通の `params` に、名前ごとに重ねます |
 
-- 機種で変えられるのは、この 4 つ（`command`、`variables`、`enabled`、`params`）だけです。ほかのキーは誤りです（`unknown-key`）。ネットワーク、`step_ms`、`describe`、`required` などは、どの機種でも同じです。
+- 機種で変えられるのは、この 4 つ（`command`、`variables`、`enabled`、`params`）だけです。ほかのキーは誤りです（`unknown-key`）。ネットワーク、`step_ms`、`describe`、`required`、`role` などは、どの機種でも同じです。
 - 機種を書いた構成で `--variant` を省くと、引数の誤りです（終了コード 4。文に機種の一覧が出ます）。既定の機種はありません。機種のどれでもない名前の `--variant` も、引数の誤りです。構成ファイルの文面にほかの誤りがあっても、先にこれを出します（共通の部分だけを、機種の代わりに照合することはしません。文には、ファイルにも誤りがあることを足します）。機種のない構成への `--variant` も引数の誤りですが、こちらは `--disable` と同じで、文面に誤りがある間は言いません（`variants` を読めなかったせいかもしれないため）。
 - ある機種にだけいる participant は、`participants` に `enabled: false` で書き、その機種で `enabled: true` にします。
 - 対応を共通の部分より減らすことはできません。共通の対応が要らない機種では、同じ名前に、その機種の対応を書きます（`engine.speed: engine.speed` は、名前も値もそのままです）。

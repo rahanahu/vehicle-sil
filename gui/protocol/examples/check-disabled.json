@@ -43,6 +43,7 @@
           "required": true,
           "enabled": true,
           "manual": false,
+          "role": "ecu",
           "step_ms": null,
           "status": "described",
           "reported": {
@@ -139,6 +140,7 @@
           "required": true,
           "enabled": false,
           "manual": false,
+          "role": "ecu",
           "step_ms": null,
           "status": "disabled",
           "reported": null,
@@ -156,6 +158,7 @@
           "required": false,
           "enabled": true,
           "manual": false,
+          "role": "ecu",
           "step_ms": null,
           "status": "not_checked",
           "reported": null,

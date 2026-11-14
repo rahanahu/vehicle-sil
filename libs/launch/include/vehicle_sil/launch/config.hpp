@@ -82,6 +82,22 @@ struct NetworkConfig
     bool valid = true;
 };
 
+/// What a participant is for (its "role" key). The check reads it; running does not: a participant
+/// of any role is started and joins the same way, and it is not in --describe's JSON nor on the wire.
+enum class ParticipantRole
+{
+    Ecu,    ///< an ECU of the vehicle (the default)
+    Test,   ///< a participant for testing (a spy, a tool that talks to the ECUs); not counted as an ECU
+    Bridge, ///< carries one or more networks to real buses (and from them)
+};
+
+/// The roles in the order the messages list them, and their names in the file and in check --json.
+inline constexpr ParticipantRole kParticipantRoles[] = {ParticipantRole::Ecu, ParticipantRole::Test,
+                                                       ParticipantRole::Bridge};
+[[nodiscard]] const char* to_string(ParticipantRole role);
+/// The role to_string() names `name` (exactly, lower case), or empty for another text.
+[[nodiscard]] std::optional<ParticipantRole> participant_role_named(std::string_view name) noexcept;
+
 struct ParticipantConfig
 {
     /// The participant name (on SIL Kit); an ecu_main executable gets it with --name.
@@ -106,6 +122,11 @@ struct ParticipantConfig
     /// key, or --manual): run prints the command to start it with and waits for it to join. It is
     /// checked as any other.
     bool manual = false;
+    /// What it is for (its "role" key; ParticipantRole::Ecu if it has none or an error there).
+    ParticipantRole role = ParticipantRole::Ecu;
+    /// true: the entry has a role key (even role: ecu). A participant with describe: false and no
+    /// role may be a bridge to the check, unless another participant has role: bridge.
+    bool role_written = false;
     /// The step the executable must report, in milliseconds; empty: any.
     std::optional<std::int64_t> step_ms{};
     /// Its variable map (its "variables" key): the names and values under which the simulation

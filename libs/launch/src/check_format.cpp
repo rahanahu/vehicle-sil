@@ -161,7 +161,10 @@ std::string detail::check_text_body(const CheckReport& report)
         {
             const ParticipantConfig& p = config.participants[i];
             const ParticipantResult result = i < report.participants.size() ? report.participants[i] : ParticipantResult{};
-            std::vector<std::string> row{p.name.empty() ? "participants[" + std::to_string(i) + "]" : p.name};
+            // A participant that is not an ECU says so after its name: "Spy (role: test)".
+            std::vector<std::string> row{(p.name.empty() ? "participants[" + std::to_string(i) + "]" : p.name) +
+                                         (p.role == ParticipantRole::Ecu ? std::string{}
+                                                                         : std::string(" (role: ") + to_string(p.role) + ")")};
             if (result.status == ParticipantStatus::Described && result.ecu)
             {
                 const EcuDescription& ecu = result.ecu->description;
@@ -446,6 +449,7 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
             w.boolean("required", p.required);
             w.boolean("enabled", p.enabled);
             w.boolean("manual", p.manual);
+            w.string("role", to_string(p.role));
             optional_integer("step_ms", p.step_ms);
             w.string("status", status_name(result.status));
             if (!result.ecu)

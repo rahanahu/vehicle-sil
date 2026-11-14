@@ -152,9 +152,9 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
                "networks, participants, variants, params)\n");
     check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
                "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual, variables)\n"
+               "command, step_ms, describe, required, enabled, manual, role, variables)\n"
                "E 7 unknown-key: participant 'A': unknown key 'Step_ms': did you mean 'step_ms'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual, variables)\n");
+               "command, step_ms, describe, required, enabled, manual, role, variables)\n");
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'bitrate': remove it, or use one of the keys here (name, kind)\n");
@@ -473,7 +473,7 @@ TEST_CASE(many_errors_are_reported_at_once_in_the_order_of_the_file)
                "ecu_main executable --local itself: remove it (or set describe: false for an executable not made with "
                "ecu_main)\n"
                "E 11 unknown-key: participant 'A': unknown key 'commands': did you mean 'command'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual, variables)\n"
+               "command, step_ms, describe, required, enabled, manual, role, variables)\n"
                "E 10 missing-key: participant 'A': no command: add command: [<path of the executable>]\n"
                "E 10 duplicate-name: participant 'A' is listed twice (first at line 7); give each participant its own name "
                "(for a second copy of an ECU, e.g. A_2)\n");
@@ -838,7 +838,7 @@ TEST_CASE(a_disabled_participant_is_checked_like_any_other)
                                       "    bitrate: 1\n"
                                       "  - name: A\n    command: a\n    enabled: false\n")),
                "E 10 unknown-key: participant 'B': unknown key 'bitrate': remove it, or use one of the keys here (name, "
-               "command, step_ms, describe, required, enabled, manual, variables)\n"
+               "command, step_ms, describe, required, enabled, manual, role, variables)\n"
                "E 7 launcher-argument: participant 'B': the command has '--local', but vehicle_sil_launch gives an ecu_main "
                "executable --local itself: remove it (or set describe: false for an executable not made with ecu_main)\n"
                "E 9 not-required-ecu: participant 'B': required: false is only for executables with describe: false: an "
@@ -932,6 +932,50 @@ TEST_CASE(the_command_line_must_name_participants_of_the_file_once)
     check_text(lines(override_conflicts(EnabledOverrides{{"A", "B"}, {"B"}})),
                "E 0 usage: --disable and --enable both name B: give one of them\n");
     CHECK(override_conflicts(EnabledOverrides{{"A"}, {"B"}}).empty());
+}
+
+TEST_CASE(a_participant_has_a_role_that_only_the_check_reads)
+{
+    const std::string text = with_participants("  - name: Engine\n    command: e\n"
+                                               "  - name: Cluster\n    command: c\n    role: ecu\n"
+                                               "  - name: Spy\n    command: s\n    role: test\n"
+                                               "  - name: Gateway\n    command: [g, \"{registry_uri}\"]\n    describe: false\n"
+                                               "    role: \"bridge\"\n");
+    const ConfigRead r = read_config(text);
+    check_text(lines(r.findings), "");
+    const auto& p = r.config->participants;
+    CHECK(p[0].role == ParticipantRole::Ecu && !p[0].role_written);
+    CHECK(p[1].role == ParticipantRole::Ecu && p[1].role_written);
+    CHECK(p[2].role == ParticipantRole::Test && p[2].role_written);
+    CHECK(p[3].role == ParticipantRole::Bridge && p[3].role_written);
+    CHECK(std::string(to_string(ParticipantRole::Test)) == "test");
+    CHECK(participant_role_named("bridge") == ParticipantRole::Bridge && !participant_role_named("Bridge"));
+
+    // A role that is none of them is an error that says which there are; in capitals, the
+    // lower case. The participant stays usable (an ECU).
+    const ConfigRead bad = read_config(with_participants("  - name: Spy\n    command: s\n    role: spy\n"
+                                                         "  - name: Tool\n    command: t\n    role: Test\n"
+                                                         "  - name: Logger\n    command: l\n    role: [test]\n"));
+    check_text(lines(bad.findings),
+               "E 6 value: participant 'Spy': role is 'spy': write ecu, test or bridge (ecu: an ECU of the vehicle, the "
+               "default; test: a participant for testing, such as a spy or a tool that talks to the ECUs, not counted as "
+               "an ECU; bridge: it carries networks to real buses)\n"
+               "E 9 value: participant 'Tool': role is 'Test': write test (lower case)\n"
+               "E 12 value: participant 'Logger': role is a list: write ecu, test or bridge (ecu: an ECU of the vehicle, "
+               "the default; test: a participant for testing, such as a spy or a tool that talks to the ECUs, not counted "
+               "as an ECU; bridge: it carries networks to real buses)\n");
+    CHECK(bad.config->participants[0].valid && bad.config->participants[0].role == ParticipantRole::Ecu &&
+          !bad.config->participants[0].role_written);
+
+    // A variant cannot change it (like describe and required).
+    EnabledOverrides chosen;
+    chosen.variant = "a";
+    check_text(lines(read_config(with_participants("  - name: Spy\n    command: s\n") +
+                                     "variants:\n  a:\n    participants:\n      Spy: { role: test }\n",
+                                 chosen)
+                         .findings),
+               "E 9 unknown-key: variant 'a': participant 'Spy': unknown key 'role': remove it, or use one of the keys here "
+               "(command, variables, enabled)\n");
 }
 
 TEST_CASE(a_participant_started_by_hand_from_the_file_or_the_command_line)
