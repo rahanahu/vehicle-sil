@@ -487,25 +487,58 @@ auto& node = ecu.j1939("J1939_CAN", options).add_node({.address = 0x00, .name = 
 ほかの ECU どうしのやり取りをシナリオで確かめるときは、何も送らない ECU を構成に足して、聞いたことを `output` の変数に出します（「外から信号を操作する・読む」）。送らなければ、バスには何も出ません。ほかの ECU が受けるもの、送るもの、送信確認とそれぞれの時刻は、その ECU がいてもいなくても同じで、その ECU のステップ幅にもよりません（仮想バス、SIL Kit の簡易シミュレーション、簡易 CAN Network Simulator で試験しています）。
 
 ```cpp
-class BusWatch final : public j1939::Observer {
+class BusWatch {
 public:
-    explicit BusWatch(vehicle_sil::Ecu& ecu) {
-        ecu.j1939("J1939_CAN").set_observer(this);   // ノードを足さない: 1 フレームも送らない
+    explicit BusWatch(vehicle_sil::Ecu& ecu)
+      : network_(ecu.j1939("J1939_CAN")),   // ノードを足さない: 1 フレームも送らない
+        listener_(network_) {
+        watch_status(listener_);
         ecu.output("watch.status_seen", &statusSeen_);
+        ecu.output("watch.status_to", &statusTo_);
+        // 聞きこぼしを、シナリオから見えるようにする
+        ecu.output("watch.missed", [this] {
+            const auto& s = listener_.sniffer_statistics();
+            return static_cast<std::int64_t>(s.no_session + s.incomplete + s.replaced + s.lost +
+                                             network_.statistics().receive_overflows);
+        });
     }
-    void on_event(const j1939::Event& e) override {
-        if (e.kind == j1939::EventKind::MessageReceived && e.pgn == kPgnStatus) { ++statusSeen_; }
-    }
+
 private:
+    // 見張りは Listener を作らず、受け取ってハンドラを足す
+    void watch_status(j1939::Listener& listener) {
+        listener.on_message(kPgnStatus, [this](const j1939::Message& m) {   // 宛先が誰でも渡る。長いメッセージも
+            if (m.time < latest_) { return; }   // 渡る順は前後しうる。新しさは時刻で比べる
+            latest_ = m.time;
+            ++statusSeen_;
+            statusTo_ = m.destination;
+        });
+    }
+
+    j1939::Network& network_;
+    j1939::Listener listener_;
+    vehicle_sil::SimTime latest_{};
     int statusSeen_ = 0;
+    int statusTo_ = 0;
 };
 
 int main(int argc, char** argv) { return vehicle_sil::ecu_main<BusWatch>(argc, argv, {.name = "Watch", .step = 10ms}); }
 ```
 
-- J1939 で聞く: ノードを足さない `Network`（`ecu.j1939(network)`）は、Address Claim も、Request への応答も、ACK と NACK もしません。受けたメッセージは `Network::set_observer` の `Observer` の `MessageReceived` で、時刻つきで見えます（[internals/j1939.md](internals/j1939.md) の「観測（`Observer`）」）。宛先がほかの ECU でも見えます。BAM で送られたメッセージは、組み立てたものが見えます。
-- 生の CAN で聞く: `ecu.can(network)` の `on_frame` で、全部のフレーム（11 ビットのフレーム、TP.CM と TP.DT を含む）を受けます。`send()` を呼ばなければ何も送りません。
-- いまは、ほかの ECU どうしの、相手を指定した複数フレームのメッセージ（RTS/CTS の転送）は、組み立てたものとしては聞けません。ノードのない `Network` は、自分宛てでない接続を組み立てないためです。要るときは、生の CAN で TP.CM と TP.DT を受けて組み立てます。
+- J1939 で聞く: ノードを足さない `Network`（`ecu.j1939(network)`）は、Address Claim も、Request への応答も、ACK と NACK もしません。その `Network` に `j1939::Listener`（ヘッダー `vehicle_sil/j1939/listener.hpp`）を 1 つ作り、ハンドラを足します。`Listener` は聞くだけで、何も送りません。
+  - `on_message(pgn, handler)` と `on_any_message(handler)`: ほかの participant が送ったメッセージが、宛先が誰でも渡ります。単一フレーム、BAM で送られたもの、2 つの ECU の間の接続（RTS/CTS）で送られたものです。ハンドラが受け取る型はノードのハンドラと同じ `j1939::Message` なので、読む関数をノードと共用できます。同じ PGN に複数のハンドラを足せます（登録の順に呼ばれます。外すことはできません）。
+  - `on_transfer(handler)`: ほかの ECU どうしの接続がどう終わったか（`SniffedTransfer`。完了のほか、Abort、時間切れ、聞きこぼし）。
+  - `on_frame(handler)`: フレーム 1 つずつ（TP.CM と TP.DT、ほかのアドレス宛てを含む）。自分で組み立てるときに使います。
+- 聞こえないもの:
+  - 同じ `Network` のノードが送ったもの。`Listener` が渡すのは「ほかの participant が言ったこと」です。自分のノードの送信は、送った側の結果（`Node::on_transfer_end`、`Requester` の結果）で数えます。`ListenerOptions::hear_local` を入れると、同じ `Network` のノードどうしで折り返したフレームとメッセージも渡りますが（`ReceivedFrame::local` が立ちます）、折り返しはノードが 2 つ以上のときにしか起きないので、ノードが 1 つの `Network` では何も増えません。
+  - 11 ビットのフレームと、`Network` が受け取らなかったフレーム（`Network::statistics()` の `receive_overflows`）。11 ビットを見るときは生の CAN で聞きます。
+  - `Listener` が追えなかった接続。同時に追える数（`ListenerOptions::sniffer.sessions`、既定 32）を超えた告知は `no_session`、パケットを見逃した転送は `incomplete`、途中で告知し直された転送は `replaced` に数えます（`Listener::sniffer_statistics()`）。上の見本のように変数に出しておくと、「来なかった」と「聞きこぼした」をシナリオで見分けられます。
+- 自分のノードを持つ participant でも使えます。ノード宛ての接続とノードが送る接続は `Network` が扱い、ノード宛てのメッセージは 1 回だけ渡ります（`on_transfer` には出ません）。
+- ハンドラは読むだけです。ハンドラの中から送信やハンドラの登録をすると `std::logic_error` で、その participant は失敗して止まります（例外を握りつぶしても止まります）。ハンドラでは変数を更新し、送るのは `ecu.on_step` からにします。ハンドラの登録は、シミュレーションが始まる前（コンストラクター）に済ませます。
+- 時刻と順: 接続で送られたメッセージの `Message::time` は、受け手がメッセージを受け取った時点（最後のパケット）の時刻で、受け手のノードが見る時刻と同じです。ただしハンドラが呼ばれるのは、受け手が「受け取った」と返した後です。そのため、後の時刻のメッセージより後に、前の時刻のメッセージが渡ることがあります。最後の値や周期を出すときは、呼ばれた順ではなく `time` を比べます。フレームから決まること（メッセージ、Abort）は、聞く participant のステップ幅によりません。時間の経過から決まること（`TimedOut` など）は、`time` はステップ幅によりませんが、ハンドラが呼ばれるステップは変わるので、これも `time` で比べます。
+- 見張りの書き方: 1 つの `Network` に `Listener` は 1 つです（2 つ目は `std::logic_error`）。見張りのクラスや関数は `Listener` を自分で作らず、`Listener&` を受け取ってハンドラを足す形にします。こうしておくと、1 つの participant に見張りをいくつ入れても書き換えずに済みます。
+- 接続を追う決まりは、このリポジトリのエンジンの受信側に合わせたもので、規格とは照らしていません。ほかのスタックで違いうる値（時間切れ、完了とする時点など）は `ListenerOptions::sniffer` で変えられます（[internals/j1939.md](internals/j1939.md) の「ほかの participant が言ったことを聞く（`Listener`）」と「ほかの ECU の転送を追う（`TransferSniffer`）」）。実機のブリッジがいるネットワークでは、時刻も順も正確ではありません（[bridges.md](bridges.md) の「物理 CAN と仮想時間」）。
+- 記録や試験のために `Network` の出来事（送信、アドレスの変化を含む）を見るなら `j1939::Observer` です（[internals/j1939.md](internals/j1939.md) の「観測（`Observer`）」）。`Listener` と同時に付けられます。
+- 生の CAN で聞く: `ecu.can(network)` の `on_frame` で、全部のフレーム（11 ビットのフレーム、TP.CM と TP.DT を含む）を受けます。`send()` を呼ばなければ何も送りません。独自の組み立てをするときに、接続だけを追わせたいなら `j1939::TransferSniffer` にフレームを渡します。
 - 確かめていないこと: Vector の Network Simulator の上で、送らない CAN コントローラーがバスの動き（ACK を返す相手の数など）を変えないかどうか。
 
 ## 外から信号を操作する・読む（UI、試験）

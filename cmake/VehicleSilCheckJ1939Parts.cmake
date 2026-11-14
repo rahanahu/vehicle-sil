@@ -14,7 +14,11 @@ cmake_minimum_required(VERSION 3.21) # cmake -P sets no policies without it (CMa
 #   cmake -DENGINE_DIR=<libs/j1939> -P VehicleSilCheckJ1939Parts.cmake
 # - transfer_sniffer.hpp, transfer_sniffer.cpp and the internal transport_wire.hpp they share
 #   with the engine include only the value types (and each other), no network.hpp.
-# - No other source of the engine includes transfer_sniffer.hpp.
+# - No other source of the engine includes transfer_sniffer.hpp, but the Listener, which is
+#   built on both: listener.hpp and listener.cpp.
+# - listener.cpp includes no internal header but frame_seat.hpp (its seat in the Network) and
+#   transport_wire.hpp, and no source of the engine includes listener.hpp: the Listener stays
+#   on top of the engine and the sniffer.
 if(ENGINE_DIR)
   set(sniffer_sources
     "${ENGINE_DIR}/include/vehicle_sil/j1939/transfer_sniffer.hpp"
@@ -39,12 +43,37 @@ if(ENGINE_DIR)
       endif()
     endforeach()
   endforeach()
+  set(listener_sources
+    "${ENGINE_DIR}/include/vehicle_sil/j1939/listener.hpp"
+    "${ENGINE_DIR}/src/listener.cpp")
+  set(listener_may_include_internal "frame_seat.hpp" "transport_wire.hpp")
+  foreach(source IN LISTS listener_sources)
+    if(NOT EXISTS "${source}")
+      message(FATAL_ERROR "the Listener's source is missing (renamed? update this check): ${source}")
+    endif()
+    file(READ "${source}" text)
+    string(REGEX MATCHALL "${include_pattern}" includes "${text}")
+    foreach(include IN LISTS includes)
+      string(REGEX REPLACE "${include_pattern}" "\\1" name "${include}")
+      # Internal headers are the ones outside vehicle_sil/ (the standard library's have no
+      # directory and no extension).
+      if(name MATCHES "[/.]" AND NOT name MATCHES "^vehicle_sil/" AND NOT name IN_LIST listener_may_include_internal)
+        string(APPEND failures "\n  ${source}: includes ${name}")
+      endif()
+    endforeach()
+  endforeach()
   file(GLOB_RECURSE engine_sources "${ENGINE_DIR}/src/*" "${ENGINE_DIR}/include/*")
   foreach(source IN LISTS engine_sources)
-    if(source IN_LIST sniffer_sources)
+    if(source IN_LIST listener_sources)
       continue()
     endif()
     file(READ "${source}" text)
+    if(text MATCHES "#[ \t]*include[ \t]*[\"<][^\">]*listener\\.hpp")
+      string(APPEND failures "\n  ${source}: includes listener.hpp")
+    endif()
+    if(source IN_LIST sniffer_sources)
+      continue()
+    endif()
     if(text MATCHES "#[ \t]*include[ \t]*[\"<][^\">]*transfer_sniffer\\.hpp")
       string(APPEND failures "\n  ${source}: includes transfer_sniffer.hpp")
     endif()
@@ -52,9 +81,11 @@ if(ENGINE_DIR)
   if(failures)
     message(FATAL_ERROR "the TransferSniffer and the J1939 engine depend on each other:${failures}\n"
                         "The sniffer may include only: ${sniffer_may_include}. Share what both need through "
-                        "src/transport_wire.hpp, and keep the engine free of transfer_sniffer.hpp.")
+                        "src/transport_wire.hpp, and keep the engine free of transfer_sniffer.hpp and listener.hpp. "
+                        "listener.cpp may include these internal headers only: ${listener_may_include_internal} "
+                        "(it uses the Network's public API apart from its seat).")
   endif()
-  message(STATUS "j1939 engine: the TransferSniffer is independent of the Network")
+  message(STATUS "j1939 engine: the TransferSniffer is independent of the Network, and the Listener is on top of both")
   return()
 endif()
 if(NOT PARTS_DIR OR NOT IS_DIRECTORY "${PARTS_DIR}")

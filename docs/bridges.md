@@ -45,6 +45,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 - Vector Virtual CAN も、SIL Kit の仮想時間には自動で同期しないものとして扱います。
 - Vector XL CAN Bridge は、autonomous lifecycle を使い、実時間で動きます。仮想時間のシミュレーションには参加させません。
 - 仮想時間の ECU と同じネットワークにブリッジを置くと、ECU はブリッジが転送したフレームを、届いた時点の自分のステップの時刻で受けます（シミュレーションが始まる前に届いたものは時刻 0）。どのステップで受けるかは壁時計しだいなので、結果は決定的ではありません（[internals/can.md](internals/can.md) の「SIL Kit のポート」）。
+- ブリッジ越しでは、時刻だけでなく順も崩れます。1 つのステップの間に届いたフレームは全部同じ時刻になり、J1939 の `Network` は同じ時刻のフレームを送り元ごとに識別子の小さい順で並べるので、実機のバスでの前後とは違う順で扱われることがあります。実機どうしの転送を `j1939::Listener` や `TransferSniffer` で聞くと、最後のパケットより先に「受け取った」（EndOfMsgACK）が来る、次の告知が前の「受け取った」より先に来る、といったことが起きます。前者は時刻が進むまで待って決めるので拾えますが、後者は両方を聞きこぼします。聞く participant のステップ幅を短くし、聞きこぼしの統計（`incomplete`、`replaced`）を変数に出して確かめます（[internals/j1939.md](internals/j1939.md) の「ほかの participant が言ったことを聞く（`Listener`）」）。
 - プロトコルスタックを XL のチャネルに直接載せる場合（`ExternalPortAdapter`）も実時間だけです。時刻同期で回すホストに登録すると、構成エラーになります。
 
 ## プロトコルスタックから使う（`ExternalPortAdapter`）

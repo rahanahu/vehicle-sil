@@ -22,6 +22,13 @@ vehicle_sil_add_harness_tests(vehicle_sil_j1939_tests
   LINK vehicle_sil::j1939)
 target_include_directories(vehicle_sil_j1939_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# The Listener: public API only. With the test kit's recorder on the same network.
+vehicle_sil_add_harness_tests(vehicle_sil_j1939_listener_tests
+  PREFIX j1939 LABELS unit j1939 TIMEOUT 60
+  SOURCES test_j1939_listener.cpp
+  LINK vehicle_sil::j1939 vehicle_sil::testkit)
+target_include_directories(vehicle_sil_j1939_listener_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # The listener's seat of the engine (detail::FrameSeat): an internal header, so this binary has
 # the engine's src/ on its include path. With the test kit's recorder on the same network.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_seat_tests
@@ -69,13 +76,15 @@ add_test(NAME j1939_parts.boundary_check_observer
 set_tests_properties(j1939_parts.boundary_check_observer PROPERTIES LABELS "unit;j1939" TIMEOUT 60
                      PASS_REGULAR_EXPRESSION "reach into the J1939 engine:.*part\\.hpp: matches 'set_observer'")
 # Inside the engine's target: the TransferSniffer does not depend on the Network (it also runs
-# on raw CAN frames), and the engine does not depend on the sniffer.
+# on raw CAN frames), the engine does not depend on the sniffer or on the Listener, and the
+# Listener reaches into the engine only through its seat.
 add_test(NAME j1939.sniffer_boundary
          COMMAND ${CMAKE_COMMAND} -DENGINE_DIR=${PROJECT_SOURCE_DIR}/libs/j1939
                  -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
 set_tests_properties(j1939.sniffer_boundary PROPERTIES LABELS "unit;j1939" TIMEOUT 60)
 # The check itself fails for the right reason.
-foreach(fixture IN ITEMS sniffer_includes_network engine_includes_sniffer)
+foreach(fixture IN ITEMS sniffer_includes_network engine_includes_sniffer listener_includes_the_engine_internals
+                         engine_includes_listener)
   add_test(NAME j1939.sniffer_boundary_check_${fixture}
            COMMAND ${CMAKE_COMMAND} -DENGINE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/boundary_fixtures/${fixture}
                    -P ${PROJECT_SOURCE_DIR}/cmake/VehicleSilCheckJ1939Parts.cmake)
@@ -85,6 +94,10 @@ set_tests_properties(j1939.sniffer_boundary_check_sniffer_includes_network PROPE
                      "depend on each other:.*transfer_sniffer\\.cpp: includes vehicle_sil/j1939/network\\.hpp")
 set_tests_properties(j1939.sniffer_boundary_check_engine_includes_sniffer PROPERTIES PASS_REGULAR_EXPRESSION
                      "depend on each other:.*network\\.cpp: includes transfer_sniffer\\.hpp")
+set_tests_properties(j1939.sniffer_boundary_check_listener_includes_the_engine_internals PROPERTIES PASS_REGULAR_EXPRESSION
+                     "depend on each other:.*listener\\.cpp: includes transport\\.hpp")
+set_tests_properties(j1939.sniffer_boundary_check_engine_includes_listener PROPERTIES PASS_REGULAR_EXPRESSION
+                     "depend on each other:.*node\\.cpp: includes listener\\.hpp")
 # The local buses, the test kit, Peer, Ecu and Simulation use the engine's public API only, like
 # the parts.
 foreach(dir IN ITEMS local testkit peer ecu simulation)
