@@ -7,6 +7,8 @@
 //                  and every participant, watches the simulation to its end, ends every
 //                  participant and reports how each ended; with --events as events (one JSON
 //                  object per line), with --stdin-commands stopped by commands on stdin.
+//   test <file>    runs every scenario of a list with the file, once for each of its variants,
+//                  one run after the other, and reports all of them as one table.
 //   version        its version (--json: also the formats it writes and what it can do).
 // The file format: docs/simulation-config.md; the rules and the output of check: docs/simulation-check.md;
 // the run: docs/simulation-run.md; the events: docs/simulation-events.md.
@@ -29,6 +31,7 @@
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
+#include "vehicle_sil/launch/test.hpp"
 #include "vehicle_sil/process/child_process.hpp"
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
 #include "control_server.hpp"
@@ -86,6 +89,9 @@ constexpr const char* kUsage =
     "                              [--timeout-ms <ms>]\n"
     "                              [--describe-timeout-ms <ms>]\n"
     "                              [--disable <name>]... [--enable <name>]... [--manual <name>]... [--] <file>\n"
+    "       vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... [--param <name>=<value>]...\n"
+    "                               [--timeout-ms <ms>] [--describe-timeout-ms <ms>]\n"
+    "                               [--disable <name>]... [--enable <name>]... <file> --scenarios <directory or files>...\n"
     "       vehicle_sil_launch version [--json]\n"
     "  check <file>                compare the simulation configuration <file> (YAML or JSON) with what each\n"
     "                              ecu_main executable in it reports (--describe); list the participants,\n"
@@ -94,6 +100,11 @@ constexpr const char* kUsage =
     "                              controller in this process, each participant as a process of its own\n"
     "                              (its output on stderr, each line after [<name>]); then end every\n"
     "                              participant and report how each ended. Ctrl+C stops it in order\n"
+    "  test <file>                 run every scenario of --scenarios with <file>, once for each of its variants, one\n"
+    "                              run after the other (each as run --speed max --scenario: its own registry and\n"
+    "                              processes); then a table of all runs: passed, FAILED or skipped, and why. A\n"
+    "                              failed run does not end the test. Ctrl+C stops the current run in order and\n"
+    "                              leaves the rest out\n"
     "  version                     the version of vehicle_sil_launch (--json: also its formats and features)\n"
     "  --json                      write the result as JSON\n"
     "  --events                    run: write what happens as events on stdout, one JSON object per line, the\n"
@@ -122,15 +133,22 @@ constexpr const char* kUsage =
     "                              clients read and stop, and cannot write or move the time)\n"
     "  --variant <name>            the variant of <file> to check or run (its variants: the common part with the\n"
     "                              variant's commands, variable maps, params and enabled laid over it); a file\n"
-    "                              that defines variants needs it: none is the default\n"
+    "                              that defines variants needs it: none is the default. test: only this variant\n"
+    "                              (repeatable); without it, every variant\n"
     "  --param <name>=<value>      with --scenario: the value of the scenario's parameter ${<name>}, over the\n"
-    "                              scenario's, the file's and the variant's params; repeatable\n"
+    "                              scenario's, the file's and the variant's params; repeatable. test: for each\n"
+    "                              scenario that has the parameter (at least one must)\n"
+    "  --scenarios <dir or files>  test: the scenarios: a directory (the files directly in it that end in .yaml,\n"
+    "                              .yml or .json, in the order of their names) or files, in the order given;\n"
+    "                              several after one --scenarios (so <file> comes first, or after --); repeatable\n"
+    "  --fail-fast                 test: do not run what comes after the first run that fails\n"
     "  --speed <speed>             run: simulation seconds per wall-clock second (1 real time, 2 twice as fast)\n"
     "                              or max (as fast as possible); replaces speed in <file>\n"
     "  --strict                    fail on warnings too\n"
     "  --log-dir <dir>             run: also write each participant's output to <dir>/<name>.log\n"
     "  --timeout-ms <ms>           run: abort the simulation if it has not ended <ms> after its start (wall clock;\n"
-    "                              with --start-paused and --control, from when it stands still before the start)\n"
+    "                              with --start-paused and --control, from when it stands still before the start);\n"
+    "                              test: each run\n"
     "  --describe-timeout-ms <ms>  how long one executable may take for --describe (default 10000)\n"
     "  --disable <name>            leave the participant <name> out (as enabled: false in <file>); repeatable\n"
     "  --enable <name>             take the participant <name> in (as enabled: true in <file>); repeatable\n"
@@ -140,8 +158,9 @@ constexpr const char* kUsage =
     "  --help, -h                  this text\n"
     "  --version                   as version\n"
     "  --                          what follows is the file, also if it starts with '-'\n"
-    "exit codes: 0 passed, 1 errors (with --strict: or warnings; run: also a failed simulation), 3 the file\n"
-    "            cannot be read (run: or the registry cannot be set up), 4 usage, 130 run was interrupted (or stopped)\n"
+    "exit codes: 0 passed, 1 errors (with --strict: or warnings; run: also a failed simulation; test: a run failed\n"
+    "            or was left out), 3 the file cannot be read (run: or the registry cannot be set up), 4 usage,\n"
+    "            130 run or test was interrupted (or stopped)\n"
     "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;\n"
     "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md\n";
 
@@ -779,13 +798,21 @@ int finish_events(launch::EventStream& events, const launch::RunReport& report, 
     return code;
 }
 
+enum class Command
+{
+    Check,
+    Run,
+    Test,
+};
+
 /// A wrong command line: each error and the usage on stderr; with --json also the JSON (result
 /// "usage") on stdout, with --events the result event, so that a program that reads it gets an
 /// answer. `file`: the configuration file if the arguments name one, else "" (null in the JSON).
 /// `variants`: the variants the file defines, if it was read (the JSON lists what --variant takes).
-int usage_error(const std::vector<launch::Finding>& errors, bool json, bool run, const std::string& file,
+int usage_error(const std::vector<launch::Finding>& errors, bool json, Command command, const std::string& file,
                 launch::EventStream* events, const std::vector<std::string>& variants = {})
 {
+    const bool run = command == Command::Run;
     for (const auto& error : errors)
     {
         write_stderr_line("error: " + error.message);
@@ -797,6 +824,14 @@ int usage_error(const std::vector<launch::Finding>& errors, bool json, bool run,
             std::fputs(kUsage, stderr);
             std::fflush(stderr);
         }
+    }
+    if (json && command == Command::Test)
+    {
+        launch::TestReport test;
+        test.file = file;
+        test.usage = true;
+        test.findings = errors;
+        return write_or_fail(launch::format_test_json(test), cli::kExitUsage);
     }
     if (json || events != nullptr)
     {
@@ -818,9 +853,9 @@ int usage_error(const std::vector<launch::Finding>& errors, bool json, bool run,
     return cli::kExitUsage;
 }
 
-int usage_error(const std::string& message, bool json, bool run, const std::string& file, launch::EventStream* events)
+int usage_error(const std::string& message, bool json, Command command, const std::string& file, launch::EventStream* events)
 {
-    return usage_error({launch::Finding{launch::Severity::Error, "usage", message, 0, "", ""}}, json, run, file, events);
+    return usage_error({launch::Finding{launch::Severity::Error, "usage", message, 0, "", ""}}, json, command, file, events);
 }
 
 /// The arguments that are no option or an option's value (as cli::Args reads them), for a usage
@@ -842,7 +877,7 @@ std::vector<std::string> positional_arguments(const std::vector<std::string>& ar
         }
         else if (a == "--describe-timeout-ms" || a == "--log-dir" || a == "--timeout-ms" || a == "--events-stall-ms" ||
                  a == "--disable" || a == "--enable" || a == "--manual" || a == "--speed" || a == "--scenario" || a == "--control" ||
-                 a == "--variant" || a == "--param" ||
+                 a == "--variant" || a == "--param" || a == "--scenarios" ||
                  a == "--control-credentials" ||
                  a == "--control-tls-cert" || a == "--control-tls-key" || a == "--control-audit-log")
         {
@@ -864,6 +899,15 @@ Common common(const cli::Args& args, const std::string& command)
     const auto& positionals = args.positionals();
     if (positionals.size() != 2)
     {
+        if (command == "test")
+        {
+            throw cli::UsageError(positionals.size() < 2
+                                      ? "test needs the configuration file: vehicle_sil_launch test <file> --scenarios <directory "
+                                        "or files> (the file comes before --scenarios, which takes every path after it; or "
+                                        "last, after --)"
+                                      : "test takes one configuration file, not " + std::to_string(positionals.size() - 1) +
+                                            ": the scenarios come after --scenarios");
+        }
         throw cli::UsageError(positionals.size() < 2
                                   ? command + " needs the configuration file: vehicle_sil_launch " + command + " <file>"
                                   : command + " takes one file, not " + std::to_string(positionals.size() - 1));
@@ -878,7 +922,7 @@ Common common(const cli::Args& args, const std::string& command)
     c.options.overrides.disable = args.all("disable");
     c.options.overrides.enable = args.all("enable");
     c.options.overrides.manual = args.all("manual");
-    if (args.has("variant"))
+    if (args.has("variant") && command != "test") // test: each of its --variant, in test()
     {
         c.options.overrides.variant = args.str("variant", "");
         if (c.options.overrides.variant->empty())
@@ -909,7 +953,7 @@ Common common(const cli::Args& args, const std::string& command)
         }
         c.options.params.push_back(std::move(param));
     }
-    if (!c.options.params.empty() && !args.has("scenario"))
+    if (!c.options.params.empty() && !args.has("scenario") && command != "test")
     {
         throw cli::UsageError("--param sets a parameter of a scenario: give --scenario <file> too, or leave --param out");
     }
@@ -940,7 +984,7 @@ int check(const cli::Args& args)
     const launch::CheckReport report = launch::check_file(process::path_from_utf8(c.file), c.file, c.options);
     if (report.usage)
     {
-        return usage_error(report.findings, args.flag("json"), false, c.file, nullptr, report.variants);
+        return usage_error(report.findings, args.flag("json"), Command::Check, c.file, nullptr, report.variants);
     }
     const int code = !report.config ? cli::kExitSetupFailed : report.passed() ? cli::kExitOk : cli::kExitFailed;
     return write_or_fail(args.flag("json") ? launch::format_json(report) : launch::format_text(report), code);
@@ -1084,7 +1128,7 @@ int run(const cli::Args& args, launch::EventStream* events)
 #endif
     if (report.check.usage)
     {
-        return usage_error(report.check.findings, args.flag("json"), true, c.file, events, report.check.variants);
+        return usage_error(report.check.findings, args.flag("json"), Command::Run, c.file, events, report.check.variants);
     }
     const int code = events != nullptr
                          ? finish_events(*events, report, report.exit_code())
@@ -1095,6 +1139,119 @@ int run(const cli::Args& args, launch::EventStream* events)
 #ifdef VEHICLE_SIL_LAUNCH_CONTROL_SERVER
         server.reset(); // its audit log is complete; the hub stays
 #endif
+        end_process_at_once(code);
+    }
+    return code;
+}
+
+/// "--scenarios a b c" as "--scenarios a --scenarios b --scenarios c" (test): --scenarios takes
+/// every argument after it up to the next option or "--", so that a shell's list of files
+/// (scenarios/*.yaml) can follow it.
+std::vector<std::string> spread_scenarios(const std::vector<std::string>& arguments)
+{
+    std::vector<std::string> out;
+    bool ended = false;   // after "--"
+    bool listing = false; // after --scenarios and its first path
+    for (std::size_t i = 0; i < arguments.size(); ++i)
+    {
+        const std::string& a = arguments[i];
+        if (ended)
+        {
+            out.push_back(a);
+        }
+        else if (a == "--")
+        {
+            ended = true;
+            out.push_back(a);
+        }
+        else if (a == "--scenarios")
+        {
+            out.push_back(a);
+            listing = i + 1 < arguments.size() && arguments[i + 1].substr(0, 2) != "--";
+            if (listing)
+            {
+                out.push_back(arguments[++i]);
+            }
+        }
+        else if (a.substr(0, 2) == "--")
+        {
+            listing = false;
+            out.push_back(a);
+        }
+        else
+        {
+            if (listing)
+            {
+                out.emplace_back("--scenarios");
+            }
+            out.push_back(a);
+        }
+    }
+    return out;
+}
+
+int test(const cli::Args& args)
+{
+    if (args.has("scenario"))
+    {
+        throw cli::UsageError("--scenario is for check and run: test takes its scenarios with --scenarios <directory or files>");
+    }
+    for (const char* runOnly : {"log-dir", "events-stall-ms", "events", "stdin-commands", "speed", "start-paused", "manual", "control",
+                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"})
+    {
+        if (args.has(runOnly) || args.flag(runOnly))
+        {
+            throw cli::UsageError("--" + std::string(runOnly) +
+                                  " is for run, not for test (which runs one simulation after the other, each as fast as "
+                                  "possible): to use it, run one scenario with vehicle_sil_launch run --scenario <file>");
+        }
+    }
+    const Common c = common(args, "test");
+    const bool json = args.flag("json");
+    launch::TestOptions options;
+    options.run.check = c.options;
+    options.variants = args.all("variant");
+    for (const std::string& variant : options.variants)
+    {
+        if (variant.empty())
+        {
+            throw cli::UsageError("--variant needs the name of a variant of the file");
+        }
+    }
+    options.fail_fast = args.flag("fail-fast");
+    if (args.has("timeout-ms"))
+    {
+        options.run.timeout = args.millis("timeout-ms", std::chrono::milliseconds(0));
+        if (options.run.timeout->count() == 0)
+        {
+            throw cli::UsageError("--timeout-ms must be at least 1");
+        }
+    }
+    const std::vector<std::string> given = args.all("scenarios");
+    if (given.empty())
+    {
+        throw cli::UsageError("test needs the scenarios to run: give --scenarios <directory> (every .yaml, .yml and .json "
+                              "file directly in it) or --scenarios <file>... after the configuration file");
+    }
+    launch::ScenarioList list = launch::list_scenarios(given);
+    if (!list.errors.empty())
+    {
+        return usage_error(list.errors, json, Command::Test, c.file, nullptr);
+    }
+    options.scenarios = std::move(list.scenarios);
+    options.run.speed.emplace(std::optional<double>{}); // as fast as possible, whatever the file says
+    watch_interrupts();
+    options.run.write_line = write_stderr_line;
+    options.run.interrupts = &g_interrupts;
+    options.run.interrupt_name = interrupt_name;
+    const launch::TestReport report = launch::test_file(process::path_from_utf8(c.file), c.file, options);
+    if (report.usage)
+    {
+        return usage_error(report.findings, json, Command::Test, c.file, nullptr);
+    }
+    const int code = write_or_fail(json ? launch::format_test_json(report) : launch::format_test_text(report), report.exit_code());
+    if (report.connection_not_closed)
+    {
         end_process_at_once(code);
     }
     return code;
@@ -1145,7 +1302,11 @@ int main(int argc, char** argv)
     // reap the participants itself, and their exit codes would be lost.
     std::signal(SIGCHLD, SIG_DFL);
 #endif
-    const std::vector<std::string> arguments = utf8_arguments(argc, argv);
+    std::vector<std::string> arguments = utf8_arguments(argc, argv);
+    if (const auto first = positional_arguments(arguments); !first.empty() && first.front() == "test")
+    {
+        arguments = spread_scenarios(arguments);
+    }
     bool json = false;
     bool events = false;
     for (const auto& argument : arguments)
@@ -1168,6 +1329,8 @@ int main(int argc, char** argv)
     // The command and the file, for a usage error's JSON.
     const std::vector<std::string> positionals = positional_arguments(arguments);
     const bool isRun = !positionals.empty() && positionals.front() == "run";
+    const bool isTest = !positionals.empty() && positionals.front() == "test";
+    const Command command = isRun ? Command::Run : isTest ? Command::Test : Command::Check;
     const std::string file = positionals.size() == 2 ? positionals[1] : std::string{};
     if (!positionals.empty() && positionals.front() == "version")
     {
@@ -1185,37 +1348,47 @@ int main(int argc, char** argv)
             {
                 return usage_error("--events needs a standard output to write the events to, and there is none (it is "
                                    "closed): start vehicle_sil_launch with its standard output as a pipe or a file",
-                                   false, true, file, nullptr);
+                                   false, Command::Run, file, nullptr);
             }
         }
+    }
+    if (isTest)
+    {
+        ignore_broken_pipes();
     }
     int code = cli::kExitSetupFailed;
     try
     {
-        const cli::Args args(arguments,
-                             {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario",
-                              "control", "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log",
-                              "variant"},
-                             {"json", "strict", "events", "stdin-commands", "start-paused"},
-                             {"disable", "enable", "manual", "param"});
+        // test takes --variant more than once, and has options of its own.
+        const cli::Args args =
+            isTest ? cli::Args(arguments,
+                               {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
+                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log"},
+                               {"json", "strict", "events", "stdin-commands", "start-paused", "fail-fast"},
+                               {"disable", "enable", "manual", "param", "variant", "scenarios"})
+                   : cli::Args(arguments,
+                               {"describe-timeout-ms", "log-dir", "timeout-ms", "events-stall-ms", "speed", "scenario", "control",
+                                "control-credentials", "control-tls-cert", "control-tls-key", "control-audit-log", "variant"},
+                               {"json", "strict", "events", "stdin-commands", "start-paused"},
+                               {"disable", "enable", "manual", "param"});
         if (args.positionals().empty())
         {
-            code = usage_error("no command: give check <file>, run <file> or version", json, false, file, stream);
+            code = usage_error("no command: give check <file>, run <file>, test <file> or version", json, command, file, stream);
         }
-        else if (args.positionals().front() != "check" && !isRun)
+        else if (args.positionals().front() != "check" && !isRun && !isTest)
         {
             code = usage_error("unknown command '" + args.positionals().front() +
-                                   "': the commands are check, run and version",
-                               json, false, file, stream);
+                                   "': the commands are check, run, test and version",
+                               json, command, file, stream);
         }
         else
         {
-            code = isRun ? run(args, stream) : check(args);
+            code = isRun ? run(args, stream) : isTest ? test(args) : check(args);
         }
     }
     catch (const cli::UsageError& e)
     {
-        code = usage_error(e.what(), json, isRun, file, stream);
+        code = usage_error(e.what(), json, command, file, stream);
     }
     catch (const std::exception& e)
     {
@@ -1228,7 +1401,17 @@ int main(int argc, char** argv)
         }
         else if (json)
         {
-            static_cast<void>(write_or_fail(launch::format_internal_error_json(isRun, e.what()), cli::kExitSetupFailed));
+            if (isTest)
+            {
+                launch::TestReport report;
+                report.unreadable = true;
+                report.findings.push_back(launch::Finding{launch::Severity::Error, "internal", e.what(), 0, "", ""});
+                static_cast<void>(write_or_fail(launch::format_test_json(report), cli::kExitSetupFailed));
+            }
+            else
+            {
+                static_cast<void>(write_or_fail(launch::format_internal_error_json(isRun, e.what()), cli::kExitSetupFailed));
+            }
         }
         code = cli::kExitSetupFailed;
     }

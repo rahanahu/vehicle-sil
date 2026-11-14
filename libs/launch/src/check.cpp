@@ -152,6 +152,7 @@ namespace {
         context.variants = report.variants;
         context.params = report.config->params;
         context.params.insert(context.params.end(), options.params.begin(), options.params.end());
+        context.params_for_many = options.params_for_many;
         ScenarioRead read = read_scenario(text, scenario_catalog(report), context);
         check.name = std::move(read.name);
         check.steps = read.steps;
@@ -159,6 +160,7 @@ namespace {
         check.params = std::move(read.params);
         check.only = std::move(read.only);
         check.skipped = read.skipped;
+        check.not_for_variant = read.not_for_variant;
         if (!read.usage_errors.empty())
         {
             return std::move(read.usage_errors);
@@ -235,7 +237,7 @@ CheckReport check_file(const std::filesystem::path& path, const std::string& sho
     }
     report.findings = std::move(read.findings);
     report.config = std::move(read.config);
-    if (!report.config)
+    if (!report.config || options.file_only)
     {
         return report;
     }
