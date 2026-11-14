@@ -14,7 +14,7 @@ vehicle_sil_target_defaults(vehicle_sil_vector_xl_on_fake)
 
 # The production bridge executable, linked against the fake driver.
 add_executable(vehicle_sil_vector_xl_bridge_on_fake ${_bridge_dir}/app/main.cpp)
-target_link_libraries(vehicle_sil_vector_xl_bridge_on_fake PRIVATE vehicle_sil_vector_xl_on_fake vehicle_sil::core vehicle_sil_cli)
+target_link_libraries(vehicle_sil_vector_xl_bridge_on_fake PRIVATE vehicle_sil_vector_xl_on_fake vehicle_sil::bridge_runtime vehicle_sil::core vehicle_sil_cli)
 vehicle_sil_target_defaults(vehicle_sil_vector_xl_bridge_on_fake)
 vehicle_sil_copy_runtime_dlls(vehicle_sil_vector_xl_bridge_on_fake)
 

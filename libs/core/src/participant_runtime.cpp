@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/core/participant_runtime.hpp"
 
+#include "participant_runtime_probe.hpp"
+
 #include <silkit/services/orchestration/all.hpp>
 #include <silkit/services/orchestration/string_utils.hpp>
 
@@ -45,7 +47,27 @@ bool is_terminal_or_stopping(orch::ParticipantState state) noexcept
     }
 }
 
+/// Only tests set one (participant_runtime_probe.hpp).
+std::atomic<const detail::StartProbe*> g_start_probe{nullptr};
+
+void start_probe(detail::StartProbePoint point)
+{
+    if (const auto* probe = g_start_probe.load(std::memory_order_acquire))
+    {
+        (*probe)(point);
+    }
+}
+
 } // namespace
+
+namespace detail {
+
+void set_start_probe(const StartProbe* probe) noexcept
+{
+    g_start_probe.store(probe, std::memory_order_release);
+}
+
+} // namespace detail
 
 namespace {
 
@@ -491,7 +513,10 @@ ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
         {
             // Without time synchronisation no step proves that the lifecycle got to Running;
             // this handler does (start()). SIL Kit calls it only without a TimeSyncService.
-            lifecycle_->SetStartingHandler([this] { starting_entered_.store(true, std::memory_order_release); });
+            lifecycle_->SetStartingHandler([this] {
+                starting_entered_.store(true, std::memory_order_release);
+                start_probe(detail::StartProbePoint::StartingHandlerEntered);
+            });
         }
     }
     catch (...)
@@ -608,18 +633,37 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
                                                    : std::chrono::steady_clock::now() + timeout;
     while (true)
     {
-        const auto current = lifecycle_->State();
         // A short simulation can pass through Running between two polls (to Stopping or on to
         // Shutdown); a step handler call (virtual time) or the starting handler (otherwise)
-        // proves that it got there.
-        if (current == orch::ParticipantState::Running || step_entered_.load(std::memory_order_acquire)
-            || starting_entered_.load(std::memory_order_acquire))
+        // proves that it got there. The starting handler runs in ReadyToRun, and SIL Kit sets
+        // Running only after it returned: until then, state() would still say ReadyToRun.
+        //
+        // The order of the reads matters: the flags first, the state after them. SIL Kit sets
+        // ReadyToRun before it calls the starting handler and never goes back from there, so a
+        // state read after the flag was seen set is ReadyToRun or a later one, and "not
+        // ReadyToRun" then means Running or beyond. With the state read first, the SIL Kit thread
+        // could set ReadyToRun and the flag between the two reads, and start() would return on
+        // an older state while state() says ReadyToRun.
+        const bool stepEntered = step_entered_.load(std::memory_order_acquire);
+        const bool startingEntered = starting_entered_.load(std::memory_order_acquire);
+        start_probe(detail::StartProbePoint::BetweenFlagsAndState);
+        const auto current = lifecycle_->State();
+        if (current == orch::ParticipantState::Running || stepEntered
+            || (startingEntered && current != orch::ParticipantState::ReadyToRun))
         {
             deliver_stop(false); // a stop requested before Running
             return;
         }
         if (is_terminal_or_stopping(current))
         {
+            // The other side of the same order: the lifecycle can have gone through Running and
+            // on to this state after the flags were read. They never go back, so they say now
+            // whether it did: that is a start that succeeded, not one that failed.
+            if (step_entered_.load(std::memory_order_acquire) || starting_entered_.load(std::memory_order_acquire))
+            {
+                deliver_stop(false);
+                return;
+            }
             throw std::runtime_error("SIL Kit lifecycle of '" + options_.participant_name
                                      + "' failed to start, state: " + orch::to_string(current));
         }
