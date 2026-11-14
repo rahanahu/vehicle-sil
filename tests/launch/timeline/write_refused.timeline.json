@@ -62,7 +62,8 @@
         "write": {
           "variable": "Body.level",
           "at_ms": 40,
-          "value": 13
+          "value": 13,
+          "point": 1
         }
       }
     },
@@ -101,6 +102,7 @@
       "variable": "Body.level",
       "source": "written",
       "encoding": "all",
+      "not_applied_from": 1,
       "points": [
         [0, 7],
         [40, 13]

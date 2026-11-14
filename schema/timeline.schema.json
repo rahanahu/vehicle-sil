@@ -108,14 +108,14 @@
             "number",
             "null"
           ],
-          "description": "The step of the controller at which the scenario was over; null if it was not (incomplete, not_run)."
+          "description": "The step of the controller at which the scenario was over; null if it was not (incomplete, not_run). Usually after recorded_to_ms; at or before it only where a write was refused at once."
         },
         "recorded_to_ms": {
           "type": [
             "number",
             "null"
           ],
-          "description": "The time that decided the scenario, and the right end of the series: no point is later. Failed: the at_ms of the failed step. Passed: the latest at_ms of its steps. Incomplete: the time of the last sample that was looked at. null if the scenario did not begin."
+          "description": "The right end of the series: no point is later. Failed: the at_ms of the failed step (the time of the stop, if stop_at_ms ended the run). Passed: the latest at_ms of its steps. Incomplete: the time of the last sample that was looked at; or, if a write was refused and then a participant's failure became the result of the run, the time of that write. null if the scenario did not begin (the series are empty). In a failed run a step that passed may have an at_ms after it (it was decided before the failure was seen): its points are not in the series."
         }
       }
     },
@@ -427,11 +427,12 @@
                   "object",
                   "null"
                 ],
-                "description": "The write that was not made or not applied; null if the step did not fail of a write.",
+                "description": "The write that was not made or not applied; null if the step did not fail of a write. Of a set of several variables: the first one for the participant that refused.",
                 "required": [
                   "variable",
                   "at_ms",
-                  "value"
+                  "value",
+                  "point"
                 ],
                 "properties": {
                   "variable": {
@@ -449,6 +450,14 @@
                       "null"
                     ],
                     "description": "The value; null if it was never worked out."
+                  },
+                  "point": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "description": "The index in points of the variable's written series of the point that is this write; null if nothing was sent (value is null)."
                   }
                 }
               }
@@ -475,7 +484,7 @@
           },
           "source": {
             "type": "string",
-            "description": "\"written\": the values the scenario sent, each with the time it was for. \"sampled\": the values of the ECU's samples that the scenario looked at; a sample has the value at the end of an ECU step and the time of its start, so a value holds from its point to the next."
+            "description": "\"written\": the values the scenario sent, each with the time it was for; sent, not necessarily applied (not_applied_from). \"sampled\": the values of the ECU's samples that the scenario looked at; a sample has the value at the end of an ECU step and the time of its start, so a value holds from its point to the next."
           },
           "encoding": {
             "type": "string",
@@ -503,7 +512,7 @@
           "not_applied_from": {
             "type": "integer",
             "minimum": 0,
-            "description": "written, only if there are such points: the index in points of the first one for a time after scenario.over_at_ms: sent, and no ECU got to that time."
+            "description": "written, only if there are such points: the index in points from which on the points were sent and not applied by the ECU. They are the write that was refused (failed.write.point of the failed step) with what was sent after it, and the points for a time after scenario.over_at_ms (no ECU got to that time). Do not draw them as values the variable took. In a run that did not pass, a point before it may still not have been applied (the run ended before its result was looked at)."
           },
           "points": {
             "type": "array",
@@ -530,7 +539,7 @@
     },
     "findings": {
       "type": "array",
-      "description": "The findings of the check and of the run that are about the scenario (code scenario-...) or this file (timeline-write), as in `run --json`; and, with their code alone, those that say the run was late (control-link-late-values, behind-real-time): what such a run recorded may differ from run to run.",
+      "description": "The findings of the check and of the run that are about the scenario (code scenario-...), as in `run --json`; and, with its code alone, control-link-late-values (an ECU's values came later than promised: what such a run recorded may differ from run to run). No other finding: nothing of the run's pace in real time.",
       "items": {
         "type": "object",
         "required": [
@@ -589,7 +598,7 @@
     },
     "limits": {
       "type": "object",
-      "description": "How many points the file keeps, and what went. Beyond a limit the oldest points of a series go and the newest stay. Counted are the points of samples and the written points of a ramp or a wave; the written points of a set always stay.",
+      "description": "How many points the file keeps, and what went. Beyond a limit the oldest points of a series go and the newest stay. Counted are the points of samples and the written points of a ramp or a wave; the written points of a set always stay. A run that dropped points also says so in its result (the note timeline-limit).",
       "required": [
         "points_per_series",
         "points_total",
@@ -613,6 +622,7 @@
               "variable",
               "source",
               "dropped",
+              "dropped_from_ms",
               "dropped_before_ms"
             ],
             "properties": {
@@ -629,12 +639,19 @@
                 "minimum": 1,
                 "description": "How many points went."
               },
+              "dropped_from_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "The time of the oldest point that went. From here up to (not with) dropped_before_ms values are missing: do not join points across this time. In a written series the points of a set stay, also in and before this time; the values of the ramp or wave between them and dropped_before_ms are not there."
+              },
               "dropped_before_ms": {
                 "type": [
                   "number",
                   "null"
                 ],
-                "description": "The time of the oldest point that stayed (of a written series: of a ramp or a wave)."
+                "description": "The time of the oldest point that stayed, of the points that can go (all of a sampled series; of a written series those of a ramp or a wave)."
               }
             }
           }

@@ -406,10 +406,10 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 ### `schema/`（構成ファイルとシナリオの JSON Schema）
 
-- 主なクラス・関数（ヘッダー）: `schema/simulation.schema.json`（構成ファイル）、`schema/scenario.schema.json`（シナリオ）、`schema/timeline.schema.json`（`run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。ひな形と道具の圧縮ファイルには入れていません）。
+- 主なクラス・関数（ヘッダー）: `schema/simulation.schema.json`（構成ファイル）、`schema/scenario.schema.json`（シナリオ）、`schema/timeline.schema.json`（`run --timeline` が書くファイル。ランチャーの出力の形で、読む道具のためのもの。道具の圧縮ファイルの `schema/` に入れます。ひな形の `template/schema/` には置きません）。
   前の 2 つはエディターの補完と検査のためのもので、ランチャーは読みません（読み手は `libs/launch/src/config.cpp` と `scenario.cpp`）。
   ダッシュボードのスキーマは `gui/protocol/dashboard.schema.json` です。
-  ひな形の `template/schema/` は 3 つの写しで、道具の圧縮ファイルの `schema/` にも同じ 3 つが入ります（`template/get_tools.py` が、道具の分をプロジェクトの `schema/` に写します）。
+  ひな形の `template/schema/` は 3 つの写しで、道具の圧縮ファイルの `schema/` には、同じ 3 つと `timeline.schema.json` が入ります（`template/get_tools.py` が、道具の分を全部プロジェクトの `schema/` に写します）。
   例をビルドするときは、構成のときにビルドのディレクトリにも写します（最上位の `CMakeLists.txt`。写された例の YAML の 1 行目が、そこを指します）
 - 試験: `tests/schema/test_schemas.py`（例、ひな形、文書の YAML がスキーマに通る。
   通る見本と落ちる見本を、スキーマと `check` の両方に掛ける。
@@ -900,7 +900,7 @@ flowchart TD
   試験は `schema.files_and_launcher`
 
 - 変えるもの: 時間の軸のファイル（`run --scenario --timeline`。
-  記録は `libs/launch/src/timeline.cpp` の `TimelineRecord`（上限と、古い側を捨てる決まりもここ）、記録に入れる所は `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`）、ファイルの形は `timeline.cpp` の `format_timeline_json()`、1 行に 1 点は `JsonWriter::begin_array_on_one_line()`（`libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp`）、ファイルを開く所と書く所は `run.cpp` の `Runner::open_timeline()` と `write_timeline()`、所見 `timeline-write` は `run_assess.cpp`、引数は `tools/launch/main.cpp`）
+  記録は `libs/launch/src/timeline.cpp` の `TimelineRecord`（上限と、古い側を捨てる決まりもここ）、記録に入れる所は `scenario_run.cpp` の `submit_one()`（書き込み）、`observe()`（サンプル）、`issue_step()`（見張り）、`fail()`（失敗の中身）、`close_record()`（記録の終わり `recorded_to_ms`）、ファイルの形は `timeline.cpp` の `format_timeline_json()`、1 行に 1 点は `JsonWriter::begin_array_on_one_line()`（`libs/ecu/include/vehicle_sil/ecu/detail/json_writer.hpp`）、ファイルを開く所と書く所は `run.cpp` の `Runner::open_timeline()` と `write_timeline()`、所見 `timeline-write` と `timeline-limit` は `run_assess.cpp`、引数は `tools/launch/main.cpp`）
 
   合わせて直すもの: `schema/timeline.schema.json`、[simulation-run.md](simulation-run.md) の「シナリオの実行を時間の軸で記録する（`--timeline`）」、基準のファイル `tests/launch/timeline/*.timeline.json`（手で直さない。作り直し方と比べないキーは、そのディレクトリの `README.md`）。
   守ること: 記録は、シナリオのスレッド（と、始まる前の窓のスレッドの `begin()`）でだけ行う。Hub の tap の中では何もしない。
@@ -908,7 +908,7 @@ flowchart TD
   ファイルに入れるのは、仮想時刻で決まるものだけ（実時間、プロセス ID、遅れの数を入れない）。
   キーと値は足すだけにし、読む側が知らないものを無視できる形を保つ（スキーマは値を `enum` で閉じない）。
   基準のシナリオには `sine`、`chirp`、`lag` を入れない（最後のビットが C ライブラリで違いうるので、バイト単位で比べられない）。
-  試験は `launch.timeline_*`（刻みによらないこと、基準のファイル、上限、サンプルの数え方）、`launch_run.timeline`（本物のランチャー: 2 回回して同じ、速さを変えて同じ、開けないファイル、失敗する実行、引数）、`schema.files_and_launcher`
+  試験は `launch.timeline_*`（刻みによらないこと、刻みで変わる手順、基準のファイル、上限、サンプルの数え方、断られた書き込みの点、途中で終わった実行）、`launch.a_timeline_that_dropped_points_or_was_not_written_is_said`、`launch_run.timeline`（本物のランチャー: 2 回回して同じ、速さを変えて同じ、開けないファイル、書けないファイル、失敗する実行、`stop_at_ms` と `--timeout-ms` で終わる実行、始まらない実行、引数）、`schema.files_and_launcher`
 
 - 変えるもの: シナリオ（`run --scenario`、`check --scenario`。
   読み方と照合は `libs/launch/src/scenario.cpp`、手順を進める機械は `libs/launch/src/scenario_run.cpp`、`ramp` と `wave` の値を出す関数（`Waveform` の実装）は `libs/launch/src/scenario_shapes.cpp`、その計算は `libs/signal` の `signal/waveform.hpp`、ランチャーへのつなぎ込みは `libs/launch/src/run_scenario.cpp` の `RunScenario`（`begin()`、`loop()`、`finish()`）、時間のゲートのガードは `SimulationController::guard_from()` と `wait_guarded()`、全サンプルを受ける口は `control::Hub::set_values_tap()`）

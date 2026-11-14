@@ -235,7 +235,8 @@ passed: 0 errors, 1 warning, 1 note
 | `before-start` | 誤り | 始まる前の窓でする処理（`run` を関数として呼ぶ側が渡すもの。内部用）が失敗した。シミュレーションは始まっていて、すぐに中断した |
 | `behind-real-time` | 警告 | 速さを合わせた刻みのうち、遅れが `late_tolerance_ms` を超えたものがあった（[等速で動かす](#等速で動かす)）。遅れた刻みの数、最大の遅れ、ずれの合計、全体の実際の速さ、止まったまま終わったならそのときの遅れを書きます。どの participant の所見でもありません |
 | `coarse-time-step` | 警告 | 速さの指定があり、controller の刻みが ECU のステップより粗い（ECU のステップが刻みの境目で始まらない）。ECU のステップが最大で何 ms 遅れてまとまって動くかと、`time_step_ms` に書く値を書きます（[等速で動かす](#等速で動かす)の「刻みと ECU のステップ」）。どの participant の所見でもありません |
-| `timeline-write` | 誤り | `--timeline` のファイルを、実行の後に書けなかった（開けたが、書き込みが失敗した）。ファイルの中身は途中までなので使わない。シナリオの結果は変わらない。空きを作るか、別のファイルを指定して、もう一度実行する（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)） |
+| `timeline-write` | 誤り | `--timeline` のファイルを、実行の後に書けなかった（開けたが、書き込みが失敗した）。ファイルの中身は途中までなので使わない。シナリオの結果は変わらないが、この所見で実行は失敗（終了コード 1）。空きを作るか、別のファイルを指定して、もう一度実行する（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)） |
+| `timeline-limit` | 注記 | `--timeline` のファイルが、上限で古い側の点を捨てた（捨てた点の数を書きます。終わりの側の点は全部あります）。どの系列のどの時刻かは、ファイルの `limits.dropped` にあります。全部の点が要るなら、シナリオを短くします |
 | `interrupted` | 注記 | 中断された |
 
 ## JSON（`run --json`）
@@ -538,7 +539,8 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 ```
 
 - ファイルは実行の後に書き、標準エラーに `[vehicle_sil_launch] timeline: <file>` の 1 行を出します（`--events` では `log` の事象）。`run --json` と `--events` の結果では、`scenario.timeline` にファイルの名前（引数のとおり）が入ります。**`--timeline` を付けない実行の出力は、何も変わりません。**
-- ファイルは、何かを起動する前に開きます（ディレクトリがなければ作ります）。開けなければ誤り `setup`（終了コード 3）で、何も起動しません。実行の後に書けなかったとき（ディスクがいっぱい、など）は、誤り `timeline-write` です。シナリオの結果（`scenario.status`）は変わりません。
+- ファイルは、何かを起動する前に開きます（ディレクトリがなければ作ります）。開けなければ誤り `setup`（終了コード 3）で、何も起動しません。実行の後に書けなかったとき（ディスクがいっぱい、など）は、誤り `timeline-write` です。シナリオの結果（`scenario.status`）は変わりませんが、誤りの所見なので、シナリオが通っていても実行は失敗です（終了コード 1）。
+- 上限で点を捨てたときは、`timeline:` の行に捨てた点の数を足し、注記 `timeline-limit` を出します（下の「上限」。終了コードは変わりません）。
 - シナリオが通っても、失敗しても、途中で終わっても書きます。照合の誤りで何も起動しなかったときは書きません。
 - `--scenario` のない `run` に付けると、引数の誤りです。`check` と `test` には付けられません。
 - 形は `schema/timeline.schema.json`（JSON Schema）にあります。改行はどの OS でも LF です。
@@ -557,7 +559,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `variables[]` | シナリオが使う変数（最初に出た順）。`name`、`participant`、`type`、`causality`、`unit`、`min`、`max`、`items`（enum）、`ecu_step_ms`（その ECU のステップ幅）、`written`（シナリオが書く）、`watched`（条件が読む） |
 | `steps[]` | 手順。`run --json` の `scenario.steps[]` と同じキーに、`watch` と `failed` を足したもの |
 | `series[]` | 値の列（下） |
-| `findings[]` | 照合と実行の所見のうち、`code` が `scenario-` で始まるものと `timeline-write`（`run --json` と同じ形）。実行が遅れたことを言う所見（`control-link-late-values`、`behind-real-time`）は、`code` だけ |
+| `findings[]` | 照合と実行の所見のうち、`code` が `scenario-` で始まるもの（`run --json` と同じ形）。ECU の値が約束より遅れて届いたことを言う所見 `control-link-late-values` は、`code` だけ（この所見のある実行は、記録が実行ごとに違いえます）。実時間の速さの所見（`behind-real-time`）など、ほかの所見は入りません |
 | `limits` | 点の数の上限と、捨てた点（下の「上限」） |
 
 読む側は、知らないキーを無視します。知らない値（系列の `source` と `encoding`、`watch` の `mode`、条件の `op`、手順の `kind` と `status`）は、その部分を描かずに名前と `text` を出します。形の版を上げずに、キーと値が増えることがあります。
@@ -592,7 +594,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 ```
 
 - `conditions[]` は、成り立たなかった条件の全部です。`condition` は `watch.conditions[]` の添字（0 から）、`value` と `sample_ms` は、そのときの値と、その値のサンプルの時刻です。値がまだなかった条件と、`during` の区間にサンプルが 1 つもなかった条件では、どちらも `null` です。
-- `write` は、適用されなかった書き込み（`variable`、`at_ms`、`value`。値を計算する前に失敗したときは `null`）です。書き込みの失敗でなければ `null` です。
+- `write` は、適用されなかった書き込み（`variable`、`at_ms`、`value`、`point`）です。書き込みの失敗でなければ `null` です。`point` は、その変数の `written` の系列の `points` の添字（0 から）で、その点が、断られた書き込みです。値を計算する前に失敗したとき（送っていない）は、`value` と `point` が `null` です。1 つの `set` がいくつもの変数を書くときは、断った participant への最初の変数です。
 
 ### 値の列（`series[]`）
 
@@ -611,7 +613,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 | `source` | 中身 | `encoding` |
 |---|---|---|
-| `written` | シナリオが送った書き込みの全部。点は `[時刻, 値]` で、時刻は、その書き込みが効く時刻 | `all` |
+| `written` | シナリオが送った書き込みの全部。点は `[時刻, 値]` で、時刻は、その書き込みが効く時刻。**送った値で、ECU に入ったとは限りません**（下の `not_applied_from`） | `all` |
 | `sampled` | シナリオが見たサンプルの値。条件が読む変数だけ | `changes`: 値が変わったサンプルだけが点になる。`samples`（見たサンプルの数）、`first_ms`、`last_ms`（最初と最後のサンプルの時刻）を別に持つ |
 
 - 記録するのは、シナリオが使う変数だけです。シナリオが書く変数に `written` の系列、条件が読む変数に `sampled` の系列があります（両方の変数には 2 つ）。順は `variables[]` の順で、1 つの変数では `written` が先です。
@@ -619,24 +621,27 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 - 値は、bool が `true` と `false`、enum が項目の値（名前は `variables[].items`）、数にならない real が `null` です。
 - サンプルは「ステップの終わりの値、時刻はステップの始まり」です（[scenario.md](scenario.md) の「値の見え方」）。`sampled` の値は、点から次の点まで（最後の点は `last_ms` まで）続くものとして読みます。
 - `changes` の「変わった」は、書いた文字が違うことです（`0` と `-0` は別、`null` が続けば同じ）。
-- `written` の点のうち、時刻が `scenario.over_at_ms` より後のもの（送ったが、どの ECU もその時刻まで進まなかった）があれば、系列の `not_applied_from` が、最初のその点の添字です。
+- `written` の系列に `not_applied_from` があれば、その添字（0 から）の点から後ろは、送ったが ECU に入っていません。値が変わったように描かないでください。入っていない点は、次の 2 つです。
+  - 断られた書き込みの点（失敗した手順の `failed.write.point` と同じ点）と、その後ろ。エージェントがすぐ断ったときも、ECU がステップで断ったときも付きます。
+  - 時刻が `scenario.over_at_ms` より後の点（どの ECU もその時刻まで進まなかった）。
+- 失敗した実行と途中で終わった実行では、`not_applied_from` より前の点にも、入ったことをシナリオが確かめる前に実行が終わったものがありえます（結果を見る前の書き込み。時刻が `over_at_ms` と同じ点は、ECU がその時刻のステップを動かしたかどうかが実行ごとに違います）。通った実行では、全部の点が入っています。
 
 ### 記録の終わり（`recorded_to_ms`）
 
-`scenario.recorded_to_ms` は、シナリオが決まった仮想時刻です。系列には、これ以前の点だけが入ります。
+`scenario.recorded_to_ms` は、記録の右端の仮想時刻です。系列には、これ以前の点だけが入ります。
 
 | シナリオ | `recorded_to_ms` |
 |---|---|
-| 失敗した | 失敗した手順の `at_ms` |
-| 通った | 手順の `at_ms` のうち、いちばん後のもの |
-| 途中で終わった（`incomplete`） | 最後に見たサンプルの時刻（1 つも見ていなければ 0） |
-| 始まらなかった（`not_run`） | `null`（系列は空） |
+| 失敗した（`failed`） | 失敗した手順の `at_ms`（`stop_at_ms` で終わった実行では、止まった時刻） |
+| 通った（`passed`） | 手順の `at_ms` のうち、いちばん後のもの |
+| 途中で終わった（`incomplete`） | 最後に見たサンプルの時刻（1 つも見ていなければ 0）。書き込みが断られた後で participant の失敗が実行の結果になったときは、その書き込みの時刻（`failed` はどの手順でも `null` ですが、`not_applied_from` は付きます） |
+| シナリオが始まらなかった（`not_run`。シミュレーションは始まったのにシナリオを始められなかったときは `incomplete`） | `null`（系列は空） |
 
-- controller は刻みごとにしかサンプルを見ないので、シナリオが終わったとわかる時刻（`over_at_ms`）は、決まった時刻より後です。その間のサンプルと書き込みは、ファイルに入れません。
+- controller は刻みごとにしかサンプルを見ないので、シナリオが終わったとわかる時刻（`over_at_ms`）は、ふつう `recorded_to_ms` より後です。その間のサンプルと書き込みは、ファイルに入れません。エージェントがすぐ断った書き込みで失敗した実行だけ、`over_at_ms`（断られた時点の刻み）が `recorded_to_ms`（その書き込みの時刻）以前です。
 - **同じ実行からは、同じファイルができます。** 入っているのは仮想時刻で決まるものだけです（実時間、プロセス ID、遅れの数は入りません）。速さ（`--speed`）を変えても同じです。対象は、通った実行と、サンプルか待ち時間で失敗した実行です。ECU 自身が実時間や乱数で動くなら、値の列も変わります。
 - 通った実行と、サンプルか待ち時間で失敗した実行では、`over_at_ms` と `tick_ms` を除いて、controller の刻み（`time_step_ms`）を変えても同じファイルです。ただし、次のものは刻みによります（シナリオの結果が刻みによる所と同じです。[scenario.md](scenario.md) の「時刻」と「結果」）。
   - 成り立った待つ手順（`wait_until`、`within_ms` つきの `expect`）の `end_ms` と、その後ろの手順の時刻。
-  - ある手順が失敗したとき、進行中だったほかの手順の `status`（`passed` か `unfinished` か）。
+  - ある手順が失敗した実行での、ほかの手順（失敗した手順より後ろの手順と、進行中だった手順）の `status`（`passed`、`unfinished`、`not_run` のどれにもなりえます）と、`start_ms`、`at_ms`、`end_ms`。失敗がわかる前に controller がどこまで先を送り、どこまで結果を見たかが、刻みで決まるためです。このとき、**`at_ms` が `recorded_to_ms` より後の `passed` の手順がありえます。その手順の書き込みの点は、系列にありません**（系列と `recorded_to_ms` は、刻みによりません）。
   - 書き込みが適用されずに終わった実行の全部。
 - `incomplete` の実行と、`stop_at_ms` で終わった実行は、どこまで見たかが実時間で決まることがあるので、同じファイルになるとは限りません。
 
@@ -644,9 +649,19 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 系列の点が多すぎるときは、**古い側を捨て、新しい側を残します**（失敗のある終わりの側は、必ず全部残ります）。
 
-- 上限は、系列ごとに 100,000 点、全部の系列を合わせて 1,000,000 点です。数えるのは、`sampled` の点と、`written` のうち `ramp` と `wave` の点です。`set` の点は数えず、捨てません。
+- 上限は、系列ごとに 100,000 点、全部の系列を合わせて 1,000,000 点です（残る点の数の上限です）。数えるのは、`sampled` の点と、`written` のうち `ramp` と `wave` の点です。`set` の点は数えず、捨てません。
 - 全体の上限を超えたときは、点の多い系列から順に、同じ数になるまで古い側を捨てます。
-- `limits` に、上限（`points_per_series`、`points_total`）と、点を捨てた系列（`dropped[]`: `variable`、`source`、`dropped`（捨てた点の数）、`dropped_before_ms`（残った点のうち、いちばん古いものの時刻））があります。捨てていなければ `dropped` は空です。`sampled` の `samples` と `first_ms` は、捨てた点の分も含みます。
+- `limits` に、上限（`points_per_series`、`points_total`）と、点を捨てた系列（`dropped[]`）があります。捨てていなければ `dropped` は空です。`sampled` の `samples` と `first_ms` は、捨てた点の分も含みます。
+
+  | `dropped[]` のキー | 値 |
+  |---|---|
+  | `variable`、`source` | どの系列か |
+  | `dropped` | 捨てた点の数 |
+  | `dropped_from_ms` | 捨てた点のうち、いちばん古いものの時刻 |
+  | `dropped_before_ms` | 捨てる対象の点（`sampled` は全部、`written` は `ramp` と `wave` の点）のうち、残ったいちばん古いものの時刻 |
+
+- **`dropped_from_ms` から `dropped_before_ms` の手前までは、値が欠けています。** 描く道具は、この区間をまたいで点をつながないでください。`written` の系列では、`set` の点がこの区間の中や前に残ります（その時刻に送った値としては正しい）が、その点から `dropped_before_ms` までの間の `ramp` と `wave` の値はありません。
+- 点を捨てた実行では、標準エラーの行が `[vehicle_sil_launch] timeline: <file> (without <N> older points, dropped at its limits: limits.dropped in the file)` になり、結果に注記 `timeline-limit`（捨てた点の数）が入ります。ファイルを開かなくても、欠けたことがわかります。
 
 ## シナリオをまとめて回す（`vehicle_sil_launch test`）
 

@@ -210,7 +210,27 @@ void write_watch(JsonWriter& w, const Scenario& scenario, const ScenarioStep& st
     w.end_object();
 }
 
-void write_failed(JsonWriter& w, const Scenario& scenario, const ScenarioStepRun& run, const std::optional<TimelineFailure>& failure)
+/// The index of the point of the write a step failed of, in the written series of `variable`.
+std::optional<std::size_t> refused_point(const TimelineRecord* record, std::size_t variable)
+{
+    if (record == nullptr)
+    {
+        return std::nullopt;
+    }
+    for (const TimelineRecord::Series& series : record->series())
+    {
+        if (!series.sampled && series.variable == variable)
+        {
+            const auto it = std::find_if(series.written.begin(), series.written.end(),
+                                         [](const TimelineRecord::Written& p) { return p.refused; });
+            return it == series.written.end() ? std::nullopt : std::optional<std::size_t>(it - series.written.begin());
+        }
+    }
+    return std::nullopt;
+}
+
+void write_failed(JsonWriter& w, const Scenario& scenario, const ScenarioStepRun& run, const std::optional<TimelineFailure>& failure,
+                  const TimelineRecord* record)
 {
     if (run.status != StepStatus::Failed)
     {
@@ -239,6 +259,16 @@ void write_failed(JsonWriter& w, const Scenario& scenario, const ScenarioStepRun
         w.string("variable", scenario.variables[failure->write->variable].text);
         write_ms(w, "at_ms", failure->write->at);
         write_value(w, "value", failure->write->value);
+        // Which point of the variable's written series it is; null if it has none (the value
+        // was never worked out, so nothing was sent).
+        if (const auto point = refused_point(record, failure->write->variable))
+        {
+            w.integer("point", static_cast<std::int64_t>(*point));
+        }
+        else
+        {
+            w.null("point");
+        }
         w.end_object();
     }
     else
@@ -265,12 +295,14 @@ void write_series(JsonWriter& w, const TimelineInput& input)
                 write_ms(w, "first_ms", series.first_sample);
                 write_ms(w, "last_ms", series.last_sample);
             }
-            else if (input.run->over_at)
+            else
             {
-                // Written for a time after the step at which the scenario was over: sent, and no
-                // ECU got to that time.
-                const auto it = std::find_if(series.written.begin(), series.written.end(),
-                                             [&](const TimelineRecord::Written& p) { return p.at > *input.run->over_at; });
+                // Sent and not applied: the write that was refused and what was sent after it,
+                // and what was written for a time after the step at which the scenario was over
+                // (no ECU got to that time).
+                const auto it = std::find_if(series.written.begin(), series.written.end(), [&](const TimelineRecord::Written& p) {
+                    return p.refused || (input.run->over_at && p.at > *input.run->over_at);
+                });
                 if (it != series.written.end())
                 {
                     w.integer("not_applied_from", it - series.written.begin());
@@ -318,6 +350,7 @@ void write_limits(JsonWriter& w, const TimelineInput& input)
                 w.string("variable", input.scenario->variables[series.variable].text);
                 w.string("source", series.sampled ? "sampled" : "written");
                 w.integer("dropped", static_cast<std::int64_t>(series.dropped));
+                write_ms(w, "dropped_from_ms", series.dropped_from);
                 write_ms(w, "dropped_before_ms", series.dropped_before);
                 w.end_object();
             }
@@ -448,10 +481,30 @@ void TimelineRecord::watch(std::size_t step, Watch watch)
     }
 }
 
+std::uint64_t TimelineRecord::dropped() const noexcept
+{
+    std::uint64_t out = 0;
+    for (const Series& series : series_)
+    {
+        out += series.dropped;
+    }
+    return out;
+}
+
 void TimelineRecord::failed(std::size_t step, TimelineFailure failure)
 {
     if (!recorded_to_ && step < failures_.size())
     {
+        if (failure.write && failure.write->value && failure.write->variable < written_.size() && written_[failure.write->variable])
+        {
+            // The point of that write: the last one sent for its time.
+            std::vector<Written>& points = series_[*written_[failure.write->variable]].written;
+            const auto it = std::find_if(points.rbegin(), points.rend(), [&](const Written& p) { return p.at == failure.write->at; });
+            if (it != points.rend())
+            {
+                it->refused = true;
+            }
+        }
         failures_[step] = std::move(failure);
     }
 }
@@ -510,6 +563,10 @@ void TimelineRecord::drop_oldest(Series& series, std::size_t keep)
     if (series.sampled)
     {
         const auto end = series.samples.begin() + static_cast<std::ptrdiff_t>(drop);
+        if (!series.dropped_from)
+        {
+            series.dropped_from = series.samples.front().first;
+        }
         series.dropped += static_cast<std::uint64_t>(
             std::count_if(series.samples.begin(), end, [](const Sampled& point) { return !point.repeats; }));
         series.samples.erase(series.samples.begin(), end);
@@ -526,9 +583,13 @@ void TimelineRecord::drop_oldest(Series& series, std::size_t keep)
         return;
     }
     series.dropped += drop;
-    std::erase_if(series.written, [&drop](const Written& point) {
+    std::erase_if(series.written, [&drop, &series](const Written& point) {
         if (point.motion && drop > 0)
         {
+            if (!series.dropped_from)
+            {
+                series.dropped_from = point.at;
+            }
             --drop;
             return true;
         }
@@ -594,8 +655,10 @@ void TimelineRecord::enforce(bool final)
 
 bool timeline_takes_finding(const std::string& code, bool& code_only)
 {
-    code_only = code == "control-link-late-values" || code == "behind-real-time";
-    return code_only || code == "timeline-write" || code.rfind("scenario-", 0) == 0;
+    // Not "behind-real-time": how well the run kept its pace changes nothing of what the
+    // scenario wrote and saw in virtual time, and the file must not differ for it.
+    code_only = code == "control-link-late-values";
+    return code_only || code.rfind("scenario-", 0) == 0;
 }
 
 std::string format_timeline_json(const TimelineInput& input)
@@ -626,7 +689,7 @@ std::string format_timeline_json(const TimelineInput& input)
         detail::write_scenario_step_members(w, run.steps[i]);
         write_watch(w, scenario, scenario.steps[i], run.steps[i],
                     input.record != nullptr ? input.record->watches()[i] : std::nullopt);
-        write_failed(w, scenario, run.steps[i], input.record != nullptr ? input.record->failures()[i] : std::nullopt);
+        write_failed(w, scenario, run.steps[i], input.record != nullptr ? input.record->failures()[i] : std::nullopt, input.record);
         w.end_object();
     }
     w.end_array();

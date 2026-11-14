@@ -370,7 +370,7 @@ bool ScenarioEngine::unusable(std::size_t index, SimTime time)
             TimelineFailure failure;
             if (writes)
             {
-                const auto set = std::find_if(step.writes.begin(), step.writes.end(), [v = v](const ScenarioWrite& w) { return w.variable == v; });
+                const auto set = std::find_if(step.writes.begin(), step.writes.end(), [variable = v](const ScenarioWrite& w) { return w.variable == variable; });
                 failure.write = TimelineFailedWrite{
                     v, time, set == step.writes.end() ? std::nullopt : std::optional<control::Value>(set->value)};
             }

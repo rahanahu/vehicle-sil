@@ -362,6 +362,16 @@ std::vector<Finding> assess_run(const RunOutcome& outcome)
                          reached != scenario.steps.rend() ? reached->line : 0);
         }
     }
+    if (!outcome.timeline.empty() && outcome.timeline_record && outcome.timeline_record->dropped() > 0)
+    {
+        const std::uint64_t points = outcome.timeline_record->dropped();
+        add(Severity::Note, "timeline-limit",
+            "the timeline " + outcome.timeline + " does not have the whole run: " + std::to_string(points) +
+                (points == 1 ? " older point was" : " older points were") +
+                " dropped at its limits (the newest points, up to the end of the scenario, are all there). limits.dropped in "
+                "the file says of which series and of which time; for a file with every point, record a shorter scenario",
+            nullptr);
+    }
     if (!outcome.timeline_error.empty())
     {
         add(Severity::Error, "timeline-write",

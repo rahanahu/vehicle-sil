@@ -202,9 +202,14 @@ struct EnginePeer
 /// looked at yet (they do not decide anything any more) are noted first, if they are of steps
 /// before the controller's step being handled (those have all arrived). So what the record has
 /// of a scenario that passed, or failed at a sample, does not depend on the controller's tick
-/// (while no limit of the record drops points). What may depend on it then is the status of a
-/// step that was under way when another step failed, and everything of a run that a write ended
-/// (see "fails with what the engine learns first" above).
+/// (while no limit of the record drops points). What may depend on it then: the end of a step
+/// that waited and became true, with the times of the steps after it; in a run in which a step
+/// failed, the status (Passed, Unfinished or NotRun) and the times of the other steps that were
+/// under way or came after it (how far ahead the engine had sent and judged when it saw the
+/// failure), so a step that passed may have an `at` after "recorded to", and its points are not
+/// in the record; and everything of a run that a write ended (see "fails with what the engine
+/// learns first" above). A write that was refused is a point of its series all the same (the
+/// record marks it, TimelineRecord::failed()): a written point is what was sent.
 class ScenarioEngine
 {
 public:

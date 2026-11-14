@@ -139,6 +139,10 @@ public:
     Policy policy = [](std::size_t, SimTime) { return 0; };
     bool reverse = false; ///< the ECUs step in the reverse order
     std::optional<SimTime> stop_at;
+    /// A participant failed and ended the run: the engine is told so when the run is over.
+    bool superseded = false;
+    /// timeline_of(): the simulation ends here for another reason (none: after 5 s).
+    std::optional<SimDuration> ends_after;
     /// "Body.level=5 for 130 applied at 130", in the order applied.
     std::vector<std::string> log;
     ScenarioEngine* engine = nullptr;
@@ -244,6 +248,10 @@ public:
         if (!e.over())
         {
             e.cut_short();
+        }
+        if (superseded)
+        {
+            e.superseded();
         }
         engine = nullptr;
         return e.run();
@@ -2306,7 +2314,7 @@ std::string timeline_of(const std::string& text, SimDuration tick, const std::fu
     }
     TimelineRecord record(s, limits);
     world.record = &record;
-    ScenarioRun run = world.run(s);
+    ScenarioRun run = world.run(s, world.ends_after.value_or(5s));
     run.file = "scenario.yaml";
     TimelineInput input;
     input.file = "simulation.yaml";
@@ -2541,12 +2549,14 @@ TEST_CASE(timeline_keeps_the_newest_points_at_its_limits)
                "        \"variable\": \"Body.level\",\n"
                "        \"source\": \"written\",\n"
                "        \"dropped\": 23,\n"
+               "        \"dropped_from_ms\": 0,\n"
                "        \"dropped_before_ms\": 230\n"
                "      },\n"
                "      {\n"
                "        \"variable\": \"Body.body.speed\",\n"
                "        \"source\": \"sampled\",\n"
                "        \"dropped\": 25,\n"
+               "        \"dropped_from_ms\": 0,\n"
                "        \"dropped_before_ms\": 250\n"
                "      }\n"
                "    ]\n"
@@ -2565,12 +2575,14 @@ TEST_CASE(timeline_keeps_the_newest_points_at_its_limits)
                "        \"variable\": \"Body.level\",\n"
                "        \"source\": \"written\",\n"
                "        \"dropped\": 26,\n"
+               "        \"dropped_from_ms\": 0,\n"
                "        \"dropped_before_ms\": 260\n"
                "      },\n"
                "      {\n"
                "        \"variable\": \"Body.body.speed\",\n"
                "        \"source\": \"sampled\",\n"
                "        \"dropped\": 28,\n"
+               "        \"dropped_from_ms\": 0,\n"
                "        \"dropped_before_ms\": 280\n"
                "      }\n"
                "    ]\n"
@@ -2610,9 +2622,215 @@ TEST_CASE(timeline_counts_the_samples_up_to_the_time_it_is_closed_at)
     check_text(closed_at(34ms), "4 samples, last 25: 0=7\n4 samples, last 25: 0=0\n");
     check_text(closed_at(19ms), "2 samples, last 10: 0=7\n2 samples, last 10: 0=0\n");
     check_text(closed_at(0ms), "1 samples, last 0: 0=7\n1 samples, last 0: 0=0\n");
+    // Of the findings the file has those of the scenario, and that an ECU's values came late (its
+    // code alone); nothing of the pace in real time, which differs from run to run.
+    bool code_only = true;
+    CHECK(timeline_takes_finding("scenario-failed", code_only) && !code_only);
+    CHECK(timeline_takes_finding("control-link-late-values", code_only) && code_only);
+    CHECK(!timeline_takes_finding("behind-real-time", code_only));
+    CHECK(!timeline_takes_finding("timeline-write", code_only));
+    CHECK(!timeline_takes_finding("exit-code", code_only));
     // Nothing is noted once it is closed.
     TimelineRecord record(s);
     record.close(at(10ms));
     record.sampled(0, at(0ms), control::Value{std::int64_t{1}});
     CHECK(record.series()[0].samples.empty());
+}
+
+TEST_CASE(timeline_marks_the_write_that_was_refused)
+{
+    // A written point is what was sent. The write a step failed of is a point too, and the series
+    // says from where on its points were not applied; the failure names the point.
+    // (A description without the range of level: the check lets the value through, as with an
+    // ECU that says less than its agent checks.)
+    ScenarioCatalog loose = catalog();
+    loose[0].variables[0].max.reset();
+    const auto refused = [&loose](const std::string& text, SimDuration tick) {
+        const std::string timeline = timeline_of(text, tick, {}, loose);
+        return part(timeline, "  \"scenario\": {", "  \"variables\"") + part(timeline, "        \"write\": {", "      }\n") +
+               part(timeline, "  \"series\": [", "  \"findings\"");
+    };
+    // Refused at once by the agent (out of range), between two steps of the controller: over at
+    // 30 ms, the write is for 40 ms.
+    check_text(refused(kHead + "  - set: { Body.level: 7 }\n"
+                               "  - set: { Body.level: 95 }\n"
+                               "  - at_ms: 30\n"
+                               "    wave: { Body.level: { triangle: { amplitude: 10, period_ms: 40 }, for_ms: 40 } }\n",
+                       10ms),
+               "  \"scenario\": {\n"
+               "    \"file\": \"scenario.yaml\",\n"
+               "    \"name\": null,\n"
+               "    \"status\": \"failed\",\n"
+               "    \"over_at_ms\": 30,\n"
+               "    \"recorded_to_ms\": 40\n"
+               "  },\n"
+               "        \"write\": {\n"
+               "          \"variable\": \"Body.level\",\n"
+               "          \"at_ms\": 40,\n"
+               "          \"value\": 105,\n"
+               "          \"point\": 3\n"
+               "    \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 3,\n"
+               "      \"points\": [\n"
+               "        [0, 7],\n"
+               "        [0, 95],\n"
+               "        [30, 95],\n"
+               "        [40, 105]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n");
+    // The same at a step of the controller: the write for 0 ms is refused at 0 ms, where the
+    // scenario is over.
+    check_text(refused(kHead + "  - set: { Body.level: 102 }\n", 10ms),
+               "  \"scenario\": {\n"
+               "    \"file\": \"scenario.yaml\",\n"
+               "    \"name\": null,\n"
+               "    \"status\": \"failed\",\n"
+               "    \"over_at_ms\": 0,\n"
+               "    \"recorded_to_ms\": 0\n"
+               "  },\n"
+               "        \"write\": {\n"
+               "          \"variable\": \"Body.level\",\n"
+               "          \"at_ms\": 0,\n"
+               "          \"value\": 102,\n"
+               "          \"point\": 0\n"
+               "    \"series\": [\n"
+               "    {\n"
+               "      \"variable\": \"Body.level\",\n"
+               "      \"source\": \"written\",\n"
+               "      \"encoding\": \"all\",\n"
+               "      \"not_applied_from\": 0,\n"
+               "      \"points\": [\n"
+               "        [0, 102]\n"
+               "      ]\n"
+               "    }\n"
+               "  ],\n");
+}
+
+TEST_CASE(timeline_of_a_failed_run_has_the_steps_as_the_controllers_step_saw_them)
+{
+    // An expect that the sample of 10 ms fails, and a set for 20 ms after it. What becomes of the
+    // set depends on the controller's step: with 5 ms the failure is seen before the set is sent;
+    // with 10 ms the set is sent and not judged yet; with 30 ms it was sent at 0 ms and is seen
+    // applied at 30 ms, before the sample is looked at.
+    const std::string text = kHead + "  - set: { Body.level: 5 }\n"
+                                     "  - at_ms: 10\n"
+                                     "    expect: { Body.body.speed: 0 }\n"
+                                     "  - at_ms: 20\n"
+                                     "    set: { Body.level: 6 }\n";
+    const auto steps = [&text](SimDuration tick) {
+        const std::string timeline = timeline_of(text, tick);
+        std::string out = part(timeline, "    \"recorded_to_ms\"", "  },");
+        std::istringstream in(part(timeline, "  \"steps\": [", "  \"series\""));
+        for (std::string line; std::getline(in, line);)
+        {
+            for (const char* key : {"\"index\"", "\"status\"", "\"start_ms\"", "\"at_ms\"", "\"end_ms\""})
+            {
+                if (line.rfind(std::string("      ") + key, 0) == 0)
+                {
+                    out += line.substr(6) + (std::string(key) == "\"end_ms\"" ? "\n" : " ");
+                }
+            }
+        }
+        return out + part(timeline, "  \"series\": [", "  \"findings\"");
+    };
+    // The series and where they end are the same: they go to the failure, and the set for 20 ms
+    // is no point of them, also where its step passed.
+    const std::string same =
+        "    \"recorded_to_ms\": 10\n"
+        "\"index\": 1, \"status\": \"passed\", \"start_ms\": 0, \"at_ms\": 0, \"end_ms\": 0,\n"
+        "\"index\": 2, \"status\": \"failed\", \"start_ms\": 10, \"at_ms\": 10, \"end_ms\": 10,\n";
+    const std::string series =
+        "  \"series\": [\n"
+        "    {\n"
+        "      \"variable\": \"Body.level\",\n"
+        "      \"source\": \"written\",\n"
+        "      \"encoding\": \"all\",\n"
+        "      \"points\": [\n"
+        "        [0, 5]\n"
+        "      ]\n"
+        "    },\n"
+        "    {\n"
+        "      \"variable\": \"Body.body.speed\",\n"
+        "      \"source\": \"sampled\",\n"
+        "      \"encoding\": \"changes\",\n"
+        "      \"samples\": 2,\n"
+        "      \"first_ms\": 0,\n"
+        "      \"last_ms\": 10,\n"
+        "      \"points\": [\n"
+        "        [0, 50]\n"
+        "      ]\n"
+        "    }\n"
+        "  ],\n";
+    check_text(steps(5ms),
+               same + "\"index\": 3, \"status\": \"not_run\", \"start_ms\": null, \"at_ms\": null, \"end_ms\": null,\n" + series);
+    check_text(steps(10ms),
+               same + "\"index\": 3, \"status\": \"unfinished\", \"start_ms\": 20, \"at_ms\": null, \"end_ms\": null,\n" + series);
+    check_text(steps(30ms),
+               same + "\"index\": 3, \"status\": \"passed\", \"start_ms\": 20, \"at_ms\": 20, \"end_ms\": 20,\n" + series);
+}
+
+TEST_CASE(timeline_of_a_run_that_did_not_get_to_its_end_says_how_far_it_is_recorded)
+{
+    const auto head = [](const std::string& text, const std::function<void(World&)>& setup) {
+        const std::string timeline = timeline_of(text, 10ms, setup);
+        std::string out = part(timeline, "    \"status\"", "  },");
+        std::istringstream in(part(timeline, "  \"series\": [", "  \"findings\""));
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind("      \"not_applied_from\"", 0) == 0 || line.rfind("      \"last_ms\"", 0) == 0)
+            {
+                out += line.substr(6) + "\n";
+            }
+        }
+        std::istringstream steps(part(timeline, "  \"steps\": [", "  \"series\""));
+        for (std::string line; std::getline(steps, line);)
+        {
+            if (line.rfind("      \"failed\"", 0) == 0)
+            {
+                out += line.substr(6) + "\n";
+            }
+        }
+        return out;
+    };
+    const std::string refused = kHead + "  - set: { Body.level: 7 }\n"
+                                        "  - at_ms: 40\n"
+                                        "    set: { Body.level: 13 }\n"
+                                        "  - expect: { Body.level: 13 }\n"
+                                        "    within_ms: 100\n";
+    // stop_at_ms before the scenario's end: failed at that time, and recorded to it.
+    check_text(head(refused, [](World& w) { w.stop_at = at(30ms); }),
+               "    \"status\": \"failed\",\n"
+               "    \"over_at_ms\": 30,\n"
+               "    \"recorded_to_ms\": 30\n"
+               "\"last_ms\": 20,\n"
+               "\"failed\": null\n"
+               "\"failed\": {\n"
+               "\"failed\": null\n");
+    // A participant failed after a write to it had failed: the scenario is incomplete and no step
+    // has failed, but the record ends where it was closed, at the write, and its point is marked.
+    check_text(head(refused, [](World& w) { w.superseded = true; }),
+               "    \"status\": \"incomplete\",\n"
+               "    \"over_at_ms\": null,\n"
+               "    \"recorded_to_ms\": 40\n"
+               "\"not_applied_from\": 1,\n"
+               "\"last_ms\": 40,\n"
+               "\"failed\": null\n"
+               "\"failed\": null\n"
+               "\"failed\": null\n");
+    // The simulation ended for another reason: recorded to the last sample that was looked at.
+    check_text(head(kHead + "  - set: { Body.level: 7 }\n"
+                            "  - wait_until: { Body.level: 8 }\n"
+                            "    timeout_ms: 9000\n",
+                    [](World& w) { w.ends_after = 300ms; }),
+               "    \"status\": \"incomplete\",\n"
+               "    \"over_at_ms\": null,\n"
+               "    \"recorded_to_ms\": 290\n"
+               "\"last_ms\": 290,\n"
+               "\"failed\": null\n"
+               "\"failed\": null\n");
 }

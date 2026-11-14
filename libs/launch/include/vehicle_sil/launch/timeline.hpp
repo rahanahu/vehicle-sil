@@ -72,7 +72,8 @@ struct TimelineFailure
 /// the thread that runs it, and closes it when the scenario is over; then it only is read. Not
 /// thread safe.
 ///
-/// Two kinds of series. Written: every value the engine sent for a variable, in the order sent.
+/// Two kinds of series. Written: every value the engine sent for a variable, in the order sent
+/// (sent: also the write that was refused, which failed() marks).
 /// Sampled: the values of a variable that a condition reads, of every sample the engine looked at;
 /// kept are the samples at which the value changed, and how many samples there were.
 class TimelineRecord
@@ -83,6 +84,7 @@ public:
         SimTime at{};
         control::Value value{};
         bool motion = false; ///< of a ramp or a wave (may go at a limit); else of a set (is kept)
+        bool refused = false; ///< the write a step failed of (failed()): sent, and not taken or not applied
     };
     /// Samples of one value, one after the other. A sample with the value of the one before it
     /// that does not come at the same distance begins a new one (`repeats`), so that the samples
@@ -110,8 +112,10 @@ public:
         std::uint64_t sample_count = 0;
         std::optional<SimTime> first_sample{};
         std::optional<SimTime> last_sample{};
-        /// How many points went at a limit, and the time of the oldest that stayed.
+        /// How many points went at a limit, the time of the oldest that went and the time of the
+        /// oldest that stayed (of `written`: of the points of a ramp or a wave; a set stays).
         std::uint64_t dropped = 0;
+        std::optional<SimTime> dropped_from{};
         std::optional<SimTime> dropped_before{};
     };
     struct Watch
@@ -141,6 +145,8 @@ public:
     [[nodiscard]] const std::vector<std::optional<TimelineFailure>>& failures() const noexcept { return failures_; }
     /// The time close() was given; empty while the scenario runs.
     [[nodiscard]] const std::optional<SimTime>& recorded_to() const noexcept { return recorded_to_; }
+    /// How many points went at a limit, of all series.
+    [[nodiscard]] std::uint64_t dropped() const noexcept;
     /// Whether a step of the scenario writes the variable, and whether a condition reads it.
     [[nodiscard]] bool is_written(std::size_t variable) const { return written_[variable].has_value(); }
     [[nodiscard]] bool is_watched(std::size_t variable) const { return sampled_[variable].has_value(); }
@@ -179,9 +185,10 @@ struct TimelineInput
     std::vector<Finding> findings{};
 };
 
-/// Whether a timeline file has the finding with this code: whole if it is about the scenario or
-/// the timeline ("scenario-...", "timeline-write"); with its code alone if it says that the run
-/// was late (`code_only`: its message has numbers that differ from run to run).
+/// Whether a timeline file has the finding with this code: whole if it is about the scenario
+/// ("scenario-..."); with its code alone (`code_only`: its message has numbers that differ from
+/// run to run) if it says that an ECU's values came late ("control-link-late-values": what such a
+/// run recorded may differ from run to run). Nothing else: not the pace of the run in real time.
 [[nodiscard]] bool timeline_takes_finding(const std::string& code, bool& code_only);
 
 /// The timeline file: JSON with one member per line and one point per line, LF line ends. Nothing

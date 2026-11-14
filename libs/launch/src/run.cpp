@@ -353,7 +353,11 @@ public:
             outcome_.timeline_error = "writing " + std::to_string(text.size()) + " bytes to it failed (is the disk full?)";
             return outcome_.timeline_error;
         }
-        out_.say("timeline: " + outcome_.timeline);
+        const std::uint64_t dropped = outcome_.timeline_record ? outcome_.timeline_record->dropped() : 0;
+        out_.say("timeline: " + outcome_.timeline +
+                 (dropped > 0 ? " (without " + std::to_string(dropped) + (dropped == 1 ? " older point" : " older points") +
+                                    ", dropped at its limits: limits.dropped in the file)"
+                              : ""));
         return {};
     }
 

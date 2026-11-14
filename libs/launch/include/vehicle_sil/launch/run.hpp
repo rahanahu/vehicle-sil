@@ -253,7 +253,8 @@ struct RunOutcome
     /// What the scenario's engine noted for the timeline; null if the scenario did not begin.
     std::shared_ptr<const TimelineRecord> timeline_record{};
     /// The timeline file could be opened, but not written when the run was over: why (finding
-    /// "timeline-write"; the scenario's result stands).
+    /// "timeline-write"; the scenario's result stands). (A record that dropped points at its
+    /// limits is the note "timeline-limit".)
     std::string timeline_error{};
     /// Set if the launcher's own SIL Kit connection (the hub's transport, the controller, the
     /// registry) had not closed when the launcher stopped waiting for it, after the participants
