@@ -10,11 +10,13 @@ vehicle-sil 自体を直す人と AI エージェント向けです。変える�
 - 試験の実行ファイルの試験は、ソースの `TEST_CASE(名前)` から設定時に登録されます（`vehicle_sil_add_harness_tests()`、`cmake/VehicleSilTestHelpers.cmake`）。既存のソースに `TEST_CASE` を足すときは、CMake を書き換えません。新しいソースのファイルは、その `CMakeLists.txt` の `SOURCES` に足します。マクロ（`TEST_CASE`、`CHECK`、`CHECK_EQ`）は `tests/unit/test_harness.hpp` にあります。
 - 1 つの試験は、試験の実行ファイルに名前を渡すと動きます（`<実行ファイル> <名前>`。ctest もそうしています）。
 - プロセスを起動する試験（シナリオ）は `vehicle_sil_add_scenario_tests()` で登録し、名前は `<前置き>.<シナリオ>` です。シナリオの一覧は `CMakeLists.txt` の `SCENARIOS`、中身は同じディレクトリの `*launcher.cpp`（`tests/integration/launcher.cpp`、`tests/launch/launch_run_launcher.cpp` など）です。共通の部品は `tests/integration/launcher_support.hpp` にあります。
+- 試験は決まったポートで待ち受けません。registry はポート 0（`RegistryProcess`、`registry_uri` を書かない構成ファイル）、Control Server は `--control 0`、GUI サーバーは `--port 0` か、e2e が起動のたびに選ぶ空いているポートです（`multi_host.two_hosts` の 18500 は、試験が作る network namespace の中）。同じ PC で、別の作業ツリーのビルドの試験と同時に回せます。文書が示す決まったポート（`manual` の 8500 など）が要るシナリオは、`vehicle_sil_add_scenario_tests()` の `MACHINE_LOCK` で PC 全体のロック（`flock`、Windows ではなし）を取り、順に回ります。
 - 前置きだけを回すときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.` にも当たります。
 - 起きるはずのことは、`eventually(条件, 上限)`（`test_harness.hpp`）か、起きたことを知らせる手段で待ちます。決まった時間だけ眠って「進んだはず」としません。
-  - 待ちの上限には、環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率（未設定なら 1）が掛かります。`eventually`、`tests/process/spawn_sleeper.hpp` の待ち、シナリオのランチャーの `--timeout-ms` と registry の起動は、中で掛けます。ほかの関数に上限を渡すときは `scaled_timeout(20s)`（`tests/unit/test_timeout_scale.hpp`）を通します。通る試験は待つものが起きた時点で進むので、倍率を上げても遅くなりません。
-  - 「起きないこと」を確かめる待ちと、製品に与える時間（周期、製品のタイムアウト）には掛けません。掛けると、試験が確かめることが変わります。
-  - TSan のプリセットは構成のときに倍率 4 を与え（`CMakePresets.json`）、CI は 3 を与えます（`.github/workflows/ci.yml`）。構成のときの値で、ハーネスの試験とシナリオの試験の CTest の `TIMEOUT` も伸びます（`cmake/VehicleSilTestHelpers.cmake`）。
+  - 待ちの上限には倍率が掛かります。倍率は、試験を動かすときの環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`、なければビルドの既定（CMake のキャッシュ変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT`。既定は 1、TSan のプリセットは 4）です。値は数字と小数点 1 つだけで書き、0 より大きくします（`3`、`2.5`）。ほかの書き方（空白、指数、16 進）は、C++ の試験、GUI サーバーの試験、e2e が変数の名前と直し方を言って止まります。CI は 3 を与えます（TSan のジョブは与えずに、プリセットの既定を使います。`.github/workflows/ci.yml`）。
+  - 倍率は `eventually`、`tests/process/spawn_sleeper.hpp` の待ち、シナリオのランチャーの `--timeout-ms` と registry の起動の中で掛かります。ほかの関数に上限を渡すときは `scaled_timeout(20s)`（`tests/unit/test_timeout_scale.hpp`）を通します。通る試験は待つものが起きた時点で進むので、倍率を上げても遅くなりません。
+  - 上限として製品に渡す時間（ランチャーが製品の `--timeout-ms` に渡す値）には掛けます。「起きないこと」を確かめる待ち、試験が時間切れになることを確かめる製品の時間（`receiver-timeout` の 1500 ms など）、周期には掛けません。掛けると、試験が確かめることが変わります。
+  - ハーネスの試験とシナリオの試験の CTest の `TIMEOUT` は、構成のときの倍率（環境変数、なければビルドの既定。切り上げた整数）で伸びます（`cmake/VehicleSilTestHelpers.cmake`）。構成の後で倍率を大きくしたら、構成し直します。そのままだと、止まった試験は自分で失敗を言う前に CTest に止められます。ハーネスとランチャーは、そのときに `warning: ... configure the build again ...` の 1 行を出します。
 
 ```sh
 ctest --preset linux-gcc-debug -R '^launch\.'

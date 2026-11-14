@@ -2,13 +2,7 @@
 // 状態ごとに新しい GUI サーバー（流し直すランチャー）を起動するので、前の試験の実行は写らない。
 // 窓は伸ばさず、利用者が見る大きさのまま撮る。
 import { Page, expect, test } from '@playwright/test';
-import {
-  CONFIGS,
-  REPLAY_LAUNCHER,
-  GUI_PORT,
-  GuiServer,
-  launchGuiServer,
-} from './support/gui-server';
+import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/gui-server';
 import { VIEWPORTS } from './support/layout';
 import {
   Language,
@@ -59,7 +53,7 @@ test.describe('screenshots', () => {
   test.skip(!directory, 'VEHICLE_SIL_GUI_SHOTS is not set');
   test.use({ locale: language === 'en' ? 'en-US' : 'ja-JP' });
 
-  for (const [i, state] of STATES.entries()) {
+  for (const state of STATES) {
     test(state.name, async ({ page }, testInfo) => {
       // 開発サーバーの形（e2e:dev）では撮らない（同じ画面を 2 回撮らない）
       test.skip(testInfo.project.name !== 'static', 'only with the built screen');
@@ -67,8 +61,8 @@ test.describe('screenshots', () => {
         launcher: REPLAY_LAUNCHER,
         root: CONFIGS,
         env: { REPLAY_TICK_MS: '50' },
-        // 試験ごとに別のポート（前のサーバーの接続が残っていても待てるように）
-        port: GUI_PORT + 100 + i,
+        // 試験ごとに空いているポート（前のサーバーの接続が残っていても待てるように）
+        port: 0,
       });
       try {
         await page.goto(server.url);

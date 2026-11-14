@@ -22,6 +22,11 @@ void set_log_tag(std::string tag);
 /// Prints "[tag] text" to stdout and flushes.
 void log(const std::string& text);
 
+/// Reads the factor on the upper bounds of waiting (test_timeout_scale.hpp) and logs a warning when
+/// it is larger than the one the test's CTest TIMEOUT was made for. Each launcher calls it first, so
+/// that a wrong value fails every scenario (std::invalid_argument, saying what to set).
+void check_timeout_scale();
+
 /// Logs "CHECK what -> ok|MISMATCH" and returns `condition`.
 bool expect(bool condition, const std::string& what);
 

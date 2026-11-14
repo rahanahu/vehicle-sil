@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -27,15 +28,16 @@ os.environ["REPLAY_RECORDINGS"] = str(TESTS / "recordings")
 
 
 def _timeout_scale() -> float:
+    # Digits with at most one point, greater than 0: the rule of the C++ tests (tests/unit/test_timeout_scale.hpp),
+    # CMake and the e2e (no spaces, sign, exponent, "_", hex, inf or nan).
     text = os.environ.get("VEHICLE_SIL_TEST_TIMEOUT_SCALE", "")
-    try:
-        value = float(text) if text else 1.0
-    except ValueError:
-        value = 0.0
+    if not text:
+        return 1.0
+    value = float(text) if re.fullmatch(r"[0-9]*\.?[0-9]*", text) and re.search(r"[0-9]", text) else 0.0
     if not 0 < value < float("inf"):
         raise pytest.UsageError(
-            f'VEHICLE_SIL_TEST_TIMEOUT_SCALE="{text}" is not a number greater than 0: set it to a factor such as 3 '
-            "(every upper bound of waiting in the tests 3 times as long), or unset it")
+            f'VEHICLE_SIL_TEST_TIMEOUT_SCALE="{text}" is not a number greater than 0 in digits (such as 3 or 2.5): set it '
+            "to a factor such as 3 (every upper bound of waiting in the tests 3 times as long), or unset it")
     return value
 
 
