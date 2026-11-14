@@ -160,7 +160,32 @@ Peer::Peer(PeerOptions options) :
             }
         });
     }
+    // Where SIL Kit wants the controllers configured and started: on its thread, before the first
+    // step, and (Coordinated) once every participant's services are known.
     runtime_->set_communication_ready_handler([this] {
+        const auto start_can = [this](can::SilKitCanPort& port, const std::string& network) {
+            try
+            {
+                port.start();
+            }
+            catch (const std::exception& e)
+            {
+                // Not out of a SIL Kit handler: the participant goes to Error instead.
+                runtime_->report_failure("vehicle_sil::Peer: starting the CAN controller of the network \"" + network +
+                                         "\" failed: " + e.what());
+            }
+        };
+        for (auto& c : channels_)
+        {
+            if (c->silkit_port)
+            {
+                start_can(*c->silkit_port, c->name);
+            }
+        }
+        for (auto& r : raw_channels_)
+        {
+            start_can(*r->port, r->name);
+        }
         for (auto& node : lin_)
         {
             if (node->master)

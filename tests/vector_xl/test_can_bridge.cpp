@@ -69,8 +69,20 @@ TEST_CASE(bridge_start_and_stop_manage_both_sides)
         bridge.start();
         CHECK(bridge.running());
         CHECK(port.started());
-        CHECK(controller.started());
         CHECK_EQ(controller.frame_handler_count(), 1u);
+        const std::vector<std::uint8_t> one{1};
+        // The controller waits for the participant's CommunicationReady. Until then, a frame from
+        // the external bus is not given to SIL Kit (it would drop it without telling).
+        CHECK(!controller.started());
+        port.deliver(ExternalEventKind::Frame, make_frame(0x123, 0, 1, one));
+        CHECK(controller.sent().empty());
+        CHECK_EQ(bridge.statistics().external_to_silkit, 0u);
+        bridge.start_controller();
+        CHECK(controller.started());
+        bridge.start_controller(); // a second time: nothing
+        port.deliver(ExternalEventKind::Frame, make_frame(0x123, 0, 1, one));
+        CHECK_EQ(controller.sent().size(), 1u);
+        CHECK_EQ(bridge.statistics().external_to_silkit, 1u);
 
         bridge.stop();
         CHECK(!bridge.running());
@@ -80,11 +92,22 @@ TEST_CASE(bridge_start_and_stop_manage_both_sides)
         bridge.stop(); // idempotent
         CHECK_EQ(port.stop_calls(), 1);
 
-        bridge.start(); // restartable
+        bridge.start(); // restartable; after CommunicationReady it starts the controller itself
         CHECK(bridge.running());
+        CHECK(controller.started());
     } // destructor stops
     CHECK(!port.started());
+    CHECK(!controller.started());
     CHECK_EQ(controller.frame_handler_count(), 0u);
+
+    // CommunicationReady before start(): start() starts the controller.
+    FakeCanController early;
+    FakeExternalPort earlyPort;
+    CanBridge bridge(early, earlyPort);
+    bridge.start_controller();
+    CHECK(!early.started());
+    bridge.start();
+    CHECK(early.started());
 }
 
 TEST_CASE(bridge_start_failure_leaves_nothing_registered)
@@ -102,6 +125,14 @@ TEST_CASE(bridge_start_failure_leaves_nothing_registered)
     failingController.throw_on_start = true;
     FakeExternalPort port2;
     CanBridge bridge2(failingController, port2);
+    bridge2.start();
+    // A controller that cannot be started: a fault (the executable ends), not an exception out of
+    // SIL Kit's handler.
+    bridge2.start_controller();
+    CHECK(bridge2.fault() == std::optional<std::string>("starting the SIL Kit CAN controller failed: fake Start failure"));
+    CHECK(bridge2.last_error() == "starting the SIL Kit CAN controller failed: fake Start failure");
+    bridge2.stop();
+    // After CommunicationReady, start() starts the controller and throws if that fails.
     CHECK(throws<std::runtime_error>([&] { bridge2.start(); }));
     CHECK(!port2.started()); // external side rolled back
     CHECK_EQ(failingController.frame_handler_count(), 0u);
@@ -113,6 +144,7 @@ TEST_CASE(bridge_forwards_silkit_to_external_preserving_every_field)
     FakeExternalPort port;
     CanBridge bridge(controller, port);
     bridge.start();
+    bridge.start_controller();
 
     const auto matrix = frame_matrix();
     for (const auto& frame : matrix)
@@ -136,6 +168,7 @@ TEST_CASE(bridge_forwards_external_to_silkit_preserving_every_field)
     FakeExternalPort port;
     CanBridge bridge(controller, port);
     bridge.start();
+    bridge.start_controller();
 
     const auto matrix = frame_matrix();
     for (const auto& frame : matrix)
@@ -159,6 +192,7 @@ TEST_CASE(bridge_never_forwards_own_external_transmissions)
     port.report_own_transmissions = true; // driver echoes our frames as TX receipts
     CanBridge bridge(controller, port);
     bridge.start();
+    bridge.start_controller();
 
     const auto matrix = frame_matrix();
     for (const auto& frame : matrix)
@@ -178,6 +212,7 @@ TEST_CASE(bridge_rejects_frames_it_cannot_carry)
     FakeExternalPort port;
     CanBridge bridge(controller, port);
     bridge.start();
+    bridge.start_controller();
 
     const std::vector<std::uint8_t> eight(8, 0x11);
     const std::vector<std::uint8_t> twelve(12, 0x22);
@@ -199,6 +234,7 @@ TEST_CASE(bridge_counts_error_frames_and_overruns_without_forwarding)
     FakeExternalPort port;
     CanBridge bridge(controller, port);
     bridge.start();
+    bridge.start_controller();
     port.deliver(ExternalEventKind::ErrorFrame);
     port.deliver(ExternalEventKind::ErrorFrame);
     port.deliver(ExternalEventKind::Overrun);
@@ -214,6 +250,7 @@ TEST_CASE(bridge_keeps_the_bus_state_and_the_fault)
     FakeExternalPort port;
     CanBridge bridge(controller, port);
     bridge.start();
+    bridge.start_controller();
     CHECK(bridge.health().bus_state.level == ExternalBusState::Level::Unknown);
     CHECK(!bridge.fault());
 
@@ -310,6 +347,7 @@ TEST_CASE(bridge_counts_dropped_and_unsent_transmissions)
     FakeExternalPort port;
     CanBridge bridge(controller, port);
     bridge.start();
+    bridge.start_controller();
     port.result = TransmitResult::Dropped;
     const std::vector<std::uint8_t> data{1, 2};
     for (int i = 0; i < 7; ++i)
@@ -339,6 +377,7 @@ TEST_CASE(bridge_reports_transmit_problems)
     FakeExternalPort port;
     CanBridge bridge(controller, port);
     bridge.start();
+    bridge.start_controller();
     const std::vector<std::uint8_t> data{1, 2};
 
     port.result = TransmitResult::QueueFull;
@@ -362,6 +401,7 @@ TEST_CASE(bridge_forwards_nothing_after_stop)
     FakeExternalPort port;
     CanBridge bridge(controller, port);
     bridge.start();
+    bridge.start_controller();
     bridge.stop();
     const std::vector<std::uint8_t> data{1};
     controller.deliver(make_frame(0x10, 0, 1, data)); // handler removed

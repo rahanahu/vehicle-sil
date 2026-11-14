@@ -240,6 +240,7 @@ struct SilKitRun
     Traces traces;
     vehicle_sil::can::CanBusSimulatorStatistics statistics; ///< InProcess only
     std::vector<vehicle_sil::can::SilKitCanPortStatistics> ports;
+    std::size_t started_controllers = 0; ///< peers whose controller the simulator reported as Started
 };
 
 std::filesystem::path scratch_dir()
@@ -251,9 +252,11 @@ std::filesystem::path scratch_dir()
 
 /// Runs the peers on SIL Kit with a simple network simulator of step `simulatorStep`.
 /// `foreign`: also a participant that sends at 30 ms through a raw SIL Kit controller with a
-/// real pointer as userContext (no send time).
+/// real pointer as userContext (no send time). `simulatorLast` (InProcess): the simulator joins
+/// after the peers have made their controllers and ports.
 SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulatorStep, Simulator kind = Simulator::InProcess,
-                        bool foreign = false, CanBusSimulatorOptions simulatorOptions = {}, std::uint32_t portBitrate = kBitrate)
+                        bool foreign = false, CanBusSimulatorOptions simulatorOptions = {}, std::uint32_t portBitrate = kBitrate,
+                        bool simulatorLast = false)
 {
     InProcessRegistry registry;
     SimulationControllerOptions controllerOptions;
@@ -275,11 +278,11 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
     std::unique_ptr<CanBusSimulator> simulator;
     int localObject = 0;
     std::atomic<bool> foreignStarted{false};
+    std::atomic<std::size_t> startedControllers{0};
     std::unique_ptr<ParticipantRuntime> simulatorRuntime;
     std::unique_ptr<vehicle_sil::process::ChildProcess> child;
     const auto logFile = scratch_dir() / ("simulator-" + std::to_string(to_ns(at(simulatorStep))) + ".log");
-    if (kind == Simulator::InProcess)
-    {
+    const auto join_simulator = [&] {
         simulatorRuntime = std::make_unique<ParticipantRuntime>(
             coordinated_options("NetworkSimulator", registry.uri, VirtualTimeOptions{simulatorStep, std::nullopt, kEnd}));
         // A second network that no controller joins: it must not disturb the run.
@@ -287,6 +290,13 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
                                                       std::vector<std::string>{kNetwork, "UnusedCAN"}, simulatorOptions);
         simulatorRuntime->set_step_handler([&simulator](SimTime now, SimDuration step) { simulator->step(now, step); });
         runtimes.push_back(simulatorRuntime.get());
+    };
+    if (kind == Simulator::InProcess)
+    {
+        if (!simulatorLast)
+        {
+            join_simulator();
+        }
     }
     else
     {
@@ -310,9 +320,8 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
             std::vector<std::string>{"--connect-uri", registry.uri, "--log", "info", "--start-timeout-ms", "60000",
                                      "--default-bitrate", std::to_string(kBitrate), config.string()},
             logFile);
-        // Let the simulator connect and offer its network before the peers create their
-        // controllers: a controller that finds it later does not pass its SetBaudRate() on (the
-        // default bit rate covers that too).
+        // Let the simulator come up before the peers (the order does not matter to what it learns
+        // from them: simulator_learns_the_bit_rate_and_the_start_whichever_joins_first).
         const auto deadline = std::chrono::steady_clock::now() + 30s;
         while (true)
         {
@@ -339,12 +348,25 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
         SilKitCanPortOptions portOptions;
         portOptions.bitrate = peers[i].bitrate.value_or(portBitrate);
         portOptions.transmit_queue_capacity = peers[i].port_queue;
-        node.port = std::make_unique<SilKitCanPort>(*node.runtime->participant().CreateCanController("CAN", kNetwork), portOptions);
+        auto* canController = node.runtime->participant().CreateCanController("CAN", kNetwork);
+        // With a simulator, the state changes only when the simulator answers the Start().
+        canController->AddStateChangeHandler([&startedControllers](sk::ICanController*, const sk::CanStateChangeEvent& e) {
+            if (e.state == sk::CanControllerState::Started)
+            {
+                startedControllers.fetch_add(1);
+            }
+        });
+        node.port = std::make_unique<SilKitCanPort>(*canController, portOptions);
+        node.runtime->add_communication_ready_handler([p = node.port.get()] { p->start(); });
         node.node = std::make_unique<Scripted>(peers[i].script);
         node.host = std::make_unique<Host>();
         node.host->add(*node.node, *node.port);
         vehicle_sil::can::bind_host(*node.runtime, *node.host);
         runtimes.push_back(node.runtime.get());
+    }
+    if (kind == Simulator::InProcess && simulatorLast)
+    {
+        join_simulator();
     }
     std::unique_ptr<ParticipantRuntime> foreignRuntime;
     if (foreign)
@@ -399,6 +421,7 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
         node.port->close();
         run.traces.push_back(node.node->trace());
     }
+    run.started_controllers = startedControllers.load();
     if (foreign && !foreignStarted.load())
     {
         throw std::runtime_error("the simulator did not acknowledge the raw controller's Start()");
@@ -596,6 +619,27 @@ TEST_CASE(simulator_uses_the_default_bitrate_until_a_controller_sets_one)
     CHECK_EQ(run.statistics.bitrate_conflicts, 0u);
     // 131 bits at 8 us from the 11 ms boundary.
     CHECK(run.traces[1] == (std::vector<std::string>{"12048000 rx " + std::to_string(j1939_id(6, 0xFF10, 0x80)) + " 0"}));
+}
+
+TEST_CASE(simulator_learns_the_bit_rate_and_the_start_whichever_joins_first)
+{
+    // The ports set the bit rate and start their controllers from the CommunicationReady handler,
+    // where a Coordinated participant knows every participant's services. So the simulator gets
+    // both from a controller that was made before the simulator joined, too (calls made before
+    // the controller has found the simulator are not sent again).
+    std::vector<TimedFrame> one{{at(10ms), ext(j1939_id(6, 0xFF10, 0x80))}};
+    const std::vector<PeerSpec> peers{{"A", 10ms, one}, {"R1", 1ms, {}}};
+    CanBusSimulatorOptions options;
+    options.default_bitrate = 125'000;
+    for (const bool simulatorLast : {false, true})
+    {
+        const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, false, options, 250'000, simulatorLast);
+        CHECK_EQ(run.statistics.bitrate, 250'000u);
+        CHECK_EQ(run.statistics.bitrate_conflicts, 0u);
+        CHECK_EQ(run.started_controllers, 2u);
+        // 131 bits at 4 us from the 11 ms boundary (the default bit rate would give 12048000).
+        CHECK(run.traces[1] == (std::vector<std::string>{"11524000 rx " + std::to_string(j1939_id(6, 0xFF10, 0x80)) + " 0"}));
+    }
 }
 
 TEST_CASE(simulator_keeps_the_first_bitrate_and_counts_a_conflicting_one)

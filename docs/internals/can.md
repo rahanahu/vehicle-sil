@@ -113,13 +113,16 @@ CAN の上にプロトコルスタックを作るときの拡張点です。J193
 
 ## SIL Kit のポート（`SilKitCanPort`）
 
-- 生成時に、CAN コントローラーに受信（RX 方向だけ）と送信確認のハンドラを付け、コントローラーを開始します。`close()` はハンドラを外し、コントローラーを止め、受け箱を空にします。`close()` から戻った後は、SIL Kit がポートを呼びません。
+- 生成時に、CAN コントローラーに受信（RX 方向だけ）と送信確認のハンドラを付けます（ここから届くフレームは受け箱に入ります）。コントローラーを始めるのは `start()` で、participant の CommunicationReady のハンドラーから呼びます（`runtime.add_communication_ready_handler([&port] { port.start(); })`。`Peer` は自分のポートについて呼びます）。SIL Kit が `SetBaudRate()` と `Start()` を呼ぶよう勧めている時点です: SIL Kit のスレッドの上で、最初のステップより前で、coordinated の participant では全員のサービスが見えています。そのため、ネットワークシミュレーターには、起動の順によらずビットレートと開始が届きます。autonomous の participant には、この保証がありません（まだ見つけていないシミュレーターには届かず、送り直されません）。
+- `start()` の前にステップが来ると（`release_before()` か `send()`）、`std::logic_error` です（「... before start(): the controller is not started ...」。何を呼ぶかを言います）。SIL Kit の簡易シミュレーションは、始めていないコントローラーの送信を、送信の確認なしに捨てるためです。`start()` は、`close()` の後と 2 回目には何もしません。
+- `close()` はハンドラを外し、（始めていれば）コントローラーを止め、受け箱を空にします。`close()` から戻った後は、SIL Kit がポートを呼びません。
 - 受信のコールバックは、SIL Kit のタイムスタンプ（送信側のステップ時刻）を付けて受け箱に積むだけです。クラシック CAN のデータフレーム以外は捨てて数えます。
+- 「ステップ T の時点で、T より前のフレームは全部届いている」のは、送り手が自分のステップの中で送ったフレームだけです（SIL Kit の約束の範囲。vehicle-sil のポートはステップの中で送ります）。ほかの SIL Kit のプログラムがステップの外（別のスレッド、受信のハンドラー）から送ったフレームは、どのステップで渡るかが実行ごとに変わりえます。
 - 時刻同期に参加していない送信者（Vector XL CAN Bridge など）のフレーム（仮想時間）: SIL Kit は、受け手のこの participant の今のステップの時刻を付けます。ただし、この participant の最初のステップの前に届いたフレームは `std::chrono::nanoseconds::min()` のままです。ポートはこの時刻を渡しません。時刻が負のフレームと事象には、届いた時点でのこの participant の最新のステップの時刻（最初のステップの前なら 0）を付け、次のステップで渡します。数は統計の `received_without_time` にあります。どのステップで届くかは届いた時点で決まるので、決定的ではありません。
 - 送信は `SendFrame()` です。時刻は SIL Kit が送信側のステップ時刻を付けます。SIL Kit の簡易シミュレーションには同期の結果がないので、正しいフレームは `Accepted` です。
 - `SendFrame()` の userContext には、送ったステップの時刻（`TimedFrame::time`）を目印付きで入れます（`encode_send_time()`。上位 8 ビットが目印 0xA5、下位 56 ビットが ns）。簡易 CAN Network Simulator はこれで送信時刻を知ります。SIL Kit は userContext を送信確認で送信側に返すだけで、他の受信者には渡しません。64 ビットのプラットフォームだけを対象にします。
 - 送信確認は数えて、`PortEvent` として事象の受け箱に積みます（`Transmitted` は `TransmitCompleted`、`Canceled` と `TransmitQueueFull` は `TransmitFailed`）。SIL Kit のハンドラからプロトコル処理は呼びません（簡易シミュレーションでは送信確認が `SendFrame()` の中で返るので、呼ぶと再入になります）。時刻は、簡易シミュレーションでは送ったステップの時刻、ネットワークシミュレーターでは送信の終わりです。
-- `SilKitCanPortOptions::bitrate` を設定すると、開始の前に `SetBaudRate()` で渡します。簡易シミュレーションは使いません。ネットワークシミュレーターは送信時間に使います。
+- `SilKitCanPortOptions::bitrate` を設定すると、`start()` が `Start()` の前に `SetBaudRate()` で渡します。簡易シミュレーションは使いません。ネットワークシミュレーターは送信時間に使います。既定の 0 では `SetBaudRate()` を呼びません（SIL Kit の文書は、使う前に必ず設定するよう書いています。簡易シミュレーションと簡易 CAN Network Simulator では困りません。ほかのネットワークシミュレーターが、設定のないコントローラーをどう扱うかは確かめていません。そういうシミュレーターと使うときは、ビットレートを設定してください）。
 - `SilKitCanPortOptions::transmit_queue_capacity`（既定 0 = 上限なし）を設定すると、送ったが送信確認の事象をまだ渡していないフレームがその数に達したとき、`send()` が `QueueFull` を返します。プロトコル処理はフレームを残して次のステップで出し直します。ネットワークシミュレーターは自分の送信キューを超えた要求を送らずに捨てる（`TransmitQueueFull` の送信確認）ので、シミュレーターを使うときはその大きさ以下にします。`event_capacity` より大きくはできません。送信確認の来ないフレーム（開始していないコントローラーでの送信など）は枠を返さないので、統計の `outstanding` で確かめます。SIL Kit の簡易シミュレーションでは送信確認が次のステップで渡るので、上限は 1 ステップに送れる数になります。
 - SIL Kit のエラー状態の通知は `BusStateChanged` の事象にします（`NotAvailable` は出しません）。事象の受け箱に、送信確認をまだ受けていないフレームの数の空きを残せないときは、捨てて `event_overflows` に数えます（送信確認を失って `transmit_queue_capacity` の枠が減らないように）。受け箱のあふれは `ReceiveOverflow` です。
 - 実時間（`SilKitCanPortOptions::real_time_clock` を設定）: 時刻同期なしの participant のポートになり、時刻の領域は `RealTime` です。SIL Kit のタイムスタンプ（同期なしの送信者では使えない）の代わりに、時計で到着時刻を付け、到着のたびにドライバーを起こします。userContext に送信時刻は入れません（ネットワークシミュレーターは仮想時間が前提のため）。`RealTimeDriver` で回します。
@@ -147,8 +150,8 @@ SIL Kit の簡易シミュレーション（trivial simulation）は、調停も
 - そのネットワークのコントローラーは、SIL Kit が自動で詳細シミュレーションに切り替えます。各 participant のコードは変わりません。
 - 受信のフレームの時刻は送信の終わりです。送信側には、同じ時刻の TX のフレームと送信確認（`Transmitted`）を、送信側の userContext を付けて返します。コントローラーごとの送信キュー（既定 64）があふれた要求には `TransmitQueueFull` の送信確認を返し、送信しません。
 - 時刻と決定論: 時刻同期に参加し、ステップ T で、T より前に送られた要求（vehicle-sil のポートが userContext に入れた送信時刻）を取り込み、[T, T + ステップ幅) に始まる送信を決めます。結果は送信時刻とステップ幅だけで決まり、他の participant のステップ幅やスレッドのタイミングによりません。目印のない要求（vehicle-sil 以外の participant）と、最後のステップより 1 秒以上先の時刻の要求は、最後のステップの時刻で扱い、数えます。この扱いは決定的ではありません。
-- ビットレート: そのネットワークで最初に `SetBaudRate()` を呼んだコントローラーの値、なければ `--default-bitrate`（既定 500 kbit/s）です。後から違う値が来たら数えて警告し、使いません。コントローラーがシミュレーターを見つける前に呼んだ `SetBaudRate()` は届かないので（SIL Kit の挙動。docs/dependencies.md）、ネットワークのビットレートは `--default-bitrate` でも指定してください。
-- コントローラーのモードの変更（`Start()`、`Stop()` など）には、次のステップで状態の変化を返します。フレームは、モードによらず、送信者以外の接続中の全コントローラーに届けます。CAN FD とリモートフレームの要求は捨てて数えます。
+- ビットレート: そのネットワークで最初に `SetBaudRate()` を呼んだコントローラーの値、なければ `--default-bitrate`（既定 500 kbit/s）です。後から違う値が来たら数えて警告し、使いません。vehicle-sil のポートは CommunicationReady で `SetBaudRate()` を呼ぶので、coordinated の participant（`vehicle_sil_launch run` の ECU、`Simulation`）の値は、起動の順によらず届きます。autonomous の participant と、コントローラーを作ってすぐ `SetBaudRate()` を呼ぶほかのプログラムの値は、シミュレーターを見つける前だと届きません（SIL Kit の挙動。docs/dependencies.md）。ポートにビットレートを設定しない構成と、そういう participant のために、ネットワークのビットレートは `--default-bitrate` でも指定してください。
+- コントローラーのモードの変更（`Start()`、`Stop()` など）には、次のステップで状態の変化を返します。フレームは、モードによらず、送信者以外の接続中の全コントローラーに届けます（autonomous の participant の `Start()` は届かないことがあるので、モードで止めません）。CAN FD とリモートフレームの要求は捨てて数えます。
 - 受け箱（ネットワークごとに 4096 要求）があふれたら、捨てて数え、警告します。あふれた実行は決定的ではありません。
 - 設定にあっても、まだどのコントローラーも参加していないネットワークは何もしません（SIL Kit は最初のコントローラーが現れたときにフレームを配る手段を渡します）。Vector のものと共用する設定に、使わない CAN ネットワークがあってもかまいません。
 - 使っているビットレートと、それが既定値かコントローラーの設定かを、ログに出します。

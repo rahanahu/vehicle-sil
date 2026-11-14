@@ -530,7 +530,53 @@ void ParticipantRuntime::set_communication_ready_handler(std::function<void()> h
     {
         throw std::logic_error("ParticipantRuntime::set_communication_ready_handler() must be called before start()");
     }
-    lifecycle_->SetCommunicationReadyHandler(std::move(handler));
+    lifecycle_->SetCommunicationReadyHandler([this, handler = std::move(handler)] {
+        run_added_communication_ready();
+        if (handler)
+        {
+            handler();
+        }
+    });
+    communication_ready_registered_ = true;
+}
+
+void ParticipantRuntime::add_communication_ready_handler(std::function<void()> handler)
+{
+    if (started())
+    {
+        throw std::logic_error("ParticipantRuntime::add_communication_ready_handler() must be called before start()");
+    }
+    added_communication_ready_.push_back(std::move(handler));
+    if (!communication_ready_registered_)
+    {
+        lifecycle_->SetCommunicationReadyHandler([this] { run_added_communication_ready(); });
+        communication_ready_registered_ = true;
+    }
+}
+
+void ParticipantRuntime::run_added_communication_ready()
+{
+    for (const auto& handler : added_communication_ready_)
+    {
+        std::string error;
+        try
+        {
+            if (handler)
+            {
+                handler();
+            }
+            continue;
+        }
+        catch (const std::exception& e)
+        {
+            error = *e.what() != '\0' ? e.what() : "exception without message";
+        }
+        catch (...)
+        {
+            error = "unknown exception";
+        }
+        report_failure("CommunicationReady handler failed: " + error);
+    }
 }
 
 void ParticipantRuntime::set_communication_ready_handler_async(std::function<void()> handler)
@@ -540,7 +586,9 @@ void ParticipantRuntime::set_communication_ready_handler_async(std::function<voi
         throw std::logic_error("ParticipantRuntime::set_communication_ready_handler_async() must be called before start()");
     }
     communication_ready_ = std::move(handler);
+    communication_ready_registered_ = true;
     lifecycle_->SetCommunicationReadyHandlerAsync([this] {
+        run_added_communication_ready();
         {
             // Before the handler: a thread it wakes may complete at once. The lock also orders
             // SIL Kit's own (unsynchronised) record of the call before the completing thread's
@@ -1172,6 +1220,10 @@ void ParticipantRuntime::resync_peers()
 {
     // AddParticipantStatusHandler() replays the current status of every connected participant to
     // the new handler synchronously, under SIL Kit's own lock.
+    // One thread at a time: SIL Kit's C++ API keeps a system monitor's handlers in a table
+    // without a lock, which adding and removing change. Not peers_mutex_: the replay calls
+    // on_status(), which takes that.
+    const std::lock_guard lock(resync_mutex_);
     const auto id =
         monitor_->AddParticipantStatusHandler([this](const orch::ParticipantStatus& status) { on_status(status, true); });
     monitor_->RemoveParticipantStatusHandler(id);

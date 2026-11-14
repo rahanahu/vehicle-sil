@@ -95,13 +95,8 @@ SilKitLinPort::SilKitLinPort(silkit_lin::ILinController& controller, LinRole rol
     {
         if (role_ == LinRole::Slave)
         {
-            header_handler_ = experimental_lin::AddFrameHeaderHandler(
-                &controller_, [this](silkit_lin::ILinController*, const experimental_lin::LinFrameHeaderEvent& event) {
-                    if (auto* listener = listener_.load(std::memory_order_acquire))
-                    {
-                        listener->on_header(from_silkit_time(event.timestamp), event.id);
-                    }
-                });
+            // The header handler is added in open(), after InitDynamic(): SIL Kit's C API calls
+            // adding it before that a state error.
             sleep_handler_ = controller_.AddGoToSleepHandler(
                 [this](silkit_lin::ILinController*, const silkit_lin::LinGoToSleepEvent& event) {
                     if (auto* listener = listener_.load(std::memory_order_acquire))
@@ -188,6 +183,14 @@ void SilKitLinPort::open()
         config.controllerMode = silkit_lin::LinControllerMode::Slave;
         config.baudRate = kBaudRate;
         experimental_lin::InitDynamic(&controller_, config);
+        // In the same SIL Kit handler as InitDynamic(), so no header arrives in between.
+        header_handler_ = experimental_lin::AddFrameHeaderHandler(
+            &controller_, [this](silkit_lin::ILinController*, const experimental_lin::LinFrameHeaderEvent& event) {
+                if (auto* listener = listener_.load(std::memory_order_acquire))
+                {
+                    listener->on_header(from_silkit_time(event.timestamp), event.id);
+                }
+            });
     }
 }
 

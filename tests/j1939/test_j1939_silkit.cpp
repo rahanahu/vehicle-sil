@@ -619,6 +619,7 @@ Traces run_on_silkit(const std::vector<SimDuration>& steps, const EcuFactory& ma
         vehicle_sil::can::SilKitCanPortOptions portOptions;
         portOptions.bitrate = kind == Bus::Simulator ? kSimulatorBitrate : 0;
         node.port = std::make_unique<SilKitCanPort>(*controllerPtr, portOptions);
+        node.runtime->add_communication_ready_handler([p = node.port.get()] { p->start(); });
         node.scenario = make(i);
         node.host = std::make_unique<Host>();
         node.host->add(node.scenario->network, *node.port);
@@ -901,6 +902,7 @@ TEST_CASE(j1939_step_size_above_200_ms_fails_the_participant)
     node.runtime = std::make_unique<ParticipantRuntime>(
         coordinated_options("Ecu", registry.uri, VirtualTimeOptions{250ms, std::nullopt, std::nullopt}));
     node.port = std::make_unique<SilKitCanPort>(*node.runtime->participant().CreateCanController("CAN", kNetwork));
+    node.runtime->add_communication_ready_handler([p = node.port.get()] { p->start(); });
     node.scenario = std::make_unique<Scenario>(0);
     node.host = std::make_unique<Host>();
     node.host->add(node.scenario->network, *node.port);
@@ -1044,6 +1046,7 @@ struct RealTimeEcu
         vehicle_sil::can::SilKitCanPortOptions portOptions;
         portOptions.real_time_clock = &clock;
         port = std::make_unique<SilKitCanPort>(*runtime->participant().CreateCanController("CAN", kNetwork), portOptions);
+        runtime->add_communication_ready_handler([p = port.get()] { p->start(); });
         node = &network.add_node(nodeOptions);
         node->on_address_change([this](const vehicle_sil::j1939::AddressChange& c) {
             if (c.state == AddressState::Claimed)
@@ -1167,6 +1170,7 @@ struct EcuAndBridge
         ecuOptions.registry_uri = registry.uri;
         ecu = std::make_unique<ParticipantRuntime>(ecuOptions);
         port = std::make_unique<SilKitCanPort>(*ecu->participant().CreateCanController("CAN", kNetwork));
+        ecu->add_communication_ready_handler([p = port.get()] { p->start(); });
         Node& node = network.add_node(NodeOptions{0x20, Name{0x2000}});
         node.on_any_message([this](const Message& m) {
             if (m.pgn == Pgn{0xFF10})

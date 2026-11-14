@@ -87,7 +87,10 @@ struct Fixture
         auto& bridgeCan = *bridgeRuntime->participant().CreateCanController("XL", kNetwork);
         port = std::make_unique<XlCanPort>(*driver, driver->channels().at(kVirtual1));
         bridge = std::make_unique<CanBridge>(bridgeCan, *port);
-        bridge->start(); // before the lifecycle, as vehicle_sil_vector_xl_bridge does
+        // As vehicle_sil_vector_xl_bridge does: forwarding before the lifecycle, the controller at
+        // CommunicationReady.
+        bridgeRuntime->add_communication_ready_handler([b = bridge.get()] { b->start_controller(); });
+        bridge->start();
         bridgeRuntime->start(10s);
 
         peerRuntime = std::make_unique<ParticipantRuntime>(ParticipantRuntimeOptions{"Peer", registry.uri});

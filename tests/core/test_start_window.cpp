@@ -278,3 +278,31 @@ TEST_CASE(start_window_that_opens_after_start_gave_up_is_completed_without_its_f
         CHECK(late_windows >= 1);
     }
 }
+
+TEST_CASE(peer_statuses_can_be_re_read_from_several_threads_at_once)
+{
+    // refresh_peer_statuses() and wait_for_peer() add a status handler and remove it again. SIL
+    // Kit's C++ API keeps the handlers of a system monitor in a table without a lock, so the
+    // runtime must let only one thread at a time do that (ThreadSanitizer sees it otherwise).
+    InProcessRegistry registry;
+    ParticipantRuntimeOptions options;
+    options.participant_name = "Watcher";
+    options.registry_uri = registry.uri;
+    ParticipantRuntime runtime(options);
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t)
+    {
+        threads.emplace_back([&runtime] {
+            for (int i = 0; i < 500; ++i)
+            {
+                runtime.refresh_peer_statuses();
+            }
+        });
+    }
+    // wait_for_peer() re-reads too (every 200 ms while it waits).
+    CHECK(!runtime.wait_for_peer("Nobody", [](const auto& status) { return status.state.has_value(); }, 450ms));
+    for (auto& thread : threads)
+    {
+        thread.join();
+    }
+}

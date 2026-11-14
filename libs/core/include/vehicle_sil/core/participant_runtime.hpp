@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace vehicle_sil {
 
@@ -250,6 +251,18 @@ public:
     /// ILinController::Init(). Only before start(); otherwise throws std::logic_error.
     void set_communication_ready_handler(std::function<void()> handler);
 
+    /// Adds a handler for the same moment: SIL Kit's CommunicationReady, on its own thread, before
+    /// the first step. The added handlers run in the order added, before the one of
+    /// set_communication_ready_handler() or set_communication_ready_handler_async() (which this
+    /// does not replace, nor they it). For what each controller needs there, without one place
+    /// that knows them all: `runtime.add_communication_ready_handler([&port] { port.start(); })`
+    /// for a vehicle_sil::can::SilKitCanPort. What the handler uses must live until the lifecycle
+    /// has ended or the ParticipantRuntime is destroyed. An exception from an added handler is
+    /// reported as a failure of the participant (report_failure(), "CommunicationReady handler
+    /// failed: ..."); the handlers after it still run. Only before start(); otherwise throws
+    /// std::logic_error.
+    void add_communication_ready_handler(std::function<void()> handler);
+
     /// Like set_communication_ready_handler(), but the participant stays where the handler found
     /// it (CommunicationInitialized) after the handler has returned, until
     /// complete_communication_ready(). A Coordinated participant gets there when every required
@@ -382,8 +395,8 @@ public:
     [[nodiscard]] std::vector<std::string> peer_names() const;
 
     /// Re-reads the statuses SIL Kit's system monitor knows, so that peer_status() also reports
-    /// one whose notification was missed (see resync_peers()). Must not be called from a SIL Kit
-    /// handler.
+    /// one whose notification was missed (see resync_peers()). Thread safe (callers take turns,
+    /// also with wait_for_peer()). Must not be called from a SIL Kit handler.
     void refresh_peer_statuses() { resync_peers(); }
     /// Blocks until `predicate(peer_status(name))` holds or the timeout expires.
     /// While waiting it periodically re-reads the statuses SIL Kit knows (see resync_peers()).
@@ -414,7 +427,9 @@ private:
     /// Re-reads the current status of every connected participant from the system monitor.
     /// Works around a SIL Kit v5.0.8 race in which a status received while
     /// AddParticipantStatusHandler() is registering the handler is never delivered to it.
+    /// One caller at a time (resync_mutex_).
     void resync_peers();
+    std::mutex resync_mutex_; ///< guards the adding and removing of status handlers in resync_peers()
 
     struct PeerRecord
     {
@@ -439,6 +454,10 @@ private:
 
     StepHandler step_handler_;
     StepHold step_hold_;
+    /// Runs added_communication_ready_ (the SIL Kit thread).
+    void run_added_communication_ready();
+    std::vector<std::function<void()>> added_communication_ready_; ///< add_communication_ready_handler()
+    bool communication_ready_registered_ = false; ///< SIL Kit has a handler that runs the added ones
     std::function<void()> communication_ready_; ///< set_communication_ready_handler_async()
     std::mutex communication_ready_mutex_;      ///< guards communication_ready_state_
     enum class CommunicationReady

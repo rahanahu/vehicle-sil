@@ -127,6 +127,7 @@ Traces run_on_silkit(const std::vector<SimDuration>& steps)
             coordinated_options(names[i], registry.uri, VirtualTimeOptions{steps[i], std::nullopt, kEnd}));
         auto* controllerPtr = node.runtime->participant().CreateCanController("CAN", kNetwork);
         node.port = std::make_unique<SilKitCanPort>(*controllerPtr);
+        node.runtime->add_communication_ready_handler([p = node.port.get()] { p->start(); });
         node.protocol = std::make_unique<TraceProtocol>(static_cast<std::uint8_t>(i + 1), period_of(i));
         node.host = std::make_unique<Host>();
         node.host->add(*node.protocol, *node.port);
@@ -250,6 +251,7 @@ TEST_CASE(shutdown_in_order_while_a_peer_keeps_sending)
     auto stepper = std::make_unique<ParticipantRuntime>(stepperOptions);
     auto* stepperCan = stepper->participant().CreateCanController("CAN", kNetwork);
     auto port = std::make_unique<SilKitCanPort>(*stepperCan);
+    stepper->add_communication_ready_handler([p = port.get()] { p->start(); });
 
     struct Counter final : vehicle_sil::can::Steppable
     {

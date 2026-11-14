@@ -169,8 +169,13 @@ void EthernetBridge::start()
                 on_silkit_transmit(event);
             },
             kFailedTransmissions);
-        silkit_.Activate();
-        activated = true;
+        if (communication_ready_)
+        {
+            // A start after the participant's CommunicationReady (a restart): nothing else will.
+            silkit_.Activate();
+            activated = true;
+            controller_started_.store(true);
+        }
         running_.store(true);
     }
     catch (...)
@@ -180,12 +185,35 @@ void EthernetBridge::start()
     }
 }
 
+void EthernetBridge::start_controller() noexcept
+{
+    const std::lock_guard lock(lifecycle_mutex_);
+    communication_ready_ = true;
+    if (!running_.load() || controller_started_.load())
+    {
+        return; // not running: start() activates the controller
+    }
+    try
+    {
+        silkit_.Activate();
+        controller_started_.store(true);
+    }
+    catch (const std::exception& e)
+    {
+        // Nothing can go to SIL Kit: a fault, so that the caller stops.
+        std::string why = std::string("activating the SIL Kit Ethernet controller failed: ") + e.what();
+        const std::lock_guard errors(error_mutex_);
+        last_error_ = why;
+        fault_ = std::move(why);
+    }
+}
+
 void EthernetBridge::stop() noexcept
 {
     const std::lock_guard lock(lifecycle_mutex_);
     if (running_.exchange(false))
     {
-        teardown(true, true);
+        teardown(true, controller_started_.exchange(false));
     }
 }
 
@@ -346,7 +374,8 @@ void EthernetBridge::on_external_event(const eth_link::LinkEvent& event)
 
 void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame)
 {
-    if (!running_.load())
+    // Before the controller is activated, SIL Kit refuses what it is given (ControllerInactive).
+    if (!running_.load() || !controller_started_.load())
     {
         return;
     }
