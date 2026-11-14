@@ -4432,18 +4432,34 @@ void scenario_expect_beside(const Options& o)
                                "its variables)";
     const Captured checked = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml"}, dir);
     expect_code(checked, 0, "check of an expect beside a ramp with an absent variable");
-    require(contains(lf(checked.standard_output), "\nnote: s.yaml:4: the ramp runs; its expect is not checked (ramp Body.level to 30 "
-                                                  "over 100 ms, expecting Body.body.heater; Body.level le 30): " + reason + "\n"),
+    require(contains(lf(checked.standard_output), "\nscenario s.yaml: 3 steps (1 expect not checked)\n") &&
+                contains(lf(checked.standard_output), "\nnote: s.yaml:4: the ramp runs; its expect is not checked (ramp Body.level to "
+                                                      "30 over 100 ms, expect not checked: Body.body.heater; Body.level le 30): " +
+                                                          reason + "\n"),
             "the note of the check:\n" + lf(checked.standard_output));
     const Captured text = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml"}, dir);
     expect_code(text, 0, "run of an expect beside a ramp with an absent variable");
-    require(contains(lf(text.standard_output), "\nline 4 expect not checked: " + reason + "\n"),
-            "the line under the table:\n" + lf(text.standard_output));
+    require(contains(lf(text.standard_output), "\nscenario s.yaml: passed, 3 of 3 steps passed, 1 expect not checked\n") &&
+                contains(lf(text.standard_output), "\nline 4 expect not checked: " + reason + "\n"),
+            "the summary and the line under the table:\n" + lf(text.standard_output));
     const Captured json = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
     expect_code(json, 0, "run --json of an expect beside a ramp with an absent variable");
     require(contains(scenario_json(lf(json.standard_output)), "        \"code\": null,\n        \"message\": null,\n"
-                                                              "        \"expect_skipped\": \"" + reason + "\"\n"),
-            "expect_skipped in the JSON:\n" + scenario_json(lf(json.standard_output)));
+                                                              "        \"expect_skipped\": \"" + reason + "\"\n") &&
+                contains(scenario_json(lf(json.standard_output)), "\n    \"unchecked_expects\": 1,\n    \"steps\": [\n"),
+            "expect_skipped and unchecked_expects in the JSON:\n" + scenario_json(lf(json.standard_output)));
+    // vehicle_sil_launch test does not show such a run as a plain pass.
+    fs::create_directories(dir / "scn");
+    fs::copy_file(dir / "s.yaml", dir / "scn" / "ramp.yaml", fs::copy_options::overwrite_existing);
+    const Captured table = launch(o, {"test", "sim.yaml", "--scenarios", "scn"}, dir);
+    expect_code(table, 0, "test with an expect that is not checked");
+    require(contains(lf(table.standard_output), "scn/ramp.yaml  passed  1 expect was not checked\n"),
+            "the table of the test:\n" + lf(table.standard_output));
+    const Captured tested = launch(o, {"test", "sim.yaml", "--scenarios", "scn", "--json"}, dir);
+    expect_code(tested, 0, "test --json with an expect that is not checked");
+    require(contains(lf(tested.standard_output), "\"reason\": \"1 expect was not checked\"") &&
+                contains(lf(tested.standard_output), "\"unchecked_expects\": 1,"),
+            "the JSON of the test:\n" + lf(tested.standard_output));
 }
 
 void scenario_failures(const Options& o)

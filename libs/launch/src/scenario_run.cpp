@@ -112,6 +112,13 @@ std::size_t ScenarioRun::skipped() const
     }));
 }
 
+std::size_t ScenarioRun::unchecked_expects() const
+{
+    return static_cast<std::size_t>(std::count_if(steps.begin(), steps.end(), [](const ScenarioStepRun& step) {
+        return step.status != StepStatus::Skipped && !step.expect_skipped.empty();
+    }));
+}
+
 const char* scenario_status_name(ScenarioStatus status)
 {
     switch (status)
@@ -404,6 +411,7 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
     case StepKind::Wave:
     {
         std::int64_t longest = 0;
+        SimTime lastApplied = time; // the latest step of an ECU that applies an end value
         for (const ScenarioSignal& r : step.signals)
         {
             Signal signal;
@@ -419,6 +427,10 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
             // One write per period before the end, and the last one at the end.
             const std::int64_t over = r.length_ms * kNanosPerMilli;
             open_writes_[index] += static_cast<std::size_t>((over + signal.period.count() - 1) / signal.period.count()) + 1;
+            // The ECU's first step at or after the end applies the end value.
+            const std::int64_t end = to_ns(time) + over;
+            lastApplied = std::max(lastApplied, SimTime{} + SimDuration((end + signal.period.count() - 1) / signal.period.count() *
+                                                                        signal.period.count()));
             signals_.push_back(std::move(signal));
             longest = std::max(longest, r.length_ms);
         }
@@ -426,12 +438,15 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
         base_ = run_.steps[index].end;
         if (!step.conditions.empty())
         {
-            // The expect beside it: true from T to E, and one more thing that decides the step.
+            // The expect beside it: true at every sample from T up to the step that applies the
+            // end value (E, or the ECU's next step if E is between two), and one more thing that
+            // decides the step.
             Watch watch;
             watch.step = index;
             watch.from = time;
-            watch.until = *run_.steps[index].end;
+            watch.until = lastApplied;
             watch.hold = true;
+            watch.beside = true;
             watches_.push_back(watch);
             ++open_writes_[index];
         }
@@ -720,13 +735,17 @@ void ScenarioEngine::judge(SimTime p)
 
 // --- samples ---
 
-std::string ScenarioEngine::unmet(const ScenarioStep& step) const
+std::string ScenarioEngine::unmet(const ScenarioStep& step, std::optional<SimTime> since) const
 {
     std::string out;
     for (const ScenarioCondition& condition : step.conditions)
     {
         const Variable& known = variables_[condition.variable];
         const ScenarioVariable& v = scenario_.variables[condition.variable];
+        if (since && (!known.value_time || *known.value_time < *since))
+        {
+            continue; // no sample of its ECU from `since` yet: not judged
+        }
         const bool met = known.value && std::all_of(condition.all.begin(), condition.all.end(), [&](const ScenarioComparison& c) {
             return holds(c, *known.value);
         });
@@ -744,7 +763,7 @@ std::string ScenarioEngine::unmet(const ScenarioStep& step) const
 void ScenarioEngine::evaluate(Watch& watch, SimTime t)
 {
     const ScenarioStep& step = scenario_.steps[watch.step];
-    const std::string unmetNow = unmet(step);
+    const std::string unmetNow = unmet(step, watch.beside ? std::optional<SimTime>(watch.from) : std::nullopt);
     const bool ok = unmetNow.empty();
     if (!watch.until)
     {
@@ -762,11 +781,9 @@ void ScenarioEngine::evaluate(Watch& watch, SimTime t)
     {
         if (!ok)
         {
-            const bool beside = step.kind == StepKind::Ramp || step.kind == StepKind::Wave;
             fail(watch.step, t, "scenario-failed",
-                 (beside ? "not true during the " + std::string(step_kind_name(step.kind)) + " (from " + ms_text(watch.from) +
-                               " ms to " + ms_text(*watch.until) + " ms)"
-                         : "not true for " + std::to_string(*step.hold_for_ms) + " ms (from " + ms_text(watch.from) + " ms)") +
+                 (watch.beside ? "not true during the " + std::string(step_kind_name(step.kind)) + " (" + during(watch.step, watch) + ")"
+                               : "not true for " + std::to_string(*step.hold_for_ms) + " ms (from " + ms_text(watch.from) + " ms)") +
                      ": at " + ms_text(t) + " ms " + unmetNow);
             watch.step = run_.steps.size();
         }
@@ -787,12 +804,31 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
     const ScenarioStep& step = scenario_.steps[watch.step];
     const std::size_t index = watch.step;
     watch.step = run_.steps.size();
-    if (step.kind == StepKind::Ramp || step.kind == StepKind::Wave)
+    if (watch.beside)
     {
+        // A variable whose ECU sent no sample in the time was not looked at: that is no pass.
+        std::string unseen;
+        for (const ScenarioCondition& condition : step.conditions)
+        {
+            const Variable& known = variables_[condition.variable];
+            if (!known.value_time || *known.value_time < watch.from)
+            {
+                unseen += (unseen.empty() ? "" : ", ") + scenario_.variables[condition.variable].text;
+            }
+        }
+        if (!unseen.empty())
+        {
+            fail(index, t, "scenario-failed",
+                 "not checked during the " + std::string(step_kind_name(step.kind)) + " (" + during(index, watch) + "): no sample of " +
+                     unseen + " in that time (its ECU sends one every sample_period); make the " + step_kind_name(step.kind) +
+                     " longer, or check in an expect step with within_ms after it");
+            return;
+        }
         // The expect beside it held to the end: the step passes once its writes have, too.
         if (--open_writes_[index] == 0)
         {
-            pass(index, t, t);
+            const SimTime end = *run_.steps[index].end;
+            pass(index, end, end);
         }
     }
     else if (watch.hold)
@@ -811,6 +847,14 @@ void ScenarioEngine::close(Watch& watch, SimTime t)
              "not true at any time within " + std::to_string(*step.within_ms) + " ms (from " + ms_text(watch.from) + " ms to " +
                  ms_text(t) + " ms): at the end " + unmet(step));
     }
+}
+
+std::string ScenarioEngine::during(std::size_t step, const Watch& watch) const
+{
+    const SimTime end = *run_.steps[step].end;
+    return "from " + ms_text(watch.from) + " ms to " + ms_text(*watch.until) + " ms" +
+           (*watch.until == end ? std::string{}
+                                : ", where its end (" + ms_text(end) + " ms) takes effect");
 }
 
 void ScenarioEngine::observe(SimTime p)

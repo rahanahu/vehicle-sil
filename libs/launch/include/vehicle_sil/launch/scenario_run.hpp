@@ -84,6 +84,9 @@ struct ScenarioRun
 
     /// How many steps are skipped: a scenario that passed with some did not look at everything.
     [[nodiscard]] std::size_t skipped() const;
+    /// How many expects beside a ramp or a wave were not checked (ScenarioStepRun::expect_skipped):
+    /// their steps ran, and are not counted in skipped().
+    [[nodiscard]] std::size_t unchecked_expects() const;
 };
 
 /// The run of `scenario` before anything happened: every step NotRun, or Skipped with its reason
@@ -163,10 +166,14 @@ struct EnginePeer
 /// at a fixed step of the controller: the first after the ECU's step that applies it (by then it
 /// has arrived). Anything but "applied" fails the step ("scenario-write").
 ///
-/// An expect beside a ramp or a wave (ScenarioStep::conditions of those) is a watch like an
-/// expect with hold_for_ms from the step's time T to its end E: true at T and at every sample in
-/// (T, E]; a sample after E is not its. The step is decided when both are over, every write judged
-/// and the watch closed: it passes at E once both passed, and fails with what the engine learns
+/// An expect beside a ramp or a wave (ScenarioStep::conditions of those) is a watch from the step's
+/// time T to U, the latest step of a written variable's ECU that applies an end value (E, the
+/// step's end, if E is on that ECU's steps, else its next step). Per variable it judges every
+/// sample of a time in [T, U], whichever ECU sends it; a sample before T (the value before the
+/// motion) or after U is not its. So whether T and E fall on the ECU's steps does not change the
+/// result. A variable without such a sample fails the step at U (it was not looked at). The
+/// step's end stays E (the next step counts from there). The step is decided when both are over,
+/// every write judged and the watch closed: it passes at E once both passed, and fails with what the engine learns
 /// first, a write ("scenario-write") or a sample ("scenario-failed"). That is the order of tick()
 /// (results of earlier writes, samples before P, then writes up to P + tick), not the order of the
 /// virtual times: a write for P + tick that its agent refuses at once is said at P, before a
@@ -220,6 +227,7 @@ private:
         SimTime from{};
         std::optional<SimTime> until{}; ///< empty: decided at `from`
         bool hold = false;              ///< until: true all the time (else: true at some time)
+        bool beside = false;            ///< the expect beside a ramp or a wave: only samples from `from` count
         bool opened = false;
     };
     struct Write
@@ -257,7 +265,11 @@ private:
     void fail(std::size_t step, SimTime at, std::string code, std::string message);
     void finish(ScenarioStatus status);
     [[nodiscard]] bool unusable(std::size_t step, SimTime time);
-    [[nodiscard]] std::string unmet(const ScenarioStep& step) const;
+    /// The conditions of `step` that the values do not meet ("" if none); with `since`, only those
+    /// whose latest sample is at or after it are judged.
+    [[nodiscard]] std::string unmet(const ScenarioStep& step, std::optional<SimTime> since = std::nullopt) const;
+    /// The time of the watch beside a ramp or a wave, for the messages: "from 40 ms to 120 ms, ...".
+    [[nodiscard]] std::string during(std::size_t step, const Watch& watch) const;
     [[nodiscard]] SimTime judge_time(const std::vector<ScenarioWrite>& writes, SimTime at) const;
     [[nodiscard]] SimTime next_tick_after(SimTime t) const;
 

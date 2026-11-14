@@ -232,6 +232,9 @@ struct ScenarioRead
     bool not_for_variant = false;
     /// How many steps the run will skip (ScenarioStep::skipped), each with a note in `findings`.
     std::size_t skipped = 0;
+    /// How many expects beside a ramp or a wave the run will not check (ScenarioStep::expect_skipped;
+    /// the ramp or wave runs), each with a note in `findings`. Not counted in `skipped`.
+    std::size_t unchecked_expects = 0;
     /// Every error of the text, a note for each step that is skipped and for each expect beside a ramp
     /// or a wave that is not checked (ScenarioStep::expect_skipped), and a warning
     /// ("scenario-nothing-checked") if every step that checks is skipped, in the order of the file

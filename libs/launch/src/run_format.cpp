@@ -267,7 +267,12 @@ std::string detail::scenario_text(const ScenarioRun& scenario)
     }
     std::string out = "scenario " + scenario.file + (scenario.name.empty() ? "" : " (" + scenario.name + ")") + ": " + state +
                       ", " + std::to_string(passed) + " of " + std::to_string(scenario.steps.size()) + " steps passed" +
-                      (scenario.skipped() > 0 ? ", " + std::to_string(scenario.skipped()) + " skipped" : std::string{}) + "\n\n";
+                      (scenario.skipped() > 0 ? ", " + std::to_string(scenario.skipped()) + " skipped" : std::string{}) +
+                      (scenario.unchecked_expects() > 0
+                           ? ", " + std::to_string(scenario.unchecked_expects()) +
+                                 (scenario.unchecked_expects() == 1 ? " expect not checked" : " expects not checked")
+                           : std::string{}) +
+                      "\n\n";
     std::vector<std::vector<std::string>> rows{{"line", "step", "result", "at"}};
     for (const ScenarioStepRun& step : scenario.steps)
     {
@@ -488,6 +493,11 @@ void detail::write_scenario_json(vehicle_sil::detail::JsonWriter& w, std::string
     {
         // Only then: a result without skipped steps is as it was before them.
         w.integer("skipped_steps", static_cast<std::int64_t>(scenario.skipped()));
+    }
+    if (scenario.unchecked_expects() > 0)
+    {
+        // Only then, as skipped_steps.
+        w.integer("unchecked_expects", static_cast<std::int64_t>(scenario.unchecked_expects()));
     }
     w.begin_array("steps");
     for (const ScenarioStepRun& step : scenario.steps)

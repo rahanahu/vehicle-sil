@@ -401,11 +401,18 @@ private:
         }
         const bool one = lines.size() == 1;
         const std::string where = context_.variant.empty() ? "in this configuration" : "in the variant " + context_.variant;
+        // An expect beside a ramp or a wave that is not checked: the step runs, only its check is gone.
+        const std::size_t unchecked = unchecked_lines_.size();
+        const std::string what =
+            unchecked == 0 ? (one ? "its only step that checks (expect or wait_until, line " + lines.front() + ") is skipped"
+                                  : "all its " + std::to_string(lines.size()) + " steps that check (expect or wait_until, lines " +
+                                        join(lines) + ") are skipped")
+            : one ? "its only check (an expect beside a ramp or a wave, line " + lines.front() + ") is not checked"
+                  : "all its " + std::to_string(lines.size()) + " checks (expect, wait_until, or an expect beside a ramp or a wave; lines " +
+                        join(lines) + ") are " + (unchecked == lines.size() ? "not checked" : "skipped or not checked");
         add(Severity::Warning, "scenario-nothing-checked", 0,
-            "the scenario checks nothing " + where + ": " +
-                (one ? "its only step that checks (expect or wait_until, line " + lines.front() + ") is skipped"
-                     : "all its " + std::to_string(lines.size()) + " steps that check (expect or wait_until, lines " + join(lines) + ") are skipped") +
-                ", so it passes whatever the ECUs do (the notes say why each is skipped). " +
+            "the scenario checks nothing " + where + ": " + what + ", so it passes whatever the ECUs do (the notes say why " +
+                (unchecked == 0 ? "each is skipped). " : "for each). ") +
                 (context_.variant.empty()
                      ? std::string("If the configuration has what the steps look at under other names, map them in the participant's variables "
                                    "(docs/simulation-config.md); else do not run this scenario with it")
@@ -1009,18 +1016,21 @@ private:
         {
             read_conditions(nodes.at("expect"), step, "expect");
         }
+        // Only the expect uses what is absent: the ramp or wave runs, unchecked.
+        unchecked_ = beside && motion_absent_ == 0 && !absent_.empty();
         step.text = step_text(step);
         const bool checks = beside || step.kind == StepKind::Expect || step.kind == StepKind::WaitUntil;
         if (checks)
         {
             checks_.push_back(line);
         }
-        if (beside && motion_absent_ == 0 && !absent_.empty())
+        if (unchecked_)
         {
-            // Only the expect uses what is absent: the ramp or wave runs, unchecked.
             step.expect_skipped = skip_reason();
             step.conditions.clear();
             skipped_checks_.push_back(line);
+            unchecked_lines_.insert(line);
+            ++out_.unchecked_expects;
             add(Severity::Note, "scenario-step-skipped", step.line,
                 "the " + std::string(step_kind_name(step.kind)) + " runs; its expect is not checked (" + step.text +
                     "): " + step.expect_skipped);
@@ -2700,7 +2710,7 @@ private:
         if (beside_)
         {
             // "ramp Engine.engine.throttle to 80 over 1000 ms, expecting Engine.engine.speed le 3000"
-            out += ", expecting";
+            out += unchecked_ ? ", expect not checked:" : ", expecting";
             first = true;
             absent(motion, absent_.size());
         }
@@ -2733,6 +2743,8 @@ private:
     std::map<std::string, std::string> absent_variables_; ///< "<participant>.<name>" that is absent: its participant
     std::vector<std::string> absent_;                   ///< those the step being read uses
     bool beside_ = false;          ///< the step being read is a ramp or a wave with an expect beside it
+    bool unchecked_ = false;       ///< and only its expect uses what is absent: the expect is not checked
+    std::set<std::size_t> unchecked_lines_; ///< of skipped_checks_, those of an expect beside that is not checked
     std::size_t motion_absent_ = 0; ///< of absent_, those of its ramp or wave (the others: of the expect)
     std::set<std::string> left_out_; ///< the participants of absent_variables_ that the variant leaves out
     std::vector<std::size_t> checks_;         ///< the lines of the steps that check (expect, wait_until, an expect beside)
