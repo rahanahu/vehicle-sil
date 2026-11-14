@@ -89,6 +89,7 @@ struct State
     std::map<unsigned, unsigned> activations;
     bool device_lost = false;
     bool chip_state_refused = false;
+    unsigned chip_state_refusals = 0; // the next requests that fail, then the answers come again
     std::optional<std::chrono::steady_clock::time_point> lose_device_at;
     unsigned chip_state_requests = 0;
 };
@@ -274,6 +275,7 @@ void reset()
     s.activations.clear();
     s.device_lost = false;
     s.chip_state_refused = false;
+    s.chip_state_refusals = 0;
     s.lose_device_at.reset();
     s.chip_state_requests = 0;
 }
@@ -300,6 +302,12 @@ void set_chip_state_refused(bool refused)
 {
     const std::lock_guard lock(state().mutex);
     state().chip_state_refused = refused;
+}
+
+void refuse_next_chip_state_requests(unsigned count)
+{
+    const std::lock_guard lock(state().mutex);
+    state().chip_state_refusals = count;
 }
 
 void set_chip_state(unsigned channel_index, backend::ChipState chip)
@@ -777,6 +785,11 @@ Status request_chip_state(PortHandle handle, ChannelMask channels)
     }
     if (s.chip_state_refused)
     {
+        return status(fake_xl::kStatusNoAccess);
+    }
+    if (s.chip_state_refusals > 0)
+    {
+        --s.chip_state_refusals;
         return status(fake_xl::kStatusNoAccess);
     }
     if (s.queue_full)

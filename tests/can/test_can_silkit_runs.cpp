@@ -26,6 +26,7 @@
 #include <vector>
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 namespace orch = SilKit::Services::Orchestration;
 namespace sk = SilKit::Services::Can;
 using vehicle_sil::LifecycleMode;
@@ -138,7 +139,7 @@ Traces run_on_silkit(const std::vector<SimDuration>& steps)
     start_together(controller, runtimes, 30s);
     for (auto& node : nodes)
     {
-        const auto state = node.runtime->wait_until_finished(60s);
+        const auto state = node.runtime->wait_until_finished(scaled_timeout(60s));
         if (!state || *state != orch::ParticipantState::Shutdown)
         {
             throw std::runtime_error(node.runtime->name() + " did not shut down: " + node.runtime->step_error());

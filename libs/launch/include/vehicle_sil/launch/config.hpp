@@ -6,6 +6,7 @@
 // Internal; the file format is in docs/simulation-config.md.
 #pragma once
 
+#include "vehicle_sil/control/variable_map.hpp"
 #include "vehicle_sil/ecu/describe.hpp"
 #include "vehicle_sil/ecu/executable.hpp"
 
@@ -103,6 +104,12 @@ struct ParticipantConfig
     bool manual = false;
     /// The step the executable must report, in milliseconds; empty: any.
     std::optional<std::int64_t> step_ms{};
+    /// Its variable map (its "variables" key): the names and values under which the simulation
+    /// sees the executable's variables (control::VariableMapping). Only the mappings that are one
+    /// of the forms (the others are reported when reading); whether they fit the executable's
+    /// variables is the check's to say (seen_variables()).
+    control::VariableMap variables{};
+    std::vector<std::size_t> variable_lines{}; ///< the line of each mapping of `variables`
     std::size_t line = 0;         ///< the line of the participant's entry
     std::size_t command_line = 0; ///< the line of its command (its entry's line if it has none)
     std::size_t step_line = 0;    ///< the line of step_ms (its entry's line if it has none)

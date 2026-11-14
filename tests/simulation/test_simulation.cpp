@@ -32,6 +32,7 @@
 #include <vector>
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using vehicle_sil::Ecu;
 using vehicle_sil::Peer;
 using vehicle_sil::PeerOptions;
@@ -320,7 +321,7 @@ TEST_CASE(simulation_runs_under_a_controller_elsewhere)
             try
             {
                 controller.start(30s);
-                end = controller.wait_until_finished(60s);
+                end = controller.wait_until_finished(scaled_timeout(60s));
             }
             catch (...)
             {

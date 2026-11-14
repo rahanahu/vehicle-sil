@@ -19,6 +19,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 using namespace vehicle_sil::control;
 
@@ -418,13 +419,13 @@ TEST_CASE(control_hub_wait_returns_the_operation)
         std::this_thread::sleep_for(20ms);
         engine.pump();
     });
-    const auto queued = hub.wait_queued(seq, 5s);
+    const auto queued = hub.wait_queued(seq, scaled_timeout(5s));
     transport.join();
     CHECK(queued.has_value());
     CHECK(queued->targets.at(0).status == TargetStatus::Queued);
     engine.step(at(30ms));
     // The result comes with the wait, even if the operation is forgotten right after.
-    const auto done = hub.wait_done(seq, 5s);
+    const auto done = hub.wait_done(seq, scaled_timeout(5s));
     CHECK(done.has_value());
     CHECK(done->targets.at(0).status == TargetStatus::Applied);
     hub.write(req({{"Nobody", "x", 1.0}}));
@@ -437,7 +438,7 @@ TEST_CASE(control_hub_wait_returns_the_operation)
     const auto mixed = hub.write(req({{"Engine", "level", 1.0}, {"Busy", "level", 2.0}}, at(1s)));
     engine.pump();
     busy.pump(); // the agent refuses it: its one slot is taken
-    const auto w = hub.wait_queued(mixed, 1s);
+    const auto w = hub.wait_queued(mixed, scaled_timeout(1s));
     CHECK(w.has_value());
     CHECK(target(*w, "Engine").status == TargetStatus::Queued);
     CHECK(target(*w, "Busy").status == TargetStatus::Busy);
@@ -508,7 +509,7 @@ TEST_CASE(control_hub_clients_transports_and_subscribers_on_many_threads)
             for (int i = 0; i < kPerClient; ++i)
             {
                 const auto seq = hub.write(req({{"Engine", "level", static_cast<double>(i % 100)}, {"Body", "lamp", i % 2 == 0}}));
-                const auto done = hub.wait_done(seq, 10s);
+                const auto done = hub.wait_done(seq, scaled_timeout(10s));
                 if (!done || done->targets.at(0).status != TargetStatus::Applied || done->targets.at(1).status != TargetStatus::Applied)
                 {
                     ++not_applied;
@@ -593,7 +594,7 @@ struct SelfDisconnectingLink final : AgentLink
             static_cast<void>(hub->peers());
             done = true;
         });
-        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(2s);
         while (!done.load() && std::chrono::steady_clock::now() < deadline)
         {
             std::this_thread::sleep_for(1ms);

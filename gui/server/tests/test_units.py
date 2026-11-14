@@ -751,8 +751,10 @@ def test_a_command_that_does_not_end_is_killed_with_its_children(tmp_path: Path)
             "time.sleep(60)\n")
 
     async def main() -> None:
+        from conftest import scaled
+        # Python has to start both processes and write their IDs before the time limit ends them: scaled.
         with pytest.raises(TimeoutError):
-            await process.run_to_end([sys.executable, "-c", code], cwd=None, timeout_s=2)
+            await process.run_to_end([sys.executable, "-c", code], cwd=None, timeout_s=scaled(2))
 
     asyncio.run(main())
     from conftest import alive, wait_until

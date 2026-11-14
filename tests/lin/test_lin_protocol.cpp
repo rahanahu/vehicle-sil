@@ -31,6 +31,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 using namespace vehicle_sil::lin;
 namespace orch = SilKit::Services::Orchestration;
@@ -271,10 +272,10 @@ Trace run(Cluster c)
     } stopAll{runtimes};
 
     start_together(controller, runtimes, 30s);
-    CHECK(controller.wait_until_finished(120s) == orch::ParticipantState::Shutdown);
+    CHECK(controller.wait_until_finished(scaled_timeout(120s)) == orch::ParticipantState::Shutdown);
     for (auto* runtime : runtimes)
     {
-        CHECK(runtime->wait_until_finished(30s) == orch::ParticipantState::Shutdown);
+        CHECK(runtime->wait_until_finished(scaled_timeout(30s)) == orch::ParticipantState::Shutdown);
         require(runtime->step_error().empty(), "step error: " + runtime->step_error());
     }
     out.master_stats = master.statistics();

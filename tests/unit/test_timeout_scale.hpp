@@ -5,14 +5,20 @@
 // VEHICLE_SIL_TEST_TIMEOUT_SCALE where the test runs, or, when it is not set, the build's default
 // (the CMake cache variable VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT, 1 unless a preset sets it; the
 // thread sanitizer presets set 4). A slow machine, a loaded one or a sanitizer build sets it above
-// 1, so that a test that waits for something that will happen gives it more time. A test that
-// passes ends as soon as what it waits for happens, so it is not slower.
+// 1, so that a test that waits for something that will happen gives it more time.
 //
-// Scale an upper bound of waiting for something that will happen, also when the test hands it to
-// the product as a limit (a launcher's --timeout-ms for the simulation it runs). Never scale a
-// wait that checks that something does NOT happen, nor a time whose expiry the test checks (a
-// receiver's timeout that the test expects to run out), nor periods: that would change what the
-// test checks.
+// Whether a time is scaled depends on what it is:
+// 1. An upper bound of waiting for something that will happen: scaled, also when the test hands it
+//    to the product as a limit (a launcher's --timeout-ms for the simulation it runs). A test that
+//    passes ends as soon as what it waits for happens, so it is not slower.
+// 2. A time whose expiry the test checks, but before which a child process or another thread has
+//    to get something done (a helper that writes a line before the limit stops it): scaled, and
+//    the expected messages are made from the same value. Such a test is always longer by the factor.
+// 3. A wait that checks that something does NOT happen, a period, or a time whose own expiry is
+//    what the test checks (a receiver's timeout that runs out): not scaled, as that would change
+//    what the test checks.
+// A function that takes an upper bound and scales it inside says "scaled" in its comment; do not
+// scale what you pass to it.
 //
 // The CTest TIMEOUT of the harness and scenario tests is made at configure time for the factor of
 // that time (cmake/VehicleSilTestHelpers.cmake), and the tests get it as

@@ -102,6 +102,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -296,7 +297,7 @@ void expect_text(const std::string& actual, const std::string& expected, const s
 Captured launch(const Options& o, const std::vector<std::string>& args, const fs::path& dir)
 {
     vehicle_sil::process::CaptureOptions options;
-    options.timeout = 240s;
+    options.timeout = scaled_timeout(240s);
     options.working_directory = dir;
     return vehicle_sil::process::run_captured(o.launch, args, options);
 }
@@ -493,7 +494,7 @@ void check(const Options& o)
                 "Logger       -     not checked (describe: false)\n"
                 "\n"
                 "error: sim.yaml:7: participant 'Logger': unknown key 'requried': did you mean 'required'? (the keys "
-                "here: name, command, step_ms, describe, required, enabled, manual)\n"
+                "here: name, command, step_ms, describe, required, enabled, manual, variables)\n"
                 "note: sim.yaml:4: participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot "
                 "compare its name, step and networks with this file\n"
                 "note: sim.yaml:5: participant 'Logger': the command has no {registry_uri}, so the executable is not told "
@@ -699,11 +700,14 @@ void hang(const Options& o)
     {
         throw Skip("no console to send Ctrl+Break through (the participants are ended at once)");
     }
-    // Both hang after the simulation for ever: 300 ms is not a guess about their speed.
+    // Both hang after the simulation for ever: the time is not a guess about how fast they get
+    // there. After the stop request, Stuck has to leave ecu_main and exit with 9 before the
+    // second period ends (else it is killed too): scaled, as that takes longer on a slow machine.
+    const std::string stop_ms = std::to_string(scaled_timeout(300ms).count());
     const fs::path dir = scenario_dir(o,
                                       "vehicle_sil_simulation: 1\n"
                                       "stop_at_ms: 1000\n"
-                                      "stop_timeout_ms: 300\n"
+                                      "stop_timeout_ms: " + stop_ms + "\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Stuck\n"
@@ -720,11 +724,11 @@ void hang(const Options& o)
                 "Stuck        yes       stopped (" + kStop + "), exit code 9\n"
                 "Deaf         yes       killed\n"
                 "\n"
-                "error: sim.yaml:6: participant 'Stuck': it was still running 300 ms (stop_timeout_ms) after the "
+                "error: sim.yaml:6: participant 'Stuck': it was still running " + stop_ms + " ms (stop_timeout_ms) after the "
                 "simulation ended: the launcher asked it to stop (" + kStop + "), and its process exited with code 9; a "
                 "participant should end when the simulation ends (the lines [Stuck] above show what it wrote)\n"
-                "error: sim.yaml:8: participant 'Deaf': it was still running 300 ms (stop_timeout_ms) after the "
-                "simulation ended: the launcher asked it to stop (" + kStop + "), and as it did not end within 300 ms "
+                "error: sim.yaml:8: participant 'Deaf': it was still running " + stop_ms + " ms (stop_timeout_ms) after the "
+                "simulation ended: the launcher asked it to stop (" + kStop + "), and as it did not end within " + stop_ms + " ms "
                 "either, ended it with the processes it started; a participant should end when the simulation ends (the "
                 "lines [Deaf] above show what it wrote)\n"
                 "\n"
@@ -841,11 +845,11 @@ std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::string> run_unti
     {
         std::unique_lock lock(mutex);
         // Only a last line against a hang: the start takes a second or two.
-        require(changed.wait_for(lock, 120s, [&] { return running || launcher.poll().has_value(); }) && running,
+        require(changed.wait_for(lock, scaled_timeout(120s), [&] { return running || launcher.poll().has_value(); }) && running,
                 "the simulation did not start:\n" + err);
     }
     act(launcher);
-    const auto status = launcher.wait_for(120s);
+    const auto status = launcher.wait_for(scaled_timeout(120s));
     launcher.finish_output(10s);
     const std::lock_guard lock(mutex);
     log("stderr of the launcher:\n" + err);
@@ -930,7 +934,7 @@ void interrupt_twice(const Options& o)
     const auto wait_for_line = [&](const std::string& line) {
         std::unique_lock lock(mutex);
         // Only a last line against a hang.
-        require(changed.wait_for(lock, 120s, [&] { return contains(err, line); }), "no line " + line + " in:\n" + err);
+        require(changed.wait_for(lock, scaled_timeout(120s), [&] { return contains(err, line); }), "no line " + line + " in:\n" + err);
     };
     const auto interrupt_it = [&] {
 #ifdef _WIN32
@@ -943,7 +947,7 @@ void interrupt_twice(const Options& o)
     interrupt_it();
     wait_for_line("): the simulation was stopped\n");
     interrupt_it();
-    const auto status = launcher.wait_for(120s);
+    const auto status = launcher.wait_for(scaled_timeout(120s));
     launcher.finish_output(10s);
     const bool gone = all_gone(dir, {"Deaf.pid"}, 30s);
     require(status.has_value() && status->code == 130, "the launcher ends with 130 after the second interrupt");
@@ -1033,7 +1037,7 @@ void interrupt_ending(const Options& o)
     {
         std::unique_lock lock(mutex);
         // Only a last line against a hang.
-        require(changed.wait_for(lock, 120s, [&] { return contains(err, "[vehicle_sil_launch] the simulation ended\n"); }),
+        require(changed.wait_for(lock, scaled_timeout(120s), [&] { return contains(err, "[vehicle_sil_launch] the simulation ended\n"); }),
                 "the simulation did not end:\n" + err);
     }
     wait_hanging(dir, "Stuck");
@@ -1042,7 +1046,7 @@ void interrupt_ending(const Options& o)
 #else
     ::kill(static_cast<pid_t>(launcher.id()), SIGINT);
 #endif
-    const auto status = launcher.wait_for(120s);
+    const auto status = launcher.wait_for(scaled_timeout(120s));
     launcher.finish_output(10s);
     const bool gone = all_gone(dir, {"Stuck.pid"}, 30s);
     require(status.has_value() && status->code == 130, "the launcher ends with 130 when interrupted while it waits");
@@ -1114,7 +1118,7 @@ void no_console(const Options& o)
                                       "    command: [" + ecu(o) + "]\n",
                                       {{"Deaf", "pid hang-after-end ignore-stop"}});
     vehicle_sil::process::CaptureOptions options;
-    options.timeout = 240s;
+    options.timeout = scaled_timeout(240s);
     options.working_directory = dir;
     const Captured run = vehicle_sil::process::run_captured(o.helper, {"--run-detached", shown_path(o.launch), "run", "sim.yaml"}, options);
     expect_code(run, 1, "run without a console");
@@ -1795,14 +1799,14 @@ public:
         changed_.notify_all();
     }
 
-    /// Waits for an event line that contains every one of `parts`; returns it.
+    /// Waits for an event line that contains every one of `parts` (up to 120 s, scaled); returns it.
     std::string wait_for(const std::vector<std::string>& parts)
     {
         std::unique_lock lock(mutex_);
         std::string found;
         std::size_t next = 0;
         // Only a last line against a hang: the start takes a second or two.
-        const bool seen = changed_.wait_for(lock, 120s, [&] {
+        const bool seen = changed_.wait_for(lock, scaled_timeout(120s), [&] {
             for (; next < out_.size() && found.empty(); ++next)
             {
                 if (std::all_of(parts.begin(), parts.end(), [&](const std::string& p) { return contains(out_[next], p); }))
@@ -1816,13 +1820,13 @@ public:
         return found;
     }
 
-    /// Waits until `n` event lines contain every one of `parts`.
+    /// Waits until `n` event lines contain every one of `parts` (up to 120 s, scaled).
     void wait_for_count(const std::vector<std::string>& parts, std::size_t n)
     {
         std::unique_lock lock(mutex_);
         std::size_t next = 0;
         std::size_t count = 0;
-        const bool seen = changed_.wait_for(lock, 120s, [&] {
+        const bool seen = changed_.wait_for(lock, scaled_timeout(120s), [&] {
             for (; next < out_.size(); ++next)
             {
                 count += std::all_of(parts.begin(), parts.end(), [&](const std::string& p) { return contains(out_[next], p); }) ? 1 : 0;
@@ -1834,7 +1838,8 @@ public:
 
     void write(const std::string& text) { require(process_->write_input(text), "cannot write to the launcher"); }
 
-    /// Waits until its standard error makes `done` true, or it has ended; returns the standard error.
+    /// Waits until its standard error makes `done` true, or it has ended (up to 120 s, scaled); returns
+    /// the standard error.
     template <class Done>
     std::string wait_for_error(Done done)
     {
@@ -1849,12 +1854,13 @@ public:
         return err_;
     }
 
-    /// Waits for its end and reads the rest of its output; its status and its lines, unchecked.
+    /// Waits for its end (up to `timeout`, scaled) and reads the rest of its output; its status and
+    /// its lines, unchecked.
     std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::vector<std::string>> finish_unchecked(
         std::chrono::milliseconds timeout = 120s)
     {
         release();
-        const auto status = process_->wait_for(timeout);
+        const auto status = process_->wait_for(scaled_timeout(timeout));
         process_->finish_output(10s);
         const std::lock_guard lock(mutex_);
         log("stderr of the launcher:\n" + err_);
@@ -2090,7 +2096,7 @@ void output_closed(const Options& o)
         live.wait_for({"\"phase\":\"running\""});
         // The reader goes away: the launcher's events have nowhere to go (its stderr closes too).
         live.process().finish_output(0ms);
-        const auto status = live.process().wait_for(120s);
+        const auto status = live.process().wait_for(scaled_timeout(120s));
         const bool gone = all_gone(dir, {"Engine.pid", "Brake.pid"}, 30s);
         require(status.has_value() && status->code == 130 && !status->signal,
                 "the launcher stops in order (130) when its output closes, not " +
@@ -2113,7 +2119,7 @@ void output_closed(const Options& o)
         const long ghost = read_pid((dir / "ghost.pid").string(), 60s);
         const auto closed = std::chrono::steady_clock::now();
         live.process().finish_output(0ms);
-        const auto status = live.process().wait_for(60s);
+        const auto status = live.process().wait_for(scaled_timeout(60s));
         log("closed while waiting: the launcher ended after " +
             std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - closed).count()) + " ms");
         const bool gone = all_gone(dir, {"ghost.pid"}, 30s);
@@ -2136,7 +2142,7 @@ void output_closed(const Options& o)
         live.wait_for({"\"phase\":\"stopping\""});
         wait_hanging(dir, "Stuck");
         live.process().finish_output(0ms);
-        const auto status = live.process().wait_for(60s);
+        const auto status = live.process().wait_for(scaled_timeout(60s));
         const bool gone = all_gone(dir, {"Stuck.pid"}, 30s);
         require(status.has_value() && status->code == 130, "the launcher stops (130) when its output closes while it ends the participants");
         require(gone, "no participant is left");
@@ -2171,7 +2177,7 @@ void stop_once(const Options& o)
     const bool waitsAfterClose = !live.process().poll().has_value() && process_alive(deaf);
     // The launcher's death ends Deaf.
     kill_one(live.process().id());
-    static_cast<void>(live.process().wait_for(30s));
+    static_cast<void>(live.process().wait_for(scaled_timeout(30s)));
     const bool gone = all_gone(dir, {"Deaf.pid"}, 30s);
     require(deaf > 0 && waitsAfterEof, "the end of input after a stop is no second stop: the launcher still waits for Deaf");
     require(waitsAfterClose, "a closed output after a stop is no second stop: the launcher still waits for Deaf");
@@ -2207,11 +2213,11 @@ std::uintmax_t size_now(const fs::path& file)
     return at > 0 ? static_cast<std::uintmax_t>(at) : 0;
 }
 
-/// Waits up to `timeout` until `file` has grown by `bytes`; how much it grew.
+/// Waits up to `timeout` (scaled) until `file` has grown by `bytes`; how much it grew.
 std::uintmax_t growth(const fs::path& file, std::uintmax_t bytes, std::chrono::milliseconds timeout)
 {
     const std::uintmax_t from = size_now(file);
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(timeout);
     std::uintmax_t now = from;
     while (now < from + bytes && std::chrono::steady_clock::now() < deadline)
     {
@@ -2281,10 +2287,10 @@ struct Stalled
     /// Both ECUs have ended within `timeout`.
     bool participants_gone(std::chrono::milliseconds timeout) const { return wait_gone(engine, timeout) && wait_gone(brake, timeout); }
 
-    /// Ends what is left; the launcher's status after `timeout` and its lines.
+    /// Ends what is left; the launcher's status after `timeout` (scaled) and its lines.
     std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::vector<std::string>> end(std::chrono::milliseconds timeout)
     {
-        auto status = live->process().wait_for(timeout);
+        auto status = live->process().wait_for(scaled_timeout(timeout));
         if (!status)
         {
             kill_one(live->process().id());
@@ -2325,10 +2331,11 @@ void events_stalled(const Options& o)
                       "a second stop command ends the wait: 130, " + code_text(status) + " after " + std::to_string(ms_since(asked)) + " ms");
         check_cut_events(lines);
     }
-    // --timeout-ms aborts the simulation while the reader does not read.
+    // --timeout-ms aborts the simulation while the reader does not read. The run has to be under
+    // way and its reader stalled before then (scaled: that takes longer on a slow machine).
     {
         std::vector<std::string> args = kRun;
-        args.insert(args.begin() + 1, {"--timeout-ms", "5000"});
+        args.insert(args.begin() + 1, {"--timeout-ms", std::to_string(scaled_timeout(5s).count())});
         Stalled run(o, args, checks);
         checks.expect(run.participants_gone(60s), "--timeout-ms ends the run while the reader does not read");
         // Gone here includes a process that is ending but that the launcher cannot reap yet (its
@@ -2341,7 +2348,7 @@ void events_stalled(const Options& o)
 #else
         for (const long pid : {run.engine, run.brake})
         {
-            const auto limit = std::chrono::steady_clock::now() + 30s;
+            const auto limit = std::chrono::steady_clock::now() + scaled_timeout(30s);
             while (!(::kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH) && std::chrono::steady_clock::now() < limit)
             {
                 std::this_thread::sleep_for(5ms);
@@ -2379,7 +2386,7 @@ void events_stalled(const Options& o)
     {
         Stalled run(o, {"run", "--events", "--events-stall-ms", "1500", "--log-dir", "logs", "sim.yaml"}, checks, false);
         const auto held = std::chrono::steady_clock::now();
-        const bool ended = run.live->process().wait_for(30s).has_value();
+        const bool ended = run.live->process().wait_for(scaled_timeout(30s)).has_value();
         const long long after = ms_since(held);
         const bool gone = run.participants_gone(10s);
         const auto [status, lines] = run.end(0ms);
@@ -2571,7 +2578,7 @@ void events_stderr(const Options& o)
     vehicle_sil::process::Process wrapper(shell, args, std::move(options));
     const long engine = read_pid((dir / "Engine.pid").string(), 60s);
     const long brake = read_pid((dir / "Brake.pid").string(), 60s);
-    const auto status = wrapper.wait_for(60s);
+    const auto status = wrapper.wait_for(scaled_timeout(60s));
     const long long after = ms_since(from);
     const bool gone = wait_gone(engine, 10s) && wait_gone(brake, 10s);
     if (!status)
@@ -2661,7 +2668,7 @@ void events_output(const Options& o)
                                       "  - name: Engine\n"
                                       "    command: [" + ecu(o) + "]\n");
     vehicle_sil::process::CaptureOptions options;
-    options.timeout = 120s;
+    options.timeout = scaled_timeout(120s);
     options.working_directory = dir;
     // A file: every event is in it.
     const Captured file = vehicle_sil::process::run_captured(
@@ -2688,7 +2695,7 @@ void stdin_killed(const Options& o)
     const std::vector<long> pids{read_pid((dir / "Engine.pid").string(), 60s), read_pid((dir / "Brake.pid").string(), 60s)};
     live.process().close_input();
     kill_one(live.process().id());
-    require(live.process().wait_for(120s).has_value(), "the launcher has ended");
+    require(live.process().wait_for(scaled_timeout(120s)).has_value(), "the launcher has ended");
     const bool gone = wait_gone(pids[0], 60s) && wait_gone(pids[1], 60s);
     for (const long pid : pids)
     {
@@ -3456,6 +3463,139 @@ void scenario_same(const Options& o)
     }
 }
 
+/// A scenario through a participant's variable map: the names and values are the map's, and a
+/// write takes effect in the same step as without a map.
+void variable_map(const Options& o)
+{
+    const std::string head = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n";
+    const std::string body = "  - name: Body\n    command: [" + ecu(o) + "]\n";
+    const std::string door = "  - name: Door\n    command: [" + ecu(o) + "]\n";
+    const std::string mapped = head + body +
+                               "    variables:\n"
+                               "      body.fill: { from: level, scale: 0.01, unit: ratio }\n"
+                               "      changed_ms: level_changed_at_ms\n"
+                               "      body.heater: { absent: true }\n" +
+                               door +
+                               "    variables:\n"
+                               "      drive.mode: { from: mode, map: { standby: 0, cruise: 2 } }\n";
+    const std::vector<std::pair<std::string, std::string>> behaviours{{"Body", "scenario-variables"}, {"Door", "scenario-variables"}};
+    const auto steps = [](const std::string& fill, const std::string& changed, const std::string& mode, double unit) {
+        const auto n = [unit](double percent) {
+            char text[32];
+            std::snprintf(text, sizeof(text), "%g", percent * unit);
+            return std::string(text);
+        };
+        return "vehicle_sil_scenario: 1\n"
+               "name: fill\n"
+               "steps:\n"
+               "  - set: { Body." + fill + ": " + n(5) + ", Door." + mode + " }\n"
+               "  - expect: { Body." + changed + ": 0, Door.mode_now: auto, Body." + fill + ": { near: " + n(5) + ", tolerance: 0.000001 } }\n"
+               "  - at_ms: 30\n"
+               "    set: { Body." + fill + ": " + n(6) + " }\n"
+               "  - expect: { Body." + changed + ": 30 }\n"
+               "  - at_ms: 70\n"
+               "    set: { Body." + fill + ": " + n(100) + " }\n"
+               "  - expect: { Body." + changed + ": 70, Body." + fill + ": " + n(100) + " }\n"
+               "  - ramp: { Body." + fill + ": { to: 0, over_ms: 30 } }\n"
+               "  - expect: { Body." + fill + ": 0 }\n";
+    };
+    const auto run = [&](const fs::path& dir, const std::string& what) {
+        const Captured r = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
+        expect_code(r, 0, what);
+        const std::string out = lf(r.standard_output);
+        require(!contains(out, "variable-map"), what + ": every mapping applies:\n" + out);
+        return scenario_json(out);
+    };
+    // Without a map, in the executable's names and values.
+    fs::path dir = scenario_dir(o, head + body + door, behaviours);
+    write_file(dir / "s.yaml", steps("level", "level_changed_at_ms", "mode: auto", 1.0));
+    std::string plain = run(dir, "without a map");
+    require(contains(plain, "\"status\": \"passed\""), "the scenario passes without a map:\n" + plain);
+
+    // With the map: the same steps at the same times, in the seen names and values.
+    dir = scenario_dir(o, mapped, behaviours);
+    write_file(dir / "s.yaml", steps("body.fill", "changed_ms", "drive.mode: cruise", 0.01));
+    const std::string seen = run(dir, "with a map");
+    require(contains(seen, "\"status\": \"passed\""), "the scenario passes with the map:\n" + seen);
+    const auto times = [](const std::string& json) {
+        std::string out;
+        for (std::size_t at = json.find("_ms\": "); at != std::string::npos; at = json.find("_ms\": ", at + 1))
+        {
+            out += json.substr(at, json.find('\n', at) - at) + " ";
+        }
+        return out;
+    };
+    require(!times(seen).empty(), "the result has the steps' times:\n" + seen);
+    expect_text(times(seen), times(plain), "the times of the steps with and without the map");
+    log("CHECK a scenario through a variable map: the same steps at the same times -> ok");
+
+    // The check shows what the simulation sees, and both names of what is mapped.
+    const Captured json = launch(o, {"check", "sim.yaml", "--json"}, dir);
+    expect_code(json, 0, "check --json");
+    const std::string report = lf(json.standard_output);
+    require(contains(report, "\"name\": \"body.fill\",\n          \"type\": \"real\",\n          \"causality\": \"input\",\n"
+                             "          \"unit\": \"ratio\",\n          \"min\": 0,\n          \"max\": 1,") &&
+                contains(report, "\"name\": \"body.fill\",\n          \"line\": 7,\n          \"from\": \"level\",\n"
+                                 "          \"absent\": false,\n          \"scale\": 0.01,\n          \"offset\": 0,") &&
+                contains(report, "\"name\": \"body.heater\",\n          \"line\": 9,\n          \"from\": null,\n"
+                                 "          \"absent\": true,") &&
+                contains(report, "\"name\": \"drive.mode\",\n          \"type\": \"enum\","),
+            "check --json has the seen variables and the map:\n" + report);
+
+    // The executable's own names are not names of the simulation any more; a value is checked in
+    // the seen range and against the map's names.
+    write_file(dir / "s.yaml", "vehicle_sil_scenario: 1\nsteps:\n"
+                               "  - set: { Body.level: 5 }\n"
+                               "  - set: { Body.body.fill: 1.5 }\n"
+                               "  - set: { Door.drive.mode: auto }\n"
+                               "  - set: { Body.body.heater: 1 }\n");
+    const Captured wrong = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml"}, dir);
+    expect_code(wrong, 1, "check --scenario with the executable's names");
+    const std::string said = lf(wrong.standard_output);
+    require(contains(said, "s.yaml:3: 'Body.level': participant 'Body' has no variable 'level'") &&
+                contains(said, "s.yaml:4: ") && contains(said, "Body.body.fill") &&
+                contains(said, "s.yaml:5: ") && contains(said, "standby (0), cruise (2)") &&
+                contains(said, "s.yaml:6: 'Body.body.heater': participant 'Body' has no variable 'body.heater'"),
+            "the scenario's check uses the seen variables:\n" + said);
+
+    // A mapping that does not fit the executable is an error of the check, and nothing runs.
+    write_file(dir / "sim.yaml", head + body + "    variables:\n      body.fill: { from: levle, scale: 0.01 }\n" + door);
+    const Captured unfit = launch(o, {"run", "sim.yaml"}, dir);
+    expect_code(unfit, 1, "run with a mapping that does not fit");
+    require(contains(lf(unfit.standard_output),
+                     "error: sim.yaml:7: participant 'Body': variables: body.fill: the executable has no variable 'levle': "
+                     "did you mean 'level'? Correct the name, or write { absent: true } if this executable does not have "
+                     "the variable\n"),
+            "the mapping that does not fit:\n" + lf(unfit.standard_output) + lf(unfit.standard_error));
+    log("CHECK a mapping that does not fit stops the run before it starts -> ok");
+
+    // A participant that does not describe itself cannot be compared before the run: what does
+    // not fit is said when its agent has connected (a line of the run), and with the result.
+    write_file(dir / "sim.yaml", std::string("vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n") +
+                                     "  - name: Body\n    command: [" + ecu(o) +
+                                     ", --registry-uri, \"{registry_uri}\", --name, \"{name}\"]\n    describe: false\n"
+                                     "    variables:\n      body.fill: { from: levle, scale: 0.01 }\n"
+                                     "      changed_ms: level_changed_at_ms\n" +
+                                     door);
+    const Captured late = launch(o, {"run", "sim.yaml"}, dir);
+    expect_code(late, 1, "run with a mapping that the agent's variables do not fit");
+    const std::string said_late = lf(late.standard_error);
+    const std::string result_late = lf(late.standard_output);
+    require(contains(said_late,
+                     "[vehicle_sil_launch] participant 'Body': variables: 1 of its mappings do not fit the variables its "
+                     "control agent announced and are not applied: body.fill: the executable has no variable 'levle'. In "
+                     "this run those variables are read under the executable's names and values, and a write to a name of "
+                     "these mappings is refused\n"),
+            "the line of the run about the mapping:\n" + said_late);
+    require(contains(result_late, "note: sim.yaml:9: participant 'Body': variables is not compared for a participant with "
+                                  "describe: false") &&
+                contains(result_late, "error: sim.yaml:5: participant 'Body': variables: 1 of its mappings do not fit the "
+                                      "variables its control agent announced and were not applied") &&
+                contains(result_late, "failed: 1 error, 0 warnings, 2 notes\n"),
+            "the result about the mapping:\n" + result_late);
+    log("CHECK a mapping that does not fit an undescribed participant is said in the run and fails it -> ok");
+}
+
 void scenario_disconnect(const Options& o)
 {
     // Engine off its bus at 300 ms: its last speed is the one of 200 ms, so the dashboard says it is
@@ -3755,7 +3895,7 @@ public:
     /// Waits for its end (it ends by itself): its status.
     std::optional<vehicle_sil::process::ExitStatus> wait(std::chrono::milliseconds timeout)
     {
-        const auto status = process_->wait_for(timeout);
+        const auto status = process_->wait_for(scaled_timeout(timeout));
         process_->finish_output(10s);
         const std::lock_guard lock(mutex_);
         log("output of the participant started by hand:\n" + output_);
@@ -4436,7 +4576,7 @@ int main(int argc, char** argv)
             {"events_stderr", events_stderr}, {"realtime", realtime}, {"on_time", on_time}, {"late", late}, {"stall", stall},
             {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
             {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control},
-            {"scenario", scenario}, {"scenario_same", scenario_same}, {"scenario_disconnect", scenario_disconnect},
+            {"scenario", scenario}, {"scenario_same", scenario_same}, {"variable_map", variable_map}, {"scenario_disconnect", scenario_disconnect},
             {"scenario_failures", scenario_failures}, {"manual", manual},
             {"manual_late", manual_late}, {"manual_fails", manual_fails}, {"manual_stop", manual_stop},
             {"manual_frozen", manual_frozen}, {"manual_thawed", manual_thawed}, {"manual_again", manual_again},

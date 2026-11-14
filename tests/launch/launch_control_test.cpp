@@ -6,6 +6,7 @@
 // reached stop_at_ms, the hub has the values of the last steps before it; nothing arrived late.
 //
 // usage: vehicle_sil_launch_control_test <test ECU executable> <scratch directory> <process helper> <part>
+#include "test_timeout_scale.hpp"
 #include "topics.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
@@ -39,6 +40,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 namespace fs = std::filesystem;
 
@@ -117,7 +119,7 @@ void one_run(const fs::path& ecu, const fs::path& dir, int round)
             request.writes.push_back({names[i], "gain", control::Value{std::int64_t{1000} * round + static_cast<std::int64_t>(i)}});
         }
         seq = h.write(std::move(request));
-        queued = h.wait_queued(seq, 30s);
+        queued = h.wait_queued(seq, scaled_timeout(30s));
     };
     std::string lines;
     options.write_line = [&lines](std::string_view line) { lines += std::string(line) + "\n"; };

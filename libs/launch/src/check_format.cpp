@@ -386,11 +386,54 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
             }
             if (result.ecu && result.ecu->variables_reported)
             {
-                vehicle_sil::detail::write_variables(w, "variables", result.ecu->description.variables);
+                // As the simulation sees them (the run's hub applies the same map).
+                vehicle_sil::detail::write_variables(w, "variables", seen_variables(p, *result.ecu).schema());
             }
             else
             {
                 w.null("variables");
+            }
+            // Only for an entry with "variables": the names on both sides.
+            if (!p.variables.empty())
+            {
+                w.begin_array("variable_map");
+                for (std::size_t m = 0; m < p.variables.size(); ++m)
+                {
+                    const control::VariableMapping& mapping = p.variables[m];
+                    w.begin_object();
+                    w.string("name", mapping.name);
+                    w.integer("line", static_cast<std::int64_t>(p.variable_lines[m]));
+                    optional_text("from", mapping.from);
+                    w.boolean("absent", mapping.absent);
+                    w.real("scale", mapping.linear() ? std::optional<double>(mapping.scale.value_or(1.0)) : std::nullopt);
+                    w.real("offset", mapping.linear() ? std::optional<double>(mapping.offset.value_or(0.0)) : std::nullopt);
+                    if (mapping.unit)
+                    {
+                        w.string("unit", *mapping.unit);
+                    }
+                    else
+                    {
+                        w.null("unit");
+                    }
+                    if (mapping.map)
+                    {
+                        w.begin_array("map");
+                        for (const auto& item : *mapping.map)
+                        {
+                            w.begin_object();
+                            w.string("name", item.name);
+                            w.integer("value", item.value);
+                            w.end_object();
+                        }
+                        w.end_array();
+                    }
+                    else
+                    {
+                        w.null("map");
+                    }
+                    w.end_object();
+                }
+                w.end_array();
             }
             if (result.ecu && result.ecu->description.control)
             {

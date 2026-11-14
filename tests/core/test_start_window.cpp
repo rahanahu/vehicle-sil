@@ -24,6 +24,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 namespace orch = SilKit::Services::Orchestration;
 using vehicle_sil::unit::coordinated_options;
@@ -81,7 +82,7 @@ TEST_CASE(start_window_an_open_communication_ready_keeps_every_participant_befor
     start_b.join();
     start_controller.join();
     CHECK_EQ(started.load(), 3);
-    CHECK(controller.wait_until_finished(30s) == orch::ParticipantState::Shutdown);
+    CHECK(controller.wait_until_finished(scaled_timeout(30s)) == orch::ParticipantState::Shutdown);
     CHECK(steps_a.load() >= 50);
     CHECK(steps_b.load() >= 50);
 
@@ -132,7 +133,7 @@ TEST_CASE(start_window_the_controllers_function_runs_before_any_step_and_on_its_
     CHECK(window_thread != starter_thread);
     CHECK(state_of_a != orch::ParticipantState::Running);
     CHECK(std::chrono::steady_clock::now() - begin >= 200ms);
-    CHECK(controller.wait_until_finished(30s) == orch::ParticipantState::Shutdown);
+    CHECK(controller.wait_until_finished(scaled_timeout(30s)) == orch::ParticipantState::Shutdown);
     CHECK(steps.load() >= 20);
     // After the start there is no window to set.
     CHECK(throws<std::logic_error>([&] { controller.set_start_window([](const StartWindow&) {}); }));
@@ -165,7 +166,7 @@ TEST_CASE(start_window_the_peer_status_observer_sees_the_other_participants_stat
     std::thread start_a([&] { a.start(60s); });
     controller.start(60s);
     start_a.join();
-    CHECK(controller.wait_until_finished(30s) == orch::ParticipantState::Shutdown);
+    CHECK(controller.wait_until_finished(scaled_timeout(30s)) == orch::ParticipantState::Shutdown);
     a.stop("done");
     const auto has = [&](const std::string& name, orch::ParticipantState state) {
         const std::lock_guard lock(mutex);
@@ -271,7 +272,7 @@ TEST_CASE(start_window_that_opens_after_start_gave_up_is_completed_without_its_f
             CHECK(std::chrono::steady_clock::now() - begin < 4s);
             start_a.join();
             // In order: Shutdown, not an Error after a lost connection.
-            CHECK(a.wait_until_finished(30s) == orch::ParticipantState::Shutdown);
+            CHECK(a.wait_until_finished(scaled_timeout(30s)) == orch::ParticipantState::Shutdown);
             late_windows += calls.load() == 0 ? 1 : 0;
         }
         // The window did open after start() had given up, and its function was not called.

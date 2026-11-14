@@ -12,7 +12,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -237,6 +237,17 @@ def wait_until(condition: Callable[[], bool], timeout: float = 10) -> bool:
             return True
         time.sleep(0.02)
     return condition()
+
+
+async def until_async(condition: Callable[[], Awaitable[bool]], timeout: float = 10) -> bool:
+    """Whether the awaited `condition` becomes true within `timeout` seconds (scaled). For a test that runs in
+    the event loop (run_async), where wait_until would block what it waits for."""
+    end = time.monotonic() + scaled(timeout)
+    while time.monotonic() < end:
+        if await condition():
+            return True
+        await asyncio.sleep(0.02)
+    return await condition()
 
 
 class Client:

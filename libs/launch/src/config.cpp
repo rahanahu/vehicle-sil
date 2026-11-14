@@ -30,7 +30,15 @@ constexpr const char* kSpeedMeaning =
     "simulation seconds per wall-clock second from 0.000001 to 1000000 (1: real time, 2: twice as fast, 0.5: half as "
     "fast), or max (as fast as possible)";
 const std::vector<std::string> kNetworkKeys = {"name", "kind"};
-const std::vector<std::string> kParticipantKeys = {"name", "command", "step_ms", "describe", "required", "enabled", "manual"};
+const std::vector<std::string> kParticipantKeys = {"name",     "command", "step_ms", "describe",
+                                                   "required", "enabled", "manual",  "variables"};
+/// The keys of one mapping of a participant's variables (control::VariableMapping). A new form of
+/// mapping gets its key here and in read_variable().
+const std::vector<std::string> kVariableMapKeys = {"from", "scale", "offset", "map", "unit", "absent"};
+constexpr const char* kVariableForms =
+    "the executable's name of the variable (engine.speed: rpm), { from: rpm, scale: 0.1, offset: 0 } (the value seen "
+    "is the executable's value * scale + offset), { from: gear_raw, map: { P: 0, R: 1 } } (names for its values) or "
+    "{ absent: true } (this executable does not have it)";
 
 using detail::join;
 
@@ -633,6 +641,10 @@ private:
                 {
                     participant.manual = boolean(child, prefix, key, who).value_or(false);
                 }
+                else if (key == "variables")
+                {
+                    read_variables(child, prefix, who, participant);
+                }
                 else if (key != "name")
                 {
                     unknown_key(child, key, prefix, kParticipantKeys);
@@ -684,6 +696,14 @@ private:
                               "step): remove it, or set describe: true for an ecu_main executable",
                      who);
             }
+            if (!participant.describe && !participant.variables.empty())
+            {
+                note("variable-map-not-checked", participant.variable_lines.front(),
+                     prefix + "variables is not compared for a participant with describe: false (the launcher does not "
+                              "know its variables before the run): the mappings apply when its control agent connects, "
+                              "and vehicle_sil_launch run reports those that do not fit",
+                     who);
+            }
             if (name)
             {
                 const auto [it, inserted] = names.emplace(*name, participant.line);
@@ -700,6 +720,195 @@ private:
             participant.valid = usable;
             config.participants.push_back(std::move(participant));
         }
+    }
+
+    // --- a participant's variable map ---
+
+    void read_variables(ryml::id_type node, const std::string& prefix, const std::string& who, ParticipantConfig& participant)
+    {
+        if (!tree_.is_map(node))
+        {
+            error("value", doc_.line(node),
+                  prefix + "variables must be a mapping of the names the simulation uses to the executable's variables "
+                           "(engine.speed: rpm), not " + shown_value(node),
+                  who);
+            return;
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            const std::string name = detail::to_string(tree_.key(child));
+            if (!first_occurrence(seen, name, child, prefix + "variables: "))
+            {
+                continue;
+            }
+            if (auto mapping = read_variable(child, name, prefix + "variables: " + name + ": ", who))
+            {
+                participant.variables.push_back(std::move(*mapping));
+                participant.variable_lines.push_back(doc_.line(child));
+            }
+        }
+    }
+
+    /// One mapping, or empty (and an error) if it is not one of the forms.
+    std::optional<control::VariableMapping> read_variable(ryml::id_type node, const std::string& name,
+                                                          const std::string& prefix, const std::string& who)
+    {
+        const std::size_t line = doc_.line(node);
+        control::VariableMapping out;
+        out.name = name;
+        if (name.empty())
+        {
+            error("value", line, prefix + "the name the simulation uses for the variable is empty: write it before the ':'", who);
+            return std::nullopt;
+        }
+        if (is_scalar(node) && !is_null(node) && !tree_.val(node).empty())
+        {
+            out.from = detail::to_string(tree_.val(node));
+            return out;
+        }
+        if (!tree_.is_map(node))
+        {
+            error("value", line, prefix + "must be " + kVariableForms + ", not " + shown_value(node), who);
+            return std::nullopt;
+        }
+        bool ok = true;
+        const auto bad = [&](ryml::id_type at, const std::string& text) {
+            error("value", doc_.line(at), prefix + text, who);
+            ok = false;
+        };
+        std::map<std::string, std::size_t> seen;
+        bool absentWritten = false;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            const std::string key = detail::to_string(tree_.key(child));
+            if (!first_occurrence(seen, key, child, prefix))
+            {
+                ok = false;
+            }
+            else if (key == "from")
+            {
+                if (!is_scalar(child) || is_null(child) || tree_.val(child).empty())
+                {
+                    bad(child, "from must be the executable's name of the variable, not " + shown_value(child));
+                    continue;
+                }
+                out.from = detail::to_string(tree_.val(child));
+            }
+            else if (key == "scale" || key == "offset")
+            {
+                double value = 0;
+                if (!plain_number(child, value) || (key == "scale" && value == 0.0))
+                {
+                    bad(child, key + " must be a number" + (key == "scale" ? " other than 0" : "") +
+                                   " (the value seen is the executable's value * scale + offset), not " + shown_value(child));
+                    continue;
+                }
+                (key == "scale" ? out.scale : out.offset) = value;
+            }
+            else if (key == "map")
+            {
+                out.map = read_value_names(child, prefix, who);
+                ok = ok && out.map.has_value();
+            }
+            else if (key == "unit")
+            {
+                if (!is_scalar(child))
+                {
+                    bad(child, "unit must be the unit of the value seen (a text such as rpm), not " + shown_value(child));
+                    continue;
+                }
+                out.unit = is_null(child) ? std::string{} : detail::to_string(tree_.val(child));
+            }
+            else if (key == "absent")
+            {
+                absentWritten = true;
+                // Only true: a variable that is there needs no entry.
+                const auto absent = boolean(child, prefix, key, who);
+                if (!absent)
+                {
+                    ok = false;
+                }
+                else if (!*absent)
+                {
+                    bad(child, "absent: false says nothing: remove it (a variable that is not listed is seen under its "
+                               "own name)");
+                }
+                out.absent = true;
+            }
+            else
+            {
+                unknown_key(child, key, prefix, kVariableMapKeys);
+                ok = false;
+            }
+        }
+        if (!ok)
+        {
+            return std::nullopt;
+        }
+        if (absentWritten && seen.size() > 1)
+        {
+            bad(node, "absent: true says that this executable does not have the variable, so it takes no other key: "
+                      "remove the others, or absent");
+        }
+        else if (!absentWritten && out.from.empty())
+        {
+            bad(node, "it does not name the executable's variable: add from: <the executable's name of it>");
+        }
+        else if (out.map && out.linear())
+        {
+            bad(node, "scale and offset cannot be combined with map: use one of the two (scale and offset convert a "
+                      "number, map names the values of an integer or an enum)");
+        }
+        return ok ? std::optional<control::VariableMapping>(std::move(out)) : std::nullopt;
+    }
+
+    /// The names of a variable's values ("map": { P: 0, R: 1 }), or empty (and an error).
+    std::optional<std::vector<control::EnumItem>> read_value_names(ryml::id_type node, const std::string& prefix,
+                                                                   const std::string& who)
+    {
+        if (!tree_.is_map(node) || tree_.num_children(node) == 0)
+        {
+            error("value", doc_.line(node),
+                  prefix + "map must give the names of the executable's values ({ P: 0, R: 1 }), not " + shown_value(node), who);
+            return std::nullopt;
+        }
+        std::vector<control::EnumItem> items;
+        std::map<std::string, std::size_t> seen;
+        bool ok = true;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            control::EnumItem item;
+            item.name = detail::to_string(tree_.key(child));
+            if (!first_occurrence(seen, item.name, child, prefix + "map: "))
+            {
+                ok = false;
+                continue;
+            }
+            if (item.name.empty() || !plain_integer(child, item.value))
+            {
+                error("value", doc_.line(child),
+                      prefix + "map: " + (item.name.empty() ? "a name is empty" : item.name + " must be the executable's value "
+                                                                                  "for that name, a whole number, not " +
+                                                                                      shown_value(child)),
+                      who);
+                ok = false;
+                continue;
+            }
+            const auto same = std::find_if(items.begin(), items.end(),
+                                           [&](const control::EnumItem& e) { return e.value == item.value; });
+            if (same != items.end())
+            {
+                error("value", doc_.line(child),
+                      prefix + "map: " + same->name + " and " + item.name + " are both " + std::to_string(item.value) +
+                          ": give each value one name",
+                      who);
+                ok = false;
+                continue;
+            }
+            items.push_back(std::move(item));
+        }
+        return ok ? std::optional<std::vector<control::EnumItem>>(std::move(items)) : std::nullopt;
     }
 
     void read_command(ryml::id_type node, const std::string& prefix, const std::string& who, ParticipantConfig& participant)

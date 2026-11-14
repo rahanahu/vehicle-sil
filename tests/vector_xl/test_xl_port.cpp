@@ -22,6 +22,7 @@ namespace {
 namespace can = SilKit::Services::Can;
 using namespace vehicle_sil::vector_xl;
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using vehicle_sil::test::frame_matrix;
 using vehicle_sil::test::MatrixFrame;
 using vehicle_sil::test::to_fake;
@@ -67,10 +68,12 @@ public:
         };
     }
 
+    // The waits below are upper bounds for events that will come (scaled); a check that nothing
+    // came passes 0 ms.
     std::vector<Event> wait_for(std::size_t count, std::chrono::milliseconds timeout = 2000ms)
     {
         std::unique_lock lock(mutex_);
-        cv_.wait_for(lock, timeout, [&] { return events_.size() >= count; });
+        cv_.wait_for(lock, scaled_timeout(timeout), [&] { return events_.size() >= count; });
         return events_;
     }
 
@@ -78,7 +81,7 @@ public:
     std::vector<Event> wait_for_kind(ExternalEventKind kind, std::chrono::milliseconds timeout = 2000ms)
     {
         std::unique_lock lock(mutex_);
-        cv_.wait_for(lock, timeout, [&] {
+        cv_.wait_for(lock, scaled_timeout(timeout), [&] {
             return std::any_of(events_.begin(), events_.end(), [&](const Event& e) { return e.kind == kind; });
         });
         return events_;
@@ -87,7 +90,7 @@ public:
     std::vector<ExternalBusState> wait_for_bus_states(std::size_t count, std::chrono::milliseconds timeout = 2000ms)
     {
         std::unique_lock lock(mutex_);
-        cv_.wait_for(lock, timeout, [&] { return bus_states_.size() >= count; });
+        cv_.wait_for(lock, scaled_timeout(timeout), [&] { return bus_states_.size() >= count; });
         return bus_states_;
     }
 
@@ -307,7 +310,7 @@ TEST_CASE(xl_port_transmits_onto_the_bus)
     }
     for (const auto& frame : matrix)
     {
-        const auto received = node.receive(1000ms);
+        const auto received = node.receive(scaled_timeout(1000ms));
         CHECK(received.has_value());
         CHECK(*received == as_transmitted_on_xl(frame));
     }
@@ -487,19 +490,15 @@ TEST_CASE(xl_port_does_not_take_one_refused_query_for_a_lost_device)
     // A full driver queue is no refusal at all.
     fake_xl::set_transmit_queue_full(true);
     const unsigned before = fake_xl::chip_state_requests();
-    std::this_thread::sleep_for(150ms);
-    CHECK(fake_xl::chip_state_requests() >= before + 3);
+    CHECK(vehicle_sil::unit::eventually([&] { return fake_xl::chip_state_requests() >= before + 3; }, 2s));
     CHECK(sink.wait_for(1, 0ms).empty());
     fake_xl::set_transmit_queue_full(false);
 
-    // Two refusals in a row, then an answer: no fault.
-    fake_xl::set_chip_state_refused(true);
+    // Two refusals in a row, then an answer: no fault. (Counted by the fake, so that a slow test
+    // thread does not let a third one through.)
     const unsigned refusedFrom = fake_xl::chip_state_requests();
-    while (fake_xl::chip_state_requests() < refusedFrom + 2)
-    {
-        std::this_thread::sleep_for(1ms);
-    }
-    fake_xl::set_chip_state_refused(false);
+    fake_xl::refuse_next_chip_state_requests(2);
+    CHECK(vehicle_sil::unit::eventually([&] { return fake_xl::chip_state_requests() >= refusedFrom + 3; }, 2s));
     std::this_thread::sleep_for(100ms);
     CHECK(sink.wait_for(1, 0ms).empty());
 
@@ -591,7 +590,7 @@ TEST_CASE(xl_port_stop_sends_what_it_accepted_before_going_off_the_bus)
     CHECK(std::chrono::steady_clock::now() - begin >= 150ms);
     for (int i = 0; i < 3; ++i)
     {
-        CHECK(f.node.receive(1000ms).has_value());
+        CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
     }
     CHECK(of_kind(f.sink.wait_for(3, 0ms), ExternalEventKind::TransmitUnsent).empty());
 }
@@ -639,12 +638,12 @@ TEST_CASE(xl_port_refuses_frames_while_the_bus_is_stuck_longer_than_the_transmit
     fake_xl::set_bus_blocked(kHardware1, false);
     for (int i = 0; i < 3; ++i)
     {
-        CHECK(f.node.receive(1000ms).has_value());
+        CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
     }
     CHECK(!f.node.receive(100ms).has_value());
     CHECK_EQ(of_kind(f.sink.wait_for(3, 1000ms), ExternalEventKind::OwnTransmission).size(), 3u);
     CHECK(f.port->transmit(frame_matrix()[2].to_silkit()) == TransmitResult::Ok);
-    CHECK(f.node.receive(1000ms).has_value());
+    CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
     CHECK_EQ(of_kind(f.sink.wait_for(4, 1000ms), ExternalEventKind::OwnTransmission).size(), 4u); // its receipt
     f.port->stop();
     CHECK(of_kind(f.sink.wait_for(100, 0ms), ExternalEventKind::TransmitUnsent).empty());
@@ -652,18 +651,21 @@ TEST_CASE(xl_port_refuses_frames_while_the_bus_is_stuck_longer_than_the_transmit
 
 TEST_CASE(xl_port_a_lost_receipt_does_not_make_a_working_bus_look_stuck)
 {
+    // The receipts come, but the port's thread may lag behind them on a slow machine: the time
+    // that would make the bus look stuck is scaled, and the gaps with it.
+    const auto timeout = scaled_timeout(50ms);
     XlCanPortOptions options;
-    options.transmit_timeout = 50ms;
+    options.transmit_timeout = timeout;
     BlockedBusFixture f(options);
     fake_xl::lose_next_receipt(kHardware1);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
-    CHECK(f.node.receive(1000ms).has_value());
-    std::this_thread::sleep_for(150ms); // a gap longer than the timeout, with one receipt missing
+    CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
+    std::this_thread::sleep_for(3 * timeout); // a gap longer than the timeout, with one receipt missing
     for (int i = 0; i < 5; ++i)
     {
         CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
-        CHECK(f.node.receive(1000ms).has_value());
-        std::this_thread::sleep_for(80ms);
+        CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
+        std::this_thread::sleep_for(timeout + 30ms);
     }
 }
 
@@ -690,7 +692,7 @@ TEST_CASE(xl_port_lets_a_probe_through_while_stuck)
         std::this_thread::sleep_for(5ms);
     }
     CHECK(probed);
-    CHECK(f.node.receive(1000ms).has_value());
+    CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
     std::this_thread::sleep_for(20ms); // the receipt
     for (int i = 0; i < 3; ++i)
     {
@@ -757,7 +759,7 @@ TEST_CASE(xl_port_does_not_use_the_transmit_timeout_without_init_access)
     BlockedBusFixture f(options, false);
     CHECK(!f.port->has_init_access());
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
-    CHECK(f.node.receive(1000ms).has_value());
+    CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
     fake_xl::set_bus_blocked(kHardware1, true);
     CHECK(f.port->transmit(frame_matrix()[1].to_silkit()) == TransmitResult::Ok);
     std::this_thread::sleep_for(150ms);
@@ -797,7 +799,7 @@ TEST_CASE(xl_port_restarts_the_channel_after_a_lasting_bus_off)
     // The controller is error active again and the bus works: frames go out.
     fake_xl::set_bus_blocked(kHardware1, false);
     CHECK(f.port->transmit(frame_matrix()[2].to_silkit()) == TransmitResult::Ok);
-    CHECK(f.node.receive(1000ms).has_value());
+    CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
     f.port->stop();
 }
 
@@ -937,7 +939,7 @@ TEST_CASE(xl_port_restart_ends_a_stuck_state)
     // The waiting frames went with the deactivation: the next frame goes to the driver at once.
     fake_xl::set_bus_blocked(kHardware1, false);
     CHECK(f.port->transmit(frame_matrix()[2].to_silkit()) == TransmitResult::Ok);
-    CHECK(f.node.receive(1000ms).has_value());
+    CHECK(f.node.receive(scaled_timeout(1000ms)).has_value());
     f.port->stop();
 }
 
