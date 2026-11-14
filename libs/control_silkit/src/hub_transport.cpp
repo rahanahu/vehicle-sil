@@ -123,7 +123,7 @@ struct HubTransport::State
     wire::SubmittedMessage submitted;
 
     std::atomic<std::uint64_t> n_hellos{0}, n_messages{0}, n_bytes{0}, n_undecodable{0}, n_unknown{0}, n_late{0}, n_calls{0},
-        n_refused{0};
+        n_refused{0}, n_last_words{0};
     std::atomic<std::int64_t> handler_ns{0}, max_handler_ns{0};
 
     /// Times a receive handler and holds handler_mutex for it.
@@ -189,6 +189,27 @@ struct HubTransport::State
         }
         changed.notify_all();
         hub->agent_ended(link->connection, reason);
+    }
+
+    /// Tells the agent `session` that its last word has arrived: its transport waits for this
+    /// before its participant is destroyed (which would drop a last word not yet written to the
+    /// socket). After the connection was ended, so that the agent finds everything settled (the
+    /// order does not rely on when SIL Kit writes what is published from one of its handlers).
+    /// Also for a session that has ended already or was never connected: nothing waits here for
+    /// that agent, and it need not wait either. An agent that does not know the answer ignores
+    /// it. On a receive handler (handler_mutex held), as a probe.
+    void answer_last_word(std::uint64_t session)
+    {
+        const std::lock_guard lock(sender->mutex);
+        if (sender->closed)
+        {
+            return;
+        }
+        wire::encode_session(wire::Kind::LastWordReceived, session, sender->bytes);
+        // Counted first: whoever receives the answer may look at the count at once (this does
+        // not rely on when SIL Kit writes what is published from one of its handlers).
+        n_last_words.fetch_add(1, std::memory_order_relaxed);
+        sender->commands->Publish(detail::span_of(sender->bytes));
     }
 
     void on_hello(const pubsub::DataMessageEvent& event)
@@ -325,6 +346,10 @@ struct HubTransport::State
         if (!link)
         {
             count_unknown(step.session);
+            if (step.final)
+            {
+                answer_last_word(step.session);
+            }
             return;
         }
         n_messages.fetch_add(1, std::memory_order_relaxed);
@@ -358,6 +383,7 @@ struct HubTransport::State
         if (step.final)
         {
             end(link, "the participant's control agent has ended");
+            answer_last_word(step.session);
         }
     }
 
@@ -489,7 +515,8 @@ bool HubTransport::State::Link::send(const control::Command& command)
     const std::lock_guard lock(sender->mutex);
     // Not to an agent that has not said that it receives commands (the command might reach
     // nobody, and nothing would ever settle it), nor to a participant that is leaving or has left
-    // (its agent's last word may not arrive).
+    // (if its agent's last word does not arrive, nothing would settle the command before this
+    // transport is destroyed).
     if (!open || sender->closed || !ready || has_finished(sender->runtime->peer_status(info.participant)))
     {
         return false;
@@ -675,6 +702,7 @@ HubTransportStats HubTransport::stats() const
     out.unknown = s.n_unknown.load(std::memory_order_relaxed);
     out.late_messages = s.n_late.load(std::memory_order_relaxed);
     out.refused_hellos = s.n_refused.load(std::memory_order_relaxed);
+    out.last_words = s.n_last_words.load(std::memory_order_relaxed);
     out.handler_calls = s.n_calls.load(std::memory_order_relaxed);
     out.handler_time = std::chrono::nanoseconds(s.handler_ns.load(std::memory_order_relaxed));
     out.max_handler_time = std::chrono::nanoseconds(s.max_handler_ns.load(std::memory_order_relaxed));

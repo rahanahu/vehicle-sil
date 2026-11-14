@@ -306,8 +306,9 @@ public:
         out_.event([](EventStream& e) { e.phase(Phase::Stopping); });
         participants_.end_children(ran || start_.before_start_failed(), interrupts_at_end_);
         participants_.end_manual(*controller, ran || start_.before_start_failed(), interrupts_at_end_);
-        // The agents have said their last word (their processes have ended); what is still open
-        // in the hub is settled here.
+        // The agents have said their last word and waited for this side's answer (their processes
+        // have ended); what is still open in the hub (of a process that was killed, or whose last
+        // word did not arrive within its wait) is settled here.
         close_connection(std::move(transport), std::move(controller), std::move(registry));
         return outcome_;
     }

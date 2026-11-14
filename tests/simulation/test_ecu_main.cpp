@@ -767,12 +767,15 @@ TEST_CASE(ecu_main_offers_its_variables_to_the_simulation_unless_no_control)
         std::vector<std::string> args{"--registry-uri", registry.registry_uri(), "--name", name};
         args.insert(args.end(), extra.begin(), extra.end());
         Probe probe;
-        const Result r = call(args, probe);
+        // Plenty of time for the hub's answer to the last word: the hub is there and answers, so
+        // the ECU does not wait long, however busy the machine is.
+        const Result r = call(args, probe, EcuMainOptions{.name = "Engine", .step = 10ms, .last_word_wait = 60s});
         starter.join();
         require(r.code == 0, "the ECU ran to the end of the simulation", r);
         require(start_error.empty(), "the controller started: " + start_error, r);
         require(probe.steps >= 10, "the ECU stepped", r);
-        // The ECU's last word reaches the hub while the controller's participant is still there.
+        // The ECU waited for the hub's answer to its last word before it let its participant go:
+        // the hub has ended the connection. (An ECU with --no-control says none: nothing to wait for.)
         const auto deadline = std::chrono::steady_clock::now() + 20s;
         while (std::chrono::steady_clock::now() < deadline)
         {

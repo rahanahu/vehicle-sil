@@ -7,6 +7,7 @@
 #include "vehicle_sil/core/sim_time.hpp"
 #include "vehicle_sil/ecu/ecu.hpp"
 
+#include <chrono>
 #include <functional>
 #include <string>
 #include <utility>
@@ -21,6 +22,13 @@ struct EcuMainOptions
     std::string name{};
     /// The ECU's step (> 0).
     SimDuration step{};
+    /// With --registry-uri, for an ECU with variables: the longest the ECU waits, when it ends, for
+    /// the simulation's answer to its control agent's last word (the results of the writes that
+    /// were cancelled), so that the last word arrives before the ECU leaves
+    /// (control_silkit::AgentTransportOptions::last_word_wait). The answer usually comes at once;
+    /// the whole time passes only if the launcher has gone or is of a version that does not
+    /// answer. 0: do not wait. A negative value fails the set-up (exit code 3).
+    std::chrono::milliseconds last_word_wait{500};
 };
 
 /// The main() of an executable that is one ECU, set up by `set_up` (called once with the ECU,

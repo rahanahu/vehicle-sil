@@ -119,7 +119,7 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
   - Coordinated の participant の CommunicationReady のハンドラーは、必須の participant が全員 ServicesCreated になり、全員から返事が届き、自分の publish/subscribe の購読が確認された後で呼ばれます（ほかの participant は、その時点でまだ CommunicationInitializing の途中のことがあります。コマンドは受け取れます）。相手は、購読の知らせを受けると、履歴（hello）を送ってから確認を返すので、必須の ECU が始める前に送った hello は、窓が開く前に届いています。非同期のハンドラーでは、`CompleteCommunicationReadyHandlerAsync` を呼ぶまで、誰も ReadyToRun に進まず、どのステップも始まりません。その間、publish/subscribe は届きます。`CompleteCommunicationReadyHandlerAsync` は、ハンドラーが呼ばれる前に呼ぶと無視されます（`ParticipantRuntime` が、呼ばれた後にだけ渡します）。
   - 始めたライフサイクルを持つ participant が、Shutdown せずに接続を切ると、ほかの participant にはその状態が Error として届きます（`HubTransport` が、いなくなった Agent の接続を終えるのに使います）。
   - participant の構成の `EnableMessageAggregation` は既定の Off のままであること（On にした participant は、データのメッセージを溜めてから送るので、上の順序の前提が変わります）。
-  - participant を壊すとき、すでに I/O スレッドの待ち行列に積んだ送信は、接続を閉じる処理より前に実行されます（Agent の「最後の知らせ」が届くのは、これによります。届かなくても、接続は `HubTransport` を壊すときに終わります）。
+  - participant を壊すと、まだソケットに書いていない送信は捨てられます（同じ相手への前の送信を書いている途中なら、その後ろに積んだ送信は書かれません）。そのため、Agent の「最後の知らせ」は、Hub の返事を待ってから participant を壊します（`AgentTransport` のデストラクター。internals/control.md の「接続の終わり」）。participant が生きている間は、積んだ送信は順に書かれます。
 - 時刻同期した participant が送るメッセージのタイムスタンプは、送信時のステップの時刻です。
 - CAN の `SendFrame` の userContext は、ポインタの値（64 ビット）のまま運ばれます。ネットワークシミュレーターの `CanFrameRequest` と送信確認には届き、他の受信者の RX のフレームでは `nullptr` になります（`CanController::ReceiveMsg`）。`SilKitCanPort` は送信時刻を入れ、簡易 CAN Network Simulator がそれを読みます。
 - Network Simulator API（experimental）: あるネットワークの模擬を引き受ける participant が現れると、そのネットワークの CAN コントローラーは詳細シミュレーションに切り替わり、送信の要求、ボーレート、モードの変更をその participant に送ります。コントローラーの状態（`Started` など）は、シミュレーターが返す状態の変化で初めて変わります。`ControllerDescriptor` は見つけた順の通し番号で、決定的ではありません。

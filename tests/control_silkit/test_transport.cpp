@@ -22,11 +22,14 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -48,6 +51,8 @@ using vehicle_sil::unit::InProcessRegistry;
 using vehicle_sil::unit::throws;
 using vehicle_sil::unit::throws_with;
 namespace orch = SilKit::Services::Orchestration;
+namespace pubsub = SilKit::Services::PubSub;
+namespace topics = vehicle_sil::control_silkit::detail;
 using Wall = std::chrono::steady_clock;
 
 SimTime at(SimDuration d)
@@ -103,6 +108,9 @@ struct EcuOptions
     std::size_t max_message_bytes = wire::kMaxMessageBytes;
     /// The application throws in its step at this time.
     std::optional<SimTime> fail_at{};
+    /// AgentTransportOptions::last_word_wait. A test that checks what the hub has right after the
+    /// ECU ended gives it plenty: with a hub that answers, the wait ends with the answer.
+    std::chrono::milliseconds last_word_wait = AgentTransportOptions{}.last_word_wait;
 };
 
 /// An ECU with the inputs `cmd` and `timed`, the parameter `gain` and the output `steps` (the
@@ -178,11 +186,13 @@ struct TestEcu
             AgentTransportOptions t;
             t.max_message_bytes = options.max_message_bytes;
             t.step = options.virtual_time ? options.step : SimDuration::zero();
+            t.last_word_wait = options.last_word_wait;
             transport = std::make_unique<AgentTransport>(peer->agent(), peer->runtime(), t);
         }
     }
 
-    /// As an ECU's process ends: the steps stop, the transport says its last word, the participant goes.
+    /// As an ECU's process ends: the steps stop, the transport says its last word (and waits for
+    /// the hub's answer), and the participant goes right after it.
     ~TestEcu() { end(); }
 
     void end()
@@ -976,9 +986,11 @@ TEST_CASE(the_end_of_an_agent_settles_the_operations_that_wait_for_it)
 {
     const InProcessRegistry registry;
     HubSide side(registry.uri, {"A", "B", "Failing"});
-    TestEcu a("A", registry.uri);
-    TestEcu b("B", registry.uri);
-    TestEcu failing("Failing", registry.uri, {.fail_at = at(15ms)});
+    // The hub answers every last word here, so no ECU waits long: with plenty of time for the
+    // answer, what the hub has when end() has returned does not depend on how busy the machine is.
+    TestEcu a("A", registry.uri, {.last_word_wait = 60s});
+    TestEcu b("B", registry.uri, {.last_word_wait = 60s});
+    TestEcu failing("Failing", registry.uri, {.fail_at = at(15ms), .last_word_wait = 60s});
     start_together(*side.controller, {a.peer.get(), b.peer.get(), failing.peer.get()});
     auto& hub = side.hub;
     CHECK(side.controller->wait_until_paused(20s).has_value());
@@ -1019,7 +1031,7 @@ TEST_CASE(the_end_of_an_agent_settles_the_operations_that_wait_for_it)
     check_status(*refused_result, "Failing", TargetStatus::Invalid);
 
     // The others end in order: their last word carries the cancelled writes. From the moment
-    // their lifecycle stops, a write is refused at once (their last word may not arrive, and
+    // their lifecycle stops, a write is refused at once (were their last word not to arrive,
     // nothing else would settle it).
     side.controller->abort();
     CHECK(eventually([&] { return has_finished(side.controller->runtime().peer_status("A")); }, 20s));
@@ -1027,39 +1039,74 @@ TEST_CASE(the_end_of_an_agent_settles_the_operations_that_wait_for_it)
     const auto too_late_result = hub.wait_done(too_late, 20s);
     CHECK(too_late_result.has_value());
     check_status(*too_late_result, "A", TargetStatus::Invalid);
+    // The ECU ends as its process would: the transport, and right after it the participant. The
+    // transport has waited for the hub's answer to its last word, and the hub answers after it
+    // has ended the connection: nothing is left to wait for here.
     a.end();
-    const auto after_a = hub.wait_done(seq, 100ms);
-    CHECK(!after_a.has_value()); // B is still open
-    CHECK(eventually([&] { return target(*hub.operation(seq), "A").status == TargetStatus::Cancelled; }, 20s));
+    check_status(*hub.operation(seq), "A", TargetStatus::Cancelled);
+    CHECK(!hub.wait_done(seq, 100ms).has_value()); // B is still open
     b.end();
-    const auto all = hub.wait_done(seq, 20s);
+    const auto all = hub.wait_done(seq, 0ms);
     CHECK(all.has_value());
     check_status(*all, "A", TargetStatus::Cancelled);
     check_status(*all, "B", TargetStatus::Cancelled);
     check_status(*all, "Failing", TargetStatus::Unknown);
-    // The operation is settled by the agents' last words; the transport marks a link ended a moment later.
-    CHECK(eventually(
-        [&] {
-            for (const auto& link : side.transport->links())
-            {
-                if (link.state != LinkState::Ended)
-                {
-                    return false;
-                }
-            }
-            return true;
-        },
-        20s));
+    for (const auto& link : side.transport->links())
+    {
+        CHECK(link.state == LinkState::Ended);
+    }
     for (const auto& peer : hub.peers())
     {
         CHECK(!peer.connected);
     }
     // The failed ECU's process ends too and its agent says its last word, for a connection that
-    // has ended already: expected, and not counted as a message nobody knows.
+    // has ended already: answered all the same (the ECU does not wait for nothing), and not
+    // counted as a message nobody knows.
     const auto before = side.transport->stats();
+    CHECK_EQ(before.last_words, std::uint64_t{2});
+    const auto began = Wall::now();
     failing.end();
-    CHECK(eventually([&] { return side.transport->stats().handler_calls > before.handler_calls; }, 20s));
+    CHECK(Wall::now() - began < 50s);
+    CHECK_EQ(side.transport->stats().last_words, std::uint64_t{3});
     CHECK_EQ(side.transport->stats().unknown, std::uint64_t{0});
+}
+
+// An ECU's process destroys its participant right after the transport. SIL Kit drops what the
+// participant has not written to the socket by then, and the last word waits behind every earlier
+// send to the hub's participant: here behind megabytes of another topic. The transport therefore
+// waits for the hub's answer before it lets the participant go.
+TEST_CASE(the_last_word_arrives_though_the_participant_goes_right_after_it_with_a_large_send_under_way)
+{
+    const InProcessRegistry registry;
+    HubSide side(registry.uri, {"A"});
+    const char* const kNoise = "vehicle_sil.test.noise";
+    std::atomic<std::uint64_t> noise_received{0};
+    side.controller->runtime().participant().CreateDataSubscriber(
+        kNoise, topics::spec(kNoise),
+        [&noise_received](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) { noise_received += event.data.size(); });
+    TestEcu a("A", registry.uri, {.last_word_wait = 60s});
+    auto* const noise = a.peer->runtime().participant().CreateDataPublisher(kNoise, topics::spec(kNoise), 0);
+    start_together(*side.controller, {a.peer.get()});
+    CHECK(side.controller->wait_until_paused(20s).has_value());
+    side.wait_ready({"A"});
+    const std::uint64_t seq = side.hub.write(OperationRequest{{{"A", "cmd", Value{std::int64_t{1}}}}, at(std::chrono::hours(1))});
+    CHECK(side.hub.wait_queued(seq, 20s).has_value());
+    side.controller->abort();
+    CHECK(eventually([&] { return has_finished(side.controller->runtime().peer_status("A")); }, 20s));
+
+    a.peer->stop("the test ECU ends");
+    const std::vector<std::uint8_t> big(4 * 1024 * 1024, 0x5A);
+    for (int i = 0; i < 4; ++i)
+    {
+        noise->Publish(topics::span_of(big));
+    }
+    a.transport.reset();
+    a.peer.reset();
+    const auto done = side.hub.wait_done(seq, 0ms);
+    CHECK(done.has_value());
+    check_status(*done, "A", TargetStatus::Cancelled);
+    CHECK(side.transport->links().at(0).state == LinkState::Ended);
+    CHECK(!side.hub.peers().at(0).connected);
 }
 
 TEST_CASE(closing_the_hub_transport_settles_what_is_open)
@@ -1237,9 +1284,6 @@ TEST_CASE(transports_are_made_before_the_start_and_one_per_agent)
 
 namespace {
 
-namespace pubsub = SilKit::Services::PubSub;
-namespace topics = vehicle_sil::control_silkit::detail;
-
 /// A participant that speaks the agent's side by hand: whatever bytes the test gives it. It
 /// answers the hub's probes only if told to.
 struct RawAgent
@@ -1248,6 +1292,10 @@ struct RawAgent
     std::uint64_t session;
     std::atomic<bool> answers{false};
     std::atomic<int> probes{0};
+    std::atomic<int> last_word_answers{0}; ///< received for its session; it takes no other notice of them
+    /// Called for each of them before it is counted, on the participant's SIL Kit thread (set
+    /// before the first can come): what a test wants to see at the moment the answer arrives.
+    std::function<void()> on_last_word_answer;
     std::unique_ptr<SilKit::IParticipant> participant;
     pubsub::IDataPublisher* hello_out = nullptr;
     pubsub::IDataPublisher* step_out = nullptr;
@@ -1275,6 +1323,14 @@ struct RawAgent
                                                   {
                                                       ready();
                                                   }
+                                              }
+                                              if (to && to->kind == wire::Kind::LastWordReceived && to->session == session)
+                                              {
+                                                  if (on_last_word_answer)
+                                                  {
+                                                      on_last_word_answer();
+                                                  }
+                                                  ++last_word_answers;
                                               }
                                           });
     }
@@ -1309,6 +1365,89 @@ struct RawAgent
         submitted_out->Publish(topics::span_of(bytes));
     }
     void step(const wire::Bytes& bytes) { step_out->Publish(topics::span_of(bytes)); }
+};
+
+/// A participant that speaks the hub's side by hand, as a hub from before the answer to the last
+/// word existed: it asks the agents that said hello whether they receive commands, notes their
+/// last words, and answers none.
+struct RawHub
+{
+    std::mutex mutex;
+    std::map<std::string, std::uint64_t> sessions; ///< guarded by mutex: by participant, from its hello
+    std::set<std::uint64_t> ready;                 ///< guarded by mutex
+    std::set<std::uint64_t> last_words;            ///< guarded by mutex: the sessions that said theirs
+    std::unique_ptr<SilKit::IParticipant> participant;
+    pubsub::IDataPublisher* command_out = nullptr;
+
+    explicit RawHub(const std::string& uri)
+    {
+        participant = vehicle_sil::create_participant(
+            SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(uri)), "OldHub",
+            uri, 30s);
+        command_out = participant->CreateDataPublisher(topics::kCommandTopic, topics::spec(topics::kCommandTopic), 0);
+        participant->CreateDataSubscriber(topics::kHelloTopic, topics::spec(topics::kHelloTopic),
+                                          [this](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) {
+                                              wire::Hello hello;
+                                              if (!wire::decode_hello({event.data.data(), event.data.size()}, hello))
+                                              {
+                                                  const std::lock_guard lock(mutex);
+                                                  sessions[hello.participant] = hello.session;
+                                              }
+                                          });
+        participant->CreateDataSubscriber(topics::kSubmittedTopic, topics::spec(topics::kSubmittedTopic),
+                                          [this](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) {
+                                              const auto from = wire::addressed({event.data.data(), event.data.size()});
+                                              if (from && from->kind == wire::Kind::Ready)
+                                              {
+                                                  const std::lock_guard lock(mutex);
+                                                  ready.insert(from->session);
+                                              }
+                                          });
+        participant->CreateDataSubscriber(topics::kStepTopic, topics::spec(topics::kStepTopic),
+                                          [this](pubsub::IDataSubscriber*, const pubsub::DataMessageEvent& event) {
+                                              wire::StepMessage step;
+                                              if (!wire::decode_step({event.data.data(), event.data.size()}, step) && step.final)
+                                              {
+                                                  const std::lock_guard lock(mutex);
+                                                  last_words.insert(step.session);
+                                              }
+                                          });
+    }
+    ~RawHub() { participant.reset(); } // first: its handlers use the members
+
+    /// Asks `name` (again) whether it receives commands. @returns its session once it has said so.
+    std::optional<std::uint64_t> probe(const std::string& name)
+    {
+        std::uint64_t session = 0;
+        {
+            const std::lock_guard lock(mutex);
+            const auto it = sessions.find(name);
+            if (it == sessions.end())
+            {
+                return std::nullopt;
+            }
+            session = it->second;
+            if (ready.count(session) != 0)
+            {
+                return session;
+            }
+        }
+        send(static_cast<std::uint8_t>(wire::Kind::Probe), session);
+        return std::nullopt;
+    }
+    [[nodiscard]] bool heard_last_word_of(std::uint64_t session)
+    {
+        const std::lock_guard lock(mutex);
+        return last_words.count(session) != 0;
+    }
+    /// A message of `kind` (also one that no version knows) that is `session` and nothing else.
+    void send(std::uint8_t kind, std::uint64_t session)
+    {
+        wire::Bytes bytes;
+        wire::encode_session(wire::Kind::Probe, session, bytes);
+        bytes[6] = kind;
+        command_out->Publish(topics::span_of(bytes));
+    }
 };
 
 /// A sample of `variables` values of the types RawAgent::hello() announces.
@@ -1562,6 +1701,124 @@ TEST_CASE(a_participant_started_anew_after_it_failed_is_connected_again)
         const std::uint64_t late = hub.write(OperationRequest{{{"Crash", "v1", Value{std::int64_t{2}}}}});
         check_status(*hub.wait_done(late, 30s), "Crash", TargetStatus::Invalid);
     }
+}
+
+// What bounds the end of an ECU: no hub (no wait), a hub that does not answer (the whole wait,
+// and no longer), and being told not to wait.
+TEST_CASE(an_agent_waits_for_the_answer_to_its_last_word_no_longer_than_it_is_told)
+{
+    const InProcessRegistry registry;
+    const auto real_time = [&](const std::string& name, std::chrono::milliseconds wait) {
+        auto ecu = std::make_unique<TestEcu>(name, registry.uri, EcuOptions{.virtual_time = false, .last_word_wait = wait});
+        ecu->peer->start(30s);
+        return ecu;
+    };
+    /// How long the transport's destructor takes, after the ECU was stopped.
+    const auto end_of = [](TestEcu& ecu) {
+        ecu.peer->stop("the test ECU ends");
+        const auto began = Wall::now();
+        ecu.transport.reset();
+        return Wall::now() - began;
+    };
+    CHECK(throws_with<std::invalid_argument>([&] { TestEcu bad("Bad", registry.uri, {.last_word_wait = -1ms}); },
+                                             "last_word_wait must not be negative"));
+
+    // No hub has ever spoken to it: nobody would answer, and nothing waits for it.
+    {
+        const auto alone = real_time("Alone", 60s);
+        CHECK(end_of(*alone) < 30s);
+    }
+
+    // A hub that asks it whether it receives commands, as every hub does, and never answers a
+    // last word, as a hub of an earlier version: the whole wait, then the end as before.
+    RawHub old(registry.uri);
+    {
+        const auto a = real_time("A", 400ms);
+        std::optional<std::uint64_t> session;
+        CHECK(eventually([&] { return (session = old.probe("A")).has_value(); }, 30s));
+        CHECK_EQ(*session, a->transport->session());
+        // Before its last word, an answer to it means nothing (and does not end the wait later),
+        // nor does a kind that this version does not know: counted, nothing else.
+        const auto undecodable = a->transport->stats().undecodable;
+        old.send(static_cast<std::uint8_t>(wire::Kind::LastWordReceived), *session);
+        old.send(static_cast<std::uint8_t>(wire::Kind::LastWordReceived) + 1, *session);
+        CHECK(eventually([&] { return a->transport->stats().undecodable == undecodable + 2; }, 30s));
+        // Nor does the answer to another agent's last word, which every agent receives.
+        std::thread other([&] {
+            static_cast<void>(eventually([&] { return old.heard_last_word_of(*session); }, 30s));
+            old.send(static_cast<std::uint8_t>(wire::Kind::LastWordReceived), *session + 1);
+        });
+        const auto took = end_of(*a);
+        other.join();
+        CHECK(took >= 400ms);
+        CHECK(took < 30s);
+        // The participant is still there: its last word arrives.
+        CHECK(eventually([&] { return old.heard_last_word_of(*session); }, 30s));
+    }
+    // Told not to wait.
+    {
+        const auto b = real_time("B", 0ms);
+        CHECK(eventually([&] { return old.probe("B").has_value(); }, 30s));
+        CHECK(end_of(*b) < 30s);
+    }
+    // The answer ends the wait.
+    {
+        const auto c = real_time("C", 120s);
+        std::optional<std::uint64_t> session;
+        CHECK(eventually([&] { return (session = old.probe("C")).has_value(); }, 30s));
+        std::thread answers([&] {
+            // Once its last word is there (not before: an earlier answer is not one).
+            static_cast<void>(eventually([&] { return old.heard_last_word_of(*session); }, 60s));
+            old.send(static_cast<std::uint8_t>(wire::Kind::LastWordReceived), *session);
+        });
+        const auto took = end_of(*c);
+        answers.join();
+        CHECK(took < 100s);
+    }
+}
+
+// The hub's side of the answer, with an agent made by hand that takes no notice of it (as an
+// agent of an earlier version): the connection ends as it always did.
+TEST_CASE(a_last_word_is_answered_also_for_a_session_that_has_ended_or_was_never_connected)
+{
+    const InProcessRegistry registry;
+    HubSide side(registry.uri, {"Unused"});
+    RawAgent agent("Old", registry.uri, 55);
+    agent.answers.store(true);
+    // What the hub's side shows at the moment the answer arrives (in the agent's receive handler:
+    // an AgentTransport's destructor returns from there on): the connection has ended by then.
+    std::atomic<int> ended_when_answered{0};
+    std::atomic<int> connected_when_answered{0};
+    agent.on_last_word_answer = [&] {
+        ended_when_answered += side.transport->links().at(0).state == LinkState::Ended ? 1 : 0;
+        connected_when_answered += side.hub.peers().at(0).connected ? 1 : 0;
+    };
+    agent.hello(3);
+    side.wait_ready({"Old"});
+    const auto last_word = [](std::uint64_t session) {
+        wire::Bytes scratch;
+        wire::Bytes out;
+        wire::encode_step(session, at(0ms), true, {}, {}, nullptr, wire::kMaxMessageBytes, scratch,
+                          [&](const wire::Bytes& m) { out = m; });
+        return out;
+    };
+    agent.step(last_word(55));
+    CHECK(eventually([&] { return agent.last_word_answers.load() == 1; }, 30s));
+    // Answered after the connection was ended, not before.
+    CHECK_EQ(ended_when_answered.load(), 1);
+    CHECK_EQ(connected_when_answered.load(), 0);
+    CHECK(side.transport->links().at(0).state == LinkState::Ended);
+    CHECK(!side.hub.peers().at(0).connected);
+    CHECK_EQ(side.transport->stats().last_words, std::uint64_t{1});
+    // Said again, for the session that has ended: answered again.
+    agent.step(last_word(55));
+    CHECK(eventually([&] { return agent.last_word_answers.load() == 2; }, 30s));
+    CHECK_EQ(side.transport->stats().unknown, std::uint64_t{0});
+    // Of a session that never said hello: answered too (and counted as a message nobody knows).
+    agent.step(last_word(56));
+    CHECK(eventually([&] { return side.transport->stats().last_words == 3; }, 30s));
+    CHECK_EQ(side.transport->stats().unknown, std::uint64_t{1});
+    CHECK_EQ(agent.last_word_answers.load(), 2);
 }
 
 TEST_CASE(a_write_to_an_agent_that_has_not_said_it_receives_commands_is_refused_at_once)

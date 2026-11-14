@@ -715,7 +715,7 @@ TEST_CASE(wire_hello_is_bounded_in_what_it_makes_a_reader_keep)
 TEST_CASE(wire_probe_and_ready_and_whom_a_message_is_for)
 {
     wire::Bytes bytes;
-    for (const wire::Kind kind : {wire::Kind::Probe, wire::Kind::Ready})
+    for (const wire::Kind kind : {wire::Kind::Probe, wire::Kind::Ready, wire::Kind::LastWordReceived})
     {
         wire::encode_session(kind, 0xFEDCBA9876543210ULL, bytes);
         CHECK_EQ(bytes.size(), std::size_t{16});
@@ -738,6 +738,14 @@ TEST_CASE(wire_probe_and_ready_and_whom_a_message_is_for)
         CHECK(wire::peek(bytes, error).has_value());
     }
     CHECK(throws<std::invalid_argument>([&] { wire::encode_session(wire::Kind::Command, 1, bytes); }));
+    // A kind beyond the last this version knows (what a later version may add without a new
+    // version number, as the answer to the last word was): for nobody, and not a message to peek at.
+    wire::encode_session(wire::Kind::LastWordReceived, 1, bytes);
+    ++bytes[6];
+    CHECK(!wire::addressed(bytes).has_value());
+    wire::Error unknown_kind;
+    CHECK(!wire::peek(bytes, unknown_kind).has_value());
+    CHECK(unknown_kind.code == wire::ErrorCode::WrongKind);
 
     // A command says whom it is for before it is decoded; the other kinds are for nobody.
     CHECK(wire::encode_command(sample_command(), bytes));

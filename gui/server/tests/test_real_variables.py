@@ -217,14 +217,28 @@ def test_the_recorded_writes_pass_the_launchers_check_and_play_back(tmp_path: Pa
             sid = started["session"]["id"]
             await ws.until(lambda m: m["type"] == "variables" and len(m["variables"]["peers"]) == 2
                            and all(p["connected"] and p["variables"] for p in m["variables"]["peers"]))
+            before = len(ws.received)
             status, body = await c.post("api/write", {"session": sid, "writes": {"Engine": {"engine.throttle": 40}}})
             assert status == 200, body
-            await c.post("api/time", {"command": "resume"})
-            await ws.until(lambda m: m["type"] == "operation" and m["seq"] == body["operation"] and m["done"])
+            # The time goes on by steps, not freely: a write is recorded with the virtual time it was applied at,
+            # and at the speed "max" a free run would be anywhere by the second write (on a busy machine, beyond
+            # the stop_at_ms of the simulation that the record is played back in below).
+            async def step_and_wait(first: int, operation: int, stands_at: int) -> None:
+                """Steps 100 ms; waits for the operation's end and for the standstill, whichever comes first, among
+                the messages from ws.received[first] on (from before the write: standing still at a time, an ECU
+                whose step at that time has not run yet applies a write there, before the next step command)."""
+                await c.post("api/time", {"command": "step", "ms": 100})
+                wanted = (lambda m: m["type"] == "operation" and m["seq"] == operation and m["done"],
+                          lambda m: m["type"] == "event" and m["event"]["event"] == "time" and m["event"]["paused"]
+                          and m["event"]["sim_ms"] == stands_at)
+                while not all(any(w(m) for m in ws.received[first:]) for w in wanted):
+                    await ws.until(lambda m: True)
+            await step_and_wait(before, body["operation"], 100)
+            before = len(ws.received)
             status, body = await c.post("api/write", {"session": sid, "writes": {
                 "Engine": {"engine.throttle": 12.5}, "Dashboard": {"ecu.connected": False}}, "late": "apply"})
             assert status == 200, body
-            await ws.until(lambda m: m["type"] == "operation" and m["seq"] == body["operation"] and m["done"])
+            await step_and_wait(before, body["operation"], 200)
             await c.post("api/stop", {})
             await ws.until(is_ended)
             _, body = await c.get("api/recording")
