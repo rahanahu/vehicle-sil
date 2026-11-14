@@ -285,7 +285,8 @@ int run(const Args& args)
     auto& controller = *runtime->participant().CreateCanController("J1939CAN", network);
     const auto handler = controller.AddFrameHandler(
         [&inbox](can::ICanController*, const can::CanFrameEvent& event) { inbox.push(event); });
-    controller.Start();
+    // Where SIL Kit wants a controller started: from the CommunicationReady handler.
+    runtime->add_communication_ready_handler([&controller] { controller.Start(); });
 
     try
     {

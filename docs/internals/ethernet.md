@@ -85,10 +85,11 @@ SIL Kit では、違う送り手から同じ時刻に届いたフレームの到
 
 時刻同期した participant の Ethernet のコントローラーの上のポートです（`TimeDomain::Virtual`）。実時間（時刻同期なし）のポートはまだありません。
 
-- 生成のときに、受信（RX の向きだけ）、送信の確認、状態の変化のハンドラーを登録し、コントローラーを `Activate()` します。`close()` はハンドラーを外し、`Deactivate()` し、ためたものを捨てます。`close()` の後、SIL Kit はポートを呼びません。
+- 生成のときに、受信（RX の向きだけ）、送信の確認、状態の変化のハンドラーを登録します（ここから届くフレームは受け箱に入ります）。コントローラーを `Activate()` するのは `start()` で、participant の CommunicationReady のハンドラーから呼びます（`runtime.add_communication_ready_handler([&port] { port.start(); })`）。SIL Kit が `Activate()` を呼ぶよう勧めている時点です（SIL Kit のスレッドの上、最初のステップの前。coordinated の participant では全員のサービスが見えているので、ネットワークシミュレーターにも届きます。見つける前の `Activate()` は手元の状態だけを変え、やり直せません）。`start()` の前にステップが来ると（`release_before()` か `send()`）、何を呼ぶかを言う `std::logic_error` です。`close()` はハンドラーを外し、（始めていれば）`Deactivate()` し、ためたものを捨てます。`close()` の後、SIL Kit はポートを呼びません。
 - 受信のハンドラーは、フレームを受け箱（`StepInbox`）に SIL Kit の時刻（送り手のステップの時刻）で積むだけです。`Frame::kCapacity` より長いフレームは数えて捨てます。
 - 送信は、そのステップの時刻で `SendFrame()` を呼びます。送信の確認は、Network Simulator がなければ `SendFrame()` の中で返るので、事象として積んで次のステップで渡します（チャネルをその場で呼びません）。`Transmitted` は `TransmitCompleted`、`ControllerInactive`、`LinkDown`、`Dropped`、`InvalidFrameFormat` は `TransmitFailed` で、種類ごとの数は統計にあります。`event_capacity`（既定 1024）は、1 ステップに送るフレームの数（チャネルの `send_capacity`）以上にします。あふれた確認は捨てて数え、`EventOverflow` で知らせます。
-- 60 バイトより短いフレームは、受け手の SIL Kit が 0 で埋めます（送る側では埋めません）。
+- 「ステップ T の時点で、T より前のフレームは全部届いている」のは、送り手が自分のステップの中で送ったフレームだけです（SIL Kit の約束の範囲）。ほかの SIL Kit のプログラムがステップの外から送ったフレームは、どのステップで渡るかが実行ごとに変わりえます。
+- 60 バイトより短いフレームは、ポートが 0 で 60 バイトまで埋めてから SIL Kit に渡します（受け手の SIL Kit も短いフレームを埋めますが、Network Simulator は短いフレームを断ることがあるため、送る側でそろえます）。
 
 ### 時刻同期に参加していない送り手
 

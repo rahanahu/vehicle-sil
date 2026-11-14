@@ -221,6 +221,11 @@ public:
     /// unknown name.
     [[nodiscard]] can::RawChannel& raw_channel(std::string_view name) const;
 
+    /// The participant. The peer starts its CAN controllers and initialises its LIN nodes in a
+    /// CommunicationReady handler that it adds (ParticipantRuntime::add_communication_ready_handler()),
+    /// so a handler set or added here runs after the peer's and does not replace it. A controller
+    /// that fails there fails the participant (ParticipantRuntime::report_failure(), with the
+    /// network's name).
     [[nodiscard]] ParticipantRuntime& runtime() noexcept { return *runtime_; }
     /// The ECU's control agent if it has one (it declared a variable, agent() was called, or the
     /// peer started), else nullptr; unlike Ecu::agent(), it makes none. For whoever attaches a transport to the

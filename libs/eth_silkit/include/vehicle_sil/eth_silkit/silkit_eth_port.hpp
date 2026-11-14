@@ -57,9 +57,13 @@ struct SilKitEthPortStatistics
 /// (TimeDomain::Virtual).
 ///
 /// The constructor adds a receive handler (RX direction only, so the port never sees its own
-/// frames), a transmit handler and a state handler, then activates the controller. close()
-/// removes the handlers and deactivates the controller; after close() returns, SIL Kit no
-/// longer calls into the port.
+/// frames), a transmit handler and a state handler; frames that arrive from then on are queued.
+/// start() activates the controller: call it from the participant's CommunicationReady handler
+/// (ParticipantRuntime::add_communication_ready_handler()), which is where SIL Kit wants
+/// IEthernetController::Activate() called (on its own thread, before the first step, and for a
+/// Coordinated participant when every participant's services are known). A step before start()
+/// (release_before() or send()) throws std::logic_error. close() removes the handlers and
+/// deactivates the controller; after close() returns, SIL Kit no longer calls into the port.
 ///
 /// Receiving: SIL Kit's receive callback only queues the frame in an inbox (StepInbox), stamped
 /// with SIL Kit's timestamp, which is the sender's step time. release_before(now) hands over the
@@ -76,7 +80,8 @@ struct SilKitEthPortStatistics
 ///
 /// Sending: SendFrame() at the time of the current step; SIL Kit stamps the frame with the step
 /// time itself. A frame of at least kHeaderBytes yields Accepted; a shorter one, a closed port
-/// or an exception from SendFrame() yields Failed.
+/// or an exception from SendFrame() yields Failed. A frame shorter than kDefaultMinFrameBytes
+/// is padded with zero bytes to that length before it is given to SIL Kit.
 ///
 /// Transmit acknowledgements are counted and queued as PortEvents (Transmitted:
 /// TransmitCompleted; ControllerInactive, LinkDown, Dropped, InvalidFrameFormat:
@@ -89,8 +94,9 @@ struct SilKitEthPortStatistics
 /// destroy the channel, then destroy the ParticipantRuntime (which owns the controller).
 ///
 /// Threading: SIL Kit calls the handlers on its own thread; release_before() and send() run on
-/// the step handler's thread. close() may be called from any thread except a SIL Kit handler of
-/// this controller.
+/// the step handler's thread. start() is for a SIL Kit handler (CommunicationReady); it and
+/// close() may run at the same time. close() may be called from any thread except a SIL Kit
+/// handler of this controller.
 class SilKitEthPort final : public Port
 {
 public:
@@ -106,11 +112,19 @@ public:
     SendResult send(const TimedFrame& frame) override;
     std::size_t release_events_before(SimTime now, PortEventSink sink) override;
 
+    /// Activates the controller. From the participant's CommunicationReady handler (see the
+    /// class). Does nothing after close() or a second time. Throws what
+    /// IEthernetController::Activate() throws; the port is then not started.
+    void start();
+
     /// Removes the handlers, deactivates the controller and discards queued frames and events.
     /// Idempotent. send() after close() returns Failed; release_before() releases nothing.
     void close() noexcept;
 
+    /// From the constructor until close().
     [[nodiscard]] bool is_open() const noexcept { return open_.load(std::memory_order_acquire); }
+    /// From start() until close().
+    [[nodiscard]] bool is_started() const noexcept { return started_.load(std::memory_order_acquire); }
     [[nodiscard]] SilKitEthPortStatistics statistics() const;
 
 private:
@@ -119,6 +133,8 @@ private:
     /// The time of a received frame or event: SIL Kit's timestamp, or for a negative one the
     /// time of the latest step.
     [[nodiscard]] SimTime stamp(std::chrono::nanoseconds timestamp) const noexcept;
+    /// Throws std::logic_error unless started; `what` is what happened before start().
+    void require_started(const char* what) const;
 
     SilKit::Services::Ethernet::IEthernetController& controller_;
     StepInbox<Frame> inbox_;
@@ -131,6 +147,7 @@ private:
     std::atomic<std::int64_t> step_time_ns_{0};
     std::mutex lifecycle_mutex_;
     std::atomic<bool> open_{false};
+    std::atomic<bool> started_{false};
     std::optional<SilKit::Util::HandlerId> frame_handler_;
     std::optional<SilKit::Util::HandlerId> transmit_handler_;
     std::optional<SilKit::Util::HandlerId> state_handler_;

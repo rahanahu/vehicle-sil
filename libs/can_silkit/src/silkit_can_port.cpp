@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <exception>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace vehicle_sil::can {
@@ -72,7 +73,8 @@ SilKitCanPort::SilKitCanPort(sk::ICanController& controller, SilKitCanPortOption
   // RealTimeReceiver holds the frames and events instead.
   inbox_(options.real_time_clock != nullptr && options.inbox_capacity > 0 ? 1 : options.inbox_capacity),
   events_(options.real_time_clock != nullptr && options.event_capacity > 0 ? 1 : options.event_capacity),
-  transmit_capacity_(options.transmit_queue_capacity)
+  transmit_capacity_(options.transmit_queue_capacity),
+  bitrate_(options.bitrate)
 {
     if (options.real_time_clock != nullptr)
     {
@@ -87,10 +89,6 @@ SilKitCanPort::SilKitCanPort(sk::ICanController& controller, SilKitCanPortOption
     const std::lock_guard lock(lifecycle_mutex_);
     try
     {
-        if (options.bitrate > 0)
-        {
-            controller_.SetBaudRate(options.bitrate, 0, 0);
-        }
         frame_handler_ = controller_.AddFrameHandler(
             [this](sk::ICanController*, const sk::CanFrameEvent& event) { on_frame(event); },
             static_cast<SilKit::Services::DirectionMask>(SilKit::Services::TransmitDirection::RX));
@@ -101,7 +99,6 @@ SilKitCanPort::SilKitCanPort(sk::ICanController& controller, SilKitCanPortOption
             [this](sk::ICanController*, const sk::CanFrameTransmitEvent& event) { on_transmit(event); }, kAll);
         error_state_handler_ = controller_.AddErrorStateChangeHandler(
             [this](sk::ICanController*, const sk::CanErrorStateChangeEvent& event) { on_error_state(event); });
-        controller_.Start();
         open_.store(true, std::memory_order_release);
     }
     catch (...)
@@ -134,10 +131,38 @@ SilKitCanPort::~SilKitCanPort()
     close();
 }
 
+void SilKitCanPort::start()
+{
+    const std::lock_guard lock(lifecycle_mutex_);
+    if (!is_open() || is_started())
+    {
+        return;
+    }
+    if (bitrate_ > 0)
+    {
+        controller_.SetBaudRate(bitrate_, 0, 0);
+    }
+    controller_.Start();
+    started_.store(true, std::memory_order_release);
+}
+
+void SilKitCanPort::require_started(const char* what) const
+{
+    if (!is_started())
+    {
+        throw std::logic_error(std::string("vehicle_sil::can::SilKitCanPort: ") + what +
+                               " before start(): the controller is not started, so SIL Kit would drop the frames "
+                               "this port sends without telling. Call start() from the participant's "
+                               "CommunicationReady handler (ParticipantRuntime::add_communication_ready_handler(); "
+                               "vehicle_sil::Peer does it for its own ports)");
+    }
+}
+
 void SilKitCanPort::close() noexcept
 {
     const std::lock_guard lock(lifecycle_mutex_);
-    const bool wasOpen = open_.exchange(false, std::memory_order_acq_rel);
+    open_.store(false, std::memory_order_release);
+    const bool wasStarted = started_.exchange(false, std::memory_order_acq_rel);
     // RemoveFrameHandler waits for a running handler call to finish, so afterwards SIL Kit no
     // longer touches `this`.
     try
@@ -173,7 +198,7 @@ void SilKitCanPort::close() noexcept
     frame_handler_.reset();
     transmit_handler_.reset();
     error_state_handler_.reset();
-    if (wasOpen)
+    if (wasStarted)
     {
         try
         {
@@ -315,6 +340,7 @@ std::size_t SilKitCanPort::release_before(SimTime now, FrameSink sink)
     {
         return 0;
     }
+    require_started("a step ran");
     if (real_time_)
     {
         return real_time_->release_before(now, sink);
@@ -332,6 +358,7 @@ SendResult SilKitCanPort::send(const TimedFrame& frame)
         send_failed_.fetch_add(1, std::memory_order_relaxed);
         return SendResult::Failed;
     }
+    require_started("send()");
     if (transmit_capacity_ > 0 && outstanding_.load(std::memory_order_relaxed) >= transmit_capacity_)
     {
         send_queue_full_.fetch_add(1, std::memory_order_relaxed);

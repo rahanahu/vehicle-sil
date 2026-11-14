@@ -51,6 +51,7 @@ public:
                     const std::lock_guard lock(mutex_);
                     states_.push_back(status.state);
                     entered_.push_back(status.enterTime);
+                    reasons_.push_back(status.enterReason);
                 }
             });
     }
@@ -77,6 +78,15 @@ public:
             return std::nullopt;
         }
         return entered_[static_cast<std::size_t>(it - states_.begin())];
+    }
+
+    /// The reason the watched participant gave when it entered `state` for the first time (empty
+    /// if it has not).
+    [[nodiscard]] std::string reason_of(State state) const
+    {
+        const std::lock_guard lock(mutex_);
+        const auto it = std::find(states_.begin(), states_.end(), state);
+        return it == states_.end() ? std::string{} : reasons_[static_cast<std::size_t>(it - states_.begin())];
     }
 
     /// The state that followed Running, if any.
@@ -106,6 +116,7 @@ private:
     mutable std::mutex mutex_;
     std::vector<State> states_;
     std::vector<std::chrono::system_clock::time_point> entered_; // as states_
+    std::vector<std::string> reasons_; // as states_
     std::unique_ptr<SilKit::IParticipant> participant_; // last: destroyed first, with the handler
 };
 

@@ -56,7 +56,15 @@ TEST_CASE(silkit_port_manages_the_controller_and_its_handlers)
         SilKitCanPort port(controller);
         CHECK(port.is_open());
         CHECK(port.time_domain() == TimeDomain::Virtual);
+        // The constructor only listens; start() (from the CommunicationReady handler) starts.
+        CHECK(!port.is_started());
+        CHECK(!controller.started());
+        CHECK_EQ(controller.frame_handler_count(), 1u);
+        port.start();
+        CHECK(port.is_started());
         CHECK(controller.started());
+        CHECK_EQ(controller.baud_rate(), 0u); // no bit rate in the options: not set
+        port.start(); // a second time: nothing
         CHECK_EQ(controller.frame_handler_count(), 1u);
         CHECK_EQ(controller.transmit_handler_count(), 1u);
         CHECK_EQ(controller.error_state_handler_count(), 1u);
@@ -67,28 +75,88 @@ TEST_CASE(silkit_port_manages_the_controller_and_its_handlers)
 
         port.close();
         CHECK(!port.is_open());
+        CHECK(!port.is_started());
         CHECK(!controller.started());
         CHECK_EQ(controller.frame_handler_count(), 0u);
         CHECK_EQ(controller.transmit_handler_count(), 0u);
         CHECK_EQ(controller.error_state_handler_count(), 0u);
         port.close(); // idempotent
+        port.start(); // after close(): nothing (a CommunicationReady that comes late)
+        CHECK(!port.is_started());
+        CHECK(!controller.started());
     }
     // The destructor closes as well.
     {
         SilKitCanPort port(controller);
+        port.start();
         CHECK_EQ(controller.frame_handler_count(), 1u);
     }
     CHECK_EQ(controller.frame_handler_count(), 0u);
     CHECK(!controller.started());
+    // A port that was never started does not stop the controller (another user may have started it).
+    controller.Start();
+    {
+        SilKitCanPort port(controller);
+    }
+    CHECK(controller.started());
+}
+
+TEST_CASE(silkit_port_sets_the_bit_rate_and_starts_in_start)
+{
+    FakeCanController controller;
+    SilKitCanPortOptions options;
+    options.bitrate = 250'000;
+    SilKitCanPort port(controller, options);
+    CHECK_EQ(controller.baud_rate(), 0u); // not from the constructor
+    port.start();
+    CHECK_EQ(controller.baud_rate(), 250'000u);
+    CHECK_EQ(controller.baud_rate_at_start(), 250'000u); // set before Start()
+}
+
+TEST_CASE(silkit_port_refuses_a_step_before_start_and_says_what_to_call)
+{
+    FakeCanController controller;
+    SilKitCanPort port(controller);
+    // A frame that arrives before start() is kept (a sender that is already running).
+    const std::vector<std::uint8_t> one{1};
+    controller.deliver(extended_frame(0x18FF0001u, one), 1ms);
+    Frame out;
+    out.id = 0x18FF0002u;
+    out.format = IdFormat::Extended;
+    out.length = 1;
+    out.data = {2};
+    const std::string where = "Call start() from the participant's CommunicationReady handler "
+                              "(ParticipantRuntime::add_communication_ready_handler(); vehicle_sil::Peer does it for "
+                              "its own ports)";
+    CHECK(vehicle_sil::unit::throws_with<std::logic_error>(
+        [&] { static_cast<void>(port.release_before(at(2ms), [](const TimedFrame&) {})); },
+        "vehicle_sil::can::SilKitCanPort: a step ran before start(): the controller is not started, so SIL Kit would "
+        "drop the frames this port sends without telling. " + where));
+    CHECK(vehicle_sil::unit::throws_with<std::logic_error>(
+        [&] { static_cast<void>(port.send(TimedFrame{at(2ms), out})); },
+        "vehicle_sil::can::SilKitCanPort: send() before start(): "));
+    CHECK(controller.sent().empty());
+    port.start();
+    CHECK_EQ(release(port, at(2ms)).size(), 1u);
+    CHECK(port.send(TimedFrame{at(2ms), out}) == SendResult::Accepted);
 }
 
 TEST_CASE(silkit_port_construction_failure_leaves_no_handlers)
 {
     FakeCanController controller;
-    controller.throw_on_start = true;
+    controller.throw_on_add_transmit_handler = true;
     CHECK(vehicle_sil::unit::throws<std::runtime_error>([&] { SilKitCanPort port(controller); }));
     CHECK_EQ(controller.frame_handler_count(), 0u);
     CHECK_EQ(controller.transmit_handler_count(), 0u);
+    // A start that fails leaves the port open and not started; it can be tried again.
+    controller.throw_on_add_transmit_handler = false;
+    controller.throw_on_start = true;
+    SilKitCanPort port(controller);
+    CHECK(vehicle_sil::unit::throws<std::runtime_error>([&] { port.start(); }));
+    CHECK(port.is_open() && !port.is_started());
+    controller.throw_on_start = false;
+    port.start();
+    CHECK(port.is_started());
 }
 
 TEST_CASE(silkit_port_rejects_a_zero_inbox_capacity)
@@ -150,6 +218,7 @@ TEST_CASE(silkit_port_releases_frames_before_now_in_time_then_arrival_order)
 {
     FakeCanController controller;
     SilKitCanPort port(controller);
+    port.start();
     const std::vector<std::uint8_t> d1{1}, d2{2}, d3{3}, d4{4}, d5{5};
     controller.deliver(extended_frame(0x300, d1), 3ms);
     controller.deliver(extended_frame(0x100, d2), 3ms);
@@ -184,6 +253,7 @@ TEST_CASE(silkit_port_gives_frames_without_time_the_time_of_the_latest_step)
     constexpr std::chrono::nanoseconds kNoTime = std::chrono::nanoseconds::min();
     FakeCanController controller;
     SilKitCanPort port(controller);
+    port.start();
     const std::vector<std::uint8_t> d1{1}, d2{2}, d3{3}, d4{4};
     // Before the first step: time 0, released at the first step after 0.
     controller.deliver(extended_frame(0x100, d1), kNoTime);
@@ -217,6 +287,7 @@ TEST_CASE(silkit_port_counts_inbox_overflow_and_close_discards_queued_frames)
 {
     FakeCanController controller;
     SilKitCanPort port(controller, SilKitCanPortOptions{2});
+    port.start();
     const std::vector<std::uint8_t> d{0};
     controller.deliver(extended_frame(1, d), 0ms);
     controller.deliver(extended_frame(2, d), 0ms);
@@ -232,6 +303,7 @@ TEST_CASE(silkit_port_sends_valid_frames_and_counts_acknowledgements)
 {
     FakeCanController controller;
     SilKitCanPort port(controller);
+    port.start();
     Frame f;
     f.id = 0x18EAFF00;
     f.length = 3;
@@ -292,6 +364,7 @@ TEST_CASE(silkit_port_reports_error_states_and_inbox_overflow_as_events)
 {
     FakeCanController controller;
     SilKitCanPort port(controller, SilKitCanPortOptions{2});
+    port.start();
     controller.deliver_error_state(sk::CanErrorState::ErrorPassive, 3ms);
     controller.deliver_error_state(sk::CanErrorState::NotAvailable, 4ms); // not a bus state
     controller.deliver_error_state(sk::CanErrorState::BusOff, 5ms);
@@ -319,6 +392,7 @@ TEST_CASE(silkit_port_frees_its_transmit_queue_only_on_acknowledgements)
     SilKitCanPortOptions options;
     options.transmit_queue_capacity = 1;
     SilKitCanPort port(controller, options);
+    port.start();
     controller.ack_timestamp = 50ms; // a network simulator acknowledges at the end of the transmission
     Frame f;
     f.id = 0x100;
@@ -341,6 +415,7 @@ TEST_CASE(silkit_port_on_real_time_stamps_arrivals_and_wakes_the_driver)
     SilKitCanPortOptions options;
     options.real_time_clock = &clock;
     SilKitCanPort port(controller, options);
+    port.start();
     CHECK(port.time_domain() == TimeDomain::RealTime);
     std::vector<SimTime> wakes;
     port.set_wakeup([&](SimTime t) { wakes.push_back(t); });
@@ -387,6 +462,7 @@ TEST_CASE(silkit_port_kinds_are_checked_against_the_drivers)
     SilKitCanPortOptions options;
     options.real_time_clock = &clock;
     SilKitCanPort port(controller, options);
+    port.start();
     vehicle_sil::unit::InProcessRegistry registry;
     vehicle_sil::ParticipantRuntimeOptions runtimeOptions;
     runtimeOptions.participant_name = "Synced";
@@ -414,6 +490,7 @@ TEST_CASE(silkit_port_keeps_places_for_outstanding_acknowledgements)
     options.event_capacity = 3;
     options.transmit_queue_capacity = 1;
     SilKitCanPort port(controller, options);
+    port.start();
     Frame f;
     f.id = 0x100;
     f.length = 1;

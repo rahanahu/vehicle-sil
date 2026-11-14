@@ -196,7 +196,12 @@ void CanBridge::start()
         silkit_handler_ = silkit_.AddFrameHandler(
             [this](can::ICanController*, const can::CanFrameEvent& event) { on_silkit_frame(event); },
             static_cast<SilKit::Services::DirectionMask>(SilKit::Services::TransmitDirection::RX));
-        silkit_.Start();
+        if (communication_ready_)
+        {
+            // A start after the participant's CommunicationReady (a restart): nothing else will.
+            silkit_.Start();
+            controller_started_.store(true);
+        }
         running_.store(true);
     }
     catch (...)
@@ -206,12 +211,35 @@ void CanBridge::start()
     }
 }
 
+void CanBridge::start_controller() noexcept
+{
+    const std::lock_guard lock(lifecycle_mutex_);
+    communication_ready_ = true;
+    if (!running_.load() || controller_started_.load())
+    {
+        return; // not running: start() starts the controller
+    }
+    try
+    {
+        silkit_.Start();
+        controller_started_.store(true);
+    }
+    catch (const std::exception& e)
+    {
+        // Nothing can go to SIL Kit: a fault, so that the caller stops.
+        std::string why = std::string("starting the SIL Kit CAN controller failed: ") + e.what();
+        const std::lock_guard errors(error_mutex_);
+        last_error_ = why;
+        fault_ = std::move(why);
+    }
+}
+
 void CanBridge::stop() noexcept
 {
     const std::lock_guard lock(lifecycle_mutex_);
     if (running_.exchange(false))
     {
-        teardown(true, true);
+        teardown(true, controller_started_.exchange(false));
     }
 }
 
@@ -328,7 +356,8 @@ void CanBridge::on_external_event(const ExternalCanEvent& event)
     case ExternalEventKind::Frame:
         break;
     }
-    if (!running_.load())
+    // Before the controller is started, SIL Kit drops what it is given without telling.
+    if (!running_.load() || !controller_started_.load())
     {
         return;
     }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/eth_silkit/silkit_eth_port.hpp"
 
+#include <algorithm>
+#include <array>
 #include <exception>
 #include <stdexcept>
 #include <string>
@@ -41,7 +43,6 @@ SilKitEthPort::SilKitEthPort(sk::IEthernetController& controller, SilKitEthPortO
             [this](sk::IEthernetController*, const sk::EthernetStateChangeEvent& event) {
                 link_up_.store(event.state == sk::EthernetState::LinkUp, std::memory_order_relaxed);
             });
-        controller_.Activate();
         open_.store(true, std::memory_order_release);
     }
     catch (...)
@@ -74,10 +75,33 @@ SilKitEthPort::~SilKitEthPort()
     close();
 }
 
+void SilKitEthPort::start()
+{
+    const std::lock_guard lock(lifecycle_mutex_);
+    if (!is_open() || is_started())
+    {
+        return;
+    }
+    controller_.Activate();
+    started_.store(true, std::memory_order_release);
+}
+
+void SilKitEthPort::require_started(const char* what) const
+{
+    if (!is_started())
+    {
+        throw std::logic_error(std::string("vehicle_sil::eth::SilKitEthPort: ") + what +
+                               " before start(): the controller is not activated, so SIL Kit would refuse every "
+                               "frame this port sends. Call start() from the participant's CommunicationReady handler "
+                               "(ParticipantRuntime::add_communication_ready_handler())");
+    }
+}
+
 void SilKitEthPort::close() noexcept
 {
     const std::lock_guard lock(lifecycle_mutex_);
-    const bool wasOpen = open_.exchange(false, std::memory_order_acq_rel);
+    open_.store(false, std::memory_order_release);
+    const bool wasStarted = started_.exchange(false, std::memory_order_acq_rel);
     // RemoveFrameHandler waits for a running handler call to finish, so afterwards SIL Kit no
     // longer touches `this`.
     try
@@ -113,7 +137,7 @@ void SilKitEthPort::close() noexcept
     frame_handler_.reset();
     transmit_handler_.reset();
     state_handler_.reset();
-    if (wasOpen)
+    if (wasStarted)
     {
         try
         {
@@ -201,6 +225,7 @@ std::size_t SilKitEthPort::release_before(SimTime now, FrameSink sink)
     {
         return 0;
     }
+    require_started("a step ran");
     // A frame without a time that arrives from here on belongs to this step.
     step_time_ns_.store(to_ns(now), std::memory_order_release);
     return inbox_.drain_before(now, [&sink](SimTime time, Frame& frame) { sink(TimedFrame{time, frame}); });
@@ -213,10 +238,20 @@ SendResult SilKitEthPort::send(const TimedFrame& frame)
         send_failed_.fetch_add(1, std::memory_order_relaxed);
         return SendResult::Failed;
     }
+    require_started("send()");
     const auto bytes = frame.frame.bytes();
+    // At least the minimum frame size (without the FCS): a receiving SIL Kit controller pads a
+    // shorter frame itself, but a network simulator may refuse it.
+    std::array<std::uint8_t, kDefaultMinFrameBytes> padded{};
+    SilKit::Util::Span<const std::uint8_t> out(bytes.data(), bytes.size());
+    if (bytes.size() < padded.size())
+    {
+        std::copy(bytes.begin(), bytes.end(), padded.begin());
+        out = SilKit::Util::Span<const std::uint8_t>(padded.data(), padded.size());
+    }
     try
     {
-        controller_.SendFrame(sk::EthernetFrame{SilKit::Util::Span<const std::uint8_t>(bytes.data(), bytes.size())});
+        controller_.SendFrame(sk::EthernetFrame{out});
     }
     catch (const std::exception&)
     {
