@@ -2285,7 +2285,7 @@ TEST_CASE(scenario_expect_beside_a_ramp_is_read_with_the_ramp)
                                     "  - wave: { Door.ratio: { sine: { amplitude: 0.1, period_ms: 100 }, around: 0.5, for_ms: 200 } }\n"
                                     "    expect: { Door.ratio: { ge: 0.3 } }\n");
     CHECK_EQ(s.steps.size(), std::size_t{3});
-    CHECK(s.steps[1].kind == StepKind::Ramp && s.steps[1].conditions.size() == 2 && s.steps[1].signals.size() == 1);
+    CHECK(s.steps[1].kind == StepKind::Ramp && s.steps[1].conditions.size() == 2 && s.steps[1].motions.size() == 1);
     CHECK(s.steps[2].kind == StepKind::Wave && s.steps[2].conditions.size() == 1);
     check_text(s.steps[1].text + "\n" + s.steps[2].text + "\n",
                "ramp Body.level to 10 over 100 ms, expecting Body.level le 10; Body.lamp eq false\n"

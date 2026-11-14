@@ -1154,7 +1154,7 @@ private:
     {
         step.skipped = skip_reason();
         step.writes.clear();
-        step.signals.clear();
+        step.motions.clear();
         step.conditions.clear();
         ++out_.skipped;
         add(Severity::Note, "scenario-step-skipped", step.line,
@@ -1293,7 +1293,7 @@ private:
                 error("value", line, "ramp of " + name + " must be { to: <value>, over_ms: <milliseconds> }, not " + shown_value(child));
                 continue;
             }
-            ScenarioSignal ramp;
+            ScenarioMotion ramp;
             ramp.variable = *v;
             double to = 0.0;
             bool hasTo = false;
@@ -1375,7 +1375,7 @@ private:
                 ramp.hint = "give the ramp from: <value>";
                 ramp.text = var.text + (ramp.base ? " from " + number_text(*ramp.base) : "") + " to " + number_text(to) + " over " +
                             std::to_string(ramp.length_ms) + " ms";
-                step.signals.push_back(std::move(ramp));
+                step.motions.push_back(std::move(ramp));
             }
         }
         return longest;
@@ -1908,14 +1908,14 @@ private:
             if (auto one = read_wave_of(child, *v, time, quiet))
             {
                 longest = std::max(longest, one->length_ms);
-                step.signals.push_back(std::move(*one));
+                step.motions.push_back(std::move(*one));
             }
         }
         return longest;
     }
 
     /// The wave of one variable (`node`: its entry in "wave"), or empty (and its errors).
-    std::optional<ScenarioSignal> read_wave_of(ryml::id_type node, std::size_t v, const std::optional<std::int64_t>& time, bool quiet)
+    std::optional<ScenarioMotion> read_wave_of(ryml::id_type node, std::size_t v, const std::optional<std::int64_t>& time, bool quiet)
     {
         const std::size_t line = doc_.line(node);
         const ScenarioVariable& var = scenario_.variables[v];
@@ -1957,7 +1957,7 @@ private:
             return std::nullopt;
         }
 
-        ScenarioSignal out;
+        ScenarioMotion out;
         out.variable = v;
         out.hint = "give the wave around: <value>";
         std::string text = name + " " + shape;
@@ -2483,7 +2483,7 @@ private:
     /// The points of a wave (`body`: the list; `interpolate`: its node or NONE). @returns whether
     /// they have no error; then `length` and `make` are set.
     bool read_points(ryml::id_type body, ryml::id_type interpolate, std::size_t v, const std::string& what,
-                     const std::optional<std::int64_t>& time, bool quiet, ScenarioSignal& out, std::string& text, std::optional<std::int64_t>& length,
+                     const std::optional<std::int64_t>& time, bool quiet, ScenarioMotion& out, std::string& text, std::optional<std::int64_t>& length,
                      std::function<std::shared_ptr<const Waveform>(SimDuration)>& make)
     {
         const ScenarioVariable& var = scenario_.variables[v];
@@ -3105,7 +3105,7 @@ private:
             const ScenarioVariable& var = scenario_.variables[w.variable];
             out += sep() + var.text + " = " + value_text(w.value, &var);
         }
-        for (const auto& r : step.signals)
+        for (const auto& r : step.motions)
         {
             out += sep() + r.text;
         }

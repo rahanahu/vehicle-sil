@@ -145,7 +145,7 @@ struct EnginePeer
 ///
 /// Times. A step's time T is at_ms, or after_ms after the end of the step before it. The end of
 /// a set and of an expect at one time is T; of a ramp T + over_ms; of a wave T + its longest
-/// length (ScenarioSignal::length_ms); of an expect with hold_for_ms T + hold_for_ms: all known when the step before ends, so such steps keep their times whatever
+/// length (ScenarioMotion::length_ms); of an expect with hold_for_ms T + hold_for_ms: all known when the step before ends, so such steps keep their times whatever
 /// happens. A wait_until, or an expect with within_ms, that becomes true at the sample of time t
 /// is known to the engine at the first step P of the controller after t, and ends at P + tick:
 /// the first time at which a write of the next step can still take effect.
@@ -257,16 +257,16 @@ private:
         std::size_t step = 0;
         SimTime at{};
         std::vector<ScenarioWrite> writes;
-        std::optional<std::size_t> signal{}; ///< of signals_: its value is worked out when it is sent
-        bool signal_last = false;            ///< the signal's end value
+        std::optional<std::size_t> motion{}; ///< of motions_: its value is worked out when it is sent
+        bool motion_last = false;            ///< the motion's end value
         std::uint64_t ticket = 0;
         SimTime judge{};
     };
     /// A ramp or a wave of one variable that is being written.
-    struct Signal
+    struct Motion
     {
         std::size_t step = 0;
-        ScenarioSignal signal;
+        ScenarioMotion motion;
         SimTime from_time{};
         SimDuration period{};
         std::optional<double> base{}; ///< found at its first write, if the step does not name it
@@ -317,8 +317,8 @@ private:
     std::deque<Watch> watches_;      ///< in step order
     std::deque<Write> to_send_;      ///< sets, by step
     std::deque<Write> sent_;         ///< in the order sent
-    std::deque<Signal> signals_;
-    /// Per step: what has yet to happen before it passes: writes not judged yet (signals not done
+    std::deque<Motion> motions_;
+    /// Per step: what has yet to happen before it passes: writes not judged yet (motions not done
     /// count their writes to come), and 1 for the watch beside a ramp or a wave until it closes.
     std::vector<std::size_t> open_writes_;
     std::size_t done_ = 0; ///< steps that passed or were skipped

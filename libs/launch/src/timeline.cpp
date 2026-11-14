@@ -385,7 +385,7 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
         {
             writes[w.variable] = true;
         }
-        for (const ScenarioSignal& s : step.signals)
+        for (const ScenarioMotion& s : step.motions)
         {
             writes[s.variable] = true;
         }
