@@ -51,7 +51,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 
 ### 確認
 
-標準出力の最後が `passed:` で、終了コード（`echo $?`）が 0 なら成功です。
+標準出力の最後が `passed:` で、終了コード（`echo $?`）が 0 なら成功です。最後の行は、設定ファイルの照合とシナリオの両方の指摘を数えます（シナリオが失敗すると `failed:` になります）。
 
 <!-- vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -->
 ```text
@@ -117,7 +117,7 @@ steps:
     within_ms: 100
 ```
 
-手順は上から順に進みます。1 つの手順には、すること（`set`、`wait_until`、`expect`、`ramp`、`wave` のどれか）を 1 つと、時刻を書きます。
+手順は上から順に進みます。1 つの手順には、すること（`set`、`wait_until`、`expect`、`ramp`、`wave` のどれか）を 1 つと、時刻を書きます。`within_ms` と `hold_for_ms` は、手順 3 で説明します。
 
 | 時刻の書き方 | 意味 |
 |---|---|
@@ -324,7 +324,7 @@ failed: 1 error, 0 warnings, 0 notes
 |---|---|
 | `my_tests/response_time.yaml:5:` | 失敗した手順は、ファイルの 5 行目です。 |
 | `not true at any time within 200 ms (from 0 ms to 200 ms)` | 0 ms から 200 ms までの間に、条件が 1 度も成り立ちませんでした。 |
-| `but it was 1050 (its sample of 200 ms)` | 200 ms の時点の回転数は 1050 rpm でした。 |
+| `but it was 1050 (its sample of 200 ms)` | 200 ms の時点のサンプル（ECU が一定の間隔、既定では 10 ms ごとに送信する変数の値）では、回転数は 1050 rpm でした。 |
 | `[scenario-failed]` | 指摘のコードです。`expect` の条件が成り立たなかったことを表します。 |
 
 手順が 1 つ失敗すると、シナリオはそこで終わり、シミュレーションも止まります（`run:` の行の 205 ms）。後ろの手順は実行されず、表では `not run` になります。

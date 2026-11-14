@@ -160,7 +160,7 @@ dashboard_v1/vehicle_sil_dashboard_v1_ecu --describe
 | `networks[].nodes[].address` | J1939 のアドレスです（10 進）。 | 40（0x28） |
 | `step_ns` | ステップ幅です（ナノ秒）。 | 5 ms |
 
-ネットワーク名が `VehicleCAN` で、手順 1 で決めた `J1939_CAN` と違います。ここで気づけば、すぐ手順 4 の依頼に進めます。このガイドでは、`check` がこの不整合をどう報告するかを見るために、設定ファイルをそのままにして手順 3 に進みます。JSON のすべてのキーは、[ecu-executable.md](../ecu-executable.md) の「JSON の形式」にあります。
+ネットワーク名が `VehicleCAN` で、手順 1 で決めた `J1939_CAN` と違います。この不整合は ECU の作者に直してもらうもので、依頼の書き方は手順 4 にあります。次は、設定ファイルをそのままにして手順 3 に進み、`check` がこの不整合をどう報告するかを見ます。JSON のすべてのキーは、[ecu-executable.md](../ecu-executable.md) の「JSON の形式」にあります。
 
 ## 手順 3: 照合して指摘を読む
 
@@ -215,7 +215,7 @@ failed: 1 error, 1 warning, 0 notes
 | `J1939_CAN` と同じバスのつもり | 2 つの ECU の名前をそろえます。 | ECU のコード（設定ファイルではできません） |
 | 別のバス | `networks` に `VehicleCAN` を追加します。 | 設定ファイル |
 
-例では、エンジンの回転数を表示の ECU が受信するので、同じバスのつもりです。直すのは ECU のコードで、手順 4 に進みます。
+`networks` に追加すると `check` は通りますが、2 つの ECU は別のバスに分かれ、通信しません（下の「`networks` に名前を追加した場合」）。例では、エンジンの回転数を表示の ECU が受信するので、同じバスのつもりです。直すのは ECU のコードで、手順 4 に進みます。
 
 ### `networks` に名前を追加した場合
 
@@ -405,7 +405,7 @@ passed: 0 errors, 2 warnings, 0 notes
 
 ### シナリオで確認する
 
-シナリオは、ECU の変数に値を設定し、変数の値を確認する手順を書いた YAML です。`expect` の手順が成り立たなければ、`run` が終了コード 1 で終わるので、CI でも通信を確認できます。例の `scenarios/engine_speed.yaml` は、エンジンのスロットルを 50 % にして、表示の ECU の回転数が 600 ms 以内に 1700 rpm 以上になることを確認します。
+シナリオは、ECU の変数に値を設定し、変数の値を確認する手順を書いた YAML です。`expect` の手順が成り立たなければ、`run` が終了コード 1 で終わるので、CI でも通信を確認できます。例の `scenarios/engine_speed.yaml` は、エンジンのスロットルを 50 % にして、表示の ECU の回転数が 600 ms 以内に 1700 rpm 以上になることを確認します。上の `run` の 1200 rpm はスロットルの初期値 20 % のときの値で、50 % では 1800 rpm に上がります。
 
 <!-- examples/integrate_ecus/scenarios/engine_speed.yaml -->
 ```yaml

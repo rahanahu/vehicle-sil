@@ -48,7 +48,7 @@
 Python のパッケージをインストールし、gRPC のスタブを生成します。
 
 ```sh
-uv sync                                          # .venv に grpcio などをインストールする（README の手順で実行済みなら不要）
+uv sync                                          # .venv に grpcio などをインストールする（README の手順で実行済みなら、何も変わらない）
 export PYTHONPATH="$PWD/python"                  # クライアントのパッケージの場所。シェルを開くたびに実行する
 uv run python -m vehicle_sil_control.generate    # スタブを python/vehicle_sil_control/_generated に生成する（最初の 1 回）
 ```
@@ -95,7 +95,7 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch version --json | grep co
 
 ## 最初のスクリプトを実行する
 
-シミュレーションを時刻 0 で一時停止した状態で起動し、スロットルに 50 % を書き込み、500 ms 進めてから、回転数を読みます。次が [examples/launch_control/write_and_read.py](../../examples/launch_control/write_and_read.py) の全文です（1 行目のライセンスの行を除く）。
+シミュレーションを時刻 0 で一時停止した状態で起動し、スロットルに 50 % を書き込み、500 ms 進めてから、回転数を読みます。次が [examples/launch_control/write_and_read.py](../../examples/launch_control/write_and_read.py) の全文です（1 行目の `# SPDX-License-Identifier: MIT` だけ省いています）。
 
 <!-- examples/launch_control/write_and_read.py -->
 ```python
@@ -176,6 +176,8 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --con
 [vehicle_sil_launch] control server at 127.0.0.1:8510
 [vehicle_sil_launch] standing still before the first step until a resume, step or run_until command (--start-paused with a control server)
 ```
+
+端末が 1 つのとき（スクリプトや CI）は、端末 1 のコマンドの末尾に `> launch.log 2>&1 &` を付けてバックグラウンドで起動し、`launch.log` に上の 2 行が出てから、同じ端末で端末 2 のコマンドを実行します。途中でやめるときは、CLI の `stop` か `kill <PID>`（SIGTERM）で、シミュレーションと ECU が止まります（結果は `interrupted`、終了コード 130）。
 
 端末 2 で、`export PYTHONPATH="$PWD/python"` を実行してから、次のコマンドを順に実行します。CLI は、指定しなければ `127.0.0.1:8510` に接続します。時刻 0 で一時停止したまま 50 秒が過ぎると、端末 1 のシミュレーションはエラーで終わるので、それまでに `step` まで実行します。`step` の後は、一時停止したまま待てます。
 

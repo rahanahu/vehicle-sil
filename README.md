@@ -51,6 +51,8 @@ participants:
     step_ms: 5
 ```
 
+次のコマンドは、「[クイックスタート](#クイックスタート)」のとおりにビルドした後、`build/linux-gcc-control/examples/ecu_main`（ビルドが設定ファイルと ECU を置くディレクトリ）で実行します。`run` の出力は抜粋で、registry と ECU の起動の行や、ECU が表示する行（`[Dashboard] t=…`）は省いています。
+
 | コマンド | 動作 | 起動するもの |
 |---|---|---|
 | `vehicle_sil_launch check simulation.yaml` | 各 ECU に自身の構成を出力させて、設定ファイルと照合します。 | 各 ECU を `--describe` で起動するだけで、シミュレーションは実行しません。 |
@@ -133,7 +135,7 @@ failed: 2 errors, 1 warning, 0 notes
 ```sh
 git clone --recursive https://github.com/rahanahu/vehicle-sil.git
 cd vehicle-sil
-scripts/doctor.py                    # 必要なものがそろっているかを 1 行ずつ表示する（uv、Node.js、npm は absent でも終了コード 0 なので、行を見る）
+scripts/doctor.py                    # 必要なものを 1 行ずつ表示する。MISSING はビルドに必要（終了コード 1）、absent は GUI などにだけ必要
 uv sync                              # ビルドと GUI が使う Python のパッケージをインストールする
 cmake --preset linux-gcc-control     # Control API のサーバーつき（Python と GUI から値を読み書きするのに必要）
 cmake --build --preset linux-gcc-control   # 最初は SIL Kit（PC に gRPC がなければ gRPC も）をコンパイルするので時間がかかる
@@ -144,12 +146,14 @@ cd build/linux-gcc-control/examples/ecu_main
 vehicle_sil_launch check simulation.yaml
 vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml
 
-# ブラウザの GUI: リポジトリのルートに戻り、画面をビルドして起動する（Ctrl+C で終了）
+# ブラウザの GUI: リポジトリのルートに戻り、画面をビルドして起動する
 cd ../../../..
 npm --prefix gui/web ci
 npm --prefix gui/web run build
 scripts/run-gui.py                   # 足りないものがあれば、それをビルドするコマンドを表示する
 ```
+
+`scripts/run-gui.py` は、ビルドの `examples/ecu_main/simulation.live.yaml` で GUI サーバーを起動し、ブラウザを開きます（開かないときは `--no-browser`。URL は端末に表示されます）。止めるときは、その端末で Ctrl+C を押すか、別の端末から `kill <PID>`（SIGTERM）を送ります。実行中のシミュレーションも止まります。
 
 ### テンプレートとビルド済みのツールを使う（リリース後）
 

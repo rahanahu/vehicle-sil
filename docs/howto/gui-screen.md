@@ -1,6 +1,6 @@
 # ブラウザの GUI に自分の画面を作る
 
-画面のテンプレート（`gui_starter`）をコピーし、ECU の変数を 1 つ表示する画面に書き換えて、GUI サーバー（`vehicle-sil-gui`）に配信させる手順です。ビルドも Node.js も使いません。各手順の「確認」には、ブラウザがなくても `curl` でできる方法も書いてあります。
+画面のテンプレート（`gui_starter`）をコピーし、ECU の変数を 1 つ表示する画面に書き換えて、GUI サーバー（`vehicle-sil-gui`）に配信させる手順です。画面を作るのに、ビルドも Node.js も使いません（手順 4 で値を API から確認するときだけ、Node.js を使います）。各手順の「確認」には、ブラウザがなくても `curl` でできる方法も書いてあります。
 
 > [!NOTE]
 > テンプレートとビルド済みのツールは、最初のリリース（0.1.0）から配布します。まだリリースしていません。リリース前は、「前提」の表の「リポジトリ」の列を使います。
@@ -12,11 +12,12 @@
 | テンプレートのプロジェクト | [最初の ECU を作る](first-ecu.md) の手順 1 まで済ませて、ECU をビルドし、ツールの `bin` を `PATH` に追加しておきます。 |
 | Python | 3.11 以上が必要で、[uv](https://docs.astral.sh/uv/) があれば、Python とパッケージは uv がインストールします。 |
 | ブラウザか `curl` | ブラウザは、GUI サーバーと同じ PC のものを使います。 |
+| Node.js | 22 以上。ブラウザを使わずに、手順 4 で値を確認するときだけ使います。 |
 
 コマンドは、テンプレートのプロジェクトのディレクトリ（`simulation.yaml` のある所）で実行します。ビルド済みのツールのディレクトリを、次の変数に設定しておきます。
 
 ```sh
-TOOLS=tools/vehicle-sil-tools-<バージョン>-linux-x86_64
+TOOLS=tools/vehicle-sil-tools-<バージョン>-linux-x86_64   # <バージョン> は vehicle_sil_launch version が表示するもの
 ```
 
 リポジトリをビルドして使う場合は、次のように読み替えます。
@@ -58,24 +59,26 @@ vehicle-sil-gui --web my-screen simulation.live.yaml
 
 ### 確認
 
-端末に URL が表示され、ブラウザに「My vehicle-sil screen」という画面が開きます。「Start」を押すと、「Phase」が `running` になります。
+端末に URL が表示され、ブラウザに「My vehicle-sil screen」という画面が開きます（ブラウザを開かないときは、`--no-browser` を付けて起動します）。「Start」を押すと、「Phase」が `running` になります。
 
 ```text
 http://127.0.0.1:36917/#token=<起動のたびに変わるトークン>
 vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
 ```
 
-ブラウザがないときは、別の端末から、表示された URL の `#` より前の部分を `curl` で読みます。画面のファイルは、トークンなしで読めます。
+ブラウザがないときは、別の端末から、表示された URL の `#` より前の部分を `curl` で読みます。ポートは起動のたびに変わるので、表示された URL から取り出します（決まったポートにするときは `--port`）。画面のファイルは、トークンなしで読めます。
 
 ```sh
-curl -s http://127.0.0.1:36917/ | grep '<title>'
+URL='<サーバーが表示した URL>'
+BASE="${URL%%/#*}"
+curl -s "$BASE/" | grep '<title>'
 ```
 
 ```text
     <title>My vehicle-sil screen</title>
 ```
 
-確認したら、Ctrl+C で GUI サーバーを止めます。
+確認したら、Ctrl+C で GUI サーバーを止めます。別の端末からは、`kill <PID>`（SIGTERM）で止まります。
 
 ### うまくいかないとき
 
@@ -103,19 +106,19 @@ import json, sys
 for p in json.load(sys.stdin)['participants']:
     for v in p['variables']:
         if not v['builtin']:
-            print(p['name'], v['name'], v['type'], v['causality'], v['unit'])
+            print(p['name'], v['name'], v['type'], v['causality'], v['unit'], v['description'], sep=' | ')
 "
 ```
 
 ### 確認
 
-participant の名前、変数の名前、型、入出力の向き、単位が表示されます。
+participant の名前、変数の名前、型、入出力の向き、単位、説明が表示されます。説明は ECU の作者が書いたもので、空のこともあります。どの変数かを名前と説明で決められないときは、ECU の作者に確認します。
 
 ```text
-Engine engine.throttle real input %
-Engine engine.speed integer output rpm
-Dashboard dashboard.engine_speed integer output rpm
-Dashboard dashboard.engine_lost bool output
+Engine | engine.throttle | real | input | % | accelerator pedal position
+Engine | engine.speed | integer | output | rpm |
+Dashboard | dashboard.engine_speed | integer | output | rpm | the speed shown
+Dashboard | dashboard.engine_lost | bool | output |  | no engine speed for more than 300 ms (it comes every 100 ms)
 ```
 
 この手順では、`Engine` の `engine.speed`（エンジンの回転数）を表示します。`output` の変数は読み取り専用で、`input` の変数には書き込めます。ライブラリには `{ peer: 'Engine', name: 'engine.speed' }` の形で渡します（シナリオとダッシュボードのファイルでは `Engine.engine.speed` と書きます）。
@@ -225,11 +228,13 @@ vehicle-sil-gui --web my-screen simulation.live.yaml
 | 「開始」を押す | `Engine.engine.speed: 1200 rpm（live）` |
 | 「停止」を押す | `Engine.engine.speed: 1200 rpm（ended）` |
 
-ブラウザがないときは、配信されていることを `curl` で確認します。
+ブラウザがないときは、配信されていることを `curl` で確認します。`URL` と `BASE` は、手順 1 と同じように、今回表示された URL で設定し直します。
 
 ```sh
-curl -s http://127.0.0.1:36917/ | grep '<title>'
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:36917/main.js
+URL='<サーバーが表示した URL>'
+BASE="${URL%%/#*}"
+curl -s "$BASE/" | grep '<title>'
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' "$BASE/main.js"
 ```
 
 ```text
@@ -240,8 +245,6 @@ curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:36917/
 値まで確認するには、API を呼びます。API にはトークンが必要で、`POST` には `Origin` も必要です。トークンをコマンドの引数に書くと、同じ PC のほかの利用者にプロセスの一覧から見えるので、ヘッダーをファイルに置いて渡します。
 
 ```sh
-URL='<サーバーが表示した URL>'
-BASE="${URL%%/#*}"
 (umask 077; printf 'Authorization: Bearer %s\n' "${URL##*#token=}" > token.header)
 
 # 実行を開始する

@@ -36,7 +36,7 @@
 
 テンプレートに入っている 2 つの ECU（エンジンと表示）をそのまま動かして、ビルドと実行の環境がそろっていることを確認します。
 
-[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)からテンプレートのアーカイブ（`vehicle-sil-template-<バージョン>.zip`）をダウンロードして展開し、そのディレクトリで次のコマンドを実行します。これ以降のコマンドも、すべて同じディレクトリ（`simulation.yaml` のある所）で実行します。
+[リリースのページ](https://github.com/rahanahu/vehicle-sil/releases)からテンプレートのアーカイブ（`vehicle-sil-template-<バージョン>.zip`）をダウンロードして展開します。zip の中の `vehicle-sil-template-<バージョン>` のディレクトリを、自分のプロジェクトの名前に変えます。そのディレクトリで次のコマンドを実行します。これ以降のコマンドも、すべて同じディレクトリ（`simulation.yaml` のある所）で実行します。
 
 ```sh
 python3 get_tools.py             # ビルド済みのツールを tools/ にダウンロードし、最後に export PATH=... の行を表示する
@@ -135,14 +135,15 @@ participants:
 | 症状 | 原因 | 直し方 |
 |---|---|---|
 | `get_tools.py` が `may not be published yet` と表示して止まる | そのバージョンが、まだリリースされていません。 | README の「[リポジトリからビルドする](../../README.md#リポジトリからビルドする)」でビルドした `vehicle_sil_launch` を使います。 |
+| ネットワークからダウンロードできない | PC からリリースのページに接続できません。 | ブラウザで `vehicle-sil-tools-<バージョン>-linux-x86_64.tar.gz`（Windows は `-windows-x86_64.zip`）をダウンロードし、`python3 get_tools.py --archive <ダウンロードしたファイル>` を実行します（SHA-256 の確認は同じです）。 |
 | `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | `python3 get_tools.py` をもう一度実行し、表示された `export` の行を実行します。 |
 | `check` が、末尾に `[executable]` の付いたエラーを表示する | ECU の実行ファイルが `bin/` にありません。 | `cmake --build --preset linux` を実行します。 |
 
-ネットワークからダウンロードできないときの手順は、テンプレートの [README](../../template/README.md) にあります。
+`get_tools.py` のほかの使い方は、テンプレートの [README](../../template/README.md) にあります。
 
 ## 手順 2: ECU のクラスと `main()` を書く
 
-ディレクトリ `cooler` を作り、その中の `main.cpp` に次の内容を書きます。これがファイルの全文です。
+プロジェクトのディレクトリ（`simulation.yaml` のある所）にディレクトリ `cooler` を作り、その中の `main.cpp` に次の内容を書きます。これがファイルの全文です。
 
 <!-- examples/first_ecu/cooler/main.cpp -->
 ```cpp
@@ -415,7 +416,7 @@ with Launch("vehicle_sil_launch", "simulation.yaml", start_paused=True) as launc
               f"cooler.temperature = {values['cooler.temperature']}")
 ```
 
-Python のクライアント（`vehicle_sil_control`）は、ビルド済みのツールの `python/` に入っています。uv で実行します。
+Python のクライアント（`vehicle_sil_control`）は、ビルド済みのツールの `python/` に入っています。uv で実行します。`<バージョン>` は、`vehicle_sil_launch version` が表示するバージョン（`tools/` の下のディレクトリの名前と同じ）です。
 
 ```sh
 T=tools/vehicle-sil-tools-<バージョン>-linux-x86_64
