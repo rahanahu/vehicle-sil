@@ -36,7 +36,7 @@ vehicle-sil/
 ├── libs/can_netsim/  vehicle_sil::can_netsim  簡易 CAN Network Simulator（SIL Kit の Network Simulator API）
 ├── libs/eth/         vehicle_sil::eth    生のイーサネットのフレームの基盤（フレーム、ポート、vehicle_sil::step の上のチャネル、仮想ネットワーク。SIL Kit に依存しない）
 ├── libs/eth_silkit/  vehicle_sil::eth_silkit  vehicle_sil::eth のポートの SIL Kit 実装（仮想時間）
-├── libs/eth_link/    vehicle_sil::eth_link  イーサネットのブリッジの外の側: 外のインターフェースの口、絞り込み、輪を防ぐ MAC の表、Linux の TAP デバイスと packet ソケットの口（SIL Kit に依存しない）
+├── libs/eth_link/    vehicle_sil::eth_link  イーサネットのブリッジの外の側: 外のインターフェースの口、絞り込み、輪を防ぐ MAC の表、Linux の TAP デバイスと packet ソケットの口、実行時に読み込む pcap のライブラリ（Npcap、libpcap）の口（SIL Kit に依存しない）
 ├── libs/j1939/       vehicle_sil::j1939  J1939 スタック（vehicle_sil::can の上。SIL Kit に依存しない）と、そのプロトコル部品（parts/）、型付きメッセージ（codec/）
 ├── libs/ecu/         vehicle_sil::ecu    ECU のアプリケーションを組み立てる入口 Ecu（変数の宣言と、自己申告 describe() とその JSON を含む。SIL Kit に依存しない）
 ├── libs/local/       vehicle_sil::local  プロセス内の仮想 CAN バスと仮想 LIN バスの上で ECU を仮想時間で回す LocalBench（SIL Kit に依存しない）
@@ -121,7 +121,7 @@ vehicle-sil/
 | `vehicle_sil::vector_xl_bridge_core` | — | CAN ブリッジのコア（`vehicle_sil::vector_xl::CanBridge` など）と、外部 CAN ポートを `vehicle_sil::can` の実時間のポートにする `ExternalPortAdapter`。プラットフォームに依存しない。ほかに `ExternalCanPort` |
 | `vehicle_sil::vector_xl`（Windows のみ） | — | Vector XL Driver のバックエンド（`XlDriver`、`XlCanPort`）。Windows 専用で、XL Driver Library が必要。ほかに `vehicle_sil::vector_xl::XlDriver` |
 | `vehicle_sil_vector_xl_bridge`（Windows のみ、実行ファイル） | — | ブリッジの CLI |
-| `vehicle_sil::eth_link` | — | イーサネットのブリッジの外の側: 外のインターフェースの口 `vehicle_sil::eth_link::ExternalLink`、絞り込み `FrameFilter`、輪を防ぐ `MacSideTable`、OS の口（`make_tap_link()`、`make_packet_link()`。Linux だけ）。SIL Kit に依存しない（[ethernet-bridge.md](ethernet-bridge.md)） |
+| `vehicle_sil::eth_link` | — | イーサネットのブリッジの外の側: 外のインターフェースの口 `vehicle_sil::eth_link::ExternalLink`、絞り込み `FrameFilter`、輪を防ぐ `MacSideTable`、OS の口（`make_tap_link()`、`make_packet_link()`。Linux だけ）、pcap のライブラリの口（`make_pcap_link()`。Windows の Npcap、Linux の libpcap を実行時に読み込む）。SIL Kit に依存しない（[ethernet-bridge.md](ethernet-bridge.md)） |
 | `vehicle_sil::ethernet_bridge_core` | — | SIL Kit の `IEthernetController` と `ExternalLink` の間でフレームを運ぶ `vehicle_sil::ethernet_bridge::EthernetBridge`、統計と監視の行、引数の解釈、起動の 1 行。プラットフォームに依存しない |
 | `vehicle_sil_ethernet_bridge`（実行ファイル） | — | イーサネットのブリッジの CLI。どのプラットフォームでもビルドする（外のインターフェースを開けるのは Linux の `tap` と `packet`） |
 

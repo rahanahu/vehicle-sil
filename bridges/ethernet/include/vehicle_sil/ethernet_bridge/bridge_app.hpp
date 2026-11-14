@@ -33,7 +33,7 @@ enum class HostOs
 
 /// Why `backend` cannot be used on `os`, and what to do instead; nullopt if it can. Without a
 /// backend (--list-interfaces alone): why no backend at all can be used on `os`, or nullopt.
-/// Today: tap and packet on Linux; nothing elsewhere.
+/// tap, packet and pcap are for Linux, npcap is for Windows; nothing elsewhere.
 [[nodiscard]] std::optional<std::string> backend_unavailable(std::optional<Backend> backend, HostOs os);
 
 /// The line the bridge prints once it forwards (without the "[eth-bridge] " prefix):

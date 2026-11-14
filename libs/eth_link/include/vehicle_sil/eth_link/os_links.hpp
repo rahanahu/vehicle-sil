@@ -9,6 +9,7 @@
 //   packet  a network interface (a network adapter, a veth) through a packet socket (AF_PACKET).
 //
 // On other operating systems has_os_links() is false and the make functions throw LinkError.
+// The link through the pcap library (Npcap on Windows, libpcap on Linux) is in pcap_link.hpp.
 // No SIL Kit.
 //
 // The messages of the LinkError these links throw name the options of
