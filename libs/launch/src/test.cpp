@@ -135,6 +135,13 @@ void judge(TestRun& run, RunReport report)
             run.reason = std::to_string(skipped) + " of " + std::to_string(report.run->scenario->steps.size()) +
                          (skipped == 1 ? " steps was skipped" : " steps were skipped");
         }
+        // Expects beside a ramp or a wave that were not checked: the steps ran, but did not look.
+        if (report.run && report.run->scenario && report.run->scenario->unchecked_expects() > 0)
+        {
+            const std::size_t unchecked = report.run->scenario->unchecked_expects();
+            run.reason += (run.reason.empty() ? "" : ", ") + std::to_string(unchecked) +
+                          (unchecked == 1 ? " expect was not checked" : " expects were not checked");
+        }
         // It passed with warnings (no --strict): how many, so that the table does not hide them.
         if (const std::size_t warnings = report.warnings(); warnings > 0)
         {

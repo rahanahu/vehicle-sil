@@ -160,6 +160,7 @@ namespace {
         check.params = std::move(read.params);
         check.only = std::move(read.only);
         check.skipped = read.skipped;
+        check.unchecked_expects = read.unchecked_expects;
         check.not_for_variant = read.not_for_variant;
         if (!read.usage_errors.empty())
         {

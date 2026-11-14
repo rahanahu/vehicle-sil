@@ -78,6 +78,8 @@
 //   scenario_wave  the steps "wave": what the ECU saw of each shape, the same at a speed and with
 //                  another controller step, the warning of the check and "undersampled: ok", and
 //                  the failure of a wave that leaves the variable's range; the example with waves
+//   scenario_expect_beside  an expect beside a ramp: it holds, the sample that breaks it, and the
+//                note, the line and expect_skipped where its variable is absent
 //   scenario_same  one scenario, run as fast as possible, at a speed, with a slow ECU and with a
 //                pause in between: the same result each time; every write takes effect in the step
 //                of its time (the ECU says in which step it saw each value)
@@ -4387,6 +4389,79 @@ void ethernet(const Options& o)
     expect_text(run({"--speed", "4"}, "at four times real time"), fastest, "at a speed");
 }
 
+/// An expect beside a ramp in a real run: true all through the ramp, the time and the value of the
+/// sample that breaks it, and an expect that is not checked where its variable is absent while the
+/// ramp runs.
+void scenario_expect_beside(const Options& o)
+{
+    // Body.level goes 20, 21, ... from 100 ms, one more each 10 ms, and is 30 at the end, 200 ms.
+    const auto steps = [](const std::string& expect) {
+        return "vehicle_sil_scenario: 1\nsteps:\n"
+               "  - set: { Body.level: 20 }\n"
+               "  - at_ms: 100\n"
+               "    ramp: { Body.level: { to: 30, over_ms: 100 } }\n"
+               "    expect: { Body.level: " + expect + " }\n"
+               "  - expect: { Body.level: 30, Body.level_changed_at_ms: 200 }\n";
+    };
+    const fs::path dir = scenario_ecus(o, "", steps("{ ge: 20, le: 30 }"));
+    const Captured passed = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
+    expect_code(passed, 0, "a ramp with an expect beside it");
+    const std::string held = scenario_json(lf(passed.standard_output));
+    require(contains(held, "        \"kind\": \"ramp\",\n"
+                           "        \"text\": \"ramp Body.level to 30 over 100 ms, expecting Body.level ge 20, le 30\",\n"
+                           "        \"status\": \"passed\",\n        \"start_ms\": 100,\n        \"at_ms\": 200,\n"
+                           "        \"end_ms\": 200,") &&
+                !contains(held, "expect_skipped"),
+            "the ramp with its expect in the JSON:\n" + held);
+
+    scenario_ecus(o, "", steps("{ le: 25 }"));
+    const Captured broken = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
+    expect_code(broken, 1, "a ramp whose expect breaks");
+    const std::string why = scenario_json(lf(broken.standard_output));
+    require(contains(why, "\"code\": \"scenario-failed\",\n        \"message\": \"not true during the ramp (from 100 ms to 200 ms): "
+                          "at 160 ms Body.level le 25, but it was 26 (its sample of 160 ms)\""),
+            "the failure of the expect beside the ramp:\n" + why);
+
+    // Where the variable of the expect is absent, the ramp runs and its expect is not checked.
+    write_file(dir / "sim.yaml", "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"
+                                 "  - name: Body\n    command: [" + ecu(o) + "]\n"
+                                 "    variables:\n      body.heater: { absent: true }\n"
+                                 "  - name: Door\n    command: [" + ecu(o) + "]\n");
+    write_file(dir / "s.yaml", steps("{ le: 30 }, Body.body.heater: true"));
+    const std::string reason = "Body.body.heater is absent: participant 'Body' does not have it in this configuration (absent: true in "
+                               "its variables)";
+    const Captured checked = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml"}, dir);
+    expect_code(checked, 0, "check of an expect beside a ramp with an absent variable");
+    require(contains(lf(checked.standard_output), "\nscenario s.yaml: 3 steps (1 expect not checked)\n") &&
+                contains(lf(checked.standard_output), "\nnote: s.yaml:4: the ramp runs; its expect is not checked (ramp Body.level to "
+                                                      "30 over 100 ms, expect not checked: Body.body.heater; Body.level le 30): " +
+                                                          reason + "\n"),
+            "the note of the check:\n" + lf(checked.standard_output));
+    const Captured text = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml"}, dir);
+    expect_code(text, 0, "run of an expect beside a ramp with an absent variable");
+    require(contains(lf(text.standard_output), "\nscenario s.yaml: passed, 3 of 3 steps passed, 1 expect not checked\n") &&
+                contains(lf(text.standard_output), "\nline 4 expect not checked: " + reason + "\n"),
+            "the summary and the line under the table:\n" + lf(text.standard_output));
+    const Captured json = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
+    expect_code(json, 0, "run --json of an expect beside a ramp with an absent variable");
+    require(contains(scenario_json(lf(json.standard_output)), "        \"code\": null,\n        \"message\": null,\n"
+                                                              "        \"expect_skipped\": \"" + reason + "\"\n") &&
+                contains(scenario_json(lf(json.standard_output)), "\n    \"unchecked_expects\": 1,\n    \"steps\": [\n"),
+            "expect_skipped and unchecked_expects in the JSON:\n" + scenario_json(lf(json.standard_output)));
+    // vehicle_sil_launch test does not show such a run as a plain pass.
+    fs::create_directories(dir / "scn");
+    fs::copy_file(dir / "s.yaml", dir / "scn" / "ramp.yaml", fs::copy_options::overwrite_existing);
+    const Captured table = launch(o, {"test", "sim.yaml", "--scenarios", "scn"}, dir);
+    expect_code(table, 0, "test with an expect that is not checked");
+    require(contains(lf(table.standard_output), "scn/ramp.yaml  passed  1 expect was not checked\n"),
+            "the table of the test:\n" + lf(table.standard_output));
+    const Captured tested = launch(o, {"test", "sim.yaml", "--scenarios", "scn", "--json"}, dir);
+    expect_code(tested, 0, "test --json with an expect that is not checked");
+    require(contains(lf(tested.standard_output), "\"reason\": \"1 expect was not checked\"") &&
+                contains(lf(tested.standard_output), "\"unchecked_expects\": 1,"),
+            "the JSON of the test:\n" + lf(tested.standard_output));
+}
+
 void scenario_failures(const Options& o)
 {
     const std::string head = "vehicle_sil_scenario: 1\nsteps:\n";
@@ -5381,6 +5456,7 @@ int main(int argc, char** argv)
             {"scenario_failures", scenario_failures},
             {"scenario_same", scenario_same},
             {"scenario_wave", scenario_wave},
+            {"scenario_expect_beside", scenario_expect_beside},
             {"speed_change", speed_change},
             {"stall", stall},
             {"stand_still", stand_still},
