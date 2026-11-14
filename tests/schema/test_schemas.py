@@ -12,6 +12,9 @@ Without the launcher (the files only):
   - the copies in template/schema/ are the files they are copies of, and the first line of each YAML file of examples/
     and template/ names the schema of its kind (# yaml-language-server: $schema=<relative path>).
 
+With the built examples (VEHICLE_SIL_EXAMPLE_DIR):
+  - the first line of each copy of an example's YAML file in the build directory leads to a copy of its schema.
+
 With the launcher (VEHICLE_SIL_LAUNCH_EXE, and VEHICLE_SIL_EXAMPLE_DIR with the built examples/ecu_main; CTest sets
 both, as schema.files_and_launcher):
   - the keys of every mapping are the ones the launcher knows: an unknown key is given to `check` at each place, and
@@ -721,6 +724,36 @@ class SchemaAndLauncher(unittest.TestCase):
                                         + ("the schema refuses a file that is right: loosen the schema"
                                            if verdict == "invalid" else "it is not a mistake any more: remove the sample")
                                         + f"\n{text}")
+
+
+
+@unittest.skipUnless(EXAMPLE_DIR, "VEHICLE_SIL_EXAMPLE_DIR is not set: the copies of the examples in the build "
+                                  "directory are left out (CTest runs it)")
+class SchemaOfTheBuiltExamples(unittest.TestCase):
+    """CMake copies the YAML files of the examples next to their executables, with the first line as it is."""
+
+    def test_the_first_line_of_each_copy_in_the_build_directory_leads_to_its_schema(self):
+        built = Path(EXAMPLE_DIR).resolve().parent  # <build>/examples
+        sources = {"simulation.schema.json": SCHEMA_DIR, "scenario.schema.json": SCHEMA_DIR,
+                   "dashboard.schema.json": ROOT / "gui" / "protocol"}
+        seen = 0
+        for path in sorted(built.rglob("*.yaml")):
+            match = MODELINE.match(path.read_text(encoding="utf-8").split("\n", 1)[0].rstrip("\r"))
+            if not match:
+                continue
+            seen += 1
+            target = path.parent / match.group(1)
+            where = f"{path}: the first line names {match.group(1)}"
+            self.assertTrue(target.is_file(),
+                            f"{where}, and there is no file {target.resolve()}: an editor cannot complete and check "
+                            "this copy; copy the schema there at configure time (the foreach of schemas after the "
+                            "examples in the top CMakeLists.txt)")
+            self.assertIn(target.name, sources, f"{where}, which is not a schema of this repository")
+            self.assertEqual(target.read_bytes(), (sources[target.name] / target.name).read_bytes(),
+                             f"{where}, and {target.resolve()} is not {sources[target.name] / target.name} any more: "
+                             "configure again (cmake --preset <preset>)")
+        self.assertGreater(seen, 3, f"{built} has no copies of the examples' YAML files that name a schema: is "
+                                    "VEHICLE_SIL_EXAMPLE_DIR the directory of the built examples/ecu_main?")
 
 
 if __name__ == "__main__":

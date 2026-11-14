@@ -138,6 +138,17 @@ jobs:
               exit 1
             fi
           done
+      # schema.files_and_launcher is the only test that holds the keys of the JSON Schemas (schema/) against the
+      # launcher's readers. It is added only where CMake finds a Python with PyYAML and jsonschema (here the uv
+      # environment); without one it would be left out silently, and the schemas could drift from the launcher.
+      - name: The test of the JSON Schemas against the launcher was run
+        if: matrix.preset == 'linux-gcc-debug'
+        run: |
+          listed=$(ctest --test-dir build/linux-gcc-debug -N -R '^schema\.')
+          if ! grep -qE 'Test +#[0-9]+: schema\.files_and_launcher$' <<<"$listed"; then
+            echo "::error::schema.files_and_launcher is not registered: CMake found no Python 3.11+ with PyYAML and jsonschema (see 'the tests of the JSON Schemas are skipped' in build/logs/ci-linux-gcc-debug-configure.log), or the launcher and the examples of examples/ecu_main were not built; run uv sync --locked (its dev group has both) before the configure"
+            exit 1
+          fi
       # The GUI server against this launcher and its control server (gui/server/tests/test_real_launcher.py records
       # every case again, those with the control server too, and compares; test_real_variables.py reads and writes
       # the example ECUs' variables). The screen and its browser tests are in the gui job (without a real launcher).
@@ -239,6 +250,7 @@ jobs:
             mingw-w64-ucrt-x86_64-ccache
             mingw-w64-ucrt-x86_64-python
             mingw-w64-ucrt-x86_64-python-yaml
+            mingw-w64-ucrt-x86_64-python-jsonschema
       - name: Where ccache keeps its files
         run: echo "CCACHE_DIR=$(cygpath -m "$GITHUB_WORKSPACE/.ccache")" >> "$GITHUB_ENV"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -255,6 +267,7 @@ jobs:
           cmake --version | head -n 1
           command -v python git
           python -c "import sys, yaml; print('Python', sys.version.split()[0], 'PyYAML', yaml.__version__)"
+          python -c "import jsonschema, importlib.metadata; print('jsonschema', importlib.metadata.version('jsonschema'))"
       - name: Configure, build and test
         run: python scripts/verify.py windows-mingw-release --tag ci
       - if: failure()
