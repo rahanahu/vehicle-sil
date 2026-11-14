@@ -98,6 +98,7 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 | SIL Kit | publish/subscribe（`vehicle_sil::control_silkit`、examples/virtual_time） | `CreateDataPublisher`（履歴 0。hello だけ履歴 1）、`CreateDataSubscriber`、`IDataPublisher::Publish`、`PubSubSpec`（トピックとメディアタイプ。ラベルは使わない） |
 | SIL Kit | 他参加者の監視 | `CreateSystemMonitor`、`AddParticipantStatusHandler`（`SetParticipantConnectedHandler` と `SetParticipantDisconnectedHandler` は使わない。「上流の既知の不具合」を参照） |
 | SIL Kit | CAN | `CreateCanController`、`ICanController::Start/Stop/SendFrame/SetBaudRate`、`AddFrameHandler`、`AddFrameTransmitHandler`。`SendFrame` の userContext に送信時刻を入れる（簡易 CAN Network Simulator との取り決め） |
+| SIL Kit | Ethernet（`vehicle_sil::eth_silkit`） | `CreateEthernetController`、`IEthernetController::Activate/Deactivate/SendFrame`、`AddFrameHandler`（RX だけ）、`AddFrameTransmitHandler`、`AddStateChangeHandler` |
 | SIL Kit | Ethernet（`vehicle_sil::ethernet_bridge_core`） | `CreateEthernetController`、`IEthernetController::Activate/Deactivate/SendFrame`、`AddFrameHandler`（RX の向きだけ）、`AddFrameTransmitHandler`（`Transmitted` 以外の確認だけ） |
 | SIL Kit | Network Simulator（experimental、`vehicle_sil::can_netsim`） | `Experimental::Participant::CreateNetworkSimulator`、`INetworkSimulator::SimulateNetwork/Start`、`ISimulatedNetwork`、`Can::ISimulatedCanController`、`Can::ICanEventProducer::Produce`（フレーム、送信確認、状態の変化） |
 | SIL Kit | プロセス内レジストリ（`Simulation`、`vehicle_sil_launch run`） | `Vendor::Vector::CreateSilKitRegistry`、`StartListening` |
@@ -122,6 +123,8 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
   - participant の構成の `EnableMessageAggregation` は既定の Off のままであること（On にした participant は、データのメッセージを溜めてから送るので、上の順序の前提が変わります）。
   - participant を壊すと、まだソケットに書いていない送信は捨てられます（同じ相手への前の送信を書いている途中なら、その後ろに積んだ送信は書かれません）。そのため、Agent の「最後の知らせ」は、Hub の返事を待ってから participant を壊します（`AgentTransport` のデストラクター。internals/control.md の「接続の終わり」）。participant が生きている間は、積んだ送信は順に書かれます。
 - 時刻同期した participant が送るメッセージのタイムスタンプは、送信時のステップの時刻です。
+- 時刻同期していない participant が送るメッセージのタイムスタンプは `std::chrono::nanoseconds::min()` です（`TimeProvider` の既定）。`SilKitEthPort` はこれを負の時刻として見分け、受け手のステップの時刻に寄せます（[internals/ethernet.md](internals/ethernet.md) の「時刻同期に参加していない送り手」）。
+- Ethernet は、Network Simulator がなければ、送ったフレームを同じネットワークのほかの全部のコントローラーに届けます（宛先のアドレスで絞らない）。送信の確認は `SendFrame()` の中で、送った時刻で返ります。`Activate()` は、その中で状態を LinkUp にします。60 バイトより短いフレームは、受け手のコントローラーが 0 で埋めてからハンドラーに渡します（`EthController::ReceiveMsgInternal`）。`VirtualEthernetBus` はこの振る舞いに合わせてあり、試験 `eth_silkit.records_match_*` が同じ記録になることを確かめます。
 - Ethernet（`EthernetBridge` が前提にしています。試験 `ethernet_bridge.silkit_*` が、埋めることと、自分の送信が RX のハンドラーに来ないことを確かめます）:
   - `SendFrame` は、呼び出しの中でフレームのバイト列を写します。ブリッジは、外の口のハンドラーの間だけ有効なバッファーをそのまま渡します。
   - trivial simulation では、送ったフレームはほかの participant に RX として、自分には TX として届きます。RX の向きだけで登録したハンドラーには、自分の送信は来ません。
