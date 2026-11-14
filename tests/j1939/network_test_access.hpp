@@ -14,6 +14,9 @@ struct NetworkTestAccess
     static void deliver_message(Network& network, const Message& message) { network.deliver_message(message); }
     /// The network's protocol timers, started directly (without a reserved slot).
     static TimerSet& timers(Network& network) noexcept { return network.timers_; }
+    /// Network::set_seat(): puts `seat` in the listener's seat (nullptr: empties it).
+    static void set_seat(Network& network, FrameSeat* seat) { network.set_seat(seat); }
+    [[nodiscard]] static FrameSeat* seat(const Network& network) noexcept { return network.seat_; }
 };
 
 } // namespace vehicle_sil::j1939::detail

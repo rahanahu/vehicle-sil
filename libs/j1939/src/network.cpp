@@ -2,6 +2,7 @@
 #include "vehicle_sil/j1939/network.hpp"
 #include "vehicle_sil/j1939/observer.hpp"
 
+#include "frame_seat.hpp"
 #include "transport.hpp"
 
 #include <algorithm>
@@ -183,6 +184,11 @@ Network::~Network()
         observer_->network_ = nullptr;
         observer_ = nullptr;
     }
+    if (seat_ != nullptr)
+    {
+        seat_->network_ = nullptr;
+        seat_ = nullptr;
+    }
     // Subscriptions and Timers that outlive the network do nothing from now on.
     alive_.reset();
 }
@@ -261,12 +267,101 @@ void Network::observe(const Event& event)
     observing_ = outer;
 }
 
+namespace detail {
+
+FrameSeat::~FrameSeat()
+{
+    if (network_ != nullptr)
+    {
+        network_->seat_ = nullptr;
+    }
+}
+
+} // namespace detail
+
+void Network::set_seat(detail::FrameSeat* seat)
+{
+    if (phase_ != Phase::Failed)
+    {
+        require_not_observing("adding or removing a Listener");
+        if (phase_ != Phase::Idle || dispatching_)
+        {
+            throw std::logic_error("vehicle_sil::j1939::Network: a Listener is only added or removed outside a step "
+                                   "(create it before the simulation starts, next to the nodes)");
+        }
+    }
+    if (seat == seat_)
+    {
+        return;
+    }
+    if (seat != nullptr && seat_ != nullptr)
+    {
+        throw std::logic_error("vehicle_sil::j1939::Network: this Network already has a Listener (a Network has one); "
+                               "add the handlers to that Listener");
+    }
+    if (seat != nullptr && seat->network_ != nullptr)
+    {
+        throw std::logic_error("vehicle_sil::j1939::Network: the Listener already listens to another Network; "
+                               "create one Listener per Network");
+    }
+    if (seat_ != nullptr)
+    {
+        seat_->network_ = nullptr;
+    }
+    seat_ = seat;
+    if (seat_ != nullptr)
+    {
+        seat_->network_ = this;
+    }
+}
+
+template <typename F>
+void Network::tell_seat(F&& call)
+{
+    if (seat_ == nullptr)
+    {
+        return;
+    }
+    const bool outer = observing_;
+    observing_ = true;
+    in_seat_ = true;
+    try
+    {
+        call(*seat_);
+    }
+    catch (const std::exception& e)
+    {
+        observing_ = outer;
+        in_seat_ = false;
+        fail(std::string("vehicle_sil::j1939::Network: a Listener handler threw: ") + e.what());
+        throw;
+    }
+    catch (...)
+    {
+        observing_ = outer;
+        in_seat_ = false;
+        fail("vehicle_sil::j1939::Network: a Listener handler threw");
+        throw;
+    }
+    observing_ = outer;
+    in_seat_ = false;
+}
+
+std::string Network::read_only_text(const char* what) const
+{
+    if (in_seat_)
+    {
+        return std::string("vehicle_sil::j1939::Network: ") + what +
+               " called from a Listener handler (handlers only read: update variables there and send from on_step)";
+    }
+    return std::string("vehicle_sil::j1939::Network: ") + what + " called from an observer (observers are read only)";
+}
+
 void Network::require_not_observing(const char* what)
 {
     if (observing_)
     {
-        const std::string text = std::string("vehicle_sil::j1939::Network: ") + what +
-                                 " called from an observer (observers are read only)";
+        const std::string text = read_only_text(what);
         fail(text);
         throw std::logic_error(text);
     }
@@ -280,7 +375,7 @@ bool Network::fail_if_observing(const char* what) noexcept
     }
     try
     {
-        fail(std::string("vehicle_sil::j1939::Network: ") + what + " called from an observer (observers are read only)");
+        fail(read_only_text(what));
     }
     catch (...)
     {
@@ -538,6 +633,9 @@ void Network::process()
             fire_timers_before(received_[index].time);
             dispatch(received_[index]);
         }
+        // The seat before the timers due at the step time: what a listener concludes from the
+        // step's frames is there when the application's timers run.
+        tell_seat([&](detail::FrameSeat& seat) { seat.on_step_end(*now_); });
         fire_due_timers();
         // Nodes start claiming after this step's frames: those were sent before the claim.
         for (auto& node : nodes_)
@@ -626,6 +724,7 @@ void Network::order_received()
 
 void Network::dispatch(const Received& received)
 {
+    tell_seat([&](detail::FrameSeat& seat) { seat.on_frame(received.time, received.frame, received.sender >= 0); });
     const Identifier id = Identifier::decode(received.frame.id);
     const Message message{id.pgn, id.priority, id.source, id.destination, received.time, received.frame.payload()};
     if (id.pgn == kPgnTransportControl || id.pgn == kPgnTransportData)
@@ -694,6 +793,7 @@ void Network::dispatch_message(const Message& message, std::int32_t sender, bool
         e.data = message.data;
         observe(e);
     }
+    tell_seat([&](detail::FrameSeat& seat) { seat.on_message(message, sender >= 0); });
     if (message.pgn == kPgnAddressClaimed)
     {
         if (message.data.size() < 8)

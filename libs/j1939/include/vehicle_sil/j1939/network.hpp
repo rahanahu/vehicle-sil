@@ -36,6 +36,8 @@ class Timer;
 class Transport;
 
 namespace detail {
+/// The listener's seat in a Network's receive path (internal: src/frame_seat.hpp).
+class FrameSeat;
 /// The tests' way into the internals of a Network (defined only in the tests).
 struct NetworkTestAccess;
 } // namespace detail
@@ -825,6 +827,8 @@ private:
     friend class Subscription;
     friend class Timer;
     friend class Transport;
+    friend class detail::FrameSeat;
+    friend class Listener; ///< Sits in the seat (set_seat()).
     friend struct detail::NetworkTestAccess;
 
     enum class Phase : std::uint8_t
@@ -893,13 +897,24 @@ private:
     void require_not_failed() const;
     void require_not_reentrant(const char* what);
     void require_in_step(const char* what);
-    /// Throws std::logic_error (and fails the network) while an observer runs.
+    /// Throws std::logic_error (and fails the network) while an observer or the seat runs.
     void require_not_observing(const char* what);
-    /// Fails the network if an observer runs (for the noexcept paths); returns true then.
+    /// Fails the network if an observer or the seat runs (for the noexcept paths); returns true
+    /// then.
     bool fail_if_observing(const char* what) noexcept;
+    /// The text of both: `what` was called from an observer, or from the seat.
+    [[nodiscard]] std::string read_only_text(const char* what) const;
     [[nodiscard]] bool observed() const noexcept { return observer_ != nullptr; }
     /// Calls the observer (if any) with `event`; see Observer.
     void observe(const Event& event);
+    /// Puts `seat` in the listener's seat (nullptr: empties it). Only outside a step and not
+    /// from an observer or the seat (std::logic_error); after the network failed, anywhere. A
+    /// network has one seat: std::logic_error if another one sits there, or if `seat` sits in
+    /// another network. See detail::FrameSeat.
+    void set_seat(detail::FrameSeat* seat);
+    /// Calls the seat (if any) with `call`, as observe() calls the observer.
+    template <typename F>
+    void tell_seat(F&& call);
     void warn(std::string_view text) const;
 
     void order_received();
@@ -961,7 +976,9 @@ private:
     std::string error_;
     std::vector<Attached> attached_; ///< In attach order; destroyed last to first.
     Observer* observer_ = nullptr;
-    bool observing_ = false; ///< Inside Observer::on_event().
+    bool observing_ = false; ///< Inside Observer::on_event() or a function of the seat.
+    detail::FrameSeat* seat_ = nullptr;
+    bool in_seat_ = false; ///< Inside a function of the seat (chooses the text of the errors).
 };
 
 template <typename T, typename... Args>
