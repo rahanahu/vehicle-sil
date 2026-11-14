@@ -66,12 +66,23 @@ double number_of(const control::Value& value)
 
 /// A signal's value as a value of the variable's type: an integer is rounded to the nearest
 /// (halves away from zero), a bool is true from 0.5.
+///
+/// Before an integer is rounded, the value is put on a grid of 2^-30: a value that is a half but
+/// for the last bits of the arithmetic (a sine at 30 degrees is 0.49999999999999994 with one C
+/// library and 0.5 with another) then rounds the same way everywhere. What can still differ by
+/// one between platforms is a value that close to the middle between two points of the grid,
+/// which a scenario does not meet by writing round numbers.
 control::Value value_of_type(double value, control::ValueType type)
 {
     switch (type)
     {
     case control::ValueType::Integer:
-    case control::ValueType::Enum: return control::Value{static_cast<std::int64_t>(std::llround(value))};
+    case control::ValueType::Enum:
+        if (std::fabs(value) < 0x1p22) // (times 2^30 it still has bits below one)
+        {
+            value = std::round(value * 0x1p30) * 0x1p-30;
+        }
+        return control::Value{static_cast<std::int64_t>(std::llround(value))};
     case control::ValueType::Bool: return control::Value{value >= 0.5};
     case control::ValueType::Real: break;
     }

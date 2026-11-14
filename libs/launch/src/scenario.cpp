@@ -13,6 +13,7 @@
 #include <cmath>
 #include <functional>
 #include <map>
+#include <numeric>
 #include <set>
 #include <system_error>
 #include <utility>
@@ -40,6 +41,8 @@ const std::vector<std::string> kWaveKeys = {"sine",  "triangle", "sawtooth", "sq
 constexpr const char* kAsItIs = "; to run it as it is without this message, add undersampled: ok to the step";
 /// A smooth shape with fewer steps of its ECU per period is coarse (a note).
 constexpr std::int64_t kSmoothSteps = 8;
+/// Two values of a shape (as a share of its amplitude) that are this close are the same value.
+constexpr double kSameValue = 1e-9;
 constexpr std::int64_t kMaxBounces = 1'000'000;
 
 constexpr const char* kDocs = "docs/scenario.md";
@@ -1477,26 +1480,60 @@ private:
         return scenario_.participants[scenario_.variables[variable].participant].name;
     }
 
-    /// A shape that repeats every `period`: too fast for its ECU (a warning), or, if `smooth`
-    /// (its values between the corners matter), coarse (a note). @returns whether it warned.
-    bool check_period(std::size_t variable, const std::string& what, std::size_t line, bool quiet, SimDuration period, bool smooth)
+    /// A shape that repeats every `period`: too fast for its ECU (a warning), or, if it is smooth
+    /// (its values between the corners matter; `factor` is then its value, -1 to 1, at a time
+    /// since the step began), all the same at the times the ECU takes it (a warning) or coarse (a
+    /// note). @returns whether it warned.
+    ///
+    /// The wave writes at T, T + step, T + 2 step, ... (T: when the scenario's step begins), and
+    /// the ECU applies each in a step of its own, so what the ECU sees does not depend on T.
+    bool check_period(std::size_t variable, const std::string& what, std::size_t line, bool quiet, SimDuration period,
+                      const std::function<double(SimDuration)>& factor = {})
     {
         const auto step = sampling(variable, what, line, quiet);
         if (!step)
         {
             return true;
         }
+        const bool smooth = static_cast<bool>(factor);
+        // What to make of a smooth shape: a period that shows it. Two values per period show a square.
+        const std::string longer = smooth ? "Make the period " + span_text(kSmoothSteps * *step) + " or more (" +
+                                                std::to_string(kSmoothSteps) + " values per period)"
+                                          : "Make the period " + span_text(2 * *step) + " or more";
         if (period < 2 * *step)
         {
             add(Severity::Warning, "scenario-wave-undersampled", line,
                 what + " has a period of " + span_text(period) + ", but " + takes_inputs(variable) +
-                    ": with fewer than two values per period the ECU sees a slower shape or a constant, not this one. Make the "
-                    "period " + span_text(2 * *step) + " or more" + kAsItIs,
+                    ": with fewer than two values per period the ECU sees a slower shape or a constant, not this one. " + longer +
+                    kAsItIs,
                 owner_of(variable));
             return true;
         }
         if (smooth && period < kSmoothSteps * *step)
         {
+            // The values the ECU takes repeat after `count` of them: if they are few, look at them.
+            const std::int64_t count = period.count() / std::gcd(period.count(), step->count());
+            if (count <= kSmoothSteps)
+            {
+                double low = factor(SimDuration::zero());
+                double high = low;
+                for (std::int64_t k = 1; k < count; ++k)
+                {
+                    const double value = factor(k * *step);
+                    low = std::min(low, value);
+                    high = std::max(high, value);
+                }
+                if (high - low <= kSameValue)
+                {
+                    const std::string shape = what.substr(0, what.find(" of "));
+                    add(Severity::Warning, "scenario-wave-undersampled", line,
+                        what + " has a period of " + span_text(period) + ", and " + takes_inputs(variable) + ": at each of those times " +
+                            shape + " is at " + (std::fabs(low) <= kSameValue ? "its middle" : "the same value") +
+                            ", so the ECU sees a constant, not " + shape + ". " + longer + kAsItIs,
+                        owner_of(variable));
+                    return true;
+                }
+            }
             add(Severity::Note, "scenario-wave-coarse", line,
                 what + " has a period of " + span_text(period) + ", and " + takes_inputs(variable) + ": the ECU sees " +
                     rounded_text(static_cast<double>(period.count()) / static_cast<double>(step->count())) +
@@ -1511,7 +1548,7 @@ private:
     void check_square(std::size_t variable, const std::string& what, std::size_t line, bool quiet, const detail::Periodic& periodic,
                       double duty)
     {
-        if (check_period(variable, what, line, quiet, periodic.period, false))
+        if (check_period(variable, what, line, quiet, periodic.period))
         {
             return;
         }
@@ -1528,7 +1565,7 @@ private:
         }
         // The ECU takes the values at 0, step, 2 step, ... of the wave: those of them that are high.
         const std::int64_t high = signal::square_high_time(periodic.period, duty).count();
-        const std::int64_t first = signal::detail::position(SimDuration::zero(), periodic.period, periodic.phase_deg) % step;
+        const std::int64_t first = signal::time_in_period(SimDuration::zero(), periodic.period, periodic.phase_deg).count() % step;
         const std::int64_t seen = high > first ? (high - first + step - 1) / step * step : 0;
         if (seen != high)
         {
@@ -1554,6 +1591,85 @@ private:
             add(Severity::Warning, "scenario-wave-undersampled", line,
                 what + " " + is + " " + step_of(variable) + ": " + sees + ". " + make + kAsItIs, owner_of(variable));
         }
+    }
+
+    enum class Seen
+    {
+        Yes,
+        No,
+        Depends, ///< on when the scenario's step begins, which is not known before the run
+    };
+
+    /// Whether the ECU gets a value that a wave has from `from` until `to` (times since the
+    /// scenario's step began; `to` is not part of it) and no longer; the wave ends at `length`.
+    /// `time`: when the scenario's step begins (ms), if that is known before the run.
+    ///
+    /// The wave writes at T, T + step, T + 2 step, ... and at T + length (what it leaves), and the
+    /// ECU applies each write in its first step at or after the write's time: its steps are at 0,
+    /// step, 2 step, .... A value that none of the regular writes carries is never applied. Two
+    /// regular writes go to two steps of the ECU; the last regular write and the one of the end
+    /// go to the same step, where the end's wins, if no step of the ECU is from the one until the
+    /// other. `written`, `ends`: those two times, when that decides (Yes or No with `time`; as
+    /// times since the step began for Depends).
+    static Seen seen_between(SimDuration step, const std::optional<std::int64_t>& time, SimDuration from, SimDuration to, SimDuration length,
+                             SimDuration& written, SimDuration& ends)
+    {
+        const std::int64_t s = step.count();
+        const std::int64_t first = (from.count() + s - 1) / s * s; // the first regular write at or after `from`
+        if (first >= to.count())
+        {
+            return Seen::No;
+        }
+        if (first + s <= length.count())
+        {
+            return Seen::Yes; // the write after it is a regular one
+        }
+        written = SimDuration{first};
+        ends = length;
+        if (!time)
+        {
+            return Seen::Depends;
+        }
+        const SimDuration begins = std::chrono::milliseconds(*time);
+        written += begins;
+        ends += begins;
+        const std::int64_t applied = (written.count() + s - 1) / s * s; // the ECU's first step at or after the write
+        return applied < ends.count() ? Seen::Yes : Seen::No;
+    }
+
+    /// A pulse that is shorter than the step of its ECU: whether the ECU sees it, as far as that
+    /// is known before the run.
+    void check_pulse(std::size_t variable, const std::string& what, std::size_t line, bool quiet, SimDuration width,
+                     const std::optional<std::int64_t>& time)
+    {
+        const auto step = sampling(variable, what, line, quiet);
+        if (!step || width >= *step)
+        {
+            return;
+        }
+        SimDuration written{};
+        SimDuration ends{};
+        std::string sees;
+        switch (seen_between(*step, time, SimDuration::zero(), width, width, written, ends))
+        {
+        case Seen::Yes:
+            sees = "this step begins at " + span_text(written) + ", so the ECU has the pulse's value for one whole step of " +
+                   span_text(*step) + " (the one at " + span_text(SimDuration{(written.count() + step->count() - 1) / step->count() * step->count()}) +
+                   "), not for " + span_text(width);
+            break;
+        case Seen::No:
+            sees = "this step begins at " + span_text(written) + ", and none of the ECU's steps is from then until the pulse ends (" +
+                   span_text(ends) + "), so the ECU never gets the pulse's value";
+            break;
+        case Seen::Depends:
+            sees = "the ECU has the pulse's value for one whole step if one of its steps is from the pulse's beginning until its end, "
+                   "and never otherwise; when this step begins is not known before the run";
+            break;
+        }
+        add(Severity::Warning, "scenario-wave-undersampled", line,
+            what + " is " + span_text(width) + " wide, shorter than " + step_of(variable) + ": " + sees + ". Make width_ms " +
+                whole_ms(*step) + " or more" + kAsItIs,
+            owner_of(variable));
     }
 
     /// How long the wave of a variable that is absent takes (`node`: its entry in "wave"), as far
@@ -1698,7 +1814,7 @@ private:
 
         if (shape == "points")
         {
-            good = read_points(body, top->count("interpolate") > 0 ? top->at("interpolate") : ryml::NONE, v, what, quiet, out, text, length, make) && good;
+            good = read_points(body, top->count("interpolate") > 0 ? top->at("interpolate") : ryml::NONE, v, what, time, quiet, out, text, length, make) && good;
             wantsFor = false;
             noAround = "the points are the values themselves (for where it begins, start with a point at 0: [0, <value>])";
         }
@@ -1769,7 +1885,12 @@ private:
                 swing = amplitude;
                 if (periodic)
                 {
-                    check_period(v, what, line, quiet, periodic->period, true);
+                    const detail::Periodic p = *periodic;
+                    check_period(v, what, line, quiet, p.period, [&](SimDuration t) {
+                        return shape == "sine" ? signal::sine(t, p.period, p.phase_deg)
+                               : shape == "triangle" ? signal::triangle(t, p.period, p.phase_deg)
+                                                     : signal::sawtooth(t, p.period, falling, p.phase_deg);
+                    });
                     make = [=](SimDuration) {
                         return shape == "sine" ? detail::sine_shape(amplitude, *periodic)
                                : shape == "triangle" ? detail::triangle_shape(amplitude, *periodic)
@@ -1872,13 +1993,15 @@ private:
                     noAround = "a bool has no middle (the pulse returns to the other value)";
                     out.base = value.value_or(1.0) != 0.0 ? 0.0 : 1.0;
                 }
+                else
+                {
+                    noAround = "a pulse returns to the value the variable has when the pulse begins (for another value after it, "
+                               "write a set in the next step)";
+                    out.hint = "set the variable in a step before the pulse (set: { " + name + ": <value> })";
+                }
                 if (length)
                 {
-                    const SimDuration width = std::chrono::milliseconds(*length);
-                    check_span(v, what, line, quiet, width, "is " + span_text(width) + " wide, shorter than",
-                               "the ECU sees it for one whole step if the pulse begins at the time of one of the ECU's steps, and not "
-                               "at all otherwise",
-                               "Make width_ms " + whole_ms(step_ns(v)) + " or more");
+                    check_pulse(v, what, line, quiet, std::chrono::milliseconds(*length), time);
                 }
                 if (value)
                 {
@@ -1922,7 +2045,10 @@ private:
                     check_span(v, what, line, quiet, held, "changes every " + span_text(held) + ", faster than",
                                "the ECU gets only the value at the time of each of its steps; the values between are never applied",
                                "Make hold_ms " + whole_ms(step_ns(v)) + " or more");
-                    make = [=](SimDuration) { return detail::noise_shape(amplitude, held, *seed, gaussian); };
+                    // (The variable's name is part of the seed: the same seed for two variables is two sequences.)
+                    make = [=, mixed = detail::seed_of_variable(*seed, name)](SimDuration) {
+                        return detail::noise_shape(amplitude, held, mixed, gaussian);
+                    };
                 }
             }
             else if (shape == "chirp")
@@ -1930,15 +2056,15 @@ private:
                 const double amplitude = amplitude_of("how far the value goes above and below the middle");
                 std::optional<double> fromHz;
                 std::optional<double> toHz;
-                const double least = 1e3 / static_cast<double>(kMaxMillis);
+                // (0 Hz is a frequency: a linear sweep can begin or end standing still.)
                 if (need("from_hz", "the frequency at the beginning, in periods per second of virtual time"))
                 {
-                    fromHz = measure(parts->at("from_hz"), "from_hz of " + what, least, false, 1e9, "the frequency at the beginning");
+                    fromHz = measure(parts->at("from_hz"), "from_hz of " + what, 0.0, false, 1e9, "the frequency at the beginning");
                     good = good && fromHz.has_value();
                 }
                 if (need("to_hz", "the frequency at the end (after for_ms)"))
                 {
-                    toHz = measure(parts->at("to_hz"), "to_hz of " + what, least, false, 1e9, "the frequency at the end");
+                    toHz = measure(parts->at("to_hz"), "to_hz of " + what, 0.0, false, 1e9, "the frequency at the end");
                     good = good && toHz.has_value();
                 }
                 text += fromHz && toHz ? " from " + number_text(*fromHz) + " Hz to " + number_text(*toHz) + " Hz" : "";
@@ -1951,7 +2077,21 @@ private:
                     text += sweep == signal::Sweep::Log ? " log" : "";
                 }
                 swing = amplitude;
-                if (fromHz && toHz)
+                if (fromHz && toHz && sweep == signal::Sweep::Log && (*fromHz == 0.0 || *toHz == 0.0))
+                {
+                    const char* key = *fromHz == 0.0 ? "from_hz" : "to_hz";
+                    error("value", doc_.line(parts->at(key)),
+                          std::string(key) + " of " + what + " is 0, but a log sweep changes the frequency by the same factor every second, "
+                          "which neither begins nor ends at 0 Hz: give a frequency above 0, or write sweep: linear");
+                    good = false;
+                }
+                else if (fromHz && toHz && *fromHz == 0.0 && *toHz == 0.0)
+                {
+                    error("value", doc_.line(parts->at("to_hz")),
+                          what + " goes from 0 Hz to 0 Hz, which does not move: give from_hz or to_hz a frequency above 0");
+                    good = false;
+                }
+                else if (fromHz && toHz)
                 {
                     check_chirp(v, what, line, quiet, std::max(*fromHz, *toHz));
                     make = [=](SimDuration all) { return detail::chirp_shape(amplitude, *fromHz, *toHz, all, sweep); };
@@ -2087,7 +2227,8 @@ private:
                 }
                 if (to && interval)
                 {
-                    make = [=](SimDuration) { return detail::chatter_shape(*to, std::chrono::milliseconds(*interval), seed); };
+                    const std::optional<std::uint64_t> mixed = seed ? std::optional{detail::seed_of_variable(*seed, name)} : std::nullopt;
+                    make = [=](SimDuration) { return detail::chatter_shape(*to, std::chrono::milliseconds(*interval), mixed); };
                 }
             }
         }
@@ -2185,8 +2326,8 @@ private:
 
     /// The points of a wave (`body`: the list; `interpolate`: its node or NONE). @returns whether
     /// they have no error; then `length` and `make` are set.
-    bool read_points(ryml::id_type body, ryml::id_type interpolate, std::size_t v, const std::string& what, bool quiet,
-                     ScenarioSignal& out, std::string& text, std::optional<std::int64_t>& length,
+    bool read_points(ryml::id_type body, ryml::id_type interpolate, std::size_t v, const std::string& what,
+                     const std::optional<std::int64_t>& time, bool quiet, ScenarioSignal& out, std::string& text, std::optional<std::int64_t>& length,
                      std::function<std::shared_ptr<const Waveform>(SimDuration)>& make)
     {
         const ScenarioVariable& var = scenario_.variables[v];
@@ -2248,7 +2389,10 @@ private:
             {
                 error("value", doc_.line(item),
                       "the times of " + what + " must go up: " + label + " is at " + std::to_string(*at) + " ms, not after point " +
-                          std::to_string(index - 1) + " (" + std::to_string(*before) + " ms)");
+                          std::to_string(index - 1) + " (" + std::to_string(*before) + " ms)" +
+                          (*at == *before && !hold ? "; for a value that jumps, write interpolate: hold beside the points (each value is "
+                                                     "then kept until the next point)"
+                                                   : ""));
                 good = false;
                 continue;
             }
@@ -2272,17 +2416,73 @@ private:
         length = points.back().time.count() / 1'000'000;
         text += " (" + std::to_string(points.size()) + (hold ? ", hold" : ", linear") + ") over " + std::to_string(*length) + " ms";
         out.hint = "begin the points with one at 0 ms ([0, <value>])";
-        if (closest)
+        if (hold)
         {
+            check_held_points(v, what, doc_.line(body), quiet, points, time);
+        }
+        else if (closest)
+        {
+            // On lines every point is a corner: closer than a step, the ECU misses some of them.
             const SimDuration apart = std::chrono::milliseconds(closest->second - closest->first);
             check_span(v, what, doc_.line(body), quiet, apart,
-                       "has points " + span_text(apart) + " apart (at " + std::to_string(closest->first) + " ms and " +
+                       "are as little as " + span_text(apart) + " apart (at " + std::to_string(closest->first) + " ms and " +
                            std::to_string(closest->second) + " ms), closer than",
                        "the ECU gets only the value at the time of each of its steps, so it does not see every point",
                        "Put the points " + span_text(step_ns(v)) + " or more apart");
         }
         make = [points = std::move(points), hold](SimDuration) { return detail::points_shape(points, hold); };
         return true;
+    }
+
+    /// Points that are kept until the next (interpolate: hold): a jump is what they are for, so
+    /// how close two of them are does not matter; one whose value the ECU never gets does. Says
+    /// the first such point, or else the first of which that is not known before the run.
+    void check_held_points(std::size_t variable, const std::string& what, std::size_t line, bool quiet,
+                           const std::vector<signal::Point>& points, const std::optional<std::int64_t>& time)
+    {
+        const auto step = sampling(variable, what, line, quiet);
+        if (!step)
+        {
+            return;
+        }
+        const std::string head = what + " keep point ";
+        const std::string fix = ". Put the points at multiples of " + span_text(*step) + kAsItIs;
+        std::string unknown;
+        for (std::size_t i = 0; i + 1 < points.size(); ++i)
+        {
+            SimDuration written{};
+            SimDuration ends{};
+            const Seen seen = seen_between(*step, time, points[i].time, points[i + 1].time, points.back().time, written, ends);
+            const bool last = i + 2 == points.size();
+            const std::string span = std::to_string(i + 1) + " from " + span_text(points[i].time) + " to " + span_text(points[i + 1].time) +
+                                     (last ? ", where they end" : "") + ", and " + takes_inputs(variable) + ": ";
+            if (seen == Seen::No && written == SimDuration::zero() && ends == SimDuration::zero())
+            {
+                add(Severity::Warning, "scenario-wave-undersampled", line,
+                    head + span + "the wave writes a value every " + span_text(*step) + " from the step's beginning, and none of those "
+                    "times is in that span, so the value of point " + std::to_string(i + 1) + " is never applied" + fix,
+                    owner_of(variable));
+                return;
+            }
+            if (seen == Seen::No)
+            {
+                add(Severity::Warning, "scenario-wave-undersampled", line,
+                    head + span + "this step begins at " + std::to_string(*time) + " ms, and none of the ECU's steps is from " +
+                        span_text(written) + " (when the value of point " + std::to_string(i + 1) + " is written) until the points end (" +
+                        span_text(ends) + "), so that value is never applied" + fix,
+                    owner_of(variable));
+                return;
+            }
+            if (seen == Seen::Depends && unknown.empty())
+            {
+                unknown = head + span + "the value of point " + std::to_string(i + 1) + " is applied only if one of the ECU's steps is from " +
+                          span_text(written) + " to " + span_text(ends) + " after this step begins, and when it begins is not known before the run" + fix;
+            }
+        }
+        if (!unknown.empty())
+        {
+            add(Severity::Warning, "scenario-wave-undersampled", line, unknown, owner_of(variable));
+        }
     }
 
     void read_conditions(ryml::id_type node, ScenarioStep& step, const std::string& action)

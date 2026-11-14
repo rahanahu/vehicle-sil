@@ -34,13 +34,14 @@
           "control-links",
           "scenario",
           "manual-participants",
+          "scenario-wave",
           "scenario-control"
         ]
       }
     },
     "variables": {
       "available": false,
-      "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)"
+      "reason": "this vehicle_sil_launch has no 'control-server' (its features: events, stdin-commands, check-variables, speed, start-paused, time-commands, control-links, scenario, manual-participants, scenario-wave, scenario-control): build it with -DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON (docs/control-api.md)"
     },
     "limits": {
       "log_lines_per_source": 2000,

@@ -369,10 +369,11 @@ SCENARIO_SAMPLES = [
      "  - wave: { Engine.engine.throttle: { square: { low: 20, high: 80, period_ms: 100, duty: 30, phase_deg: -90 }, for_ms: 400 } }\n"
      "  - wave: { Engine.engine.throttle: { square: { amplitude: 5, frequency_hz: 5 }, around: 50, for_ms: 400 },\n"
      "            Engine.ecu.connected: { square: { period_ms: 100 }, for_ms: 200 } }\n"
-     "  - wave: { Engine.engine.throttle: { pulse: { value: 100, width_ms: 50 }, around: 20 }, Engine.ecu.connected: { pulse: { width_ms: 30 } } }\n"
+     "  - wave: { Engine.engine.throttle: { pulse: { value: 100, width_ms: 50 } }, Engine.ecu.connected: { pulse: { width_ms: 30 } } }\n"
      "  - wave: { Engine.engine.throttle: { noise: { amplitude: 2, hold_ms: 10, seed: 7 }, around: 50, for_ms: 100 } }\n"
      "  - wave: { Engine.engine.throttle: { noise: { amplitude: 2, hold_ms: 10, seed: 7, distribution: gaussian }, for_ms: 100 } }\n"
      "  - wave: { Engine.engine.throttle: { chirp: { amplitude: 5, from_hz: 1, to_hz: 10, sweep: log }, for_ms: 1000 } }\n"
+     "  - wave: { Engine.engine.throttle: { chirp: { amplitude: 5, from_hz: 0, to_hz: 10 }, for_ms: 1000 } }\n"
      "  - wave: { Engine.engine.throttle: { lag: { from: 0, to: 80, tau_ms: 200, settle: true }, for_ms: 1000 } }\n"
      "  - wave: { Engine.ecu.connected: { chatter: { to: true, bounces: 3, interval_ms: 10 } },\n"
      "            Engine.engine.throttle: { chatter: { from: 0, to: 80, interval_ms: 20, seed: 4 }, for_ms: 100 } }\n"
@@ -406,6 +407,9 @@ SCENARIO_SAMPLES = [
      S + "  - wave: { Engine.engine.throttle: { noise: { amplitude: 1, hold_ms: 10, seed: 1, distribution: normal }, for_ms: 100 } }\n", "invalid"),
     ("a pulse with for_ms", S + "  - wave: { Engine.engine.throttle: { pulse: { value: 1, width_ms: 50 }, for_ms: 100 } }\n", "invalid"),
     ("points with for_ms", S + "  - wave: { Engine.engine.throttle: { points: [[0, 1], [50, 2]], for_ms: 100 } }\n", "invalid"),
+    ("a pulse with around", S + "  - wave: { Engine.engine.throttle: { pulse: { value: 1, width_ms: 50 }, around: 5 } }\n", "invalid"),
+    ("a chirp from a negative frequency",
+     S + "  - wave: { Engine.engine.throttle: { chirp: { amplitude: 1, from_hz: -1, to_hz: 2 }, for_ms: 100 } }\n", "invalid"),
     ("points with around", S + "  - wave: { Engine.engine.throttle: { points: [[0, 1], [50, 2]], around: 5 } }\n", "invalid"),
     ("a point with three numbers", S + "  - wave: { Engine.engine.throttle: { points: [[0, 1, 2], [50, 2]] } }\n", "invalid"),
     ("points that are a mapping", S + "  - wave: { Engine.engine.throttle: { points: { 0: 1, 50: 2 } } }\n", "invalid"),
@@ -485,6 +489,8 @@ SCENARIO_SAMPLES = [
      S + "  - wave: { Engine.engine.throttle: { square: { low: 1, period_ms: 100 }, for_ms: 100 } }\n", "check only"),
     ("a square of a bool with low and high",
      S + "  - wave: { Engine.ecu.connected: { square: { low: 0, high: 1, period_ms: 100 }, for_ms: 100 } }\n", "check only"),
+    ("a log chirp from 0 Hz",
+     S + "  - wave: { Engine.engine.throttle: { chirp: { amplitude: 1, from_hz: 0, to_hz: 2, sweep: log }, for_ms: 100 } }\n", "check only"),
     ("points whose times do not go up", S + "  - wave: { Engine.engine.throttle: { points: [[0, 1], [50, 2], [50, 3]] } }\n", "check only"),
     ("points that end at 0", S + "  - wave: { Engine.engine.throttle: { points: [[0, 1]] } }\n", "check only"),
     ("a wave of an output", S + "  - wave: { Engine.engine.speed: { pulse: { value: 1, width_ms: 50 } } }\n", "check only"),

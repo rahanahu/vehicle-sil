@@ -902,7 +902,8 @@ flowchart TD
   誤りのある例と失敗する例は、ファイルも scenario.md のブロック（`<!-- throttle_mistakes.yaml -->`、`<!-- throttle_response.yaml -->`）で、同じ試験が書き出して、`check --scenario` の出力、`run --scenario` の出力と `--json` の `scenario` を照合）、[simulation-config.md](simulation-config.md) の引数の表、事象 `scenario_step`、`features` の `scenario`、[internals/control.md](internals/control.md) の「シナリオ」。
   約束の正本は `scenario_run.hpp` の `ScenarioEngine` のコメントです。
   守ること: 判定に使うのは仮想時刻だけ（実時間の待ちと時間切れで結果を決めない）。
-  `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にする（`Waveform::value()`。呼ばれた回数や順に頼らない。乱数は種と時刻から作る）。
+  `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にする（`Waveform::value()`。呼ばれた回数や順に頼らない。乱数は種、変数の名前、時刻から作る: `scenario_shapes.cpp` の `seed_of_variable()`。整数だけの計算で、どの OS でも同じ）。
+  ECU に見えるかどうかの判定（短い `pulse`、`hold` の `points`）は `scenario.cpp` の `seen_between()` の決まり 1 つに従う。
   波形を足すときは、`signal/waveform.hpp` の関数、`scenario_shapes.cpp` の実装、`scenario.cpp` の `read_wave_of()`（キー、型、範囲、ステップ幅との比較）、`schema/scenario.schema.json` の `definitions.wave`（と `template/schema` の写し）、`tests/schema/test_schemas.py` の `WAVE_SHAPES_WITH_KEYS` と見本、[scenario.md](scenario.md) の波形の表を合わせる。
   controller のステップ P では、P より前に始まったステップのサンプルと結果だけを見る（P 以降のものは、届いていても次に回す）。
   時刻 T の書き込みは、T より前の controller のステップを止めている間に積む（時刻 0 は開始前の窓）。

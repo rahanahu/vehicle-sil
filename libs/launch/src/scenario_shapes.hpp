@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 namespace vehicle_sil::launch::detail {
@@ -38,6 +39,12 @@ struct Periodic
 [[nodiscard]] std::shared_ptr<const Waveform> noise_shape(double amplitude, SimDuration hold, std::uint64_t seed, bool gaussian);
 [[nodiscard]] std::shared_ptr<const Waveform> chirp_shape(double amplitude, double from_hz, double to_hz, SimDuration length,
                                                           signal::Sweep sweep);
+/// The seed of one variable's random numbers (a noise's values, the times of a chatter with a
+/// seed): the seed the scenario gives with the variable's name ("<participant>.<name>") mixed in.
+/// The same seed written for two variables so gives each its own sequence, and the same
+/// scenario gives the same values in every run and on every platform.
+[[nodiscard]] std::uint64_t seed_of_variable(std::uint64_t seed, std::string_view variable) noexcept;
+
 /// `value` all the time, the base at the end.
 [[nodiscard]] std::shared_ptr<const Waveform> pulse_shape(double value);
 

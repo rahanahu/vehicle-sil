@@ -199,7 +199,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["width_ms"],
-          "description": "One value for width_ms, then back to the value before (or to around). For a number or a bool.",
+          "description": "One value for width_ms, then back to the value the variable had when the pulse began (for a bool: the other value). For a number or a bool. No around beside it.",
           "properties": {
             "value": { "$ref": "#/definitions/value", "description": "The value during the pulse. A bool may leave it out: true." },
             "width_ms": { "$ref": "#/definitions/duration_ms", "description": "How long the pulse lasts, in milliseconds of virtual time." }
@@ -230,8 +230,8 @@
           "description": "A sine whose frequency goes from from_hz to to_hz over for_ms. For an integer or a real.",
           "properties": {
             "amplitude": { "$ref": "#/definitions/amplitude" },
-            "from_hz": { "$ref": "#/definitions/frequency_hz", "description": "The frequency at the start." },
-            "to_hz": { "$ref": "#/definitions/frequency_hz", "description": "The frequency at the end (after for_ms)." },
+            "from_hz": { "$ref": "#/definitions/sweep_hz", "description": "The frequency at the start. 0 only with a linear sweep, and not both 0." },
+            "to_hz": { "$ref": "#/definitions/sweep_hz", "description": "The frequency at the end (after for_ms). 0 only with a linear sweep, and not both 0." },
             "sweep": {
               "description": "linear (the same number of hertz more every second; the default) or log (the same factor every second).",
               "anyOf": [{ "enum": ["linear", "log"] }, { "$ref": "#/definitions/parameter" }]
@@ -289,14 +289,14 @@
         },
         "around": {
           "$ref": "#/definitions/number",
-          "description": "The middle of the shape, and the value at the end. Without it, the value the variable has when the step begins. Not for points, lag and chatter, and not for a square with low and high."
+          "description": "The middle of the shape, and the value at the end. Without it, the value the variable has when the step begins. Not for pulse, points, lag and chatter, and not for a square with low and high."
         },
         "for_ms": {
           "$ref": "#/definitions/duration_ms",
           "description": "How long the wave lasts, in milliseconds of virtual time. Not for a pulse (width_ms) and points (the last point)."
         },
         "interpolate": {
-          "description": "For points: linear (straight lines between the points; the default for a number) or hold (each value until the next point).",
+          "description": "For points, beside them (not inside): linear (straight lines between the points; the default for a number) or hold (each value until the next point; the way to write a value that jumps).",
           "anyOf": [{ "enum": ["linear", "hold"] }, { "$ref": "#/definitions/parameter" }]
         }
       },
@@ -341,7 +341,7 @@
           }
         },
         {
-          "if": { "anyOf": [{ "required": ["points"] }, { "required": ["lag"] }, { "required": ["chatter"] }] },
+          "if": { "anyOf": [{ "required": ["pulse"] }, { "required": ["points"] }, { "required": ["lag"] }, { "required": ["chatter"] }] },
           "then": { "not": { "required": ["around"] } }
         },
         { "if": { "required": ["interpolate"] }, "then": { "required": ["points"] } }
@@ -358,6 +358,10 @@
     "frequency_hz": {
       "description": "Periods per second of virtual time: more than 0. (For a shape that repeats: give this or period_ms.)",
       "anyOf": [{ "type": "number", "exclusiveMinimum": 0, "maximum": 1000000000 }, { "$ref": "#/definitions/parameter" }]
+    },
+    "sweep_hz": {
+      "description": "Periods per second of virtual time: 0 or more.",
+      "anyOf": [{ "type": "number", "minimum": 0, "maximum": 1000000000 }, { "$ref": "#/definitions/parameter" }]
     },
     "phase_deg": {
       "description": "Where in its period the shape begins, in degrees: 90 begins a quarter of a period in. Without it, 0.",

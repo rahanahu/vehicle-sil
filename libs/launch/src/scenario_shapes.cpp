@@ -124,6 +124,26 @@ private:
 
 } // namespace
 
+std::uint64_t seed_of_variable(std::uint64_t seed, std::string_view variable) noexcept
+{
+    // FNV-1a over the seed's eight bytes (the lowest first) and the name's: whole numbers of 64
+    // bits alone, so the same everywhere. vehicle_sil::signal mixes the result further.
+    std::uint64_t hash = 0xCBF29CE484222325ULL;
+    const auto take = [&hash](std::uint64_t byte) {
+        hash ^= byte;
+        hash *= 0x100000001B3ULL;
+    };
+    for (int shift = 0; shift < 64; shift += 8)
+    {
+        take((seed >> shift) & 0xFFU);
+    }
+    for (const char c : variable)
+    {
+        take(static_cast<unsigned char>(c));
+    }
+    return hash;
+}
+
 std::shared_ptr<const Waveform> ramp_shape(double to, SimDuration length)
 {
     return std::make_shared<Ramp>(to, length);

@@ -1329,7 +1329,7 @@ TEST_CASE(scenario_wave_is_read_with_its_shape_and_how_long_it_lasts)
                 "            Door.level: { sawtooth: { amplitude: 5, period_ms: 100, falling: true }, around: 50, for_ms: 250 } }\n"
                 "  - wave: { Body.level: { square: { low: 10, high: 20, period_ms: 100, duty: 30 }, for_ms: 200 } }\n"
                 "  - wave: { Body.level: { square: { amplitude: 3, period_ms: 100 }, around: 9, for_ms: 200 }, Door.lamp: { square: { period_ms: 40 }, for_ms: 80 } }\n"
-                "  - wave: { Door.lamp: { pulse: { width_ms: 30 } }, Body.level: { pulse: { value: 7, width_ms: 50 }, around: 1 } }\n"
+                "  - wave: { Door.lamp: { pulse: { width_ms: 30 } }, Body.level: { pulse: { value: 7, width_ms: 50 } } }\n"
                 "  - wave: { Body.ratio: { noise: { amplitude: 0.1, hold_ms: 20, seed: 7 }, around: 0.5, for_ms: 100 } }\n"
                 "  - wave: { Body.ratio: { noise: { amplitude: 0.1, hold_ms: 20, seed: 7, distribution: gaussian }, for_ms: 100 } }\n"
                 "  - wave: { Body.ratio: { chirp: { amplitude: 0.1, from_hz: 1, to_hz: 5, sweep: log }, around: 0.5, for_ms: 2000 } }\n"
@@ -1350,7 +1350,7 @@ TEST_CASE(scenario_wave_is_read_with_its_shape_and_how_long_it_lasts)
                "amplitude 5 period 100 ms falling around 50 for 250 ms\n"
                "6: wave Body.level square low 10 high 20 period 100 ms duty 30 % for 200 ms\n"
                "7: wave Body.level square amplitude 3 period 100 ms around 9 for 200 ms; Door.lamp square period 40 ms for 80 ms\n"
-               "8: wave Door.lamp pulse true width 30 ms; Body.level pulse 7 width 50 ms around 1\n"
+               "8: wave Door.lamp pulse true width 30 ms; Body.level pulse 7 width 50 ms\n"
                "9: wave Body.ratio noise amplitude 0.1 hold 20 ms seed 7 around 0.5 for 100 ms\n"
                "10: wave Body.ratio noise amplitude 0.1 hold 20 ms seed 7 gaussian for 100 ms\n"
                "11: wave Body.ratio chirp amplitude 0.1 from 1 Hz to 5 Hz log around 0.5 for 2000 ms\n"
@@ -1409,6 +1409,13 @@ TEST_CASE(scenario_wave_without_around_swings_around_the_value_the_variable_has)
                "failed over=0\n"
                "3 failed start=0 at=0 end=20 scenario-write: the wave of Body.level has no value to start from: no sample of its "
                "ECU has arrived before 0 ms and the scenario has not written it; give the wave around: <value>\n");
+    // A pulse returns to the value the variable has: without one, it says how to give it one.
+    World bare;
+    check_text(text_of(bare.run(read(kHead + "  - wave: { Body.level: { pulse: { value: 9, width_ms: 20 } } }\n"))),
+               "failed over=0\n"
+               "3 failed start=0 at=0 end=20 scenario-write: the wave of Body.level has no value to start from: no sample of its "
+               "ECU has arrived before 0 ms and the scenario has not written it; set the variable in a step before the pulse (set: { "
+               "Body.level: <value> })\n");
     // A shape that has its values itself needs none.
     World own;
     CHECK(own.run(read(kHead + "  - wave: { Body.level: { square: { low: 1, high: 2, period_ms: 20 }, for_ms: 20 }, Door.lamp: { pulse: { width_ms: 10 } },\n"
@@ -1445,12 +1452,11 @@ TEST_CASE(scenario_wave_shapes_that_go_somewhere_stay_there)
 
 TEST_CASE(scenario_wave_gives_the_same_value_at_the_same_time_whatever_the_steps_are)
 {
-    // The same noise and the same chatter to an ECU of 10 ms and one of 4 ms, with a controller
-    // of 10 ms and of 20 ms: at the times both ECUs step (every 20 ms), the same values.
+    // The same noise and the same chatter to an ECU that steps every 10 ms and to the same ECU
+    // stepping every 4 ms, with a controller of 10 ms and of 20 ms: at the times both step (every
+    // 20 ms), the same values.
     const std::string text = kHead + "  - wave: { Body.ratio: { noise: { amplitude: 0.4, hold_ms: 20, seed: 11 }, around: 0.5, for_ms: 200 },\n"
-                                     "            Door.ratio: { noise: { amplitude: 0.4, hold_ms: 20, seed: 11 }, around: 0.5, for_ms: 200 },\n"
-                                     "            Body.level: { chatter: { from: 0, to: 9, interval_ms: 20, seed: 3 }, for_ms: 200 },\n"
-                                     "            Door.level: { chatter: { from: 0, to: 9, interval_ms: 20, seed: 3 }, for_ms: 200 } }\n";
+                                     "            Body.level: { chatter: { from: 0, to: 9, interval_ms: 20, seed: 3 }, for_ms: 200 } }\n";
     const auto at_shared_times = [](const World& world, const std::string& variable) {
         std::string out;
         for (const std::string& entry : world.log)
@@ -1464,28 +1470,130 @@ TEST_CASE(scenario_wave_gives_the_same_value_at_the_same_time_whatever_the_steps
         return out;
     };
     std::string first;
-    for (const SimDuration tick : {SimDuration{10ms}, SimDuration{20ms}})
+    std::string firstLevel;
+    for (const SimDuration step : {SimDuration{10ms}, SimDuration{4ms}})
     {
-        const Scenario s = read(text, catalog(10ms, 4ms));
-        World world;
-        world.tick = tick;
-        world.ecus[1].step = 4ms;
-        CHECK(world.run(s).status == ScenarioStatus::Passed);
-        const std::string body = at_shared_times(world, "Body.ratio");
-        check_text(at_shared_times(world, "Door.ratio"), body);
-        check_text(at_shared_times(world, "Door.level"), at_shared_times(world, "Body.level"));
-        // A value per stretch of hold_ms: 10 of them, and the middle at the end.
-        CHECK_EQ(std::count(body.begin(), body.end(), '\n'), std::ptrdiff_t{11});
-        CHECK(first.empty() || first == body);
-        first = body;
+        for (const SimDuration tick : {SimDuration{10ms}, SimDuration{20ms}})
+        {
+            const Scenario s = read(text, catalog(step, 10ms));
+            World world;
+            world.tick = tick;
+            world.ecus[0].step = step;
+            CHECK(world.run(s).status == ScenarioStatus::Passed);
+            const std::string ratio = at_shared_times(world, "Body.ratio");
+            const std::string level = at_shared_times(world, "Body.level");
+            // A value per stretch of hold_ms: 10 of them, and the middle at the end.
+            CHECK_EQ(std::count(ratio.begin(), ratio.end(), '\n'), std::ptrdiff_t{11});
+            CHECK(first.empty() || (first == ratio && firstLevel == level));
+            first = ratio;
+            firstLevel = level;
+        }
     }
-    // The values are those of the seed: another run of the same text gives them again, another
-    // seed others.
+    // The values are those of the seed and of the variable's name, on every platform (whole
+    // numbers alone make them): the first of them, and the middle at the end.
+    check_text(first.substr(0, first.find('\n') + 1), "0.4353229041685524 for 0 applied at 0\n");
     CHECK(first.find("0.5 for 200 applied at 200\n") != std::string::npos);
-    const Scenario other = read(kHead + "  - wave: { Body.ratio: { noise: { amplitude: 0.4, hold_ms: 20, seed: 12 }, around: 0.5, for_ms: 200 } }\n");
+    // Another seed gives other values. So does the same seed for another variable: two inputs
+    // with one seed do not move together.
+    const Scenario other = read(kHead + "  - wave: { Body.ratio: { noise: { amplitude: 0.4, hold_ms: 20, seed: 12 }, around: 0.5, for_ms: 200 },\n"
+                                        "            Door.ratio: { noise: { amplitude: 0.4, hold_ms: 20, seed: 11 }, around: 0.5, for_ms: 200 },\n"
+                                        "            Door.level: { chatter: { from: 0, to: 9, interval_ms: 20, seed: 3 }, for_ms: 200 } }\n");
     World world;
     CHECK(world.run(other).status == ScenarioStatus::Passed);
     CHECK(at_shared_times(world, "Body.ratio") != first);
+    CHECK(at_shared_times(world, "Door.ratio") != first);
+    CHECK(at_shared_times(world, "Door.ratio") != at_shared_times(world, "Body.ratio"));
+    CHECK(at_shared_times(world, "Door.level") != firstLevel);
+}
+
+TEST_CASE(scenario_wave_rounds_a_half_for_an_integer_the_same_way_whatever_the_last_bits_are)
+{
+    // A sine of amplitude 1 and 120 ms is a half at 10 ms and at 50 ms, but for the last bits of
+    // the sine: an integer gets 1 there (halves go away from zero), not 0 on one platform and 1
+    // on another.
+    World world;
+    CHECK(world.run(read(kHead + "  - set: { Body.level: 0 }\n"
+                                 "  - wave: { Body.level: { sine: { amplitude: 1, period_ms: 120 }, for_ms: 60 } }\n"))
+              .status == ScenarioStatus::Passed);
+    check_text(applied(world, "Body.level"), "0@0 0@0 1@10 1@20 1@30 1@40 1@50 0@60 ");
+}
+
+TEST_CASE(scenario_pulse_shorter_than_a_step_is_seen_if_a_step_of_the_ecu_is_in_it)
+{
+    // Body steps at 0, 10, 20, ... ms. A pulse of 5 ms from 107 ms: its value is applied in the
+    // step at 110 ms and what follows it in the one at 120 ms, so the ECU has it for one step.
+    // From 201 ms: both are applied in the step at 210 ms, where the later one wins. From 305 ms,
+    // ending at a step: the same.
+    const Scenario s = read(kHead + "  - set: { Body.level: 20 }\n"
+                                    "  - at_ms: 107\n    wave: { Body.level: { pulse: { value: 50, width_ms: 5 } } }\n    undersampled: ok\n"
+                                    "  - at_ms: 201\n    wave: { Body.level: { pulse: { value: 60, width_ms: 5 } } }\n    undersampled: ok\n"
+                                    "  - at_ms: 305\n    wave: { Body.level: { pulse: { value: 70, width_ms: 5 } } }\n    undersampled: ok\n");
+    World world;
+    CHECK(world.run(s).status == ScenarioStatus::Passed);
+    check_text(applied(world, "Body.level"), "20@0 50@110 20@120 60@210 20@210 70@310 20@310 ");
+    // The check says which it is, where the time of the step is known before the run.
+    check_text(wave_findings("  - set: { Body.level: 20 }\n"
+                             "  - at_ms: 107\n    wave: { Body.level: { pulse: { value: 50, width_ms: 5 } } }\n"
+                             "  - at_ms: 201\n    wave: { Body.level: { pulse: { value: 60, width_ms: 5 } } }\n"
+                             "  - at_ms: 305\n    wave: { Body.level: { pulse: { value: 70, width_ms: 5 } } }\n"
+                             "  - wait_until: { Body.level: 20 }\n    timeout_ms: 100\n"
+                             "  - wave: { Body.level: { pulse: { value: 70, width_ms: 5 } } }\n"),
+               "W 5 scenario-wave-undersampled: the pulse of Body.level is 5 ms wide, shorter than the step of participant 'Body' (10 ms): "
+               "this step begins at 107 ms, so the ECU has the pulse's value for one whole step of 10 ms (the one at 110 ms), not for 5 "
+               "ms. Make width_ms 10 or more; to run it as it is without this message, add undersampled: ok to the step\n"
+               "W 7 scenario-wave-undersampled: the pulse of Body.level is 5 ms wide, shorter than the step of participant 'Body' (10 ms): "
+               "this step begins at 201 ms, and none of the ECU's steps is from then until the pulse ends (206 ms), so the ECU never gets "
+               "the pulse's value. Make width_ms 10 or more; to run it as it is without this message, add undersampled: ok to the step\n"
+               "W 9 scenario-wave-undersampled: the pulse of Body.level is 5 ms wide, shorter than the step of participant 'Body' (10 ms): "
+               "this step begins at 305 ms, and none of the ECU's steps is from then until the pulse ends (310 ms), so the ECU never gets "
+               "the pulse's value. Make width_ms 10 or more; to run it as it is without this message, add undersampled: ok to the step\n"
+               "W 12 scenario-wave-undersampled: the pulse of Body.level is 5 ms wide, shorter than the step of participant 'Body' (10 "
+               "ms): the ECU has the pulse's value for one whole step if one of its steps is from the pulse's beginning until its end, "
+               "and never otherwise; when this step begins is not known before the run. Make width_ms 10 or more; to run it as it is "
+               "without this message, add undersampled: ok to the step\n");
+}
+
+TEST_CASE(scenario_points_that_are_kept_may_jump_and_a_point_the_ecu_never_gets_is_said)
+{
+    // interpolate: hold is how a value jumps: points 1 ms apart say nothing, as long as each is
+    // written once (Body steps every 10 ms; the wave writes at 0, 10, 20, ... ms of the step).
+    check_text(wave_findings("  - wave: { Body.level: { points: [[0, 0], [20, 5], [21, 60], [40, 0]], interpolate: hold } }\n"), "");
+    World world;
+    CHECK(world.run(read(kHead + "  - wave: { Body.level: { points: [[0, 0], [20, 60], [40, 0]], interpolate: hold } }\n")).status ==
+          ScenarioStatus::Passed);
+    check_text(applied(world, "Body.level"), "0@0 0@10 60@20 60@30 0@40 ");
+    // A point that no write carries; a point before the end whose one write may meet the end's
+    // in one step of the ECU: at a time that is known it does (101 ms) or does not (100 ms), and
+    // after a wait that is not known.
+    check_text(wave_findings("  - wave: { Body.level: { points: [[0, 0], [21, 5], [25, 6], [40, 0]], interpolate: hold } }\n"
+                             "  - at_ms: 100\n    wave: { Body.level: { points: [[0, 0], [12, 5], [25, 6]], interpolate: hold } }\n"
+                             "  - at_ms: 201\n    wave: { Body.level: { points: [[0, 0], [12, 5], [25, 6]], interpolate: hold } }\n"
+                             "  - wait_until: { Body.level: 6 }\n    timeout_ms: 100\n"
+                             "  - wave: { Body.level: { points: [[0, 0], [12, 5], [25, 6]], interpolate: hold } }\n"),
+               "W 3 scenario-wave-undersampled: the points of Body.level keep point 2 from 21 ms to 25 ms, and participant 'Body' takes "
+               "its inputs once per step of 10 ms: the wave writes a value every 10 ms from the step's beginning, and none of those "
+               "times is in that span, so the value of point 2 is never applied. Put the points at multiples of 10 ms; to run it as it "
+               "is without this message, add undersampled: ok to the step\n"
+               "W 7 scenario-wave-undersampled: the points of Body.level keep point 2 from 12 ms to 25 ms, where they end, and participant "
+               "'Body' takes its inputs once per step of 10 ms: this step begins at 201 ms, and none of the ECU's steps is from 221 ms "
+               "(when the value of point 2 is written) until the points end (226 ms), so that value is never applied. Put the points at "
+               "multiples of 10 ms; to run it as it is without this message, add undersampled: ok to the step\n"
+               "W 10 scenario-wave-undersampled: the points of Body.level keep point 2 from 12 ms to 25 ms, where they end, and "
+               "participant 'Body' takes its inputs once per step of 10 ms: the value of point 2 is applied only if one of the ECU's "
+               "steps is from 20 ms to 25 ms after this step begins, and when it begins is not known before the run. Put the points at "
+               "multiples of 10 ms; to run it as it is without this message, add undersampled: ok to the step\n");
+    // The span of a point ends where the next begins: a write at that time carries the next.
+    check_text(wave_findings("  - wave: { Body.level: { points: [[0, 0], [15, 5], [20, 6], [40, 0]], interpolate: hold } }\n"),
+               "W 3 scenario-wave-undersampled: the points of Body.level keep point 2 from 15 ms to 20 ms, and participant 'Body' takes "
+               "its inputs once per step of 10 ms: the wave writes a value every 10 ms from the step's beginning, and none of those "
+               "times is in that span, so the value of point 2 is never applied. Put the points at multiples of 10 ms; to run it as it "
+               "is without this message, add undersampled: ok to the step\n");
+    // What the check says of 201 ms is what happens: 5 and 6 are both applied at 230 ms.
+    World late;
+    CHECK(late.run(read(kHead + "  - at_ms: 201\n    wave: { Body.level: { points: [[0, 0], [12, 5], [25, 6]], interpolate: hold } }\n"
+                                "    undersampled: ok\n"))
+              .status == ScenarioStatus::Passed);
+    check_text(applied(late, "Body.level"), "0@210 0@220 5@230 6@230 ");
 }
 
 TEST_CASE(scenario_wave_takes_parameters_where_a_number_stands)
@@ -1557,7 +1665,8 @@ TEST_CASE(scenario_wave_errors_say_what_is_wrong_and_what_to_write)
                "E 7 value: width_ms is 0, but it must be from 1 to 1000000000000 (milliseconds of virtual time the pulse lasts)\n"
                "E 8 missing-key: the noise of Body.ratio needs seed: a whole number that picks the values; the same seed gives the same "
                "values in every run, so that a failure can be run again\n"
-               "E 9 value: the times of the points of Body.level must go up: point 3 is at 50 ms, not after point 2 (50 ms)\n"
+               "E 9 value: the times of the points of Body.level must go up: point 3 is at 50 ms, not after point 2 (50 ms); for a "
+               "value that jumps, write interpolate: hold beside the points (each value is then kept until the next point)\n"
                "E 9 value: the times of the points of Body.level must go up: point 4 is at 40 ms, not after point 3 (50 ms)\n"
                "E 10 value: the points of Body.level end at 0 ms: a wave takes time; give a later point, or use set for a value at one "
                "time\n"
@@ -1601,6 +1710,19 @@ TEST_CASE(scenario_wave_errors_say_what_is_wrong_and_what_to_write)
                "E 5 scenario-value: around of the sine of Body.level is 120, outside its range (from 0 to 100)\n"
                "E 6 scenario-value: the value of point 2 of the points of Body.level is 500, outside its range (from 0 to 100)\n"
                "E 7 scenario-value: to of the lag of Body.level is 101, outside its range (from 0 to 100)\n");
+    // A chirp may begin or end at 0 Hz on a linear sweep, not on a log one, and it has to move.
+    check_text(wave_findings("  - wave: { Body.ratio: { chirp: { amplitude: 0.1, from_hz: 0, to_hz: 5 }, around: 0.5, for_ms: 1000 } }\n"
+                             "  - wave: { Body.ratio: { chirp: { amplitude: 0.1, from_hz: 0, to_hz: 5, sweep: log }, around: 0.5, for_ms: 1000 } }\n"
+                             "  - wave: { Body.ratio: { chirp: { amplitude: 0.1, from_hz: 5, to_hz: 0, sweep: log }, around: 0.5, for_ms: 1000 } }\n"
+                             "  - wave: { Body.ratio: { chirp: { amplitude: 0.1, from_hz: 0, to_hz: 0 }, around: 0.5, for_ms: 1000 } }\n"
+                             "  - wave: { Body.ratio: { chirp: { amplitude: 0.1, from_hz: -1, to_hz: 5 }, around: 0.5, for_ms: 1000 } }\n"),
+               "E 4 value: from_hz of the chirp of Body.ratio is 0, but a log sweep changes the frequency by the same factor every "
+               "second, which neither begins nor ends at 0 Hz: give a frequency above 0, or write sweep: linear\n"
+               "E 5 value: to_hz of the chirp of Body.ratio is 0, but a log sweep changes the frequency by the same factor every "
+               "second, which neither begins nor ends at 0 Hz: give a frequency above 0, or write sweep: linear\n"
+               "E 6 value: the chirp of Body.ratio goes from 0 Hz to 0 Hz, which does not move: give from_hz or to_hz a frequency above "
+               "0\n"
+               "E 7 value: from_hz of the chirp of Body.ratio is -1, but it must be from 0 to 1e+09 (the frequency at the beginning)\n");
     // Keys that do not go together.
     check_text(wave_findings("  - wave: { Body.level: { pulse: { value: 1, width_ms: 20 }, for_ms: 100 } }\n"
                              "  - wave: { Body.level: { points: [[0, 1], [20, 2]], for_ms: 100, around: 5 } }\n"
@@ -1612,7 +1734,8 @@ TEST_CASE(scenario_wave_errors_say_what_is_wrong_and_what_to_write)
                              "  - set: { Body.level: 1 }\n"
                              "    undersampled: ok\n"
                              "  - wave: { Body.level: { pulse: { value: 1, width_ms: 20 } } }\n"
-                             "    undersampled: yes\n"),
+                             "    undersampled: yes\n"
+                             "  - wave: { Body.level: { pulse: { value: 1, width_ms: 20 }, around: 5 } }\n"),
                "E 3 value: for_ms does not go with pulse: a pulse lasts its width_ms; remove it\n"
                "E 4 value: for_ms does not go with points: the points end at the last of them; remove it\n"
                "E 4 value: around does not go with the points of Body.level: the points are the values themselves (for where it begins, "
@@ -1629,7 +1752,9 @@ TEST_CASE(scenario_wave_errors_say_what_is_wrong_and_what_to_write)
                "bounces)\n"
                "E 11 value: undersampled goes with wave, not with set: remove it\n"
                "E 13 value: undersampled must be ok (run the step's waves as they are, also where they change faster than their ECU "
-               "steps), not 'yes': write undersampled: ok, or remove it\n");
+               "steps), not 'yes': write undersampled: ok, or remove it\n"
+               "E 14 value: around does not go with the pulse of Body.level: a pulse returns to the value the variable has when the "
+               "pulse begins (for another value after it, write a set in the next step); remove it\n");
     // A wave ends where it says: the step after it may not be earlier.
     check_text(wave_findings("  - wave: { Body.level: { pulse: { value: 1, width_ms: 100 } } }\n  - at_ms: 99\n    expect: { Body.level: 5 }\n"),
                "E 4 scenario-time: at_ms is 99, before the end of the step before it (100 ms): the steps run in the order of the file, "
@@ -1644,10 +1769,42 @@ TEST_CASE(scenario_wave_that_its_ecu_cannot_see_gets_a_warning_that_says_what_th
                              "  - wave: { Body.ratio: { sine: { amplitude: 0.1, period_ms: 80 }, around: 0.5, for_ms: 100 } }\n"),
                "W 3 scenario-wave-undersampled: the sine of Body.ratio has a period of 5 ms, but participant 'Body' takes its inputs once "
                "per step of 10 ms: with fewer than two values per period the ECU sees a slower shape or a constant, not this one. Make "
-               "the period 20 ms or more; to run it as it is without this message, add undersampled: ok to the step\n"
+               "the period 80 ms or more (8 values per period); to run it as it is without this message, add undersampled: ok to the "
+               "step\n"
                "N 4 scenario-wave-coarse: the triangle of Body.ratio has a period of 25 ms, and participant 'Body' takes its inputs once "
                "per step of 10 ms: the ECU sees 2.5 values per period, so it can miss the highest and the lowest. A period of 80 ms or "
                "more gives it 8; to run it as it is without this message, add undersampled: ok to the step\n");
+    // A period of two steps: a sine and a triangle that begin at their middle are there at every
+    // step of the ECU, which so sees a constant. Begun elsewhere they are two values (a note), and
+    // a sawtooth is two values wherever it begins. When the scenario's step begins does not matter.
+    check_text(wave_findings("  - wave: { Body.ratio: { sine: { amplitude: 0.1, period_ms: 20 }, around: 0.5, for_ms: 100 } }\n"
+                             "  - at_ms: 203\n"
+                             "    wave: { Body.ratio: { triangle: { amplitude: 0.1, frequency_hz: 50, phase_deg: 180 }, around: 0.5, for_ms: 100 } }\n"
+                             "  - wave: { Body.ratio: { sine: { amplitude: 0.1, period_ms: 20, phase_deg: 90 }, around: 0.5, for_ms: 100 } }\n"
+                             "  - wave: { Body.ratio: { sawtooth: { amplitude: 0.1, period_ms: 20 }, around: 0.5, for_ms: 100 } }\n"),
+               "W 3 scenario-wave-undersampled: the sine of Body.ratio has a period of 20 ms, and participant 'Body' takes its inputs "
+               "once per step of 10 ms: at each of those times the sine is at its middle, so the ECU sees a constant, not the sine. Make "
+               "the period 80 ms or more (8 values per period); to run it as it is without this message, add undersampled: ok to the "
+               "step\n"
+               "W 5 scenario-wave-undersampled: the triangle of Body.ratio has a period of 20 ms, and participant 'Body' takes its inputs "
+               "once per step of 10 ms: at each of those times the triangle is at its middle, so the ECU sees a constant, not the "
+               "triangle. Make the period 80 ms or more (8 values per period); to run it as it is without this message, add "
+               "undersampled: ok to the step\n"
+               "N 6 scenario-wave-coarse: the sine of Body.ratio has a period of 20 ms, and participant 'Body' takes its inputs once per "
+               "step of 10 ms: the ECU sees 2 values per period, so it can miss the highest and the lowest. A period of 80 ms or more "
+               "gives it 8; to run it as it is without this message, add undersampled: ok to the step\n"
+               "N 7 scenario-wave-coarse: the sawtooth of Body.ratio has a period of 20 ms, and participant 'Body' takes its inputs once "
+               "per step of 10 ms: the ECU sees 2 values per period, so it can miss the highest and the lowest. A period of 80 ms or "
+               "more gives it 8; to run it as it is without this message, add undersampled: ok to the step\n");
+    // What the check says is what is written: the middle at every step of the ECU.
+    {
+        World constant;
+        CHECK(constant.run(read(kHead + "  - at_ms: 203\n"
+                                        "    wave: { Body.level: { sine: { amplitude: 9, period_ms: 20 }, around: 50, for_ms: 40 } }\n"
+                                        "    undersampled: ok\n"))
+                  .status == ScenarioStatus::Passed);
+        check_text(applied(constant, "Body.level"), "50@210 50@220 50@230 50@240 50@250 ");
+    }
     // A square whose high time is not a number of steps: the duty the ECU sees.
     check_text(wave_findings("  - wave: { Door.lamp: { square: { period_ms: 30, duty: 25 }, for_ms: 300 } }\n"
                              "  - wave: { Door.lamp: { square: { period_ms: 25 }, for_ms: 300 } }\n"
@@ -1682,13 +1839,13 @@ TEST_CASE(scenario_wave_that_its_ecu_cannot_see_gets_a_warning_that_says_what_th
                              "  - wave: { Body.ratio: { chirp: { amplitude: 0.1, from_hz: 1, to_hz: 200 }, around: 0.5, for_ms: 1000 } }\n"
                              "  - wave: { Body.ratio: { chirp: { amplitude: 0.1, from_hz: 20, to_hz: 1 }, around: 0.5, for_ms: 1000 } }\n"),
                "W 3 scenario-wave-undersampled: the pulse of Door.lamp is 3 ms wide, shorter than the step of participant 'Door' (10 ms): "
-               "the ECU sees it for one whole step if the pulse begins at the time of one of the ECU's steps, and not at all otherwise. "
+               "this step begins at 0 ms, so the ECU has the pulse's value for one whole step of 10 ms (the one at 0 ms), not for 3 ms. "
                "Make width_ms 10 or more; to run it as it is without this message, add undersampled: ok to the step\n"
                "W 4 scenario-wave-undersampled: the noise of Body.ratio changes every 2 ms, faster than the step of participant 'Body' "
                "(10 ms): the ECU gets only the value at the time of each of its steps; the values between are never applied. Make "
                "hold_ms 10 or more; to run it as it is without this message, add undersampled: ok to the step\n"
-               "W 5 scenario-wave-undersampled: the points of Body.level has points 3 ms apart (at 25 ms and 28 ms), closer than the step "
-               "of participant 'Body' (10 ms): the ECU gets only the value at the time of each of its steps, so it does not see every "
+               "W 5 scenario-wave-undersampled: the points of Body.level are as little as 3 ms apart (at 25 ms and 28 ms), closer "
+               "than the step of participant 'Body' (10 ms): the ECU gets only the value at the time of each of its steps, so it does not see every "
                "point. Put the points 10 ms or more apart; to run it as it is without this message, add undersampled: ok to the step\n"
                "W 6 scenario-wave-undersampled: the chatter of Door.lamp changes every 2 ms, faster than the step of participant 'Door' "
                "(10 ms): the ECU gets only the value at the time of each of its steps, so it sees some of the bounces or none. Make "

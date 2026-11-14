@@ -4167,13 +4167,27 @@ void scenario_wave(const Options& o)
     expect_code(checked, 0, "check of a wave that is finer than the ECU's step");
     require(contains(lf(checked.standard_output),
                      "\nwarning: s.yaml:12: the pulse of Body.level is 5 ms wide, shorter than the step of "
-                     "participant 'Body' (10 ms): the ECU sees it for one whole step if the pulse begins at the time of one of the "
-                     "ECU's steps, and not at all otherwise. Make width_ms 10 or more; to run it as it is without this message, add "
+                     "participant 'Body' (10 ms): this step begins at 270 ms, so the ECU has the pulse's value for one whole step of 10 "
+                     "ms (the one at 270 ms), not for 5 ms. Make width_ms 10 or more; to run it as it is without this message, add "
                      "undersampled: ok to the step\n"),
             "the warning of the check:\n" + lf(checked.standard_output));
     expect_code(launch(o, {"check", "--strict", "sim.yaml", "--scenario", "s.yaml"}, warned), 1, "check --strict of the same");
     const std::string same = run(warned, {}, "with the warning");
     require(contains(same, "\"status\": \"passed\"") && contains(same, "\"over_at_ms\": 290,"), "the run with the warning:\n" + same);
+
+    // A pulse shorter than the ECU's step that begins between two steps: the ECU has it for one
+    // step if a step is in it (107 ms to 112 ms: the one at 110 ms), and never gets it otherwise
+    // (201 ms to 206 ms: the level stays as it changed last, at 120 ms).
+    const fs::path between = scenario_ecus(o, "",
+                                           "vehicle_sil_scenario: 1\nsteps:\n"
+                                           "  - set: { Body.level: 20 }\n"
+                                           "  - at_ms: 107\n    wave: { Body.level: { pulse: { value: 50, width_ms: 5 } } }\n    undersampled: ok\n"
+                                           "  - at_ms: 115\n    expect: { Body.level: 50, Body.level_changed_at_ms: 110 }\n"
+                                           "  - at_ms: 125\n    expect: { Body.level: 20, Body.level_changed_at_ms: 120 }\n"
+                                           "  - at_ms: 201\n    wave: { Body.level: { pulse: { value: 60, width_ms: 5 } } }\n    undersampled: ok\n"
+                                           "  - at_ms: 225\n    expect: { Body.level: 20, Body.level_changed_at_ms: 120 }\n");
+    const std::string seen = run(between, {}, "pulses that begin between two steps of the ECU");
+    require(contains(seen, "\"status\": \"passed\""), "pulses that begin between two steps of the ECU:\n" + seen);
 
     // A wave that leaves the variable's range fails at the write that does, and says the value's time.
     const fs::path outside = scenario_ecus(o, "",

@@ -173,20 +173,22 @@ ECU は、Agent の `sample_period`（既定 10 ms の仮想時間）ごとに�
 | `triangle` | 同じ | 三角波。山と谷の位置は `sine` と同じ | integer、real |
 | `sawtooth` | 同じ、`falling: true` | のこぎり波。周期の始めが最小で、直線で最大まで上がって戻る。`falling: true` は逆 | integer、real |
 | `square` | `low` と `high`、または `amplitude`。`period_ms` か `frequency_hz`、`duty`（%、既定 50）、`phase_deg` | 矩形波。周期の始めから `duty` % の間が高い側。`low`・`high` はその 2 つの値、`amplitude` は中心 ± `amplitude`。bool はどちらも書かない（`false` と `true`） | integer、real、bool |
-| `pulse` | `value`、`width_ms` | `width_ms` の間だけ `value`、終わると元の値。bool は `value` を省ける（`true`） | integer、real、bool |
+| `pulse` | `value`、`width_ms` | `width_ms` の間だけ `value`、終わると、始まる時点の値に戻る（bool は `value` の反対）。bool は `value` を省ける（`true`） | integer、real、bool |
 | `noise` | `amplitude`、`hold_ms`、`seed`、`distribution` | 乱数。1 つの値を `hold_ms` の間保つ。`distribution: uniform`（既定）は中心 ± `amplitude` の一様、`gaussian` は標準偏差が `amplitude` の釣り鐘形（標準偏差の 6 倍を超えない） | integer、real |
-| `chirp` | `amplitude`、`from_hz`、`to_hz`、`sweep` | 周波数が `for_ms` の間に `from_hz` から `to_hz` へ変わる正弦。`sweep: linear`（既定）は毎秒同じ Hz ずつ、`log` は毎秒同じ倍率ずつ | integer、real |
+| `chirp` | `amplitude`、`from_hz`、`to_hz`、`sweep` | 周波数が `for_ms` の間に `from_hz` から `to_hz` へ変わる正弦。`sweep: linear`（既定）は毎秒同じ Hz ずつ、`log` は毎秒同じ倍率ずつ。周波数は 0 以上で、`linear` は 0 Hz から始めることも 0 Hz で終わることもできる（両方 0 は誤り）。`log` はどちらも 0 より大きい数 | integer、real |
 | `lag` | `to`、`tau_ms`、`from`、`settle: true` | 一次遅れの形で `to` に寄る（`tau_ms` で 63 %、その 5 倍で 99 %）。`from` を省くと、いまの値から | integer、real |
 | `chatter` | `to`、`interval_ms`、`bounces` か横の `for_ms`、`seed`、`from` | スイッチの跳ね。`to`、元の値、`to`、元の値、… と `interval_ms` ごとに変わり、最後は `to`。`bounces` は元の値に戻る回数。`seed` を書くと、変わる時刻が `interval_ms` の 1/4 まで前後にずれる。bool は `from` を書かない（`to` の反対） | integer、real、bool |
-| `points` | `[[<ms>, <値>], ...]`、横に `interpolate` | 時刻（手順の始めからの ms、昇順）と値の表。`interpolate: linear`（数の既定）は点の間を直線で、`hold` は次の点まで値を保つ。bool と enum は `hold` だけ | どの型でも |
+| `points` | `[[<ms>, <値>], ...]`、横に `interpolate` | 時刻（手順の始めからの ms、昇順）と値の表。`interpolate: linear`（数の既定）は点の間を直線で、`hold` は次の点まで値を保つ。bool と enum は `hold` だけ。値を飛ばす（段差）ときは `hold` で書く（`linear` では、同じ時刻の 2 点は誤り） | どの型でも |
 
 - **周期**は `period_ms`（1 以上の整数）か `frequency_hz`（0 より大きい数）のどちらかです。1 ms より短い周期は `frequency_hz` で書きます。`phase_deg` は波形を始める位置で、90 なら 1/4 周期の所から始めます。
 - **長さ**は `for_ms` です。周期の倍数でなくてもかまいません。`pulse` と `points` は自分で長さを持つので `for_ms` を書きません。`chatter` は `bounces` か `for_ms` のどちらかです。
 - **中心**は `around` です。省くと、手順が始まる時点のその変数の値です（`ramp` の `from` と同じ決まり: シナリオが最後に書いた値か、それより新しいサンプル。どちらもなければ失敗するので、`around` を書きます）。
 - **終わった後の値**: 中心（`around`、省いたときは始まる時点の値）に戻します。`low`・`high` を書いた `square` と bool の `square` は、低い側で終わります。行き先のある波形はそこに留まります: `points` は最後の点の値、`chatter` は `to`、`lag` は `for_ms` の時点で着いていた値（`settle: true` なら `to`）。続けて `around` のない `wave` や `from` のない `ramp` を書くと、この値から始まります。
-- `around` を書けるのは、中心のある波形（`sine`、`triangle`、`sawtooth`、`amplitude` の `square`、`noise`、`chirp`）と、数の `pulse`（終わった後に戻る値）です。`lag` と `chatter` の始まりの値は `from`、`points` は最初の点で書きます。`points` の最初の点が 0 より後なら、そこまでは、いまの値から最初の点への直線（`hold` なら、いまの値のまま）です。
-- **値の決まり方**: 値は、手順が始まった仮想時刻からの経過と、書いた数だけで決まります。ECU のステップ幅、controller の刻み、実行の速さによりません。`noise` と `chatter` の乱数も、`seed` と時刻だけから作るので、同じシナリオは毎回同じ値になり、失敗した実行をそのまま再現できます。
-- **書く時刻**は `ramp` と同じです。変数ごとに、T、T + ステップ、T + 2 ステップ、…（その ECU のステップ）にその時刻の値を書き、終わりの時刻に終わった後の値を書きます。integer は四捨五入です。
+- `around` を書けるのは、中心のある波形（`sine`、`triangle`、`sawtooth`、`amplitude` の `square`、`noise`、`chirp`）だけです。`pulse` には書けません: 終わると、始まる時点の値に戻ります（別の値にするには、次の手順で `set` します。数の `pulse` は、始まる時点の値がなければ失敗するので、前の手順で `set` しておきます）。`lag` と `chatter` の始まりの値は `from`、`points` は最初の点で書きます。
+- `interpolate` は、`points` の中ではなく横に書きます（`{ points: [...], interpolate: hold }`）。点の与え方が増えても、書く場所はここです。
+- `points` の最初の点が 0 より後なら、そこまでは、いまの値から最初の点への直線（`hold` なら、いまの値のまま）です。
+- **値の決まり方**: 値は、手順が始まった仮想時刻からの経過と、書いた数だけで決まります。ECU のステップ幅、controller の刻み、実行の速さによりません。`noise` と `chatter` の乱数も、`seed`、変数の名前（`<participant>.<変数>`）、時刻だけから作るので、同じシナリオは、どの OS でも毎回同じ値になり、失敗した実行をそのまま再現できます。変数の名前が入るので、2 つの変数に同じ `seed` を書いても、同じ列にはなりません（別々の入力に、そろった乱れは入りません）。
+- **書く時刻**は `ramp` と同じです。変数ごとに、T、T + ステップ、T + 2 ステップ、…（その ECU のステップ）にその時刻の値を書き、終わりの時刻に終わった後の値を書きます。integer は四捨五入です（ちょうど .5 は 0 から遠い側。計算の最後の桁だけ .5 からずれた値も、.5 として丸めます）。それでも、丸めの境界のごく近くの値は、OS やコンパイラーによって 1 違うことがあります（`sine`、`chirp`、`lag` は C ライブラリの関数を使い、最後の桁が同じとは限りません）。integer の入力に掛けた波形の結果を確かめるときは、`ge` と `le` で幅を持たせて書きます。
 - **範囲**: `low`、`high`、`value`、`to`、`from`、`around`、`points` の値と、`around` を書いたときの `around` ± `amplitude` は、照合で範囲を確かめます。`around` を省いた波形と `gaussian` の `noise` は、実行しないと値がわからないので、範囲の外の値を書こうとした時点でその手順が失敗します（`scenario-write`。値を黙って丸めません）。
 - `${名前}` は、波形の中の数の位置にも書けます（`amplitude: "${amp}"`）。
 - 手順は 1 つずつ進むので、`wave` が動いている間は `expect` できません。波形を掛けた結果は、`wave` の後の手順で確かめます。
@@ -203,7 +205,7 @@ ECU は、ステップごとに 1 回だけ入力を受け取ります。
 
 | 所見 | 出るとき |
 |---|---|
-| `scenario-wave-undersampled`（警告） | 周期がステップ幅の 2 倍より短い（`sine`、`triangle`、`sawtooth`、`square`。`chirp` は高い側の周波数）。`pulse` の `width_ms`、`noise` の `hold_ms`、`points` の点の間隔、`chatter` の `interval_ms`（`seed` があればその半分）がステップ幅より短い |
+| `scenario-wave-undersampled`（警告） | 周期がステップ幅の 2 倍より短い（`sine`、`triangle`、`sawtooth`、`square`。`chirp` は高い側の周波数）。`sine`、`triangle` が、ECU が値を受け取るどの時刻にも同じ値になる（周期がステップ幅の 2 倍で、中心から始まるとき。ECU には一定の値に見える）。`pulse` の `width_ms`、`noise` の `hold_ms`、`linear` の `points` の点の間隔、`chatter` の `interval_ms`（`seed` があればその半分）がステップ幅より短い。`hold` の `points` に、ECU に入らない点がある（点の間隔は見ない） |
 | `scenario-wave-duty`（警告） | `square` の高い側の長さ（周期 × `duty`）がステップ幅の倍数でない（ECU に見えるデューティーを言う）。周期がステップ幅の倍数でない |
 | `scenario-wave-coarse`（注記） | `sine`、`triangle`、`sawtooth`、`chirp` の 1 周期が 8 ステップより少ない（山と谷を取りこぼすことがある） |
 | `scenario-wave-not-checked`（注記） | 相手の participant のステップ幅がわからないので、比べていない |
@@ -221,7 +223,9 @@ warning: pwm.yaml:5: the square of Door.lamp is high for 7.5 ms of each period o
       undersampled: ok
   ```
 
-- ステップ幅より短い `pulse` は、手順の時刻が ECU のステップの時刻なら 1 ステップの間だけ見え、そうでなければ見えません（始まりと終わりの書き込みが、同じステップに入るためです）。
+- なめらかな波形（`sine`、`triangle`、`sawtooth`）の警告は、形が見える周期（ステップ幅の 8 倍以上）を勧めます。ECU に見える値の並びは、手順がいつ始まるかによりません（書き込みは T、T + ステップ、… で、ECU は 1 つずつ別のステップで受け取ります）。
+- ステップ幅より短い `pulse` は、パルスの間（始まりの時刻を含み、終わりの時刻を含まない）に ECU のステップの時刻が 1 つあれば、1 ステップの間だけ見えます。なければ見えません（始まりと終わりの書き込みが同じステップに入り、後の方が残るためです）。ステップ幅 10 ms の ECU なら、107 ms に始まる 5 ms のパルスは 110 ms のステップで見え、101 ms に始まるものは見えません。手順の時刻が実行の前にわかるとき（`at_ms`、長さの決まった手順の後）は、どちらになるかを警告が言います。わからないとき（`wait_until` の後など）は、そう言います。
+- `hold` の `points` は、段差を書くためのものなので、点の間隔が短くても警告しません。警告するのは、値が ECU に 1 度も入らない点があるときです: 手順の始めからステップ幅ごとの書き込みが、その点の区間に 1 つもないとき（点をステップ幅の倍数の時刻に置けば起きません）と、最後の点の直前の点の書き込みが、終わりの書き込みと同じステップに入るとき（短い `pulse` と同じ決まり）です。
 - 動かしようのないものは誤りです: 周期や幅が 0 以下、`noise` に `seed` がない、`points` の時刻が昇順でない、型に合わない波形（bool に `sine` など）、範囲の外。
 
 ## 機種とパラメーター
@@ -461,7 +465,7 @@ failed: 5 errors, 0 warnings, 0 notes
 - 時刻はミリ秒の数です（ECU のステップが 1 ms より細かいと、小数になることがあります）。わからない時刻は null です。
 - シナリオが終わってランチャーが止めた実行の `simulation` は `ended` です。
 - `run --events`: 手順が始まったとき（`status` は `running`）と決まったときに、事象 `scenario_step`（`steps[]` と同じキー）。結果の事象にも `scenario` があります。飛ばす手順の `scenario_step`（`status` は `skipped`、`at_ms` は null）は 1 回で、その手順の時刻が決まったときに出ます（実行の前からわかっているので、仮想時間がそこへ進むより前に出ることがあります）。
-- `vehicle_sil_launch version --json` の `features` に `scenario` があれば、この機能を使えます。
+- `vehicle_sil_launch version --json` の `features` に `scenario` があれば、この機能を使えます。手順 `wave` は、`scenario-wave` があるランチャーで使えます（ないランチャーでは、`wave` は知らないキーの誤りです）。
 
 ## 実行中に変数を見る（`--control`）
 

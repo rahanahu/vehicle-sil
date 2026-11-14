@@ -212,3 +212,65 @@ TEST_CASE(signal_points_are_joined_by_lines_or_kept)
     CHECK_EQ(points_linear({}, 5ms, 77.0), 77.0);
     CHECK_EQ(points_hold({}, 5ms, 77.0), 77.0);
 }
+
+TEST_CASE(signal_time_in_period_is_where_the_shapes_read_their_value)
+{
+    CHECK(time_in_period(0ms, 40ms) == Nanos{0ms});
+    CHECK(time_in_period(130ms, 40ms) == Nanos{10ms});
+    CHECK(time_in_period(-10ms, 40ms) == Nanos{30ms});
+    // 45 degrees: the time 0 is an eighth of a period in.
+    CHECK(time_in_period(0ms, 40ms, 45.0) == Nanos{5ms});
+    CHECK(time_in_period(38ms, 40ms, 45.0) == Nanos{3ms});
+    // A square is high while that time is under its high time.
+    CHECK(square_high_time(40ms, 37.5) == Nanos{15ms});
+    CHECK(square(10ms, 40ms, 37.5, 45.0) == (time_in_period(10ms, 40ms, 45.0) < square_high_time(40ms, 37.5)));
+}
+
+TEST_CASE(signal_chirp_may_begin_or_end_at_0_hz_on_a_linear_sweep)
+{
+    // 0 Hz to 4 Hz in one second: 2 x^2 periods after x seconds.
+    CHECK(near(chirp(0ms, 0.0, 4.0, 1s), 0.0));
+    CHECK(near(chirp(250ms, 0.0, 4.0, 1s), std::sin(2.0 * 3.14159265358979323846 * 0.125)));
+    CHECK(near(chirp(500ms, 0.0, 4.0, 1s), 0.0, 1e-6));
+    // 4 Hz to 0 Hz: 4 x - 2 x^2.
+    CHECK(near(chirp(250ms, 4.0, 0.0, 1s), std::sin(2.0 * 3.14159265358979323846 * 0.875)));
+    CHECK(near(chirp_frequency(500ms, 0.0, 4.0, 1s), 2.0));
+}
+
+TEST_CASE(signal_arguments_a_function_is_not_for_give_a_value_and_do_not_trap)
+{
+    // A period, hold, interval or time constant of 0 or less: the middle (0), low, closed, there.
+    for (const Nanos none : {Nanos{0}, Nanos{-5ms}})
+    {
+        CHECK(time_in_period(7ms, none, 90.0) == Nanos{0});
+        CHECK_EQ(sine(7ms, none), 0.0);
+        CHECK_EQ(triangle(7ms, none, 90.0), 0.0);
+        CHECK_EQ(sawtooth(7ms, none), 0.0);
+        CHECK_EQ(sawtooth(7ms, none, true), 0.0);
+        CHECK(!square(7ms, none));
+        CHECK(!square(7ms, none, 100.0));
+        CHECK(square_high_time(none, 50.0) == Nanos{0});
+        CHECK_EQ(noise_uniform(7ms, none, 1), 0.0);
+        CHECK_EQ(noise_gaussian(7ms, none, 1), 0.0);
+        CHECK_EQ(chirp(7ms, 1.0, 2.0, none), 0.0);
+        CHECK_EQ(chirp_frequency(7ms, 1.0, 2.0, none), 1.0);
+        CHECK_EQ(lag(7ms, none), 1.0);
+        CHECK(chatter(7ms, none));
+        CHECK(chatter(7ms, none, 3));
+    }
+    // A log sweep from or to 0 Hz, a negative frequency, one that is not a number.
+    CHECK_EQ(chirp(7ms, 0.0, 2.0, 1s, Sweep::Log), 0.0);
+    CHECK_EQ(chirp(7ms, 2.0, 0.0, 1s, Sweep::Log), 0.0);
+    CHECK_EQ(chirp(7ms, -1.0, 2.0, 1s), 0.0);
+    CHECK_EQ(chirp(7ms, 1.0, std::nan(""), 1s), 0.0);
+    CHECK_EQ(chirp_frequency(7ms, 0.0, 2.0, 1s, Sweep::Log), 0.0);
+    // A phase that is not a number is no phase; a duty that is not one is 0.
+    CHECK_EQ(triangle(10ms, 40ms, std::nan("")), triangle(10ms, 40ms));
+    CHECK_EQ(triangle(10ms, 40ms, HUGE_VAL), triangle(10ms, 40ms));
+    CHECK(!square(0ms, 40ms, std::nan("")));
+    // Points with one time twice, and a time before a first point at 0: the later point's value.
+    const std::array<Point, 3> twice{Point{0ms, 1.0}, Point{10ms, 2.0}, Point{10ms, 5.0}};
+    CHECK_EQ(points_linear(twice, 10ms), 5.0);
+    CHECK_EQ(points_linear(twice, 5ms), 1.5);
+    CHECK_EQ(points_linear(twice, -5ms, 77.0), 1.0);
+}
