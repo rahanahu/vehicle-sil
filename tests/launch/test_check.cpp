@@ -57,6 +57,13 @@ ParticipantConfig participant(const std::string& name, std::size_t line, std::op
     return p;
 }
 
+ParticipantConfig with_role(ParticipantConfig p, ParticipantRole role)
+{
+    p.role = role;
+    p.role_written = true;
+    return p;
+}
+
 /// A configuration with `networks` and the participants `entries` (each with what it reported,
 /// or nothing for describe: false).
 struct Setup
@@ -404,6 +411,106 @@ TEST_CASE(networks_without_participants_or_with_one_are_warnings)
                "remove it\n"
                "N 5 unused-network: network 'B': no participant uses it (participants with describe: false are not "
                "counted): remove it, or check the network names in the ECUs\n");
+}
+
+TEST_CASE(participants_for_testing_are_not_counted_as_the_ecus_of_a_network)
+{
+    // One ECU and a spy: still one ECU on the network.
+    Setup s;
+    s.network("A", NetworkKind::Can, 3);
+    s.described(participant("Engine", 6), ecu("Engine", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}));
+    s.described(with_role(participant("Spy", 9), ParticipantRole::Test),
+                ecu("Spy", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}));
+    check_text(s.check(), "W 3 single-participant: network 'A': only Engine is on it besides the participants for testing "
+                          "(role: test: Spy), so what it sends there reaches no other ECU: add the other ECUs of this "
+                          "network, or remove it\n");
+    // Two ECUs (role: ecu written or not) and the spy: right.
+    s.described(with_role(participant("Brake", 12), ParticipantRole::Ecu),
+                ecu("Brake", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}));
+    check_text(s.check(), "");
+    // Participants for testing alone.
+    Setup t;
+    t.network("A", NetworkKind::Can, 3);
+    t.described(with_role(participant("Spy", 6), ParticipantRole::Test),
+                ecu("Spy", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}));
+    t.described(with_role(participant("Tool", 9), ParticipantRole::Test),
+                ecu("Tool", 10ms, {NetworkDescription{"A", NetworkUse::Raw, {}}}));
+    check_text(t.check(), "W 3 single-participant: network 'A': only participants for testing (role: test: Spy and Tool) "
+                          "are on it, so there is no ECU for them there: add the ECUs of this network, or remove it\n");
+}
+
+TEST_CASE(a_test_participant_with_j1939_nodes_where_a_bridge_may_be_is_a_warning)
+{
+    constexpr std::uint64_t kToolName = 0x80000000FE000080; // arbitrary address capable, Manufacturer Code 0x7F0
+    Setup base = good_pair();
+    base.described(with_role(participant("Tool", 12), ParticipantRole::Test),
+                   ecu("Tool", 10ms, {on_j1939("J1939_CAN", {node(0x80, kToolName)})}));
+    check_text(base.check(), "");
+
+    // A bridge that describes itself on the network.
+    Setup on = base;
+    on.network("Other", NetworkKind::Can, 4);
+    on.described(with_role(participant("Gateway", 15), ParticipantRole::Bridge),
+                 ecu("Gateway", 10ms, {NetworkDescription{"Other", NetworkUse::Raw, {}}}));
+    on.described(participant("Seat", 18), ecu("Seat", 10ms, {NetworkDescription{"Other", NetworkUse::Raw, {}}}));
+    check_text(on.check(), ""); // on another network
+    on.results[3].ecu->description.networks.push_back(NetworkDescription{"J1939_CAN", NetworkUse::Raw, {}});
+    check_text(on.check(),
+               "W 12 test-participant-talks-on-bridged-network: participant 'Tool': it has role: test and J1939 nodes on "
+               "network 'J1939_CAN', and the bridge Gateway (role: bridge) is on it too: what it sends there goes out on "
+               "the real bus too, its address claims among it, and a real ECU with the same address fights it for the "
+               "address: let it only listen there (no J1939 nodes), or leave the bridge out of runs with it (--disable "
+               "Gateway, or enabled: false in a variant)\n");
+    on.config.participants[3].enabled = false; // a bridge that is left out carries nothing
+    on.results[3] = ParticipantResult{ParticipantStatus::Disabled, std::nullopt};
+    CHECK(on.check().find("test-participant-talks-on-bridged-network") == std::string::npos);
+    // Nor does it mark the bridges: a participant with describe: false and no role may be one.
+    on.unchecked("Logger", 21);
+    CHECK(on.check().find("and Logger has describe: false and no role") != std::string::npos);
+
+    // A bridge with describe: false may carry any network.
+    Setup marked = base;
+    marked.unchecked("Gateway", 15);
+    marked.config.participants.back().role = ParticipantRole::Bridge;
+    marked.config.participants.back().role_written = true;
+    marked.unchecked("Logger", 18); // no role, but there is a bridge: not one
+    check_text(marked.check(),
+               "N 15 not-checked: participant 'Gateway': not checked (describe: false): vehicle_sil_launch cannot "
+               "compare its name, step and networks with this file\n"
+               "N 18 not-checked: participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot "
+               "compare its name, step and networks with this file\n"
+               "W 12 test-participant-talks-on-bridged-network: participant 'Tool': it has role: test and J1939 nodes on "
+               "network 'J1939_CAN', and the bridge Gateway (role: bridge) may carry it (describe: false, so the check "
+               "cannot see its networks): what it sends there goes out on the real bus too, its address claims among it, "
+               "and a real ECU with the same address fights it for the address: let it only listen there (no J1939 "
+               "nodes), or leave the bridge out of runs with it (--disable Gateway, or enabled: false in a variant)\n");
+
+    // Without role: bridge, a participant with describe: false and no role may be one.
+    Setup maybe = base;
+    maybe.unchecked("Logger", 15);
+    check_text(maybe.check(),
+               "N 15 not-checked: participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot "
+               "compare its name, step and networks with this file\n"
+               "W 12 test-participant-talks-on-bridged-network: participant 'Tool': it has role: test and J1939 nodes on "
+               "network 'J1939_CAN', and Logger has describe: false and no role, so it may be a bridge that carries this "
+               "network to a real bus: what it sends there goes out on the real bus too, its address claims among it, "
+               "and a real ECU with the same address fights it for the address: let it only listen there (no J1939 "
+               "nodes), or leave the bridge out of runs with it (--disable Logger, or enabled: false in a variant); if "
+               "Logger is not a bridge, write role: ecu for it (and role: bridge for a bridge)\n");
+    // With a role written, it is not one.
+    maybe.config.participants.back().role_written = true;
+    CHECK(maybe.check().find("test-participant-talks-on-bridged-network") == std::string::npos);
+
+    // A participant for testing without J1939 nodes there (it may only listen): no warning.
+    Setup quiet = good_pair();
+    quiet.described(with_role(participant("Spy", 12), ParticipantRole::Test),
+                    ecu("Spy", 10ms, {NetworkDescription{"J1939_CAN", NetworkUse::Raw, {}}}));
+    quiet.unchecked("Logger", 15);
+    CHECK(quiet.check().find("test-participant-talks-on-bridged-network") == std::string::npos);
+    // An ECU with J1939 nodes beside a bridge is what a bridge is for: no warning.
+    Setup ecus = good_pair();
+    ecus.unchecked("Logger", 15);
+    CHECK(ecus.check().find("test-participant-talks-on-bridged-network") == std::string::npos);
 }
 
 TEST_CASE(j1939_addresses_must_differ_on_a_network)
@@ -935,6 +1042,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "required": true,
       "enabled": true,
       "manual": false,
+      "role": "ecu",
       "step_ms": 10,
       "status": "described",
       "reported": {
@@ -1000,6 +1108,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "required": true,
       "enabled": true,
       "manual": false,
+      "role": "ecu",
       "step_ms": null,
       "status": "described",
       "reported": {
@@ -1042,6 +1151,7 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
       "required": true,
       "enabled": true,
       "manual": false,
+      "role": "ecu",
       "step_ms": null,
       "status": "failed",
       "reported": null,
@@ -1486,11 +1596,34 @@ TEST_CASE(the_reports_show_a_disabled_participant)
     r.findings.erase(r.findings.begin());
     CHECK(r.passed());
     const std::string json = format_json(r);
-    CHECK(json.find("      \"required\": true,\n      \"enabled\": true,\n      \"manual\": false,\n      \"step_ms\": 10,\n      \"status\": "
-                    "\"described\",\n") != std::string::npos);
-    CHECK(json.find("      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n      \"step_ms\": null,\n      \"status\": "
-                    "\"disabled\",\n      \"reported\": null,\n      \"variables\": null,\n      \"control\": null\n") != std::string::npos);
+    CHECK(json.find("      \"required\": true,\n      \"enabled\": true,\n      \"manual\": false,\n"
+                    "      \"role\": \"ecu\",\n      \"step_ms\": 10,\n      \"status\": \"described\",\n") != std::string::npos);
+    CHECK(json.find("      \"required\": true,\n      \"enabled\": false,\n      \"manual\": false,\n"
+                    "      \"role\": \"ecu\",\n      \"step_ms\": null,\n      \"status\": \"disabled\",\n"
+                    "      \"reported\": null,\n      \"variables\": null,\n      \"control\": null\n") != std::string::npos);
     CHECK(json.find("      \"participants\": [\n        \"Engine\"\n      ]\n") != std::string::npos);
+}
+
+TEST_CASE(the_reports_show_a_role_that_is_not_ecu)
+{
+    Setup s = good_pair();
+    s.described(with_role(participant("Spy", 12), ParticipantRole::Test),
+                ecu("Spy", 10ms, {NetworkDescription{"J1939_CAN", NetworkUse::Raw, {}}}));
+    s.unchecked("Gateway", 15);
+    s.config.participants.back().role = ParticipantRole::Bridge;
+    CheckReport r;
+    r.file = "sim.yaml";
+    r.config = s.config;
+    r.participants = s.results;
+    const std::string text = format_text(r);
+    CHECK(text.find("Engine                  10 ms  J1939_CAN (j1939 0x00)\n") != std::string::npos);
+    CHECK(text.find("Spy (role: test)        10 ms  J1939_CAN (raw)\n") != std::string::npos);
+    CHECK(text.find("Gateway (role: bridge)  -      not checked (describe: false)\n") != std::string::npos);
+    // The network table names the participant only.
+    CHECK(text.find("J1939_CAN  can   Engine, Dashboard, Spy\n") != std::string::npos);
+    const std::string json = format_json(r);
+    CHECK(json.find("      \"manual\": false,\n      \"role\": \"test\",\n      \"step_ms\": null,\n") != std::string::npos);
+    CHECK(json.find("      \"manual\": false,\n      \"role\": \"bridge\",\n      \"step_ms\": null,\n") != std::string::npos);
 }
 
 TEST_CASE(check_file_neither_looks_for_nor_runs_a_disabled_executable)
@@ -1556,6 +1689,6 @@ TEST_CASE(check_file_a_disabled_entry_with_errors_and_an_unreadable_enabled)
     }
     check_text(codes, "executable(Engine) missing-key(Ghost) value(Maybe) participant-disabled(Ghost) ");
     // The JSON says disabled for Ghost.
-    CHECK(format_json(r).find("      \"enabled\": false,\n      \"manual\": false,\n      \"step_ms\": null,\n      \"status\": \"disabled\",\n") !=
+    CHECK(format_json(r).find("      \"enabled\": false,\n      \"manual\": false,\n      \"role\": \"ecu\",\n      \"step_ms\": null,\n      \"status\": \"disabled\",\n") !=
           std::string::npos);
 }

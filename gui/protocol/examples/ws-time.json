@@ -140,6 +140,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "role": "ecu",
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -236,6 +237,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "role": "ecu",
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -333,6 +335,7 @@
               "required": false,
               "enabled": false,
               "manual": false,
+              "role": "ecu",
               "step_ms": null,
               "status": "disabled",
               "reported": null,
@@ -786,6 +789,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "role": "ecu",
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -882,6 +886,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "role": "ecu",
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -979,6 +984,7 @@
               "required": false,
               "enabled": false,
               "manual": false,
+              "role": "ecu",
               "step_ms": null,
               "status": "disabled",
               "reported": null,
@@ -1359,6 +1365,7 @@
                 "required": true,
                 "enabled": true,
                 "manual": false,
+                "role": "ecu",
                 "step_ms": null,
                 "status": "described",
                 "reported": {
@@ -1455,6 +1462,7 @@
                 "required": true,
                 "enabled": true,
                 "manual": false,
+                "role": "ecu",
                 "step_ms": null,
                 "status": "described",
                 "reported": {
@@ -1552,6 +1560,7 @@
                 "required": false,
                 "enabled": false,
                 "manual": false,
+                "role": "ecu",
                 "step_ms": null,
                 "status": "disabled",
                 "reported": null,
@@ -1648,6 +1657,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "role": "ecu",
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -1744,6 +1754,7 @@
               "required": true,
               "enabled": true,
               "manual": false,
+              "role": "ecu",
               "step_ms": null,
               "status": "described",
               "reported": {
@@ -1841,6 +1852,7 @@
               "required": false,
               "enabled": false,
               "manual": false,
+              "role": "ecu",
               "step_ms": null,
               "status": "disabled",
               "reported": null,
@@ -2080,6 +2092,7 @@
                 "required": true,
                 "enabled": true,
                 "manual": false,
+                "role": "ecu",
                 "step_ms": null,
                 "status": "described",
                 "reported": {
@@ -2176,6 +2189,7 @@
                 "required": true,
                 "enabled": true,
                 "manual": false,
+                "role": "ecu",
                 "step_ms": null,
                 "status": "described",
                 "reported": {
@@ -2273,6 +2287,7 @@
                 "required": false,
                 "enabled": false,
                 "manual": false,
+                "role": "ecu",
                 "step_ms": null,
                 "status": "disabled",
                 "reported": null,

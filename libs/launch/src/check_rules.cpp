@@ -235,6 +235,13 @@ struct Rules
     bool incomplete = false;
     bool unchecked = false;
     std::string not_counted{};
+    /// The enabled participants (indexes) that may carry networks to real buses: those with
+    /// role: bridge if there are any (`bridges_marked`), otherwise those with describe: false and
+    /// no role. One that described itself carries the networks it uses; one with describe: false
+    /// may carry any of them. A role: bridge whose description failed is left out (its error says
+    /// why).
+    std::vector<std::size_t> bridges{};
+    bool bridges_marked = false;
 
     void add(Severity severity, const char* code, std::size_t line, std::string message, const std::string& participant,
              const std::string& network) const
@@ -608,11 +615,73 @@ void check_ethernet_network(const Rules& rules, const NetworkConfig& network, co
     }
 }
 
+/// A participant for testing (role: test, index `talker`) with J1939 nodes on `network`, which a
+/// bridge may carry to a real bus (Rules::bridges; `users`: who described itself on the network).
+void check_test_on_bridged_network(const Rules& rules, const NetworkConfig& network, std::size_t talker,
+                                   const std::vector<std::string>& users)
+{
+    std::vector<std::string> on;    // bridges that described themselves on the network
+    std::vector<std::string> maybe; // bridges with describe: false (their networks are not known)
+    for (const std::size_t b : rules.bridges)
+    {
+        const std::string& name = rules.config.participants[b].name;
+        if (rules.results[b].status == ParticipantStatus::NotChecked)
+        {
+            maybe.push_back(name);
+        }
+        else if (std::find(users.begin(), users.end(), name) != users.end())
+        {
+            on.push_back(name);
+        }
+    }
+    if (on.empty() && maybe.empty())
+    {
+        return;
+    }
+    const ParticipantConfig& p = rules.config.participants[talker];
+    const auto bridge_words = [](const std::vector<std::string>& names) {
+        return (names.size() == 1 ? "the bridge " : "the bridges ") + and_list(names) + " (role: bridge)";
+    };
+    // Without role: bridge anywhere, `maybe` are participants that may be bridges (and `on` is empty).
+    std::string where;
+    if (!on.empty())
+    {
+        where = bridge_words(on) + (on.size() == 1 ? " is" : " are") + " on it too";
+    }
+    else if (rules.bridges_marked)
+    {
+        where = bridge_words(maybe) + " may carry it (describe: false, so the check cannot see " +
+                (maybe.size() == 1 ? "its" : "their") + " networks)";
+    }
+    else
+    {
+        where = and_list(maybe) +
+                (maybe.size() == 1 ? " has describe: false and no role, so it may be a bridge that carries"
+                                   : " have describe: false and no role, so they may be bridges that carry") +
+                " this network to a real bus";
+    }
+    const std::string fix = "--disable " + (on.empty() ? maybe : on).front();
+    rules.add(Severity::Warning, "test-participant-talks-on-bridged-network", p.line,
+        participant_prefix(p.name) + "it has role: test and J1939 nodes on network '" + network.name + "', and " +
+            where + ": what it sends there goes out on the real bus too, its address claims among it, and a real "
+            "ECU with the same address fights it for the address: let it only listen there (no J1939 nodes), or "
+            "leave the bridge out of runs with it (" + fix + ", or enabled: false in a variant)" +
+            (rules.bridges_marked
+                 ? std::string{}
+                 : "; if " + and_list(maybe) +
+                       (maybe.size() == 1 ? " is not a bridge, write role: ecu for it"
+                                          : " are not bridges, write role: ecu for them") +
+                       " (and role: bridge for a bridge)"),
+        p.name, network.name);
+}
+
 /// The network `network` (of a valid kind): who is on it, then the rules of its kind.
 void check_network(const Rules& rules, const NetworkConfig& network)
 {
     const std::string prefix = "network '" + network.name + "': ";
     std::vector<std::string> users;
+    std::vector<std::string> tests;         // the users with role: test (not counted as ECUs)
+    std::vector<std::size_t> talkingTests;  // role: test participants with J1939 nodes here
     std::vector<NodeOnNetwork> nodes;
     std::vector<std::string> masters;
     std::vector<std::string> slaves;
@@ -624,6 +693,7 @@ void check_network(const Rules& rules, const NetworkConfig& network)
             continue;
         }
         const std::string& who = rules.config.participants[i].name;
+        const bool test = rules.config.participants[i].role == ParticipantRole::Test;
         std::vector<J1939NodeDescription> own;
         for (const auto& used : rules.results[i].ecu->description.networks)
         {
@@ -634,6 +704,10 @@ void check_network(const Rules& rules, const NetworkConfig& network)
             if (std::find(users.begin(), users.end(), who) == users.end())
             {
                 users.push_back(who);
+                if (test)
+                {
+                    tests.push_back(who);
+                }
             }
             own.insert(own.end(), used.nodes.begin(), used.nodes.end());
             if (used.use == NetworkUse::LinMaster)
@@ -654,6 +728,10 @@ void check_network(const Rules& rules, const NetworkConfig& network)
             nodes.push_back(
                 NodeOnNetwork{own.size() == 1 ? who : who + " (node " + std::to_string(n + 1) + ")", own[n]});
         }
+        if (test && !own.empty())
+        {
+            talkingTests.push_back(i);
+        }
     }
     const bool sayAll = !rules.incomplete;
     const Severity weight = rules.unchecked ? Severity::Note : Severity::Warning;
@@ -668,12 +746,35 @@ void check_network(const Rules& rules, const NetworkConfig& network)
         }
         return;
     }
-    if (users.size() == 1 && sayAll)
+    // Participants for testing (role: test) are not counted: a spy on the network of one ECU
+    // does not make that network right.
+    const std::size_t ecus = users.size() - tests.size();
+    if (ecus <= 1 && sayAll)
     {
+        std::string ecu;
+        for (const auto& who : users)
+        {
+            if (std::find(tests.begin(), tests.end(), who) == tests.end())
+            {
+                ecu = who;
+            }
+        }
         rules.add(weight, "single-participant", network.line,
-            prefix + "only " + users.front() + " is on it, so what it sends there reaches no one" + rules.not_counted +
-                ": add the other participants of this network, or remove it",
+            prefix +
+                (tests.empty() ? "only " + ecu + " is on it, so what it sends there reaches no one" + rules.not_counted +
+                                     ": add the other participants of this network, or remove it"
+                 : ecus == 1
+                     ? "only " + ecu + " is on it besides the participants for testing (role: test: " + and_list(tests) +
+                           "), so what it sends there reaches no other ECU" + rules.not_counted +
+                           ": add the other ECUs of this network, or remove it"
+                     : "only participants for testing (role: test: " + and_list(tests) +
+                           ") are on it, so there is no ECU for them there" + rules.not_counted +
+                           ": add the ECUs of this network, or remove it"),
             "", network.name);
+    }
+    for (const std::size_t talker : talkingTests)
+    {
+        check_test_on_bridged_network(rules, network, talker, users);
     }
     // The rules of the network's kind; a new kind needs its own (or none, but a case here). Only
     // j1939 uses have nodes (read_description() refuses nodes on another use), only LIN uses are
@@ -725,6 +826,23 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
     rules.incomplete = any_enabled(ParticipantStatus::Failed) || any_enabled(ParticipantStatus::Skipped);
     rules.unchecked = any_enabled(ParticipantStatus::NotChecked);
     rules.not_counted = rules.unchecked ? " (participants with describe: false are not counted)" : "";
+    for (std::size_t i = 0; i < config.participants.size() && i < results.size(); ++i)
+    {
+        rules.bridges_marked = rules.bridges_marked ||
+                               (config.participants[i].enabled && config.participants[i].role == ParticipantRole::Bridge);
+    }
+    for (std::size_t i = 0; i < config.participants.size() && i < results.size(); ++i)
+    {
+        const ParticipantConfig& p = config.participants[i];
+        const bool known = results[i].status == ParticipantStatus::NotChecked ||
+                           (results[i].status == ParticipantStatus::Described && results[i].ecu);
+        if (p.enabled && known &&
+            (rules.bridges_marked ? p.role == ParticipantRole::Bridge
+                                  : results[i].status == ParticipantStatus::NotChecked && !p.role_written))
+        {
+            rules.bridges.push_back(i);
+        }
+    }
 
     // Each participant against its entry.
     for (std::size_t i = 0; i < config.participants.size() && i < results.size(); ++i)

@@ -539,7 +539,7 @@ void check(const Options& o)
                 "Logger       -     not checked (describe: false)\n"
                 "\n"
                 "error: sim.yaml:7: participant 'Logger': unknown key 'requried': did you mean 'required'? (the keys "
-                "here: name, command, step_ms, describe, required, enabled, manual, variables)\n"
+                "here: name, command, step_ms, describe, required, enabled, manual, role, variables)\n"
                 "note: sim.yaml:4: participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot "
                 "compare its name, step and networks with this file\n"
                 "note: sim.yaml:5: participant 'Logger': the command has no {registry_uri}, so the executable is not told "
@@ -1405,7 +1405,7 @@ void disabled(const Options& o)
                            "        \"state\": \"none\",\n") &&
                 contains(json, "      \"name\": \"Brake\",\n      \"required\": true,\n      \"enabled\": true,\n      \"manual\": false,\n"
                                "      \"ended\": \"exited\",\n      \"exit_code\": 0,\n") &&
-                contains(json, "        \"enabled\": false,\n        \"manual\": false,\n        \"step_ms\": null,\n        \"status\": \"disabled\",\n"),
+                contains(json, "        \"enabled\": false,\n        \"manual\": false,\n        \"role\": \"ecu\",\n        \"step_ms\": null,\n        \"status\": \"disabled\",\n"),
             "the run's JSON for --disable Engine --enable Brake:\n" + json);
     require(fs::exists(dir / "Brake.pid") && !fs::exists(dir / "Engine.pid"), "Brake ran, Engine did not");
 

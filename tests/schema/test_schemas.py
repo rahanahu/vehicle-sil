@@ -293,6 +293,12 @@ CONFIG_SAMPLES = [
     ("a network without a kind", "vehicle_sil_simulation: 1\nnetworks:\n  - name: Body\n" + P, "invalid"),
     ("a kind there is not", CONFIG_HEAD.replace("can", "flexray") + P, "invalid"),
     ("a kind in capitals", CONFIG_HEAD.replace("can", "CAN") + P, "invalid"),
+    ("a participant for testing", CONFIG_HEAD + P + "    role: test\n", "valid"),
+    ("a bridge", CONFIG_HEAD + P + "    role: bridge\n", "valid"),
+    ("a role there is not", CONFIG_HEAD + P + "    role: spy\n", "invalid"),
+    ("a role in capitals", CONFIG_HEAD + P + "    role: Test\n", "invalid"),
+    ("a role in a variant", CONFIG_HEAD + P + "variants: { small: { participants: { Tool: { role: test } } } }\n",
+     "invalid"),
     ("a number in quotes", CONFIG_HEAD + P + 'stop_at_ms: "1000"\n', "invalid"),
     ("a number with a fraction", CONFIG_HEAD + P + "stop_at_ms: 1.5\n", "invalid"),
     ("zero milliseconds", CONFIG_HEAD + P + "stop_timeout_ms: 0\n", "invalid"),
@@ -801,6 +807,14 @@ class SchemaAndLauncher(unittest.TestCase):
         self.assertEqual(len(said), 1, f"the launcher does not list the kinds of network any more: {errors}")
         kinds = SIMULATION["properties"]["networks"]["items"]["properties"]["kind"]["enum"]
         self.same_keys("networks[].kind", set(kinds), listed(said[0]), "simulation.schema.json")
+
+    def test_the_roles_of_a_participant_are_the_launchers(self):
+        errors = self.launcher.configuration(CONFIG_HEAD + P + "    role: zz\n")
+        said = [re.search(r"role is 'zz': write (.*?) \(", e["message"]) for e in errors]
+        said = [m.group(1) for m in said if m]
+        self.assertEqual(len(said), 1, f"the launcher does not list the roles any more: {errors}")
+        roles = SIMULATION["properties"]["participants"]["items"]["properties"]["role"]["enum"]
+        self.same_keys("participants[].role", set(roles), listed(said[0]), "simulation.schema.json")
 
     def test_the_launcher_reads_what_the_schema_accepts_and_refuses_what_it_refuses(self):
         for name, samples, ask in (("configuration", CONFIG_SAMPLES, self.launcher.configuration),
