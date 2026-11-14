@@ -48,6 +48,20 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
          --docs ${PROJECT_SOURCE_DIR}/docs)
 endif()
 
+# The example of the guide docs/howto/integrate-ecus.md (examples/integrate_ecus: two ECUs that name one
+# bus differently, and the same two after one was built again): the files, --describe and the
+# launcher's outputs must be what the guide shows.
+if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_dashboard_v1_ecu)
+  add_test(NAME launch_docs.integrate_ecus
+           COMMAND ${CMAKE_COMMAND} -DLAUNCH=$<TARGET_FILE:vehicle_sil_launch>
+                   -DDASHBOARD_V1=$<TARGET_FILE:vehicle_sil_dashboard_v1_ecu>
+                   -DDIR=$<TARGET_FILE_DIR:vehicle_sil_dashboard_v1_ecu>/..
+                   -DEXAMPLE=${PROJECT_SOURCE_DIR}/examples/integrate_ecus
+                   -DDOC=${PROJECT_SOURCE_DIR}/docs/howto/integrate-ecus.md
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/integrate_ecus.cmake)
+  set_tests_properties(launch_docs.integrate_ecus PROPERTIES LABELS "integration;launch" TIMEOUT 300)
+endif()
+
 # vehicle_sil_launch run as a process: the example of examples/ecu_main and docs/simulation-*.md,
 # and an ecu_main executable that misbehaves as a file in its working directory says
 # (run_test_ecu.cpp), with the helper of tests/process.
