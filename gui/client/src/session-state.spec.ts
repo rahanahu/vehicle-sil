@@ -158,6 +158,7 @@ describe('applyEvents', () => {
         manual: false,
         commandLine: null,
         workingDirectory: null,
+        environment: {},
       },
       {
         name: 'B',
@@ -174,6 +175,7 @@ describe('applyEvents', () => {
         manual: false,
         commandLine: null,
         workingDirectory: null,
+        environment: {},
       },
     ]);
     expect(runOutcome(session)).toBe('running');
@@ -345,12 +347,72 @@ describe('applyEvents', () => {
             stop_requested: false,
             command_line: '/b --name B',
             working_directory: '/root',
+            environment: null,
             control_link: null,
           },
         ],
       }),
     );
     expect(again.participants[0]).toMatchObject({ manual: true, commandLine: '/b --name B' });
+  });
+
+  it('keeps the environment to start a participant with, and has none when the launcher names none', () => {
+    const environment = { VEHICLE_SIL_LISTEN_ON_NETWORK: '1' };
+    const session = applyEvents(
+      emptySession(),
+      events(
+        {
+          event: 'check',
+          check: check([
+            { name: 'A', manual: true },
+            { name: 'B', manual: true },
+          ]),
+        },
+        {
+          event: 'participant',
+          name: 'A',
+          state: 'manual',
+          command_line: '/a --name A',
+          working_directory: '/root',
+          environment,
+        },
+        {
+          event: 'participant',
+          name: 'B',
+          state: 'manual',
+          command_line: '/b --name B',
+          working_directory: '/root',
+        },
+        { event: 'participant', name: 'A', state: 'joined' },
+      ),
+    );
+    expect(session.participants.map((p) => [p.name, p.state, p.environment])).toEqual([
+      ['A', 'joined', environment],
+      ['B', 'manual', {}],
+    ]);
+    // つなぎ直した画面: 要約の participant から（ほかの欄と同じく、サーバーが事象の欄を重ねて持つ）
+    const again = sessionFromSummary(
+      summary({
+        participants: [
+          {
+            name: 'A',
+            state: 'manual',
+            pid: null,
+            exit_code: null,
+            signal: null,
+            reason: null,
+            message: null,
+            omitted_fields: [],
+            stop_requested: false,
+            command_line: '/a --name A',
+            working_directory: '/root',
+            environment,
+            control_link: null,
+          },
+        ],
+      }),
+    );
+    expect(again.participants[0]?.environment).toEqual(environment);
   });
 
   it('keeps the last command and whether the launcher took it', () => {
@@ -628,6 +690,7 @@ describe('applySummary', () => {
       control_link: null,
       command_line: null,
       working_directory: null,
+      environment: null,
     };
     const session = applySummary(
       emptySession(),
@@ -679,6 +742,7 @@ describe('applySummary', () => {
             control_link: null,
             command_line: null,
             working_directory: null,
+            environment: null,
           },
         ],
       }),
@@ -714,6 +778,7 @@ describe('applySummary', () => {
       control_link: null,
       command_line: null,
       working_directory: null,
+      environment: null,
     };
     // サーバーの印がなくても、手元で知っていれば残す
     const later = applySummary(
@@ -954,6 +1019,7 @@ describe('addProblem', () => {
             control_link: null,
             command_line: null,
             working_directory: null,
+            environment: null,
           },
         ],
       }),
@@ -1048,6 +1114,7 @@ describe('addProblem', () => {
             control_link: null,
             command_line: null,
             working_directory: null,
+            environment: null,
           },
         ],
       }),

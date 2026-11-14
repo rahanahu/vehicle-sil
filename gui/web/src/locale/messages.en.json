@@ -14,6 +14,10 @@
       "source": "実行 - vehicle-sil",
       "target": "Run - vehicle-sil"
     },
+    "9000061764503695289": {
+      "source": "変数 - vehicle-sil",
+      "target": "Variables - vehicle-sil"
+    },
     "4407674405558635807": {
       "source": "レイアウトの試験 - vehicle-sil",
       "target": "Layout test - vehicle-sil"
@@ -42,6 +46,10 @@
       "source": "実行",
       "target": "Run"
     },
+    "3116623762056091741": {
+      "source": "変数",
+      "target": "Variables"
+    },
     "4701042726840341535": {
       "source": "画面が見つからない",
       "target": "Page not found"
@@ -65,6 +73,10 @@
     "6601304880850067743": {
       "source": "使う",
       "target": "Use"
+    },
+    "4905520956161692593": {
+      "source": "自分で起動する",
+      "target": "Start it yourself"
     },
     "1828061073589725228": {
       "source": "照合:",
@@ -94,6 +106,14 @@
       "source": "構成ファイルで外してあります（enabled: false）。",
       "target": "Disabled in the config file (enabled: false)."
     },
+    "6368315094090140399": {
+      "source": " ランチャーは起動しません。始めると、起動するコマンドが「participant の状態」に出ます。そのコマンドを（デバッガーなどから）実行すると参加し、シミュレーションはそれまで待ちます。 ",
+      "target": " The launcher does not start it. When you start the run, the command to start it appears in Participant status. Run that command (from a debugger, for example) and it joins; the simulation waits until then. "
+    },
+    "2475584079216036275": {
+      "source": "構成ファイルで自分で起動すると指定してあります（manual: true）。",
+      "target": "The config file says you start it yourself (manual: true)."
+    },
     "1231569490753108814": {
       "source": "participant がありません。",
       "target": "No participants."
@@ -105,6 +125,10 @@
     "6358845893914240906": {
       "source": "{$name} を使う",
       "target": "Use {$name}"
+    },
+    "277134845098732758": {
+      "source": "{$name} を自分で起動する",
+      "target": "Start {$name} yourself"
     },
     "8500979095361014136": {
       "source": "所見はありません。",
@@ -181,6 +205,10 @@
     "8583173837108479200": {
       "source": "起動した",
       "target": "Started"
+    },
+    "70671245526033097": {
+      "source": "自分で起動する: 参加を待っています",
+      "target": "To be started by you: waiting for it to join"
     },
     "2029821123243853476": {
       "source": "参加した",
@@ -265,6 +293,38 @@
     "3784701066459330034": {
       "source": "始まらなかった",
       "target": "Did not start"
+    },
+    "4111930771354855109": {
+      "source": "シナリオが終わった",
+      "target": "The scenario ended"
+    },
+    "1514343009694596635": {
+      "source": "シナリオは通りました",
+      "target": "The scenario passed"
+    },
+    "3992420100330722937": {
+      "source": "シナリオは失敗しました",
+      "target": "The scenario failed"
+    },
+    "5807458646117155630": {
+      "source": "シナリオは終わる前に止まりました",
+      "target": "The scenario stopped before its end"
+    },
+    "6377323770012009288": {
+      "source": "シナリオは動きませんでした",
+      "target": "The scenario did not run"
+    },
+    "1124667237206414639": {
+      "source": "進行中",
+      "target": "In progress"
+    },
+    "4740247778648809579": {
+      "source": "途中で終わった",
+      "target": "Ended partway"
+    },
+    "5644006703414350153": {
+      "source": "動かなかった",
+      "target": "Did not run"
     },
     "5178359797605568054": {
       "source": "シミュレーションを去った",
@@ -418,6 +478,46 @@
       "source": "最後の知らせ: {$INTERPOLATION}",
       "target": "Last report: {$INTERPOLATION}"
     },
+    "7947834462844005437": {
+      "source": " 起動する前に、次の環境変数を設定します（設定の書き方は、シェルや IDE によって違います）: ",
+      "target": "Before you start it, set these environment variables (how to set them depends on your shell or IDE):"
+    },
+    "648412382115717634": {
+      "source": "名前",
+      "target": "Name"
+    },
+    "6903603163429670126": {
+      "source": "値",
+      "target": "Value"
+    },
+    "1574573437643780597": {
+      "source": "コピーしました",
+      "target": "Copied"
+    },
+    "967871140934812227": {
+      "source": "名前=値 をコピー",
+      "target": "Copy NAME=value"
+    },
+    "4836877782316867966": {
+      "source": "ディレクトリ",
+      "target": "In the directory"
+    },
+    "655693724784412941": {
+      "source": "で、次のコマンドを実行します:",
+      "target": ", run this command:"
+    },
+    "3947705204937790062": {
+      "source": "次のコマンドを実行します:",
+      "target": "Run this command:"
+    },
+    "4171957228112156442": {
+      "source": "コピー",
+      "target": "Copy"
+    },
+    "4704410634574974411": {
+      "source": " シミュレーションが終わっても残っています。ランチャーは終わらせないので、自分で終わらせてください。 ",
+      "target": " It is still running after the simulation ended. The launcher does not end it, so end it yourself. "
+    },
     "6093372099174534144": {
       "source": "大きすぎて省いた欄: {$INTERPOLATION}",
       "target": "Fields left out (too large): {$INTERPOLATION}"
@@ -429,6 +529,54 @@
     "7944508049780343564": {
       "source": "不明",
       "target": "Unknown"
+    },
+    "5245842725194486240": {
+      "source": "参加しなかった（自分で起動）",
+      "target": "Did not join (you start this one yourself)"
+    },
+    "8521098696683045571": {
+      "source": "参加した（自分で起動）",
+      "target": "Joined (started by you)"
+    },
+    "8346138796563937709": {
+      "source": "{$name} を起動するコマンドをコピー",
+      "target": "Copy the command to start {$name}"
+    },
+    "5460097331503771106": {
+      "source": "環境変数 {$name} を 名前=値 の形でコピー",
+      "target": "Copy the environment variable {$name} as NAME=value"
+    },
+    "5510708034680427086": {
+      "source": " この実行で反映された書き込み {$INTERPOLATION} 件を、{$INTERPOLATION_1} 個の手順（set）にして保存します。この GUI サーバーを通したすべての書き込みです（ほかの画面や、api/write を使う道具のものも入ります）。 ",
+      "target": " Saves the {$INTERPOLATION} writes applied in this run as {$INTERPOLATION_1} steps (set). These are all the writes through this GUI server (also those from other screens and from tools that use api/write). "
+    },
+    "1466892935012351634": {
+      "source": " {$INTERPOLATION} 件の書き込みは入りません。理由は、保存したファイルの先頭のコメントにあります。 ",
+      "target": " Writes left out: {$INTERPOLATION}. The comments at the top of the saved file say why. "
+    },
+    "6916844428088730521": {
+      "source": " この実行の操作をシナリオとして保存 ",
+      "target": " Save the writes of this run as a scenario "
+    },
+    "1942270044819791758": {
+      "source": " 保存したファイルを構成ファイルの隣の scenarios に置くと、「シナリオ」で選んで回せます。シナリオは最後の手順の時刻で止まるので、その後も走らせたいときや、確かめる手順（expect、wait_until）は、エディターで足してください（ファイルの先頭のコメントに例があります）。一時停止やステップ送りは入りません。 ",
+      "target": " Put the saved file in scenarios next to the config file, and you can choose it under Scenario and run it. A scenario stops at the time of its last step: to run on after it, or to add steps that check (expect, wait_until), edit the file (the comments at its top have examples). Pausing and stepping are not saved. "
+    },
+    "1907072433345070030": {
+      "source": "まだ保存するものがありません。変数を書いて、反映されると数えます。",
+      "target": "Nothing to save yet. Writes to variables count once they are applied."
+    },
+    "3337553899292010384": {
+      "source": "この実行の操作は、シナリオとして保存できません:",
+      "target": "The writes of this run cannot be saved as a scenario:"
+    },
+    "5486695330168130127": {
+      "source": "保存するものを読めませんでした:",
+      "target": "Could not get what to save:"
+    },
+    "3371286846145497426": {
+      "source": " 保存のためにブラウザへ渡しました: {$INTERPOLATION} ",
+      "target": " Handed to the browser to save: {$INTERPOLATION} "
     },
     "7021650277600365342": {
       "source": "終わり方",
@@ -566,17 +714,41 @@
       "source": "選べる範囲:",
       "target": "Files under:"
     },
-    "1574573437643780597": {
-      "source": "コピーしました",
-      "target": "Copied"
+    "5586305627400735839": {
+      "source": "シナリオ:",
+      "target": "Scenario:"
     },
-    "4171957228112156442": {
-      "source": "コピー",
-      "target": "Copy"
+    "8762868499684338014": {
+      "source": "なし",
+      "target": "None"
+    },
+    "2617965929230353018": {
+      "source": "シナリオ",
+      "target": "Scenario"
+    },
+    "4650179018992621111": {
+      "source": "なし（自分で操作する）",
+      "target": "None (you operate it yourself)"
+    },
+    "4765976640976275428": {
+      "source": " シナリオはありません。構成ファイルの隣の {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} に .yaml を置くと選べます。 ",
+      "target": " There are no scenarios. Put .yaml files in {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} next to the config file to choose them. "
+    },
+    "5936000937981361991": {
+      "source": " シナリオを最後まで進めると、ランチャーが止めて合否を出します。シナリオの実行中は、変数を書けません。 ",
+      "target": " When the scenario gets to its end, the launcher stops the run and says whether it passed. While a scenario runs, variables cannot be written. "
+    },
+    "5747926325982518217": {
+      "source": "シナリオの一覧を取得できませんでした:",
+      "target": "Could not get the list of scenarios:"
     },
     "6198959273292437434": {
       "source": "止めた状態で始める（仮想時間 0 で止まり、再開かステップ送りを待つ）",
       "target": "Start paused (stand still at virtual time 0 until resumed or stepped)"
+    },
+    "3547482668738318262": {
+      "source": " シナリオ {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} も照合しました（{$INTERPOLATION_1} 手順）。 ",
+      "target": " The scenario {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} was checked too (steps: {$INTERPOLATION_1}). "
     },
     "5988127550695008293": {
       "source": "この実行の照合の結果はありません。",
@@ -634,6 +806,10 @@
       "source": " サーバーの知らせを見る ",
       "target": " See the server messages "
     },
+    "3846480251725526630": {
+      "source": "操作をシナリオに",
+      "target": "Writes as a scenario"
+    },
     "2325964529765656107": {
       "source": "ランチャーの標準エラー",
       "target": "Launcher standard error"
@@ -689,6 +865,18 @@
     "2311313022214449144": {
       "source": "速度の倍率が範囲の外です。",
       "target": "The speed factor is out of range."
+    },
+    "5040638888676210622": {
+      "source": "シナリオの一覧を読めないので、選んだシナリオで始められません。",
+      "target": "Cannot start with the chosen scenario: the list of scenarios cannot be read."
+    },
+    "3858816202891928322": {
+      "source": "シナリオの一覧を読んでいます。",
+      "target": "Reading the list of scenarios."
+    },
+    "1311482530912087155": {
+      "source": "選んだシナリオ {$file} が一覧にありません。選び直してください。",
+      "target": "The chosen scenario {$file} is not in the list. Choose again."
     },
     "4267031745399035688": {
       "source": "照合できませんでした: {$reason}",
@@ -854,6 +1042,42 @@
       "source": "停止",
       "target": "Stop"
     },
+    "6098288126835780294": {
+      "source": "行",
+      "target": "Line"
+    },
+    "2760833478187716678": {
+      "source": "手順",
+      "target": "Step"
+    },
+    "9084130244021564389": {
+      "source": "状態",
+      "target": "State"
+    },
+    "3762578014232077049": {
+      "source": "{VAR_PLURAL, plural, other {ほかに {INTERPOLATION} 個の手順があります（まだ始まっていません）。}}",
+      "target": "{VAR_PLURAL, plural, one {{INTERPOLATION} more step (not started yet).} other {{INTERPOLATION} more steps (not started yet).}}"
+    },
+    "2299711158826910935": {
+      "source": "{VAR_PLURAL, plural, other {多すぎるので、{INTERPOLATION} 個の手順を出していません。}}",
+      "target": "{VAR_PLURAL, plural, one {Too many: {INTERPOLATION} step is not shown.} other {Too many: {INTERPOLATION} steps are not shown.}}"
+    },
+    "4812059856413496987": {
+      "source": "シナリオの手順",
+      "target": "Scenario steps"
+    },
+    "8616408880928320737": {
+      "source": "シナリオを進めています（{$done} / {$total} 手順）",
+      "target": "Running the scenario ({$done} / {$total} steps)"
+    },
+    "2450769932135438028": {
+      "source": "シナリオの結果はありません（{$done} / {$total} 手順）",
+      "target": "No scenario result ({$done} / {$total} steps)"
+    },
+    "6980809203121972625": {
+      "source": "{$ms} ms から",
+      "target": "from {$ms} ms"
+    },
     "3190502933620390937": {
       "source": "構成のとおり",
       "target": "As configured"
@@ -873,10 +1097,6 @@
     "9056348193082714770": {
       "source": "再開",
       "target": "Resume"
-    },
-    "9084130244021564389": {
-      "source": "状態",
-      "target": "State"
     },
     "3774189797169423796": {
       "source": "いまの遅れ",
@@ -934,14 +1154,6 @@
       "source": "一覧",
       "target": "List"
     },
-    "648412382115717634": {
-      "source": "名前",
-      "target": "Name"
-    },
-    "6903603163429670126": {
-      "source": "値",
-      "target": "Value"
-    },
     "4025306852603491769": {
       "source": "単位",
       "target": "Unit"
@@ -953,6 +1165,394 @@
     "4417969800817891316": {
       "source": "実行の部品",
       "target": "Run parts"
+    },
+    "3041715862489313310": {
+      "source": "ダッシュボードのファイル {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} のとおりに並べています。",
+      "target": "Laid out as the dashboard file {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} says."
+    },
+    "6360246307357765998": {
+      "source": "読み込んだパネルのモジュール:",
+      "target": "Panel modules loaded:"
+    },
+    "7156814396060841952": {
+      "source": "ダッシュボードのファイル {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} がないので、変数を自動で並べています。",
+      "target": "There is no dashboard file {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE}, so the variables are laid out automatically."
+    },
+    "8525791967739710094": {
+      "source": "ダッシュボードのファイル {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} に誤りがあるので、変数を自動で並べています。直したら「読み直す」を押してください。",
+      "target": "The dashboard file {$START_TAG_CODE}{$INTERPOLATION}{$CLOSE_TAG_CODE} has errors, so the variables are laid out automatically. Fix it, then press Reload."
+    },
+    "5446922134435453814": {
+      "source": "ダッシュボードのファイルを読めないので、変数を自動で並べています:",
+      "target": "Cannot read the dashboard file, so the variables are laid out automatically:"
+    },
+    "3844331683207867655": {
+      "source": " 読み直す ",
+      "target": " Reload "
+    },
+    "782861897795380816": {
+      "source": "{$INTERPOLATION} 行 {$INTERPOLATION_1} 桁",
+      "target": "line {$INTERPOLATION}, column {$INTERPOLATION_1}"
+    },
+    "1219193312094947656": {
+      "source": "名前で絞り込む",
+      "target": "Filter by name"
+    },
+    "6016623546511051480": {
+      "source": "{$INTERPOLATION} 個中 {$INTERPOLATION_1} 個",
+      "target": "{$INTERPOLATION_1} of {$INTERPOLATION}"
+    },
+    "8307096291089687696": {
+      "source": "{$INTERPOLATION} 個の変数",
+      "target": "Variables: {$INTERPOLATION}"
+    },
+    "5065950559110973421": {
+      "source": " サーバーの上限を超えた {$INTERPOLATION} 個の変数は出していません。 ",
+      "target": " Variables not shown (over the server's limit): {$INTERPOLATION}. "
+    },
+    "4986131820968401668": {
+      "source": "名前に合う変数はありません。",
+      "target": "No variable matches the name."
+    },
+    "1253442305765584765": {
+      "source": " この実行の ECU は、変数を宣言していません。 ",
+      "target": " The ECUs of this run declare no variables. "
+    },
+    "7536389574407035612": {
+      "source": "{$START_LINK}「実行」の画面{$CLOSE_LINK}で実行を始めると、ECU の変数がここに並びます。 ",
+      "target": "Start a run on the {$START_LINK}Run page{$CLOSE_LINK}, and the variables of the ECUs appear here. "
+    },
+    "1786186159333010746": {
+      "source": "サーバーとの接続が切れています。値は古いかもしれず、書けません。",
+      "target": "The connection to the server is lost. The values may be old, and cannot be written."
+    },
+    "403373071631315232": {
+      "source": "シナリオの実行中は、変数を見られません:",
+      "target": "While a scenario runs, the variables cannot be seen:"
+    },
+    "1708163471579535631": {
+      "source": "値を読めていません。出している値は最後に読めたもので、古いかもしれません:",
+      "target": "Cannot read the values. The values shown are the last ones read, and may be old:"
+    },
+    "8929531448881994828": {
+      "source": "シナリオの実行中です。値は見られますが、書くことはできません（シナリオの結果を変えないため）。",
+      "target": "A scenario is running. You can see the values but not write them (so as not to change the result of the scenario)."
+    },
+    "554589511785725809": {
+      "source": "最初のステップの前で止まっています。ここで書いた値（パラメーターを含む）は、時刻 0 のステップで反映されます。再開は「実行」の画面で行います。",
+      "target": "Standing still before the first step. Values written now (parameters too) are applied in the step at time 0. Resume on the Run page."
+    },
+    "1469715543654532890": {
+      "source": "一時停止しています。値は止まっている時刻のものです。",
+      "target": "Paused. The values are those of the paused time."
+    },
+    "3148904264671010136": {
+      "source": "実行は終わりました。最後に読めた値を出しています。書くことはできません。",
+      "target": "The run has ended. The last values read are shown. They cannot be written."
+    },
+    "2116464812288355748": {
+      "source": "ランチャーにつないでいます。",
+      "target": "Connecting to the launcher."
+    },
+    "6079158957856682268": {
+      "source": "ランチャーにつながらないので、変数を読み書きできません:",
+      "target": "Cannot connect to the launcher, so the variables cannot be read or written:"
+    },
+    "5371106956488523846": {
+      "source": "このランチャーか GUI サーバーでは、ECU の変数を読み書きできません:",
+      "target": "This launcher or GUI server cannot read or write the variables of the ECUs:"
+    },
+    "5741968327750002915": {
+      "source": "この実行では、ECU の変数を読み書きできません:",
+      "target": "In this run, the variables of the ECUs cannot be read or written:"
+    },
+    "3815797889768714758": {
+      "source": " バスにつなぐ ",
+      "target": " Connect to the bus "
+    },
+    "2701717060348009531": {
+      "source": "この ECU はバスから外れています（CAN と LIN に送らず、受けません。ステップは動き続けます）。",
+      "target": "This ECU is off the bus (it neither sends nor receives on CAN and LIN; its steps go on)."
+    },
+    "8398221335614319038": {
+      "source": "（{$INTERPOLATION} 個）",
+      "target": "({$INTERPOLATION})"
+    },
+    "3965728037100962026": {
+      "source": "{$INTERPOLATION}–{$INTERPOLATION_1} s",
+      "target": "{$INTERPOLATION}–{$INTERPOLATION_1} s"
+    },
+    "508678417595074016": {
+      "source": "グラフ: 点はまだありません",
+      "target": "Chart: no points yet"
+    },
+    "8356779589475315091": {
+      "source": "グラフ: 最後の値 {$value}、{$count} 点、{$from} から {$to} 秒",
+      "target": "Chart: last value {$value}, points: {$count}, from {$from} to {$to} s"
+    },
+    "8041454323649733690": {
+      "source": "オン",
+      "target": "On"
+    },
+    "1225148989398918542": {
+      "source": "オフ",
+      "target": "Off"
+    },
+    "1723248627543909109": {
+      "source": "数でない値",
+      "target": "Not a number"
+    },
+    "9023816128822252513": {
+      "source": "入力",
+      "target": "Input"
+    },
+    "2842780653863670560": {
+      "source": "出力",
+      "target": "Output"
+    },
+    "4698833743173538892": {
+      "source": "パラメーター",
+      "target": "Parameter"
+    },
+    "1166215629256689344": {
+      "source": "実行していません",
+      "target": "Not running"
+    },
+    "1790861284813728018": {
+      "source": "この実行では使えません",
+      "target": "Not available in this run"
+    },
+    "2208292689456413166": {
+      "source": "ランチャーにつないでいます",
+      "target": "Connecting to the launcher"
+    },
+    "2763018723384339439": {
+      "source": "ランチャーにつながりません",
+      "target": "Cannot connect to the launcher"
+    },
+    "4883013487086483015": {
+      "source": "使えません",
+      "target": "Not available"
+    },
+    "4125884304573570515": {
+      "source": "この実行にない変数です",
+      "target": "Not a variable of this run"
+    },
+    "9070908951008675241": {
+      "source": "値はまだありません",
+      "target": "No value yet"
+    },
+    "2736208761441080863": {
+      "source": "{$time} s の値",
+      "target": "Value at {$time} s"
+    },
+    "1107617929656297712": {
+      "source": "止まっている時刻 {$time} s の値",
+      "target": "Value at {$time} s (paused)"
+    },
+    "8702594900547111098": {
+      "source": "古い値: 画面とサーバーの接続が切れています",
+      "target": "Old value: the screen has lost the connection to the server"
+    },
+    "401667723701492750": {
+      "source": "古い値: ランチャーにつなぎ直しています",
+      "target": "Old value: reconnecting to the launcher"
+    },
+    "3817472311034696539": {
+      "source": "古い値: ECU がつながっていません",
+      "target": "Old value: the ECU is not connected"
+    },
+    "8070348216591545448": {
+      "source": "古い値: 値を読めていません",
+      "target": "Old value: cannot read the values"
+    },
+    "750290022131476560": {
+      "source": "終わった実行の最後の値",
+      "target": "Last value of the ended run"
+    },
+    "2733100273521748775": {
+      "source": "読むだけの変数です",
+      "target": "Read-only variable"
+    },
+    "3003493119584923364": {
+      "source": "サーバーとの接続が切れているので書けません",
+      "target": "Cannot write: the connection to the server is lost"
+    },
+    "893195083254208275": {
+      "source": "いまは書けません（実行がないか、ランチャーにつながっていません）",
+      "target": "Cannot write now (no run, or not connected to the launcher)"
+    },
+    "8965133818835695082": {
+      "source": "実行が終わったので書けません",
+      "target": "Cannot write: the run has ended"
+    },
+    "6061273606189856241": {
+      "source": "この実行にない変数なので書けません",
+      "target": "Cannot write: not a variable of this run"
+    },
+    "4163783494160006079": {
+      "source": "ECU がつながっていないので書けません",
+      "target": "Cannot write: the ECU is not connected"
+    },
+    "9099861318126985288": {
+      "source": "範囲（最小と最大）のない変数なので、スライダーは使えません（数値の入力を使ってください）",
+      "target": "The slider cannot be used: the variable has no range (minimum and maximum). Use the number input"
+    },
+    "4313104709881227241": {
+      "source": "値がまだないので動かせません（値が届くと動かせます）",
+      "target": "Cannot be moved until a value comes"
+    },
+    "1084278348519390864": {
+      "source": "パラメーターは、止めて始めた実行の最初のステップの前だけ書けます",
+      "target": "Parameters can be written only before the first step of a run started paused"
+    },
+    "345950103004168810": {
+      "source": "シナリオの実行中は書けません（見るだけです）",
+      "target": "Cannot write while a scenario runs (you can only watch)"
+    },
+    "8973894855810621678": {
+      "source": "送っています",
+      "target": "Sending"
+    },
+    "8855098957632147964": {
+      "source": "受け付けました。ECU のステップで反映されるのを待っています",
+      "target": "Accepted. Waiting for the step of the ECU to apply it"
+    },
+    "4320841632567125759": {
+      "source": "反映しました",
+      "target": "Applied"
+    },
+    "9181086108036645722": {
+      "source": "{$time} s のステップで反映しました",
+      "target": "Applied in the step at {$time} s"
+    },
+    "7005292058197659693": {
+      "source": "サーバーが断りました:",
+      "target": "The server refused it:"
+    },
+    "3661994736773855664": {
+      "source": "反映されませんでした:",
+      "target": "Not applied:"
+    },
+    "858880430888134023": {
+      "source": "答えが来ませんでした。反映されたかわかりません（送り直していません）。値を確かめてから書き直してください:",
+      "target": "No answer came, so it is not known whether it was applied (it was not sent again). Check the value, then write again:"
+    },
+    "2149991866108578873": {
+      "source": "接続を閉じたので、反映されたかわかりません",
+      "target": "The connection was closed, so it is not known whether it was applied"
+    },
+    "2779228442533056820": {
+      "source": "書けなくなったので、待たせていた値は送っていません。値を確かめてから書き直してください",
+      "target": "Writing is no longer possible, so the waiting value was not sent. Check the value, then write again"
+    },
+    "4990348354152895618": {
+      "source": "数を入れてください",
+      "target": "Enter a number"
+    },
+    "8865527778813613226": {
+      "source": "整数を入れてください",
+      "target": "Enter a whole number"
+    },
+    "4752338984102092001": {
+      "source": "{$min} 以上にしてください",
+      "target": "Enter {$min} or more"
+    },
+    "4490911917871665666": {
+      "source": "{$max} 以下にしてください",
+      "target": "Enter {$max} or less"
+    },
+    "1453888180221947459": {
+      "source": "値の表示",
+      "target": "Value display"
+    },
+    "8265576679469784779": {
+      "source": "数値の入力",
+      "target": "Number input"
+    },
+    "6967847178269036802": {
+      "source": "スライダー",
+      "target": "Slider"
+    },
+    "5516614225914102004": {
+      "source": "スイッチ",
+      "target": "Switch"
+    },
+    "5813034467043309391": {
+      "source": "ランプ",
+      "target": "Lamp"
+    },
+    "5454813009172692195": {
+      "source": "選択肢",
+      "target": "Choice"
+    },
+    "5163824197747036081": {
+      "source": "グラフ",
+      "target": "Chart"
+    },
+    "7068372677715812439": {
+      "source": "部品の種類「{$widget}」はありません。{$kinds} のどれかにしてください",
+      "target": "There is no widget kind \"{$widget}\": use one of {$kinds}"
+    },
+    "3746765129456107550": {
+      "source": "{$widget} は {$type} の変数に使えません（使える型: {$types}）",
+      "target": "{$widget} cannot be used for a variable of type {$type} (the types it takes: {$types})"
+    },
+    "5851042374488197206": {
+      "source": "{$widget} は書く部品なので、読むだけの変数に使えません（値の表示かグラフにしてください）",
+      "target": "{$widget} writes, so it cannot be used for a read-only variable (use a value display or a chart)"
+    },
+    "718320321846221163": {
+      "source": "スライダーは、範囲（最小と最大）のない変数に使えません（数値の入力にしてください）",
+      "target": "A slider cannot be used for a variable without a range (minimum and maximum): use a number input"
+    },
+    "4321359931770514804": {
+      "source": "選択肢は、項目のない列挙に使えません（値の表示にしてください）",
+      "target": "A choice cannot be used for an enumeration without items: use a value display"
+    },
+    "8806025928575351633": {
+      "source": "{$widget} に設定「{$key}」はありません",
+      "target": "{$widget} has no setting \"{$key}\""
+    },
+    "9035643778217041569": {
+      "source": "{$widget} の設定「{$key}」の値が合いません",
+      "target": "The value of the setting \"{$key}\" of {$widget} does not fit"
+    },
+    "8428488875257497120": {
+      "source": "auto: の participant「{$peer}」は、この実行にありません。名前を確かめてください（実行の画面の participant の表にある名前）",
+      "target": "The participant \"{$peer}\" of auto: is not in this run. Check the name (the names in the participant table of the Run page)"
+    },
+    "1046241773156658797": {
+      "source": "{$peer} の監視",
+      "target": "{$peer} monitoring"
+    },
+    "2551679789614265245": {
+      "source": "パネル <{$name}> を作れませんでした: {$message}",
+      "target": "Could not create the panel <{$name}>: {$message}"
+    },
+    "8976420207740708241": {
+      "source": "読み込めなかったモジュールがあります。パネル <{$name}> は、この画面で前に読み込んだ定義で描いています（別の構成ファイルの、同じ名前のパネルかもしれません。ページを読み直すと、このファイルのモジュールで描きます）: {$failures}",
+      "target": "Some modules could not be loaded. The panel <{$name}> is drawn with the definition this screen loaded before (it may be a panel of the same name from another config file; reload the page to draw it with the modules of this file): {$failures}"
+    },
+    "3684398816252439102": {
+      "source": "パネル <{$name}> のモジュールを読み込めませんでした（ブラウザの開発者ツールのコンソールに詳細があります）: {$failures}",
+      "target": "Could not load the modules of the panel <{$name}> (the console of the browser's developer tools has the details): {$failures}"
+    },
+    "5037751368631078529": {
+      "source": "パネル <{$name}> を定義したモジュールがありません。ダッシュボードのファイルの panels: に挙げたモジュールで、この名前の custom element を定義してください（customElements.define）",
+      "target": "No module defines the panel <{$name}>. Define a custom element of this name (customElements.define) in a module that panels: of the dashboard file lists"
+    },
+    "1691053984771303038": {
+      "source": "{$peer} をバスにつなぐ",
+      "target": "Connect {$peer} to the bus"
+    },
+    "6497667756406747543": {
+      "source": "書く値",
+      "target": "Value to write"
+    },
+    "2801277815975594602": {
+      "source": " 書く ",
+      "target": " Write "
     }
   }
 }

@@ -6,10 +6,11 @@ The extraction is Angular's "simple JSON" ({"locale": "ja", "translations": {"<i
     {"locale": "en", "note": "...", "translations": {"<id>": {"source": "<source>", "target": "<text>" | null}}}
 
 `target: null` marks a message as not translated yet (the screen shows the source text). The check fails on a
-source that differs from the extraction, an empty target, and a target whose placeholders or ICU cases do not
-fit the source. A message missing from a file is not translated either (the screen shows the source text): it
-is counted and listed, without failing, as are obsolete entries (ids no longer extracted). scripts/verify-web.py
-runs it (step i18n) and updates the files (--i18n-update).
+message missing from a file, a message not translated yet, a source that differs from the extraction, an empty
+target, and a target whose placeholders or ICU cases do not fit the source; it lists obsolete entries (ids no
+longer extracted) without failing. Messages not translated yet pass only with allow_untranslated
+(verify-web.py --allow-untranslated, for work in progress on one's own machine; CI does not pass it).
+scripts/verify-web.py runs it (step i18n) and updates the files (--i18n-update).
 """
 
 from __future__ import annotations
@@ -37,18 +38,20 @@ class Report:
     obsolete: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)  # wrong source, empty or broken target
 
+    def passes(self, allow_untranslated: bool = False) -> bool:
+        return not self.missing and not self.problems and (allow_untranslated or not self.untranslated)
+
     @property
     def ok(self) -> bool:
-        # a missing message only lacks its translation (the screen shows the source text): counted, not failing
-        return not self.problems
+        return self.passes()
 
     def summary(self) -> str:
         parts = []
+        if self.missing:
+            parts.append(f"{len(self.missing)} missing")
         if self.problems:
             parts.append(f"{len(self.problems)} wrong")
         parts.append(f"{self.translated} of {self.total} translated")
-        if self.missing:
-            parts.append(f"{len(self.missing)} not in the file yet")
         if self.untranslated:
             parts.append(f"{len(self.untranslated)} not translated yet")
         if self.obsolete:

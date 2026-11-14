@@ -136,6 +136,32 @@ def test_a_participant_that_the_user_starts(tmp_path: Path) -> None:
         run_async(old, gui)
 
 
+def test_the_environment_to_start_a_participant_with_reaches_the_screen(gui: Gui) -> None:
+    """A registry that is not on a loopback address (network.yaml): the check's note registry-on-network, and the
+    environment of the manual event (VEHICLE_SIL_LISTEN_ON_NETWORK=1) in the event and in the summary, as the
+    launcher wrote them."""
+    async def main(c: Client) -> None:
+        status, body = await c.post("api/check", {"file": "network.yaml"})
+        assert status == 200
+        notes = {f["code"]: f for f in body["check"]["findings"]}
+        assert notes["registry-on-network"]["severity"] == "note"
+        assert "VEHICLE_SIL_LISTEN_ON_NETWORK=1" in notes["participant-manual"]["message"]
+        sock = await c.ws()
+        await sock.until(is_synced)
+        status, _ = await c.post("api/run", {"file": "network.yaml"})
+        assert status == 200
+        got = await sock.until(lambda m: m["type"] == "event" and m["event"]["event"] == "participant"
+                               and m["event"]["state"] == "manual")
+        assert events(got, "participant")[-1]["environment"] == {"VEHICLE_SIL_LISTEN_ON_NETWORK": "1"}
+        await c.post("api/stop", {})
+        end = (await sock.until(is_ended))[-1]["session"]
+        dashboard = next(p for p in end["participants"] if p["name"] == "Dashboard")
+        assert dashboard["environment"] == {"VEHICLE_SIL_LISTEN_ON_NETWORK": "1"}
+        engine = next(p for p in end["participants"] if p["name"] == "Engine")
+        assert "environment" not in engine
+    run_async(main, gui)
+
+
 def test_check_then_run_with_a_participant_left_out(gui: Gui) -> None:
     async def main(c: Client) -> None:
         status, body = await c.post("api/check", {"file": "simulation.yaml", "disable": ["Dashboard"]})

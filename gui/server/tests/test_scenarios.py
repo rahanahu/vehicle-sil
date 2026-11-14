@@ -189,6 +189,31 @@ def test_with_scenario_control_variables_are_read_and_writes_refused(tmp_path: P
         run_async(talk, gui)
 
 
+def test_the_time_commands_go_to_the_launcher_while_a_scenario_runs(tmp_path: Path, control_env: dict) -> None:
+    """The server's time commands are the launcher's standard input, which a scenario's run takes as any run does
+    (docs/scenario.md; only the control server's clients are refused them): pause, a step, a speed, resume."""
+    env = {**control_env, "REPLAY_FEATURES": CONTROL_FEATURES + ",scenario-control"}
+    with gui_server(tmp_path, env=env) as gui:
+        async def talk(c: Client) -> None:
+            ws = await c.ws()
+            await ws.until(is_synced)
+            status, body = await c.post("api/run", {"file": "forever.yaml", "scenario": PASS, "speed": 0.001})
+            assert status == 200, body
+            await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "scenario_step"
+                           and m["event"]["index"] == 2)
+            for command in ({"command": "pause"}, {"command": "step", "ms": 10}, {"command": "speed", "value": 0.002},
+                            {"command": "resume"}):
+                status, body = await c.post("api/time", command)
+                assert status == 200, (command, body)
+                got = await ws.until(lambda m: m["type"] == "event" and m["event"]["event"] == "command"
+                                     and m["event"]["command"] == command["command"])
+                assert got[-1]["event"]["accepted"] is True, got[-1]
+            await c.post("api/stop")
+            got = await ws.until(is_ended)
+            assert got[-1]["session"]["scenario"]["status"] == "incomplete"
+        run_async(talk, gui)
+
+
 # ---------------------------------------------------------------- the record of the writes
 
 

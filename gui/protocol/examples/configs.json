@@ -129,6 +129,12 @@
         "simulation": true
       },
       {
+        "path": "network.yaml",
+        "modified": "2026-01-01T00:00:00Z",
+        "size": 670,
+        "simulation": true
+      },
+      {
         "path": "orphan.yaml",
         "modified": "2026-01-01T00:00:00Z",
         "size": 555,

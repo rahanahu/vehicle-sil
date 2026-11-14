@@ -61,6 +61,37 @@ const SETTLED: ReadonlySet<string> = new Set([
           }
           @if (row.command; as command) {
             <div class="manual" [attr.data-testid]="'manual-command-' + row.name">
+              @if (command.environment.length > 0) {
+                <div [attr.data-testid]="'manual-environment-' + row.name">
+                  <span i18n>
+                    起動する前に、次の環境変数を設定します（設定の書き方は、シェルや IDE
+                    によって違います）:
+                  </span>
+                  <ul class="environment">
+                    @for (variable of command.environment; track variable.name) {
+                      <li [attr.data-testid]="'manual-variable-' + variable.name">
+                        <span i18n>名前</span>
+                        <code class="variable-name">{{ variable.name }}</code>
+                        <span i18n>値</span>
+                        <code class="variable-value">{{ variable.value }}</code>
+                        <button
+                          matButton
+                          type="button"
+                          (click)="copy(row.name + '/' + variable.name, variable.assignment)"
+                          [attr.aria-label]="copyVariableLabel(variable.name)"
+                          [title]="variable.assignment"
+                        >
+                          @if (copied() === row.name + '/' + variable.name) {
+                            <ng-container i18n>コピーしました</ng-container>
+                          } @else {
+                            <ng-container i18n>名前=値 をコピー</ng-container>
+                          }
+                        </button>
+                      </li>
+                    }
+                  </ul>
+                </div>
+              }
               @if (command.directory) {
                 <span i18n>ディレクトリ</span>
                 <code class="directory">{{ command.directory }}</code>
@@ -170,6 +201,17 @@ const SETTLED: ReadonlySet<string> = new Set([
       overflow-wrap: anywhere;
       user-select: all;
     }
+    .environment {
+      margin: var(--app-space-1) 0;
+      padding: 0;
+      list-style: none;
+    }
+    .environment li {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0 var(--app-space-2);
+    }
     .stays {
       flex-basis: 100%;
       color: var(--mat-sys-error);
@@ -193,7 +235,7 @@ export class ParticipantStatus {
    * ランチャーのログの行へ）。
    */
   readonly stays = input<ReadonlyMap<string, string>>(new Map());
-  /** 最後にコマンドをコピーした participant。 */
+  /** 最後に押したコピーのボタン（copy の key）。 */
   protected readonly copied = signal<string | null>(null);
 
   protected readonly rows = computed(() =>
@@ -272,7 +314,17 @@ export class ParticipantStatus {
         control,
         command:
           waiting && !this.ended() && p.commandLine !== null
-            ? { line: p.commandLine, directory: p.workingDirectory }
+            ? {
+                line: p.commandLine,
+                directory: p.workingDirectory,
+                // ランチャーが言う環境変数（registry がネットワークで待ち受けるとき）。設定の書き方はシェルや IDE
+                // ごとに違うので、名前と値を分けて出し、コピーは多くの場所でそのまま使える 名前=値 にする
+                environment: Object.entries(p.environment).map(([name, value]) => ({
+                  name,
+                  value,
+                  assignment: `${name}=${value}`,
+                })),
+              }
             : null,
         stays: p.manual ? (this.stays().get(p.name) ?? null) : null,
       };
@@ -283,8 +335,13 @@ export class ParticipantStatus {
     return $localize`${name}:name: を起動するコマンドをコピー`;
   }
 
-  protected copy(name: string, line: string): void {
-    void navigator.clipboard?.writeText(line).then(() => this.copied.set(name));
+  protected copyVariableLabel(name: string): string {
+    return $localize`環境変数 ${name}:name: を 名前=値 の形でコピー`;
+  }
+
+  /** key: コマンドは participant の名前、環境変数は「participant/変数」。押したボタンだけを「コピーしました」にする。 */
+  protected copy(key: string, text: string): void {
+    void navigator.clipboard?.writeText(text).then(() => this.copied.set(key));
   }
 
   protected readonly hasUnknown = computed(() => this.rows().some((row) => row.tone === 'unknown'));

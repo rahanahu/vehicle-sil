@@ -70,3 +70,36 @@ test('a participant the file says the user starts: it joins later, and stays aft
     '自分で終わらせてください',
   );
 });
+
+test('a registry on the network: the check notes it, and the command comes with the environment to set', async ({
+  page,
+}) => {
+  // network.yaml: registry_uri は全部のアドレス（ループバックでない）。Dashboard は manual: true で、参加しない
+  await choose(page, 'network.yaml');
+  const note = page
+    .getByTestId('check-card')
+    .getByTestId('finding')
+    .filter({ hasText: 'registry-on-network' });
+  await expect(note).toHaveAttribute('data-severity', '2');
+
+  const session = await start(page);
+  const command = page.getByTestId('manual-command-Dashboard');
+  // 変数は名前と値を分けて出し、別のボタンで 名前=値 を写す（コマンドのボタンは変数を写さない）
+  const variable = command
+    .getByTestId('manual-environment-Dashboard')
+    .getByTestId('manual-variable-VEHICLE_SIL_LISTEN_ON_NETWORK');
+  await expect(variable.locator('.variable-name')).toHaveText('VEHICLE_SIL_LISTEN_ON_NETWORK', {
+    timeout: RUN_TIMEOUT,
+  });
+  await expect(variable.locator('.variable-value')).toHaveText('1');
+  await expect(variable.getByRole('button')).toHaveAttribute(
+    'title',
+    'VEHICLE_SIL_LISTEN_ON_NETWORK=1',
+  );
+  await expect(command.locator('pre')).toContainText('--name Dashboard --registry-uri');
+  await expect(command.locator('pre')).not.toContainText('VEHICLE_SIL_LISTEN_ON_NETWORK');
+
+  await press(stopButton(page));
+  await expect(result(page, session)).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(command).toHaveCount(0);
+});
