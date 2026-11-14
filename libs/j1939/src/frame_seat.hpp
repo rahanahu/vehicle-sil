@@ -2,7 +2,7 @@
 //
 // The listener's seat: the one internal place in a Network's receive path from which a
 // Listener hears what the network receives. Not installed and not an extension point for
-// users; see docs/internals/j1939.md ("The listener's seat").
+// users; see docs/internals/j1939.md ("聞き役の席（内部の口）").
 #pragma once
 
 #include "vehicle_sil/can/frame.hpp"
@@ -20,8 +20,12 @@ namespace detail {
 ///
 /// Read only: calling into the network or its nodes from one of these functions (sending,
 /// registering a handler, adding a node, starting a Timer, ...) throws std::logic_error and
-/// fails the network. An exception that leaves one of them fails the network too. References
-/// and spans are valid only during the call.
+/// fails the network. An exception that leaves one of them fails the network too. A function
+/// that makes the network fail without letting an exception out (it caught the std::logic_error,
+/// or it removed a handler or cancelled or destroyed a Timer, which cannot throw) stops the step
+/// in the same way: the network throws std::logic_error when the function returns, and handles
+/// nothing more of the frame, the message or the step. References and spans are valid only
+/// during the call.
 class FrameSeat
 {
 public:
@@ -47,7 +51,15 @@ public:
     virtual void on_step_end(SimTime now) = 0;
 
 protected:
-    /// Leaves the seat (also inside a step: the network calls nothing afterwards).
+    /// Takes the seat of `network`: Network::set_seat(this), with its conditions (only outside a
+    /// step; std::logic_error if the seat is taken or this one sits in another network).
+    void sit(Network& network);
+    /// Leaves the seat it is in, if any: only outside a step (std::logic_error), as sit().
+    void leave();
+    /// Leaves the seat. Unlike leave() also inside a step (a destructor cannot refuse), from a
+    /// node's handler, a timer or the application stage: the network calls nothing afterwards.
+    /// Not from inside one of this object's own functions: that function would go on running in
+    /// a destroyed object, which is undefined behaviour and which the network cannot notice.
     virtual ~FrameSeat();
 
 private:

@@ -277,6 +277,19 @@ FrameSeat::~FrameSeat()
     }
 }
 
+void FrameSeat::sit(Network& network)
+{
+    network.set_seat(this);
+}
+
+void FrameSeat::leave()
+{
+    if (network_ != nullptr)
+    {
+        network_->set_seat(nullptr);
+    }
+}
+
 } // namespace detail
 
 void Network::set_seat(detail::FrameSeat* seat)
@@ -323,6 +336,7 @@ void Network::tell_seat(F&& call)
         return;
     }
     const bool outer = observing_;
+    const bool outerSeat = in_seat_;
     observing_ = true;
     in_seat_ = true;
     try
@@ -332,19 +346,22 @@ void Network::tell_seat(F&& call)
     catch (const std::exception& e)
     {
         observing_ = outer;
-        in_seat_ = false;
+        in_seat_ = outerSeat;
         fail(std::string("vehicle_sil::j1939::Network: a Listener handler threw: ") + e.what());
         throw;
     }
     catch (...)
     {
         observing_ = outer;
-        in_seat_ = false;
+        in_seat_ = outerSeat;
         fail("vehicle_sil::j1939::Network: a Listener handler threw");
         throw;
     }
     observing_ = outer;
-    in_seat_ = false;
+    in_seat_ = outerSeat;
+    // The sitter made the network fail without throwing (it caught the exception, or used a
+    // path that cannot throw): stop here, as if it had thrown.
+    throw_if_failed_during_step();
 }
 
 std::string Network::read_only_text(const char* what) const

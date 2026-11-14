@@ -74,6 +74,9 @@ enum class Where
 /// Keeps what the seat is told, and writes one line per call to `log` (shared with others).
 struct TestSeat final : FrameSeat
 {
+    using FrameSeat::leave;
+    using FrameSeat::sit;
+
     struct HeardFrame
     {
         SimTime time;
@@ -357,6 +360,7 @@ TEST_CASE(seat_is_read_only)
         SetObserver,
         Attach,
         Throw,
+        SwallowSend, ///< send() and catch what it throws
     };
     struct Part
     {
@@ -365,7 +369,7 @@ TEST_CASE(seat_is_read_only)
     for (const Where where : {Where::Frame, Where::Message, Where::StepEnd})
     {
         for (const Op op : {Op::Send, Op::Request, Op::Register, Op::Unsubscribe, Op::StartTimer, Op::CancelTimer, Op::AddNode,
-                            Op::SetSeat, Op::SetObserver, Op::Attach, Op::Throw})
+                            Op::SetSeat, Op::SetObserver, Op::Attach, Op::Throw, Op::SwallowSend})
         {
             Bench bench;
             TestSeat seat;
@@ -373,6 +377,14 @@ TEST_CASE(seat_is_read_only)
             std::size_t handled = 0;
             Subscription subscription(a, a.on_message(Pgn{kPgnPropB}, [&](const Message&) { ++handled; }));
             Timer timer(bench.network, TimerKind::Scheduled, [] {});
+            std::size_t fired = 0;
+            Timer due(bench.network, TimerKind::Scheduled, [&] { ++fired; }); // due in the step that fails
+            bench.app = [&](SimTime now) {
+                if (now == at(0ms))
+                {
+                    due.start_at(at(10ms));
+                }
+            };
             NetworkTestAccess::set_seat(bench.network, &seat);
             bench.step();
             bool once = false;
@@ -412,8 +424,18 @@ TEST_CASE(seat_is_read_only)
                     break;
                 case Op::Throw:
                     throw std::runtime_error("seat failed");
+                case Op::SwallowSend:
+                    try
+                    {
+                        static_cast<void>(a.send(Pgn{kPgnPropB}, Bytes{1}));
+                    }
+                    catch (...) // NOLINT: what a careless handler does
+                    {
+                    }
+                    break;
                 }
             };
+            const bool silent = op == Op::Unsubscribe || op == Op::CancelTimer || op == Op::SwallowSend;
             seat.during = [&](Where now) {
                 if (now != where || std::exchange(once, true))
                 {
@@ -440,22 +462,25 @@ TEST_CASE(seat_is_read_only)
             }
             else
             {
-                // Unsubscribing and cancelling cannot throw: they fail the network only.
-                CHECK_EQ(threw_logic_error, op != Op::Unsubscribe && op != Op::CancelTimer);
+                // Unsubscribing and cancelling cannot throw, and a handler may catch what a call
+                // throws: the network has failed all the same.
+                CHECK_EQ(threw_logic_error, !silent);
                 CHECK(error.size() > kReadOnly.size());
                 CHECK_TEXT(error.substr(error.size() - kReadOnly.size()), kReadOnly);
                 CHECK(error.find("from an observer") == std::string::npos);
             }
-            if (op == Op::Send)
+            if (op == Op::Send || op == Op::SwallowSend)
             {
                 CHECK_TEXT(error, "vehicle_sil::j1939::Network: send()" + kReadOnly);
             }
-            // The seat stays where it was, and a failure in the frame's call stops the frame.
+            // The seat stays where it was. Whether the sitter threw or failed the network
+            // silently, nothing after its call runs: a frame's or a message's failure stops the
+            // handlers, and each of them stops the step before the timers that are due.
             CHECK(NetworkTestAccess::seat(bench.network) == &seat);
-            if (where == Where::Frame && op != Op::Unsubscribe && op != Op::CancelTimer)
-            {
-                CHECK_EQ(handled, 0u);
-            }
+            CHECK_EQ(handled, where == Where::StepEnd ? 1u : 0u);
+            CHECK_EQ(fired, 0u);
+            CHECK_EQ(seat.messages.size(), where == Where::Frame ? 0u : 1u);
+            CHECK_EQ(seat.step_ends.size(), where == Where::StepEnd ? 2u : 1u);
             CHECK(bench.take_sent().empty());
         }
     }
@@ -565,6 +590,176 @@ TEST_CASE(seat_is_taken_outside_a_step_only_and_by_one)
     NetworkTestAccess::set_seat(bench.network, &second);
     CHECK(NetworkTestAccess::seat(other.network) == &seat);
     CHECK(NetworkTestAccess::seat(bench.network) == &second);
+}
+
+TEST_CASE(seat_sits_and_leaves_by_itself)
+{
+    // What a sitter calls: the same as setting and emptying the seat from outside.
+    Bench bench;
+    Bench other;
+    TestSeat seat;
+    TestSeat second;
+    seat.leave(); // in no seat: nothing
+    seat.sit(bench.network);
+    CHECK(NetworkTestAccess::seat(bench.network) == &seat);
+    CHECK(throws<std::logic_error>([&] { second.sit(bench.network); }));
+    CHECK(throws<std::logic_error>([&] { seat.sit(other.network); }));
+    bench.add_node(kA);
+    bool refused = false;
+    bench.app = [&](SimTime) { refused = throws<std::logic_error>([&] { seat.leave(); }); };
+    bench.step();
+    bench.app = {};
+    CHECK(refused);
+    CHECK(NetworkTestAccess::seat(bench.network) == &seat);
+    CHECK(!bench.network.failed());
+    seat.leave();
+    CHECK(NetworkTestAccess::seat(bench.network) == nullptr);
+    seat.sit(other.network);
+    second.sit(bench.network);
+    CHECK(NetworkTestAccess::seat(other.network) == &seat);
+    CHECK(NetworkTestAccess::seat(bench.network) == &second);
+}
+
+TEST_CASE(seat_hears_a_transfers_last_packet_before_the_message_it_completes)
+{
+    // The frame is told before the engine handles it, also for the transport's frames: the last
+    // data packet, then the message the engine put together, then the handlers.
+    for (const bool broadcast : {true, false})
+    {
+        Bench bench;
+        std::vector<std::string> log;
+        TestSeat seat;
+        seat.log = &log;
+        NetworkTestAccess::set_seat(bench.network, &seat);
+        Node& a = bench.add_node(kA);
+        a.on_any_message(
+          [&](const Message& m) { log.push_back("handler " + std::to_string(m.pgn.value()) + " " + std::to_string(m.data.size())); });
+        const Bytes big = payload(20);
+        const Address to = broadcast ? kGlobal : kA;
+        const std::uint32_t pgn = broadcast ? kPgnPropB : kPgnPropA;
+        bench.step();
+        bench.inject(broadcast ? bam(kRemote, big.size(), pgn) : rts(kRemote, kA, big.size(), pgn));
+        bench.steps(6);
+        if (!broadcast)
+        {
+            CHECK_J1939(bench.take_sent(), {cts(kA, kRemote, 3, 1, pgn)});
+        }
+        for (std::uint8_t k = 1; k <= 2; ++k)
+        {
+            bench.inject(dt(kRemote, to, k, big));
+            bench.steps(6);
+        }
+        CHECK_EQ(seat.frames.size(), 3u);
+        CHECK(seat.messages.empty());
+        const SimTime t = bench.last_time();
+        const J1939Frame last = dt(kRemote, to, 3, big);
+        bench.inject(last);
+        log.clear();
+        bench.step();
+        const std::string ns = std::to_string(to_ns(t));
+        CHECK_EQ(log.size(), 4u);
+        CHECK_TEXT(log.at(0), "seat frame " + to_string(last) + " " + ns);
+        CHECK_TEXT(log.at(1), "seat message " + std::to_string(pgn) + " 20 " + ns);
+        CHECK_TEXT(log.at(2), "handler " + std::to_string(pgn) + " 20");
+        CHECK_TEXT(log.at(3), "seat step end " + std::to_string(to_ns(bench.last_time())));
+        CHECK(!bench.network.failed());
+    }
+}
+
+TEST_CASE(seat_failure_in_a_transport_frame_stops_the_transfer)
+{
+    for (const bool silently : {false, true})
+    {
+        Bench bench;
+        TestSeat seat;
+        NetworkTestAccess::set_seat(bench.network, &seat);
+        Node& a = bench.add_node(kA);
+        std::size_t handled = 0;
+        std::size_t ended = 0;
+        a.on_any_message([&](const Message&) { ++handled; });
+        a.on_transfer_end([&](const vehicle_sil::j1939::TransferEnd&) { ++ended; });
+        Timer timer(bench.network, TimerKind::Scheduled, [] {});
+        const Bytes big = payload(20);
+        bench.step();
+        bench.inject(bam(kRemote, big.size(), kPgnPropB));
+        bench.inject(dt(kRemote, kGlobal, 1, big));
+        bench.inject(dt(kRemote, kGlobal, 2, big));
+        bench.steps(6);
+        seat.during = [&](Where where) {
+            if (where != Where::Frame)
+            {
+                return;
+            }
+            if (silently)
+            {
+                CHECK(!timer.cancel()); // cannot throw: fails the network
+                return;
+            }
+            throw std::runtime_error("seat failed");
+        };
+        bench.inject(dt(kRemote, kGlobal, 3, big)); // would complete the broadcast
+        CHECK(throws<std::exception>([&] { bench.steps(3); }));
+        CHECK(bench.network.failed());
+        CHECK_EQ(seat.frames.size(), 4u);
+        CHECK(seat.messages.empty());
+        CHECK_EQ(handled, 0u);
+        CHECK_EQ(ended, 0u);
+    }
+}
+
+TEST_CASE(seat_can_be_destroyed_inside_a_step)
+{
+    // From a node's handler and from the application stage: the seat is empty from then on,
+    // nothing is told to the destroyed sitter and the network goes on.
+    for (const bool from_handler : {true, false})
+    {
+        Bench bench;
+        std::vector<std::string> log;
+        auto seat = std::make_unique<TestSeat>();
+        seat->log = &log;
+        NetworkTestAccess::set_seat(bench.network, seat.get());
+        Node& a = bench.add_node(kA);
+        std::size_t handled = 0;
+        std::size_t heard = 0; ///< log lines when the sitter went
+        const auto destroy = [&] {
+            if (seat)
+            {
+                seat.reset();
+                heard = log.size();
+            }
+        };
+        a.on_any_message([&](const Message&) {
+            ++handled;
+            if (from_handler)
+            {
+                destroy();
+            }
+        });
+        bench.app = [&](SimTime now) {
+            if (!from_handler && now == at(10ms))
+            {
+                destroy();
+            }
+        };
+        bench.step();
+        bench.inject(frame(6, kPgnPropB, kRemote, kGlobal, {1}));
+        bench.inject(frame(6, kPgnPropB, kRemote, kGlobal, {2})); // in the same step, after the sitter went
+        bench.step(); // 10 ms
+        CHECK(seat == nullptr);
+        CHECK(NetworkTestAccess::seat(bench.network) == nullptr);
+        // From the handler: the first frame and its message. From the application: the whole step.
+        CHECK_EQ(heard, from_handler ? 3u : 6u);
+        bench.inject(frame(6, kPgnPropB, kRemote, kGlobal, {3}));
+        bench.steps(2);
+        CHECK_EQ(log.size(), heard);
+        CHECK_EQ(handled, 3u);
+        CHECK(!bench.network.failed());
+        // The seat is free for another one.
+        TestSeat next;
+        NetworkTestAccess::set_seat(bench.network, &next);
+        bench.step();
+        CHECK_EQ(next.step_ends.size(), 1u);
+    }
 }
 
 TEST_CASE(seat_and_network_can_be_destroyed_in_either_order)

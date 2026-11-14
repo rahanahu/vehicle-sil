@@ -828,7 +828,6 @@ private:
     friend class Timer;
     friend class Transport;
     friend class detail::FrameSeat;
-    friend class Listener; ///< Sits in the seat (set_seat()).
     friend struct detail::NetworkTestAccess;
 
     enum class Phase : std::uint8_t
@@ -910,9 +909,10 @@ private:
     /// Puts `seat` in the listener's seat (nullptr: empties it). Only outside a step and not
     /// from an observer or the seat (std::logic_error); after the network failed, anywhere. A
     /// network has one seat: std::logic_error if another one sits there, or if `seat` sits in
-    /// another network. See detail::FrameSeat.
+    /// another network. See detail::FrameSeat (its sit() and leave() call this).
     void set_seat(detail::FrameSeat* seat);
-    /// Calls the seat (if any) with `call`, as observe() calls the observer.
+    /// Calls the seat (if any) with `call`, as observe() calls the observer. Also throws
+    /// (std::logic_error) when the call made the network fail without throwing itself.
     template <typename F>
     void tell_seat(F&& call);
     void warn(std::string_view text) const;
