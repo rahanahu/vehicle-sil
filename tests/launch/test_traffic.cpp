@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //
-// The traffic of a run's result without a process: the count (run_traffic.hpp) fed with samples
-// directly, what it reads of a control agent's hello, who is on which network, and the run's
-// samples (run_samples.hpp) between a hub, the scenario's sink and the count. The same with real
+// The traffic of a run's result without a process: which sample of a participant counts
+// (run_traffic.hpp, fed with samples directly), what is read of a control agent's hello, who is on
+// which network, what a network says of itself, and the run's samples (run_samples.hpp) between a
+// hub, the scenario and the count. The same with real
 // ECUs: launch_run.traffic (launch_run_launcher.cpp).
 
 #include "launch_test_util.hpp"
@@ -14,7 +15,9 @@
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/launch/run.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -28,7 +31,8 @@ using namespace std::chrono_literals;
 using vehicle_sil::launch::test::check_text;
 using launch::detail::RunSamples;
 using launch::detail::TrafficColumns;
-using launch::detail::TrafficCount;
+using launch::detail::TrafficLatest;
+using launch::detail::TrafficSeen;
 using launch::detail::TrafficPlan;
 using launch::detail::TrafficSchema;
 
@@ -77,8 +81,10 @@ std::string said(const RunTraffic& traffic)
     std::string out = "before " + std::to_string(traffic.before_ms) + "\n";
     for (const TrafficNetwork& network : traffic.per_network)
     {
-        out += network.name + " (" + network.kind + ") " + std::to_string(network.received()) + " of " +
-               std::to_string(network.counted()) + "\n";
+        const std::optional<bool> delivered = network.delivered();
+        out += network.name + " (" + network.kind + ") counted " + std::to_string(network.counted()) + " senders " +
+               std::to_string(network.senders()) + " receivers " + std::to_string(network.receivers()) + " delivered " +
+               (!delivered ? "?" : *delivered ? "yes" : "no") + "\n";
         for (const TrafficParticipant& p : network.participants)
         {
             out += "  " + said(p) + "\n";
@@ -87,27 +93,55 @@ std::string said(const RunTraffic& traffic)
     return out;
 }
 
-/// A runs every `step` from 0 and has sent one frame per step before; B has received them. The
-/// samples up to `last` are given, and the count is settled after every `takes` samples of A with
-/// the time the controller (a step of 10 ms) would have by then.
-RunTraffic run_of(std::chrono::milliseconds step, std::chrono::milliseconds last, std::int64_t end_ms, int takes)
+constexpr SimDuration kStep = 10ms; // the controller's
+
+/// The participants of a plan as the run's samples keep them: each sample is put with the
+/// controller's time when it came.
+struct Fed
 {
-    TrafficCount count(pair_plan());
-    count.hello(0, counters("BUS"));
-    count.hello(1, counters("BUS"));
-    int given = 0;
+    TrafficPlan plan;
+    std::vector<TrafficLatest> latest;
+    std::vector<TrafficSeen> seen;
+    explicit Fed(TrafficPlan p) : plan(std::move(p)), latest(plan.participants.size()), seen(plan.participants.size()) {}
+    void hello(std::size_t i, TrafficSchema schema)
+    {
+        seen[i].hello = true;
+        seen[i].schema = std::move(schema);
+    }
+    void put(std::size_t i, std::shared_ptr<const control::Snapshot> s, std::chrono::milliseconds now)
+    {
+        latest[i].put(std::move(s), at(now), kStep);
+    }
+    RunTraffic finish(std::int64_t end_ms)
+    {
+        for (std::size_t i = 0; i < latest.size(); ++i)
+        {
+            seen[i].off_time = latest[i].off_time();
+            seen[i].last = latest[i].last_before(at(std::chrono::milliseconds(end_ms)), kStep);
+        }
+        return launch::detail::count_traffic(plan, seen, end_ms);
+    }
+};
+
+/// A runs every `step` from 0 and has sent one frame per step before; B has received them. The
+/// samples up to `last` come. `lag`: how far the controller is behind when a sample comes (0: it
+/// is in the step of 10 ms the ECU's step falls in; more: the samples come early, as while the
+/// controller's step is held).
+RunTraffic run_of(std::chrono::milliseconds step, std::chrono::milliseconds last, std::int64_t end_ms,
+                  std::chrono::milliseconds lag = 0ms)
+{
+    Fed fed(pair_plan());
+    fed.hello(0, counters("BUS"));
+    fed.hello(1, counters("BUS"));
     for (std::chrono::milliseconds t = 0ms; t <= last; t += step)
     {
         const std::int64_t frames = t / step;
-        count.sample(0, 1, sample(t, 0, frames));
-        count.sample(1, 1, sample(t, frames, 0));
-        if (++given % takes == 0)
-        {
-            // The controller is in the step of 10 ms that the ECU's step falls in, and not beyond the end.
-            count.settle(at(std::min(t / 10ms * 10ms, std::chrono::milliseconds(end_ms))));
-        }
+        // Never beyond the end: the run's end is the controller's last step.
+        const std::chrono::milliseconds now = std::min(std::max(t / 10ms * 10ms - lag, 0ms), std::chrono::milliseconds(end_ms));
+        fed.put(0, sample(t, 0, frames), now);
+        fed.put(1, sample(t, frames, 0), now);
     }
-    return count.finish(end_ms);
+    return fed.finish(end_ms);
 }
 
 } // namespace
@@ -116,20 +150,22 @@ TEST_CASE(the_numbers_are_those_of_the_last_step_before_the_end_whatever_came_af
 {
     // The run ends at 1000 ms. Of the steps from 1000 ms on, none, one or several samples came
     // before the run was over: the numbers are those of the step at 990 ms each time.
-    const std::string expected = "before 1000\nBUS (can) 1 of 2\n  A counted at 990 sent 99 received 0\n"
-                                 "  B counted at 990 sent 0 received 99\n";
+    const std::string expected = "before 1000\nBUS (can) counted 2 senders 1 receivers 1 delivered yes\n"
+                                 "  A counted at 990 sent 99 received 0\n  B counted at 990 sent 0 received 99\n";
     for (const std::chrono::milliseconds last : {990ms, 1000ms, 1010ms, 1050ms})
     {
-        check_text(said(run_of(10ms, last, 1000, 1)), expected);
+        check_text(said(run_of(10ms, last, 1000)), expected);
     }
 }
 
-TEST_CASE(where_the_takes_fall_does_not_change_the_numbers)
+TEST_CASE(when_the_samples_come_does_not_change_the_numbers)
 {
-    const std::string every = said(run_of(10ms, 1030ms, 1000, 1));
-    for (const int takes : {2, 3, 7, 50, 1000})
+    // The same samples, come while the controller was in the same step, a step behind, far behind.
+    const std::string every = said(run_of(10ms, 1030ms, 1000));
+    for (const std::chrono::milliseconds lag : {10ms, 20ms, 300ms})
     {
-        check_text(said(run_of(10ms, 1030ms, 1000, takes)), every);
+        check_text(said(run_of(10ms, 1030ms, 1000, lag)), every);
+        check_text(said(run_of(5ms, 1030ms, 1000, lag)), said(run_of(5ms, 1030ms, 1000)));
     }
     CHECK(every.find("A counted at 990 sent 99") != std::string::npos);
 }
@@ -139,131 +175,183 @@ TEST_CASE(an_ecu_with_finer_or_coarser_steps_than_the_controller_is_counted_by_i
     // 5 ms under a controller of 10 ms: its step at 995 ms began before the end, the one at 1000 ms did not.
     for (const std::chrono::milliseconds last : {995ms, 1000ms, 1005ms})
     {
-        CHECK(said(run_of(5ms, last, 1000, 1)).find("A counted at 995 sent 199 received 0") != std::string::npos);
+        CHECK(said(run_of(5ms, last, 1000)).find("A counted at 995 sent 199 received 0") != std::string::npos);
     }
     // 100 ms: the step at 900 ms is the last before the end, also when the one at 1000 ms came.
     for (const std::chrono::milliseconds last : {900ms, 1000ms})
     {
-        CHECK(said(run_of(100ms, last, 1000, 1)).find("A counted at 900 sent 9 received 0") != std::string::npos);
+        CHECK(said(run_of(100ms, last, 1000)).find("A counted at 900 sent 9 received 0") != std::string::npos);
     }
 }
 
 TEST_CASE(a_run_that_ends_while_it_stands_still_counts_the_steps_before_where_it_stood)
 {
     // Paused at 500 ms: the sample of the step at 500 ms may have come; the controller's time
-    // stays 500 ms however often the samples are taken, and the run ends there.
+    // stays 500 ms, and the run ends there.
     for (const bool came : {false, true})
     {
-        TrafficCount count(pair_plan());
-        count.hello(0, counters("BUS"));
+        Fed fed(pair_plan());
+        fed.hello(0, counters("BUS"));
         for (std::chrono::milliseconds t = 0ms; t < 500ms; t += 10ms)
         {
-            count.sample(0, 1, sample(t, 2, t / 10ms));
-            count.settle(at(t));
+            fed.put(0, sample(t, 2, t / 10ms), t);
         }
         if (came)
         {
-            count.sample(0, 1, sample(500ms, 3, 50));
+            fed.put(0, sample(500ms, 3, 50), 500ms);
         }
-        count.settle(at(500ms));
-        count.settle(at(500ms));
-        const RunTraffic traffic = count.finish(500);
-        check_text(said(traffic.per_network.at(0).participants.at(0)), std::string("A counted at 490 sent 49 received 2"));
+        check_text(said(fed.finish(500).per_network.at(0).participants.at(0)), "A counted at 490 sent 49 received 2");
     }
-    // It went on instead: the step at 500 ms is settled once the controller is beyond it.
-    TrafficCount count(pair_plan());
-    count.hello(0, counters("BUS"));
-    count.sample(0, 1, sample(490ms, 2, 49));
-    count.sample(0, 1, sample(500ms, 3, 50));
-    count.settle(at(500ms));
-    count.settle(at(510ms));
-    check_text(said(count.finish(510).per_network.at(0).participants.at(0)), std::string("A counted at 500 sent 50 received 3"));
+    // It went on instead: the step at 500 ms counts once the run ends beyond it.
+    Fed fed(pair_plan());
+    fed.hello(0, counters("BUS"));
+    fed.put(0, sample(490ms, 2, 49), 490ms);
+    fed.put(0, sample(500ms, 3, 50), 500ms);
+    check_text(said(fed.finish(510).per_network.at(0).participants.at(0)), "A counted at 500 sent 50 received 3");
+}
+
+TEST_CASE(only_a_few_samples_are_kept_however_many_come)
+{
+    // An hour of steps of 5 ms: what is kept is the last sample of each step of the controller
+    // from the one that runs on, and the last one before.
+    TrafficLatest latest;
+    std::shared_ptr<const control::Snapshot> first = sample(0ms, 0, 0);
+    const std::weak_ptr<const control::Snapshot> gone = first;
+    latest.put(std::move(first), at(0ms), kStep);
+    std::vector<std::weak_ptr<const control::Snapshot>> all;
+    for (std::chrono::milliseconds t = 5ms; t <= 3'600'000ms; t += 5ms)
+    {
+        std::shared_ptr<const control::Snapshot> s = sample(t, 0, t / 5ms);
+        all.push_back(s);
+        latest.put(std::move(s), at(t / 10ms * 10ms), kStep);
+    }
+    CHECK(gone.expired());
+    const auto alive = std::count_if(all.begin(), all.end(), [](const auto& s) { return !s.expired(); });
+    CHECK(alive <= 3);
+    CHECK(!latest.off_time());
+    CHECK(latest.last_before(at(3'600'000ms), kStep)->time == at(3'599'995ms));
+    // A late sample (of a step before the controller's) still counts if it is the latest of its kind.
+    latest.put(sample(3'599'996ms, 0, 7), at(3'600'000ms), kStep);
+    CHECK(latest.last_before(at(3'600'000ms), kStep)->time == at(3'599'996ms));
+    latest.put(sample(100ms, 0, 7), at(3'600'000ms), kStep);
+    CHECK(latest.last_before(at(3'600'000ms), kStep)->time == at(3'599'996ms));
+}
+
+TEST_CASE(a_participant_far_ahead_of_the_controller_is_not_on_the_runs_time)
+{
+    // The simulation stands still at 100 ms; a participant in real time goes on.
+    Fed fed(pair_plan());
+    fed.hello(0, counters("BUS"));
+    fed.hello(1, counters("BUS"));
+    fed.put(1, sample(90ms, 1, 1), 100ms);
+    for (std::size_t i = 0; i < TrafficLatest::kMaxAhead; ++i)
+    {
+        fed.put(0, sample(100ms + 10ms * static_cast<int>(i), 1, 1), 100ms);
+    }
+    CHECK(!fed.latest[0].off_time());
+    fed.put(0, sample(100ms + 10ms * static_cast<int>(TrafficLatest::kMaxAhead), 1, 1), 100ms);
+    CHECK(fed.latest[0].off_time());
+    // Nothing of it is kept from then on, and the others are as they were.
+    std::shared_ptr<const control::Snapshot> more = sample(5000ms, 1, 1);
+    const std::weak_ptr<const control::Snapshot> kept = more;
+    fed.put(0, std::move(more), 100ms);
+    CHECK(kept.expired());
+    check_text(said(fed.finish(100)), "before 100\nBUS (can) counted 1 senders 1 receivers 1 delivered ?\n"
+                                      "  A real-time at - sent - received -\n  B counted at 90 sent 1 received 1\n");
+    // One that runs in virtual time is a step or two ahead, never that far.
+    Fed synced(pair_plan());
+    synced.hello(0, counters("BUS"));
+    for (std::chrono::milliseconds t = 0ms; t < 5000ms; t += 1ms)
+    {
+        synced.put(0, sample(t, 1, 1), std::max(t / 10ms * 10ms - 10ms, 0ms));
+    }
+    CHECK(!synced.latest[0].off_time());
 }
 
 TEST_CASE(a_participant_that_is_not_counted_says_why)
 {
     TrafficPlan plan;
     plan.buses = {{"BUS", "can"}};
-    for (const char* name : {"Silent", "Restarted", "Later", "RealTime", "Raw", "Mapped", "Dropped", "Flooding", "Early", "Ok"})
+    for (const char* name : {"Silent", "Restarted", "RealTime", "Raw", "Mapped", "Early", "Odd", "Ok"})
     {
         plan.participants.push_back({name, true, true, {"BUS"}});
     }
-    TrafficCount count(plan);
+    Fed fed(plan);
     // Silent: no hello.
-    // Restarted: two processes, seen by their samples.
-    count.hello(1, counters("BUS"));
-    count.sample(1, 1, sample(10ms, 1, 1));
-    count.sample(1, 2, sample(20ms, 0, 0));
-    // Later: the hub had the hello of a later process when its samples were taken.
-    count.restarted(2);
-    count.hello(2, counters("BUS"));
-    count.sample(2, 1, sample(10ms, 1, 1));
+    // Restarted: more than one process ran under its name.
+    fed.hello(1, counters("BUS"));
+    fed.put(1, sample(10ms, 1, 1), 10ms);
+    fed.seen[1].restarted = true;
     // RealTime.
-    count.hello(3, counters("BUS", false));
-    count.sample(3, 1, sample(10ms, 1, 1));
+    fed.hello(2, counters("BUS", false));
+    fed.put(2, sample(10ms, 1, 1), 10ms);
     // Raw: an agent, and no counters of this network.
-    count.hello(4, counters("OTHER"));
-    count.sample(4, 1, sample(10ms, 1, 1));
+    fed.hello(3, counters("OTHER"));
+    fed.put(3, sample(10ms, 1, 1), 10ms);
     // Mapped.
-    count.hello(5, counters("BUS", true, true));
-    count.sample(5, 1, sample(10ms, 1, 1));
-    // Dropped: the queue was full.
-    count.hello(6, counters("BUS"));
-    count.sample(6, 1, sample(10ms, 1, 1));
-    count.dropped(6);
-    // Flooding: more samples pending than the count keeps.
-    count.hello(7, counters("BUS"));
-    for (std::size_t i = 0; i <= TrafficCount::kMaxPending; ++i)
-    {
-        count.sample(7, 1, sample(1000ms + std::chrono::milliseconds(i), 1, 1));
-    }
-    count.settle(at(50ms));
+    fed.hello(4, counters("BUS", true, true));
+    fed.put(4, sample(10ms, 1, 1), 10ms);
     // Early: a hello, and only a sample of a step at the end.
-    count.hello(8, counters("BUS"));
-    count.sample(8, 1, sample(100ms, 1, 1));
-    // Ok.
-    count.hello(9, counters("BUS"));
-    count.sample(9, 1, sample(90ms, 4, 5));
-    const RunTraffic traffic = count.finish(100);
-    check_text(said(traffic),
-             std::string("before 100\nBUS (can) 1 of 1\n"
-                         "  Silent no-control-link at - sent - received -\n"
-                         "  Restarted restarted at - sent - received -\n"
-                         "  Later restarted at - sent - received -\n"
-                         "  RealTime real-time at - sent - received -\n"
-                         "  Raw no-counters at - sent - received -\n"
-                         "  Mapped mapped at - sent - received -\n"
-                         "  Dropped queue-full at - sent - received -\n"
-                         "  Flooding queue-full at - sent - received -\n"
-                         "  Early no-sample at - sent - received -\n"
-                         "  Ok counted at 90 sent 5 received 4\n"));
-    const auto& rows = traffic.per_network.at(0).participants;
-    CHECK(!rows.at(0).virtual_time.has_value());
-    CHECK(rows.at(3).virtual_time == std::optional<bool>(false));
-    CHECK(rows.at(9).virtual_time == std::optional<bool>(true));
-    // A sample without the two integers (not this agent's schema) is no sample.
-    TrafficCount odd(pair_plan());
-    odd.hello(0, counters("BUS"));
+    fed.hello(5, counters("BUS"));
+    fed.put(5, sample(100ms, 1, 1), 100ms);
+    // Odd: a sample without the two integers (not this agent's schema) is no sample.
+    fed.hello(6, counters("BUS"));
     control::Snapshot shorter;
     shorter.time = at(10ms);
     shorter.values = {control::Value{true}};
-    odd.sample(0, 1, std::make_shared<const control::Snapshot>(shorter));
-    check_text(said(odd.finish(100).per_network.at(0).participants.at(0)), std::string("A no-sample at - sent - received -"));
+    fed.put(6, std::make_shared<const control::Snapshot>(shorter), 10ms);
+    // Ok.
+    fed.hello(7, counters("BUS"));
+    fed.put(7, sample(90ms, 4, 5), 90ms);
+    const RunTraffic traffic = fed.finish(100);
+    check_text(said(traffic), "before 100\nBUS (can) counted 1 senders 1 receivers 1 delivered ?\n"
+                              "  Silent no-control-link at - sent - received -\n"
+                              "  Restarted restarted at - sent - received -\n"
+                              "  RealTime real-time at - sent - received -\n"
+                              "  Raw no-counters at - sent - received -\n"
+                              "  Mapped mapped at - sent - received -\n"
+                              "  Early no-sample at - sent - received -\n"
+                              "  Odd no-sample at - sent - received -\n"
+                              "  Ok counted at 90 sent 5 received 4\n");
+    const auto& rows = traffic.per_network.at(0).participants;
+    CHECK(!rows.at(0).virtual_time.has_value());
+    CHECK(rows.at(2).virtual_time == std::optional<bool>(false));
+    CHECK(rows.at(7).virtual_time == std::optional<bool>(true));
 }
 
-TEST_CASE(received_counts_the_counted_participants_that_received_a_frame)
+TEST_CASE(a_network_says_whether_what_was_sent_arrived_as_far_as_the_counters_tell)
 {
-    TrafficCount count(pair_plan());
-    count.hello(0, counters("BUS"));
-    count.hello(1, counters("BUS"));
-    count.sample(0, 1, sample(10ms, 0, 7));
-    count.sample(1, 1, sample(10ms, 1, 0));
-    const RunTraffic traffic = count.finish(20);
-    CHECK_EQ(traffic.per_network.at(0).counted(), std::size_t{2});
-    CHECK_EQ(traffic.per_network.at(0).received(), std::size_t{1});
+    const auto counted = [](const char* name, std::int64_t sent, std::int64_t received) {
+        return TrafficParticipant{name, TrafficNotCounted::None, true, at(90ms), sent, received};
+    };
+    const TrafficParticipant other{"Tool", TrafficNotCounted::NoCounters, true};
+    const auto of = [](std::vector<TrafficParticipant> participants) {
+        const TrafficNetwork network{"BUS", "can", std::move(participants)};
+        const std::optional<bool> delivered = network.delivered();
+        return std::to_string(network.counted()) + " " + std::to_string(network.senders()) + " " +
+               std::to_string(network.receivers()) + " " + (!delivered ? "?" : *delivered ? "yes" : "no");
+    };
+    // One sends, one only listens: as it should be.
+    check_text(of({counted("Engine", 11, 0), counted("Dashboard", 0, 11)}), "2 1 1 yes");
+    check_text(of({counted("A", 5, 5), counted("B", 5, 5)}), "2 2 2 yes");
+    check_text(of({counted("A", 5, 5), counted("B", 5, 0)}), "2 2 1 yes");
+    // Sent, and nobody else received.
+    check_text(of({counted("Engine", 11, 0)}), "1 1 0 no");
+    check_text(of({counted("Engine", 11, 0), counted("Dashboard", 0, 0)}), "2 1 0 no");
+    // A participant's own frames are not in what it received: the one sender that is the one
+    // receiver heard someone the launcher does not know of, and nobody known heard it.
+    check_text(of({counted("Engine", 11, 3), counted("Dashboard", 0, 0)}), "2 1 1 no");
+    // Cannot be said: nobody sent, nobody is counted, nobody is known, or one that is not counted may have received.
+    check_text(of({counted("A", 0, 0), counted("B", 0, 4)}), "2 0 1 ?");
+    check_text(of({other}), "0 0 0 ?");
+    check_text(of({}), "0 0 0 ?");
+    check_text(of({counted("Engine", 11, 0), other}), "1 1 0 ?");
+    check_text(of({counted("Engine", 11, 3), other}), "1 1 1 ?");
+    // One that is not counted does not take away what the counted ones show.
+    check_text(of({counted("Engine", 11, 0), counted("Dashboard", 0, 11), other}), "2 1 1 yes");
 }
 
-TEST_CASE(a_participant_is_on_the_networks_describe_says_or_those_its_agent_counts)
+TEST_CASE(every_network_of_the_file_is_there_with_who_is_known_to_be_on_it)
 {
     TrafficPlan plan;
     plan.buses = {{"FIRST", "can"}, {"UNUSED", "lin"}, {"SECOND", "can"}};
@@ -271,18 +359,23 @@ TEST_CASE(a_participant_is_on_the_networks_describe_says_or_those_its_agent_coun
                          {"Tool", true, false, {}},
                          {"Disabled", false, true, {"FIRST"}},
                          {"Quiet", true, false, {}}};
-    TrafficCount count(plan);
-    count.hello(0, TrafficSchema{true, {TrafficColumns{"FIRST", 1, 0, false}}});
-    count.sample(0, 1, sample(0ms, 1, 2));
+    Fed fed(plan);
+    fed.hello(0, TrafficSchema{true, {TrafficColumns{"FIRST", 1, 0, false}}});
+    fed.put(0, sample(0ms, 1, 2), 0ms);
     // Without --describe: where its agent has counters (also of a network that is not in the file).
-    count.hello(1, TrafficSchema{true, {TrafficColumns{"SECOND", 1, 0, false}, TrafficColumns{"ELSEWHERE", 1, 0, false}}});
-    count.sample(1, 1, sample(0ms, 3, 4));
-    check_text(said(count.finish(10)),
-             std::string("before 10\nFIRST (can) 1 of 1\n  Described counted at 0 sent 2 received 1\n"
-                         "SECOND (can) 1 of 1\n  Described no-counters at - sent - received -\n"
-                         "  Tool counted at 0 sent 4 received 3\n"));
-    // Nobody is known to be on a network: no network at all.
-    TrafficCount none(TrafficPlan{{{"BUS", "can"}}, {{"Tool", true, false, {}}}});
+    fed.hello(1, TrafficSchema{true, {TrafficColumns{"SECOND", 1, 0, false}, TrafficColumns{"ELSEWHERE", 1, 0, false}}});
+    fed.put(1, sample(0ms, 3, 4), 0ms);
+    check_text(said(fed.finish(10)), "before 10\nFIRST (can) counted 1 senders 1 receivers 1 delivered no\n"
+                                     "  Described counted at 0 sent 2 received 1\n"
+                                     "UNUSED (lin) counted 0 senders 0 receivers 0 delivered ?\n"
+                                     "SECOND (can) counted 1 senders 1 receivers 1 delivered ?\n"
+                                     "  Described no-counters at - sent - received -\n"
+                                     "  Tool counted at 0 sent 4 received 3\n");
+    // Nobody is known to be on a network of the file (participants without --describe and
+    // without a control agent): it is there all the same. No network in the file: none.
+    Fed unknown(TrafficPlan{{{"BUS", "can"}}, {{"Tool", true, false, {}}}});
+    check_text(said(unknown.finish(10)), "before 10\nBUS (can) counted 0 senders 0 receivers 0 delivered ?\n");
+    Fed none(TrafficPlan{{}, {{"Tool", true, false, {}}}});
     CHECK(none.finish(10).per_network.empty());
 }
 
@@ -364,40 +457,47 @@ TEST_CASE(the_traffic_for_people_is_a_line_and_a_table)
 {
     RunTraffic traffic;
     traffic.before_ms = 1000;
-    check_text(launch::detail::traffic_text(traffic), std::string("traffic: no network in use\n"));
-    TrafficParticipant engine{"Engine", TrafficNotCounted::None, true, at(990ms), 1234, 1};
-    TrafficParticipant dashboard{"Dashboard", TrafficNotCounted::None, true, at(995ms), 1, 0};
+    check_text(launch::detail::traffic_text(traffic), "traffic: no network in use\n");
+    TrafficParticipant engine{"Engine", TrafficNotCounted::None, true, at(990ms), 1234, 0};
+    TrafficParticipant dashboard{"Dashboard", TrafficNotCounted::None, true, at(995ms), 0, 1234};
     traffic.per_network = {TrafficNetwork{"J1939_CAN", "can", {engine, dashboard}}};
-    check_text(launch::detail::traffic_text(traffic),
-             std::string("traffic: J1939_CAN: 1 of 2 participants received (steps before 1000 ms)\n\n"
-                         "network    participant  sent  received\n"
-                         "J1939_CAN  Engine       1234         1\n"
-                         "J1939_CAN  Dashboard       1         0\n"));
+    check_text(launch::detail::traffic_text(traffic), "traffic: J1939_CAN: 1 participant sent, 1 received (2 counted) (steps before 1000 ms)\n\n"
+                                                      "network    participant  sent  received\n"
+                                                      "J1939_CAN  Engine       1234         0\n"
+                                                      "J1939_CAN  Dashboard       0      1234\n");
     const auto not_counted = [](const char* name, TrafficNotCounted why) {
         return TrafficParticipant{name, why, why == TrafficNotCounted::NoControlLink ? std::nullopt : std::optional<bool>(true)};
     };
-    traffic.per_network.push_back(TrafficNetwork{"B",
-                                                 "can",
-                                                 {not_counted("P1", TrafficNotCounted::NoControlLink),
-                                                  not_counted("P2", TrafficNotCounted::Restarted),
-                                                  not_counted("P3", TrafficNotCounted::RealTime),
-                                                  not_counted("P4", TrafficNotCounted::NoCounters),
-                                                  not_counted("P5", TrafficNotCounted::Mapped),
-                                                  not_counted("P6", TrafficNotCounted::QueueFull),
-                                                  not_counted("P7", TrafficNotCounted::NoSample)}});
+    TrafficParticipant both{"Both", TrafficNotCounted::None, true, at(990ms), 7, 8};
+    traffic.per_network = {TrafficNetwork{"A", "can", {engine, both, not_counted("P0", TrafficNotCounted::NoCounters)}},
+                           TrafficNetwork{"Quiet", "can", {TrafficParticipant{"Q", TrafficNotCounted::None, true, at(990ms), 0, 0}}},
+                           TrafficNetwork{"B",
+                                          "lin",
+                                          {not_counted("P1", TrafficNotCounted::NoControlLink),
+                                           not_counted("P2", TrafficNotCounted::Restarted),
+                                           not_counted("P3", TrafficNotCounted::RealTime),
+                                           not_counted("P4", TrafficNotCounted::NoCounters),
+                                           not_counted("P5", TrafficNotCounted::Mapped),
+                                           not_counted("P6", TrafficNotCounted::NoSample)}},
+                           TrafficNetwork{"One", "lin", {not_counted("P7", TrafficNotCounted::NoCounters)}},
+                           TrafficNetwork{"Nobody", "ethernet", {}}};
     check_text(launch::detail::traffic_text(traffic),
-             std::string("traffic: J1939_CAN: 1 of 2 participants received; B: 0 of 0 participants received (7 not counted) "
-                         "(steps before 1000 ms)\n\n"
-                         "network    participant  sent  received\n"
-                         "J1939_CAN  Engine       1234         1\n"
-                         "J1939_CAN  Dashboard       1         0\n"
-                         "B          P1              -         -  not counted: no control link\n"
-                         "B          P2              -         -  not counted: restarted\n"
-                         "B          P3              -         -  not counted: real time\n"
-                         "B          P4              -         -  not counted: no J1939 counters\n"
-                         "B          P5              -         -  not counted: counters mapped by variables\n"
-                         "B          P6              -         -  not counted: samples dropped\n"
-                         "B          P7              -         -  not counted: no sample before the end\n"));
+               "traffic: A: 2 participants sent, 1 received (2 counted, 1 not counted); Quiet: nothing sent (1 counted); "
+               "B: not counted (6 participants); One: not counted (1 participant); "
+               "Nobody: not counted (no participant known to be on it) (steps before 1000 ms)\n\n"
+               "network  participant  sent  received\n"
+               "A        Engine       1234         0\n"
+               "A        Both            7         8\n"
+               "A        P0              -         -  not counted: no J1939 counters\n"
+               "Quiet    Q               0         0\n"
+               "B        P1              -         -  not counted: no control link\n"
+               "B        P2              -         -  not counted: restarted\n"
+               "B        P3              -         -  not counted: real time\n"
+               "B        P4              -         -  not counted: no J1939 counters\n"
+               "B        P5              -         -  not counted: counters mapped by variables\n"
+               "B        P6              -         -  not counted: no sample before the end\n"
+               "One      P7              -         -  not counted: no J1939 counters\n"
+               "Nobody   -               -         -  no participant known to be on it\n");
 }
 
 namespace {
@@ -415,11 +515,13 @@ struct FakeAgent
     control::ConnectionId connection = 0;
     std::uint64_t sequence = 0;
 
-    FakeAgent(control::Hub& h, std::string participant, const std::string& incarnation) : hub(h), name(std::move(participant))
+    FakeAgent(control::Hub& h, std::string participant, const std::string& incarnation, bool virtual_time = true) :
+      hub(h), name(std::move(participant))
     {
         control::PeerHello hello;
         hello.participant = name;
         hello.incarnation = incarnation;
+        hello.virtual_time = virtual_time;
         for (const char* field : {"j1939.BUS.frames_received", "j1939.BUS.frames_sent"})
         {
             control::VariableInfo v;
@@ -440,98 +542,131 @@ struct FakeAgent
     }
 };
 
-} // namespace
-
-TEST_CASE(the_samples_of_a_hub_go_to_the_count_and_from_its_beginning_to_the_scenario)
+/// The samples of a run with A and B on BUS, at a hub, with a controller whose time the test sets.
+struct Tapped
 {
     control::Hub hub;
-    RunSamples samples({"A", "B"}, pair_plan());
-    samples.tap(hub);
-    FakeAgent a(hub, "A", "a1");
-    FakeAgent b(hub, "B", "b1");
-    FakeAgent stranger(hub, "Stranger", "s1");
-    std::vector<std::string> scenario;
-    const auto sink = [&scenario](std::size_t participant, const std::string& incarnation,
-                                  const std::shared_ptr<const control::Snapshot>& taken) {
-        scenario.push_back(std::to_string(participant) + "/" + incarnation + "@" + std::to_string((taken->time - SimTime{}) / 1ms));
-    };
-    // Before the scenario begins (a participant that does not wait for the start): for the count only.
+    SimTime now{};
+    RunSamples samples{{"A", "B"}, pair_plan()};
+    Tapped()
+    {
+        samples.tap(hub, kStep, [this] { return now; });
+    }
+    /// What the scenario takes, as "place/time".
+    std::vector<std::string> taken()
+    {
+        std::vector<std::string> out;
+        for (const auto& [participant, s] : samples.take())
+        {
+            out.push_back(std::to_string(participant) + "@" + std::to_string((s->time - SimTime{}) / 1ms));
+        }
+        return out;
+    }
+};
+
+} // namespace
+
+TEST_CASE(the_samples_of_a_hub_are_counted_and_from_its_beginning_go_to_the_scenario)
+{
+    Tapped t;
+    FakeAgent a(t.hub, "A", "a1");
+    FakeAgent b(t.hub, "B", "b1");
+    FakeAgent stranger(t.hub, "Stranger", "s1");
+    // Before the scenario begins (a participant that does not wait for the start): counted only.
     a.step(0ms, 0, 0);
     stranger.step(0ms, 9, 9);
-    samples.scenario_begins(sink);
+    CHECK(t.taken().empty());
+    t.samples.scenario_begins({"a1", "b1"});
+    t.now = at(10ms);
     a.step(10ms, 0, 1);
     b.step(10ms, 1, 0);
-    samples.take(at(10ms));
-    CHECK(scenario == (std::vector<std::string>{"0/a1@10", "1/b1@10"}));
+    stranger.step(10ms, 9, 9);
+    CHECK(t.taken() == (std::vector<std::string>{"0@10", "1@10"}));
+    t.now = at(20ms);
     a.step(20ms, 0, 2);
     b.step(20ms, 2, 0);
-    samples.take(at(20ms));
+    t.now = at(30ms);
     a.step(30ms, 0, 3);
-    samples.take(at(30ms));
-    CHECK(scenario == (std::vector<std::string>{"0/a1@10", "1/b1@10", "0/a1@20", "1/b1@20", "0/a1@30"}));
-    // The scenario is over: the last take is the count's alone.
-    samples.scenario_ends();
+    CHECK(t.taken() == (std::vector<std::string>{"0@20", "1@20", "0@30"}));
+    CHECK(t.taken().empty());
+    // The scenario is over: nothing is kept for it any more.
     b.step(30ms, 3, 0);
+    t.samples.scenario_ends();
+    t.now = at(40ms);
     a.step(40ms, 0, 4);
-    const RunTraffic traffic = samples.finish(40);
-    CHECK_EQ(scenario.size(), std::size_t{5});
-    check_text(said(traffic), std::string("before 40\nBUS (can) 1 of 2\n  A counted at 30 sent 3 received 0\n"
-                                        "  B counted at 30 sent 0 received 3\n"));
-    // The tap is gone, and a take after the end does nothing.
+    CHECK(t.taken().empty());
+    check_text(said(t.samples.finish(40)), "before 40\nBUS (can) counted 2 senders 1 receivers 1 delivered yes\n"
+                                           "  A counted at 30 sent 3 received 0\n  B counted at 30 sent 0 received 3\n");
+    // The tap is gone.
     a.step(50ms, 0, 5);
-    samples.take(at(60ms));
-    samples.untap();
+    t.samples.untap();
+}
+
+TEST_CASE(the_scenario_gets_only_the_samples_of_the_agents_that_were_there_when_it_began)
+{
+    Tapped t;
+    FakeAgent a(t.hub, "A", "a1");
+    FakeAgent b(t.hub, "B", "b1");
+    t.samples.scenario_begins({"a1", ""}); // the scenario does not use B
+    a.step(10ms, 0, 1);
+    b.step(10ms, 1, 0);
+    FakeAgent again(t.hub, "A", "a2"); // started again: not the agent the scenario began with
+    again.step(20ms, 0, 1);
+    CHECK(t.taken() == (std::vector<std::string>{"0@10"}));
+}
+
+TEST_CASE(a_flood_while_nobody_looks_loses_nothing_of_the_scenario_and_of_the_count)
+{
+    // The simulation stands still at 100 ms for a long time (nobody takes samples: the scenario
+    // holds no step, a run without one never takes). B runs in real time and goes on sending; then
+    // the simulation goes on and A's samples come. Every sample of A reaches the scenario, and A
+    // is counted by its last step.
+    Tapped t;
+    FakeAgent a(t.hub, "A", "a1");
+    FakeAgent b(t.hub, "B", "b1", false);
+    t.samples.scenario_begins({"a1", ""});
+    t.now = at(90ms);
+    a.step(90ms, 0, 9);
+    t.now = at(100ms);
+    for (int i = 0; i < 200'000; ++i)
+    {
+        b.step(100ms + std::chrono::milliseconds(i), 0, 0);
+    }
+    a.step(100ms, 0, 10);
+    a.step(105ms, 0, 11);
+    t.now = at(110ms);
+    a.step(110ms, 0, 12);
+    CHECK(t.taken() == (std::vector<std::string>{"0@90", "0@100", "0@105", "0@110"}));
+    check_text(said(t.samples.finish(110)), "before 110\nBUS (can) counted 1 senders 1 receivers 0 delivered ?\n"
+                                            "  A counted at 105 sent 11 received 0\n  B real-time at - sent - received -\n");
 }
 
 TEST_CASE(a_participant_whose_samples_did_not_come_is_told_from_one_without_an_agent)
 {
-    control::Hub hub;
-    RunSamples samples({"A", "B"}, pair_plan());
-    samples.tap(hub);
-    FakeAgent a(hub, "A", "a1");
-    check_text(said(samples.finish(100)), std::string("before 100\nBUS (can) 0 of 0\n  A no-sample at - sent - received -\n"
-                                                    "  B no-control-link at - sent - received -\n"));
+    Tapped t;
+    FakeAgent a(t.hub, "A", "a1");
+    check_text(said(t.samples.finish(100)), "before 100\nBUS (can) counted 0 senders 0 receivers 0 delivered ?\n"
+                                            "  A no-sample at - sent - received -\n  B no-control-link at - sent - received -\n");
 }
 
 TEST_CASE(a_participant_that_was_started_again_is_not_counted)
 {
     // Seen by its samples.
     {
-        control::Hub hub;
-        RunSamples samples({"A", "B"}, pair_plan());
-        samples.tap(hub);
-        FakeAgent first(hub, "A", "a1");
+        Tapped t;
+        FakeAgent first(t.hub, "A", "a1");
         first.step(0ms, 0, 5);
-        samples.take(at(10ms));
-        FakeAgent second(hub, "A", "a2");
+        FakeAgent second(t.hub, "A", "a2");
+        t.now = at(20ms);
         second.step(20ms, 0, 1);
-        CHECK(said(samples.finish(100)).find("A restarted at") != std::string::npos);
+        CHECK(said(t.samples.finish(100)).find("A restarted at") != std::string::npos);
     }
-    // Seen by the hub's hello only: the samples taken are the first process's, the hello is the second's.
+    // Seen by the hub's hello only: the samples are the first process's, the hello is the second's.
     {
-        control::Hub hub;
-        RunSamples samples({"A", "B"}, pair_plan());
-        samples.tap(hub);
-        FakeAgent first(hub, "A", "a1");
+        Tapped t;
+        FakeAgent first(t.hub, "A", "a1");
         first.step(0ms, 0, 5);
-        FakeAgent second(hub, "A", "a2");
-        CHECK(said(samples.finish(100)).find("A restarted at") != std::string::npos);
+        FakeAgent second(t.hub, "A", "a2");
+        CHECK(said(t.samples.finish(100)).find("A restarted at") != std::string::npos);
     }
-}
-
-TEST_CASE(a_queue_that_nobody_takes_from_is_bounded_and_says_so)
-{
-    control::Hub hub;
-    RunSamples samples({"A", "B"}, pair_plan());
-    samples.tap(hub);
-    FakeAgent a(hub, "A", "a1");
-    FakeAgent b(hub, "B", "b1");
-    b.step(0ms, 1, 1);
-    for (std::size_t i = 0; i < RunSamples::kMaxQueued; ++i)
-    {
-        a.step(std::chrono::milliseconds(i), 0, static_cast<std::int64_t>(i));
-    }
-    const std::string full = said(samples.finish(1'000'000'000));
-    CHECK(full.find("A queue-full at") != std::string::npos);
-    CHECK(full.find("B counted at 0 sent 1 received 1") != std::string::npos);
 }

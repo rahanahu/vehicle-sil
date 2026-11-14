@@ -939,16 +939,17 @@ flowchart TD
   届く順を変えても結果が同じ。`launch.scenario_wave_*` は波形の値、終わった後の値、所見。`launch.scenario_expect_beside_*` は `ramp` と `wave` の横の `expect` の区間、手順が決まる順、機種で `expect` だけ飛ばすこと）、`^signal\.`、`launch_run.scenario`、`scenario_wave`（波形を ECU が見た時刻、刻みを変えても通る、警告と `undersampled: ok`）、`scenario_expect_beside`（横の `expect` が外れたサンプル、`expect_skipped`）、`scenario_same`（最速、等速、遅い ECU、一時停止で同じ結果。
   書き込みが効いたステップを ECU が申告する）、`scenario_failures`、`core.time_gate_model_the_guard_*`、`core.virtual_time_gate_guard_*`、`control.control_hub_tap_*`
 
-- 変えるもの: 実行の結果の `traffic`（ネットワークごとの J1939 の送受信の数。
-  tap と列と取り出しは `libs/launch/src/run_samples.cpp` の `RunSamples`、数え方は `libs/launch/src/run_traffic.cpp` の `TrafficCount`、hello のスキーマからネットワーク名と数の出力の位置を取り出すのは `traffic_schema()`、誰がどのネットワークにいるかは `traffic_plan()`（`seen_networks()` から）、取り出す所は `run_scenario.cpp` の `RunScenario::loop()` と `finish()`、`run_watch.cpp` の `RunWatch::watch()`、文と JSON は `run_format.cpp` の `traffic_text()` と `write_run_json()`）
+- 変えるもの: 実行の結果の `traffic`（ネットワークごとの J1939 の送受信の数と `delivered`。
+  tap とシナリオの列は `libs/launch/src/run_samples.cpp` の `RunSamples`、participant ごとに残す最新の数組は `libs/launch/src/run_traffic.cpp` の `TrafficLatest`、結果を作るのは `count_traffic()`、ネットワークの `senders`、`receivers`、`delivered` は `TrafficNetwork` の関数、hello のスキーマからネットワーク名と数の出力の位置を取り出すのは `traffic_schema()`、誰がどのネットワークにいるかは `traffic_plan()`（`seen_networks()` から）、終わりに読む所は `run_watch.cpp` の `RunWatch::watch()`（`RunSamples::finish()`）、文と JSON は `run_format.cpp` の `traffic_text()` と `write_run_json()`）
 
-  合わせて直すもの: [simulation-run.md](simulation-run.md) の「ネットワークの送受信（`traffic:`）」（数え方、`sent` の意味、数えない理由の表、実行ごとに変わる終わり方）と「JSON」の `traffic` の表、`run` の出力例（`launch_run.docs`、`launch_run.scenario` などが照合する `simulation-run.md`、`scenario.md`、`simulation-config.md`、`simulation-events.md`、`howto/first-ecu.md`、`howto/scenario-tests.md` のブロック）、`features` の `run-traffic`、[internals/control.md](internals/control.md) の「ランチャーが受け取るサンプル」、GUI の録り（`gui/server/tests/recordings/`）と `gui/protocol/examples/`。
-  守ること: tap の中は列に積むだけ（待たない、Hub を呼ばない）。
-  取り出す人は、先に controller の時刻を読んでから取り出す。
-  数は「終わりの時刻より前に始まった最後のステップ」の値で、それ以後のサンプルは捨てる（届いたかどうかで出力が変わらないように）。
+  合わせて直すもの: [simulation-run.md](simulation-run.md) の「ネットワークの送受信（`traffic:`）」（行の読み方、数え方、`sent` の意味、数えない理由の表、実行ごとに変わる場合）と「JSON」の `traffic` の表、`run` の出力例（`launch_run.docs`、`launch_run.scenario` などが照合する `simulation-run.md`、`scenario.md`、`simulation-config.md`、`simulation-events.md`、`howto/first-ecu.md`、`howto/scenario-tests.md` のブロック）、`features` の `run-traffic`、[internals/control.md](internals/control.md) の「ランチャーが受け取るサンプル」、GUI の録り（`gui/server/tests/recordings/`）と `gui/protocol/examples/`。
+  守ること: tap の中は、participant ごとの数組を置き換えることと、シナリオの列に積むことだけ（待たない、Hub を呼ばない）。
+  `traffic` のために列を持たない（誰も取り出さない間にあふれる状態を作らない）。
+  数は「終わりの時刻より前に始まった最後のステップ」の値で、それ以後のサンプルが届いたかどうかで出力が変わらないようにする。
   数の出力は、Agent が申告した名前（`PeerInfo::sources`）で探し、対応が当たっているものは数えない。
-  シナリオに渡すサンプルを変えない（シナリオが始まった後に tap が受け取った、始まったときの Agent のものだけ。`RunSamples::scenario_begins()`）。
-  試験は `launch.the_numbers_are_those_of_the_last_step_*`、`launch.where_the_takes_fall_*`、`launch.a_participant_that_is_not_counted_says_why`、`launch.the_samples_of_a_hub_go_to_the_count_*`（`tests/launch/test_traffic.cpp`）、`launch.the_text_for_people`、`launch.the_json_report`、`launch_run.traffic`（例の 2 つの ECU で実行ごとに同じ出力、`network_names` で分かれたバスとそろえたバス、変数を宣言しない ECU、数えない participant）、`^launch_run\.scenario`、`control_server.launcher`
+  行は割合で言わない（受けるだけの participant がいるのは正常なので）。`delivered` の `false` は、数だけで言い切れるときだけ。
+  シナリオに渡すサンプルを変えない（シナリオが始まった後に tap が受け取った、始まったときの Agent のものを全部。上限なし。`RunSamples::scenario_begins()`）。
+  試験は `launch.the_numbers_are_those_of_the_last_step_*`、`launch.when_the_samples_come_*`、`launch.only_a_few_samples_are_kept_*`、`launch.a_flood_while_nobody_looks_*`、`launch.a_network_says_whether_*`、`launch.every_network_of_the_file_*`、`launch.a_participant_that_is_not_counted_says_why`（`tests/launch/test_traffic.cpp`）、`launch.the_text_for_people`、`launch.the_json_report`、`launch_run.traffic`（例の 2 つの ECU で実行ごとに同じ出力、`network_names` で分かれたバスとそろえたバス、変数を宣言しない ECU、数えない participant、誰がいるかわからないネットワーク）、`^launch_run\.scenario`、`control_server.launcher`
 
 - 変えるもの: シナリオの実行中の Control Server（見るだけ。
   `ServerOptions::observe_only`、`libs/control_grpc/src/auth.hpp` の `Effect` と `auth.cpp` の `rpc_rules()`、断る所は `control_service.cpp` の `guarded()`、付けるのは `tools/launch/control_server.cpp`）

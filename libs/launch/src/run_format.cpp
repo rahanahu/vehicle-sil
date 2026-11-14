@@ -265,20 +265,26 @@ std::string detail::traffic_text(const RunTraffic& traffic)
         case TrafficNotCounted::RealTime: return "not counted: real time";
         case TrafficNotCounted::NoCounters: return "not counted: no J1939 counters";
         case TrafficNotCounted::Mapped: return "not counted: counters mapped by variables";
-        case TrafficNotCounted::QueueFull: return "not counted: samples dropped";
         case TrafficNotCounted::NoSample: return "not counted: no sample before the end";
         }
         return {};
     };
+    const auto participants = [](std::size_t n) { return std::to_string(n) + (n == 1 ? " participant" : " participants"); };
     std::string line;
     std::vector<std::vector<std::string>> rows{{"network", "participant", "sent", "received"}};
     for (const TrafficNetwork& network : traffic.per_network)
     {
         const std::size_t counted = network.counted();
         const std::size_t others = network.participants.size() - counted;
-        line += (line.empty() ? "" : "; ") + network.name + ": " + std::to_string(network.received()) + " of " +
-                std::to_string(counted) + " participants received" +
-                (others > 0 ? " (" + std::to_string(others) + " not counted)" : std::string{});
+        const std::string in_all = " (" + std::to_string(counted) + " counted" +
+                                   (others > 0 ? ", " + std::to_string(others) + " not counted" : std::string{}) + ")";
+        // Who sent and who received, not a share: a participant that only listens is as it should be.
+        line += (line.empty() ? "" : "; ") + network.name + ": " +
+                (network.participants.empty() ? "not counted (no participant known to be on it)"
+                 : counted == 0               ? "not counted (" + participants(others) + ")"
+                 : network.senders() == 0     ? "nothing sent" + in_all
+                                              : participants(network.senders()) + " sent, " +
+                                                    std::to_string(network.receivers()) + " received" + in_all);
         for (const TrafficParticipant& p : network.participants)
         {
             std::vector<std::string> row{network.name, p.name, p.frames_sent ? std::to_string(*p.frames_sent) : "-",
@@ -288,6 +294,10 @@ std::string detail::traffic_text(const RunTraffic& traffic)
                 row.push_back(why(p.not_counted));
             }
             rows.push_back(std::move(row));
+        }
+        if (network.participants.empty())
+        {
+            rows.push_back({network.name, "-", "-", "-", "no participant known to be on it"});
         }
     }
     // The numbers to the right.
@@ -505,7 +515,16 @@ void detail::write_run_json(vehicle_sil::detail::JsonWriter& w, std::string_view
             w.string("name", network.name);
             w.string("kind", network.kind);
             w.integer("counted", static_cast<std::int64_t>(network.counted()));
-            w.integer("received", static_cast<std::int64_t>(network.received()));
+            w.integer("senders", static_cast<std::int64_t>(network.senders()));
+            w.integer("receivers", static_cast<std::int64_t>(network.receivers()));
+            if (const std::optional<bool> delivered = network.delivered())
+            {
+                w.boolean("delivered", *delivered);
+            }
+            else
+            {
+                w.null("delivered");
+            }
             w.begin_array("participants");
             for (const TrafficParticipant& p : network.participants)
             {

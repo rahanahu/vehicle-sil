@@ -3,16 +3,13 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstddef>
 #include <utility>
 
 namespace vehicle_sil::launch::detail {
 
 RunSamples::RunSamples(std::vector<std::string> names, TrafficPlan plan) :
-  names_(std::move(names)), known_(names_.size()), count_(std::move(plan))
+  names_(std::move(names)), plan_(std::move(plan)), kept_(names_.size())
 {
-    queue_.incarnations.resize(names_.size());
-    queue_.dropped.assign(names_.size(), false);
 }
 
 RunSamples::~RunSamples()
@@ -20,36 +17,35 @@ RunSamples::~RunSamples()
     untap();
 }
 
-void RunSamples::tap(control::Hub& hub)
+void RunSamples::tap(control::Hub& hub, SimDuration step, Now now)
 {
-    {
-        const std::lock_guard lock(take_mutex_);
-        hub_ = &hub;
-    }
+    hub_ = &hub;
+    step_ = step;
+    now_ = std::move(now);
     tapped_ = true;
     hub.set_values_tap([this](const std::string& participant, const std::string& incarnation,
                               const std::shared_ptr<const control::Snapshot>& sample) {
-        const std::lock_guard lock(queue_mutex_);
-        for (std::size_t i = 0; i < names_.size(); ++i)
+        const auto name = std::find(names_.begin(), names_.end(), participant);
+        if (name == names_.end())
         {
-            if (names_[i] != participant)
-            {
-                continue;
-            }
-            std::vector<std::string>& seen = queue_.incarnations[i];
-            if (seen.empty() || seen.back() != incarnation)
-            {
-                seen.push_back(incarnation);
-            }
-            if (queue_.samples.size() >= kMaxQueued || queue_.values + sample->values.size() > kMaxQueuedValues)
-            {
-                queue_.dropped[i] = true;
-                return;
-            }
-            queue_.samples.push_back(Queued{i, seen.size(), sample});
-            queue_.values += sample->values.size();
-            ++queue_.put;
             return;
+        }
+        const auto i = static_cast<std::size_t>(name - names_.begin());
+        // Read before the lock; the hub's lock, which this runs under, orders the samples.
+        const SimTime controller = now_();
+        const std::lock_guard lock(mutex_);
+        Kept& kept = kept_[i];
+        if (kept.incarnation != incarnation)
+        {
+            // Another process: its counters began again.
+            kept.incarnation = incarnation;
+            ++kept.incarnations;
+            kept.latest.clear();
+        }
+        kept.latest.put(sample, controller, step_);
+        if (!scenario_.empty() && !scenario_[i].empty() && scenario_[i] == incarnation)
+        {
+            queue_.emplace_back(i, sample);
         }
     });
 }
@@ -63,115 +59,69 @@ void RunSamples::untap()
     }
 }
 
-void RunSamples::scenario_begins(Sink sink)
+void RunSamples::scenario_begins(std::vector<std::string> incarnations)
 {
-    const std::lock_guard lock(take_mutex_);
-    sink_ = std::move(sink);
-    const std::lock_guard queue(queue_mutex_);
-    from_ = queue_.put;
+    incarnations.resize(names_.size());
+    const std::lock_guard lock(mutex_);
+    scenario_ = std::move(incarnations);
+    queue_.clear();
 }
 
 void RunSamples::scenario_ends()
 {
-    const std::lock_guard lock(take_mutex_);
-    sink_ = {};
+    const std::lock_guard lock(mutex_);
+    scenario_.clear();
+    queue_.clear();
 }
 
-void RunSamples::take(SimTime now)
+std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> RunSamples::take()
 {
-    const std::lock_guard lock(take_mutex_);
-    take_locked(now);
-}
-
-void RunSamples::take_locked(SimTime now)
-{
-    if (finished_ || hub_ == nullptr)
-    {
-        return;
-    }
-    std::vector<Queued> batch;
-    std::uint64_t first = 0;
-    std::vector<std::size_t> fresh;   // participants of which a new process was seen
-    std::vector<std::size_t> dropped; // participants of which a sample was dropped
-    {
-        const std::lock_guard queue(queue_mutex_);
-        batch.swap(queue_.samples);
-        queue_.values = 0;
-        first = queue_.put - batch.size();
-        for (std::size_t i = 0; i < names_.size(); ++i)
-        {
-            const std::vector<std::string>& seen = queue_.incarnations[i];
-            if (seen.size() > known_[i].size())
-            {
-                known_[i].insert(known_[i].end(), seen.begin() + static_cast<std::ptrdiff_t>(known_[i].size()), seen.end());
-                fresh.push_back(i);
-            }
-            if (queue_.dropped[i])
-            {
-                queue_.dropped[i] = false;
-                dropped.push_back(i);
-            }
-        }
-    }
-    if (!fresh.empty())
-    {
-        // What the hello of the new process says. The hub cannot be asked inside the tap.
-        const std::vector<control::PeerInfo> peers = hub_->peers();
-        for (const std::size_t i : fresh)
-        {
-            const auto peer = std::find_if(peers.begin(), peers.end(),
-                                           [this, i](const control::PeerInfo& info) { return info.participant == names_[i]; });
-            if (peer != peers.end() && peer->incarnation == known_[i].back())
-            {
-                count_.hello(i, traffic_schema(*peer));
-            }
-            else
-            {
-                // The hub has the hello of a later process already: these samples are not its.
-                count_.restarted(i);
-            }
-        }
-    }
-    for (std::size_t k = 0; k < batch.size(); ++k)
-    {
-        Queued& q = batch[k];
-        if (sink_ && first + k >= from_)
-        {
-            sink_(q.participant, known_[q.participant][q.incarnation - 1], q.sample);
-        }
-        count_.sample(q.participant, q.incarnation, std::move(q.sample));
-    }
-    for (const std::size_t i : dropped)
-    {
-        count_.dropped(i);
-    }
-    count_.settle(now);
+    std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> taken;
+    const std::lock_guard lock(mutex_);
+    taken.swap(queue_);
+    return taken;
 }
 
 RunTraffic RunSamples::finish(std::int64_t end_ms)
 {
-    RunTraffic traffic;
+    const SimTime end = SimTime{std::chrono::milliseconds(end_ms)};
+    std::vector<TrafficSeen> seen(names_.size());
+    std::vector<std::string> incarnations(names_.size());
     {
-        const std::lock_guard lock(take_mutex_);
-        take_locked(SimTime{std::chrono::milliseconds(end_ms)});
-        if (hub_ != nullptr && !finished_)
+        const std::lock_guard lock(mutex_);
+        for (std::size_t i = 0; i < names_.size(); ++i)
         {
-            // Those of which no sample came: whether a control agent said hello at all, and what
-            // it has.
-            for (const control::PeerInfo& peer : hub_->peers())
+            const Kept& kept = kept_[i];
+            seen[i].restarted = kept.incarnations > 1;
+            seen[i].off_time = kept.latest.off_time();
+            seen[i].last = kept.latest.last_before(end, step_);
+            incarnations[i] = kept.incarnation;
+        }
+    }
+    if (hub_ != nullptr)
+    {
+        // What each control agent's hello says. The hub cannot be asked inside the tap.
+        for (const control::PeerInfo& peer : hub_->peers())
+        {
+            const auto name = std::find(names_.begin(), names_.end(), peer.participant);
+            if (name == names_.end())
             {
-                for (std::size_t i = 0; i < names_.size(); ++i)
-                {
-                    if (names_[i] == peer.participant && known_[i].empty())
-                    {
-                        count_.hello(i, traffic_schema(peer));
-                    }
-                }
+                continue;
+            }
+            const auto i = static_cast<std::size_t>(name - names_.begin());
+            if (incarnations[i].empty() || incarnations[i] == peer.incarnation)
+            {
+                seen[i].hello = true;
+                seen[i].schema = traffic_schema(peer);
+            }
+            else
+            {
+                // The hello is a later process's than the samples: they are not of its schema.
+                seen[i].restarted = true;
             }
         }
-        finished_ = true;
-        traffic = count_.finish(end_ms);
     }
+    RunTraffic traffic = count_traffic(plan_, seen, end_ms);
     untap();
     return traffic;
 }

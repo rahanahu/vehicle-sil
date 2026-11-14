@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -19,7 +20,6 @@ const char* traffic_not_counted_name(TrafficNotCounted why)
     case TrafficNotCounted::RealTime: return "real-time";
     case TrafficNotCounted::NoCounters: return "no-counters";
     case TrafficNotCounted::Mapped: return "mapped";
-    case TrafficNotCounted::QueueFull: return "queue-full";
     case TrafficNotCounted::NoSample: return "no-sample";
     }
     return "";
@@ -31,11 +31,43 @@ std::size_t TrafficNetwork::counted() const
         std::count_if(participants.begin(), participants.end(), [](const TrafficParticipant& p) { return p.counted(); }));
 }
 
-std::size_t TrafficNetwork::received() const
+std::size_t TrafficNetwork::senders() const
+{
+    return static_cast<std::size_t>(std::count_if(participants.begin(), participants.end(), [](const TrafficParticipant& p) {
+        return p.counted() && p.frames_sent.value_or(0) > 0;
+    }));
+}
+
+std::size_t TrafficNetwork::receivers() const
 {
     return static_cast<std::size_t>(std::count_if(participants.begin(), participants.end(), [](const TrafficParticipant& p) {
         return p.counted() && p.frames_received.value_or(0) > 0;
     }));
+}
+
+std::optional<bool> TrafficNetwork::delivered() const
+{
+    const TrafficParticipant* sender = nullptr;
+    const TrafficParticipant* receiver = nullptr;
+    const std::size_t sent = senders();
+    const std::size_t got = receivers();
+    for (const TrafficParticipant& p : participants)
+    {
+        sender = p.counted() && p.frames_sent.value_or(0) > 0 ? &p : sender;
+        receiver = p.counted() && p.frames_received.value_or(0) > 0 ? &p : receiver;
+    }
+    if (sent == 0)
+    {
+        return std::nullopt; // nobody counted, or nobody sent
+    }
+    // A participant's own frames are not in its frames_received: a receiver that is not the one
+    // sender got a frame of someone else.
+    if (got > 1 || (got == 1 && (sent > 1 || sender != receiver)))
+    {
+        return true;
+    }
+    // Nobody else that is counted received. One that is not counted may have.
+    return counted() < participants.size() ? std::nullopt : std::optional<bool>(false);
 }
 
 namespace detail {
@@ -128,66 +160,94 @@ TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& chec
     return plan;
 }
 
-TrafficCount::TrafficCount(TrafficPlan plan) : plan_(std::move(plan)), counted_(plan_.participants.size()) {}
+namespace {
 
-void TrafficCount::hello(std::size_t i, TrafficSchema schema)
+std::int64_t step_of(SimTime time, SimDuration step)
 {
-    counted_[i].hello = true;
-    counted_[i].schema = std::move(schema);
+    return to_ns(time) / step.count();
 }
 
-void TrafficCount::restarted(std::size_t i)
+bool later(const std::shared_ptr<const control::Snapshot>& a, const std::shared_ptr<const control::Snapshot>& than)
 {
-    counted_[i].restarted = true;
+    return !than || a->time > than->time || (a->time == than->time && a->sequence >= than->sequence);
 }
 
-void TrafficCount::dropped(std::size_t i)
-{
-    counted_[i].dropped = true;
-}
+} // namespace
 
-void TrafficCount::sample(std::size_t i, std::uint64_t incarnation, std::shared_ptr<const control::Snapshot> sample)
+void TrafficLatest::put(std::shared_ptr<const control::Snapshot> sample, SimTime now, SimDuration step)
 {
-    Counted& c = counted_[i];
-    if (c.incarnation != incarnation)
+    if (off_time_)
     {
-        // Another process: its counters began again, and so does the count.
-        c.restarted = c.restarted || c.incarnation != 0;
-        c.incarnation = incarnation;
-        c.settled.reset();
-        c.pending.clear();
+        return;
     }
-    if (c.restarted || c.dropped)
+    const std::int64_t running = step_of(now, step);
+    // The controller's steps before the one that runs are complete: of their samples the last stays.
+    std::size_t done = 0;
+    while (done < ahead_.size() && ahead_[done].first < running)
     {
-        return; // not counted whatever comes: nothing is kept
-    }
-    c.pending.push_back(std::move(sample));
-}
-
-void TrafficCount::settle(SimTime now)
-{
-    for (Counted& c : counted_)
-    {
-        // In the order taken, which is the order of the steps: the last one before `now` stays.
-        while (!c.pending.empty() && c.pending.front()->time < now)
+        if (later(ahead_[done].second, settled_))
         {
-            c.settled = std::move(c.pending.front());
-            c.pending.pop_front();
+            settled_ = std::move(ahead_[done].second);
         }
-        if (c.pending.size() > kMaxPending)
+        ++done;
+    }
+    ahead_.erase(ahead_.begin(), ahead_.begin() + static_cast<std::ptrdiff_t>(done));
+    const std::int64_t at = step_of(sample->time, step);
+    if (at < running)
+    {
+        if (later(sample, settled_))
         {
-            // So far ahead of the controller: not a participant whose steps the run's time orders.
-            c.dropped = true;
-            c.pending.clear();
+            settled_ = std::move(sample);
         }
+        return;
+    }
+    const auto place = std::find_if(ahead_.begin(), ahead_.end(), [at](const auto& kept) { return kept.first >= at; });
+    if (place != ahead_.end() && place->first == at)
+    {
+        if (later(sample, place->second))
+        {
+            place->second = std::move(sample);
+        }
+        return;
+    }
+    ahead_.insert(place, {at, std::move(sample)});
+    if (ahead_.size() > kMaxAhead)
+    {
+        off_time_ = true;
+        ahead_.clear();
+        settled_.reset();
     }
 }
 
-TrafficParticipant TrafficCount::row(std::size_t i, const std::string& network) const
+void TrafficLatest::clear()
 {
-    const Counted& c = counted_[i];
+    settled_.reset();
+    ahead_.clear();
+    off_time_ = false;
+}
+
+std::shared_ptr<const control::Snapshot> TrafficLatest::last_before(SimTime end, SimDuration step) const
+{
+    std::shared_ptr<const control::Snapshot> last = settled_ && settled_->time < end ? settled_ : nullptr;
+    // Whole steps of the controller only: of a step that `end` is inside (it never is), an
+    // earlier sample than the one kept may have been the answer.
+    const std::int64_t ending = step_of(end, step);
+    for (const auto& [at, sample] : ahead_)
+    {
+        if (at < ending && sample->time < end && later(sample, last))
+        {
+            last = sample;
+        }
+    }
+    return last;
+}
+
+namespace {
+
+TrafficParticipant row(const std::string& name, const TrafficSeen& c, const std::string& network)
+{
     TrafficParticipant out;
-    out.name = plan_.participants[i].name;
+    out.name = name;
     if (c.hello)
     {
         out.virtual_time = c.schema.virtual_time;
@@ -195,42 +255,37 @@ TrafficParticipant TrafficCount::row(std::size_t i, const std::string& network) 
     const auto columns = std::find_if(c.schema.counters.begin(), c.schema.counters.end(),
                                       [&network](const TrafficColumns& n) { return n.network == network; });
     const bool has = columns != c.schema.counters.end() && columns->complete();
-    const std::optional<std::int64_t> sent = has && c.settled ? counter(*c.settled, columns->sent) : std::nullopt;
-    const std::optional<std::int64_t> received = has && c.settled ? counter(*c.settled, columns->received) : std::nullopt;
+    const std::optional<std::int64_t> sent = has && c.last ? counter(*c.last, columns->sent) : std::nullopt;
+    const std::optional<std::int64_t> received = has && c.last ? counter(*c.last, columns->received) : std::nullopt;
     out.not_counted = c.restarted                              ? TrafficNotCounted::Restarted
                       : !c.hello                               ? TrafficNotCounted::NoControlLink
-                      : !c.schema.virtual_time                 ? TrafficNotCounted::RealTime
+                      : !c.schema.virtual_time || c.off_time   ? TrafficNotCounted::RealTime
                       : !has                                   ? TrafficNotCounted::NoCounters
                       : columns->mapped                        ? TrafficNotCounted::Mapped
-                      : c.dropped                              ? TrafficNotCounted::QueueFull
-                      : !c.settled || !sent || !received       ? TrafficNotCounted::NoSample
+                      : !c.last || !sent || !received          ? TrafficNotCounted::NoSample
                                                                : TrafficNotCounted::None;
     if (out.counted())
     {
-        out.at = c.settled->time;
+        out.at = c.last->time;
         out.frames_sent = sent;
         out.frames_received = received;
     }
     return out;
 }
 
-RunTraffic TrafficCount::finish(std::int64_t end_ms)
+} // namespace
+
+RunTraffic count_traffic(const TrafficPlan& plan, const std::vector<TrafficSeen>& seen, std::int64_t end_ms)
 {
-    settle(SimTime{std::chrono::milliseconds(end_ms)});
-    for (Counted& c : counted_)
-    {
-        // Of steps from the end on: they came, or did not, before the run was over.
-        c.pending.clear();
-    }
     RunTraffic out;
     out.before_ms = end_ms;
-    for (const TrafficPlan::Network& network : plan_.buses)
+    for (const TrafficPlan::Network& network : plan.buses)
     {
         TrafficNetwork counted{network.name, network.kind, {}};
-        for (std::size_t i = 0; i < plan_.participants.size(); ++i)
+        for (std::size_t i = 0; i < plan.participants.size(); ++i)
         {
-            const TrafficPlan::Participant& p = plan_.participants[i];
-            const Counted& c = counted_[i];
+            const TrafficPlan::Participant& p = plan.participants[i];
+            const TrafficSeen& c = seen[i];
             // --describe says where it is; without it, the counters its agent has.
             const bool on = p.in_run &&
                             (p.described ? std::find(p.on.begin(), p.on.end(), network.name) != p.on.end()
@@ -240,13 +295,11 @@ RunTraffic TrafficCount::finish(std::int64_t end_ms)
                                                                   }));
             if (on)
             {
-                counted.participants.push_back(row(i, network.name));
+                counted.participants.push_back(row(p.name, c, network.name));
             }
         }
-        if (!counted.participants.empty())
-        {
-            out.per_network.push_back(std::move(counted));
-        }
+        // Also one that nobody is known to be on: it is in the file, and frames may go over it.
+        out.per_network.push_back(std::move(counted));
     }
     return out;
 }

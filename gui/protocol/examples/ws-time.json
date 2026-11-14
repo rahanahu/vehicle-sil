@@ -1326,7 +1326,9 @@
                 "name": "J1939_CAN",
                 "kind": "can",
                 "counted": 2,
-                "received": 1,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
                 "participants": [
                   {
                     "name": "Engine",
@@ -2084,7 +2086,9 @@
                 "name": "J1939_CAN",
                 "kind": "can",
                 "counted": 2,
-                "received": 1,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
                 "participants": [
                   {
                     "name": "Engine",

@@ -663,7 +663,7 @@ TEST_CASE(the_text_for_people)
                "Deaf         no        killed\n"
                "Tool         no        not started\n"
                "\n"
-               "traffic: J1939_CAN: 1 of 1 participants received (1 not counted) (steps before 1000 ms)\n"
+               "traffic: J1939_CAN: 1 participant sent, 1 received (1 counted, 1 not counted) (steps before 1000 ms)\n"
                "\n"
                "network    participant  sent  received\n"
                "J1939_CAN  Engine         10         1\n"
@@ -835,7 +835,9 @@ TEST_CASE(the_json_report)
                "        \"name\": \"J1939_CAN\",\n"
                "        \"kind\": \"can\",\n"
                "        \"counted\": 1,\n"
-               "        \"received\": 0,\n"
+               "        \"senders\": 1,\n"
+               "        \"receivers\": 0,\n"
+               "        \"delivered\": null,\n"
                "        \"participants\": [\n"
                "          {\n"
                "            \"name\": \"Engine\",\n"
@@ -913,9 +915,23 @@ TEST_CASE(the_json_report)
                    traffic_not_counted_name(TrafficNotCounted::RealTime) + "," +
                    traffic_not_counted_name(TrafficNotCounted::NoCounters) + "," +
                    traffic_not_counted_name(TrafficNotCounted::Mapped) + "," +
-                   traffic_not_counted_name(TrafficNotCounted::QueueFull) + "," +
                    traffic_not_counted_name(TrafficNotCounted::NoSample),
-               ",no-control-link,restarted,real-time,no-counters,mapped,queue-full,no-sample");
+               ",no-control-link,restarted,real-time,no-counters,mapped,no-sample");
+    // What a machine reads of a network: true, false, and "cannot be said".
+    RunOutcome heard = passed_run();
+    const auto counted = [](const char* name, std::int64_t sent, std::int64_t received) {
+        return TrafficParticipant{name, TrafficNotCounted::None, true, SimTime{} + std::chrono::milliseconds(990), sent, received};
+    };
+    heard.traffic = RunTraffic{1000,
+                               {TrafficNetwork{"A", "can", {counted("Engine", 5, 0), counted("Brake", 0, 5)}},
+                                TrafficNetwork{"B", "can", {counted("Engine", 5, 0)}}, TrafficNetwork{"C", "lin", {}}}};
+    const std::string networks = format_run_json(report_of(heard));
+    CHECK(networks.find("        \"counted\": 2,\n        \"senders\": 1,\n        \"receivers\": 1,\n        \"delivered\": true,\n") !=
+          std::string::npos);
+    CHECK(networks.find("        \"counted\": 1,\n        \"senders\": 1,\n        \"receivers\": 0,\n        \"delivered\": false,\n") !=
+          std::string::npos);
+    CHECK(networks.find("        \"name\": \"C\",\n        \"kind\": \"lin\",\n        \"counted\": 0,\n        \"senders\": 0,\n"
+                        "        \"receivers\": 0,\n        \"delivered\": null,\n        \"participants\": []\n") != std::string::npos);
     // A speed and how it went.
     const std::string late = format_run_json(report_of(late_run()));
     CHECK(late.find("  \"timing\": {\n    \"speed\": 1,\n    \"time_step_ms\": 10,\n    \"ecu_step_ms\": 10,\n"

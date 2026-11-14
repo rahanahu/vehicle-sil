@@ -188,14 +188,13 @@ enum class TrafficNotCounted
     None,          ///< counted
     NoControlLink, ///< no control agent of it said hello: nothing came from it
     Restarted,     ///< more than one process ran under its name: its counters began again
-    RealTime,      ///< it does not run in virtual time: its samples have no place in the run's time
+    RealTime,      ///< it does not run in virtual time (or its samples are far ahead of the run's time)
     NoCounters,    ///< its control agent has no J1939 counters for the network (another use of it)
     Mapped,        ///< the entry's `variables` map the counters: their values are not the executable's
-    QueueFull,     ///< the launcher could not keep up with its samples and dropped some
     NoSample,      ///< no sample of a step before the end came
 };
-/// "no-control-link", "restarted", "real-time", "no-counters", "mapped", "queue-full",
-/// "no-sample" (the result's "not_counted"); None: "".
+/// "no-control-link", "restarted", "real-time", "no-counters", "mapped", "no-sample" (the
+/// result's "not_counted"); None: "".
 [[nodiscard]] const char* traffic_not_counted_name(TrafficNotCounted why);
 
 /// One participant on one network: the J1939 frames it had sent and received there, as its last
@@ -220,16 +219,24 @@ struct TrafficNetwork
 {
     std::string name;
     std::string kind; ///< "can", "lin", "ethernet"
-    std::vector<TrafficParticipant> participants{}; ///< in the order of the configuration
-    /// How many of them were counted, and how many of those had received a frame.
+    std::vector<TrafficParticipant> participants{}; ///< in the order of the configuration; may be empty
+    /// How many of them were counted, and how many of those had sent and had received a frame.
     [[nodiscard]] std::size_t counted() const;
-    [[nodiscard]] std::size_t received() const;
+    [[nodiscard]] std::size_t senders() const;
+    [[nodiscard]] std::size_t receivers() const;
+    /// Whether what was sent arrived, as far as the counters say. true: a counted participant
+    /// sent, and another counted participant received (a participant's own frames are not in its
+    /// frames_received). false: a counted participant sent, every participant known to be on the
+    /// network is counted, and none but the sender itself received. Empty (cannot be said):
+    /// nobody is counted, nobody sent, or nobody else that is counted received while a
+    /// participant on the network is not counted (it may have).
+    [[nodiscard]] std::optional<bool> delivered() const;
 };
 
-/// What went over the networks of a run that started: per network of the configuration that a
-/// participant of the run is known to be on (a `describe: true` participant: what --describe
-/// says, under the simulation's names; another one: the networks its control agent has J1939
-/// counters for), each such participant's counters. A participant's numbers are those of its
+/// What went over the networks of a run that started: per network of the configuration, the
+/// participants of the run that are known to be on it (a `describe: true` participant: what
+/// --describe says, under the simulation's names; another one: the networks its control agent has
+/// J1939 counters for), each with its counters. A participant's numbers are those of its
 /// last step that began before `before_ms`: the samples of the steps from then on come or do not
 /// come before the run is over, so they are left out, and a run that ends at the same virtual
 /// time with the same steps has the same numbers.

@@ -534,11 +534,12 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "control_link",
         "seq": 16,
         "t_ms": 160,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
+        "name": "Engine",
+        "state": "connected",
+        "variables": 4
       }
     },
     {
@@ -548,7 +549,7 @@
         "event": "control_link",
         "seq": 17,
         "t_ms": 170,
-        "name": "Engine",
+        "name": "Dashboard",
         "state": "connected",
         "variables": 4
       }
@@ -560,18 +561,6 @@
         "event": "control_link",
         "seq": 18,
         "t_ms": 180,
-        "name": "Dashboard",
-        "state": "connected",
-        "variables": 4
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "control_link",
-        "seq": 19,
-        "t_ms": 190,
         "name": "Logger",
         "state": "none"
       }
@@ -581,8 +570,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 20,
-        "t_ms": 200,
+        "seq": 19,
+        "t_ms": 190,
         "phase": "running"
       }
     },
@@ -591,8 +580,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 21,
-        "t_ms": 210,
+        "seq": 20,
+        "t_ms": 200,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -602,8 +591,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 22,
-        "t_ms": 220,
+        "seq": 21,
+        "t_ms": 210,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -612,6 +601,17 @@
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 22,
+        "t_ms": 220,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -850,7 +850,9 @@
                 "name": "J1939_CAN",
                 "kind": "can",
                 "counted": 2,
-                "received": 1,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
                 "participants": [
                   {
                     "name": "Engine",
@@ -1319,7 +1321,9 @@
                 "name": "J1939_CAN",
                 "kind": "can",
                 "counted": 2,
-                "received": 1,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
                 "participants": [
                   {
                     "name": "Engine",

@@ -73,13 +73,12 @@ void RunScenario::note_step(const ScenarioStepRun& step)
     out_.event([&step](EventStream& e) { e.scenario_step(step); });
 }
 
-void RunScenario::sample(std::size_t participant, const std::string& incarnation,
-                         const std::shared_ptr<const control::Snapshot>& sample)
+void RunScenario::drain()
 {
-    // Only of the control agents that were there when the scenario began.
-    if (const std::optional<std::size_t>& place = places_[participant]; place && incarnations_[*place] == incarnation)
+    for (auto& [participant, sample] : samples_.take())
     {
-        engine_->sample(*place, sample);
+        // RunSamples gives only the samples of the control agents begin() named.
+        engine_->sample(*places_[participant], std::move(sample));
     }
 }
 
@@ -88,7 +87,8 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     const std::vector<control::PeerInfo> peers = control_.hub().peers();
     const std::vector<control_silkit::LinkInfo> links = transport.links();
     std::vector<EnginePeer> found(ctx_.scenario->participants.size());
-    incarnations_.assign(found.size(), std::string{});
+    // Per participant of the configuration: the control agent whose samples the scenario gets.
+    std::vector<std::string> incarnations(places_.size());
     {
         for (std::size_t i = 0; i < found.size(); ++i)
         {
@@ -103,7 +103,13 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
             {
                 found[i].connected = true;
                 found[i].schema = peer->schema;
-                incarnations_[i] = peer->incarnation;
+                for (std::size_t place = 0; place < places_.size(); ++place)
+                {
+                    if (places_[place] == std::optional<std::size_t>(i))
+                    {
+                        incarnations[place] = peer->incarnation;
+                    }
+                }
             }
         }
     }
@@ -112,10 +118,8 @@ void RunScenario::begin(control_silkit::HubTransport& transport, const std::func
     engine_ = std::make_unique<ScenarioEngine>(*ctx_.scenario, step_,
                                                         *port_,
                                                         [this](const ScenarioStepRun& step) { note_step(step); });
-    // From here on the scenario gets the samples: none that was in the queue before (of a
-    // participant that does not wait for the start).
-    samples_.scenario_begins([this](std::size_t participant, const std::string& incarnation,
-                                    const std::shared_ptr<const control::Snapshot>& taken) { sample(participant, incarnation, taken); });
+    // From here on the scenario gets the samples of these agents, and none that came before.
+    samples_.scenario_begins(std::move(incarnations));
     engine_->begin(found);
     port_->give_up = [this] { return quit_.load(); };
 }
@@ -150,7 +154,7 @@ void RunScenario::loop(SimulationController& controller)
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
-            samples_.take(*p);
+            drain();
             if (engine_->tick(*p))
             {
                 // Over: the guard stays, so that the simulation stands at this step until the
@@ -206,9 +210,8 @@ void RunScenario::finish(SimulationController& controller, const WatchResult& wa
         if (stoppedAt)
         {
             // The controller's last step: the samples of the steps before it are all there.
-            const SimTime last = controller.time_state().now;
-            samples_.take(last);
-            engine_->stopped_at(last);
+            drain();
+            engine_->stopped_at(controller.time_state().now);
         }
         else
         {

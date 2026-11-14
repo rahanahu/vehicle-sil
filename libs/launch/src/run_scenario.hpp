@@ -42,13 +42,12 @@ namespace vehicle_sil::launch::detail {
 /// has ended.
 ///
 /// The state, who touches it, and under which lock:
-/// - The samples: RunSamples keeps them (run_samples.hpp says who takes, and under which locks).
-///   The scenario gets those the hub takes after begin() has said so
-///   (RunSamples::scenario_begins()), of the control agents that were there then, through
-///   sample(): inside RunSamples::take(), which only the scenario's thread calls while it lives
-///   (loop()), and the main thread after it has ended (finish()). finish() ends that
-///   (RunSamples::scenario_ends()) before anyone else takes.
-/// - port_, engine_, incarnations_: no lock; they go from thread to thread. begin() makes them on
+/// - The samples: RunSamples keeps them (run_samples.hpp: the hub's tap, its queue for the
+///   scenario, its lock). The scenario gets those the hub takes after begin() has said so
+///   (RunSamples::scenario_begins()), of the control agents that were there then; drain() takes
+///   them (the scenario's thread; the main thread in finish(), after that thread has ended).
+///   finish() and end() end that (RunSamples::scenario_ends()).
+/// - port_, engine_: no lock; they go from thread to thread. begin() makes them on
 ///   the start window's thread. The main thread calls start() only after
 ///   SimulationController::start() has returned, and then the window's function does not run any
 ///   more; from start() until the thread is joined they are the scenario's thread's; after the
@@ -94,8 +93,8 @@ private:
     class HubPort;
 
     void note_step(const ScenarioStepRun& step);
-    /// RunSamples' sink: a sample of the participant at `participant` of the configuration.
-    void sample(std::size_t participant, const std::string& incarnation, const std::shared_ptr<const control::Snapshot>& sample);
+    /// Gives the engine the samples that have arrived since the last call.
+    void drain();
     void loop(SimulationController& controller);
 
     const RunContext& ctx_;
@@ -106,9 +105,6 @@ private:
     /// Per participant of the configuration: its place among the scenario's participants (none:
     /// the scenario does not use it). Never written after the constructor.
     std::vector<std::optional<std::size_t>> places_;
-    /// Per scenario participant: the control agent whose samples count ("": none was there when
-    /// the scenario began). Goes from thread to thread with engine_.
-    std::vector<std::string> incarnations_;
     std::unique_ptr<HubPort> port_;
     std::unique_ptr<ScenarioEngine> engine_; ///< the window's thread, then the scenario's, then main
     std::thread thread_;

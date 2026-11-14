@@ -9,7 +9,7 @@
 //   run_participants.*   RunParticipants  the participants' processes: start, look, end
 //   run_notes.*          RunNotes         run --events: what has been written already
 //   run_samples.*        RunSamples       the hub's tap: every sample, for the scenario and the traffic
-//   run_traffic.*        TrafficCount     the result's traffic, counted from the samples
+//   run_traffic.*        TrafficLatest, count_traffic()   the result's traffic, from the samples
 //   run_scenario.*       RunScenario      run --scenario: the engine between hub, gate and result
 //   run_start.*          RunStart, RunStartWindow, StartShared   the wait, the start window, the limits
 //   run_start_limit.hpp  StartLimit       when the start is given up
@@ -26,7 +26,7 @@
 //   RunControl::expected_agents() and hub(), TimeCommands::hold_before_start(), and RunOutput.
 // - The scenario's thread (RunScenario::loop()): the scenario's engine, from RunScenario::start()
 //   until the main thread joins it, RunSamples::take(), and RunOutput.
-// - The controller's SIL Kit thread: the hub's tap (RunSamples' queue).
+// - The controller's SIL Kit thread: the hub's tap (what RunSamples keeps).
 // - Each participant's reader thread (process::Process): RunOutput::on_line().
 // - The closing thread (Runner::close_connection(), at the end of run()): destroys the hub's
 //   transport, the controller and the registry, and touches nothing else of the run. The main
@@ -39,11 +39,9 @@
 // - TimeCommands' mutex, then the event stream's, the controller's time gate's, or what
 //   RunOptions' callbacks take (on_detach, the `accepted` of a stop).
 // - RunOutput's mutex, then the event stream's (and RunOptions::write_line).
-// - RunSamples' take mutex, then the hub's or RunSamples' queue mutex (and what the scenario's
-//   engine does with a sample: no lock).
-// - The hub's mutex, then RunSamples' queue mutex (the tap).
-// - StartLimit's mutex, StartShared::found_mutex, RunSamples' queue mutex, RunScenario's error
-//   mutex: nothing under them.
+// - The hub's mutex, then RunSamples' mutex (the tap).
+// - StartLimit's mutex, StartShared::found_mutex, RunSamples' mutex, RunScenario's error mutex:
+//   nothing under them.
 //
 // A control server (RunOptions::serve_control) has threads of its own. Of the run they touch the
 // hub (thread safe; its subscriptions are bounded and never make the simulation wait) and the
@@ -185,8 +183,8 @@ public:
             TimeCommands& commands;
             ~Detach() { commands.detach(); }
         } const detach{ctx_.commands};
-        // The hub's tap and the scenario's thread end with the run, before the controller and the
-        // transport go (declared after them); the thread first, which takes the samples.
+        // The hub's tap and the scenario's thread end with the run, before the controller (whose
+        // time the tap reads) and the transport go (declared after them); the thread first.
         struct EndSamples
         {
             Runner& runner;
@@ -293,7 +291,8 @@ public:
             ctx_.commands.attach(*controller, outcome_.timing.time_step_ms, outcome_.timing.speed);
             // Every sample the hub takes, in every run: for the traffic of the result, and for
             // the scenario.
-            samples_.tap(control_.hub());
+            samples_.tap(control_.hub(), std::chrono::milliseconds(outcome_.timing.time_step_ms),
+                         [c = controller.get()] { return c->runtime().now(); });
             if (ctx_.scenario != nullptr)
             {
                 // The scenario decides at every step of the controller, from the one at 0 on.

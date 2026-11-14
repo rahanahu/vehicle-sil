@@ -2579,6 +2579,11 @@ void events_findings(const Options& o)
         const std::string value = text.substr(at + head.size(), to - at - head.size());
         require(value == "190" || value == "200", "the simulation got to the step of the failure (200 ms) or the one before, not to " + value);
         text.replace(at + head.size(), value.size(), "<sim_ms>");
+        // The traffic is of the steps before that step (no network here: nothing else in it).
+        const std::string before = "\"traffic\":{\"before_ms\":" + value + ",";
+        const auto traffic = text.find(before);
+        require(traffic != std::string::npos, "the result's traffic is of the steps before sim_ms:\n" + text);
+        text.replace(traffic, before.size(), "\"traffic\":{\"before_ms\":<sim_ms>,");
         return without_timing(text);
     };
     expect_text(comparable(last.substr(last.find(",\"result\":") + 10)),
@@ -5482,7 +5487,7 @@ void traffic(const Options& o)
     const Captured first = launch(o, {"run", "simulation.yaml"}, example);
     expect_code(first, 0, "run simulation.yaml");
     expect_text(traffic_part(first.standard_output),
-                "traffic: J1939_CAN: 1 of 2 participants received (steps before 1000 ms)\n"
+                "traffic: J1939_CAN: 1 participant sent, 1 received (2 counted) (steps before 1000 ms)\n"
                 "\n"
                 "network    participant  sent  received\n"
                 "J1939_CAN  Engine         11         0\n"
@@ -5514,8 +5519,8 @@ void traffic(const Options& o)
     const Captured apart = launch(o, {"run", "apart.yaml"}, example);
     expect_code(apart, 0, "run apart.yaml");
     expect_text(traffic_part(apart.standard_output),
-                "traffic: J1939_CAN: 0 of 1 participants received; VehicleCAN: 0 of 1 participants received (steps before "
-                "1000 ms)\n"
+                "traffic: J1939_CAN: 1 participant sent, 0 received (1 counted); VehicleCAN: nothing sent (1 counted) (steps "
+                "before 1000 ms)\n"
                 "\n"
                 "network     participant  sent  received\n"
                 "J1939_CAN   Engine         11         0\n"
@@ -5528,12 +5533,28 @@ void traffic(const Options& o)
     const Captured renamed = launch(o, {"run", "renamed.yaml"}, example);
     expect_code(renamed, 0, "run renamed.yaml");
     expect_text(traffic_part(renamed.standard_output),
-                "traffic: VehicleCAN: 1 of 2 participants received (steps before 1000 ms)\n"
+                "traffic: J1939_CAN: not counted (no participant known to be on it); VehicleCAN: 1 participant sent, 1 received "
+                "(2 counted) (steps before 1000 ms)\n"
                 "\n"
                 "network     participant  sent  received\n"
+                "J1939_CAN   -               -         -  no participant known to be on it\n"
                 "VehicleCAN  Engine         11         0\n"
                 "VehicleCAN  Dashboard       0        11\n",
                 "the traffic of a bus that both call by another name");
+
+    // What a machine reads: delivered where the listener heard, not where the buses are apart.
+    const auto delivered = [&](const char* file) {
+        const std::string out = launch(o, {"run", file, "--json"}, example).standard_output;
+        std::string all;
+        for (auto at = out.find("        \"delivered\": "); at != std::string::npos; at = out.find("        \"delivered\": ", at + 1))
+        {
+            all += out.substr(at + 21, out.find(',', at) - at - 21) + " ";
+        }
+        return all;
+    };
+    expect_text(delivered("simulation.yaml"), "true ", "delivered in the example");
+    expect_text(delivered("apart.yaml"), "false null ", "delivered on two buses that are one in the code");
+    expect_text(delivered("renamed.yaml"), "null true ", "delivered on a bus that both call by another name");
 
     // An ECU without a network.
     const fs::path alone = scenario_dir(o, "vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks: []\nparticipants:\n"
@@ -5573,14 +5594,16 @@ void traffic(const Options& o)
     expect_code(mix, 0, "run with ECUs that are counted and not counted");
     // Four of them send a frame in each of the 19 steps before the one at 190 ms.
     expect_text(traffic_part(mix.standard_output),
-                "traffic: BUS: 3 of 3 participants received (2 not counted) (steps before 200 ms)\n"
+                "traffic: BUS: 3 participants sent, 3 received (3 counted, 2 not counted); Empty: not counted (no participant "
+                "known to be on it) (steps before 200 ms)\n"
                 "\n"
                 "network  participant  sent  received\n"
                 "BUS      A              19        76\n"
                 "BUS      B              19        76\n"
                 "BUS      Raw             -         -  not counted: no J1939 counters\n"
                 "BUS      Door            -         -  not counted: counters mapped by variables\n"
-                "BUS      Tool           19        76\n",
+                "BUS      Tool           19        76\n"
+                "Empty    -               -         -  no participant known to be on it\n",
                 "the traffic of ECUs that are counted and not counted");
     for (int again = 0; again < 3; ++again)
     {
@@ -5606,16 +5629,43 @@ void traffic(const Options& o)
                 "        \"name\": \"BUS\",\n"
                 "        \"kind\": \"can\",\n"
                 "        \"counted\": 3,\n"
-                "        \"received\": 3,\n"
+                "        \"senders\": 3,\n"
+                "        \"receivers\": 3,\n"
+                "        \"delivered\": true,\n"
                 "        \"participants\": [\n" +
                     member("A", "", counted) + ",\n" + member("B", "", counted) + ",\n" + member("Raw", "no-counters", not_counted) +
                     ",\n" + member("Door", "mapped", not_counted) + ",\n" + member("Tool", "", counted) +
                     "\n"
                     "        ]\n"
+                    "      },\n"
+                    "      {\n"
+                    "        \"name\": \"Empty\",\n"
+                    "        \"kind\": \"can\",\n"
+                    "        \"counted\": 0,\n"
+                    "        \"senders\": 0,\n"
+                    "        \"receivers\": 0,\n"
+                    "        \"delivered\": null,\n"
+                    "        \"participants\": []\n"
                     "      }\n"
                     "    ]\n"
                     "  },\n",
                 "the JSON's traffic");
+
+    // A network that the participants use, none of them known to the launcher (no --describe, no
+    // control agent): it is in the result, not counted. "no network in use" is for a file without one.
+    write_file(mixed / "test-ecu-no-control", "");
+    write_file(mixed / "unknown.yaml", "vehicle_sil_simulation: 1\nstop_at_ms: 100\nnetworks:\n  - { name: BUS, kind: can }\n"
+                                       "participants:\n  - name: Door\n    command: [" + ecu(o) + undescribed +
+                                       "  - name: Tool\n    command: [" + ecu(o) + undescribed);
+    const Captured unknown = launch(o, {"run", "unknown.yaml"}, mixed);
+    fs::remove(mixed / "test-ecu-no-control");
+    expect_code(unknown, 0, "run with participants the launcher knows nothing of");
+    expect_text(traffic_part(unknown.standard_output),
+                "traffic: BUS: not counted (no participant known to be on it) (steps before 100 ms)\n"
+                "\n"
+                "network  participant  sent  received\n"
+                "BUS      -               -         -  no participant known to be on it\n",
+                "the traffic of a network with participants the launcher knows nothing of");
 
     // A run that did not start has none.
     const fs::path missing = scenario_dir(o, "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n"

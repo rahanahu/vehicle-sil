@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
-// Every sample of the ECUs' control agents that the run's hub takes: the hub's one tap, the queue
-// behind it, and who gets what is taken from the queue (the scenario's engine, the count of the
-// traffic). Internal.
+// Every sample of the ECUs' control agents that the run's hub takes: the hub's one tap, what it
+// keeps for the scenario (a queue) and for the traffic of the result (the latest samples of each
+// participant). Internal.
 #pragma once
 
 #include "run_traffic.hpp"
@@ -16,50 +16,40 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil::launch::detail {
 
-/// The samples of a run. The hub has one tap, and it is this one, in every run: it puts each
-/// sample of a participant of the configuration into a queue. take() empties the queue and gives
-/// what was in it, in the order taken, to the scenario (if one has begun) and to the count of the
-/// traffic.
+/// The samples of a run. The hub has one tap, and it is this one, in every run. For each sample
+/// of a participant of the configuration it does two things:
+/// - For the traffic: it puts the sample among the participant's latest ones (TrafficLatest),
+///   which are a few however long the run lasts and however long nobody looks. No queue, so
+///   nothing can fill up, and nobody has to take anything while the run lasts. finish() reads
+///   them once, at the end.
+/// - For the scenario: from scenario_begins() to scenario_ends(), it appends the samples of the
+///   control agents named then to a queue, which take() empties. As before the traffic was
+///   counted: only the scenario's participants, every sample of them, without a limit (the
+///   scenario holds the controller's step while it works, so the queue holds a step's samples).
 ///
-/// Who takes: with a scenario, the scenario's thread at every step of the controller it holds
-/// (RunScenario::loop()), and the main thread once that thread has ended (RunScenario::finish());
-/// without one, the main thread at every look of the watch (RunWatch::watch()). At the end the
-/// main thread takes once more (finish()). Whoever takes reads the controller's time first and
-/// passes it: the samples of every step before that time are in the queue by then.
-///
-/// The state, who touches it, and under which lock:
-/// - queue_ (queue_mutex_): the hub's tap appends, on the controller's SIL Kit thread and inside
-///   the hub's call (under the hub's lock); take() swaps it out; scenario_begins() reads how many
-///   have been put. Nothing is taken and nothing is called while it is held: the tap only puts
-///   (it does not wait, does not call the hub, and allocates only where the queue or a
-///   participant's list of incarnations grows).
-/// - sink_, from_, known_, count_, finished_, hub_ (take_mutex_): whoever takes, one at a time. Under it
-///   take() takes queue_mutex_ (for the swap only), calls the hub (peers(), when a participant's
-///   new process is seen first; the hub's lock), the scenario's sink and the count. Neither the
-///   hub nor the scenario calls back into this class from there, and take_mutex_ is never taken
-///   inside the hub's call of the tap.
-/// - tapped_: the main thread only.
-/// The order of the locks is so: take_mutex_, then the hub's or queue_mutex_; the hub's, then
-/// queue_mutex_ (the tap).
+/// The state, who touches it, and under which lock (mutex_, the only one):
+/// - kept_, scenario_, queue_: the hub's tap, on the controller's SIL Kit thread and inside the
+///   hub's call (under the hub's lock); scenario_begins() (the start window's thread), take()
+///   (the scenario's thread, then the main thread), scenario_ends() and finish() (the main
+///   thread). Nothing is taken and nothing is called while it is held, but `now_` in the tap,
+///   which must only read (the controller's time is an atomic). The tap does not wait, does not
+///   call the hub, and allocates only where the scenario's queue or a participant's incarnation
+///   grows.
+/// - hub_, step_, now_: set by tap() before the hub's transport brings anything; never changed after.
+/// - tapped_, finished_: the main thread only.
+/// finish() asks the hub (peers()) without holding mutex_. The order of the locks: the hub's,
+/// then mutex_ (the tap); never the other way round.
 class RunSamples
 {
 public:
-    /// The queue holds that many samples, and that many values in them, at most (a taker that
-    /// does not come: the main thread waiting for a reader of its output while the simulation
-    /// runs on). What comes beyond is dropped, and the participant is not counted
-    /// (TrafficNotCounted::QueueFull); a scenario does not see it either. Far more than a take
-    /// finds in a run as fast as possible.
-    static constexpr std::size_t kMaxQueued = 1u << 16;
-    static constexpr std::size_t kMaxQueuedValues = 1u << 22;
-
-    /// A sample for the scenario: the participant's place in the configuration, the incarnation
-    /// of its control agent, the sample.
-    using Sink =
-        std::function<void(std::size_t participant, const std::string& incarnation, const std::shared_ptr<const control::Snapshot>& sample)>;
+    /// The controller's time: the start of its step that runs or ran last. Called inside the
+    /// tap, on the controller's SIL Kit thread: it must not wait.
+    using Now = std::function<SimTime()>;
 
     /// `names`: the participants in the order of the configuration (the places the samples are
     /// given under). `plan`: who is counted where.
@@ -68,58 +58,45 @@ public:
     RunSamples(const RunSamples&) = delete;
     RunSamples& operator=(const RunSamples&) = delete;
 
-    /// Sets the tap on `hub`. Main thread, in the setup (before the hub's transport brings
-    /// anything). The hub must live until untap().
-    void tap(control::Hub& hub);
+    /// Sets the tap on `hub`. `step`: the controller's step (> 0). Main thread, in the setup
+    /// (before the hub's transport brings anything). The hub and what `now` reads must live
+    /// until untap().
+    void tap(control::Hub& hub, SimDuration step, Now now);
     /// Takes the tap off (once it returns, the tap is not running and is not called again). Main
-    /// thread; before the hub's transport goes. Does nothing without a tap.
+    /// thread; before the hub's transport and the controller go. Does nothing without a tap.
     void untap();
 
-    /// From here on the samples go to `sink` too: those the tap puts after this call (what is in
-    /// the queue already is for the count only). The sink is called inside take(), on the thread
-    /// that takes.
-    void scenario_begins(Sink sink);
-    /// No sample goes to the scenario's sink any more (it is not running once this returns).
+    /// From here on the scenario gets samples: those the tap takes after this call, of the
+    /// control agents `incarnations` names (per participant of the configuration; "": none of it).
+    void scenario_begins(std::vector<std::string> incarnations);
+    /// The scenario gets no sample any more; what it has not taken is dropped.
     void scenario_ends();
+    /// The scenario's samples since the last call, in the order taken: the participant's place
+    /// in the configuration, the sample.
+    [[nodiscard]] std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> take();
 
-    /// Takes what has arrived and gives it on. `now`: the controller's time (the start of its
-    /// step that runs or ran last), read before this call.
-    void take(SimTime now);
-    /// The last take, with the run's end (RunTiming::sim_ms), then the tap goes: the traffic.
-    /// Main thread. A take after it does nothing.
+    /// The run ended at `end_ms` (RunTiming::sim_ms): the traffic, from each participant's last
+    /// step that began before it; then the tap goes. Main thread, once.
     [[nodiscard]] RunTraffic finish(std::int64_t end_ms);
 
 private:
-    struct Queued
+    struct Kept
     {
-        std::size_t participant;
-        std::uint64_t incarnation; ///< counted from 1 per participant
-        std::shared_ptr<const control::Snapshot> sample;
+        TrafficLatest latest;
+        std::string incarnation;        ///< of the samples in `latest`; "": none came
+        std::uint64_t incarnations = 0; ///< how many control agents' samples came
     };
-    struct Queue
-    {
-        std::vector<Queued> samples;
-        std::size_t values = 0; ///< the values in `samples`
-        std::uint64_t put = 0;  ///< how many samples have been put so far
-        /// Per participant: the incarnations seen, in the order seen (a sample's number is its
-        /// place here, from 1), and whether a sample of it was dropped since the last take.
-        std::vector<std::vector<std::string>> incarnations;
-        std::vector<bool> dropped;
-    };
-
-    void take_locked(SimTime now);
 
     const std::vector<std::string> names_;
-    std::mutex queue_mutex_;
-    Queue queue_; ///< guarded by queue_mutex_
-    std::mutex take_mutex_;
-    // Guarded by take_mutex_:
-    Sink sink_;
-    std::uint64_t from_ = 0;  ///< the scenario gets the samples put from this one on
-    std::vector<std::vector<std::string>> known_; ///< the incarnations take() has seen
-    TrafficCount count_;
-    bool finished_ = false;
-    control::Hub* hub_ = nullptr; ///< set by tap(), before anyone takes; never changed after
+    const TrafficPlan plan_;
+    control::Hub* hub_ = nullptr;
+    SimDuration step_{1};
+    Now now_;
+    std::mutex mutex_;
+    // Guarded by mutex_:
+    std::vector<Kept> kept_;
+    std::vector<std::string> scenario_; ///< per participant: the agent whose samples the scenario gets; empty: no scenario runs
+    std::vector<std::pair<std::size_t, std::shared_ptr<const control::Snapshot>>> queue_;
     // The main thread's:
     bool tapped_ = false;
 };

@@ -22,9 +22,8 @@ namespace vehicle_sil::launch::detail {
 /// a simulation that stands still (StandStill). What it reads of
 /// other threads is atomic (RunScenario::over(), the hold's times of RunStart) or the
 /// controller's. It ends the time commands (TimeCommands::detach()) once the simulation is over.
-/// It takes the run's samples (RunSamples, which keeps itself): at every look in a run without a
-/// scenario (with one, the scenario's thread takes them), and once more when the simulation is
-/// over, for the traffic of the result.
+/// When the simulation is over, it asks the run's samples (RunSamples, which keeps itself) for
+/// the traffic of the result.
 class RunWatch
 {
 public:

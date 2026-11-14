@@ -665,20 +665,9 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "time",
         "seq": 24,
         "t_ms": 240,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "time",
-        "seq": 25,
-        "t_ms": 250,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -687,6 +676,17 @@
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 25,
+        "t_ms": 250,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -1009,7 +1009,9 @@
                 "name": "J1939_CAN",
                 "kind": "can",
                 "counted": 2,
-                "received": 1,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
                 "participants": [
                   {
                     "name": "Engine",
@@ -1873,7 +1875,9 @@
                 "name": "J1939_CAN",
                 "kind": "can",
                 "counted": 2,
-                "received": 1,
+                "senders": 1,
+                "receivers": 1,
+                "delivered": true,
                 "participants": [
                   {
                     "name": "Engine",

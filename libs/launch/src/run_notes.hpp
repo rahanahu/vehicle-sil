@@ -31,15 +31,9 @@ enum class TimeNote
 
 /// The controller's virtual time: the start of its step that runs or ran last (the gate's
 /// time, or the runtime's if that has gone on since the gate's numbers stopped).
-[[nodiscard]] inline SimTime controller_time(SimulationController& controller, const TimeState& s)
-{
-    return std::max(s.now, controller.runtime().now());
-}
-
-/// controller_time() in milliseconds.
 [[nodiscard]] inline std::int64_t sim_ms(SimulationController& controller, const TimeState& s)
 {
-    const SimTime t = controller_time(controller, s);
+    const SimTime t = std::max(s.now, controller.runtime().now());
     return std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()).count();
 }
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
-// What went over the networks of a run (RunTraffic): the count, from the samples of the ECUs'
-// control agents as they come. It eats what it is given and touches neither SIL Kit nor the hub
-// (RunSamples gives it the samples and what each agent's hello says). Internal.
+// What went over the networks of a run (RunTraffic): which sample of each ECU's control agent
+// counts, what a hello says of the counters, and the result. It eats what it is given and touches
+// neither SIL Kit nor the hub (RunSamples gives it the samples and the hellos). Internal.
 #pragma once
 
 #include "vehicle_sil/control/hub.hpp"
@@ -13,10 +13,10 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace vehicle_sil::launch::detail {
@@ -70,58 +70,61 @@ struct TrafficPlan
 /// The plan of a checked configuration (`check.participants` in the order of config.participants).
 [[nodiscard]] TrafficPlan traffic_plan(const SimulationConfig& config, const CheckReport& check);
 
-/// Counts. Per participant it keeps the last sample that is settled (of a step that began before
-/// the controller's time when it was taken) and the samples that are not yet (pending).
+/// The latest samples of one participant: enough of them to say, once the run's end E is known,
+/// which was the sample of its last step that began before E. The hub's tap puts every sample
+/// here and keeps no queue for the count.
 ///
-/// The rule: the numbers of a participant are those of its last step that began before the run's
-/// end E. Whoever takes samples from the hub reads the controller's time N first, gives the
-/// samples (sample()), and then settles (settle(N)): every sample of a step before N has come by
-/// then (docs/internals/control.md), so what moves to "settled" does not depend on when the
-/// samples of the steps from N on arrive. At the end, finish(E) settles once more and drops what
-/// is still pending.
+/// The rule: E is the start of a step of the controller, and so is the controller's time N at any
+/// moment (N <= E). When the controller's step at N has begun, every sample of a step before N
+/// has come (docs/internals/control.md), so of those only the last one can be the answer: it is
+/// `settled`. Of the samples from N on, the answer for an end at the controller's step B is the
+/// last one before B, so one sample is kept per step of the controller (`ahead`, the last one
+/// that began in it). A participant that runs in virtual time is at most a step of the controller
+/// ahead, so `ahead` holds one or two samples; what was kept never depends on when the samples of
+/// the steps from N on arrive, nor on how long nobody looks.
 ///
-/// Threads and locks: none of its own; its owner (RunSamples) calls it from one thread at a time.
-class TrafficCount
+/// Threads and locks: none of its own (RunSamples keeps it under its mutex). put() does not wait
+/// and does not allocate.
+class TrafficLatest
 {
 public:
-    /// A participant may have that many samples pending once the samples taken are settled;
-    /// beyond, it is not counted (QueueFull). One that runs in virtual time is at most a step of
-    /// the controller ahead.
-    static constexpr std::size_t kMaxPending = 4096;
+    /// A participant whose samples are that many steps of the controller ahead of it is not on
+    /// the run's time (one that runs in real time while the simulation stands still): nothing of
+    /// it is kept from then on, and it is not counted (off_time()).
+    static constexpr std::size_t kMaxAhead = 64;
 
-    explicit TrafficCount(TrafficPlan plan);
+    TrafficLatest() { ahead_.reserve(kMaxAhead + 1); }
 
-    /// What the hello of participant `i`'s control agent says (of the one whose samples come, or
-    /// of the one that is there when none came).
-    void hello(std::size_t i, TrafficSchema schema);
-    /// More than one process ran as participant `i`.
-    void restarted(std::size_t i);
-    /// Samples of participant `i` were dropped before they got here.
-    void dropped(std::size_t i);
-    /// A sample of participant `i`, in the order taken. `incarnation` numbers its control agents
-    /// from 1; another number than the last one's is a new process.
-    void sample(std::size_t i, std::uint64_t incarnation, std::shared_ptr<const control::Snapshot> sample);
-    /// The controller's step at `now` had begun before the samples given so far were taken.
-    void settle(SimTime now);
-    /// The run ended at `end_ms`: the result. Nothing may be given after it.
-    [[nodiscard]] RunTraffic finish(std::int64_t end_ms);
+    /// A sample, as the hub takes it. `now`: the start of the controller's step that runs or ran
+    /// last; `step`: the controller's step (> 0).
+    void put(std::shared_ptr<const control::Snapshot> sample, SimTime now, SimDuration step);
+    /// Another process runs under the participant's name: what was kept is not its.
+    void clear();
+    /// The sample of the last step that began before `end` (the start of a step of the
+    /// controller, not before any `now` given); null if none came.
+    [[nodiscard]] std::shared_ptr<const control::Snapshot> last_before(SimTime end, SimDuration step) const;
+    [[nodiscard]] bool off_time() const { return off_time_; }
 
 private:
-    struct Counted
-    {
-        bool hello = false;
-        TrafficSchema schema{};
-        std::uint64_t incarnation = 0; ///< of the samples kept; 0: none came
-        bool restarted = false;
-        bool dropped = false;
-        std::shared_ptr<const control::Snapshot> settled{};
-        std::deque<std::shared_ptr<const control::Snapshot>> pending{};
-    };
-
-    [[nodiscard]] TrafficParticipant row(std::size_t i, const std::string& network) const;
-
-    TrafficPlan plan_;
-    std::vector<Counted> counted_;
+    std::shared_ptr<const control::Snapshot> settled_{};
+    /// (the number of the controller's step, the last sample that began in it), in the order of the steps.
+    std::vector<std::pair<std::int64_t, std::shared_ptr<const control::Snapshot>>> ahead_{};
+    bool off_time_ = false;
 };
+
+/// What the run knows of one participant at its end.
+struct TrafficSeen
+{
+    bool hello = false; ///< a control agent of it said hello: `schema`
+    TrafficSchema schema{};
+    bool restarted = false; ///< more than one process ran under its name
+    bool off_time = false;  ///< TrafficLatest::off_time()
+    /// The sample of its last step that began before the end; null if none came.
+    std::shared_ptr<const control::Snapshot> last{};
+};
+
+/// The result: every network of the plan with the participants known to be on it (`seen` in the
+/// order of plan.participants), each counted or with the reason why not.
+[[nodiscard]] RunTraffic count_traffic(const TrafficPlan& plan, const std::vector<TrafficSeen>& seen, std::int64_t end_ms);
 
 } // namespace vehicle_sil::launch::detail

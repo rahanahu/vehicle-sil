@@ -126,12 +126,6 @@ int RunWatch::watch(SimulationController& controller)
         notes_.note_joined(controller, outcome_);
         notes_.note_time(controller, TimeNote::Poll, outcome_);
         const TimeState time = controller.time_state();
-        if (ctx_.scenario == nullptr)
-        {
-            // With a scenario its thread takes them, at every step of the controller. The time
-            // was read before the take: the samples of the steps before it are all there.
-            samples_.take(controller_time(controller, time));
-        }
         if (!running)
         {
             // It moved again just before it stopped (a simulation that ends soon after).
