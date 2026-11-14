@@ -80,6 +80,8 @@
 //                of its time (the ECU says in which step it saw each value)
 //   scenario_disconnect  the example scenario that takes the engine off the bus (ecu.connected):
 //                the dashboard sees the speed stop and come back, at the same times at any speed
+//   scenario_each_write  the same value written by two steps of a scenario, at one time and at two
+//                times: the ECU's setter is called once for each step
 //   ethernet     the example of examples/ethernet: two ECU executables on an Ethernet network; the
 //                check shows their MAC addresses, and the example scenario passes with the same
 //                result at any speed (frames, acknowledgements, ecu.connected)
@@ -3505,6 +3507,33 @@ void scenario_same(const Options& o)
     }
 }
 
+void scenario_each_write(const Options& o)
+{
+    // "request" always reads false, and its setter counts each write: a write of the value the
+    // variable has already is not dropped on the way.
+    const std::string file = "vehicle_sil_scenario: 1\n"
+                             "name: a write each time\n"
+                             "steps:\n"
+                             "  - set: { Body.request: true }\n"
+                             "  - set: { Body.request: true }\n"
+                             "  - expect: { Body.requests: 2, Body.request: false }\n"
+                             "  - at_ms: 30\n"
+                             "    set: { Body.request: true }\n"
+                             "  - expect: { Body.requests: 3 }\n"
+                             "  - at_ms: 50\n"
+                             "    set: { Body.request: true }\n"
+                             "  - expect: { Body.requests: 4, Body.request: false }\n"
+                             "  - expect: { Body.requests: 4 }\n"
+                             "    hold_for_ms: 30\n";
+    const fs::path dir = scenario_ecus(o, "", file, "request");
+    const Captured r = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
+    expect_code(r, 0, "a scenario that writes the same value four times");
+    const std::string scenario = scenario_json(lf(r.standard_output));
+    require(contains(scenario, "\"status\": \"passed\"") && !contains(scenario, "\"status\": \"failed\""),
+            "each set reaches the setter once:\n" + scenario);
+    log("CHECK the same value written by four steps: four setter calls -> ok");
+}
+
 /// A scenario through a participant's variable map: the names and values are the map's, and a
 /// write takes effect in the same step as without a map.
 void variable_map(const Options& o)
@@ -5246,6 +5275,7 @@ int main(int argc, char** argv)
             {"realtime", realtime},
             {"scenario", scenario},
             {"scenario_disconnect", scenario_disconnect},
+            {"scenario_each_write", scenario_each_write},
             {"scenario_failures", scenario_failures},
             {"scenario_same", scenario_same},
             {"speed_change", speed_change},
