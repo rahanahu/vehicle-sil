@@ -1,5 +1,5 @@
-# vehicle_sil::can_silkit - vehicle_sil::can port on a SIL Kit CAN controller (virtual or real time),
-# and the binding of a vehicle_sil::can::Host to a ParticipantRuntime.
+# vehicle_sil::can_silkit - vehicle_sil::can port on a SIL Kit CAN controller (virtual or real time).
+# bind_host(), which steps a host from a ParticipantRuntime, is vehicle_sil::core's (named here too).
 add_library(vehicle_sil_can_silkit STATIC src/silkit_can_port.cpp)
 add_library(vehicle_sil::can_silkit ALIAS vehicle_sil_can_silkit)
 set_target_properties(vehicle_sil_can_silkit PROPERTIES EXPORT_NAME can_silkit)

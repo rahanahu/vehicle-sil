@@ -176,9 +176,8 @@ int run(const BridgeOptions& options)
     {
         log(kTag, "warning: --bus-off-restart-ms is not used: it needs init access (--bitrate)");
     }
-    log(kTag, "bridging SIL Kit network '%s' (participant '%s', %s) <-> XL '%s'; Ctrl+C to stop", options.network.c_str(),
-        options.participant.c_str(), options.registry_uri.c_str(), channel.name.c_str());
-
+    // Before the line that says "Ctrl+C to stop": from then on, a stop request stops the bridge
+    // in order (statistics, exit code 0).
     std::signal(SIGINT, on_stop_signal);
     std::signal(SIGTERM, on_stop_signal);
 #ifdef SIGBREAK
@@ -188,6 +187,9 @@ int run(const BridgeOptions& options)
     // Registered after the signal handlers so that Windows asks this handler first.
     (void)SetConsoleCtrlHandler(on_console_close, TRUE);
 #endif
+    log(kTag, "bridging SIL Kit network '%s' (participant '%s', %s) <-> XL '%s'; Ctrl+C to stop", options.network.c_str(),
+        options.participant.c_str(), options.registry_uri.c_str(), channel.name.c_str());
+
     int result = kExitOk;
     CanBridgeHealth reported = bridge->health();
     bool problemsBefore = false;

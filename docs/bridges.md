@@ -173,5 +173,5 @@ XL Driver Library が見つかれば、`vxlapi64.dll` を実行ファイルの�
   - 他の物理 CAN 構成や機器での送受信と送信レシート
   - チャネルを有効にし直さなくても、有効にするだけでバスオフから戻るか。チャネルを無効にしたとき、受信キューに残ったイベント（遅れて届くレシート）が消えるか
   - CAN FD モードで動いているチャネルを、クラシック CAN のポート（`XL_INTERFACE_VERSION`）で開いたときの挙動
-  - `tests/vector_xl/xl_bridge_it_launcher` は Windows で bridge を強制終了するため、その E2E テストは統計と終了コードを検査しません（`device-lost` のシナリオは、ブリッジが自分で終わるので検査します）。
+  - `tests/vector_xl/xl_bridge_it_launcher` の往復の E2E テストは、Windows では bridge を強制終了するため、統計と終了コードを検査しません。止める要求（POSIX は SIGTERM、Windows はプロセスグループへの Ctrl+Break）で止めたときの統計の 1 行と終了コード 0 は、`stop-request` のシナリオが確かめます。Windows では、試験の実行ファイルとブリッジが共有するコンソールがないと Ctrl+Break を送れないので、このシナリオは飛ばされます（`device-lost` のシナリオは、ブリッジが自分で終わるので、どこでも検査します）。
   - `ExternalPortAdapter` で XL のチャネルにプロトコルスタックを載せた動作（自動テストは `ExternalCanPort` のフェイクに対してだけです）
