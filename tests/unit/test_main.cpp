@@ -16,6 +16,17 @@ int main(int argc, char** argv)
         }
         return 0;
     }
+    // A wrong VEHICLE_SIL_TEST_TIMEOUT_SCALE fails the run before any test, saying what to set.
+    double timeoutScale = 1.0;
+    try
+    {
+        timeoutScale = vehicle_sil::unit::timeout_scale();
+    }
+    catch (const std::exception& e)
+    {
+        std::printf("%s\n", e.what());
+        return 1;
+    }
 
     int failures = 0;
     int executed = 0;
@@ -41,6 +52,11 @@ int main(int argc, char** argv)
         {
             ++failures;
             std::printf("[ FAIL ] %s\n  %s\n", name.c_str(), e.what());
+            if (timeoutScale != 1.0)
+            {
+                std::printf("  (the upper bounds of waiting were %g times as long: VEHICLE_SIL_TEST_TIMEOUT_SCALE)\n",
+                            timeoutScale);
+            }
         }
     }
     if (executed == 0)

@@ -33,7 +33,8 @@ void dump_log(const std::filesystem::path& path);
 /// "3", or "none (killed)" for a process that did not exit.
 [[nodiscard]] std::string exit_code_text(const std::optional<int>& code);
 
-/// Waits for `process` until `deadline`; kills it if it is still running then.
+/// Waits for `process` until `deadline`; kills it if it is still running then. `deadline` is not
+/// scaled here: each launcher scales its --timeout-ms where it reads it (scaled_timeout()).
 /// @returns its exit code, or nullopt if it had to be killed.
 std::optional<int> wait_or_kill(ChildProcess& process, std::chrono::steady_clock::time_point deadline);
 

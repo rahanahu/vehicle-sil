@@ -11,6 +11,10 @@ vehicle-sil 自体を直す人と AI エージェント向けです。変える�
 - 1 つの試験は、試験の実行ファイルに名前を渡すと動きます（`<実行ファイル> <名前>`。ctest もそうしています）。
 - プロセスを起動する試験（シナリオ）は `vehicle_sil_add_scenario_tests()` で登録し、名前は `<前置き>.<シナリオ>` です。シナリオの一覧は `CMakeLists.txt` の `SCENARIOS`、中身は同じディレクトリの `*launcher.cpp`（`tests/integration/launcher.cpp`、`tests/launch/launch_run_launcher.cpp` など）です。共通の部品は `tests/integration/launcher_support.hpp` にあります。
 - 前置きだけを回すときは、`\.` まで書きます。`^j1939` は `j1939_parts.`、`j1939_codec.`、`j1939_silkit.` にも当たります。
+- 起きるはずのことは、`eventually(条件, 上限)`（`test_harness.hpp`）か、起きたことを知らせる手段で待ちます。決まった時間だけ眠って「進んだはず」としません。
+  - 待ちの上限には、環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率（未設定なら 1）が掛かります。`eventually`、`tests/process/spawn_sleeper.hpp` の待ち、シナリオのランチャーの `--timeout-ms` と registry の起動は、中で掛けます。ほかの関数に上限を渡すときは `scaled_timeout(20s)`（`tests/unit/test_timeout_scale.hpp`）を通します。通る試験は待つものが起きた時点で進むので、倍率を上げても遅くなりません。
+  - 「起きないこと」を確かめる待ちと、製品に与える時間（周期、製品のタイムアウト）には掛けません。掛けると、試験が確かめることが変わります。
+  - TSan のプリセットは構成のときに倍率 4 を与え（`CMakePresets.json`）、CI は 3 を与えます（`.github/workflows/ci.yml`）。構成のときの値で、ハーネスの試験とシナリオの試験の CTest の `TIMEOUT` も伸びます（`cmake/VehicleSilTestHelpers.cmake`）。
 
 ```sh
 ctest --preset linux-gcc-debug -R '^launch\.'
@@ -41,7 +45,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 
 - テストケースの登録漏れは、テスト実行ファイルごとの `<ラベル>.registration` テストが検出します（実行ファイルの `--list` と登録した名前を比べる）。
 - クロスビルドでは、`CMAKE_CROSSCOMPILING_EMULATOR`（たとえば `wine`）を指定すると、`ctest` がテストの実行ファイルをそれで動かします（`registration` テストも含む）。Windows の DLL（MinGW の実行時ライブラリ）は、実行ファイルの隣に置くなどして見つかるようにしてください。
-- テストプリセットは 8 並列で実行します。壁時計の所要時間を測るテスト（`virtual_time.*`、`core.virtual_time_*`、LIN の速度のテスト）は単独で実行されます。
+- テストプリセットは 8 並列で実行します。`scripts/verify.py` は、CPU がそれより少ない PC では CPU の数だけ並べます。壁時計の所要時間を測るテスト（`virtual_time.*`、`core.virtual_time_*`、LIN の速度のテスト）は単独で実行されます。
 
 ```sh
 ctest --preset linux-gcc-release -L integration

@@ -23,6 +23,7 @@
 //               simulation and every process exits with 1
 #include "launcher_support.hpp"
 #include "simulation_run.hpp"
+#include "test_timeout_scale.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
 
@@ -63,7 +64,8 @@ Options parse(int argc, char** argv)
     o.workDir = args.required("work-dir");
     o.scenario = args.required("scenario");
     o.endMs = static_cast<long long>(args.u64("end-ms", 1000, 1'000'000));
-    o.timeout = args.millis("timeout-ms", o.timeout);
+    // An upper bound of waiting: scaled by VEHICLE_SIL_TEST_TIMEOUT_SCALE.
+    o.timeout = vehicle_sil::test::scaled_timeout(args.millis("timeout-ms", o.timeout));
     return o;
 }
 

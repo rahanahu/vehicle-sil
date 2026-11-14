@@ -53,20 +53,11 @@ PeerOptions coordinated(std::string name, const std::string& uri, SimDuration st
     return o;
 }
 
-/// Waits until `pred` holds or 10 s passed.
+/// Waits until `pred` holds or 10 s (scaled) passed.
 template <typename Pred>
 bool eventually(Pred pred)
 {
-    const auto deadline = std::chrono::steady_clock::now() + 10s;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (pred())
-        {
-            return true;
-        }
-        std::this_thread::sleep_for(10ms);
-    }
-    return pred();
+    return vehicle_sil::unit::eventually(pred, 10s, 10ms);
 }
 
 /// A link to an agent that takes every command and never answers.

@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { GUI_PORT } from './e2e/support/gui-server';
+import { scaled } from './e2e/support/timeouts';
 
 // 本物のランチャー（npm run e2e:real）: GUI サーバーがビルド済みの画面（dist/browser）と API を配信し、
 // 環境変数 VEHICLE_SIL_GUI_LAUNCHER の vehicle_sil_launch と、その隣にビルドした ecu_main の例の ECU を動かす
@@ -10,6 +11,9 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   forbidOnly: true,
+  // 1 つの試験と expect の待ちの上限（Playwright の既定の 30 秒と 5 秒）に、VEHICLE_SIL_TEST_TIMEOUT_SCALE の倍率を掛ける
+  timeout: scaled(30_000),
+  expect: { timeout: scaled(5_000) },
   reporter: [['list']],
   outputDir: 'test-results/real',
   globalSetup: './e2e/support/real-server.ts',

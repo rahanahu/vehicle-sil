@@ -14,6 +14,7 @@
 //             before the start it ends at once; while the simulation runs it stops the simulation
 //             in order (the controller of this test sees it shut down) and ends; exit code 130
 #include "launcher_support.hpp"
+#include "test_timeout_scale.hpp"
 
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
@@ -70,7 +71,8 @@ Options parse(int argc, char** argv)
     o.docs = args.required("docs");
     o.work_dir = args.required("work-dir");
     o.scenario = args.required("scenario");
-    o.timeout = args.millis("timeout-ms", o.timeout);
+    // An upper bound of waiting: scaled by VEHICLE_SIL_TEST_TIMEOUT_SCALE.
+    o.timeout = vehicle_sil::test::scaled_timeout(args.millis("timeout-ms", o.timeout));
     return o;
 }
 

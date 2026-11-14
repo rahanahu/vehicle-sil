@@ -204,6 +204,7 @@ effect(() => localStorage.setItem('selected', this.selected() ?? '')); // 外へ
 - WebSocket は `FakeWebSockets`（`@vehicle-sil/gui-client/testing`）で差し替える（`{ provide: SOCKET_FACTORY, useValue: fake.factory }`）。HTTP は、包みが `HttpClient` で送るので `HttpTestingController` で答える。時間は Vitest の偽の時計。サーバーの通知は、作らずに `gui/protocol/examples/` の例を流す（`webSocketExamples`、`httpExamples`）。
 - 接続、セッションの写し、時刻と実行の操作の決まりは、ライブラリの試験（`gui/client/src/*.spec.ts`。Angular なし）で確かめる。包みの試験は、signal に写ること、トークン、画面の言葉だけを見る。
 - 「何かが起きないこと」を、決まった時間待ってから確かめない（遅いマシンで見落とす）。その時間が過ぎたとわかる後の出来事（後の事象、サーバーの要約の `last_seq` や `stop`）を待ってから確かめる。
+- e2e で起きるはずのことは、`expect` の待ちか `expect.poll` で待つ。決まった時間だけ眠って「進んだはず」としない。待ちの上限（設定ファイルの `timeout` と `expect.timeout`、`RUN_TIMEOUT`）には環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かる。上限を書くときは `scaled(ms)`（`e2e/support/timeouts.ts`）を通す。「起きないこと」を確かめる時間と、画面に与える時間（ガードの長さなど）には掛けない。
 - e2e は `getByRole` を先に使い、`data-testid` は補助。レイアウトは上の「レイアウト」。e2e は本物の GUI サーバーと、本物のランチャーの出力を録ったものを流し直すランチャーを相手にする（構成ファイルと、送った命令で録りが決まる。録りのない操作は、流し直すランチャーが何を録ればよいかを言って終わる）。録ったものがいまの本物と合うかは `gui/server/tests/test_real_launcher.py` が比べる。本物のランチャーでしか起きないこと（例の ECU の申告、本物の止まり方）は `e2e/real/` で確かめる。筋書きにない状況（切断、読んでいる間に流れ続ける行）は、`page.routeWebSocket` で通知を差し込んで作る。
 - 見た目の確かめとスクリーンショットは、窓を伸ばさずに利用者が見る大きさのままで行う（最初の画面に何が入っているかを見るため）。
 
