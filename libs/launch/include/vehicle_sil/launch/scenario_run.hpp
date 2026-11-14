@@ -177,7 +177,8 @@ struct EnginePeer
 /// or before T, or the end value of the motion before it, as the variable's type has it (an
 /// integer rounded), also if that motion's length is not a multiple of its ECU's step. A motion
 /// that finds no base fails its step at its first write. The values a motion writes come from
-/// one function of the motion and the time (motion_value(), scenario_line.hpp).
+/// one function of the motion and the time (motion_value(), which is motion_number() as the
+/// variable's type has it: scenario_line.hpp).
 ///
 /// The result of a write is judged
 /// at a fixed step of the controller: the first after the ECU's step that applies it (by then it
@@ -213,7 +214,8 @@ struct EnginePeer
 /// looks at (observe()), each step's watch and what a failed step failed of. When the scenario is over it closes the record at one time,
 /// "recorded to": the `at` of the failed step; of a scenario that passed, the latest `at` of its
 /// steps; of one that is Incomplete, the time of the last sample looked at (0 without one).
-/// Nothing after that time stays in the record (no point, and no line put after it), and the samples up to it that the engine had not
+/// Nothing after that time stays in the record (no point, and no line put after it; nor a line
+/// of which no write was sent: put, and then a write before its own failed), and the samples up to it that the engine had not
 /// looked at yet (they do not decide anything any more) are noted first, if they are of steps
 /// before the controller's step being handled (those have all arrived). So what the record has
 /// of a scenario that passed, or failed at a sample, does not depend on the controller's tick

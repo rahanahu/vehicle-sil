@@ -2577,6 +2577,22 @@ TEST_CASE(scenario_first_motion_without_a_base_takes_the_sample_the_controllers_
                "failed over=0\n"
                "3 failed start=25 at=25 end=45 scenario-write: the ramp of Body.level has no value to start from: no sample of its "
                "ECU has arrived before 25 ms and the scenario has not written it; give the ramp from: <value>\n");
+    // Where it turns: the writes for the times up to the controller's first step (30 ms, that
+    // time too) go out at 0 ms. A ramp at 30 ms fails as well; one at 40 ms goes out at 30 ms, with
+    // the samples of 0 to 20 ms looked at.
+    World edge;
+    edge.tick = 30ms;
+    check_text(text_of(edge.run(read(kHead + "  - at_ms: 30\n"
+                                             "    ramp: { Body.level: { to: 80, over_ms: 20 } }\n"))),
+               "failed over=0\n"
+               "3 failed start=30 at=30 end=50 scenario-write: the ramp of Body.level has no value to start from: no sample of its "
+               "ECU has arrived before 30 ms and the scenario has not written it; give the ramp from: <value>\n");
+    World after;
+    after.tick = 30ms;
+    CHECK(after.run(read(kHead + "  - at_ms: 40\n"
+                                 "    ramp: { Body.level: { to: 80, over_ms: 20 } }\n"))
+              .status == ScenarioStatus::Passed);
+    check_text(applied(after, "Body.level"), "0@40 40@50 80@60 ");
 }
 
 /// The timeline file of `text` run against the model, as `vehicle_sil_launch run --timeline`
@@ -3222,9 +3238,10 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
                     "      \"text\": \"Door.ratio lag from 0.25 to 1 tau 20 ms for 40 ms\"") != std::string::npos);
     CHECK(made.find("      \"writes\": [1, 2],\n") != std::string::npos && made.find("      \"writes\": [3, 4, 5],\n") != std::string::npos);
 
-    // A set that its agent refuses at once, and at the same time a ramp that does not say where
-    // it starts: the steps of a time put what they do on the lines before any write of that time
-    // goes out, so the ramp has its base (the 105 of the set) though the scenario ends at the set.
+    // The file has what happened: a line of which no write was sent is not in it, and not in the
+    // writes of its step. A set that its agent refuses at once (sent: its point is in the series,
+    // marked), and at the same time a ramp, of which nothing went out: the set's line alone, and
+    // the ramp's step (not run) has no writes.
     ScenarioCatalog loose = catalog();
     loose[0].variables[0].max.reset();
     const std::string refused = timeline_of(kHead + "  - at_ms: 40\n"
@@ -3232,8 +3249,37 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
                                                     "  - ramp: { Body.level: { to: 50, over_ms: 20 } }\n",
                                             10ms, {}, loose);
     CHECK(refused.find("    \"status\": \"failed\",") != std::string::npos);
-    check_text(lines_of(refused), "Body.level set 40-40 base=105 written\n"
-                                  "Body.level ramp 40-60 base=105 line\n");
+    check_text(lines_of(refused), "Body.level set 40-40 base=105 written\n");
+    const auto writes_of = [](const std::string& timeline) {
+        std::istringstream in(timeline);
+        std::string out;
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind("      \"writes\": ", 0) == 0)
+            {
+                out += line.substr(16) + " ";
+            }
+        }
+        return out;
+    };
+    check_text(writes_of(refused), "[0], [], ");
+    // One step moves three variables. The second finds no base (the scenario has not written it
+    // and no sample is there at 0 ms): the first was sent and is a line, the second and the third
+    // (which names its base) were not and are not. Whatever the controller's step.
+    for (const SimDuration tick : {SimDuration{5ms}, SimDuration{10ms}, SimDuration{30ms}})
+    {
+        const std::string part_sent = timeline_of(kHead + "  - set: { Door.lamp: true }\n"
+                                                          "  - ramp: { Door.ratio: { from: 0, to: 1, over_ms: 20 }, Body.level: { to: 5, over_ms: 20 },\n"
+                                                          "            Door.level: { from: 0, to: 9, over_ms: 20 } }\n"
+                                                          "  - set: { Body.level: 1 }\n",
+                                                tick);
+        check_text(lines_of(part_sent), "Door.lamp set 0-0 base=true written\n"
+                                        "Door.ratio ramp 0-20 base=0 written\n",
+                   "the lines of a step that sent a part of its writes");
+        check_text(writes_of(part_sent), "[0], [1], [], ");
+        CHECK(part_sent.find("      \"variable\": \"Door.level\",\n      \"source\": \"written\",\n      \"encoding\": \"all\",\n"
+                             "      \"points\": []\n") != std::string::npos);
+    }
     // A run that never began has no lines, and says so with an empty list.
     const Scenario s = read(kHead + "  - set: { Body.level: 20 }\n");
     ScenarioRun run = scenario_not_run(s);
@@ -3243,4 +3289,35 @@ TEST_CASE(timeline_lines_say_where_each_motion_starts_and_where_that_is_from)
     input.run = &run;
     const std::string none = format_timeline_json(input);
     CHECK(none.find("  \"lines\": [],\n") != std::string::npos && none.find("      \"writes\": [],\n") != std::string::npos);
+}
+
+TEST_CASE(timeline_line_after_a_motion_that_returns_to_a_sample_starts_from_that_sample_too)
+{
+    // Door's input is 20, and Door writes 60 to it in its step at 30 ms. The wave at 45 ms names no middle and
+    // the scenario has not written the variable: it swings around a sample, and returns to it.
+    // The ramp after it starts from the line, which is that sample still. A controller that steps
+    // every 10 ms sends the writes for 45 ms at 40 ms and has looked at the sample of 30 ms (60);
+    // one that steps every 30 ms sends them at 30 ms and has looked at the one of 20 ms (20).
+    const std::string text = kHead + "  - at_ms: 45\n"
+                                     "    wave: { Door.level: { square: { amplitude: 5, period_ms: 20 }, for_ms: 20 } }\n"
+                                     "  - ramp: { Door.level: { to: 10, over_ms: 20 } }\n";
+    const auto bases = [&text](SimDuration tick) {
+        const std::string made = timeline_of(text, tick, [](World& w) {
+            w.ecus[1].level = 20;
+            w.ecus[1].last_level = 20;
+            w.ecus[1].own_level = std::pair{at(30ms), std::int64_t{60}};
+        });
+        std::istringstream in(part(made, "  \"lines\": [", "  \"findings\""));
+        std::string out;
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind("      \"base", 0) == 0)
+            {
+                out += line.substr(6) + " ";
+            }
+        }
+        return out;
+    };
+    check_text(bases(10ms), "\"base\": 60, \"base_source\": \"sample\", \"base\": 60, \"base_source\": \"line\", ");
+    check_text(bases(30ms), "\"base\": 20, \"base_source\": \"sample\", \"base\": 20, \"base_source\": \"line\", ");
 }

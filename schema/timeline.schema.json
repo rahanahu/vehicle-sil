@@ -288,7 +288,7 @@
           },
           "writes": {
             "type": "array",
-            "description": "Where the lines this step put are in lines[] (positions from 0); empty for a step that writes nothing, and for one whose time is after scenario.recorded_to_ms. Not in a file of a launcher without the feature timeline-lines.",
+            "description": "Where the lines this step put are in lines[] (positions from 0); empty for a step that writes nothing, for one whose time is after scenario.recorded_to_ms, and for one that sent none of its writes. Not in a file of a launcher without the feature timeline-lines.",
             "items": {
               "type": "integer",
               "minimum": 0
@@ -547,7 +547,7 @@
     },
     "lines": {
       "type": "array",
-      "description": "The lines of the inputs: what each step put on the line of a variable it writes when its time came (a set its value, a ramp or a wave its motion), in the order put: by time, then by step, then in the order within the step. Only those put at or before scenario.recorded_to_ms; empty for a run that never began. Not in a file of a launcher without the feature timeline-lines.",
+      "description": "The lines of the inputs: what each step put on the line of a variable it writes when its time came (a set its value, a ramp or a wave its motion), in the order put: by time, then by step, then in the order within the step. Only those put at or before scenario.recorded_to_ms of which a write was sent (also one that was refused): a line whose first write the scenario did not get to, because a write before it failed, is not here. Empty for a run that never began. Not in a file of a launcher without the feature timeline-lines.",
       "items": {
         "type": "object",
         "required": [

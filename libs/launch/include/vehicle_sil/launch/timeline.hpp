@@ -144,12 +144,19 @@ public:
         /// Where a motion's base is from: "written" (the step names it; also a set's value),
         /// "line", "sample"; null without a base.
         const char* base_source = nullptr;
+        /// A write of it went out (written() with its step, for its time). The engine puts what
+        /// the steps of one time do on the lines before it sends the first write of that time,
+        /// and a failure there ends the scenario: a line that sent nothing did not happen, and
+        /// close() drops it.
+        bool sent = false;
     };
 
     explicit TimelineRecord(const Scenario& scenario, TimelineLimits limits = {});
 
     // --- the engine's side ---
-    void written(std::size_t variable, SimTime at, const control::Value& value, bool motion);
+    /// A write that is sent, of `step` (index in Scenario::steps): a point of the variable's
+    /// series, and the line that step put at `at` on the variable has happened (Line::sent).
+    void written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion);
     /// A sample of `variable` (kept if a condition reads the variable).
     void sampled(std::size_t variable, SimTime at, const control::Value& value);
     void line(Line line);
@@ -165,7 +172,7 @@ public:
     /// Per step of the scenario; empty for a step without conditions, or one that was not reached.
     [[nodiscard]] const std::vector<std::optional<Watch>>& watches() const noexcept { return watches_; }
     [[nodiscard]] const std::vector<std::optional<TimelineFailure>>& failures() const noexcept { return failures_; }
-    /// Once closed: those put at or before the time it was closed at.
+    /// Once closed: those put at or before the time it was closed at of which a write was sent.
     [[nodiscard]] const std::vector<Line>& lines() const noexcept { return lines_; }
     /// The time close() was given; empty while the scenario runs.
     [[nodiscard]] const std::optional<SimTime>& recorded_to() const noexcept { return recorded_to_; }

@@ -660,7 +660,7 @@ bool ScenarioEngine::submit_one(Write write)
         out.push_back(control::PeerWrite{scenario_.participants[v.participant].name, v.name, w.value});
         if (record_ != nullptr)
         {
-            record_->written(w.variable, write.at, w.value, write.motion.has_value());
+            record_->written(write.step, w.variable, write.at, w.value, write.motion.has_value());
         }
     }
     write.ticket = port_.write(std::move(out), write.at);

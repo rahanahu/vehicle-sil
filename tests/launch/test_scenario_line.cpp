@@ -119,6 +119,9 @@ TEST_CASE(scenario_line_has_the_value_of_its_motion_at_any_time_as_the_type_has_
     CHECK(text(line.value(at(0ms))) == "0" && text(line.value(at(50ms))) == "5" && text(line.value(at(54ms))) == "5");
     CHECK(text(line.value(at(55ms))) == "6" && text(line.value(at(99ms))) == "10");
     CHECK(text(line.value(at(100ms))) == "10" && text(line.value(at(5s))) == "10");
+    // Before the type: the number on the line, and the end value from the end on.
+    CHECK(launch::detail::motion_number(up, at(54ms)) == 5.4 && launch::detail::motion_number(up, at(100ms)) == 10.0 &&
+          launch::detail::motion_number(up, at(5s)) == 10.0);
     // The function the engine sends with is the same one.
     CHECK(text(launch::detail::motion_value(up, at(55ms))) == "6" && text(launch::detail::motion_value(up, at(100ms))) == "10");
     // A real is not rounded, a bool is true from a half.

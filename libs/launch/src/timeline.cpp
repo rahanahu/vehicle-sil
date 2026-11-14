@@ -492,8 +492,19 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
     failures_.resize(scenario.steps.size());
 }
 
-void TimelineRecord::written(std::size_t variable, SimTime at, const control::Value& value, bool motion)
+void TimelineRecord::written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion)
 {
+    if (!recorded_to_)
+    {
+        // The first write of a line is the one for the time it was put at.
+        for (auto line = lines_.rbegin(); line != lines_.rend() && line->from == at; ++line)
+        {
+            if (line->step == step && line->variable == variable)
+            {
+                line->sent = true;
+            }
+        }
+    }
     if (recorded_to_ || variable >= written_.size() || !written_[variable])
     {
         return;
@@ -604,8 +615,9 @@ void TimelineRecord::close(SimTime to)
     }
     recorded_to_ = to;
     // A line put after `to` is of a write for a time the controller's step let the engine reach
-    // early; with a shorter step it is not there. (They are in the order of their times.)
-    std::erase_if(lines_, [to](const Line& line) { return line.from > to; });
+    // early; with a shorter step it is not there. (They are in the order of their times.) A line
+    // of which no write went out was put, and then the scenario failed at a write before its own.
+    std::erase_if(lines_, [to](const Line& line) { return line.from > to || !line.sent; });
     for (Series& series : series_)
     {
         std::erase_if(series.written, [&](const Written& point) {

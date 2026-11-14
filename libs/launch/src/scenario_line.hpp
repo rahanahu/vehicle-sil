@@ -5,8 +5,9 @@
 // it writes: a step that begins puts what it does on the line (a set its value, a ramp or a wave
 // its motion), and a motion that does not name where it starts reads that from the line.
 //
-// The value of a motion at a time comes from one function, motion_value(): the engine sends what
-// it gives, and whatever shows a motion without running it has to call the same.
+// The value of a motion at a time comes from one function, motion_number(), and motion_value()
+// is that value as the variable's type has it: the engine sends what it gives, and whatever shows
+// a motion without running it has to call the same.
 #pragma once
 
 #include "vehicle_sil/control/agent.hpp"
@@ -57,9 +58,14 @@ struct LineMotion
     [[nodiscard]] bool has_value() const { return base.has_value() || !shape->uses_base(); }
 };
 
-/// The value of `motion` at `t` (at or after its `from`; it must have a value, has_value()), as
-/// the variable's type has it: the shape's value before the end of its length, and what the shape
-/// leaves (Waveform::end()) from there on.
+/// The value of `motion` at `t` (at or after its `from`; it must have a value, has_value()) as a
+/// number, before the variable's type is applied: the shape's value before the end of its length,
+/// and what the shape leaves (Waveform::end()) from there on. The one place that knows when a
+/// motion is over. What adds to a motion's value before it is rounded (a dither on top of it)
+/// calls this one, and rounds the sum.
+[[nodiscard]] double motion_number(const LineMotion& motion, SimTime t);
+
+/// motion_number() as the variable's type has it (value_of_type()): what the engine sends.
 [[nodiscard]] control::Value motion_value(const LineMotion& motion, SimTime t);
 
 /// The line of one variable. Times given to it never go back.

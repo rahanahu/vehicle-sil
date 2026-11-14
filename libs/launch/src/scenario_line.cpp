@@ -49,11 +49,16 @@ const char* base_source_name(BaseSource source)
     return nullptr;
 }
 
-control::Value motion_value(const LineMotion& motion, SimTime t)
+double motion_number(const LineMotion& motion, SimTime t)
 {
     const double base = motion.base.value_or(0.0);
     const SimDuration since = t - motion.from;
-    return value_of_type(since >= motion.length ? motion.shape->end(base) : motion.shape->value(since, base), motion.type);
+    return since >= motion.length ? motion.shape->end(base) : motion.shape->value(since, base);
+}
+
+control::Value motion_value(const LineMotion& motion, SimTime t)
+{
+    return value_of_type(motion_number(motion, t), motion.type);
 }
 
 void Line::set(SimTime t, control::Value value)

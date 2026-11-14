@@ -565,7 +565,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 読む側は、知らないキーを無視します。知らない値（系列の `source` と `encoding`、`watch` の `mode`、条件の `op`、手順の `kind` と `status`、線の `kind` と `base_source`、`shape` の `type`）は、その部分を描かずに名前と `text` を出します。形の版を上げずに、キーと値が増えることがあります。
 
-手順の `writes` は、その手順が置いた線の、`lines[]` の中の位置（0 から）の配列です（書かない手順と、時刻が `recorded_to_ms` より後の手順では空）。`lines` と `writes` は、`vehicle_sil_launch version --json` の `features` に `timeline-lines` があるランチャーが書きます。
+手順の `writes` は、その手順が置いた線の、`lines[]` の中の位置（0 から）の配列です（書かない手順、時刻が `recorded_to_ms` より後の手順、書き込みを 1 つも送らなかった手順では空）。`lines` と `writes` は、`vehicle_sil_launch version --json` の `features` に `timeline-lines` があるランチャーが書きます。
 
 手順の `watch` は、その手順が見る条件です（条件のない手順では `null`）。
 
@@ -631,7 +631,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 ### 入力の線（`lines[]`）
 
-シナリオが書く変数には、変数ごとに 1 本の線があります。手順は、時刻が来ると、自分のすることを線に置きます。`set` は値を、`ramp` と `wave` は動きを置きます。`lines[]` は、置いたものを置いた順に並べたものです（時刻の順。同じ時刻では手順の順、1 つの手順の中では書いた順）。
+シナリオが書く変数には、変数ごとに 1 本の線があります。手順は、時刻が来ると、自分のすることを線に置きます。`set` は値を、`ramp` と `wave` は動きを置きます。`lines[]` は、置いたもののうち、書き込みを 1 つでも送ったものを、置いた順に並べたものです（時刻の順。同じ時刻では手順の順、1 つの手順の中では書いた順）。
 
 ```json
 {
@@ -666,16 +666,16 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 |---|---|
 | `written` | 手順に書いた値（`set` の値、`from`、`around`、bool の「もう一方の値」） |
 | `line` | 線の値: その時刻にシナリオがその変数を置いていた値（前の `set` の値、前の動きの終わりの値。整数には丸めた値） |
-| `sample` | シナリオがまだ書いていない変数の、その時点でいちばん新しいサンプル。**どのサンプルになるかは controller の刻みによります**（下の「記録の終わり」） |
+| `sample` | シナリオがまだ書いていない変数の、その時点でいちばん新しいサンプル。**どのサンプルになるかは controller の刻みによります**（下の「記録の終わり」。この値に戻って終わる動きの後ろの、`line` の線も同じ） |
 
 - `shape` にあるのは、手順に書いたキーだけです（省いたキーの既定の値は [scenario.md](scenario.md) の波形の表）。`from` と `around` は `shape` に入れず、`base` にします。`wave` には `for_ms` も入ります（`for_ms` を書く波形）。
 - `points` の `shape` は、点の数（`points`）と `interpolate` です。CSV ファイルから読んだ点では、`file`、`value`、`time`、`time_unit` も、書いたとおりに入ります（列の名前だけ。点の値は系列にあります）。
-- 同じ時刻に始まる手順は、その時刻の書き込みを 1 つも送る前に、手順の順で線に置きます。そのため、`set` と、`from` を省いた `ramp` が同じ時刻にあれば、`set` が断られても、`ramp` の線は `base`（`set` の値）を持ちます。
-- 入るのは、`from_ms` が `recorded_to_ms` 以前の線だけです。シナリオが始まらなかった実行では、`lines` は空です。
+- 入るのは、`from_ms` が `recorded_to_ms` 以前で、**書き込みを 1 つでも送った線だけ**です（ファイルは起きたことの記録です）。線の最初の書き込みより前にシナリオが失敗したとき、その線は入らず、手順の `writes` にも入りません。例: 同じ時刻の前の手順の `set` が断られた後ろの `ramp`。1 つの手順がいくつもの変数を動かし、その 1 つの始まりの値が見つからないときの、その変数と、後ろに書いた変数。断られた書き込みは送ったものなので、その線は入ります（系列の点と同じ）。
+- シナリオが始まらなかった実行では、`lines` は空です。
 
 ### 記録の終わり（`recorded_to_ms`）
 
-`scenario.recorded_to_ms` は、記録の右端の仮想時刻です。系列には、これ以前の点だけが入ります。`lines[]` も、これ以前に置いた線だけです。
+`scenario.recorded_to_ms` は、記録の右端の仮想時刻です。系列には、これ以前の点だけが入ります。`lines[]` も、これ以前に置いて、書き込みを送った線だけです。
 
 | シナリオ | `recorded_to_ms` |
 |---|---|
@@ -690,7 +690,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
   - 成り立った待つ手順（`wait_until`、`within_ms` つきの `expect`）の `end_ms` と、その後ろの手順の時刻。
   - ある手順が失敗した実行での、ほかの手順（失敗した手順より後ろの手順と、進行中だった手順）の `status`（`passed`、`unfinished`、`not_run` のどれにもなりえます）と、`start_ms`、`at_ms`、`end_ms`。失敗がわかる前に controller がどこまで先を送り、どこまで結果を見たかが、刻みで決まるためです。このとき、**`at_ms` が `recorded_to_ms` より後の `passed` の手順がありえます。その手順の書き込みの点は、系列にありません**（系列と `recorded_to_ms` は、刻みによりません）。
   - 書き込みが適用されずに終わった実行の全部。
-  - シナリオがまだ書いていない変数を、`from` や `around` を省いた `ramp` や `wave` で動かすときの、始まりの値（`lines[]` の `base_source` が `sample` の線の `base`）と、その動きの値。controller は、時刻 T の書き込みを、T より前の自分の刻みで送ります。始まりの値は、その時までに見たいちばん新しいサンプルなので、刻みが粗いと古いサンプルになり、1 つも見る前（最初の刻みより前の時刻）なら、手順は `scenario-write`（始まりの値がない）で失敗します。刻みによらない結果にするには、`from` か `around` を書くか、先に `set` します。
+  - シナリオがまだ書いていない変数を、`from` や `around` を省いた `ramp` や `wave` で動かすときの、始まりの値（`lines[]` の `base_source` が `sample` の線の `base`）と、その動きの値。その動きが始まりの値に戻って終わるとき（`around` を省いた `sine` など、中心に戻る波形と、`pulse`）は、後ろに続く、`from` や `around` を省いた動きの `base`（`base_source` は `line`）も、同じサンプルから来るので同じように変わります。controller は、時刻 T の書き込みを、T より前の自分の刻みで送ります。始まりの値は、その時までに見たいちばん新しいサンプルなので、刻みが粗いと古いサンプルになり、1 つも見る前（T が controller の最初の刻みの長さ以下。刻みが 30 ms なら、30 ms までの時刻）なら、手順は `scenario-write`（始まりの値がない）で失敗します。刻みによらない結果にするには、`from` か `around` を書くか、先に `set` します。
 - `incomplete` の実行と、`stop_at_ms` で終わった実行は、どこまで見たかが実時間で決まることがあるので、同じファイルになるとは限りません。
 
 ### 上限
