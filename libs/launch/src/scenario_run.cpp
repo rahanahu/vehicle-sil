@@ -106,6 +106,12 @@ ScenarioRun scenario_not_run(const Scenario& scenario)
 {
     ScenarioRun run;
     run.name = scenario.name;
+    run.has_dither = scenario.has_dither;
+    if (run.has_dither)
+    {
+        run.inputs = scenario_inputs_text(scenario);
+        run.lines = scenario.lines;
+    }
     for (std::size_t i = 0; i < scenario.steps.size(); ++i)
     {
         ScenarioStepRun step;

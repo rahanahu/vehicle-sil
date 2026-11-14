@@ -4597,6 +4597,39 @@ void scenario_dither(const Options& o)
                                "        [10, 51, 50],\n        [20, 52, 50],\n") &&
                 contains(file, "      \"shape\": null,\n      \"text\": \"Engine.engine.throttle none\"\n"),
             "the timeline of the example with a dither:\n" + file);
+
+    // The check lists what the text puts on the inputs (the block of docs/scenario.md), and so do
+    // the JSON of the check and of the run; a scenario without a dither has no such list.
+    const Captured checked = launch(o, {"check", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml"}, o.example_dir);
+    expect_code(checked, 0, "check simulation.yaml --scenario scenarios/throttle_dither.yaml");
+    const std::string shown = lf(checked.standard_output);
+    const std::string head = "\nscenario scenarios/throttle_dither.yaml (throttle dither): 8 steps\n\n";
+    const auto listAt = shown.find(head);
+    require(listAt != std::string::npos, "the check of the example with a dither:\n" + shown);
+    const auto listEnd = shown.find("\n\n", listAt + head.size());
+    expect_text(shown.substr(listAt + head.size(), listEnd + 1 - listAt - head.size()),
+                block_after(o.docs / "scenario.md",
+                            "<!-- vehicle_sil_launch check simulation.yaml --scenario scenarios/throttle_dither.yaml: the lines -->"),
+                "the lines of check --scenario scenarios/throttle_dither.yaml");
+    const std::string lists = "    \"inputs\": [\n      {\n        \"variable\": \"Engine.engine.throttle\",\n        \"line\": 10,\n"
+                              "        \"dither\": \"triangle amplitude 2 period 80 ms\"\n      }\n    ],\n"
+                              "    \"lines\": [\n      {\n        \"variable\": \"Engine.engine.throttle\",\n        \"kind\": \"dither\",\n"
+                              "        \"line\": 10,\n        \"from_ms\": 0,\n        \"to_ms\": null,\n"
+                              "        \"text\": \"triangle amplitude 2 period 80 ms\"\n      },\n";
+    const Captured checkedJson = launch(o, {"check", "--json", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml"}, o.example_dir);
+    expect_code(checkedJson, 0, "check --json --scenario scenarios/throttle_dither.yaml");
+    require(contains(lf(checkedJson.standard_output), "    \"steps\": 8,\n" + lists) &&
+                contains(lf(checkedJson.standard_output), "        \"kind\": \"ramp\",\n        \"line\": 21,\n        \"from_ms\": null,\n"
+                                                          "        \"to_ms\": null,\n        \"text\": \"to 80 over 300 ms\"\n"),
+            "the inputs and the lines in check --json:\n" + lf(checkedJson.standard_output));
+    const Captured ranJson = launch(o, {"run", "--json", "simulation.yaml", "--scenario", "scenarios/throttle_dither.yaml"}, o.example_dir);
+    expect_code(ranJson, 0, "run --json --scenario scenarios/throttle_dither.yaml");
+    require(contains(scenario_json(lf(ranJson.standard_output)), "    ],\n" + lists),
+            "the inputs and the lines in the scenario of run --json:\n" + scenario_json(lf(ranJson.standard_output)));
+    const Captured plain = launch(o, {"check", "--json", "simulation.yaml", "--scenario", "scenarios/throttle_step.yaml"}, o.example_dir);
+    expect_code(plain, 0, "check --json --scenario scenarios/throttle_step.yaml");
+    require(!contains(lf(plain.standard_output), "\"inputs\"") && !contains(lf(plain.standard_output), "\"lines\""),
+            "a scenario without a dither has no inputs and no lines:\n" + lf(plain.standard_output));
 }
 
 /// examples/ecu_main/simulation.live.yaml: the example's two ECUs at the speed of a clock, with no

@@ -3386,7 +3386,7 @@ TEST_CASE(scenario_dither_is_read_from_the_inputs_and_from_its_step)
                                                        "  Door.level:\n"
                                                        "    dither: { triangle: { amplitude: 2, period_ms: 80 } }\n"
                                                        "steps:\n"
-                                                       "  - set: { Body.ratio: 0.5 }\n"
+                                                       "  - set: { Body.ratio: 0.5, Door.level: 5 }\n"
                                                        "  - after_ms: 100\n"
                                                        "    dither: { Body.ratio: none, Door.level: { square: { amplitude: 1, frequency_hz: 25, duty: 25 } } }\n",
                                          catalog());
@@ -3721,7 +3721,7 @@ TEST_CASE(scenario_dither_errors_say_what_is_wrong_and_what_to_write)
                "one of the ECU's inputs instead\n"
                "E 7 scenario-variable: 'Body.levle': participant 'Body' has no variable 'levle': did you mean 'Body.level'? "
                "(vehicle_sil_launch check --json lists the variables)\n");
-    // The form of inputs, and of an entry. clip is of a later version: an unknown key here.
+    // The form of inputs, and of an entry (which has a dither; any other key is unknown).
     check_text(errors("inputs: [Body.level]\n" + steps),
                "E 2 value: inputs must be a mapping of inputs to what is on top of them ({ Body.level: { dither: { triangle: { "
                "amplitude: 1, period_ms: 100 } } } }), not a list\n");
@@ -3738,6 +3738,9 @@ TEST_CASE(scenario_dither_errors_say_what_is_wrong_and_what_to_write)
                "E 5 value: the dither of Door.level in inputs is none: an input without a dither needs no entry; remove it\n"
                "E 6 value: undersampled must be ok (run the input's dither as it is, also where it changes faster than its ECU steps), "
                "not 'yes': write undersampled: ok, or remove it\n"
+               // (Door.ratio's dither is read, and nothing puts a value on Door.ratio.)
+               "W 6 scenario-dither-unused: the dither of Door.ratio is never written: no step that runs puts a value on Door.ratio "
+               "(set, ramp or wave), and a dither is added to what the steps put; add a set of Door.ratio, or remove the entry\n"
                "E 7 duplicate-key: inputs: 'Door.level' appears twice (first at line 5); keep one of them\n");
     // The step: none or a shape, one shape, the shape's own keys.
     check_text(errors("steps:\n"
@@ -3939,4 +3942,193 @@ TEST_CASE(timeline_line_has_the_base_as_the_step_names_it_and_the_shape_with_the
                     "        \"distribution\": \"gaussian\",\n        \"for_ms\": 20\n      },\n") != std::string::npos);
     CHECK(made.find("        \"type\": \"sine\",\n        \"amplitude\": 0.1,\n        \"frequency_hz\": 12.5,\n        \"for_ms\": 20\n") !=
           std::string::npos);
+}
+
+TEST_CASE(scenario_dither_that_can_leave_the_range_or_is_never_written_gets_a_warning)
+{
+    const auto findings = [](const std::string& text, const ScenarioCatalog& c = catalog()) {
+        return lines(read_scenario(kDitherHead + text, c).findings);
+    };
+    // The values the text puts on the input, with the dither's amplitude on both sides: a set's
+    // value, the ends of a ramp, where a wave around a value goes. An estimate: which dither is
+    // on when is not worked out, and a value that is only known in the run is not looked at.
+    check_text(findings("inputs:\n"
+                        "  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                        "  Body.ratio: { dither: { noise: { amplitude: 0.1, hold_ms: 10, seed: 1, distribution: gaussian } } }\n"
+                        "  Door.level: { dither: { square: { amplitude: 3, period_ms: 80 } } }\n"
+                        "steps:\n"
+                        "  - set: { Body.level: 50, Body.ratio: 0.8, Door.level: 50 }\n"
+                        "  - ramp: { Body.level: { to: 99, over_ms: 100 } }\n"
+                        "  - wave: { Door.level: { sine: { amplitude: 5, period_ms: 80 }, around: 7, for_ms: 80 } }\n"
+                        "  - dither: { Door.level: { triangle: { amplitude: 1, period_ms: 80 } } }\n"),
+               "W 3 scenario-dither-range: the dither of Body.level can take it out of its range (from 0 to 100): on the 99 that line 8 "
+               "puts on it, it goes from 97 to 101. The run fails at the write that is outside: lower the amplitude, or keep the values "
+               "of Body.level further from the ends of its range\n"
+               "W 4 scenario-dither-range: the dither of Body.ratio can take it out of its range (from 0 to 1): on the 0.8 that line 7 "
+               "puts on it, it goes about from 0.5 to 1.1 (three times the amplitude of a gaussian noise, which is its standard "
+               "deviation). The run fails at the write that is outside: lower the amplitude, or keep the values of Body.ratio further "
+               "from the ends of its range\n"
+               "W 5 scenario-dither-range: the dither of Door.level can take it out of its range (from 0 to 100): on the 2 that line 9 "
+               "puts on it, it goes from -1 to 5. The run fails at the write that is outside: lower the amplitude, or keep the values of "
+               "Door.level further from the ends of its range\n");
+    // Within the range: nothing. The run refuses what is outside all the same (another test).
+    check_text(findings("inputs:\n  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                        "steps:\n  - set: { Body.level: 98 }\n  - ramp: { Body.level: { to: 2, over_ms: 100 } }\n"),
+               "");
+    // A declared dither of an input that no step puts a value on is never written. A dither step
+    // is no value, and a step that this configuration skips does not count.
+    ScenarioContext context;
+    context.variant = "small";
+    check_text(lines(read_scenario(kDitherHead + "inputs:\n"
+                                                 "  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                                                 "  Door.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                                                 "steps:\n"
+                                                 "  - set: { Body.boost: 1, Door.level: 5 }\n"
+                                                 "  - dither: { Body.level: none }\n"
+                                                 "  - expect: { Body.level: 0 }\n",
+                                   catalog_without_boost(), context)
+                         .findings),
+               "W 3 scenario-dither-unused: the dither of Body.level is never written: no step that runs puts a value on Body.level "
+               "(set, ramp or wave), and a dither is added to what the steps put; add a set of Body.level, or remove the entry\n"
+               "W 4 scenario-dither-unused: the dither of Door.level is never written: no step that runs puts a value on Door.level "
+               "(set, ramp or wave), and a dither is added to what the steps put; add a set of Door.level, or remove the entry\n"
+               "N 6 scenario-step-skipped: the step is skipped (set Body.boost; Door.level = 5): Body.boost is absent: participant "
+               "'Body' does not have it in the variant small (absent: true in its variables); the other steps run, also those that "
+               "would need what this one does\n");
+    // What the ECU's step makes of a dither is said as for a wave, and how to run it as it is
+    // says where to write that: the input's entry, or the step. An integer rounds a dither of
+    // less than a half away on a whole value.
+    check_text(findings("inputs:\n"
+                        "  Body.ratio: { dither: { sine: { amplitude: 0.1, period_ms: 15 } } }\n"
+                        "  Body.level: { dither: { triangle: { amplitude: 0.2, period_ms: 80 } } }\n"
+                        "steps:\n"
+                        "  - set: { Body.ratio: 0.5, Body.level: 50 }\n"
+                        "  - dither: { Body.ratio: { noise: { amplitude: 0.1, hold_ms: 5, seed: 1 } } }\n"),
+               "W 3 scenario-wave-undersampled: the sine dither of Body.ratio has a period of 15 ms, but participant 'Body' takes its "
+               "inputs once per step of 10 ms: with fewer than two values per period the ECU sees a slower shape or a constant, not this "
+               "one. Make the period 80 ms or more (8 values per period); to run it as it is without this message, add undersampled: ok "
+               "to the input's entry in inputs\n"
+               "W 4 scenario-wave-undersampled: the triangle dither of Body.level has an amplitude of 0.2, but Body.level is an integer: "
+               "on a whole value every sum is rounded back to that value, so the ECU sees no dither there (only where a ramp or a wave "
+               "is between two whole values). Make the amplitude 0.5 or more; to run it as it is without this message, add "
+               "undersampled: ok to the input's entry in inputs\n"
+               "W 7 scenario-wave-undersampled: the noise dither of Body.ratio changes every 5 ms, faster than the step of participant "
+               "'Body' (10 ms): the ECU gets only the value at the time of each of its steps; the values between are never applied. Make "
+               "hold_ms 10 or more; to run it as it is without this message, add undersampled: ok to the step\n");
+    check_text(findings("inputs:\n"
+                        "  Body.ratio: { dither: { sine: { amplitude: 0.1, period_ms: 15 } }, undersampled: ok }\n"
+                        "  Body.level: { dither: { triangle: { amplitude: 0.2, period_ms: 80 } }, undersampled: ok }\n"
+                        "steps:\n"
+                        "  - set: { Body.ratio: 0.5, Body.level: 50 }\n"
+                        "  - dither: { Body.ratio: { noise: { amplitude: 0.1, hold_ms: 5, seed: 1 } } }\n"
+                        "    undersampled: ok\n"),
+               "");
+}
+
+TEST_CASE(scenario_with_a_dither_lists_what_its_text_puts_on_the_inputs)
+{
+    const auto listed = [](const Scenario& s) {
+        std::string out;
+        for (const ScenarioLineText& line : s.lines)
+        {
+            out += line.variable + " " + line.kind + " " + (line.from_ms ? std::to_string(*line.from_ms) : "?") + "-" +
+                   (!line.ends ? "none" : line.to_ms ? std::to_string(*line.to_ms) : "?") + " line " + std::to_string(line.line) +
+                   (line.after_wait > 0 ? " after " + std::to_string(line.after_wait) : "") + ": " + line.text + "\n";
+        }
+        return out;
+    };
+    // The declared dithers first (from 0, no end), then what each step that runs puts, in the
+    // order of the file. A time after a step that waits is not known before the run.
+    ScenarioContext context;
+    context.variant = "small";
+    const ScenarioRead r = read_scenario(kDitherHead + "inputs:\n"
+                                                       "  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                                                       "  Body.boost: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
+                                                       "steps:\n"
+                                                       "  - set: { Body.level: 50, Door.lamp: true }\n"
+                                                       "  - at_ms: 100\n"
+                                                       "    ramp: { Body.level: { to: 80, over_ms: 60 } }\n"
+                                                       "  - set: { Body.boost: 1 }\n"
+                                                       "  - wait_until: { Body.level: { ge: 0 } }\n"
+                                                       "    timeout_ms: 100\n"
+                                                       "  - dither: { Body.level: none }\n"
+                                                       "  - after_ms: 10\n"
+                                                       "    wave: { Body.level: { pulse: { value: 10, width_ms: 20 } } }\n",
+                                         catalog_without_boost(), context);
+    if (!r.scenario)
+    {
+        throw unit::Failure("the scenario has errors:\n" + lines(r.findings));
+    }
+    CHECK(r.scenario->has_dither);
+    check_text(listed(*r.scenario), "Body.level dither 0-none line 3: triangle amplitude 2 period 80 ms\n"
+                                    "Body.level set 0-0 line 6: = 50\n"
+                                    "Door.lamp set 0-0 line 6: = true\n"
+                                    "Body.level ramp 100-160 line 7: to 80 over 60 ms\n"
+                                    "Body.level dither ?-none line 12 after 10: none\n"
+                                    "Body.level wave ?-? line 13 after 10: pulse 10 width 20 ms\n");
+    // The run's result has the same, and what "inputs" declares (of the variables there are).
+    const ScenarioRun before = scenario_not_run(*r.scenario);
+    CHECK(before.has_dither && before.lines.size() == 6 && before.inputs.size() == 1);
+    CHECK(before.inputs[0].variable == "Body.level" && before.inputs[0].line == 3 && before.inputs[0].text == "triangle amplitude 2 period 80 ms");
+    // A scenario without a dither has no list: its outputs are as they were. A dither step alone is one.
+    const Scenario plain = read(kHead + "  - set: { Body.level: 50 }\n");
+    CHECK(!plain.has_dither && plain.lines.empty() && !scenario_not_run(plain).has_dither);
+    const Scenario stepOnly = read(kHead + "  - dither: { Body.level: none }\n");
+    CHECK(stepOnly.has_dither && stepOnly.lines.size() == 1 && stepOnly.inputs.empty());
+}
+
+TEST_CASE(scenario_dither_noise_is_the_same_in_every_run_and_differs_by_seed_and_by_variable)
+{
+    const auto text = [](const std::string& seedBody, const std::string& seedDoor) {
+        return kDitherHead + "inputs:\n"
+                             "  Body.ratio: { dither: { noise: { amplitude: 0.1, hold_ms: 10, seed: " + seedBody + " } } }\n"
+                             "  Door.ratio: { dither: { noise: { amplitude: 0.1, hold_ms: 10, seed: " + seedDoor + " } } }\n"
+                             "steps:\n"
+                             "  - set: { Body.ratio: 0.5, Door.ratio: 0.5 }\n"
+                             "  - at_ms: 200\n"
+                             "    expect: { Body.ratio: { ge: 0.4, le: 0.6 }, Door.ratio: { ge: 0.4, le: 0.6 } }\n";
+    };
+    const auto values = [](const World& world, const std::string& variable) {
+        // The values alone: "0.53 0.47 ...".
+        std::string out;
+        const std::string writes = written_to(world, variable, 200ms);
+        for (std::size_t from = 0; from < writes.size(); from = writes.find(' ', from) + 1)
+        {
+            out += writes.substr(from, writes.find('@', from) - from) + " ";
+        }
+        return out;
+    };
+    // Two runs of one scenario write the same file, whatever the controller's step is.
+    const std::string first = timeline_of(text("7", "7"), 10ms);
+    CHECK(first.find("    \"status\": \"passed\",") != std::string::npos);
+    check_text(timeline_of(text("7", "7"), 10ms), first, "the same scenario again");
+    check_text(compared(timeline_of(text("7", "7"), 30ms)), compared(first), "with another step of the controller");
+    // The name of the variable is part of the seed: one seed for two inputs is two sequences.
+    World same;
+    same.run(read(text("7", "7")));
+    const std::string body = values(same, "Body.ratio");
+    CHECK(std::count(body.begin(), body.end(), ' ') == 21 && body != values(same, "Door.ratio"));
+    // Another seed is another sequence, and the input with the seed it had keeps its own.
+    World other;
+    other.run(read(text("8", "7")));
+    CHECK(values(other, "Body.ratio") != body && values(other, "Door.ratio") == values(same, "Door.ratio"));
+}
+
+TEST_CASE(scenario_dither_writes_of_no_step_do_not_decide_a_step)
+{
+    // One step moves two inputs: Body.level for 20 ms, Door.level for 200 ms. From 30 ms the
+    // dither alone writes Body.level, while the step is still under way: those writes are no
+    // step's, and the step passes when its own last write is applied, at 200 ms.
+    const Scenario s = read(kDitherHead + "inputs:\n"
+                                          "  Body.level: { dither: { square: { amplitude: 1, period_ms: 20 } } }\n"
+                                          "steps:\n"
+                                          "  - ramp: { Body.level: { from: 10, to: 50, over_ms: 20 }, Door.level: { from: 20, to: 40, over_ms: 200 } }\n");
+    for (const SimDuration tick : {10ms, 30ms})
+    {
+        World world;
+        world.tick = tick;
+        const ScenarioRun run = world.run(s);
+        check_text(text_of(run), "passed over=210\n5 passed start=0 at=200 end=200\n", ("tick " + std::to_string(tick.count())).c_str());
+        check_text(written_to(world, "Body.level", 60ms), "11@0>0 29@10>10 51@20>20 49@30>30 51@40>40 49@50>50 51@60>60 ");
+    }
 }

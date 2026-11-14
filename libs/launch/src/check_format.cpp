@@ -223,9 +223,67 @@ std::string detail::check_text_body(const CheckReport& report)
             out += "parameters: " + params + "\n";
         }
         out += "\n";
+        if (report.scenario->scenario && report.scenario->scenario->has_dither)
+        {
+            // Only for a scenario with a dither: another one's output is as it was.
+            out += detail::scenario_lines_text(report.scenario->scenario->lines) + "\n";
+        }
     }
     out += detail::findings_text(report.file, report.findings);
     return out;
+}
+
+void detail::write_scenario_lines_json(vehicle_sil::detail::JsonWriter& w, const std::vector<ScenarioLineText>& inputs,
+                                       const std::vector<ScenarioLineText>& lines)
+{
+    const auto ms = [&w](std::string_view key, const std::optional<std::int64_t>& t) {
+        if (t)
+        {
+            w.integer(key, *t);
+        }
+        else
+        {
+            w.null(key);
+        }
+    };
+    w.begin_array("inputs");
+    for (const ScenarioLineText& input : inputs)
+    {
+        w.begin_object();
+        w.string("variable", input.variable);
+        w.integer("line", static_cast<std::int64_t>(input.line));
+        w.string("dither", input.text);
+        w.end_object();
+    }
+    w.end_array();
+    w.begin_array("lines");
+    for (const ScenarioLineText& line : lines)
+    {
+        w.begin_object();
+        w.string("variable", line.variable);
+        w.string("kind", line.kind);
+        w.integer("line", static_cast<std::int64_t>(line.line));
+        ms("from_ms", line.from_ms);
+        ms("to_ms", line.to_ms);
+        w.string("text", line.text);
+        w.end_object();
+    }
+    w.end_array();
+}
+
+std::string detail::scenario_lines_text(const std::vector<ScenarioLineText>& lines)
+{
+    std::vector<std::vector<std::string>> rows{{"input", "from", "to", "what", "line"}};
+    for (const ScenarioLineText& line : lines)
+    {
+        // A time that the text does not give ("?": after a step that waits), and no end ("-").
+        const auto ms = [](const std::optional<std::int64_t>& t) { return t ? std::to_string(*t) + " ms" : std::string("?"); };
+        rows.push_back({line.variable, ms(line.from_ms), line.ends ? ms(line.to_ms) : "-",
+                        line.kind + " " + line.text +
+                            (line.from_ms ? "" : " (after the wait of line " + std::to_string(line.after_wait) + ")"),
+                        std::to_string(line.line)});
+    }
+    return table(rows);
 }
 
 std::string detail::findings_text(const std::string& file, const std::vector<Finding>& findings)
@@ -604,6 +662,10 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
         if (report.scenario->unchecked_expects > 0)
         {
             w.integer("unchecked_expects", static_cast<std::int64_t>(report.scenario->unchecked_expects));
+        }
+        if (report.scenario->scenario && report.scenario->scenario->has_dither)
+        {
+            detail::write_scenario_lines_json(w, scenario_inputs_text(*report.scenario->scenario), report.scenario->scenario->lines);
         }
         w.end_object();
     }

@@ -235,9 +235,11 @@ public:
             {
                 if (inputsNode != ryml::NONE)
                 {
+                    inputs_written_ = true;
                     read_inputs(inputsNode);
                 }
                 read_steps(stepsNode);
+                check_dithers();
                 check_given_params();
                 check_something_is_checked();
             }
@@ -878,6 +880,10 @@ private:
                                               ", outside its range (" + range_text(info) + ")");
             return std::nullopt;
         }
+        if (out && write && (v.type == control::ValueType::Integer || v.type == control::ValueType::Real))
+        {
+            note_base(variable, as_number(*out), line);
+        }
         return out;
     }
 
@@ -955,6 +961,8 @@ private:
         ScenarioStep step;
         step.line = line;
         absent_.clear();
+        step_bases_.clear();
+        step_dithers_.clear();
         std::map<std::string, std::size_t> seen;
         std::map<std::string, ryml::id_type> nodes;
         for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
@@ -1189,7 +1197,114 @@ private:
         {
             end_ms_ = *time + length;
         }
+        if (step.skipped.empty())
+        {
+            note_lines(step, time);
+        }
         scenario_.steps.push_back(std::move(step));
+    }
+
+    // --- what the steps put on the inputs, as the text says it ---
+
+    /// A value the text puts on a written variable (a set's value, an end of a ramp, a level or
+    /// an end of a wave), of the step being read: what a dither on the variable may be added to.
+    void note_base(std::size_t variable, double value, std::size_t line) { step_bases_.push_back(Base{variable, value, line}); }
+
+    /// A step that runs: what it puts on the inputs, for the list of the lines and the findings
+    /// about the dithers (a skipped step puts nothing).
+    void note_lines(const ScenarioStep& step, const std::optional<std::int64_t>& time)
+    {
+        bases_.insert(bases_.end(), step_bases_.begin(), step_bases_.end());
+        dithers_.insert(dithers_.end(), step_dithers_.begin(), step_dithers_.end());
+        const auto text_of_part = [this](std::size_t variable, const std::string& text) {
+            // "<variable> to 80 over 100 ms": without the variable, which the list has in its own column.
+            const std::string& name = scenario_.variables[variable].text;
+            return text.rfind(name + " ", 0) == 0 ? text.substr(name.size() + 1) : text;
+        };
+        const auto put = [&](std::size_t variable, const std::optional<std::int64_t>& length, const std::string& text) {
+            ScenarioLineText line;
+            line.variable = scenario_.variables[variable].text;
+            line.kind = step_kind_name(step.kind);
+            line.line = step.line;
+            line.from_ms = time;
+            if (time && length)
+            {
+                line.to_ms = *time + *length;
+            }
+            line.ends = length.has_value();
+            line.after_wait = time ? 0 : wait_line_;
+            line.text = text_of_part(variable, text);
+            lines_.push_back(std::move(line));
+        };
+        for (const ScenarioWrite& w : step.writes)
+        {
+            placed_.insert(w.variable);
+            put(w.variable, 0, w.text);
+        }
+        for (const ScenarioMotion& m : step.motions)
+        {
+            placed_.insert(m.variable);
+            put(m.variable, m.length_ms, m.text);
+        }
+        for (const ScenarioOverlay& o : step.overlays)
+        {
+            put(o.variable, std::nullopt, o.text);
+        }
+    }
+
+    /// Once the steps are read: the dithers that can leave the range of their input, and those
+    /// that nothing is ever under.
+    void check_dithers()
+    {
+        const std::size_t before = findings_.size();
+        for (const Dither& dither : dithers_)
+        {
+            const ScenarioVariable& var = scenario_.variables[dither.variable];
+            // An estimate from the text: each value a step that runs puts on the input, with the
+            // dither's reach on both sides (which dither is on when is not worked out).
+            const auto outside = std::find_if(bases_.begin(), bases_.end(), [&](const Base& base) {
+                return base.variable == dither.variable &&
+                       (!in_range(base.value - dither.reach, dither.variable) || !in_range(base.value + dither.reach, dither.variable));
+            });
+            if (outside != bases_.end())
+            {
+                add(Severity::Warning, "scenario-dither-range", dither.line,
+                    "the dither of " + var.text + " can take it out of its range (" + range_text(*info_of(dither.variable)) + "): on the " +
+                        number_text(outside->value) + " that line " + std::to_string(outside->line) + " puts on it, it goes " +
+                        (dither.about ? "about " : "") + "from " + number_text(outside->value - dither.reach) + " to " +
+                        number_text(outside->value + dither.reach) +
+                        (dither.about ? " (three times the amplitude of a gaussian noise, which is its standard deviation)" : "") +
+                        ". The run fails at the write that is outside: lower the amplitude, or keep the values of " + var.text +
+                        " further from the ends of its range",
+                    owner_of(dither.variable));
+            }
+        }
+        for (const ScenarioOverlay& input : scenario_.inputs)
+        {
+            if (placed_.count(input.variable) == 0)
+            {
+                const std::string& name = scenario_.variables[input.variable].text;
+                add(Severity::Warning, "scenario-dither-unused", input.line,
+                    "the dither of " + name + " is never written: no step that runs puts a value on " + name +
+                        " (set, ramp or wave), and a dither is added to what the steps put; add a set of " + name +
+                        ", or remove the entry",
+                    owner_of(input.variable));
+            }
+        }
+        if (findings_.size() > before)
+        {
+            // Among the findings of the steps, which are in the order of the file.
+            std::stable_sort(findings_.begin(), findings_.end(), [](const Finding& x, const Finding& y) { return x.line < y.line; });
+        }
+        // The list of the lines is for a scenario with a dither: another one's outputs are as they were.
+        const bool anyStep = std::any_of(lines_.begin(), lines_.end(), [](const ScenarioLineText& line) { return line.kind == "dither"; });
+        if (!scenario_.inputs.empty() || anyStep || inputs_written_)
+        {
+            scenario_.has_dither = true;
+            std::vector<ScenarioLineText> all = scenario_inputs_text(scenario_);
+            all.insert(all.end(), std::make_move_iterator(lines_.begin()), std::make_move_iterator(lines_.end()));
+            scenario_.lines = std::move(all);
+        }
     }
 
     /// The step uses variables that their participants do not have (absent_): it does nothing in
@@ -1389,10 +1504,12 @@ private:
                     else if (key == "to")
                     {
                         to = d;
+                        note_base(*v, d, doc_.line(part));
                     }
                     else
                     {
                         ramp.base = d;
+                        note_base(*v, d, doc_.line(part));
                     }
                     hasTo = hasTo || key == "to";
                 }
@@ -1555,6 +1672,7 @@ private:
                       range_text(*info_of(variable)) + ")");
             return std::nullopt;
         }
+        note_base(variable, d, doc_.line(node));
         return d;
     }
 
@@ -2021,11 +2139,11 @@ private:
                 continue;
             }
             as_it_is_ = kAsItIsInput;
-            auto overlay = read_overlay(parts->at("dither"), *v, quiet, false);
+            // (Known by the entry's line, also if its dither is on a line below.)
+            auto overlay = read_overlay(parts->at("dither"), *v, quiet, false, doc_.line(child));
             as_it_is_ = kAsItIs;
             if (overlay)
             {
-                overlay->line = doc_.line(child); // (the entry's line, also if its dither is on a line below)
                 scenario_.inputs.push_back(std::move(*overlay));
             }
         }
@@ -2051,9 +2169,8 @@ private:
             }
             if (const auto v = variable(child))
             {
-                if (auto overlay = read_overlay(child, *v, quiet, true))
+                if (auto overlay = read_overlay(child, *v, quiet, true, step.line))
                 {
-                    overlay->line = step.line; // (as everything of a step: the step's line)
                     step.overlays.push_back(std::move(*overlay));
                 }
             }
@@ -2061,7 +2178,8 @@ private:
     }
 
     /// The dither of the variable `v` (`node`: a shape, or in a step none), or empty (and its errors).
-    std::optional<ScenarioOverlay> read_overlay(ryml::id_type node, std::size_t v, bool quiet, bool in_step)
+    /// `shown`: the line it is known by (ScenarioOverlay::line): the step's, or its entry's in "inputs".
+    std::optional<ScenarioOverlay> read_overlay(ryml::id_type node, std::size_t v, bool quiet, bool in_step, std::size_t shown)
     {
         const std::size_t line = doc_.line(node);
         const ScenarioVariable& var = scenario_.variables[v];
@@ -2074,7 +2192,7 @@ private:
         }
         ScenarioOverlay out;
         out.variable = v;
-        out.line = line;
+        out.line = shown;
         if (var.type == control::ValueType::Bool || var.type == control::ValueType::Enum)
         {
             error("scenario-value", line,
@@ -2188,6 +2306,31 @@ private:
         out.text = std::move(text);
         out.described = std::move(read.described);
         out.described.type = shape;
+        // How far from the value under it the dither goes: its amplitude, or for a gaussian noise
+        // (whose amplitude is the standard deviation) three times that, which nearly every value is within.
+        Dither noted{v, shown, swing.value_or(0.0), !swing.has_value()};
+        if (!swing)
+        {
+            for (const auto& [key, value] : out.described.values)
+            {
+                if (key == "amplitude")
+                {
+                    const double* real = std::get_if<double>(&value);
+                    const std::int64_t* whole = std::get_if<std::int64_t>(&value);
+                    noted.reach = 3.0 * (real != nullptr ? *real : whole != nullptr ? static_cast<double>(*whole) : 0.0);
+                }
+            }
+        }
+        (in_step ? step_dithers_ : dithers_).push_back(noted);
+        if (var.type == control::ValueType::Integer && swing && *swing < 0.5 && !quiet)
+        {
+            add(Severity::Warning, "scenario-wave-undersampled", line,
+                "the " + shape + " dither of " + name + " has an amplitude of " + number_text(*swing) + ", but " + name +
+                    " is an integer: on a whole value every sum is rounded back to that value, so the ECU sees no dither there (only "
+                    "where a ramp or a wave is between two whole values). Make the amplitude 0.5 or more" +
+                    as_it_is_,
+                owner_of(v));
+        }
         return out;
     }
 
@@ -2753,6 +2896,12 @@ private:
         {
             return std::nullopt;
         }
+        if (around && swing)
+        {
+            // Where the wave takes the input: what a dither on top of it starts from.
+            note_base(v, *around - *swing, line);
+            note_base(v, *around + *swing, line);
+        }
         out.length_ms = *length;
         if (wantsFor)
         {
@@ -3063,6 +3212,7 @@ private:
             error("scenario-value", line, pre + " is " + number_text(d) + ", outside its range (" + range_text(info) + ")");
             return std::nullopt;
         }
+        note_base(variable, d, line);
         return d;
     }
 
@@ -3476,6 +3626,27 @@ private:
     std::map<ryml::id_type, std::size_t> substituted_;  ///< a value node that is "${name}": its index in params_
     std::set<std::string> undefined_;                   ///< the parameters without a value, said once
     std::map<std::string, std::string> absent_variables_; ///< "<participant>.<name>" that is absent: its participant
+    /// What the steps that run put on the inputs, as the text says it (note_lines()).
+    struct Base
+    {
+        std::size_t variable;
+        double value;
+        std::size_t line;
+    };
+    struct Dither
+    {
+        std::size_t variable;
+        std::size_t line;
+        double reach;  ///< how far from the value under it
+        bool about;    ///< `reach` is an estimate (a gaussian noise)
+    };
+    std::vector<Base> step_bases_;     ///< of the step being read
+    std::vector<Dither> step_dithers_; ///< of the step being read
+    std::vector<Base> bases_;
+    std::vector<Dither> dithers_; ///< those of "inputs", then those of the steps that run
+    std::set<std::size_t> placed_; ///< the variables a step that runs puts a value on (set, ramp, wave)
+    std::vector<ScenarioLineText> lines_;
+    bool inputs_written_ = false; ///< the file has "inputs"
     /// How the messages say to run a wave or a dither as it is (kAsItIs; kAsItIsInput while "inputs" is read).
     const char* as_it_is_ = kAsItIs;
     std::vector<std::string> absent_;                   ///< those the step being read uses
@@ -3513,6 +3684,23 @@ const char* step_kind_name(StepKind kind)
     case StepKind::Dither: return "dither";
     }
     return "set";
+}
+
+std::vector<ScenarioLineText> scenario_inputs_text(const Scenario& scenario)
+{
+    std::vector<ScenarioLineText> out;
+    for (const ScenarioOverlay& input : scenario.inputs)
+    {
+        ScenarioLineText line;
+        line.variable = scenario.variables[input.variable].text;
+        line.kind = "dither";
+        line.line = input.line;
+        line.from_ms = 0;
+        line.ends = false;
+        line.text = input.text.substr(line.variable.size() + 1);
+        out.push_back(std::move(line));
+    }
+    return out;
 }
 
 std::string value_text(const control::Value& value, const ScenarioVariable* variable)

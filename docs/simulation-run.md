@@ -258,7 +258,7 @@ passed: 0 errors, 1 warning, 1 note
 | `participants[].control_link` | `state`（`"connected"`、`"no_hello"`、`"version_mismatch"`、`"not_offered"`、`"none"`。[変数を読み書きする口](#変数を読み書きする口)）、`variables`（`connected` のとき、その ECU が出す変数の数。ECU の実行が足す `peer.` などの出力を含むので、`--describe` の数より多いことがあります。ほかは `null`）、`version`（`version_mismatch` のとき、相手の形式の版。ほかは `null`）、`late_messages`（約束より遅れて届いたメッセージの数。ふつうは 0） |
 | `findings[]` | 実行で見つけたもの（照合の `findings[]` と同じ形） |
 | `check` | 照合の結果（`check --json` と同じオブジェクト）。選んだ機種（`variant`）と、パラメーター（`params`、`scenario.params`）はここにあります |
-| `scenario` | `--scenario` を付けたときだけ。シナリオの結果（[scenario.md](scenario.md) の「出力」）。`check` の中にも `scenario`（`file`、`name`、`steps`）があります。`simulation` の `"ended"` は、シナリオが終わってランチャーが止めた場合を含みます。見分けるには `scenario.status` を見ます（`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です）。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です。`--timeline` を付けた実行では、`scenario.timeline` に、時間の軸のファイルの名前（引数のとおり）があります（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)） |
+| `scenario` | `--scenario` を付けたときだけ。シナリオの結果（[scenario.md](scenario.md) の「出力」）。`check` の中にも `scenario`（`file`、`name`、`steps`）があります。`dither` のあるシナリオでは、どちらの `scenario` にも `inputs[]`（`inputs` に宣言した揺れ）と `lines[]`（文面が入力に置くものの一覧）が入ります。`simulation` の `"ended"` は、シナリオが終わってランチャーが止めた場合を含みます。見分けるには `scenario.status` を見ます（`"passed"` か `"failed"` なら、シナリオが終わって止めた実行です）。飛ばした手順があれば、`scenario.skipped_steps` にその数があります（`status` は `"passed"` のまま）。飛ばした手順の `at_ms` は null です。`--timeline` を付けた実行では、`scenario.timeline` に、時間の軸のファイルの名前（引数のとおり）があります（[シナリオの実行を時間の軸で記録する](#シナリオの実行を時間の軸で記録する--timeline)） |
 
 `timing` のキー（数の定義は[等速で動かす](#等速で動かす)。時間は、controller の最初の刻み（仮想時間 0）が始まってから、最後の刻みが始まるまでのものです。participant の起動、止める処理、失敗に気づくまでの待ちは入りません。次の刻みが期限を過ぎたまま実行が終わったときと、最速のときは、実行が終わった時点までです）:
 
@@ -717,7 +717,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 - 通った実行と、サンプルか待ち時間で失敗した実行では、`over_at_ms` と `tick_ms` を除いて、controller の刻み（`time_step_ms`）を変えても同じファイルです。ただし、次のものは刻みによります（シナリオの結果が刻みによる所と同じです。[scenario.md](scenario.md) の「時刻」と「結果」）。
   - 成り立った待つ手順（`wait_until`、`within_ms` つきの `expect`）の `end_ms` と、その後ろの手順の時刻。
   - ある手順が失敗した実行での、ほかの手順（失敗した手順より後ろの手順と、進行中だった手順）の `status`（`passed`、`unfinished`、`not_run` のどれにもなりえます）と、`start_ms`、`at_ms`、`end_ms`。失敗がわかる前に controller がどこまで先を送り、どこまで結果を見たかが、刻みで決まるためです。このとき、**`at_ms` が `recorded_to_ms` より後の `passed` の手順がありえます。その手順の書き込みの点は、系列にありません**（系列と `recorded_to_ms` は、刻みによりません）。
-  - 書き込みが適用されずに終わった実行の全部。
+  - 書き込みが適用されずに終わった実行の全部。`dither` が動きのない間に出す書き込み（手順のものでない書き込み）が断られたときは、失敗する手順（その時点でまだ決まっていない最初の手順）も刻みによります。その書き込みが、最後の手順が決まる刻みより後に送る分なら、刻みによっては送らずに通ります（[scenario.md](scenario.md) の「結果」）。
   - シナリオがまだ書いていない変数を、`from` や `around` を省いた `ramp` や `wave` で動かすときの、始まりの値（`lines[]` の `base_source` が `sample` の線の `base`）と、その動きの値。その動きが始まりの値に戻って終わるとき（`around` を省いた `sine` など、中心に戻る波形と、`pulse`）は、後ろに続く、`from` や `around` を省いた動きの `base`（`base_source` は `line`）も、同じサンプルから来るので同じように変わります。controller は、時刻 T の書き込みを、T より前の自分の刻みで送ります。始まりの値は、その時までに見たいちばん新しいサンプルなので、刻みが粗いと古いサンプルになり、1 つも見る前（T が controller の最初の刻みの長さ以下。刻みが 30 ms なら、30 ms までの時刻）なら、手順は `scenario-write`（始まりの値がない）で失敗します。刻みによらない結果にするには、`from` か `around` を書くか、先に `set` します。
 - `incomplete` の実行と、`stop_at_ms` で終わった実行は、どこまで見たかが実時間で決まることがあるので、同じファイルになるとは限りません。
 

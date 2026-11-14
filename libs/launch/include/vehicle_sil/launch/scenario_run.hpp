@@ -83,6 +83,12 @@ struct ScenarioRun
     /// Passed and Failed: the step of the launcher's controller at which the scenario was over
     /// (the simulation stands there until it is stopped).
     std::optional<SimTime> over_at{};
+    /// Scenario::has_dither, and then what the scenario's "inputs" declare
+    /// (scenario_inputs_text()) and Scenario::lines: what the text puts on the inputs, known
+    /// before the run. The outputs have them only then.
+    bool has_dither = false;
+    std::vector<ScenarioLineText> inputs{};
+    std::vector<ScenarioLineText> lines{};
 
     /// How many steps are skipped: a scenario that passed with some did not look at everything.
     [[nodiscard]] std::size_t skipped() const;

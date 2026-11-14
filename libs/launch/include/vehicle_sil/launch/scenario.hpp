@@ -211,6 +211,24 @@ struct ScenarioStep
     [[nodiscard]] bool waits() const noexcept { return within_ms.has_value(); }
 };
 
+/// One thing a scenario puts on an input, as the text says it, for the list of the lines that the
+/// check shows (the timeline file has what a run did: TimelineRecord::Line).
+struct ScenarioLineText
+{
+    std::string variable; ///< "<participant>.<name>"
+    std::string kind;     ///< "set", "ramp", "wave", "dither"
+    std::size_t line = 0; ///< the step's; of a dither that "inputs" declares its entry's
+    /// The step's time (0 for what "inputs" declares); empty: not known before the run (the step
+    /// comes after one that waits, `after_wait`).
+    std::optional<std::int64_t> from_ms{};
+    /// Where it ends by the text (a set: its time); empty if that is not known, or it has no end.
+    std::optional<std::int64_t> to_ms{};
+    bool ends = true;           ///< false: it has no end (a dither)
+    std::size_t after_wait = 0; ///< the line of the step that waits, if from_ms is not known
+    /// What it is, without the variable: "= 50", "to 80 over 1000 ms", "triangle amplitude 2 period 40 ms", "none".
+    std::string text;
+};
+
 /// A scenario that was read and checked against the participants: it can run as it is.
 struct Scenario
 {
@@ -222,6 +240,11 @@ struct Scenario
     /// (a note of the check says so).
     std::vector<ScenarioOverlay> inputs{};
     std::vector<ScenarioStep> steps{};
+    /// The file has "inputs" or a dither step that runs: its outputs then list `inputs` and `lines`.
+    bool has_dither = false;
+    /// With has_dither: what "inputs" declares and what each step that runs puts on an input, in
+    /// the order of the file (the declared dithers first).
+    std::vector<ScenarioLineText> lines{};
 };
 
 /// What a scenario may use of one participant of the configuration.
@@ -322,6 +345,10 @@ struct ScenarioRead
 /// CSV file, read once per path).
 [[nodiscard]] ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog,
                                          const ScenarioContext& context = {});
+
+/// The dithers that the scenario's "inputs" declare, as lines of the list (kind "dither", from 0,
+/// no end; `text` is the dither without the variable).
+[[nodiscard]] std::vector<ScenarioLineText> scenario_inputs_text(const Scenario& scenario);
 
 /// A value as the messages show it: true, 42, 1.5, or an enum's item ("on (1)").
 [[nodiscard]] std::string value_text(const control::Value& value, const ScenarioVariable* variable = nullptr);
