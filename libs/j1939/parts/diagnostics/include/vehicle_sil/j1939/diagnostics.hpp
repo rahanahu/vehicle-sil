@@ -2,16 +2,19 @@
 //
 // A protocol part of the J1939 stack: the diagnostic trouble codes of one node and the
 // J1939-73 messages about them (DM1, DM2, DM3, DM11, DM22). Built on the node's public API and
-// the toolbox only.
+// the toolbox only. parse_dtc_list() reads the DTC lists (DM1, DM2) of other nodes.
 #pragma once
 
 #include "vehicle_sil/j1939/broadcast_suppression.hpp"
 #include "vehicle_sil/j1939/toolbox.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace vehicle_sil::j1939 {
@@ -200,5 +203,95 @@ private:
     Subscription address_;
     Subscription transfers_;
 };
+
+/// One DTC of a list read with parse_dtc_list(). SPN, FMI and occurrence count are read as the
+/// inverse of the layout Diagnostics sends.
+struct ReadDtc
+{
+    std::uint32_t spn = 0;        ///< 19 bits.
+    std::uint8_t fmi = 0;         ///< 5 bits.
+    std::uint8_t occurrences = 0; ///< The low 7 bits of the fourth byte.
+    /// The top bit of the fourth byte, passed on as it is and not interpreted: its meaning is not
+    /// checked against the standard, so the user decides what it means. Diagnostics sends 0.
+    bool byte4_high_bit = false;
+    std::array<std::uint8_t, 4> raw{}; ///< The four bytes of this DTC as received.
+
+    friend bool operator==(const ReadDtc&, const ReadDtc&) = default;
+};
+
+/// A DTC list (the data of a DM1 or DM2) read in place: it allocates nothing and refers to the
+/// bytes it was read from, so it is valid only while they live (in a handler: during the call,
+/// like Message::data). Copy the ReadDtc values to keep them.
+///
+/// The layout is the inverse of what Diagnostics sends: the lamp status and lamp flash bytes,
+/// then 4 bytes per DTC. A list of up to 8 bytes holds one DTC (the bytes after it are padding);
+/// a longer list is 2 + 4 * n bytes, or it is not valid. A list whose only DTC is 4 zero bytes
+/// (the list without DTCs) is valid and empty. Not valid: size() is 0 and no lamp is on.
+class DtcListView
+{
+public:
+    /// Reads the DTCs one after the other (a forward iterator; it yields ReadDtc by value).
+    class iterator
+    {
+    public:
+        using iterator_concept = std::forward_iterator_tag;
+        using iterator_category = std::input_iterator_tag;
+        using value_type = ReadDtc;
+        using difference_type = std::ptrdiff_t;
+        using reference = ReadDtc;
+
+        iterator() noexcept = default;
+        [[nodiscard]] ReadDtc operator*() const noexcept;
+        iterator& operator++() noexcept
+        {
+            at_ += 4;
+            return *this;
+        }
+        iterator operator++(int) noexcept
+        {
+            iterator before = *this;
+            at_ += 4;
+            return before;
+        }
+        friend bool operator==(const iterator&, const iterator&) = default;
+
+        /// At the first of the 4 bytes of a DTC; begin() and end() make them.
+        explicit iterator(const std::uint8_t* at) noexcept : at_(at) {}
+
+    private:
+        const std::uint8_t* at_ = nullptr;
+    };
+
+    /// Not valid (like data of the wrong length).
+    DtcListView() noexcept = default;
+    /// Reads `data`; the same as parse_dtc_list(data).
+    explicit DtcListView(std::span<const std::uint8_t> data) noexcept;
+
+    [[nodiscard]] bool valid() const noexcept { return valid_; }
+    [[nodiscard]] std::size_t size() const noexcept { return count_; }
+    [[nodiscard]] bool empty() const noexcept { return count_ == 0; }
+    /// How the lamp shows: empty if it is off (also for Lamp::None and a list that is not
+    /// valid). As the inverse of Diagnostics: on is the status value 1; the flash value 0 is
+    /// Slow, 1 is Fast and the others Solid. Another status value counts as off; data() has the
+    /// raw bytes for another reading.
+    [[nodiscard]] std::optional<LampFlash> lamp(Lamp which) const noexcept;
+    /// Whether the list holds the DTC with this SPN and FMI.
+    [[nodiscard]] bool has(std::uint32_t spn, std::uint8_t fmi) const noexcept;
+    [[nodiscard]] iterator begin() const noexcept { return iterator(entries()); }
+    [[nodiscard]] iterator end() const noexcept { return iterator(entries() + 4 * count_); }
+    /// The bytes the list was read from, as given to parse_dtc_list().
+    [[nodiscard]] std::span<const std::uint8_t> data() const noexcept { return data_; }
+
+private:
+    [[nodiscard]] const std::uint8_t* entries() const noexcept { return count_ == 0 ? nullptr : data_.data() + 2; }
+
+    std::span<const std::uint8_t> data_;
+    std::size_t count_ = 0;
+    bool valid_ = false;
+};
+
+/// Reads a DTC list (see DtcListView) without allocating. Any length is safe: data of the wrong
+/// length gives a list that is not valid.
+[[nodiscard]] DtcListView parse_dtc_list(std::span<const std::uint8_t> data) noexcept;
 
 } // namespace vehicle_sil::j1939

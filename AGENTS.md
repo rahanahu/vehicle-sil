@@ -77,40 +77,34 @@ mkdir -p .local/research .local/decisions .local/reviews .local/experiments .loc
 
 ## 検証とスクリプト
 
-`scripts/` に、開発と CI で使うスクリプトがあります。Python 3.11 以上の標準ライブラリだけで書いてあります。
-
-- 出力は要約だけです。詳細は `build/logs/` のログに書き、要約にその場所を表示します。
-- 終了コードは、0 が成功、1 が失敗、2 が使い方の誤りです。CI からそのまま呼べます。
-- 使い方は `--help` で表示します。
+`scripts/` に、開発と CI で使うスクリプトがあります。Python 3.11 以上の標準ライブラリだけで書いてあります。どれも、出力は要約だけで（詳細は `build/logs/` のログ。要約に場所が出る）、終了コードは 0 が成功、1 が失敗、2 が使い方の誤りです。引数と細かい動きは、それぞれの `--help` にあります。
 
 | スクリプト | 内容 |
 |---|---|
-| `scripts/doctor.py` | この PC に、ビルドと試験に要るものがそろっているかを 1 行ずつ出す（読むだけ）。どのビルドにも要るものが足りなければ終了コード 1。一部の機能だけに要るもの（GUI、サニタイザーのプリセット、静的リンク）は「absent」と出すだけで、終了コードを変えない。足りないものには、何に要るかと入れ方を出す。`--json` |
-| `scripts/verify.py` | プリセットごとに構成、ビルド、テストを実行して要約する。失敗した段、落ちたテストと出力の先頭、ログの場所を表示する。JUnit 形式の結果も `build/logs/` に書く |
-| `scripts/check-commits.py` | コミットメッセージの形式と、コミットしてはいけないファイル（ローカルにだけ置くもの、`CLAUDE.local.md`、`build/`）を確かめる |
-| `scripts/check-docs.py` | 追跡している Markdown の相対リンクを確かめる: リンク先のファイルがあるか、`#` の見出しがあるか、リンクの直後に「…」で挙げた節の名前がリンク先にあるか。CI でも回す |
-| `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる。書き換えたファイルは、中断しても元に戻す |
-| `scripts/verify-web.py` | 画面（`gui/web`）とクライアントのライブラリ（`gui/client`）の `npm ci`、書式、lint、単体試験、翻訳ファイルとの照合、ビルド、クライアントのライブラリの 1 ファイルとパッケージ、e2e を順に回して要約する。ログは `build/logs/web-*.log`。`--e2e-dev`（開発サーバーを通した e2e も回す。同じ試験の繰り返しなので、既定では回さない）など、引数は `--help` |
-| `scripts/verify-gui.py` | GUI 全体: GUI サーバー（`gui/server`）の試験（pytest。本物のランチャーの出力を録ったものを流し直すランチャーで API、WebSocket、安全、止め方、`gui/protocol` の例の照合）、クライアントの例（`examples/gui_client` の `run.mjs`、`run-with-library.mjs`、`variables.mjs`）を同じランチャーで動かす試験の後に `scripts/verify-web.py` を回して要約する。`--launcher <vehicle_sil_launch>`（または `VEHICLE_SIL_GUI_LAUNCHER`）を渡すと、本物のランチャーでも回し、録った出力と照合する。ログは `build/logs/gui-*.log`。`--skip-web`、`-k` など、引数は `--help` |
-| `scripts/package.py` | ビルド済みの道具の圧縮ファイルを作る（`tools`）、使う人の手順で確かめる（`verify`: 空のディレクトリにひな形を写し、`get_tools.py` で展開し、ひな形をビルドして `check`、`run`、シナリオ、`run --control` に Python のクライアントでつなぐ、GUI サーバーの起動）、ひな形の圧縮ファイルと `SHA256SUMS` を作る（`template`）、版の番号が全部の場所で同じかを確かめる（`version`）。出力は `build/dist/`。タグ `v<版>` の GitHub Actions（`.github/workflows/release.yml`）も同じものを呼ぶ |
-| `scripts/verify-python.py` | uv で、Python 3.11 と `.python-version` の版の環境を `uv.lock` から作り、C++ のビルドなしで回せる Python の確認（構文、生成器の試験、ひな形の `get_tools.py` と `package.py template` の試験、`schema/` の JSON Schema と例・文書の照合、スクリプトの `--help`、Control API のスタブの生成と import）をする。続けて、`pyproject.toml` の依存の下限そのものを 3.11 に入れ、生成器の試験と Control API の確認をする（`--skip-lowest` で省く）。uv がなければ終了コード 2 |
-| `scripts/run-gui.py` | リポジトリからブラウザの GUI を起動する: `build/` の下から Control Server つきの `vehicle_sil_launch`、その隣の例（`examples/ecu_main/simulation.live.yaml`。等速で、止めるまで動く）、ビルドした画面（`gui/web/dist`）、uv を探し、`uv run vehicle-sil-gui` を起動して、開く URL を表示する。ビルドはしない。足りないものがあれば、作るコマンドを出して終了コード 1（渡した `--launcher` や構成ファイルがなければ 2）。`--dry-run`（探した結果と起動するコマンドだけ）、`--launcher`、構成ファイルなど、引数は `--help` |
+| `scripts/doctor.py` | この PC に、ビルドと試験に要るものがそろっているかを 1 行ずつ出す（読むだけ。足りないものには入れ方を出す） |
+| `scripts/verify.py` | プリセットごとに構成、ビルド、テストを実行して要約する（落ちたテストと出力の先頭、ログの場所） |
+| `scripts/check-commits.py` | コミットメッセージの形式と、コミットしてはいけないファイルを確かめる |
+| `scripts/check-docs.py` | 追跡している Markdown の相対リンクと、リンクの後に「…」で挙げた節の名前を確かめる |
+| `scripts/mutate.py` | TOML に書いたミューテーションを 1 件ずつ当て、テストが落ちることを確かめる |
+| `scripts/verify-web.py` | 画面（`gui/web`）とクライアントのライブラリ（`gui/client`）の書式、lint、単体試験、ビルド、e2e |
+| `scripts/verify-gui.py` | GUI 全体: GUI サーバー（`gui/server`）の試験、クライアントの例、その後に `verify-web.py`（`--skip-web` でサーバーだけ、`--launcher` で本物のランチャーでも） |
+| `scripts/verify-python.py` | uv で環境を作り、C++ のビルドなしで回せる Python の確認（3.11、`.python-version` の版、依存の下限） |
+| `scripts/package.py` | ビルド済みの道具の圧縮ファイルを作る（`tools`）、使う人の手順で確かめる（`verify`）、ひな形の圧縮ファイル（`template`）、版の番号の照合（`version`） |
+| `scripts/run-gui.py` | リポジトリからブラウザの GUI を起動する（足りないものは、作るコマンドを言う。ビルドはしない） |
 
-`verify-web.py` と `verify-gui.py` は、時間に敏感な試験を回す前に、この PC で `ninja`、`ctest`、Windows の VM（`qemu-system-x86*`）が動いている間は待ちます（`scripts/busy_machine.py`。何を待つかを 1 行で表示し、`--wait-limit` 分（既定 20 分）で諦めて警告を出して進む）。どちらの試験も、同時に回すと時間の条件で落ちるためです。GUI の試験は、pytest、ng、Playwright を直接呼ばずにこの 2 つから回します。
-
-遅い PC や負荷のかかった PC では、環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`（例: `3`）で、試験が起きるはずのことを待つ上限を伸ばします（C++ の試験の `eventually` などの支援の関数、GUI サーバーの試験、画面の e2e。TSan のプリセットは、変数がなければ 4）。CTest の `TIMEOUT` は構成のときの値で決まるので、値を大きくしたら構成し直します。決まりは [docs/code-map.md](docs/code-map.md) の「試験の名前と回し方」にあります。
+- GUI の試験は、pytest、ng、Playwright を直接呼ばずに `verify-web.py` と `verify-gui.py` から回します。この 2 つは、時間に敏感な試験の前に、この PC でビルドや試験や Windows の VM が動いている間は待ちます（同時に回すと時間の条件で落ちるため。`--wait-limit`）。
+- 遅い PC や負荷のかかった PC では、環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE`（例: `3`）で、試験が待つ上限を伸ばします。CTest の `TIMEOUT` は構成のときの値で決まるので、値を変えたら構成し直します。決まりは [docs/code-map.md](docs/code-map.md) の「試験の名前と回し方」にあります。
 
 ```sh
 scripts/doctor.py                                    # 最初に: 要るものがそろっているか
-scripts/verify.py --linux                            # コミット前: Linux の 5 つのプリセット
+scripts/verify.py --linux                            # Linux の全部のプリセット
 scripts/verify.py linux-gcc-debug --tests '^launch'  # 1 つのプリセットで一部のテストだけ
 scripts/verify.py --summarize build/logs/verify-linux-gcc-debug-test.log
-scripts/check-commits.py                             # ステージした内容
-scripts/check-docs.py                                # docs を変えたら: リンクと節の名前
-scripts/check-commits.py --range origin/main..HEAD   # 範囲の各コミット
+scripts/check-commits.py                             # ステージした内容（--range origin/main..HEAD で範囲の各コミット）
+scripts/check-docs.py                                # docs を変えたら
 scripts/mutate.py mutations.toml --check             # 書き換える箇所が見つかるかだけを確かめる
-scripts/verify-python.py                             # Python のコード: 3.11、.python-version の版、3.11 と依存の下限
-scripts/verify-gui.py                                # GUI: サーバーの試験と画面（--skip-web でサーバーだけ）
-scripts/run-gui.py                                   # リポジトリから GUI を起動（足りないものは、作るコマンドを言う）
+scripts/verify-python.py                             # Python のコード
+scripts/verify-gui.py                                # GUI（--skip-web でサーバーだけ）
+scripts/run-gui.py                                   # リポジトリから GUI を起動
 scripts/package.py tools && scripts/package.py verify build/dist/vehicle-sil-tools-*-linux-x86_64.tar.gz
 ```

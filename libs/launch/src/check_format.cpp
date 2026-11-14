@@ -98,6 +98,27 @@ bool is_on(const ParticipantConfig& participant, const ParticipantResult& result
                        });
 }
 
+/// " (1 skipped, 1 expect not checked)", or "" if the run skips nothing.
+std::string scenario_counts_text(const ScenarioCheck& scenario)
+{
+    std::vector<std::string> parts;
+    if (scenario.skipped > 0)
+    {
+        parts.push_back(std::to_string(scenario.skipped) + " skipped");
+    }
+    if (scenario.unchecked_expects > 0)
+    {
+        parts.push_back(std::to_string(scenario.unchecked_expects) +
+                        (scenario.unchecked_expects == 1 ? " expect not checked" : " expects not checked"));
+    }
+    std::string out;
+    for (const std::string& part : parts)
+    {
+        out += (out.empty() ? " (" : ", ") + part;
+    }
+    return out.empty() ? out : out + ")";
+}
+
 const char* severity_name(Severity severity)
 {
     return severity == Severity::Error ? "error" : severity == Severity::Warning ? "warning" : "note";
@@ -191,7 +212,7 @@ std::string detail::check_text_body(const CheckReport& report)
     {
         out += "scenario " + report.scenario->file + (report.scenario->name.empty() ? "" : " (" + report.scenario->name + ")") +
                ": " + count_text(report.scenario->steps, "step", "steps") +
-               (report.scenario->skipped > 0 ? " (" + std::to_string(report.scenario->skipped) + " skipped)" : std::string{}) + "\n";
+               scenario_counts_text(*report.scenario) + "\n";
         if (!report.scenario->params.empty())
         {
             std::string params;
@@ -578,6 +599,10 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
         if (report.scenario->skipped > 0)
         {
             w.integer("skipped_steps", static_cast<std::int64_t>(report.scenario->skipped));
+        }
+        if (report.scenario->unchecked_expects > 0)
+        {
+            w.integer("unchecked_expects", static_cast<std::int64_t>(report.scenario->unchecked_expects));
         }
         w.end_object();
     }

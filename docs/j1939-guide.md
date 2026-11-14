@@ -164,6 +164,24 @@ if (const auto status = EngineStatus::decode(eec.data())) { use(status->speed.va
 - `MonitorOptions::accept` に関数を渡すと、それが受け入れたメッセージだけを最新の値と受信に数えます（`.accept = [](const j1939::Message& m) { return j1939::codec::decode<EngineStatus>(m).has_value(); }` で 1 つの型だけ、通し番号や検査値の確認も同じ形）。受け入れなかったものは `rejected()` に数え、途絶の判定にも使いません。
 - 途絶（`Lost`）は最後の受信から `timeout` で知らせ、受信が戻れば `Receiving` に戻ります。最初の受信までは `Waiting` で、途絶にしません。
 
+## ほかのノードの故障コード（DM1、DM2）を読む
+
+```cpp
+node.on_message(j1939::kPgnDm1, [&](const j1939::Message& m) {
+    const auto list = j1939::parse_dtc_list(m.data);   // 確保しない。m.data を指すだけ
+    if (!list.valid()) { return; }                        // 長さが合わない
+    dash.amber = list.lamp(j1939::Lamp::AmberWarning).has_value();
+    dash.low_oil = list.has(0x7F0, 1);
+    for (const j1939::ReadDtc& dtc : list) { log(dtc.spn, dtc.fmi, dtc.occurrences); }
+});
+```
+
+- `parse_dtc_list()`（`j1939/diagnostics.hpp`、部品 `vehicle_sil::j1939_diagnostics`）は、`Diagnostics` 部品が送る形の逆として読みます。ランプの 2 バイトの後に、故障コードごとに 4 バイト（SPN、FMI、発生回数）。8 バイト以下は故障コード 1 つ（後ろは埋め草）、それより長いものは 2 + 4 × 件数 のバイトでなければ `valid()` が偽で、`size()` は 0 です。どんな長さのバイト列を渡しても落ちません。
+- 故障コードのない一覧（ただ 1 つの故障コードが 4 バイトの 0）は、`valid()` が真で `size()` が 0 です。
+- 戻り値はビューです。確保せず、渡したバイト列を指すだけなので、そのバイト列が生きている間だけ使えます（ハンドラでは呼び出しの間だけ）。残すときは `ReadDtc` をコピーします。
+- `lamp(Lamp)` は、ランプが点いていれば点滅の速さ（`LampFlash`）を、消えていれば空を返します。`Diagnostics` が送らない値は、状態なら消灯、点滅なら点灯（`Solid`）として読みます。別の読み方が要るときは、`data()` の生のバイトを読みます。
+- 4 バイト目の最上位ビットは解釈しません。`ReadDtc::byte4_high_bit` にそのまま入れ、`ReadDtc::raw` に 1 件の 4 バイトを生のまま入れます（`occurrences` は下位 7 ビット）。このビットの意味は規格と照らして確かめていないので、使う人が決めます。`Diagnostics` は 0 で送ります。
+
 ## ほかのノードのアドレスを変える
 
 ```cpp
