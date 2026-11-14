@@ -48,6 +48,7 @@ vehicle-sil/
 ├── libs/control_grpc/ vehicle_sil::control_grpc  Control API の gRPC の層（クライアント向けの ControlServer。VEHICLE_SIL_BUILD_CONTROL_SERVER のときだけ）
 ├── proto/            Control API の定義（vehicle_sil/control/v1/control.proto）
 ├── python/vehicle_sil_control/ Control API の Python クライアントと CLI、`vehicle_sil_launch run --control` を子プロセスで動かす助け
+├── bridges/common/  ブリッジの実行ファイルが共有する run_bridge()（止め方、監視のループ、止める順、終了コード。内部用）
 ├── bridges/vector-xl/ Vector XL CAN Bridge（転送のコアは移植可能、XL バックエンドと実行ファイルは Windows 専用）
 ├── bridges/ethernet/ イーサネットのブリッジ（SIL Kit の Ethernet と外のインターフェースの間の転送、統計、引数の解釈。プラットフォームに依存しない）
 ├── tools/common/     実行ファイル共通のコマンドライン解析、終了コード、ログ出力（内部用、ヘッダーのみ）
@@ -111,6 +112,7 @@ vehicle-sil/
 | `vehicle_sil::control_silkit` | 利用者向け | Control Agent と `Hub` の間を SIL Kit の publish/subscribe で運ぶ層（`AgentTransport`、`HubTransport`）。`ecu_main()` で作った ECU と `vehicle_sil_launch run` が使う。gRPC は要らない。ほかに `vehicle_sil::control_silkit::AgentTransport`（[internals/control.md](internals/control.md)） |
 | `vehicle_sil::control_proto`（`VEHICLE_SIL_BUILD_CONTROL_SERVER` のとき） | — | `control.proto` から生成したコード（`control_grpc` の内部） |
 | `vehicle_sil::control_grpc`（同上） | 利用者向け | Control API（gRPC）の Server（クライアント向け。ECU の Agent は SIL Kit の `vehicle_sil::control_silkit` でつながる）。認証（TLS、トークン、役割）。`vehicle_sil_launch run --control` が使う。[使い方](control-api.md)。ほかに `vehicle_sil::control_grpc::ControlServer`、`time_control_of()` |
+| `vehicle_sil::bridge_runtime`（内部用） | — | ブリッジの実行ファイルが準備の後に呼ぶ `vehicle_sil::bridge_runtime::run_bridge()`: 止める要求の受け方（シグナル、Windows のコンソールを閉じたとき）、監視のループ（participant の状態の判定、外の側の失敗、警告、監視の行）、止める順（統計を SIL Kit の participant の停止より先に出す）、終了コード。ブリッジごとの部分は `BridgeHooks` で渡す。プラットフォームに依存しない（[bridges.md](bridges.md)） |
 | `vehicle_sil::vector_xl_bridge_core` | — | CAN ブリッジのコア（`vehicle_sil::vector_xl::CanBridge` など）と、外部 CAN ポートを `vehicle_sil::can` の実時間のポートにする `ExternalPortAdapter`。プラットフォームに依存しない。ほかに `ExternalCanPort` |
 | `vehicle_sil::vector_xl`（Windows のみ） | — | Vector XL Driver のバックエンド（`XlDriver`、`XlCanPort`）。Windows 専用で、XL Driver Library が必要。ほかに `vehicle_sil::vector_xl::XlDriver` |
 | `vehicle_sil_vector_xl_bridge`（Windows のみ、実行ファイル） | — | ブリッジの CLI |

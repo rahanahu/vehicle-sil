@@ -611,9 +611,10 @@ void ParticipantRuntime::start(std::chrono::milliseconds timeout, const std::fun
         const auto current = lifecycle_->State();
         // A short simulation can pass through Running between two polls (to Stopping or on to
         // Shutdown); a step handler call (virtual time) or the starting handler (otherwise)
-        // proves that it got there.
+        // proves that it got there. The starting handler runs in ReadyToRun, and SIL Kit sets
+        // Running only after it returned: until then, state() would still say ReadyToRun.
         if (current == orch::ParticipantState::Running || step_entered_.load(std::memory_order_acquire)
-            || starting_entered_.load(std::memory_order_acquire))
+            || (starting_entered_.load(std::memory_order_acquire) && current != orch::ParticipantState::ReadyToRun))
         {
             deliver_stop(false); // a stop requested before Running
             return;
