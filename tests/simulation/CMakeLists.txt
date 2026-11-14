@@ -6,7 +6,7 @@
 vehicle_sil_add_harness_tests(vehicle_sil_simulation_tests
   PREFIX simulation LABELS unit simulation TIMEOUT 180
   SOURCES test_simulation.cpp test_lin_simulation.cpp test_describe.cpp test_ecu_main.cpp test_disconnect.cpp
-          test_network_kinds.cpp
+          test_network_kinds.cpp test_ethernet.cpp
   LINK vehicle_sil::simulation vehicle_sil::testkit vehicle_sil::control_silkit)
 # simulation_internal.hpp: the tests shorten a wait of the library.
 target_include_directories(vehicle_sil_simulation_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/simulation/src)
@@ -36,6 +36,17 @@ if(TARGET vehicle_sil_vehicle)
   add_test(NAME vehicle.silkit_demo COMMAND vehicle_sil_vehicle)
   add_test(NAME vehicle.local_demo COMMAND vehicle_sil_vehicle --local)
   set_tests_properties(vehicle.silkit_demo vehicle.local_demo PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+endif()
+# Raw Ethernet frames between two ECUs, on the virtual network and on SIL Kit: the same result.
+if(TARGET vehicle_sil_ethernet_example)
+  add_test(NAME ethernet_example.demo COMMAND vehicle_sil_ethernet_example)
+  add_test(NAME ethernet_example.silkit_demo COMMAND vehicle_sil_ethernet_example --silkit)
+  add_test(NAME ethernet_example.other_ethertype COMMAND vehicle_sil_ethernet_example --ethertype 0x88B6)
+  add_test(NAME ethernet_example.usage COMMAND vehicle_sil_ethernet_example --ethertype 70000)
+  set_tests_properties(ethernet_example.demo ethernet_example.silkit_demo ethernet_example.other_ethertype
+                       ethernet_example.usage PROPERTIES LABELS "examples;simulation" TIMEOUT 120)
+  set_tests_properties(ethernet_example.usage PROPERTIES
+                       PASS_REGULAR_EXPRESSION "--ethertype 70000 is not a number from 0 to 65535")
 endif()
 # The layers under Simulation, assembled by hand.
 if(TARGET vehicle_sil_low_level)

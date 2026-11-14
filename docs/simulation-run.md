@@ -384,7 +384,8 @@ passed: 0 errors, 1 warning, 1 note
                   "j1939_name": "0x00000000FE000001",
                   "arbitrary_address_capable": false
                 }
-              ]
+              ],
+              "mac": null
             }
           ]
         },
@@ -397,7 +398,7 @@ passed: 0 errors, 1 warning, 1 note
             "min": null,
             "max": null,
             "step": null,
-            "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+            "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
             "items": [],
             "builtin": true
           },
@@ -458,7 +459,8 @@ passed: 0 errors, 1 warning, 1 note
                   "j1939_name": null,
                   "arbitrary_address_capable": false
                 }
-              ]
+              ],
+              "mac": null
             }
           ]
         },
@@ -471,7 +473,7 @@ passed: 0 errors, 1 warning, 1 note
             "min": null,
             "max": null,
             "step": null,
-            "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+            "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
             "items": [],
             "builtin": true
           },

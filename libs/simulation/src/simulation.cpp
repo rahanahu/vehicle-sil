@@ -156,9 +156,10 @@ struct Simulation::SilKitRun
             if (other && *other != kind)
             {
                 throw std::invalid_argument(std::string(kWho) + call + " of the ECU \"" + ecu + "\": \"" + network +
-                                            "\" is a " + std::string(detail::network_kind_label(*other)) + " network of the ECU \"" +
-                                            names[i] + "\" (made by " + std::string(detail::network_kind_calls(*other)) +
-                                            "); a " + std::string(detail::network_kind_label(kind)) +
+                                            "\" is " + std::string(detail::network_kind_with_article(*other)) +
+                                            " network of the ECU \"" + names[i] + "\" (made by " +
+                                            std::string(detail::network_kind_calls(*other)) + "); " +
+                                            std::string(detail::network_kind_with_article(kind)) +
                                             " network needs a name of its own");
             }
         }

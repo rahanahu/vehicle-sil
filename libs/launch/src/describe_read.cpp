@@ -314,6 +314,20 @@ private:
         {
             fail(at + " has nodes, but only a j1939 network has them");
         }
+        // Absent in the descriptions of the versions before Ethernet: as null.
+        if (const auto mac = find(node, "mac"); mac != ryml::NONE && !is_null(mac))
+        {
+            const std::string address = text(mac, at + ".mac");
+            out.mac = eth::MacAddress::parse(address);
+            if (!out.mac)
+            {
+                fail(at + ".mac is \"" + address + "\", not six pairs of hexadecimal digits like \"02:00:00:00:00:01\"");
+            }
+            if (out.use != NetworkUse::Ethernet)
+            {
+                fail(at + " has a mac, but only an ethernet network has one");
+            }
+        }
         return out;
     }
 

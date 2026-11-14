@@ -122,7 +122,9 @@ TEST_CASE(reads_what_to_json_writes)
                      {on_j1939("J1939_CAN", {node(0x00, kEngineName), node(j1939::kNullAddress, kEngineName | kArbitraryBit), node(0x28)}),
                       NetworkDescription{"J1939_CAN", NetworkUse::Raw, {}},
                       NetworkDescription{"Body \"LIN\"", NetworkUse::LinMaster, {}},
-                      NetworkDescription{"Seat", NetworkUse::LinSlave, {}}},
+                      NetworkDescription{"Seat", NetworkUse::LinSlave, {}},
+                      NetworkDescription{"Eth", NetworkUse::Ethernet, {}, eth::MacAddress{{0x02, 0, 0, 0, 0, 0x01}}},
+                      NetworkDescription{"Eth2", NetworkUse::Ethernet, {}}},
                      {variable("x")}};
     const ReportedEcu read = read_description(to_json(d));
     CHECK(read.description == d);
@@ -139,6 +141,10 @@ TEST_CASE(reads_what_to_json_writes)
         if (use == NetworkUse::J1939)
         {
             every.networks.back().nodes.push_back(node(0x00, kEngineName));
+        }
+        if (use == NetworkUse::Ethernet)
+        {
+            every.networks.back().mac = eth::MacAddress{{0x02, 0x00, 0x00, 0xAB, 0xCD, 0xEF}};
         }
     }
     CHECK(read_description(to_json(every)).description == every);
@@ -180,8 +186,14 @@ TEST_CASE(refuses_what_is_not_a_description)
     check_text(refused(R"({"vehicle_sil_ecu": 1, "name": 5, "step_ns": null, "networks": []})"), "name is not a string");
     check_text(refused(R"({"vehicle_sil_ecu": 1, "name": "A", "step_ns": 0, "networks": []})"), "step_ns is 0, not a step");
     check_text(refused(R"({"vehicle_sil_ecu": 1, "name": "A", "step_ns": null, "networks": {}})"), "networks is not an array");
-    check_text(refused(head + R"([{"name": "N", "kind": "can", "use": "ethernet", "nodes": []}]})"),
-               "networks[0].use is \"ethernet\", not raw, j1939, lin_master or lin_slave");
+    check_text(refused(head + R"([{"name": "N", "kind": "can", "use": "flexray", "nodes": []}]})"),
+               "networks[0].use is \"flexray\", not raw, j1939, lin_master, lin_slave or ethernet");
+    check_text(refused(head + R"([{"name": "N", "kind": "ethernet", "use": "ethernet", "nodes": [], "mac": "02:00:00:00:00"}]})"),
+               "networks[0].mac is \"02:00:00:00:00\", not six pairs of hexadecimal digits like \"02:00:00:00:00:01\"");
+    check_text(refused(head + R"([{"name": "N", "kind": "ethernet", "use": "ethernet", "nodes": [], "mac": 2}]})"),
+               "networks[0].mac is not a string");
+    check_text(refused(head + R"([{"name": "N", "kind": "can", "use": "raw", "nodes": [], "mac": "02:00:00:00:00:01"}]})"),
+               "networks[0] has a mac, but only an ethernet network has one");
     check_text(refused(head + R"([{"name": "N", "kind": "lin", "use": "raw", "nodes": []}]})"),
                "networks[0].kind is \"lin\", but use \"raw\" is on can");
     check_text(refused(head + R"([{"name": "N", "kind": "can", "use": "raw"}]})"), "networks[0]: the key nodes is missing");
@@ -285,12 +297,12 @@ TEST_CASE(a_value_of_a_later_vehicle_sil_is_its_own_error)
                                  "vehicle-sil " + mine;
     const std::string start = "E 7 describe-unknown-value: participant 'Engine': engine/engine_ecu --describe --name Engine "
                               "wrote ";
-    check_text(error(head + R"("networks": [{"name": "Eth", "kind": "ethernet", "use": "ethernet", "nodes": []}]})"),
-               start + "networks[0].use \"ethernet\", which this vehicle_sil_launch does not know (it knows raw, j1939, "
-                       "lin_master and lin_slave): " + versions + tail);
+    check_text(error(head + R"("networks": [{"name": "Ray", "kind": "flexray", "use": "flexray", "nodes": []}]})"),
+               start + "networks[0].use \"flexray\", which this vehicle_sil_launch does not know (it knows raw, j1939, "
+                       "lin_master, lin_slave and ethernet): " + versions + tail);
     check_text(error(head + R"("networks": [{"name": "N", "kind": "flexray", "use": "raw", "nodes": []}]})"),
-               start + "networks[0].kind \"flexray\", which this vehicle_sil_launch does not know (it knows can and "
-                       "lin): " + versions + tail);
+               start + "networks[0].kind \"flexray\", which this vehicle_sil_launch does not know (it knows can, lin and "
+                       "ethernet): " + versions + tail);
     const std::string var = R"("networks": [], "variables": [{"name": "v", "type": "real", "causality": "input", )"
                             R"("unit": "", "min": null, "max": null, "step": null, "description": "", "items": []}, )";
     check_text(error(head + var + R"({"name": "w", "type": "text", "causality": "input"}]})"),
@@ -303,7 +315,7 @@ TEST_CASE(a_value_of_a_later_vehicle_sil_is_its_own_error)
     check_text(error(R"({"vehicle_sil_ecu": 1, "name": "Engine", "step_ns": 1000, "networks": [{"name": "N", )"
                      R"("kind": "can", "use": "fd", "nodes": []}]})"),
                start + "networks[0].use \"fd\", which this vehicle_sil_launch does not know (it knows raw, j1939, "
-                       "lin_master and lin_slave): the executable does not say which vehicle-sil it was built with, and "
+                       "lin_master, lin_slave and ethernet): the executable does not say which vehicle-sil it was built with, and "
                        "this vehicle_sil_launch is of vehicle-sil " + mine + tail);
     // A known kind that is not the use's: broken output, not a later value.
     CHECK(interpret_describe(participant("Engine", 6),
@@ -472,6 +484,59 @@ TEST_CASE(j1939_names_must_differ_on_a_network)
                           "identity number)\n");
     s.results[2].ecu->description.networks[0].nodes[0].name = j1939::Name{kEngineName + 1};
     check_text(s.check(), "");
+}
+
+TEST_CASE(an_ethernet_network_has_one_mac_address_per_participant)
+{
+    const auto on_eth = [](std::optional<eth::MacAddress> mac) {
+        return NetworkDescription{"Backbone", NetworkUse::Ethernet, {}, mac};
+    };
+    const eth::MacAddress one{{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}};
+    const eth::MacAddress two{{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}};
+    Setup s;
+    s.network("Backbone", NetworkKind::Ethernet, 3)
+        .described(participant("Camera", 6), ecu("Camera", 5ms, {on_eth(one)}))
+        .described(participant("Display", 9), ecu("Display", 5ms, {on_eth(two)}))
+        .described(participant("Gateway", 12), ecu("Gateway", 5ms, {on_eth(std::nullopt)}));
+    // Different addresses; the one without an address is a note.
+    check_text(s.check(), "N 3 ethernet-mac-unknown: network 'Backbone': Gateway reports no MAC address, so the check "
+                          "cannot tell whether two participants use the same one: pass the address to ethernet() "
+                          "(eth::ChannelOptions::mac), or make sure by hand that the addresses differ\n");
+    s.results[2].ecu->description.networks[0].mac = eth::MacAddress{{0x02, 0x00, 0x00, 0x00, 0x00, 0x03}};
+    check_text(s.check(), "");
+    // The same address twice: an error that names both and the address.
+    s.results[1].ecu->description.networks[0].mac = one;
+    check_text(s.check(), "E 3 ethernet-duplicate-mac: network 'Backbone': Camera and Display have the same MAC address "
+                          "02:00:00:00:00:01, so their frames cannot be told apart: give each its own address "
+                          "(eth::ChannelOptions::mac, and the source address of the frames it sends). If they share "
+                          "the address on purpose, leave ChannelOptions::mac unset on all but one of them: the check "
+                          "then only notes it (ethernet-mac-unknown), and frames they send in the same step arrive in "
+                          "an order that can differ between runs\n");
+    // Two without an address: one note for both, and no guess that they are the same.
+    s.results[0].ecu->description.networks[0].mac.reset();
+    s.results[1].ecu->description.networks[0].mac.reset();
+    check_text(s.check(), "N 3 ethernet-mac-unknown: network 'Backbone': Camera and Display report no MAC address, so the "
+                          "check cannot tell whether two participants use the same one: pass the address to ethernet() "
+                          "(eth::ChannelOptions::mac), or make sure by hand that the addresses differ\n");
+    // The same address on two networks is no conflict, and a disabled participant is not counted.
+    Setup two_networks;
+    two_networks.network("A", NetworkKind::Ethernet, 3).network("B", NetworkKind::Ethernet, 5);
+    two_networks
+        .described(participant("P", 8),
+                   ecu("P", 5ms, {NetworkDescription{"A", NetworkUse::Ethernet, {}, one},
+                                  NetworkDescription{"B", NetworkUse::Ethernet, {}, one}}))
+        .described(participant("Q", 11),
+                   ecu("Q", 5ms, {NetworkDescription{"A", NetworkUse::Ethernet, {}, two},
+                                  NetworkDescription{"B", NetworkUse::Ethernet, {}, two}}));
+    check_text(two_networks.check(), "");
+    // A name that the file says is CAN, used as Ethernet: the kind is the error (no Ethernet rule).
+    Setup wrong;
+    wrong.network("Backbone", NetworkKind::Can, 3)
+        .described(participant("Camera", 6), ecu("Camera", 5ms, {on_eth(one)}))
+        .described(participant("Display", 9), ecu("Display", 5ms, {on_eth(one)}));
+    CHECK(wrong.check().find("kind-mismatch: participant 'Camera': the executable uses the network 'Backbone' as ethernet "
+                             "(ethernet), but networks says kind: can (line 3)") != std::string::npos);
+    CHECK(wrong.check().find("ethernet-duplicate-mac") == std::string::npos);
 }
 
 TEST_CASE(a_lin_network_has_one_master)
@@ -887,13 +952,15 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
                 "j1939_name": "0x00000000FE000001",
                 "arbitrary_address_capable": false
               }
-            ]
+            ],
+            "mac": null
           },
           {
             "name": "Body",
             "kind": "lin",
             "use": "lin_master",
-            "nodes": []
+            "nodes": [],
+            "mac": null
           }
         ]
       },
@@ -950,13 +1017,15 @@ TEST_CASE(the_json_report_has_every_key_in_a_fixed_order)
                 "j1939_name": null,
                 "arbitrary_address_capable": false
               }
-            ]
+            ],
+            "mac": null
           },
           {
             "name": "Body",
             "kind": "can",
             "use": "raw",
-            "nodes": []
+            "nodes": [],
+            "mac": null
           }
         ]
       },
@@ -1207,6 +1276,29 @@ TEST_CASE(the_json_report_writes_null_for_what_is_not_there)
     r.participants = {ParticipantResult{ParticipantStatus::Described, ecu("", 10ms, {}, "")}};
     const std::string reported = format_json(r);
     CHECK(reported.find("\n      \"reported\": {\n        \"vehicle_sil\": null,\n        \"name\": null,\n") != std::string::npos);
+}
+
+TEST_CASE(the_reports_show_the_mac_address_of_an_ethernet_network)
+{
+    Setup s;
+    s.network("Backbone", NetworkKind::Ethernet, 3)
+        .described(participant("Camera", 6),
+                   ecu("Camera", 5ms,
+                       {NetworkDescription{"Backbone", NetworkUse::Ethernet, {}, eth::MacAddress{{0x02, 0, 0, 0, 0xAB, 0x01}}}}))
+        .described(participant("Display", 9), ecu("Display", 5ms, {NetworkDescription{"Backbone", NetworkUse::Ethernet, {}}}));
+    CheckReport r;
+    r.file = "x.yaml";
+    r.config = s.config;
+    r.participants = s.results;
+    const std::string text = format_text(r);
+    CHECK(text.find("Camera       5 ms  Backbone (ethernet 02:00:00:00:ab:01)\n"
+                    "Display      5 ms  Backbone (ethernet)\n") != std::string::npos);
+    CHECK(text.find("network   kind      participants\n"
+                    "Backbone  ethernet  Camera, Display\n") != std::string::npos);
+    const std::string json = format_json(r);
+    CHECK(json.find("\"kind\": \"ethernet\",\n            \"use\": \"ethernet\",\n            \"nodes\": [],\n"
+                    "            \"mac\": \"02:00:00:00:ab:01\"\n") != std::string::npos);
+    CHECK(json.find("\"nodes\": [],\n            \"mac\": null\n") != std::string::npos);
 }
 
 TEST_CASE(the_json_report_shows_the_seen_variables_and_the_map_of_an_entry_that_has_one)

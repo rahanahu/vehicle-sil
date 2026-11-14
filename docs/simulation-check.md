@@ -46,12 +46,14 @@
 | `name-mismatch` | 誤り | 自己申告の `name` が participant 名と違う（`--name` を `ecu_main` に渡していない） |
 | `step-mismatch` | 誤り | `step_ms` が自己申告のステップ幅と違う（実時間で、ステップ幅のない ECU も） |
 | `unknown-network` | 誤り | ECU が `networks` にないネットワークを使う |
-| `kind-mismatch` | 誤り | ECU がネットワークを `networks` と違う種類（CAN か LIN）で使う |
+| `kind-mismatch` | 誤り | ECU がネットワークを `networks` と違う種類（CAN、LIN、イーサネット）で使う |
 | `address-conflict` | 誤り | 同じネットワークの 2 つ以上の J1939 ノードが同じアドレスを求め、どれかが動けない（下の表） |
 | `address-shared` | 警告 | 同じアドレスを求めるノードのうち、NAME の最も小さいノードが取り、ほかはどれも別のアドレスへ移る |
 | `name-conflict` | 誤り | 同じネットワークで、2 つ以上の J1939 ノードの NAME が同じ |
 | `lin-masters` | 誤り | 1 つの LIN のネットワークに master が 2 つ以上（同じ participant の 2 回も） |
 | `lin-no-master` | 誤り（`describe: false` の participant がいるときは注記） | LIN の slave がいて、master がいない |
+| `ethernet-duplicate-mac` | 誤り | 1 つのイーサネットのネットワークで、2 つ以上の participant が同じ MAC アドレスを申告している（文は participant とアドレスを言う）。同じアドレスをわざと使う構成（待機系と現用系など）では、1 つを残してほかの participant の `eth::ChannelOptions::mac` を渡さずにおくと、`ethernet-mac-unknown` の注記だけになる（`mac` のないチャネルは `Accept::Addressed` を使えない。同じステップで送ったフレームの順は、SIL Kit では実行ごとに変わりうる） |
+| `ethernet-mac-unknown` | 注記 | イーサネットのネットワークに、MAC アドレスを申告しない participant がいる（`ethernet()` にアドレスを渡していない ECU。アドレスの重なりを確かめられない） |
 | `unused-network` | 警告（同上のときは注記） | どの participant も使わないネットワーク |
 | `single-participant` | 警告（同上のときは注記） | participant が 1 つだけのネットワーク（送ったものを誰も受けない） |
 | `not-checked` | 注記 | `describe: false` の participant（照合していない） |
@@ -83,6 +85,7 @@
 
 - `address-shared` の「別のアドレスへ移る」は、移る先が空いていることを前提にします。NAME のないノードは Address Claim をしないので、任意アドレスの範囲にそのノードがいると、移ったノードと重なることがあります。照合は移る先を決めないので、これは確かめません。
 - `unused-network`、`single-participant`、`lin-no-master` は、すべての participant の自己申告がそろったときだけ出します。照合できなかった participant（`failed` と `skipped`）がいる間は出しません（その participant の誤りを先に直します）。`describe: false` の participant がいるときは注記です（その participant が使っているかもしれないため。文言にもそう書きます）。
+- イーサネットの MAC アドレスは、ECU が `ethernet()` に渡して申告した値です（[ecu-executable.md](ecu-executable.md) の `networks[].mac`）。実際に送るフレームの送り元のアドレスは見ません。同じアドレスでも、別のネットワークなら重なりとみなしません。表では、ネットワークの欄にアドレスを書きます（`ETH (ethernet 02:00:00:00:00:01)`。申告がなければ `ETH (ethernet)`）。
 - ネットワークを使う participant は、名前と種類の両方が合うものです（表と JSON の `networks[].participants` も同じです）。
 - `networks` にないネットワークの上の、アドレスと NAME の重なりは確かめません（先に `unknown-network` を直します）。種類を読めなかったネットワークも確かめません。
 
@@ -234,7 +237,8 @@ participants:
                 "j1939_name": "0x00000000FE000001",
                 "arbitrary_address_capable": false
               }
-            ]
+            ],
+            "mac": null
           }
         ]
       },
@@ -247,7 +251,7 @@ participants:
           "min": null,
           "max": null,
           "step": null,
-          "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+          "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
           "items": [],
           "builtin": true
         },

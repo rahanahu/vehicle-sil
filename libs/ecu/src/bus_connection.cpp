@@ -38,7 +38,7 @@ void BusConnection::declare(control::Agent& agent)
                             : "disconnected from its buses (ecu.connected false): what it sends does not leave, what the "
                               "buses carry does not reach it");
         },
-        {.description = "on its buses; false: off all of them (CAN and LIN), its steps go on"});
+        {.description = "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on"});
 }
 
 void BusConnection::set(bool connected)
@@ -86,6 +86,24 @@ std::size_t GatedCanPort::release_before(SimTime now, can::FrameSink sink)
 can::SendResult GatedCanPort::send(const can::TimedFrame& frame)
 {
     return connection_.connected() ? inner_.send(frame) : can::SendResult::Failed;
+}
+
+std::size_t GatedEthPort::release_before(SimTime now, eth::FrameSink sink)
+{
+    std::size_t passed = 0;
+    inner_.release_before(now, [&](const eth::TimedFrame& frame) {
+        if (connection_.connected_for(frame.time))
+        {
+            ++passed;
+            sink(frame);
+        }
+    });
+    return passed;
+}
+
+eth::SendResult GatedEthPort::send(const eth::TimedFrame& frame)
+{
+    return connection_.connected() ? inner_.send(frame) : eth::SendResult::Failed;
 }
 
 void GatedLinPort::send_header(SimTime now, lin::LinId id, std::uint8_t data_length, lin::LinChecksumModel checksum_model)

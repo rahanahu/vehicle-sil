@@ -5,7 +5,8 @@
 // CAN: the others stop hearing it and it stops hearing them, with the frames stamped at the
 // steps of the changes decided alike; its sends fail; it announces its address again when it
 // comes back (or not, NetworkOptions::on_reconnect), which finds a node that took its address
-// meanwhile. LIN: a master off the bus gets no responses and its slaves no headers, except for
+// meanwhile. Ethernet: as raw CAN (its frames do not leave and are counted as dropped, and it
+// hears none). LIN: a master off the bus gets no responses and its slaves no headers, except for
 // the header it sent before it went off; a slave off the bus answers nothing and hears nothing.
 // The records must be the same on every runtime and order.
 #include "test_harness.hpp"
@@ -28,6 +29,7 @@ using vehicle_sil::SilKitOptions;
 using vehicle_sil::SimTime;
 using vehicle_sil::Simulation;
 namespace can = vehicle_sil::can;
+namespace eth = vehicle_sil::eth;
 namespace j1939 = vehicle_sil::j1939;
 namespace lin = vehicle_sil::lin;
 namespace control = vehicle_sil::control;
@@ -38,6 +40,21 @@ constexpr lin::LinId kCommand = 0x10; // the master's frame
 constexpr lin::LinId kStatus = 0x11;  // the slave's frame
 
 SimTime at(std::chrono::milliseconds ms) { return SimTime{} + ms; }
+
+constexpr eth::MacAddress kEngineMac{{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}};
+constexpr eth::MacAddress kDashMac{{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}};
+
+/// A broadcast frame from `source` with an EtherType of the local experimental range and one byte.
+eth::Frame eth_frame(const eth::MacAddress& source, std::uint8_t value)
+{
+    std::array<std::uint8_t, eth::kHeaderBytes + 1> bytes{};
+    std::copy(eth::kBroadcast.bytes.begin(), eth::kBroadcast.bytes.end(), bytes.begin());
+    std::copy(source.bytes.begin(), source.bytes.end(), bytes.begin() + 6);
+    bytes[12] = 0x88;
+    bytes[13] = 0xB5;
+    bytes[14] = value;
+    return *eth::Frame::from(bytes);
+}
 
 long long ms_of(SimTime t) { return static_cast<long long>(t.time_since_epoch() / 1ms); }
 
@@ -50,8 +67,8 @@ j1939::NetworkOptions on_reconnect(j1939::OnReconnect what)
     return options;
 }
 
-/// Sends its speed every 100 ms on J1939 (a node with a NAME) and a raw 11-bit frame every 100 ms,
-/// hears the dashboard, and runs a LIN schedule of its own frame and the slave's.
+/// Sends its speed every 100 ms on J1939 (a node with a NAME), a raw 11-bit frame and an Ethernet
+/// frame every 100 ms, hears the dashboard (J1939 and Ethernet), and runs a LIN schedule of its own frame and the slave's.
 class Engine
 {
 public:
@@ -59,6 +76,7 @@ public:
       network(ecu.j1939("J1939_CAN")),
       node(network.add_node({0x00, name(7)})),
       raw(ecu.can("RAW")),
+      ethernet(ecu.ethernet("ETH", {.mac = kEngineMac})),
       master(ecu.lin_master("LIN", {{kCommand, 1, lin::LinChecksumModel::Enhanced, 10ms, lin::LinPublisher::Master},
                                     {kStatus, 1, lin::LinChecksumModel::Enhanced, 10ms, lin::LinPublisher::Slave}}))
     {
@@ -66,7 +84,9 @@ public:
             const std::array<std::uint8_t, 1> data{0x42};
             static_cast<void>(node.send(kSpeed, data));
             static_cast<void>(raw.send(can::Frame{0x100, can::IdFormat::Standard, 1, {0x42}}));
+            static_cast<void>(ethernet.send(eth_frame(kEngineMac, 0x42)));
         });
+        ethernet.on_frame([this](const eth::TimedFrame& f) { eth_heard.push_back(ms_of(f.time)); });
         node.on_message(kDash, [this](const j1939::Message& m) { heard.push_back(ms_of(m.time)); });
         master.on_result([this](const lin::LinScheduleResult& r) {
             results.push_back(std::to_string(ms_of(r.header_time)) + " " + std::to_string(r.id) + " " +
@@ -77,8 +97,10 @@ public:
     j1939::Network& network;
     j1939::Node& node;
     can::RawChannel& raw;
+    eth::Channel& ethernet;
     lin::LinMaster& master;
     std::vector<long long> heard;      ///< the times of the dashboard's messages received
+    std::vector<long long> eth_heard;  ///< the times of the dashboard's Ethernet frames received
     std::vector<std::string> results; ///< "<header ms> <id> ok|none"
 };
 
@@ -101,7 +123,11 @@ public:
             static_cast<void>(node.send(kDash, data));
         });
         ecu.can("RAW").on_frame([this](const can::TimedFrame& f) { raw.push_back(ms_of(f.time)); });
+        auto& ethernet = ecu.ethernet("ETH", {.mac = kDashMac});
+        ethernet.on_frame([this](const eth::TimedFrame& f) { eth.push_back(ms_of(f.time)); });
+        ecu.every(10ms, [&ethernet](SimTime) { static_cast<void>(ethernet.send(eth_frame(kDashMac, 0x01))); });
     }
+    std::vector<long long> eth;    ///< the times of the engine's Ethernet frames received
     std::vector<long long> speeds; ///< the times of the speeds received
     std::vector<long long> claims; ///< the times of the engine's Address Claimed
     std::vector<long long> raw;    ///< the times of the engine's raw frames received
@@ -130,6 +156,9 @@ struct Records
     std::vector<long long> frames;
     std::uint64_t send_failures = 0;
     std::uint64_t raw_dropped = 0;
+    std::vector<long long> eth;
+    std::vector<long long> eth_heard;
+    std::uint64_t eth_dropped = 0;
     std::vector<control::CommandResult> writes;
 };
 
@@ -166,6 +195,9 @@ Records run(std::optional<SilKitOptions> silkit, bool door_first)
                 door->frames,
                 engine.network.statistics().send_failures,
                 engine.raw.statistics().frames_dropped,
+                dashboard.eth,
+                engine.eth_heard,
+                engine.ethernet.statistics().frames_dropped,
                 {}};
     sim.ecu("Engine").agent().drain_results(out.writes);
     sim.ecu("Door").agent().drain_results(out.writes);
@@ -201,6 +233,10 @@ void check(const Records& r)
         }
     }
     CHECK(r.heard == heard);
+    // Ethernet: the same as raw CAN in both directions.
+    CHECK(r.eth == sent);
+    CHECK_EQ(r.eth_dropped, std::uint64_t{3});
+    CHECK(r.eth_heard == heard);
     // The first claim, and the claim the engine sends again when it comes back at 600 ms (not at
     // 800 ms: it was not off before that step).
     CHECK(r.claims == (std::vector<long long>{0, 600}));
@@ -227,7 +263,7 @@ void check(const Records& r)
 bool same(const Records& a, const Records& b)
 {
     return a.results == b.results && a.speeds == b.speeds && a.claims == b.claims && a.raw == b.raw &&
-           a.heard == b.heard && a.frames == b.frames;
+           a.heard == b.heard && a.frames == b.frames && a.eth == b.eth && a.eth_heard == b.eth_heard;
 }
 
 /// A LIN master with a step much shorter than its slot: only the slave's frame, every 10 ms.

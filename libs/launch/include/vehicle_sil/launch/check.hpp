@@ -149,7 +149,8 @@ struct ParticipantResult
 
 /// Compares the configuration with what the participants reported (`results` in the order of
 /// config.participants): names, steps, networks and their kinds, J1939 addresses and NAMEs (on a
-/// CAN network), LIN masters (on a LIN network), unused networks and networks with one
+/// CAN network), LIN masters (on a LIN network), MAC addresses (on an Ethernet network), unused
+/// networks and networks with one
 /// participant, participants that were not checked or are disabled, vehicle-sil versions other
 /// than `launcher_version`. The rules of a network are those of its kind only: a description
 /// with J1939 nodes on a use other than j1939 is not checked for them (read_description()

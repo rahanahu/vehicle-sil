@@ -150,7 +150,8 @@
                         "j1939_name": "0x00000000FE000001",
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -163,7 +164,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -245,7 +246,8 @@
                         "j1939_name": null,
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -258,7 +260,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -593,20 +595,9 @@
       "type": "event",
       "session": 1,
       "event": {
-        "event": "log",
+        "event": "control_link",
         "seq": 18,
         "t_ms": 180,
-        "source": "Dashboard",
-        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
-      }
-    },
-    {
-      "type": "event",
-      "session": 1,
-      "event": {
-        "event": "control_link",
-        "seq": 19,
-        "t_ms": 190,
         "name": "Engine",
         "state": "no_hello"
       }
@@ -616,8 +607,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 20,
-        "t_ms": 200,
+        "seq": 19,
+        "t_ms": 190,
         "name": "Dashboard",
         "state": "version_mismatch",
         "version": 2
@@ -628,8 +619,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 21,
-        "t_ms": 210,
+        "seq": 20,
+        "t_ms": 200,
         "name": "Gauge",
         "state": "not_offered"
       }
@@ -639,8 +630,8 @@
       "session": 1,
       "event": {
         "event": "control_link",
-        "seq": 22,
-        "t_ms": 220,
+        "seq": 21,
+        "t_ms": 210,
         "name": "Logger",
         "state": "none"
       }
@@ -650,8 +641,8 @@
       "session": 1,
       "event": {
         "event": "phase",
-        "seq": 23,
-        "t_ms": 230,
+        "seq": 22,
+        "t_ms": 220,
         "phase": "running"
       }
     },
@@ -660,8 +651,8 @@
       "session": 1,
       "event": {
         "event": "log",
-        "seq": 24,
-        "t_ms": 240,
+        "seq": 23,
+        "t_ms": 230,
         "source": "vehicle_sil_launch",
         "line": "simulation running"
       }
@@ -671,8 +662,8 @@
       "session": 1,
       "event": {
         "event": "time",
-        "seq": 25,
-        "t_ms": 250,
+        "seq": 24,
+        "t_ms": 240,
         "sim_ms": 0,
         "speed": "max",
         "paused": false,
@@ -681,6 +672,17 @@
         "max_late_ms": 0,
         "slipped_ms": 0,
         "late_ms": 0
+      }
+    },
+    {
+      "type": "event",
+      "session": 1,
+      "event": {
+        "event": "log",
+        "seq": 25,
+        "t_ms": 250,
+        "source": "Dashboard",
+        "line": "t=500 ms engine speed 1200 rpm (5 messages)"
       }
     },
     {
@@ -1057,7 +1059,8 @@
                           "j1939_name": "0x00000000FE000001",
                           "arbitrary_address_capable": false
                         }
-                      ]
+                      ],
+                      "mac": null
                     }
                   ]
                 },
@@ -1070,7 +1073,7 @@
                     "min": null,
                     "max": null,
                     "step": null,
-                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                     "items": [],
                     "builtin": true
                   },
@@ -1152,7 +1155,8 @@
                           "j1939_name": null,
                           "arbitrary_address_capable": false
                         }
-                      ]
+                      ],
+                      "mac": null
                     }
                   ]
                 },
@@ -1165,7 +1169,7 @@
                     "min": null,
                     "max": null,
                     "step": null,
-                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                     "items": [],
                     "builtin": true
                   },
@@ -1378,7 +1382,8 @@
                         "j1939_name": "0x00000000FE000001",
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -1391,7 +1396,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -1473,7 +1478,8 @@
                         "j1939_name": null,
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -1486,7 +1492,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -1878,7 +1884,8 @@
                           "j1939_name": "0x00000000FE000001",
                           "arbitrary_address_capable": false
                         }
-                      ]
+                      ],
+                      "mac": null
                     }
                   ]
                 },
@@ -1891,7 +1898,7 @@
                     "min": null,
                     "max": null,
                     "step": null,
-                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                     "items": [],
                     "builtin": true
                   },
@@ -1973,7 +1980,8 @@
                           "j1939_name": null,
                           "arbitrary_address_capable": false
                         }
-                      ]
+                      ],
+                      "mac": null
                     }
                   ]
                 },
@@ -1986,7 +1994,7 @@
                     "min": null,
                     "max": null,
                     "step": null,
-                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                     "items": [],
                     "builtin": true
                   },

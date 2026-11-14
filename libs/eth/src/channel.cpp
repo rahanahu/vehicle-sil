@@ -2,6 +2,7 @@
 #include "vehicle_sil/eth/channel.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -12,22 +13,33 @@ namespace {
 constexpr const char* kWho = "vehicle_sil::eth::Channel: ";
 } // namespace
 
-Channel::Channel(Port& port, ChannelOptions options) : port_(&port), options_(std::move(options))
+void Channel::validate(const ChannelOptions& options)
 {
-    if (options_.send_capacity == 0 || options_.receive_capacity == 0)
+    if (options.send_capacity == 0 || options.receive_capacity == 0)
     {
         throw std::invalid_argument(std::string(kWho) + "send_capacity and receive_capacity must be > 0");
     }
-    if (options_.max_frame_bytes < kHeaderBytes || options_.max_frame_bytes > Frame::kCapacity)
+    if (options.max_frame_bytes < kHeaderBytes || options.max_frame_bytes > Frame::kCapacity)
     {
         throw std::invalid_argument(std::string(kWho) + "max_frame_bytes must be from " + std::to_string(kHeaderBytes) +
                                     " to " + std::to_string(Frame::kCapacity) + ", not " +
-                                    std::to_string(options_.max_frame_bytes));
+                                    std::to_string(options.max_frame_bytes));
     }
-    if (options_.accept == Accept::Addressed && !options_.mac)
+    if (options.accept == Accept::Addressed && !options.mac)
     {
         throw std::invalid_argument(std::string(kWho) + "Accept::Addressed needs the channel's own address (mac)");
     }
+}
+
+std::size_t Channel::port_inbox_capacity(const ChannelOptions& options) noexcept
+{
+    constexpr std::size_t kMax = std::numeric_limits<std::size_t>::max();
+    return options.receive_capacity > kMax / 2 ? kMax : options.receive_capacity * 2;
+}
+
+Channel::Channel(Port& port, ChannelOptions options) : port_(&port), options_(std::move(options))
+{
+    validate(options_);
     received_.reserve(options_.receive_capacity);
     order_.reserve(options_.receive_capacity);
     outgoing_.reserve(options_.send_capacity);

@@ -253,7 +253,7 @@ describe('variable widgets', () => {
     expect(host.dataset['connected']).toBe('false');
     expect(button.getAttribute('aria-checked')).toBe('false');
     expect(text(fixture, 'bus-state')).toBe(
-      '⚠この ECU はバスから外れています（CAN と LIN に送らず、受けません。ステップは動き続けます）。',
+      '⚠この ECU はバスから外れています（CAN、LIN、イーサネットに送らず、受けません。ステップは動き続けます）。',
     );
   });
 

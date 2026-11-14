@@ -150,7 +150,8 @@
                         "j1939_name": "0x00000000FE000001",
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -163,7 +164,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -245,7 +246,8 @@
                         "j1939_name": null,
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -258,7 +260,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -642,7 +644,8 @@
                         "j1939_name": "0x00000000FE000001",
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -655,7 +658,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -737,7 +740,8 @@
                         "j1939_name": null,
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -750,7 +754,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -906,7 +910,7 @@
         "event": "time",
         "seq": 22,
         "t_ms": 220,
-        "sim_ms": 305,
+        "sim_ms": 300,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -923,7 +927,7 @@
         "event": "time",
         "seq": 23,
         "t_ms": 230,
-        "sim_ms": 405,
+        "sim_ms": 400,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -951,7 +955,7 @@
         "event": "time",
         "seq": 25,
         "t_ms": 250,
-        "sim_ms": 505,
+        "sim_ms": 500,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -985,7 +989,7 @@
         "event": "time",
         "seq": 27,
         "t_ms": 270,
-        "sim_ms": 710,
+        "sim_ms": 705,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1002,7 +1006,7 @@
         "event": "time",
         "seq": 28,
         "t_ms": 280,
-        "sim_ms": 810,
+        "sim_ms": 805,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1019,7 +1023,7 @@
         "event": "time",
         "seq": 29,
         "t_ms": 290,
-        "sim_ms": 910,
+        "sim_ms": 905,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1047,7 +1051,7 @@
         "event": "time",
         "seq": 31,
         "t_ms": 310,
-        "sim_ms": 1010,
+        "sim_ms": 1005,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1064,7 +1068,7 @@
         "event": "time",
         "seq": 32,
         "t_ms": 320,
-        "sim_ms": 1110,
+        "sim_ms": 1105,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1081,7 +1085,7 @@
         "event": "time",
         "seq": 33,
         "t_ms": 330,
-        "sim_ms": 1215,
+        "sim_ms": 1205,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1111,7 +1115,7 @@
         "event": "time",
         "seq": 35,
         "t_ms": 350,
-        "sim_ms": 1235,
+        "sim_ms": 1225,
         "speed": 1,
         "paused": false,
         "actual_speed": 1.5,
@@ -1145,7 +1149,7 @@
         "line": null,
         "participant": null,
         "network": null,
-        "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+        "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
       }
     },
     {
@@ -1257,10 +1261,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1235,
+            "sim_ms": 1225,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 247,
+            "paced_steps": 245,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -1311,7 +1315,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -1365,7 +1369,8 @@
                           "j1939_name": "0x00000000FE000001",
                           "arbitrary_address_capable": false
                         }
-                      ]
+                      ],
+                      "mac": null
                     }
                   ]
                 },
@@ -1378,7 +1383,7 @@
                     "min": null,
                     "max": null,
                     "step": null,
-                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                     "items": [],
                     "builtin": true
                   },
@@ -1460,7 +1465,8 @@
                           "j1939_name": null,
                           "arbitrary_address_capable": false
                         }
-                      ]
+                      ],
+                      "mac": null
                     }
                   ]
                 },
@@ -1473,7 +1479,7 @@
                     "min": null,
                     "max": null,
                     "step": null,
-                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                     "items": [],
                     "builtin": true
                   },
@@ -1572,7 +1578,7 @@
           "event": "time",
           "seq": 35,
           "t_ms": 350,
-          "sim_ms": 1235,
+          "sim_ms": 1225,
           "speed": 1,
           "paused": false,
           "actual_speed": 1.5,
@@ -1622,7 +1628,8 @@
                         "j1939_name": "0x00000000FE000001",
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -1635,7 +1642,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -1717,7 +1724,8 @@
                         "j1939_name": null,
                         "arbitrary_address_capable": false
                       }
-                    ]
+                    ],
+                    "mac": null
                   }
                 ]
               },
@@ -1730,7 +1738,7 @@
                   "min": null,
                   "max": null,
                   "step": null,
-                  "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                  "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                   "items": [],
                   "builtin": true
                 },
@@ -1855,7 +1863,7 @@
             "line": null,
             "participant": null,
             "network": null,
-            "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+            "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
           },
           {
             "severity": "note",
@@ -1893,10 +1901,10 @@
             "ecu_step_ms": 5,
             "step_delay_ms": 0,
             "late_tolerance_ms": 10,
-            "sim_ms": 1235,
+            "sim_ms": 1225,
             "wall_ms": 1000,
             "actual_speed": 1.5,
-            "paced_steps": 247,
+            "paced_steps": 245,
             "late_steps": 1,
             "max_late_ms": 200,
             "slipped_ms": 200,
@@ -1947,7 +1955,7 @@
               "line": null,
               "participant": null,
               "network": null,
-              "message": "1 of 247 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
+              "message": "1 of 245 paced steps were more than 10 ms late (the latest by 200 ms), so the simulation came 200 ms behind real time in all: lower the speed, or find what is slow"
             },
             {
               "severity": "note",
@@ -2001,7 +2009,8 @@
                           "j1939_name": "0x00000000FE000001",
                           "arbitrary_address_capable": false
                         }
-                      ]
+                      ],
+                      "mac": null
                     }
                   ]
                 },
@@ -2014,7 +2023,7 @@
                     "min": null,
                     "max": null,
                     "step": null,
-                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                     "items": [],
                     "builtin": true
                   },
@@ -2096,7 +2105,8 @@
                           "j1939_name": null,
                           "arbitrary_address_capable": false
                         }
-                      ]
+                      ],
+                      "mac": null
                     }
                   ]
                 },
@@ -2109,7 +2119,7 @@
                     "min": null,
                     "max": null,
                     "step": null,
-                    "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+                    "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
                     "items": [],
                     "builtin": true
                   },

@@ -52,8 +52,8 @@ participants:
 | `time_step_ms` | | controller の刻み（ミリ秒の仮想時間、1 以上 10^12 以下の整数）。一時停止とステップ送りの細かさ、速さを合わせる細かさです。書かなければ、最速のときは 10 です（`stop_at_ms` が 10 の倍数でなければ、`stop_at_ms` と 10 の最大公約数）。速さを指定したときは、さらに ECU のステップ幅との最大公約数にします（[等速で動かす](simulation-run.md#等速で動かす)の「刻みと ECU のステップ」）。書いたときは `stop_at_ms` の約数にします（誤り `value`） |
 | `late_tolerance_ms` | | 遅れの許容（実時間のミリ秒、1 以上 10^12 以下の整数）。刻みの遅れがこれを超えたら、遅れた刻みに数えます。書かなければ 10 です（刻みと速さによりません） |
 | `networks` | はい | ネットワークの配列（空でもかまいません）。ECU が使うネットワークは、すべてここに書きます |
-| `networks[].name` | はい | ネットワークの名前（ECU の `j1939()`、`can()`、`lin_master()`、`lin_slave()` に渡す名前） |
-| `networks[].kind` | はい | `can` か `lin` |
+| `networks[].name` | はい | ネットワークの名前（ECU の `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡す名前） |
+| `networks[].kind` | はい | `can`、`lin`、`ethernet` のどれか |
 | `participants` | はい | participant の配列（1 つ以上） |
 | `participants[].name` | はい | participant 名。照合では、ecu_main の実行ファイルに `--name` で渡します。空でなく、1 行で（制御文字なし）、`-` で始まらないこと。`SimulationController`（vehicle-sil の controller の participant 名）は使えません |
 | `participants[].command` | はい | 実行ファイルと、その引数の配列。引数がなければ文字列 1 つでもかまいません（空白で分けません） |

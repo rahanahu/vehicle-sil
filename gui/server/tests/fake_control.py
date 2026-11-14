@@ -47,7 +47,7 @@ def variables(name: str) -> list[dict]:
     base = name.lower()
     return [
         {"name": "ecu.connected", "type": "bool", "causality": "input", "unit": "", "min": None, "max": None,
-         "step": None, "description": "on its buses; false: off all of them (CAN and LIN), its steps go on",
+         "step": None, "description": "on its buses; false: off all of them (CAN, LIN and Ethernet), its steps go on",
          "items": [], "builtin": True},
         {"name": f"{base}.demand", "type": "real", "causality": "input", "unit": "%", "min": 0, "max": 100,
          "step": None, "description": "requested level", "items": [], "builtin": False},
