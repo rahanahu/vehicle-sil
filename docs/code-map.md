@@ -47,6 +47,7 @@ scripts/verify.py linux-gcc-debug --tests '^launch_run\.'
 | `control` | Control Agent の試験（`control.*`）。転送なしで Agent を直接動かす試験、`Ecu` で宣言した変数への時刻つきの書き込みが仮想バスと SIL Kit で同じステップに反映され、同じ時刻に読み出されること、`Peer` の Agent（SIL Kit の participant で、反映の位置、実時間、監視の出力）、プロセス内でつないだ `Hub`、ECU より長く残った転送がプロセスを止めること（`unit` ラベルも付く）。`control_server` の試験にもこのラベルが付く |
 | `control_server` | `VEHICLE_SIL_BUILD_CONTROL_SERVER=ON` のときだけ。Control Server の試験（`control_server.*`）: gRPC の生成コードと呼び出し、1 つのプロセスで端から端まで（2 つの J1939 の Peer の Agent が SIL Kit でつながる Hub、時間ゲート、gRPC のクライアント）、認証と役割と TLS と監査ログ、どの役割がどの RPC を呼べるか（proto の RPC と規則の表の対応も）、メッセージの変換、上限と入力の検査、`SimulationMonitor`（`unit` と `control` のラベルも付く）。grpcio と grpcio-tools のある Python があれば、`control_server.python_client` が Python のクライアントと CLI を `vehicle_sil_launch run --control` に対して動かし、`control_server.launcher` が `vehicle_sil_launch run --control` と `examples/ecu_main` の ECU を動かし（始まる前の書き込み、2 つの口の命令、終わり方、認証と TLS と監査、トークンつきの CLI）、`control_server.example_write_before_start` と `control_server.example_pause_and_step` が `examples/launch_control` を動かす（どれも `control` と `python` のラベル。`launcher` には `integration` も、例には `examples` も付く） |
 | `eth_link` / `ethernet_bridge` | イーサネットのブリッジの試験（全プラットフォーム。`unit` ラベルも付く）。`eth_link.*` は SIL Kit なしで、MAC アドレス、絞り込み（EtherType、VLAN タグの先、MAC、最大長）、MAC の表、偽の口を確かめ、`eth_link.boundary` が `libs/eth_link` に SIL Kit の include がないことを確かめる。`ethernet_bridge.*` は、偽の SIL Kit のコントローラーと偽の口で転送、絞り込み、自分のフレームの戻り、2 つのブリッジを通る輪（止まる順序と止まらない順序）、失ったフレーム、`Fault`、警告を、ほかに統計と監視の行、引数の誤りの文言を確かめる。`ethernet_bridge.silkit_*` はプロセス内のレジストリ（空いているポート）で本物の SIL Kit の側を確かめる |
+| `bridge_runtime` | ブリッジの実行ファイルが共有する `run_bridge()` の試験（全プラットフォーム。`unit` ラベルも付く）。偽の `hooks` と状態を決めた偽の participant で、終了コード、止める順（統計を SIL Kit の participant の停止より先に出す）、`fault()` と participant の失敗、警告と監視の行、起動の途中の状態を失敗にしないこと、起動の上限を確かめる。1 つはプロセス内のレジストリ（空いているポート）で本物の participant を使う |
 | `fetchcontent` | 既定では無効。このリポジトリのコミットを FetchContent で取り込み、利用例をビルドして実行する。`fetchcontent.template` は、ひな形を別のディレクトリに写し、いまの作業ツリーを FetchContent で取り込んでビルドし、照合と実行とシナリオを通す |
 
 各プロセスのログは `build/<preset>/tests/` の下の `integration/<シナリオ>/`、`virtual_time/<シナリオ>/`、`lin_cluster/<シナリオ>/`、`vector_xl/integration/<シナリオ>/` に残ります。失敗したときは、ランチャーがすべてのログを出力します。
@@ -91,6 +92,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 | `tools/common` | 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、`vehicle_sil/cli/console.hpp`。ターゲット `vehicle_sil_cli`） | `tests/unit` | `^unit\.` |
 | `tools/sim_controller` | `vehicle_sil_sim_controller`（`main.cpp`） | 専用の試験はなく、プロセスの試験が使う | `^virtual_time\.`、`^ecu_main\.`、`^lin_cluster\.` |
 | `bridges/vector-xl` | `CanBridge`（`vector_xl/can_bridge.hpp`）、`ExternalPortAdapter`（`vector_xl/external_port_adapter.hpp`）、`XlDriver`、`XlCanPort`（`vector_xl/xl_driver.hpp`） | `tests/vector_xl`（XL ドライバのフェイクは `tests/vector_xl/fake_xl`） | `^vector_xl\.` |
+| `bridges/common` | `run_bridge()`、`BridgeHooks`、`judge_participant_state()`、`request_stop()`、`finish_console_close()`（`bridge_runtime/run_bridge.hpp`） | `tests/bridge_runtime`、ブリッジの実行ファイルの E2E（`tests/vector_xl` の `integration.*`） | `^bridge_runtime\.`、`^vector_xl\.integration\.` |
 | `libs/eth_link`、`bridges/ethernet` | `ExternalLink`、`LinkEvent`、`LinkError`（`eth_link/external_link.hpp`）、`FrameFilter`（`eth_link/frame_filter.hpp`）、`MacSideTable`（`eth_link/mac_side_table.hpp`）、`MacAddress`（`eth_link/mac_address.hpp`）、`EthernetBridge`（`ethernet_bridge/ethernet_bridge.hpp`）、`parse_bridge_options()`（`ethernet_bridge/bridge_options.hpp`） | `tests/eth_link`（偽の口は `tests/eth_link/fake_link`）、`tests/ethernet_bridge` | `^eth_link\.`、`^ethernet_bridge\.` |
 | `examples/j1939`（sender と receiver） | | `tests/integration` | `^integration\.` |
 | `examples/virtual_time` | | `tests/virtual_time` | `^virtual_time\.` |
@@ -122,7 +124,7 @@ flowchart TD
         run["peer, simulation"]
         launch_process["launch, process"]
         grpc["control_grpc, control_proto"]
-        tools["executables, vector_xl bridge"]
+        tools["executables, vector_xl bridge, bridge_runtime"]
         ethernet_bridge["ethernet_bridge_core"]
     end
     j1939_parts --> protocols
@@ -254,7 +256,7 @@ flowchart TD
 
 ### Vector XL CAN Bridge
 
-`vector_xl` と `vehicle_sil_vector_xl_bridge` は Windows で、XL Driver Library があるときだけ作ります。
+`vector_xl` と `vehicle_sil_vector_xl_bridge` は Windows で、XL Driver Library があるときだけ作ります。`bridge_runtime`（`bridges/common`）は、ブリッジの実行ファイルの止め方、監視のループ、終了コードを 1 か所に置いたもので、どのプラットフォームでも作ります。
 
 ```mermaid
 flowchart TD
@@ -266,8 +268,12 @@ flowchart TD
     vector_xl -.-> vehicle_sil_vector_xl_logic
     vector_xl -.-> vxlapi["XL Driver Library"]
     vehicle_sil_vector_xl_bridge -.-> vector_xl
+    vehicle_sil_vector_xl_bridge -.-> bridge_runtime
     vehicle_sil_vector_xl_bridge -.-> core
     vehicle_sil_vector_xl_bridge -.-> vehicle_sil_cli
+    bridge_runtime --> SilKit
+    bridge_runtime -.-> core
+    bridge_runtime -.-> vehicle_sil_cli
 ```
 
 ### Ethernet Bridge
@@ -324,6 +330,7 @@ flowchart TD
 | `libs/` にライブラリを足す | ルートの `CMakeLists.txt` の `add_subdirectory`、[architecture.md](architecture.md) の「構成」 |
 | `proto/vehicle_sil/control/v1/control.proto` | `libs/control_grpc/src`（`convert.hpp`、`control_service.cpp`。サービスを足したら `auth.cpp` の `rpc_rules()` と `test_authorization*.cpp` も）、`python/vehicle_sil_control/client.py`、[control-api.md](control-api.md)。Python のスタブは試験のビルドで生成します（`python -m vehicle_sil_control.generate`） |
 | 使う SIL Kit の API、上流の挙動への前提 | [dependencies.md](dependencies.md) の「使っている API」と「実装が前提にしている上流の挙動」 |
+| ブリッジの止め方、participant の状態の判定（`judge_participant_state()`）、止める順、終了コード、監視の行の出し方（`bridges/common/src/run_bridge.cpp`） | [bridges.md](bridges.md) の「接続先とチャネルの選択（CLI）」の終了コードと participant の状態の扱い。出す文言は `bridge_runtime.*` が照合します。止める順と終了コードは `vector_xl.integration.stop-request` と `device-lost` も確かめます。コンソールのウィンドウを閉じたときの扱い（4 秒）を確かめる自動の試験はないので、変えたら Windows で手で確かめます |
 | イーサネットのブリッジの統計のキー、監視の行、警告、引数と誤りの文（`bridges/ethernet/src`、`libs/eth_link/src`） | [ethernet-bridge.md](ethernet-bridge.md) にある写し。文言は試験 `ethernet_bridge.*` が照合しますが、文書の写しは照合しないので、手で合わせます |
 | ランチャーの Control Server（`tools/launch/control_server.cpp`、`RunOptions::serve_control`、`TimeCommands` の `hold_before_start()`、`inspect()`、`wait_paused()`、`ServerOptions::external_hub`）、`python/vehicle_sil_control/launcher.py` | [control-api.md](control-api.md) の「ランチャーにつなぐ」（始まる前に書く、2 つの口の命令、認証）、[simulation-config.md](simulation-config.md) の事象 `control_server`、`command` の `source` と `at_ms`、引数の表、`features` の `control-server`（`kControlServerFeature`。この名前は Control Server を持つビルドだけが出すので、`version --json` の例には入れず、`launch_cli.docs` が除いて照合します）、[internals/control.md](internals/control.md) の「ランチャーの Control Server」（スレッド、2 つの口の順序、始まる前の窓で止めること、終わり方）。gRPC のスレッドから controller に触れるのは `TimeCommands` の中だけにします（`detach()` の後に controller が壊れるため）。`run_file()` の中で gRPC を待つものを足しません。試験は `control_server.launcher`、`control_server.example_write_before_start`、`control_server.example_pause_and_step`、`^launch\.`（`TimeCommands`）、`launch_run.time_usage`（引数の誤り） |
 | Agent と Hub の間のメッセージ（`libs/control/src/wire.cpp`） | 並びを変えたら `control/wire.hpp` の `kVersion` を上げます（復号は自分の版だけを受け付けます）。相手が知らなくても困らない種類を足すだけなら上げません（知らない種類は捨てられます。最後の知らせへの返事 `Kind::LastWordReceived` がそうです）。hello の先頭から participant 名までは、どの版でも変えません（版の違う相手の名前を読むため）。大きさの上限（`kMaxMessageBytes`、`kMaxHelloBytes`、`kMaxTextBytes`）と分け方は [internals/control.md](internals/control.md) の「SIL Kit の上の運び手」。試験は `^control\.wire_`（1 バイトずつ切る、欄を壊す、乱数の入力。境界の外を読むと sanitizer のプリセットが落とします） |

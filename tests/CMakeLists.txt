@@ -45,6 +45,8 @@ add_subdirectory(peer)
 add_subdirectory(control_silkit)
 # The J1939 stack, its parts, the typed messages and the boundary checks; uses no example.
 add_subdirectory(j1939)
+# What the bridge executables share: run_bridge() (every platform).
+add_subdirectory(bridge_runtime)
 # Vector XL CAN bridge (against a fake XL driver; runs on every platform).
 add_subdirectory(vector_xl)
 # Ethernet bridge: the external link library and the bridge (against fake links; every platform).

@@ -314,7 +314,8 @@ public:
     void release_step() noexcept;
 
     /// Starts the lifecycle and waits until this participant is Running (or was: a short
-    /// simulation may have ended already when it looks). In Coordinated mode that requires the
+    /// simulation may have ended already when it looks). When it returns, state() says Running
+    /// or a later state, never one before Running. In Coordinated mode that requires the
     /// system controller and all other required participants.
     /// Throws StartTimeoutError (a std::runtime_error) on timeout, std::runtime_error if the
     /// lifecycle fails, std::logic_error if virtual time is used without a step handler.

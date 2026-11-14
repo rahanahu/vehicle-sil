@@ -6,7 +6,10 @@ vehicle-sil 自体を直す人と、`ParticipantRuntime` を直接使う人向�
 
 - `ParticipantRuntime` のコンストラクタはレジストリに接続します。失敗すると `SilKit::SilKitError` を投げます。
 - バスのコントローラは `start()` の前に作ります。`start()` が戻った時点で、接続済みの相手はそのコントローラの購読を確認済みです。
-- `start(timeout)` は lifecycle が Running になるまで待ちます。タイムアウトや失敗のときは `std::runtime_error` を投げます。
+- `start(timeout)` は lifecycle が Running になるまで待ちます。タイムアウトや失敗のときは `std::runtime_error` を投げます。戻った直後の `state()` は Running か、その後の状態です（短い実行は、見たときにもう終わっていることがあります。それも開始の成功です）。Running より前の状態（ReadyToRun など）のまま戻ることはありません。
+  - 時刻同期のない participant では、SIL Kit は starting のハンドラーを ReadyToRun で呼び、戻ってから Running にします。`start()` は、ハンドラーが呼ばれた印だけでは戻らず、状態が ReadyToRun を離れるまで待ちます。
+  - `start()` の待ちの中では、印（starting のハンドラー、最初のステップ）を先に読み、状態をその後で読みます。この順を入れ替えると、ReadyToRun のまま戻る道ができます。逆に、印を読んだ後に Running を通って止まった実行を失敗にしないよう、止まる途中か終わった状態を見たときは印を読み直します。
+  - この 2 つの順は、`libs/core/src/participant_runtime_probe.hpp` の差し込み口（試験だけが使う。インストールしない）で順を決めて、`core.participant_start_*` が確かめます。
 - `add_communication_ready_handler(handler)`: SIL Kit の CommunicationReady（SIL Kit のスレッドの上、最初のステップの前。autonomous の participant でも同じスレッドです）で呼ぶハンドラーを足します。コントローラーを始める所です（`SilKitCanPort::start()`、`SilKitEthPort::start()`、LIN の `init()`、ブリッジの `start_controller()`。SIL Kit は、CAN の `SetBaudRate` と `Start`、LIN の `Init`、Ethernet の `Activate` を、ここで呼ぶよう勧めています）。足した順に、`set_communication_ready_handler()` や `set_communication_ready_handler_async()` のハンドラーより前に呼ばれ、互いに置き換えません。足したハンドラーの例外は、participant の失敗として報告し（`report_failure()`、「CommunicationReady handler failed: ...」）、残りのハンドラーは呼びます。`start()` の前にだけ呼べます。ハンドラーが使うものは、lifecycle が終わるか `ParticipantRuntime` を破棄するまで生かしておきます。
 - `set_communication_ready_handler_async(handler)` と `complete_communication_ready()`: ハンドラーが戻った後も、`complete_communication_ready()` を呼ぶまで、participant は最初のステップの前（CommunicationInitialized）にとどまります。Coordinated では全員がそこで待つので、その間に publish/subscribe でやりとりできます（ハンドラーの中ではできません）。完了は、ハンドラーが起こした別のスレッドから呼びます（ハンドラーの中からは呼べません。ハンドラーが呼ばれる前と、2 回目は何もせずに偽を返します）。完了するまで誰のステップも始まらないので、窓の用が失敗したときも必ず完了させます。`SimulationController::set_start_window()` がこれを使います（[control.md](control.md) の「SIL Kit の上の運び手」）。
 - `set_peer_status_observer(observer)`: ほかの participant（と自分）のライフサイクルの状態がわかるたびに、名前と状態を渡して呼びます。呼ぶのは、それを知ったスレッド（SIL Kit のスレッドか、状態を読み直すスレッド）で、1 つずつです。同じ状態でもう一度呼ぶことがあります。短く、`peer_status()` のほかはこの runtime を呼ばないこと。`start()` の前に登録します。

@@ -105,6 +105,8 @@ if(VEHICLE_SIL_BUILD_CONTROL_SERVER)
   add_subdirectory(proto ${_vehicle_sil_exclude})
   add_subdirectory(libs/control_grpc ${_vehicle_sil_exclude})
 endif()
+# What the bridge executables share: run_bridge() (stop handling, monitor loop, exit code).
+add_subdirectory(bridges/common ${_vehicle_sil_exclude})
 # Vector XL CAN bridge: portable core everywhere, XL backend and executable on Windows only.
 add_subdirectory(bridges/vector-xl ${_vehicle_sil_exclude})
 # Ethernet bridge: the bridge between a SIL Kit Ethernet network and an external link (portable).
