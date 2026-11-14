@@ -81,7 +81,7 @@ Logging:
 engine/vehicle_sil_engine_ecu --registry-uri silkit://192.0.2.10:8500 --silkit-config engine.silkit.yaml
 ```
 
-- ファイルの形式とキーは、SIL Kit の participant の構成（SIL Kit の文書の「Configuration」）です。知らないキーや値の誤りは SIL Kit が決めます（知らないキーは警告、型の違う値は誤り）。相対パスは、プロセスの作業ディレクトリから数えます。
+- ファイルの形式とキーは、SIL Kit の participant の構成（SIL Kit の文書の「Configuration」）です。知らないキーや値の誤りは SIL Kit が決めます（知らないキーは警告、型の違う値は誤り。`error: <名前>: --silkit-config "<file>": SIL Kit does not accept the configuration: ...` で、YAML として読めないファイルのときは「(at line <行>, column <列> of the configuration text)」が付きます）。相対パスは、プロセスの作業ディレクトリから数えます。
 - 書いたものは、書いたとおりに使います。書いていないものには、vehicle-sil の既定を足します。
   - `Middleware.AcceptorUris` がなければ、構成なしのときと同じです（registry の URI がループバックのアドレスなら、ループバックだけで待ち受ける。[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。
   - Windows では `Middleware.EnableDomainSockets` を `false` にします。`true` と書いても `false` になります（SIL Kit の既定が `true` なので、書いたかどうかを見分けられません）。

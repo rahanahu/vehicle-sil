@@ -132,8 +132,9 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
 ///
 /// - SIL Kit reads `configuration` first (its schema, its Includes; an included file is looked
 ///   for from the working directory and in Includes.SearchPathHints). What SIL Kit refuses is SIL
-///   Kit's exception (SilKit::ConfigurationError), with SIL Kit's words. What the configuration
-///   says is taken from that reading, so a member counts whichever file it is in.
+///   Kit's exception (SilKit::ConfigurationError), with SIL Kit's words; for a text that is not
+///   YAML, " (at line <n>, column <n> of the configuration text)" is added to them. What the
+///   configuration says is taken from that reading, so a member counts whichever file it is in.
 /// - Middleware.AcceptorUris: the given ones; without them, as default_participant_configuration()
 ///   (loopback only for a loopback registry URI, unless `listen_on_network` or
 ///   kListenOnNetworkVariable says otherwise).
@@ -142,8 +143,9 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
 ///   becomes false as well.
 /// - Experimental.TimeSynchronization.DynamicSimulationStep: false when it is left out.
 /// - Everything else (Logging, HealthCheck, the other members of Middleware, ...) stays as it is
-///   written: the members above are added to the given text, in its first file. A configuration
-///   that leaves none of them out is returned as it is.
+///   written: the members above are added to the given text, in its first file (a member with
+///   nothing under it, as "Experimental:", is one that is left out). A configuration that leaves
+///   none of them out is returned as it is.
 ///
 /// std::invalid_argument, with what to change, for a configuration that would make the
 /// participant another one than the program says: a ParticipantName other than
@@ -152,11 +154,16 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
 /// (ParticipantRuntime runs on its own fixed step). An empty `registry_uri` means that it is not
 /// known (a check before the run): the configuration's URI is not compared.
 ///
-/// Adding a member needs the YAML library that SIL Kit builds (rapidyaml). In a build against a
-/// SIL Kit that vehicle-sil did not build from source, the checks above are made, but nothing is
-/// added: the configuration is used as it is (on Windows it should set
-/// Middleware.EnableDomainSockets to false, it listens where it says, and it should set
-/// DynamicSimulationStep to false: a ParticipantRuntime whose step SIL Kit cut fails that step).
+/// std::runtime_error if the text that SIL Kit accepted cannot be read again to add the members
+/// (an error of vehicle-sil; the message says how to go on without it).
+///
+/// All of this needs the YAML library that SIL Kit builds (rapidyaml). In a build against a SIL
+/// Kit that vehicle-sil did not build from source, a configuration that is not "{}" or empty is
+/// returned as it is, unread: nothing is added, and none of the checks above is made (SIL Kit
+/// reads it when the participant is made). It should then set Middleware.EnableDomainSockets to
+/// false on Windows and DynamicSimulationStep to false (a ParticipantRuntime whose step SIL Kit
+/// cut fails that step), it listens where it says, and it should not set ParticipantName or
+/// Middleware.RegistryUri.
 [[nodiscard]] std::string merged_participant_configuration(std::string_view configuration,
                                                            std::string_view participant_name,
                                                            std::string_view registry_uri,
@@ -167,9 +174,11 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
 /// its directory is added to Includes.SearchPathHints, so that the files it includes are found
 /// beside it from any working directory (not in a build without rapidyaml, see
 /// merged_participant_configuration(): they are then looked for from the working directory).
-/// The text is not checked here (merged_participant_configuration() and ParticipantRuntime do).
+/// The text is not checked here (merged_participant_configuration() and ParticipantRuntime do):
+/// a file that is not YAML, or whose Includes or SearchPathHints is not what SIL Kit wants, is
+/// returned as it is, and SIL Kit says what is wrong when the text is used.
 /// std::invalid_argument if there is no such file (with the directory a relative path was taken
-/// from) or it cannot be read.
+/// from) or it cannot be read; nothing else is thrown for what the file says.
 [[nodiscard]] std::string participant_configuration_from_file(const std::string& path);
 
 /// The SIL Kit configuration (JSON) for a registry that vehicle-sil starts: without local-domain

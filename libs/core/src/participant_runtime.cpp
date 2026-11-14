@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "vehicle_sil/core/participant_runtime.hpp"
 
+#include "participant_runtime_checks.hpp"
 #include "participant_runtime_probe.hpp"
 
 #include <silkit/services/orchestration/all.hpp>
@@ -71,6 +72,21 @@ namespace detail {
 void set_start_probe(const StartProbe* probe) noexcept
 {
     g_start_probe.store(probe, std::memory_order_release);
+}
+
+std::string step_width_error(std::chrono::nanoseconds given, SimDuration own, SimTime now)
+{
+    if (given == own)
+    {
+        return {};
+    }
+    // SIL Kit cut the step (dynamic simulation steps).
+    return "SIL Kit gave this participant a step of " + std::to_string(given.count()) + " ns at t=" + std::to_string(to_ns(now)) +
+           " ns, not its own " + std::to_string(std::chrono::nanoseconds(own).count()) +
+           " ns: this participant's SIL Kit configuration asks for dynamic simulation steps itself, or does not opt out "
+           "while another participant asks for them. Set "
+           R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}})"
+           " in that configuration, or pass none (the default configuration has it)";
 }
 
 } // namespace detail
@@ -336,249 +352,7 @@ std::string middleware_members(std::string_view registry_uri, std::optional<bool
     return members;
 }
 
-/// A member of a JSON object: its name, and its value as the JSON text it was written with.
-struct JsonMember
-{
-    std::string name;
-    std::string value;
-};
-
-/// Reads the JSON that SIL Kit writes for a participant configuration
-/// (ParticipantConfigurationToJson()), as far as the merge needs it: the members of an object,
-/// each value kept as its text. Not a JSON library: it does not check what is inside a value.
-/// Only to see what a configuration says after SIL Kit read it (with its Includes): SIL Kit's JSON
-/// leaves out some of what it read (a log sink's Format, for one), so it is never used in place of
-/// the caller's text.
-class JsonText
-{
-public:
-    explicit JsonText(std::string_view text) : text_(text) {}
-
-    /// The members of the object that the text is.
-    std::vector<JsonMember> members()
-    {
-        std::vector<JsonMember> out;
-        skip_space();
-        expect('{');
-        skip_space();
-        if (peek() == '}')
-        {
-            ++at_;
-        }
-        else
-        {
-            for (;;)
-            {
-                skip_space();
-                JsonMember member;
-                member.name = string();
-                skip_space();
-                expect(':');
-                skip_space();
-                const std::size_t begin = at_;
-                skip_value();
-                member.value = std::string(text_.substr(begin, at_ - begin));
-                out.push_back(std::move(member));
-                skip_space();
-                if (peek() == ',')
-                {
-                    ++at_;
-                    continue;
-                }
-                expect('}');
-                break;
-            }
-        }
-        skip_space();
-        if (at_ != text_.size())
-        {
-            fail();
-        }
-        return out;
-    }
-
-    /// The string that the text is, without its quotes and escapes (UTF-8).
-    std::string string_value()
-    {
-        skip_space();
-        std::string out = string();
-        skip_space();
-        if (at_ != text_.size())
-        {
-            fail();
-        }
-        return out;
-    }
-
-private:
-    [[noreturn]] void fail() const
-    {
-        throw std::runtime_error("could not read the JSON that SIL Kit wrote for the participant configuration "
-                                 "(ParticipantConfigurationToJson()) at byte " + std::to_string(at_) + " of " +
-                                 std::to_string(text_.size()) + ": this is an error in vehicle-sil's reading of it "
-                                 "(merged_participant_configuration()); please report it with the configuration");
-    }
-    char peek() const { return at_ < text_.size() ? text_[at_] : '\0'; }
-    void expect(char c)
-    {
-        if (peek() != c)
-        {
-            fail();
-        }
-        ++at_;
-    }
-    void skip_space()
-    {
-        while (at_ < text_.size() && (text_[at_] == ' ' || text_[at_] == '\t' || text_[at_] == '\r' || text_[at_] == '\n'))
-        {
-            ++at_;
-        }
-    }
-    unsigned hex4()
-    {
-        if (at_ + 4 > text_.size())
-        {
-            fail();
-        }
-        unsigned value = 0;
-        const auto [end, error] = std::from_chars(text_.data() + at_, text_.data() + at_ + 4, value, 16);
-        if (error != std::errc{} || end != text_.data() + at_ + 4)
-        {
-            fail();
-        }
-        at_ += 4;
-        return value;
-    }
-    static void append_utf8(std::string& out, unsigned long c)
-    {
-        if (c < 0x80)
-        {
-            out += static_cast<char>(c);
-        }
-        else if (c < 0x800)
-        {
-            out += static_cast<char>(0xC0 | (c >> 6));
-            out += static_cast<char>(0x80 | (c & 0x3F));
-        }
-        else if (c < 0x10000)
-        {
-            out += static_cast<char>(0xE0 | (c >> 12));
-            out += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
-            out += static_cast<char>(0x80 | (c & 0x3F));
-        }
-        else
-        {
-            out += static_cast<char>(0xF0 | (c >> 18));
-            out += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
-            out += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
-            out += static_cast<char>(0x80 | (c & 0x3F));
-        }
-    }
-    std::string string()
-    {
-        std::string out;
-        expect('"');
-        for (;;)
-        {
-            if (at_ >= text_.size())
-            {
-                fail();
-            }
-            const char c = text_[at_++];
-            if (c == '"')
-            {
-                return out;
-            }
-            if (c != '\\')
-            {
-                out += c;
-                continue;
-            }
-            if (at_ >= text_.size())
-            {
-                fail();
-            }
-            switch (const char escaped = text_[at_++])
-            {
-            case 'b': out += '\b'; break;
-            case 'f': out += '\f'; break;
-            case 'n': out += '\n'; break;
-            case 'r': out += '\r'; break;
-            case 't': out += '\t'; break;
-            case 'u':
-            {
-                unsigned long code = hex4();
-                if (code >= 0xD800 && code < 0xDC00 && text_.substr(at_, 2) == "\\u")
-                {
-                    at_ += 2;
-                    code = 0x10000 + ((code - 0xD800) << 10) + ((hex4() - 0xDC00) & 0x3FF);
-                }
-                append_utf8(out, code);
-                break;
-            }
-            default: out += escaped; break; // \" \\ \/
-            }
-        }
-    }
-    void skip_value()
-    {
-        const char first = peek();
-        if (first == '"')
-        {
-            static_cast<void>(string());
-            return;
-        }
-        if (first != '{' && first != '[')
-        {
-            // A number, true, false or null: up to what ends it.
-            const std::size_t begin = at_;
-            while (at_ < text_.size() && std::string_view(",}] \t\r\n").find(text_[at_]) == std::string_view::npos)
-            {
-                ++at_;
-            }
-            if (at_ == begin)
-            {
-                fail();
-            }
-            return;
-        }
-        // An object or an array: to the bracket that closes it, over the strings inside.
-        std::size_t depth = 0;
-        do
-        {
-            const char c = peek();
-            if (c == '"')
-            {
-                static_cast<void>(string());
-                continue;
-            }
-            if (at_ >= text_.size())
-            {
-                fail();
-            }
-            depth += (c == '{' || c == '[') ? 1 : 0;
-            depth -= (c == '}' || c == ']') ? 1 : 0;
-            ++at_;
-        } while (depth > 0);
-    }
-
-    std::string_view text_;
-    std::size_t at_ = 0;
-};
-
-const JsonMember* find_member(const std::vector<JsonMember>& members, std::string_view name)
-{
-    const auto it = std::find_if(members.begin(), members.end(), [name](const JsonMember& m) { return m.name == name; });
-    return it == members.end() ? nullptr : &*it;
-}
-
-/// The members of the object `name` of `members`; none if there is no such member.
-std::vector<JsonMember> members_of(const std::vector<JsonMember>& members, std::string_view name)
-{
-    const JsonMember* member = find_member(members, name);
-    return member != nullptr ? JsonText(member->value).members() : std::vector<JsonMember>{};
-}
-
+#ifdef VEHICLE_SIL_CORE_HAS_RAPIDYAML
 /// What vehicle-sil adds to a configuration of the caller's that leaves it out.
 struct AddedDefaults
 {
@@ -588,16 +362,30 @@ struct AddedDefaults
     [[nodiscard]] bool any() const { return !acceptor_uris.empty() || no_domain_sockets || no_dynamic_simulation_step; }
 };
 
-#ifdef VEHICLE_SIL_CORE_HAS_RAPIDYAML
-/// A configuration text that SIL Kit has read (so it is YAML or JSON that SIL Kit's parser, the
-/// same rapidyaml, takes), to set members in: what the caller wrote stays as it is written.
+/// rapidyaml cannot read a text, or refuses a change of its tree. Never leaves this file.
+struct YamlError
+{
+    std::string message;    ///< rapidyaml's
+    std::size_t line = 0;   ///< the place in the text, counted from 1; 0 if the error is not about a place in it
+    std::size_t column = 0;
+    /// " (at line <n>, column <n> of the configuration text)", or nothing.
+    [[nodiscard]] std::string place() const
+    {
+        return line == 0 ? std::string()
+                         : " (at line " + std::to_string(line) + ", column " + std::to_string(column) + " of the configuration text)";
+    }
+};
+
+/// A YAML or JSON text as rapidyaml (the parser that SIL Kit reads its configurations with)
+/// reads it: to see what its members are, and to set members in it while what the caller wrote
+/// stays as it is written. Everything that rapidyaml refuses here is a YamlError.
 class ConfigurationText
 {
 public:
-    explicit ConfigurationText(std::string_view text) :
-      handler_(ryml::Callbacks(nullptr, nullptr, nullptr, &on_error)), parser_(&handler_)
+    explicit ConfigurationText(std::string_view text) : handler_(callbacks()), parser_(&handler_)
     {
         tree_ = ryml::parse_in_arena(&parser_, ryml::csubstr(text.data(), text.size())); // as SIL Kit does, JSON too
+        tree_.callbacks(callbacks()); // the checks of the changes below: not rapidyaml's own handler, which writes to stderr
         root_ = tree_.root_id();
         if (tree_.is_stream(root_) && tree_.has_children(root_))
         {
@@ -610,78 +398,119 @@ public:
     /// false for a text without members at its top (only comments, or "~").
     [[nodiscard]] bool has_members() const { return tree_.is_map(root_); }
     [[nodiscard]] ryml::id_type root() const { return root_; }
-    [[nodiscard]] bool has(ryml::id_type map, ryml::csubstr key) const { return tree_.find_child(map, key) != ryml::NONE; }
+    [[nodiscard]] bool is_map(ryml::id_type node) const { return node != ryml::NONE && tree_.is_map(node); }
 
-    /// The mapping `key` of the mapping `parent`, made if it is not there. `key` must outlive this.
+    /// The member `key` of `parent`; ryml::NONE if there is none, or `parent` is no mapping (or ryml::NONE).
+    [[nodiscard]] ryml::id_type member(ryml::id_type parent, ryml::csubstr key) const
+    {
+        return is_map(parent) ? tree_.find_child(parent, key) : ryml::NONE;
+    }
+
+    /// The scalar that the member `key` of `parent` is; empty if there is no such member, or it is no scalar.
+    [[nodiscard]] std::optional<std::string> scalar(ryml::id_type parent, ryml::csubstr key) const
+    {
+        const ryml::id_type node = member(parent, key);
+        if (node == ryml::NONE || !tree_.has_val(node))
+        {
+            return std::nullopt;
+        }
+        const ryml::csubstr value = tree_.val(node);
+        return std::string(value.str, value.len); // (nullptr, 0) is the empty string
+    }
+
+    /// The mapping `key` of the mapping `parent`, made if it is not there or has nothing under it
+    /// (SIL Kit reads "Experimental:" with nothing, or only comments, under it as left out).
+    /// `key` must outlive this.
     ryml::id_type map_at(ryml::id_type parent, ryml::csubstr key)
     {
         ryml::id_type node = tree_.find_child(parent, key);
-        if (node == ryml::NONE)
+        if (node != ryml::NONE && tree_.is_map(node))
         {
-            node = tree_.append_child(parent);
-            tree_.to_map(node, key);
+            return node;
         }
-        else if (!tree_.is_map(node))
+        if (node != ryml::NONE && !is_without_value(node))
         {
-            if (tree_.has_children(node) || (tree_.has_val(node) && !tree_.val_is_null(node)))
-            {
-                throw std::invalid_argument("the SIL Kit participant configuration has a " + std::string(key.str, key.len) +
-                                            " that is not a mapping; write its members under it (" +
-                                            std::string(key.str, key.len) + ":, then one member a line)");
-            }
-            tree_.to_map(node, key); // "Middleware:" with nothing under it
+            throw std::invalid_argument("the SIL Kit participant configuration has a " + std::string(key.str, key.len) +
+                                        " that is not a mapping; write its members under it (" +
+                                        std::string(key.str, key.len) + ":, then one member a line)");
         }
+        node = remade(parent, key);
+        tree_.to_map(node, key);
         return node;
     }
 
     /// Sets the member `key` of the mapping `parent` to the plain scalar `value`. Both must outlive this.
     void set(ryml::id_type parent, ryml::csubstr key, ryml::csubstr value)
     {
-        tree_.to_keyval(emptied(parent, key), key, value);
+        tree_.to_keyval(remade(parent, key), key, value);
     }
 
-    /// Adds the string `value` to the list `key` of the mapping `parent`, made if it is not there.
-    void add(ryml::id_type parent, ryml::csubstr key, const std::string& value)
+    /// Sets the member `key` of the mapping `parent` to the list of the strings `values`. `key` must outlive this.
+    void set(ryml::id_type parent, ryml::csubstr key, const std::vector<std::string>& values)
+    {
+        const ryml::id_type node = remade(parent, key);
+        tree_.to_seq(node, key);
+        for (const auto& value : values)
+        {
+            append_string(node, value);
+        }
+    }
+
+    /// Adds the string `value` to the list `key` of the mapping `parent`, made if it is not there
+    /// or has nothing under it. false, and nothing changed, if the member is something else than
+    /// a list (a single string, a mapping). `key` must outlive this.
+    [[nodiscard]] bool add(ryml::id_type parent, ryml::csubstr key, const std::string& value)
     {
         ryml::id_type node = tree_.find_child(parent, key);
         if (node == ryml::NONE || !tree_.is_seq(node))
         {
-            node = emptied(parent, key);
+            if (node != ryml::NONE && !is_without_value(node))
+            {
+                return false;
+            }
+            node = remade(parent, key);
             tree_.to_seq(node, key);
         }
-        tree_.to_val(tree_.append_child(node), tree_.to_arena(ryml::csubstr(value.data(), value.size())), ryml::VAL_DQUO);
-    }
-
-    /// Sets the member `key` of the mapping `parent` to the list of the strings `values`.
-    void set(ryml::id_type parent, ryml::csubstr key, const std::vector<std::string>& values)
-    {
-        const ryml::id_type node = emptied(parent, key);
-        tree_.to_seq(node, key);
-        for (const auto& value : values)
-        {
-            tree_.to_val(tree_.append_child(node), tree_.to_arena(ryml::csubstr(value.data(), value.size())), ryml::VAL_DQUO);
-        }
+        append_string(node, value);
+        return true;
     }
 
     [[nodiscard]] std::string text() const { return ryml::emitrs_yaml<std::string>(tree_); }
 
 private:
-    [[noreturn]] static void on_error(const char* message, std::size_t length, ryml::Location, void*)
+    [[noreturn]] static void on_error(const char* message, std::size_t length, ryml::Location location, void*)
     {
-        // SIL Kit read the same text with the same parser before this does.
-        throw std::runtime_error("could not read the SIL Kit participant configuration again to add vehicle-sil's "
-                                 "defaults to it: " + std::string(message, length));
+        // A place in the text has no file name. A place with one is in rapidyaml's own source (a
+        // check that failed): the path on the computer that built it says nothing to the reader.
+        const bool in_text = location.name.empty() && location;
+        throw YamlError{std::string(message, length), in_text ? location.line : 0, in_text ? location.col : 0};
     }
-    /// The member `key` of `parent` without value or children; made if it is not there.
-    ryml::id_type emptied(ryml::id_type parent, ryml::csubstr key)
+    static ryml::Callbacks callbacks() { return ryml::Callbacks(nullptr, nullptr, nullptr, &on_error); }
+
+    /// A member that is written with nothing as its value ("Key:", "Key: ~", "Key: null").
+    [[nodiscard]] bool is_without_value(ryml::id_type node) const
     {
-        ryml::id_type node = tree_.find_child(parent, key);
+        return !tree_.has_children(node) && !tree_.is_container(node) && tree_.has_val(node) && tree_.val_is_null(node);
+    }
+
+    /// The member `key` of `parent` as a new node at the same place, without type, value or
+    /// children; a new last member if there is none. rapidyaml turns only such a node into a
+    /// mapping, a list or a scalar: one that has a value (an empty one too) must be made anew.
+    ryml::id_type remade(ryml::id_type parent, ryml::csubstr key)
+    {
+        const ryml::id_type node = tree_.find_child(parent, key);
         if (node == ryml::NONE)
         {
             return tree_.append_child(parent);
         }
-        tree_.remove_children(node);
-        return node;
+        const ryml::id_type before = tree_.prev_sibling(node);
+        tree_.remove(node);
+        return tree_.insert_child(parent, before);
+    }
+
+    void append_string(ryml::id_type list, const std::string& value)
+    {
+        tree_.to_val(tree_.append_child(list), tree_.to_arena(ryml::csubstr(value.data(), value.size())), ryml::VAL_DQUO);
     }
 
     ryml::EventHandlerTree handler_;
@@ -689,6 +518,45 @@ private:
     ryml::Tree tree_;
     ryml::id_type root_ = ryml::NONE;
 };
+
+/// For what should not happen: rapidyaml does not take a text that SIL Kit (the same parser) took,
+/// or SIL Kit's own JSON, or refuses a change. `detail` is rapidyaml's message.
+[[noreturn]] void throw_cannot_add_defaults(std::string_view participant_name, std::string_view what, const std::string& detail)
+{
+    throw std::runtime_error(
+        "could not " + std::string(what) + " the SIL Kit configuration of the participant \"" + std::string(participant_name) +
+        "\", which SIL Kit itself accepts (" + detail + "). Write the members that vehicle-sil adds into the configuration "
+        "yourself, so that nothing is added (Middleware.AcceptorUris; on Windows Middleware.EnableDomainSockets: false; "
+        "Experimental.TimeSynchronization.DynamicSimulationStep: false), and report this as an error of vehicle-sil with "
+        "the configuration");
+}
+
+/// `text` (of the file `file`) with the file's directory added to Includes.SearchPathHints;
+/// empty if `text` is to be used as it is: it has no Includes with members, or it is not for
+/// this function to say what is wrong with it (SIL Kit does, with the line).
+std::optional<std::string> with_search_path_hint(const std::string& text, const std::filesystem::path& file)
+{
+    try
+    {
+        ConfigurationText tree(text);
+        const ryml::id_type includes = tree.member(tree.root(), "Includes");
+        if (!tree.is_map(includes))
+        {
+            return std::nullopt; // none, or "Includes:" with nothing under it: nothing is included
+        }
+        std::error_code error;
+        const auto directory = std::filesystem::absolute(file, error).parent_path();
+        if (error || directory.empty() || !tree.add(includes, "SearchPathHints", directory.generic_string()))
+        {
+            return std::nullopt;
+        }
+        return tree.text();
+    }
+    catch (const YamlError&)
+    {
+        return std::nullopt;
+    }
+}
 #endif
 
 bool is_blank_configuration(std::string_view configuration)
@@ -758,95 +626,124 @@ std::string merged_participant_configuration(std::string_view configuration, std
     {
         return default_participant_configuration(registry_uri, listen_on_network);
     }
+#ifndef VEHICLE_SIL_CORE_HAS_RAPIDYAML
+    // Built with a SIL Kit that gives no YAML library (rapidyaml): the configuration is used as
+    // it is, unread. SIL Kit reads it when the participant is made.
+    static_cast<void>(participant_name);
+    return std::string(configuration);
+#else
     // What the configuration says once SIL Kit has read it (its schema, its Includes): SIL Kit's
-    // JSON has the members that differ from SIL Kit's defaults, whatever file they came from.
-    const auto read = SilKit::Config::ParticipantConfigurationFromString(
-        std::string(configuration) /* the caller's own: the rest of merged_participant_configuration() adds the defaults */);
-    const auto top = JsonText(SilKit::Config::ParticipantConfigurationToJson(read)).members();
-    const std::string who = "the SIL Kit configuration of the participant " + in_quotes(participant_name);
-
-    if (const JsonMember* name = find_member(top, "ParticipantName"))
+    // JSON has the members that differ from SIL Kit's defaults, whatever file they came from. It
+    // is only looked at: it leaves out some of what SIL Kit read (a log sink's Format, for one),
+    // so the defaults are added to the caller's text.
+    std::string json;
+    try
     {
-        if (const std::string configured = JsonText(name->value).string_value(); configured != participant_name)
+        json = SilKit::Config::ParticipantConfigurationToJson(SilKit::Config::ParticipantConfigurationFromString(
+            std::string(configuration) /* the caller's own: the rest of merged_participant_configuration() adds the defaults */));
+    }
+    catch (const SilKit::ConfigurationError& e)
+    {
+        // SIL Kit's words. For a text that is not YAML they do not say where (SIL Kit's parser
+        // writes the place to stderr only): the same parser, asked again, does.
+        std::string place;
+        try
+        {
+            const ConfigurationText again(configuration);
+        }
+        catch (const YamlError& yaml)
+        {
+            place = yaml.place();
+        }
+        if (place.empty())
+        {
+            throw;
+        }
+        std::string what = e.what();
+        what.erase(what.find_last_not_of(" \t\r\n") + 1);
+        throw SilKit::ConfigurationError(what + place);
+    }
+    const std::string who = "the SIL Kit configuration of the participant " + in_quotes(participant_name);
+    std::string_view doing = "read what SIL Kit makes of";
+    try
+    {
+        // A scalar is its text, however SIL Kit's JSON writes it: a name like 42 or true without quotes.
+        const ConfigurationText said(json);
+        if (const auto configured = said.scalar(said.root(), "ParticipantName"); configured && *configured != participant_name)
         {
             throw std::invalid_argument(
-                who + " sets ParticipantName to " + in_quotes(configured) + ": SIL Kit would join the simulation under that "
+                who + " sets ParticipantName to " + in_quotes(*configured) + ": SIL Kit would join the simulation under that "
                 "name, and whatever waits for " + in_quotes(participant_name) + " (the controller's required participants, "
                 "vehicle_sil_launch) would wait until its timeout. Remove ParticipantName from the configuration (the "
                 "program gives the name; --name of an ECU's executable changes it), or set it to " +
                 in_quotes(participant_name));
         }
-    }
 
-    AddedDefaults added;
-    const auto middleware = members_of(top, "Middleware");
-    if (const JsonMember* uri = find_member(middleware, "RegistryUri"); uri != nullptr && !registry_uri.empty())
-    {
-        if (const std::string configured = JsonText(uri->value).string_value(); configured != registry_uri)
+        AddedDefaults added;
+        const ryml::id_type middleware = said.member(said.root(), "Middleware");
+        if (const auto configured = said.scalar(middleware, "RegistryUri");
+            configured && !registry_uri.empty() && *configured != registry_uri)
         {
             throw std::invalid_argument(
-                who + " sets Middleware.RegistryUri to " + in_quotes(configured) + ", but the participant is told to join " +
+                who + " sets Middleware.RegistryUri to " + in_quotes(*configured) + ", but the participant is told to join " +
                 in_quotes(registry_uri) + ": SIL Kit would connect to the configuration's registry. Remove "
                 "Middleware.RegistryUri from the configuration (the program gives the URI: --registry-uri, or registry_uri "
                 "of vehicle_sil_launch's configuration), or write the same URI in both");
         }
-    }
-    if (find_member(middleware, "AcceptorUris") == nullptr)
-    {
-        added.acceptor_uris = default_acceptor_uris(registry_uri, listen_on_network);
-    }
+        if (said.member(middleware, "AcceptorUris") == ryml::NONE) // SIL Kit's JSON leaves an empty list out
+        {
+            added.acceptor_uris = default_acceptor_uris(registry_uri, listen_on_network);
+        }
 #ifdef _WIN32
-    added.no_domain_sockets = find_member(middleware, "EnableDomainSockets") == nullptr; // SIL Kit's JSON has only a false
+        added.no_domain_sockets = said.member(middleware, "EnableDomainSockets") == ryml::NONE; // SIL Kit's JSON has only a false
 #endif
 
-    // SIL Kit's JSON writes a boolean as 1 or 0.
-    std::optional<bool> dynamic_step;
-    const auto time_synchronization = members_of(members_of(top, "Experimental"), "TimeSynchronization");
-    if (const JsonMember* dynamic = find_member(time_synchronization, "DynamicSimulationStep"))
-    {
-        dynamic_step = dynamic->value != "0" && dynamic->value != "false";
-    }
-    if (dynamic_step.value_or(false))
-    {
-        throw std::invalid_argument(
-            who + " sets Experimental.TimeSynchronization.DynamicSimulationStep to true: SIL Kit would cut this "
-            "participant's steps down to the smallest step of the simulation, and vehicle-sil's participants run on "
-            "their own fixed step. Remove the key from the configuration (vehicle-sil then sets it to false for this "
-            "participant), or set it to false");
-    }
-    added.no_dynamic_simulation_step = !dynamic_step.has_value();
+        // SIL Kit's JSON writes a boolean as 1 or 0.
+        const auto dynamic_step = said.scalar(said.member(said.member(said.root(), "Experimental"), "TimeSynchronization"),
+                                              "DynamicSimulationStep");
+        if (dynamic_step && *dynamic_step != "0" && *dynamic_step != "false")
+        {
+            throw std::invalid_argument(
+                who + " sets Experimental.TimeSynchronization.DynamicSimulationStep to true: SIL Kit would cut this "
+                "participant's steps down to the smallest step of the simulation, and vehicle-sil's participants run on "
+                "their own fixed step. Remove the key from the configuration (vehicle-sil then sets it to false for this "
+                "participant), or set it to false");
+        }
+        added.no_dynamic_simulation_step = !dynamic_step.has_value();
 
-    if (!added.any())
-    {
-        return std::string(configuration);
-    }
-#ifdef VEHICLE_SIL_CORE_HAS_RAPIDYAML
-    // The caller's text with the members that it leaves out: every other member stays as written.
-    ConfigurationText text(configuration);
-    if (!text.has_members())
-    {
-        return default_participant_configuration(registry_uri, listen_on_network); // only comments
-    }
-    if (!added.acceptor_uris.empty() || added.no_domain_sockets)
-    {
-        const auto node = text.map_at(text.root(), "Middleware");
-        if (!added.acceptor_uris.empty())
+        if (!added.any())
         {
-            text.set(node, "AcceptorUris", added.acceptor_uris);
+            return std::string(configuration);
         }
-        if (added.no_domain_sockets)
+        // The caller's text with the members that it leaves out: every other member stays as written.
+        doing = "add vehicle-sil's defaults to";
+        ConfigurationText text(configuration);
+        if (!text.has_members())
         {
-            text.set(node, "EnableDomainSockets", "false");
+            return default_participant_configuration(registry_uri, listen_on_network); // only comments
         }
+        if (!added.acceptor_uris.empty() || added.no_domain_sockets)
+        {
+            const auto node = text.map_at(text.root(), "Middleware");
+            if (!added.acceptor_uris.empty())
+            {
+                text.set(node, "AcceptorUris", added.acceptor_uris);
+            }
+            if (added.no_domain_sockets)
+            {
+                text.set(node, "EnableDomainSockets", "false");
+            }
+        }
+        if (added.no_dynamic_simulation_step)
+        {
+            text.set(text.map_at(text.map_at(text.root(), "Experimental"), "TimeSynchronization"), "DynamicSimulationStep", "false");
+        }
+        return text.text();
     }
-    if (added.no_dynamic_simulation_step)
+    catch (const YamlError& e)
     {
-        text.set(text.map_at(text.map_at(text.root(), "Experimental"), "TimeSynchronization"), "DynamicSimulationStep", "false");
+        throw_cannot_add_defaults(participant_name, doing, e.message + e.place());
     }
-    return text.text();
-#else
-    // Built with a SIL Kit that gives no YAML library (rapidyaml): the configuration is used as it is.
-    return std::string(configuration);
 #endif
 }
 
@@ -876,15 +773,9 @@ std::string participant_configuration_from_file(const std::string& path)
     // text says (Includes.SearchPathHints): name the file's directory there, so that a file beside
     // it is found from any working directory. (SIL Kit's own ParticipantConfigurationFromFile()
     // means to, but joins the directory and the name without a separator, as of v5.0.8.)
-    if (ConfigurationText tree(text); tree.has_members() && tree.has(tree.root(), "Includes"))
+    if (auto with_hint = with_search_path_hint(text, file))
     {
-        const auto directory = std::filesystem::absolute(file, error).parent_path();
-        if (!error && !directory.empty())
-        {
-            const auto includes = tree.map_at(tree.root(), "Includes");
-            tree.add(includes, "SearchPathHints", directory.generic_string());
-            return tree.text();
-        }
+        return std::move(*with_hint);
     }
 #endif
     return text;
@@ -1606,17 +1497,11 @@ bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
                 Running& operator=(const Running&) = delete;
             };
             bool ok = false;
-            if (duration != options_.virtual_time->step)
+            if (std::string cut = detail::step_width_error(duration, options_.virtual_time->step, time); !cut.empty())
             {
-                // SIL Kit cut the step (dynamic simulation steps): everything above assumes the
-                // fixed step it asked for (the grid of the steps, TickScheduler, the time gate).
-                fail_step("SIL Kit gave this participant a step of " + std::to_string(duration.count()) + " ns at t=" +
-                          std::to_string(to_ns(time)) + " ns, not its own " +
-                          std::to_string(std::chrono::nanoseconds(options_.virtual_time->step).count()) +
-                          " ns: this participant's SIL Kit configuration asks for dynamic simulation steps itself, or "
-                          "does not opt out while another participant asks for them. Set "
-                          R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}})"
-                          " in that configuration, or pass none (the default configuration has it)");
+                // Everything above assumes the fixed step that was asked for (the grid of the
+                // steps, TickScheduler, the time gate).
+                fail_step(std::move(cut));
             }
             else
             {

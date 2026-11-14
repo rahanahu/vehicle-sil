@@ -721,6 +721,20 @@ TEST_CASE(ecu_main_describe_checks_the_silkit_configuration_and_keeps_stdout_for
                                       "configuration lists the keys and their values)\n"),
             "SIL Kit's refusal", refused);
 
+    // A file that is not YAML: SIL Kit's refusal as well, with the place in the text.
+    const std::string not_yaml = files.write("not-yaml.silkit.yaml", "Description: x\nLogging: [not, a, map\n");
+    const Result unread = call({"--describe", "--silkit-config", not_yaml});
+    require(unread.code == 3 && unread.out.empty(), "exit 3", unread);
+    require(unread.err.rfind("error: Engine: --silkit-config \"" + not_yaml + "\": SIL Kit does not accept the configuration: ", 0) == 0 &&
+                contains(unread.err, "(at line 3, column 1 of the configuration text) ") && contains(unread.err, "(correct the file, or a file it includes;"),
+            "SIL Kit's refusal of a text that is not YAML", unread);
+
+    // A member with nothing under it is fine, and nothing else is written to stderr (the YAML
+    // library's own error handler would write a line there).
+    const std::string empty_member = files.write("empty-member.silkit.yaml", "Experimental:\n  TimeSynchronization:\n    # AnimationFactor: 2\n");
+    const Result accepted = call({"--describe", "--silkit-config", empty_member});
+    require(accepted.code == 0 && accepted.err.empty(), "exit 0, nothing on stderr", accepted);
+
     // A URI in the file is not compared by --describe (it knows none); --registry-uri compares it,
     // before it connects (nothing listens at this URI: the error would be another one).
     const std::string elsewhere = files.write("uri.silkit.yaml", "Middleware:\n  RegistryUri: silkit://192.0.2.10:8500\n");

@@ -15,6 +15,7 @@
 #include "silkit_test_util.hpp"
 #include "test_harness.hpp"
 
+#include "participant_runtime_checks.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 
 #include <algorithm>
@@ -387,6 +388,17 @@ TEST_CASE(a_configuration_of_the_callers_gets_the_defaults_for_what_it_leaves_ou
     const std::string empty_list = merged_participant_configuration("Middleware:\n  AcceptorUris: []\n", "Engine", "silkit://127.0.0.1:1");
     CHECK(occurrences(empty_list, "AcceptorUris") == 1 && contains(empty_list, "tcp://127.0.0.1:0"));
     CHECK(contains(read_by_silkit("Middleware:\n  AcceptorUris: []\n", "Engine", "silkit://127.0.0.1:1"), R"("tcp://127.0.0.1:0"])"));
+    // A member with nothing under it, or only comments (a setting kept as a comment): SIL Kit
+    // reads it as left out, and the added members go under it.
+    const std::string empty_member = read_by_silkit("Experimental:\n" + kLogging, "Engine", "silkit://127.0.0.1:1");
+    CHECK(contains(empty_member, kFixedStep) && contains(empty_member, R"("Level": "Warn")"));
+    CHECK(contains(read_by_silkit("Experimental: ~\n", "Engine", "silkit://127.0.0.1:1"), kFixedStep));
+    const std::string commented_out =
+        merged_participant_configuration("Experimental:\n  TimeSynchronization:\n    # AnimationFactor: 2\n" + kLogging, "Engine", "silkit://10.0.0.1:1");
+    CHECK(occurrences(commented_out, "TimeSynchronization") == 1 && occurrences(commented_out, "Experimental") == 1);
+    CHECK(contains(read_by_silkit("Experimental:\n  TimeSynchronization:\n    # AnimationFactor: 2\n" + kLogging, "Engine", "silkit://10.0.0.1:1"),
+                   kFixedStep));
+    CHECK(contains(read_by_silkit(R"({"Experimental":{"TimeSynchronization":null},"Description":"x"})", "Engine", "silkit://10.0.0.1:1"), kFixedStep));
     // Only comments: the default.
     CHECK(contains(read_by_silkit("# nothing yet\n", "Engine", "silkit://127.0.0.1:1"), R"("tcp://127.0.0.1:0"])"));
     // A false of the caller's stays the only one.
@@ -396,9 +408,10 @@ TEST_CASE(a_configuration_of_the_callers_gets_the_defaults_for_what_it_leaves_ou
     CHECK(contains(read_by_silkit(R"({"Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}}})", "Engine", "silkit://10.0.0.1:1"),
                    kFixedStep));
 
-    // What SIL Kit refuses is SIL Kit's error.
-    CHECK(unit::throws<SilKit::ConfigurationError>(
-        [] { static_cast<void>(merged_participant_configuration("Logging: [not, a, map", "Engine", "silkit://10.0.0.1:1")); }));
+    // What SIL Kit refuses is SIL Kit's error; for a text that is not YAML, with the place.
+    CHECK(unit::throws_with<SilKit::ConfigurationError>(
+        [] { static_cast<void>(merged_participant_configuration("Description: x\nLogging: [not, a, map", "Engine", "silkit://10.0.0.1:1")); },
+        " (at line 2, column 22 of the configuration text)"));
     CHECK(unit::throws<SilKit::ConfigurationError>([] {
         static_cast<void>(merged_participant_configuration("Middleware:\n  ConnectAttempts: many\n", "Engine", "silkit://10.0.0.1:1"));
     }));
@@ -422,6 +435,19 @@ TEST_CASE(a_configuration_that_names_another_participant_or_registry_is_refused)
         "the name; --name of an ECU's executable changes it), or set it to \"Engine\""));
     CHECK(unit::throws<std::invalid_argument>(
         [&] { static_cast<void>(merged_participant_configuration("ParticipantName: engine\n", "Engine", uri)); }));
+    // A name that reads as a number or a boolean is a name: the same one passes, another one is refused.
+    CHECK(contains(read_by_silkit("ParticipantName: 42\n", "42", uri), "ParticipantName"));
+    CHECK(contains(read_by_silkit("ParticipantName: \"true\"\n", "true", uri), "ParticipantName"));
+    CHECK(contains(read_by_silkit("ParticipantName: \"null\"\n", "null", uri), "ParticipantName"));
+    CHECK(contains(read_by_silkit("ParticipantName: 0x10\n", "0x10", uri), "ParticipantName"));
+    CHECK(unit::throws_with<std::invalid_argument>(
+        [&] { static_cast<void>(merged_participant_configuration("ParticipantName: 42\n", "Engine", uri)); },
+        "sets ParticipantName to \"42\": "));
+    CHECK(unit::throws_with<std::invalid_argument>(
+        [&] { static_cast<void>(merged_participant_configuration("ParticipantName: \"true\"\n", "Engine", uri)); },
+        "sets ParticipantName to \"true\": "));
+    CHECK(unit::throws_with<std::invalid_argument>(
+        [&] { static_cast<void>(merged_participant_configuration("ParticipantName: 42\n", "043", uri)); }, "or set it to \"043\""));
 
     // The registry URI: the same one passes, another one is refused; not compared when none is known.
     const std::string with_uri = "Middleware:\n  RegistryUri: silkit://192.168.1.10:8500\n";
@@ -507,6 +533,58 @@ TEST_CASE(a_configuration_with_includes_gets_the_defaults_for_what_all_its_files
         static_cast<void>(merged_participant_configuration(
             participant_configuration_from_file((directory.path / "broken.silkit.yaml").string()), "Engine", ""));
     }));
+}
+
+TEST_CASE(a_configuration_file_that_cannot_get_a_search_path_is_left_to_silkit)
+{
+    set_variable(kListenOnNetworkVariable.data(), nullptr);
+    const TemporaryDirectory directory("left-to-silkit");
+    const auto from_file = [&](const std::string& file, const std::string& text) {
+        directory.write(file, text);
+        return participant_configuration_from_file((directory.path / file).string());
+    };
+    directory.write("middleware.silkit.yaml", "Middleware:\n  ConnectAttempts: 7\n");
+
+    // "Includes:" with nothing under it includes nothing: the text stays as it is, and SIL Kit takes it.
+    const std::string empty_includes = "Includes:\n" + kLogging;
+    CHECK(from_file("empty-includes.silkit.yaml", empty_includes) == empty_includes);
+    CHECK(contains(read_by_silkit(empty_includes, "Engine", "silkit://10.0.0.1:1"), kFixedStep));
+    // "SearchPathHints:" with nothing under it becomes the list with the file's directory.
+    const std::string empty_hints = from_file("empty-hints.silkit.yaml", "Includes:\n  SearchPathHints:\n  Files: [middleware.silkit.yaml]\n");
+    CHECK(occurrences(empty_hints, "SearchPathHints") == 1);
+    CHECK(contains(read_by_silkit(empty_hints, "Engine", "silkit://10.0.0.1:1"), R"("ConnectAttempts": 7)"));
+    // A single string where SIL Kit wants a list: not touched, SIL Kit refuses it.
+    const std::string hint_string = "Includes:\n  SearchPathHints: /dir\n  Files: [middleware.silkit.yaml]\n";
+    CHECK(from_file("hint-string.silkit.yaml", hint_string) == hint_string);
+    CHECK(unit::throws<SilKit::ConfigurationError>(
+        [&] { static_cast<void>(merged_participant_configuration(hint_string, "Engine", "silkit://10.0.0.1:1")); }));
+
+    // A text that is not YAML is not this function's to refuse: it is returned as it is, and SIL
+    // Kit says what is wrong with it, with the line.
+    for (const std::string broken : {"Logging: [not, a, map\n", "Includes:\n  Files: [middleware.silkit.yaml\nLogging: {\n", "a: b: c\n\t- d\n"})
+    {
+        CHECK(from_file("broken.silkit.yaml", broken) == broken);
+        CHECK(unit::throws_with<SilKit::ConfigurationError>(
+            [&] { static_cast<void>(merged_participant_configuration(broken, "Engine", "silkit://10.0.0.1:1")); },
+            " of the configuration text)"));
+    }
+}
+
+TEST_CASE(a_step_that_silkit_cut_fails_with_the_key_that_keeps_the_step)
+{
+    using namespace std::chrono_literals;
+    // The participant's own step, at any time: no error.
+    CHECK(detail::step_width_error(10ms, SimDuration(10ms), SimTime{}).empty());
+    CHECK(detail::step_width_error(10ms, SimDuration(10ms), SimTime{} + 30ms).empty());
+    // A shorter one (dynamic simulation steps) or a longer one: the widths, the time, the key to set.
+    CHECK(detail::step_width_error(3ms, SimDuration(10ms), SimTime{} + 30ms) ==
+          std::string("SIL Kit gave this participant a step of 3000000 ns at t=30000000 ns, not its own 10000000 ns: this "
+                         "participant's SIL Kit configuration asks for dynamic simulation steps itself, or does not opt out "
+                         "while another participant asks for them. Set "
+                         R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}})"
+                         " in that configuration, or pass none (the default configuration has it)"));
+    CHECK(contains(detail::step_width_error(10'000'001ns, SimDuration(10ms), SimTime{}), "a step of 10000001 ns at t=0 ns, not its own 10000000 ns"));
+    CHECK(!detail::step_width_error(1ns, SimDuration(10ms), SimTime{}).empty());
 }
 
 TEST_CASE(a_participant_with_a_configuration_of_its_own_listens_on_loopback_only)
