@@ -122,7 +122,7 @@ public:
     /// same networks, or one address used on both sides, from its own frames.
     [[nodiscard]] virtual bool echoes_own_transmissions() const noexcept = 0;
     /// What the link is, for the bridge's start line: kind, name, real or virtual
-    /// (e.g. "tap 'vsil0' (virtual)").
+    /// (e.g. "tap 'vsil0' (TAP device in this computer)").
     [[nodiscard]] virtual std::string describe() const = 0;
     [[nodiscard]] virtual std::string last_error() const = 0;
 };

@@ -2,6 +2,8 @@
 
 実機の CAN（Vector の XL Driver Library で使える機器と Vector Virtual CAN）につなぐ人と、ブリッジを直す人向けです。前に読む文書はありません。ブリッジを直す人は、次に [code-map.md](code-map.md) の「Vector XL CAN Bridge」を読みます。
 
+イーサネットのブリッジ（`vehicle_sil_ethernet_bridge`）は [ethernet-bridge.md](ethernet-bridge.md) にあります。
+
 `vehicle_sil_vector_xl_bridge` は、SIL Kit の CAN ネットワークと Vector XL の CAN チャネルの間で、クラシック CAN のフレームを双方向に転送します。XL のチャネルには、Vector Virtual CAN と、CANcase や VN16xx などの物理 CAN を使えます。
 
 > [!WARNING]

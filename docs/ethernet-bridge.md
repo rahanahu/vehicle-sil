@@ -1,13 +1,17 @@
 # イーサネットのブリッジ
 
-SIL Kit の Ethernet ネットワークと、SIL Kit の外のイーサネットのインターフェースの間でフレームを運ぶ部品を使う人と、直す人向けです。前に読む文書はありません。直す人は、次に [code-map.md](code-map.md) の「Ethernet Bridge」を読みます。
+SIL Kit の Ethernet ネットワークを、SIL Kit の外のイーサネットのインターフェース（PC の中の TAP デバイス、ネットワークのインターフェース）につなぐ人と、ブリッジを直す人向けです。前に読む文書はありません。直す人は、次に [code-map.md](code-map.md) の「Ethernet Bridge」を読みます。
 
-ここに書いてあるのは、2 つのライブラリです。
+`vehicle_sil_ethernet_bridge` は、SIL Kit の Ethernet ネットワークと外のインターフェースの間で、イーサネットのフレームを書き換えずに双方向に運びます。実時間で動き、時刻同期には参加しません。
+
+> [!WARNING]
+> 外のインターフェースを開けるのは、いまは Linux の `tap` と `packet` だけです。Windows では実行ファイルはビルドできますが、開けるバックエンドがまだありません（`--backend` に何を渡しても、その旨と直し方を言って終了コード 3 で終わります）。確かめた範囲は「[確かめたことと、確かめていないこと](#確かめたことと確かめていないこと)」にあります。
 
 | ターゲット | 中身 |
 |---|---|
-| `vehicle_sil::eth_link` | 外のインターフェースの口 `ExternalLink`、MAC アドレス、絞り込み `FrameFilter`、輪を防ぐ表 `MacSideTable`。SIL Kit を使わない |
-| `vehicle_sil::ethernet_bridge_core` | SIL Kit の `IEthernetController` と `ExternalLink` の間でフレームを運ぶ `EthernetBridge`、統計と監視の行、引数の解釈（`parse_bridge_options()`）。プラットフォームに依存しない |
+| `vehicle_sil_ethernet_bridge`（実行ファイル） | ブリッジの CLI。止め方、監視、終了コードは `run_bridge()`（[bridges.md](bridges.md) と同じ）。どのプラットフォームでもビルドする |
+| `vehicle_sil::eth_link` | 外のインターフェースの口 `ExternalLink`、MAC アドレス、絞り込み `FrameFilter`、輪を防ぐ表 `MacSideTable`、OS がライブラリなしで持つ口（`os_links.hpp`: Linux の TAP デバイスと packet ソケット）。SIL Kit を使わない |
+| `vehicle_sil::ethernet_bridge_core` | SIL Kit の `IEthernetController` と `ExternalLink` の間でフレームを運ぶ `EthernetBridge`、統計と監視の行、引数の解釈（`parse_bridge_options()`）、実行ファイルが言うこと（起動の 1 行、OS ごとに使えるバックエンド、プロミスキャスの手がかり: `bridge_app.hpp`）。プラットフォームに依存しない |
 
 ```mermaid
 flowchart LR
@@ -15,6 +19,139 @@ flowchart LR
     bridge <--> link["ExternalLink<br/>(eth_link)"]
     link <--> nic["外のインターフェース"]
 ```
+
+## 使い方（`vehicle_sil_ethernet_bridge`）
+
+```sh
+# PC の中だけ: 先に作った自分の TAP デバイスにつなぐ（権限は要らない）
+sudo ip tuntap add dev vsil0 mode tap user $USER
+sudo ip link set vsil0 up
+vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend tap --interface vsil0
+
+# ネットワークのインターフェース: 何を通すかの指定が要る
+sudo setcap cap_net_raw+ep ./vehicle_sil_ethernet_bridge
+vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH1 --backend packet --interface enp3s0 \
+    --ethertype 0x88b5 --promiscuous
+
+vehicle_sil_ethernet_bridge --list-interfaces
+```
+
+引数は「[引数](#引数parse_bridge_options)」にあります。ブリッジは次の順に動きます。
+
+1. 引数を調べます。誤りは、何が誤りかと使い方を標準エラーに出して、終了コード 4 で終わります。
+2. `--backend` がこの OS で使えるかを調べます。使えなければ、SIL Kit に接続する前に、理由と代わりを言って終了コード 3 で終わります。
+3. SIL Kit の registry に接続し、Ethernet のコントローラーを作ります。
+4. 外のインターフェースを開き、転送を始めます（`EthernetBridge::start()`）。開けなければ、何が起きたかと直し方を言って終了コード 3 で終わります（下の「[バックエンド](#バックエンド)」の文）。
+5. participant の lifecycle を始めます。転送を先に始めるのは、ほかの participant が、ブリッジが Running になったのを見た時点で送り始めるからです。
+6. 起動の 1 行を出し、止める要求か失敗まで動きます。
+
+起動の 1 行は、何をどこにつないだか、何を通すか、プロミスキャスと MAC の規則の状態を言います。
+
+```
+[eth-bridge] bridging SIL Kit network 'ETH1' (participant 'EthernetBridge', silkit://127.0.0.1:8500) <-> packet 'enp3s0' (network interface): EtherType 0x88b5 only, both ways; promiscuous off (only frames to the interface's own address and to group addresses arrive); MAC guard on; Ctrl+C to stop
+```
+
+- 何を通すかは `every frame, both ways`、`EtherType 0x88b5,0x0800 only, both ways`、`SIL Kit MAC 02:00:00:00:00:01 only, both ways`、またはその 2 つを `and` でつないだものです。
+- プロミスキャスの部分は `promiscuous on` か上の `promiscuous off (...)` で、`tap` では出しません。
+- 動いている間は、警告を `[eth-bridge] warning: <文>`、監視の行（「[監視の行](#監視の行)」）を `[eth-bridge] interface <名前>: ...` として、1 秒に 1 回まで出します。
+- 止める要求（Ctrl+C、Ctrl+Break、SIGTERM、Windows でコンソールを閉じたとき）で、`stopping`、統計の 1 行（「[統計](#統計)」）、最後の誤りがあれば `last error: <文>`、`stopped` の順に出して終わります。止める順は、SIL Kit のハンドラーを外す、外の受信を止める（インターフェースを閉じる）、統計を出す、lifecycle を止める、です。
+
+終了コードです。participant の状態の扱いは Vector XL CAN Bridge と同じです（[bridges.md](bridges.md) の「接続先とチャネルの選択（CLI）」）。
+
+| 終了コード | 意味 |
+|---|---|
+| 0 | 止める要求で止まった。`--list-interfaces`、`--help` が終わった |
+| 1 | 動いている間の失敗。外のインターフェースが動かなくなった（なくなった、読み取りの失敗）: `FAIL: <理由>`。SIL Kit の participant が自分で止まった、終わった、Running にならなかった |
+| 3 | 準備の失敗（この OS で使えないバックエンド、インターフェース、SIL Kit）: `FAIL setup: <理由>` |
+| 4 | 引数の誤り |
+
+プロミスキャスなしで（`packet`）、ブリッジが外へフレームを送ってから 5 秒たっても、SIL Kit の側の MAC アドレス（外へ送ったフレームの送り元）宛てのフレームが 1 つも来ないとき、手がかりを 1 回だけ警告します。プロミスキャスなしのインターフェースは、自分のアドレス宛てとグループのアドレス宛てのフレームしか渡さず、SIL Kit の機器のアドレスはインターフェースのアドレスと違うからです。返事を待たない使い方（外へ流すだけ）でも出るので、文は条件つきです。
+
+```
+no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and --promiscuous is off: without it an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, add --promiscuous.
+```
+
+## バックエンド
+
+| `--backend` | OS | 相手 | 仕組み | 要る権限 |
+|---|---|---|---|---|
+| `tap` | Linux | 同じ PC の OS のネットワークスタックと、その TAP デバイスを開くソフト（Wireshark など） | `/dev/net/tun` の TAP デバイス | 先に作った自分の持ち物のデバイスなら不要。`--tap-create` は `CAP_NET_ADMIN` |
+| `packet` | Linux | ネットワークのインターフェース（NIC、veth）の先の機器と、同じ PC で同じインターフェースに送るソフト | インターフェースに結び付けた packet ソケット（`AF_PACKET`） | `CAP_NET_RAW` |
+| `npcap`、`pcap` | — | — | この版にはない（引数としては受け付け、使えないと言う） | — |
+
+どちらも Linux のカーネルの口だけを使い、外のライブラリは要りません（[dependencies.md](dependencies.md)）。ブリッジは、インターフェースに IP アドレスを振ることも、上げることもしません。インターフェースが下がっていると、起動のときに 1 回警告し、上げ方を言います。
+
+```
+interface 'vsil0' is down: no frame passes until it is up. Bring it up with 'sudo ip link set vsil0 up'.
+```
+
+`--list-interfaces` は、この PC のインターフェースを、イーサネットかどうかと上がっているかを付けて並べます。
+
+```
+interfaces of this computer (--backend packet takes the Ethernet ones; --backend tap takes a TAP device):
+  --interface lo      not Ethernet (link type 772), up
+  --interface enp3s0  Ethernet, up
+  --interface vsil0   Ethernet, down
+```
+
+### `tap`
+
+TAP デバイスは PC の中の仮想のイーサネットのインターフェースで、ブリッジはその線の向こう側になります。ブリッジが送ったフレームは、OS がそのインターフェースで受けたフレームになります。OS やほかのソフトがそのインターフェースに送ったフレームを、ブリッジが受けます。
+
+- 既定では、すでにあるデバイスにつなぎます。自分の持ち物として作ってあれば（`ip tuntap add ... user $USER`）、権限は要りません。
+- `--tap-create` を付けると、ブリッジがデバイスを作ります（`CAP_NET_ADMIN` が要ります）。作ったデバイスは下がった状態で、ブリッジが止まるとなくなります。上げるのは使う人です（上がると監視の行が `link up` と言います）。
+- 絞り込みの指定は要りません（既定で全部通します）。フレームは PC の中にとどまるからです。その TAP デバイスを OS のブリッジで NIC につないだ場合に外へ出るフレームは、つないだ人の責任です。
+- 1 つの TAP デバイスにつなげるソフトは 1 つです。
+- OS が TAP デバイスへ渡す前に捨てたフレームは、ブリッジからは見えません（`ext_overruns` は増えません）。OS の側のインターフェースの統計（`ip -s link show <名前>`）で見ます。
+
+開けないときの文です（終了コード 3）。
+
+```
+no TAP device 'vsil0'. Make it first: 'sudo ip tuntap add dev vsil0 mode tap user $USER' and 'sudo ip link set vsil0 up'; or let the bridge make it while it runs with --tap-create (needs CAP_NET_ADMIN). Interfaces here: lo, enp3s0.
+cannot attach to TAP 'vsil0': Operation not permitted. It belongs to another user. Make it yours first: 'sudo ip tuntap del dev vsil0 mode tap', then 'sudo ip tuntap add dev vsil0 mode tap user $USER' and 'sudo ip link set vsil0 up'.
+cannot attach to TAP 'vsil0': Device or resource busy. Another program has it open, and a TAP device serves one program: stop that program, or use another TAP device.
+interface 'lo' is not a TAP device. For a network interface use --backend packet; a TAP device is made with 'sudo ip tuntap add dev <name> mode tap user $USER'.
+cannot create TAP 'vsil0': an interface with that name exists. Leave out --tap-create to attach to it, or choose another name.
+cannot create TAP 'vsil1': Operation not permitted. Creating a TAP device needs CAP_NET_ADMIN: make it first with 'sudo ip tuntap add dev vsil1 mode tap user $USER' and 'sudo ip link set vsil1 up' and leave out --tap-create, or run as root.
+cannot open /dev/net/tun: Permission denied. This user may not use TAP devices here: ask the administrator for read and write access to /dev/net/tun, or run as root.
+cannot open /dev/net/tun: No such file or directory. The kernel's TUN/TAP driver is not there: load it with 'sudo modprobe tun'.
+```
+
+### `packet`
+
+インターフェースに結び付けた packet ソケットで、フレームをそのまま送り受けします。
+
+- `CAP_NET_RAW` が要ります。実行ファイルに 1 回付けるか（`sudo setcap cap_net_raw+ep <実行ファイル>`）、root で動かします。誤りの文は、この実行ファイルのパスを入れたコマンドを言います。
+- 実のネットワークに出うるので、何を通すか（`--ethertype`、`--src-mac`、`--all-frames` のどれか）が必須です。
+- 受けるのは、インターフェースに届いたフレームと、同じ PC の OS やほかのソフトがそのインターフェースに送ったフレームです。ブリッジ自身が送ったフレームは受けません。
+- 受けたフレームの外側の VLAN タグは、カーネルがフレームのバイト列から外して、別の情報として渡します。ブリッジはそれを元の位置に戻すので、タグつきのフレームはタグを保ったまま両方向に通ります。
+- `--promiscuous` は、ブリッジが動いている間だけ、自分宛てでないフレームも受けます（ソケットの設定で、止まると元に戻ります）。付けないと、実の NIC は自分の MAC アドレス宛てとグループのアドレス宛てのフレームしか渡しません。SIL Kit の機器宛てのユニキャストを外から受けるには、付けます。
+- イーサネットでないインターフェース（`lo` など）は開きません。
+- OS がソケットへ渡す前に捨てたフレームは `ext_overruns` に数えます。
+- 受信のオフロード（GRO、LRO）が効いていると、最大長より長いフレームが見えることがあります。そのフレームは `oversize` として捨てます。困るときは、インターフェースのオフロードを切ります（`sudo ethtool -K <名前> gro off lro off`）。
+
+開けないときの文です（終了コード 3）。
+
+```
+no interface 'eth9' for --backend packet. Interfaces here: lo, enp3s0, vsil0 (run --list-interfaces).
+interface 'lo' is not Ethernet (link type 772): --backend packet carries Ethernet frames only. Choose an Ethernet interface (run --list-interfaces).
+cannot open a packet socket on 'enp3s0': Operation not permitted. A network interface needs CAP_NET_RAW: run 'sudo setcap cap_net_raw+ep /opt/vehicle-sil/bin/vehicle_sil_ethernet_bridge' once, or run as root.
+```
+
+### 動いている間にインターフェースが変わったとき
+
+- リンクが下がった、上がった: 監視の行が `link down`、`link up` と言い、ブリッジは動き続けます。下がっている間に送って OS が断ったフレームは `ext_tx_failures` に数えます。
+- インターフェースがなくなった（消した、名前を変えた）、読み取りが失敗した: `FAIL: interface 'vsil0' is gone (removed or renamed while the bridge ran)` などと言い、統計を出して終了コード 1 で終わります。
+
+### この OS で使えないバックエンド
+
+```
+--backend npcap is for Windows. On Linux use --backend packet (a network interface) or --backend tap (a TAP device).
+--backend pcap is not part of this version. Use --backend packet (a network interface) or --backend tap (a TAP device).
+--backend tap cannot be used here: this version of vehicle_sil_ethernet_bridge has no backend for Windows (tap and packet are for Linux; npcap and pcap are not part of this version). Run the bridge on a Linux computer that reaches the same SIL Kit registry.
+```
+
+Windows では `--list-interfaces` も同じ理由（`there is no interface to list here: ...`）で、終了コード 3 で終わります。
 
 ## 外のインターフェースの口（`ExternalLink`）
 
@@ -26,7 +163,7 @@ flowchart LR
 | `stop()` | 渡すのをやめる。戻る前に、前の知らせの後で OS が捨てたフレームの数を、呼んだスレッドから `Overrun` で知らせてよい。戻った時点で、ハンドラーは動いていない。始めていなくても呼べる |
 | `transmit(frame)` | フレームを 1 つ送る。結果は `Ok`、`QueueFull`（送信のキューがいっぱいで送らなかった）、`Failed`（ほかの誤り。理由は `last_error()`）。フレームは呼び出しの間だけ読む。ブロックしない |
 | `echoes_own_transmissions()` | `transmit()` で送ったフレームが、受けたフレームとしてハンドラーに戻るか。口の寿命の間は変わらない。ブリッジは `start()` のときに読み、輪の防ぎ方を変える（下の「輪の防ぎ方」） |
-| `describe()` | 起動のときに出す 1 行の部品。種類、名前、実か仮想か（例: `tap 'vsil0' (virtual)`） |
+| `describe()` | 起動のときに出す 1 行の部品。種類、名前、実か仮想か（例: `tap 'vsil0' (TAP device in this computer)`、`packet 'enp3s0' (network interface)`） |
 
 スレッド: ハンドラーは一度に 1 つのスレッドからだけ呼ばれます（受信スレッドと、`stop()` を呼んだスレッド）。`transmit()` はどのスレッドからでも、ハンドラーと並行にも呼べます。受信の時刻は渡しません。OS の時計はシミュレーションの時計と別のものだからです。
 
@@ -43,6 +180,8 @@ flowchart LR
 | `Warning` | 止めるほどではないが利用者に知らせること（`detail`） |
 
 `LinkError` の種類（`kind()`）は `NoSuchInterface`、`PermissionDenied`、`LibraryMissing`、`NotEthernet`、`Other` です。`what()` は、何が起きたかと直し方を言います。
+
+OS の口は `vehicle_sil/eth_link/os_links.hpp` の `make_tap_link()` と `make_packet_link()` で作ります（Linux だけ。ほかの OS では `has_os_links()` が `false` で、作る関数は `LinkError` を投げます）。`list_interfaces()` はこの PC のインターフェースを返します。どちらの口も、受信スレッドが 250 ms ごとにインターフェースを見て、リンクの上下、なくなったこと、OS が捨てた数を知らせます。`LinkError` の文は、直し方が引数のときは `vehicle_sil_ethernet_bridge` の引数の名前で言います。
 
 試験用の偽の口は `tests/eth_link/fake_link`（`FakeLink` と、偽の口どうしをつなぐ `FakeSegment`）です。受信スレッドを持ち、送信の詰まり、取りこぼし、`Fault`、リンクの上下、自分が送ったフレームが戻るインターフェースを模擬します。
 
@@ -107,7 +246,12 @@ SIL Kit は、60 バイトより短いフレームを受け手の側で 0 で埋
 - 両方のブリッジが `--no-mac-guard` の場合。
 - MAC の表がいっぱいで覚えられなかったアドレス（`mac_unguarded` に数える）と、グループの送り元アドレスのフレーム。
 
-どの口が自分の送信を戻すかは、口の実装が申告します。どの OS のどの仕組みが戻すかは、まだ確かめていません。
+どの口が自分の送信を戻すかは、口の実装が申告します。`tap` と `packet` は「戻さない」と申告します。Linux のカーネルで確かめた挙動です（試験 `ethernet_bridge.netns.*`）。
+
+- `tap`: ブリッジが TAP デバイスに書いたフレームは OS へ行き、ブリッジの読み取りには戻りません。
+- `packet`: ブリッジのソケットが送ったフレームは、そのソケットには戻りません。同じインターフェースのほかのソケットが送ったフレームは届きます。
+
+そのため、この 2 つの口では「止まる場合」の全部が当てはまり、SIL Kit の側のアドレスを送り元に持つフレームが外から来たら、そのアドレスは両側にあるものとして止めて警告します。同じ PC で、SIL Kit の機器と同じ MAC アドレスを送り元にして同じインターフェースに送るソフトがあると、この警告になります。
 
 両側にあるアドレスのフレームを両方向で捨てるので、同じ MAC アドレスを持つ機器が両側に本当にあると、そのアドレスのフレームは届かなくなります。警告がアドレスを挙げるので、構成の誤りとして見つけられます。ただし、自分の送信を戻す口では、SIL Kit の側で先に覚えたアドレスを外で見ても、戻りと区別できないので、黙って捨てます。
 
@@ -172,7 +316,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 | `--registry-uri <uri>` | SIL Kit の registry。必須 |
 | `--network <name>` | SIL Kit の Ethernet ネットワーク。必須で、既定の名前はない（別のネットワークに誤ってつながないため） |
 | `--participant <name>` | participant の名前（既定 `EthernetBridge`） |
-| `--backend <tap\|packet\|npcap\|pcap>` | 外のインターフェースの開き方。必須。`tap` は PC の中の仮想のインターフェース、ほかは実のアダプターに届きうるものとして扱う |
+| `--backend <tap\|packet\|npcap\|pcap>` | 外のインターフェースの開き方。必須。`tap` は PC の中の仮想のインターフェース、ほかは実のアダプターに届きうるものとして扱う。いま開けるのは Linux の `tap` と `packet`（「[バックエンド](#バックエンド)」） |
 | `--interface <name>` | つなぐインターフェース。必須で、「最初に見つかったもの」は選ばない |
 | `--ethertype <hex>,...` | 通す EtherType（`0x` で始まる 16 進。繰り返すと足される） |
 | `--src-mac <mac>,...` | SIL Kit の側の MAC アドレス（`:` か `-` で区切った 6 バイト。繰り返すと足される） |
@@ -183,7 +327,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 | `--tap-create` | TAP デバイスをブリッジが動く間だけ作る。`tap` だけ |
 | `--no-mac-guard` | MAC の規則を使わない |
 | `--mac-table-size <n>` | MAC の表の大きさ、16〜65536（既定 1024） |
-| `--list-interfaces` | インターフェースの一覧を求める（`--backend` のほかは要らない） |
+| `--list-interfaces` | この PC のインターフェースの一覧を出して終わる（ほかの引数は要らない） |
 | `--help` | 使い方 |
 
 実のアダプターに届きうる `--backend`（`packet`、`npcap`、`pcap`）では、何を通すか（`--ethertype`、`--src-mac`、`--all-frames` のどれか）が必須です。ないと次の誤りになります。
@@ -192,9 +336,30 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 --backend npcap sends to a real adapter: say what may pass with --ethertype, --src-mac or --all-frames.
 ```
 
+## 確かめたことと、確かめていないこと
+
+確かめたこと（Linux。試験 `ethernet_bridge.netns.*` が、ユーザー名前空間の中のネットワーク名前空間で、本物の実行ファイルとカーネルに対して確かめます）:
+
+- `tap`: TAP デバイスの側の packet ソケットから送ったフレームが SIL Kit の相手にそのまま届き、返事が戻る。ブリッジが書いたフレームがブリッジに戻らない。2 つ目のブリッジは断られる。`--tap-create` で作ったデバイスが、下がった状態で作られ、ブリッジが止まるとなくなる。
+- `packet`（veth の対）: タグなし、VLAN タグ 1 つ、タグ 2 つのフレームが、タグを保ったまま両方向に通る。同じインターフェースの別のソケットが送ったフレームが SIL Kit の相手に届く。ブリッジが送ったフレームがブリッジに戻らない。`--promiscuous` がインターフェースの promiscuity を、動いている間だけ上げる。リンクの上下の監視の行。
+- 開けないときの文と終了コード 3（ない、TAP でない、イーサネットでない、すでにある、使用中、権限を落としたとき）。インターフェースを消したときの `FAIL` と終了コード 1。
+
+確かめていないこと:
+
+- 実の NIC と、その先の実機や別の PC との往復。`--promiscuous` のありなしでの届き方（veth は、プロミスキャスでなくても全部のフレームをソケットに渡すので、名前空間では違いが出ません）。プロミスキャスの手がかりの警告は、時計を差し替えた試験でだけ確かめています。
+- `setcap cap_net_raw+ep` した実行ファイルが、共有ライブラリの SIL Kit を見つけられるか（権限を付けた実行ファイルでは、ライブラリを探す環境変数が効かないことがあります）。
+- ほかの人の持ち物の TAP デバイスにつなごうとしたときの文（文言は試験で確かめていますが、カーネルがその誤りを返す場面は作れていません）。
+- 受信のオフロードで長いフレームが見える場面、無線のアダプター。
+- ランチャーの構成ファイル（`describe: false`、`required: false`）から起動する形。
+- EtherType の位置、VLAN の TPID、最大長は、上の「絞り込み」の注のとおり、規格では確かめていません。
+
 ## 試験
 
-`ctest -R '^(eth_link|ethernet_bridge)\.'` で回ります。どれも実時間に頼らず、偽の口と偽のコントローラーで起きたことを待ちます。
+`ctest -R '^(eth_link|ethernet_bridge)\.'` で回ります。名前空間の試験のほかは実時間に頼らず、偽の口と偽のコントローラーで起きたことを待ちます。
 
 - `eth_link.*`: MAC アドレス、絞り込み（EtherType、VLAN タグの先、MAC、最大長）、MAC の表（戻り、両側、上限、並行）、偽の口。`eth_link.boundary` は、`libs/eth_link` が SIL Kit のヘッダーを直接にも間接にも含まないことを確かめます。
 - `ethernet_bridge.*`: 偽のコントローラーと偽の口での転送、絞り込み、自分のフレームの戻り、2 つのブリッジを通る輪（止まる順序と、自分の送信を戻す口で止まらない順序、片方が `--no-mac-guard` の場合）、MAC の表があふれたとき、流れの最中の `stop()`、失ったフレーム、`Fault`、警告、始め方と止め方。統計と監視の行、引数の誤りの文言。`ethernet_bridge.silkit_*` は、プロセス内の registry（空いているポート）と 2 つの participant で、本物の SIL Kit の側を確かめます。
+- `eth_link.os_link_*`: OS の口が開けないときの文と種類、`--list-interfaces` の並べ方（文だけなので全プラットフォーム）。
+- `ethernet_bridge.app_*`: OS ごとに使えるバックエンドと使えないときの文、起動の 1 行、プロミスキャスの手がかり（時計を差し替えて、5 秒を待たずに確かめる）。
+- `ethernet_bridge.integration.*`（全プラットフォーム）: 実行ファイルに偽の口をリンクしたもの（`vehicle_sil_ethernet_bridge_on_fake`。`tests/ethernet_bridge/fake_link_factory.cpp`）を、registry と SIL Kit の相手（`eth_bridge_it_peer`。SIL Kit の `IEthernetController` を直接使う）と一緒にプロセスとして動かします。往復と統計、起動の 1 行、引数の誤り（4）、開けないインターフェース（3）、`Fault`（1）、止める要求（統計、`stopped`、0）。`backend-not-here` は本物の実行ファイルで、その OS で使えないバックエンドの文を確かめます。
+- `ethernet_bridge.netns.tap`、`ethernet_bridge.netns.packet`（Linux だけ。`tests/ethernet_bridge/bridge_netns.py`）: 上の「確かめたこと」。ユーザー名前空間を作れない所では飛ばします（終了コード 77。環境変数 `VEHICLE_SIL_REQUIRE_MULTI_HOST=1` があれば失敗）。名前空間は作れるが、その中で TAP デバイス、veth、packet ソケットを作れない所でも飛ばします（`VEHICLE_SIL_REQUIRE_ETHERNET_NETNS=1` があれば失敗）。どちらで飛ばしたかは、出力の `skipped:` の行が言います。
