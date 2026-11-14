@@ -651,7 +651,16 @@ bool ScenarioEngine::submit_one(Write write)
                  std::move(failure));
             return false;
         }
-        write.writes.push_back(ScenarioWrite{motion.motion.variable, detail::motion_value(*placed, write.at)});
+        write.writes.push_back(ScenarioWrite{motion.motion.variable, lines_->lines[motion.motion.variable].written(
+                                                                         detail::motion_number(*placed, write.at), write.at)});
+    }
+    else
+    {
+        // A set: its value, with what is on top of the line at this time (written()).
+        for (ScenarioWrite& w : write.writes)
+        {
+            w.value = lines_->lines[w.variable].written(w.value, write.at);
+        }
     }
     std::vector<control::PeerWrite> out;
     for (const ScenarioWrite& w : write.writes)

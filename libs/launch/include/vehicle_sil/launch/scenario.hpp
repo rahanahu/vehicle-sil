@@ -97,6 +97,9 @@ public:
     /// The value at `t` after the step began (0 <= t < the length). `base` is the value the
     /// variable has when the step begins, or the one the step names instead (ScenarioMotion::base);
     /// 0 if uses_base() is false.
+    /// The shapes a dither takes (ScenarioOverlay: sine, triangle, sawtooth, a square with an
+    /// amplitude, noise) repeat or go on without an end: they give a value for every t >= 0,
+    /// however large, and a dither asks them with the virtual time itself and the base 0.
     [[nodiscard]] virtual double value(SimDuration t, double base) const = 0;
     /// The value written at the end of the length, which the variable keeps.
     [[nodiscard]] virtual double end(double base) const = 0;

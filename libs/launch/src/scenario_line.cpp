@@ -119,4 +119,34 @@ std::optional<control::Value> Line::value(SimTime t) const
     return motion_value(*motion_, t);
 }
 
+std::optional<double> Line::number(SimTime t) const
+{
+    if (!motion_)
+    {
+        return base_ ? std::optional<double>(number_of(*base_)) : std::nullopt;
+    }
+    if (!motion_->has_value())
+    {
+        return std::nullopt;
+    }
+    return motion_number(*motion_, t);
+}
+
+control::Value Line::written(double number, SimTime t) const
+{
+    // (Nothing is added without an overlay: not even a zero, which would turn -0 into 0.)
+    return value_of_type(overlay_ ? number + overlay_->value(t - SimTime{}, 0.0) : number, type_);
+}
+
+control::Value Line::written(const control::Value& value, SimTime t) const
+{
+    return overlay_ ? written(number_of(value), t) : value;
+}
+
+std::optional<control::Value> Line::written_value(SimTime t) const
+{
+    const std::optional<double> at = number(t);
+    return at ? std::optional<control::Value>(written(*at, t)) : std::nullopt;
+}
+
 } // namespace vehicle_sil::launch::detail

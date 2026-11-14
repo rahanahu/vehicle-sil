@@ -6,8 +6,10 @@
 // its motion), and a motion that does not name where it starts reads that from the line.
 //
 // The value of a motion at a time comes from one function, motion_number(), and motion_value()
-// is that value as the variable's type has it: the engine sends what it gives, and whatever shows
-// a motion without running it has to call the same.
+// is that value as the variable's type has it. On top of the line there may be an overlay (a
+// dither): a function of the virtual time itself that is added before the type is applied. What
+// the engine sends is Line::written(): the number of what is written, plus the overlay then, as
+// the variable's type has it. Whatever shows a line without running it has to call the same.
 #pragma once
 
 #include "vehicle_sil/control/agent.hpp"
@@ -84,10 +86,32 @@ public:
     const LineMotion& move(SimTime t, std::shared_ptr<const Waveform> shape, SimDuration length, std::optional<double> named,
                            const std::optional<control::Value>& sample);
 
+    /// The overlay from here on: a shape around 0 without an end, whose value at a virtual time t
+    /// is shape->value(t, 0) (t itself, not the time since it was put: putting the same shape
+    /// again changes nothing). Null takes it off. A line has one; what is put on the line (set(),
+    /// move()) leaves it where it is.
+    void overlay(std::shared_ptr<const Waveform> shape) { overlay_ = std::move(shape); }
+    [[nodiscard]] const std::shared_ptr<const Waveform>& overlay() const noexcept { return overlay_; }
+
     /// The value at `t`, at or after the time of what was put last: of the motion (its end value
     /// once it is over), else where the line stands. Empty if nothing was put yet, or the motion
-    /// has no value.
+    /// has no value. Without the overlay: this is where the next motion starts from.
     [[nodiscard]] std::optional<control::Value> value(SimTime t) const;
+    /// The same before the variable's type is applied (the base, B(t)): the number of a set's
+    /// value, a motion's motion_number(). The two differ for an integer whose motion ends between
+    /// two integers: a lag that ends at 79.6 leaves value() at 80 (the next ramp starts there)
+    /// and number() at 79.6 (the overlay is added to that).
+    [[nodiscard]] std::optional<double> number(SimTime t) const;
+    /// What is written at `t` for something that stands at `number` then (a set's value, a
+    /// motion's motion_number(), number(t)): `number` plus the overlay at `t`, as the variable's
+    /// type has it. Without an overlay `number` as the type has it, and nothing is added.
+    /// The one place that puts the overlay on a value.
+    [[nodiscard]] control::Value written(double number, SimTime t) const;
+    /// The same for a value of the variable's type (a set's): without an overlay the value itself.
+    [[nodiscard]] control::Value written(const control::Value& value, SimTime t) const;
+    /// written(number(t), t): what a write at `t` of the line as it stands carries. Empty where
+    /// number() is.
+    [[nodiscard]] std::optional<control::Value> written_value(SimTime t) const;
     /// Where the line stood when what is on it was put: the value of a set, and for a motion the
     /// value before it. Empty: nothing then.
     [[nodiscard]] const std::optional<control::Value>& base() const noexcept { return base_; }
@@ -101,6 +125,7 @@ private:
     std::optional<control::Value> base_{};
     std::optional<SimTime> placed_{};
     std::optional<LineMotion> motion_{};
+    std::shared_ptr<const Waveform> overlay_{};
 };
 
 } // namespace vehicle_sil::launch::detail
