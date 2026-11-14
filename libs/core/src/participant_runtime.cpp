@@ -354,13 +354,16 @@ std::string default_participant_configuration_with(std::string_view registry_uri
     std::string text = "{";
     if (!middleware.empty())
     {
-        text += R"("Middleware":{)" + middleware + "}";
+        text += R"("Middleware":{)" + middleware + "},";
     }
-    if (!middleware.empty() && !members.empty())
+    // The opt-out of dynamic simulation steps: without the key, SIL Kit cuts this participant's
+    // steps down to the smallest step of the simulation as soon as any participant asks for it.
+    text += R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}})";
+    if (!members.empty())
     {
         text += ',';
+        text += members;
     }
-    text += members;
     text += '}';
     return text;
 }
@@ -994,6 +997,19 @@ bool ParticipantRuntime::on_step(std::chrono::nanoseconds now, std::chrono::nano
                 Running& operator=(const Running&) = delete;
             };
             bool ok = false;
+            if (duration != options_.virtual_time->step)
+            {
+                // SIL Kit cut the step (dynamic simulation steps): everything above assumes the
+                // fixed step it asked for (the grid of the steps, TickScheduler, the time gate).
+                fail_step("SIL Kit gave this participant a step of " + std::to_string(duration.count()) + " ns at t=" +
+                          std::to_string(to_ns(time)) + " ns, not its own " +
+                          std::to_string(std::chrono::nanoseconds(options_.virtual_time->step).count()) +
+                          " ns: this participant's SIL Kit configuration asks for dynamic simulation steps itself, or "
+                          "does not opt out while another participant asks for them. Set "
+                          R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}})"
+                          " in that configuration, or pass none (the default configuration has it)");
+            }
+            else
             {
                 const Running running(handler_running_);
                 ok = run_step_handler(time, duration);
@@ -1111,14 +1127,19 @@ bool ParticipantRuntime::run_step_handler(SimTime now, SimDuration step)
     {
         error = "unknown exception";
     }
-    error = "step handler at t=" + std::to_string(to_ns(now)) + " ns failed: " + error;
+    fail_step("step handler at t=" + std::to_string(to_ns(now)) + " ns failed: " + error);
+    return false;
+}
+
+void ParticipantRuntime::fail_step(std::string error)
+{
     // The flag and the queued error under one lock, as in report_failure(). A step runs only
     // after StartLifecycle(), so SIL Kit takes the error.
     const std::lock_guard lock(control_mutex_);
     step_error_ = error;
     if (std::exchange(failed_, true))
     {
-        return false; // report_failure() reported a failure already
+        return; // report_failure() reported a failure already
     }
     try
     {
@@ -1128,7 +1149,6 @@ bool ParticipantRuntime::run_step_handler(SimTime now, SimDuration step)
     {
         // Already in a state that cannot report errors; the simulation is ending anyway.
     }
-    return false;
 }
 
 void ParticipantRuntime::pace_until(std::chrono::steady_clock::time_point deadline)
