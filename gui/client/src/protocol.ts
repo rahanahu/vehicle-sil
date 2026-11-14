@@ -29,7 +29,7 @@ export type Open<T extends string> = T | (string & {});
 
 /**
  * このライブラリが読む GUI サーバーの口の版（`api/app` と `hello` の `vehicle_sil_gui`）。違う版の hello と api/app は
- * 読まない（欄の意味が変わっているかもしれないため）。版を上げる決まりは gui/protocol/README.md の「版と互換」。
+ * 読まない（欄の意味が変わっているかもしれないため）。版を上げる決まりは gui/protocol/README.md の「バージョンと互換性」。
  */
 export const PROTOCOL_VERSION = 1;
 
@@ -472,12 +472,12 @@ export interface RunParticipant {
   exit_code: number | null;
   signal: string | null;
   left_processes: boolean;
-  /** 始まったときの、変数を読み書きする口のつながり方（古いランチャーは書かないので null）。 */
+  /** 始まったときの、ECU の変数との接続の状態（古いランチャーは書かないので null）。 */
   control_link: ControlLink | null;
 }
 
 /**
- * 変数を読み書きする口（ランチャーの control-links）のつながり方。ランチャーの語はここにだけ書く（名前が増えたり
+ * ECU の変数との接続（ランチャーの control-links）の状態。ランチャーの語はここにだけ書く（名前が増えたり
  * 変わったりしても、知らない値は文字列のまま通す）。
  * connected: 変数を読み書きできる、no_hello: 出すと申告したのに hello が来なかった、version_mismatch: 形式の版が
  * 違う、not_offered: 変数はあるが出すと申告していない（--no-control、古い実行ファイル）、none: 変数を出す ECU では
@@ -487,7 +487,7 @@ export type ControlState = Open<
   'connected' | 'no_hello' | 'version_mismatch' | 'not_offered' | 'none'
 >;
 
-/** ランチャーの事象の名前（変数を読み書きする口のつながり方）。 */
+/** ランチャーのイベントの名前（ECU の変数との接続の状態）。 */
 export const CONTROL_EVENT = 'control_link';
 /** ランチャーの結果の participants[] の、口のつながり方のキー（オブジェクト）。 */
 export const CONTROL_RESULT_KEY = 'control_link';
@@ -563,7 +563,7 @@ export type RunResultName = Open<
 >;
 
 /**
- * 結果の timing: 時間の進み方（数の定義はランチャーの docs の「等速で動かす」）。何も起動しなかったとき、古い
+ * 結果の timing: 時間の進み方（数の定義はランチャーの docs の「速度を指定して動かす」）。何も起動しなかったとき、古い
  * ランチャーでは結果に null。欄ごとに、ないか読めなければ null。
  */
 export interface RunTiming {
@@ -748,7 +748,7 @@ export type LauncherEvent =
       environment: Record<string, string> | null;
     })
   | (EventBase & { event: 'log'; source: string; line: string })
-  /** 変数を読み書きする口のつながり方（始まる直前に、起動した participant ごとに 1 回）。 */
+  /** ECU の変数との接続の状態（始まる直前に、起動した participant ごとに 1 回）。 */
   | (EventBase & { event: typeof CONTROL_EVENT; name: string; link: ControlLink })
   /** 読む側が遅くて、ランチャーが書けなかった log の行の数（出どころごと）。その位置に来る。 */
   | (EventBase & { event: 'log_dropped'; count: number; sources: Record<string, number> })
@@ -1220,7 +1220,7 @@ export interface SummaryParticipant {
   working_directory: string | null;
   /** manual の事象の environment（起動するときに設定する環境変数）。なければ null。 */
   environment: Record<string, string> | null;
-  /** 変数を読み書きする口のつながり方（ランチャーの control_link の事象）。まだなければ null。 */
+  /** ECU の変数との接続の状態（ランチャーの control_link のイベント）。まだなければ null。 */
   control_link: ControlLink | null;
 }
 

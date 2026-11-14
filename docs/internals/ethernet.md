@@ -366,6 +366,6 @@ SIL Kit の Network Simulator がイーサネットのネットワークを模�
 
 - ステップを実行する仕組み（ホスト、ドライバー、時間の領域）: [can.md](can.md)
 - `Ecu::ethernet()` の使い方: [execution.md](execution.md)
-- 全体の形: [architecture.md](../architecture.md)
+- 全体像: [architecture.md](../architecture.md)
 - どこに何があるか: [code-map.md](../code-map.md)
-- ほかの内部の仕組みのドキュメント: architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」
+- ほかの内部の仕組みのドキュメント: architecture.md の「[内部の仕組み](../architecture.md#内部の仕組み)」

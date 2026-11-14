@@ -1,6 +1,6 @@
 # J1939 のノードの作り方
 
-vehicle-sil の J1939 スタックで ECU のノードを作り、メッセージを送受信し、シミュレーションで実行してテストする方法を、C++ のコードで説明します。API の契約とルールの詳細は [internals/j1939.md](internals/j1939.md) にあります。API はまだ変わることがあります。
+vehicle-sil の J1939 スタックで ECU のノードを作り、メッセージを送受信し、シミュレーションで実行してテストする方法を、C++ のコードで説明します。API の保証とルールの詳細は [internals/j1939.md](internals/j1939.md) にあります。API はまだ変わることがあります。
 
 | したいこと | 使うもの | 節 |
 |---|---|---|
@@ -24,7 +24,7 @@ vehicle-sil の J1939 スタックで ECU のノードを作り、メッセー�
 | ECU の値を外部から読み書きする | `Ecu::input`、`Ecu::output` | [外部から信号を読み書きする（UI、テスト）](#外部から信号を読み書きするuiテスト) |
 | 信号をビット位置を書かずに扱う | 型付きメッセージ | [データの形（Codec）](#データの形codec) |
 
-最初に動かすなら [examples/getting_started](../examples/getting_started) です。完全な例は [examples/j1939/ecu_pair](../examples/j1939/ecu_pair) です。エンジンとキャブの 2 つの ECU を部品だけで作り、`Simulation` で仮想バスか SIL Kit の 2 つの participant として動かします。同じコードをテストでも使っています。
+最初に動かすなら [examples/getting_started](../examples/getting_started) です。完全な例は [examples/j1939/ecu_pair](../examples/j1939/ecu_pair) です。エンジンとキャブの 2 つの ECU をコンポーネントだけで作り、`Simulation` で仮想バスか SIL Kit の 2 つの participant として動かします。同じコードをテストでも使っています。
 
 ## コード例の読み方
 
@@ -93,10 +93,10 @@ inline j1939::Node& install_engine(vehicle_sil::Ecu& ecu, EngineModel& engine)
 |---|---|
 | `NodeOptions::name` を付けたノード | 最初のステップでアドレスを要求します。 |
 | NAME を付けないノード | 指定したアドレスをすぐに使います（テスト用）。 |
-| `node.attach<T>(...)` で付けた部品 | `Network` が持ち、正しい順序で破棄します。 |
+| `node.attach<T>(...)` で付けたコンポーネント | `Network` が持ち、正しい順序で破棄します。 |
 | ハンドラが参照するモデルやアプリのオブジェクト | `ecu.emplace<T>(args...)` で ECU に持たせます（`emplace` は実行の開始前だけ使えます）。 |
-| `emplace` したものの破棄 | ECU がネットワークの後に、最後に emplace したものから先に破棄するので、ハンドラや部品は破棄の間も参照してかまいません。 |
-| 部品とハンドラを呼ぶスレッド | ステップを実行するスレッドです（ほかのスレッドから操作するときは「周期的な処理の使い分け」の「ステップの外からデータを渡す」）。 |
+| `emplace` したものの破棄 | ECU がネットワークの後に、最後に emplace したものから先に破棄するので、ハンドラやコンポーネントは破棄の間も参照してかまいません。 |
+| コンポーネントとハンドラを呼ぶスレッド | ステップを実行するスレッドです（ほかのスレッドから操作するときは「周期的な処理の使い分け」の「ステップの外からデータを渡す」）。 |
 
 1 ステップの中では、次の順に処理します。
 
@@ -184,7 +184,7 @@ node.on_message(kPgnRaw, [&](const j1939::Message& m) { log(m.data); });   // �
 
 `node.send()` で送信できるのは、ステップの中（ハンドラ、タイマー、`Ecu::every`、`Ecu::on_step`、`Ecu::at` などアプリの処理）だけです。結果は `SendStatus` で返ります（例外ではありません）。
 
-`main` から直接、`send()` や、送信する部品の関数（`examples/pid_stream` の `subscribe()`、`unsubscribe()` など）は呼べません（ステップの外のため）。
+`main` から直接、`send()` や、送信するコンポーネントの関数（`examples/pid_stream` の `subscribe()`、`unsubscribe()` など）は呼べません（ステップの外のため）。
 
 ### 決まった時刻に 1 回送信する
 
@@ -232,7 +232,7 @@ status.set_period(50ms);                                                        
 | 作り方 | 内容 |
 |---|---|
 | `codec::attach_sender` | 定義の優先度と長さで送信します。 |
-| `Encoder`（span を取る関数） | 部品のバッファ（`max_length` バイト、既定 8）に書き、書いた長さを返します。 |
+| `Encoder`（span を取る関数） | コンポーネントのバッファ（`max_length` バイト、既定 8）に書き、書いた長さを返します。 |
 | `PeriodicSender::VectorEncoder`（`std::vector<std::uint8_t>&` に追記する関数） | 長さが送信のたびに変わるメッセージを作ります。 |
 
 9 バイト以上（`max_length` を上げる）は、トランスポートプロトコルで送信します。PDU1 の PG を 1 つのアドレスへ送信するときは `PeriodicSenderOptions{.destination = address}` です。
@@ -242,7 +242,7 @@ status.set_period(50ms);                                                        
 | 項目 | ルール |
 |---|---|
 | 渡されるベクター | 空で渡され、その大きさがメッセージの長さになります。 |
-| メモリの確保 | 部品がベクターを持ち回るので、追記だけなら送信のたびの確保はありません。 |
+| メモリの確保 | コンポーネントがベクターを持ち回るので、追記だけなら送信のたびの確保はありません。 |
 | 引数の型 | 省略せずに書きます（`std::vector<std::uint8_t>&` か `auto&`）。 |
 | span を取る関数 | 長さを返す `Encoder` として扱います。 |
 | `max_length` を超えたとき | span の形と同じく、`Network` が失敗します。 |
@@ -265,7 +265,7 @@ auto& reply = node.attach<j1939::PeriodicSender>(kPgnReply, 100ms, [&](std::vect
 
 - 一時停止の間に変えれば、再開したときに新しい値で動きます。
 - 不正な値は `std::invalid_argument` で、何も変わりません。
-- 同じ相手からの新しい要求には、部品を作り直さずに周期を変えて応えられます（`examples/pid_stream`）。
+- 同じ相手からの新しい要求には、コンポーネントを作り直さずに周期を変えて応えられます（`examples/pid_stream`）。
 - 呼んだステップで送信したいときは、`trigger()` ではなく `node.send()` を使います。
 
 送信を始める時点と止める時点は、ノードのアドレスの状態で決まります。ノードが送信できるようになるまで（Address Claim の後の 250 ms の待ちの間も）送信せず、送信できるようになったときに 1 回送信してから周期を数えます。アドレスを失えば止まり、取り直せば再開します。
@@ -290,8 +290,8 @@ node.on_request(kPgnSomething, [&](j1939::RequestContext& r) { r.respond(encode(
 | 場合 | 動作と書き方 |
 |---|---|
 | 応答者のない PGN への、宛先を指定した Request | スタックが NACK を返します。 |
-| ソフトウェア ID などの識別情報 | `Identification` 部品が応答します（`node.attach<j1939::Identification>().set_software_identification(fields)`）。 |
-| 診断（DM1 など） | `Diagnostics` 部品が応答します。 |
+| ソフトウェア ID などの識別情報 | `Identification` コンポーネントが応答します（`node.attach<j1939::Identification>().set_software_identification(fields)`）。 |
+| 診断（DM1 など） | `Diagnostics` コンポーネントが応答します。 |
 | 何ステップかかけて応答するとき | `r.defer()` で要求を値として取っておき、後で `node.respond(pending, data)` を呼びます。 |
 
 ## Request を送信して応答を受信する
@@ -365,7 +365,7 @@ node.on_message(j1939::kPgnDm1, [&](const j1939::Message& m) {
 });
 ```
 
-`parse_dtc_list()`（`j1939/diagnostics.hpp`、部品 `vehicle_sil::j1939_diagnostics`）は、`Diagnostics` 部品が送信する形の逆として読みます。ランプの 2 バイトの後に、故障コードごとに 4 バイト（SPN、FMI、発生回数）が続く形です。どんな長さのバイト列を渡しても安全に読めます。
+`parse_dtc_list()`（`j1939/diagnostics.hpp`、コンポーネント `vehicle_sil::j1939_diagnostics`）は、`Diagnostics` コンポーネントが送信する形の逆として読みます。ランプの 2 バイトの後に、故障コードごとに 4 バイト（SPN、FMI、発生回数）が続く形です。どんな長さのバイト列を渡しても安全に読めます。
 
 | 渡したバイト列 | 読み方 |
 |---|---|
@@ -409,7 +409,7 @@ tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome ==
 | `Ecu::on_step(fn)` | 毎ステップの処理 | ステップの時刻（受信の処理の後、送信の前） |
 | `Ecu::at(time, fn)` | シナリオの 1 回きりの操作（要求を送信する、購読を始める、止める） | 開始時刻が `time` 以後の最初のステップで 1 回（`time` がステップ幅で割り切れなくてもよい） |
 | `TickScheduler` | 固定周期の既存モデル（DLL の `tick()`）。`Ecu` の外、`ParticipantRuntime` のステップハンドラで使う | ステップ幅の倍数の周期だけ（違えば例外） |
-| `j1939::Timer` | 部品の中の時間（待ち時間、遅延、独自の周期） | イベントの時刻から数える（ステップ幅によらない） |
+| `j1939::Timer` | コンポーネントの中の時間（待ち時間、遅延、独自の周期） | イベントの時刻から数える（ステップ幅によらない） |
 
 `Ecu::every` の period は、ステップ幅の倍数でなくてもかまいません。ステップ幅 10 ms、period 25 ms なら、0、30、50、80、100 ms… に呼ばれます。
 
@@ -439,30 +439,30 @@ tool.command(kCabName, 0x81, [](const j1939::CommandResult& r) { /* r.outcome ==
 | 起きること | 現れ方 |
 |---|---|
 | 送信の失敗 | `SendStatus` の戻り値（`QueueFull`、`Busy`、`NoAddress` など） |
-| 使い方のエラー（不正な PGN、範囲外の値） | 部品の生成や呼び出しの時点で、`std::invalid_argument` などの例外 |
-| タイマーの枠の不足 | 部品の生成が `std::length_error`（メッセージに `timer_capacity` と表示） |
+| 使い方のエラー（不正な PGN、範囲外の値） | コンポーネントの生成や呼び出しの時点で、`std::invalid_argument` などの例外 |
+| タイマーの枠の不足 | コンポーネントの生成が `std::length_error`（メッセージに `timer_capacity` と表示） |
 | ハンドラ、`Encoder`、コールバックから投げた例外 | `Network` が失敗状態になる |
 
-- 部品は送信の失敗を数えて（`statistics()`）、次の機会にまた送信します。
+- コンポーネントは送信の失敗を数えて（`statistics()`）、次の機会にまた送信します。
 - 失敗状態は、`Simulation` では `SimulationError` になります（「シミュレーションで実行する」）。
 - `Peer` を直接使うときは、`Peer::failed()` と `error()` で失敗がわかります。
-- 通信の状態は、`Network::statistics()`、部品の `statistics()`、`Monitor` の状態で見ます。
+- 通信の状態は、`Network::statistics()`、コンポーネントの `statistics()`、`Monitor` の状態で見ます。
 
 ### タイマーの枠（`timer_capacity`）
 
-タイマーの枠は `NetworkOptions::timer_capacity`（既定 64）です。周期送信の多いノードでは、`Ecu::j1939(network, NetworkOptions{.timer_capacity = ...})`（`Peer` では `J1939ChannelOptions::network.timer_capacity`）で上げます。各部品が使うタイマーの数は、部品のヘッダーのコメントと [internals/j1939.md](internals/j1939.md) の「プロトコル部品」にあります。
+タイマーの枠は `NetworkOptions::timer_capacity`（既定 64）です。周期送信の多いノードでは、`Ecu::j1939(network, NetworkOptions{.timer_capacity = ...})`（`Peer` では `J1939ChannelOptions::network.timer_capacity`）で上げます。各コンポーネントが使うタイマーの数は、コンポーネントのヘッダーのコメントと [internals/j1939.md](internals/j1939.md) の「プロトコルのコンポーネント」にあります。
 
-受信した要求ごとに部品（`PeriodicSender`、`Timer` など）をハンドラの中で作るときは、作る前に残りの枠を確認します。`node.network().timers_free()`（残りの枠の数）を、作る部品の `kTimers`（`PeriodicSender::kTimers` など）と比べ、足りなければ要求を拒否します。
+受信した要求ごとにコンポーネント（`PeriodicSender`、`Timer` など）をハンドラの中で作るときは、作る前に残りの枠を確認します。`node.network().timers_free()`（残りの枠の数）を、作るコンポーネントの `kTimers`（`PeriodicSender::kTimers` など）と比べ、足りなければ要求を拒否します。
 
 ハンドラの中の `std::length_error` は `Network` を失敗させます。そのため、確認しないと、多数のアドレスから要求を送信するだけでその ECU の通信を止められます。確認するコードは、[examples/pid_stream/pid_stream.hpp](../examples/pid_stream/pid_stream.hpp) の `PidStreamer` にあります。
 
 ## 独自のプロトコルを作る
 
-Proprietary A/B やメーカー独自の通信手順は、vehicle-sil を変更せずに、利用者の部品として作れます。使うのはノードの公開 API、道具箱（`Subscription`、`Timer`、`Node::attach`）、既存の部品、型付きメッセージだけです。
+Proprietary A/B やメーカー独自の通信手順は、vehicle-sil を変更せずに、利用者のコンポーネントとして作れます。使うのはノードの公開 API、ツールキット（`Subscription`、`Timer`、`Node::attach`）、既存のコンポーネント、型付きメッセージだけです。
 
 | 例 | 内容 |
 |---|---|
-| [examples/pid_stream](../examples/pid_stream) | 最初の手本です（要求を受信して周期的に返す部品）。 |
+| [examples/pid_stream](../examples/pid_stream) | 最初の手本です（要求を受信して周期的に返すコンポーネント）。 |
 | [examples/j1939/param_service](../examples/j1939/param_service) | 完全な例です（サービスツールがエンジン ECU のパラメーターとブロックを Proprietary A で読み書きします）。 |
 
 `param_service` が扱うのは、セッションの開始と終了、書き込み中の途中の応答、トランスポートプロトコルで送信するブロック、エラー応答、無通信でのセッションの終了、相手の消失です。テストは `tests/testkit/test_param_service.cpp` です。
@@ -614,7 +614,7 @@ exchange.start(kPgn, read.bytes(), kEngineName,          // 相手は NAME（ア
 
 ### 手順を書く（複数のメッセージ）
 
-手順は、前の応答のコールバックで次のコマンドを `start()` してつなぎます。セッションのように前の応答で次のコマンドが決まる手順や、操作を順に 1 つずつ行う手順は、利用者の部品が操作の待ち行列を持ちます。
+手順は、前の応答のコールバックで次のコマンドを `start()` してつなぎます。セッションのように前の応答で次のコマンドが決まる手順や、操作を順に 1 つずつ行う手順は、利用者のコンポーネントが操作の待ち行列を持ちます。
 
 例の `ParamClient`（[examples/j1939/param_service/param_service.cpp](../examples/j1939/param_service/param_service.cpp)）は、次のようにしています。
 
@@ -631,11 +631,11 @@ exchange.start(kPgn, read.bytes(), kEngineName,          // 相手は NAME（ア
 - 利用者へのコールバックは、自分の状態を確定してから呼びます。
 - `read()` などの呼び出しの中で、その利用者のコールバックを呼ばないようにします（呼び出し側の状態が途中のことがあります）。
 
-例では、次の操作を始めてから前の操作のコールバックを呼びます。そのため、コールバックの中で部品を破棄しても安全です。
+例では、次の操作を始めてから前の操作のコールバックを呼びます。そのため、コールバックの中でコンポーネントを破棄しても安全です。
 
 ### 応答する側
 
-応答側は `on_message` とノードの `send()` で書きます（専用の部品はありません）。
+応答側は `on_message` とノードの `send()` で書きます（専用のコンポーネントはありません）。
 
 [examples/j1939/param_service/param_service.cpp](../examples/j1939/param_service/param_service.cpp) の `ParamServer` のコンストラクターと `ParamServer::on_command()` を短くしたものです。この形のままのコードは、リポジトリにはありません。
 
@@ -673,16 +673,16 @@ void on_command(const j1939::Message& m) {
 | 項目 | ルール |
 |---|---|
 | 時間 | スレッド、イベントループ、OS の時計を使わず、`Timer`（仮想時間）で数えます。 |
-| 解除 | 登録は `Subscription`、タイマーは `Timer`、要求は `Exchange` に持たせると、部品の破棄で自動で解除されます。 |
-| 部品の持ち主 | 部品は `attach` で `Network` に持たせるか、`Network` より先に破棄します。 |
-| ハンドラの中で部品を作るとき | `timers_free()` で枠を確認してから作ります（「エラーの扱い」）。 |
+| 解除 | 登録は `Subscription`、タイマーは `Timer`、要求は `Exchange` に持たせると、コンポーネントの破棄で自動で解除されます。 |
+| コンポーネントの持ち主 | コンポーネントは `attach` で `Network` に持たせるか、`Network` より先に破棄します。 |
+| ハンドラの中でコンポーネントを作るとき | `timers_free()` で枠を確認してから作ります（「エラーの扱い」）。 |
 | 標準の Request（PGN 59904） | `Requester::of(node)` を使います（`Exchange` で作り直しません）。 |
-| 自分の利用者を呼ぶループ | 通知の前に自分の状態を確定し、通知の中で追加されたものを同じループで扱いません（[internals/j1939.md](internals/j1939.md) の「道具箱」）。 |
+| 自分の利用者を呼ぶループ | 通知の前に自分の状態を確定し、通知の中で追加されたものを同じループで扱いません（[internals/j1939.md](internals/j1939.md) の「ツールキット」の「利用者に通知するループ」）。 |
 | `on_any_request` と `Network::set_observer` | 使いません。 |
 
-アプリが持つ部品（`std::unique_ptr` など）は、ハンドラやタイマーのコールバックの中で破棄してかまいません（相手の Stop を受信したら止める、など）。破棄した部品のハンドラは、同じ配送の残りでも呼ばれず、タイマーも発火しません。
+アプリが持つコンポーネント（`std::unique_ptr` など）は、ハンドラやタイマーのコールバックの中で破棄してかまいません（相手の Stop を受信したら止める、など）。破棄したコンポーネントのハンドラは、同じ配送の残りでも呼ばれず、タイマーも発火しません。
 
-部品が呼ぶ関数（`PeriodicSender` の Encoder、`Monitor` と `Exchange` のコールバック）の中でも、その部品を破棄してかまいません。例外は `AddressCommander` のコールバックと `Diagnostics` の `on_clear` です。
+コンポーネントが呼ぶ関数（`PeriodicSender` の Encoder、`Monitor` と `Exchange` のコールバック）の中でも、そのコンポーネントを破棄してかまいません。例外は `AddressCommander` のコールバックと `Diagnostics` の `on_clear` です。
 
 ### 独自のプロトコルをテストする
 
@@ -694,7 +694,7 @@ void on_command(const j1939::Message& m) {
 | 相手・自分のアドレスの喪失と移動 | 優先度の高い NAME の Address Claimed を `bus.inject()` で入れる |
 | 無通信でのセッションの終了 | `bus.run_for()` で待つ |
 | 2 台目のツール | 同じバスに `add_j1939()` でもう 1 つのネットワークを追加する |
-| 部品の破棄（処理中、コールバックの中） | 部品を `std::unique_ptr` で持ち、途中で `reset()` する |
+| コンポーネントの破棄（処理中、コールバックの中） | コンポーネントを `std::unique_ptr` で持ち、途中で `reset()` する |
 
 コールバックの中で時刻を見るときは、そのネットワークの `now()`（ステップの時刻）を使います。`LocalBench::now()` は、最後の `run_until()` の終わりの時刻です。
 
@@ -828,7 +828,7 @@ CHECK(bus.network("cab").node(0).find<j1939::Monitor>()->losses() == 1);
 
 ### ECU をバスから切断する（`ecu.connected`）
 
-どの ECU にも、bool の入力 `ecu.connected` があります。false を書くと、その ECU は動いたまま、すべてのバスから切断されます。`add_outage` と違って、`Simulation()`（仮想バス）でも SIL Kit でも、シナリオ（[scenario.md](scenario.md) の「ECU をバスから外す」）、Control API、`agent()` のどれからでも同じように使えます。
+どの ECU にも、bool の入力 `ecu.connected` があります。false を書くと、その ECU は動いたまま、すべてのバスから切断されます。`add_outage` と違って、`Simulation()`（仮想バス）でも SIL Kit でも、シナリオ（[scenario.md](scenario.md) の「ECU をバスから切断する」）、Control API、`agent()` のどれからでも同じように使えます。
 
 断片です（`sim` は `Simulation`）。同じ書き込みを `tests/simulation/test_disconnect.cpp` がテストしています。
 
@@ -837,7 +837,7 @@ sim.ecu("engine").agent().submit({1, {{"ecu.connected", false}}, SimTime{} + 300
 sim.ecu("engine").agent().submit({2, {{"ecu.connected", true}}, SimTime{} + 600ms});
 ```
 
-J1939 では次のように見えます（契約は [internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」）。
+J1939 では次のように見えます（保証は [internals/execution.md](internals/execution.md) の「`Ecu` クラス」の「バスからの切断」）。
 
 | 見る所 | 切断している間の動作 |
 |---|---|
@@ -926,9 +926,9 @@ ecu.output("engine.speed", &rpm_, {.unit = "rpm"});   // 送信する PG の元�
 
 ## データの形（Codec）
 
-部品とエンジンはバイト列だけを扱います（`PeriodicSender` の `Encoder` は「バッファに書いて長さを返す」関数、受信は `Message::data` の `std::span`）。信号の配置とスケーリングは、YAML から生成した型付きメッセージ（[j1939-codec.md](j1939-codec.md)）が受け持ち、`codec_node.hpp` の関数が両者をつなぎます。
+コンポーネントとエンジンはバイト列だけを扱います（`PeriodicSender` の `Encoder` は「バッファに書いて長さを返す」関数、受信は `Message::data` の `std::span`）。信号の配置とスケーリングは、YAML から生成した型付きメッセージ（[j1939-codec.md](j1939-codec.md)）が受け持ち、`codec_node.hpp` の関数が両者をつなぎます。
 
-独自プロトコルの部品も、メッセージの形を同じ YAML で定義できます（Proprietary A のように 1 つの PGN に複数のメッセージを載せるときは `selector`）。YAML で定義して使う例は [examples/typed_messages](../examples/typed_messages) です。
+独自プロトコルのコンポーネントも、メッセージの形を同じ YAML で定義できます（Proprietary A のように 1 つの PGN に複数のメッセージを載せるときは `selector`）。YAML で定義して使う例は [examples/typed_messages](../examples/typed_messages) です。
 
 ## 関連するドキュメント
 
@@ -937,4 +937,4 @@ ecu.output("engine.speed", &rpm_, {.unit = "rpm"});   // 送信する PG の元�
 | README の「[ECU の書き方](../README.md#ecu-の書き方)」 | この文書の前に読む、ECU の最小の形 |
 | [j1939-codec.md](j1939-codec.md) | 信号を値として読み書きする型付きメッセージ |
 | [ecu-executable.md](ecu-executable.md) | ECU を実行ファイルにする方法 |
-| [internals/j1939.md](internals/j1939.md) | API の契約とルールの詳細 |
+| [internals/j1939.md](internals/j1939.md) | API の保証とルールの詳細 |

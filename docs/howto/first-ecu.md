@@ -12,7 +12,7 @@
 | 必要なもの | 条件 |
 |---|---|
 | OS | Linux か、Windows の MSYS2 UCRT64 シェルで作業します。 |
-| コンパイラ、CMake、Ninja、Git | バージョンは、テンプレートの [README](../../template/README.md) の「要るもの」の表にあります。 |
+| コンパイラ、CMake、Ninja、Git | バージョンは、テンプレートの [README](../../template/README.md) の「前提」の表にあります。 |
 | Python | `get_tools.py` の実行に、3.9 以上を使います。 |
 | [uv](https://docs.astral.sh/uv/) | 手順 7 で、Python のクライアントを実行するのに使います。 |
 

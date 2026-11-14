@@ -377,7 +377,7 @@ export PYTHONPATH=$PWD/python
 from vehicle_sil_control import Control, Launch, ms
 
 with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulation.yaml", start_paused=True) as launch:
-    with Control(launch.address) as c:   # address は事象 control_server を待って返す
+    with Control(launch.address) as c:   # address はイベント control_server を待って返す
         ...
     launch.stop()                        # {"command":"stop"}（with を出るときも、動いていれば止める）
     print(launch.wait()["result"])       # run --json と同じ結果

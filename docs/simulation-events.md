@@ -437,7 +437,7 @@ participant の `log` の終わりの側には、保証がありません。part
 
 ### Control Server のクライアントからのコマンド
 
-`--control` の Control Server のクライアントの時間の操作（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）と `Stop` も、同じコマンドとして処理します（`source` が `"control_server"`）。規則と順序は [control-api.md](control-api.md) の「2 つの口の命令」にあります。
+`--control` の Control Server のクライアントの時間の操作（`Pause`、`Resume`、`Step`、`RunUntil`、`SetSpeed`）と `Stop` も、同じコマンドとして処理します（`source` が `"control_server"`）。規則と順序は [control-api.md](control-api.md) の「標準入力とクライアントのコマンド」にあります。
 
 | 項目 | 標準入力 | クライアント |
 |---|---|---|
@@ -506,7 +506,7 @@ participant の `log` の終わりの側には、保証がありません。part
 | `manual-participants` | 利用者が起動する participant |
 | `scenario` | `check --scenario` と `run --scenario`（[scenario.md](scenario.md)） |
 | `scenario-wave` | シナリオの手順 `wave`（[scenario.md](scenario.md) の「波形で動かす（`wave`）」） |
-| `scenario-motion-expect` | シナリオの `ramp` と `wave` の横に書く `expect`（[scenario.md](scenario.md) の「動かしている間ずっと確かめる」） |
+| `scenario-motion-expect` | シナリオの `ramp` と `wave` の横に書く `expect`（[scenario.md](scenario.md) の「動かしている間ずっと確認する」） |
 | `control-server` | `run --control`（Control Server を持つビルドだけ） |
 | `scenario-control` | `run --scenario` と `--control` を一緒に使える（Control Server を持つビルドだけ） |
 

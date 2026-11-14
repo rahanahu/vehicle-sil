@@ -422,7 +422,7 @@ line  step                                                                      
 | 知りたいこと | 読む所 |
 |---|---|
 | 波形の種類（`sine`、`square`、`pulse`、`noise` など）と書き方 | [scenario.md](../scenario.md) の「波形で動かす（`wave`）」 |
-| 横の `expect` が見るサンプルの範囲 | [scenario.md](../scenario.md) の「動かしている間ずっと確かめる」 |
+| 横の `expect` が見るサンプルの範囲 | [scenario.md](../scenario.md) の「動かしている間ずっと確認する」 |
 | 16 進で書ける位置 | [scenario.md](../scenario.md) の「ファイルの形式」 |
 
 ## 手順 6: パラメーターと機種を使う
@@ -520,7 +520,7 @@ error: my_tests/dashboard_speed.yaml:3: the scenario is only for the variant ful
 | 知りたいこと | 読む所 |
 |---|---|
 | `${名前}` を書ける位置と、値が決まる順 | [scenario.md](../scenario.md) の「パラメーター（`params`、`${名前}`）」 |
-| その機種にない変数を使う手順の扱い | [scenario.md](../scenario.md) の「ない変数を使う手順は飛ばす」 |
+| その機種にない変数を使う手順の扱い | [scenario.md](../scenario.md) の「ない変数を使う手順のスキップ」 |
 | 設定ファイルの `variants` の書き方 | [simulation-config.md](../simulation-config.md) の「機種（`variants`、`--variant`）」 |
 
 ## 手順 7: シナリオをまとめて実行する
@@ -588,7 +588,7 @@ FAILED: 8 runs, 6 passed, 1 failed, 1 skipped
 | 最初の失敗で止める | `--fail-fast` を付けます。 |
 | 機種のない設定ファイルで実行する | `test simulation.yaml --scenarios scenarios/` のように、同じ書き方です。 |
 
-`test` のルールは、[simulation-run.md](../simulation-run.md) の「シナリオをまとめて回す（`vehicle_sil_launch test`）」にあります。
+`test` のルールは、[simulation-run.md](../simulation-run.md) の「シナリオをまとめて実行する（`vehicle_sil_launch test`）」にあります。
 
 ## 手順 8: CI で実行する
 
@@ -694,8 +694,8 @@ line  step                                                             result  a
 
 | 知りたいこと | 読む所 |
 |---|---|
-| 切断している間に ECU の中で動き続けるもの | [internals/execution.md](../internals/execution.md) の「ECU の入口」 |
-| 切断したときと戻したときの J1939 の動作 | [j1939-guide.md](../j1939-guide.md) の「ECU をバスから外す（`ecu.connected`）」 |
+| 切断している間に ECU の中で動き続けるもの | [internals/execution.md](../internals/execution.md) の「バスからの切断（`ecu.connected`）」 |
+| 切断したときと戻したときの J1939 の動作 | [j1939-guide.md](../j1939-guide.md) の「ECU をバスから切断する（`ecu.connected`）」 |
 
 ## 注意点
 

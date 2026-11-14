@@ -122,7 +122,7 @@ participants:
 | `participants[].command` | 実行ファイルのパスで、相対パスは設定ファイルのあるディレクトリを基準にします。 |
 | `participants[].step_ms` | 手順 1 で伝えてもらったステップ幅で、書くと ECU の値と照合し、省略もできます。 |
 
-`command` に `--name` や `--registry-uri` は書きません。`vehicle_sil_launch` が追加します。Windows では、`.exe` を書かなくても実行ファイルが見つかります。キーの一覧と既定の値は、[simulation-config.md](../simulation-config.md) の「構成ファイル」にあります。
+`command` に `--name` や `--registry-uri` は書きません。`vehicle_sil_launch` が追加します。Windows では、`.exe` を書かなくても実行ファイルが見つかります。キーの一覧と既定の値は、[simulation-config.md](../simulation-config.md) の「設定ファイル」にあります。
 
 ### ECU が使う名前を調べる
 
@@ -473,7 +473,7 @@ failed: 1 error, 2 warnings, 0 notes
 | いつまでも終わらない | ステップの途中で止まった ECU がいて、仮想時間が進みません。 | Ctrl+C で止めます。CI では `--timeout-ms` で実時間の上限を付けます。 |
 | `[participant-failed]`、`[not-joined]`、`[did-not-end]` などの指摘が出る | 実行中に、ECU が失敗したか、参加しなかったか、終わりませんでした。 | 指摘の文にある participant の出力を読みます。 |
 
-実行中の指摘のコードは [simulation-run.md](../simulation-run.md) の「出力」に、中断する条件は同じ文書の「見張ること」にあります。
+実行中の指摘のコードは [simulation-run.md](../simulation-run.md) の「出力」に、中断する条件は同じ文書の「中断する条件とタイムアウト」にあります。
 
 ## ECU を無効にして動かす（`enabled`、`--disable`）
 
@@ -514,7 +514,7 @@ passed: 0 errors, 1 warning, 1 note
 | `--strict` | 無効にしたために出る警告（上の `single-participant`）でも、失敗になります。 |
 | `required: false` | `ecu_main()` で作った ECU には書けません。除くときは、`enabled: false` か `--disable` を使います。 |
 
-ルールは、[simulation-config.md](../simulation-config.md) の「participant を外す」にあります。
+ルールは、[simulation-config.md](../simulation-config.md) の「participant を無効にする」にあります。
 
 ## 止める
 
@@ -525,7 +525,7 @@ passed: 0 errors, 1 warning, 1 note
 | Ctrl+C をもう 1 回 | 待たずに強制終了します。 | 130 |
 | `--timeout-ms <ms>` | 開始から実時間で `<ms>` たっても終わらなければ、中断して `error` にします。 | 1 |
 
-プログラムから止めるときは、`run` に `--stdin-commands` を付けて、標準入力に `{"command":"stop"}` を書くか、標準入力を閉じます（[simulation-events.md](../simulation-events.md) の「標準入力の命令」）。
+プログラムから止めるときは、`run` に `--stdin-commands` を付けて、標準入力に `{"command":"stop"}` を書くか、標準入力を閉じます（[simulation-events.md](../simulation-events.md) の「標準入力のコマンド」）。
 
 どの止め方でも、`vehicle_sil_launch` は、起動した ECU と、ECU が起動したプロセスを終了させてから終わります。シミュレーションが終わっても終了しない ECU は、強制終了して、`did-not-end` の `error` にします。順番と待つ時間は、[simulation-run.md](../simulation-run.md) の「止め方」「中断（Ctrl+C）」「participant を残さないこと」にあります。
 
@@ -615,7 +615,7 @@ time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced 
 | 警告 `behind-real-time` が出る | 許容を超えて遅れたタイムステップが、1 つ以上あります。 | 速度を下げるか、ECU を 1 つずつ `--disable` で無効にして、遅い ECU を探します。 |
 | 警告 `coarse-time-step` が出る | `time_step_ms` を書いていて、ECU のステップがタイムステップの境目で始まりません。 | 指摘の文にある値を、`time_step_ms` に書きます。 |
 
-遅れの定義、許容の決め方、タイムステップと ECU のステップの関係は、[simulation-run.md](../simulation-run.md) の「等速で動かす」にあります。
+遅れの定義、許容の決め方、タイムステップと ECU のステップの関係は、[simulation-run.md](../simulation-run.md) の「速度を指定して動かす」にあります。
 
 ## 同じ ECU を 2 つ載せる
 

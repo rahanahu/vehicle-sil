@@ -26,7 +26,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 - バージョンが違うときは、待っても直らないので再接続しません。ライブラリは `api/app` で `ProtocolError`、`hello` で `session.incompatible` を立てて止まります。
 - **受信し直すもの**: WebSocket のメッセージが JSON として読めない、または `hello` と `session` の要約の中心のフィールド（`id`、`state`、`launcher`、`stop`）が読めないときは、何が抜けたかわからないので、再接続して `hello` から受信し直します。要約を正とします。続けて起きるたびに、再接続するまでの間隔を延ばします。
 - **頼んだときだけ変わる形**: 前の形のままでは重いものは、クライアントが認証のメッセージで頼んだときだけ形を変えます（`session_without_check`）。頼まないクライアントには、いままでの形で送ります。
-- ランチャーのイベント（`event` の中身）は、ランチャーの `run --events` の形そのままです。そのバージョン（`hello` のイベントの `vehicle_sil_events`）はランチャーが決めます（[docs/simulation-events.md](../../docs/simulation-events.md) の「機械から使う」）。
+- ランチャーのイベント（`event` の中身）は、ランチャーの `run --events` の形そのままです。そのバージョン（`hello` のイベントの `vehicle_sil_events`）はランチャーが決めます（[docs/simulation-events.md](../../docs/simulation-events.md) の「プログラムから使う」）。
 - エラーの `code` の名前は変えません（追加することはあります）。`message` は人向けの英語の 1 文で、文言は変わることがあります。プログラムは `code` で分けます。
 
 ## 認証と Origin
@@ -155,7 +155,7 @@ API のバージョンは `vehicle_sil_gui`（今は 1）です。サーバー�
 - 動いている実行がなければ（終わった、始まりかけ、ランチャーの入力が閉じた）409 `not-running` です。
 - その実行のランチャー（始めたときの `version --json`）の `features` に `time-commands` がなければ 400 `unsupported` です。
 - ランチャーが入力を読まないままのときも、リクエストは長くて約 2 秒で返ります（コマンドはランチャーの入力に残ります）。
-- コマンドの意味（一時停止はステップの境目で反映される、ステップ実行は一時停止の間だけ、など）はランチャーのルールです（[docs/simulation-events.md](../../docs/simulation-events.md) の「標準入力の命令」）。
+- コマンドの意味（一時停止はステップの境目で反映される、ステップ実行は一時停止の間だけ、など）はランチャーのルールです（[docs/simulation-events.md](../../docs/simulation-events.md) の「標準入力のコマンド」）。
 
 ## エラーの `code`
 

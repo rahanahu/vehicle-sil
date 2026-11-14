@@ -380,7 +380,7 @@ stands = c.sim.wait_paused()
 - Parameter に書き込めるのは、最初のステップの前だけです。
 - 同じ変数に、複数のクライアントが同じ時刻を指定して書き込むと、残る値は Server が受信した順で決まります。
 
-ECU をバスから切断するのも、変数への書き込みです。どの ECU にもある `ecu.connected` に `False` を書き込みます。J1939 でどう見えるかは、[j1939-guide.md](../j1939-guide.md) の「ECU をバスから外す（`ecu.connected`）」にあります。
+ECU をバスから切断するのも、変数への書き込みです。どの ECU にもある `ecu.connected` に `False` を書き込みます。J1939 でどう見えるかは、[j1939-guide.md](../j1939-guide.md) の「ECU をバスから切断する（`ecu.connected`）」にあります。
 
 反映される時刻のルールの全体は、[control-api.md](../control-api.md) の「始まる前に書く（`--start-paused`）」と「Python」にあります。
 
@@ -544,7 +544,7 @@ build/linux-gcc-control/tools/launch/vehicle_sil_launch run --start-paused --std
 - JSON として読めない行は無視され、理由が標準エラーに 1 行表示されます。
 - `--control` と一緒に使うと、標準入力と Control Server のどちらからも時間を操作できます。
 
-行の形式の全体と、受け付けない場合は、[simulation-events.md](../simulation-events.md) の「標準入力の命令（`run --stdin-commands`）」にあります。標準入力と Control Server の両方から操作したときの順序は、[control-api.md](../control-api.md) の「2 つの口の命令」にあります。
+行の形式の全体と、受け付けない場合は、[simulation-events.md](../simulation-events.md) の「標準入力のコマンド（`run --stdin-commands`）」にあります。標準入力と Control Server の両方から操作したときの順序は、[control-api.md](../control-api.md) の「標準入力とクライアントのコマンド」にあります。
 
 ## 別の PC から接続する
 
@@ -566,7 +566,7 @@ node.on_message(ecu_main_example::kEngineSpeed, [this](const j1939::Message& m) 
 ecu.output("dashboard.engine_speed", &rpm_, {.unit = "rpm", .description = "the speed shown"});
 ```
 
-変数を追加するのは、ECU のコードを書く人の作業です。必要な信号があれば、その ECU を書いた人に伝えます。変数の宣言の仕方は、[j1939-guide.md](../j1939-guide.md) の「外から信号を操作する・読む（UI、試験）」と [control-api.md](../control-api.md) の「ECU の変数」にあります。
+変数を追加するのは、ECU のコードを書く人の作業です。必要な信号があれば、その ECU を書いた人に伝えます。変数の宣言の仕方は、[j1939-guide.md](../j1939-guide.md) の「外部から信号を読み書きする（UI、テスト）」と [control-api.md](../control-api.md) の「ECU の変数」にあります。
 
 ## 補足
 

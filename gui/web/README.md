@@ -241,7 +241,7 @@ API と WebSocket の URL は、先頭に `/` を付けずに書きます（`api
 - ライブラリの HTTP は、ラッパーが `HttpClient` で送る（interceptor がトークンを付ける）。
 - ライブラリの状態は `Readable`（`get()` と `subscribe()`）。ラッパーは `readableSignal`（`core/session/gui-client.ts`）で signal にする。
 - ライブラリが足りないときは、ラッパーで近道を作らず、ライブラリの公開のエントリーポイント（`@vehicle-sil/gui-client`）に追加する。
-- 本番のコードは、`@vehicle-sil/gui-client/internal`（互換の約束の外）と `/testing` を import しない（lint で止まる。テストは使ってよい）。
+- 本番のコードは、`@vehicle-sil/gui-client/internal`（互換の保証の外）と `/testing` を import しない（lint で止まる。テストは使ってよい）。
 - 購読が投げたものは、Angular の `ErrorHandler` へ渡る。
 
 **リクエストの送り方**:

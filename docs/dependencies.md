@@ -177,7 +177,7 @@ pcap のインターフェースの判断と状態（開く順、受信スレッ
 - 受信したフレームの VLAN タグは、元の位置に戻して渡される。
 - ブロックしない読み取りでは、インターフェースが下がったことも、なくなったことも、ライブラリは通知しない（ブリッジがカーネルに問い合わせます）。
 
-実装が前提にしている Npcap の挙動は、次のとおりです（本物に対して手で確認しました。範囲は [ethernet-bridge.md](ethernet-bridge.md) の「確かめたことと、確かめていないこと」）。
+実装が前提にしている Npcap の挙動は、次のとおりです（本物に対して手で確認しました。範囲は [ethernet-bridge.md](ethernet-bridge.md) の「確認したことと、確認していないこと」）。
 
 - 構造体の形が合う。
 - イベントは、読み切ると下がる。
@@ -249,7 +249,7 @@ SIL Kit のバージョン情報の Git ハッシュ（`SilKit::Version::GitHash
 | `sil-kit-registry` | レジストリの実行ファイルで、SIL Kit を静的にリンクしているので、共有ライブラリは不要です。 |
 | `rapidyaml` | SIL Kit が `ThirdParty/rapidyaml` からビルドする YAML/JSON パーサー（MIT。静的ライブラリ）で、`vehicle_sil::can_netsim` と `vehicle_sil::launch` が設定ファイルの読み込みに使い、`vehicle_sil::core` が、渡された SIL Kit の構成に vehicle-sil の既定を追加するのに使います（`merged_participant_configuration()`）。 |
 
-SIL Kit をサブモジュールから追加しないとき（利用側が `SilKit::SilKit` を定義済み）は `rapidyaml` のターゲットがないので、`vehicle_sil::can_netsim`、`vehicle_sil_can_bus_simulator`、`vehicle_sil::launch`、`vehicle_sil_launch` を作りません。`vehicle_sil::core` は作りますが、渡された SIL Kit の構成をそのまま使います（既定を追加せず、名前、registry の URI、`DynamicSimulationStep` の検査もしない。[internals/core.md](internals/core.md) の「SIL Kit の構成の既定」）。
+SIL Kit をサブモジュールから追加しないとき（利用側が `SilKit::SilKit` を定義済み）は `rapidyaml` のターゲットがないので、`vehicle_sil::can_netsim`、`vehicle_sil_can_bus_simulator`、`vehicle_sil::launch`、`vehicle_sil_launch` を作りません。`vehicle_sil::core` は作りますが、渡された SIL Kit の構成をそのまま使います（既定を追加せず、名前、registry の URI、`DynamicSimulationStep` の検査もしない。[internals/core.md](internals/core.md) の「SIL Kit の設定の既定」）。
 
 Windows では `SilKit.dll` が実行ファイルと別のディレクトリに出力されます。`vehicle_sil_copy_runtime_dlls(<target>)` を呼ぶと、ビルド後に DLL が実行ファイルの隣へコピーされます。
 
@@ -288,7 +288,7 @@ Windows では `SilKit.dll` が実行ファイルと別のディレクトリに�
 
 同じ名前の participant を拒否するとき、registry は「A participant with the same name ... already exists in the simulation」という文のエラーを返します。`create_participant()` は、エラーの文にこの「already exists in the simulation」があるときだけ、待ってやり直します（SIL Kit には、エラーの種類を見分ける公開の API がありません）。拒否のしかたと文は registry のバージョンによって違うので、ほかのバージョンの registry（ほかのツールが立てたもの、公式の配布物のもの）では文が合わないことがあります。そのときは、待たずに、SIL Kit のエラーのまますぐ失敗します（`name_in_use_wait` は役に立ちません。同じ名前ですぐに起動し直すときは、少し間を空けます）。拒否された後の作り直しは、registry が同じ名前を毎回拒否すること（4.0.55 以上）にも頼っています。それより古い registry は 2 回目の接続を拒否しないので、同じ名前の participant が黙って 2 つ入ります（変更履歴から。古いバージョンではテストしていません）。上流を更新するときは、この文が変わっていないかを確認します（テスト `core.participant_runtime_waits_while_the_registry_still_has_the_name`、`core.participant_runtime_says_how_long_the_name_was_refused`）。
 
-`ReportError` で Error になった participant は、`Stop` か abort されるまで Error のままで、`StartLifecycle` の future も完了しません。`Stop` は Error から Shutdown に進めます。公開のヘッダーとドキュメントは、`Stop` を呼べるのは Running（か Paused）のときとしていて、Error からの `Stop` は約束の外です（Error については、終わらせるしかない、とだけ書いてあります）。`ParticipantRuntime::stop()` は Error でも `Stop` を呼ぶので、上流がこの前提を検査するようになると、Error の participant が Shutdown に進まなくなります。上流を更新するときに確認します（テスト `core.virtual_time_stop_during_a_failing_step_leaves_through_error`）。
+`ReportError` で Error になった participant は、`Stop` か abort されるまで Error のままで、`StartLifecycle` の future も完了しません。`Stop` は Error から Shutdown に進めます。公開のヘッダーとドキュメントは、`Stop` を呼べるのは Running（か Paused）のときとしていて、Error からの `Stop` は保証の外です（Error については、終わらせるしかない、とだけ書いてあります）。`ParticipantRuntime::stop()` は Error でも `Stop` を呼ぶので、上流がこの前提を検査するようになると、Error の participant が Shutdown に進まなくなります。上流を更新するときに確認します（テスト `core.virtual_time_stop_during_a_failing_step_leaves_through_error`）。
 
 workflow configuration は、送信した時点で接続している参加者だけが受信します。そのため `SimulationController` は、必要な参加者のステータスが見えてから送信します（`sil-kit-system-controller` と同じ方針）。
 
@@ -296,13 +296,13 @@ workflow configuration は、送信した時点で接続している参加者だ
 
 時刻同期した participant は、自分の次のステップ時刻がほかの全員の次のステップ時刻以下のときだけ進みます（`TimeConfiguration::OtherParticipantHasLowerTimepoint`）。「最も遅いピアを待つ」と `SimulationController` の stop_at の保証は、これに基づいています。
 
-構成の `Experimental.TimeSynchronization.DynamicSimulationStep` は 3 つの値を取ります。`true` の participant は、自分のステップを全員の最小の幅に縮め、ほかの participant にもそうするよう求めます。キーがない participant は、`true` の participant が 1 つでもいれば、それに従って縮みます。`false` の participant は縮みません。vehicle-sil のステップは固定の幅を前提にしているので（ステップの格子、`TickScheduler`、時間ゲート）、既定の構成（`default_participant_configuration()`）はいつも `false` にします。自分の構成を渡した participant にも、キーがなければ `false` を追加し、`true` なら participant を作る前にエラーにします（`merged_participant_configuration()`）。それでも SIL Kit がステップを縮めたとき（rapidyaml のないビルドで、キーのない構成か `true` の構成を渡したとき）は、`ParticipantRuntime` が、渡されたステップの幅が自分の幅と違うことを見つけて、そのステップを失敗にします（[internals/core.md](internals/core.md) の「SIL Kit の構成の既定」）。experimental のキーなので、上流を更新するときは、名前と意味が変わっていないかを確認します。テスト `core.virtual_time_keeps_its_step_when_another_participant_asks_for_dynamic_steps` が、`true` の participant と一緒に動かして、既定の構成が有効であることを確認します（キーがなくなるか、意味が変わると落ちます）。`core.virtual_time_keeps_its_step_with_a_configuration_of_its_own` が、キーのない自分の構成でも同じであることを確認します。
+構成の `Experimental.TimeSynchronization.DynamicSimulationStep` は 3 つの値を取ります。`true` の participant は、自分のステップを全員の最小の幅に縮め、ほかの participant にもそうするよう求めます。キーがない participant は、`true` の participant が 1 つでもいれば、それに従って縮みます。`false` の participant は縮みません。vehicle-sil のステップは固定の幅を前提にしているので（ステップの格子、`TickScheduler`、時間ゲート）、既定の構成（`default_participant_configuration()`）はいつも `false` にします。自分の構成を渡した participant にも、キーがなければ `false` を追加し、`true` なら participant を作る前にエラーにします（`merged_participant_configuration()`）。それでも SIL Kit がステップを縮めたとき（rapidyaml のないビルドで、キーのない構成か `true` の構成を渡したとき）は、`ParticipantRuntime` が、渡されたステップの幅が自分の幅と違うことを見つけて、そのステップを失敗にします（[internals/core.md](internals/core.md) の「SIL Kit の設定の既定」）。experimental のキーなので、上流を更新するときは、名前と意味が変わっていないかを確認します。テスト `core.virtual_time_keeps_its_step_when_another_participant_asks_for_dynamic_steps` が、`true` の participant と一緒に動かして、既定の構成が有効であることを確認します（キーがなくなるか、意味が変わると落ちます）。`core.virtual_time_keeps_its_step_with_a_configuration_of_its_own` が、キーのない自分の構成でも同じであることを確認します。
 
-時間ゲートは、非同期版のステップを完了させないことで仮想時間を止めます（[internals/virtual-time.md](internals/virtual-time.md)）。SIL Kit の HealthCheck（構成の `HealthCheck`）は、ステップのハンドラーの呼び出しにかかった時間だけを測るので、保留しているステップを時間切れにしません。公式のドキュメントが約束しているのは `Pause()` の間のことだけで、完了させていない非同期のステップのことは書いていません。変わると、HealthCheck を付けた構成では、一時停止が警告か Error になります。
+時間ゲートは、非同期版のステップを完了させないことで仮想時間を止めます（[internals/virtual-time.md](internals/virtual-time.md)）。SIL Kit の HealthCheck（構成の `HealthCheck`）は、ステップのハンドラーの呼び出しにかかった時間だけを測るので、保留しているステップを時間切れにしません。公式のドキュメントが保証しているのは `Pause()` の間のことだけで、完了させていない非同期のステップのことは書いていません。変わると、HealthCheck を付けた構成では、一時停止が警告か Error になります。
 
 時刻同期した participant が送信するメッセージのタイムスタンプは、送信時のステップの時刻です。
 
-時刻同期していない participant が送信するメッセージのタイムスタンプは `std::chrono::nanoseconds::min()` です（`TimeProvider` の既定）。時刻同期している受信側の SIL Kit は、受信したメッセージのこの値を自分の今の時刻に置き換えます（`SilKitLink::DistributeRemoteSilKitMessage`）。最初のステップの前は今の時刻もこの値なので、そのまま残ります。`SilKitCanPort`（仮想時間）と `SilKitEthPort` は負の時刻を見分け、受信側の最新のステップの時刻（最初のステップの前なら 0）に寄せます（[internals/can.md](internals/can.md) の「SIL Kit のポート」、[internals/ethernet.md](internals/ethernet.md) の「時刻同期に参加していない送り手」）。テスト `j1939_silkit.j1939_on_virtual_time_receives_a_bam_from_a_participant_without_time_synchronisation*` が、始まる前と始まった後の両方を確認します。
+時刻同期していない participant が送信するメッセージのタイムスタンプは `std::chrono::nanoseconds::min()` です（`TimeProvider` の既定）。時刻同期している受信側の SIL Kit は、受信したメッセージのこの値を自分の今の時刻に置き換えます（`SilKitLink::DistributeRemoteSilKitMessage`）。最初のステップの前は今の時刻もこの値なので、そのまま残ります。`SilKitCanPort`（仮想時間）と `SilKitEthPort` は負の時刻を見分け、受信側の最新のステップの時刻（最初のステップの前なら 0）に寄せます（[internals/can.md](internals/can.md) の「SIL Kit のポート」、[internals/ethernet.md](internals/ethernet.md) の「時刻同期に参加していない送信側」）。テスト `j1939_silkit.j1939_on_virtual_time_receives_a_bam_from_a_participant_without_time_synchronisation*` が、始まる前と始まった後の両方を確認します。
 
 ### publish/subscribe（Agent と Hub の間）
 
@@ -324,15 +324,15 @@ participant の構成の `EnableMessageAggregation` は、既定の Off のま�
 
 participant を壊すと、まだソケットに書いていない送信は捨てられます（同じ相手への前の送信を書いている途中なら、その後ろに積んだ送信は書かれません）。そのため、Agent の「最後の通知」は、Hub の返事を待ってから participant を壊します（`AgentTransport` のデストラクター。internals/control.md の「接続の終わり」）。participant が生きている間は、積んだ送信は順に書かれます。
 
-### スレッドと順序の約束
+### スレッドと順序の保証
 
-スレッドと順序について、公式のドキュメントが約束していることと、実装を読んで頼っていることを分けて書きます。
+スレッドと順序について、公式のドキュメントが保証していることと、実装を読んで頼っていることを分けて書きます。
 
-**約束されていること**: 受信のハンドラーとステップのハンドラーは、participant の 1 つの通信スレッドで呼ばれ、ステップのハンドラーが動いている間はほかのハンドラーが呼ばれません。ブロッキング版のステップのハンドラーの中で送信したメッセージは、ハンドラーが終わったときに配信されます。メッセージは、どのスレッドやハンドラーから呼んでも、API を呼んだ順に送信されます（4.0.24 の変更履歴。別々のスレッドから並行に呼んだものどうしの順は約束されていません）。
+**保証されていること**: 受信のハンドラーとステップのハンドラーは、participant の 1 つの通信スレッドで呼ばれ、ステップのハンドラーが動いている間はほかのハンドラーが呼ばれません。ブロッキング版のステップのハンドラーの中で送信したメッセージは、ハンドラーが終わったときに配信されます。メッセージは、どのスレッドやハンドラーから呼んでも、API を呼んだ順に送信されます（4.0.24 の変更履歴。別々のスレッドから並行に呼んだものどうしの順は保証されていません）。
 
-**約束されていないこと（実装を読んで頼っている）**: 非同期版のステップ（`CompleteSimulationStep`）でも、ステップの中の送信が完了の通知より前に出ること（完了の通知が、送信と同じ待ち行列を通ること）。`Publish` と `SendFrame` をどのスレッドから呼んでもよいこと（順の約束は別のスレッドからの呼び出しに触れていて、公式の例にも別のスレッドからの送信がありますが、スレッド安全性そのものの記述はありません）。上の publish/subscribe の項目と、下の LIN の Master のフレームの項目は、これに頼っています。
+**保証されていないこと（実装を読んで頼っている）**: 非同期版のステップ（`CompleteSimulationStep`）でも、ステップの中の送信が完了の通知より前に出ること（完了の通知が、送信と同じ待ち行列を通ること）。`Publish` と `SendFrame` をどのスレッドから呼んでもよいこと（順の保証は別のスレッドからの呼び出しに触れていて、公式の例にも別のスレッドからの送信がありますが、スレッド安全性そのものの記述はありません）。上の publish/subscribe の項目と、下の LIN の Master のフレームの項目は、これに頼っています。
 
-「ステップ T が始まる時点で、T より前の時刻のメッセージは全部届いている」のは、送信側がステップのハンドラーの中で送信したときだけの約束です。ほかの SIL Kit のプログラムがステップの外（別のスレッド、受信のハンドラー）から送信したフレームは、受信側のどのステップに入るかが実行ごとに変わりえます（[internals/can.md](internals/can.md)、[internals/ethernet.md](internals/ethernet.md)）。
+「ステップ T が始まる時点で、T より前の時刻のメッセージは全部届いている」のは、送信側がステップのハンドラーの中で送信したときだけの保証です。ほかの SIL Kit のプログラムがステップの外（別のスレッド、受信のハンドラー）から送信したフレームは、受信側のどのステップに入るかが実行ごとに変わりえます（[internals/can.md](internals/can.md)、[internals/ethernet.md](internals/ethernet.md)）。
 
 コントローラーの設定の操作（CAN の `SetBaudRate`、`Start`、Ethernet の `Activate` など）は、どのスレッドから呼んでも安全とは言えません（trivial と detailed の切り替えは通信スレッドで起きます。「SIL Kit へのパッチ」の 0002）。vehicle-sil は、通信スレッドの上（CommunicationReady のハンドラー）で呼びます。
 
@@ -342,7 +342,7 @@ participant を壊すと、まだソケットに書いていない送信は捨�
 
 trivial simulation の CAN は、`Start()` の前の `SendFrame` を、警告のログだけで捨てます。送信の確認は来ません（`SimBehaviorTrivial::SendMsg`）。`Start()` はその場で状態を変えます。受信は `Start()` と関係なく届きます。そのため `SilKitCanPort` は、`start()` の前の送信を SIL Kit に渡さずにエラーにし、ブリッジは、コントローラーを始める前に外から受信したフレームを SIL Kit に渡しません。trivial simulation の Ethernet は、`Activate()` の前の `SendFrame` に `ControllerInactive` の確認を返します。
 
-CAN の `SendFrame` の userContext は、ポインタの値（64 ビット）のまま運ばれます。ネットワークシミュレーターの `CanFrameRequest` と送信確認には届き、他の受信者の RX のフレームでは `nullptr` になります（`CanController::ReceiveMsg`）。`SilKitCanPort` は送信時刻を入れ、簡易 CAN Network Simulator がそれを読みます。公式のドキュメントに書いてあるのは、userContext が送信側の送信確認とシミュレーターの要求に届くことまでで、プロセスをまたいで値を運ぶ使い方は約束されていません。SIL Kit の replay が流し直すフレームは userContext が空なので、送信時刻がありません（簡易 CAN Network Simulator は、時刻のない要求を、受け取った時点の自分の最後のステップの時刻に置き、警告を 1 度表示します。この位置は決定的ではありません）。
+CAN の `SendFrame` の userContext は、ポインタの値（64 ビット）のまま運ばれます。ネットワークシミュレーターの `CanFrameRequest` と送信確認には届き、他の受信者の RX のフレームでは `nullptr` になります（`CanController::ReceiveMsg`）。`SilKitCanPort` は送信時刻を入れ、簡易 CAN Network Simulator がそれを読みます。公式のドキュメントに書いてあるのは、userContext が送信側の送信確認とシミュレーターの要求に届くことまでで、プロセスをまたいで値を運ぶ使い方は保証されていません。SIL Kit の replay が流し直すフレームは userContext が空なので、送信時刻がありません（簡易 CAN Network Simulator は、時刻のない要求を、受け取った時点の自分の最後のステップの時刻に置き、警告を 1 度表示します。この位置は決定的ではありません）。
 
 ### Network Simulator
 
@@ -366,7 +366,7 @@ trivial simulation では、`Activate()` でコントローラーはすぐ `Link
 
 `RemoveFrameHandler` は、CAN と同じく、実行中のハンドラーの終了を待ってから戻ります（ハンドラーの呼び出しと削除が同じ `recursive_mutex` で直列化されている）。
 
-コントローラーは、フレームのハンドラーを、ハンドラーの集まりの `recursive_mutex` を持ったまま呼びます（`SynchronizedHandlers::InvokeAll`）。trivial simulation の `SendFrame` は、自分への TX の配信で同じ集まりの `InvokeAll` を通るので、同じ錠を取ります。そのため、外のインターフェースの受信スレッドが呼ぶ `SendFrame` は、SIL Kit の受信スレッドが `EthernetBridge` のハンドラー（その中の `ExternalLink::transmit()`）を終えるまで待ちます。`ExternalLink` の契約（`transmit()` はブロックせず、ハンドラーの間に `transmit()` の取る錠を持たない）は、これを前提にしています。
+コントローラーは、フレームのハンドラーを、ハンドラーの集まりの `recursive_mutex` を持ったまま呼びます（`SynchronizedHandlers::InvokeAll`）。trivial simulation の `SendFrame` は、自分への TX の配信で同じ集まりの `InvokeAll` を通るので、同じ錠を取ります。そのため、外のインターフェースの受信スレッドが呼ぶ `SendFrame` は、SIL Kit の受信スレッドが `EthernetBridge` のハンドラー（その中の `ExternalLink::transmit()`）を終えるまで待ちます。`ExternalLink` の仕様（`transmit()` はブロックせず、ハンドラーの間に `transmit()` の取る錠を持たない）は、これを前提にしています。
 
 ### LIN
 
@@ -394,7 +394,7 @@ SIL Kit の `SendMsg` は、送信を I/O スレッドのタスクとして積�
 
 ## 混ぜてよい SIL Kit のバージョン
 
-確認しているのは v5.0.8 だけです（利用側の `SilKit::SilKit`、ほかの PC の participant、外で立てた registry のどれについても）。SIL Kit は 4.0.5 から、バージョンの違う participant どうしが接続できることを約束していますが、vehicle-sil が頼っている挙動には、それより後のバージョンで入ったものがあります。下は SIL Kit の変更履歴から拾ったもので、古いバージョンと組んでテストしてはいません。
+確認しているのは v5.0.8 だけです（利用側の `SilKit::SilKit`、ほかの PC の participant、外で立てた registry のどれについても）。SIL Kit は 4.0.5 から、バージョンの違う participant どうしが接続できることを保証していますが、vehicle-sil が頼っている挙動には、それより後のバージョンで入ったものがあります。下は SIL Kit の変更履歴から拾ったもので、古いバージョンと組んでテストしてはいません。
 
 | バージョン | 入った挙動 | 古いバージョンと組むと |
 |---|---|---|
@@ -447,7 +447,7 @@ SIL Kit の `SendMsg` は、送信を I/O スレッドのタスクとして積�
 
 **影響**: 推測のとおりなら、1 つの participant をデバッガーで止めたまま全体を止めると、まれに、ほかの participant やランチャーが終わらなくなります。
 
-**対応**: vehicle-sil の participant（`ParticipantRuntime`）は、Windows では、構成を渡されなければ `Middleware.EnableDomainSockets: false` で作ります。vehicle-sil が立てる registry（`vehicle_sil_launch run`、`Simulation`）は、どの OS でもそうします（TCP のポートで待ち受けられないとき、SIL Kit の registry は local-domain ソケットだけで動き続け、同じ URI のほかの registry の local-domain のパスを奪うため。[simulation-run.md](simulation-run.md) の「待ち受けるアドレス」）。既定を作るのは 1 か所です（`default_participant_configuration()`、`default_participant_configuration_with()`、`merged_participant_configuration()`、registry は `default_registry_configuration()`。ほかに変える所は [internals/core.md](internals/core.md) の「SIL Kit の構成の既定」）。`vehicle_sil_can_bus_simulator` が自分で作る構成（ログの設定）も、これに追加して作ります。相手が local-domain のエンドポイントを持っていても、こちらが使わないので TCP で接続します。自分の SIL Kit の構成を渡したとき（`participant_configuration`、ecu_main の `--silkit-config`、`vehicle_sil_can_bus_simulator --participant-configuration`）も、Windows では `Middleware.EnableDomainSockets` を `false` にします（`true` と書いても `false` です）。vehicle-sil を使わない SIL Kit の participant どうしの接続には、この対応は適用されません。
+**対応**: vehicle-sil の participant（`ParticipantRuntime`）は、Windows では、構成を渡されなければ `Middleware.EnableDomainSockets: false` で作ります。vehicle-sil が立てる registry（`vehicle_sil_launch run`、`Simulation`）は、どの OS でもそうします（TCP のポートで待ち受けられないとき、SIL Kit の registry は local-domain ソケットだけで動き続け、同じ URI のほかの registry の local-domain のパスを奪うため。[simulation-run.md](simulation-run.md) の「待ち受けるアドレス」）。既定を作るのは 1 か所です（`default_participant_configuration()`、`default_participant_configuration_with()`、`merged_participant_configuration()`、registry は `default_registry_configuration()`。ほかに変える所は [internals/core.md](internals/core.md) の「SIL Kit の設定の既定」）。`vehicle_sil_can_bus_simulator` が自分で作る構成（ログの設定）も、これに追加して作ります。相手が local-domain のエンドポイントを持っていても、こちらが使わないので TCP で接続します。自分の SIL Kit の構成を渡したとき（`participant_configuration`、ecu_main の `--silkit-config`、`vehicle_sil_can_bus_simulator --participant-configuration`）も、Windows では `Middleware.EnableDomainSockets` を `false` にします（`true` と書いても `false` です）。vehicle-sil を使わない SIL Kit の participant どうしの接続には、この対応は適用されません。
 
 **守り方**: `libs/`、`tools/`、`bridges/`、`tests/` で、文字列から SIL Kit の構成を作る所（`ParticipantConfigurationFromString(`）が上の関数を通っていることを、テスト `core.silkit_configuration_defaults`（`cmake/VehicleSilCheckSilKitConfiguration.cmake`）が確認します。
 

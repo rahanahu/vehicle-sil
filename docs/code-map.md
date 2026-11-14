@@ -2,7 +2,7 @@
 
 <!-- 書き方: 項目は、同じ形の短いブロックにします（小見出し、1 行に 1 つの事実の箇条書き、セルが 1 文の表）。1 つのセルや 1 つの箇条書きに複数の事実を詰めません。1 行が長くなり、別々の変更が同じ行に当たるためです。 -->
 
-vehicle-sil 自体を開発するときに、変える場所、そのテスト、テストだけを実行する方法、一緒に直すものを探すための地図です。各ディレクトリと各ターゲットの内容は [architecture.md](architecture.md) の「構成」にあり、ここには書きません。
+vehicle-sil 自体を開発するときに、変える場所、そのテスト、テストだけを実行する方法、一緒に直すものを探すための地図です。各ディレクトリと各ターゲットの内容は [architecture.md](architecture.md) の「ディレクトリとターゲット」にあり、ここには書きません。
 
 | 探すもの | 節 |
 |---|---|
@@ -260,7 +260,7 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 |---|---|---|
 | `j1939.*` | `vehicle_sil::j1939` の単体テスト（SIL Kit なしでビルドする） | `unit` も |
 | `j1939_silkit.*` | SIL Kit 上のテスト | `unit` も |
-| `j1939_parts.*` | プロトコル部品 | |
+| `j1939_parts.*` | プロトコルのコンポーネント | |
 | `j1939_codec.*` | 型付きメッセージ | |
 | `local.boundary`、`testkit.boundary`、`peer.boundary`、`simulation.boundary`、`ecu.boundary` | それぞれのディレクトリのソースが、エンジンの内部を使っていないこと | `unit` と `j1939` |
 
@@ -277,18 +277,18 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 - 1 つの ECU がバスから切断されたとき（受信だけ、送受信とも）の TP の時間切れと回復
 - 隠れていたアドレスの衝突の解決
 - 時刻同期なしの SIL Kit での実時間の動作
-- 道具箱（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）
+- ツールキット（解除と破棄の再入、Network の後の破棄、タイマーの起点と予約）
 
 仮想バスと SIL Kit の一致:
 
 - プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致すること（簡易 CAN Network Simulator ありでも）
-- `j1939_silkit.listen_only_participants_*`: 聞くだけの participant（生の CAN、ノードのない `Network`。ステップ幅はいろいろ）を追加しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらないこと
-- 同じテストで、聞くだけの participant が何も送信しないこと（仮想バスと SIL Kit の両方で）
+- `j1939_silkit.listen_only_participants_*`: 受信だけをする participant（生の CAN、ノードのない `Network`。ステップ幅はいろいろ）を追加しても、各 ECU の受信、ポートに渡したフレーム、送信確認と統計が 1 行も変わらないこと
+- 同じテストで、受信だけをする participant が何も送信しないこと（仮想バスと SIL Kit の両方で）
 
-プロトコル部品（`j1939_parts.*`）:
+プロトコルのコンポーネント（`j1939_parts.*`）:
 
 - DM13、診断、識別情報、送信の競合、後で返す ACK、ステップ幅によらない結果
-- `j1939_parts.boundary`: 部品がエンジンの内部を使っていないこと
+- `j1939_parts.boundary`: コンポーネントがエンジンの内部を使っていないこと
 
 型付きメッセージ（`j1939_codec.*`）:
 
@@ -313,8 +313,8 @@ CAN でないテスト用の participant（`Member`）で、次を確認しま�
 
 - `peer.*`: J1939 と LIN の 3 つの participant、仮想バスと同じ結果、実時間と外部ポート、組み立てのエラー、失敗の報告
 - `testkit.*`: アドレスの喪失、Address Claimed の欠落、TP のパケットの欠落、通信断、生フレームの注入、受信側のステップ幅と記録の有無によらない結果
-- `ecu_api.*`: `examples/j1939/ecu_pair`、道具箱と `Requester` で作る独自のプロトコル、`Monitor` と `Observer` と tap で通信を確認するテスト
-- `param_service.*`: 正常な流れ、セッションの期限切れ、2 つ目のツール、応答しない ECU、アドレスの変化と喪失、拒否、動作中の部品の破棄
+- `ecu_api.*`: `examples/j1939/ecu_pair`、ツールキットと `Requester` で作る独自のプロトコル、`Monitor` と `Observer` と tap で通信を確認するテスト
+- `param_service.*`: 正常な流れ、セッションの期限切れ、2 つ目のツール、応答しない ECU、アドレスの変化と喪失、拒否、動作中のコンポーネントの破棄
 - `param_service.boundary`: 例が公開 API だけを使うこと
 - `param_service.demo`: 例の実行
 
@@ -458,9 +458,9 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `control_server.python_client` | Python のクライアントと CLI を、`vehicle_sil_launch run --control` に対して動かす | |
 | `control_server.launcher` | `vehicle_sil_launch run --control` と `examples/ecu_main` の ECU を動かす | `integration` |
 | `control_server.example_write_before_start`、`control_server.example_pause_and_step` | `examples/launch_control` を動かす | `examples` |
-| `control_server.guide_operate_signals` | ガイド [信号を外から操作する](howto/operate-signals.md) の印つきのブロックを、同じ例、CLI、標準入力の命令の出力と照合する | `examples` |
+| `control_server.guide_operate_signals` | ガイド [信号を外から操作する](howto/operate-signals.md) の印つきのブロックを、同じ例、CLI、標準入力のコマンドの出力と照合する | `examples` |
 
-`control_server.launcher` は、始まる前の書き込み、標準入力と Control Server の両方からの命令、終わり方、認証と TLS と監査、トークンつきの CLI を確認します。
+`control_server.launcher` は、始まる前の書き込み、標準入力と Control Server の両方からのコマンド、終わり方、認証と TLS と監査、トークンつきの CLI を確認します。
 
 ### `eth_link` / `ethernet_bridge`
 
@@ -627,9 +627,9 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 - テスト: `tests/j1939`
 - `ctest -R`: `^j1939\.`、`^j1939_silkit\.`
 
-### `libs/j1939/parts/<部品>`
+### `libs/j1939/parts/<コンポーネント>`
 
-部品ごとに、1 つのディレクトリと 1 つのターゲットがあります。
+コンポーネントごとに、1 つのディレクトリと 1 つのターゲットがあります。
 
 主なクラスと関数:
 
@@ -659,7 +659,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `Ecu` | `ecu/ecu.hpp` |
 | `EcuDescription`、`to_json()` | `ecu/describe.hpp` |
 | ネットワークの種類と使い方の一覧 `kNetworkKinds`、`kNetworkUses` | `ecu/describe.hpp` |
-| ECU の実行ファイルとランチャーの約束（引数、終了コード、`kMaxMillis`） | `ecu/executable.hpp` |
+| ECU の実行ファイルとランチャーの間の仕様（引数、終了コード、`kMaxMillis`） | `ecu/executable.hpp` |
 | バスからの切断（`ecu.connected`）の `BusConnection`、`GatedCanPort`、`GatedLinPort`、`GatedEthPort` | `ecu/detail/bus_connection.hpp` |
 
 - テスト: `tests/ecu`、`tests/simulation`（`test_disconnect.cpp`）
@@ -745,7 +745,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | `test_launcher.py` | ランチャーの Control Server（認証、TLS、役割、監査も） |
 | `test_python_client.py` | Python のクライアントと CLI |
 | `control_server.example_write_before_start`、`control_server.example_pause_and_step` | `examples/launch_control` |
-| `test_guide_operate_signals.py` | ガイド `docs/howto/operate-signals.md` と、例、CLI、標準入力の命令の照合（印は「[ドキュメントの例とテスト](#ドキュメントの例とテスト)」） |
+| `test_guide_operate_signals.py` | ガイド `docs/howto/operate-signals.md` と、例、CLI、標準入力のコマンドの照合（印は「[ドキュメントの例とテスト](#ドキュメントの例とテスト)」） |
 
 ### `libs/process`
 
@@ -979,7 +979,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 ### `examples/launch_control`（ガイド「信号を外から操作する」の例）
 
 - テスト: `control_server.example_write_before_start`、`control_server.example_pause_and_step` が例を動かします。
-- テスト: `control_server.guide_operate_signals`（`tests/control_server` の `test_guide_operate_signals.py`）が、ガイド [howto/operate-signals.md](howto/operate-signals.md) の印つきのブロックを、例、CLI、標準入力の命令の出力と照合します。
+- テスト: `control_server.guide_operate_signals`（`tests/control_server` の `test_guide_operate_signals.py`）が、ガイド [howto/operate-signals.md](howto/operate-signals.md) の印つきのブロックを、例、CLI、標準入力のコマンドの出力と照合します。
 - `ctest -R`: `^control_server\.example_write_before_start`、`^control_server\.example_pause_and_step`、`^control_server\.guide_operate_signals`
 
 どれも、Control Server のあるビルドで、grpcio と grpcio-tools のある Python があるときだけ登録されます。
@@ -1024,7 +1024,7 @@ grpcio と grpcio-tools のある Python があれば、次のテストも登録
 | 内容 | 場所 |
 |---|---|
 | GUI サーバー | `gui/server/src/vehicle_sil_gui/`（Control Server に接続するのは `control.py`） |
-| API の契約と例 | `gui/protocol` |
+| API の仕様と例 | `gui/protocol` |
 | クライアントのライブラリ | `gui/client/src` |
 | サンプルの画面 | `gui/web/src/app` |
 
@@ -1078,7 +1078,7 @@ SIL Kit に当てるパッチです。configure のときに、ビルドのデ�
 |---|---|---|
 | [simulation-config.md](simulation-config.md)、[simulation-check.md](simulation-check.md)、[simulation-run.md](simulation-run.md)、[simulation-events.md](simulation-events.md) | `check` の印 | `launch_cli.docs` |
 | 同上 | `run` の印 | `launch_run.docs` |
-| [simulation-events.md](simulation-events.md) | 「機械から使う」のイベントの例 | `launch_run.events` |
+| [simulation-events.md](simulation-events.md) | 「プログラムから使う」のイベントの例 | `launch_run.events` |
 | [simulation-config.md](simulation-config.md) | 「participant を自分で起動する」の例 | `launch_run.manual` |
 | [ecu-executable.md](ecu-executable.md) | `<!-- vehicle_sil_engine_ecu --describe -->` | `ecu_main.describe` |
 | [scenario.md](scenario.md) | `<!-- vehicle_sil_launch run simulation.yaml --scenario ... -->` | `launch_run.scenario` |
@@ -1176,9 +1176,9 @@ flowchart TD
     ethernet_bridge --> eth_link_box
 ```
 
-SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とその部品、`j1939_codec`、`ecu`、`local`、`testkit`、`process`、`eth_link`、`signal` です。`signal` はヘッダーだけで、vehicle-sil のほかのライブラリも使いません（図にはありません）。
+SIL Kit を使わないのは `sim_base`、`step`、`can`、`eth`、`lin`、`control`、`j1939` とそのコンポーネント、`j1939_codec`、`ecu`、`local`、`testkit`、`process`、`eth_link`、`signal` です。`signal` はヘッダーだけで、vehicle-sil のほかのライブラリも使いません（図にはありません）。
 
-### 土台と SIL Kit の実装
+### 基盤と SIL Kit の実装
 
 ```mermaid
 flowchart TD
@@ -1208,7 +1208,7 @@ flowchart TD
     core -.-> rapidyaml
 ```
 
-### J1939 のエンジンと部品
+### J1939 のエンジンとコンポーネント
 
 ```mermaid
 flowchart TD
@@ -1369,7 +1369,7 @@ flowchart TD
 
 | テスト | 検査すること |
 |---|---|
-| `j1939_parts.boundary` | `libs/j1939/parts` が、エンジンの公開 API と道具箱だけを使い、`vehicle_sil::j1939` とほかの部品だけをリンクする |
+| `j1939_parts.boundary` | `libs/j1939/parts` が、エンジンの公開 API とツールキットだけを使い、`vehicle_sil::j1939` とほかのコンポーネントだけをリンクする |
 | `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary`、`j1939_codec.boundary`、`param_service.boundary` | そのディレクトリのソースが、エンジンの内部を使わない（`cmake/VehicleSilCheckJ1939Parts.cmake`） |
 | `ecu.no_silkit_boundary`、`ecu.simulation_headers_boundary`、`lin.boundary`、`step.boundary`、`eth.boundary`、`signal.boundary` | `libs/ecu`、`libs/simulation/include`、`libs/lin`、`libs/step`、`libs/eth`、`libs/signal` が、SIL Kit のヘッダーを直接にも間接にも含まない（`cmake/VehicleSilCheckNoSilKit.cmake`） |
 | `core.silkit_configuration_defaults` | `libs/`、`tools/`、`bridges/`、`tests/`（`tests/core/configuration_fixtures` を除く）が文字列から作る SIL Kit の設定は、vehicle-sil の既定（`default_participant_configuration()` など）を通る（`cmake/VehicleSilCheckSilKitConfiguration.cmake`） |
@@ -1387,7 +1387,7 @@ flowchart TD
 | ランチャー | 例のコードと、ガイドにあるコピー | [ガイドにある出力とコードのコピー](#ガイドにある出力とコードのコピー) |
 | ランチャー | 照合のルールと `code` | [照合のルールと `code`](#照合のルールと-code) |
 | ランチャー | 設定ファイルかシナリオのキー、スキーマ | [設定ファイルかシナリオのキー](#設定ファイルかシナリオのキー) |
-| ランチャー | `run --events`、`--stdin-commands`、`version --json` | [イベント、標準入力の命令、`version --json`](#イベント標準入力の命令version---json) |
+| ランチャー | `run --events`、`--stdin-commands`、`version --json` | [イベント、標準入力のコマンド、`version --json`](#イベント標準入力のコマンドversion---json) |
 | ランチャー | 速度、一時停止、ステップ実行、遅れ | [`run` の時間](#run-の時間) |
 | ランチャー | `manual`、`--manual` | [自分で起動する participant](#自分で起動する-participant) |
 | ランチャー | `variants`、`params`、`--variant`、`--param`、`only` | [機種とシナリオのパラメーター](#機種とシナリオのパラメーター) |
@@ -1412,7 +1412,7 @@ flowchart TD
 | ビルドと配布 | `VEHICLE_SIL_STATIC` | [`VEHICLE_SIL_STATIC`](#vehicle_sil_static) |
 | ビルドと配布 | `scripts/package.py tools` | [ツールのアーカイブの中身](#ツールのアーカイブの中身) |
 | ビルドと配布 | 使う SIL Kit の API | [SIL Kit の API と上流の挙動への前提](#sil-kit-の-api-と上流の挙動への前提) |
-| 追加 | J1939 の部品 | [J1939 の部品を追加する](#j1939-の部品を追加する) |
+| 追加 | J1939 のコンポーネント | [J1939 のコンポーネントを追加する](#j1939-のコンポーネントを追加する) |
 | 追加 | `libs/` のライブラリ | [`libs/` にライブラリを追加する](#libs-にライブラリを追加する) |
 
 ### SIL Kit の設定の既定
@@ -1427,11 +1427,11 @@ flowchart TD
 
 合わせて直すドキュメント:
 
-- [internals/core.md](internals/core.md) の「SIL Kit の構成の既定」
+- [internals/core.md](internals/core.md) の「SIL Kit の設定の既定」
 - [simulation-run.md](simulation-run.md) の「待ち受けるアドレス」
 - [simulation-check.md](simulation-check.md): 指摘の表
 - [dependencies.md](dependencies.md): SIL Kit（Windows）の節
-- [ecu-executable.md](ecu-executable.md) の「SIL Kit の構成を渡す」
+- [ecu-executable.md](ecu-executable.md) の「SIL Kit の設定ファイルを渡す」
 - [howto/multi-pc.md](howto/multi-pc.md): `examples/ecu_main/simulation.two-pcs.yaml` と、その `check` の出力のブロック（`multi_host.docs` が照合）
 
 テスト:
@@ -1524,18 +1524,18 @@ flowchart TD
 
 - `schema.files_and_launcher`
 
-### イベント、標準入力の命令、`version --json`
+### イベント、標準入力のコマンド、`version --json`
 
 変える場所:
 
-- `run --events` のイベント、`--stdin-commands` の命令、`version --json`（`libs/launch/src/events.cpp`、`tools/launch/main.cpp`）
+- `run --events` のイベント、`--stdin-commands` のコマンド、`version --json`（`libs/launch/src/events.cpp`、`tools/launch/main.cpp`）
 
 合わせて直すドキュメント:
 
-- [simulation-events.md](simulation-events.md) の「機械から使う」: イベントと `state` の表、命令の表、`features` の表
-- [simulation-events.md](simulation-events.md) の「機械から使う」: イベントの例（`launch_run.events` が、置き換えの後にバイト単位で照合）
-- [simulation-events.md](simulation-events.md) の「機械から使う」の「読む側が遅いとき、読まないとき」（下の不変条件を変えたとき）
-- [simulation-events.md](simulation-events.md) の「機械から使う」: 引数の表（`--events-stall-ms` を変えたとき）
+- [simulation-events.md](simulation-events.md) の「プログラムから使う」: イベントと `state` の表、コマンドの表、`features` の表
+- [simulation-events.md](simulation-events.md) の「プログラムから使う」: イベントの例（`launch_run.events` が、置き換えの後にバイト単位で照合）
+- [simulation-events.md](simulation-events.md) の「プログラムから使う」の「読む側が遅いとき、読まないとき」（下の不変条件を変えたとき）
+- [simulation-events.md](simulation-events.md) の「プログラムから使う」: 引数の表（`--events-stall-ms` を変えたとき）
 
 変更ごとに決めること:
 
@@ -1572,8 +1572,8 @@ flowchart TD
 
 合わせて直すドキュメント:
 
-- [simulation-run.md](simulation-run.md) の「等速で動かす」（遅れの定義、遅れたときに起きること、タイムステップと ECU のステップ）
-- [simulation-run.md](simulation-run.md): 設定ファイルのキーの表、`time` と `command` のイベント、命令の表、`timing` の表、`features` の表
+- [simulation-run.md](simulation-run.md) の「速度を指定して動かす」（遅れの定義、遅れたときに起きること、タイムステップと ECU のステップ）
+- [simulation-run.md](simulation-run.md): 設定ファイルのキーの表、`time` と `command` のイベント、コマンドの表、`timing` の表、`features` の表
 - [simulation-run.md](simulation-run.md): 指摘の表（`behind-real-time`、`coarse-time-step`）
 - [internals/virtual-time.md](internals/virtual-time.md) の「一時停止、ステップ実行、速度（時間ゲート）」（遅れの定義を変えたとき）
 - simulation-config.md: 遅れの定義を変えたとき
@@ -1581,7 +1581,7 @@ flowchart TD
 守ること:
 
 - 遅れの定義は、`TimeControlOptions` のコメント（`simulation_controller.hpp`）に書いてあり、ドキュメントをそれに合わせます。
-- 命令は、標準入力を読むスレッドがゲートに渡します（待ちません）。`TimeCommands` のロックの中で待つものを追加しません。
+- コマンドは、標準入力を読むスレッドがゲートに渡します（待ちません）。`TimeCommands` のロックの中で待つものを追加しません。
 - 遅れの数は、時刻を決めた例のテスト `core.time_gate_model_*` で確認します。実時間を使うテストは、片側の検査だけにします。
 
 テスト:
@@ -1641,7 +1641,7 @@ flowchart TD
 - [scenario.md](scenario.md) の「機種とパラメーター」と `code` の表
 - [simulation-check.md](simulation-check.md): `code` の表と、JSON のキー（`variant`、`variants`、`params`）
 - [simulation-run.md](simulation-run.md)
-- [simulation-events.md](simulation-events.md) の「実行に進まないときの事象」
+- [simulation-events.md](simulation-events.md) の「実行に進まないときのイベント」
 
 機種で変えられる項目を追加するときは、キーの一覧、`VariantParticipant`、`read_variant_participants()`、`apply_variant()` と、simulation-config.md の表を一緒に直します。
 
@@ -1684,7 +1684,7 @@ flowchart TD
 - ガイド howto/scenario-tests.md は、`throttle_step.yaml`、`engine_disconnect.yaml` と、`examples/scenario_tests` のファイルを載せています（「[`examples/scenario_tests`](#examplesscenario_testsガイドシナリオでテストを書くの例)」）。
 - エラーのある例と失敗する例は、ファイルも scenario.md のブロックです。`launch_run.scenario` が書き出して、`check --scenario` の出力、`run --scenario` の出力、`--json` の `scenario` を照合します。
 
-守ること（約束は、`scenario_run.hpp` の `ScenarioEngine` のコメントに書いてあります）:
+守ること（仕様は、`scenario_run.hpp` の `ScenarioEngine` のコメントに書いてあります）:
 
 - 判定に使うのは仮想時刻だけです。実時間の待ちと時間切れで、結果を決めません。
 - `ramp` と `wave` の値は、手順の始まりからの仮想時間だけの関数にします（`Waveform::value()`）。呼ばれた回数や順に依存させません。
@@ -1741,7 +1741,7 @@ flowchart TD
 
 合わせて直すドキュメント:
 
-- [simulation-run.md](simulation-run.md) の「シナリオをまとめて回す」（表、終了コード、JSON のキー）
+- [simulation-run.md](simulation-run.md) の「シナリオをまとめて実行する」（表、終了コード、JSON のキー）
 - [simulation-config.md](simulation-config.md): 引数の表と終了コードの表
 - `vehicle_sil_launch` の使い方の文: `kUsage`
 
@@ -1816,9 +1816,9 @@ flowchart TD
 
 合わせて直すドキュメント:
 
-- [internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」（反映される時点、CAN、J1939 で再接続したとき、LIN）
-- [j1939-guide.md](j1939-guide.md) の「ECU をバスから外す」
-- [scenario.md](scenario.md) の「ECU をバスから外す」と、例 `examples/ecu_main/scenarios/engine_disconnect.yaml`
+- [internals/execution.md](internals/execution.md) の「`Ecu` クラス」の「バスからの切断」（反映される時点、CAN、J1939 で再接続したとき、LIN）
+- [j1939-guide.md](j1939-guide.md) の「ECU をバスから切断する」
+- [scenario.md](scenario.md) の「ECU をバスから切断する」と、例 `examples/ecu_main/scenarios/engine_disconnect.yaml`
 
 守ること:
 
@@ -1948,9 +1948,9 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 合わせて直すドキュメント:
 
-- [control-api.md](control-api.md) の「ランチャーにつなぐ」（始まる前に書く、2 つの口の命令、認証）
+- [control-api.md](control-api.md) の「ランチャーに接続する」（始まる前に書く、標準入力とクライアントのコマンド、認証）
 - [simulation-config.md](simulation-config.md): イベント `control_server`、`command` の `source` と `at_ms`、引数の表、`features` の `control-server`（`kControlServerFeature`）
-- [internals/control.md](internals/control.md) の「ランチャーの Control Server」（スレッド、2 つの口の順序、始まる前の窓で止めること、終わり方）
+- [internals/control.md](internals/control.md) の「ランチャーの Control Server」（スレッド、標準入力とクライアントのコマンドの順序、開始前に止めること、終わり方）
 
 `features` の `control-server` は、Control Server を持つビルドだけが出力します。そのため `version --json` の例には入れず、`launch_cli.docs` がこの名前を除いて照合します。
 
@@ -1979,7 +1979,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 合わせて直すドキュメント:
 
 - [scenario.md](scenario.md) の「実行中に変数を見る」（拒否する呼び出しの表、理由 `scenario-running`）
-- [control-api.md](control-api.md) の「ランチャーにつなぐ」と `ControlError.reason`
+- [control-api.md](control-api.md) の「ランチャーに接続する」と `ControlError.reason`
 - [simulation-config.md](simulation-config.md): `features` の `scenario-control`（`kScenarioControlFeature`）と、引数の表
 - [internals/control.md](internals/control.md) の「ランチャーの Control Server」
 
@@ -2009,8 +2009,8 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 合わせて直すドキュメント:
 
-- `control.proto` の `GetSnapshotReply` のコメント: 約束
-- [control-api.md](control-api.md) の「時刻と値をまとめて読む」（約束）
+- `control.proto` の `GetSnapshotReply` のコメント: 保証
+- [control-api.md](control-api.md) の「時刻と値をまとめて読む」（保証）
 - [internals/control.md](internals/control.md) の「Control Server と通信の層」（読む順とロック）
 
 守ること:
@@ -2037,7 +2037,7 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 合わせて直すドキュメント:
 
-- [internals/control.md](internals/control.md) の「SIL Kit の上の運び手」（大きさの上限 `kMaxMessageBytes`、`kMaxHelloBytes`、`kMaxTextBytes` と、分け方）
+- [internals/control.md](internals/control.md) の「SIL Kit の上のトランスポート」（大きさの上限 `kMaxMessageBytes`、`kMaxHelloBytes`、`kMaxTextBytes` と、分け方）
 
 テスト:
 
@@ -2055,13 +2055,13 @@ Python のスタブは、テストのビルドで生成します（`python -m ve
 
 合わせて直すドキュメント:
 
-- [internals/control.md](internals/control.md) の「SIL Kit の上の運び手」（スレッド、受信の順序の約束、窓、接続の終わりと最後の通知への返事、認証がないこと）
+- [internals/control.md](internals/control.md) の「SIL Kit の上のトランスポート」（スレッド、受信の順序の保証、最初のステップの前で待つ区間、接続の終わりと最後の通知への返事、認証がないこと）
 - [internals/control.md](internals/control.md): 同じ節の上限（`kMaxVariables`、`kMaxNameBytes`、`HubTransportOptions::max_links` を変えたとき）
 - [dependencies.md](dependencies.md) の「実装が前提にしている上流の挙動」（依存している SIL Kit の挙動）
-- [simulation-run.md](simulation-run.md) の「変数を読み書きする口」と表（下のランチャーの出力）
+- [simulation-run.md](simulation-run.md) の「ECU の変数との接続」と表（下のランチャーの出力）
 - [ecu-executable.md](ecu-executable.md) の「JSON の形式」（`--describe` の `control`）
 
-契約は、`agent_transport.hpp` と `hub_transport.hpp` のクラスのコメントに書いてあり、internals/control.md をそれに合わせます。
+仕様は、`agent_transport.hpp` と `hub_transport.hpp` のクラスのコメントに書いてあり、internals/control.md をそれに合わせます。
 
 simulation-run.md に書いてあるランチャーの出力:
 
@@ -2080,7 +2080,7 @@ simulation-run.md に書いてあるランチャーの出力:
 
 - `AgentTransport` のデストラクターは、Hub の返事を待ちます（`AgentTransportOptions::last_word_wait`）。
 - 待ちを長くする変更や、なくす変更は、ECU の終わりの遅れと、実行の終わりの結果（Cancelled か Unknown か）を変えます。
-- 値と結果は、ステップのスレッドから、値を読んだ直後に送信します。別のスレッドに渡すと、順序の約束がなくなります（`HubTransportStats::late_messages` が数えます）。
+- 値と結果は、ステップのスレッドから、値を読んだ直後に送信します。別のスレッドに渡すと、順序の保証がなくなります（`HubTransportStats::late_messages` が数えます）。
 - Hub の側の受信のハンドラーには、待つものと重い処理を追加しません。シミュレーション全体が待つことになります。
 
 テスト:
@@ -2097,7 +2097,7 @@ simulation-run.md に書いてあるランチャーの出力:
 
 合わせて直すドキュメント:
 
-- [bridges.md](bridges.md) の「接続先とチャネルの選択（CLI）」の終了コードと、participant の状態の扱い
+- [bridges.md](bridges.md) の「終了コード」と「実行中の participant の状態」
 
 テスト:
 
@@ -2172,7 +2172,7 @@ simulation-run.md に書いてあるランチャーの出力:
 合わせて直すドキュメントとファイル:
 
 - [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md): 同じ中身を書いた所（同梱する物と、ライセンスの文の場所）
-- [build.md](build.md) の「ビルド済みの道具」
+- [build.md](build.md) の「ビルド済みのツール」
 - `.github/workflows/release.yml`
 
 gRPC のバージョンを変えたら、`package.py` の `GRPC_LICENSES` と、THIRD_PARTY_NOTICES.md の表のライセンスの名前を直します。gRPC が取り込む物のライセンスは、バージョンで変わるためです。
@@ -2188,18 +2188,18 @@ gRPC のバージョンを変えたら、`package.py` の `GRPC_LICENSES` と、
 
 - [dependencies.md](dependencies.md) の「使っている API」と「実装が前提にしている上流の挙動」
 
-### J1939 の部品を追加する
+### J1939 のコンポーネントを追加する
 
 追加する場所:
 
-- `libs/j1939/parts/<部品>/`
+- `libs/j1939/parts/<コンポーネント>/`
 - `libs/j1939/CMakeLists.txt` の `add_subdirectory`
 - テスト: `tests/j1939/CMakeLists.txt` の `vehicle_sil_j1939_parts_tests` の `SOURCES` と `LINK`
 
 合わせて直すドキュメント:
 
-- [architecture.md](architecture.md) の「構成」
-- [internals/j1939.md](internals/j1939.md) の「プロトコル部品」
+- [architecture.md](architecture.md) の「ディレクトリとターゲット」
+- [internals/j1939.md](internals/j1939.md) の「プロトコルのコンポーネント」
 
 ### `libs/` にライブラリを追加する
 
@@ -2209,7 +2209,7 @@ gRPC のバージョンを変えたら、`package.py` の `GRPC_LICENSES` と、
 
 合わせて直すドキュメント:
 
-- [architecture.md](architecture.md) の「構成」
+- [architecture.md](architecture.md) の「ディレクトリとターゲット」
 
 ## 関連するドキュメント
 
@@ -2217,4 +2217,4 @@ gRPC のバージョンを変えたら、`package.py` の `GRPC_LICENSES` と、
 |---|---|
 | [AGENTS.md](../AGENTS.md) | ドキュメントの管理、コミット、検証のスクリプト（先に読みます） |
 | [architecture.md](architecture.md) | 全体の構成と、各ディレクトリと各ターゲットの内容 |
-| [internals/](architecture.md#中の仕組み) のドキュメント | 変える場所の内部の仕組み |
+| [internals/](architecture.md#内部の仕組み) のドキュメント | 変える場所の内部の仕組み |

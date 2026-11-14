@@ -381,6 +381,6 @@ LIN の統合テスト（`lin_cluster.*`）では、registry、`vehicle_sil_sim_
 
 - 使い方の例: [lin-guide.md](../lin-guide.md)
 - 仮想時間の進み方と受信の順序: [virtual-time.md](virtual-time.md)
-- 全体の形: [architecture.md](../architecture.md)
+- 全体像: [architecture.md](../architecture.md)
 - どこに何があるか: [code-map.md](../code-map.md)
-- ほかの内部の仕組みのドキュメント: architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」
+- ほかの内部の仕組みのドキュメント: architecture.md の「[内部の仕組み](../architecture.md#内部の仕組み)」

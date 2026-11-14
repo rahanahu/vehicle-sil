@@ -308,6 +308,6 @@ TCP だけにするのは、次の理由です。SIL Kit の registry は、TCP 
 
 ## 関連するドキュメント
 
-- 全体の形: [architecture.md](../architecture.md)
+- 全体像: [architecture.md](../architecture.md)
 - どこに何があるか: [code-map.md](../code-map.md)
-- ほかの内部の仕組みのドキュメント: architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」
+- ほかの内部の仕組みのドキュメント: architecture.md の「[内部の仕組み](../architecture.md#内部の仕組み)」

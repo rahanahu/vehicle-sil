@@ -126,9 +126,9 @@ manual は、利用者が自分で起動する participant です（[participant
 
 ## ECU の変数との接続（`control_link`）
 
-`vehicle_sil_launch run` は、controller の participant の上に、ECU の変数を読み書きする側（`vehicle_sil::control::Hub` と `vehicle_sil::control_silkit::HubTransport`）を持ちます。`ecu_main` で作った ECU は、自分から SIL Kit の publish/subscribe で接続します（[ecu-executable.md](ecu-executable.md) の「変数を出す」）。どの ECU にも `ecu.connected` があるので、変数を宣言していない ECU も接続します。設定ファイルに書くことはありません。gRPC は使いません。しくみと保証は [internals/control.md](internals/control.md) の「SIL Kit の上の運び手」にあります。
+`vehicle_sil_launch run` は、controller の participant の上に、ECU の変数を読み書きする側（`vehicle_sil::control::Hub` と `vehicle_sil::control_silkit::HubTransport`）を持ちます。`ecu_main` で作った ECU は、自分から SIL Kit の publish/subscribe で接続します（[ecu-executable.md](ecu-executable.md) の「変数を公開する」）。どの ECU にも `ecu.connected` があるので、変数を宣言していない ECU も接続します。設定ファイルに書くことはありません。gRPC は使いません。しくみと保証は [internals/control.md](internals/control.md) の「SIL Kit の上のトランスポート」にあります。
 
-この接続を使うのは、`vehicle_sil_launch` の中の Hub です。`run --control <address>`（Control Server を持つビルドだけ）を付けると、Hub を gRPC の Control API としてクライアント（Python、CLI、GUI）に公開します。使い方は [control-api.md](control-api.md) の「ランチャーにつなぐ」です。
+この接続を使うのは、`vehicle_sil_launch` の中の Hub です。`run --control <address>`（Control Server を持つビルドだけ）を付けると、Hub を gRPC の Control API としてクライアント（Python、CLI、GUI）に公開します。使い方は [control-api.md](control-api.md) の「ランチャーに接続する」です。
 
 ECU が変数を公開するかどうかは、実行ファイルの `--describe` の出力でわかります（`control`: 通信の方式と、メッセージの形式のバージョン。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。そのため、公開しない ECU とバージョンの違う ECU は、照合の段階でわかります。
 
@@ -369,7 +369,7 @@ registry は、自分の URI のアドレスで、TCP だけで待ち受けま�
 
 `registry_uri` がループバックのアドレスでないとき、Windows のファイアウォールは、registry（`vehicle_sil_launch`）と participant のプログラムに、待ち受けてよいかを尋ねます。どちらも全部のアドレスで待ち受けるためです。
 
-許可が必要なのは、registry を持つ `vehicle_sil_launch` だけです。participant の実行ファイルは、許可しなくても参加できます。participant のほうから、ランチャーを動かす PC に接続するためです。直接接続できない participant どうしは、registry の中継で接続します（[dependencies.md](dependencies.md) の「混ぜてよい SIL Kit の版」）。
+許可が必要なのは、registry を持つ `vehicle_sil_launch` だけです。participant の実行ファイルは、許可しなくても参加できます。participant のほうから、ランチャーを動かす PC に接続するためです。直接接続できない participant どうしは、registry の中継で接続します（[dependencies.md](dependencies.md) の「混ぜてよい SIL Kit のバージョン」）。
 
 | 許可の状態 | 起きること |
 |---|---|
@@ -420,7 +420,7 @@ registry は、自分の URI のアドレスで、TCP だけで待ち受けま�
 | SIL Kit の設定を渡し、そこに `Middleware.AcceptorUris` がない | 上のルールのとおりです（vehicle-sil が、設定に追加します）。 |
 | vehicle-sil を使わない SIL Kit のプログラム（`describe: false` の participant など） | それぞれの設定のとおりです（`Middleware.AcceptorUris` がなければ全部のアドレス）。 |
 
-SIL Kit の設定は、ecu_main の `--silkit-config`、`vehicle_sil_can_bus_simulator --participant-configuration` などで渡します（[ecu-executable.md](ecu-executable.md) の「SIL Kit の構成を渡す」）。
+SIL Kit の設定は、ecu_main の `--silkit-config`、`vehicle_sil_can_bus_simulator --participant-configuration` などで渡します（[ecu-executable.md](ecu-executable.md) の「SIL Kit の設定ファイルを渡す」）。
 
 ## 出力
 
@@ -523,7 +523,7 @@ participant の表の `ended` の列:
 | `started by you (manual)` | 利用者が起動する participant で、シミュレーションに参加した（どう終わったかは、`run` にはわからない） |
 | `not joined (manual)` | 利用者が起動する participant で、参加しなかった |
 
-無効にした participant がいるときの例です。照合の部分は `check` と同じです（[participant を無効にする](simulation-config.md#participant-を外すenabled--disable--enable)）。
+無効にした participant がいるときの例です。照合の部分は `check` と同じです（[participant を無効にする](simulation-config.md#participant-を無効にするenabled--disable--enable)）。
 
 <!-- vehicle_sil_launch run simulation.yaml --disable Dashboard -->
 ```text

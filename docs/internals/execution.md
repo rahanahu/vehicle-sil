@@ -10,7 +10,7 @@ ECU のアプリケーションを組み立てる `Ecu`、J1939 と LIN のノ�
 | [ローカルの実行とテストキット](#ローカルの実行vehicle_sillocalbenchとテストキットvehicle_siltestkit) | `LocalBench` のバスと ECU、記録と故障注入 |
 | [検証の範囲](#検証の範囲) | テストが確認している範囲 |
 
-`Peer` と `LocalBench` は、どちらもエンジン（`vehicle_sil::j1939`）の公開 API だけを使います。CTest の `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary` が、内部ヘッダーやテスト用の API を使っていないことを確認します。区分（[architecture.md](../architecture.md) の「構成」の表）は、`Ecu` と `Simulation` が利用者向け、`Peer` と `LocalBench` が基盤、テストキットがテスト用です。
+`Peer` と `LocalBench` は、どちらもエンジン（`vehicle_sil::j1939`）の公開 API だけを使います。CTest の `local.boundary`、`testkit.boundary`、`peer.boundary`、`ecu.boundary`、`simulation.boundary` が、内部ヘッダーやテスト用の API を使っていないことを確認します。区分（[architecture.md](../architecture.md) の「ディレクトリとターゲット」の表）は、`Ecu` と `Simulation` が利用者向け、`Peer` と `LocalBench` が基盤、テストキットがテスト用です。
 
 ## `Ecu` クラス（`vehicle_sil::Ecu`）
 
@@ -664,6 +664,6 @@ LIN のテストは、仮想 LIN バスの上（`LocalBench`）でも、`Peer` �
 ## 関連するドキュメント
 
 - ECU の書き方: [j1939-guide.md](../j1939-guide.md)、[ecu-executable.md](../ecu-executable.md)
-- 全体の形: [architecture.md](../architecture.md)
+- 全体像: [architecture.md](../architecture.md)
 - どこに何があるか: [code-map.md](../code-map.md)
-- ほかの内部の仕組みのドキュメント: architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」
+- ほかの内部の仕組みのドキュメント: architecture.md の「[内部の仕組み](../architecture.md#内部の仕組み)」

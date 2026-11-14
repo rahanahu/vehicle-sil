@@ -215,7 +215,7 @@ vehicle-sil-gui: open the URL above (it has the token); Ctrl+C stops the server
 | 機能 | 必要なもの |
 |---|---|
 | GUI サーバーの起動 | Python 3.11 以上と [uv](https://docs.astral.sh/uv/) |
-| シミュレーションの照合と実行 | `version --json` の `features` に `events` と `stdin-commands` がある `vehicle_sil_launch`（`run --events`、`run --stdin-commands`。[simulation-events.md](simulation-events.md) の「機械から使う」） |
+| シミュレーションの照合と実行 | `version --json` の `features` に `events` と `stdin-commands` がある `vehicle_sil_launch`（`run --events`、`run --stdin-commands`。[simulation-events.md](simulation-events.md) の「プログラムから使う」） |
 | 時間の操作 | `features` の `speed`、`start-paused`、`time-commands`（ないランチャーでは、その操作を表示しません） |
 | ECU の変数の読み書き | Control Server を持つランチャー（`features` に `control-server`。`-DVEHICLE_SIL_BUILD_CONTROL_SERVER=ON` でビルドしたもの。[control-api.md](control-api.md)）と、GUI サーバーの Python の gRPC（`grpcio`、`protobuf`。`uv sync` がインストールします） |
 | 実行するシミュレーション | 設定ファイルと、そこに書いた ECU の実行ファイル（ランチャーが照合と実行で起動します） |
@@ -356,7 +356,7 @@ GUI サーバーはプロセスを起動できます（設定ファイルに書�
 
 ## 時間の操作
 
-時間を進めるのはランチャーで、GUI はコマンドを渡して、その結果を表示するだけです。コマンドの意味と遅れの数え方は、ランチャーのルールのとおりです（[simulation-run.md](simulation-run.md) の「等速で動かす」と、[simulation-events.md](simulation-events.md) の「標準入力の命令」）。
+時間を進めるのはランチャーで、GUI はコマンドを渡して、その結果を表示するだけです。コマンドの意味と遅れの数え方は、ランチャーのルールのとおりです（[simulation-run.md](simulation-run.md) の「速度を指定して動かす」と、[simulation-events.md](simulation-events.md) の「標準入力のコマンド」）。
 
 | 場面 | 画面の場所 | できること |
 |---|---|---|
@@ -575,7 +575,7 @@ ECU が宣言したのではない変数は、ECU ごとに、アプリの変数
 
 #### バスへの接続（`ecu.connected`）
 
-どの ECU にもある入力 `ecu.connected` は、ECU の見出しの「バスにつなぐ」のスイッチになります（スクリーンリーダーが読む名前は「<ECU> をバスにつなぐ」）。false の間、ECU はすべてのバスから切断され、ステップは動き続けます（[internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」）。
+どの ECU にもある入力 `ecu.connected` は、ECU の見出しの「バスにつなぐ」のスイッチになります（スクリーンリーダーが読む名前は「<ECU> をバスにつなぐ」）。false の間、ECU はすべてのバスから切断され、ステップは動き続けます（[internals/execution.md](internals/execution.md) の「`Ecu` クラス」の「バスからの切断」）。
 
 - 切断されている間は、そのセクションの横に線を引き、スイッチの横に記号（⚠）と文で通知します。
 - ダッシュボードのファイルでは、`auto:` で並べたセクションの見出しに付きます（1 つのセクションに 1 つ。2 つ目の ECU の分はスイッチのコンポーネントとして並びます）。
@@ -1173,7 +1173,7 @@ GUI 自体を開発するときの、ディレクトリとテストです。
 | パッケージ | `verify-web.py` の `package` の手順 |
 | 画面のテンプレート `examples/gui_starter` を `--web` で配信してブラウザで動かす | e2e の `starter.spec.ts` |
 
-サーバーのテストは、起きるはずのことを `conftest.py` の `wait_until` と `Socket.until` で待ちます。ほかに待ちの上限を書くときは `scaled(秒)` を通します。どれにも環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かります（ルールは [code-map.md](code-map.md) の「試験の名前と回し方」）。
+サーバーのテストは、起きるはずのことを `conftest.py` の `wait_until` と `Socket.until` で待ちます。ほかに待ちの上限を書くときは `scaled(秒)` を通します。どれにも環境変数 `VEHICLE_SIL_TEST_TIMEOUT_SCALE` の倍率が掛かります（ルールは [code-map.md](code-map.md) の「テストの名前と実行方法」の「待ち時間と倍率」）。
 
 ### 記録を再生するランチャー
 

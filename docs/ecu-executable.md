@@ -146,9 +146,9 @@ registry が「その名前は使用中」として拒否したときは、5 秒
 
 ### 変数を公開する（`--registry-uri`）
 
-ECU は、`--registry-uri` で参加するとき、何も書かなくても、自分の変数を SIL Kit の publish/subscribe でシミュレーションに公開します（`vehicle_sil::control_silkit::AgentTransport`。[internals/control.md](internals/control.md) の「SIL Kit の上の運び手」）。変数を宣言していない ECU にも `ecu.connected` があるので、どの ECU も公開します。
+ECU は、`--registry-uri` で参加するとき、何も書かなくても、自分の変数を SIL Kit の publish/subscribe でシミュレーションに公開します（`vehicle_sil::control_silkit::AgentTransport`。[internals/control.md](internals/control.md) の「SIL Kit の上のトランスポート」）。変数を宣言していない ECU にも `ecu.connected` があるので、どの ECU も公開します。
 
-`vehicle_sil_launch run` がそれを受信して、変数を読み書きします（[simulation-run.md](simulation-run.md) の「変数を読み書きする口」）。受信するプロセスがいなければ、送信したものは誰にも届かないだけです。
+`vehicle_sil_launch run` がそれを受信して、変数を読み書きします（[simulation-run.md](simulation-run.md) の「ECU の変数との接続」）。受信するプロセスがいなければ、送信したものは誰にも届かないだけです。
 
 | 項目 | 内容 |
 |---|---|
@@ -214,7 +214,7 @@ Windows では、`Middleware.EnableDomainSockets` に `true` と書いても `fa
 - コントローラーの節（`CanControllers` の `Network` など）は書かないでください。ネットワークの名前が `--describe` の出力とずれます（確認する仕組みはありません）。
 - `vehicle_sil_launch` では、`command` に書きます（[simulation-config.md](simulation-config.md) の「ecu_main の実行ファイル」）。照合の `--describe` にも渡るので、設定のエラーは `check` で分かります。
 
-ライブラリから使うときは、`SilKitOptions::participant_configuration` か `ParticipantRuntimeOptions::participant_configuration` に、設定の文字列を渡します。`SilKitOptions` は `Simulation` のもので、そのプロセスの全部の participant に渡ります。ファイルから読むときは `participant_configuration_from_file()` を使います（ルールは [internals/core.md](internals/core.md) の「SIL Kit の構成の既定」）。
+ライブラリから使うときは、`SilKitOptions::participant_configuration` か `ParticipantRuntimeOptions::participant_configuration` に、設定の文字列を渡します。`SilKitOptions` は `Simulation` のもので、そのプロセスの全部の participant に渡ります。ファイルから読むときは `participant_configuration_from_file()` を使います（ルールは [internals/core.md](internals/core.md) の「SIL Kit の設定の既定」）。
 
 ### 止まるよう求められたとき（`--registry-uri`）
 
@@ -325,7 +325,7 @@ controller のプロセスが結果を出さずにいなくなったら、すべ
 
 **`variables`**: 先頭は、どの ECU にもある入力 `ecu.connected` で、Agent を作る前でも並びます。その後に、ECU が宣言した変数（`input()`、`output()` などと、`agent()` に直接登録したもの）が宣言した順に並びます。`Peer` が追加する監視用の変数（`PeerOptions::monitor`）は含みません。
 
-`ecu.connected` は bool の入力で、`false` の間、ECU はすべてのバスから切断されます。ステップは動き続けます（[internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」）。
+`ecu.connected` は bool の入力で、`false` の間、ECU はすべてのバスから切断されます。ステップは動き続けます（[internals/execution.md](internals/execution.md) の「`Ecu` クラス」の「バスからの切断」）。
 
 `describe()` を呼べる時点と、返す内容のルールは次のとおりです。
 

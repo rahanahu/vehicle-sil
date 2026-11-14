@@ -234,7 +234,7 @@ int main(int argc, char** argv)
 | LIN | Slave が受信できるのは、Master が送るフレームだけです。 | ほかの Slave の応答は、仮想 LIN バスでは受信できず、SIL Kit では購読した ID なら受信できますが、受信するステップと時刻は決定論的ではありません。 |
 | イーサネット | 生のフレームだけで、TCP/IP のスタックはありません。 | 外部のネットワークとは [ethernet-bridge.md](docs/ethernet-bridge.md) のブリッジで接続します。 |
 | 時間と操作 | シミュレーションを最初からやり直す操作（リセット）はありません。 | 停止してから `run` を実行し直します。 |
-| 時間と操作 | `vehicle_sil_sim_controller` からは、仮想時間の一時停止とステップ実行ができません。 | C++ の API（`SimulationController` の時間ゲート）、`vehicle_sil_launch run` の標準入力の命令、Control API（`--control`）からできます。 |
+| 時間と操作 | `vehicle_sil_sim_controller` からは、仮想時間の一時停止とステップ実行ができません。 | C++ の API（`SimulationController` の時間ゲート）、`vehicle_sil_launch run` の標準入力のコマンド、Control API（`--control`）からできます。 |
 | 時間と操作 | CAN と LIN のチャネルやデバイスは、Control API、設定ファイル、GUI からは選択できません。 | Vector XL CAN Bridge のチャネルは、起動時の引数で指定します。 |
 | 時間と操作 | 既存 ECU の DLL が内部で実時間（スリープ、時刻の取得）を使っている場合、vehicle-sil はそれを仮想時間に置き換えられません。 | — |
 | ツールとビルド | テスト用のライブラリ（`vehicle_sil::testkit`）に、LIN の故障注入と記録の機能はありません。 | 記録は仮想 LIN バスの観測、ECU ごとの通信断は `ecu.connected` でできます。 |

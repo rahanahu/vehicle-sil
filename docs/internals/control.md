@@ -63,7 +63,7 @@ flowchart LR
 
 - 開始はランチャーが決めます（必須の participant がそろったとき。`--start-paused` では `Resume`、`Step`、`RunUntil` で始まります）。
 - リセットはありません。やり直すには、プロセスを起動し直します。
-- CAN/LIN のチャネルと Vector のデバイスは選べません（[bridges.md](../bridges.md) の「接続先とチャネルの選択（CLI）」）。
+- CAN/LIN のチャネルと Vector のデバイスは選べません（[bridges.md](../bridges.md) の「引数」）。
 
 ## 設計の方針
 
@@ -77,7 +77,7 @@ flowchart LR
 | GUI を分ける | GUI はシミュレーションと別のプロセスで、GUI サーバー（`gui/server`、Python）がランチャーを動かし、Control API のクライアントになって画面に中継する | [gui.md](../gui.md) |
 
 - Agent と Hub の間（SIL Kit の上のトランスポート）と、SIL Kit の registry とデータプレーンには認証がありません。閉じたネットワークで使います。
-- GUI のサンプルの画面は、ダッシュボードのファイルがなければ、公開された変数の情報を使って変数ごとにコンポーネントを並べます（[gui.md](../gui.md) の「変数の画面と部品」）。
+- GUI のサンプルの画面は、ダッシュボードのファイルがなければ、公開された変数の情報を使って変数ごとにコンポーネントを並べます（[gui.md](../gui.md) の「変数の画面とコンポーネント」）。
 - 公開ライブラリ（`vehicle_sil::*`）は GUI に依存しません。
 
 ## Control Agent（`vehicle_sil::control`）
@@ -954,6 +954,6 @@ ECU がステップの外から送信するなどで、サンプルが遅れて�
 - 使い方: [control-api.md](../control-api.md)
 - シナリオの書き方: [scenario.md](../scenario.md)
 - GUI: [gui.md](../gui.md)
-- 全体の形: [architecture.md](../architecture.md)
+- 全体像: [architecture.md](../architecture.md)
 - どこに何があるか: [code-map.md](../code-map.md)
-- ほかの内部の仕組みのドキュメント: architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」
+- ほかの内部の仕組みのドキュメント: architecture.md の「[内部の仕組み](../architecture.md#内部の仕組み)」

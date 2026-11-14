@@ -135,10 +135,10 @@
 | `describe-unknown-value` | その participant だけのエラーで、ほかの participant は照合を続けます。 |
 | `address-conflict` | 重大度の条件は、下の「J1939 のアドレスの重なり」にあります。 |
 | `test-participant-talks-on-bridged-network` | ブリッジとして扱うのは `role: bridge` の participant で、1 つもなければ、`role` を書いていない `describe: false` の participant です。 |
-| `test-participant-talks-on-bridged-network` | その participant の送信とアドレスの主張（Address Claimed）が、実機のバスに出ます。 |
+| `test-participant-talks-on-bridged-network` | その participant の送信とアドレスの要求（Address Claimed）が、実機のバスに出ます。 |
 | `test-participant-talks-on-bridged-network` | 指摘の文は、ブリッジが確かにいるのか、いるかもしれないのかと、直し方を言います（[テスト用の participant とブリッジ](simulation-config.md#テスト用の-participant-とブリッジrole)）。 |
-| `coarse-time-step` | `run` の指摘と同じ文です（[等速で動かす](simulation-run.md#等速で動かす)の「刻みと ECU のステップ」）。 |
-| `control-link-not-offered`、`control-link-version` | `run` は、その ECU の変数を読み書きできません（[変数を読み書きする口](simulation-run.md#変数を読み書きする口)）。 |
+| `coarse-time-step` | `run` の指摘と同じ文です（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)の「タイムステップと ECU のステップ」）。 |
+| `control-link-not-offered`、`control-link-version` | `run` は、その ECU の変数を読み書きできません（[ECU の変数との接続](simulation-run.md#ecu-の変数との接続control_link)）。 |
 | `variable-map-*` | 対応の書き方は、[変数の名前と値を合わせる](simulation-config.md#変数の名前と値を合わせるvariables) にあります。 |
 | `variable-map-not-checked` | 合わない対応は、実行の指摘 `variable-map-not-applied` になります。 |
 | `scenario-nothing-checked` | シナリオは、何も確認せずに通ります（[scenario.md](scenario.md) の「機種とパラメーター」）。 |

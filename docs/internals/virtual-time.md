@@ -262,6 +262,6 @@ DLL の内部で実時間に依存している箇所（スリープ、`GetTickCo
 ## 関連するドキュメント
 
 - participant の開始と停止、スレッド: [core.md](core.md)
-- 全体の形: [architecture.md](../architecture.md)
+- 全体像: [architecture.md](../architecture.md)
 - どこに何があるか: [code-map.md](../code-map.md)
-- ほかの内部の仕組みのドキュメント: architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」
+- ほかの内部の仕組みのドキュメント: architecture.md の「[内部の仕組み](../architecture.md#内部の仕組み)」

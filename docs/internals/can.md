@@ -586,6 +586,6 @@ vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--lo
 
 - J1939 スタックがこの基盤をどう使うか: [j1939.md](j1939.md)
 - 簡易 CAN Network Simulator を使う participant の組み立て: [peers.md](../peers.md)
-- 全体の形: [architecture.md](../architecture.md)
+- 全体像: [architecture.md](../architecture.md)
 - どこに何があるか: [code-map.md](../code-map.md)
-- ほかの内部の仕組みのドキュメント: architecture.md の「[中の仕組み](../architecture.md#中の仕組み)」
+- ほかの内部の仕組みのドキュメント: architecture.md の「[内部の仕組み](../architecture.md#内部の仕組み)」

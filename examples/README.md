@@ -9,7 +9,7 @@
 | やりたいこと | サンプル | 実行ファイル、ファイル |
 |---|---|---|
 | 最初の ECU を動かす（送信する、受信する） | [getting_started](getting_started) | `vehicle_sil_getting_started` |
-| ECU アプリの部品を使う（Request、監視、識別情報） | [j1939/ecu_pair](j1939/ecu_pair) | `vehicle_sil_j1939_ecu_pair` |
+| ECU アプリのコンポーネントを使う（Request、監視、識別情報） | [j1939/ecu_pair](j1939/ecu_pair) | `vehicle_sil_j1939_ecu_pair` |
 | メッセージを YAML で定義して使う | [typed_messages](typed_messages) | `vehicle_sil_typed_messages` |
 | 独自のプロトコルを作る（問い合わせを受けて値を定期的に返す） | [pid_stream](pid_stream) | `vehicle_sil_pid_stream` |
 | 独自のプロトコルを作る（セッション、書き込み、長いデータ） | [j1939/param_service](j1939/param_service) | `vehicle_sil_j1939_param_service` |
@@ -41,7 +41,7 @@ getting_started、typed_messages、pid_stream、fault_injection、vehicle、ethe
 
 ### j1939/ecu_pair
 
-部品（`PeriodicSender`、`Requester`、`Monitor` など）で ECU の振る舞いを組み立てるときに読みます。既定は SIL Kit で、`--local` を付けると仮想バスで動きます。
+コンポーネント（`PeriodicSender`、`Requester`、`Monitor` など）で ECU の振る舞いを組み立てるときに読みます。既定は SIL Kit で、`--local` を付けると仮想バスで動きます。
 
 ### typed_messages
 
@@ -49,9 +49,9 @@ getting_started、typed_messages、pid_stream、fault_injection、vehicle、ethe
 
 ### pid_stream
 
-部品を自分で書く最初の手本です。要求を受けて要求元へ周期的に返す部品と、その使い方を示します。バイト列の形式は差し替えられます。
+コンポーネントを自分で書く最初の手本です。要求を受けて要求元へ周期的に返すコンポーネントと、その使い方を示します。バイト列の形式は差し替えられます。
 
-同じ相手の新しい要求には送信の部品を作り直さずに周期を変え（`set_period()`）、長さの変わる返信は vector に追記して作ります。新しい相手の部品は、上限（`max_streams`）とタイマーの残り（`timers_free()`）を確認してからハンドラの中で作り、Stop や期限切れではハンドラやタイマーの中で破棄します。ツールの操作は `Ecu::at()` で時刻に書きます。
+同じ相手の新しい要求には送信のコンポーネントを作り直さずに周期を変え（`set_period()`）、長さの変わる返信は vector に追記して作ります。新しい相手のコンポーネントは、上限（`max_streams`）とタイマーの残り（`timers_free()`）を確認してからハンドラの中で作り、Stop や期限切れではハンドラやタイマーの中で破棄します。ツールの操作は `Ecu::at()` で時刻に書きます。
 
 ### j1939/param_service
 
@@ -75,7 +75,7 @@ ECU ごとに実行ファイルを作り、それらを SIL Kit の 1 つのシ�
 | `simulation.live.yaml` | 同じ 2 つを等速で、止めるまで動かす設定ファイルで、GUI で値を見ながら操作するときに使います（リポジトリからは `scripts/run-gui.py` がこれで GUI を起動します）。 |
 | `simulation.two-pcs.yaml` | 同じ 2 つを 2 台の PC に分けて動かす設定ファイルです（[docs/howto/multi-pc.md](../docs/howto/multi-pc.md)）。 |
 | `simulation.dashboard.yaml` | ブラウザの GUI で変数をどう並べるかです（[docs/gui.md](../docs/gui.md) の「ダッシュボードのファイル」）。 |
-| `panels/rpm-bar.js` | ダッシュボードに置く自作のパネル（素の JavaScript）です（[docs/gui.md](../docs/gui.md) の「持ち込みのパネル」）。 |
+| `panels/rpm-bar.js` | ダッシュボードに置く自作のパネル（素の JavaScript）です（[docs/gui.md](../docs/gui.md) の「カスタムパネル」）。 |
 
 ### integrate_ecus
 
@@ -135,7 +135,7 @@ GUI と同じ API（[gui/protocol](../gui/protocol/README.md)）で、自分の�
 | `run-with-library.mjs` | クライアントのライブラリ（[gui/client](../gui/client/README.md)）を 1 つにまとめたファイルを使います。 |
 | `variables.mjs` | 同じライブラリで ECU の変数を読み書きします（止めて始め、最初のステップの前に 1 つ書き込み、進めて止めて、値を確認する。Control Server を持つランチャーが必要です）。 |
 
-CMake には入っていません（`scripts/verify-gui.py` が、流し直すランチャーを相手に動かして確認します）。使い方は [docs/gui.md](../docs/gui.md) の「画面のない道具」にあります。
+CMake には入っていません（`scripts/verify-gui.py` が、流し直すランチャーを相手に動かして確認します）。使い方は [docs/gui.md](../docs/gui.md) の「画面のないツールから使う」にあります。
 
 ### gui_starter
 

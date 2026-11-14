@@ -10,8 +10,8 @@ import { ValueWidget } from './value-widget';
 
 /**
  * 部品の種類と、そのコンポーネント。ダッシュボード（DashboardView）は、ここから部品を作り、input の `ref`
- * （VariableRef）と `label` を渡す。部品を足すときは、同じ input を持つコンポーネントを作り、WidgetKind と
- * ここに足す（docs/gui.md の「部品を足す」）。
+ * （VariableRef）と `label` を渡す。コンポーネントを追加するときは、同じ input を持つコンポーネントを作り、WidgetKind と
+ * ここに足す（docs/gui.md の「コンポーネントを追加する」）。
  */
 export const WIDGETS: Readonly<Record<WidgetKind, Type<unknown>>> = {
   value: ValueWidget,

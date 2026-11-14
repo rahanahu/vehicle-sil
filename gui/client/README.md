@@ -40,9 +40,9 @@ GUI サーバー（`vehicle-sil-gui`）のクライアントのライブラリ�
 
 | エントリーポイント     | 名前                               | 中身                                                         |
 | ---------------------- | ---------------------------------- | ------------------------------------------------------------ |
-| `src/index.ts`         | `@vehicle-sil/gui-client`          | 公開 API（下の「公開 API」）。互換を約束するのはここだけ     |
+| `src/index.ts`         | `@vehicle-sil/gui-client`          | 公開 API（下の「公開 API」）。互換を保証するのはここだけ     |
 | `src/testing/index.ts` | `@vehicle-sil/gui-client/testing`  | テスト用のヘルパー（自分のコンポーネントのテストに使える）   |
-| `src/internal.ts`      | `@vehicle-sil/gui-client/internal` | **互換の約束の外**。内部のクラスと関数で、アプリでは使わない |
+| `src/internal.ts`      | `@vehicle-sil/gui-client/internal` | **互換の保証の外**。内部のクラスと関数で、アプリでは使わない |
 
 - `testing` にあるのは、偽の WebSocket（`FakeWebSockets`）、偽の HTTP（`FakeHttp`）、`gui/protocol/examples/` の読み込み、要約から `SessionView` を作る `sessionViewFrom` です。
 - `internal` にあるのは、内部のクラス、要約を反映する関数、読み取りの関数です。テストのために公開していて、予告なく変わり、消えます。

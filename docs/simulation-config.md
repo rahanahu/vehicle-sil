@@ -130,7 +130,7 @@ participants:
 
 ほかの PC から参加させる手順は、[howto/multi-pc.md](howto/multi-pc.md) にあります。
 
-**`speed`**: 実時間 1 秒あたりの仮想時間の秒数です。`1` が等速、`2` が 2 倍速、`0.5` が半分の速度です。`run --speed` で上書きできます（[等速で動かす](simulation-run.md#等速で動かす)）。
+**`speed`**: 実時間 1 秒あたりの仮想時間の秒数です。`1` が等速、`2` が 2 倍速、`0.5` が半分の速度です。`run --speed` で上書きできます（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)）。
 
 **`time_step_ms`**: 一時停止とステップ実行の細かさ、速度を合わせる細かさです。
 
@@ -138,7 +138,7 @@ participants:
 |---|---|
 | 書かず、最速で動かす | 10 です。 |
 | 書かず、最速で、`stop_at_ms` が 10 の倍数でない | `stop_at_ms` と 10 の最大公約数です。 |
-| 書かず、速度を指定した | さらに、ECU のステップ幅との最大公約数にします（[等速で動かす](simulation-run.md#等速で動かす)の「刻みと ECU のステップ」）。 |
+| 書かず、速度を指定した | さらに、ECU のステップ幅との最大公約数にします（[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)の「タイムステップと ECU のステップ」）。 |
 | 書く | `stop_at_ms` の約数にします（約数でなければエラー `value`）。 |
 
 **`late_tolerance_ms`**: タイムステップの遅れがこの値を超えたら、遅れたタイムステップとして数えます。
@@ -242,7 +242,7 @@ JSON Schema は [schema/simulation.schema.json](../schema/simulation.schema.json
 | `--silkit-config <file>` | 書けます（その ECU に SIL Kit の設定ファイルを渡します）。 |
 | `required: false` | 書けません（エラー `not-required-ecu`）。 |
 
-**`--no-control`**: 照合の `--describe` にも同じ引数が渡るので、`--describe` の出力の `control` が `null` になり、`run` はその ECU の hello を待ちません（[変数を読み書きする口](simulation-run.md#変数を読み書きする口)）。
+**`--no-control`**: 照合の `--describe` にも同じ引数が渡るので、`--describe` の出力の `control` が `null` になり、`run` はその ECU の hello を待ちません（[ECU の変数との接続](simulation-run.md#ecu-の変数との接続control_link)）。
 
 **`--silkit-config <file>`**: `command: [engine/vehicle_sil_engine_ecu, --silkit-config, engine.silkit.yaml]` のように書きます。相対パスは、設定ファイルのあるディレクトリを基準にします（participant の作業ディレクトリ）。照合の `--describe` にも渡るので、次のようなエラーは、照合で `describe-failed` として分かります（[ecu-executable.md](ecu-executable.md) の「SIL Kit の設定ファイルを渡す」）。
 
@@ -486,7 +486,7 @@ passed: 0 errors, 0 warnings, 1 note
 
 ブリッジでないツールには `role: ecu` か `role: test` を書くと、ブリッジかもしれないとはみなしません。
 
-警告の理由は次のとおりです。ブリッジは、SIL Kit の側で送信されたものを実機のバスに送信します。そのため、J1939 のノードを持つテスト用の participant の送信、とくにアドレスの主張（Address Claimed）も実機に出て、同じアドレスの実機の ECU とアドレスを取り合います。直し方は、その participant をそのネットワークでは受信だけにする（J1939 のノードを作らない）か、その participant を使う実行ではブリッジを無効にする（`--disable <ブリッジ>`、機種の `enabled: false`）かです。生の CAN で送信する participant は、`--describe` の出力からはわからないので、警告しません。
+警告の理由は次のとおりです。ブリッジは、SIL Kit の側で送信されたものを実機のバスに送信します。そのため、J1939 のノードを持つテスト用の participant の送信、とくにアドレスの要求（Address Claimed）も実機に出て、同じアドレスの実機の ECU とアドレスを取り合います。直し方は、その participant をそのネットワークでは受信だけにする（J1939 のノードを作らない）か、その participant を使う実行ではブリッジを無効にする（`--disable <ブリッジ>`、機種の `enabled: false`）かです。生の CAN で送信する participant は、`--describe` の出力からはわからないので、警告しません。
 
 そのほかのルールは次のとおりです。
 
@@ -575,7 +575,7 @@ participants:
 
 ### 機種（`variants`、`--variant`）
 
-実行ファイルや変数の対応が機種ごとに違うときは、共通の部分を `participants` に書き、機種ごとの差分を `variants` に書きます。`check` と `run` は、`--variant <名前>` で選んだ機種の差分を共通の部分に重ねた設定を、照合し、実行します。全部の機種を順に実行するのは `test` です（[simulation-run.md](simulation-run.md#シナリオをまとめて回すvehicle_sil_launch-test)「シナリオをまとめて回す」）。シナリオは共通の名前だけを使うので、どの機種にも同じものを使えます。
+実行ファイルや変数の対応が機種ごとに違うときは、共通の部分を `participants` に書き、機種ごとの差分を `variants` に書きます。`check` と `run` は、`--variant <名前>` で選んだ機種の差分を共通の部分に重ねた設定を、照合し、実行します。全部の機種を順に実行するのは `test` です（[simulation-run.md](simulation-run.md#シナリオをまとめて実行するvehicle_sil_launch-test)「シナリオをまとめて実行する」）。シナリオは共通の名前だけを使うので、どの機種にも同じものを使えます。
 
 ```yaml
 participants:
@@ -686,7 +686,7 @@ vehicle_sil_launch test [--json] [--strict] [--fail-fast] [--variant <name>]... 
 vehicle_sil_launch version [--json]
 ```
 
-`test` は、機種ごとにシナリオを 1 つずつ実行して、全部の結果を表にします（[simulation-run.md](simulation-run.md#シナリオをまとめて回すvehicle_sil_launch-test)「シナリオをまとめて回す」）。
+`test` は、機種ごとにシナリオを 1 つずつ実行して、全部の結果を表にします（[simulation-run.md](simulation-run.md#シナリオをまとめて実行するvehicle_sil_launch-test)「シナリオをまとめて実行する」）。
 
 ### 引数
 
@@ -695,11 +695,11 @@ vehicle_sil_launch version [--json]
 | 引数 | 条件 | 意味 |
 |---|---|---|
 | `--json` | | 結果を JSON で書きます。 |
-| `--events` | `run` だけ | 経過と結果をイベントとして書きます（[機械から使う](simulation-events.md)。`--json` と一緒には使えません）。 |
+| `--events` | `run` だけ | 経過と結果をイベントとして書きます（[プログラムから使う](simulation-events.md)。`--json` と一緒には使えません）。 |
 | `--events-stall-ms <ms>` | `--events` を付けた `run` だけ | イベントの書き込みがこの時間まったく進まなければ、読む側がいなくなったものとして扱います（1000 以上 86400000 以下の整数。既定は 30000）。 |
 | `--stdin-commands` | `run` だけ | 標準入力からコマンドを読みます（標準入力の終わりも、停止の要求です）。 |
 | `--start-paused` | `--stdin-commands` か `--control` を付けた `run` だけ | 全員がそろったら仮想時間 0 で止まり、`resume` か `step` のコマンドを待ちます。 |
-| `--control <address>` | `run` だけ、Control Server を持つビルドだけ | Control API（gRPC）の Server を立てます（[control-api.md](control-api.md) の「ランチャーにつなぐ」）。 |
+| `--control <address>` | `run` だけ、Control Server を持つビルドだけ | Control API（gRPC）の Server を立てます（[control-api.md](control-api.md) の「ランチャーに接続する」）。 |
 | `--control-credentials <file>` | `--control` だけ | トークンと役割のファイル（1 行に `<role> <name> <token>`）で、あれば、どの呼び出しにもトークンが必要です。 |
 | `--control-tls-cert <file>`、`--control-tls-key <file>` | `--control` だけ | サーバーの証明書チェーンと秘密鍵（PEM）で、2 つ一緒に付けると TLS になります。 |
 | `--control-audit-log <file>` | `--control` だけ | 誰が何を変えたかを追記します。 |
@@ -708,7 +708,7 @@ vehicle_sil_launch version [--json]
 | `--param <name>=<value>` | `--scenario` と一緒にだけ | シナリオのパラメーター `${name}` の値です（[シナリオのパラメーター](#シナリオのパラメーターparams--param)）。 |
 | `--scenarios <dir or files>` | `test` だけ | 実行するシナリオです。 |
 | `--fail-fast` | `test` だけ | 最初に失敗した組の後は実行しません。 |
-| `--speed <speed>` | `run` だけ | 設定ファイルの `speed` を上書きします（数か `max`。[等速で動かす](simulation-run.md#等速で動かす)）。 |
+| `--speed <speed>` | `run` だけ | 設定ファイルの `speed` を上書きします（数か `max`。[速度を指定して動かす](simulation-run.md#速度を指定して動かすspeed)）。 |
 | `--strict` | | 警告があっても失敗にします（注記では失敗にしません）。 |
 | `--log-dir <dir>` | `run` だけ | participant ごとの出力のファイルを置くディレクトリです。 |
 | `--timeout-ms <ms>` | `run` と `test`（1 組ごと） | シミュレーションの開始から終わりまでの実時間の上限です（1 以上の整数。既定は上限なし）。 |

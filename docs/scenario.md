@@ -22,7 +22,7 @@
 
 同じ設定ファイルと同じシナリオなら、結果（どの手順が、どの仮想時間に、どの値で成功したか、失敗したか）はいつも同じです。PC の速度、最速か等速か（`speed`）、ECU の処理の重さでは変わりません。判定には仮想時間だけを使い、実時間の待ちやタイムアウトは使いません。
 
-シナリオが使う変数は、`ecu_main` で作った ECU が宣言したものと、どの ECU にもある `ecu.connected` です（[ecu-executable.md](ecu-executable.md) の「変数を出す」）。名前は `vehicle_sil_launch check --json` の `participants[].variables` でわかります。gRPC は使いません（Control Server のないビルドでも動きます）。
+シナリオが使う変数は、`ecu_main` で作った ECU が宣言したものと、どの ECU にもある `ecu.connected` です（[ecu-executable.md](ecu-executable.md) の「変数を公開する」）。名前は `vehicle_sil_launch check --json` の `participants[].variables` でわかります。gRPC は使いません（Control Server のないビルドでも動きます）。
 
 このドキュメントでは、シナリオの `steps` に書く 1 項目を「手順」と呼びます。「ステップ」は、ECU や controller が仮想時間を 1 回進める単位のことです。
 
@@ -91,7 +91,7 @@ passed: 0 errors, 0 warnings, 0 notes
 
 ### ECU をバスから切断する
 
-`<participant>.ecu.connected` に `false` を書くと、その ECU は、動いたまま、すべてのバスから切断されます。送信したフレームはバスに出ず、バスのフレームも受信しません。`true` を書くと戻ります（[internals/execution.md](internals/execution.md) の「ECU の入口」の「バスからの切り離し」）。通信の相手がいなくなったことを、ほかの ECU が正しく検出するかをテストできます。
+`<participant>.ecu.connected` に `false` を書くと、その ECU は、動いたまま、すべてのバスから切断されます。送信したフレームはバスに出ず、バスのフレームも受信しません。`true` を書くと戻ります（[internals/execution.md](internals/execution.md) の「`Ecu` クラス」の「バスからの切断」）。通信の相手がいなくなったことを、ほかの ECU が正しく検出するかをテストできます。
 
 [examples/ecu_main/scenarios/engine_disconnect.yaml](../examples/ecu_main/scenarios/engine_disconnect.yaml) は、300 ms に Engine を切断し、Dashboard が回転数の途絶を検出することを確認します（`dashboard.engine_lost`。回転数を 300 ms 受信しなければ true）。続けて Engine を戻し、回復することを確認します。
 
@@ -227,7 +227,7 @@ JSON Schema は [schema/scenario.schema.json](../schema/scenario.schema.json) �
 
 そのため、待つ手順より後ろには `at_ms` を書けません（`after_ms` で書きます）。時刻が戻る `at_ms` もエラーです。
 
-controller のタイムステップは、設定ファイルの `time_step_ms` です。書いていなければ、ECU のステップがすべて controller のステップから始まるタイムステップになります（結果の `timing.time_step_ms`。[simulation-run.md](simulation-run.md) の「等速で動かす」の、速度を指定したときの既定と同じです）。シナリオのある実行では、速度によらずこのタイムステップです。
+controller のタイムステップは、設定ファイルの `time_step_ms` です。書いていなければ、ECU のステップがすべて controller のステップから始まるタイムステップになります（結果の `timing.time_step_ms`。[simulation-run.md](simulation-run.md) の「速度を指定して動かす」の、速度を指定したときの既定と同じです）。シナリオのある実行では、速度によらずこのタイムステップです。
 
 ## 値の見え方
 
@@ -602,7 +602,7 @@ steps:
 | 場合 | 結果 |
 |---|---|
 | ほかの機種（`--variant large`）で `check --scenario` か `run --scenario` に渡す | エラー `scenario-variant` で、何も起動しません。 |
-| 全部の機種を実行する `vehicle_sil_launch test` | その組を実行せずに `skipped` にします（[simulation-run.md](simulation-run.md#シナリオをまとめて回すvehicle_sil_launch-test)「シナリオをまとめて回す」）。 |
+| 全部の機種を実行する `vehicle_sil_launch test` | その組を実行せずに `skipped` にします（[simulation-run.md](simulation-run.md#シナリオをまとめて実行するvehicle_sil_launch-test)「シナリオをまとめて実行する」）。 |
 | `only` に、設定ファイルの `variants` にない名前がある | エラーです。 |
 | 機種のない設定ファイルに、`only` のあるシナリオを渡す | エラーです。 |
 

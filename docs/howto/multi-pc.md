@@ -272,7 +272,7 @@ Middleware:
 dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://192.0.2.10:8500 --start-timeout-ms 1000000000000 --silkit-config dashboard.silkit.yaml
 ```
 
-確認することは手順 3 と同じです。ファイルに書いていない設定は、既定のままです。ルールは [ecu-executable.md](../ecu-executable.md) の「SIL Kit の構成を渡す」にあります。
+確認することは手順 3 と同じです。ファイルに書いていない設定は、既定のままです。ルールは [ecu-executable.md](../ecu-executable.md) の「SIL Kit の設定ファイルを渡す」にあります。
 
 ## Windows で変わること
 
