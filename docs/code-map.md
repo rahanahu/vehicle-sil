@@ -696,8 +696,8 @@ flowchart TD
 
 - 変えるもの: 版の番号（ルートの `CMakeLists.txt` の `project(... VERSION)`）
 
-  合わせて直すもの: [CHANGELOG.md](../CHANGELOG.md) に書いてある場所（`pyproject.toml`、`gui/server/pyproject.toml`、`template/get_tools.py`、`template/CMakeLists.txt` の `GIT_TAG`、`template/README.md` の版、`CHANGELOG.md` の見出し）。
-  `scripts/package.py version`（と `template.get_tools`）が食い違いを見つけます
+  合わせて直すもの: [CHANGELOG.md](../CHANGELOG.md) に書いてある場所（`pyproject.toml`、`gui/server/pyproject.toml`、`template/get_tools.py`、`template/CMakeLists.txt` の `GIT_TAG`、`template/README.md` の版、`CHANGELOG.md` の見出し `## [<版>] - Unreleased`）。タグを付けるコミットで、見出しの `Unreleased` をリリースの日付（`YYYY-MM-DD`）にします。
+  `scripts/package.py version`（と `template.get_tools`）が食い違いを見つけます。`--expect v<版>`（リリースのワークフロー）は、日付のない見出しも断ります。リリースノートは、`.github/workflows/release.yml` が `CHANGELOG.md` のこの版の節から切り出します
 
 - 変えるもの: `VEHICLE_SIL_STATIC`（`cmake/VehicleSilDependencies.cmake` の SIL Kit の取り込みと、`SilKit::SilKit` に付ける静的なリンクの指定）
 

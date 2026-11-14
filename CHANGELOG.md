@@ -1,19 +1,23 @@
 # Changelog
 
-Changes of vehicle-sil by version. Version numbers are `MAJOR.MINOR.PATCH`. While the version is 0.x, a version that raises MINOR may break compatibility. A change that breaks compatibility says what users have to do.
+Changes of vehicle-sil by version, in the format of [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/): each version has a heading `## [<version>] - <release date>` and its changes under `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed` and `### Security`. Version numbers are `MAJOR.MINOR.PATCH`. While the version is 0.x, a version that raises MINOR may break compatibility. A change that breaks compatibility says what users have to do.
 
-The version comes from `project(vehicle_sil VERSION ...)` in the root `CMakeLists.txt` (`vehicle_sil_launch version` and `vehicle_sil` in the `--describe` output of an ECU print it). When the version is raised, write the same number in `pyproject.toml`, `gui/server/pyproject.toml`, `VERSION` in `template/get_tools.py`, `GIT_TAG` in `template/CMakeLists.txt`, the version written in `template/README.md`, and the heading in this file. `scripts/package.py version` finds mismatches.
+The version comes from `project(vehicle_sil VERSION ...)` in the root `CMakeLists.txt` (`vehicle_sil_launch version` and `vehicle_sil` in the `--describe` output of an ECU print it). When the version is raised, write the same number in `pyproject.toml`, `gui/server/pyproject.toml`, `VERSION` in `template/get_tools.py`, `GIT_TAG` in `template/CMakeLists.txt`, the version written in `template/README.md`, and the heading in this file, `## [<version>] - Unreleased` until the release. The commit that is tagged `v<version>` replaces `Unreleased` with the release date (`YYYY-MM-DD`). `scripts/package.py version` finds mismatches; with `--expect v<version>`, which the release workflow runs for the tag, it also refuses a heading without the date. The release notes are this version's section.
 
-## 0.1.0 (unreleased)
+## [0.1.0] - Unreleased
 
 The first version.
 
-### Overview
+Breaking changes: none (the first version).
+
+### Added
+
+#### Overview
 
 - A library for writing ECUs (`vehicle_sil::Ecu`, `ecu_main()`, the J1939 stack and its parts, typed messages, LIN, ECU variables), a launcher that runs ECU executables together on SIL Kit (`vehicle_sil_launch check`, `run`, scenarios, the Control API), and a browser GUI.
 - Prebuilt tools (one archive per OS: `vehicle_sil_launch`, the GUI server and web UI, the Python client of the Control API, the GUI client library, the starter for your own web UI `gui_starter/`, the JSON Schema of the dashboard) and a template for an ECU project (`template/`; in a release, `vehicle-sil-template-0.1.0.zip`).
 
-### ECU library, J1939 and Ethernet
+#### ECU library, J1939 and Ethernet
 
 - **SIL Kit controllers** start at the point SIL Kit recommends (CommunicationReady). The bitrate and the start of a coordinated participant reach the CAN network simulator regardless of the start order. Code that uses `Peer`, `Ecu` or `Simulation` gets this without any change. Code that uses `SilKitCanPort` or `SilKitEthPort` directly calls `runtime.add_communication_ready_handler([&port] { port.start(); })`, and code that uses `CanBridge` or `EthernetBridge` directly calls `start_controller()` from the same place (without the call, the first step is an error that says what to call). After `ParticipantRuntime::stop()` returns, this handler is not called.
 - **SIL Kit participant configuration** can be passed: `--silkit-config <file>` of an ecu_main executable, and `SilKitOptions::participant_configuration`. It is for adding the listen addresses for a run on several PCs, or logging settings. The defaults of vehicle-sil (listen addresses, TCP on Windows, fixed step) are also added to a passed configuration, only for keys it does not set. A configuration that sets another participant name, another registry or `DynamicSimulationStep: true` is an error before connecting, and the error names the key to remove (`vehicle_sil_can_bus_simulator --participant-configuration` behaves the same). A file with `Includes` finds the files next to it. A build without rapidyaml uses the passed configuration as it is ([docs/ecu-executable.md](docs/ecu-executable.md)).
@@ -26,7 +30,7 @@ The first version.
 - **When an ECU ends**, it waits until the last notice, which carries cancelled writes among other things, has reached the launcher (the launcher answers, and the ECU waits 500 ms at most; normally it ends at once). A write that the ECU cancelled at the end of a run is settled as `Cancelled`, not `Unknown`. The end of the ECU is delayed by 500 ms only when the launcher has already ended.
 - `SilKitEthPort` pads a frame shorter than 60 bytes with zeros before sending it. `refresh_peer_statuses()` and `wait_for_peer()` can be called from several threads at the same time.
 
-### Launcher, configuration and check
+#### Launcher, configuration and check
 
 - `simulation.live.yaml` in `examples/ecu_main` and in the template is a configuration that runs at real-time speed until it is stopped.
 - **JSON Schema for configuration files and scenarios** (`schema/`; also shipped in the template and in the tools). Completion and validation in editors work from the first line of the YAML files of the examples and the template.
@@ -38,7 +42,7 @@ The first version.
 - `run --events`: a run that ends by `--timeout-ms` or by the failure of a participant while paused also emits a last `time` with `paused` false (the same as the other ways of ending).
 - `run --events`: when a `step` or `run_until` that was accepted before the start finishes quickly, the first `time` (`sim_ms` 0) does not have `paused: true`.
 
-### Scenarios
+#### Scenarios
 
 - `vehicle_sil_launch test <file> --scenarios <directory or file>` runs the scenarios one by one for each variant, summarizes them in a table and in JSON (`vehicle_sil_test`), and gives the verdict as the exit code (`--variant`, `--param`, `--fail-fast`, `--strict`). It fails when some combination was not run (except after an interruption), and with `--strict` when no combination was run. When the configuration has a `manual` participant, it refuses at the start. The command it prints for running a failed combination again carries over the arguments given to `test`.
 - **Step `wave`** (`sine`, `triangle`, `sawtooth`, `square`, `pulse`, `noise`, `chirp`, `lag`, `chatter`, `points`). `check --scenario` warns about a waveform that is finer than the step of the ECU; `undersampled: ok` silences the warning. `features` of `version --json` has `scenario-wave`.
@@ -46,19 +50,18 @@ The first version.
 - **A `ramp` without `from`** starts from the last value the scenario wrote to that variable, if the scenario has written to it; the start does not change when another writer, such as the ECU, changes the value. If the scenario has not written to it yet, the ramp starts from the value of the latest sample. `around` of `wave` follows the same rule.
 - **Hexadecimal values** (`0x1F`) can be written for integer and enum variables in a scenario (`set`, `ramp`, `wave`, comparisons, parameters). Output stays decimal.
 
-### Control API
+#### Control API
 
 - **A run that plays a scenario** also accepts Control API clients (`run --scenario` with `--control`). A client can only read, wait and stop; calls that write and calls that move time are refused.
-- **The standalone Control Server** that existed during development (`vehicle_sil_control_server`) is not part of this version. Connect to the Control API with `vehicle_sil_launch run --control`, and add an ECU that the launcher does not start to the same run with `manual` on the participant (or `run --manual <name>`).
 - `vehicle_sil_launch run --control unix:<path>` ends with exit code 4 when the path is too long, and gives the length and the limit.
 - **The time answer of the Control API** does not have both `ended` and `paused` true at the moment the run ends.
 
-### Browser GUI
+#### Browser GUI
 
 - `scripts/run-gui.py` starts the GUI from the repository with one command (for anything missing, it prints the command that builds it; a `--launcher` or a configuration file that does not exist is exit code 2).
 - **Your own web UI** can be served by the browser GUI (`vehicle-sil-gui --web <dir>`). The client library is also distributed as a typed npm package, `vehicle-sil-gui-client-<version>.tgz`. `client.variables.bind` delivers the value of one variable, its freshness, whether it can be written and the state of a write as a single value, from any framework.
 
-### Bridges and the CAN network simulator
+#### Bridges and the CAN network simulator
 
 - `vehicle_sil_ethernet_bridge`, the Ethernet bridge executable, carries frames in both directions between a SIL Kit Ethernet network and an external interface. On Linux, `--backend tap` (a TAP device) and `--backend packet` (a network interface) are available and keep VLAN tags. `--backend pcap` on Linux (libpcap) and `--backend npcap` on Windows (Npcap) load the library at run time (vehicle-sil does not ship Npcap; when it is missing or old, the bridge says where to get it and ends with exit code 3 before touching SIL Kit). `npcap` looks for `wpcap.dll` and the DLLs it depends on only in the Npcap and system directories, and opens the adapter in a way that does not receive its own transmissions. `--list-interfaces` prints the interfaces that can be opened (also on Windows). `packet` counts frames with an unfinished checksum sent by the OS of the same PC in `ext_checksum_incomplete` and warns once how to fix it. Use `tap` when the other side is the network stack of the OS of the same PC ([docs/ethernet-bridge.md](docs/ethernet-bridge.md)).
 - **Ethernet bridge libraries**: the port for an external interface, which does not use SIL Kit, with its filter (`vehicle_sil::eth_link`; EtherType, what follows the VLAN tag, the MACs on the SIL Kit side, maximum length), and `EthernetBridge`, which carries frames to and from SIL Kit Ethernet (`vehicle_sil::ethernet_bridge_core`). A second bridge between the same networks, and a MAC that is on both sides, are detected where the source MAC makes that possible; frames of that address are then dropped in both directions with a warning (the documentation lists the cases that cannot be detected). The libraries include the statistics line, the monitoring lines and the argument parsing ([docs/ethernet-bridge.md](docs/ethernet-bridge.md)).
@@ -71,16 +74,20 @@ The first version.
 - **Non-ASCII names on Windows**: the Ethernet bridge handles its arguments and connection names as UTF-8. The bridges and `vehicle_sil_can_bus_simulator` print non-ASCII names in a readable form regardless of the console code page (UTF-8 to files and pipes).
 - **Warnings before stopping**: the bridges (Vector XL, Ethernet) print the warnings raised just before stopping ahead of the statistics.
 
-### Build, packaging and tools
+#### Build, packaging and tools
 
 - `scripts/doctor.py` checks whether this PC has what building and testing vehicle-sil needs (read-only; for anything missing, it prints how to install it; `--json`). It also has a line "CMake for gRPC", which a build with the Control Server needs (optional).
 - **Preset `linux-gcc-control`**: a GCC Debug build with the Control Server (gRPC from the PC if present, otherwise a fixed version through FetchContent).
 - **CMake option `VEHICLE_SIL_STATIC`**: links SIL Kit and the C++ runtime library statically into the ECU executables, so that each can be distributed as a single file (default OFF).
 - **Configuring** (`cmake --preset …`) prints in one line the SIL Kit commit that is built, the patches applied and the location of the copy.
 
-### Fixes to SIL Kit carried as patches
+### Removed
+
+- **The standalone Control Server** that existed during development (`vehicle_sil_control_server`) is not part of this version. Connect to the Control API with `vehicle_sil_launch run --control`, and add an ECU that the launcher does not start to the same run with `manual` on the participant (or `run --manual <name>`).
+
+### Fixed
+
+#### Fixes to SIL Kit carried as patches
 
 - **Patch 0004**: fixes a rare case in which a run with the simple CAN Network Simulator started with every controller still in SIL Kit's trivial mode (the bitrate and the controller mode did not reach the simulator, and there was no error or warning).
 - **Patch 0005**: fixes a rare case in which a participant that joined right after another participant had ended waited 5 seconds and then failed with a handshake timeout to the registry (same name).
-
-Breaking changes: none (the first version).

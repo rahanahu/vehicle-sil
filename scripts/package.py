@@ -44,7 +44,8 @@ Commands:
             release carries on its own (npm install <its URL>).
   version   prints the version and checks that every place that names it agrees: CMakeLists.txt (project VERSION, the
             source), pyproject.toml, gui/server/pyproject.toml, template/get_tools.py (VERSION), template/CMakeLists.txt
-            (GIT_TAG v<version>), CHANGELOG.md (a "## <version>" heading). --expect v<version> also checks a tag.
+            (GIT_TAG v<version>), CHANGELOG.md (a heading "## [<version>] - Unreleased" or "## [<version>] -
+            YYYY-MM-DD"). --expect v<version> also checks a tag, and that the heading has the release date.
 
 The full output of each step goes to build/logs/<tag>-<step>.log; the summary shows one line per step and, for a
 failed step, its first error lines and its log. Stops at the first failed step.
@@ -73,6 +74,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -209,8 +211,8 @@ def project_version() -> str:
     return m.group(1)
 
 
-def version_problems(version: str) -> list[str]:
-    """Where the version disagrees with CMakeLists.txt, and what to change."""
+def version_problems(version: str, release: bool = False) -> list[str]:
+    """Where the version disagrees with CMakeLists.txt, and what to change. `release`: for the tag being made."""
     checks = [
         ("pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
         ("gui/server/pyproject.toml", r'(?m)^version = "([^"]*)"', '{}'),
@@ -233,9 +235,32 @@ def version_problems(version: str) -> list[str]:
                         f"it {version}")
     changelog = ROOT / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8") if changelog.is_file() else ""
-    if not re.search(rf"(?m)^## \[?{re.escape(version)}(?![\d.])", text):
-        problems.append(f"CHANGELOG.md has no heading \"## {version}\": add the changes of {version} under it")
+    problems += changelog_problems(text, version, release)
     return problems
+
+
+def changelog_problems(text: str, version: str, release: bool = False) -> list[str]:
+    """What is wrong with the heading of `version` in CHANGELOG.md (Keep a Changelog: "## [0.1.0] - 2026-01-31", or
+    "## [0.1.0] - Unreleased" before the release). `release`: the tag is being made, so the heading needs the date."""
+    v = re.escape(version)
+    want = f"\"## [{version}] - Unreleased\" (\"## [{version}] - YYYY-MM-DD\" in the tagged commit)"
+    m = re.search(rf"(?m)^## \[{v}\] - (Unreleased|\d{{4}}-\d{{2}}-\d{{2}})[ \t]*$", text)
+    if m is None:
+        old = re.search(rf"(?m)^##[ \t]+\[?v?{v}(?![\d.]).*$", text)
+        if old:
+            return [f"CHANGELOG.md has the heading \"{old.group(0).strip()}\", which is not in the form of Keep a "
+                    f"Changelog: write it as {want}"]
+        return [f"CHANGELOG.md has no heading {want}: add the changes of {version} under it"]
+    if m.group(1) == "Unreleased":
+        if release:
+            return [f"CHANGELOG.md says \"## [{version}] - Unreleased\": write the release date in its place "
+                    f"(\"## [{version}] - YYYY-MM-DD\") in the commit that is tagged v{version}"]
+        return []
+    try:
+        date.fromisoformat(m.group(1))
+    except ValueError:
+        return [f"CHANGELOG.md: the date in \"{m.group(0).strip()}\" is not a date: write it as YYYY-MM-DD"]
+    return []
 
 
 def check_version(step: Step) -> str:
@@ -994,7 +1019,7 @@ def template_command(args: argparse.Namespace) -> int:
 
 def version_command(args: argparse.Namespace) -> int:
     version = project_version()
-    problems = version_problems(version)
+    problems = version_problems(version, release=bool(args.expect))
     if args.expect and args.expect != f"v{version}":
         problems.append(f"the tag is {args.expect}, the version {version}: tag v{version}, or change the version "
                         "(CMakeLists.txt and the places this command checks)")
