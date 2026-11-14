@@ -9,15 +9,25 @@ namespace vehicle_sil::launch::detail {
 
 control::Hub& RunControl::hub()
 {
-    if (ctx_.options.hub != nullptr)
-    {
-        return *ctx_.options.hub;
-    }
-    if (!own_hub_)
+    if (ctx_.options.hub == nullptr && !own_hub_)
     {
         own_hub_ = std::make_unique<control::Hub>();
     }
-    return *own_hub_;
+    control::Hub& hub = ctx_.options.hub != nullptr ? *ctx_.options.hub : *own_hub_;
+    if (!maps_set_)
+    {
+        // Before any agent connects: the hub shows every client (the scenario, the control server)
+        // the variables through the participants' variable maps.
+        maps_set_ = true;
+        for (const ParticipantConfig& p : ctx_.config.participants)
+        {
+            if (p.enabled && !p.variables.empty())
+            {
+                hub.set_variable_map(p.name, p.variables);
+            }
+        }
+    }
+    return hub;
 }
 
 ControlLink RunControl::described_link(std::size_t i) const
@@ -61,6 +71,8 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
     const std::optional<control_silkit::HelloReport> report =
         start ? std::optional<control_silkit::HelloReport>(start->report) : std::nullopt;
     const std::vector<control_silkit::LinkInfo> links = start ? start->links : std::vector<control_silkit::LinkInfo>{};
+    const control::Hub* hub = ctx_.options.hub != nullptr ? ctx_.options.hub : own_hub_.get();
+    const std::vector<control::PeerInfo> peers = hub != nullptr ? hub->peers() : std::vector<control::PeerInfo>{};
     for (std::size_t i = 0; i < outcome.participants.size(); ++i)
     {
         ParticipantRun& run = outcome.participants[i];
@@ -81,6 +93,12 @@ void RunControl::note_links(RunOutcome& outcome, const std::optional<ControlStar
         {
             run.control = ControlLink::Connected;
             run.control_variables = link->variables;
+            const auto peer = std::find_if(peers.begin(), peers.end(),
+                                           [&run](const control::PeerInfo& p) { return p.participant == run.name; });
+            if (peer != peers.end())
+            {
+                run.variable_map_problems = peer->map_problems;
+            }
         }
         else if (described == ControlLink::VersionMismatch)
         {

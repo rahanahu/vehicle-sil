@@ -353,6 +353,23 @@ ConnectionId Hub::agent_connected(PeerHello hello, std::shared_ptr<AgentLink> li
     {
         std::sort(hello.open_seqs->begin(), hello.open_seqs->end()); // looked up under the lock
     }
+    // The seen schema is made outside the lock (its cost grows with the hello, which comes from
+    // outside); a map set meanwhile applies from the next connection.
+    std::shared_ptr<const MappedSchema> mapped;
+    {
+        VariableMap map;
+        {
+            const std::lock_guard maps(mutex_);
+            if (const auto found = variable_maps_.find(hello.participant); found != variable_maps_.end())
+            {
+                map = found->second;
+            }
+        }
+        if (!map.empty())
+        {
+            mapped = std::make_shared<const MappedSchema>(MappedSchema::make(hello.schema, map));
+        }
+    }
     std::shared_ptr<AgentLink> old_link; // released after the lock: its destructor may wait for a thread that calls the hub
     std::unique_lock lock(mutex_);
     const auto id = next_connection_++;
@@ -417,7 +434,17 @@ ConnectionId Hub::agent_connected(PeerHello hello, std::shared_ptr<AgentLink> li
     old_link = std::exchange(entry.link, std::move(link));
     entry.info.participant = hello.participant;
     entry.info.incarnation = std::move(hello.incarnation);
-    entry.info.schema = std::move(hello.schema);
+    entry.info.schema = mapped ? mapped->schema() : std::move(hello.schema);
+    entry.info.sources = mapped ? mapped->sources() : std::vector<std::string>{};
+    entry.info.map_problems.clear();
+    if (mapped)
+    {
+        for (const MapProblem& problem : mapped->problems())
+        {
+            entry.info.map_problems.push_back(problem.message);
+        }
+    }
+    entry.mapped = std::move(mapped);
     entry.info.connected = true;
     entry.info.virtual_time = hello.virtual_time;
     entry.connection = id;
@@ -514,6 +541,25 @@ void Hub::agent_ended(ConnectionId id, const std::string& reason)
     }
 }
 
+void Hub::set_variable_map(const std::string& participant, VariableMap map)
+{
+    const std::lock_guard lock(mutex_);
+    if (map.empty())
+    {
+        variable_maps_.erase(participant);
+    }
+    else
+    {
+        variable_maps_[participant] = std::move(map);
+    }
+}
+
+std::string Hub::reason_as_seen(const std::string& participant, const std::string& reason) const
+{
+    const auto it = peers_.find(participant);
+    return it != peers_.end() && it->second.mapped ? it->second.mapped->reason_to_seen(reason) : reason;
+}
+
 void Hub::agent_submitted(ConnectionId id, std::uint64_t seq, const SubmitResult& result)
 {
     const std::lock_guard lock(mutex_);
@@ -539,7 +585,7 @@ void Hub::agent_submitted(ConnectionId id, std::uint64_t seq, const SubmitResult
         t->result.status = TargetStatus::Invalid;
         break;
     }
-    t->result.reason = result.reason;
+    t->result.reason = reason_as_seen(c->participant, result.reason);
     target_changed(operations_.at(seq));
     forget_finished();
 }
@@ -574,7 +620,7 @@ void Hub::agent_result(ConnectionId id, const CommandResult& result)
     }
     t->result.applied_at = result.applied_at;
     t->result.late = result.late;
-    t->result.reason = result.reason;
+    t->result.reason = reason_as_seen(c->participant, result.reason);
     target_changed(operations_.at(result.seq));
     forget_finished();
 }
@@ -597,6 +643,10 @@ void Hub::agent_values(ConnectionId id, Snapshot snapshot)
         || (entry.latest && snapshot.sequence <= entry.latest->sequence))
     {
         return; // not for this schema, or not newer
+    }
+    if (entry.mapped)
+    {
+        entry.mapped->to_seen(snapshot); // before anyone sees it: every reader shares this one sample
     }
     entry.latest = std::make_shared<const Snapshot>(std::move(snapshot));
     if (values_tap_)
@@ -783,7 +833,7 @@ std::uint64_t Hub::write(OperationRequest request)
         {
             t.incarnation = entry->second.info.incarnation;
             const auto& schema = entry->second.info.schema;
-            for (const auto& w : t.command.writes)
+            for (auto& w : t.command.writes)
             {
                 const auto v = std::find_if(schema.begin(), schema.end(), [&](const VariableInfo& i) { return i.name == w.name; });
                 if (v == schema.end())
@@ -795,6 +845,16 @@ std::uint64_t Hub::write(OperationRequest request)
                 {
                     why = w.name + ": an output is not writable";
                     break;
+                }
+                // Checked against the seen schema; from here the write is the executable's own
+                // (the command is sent only to this incarnation).
+                if (entry->second.mapped)
+                {
+                    if (auto refused = entry->second.mapped->to_actual(w))
+                    {
+                        why = std::move(*refused);
+                        break;
+                    }
                 }
             }
             if (why.empty() && open_targets(t.result.peer) >= entry->second.max_pending)

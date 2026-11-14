@@ -62,6 +62,7 @@ participants:
 | `participants[].required` | | `true`（既定）か `false`。シミュレーションがその participant を待つか。`false` は `describe: false` の participant にだけ書けます。外していない participant のうち、少なくとも 1 つは `true` の participant が要ります（誤り `no-required-participant`） |
 | `participants[].enabled` | | `true`（既定）か `false`。`false` の participant は外します（照合も起動もしません。[participant を外す](#participant-を外すenabled--disable--enable)） |
 | `participants[].manual` | | `false`（既定）か `true`。`true` の participant は、`run` が起動せず、利用者が自分で起動します（デバッガーからなど。[participant を自分で起動する](#participant-を自分で起動するmanual--manual)） |
+| `participants[].variables` | | 変数の対応表。シミュレーションで使う名前から、この実行ファイルの変数への対応を書きます（[変数の名前と値を合わせる](#変数の名前と値を合わせるvariables)）。書いていない変数は、実行ファイルの名前のまま見えます |
 
 - 知らないキーはエラーです（打ち間違いを黙って無視しません）。近い名前があれば示します。同じキーを 2 回書くのもエラーです。
 - 整数は引用符なしで書きます（`"5000"` は文字列なのでエラーです）。真偽値は `true` か `false` です。
@@ -176,6 +177,45 @@ Dashboard    yes       exit code 0
 
 passed: 0 errors, 0 warnings, 1 note
 ```
+
+### 変数の名前と値を合わせる（`variables`）
+
+同じ役目の ECU でも、実行ファイルによって変数の名前、単位、値の表し方が違うことがあります（他人の ECU、古い版、機種ごとの違い）。`variables` に対応を書くと、シミュレーションの側（シナリオ、`check --json`、Control API とその先の GUI）からは、どの実行ファイルも同じ名前と値で見えます。実行ファイルは変えません。名前を ECU の側でそろえられるなら、そのほうが簡単です。対応表は、そろえられないもののためにあります。
+
+```yaml
+participants:
+  - name: Engine
+    command: [engine/engine_small]
+    variables:
+      engine.throttle: throttle_pct                        # 名前を替える
+      engine.speed: { from: rpm_x10, scale: 0.1, unit: rpm }   # 値を一次式で変える
+      engine.gear: { from: gear_raw, map: { P: 0, R: 1, N: 2, D: 3 } }   # 値に名前を付ける
+      engine.turbo: { absent: true }                       # この実行ファイルにはない
+```
+
+キーは、シミュレーションで使う名前です。値は次の 4 つの形のどれかです。1 つの変数に書ける形は 1 つで、ここにないキーは誤りです。
+
+| 形 | 意味 |
+|---|---|
+| `<実行ファイルの変数名>`（文字列） | 名前だけを替えます。`{ from: <名前> }` と同じです |
+| `{ from, scale, offset }` | 見える値 = 実行ファイルの値 × `scale` + `offset`。`scale` は 0 以外の数（書かなければ 1）、`offset` は数（書かなければ 0）。整数か実数の変数に書けます |
+| `{ from, map: { <名前>: <値>, ... } }` | 実行ファイルの値（整数）に名前を付けます。整数か列挙の変数に書けます。1 つの値に付けられる名前は 1 つです |
+| `{ absent: true }` | この実行ファイルには、その変数がありません。ほかのキーと一緒には書けません |
+
+`from` のある形には、`unit`（見える値の単位）も書けます。
+
+見え方は次のとおりです。
+
+- 対応を書いた変数は、キーの名前でだけ見えます。実行ファイルの名前では読み書きできません。変数の並びは、実行ファイルが宣言した順のままです。
+- `scale`、`offset`: 型は実数になります。範囲（`min`、`max`）と刻み（`step`）は見える値に直ります（`scale` が負なら、範囲の両端が入れ替わります）。単位は `unit` に書いたもので、書かなければ空です（実行ファイルの単位は、変えた後の値には当てはまりません）。
+- 書き込みは逆に直します（実行ファイルの値 = (書いた値 − `offset`) ÷ `scale`）。実行ファイルの変数が整数なら、最も近い整数に丸めます。そのため、書いた値と読み戻した値は、丸めの分だけ違うことがあります。シナリオで比べるときは `near` と `tolerance` を使います。範囲の外の値は、実行ファイルに届く前に断ります。
+- `map`: 型は列挙になり、項目は `map` に書いたものだけです。数は実行ファイルの値のままです。実行ファイルによって数が違っても、シナリオに名前で書けば（`engine.gear: D`）同じシナリオが使えます。`map` にない値は書けません。
+- 入力、出力、パラメーターの別は変わりません。
+- `absent: true` の変数は、どこにも見えません。その変数を使うシナリオは、照合で誤りになります。
+
+照合（`check`、`run` の最初）は、対応の全部を実行ファイルの自己申告と比べます（`from` の変数があるか、形が型に合うか、`map` の値を変数が取れるか、名前がほかの変数と重ならないか。所見は [simulation-check.md](simulation-check.md) の `variable-map-*`）。合わない対応が 1 つでもあれば、`run` は何も起動しません。`check --json` の `participants[].variables` は対応の後の変数で、`participants[].variable_map` に両方の名前が出ます。
+
+`describe: false` の participant にも `variables` は書けますが、実行の前には比べられません（注記 `variable-map-not-checked`）。対応は、その participant の変数の口がつながったときに当て、合わなかった対応は実行の所見 `variable-map-not-applied`（誤り）になります。
 
 ## 引数と終了コード
 

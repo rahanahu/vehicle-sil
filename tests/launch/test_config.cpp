@@ -152,9 +152,9 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
                "networks, participants)\n");
     check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
                "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual)\n"
+               "command, step_ms, describe, required, enabled, manual, variables)\n"
                "E 7 unknown-key: participant 'A': unknown key 'Step_ms': did you mean 'step_ms'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual)\n");
+               "command, step_ms, describe, required, enabled, manual, variables)\n");
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'bitrate': remove it, or use one of the keys here (name, kind)\n");
@@ -473,7 +473,7 @@ TEST_CASE(many_errors_are_reported_at_once_in_the_order_of_the_file)
                "ecu_main executable --local itself: remove it (or set describe: false for an executable not made with "
                "ecu_main)\n"
                "E 11 unknown-key: participant 'A': unknown key 'commands': did you mean 'command'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual)\n"
+               "command, step_ms, describe, required, enabled, manual, variables)\n"
                "E 10 missing-key: participant 'A': no command: add command: [<path of the executable>]\n"
                "E 10 duplicate-name: participant 'A' is listed twice (first at line 7); give each participant its own name "
                "(for a second copy of an ECU, e.g. A_2)\n");
@@ -838,7 +838,7 @@ TEST_CASE(a_disabled_participant_is_checked_like_any_other)
                                       "    bitrate: 1\n"
                                       "  - name: A\n    command: a\n    enabled: false\n")),
                "E 10 unknown-key: participant 'B': unknown key 'bitrate': remove it, or use one of the keys here (name, "
-               "command, step_ms, describe, required, enabled, manual)\n"
+               "command, step_ms, describe, required, enabled, manual, variables)\n"
                "E 7 launcher-argument: participant 'B': the command has '--local', but vehicle_sil_launch gives an ecu_main "
                "executable --local itself: remove it (or set describe: false for an executable not made with ecu_main)\n"
                "E 9 not-required-ecu: participant 'B': required: false is only for executables with describe: false: an "
@@ -974,4 +974,116 @@ TEST_CASE(an_error_in_the_file_comes_before_the_names_of_the_command_line)
     // A name given to both is an error all the same (it needs no file).
     check_text(lines(read_config(text, EnabledOverrides{{"Brake"}, {"Brake"}}).override_errors),
                "E 0 usage: --disable and --enable both name Brake: give one of them\n");
+}
+
+// --- a participant's variable map -------------------------------------------------------------
+
+TEST_CASE(a_participants_variables_are_mappings_in_one_of_four_forms)
+{
+    const ConfigRead r = read_config(with_participants("  - name: Engine\n"
+                                                       "    command: e\n"
+                                                       "    variables:\n"
+                                                       "      engine.throttle: throttle_pct\n"
+                                                       "      engine.speed: { from: rpm_x10, scale: 0.1, unit: rpm }\n"
+                                                       "      coolant.temperature: { from: temp_k, offset: -273.15 }\n"
+                                                       "      engine.gear:\n"
+                                                       "        from: gear_raw\n"
+                                                       "        map: { P: 0, R: 1, N: -2 }\n"
+                                                       "      engine.turbo: { absent: true }\n"
+                                                       "      engine.lamp: { from: \"lamp 1\", unit: \"\" }\n"
+                                                       "  - name: Plain\n"
+                                                       "    command: p\n"));
+    check_text(lines(r.findings), "");
+    const ParticipantConfig& engine = r.config->participants[0];
+    CHECK(engine.valid);
+    CHECK_EQ(engine.variables.size(), std::size_t{6});
+    CHECK((engine.variable_lines == std::vector<std::size_t>{7, 8, 9, 10, 13, 14}));
+    control::VariableMapping throttle;
+    throttle.name = "engine.throttle";
+    throttle.from = "throttle_pct";
+    CHECK(engine.variables[0] == throttle);
+    control::VariableMapping speed;
+    speed.name = "engine.speed";
+    speed.from = "rpm_x10";
+    speed.scale = 0.1;
+    speed.unit = "rpm";
+    CHECK(engine.variables[1] == speed);
+    CHECK(!engine.variables[2].scale && engine.variables[2].offset == -273.15 && engine.variables[2].linear());
+    CHECK((engine.variables[3].map == std::vector<control::EnumItem>{{"P", 0}, {"R", 1}, {"N", -2}}));
+    CHECK(engine.variables[3].from == "gear_raw" && !engine.variables[3].linear());
+    control::VariableMapping turbo;
+    turbo.name = "engine.turbo";
+    turbo.absent = true;
+    CHECK(engine.variables[4] == turbo);
+    CHECK(engine.variables[5].from == "lamp 1" && engine.variables[5].unit == std::string());
+    CHECK(r.config->participants[1].variables.empty());
+}
+
+TEST_CASE(a_mapping_that_is_not_one_of_the_forms_is_an_error_and_is_left_out)
+{
+    const std::string forms =
+        "the executable's name of the variable (engine.speed: rpm), { from: rpm, scale: 0.1, offset: 0 } (the value seen "
+        "is the executable's value * scale + offset), { from: gear_raw, map: { P: 0, R: 1 } } (names for its values) or "
+        "{ absent: true } (this executable does not have it)";
+    const ConfigRead r = read_config(with_participants("  - name: A\n"
+                                                       "    command: a\n"
+                                                       "    variables:\n"
+                                                       "      ok: fine\n"
+                                                       "      a: [x]\n"
+                                                       "      b:\n"
+                                                       "      c: { from: x, scale: 0 }\n"
+                                                       "      d: { from: x, scale: fast, offset: \"1\" }\n"
+                                                       "      e: { from: x, factor: 2 }\n"
+                                                       "      f: { scale: 2 }\n"
+                                                       "      g: { from: x, scale: 2, map: { on: 1 } }\n"
+                                                       "      h: { absent: true, from: x }\n"
+                                                       "      i: { absent: false }\n"
+                                                       "      j: { from: x, map: { on: 1, yes: 1, half: 0.5 } }\n"
+                                                       "      k: { from: x, map: [1, 2] }\n"
+                                                       "      l: { from: [x] }\n"
+                                                       "      ok: again\n"
+                                                       "      m: { from: x, from: y }\n"
+                                                       "      n: { from: x, unit: [rpm] }\n"
+                                                       "      o: { absent: maybe }\n"));
+    const std::string p = "participant 'A': variables: ";
+    check_text(lines(r.findings),
+               "E 8 value: " + p + "a: must be " + forms + ", not a list\n"
+               "E 9 value: " + p + "b: must be " + forms + ", not empty\n"
+               "E 10 value: " + p + "c: scale must be a number other than 0 (the value seen is the executable's value * "
+               "scale + offset), not '0'\n"
+               "E 11 value: " + p + "d: scale must be a number other than 0 (the value seen is the executable's value * "
+               "scale + offset), not 'fast'\n"
+               "E 11 value: " + p + "d: offset must be a number (the value seen is the executable's value * scale + "
+               "offset), not the text \"1\"\n"
+               "E 12 unknown-key: " + p + "e: unknown key 'factor': remove it, or use one of the keys here (from, scale, "
+               "offset, map, unit, absent)\n"
+               "E 13 value: " + p + "f: it does not name the executable's variable: add from: <the executable's name of it>\n"
+               "E 14 value: " + p + "g: scale and offset cannot be combined with map: use one of the two (scale and offset "
+               "convert a number, map names the values of an integer or an enum)\n"
+               "E 15 value: " + p + "h: absent: true says that this executable does not have the variable, so it takes no "
+               "other key: remove the others, or absent\n"
+               "E 16 value: " + p + "i: absent: false says nothing: remove it (a variable that is not listed is seen under "
+               "its own name)\n"
+               "E 17 value: " + p + "j: map: on and yes are both 1: give each value one name\n"
+               "E 17 value: " + p + "j: map: half must be the executable's value for that name, a whole number, not '0.5'\n"
+               "E 18 value: " + p + "k: map must give the names of the executable's values ({ P: 0, R: 1 }), not a list\n"
+               "E 19 value: " + p + "l: from must be the executable's name of the variable, not a list\n"
+               "E 20 duplicate-key: " + p + "'ok' appears twice (first at line 7); keep one of them\n"
+               "E 21 duplicate-key: " + p + "m: 'from' appears twice (first at line 21); keep one of them\n"
+               "E 22 value: " + p + "n: unit must be the unit of the value seen (a text such as rpm), not a list\n"
+               "E 23 value: " + p + "o: absent must be true or false, not 'maybe'\n");
+    // Only the mapping that is a form is kept; the entry is checked all the same.
+    CHECK_EQ(r.config->participants[0].variables.size(), std::size_t{1});
+    CHECK(r.config->participants[0].variables[0].name == "ok" && r.config->participants[0].variables[0].from == "fine");
+    CHECK(r.config->participants[0].valid);
+
+    check_text(read(with_participants("  - name: A\n    command: a\n    variables: [x]\n")),
+               "E 6 value: participant 'A': variables must be a mapping of the names the simulation uses to the "
+               "executable's variables (engine.speed: rpm), not a list\n");
+    // Without --describe there is nothing to compare the map with before the run.
+    check_text(read(with_participants("  - name: A\n    command: [a, --registry-uri, \"{registry_uri}\"]\n    describe: false\n"
+                                      "    variables:\n      speed: rpm\n")),
+               "N 8 variable-map-not-checked: participant 'A': variables is not compared for a participant with describe: "
+               "false (the launcher does not know its variables before the run): the mappings apply when its control "
+               "agent connects, and vehicle_sil_launch run reports those that do not fit\n");
 }

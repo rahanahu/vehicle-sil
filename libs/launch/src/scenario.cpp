@@ -190,22 +190,6 @@ public:
     }
 
 private:
-    /// An unquoted finite decimal number ("1", "-2.5", "1e3").
-    bool plain_number(ryml::id_type node, double& value) const
-    {
-        if (!is_scalar(node) || tree_.is_val_quoted(node) || is_null(node))
-        {
-            return false;
-        }
-        const std::string text = detail::to_string(tree_.val(node));
-        const bool plain = !text.empty() && std::all_of(text.begin(), text.end(), [](char c) {
-            return std::isdigit(static_cast<unsigned char>(c)) != 0 || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+';
-        }) && (std::isdigit(static_cast<unsigned char>(text.front())) != 0 || text.front() == '-');
-        const char* end = text.data() + text.size();
-        const auto [ptr, ec] = std::from_chars(text.data(), end, value);
-        return plain && ec == std::errc{} && ptr == end && std::isfinite(value);
-    }
-
     /// A whole number of milliseconds from `least` to kMaxMillis, or empty (and an error).
     std::optional<std::int64_t> millis(ryml::id_type node, const std::string& key, std::int64_t least, const std::string& meaning)
     {
@@ -1067,7 +1051,7 @@ ScenarioCatalog scenario_catalog(const CheckReport& check)
         else
         {
             const EcuDescription& d = result->ecu->description;
-            c.variables = d.variables;
+            c.variables = seen_variables(p, *result->ecu).schema(); // as the run's hub shows them
             if (!d.step)
             {
                 c.unusable = "runs in real time (it has no step): a scenario needs the virtual time of its steps";

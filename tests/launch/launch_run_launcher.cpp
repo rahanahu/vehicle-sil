@@ -102,6 +102,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -492,7 +493,7 @@ void check(const Options& o)
                 "Logger       -     not checked (describe: false)\n"
                 "\n"
                 "error: sim.yaml:7: participant 'Logger': unknown key 'requried': did you mean 'required'? (the keys "
-                "here: name, command, step_ms, describe, required, enabled, manual)\n"
+                "here: name, command, step_ms, describe, required, enabled, manual, variables)\n"
                 "note: sim.yaml:4: participant 'Logger': not checked (describe: false): vehicle_sil_launch cannot "
                 "compare its name, step and networks with this file\n"
                 "note: sim.yaml:5: participant 'Logger': the command has no {registry_uri}, so the executable is not told "
@@ -3450,6 +3451,113 @@ void scenario_same(const Options& o)
     }
 }
 
+/// A scenario through a participant's variable map: the names and values are the map's, and a
+/// write takes effect in the same step as without a map.
+void variable_map(const Options& o)
+{
+    const std::string head = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n";
+    const std::string body = "  - name: Body\n    command: [" + ecu(o) + "]\n";
+    const std::string door = "  - name: Door\n    command: [" + ecu(o) + "]\n";
+    const std::string mapped = head + body +
+                               "    variables:\n"
+                               "      body.fill: { from: level, scale: 0.01, unit: ratio }\n"
+                               "      changed_ms: level_changed_at_ms\n"
+                               "      body.heater: { absent: true }\n" +
+                               door +
+                               "    variables:\n"
+                               "      drive.mode: { from: mode, map: { standby: 0, cruise: 2 } }\n";
+    const std::vector<std::pair<std::string, std::string>> behaviours{{"Body", "scenario-variables"}, {"Door", "scenario-variables"}};
+    const auto steps = [](const std::string& fill, const std::string& changed, const std::string& mode, double unit) {
+        const auto n = [unit](double percent) {
+            char text[32];
+            std::snprintf(text, sizeof(text), "%g", percent * unit);
+            return std::string(text);
+        };
+        return "vehicle_sil_scenario: 1\n"
+               "name: fill\n"
+               "steps:\n"
+               "  - set: { Body." + fill + ": " + n(5) + ", Door." + mode + " }\n"
+               "  - expect: { Body." + changed + ": 0, Door.mode_now: auto, Body." + fill + ": { near: " + n(5) + ", tolerance: 0.000001 } }\n"
+               "  - at_ms: 30\n"
+               "    set: { Body." + fill + ": " + n(6) + " }\n"
+               "  - expect: { Body." + changed + ": 30 }\n"
+               "  - at_ms: 70\n"
+               "    set: { Body." + fill + ": " + n(100) + " }\n"
+               "  - expect: { Body." + changed + ": 70, Body." + fill + ": " + n(100) + " }\n"
+               "  - ramp: { Body." + fill + ": { to: 0, over_ms: 30 } }\n"
+               "  - expect: { Body." + fill + ": 0 }\n";
+    };
+    const auto run = [&](const fs::path& dir, const std::string& what) {
+        const Captured r = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, dir);
+        expect_code(r, 0, what);
+        const std::string out = lf(r.standard_output);
+        require(!contains(out, "variable-map"), what + ": every mapping applies:\n" + out);
+        return scenario_json(out);
+    };
+    // Without a map, in the executable's names and values.
+    fs::path dir = scenario_dir(o, head + body + door, behaviours);
+    write_file(dir / "s.yaml", steps("level", "level_changed_at_ms", "mode: auto", 1.0));
+    std::string plain = run(dir, "without a map");
+    require(contains(plain, "\"status\": \"passed\""), "the scenario passes without a map:\n" + plain);
+
+    // With the map: the same steps at the same times, in the seen names and values.
+    dir = scenario_dir(o, mapped, behaviours);
+    write_file(dir / "s.yaml", steps("body.fill", "changed_ms", "drive.mode: cruise", 0.01));
+    const std::string seen = run(dir, "with a map");
+    require(contains(seen, "\"status\": \"passed\""), "the scenario passes with the map:\n" + seen);
+    const auto times = [](const std::string& json) {
+        std::string out;
+        for (std::size_t at = json.find("_ms\": "); at != std::string::npos; at = json.find("_ms\": ", at + 1))
+        {
+            out += json.substr(at, json.find('\n', at) - at) + " ";
+        }
+        return out;
+    };
+    require(!times(seen).empty(), "the result has the steps' times:\n" + seen);
+    expect_text(times(seen), times(plain), "the times of the steps with and without the map");
+    log("CHECK a scenario through a variable map: the same steps at the same times -> ok");
+
+    // The check shows what the simulation sees, and both names of what is mapped.
+    const Captured json = launch(o, {"check", "sim.yaml", "--json"}, dir);
+    expect_code(json, 0, "check --json");
+    const std::string report = lf(json.standard_output);
+    require(contains(report, "\"name\": \"body.fill\",\n          \"type\": \"real\",\n          \"causality\": \"input\",\n"
+                             "          \"unit\": \"ratio\",\n          \"min\": 0,\n          \"max\": 1,") &&
+                contains(report, "\"name\": \"body.fill\",\n          \"line\": 7,\n          \"from\": \"level\",\n"
+                                 "          \"absent\": false,\n          \"scale\": 0.01,\n          \"offset\": 0,") &&
+                contains(report, "\"name\": \"body.heater\",\n          \"line\": 9,\n          \"from\": null,\n"
+                                 "          \"absent\": true,") &&
+                contains(report, "\"name\": \"drive.mode\",\n          \"type\": \"enum\","),
+            "check --json has the seen variables and the map:\n" + report);
+
+    // The executable's own names are not names of the simulation any more; a value is checked in
+    // the seen range and against the map's names.
+    write_file(dir / "s.yaml", "vehicle_sil_scenario: 1\nsteps:\n"
+                               "  - set: { Body.level: 5 }\n"
+                               "  - set: { Body.body.fill: 1.5 }\n"
+                               "  - set: { Door.drive.mode: auto }\n"
+                               "  - set: { Body.body.heater: 1 }\n");
+    const Captured wrong = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml"}, dir);
+    expect_code(wrong, 1, "check --scenario with the executable's names");
+    const std::string said = lf(wrong.standard_output);
+    require(contains(said, "s.yaml:3: 'Body.level': participant 'Body' has no variable 'level'") &&
+                contains(said, "s.yaml:4: ") && contains(said, "Body.body.fill") &&
+                contains(said, "s.yaml:5: ") && contains(said, "standby (0), cruise (2)") &&
+                contains(said, "s.yaml:6: 'Body.body.heater': participant 'Body' has no variable 'body.heater'"),
+            "the scenario's check uses the seen variables:\n" + said);
+
+    // A mapping that does not fit the executable is an error of the check, and nothing runs.
+    write_file(dir / "sim.yaml", head + body + "    variables:\n      body.fill: { from: levle, scale: 0.01 }\n" + door);
+    const Captured unfit = launch(o, {"run", "sim.yaml"}, dir);
+    expect_code(unfit, 1, "run with a mapping that does not fit");
+    require(contains(lf(unfit.standard_output),
+                     "error: sim.yaml:7: participant 'Body': variables: body.fill: the executable has no variable 'levle': "
+                     "did you mean 'level'? Correct the name, or write { absent: true } if this executable does not have "
+                     "the variable\n"),
+            "the mapping that does not fit:\n" + lf(unfit.standard_output) + lf(unfit.standard_error));
+    log("CHECK a mapping that does not fit stops the run before it starts -> ok");
+}
+
 void scenario_disconnect(const Options& o)
 {
     // Engine off its bus at 300 ms: its last speed is the one of 200 ms, so the dashboard says it is
@@ -4423,7 +4531,7 @@ int main(int argc, char** argv)
             {"events_stderr", events_stderr}, {"realtime", realtime}, {"on_time", on_time}, {"late", late}, {"stall", stall},
             {"speed_change", speed_change}, {"step_width", step_width}, {"pause_step", pause_step},
             {"paused_failures", paused_failures}, {"time_usage", time_usage}, {"control", control},
-            {"scenario", scenario}, {"scenario_same", scenario_same}, {"scenario_disconnect", scenario_disconnect},
+            {"scenario", scenario}, {"scenario_same", scenario_same}, {"variable_map", variable_map}, {"scenario_disconnect", scenario_disconnect},
             {"scenario_failures", scenario_failures}, {"manual", manual},
             {"manual_late", manual_late}, {"manual_fails", manual_fails}, {"manual_stop", manual_stop},
             {"manual_frozen", manual_frozen}, {"manual_thawed", manual_thawed}, {"manual_again", manual_again},

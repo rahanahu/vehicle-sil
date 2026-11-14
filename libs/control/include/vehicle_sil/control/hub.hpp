@@ -6,6 +6,7 @@
 #pragma once
 
 #include "vehicle_sil/control/agent.hpp"
+#include "vehicle_sil/control/variable_map.hpp"
 
 #include <chrono>
 #include <condition_variable>
@@ -73,9 +74,17 @@ struct PeerInfo
     std::string participant;
     std::string incarnation;
     bool connected = false;
+    /// Its variables as the clients see them: what its agent announced, under the names and with
+    /// the types, ranges and units that the peer's variable map gives (Hub::set_variable_map()).
     std::vector<VariableInfo> schema;
     PeerStatus status;
     bool virtual_time = true; ///< PeerHello::virtual_time of its incarnation
+    /// With a variable map: for each variable of `schema`, the name its agent announced it under
+    /// if a mapping applies to it, else "". Empty without a map.
+    std::vector<std::string> sources{};
+    /// The mappings of the peer's variable map that do not fit what its agent announced (what is
+    /// wrong and how to correct it). They are not applied: those variables are seen as announced.
+    std::vector<std::string> map_problems{};
 };
 
 /// One write of a client: a variable of a peer.
@@ -242,6 +251,26 @@ class Hub
 public:
     explicit Hub(HubOptions options = {});
 
+    /// Sets the variable map of `participant` (empty: none): the names and values under which
+    /// every client of the hub sees the variables of that participant's agent, and writes them.
+    /// It takes effect when an agent of the participant connects; set it before (a connection
+    /// that is there keeps what it had).
+    ///
+    /// Where it applies, each under the hub's lock and with the map of the incarnation concerned:
+    /// - agent_connected(): the announced schema becomes the seen one (PeerInfo::schema, sources,
+    ///   map_problems), once per connection.
+    /// - agent_values(): a sample is converted before the hub keeps it, so latest(), latest_of(),
+    ///   the values tap and every subscription share one converted sample. Its time and sequence
+    ///   are the agent's.
+    /// - write(): where the names are checked, each write becomes the executable's name and value
+    ///   (MappedSchema::to_actual()); a value that cannot be converted makes the target Invalid.
+    ///   The request kept for the record has the names and values as the client gave them. The
+    ///   converted command goes only to the incarnation it was converted for.
+    /// - agent_submitted(), agent_result(): a reason that starts with the executable's name of a
+    ///   variable gets the seen name in front.
+    /// Events are not touched.
+    void set_variable_map(const std::string& participant, VariableMap map);
+
     // ---- agent side (transports) -----------------------------------------------------------
 
     /// An agent connected. The same participant with the same incarnation is the same process
@@ -328,6 +357,7 @@ private:
         ConnectionId connection = 0;
         std::size_t max_pending = 0;
         std::shared_ptr<const Snapshot> latest;
+        std::shared_ptr<const MappedSchema> mapped; ///< of its incarnation; nullptr: no variable map
         std::deque<std::uint64_t> outbox; ///< seqs to send, in order
         bool sending = false;            ///< a thread is in AgentLink::send() for this peer
         std::uint64_t generation = 0;    ///< unique per entry: tells an entry made again after forget_peer() apart
@@ -363,6 +393,8 @@ private:
     void target_changed(Operation& op);
     void for_subscribers(const std::string& peer, const std::function<void(Subscription&)>& fn);
     void announce_peer(const PeerEntry& entry);
+    /// An agent's reason in the names the clients see (with the hub's lock held).
+    [[nodiscard]] std::string reason_as_seen(const std::string& participant, const std::string& reason) const;
     void forget_finished();
     /// Commands still in the outbox (never handed to the link) become Invalid.
     void drop_outbox(PeerEntry& entry, const std::string& reason);
@@ -380,6 +412,7 @@ private:
     std::deque<std::uint64_t> finished_; ///< finished operations, oldest first
     std::vector<std::weak_ptr<Subscription>> subscriptions_;
     ValuesTap values_tap_;
+    std::map<std::string, VariableMap, std::less<>> variable_maps_;
 };
 
 } // namespace vehicle_sil::control
