@@ -3,13 +3,7 @@
 // VEHICLE_SIL_GUI_SHOTS にディレクトリを書くと、シナリオが失敗で終わった実行の画面（幅 1280）も撮る。
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import {
-  CONFIGS,
-  REPLAY_LAUNCHER,
-  GUI_PORT,
-  GuiServer,
-  launchGuiServer,
-} from './support/gui-server';
+import { CONFIGS, REPLAY_LAUNCHER, GuiServer, launchGuiServer } from './support/gui-server';
 import { RUN_TIMEOUT } from './support/run-page';
 import {
   Target,
@@ -34,7 +28,7 @@ test.beforeAll(async () => {
     launcher: REPLAY_LAUNCHER,
     root: CONFIGS,
     env: { REPLAY_TICK_MS: '100', REPLAY_FEATURES: FEATURES },
-    port: GUI_PORT + 400,
+    port: 0,
   });
   target = { base: new URL('/', server.url).href, token: server.token };
 });

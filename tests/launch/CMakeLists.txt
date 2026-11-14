@@ -64,13 +64,25 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
               stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
               events_slow events_findings events_nonblocking events_output events_stderr realtime late stall stand_still
               speed_change step_width pause_step paused_failures time_usage control scenario scenario_same
-              scenario_disconnect scenario_failures manual manual_late manual_fails manual_stop manual_frozen
+              scenario_disconnect scenario_failures manual_late manual_fails manual_stop manual_frozen
               manual_thawed manual_again manual_timeout manual_stranger
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>
          --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
          --docs ${PROJECT_SOURCE_DIR}/docs)
+  # The example of the docs with a participant started by hand: its registry is at 8500, the port
+  # of such a run, which the docs show. Builds in other working trees on this machine take turns.
+  vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
+    PREFIX launch_run LABELS integration launch TIMEOUT 300
+    WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
+    SCENARIOS manual
+    ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
+         --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
+         --helper $<TARGET_FILE:vehicle_sil_process_helper>
+         --example-dir $<TARGET_FILE_DIR:vehicle_sil_engine_ecu>/..
+         --docs ${PROJECT_SOURCE_DIR}/docs
+    MACHINE_LOCK port-8500)
   # Alone: it says that an idle simulation is not late at speed 1 within the default tolerance,
   # which is a bound on real time (the other scenarios have bounds on one side only).
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher

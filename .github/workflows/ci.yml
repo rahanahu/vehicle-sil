@@ -19,8 +19,8 @@ concurrency:
 
 # The runners are small (4 CPUs): the tests' upper bounds of waiting for something that will happen are 3
 # times as long (C++, the GUI server's and the screen's tests; a test that passes is not slower). The thread
-# sanitizer's presets set their own factor (CMakePresets.json). scripts/verify.py runs no more tests at once than the
-# runner has CPUs.
+# sanitizer's job leaves it empty, so that its preset's own default applies (VEHICLE_SIL_TEST_TIMEOUT_SCALE_DEFAULT in
+# CMakePresets.json). scripts/verify.py runs no more tests at once than the runner has CPUs.
 env:
   VEHICLE_SIL_TEST_TIMEOUT_SCALE: "3"
 
@@ -75,6 +75,8 @@ jobs:
       CCACHE_MAXSIZE: 1G
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      # Empty (not set) for the thread sanitizer: its preset's default factor (4) applies.
+      VEHICLE_SIL_TEST_TIMEOUT_SCALE: ${{ matrix.preset != 'linux-clang-tsan' && '3' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

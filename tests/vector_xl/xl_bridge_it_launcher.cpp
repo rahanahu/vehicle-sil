@@ -344,6 +344,7 @@ int main(int argc, char** argv)
 {
     try
     {
+        vehicle_sil::test::check_timeout_scale();
         const Options options = parse(argc, argv);
         fs::create_directories(options.workDir);
         log("scenario " + options.scenario + ", logs in " + options.workDir.string());

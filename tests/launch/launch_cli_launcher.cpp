@@ -676,6 +676,7 @@ int main(int argc, char** argv)
     set_log_tag("launch-cli");
     try
     {
+        vehicle_sil::test::check_timeout_scale();
         const Options o = parse(argc, argv);
         fs::remove_all(o.work_dir);
         fs::create_directories(o.work_dir);

@@ -222,6 +222,7 @@ int main(int argc, char** argv)
     set_log_tag("lin-launcher");
     try
     {
+        vehicle_sil::test::check_timeout_scale();
         const Options options = parse(argc, argv);
         fs::create_directories(options.setup.work_dir);
         log("scenario " + options.scenario);
