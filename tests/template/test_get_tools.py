@@ -8,8 +8,10 @@ archives made here stand in for the release's.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import io
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -261,6 +263,58 @@ def test_version() -> None:
     check(p.returncode == 1 and "tag" in p.stderr, f"package.py version --expect another tag: exit code 1 ({p.stderr})")
 
 
+def test_changelog() -> None:
+    """The CHANGELOG.md heading of a version (Keep a Changelog), and the release notes that release.yml cuts."""
+    spec = importlib.util.spec_from_file_location("package", PACKAGE)
+    package = importlib.util.module_from_spec(spec)
+    # package.py imports the modules next to it (as a script, its directory is on the path).
+    sys.path.insert(0, str(PACKAGE.parent))
+    try:
+        spec.loader.exec_module(package)
+    finally:
+        sys.path.remove(str(PACKAGE.parent))
+    head = "# Changelog\n\nIntro.\n\n"
+    body = "The first version.\n\n### Added\n\n#### Launcher\n\n- a\n\n### Fixed\n\n- b\n"
+    older = "\n## [0.0.9] - 2026-01-02\n\n### Added\n\n- old\n"
+    links = "\n[0.1.0]: https://example.invalid/v0.1.0\n"
+    cases = [  # (text, release, what the problem says, or None)
+        (head + "## [0.1.0] - Unreleased\n\n" + body, False, None),
+        (head + "## [0.1.0] - 2026-02-03\n\n" + body, True, None),
+        (head + "## [Unreleased]\n\n## [0.1.0] - 2026-02-03\n\n" + body, True, None),
+        (head + "## [0.1.0] - Unreleased\n\n" + body, True, 'write the release date in its place ("## [0.1.0] - YYYY-MM-DD") in the commit that is tagged v0.1.0'),
+        (head + "## 0.1.0 (unreleased)\n\n" + body, False, '"## 0.1.0 (unreleased)", which is not in the form'),
+        (head + "## [0.1.0]\n\n" + body, False, 'write it as "## [0.1.0] - Unreleased"'),
+        (head + "## [0.1.0] - soon\n\n" + body, False, "which is not in the form of Keep a Changelog"),
+        (head + "## [0.1.0] - 2026-02-30\n\n" + body, True, "is not a date"),
+        (head + "## [0.1.01] - 2026-02-03\n\n" + body, False, 'no heading "## [0.1.0] - Unreleased"'),
+        (head, False, 'no heading "## [0.1.0] - Unreleased"'),
+    ]
+    for text, release, want in cases:
+        got = package.changelog_problems(text, "0.1.0", release)
+        first = text.splitlines()[4] if len(text.splitlines()) > 4 else "(no heading)"
+        if want is None:
+            check(got == [], f"changelog {first!r} (release {release}): accepted ({got})")
+        else:
+            check(len(got) == 1 and want in got[0], f"changelog {first!r} (release {release}): refused with {want!r} ({got})")
+    check(package.changelog_problems((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), VERSION) == [],
+          "CHANGELOG.md has the heading of the version")
+
+    # The release notes: the awk program of release.yml on a made-up CHANGELOG.md.
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    m = re.search(r"awk -v h=\"## \[\$version\] - \" '([^']*)'", workflow)
+    check(m is not None, "release.yml cuts the release notes with awk -v h=\"## [$version] - \" '<program>'")
+    awk = shutil.which("awk")
+    if m is None or awk is None:
+        print("note: no awk here, the release notes are not tried")
+        return
+    for text in (head + "## [0.1.0] - 2026-02-03\n\n" + body + older + links,
+                 head + "## [Unreleased]\n\n- next\n\n## [0.1.0] - 2026-02-03\n\n" + body + links):
+        p = subprocess.run([awk, "-v", "h=## [0.1.0] - ", m.group(1)], input=text, capture_output=True, text=True,
+                           encoding="utf-8")
+        check(p.returncode == 0 and p.stdout.strip() == body.strip(),
+              f"release.yml's awk cuts the body of \"## [0.1.0] - <date>\" ({p.returncode}: {p.stdout!r} {p.stderr})")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         for test in (test_fetch, test_broken, test_unsafe, test_template_archive, test_schemas):
@@ -268,6 +322,7 @@ def main() -> int:
             d.mkdir()
             test(d)
     test_version()
+    test_changelog()
     print(f"{'FAILED' if failures else 'passed'}: {len(failures)} failures")
     return 1 if failures else 0
 

@@ -203,8 +203,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${TAG#v}"
-          # The notes: this version's section of CHANGELOG.md.
-          awk -v v="$version" '$0 ~ "^## " { on = index($0, "## " v) == 1; next } on' CHANGELOG.md > notes.md
+          # The notes: the body of this version's section of CHANGELOG.md ("## [<version>] - <date>"), with its
+          # "###" and "####" headings, up to the next "## " heading or the link reference definitions at the end.
+          awk -v h="## [$version] - " 'index($0, h) == 1 { on = 1; next } /^## |^\[[^]]*\]: / { on = 0 } on' \
+            CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "error: CHANGELOG.md has no section \"## [$version] - YYYY-MM-DD\" with changes under it: add it in the commit that is tagged $TAG"
+            exit 1
+          fi
           gh release create "$TAG" --draft --verify-tag --title "vehicle-sil $version" --notes-file notes.md \
             build/dist/vehicle-sil-tools-* build/dist/vehicle-sil-template-*.zip \
             build/dist/vehicle-sil-gui-client-*.tgz build/dist/SHA256SUMS
