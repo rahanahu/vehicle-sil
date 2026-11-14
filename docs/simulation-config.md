@@ -231,7 +231,10 @@ JSON Schema は [schema/simulation.schema.json](../schema/simulation.schema.json
 | 照合 | `--describe --name <participant 名>` |
 | `run` | `--name <participant 名> --registry-uri <URI> --start-timeout-ms <ms>` |
 
-`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です。開始を待つのはランチャーで、参加しなかった participant を挙げるのもランチャーです。ECU の側の制限は、ランチャーがいなくなったときのためのものです。自分で起動する必須の participant がいる実行では、開始に上限がないので、10^12（`1000000000000`）です。
+`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です。開始を待つのはランチャーで、参加しなかった participant を挙げるのもランチャーです。ECU の側の制限は、ランチャーがいなくなったときのためのものです。次の 2 つの実行では、ECU が始まるまで待つ時間に上限がないので、10^12（`1000000000000`）です。始まらない participant は、ランチャーの `start_timeout_ms` が、止まる前と進んだ後に見つけます。
+
+- 自分で起動する必須の participant がいる実行。
+- `--control` と `--start-paused` で、時刻 0 のステップの前に止まる実行。
 
 `command` に書ける引数と書けないものは、次のとおりです。
 

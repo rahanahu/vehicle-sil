@@ -21,8 +21,8 @@ vehicle-sil は、車の ECU（電子制御ユニット）をソフトウェア�
 
 ```mermaid
 flowchart LR
-    a["ECU（A さんが作る）"] --- silkit(["SIL Kit"])
-    b["ECU（B さんが作る）"] --- silkit
+    a["ECU A"] --- silkit(["SIL Kit"])
+    b["ECU B"] --- silkit
     launch["vehicle_sil_launch<br>check / run / シナリオ"] --- silkit
     bridge["ブリッジ"] --- silkit
     bridge --- real["実機の CAN、<br>外のネットワーク"]
