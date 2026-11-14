@@ -250,9 +250,12 @@ fs::path marked_file(const fs::path& docs, const std::string& marker)
         }
     }
     require(!found.empty(), "no document in " + docs.string() + " has the line " + marker);
-    require(found.size() == 1, "two documents in " + docs.string() + " have the line " + marker + ": " +
-                                   found[0].filename().string() + ", " + found[1].filename().string() +
-                                   " (keep the line in one of them)");
+    if (found.size() > 1)
+    {
+        require(false, "two documents in " + docs.string() + " have the line " + marker + ": " +
+                           found[0].filename().string() + ", " + found[1].filename().string() +
+                           " (keep the line in one of them)");
+    }
     return found[0];
 }
 
