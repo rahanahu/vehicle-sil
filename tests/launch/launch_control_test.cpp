@@ -303,9 +303,11 @@ struct HoldRun
 
 HoldRun hold_run(const fs::path& ecu, const fs::path& helper, const fs::path& dir, bool stuck, bool start_paused,
                  launch::TimeCommands& commands, std::optional<std::chrono::milliseconds> timeout,
-                 const std::function<void()>& during_hold, const std::atomic<int>* interrupts = nullptr)
+                 const std::function<void()>& during_hold, const std::atomic<int>* interrupts = nullptr,
+                 const std::string& more_keys = {})
 {
-    std::string config = "vehicle_sil_simulation: 1\nstop_at_ms: 200\nstart_timeout_ms: 2000\nnetworks: []\nparticipants:\n"
+    std::string config = "vehicle_sil_simulation: 1\nstop_at_ms: 200\nstart_timeout_ms: 2000\n" + more_keys +
+                         "networks: []\nparticipants:\n"
                          "  - name: Engine\n    command: [" + yaml_quote(process::shown_path(ecu)) + "]\n";
     if (stuck)
     {
@@ -414,6 +416,30 @@ void the_start_is_limited_before_and_after_the_hold_but_not_in_it(const fs::path
     }
 }
 
+/// The ECUs wait as long as the run stands still before the first step: the limit the launcher
+/// gives them for their own wait for the start (it ends an ECU that never sees the simulation
+/// start) does not end the hold. Stands still longer than that limit would be without the hold
+/// (start_timeout_ms + stop_timeout_ms + 10 s), then resumes: the run passes.
+void the_ecus_wait_as_long_as_the_run_stands_still(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
+{
+    launch::SimulationConfig limits;
+    limits.start_timeout_ms = 2000;
+    limits.stop_timeout_ms = 1000;
+    const std::chrono::milliseconds without_hold{launch::detail::ecu_start_timeout_ms(limits, false)};
+    require(without_hold == 13000ms, "the limit of an ECU without the hold is the one this test stands still for");
+    launch::TimeCommands commands(true);
+    const HoldRun run = hold_run(ecu, helper, dir, false, true, commands, std::nullopt, [&] {
+        // The ECU began its wait before the hold: this is longer than its limit would be.
+        std::this_thread::sleep_for(without_hold + 1500ms);
+        require(commands.apply(resume_command(), "stdin").accepted, "the resume was refused");
+    }, nullptr, "stop_timeout_ms: 1000\n");
+    require(run.held, "the run held before the first step" + shown(run));
+    require(run.took >= without_hold, "the run stood still longer than the limit" + shown(run));
+    require(run.report.result() == launch::RunResult::Passed && run.report.run &&
+                run.report.run->simulation == launch::SimulationEnd::ReachedStopAt,
+            "the run went on after the hold and passed" + shown(run));
+}
+
 /// --timeout-ms counts the time the run stands still before the first step: a client that never
 /// comes does not leave the run waiting.
 void timeout_counts_the_hold(const fs::path& ecu, const fs::path& helper, const fs::path& dir)
@@ -480,6 +506,7 @@ int main(int argc, char** argv)
          [](const fs::path& ecu, const fs::path&, const fs::path& dir) { failing_start_with_a_stop(ecu, dir); }},
         {"a_hello_without_an_answer_and_what_is_no_message_are_reported", [](const fs::path& ecu, const fs::path&, const fs::path& dir) { hello_without_an_answer(ecu, dir); }},
         {"the_start_is_limited_before_and_after_the_hold_but_not_in_it", the_start_is_limited_before_and_after_the_hold_but_not_in_it},
+        {"the_ecus_wait_as_long_as_the_run_stands_still", the_ecus_wait_as_long_as_the_run_stands_still},
         {"timeout_counts_the_hold", timeout_counts_the_hold},
         {"an_interrupt_ends_the_hold", an_interrupt_ends_the_hold},
         {"a_resume_before_the_window_means_no_hold", a_resume_before_the_window_means_no_hold},
