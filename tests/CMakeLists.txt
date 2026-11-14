@@ -44,6 +44,9 @@ add_subdirectory(control_silkit)
 add_subdirectory(j1939)
 # Vector XL CAN bridge (against a fake XL driver; runs on every platform).
 add_subdirectory(vector_xl)
+# Ethernet bridge: the external link library and the bridge (against fake links; every platform).
+add_subdirectory(eth_link)
+add_subdirectory(ethernet_bridge)
 if(VEHICLE_SIL_TEST_FETCHCONTENT)
   add_subdirectory(fetchcontent)
 endif()

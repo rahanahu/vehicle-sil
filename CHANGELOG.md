@@ -17,6 +17,7 @@ vehicle-sil の版ごとの変更です。版の番号は `MAJOR.MINOR.PATCH` �
 - ブラウザの GUI に自分の画面を配れます（`vehicle-sil-gui --web <dir>`）。クライアントのライブラリは、型つきの npm のパッケージ `vehicle-sil-gui-client-<版>.tgz` でも配ります。`client.variables.bind` で、どの枠組みからでも変数 1 つの値、新しさ、書けるか、書き込みの状態を 1 つの値で受け取れます。
 - Vector XL CAN Bridge: バスの異常を 1 秒に 1 行まで知らせます（`--no-bus-monitor` で止める）。デバイスを外すと終了コード 1 で終わります。送信レシートでバスに出たフレームを数え（`own_tx_dropped`）、止めるときに送れなかった数を `xl_tx_unsent` に出します。`--tx-timeout-ms` を付けると、バスが詰まっている間は新しいフレームを捨てます（`xl_tx_dropped`）。バスオフが続くとチャネルを有効にし直します（`--bus-off-restart-ms`、既定 1000、0 で無効）。この 2 つは `--bitrate`（init 権限）があるときだけ効きます。
 - ECU が終わるとき、取り消された書き込みなどを運ぶ最後の知らせが、ランチャーに届くまで待ちます（ランチャーが返事をし、ECU は長くても 500 ms 待ちます。ふつうはすぐ終わります）。実行の終わりに ECU が取り消した書き込みは、`Unknown` ではなく `Cancelled` で確定します。ランチャーが先に終わっていたときだけ、ECU の終わりが 500 ms 遅れます。
+- イーサネットのブリッジのライブラリ: SIL Kit を使わない外のインターフェースの口と絞り込み（`vehicle_sil::eth_link`。EtherType、VLAN タグの先、SIL Kit の側の MAC、最大長）と、SIL Kit の Ethernet との間でフレームを運ぶ `EthernetBridge`（`vehicle_sil::ethernet_bridge_core`）。輪は送り元 MAC の規則で防ぎ、自分が送ったフレームの戻りを捨て、両側にある MAC のフレームは両方向で捨てて警告します。統計の 1 行、監視の行、引数の解釈を含みます（[docs/ethernet-bridge.md](docs/ethernet-bridge.md)）。
 - 構成（`cmake --preset …`）のときに、ビルドする SIL Kit のコミット、当てたパッチ、写しの場所を 1 行で出します。
 - `scripts/doctor.py`: この PC に、vehicle-sil のビルドと試験に要るものがそろっているかを確かめます（読むだけです。足りないものには入れ方を出します。`--json`）。
 - 開発中にあった単独の Control Server（`vehicle_sil_control_server`）は、この版に入れていません。Control API には `vehicle_sil_launch run --control` でつなぎ、ランチャーに起動させない ECU は participant の `manual`（または `run --manual <name>`）で同じ実行に加えます。
