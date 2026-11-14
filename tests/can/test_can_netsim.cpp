@@ -38,6 +38,7 @@
 #include <vector>
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 namespace orch = SilKit::Services::Orchestration;
 namespace sk = SilKit::Services::Can;
 using vehicle_sil::ParticipantRuntime;
@@ -313,7 +314,7 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
         // Let the simulator connect and offer its network before the peers create their
         // controllers: a controller that finds it later does not pass its SetBaudRate() on (the
         // default bit rate covers that too).
-        const auto deadline = std::chrono::steady_clock::now() + 30s;
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(30s);
         while (true)
         {
             std::ifstream log(logFile);
@@ -382,7 +383,7 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
     start_together(controller, runtimes, 60s);
     for (auto* runtime : runtimes)
     {
-        const auto state = runtime->wait_until_finished(60s);
+        const auto state = runtime->wait_until_finished(scaled_timeout(60s));
         if (!state || *state != orch::ParticipantState::Shutdown)
         {
             throw std::runtime_error(runtime->name() + " did not shut down: " + runtime->step_error());
@@ -414,7 +415,7 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
     }
     if (child)
     {
-        const auto code = child->wait_for(30s);
+        const auto code = child->wait_for(scaled_timeout(30s));
         if (!code || *code != 0)
         {
             throw std::runtime_error("vehicle_sil_can_bus_simulator failed (exit " + (code ? std::to_string(*code) : std::string("none")) +

@@ -14,7 +14,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import CONFIGS, REPLAY, Client, Gui, alive, gui_server, is_ended, is_synced, run_async, wait_until, without_variables
+from conftest import (CONFIGS, REPLAY, Client, Gui, alive, gui_server, is_ended, is_synced, run_async, scaled, wait_until,
+                      without_variables)
 
 POSIX = sys.platform != "win32"
 
@@ -346,7 +347,7 @@ def test_stopping_the_server_stops_the_run(tmp_path: Path, how: int) -> None:
         assert len(pids) == 4 and all(alive(p) for p in pids)
         start = time.monotonic()
         gui.proc.send_signal(how)
-        assert gui.proc.wait(20) == 0
+        assert gui.proc.wait(scaled(20)) == 0
         assert time.monotonic() - start < 5  # in order, through the end of input: no waiting for a timeout
         assert wait_until(lambda: not any(alive(p) for p in pids), 5)
 
@@ -357,7 +358,7 @@ def test_a_launcher_that_does_not_stop_is_killed(tmp_path: Path) -> None:
         pids = start_run(gui, "ignore-stop.yaml")
         start = time.monotonic()
         gui.proc.send_signal(signal.SIGTERM)
-        assert gui.proc.wait(20) == 0
+        assert gui.proc.wait(scaled(20)) == 0
         assert time.monotonic() - start < 10
         assert wait_until(lambda: not any(alive(p) for p in pids), 5)
 
@@ -371,7 +372,7 @@ def test_a_second_signal_skips_the_waiting(tmp_path: Path) -> None:
         assert gui.proc.poll() is None  # waiting for the launcher, which ignores the first stop
         start = time.monotonic()
         gui.proc.send_signal(signal.SIGINT)
-        assert gui.proc.wait(20) == 0
+        assert gui.proc.wait(scaled(20)) == 0
         assert time.monotonic() - start < 10
         assert wait_until(lambda: not any(alive(p) for p in pids), 5)
 

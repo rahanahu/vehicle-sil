@@ -35,6 +35,7 @@
 #include <vector>
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 namespace orch = SilKit::Services::Orchestration;
 using vehicle_sil::ParticipantRuntime;
 using vehicle_sil::SimDuration;
@@ -629,7 +630,7 @@ Traces run_on_silkit(const std::vector<SimDuration>& steps, const EcuFactory& ma
     start_together(controller, runtimes, 30s);
     for (auto* runtime : runtimes)
     {
-        const auto state = runtime->wait_until_finished(60s);
+        const auto state = runtime->wait_until_finished(scaled_timeout(60s));
         if (!state || *state != orch::ParticipantState::Shutdown)
         {
             throw std::runtime_error(runtime->name() + " did not shut down: " + runtime->step_error());
@@ -904,7 +905,7 @@ TEST_CASE(j1939_step_size_above_200_ms_fails_the_participant)
     node.host->add(node.scenario->network, *node.port);
     vehicle_sil::can::bind_host(*node.runtime, *node.host);
     start_together(controller, {node.runtime.get()}, 30s);
-    const auto state = node.runtime->wait_until_finished(60s);
+    const auto state = node.runtime->wait_until_finished(scaled_timeout(60s));
     CHECK(state.has_value());
     CHECK(*state == orch::ParticipantState::Error);
     CHECK(node.host->failed());

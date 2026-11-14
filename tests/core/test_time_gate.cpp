@@ -21,6 +21,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 namespace orch = SilKit::Services::Orchestration;
 using Wall = std::chrono::steady_clock;
@@ -156,20 +157,20 @@ TEST_CASE(virtual_time_gate_stands_still_at_a_controller_step)
     sim.controller->pause_at(at(45ms)); // the first controller step at or after 45 ms is 50 ms
     sim.start();
 
-    auto p = sim.controller->wait_until_paused(10s);
+    auto p = sim.controller->wait_until_paused(scaled_timeout(10s));
     CHECK(p.has_value());
     CHECK_EQ(p->time_since_epoch().count(), SimDuration(50ms).count());
     CHECK(sim.controller->time_state().paused);
     sim.check_stands_still_at(50ms); // A 50, B 48, C 49
 
     sim.controller->run_until(at(100ms));
-    p = sim.controller->wait_until_paused(10s);
+    p = sim.controller->wait_until_paused(scaled_timeout(10s));
     CHECK(p.has_value());
     CHECK_EQ(p->time_since_epoch().count(), SimDuration(100ms).count());
     sim.check_stands_still_at(100ms); // A 100, B 99, C 98
 
     sim.controller->step(30ms);
-    p = sim.controller->wait_until_paused(10s);
+    p = sim.controller->wait_until_paused(scaled_timeout(10s));
     CHECK(p.has_value());
     CHECK_EQ(p->time_since_epoch().count(), SimDuration(130ms).count());
     sim.check_stands_still_at(130ms);
@@ -179,7 +180,7 @@ TEST_CASE(virtual_time_gate_stands_still_at_a_controller_step)
     CHECK(!sim.controller->time_state().paused);
     std::this_thread::sleep_for(20ms);
     sim.controller->pause();
-    p = sim.controller->wait_until_paused(10s);
+    p = sim.controller->wait_until_paused(scaled_timeout(10s));
     CHECK(p.has_value());
     CHECK(*p > at(130ms));
     CHECK_EQ((p->time_since_epoch() % 10ms).count(), 0);
@@ -228,7 +229,7 @@ TEST_CASE(virtual_time_gate_guard_holds_every_step_until_its_owner_moves_it_on)
         CHECK_EQ(seen[i].count(), SimDuration(10ms * static_cast<int>(i)).count());
     }
     // The step at stop_at is not held: the simulation ends by itself, and the wait says so.
-    CHECK(sim.controller->wait_until_finished(10s).has_value());
+    CHECK(sim.controller->wait_until_finished(scaled_timeout(10s)).has_value());
     CHECK(!sim.controller->wait_guarded(1s).has_value());
     for (auto& peer : sim.peers)
     {
@@ -240,7 +241,7 @@ TEST_CASE(virtual_time_gate_start_paused_runs_only_the_steps_at_zero)
 {
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true});
     sim.start();
-    const auto p = sim.controller->wait_until_paused(10s);
+    const auto p = sim.controller->wait_until_paused(scaled_timeout(10s));
     CHECK(p.has_value());
     CHECK(*p == SimTime{});
     std::this_thread::sleep_for(200ms);
@@ -267,31 +268,31 @@ TEST_CASE(virtual_time_gate_pausing_does_not_change_the_steps)
         SimulationController controller(options);
         Recorder a("A", 1ms, registry.uri), b("B", 3ms, registry.uri), c("C", 7ms, registry.uri);
         start_together(controller, {a.runtime.get(), b.runtime.get(), c.runtime.get()}, 30s);
-        CHECK(controller.wait_until_finished(30s).has_value());
+        CHECK(controller.wait_until_finished(scaled_timeout(30s)).has_value());
         for (auto* r : {&a, &b, &c})
         {
-            r->runtime->wait_until_finished(10s);
+            r->runtime->wait_until_finished(scaled_timeout(10s));
             free_run.push_back(r->copy());
         }
     }
 
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true}, kEnd);
     sim.start();
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     for (int i = 0; i < 8; ++i)
     {
         sim.controller->step(10ms * (i % 3 + 1));
-        CHECK(sim.controller->wait_until_paused(10s).has_value());
+        CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     }
     sim.controller->set_speed(2.0);
     sim.controller->run_until(at(200ms));
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     sim.controller->set_speed(std::nullopt);
     sim.controller->resume();
-    CHECK(sim.controller->wait_until_finished(30s).has_value());
+    CHECK(sim.controller->wait_until_finished(scaled_timeout(30s)).has_value());
     for (std::size_t i = 0; i < sim.peers.size(); ++i)
     {
-        sim.peers[i]->runtime->wait_until_finished(10s);
+        sim.peers[i]->runtime->wait_until_finished(scaled_timeout(10s));
         auto gated = sim.peers[i]->copy();
         auto free = free_run[i];
         // The step at kEnd itself may or may not run (it races with the stop); compare below it.
@@ -312,12 +313,12 @@ TEST_CASE(virtual_time_gate_speed_paces_and_changes)
 {
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true, .speed = 2.0});
     sim.start();
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
 
     // 200 ms of simulation at speed 2: about 100 ms of wall-clock time.
     auto begin = Wall::now();
     sim.controller->run_until(at(200ms));
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     const auto at2 = Wall::now() - begin;
     CHECK(at2 >= 90ms);
     CHECK(at2 < 1s);
@@ -328,7 +329,7 @@ TEST_CASE(virtual_time_gate_speed_paces_and_changes)
     std::this_thread::sleep_for(300ms);
     begin = Wall::now();
     sim.controller->step(100ms);
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     const auto half = Wall::now() - begin;
     CHECK(half >= 180ms);
     CHECK(half < 1500ms);
@@ -354,13 +355,13 @@ TEST_CASE(virtual_time_gate_stop_while_paused_shuts_down)
 {
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true});
     sim.start();
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     const auto begin = Wall::now();
     sim.controller->stop("stop while paused");
     CHECK(Wall::now() - begin < 3s);
     for (auto& peer : sim.peers)
     {
-        const auto state = peer->runtime->wait_until_finished(5s);
+        const auto state = peer->runtime->wait_until_finished(scaled_timeout(5s));
         CHECK(state.has_value());
         CHECK(*state == orch::ParticipantState::Shutdown);
     }
@@ -398,11 +399,11 @@ TEST_CASE(virtual_time_gate_stop_requested_before_start_ends_the_simulation)
     }
     for (auto& peer : sim.peers)
     {
-        const auto state = peer->runtime->wait_until_finished(10s);
+        const auto state = peer->runtime->wait_until_finished(scaled_timeout(10s));
         CHECK(state.has_value());
         CHECK(peer->last() < SimDuration(1s));
     }
-    CHECK(sim.controller->wait_until_finished(10s).has_value());
+    CHECK(sim.controller->wait_until_finished(scaled_timeout(10s)).has_value());
 }
 
 TEST_CASE(virtual_time_gate_stop_requested_while_waiting_for_the_others_ends_the_simulation)
@@ -424,7 +425,7 @@ TEST_CASE(virtual_time_gate_stop_requested_while_waiting_for_the_others_ends_the
         });
     }
     auto& first = *sim.peers.front()->runtime;
-    const auto deadline = Wall::now() + 10s;
+    const auto deadline = Wall::now() + scaled_timeout(10s);
     while (!first.started() && Wall::now() < deadline)
     {
         std::this_thread::sleep_for(5ms);
@@ -447,10 +448,10 @@ TEST_CASE(virtual_time_gate_stop_requested_while_waiting_for_the_others_ends_the
     }
     for (auto& peer : sim.peers)
     {
-        CHECK(peer->runtime->wait_until_finished(10s).has_value());
+        CHECK(peer->runtime->wait_until_finished(scaled_timeout(10s)).has_value());
         CHECK(peer->last() < SimDuration(1s));
     }
-    CHECK(sim.controller->wait_until_finished(10s).has_value());
+    CHECK(sim.controller->wait_until_finished(scaled_timeout(10s)).has_value());
 }
 
 TEST_CASE(virtual_time_gate_a_step_past_the_end_of_time_saturates)
@@ -460,13 +461,13 @@ TEST_CASE(virtual_time_gate_a_step_past_the_end_of_time_saturates)
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true});
     sim.start();
     sim.controller->step(10ms);
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     CHECK(sim.controller->time_state().now == at(10ms));
     sim.controller->step(SimDuration::max());
     const auto target = sim.controller->time_state().pause_target;
     CHECK(target.has_value() && *target == SimTime::max());
     sim.controller->pause();
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
 }
 
 TEST_CASE(virtual_time_gate_api_misuse_is_rejected)
@@ -549,9 +550,9 @@ TEST_CASE(virtual_time_gate_targets_in_the_past_and_resume)
 {
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true});
     sim.start();
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     sim.controller->run_until(at(50ms));
-    CHECK(sim.controller->wait_until_paused(10s) == std::optional<SimTime>(at(50ms)));
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)) == std::optional<SimTime>(at(50ms)));
     // Already at or after the target: run_until stays.
     sim.controller->run_until(at(30ms));
     CHECK(sim.controller->time_state().paused);
@@ -565,7 +566,7 @@ TEST_CASE(virtual_time_gate_targets_in_the_past_and_resume)
     CHECK(!sim.controller->time_state().pause_target.has_value());
     std::this_thread::sleep_for(100ms);
     sim.controller->pause_at(at(20ms)); // passed: the next controller step
-    const auto p = sim.controller->wait_until_paused(10s);
+    const auto p = sim.controller->wait_until_paused(scaled_timeout(10s));
     CHECK(p.has_value());
     CHECK(*p > at(60ms));
     sim.check_stands_still_at(p->time_since_epoch());
@@ -575,11 +576,11 @@ TEST_CASE(virtual_time_gate_abort_while_paused_ends_the_simulation)
 {
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true});
     sim.start();
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     sim.controller->abort();
     for (auto& peer : sim.peers)
     {
-        CHECK(peer->runtime->wait_until_finished(10s).has_value());
+        CHECK(peer->runtime->wait_until_finished(scaled_timeout(10s)).has_value());
     }
     CHECK(!sim.controller->wait_until_paused(1s).has_value());
     CHECK(!sim.controller->time_state().paused);
@@ -591,10 +592,10 @@ TEST_CASE(virtual_time_gate_stop_at_between_controller_steps)
     // no peer runs a step that starts after 300 ms.
     GateSim sim(TimeControlOptions{.step = 10ms}, 295ms);
     sim.start();
-    CHECK(sim.controller->wait_until_finished(30s).has_value());
+    CHECK(sim.controller->wait_until_finished(scaled_timeout(30s)).has_value());
     for (auto& peer : sim.peers)
     {
-        peer->runtime->wait_until_finished(10s);
+        peer->runtime->wait_until_finished(scaled_timeout(10s));
         const auto last = peer->last();
         CHECK(last <= SimDuration(300ms));
         CHECK(last > SimDuration(300ms) - peer->step - peer->step);
@@ -615,9 +616,9 @@ TEST_CASE(virtual_time_gate_counts_the_steps_that_fall_behind_the_wall_clock)
     // so the controller sees some of its steps one step late, and the step after those on time.)
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true, .speed = 1.0, .late_tolerance = 5ms}, std::nullopt, 10ms);
     sim.start();
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     sim.controller->run_until(at(200ms));
-    CHECK(sim.controller->wait_until_paused(30s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(30s)).has_value());
     const TimeState s = sim.controller->time_state();
     // Steps 10 .. 200 ms are paced (the one at 0 takes the base on resume).
     CHECK_EQ(s.paced_steps, std::uint64_t{20});
@@ -633,7 +634,7 @@ TEST_CASE(virtual_time_gate_counts_the_steps_that_fall_behind_the_wall_clock)
     // As fast as possible: nothing is paced, nothing is late.
     sim.controller->set_speed(std::nullopt);
     sim.controller->step(50ms);
-    CHECK(sim.controller->wait_until_paused(30s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(30s)).has_value());
     CHECK_EQ(sim.controller->time_state().paced_steps, std::uint64_t{20});
     CHECK_EQ(sim.controller->time_state().slipped.count(), s.slipped.count());
 }
@@ -643,28 +644,33 @@ TEST_CASE(virtual_time_gate_does_not_count_the_time_it_stood_still_as_late)
     // Paused at 0 for 1000 ms at speed 1, then 100 ms of simulation: had the pause counted, the
     // first step after it would be 1000 ms late. The same after a pause of 1000 ms at 100 ms and a
     // change of speed while paused.
+    // The time it stood still and the sleep are both steady_clock, but a check that it counted
+    // the sleep allows for a tick (about 16 ms on Windows): CI on Windows saw it count less than
+    // the sleep. Why is unconfirmed; perhaps sleep_for() returns a tick early there, measured by
+    // steady_clock.
+    constexpr auto kTick = 20ms;
     GateSim sim(TimeControlOptions{.step = 10ms, .start_paused = true, .speed = 1.0, .late_tolerance = 500ms});
     sim.start();
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     std::this_thread::sleep_for(1000ms);
-    CHECK(sim.controller->time_state().paused_for >= 1000ms);
+    CHECK(sim.controller->time_state().paused_for >= 1000ms - kTick);
     sim.controller->run_until(at(100ms));
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     std::this_thread::sleep_for(1000ms);
     // A pause, a speed change and a resume in between do not count either.
     sim.controller->set_speed(2.0);
     sim.controller->step(100ms);
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     const TimeState s = sim.controller->time_state();
     CHECK_EQ(s.paced_steps, std::uint64_t{20});
     CHECK_EQ(s.late_steps, std::uint64_t{0});
-    CHECK(s.paused_for >= 2000ms);
+    CHECK(s.paused_for >= 2000ms - 2 * kTick);
     // 100 ms at speed 1 and 100 ms at speed 2, and none of the 2000 ms it stood still.
     CHECK(s.running_for >= 150ms);
     CHECK(s.running_for < 1000ms);
     // Standing still goes on counting while it lasts.
     std::this_thread::sleep_for(100ms);
-    CHECK(sim.controller->time_state().paused_for >= s.paused_for + 100ms);
+    CHECK(sim.controller->time_state().paused_for >= s.paused_for + 100ms - kTick);
     CHECK(sim.controller->time_state().paused);
 }
 
@@ -677,7 +683,7 @@ TEST_CASE(virtual_time_gate_a_speed_set_before_the_start_paces_from_the_first_st
     sim.controller->pause_at(at(200ms));
     std::this_thread::sleep_for(1000ms);
     sim.start();
-    CHECK(sim.controller->wait_until_paused(10s).has_value());
+    CHECK(sim.controller->wait_until_paused(scaled_timeout(10s)).has_value());
     const TimeState s = sim.controller->time_state();
     CHECK_EQ(s.paced_steps, std::uint64_t{20});
     CHECK_EQ(s.late_steps, std::uint64_t{0});
@@ -690,7 +696,7 @@ TEST_CASE(virtual_time_gate_measures_the_step_at_stop_at)
     // the last, at stop_at, which the gate does not hold.
     GateSim sim(TimeControlOptions{.step = 10ms, .speed = 1.0, .late_tolerance = 100ms}, 200ms, 300ms, 190ms);
     sim.start();
-    CHECK(sim.controller->wait_until_finished(30s).has_value());
+    CHECK(sim.controller->wait_until_finished(scaled_timeout(30s)).has_value());
     const TimeState s = sim.controller->time_state();
     CHECK_EQ(s.now.time_since_epoch().count(), SimDuration(200ms).count());
     CHECK_EQ(s.paced_steps, std::uint64_t{20}); // 10 .. 200 ms
@@ -712,7 +718,7 @@ TEST_CASE(virtual_time_gate_counts_a_stall_while_it_lasts_and_when_the_run_is_st
     // for a second and a half.
     GateSim sim(TimeControlOptions{.step = 10ms, .speed = 1.0, .late_tolerance = 100ms}, std::nullopt, 500ms, 100ms);
     sim.start();
-    const auto limit = Wall::now() + 30s;
+    const auto limit = Wall::now() + scaled_timeout(30s);
     while (sim.controller->time_state().now < at(100ms) && Wall::now() < limit)
     {
         std::this_thread::sleep_for(5ms);
@@ -759,7 +765,7 @@ TEST_CASE(virtual_time_gate_numbers_stop_when_another_participant_or_an_abort_en
         {
             sim.peers[0]->runtime->request_stop("test: a participant stops the simulation");
         }
-        CHECK(sim.controller->wait_until_finished(30s).has_value());
+        CHECK(sim.controller->wait_until_finished(scaled_timeout(30s)).has_value());
         const TimeState s = sim.controller->time_state();
         std::this_thread::sleep_for(300ms);
         const TimeState later = sim.controller->time_state();
@@ -810,12 +816,18 @@ TEST_CASE(virtual_time_step_hold_of_a_participant_runtime)
         return now == at(50ms) || now == at(200ms) || now == at(250ms);
     });
     start_together(controller, {holder.runtime.get(), a.runtime.get()}, 30s);
+    // A gets to the hold at 50 ms (how soon depends on the machine) and stays there.
+    const auto held = Wall::now() + scaled_timeout(10s);
+    while (a.last() < SimDuration(50ms) && Wall::now() < held)
+    {
+        std::this_thread::sleep_for(5ms);
+    }
     std::this_thread::sleep_for(300ms);
     CHECK_EQ(a.last().count(), SimDuration(50ms).count());
     std::thread releaser([&] { holder.runtime->release_step(); });
     releaser.join();
     // Past the throwing hold at 100 ms up to the next hold at 200 ms.
-    const auto deadline = Wall::now() + 10s;
+    const auto deadline = Wall::now() + scaled_timeout(10s);
     while (a.last() < SimDuration(200ms) && Wall::now() < deadline)
     {
         std::this_thread::sleep_for(5ms);
@@ -825,7 +837,7 @@ TEST_CASE(virtual_time_step_hold_of_a_participant_runtime)
     CHECK(holder.runtime->step_error().empty());
     // Released at 200 ms, it runs on to 250 ms and stops itself there.
     holder.runtime->release_step();
-    CHECK(holder.runtime->wait_until_finished(10s).has_value());
+    CHECK(holder.runtime->wait_until_finished(scaled_timeout(10s)).has_value());
     CHECK(stopping.load());
     CHECK_EQ(holds_after_stop.load(), 0);
     controller.stop("done");

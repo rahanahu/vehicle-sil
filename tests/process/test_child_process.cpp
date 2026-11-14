@@ -25,6 +25,7 @@
 
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using vehicle_sil::process::CaptureOptions;
 using vehicle_sil::process::Captured;
 using vehicle_sil::process::run_captured;
@@ -74,12 +75,15 @@ TEST_CASE(reads_much_output_on_both_streams_without_blocking)
 
 TEST_CASE(kills_a_process_that_takes_too_long_and_keeps_what_it_wrote)
 {
+    // The helper must have written its lines before the time limit ends it: on a slow machine
+    // its start takes a while, so the limit is scaled.
+    const auto limit = scaled_timeout(300ms);
     const auto start = std::chrono::steady_clock::now();
     const Captured run =
-        run_captured(kHelper, {"--out", "started\n", "--err", "waiting\n", "--sleep-ms", "60000"}, CaptureOptions{300ms});
+        run_captured(kHelper, {"--out", "started\n", "--err", "waiting\n", "--sleep-ms", "60000"}, CaptureOptions{limit});
     const auto took = std::chrono::steady_clock::now() - start;
     CHECK(!run.exit_code.has_value());
-    CHECK(took >= 300ms);
+    CHECK(took >= limit);
     CHECK(took < 20s);
     check_text(run.standard_output, "started\n", "stdout");
     check_text(run.standard_error, "waiting\n", "stderr");
@@ -182,7 +186,7 @@ TEST_CASE(child_process_writes_both_streams_to_its_log_file)
     const fs::path log = scratch("log") / "child.log";
     {
         vehicle_sil::process::ChildProcess child(kHelper, {"--out", "out\n", "--err", "err\n", "--exit", "7"}, log);
-        const auto code = child.wait_for(30s);
+        const auto code = child.wait_for(scaled_timeout(30s));
         CHECK(code.has_value());
         CHECK_EQ(*code, 7);
     }
