@@ -9,6 +9,8 @@
 #include "network_test_access.hpp"
 #include "test_harness.hpp"
 
+#include "frame_seat.hpp"
+
 #include "vehicle_sil/can/step_driver.hpp"
 #include "vehicle_sil/j1939/broadcast_suppression.hpp"
 #include "vehicle_sil/j1939/codec_node.hpp"
@@ -128,6 +130,92 @@ TEST_CASE(steady_state_steps_do_not_allocate)
     CHECK(bytes > 0u);
     CHECK_EQ(bench.network.statistics().receive_overflows, 0u);
     CHECK_EQ(bench.network.statistics().control_frames_dropped, 0u);
+}
+
+namespace {
+
+/// Counts what the seat is told (no allocation).
+struct CountingSeat final : vehicle_sil::j1939::detail::FrameSeat
+{
+    void on_frame(SimTime, const vehicle_sil::can::Frame& frame, bool local) override
+    {
+        ++frames;
+        local_frames += local ? 1u : 0u;
+        bytes += frame.length;
+    }
+    void on_message(const Message& message, bool) override
+    {
+        ++messages;
+        bytes += message.data.size();
+    }
+    void on_step_end(SimTime) override { ++step_ends; }
+    struct Counts
+    {
+        std::size_t frames, local_frames, messages, step_ends;
+    };
+    [[nodiscard]] Counts counts() const noexcept { return {frames, local_frames, messages, step_ends}; }
+    std::size_t frames = 0;
+    std::size_t local_frames = 0;
+    std::size_t messages = 0;
+    std::size_t step_ends = 0;
+    std::size_t bytes = 0;
+};
+
+} // namespace
+
+TEST_CASE(steady_state_steps_with_the_listeners_seat_taken_do_not_allocate)
+{
+    // The seat is empty in every other case of this file. Taken, the engine tells it about each
+    // frame, each message and each step without allocating.
+    Bench bench;
+    Node& a = bench.add_node(0x80);
+    Node& b = bench.add_node(0x81);
+    std::size_t handled = 0;
+    a.on_any_message([&](const Message&) { ++handled; });
+    b.on_any_message([&](const Message&) { ++handled; });
+    std::array<std::uint8_t, 40> big{};
+    bench.app = [&](SimTime now) {
+        const std::array<std::uint8_t, 3> data{static_cast<std::uint8_t>(vehicle_sil::to_ns(now) / 1000000), 1, 2};
+        CHECK(a.send(Pgn{kPgnPropB}, data) == SendStatus::Ok);
+        if (vehicle_sil::to_ns(now) % 500000000 == 0) // a broadcast now and then: transport frames, looped back
+        {
+            CHECK(b.send(Pgn{0xFF30}, big) == SendStatus::Ok);
+        }
+    };
+    CountingSeat seat;
+    NetworkTestAccess::set_seat(bench.network, &seat);
+    const auto inject_traffic = [&] {
+        const SimTime t = bench.next_time();
+        bench.inject(t, frame(6, kPgnPropB, 0x90, kGlobal, {9, 8, 7}));
+        bench.inject(t, frame(3, kPgnPropA, 0x91, 0x80, {1}));
+        bench.inject(t, frame(3, kPgnPropA, 0x92, 0x55, {1})); // to nobody here
+    };
+    for (int i = 0; i < 5; ++i)
+    {
+        inject_traffic();
+        bench.step();
+        static_cast<void>(bench.take_sent());
+    }
+    const CountingSeat::Counts before = seat.counts();
+    std::size_t counted = 0;
+    constexpr std::size_t kSteps = 120;
+    for (std::size_t i = 0; i < kSteps; ++i)
+    {
+        inject_traffic();
+        g_allocations.store(0);
+        g_counting.store(true);
+        bench.step();
+        g_counting.store(false);
+        counted += g_allocations.load();
+        static_cast<void>(bench.take_sent());
+    }
+    CHECK_EQ(counted, 0u);
+    CHECK_EQ(seat.step_ends - before.step_ends, kSteps);
+    CHECK(seat.frames - before.frames >= 4 * kSteps); // three from outside and the node's own, per step
+    CHECK(seat.local_frames - before.local_frames > kSteps); // also the broadcast's transport frames
+    CHECK(seat.messages - before.messages > 4 * kSteps); // also the broadcasts put together
+    CHECK(handled > 4 * kSteps);
+    CHECK(!bench.network.failed());
 }
 
 TEST_CASE(the_counter_sees_allocations)
