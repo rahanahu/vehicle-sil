@@ -247,6 +247,19 @@ TEST_CASE(pcap_interface_list_shows_the_name_to_give_and_what_the_library_says)
     CHECK_TEXT(format_pcap_devices({}, PcapFlavor::Npcap, ""),
                "interfaces Npcap offers; --backend npcap takes the Ethernet ones:\n  none. If Npcap was installed for "
                "administrators only, run this from a console started as administrator.\n");
+    // The loopback device alone: what Npcap installed for administrators only gives another user.
+    const std::vector<PcapDevice> loopbackOnly = {
+        {"\\Device\\NPF_Loopback", "Adapter for loopback traffic capture", "", kPcapIfUp | kPcapIfLoopback}};
+    CHECK_TEXT(format_pcap_devices(loopbackOnly, PcapFlavor::Npcap, ""),
+               "interfaces Npcap offers; --backend npcap takes the Ethernet ones:\n"
+               "  --interface \\Device\\NPF_Loopback  up, loopback  (Adapter for loopback traffic capture)\n"
+               "  Npcap offers no network adapter here: if it was installed for administrators only, run this from a console "
+               "started as administrator, or install Npcap again without that limit. A disabled adapter is not offered "
+               "either: enable it in Windows.\n");
+    // libpcap has no such setting.
+    const std::vector<PcapDevice> lo = {{"lo", "", "", kPcapIfUp | kPcapIfLoopback}};
+    CHECK_TEXT(format_pcap_devices(lo, PcapFlavor::Libpcap, ""),
+               "interfaces libpcap offers; --backend pcap takes the Ethernet ones:\n  --interface lo  up, loopback\n");
 }
 
 TEST_CASE(pcap_api_names_every_function_it_does_not_find)

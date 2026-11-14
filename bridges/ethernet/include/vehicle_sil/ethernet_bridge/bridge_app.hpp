@@ -49,6 +49,11 @@ enum class HostOs
 /// in for a while. (Without promiscuous mode an adapter passes on only frames to its own
 /// address and to group addresses; the SIL Kit devices have other addresses.)
 ///
+/// A frame that came in before the bridge sent from its destination counts too: the addresses
+/// frames came in for are remembered until the SIL Kit side is known. An interface that passes
+/// on frames to more addresses than are remembered does not filter by address, so the warning
+/// is not given there either.
+///
 /// Everything else is passed to the wrapped link unchanged. The contract of
 /// eth_link::ExternalLink holds: transmit() takes no lock and does not block.
 class PromiscuousHint final : public eth_link::ExternalLink
@@ -57,7 +62,8 @@ public:
     using Clock = std::function<std::chrono::steady_clock::time_point()>;
 
     /// How many source addresses of sent frames are remembered; with more, any frame to an
-    /// individual address counts as an answer.
+    /// individual address counts as an answer. Also how many destination addresses of received
+    /// frames are remembered; with more, the interface is taken not to filter by address.
     static constexpr std::size_t kMaxAddresses = 32;
 
     /// `link` must outlive this object. `after`: how long after the first frame sent the warning
@@ -66,7 +72,7 @@ public:
                              Clock clock = [] { return std::chrono::steady_clock::now(); });
 
     /// The warning, once, when it is due: a frame was sent `after` or longer ago and no frame to
-    /// an address of the SIL Kit side has come in. Call it from one thread.
+    /// an address of the SIL Kit side has come in, before or after. Call it from one thread.
     [[nodiscard]] std::optional<std::string> take_warning();
 
     void start(EventHandler handler) override;
@@ -77,8 +83,13 @@ public:
     [[nodiscard]] std::string last_error() const override { return link_.last_error(); }
 
 private:
-    void sent_from(const eth_link::MacAddress& source) noexcept;
+    using Addresses = std::array<std::atomic<std::uint64_t>, kMaxAddresses>;
+    /// Puts `address` into `held` if it is not there; false if there is no room for it.
+    static bool remember(Addresses& held, const eth_link::MacAddress& address) noexcept;
+    [[nodiscard]] static bool holds(const Addresses& held, std::uint64_t entry) noexcept;
     [[nodiscard]] bool is_silkit_address(const eth_link::MacAddress& address) const noexcept;
+    /// A frame came in earlier for an address the bridge has sent from since.
+    [[nodiscard]] bool answered_before_sending() const noexcept;
 
     eth_link::ExternalLink& link_;
     const std::chrono::milliseconds after_;
@@ -86,8 +97,10 @@ private:
 
     /// Addresses frames were sent from: the address's value with kUsed set, 0 while free.
     static constexpr std::uint64_t kUsed = std::uint64_t{1} << 48;
-    std::array<std::atomic<std::uint64_t>, kMaxAddresses> addresses_{};
+    Addresses addresses_{};
     std::atomic<bool> more_addresses_{false};
+    /// Individual addresses frames came in for while they were not known as SIL Kit's; same form.
+    Addresses received_for_{};
     /// When the first frame was sent (the clock's count), kNotSent before.
     static constexpr std::int64_t kNotSent = -1;
     std::atomic<std::int64_t> first_sent_{kNotSent};

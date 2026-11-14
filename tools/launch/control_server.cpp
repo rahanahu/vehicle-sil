@@ -277,6 +277,10 @@ std::string listen_address(const std::string& value)
     }
     if (value.rfind("unix:", 0) == 0)
     {
+        if (const std::string problem = control_grpc::unix_socket_path_problem(value); !problem.empty())
+        {
+            throw cli::UsageError("--control " + value + ": " + problem);
+        }
         return value;
     }
     const auto colon = value.rfind(':');

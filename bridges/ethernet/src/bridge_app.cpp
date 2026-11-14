@@ -3,6 +3,7 @@
 
 #include "vehicle_sil/eth_link/frame_filter.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace vehicle_sil::ethernet_bridge {
@@ -73,6 +74,10 @@ void PromiscuousHint::start(EventHandler handler)
     {
         address.store(0);
     }
+    for (auto& address : received_for_)
+    {
+        address.store(0);
+    }
     more_addresses_.store(false);
     first_sent_.store(kNotSent);
     answered_.store(false);
@@ -80,10 +85,15 @@ void PromiscuousHint::start(EventHandler handler)
     link_.start([this, handler = std::move(handler)](const eth_link::LinkEvent& event) {
         if (event.kind == eth_link::LinkEventKind::Frame && !answered_.load(std::memory_order_relaxed))
         {
-            if (const auto destination = eth_link::destination_of(event.frame);
-                destination && !destination->is_group() && is_silkit_address(*destination))
+            if (const auto destination = eth_link::destination_of(event.frame); destination && !destination->is_group())
             {
-                answered_.store(true);
+                // Not known as an address of the SIL Kit side: the bridge may send from it later
+                // (take_warning() looks). No room for it: the interface passes on frames to many
+                // addresses, so it does not filter by address and the hint would mislead.
+                if (is_silkit_address(*destination) || !remember(received_for_, *destination))
+                {
+                    answered_.store(true);
+                }
             }
         }
         handler(event);
@@ -95,9 +105,9 @@ eth_link::TransmitResult PromiscuousHint::transmit(std::span<const std::uint8_t>
     const auto result = link_.transmit(frame);
     if (result == eth_link::TransmitResult::Ok && !answered_.load(std::memory_order_relaxed))
     {
-        if (const auto source = eth_link::source_of(frame); source && !source->is_group())
+        if (const auto source = eth_link::source_of(frame); source && !source->is_group() && !remember(addresses_, *source))
         {
-            sent_from(*source);
+            more_addresses_.store(true);
         }
         if (first_sent_.load() == kNotSent)
         {
@@ -108,39 +118,40 @@ eth_link::TransmitResult PromiscuousHint::transmit(std::span<const std::uint8_t>
     return result;
 }
 
-void PromiscuousHint::sent_from(const eth_link::MacAddress& source) noexcept
+bool PromiscuousHint::remember(Addresses& held, const eth_link::MacAddress& address) noexcept
 {
-    const std::uint64_t wanted = source.value() | kUsed;
-    for (auto& address : addresses_)
-    {
-        std::uint64_t held = address.load();
-        if (held == 0 && address.compare_exchange_strong(held, wanted))
-        {
-            return;
-        }
-        if (held == wanted)
-        {
-            return;
-        }
-    }
-    more_addresses_.store(true);
-}
-
-bool PromiscuousHint::is_silkit_address(const eth_link::MacAddress& address) const noexcept
-{
-    if (more_addresses_.load())
-    {
-        return true;
-    }
     const std::uint64_t wanted = address.value() | kUsed;
-    for (const auto& held : addresses_)
+    for (auto& entry : held)
     {
-        if (held.load() == wanted)
+        std::uint64_t now = entry.load();
+        if (now == 0 && entry.compare_exchange_strong(now, wanted))
+        {
+            return true;
+        }
+        if (now == wanted)
         {
             return true;
         }
     }
     return false;
+}
+
+bool PromiscuousHint::holds(const Addresses& held, std::uint64_t entry) noexcept
+{
+    return std::ranges::any_of(held, [entry](const auto& one) { return one.load() == entry; });
+}
+
+bool PromiscuousHint::is_silkit_address(const eth_link::MacAddress& address) const noexcept
+{
+    return more_addresses_.load() || holds(addresses_, address.value() | kUsed);
+}
+
+bool PromiscuousHint::answered_before_sending() const noexcept
+{
+    return std::ranges::any_of(received_for_, [this](const auto& one) {
+        const std::uint64_t entry = one.load();
+        return entry != 0 && (more_addresses_.load() || holds(addresses_, entry));
+    });
 }
 
 std::optional<std::string> PromiscuousHint::take_warning()
@@ -157,6 +168,11 @@ std::optional<std::string> PromiscuousHint::take_warning()
     const auto since = clock_().time_since_epoch() - std::chrono::steady_clock::duration(sent);
     if (since < after_)
     {
+        return std::nullopt;
+    }
+    if (answered_before_sending())
+    {
+        answered_.store(true);
         return std::nullopt;
     }
     warned_ = true;

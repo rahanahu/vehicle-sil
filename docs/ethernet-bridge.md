@@ -76,7 +76,7 @@ vehicle_sil_ethernet_bridge --registry-uri silkit://127.0.0.1:8500 --network ETH
 | 3 | 準備の失敗（この OS で使えないバックエンド、入っていない pcap のライブラリ、インターフェース、SIL Kit）: `FAIL setup: <理由>` |
 | 4 | 引数の誤り |
 
-プロミスキャスなしで（`packet`、`npcap`、`pcap`）、ブリッジが外へフレームを送ってから 5 秒たっても、SIL Kit の側の MAC アドレス（外へ送ったフレームの送り元）宛てのフレームが 1 つも来ないとき、手がかりを 1 回だけ警告します。プロミスキャスなしのインターフェースは、自分のアドレス宛てとグループのアドレス宛てのフレームしか渡さず、SIL Kit の機器のアドレスはインターフェースのアドレスと違うからです。返事を待たない使い方（外へ流すだけ）でも出るので、文は条件つきです。
+プロミスキャスなしで（`packet`、`npcap`、`pcap`）、ブリッジが外へフレームを送ってから 5 秒たっても、SIL Kit の側の MAC アドレス（外へ送ったフレームの送り元）宛てのフレームが 1 つも来ないとき、手がかりを 1 回だけ警告します。プロミスキャスなしのインターフェースは、自分のアドレス宛てとグループのアドレス宛てのフレームしか渡さず、SIL Kit の機器のアドレスはインターフェースのアドレスと違うからです。ブリッジが最初に送るより前に届いた分も数えます（その宛先からブリッジが後で送れば、届いていたとみなします）。宛先で絞らないインターフェース（個別のアドレス宛てのフレームを、覚えていられる数（32）より多くの宛先について渡したもの）でも出しません。返事を待たない使い方（外へ流すだけ）でも出るので、文は条件つきです。
 
 ```
 no frame to a MAC address of the SIL Kit side has come from packet 'enp3s0' (network interface) in the 5 s since the bridge first sent a frame there, and --promiscuous is off: without it an interface passes on only frames to its own address and to group addresses, so frames to the SIL Kit devices (they have other addresses) do not arrive. If devices outside are meant to answer, add --promiscuous.
@@ -108,7 +108,7 @@ interfaces of this computer (--backend packet and --backend pcap take the Ethern
   --interface vsil0   Ethernet, down
 ```
 
-`--list-interfaces --backend pcap`（Windows では `--list-interfaces` だけでも、`--backend npcap` を付けても）は、pcap のライブラリが出すインターフェースを並べます。行の先頭が `--interface` に渡す名前で、空白のある名前は `"` で囲んであります。その後ろは、ライブラリが言う状態（`up` / `down`、`connected` / `disconnected`、`wireless`、`loopback`）と、括弧の中に説明と pcap の名前です。イーサネットでないもの（Linux の `any` など）も並びます。開くときに断ります。
+`--list-interfaces --backend pcap`（Windows では `--list-interfaces` だけでも、`--backend npcap` を付けても）は、pcap のライブラリが出すインターフェースを並べます。行の先頭が `--interface` に渡す名前で、空白のある名前は `"` で囲んであります。その後ろは、ライブラリが言う状態（`up` / `down`、`connected` / `disconnected`、`wireless`、`loopback`）と、括弧の中に説明と pcap の名前です。イーサネットでないもの（Linux の `any` など）も並びます。開くときに断ります。Npcap の一覧にネットワークのアダプターが 1 つもない（`\Device\NPF_Loopback` だけ）ときは、最後に 1 行、Npcap の「管理者だけ」の入れ方と無効のアダプターのことを足します（`Npcap offers no network adapter here: ...`）。
 
 ```
 interfaces Npcap offers (Npcap version 1.80, based on libpcap version 1.10.5); --backend npcap takes the Ethernet ones:
@@ -212,7 +212,7 @@ cannot open a packet socket on 'enp3s0': Operation not permitted. A network inte
 - Windows の `npcap`: リンクの上下は見ません（監視の行にリンクの状態は出ません）。アダプターがなくなったことは、ライブラリの読み取りが失敗したときにだけわかります。
 - Windows の `npcap`: Npcap は、アダプターを開いたソフトに、そのソフト自身が送ったフレームも渡します。ブリッジは、それを渡さない指定（`pcap_open()` の `PCAP_OPENFLAG_NOCAPTURE_LOCAL`）でアダプターを開くので、ブリッジが送ったフレームはブリッジに戻りません（`ExternalLink::echoes_own_transmissions()` は false）。同じアダプターを開いているほかのソフトが送ったフレームは届きます。`pcap_open` のない `wpcap.dll` は、読み込むときに断ります（下の文）。
 - Windows の `npcap`: 無効にしたアダプターは、Npcap の一覧に出ません。`--interface` に書くと、「下がっている」ではなく、「ない」の誤り（`no interface ...`）になります。この誤りの文は、無効のアダプターが一覧に出ないことを言います。
-- Windows の `npcap`: Npcap を「管理者だけ」の設定で入れた PC で、管理者でない利用者がブリッジを動かすと、Npcap が昇格を求める画面を出し、その画面を閉じるまでブリッジは止まったままです（`--list-interfaces` も同じ）。閉じると、一覧には `\Device\NPF_Loopback` しか出ず、アダプターは「ない」の誤りになります。Npcap は権限がないとは言わないので、ブリッジは、一覧にネットワークのアダプターが 1 つもないときに、「ない」の誤りの文でこの場合を挙げます（下の文）。管理者として起動したコンソールから動かすか、Npcap をその制限なしで入れ直します。
+- Windows の `npcap`: Npcap を「管理者だけ」の設定で入れた PC で、管理者でない利用者がブリッジを動かすと、Npcap が昇格を求める画面を出し、その画面を閉じるまでブリッジは止まったままです（`--list-interfaces` も同じ）。閉じると、一覧には `\Device\NPF_Loopback` しか出ず、アダプターは「ない」の誤りになります。Npcap は権限がないとは言わないので、ブリッジは、一覧にネットワークのアダプターが 1 つもないときに、`--list-interfaces` の一覧の最後の行と「ない」の誤りの文でこの場合を挙げます（下の文）。管理者として起動したコンソールから動かすか、Npcap をその制限なしで入れ直します。
 - Windows の `npcap`: VLAN タグつきのフレームが通るかは、アダプターのドライバーとその設定で決まります（ブリッジも Npcap も、タグを変えません）。ドライバーが、既定の設定では、VLAN タグつきのフレームを渡さないことがあります。ドライバーの優先度と VLAN の処理を切ると届きますが、今度は、ブリッジが送ったフレームから外側のタグが 1 つ外れて出ることがあります。そのときも送信は成功を返し、統計にも警告にも出ません。VLAN タグを使う前に、そのアダプターで両方向を確かめてください。
 - 無線のアダプター（ライブラリが `wireless` と言うもの）では、起動のときに 1 回警告します。
 

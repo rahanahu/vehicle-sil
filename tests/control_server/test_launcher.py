@@ -670,6 +670,9 @@ class LauncherTest(unittest.TestCase):
                                          "from 0 to 65535) or unix:<path>, not 'localhost'"),
             (["--control", "localhost:99999"], "--control must be <port>"),
             (["--control", "99999"], "--control 99999: a port is from 0 to 65535"),
+            *([] if os.name == "nt" else [
+                (["--control", "unix:/tmp/" + "a" * 200], ": the path of the socket is 205 bytes long and this system "
+                                                          "takes ")]),
             (["--control", "0", "--control-credentials", str(SCRATCH / "missing.txt")], "cannot read "),
             (["--control", "0", "--control-credentials", str(empty)], f"--control-credentials: {empty} has no credential"),
             (["--control", "0", "--control-credentials", str(wrong_order)], "the first word is no role"),

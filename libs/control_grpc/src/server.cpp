@@ -12,7 +12,12 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
+
+#ifndef _WIN32
+#include <sys/un.h>
+#endif
 
 namespace vehicle_sil::control_grpc {
 namespace {
@@ -20,6 +25,33 @@ namespace {
 using namespace detail;
 
 } // namespace
+
+std::string unix_socket_path_problem(const std::string& listen)
+{
+#ifndef _WIN32
+    constexpr std::string_view scheme = "unix:";
+    if (listen.rfind(scheme, 0) != 0)
+    {
+        return {};
+    }
+    // unix:<path> and unix://<absolute path> name the same file.
+    std::string_view path = std::string_view(listen).substr(scheme.size());
+    if (path.rfind("//", 0) == 0)
+    {
+        path.remove_prefix(2);
+    }
+    // The address keeps the path and the 0 that ends it.
+    const std::size_t most = sizeof(sockaddr_un{}.sun_path) - 1;
+    if (path.size() > most)
+    {
+        return "the path of the socket is " + std::to_string(path.size()) + " bytes long and this system takes " +
+               std::to_string(most) + " at most: give a shorter path, for example unix:/tmp/vehicle-sil-control.sock";
+    }
+#else
+    static_cast<void>(listen);
+#endif
+    return {};
+}
 
 bool is_loopback_address(const std::string& listen)
 {
@@ -161,6 +193,10 @@ struct ControlServer::Impl
         else
         {
             credentials = grpc::InsecureServerCredentials();
+        }
+        if (const std::string problem = unix_socket_path_problem(options.listen); !problem.empty())
+        {
+            throw std::runtime_error("vehicle_sil control server: cannot listen on " + options.listen + ": " + problem);
         }
         grpc::ServerBuilder builder;
         // Keepalive: a link that went silent (a NAT or firewall dropped it) is found within

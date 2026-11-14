@@ -764,6 +764,14 @@ std::string format_pcap_devices(std::span<const PcapDevice> devices, PcapFlavor 
                     ? "  none. If Npcap was installed for administrators only, run this from a console started as administrator.\n"
                     : "  none\n";
     }
+    else if (flavor == PcapFlavor::Npcap &&
+             std::ranges::all_of(devices, [](const PcapDevice& device) { return (device.flags & kPcapIfLoopback) != 0; }))
+    {
+        // Seen with the real Npcap installed for administrators only: another user gets the loopback device alone.
+        text += "  Npcap offers no network adapter here: if it was installed for administrators only, run this from a console "
+                "started as administrator, or install Npcap again without that limit. A disabled adapter is not offered "
+                "either: enable it in Windows.\n";
+    }
     return text;
 }
 

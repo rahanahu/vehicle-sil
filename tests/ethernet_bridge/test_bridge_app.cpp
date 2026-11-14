@@ -171,6 +171,55 @@ TEST_CASE(app_promiscuous_hint_is_quiet_once_a_frame_to_the_silkit_side_arrived)
     CHECK(!h.hint.take_warning());
 }
 
+TEST_CASE(app_promiscuous_hint_is_quiet_when_the_frame_to_the_silkit_side_arrived_before_the_first_one_sent)
+{
+    // The frame came while the address was not known as one of the SIL Kit side; the bridge sent from it later.
+    Hinted h;
+    h.receive(kEcu, kDevice);
+    h.send(kDevice, kEcu);
+    h.now_ms += 3600000;
+    CHECK(!h.hint.take_warning());
+}
+
+TEST_CASE(app_promiscuous_hint_warns_when_the_earlier_frames_were_to_other_addresses)
+{
+    Hinted h;
+    h.receive(kOtherEcu, kDevice); // the bridge never sends from this address
+    h.receive(kBroadcast, kDevice);
+    h.send(kDevice, kEcu);
+    h.now_ms += 5000;
+    CHECK_TEXT(h.hint.take_warning().value_or(""), kHint);
+}
+
+TEST_CASE(app_promiscuous_hint_is_quiet_on_an_interface_that_passes_on_frames_to_many_addresses)
+{
+    // More individual destinations than it remembers, none of them known: the interface does not filter by address.
+    Hinted h;
+    h.send(kDevice, kEcu);
+    for (std::size_t i = 0; i < PromiscuousHint::kMaxAddresses; ++i)
+    {
+        std::vector<std::uint8_t> frame = make_frame(kOtherEcu, kDevice, kExperimental);
+        frame[5] = static_cast<std::uint8_t>(0x40 + i); // a destination of its own
+        const int before = h.frames.load();
+        h.segment.send(frame);
+        CHECK(eventually([&] { return h.frames.load() == before + 1; }, 10s));
+    }
+    h.now_ms += 5000;
+    CHECK_TEXT(h.hint.take_warning().value_or(""), kHint); // as many as it remembers: still told apart
+    Hinted more;
+    more.send(kDevice, kEcu);
+    for (std::size_t i = 0; i <= PromiscuousHint::kMaxAddresses; ++i)
+    {
+        std::vector<std::uint8_t> frame = make_frame(kOtherEcu, kDevice, kExperimental);
+        frame[5] = static_cast<std::uint8_t>(0x40 + i);
+        const int before = more.frames.load();
+        more.segment.send(frame);
+        CHECK(eventually([&] { return more.frames.load() == before + 1; }, 10s));
+    }
+    more.now_ms += 3600000;
+    CHECK(!more.hint.take_warning());
+}
+
 TEST_CASE(app_promiscuous_hint_does_not_count_frames_that_were_not_sent)
 {
     Hinted h;
