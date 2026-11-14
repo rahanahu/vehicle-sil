@@ -296,7 +296,7 @@ void expect_text(const std::string& actual, const std::string& expected, const s
 Captured launch(const Options& o, const std::vector<std::string>& args, const fs::path& dir)
 {
     vehicle_sil::process::CaptureOptions options;
-    options.timeout = 240s;
+    options.timeout = scaled_timeout(240s);
     options.working_directory = dir;
     return vehicle_sil::process::run_captured(o.launch, args, options);
 }
@@ -699,11 +699,14 @@ void hang(const Options& o)
     {
         throw Skip("no console to send Ctrl+Break through (the participants are ended at once)");
     }
-    // Both hang after the simulation for ever: 300 ms is not a guess about their speed.
+    // Both hang after the simulation for ever: the time is not a guess about how fast they get
+    // there. After the stop request, Stuck has to leave ecu_main and exit with 9 before the
+    // second period ends (else it is killed too): scaled, as that takes longer on a slow machine.
+    const std::string stop_ms = std::to_string(scaled_timeout(300ms).count());
     const fs::path dir = scenario_dir(o,
                                       "vehicle_sil_simulation: 1\n"
                                       "stop_at_ms: 1000\n"
-                                      "stop_timeout_ms: 300\n"
+                                      "stop_timeout_ms: " + stop_ms + "\n"
                                       "networks: []\n"
                                       "participants:\n"
                                       "  - name: Stuck\n"
@@ -720,11 +723,11 @@ void hang(const Options& o)
                 "Stuck        yes       stopped (" + kStop + "), exit code 9\n"
                 "Deaf         yes       killed\n"
                 "\n"
-                "error: sim.yaml:6: participant 'Stuck': it was still running 300 ms (stop_timeout_ms) after the "
+                "error: sim.yaml:6: participant 'Stuck': it was still running " + stop_ms + " ms (stop_timeout_ms) after the "
                 "simulation ended: the launcher asked it to stop (" + kStop + "), and its process exited with code 9; a "
                 "participant should end when the simulation ends (the lines [Stuck] above show what it wrote)\n"
-                "error: sim.yaml:8: participant 'Deaf': it was still running 300 ms (stop_timeout_ms) after the "
-                "simulation ended: the launcher asked it to stop (" + kStop + "), and as it did not end within 300 ms "
+                "error: sim.yaml:8: participant 'Deaf': it was still running " + stop_ms + " ms (stop_timeout_ms) after the "
+                "simulation ended: the launcher asked it to stop (" + kStop + "), and as it did not end within " + stop_ms + " ms "
                 "either, ended it with the processes it started; a participant should end when the simulation ends (the "
                 "lines [Deaf] above show what it wrote)\n"
                 "\n"
@@ -841,11 +844,11 @@ std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::string> run_unti
     {
         std::unique_lock lock(mutex);
         // Only a last line against a hang: the start takes a second or two.
-        require(changed.wait_for(lock, 120s, [&] { return running || launcher.poll().has_value(); }) && running,
+        require(changed.wait_for(lock, scaled_timeout(120s), [&] { return running || launcher.poll().has_value(); }) && running,
                 "the simulation did not start:\n" + err);
     }
     act(launcher);
-    const auto status = launcher.wait_for(120s);
+    const auto status = launcher.wait_for(scaled_timeout(120s));
     launcher.finish_output(10s);
     const std::lock_guard lock(mutex);
     log("stderr of the launcher:\n" + err);
@@ -930,7 +933,7 @@ void interrupt_twice(const Options& o)
     const auto wait_for_line = [&](const std::string& line) {
         std::unique_lock lock(mutex);
         // Only a last line against a hang.
-        require(changed.wait_for(lock, 120s, [&] { return contains(err, line); }), "no line " + line + " in:\n" + err);
+        require(changed.wait_for(lock, scaled_timeout(120s), [&] { return contains(err, line); }), "no line " + line + " in:\n" + err);
     };
     const auto interrupt_it = [&] {
 #ifdef _WIN32
@@ -943,7 +946,7 @@ void interrupt_twice(const Options& o)
     interrupt_it();
     wait_for_line("): the simulation was stopped\n");
     interrupt_it();
-    const auto status = launcher.wait_for(120s);
+    const auto status = launcher.wait_for(scaled_timeout(120s));
     launcher.finish_output(10s);
     const bool gone = all_gone(dir, {"Deaf.pid"}, 30s);
     require(status.has_value() && status->code == 130, "the launcher ends with 130 after the second interrupt");
@@ -1033,7 +1036,7 @@ void interrupt_ending(const Options& o)
     {
         std::unique_lock lock(mutex);
         // Only a last line against a hang.
-        require(changed.wait_for(lock, 120s, [&] { return contains(err, "[vehicle_sil_launch] the simulation ended\n"); }),
+        require(changed.wait_for(lock, scaled_timeout(120s), [&] { return contains(err, "[vehicle_sil_launch] the simulation ended\n"); }),
                 "the simulation did not end:\n" + err);
     }
     wait_hanging(dir, "Stuck");
@@ -1042,7 +1045,7 @@ void interrupt_ending(const Options& o)
 #else
     ::kill(static_cast<pid_t>(launcher.id()), SIGINT);
 #endif
-    const auto status = launcher.wait_for(120s);
+    const auto status = launcher.wait_for(scaled_timeout(120s));
     launcher.finish_output(10s);
     const bool gone = all_gone(dir, {"Stuck.pid"}, 30s);
     require(status.has_value() && status->code == 130, "the launcher ends with 130 when interrupted while it waits");
@@ -1114,7 +1117,7 @@ void no_console(const Options& o)
                                       "    command: [" + ecu(o) + "]\n",
                                       {{"Deaf", "pid hang-after-end ignore-stop"}});
     vehicle_sil::process::CaptureOptions options;
-    options.timeout = 240s;
+    options.timeout = scaled_timeout(240s);
     options.working_directory = dir;
     const Captured run = vehicle_sil::process::run_captured(o.helper, {"--run-detached", shown_path(o.launch), "run", "sim.yaml"}, options);
     expect_code(run, 1, "run without a console");
@@ -1802,7 +1805,7 @@ public:
         std::string found;
         std::size_t next = 0;
         // Only a last line against a hang: the start takes a second or two.
-        const bool seen = changed_.wait_for(lock, 120s, [&] {
+        const bool seen = changed_.wait_for(lock, scaled_timeout(120s), [&] {
             for (; next < out_.size() && found.empty(); ++next)
             {
                 if (std::all_of(parts.begin(), parts.end(), [&](const std::string& p) { return contains(out_[next], p); }))
@@ -1822,7 +1825,7 @@ public:
         std::unique_lock lock(mutex_);
         std::size_t next = 0;
         std::size_t count = 0;
-        const bool seen = changed_.wait_for(lock, 120s, [&] {
+        const bool seen = changed_.wait_for(lock, scaled_timeout(120s), [&] {
             for (; next < out_.size(); ++next)
             {
                 count += std::all_of(parts.begin(), parts.end(), [&](const std::string& p) { return contains(out_[next], p); }) ? 1 : 0;
@@ -1849,12 +1852,13 @@ public:
         return err_;
     }
 
-    /// Waits for its end and reads the rest of its output; its status and its lines, unchecked.
+    /// Waits for its end (up to `timeout`, scaled) and reads the rest of its output; its status and
+    /// its lines, unchecked.
     std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::vector<std::string>> finish_unchecked(
         std::chrono::milliseconds timeout = 120s)
     {
         release();
-        const auto status = process_->wait_for(timeout);
+        const auto status = process_->wait_for(scaled_timeout(timeout));
         process_->finish_output(10s);
         const std::lock_guard lock(mutex_);
         log("stderr of the launcher:\n" + err_);
@@ -2090,7 +2094,7 @@ void output_closed(const Options& o)
         live.wait_for({"\"phase\":\"running\""});
         // The reader goes away: the launcher's events have nowhere to go (its stderr closes too).
         live.process().finish_output(0ms);
-        const auto status = live.process().wait_for(120s);
+        const auto status = live.process().wait_for(scaled_timeout(120s));
         const bool gone = all_gone(dir, {"Engine.pid", "Brake.pid"}, 30s);
         require(status.has_value() && status->code == 130 && !status->signal,
                 "the launcher stops in order (130) when its output closes, not " +
@@ -2113,7 +2117,7 @@ void output_closed(const Options& o)
         const long ghost = read_pid((dir / "ghost.pid").string(), 60s);
         const auto closed = std::chrono::steady_clock::now();
         live.process().finish_output(0ms);
-        const auto status = live.process().wait_for(60s);
+        const auto status = live.process().wait_for(scaled_timeout(60s));
         log("closed while waiting: the launcher ended after " +
             std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - closed).count()) + " ms");
         const bool gone = all_gone(dir, {"ghost.pid"}, 30s);
@@ -2136,7 +2140,7 @@ void output_closed(const Options& o)
         live.wait_for({"\"phase\":\"stopping\""});
         wait_hanging(dir, "Stuck");
         live.process().finish_output(0ms);
-        const auto status = live.process().wait_for(60s);
+        const auto status = live.process().wait_for(scaled_timeout(60s));
         const bool gone = all_gone(dir, {"Stuck.pid"}, 30s);
         require(status.has_value() && status->code == 130, "the launcher stops (130) when its output closes while it ends the participants");
         require(gone, "no participant is left");
@@ -2171,7 +2175,7 @@ void stop_once(const Options& o)
     const bool waitsAfterClose = !live.process().poll().has_value() && process_alive(deaf);
     // The launcher's death ends Deaf.
     kill_one(live.process().id());
-    static_cast<void>(live.process().wait_for(30s));
+    static_cast<void>(live.process().wait_for(scaled_timeout(30s)));
     const bool gone = all_gone(dir, {"Deaf.pid"}, 30s);
     require(deaf > 0 && waitsAfterEof, "the end of input after a stop is no second stop: the launcher still waits for Deaf");
     require(waitsAfterClose, "a closed output after a stop is no second stop: the launcher still waits for Deaf");
@@ -2207,11 +2211,11 @@ std::uintmax_t size_now(const fs::path& file)
     return at > 0 ? static_cast<std::uintmax_t>(at) : 0;
 }
 
-/// Waits up to `timeout` until `file` has grown by `bytes`; how much it grew.
+/// Waits up to `timeout` (scaled) until `file` has grown by `bytes`; how much it grew.
 std::uintmax_t growth(const fs::path& file, std::uintmax_t bytes, std::chrono::milliseconds timeout)
 {
     const std::uintmax_t from = size_now(file);
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(timeout);
     std::uintmax_t now = from;
     while (now < from + bytes && std::chrono::steady_clock::now() < deadline)
     {
@@ -2281,10 +2285,10 @@ struct Stalled
     /// Both ECUs have ended within `timeout`.
     bool participants_gone(std::chrono::milliseconds timeout) const { return wait_gone(engine, timeout) && wait_gone(brake, timeout); }
 
-    /// Ends what is left; the launcher's status after `timeout` and its lines.
+    /// Ends what is left; the launcher's status after `timeout` (scaled) and its lines.
     std::pair<std::optional<vehicle_sil::process::ExitStatus>, std::vector<std::string>> end(std::chrono::milliseconds timeout)
     {
-        auto status = live->process().wait_for(timeout);
+        auto status = live->process().wait_for(scaled_timeout(timeout));
         if (!status)
         {
             kill_one(live->process().id());
@@ -2325,10 +2329,11 @@ void events_stalled(const Options& o)
                       "a second stop command ends the wait: 130, " + code_text(status) + " after " + std::to_string(ms_since(asked)) + " ms");
         check_cut_events(lines);
     }
-    // --timeout-ms aborts the simulation while the reader does not read.
+    // --timeout-ms aborts the simulation while the reader does not read. The run has to be under
+    // way and its reader stalled before then (scaled: that takes longer on a slow machine).
     {
         std::vector<std::string> args = kRun;
-        args.insert(args.begin() + 1, {"--timeout-ms", "5000"});
+        args.insert(args.begin() + 1, {"--timeout-ms", std::to_string(scaled_timeout(5s).count())});
         Stalled run(o, args, checks);
         checks.expect(run.participants_gone(60s), "--timeout-ms ends the run while the reader does not read");
         // Gone here includes a process that is ending but that the launcher cannot reap yet (its
@@ -2341,7 +2346,7 @@ void events_stalled(const Options& o)
 #else
         for (const long pid : {run.engine, run.brake})
         {
-            const auto limit = std::chrono::steady_clock::now() + 30s;
+            const auto limit = std::chrono::steady_clock::now() + scaled_timeout(30s);
             while (!(::kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH) && std::chrono::steady_clock::now() < limit)
             {
                 std::this_thread::sleep_for(5ms);
@@ -2379,7 +2384,7 @@ void events_stalled(const Options& o)
     {
         Stalled run(o, {"run", "--events", "--events-stall-ms", "1500", "--log-dir", "logs", "sim.yaml"}, checks, false);
         const auto held = std::chrono::steady_clock::now();
-        const bool ended = run.live->process().wait_for(30s).has_value();
+        const bool ended = run.live->process().wait_for(scaled_timeout(30s)).has_value();
         const long long after = ms_since(held);
         const bool gone = run.participants_gone(10s);
         const auto [status, lines] = run.end(0ms);
@@ -2571,7 +2576,7 @@ void events_stderr(const Options& o)
     vehicle_sil::process::Process wrapper(shell, args, std::move(options));
     const long engine = read_pid((dir / "Engine.pid").string(), 60s);
     const long brake = read_pid((dir / "Brake.pid").string(), 60s);
-    const auto status = wrapper.wait_for(60s);
+    const auto status = wrapper.wait_for(scaled_timeout(60s));
     const long long after = ms_since(from);
     const bool gone = wait_gone(engine, 10s) && wait_gone(brake, 10s);
     if (!status)
@@ -2661,7 +2666,7 @@ void events_output(const Options& o)
                                       "  - name: Engine\n"
                                       "    command: [" + ecu(o) + "]\n");
     vehicle_sil::process::CaptureOptions options;
-    options.timeout = 120s;
+    options.timeout = scaled_timeout(120s);
     options.working_directory = dir;
     // A file: every event is in it.
     const Captured file = vehicle_sil::process::run_captured(
@@ -2688,7 +2693,7 @@ void stdin_killed(const Options& o)
     const std::vector<long> pids{read_pid((dir / "Engine.pid").string(), 60s), read_pid((dir / "Brake.pid").string(), 60s)};
     live.process().close_input();
     kill_one(live.process().id());
-    require(live.process().wait_for(120s).has_value(), "the launcher has ended");
+    require(live.process().wait_for(scaled_timeout(120s)).has_value(), "the launcher has ended");
     const bool gone = wait_gone(pids[0], 60s) && wait_gone(pids[1], 60s);
     for (const long pid : pids)
     {
@@ -3755,7 +3760,7 @@ public:
     /// Waits for its end (it ends by itself): its status.
     std::optional<vehicle_sil::process::ExitStatus> wait(std::chrono::milliseconds timeout)
     {
-        const auto status = process_->wait_for(timeout);
+        const auto status = process_->wait_for(scaled_timeout(timeout));
         process_->finish_output(10s);
         const std::lock_guard lock(mutex_);
         log("output of the participant started by hand:\n" + output_);

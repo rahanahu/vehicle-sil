@@ -39,6 +39,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 using namespace vehicle_sil::control;
 using vehicle_sil::control_silkit::AgentTransport;
@@ -293,6 +294,17 @@ std::string text_of(TargetStatus status)
     return kNames[static_cast<std::size_t>(status)];
 }
 
+/// The result of an operation that has to settle: fails the test, instead of reading an empty
+/// optional, when it did not settle within the wait.
+OperationResult settled(const std::optional<OperationResult>& done)
+{
+    if (!done)
+    {
+        throw std::runtime_error("the operation did not settle within the wait");
+    }
+    return *done;
+}
+
 void check_status(const OperationResult& operation, const std::string& peer, TargetStatus expected)
 {
     const TargetResult t = target(operation, peer);
@@ -318,7 +330,7 @@ TEST_CASE(values_before_a_pause_are_complete_and_a_write_while_paused_takes_effe
     auto& controller = *side.controller;
     auto& hub = side.hub;
 
-    const auto paused0 = controller.wait_until_paused(20s);
+    const auto paused0 = controller.wait_until_paused(scaled_timeout(20s));
     CHECK(paused0.has_value());
     CHECK(*paused0 == SimTime{});
     CHECK_EQ(hub.peers().size(), std::size_t{2});
@@ -344,7 +356,7 @@ TEST_CASE(values_before_a_pause_are_complete_and_a_write_while_paused_takes_effe
     {
         target_time += advances[static_cast<std::size_t>(i) % std::size(advances)];
         controller.run_until(target_time);
-        const auto paused = controller.wait_until_paused(30s);
+        const auto paused = controller.wait_until_paused(scaled_timeout(30s));
         CHECK(paused.has_value());
         const SimTime p = *paused;
         CHECK(p >= target_time);
@@ -406,13 +418,13 @@ TEST_CASE(values_before_a_pause_are_complete_and_a_write_while_paused_takes_effe
         now.timed = hub.write(OperationRequest{{{"A", "timed", Value{now.value}}, {"B", "timed", Value{now.value}}},
                                                p + SimDuration{1}});
         // The agents answer while the simulation stands still.
-        const auto queued = hub.wait_queued(now.timed, 20s);
+        const auto queued = hub.wait_queued(now.timed, scaled_timeout(20s));
         CHECK(queued.has_value());
         for (TestEcu* ecu : ecus)
         {
             check_status(*queued, ecu->name, TargetStatus::Queued);
         }
-        const auto accepted = hub.wait_queued(now.untimed, 20s);
+        const auto accepted = hub.wait_queued(now.untimed, scaled_timeout(20s));
         CHECK(accepted.has_value());
         for (TestEcu* ecu : ecus)
         {
@@ -497,7 +509,7 @@ TEST_CASE(the_time_and_then_all_values_are_never_older_than_the_time_while_the_s
     start_together(*side.controller, {a.peer.get(), b.peer.get()});
     auto& controller = *side.controller;
     auto& hub = side.hub;
-    CHECK(controller.wait_until_paused(20s) == SimTime{});
+    CHECK(controller.wait_until_paused(scaled_timeout(20s)) == SimTime{});
 
     struct Look
     {
@@ -565,7 +577,7 @@ TEST_CASE(the_time_and_then_all_values_are_never_older_than_the_time_while_the_s
     // Mostly it runs free and is stopped (a look sees a step begin between its two reads only
     // while it runs); now and then it steps. With a look at once after each stop.
     const SimDuration advances[] = {10ms, 13ms, 40ms, 5ms, 20ms, 70ms, 10ms};
-    const auto give_up = Wall::now() + 120s;
+    const auto give_up = Wall::now() + scaled_timeout(120s);
     constexpr std::uint64_t kMoving = 20000;
     int rounds = 0;
     for (; (rounds < 40 || moving.load() < kMoving) && Wall::now() < give_up; ++rounds)
@@ -580,7 +592,7 @@ TEST_CASE(the_time_and_then_all_values_are_never_older_than_the_time_while_the_s
         {
             controller.step(advances[static_cast<std::size_t>(rounds) % std::size(advances)]);
         }
-        const auto paused = controller.wait_until_paused(30s);
+        const auto paused = controller.wait_until_paused(scaled_timeout(30s));
         CHECK(paused.has_value());
         // Nobody lets it go on now: the look is of this moment.
         const Look l = look();
@@ -636,7 +648,7 @@ TEST_CASE(a_write_in_the_start_window_is_seen_in_the_first_step_in_every_start_o
                     hellos = s->transport->wait_for_hellos({"A", "B"}, std::min(window.deadline(), Wall::now() + 20s),
                                                            [&window] { return window.cancelled(); });
                     seq = s->hub.write(OperationRequest{{{"A", "gain", Value{base}}, {"B", "gain", Value{base + 1}}}});
-                    queued = s->hub.wait_queued(seq, 20s);
+                    queued = s->hub.wait_queued(seq, scaled_timeout(20s));
                 });
             };
             const auto make_ecu = [&](int i) {
@@ -736,11 +748,11 @@ TEST_CASE(a_write_in_the_start_window_is_seen_in_the_first_step_in_every_start_o
             check_status(*queued, "B", TargetStatus::Queued);
 
             auto& controller = *side->controller;
-            const auto paused = controller.wait_until_paused(20s);
+            const auto paused = controller.wait_until_paused(scaled_timeout(20s));
             CHECK(paused.has_value());
             CHECK(*paused == SimTime{});
             controller.run_until(at(30ms));
-            CHECK(controller.wait_until_paused(20s).has_value());
+            CHECK(controller.wait_until_paused(scaled_timeout(20s)).has_value());
             // Applied in the step at 0, and reported by the time the gate stands at 30 ms.
             const auto result = side->hub.operation(seq);
             CHECK(result.has_value());
@@ -753,7 +765,7 @@ TEST_CASE(a_write_in_the_start_window_is_seen_in_the_first_step_in_every_start_o
             CHECK(hub_value(side->hub, "B", "gain") == Value{base + 1});
             // A parameter is refused once the simulation has run.
             const std::uint64_t later = side->hub.write(OperationRequest{{{"A", "gain", Value{std::int64_t{5}}}}});
-            const auto refused = side->hub.wait_done(later, 20s);
+            const auto refused = side->hub.wait_done(later, scaled_timeout(20s));
             CHECK(refused.has_value());
             check_status(*refused, "A", TargetStatus::Invalid);
             CHECK_EQ(side->transport->stats().late_messages, std::uint64_t{0});
@@ -781,6 +793,10 @@ TEST_CASE(a_missing_hello_ends_the_wait_at_its_deadline_and_a_stop_request_ends_
         HelloReport hellos;
         Wall::duration waited{};
         side.controller->set_start_window([&](const StartWindow& window) {
+            // A's hello comes (how soon depends on the machine): first that, then the wait that
+            // only its deadline ends.
+            static_cast<void>(side.transport->wait_for_hellos({"A"}, Wall::now() + scaled_timeout(30s),
+                                                              [&window] { return window.cancelled(); }));
             const auto begin = Wall::now();
             hellos = side.transport->wait_for_hellos({"A", "Silent"}, begin + 300ms, [&window] { return window.cancelled(); });
             waited = Wall::now() - begin;
@@ -793,7 +809,7 @@ TEST_CASE(a_missing_hello_ends_the_wait_at_its_deadline_and_a_stop_request_ends_
         CHECK(!hellos.cancelled);
         CHECK(waited >= 300ms);
         CHECK_EQ(side.hub.peers().size(), std::size_t{1});
-        CHECK(side.controller->wait_until_paused(20s).has_value());
+        CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
     }
     {
         // A stop requested while the window waits: the wait ends, the start goes on (and the
@@ -821,7 +837,7 @@ TEST_CASE(a_missing_hello_ends_the_wait_at_its_deadline_and_a_stop_request_ends_
         CHECK(hellos.cancelled);
         CHECK(hellos.missing == std::vector<std::string>{"Silent"});
         // The stop that was requested in the window ends the simulation in order.
-        const auto state = side.controller->wait_until_finished(20s);
+        const auto state = side.controller->wait_until_finished(scaled_timeout(20s));
         CHECK(state == orch::ParticipantState::Shutdown);
     }
 }
@@ -878,7 +894,7 @@ TEST_CASE(a_hello_of_another_version_is_reported_and_makes_no_peer)
     CHECK(eventually([&] { return side.transport->stats().undecodable >= 2; }, 20s));
     // The simulation is not disturbed.
     side.controller->run_until(at(20ms));
-    CHECK(side.controller->wait_until_paused(20s).has_value());
+    CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
     CHECK(side.hub.latest("A") != nullptr);
     side.controller->stop("done");
     a.end();
@@ -950,7 +966,7 @@ TEST_CASE(start_window_of_the_controller_is_checked_and_its_failure_fails_the_st
         ecu.join();
         CHECK(error.find("the start window failed: the window's work failed") != std::string::npos);
         CHECK(!cancelled_in_window.load());
-        CHECK(side.controller->wait_until_paused(20s).has_value());
+        CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
     }
     {
         // The function does not return before start()'s timeout: start() throws at its timeout,
@@ -993,7 +1009,7 @@ TEST_CASE(the_end_of_an_agent_settles_the_operations_that_wait_for_it)
     TestEcu failing("Failing", registry.uri, {.fail_at = at(15ms), .last_word_wait = 60s});
     start_together(*side.controller, {a.peer.get(), b.peer.get(), failing.peer.get()});
     auto& hub = side.hub;
-    CHECK(side.controller->wait_until_paused(20s).has_value());
+    CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
     side.wait_ready({"A", "B", "Failing"});
 
     // Writes far in the future: queued on each agent.
@@ -1001,7 +1017,7 @@ TEST_CASE(the_end_of_an_agent_settles_the_operations_that_wait_for_it)
     const std::uint64_t seq = hub.write(
         OperationRequest{{{"A", "cmd", Value{std::int64_t{1}}}, {"B", "cmd", Value{std::int64_t{1}}}, {"Failing", "cmd", Value{std::int64_t{1}}}},
                          far});
-    const auto queued = hub.wait_queued(seq, 20s);
+    const auto queued = hub.wait_queued(seq, scaled_timeout(20s));
     CHECK(queued.has_value());
     for (const char* name : {"A", "B", "Failing"})
     {
@@ -1026,7 +1042,7 @@ TEST_CASE(the_end_of_an_agent_settles_the_operations_that_wait_for_it)
     }
     // A write to the agent that has ended is refused at once.
     const std::uint64_t refused = hub.write(OperationRequest{{{"Failing", "cmd", Value{std::int64_t{2}}}}});
-    const auto refused_result = hub.wait_done(refused, 20s);
+    const auto refused_result = hub.wait_done(refused, scaled_timeout(20s));
     CHECK(refused_result.has_value());
     check_status(*refused_result, "Failing", TargetStatus::Invalid);
 
@@ -1036,7 +1052,7 @@ TEST_CASE(the_end_of_an_agent_settles_the_operations_that_wait_for_it)
     side.controller->abort();
     CHECK(eventually([&] { return has_finished(side.controller->runtime().peer_status("A")); }, 20s));
     const std::uint64_t too_late = hub.write(OperationRequest{{{"A", "cmd", Value{std::int64_t{3}}}}});
-    const auto too_late_result = hub.wait_done(too_late, 20s);
+    const auto too_late_result = hub.wait_done(too_late, scaled_timeout(20s));
     CHECK(too_late_result.has_value());
     check_status(*too_late_result, "A", TargetStatus::Invalid);
     // The ECU ends as its process would: the transport, and right after it the participant. The
@@ -1087,10 +1103,10 @@ TEST_CASE(the_last_word_arrives_though_the_participant_goes_right_after_it_with_
     TestEcu a("A", registry.uri, {.last_word_wait = 60s});
     auto* const noise = a.peer->runtime().participant().CreateDataPublisher(kNoise, topics::spec(kNoise), 0);
     start_together(*side.controller, {a.peer.get()});
-    CHECK(side.controller->wait_until_paused(20s).has_value());
+    CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
     side.wait_ready({"A"});
     const std::uint64_t seq = side.hub.write(OperationRequest{{{"A", "cmd", Value{std::int64_t{1}}}}, at(std::chrono::hours(1))});
-    CHECK(side.hub.wait_queued(seq, 20s).has_value());
+    CHECK(side.hub.wait_queued(seq, scaled_timeout(20s)).has_value());
     side.controller->abort();
     CHECK(eventually([&] { return has_finished(side.controller->runtime().peer_status("A")); }, 20s));
 
@@ -1115,18 +1131,18 @@ TEST_CASE(closing_the_hub_transport_settles_what_is_open)
     HubSide side(registry.uri, {"A"});
     TestEcu a("A", registry.uri);
     start_together(*side.controller, {a.peer.get()});
-    CHECK(side.controller->wait_until_paused(20s).has_value());
+    CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
     side.wait_ready({"A"});
     const std::uint64_t seq = side.hub.write(OperationRequest{{{"A", "cmd", Value{std::int64_t{1}}}}, at(std::chrono::hours(1))});
-    CHECK(side.hub.wait_queued(seq, 20s).has_value());
+    CHECK(side.hub.wait_queued(seq, scaled_timeout(20s)).has_value());
     side.transport.reset();
-    const auto closed = side.hub.wait_done(seq, 20s);
+    const auto closed = side.hub.wait_done(seq, scaled_timeout(20s));
     CHECK(closed.has_value());
     check_status(*closed, "A", TargetStatus::Unknown);
     CHECK(!side.hub.peers().at(0).connected);
     // A write now is not sent.
     const std::uint64_t later = side.hub.write(OperationRequest{{{"A", "cmd", Value{std::int64_t{2}}}}});
-    check_status(*side.hub.wait_done(later, 20s), "A", TargetStatus::Invalid);
+    check_status(settled(side.hub.wait_done(later, scaled_timeout(20s))), "A", TargetStatus::Invalid);
     side.controller->stop("done");
     a.end();
 }
@@ -1137,9 +1153,9 @@ TEST_CASE(a_sample_larger_than_a_message_arrives_whole)
     HubSide side(registry.uri, {"Big"});
     TestEcu big("Big", registry.uri, {.extra_outputs = 700, .max_message_bytes = wire::kMinMessageBytes});
     start_together(*side.controller, {big.peer.get()});
-    CHECK(side.controller->wait_until_paused(20s).has_value());
+    CHECK(side.controller->wait_until_paused(scaled_timeout(20s)).has_value());
     side.controller->run_until(at(50ms));
-    const auto paused = side.controller->wait_until_paused(20s);
+    const auto paused = side.controller->wait_until_paused(scaled_timeout(20s));
     CHECK(paused.has_value());
     const auto snapshot = side.hub.latest("Big");
     CHECK(snapshot != nullptr);
@@ -1176,7 +1192,7 @@ TEST_CASE(a_real_time_peer_is_a_peer_too_and_a_restarted_one_replaces_the_old)
     // It joined on its own: a write goes out once it has said that it receives commands.
     side.wait_ready({"Real"});
     const std::uint64_t seq = hub.write(OperationRequest{{{"Real", "cmd", Value{std::int64_t{9}}}}});
-    const auto result = hub.wait_done(seq, 30s);
+    const auto result = hub.wait_done(seq, scaled_timeout(30s));
     CHECK(result.has_value());
     check_status(*result, "Real", TargetStatus::Applied);
     CHECK(eventually([&] { return hub_value(hub, "Real", "cmd") == Value{std::int64_t{9}}; }, 30s));
@@ -1246,7 +1262,7 @@ TEST_CASE(a_real_time_peer_is_a_peer_too_and_a_restarted_one_replaces_the_old)
         },
         30s));
     const std::uint64_t again = hub.write(OperationRequest{{{"Real", "cmd", Value{std::int64_t{11}}}}});
-    check_status(*hub.wait_done(again, 30s), "Real", TargetStatus::Applied);
+    check_status(settled(hub.wait_done(again, scaled_timeout(30s))), "Real", TargetStatus::Applied);
     // Real-time messages are not measured against the virtual time.
     CHECK_EQ(side.transport->stats().late_messages, std::uint64_t{0});
 
@@ -1696,10 +1712,13 @@ TEST_CASE(a_participant_started_anew_after_it_failed_is_connected_again)
         CHECK(hub.wait_queued(seq, 200ms) == std::nullopt); // sent: the hand-made agent does not answer commands
         check_status(*hub.operation(seq), "Crash", TargetStatus::Sent);
         again->Stop("round over");
-        CHECK(done_again.wait_for(30s) == std::future_status::ready);
-        // Its lifecycle has ended in order and it says no last word: writes are refused from here.
+        CHECK(done_again.wait_for(scaled_timeout(30s)) == std::future_status::ready);
+        // Its lifecycle has ended in order and it says no last word: writes are refused once the
+        // controller has seen the end (the hub decides by what the controller saw, which comes a
+        // moment after the participant's own end).
+        CHECK(eventually([&] { return has_finished(side.controller->runtime().peer_status("Crash")); }, 30s));
         const std::uint64_t late = hub.write(OperationRequest{{{"Crash", "v1", Value{std::int64_t{2}}}}});
-        check_status(*hub.wait_done(late, 30s), "Crash", TargetStatus::Invalid);
+        check_status(settled(hub.wait_done(late, scaled_timeout(30s))), "Crash", TargetStatus::Invalid);
     }
 }
 
@@ -1842,7 +1861,7 @@ TEST_CASE(a_write_to_an_agent_that_has_not_said_it_receives_commands_is_refused_
     CHECK(!side.transport->links().at(0).ready);
     // No answer yet: the write is not sent into the void, and nothing stays open.
     const std::uint64_t early = hub.write(OperationRequest{{{"Quiet", "v1", Value{std::int64_t{1}}}}});
-    const auto refused = hub.wait_done(early, 30s);
+    const auto refused = hub.wait_done(early, scaled_timeout(30s));
     CHECK(refused.has_value());
     check_status(*refused, "Quiet", TargetStatus::Invalid);
     // wait_for_hellos() does not count it as connected either.

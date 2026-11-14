@@ -35,6 +35,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using namespace vehicle_sil;
 namespace orch = SilKit::Services::Orchestration;
 using Wall = std::chrono::steady_clock;
@@ -121,12 +122,12 @@ std::chrono::nanoseconds run_simulation(const std::vector<PeerSpec>& peers, SimD
 
     start_together(controller, runtimePointers, 30s);
 
-    const auto controllerState = controller.wait_until_finished(60s);
+    const auto controllerState = controller.wait_until_finished(scaled_timeout(60s));
     CHECK(controllerState.has_value());
     CHECK(*controllerState == orch::ParticipantState::Shutdown);
     for (auto& runtime : runtimes)
     {
-        const auto state = runtime->wait_until_finished(30s);
+        const auto state = runtime->wait_until_finished(scaled_timeout(30s));
         CHECK(state.has_value());
         CHECK(*state == orch::ParticipantState::Shutdown);
         CHECK(runtime->step_error().empty());
@@ -278,8 +279,8 @@ TEST_CASE(virtual_time_tick_scheduler_drives_a_fixed_period_tick)
     });
 
     start_together(controller, {&runtime}, 30s);
-    CHECK(controller.wait_until_finished(30s) == orch::ParticipantState::Shutdown);
-    CHECK(runtime.wait_until_finished(30s) == orch::ParticipantState::Shutdown);
+    CHECK(controller.wait_until_finished(scaled_timeout(30s)) == orch::ParticipantState::Shutdown);
+    CHECK(runtime.wait_until_finished(scaled_timeout(30s)) == orch::ParticipantState::Shutdown);
 
     const std::vector<long long> expectedTicks{0, 10, 20, 30, 40, 50, 60, 70, 80, 90};
     const std::vector<long long> expectedBackground{0, 20, 40, 60, 80};
@@ -310,7 +311,7 @@ TEST_CASE(virtual_time_step_handler_exception_is_reported)
 
     start_together(controller, {&runtime}, 30s);
 
-    const auto state = runtime.wait_until_finished(10s);
+    const auto state = runtime.wait_until_finished(scaled_timeout(10s));
     CHECK(state.has_value());
     CHECK(*state == orch::ParticipantState::Error);
     CHECK(runtime.step_error().find("ECU model diverged") != std::string::npos);
@@ -336,7 +337,7 @@ struct HeldStep
                 // Like Peer: its Host has failed (Peer::failed() is true) before the exception
                 // leaves the step handler.
                 entered.set_value();
-                if (release_future.wait_for(10s) != std::future_status::ready)
+                if (release_future.wait_for(scaled_timeout(10s)) != std::future_status::ready)
                 {
                     throw std::runtime_error("the test did not release the step");
                 }
@@ -351,7 +352,7 @@ struct HeldStep
             }
         });
         start_together(controller, {&runtime}, 30s);
-        CHECK(entered_future.wait_for(10s) == std::future_status::ready);
+        CHECK(entered_future.wait_for(scaled_timeout(10s)) == std::future_status::ready);
     }
 
     ~HeldStep() { controller.abort(); }
@@ -431,7 +432,7 @@ TEST_CASE(virtual_time_stop_request_during_a_step_goes_out_after_it)
     HeldStep held(false);
     held.runtime.request_stop("the owner is done");
     held.release();
-    CHECK(held.runtime.wait_until_finished(10s) == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
+    CHECK(held.runtime.wait_until_finished(scaled_timeout(10s)) == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
     CHECK(held.log.after_running() == orch::ParticipantState::Stopping);
     CHECK(held.runtime.step_error().empty());
 }
@@ -472,7 +473,7 @@ TEST_CASE(virtual_time_failure_reported_before_start_is_ignored)
     });
     runtime.report_failure("too early");
     start_together(controller, {&runtime}, 30s);
-    CHECK(runtime.wait_until_finished(10s) == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
+    CHECK(runtime.wait_until_finished(scaled_timeout(10s)) == std::optional<orch::ParticipantState>(orch::ParticipantState::Shutdown));
     CHECK(steps.load() < 50); // the request stopped it soon after 20 ms, not the controller at 60 s
     CHECK(log.after_running() == orch::ParticipantState::Stopping);
     CHECK(!log.reached(orch::ParticipantState::Error));
@@ -495,7 +496,7 @@ TEST_CASE(virtual_time_end_limits_the_handled_steps)
 
     start_together(controller, {&runtime}, 30s);
 
-    const auto state = runtime.wait_until_finished(30s);
+    const auto state = runtime.wait_until_finished(scaled_timeout(30s));
     CHECK(state.has_value());
     CHECK(*state == orch::ParticipantState::Shutdown);
     CHECK(runtime.now() >= SimTime{} + 90ms); // the steps after `end` did take place

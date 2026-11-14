@@ -41,6 +41,7 @@
 #endif
 
 using namespace std::chrono_literals;
+using vehicle_sil::test::scaled_timeout;
 using vehicle_sil::Ecu;
 using vehicle_sil::EcuMainOptions;
 using vehicle_sil::SimTime;
@@ -776,7 +777,7 @@ TEST_CASE(ecu_main_offers_its_variables_to_the_simulation_unless_no_control)
         require(probe.steps >= 10, "the ECU stepped", r);
         // The ECU waited for the hub's answer to its last word before it let its participant go:
         // the hub has ended the connection. (An ECU with --no-control says none: nothing to wait for.)
-        const auto deadline = std::chrono::steady_clock::now() + 20s;
+        const auto deadline = std::chrono::steady_clock::now() + scaled_timeout(20s);
         while (std::chrono::steady_clock::now() < deadline)
         {
             const auto peers = hub.peers();
