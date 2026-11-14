@@ -267,7 +267,12 @@ def test_changelog() -> None:
     """The CHANGELOG.md heading of a version (Keep a Changelog), and the release notes that release.yml cuts."""
     spec = importlib.util.spec_from_file_location("package", PACKAGE)
     package = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(package)
+    # package.py imports the modules next to it (as a script, its directory is on the path).
+    sys.path.insert(0, str(PACKAGE.parent))
+    try:
+        spec.loader.exec_module(package)
+    finally:
+        sys.path.remove(str(PACKAGE.parent))
     head = "# Changelog\n\nIntro.\n\n"
     body = "The first version.\n\n### Added\n\n#### Launcher\n\n- a\n\n### Fixed\n\n- b\n"
     older = "\n## [0.0.9] - 2026-01-02\n\n### Added\n\n- old\n"

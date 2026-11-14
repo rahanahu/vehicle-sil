@@ -1024,6 +1024,79 @@ TEST_CASE(scenario_parameter_errors_say_what_to_write)
                "${name}); remove the option or correct the name\n");
 }
 
+TEST_CASE(scenario_values_of_integers_and_enums_may_be_hexadecimal)
+{
+    // Where a value of an integer or an enum stands; the steps' texts stay decimal.
+    ScenarioContext context;
+    context.params = {param("code", "0X1f", ParamSource::CommandLine)};
+    const ScenarioRead r = read_scenario(
+        "vehicle_sil_scenario: 1\n"
+        "params: { code: 0, top: 0x64 }\n"
+        "steps:\n"
+        "  - set: { Body.level: 0x0, Body.gain: 0x7FFFFFFFFFFFFFFF, Door.mode: 0x2, Door.level: \"${top}\" }\n"
+        "  - ramp: { Body.level: { from: 0x0A, to: 0X64, over_ms: 100 } }\n"
+        "  - expect: { Body.level: 0x64, Door.mode: { ne: 0x0 }, Body.gain: { ge: 0x10, le: 0x7fffffffffffffff, gt: 0xf, lt: 0x7FFFFFFFFFFFFFFF } }\n"
+        "  - wait_until: { Body.level: { eq: \"${code}\" } }\n"
+        "    timeout_ms: 10\n"
+        "  - wave: { Body.level: { square: { low: 0x10, high: 0x20, period_ms: 100 }, for_ms: 200 },\n"
+        "            Door.level: { sine: { amplitude: 5, period_ms: 100 }, around: 0x32, for_ms: 100 } }\n"
+        "  - wave: { Body.level: { points: [[0, 0x1], [50, 0xa]] }, Door.mode: { points: [[0, 0x1], [10, 0x2]] } }\n",
+        catalog(), context);
+    check_text(lines(r.findings), "");
+    CHECK(r.scenario.has_value());
+    if (!r.scenario)
+    {
+        return;
+    }
+    std::string texts;
+    for (const auto& step : r.scenario->steps)
+    {
+        texts += step.text + "\n";
+    }
+    check_text(texts, "set Body.level = 0; Body.gain = 9223372036854775807; Door.mode = auto (2); Door.level = 100\n"
+                      "ramp Body.level from 10 to 100 over 100 ms\n"
+                      "expect Body.level eq 100; Door.mode ne off (0); Body.gain ge 16, le 9223372036854775807, gt 15, lt "
+                      "9223372036854775807\n"
+                      "wait_until Body.level eq 31 (timeout 10 ms)\n"
+                      "wave Body.level square low 16 high 32 period 100 ms for 200 ms; Door.level sine amplitude 5 period 100 ms "
+                      "around 50 for 100 ms\n"
+                      "wave Body.level points (2, linear) over 50 ms; Door.mode points (2, hold) over 10 ms\n");
+
+    // What is not read, and what to write instead.
+    const auto errors = [](const std::string& text) { return lines(read_scenario(text, catalog()).findings); };
+    check_text(errors(kHead + "  - set: { Body.level: 0x65, Door.level: -0x10, Body.gain: \"0x10\", Body.ratio: 0x1 }\n"),
+               "E 3 scenario-value: the value of Body.level (integer) is 0x65 (101), outside its range (from 0 to 100)\n"
+               "E 3 scenario-value: the value of Door.level (integer) must be a whole number, not '-0x10': write a negative number "
+               "in decimal (-16)\n"
+               "E 3 scenario-value: the value of Body.gain (integer) must be a whole number, not the text \"0x10\": write the "
+               "number without quotes\n"
+               "E 3 scenario-value: the value of Body.ratio (real) must be a number, not '0x1': hexadecimal (0x...) is for "
+               "integer and enum variables only; write 1\n");
+    check_text(errors(kHead + "  - set: { Body.gain: 0x8000000000000000, Door.gain: 0x, Body.level: 0x1G, Door.level: 0o17 }\n"),
+               "E 3 scenario-value: the value of Body.gain (integer) must be a whole number, not '0x8000000000000000': it is "
+               "more than an integer holds (at most 0x7FFFFFFFFFFFFFFF)\n"
+               "E 3 scenario-value: the value of Door.gain (integer) must be a whole number, not '0x'\n"
+               "E 3 scenario-value: the value of Body.level (integer) must be a whole number, not '0x1G'\n"
+               "E 3 scenario-value: the value of Door.level (integer) must be a whole number, not '0o17'\n");
+    check_text(errors(kHead + "  - set: { Door.mode: -0x1, Body.mode: 0x5, Door.lamp: 0x1 }\n"),
+               "E 3 scenario-value: the value of Door.mode (enum) must be one of its items, by name or by value, not '-0x1': "
+               "write a negative number in decimal (-1); the items are off (0), on (1), auto (2)\n"
+               "E 3 scenario-value: the value of Body.mode (enum) must be one of its items, by name or by value, not '0x5': the "
+               "items are off (0), on (1), auto (2)\n"
+               "E 3 scenario-value: the value of Door.lamp (bool) must be true or false, not '0x1'\n");
+    check_text(errors(kHead + "  - ramp: { Body.level: { to: 0x65, over_ms: 10 }, Body.ratio: { to: 0x1, over_ms: 10 } }\n"
+                              "  - expect: { Body.level: { ge: -0x1 }, Body.body.speed: { le: 0x10 } }\n"
+                              "  - wave: { Body.level: { pulse: { value: 0x65, width_ms: 10 } } }\n"),
+               "E 3 scenario-value: to of the ramp of Body.level is 0x65 (101), outside its range (from 0 to 100)\n"
+               "E 3 scenario-value: to of the ramp of Body.ratio must be a number, not '0x1': hexadecimal (0x...) is for "
+               "integer and enum variables only; write 1\n"
+               "E 4 scenario-value: ge of Body.level (integer) must be a whole number, not '-0x1': write a negative number in "
+               "decimal (-1)\n"
+               "E 4 scenario-value: le of Body.body.speed (real) must be a number, not '0x10': hexadecimal (0x...) is for "
+               "integer and enum variables only; write 16\n"
+               "E 5 scenario-value: value of the pulse of Body.level is 0x65 (101), outside its range (from 0 to 100)\n");
+}
+
 TEST_CASE(scenario_only_names_the_variants_it_is_for)
 {
     const std::string text = "vehicle_sil_scenario: 1\n"

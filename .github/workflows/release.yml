@@ -58,6 +58,7 @@ jobs:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       TAG: ${{ github.ref_name }}
+      VEHICLE_SIL_LOG_ARTIFACT: logs-linux
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -107,6 +108,7 @@ jobs:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       TAG: ${{ github.ref_name }}
+      VEHICLE_SIL_LOG_ARTIFACT: logs-windows
     steps:
       - name: Keep LF line ends
         shell: pwsh

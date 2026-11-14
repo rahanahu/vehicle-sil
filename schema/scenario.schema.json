@@ -457,8 +457,14 @@
     "number": {
       "anyOf": [
         { "type": "number" },
+        { "$ref": "#/definitions/hexadecimal" },
         { "$ref": "#/definitions/parameter" }
       ]
+    },
+    "hexadecimal": {
+      "type": "string",
+      "pattern": "^0[xX][0-9a-fA-F]+$",
+      "description": "A whole number in hexadecimal, 0x1F or 0X1F, without quotes: for a value of an integer or an enum variable only."
     },
     "variable_name": {
       "pattern": "^[^.]+\\..+",
@@ -466,7 +472,7 @@
     },
     "value": {
       "type": ["number", "boolean", "string"],
-      "description": "A value of the variable's type: true or false for a bool, a whole number for an integer, a number for a real, an item's name or its number for an enum. Or a parameter, ${name}."
+      "description": "A value of the variable's type: true or false for a bool, a whole number for an integer (decimal, or hexadecimal such as 0x1F), a number for a real, an item's name or its number for an enum. Or a parameter, ${name}."
     },
     "conditions": {
       "type": "object",

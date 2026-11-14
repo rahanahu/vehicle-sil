@@ -441,7 +441,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 ### `scripts/`
 
 - 主なクラス・関数（ヘッダー）: 開発と CI のスクリプト（[AGENTS.md](../AGENTS.md) の「検証とスクリプト」）
-- 試験: `scripts/verify-python.py`（各スクリプトの `--help`）、`tests/scripts/test_run_gui.py`（`scripts/run-gui.py`: ランチャーの選び方、足りないものごとの文言）、`tests/template/test_get_tools.py`（`package.py template`、`version`）
+- 試験: `scripts/verify-python.py`（各スクリプトの `--help`）、`tests/scripts/test_run_gui.py`（`scripts/run-gui.py`: ランチャーの選び方、足りないものごとの文言）、`tests/scripts/test_job_summary.py`（`scripts/job_summary.py`: GitHub Actions の job の Summary に書く中身、書かないとき）、`tests/template/test_get_tools.py`（`package.py template`、`version`）
 - `ctest -R`: `^template\.get_tools`、`^scripts\.`
 
 ### `patches/sil-kit`
