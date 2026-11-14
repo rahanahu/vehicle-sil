@@ -66,7 +66,7 @@ ctest --preset linux-gcc-release -L fetchcontent
 CAN ブリッジのテスト。
 全プラットフォームで、テスト専用の XL ドライバのフェイクに対して本番のコードを動かす。
 CanBridge の単体テスト、XL バックエンドのテスト、実際の SIL Kit を使うプロセス内のテスト、ブリッジの実行ファイルを使う E2E テストがある。
-E2E では、エコーノードとの往復（Virtual CAN と、ビットレートを設定する物理 CAN）、送信レシートが返ってくる場合のループ防止、`--list-channels`、存在しないチャネル、引数の誤り、ドライバがない場合、止める要求で止めたときの統計の 1 行と終了コード 0（Windows では共有するコンソールがなければ飛ばす）を確かめる
+E2E では、エコーノードとの往復（Virtual CAN と、ビットレートを設定する物理 CAN）、送信レシートが返ってくる場合のループ防止、`--list-channels`、存在しないチャネル、引数の誤り、registry につながらない場合、ドライバがない場合、止める要求で止めたときの統計の 1 行と終了コード 0（Windows では共有するコンソールがなければ飛ばす）を確かめる
 
 ### `step`
 
@@ -78,7 +78,7 @@ CAN でない試験用の参加者（`Member`）で、段の順序、`start()` �
 
 `vehicle_sil::can` の単体テスト（SIL Kit なしでビルドする）、SIL Kit のポートのテスト（`can_silkit.*`）、簡易 CAN Network Simulator のテスト（`can_netsim.*`）。
 フレームの検証、仮想バスの受信順序とあふれ、ホストの段階の順序と失敗、ステップドライバーの順序、送信時間と調停（11 ビット / 29 ビット）、混雑、送信キュー、受信側のステップ幅によらないこと、ポートの事象（送信の結果、受け箱のあふれ、バス状態、エラーフレーム）、故障注入と ECU 単位の通信断、`post()`、時間の領域の混在の拒否、実時間のドライバー（差し替えた時計での決定的な試験と、壁時計での到着と順序）を確かめる。
-簡易 CAN Network Simulator では、プロセス内の participant と実行ファイルの両方で、仮想バスと同じ受信の時刻になること、繰り返しても同じ結果になること、送信時刻のない送信者、設定ファイルの読み込みを確かめる。
+簡易 CAN Network Simulator では、プロセス内の participant と実行ファイルの両方で、仮想バスと同じ受信の時刻になること、繰り返しても同じ結果になること、送信時刻のない送信者、コントローラーのモード（始めていないコントローラーの送信を捨てること、`Reset()` での送信の取り消し、止めたコントローラーへの配送）、設定ファイルの読み込みを確かめる。
 プロセス内のレジストリで、同じシナリオのトレースが仮想バスと SIL Kit で一致すること（ステップ幅の組み合わせを変えて）と、送信の続く中で participant を決まった順序で止めて破棄できることを確かめる（`unit` ラベルも付く）
 
 ### `eth`
@@ -184,7 +184,8 @@ Windows では `eth_link.fake_pcap_imports.*` が、偽のライブラリの使�
 ブリッジの実行ファイルが共有する `run_bridge()` の試験（全プラットフォーム。
 `unit` ラベルも付く）。
 偽の `hooks` と状態を決めた偽の participant で、終了コード、止める順（統計を SIL Kit の participant の停止より先に出す）、`fault()` と participant の失敗、警告と監視の行、起動の途中の状態を失敗にしないこと、起動の上限を確かめる。
-1 つはプロセス内のレジストリ（空いているポート）で本物の participant を使う
+1 つはプロセス内のレジストリ（空いているポート）で本物の participant を使う。
+registry につながらないときの文（`registry_failure_message()`）は、SIL Kit が実際に投げる文でも確かめる
 
 ### `fetchcontent`
 
@@ -333,7 +334,7 @@ Windows では `eth_link.fake_pcap_imports.*` が、偽のライブラリの使�
 
 ### `tools/common`
 
-- 主なクラス・関数（ヘッダー）: 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、`vehicle_sil/cli/console.hpp`。
+- 主なクラス・関数（ヘッダー）: 実行ファイル共通のコマンドライン処理（`vehicle_sil/cli/args.hpp`、`vehicle_sil/cli/console.hpp`、引数とパスを UTF-8 で扱う `vehicle_sil/cli/utf8.hpp`。
   ターゲット `vehicle_sil_cli`）
 - 試験: `tests/unit`
 - `ctest -R`: `^unit\.`
@@ -352,7 +353,7 @@ Windows では `eth_link.fake_pcap_imports.*` が、偽のライブラリの使�
 
 ### `bridges/common`
 
-- 主なクラス・関数（ヘッダー）: `run_bridge()`、`BridgeHooks`、`judge_participant_state()`、`request_stop()`、`finish_console_close()`（`bridge_runtime/run_bridge.hpp`）
+- 主なクラス・関数（ヘッダー）: `run_bridge()`、`BridgeHooks`、`judge_participant_state()`、`request_stop()`、`finish_console_close()`（`bridge_runtime/run_bridge.hpp`）、`registry_failure_message()`（`bridge_runtime/registry_failure.hpp`）
 - 試験: `tests/bridge_runtime`、ブリッジの実行ファイルの E2E（`tests/vector_xl` の `integration.*`）
 - `ctest -R`: `^bridge_runtime\.`、`^vector_xl\.integration\.`
 

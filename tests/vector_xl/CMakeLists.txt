@@ -53,6 +53,7 @@ vehicle_sil_add_scenario_tests(vehicle_sil_vector_xl_it_launcher
     echo-roundtrip-receipts
     list-channels
     no-driver
+    no-registry
     stop-request
   ARGS --registry $<TARGET_FILE:sil-kit-registry>
        --bridge $<TARGET_FILE:vehicle_sil_vector_xl_bridge_on_fake>

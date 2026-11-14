@@ -36,6 +36,7 @@ struct Request
     ns::ControllerDescriptor sender{};
     Frame frame{};
     void* user_context = nullptr;
+    std::uint64_t cancel_generation = 0; ///< the sender's, when the request arrived
 };
 
 std::string describe(const Frame& frame)
@@ -43,6 +44,22 @@ std::string describe(const Frame& frame)
     char text[32];
     std::snprintf(text, sizeof(text), "0x%X", static_cast<unsigned>(frame.id));
     return text;
+}
+
+/// A mode other than Started, as the warning of a dropped frame says it.
+const char* describe(sk::CanControllerState state)
+{
+    switch (state)
+    {
+    case sk::CanControllerState::Stopped:
+        return "stopped (Stop())";
+    case sk::CanControllerState::Sleep:
+        return "asleep (Sleep())";
+    case sk::CanControllerState::Uninit:
+        return "reset (Reset()) and not started again";
+    default:
+        return "not started";
+    }
 }
 
 } // namespace
@@ -85,13 +102,21 @@ public:
         }
     }
 
-    void set_mode(ns::ControllerDescriptor descriptor, sk::CanControllerState state)
+    void set_mode(ns::ControllerDescriptor descriptor, sk::CanControllerState state, bool cancelTransmitRequests)
     {
         const std::lock_guard lock(mutex_);
         const auto it = controllers_.find(descriptor);
         if (it != controllers_.end())
         {
             it->second.pending_state = state;
+            // In force for the requests that arrive from now on: SIL Kit delivers a controller's
+            // mode changes and requests in the order of its calls.
+            it->second.state = state;
+            if (cancelTransmitRequests)
+            {
+                ++it->second.cancel_generation;
+                it->second.cancel_pending = true;
+            }
         }
     }
 
@@ -133,6 +158,36 @@ public:
             }
             return;
         }
+        std::uint64_t cancelGeneration = 0;
+        {
+            const std::lock_guard lock(mutex_);
+            const auto it = controllers_.find(sender);
+            if (it != controllers_.end())
+            {
+                // Only a mode the simulator was told: a controller it heard nothing of may have
+                // started before it found the simulator (SIL Kit does not send that again).
+                if (it->second.state && *it->second.state != sk::CanControllerState::Started)
+                {
+                    rejected_.fetch_add(1, std::memory_order_relaxed);
+                    // Once per controller, also after a Start() and another Stop(): a tool that
+                    // changes its mode again and again must not fill the log.
+                    if (!it->second.warned_not_started)
+                    {
+                        it->second.warned_not_started = true;
+                        const std::string number = std::to_string(sender);
+                        warnings_.push_back("network '" + name_ + "': dropped frame " + describe(*frame) + " of controller " +
+                                            number + ", which is " + describe(*it->second.state) +
+                                            "; the frame gets no acknowledgement. Call Start() on that controller before "
+                                            "it sends. Controller " + number +
+                                            " is the number SIL Kit gave it: the simulator numbers the controllers it "
+                                            "finds from 1, over all networks. This is said once per controller; the "
+                                            "later frames are only counted (rejected)");
+                    }
+                    return;
+                }
+                cancelGeneration = it->second.cancel_generation;
+            }
+        }
         const SimTime last = SimTime{} + std::chrono::nanoseconds(last_step_ns_.load(std::memory_order_acquire));
         SimTime sent = last;
         const auto tagged = decode_send_time(request.userContext);
@@ -154,7 +209,7 @@ public:
                                     "); it is placed at the simulator's last step, which is not deterministic");
             }
         }
-        if (!inbox_.push(sent, Request{sender, *frame, request.userContext}))
+        if (!inbox_.push(sent, Request{sender, *frame, request.userContext, cancelGeneration}))
         {
             const std::lock_guard lock(mutex_);
             warnings_.push_back("network '" + name_ + "': the request inbox is full (" +
@@ -169,6 +224,7 @@ public:
         last_step_ns_.store(to_ns(now), std::memory_order_release);
         std::vector<std::string> warnings;
         std::vector<std::pair<ns::ControllerDescriptor, sk::CanControllerState>> states;
+        std::vector<std::pair<ns::ControllerDescriptor, std::size_t>> cancelled; // controller, model index
         std::optional<std::uint32_t> bitrate;
         bool hasProducer = false;
         step_ns_.store((step - SimDuration::zero()).count(), std::memory_order_relaxed);
@@ -194,6 +250,10 @@ public:
                 {
                     states.emplace_back(it->first, *c.pending_state);
                     c.pending_state.reset();
+                }
+                if (std::exchange(c.cancel_pending, false) && c.model_index)
+                {
+                    cancelled.emplace_back(it->first, *c.model_index);
                 }
                 present_.push_back(it->first);
                 ++it;
@@ -239,23 +299,43 @@ public:
             producer.Produce(sk::CanStateChangeEvent{now - SimTime{}, state}, SilKit::Util::MakeSpan(to));
         }
 
+        // A refusal: the acknowledgement that tells the sender what became of its request.
+        const auto refuse = [&](ns::ControllerDescriptor sender, std::uint32_t id, void* userContext, sk::CanTransmitStatus status) {
+            sk::CanFrameTransmitEvent ack{};
+            ack.canId = id;
+            ack.timestamp = now - SimTime{};
+            ack.status = status;
+            ack.userContext = userContext;
+            const std::array<ns::ControllerDescriptor, 1> to{sender};
+            producer.Produce(ack, SilKit::Util::MakeSpan(to));
+        };
+
+        // Cancelled transmit requests (Reset()): the frames that wait for the bus go, before this
+        // step decides its transmissions.
+        for (const auto& [descriptor, index] : cancelled)
+        {
+            const auto removed = model_.clear(index, [&, sender = descriptor](const CanBusModel::Removed& r) {
+                refuse(sender, r.frame.id, reinterpret_cast<void*>(r.context), sk::CanTransmitStatus::Canceled);
+            });
+            rejected_.fetch_add(removed, std::memory_order_relaxed);
+        }
+
         inbox_.drain_before(now, [&](SimTime sent, Request& request) {
-            const auto index = model_index(request.sender);
-            if (!index)
+            const auto accepted = accept(request.sender, request.cancel_generation);
+            if (!accepted.index)
             {
                 rejected_.fetch_add(1, std::memory_order_relaxed);
+                if (accepted.cancelled)
+                {
+                    // Sent before the controller cancelled its requests, taken only now.
+                    refuse(request.sender, request.frame.id, request.user_context, sk::CanTransmitStatus::Canceled);
+                }
                 return;
             }
-            if (!model_.submit(*index, request.frame, sent, reinterpret_cast<std::uint64_t>(request.user_context)))
+            if (!model_.submit(*accepted.index, request.frame, sent, reinterpret_cast<std::uint64_t>(request.user_context)))
             {
                 queue_full_.fetch_add(1, std::memory_order_relaxed);
-                sk::CanFrameTransmitEvent ack{};
-                ack.canId = request.frame.id;
-                ack.timestamp = now - SimTime{};
-                ack.status = sk::CanTransmitStatus::TransmitQueueFull;
-                ack.userContext = request.user_context;
-                const std::array<ns::ControllerDescriptor, 1> to{request.sender};
-                producer.Produce(ack, SilKit::Util::MakeSpan(to));
+                refuse(request.sender, request.frame.id, request.user_context, sk::CanTransmitStatus::TransmitQueueFull);
             }
         });
 
@@ -322,25 +402,41 @@ private:
     struct Controller
     {
         std::optional<std::size_t> model_index;
-        std::optional<sk::CanControllerState> pending_state;
+        std::optional<sk::CanControllerState> pending_state; ///< to acknowledge at the next step
+        std::optional<sk::CanControllerState> state;         ///< the last mode the controller told; none: not heard
+        std::uint64_t cancel_generation = 0;                 ///< counts the controller's cancellations of its requests
+        bool cancel_pending = false;                         ///< a cancellation the next step applies to the model
+        bool warned_not_started = false;                     ///< said once that its frames are dropped
         bool removed = false;
     };
 
-    /// The bus model's sender index of a connected controller (added on its first request).
-    std::optional<std::size_t> model_index(ns::ControllerDescriptor descriptor)
+    struct Accepted
+    {
+        std::optional<std::size_t> index; ///< the bus model's sender index; none: the request is dropped
+        bool cancelled = false;           ///< dropped because the controller cancelled its requests after it
+    };
+
+    /// Whether a request that arrived at the sender's `cancelGeneration` goes to the bus model,
+    /// with the model's sender index of the controller (added on its first request). Not for a
+    /// controller that is gone.
+    Accepted accept(ns::ControllerDescriptor descriptor, std::uint64_t cancelGeneration)
     {
         const std::lock_guard lock(mutex_);
         const auto it = controllers_.find(descriptor);
         if (it == controllers_.end() || it->second.removed)
         {
-            return std::nullopt;
+            return {};
+        }
+        if (it->second.cancel_generation != cancelGeneration)
+        {
+            return {std::nullopt, true};
         }
         if (!it->second.model_index)
         {
             it->second.model_index = model_.add_sender();
             senders_.push_back(descriptor);
         }
-        return it->second.model_index;
+        return {it->second.model_index, false};
     }
 
     const std::string name_;
@@ -389,7 +485,13 @@ public:
 
     void OnSetBaudrate(const ns::Can::CanConfigureBaudrate& baudrate) override { network_->set_baudrate(baudrate.baudRate); }
     void OnFrameRequest(const ns::Can::CanFrameRequest& request) override { network_->on_request(descriptor_, request); }
-    void OnSetControllerMode(const ns::Can::CanControllerMode& mode) override { network_->set_mode(descriptor_, mode.state); }
+    void OnSetControllerMode(const ns::Can::CanControllerMode& mode) override
+    {
+        // The other flag asks to reset the error handling: error states are not modelled.
+        const bool cancel =
+            (mode.canControllerModeFlags & SilKit_Experimental_NetSim_CanControllerModeFlags_CancelTransmitRequests) != 0;
+        network_->set_mode(descriptor_, mode.state, cancel);
+    }
 
 private:
     std::shared_ptr<CanBusSimulator::Network> network_;
