@@ -4,6 +4,9 @@
 #include "frame_seat.hpp"
 #include "vehicle_sil/j1939/network.hpp"
 
+#include <algorithm>
+#include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -34,21 +37,34 @@ public:
         sit(network);
     }
 
-    void add(const char* what, bool any, Pgn pgn, MessageHandler handler)
+    ~Seat() override
+    {
+        // First: the handlers destroyed with the lists may own subscriptions of this listener.
+        alive_.reset();
+    }
+
+    HandlerId add(const char* what, bool any, Pgn pgn, MessageHandler handler)
     {
         check(what, static_cast<bool>(handler));
-        messages_.push_back(MessageEntry{any, pgn, std::move(handler)});
+        messages_.push_back(Entry<MessageHandler>{next_id(), false, any, pgn, std::move(handler)});
+        return messages_.back().id;
     }
-    void add(const char* what, TransferHandler handler)
+    HandlerId add(const char* what, TransferHandler handler)
     {
         check(what, static_cast<bool>(handler));
-        transfers_.push_back(std::move(handler));
+        transfers_.push_back(Entry<TransferHandler>{next_id(), false, false, Pgn{}, std::move(handler)});
+        return transfers_.back().id;
     }
-    void add(const char* what, FrameHandler handler)
+    HandlerId add(const char* what, FrameHandler handler)
     {
         check(what, static_cast<bool>(handler));
-        frames_.push_back(std::move(handler));
+        frames_.push_back(Entry<FrameHandler>{next_id(), false, false, Pgn{}, std::move(handler)});
+        return frames_.back().id;
     }
+
+    bool remove(HandlerId id) noexcept { return remove_from(messages_, id) || remove_from(transfers_, id) || remove_from(frames_, id); }
+
+    [[nodiscard]] std::weak_ptr<const bool> alive() const noexcept { return alive_; }
 
     [[nodiscard]] const TransferSniffer& sniffer() const noexcept { return sniffer_; }
     [[nodiscard]] const ListenerOptions& options() const noexcept { return options_; }
@@ -56,15 +72,13 @@ public:
     // detail::FrameSeat
     void on_frame(SimTime time, const can::Frame& frame, bool local) override
     {
+        const Sweeping sweeping(*this);
         const Identifier id = Identifier::decode(frame.id);
         if (!local || options_.hear_local)
         {
             const ReceivedFrame received{time, frame, id.pgn, id.priority, id.source, id.destination, local, frame.payload()};
             const Calling calling(calling_);
-            for (const FrameHandler& handler : frames_)
-            {
-                handler(received);
-            }
+            call(frames_, received);
         }
         // A frame of this Network's own node never reaches the sniffer, not even its time: the
         // Network loops it back only when it has a second node, and what is followed must not
@@ -96,6 +110,7 @@ public:
 
     void on_message(const Message& message, bool local) override
     {
+        const Sweeping sweeping(*this);
         if (!local || options_.hear_local)
         {
             const Calling calling(calling_);
@@ -106,16 +121,101 @@ public:
 
     void on_step_end(SimTime now) override
     {
+        const Sweeping sweeping(*this);
         sniffer_.advance(now);
         stop_if_misused();
     }
 
 private:
-    struct MessageEntry
+    template <typename Handler>
+    struct Entry
     {
-        bool any;
-        Pgn pgn;
-        MessageHandler handler;
+        HandlerId id;
+        bool removed; ///< Removed while the lists were walked: skipped, erased by sweep().
+        bool any;     ///< Message handlers: for every group.
+        Pgn pgn;      ///< Message handlers that are not `any`.
+        Handler handler;
+    };
+
+    [[nodiscard]] HandlerId next_id() noexcept { return HandlerId{++last_id_}; }
+
+    /// Calls the handlers of `list` in the order they were added. Nothing is added to a list
+    /// while it is walked (check()), and what is removed is only marked.
+    template <typename Handler, typename Argument>
+    static void call(const std::vector<Entry<Handler>>& list, const Argument& argument)
+    {
+        for (std::size_t i = 0; i < list.size(); ++i)
+        {
+            if (!list[i].removed)
+            {
+                list[i].handler(argument);
+            }
+        }
+    }
+
+    template <typename Handler>
+    bool remove_from(std::vector<Entry<Handler>>& list, HandlerId id) noexcept
+    {
+        for (auto it = list.begin(); it != list.end(); ++it)
+        {
+            if (it->id != id || it->removed)
+            {
+                continue;
+            }
+            if (calling_)
+            {
+                // The list may be the one being walked, and the handler the one running.
+                it->removed = true;
+                swept_ = false;
+                return true;
+            }
+            // Destroyed after the erase: what the handler captured may remove other handlers.
+            const Entry<Handler> gone = std::move(*it);
+            list.erase(it);
+            return true;
+        }
+        return false;
+    }
+
+    template <typename Handler>
+    static void sweep(std::vector<Entry<Handler>>& list) noexcept
+    {
+        while (true)
+        {
+            const auto it = std::find_if(list.begin(), list.end(), [](const Entry<Handler>& e) { return e.removed; });
+            if (it == list.end())
+            {
+                return;
+            }
+            const Entry<Handler> gone = std::move(*it); // destroyed after the erase (see remove_from())
+            list.erase(it);
+        }
+    }
+
+    /// Erases what was removed while handlers ran (see Sweeping).
+    void sweep() noexcept
+    {
+        if (!swept_)
+        {
+            swept_ = true;
+            sweep(messages_);
+            sweep(transfers_);
+            sweep(frames_);
+        }
+    }
+
+    /// At the end of a function of the seat, however it is left: erases what was removed while
+    /// handlers ran. No list is walked there.
+    class Sweeping
+    {
+    public:
+        explicit Sweeping(Seat& seat) noexcept : seat_(seat) {}
+        ~Sweeping() { seat_.sweep(); }
+        Sweeping(const Sweeping&) = delete;
+        Sweeping& operator=(const Sweeping&) = delete;
+
+    private:
+        Seat& seat_;
     };
 
     /// Sets a flag for a scope and puts back what it was (handlers are called from nested scopes).
@@ -183,9 +283,10 @@ private:
 
     void hand_on(const Message& message) const
     {
-        for (const MessageEntry& entry : messages_)
+        for (std::size_t i = 0; i < messages_.size(); ++i)
         {
-            if (entry.any || entry.pgn == message.pgn)
+            const Entry<MessageHandler>& entry = messages_[i];
+            if (!entry.removed && (entry.any || entry.pgn == message.pgn))
             {
                 entry.handler(message);
             }
@@ -201,18 +302,20 @@ private:
         {
             hand_on(transfer.message());
         }
-        for (const TransferHandler& handler : transfers_)
-        {
-            handler(transfer);
-        }
+        call(transfers_, transfer);
     }
 
     Network& network_; ///< Used only inside the seat's functions, where the network is alive.
     ListenerOptions options_;
     TransferSniffer sniffer_;
-    std::vector<MessageEntry> messages_;
-    std::vector<TransferHandler> transfers_;
-    std::vector<FrameHandler> frames_;
+    std::vector<Entry<MessageHandler>> messages_;
+    std::vector<Entry<TransferHandler>> transfers_;
+    std::vector<Entry<FrameHandler>> frames_;
+    std::uint64_t last_id_ = 0;
+    bool swept_ = true;     ///< false: a handler was removed while handlers ran.
+    /// Tells ListenerSubscriptions that the listener is gone. Declared after the lists, but
+    /// reset first by the destructor.
+    std::shared_ptr<const bool> alive_ = std::make_shared<const bool>(true);
     bool calling_ = false;  ///< Inside a handler of this listener.
     std::string misuse_;    ///< Not empty: a handler registered a handler.
 };
@@ -221,18 +324,61 @@ Listener::Listener(Network& network, ListenerOptions options) : seat_(std::make_
 
 Listener::~Listener() = default;
 
-void Listener::on_message(Pgn pgn, MessageHandler handler) { seat_->add("on_message()", false, pgn, std::move(handler)); }
+Listener::HandlerId Listener::on_message(Pgn pgn, MessageHandler handler)
+{
+    return seat_->add("on_message()", false, pgn, std::move(handler));
+}
 
-void Listener::on_any_message(MessageHandler handler) { seat_->add("on_any_message()", true, Pgn{}, std::move(handler)); }
+Listener::HandlerId Listener::on_any_message(MessageHandler handler)
+{
+    return seat_->add("on_any_message()", true, Pgn{}, std::move(handler));
+}
 
-void Listener::on_transfer(TransferHandler handler) { seat_->add("on_transfer()", std::move(handler)); }
+Listener::HandlerId Listener::on_transfer(TransferHandler handler) { return seat_->add("on_transfer()", std::move(handler)); }
 
-void Listener::on_frame(FrameHandler handler) { seat_->add("on_frame()", std::move(handler)); }
+Listener::HandlerId Listener::on_frame(FrameHandler handler) { return seat_->add("on_frame()", std::move(handler)); }
+
+bool Listener::remove_handler(HandlerId id) noexcept { return seat_->remove(id); }
 
 std::size_t Listener::open_transfers() const noexcept { return seat_->sniffer().active(); }
 
 const SnifferStatistics& Listener::sniffer_statistics() const noexcept { return seat_->sniffer().statistics(); }
 
 const ListenerOptions& Listener::options() const noexcept { return seat_->options(); }
+
+ListenerSubscription::ListenerSubscription(Listener& listener, Listener::HandlerId id) noexcept
+  : listener_(&listener), id_(id), alive_(listener.seat_->alive())
+{
+}
+
+ListenerSubscription::ListenerSubscription(ListenerSubscription&& other) noexcept
+  : listener_(std::exchange(other.listener_, nullptr)), id_(std::exchange(other.id_, Listener::HandlerId{})),
+    alive_(std::move(other.alive_))
+{
+    other.alive_.reset();
+}
+
+ListenerSubscription& ListenerSubscription::operator=(ListenerSubscription&& other) noexcept
+{
+    if (this != &other)
+    {
+        reset();
+        listener_ = std::exchange(other.listener_, nullptr);
+        id_ = std::exchange(other.id_, Listener::HandlerId{});
+        alive_ = std::move(other.alive_);
+        other.alive_.reset();
+    }
+    return *this;
+}
+
+void ListenerSubscription::reset() noexcept
+{
+    Listener* listener = std::exchange(listener_, nullptr);
+    if (listener != nullptr && !alive_.expired())
+    {
+        static_cast<void>(listener->remove_handler(id_));
+    }
+    alive_.reset();
+}
 
 } // namespace vehicle_sil::j1939

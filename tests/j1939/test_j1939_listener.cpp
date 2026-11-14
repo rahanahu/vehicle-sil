@@ -35,6 +35,7 @@ using vehicle_sil::j1939::Event;
 using vehicle_sil::j1939::EventKind;
 using vehicle_sil::j1939::Listener;
 using vehicle_sil::j1939::ListenerOptions;
+using vehicle_sil::j1939::ListenerSubscription;
 using vehicle_sil::j1939::Message;
 using vehicle_sil::j1939::Name;
 using vehicle_sil::j1939::Network;
@@ -1196,4 +1197,418 @@ TEST_CASE(listener_and_the_test_kits_recorder_listen_to_the_same_network)
     CHECK_EQ(recording.heard.size(), 3u);
     CHECK(recording.ended.empty());
     CHECK(!bench.network.failed());
+}
+
+// --- transfers that a frame's time or address ends -----------------------------------------------
+
+TEST_CASE(listener_reports_other_transfers_a_frame_ends_before_that_frames_own_message)
+{
+    // A to B stopped long ago; nothing was decided at the step ends in between (the listening
+    // participant steps coarsely here: one step holds the whole silence). Then C sends a single
+    // frame: its time ends the stopped transfer, which is reported before C's message.
+    Bench bench(quiet(), 100ms);
+    Listener listener(bench.network);
+    Node& node = bench.add_node(kTool);
+    std::vector<std::string> log;
+    listener.on_frame([&](const ReceivedFrame& f) { log.push_back("frame " + std::to_string(f.pgn.value())); });
+    listener.on_any_message([&](const Message& m) { log.push_back("message " + std::to_string(m.pgn.value())); });
+    listener.on_transfer([&](const SniffedTransfer& t) {
+        log.push_back("transfer " + std::to_string(static_cast<int>(t.end)) + " " + std::to_string(to_ns(t.time)));
+    });
+    node.on_any_message([&](const Message&) { log.push_back("node"); });
+    while (bench.next_time() <= at(1500ms))
+    {
+        bench.step();
+    }
+    bench.inject(at(1501ms), rts(kA, kB, 30, kPgn)); // never answered
+    while (bench.next_time() <= at(3000ms))
+    {
+        bench.step();
+    }
+    CHECK_EQ(listener.open_transfers(), 1u); // 3000 ms: 1499 ms of silence, within timeout + grace
+    log.clear();
+    bench.inject(at(3002ms), frame(6, kPgnPropB, kC, kGlobal, {1}));
+    bench.step(); // 3100 ms
+    const std::string pgn = std::to_string(kPgnPropB);
+    CHECK(log == (std::vector<std::string>{"frame " + pgn,
+                                            "transfer " + std::to_string(static_cast<int>(SniffEnd::TimedOut)) + " 2751000000",
+                                            "message " + pgn, "node"}));
+}
+
+// --- removing handlers ------------------------------------------------------------------------------
+
+namespace {
+
+/// A watcher as users write them: takes a Listener&, keeps its registrations, counts.
+class Watcher
+{
+public:
+    explicit Watcher(Listener& listener)
+      : messages_(listener, listener.on_any_message([this](const Message&) { count(); })),
+        transfers_(listener, listener.on_transfer([this](const SniffedTransfer&) { count(); })),
+        frames_(listener, listener.on_frame([this](const ReceivedFrame&) { count(); }))
+    {
+    }
+    ~Watcher() { alive_ = false; }
+    void set_counter(std::size_t* calls, std::size_t* callsWhenGone)
+    {
+        calls_ = calls;
+        calls_when_gone_ = callsWhenGone;
+    }
+
+private:
+    void count()
+    {
+        ++*(alive_ ? calls_ : calls_when_gone_);
+    }
+    bool alive_ = true;
+    std::size_t* calls_ = nullptr;
+    std::size_t* calls_when_gone_ = nullptr;
+    ListenerSubscription messages_;
+    ListenerSubscription transfers_;
+    ListenerSubscription frames_;
+};
+
+} // namespace
+
+TEST_CASE(listener_handler_whose_id_is_dropped_stays_and_a_watcher_that_goes_first_takes_its_handlers_along)
+{
+    Bench bench(quiet());
+    Listener listener(bench.network);
+    std::size_t kept = 0;
+    static_cast<void>(listener.on_any_message([&](const Message&) { ++kept; })); // the id dropped: it stays
+    std::size_t calls = 0;
+    std::size_t callsWhenGone = 0;
+    auto watcher = std::make_unique<Watcher>(listener);
+    watcher->set_counter(&calls, &callsWhenGone);
+    bench.step();
+    inject_connection(bench, at(1ms), kA, kB, payload(14));
+    bench.step();
+    CHECK_EQ(kept, 1u);
+    CHECK_EQ(calls, 5u + 1u + 1u); // five frames, the message, the transfer
+    watcher.reset();               // before the listener, between two steps
+    inject_connection(bench, at(11ms), kA, kB, payload(14));
+    bench.inject(at(18ms), frame(6, kPgnPropB, kA, kGlobal, {1}));
+    bench.steps(3);
+    CHECK_EQ(kept, 3u);
+    CHECK_EQ(calls, 7u);
+    CHECK_EQ(callsWhenGone, 0u);
+    CHECK(!bench.network.failed());
+}
+
+TEST_CASE(listener_handlers_can_be_removed_by_id_and_a_subscription_moves)
+{
+    Bench bench(quiet());
+    Listener listener(bench.network);
+    std::vector<std::string> log;
+    const Listener::HandlerId first = listener.on_any_message([&](const Message&) { log.push_back("first"); });
+    const Listener::HandlerId second = listener.on_message(Pgn{kPgnPropB}, [&](const Message&) { log.push_back("second"); });
+    const Listener::HandlerId frames = listener.on_frame([&](const ReceivedFrame&) { log.push_back("frame"); });
+    const Listener::HandlerId transfers = listener.on_transfer([&](const SniffedTransfer&) { log.push_back("transfer"); });
+    CHECK(!(first == second));
+    CHECK(!(frames == transfers));
+    CHECK(!(first == Listener::HandlerId{}));
+    CHECK(listener.remove_handler(first));
+    CHECK(!listener.remove_handler(first)); // gone already
+    CHECK(!listener.remove_handler(Listener::HandlerId{12345}));
+    CHECK(listener.remove_handler(transfers));
+    ListenerSubscription empty;
+    CHECK(!empty.active());
+    empty.reset(); // nothing
+    ListenerSubscription a(listener, second);
+    CHECK(a.active());
+    ListenerSubscription b(std::move(a));
+    CHECK(!a.active()); // NOLINT(bugprone-use-after-move): the moved-from state is part of the contract
+    CHECK(b.active());
+    empty = std::move(b);
+    CHECK(empty.active());
+    bench.step();
+    bench.inject(at(1ms), frame(6, kPgnPropB, kA, kGlobal, {1}));
+    inject_connection(bench, at(2ms), kA, kB, payload(14), kPgnPropB + 1);
+    bench.step();
+    CHECK(log == (std::vector<std::string>{"frame", "second", "frame", "frame", "frame", "frame", "frame"}));
+    log.clear();
+    // Assigning over a subscription removes what it held.
+    empty = ListenerSubscription(listener, frames);
+    bench.inject(at(11ms), frame(6, kPgnPropB, kA, kGlobal, {1}));
+    bench.step();
+    CHECK(log == (std::vector<std::string>{"frame"}));
+    empty.reset();
+    CHECK(!empty.active());
+    CHECK(!listener.remove_handler(frames));
+    bench.inject(at(21ms), frame(6, kPgnPropB, kA, kGlobal, {1}));
+    bench.step();
+    CHECK_EQ(log.size(), 1u);
+}
+
+TEST_CASE(listener_handler_can_remove_itself_and_others_while_it_runs)
+{
+    // In each kind of handler: the handler removes itself, one that ran before it and one that
+    // comes after it in the same walk. None of them is called again, the later one not even for
+    // this frame; the handler objects live until the listener is done with the frame.
+    for (const In in : {In::Frame, In::Message, In::SniffedMessage, In::Transfer, In::TimedOutTransfer})
+    {
+        Bench bench(quiet());
+        Listener listener(bench.network);
+        std::vector<std::string> log;
+        ListenerSubscription before;
+        ListenerSubscription self;
+        ListenerSubscription after;
+        // Destroyed with its handler: says when the handler object goes.
+        struct Says
+        {
+            std::vector<std::string>* log;
+            std::string text;
+            Says(std::vector<std::string>* l, std::string t) : log(l), text(std::move(t)) {}
+            Says(const Says&) = delete;
+            Says& operator=(const Says&) = delete;
+            ~Says() { log->push_back(text); }
+        };
+        const auto add = [&](std::function<void()> body) {
+            switch (in)
+            {
+            case In::Frame:
+                return listener.on_frame([body](const ReceivedFrame&) { body(); });
+            case In::Message:
+            case In::SniffedMessage:
+                return listener.on_any_message([body](const Message&) { body(); });
+            case In::Transfer:
+            case In::TimedOutTransfer:
+                break;
+            }
+            return listener.on_transfer([body](const SniffedTransfer&) { body(); });
+        };
+        before = ListenerSubscription(listener, add([&] { log.push_back("before"); }));
+        const auto gone = std::make_shared<Says>(&log, "handler object destroyed");
+        self = ListenerSubscription(listener, add([&, gone] {
+            log.push_back("self");
+            before.reset();
+            self.reset();
+            after.reset();
+            CHECK(!self.active());
+            log.push_back("self goes on"); // still running in its own, removed, handler object
+        }));
+        after = ListenerSubscription(listener, add([&] { log.push_back("after"); }));
+        std::size_t last = 0;
+        static_cast<void>(add([&] { ++last; })); // stays
+        std::weak_ptr<Says> watch = gone;
+        const auto traffic = [&](SimTime t) {
+            switch (in)
+            {
+            case In::Frame:
+            case In::Message:
+                bench.inject(t, frame(6, kPgnPropB, kA, kGlobal, {1}));
+                break;
+            case In::SniffedMessage:
+            case In::Transfer:
+                inject_connection(bench, t, kA, kB, payload(14));
+                break;
+            case In::TimedOutTransfer:
+                bench.inject(t, rts(kA, kB, 30, kPgn));
+                break;
+            }
+        };
+        bench.step();
+        traffic(at(1ms));
+        const int steps = in == In::TimedOutTransfer ? 160 : 1;
+        bench.steps(steps);
+        CHECK(log == (std::vector<std::string>{"before", "self", "self goes on"}));
+        CHECK(last >= 1u);
+        // The handler object (and what it captured) went when the listener was done, not while
+        // the handler ran: only this test's own reference is left.
+        CHECK_EQ(watch.use_count(), 1);
+        const std::size_t lastBefore = last;
+        log.clear();
+        traffic(bench.last_time() + 1ms);
+        bench.steps(steps);
+        CHECK(log.empty());
+        CHECK(last > lastBefore);
+        CHECK(!bench.network.failed());
+    }
+}
+
+TEST_CASE(listener_subscription_outlives_the_listener_and_the_network)
+{
+    std::size_t calls = 0;
+    ListenerSubscription late;
+    {
+        Bench bench(quiet());
+        ListenerSubscription onNode;
+        {
+            Listener listener(bench.network);
+            late = ListenerSubscription(listener, listener.on_any_message([&](const Message&) { ++calls; }));
+            // A handler that owns a subscription of the same listener: destroyed with it.
+            auto owned = std::make_shared<ListenerSubscription>(listener, listener.on_frame([&](const ReceivedFrame&) { ++calls; }));
+            static_cast<void>(listener.on_transfer([owned](const SniffedTransfer&) {}));
+            owned.reset();
+            onNode = ListenerSubscription(listener, listener.on_frame([&](const ReceivedFrame&) { ++calls; }));
+            bench.step();
+            bench.inject(frame(6, kPgnPropB, kA, kGlobal, {1}));
+            bench.step();
+            CHECK_EQ(calls, 3u);
+            CHECK(late.active());
+        }
+        // The listener went first.
+        CHECK(!late.active());
+        CHECK(!onNode.active());
+        onNode.reset();
+        bench.inject(frame(6, kPgnPropB, kA, kGlobal, {1}));
+        bench.step();
+        CHECK_EQ(calls, 3u);
+    }
+    late.reset(); // after the listener and the network
+    CHECK(!late.active());
+    {
+        // The network goes first, then the subscription, then the listener.
+        auto bench = std::make_unique<Bench>(quiet());
+        auto listener = std::make_unique<Listener>(bench->network);
+        ListenerSubscription sub(*listener, listener->on_any_message([&](const Message&) { ++calls; }));
+        bench.reset();
+        CHECK(sub.active());
+        sub.reset();
+        CHECK(!sub.active());
+        listener.reset();
+    }
+    CHECK_EQ(calls, 3u);
+}
+
+TEST_CASE(listener_removes_a_handler_from_a_nodes_handler_in_the_same_step)
+{
+    Bench bench(quiet());
+    Listener listener(bench.network);
+    std::size_t heard = 0;
+    ListenerSubscription sub(listener, listener.on_any_message([&](const Message&) { ++heard; }));
+    Node& node = bench.add_node(kTool);
+    node.on_any_message([&](const Message&) { sub.reset(); });
+    bench.step();
+    bench.inject(at(1ms), frame(6, kPgnPropB, kA, kGlobal, {1}));
+    bench.inject(at(2ms), frame(6, kPgnPropB, kA, kGlobal, {2}));
+    bench.step();
+    CHECK_EQ(heard, 1u); // the listener hears a message before the node; then it was removed
+    CHECK(!bench.network.failed());
+}
+
+// --- a listener on a network with nodes changes nothing for them -----------------------------------
+
+namespace {
+
+/// Two nodes on one network (so the network loops their frames back), talked to from outside and
+/// talking themselves. Returns everything the nodes got, the network's events and what it sent.
+std::vector<std::string> run_nodes(std::optional<bool> hearLocal)
+{
+    Bench bench(quiet());
+    vehicle_sil::testkit::J1939Events events(bench.network);
+    std::vector<std::string> record;
+    const Name name = Name{}.set_identity_number(7).set_manufacturer_code(0x7F0);
+    Node& a = bench.network.add_node(NodeOptions{kTool, name});
+    Node& b = bench.add_node(kTool2);
+    const auto note = [&](const char* who) {
+        return [&record, who](const Message& m) {
+            record.push_back(std::string(who) + " got " + std::to_string(m.pgn.value()) + " " + std::to_string(m.source) + ">" +
+                             std::to_string(m.destination) + " @" + std::to_string(to_ns(m.time)) + " #" +
+                             std::to_string(m.data.size()));
+        };
+    };
+    a.on_any_message(note("a"));
+    b.on_any_message(note("b"));
+    a.on_transfer_end([&](const vehicle_sil::j1939::TransferEnd& e) {
+        record.push_back("a transfer end " + std::to_string(static_cast<int>(e.result)) + " @" + std::to_string(to_ns(e.time)));
+    });
+    std::unique_ptr<Listener> listener;
+    std::size_t heard = 0;
+    if (hearLocal)
+    {
+        ListenerOptions options;
+        options.hear_local = *hearLocal;
+        listener = std::make_unique<Listener>(bench.network, options);
+        listener->on_any_message([&](const Message&) { ++heard; });
+        listener->on_frame([&](const ReceivedFrame&) { ++heard; });
+        listener->on_transfer([&](const SniffedTransfer&) { ++heard; });
+    }
+    bench.app = [&](SimTime now) {
+        if (now == at(300ms))
+        {
+            static_cast<void>(a.send(Pgn{kPgnPropB}, Bytes{1, 2}));
+            static_cast<void>(a.send(Pgn{0xFF31}, payload(30, 1), kGlobal)); // BAM, looped back to b
+        }
+        if (now == at(400ms))
+        {
+            static_cast<void>(b.send(Pgn{kPgn}, payload(40, 2), kTool)); // a connection between the two nodes
+            static_cast<void>(a.send(Pgn{kPgn}, payload(40, 3), kB));   // to outside: answered below
+        }
+    };
+    const Bytes toNode = payload(20, 4);
+    for (int i = 0; i < 80; ++i)
+    {
+        const SimTime t = bench.last_time();
+        if (i == 35)
+        {
+            bench.inject(t + 1ms, frame(6, kPgnPropB, kA, kGlobal, {9}));
+            bench.inject(t + 2ms, rts(kA, kTool2, 20, kPgn)); // to a node
+            inject_connection(bench, t + 3ms, kB, kC, payload(14)); // between others
+            bench.inject(t + 2ms, rts(kC, kA, 30, kPgn));     // between others, never answered
+        }
+        if (i == 36)
+        {
+            for (const auto& f : dts(kA, kTool2, toNode, 1, 3))
+            {
+                bench.inject(t + 1ms, f);
+            }
+        }
+        if (i == 42)
+        {
+            bench.inject(t + 1ms, cts(kB, kTool, 6, 1, kPgn)); // the answer to the node's connection
+        }
+        if (i == 44)
+        {
+            bench.inject(t + 1ms, eoma(kB, kTool, 40, kPgn));
+        }
+        bench.step();
+        std::size_t k = bench.sent_times.size();
+        for (const auto& f : bench.take_sent())
+        {
+            record.push_back("sent " + to_string(f) + " @" + std::to_string(to_ns(bench.sent_times.at(k++))));
+        }
+    }
+    for (const auto& r : events.all())
+    {
+        const Event& e = r.event;
+        record.push_back("event " + std::to_string(static_cast<int>(e.kind)) + " @" + std::to_string(to_ns(e.time)) + " n" +
+                         std::to_string(e.node) + " " + std::to_string(e.pgn.value()) + " " + std::to_string(e.source) + ">" +
+                         std::to_string(e.destination) + " #" + std::to_string(r.data.size()));
+    }
+    const auto& s = bench.network.statistics();
+    record.push_back("statistics " + std::to_string(s.frames_received) + " " + std::to_string(s.frames_sent) + " " +
+                     std::to_string(s.frames_ignored) + " " + std::to_string(s.transport_messages_received) + " " +
+                     std::to_string(s.transport_messages_sent) + " " + std::to_string(s.transport_frames_ignored) + " " +
+                     std::to_string(s.transport_rejected) + " " + std::to_string(s.address_violations));
+    CHECK(!bench.network.failed());
+    CHECK(!hearLocal || heard > 10u);
+    return record;
+}
+
+} // namespace
+
+TEST_CASE(listener_on_a_network_with_nodes_changes_nothing_for_the_nodes)
+{
+    const std::vector<std::string> without = run_nodes(std::nullopt);
+    // Not an empty comparison: the nodes received single frames and transfers and sent some.
+    std::size_t got = 0;
+    std::size_t sent = 0;
+    for (const auto& line : without)
+    {
+        got += line.find(" got ") != std::string::npos ? 1u : 0u;
+        sent += line.rfind("sent ", 0) == 0 ? 1u : 0u;
+    }
+    CHECK(got >= 6u);
+    CHECK(sent >= 20u);
+    for (const bool hearLocal : {false, true})
+    {
+        const std::vector<std::string> with = run_nodes(hearLocal);
+        for (std::size_t i = 0; i < std::min(with.size(), without.size()); ++i)
+        {
+            CHECK_TEXT(with[i], without[i]);
+        }
+        CHECK_EQ(with.size(), without.size());
+    }
 }

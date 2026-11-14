@@ -263,7 +263,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
 
 ### `libs/j1939`（エンジン）
 
-- 主なクラス・関数（ヘッダー）: `Network`、`Node`（`j1939/network.hpp`）、`Pgn`、`Identifier`（`j1939/types.hpp`）、`Name`（`j1939/name.hpp`）、`Subscription`、`Timer`（`j1939/toolbox.hpp`）、`Observer`（`j1939/observer.hpp`）、`TransferSniffer`（`j1939/transfer_sniffer.hpp`。ほかの ECU どうしの転送をフレームから追う。`Network` に依らない）、`Listener`（`j1939/listener.hpp`。ほかの participant のメッセージを、宛先が誰でも聞く）。
+- 主なクラス・関数（ヘッダー）: `Network`、`Node`（`j1939/network.hpp`）、`Pgn`、`Identifier`（`j1939/types.hpp`）、`Name`（`j1939/name.hpp`）、`Subscription`、`Timer`（`j1939/toolbox.hpp`）、`Observer`（`j1939/observer.hpp`）、`TransferSniffer`（`j1939/transfer_sniffer.hpp`。ほかの ECU どうしの転送をフレームから追う。`Network` に依らない）、`Listener` と `ListenerSubscription`（`j1939/listener.hpp`。ほかの participant のメッセージを、宛先が誰でも聞く。ハンドラの登録を持って、壊れると外す）。
   Address Claim と Request は `src/node.cpp`、トランスポートプロトコルは `src/transport.cpp`、盗み聞きは `src/transfer_sniffer.cpp`。両方が読むフレームの形（制御バイト、時間切れ、告知の形の検査）は `src/transport_wire.hpp`。聞き役の席（内部の口）は `src/frame_seat.hpp`、それに座る `Listener` は `src/listener.cpp`
 - 試験: `tests/j1939`
 - `ctest -R`: `^j1939\.`、`^j1939_silkit\.`

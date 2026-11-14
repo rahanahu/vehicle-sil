@@ -978,6 +978,25 @@ TEST_CASE(steady_state_steps_with_a_listener_do_not_allocate)
     listener.on_any_message([&](const Message&) { ++messages; });
     listener.on_frame([&](const vehicle_sil::j1939::ReceivedFrame&) { ++frames; });
     listener.on_transfer([&](const vehicle_sil::j1939::SniffedTransfer&) { ++transfers; });
+    // Handlers that are removed while the steps are counted: one from its own call, one from a
+    // node's handler.
+    std::size_t removed = 0;
+    vehicle_sil::j1939::ListenerSubscription once;
+    vehicle_sil::j1939::ListenerSubscription other(listener, listener.on_frame([&](const vehicle_sil::j1939::ReceivedFrame&) {}));
+    bool counting = false;
+    once = vehicle_sil::j1939::ListenerSubscription(listener, listener.on_any_message([&](const Message&) {
+        if (counting)
+        {
+            once.reset();
+            ++removed;
+        }
+    }));
+    a.on_any_message([&](const Message&) {
+        if (counting)
+        {
+            other.reset();
+        }
+    });
     const Bytes message = payload(30);
     std::vector<J1939Frame> round{frame(6, kPgnPropB, 0x90, kGlobal, {9, 8, 7}), frame(3, kPgnPropA, 0x91, 0x80, {1}),
                                   rts(0x10, 0x20, 30, 0xEF00), cts(0x20, 0x10, 5, 1, 0xEF00)};
@@ -1006,6 +1025,7 @@ TEST_CASE(steady_state_steps_with_a_listener_do_not_allocate)
         static_cast<void>(bench.take_sent());
     }
     const std::size_t messagesBefore = messages;
+    counting = true;
     std::size_t counted = 0;
     constexpr std::size_t kSteps = 400;
     for (std::size_t i = 0; i < kSteps; ++i)
@@ -1024,6 +1044,9 @@ TEST_CASE(steady_state_steps_with_a_listener_do_not_allocate)
     CHECK(frames >= 10 * kSteps);
     CHECK(handled >= 2 * kSteps);
     CHECK(transfers > kSteps);
+    CHECK_EQ(removed, 1u);
+    CHECK(!once.active());
+    CHECK(!other.active());
     CHECK(listener.sniffer_statistics().timed_out >= 1u);
     CHECK_EQ(listener.sniffer_statistics().completed, kSteps + 4); // the first step is before the first frames
     CHECK(!bench.network.failed());

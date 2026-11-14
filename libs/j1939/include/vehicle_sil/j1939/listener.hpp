@@ -82,7 +82,16 @@ struct ListenerOptions
 /// The message of a connection between two other ECUs is, for a transfer whose
 /// SniffedTransfer::conflicting_packets is 0, the message the receiving node of this
 /// repository's engine gets for the same frames: group, priority, source, destination, time and
-/// bytes. Code that reads a Message in a node's handler can read it here.
+/// bytes. Code that reads a Message in a node's handler can read it here. A Message does not
+/// say whether its transfer had conflicting packets (a packet seen twice with different bytes:
+/// the receiver may have taken the other one). That is known from the on_transfer() handlers,
+/// which are called for the same transfer right after the message handlers
+/// (SniffedTransfer::conflicting_packets), and from sniffer_statistics().conflicting_packets,
+/// which counts them all: while it is 0, every message handed on was the receiver's. Publish
+/// that counter with the others, or take a value only when on_transfer() confirmed it.
+/// With SniffDelivery::WhenAllPacketsSeen the receiver may also have dropped a transfer that is
+/// handed on here (it had no chance to say so; e.g. the sender's address changed hands, which
+/// the sniffer does not read).
 ///
 /// Addresses of this Network's nodes: a frame from or to an address that a node of this Network
 /// uses (a node without a NAME, or one that is claiming or has claimed the address) is not a
@@ -91,10 +100,16 @@ struct ListenerOptions
 /// that address is followed, that transfer ends as Lost with the next frame from or to the
 /// address. After the node lost the address, its conversations are followed again.
 ///
-/// Order, for one frame: the on_frame() handlers, then the messages the frame completed, then
-/// the on_transfer() handlers. For one message: the Network's Observer, then the Listener, then
-/// the handlers of the Network's nodes. Handlers of one kind run in the order they were
-/// registered (on_message() and on_any_message() are one list).
+/// Order, for one frame: first the on_frame() handlers. Then what the frame's time or address
+/// ended of other transfers (TimedOut, Incomplete, Lost): their on_transfer() handlers. Then
+/// what the frame itself brings: a connection between other ECUs that it completes is handed to
+/// the message handlers and right after to the on_transfer() handlers (any other end, such as
+/// an abort: the on_transfer() handlers only); a single frame, or a message the Network
+/// assembled with it, is handed to the message handlers. So the end of another transfer can be
+/// reported before the message of the frame that made the sniffer notice it: compare the times.
+/// For one message: the Network's Observer, then the Listener, then the handlers of the
+/// Network's nodes. Handlers of one kind run in the order they were registered (on_message()
+/// and on_any_message() are one list).
 ///
 /// Times. Message::time of a sniffed connection is the time of the data packet with which the
 /// receiver had the message, but by default the handler runs when the receiver acknowledged it
@@ -115,16 +130,31 @@ struct ListenerOptions
 /// call only.
 ///
 /// A Network has one Listener. Code that watches something takes a Listener& and adds its
-/// handlers; it does not create one. Handlers cannot be removed (destroy the Listener).
-/// Create and destroy it outside a step (it may be destroyed from a node's handler, but not from
-/// one of its own handlers), before or after the Network. Not thread safe: use it from the
-/// thread that steps the Network.
+/// handlers; it does not create one.
+///
+/// Lifetime of the handlers. A handler stays registered, and is called, until it is removed or
+/// the Listener is destroyed: whatever it captured must live that long. Code that may go away
+/// before the Listener keeps each registration in a ListenerSubscription member, which removes
+/// the handler when it is destroyed (the same pattern as Subscription for a Node's handlers):
+///     ListenerSubscription sub{listener, listener.on_message(pgn, [this](const Message& m) { ... })};
+/// A registration whose id is dropped stays for the Listener's life.
+///
+/// Create and destroy the Listener outside a step (it may be destroyed from a node's handler,
+/// but not from one of its own handlers), before or after the Network. Not thread safe: use it
+/// from the thread that steps the Network.
 class Listener final
 {
 public:
     using MessageHandler = std::function<void(const Message&)>;
     using TransferHandler = std::function<void(const SniffedTransfer&)>;
     using FrameHandler = std::function<void(const ReceivedFrame&)>;
+
+    /// Handle of a registered handler of this Listener (of any of the four kinds).
+    struct HandlerId
+    {
+        std::uint64_t value = 0;
+        [[nodiscard]] friend constexpr bool operator==(HandlerId, HandlerId) noexcept = default;
+    };
 
     /// Starts listening to `network`. Only outside a step. std::logic_error if the Network has a
     /// Listener already (add the handlers to that one); std::invalid_argument for sniffer
@@ -138,13 +168,25 @@ public:
     /// Adds a handler for the messages of `pgn` / for every message. Several handlers may be
     /// added, also for the same group. std::invalid_argument for an empty handler;
     /// std::logic_error from a handler of this Listener (register before the simulation starts).
-    void on_message(Pgn pgn, MessageHandler handler);
-    void on_any_message(MessageHandler handler);
+    /// The id removes it again (remove_handler(), ListenerSubscription); dropped, the handler
+    /// stays for the Listener's life.
+    /// A message of a connection between two other ECUs has the receiver's bytes if its transfer
+    /// had no conflicting packets, which the on_transfer() handlers are told right after (see
+    /// the class comment).
+    HandlerId on_message(Pgn pgn, MessageHandler handler);
+    HandlerId on_any_message(MessageHandler handler);
     /// Adds a handler for the end of every connection between two other ECUs. A Completed one
     /// was handed to the message handlers just before. The same conditions as on_message().
-    void on_transfer(TransferHandler handler);
+    HandlerId on_transfer(TransferHandler handler);
     /// Adds a handler for every frame. The same conditions as on_message().
-    void on_frame(FrameHandler handler);
+    HandlerId on_frame(FrameHandler handler);
+
+    /// Removes a handler. false if `id` is not registered (any more). Allowed everywhere, also
+    /// inside a step and in a handler of this Listener (the handler itself or another one): the
+    /// removed handler is not called any more, not for the rest of that frame either, and the
+    /// handler object is destroyed when the Listener is done with the frame, the message or the
+    /// step end it is handling. Allocates nothing.
+    bool remove_handler(HandlerId id) noexcept;
 
     /// The connections between other ECUs that are followed right now.
     [[nodiscard]] std::size_t open_transfers() const noexcept;
@@ -154,8 +196,39 @@ public:
     [[nodiscard]] const ListenerOptions& options() const noexcept;
 
 private:
+    friend class ListenerSubscription;
     class Seat;
     std::unique_ptr<Seat> seat_;
+};
+
+/// Owns one handler of a Listener (Listener::HandlerId) and removes it when destroyed or
+/// reset(), as Subscription does for a handler of a Node:
+///     ListenerSubscription sub{listener, listener.on_message(pgn, [this](const Message& m) { ... })};
+/// After reset() or destruction the handler is not called any more, also when that happens in a
+/// handler of the Listener (the handler itself or another one). Safe after the Listener was
+/// destroyed (it then does nothing), whether or not the Network still exists. Moving keeps the
+/// registration. Not thread safe: use it from the thread that steps the Network.
+class ListenerSubscription
+{
+public:
+    ListenerSubscription() = default;
+    /// Takes over `id`, a registration of `listener`.
+    ListenerSubscription(Listener& listener, Listener::HandlerId id) noexcept;
+    ~ListenerSubscription() { reset(); }
+    ListenerSubscription(ListenerSubscription&& other) noexcept;
+    ListenerSubscription& operator=(ListenerSubscription&& other) noexcept;
+    ListenerSubscription(const ListenerSubscription&) = delete;
+    ListenerSubscription& operator=(const ListenerSubscription&) = delete;
+
+    /// Removes the handler now (nothing if it is already removed).
+    void reset() noexcept;
+    /// true while it holds a registration (and the Listener exists).
+    [[nodiscard]] bool active() const noexcept { return listener_ != nullptr && !alive_.expired(); }
+
+private:
+    Listener* listener_ = nullptr;
+    Listener::HandlerId id_{};
+    std::weak_ptr<const bool> alive_;
 };
 
 } // namespace vehicle_sil::j1939
