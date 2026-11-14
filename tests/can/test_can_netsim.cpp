@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -236,12 +237,25 @@ enum class Simulator
     Executable, ///< vehicle_sil_can_bus_simulator as a child process
 };
 
+/// A participant "F" with a raw SIL Kit CAN controller (no vehicle-sil port), in steps of 1 ms.
+struct Foreign
+{
+    bool start = true; ///< Start() when the controller is made
+    /// Called in each step; `send(first data byte)` sends one frame with the step's time as
+    /// its send time.
+    std::function<void(sk::ICanController& controller, SimTime now, const std::function<void(std::uint8_t)>& send)> on_step;
+};
+
+/// The identifier of the frames a Foreign's `send` sends.
+constexpr std::uint32_t kForeignId = (6u << 26) | (0xFF40u << 8) | 0x70u;
+
 struct SilKitRun
 {
     Traces traces;
     vehicle_sil::can::CanBusSimulatorStatistics statistics; ///< InProcess only
     std::vector<vehicle_sil::can::SilKitCanPortStatistics> ports;
     std::size_t started_controllers = 0; ///< peers whose controller the simulator reported as Started
+    std::vector<std::string> foreign_acks;  ///< the Foreign's transmit acknowledgements: "<status> <first data byte>"
 };
 
 std::filesystem::path scratch_dir()
@@ -252,11 +266,11 @@ std::filesystem::path scratch_dir()
 }
 
 /// Runs the peers on SIL Kit with a simple network simulator of step `simulatorStep`.
-/// `foreign`: also a participant that sends at 30 ms through a raw SIL Kit controller with a
-/// real pointer as userContext (no send time). `simulatorLast` (InProcess): the simulator joins
-/// after the peers have made their controllers and ports.
+/// `foreign`: also a participant with a raw SIL Kit controller; without `on_step` it sends at
+/// 30 ms with a real pointer as userContext (no send time). `simulatorLast` (InProcess): the
+/// simulator joins after the peers have made their controllers and ports.
 SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulatorStep, Simulator kind = Simulator::InProcess,
-                        bool foreign = false, CanBusSimulatorOptions simulatorOptions = {}, std::uint32_t portBitrate = kBitrate,
+                        const Foreign* foreign = nullptr, CanBusSimulatorOptions simulatorOptions = {}, std::uint32_t portBitrate = kBitrate,
                         bool simulatorLast = false)
 {
     InProcessRegistry registry;
@@ -279,6 +293,8 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
     std::unique_ptr<CanBusSimulator> simulator;
     int localObject = 0;
     std::atomic<bool> foreignStarted{false};
+    std::mutex foreignMutex;
+    std::vector<std::string> foreignAcks;
     std::atomic<std::size_t> startedControllers{0};
     std::unique_ptr<ParticipantRuntime> simulatorRuntime;
     std::unique_ptr<vehicle_sil::process::ChildProcess> child;
@@ -303,7 +319,8 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
     {
         // The configuration in the Vector SIL Kit Network Simulator format, with networks the
         // simple simulator does not simulate.
-        const auto config = scratch_dir() / "netsim.yaml";
+        // A name outside ASCII: the simulator reads its command line as UTF-8 on Windows too.
+        const auto config = scratch_dir() / std::filesystem::path(u8"netsim-\u8ECA\u4E21.yaml");
         std::ofstream(config) << "SchemaVersion: 1\n"
                                  "Description: vehicle-sil test\n"
                                  "SimulationStepSizeNanoseconds: "
@@ -319,7 +336,7 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
         child = std::make_unique<vehicle_sil::process::ChildProcess>(
             VEHICLE_SIL_CAN_BUS_SIMULATOR,
             std::vector<std::string>{"--connect-uri", registry.uri, "--log", "info", "--start-timeout-ms", "60000",
-                                     "--default-bitrate", std::to_string(kBitrate), config.string()},
+                                     "--default-bitrate", std::to_string(kBitrate), vehicle_sil::process::utf8_from_path(config)},
             logFile);
         // Let the simulator come up before the peers (the order does not matter to what it learns
         // from them: simulator_learns_the_bit_rate_and_the_start_whichever_joins_first).
@@ -373,16 +390,42 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
     if (foreign)
     {
         foreignRuntime = std::make_unique<ParticipantRuntime>(
-            coordinated_options("F", registry.uri, VirtualTimeOptions{10ms, std::nullopt, kEnd}));
+            coordinated_options("F", registry.uri, VirtualTimeOptions{foreign->on_step ? 1ms : 10ms, std::nullopt, kEnd}));
         auto* raw = foreignRuntime->participant().CreateCanController("CAN", kNetwork);
+        // The first data byte of a frame travels as the low bits of its userContext's send time
+        // (ns), so that an acknowledgement says which frame it is for.
+        raw->AddFrameTransmitHandler([&foreignMutex, &foreignAcks](sk::ICanController*, const sk::CanFrameTransmitEvent& ack) {
+            const auto sent = vehicle_sil::can::decode_send_time(ack.userContext);
+            const char* status = ack.status == sk::CanTransmitStatus::Transmitted  ? "transmitted"
+                                 : ack.status == sk::CanTransmitStatus::Canceled   ? "canceled"
+                                                                                   : "other";
+            const std::lock_guard lock(foreignMutex);
+            foreignAcks.push_back(std::string(status) + " " + (sent ? std::to_string(to_ns(*sent) % 1000) : std::string("?")));
+        });
         raw->AddStateChangeHandler([&foreignStarted](sk::ICanController*, const sk::CanStateChangeEvent& e) {
             if (e.state == sk::CanControllerState::Started)
             {
                 foreignStarted.store(true);
             }
         });
-        raw->Start();
-        foreignRuntime->set_step_handler([raw, &localObject](SimTime now, SimDuration) {
+        if (foreign->start)
+        {
+            raw->Start();
+        }
+        foreignRuntime->set_step_handler([raw, foreign, &localObject](SimTime now, SimDuration) {
+            if (foreign->on_step)
+            {
+                foreign->on_step(*raw, now, [raw, now](std::uint8_t first) {
+                    sk::CanFrame f{};
+                    f.canId = kForeignId;
+                    f.flags = static_cast<sk::CanFrameFlagMask>(sk::CanFrameFlag::Ide);
+                    const std::uint8_t data[1] = {first};
+                    f.dlc = 1;
+                    f.dataField = SilKit::Util::Span<const std::uint8_t>(data, 1);
+                    raw->SendFrame(f, vehicle_sil::can::encode_send_time(now + std::chrono::nanoseconds(first)));
+                });
+                return;
+            }
             if (now == at(30ms))
             {
                 sk::CanFrame f{};
@@ -423,7 +466,11 @@ SilKitRun run_on_silkit(const std::vector<PeerSpec>& peers, SimDuration simulato
         run.traces.push_back(node.node->trace());
     }
     run.started_controllers = startedControllers.load();
-    if (foreign && !foreignStarted.load())
+    {
+        const std::lock_guard lock(foreignMutex);
+        run.foreign_acks = foreignAcks;
+    }
+    if (foreign && foreign->start && !foreignStarted.load())
     {
         throw std::runtime_error("the simulator did not acknowledge the raw controller's Start()");
     }
@@ -542,7 +589,8 @@ TEST_CASE(simulator_step_size_sets_the_earliest_start_deterministically)
 
 TEST_CASE(simulator_counts_a_sender_without_a_send_time_and_still_delivers_its_frame)
 {
-    const auto run = run_on_silkit(scenario(), 1ms, Simulator::InProcess, true);
+    const Foreign untagged;
+    const auto run = run_on_silkit(scenario(), 1ms, Simulator::InProcess, &untagged);
     CHECK_EQ(run.statistics.untagged_requests, 2u);
     CHECK_EQ(run.statistics.transmissions, 48u);
     // Sent at 30 ms, placed at the simulator's last step (30 or 31 ms, depending on timing) and
@@ -567,7 +615,7 @@ TEST_CASE(simulator_refuses_frames_beyond_the_transmit_queue_with_an_acknowledge
     const std::vector<PeerSpec> peers{{"A", 10ms, flood}, {"R1", 1ms, {}}};
     CanBusSimulatorOptions options;
     options.transmit_queue_capacity = 4;
-    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, false, options);
+    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, nullptr, options);
     CHECK_EQ(run.statistics.transmit_queue_full, 6u);
     CHECK_EQ(run.statistics.transmissions, 4u);
     CHECK_EQ(run.traces[1].size(), 4u);
@@ -596,7 +644,7 @@ TEST_CASE(port_transmit_queue_keeps_frames_in_the_stack_instead_of_losing_them)
     const std::vector<PeerSpec> peers{{"A", 1ms, flood, std::nullopt, 4}, {"R1", 1ms, {}}};
     CanBusSimulatorOptions options;
     options.transmit_queue_capacity = 4;
-    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, false, options);
+    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, nullptr, options);
     CHECK_EQ(run.statistics.transmit_queue_full, 0u);
     CHECK_EQ(run.statistics.transmissions, 10u);
     CHECK_EQ(run.ports[0].tx_queue_full, 0u);
@@ -615,7 +663,7 @@ TEST_CASE(simulator_uses_the_default_bitrate_until_a_controller_sets_one)
     const std::vector<PeerSpec> peers{{"A", 10ms, one}, {"R1", 1ms, {}}};
     CanBusSimulatorOptions options;
     options.default_bitrate = 125'000;
-    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, false, options, 0);
+    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, nullptr, options, 0);
     CHECK_EQ(run.statistics.bitrate, 125'000u);
     CHECK_EQ(run.statistics.bitrate_conflicts, 0u);
     // 131 bits at 8 us from the 11 ms boundary.
@@ -634,7 +682,7 @@ TEST_CASE(simulator_learns_the_bit_rate_and_the_start_whichever_joins_first)
     options.default_bitrate = 125'000;
     for (const bool simulatorLast : {false, true})
     {
-        const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, false, options, 250'000, simulatorLast);
+        const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, nullptr, options, 250'000, simulatorLast);
         CHECK_EQ(run.statistics.bitrate, 250'000u);
         CHECK_EQ(run.statistics.bitrate_conflicts, 0u);
         CHECK_EQ(run.started_controllers, 2u);
@@ -654,6 +702,156 @@ TEST_CASE(simulator_keeps_the_first_bitrate_and_counts_a_conflicting_one)
     const std::string expected = std::to_string(run.statistics.bitrate == 250'000u ? 11'524'000 : 11'262'000) + " rx " +
                                  std::to_string(j1939_id(6, 0xFF10, 0x80)) + " 0";
     CHECK(run.traces[1] == (std::vector<std::string>{expected}));
+}
+
+/// What R1 received of the Foreign's frames: the first data bytes, in order.
+std::vector<int> foreign_frames(const std::vector<std::string>& trace)
+{
+    std::vector<int> out;
+    const std::string mark = " rx " + std::to_string(kForeignId) + " ";
+    for (const auto& line : trace)
+    {
+        if (const auto at = line.find(mark); at != std::string::npos)
+        {
+            out.push_back(std::stoi(line.substr(at + mark.size())));
+        }
+    }
+    return out;
+}
+
+TEST_CASE(simulator_drops_what_a_controller_sends_while_it_is_not_started)
+{
+    // As SIL Kit without a simulator: a controller that is stopped (or asleep) sends nothing and
+    // gets no acknowledgement. What it sent before Stop() still goes out.
+    Foreign f;
+    f.on_step = [](sk::ICanController& c, SimTime now, const std::function<void(std::uint8_t)>& send) {
+        if (now == at(20ms))
+        {
+            send(1);
+        }
+        if (now == at(30ms))
+        {
+            send(2); // while started: transmitted, although the Stop() follows at once
+            c.Stop();
+            send(3);
+        }
+        if (now == at(40ms))
+        {
+            send(4);
+            c.Sleep();
+            send(5);
+        }
+        if (now == at(50ms))
+        {
+            c.Start();
+            send(6);
+        }
+    };
+    const std::vector<PeerSpec> peers{{"R1", 1ms, {}}};
+    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, &f);
+    CHECK(foreign_frames(run.traces[0]) == (std::vector<int>{1, 2, 6}));
+    CHECK(run.foreign_acks == (std::vector<std::string>{"transmitted 1", "transmitted 2", "transmitted 6"}));
+    CHECK_EQ(run.statistics.requests, 6u);
+    CHECK_EQ(run.statistics.rejected_requests, 3u);
+    CHECK_EQ(run.statistics.transmissions, 3u);
+}
+
+TEST_CASE(simulator_takes_a_controller_it_heard_no_mode_of_as_started)
+{
+    // A controller may have called Start() before it found the simulator; SIL Kit does not send
+    // that again. So only a mode the simulator was told stops a controller's frames.
+    Foreign f;
+    f.start = false;
+    f.on_step = [](sk::ICanController&, SimTime now, const std::function<void(std::uint8_t)>& send) {
+        if (now == at(20ms))
+        {
+            send(1);
+        }
+    };
+    const std::vector<PeerSpec> peers{{"R1", 1ms, {}}};
+    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, &f);
+    CHECK(foreign_frames(run.traces[0]) == (std::vector<int>{1}));
+    CHECK_EQ(run.statistics.rejected_requests, 0u);
+}
+
+TEST_CASE(simulator_delivers_frames_to_a_stopped_controller)
+{
+    // As SIL Kit without a simulator: reception does not depend on the receiver's mode.
+    std::vector<TimedFrame> one{{at(40ms), ext(j1939_id(6, 0xFF10, 0x80))}};
+    std::mutex mutex;
+    std::vector<std::uint32_t> received;
+    bool handler = false;
+    Foreign f;
+    f.on_step = [&](sk::ICanController& c, SimTime now, const std::function<void(std::uint8_t)>&) {
+        if (!handler)
+        {
+            handler = true;
+            c.AddFrameHandler([&](sk::ICanController*, const sk::CanFrameEvent& e) {
+                const std::lock_guard lock(mutex);
+                received.push_back(e.frame.canId);
+            });
+        }
+        if (now == at(20ms))
+        {
+            c.Stop();
+        }
+    };
+    const std::vector<PeerSpec> peers{{"A", 1ms, one}, {"R1", 1ms, {}}};
+    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, &f);
+    CHECK_EQ(run.traces[1].size(), 1u);
+    const std::lock_guard lock(mutex);
+    CHECK(received == (std::vector<std::uint32_t>{j1939_id(6, 0xFF10, 0x80)}));
+}
+
+TEST_CASE(simulator_cancels_a_controllers_waiting_frames_on_reset)
+{
+    // Reset() asks to cancel the transmit requests and leaves the controller uninitialised: the
+    // frames that have not been transmitted get a Canceled acknowledgement and never reach the
+    // bus; the controller sends again after Start().
+    Foreign f;
+    f.on_step = [](sk::ICanController& c, SimTime now, const std::function<void(std::uint8_t)>& send) {
+        if (now == at(20ms))
+        {
+            for (std::uint8_t k = 1; k <= 8; ++k)
+            {
+                send(k);
+            }
+        }
+        if (now == at(22ms))
+        {
+            send(9); // not yet taken by the simulator when the Reset() arrives
+            c.Reset();
+            send(10); // not started any more
+        }
+        if (now == at(40ms))
+        {
+            c.Start();
+            send(11);
+        }
+    };
+    const std::vector<PeerSpec> peers{{"R1", 1ms, {}}};
+    const auto run = run_on_silkit(peers, 1ms, Simulator::InProcess, &f);
+    // A frame of 1 data byte takes 300 us at 250 kbit/s: four start in the step at 21 ms, three in
+    // the step at 22 ms. The Reset() of F's step at 22 ms reaches the simulator before its step at
+    // 22 ms or at 23 ms decides (the two steps at 22 ms run side by side), so 4 or 7 of the 8
+    // frames were transmitted.
+    const auto frames = foreign_frames(run.traces[0]);
+    CHECK(frames == (std::vector<int>{1, 2, 3, 4, 11}) || frames == (std::vector<int>{1, 2, 3, 4, 5, 6, 7, 11}));
+    const std::size_t before = frames.empty() ? 0 : frames.size() - 1; // transmitted before the Reset()
+    CHECK_EQ(run.statistics.transmissions, before + 1);
+    CHECK_EQ(run.statistics.requests, 11u);
+    CHECK_EQ(run.statistics.rejected_requests, 10u - before);
+    std::vector<std::string> expected;
+    for (std::size_t k = 1; k <= before; ++k)
+    {
+        expected.push_back("transmitted " + std::to_string(k));
+    }
+    for (std::size_t k = before + 1; k <= 9; ++k)
+    {
+        expected.push_back("canceled " + std::to_string(k)); // 10 was never accepted: no acknowledgement
+    }
+    expected.push_back("transmitted 11");
+    CHECK(run.foreign_acks == expected);
 }
 
 TEST_CASE(network_simulator_configuration_reads_the_vector_format)

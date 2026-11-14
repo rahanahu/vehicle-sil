@@ -109,6 +109,15 @@ public:
     /// many there were.
     std::size_t clear(std::size_t sender);
 
+    /// A frame that clear() took out of a queue before it was transmitted.
+    struct Removed
+    {
+        Frame frame{};
+        std::uint64_t context = 0; ///< As passed to submit().
+    };
+    /// clear(sender) that calls `sink` for each removed frame, in queue order.
+    std::size_t clear(std::size_t sender, SinkRef<Removed> sink);
+
     /// Changes the bit rate of later transmissions (> 0, std::invalid_argument otherwise).
     void set_bitrate(std::uint32_t bitrate);
 
