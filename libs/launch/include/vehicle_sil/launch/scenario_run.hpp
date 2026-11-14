@@ -44,7 +44,7 @@ struct ScenarioStepRun
     /// Its time (at_ms, or after_ms from the end of the step before it), once that is known.
     std::optional<SimTime> start{};
     /// The virtual time that decided it. Passed: the start of the ECU step that applied a set (the
-    /// latest of them), a ramp's end, the time of an expect,
+    /// latest of them), the end of a ramp or a wave, the time of an expect,
     /// the sample at which a wait_until or an expect with within_ms became true, the end of a
     /// hold_for_ms. Failed: the sample that broke a hold, the time a wait ran out, the time of the
     /// write that failed; for a failure before anything happened, its start.
@@ -136,8 +136,8 @@ struct EnginePeer
 ///   timeout): the scenario is Incomplete.
 ///
 /// Times. A step's time T is at_ms, or after_ms after the end of the step before it. The end of
-/// a set and of an expect at one time is T; of a ramp T + over_ms; of an expect with hold_for_ms
-/// T + hold_for_ms: all known when the step before ends, so such steps keep their times whatever
+/// a set and of an expect at one time is T; of a ramp T + over_ms; of a wave T + its longest
+/// length (ScenarioSignal::length_ms); of an expect with hold_for_ms T + hold_for_ms: all known when the step before ends, so such steps keep their times whatever
 /// happens. A wait_until, or an expect with within_ms, that becomes true at the sample of time t
 /// is known to the engine at the first step P of the controller after t, and ends at P + tick:
 /// the first time at which a write of the next step can still take effect.
@@ -152,7 +152,11 @@ struct EnginePeer
 /// ECU's first step at or after T. A ramp from T writes, per variable, at T, T + step, T + 2 step,
 /// ... (the ECU's step) the value on the line from `from` to `to`, and `to` at T + over_ms; a
 /// `from` that is not given is the value the scenario wrote to the variable last, or the one of
-/// the latest sample the engine has looked at if that is newer. The result of a write is judged
+/// the latest sample the engine has looked at if that is newer. A wave is the same with another
+/// function of the time since T (Waveform; the ramp's line is one): at each of those times the
+/// function's value then, worked out when the write goes out, and at the end of its length
+/// Waveform::end(); the base it swings around or starts from is found as a ramp's `from`. The
+/// values depend on those times alone, not on the controller's tick or on what arrives when. The result of a write is judged
 /// at a fixed step of the controller: the first after the ECU's step that applies it (by then it
 /// has arrived). Anything but "applied" fails the step ("scenario-write").
 ///
@@ -211,18 +215,19 @@ private:
         std::size_t step = 0;
         SimTime at{};
         std::vector<ScenarioWrite> writes;
-        std::optional<std::size_t> ramp{}; ///< of ramps_: its value is worked out when it is sent
-        bool ramp_last = false;            ///< the ramp's end value
+        std::optional<std::size_t> signal{}; ///< of signals_: its value is worked out when it is sent
+        bool signal_last = false;            ///< the signal's end value
         std::uint64_t ticket = 0;
         SimTime judge{};
     };
-    struct Ramp
+    /// A ramp or a wave of one variable that is being written.
+    struct Signal
     {
         std::size_t step = 0;
-        ScenarioRamp ramp;
+        ScenarioSignal signal;
         SimTime from_time{};
         SimDuration period{};
-        std::optional<double> from{};
+        std::optional<double> base{}; ///< found at its first write, if the step does not name it
         std::int64_t next = 0; ///< the next write is at from_time + next * period (or the end)
         bool done = false;
     };
@@ -259,8 +264,8 @@ private:
     std::deque<Watch> watches_;      ///< in step order
     std::deque<Write> to_send_;      ///< sets, by step
     std::deque<Write> sent_;         ///< in the order sent
-    std::deque<Ramp> ramps_;
-    std::vector<std::size_t> open_writes_; ///< per step: writes not judged yet (and ramps not done)
+    std::deque<Signal> signals_;
+    std::vector<std::size_t> open_writes_; ///< per step: writes not judged yet (and signals not done)
     std::size_t done_ = 0; ///< steps that passed or were skipped
 };
 

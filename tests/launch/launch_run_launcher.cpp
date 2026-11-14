@@ -73,6 +73,9 @@
 //                run after the other; skipped, failed and passed runs in one table and as JSON;
 //                --variant, --param, --fail-fast, --strict, and what ends it before its first run
 //   test_interrupt  an interrupt during a test: the current run is stopped, the rest is not run
+//   scenario_wave  the steps "wave": what the ECU saw of each shape, the same at a speed and with
+//                  another controller step, the warning of the check and "undersampled: ok", and
+//                  the failure of a wave that leaves the variable's range; the example with waves
 //   scenario_same  one scenario, run as fast as possible, at a speed, with a slow ECU and with a
 //                pause in between: the same result each time; every write takes effect in the step
 //                of its time (the ECU says in which step it saw each value)
@@ -4107,6 +4110,91 @@ void test_interrupt(const Options& o)
                 "test interrupted");
 }
 
+void scenario_wave(const Options& o)
+{
+    // What the ECU saw of each wave: the step in which its level changed last, and the level.
+    const std::string head = "vehicle_sil_scenario: 1\n"
+                             "name: waves\n"
+                             "steps:\n"
+                             "  - set: { Body.level: 20, Door.mode: off }\n"
+                             // 30 at 100 and 110, 20 at 120 and 130, ... and 20 (low) at the end, 200.
+                             "  - at_ms: 100\n"
+                             "    wave: { Body.level: { square: { low: 20, high: 30, period_ms: 40 }, for_ms: 100 },\n"
+                             "            Door.mode: { points: [[0, on], [30, auto], [50, off]] } }\n"
+                             "  - expect: { Body.level_changed_at_ms: 200, Body.level: 20, Door.mode_now: off }\n"
+                             // Around the 20 it has: 25, 30, 25, 20, 15, and 20 again at the end, 260.
+                             "  - wave: { Body.level: { triangle: { amplitude: 10, period_ms: 80 }, for_ms: 60 } }\n"
+                             "  - expect: { Body.level_changed_at_ms: 260, Body.level: 20 }\n"
+                             // Shorter than the ECU's step, begun at one of its steps: seen for that one step.
+                             "  - after_ms: 10\n"
+                             "    wave: { Body.level: { pulse: { value: 50, width_ms: 5 } } }\n";
+    const std::string tail = "  - after_ms: 5\n"
+                             "    expect: { Body.level_changed_at_ms: 280, Body.level: 20, Body.ticks: 29 }\n";
+    const auto run = [&](const fs::path& dir, std::vector<std::string> more, const std::string& what) {
+        std::vector<std::string> args{"run", "sim.yaml", "--scenario", "s.yaml", "--json"};
+        args.insert(args.end(), more.begin(), more.end());
+        const Captured r = launch(o, args, dir);
+        expect_code(r, 0, what);
+        const std::string out = lf(r.standard_output);
+        require(contains(out, "\"late_messages\": 0") && !contains(out, "control-link-late-values"), what + ": no late message:\n" + out);
+        return scenario_json(out);
+    };
+    const fs::path dir = scenario_ecus(o, "", head + "    undersampled: ok\n" + tail);
+    const std::string fastest = run(dir, {}, "as fast as possible");
+    require(contains(fastest, "\"status\": \"passed\"") && contains(fastest, "\"over_at_ms\": 290,"),
+            "the scenario passes, and is over at 290 ms:\n" + fastest);
+    // A wave in the result: its kind, its text, and the times of a step that lasts.
+    require(contains(fastest, "        \"kind\": \"wave\",\n"
+                              "        \"text\": \"wave Body.level triangle amplitude 10 period 80 ms for 60 ms\",\n"
+                              "        \"status\": \"passed\",\n        \"start_ms\": 200,\n        \"at_ms\": 260,\n"
+                              "        \"end_ms\": 260,"),
+            "the triangle in the JSON:\n" + fastest);
+    // The values depend on the virtual time alone: the same at a speed, and with a controller
+    // that steps half and twice as often as the ECUs.
+    expect_text(run(dir, {"--speed", "4"}, "at four times real time"), fastest, "at a speed");
+    // (Before the next scenario_ecus(): each writes the same directory anew.)
+    expect_code(launch(o, {"check", "--strict", "sim.yaml", "--scenario", "s.yaml"}, dir), 0, "check --strict with undersampled: ok");
+    for (const char* step : {"5", "20"})
+    {
+        const fs::path other = scenario_ecus(o, std::string("time_step_ms: ") + step + "\n", head + "    undersampled: ok\n" + tail);
+        const std::string result = run(other, {}, std::string("with a controller step of ") + step + " ms");
+        require(contains(result, "\"status\": \"passed\""), std::string("with a controller step of ") + step + " ms:\n" + result);
+    }
+
+    // Without "undersampled: ok" the check warns, and says what the ECU sees; the run is the same.
+    const fs::path warned = scenario_ecus(o, "", head + tail);
+    const Captured checked = launch(o, {"check", "sim.yaml", "--scenario", "s.yaml"}, warned);
+    expect_code(checked, 0, "check of a wave that is finer than the ECU's step");
+    require(contains(lf(checked.standard_output),
+                     "\nwarning: s.yaml:12: the pulse of Body.level is 5 ms wide, shorter than the step of "
+                     "participant 'Body' (10 ms): the ECU sees it for one whole step if the pulse begins at the time of one of the "
+                     "ECU's steps, and not at all otherwise. Make width_ms 10 or more; to run it as it is without this message, add "
+                     "undersampled: ok to the step\n"),
+            "the warning of the check:\n" + lf(checked.standard_output));
+    expect_code(launch(o, {"check", "--strict", "sim.yaml", "--scenario", "s.yaml"}, warned), 1, "check --strict of the same");
+    const std::string same = run(warned, {}, "with the warning");
+    require(contains(same, "\"status\": \"passed\"") && contains(same, "\"over_at_ms\": 290,"), "the run with the warning:\n" + same);
+
+    // A wave that leaves the variable's range fails at the write that does, and says the value's time.
+    const fs::path outside = scenario_ecus(o, "",
+                                           "vehicle_sil_scenario: 1\nsteps:\n"
+                                           "  - set: { Body.level: 95 }\n"
+                                           "  - wave: { Body.level: { sawtooth: { amplitude: 10, period_ms: 80 }, for_ms: 80 } }\n");
+    const Captured failed = launch(o, {"run", "sim.yaml", "--scenario", "s.yaml", "--json"}, outside);
+    expect_code(failed, 1, "a wave that leaves the range");
+    const std::string why = scenario_json(lf(failed.standard_output));
+    // 85 at 0, then 2.5 more per step: 100 at 60 ms, 102.5 (written as 103) at 70 ms.
+    require(contains(why, "\"code\": \"scenario-write\"") && contains(why, "the write for 70 ms was not taken by participant 'Body'"),
+            "the failure of the wave:\n" + why);
+
+    // The example with waves (examples/ecu_main/scenarios/throttle_wave.yaml) passes, without a finding.
+    const Captured example = launch(o, {"run", "--strict", "simulation.yaml", "--scenario", "scenarios/throttle_wave.yaml"}, o.example_dir);
+    expect_code(example, 0, "run --strict simulation.yaml --scenario scenarios/throttle_wave.yaml");
+    require(contains(lf(example.standard_output), "\nscenario scenarios/throttle_wave.yaml (throttle wave): passed, 7 of 7 steps passed\n") &&
+                contains(lf(example.standard_output), "\npassed: 0 errors, 0 warnings, 0 notes"),
+            "the example with waves:\n" + lf(example.standard_output));
+}
+
 void scenario_disconnect(const Options& o)
 {
     // Engine off its bus at 300 ms: its last speed is the one of 200 ms, so the dashboard says it is
@@ -5153,6 +5241,7 @@ int main(int argc, char** argv)
             {"scenario_disconnect", scenario_disconnect},
             {"scenario_failures", scenario_failures},
             {"scenario_same", scenario_same},
+            {"scenario_wave", scenario_wave},
             {"speed_change", speed_change},
             {"stall", stall},
             {"stand_still", stand_still},

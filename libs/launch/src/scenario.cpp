@@ -2,13 +2,16 @@
 #include "vehicle_sil/launch/scenario.hpp"
 
 #include "vehicle_sil/launch/check.hpp"
+#include "scenario_shapes.hpp"
 #include "yaml_reader.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <set>
 #include <system_error>
@@ -19,11 +22,21 @@ namespace vehicle_sil::launch {
 namespace {
 
 const std::vector<std::string> kTopKeys = {"vehicle_sil_scenario", "name", "only", "params", "steps"};
-const std::vector<std::string> kStepKeys = {"at_ms",      "after_ms", "set",       "ramp",       "wait_until",
-                                            "timeout_ms", "expect",   "within_ms", "hold_for_ms"};
-const std::vector<std::string> kActionKeys = {"set", "ramp", "wait_until", "expect"};
+const std::vector<std::string> kStepKeys = {"at_ms",      "after_ms", "set",       "ramp",        "wave",        "wait_until",
+                                            "timeout_ms", "expect",   "within_ms", "hold_for_ms", "undersampled"};
+const std::vector<std::string> kActionKeys = {"set", "ramp", "wave", "wait_until", "expect"};
 const std::vector<std::string> kCompareKeys = {"eq", "ne", "ge", "le", "gt", "lt", "near", "tolerance"};
 const std::vector<std::string> kRampKeys = {"to", "over_ms", "from"};
+// A wave: the shapes (one per variable) and the keys beside the shape.
+const std::vector<std::string> kWaveShapes = {"sine", "triangle", "sawtooth", "square", "pulse",
+                                              "noise", "chirp", "lag", "chatter", "points"};
+const std::vector<std::string> kWaveKeys = {"sine",  "triangle", "sawtooth", "square", "pulse",  "noise",      "chirp",
+                                            "lag",   "chatter",  "points",   "around", "for_ms", "interpolate"};
+// How a wave that an ECU cannot see as written is run anyway (in every such message).
+constexpr const char* kAsItIs = "; to run it as it is without this message, add undersampled: ok to the step";
+/// A smooth shape with fewer steps of its ECU per period is coarse (a note).
+constexpr std::int64_t kSmoothSteps = 8;
+constexpr std::int64_t kMaxBounces = 1'000'000;
 
 constexpr const char* kDocs = "docs/scenario.md";
 
@@ -219,7 +232,7 @@ public:
         if (!hasSteps)
         {
             error("missing-key", 0,
-                  "the file has no steps: add steps, a list of what to do in order (set, ramp, wait_until, expect)");
+                  "the file has no steps: add steps, a list of what to do in order (set, ramp, wave, wait_until, expect)");
         }
         if (std::none_of(out_.findings.begin(), out_.findings.end(), [](const Finding& f) { return f.severity == Severity::Error; }))
         {
@@ -757,7 +770,7 @@ private:
     }
 
     /// Whether the step at `time` (empty: not known before the run) may write the variable.
-    bool writable(std::size_t variable, std::size_t line, const std::optional<std::int64_t>& time, bool ramp)
+    bool writable(std::size_t variable, std::size_t line, const std::optional<std::int64_t>& time, const char* over_time = nullptr)
     {
         const ScenarioVariable& v = scenario_.variables[variable];
         const control::VariableInfo& info = *info_of(variable);
@@ -768,12 +781,12 @@ private:
                            "ECU's inputs instead");
             return false;
         }
-        if (info.causality == control::Causality::Parameter && (ramp || !time || *time != 0))
+        if (info.causality == control::Causality::Parameter && (over_time != nullptr || !time || *time != 0))
         {
             error("scenario-not-writable", line,
                   v.text + " is a parameter: it can be written only before the first step, that is with set in a step at "
                            "0 (at_ms: 0, or the first steps without a time)" +
-                      (ramp ? std::string(", not with ramp") : time ? ", not at " + std::to_string(*time) + " ms" : std::string(", not after a step that waits")));
+                      (over_time != nullptr ? std::string(", not with ") + over_time : time ? ", not at " + std::to_string(*time) + " ms" : std::string(", not after a step that waits")));
             return false;
         }
         return true;
@@ -842,7 +855,11 @@ private:
             return;
         }
         const std::string& action = actions.front();
-        step.kind = action == "set" ? StepKind::Set : action == "ramp" ? StepKind::Ramp : action == "expect" ? StepKind::Expect : StepKind::WaitUntil;
+        step.kind = action == "set"      ? StepKind::Set
+                    : action == "ramp"   ? StepKind::Ramp
+                    : action == "wave"   ? StepKind::Wave
+                    : action == "expect" ? StepKind::Expect
+                                         : StepKind::WaitUntil;
 
         // The keys that go with the action.
         const auto only_with = [&](const std::string& key, bool allowed, const std::string& with) {
@@ -855,6 +872,19 @@ private:
         only_with("timeout_ms", step.kind == StepKind::WaitUntil, "wait_until");
         only_with("within_ms", step.kind == StepKind::Expect, "expect");
         only_with("hold_for_ms", step.kind == StepKind::Expect, "expect");
+        only_with("undersampled", step.kind == StepKind::Wave, "wave");
+        bool undersampledOk = false;
+        if (nodes.count("undersampled") > 0)
+        {
+            const ryml::id_type said = nodes.at("undersampled");
+            undersampledOk = is_scalar(said) && !is_null(said) && text_of(said) == "ok";
+            if (!undersampledOk)
+            {
+                error("value", doc_.line(said),
+                      "undersampled must be ok (run the step's waves as they are, also where they change faster than their ECU "
+                      "steps), not " + shown_value(said) + ": write undersampled: ok, or remove it");
+            }
+        }
 
         // The time.
         std::optional<std::int64_t> time; // as far as it is known before the run
@@ -910,6 +940,7 @@ private:
         {
         case StepKind::Set: read_set(nodes.at("set"), step, time); break;
         case StepKind::Ramp: length = read_ramp(nodes.at("ramp"), step, time); break;
+        case StepKind::Wave: length = read_wave(nodes.at("wave"), step, time, undersampledOk); break;
         case StepKind::Expect:
         case StepKind::WaitUntil:
             read_conditions(nodes.at(action), step, action);
@@ -966,7 +997,7 @@ private:
             too_long_ = true;
             error("scenario-time", line,
                   "the scenario can last " + std::to_string(latest_ms_) + " ms up to the end of this step, more than the longest "
-                  "time (" + std::to_string(kMaxMillis) + " ms): shorten the times (after_ms, over_ms, hold_for_ms, the "
+                  "time (" + std::to_string(kMaxMillis) + " ms): shorten the times (after_ms, over_ms, for_ms, hold_for_ms, the "
                   "timeouts) of the steps up to here");
         }
         if (step.waits() || step.kind == StepKind::WaitUntil)
@@ -1024,7 +1055,7 @@ private:
                             " (absent: true in " + (one ? "its" : "their") + " variables)";
         }
         step.writes.clear();
-        step.ramps.clear();
+        step.signals.clear();
         step.conditions.clear();
         ++out_.skipped;
         add(Severity::Note, "scenario-step-skipped", step.line,
@@ -1048,7 +1079,7 @@ private:
                 continue;
             }
             const auto v = variable(child);
-            if (!v || !writable(*v, doc_.line(child), time, false))
+            if (!v || !writable(*v, doc_.line(child), time))
             {
                 continue;
             }
@@ -1107,7 +1138,7 @@ private:
                 continue;
             }
             const std::size_t line = doc_.line(child);
-            bool good = writable(*v, line, time, true);
+            bool good = writable(*v, line, time, "ramp");
             const ScenarioVariable& var = scenario_.variables[*v];
             if (good && var.type != control::ValueType::Integer && var.type != control::ValueType::Real)
             {
@@ -1121,8 +1152,9 @@ private:
                 error("value", line, "ramp of " + name + " must be { to: <value>, over_ms: <milliseconds> }, not " + shown_value(child));
                 continue;
             }
-            ScenarioRamp ramp;
+            ScenarioSignal ramp;
             ramp.variable = *v;
+            double to = 0.0;
             bool hasTo = false;
             bool hasOver = false;
             std::map<std::string, std::size_t> keys;
@@ -1137,7 +1169,7 @@ private:
                 {
                     if (const auto ms = millis(part, "over_ms", 1, "milliseconds of virtual time the ramp takes"))
                     {
-                        ramp.over_ms = *ms;
+                        ramp.length_ms = *ms;
                         hasOver = true;
                     }
                     else
@@ -1168,11 +1200,11 @@ private:
                     }
                     else if (key == "to")
                     {
-                        ramp.to = d;
+                        to = d;
                     }
                     else
                     {
-                        ramp.from = d;
+                        ramp.base = d;
                     }
                     hasTo = hasTo || key == "to";
                 }
@@ -1196,11 +1228,1057 @@ private:
             }
             if (good)
             {
-                longest = std::max(longest, ramp.over_ms);
-                step.ramps.push_back(ramp);
+                longest = std::max(longest, ramp.length_ms);
+                ramp.shape = detail::ramp_shape(to, std::chrono::milliseconds(ramp.length_ms));
+                ramp.hint = "give the ramp from: <value>";
+                ramp.text = var.text + (ramp.base ? " from " + number_text(*ramp.base) : "") + " to " + number_text(to) + " over " +
+                            std::to_string(ramp.length_ms) + " ms";
+                step.signals.push_back(std::move(ramp));
             }
         }
         return longest;
+    }
+
+    // --- wave ---
+
+    using Parts = std::map<std::string, ryml::id_type>;
+
+    static std::string span_text(SimDuration d)
+    {
+        const std::int64_t ns = d.count();
+        return (ns % 1'000'000 == 0 ? std::to_string(ns / 1'000'000) : number_text(static_cast<double>(ns) / 1e6)) + " ms";
+    }
+
+    /// With one decimal at most: "33.3".
+    static std::string rounded_text(double value) { return number_text(std::round(value * 10.0) / 10.0); }
+
+    /// The entries of the mapping `node` by key; a key twice or not in `allowed` is reported and
+    /// left out. Empty (and an error) if `node` is not a mapping: `must` says what it must be.
+    std::optional<Parts> parts_of(ryml::id_type node, const std::string& what, const std::vector<std::string>& allowed,
+                                  const std::string& must)
+    {
+        if (!tree_.is_map(node))
+        {
+            error("value", doc_.line(node), what + " must be " + must + ", not " + shown_value(node));
+            return std::nullopt;
+        }
+        Parts out;
+        std::map<std::string, std::size_t> seen;
+        for (auto part = tree_.first_child(node); part != ryml::NONE; part = tree_.next_sibling(part))
+        {
+            const std::string key = detail::to_string(tree_.key(part));
+            if (!first_occurrence(seen, key, part, what + ": "))
+            {
+                continue;
+            }
+            if (std::find(allowed.begin(), allowed.end(), key) == allowed.end())
+            {
+                unknown_key(part, key, what + ": ", allowed);
+                continue;
+            }
+            out.emplace(key, part);
+        }
+        return out;
+    }
+
+    /// A number that is not a value of the variable (an amplitude, a frequency), from `least`
+    /// (not `least` itself if `above`) to `most`; `meaning` says what it is.
+    std::optional<double> measure(ryml::id_type node, const std::string& label, double least, bool above, double most,
+                                  const std::string& meaning)
+    {
+        double d = 0;
+        if (!plain_number(node, d))
+        {
+            error("value", doc_.line(node),
+                  label + " must be a number (" + meaning + "), not " + shown_value(node) +
+                      (quoted(node) ? ": write the number without quotes" : ""));
+            return std::nullopt;
+        }
+        if (d < least || (above && d == least) || d > most)
+        {
+            error("value", doc_.line(node),
+                  label + " is " + number_text(d) + ", but it must be " + (above ? "more than " : "from ") + number_text(least) +
+                      (std::isfinite(most) ? std::string(above ? " and at most " : " to ") + number_text(most) : std::string{}) + " (" +
+                      meaning + ")");
+            return std::nullopt;
+        }
+        return d;
+    }
+
+    std::optional<bool> flag(ryml::id_type node, const std::string& label, const std::string& meaning)
+    {
+        const std::string text = is_scalar(node) && !is_null(node) && !quoted(node) ? text_of(node) : std::string{};
+        if (text != "true" && text != "false")
+        {
+            error("value", doc_.line(node), label + " must be true or false (" + meaning + "), not " + shown_value(node));
+            return std::nullopt;
+        }
+        return text == "true";
+    }
+
+    std::optional<std::string> choice(ryml::id_type node, const std::string& label, const std::vector<std::string>& options)
+    {
+        const std::string text = is_scalar(node) && !is_null(node) ? text_of(node) : std::string{};
+        if (std::find(options.begin(), options.end(), text) == options.end())
+        {
+            error("value", doc_.line(node), label + " must be " + detail::or_list(options) + ", not " + shown_value(node));
+            return std::nullopt;
+        }
+        return text;
+    }
+
+    std::optional<std::uint64_t> seed_of(ryml::id_type node, const std::string& label)
+    {
+        std::int64_t value = 0;
+        if (!plain_integer(node, value) || value < 0)
+        {
+            error("value", doc_.line(node),
+                  label + " must be a whole number from 0 (the same seed gives the same values in every run), not " + shown_value(node));
+            return std::nullopt;
+        }
+        return static_cast<std::uint64_t>(value);
+    }
+
+    /// A value of the variable that a wave writes as it is (`key` of `what`): for a bool true or
+    /// false, for an enum an item, else a number of the range (also for an integer: the wave
+    /// rounds what it writes).
+    std::optional<double> level(ryml::id_type node, std::size_t variable, const std::string& key, const std::string& what)
+    {
+        const ScenarioVariable& var = scenario_.variables[variable];
+        if (var.type == control::ValueType::Bool || var.type == control::ValueType::Enum)
+        {
+            const auto value = value_of(node, variable, key + " of " + what, true);
+            return value ? std::optional<double>{as_number(*value)} : std::nullopt;
+        }
+        double d = 0;
+        if (!plain_number(node, d))
+        {
+            error("scenario-value", doc_.line(node),
+                  key + " of " + what + " of " + var.text + " must be a number, not " + shown_value(node) +
+                      (quoted(node) ? ": write the number without quotes" : ""));
+            return std::nullopt;
+        }
+        if (!in_range(d, variable))
+        {
+            error("scenario-value", doc_.line(node),
+                  key + " of " + what + " of " + var.text + " is " + number_text(d) + ", outside its range (" +
+                      range_text(*info_of(variable)) + ")");
+            return std::nullopt;
+        }
+        return d;
+    }
+
+    /// period_ms or frequency_hz, and phase_deg, of a shape that repeats. `text`: as the step's
+    /// text shows them.
+    std::optional<detail::Periodic> periodic_of(const Parts& parts, const std::string& what, std::size_t line, std::string& text)
+    {
+        detail::Periodic out;
+        bool ok = true;
+        const bool hasPeriod = parts.count("period_ms") > 0;
+        const bool hasFrequency = parts.count("frequency_hz") > 0;
+        if (hasPeriod && hasFrequency)
+        {
+            error("value", doc_.line(parts.at("frequency_hz")),
+                  what + " has period_ms and frequency_hz: give one of them (frequency_hz: 50 is period_ms: 20)");
+            ok = false;
+        }
+        else if (hasPeriod)
+        {
+            if (const auto ms = millis(parts.at("period_ms"), "period_ms", 1, "milliseconds of virtual time of one period"))
+            {
+                out.period = std::chrono::milliseconds(*ms);
+                text += " period " + std::to_string(*ms) + " ms";
+            }
+            else
+            {
+                ok = false;
+            }
+        }
+        else if (hasFrequency)
+        {
+            // A period of a whole number of nanoseconds, at least 1 and within the longest time.
+            const double least = 1e3 / static_cast<double>(kMaxMillis);
+            if (const auto hz = measure(parts.at("frequency_hz"), "frequency_hz of " + what, least, false, 1e9, "periods per second of virtual time"))
+            {
+                out.period = SimDuration{std::llround(1e9 / *hz)};
+                text += " frequency " + number_text(*hz) + " Hz";
+            }
+            else
+            {
+                ok = false;
+            }
+        }
+        else
+        {
+            error("missing-key", line, what + " needs period_ms or frequency_hz: how long one period is, or how many there are in a second");
+            ok = false;
+        }
+        if (parts.count("phase_deg") > 0)
+        {
+            if (const auto phase = measure(parts.at("phase_deg"), "phase_deg of " + what, -36000.0, false, 36000.0,
+                                           "where in its period the shape begins, in degrees: 360 is a whole period"))
+            {
+                out.phase_deg = *phase;
+                if (*phase != 0.0)
+                {
+                    text += " phase " + number_text(*phase) + " deg";
+                }
+            }
+            else
+            {
+                ok = false;
+            }
+        }
+        return ok ? std::optional<detail::Periodic>{out} : std::nullopt;
+    }
+
+    /// The step of the variable's ECU, to compare a wave with. Empty if the step's waves are not
+    /// compared (undersampled: ok) or the step is not known (a note says so).
+    std::optional<SimDuration> sampling(std::size_t variable, const std::string& what, std::size_t line, bool quiet)
+    {
+        if (quiet)
+        {
+            return std::nullopt;
+        }
+        const ScenarioParticipant& p = scenario_.participants[scenario_.variables[variable].participant];
+        if (p.step <= SimDuration::zero())
+        {
+            add(Severity::Note, "scenario-wave-not-checked", line,
+                "whether participant '" + p.name + "' can see " + what + " as it is written is not checked: the participant's step "
+                "is not known",
+                p.name);
+            return std::nullopt;
+        }
+        return p.step;
+    }
+
+    std::string takes_inputs(std::size_t variable) const
+    {
+        const ScenarioParticipant& p = scenario_.participants[scenario_.variables[variable].participant];
+        return "participant '" + p.name + "' takes its inputs once per step of " + span_text(p.step);
+    }
+    std::string step_of(std::size_t variable) const
+    {
+        const ScenarioParticipant& p = scenario_.participants[scenario_.variables[variable].participant];
+        return "the step of participant '" + p.name + "' (" + span_text(p.step) + ")";
+    }
+    SimDuration step_ns(std::size_t variable) const
+    {
+        return scenario_.participants[scenario_.variables[variable].participant].step;
+    }
+    /// For a key in whole milliseconds: the first that is not shorter than `d`.
+    static std::string whole_ms(SimDuration d) { return std::to_string((d.count() + 999'999) / 1'000'000); }
+    const std::string& owner_of(std::size_t variable) const
+    {
+        return scenario_.participants[scenario_.variables[variable].participant].name;
+    }
+
+    /// A shape that repeats every `period`: too fast for its ECU (a warning), or, if `smooth`
+    /// (its values between the corners matter), coarse (a note). @returns whether it warned.
+    bool check_period(std::size_t variable, const std::string& what, std::size_t line, bool quiet, SimDuration period, bool smooth)
+    {
+        const auto step = sampling(variable, what, line, quiet);
+        if (!step)
+        {
+            return true;
+        }
+        if (period < 2 * *step)
+        {
+            add(Severity::Warning, "scenario-wave-undersampled", line,
+                what + " has a period of " + span_text(period) + ", but " + takes_inputs(variable) +
+                    ": with fewer than two values per period the ECU sees a slower shape or a constant, not this one. Make the "
+                    "period " + span_text(2 * *step) + " or more" + kAsItIs,
+                owner_of(variable));
+            return true;
+        }
+        if (smooth && period < kSmoothSteps * *step)
+        {
+            add(Severity::Note, "scenario-wave-coarse", line,
+                what + " has a period of " + span_text(period) + ", and " + takes_inputs(variable) + ": the ECU sees " +
+                    rounded_text(static_cast<double>(period.count()) / static_cast<double>(step->count())) +
+                    " values per period, so it can miss the highest and the lowest. A period of " +
+                    span_text(kSmoothSteps * *step) + " or more gives it " + std::to_string(kSmoothSteps) + kAsItIs,
+                owner_of(variable));
+        }
+        return false;
+    }
+
+    /// A square whose edges do not fall on the steps of its ECU: the duty the ECU sees.
+    void check_square(std::size_t variable, const std::string& what, std::size_t line, bool quiet, const detail::Periodic& periodic,
+                      double duty)
+    {
+        if (check_period(variable, what, line, quiet, periodic.period, false))
+        {
+            return;
+        }
+        const std::int64_t step = scenario_.participants[scenario_.variables[variable].participant].step.count();
+        const std::int64_t period = periodic.period.count();
+        if (period % step != 0)
+        {
+            add(Severity::Warning, "scenario-wave-duty", line,
+                what + " has a period of " + span_text(periodic.period) + ", which is not a multiple of " + step_of(variable) +
+                    ": the ECU sees high and low times that change from period to period. Make the period a multiple of " +
+                    span_text(SimDuration{step}) + kAsItIs,
+                owner_of(variable));
+            return;
+        }
+        // The ECU takes the values at 0, step, 2 step, ... of the wave: those of them that are high.
+        const std::int64_t high = signal::square_high_time(periodic.period, duty).count();
+        const std::int64_t first = signal::detail::position(SimDuration::zero(), periodic.period, periodic.phase_deg) % step;
+        const std::int64_t seen = high > first ? (high - first + step - 1) / step * step : 0;
+        if (seen != high)
+        {
+            add(Severity::Warning, "scenario-wave-duty", line,
+                what + " is high for " + span_text(SimDuration{high}) + " of each period of " + span_text(periodic.period) + " (duty " +
+                    number_text(duty) + " %), but " + takes_inputs(variable) + ": the ECU sees it high for " +
+                    span_text(SimDuration{seen}) + " of each period (" +
+                    rounded_text(100.0 * static_cast<double>(seen) / static_cast<double>(period)) +
+                    " %). Make the high time (period x duty / 100) a multiple of " + span_text(SimDuration{step}) + kAsItIs,
+                owner_of(variable));
+        }
+    }
+
+    /// Something of a wave that lasts `span`, shorter than the step of its ECU: `is` says what it
+    /// is and how it compares ("is 3 ms wide, shorter than"), `sees` what the ECU sees of it,
+    /// `make` what to change.
+    void check_span(std::size_t variable, const std::string& what, std::size_t line, bool quiet, SimDuration span, const std::string& is,
+                    const std::string& sees, const std::string& make)
+    {
+        const auto step = sampling(variable, what, line, quiet);
+        if (step && span < *step)
+        {
+            add(Severity::Warning, "scenario-wave-undersampled", line,
+                what + " " + is + " " + step_of(variable) + ": " + sees + ". " + make + kAsItIs, owner_of(variable));
+        }
+    }
+
+    /// How long the wave of a variable that is absent takes (`node`: its entry in "wave"), as far
+    /// as its text says it without the variable's type: for_ms, a pulse's width_ms, the last time
+    /// of points, the bounces of a chatter. 0 if that cannot be read.
+    std::int64_t skipped_wave_ms(ryml::id_type node)
+    {
+        if (!tree_.is_map(node))
+        {
+            return 0;
+        }
+        std::int64_t length = 0;
+        const auto child = [&](ryml::id_type of, const std::string& key) {
+            if (tree_.is_map(of))
+            {
+                for (auto part = tree_.first_child(of); part != ryml::NONE; part = tree_.next_sibling(part))
+                {
+                    if (detail::to_string(tree_.key(part)) == key)
+                    {
+                        return part;
+                    }
+                }
+            }
+            return static_cast<ryml::id_type>(ryml::NONE);
+        };
+        const auto whole = [&](ryml::id_type of) {
+            std::int64_t value = 0;
+            return of != ryml::NONE && plain_integer(of, value) && value >= 0 && value <= kMaxMillis ? value : std::int64_t{0};
+        };
+        if (const auto forMs = child(node, "for_ms"); forMs != ryml::NONE)
+        {
+            return millis(forMs, "for_ms", 1, "milliseconds of virtual time the wave takes").value_or(0);
+        }
+        if (const auto pulse = child(node, "pulse"); pulse != ryml::NONE)
+        {
+            length = whole(child(pulse, "width_ms"));
+        }
+        else if (const auto chatter = child(node, "chatter"); chatter != ryml::NONE)
+        {
+            const std::int64_t bounces = whole(child(chatter, "bounces"));
+            const std::int64_t interval = whole(child(chatter, "interval_ms"));
+            length = bounces <= kMaxBounces && interval <= kMaxMillis / (2 * kMaxBounces) ? 2 * bounces * interval : 0;
+        }
+        else if (const auto points = child(node, "points"); points != ryml::NONE && tree_.is_seq(points) && tree_.has_children(points))
+        {
+            const ryml::id_type last = tree_.last_child(points);
+            length = tree_.is_seq(last) && tree_.has_children(last) ? whole(tree_.first_child(last)) : 0;
+        }
+        return length;
+    }
+
+    /// @returns the longest length, also of the variables that are absent.
+    std::int64_t read_wave(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time, bool quiet)
+    {
+        std::int64_t longest = 0;
+        if (!tree_.is_map(node) || !tree_.has_children(node))
+        {
+            error("value", doc_.line(node),
+                  "wave must be a mapping of variables to a shape and how long it lasts ({ " + example_variable() +
+                      ": { sine: { amplitude: 1, period_ms: 100 }, for_ms: 1000 } }), not " + shown_value(node));
+            return longest;
+        }
+        std::map<std::string, std::size_t> seen;
+        for (auto child = tree_.first_child(node); child != ryml::NONE; child = tree_.next_sibling(child))
+        {
+            if (!first_occurrence(seen, detail::to_string(tree_.key(child)), child, "wave: "))
+            {
+                continue;
+            }
+            const std::size_t absentBefore = absent_.size();
+            const auto v = variable(child);
+            if (!v)
+            {
+                if (absent_.size() > absentBefore)
+                {
+                    longest = std::max(longest, skipped_wave_ms(child));
+                }
+                continue;
+            }
+            if (auto one = read_wave_of(child, *v, time, quiet))
+            {
+                longest = std::max(longest, one->length_ms);
+                step.signals.push_back(std::move(*one));
+            }
+        }
+        return longest;
+    }
+
+    /// The wave of one variable (`node`: its entry in "wave"), or empty (and its errors).
+    std::optional<ScenarioSignal> read_wave_of(ryml::id_type node, std::size_t v, const std::optional<std::int64_t>& time, bool quiet)
+    {
+        const std::size_t line = doc_.line(node);
+        const ScenarioVariable& var = scenario_.variables[v];
+        const std::string name = var.text;
+        bool good = writable(v, line, time, "wave");
+        const auto top = parts_of(node, "wave of " + name, kWaveKeys,
+                                  "a shape with its values, and how long it lasts ({ sine: { amplitude: 1, period_ms: 100 }, for_ms: 1000 })");
+        if (!top)
+        {
+            return std::nullopt;
+        }
+        std::vector<std::string> shapes;
+        for (const std::string& known : kWaveShapes)
+        {
+            if (top->count(known) > 0)
+            {
+                shapes.push_back(known);
+            }
+        }
+        if (shapes.size() != 1)
+        {
+            error("value", line,
+                  shapes.empty() ? "wave of " + name + " names no shape: give it one of " + join(kWaveShapes)
+                                 : "wave of " + name + " has " + join(shapes) + ": a variable takes one shape in a step; make a step of each");
+            return std::nullopt;
+        }
+        const std::string& shape = shapes.front();
+        const ryml::id_type body = top->at(shape);
+        const std::string what = "the " + shape + " of " + name;
+        const bool isBool = var.type == control::ValueType::Bool;
+        const bool isEnum = var.type == control::ValueType::Enum;
+        const bool number = !isBool && !isEnum;
+        const bool switching = shape == "square" || shape == "pulse" || shape == "chatter";
+        if (!(number || shape == "points" || (isBool && switching)))
+        {
+            error("scenario-value", line,
+                  shape + " needs a number, and " + var.text + " is " +
+                      (isBool ? "a bool: for a bool use square, pulse, chatter or points" : "an enum: for an enum use points, or set"));
+            return std::nullopt;
+        }
+
+        ScenarioSignal out;
+        out.variable = v;
+        out.hint = "give the wave around: <value>";
+        std::string text = name + " " + shape;
+        std::optional<std::int64_t> length; // of a shape that says it itself
+        bool wantsFor = true;               // for_ms is how long it lasts
+        std::string noAround;               // why around does not go with it, or ""
+        std::optional<double> swing;        // how far from around it goes at most, if that is known
+        // What makes the shape, once everything is read: (around or its other base, the length).
+        std::function<std::shared_ptr<const Waveform>(SimDuration)> make;
+
+        if (shape == "points")
+        {
+            good = read_points(body, top->count("interpolate") > 0 ? top->at("interpolate") : ryml::NONE, v, what, quiet, out, text, length, make) && good;
+            wantsFor = false;
+            noAround = "the points are the values themselves (for where it begins, start with a point at 0: [0, <value>])";
+        }
+        else
+        {
+            static const std::map<std::string, std::vector<std::string>> kShapeKeys = {
+                {"sine", {"amplitude", "period_ms", "frequency_hz", "phase_deg"}},
+                {"triangle", {"amplitude", "period_ms", "frequency_hz", "phase_deg"}},
+                {"sawtooth", {"amplitude", "period_ms", "frequency_hz", "phase_deg", "falling"}},
+                {"square", {"low", "high", "amplitude", "period_ms", "frequency_hz", "duty", "phase_deg"}},
+                {"pulse", {"value", "width_ms"}},
+                {"noise", {"amplitude", "hold_ms", "seed", "distribution"}},
+                {"chirp", {"amplitude", "from_hz", "to_hz", "sweep"}},
+                {"lag", {"to", "tau_ms", "from", "settle"}},
+                {"chatter", {"to", "interval_ms", "bounces", "seed", "from"}},
+            };
+            static const std::map<std::string, std::string> kShapeExample = {
+                {"sine", "{ amplitude: 1, period_ms: 100 }"},
+                {"triangle", "{ amplitude: 1, period_ms: 100 }"},
+                {"sawtooth", "{ amplitude: 1, period_ms: 100 }"},
+                {"square", "{ low: 0, high: 1, period_ms: 100 }"},
+                {"pulse", "{ value: 1, width_ms: 50 }"},
+                {"noise", "{ amplitude: 1, hold_ms: 10, seed: 1 }"},
+                {"chirp", "{ amplitude: 1, from_hz: 1, to_hz: 10 }"},
+                {"lag", "{ to: 1, tau_ms: 100 }"},
+                {"chatter", "{ to: 1, bounces: 3, interval_ms: 10 }"},
+            };
+            const auto parts = parts_of(body, what, kShapeKeys.at(shape), "a mapping of its values (" + kShapeExample.at(shape) + ")");
+            if (!parts)
+            {
+                return std::nullopt;
+            }
+            const auto has = [&](const char* key) { return parts->count(key) > 0; };
+            // A key the shape cannot do without: `meaning` says what it is.
+            const auto need = [&](const char* key, const std::string& meaning) {
+                if (!has(key))
+                {
+                    error("missing-key", line, what + " needs " + key + ": " + meaning);
+                    good = false;
+                    return false;
+                }
+                return true;
+            };
+            const auto amplitude_of = [&](const std::string& meaning) {
+                std::optional<double> amplitude;
+                if (need("amplitude", meaning))
+                {
+                    amplitude = measure(parts->at("amplitude"), "amplitude of " + what, 0.0, false, HUGE_VAL, meaning);
+                    good = good && amplitude.has_value();
+                    text += amplitude ? " amplitude " + number_text(*amplitude) : "";
+                }
+                return amplitude.value_or(0.0);
+            };
+
+            if (shape == "sine" || shape == "triangle" || shape == "sawtooth")
+            {
+                const double amplitude = amplitude_of("how far the value goes above and below the middle");
+                const auto periodic = periodic_of(*parts, what, line, text);
+                bool falling = false;
+                if (has("falling"))
+                {
+                    const auto said = flag(parts->at("falling"), "falling of " + what, "true: each period goes down and jumps up");
+                    good = good && said.has_value();
+                    falling = said.value_or(false);
+                    text += falling ? " falling" : "";
+                }
+                good = good && periodic.has_value();
+                swing = amplitude;
+                if (periodic)
+                {
+                    check_period(v, what, line, quiet, periodic->period, true);
+                    make = [=](SimDuration) {
+                        return shape == "sine" ? detail::sine_shape(amplitude, *periodic)
+                               : shape == "triangle" ? detail::triangle_shape(amplitude, *periodic)
+                                                     : detail::sawtooth_shape(amplitude, *periodic, falling);
+                    };
+                }
+            }
+            else if (shape == "square")
+            {
+                std::optional<double> low;
+                std::optional<double> high;
+                std::optional<double> amplitude;
+                const bool levels = has("low") || has("high");
+                if (isBool)
+                {
+                    for (const char* key : {"low", "high", "amplitude"})
+                    {
+                        if (has(key))
+                        {
+                            error("value", doc_.line(parts->at(key)),
+                                  std::string(key) + " does not go with " + what + ": the square of a bool is false and true; remove it");
+                            good = false;
+                        }
+                    }
+                    low = 0.0;
+                    high = 1.0;
+                }
+                else if (levels && has("amplitude"))
+                {
+                    error("value", doc_.line(parts->at("amplitude")),
+                          what + " has amplitude and " + (has("low") ? "low" : "high") +
+                              ": give low and high (its two values), or amplitude (so far above and below the middle)");
+                    good = false;
+                }
+                else if (levels)
+                {
+                    if (need("low", "the value while it is low") && need("high", "the value while it is high"))
+                    {
+                        low = level(parts->at("low"), v, "low", "the square");
+                        high = level(parts->at("high"), v, "high", "the square");
+                        good = good && low && high;
+                        text += low && high ? " low " + number_text(*low) + " high " + number_text(*high) : "";
+                    }
+                }
+                else
+                {
+                    amplitude = amplitude_of("how far the value goes above and below the middle; or give low and high, its two values");
+                    swing = amplitude;
+                }
+                const auto periodic = periodic_of(*parts, what, line, text);
+                good = good && periodic.has_value();
+                double duty = 50.0;
+                if (has("duty"))
+                {
+                    const auto said = measure(parts->at("duty"), "duty of " + what, 0.0, false, 100.0,
+                                              "the percent of each period for which it is high");
+                    good = good && said.has_value();
+                    duty = said.value_or(50.0);
+                    text += said ? " duty " + number_text(duty) + " %" : "";
+                }
+                if (!amplitude)
+                {
+                    noAround = isBool ? "a bool has no middle" : "low and high are the values themselves";
+                }
+                if (periodic)
+                {
+                    check_square(v, what, line, quiet, *periodic, duty);
+                    if (amplitude)
+                    {
+                        make = [=](SimDuration) { return detail::square_shape(*amplitude, *periodic, duty); };
+                    }
+                    else if (low && high)
+                    {
+                        make = [=](SimDuration) { return detail::square_levels_shape(*low, *high, *periodic, duty); };
+                    }
+                }
+            }
+            else if (shape == "pulse")
+            {
+                std::optional<double> value;
+                if (isBool && !has("value"))
+                {
+                    value = 1.0;
+                }
+                else if (need("value", "the value during the pulse"))
+                {
+                    value = level(parts->at("value"), v, "value", "the pulse");
+                    good = good && value.has_value();
+                }
+                text += value ? " " + (isBool ? std::string(*value != 0.0 ? "true" : "false") : number_text(*value)) : "";
+                if (need("width_ms", "how long the pulse lasts, in milliseconds of virtual time"))
+                {
+                    length = millis(parts->at("width_ms"), "width_ms", 1, "milliseconds of virtual time the pulse lasts");
+                    good = good && length.has_value();
+                    text += length ? " width " + std::to_string(*length) + " ms" : "";
+                }
+                wantsFor = false;
+                if (isBool)
+                {
+                    noAround = "a bool has no middle (the pulse returns to the other value)";
+                    out.base = value.value_or(1.0) != 0.0 ? 0.0 : 1.0;
+                }
+                if (length)
+                {
+                    const SimDuration width = std::chrono::milliseconds(*length);
+                    check_span(v, what, line, quiet, width, "is " + span_text(width) + " wide, shorter than",
+                               "the ECU sees it for one whole step if the pulse begins at the time of one of the ECU's steps, and not "
+                               "at all otherwise",
+                               "Make width_ms " + whole_ms(step_ns(v)) + " or more");
+                }
+                if (value)
+                {
+                    make = [=](SimDuration) { return detail::pulse_shape(*value); };
+                }
+            }
+            else if (shape == "noise")
+            {
+                bool gaussian = false;
+                if (has("distribution"))
+                {
+                    const auto said = choice(parts->at("distribution"), "distribution of " + what, {"uniform", "gaussian"});
+                    good = good && said.has_value();
+                    gaussian = said && *said == "gaussian";
+                }
+                const double amplitude = amplitude_of(gaussian ? "the standard deviation of the values around the middle"
+                                                               : "how far the values go above and below the middle at most");
+                std::optional<std::int64_t> hold;
+                if (need("hold_ms", "how long each value is kept, in milliseconds of virtual time"))
+                {
+                    hold = millis(parts->at("hold_ms"), "hold_ms", 1, "milliseconds of virtual time each value is kept");
+                    good = good && hold.has_value();
+                    text += hold ? " hold " + std::to_string(*hold) + " ms" : "";
+                }
+                std::optional<std::uint64_t> seed;
+                if (need("seed", "a whole number that picks the values; the same seed gives the same values in every run, so that a "
+                                 "failure can be run again"))
+                {
+                    seed = seed_of(parts->at("seed"), "seed of " + what);
+                    good = good && seed.has_value();
+                    text += seed ? " seed " + std::to_string(*seed) : "";
+                }
+                text += gaussian ? " gaussian" : "";
+                if (!gaussian)
+                {
+                    swing = amplitude; // a gaussian value has no bound worth checking: the run refuses what is outside
+                }
+                if (hold && seed)
+                {
+                    const SimDuration held = std::chrono::milliseconds(*hold);
+                    check_span(v, what, line, quiet, held, "changes every " + span_text(held) + ", faster than",
+                               "the ECU gets only the value at the time of each of its steps; the values between are never applied",
+                               "Make hold_ms " + whole_ms(step_ns(v)) + " or more");
+                    make = [=](SimDuration) { return detail::noise_shape(amplitude, held, *seed, gaussian); };
+                }
+            }
+            else if (shape == "chirp")
+            {
+                const double amplitude = amplitude_of("how far the value goes above and below the middle");
+                std::optional<double> fromHz;
+                std::optional<double> toHz;
+                const double least = 1e3 / static_cast<double>(kMaxMillis);
+                if (need("from_hz", "the frequency at the beginning, in periods per second of virtual time"))
+                {
+                    fromHz = measure(parts->at("from_hz"), "from_hz of " + what, least, false, 1e9, "the frequency at the beginning");
+                    good = good && fromHz.has_value();
+                }
+                if (need("to_hz", "the frequency at the end (after for_ms)"))
+                {
+                    toHz = measure(parts->at("to_hz"), "to_hz of " + what, least, false, 1e9, "the frequency at the end");
+                    good = good && toHz.has_value();
+                }
+                text += fromHz && toHz ? " from " + number_text(*fromHz) + " Hz to " + number_text(*toHz) + " Hz" : "";
+                signal::Sweep sweep = signal::Sweep::Linear;
+                if (has("sweep"))
+                {
+                    const auto said = choice(parts->at("sweep"), "sweep of " + what, {"linear", "log"});
+                    good = good && said.has_value();
+                    sweep = said && *said == "log" ? signal::Sweep::Log : signal::Sweep::Linear;
+                    text += sweep == signal::Sweep::Log ? " log" : "";
+                }
+                swing = amplitude;
+                if (fromHz && toHz)
+                {
+                    check_chirp(v, what, line, quiet, std::max(*fromHz, *toHz));
+                    make = [=](SimDuration all) { return detail::chirp_shape(amplitude, *fromHz, *toHz, all, sweep); };
+                }
+            }
+            else if (shape == "lag")
+            {
+                std::optional<double> to;
+                if (need("to", "the value it goes towards"))
+                {
+                    to = level(parts->at("to"), v, "to", "the lag");
+                    good = good && to.has_value();
+                }
+                if (has("from"))
+                {
+                    out.base = level(parts->at("from"), v, "from", "the lag");
+                    good = good && out.base.has_value();
+                    text += out.base ? " from " + number_text(*out.base) : "";
+                }
+                text += to ? " to " + number_text(*to) : "";
+                std::optional<std::int64_t> tau;
+                if (need("tau_ms", "its time constant in milliseconds of virtual time: after this long it has gone 63 % of the way"))
+                {
+                    tau = millis(parts->at("tau_ms"), "tau_ms", 1, "the time constant in milliseconds of virtual time");
+                    good = good && tau.has_value();
+                    text += tau ? " tau " + std::to_string(*tau) + " ms" : "";
+                }
+                bool settle = false;
+                if (has("settle"))
+                {
+                    const auto said = flag(parts->at("settle"), "settle of " + what, "true: at the end the value is set to `to`");
+                    good = good && said.has_value();
+                    settle = said.value_or(false);
+                    text += settle ? " settle" : "";
+                }
+                noAround = "the value it starts from is its from (lag: { from: <value>, ... })";
+                out.hint = "give the lag from: <value>";
+                if (to && tau)
+                {
+                    make = [=](SimDuration all) { return detail::lag_shape(*to, std::chrono::milliseconds(*tau), all, settle); };
+                }
+            }
+            else // chatter
+            {
+                std::optional<double> to;
+                if (need("to", "the value it comes to rest at"))
+                {
+                    to = level(parts->at("to"), v, "to", "the chatter");
+                    good = good && to.has_value();
+                }
+                if (has("from") && isBool)
+                {
+                    error("value", doc_.line(parts->at("from")),
+                          "from does not go with " + what + ": a bool bounces between to and the other value; remove it");
+                    good = false;
+                }
+                else if (has("from"))
+                {
+                    out.base = level(parts->at("from"), v, "from", "the chatter");
+                    good = good && out.base.has_value();
+                    text += out.base ? " from " + number_text(*out.base) : "";
+                }
+                else if (isBool && to)
+                {
+                    out.base = *to != 0.0 ? 0.0 : 1.0;
+                }
+                text += to ? " to " + (isBool ? std::string(*to != 0.0 ? "true" : "false") : number_text(*to)) : "";
+                std::optional<std::int64_t> interval;
+                if (need("interval_ms", "how long it stays at a value between two changes, in milliseconds of virtual time"))
+                {
+                    interval = millis(parts->at("interval_ms"), "interval_ms", 1, "milliseconds of virtual time between two changes");
+                    good = good && interval.has_value();
+                }
+                std::optional<std::uint64_t> seed;
+                if (has("seed"))
+                {
+                    seed = seed_of(parts->at("seed"), "seed of " + what);
+                    good = good && seed.has_value();
+                }
+                const bool hasFor = top->count("for_ms") > 0;
+                if (has("bounces") && hasFor)
+                {
+                    error("value", doc_.line(top->at("for_ms")),
+                          what + " has bounces and for_ms: give one of them (bounces: how often it falls back; for_ms: how long it bounces)");
+                    good = false;
+                }
+                else if (has("bounces"))
+                {
+                    std::int64_t bounces = 0;
+                    if (!plain_integer(parts->at("bounces"), bounces) || bounces < 1 || bounces > kMaxBounces)
+                    {
+                        error("value", doc_.line(parts->at("bounces")),
+                              "bounces of " + what + " must be a whole number from 1 to " + std::to_string(kMaxBounces) +
+                                  " (how often it falls back before it rests), not " + shown_value(parts->at("bounces")));
+                        good = false;
+                    }
+                    else if (interval && *interval > kMaxMillis / (2 * bounces))
+                    {
+                        error("value", doc_.line(parts->at("bounces")),
+                              what + " lasts 2 x bounces x interval_ms, more than the longest time (" + std::to_string(kMaxMillis) + " ms): lower them");
+                        good = false;
+                    }
+                    else if (interval)
+                    {
+                        // To, back, to, back, ...: two stretches per bounce, then it rests.
+                        length = 2 * bounces * *interval;
+                        text += " " + std::to_string(bounces) + (bounces == 1 ? " bounce" : " bounces");
+                    }
+                    wantsFor = false;
+                }
+                else if (!hasFor)
+                {
+                    error("missing-key", line,
+                          what + " needs bounces (how often it falls back before it rests) or for_ms (how long it bounces)");
+                    good = false;
+                    wantsFor = false;
+                }
+                text += interval ? " interval " + std::to_string(*interval) + " ms" : "";
+                text += seed ? " seed " + std::to_string(*seed) : "";
+                noAround = "the value it bounces back to is its from (chatter: { from: <value>, ... }), or the value it has";
+                out.hint = "give the chatter from: <value>";
+                if (interval)
+                {
+                    // With a seed two changes are as little as half an interval apart.
+                    const SimDuration regular = std::chrono::milliseconds(*interval);
+                    const SimDuration apart = seed ? regular / 2 : regular;
+                    check_span(v, what, line, quiet, apart,
+                               seed ? "changes as little as " + span_text(apart) + " apart (interval_ms " + std::to_string(*interval) +
+                                          " with a seed: a half to one and a half intervals), closer than"
+                                    : "changes every " + span_text(apart) + ", faster than",
+                               "the ECU gets only the value at the time of each of its steps, so it sees some of the bounces or none",
+                               "Make interval_ms " + whole_ms(seed ? 2 * step_ns(v) : step_ns(v)) + " or more");
+                }
+                if (to && interval)
+                {
+                    make = [=](SimDuration) { return detail::chatter_shape(*to, std::chrono::milliseconds(*interval), seed); };
+                }
+            }
+        }
+
+        // What stands beside the shape.
+        if (top->count("interpolate") > 0 && shape != "points")
+        {
+            error("value", doc_.line(top->at("interpolate")), "interpolate goes with points, not with " + shape + ": remove it");
+            good = false;
+        }
+        if (top->count("for_ms") > 0)
+        {
+            if (wantsFor)
+            {
+                length = millis(top->at("for_ms"), "for_ms", 1, "milliseconds of virtual time the wave takes");
+                good = good && length.has_value();
+            }
+            else if (shape != "chatter") // (a chatter with bounces and for_ms: said above)
+            {
+                error("value", doc_.line(top->at("for_ms")),
+                      "for_ms does not go with " + shape + ": " +
+                          (shape == "pulse" ? "a pulse lasts its width_ms" : "the points end at the last of them") + "; remove it");
+                good = false;
+            }
+        }
+        else if (wantsFor)
+        {
+            error("missing-key", line, "wave of " + name + " needs for_ms: how long the " + shape + " lasts, in milliseconds of virtual time");
+            good = false;
+        }
+        std::optional<double> around;
+        if (top->count("around") > 0)
+        {
+            if (!noAround.empty())
+            {
+                error("value", doc_.line(top->at("around")), "around does not go with " + what + ": " + noAround + "; remove it");
+                good = false;
+            }
+            else
+            {
+                around = level(top->at("around"), v, "around", "the " + shape);
+                good = good && around.has_value();
+                out.base = around;
+            }
+        }
+        if (good && around && swing && (!in_range(*around - *swing, v) || !in_range(*around + *swing, v)))
+        {
+            error("scenario-value", line,
+                  what + " goes from " + number_text(*around - *swing) + " to " + number_text(*around + *swing) + " (around " +
+                      number_text(*around) + ", amplitude " + number_text(*swing) + "), outside its range (" +
+                      range_text(*info_of(v)) + "): lower the amplitude, or move around");
+            good = false;
+        }
+        if (!good || !length || !make)
+        {
+            return std::nullopt;
+        }
+        out.length_ms = *length;
+        out.shape = make(std::chrono::milliseconds(*length));
+        out.text = text + (around ? " around " + number_text(*around) : "") +
+                   (shape == "pulse" || shape == "points" ? "" : (shape == "chatter" && !wantsFor ? "" : " for " + std::to_string(*length) + " ms"));
+        return out;
+    }
+
+    /// A chirp whose highest frequency its ECU cannot see (a warning), or sees coarsely (a note).
+    void check_chirp(std::size_t variable, const std::string& what, std::size_t line, bool quiet, double top_hz)
+    {
+        const auto step = sampling(variable, what, line, quiet);
+        if (!step)
+        {
+            return;
+        }
+        const double period = 1e9 / top_hz; // in nanoseconds
+        const double steps = period / static_cast<double>(step->count());
+        const auto hz_at = [&](std::int64_t count) { return rounded_text(1e9 / static_cast<double>(count * step->count())); };
+        if (steps < 2.0)
+        {
+            add(Severity::Warning, "scenario-wave-undersampled", line,
+                what + " goes up to " + number_text(top_hz) + " Hz (a period of " + rounded_text(period / 1e6) + " ms), but " +
+                    takes_inputs(variable) + ": above " + hz_at(2) +
+                    " Hz (two steps per period) the ECU sees a slower shape, not the sweep. Keep from_hz and to_hz at " + hz_at(2) +
+                    " or less" + kAsItIs,
+                owner_of(variable));
+        }
+        else if (steps < static_cast<double>(kSmoothSteps))
+        {
+            add(Severity::Note, "scenario-wave-coarse", line,
+                what + " goes up to " + number_text(top_hz) + " Hz (a period of " + rounded_text(period / 1e6) + " ms), and " +
+                    takes_inputs(variable) + ": at that frequency the ECU sees " + rounded_text(steps) +
+                    " values per period, so it can miss the highest and the lowest. Up to " + hz_at(kSmoothSteps) + " Hz it gets " +
+                    std::to_string(kSmoothSteps) + " or more" + kAsItIs,
+                owner_of(variable));
+        }
+    }
+
+    /// The points of a wave (`body`: the list; `interpolate`: its node or NONE). @returns whether
+    /// they have no error; then `length` and `make` are set.
+    bool read_points(ryml::id_type body, ryml::id_type interpolate, std::size_t v, const std::string& what, bool quiet,
+                     ScenarioSignal& out, std::string& text, std::optional<std::int64_t>& length,
+                     std::function<std::shared_ptr<const Waveform>(SimDuration)>& make)
+    {
+        const ScenarioVariable& var = scenario_.variables[v];
+        const bool number = var.type == control::ValueType::Integer || var.type == control::ValueType::Real;
+        bool good = true;
+        bool hold = !number;
+        if (interpolate != ryml::NONE)
+        {
+            const auto said = choice(interpolate, "interpolate of " + what, {"linear", "hold"});
+            if (!said)
+            {
+                good = false;
+            }
+            else if (*said == "linear" && !number)
+            {
+                error("scenario-value", doc_.line(interpolate),
+                      "interpolate: linear needs a number, and " + var.text + " is " +
+                          (var.type == control::ValueType::Bool ? "a bool" : "an enum") +
+                          ": write interpolate: hold (each value is kept until the next point), or leave it out");
+                good = false;
+            }
+            else
+            {
+                hold = *said == "hold";
+            }
+        }
+        if (!tree_.is_seq(body) || !tree_.has_children(body))
+        {
+            error("value", doc_.line(body),
+                  "points of " + var.text + " must be a list of [<milliseconds since the step began>, <value>] ([[0, 0], [100, 50]]), not " +
+                      (tree_.is_seq(body) ? std::string("an empty list") : shown_value(body)));
+            return false;
+        }
+        std::vector<signal::Point> points;
+        std::size_t index = 0;
+        std::optional<std::int64_t> before;
+        std::optional<std::pair<std::int64_t, std::int64_t>> closest; // the two times that are closest
+        for (auto item = tree_.first_child(body); item != ryml::NONE; item = tree_.next_sibling(item))
+        {
+            ++index;
+            const std::string label = "point " + std::to_string(index);
+            if (!tree_.is_seq(item) || tree_.num_children(item) != 2)
+            {
+                error("value", doc_.line(item),
+                      label + " of " + what + " must be [<milliseconds since the step began>, <value>], not " + shown_value(item));
+                good = false;
+                continue;
+            }
+            const ryml::id_type timeNode = tree_.first_child(item);
+            const ryml::id_type valueNode = tree_.last_child(item);
+            const auto at = millis(timeNode, "the time of " + label, 0, "milliseconds of virtual time since the step began");
+            const auto value = level(valueNode, v, "the value of " + label, "the points");
+            if (!at || !value)
+            {
+                good = false;
+                continue;
+            }
+            if (before && *at <= *before)
+            {
+                error("value", doc_.line(item),
+                      "the times of " + what + " must go up: " + label + " is at " + std::to_string(*at) + " ms, not after point " +
+                          std::to_string(index - 1) + " (" + std::to_string(*before) + " ms)");
+                good = false;
+                continue;
+            }
+            if (before && (!closest || *at - *before < closest->second - closest->first))
+            {
+                closest = std::pair{*before, *at};
+            }
+            before = *at;
+            points.push_back(signal::Point{std::chrono::milliseconds(*at), *value});
+        }
+        if (!good)
+        {
+            return false;
+        }
+        if (points.back().time <= SimDuration::zero())
+        {
+            error("value", doc_.line(body),
+                  what + " end at 0 ms: a wave takes time; give a later point, or use set for a value at one time");
+            return false;
+        }
+        length = points.back().time.count() / 1'000'000;
+        text += " (" + std::to_string(points.size()) + (hold ? ", hold" : ", linear") + ") over " + std::to_string(*length) + " ms";
+        out.hint = "begin the points with one at 0 ms ([0, <value>])";
+        if (closest)
+        {
+            const SimDuration apart = std::chrono::milliseconds(closest->second - closest->first);
+            check_span(v, what, doc_.line(body), quiet, apart,
+                       "has points " + span_text(apart) + " apart (at " + std::to_string(closest->first) + " ms and " +
+                           std::to_string(closest->second) + " ms), closer than",
+                       "the ECU gets only the value at the time of each of its steps, so it does not see every point",
+                       "Put the points " + span_text(step_ns(v)) + " or more apart");
+        }
+        make = [points = std::move(points), hold](SimDuration) { return detail::points_shape(points, hold); };
+        return true;
     }
 
     void read_conditions(ryml::id_type node, ScenarioStep& step, const std::string& action)
@@ -1359,10 +2437,9 @@ private:
             const ScenarioVariable& var = scenario_.variables[w.variable];
             out += sep() + var.text + " = " + value_text(w.value, &var);
         }
-        for (const auto& r : step.ramps)
+        for (const auto& r : step.signals)
         {
-            out += sep() + scenario_.variables[r.variable].text + (r.from ? " from " + number_text(*r.from) : "") + " to " +
-                   number_text(r.to) + " over " + std::to_string(r.over_ms) + " ms";
+            out += sep() + r.text;
         }
         for (const auto& c : step.conditions)
         {
@@ -1416,6 +2493,7 @@ const char* step_kind_name(StepKind kind)
     {
     case StepKind::Set: return "set";
     case StepKind::Ramp: return "ramp";
+    case StepKind::Wave: return "wave";
     case StepKind::Expect: return "expect";
     case StepKind::WaitUntil: return "wait_until";
     }

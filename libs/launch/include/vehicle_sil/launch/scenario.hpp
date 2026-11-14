@@ -81,22 +81,48 @@ struct ScenarioWrite
     control::Value value{};
 };
 
-struct ScenarioRamp
+/// A value over the time of a step, as a function of the virtual time since the step began and of
+/// nothing else: not of how often or when it is asked, so a run gives the same values whatever
+/// the steps of the launcher and of the ECUs are. What a ramp and every wave is.
+class Waveform
+{
+public:
+    virtual ~Waveform() = default;
+    /// The value at `t` after the step began (0 <= t < the length). `base` is the value the
+    /// variable has when the step begins, or the one the step names instead (ScenarioSignal::base);
+    /// 0 if uses_base() is false.
+    [[nodiscard]] virtual double value(SimDuration t, double base) const = 0;
+    /// The value written at the end of the length, which the variable keeps.
+    [[nodiscard]] virtual double end(double base) const = 0;
+    /// Whether value() or end() looks at `base`: if so, the step fails when no value is known.
+    [[nodiscard]] virtual bool uses_base() const { return true; }
+};
+
+/// One variable of a ramp or a wave: the engine writes shape->value() at every step of the
+/// variable's ECU for length_ms, then shape->end().
+struct ScenarioSignal
 {
     std::size_t variable = 0;
-    std::optional<double> from{}; ///< empty: the value the variable has when the ramp begins
-    double to = 0.0;
-    std::int64_t over_ms = 0; ///< > 0
+    std::shared_ptr<const Waveform> shape;
+    std::int64_t length_ms = 0; ///< > 0
+    /// The base as the step names it (a ramp's from, a wave's around, the other value of a bool);
+    /// empty: the value the variable has when the step begins.
+    std::optional<double> base{};
+    /// What to do when no base is known, for the message that says so: "give the ramp from: <value>".
+    std::string hint;
+    /// As in the step's text: "Body.level from 10 to 20 over 100 ms".
+    std::string text;
 };
 
 enum class StepKind
 {
     Set,
     Ramp,
+    Wave,
     Expect,
     WaitUntil,
 };
-/// "set", "ramp", "expect", "wait_until".
+/// "set", "ramp", "wave", "expect", "wait_until".
 [[nodiscard]] const char* step_kind_name(StepKind kind);
 
 struct ScenarioStep
@@ -107,7 +133,7 @@ struct ScenarioStep
     std::optional<std::int64_t> at_ms{};
     std::int64_t after_ms = 0;
     std::vector<ScenarioWrite> writes{};       ///< Set
-    std::vector<ScenarioRamp> ramps{};         ///< Ramp
+    std::vector<ScenarioSignal> signals{};     ///< Ramp, Wave
     std::vector<ScenarioCondition> conditions{}; ///< Expect, WaitUntil: all of them
     /// Expect with within_ms, WaitUntil (its timeout_ms): true at some sample of this long.
     std::optional<std::int64_t> within_ms{};
@@ -118,10 +144,10 @@ struct ScenarioStep
     /// Why the run skips it, or "" if it runs: it uses a variable that its participant does not
     /// have in this configuration (absent: true in its variable map), or a variable of a
     /// participant that the chosen variant leaves out. A skipped step writes and compares nothing
-    /// (`writes`, `ramps` and `conditions` are empty) and ends `skipped_ms` after its own time.
+    /// (`writes`, `signals` and `conditions` are empty) and ends `skipped_ms` after its own time.
     std::string skipped{};
     /// Of a skipped step: the time it takes as the text says it (the longest over_ms of a ramp,
-    /// the hold_for_ms of an expect), so that the steps after it have the same times in every
+    /// the longest length of a wave, the hold_for_ms of an expect), so that the steps after it have the same times in every
     /// variant. 0 for a set and for a step that waits (when it would end is not in the text).
     std::int64_t skipped_ms = 0;
 

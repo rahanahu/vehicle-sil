@@ -153,6 +153,20 @@ def step_kinds() -> dict[str, dict]:
     return kinds
 
 
+# The shapes of a wave that are mappings (points is a list), each with what the launcher needs to read its keys.
+WAVE_SHAPES_WITH_KEYS = {
+    "sine": "amplitude: 1, period_ms: 100",
+    "triangle": "amplitude: 1, period_ms: 100",
+    "sawtooth": "amplitude: 1, period_ms: 100",
+    "square": "low: 0, high: 1, period_ms: 100",
+    "pulse": "value: 1, width_ms: 50",
+    "noise": "amplitude: 1, hold_ms: 10, seed: 1",
+    "chirp": "amplitude: 1, from_hz: 1, to_hz: 2",
+    "lag": "to: 1, tau_ms: 100",
+    "chatter": "to: 1, interval_ms: 10",
+}
+
+
 def scenario_mappings() -> dict[str, dict]:
     definitions = SCENARIO["definitions"]
     comparison = next(o for o in definitions["condition"]["anyOf"] if o.get("type") == "object")
@@ -164,6 +178,8 @@ def scenario_mappings() -> dict[str, dict]:
         "step": step,
         "comparison": comparison,
         "ramp": definitions["step_ramp"]["properties"]["ramp"]["additionalProperties"],
+        "wave": definitions["wave"],
+        **{f"wave {shape}": definitions["wave"]["properties"][shape] for shape in WAVE_SHAPES_WITH_KEYS},
     }
 
 
@@ -342,6 +358,63 @@ SCENARIO_SAMPLES = [
      "  - expect: { Engine.engine.speed: { near: 900, tolerance: 5000 }, Engine.engine.throttle: 80 }\n    within_ms: 50\n"
      "  - wait_until: { Dashboard.dashboard.engine_lost: false, Engine.ecu.connected: { eq: true } }\n    timeout_ms: 500\n",
      "valid"),
+    ("every shape of a wave",
+     S + SET +
+     "  - wave: { Engine.engine.throttle: { sine: { amplitude: 5, period_ms: 200, phase_deg: 90 }, around: 50, for_ms: 400 } }\n"
+     "  - wave: { Engine.engine.throttle: { triangle: { amplitude: 5, frequency_hz: 2.5 }, for_ms: 400 } }\n"
+     "  - wave: { Engine.engine.throttle: { sawtooth: { amplitude: 5, period_ms: 200, falling: true }, for_ms: 400 } }\n"
+     "  - wave: { Engine.engine.throttle: { square: { low: 20, high: 80, period_ms: 100, duty: 30, phase_deg: -90 }, for_ms: 400 } }\n"
+     "  - wave: { Engine.engine.throttle: { square: { amplitude: 5, frequency_hz: 5 }, around: 50, for_ms: 400 },\n"
+     "            Engine.ecu.connected: { square: { period_ms: 100 }, for_ms: 200 } }\n"
+     "  - wave: { Engine.engine.throttle: { pulse: { value: 100, width_ms: 50 }, around: 20 }, Engine.ecu.connected: { pulse: { width_ms: 30 } } }\n"
+     "  - wave: { Engine.engine.throttle: { noise: { amplitude: 2, hold_ms: 10, seed: 7 }, around: 50, for_ms: 100 } }\n"
+     "  - wave: { Engine.engine.throttle: { noise: { amplitude: 2, hold_ms: 10, seed: 7, distribution: gaussian }, for_ms: 100 } }\n"
+     "  - wave: { Engine.engine.throttle: { chirp: { amplitude: 5, from_hz: 1, to_hz: 10, sweep: log }, for_ms: 1000 } }\n"
+     "  - wave: { Engine.engine.throttle: { lag: { from: 0, to: 80, tau_ms: 200, settle: true }, for_ms: 1000 } }\n"
+     "  - wave: { Engine.ecu.connected: { chatter: { to: true, bounces: 3, interval_ms: 10 } },\n"
+     "            Engine.engine.throttle: { chatter: { from: 0, to: 80, interval_ms: 20, seed: 4 }, for_ms: 100 } }\n"
+     "  - wave: { Engine.engine.throttle: { points: [[0, 0], [100, 50], [400, 20]] }, Engine.ecu.connected: { points: [[0, false], [50, true]], interpolate: hold } }\n"
+     "  - wave: { Engine.engine.throttle: { pulse: { value: 100, width_ms: 3 } } }\n    undersampled: ok\n",
+     "valid"),
+    ("parameters in a wave",
+     S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: \"${a}\", frequency_hz: \"${hz}\", phase_deg: \"${a}\" }, around: \"${mid}\", for_ms: \"${ms}\" } }\n"
+     "  - wave: { Engine.engine.throttle: { points: [[0, \"${a}\"], [\"${ms}\", \"${mid}\"]], interpolate: \"${how}\" } }\n"
+     "  - wave: { Engine.engine.throttle: { sawtooth: { amplitude: \"${a}\", period_ms: \"${ms}\", falling: \"${yes}\" }, around: \"${mid}\", for_ms: \"${ms}\" } }\n"
+     "  - wave: { Engine.engine.throttle: { noise: { amplitude: \"${a}\", hold_ms: \"${ms}\", seed: \"${ms}\", distribution: \"${bell}\" }, around: \"${mid}\", for_ms: \"${ms}\" } }\n"
+     "params: { a: 5, hz: 2, mid: 50, ms: 400, how: hold, yes: true, bell: gaussian }\n", "valid"),
+    ("a wave without a shape", S + "  - wave: { Engine.engine.throttle: { for_ms: 100 } }\n", "invalid"),
+    ("a wave with two shapes",
+     S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, pulse: { value: 1, width_ms: 50 }, for_ms: 100 } }\n",
+     "invalid"),
+    ("an unknown shape", S + "  - wave: { Engine.engine.throttle: { cosine: { amplitude: 1, period_ms: 100 }, for_ms: 100 } }\n", "invalid"),
+    ("an unknown key of a shape",
+     S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100, offset: 5 }, for_ms: 100 } }\n", "invalid"),
+    ("a sine without for_ms", S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 } } }\n", "invalid"),
+    ("a sine without a period", S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1 }, for_ms: 100 } }\n", "invalid"),
+    ("period_ms and frequency_hz",
+     S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100, frequency_hz: 10 }, for_ms: 100 } }\n", "invalid"),
+    ("a period of 0", S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 0 }, for_ms: 100 } }\n", "invalid"),
+    ("a frequency of 0", S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, frequency_hz: 0 }, for_ms: 100 } }\n", "invalid"),
+    ("a negative amplitude", S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: -1, period_ms: 100 }, for_ms: 100 } }\n", "invalid"),
+    ("a duty over 100",
+     S + "  - wave: { Engine.engine.throttle: { square: { low: 0, high: 1, period_ms: 100, duty: 150 }, for_ms: 100 } }\n", "invalid"),
+    ("a noise without a seed", S + "  - wave: { Engine.engine.throttle: { noise: { amplitude: 1, hold_ms: 10 }, for_ms: 100 } }\n", "invalid"),
+    ("a distribution there is not",
+     S + "  - wave: { Engine.engine.throttle: { noise: { amplitude: 1, hold_ms: 10, seed: 1, distribution: normal }, for_ms: 100 } }\n", "invalid"),
+    ("a pulse with for_ms", S + "  - wave: { Engine.engine.throttle: { pulse: { value: 1, width_ms: 50 }, for_ms: 100 } }\n", "invalid"),
+    ("points with for_ms", S + "  - wave: { Engine.engine.throttle: { points: [[0, 1], [50, 2]], for_ms: 100 } }\n", "invalid"),
+    ("points with around", S + "  - wave: { Engine.engine.throttle: { points: [[0, 1], [50, 2]], around: 5 } }\n", "invalid"),
+    ("a point with three numbers", S + "  - wave: { Engine.engine.throttle: { points: [[0, 1, 2], [50, 2]] } }\n", "invalid"),
+    ("points that are a mapping", S + "  - wave: { Engine.engine.throttle: { points: { 0: 1, 50: 2 } } }\n", "invalid"),
+    ("interpolate without points",
+     S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, for_ms: 100, interpolate: hold } }\n", "invalid"),
+    ("a lag with around", S + "  - wave: { Engine.engine.throttle: { lag: { to: 1, tau_ms: 100 }, around: 5, for_ms: 100 } }\n", "invalid"),
+    ("a chatter with bounces and for_ms",
+     S + "  - wave: { Engine.engine.throttle: { chatter: { to: 1, bounces: 2, interval_ms: 10 }, for_ms: 100 } }\n", "invalid"),
+    ("a chatter with neither", S + "  - wave: { Engine.engine.throttle: { chatter: { to: 1, interval_ms: 10 } } }\n", "invalid"),
+    ("undersampled that is not ok",
+     S + "  - wave: { Engine.engine.throttle: { pulse: { value: 1, width_ms: 50 } } }\n    undersampled: true\n", "invalid"),
+    ("undersampled with set", S + SET + "    undersampled: ok\n", "invalid"),
     ("parameters where values stand",
      "vehicle_sil_scenario: 1\nname: 7\nparams: { pedal: 50, ms: 10, rpm: 900, far: 5000.5, on: true, empty: \"\" }\n"
      "steps:\n  - at_ms: ${ms}\n    set: { Engine.engine.throttle: \"${pedal}\", Engine.ecu.connected: \"${on}\" }\n"
@@ -402,6 +475,16 @@ SCENARIO_SAMPLES = [
     ("writing an output", S + "  - set: { Engine.engine.speed: 50 }\n", "check only"),
     ("ge of a bool", S + "  - expect: { Engine.ecu.connected: { ge: true } }\n", "check only"),
     ("a ramp of a bool", S + "  - ramp: { Engine.ecu.connected: { to: 1, over_ms: 10 } }\n", "check only"),
+    ("a sine of a bool", S + "  - wave: { Engine.ecu.connected: { sine: { amplitude: 1, period_ms: 100 }, for_ms: 100 } }\n", "check only"),
+    ("a wave that leaves the range",
+     S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 10, period_ms: 100 }, around: 95, for_ms: 100 } }\n", "check only"),
+    ("a square with low and no high",
+     S + "  - wave: { Engine.engine.throttle: { square: { low: 1, period_ms: 100 }, for_ms: 100 } }\n", "check only"),
+    ("a square of a bool with low and high",
+     S + "  - wave: { Engine.ecu.connected: { square: { low: 0, high: 1, period_ms: 100 }, for_ms: 100 } }\n", "check only"),
+    ("points whose times do not go up", S + "  - wave: { Engine.engine.throttle: { points: [[0, 1], [50, 2], [50, 3]] } }\n", "check only"),
+    ("points that end at 0", S + "  - wave: { Engine.engine.throttle: { points: [[0, 1]] } }\n", "check only"),
+    ("a wave of an output", S + "  - wave: { Engine.engine.speed: { pulse: { value: 1, width_ms: 50 } } }\n", "check only"),
     ("at_ms before the step before", S + "  - at_ms: 50\n" + SET.replace("  - ", "    ") + "  - at_ms: 10\n" +
      SET.replace("  - ", "    "), "check only"),
     ("at_ms after a step that waits",
@@ -684,6 +767,9 @@ class SchemaAndLauncher(unittest.TestCase):
             "step": S + SET + "    zz_probe: 1\n",
             "comparison": S + "  - expect: { Engine.engine.speed: { ge: 0, zz_probe: 1 } }\n",
             "ramp": S + "  - ramp: { Engine.engine.throttle: { to: 5, over_ms: 10, zz_probe: 1 } }\n",
+            "wave": S + "  - wave: { Engine.engine.throttle: { sine: { amplitude: 1, period_ms: 100 }, for_ms: 100, zz_probe: 1 } }\n",
+            **{f"wave {shape}": S + "  - wave: { Engine.engine.throttle: { " + shape + ": { " + keys + ", zz_probe: 1 }, for_ms: 100 } }\n"
+               for shape, keys in WAVE_SHAPES_WITH_KEYS.items()},
         }
         mappings = scenario_mappings()
         self.assertEqual(set(probes), set(mappings))

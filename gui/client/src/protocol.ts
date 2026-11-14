@@ -263,7 +263,7 @@ export interface ScenarioStep {
   index: number;
   /** シナリオのファイルの行。 */
   line: number | null;
-  kind: Open<'set' | 'ramp' | 'expect' | 'wait_until'>;
+  kind: Open<'set' | 'ramp' | 'wave' | 'expect' | 'wait_until'>;
   /** 手順の文（英語のまま出す）。 */
   text: string;
   status: ScenarioStepStatus;

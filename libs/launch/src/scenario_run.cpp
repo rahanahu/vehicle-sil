@@ -64,6 +64,20 @@ double number_of(const control::Value& value)
     return std::get<double>(value);
 }
 
+/// A signal's value as a value of the variable's type: an integer is rounded to the nearest
+/// (halves away from zero), a bool is true from 0.5.
+control::Value value_of_type(double value, control::ValueType type)
+{
+    switch (type)
+    {
+    case control::ValueType::Integer:
+    case control::ValueType::Enum: return control::Value{static_cast<std::int64_t>(std::llround(value))};
+    case control::ValueType::Bool: return control::Value{value >= 0.5};
+    case control::ValueType::Real: break;
+    }
+    return control::Value{value};
+}
+
 } // namespace
 
 const char* step_status_name(StepStatus status)
@@ -314,7 +328,7 @@ bool ScenarioEngine::unusable(std::size_t index, SimTime time)
     {
         used.push_back(w.variable);
     }
-    for (const auto& r : step.ramps)
+    for (const auto& r : step.signals)
     {
         used.push_back(r.variable);
     }
@@ -326,7 +340,7 @@ bool ScenarioEngine::unusable(std::size_t index, SimTime time)
     {
         if (!variables_[v].problem.empty())
         {
-            const bool writes = step.kind == StepKind::Set || step.kind == StepKind::Ramp;
+            const bool writes = step.kind == StepKind::Set || step.kind == StepKind::Ramp || step.kind == StepKind::Wave;
             fail(index, time, writes ? "scenario-write" : "scenario-failed",
                  scenario_.variables[v].text + " cannot be " + (writes ? "written" : "read") + ": " + variables_[v].problem);
             return true;
@@ -376,25 +390,26 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
         break;
     }
     case StepKind::Ramp:
+    case StepKind::Wave:
     {
         std::int64_t longest = 0;
-        for (const ScenarioRamp& r : step.ramps)
+        for (const ScenarioSignal& r : step.signals)
         {
-            Ramp ramp;
-            ramp.step = index;
-            ramp.ramp = r;
-            ramp.from_time = time;
-            ramp.from = r.from;
-            ramp.period = scenario_.participants[scenario_.variables[r.variable].participant].step;
-            if (ramp.period <= SimDuration::zero())
+            Signal signal;
+            signal.step = index;
+            signal.signal = r;
+            signal.from_time = time;
+            signal.base = r.base;
+            signal.period = scenario_.participants[scenario_.variables[r.variable].participant].step;
+            if (signal.period <= SimDuration::zero())
             {
-                ramp.period = tick_;
+                signal.period = tick_;
             }
             // One write per period before the end, and the last one at the end.
-            const std::int64_t over = r.over_ms * kNanosPerMilli;
-            open_writes_[index] += static_cast<std::size_t>((over + ramp.period.count() - 1) / ramp.period.count()) + 1;
-            ramps_.push_back(std::move(ramp));
-            longest = std::max(longest, r.over_ms);
+            const std::int64_t over = r.length_ms * kNanosPerMilli;
+            open_writes_[index] += static_cast<std::size_t>((over + signal.period.count() - 1) / signal.period.count()) + 1;
+            signals_.push_back(std::move(signal));
+            longest = std::max(longest, r.length_ms);
         }
         run_.steps[index].end = time + std::chrono::milliseconds(longest);
         base_ = run_.steps[index].end;
@@ -505,39 +520,37 @@ void ScenarioEngine::finish(ScenarioStatus status)
 bool ScenarioEngine::submit_one(Write write)
 {
     started(write.step);
-    if (write.ramp)
+    if (write.signal)
     {
-        // The ramp's value at this time, now that the writes before it have gone out.
-        Ramp& ramp = ramps_[*write.ramp];
-        const ScenarioVariable& v = scenario_.variables[ramp.ramp.variable];
-        if (!ramp.from)
+        // The signal's value at this time, now that the writes before it have gone out.
+        Signal& signal = signals_[*write.signal];
+        const ScenarioVariable& v = scenario_.variables[signal.signal.variable];
+        const Waveform& shape = *signal.signal.shape;
+        if (!signal.base && shape.uses_base())
         {
             // The value the variable has now, as far as the scenario knows: what it wrote last,
             // or a later sample.
-            const Variable& known = variables_[ramp.ramp.variable];
+            const Variable& known = variables_[signal.signal.variable];
             if (known.written && !(known.value_time && *known.value_time >= known.written_at))
             {
-                ramp.from = number_of(*known.written);
+                signal.base = number_of(*known.written);
             }
             else if (known.value)
             {
-                ramp.from = number_of(*known.value);
+                signal.base = number_of(*known.value);
             }
             else
             {
+                const std::string kind = step_kind_name(scenario_.steps[write.step].kind);
                 fail(write.step, write.at, "scenario-write",
-                     "the ramp of " + v.text + " has no value to start from: no sample of its ECU has arrived before " +
-                         ms_text(write.at) + " ms and the scenario has not written it; give the ramp from: <value>");
+                     "the " + kind + " of " + v.text + " has no value to start from: no sample of its ECU has arrived before " +
+                         ms_text(write.at) + " ms and the scenario has not written it; " + signal.signal.hint);
                 return false;
             }
         }
-        const double share = static_cast<double>(to_ns(write.at) - to_ns(ramp.from_time)) /
-                             static_cast<double>(ramp.ramp.over_ms * kNanosPerMilli);
-        const double value = write.ramp_last ? ramp.ramp.to : *ramp.from + (ramp.ramp.to - *ramp.from) * share;
-        write.writes.push_back(ScenarioWrite{ramp.ramp.variable,
-                                             v.type == control::ValueType::Integer
-                                                 ? control::Value{static_cast<std::int64_t>(std::llround(value))}
-                                                 : control::Value{value}});
+        const double base = signal.base.value_or(0.0);
+        const double value = write.signal_last ? shape.end(base) : shape.value(write.at - signal.from_time, base);
+        write.writes.push_back(ScenarioWrite{signal.signal.variable, value_of_type(value, v.type)});
     }
     std::vector<control::PeerWrite> out;
     for (const ScenarioWrite& w : write.writes)
@@ -595,18 +608,18 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
             ++it;
         }
     }
-    for (std::size_t i = 0; i < ramps_.size(); ++i)
+    for (std::size_t i = 0; i < signals_.size(); ++i)
     {
-        Ramp& ramp = ramps_[i];
-        const SimTime end = ramp.from_time + std::chrono::milliseconds(ramp.ramp.over_ms);
-        while (!ramp.done)
+        Signal& signal = signals_[i];
+        const SimTime end = signal.from_time + std::chrono::milliseconds(signal.signal.length_ms);
+        while (!signal.done)
         {
-            const SimTime regular = ramp.from_time + ramp.next * ramp.period;
+            const SimTime regular = signal.from_time + signal.next * signal.period;
             const bool last = regular >= end;
             const SimTime at = last ? end : regular;
             if (at <= from_exclusive && !at_start)
             {
-                missed(ramp.step, at);
+                missed(signal.step, at);
                 return;
             }
             if (!in_range(at))
@@ -614,13 +627,13 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
                 break;
             }
             Write write;
-            write.step = ramp.step;
+            write.step = signal.step;
             write.at = at;
-            write.ramp = i;
-            write.ramp_last = last;
+            write.signal = i;
+            write.signal_last = last;
             due.push_back(std::move(write));
-            ++ramp.next;
-            ramp.done = last;
+            ++signal.next;
+            signal.done = last;
         }
     }
     // Writes for one time take effect in the order of the steps.
@@ -678,7 +691,7 @@ void ScenarioEngine::judge(SimTime p)
         if (--open_writes_[write.step] == 0)
         {
             const ScenarioStepRun& step = run_.steps[write.step];
-            pass(write.step, step.kind == StepKind::Ramp ? *step.end : applied, *step.end);
+            pass(write.step, step.kind == StepKind::Ramp || step.kind == StepKind::Wave ? *step.end : applied, *step.end);
         }
     }
 }

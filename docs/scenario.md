@@ -100,7 +100,7 @@ JSON Schema は [schema/scenario.schema.json](../schema/scenario.schema.json) �
 | `params` | いいえ | パラメーターの既定の値（名前 → 値）。手順の値の位置に `${名前}` と書いて使う（[機種とパラメーター](#機種とパラメーター)） |
 | `steps` | はい | 手順の並び（1 つ以上）。上から順に進む |
 
-1 つの手順は、`set`、`ramp`、`wait_until`、`expect` のどれか 1 つと、時刻を持ちます。
+1 つの手順は、`set`、`ramp`、`wave`、`wait_until`、`expect` のどれか 1 つと、時刻を持ちます。
 
 | キー | 意味 |
 |---|---|
@@ -108,6 +108,8 @@ JSON Schema は [schema/scenario.schema.json](../schema/scenario.schema.json) �
 | `after_ms` | 手順の時刻を、前の手順が終わった時刻からのミリ秒で書く（0 以上）。`at_ms` も `after_ms` もなければ `after_ms: 0` |
 | `set: { <変数>: <値>, ... }` | 値を入れる |
 | `ramp: { <変数>: { to: <値>, over_ms: <ms>, from: <値> }, ... }` | `over_ms` の間、直線で値を動かす。`from` は省ける |
+| `wave: { <変数>: { <波形>: { ... }, around: <値>, for_ms: <ms> }, ... }` | 決まった波形（`sine`、`square` など）で値を動かす（[波形で動かす](#波形で動かすwave)） |
+| `wave` と `undersampled: ok` | その手順の波形が ECU のステップより細かくても、照合で何も言わない |
 | `wait_until: { <変数>: <条件>, ... }` と `timeout_ms: <ms>` | 条件が成り立つまで待つ。`timeout_ms`（必須）の間に成り立たなければ失敗 |
 | `expect: { <変数>: <条件>, ... }` | 手順の時刻に、条件が成り立つことを確かめる |
 | `expect` と `within_ms: <ms>` | その間に 1 度でも成り立てばよい。成り立った時点で次へ進む |
@@ -116,7 +118,7 @@ JSON Schema は [schema/scenario.schema.json](../schema/scenario.schema.json) �
 - **変数**は `<participant>.<変数名>` です。最初の `.` までが participant の名前で、残りが ECU の中の変数名です（変数名に `.` があってよい。例: participant `Engine` の `engine.speed` は `Engine.engine.speed`）。
 - **値**は、変数の型に合わせて書きます。bool は `true` / `false`、integer は整数、real は数、enum は項目の名前か値です。
 - **条件**は比較だけです。値をそのまま書けば「等しい」です。対応付けで `eq`、`ne`、`ge`、`le`、`gt`、`lt`、`near` と `tolerance`（差が `tolerance` 以下）を書けます。1 つの変数に複数書けば、すべてです（`{ ge: 1700, le: 1900 }`）。1 つの手順に複数の変数を書けば、すべての変数です。bool と enum に使えるのは `eq` と `ne` だけです。
-- 書けるのは、入力の変数です。Parameter は、時刻 0 の `set` でだけ書けます（最初のステップの前に入ります）。出力は読むだけです。`set` と `ramp` の値は、変数の範囲（`min`、`max`）の中にします。`ramp` は integer と real だけです（integer は四捨五入）。
+- 書けるのは、入力の変数です。Parameter は、時刻 0 の `set` でだけ書けます（最初のステップの前に入ります）。出力は読むだけです。`set`、`ramp`、`wave` の値は、変数の範囲（`min`、`max`）の中にします。`ramp` は integer と real だけです（integer は四捨五入）。`wave` は、波形ごとに使える型が決まっています。
 
 ## 時刻
 
@@ -126,10 +128,11 @@ JSON Schema は [schema/scenario.schema.json](../schema/scenario.schema.json) �
 |---|---|
 | `set`、`expect`（その時点） | T |
 | `ramp` | T + 最も長い `over_ms` |
+| `wave` | T + 最も長い波形の長さ（`for_ms`。`pulse` は `width_ms`、`points` は最後の点の時刻、`bounces` を書いた `chatter` は 2 × `bounces` × `interval_ms`） |
 | `expect` と `hold_for_ms` | T + `hold_for_ms` |
 | `wait_until`、`expect` と `within_ms` | 成り立ったサンプルの時刻 t の、次の controller のステップ P の、さらに 1 刻み後（P + 刻み） |
 
-- 上の 3 つは、実行の前に終わる時刻がわかります。これらの手順は、前の結果によらず、書いた時刻どおりに進みます。
+- 上の 4 つは、実行の前に終わる時刻がわかります。これらの手順は、前の結果によらず、書いた時刻どおりに進みます。
 - `wait_until` と `within_ms` つきの `expect` は、終わる時刻が実行するまで決まりません。ランチャーは、時刻 t のサンプルを、その次の controller のステップ P で確かに持っています。次の手順の書き込みが間に合う最初の時刻が P + 刻みなので、そこを終わりとします。例では、回転数が 1700 になったサンプルが 330 ms、P が 335 ms、終わりが 340 ms です。
 - そのため、これらの手順より後ろには `at_ms` を書けません（`after_ms` で書きます）。時刻が戻る `at_ms` も誤りです。
 - controller の刻みは、構成ファイルの `time_step_ms` です。書いていなければ、ECU のステップがすべて controller のステップから始まる刻み（結果の `timing.time_step_ms`。[simulation-run.md](simulation-run.md) の「等速で動かす」の、速さを決めたときの既定と同じ）です。シナリオのある実行では、速さによらずこの刻みです。
@@ -152,6 +155,75 @@ ECU は、Agent の `sample_period`（既定 10 ms の仮想時間）ごとに�
 - `ramp` は、変数ごとに、T、T + ステップ、T + 2 ステップ、…（その ECU のステップ）に、`from` から `to` への直線の上の値を書き、T + `over_ms` に `to` を書きます。`from` を省くと、シナリオがその変数に最後に書いた値（それより新しいサンプルがあれば、その値）から始めます。どちらもなければ失敗です（`from` を書きます）。
 - 書き込みの結果は、適用する ECU のステップの次の controller のステップで確かめます。適用されなかった書き込み（ECU の setter が拒んだ、相手がつながっていない、など）は、その手順の失敗です。
 
+## 波形で動かす（`wave`）
+
+`wave` は、変数を決まった波形で動かします。
+次の例は、スロットルを、いまの値を中心に ±5 %、1 秒に 10 回の正弦で 200 ms 動かします（[examples/ecu_main/scenarios/throttle_wave.yaml](../examples/ecu_main/scenarios/throttle_wave.yaml) の 15 行）。
+
+```yaml
+  - wave: { Engine.engine.throttle: { sine: { amplitude: 5, period_ms: 100 }, for_ms: 200 } }
+```
+
+変数ごとに、波形を 1 つと、その横に長さ（`for_ms`）と中心（`around`）を書きます。
+1 つの手順に複数の変数を書けます（同じ変数は 1 回）。手順は、いちばん長い波形が終わると終わります。
+
+| 波形 | 書くもの | 値 | 使える型 |
+|---|---|---|---|
+| `sine` | `amplitude`、`period_ms` か `frequency_hz`、`phase_deg` | 中心 ± `amplitude` の正弦。始まりは中心で、1/4 周期で最大 | integer、real |
+| `triangle` | 同じ | 三角波。山と谷の位置は `sine` と同じ | integer、real |
+| `sawtooth` | 同じ、`falling: true` | のこぎり波。周期の始めが最小で、直線で最大まで上がって戻る。`falling: true` は逆 | integer、real |
+| `square` | `low` と `high`、または `amplitude`。`period_ms` か `frequency_hz`、`duty`（%、既定 50）、`phase_deg` | 矩形波。周期の始めから `duty` % の間が高い側。`low`・`high` はその 2 つの値、`amplitude` は中心 ± `amplitude`。bool はどちらも書かない（`false` と `true`） | integer、real、bool |
+| `pulse` | `value`、`width_ms` | `width_ms` の間だけ `value`、終わると元の値。bool は `value` を省ける（`true`） | integer、real、bool |
+| `noise` | `amplitude`、`hold_ms`、`seed`、`distribution` | 乱数。1 つの値を `hold_ms` の間保つ。`distribution: uniform`（既定）は中心 ± `amplitude` の一様、`gaussian` は標準偏差が `amplitude` の釣り鐘形（標準偏差の 6 倍を超えない） | integer、real |
+| `chirp` | `amplitude`、`from_hz`、`to_hz`、`sweep` | 周波数が `for_ms` の間に `from_hz` から `to_hz` へ変わる正弦。`sweep: linear`（既定）は毎秒同じ Hz ずつ、`log` は毎秒同じ倍率ずつ | integer、real |
+| `lag` | `to`、`tau_ms`、`from`、`settle: true` | 一次遅れの形で `to` に寄る（`tau_ms` で 63 %、その 5 倍で 99 %）。`from` を省くと、いまの値から | integer、real |
+| `chatter` | `to`、`interval_ms`、`bounces` か横の `for_ms`、`seed`、`from` | スイッチの跳ね。`to`、元の値、`to`、元の値、… と `interval_ms` ごとに変わり、最後は `to`。`bounces` は元の値に戻る回数。`seed` を書くと、変わる時刻が `interval_ms` の 1/4 まで前後にずれる。bool は `from` を書かない（`to` の反対） | integer、real、bool |
+| `points` | `[[<ms>, <値>], ...]`、横に `interpolate` | 時刻（手順の始めからの ms、昇順）と値の表。`interpolate: linear`（数の既定）は点の間を直線で、`hold` は次の点まで値を保つ。bool と enum は `hold` だけ | どの型でも |
+
+- **周期**は `period_ms`（1 以上の整数）か `frequency_hz`（0 より大きい数）のどちらかです。1 ms より短い周期は `frequency_hz` で書きます。`phase_deg` は波形を始める位置で、90 なら 1/4 周期の所から始めます。
+- **長さ**は `for_ms` です。周期の倍数でなくてもかまいません。`pulse` と `points` は自分で長さを持つので `for_ms` を書きません。`chatter` は `bounces` か `for_ms` のどちらかです。
+- **中心**は `around` です。省くと、手順が始まる時点のその変数の値です（`ramp` の `from` と同じ決まり: シナリオが最後に書いた値か、それより新しいサンプル。どちらもなければ失敗するので、`around` を書きます）。
+- **終わった後の値**: 中心（`around`、省いたときは始まる時点の値）に戻します。`low`・`high` を書いた `square` と bool の `square` は、低い側で終わります。行き先のある波形はそこに留まります: `points` は最後の点の値、`chatter` は `to`、`lag` は `for_ms` の時点で着いていた値（`settle: true` なら `to`）。続けて `around` のない `wave` や `from` のない `ramp` を書くと、この値から始まります。
+- `around` を書けるのは、中心のある波形（`sine`、`triangle`、`sawtooth`、`amplitude` の `square`、`noise`、`chirp`）と、数の `pulse`（終わった後に戻る値）です。`lag` と `chatter` の始まりの値は `from`、`points` は最初の点で書きます。`points` の最初の点が 0 より後なら、そこまでは、いまの値から最初の点への直線（`hold` なら、いまの値のまま）です。
+- **値の決まり方**: 値は、手順が始まった仮想時刻からの経過と、書いた数だけで決まります。ECU のステップ幅、controller の刻み、実行の速さによりません。`noise` と `chatter` の乱数も、`seed` と時刻だけから作るので、同じシナリオは毎回同じ値になり、失敗した実行をそのまま再現できます。
+- **書く時刻**は `ramp` と同じです。変数ごとに、T、T + ステップ、T + 2 ステップ、…（その ECU のステップ）にその時刻の値を書き、終わりの時刻に終わった後の値を書きます。integer は四捨五入です。
+- **範囲**: `low`、`high`、`value`、`to`、`from`、`around`、`points` の値と、`around` を書いたときの `around` ± `amplitude` は、照合で範囲を確かめます。`around` を省いた波形と `gaussian` の `noise` は、実行しないと値がわからないので、範囲の外の値を書こうとした時点でその手順が失敗します（`scenario-write`。値を黙って丸めません）。
+- `${名前}` は、波形の中の数の位置にも書けます（`amplitude: "${amp}"`）。
+- 手順は 1 つずつ進むので、`wave` が動いている間は `expect` できません。波形を掛けた結果は、`wave` の後の手順で確かめます。
+- **`square` と PWM**: `square` は、値そのものを高い側と低い側に切り替えます（ECU がピンのエッジを見る入力）。ECU がデューティーや周波数を数の変数として受ける入力には、その変数に `set` や `ramp`、`sine` を使います。
+
+`vehicle_sil::signal`（[`signal/waveform.hpp`](../libs/signal/include/vehicle_sil/signal/waveform.hpp)）に同じ計算の関数があり、自分の C++ のコードからも使えます。
+
+### ECU のステップより細かい波形
+
+ECU は、ステップごとに 1 回だけ入力を受け取ります。
+それより細かい波形は、書いたとおりには ECU に見えません。
+照合（`check --scenario`、`run --scenario` の最初）は、相手の ECU のステップ幅と比べて、ECU に実際に見える形を警告で言います。
+警告なので、実行はできます。`--strict` では照合で落ちます。
+
+| 所見 | 出るとき |
+|---|---|
+| `scenario-wave-undersampled`（警告） | 周期がステップ幅の 2 倍より短い（`sine`、`triangle`、`sawtooth`、`square`。`chirp` は高い側の周波数）。`pulse` の `width_ms`、`noise` の `hold_ms`、`points` の点の間隔、`chatter` の `interval_ms`（`seed` があればその半分）がステップ幅より短い |
+| `scenario-wave-duty`（警告） | `square` の高い側の長さ（周期 × `duty`）がステップ幅の倍数でない（ECU に見えるデューティーを言う）。周期がステップ幅の倍数でない |
+| `scenario-wave-coarse`（注記） | `sine`、`triangle`、`sawtooth`、`chirp` の 1 周期が 8 ステップより少ない（山と谷を取りこぼすことがある） |
+| `scenario-wave-not-checked`（注記） | 相手の participant のステップ幅がわからないので、比べていない |
+
+例です。ステップ幅 10 ms の ECU に、周期 30 ms、デューティー 25 % の矩形波を書いたとき:
+
+```text
+warning: pwm.yaml:5: the square of Door.lamp is high for 7.5 ms of each period of 30 ms (duty 25 %), but participant 'Door' takes its inputs once per step of 10 ms: the ECU sees it high for 10 ms of each period (33.3 %). Make the high time (period x duty / 100) a multiple of 10 ms; to run it as it is without this message, add undersampled: ok to the step
+```
+
+- わかっていてそのまま流すときは、その手順に `undersampled: ok` を書きます。その手順の上の 4 つの所見が出なくなります。
+
+  ```yaml
+    - wave: { Door.lamp: { pulse: { width_ms: 3 } } }
+      undersampled: ok
+  ```
+
+- ステップ幅より短い `pulse` は、手順の時刻が ECU のステップの時刻なら 1 ステップの間だけ見え、そうでなければ見えません（始まりと終わりの書き込みが、同じステップに入るためです）。
+- 動かしようのないものは誤りです: 周期や幅が 0 以下、`noise` に `seed` がない、`points` の時刻が昇順でない、型に合わない波形（bool に `sine` など）、範囲の外。
+
 ## 機種とパラメーター
 
 構成ファイルに機種（`variants`）があるとき、同じシナリオをどの機種にも当てられるように、次の 3 つがあります。機種の違いは構成の側に書き、シナリオには、機種の名前で分かれる手順を書きません（構成の側の書き方は [simulation-config.md](simulation-config.md) の「機種」と「シナリオのパラメーター」）。
@@ -169,7 +241,7 @@ steps:
 
 ### パラメーター（`params`、`${名前}`）
 
-- `${名前}` は、手順の中の値の位置（`set` の値、条件の値と `tolerance`、`ramp` の `to`・`from`・`over_ms`、`at_ms`、`after_ms`、`timeout_ms`、`within_ms`、`hold_for_ms`）に、値の全体として書きます。その位置に、パラメーターの値を書いたのと同じに読みます（型と範囲の照合も同じで、誤りの文には、どのパラメーターのどこから来た値かが出ます）。
+- `${名前}` は、手順の中の値の位置（`set` の値、条件の値と `tolerance`、`ramp` の `to`・`from`・`over_ms`、`wave` の数と長さ、`at_ms`、`after_ms`、`timeout_ms`、`within_ms`、`hold_for_ms`）に、値の全体として書きます。その位置に、パラメーターの値を書いたのと同じに読みます（型と範囲の照合も同じで、誤りの文には、どのパラメーターのどこから来た値かが出ます）。
 - キー、変数名、値の一部（`"${a} rpm"`）には書けません。式（`${a+1}`）もありません（誤り `scenario-param`）。計算した値が要るときは、その値を別のパラメーターにします。
 - `{ ... }` や `[ ... ]` の中では、引用符で囲みます（`{ near: "${idle_rpm}" }`。YAML が、引用符のない `${` をそこでは読めないためです）。JSON でも文字列で書きます。引用符で囲んでも、値はパラメーターに書いたとおりに読みます（数は数です）。
 - 値は、後のものが前のものを置き換えます: シナリオの `params`、構成ファイルの `params`、選んだ機種の `params`、引数の `--param <名前>=<値>`。シナリオの `params` に書いていない名前も、ほかから値が来れば使えます。
@@ -182,12 +254,12 @@ steps:
 - 構成の対応表で `absent: true` とした変数（その実行ファイルにはない、と書いた変数）を使う手順は、実行で飛ばします。照合では、手順ごとに注記 `scenario-step-skipped` が出ます（誤りではありません）。
 - 選んだ機種が外した participant（機種の `enabled: false`）の変数を使う手順も、同じに飛ばします。理由は `participant 'Door' is not in the variant medium (enabled: false in that variant)` の形です。その participant は照合していないので、変数の名前は確かめません。機種のほかの理由で外した participant（共通の部分の `enabled: false`、`--disable`）の変数を使う手順は、今までどおり照合の誤り（`scenario-variable`）です。機種が外した participant を `--enable` で戻したときは、ほかの participant と同じに照合します。
 - 飛ばすのは、その変数を使う手順だけです。1 つの手順に、ある変数とない変数の両方があれば、手順の全体を飛ばします（ある変数にも書きません）。飛ばした `set` に頼る後ろの手順は、飛ばさずに回ります。機種によって成り立たない手順は、ない変数を使う形にするか、シナリオを分けて `only` を書きます。
-- 飛ばした手順も、文面からわかる長さは使ったことにします: `ramp` はいちばん長い `over_ms`、`hold_for_ms` のある `expect` はその長さ、`set` と長さのない `expect` は 0 です。次の手順の `after_ms` は、その終わりから数えます。飛ばす機種と飛ばさない機種で、後ろの手順の時刻は同じです。ない変数の `ramp` も、`over_ms` だけは読みます（`to` と `from` は読みません）。
+- 飛ばした手順も、文面からわかる長さは使ったことにします: `ramp` はいちばん長い `over_ms`、`wave` はいちばん長い波形の長さ、`hold_for_ms` のある `expect` はその長さ、`set` と長さのない `expect` は 0 です。次の手順の `after_ms` は、その終わりから数えます。飛ばす機種と飛ばさない機種で、後ろの手順の時刻は同じです。ない変数の `ramp` も、`over_ms` だけは読みます（`to` と `from` は読みません）。ない変数の `wave` も、長さ（`for_ms`、`width_ms`、最後の点の時刻、`bounces` と `interval_ms`）だけは読みます。
 - 例外は、待つ手順（`wait_until`、`within_ms` のある `expect`）です。いつ終わるかは実行しないとわからないので、飛ばすと 0 です（手順の時刻で終わったことにします）。その後ろの `after_ms` の手順は、飛ばさない機種より早く始まります。待った後の時刻が要る手順は、待つ手順と同じ変数を使う形にする（一緒に飛ばす）か、シナリオを分けて `only` を書きます。
 - ファイルの読み方は機種で変わりません。`at_ms` が前の手順の終わりより前、という誤りは、手順を飛ばす機種でも同じに出ます。待つ手順を飛ばしても、その後ろに `at_ms` は書けません。
 - 飛ばした手順のうち最後のものの長さは、実行を延ばしません。シナリオは、飛ばさない手順が全部決まった所で終わります。
 - 結果では、手順の `status` が `skipped`（人向けは `skipped`）で、理由が付きます。シナリオの結果は、ほかの手順が全部通れば `passed` のままで、飛ばした数が出ます（人向けは `passed, 3 of 4 steps passed, 1 skipped`、JSON は `skipped_steps`）。
-- 確かめる手順（`expect`、`wait_until`）を全部飛ばすと、シナリオは何も確かめずに `passed` になります。このとき、照合で警告 `scenario-nothing-checked` を 1 つ出します（確かめる手順の行と、次にすることを言います: その機種のシナリオでなければ `only` を書く、その機種のものなら対応表を足す）。既定では実行は通り、`--strict` では照合で落ちて何も起動しません。もとから確かめる手順のないシナリオ（`set` と `ramp` だけ）には出しません。
+- 確かめる手順（`expect`、`wait_until`）を全部飛ばすと、シナリオは何も確かめずに `passed` になります。このとき、照合で警告 `scenario-nothing-checked` を 1 つ出します（確かめる手順の行と、次にすることを言います: その機種のシナリオでなければ `only` を書く、その機種のものなら対応表を足す）。既定では実行は通り、`--strict` では照合で落ちて何も起動しません。もとから確かめる手順のないシナリオ（`set`、`ramp`、`wave` だけ）には出しません。
 - 対応も `absent` も書いていない変数が実行ファイルになければ、今までどおり照合の誤り（`scenario-variable`）です。黙って飛ばしません。
 
 ### 機種を限る（`only`）
@@ -201,7 +273,7 @@ steps:
 - 全部通ると、ランチャーはその controller のステップでシミュレーションを止め、実行は成功します（ほかに誤りがなければ終了コード 0）。構成ファイルに `stop_at_ms` がなくても回せます。
 - `stop_at_ms` に先に着くと、決められる所まで決めて、決まっていない最初の手順が失敗です（`scenario-out-of-time`。`stop_at_ms` を大きくするか、消します）。
 - 止める要求（Ctrl+C、`stop` の命令）、participant の失敗、`--timeout-ms` は、シナリオより優先です（[simulation-run.md](simulation-run.md) の規則のまま）。そのとき、シナリオは `incomplete` で、誤り `scenario-incomplete` が、どこまで進んだかを言います。落ちた ECU への書き込みが先に失敗しても、実行の結果は participant の失敗で、シナリオは `incomplete` です。
-- 手順ごとの `at`（JSON の `at_ms`）は、その手順を決めた仮想時刻です。`set` は値を適用した ECU のステップ、`ramp` は終わり、その時点の `expect` は T、`wait_until` と `within_ms` は成り立ったサンプルの時刻、`hold_for_ms` は終わり（失敗なら外れたサンプルの時刻）、時間切れは切れた時刻です。
+- 手順ごとの `at`（JSON の `at_ms`）は、その手順を決めた仮想時刻です。`set` は値を適用した ECU のステップ、`ramp` と `wave` は終わり、その時点の `expect` は T、`wait_until` と `within_ms` は成り立ったサンプルの時刻、`hold_for_ms` は終わり（失敗なら外れたサンプルの時刻）、時間切れは切れた時刻です。
 
 失敗の所見は、シナリオのファイルと行、手順、時刻、そのときの値を言います。失敗する例です。スロットルを踏んでから 200 ms のうちに回転数が 1700 rpm に届くことを確かめますが、届くのは 330 ms です（上の例の `wait_until`）。
 
@@ -259,7 +331,7 @@ error: s.yaml:4: wait_until Body.ticks ge 10; Body.level eq 6 (timeout 100 ms): 
 |---|---|
 | `scenario-failed` | `expect` が成り立たなかった。または、読む変数の participant がこの実行でつながっていない |
 | `scenario-timeout` | `wait_until` が `timeout_ms` の間に成り立たなかった |
-| `scenario-write` | `set` か `ramp` の書き込みが適用されなかった。または、`ramp` の始まりの値がない |
+| `scenario-write` | `set`、`ramp`、`wave` の書き込みが適用されなかった（`wave` が範囲の外の値を書こうとした、など）。または、`ramp` の始まりの値や `wave` の中心の値がない |
 | `scenario-out-of-time` | `stop_at_ms` で止まったとき、まだ決まっていなかった |
 | `scenario-incomplete` | シナリオが終わる前に、ほかの理由でシミュレーションが終わった |
 
@@ -314,7 +386,8 @@ failed: 5 errors, 0 warnings, 0 notes
 | `unknown-key`、`duplicate-key`、`missing-key`、`value` | キーと値の形の誤り（1 つの手順に 2 つの動作、`wait_until` に `timeout_ms` がない、`near` に `tolerance` がない、など） |
 | `scenario-variable` | 変数が `<participant>.<変数名>` でない、participant か変数がない、participant を使えない（外している、`describe: false`、実時間で動く、変数を出していない） |
 | `scenario-not-writable` | 出力に書いている。Parameter を時刻 0 の `set` 以外で書いている |
-| `scenario-value` | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている |
+| `scenario-value` | 値が型、範囲、enum の項目に合わない。`ramp` や大小の比較を、数でない変数に使っている。`wave` の波形が変数の型に合わない、`around` ± `amplitude` が範囲の外 |
+| `scenario-wave-undersampled`、`scenario-wave-duty`（警告）、`scenario-wave-coarse`、`scenario-wave-not-checked`（注記） | `wave` が相手の ECU のステップより細かい（[ECU のステップより細かい波形](#ecu-のステップより細かい波形)） |
 | `scenario-param` | `${名前}` に値がない。`${...}` がキーや変数名、値の一部にある（シナリオにない名前の `--param` は、引数の誤り `usage`） |
 | `scenario-variant` | シナリオの `only` に、選んだ機種がない。`only` の名前が構成の機種にない |
 | `scenario-step-skipped`（注記） | 手順が `absent: true` の変数か、機種が外した participant の変数を使うので、実行で飛ばす |
@@ -333,7 +406,7 @@ failed: 5 errors, 0 warnings, 0 notes
 | `status` | `passed`、`failed`、`incomplete`（ほかの理由で途中で終わった）、`not_run`（シミュレーションが始まらなかった） |
 | `over_at_ms` | シナリオが終わった controller のステップ（`passed` と `failed`。ほかは null） |
 | `skipped_steps` | 飛ばした手順の数。1 つ以上あるときだけ、このキーがあります |
-| `steps[]` | 手順ごとに `index`（1 から）、`line`、`kind`（`set`、`ramp`、`expect`、`wait_until`）、`text`、`status`（`passed`、`failed`、`unfinished`、`not_run`、`skipped`）、`start_ms`（手順の時刻）、`at_ms`（決めた時刻）、`end_ms`（終わる時刻）、`code` と `message`（失敗のときと、飛ばしたとき。飛ばした手順の `code` は `scenario-skipped`、`message` は理由）。飛ばした手順の `at_ms` は null です（実行の前に決まっていて、仮想時間のどこかで決めたのではないため）。`start_ms` と `end_ms` は、飛ばさなかったときの手順の時刻と終わり（`start_ms` に文面の長さを足したもの）で、シミュレーションがそこまで進んだことは意味しません |
+| `steps[]` | 手順ごとに `index`（1 から）、`line`、`kind`（`set`、`ramp`、`wave`、`expect`、`wait_until`）、`text`、`status`（`passed`、`failed`、`unfinished`、`not_run`、`skipped`）、`start_ms`（手順の時刻）、`at_ms`（決めた時刻）、`end_ms`（終わる時刻）、`code` と `message`（失敗のときと、飛ばしたとき。飛ばした手順の `code` は `scenario-skipped`、`message` は理由）。飛ばした手順の `at_ms` は null です（実行の前に決まっていて、仮想時間のどこかで決めたのではないため）。`start_ms` と `end_ms` は、飛ばさなかったときの手順の時刻と終わり（`start_ms` に文面の長さを足したもの）で、シミュレーションがそこまで進んだことは意味しません |
 
 上の「結果」の失敗する例（`throttle_response.yaml`）を `run --json` で回したときの `scenario` です（ほかのキーは [simulation-run.md](simulation-run.md) の「JSON（`run --json`）」）。
 
