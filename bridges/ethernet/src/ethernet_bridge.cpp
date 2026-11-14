@@ -3,6 +3,7 @@
 
 #include <silkit/services/ethernet/IEthernetController.hpp>
 
+#include <algorithm>
 #include <array>
 #include <exception>
 #include <utility>
@@ -24,6 +25,36 @@ constexpr std::string_view kEchoWithoutMacGuardWarning =
     "every frame the bridge sends out comes back and is passed into SIL Kit again (counted in ext_to_silkit), so its "
     "sender receives its own frame and every other participant receives it twice. A network stack that looks for "
     "its own address in use by others then finds it. Run without --no-mac-guard unless this is what you want.";
+
+/// Said once when, without the MAC guard, a frame like the one just sent out comes from a link
+/// that says it does not give the bridge's own transmissions back.
+constexpr std::string_view kSentFrameCameBackWarning =
+    "a frame like the one the bridge had just sent out (the same length and first bytes) came from the external "
+    "link, and with the MAC guard off (--no-mac-guard) it was passed into SIL Kit again (counted in ext_to_silkit). "
+    "A second bridge or a device outside sends the frames back, or the external link gives the bridge's own "
+    "transmissions back although it says it does not: with --backend npcap, install the current Npcap or try "
+    "another adapter, and report it to vehicle-sil if it stays. Run without --no-mac-guard to have such frames "
+    "dropped and their addresses named. This is said once.";
+
+/// Said after the conflict of an address of the SIL Kit side seen outside: the one case a link
+/// that returns the bridge's own transmissions against its word looks like.
+constexpr std::string_view kConflictMayBeOwnFrames =
+    " If there is no second bridge and no other device with this address, the external link gives the bridge's own "
+    "transmissions back although it says it does not: with --backend npcap, install the current Npcap or try "
+    "another adapter, and report it to vehicle-sil if it stays.";
+
+/// What the bridge keeps of the last frame it sent out: its length and its first bytes, as one
+/// number that is never 0.
+std::uint64_t mark_of(std::span<const std::uint8_t> frame) noexcept
+{
+    constexpr std::size_t kMarkedBytes = 64;
+    std::uint64_t hash = 14695981039346656037ULL ^ frame.size(); // FNV-1a
+    for (const std::uint8_t byte : frame.first(std::min(frame.size(), kMarkedBytes)))
+    {
+        hash = (hash ^ byte) * 1099511628211ULL;
+    }
+    return hash | 1U;
+}
 
 constexpr ethernet::EthernetTransmitStatusMask kFailedTransmissions =
     SilKit_EthernetTransmitStatus_ControllerInactive | SilKit_EthernetTransmitStatus_LinkDown |
@@ -172,6 +203,10 @@ void EthernetBridge::start()
             // Only the MAC table tells the bridge's own frames that come back from the others.
             warn(std::string(kEchoWithoutMacGuardWarning));
         }
+        // Without the table nothing else would show that a link returns them against its word.
+        watch_for_sent_frames_ = !link_echoes_ && !table_;
+        last_sent_mark_.store(0);
+        sent_frame_came_back_.store(false);
         // The link first, so that frames arriving from SIL Kit can be sent right away.
         external_.start([this](const eth_link::LinkEvent& event) { on_external_event(event); });
         externalStarted = true;
@@ -313,6 +348,11 @@ void EthernetBridge::on_silkit_frame(const ethernet::EthernetFrameEvent& event)
             mac_unguarded_.fetch_add(1);
         }
     }
+    if (watch_for_sent_frames_ && !sent_frame_came_back_.load(std::memory_order_relaxed))
+    {
+        // Before the frame goes out: it may come back before transmit() returns.
+        last_sent_mark_.store(mark_of(frame), std::memory_order_relaxed);
+    }
     TransmitResult result = TransmitResult::Failed;
     try
     {
@@ -428,7 +468,7 @@ void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame, bool
             loop_suspected_.fetch_add(1);
             if (table_->mark_both_sides(source))
             {
-                warn_conflict(source, "SIL Kit", "the external link");
+                warn_conflict(source, "SIL Kit", "the external link", kConflictMayBeOwnFrames);
             }
             return;
         case MacSideTable::FromExternal::Blocked: loop_suspected_.fetch_add(1); return;
@@ -442,6 +482,12 @@ void EthernetBridge::on_external_frame(std::span<const std::uint8_t> frame, bool
     {
         filtered_from_ext_.fetch_add(1);
         return;
+    }
+    if (watch_for_sent_frames_ && !sent_frame_came_back_.load(std::memory_order_relaxed) &&
+        mark_of(frame) == last_sent_mark_.load(std::memory_order_relaxed) && !sent_frame_came_back_.exchange(true))
+    {
+        // Forwarded all the same: without the MAC guard the bridge drops nothing by its origin.
+        warn(std::string(kSentFrameCameBackWarning));
     }
     try
     {
@@ -533,7 +579,7 @@ void EthernetBridge::warn(std::string text)
 }
 
 void EthernetBridge::warn_conflict(const eth_link::MacAddress& address, std::string_view seen_first,
-                                   std::string_view seen_now)
+                                   std::string_view seen_now, std::string_view more)
 {
     const std::lock_guard lock(error_mutex_);
     if (named_conflicts_ < kMaxNamedConflicts)
@@ -542,7 +588,8 @@ void EthernetBridge::warn_conflict(const eth_link::MacAddress& address, std::str
                             std::string(seen_first) + " and now come from " + std::string(seen_now) +
                             ", so frames from it are dropped both ways (loop_suspected). Run one bridge between "
                             "these networks and give each device its own MAC address, then restart the bridge: "
-                            "it keeps dropping them until it restarts.");
+                            "it keeps dropping them until it restarts." +
+                            std::string(more));
     }
     else if (named_conflicts_ == kMaxNamedConflicts)
     {

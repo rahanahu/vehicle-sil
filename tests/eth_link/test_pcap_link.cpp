@@ -528,10 +528,11 @@ TEST_CASE(pcap_link_refuses_devices_it_cannot_open_and_says_why)
             // pcap_open() tells a failure as a text only: the message passes it on, and says what to look at.
             CHECK_TEXT(start_error(fake, "fake-down", LinkErrorKind::Other),
                        "cannot open 'fake-down' with Npcap (pcap_open: fake-down: That device is not up). Run --list-interfaces "
-                       "--backend npcap to see whether Npcap still offers the adapter; if Npcap was installed for administrators "
-                       "only, run the bridge from a console started as administrator.");
+                       "--backend npcap to see whether Npcap still offers the adapter.");
+            CHECK_TEXT(start_error(fake, "fake-down", LinkErrorKind::Other, true),
+                       pcap_open_refused("fake-down", "fake-down: That device is not up", true).what());
             CHECK_TEXT(start_error(fake, "fake-denied", LinkErrorKind::Other),
-                       pcap_open_refused("fake-denied", "fake-denied: You don't have permission to capture on that device").what());
+                       pcap_open_refused("fake-denied", "fake-denied: You don't have permission to capture on that device", false).what());
         }
         else
         {

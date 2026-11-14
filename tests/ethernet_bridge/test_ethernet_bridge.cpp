@@ -156,6 +156,61 @@ TEST_CASE(bridge_warns_of_frames_coming_back_only_without_the_mac_guard_on_a_lin
     }
 }
 
+TEST_CASE(bridge_without_mac_guard_says_once_that_a_frame_it_sent_came_back_from_a_link_that_does_not_echo)
+{
+    // The link says it does not return the bridge's own frames, so start() has nothing to warn
+    // of. A link that returns them all the same would put them back into SIL Kit without a word:
+    // the bridge tells it from the last frame it sent.
+    EthernetBridgeOptions options;
+    options.mac_guard = false;
+    Fixture f(options, false);
+    const auto sent = make_frame(kBroadcast, kEcu, kExperimental, 46, 1);
+    f.silkit.deliver(sent);
+    // Not the frame sent: another payload, another length, and the same bytes from another address.
+    f.segment.send(make_frame(kBroadcast, kEcu, kExperimental, 46, 2));
+    f.segment.send(make_frame(kBroadcast, kEcu, kExperimental, 47, 1));
+    f.segment.send(make_frame(kBroadcast, kOutside, kExperimental, 46, 1));
+    CHECK(eventually([&] { return f.bridge.statistics().ext_to_silkit == 3 && f.segment.idle(); }, 5000ms));
+    CHECK(f.bridge.take_warnings().empty());
+    f.segment.send(sent);
+    f.segment.send(sent);
+    CHECK(eventually([&] { return f.bridge.statistics().ext_to_silkit == 5 && f.segment.idle(); }, 5000ms));
+    const auto warnings = f.bridge.take_warnings();
+    CHECK_EQ(warnings.size(), std::size_t{1}); // once, and the frames are forwarded all the same
+    CHECK_TEXT(warnings.at(0),
+               "a frame like the one the bridge had just sent out (the same length and first bytes) came from the "
+               "external link, and with the MAC guard off (--no-mac-guard) it was passed into SIL Kit again (counted in "
+               "ext_to_silkit). A second bridge or a device outside sends the frames back, or the external link gives "
+               "the bridge's own transmissions back although it says it does not: with --backend npcap, install the "
+               "current Npcap or try another adapter, and report it to vehicle-sil if it stays. Run without "
+               "--no-mac-guard to have such frames dropped and their addresses named. This is said once.");
+    CHECK_EQ(f.bridge.statistics().loop_suspected, std::uint64_t{0});
+    // Said again by the next start, and only for a frame sent since then.
+    f.bridge.stop();
+    f.bridge.start();
+    f.bridge.start_controller();
+    f.segment.send(sent);
+    CHECK(eventually([&] { return f.bridge.statistics().ext_to_silkit == 6 && f.segment.idle(); }, 5000ms));
+    CHECK(f.bridge.take_warnings().empty());
+    f.silkit.deliver(sent);
+    f.segment.send(sent);
+    CHECK(eventually([&] { return f.bridge.statistics().ext_to_silkit == 7 && f.segment.idle(); }, 5000ms));
+    CHECK_EQ(f.bridge.take_warnings().size(), std::size_t{1});
+}
+
+TEST_CASE(bridge_with_the_mac_guard_does_not_compare_with_the_frame_it_sent)
+{
+    // With the MAC guard the address tells it: the conflict is the warning, and the only one.
+    Fixture f;
+    const auto sent = make_frame(kBroadcast, kEcu, kExperimental);
+    f.silkit.deliver(sent);
+    f.segment.send(sent);
+    CHECK(eventually([&] { return f.bridge.statistics().loop_suspected == 1 && f.segment.idle(); }, 5000ms));
+    const auto warnings = f.bridge.take_warnings();
+    CHECK_EQ(warnings.size(), std::size_t{1});
+    CHECK(warnings.at(0).starts_with("MAC 02:00:00:00:00:01 is on both sides"));
+}
+
 TEST_CASE(bridge_drops_frames_from_an_address_on_both_sides_and_warns_once)
 {
     Fixture f;
@@ -299,7 +354,10 @@ TEST_CASE(two_bridges_stop_a_loop_when_sil_kit_brings_an_outside_frame_first)
                "MAC 02:00:00:00:00:99 is on both sides: frames from it came from SIL Kit and now come from the "
                "external link, so frames from it are dropped both ways (loop_suspected). Run one bridge between "
                "these networks and give each device its own MAC address, then restart the bridge: it keeps "
-               "dropping them until it restarts.");
+               "dropping them until it restarts. If there is no second bridge and no other device with this address, "
+               "the external link gives the bridge's own transmissions back although it says it does not: with "
+               "--backend npcap, install the current Npcap or try another adapter, and report it to vehicle-sil if it "
+               "stays.");
 }
 
 TEST_CASE(two_bridges_on_echoing_links_do_not_stop_a_loop_started_outside)
@@ -345,7 +403,10 @@ TEST_CASE(two_bridges_one_without_the_mac_guard_stop_a_loop_started_in_sil_kit)
     const auto warnings = t.b1->take_warnings();
     CHECK_EQ(warnings.size(), std::size_t{1});
     CHECK(warnings.at(0).starts_with("MAC 02:00:00:00:00:01 is on both sides"));
-    CHECK(t.b2->take_warnings().empty());
+    // Bridge 2 got from the wire what it had just sent there itself (bridge 1's copy), and says so.
+    const auto unguarded = t.b2->take_warnings();
+    CHECK_EQ(unguarded.size(), std::size_t{1});
+    CHECK(unguarded.at(0).starts_with("a frame like the one the bridge had just sent out"));
 }
 
 TEST_CASE(two_bridges_one_without_the_mac_guard_stop_a_loop_started_outside)
@@ -488,7 +549,10 @@ TEST_CASE(bridge_on_a_link_that_does_not_echo_warns_of_a_sil_kit_address_outside
                "MAC 02:00:00:00:00:01 is on both sides: frames from it came from SIL Kit and now come from the "
                "external link, so frames from it are dropped both ways (loop_suspected). Run one bridge between "
                "these networks and give each device its own MAC address, then restart the bridge: it keeps "
-               "dropping them until it restarts.");
+               "dropping them until it restarts. If there is no second bridge and no other device with this address, "
+               "the external link gives the bridge's own transmissions back although it says it does not: with "
+               "--backend npcap, install the current Npcap or try another adapter, and report it to vehicle-sil if it "
+               "stays.");
     // Blocked both ways from now on, warned once.
     f.silkit.deliver(make_frame(kBroadcast, kEcu, kExperimental));
     f.segment.send(make_frame(kOutside, kEcu, kExperimental));

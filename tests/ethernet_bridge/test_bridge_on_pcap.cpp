@@ -147,10 +147,12 @@ TEST_CASE(two_bridges_on_one_npcap_adapter_stop_a_loop_started_outside_whichever
         t.fake.inject_one(early, frame);
         CHECK(t.going_around());
         t.fake.inject_one(1 - early, frame);
-        CHECK(t.quiet());
         EthernetBridge& late = early == 0 ? *t.b2 : *t.b1;
         EthernetBridge& first = early == 0 ? *t.b1 : *t.b2;
-        CHECK(late.statistics().loop_suspected >= 1);
+        // First that the late bridge found it: if the thread that keeps the loop going pauses
+        // before the late bridge has read its copy, the adapter is quiet for a while with the loop still on.
+        CHECK(eventually([&] { return late.statistics().loop_suspected >= 1; }, 10000ms));
+        CHECK(t.quiet());
         CHECK_EQ(late.statistics().own_tx_dropped, std::uint64_t{0});
         CHECK_EQ(first.statistics().own_tx_dropped, std::uint64_t{0});
         const auto warnings = late.take_warnings();

@@ -87,7 +87,20 @@ TEST_CASE(pcap_error_no_interface_and_more_than_one)
     const auto none = pcap_no_interface(PcapFlavor::Npcap, "Ethernet 9", names);
     CHECK(none.kind() == LinkErrorKind::NoSuchInterface);
     CHECK_TEXT(none.what(), "no interface 'Ethernet 9' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", Ethernet "
-                            "(run --list-interfaces --backend npcap).");
+                            "(run --list-interfaces --backend npcap). Npcap does not offer an adapter that is disabled: "
+                            "enable it in Windows.");
+    // Only the loopback device, or nothing: what Npcap installed for administrators only gives another user.
+    const std::vector<std::string> loopbackOnly = {"\\Device\\NPF_Loopback"};
+    CHECK_TEXT(pcap_no_interface(PcapFlavor::Npcap, "Ethernet 2", loopbackOnly).what(),
+               "no interface 'Ethernet 2' for --backend npcap. Interfaces Npcap offers here: \\Device\\NPF_Loopback (run "
+               "--list-interfaces --backend npcap). Npcap does not offer an adapter that is disabled: enable it in Windows. It "
+               "offers no network adapter here: if Npcap was installed for administrators only, run the bridge from a console "
+               "started as administrator, or install Npcap again without that limit.");
+    CHECK(std::string(pcap_no_interface(PcapFlavor::Npcap, "Ethernet 2", {}).what())
+              .ends_with("offers here: none (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is "
+                         "disabled: enable it in Windows. It offers no network adapter here: if Npcap was installed for "
+                         "administrators only, run the bridge from a console started as administrator, or install Npcap again "
+                         "without that limit."));
     CHECK_TEXT(pcap_no_interface(PcapFlavor::Libpcap, "eth9", {}).what(),
                "no interface 'eth9' for --backend pcap. Interfaces libpcap offers here: none (run --list-interfaces --backend "
                "pcap).");
@@ -143,16 +156,19 @@ TEST_CASE(pcap_error_open_failed_tells_the_fix_for_what_it_knows)
 
 TEST_CASE(pcap_error_open_refused_by_npcap_tells_the_reason_and_what_to_look_at)
 {
-    const auto refused = pcap_open_refused("Ethernet 2", "\\Device\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}: failed to set hardware filter");
+    const auto refused =
+        pcap_open_refused("Ethernet 2", "\\Device\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}: failed to set hardware filter", false);
     CHECK(refused.kind() == LinkErrorKind::Other);
     CHECK_TEXT(refused.what(),
                "cannot open 'Ethernet 2' with Npcap (pcap_open: \\Device\\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}: failed to set "
-               "hardware filter). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter; if Npcap "
-               "was installed for administrators only, run the bridge from a console started as administrator.");
-    CHECK_TEXT(pcap_open_refused("Ethernet 2", "").what(),
+               "hardware filter). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter.");
+    CHECK_TEXT(pcap_open_refused("Ethernet 2", "", false).what(),
                "cannot open 'Ethernet 2' with Npcap (pcap_open gave no reason). Run --list-interfaces --backend npcap to see "
-               "whether Npcap still offers the adapter; if Npcap was installed for administrators only, run the bridge from a "
-               "console started as administrator.");
+               "whether Npcap still offers the adapter.");
+    // Opened with --promiscuous: the one thing the caller asked for that an adapter may refuse.
+    CHECK_TEXT(pcap_open_refused("Ethernet 2", "", true).what(),
+               "cannot open 'Ethernet 2' with Npcap (pcap_open gave no reason). Run --list-interfaces --backend npcap to see "
+               "whether Npcap still offers the adapter. The adapter may not accept promiscuous mode: try without --promiscuous.");
 }
 
 TEST_CASE(pcap_warnings)
@@ -187,10 +203,12 @@ TEST_CASE(pcap_device_is_chosen_by_pcap_name_connection_name_or_identifier)
     // A connection name is not matched in part, and not in another case.
     CHECK_TEXT(error_of([&] { (void)choose_pcap_device(devices, "ethernet", PcapFlavor::Npcap); }, LinkErrorKind::NoSuchInterface),
                "no interface 'ethernet' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", Ethernet, "
-               "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap).");
+               "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is "
+               "disabled: enable it in Windows.");
     CHECK_TEXT(error_of([&] { (void)choose_pcap_device(devices, "", PcapFlavor::Npcap); }, LinkErrorKind::NoSuchInterface),
                "no interface '' for --backend npcap. Interfaces Npcap offers here: \"Ethernet 2\", Ethernet, "
-               "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap).");
+               "\\Device\\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is "
+               "disabled: enable it in Windows.");
 }
 
 TEST_CASE(pcap_device_name_that_fits_two_devices_is_refused_and_a_pcap_name_wins)

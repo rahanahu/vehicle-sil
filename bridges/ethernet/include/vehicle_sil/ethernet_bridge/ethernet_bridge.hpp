@@ -32,6 +32,8 @@ struct EthernetBridgeOptions
     /// Drop frames by the source MAC rule of eth_link::MacSideTable. Off: whoever runs the bridge
     /// keeps frames from going around in a loop; and on a link that echoes its transmissions
     /// every frame sent out comes back into SIL Kit (start() warns: only the rule drops those).
+    /// On a link that says it does not echo, the bridge warns once when a frame like the last
+    /// one it sent comes from the outside, and forwards it all the same.
     bool mac_guard = true;
     /// Addresses the MAC table holds.
     std::size_t mac_table_size = eth_link::MacSideTable::kDefaultCapacity;
@@ -170,8 +172,9 @@ private:
     void teardown(bool external_started, bool silkit_activated) noexcept;
     void set_last_error(std::string_view message, std::string_view detail = {});
     void warn(std::string text);
-    /// `seen_first`, `seen_now`: "the external link" or "SIL Kit".
-    void warn_conflict(const eth_link::MacAddress& address, std::string_view seen_first, std::string_view seen_now);
+    /// `seen_first`, `seen_now`: "the external link" or "SIL Kit". `more`: a sentence for the end, or empty.
+    void warn_conflict(const eth_link::MacAddress& address, std::string_view seen_first, std::string_view seen_now,
+                       std::string_view more = {});
     void warn_table_full();
 
     SilKit::Services::Ethernet::IEthernetController& silkit_;
@@ -186,6 +189,11 @@ private:
     std::atomic<bool> controller_started_{false}; ///< the controller is activated (until stop())
     bool communication_ready_ = false;            ///< start_controller() was called; guarded by lifecycle_mutex_
     bool link_echoes_ = false; // set by start() before the link starts
+    /// Without the MAC guard on a link that says it does not echo: the bridge compares what comes
+    /// from the outside with the last frame it sent, to say once that the link echoes after all.
+    bool watch_for_sent_frames_ = false; // set by start() before the link starts
+    std::atomic<std::uint64_t> last_sent_mark_{0}; ///< 0: nothing sent yet
+    std::atomic<bool> sent_frame_came_back_{false};
 
     std::atomic<std::uint64_t> silkit_to_ext_{0};
     std::atomic<std::uint64_t> ext_to_silkit_{0};

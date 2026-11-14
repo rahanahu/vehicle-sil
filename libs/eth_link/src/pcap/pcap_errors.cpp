@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MIT
 #include "pcap_errors.hpp"
 
+#include <algorithm>
+
 namespace vehicle_sil::eth_link::detail {
 namespace {
+
+/// Npcap's device for the traffic of the PC with itself: not a network adapter.
+constexpr std::string_view kNpcapLoopbackName = "\\Device\\NPF_Loopback";
 
 std::string quoted(std::string_view name)
 {
@@ -84,9 +89,19 @@ LinkError pcap_list_failed(PcapFlavor flavor, std::string_view why)
 
 LinkError pcap_no_interface(PcapFlavor flavor, std::string_view wanted, std::span<const std::string> names)
 {
-    return {LinkErrorKind::NoSuchInterface, "no interface " + quoted(wanted) + " for --backend " + std::string(backend_name(flavor)) +
-                                                ". Interfaces " + std::string(library_name(flavor)) + " offers here: " +
-                                                joined(names) + " (run " + list_command(flavor) + ")."};
+    std::string what = "no interface " + quoted(wanted) + " for --backend " + std::string(backend_name(flavor)) + ". Interfaces " +
+                       std::string(library_name(flavor)) + " offers here: " + joined(names) + " (run " + list_command(flavor) + ").";
+    if (flavor == PcapFlavor::Npcap)
+    {
+        // What was seen with the real Npcap: neither case has a message of its own.
+        what += " Npcap does not offer an adapter that is disabled: enable it in Windows.";
+        if (std::ranges::all_of(names, [](const std::string& name) { return name == kNpcapLoopbackName; }))
+        {
+            what += " It offers no network adapter here: if Npcap was installed for administrators only, run the bridge from a "
+                    "console started as administrator, or install Npcap again without that limit.";
+        }
+    }
+    return {LinkErrorKind::NoSuchInterface, what};
 }
 
 LinkError pcap_ambiguous_interface(PcapFlavor flavor, std::string_view wanted, std::span<const std::string> names)
@@ -133,13 +148,16 @@ LinkError pcap_open_failed(PcapFlavor flavor, std::string_view name, std::string
     return {LinkErrorKind::Other, what};
 }
 
-LinkError pcap_open_refused(std::string_view name, std::string_view why)
+LinkError pcap_open_refused(std::string_view name, std::string_view why, bool promiscuous)
 {
-    const std::string list = list_command(PcapFlavor::Npcap);
-    return {LinkErrorKind::Other,
-            "cannot open " + quoted(name) + " with Npcap (" + (why.empty() ? "pcap_open gave no reason" : "pcap_open: " + std::string(why)) +
-                "). Run " + list + " to see whether Npcap still offers the adapter; if Npcap was installed for administrators only, "
-                "run the bridge from a console started as administrator."};
+    std::string what = "cannot open " + quoted(name) + " with Npcap (" +
+                       (why.empty() ? "pcap_open gave no reason" : "pcap_open: " + std::string(why)) + "). Run " +
+                       list_command(PcapFlavor::Npcap) + " to see whether Npcap still offers the adapter.";
+    if (promiscuous)
+    {
+        what += " The adapter may not accept promiscuous mode: try without --promiscuous.";
+    }
+    return {LinkErrorKind::Other, what};
 }
 
 std::string pcap_wireless_warning(std::string_view name)

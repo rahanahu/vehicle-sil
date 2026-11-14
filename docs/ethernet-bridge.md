@@ -204,15 +204,15 @@ cannot open a packet socket on 'enp3s0': Operation not permitted. A network inte
 - 開くときに、受けたフレームをすぐ渡す設定（immediate mode）と、ブロックしない読み取りを必ず使います。ライブラリがこの設定の関数を持たないほど古ければ、開かずに断ります。
 - 受信は、ライブラリの「フレームがある」という合図（Windows はイベント、Linux は記述子）を待って読みます。合図がなくても、100 ms ごとに 1 回は読みます。合図が立たないライブラリでも、フレームは遅れて届き、届かないままにはなりません。合図では 1 つも読めず、この見回りでだけフレームが見つかることが 3 回あると、1 回警告します（下の文）。
 - 実のネットワークに出うるので、何を通すか（`--ethertype`、`--src-mac`、`--all-frames` のどれか）が必須です。
-- `--promiscuous` は、ライブラリにプロミスキャスを頼みます。Linux の `pcap` は、インターフェースが受け付けなければ、1 回警告して続けます。Windows の `npcap` は、ライブラリが警告を伝えない開き方をするので、この警告は出ません。
+- `--promiscuous` は、ライブラリにプロミスキャスを頼みます。Linux の `pcap` は、インターフェースが受け付けなければ、1 回警告して続けます。Windows の `npcap` は、ライブラリが警告を伝えない開き方をするので、この警告は出ません。プロミスキャスを受け付けないアダプターが `npcap` で開けるのか、開けない誤りになるのかは、**未確認**です。`--promiscuous` を付けて開けなかったときの文は、付けずに試すように言います（下の文）。
 - イーサネットでないインターフェースは開きません。
 - ライブラリが捨てたフレーム（読むのが間に合わなかった分）は `ext_overruns` に数えます。
 - **チェックサムが未完成のフレームは見分けられません。** pcap のライブラリは、その印を渡さないからです。同じ PC の OS が送ったフレーム（「[同じ PC の OS のネットワークスタックが相手のとき](#同じ-pc-の-os-のネットワークスタックが相手のとき)」）は、チェックサムの欄が正しくないまま SIL Kit へ渡り、`ext_checksum_incomplete` は 0 のままで、警告も出ません。Linux でこれを知りたいときは `packet` を使います。
 - Linux の `pcap`: 受けたフレームの VLAN タグは、libpcap が元の位置に戻して渡します。ブリッジが送ったフレームはブリッジに戻りません。リンクの上下は監視の行に出て、インターフェースがなくなると `FAIL` で終わります（`packet` と同じ）。インターフェースが下がっていると、開けません（`packet` は警告だけで開きます）。
 - Windows の `npcap`: リンクの上下は見ません（監視の行にリンクの状態は出ません）。アダプターがなくなったことは、ライブラリの読み取りが失敗したときにだけわかります。
 - Windows の `npcap`: Npcap は、アダプターを開いたソフトに、そのソフト自身が送ったフレームも渡します。ブリッジは、それを渡さない指定（`pcap_open()` の `PCAP_OPENFLAG_NOCAPTURE_LOCAL`）でアダプターを開くので、ブリッジが送ったフレームはブリッジに戻りません（`ExternalLink::echoes_own_transmissions()` は false）。同じアダプターを開いているほかのソフトが送ったフレームは届きます。`pcap_open` のない `wpcap.dll` は、読み込むときに断ります（下の文）。
-- Windows の `npcap`: 無効にしたアダプターは、Npcap の一覧に出ません。`--interface` に書くと、「下がっている」ではなく、「ない」の誤り（`no interface ...`）になります。
-- Windows の `npcap`: Npcap を「管理者だけ」の設定で入れた PC で、管理者でない利用者がブリッジを動かすと、Npcap が昇格を求める画面を出し、その画面を閉じるまでブリッジは止まったままです（`--list-interfaces` も同じ）。閉じると、一覧には `\Device\NPF_Loopback` しか出ず、アダプターは「ない」の誤りになります。権限がないという文は出ません。管理者として起動したコンソールから動かすか、Npcap をその制限なしで入れ直します。
+- Windows の `npcap`: 無効にしたアダプターは、Npcap の一覧に出ません。`--interface` に書くと、「下がっている」ではなく、「ない」の誤り（`no interface ...`）になります。この誤りの文は、無効のアダプターが一覧に出ないことを言います。
+- Windows の `npcap`: Npcap を「管理者だけ」の設定で入れた PC で、管理者でない利用者がブリッジを動かすと、Npcap が昇格を求める画面を出し、その画面を閉じるまでブリッジは止まったままです（`--list-interfaces` も同じ）。閉じると、一覧には `\Device\NPF_Loopback` しか出ず、アダプターは「ない」の誤りになります。Npcap は権限がないとは言わないので、ブリッジは、一覧にネットワークのアダプターが 1 つもないときに、「ない」の誤りの文でこの場合を挙げます（下の文）。管理者として起動したコンソールから動かすか、Npcap をその制限なしで入れ直します。
 - Windows の `npcap`: VLAN タグつきのフレームが通るかは、アダプターのドライバーとその設定で決まります（ブリッジも Npcap も、タグを変えません）。ドライバーが、既定の設定では、VLAN タグつきのフレームを渡さないことがあります。ドライバーの優先度と VLAN の処理を切ると届きますが、今度は、ブリッジが送ったフレームから外側のタグが 1 つ外れて出ることがあります。そのときも送信は成功を返し、統計にも警告にも出ません。VLAN タグを使う前に、そのアダプターで両方向を確かめてください。
 - 無線のアダプター（ライブラリが `wireless` と言うもの）では、起動のときに 1 回警告します。
 
@@ -232,19 +232,24 @@ libpcap does not tell when frames arrive on interface 'va': the bridge finds the
 Npcap is not installed: cannot load C:\Windows\System32\Npcap\wpcap.dll (Windows error 126). Npcap is not part of vehicle-sil: install it yourself from https://npcap.com (see its licence for the limits of the free edition), then run --list-interfaces.
 libpcap is not installed: cannot load libpcap.so.1 or libpcap.so.0.8 (libpcap.so.0.8: cannot open shared object file: No such file or directory). libpcap is not part of vehicle-sil: install your distribution's package (Debian and Ubuntu: 'sudo apt install libpcap0.8'; Fedora: 'sudo dnf install libpcap'), or use --backend packet, which needs no library.
 C:\Windows\System32\Npcap\wpcap.dll (WinPcap version 4.1.3) lacks the function pcap_set_immediate_mode, which the bridge needs: it is too old, or it is not Npcap. Install a current one. Npcap is not part of vehicle-sil: install it yourself from https://npcap.com (see its licence for the limits of the free edition), then run --list-interfaces.
-C:\Windows\System32\Npcap\wpcap.dll (Npcap version 1.80, based on libpcap version 1.10.5) lacks the function pcap_open, which the bridge needs: it is too old, or it is not Npcap. Install a current one. Npcap is not part of vehicle-sil: install it yourself from https://npcap.com (see its licence for the limits of the free edition), then run --list-interfaces.
 ```
 
-開けないときの文です（終了コード 3）。括弧の中の `result` はライブラリの関数の結果で、その後ろはライブラリの文です。Npcap の開き方（`pcap_open()`）は結果の番号を返さないので、`npcap` の文にあるのはライブラリの文だけです。
+3 つ目は、足りない関数が 1 つのときの形です。`pcap_open` が足りないときも、関数の名前が変わるだけで同じ文です。
+
+開けないときの文です（終了コード 3）。括弧の中の `result` はライブラリの関数の結果で、その後ろはライブラリの文です。Npcap の開き方（`pcap_open()`）は結果の番号を返さないので、`npcap` の文にあるのはライブラリの文だけです（下の例の `pcap_open:` の後ろは、ライブラリの文が入る場所を示す作り物です）。
+
+- `npcap` の「ない」の誤りには、無効のアダプターが一覧に出ないことを必ず足します。一覧にネットワークのアダプターが 1 つもない（`\Device\NPF_Loopback` だけ、または空）ときは、「管理者だけ」の入れ方のことも足します（2 つ目の例）。
+- `npcap` の「開けない」の誤りには、`--promiscuous` を付けて開いたときだけ、付けずに試すことを足します（最後の例）。
 
 ```
-no interface 'Ethernet 9' for --backend npcap. Interfaces Npcap offers here: "Ethernet 2", Ethernet (run --list-interfaces --backend npcap).
+no interface 'Ethernet 9' for --backend npcap. Interfaces Npcap offers here: "Ethernet 2", Ethernet (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is disabled: enable it in Windows.
+no interface 'Ethernet 2' for --backend npcap. Interfaces Npcap offers here: \Device\NPF_Loopback (run --list-interfaces --backend npcap). Npcap does not offer an adapter that is disabled: enable it in Windows. It offers no network adapter here: if Npcap was installed for administrators only, run the bridge from a console started as administrator, or install Npcap again without that limit.
 'Ethernet' is the name of 2 interfaces for --backend npcap: \Device\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}, \Device\NPF_{0A1B2C3D-0000-1111-2222-333344445555}. Give one of these names as --interface instead.
 interface 'any' is not Ethernet (pcap link type 113): --backend pcap carries Ethernet frames only. Choose an Ethernet interface (run --list-interfaces --backend pcap).
 cannot open 'enp3s0' with libpcap (pcap_activate: result -8, socket: Operation not permitted). A network interface needs CAP_NET_RAW: run 'sudo setcap cap_net_raw+ep /opt/vehicle-sil/bin/vehicle_sil_ethernet_bridge' once, or run as root.
 cannot open 'va' with libpcap (pcap_activate: result -9, va: That device is not up). The interface is down: bring it up with 'sudo ip link set va up'.
-cannot open 'Ethernet 2' with Npcap (pcap_open: \Device\NPF_{4D36E972-E325-11CE-BFC1-08002BE10318}: failed to set hardware filter to promiscuous mode). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter; if Npcap was installed for administrators only, run the bridge from a console started as administrator.
-Npcap cannot list the interfaces: PacketGetAdapterNames: Access is denied. If Npcap was installed for administrators only, run the bridge from a console started as administrator.
+cannot open 'Ethernet 2' with Npcap (pcap_open: the reason the library gives). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter.
+cannot open 'Ethernet 2' with Npcap (pcap_open: the reason the library gives). Run --list-interfaces --backend npcap to see whether Npcap still offers the adapter. The adapter may not accept promiscuous mode: try without --promiscuous.
 ```
 
 #### Windows で PC の中だけでつなぐ
@@ -352,7 +357,7 @@ SIL Kit は、60 バイトより短いフレームを受け手の側で 0 で埋
 止まる場合（偽の口と偽のコントローラーの 2 つのブリッジで、試験が確かめています。`npcap` の開き方は、偽の pcap のライブラリの同じデバイスに 2 つのブリッジをつないで確かめています）:
 
 - 自分の送信を戻さない口では、SIL Kit の機器が始めた輪も、外の機器が始めた輪も、写しが届く順序によらず止まります。輪が回るのは、遅れた側のブリッジが、もとのフレームを自分の側で受けるまでの間です。受けた時点で、そのアドレスが両側にあると分かります。
-- 自分の送信を戻さない口では、片方のブリッジだけが `--no-mac-guard` でも、規則を使う側のブリッジが見つけて止め、警告します。
+- 自分の送信を戻さない口では、片方のブリッジだけが `--no-mac-guard` でも、規則を使う側のブリッジが見つけて止め、警告します。規則を使わない側も、自分が送ったばかりのフレームが外から来たことを 1 回警告することがあります（下の「口が『戻さない』と申告しているとき」）。
 - 自分の送信を戻す口でも、SIL Kit の機器が始めた輪は止まります（アドレスを外で先に見たブリッジが、SIL Kit から来たフレームで両側と分かる）。
 
 止まらない場合（「自分の送信を戻す口」は、`ExternalLink` を自分で実装した口がそう申告した場合です。vehicle-sil の口は、どれも戻しません）:
@@ -371,6 +376,11 @@ SIL Kit は、60 バイトより短いフレームを受け手の側で 0 で埋
 
 そのため、これらの口では「止まる場合」の全部が当てはまり、SIL Kit の側のアドレスを送り元に持つフレームが外から来たら、そのアドレスは両側にあるものとして止めて警告します。同じ PC で、SIL Kit の機器と同じ MAC アドレスを送り元にして同じインターフェースに送るソフトがあると、この警告になります。
 
+**口が「戻さない」と申告しているのに、自分の送信を戻す場合**（たとえば、戻さない指定が効かない Npcap やアダプター。あるかどうかは未確認です）も、ブリッジからは同じに見えます。
+
+- MAC の規則を使っていると、SIL Kit の機器が最初のフレームを送ったところで、その戻りが外から届き、その機器のアドレスが両側にあるものとして止まります（止まる向きです）。そのため、SIL Kit の側のアドレスを外で見たときの警告は、最後に、2 つ目のブリッジも同じアドレスの機器もないなら口が自分の送信を戻していることと、次にすること（`npcap` なら Npcap を新しくする、別のアダプターを試す、直らなければ vehicle-sil に報告する）を言います（下の文の 2 つ目）。
+- `--no-mac-guard` のときは、下の「口が『戻さない』と申告しているとき」のとおり、1 回警告します。
+
 両側にあるアドレスのフレームを両方向で捨てるので、同じ MAC アドレスを持つ機器が両側に本当にあると、そのアドレスのフレームは届かなくなります。警告がアドレスを挙げるので、構成の誤りとして見つけられます。ただし、自分の送信を戻す口では、SIL Kit の側で先に覚えたアドレスを外で見ても、戻りと区別できないので、黙って捨てます。
 
 MAC の表の大きさは既定 1024 アドレス（`--mac-table-size`、16〜65536）で、確保はブリッジを作るときだけです。いっぱいになると、SIL Kit の側のアドレス（と両側の印）は、外の側の最も古いアドレスを追い出して入ります。外の側の新しいアドレスは覚えません。覚えられなかったアドレスのフレームは、調べずに通して `mac_unguarded` に数え、最初の 1 回だけ警告します。
@@ -381,17 +391,25 @@ MAC の表の大きさは既定 1024 アドレス（`--mac-table-size`、16〜65
 
 - ブリッジが外へ送ったフレームは、口から戻り、外から来たフレームとして絞り込みを通って SIL Kit へ入ります（`ext_to_silkit` に数えます）。送った機器は自分のフレームを受け、ほかの機器は同じフレームを 2 回受けます。ブリッジは SIL Kit から受けたフレームだけを外へ送るので、回り続けはしません。
 - 自分のアドレスがほかで使われていないかを調べるネットワークスタックは、自分のフレームを見て「使われている」と判断することがあります。
-- ブリッジは、口が「戻す」と申告していて規則を使わないとき、起動のたびに 1 回警告します（下の文の最後）。
+- ブリッジは、口が「戻す」と申告していて規則を使わないとき、起動のたびに 1 回警告します（下の文の最後から 2 つ目）。
 - 規則を使っていても、同じことが起きるフレームがあります。MAC の表がいっぱいで覚えられなかった SIL Kit の側のアドレスのフレーム（`mac_unguarded` に数え、表があふれた警告が出ます）と、送り元がグループのアドレスのフレームです。どちらも、戻ったときに調べずに通します。
 - vehicle-sil の口に、「戻す」と申告するものはありません。`ExternalLink` を自分で実装した口が申告した場合の動きです。
 
-警告の文は次のとおりです（試験が文言まで確かめています）。アドレスを先に見た側と、いま見た側（`SIL Kit`、`the external link`）が入ります。
+**口が「戻さない」と申告しているときに `--no-mac-guard` にすると**、ブリッジは、外から来て SIL Kit へ渡すフレームを、自分が最後に外へ送ったフレームと比べます（長さと、先頭の 64 バイトまで）。同じなら、1 回だけ警告します（下の文の最後）。フレームは捨てずに SIL Kit へ渡します。規則を使わないときは、どこから来たかでは何も捨てないからです。統計は変わりません（`ext_to_silkit` に数えるだけです）。
+
+- この警告になるのは、口が申告に反して自分の送信を戻しているとき、同じネットワークの間に 2 つ目のブリッジがあるとき、外の機器が受けたフレームをそのまま送り返しているときです。ブリッジからは見分けられないので、文は全部を挙げます。
+- 比べるのは最後に送った 1 つだけです。戻りが届く前に次のフレームを送っていると、見つけません。口が戻すときに長さを変える（短いフレームを最小の長さまで埋める）場合も、見つけません。警告が出ないことは、戻っていないことの確かめにはなりません。
+- 警告は、起動のたびに 1 回までです。
+
+警告の文は次のとおりです（試験が文言まで確かめています）。アドレスを先に見た側と、いま見た側（`SIL Kit`、`the external link`）が入ります。SIL Kit の側のアドレスを外で見たとき（2 つ目）だけ、口が自分の送信を戻している場合の文が後ろに付きます。
 
 ```
 MAC 02:00:00:00:00:99 is on both sides: frames from it came from the external link and now come from SIL Kit, so frames from it are dropped both ways (loop_suspected). Run one bridge between these networks and give each device its own MAC address, then restart the bridge: it keeps dropping them until it restarts.
+MAC 02:00:00:00:00:01 is on both sides: frames from it came from SIL Kit and now come from the external link, so frames from it are dropped both ways (loop_suspected). Run one bridge between these networks and give each device its own MAC address, then restart the bridge: it keeps dropping them until it restarts. If there is no second bridge and no other device with this address, the external link gives the bridge's own transmissions back although it says it does not: with --backend npcap, install the current Npcap or try another adapter, and report it to vehicle-sil if it stays.
 more MAC addresses are on both sides than the first 8 named: frames from them are dropped both ways too (loop_suspected).
 the MAC table is full (1024 addresses): frames from addresses that do not fit are forwarded without the check against loops (mac_unguarded); addresses of the SIL Kit side take the places of the oldest addresses outside. Raise --mac-table-size if this many devices are expected.
 the MAC guard is off (--no-mac-guard) and this external link gives the bridge's own transmissions back to it: every frame the bridge sends out comes back and is passed into SIL Kit again (counted in ext_to_silkit), so its sender receives its own frame and every other participant receives it twice. A network stack that looks for its own address in use by others then finds it. Run without --no-mac-guard unless this is what you want.
+a frame like the one the bridge had just sent out (the same length and first bytes) came from the external link, and with the MAC guard off (--no-mac-guard) it was passed into SIL Kit again (counted in ext_to_silkit). A second bridge or a device outside sends the frames back, or the external link gives the bridge's own transmissions back although it says it does not: with --backend npcap, install the current Npcap or try another adapter, and report it to vehicle-sil if it stays. Run without --no-mac-guard to have such frames dropped and their addresses named. This is said once.
 ```
 
 ## 統計
@@ -496,7 +514,7 @@ stats silkit_to_ext=0 ext_to_silkit=0 own_tx_dropped=0 loop_suspected=0 mac_ungu
 確かめていないこと:
 
 - **ブリッジが今の開き方（`pcap_open()` と自分の送信を受けない指定）で開いたアダプターでの、本物の Npcap に対する動き。** 上の Windows の項目のうちブリッジを通したものは、ブリッジがアダプターを `pcap_create()` で開いて確かめたものです。指定そのものの動きは本物の Npcap で確かめましたが、ブリッジを通した動き（自分の送信が戻らない、同じアダプターの 2 つのブリッジの輪が止まる、受信が遅れない）は、偽のライブラリでだけ確かめています。
-- Windows で、実の NIC と線、無線のアダプター。日本語の Windows（日本語の接続の名前）。Npcap を WinPcap 互換ありで入れた PC。KM-TEST Loopback Adapter で、OS の普通のソケットを使うソフトに届くか。「管理者だけ」の Npcap で、デスクトップのある Windows が出す確認の画面。送信の詰まり（`ext_queue_full`）と取りこぼし（`ext_overruns`）が、本物の Npcap で数えられるか。
+- Windows で、実の NIC と線、無線のアダプター。日本語の Windows（日本語の接続の名前）。Npcap を WinPcap 互換ありで入れた PC。プロミスキャスを受け付けないアダプターを `--promiscuous` で開いたときに、開けるのか、開けない誤りになるのか（誤りになるときのライブラリの文も）。戻さない指定を受け付けて、それでも自分の送信を戻す Npcap やアダプターがあるか。KM-TEST Loopback Adapter で、OS の普通のソケットを使うソフトに届くか。「管理者だけ」の Npcap で、デスクトップのある Windows が出す確認の画面。送信の詰まり（`ext_queue_full`）と取りこぼし（`ext_overruns`）が、本物の Npcap で数えられるか。
 - libpcap で、送信の待ち行列が詰まったことを見分けられるか（`ext_queue_full`。ライブラリは失敗を 1 種類でしか返さないので、OS の誤りの番号が残っていれば見分けます。偽のライブラリでだけ確かめています）。
 
 - 実の NIC と、その先の実機や別の PC との往復。`--promiscuous` のありなしでの届き方（veth は、プロミスキャスでなくても全部のフレームをソケットに渡すので、名前空間では違いが出ません）。プロミスキャスの手がかりの警告は、時計を差し替えた試験でだけ確かめています。

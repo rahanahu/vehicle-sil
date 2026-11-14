@@ -43,6 +43,8 @@ inline constexpr int kPcapWarningPromiscuousNotSupported = 2;
 /// The library could not list the devices; `why` is its text.
 [[nodiscard]] LinkError pcap_list_failed(PcapFlavor flavor, std::string_view why);
 /// No device is called `wanted`. `names`: the devices the library offers, as --interface takes them.
+/// For Npcap it tells why an adapter may be missing from them (disabled; when none but the
+/// loopback device is offered, Npcap installed for administrators only).
 [[nodiscard]] LinkError pcap_no_interface(PcapFlavor flavor, std::string_view wanted, std::span<const std::string> names);
 /// More than one device is called `wanted`. `names`: their pcap names, which tell them apart.
 [[nodiscard]] LinkError pcap_ambiguous_interface(PcapFlavor flavor, std::string_view wanted, std::span<const std::string> names);
@@ -55,8 +57,9 @@ inline constexpr int kPcapWarningPromiscuousNotSupported = 2;
 [[nodiscard]] LinkError pcap_open_failed(PcapFlavor flavor, std::string_view name, std::string_view step, int status,
                                          std::string_view why, std::string_view executable);
 /// Npcap's pcap_open() could not open the device `name`. `why`: the library's text (may be
-/// empty), which is all pcap_open() tells.
-[[nodiscard]] LinkError pcap_open_refused(std::string_view name, std::string_view why);
+/// empty), which is all pcap_open() tells. `promiscuous`: promiscuous mode was asked for, which
+/// an adapter may refuse.
+[[nodiscard]] LinkError pcap_open_refused(std::string_view name, std::string_view why, bool promiscuous);
 
 /// The Warning for a device the library marks as wireless.
 [[nodiscard]] std::string pcap_wireless_warning(std::string_view name);

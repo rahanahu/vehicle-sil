@@ -221,7 +221,7 @@ PcapHandle* PcapLink::open_without_own_transmissions(const PcapDevice& device)
     PcapHandle* const handle = api_.open(device.name.c_str(), kSnapshotBytes, flags, kReadTimeoutMs, nullptr, error);
     if (handle == nullptr)
     {
-        throw pcap_open_refused(display_name(device), trimmed(error));
+        throw pcap_open_refused(display_name(device), trimmed(error), options_.promiscuous);
     }
     return handle;
 }
