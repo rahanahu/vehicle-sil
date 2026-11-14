@@ -773,7 +773,7 @@ bool ScenarioEngine::submit_one(Write write)
         if (record_ != nullptr)
         {
             record_->written(write.grid ? TimelineRecord::kNoStep : write.step, w.variable, write.at, w.value,
-                             write.motion.has_value() || write.grid, write.bases[i], lines_->lines[w.variable].overlay() != nullptr);
+                             write.motion.has_value() || write.grid, write.bases[i]);
         }
     }
     write.ticket = port_.write(std::move(out), write.at);
@@ -787,7 +787,7 @@ bool ScenarioEngine::submit_one(Write write)
             {
                 if (write.grid)
                 {
-                    fail_grid(write, target, "did not take the write");
+                    fail_grid(write, target, "did not take");
                     return false;
                 }
                 fail(write.step, write.at, "scenario-write",
@@ -961,54 +961,75 @@ void ScenarioEngine::submit(SimTime from_exclusive, SimTime to_inclusive, bool a
     }
 }
 
-void ScenarioEngine::fail_grid(const Write& write, const control::TargetResult& target, const std::string& did_not)
+void ScenarioEngine::fail_grid(const Write& write, const control::TargetResult& target, const std::string& did_not,
+                               const std::string& hint)
 {
-    // The write of the command that its participant refused: the first whose value is outside
-    // the range its ECU describes, else the first of that participant.
-    const ScenarioWrite* blamed = nullptr;
-    bool above = false;
-    bool below = false;
-    std::size_t together = 0;
+    // The writes of the command that the participant refused: all of them were not written.
+    std::vector<const ScenarioWrite*> command;
     for (const ScenarioWrite& w : write.writes)
     {
         const ScenarioVariable& v = scenario_.variables[w.variable];
-        if (scenario_.participants[v.participant].name != target.peer)
+        if (scenario_.participants[v.participant].name == target.peer)
         {
-            continue;
-        }
-        ++together;
-        const double number = detail::number_of(w.value);
-        const bool over = v.max && number > *v.max;
-        const bool under = v.min && number < *v.min;
-        if (blamed == nullptr || (!(above || below) && (over || under)))
-        {
-            blamed = &w;
-            above = over;
-            below = under;
+            command.push_back(&w);
         }
     }
-    if (blamed == nullptr)
+    // Which of them is the reason, if that can be told: the only one; or, of a command that the
+    // agent refused when it got it (Invalid), the one whose name its reason begins with (the
+    // agent and the hub's variable map say "<name>: <why>"; a result has no status per write).
+    const ScenarioWrite* named = command.size() == 1 ? command.front() : nullptr;
+    if (named == nullptr && target.status == control::TargetStatus::Invalid)
     {
-        blamed = &write.writes.front();
-        together = 1;
+        for (const ScenarioWrite* w : command)
+        {
+            if (target.reason.rfind(scenario_.variables[w->variable].name + ": ", 0) == 0)
+            {
+                named = w;
+                break;
+            }
+        }
     }
-    const bool outside = above || below;
-    const ScenarioVariable& v = scenario_.variables[blamed->variable];
-    const ScenarioOverlay* dither = lines_->dither[blamed->variable];
-    std::string message = "the dither of " + v.text + (dither != nullptr ? " (line " + std::to_string(dither->line) + ")" : "") + " wrote " +
-                          value_text(blamed->value, &v) + " at " + ms_text(write.at) + " ms, ";
-    if (outside)
+    const std::string why = std::string(target_status_text(target.status)) + (target.reason.empty() ? "" : " (" + target.reason + ")") + hint;
+    std::string message;
+    if (named != nullptr)
     {
-        message += std::string(above ? "above" : "below") + " its range " + range_text(v) +
-                   ": lower its amplitude, or keep the value further from the end of the range";
+        const ScenarioVariable& v = scenario_.variables[named->variable];
+        const ScenarioOverlay* dither = lines_->dither[named->variable];
+        message = "the dither of " + v.text + (dither != nullptr ? " (line " + std::to_string(dither->line) + ")" : "") + " wrote " +
+                  value_text(named->value, &v) + " at " + ms_text(write.at) + " ms, ";
+        // Beyond its range, if that is what the agent says (not for a value that happens to be
+        // outside while the write failed of something else: no link, no room, a setter).
+        const double number = detail::number_of(named->value);
+        const bool above = v.max && number > *v.max;
+        const bool below = v.min && number < *v.min;
+        if (target.status == control::TargetStatus::Invalid && target.reason.find("out of range") != std::string::npos && (above || below))
+        {
+            message += std::string(above ? "above" : "below") + " its range " + range_text(v) + " (" + target.reason +
+                       "): lower its amplitude, or keep the value further from the end of the range";
+        }
+        else
+        {
+            message += "and participant '" + target.peer + "' " + did_not + " the write: " + why;
+        }
+        if (command.size() > 1)
+        {
+            message += "; the dither" + std::string(command.size() > 2 ? "s" : "") + " of " + std::to_string(command.size() - 1) +
+                       " other input" + (command.size() > 2 ? "s" : "") + " of that participant " +
+                       (command.size() > 2 ? "were" : "was") + " in the same command, and not written either";
+        }
     }
     else
     {
-        message += "and participant '" + target.peer + "' " + did_not + ": " + target_status_text(target.status) +
-                   (target.reason.empty() ? "" : " (" + target.reason + ")") +
-                   (together > 1 ? "; the write was one command with those of " + std::to_string(together - 1) +
-                                       " other dithered input" + (together > 2 ? "s" : "") + " of that participant"
-                                 : "");
+        // Not known which: the participant's command as a whole, with everything in it.
+        std::string all;
+        for (std::size_t i = 0; i < command.size(); ++i)
+        {
+            const ScenarioVariable& v = scenario_.variables[command[i]->variable];
+            all += (i == 0 ? "" : i + 1 == command.size() ? " and " : ", ") + v.text + " " + value_text(command[i]->value, &v);
+        }
+        message = "the dithers of participant '" + target.peer + "' wrote " + all + " at " + ms_text(write.at) +
+                  " ms as one command, and the participant " + did_not + " it: " + why +
+                  " (which of the inputs it was about is not known; the reason may say)";
     }
     // It is no step's write: the first step that is not decided yet fails (as when the
     // simulation stops by itself, stopped_at()). There is one: the scenario is not over.
@@ -1018,8 +1039,17 @@ void ScenarioEngine::fail_grid(const Write& write, const control::TargetResult& 
     {
         ++index;
     }
+    // What failed, for the record: every write of the command is a point that was not applied,
+    // and `write` the one that is the reason, if that is known.
     TimelineFailure failure;
-    failure.write = TimelineFailedWrite{blamed->variable, write.at, blamed->value};
+    if (named != nullptr)
+    {
+        failure.write = TimelineFailedWrite{named->variable, write.at, named->value};
+    }
+    for (const ScenarioWrite* w : command)
+    {
+        failure.refused.push_back(TimelineFailedWrite{w->variable, write.at, w->value});
+    }
     fail(index, write.at, "scenario-write", std::move(message), std::move(failure));
 }
 
@@ -1110,7 +1140,12 @@ void ScenarioEngine::judge(SimTime p)
         {
             if (write.grid)
             {
-                fail_grid(write, control::TargetResult{}, "gave no result (it is not known any more: this is an error of vehicle_sil_launch)");
+                // (Cannot happen. Said of the participant of its first write.)
+                control::TargetResult lost;
+                lost.peer = scenario_.participants[scenario_.variables[write.writes.front().variable].participant].name;
+                lost.status = control::TargetStatus::Unknown;
+                lost.reason = "the result is not known any more: this is an error of vehicle_sil_launch";
+                fail_grid(write, lost, "did not apply");
                 return;
             }
             fail(write.step, write.at, "scenario-write",
@@ -1123,11 +1158,10 @@ void ScenarioEngine::judge(SimTime p)
         {
             if (target.status != control::TargetStatus::Applied && write.grid)
             {
-                fail_grid(write, target,
-                          std::string("did not apply the write") +
-                              (control::is_final(target.status)
-                                   ? ""
-                                   : " (at " + ms_text(p) + " ms the result of the ECU's step at " + ms_text(write.at) + " ms should be there)"));
+                fail_grid(write, target, "did not apply",
+                          control::is_final(target.status)
+                              ? std::string{}
+                              : "; at " + ms_text(p) + " ms the result of the ECU's step at " + ms_text(write.at) + " ms should be there");
                 return;
             }
             if (target.status != control::TargetStatus::Applied)

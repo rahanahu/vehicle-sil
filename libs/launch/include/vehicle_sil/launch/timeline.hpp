@@ -65,7 +65,12 @@ struct TimelineFailedWrite
 struct TimelineFailure
 {
     std::vector<TimelineFailedCondition> conditions{};
+    /// The write that is the reason, if that is known.
     std::optional<TimelineFailedWrite> write{};
+    /// A command of several writes that was refused as a whole (the dithers of one time for one
+    /// participant): all of them, `write` among them if it is set. Each is a point that was not
+    /// applied.
+    std::vector<TimelineFailedWrite> refused{};
 };
 
 /// What a scenario's engine wrote and saw, per variable of the scenario. The engine fills it on
@@ -111,8 +116,10 @@ public:
         bool sampled = false;
         std::vector<Written> written{};
         std::vector<Sampled> samples{};
-        /// Written: a point of it was sent with a dither on the variable's line (also a point
-        /// that went since): every point of the series is then shown with its base.
+        /// Written: the scenario puts a dither on the variable (its "inputs", or a dither step
+        /// that runs in this configuration, with a shape): every point of the series is then
+        /// shown with its base. Known from the scenario alone, whatever a run got to: the form of
+        /// the file does not depend on the controller's step.
         bool dithered = false;
         /// How many of its points can go at a limit: of `written` those of a ramp or a wave, of
         /// `samples` all.
@@ -171,10 +178,9 @@ public:
     // --- the engine's side ---
     /// A write that is sent, of `step` (index in Scenario::steps; kNoStep: of none): a point of the variable's
     /// series, and the line that step put at `at` on the variable has happened (Line::sent).
-    /// `base`: Written::base. `dithered`: a dither was on the variable's line. The dither that
-    /// was put last on the variable (dither()) begins with this write, if it has not yet.
-    void written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion, double base = 0.0,
-                 bool dithered = false);
+    /// `base`: Written::base. The dither that was put last on the variable (dither()) begins
+    /// with this write, if it has not yet.
+    void written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion, double base = 0.0);
     /// A sample of `variable` (kept if a condition reads the variable).
     void sampled(std::size_t variable, SimTime at, const control::Value& value);
     void line(Line line);

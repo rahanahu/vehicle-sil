@@ -855,6 +855,10 @@ class TimelineSchema(unittest.TestCase):
             return problems(TIMELINE, data)
 
         self.assertEqual(changed(lambda d: None), [])
+
+        def failed_step(data) -> dict:
+            return next(step for step in data["steps"] if step["failed"] is not None)
+
         mistakes = {
             "another format version": lambda d: d.update(vehicle_sil_timeline=2),
             "no series": lambda d: d.pop("series"),
@@ -868,6 +872,8 @@ class TimelineSchema(unittest.TestCase):
             "a shape without its type": lambda d: d["lines"][-1].update(shape={"to": 1}),
             "writes that are no positions": lambda d: d["steps"][0].update(writes=["0"]),
             "columns that are no names": lambda d: d["series"][0].update(columns=[0, 1, 2]),
+            "writes of a failed step without their variable": lambda d: failed_step(d)["failed"].update(
+                writes=[{"at_ms": 20, "value": 13, "point": 2}]),
             "a line whose end is a text": lambda d: d["lines"][0].update(to_ms="never"),
         }
         for what, change in mistakes.items():
@@ -885,6 +891,9 @@ class TimelineSchema(unittest.TestCase):
             "a line of no step that has no end": lambda d: d["lines"][0].update(kind="dither", step=None, to_ms=None, base=None,
                                                                               base_source=None),
             "the columns of a series": lambda d: d["series"][0].update(columns=["t_ms", "value", "base"]),
+            # A command of several writes that was refused: all of them, and no single write.
+            "the writes of a failed step": lambda d: failed_step(d)["failed"].update(
+                write=None, writes=[{"variable": "Body.level", "at_ms": 20, "value": 13, "point": 2}]),
         }
         for what, change in additions.items():
             self.assertEqual(changed(change), [], f"the schema refuses a timeline with {what}")

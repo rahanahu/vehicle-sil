@@ -253,15 +253,13 @@ void write_failed(JsonWriter& w, const Scenario& scenario, const ScenarioStepRun
         }
     }
     w.end_array();
-    if (failure && failure->write)
-    {
-        w.begin_object("write");
-        w.string("variable", scenario.variables[failure->write->variable].text);
-        write_ms(w, "at_ms", failure->write->at);
-        write_value(w, "value", failure->write->value);
+    const auto members = [&](const TimelineFailedWrite& write) {
+        w.string("variable", scenario.variables[write.variable].text);
+        write_ms(w, "at_ms", write.at);
+        write_value(w, "value", write.value);
         // Which point of the variable's written series it is; null if it has none (the value
         // was never worked out, so nothing was sent).
-        if (const auto point = refused_point(record, failure->write->variable))
+        if (const auto point = refused_point(record, write.variable))
         {
             w.integer("point", static_cast<std::int64_t>(*point));
         }
@@ -269,11 +267,29 @@ void write_failed(JsonWriter& w, const Scenario& scenario, const ScenarioStepRun
         {
             w.null("point");
         }
+    };
+    if (failure && failure->write)
+    {
+        w.begin_object("write");
+        members(*failure->write);
         w.end_object();
     }
     else
     {
         w.null("write");
+    }
+    if (failure && failure->refused.size() > 1)
+    {
+        // Only for a command of several writes that was refused as a whole: a file without one
+        // is as it was.
+        w.begin_array("writes");
+        for (const TimelineFailedWrite& write : failure->refused)
+        {
+            w.begin_object();
+            members(write);
+            w.end_object();
+        }
+        w.end_array();
     }
     w.end_object();
 }
@@ -531,6 +547,19 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
             reads[c.variable] = true;
         }
     }
+    // The inputs the scenario ever puts a dither on, by its text: not by what a run got to.
+    std::vector<bool> dithered(count, false);
+    for (const ScenarioOverlay& input : scenario.inputs)
+    {
+        dithered[input.variable] = true;
+    }
+    for (const ScenarioStep& step : scenario.steps)
+    {
+        for (const ScenarioOverlay& overlay : step.overlays)
+        {
+            dithered[overlay.variable] = dithered[overlay.variable] || overlay.shape != nullptr;
+        }
+    }
     written_.resize(count);
     sampled_.resize(count);
     for (std::size_t v = 0; v < count; ++v)
@@ -539,6 +568,7 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
         {
             written_[v] = series_.size();
             series_.push_back(Series{v, false});
+            series_.back().dithered = dithered[v];
         }
         if (reads[v])
         {
@@ -551,8 +581,7 @@ TimelineRecord::TimelineRecord(const Scenario& scenario, TimelineLimits limits) 
     waiting_dither_.resize(count);
 }
 
-void TimelineRecord::written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion, double base,
-                             bool dithered)
+void TimelineRecord::written(std::size_t step, std::size_t variable, SimTime at, const control::Value& value, bool motion, double base)
 {
     if (!recorded_to_)
     {
@@ -581,7 +610,6 @@ void TimelineRecord::written(std::size_t step, std::size_t variable, SimTime at,
     }
     Series& series = series_[*written_[variable]];
     series.written.push_back(Written{at, value, motion, false, base});
-    series.dithered = series.dithered || dithered;
     if (motion)
     {
         ++total_;
@@ -674,15 +702,25 @@ void TimelineRecord::failed(std::size_t step, TimelineFailure failure)
 {
     if (!recorded_to_ && step < failures_.size())
     {
-        if (failure.write && failure.write->value && failure.write->variable < written_.size() && written_[failure.write->variable])
-        {
-            // The point of that write: the last one sent for its time.
-            std::vector<Written>& points = series_[*written_[failure.write->variable]].written;
-            const auto it = std::find_if(points.rbegin(), points.rend(), [&](const Written& p) { return p.at == failure.write->at; });
-            if (it != points.rend())
+        const auto mark = [this](const TimelineFailedWrite& write) {
+            if (write.value && write.variable < written_.size() && written_[write.variable])
             {
-                it->refused = true;
+                // The point of that write: the last one sent for its time.
+                std::vector<Written>& points = series_[*written_[write.variable]].written;
+                const auto it = std::find_if(points.rbegin(), points.rend(), [&](const Written& p) { return p.at == write.at; });
+                if (it != points.rend())
+                {
+                    it->refused = true;
+                }
             }
+        };
+        if (failure.write)
+        {
+            mark(*failure.write);
+        }
+        for (const TimelineFailedWrite& write : failure.refused)
+        {
+            mark(write);
         }
         failures_[step] = std::move(failure);
     }

@@ -212,22 +212,37 @@ struct ScenarioStep
 };
 
 /// One thing a scenario puts on an input, as the text says it, for the list of the lines that the
-/// check shows (the timeline file has what a run did: TimelineRecord::Line).
+/// check shows. The members that a line of a timeline file has too (TimelineRecord::Line, which
+/// is what a run did) mean the same here: variable, kind, line, step, from_ms, to_ms, shape, text.
 struct ScenarioLineText
 {
+    /// What is known of its times before the run.
+    enum class Timing
+    {
+        Text,       ///< from_ms (and to_ms, if it has an end) are as the text says
+        AfterWait,  ///< not known: its step comes after one that waits (`after_wait`)
+        FirstWrite, ///< a dither that "inputs" declares: it begins with the first write of its input
+    };
     std::string variable; ///< "<participant>.<name>"
     std::string kind;     ///< "set", "ramp", "wave", "dither"
     std::size_t line = 0; ///< the step's; of a dither that "inputs" declares its entry's
-    /// The step's time (0 for what "inputs" declares); empty: not known before the run (the step
-    /// comes after one that waits, `after_wait`).
+    /// The step's index, from 1; empty for a dither that "inputs" declares.
+    std::optional<std::size_t> step{};
+    /// The step's time; empty if `timing` is not Text.
     std::optional<std::int64_t> from_ms{};
-    /// Where it ends by the text (a set: its time); empty if that is not known, or it has no end.
+    /// Where it ends by the text (a set: its time); empty if `timing` is not Text, and for a
+    /// dither, which has no end (as in a timeline file).
     std::optional<std::int64_t> to_ms{};
-    bool ends = true;           ///< false: it has no end (a dither)
-    std::size_t after_wait = 0; ///< the line of the step that waits, if from_ms is not known
-    /// What it is, without the variable: "= 50", "to 80 over 1000 ms", "triangle amplitude 2 period 40 ms", "none".
+    Timing timing = Timing::Text;
+    std::size_t after_wait = 0; ///< AfterWait: the line of the step that waits
+    /// What it is, as the step's text has it for this variable: "Body.level = 50",
+    /// "Body.level to 80 over 1000 ms", "Body.level triangle amplitude 2 period 40 ms", "Body.level none".
     std::string text;
+    /// Of a ramp, a wave and a dither: the shape as the text gives it; empty for a set and for none.
+    std::optional<ScenarioShapeText> shape{};
 };
+/// "text", "after_wait", "first_write".
+[[nodiscard]] const char* line_timing_name(ScenarioLineText::Timing timing);
 
 /// A scenario that was read and checked against the participants: it can run as it is.
 struct Scenario
@@ -242,8 +257,9 @@ struct Scenario
     std::vector<ScenarioStep> steps{};
     /// The file has "inputs" or a dither step that runs: its outputs then list `inputs` and `lines`.
     bool has_dither = false;
-    /// With has_dither: what "inputs" declares and what each step that runs puts on an input, in
-    /// the order of the file (the declared dithers first).
+    /// With has_dither: what "inputs" declares and what each step that runs puts on an input
+    /// that has a dither at some time (a declared one, or a dither step's, also none), in the
+    /// order of the file (the declared dithers first). Not the writes of the other inputs.
     std::vector<ScenarioLineText> lines{};
 };
 
@@ -346,8 +362,8 @@ struct ScenarioRead
 [[nodiscard]] ScenarioRead read_scenario(std::string_view text, const ScenarioCatalog& catalog,
                                          const ScenarioContext& context = {});
 
-/// The dithers that the scenario's "inputs" declare, as lines of the list (kind "dither", from 0,
-/// no end; `text` is the dither without the variable).
+/// The dithers that the scenario's "inputs" declare, as lines of the list (kind "dither", no
+/// step, Timing::FirstWrite, no end).
 [[nodiscard]] std::vector<ScenarioLineText> scenario_inputs_text(const Scenario& scenario);
 
 /// A value as the messages show it: true, 42, 1.5, or an enum's item ("on (1)").

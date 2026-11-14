@@ -598,6 +598,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 
 - `conditions[]` は、成り立たなかった条件の全部です。`condition` は `watch.conditions[]` の添字（0 から）、`value` と `sample_ms` は、そのときの値と、その値のサンプルの時刻です。値がまだなかった条件と、`during` の区間にサンプルが 1 つもなかった条件では、どちらも `null` です。
 - `write` は、適用されなかった書き込み（`variable`、`at_ms`、`value`、`point`）です。書き込みの失敗でなければ `null` です。`point` は、その変数の `written` の系列の `points` の添字（0 から）で、その点が、断られた書き込みです。値を計算する前に失敗したとき（送っていない）は、`value` と `point` が `null` です。1 つの `set` がいくつもの変数を書くときは、断った participant への最初の変数です。
+- `writes` は、いくつもの書き込みをまとめた 1 つのコマンドが断られたときだけあります（`dither` が動きのない間に出す書き込みは、同じ時刻・同じ participant の分が 1 つのコマンドです。結果は participant ごとで、どの書き込みのせいかは言いません）。そのコマンドの書き込みの全部で、形は `write` と同じです。どれも入っていない点なので、それぞれの系列に `not_applied_from` が付きます。このとき `write` は、原因の入力がわかれば（エージェントが理由に変数の名前を言ったとき。範囲の外など）その書き込み、わからなければ `null` です。
 
 ### 値の列（`series[]`）
 
@@ -619,7 +620,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 | `written` | シナリオが送った書き込みの全部。点は `[時刻, 値]` で、時刻は、その書き込みが効く時刻。**送った値で、ECU に入ったとは限りません**（下の `not_applied_from`） | `all` |
 | `sampled` | シナリオが見たサンプルの値。条件が読む変数だけ | `changes`: 値が変わったサンプルだけが点になる。`samples`（見たサンプルの数）、`first_ms`、`last_ms`（最初と最後のサンプルの時刻）を別に持つ |
 
-- **`dither` が乗った入力の `written` の系列は 3 列**で、系列に `"columns": ["t_ms", "value", "base"]` があります。3 列目の `base`（基準）は、揺れを足して型に丸める前の値で、`set` の値か、`ramp` や `wave` のその時刻の値です（[scenario.md](scenario.md) の「細かい揺れを重ねる」）。1 度でも揺れが乗った入力では、外した後の点も含めて、全部の点が 3 列です。`columns` のない系列の点は `[時刻, 値]` です。読む側は、`columns` の名前で列を取ります。
+- **シナリオが `dither` を置く入力の `written` の系列は 3 列**で、系列に `"columns": ["t_ms", "value", "base"]` があります。3 列目の `base`（基準）は、揺れを足して型に丸める前の値で、`set` の値か、`ramp` や `wave` のその時刻の値です（[scenario.md](scenario.md) の「細かい揺れを重ねる」）。3 列になるのは、シナリオの文面がその入力に揺れを置くとき（`inputs` の宣言か、その機種で実行する、波形を書いた手順 `dither`）で、揺れを置く前の点も、外した後の点も、全部の点が 3 列です。実行がその手順まで進んだかどうかにはよりません（列の数は controller の刻みで変わりません）。`columns` のない系列の点は `[時刻, 値]` です。読む側は、`columns` の名前で列を取ります。
 
   ```json
   {
@@ -641,7 +642,7 @@ vehicle_sil_launch run simulation.yaml --scenario scenarios/throttle_step.yaml -
 - サンプルは「ステップの終わりの値、時刻はステップの始まり」です（[scenario.md](scenario.md) の「値の見え方」）。`sampled` の値は、点から次の点まで（最後の点は `last_ms` まで）続くものとして読みます。
 - `changes` の「変わった」は、書いた文字が違うことです（`0` と `-0` は別、`null` が続けば同じ）。
 - `written` の系列に `not_applied_from` があれば、その添字（0 から）の点から後ろは、送ったが ECU に入っていません。値が変わったように描かないでください。入っていない点は、次の 2 つです。
-  - 断られた書き込みの点（失敗した手順の `failed.write.point` と同じ点）と、その後ろ。エージェントがすぐ断ったときも、ECU がステップで断ったときも付きます。
+  - 断られた書き込みの点（失敗した手順の `failed.write.point` と同じ点。まとめたコマンドが断られたときは、`failed.writes` の全部の点）と、その後ろ。エージェントがすぐ断ったときも、ECU がステップで断ったときも付きます。
   - 時刻が `scenario.over_at_ms` より後の点（どの ECU もその時刻まで進まなかった）。
 - 失敗した実行と途中で終わった実行では、`not_applied_from` より前の点にも、入ったことをシナリオが確かめる前に実行が終わったものがありえます（結果を見る前の書き込み。時刻が `over_at_ms` と同じ点は、ECU がその時刻のステップを動かしたかどうかが実行ごとに違います）。通った実行では、全部の点が入っています。
 

@@ -204,7 +204,8 @@ struct EnginePeer
 ///   without any. These writes are no step's: of one time they go out after the steps' writes of
 ///   that time, as one command per participant (in the order of Scenario::variables); they are
 ///   not waited for when the last step is decided; and one that is refused or not applied fails
-///   the first step that is not decided then ("scenario-write": which dither wrote what when).
+///   the first step that is not decided then ("scenario-write": which dither wrote what when; if
+///   the command had several inputs and which one it was about is not known, all of them).
 ///   Which step that is, and whether a refused write of the controller's last step before the
 ///   scenario is over is sent at all, depends on the controller's tick.
 ///
@@ -337,8 +338,11 @@ private:
     void place(const Write& write);
     bool submit_one(Write write);
     /// A write of no step (Write::grid) that `target` refused or did not apply (`did_not`: which,
-    /// as the message says it): the first step that is not decided yet fails.
-    void fail_grid(const Write& write, const control::TargetResult& target, const std::string& did_not);
+    /// as the message says it, "did not take"; `hint`: what to add to the reason): the first
+    /// step that is not decided yet fails. The message names the input that is the reason if
+    /// that can be told (the only one of the participant's command, or the one the agent's reason
+    /// names), else the participant with every input and value of the command.
+    void fail_grid(const Write& write, const control::TargetResult& target, const std::string& did_not, const std::string& hint = {});
     /// The step of the variable's ECU (the controller's, if that is not known).
     [[nodiscard]] SimDuration step_of(std::size_t variable) const;
     void judge(SimTime p);

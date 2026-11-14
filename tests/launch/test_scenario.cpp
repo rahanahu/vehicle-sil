@@ -150,6 +150,9 @@ public:
     const Scenario* scenario = nullptr;
     /// What the engine notes for a timeline, if set (run()).
     TimelineRecord* record = nullptr;
+    /// If set: what `peer` answers at once to a command for the time `at` instead of taking it
+    /// (its status and reason; empty: it takes the command as ever).
+    std::function<std::optional<control::TargetResult>(const std::string& peer, SimTime at)> refuse;
 
     World()
     {
@@ -176,6 +179,12 @@ public:
             {
                 target->status = control::TargetStatus::Invalid;
                 target->reason = "unknown peer";
+                continue;
+            }
+            if (const auto refused = refuse ? refuse(w.peer, time) : std::nullopt)
+            {
+                target->status = refused->status;
+                target->reason = refused->reason;
                 continue;
             }
             if (w.name == "level" && (std::get<std::int64_t>(w.value) < 0 || std::get<std::int64_t>(w.value) > 100))
@@ -3631,8 +3640,8 @@ TEST_CASE(scenario_dither_write_that_is_refused_fails_the_first_step_that_is_not
                                            "  - at_ms: 30\n"
                                            "    expect: { Body.level: 97 }\n";
     const Scenario two = read(head + "  - at_ms: 60\n    expect: { Body.level: 97 }\n");
-    const std::string message = "scenario-write: the dither of Body.level (line 3) wrote 101 at 50 ms, above its range 0 to 100: lower "
-                                "its amplitude, or keep the value further from the end of the range\n";
+    const std::string message = "scenario-write: the dither of Body.level (line 3) wrote 101 at 50 ms, above its range 0 to 100 (level: "
+                                "out of range): lower its amplitude, or keep the value further from the end of the range\n";
     {
         World world;
         world.tick = 10ms;
@@ -3667,8 +3676,9 @@ TEST_CASE(scenario_dither_write_that_is_refused_fails_the_first_step_that_is_not
                                             "6 failed start=30 at=50 end=30 " + message);
     }
     // Refused by the ECU in its step (the setter of Body.level throws at 13): known when the
-    // result is judged. The dithers of one time for one participant are one command, so the
-    // message says how many other inputs were in it.
+    // result is judged. The dithers of one time for one participant are one command, and a result
+    // does not say which write it is about: the message is about the participant's command, with
+    // every input and value in it (not about the first of them, which here is not the reason).
     const Scenario rejected = read(kDitherHead + "inputs:\n"
                                                  "  Body.ratio: { dither: { square: { amplitude: 0.1, period_ms: 20 } } }\n"
                                                  "  Body.level: { dither: { square: { amplitude: 1, period_ms: 40, phase_deg: 180 } } }\n"
@@ -3680,10 +3690,94 @@ TEST_CASE(scenario_dither_write_that_is_refused_fails_the_first_step_that_is_not
     World world;
     check_text(text_of(world.run(rejected)), "failed over=30\n"
                                              "7 passed start=0 at=0 end=0\n"
-                                             "8 failed start=100 at=20 end=100 scenario-write: the dither of Body.ratio (line 3) wrote 0.6 at 20 ms, "
-                                             "and participant 'Body' did not apply the write: the ECU rejected it (a setter threw: 13 is not a "
-                                             "level); the write was one command with those of 1 other dithered input of that participant\n");
+                                             "8 failed start=100 at=20 end=100 scenario-write: the dithers of participant 'Body' wrote Body.ratio "
+                                             "0.6 and Body.level 13 at 20 ms as one command, and the participant did not apply it: the ECU rejected "
+                                             "it (a setter threw: 13 is not a level) (which of the inputs it was about is not known; the reason "
+                                             "may say)\n");
     check_text(written_to(world, "Door.level", 20ms), "6@0>0 6@10>10 4@20>20 ");
+    // In the timeline every point of that command is one that was not applied, and the failed
+    // step has all of them (writes) and no single write.
+    const std::string file = timeline_of(kDitherHead + "inputs:\n"
+                                                       "  Body.ratio: { dither: { square: { amplitude: 0.1, period_ms: 20 } } }\n"
+                                                       "  Body.level: { dither: { square: { amplitude: 1, period_ms: 40, phase_deg: 180 } } }\n"
+                                                       "steps:\n"
+                                                       "  - set: { Body.level: 12, Body.ratio: 0.5 }\n"
+                                                       "  - at_ms: 100\n"
+                                                       "    expect: { Body.level: 11 }\n",
+                                         10ms);
+    CHECK(file.find("        \"write\": null,\n        \"writes\": [\n          {\n            \"variable\": \"Body.ratio\",\n"
+                    "            \"at_ms\": 20,\n            \"value\": 0.6,\n            \"point\": 2\n          },\n          {\n"
+                    "            \"variable\": \"Body.level\",\n            \"at_ms\": 20,\n            \"value\": 13,\n"
+                    "            \"point\": 2\n          }\n        ]\n") != std::string::npos);
+    const auto count = [&file](const std::string& what) {
+        std::size_t n = 0;
+        for (auto at = file.find(what); at != std::string::npos; at = file.find(what, at + 1))
+        {
+            ++n;
+        }
+        return n;
+    };
+    CHECK(count("      \"not_applied_from\": 2,\n") == 2);
+}
+
+TEST_CASE(scenario_dither_write_that_is_refused_says_the_input_only_if_it_is_known_and_its_range_only_if_that_is_the_reason)
+{
+    const std::string head = kDitherHead + "inputs:\n"
+                                           "  Body.level: { dither: { square: { amplitude: 2, period_ms: 100, phase_deg: 180 } } }\n";
+    const std::string steps = "steps:\n"
+                              "  - set: { Body.level: 99, Body.ratio: 0.5 }\n"
+                              "  - at_ms: 100\n"
+                              "    expect: { Body.level: 97 }\n";
+    const auto failure = [](const ScenarioRun& run) {
+        // (Of the step that failed, whichever it is: the first that was not decided.)
+        for (const ScenarioStepRun& step : run.steps)
+        {
+            if (step.status == StepStatus::Failed)
+            {
+                return step.code + ": " + step.message + "\n";
+            }
+        }
+        return std::string("no step failed\n");
+    };
+    // The write of 50 ms is 101, beyond the range, but the agent has no room for the command:
+    // that is what the message says, not the range (lowering the amplitude would not help).
+    {
+        World world;
+        world.refuse = [](const std::string& peer, SimTime at) -> std::optional<control::TargetResult> {
+            if (peer == "Body" && at == SimTime{} + 50ms)
+            {
+                return control::TargetResult{peer, control::TargetStatus::Busy, std::nullopt, false, "the peer has too many commands in flight"};
+            }
+            return std::nullopt;
+        };
+        check_text(failure(world.run(read(head + steps))),
+                   "scenario-write: the dither of Body.level (line 3) wrote 101 at 50 ms, and participant 'Body' did not take the write: "
+                   "the ECU's agent had too many commands waiting (the peer has too many commands in flight)\n");
+    }
+    // A value within the range that the agent refuses for a reason of its own: status and reason.
+    {
+        World world;
+        world.refuse = [](const std::string& peer, SimTime at) -> std::optional<control::TargetResult> {
+            if (peer == "Body" && at == SimTime{} + 10ms)
+            {
+                return control::TargetResult{peer, control::TargetStatus::Invalid, std::nullopt, false, "level: the simulation has ended"};
+            }
+            return std::nullopt;
+        };
+        check_text(failure(world.run(read(head + steps))),
+                   "scenario-write: the dither of Body.level (line 3) wrote 97 at 10 ms, and participant 'Body' did not take the write: "
+                   "the ECU's agent refused it (level: the simulation has ended)\n");
+    }
+    // Two dithered inputs of Body in one command, and the agent says which one it refuses (its
+    // reason begins with the variable's name): that input and its range, though it is the
+    // second of the command.
+    {
+        World world;
+        const ScenarioRun run = world.run(read(head + "  Body.ratio: { dither: { square: { amplitude: 0.1, period_ms: 20 } } }\n" + steps));
+        check_text(failure(run), "scenario-write: the dither of Body.level (line 3) wrote 101 at 50 ms, above its range 0 to 100 (level: out of "
+                                 "range): lower its amplitude, or keep the value further from the end of the range; the dither of 1 other "
+                                 "input of that participant was in the same command, and not written either\n");
+    }
 }
 
 TEST_CASE(scenario_dither_errors_say_what_is_wrong_and_what_to_write)
@@ -3949,9 +4043,14 @@ TEST_CASE(scenario_dither_that_can_leave_the_range_or_is_never_written_gets_a_wa
     const auto findings = [](const std::string& text, const ScenarioCatalog& c = catalog()) {
         return lines(read_scenario(kDitherHead + text, c).findings);
     };
-    // The values the text puts on the input, with the dither's amplitude on both sides: a set's
-    // value, the ends of a ramp, where a wave around a value goes. An estimate: which dither is
-    // on when is not worked out, and a value that is only known in the run is not looked at.
+    const auto estimate = [](const std::string& variable) {
+        return ". This is an estimate from the text (the dither that is on when the step comes, not the times): if it is right, the run "
+               "fails at the write that is outside. Lower the amplitude, keep the values of " + variable +
+               " further from the ends of its range, or take the dither off before them (dither: { " + variable + ": none })\n";
+    };
+    // The values the text puts on the input while the dither is on it, with the dither's
+    // amplitude on both sides: a set's value, the ends of a ramp, where a wave around a value
+    // goes. One finding per dither. A value that is only known in the run is not looked at.
     check_text(findings("inputs:\n"
                         "  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
                         "  Body.ratio: { dither: { noise: { amplitude: 0.1, hold_ms: 10, seed: 1, distribution: gaussian } } }\n"
@@ -3961,16 +4060,67 @@ TEST_CASE(scenario_dither_that_can_leave_the_range_or_is_never_written_gets_a_wa
                         "  - ramp: { Body.level: { to: 99, over_ms: 100 } }\n"
                         "  - wave: { Door.level: { sine: { amplitude: 5, period_ms: 80 }, around: 7, for_ms: 80 } }\n"
                         "  - dither: { Door.level: { triangle: { amplitude: 1, period_ms: 80 } } }\n"),
-               "W 3 scenario-dither-range: the dither of Body.level can take it out of its range (from 0 to 100): on the 99 that line 8 "
-               "puts on it, it goes from 97 to 101. The run fails at the write that is outside: lower the amplitude, or keep the values "
-               "of Body.level further from the ends of its range\n"
-               "W 4 scenario-dither-range: the dither of Body.ratio can take it out of its range (from 0 to 1): on the 0.8 that line 7 "
-               "puts on it, it goes about from 0.5 to 1.1 (three times the amplitude of a gaussian noise, which is its standard "
-               "deviation). The run fails at the write that is outside: lower the amplitude, or keep the values of Body.ratio further "
-               "from the ends of its range\n"
-               "W 5 scenario-dither-range: the dither of Door.level can take it out of its range (from 0 to 100): on the 2 that line 9 "
-               "puts on it, it goes from -1 to 5. The run fails at the write that is outside: lower the amplitude, or keep the values of "
-               "Door.level further from the ends of its range\n");
+               "W 3 scenario-dither-range: the dither of Body.level may take it out of its range (from 0 to 100): on the 99 of line 8, "
+               "the values written go from 97 to 101" + estimate("Body.level") +
+               "W 4 scenario-dither-range: the dither of Body.ratio may take it out of its range (from 0 to 1): on the 0.8 of line 7, "
+               "the values written go about from 0.5 to 1.1 (three times the amplitude of a gaussian noise, which is its standard "
+               "deviation)" + estimate("Body.ratio") +
+               "W 5 scenario-dither-range: the dither of Door.level may take it out of its range (from 0 to 100): on the 2 of line 9, "
+               "the values written go from -1 to 5" + estimate("Door.level"));
+    // Which dither is on which value, by the order of the steps: a dither that was taken off is
+    // not on the value that comes after, and one that a step puts is on the value the input was
+    // left at, not on those before. Nothing here leaves the range, and nothing is said.
+    check_text(findings("inputs:\n"
+                        "  Body.level: { dither: { triangle: { amplitude: 5, period_ms: 80 } } }\n"
+                        "steps:\n"
+                        "  - set: { Body.level: 50 }\n"
+                        "  - at_ms: 200\n"
+                        "    dither: { Body.level: none }\n"
+                        "  - at_ms: 300\n"
+                        "    set: { Body.level: 100 }\n"
+                        "  - at_ms: 400\n"
+                        "    set: { Body.level: 60 }\n"
+                        "  - at_ms: 400\n"
+                        "    dither: { Body.level: { triangle: { amplitude: 3, period_ms: 80 } } }\n"),
+               "");
+    // A dither that a step puts while the input stands near an end; and every value a dither may
+    // leave the range on is in its one finding (the first with its numbers, the others counted).
+    check_text(findings("inputs:\n"
+                        "  Body.ratio: { dither: { triangle: { amplitude: 0.1, period_ms: 80 } } }\n"
+                        "steps:\n"
+                        "  - set: { Body.level: 98, Body.ratio: 0.95 }\n"
+                        "  - dither: { Body.level: { triangle: { amplitude: 5, period_ms: 80 } } }\n"
+                        "  - ramp: { Body.ratio: { from: 0.05, to: 0.5, over_ms: 100 } }\n"
+                        "  - set: { Body.ratio: 1 }\n"),
+               "W 3 scenario-dither-range: the dither of Body.ratio may take it out of its range (from 0 to 1): on the 0.95 of line 5, "
+               "the values written go from 0.85 to 1.05; so on 2 other values (lines 7, 8)" + estimate("Body.ratio") +
+               "W 6 scenario-dither-range: the dither of Body.level may take it out of its range (from 0 to 100): on the 98 of line 5, "
+               "the values written go from 93 to 103" + estimate("Body.level"));
+    // An integer is rounded as the run rounds it. 100 with a dither of 0.4 is written as 100:
+    // nothing about the range, and the finding about the amplitude does not say "0.5 or more",
+    // which would leave the range there. With 0.5 it is written as 101, and that is said.
+    check_text(findings("inputs:\n  Body.level: { dither: { triangle: { amplitude: 0.4, period_ms: 80 } } }\n"
+                        "steps:\n  - set: { Body.level: 100 }\n"),
+               "W 3 scenario-wave-undersampled: the triangle dither of Body.level has an amplitude of 0.4, but Body.level is an integer: "
+               "on a whole value every sum is rounded back to that value, so the ECU sees no dither there (only where a ramp or a wave "
+               "is between two whole values). An amplitude of 0.5 or more would show, but on the 100 of line 5 it would leave the range "
+               "(from 0 to 100): keep that value further from the end of the range first, or remove the dither; to run it as it is "
+               "without this message, add undersampled: ok to the input's entry in inputs\n");
+    check_text(findings("inputs:\n  Body.level: { dither: { triangle: { amplitude: 0.5, period_ms: 80 } } }\n"
+                        "steps:\n  - set: { Body.level: 100 }\n"),
+               "W 3 scenario-dither-range: the dither of Body.level may take it out of its range (from 0 to 100): on the 100 of line 5, "
+               "the values written go from 100 to 101" + estimate("Body.level"));
+    // What stays a false alarm (and fails check --strict): the estimate puts the ends of the
+    // dither on the ends of a wave under it, whenever they are. Here the triangle is at its
+    // bottom when the sine is at its top: no write is above 0.98, and the run passes.
+    const std::string opposite = "inputs:\n  Body.ratio: { dither: { triangle: { amplitude: 0.02, period_ms: 80, phase_deg: 180 } } }\n"
+                                 "steps:\n  - wave: { Body.ratio: { sine: { amplitude: 0.03, period_ms: 80 }, around: 0.96, for_ms: 80 } }\n"
+                                 "  - expect: { Body.ratio: { ge: 0.9 } }\n";
+    check_text(findings(opposite),
+               "W 3 scenario-dither-range: the dither of Body.ratio may take it out of its range (from 0 to 1): on the 0.99 of line 5, "
+               "the values written go from 0.97 to 1.01" + estimate("Body.ratio"));
+    World passes;
+    check_text(scenario_status_name(passes.run(read(kDitherHead + opposite)).status), "passed");
     // Within the range: nothing. The run refuses what is outside all the same (another test).
     check_text(findings("inputs:\n  Body.level: { dither: { triangle: { amplitude: 2, period_ms: 80 } } }\n"
                         "steps:\n  - set: { Body.level: 98 }\n  - ramp: { Body.level: { to: 2, over_ms: 100 } }\n"),
@@ -4031,14 +4181,18 @@ TEST_CASE(scenario_with_a_dither_lists_what_its_text_puts_on_the_inputs)
         std::string out;
         for (const ScenarioLineText& line : s.lines)
         {
-            out += line.variable + " " + line.kind + " " + (line.from_ms ? std::to_string(*line.from_ms) : "?") + "-" +
-                   (!line.ends ? "none" : line.to_ms ? std::to_string(*line.to_ms) : "?") + " line " + std::to_string(line.line) +
-                   (line.after_wait > 0 ? " after " + std::to_string(line.after_wait) : "") + ": " + line.text + "\n";
+            out += line.variable + " " + line.kind + " step " + (line.step ? std::to_string(*line.step) : "-") + " " +
+                   (line.from_ms ? std::to_string(*line.from_ms) : "?") + "-" + (line.to_ms ? std::to_string(*line.to_ms) : "?") + " " +
+                   line_timing_name(line.timing) + " line " + std::to_string(line.line) +
+                   (line.after_wait > 0 ? " after " + std::to_string(line.after_wait) : "") + (line.shape ? " [" + line.shape->type + "]" : "") +
+                   ": " + line.text + "\n";
         }
         return out;
     };
-    // The declared dithers first (from 0, no end), then what each step that runs puts, in the
-    // order of the file. A time after a step that waits is not known before the run.
+    // The declared dithers first (no step; they begin with the first write of their input, which
+    // the text does not say), then what each step that runs puts on an input that has a dither
+    // at some time, in the order of the file. A time after a step that waits is not known before
+    // the run. Door.lamp has no dither: its set is not in the list.
     ScenarioContext context;
     context.variant = "small";
     const ScenarioRead r = read_scenario(kDitherHead + "inputs:\n"
@@ -4060,16 +4214,17 @@ TEST_CASE(scenario_with_a_dither_lists_what_its_text_puts_on_the_inputs)
         throw unit::Failure("the scenario has errors:\n" + lines(r.findings));
     }
     CHECK(r.scenario->has_dither);
-    check_text(listed(*r.scenario), "Body.level dither 0-none line 3: triangle amplitude 2 period 80 ms\n"
-                                    "Body.level set 0-0 line 6: = 50\n"
-                                    "Door.lamp set 0-0 line 6: = true\n"
-                                    "Body.level ramp 100-160 line 7: to 80 over 60 ms\n"
-                                    "Body.level dither ?-none line 12 after 10: none\n"
-                                    "Body.level wave ?-? line 13 after 10: pulse 10 width 20 ms\n");
+    // (The texts are those of a timeline file's lines: with the variable.)
+    check_text(listed(*r.scenario), "Body.level dither step - ?-? first_write line 3 [triangle]: Body.level triangle amplitude 2 period 80 ms\n"
+                                    "Body.level set step 1 0-0 text line 6: Body.level = 50\n"
+                                    "Body.level ramp step 2 100-160 text line 7 [ramp]: Body.level to 80 over 60 ms\n"
+                                    "Body.level dither step 5 ?-? after_wait line 12 after 10: Body.level none\n"
+                                    "Body.level wave step 6 ?-? after_wait line 13 after 10 [pulse]: Body.level pulse 10 width 20 ms\n");
     // The run's result has the same, and what "inputs" declares (of the variables there are).
     const ScenarioRun before = scenario_not_run(*r.scenario);
-    CHECK(before.has_dither && before.lines.size() == 6 && before.inputs.size() == 1);
-    CHECK(before.inputs[0].variable == "Body.level" && before.inputs[0].line == 3 && before.inputs[0].text == "triangle amplitude 2 period 80 ms");
+    CHECK(before.has_dither && before.lines.size() == 5 && before.inputs.size() == 1);
+    CHECK(before.inputs[0].variable == "Body.level" && before.inputs[0].line == 3 &&
+          before.inputs[0].text == "Body.level triangle amplitude 2 period 80 ms" && before.inputs[0].shape.has_value());
     // A scenario without a dither has no list: its outputs are as they were. A dither step alone is one.
     const Scenario plain = read(kHead + "  - set: { Body.level: 50 }\n");
     CHECK(!plain.has_dither && plain.lines.empty() && !scenario_not_run(plain).has_dither);
@@ -4131,4 +4286,37 @@ TEST_CASE(scenario_dither_writes_of_no_step_do_not_decide_a_step)
         check_text(text_of(run), "passed over=210\n5 passed start=0 at=200 end=200\n", ("tick " + std::to_string(tick.count())).c_str());
         check_text(written_to(world, "Body.level", 60ms), "11@0>0 29@10>10 51@20>20 49@30>30 51@40>40 49@50>50 51@60>60 ");
     }
+}
+
+TEST_CASE(timeline_columns_of_a_dithered_input_do_not_depend_on_how_far_the_run_got)
+{
+    // A scenario that fails at a sample (the expect of 30 ms) before the dither step of 50 ms.
+    // With a controller step of 30 ms the write of 50 ms went out before the failure was seen,
+    // with 10 ms it did not; the file is the same. The series has its base column because the
+    // scenario puts a dither on the input at all, not because a write carried one. (Compared:
+    // the series and the lines. The status of the steps after the one that failed depends on the
+    // controller's step, as in every run that fails.)
+    const auto recorded = [](const std::string& timeline) { return part(timeline, "  \"series\": [", "  \"findings\""); };
+    const std::string failing = kHead + "  - set: { Body.level: 50 }\n"
+                                        "  - at_ms: 30\n"
+                                        "    expect: { Body.level: 51 }\n"
+                                        "  - at_ms: 50\n"
+                                        "    dither: { Body.level: { square: { amplitude: 2, period_ms: 40 } } }\n";
+    const std::string fine = timeline_of(failing, 10ms);
+    CHECK(fine.find("    \"status\": \"failed\",") != std::string::npos);
+    check_text(recorded(timeline_of(failing, 30ms)), recorded(fine), "with a controller step of 30 ms");
+    CHECK(fine.find("      \"columns\": [\"t_ms\", \"value\", \"base\"],\n      \"points\": [\n        [0, 50, 50]\n      ]\n") != std::string::npos);
+    // The same for a declared dither whose input gets its first value after the failure.
+    const std::string declared = kDitherHead + "inputs:\n  Body.level: { dither: { square: { amplitude: 2, period_ms: 40 } } }\n"
+                                               "steps:\n  - at_ms: 30\n    expect: { Body.level: 51 }\n"
+                                               "  - at_ms: 50\n    set: { Body.level: 50 }\n";
+    check_text(recorded(timeline_of(declared, 30ms)), recorded(timeline_of(declared, 10ms)), "a declared dither");
+    // And where the run decides whether the dither step is reached: after a step that waits.
+    const std::string waiting = kHead + "  - set: { Body.level: 50 }\n"
+                                        "  - wait_until: { Body.level: 51 }\n"
+                                        "    timeout_ms: 40\n"
+                                        "  - dither: { Body.level: { square: { amplitude: 2, period_ms: 40 } } }\n";
+    const std::string timedOut = timeline_of(waiting, 10ms);
+    check_text(recorded(timeline_of(waiting, 30ms)), recorded(timedOut), "a dither step after a wait that runs out");
+    CHECK(timedOut.find("      \"columns\": [\"t_ms\", \"value\", \"base\"],\n") != std::string::npos);
 }

@@ -435,7 +435,7 @@
                   "object",
                   "null"
                 ],
-                "description": "The write that was not made or not applied; null if the step did not fail of a write. Of a set of several variables: the first one for the participant that refused.",
+                "description": "The write that was not made or not applied; null if the step did not fail of a write, or if it failed of a command of several writes and which of them is the reason is not known (writes has them). Of a set of several variables: the first one for the participant that refused.",
                 "required": [
                   "variable",
                   "at_ms",
@@ -466,6 +466,45 @@
                     ],
                     "minimum": 0,
                     "description": "The index in points of the variable's written series of the point that is this write; null if nothing was sent (value is null)."
+                  }
+                }
+              },
+              "writes": {
+                "type": "array",
+                "description": "Only where a command of several writes was refused as a whole (the dithers of one time for one participant go out as one command, and a result does not say which write it is about): every write of the command, each a point that was not applied. write is then the one that is the reason if that is known (the agent named it), else null.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "variable",
+                    "at_ms",
+                    "value",
+                    "point"
+                  ],
+                  "properties": {
+                    "variable": {
+                      "type": "string",
+                      "description": "The variable that was to be written."
+                    },
+                    "at_ms": {
+                      "type": "number",
+                      "description": "The time the write was for."
+                    },
+                    "value": {
+                      "type": [
+                        "boolean",
+                        "number",
+                        "null"
+                      ],
+                      "description": "The value; null if it was never worked out."
+                    },
+                    "point": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0,
+                      "description": "The index in points of the variable's written series of the point that is this write; null if nothing was sent (value is null)."
+                    }
                   }
                 }
               }
@@ -524,7 +563,7 @@
           },
           "columns": {
             "type": "array",
-            "description": "written, only for an input that a dither was on: what a point is, [\"t_ms\", \"value\", \"base\"]. base is what the value was made of before the dither was added and the variable's type applied: the value of a set, the value of a ramp or a wave at that time. Without columns a point is [t_ms, value]. A reader takes the columns it knows by name.",
+            "description": "written, only for an input that the scenario puts a dither on (its inputs, or a dither step with a shape that runs in this configuration; whether the run got to it does not matter): what a point is, [\"t_ms\", \"value\", \"base\"]. base is what the value was made of before the dither was added and the variable's type applied: the value of a set, the value of a ramp or a wave at that time. Without columns a point is [t_ms, value]. A reader takes the columns it knows by name.",
             "items": {
               "type": "string"
             }
