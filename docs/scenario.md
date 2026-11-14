@@ -118,6 +118,7 @@ JSON Schema は [schema/scenario.schema.json](../schema/scenario.schema.json) �
 
 - **変数**は `<participant>.<変数名>` です。最初の `.` までが participant の名前で、残りが ECU の中の変数名です（変数名に `.` があってよい。例: participant `Engine` の `engine.speed` は `Engine.engine.speed`）。
 - **値**は、変数の型に合わせて書きます。bool は `true` / `false`、integer は整数、real は数、enum は項目の名前か値です。
+- integer と enum の値は、16 進でも書けます（`0x1F`、`0X1F`）。`set`、`ramp` の `from`・`to`、`wave` の値、条件の値と、その位置に入るパラメーター（`params`、`--param`）です。引用符で囲まず（`"0x1F"` は文字列で、数の引用符と同じ誤り）、符号を付けません（負の値は 10 進で書きます）。real の値、時間、`amplitude`、`tolerance` は 10 進だけです。手順の文と結果は 10 進で出し（`0x1F` を `set` した手順は `= 31`）、範囲の外の誤りは両方を出します（`is 0x65 (101), outside its range`）。
 - **条件**は比較だけです。値をそのまま書けば「等しい」です。対応付けで `eq`、`ne`、`ge`、`le`、`gt`、`lt`、`near` と `tolerance`（差が `tolerance` 以下）を書けます。1 つの変数に複数書けば、すべてです（`{ ge: 1700, le: 1900 }`）。1 つの手順に複数の変数を書けば、すべての変数です。bool と enum に使えるのは `eq` と `ne` だけです。
 - 書けるのは、入力の変数です。Parameter は、時刻 0 の `set` でだけ書けます（最初のステップの前に入ります）。出力は読むだけです。`set`、`ramp`、`wave` の値は、変数の範囲（`min`、`max`）の中にします。`ramp` は integer と real だけです（integer は四捨五入）。`wave` は、波形ごとに使える型が決まっています。
 
