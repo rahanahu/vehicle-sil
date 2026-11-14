@@ -10,10 +10,13 @@
 
 #include "vehicle_sil/ethernet_bridge/ethernet_bridge.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <latch>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -396,8 +399,29 @@ TEST_CASE(two_bridges_one_without_the_mac_guard_stop_a_loop_started_in_sil_kit)
     // the ECU's frame on the wire (bridge 1's link does not echo).
     TwoBridges t(false, true, false);
     const auto frame = make_frame(kBroadcast, kEcu, kExperimental);
+    // Bridge 2 says something only when bridge 1's copy comes from the wire after bridge 2 sent
+    // its own. Left to the threads, the copy can come first, and bridge 1 can then drop what
+    // bridge 2 passes on, so nothing comes after. The order is made certain: bridge 2's receive
+    // thread is held, in the middle of passing on a frame from a device, until both bridges have
+    // been given the ECU's frame.
+    const auto from_device = make_frame(kBroadcast, kOutside, kExperimental, 60);
+    std::atomic<bool> held{false};
+    std::latch release{1};
+    t.c2.on_send = [&](std::span<const std::uint8_t> sent) {
+        if (std::ranges::equal(sent, from_device))
+        {
+            held.store(true);
+            release.wait();
+            return; // not passed on to bridge 1: the device's frame is not part of the loop
+        }
+        t.c1.deliver(sent);
+    };
+    t.link2.receive(from_device);
+    const bool holding = eventually([&] { return held.load(); }, 5000ms);
+    CHECK(holding);
     t.c1.deliver(frame);
     t.c2.deliver(frame);
+    release.count_down();
     CHECK(t.quiet());
     CHECK(t.b1->statistics().loop_suspected >= 1);
     const auto warnings = t.b1->take_warnings();
