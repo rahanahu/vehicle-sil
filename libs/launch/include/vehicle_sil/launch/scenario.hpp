@@ -116,10 +116,14 @@ struct ScenarioStep
     /// What it does, in one line: "set Engine.engine.throttle = 50".
     std::string text;
     /// Why the run skips it, or "" if it runs: it uses a variable that its participant does not
-    /// have in this configuration (absent: true in its variable map). A skipped step writes and
-    /// compares nothing (`writes`, `ramps` and `conditions` are empty) and takes no time: it ends
-    /// at its own time.
+    /// have in this configuration (absent: true in its variable map), or a variable of a
+    /// participant that the chosen variant leaves out. A skipped step writes and compares nothing
+    /// (`writes`, `ramps` and `conditions` are empty) and ends `skipped_ms` after its own time.
     std::string skipped{};
+    /// Of a skipped step: the time it takes as the text says it (the longest over_ms of a ramp,
+    /// the hold_for_ms of an expect), so that the steps after it have the same times in every
+    /// variant. 0 for a set and for a step that waits (when it would end is not in the text).
+    std::int64_t skipped_ms = 0;
 
     /// Its end is not known before it runs (WaitUntil, Expect with within_ms).
     [[nodiscard]] bool waits() const noexcept { return within_ms.has_value(); }
@@ -146,6 +150,10 @@ struct CatalogParticipant
     /// The names its variable map says it does not have (absent: true): a step that uses one is
     /// skipped.
     std::vector<std::string> absent{};
+    /// The chosen variant leaves the participant out (its "enabled: false" in the variant, see
+    /// ParticipantConfig::left_out_by_variant): a step that uses any variable of it is skipped,
+    /// like one that uses an absent variable. `unusable` is then not looked at.
+    bool not_in_variant = false;
     /// Its variable map applied to what it describes (`variables` is its schema()), or null if
     /// its entry has none. The range of a written value is the map's to say
     /// (control::MappedSchema::in_range()): the run's hub decides with the same code.
@@ -188,9 +196,14 @@ struct ScenarioRead
     bool not_for_variant = false;
     /// How many steps the run will skip (ScenarioStep::skipped), each with a note in `findings`.
     std::size_t skipped = 0;
-    /// Every error of the text, and a note for each step that is skipped, in the order of the file
+    /// Every error of the text, a note for each step that is skipped and a warning
+    /// ("scenario-nothing-checked") if every step that checks is skipped, in the order of the file
     /// (Finding::file is not set).
     std::vector<Finding> findings;
+    /// What is wrong with the command line, known only with the scenario (code "usage"): a
+    /// parameter given from the command line (ParamSource::CommandLine) that the scenario neither
+    /// declares nor uses. Looked for only when the text has no error of its parameters.
+    std::vector<Finding> usage_errors{};
 };
 
 /// Reads a scenario (YAML, or JSON if it starts with '{') and checks all of it: the form, unknown

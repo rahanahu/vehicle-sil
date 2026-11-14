@@ -1330,6 +1330,7 @@ std::vector<Finding> apply_overrides(SimulationConfig& config, const EnabledOver
         else if (named(overrides.enable))
         {
             p.enabled = true;
+            p.left_out_by_variant = false;
         }
         if (named(overrides.manual))
         {
@@ -1377,6 +1378,7 @@ void apply_variant(SimulationConfig& config, const VariantConfig& variant)
         if (change.enabled)
         {
             p->enabled = *change.enabled;
+            p->left_out_by_variant = !*change.enabled;
         }
     }
     for (const ParamValue& param : variant.params)
@@ -1395,7 +1397,9 @@ void apply_variant(SimulationConfig& config, const VariantConfig& variant)
 }
 
 /// Applies --variant to `config` and returns its usage errors. A file that defines variants needs
-/// one; a name the file does not have is an error only if `check_names` (as for apply_overrides()).
+/// one of them: no --variant and a name that is none of them are errors whatever else is wrong
+/// with the text (checking the common part alone would be a check of no variant). A --variant
+/// for a file without variants is an error only if `check_names` (as for apply_overrides()).
 std::vector<Finding> choose_variant(SimulationConfig& config, const std::optional<std::string>& variant, bool check_names)
 {
     std::vector<std::string> names;
@@ -1419,19 +1423,21 @@ std::vector<Finding> choose_variant(SimulationConfig& config, const std::optiona
         apply_variant(config, *chosen);
         return {};
     }
-    if (!check_names)
-    {
-        return {};
-    }
     if (names.empty())
     {
+        if (!check_names)
+        {
+            return {}; // the errors of the text may be why no variant could be read
+        }
         return {usage("--variant " + *variant +
                       ": the file defines no variants: leave --variant out, or add variants to the file "
                       "(docs/simulation-config.md)")};
     }
     const std::string guess = detail::closest(*variant, names);
     return {usage("--variant " + *variant + ": the file has no variant with this name" +
-                  (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its variants are " + join(names))};
+                  (guess.empty() ? "" : " (did you mean '" + guess + "'?)") + "; its variants are " + join(names) +
+                  // Not said by anything else: a usage error stands alone.
+                  (check_names ? "" : "; the file has errors too, which a check with one of these variants reports"))};
 }
 
 /// The simulation waits for its required participants: at least one enabled participant must be

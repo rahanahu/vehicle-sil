@@ -341,10 +341,11 @@ void ScenarioEngine::issue_step(std::size_t index, SimTime time)
     run_.steps[index].start = time;
     if (!step.skipped.empty())
     {
-        // Nothing to do, and no time taken: the next step counts from this one's time.
-        run_.steps[index].at = time;
-        run_.steps[index].end = time;
-        base_ = time;
+        // Nothing to do. It ends after the time its text says (0 for a set or a wait), and the
+        // next step counts from there, as in a configuration where the step runs. No `at`: it
+        // was decided before the run, not at a time of the simulation.
+        run_.steps[index].end = time + std::chrono::milliseconds(step.skipped_ms);
+        base_ = run_.steps[index].end;
         ++done_;
         if (on_step_)
         {

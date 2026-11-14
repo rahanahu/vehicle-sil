@@ -253,7 +253,7 @@ variants:
 | `variants.<機種>.params` | パラメーター。共通の `params` に、名前ごとに重ねます |
 
 - 機種で変えられるのは、この 4 つ（`command`、`variables`、`enabled`、`params`）だけです。ほかのキーは誤りです（`unknown-key`）。ネットワーク、`step_ms`、`describe`、`required` などは、どの機種でも同じです。
-- 機種を書いた構成で `--variant` を省くと、引数の誤りです（終了コード 4。文に機種の一覧が出ます）。既定の機種はありません。ない名前の `--variant` と、機種のない構成への `--variant` も、引数の誤りです。
+- 機種を書いた構成で `--variant` を省くと、引数の誤りです（終了コード 4。文に機種の一覧が出ます）。既定の機種はありません。機種のどれでもない名前の `--variant` も、引数の誤りです。構成ファイルの文面にほかの誤りがあっても、先にこれを出します（共通の部分だけを、機種の代わりに照合することはしません。文には、ファイルにも誤りがあることを足します）。機種のない構成への `--variant` も引数の誤りですが、こちらは `--disable` と同じで、文面に誤りがある間は言いません（`variants` を読めなかったせいかもしれないため）。
 - ある機種にだけいる participant は、`participants` に `enabled: false` で書き、その機種で `enabled: true` にします。
 - 対応を共通の部分より減らすことはできません。共通の対応が要らない機種では、同じ名前に、その機種の対応を書きます（`engine.speed: engine.speed` は、名前も値もそのままです）。
 - 読むときには、選んでいない機種も含めて、全部の機種の形を確かめます。実行ファイルとの照合は、選んだ機種だけです。
@@ -264,7 +264,7 @@ variants:
 
 シナリオの中の数（しきい値、待ち時間、入れる値）を機種ごとに替えるときは、シナリオに `${名前}` と書き、値を `params` に書きます。値は、数、`true`・`false`、文字列のどれかです（1 つの値。配列や対応は書けません）。名前は、英数字と `_`（数字で始めない）です。
 
-値は、後のものが前のものを置き換えます: シナリオの `params`（既定）、構成の `params`、機種の `params`、引数の `--param <名前>=<値>`。`--param` は `--scenario` と一緒にだけ使えます。シナリオが使っていない名前の `--param` は誤りです（`scenario-param`。打ち間違いを黙って無視しません）。構成と機種の `params` には、シナリオが使わない名前があってもかまいません（1 つの構成で、いくつものシナリオを回すため）。書き方と誤りは [scenario.md](scenario.md) の「機種とパラメーター」にあります。
+値は、後のものが前のものを置き換えます: シナリオの `params`（既定）、構成の `params`、機種の `params`、引数の `--param <名前>=<値>`。`--param` は `--scenario` と一緒にだけ使えます。シナリオが使っていない名前の `--param` は引数の誤りです（終了コード 4。打ち間違いを黙って無視しません）。構成と機種の `params` には、シナリオが使わない名前があってもかまいません（1 つの構成で、いくつものシナリオを回すため）。書き方と誤りは [scenario.md](scenario.md) の「機種とパラメーター」にあります。
 
 ## 引数と終了コード
 
@@ -313,7 +313,7 @@ vehicle_sil_launch version [--json]
 | 0 | 誤りがない（警告と注記だけなら 0。`--strict` では警告もない）。`run` では、シミュレーションが正常に終わり、必須の participant がどれも 0 で終わった |
 | 1 | 誤りがある（`--strict` では警告も）。`run` では、照合の誤り（何も起動しない）か、実行の誤り（participant が失敗した、そろわなかった、止めても終わらなかったなど） |
 | 3 | 構成ファイルを読めない（ファイルがない、文法の誤り、知らない形式の版など）。`run` で registry や controller を用意できないときも 3 です。結果を標準出力に書けないときと、`vehicle_sil_launch` 自身の想定外の失敗も 3 です（標準エラーに理由。`--json` では、そのコマンドの形の JSON に `code` が `internal` の誤り） |
-| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` も `--control` もない `--start-paused`、`--control` なしの `--control-credentials` などと Control Server を持たないビルドの `--control`、`--control` の値の誤り、読めない `--control-*` のファイル、認証情報が 1 件もない `--control-credentials` のファイル、片方だけの `--control-tls-cert` と `--control-tls-key`、TLS と認証情報のない、ループバックでない `--control`、数でも `max` でもない `--speed`、`--start-paused` と一緒の `--scenario`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*`、構成ファイルにない participant 名の `--disable`、`--enable`、`--manual`、同じ名前の `--disable` と `--enable`、同じ名前の `--disable` と `--manual`）。誤りと使い方を標準エラーに書きます |
+| 4 | 引数の誤り（知らないコマンドや引数、`check` の `--events` と `--stdin-commands`、`run` の `--json` と `--events`、`--events` なしの `--events-stall-ms` と範囲の外の値、`--stdin-commands` も `--control` もない `--start-paused`、`--control` なしの `--control-credentials` などと Control Server を持たないビルドの `--control`、`--control` の値の誤り、読めない `--control-*` のファイル、認証情報が 1 件もない `--control-credentials` のファイル、片方だけの `--control-tls-cert` と `--control-tls-key`、TLS と認証情報のない、ループバックでない `--control`、数でも `max` でもない `--speed`、`--start-paused` と一緒の `--scenario`、`version` の `--json` 以外の引数、構成ファイルの名前がない、2 つ以上のファイル、同じ引数の 2 回目（`--disable` と `--enable` は繰り返せます）、値のない `--describe-timeout-ms`、`check` の `--log-dir`、`--timeout-ms`、`--speed`、`--start-paused`、`--control` と `--control-*`、構成ファイルにない participant 名の `--disable`、`--enable`、`--manual`、同じ名前の `--disable` と `--enable`、同じ名前の `--disable` と `--manual`、機種を書いた構成で `--variant` がない、機種のどれでもない名前の `--variant`、形の違う `--param`、`--scenario` なしの `--param`、シナリオにない名前の `--param`）。誤りと使い方を標準エラーに書きます |
 | 130 | `run` が中断された（Ctrl+C、`{"command":"stop"}`、標準入力の終わり、閉じた標準出力、Control Server のクライアントの `Stop` など） |
 
 - Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスを使えます）。

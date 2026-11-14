@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -996,17 +997,22 @@ TEST_CASE(scenario_parameter_errors_say_what_to_write)
                "--param)\n"
                "E 5 value: after_ms must be a whole number (milliseconds of virtual time from the end of the step before it), "
                "not the text \"10\" (the parameter t, from the variant's params): write the number without quotes\n");
-    // A --param that the scenario does not have changes nothing: an error, not silence.
+    // A --param that the scenario does not have changes nothing: an error, not silence. It is the
+    // command line's (a usage error), not a finding of the file.
     context.params = {param("leve", "1", ParamSource::CommandLine), param("elsewhere", "1", ParamSource::Configuration)};
-    check_text(errors("vehicle_sil_scenario: 1\n"
-                      "params: { level: 5 }\n"
-                      "steps:\n"
-                      "  - set: { Body.level: \"${level}\" }\n",
-                      context),
-               "E 0 scenario-param: --param leve=1: the scenario has no parameter leve (did you mean level?): its parameters "
+    const ScenarioRead near = read_scenario("vehicle_sil_scenario: 1\n"
+                                            "params: { level: 5 }\n"
+                                            "steps:\n"
+                                            "  - set: { Body.level: \"${level}\" }\n",
+                                            catalog(), context);
+    check_text(lines(near.findings), "");
+    check_text(lines(near.usage_errors),
+               "E 0 usage: --param leve=1: the scenario has no parameter leve (did you mean level?): its parameters "
                "are level; remove the option or correct the name\n");
-    check_text(errors(kHead + "  - set: { Body.level: 1 }\n", context),
-               "E 0 scenario-param: --param leve=1: the scenario has no parameter leve: it uses none (a step uses one as "
+    const ScenarioRead none = read_scenario(kHead + "  - set: { Body.level: 1 }\n", catalog(), context);
+    check_text(lines(none.findings), "");
+    check_text(lines(none.usage_errors),
+               "E 0 usage: --param leve=1: the scenario has no parameter leve: it uses none (a step uses one as "
                "${name}); remove the option or correct the name\n");
 }
 
@@ -1075,21 +1081,21 @@ TEST_CASE(scenario_steps_that_use_an_absent_variable_are_skipped_and_the_others_
                "need what this one does\n");
     CHECK(r.scenario.has_value());
     CHECK_EQ(r.skipped, std::size_t{3});
-    // A skipped step takes no time and writes nothing (Door.level stays 0): the later steps
-    // count from its time.
+    // A skipped step writes nothing (Door.level stays 0) and takes the time its text says: the
+    // ramp's 100 ms, nothing for the set and for the wait. It has no time that decided it.
     World world;
     std::vector<std::string> events;
     const ScenarioRun run = world.run(*r.scenario);
     check_text(text_of(run),
-               "passed over=80\n"
+               "passed over=180\n"
                "3 passed start=0 at=0 end=0\n"
-               "4 skipped start=30 at=30 end=30 scenario-skipped: Body.boost is absent: participant 'Body' does not have it in "
+               "4 skipped start=30 at=- end=30 scenario-skipped: Body.boost is absent: participant 'Body' does not have it in "
                "the variant small (absent: true in its variables)\n"
-               "6 skipped start=50 at=50 end=50 scenario-skipped: Body.boost, Door.boost are absent: the participants 'Body', "
+               "6 skipped start=50 at=- end=50 scenario-skipped: Body.boost, Door.boost are absent: the participants 'Body', "
                "'Door' do not have them in the variant small (absent: true in their variables)\n"
-               "9 skipped start=60 at=60 end=60 scenario-skipped: Body.boost is absent: participant 'Body' does not have it in "
+               "9 skipped start=60 at=- end=160 scenario-skipped: Body.boost is absent: participant 'Body' does not have it in "
                "the variant small (absent: true in its variables)\n"
-               "11 passed start=70 at=70 end=70\n");
+               "11 passed start=170 at=170 end=170\n");
     CHECK_EQ(run.skipped(), std::size_t{3});
     check_text(joined(world.log), "Body.level=5 for 0 applied at 0\n");
     // A variable that is not said to be absent is an error as before.
@@ -1100,7 +1106,7 @@ TEST_CASE(scenario_steps_that_use_an_absent_variable_are_skipped_and_the_others_
     World empty;
     const ScenarioRun nothing = empty.run(*none.scenario);
     check_text(text_of(nothing), "passed over=0\n"
-                                 "3 skipped start=0 at=0 end=0 scenario-skipped: Body.boost is absent: participant 'Body' does not "
+                                 "3 skipped start=0 at=- end=0 scenario-skipped: Body.boost is absent: participant 'Body' does not "
                                  "have it in this configuration (absent: true in its variables)\n");
     // A failure before a skipped step leaves it skipped; the simulation's end does not fail it.
     World stopped;
@@ -1115,6 +1121,167 @@ TEST_CASE(scenario_steps_that_use_an_absent_variable_are_skipped_and_the_others_
     const ScenarioRun cut = stopped.run(*late.scenario);
     CHECK(cut.status == ScenarioStatus::Failed);
     CHECK(cut.steps[1].status == StepStatus::Skipped && cut.steps[2].status == StepStatus::Failed);
+}
+
+/// The errors alone (lines()), without the notes and the warnings.
+std::string errors_only(const std::vector<Finding>& findings)
+{
+    std::vector<Finding> errors;
+    std::copy_if(findings.begin(), findings.end(), std::back_inserter(errors), [](const Finding& f) { return f.severity == Severity::Error; });
+    return lines(errors);
+}
+
+/// The starts of the steps that are not skipped, "line:start_ms" each.
+std::string starts_of(const ScenarioRun& run)
+{
+    std::string out;
+    for (const ScenarioStepRun& step : run.steps)
+    {
+        if (step.status != StepStatus::Skipped)
+        {
+            out += std::to_string(step.line) + ":" + time_text(step.start) + " ";
+        }
+    }
+    return out;
+}
+
+TEST_CASE(scenario_times_are_the_same_whether_a_step_with_a_known_length_is_skipped_or_not)
+{
+    // The ramp's over_ms and the expect's hold_for_ms are times of the text: a configuration
+    // that skips the steps gives the steps after them the times of one that runs them.
+    const std::string text = kHead + "  - set: { Body.level: 0 }\n"
+                                     "  - ramp: { Body.boost: { to: 3, over_ms: 100 }, Body.ratio: { to: 1, over_ms: 40 } }\n"
+                                     "  - after_ms: 10\n"
+                                     "    expect: { Body.boost: { ge: 0 } }\n"
+                                     "    hold_for_ms: 200\n"
+                                     "  - expect: { Body.pulse: false }\n"
+                                     "  - at_ms: 400\n"
+                                     "    set: { Body.lamp: true }\n";
+    ScenarioCatalog with = catalog();
+    auto& boost = with[0].variables.emplace_back();
+    boost.name = "boost";
+    boost.type = control::ValueType::Integer;
+    boost.causality = control::Causality::Input;
+    const ScenarioRead there = read_scenario(text, with);
+    const ScenarioRead absent = read_scenario(text, catalog_without_boost());
+    CHECK(there.scenario.has_value() && absent.scenario.has_value());
+    CHECK_EQ(there.skipped, std::size_t{0});
+    CHECK_EQ(absent.skipped, std::size_t{2});
+    // The mixed ramp is skipped whole, with its longest over_ms, the absent variable's.
+    CHECK_EQ(absent.scenario->steps[1].skipped_ms, std::int64_t{100});
+    CHECK_EQ(absent.scenario->steps[2].skipped_ms, std::int64_t{200});
+    World a;
+    const ScenarioRun skipped = a.run(*absent.scenario);
+    CHECK(skipped.status == ScenarioStatus::Passed);
+    check_text(starts_of(skipped), "3:0 8:310 9:400 ");
+    CHECK(skipped.steps[1].start == at(0ms) && skipped.steps[1].end == at(100ms) && !skipped.steps[1].at);
+    CHECK(skipped.steps[2].start == at(110ms) && skipped.steps[2].end == at(310ms) && !skipped.steps[2].at);
+    // Where time would go back is the same in both: at_ms inside the skipped ramp.
+    const std::string back = kHead + "  - ramp: { Body.boost: { to: 3, over_ms: 100 } }\n"
+                                     "  - at_ms: 50\n"
+                                     "    set: { Body.lamp: true }\n";
+    const std::string wrong = "E 4 scenario-time: at_ms is 50, before the end of the step before it (100 ms): the steps run in "
+                              "the order of the file, and time does not go back; reorder the steps or raise at_ms\n";
+    check_text(errors_only(read_scenario(back, with).findings), wrong);
+    check_text(errors_only(read_scenario(back, catalog_without_boost()).findings), wrong);
+    // A skipped step that waits takes no time (when it would end is not in the text), and the
+    // text is read as if it waited: no at_ms after it.
+    const ScenarioRead waits = read_scenario(kHead + "  - expect: { Body.boost: 1 }\n"
+                                                     "    within_ms: 300\n"
+                                                     "  - after_ms: 20\n"
+                                                     "    expect: { Body.pulse: false }\n",
+                                             catalog_without_boost());
+    CHECK(waits.scenario.has_value());
+    CHECK_EQ(waits.scenario->steps[0].skipped_ms, std::int64_t{0});
+    World w;
+    check_text(starts_of(w.run(*waits.scenario)), "5:20 ");
+    CHECK(errors_only(read_scenario(kHead + "  - expect: { Body.boost: 1 }\n"
+                                            "    within_ms: 300\n"
+                                            "  - at_ms: 400\n"
+                                            "    expect: { Body.pulse: false }\n",
+                                    catalog_without_boost())
+                          .findings)
+              .find("E 5 scenario-time: at_ms after a step that waits (line 3)") == 0);
+    // The over_ms of an absent variable is read like any other time; its to and from are not.
+    check_text(errors_only(read_scenario(kHead + "  - ramp: { Body.boost: { to: high, over_ms: soon } }\n", catalog_without_boost()).findings),
+               "E 3 value: over_ms must be a whole number (milliseconds of virtual time the ramp takes), not 'soon'\n");
+}
+
+TEST_CASE(scenario_steps_that_use_a_participant_the_variant_leaves_out_are_skipped)
+{
+    // Door is not in the variant (its enabled: false there): like an absent variable, whatever
+    // the variable's name. Spare is left out in another way (--disable): an error as before.
+    ScenarioCatalog c = catalog_without_boost();
+    c[1] = CatalogParticipant{"Door", "", SimDuration{}, {}};
+    c[1].not_in_variant = true;
+    ScenarioContext context;
+    context.variants = {"small", "medium"};
+    context.variant = "medium";
+    const ScenarioRead r = read_scenario(kHead + "  - set: { Body.level: 5 }\n"
+                                                 "  - set: { Door.level: 7 }\n"
+                                                 "  - expect: { Door.anything: 1, Door.level: 7, Body.boost: 1 }\n"
+                                                 "    hold_for_ms: 50\n"
+                                                 "  - expect: { Body.level: 5 }\n",
+                                         c, context);
+    check_text(lines(r.findings),
+               "N 4 scenario-step-skipped: the step is skipped (set Door.level): participant 'Door' is not in the variant medium "
+               "(enabled: false in that variant); the other steps run, also those that would need what this one does\n"
+               "N 5 scenario-step-skipped: the step is skipped (expect Door.anything; Door.level; Body.boost (for 50 ms)): "
+               "participant 'Door' is not in the variant medium (enabled: false in that variant); Body.boost is absent: "
+               "participant 'Body' does not have it in the variant medium (absent: true in its variables); the other steps "
+               "run, also those that would need what this one does\n");
+    CHECK(r.scenario.has_value());
+    World world;
+    const ScenarioRun run = world.run(*r.scenario);
+    CHECK(run.status == ScenarioStatus::Passed);
+    check_text(starts_of(run), "3:0 7:50 ");
+    CHECK(run.steps[1].message == "participant 'Door' is not in the variant medium (enabled: false in that variant)");
+    // The other ways of being left out do not say "variant", and do not skip.
+    check_text(lines(read_scenario(kHead + "  - set: { Spare.level: 1 }\n", c, context).findings),
+               "E 3 scenario-variable: 'Spare.level': participant 'Spare' is left out of this run (enabled: false, or --disable)\n");
+}
+
+TEST_CASE(scenario_that_checks_nothing_after_the_skips_gets_a_warning)
+{
+    ScenarioContext context;
+    context.variants = {"small", "medium", "large"};
+    context.variant = "small";
+    // Every step that checks is skipped; the set that is left checks nothing.
+    const ScenarioRead r = read_scenario(kHead + "  - set: { Body.level: 5 }\n"
+                                                 "  - expect: { Body.boost: 1 }\n"
+                                                 "  - wait_until: { Body.boost: 2 }\n"
+                                                 "    timeout_ms: 100\n",
+                                         catalog_without_boost(), context);
+    CHECK(r.scenario.has_value());
+    std::string warnings;
+    for (const Finding& f : r.findings)
+    {
+        if (f.severity == Severity::Warning)
+        {
+            warnings += lines({f});
+        }
+    }
+    check_text(warnings,
+               "W 0 scenario-nothing-checked: the scenario checks nothing in the variant small: all its 2 steps that check "
+               "(expect or wait_until, lines 4, 5) are skipped, so it passes whatever the ECUs do (the notes say why each is "
+               "skipped). If the scenario is not for this variant, list the variants it is for in the scenario (only: [medium, "
+               "large]); if it is, map what the steps look at to what the variant has (variables in the variant, "
+               "docs/simulation-config.md)\n");
+    // Without variants: no "only" to write.
+    const ScenarioRead plain = read_scenario(kHead + "  - expect: { Body.boost: 1 }\n", catalog_without_boost());
+    check_text(lines(plain.findings).substr(lines(plain.findings).find("W 0")),
+               "W 0 scenario-nothing-checked: the scenario checks nothing in this configuration: its only step that checks "
+               "(expect or wait_until, line 3) is skipped, so it passes whatever the ECUs do (the notes say why each is "
+               "skipped). If the configuration has what the steps look at under other names, map them in the participant's "
+               "variables (docs/simulation-config.md); else do not run this scenario with it\n");
+    // One step that checks is left: no warning. Nor for a scenario that never checked anything.
+    const auto warned = [&](const std::string& steps) {
+        const ScenarioRead read = read_scenario(kHead + steps, catalog_without_boost(), context);
+        return std::any_of(read.findings.begin(), read.findings.end(), [](const Finding& f) { return f.severity != Severity::Note; });
+    };
+    CHECK(!warned("  - expect: { Body.boost: 1 }\n  - expect: { Body.level: 0 }\n"));
+    CHECK(!warned("  - set: { Body.boost: 1 }\n  - set: { Body.level: 1 }\n"));
+    CHECK(!warned("  - set: { Body.boost: 1 }\n"));
 }
 
 TEST_CASE(scenario_parameter_without_quotes_in_braces_gets_a_hint)

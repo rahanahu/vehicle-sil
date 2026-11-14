@@ -98,6 +98,10 @@ struct ParticipantConfig
     /// false: it is not part of the simulation (its "enabled" key, or --disable): not checked, not
     /// started, not waited for. Its entry is read and checked like any other.
     bool enabled = true;
+    /// true: it is not enabled because the chosen variant says so ("enabled: false" in the
+    /// variant), and the command line did not take it in again (--enable). A scenario skips the
+    /// steps that use its variables; one that is left out in any other way is an error there.
+    bool left_out_by_variant = false;
     /// true: someone starts it (from a debugger, say), not vehicle_sil_launch run (its "manual"
     /// key, or --manual): run prints the command to start it with and waits for it to join. It is
     /// checked as any other.
@@ -279,8 +283,8 @@ struct ConfigRead
     /// error in the text may be why the name is not there, so it is corrected first; meanwhile the
     /// overrides of the names the file has are applied). If there is one, no override is applied.
     /// The variant's come first, and alone: no --variant for a file that defines variants
-    /// (always; the message lists them), a --variant the file does not have or for a file without
-    /// variants (only if the text has no error).
+    /// and a --variant that is none of the file's variants (always; the message lists them), a
+    /// --variant for a file without variants (only if the text has no error).
     std::vector<Finding> override_errors{};
 };
 

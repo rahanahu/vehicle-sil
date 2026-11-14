@@ -48,6 +48,7 @@ struct ScenarioStepRun
     /// the sample at which a wait_until or an expect with within_ms became true, the end of a
     /// hold_for_ms. Failed: the sample that broke a hold, the time a wait ran out, the time of the
     /// write that failed; for a failure before anything happened, its start.
+    /// Skipped: none (nothing happened at a time of the simulation).
     std::optional<SimTime> at{};
     /// From where the next step's after_ms counts (Passed, and a step whose end is known before).
     std::optional<SimTime> end{};
@@ -158,9 +159,12 @@ struct EnginePeer
 /// The first failure in this order ends the scenario; steps that had begun are Unfinished, later
 /// ones NotRun (their writes for times up to P + tick may have gone out).
 ///
-/// Skipped steps (ScenarioStep::skipped) write and compare nothing and take no time: one at T ends
-/// at T, whatever its kind, and the step after it counts its after_ms from there. They are
-/// reported (OnStep, once) when their time is known.
+/// Skipped steps (ScenarioStep::skipped) write and compare nothing. One at T ends at T +
+/// ScenarioStep::skipped_ms (the time its text says it takes; 0 for a set and for a step that
+/// waits), and the step after it counts its after_ms from there: the times of the steps that run
+/// are those of a configuration that skips nothing, except after a skipped step that waits. They
+/// are reported (OnStep, once) when their time is known, with `start` and `end` and no `at`: the
+/// scenario may be over before the simulation reaches those times.
 class ScenarioEngine
 {
 public:

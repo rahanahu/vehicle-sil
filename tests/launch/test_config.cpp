@@ -1169,6 +1169,9 @@ TEST_CASE(a_variant_is_laid_over_the_common_part)
     CHECK(engine.variables[2].name == "engine.load" && engine.variables[2].from == "load_pct");
     CHECK(engine.variable_lines == std::vector<std::size_t>({7, 23, 23}));
     CHECK(!medium.config->participants[1].enabled && medium.config->participants[2].enabled);
+    // Who left a participant out: the variant (Dashboard), not the common part (Logger in small).
+    CHECK(medium.config->participants[1].left_out_by_variant && !medium.config->participants[2].left_out_by_variant);
+    CHECK(!small.config->participants[2].enabled && !small.config->participants[2].left_out_by_variant);
     check_text(params_text(medium.config->params), "idle_rpm=650 variant 26\ngear=\"D\" configuration 16\nboost=1.5 variant 26\n");
     // The command line comes after the variant.
     EnabledOverrides both = variant("medium");
@@ -1177,6 +1180,8 @@ TEST_CASE(a_variant_is_laid_over_the_common_part)
     const ConfigRead overridden = read_config(kVariants, both);
     CHECK(overridden.override_errors.empty());
     CHECK(overridden.config->participants[1].enabled && !overridden.config->participants[2].enabled);
+    // Taken in again, it is not the variant's any more; --disable is not the variant either.
+    CHECK(!overridden.config->participants[1].left_out_by_variant && !overridden.config->participants[2].left_out_by_variant);
     // The rules that depend on enabled are those of the variant: here nothing required is left.
     const std::string lonely = "vehicle_sil_simulation: 1\nnetworks: []\nparticipants:\n  - name: A\n    command: a\n"
                                "variants:\n  with: {}\n  without: { participants: { A: { enabled: false } } }\n";
@@ -1201,6 +1206,15 @@ TEST_CASE(a_file_with_variants_needs_one_and_says_which_there_are)
     const ConfigRead broken = read_config(std::string(kExample) + "variants: 3\n", variant("medium"));
     CHECK(broken.override_errors.empty());
     CHECK_EQ(broken.findings.size(), std::size_t{1});
+    // But a name that is none of the variants the file has is said whatever else is wrong: the
+    // common part alone is no variant, and a check of it would say nothing about --variant.
+    const std::string wrong = std::string(kVariants) + "  large: { step_ms: 5 }\n";
+    check_text(lines(read_config(wrong, variant("medum")).override_errors),
+               "E 0 usage: --variant medum: the file has no variant with this name (did you mean 'medium'?); its variants are "
+               "small, medium, plain, large; the file has errors too, which a check with one of these variants reports\n");
+    const ConfigRead right = read_config(wrong, variant("medium"));
+    CHECK(right.override_errors.empty() && right.config->variant == "medium");
+    CHECK(lines(right.findings).find("unknown-key: variant 'large': unknown key 'step_ms'") != std::string::npos);
 }
 
 TEST_CASE(every_variant_is_checked_and_only_its_keys_are_read)

@@ -196,6 +196,7 @@ public:
             {
                 read_steps(stepsNode);
                 check_given_params();
+                check_something_is_checked();
             }
             else if (tree_.is_seq(stepsNode))
             {
@@ -339,14 +340,55 @@ private:
             if (k.value.source == ParamSource::CommandLine && !k.declared && !k.used)
             {
                 const std::string guess = detail::closest(k.value.name, names);
-                error("scenario-param", 0,
+                // The command line's mistake, not the file's: a usage error like --disable <no such name>.
+                out_.usage_errors.push_back(Finding{
+                    Severity::Error, "usage",
                       "--param " + k.value.name + "=" + k.value.text + ": the scenario has no parameter " + k.value.name +
                           (guess.empty() ? "" : " (did you mean " + guess + "?)") + ": " +
                           (names.empty() ? std::string("it uses none (a step uses one as ${name})")
                                          : "its parameters are " + join(names)) +
-                          "; remove the option or correct the name");
+                          "; remove the option or correct the name",
+                    0, "", ""});
             }
         }
+    }
+
+    /// A scenario whose steps that check (expect, wait_until) are all skipped passes whatever the
+    /// ECUs do: a warning, so that --strict does not take it for a pass. One that never had such
+    /// a step (only set and ramp) is what its author wrote, and is left alone.
+    void check_something_is_checked()
+    {
+        if (checks_.empty() || skipped_checks_.size() != checks_.size())
+        {
+            return;
+        }
+        std::vector<std::string> lines;
+        for (const std::size_t line : skipped_checks_)
+        {
+            lines.push_back(std::to_string(line));
+        }
+        std::vector<std::string> others;
+        for (const std::string& name : context_.variants)
+        {
+            if (name != context_.variant)
+            {
+                others.push_back(name);
+            }
+        }
+        const bool one = lines.size() == 1;
+        const std::string where = context_.variant.empty() ? "in this configuration" : "in the variant " + context_.variant;
+        add(Severity::Warning, "scenario-nothing-checked", 0,
+            "the scenario checks nothing " + where + ": " +
+                (one ? "its only step that checks (expect or wait_until, line " + lines.front() + ") is skipped"
+                     : "all its " + std::to_string(lines.size()) + " steps that check (expect or wait_until, lines " + join(lines) + ") are skipped") +
+                ", so it passes whatever the ECUs do (the notes say why each is skipped). " +
+                (context_.variant.empty()
+                     ? std::string("If the configuration has what the steps look at under other names, map them in the participant's variables "
+                                   "(docs/simulation-config.md); else do not run this scenario with it")
+                     : "If the scenario is not for this variant, list the variants it is for in the scenario (only: [" +
+                           (others.empty() ? std::string("<variant>") : join(others)) +
+                           "]); if it is, map what the steps look at to what the variant has (variables in the variant, "
+                           "docs/simulation-config.md)"));
     }
 
     /// The parameter whose value stands at `node`, or null.
@@ -516,6 +558,16 @@ private:
                   "'" + text + "': the configuration has no participant '" + participant + "' (the name ends at the first '.'): " +
                       (guess.empty() ? "its participants are " + (names.empty() ? std::string("none") : join(names))
                                      : "did you mean '" + guess + "." + name + "'?"));
+            return std::nullopt;
+        }
+        if (p->not_in_variant)
+        {
+            // The variant leaves the participant out: as for an absent variable, the step is
+            // skipped (read_step()). What the variable would be is not known, so any name passes.
+            bad_variables_.erase(text);
+            absent_variables_.emplace(text, participant);
+            left_out_.insert(participant);
+            absent_.push_back(text);
             return std::nullopt;
         }
         if (!p->unusable.empty())
@@ -888,10 +940,20 @@ private:
             break;
         }
         step.text = step_text(step);
+        if (step.kind == StepKind::Expect || step.kind == StepKind::WaitUntil)
+        {
+            checks_.push_back(line);
+        }
         if (!absent_.empty())
         {
+            // It takes the time its text says (length), as in a configuration that has the
+            // variables: the times of the steps after it do not depend on what is skipped.
             skip(step);
-            length = 0; // it takes no time
+            step.skipped_ms = length; // 0 for a step that waits: when it would end is not in the text
+            if (step.kind == StepKind::Expect || step.kind == StepKind::WaitUntil)
+            {
+                skipped_checks_.push_back(line);
+            }
         }
         // The latest this step can end: the times must stay within what a time can hold.
         latest_ms_ = (time ? *time : latest_ms_ + step.after_ms) + length + step.within_ms.value_or(0);
@@ -924,20 +986,39 @@ private:
     {
         std::vector<std::string> names;
         std::vector<std::string> owners;
+        std::vector<std::string> leftOut; // the participants the variant leaves out, once each
         for (const std::string& name : absent_)
         {
-            if (std::find(names.begin(), names.end(), name) == names.end())
+            const std::string& owner = absent_variables_.at(name);
+            if (left_out_.count(owner) > 0)
+            {
+                if (std::find(leftOut.begin(), leftOut.end(), "'" + owner + "'") == leftOut.end())
+                {
+                    leftOut.push_back("'" + owner + "'");
+                }
+            }
+            else if (std::find(names.begin(), names.end(), name) == names.end())
             {
                 names.push_back(name);
-                owners.push_back("'" + absent_variables_.at(name) + "'");
+                owners.push_back("'" + owner + "'");
             }
         }
         owners.erase(std::unique(owners.begin(), owners.end()), owners.end());
         const bool one = names.size() == 1;
-        step.skipped = join(names) + (one ? " is absent: participant " : " are absent: ") +
-                       (one ? owners.front() + " does not have it" : "the participants " + join(owners) + " do not have them") +
-                       (context_.variant.empty() ? " in this configuration" : " in the variant " + context_.variant) +
-                       " (absent: true in " + (one ? "its" : "their") + " variables)";
+        step.skipped.clear();
+        if (!leftOut.empty())
+        {
+            // Not "take it in (--enable)": that would run a simulation that is none of the variants.
+            step.skipped = (leftOut.size() == 1 ? "participant " + leftOut.front() + " is" : "the participants " + join(leftOut) + " are") +
+                           " not in the variant " + context_.variant + " (enabled: false in that variant)";
+        }
+        if (!names.empty())
+        {
+            step.skipped += (step.skipped.empty() ? "" : "; ") + join(names) + (one ? " is absent: participant " : " are absent: ") +
+                            (one ? owners.front() + " does not have it" : "the participants " + join(owners) + " do not have them") +
+                            (context_.variant.empty() ? " in this configuration" : " in the variant " + context_.variant) +
+                            " (absent: true in " + (one ? "its" : "their") + " variables)";
+        }
         step.writes.clear();
         step.ramps.clear();
         step.conditions.clear();
@@ -974,7 +1055,26 @@ private:
         }
     }
 
-    /// @returns the longest over_ms.
+    /// The over_ms of the ramp of a variable that is absent (`node`: its entry in "ramp"), or 0 if
+    /// it has none that can be read. Only this is read of it: it is a time, which needs no type;
+    /// "to" and "from" need the variable's.
+    std::int64_t skipped_over_ms(ryml::id_type node)
+    {
+        if (!tree_.is_map(node))
+        {
+            return 0;
+        }
+        for (auto part = tree_.first_child(node); part != ryml::NONE; part = tree_.next_sibling(part))
+        {
+            if (detail::to_string(tree_.key(part)) == "over_ms")
+            {
+                return millis(part, "over_ms", 1, "milliseconds of virtual time the ramp takes").value_or(0);
+            }
+        }
+        return 0;
+    }
+
+    /// @returns the longest over_ms, also of the variables that are absent.
     std::int64_t read_ramp(ryml::id_type node, ScenarioStep& step, const std::optional<std::int64_t>& time)
     {
         std::int64_t longest = 0;
@@ -992,9 +1092,14 @@ private:
             {
                 continue;
             }
+            const std::size_t absentBefore = absent_.size();
             const auto v = variable(child);
             if (!v)
             {
+                if (absent_.size() > absentBefore)
+                {
+                    longest = std::max(longest, skipped_over_ms(child));
+                }
                 continue;
             }
             const std::size_t line = doc_.line(child);
@@ -1283,6 +1388,9 @@ private:
     std::set<std::string> undefined_;                   ///< the parameters without a value, said once
     std::map<std::string, std::string> absent_variables_; ///< "<participant>.<name>" that is absent: its participant
     std::vector<std::string> absent_;                   ///< those the step being read uses
+    std::set<std::string> left_out_; ///< the participants of absent_variables_ that the variant leaves out
+    std::vector<std::size_t> checks_;         ///< the lines of the steps that check (expect, wait_until)
+    std::vector<std::size_t> skipped_checks_; ///< those of them that are skipped
     std::vector<const control::VariableInfo*> infos_; ///< of scenario_.variables, in the catalog
     std::vector<const control::MappedSchema*> maps_;  ///< of scenario_.variables: its participant's map, or nullptr
     std::map<std::string, std::size_t> variable_index_;
@@ -1367,7 +1475,11 @@ ScenarioCatalog scenario_catalog(const CheckReport& check)
         CatalogParticipant c;
         c.name = p.name;
         const ParticipantResult* result = i < check.participants.size() ? &check.participants[i] : nullptr;
-        if (!p.enabled)
+        if (!p.enabled && p.left_out_by_variant && !check.config->variant.empty())
+        {
+            c.not_in_variant = true;
+        }
+        else if (!p.enabled)
         {
             c.unusable = "is left out of this run (enabled: false, or --disable): take it in (--enable " + p.name +
                          "), or run a scenario that does not use it";

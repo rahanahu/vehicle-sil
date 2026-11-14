@@ -68,7 +68,8 @@
 | `variable-map-absent` | 誤り | `absent: true` と書いた名前の変数が、実行ファイルにある |
 | `variable-map-not-checked` | 注記 | `describe: false` の participant に `variables` がある（実行の前には比べられない。合わない対応は、実行の所見 `variable-map-not-applied` になる） |
 | `variant-participant` | 誤り | 機種（`variants`）の `participants` に、構成の `participants` にない名前がある |
-| `usage` | 誤り | 引数の誤り（`--json` のときの JSON だけ）。機種を書いた構成に `--variant` がない、ない機種の名前、も含みます |
+| `scenario-nothing-checked` | 警告 | `--scenario` のシナリオの確かめる手順（`expect`、`wait_until`）が、この構成（機種）では全部飛ぶ。シナリオは何も確かめずに通る（[scenario.md](scenario.md) の「機種とパラメーター」。シナリオのほかの `code` も scenario.md にあります） |
+| `usage` | 誤り | 引数の誤り（`--json` のときの JSON だけ）。機種を書いた構成に `--variant` がない、ない機種の名前、シナリオにない名前の `--param`、も含みます |
 | `internal` | 誤り | `vehicle_sil_launch` 自身の想定外の失敗（`--json` のときの JSON だけ） |
 
 - アドレスは、ノードを足したときに求めたアドレスです（[ecu-executable.md](ecu-executable.md) の `nodes`）。254（任意アドレスの範囲から空いているものを取る）は重なりとみなしません。同じアドレスを求めるノードについては、vehicle-sil の J1939 スタックの Address Claim で起きることを判定します。

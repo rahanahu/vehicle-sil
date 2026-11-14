@@ -193,7 +193,8 @@ struct CheckReport
     bool strict = false;
     /// The command line was wrong (format_json(): result "usage"; the findings say why; `file` stays
     /// as given). check_file() sets it for overrides that do not fit (override_conflicts(),
-    /// ConfigRead::override_errors); `config` is then empty.
+    /// ConfigRead::override_errors, and the scenario's ScenarioRead::usage_errors); `config` is
+    /// then empty.
     bool usage = false;
 
     [[nodiscard]] std::size_t errors() const;
