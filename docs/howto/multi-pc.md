@@ -10,7 +10,7 @@
 | 必要なもの | 条件 |
 |---|---|
 | PC | 同じ閉じたネットワークにある 2 台です。 |
-| ビルド | 2 台とも、[README](../../README.md#リポジトリから動かす) の「リポジトリから動かす」のとおりにビルドしてあります。 |
+| ビルド | 2 台とも、[README](../../README.md#リポジトリからビルドする) の「リポジトリからビルドする」のとおりにビルドしてあります。 |
 | ランチャーを動かす PC のアドレス | この文書では `192.0.2.10` と書きます。自分の PC のアドレスに読み替えます。 |
 
 2 台とも、リポジトリのルートで次の 2 行を実行し、これ以降のコマンドをそのディレクトリ（`simulation.yaml` のある所）で実行します。
@@ -280,7 +280,7 @@ dashboard/vehicle_sil_dashboard_ecu --name Dashboard --registry-uri silkit://192
 
 | もの | Linux | Windows |
 |---|---|---|
-| ビルドとシェル | README の「リポジトリから動かす」 | [build.md](../build.md) の「Windows（MSYS2 UCRT64）」 |
+| ビルドとシェル | README の「リポジトリからビルドする」 | [build.md](../build.md) の「Windows（MSYS2 UCRT64）」 |
 | 実行ファイルの名前 | `vehicle_sil_launch`、`vehicle_sil_dashboard_ecu` | 末尾に `.exe` が付きます。 |
 | ランチャーを動かす PC のファイアウォール | firewalld などでは確認していません。 | `vehicle_sil_launch.exe` を 1 回許可します。 |
 | `openssl` | あります。 | MSYS2 と Git for Windows にあります。 |
@@ -420,4 +420,4 @@ GUI サーバーが待ち受けるアドレスと受け付けるリクエスト�
 
 - `manual` の ECU の待ち方と止め方のルールを調べる → [simulation-config.md](../simulation-config.md) の「participant を自分で起動する」
 - どのアドレスで待ち受けるかのルールと、`VEHICLE_SIL_LISTEN_ON_NETWORK` を調べる → [simulation-run.md](../simulation-run.md) の「待ち受けるアドレス」
-- 設定ファイル、`check`、`run` の使い方に戻る → [ECU をまとめて動かす](integrate-ecus.md)
+- 設定ファイル、`check`、`run` の使い方に戻る → [複数の ECU をつないで動かす](integrate-ecus.md)

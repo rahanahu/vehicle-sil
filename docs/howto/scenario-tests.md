@@ -10,7 +10,7 @@ ECU の変数に値を設定し、結果を確認するテストを、YAML の�
 
 | 必要なもの | 条件 |
 |---|---|
-| ビルド | README の「[リポジトリから動かす](../../README.md#リポジトリから動かす)」のとおりに、`linux-gcc-control` でビルドしてあること。 |
+| ビルド | README の「[リポジトリからビルドする](../../README.md#リポジトリからビルドする)」のとおりに、`linux-gcc-control` でビルドしてあること。 |
 | 例の ECU | [examples/ecu_main](../../examples/ecu_main) の Engine と Dashboard を使います。ビルドすると、設定ファイルと一緒に `build/linux-gcc-control/examples/ecu_main/` に置かれます。 |
 
 リポジトリのルートで次の 2 行を実行します。これ以降のコマンドは、すべてこのディレクトリ（`simulation.yaml` のある所）で実行します。
@@ -726,4 +726,4 @@ line  step                                                             result  a
 
 - シナリオの形式、時刻、結果、指摘のコードを調べる → [scenario.md](../scenario.md)
 - 値を変えながら対話的に確認する、時間を止めて進める → [信号を外から操作する](operate-signals.md)
-- ほかの人が作った ECU と一緒に動かす → [ECU をまとめて動かす](integrate-ecus.md)
+- ほかの人が作った ECU と一緒に動かす → [複数の ECU をつないで動かす](integrate-ecus.md)

@@ -134,7 +134,7 @@ participants:
 
 | 症状 | 原因 | 直し方 |
 |---|---|---|
-| `get_tools.py` が `may not be published yet` と表示して止まる | そのバージョンが、まだリリースされていません。 | README の「[リポジトリから動かす](../../README.md#リポジトリから動かす)」でビルドした `vehicle_sil_launch` を使います。 |
+| `get_tools.py` が `may not be published yet` と表示して止まる | そのバージョンが、まだリリースされていません。 | README の「[リポジトリからビルドする](../../README.md#リポジトリからビルドする)」でビルドした `vehicle_sil_launch` を使います。 |
 | `vehicle_sil_launch` が見つからない | 新しいシェルで、`PATH` への追加を実行していません。 | `python3 get_tools.py` をもう一度実行し、表示された `export` の行を実行します。 |
 | `check` が、末尾に `[executable]` の付いたエラーを表示する | ECU の実行ファイルが `bin/` にありません。 | `cmake --build --preset linux` を実行します。 |
 
@@ -571,6 +571,6 @@ passed: 0 errors, 0 warnings, 1 note
 
 ## 次に読むもの
 
-- ほかの人が作った ECU と一緒に動かす → [ECU をまとめて動かす](integrate-ecus.md)
+- ほかの人が作った ECU と一緒に動かす → [複数の ECU をつないで動かす](integrate-ecus.md)
 - 値の設定と確認を、自動のテストにする → [シナリオでテストを書く](scenario-tests.md)
 - 動いている途中で止めて書き込む、時間を進める → [信号を外から操作する](operate-signals.md)

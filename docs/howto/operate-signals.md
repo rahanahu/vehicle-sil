@@ -97,7 +97,7 @@ python examples/launch_control/write_before_start.py \
 - 進める命令の後は `c.sim.wait_paused()` で止まるのを待ちます。時間の状態の購読（`watch(time=True)`）は間引かれるので、短い一時停止は見えないことがあります。
 - ステップ送りは一時停止している間だけです。時刻は controller の刻みに切り上がります。今はできない命令は `ControlError`（`FAILED_PRECONDITION`）、引数の誤りは `INVALID_ARGUMENT` です。
 - 同じ命令は、ランチャーの標準入力（`--stdin-commands`）からも送れます。2 つの口の順序の規則は [control-api.md](../control-api.md) の「2 つの口の命令」です。
-- 止まるのは仮想時間で動く ECU だけです。速さと遅れの見方は [ECU をまとめて動かす](integrate-ecus.md) の「等速で動かす（`--speed`）と遅れの見方」です。
+- 止まるのは仮想時間で動く ECU だけです。速さと遅れの見方は [複数の ECU をつないで動かす](integrate-ecus.md) の「等速で動かす（`--speed`）と遅れの見方」です。
 
 ## 書き込みの結果を読む
 

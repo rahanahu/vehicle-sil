@@ -1,4 +1,4 @@
-# ECU をまとめて動かす
+# 複数の ECU をつないで動かす
 
 何人かが別々に作った ECU の実行ファイルを、1 つの設定ファイルに並べて、1 つのシミュレーションとして動かす手順です。設定ファイルと ECU の不整合を `check` で見つけ、設定ファイルで直せないものは ECU を作った人に依頼し、`run` で実行して、ECU の間で通信できたことを確認します。ECU のソースコードは読みません。
 
@@ -8,7 +8,7 @@
 
 | 必要なもの | 条件 |
 |---|---|
-| ビルド | [README](../../README.md) の「リポジトリから動かす」のとおりに、リポジトリをビルドしてあります。 |
+| ビルド | [README](../../README.md) の「リポジトリからビルドする」のとおりに、リポジトリをビルドしてあります。 |
 | ECU の実行ファイル | `ecu_main()` で作ったものです（作り方は [最初の ECU を作る](first-ecu.md)）。 |
 
 コマンドは、すべて次のディレクトリで実行します。リポジトリのルートで、次の 2 行を実行してください。`linux-gcc-control` は README のプリセットで、ほかのプリセットでビルドしたときは、その名前に読み替えます。
@@ -458,7 +458,7 @@ error: scenarios/engine_speed.yaml:8: expect Dashboard.dashboard.engine_speed ge
 failed: 1 error, 2 warnings, 0 notes
 ```
 
-シナリオの書き方は、[シナリオで試験を書く](scenario-tests.md) にあります。
+シナリオの書き方は、[シナリオでテストを書く](scenario-tests.md) にあります。
 
 ### GUI か Control API で確認する
 
@@ -664,6 +664,6 @@ time: speed 4, ran at <actual_speed> times real time; <late_steps> of 200 paced 
 
 ## 次に読むもの
 
-- 値の設定と確認を、自動のテストにする → [シナリオで試験を書く](scenario-tests.md)
+- 値の設定と確認を、自動のテストにする → [シナリオでテストを書く](scenario-tests.md)
 - 実行中に変数を読み書きする、時間を止めて進める → [信号を外から操作する](operate-signals.md)
 - ほかの PC で動く ECU を参加させる → [複数の PC で動かす](multi-pc.md)

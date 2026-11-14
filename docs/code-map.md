@@ -423,7 +423,7 @@ registry につながらないときの文（`registry_failure_message()`）は�
   手引きの印は `<!-- examples/scenario_tests/... -->`、`<!-- examples/ecu_main/scenarios/... -->`、`<!-- scenario guide: ... -->` です（`<!-- vehicle_sil_launch run ... -->` の 1 つは scenario.md の同じブロックのコピーで、`launch_run.scenario` も照合します）
 - `ctest -R`: `^launch_run\.scenario_guide`
 
-### `examples/integrate_ecus`（ガイド「ECU をまとめて動かす」の例）
+### `examples/integrate_ecus`（ガイド「複数の ECU をつないで動かす」の例）
 
 - 中身: `dashboard_v1/main.cpp`（`examples/ecu_main` の表示の ECU と同じコードで、ネットワーク名だけが `VehicleCAN`）、`simulation.yaml`（エンジンとこの ECU。`check` が `unknown-network` を報告する）、`simulation.two-buses.yaml`（`networks` に `VehicleCAN` を追加したもの）、`simulation.fixed.yaml`（表示の ECU を `examples/ecu_main` のものに差し替えたもの）、`scenarios/engine_speed.yaml`
 - ビルド: `VEHICLE_SIL_BUILD_EXAMPLES` で、`build/<preset>/examples/integrate_ecus/` に実行ファイルと YAML を置きます。エンジンと作り直した表示の ECU は、隣の `examples/ecu_main/` のものを相対パスで使います
