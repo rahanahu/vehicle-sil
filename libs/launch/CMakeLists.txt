@@ -11,6 +11,7 @@ endif()
 add_library(vehicle_sil_launch_lib STATIC
   src/check.cpp
   src/check_format.cpp
+  src/check_networks.cpp
   src/check_rules.cpp
   src/config.cpp
   src/describe_read.cpp

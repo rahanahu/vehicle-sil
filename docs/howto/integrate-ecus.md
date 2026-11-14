@@ -116,7 +116,7 @@ passed: 0 errors, 1 warning, 1 note
 | `version-mismatch`、`control-link-version` | どちらか | 同じ版の vehicle-sil でビルドし直す |
 | `single-participant` | まとめる人 | 外した ECU か、まだない ECU のせいなら、そのままでよい。`--strict` では失敗になる |
 
-ネットワークの名前の食い違いは、構成ファイルでは直せません。構成ファイルには、ECU が使う名前を別の名前に付け替える書き方がないからです。2 つの ECU が 1 つのバスを別の名前で呼んでいるとき（`unknown-network` や `single-participant` の文が、同じ種類のほかのネットワークを挙げているとき）は、`networks` に名前を足しても 2 つのバスに分かれるだけです。取り決めた名前に合わないほうの ECU を書いた人が、名前を直して実行ファイルを作り直します。
+ネットワークの名前の食い違いは、構成ファイルで合わせられます。2 つの ECU が 1 つのバスを別の名前で呼んでいるとき（`unknown-network` や `single-participant` の文が、同じ種類のほかのネットワークを挙げているとき）は、`networks` に名前を足しても 2 つのバスに分かれるだけです。`networks` の名前と違う名前を使っている participant に `network_names` を書きます（所見の文に、書く行が出ます。[simulation-config.md](../simulation-config.md) の「ネットワークの名前を合わせる（`network_names`）」）。実行ファイルは作り直しません。
 
 ## 動かす（`run`）
 

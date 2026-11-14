@@ -65,10 +65,13 @@ std::string count_text(std::size_t n, const char* one, const char* many)
     return std::to_string(n) + " " + (n == 1 ? one : many);
 }
 
-/// A network of an ECU as a table cell: "J1939_CAN (j1939 0x00 0x80)", "Body (lin_master)".
-std::string network_cell(const NetworkDescription& network)
+/// A network of an ECU as a table cell: "J1939_CAN (j1939 0x00 0x80)", "Body (lin_master)"; one
+/// that the entry renames with both names, the simulation's first: "VehicleCAN <- J1939_CAN (j1939 0x00)".
+std::string network_cell(const SeenNetwork& seen)
 {
-    std::string out = network.name + " (" + to_string(network.use);
+    const NetworkDescription& network = seen.network;
+    std::string out = network.name + (seen.renamed() ? " <- " + seen.executable_name : std::string{}) + " (" +
+                      to_string(network.use);
     if (network.use == NetworkUse::J1939)
     {
         if (network.nodes.empty())
@@ -91,11 +94,14 @@ std::string network_cell(const NetworkDescription& network)
 /// count; any kind for a network whose kind could not be read).
 bool is_on(const ParticipantConfig& participant, const ParticipantResult& result, const NetworkConfig& network)
 {
-    return participant.enabled && result.status == ParticipantStatus::Described && result.ecu &&
-           std::any_of(result.ecu->description.networks.begin(), result.ecu->description.networks.end(),
-                       [&](const NetworkDescription& n) {
-                           return n.name == network.name && (!network.valid || n.kind() == network.kind);
-                       });
+    if (!participant.enabled || result.status != ParticipantStatus::Described || !result.ecu)
+    {
+        return false;
+    }
+    const std::vector<SeenNetwork> seen = seen_networks(participant, *result.ecu);
+    return std::any_of(seen.begin(), seen.end(), [&](const SeenNetwork& n) {
+        return n.network.name == network.name && (!network.valid || n.network.kind() == network.kind);
+    });
 }
 
 /// " (1 skipped, 1 expect not checked)", or "" if the run skips nothing.
@@ -170,7 +176,7 @@ std::string detail::check_text_body(const CheckReport& report)
                 const EcuDescription& ecu = result.ecu->description;
                 row.push_back(ecu.step ? step_text(*ecu.step) : "real time");
                 std::string cells;
-                for (const auto& network : ecu.networks)
+                for (const SeenNetwork& network : seen_networks(p, *result.ecu))
                 {
                     cells += (cells.empty() ? "" : ", ") + network_cell(network);
                 }
@@ -464,27 +470,7 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
                 optional_text("vehicle_sil", result.ecu->vehicle_sil_version);
                 optional_text("name", ecu.name);
                 optional_integer("step_ns", ecu.step ? std::optional<std::int64_t>(ecu.step->count()) : std::nullopt);
-                w.begin_array("networks");
-                for (const auto& network : ecu.networks)
-                {
-                    w.begin_object();
-                    w.string("name", network.name);
-                    w.string("kind", to_string(network.kind()));
-                    w.string("use", to_string(network.use));
-                    w.begin_array("nodes");
-                    for (const auto& node : network.nodes)
-                    {
-                        w.begin_object();
-                        w.integer("address", node.address);
-                        optional_text("j1939_name", node.name ? vehicle_sil::detail::hex64(node.name->value()) : "");
-                        w.boolean("arbitrary_address_capable", node.arbitrary_address_capable());
-                        w.end_object();
-                    }
-                    w.end_array();
-                    optional_text("mac", network.mac ? network.mac->to_string() : "");
-                    w.end_object();
-                }
-                w.end_array();
+                detail::write_reported_networks(w, ecu);
                 w.end_object();
             }
             if (result.ecu && result.ecu->variables_reported)
@@ -534,6 +520,21 @@ void detail::write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_vi
                     {
                         w.null("map");
                     }
+                    w.end_object();
+                }
+                w.end_array();
+            }
+            // Only for an entry with "network_names": the lines as written (also one that renames
+            // nothing), the simulation's name and the executable's.
+            if (!p.network_names.empty())
+            {
+                w.begin_array("network_map");
+                for (const NetworkName& entry : p.network_names)
+                {
+                    w.begin_object();
+                    w.string("name", entry.name);
+                    w.integer("line", static_cast<std::int64_t>(entry.line));
+                    w.string("from", entry.from);
                     w.end_object();
                 }
                 w.end_array();

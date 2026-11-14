@@ -129,6 +129,28 @@ std::string command_text(const std::filesystem::path& executable, const std::vec
 
 } // namespace
 
+std::vector<std::string> participant_arguments(const SimulationConfig& config, const ParticipantConfig& participant,
+                                               const std::string& registry_uri)
+{
+    const std::vector<std::string> rest(participant.command.begin() + (participant.command.empty() ? 0 : 1),
+                                        participant.command.end());
+    std::vector<std::string> arguments;
+    if (participant.describe)
+    {
+        arguments = expand_placeholders(rest, "", "");
+        arguments.insert(arguments.end(), {"--name", participant.name, "--registry-uri", registry_uri, "--start-timeout-ms",
+                                           std::to_string(ecu_start_timeout_ms(config))});
+    }
+    else
+    {
+        arguments = expand_placeholders(rest, registry_uri, participant.name);
+    }
+    // After the placeholders are replaced: a network's name with "{name}" in it stays as it is.
+    const std::vector<std::string> renames = map_network_arguments(participant);
+    arguments.insert(arguments.end(), renames.begin(), renames.end());
+    return arguments;
+}
+
 RunParticipants::RunParticipants(const RunContext& ctx, RunOutput& out, RunOutcome& outcome, std::filesystem::path base) :
   ctx_(ctx), out_(out), outcome_(outcome), base_(std::move(base))
 {
@@ -154,18 +176,8 @@ bool RunParticipants::start_children(const std::string& uri)
             out_.say("not starting " + p.name + ": disabled");
             continue;
         }
-        const std::vector<std::string> rest(p.command.begin() + 1, p.command.end());
-        std::vector<std::string> arguments;
-        if (p.describe)
-        {
-            arguments = expand_placeholders(rest, "", "");
-            arguments.insert(arguments.end(), {"--name", p.name, "--registry-uri", uri, "--start-timeout-ms",
-                                               std::to_string(detail::ecu_start_timeout_ms(ctx_.config))});
-        }
-        else
-        {
-            arguments = expand_placeholders(rest, uri, p.name);
-        }
+        // The one list for the process, the command to start it by hand and the events.
+        const std::vector<std::string> arguments = participant_arguments(ctx_.config, p, uri);
         const std::filesystem::path executable = without_dots(std::filesystem::absolute(ctx_.check.participants[i].executable));
         if (p.manual)
         {

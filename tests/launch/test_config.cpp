@@ -152,9 +152,9 @@ TEST_CASE(unknown_keys_are_errors_with_a_suggestion)
                "networks, participants, variants, params)\n");
     check_text(read(with_participants("  - name: A\n    command: a\n    requird: false\n    Step_ms: 5\n")),
                "E 6 unknown-key: participant 'A': unknown key 'requird': did you mean 'required'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual, role, variables)\n"
+               "command, step_ms, describe, required, enabled, manual, role, variables, network_names)\n"
                "E 7 unknown-key: participant 'A': unknown key 'Step_ms': did you mean 'step_ms'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual, role, variables)\n");
+               "command, step_ms, describe, required, enabled, manual, role, variables, network_names)\n");
     check_text(read("vehicle_sil_simulation: 1\nnetworks:\n  - name: N\n    kind: can\n    bitrate: 250000\n"
                     "participants:\n  - name: A\n    command: a\n"),
                "E 5 unknown-key: network 'N': unknown key 'bitrate': remove it, or use one of the keys here (name, kind)\n");
@@ -473,7 +473,7 @@ TEST_CASE(many_errors_are_reported_at_once_in_the_order_of_the_file)
                "ecu_main executable --local itself: remove it (or set describe: false for an executable not made with "
                "ecu_main)\n"
                "E 11 unknown-key: participant 'A': unknown key 'commands': did you mean 'command'? (the keys here: name, "
-               "command, step_ms, describe, required, enabled, manual, role, variables)\n"
+               "command, step_ms, describe, required, enabled, manual, role, variables, network_names)\n"
                "E 10 missing-key: participant 'A': no command: add command: [<path of the executable>]\n"
                "E 10 duplicate-name: participant 'A' is listed twice (first at line 7); give each participant its own name "
                "(for a second copy of an ECU, e.g. A_2)\n");
@@ -838,7 +838,7 @@ TEST_CASE(a_disabled_participant_is_checked_like_any_other)
                                       "    bitrate: 1\n"
                                       "  - name: A\n    command: a\n    enabled: false\n")),
                "E 10 unknown-key: participant 'B': unknown key 'bitrate': remove it, or use one of the keys here (name, "
-               "command, step_ms, describe, required, enabled, manual, role, variables)\n"
+               "command, step_ms, describe, required, enabled, manual, role, variables, network_names)\n"
                "E 7 launcher-argument: participant 'B': the command has '--local', but vehicle_sil_launch gives an ecu_main "
                "executable --local itself: remove it (or set describe: false for an executable not made with ecu_main)\n"
                "E 9 not-required-ecu: participant 'B': required: false is only for executables with describe: false: an "
@@ -975,7 +975,7 @@ TEST_CASE(a_participant_has_a_role_that_only_the_check_reads)
                                  chosen)
                          .findings),
                "E 9 unknown-key: variant 'a': participant 'Spy': unknown key 'role': remove it, or use one of the keys here "
-               "(command, variables, enabled)\n");
+               "(command, variables, network_names, enabled)\n");
 }
 
 TEST_CASE(a_participant_started_by_hand_from_the_file_or_the_command_line)
@@ -1301,9 +1301,9 @@ TEST_CASE(every_variant_is_checked_and_only_its_keys_are_read)
                "participant of this variant only, list it there with enabled: false and write enabled: true here); the "
                "participants are Engine, Tool\n"
                "E 18 unknown-key: variant 'd': participant 'Engine': unknown key 'step_ms': remove it, or use one of the keys "
-               "here (command, variables, enabled)\n"
+               "here (command, variables, network_names, enabled)\n"
                "E 18 unknown-key: variant 'd': participant 'Engine': unknown key 'required': remove it, or use one of the keys "
-               "here (command, variables, enabled)\n"
+               "here (command, variables, network_names, enabled)\n"
                "E 18 value: variant 'd': participant 'Engine': enabled must be true or false, not 'maybe'\n"
                "E 18 launcher-argument: variant 'd': participant 'Engine': the command has '--name', but vehicle_sil_launch "
                "gives an ecu_main executable --name itself: remove it (or set describe: false for an executable not made with "
@@ -1329,4 +1329,298 @@ TEST_CASE(every_variant_is_checked_and_only_its_keys_are_read)
     check_text(lines(read_config(head + "params: { a: 1, a: 2, b: }\n").findings),
                "E 10 duplicate-key: params: 'a' appears twice (first at line 10); keep one of them\n"
                "E 10 value: params: b must be one value (a number, true or false, or a text), not empty\n");
+}
+
+// --- network_names ---------------------------------------------------------------------------
+
+namespace {
+
+/// A file with the networks VehicleCAN, BodyCAN (can) and Body (lin), and `participants`.
+std::string with_networks(const std::string& participants, const std::string& more = {})
+{
+    return "vehicle_sil_simulation: 1\n"                    // 1
+           "networks:\n"                                    // 2
+           "  - { name: VehicleCAN, kind: can }\n"          // 3
+           "  - { name: BodyCAN, kind: can }\n"             // 4
+           "  - { name: Body, kind: lin }\n"                // 5
+           "participants:\n" +                              // 6
+           participants + more;
+}
+
+std::string names_text(const ParticipantConfig& p)
+{
+    std::string out;
+    for (const NetworkName& n : p.network_names)
+    {
+        out += n.name + "<-" + n.from + "@" + std::to_string(n.line) + " ";
+    }
+    return out;
+}
+
+std::string words(const std::vector<std::string>& list)
+{
+    std::string out;
+    for (const std::string& word : list)
+    {
+        out += "[" + word + "]";
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE(network_names_say_what_the_executable_calls_a_network_of_the_file)
+{
+    // The simulation's name is the key, the executable's the value; the lines stay in the file's
+    // order, and run gives them to the executable in that order and in that direction.
+    const ConfigRead r = read_config(with_networks("  - name: Engine\n"            // 7
+                                                   "    command: [engine]\n"       // 8
+                                                   "    network_names:\n"          // 9
+                                                   "      VehicleCAN: J1939_CAN\n" // 10
+                                                   "      Body: Body\n"            // 11
+                                                   "      BodyCAN: \"CAN 2\"\n"    // 12
+                                                   "  - name: Dashboard\n"
+                                                   "    command: [dashboard]\n"));
+    check_text(lines(r.findings), "");
+    const ParticipantConfig& engine = r.config->participants[0];
+    CHECK(engine.valid);
+    check_text(names_text(engine), "VehicleCAN<-J1939_CAN@10 Body<-Body@11 BodyCAN<-CAN 2@12 ");
+    // A line whose two names are the same stands for no line.
+    CHECK_EQ(renamed_networks(engine).size(), std::size_t{2});
+    check_text(words(map_network_arguments(engine)), "[--map-network][VehicleCAN=J1939_CAN][--map-network][BodyCAN=CAN 2]");
+    CHECK(r.config->participants[1].network_names.empty());
+    CHECK(map_network_arguments(r.config->participants[1]).empty());
+    // Two participants may swap two names, and one participant may too.
+    check_text(read(with_networks("  - name: A\n    command: a\n    network_names: { VehicleCAN: BodyCAN, BodyCAN: VehicleCAN }\n")), "");
+}
+
+TEST_CASE(network_names_of_the_wrong_form_are_errors_and_the_participant_is_not_checked)
+{
+    const ConfigRead r = read_config(with_networks("  - name: A\n"                      // 7
+                                                   "    command: a\n"                   // 8
+                                                   "    network_names: [VehicleCAN]\n"  // 9
+                                                   "  - name: B\n"                      // 10
+                                                   "    command: b\n"                   // 11
+                                                   "    network_names:\n"               // 12
+                                                   "      VehicleCAN: [J1939_CAN]\n"    // 13
+                                                   "      BodyCAN:\n"                   // 14
+                                                   "      Body: LIN\n"                  // 15
+                                                   "      Body: LIN2\n"                 // 16
+                                                   "      \"a=b\": X\n"                 // 17
+                                                   "      \"-v\": \"-v\"\n"             // 18
+                                                   "  - name: C\n"
+                                                   "    command: c\n"));
+    check_text(lines(r.findings),
+               "E 9 value: participant 'A': network_names must be a mapping of the simulation's network names (the names "
+               "in networks) to the names the executable's code gives them (network_names: { VehicleCAN: J1939_CAN }), "
+               "not a list\n"
+               "E 13 value: participant 'B': network_names: 'VehicleCAN' must have the name the executable's code gives "
+               "this network (a text, as in VehicleCAN: J1939_CAN), not a list\n"
+               "E 14 value: participant 'B': network_names: 'BodyCAN' must have the name the executable's code gives "
+               "this network (a text, as in VehicleCAN: J1939_CAN), not empty\n"
+               "E 16 duplicate-key: participant 'B': network_names: 'Body' appears twice (first at line 15); keep one of "
+               "them\n"
+               "E 17 value: participant 'B': network_names: the key 'a=b' cannot be given to the executable (run passes "
+               "--map-network <key>=<value>, which is split at the first '='): a network that is named here needs a name "
+               "that is not empty, has no '=' and does not start with '-'; change the name in networks\n"
+               "E 18 value: participant 'B': network_names: the key '-v' cannot be given to the executable (run passes "
+               "--map-network <key>=<value>, which is split at the first '='): a network that is named here needs a name "
+               "that is not empty, has no '=' and does not start with '-'; change the name in networks\n");
+    // Neither described nor started with names the file does not mean; the next entry is.
+    CHECK(!r.config->participants[0].valid && !r.config->participants[1].valid && r.config->participants[2].valid);
+    check_text(names_text(r.config->participants[1]), "Body<-LIN@15 ");
+}
+
+TEST_CASE(a_key_of_network_names_is_a_network_of_the_file_and_an_executables_network_has_one_name)
+{
+    // networks may come after participants: the keys are compared when the whole file is read.
+    const std::string file = "vehicle_sil_simulation: 1\n"            // 1
+                             "participants:\n"                        // 2
+                             "  - name: Engine\n"                     // 3
+                             "    command: engine\n"                  // 4
+                             "    network_names:\n"                   // 5
+                             "      VehicleCAM: J1939_CAN\n"          // 6
+                             "      J1939_LIN: Body\n"                // 7
+                             "      Other: Other\n"                   // 8
+                             "      Unknown: X\n"                     // 9
+                             "  - name: Dashboard\n"                  // 10
+                             "    command: dashboard\n"               // 11
+                             "    network_names:\n"                   // 12
+                             "      VehicleCAN: CAN\n"                // 13
+                             "      Body: LIN\n"                      // 14
+                             "      BodyCAN: CAN\n"                   // 15
+                             "networks:\n"
+                             "  - { name: VehicleCAN, kind: can }\n"
+                             "  - { name: BodyCAN, kind: can }\n"
+                             "  - { name: Body, kind: lin }\n";
+    const ConfigRead r = read_config(file);
+    check_text(lines(r.findings),
+               "E 6 network-map-undeclared: participant 'Engine': network_names has the key 'VehicleCAM', which is not in "
+               "networks: the key is the simulation's name (a name from networks), the value is the executable's name "
+               "(did you mean 'VehicleCAN'?)\n"
+               // The two names the wrong way round is the mistake to expect: said with the line to write.
+               "E 7 network-map-undeclared: participant 'Engine': network_names has the key 'J1939_LIN', which is not in "
+               "networks: the key is the simulation's name (a name from networks), the value is the executable's name. "
+               "'Body' is in networks, so the two are the wrong way round: write Body: J1939_LIN\n"
+               "E 9 network-map-undeclared: participant 'Engine': network_names has the key 'Unknown', which is not in "
+               "networks: the key is the simulation's name (a name from networks), the value is the executable's name; "
+               "correct the key, or add 'Unknown' to networks\n"
+               "E 15 network-map-collision: participant 'Dashboard': network_names gives the executable's network 'CAN' "
+               "two names, 'VehicleCAN' (line 13) and 'BodyCAN' (line 15), but a network of an ECU is on one bus: keep "
+               "one of the two lines\n");
+    CHECK(r.findings[0].participant == "Engine" && r.findings[0].network == "VehicleCAM");
+    CHECK(r.findings[3].participant == "Dashboard" && r.findings[3].network == "BodyCAN");
+    CHECK(!r.config->participants[0].valid && !r.config->participants[1].valid);
+}
+
+TEST_CASE(a_variant_lays_its_network_names_over_the_common_ones)
+{
+    const std::string file = with_networks("  - name: Engine\n"                      // 7
+                                           "    command: engine\n"                   // 8
+                                           "    network_names:\n"                    // 9
+                                           "      VehicleCAN: J1939_CAN\n"           // 10
+                                           "      Body: LIN\n"                       // 11
+                                           "  - name: Dashboard\n"                   // 12
+                                           "    command: dashboard\n",               // 13
+                                           "variants:\n"                             // 14
+                                           "  plain: {}\n"                           // 15
+                                           "  other:\n"                              // 16
+                                           "    participants:\n"                     // 17
+                                           "      Engine:\n"                         // 18
+                                           "        network_names:\n"                // 19
+                                           "          Body: Body\n"                  // 20
+                                           "          VehicleCAN: CAN_A\n"           // 21
+                                           "          BodyCAN: CAN_B\n"              // 22
+                                           "      Dashboard:\n"                      // 23
+                                           "        network_names: { VehicleCAN: CAN }\n" // 24
+                                           "  twice:\n"                              // 25
+                                           "    participants:\n"                     // 26
+                                           "      Engine: { network_names: { BodyCAN: J1939_CAN } }\n" // 27
+                                           "  typo:\n"                               // 28
+                                           "    participants:\n"                     // 29
+                                           "      Dashboard: { network_names: { VehicleCAM: CAN } }\n"); // 30
+    EnabledOverrides choice;
+    choice.variant = "plain";
+    const ConfigRead plain = read_config(file, choice);
+    // Every variant is checked, also the ones that are not chosen; what the common part says is
+    // not said again for a variant.
+    const std::string findings =
+        "E 27 network-map-collision: variant 'twice': participant 'Engine': network_names gives the executable's network "
+        "'J1939_CAN' two names, 'VehicleCAN' (line 10) and 'BodyCAN' (line 27), but a network of an ECU is on one bus: "
+        "keep one of the two lines\n"
+        "E 30 network-map-undeclared: variant 'typo': participant 'Dashboard': network_names has the key 'VehicleCAM', which "
+        "is not in networks: the key is the simulation's name (a name from networks), the value is the executable's name "
+        "(did you mean 'VehicleCAN'?)\n";
+    check_text(lines(plain.findings), findings);
+    check_text(names_text(plain.config->participants[0]), "VehicleCAN<-J1939_CAN@10 Body<-LIN@11 ");
+    CHECK(plain.config->participants[0].valid && plain.config->participants[1].valid);
+    // A line of the same key takes the common line's place (with the same name twice: takes it
+    // away), a new key goes after them.
+    choice.variant = "other";
+    const ConfigRead other = read_config(file, choice);
+    check_text(lines(other.findings), findings);
+    check_text(names_text(other.config->participants[0]), "VehicleCAN<-CAN_A@21 Body<-Body@20 BodyCAN<-CAN_B@22 ");
+    check_text(words(map_network_arguments(other.config->participants[0])),
+               "[--map-network][VehicleCAN=CAN_A][--map-network][BodyCAN=CAN_B]");
+    check_text(names_text(other.config->participants[1]), "VehicleCAN<-CAN@24 ");
+    CHECK(other.config->participants[0].valid && other.config->participants[1].valid);
+    // The participant is not checked in the variant whose names are wrong.
+    choice.variant = "twice";
+    const ConfigRead twice = read_config(file, choice);
+    CHECK(!twice.config->participants[0].valid && twice.config->participants[1].valid);
+    choice.variant = "typo";
+    CHECK(!read_config(file, choice).config->participants[1].valid);
+}
+
+TEST_CASE(map_network_is_written_as_network_names_not_in_a_command)
+{
+    // An ecu_main command: the launcher gives the argument itself, and the message says what to write.
+    check_text(read(with_networks("  - name: A\n    command: [a, --map-network, VehicleCAN=J1939_CAN]\n"
+                                  "  - name: B\n    command: [b, --map-network=BodyCAN=CAN_2]\n"
+                                  "  - name: C\n    command: [c, --map-network]\n")),
+               "E 8 launcher-argument: participant 'A': the command has '--map-network', but vehicle_sil_launch gives an "
+               "ecu_main executable --map-network itself, from the participant's network_names: remove it from the command "
+               "and write network_names: { VehicleCAN: J1939_CAN } for this participant\n"
+               "E 10 launcher-argument: participant 'B': the command has '--map-network=BodyCAN=CAN_2', but "
+               "vehicle_sil_launch gives an ecu_main executable --map-network itself, from the participant's network_names: "
+               "remove it from the command and write network_names: { BodyCAN: CAN_2 } for this participant\n"
+               "E 12 launcher-argument: participant 'C': the command has '--map-network', but vehicle_sil_launch gives an "
+               "ecu_main executable --map-network itself, from the participant's network_names: remove it from the command "
+               "and write network_names: { <simulation's name>: <executable's name> } for this participant\n");
+    // Any other command may have it (the executable is on another computer, say), unless the entry
+    // has network_names too: then run would give it twice.
+    const std::string remote = "  - name: Remote\n"                                                            // 7
+                               "    command: [remote, --registry-uri, \"{registry_uri}\", --map-network, VehicleCAN=CAN]\n" // 8
+                               "    describe: false\n";                                                        // 9
+    check_text(read(with_networks(remote)), "");
+    const ConfigRead both = read_config(with_networks(remote + "    network_names: { BodyCAN: CAN_2, Body: Body }\n")); // 10
+    check_text(lines(both.findings),
+               "E 8 launcher-argument: participant 'Remote': the command has --map-network, and the participant has "
+               "network_names, for which vehicle_sil_launch gives the executable --map-network itself (--map-network "
+               "BodyCAN=CAN_2): remove --map-network from the command and write every mapping in network_names "
+               "(network_names: { <simulation's name>: <executable's name> })\n"
+               "N 10 network-map-not-checked: participant 'Remote': network_names of a participant that is not described "
+               "(describe: false) cannot be checked: run gives the executable --map-network BodyCAN=CAN_2 after its "
+               "command (the command to start it by hand shows them too), which only an executable made with ecu_main "
+               "that lists \"map-network\" in the features of its --describe takes. For any other executable (a bridge, a "
+               "tool), remove network_names and give the simulation's network name with the executable's own argument or "
+               "settings\n");
+    CHECK(!both.config->participants[0].valid);
+    // A line that renames nothing asks for no argument: no error and no note.
+    check_text(read(with_networks(remote + "    network_names: { Body: Body }\n")), "");
+    // A variant that brings the two together is the one that is wrong.
+    const std::string variants = "variants:\n"                                                                  // 10
+                                 "  plain: {}\n"                                                                // 11
+                                 "  named: { participants: { Remote: { network_names: { BodyCAN: CAN_2 } } } }\n"; // 12
+    EnabledOverrides choice;
+    choice.variant = "plain";
+    const ConfigRead plain = read_config(with_networks(remote, variants), choice);
+    CHECK(plain.config->participants[0].valid);
+    CHECK(lines(plain.findings).find("E 8 launcher-argument: variant 'named': participant 'Remote': the command has "
+                                     "--map-network, and the participant has network_names") == 0);
+    CHECK(lines(plain.findings).find("\nN 12 network-map-not-checked: variant 'named': participant 'Remote': ") != std::string::npos);
+    choice.variant = "named";
+    CHECK(!read_config(with_networks(remote, variants), choice).config->participants[0].valid);
+}
+
+TEST_CASE(network_names_of_a_disabled_participant_are_read_and_checked_like_any_other)
+{
+    const std::string file = with_networks("  - name: A\n    command: a\n    network_names: { VehicleCAM: CAN, BodyCAN: CAN_2 }\n" // 9
+                                           "  - name: B\n    command: b\n");
+    EnabledOverrides overrides;
+    overrides.disable = {"A"};
+    const ConfigRead r = read_config(file, overrides);
+    CHECK(r.override_errors.empty());
+    CHECK(!r.config->participants[0].enabled);
+    CHECK(lines(r.findings).find("E 9 network-map-undeclared: participant 'A': ") == 0);
+    check_text(names_text(r.config->participants[0]), "VehicleCAM<-CAN@9 BodyCAN<-CAN_2@9 ");
+}
+
+TEST_CASE(a_renamed_network_has_ascii_names_where_the_arguments_come_in_the_code_page)
+{
+    // ecu_main on Windows refuses a --map-network that is not ASCII (its arguments are not UTF-8
+    // there), so the launcher of a Windows build says it before anything is started. Elsewhere the
+    // names go through as they are.
+    const std::string file = "vehicle_sil_simulation: 1\nnetworks:\n  - { name: \xE8\xBB\x8A\xE4\xB8\xA1""CAN, kind: can }\n"
+                             "  - { name: Body, kind: can }\n"
+                             "participants:\n  - name: A\n    command: a\n"
+                             "    network_names: { \xE8\xBB\x8A\xE4\xB8\xA1""CAN: J1939_CAN, Body: \xE8\xBB\x8A, J1939_CAN: J1939_CAN }\n"; // 8
+    const ConfigRead r = read_config(file);
+#ifdef _WIN32
+    check_text(lines(r.findings),
+               "E 8 network-map-not-ascii: participant 'A': network_names: '\xE8\xBB\x8A\xE4\xB8\xA1""CAN: J1939_CAN' has "
+               "characters that are not ASCII, which an ECU executable on Windows does not take with --map-network (its "
+               "arguments arrive in the code page, not in UTF-8): use ASCII names for a network that is renamed (change "
+               "the name in networks, or have the ECU's author change the name in its code)\n"
+               "E 8 network-map-not-ascii: participant 'A': network_names: 'Body: \xE8\xBB\x8A' has characters that are "
+               "not ASCII, which an ECU executable on Windows does not take with --map-network (its arguments arrive in "
+               "the code page, not in UTF-8): use ASCII names for a network that is renamed (change the name in networks, "
+               "or have the ECU's author change the name in its code)\n");
+    CHECK(!r.config->participants[0].valid);
+#else
+    check_text(lines(r.findings), "");
+    CHECK(r.config->participants[0].valid);
+    check_text(words(map_network_arguments(r.config->participants[0])),
+               "[--map-network][\xE8\xBB\x8A\xE4\xB8\xA1""CAN=J1939_CAN][--map-network][Body=\xE8\xBB\x8A]");
+#endif
 }

@@ -19,7 +19,7 @@ inline constexpr std::int64_t kMaxMillis = 1'000'000'000'000;
 /// a command of the configuration must not have them. An ECU executable takes each of them.
 inline constexpr std::string_view kLauncherArguments[] = {"--describe",   "--name",       "--registry-uri",
                                                           "--local",      "--run-for-ms", "--start-timeout-ms",
-                                                          "--help",       "-h"};
+                                                          "--map-network", "--help",      "-h"};
 
 /// The argument that renames the networks of an ECU executable for one run (with --registry-uri,
 /// any number of times): `--map-network <simulation's name>=<executable's name>`, split at the

@@ -28,6 +28,9 @@ namespace vehicle_sil::launch::detail {
 [[nodiscard]] const char* severity_text(Severity severity);
 /// format_json()'s object, as the member `key` of the object `w` is in ("" at the top).
 void write_check_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const CheckReport& report);
+/// The array "networks" of a participant's "reported": what its executable described, under the
+/// executable's names (check_networks.cpp).
+void write_reported_networks(vehicle_sil::detail::JsonWriter& w, const EcuDescription& ecu);
 /// An array `key` of parameters: each with "name", "value" (as a scenario reads it: true or false,
 /// a number, or a text) and "from" (param_source_name()).
 void write_params_json(vehicle_sil::detail::JsonWriter& w, std::string_view key, const std::vector<ParamValue>& params);

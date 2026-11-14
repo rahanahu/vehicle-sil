@@ -45,8 +45,8 @@
 | `describe-unknown-value` | 誤り | 自己申告の、決まった値をとるキー（`kind`、`use`、`type`、`causality`）に、この `vehicle_sil_launch` が知らない値がある（新しい vehicle-sil の ECU。文は、キーと値、知っている値、両方の vehicle-sil の版を言う）。その participant だけの誤りで、ほかは照合を続ける |
 | `name-mismatch` | 誤り | 自己申告の `name` が participant 名と違う（`--name` を `ecu_main` に渡していない） |
 | `step-mismatch` | 誤り | `step_ms` が自己申告のステップ幅と違う（実時間で、ステップ幅のない ECU も） |
-| `unknown-network` | 誤り | ECU が `networks` にないネットワークを使う。同じ種類のネットワークで、その participant が使わず、ほかの participant が使うもの（`networks` にあるものも、ないものも）があれば、文はそれを名指しして、1 つのバスのつもりなら名前をそろえること（構成ファイルでは付け替えられないので、ECU を書いた人が直して作り直す）、別のバスなら `networks` に足すことを言う。なければ `networks` に足すことを先に言う |
-| `kind-mismatch` | 誤り | ECU がネットワークを `networks` と違う種類（CAN、LIN、イーサネット）で使う |
+| `unknown-network` | 誤り | ECU が `networks` にないネットワークを使う。同じ種類のネットワークで、その participant が使わず、ほかの participant が使うもの（`networks` にあるものも、ないものも）があれば、文はそれを名指しして、1 つのバスのつもりなら、その participant に書く `network_names` の行（`network_names: { J1939_CAN: VehicleCAN }`。向きは「シミュレーションの名前: 実行ファイルの名前」。実行ファイルは変えない）、別のバスなら `networks` に足すことを言う。挙げたネットワークがどれも `networks` にないときは、先に名前を 1 つ決めて `networks` に足すことを言う。なければ `networks` に足すことを先に言う。`network_names` で名前を替えたネットワークは、替えた後の名前で比べる |
+| `kind-mismatch` | 誤り | ECU がネットワークを `networks` と違う種類（CAN、LIN、イーサネット）で使う（`network_names` で名前を替えたネットワークは、文に両方の名前を書く: `'VehicleCAN' ('J1939_CAN' in the executable)`） |
 | `address-conflict` | 誤り | 同じネットワークの 2 つ以上の J1939 ノードが同じアドレスを求め、どれかが動けない（下の表） |
 | `address-shared` | 警告 | 同じアドレスを求めるノードのうち、NAME の最も小さいノードが取り、ほかはどれも別のアドレスへ移る |
 | `name-conflict` | 誤り | 同じネットワークで、2 つ以上の J1939 ノードの NAME が同じ |
@@ -55,7 +55,7 @@
 | `ethernet-duplicate-mac` | 誤り | 1 つのイーサネットのネットワークで、2 つ以上の participant が同じ MAC アドレスを申告している（文は participant とアドレスを言う）。同じアドレスをわざと使う構成（待機系と現用系など）では、1 つを残してほかの participant の `eth::ChannelOptions::mac` を渡さずにおくと、`ethernet-mac-unknown` の注記だけになる（`mac` のないチャネルは `Accept::Addressed` を使えない。同じステップで送ったフレームの順は、SIL Kit では実行ごとに変わりうる） |
 | `ethernet-mac-unknown` | 注記 | イーサネットのネットワークに、MAC アドレスを申告しない participant がいる（`ethernet()` にアドレスを渡していない ECU。アドレスの重なりを確かめられない） |
 | `unused-network` | 警告（同上のときは注記） | どの participant も使わないネットワーク |
-| `single-participant` | 警告（同上のときは注記） | participant が 1 つだけのネットワーク（送ったものを誰も受けない）。`role: test` の participant は数えない（ECU が 1 つと spy なら出る。試験用の participant だけのネットワークも出る）。同じ種類のほかのネットワークにも、別の ECU が 1 つだけいるときは、文はそのネットワークを挙げ、1 つのバスを ECU が別の名前で呼んでいるかもしれないと言う |
+| `single-participant` | 警告（同上のときは注記） | participant が 1 つだけのネットワーク（送ったものを誰も受けない）。`role: test` の participant は数えない（ECU が 1 つと spy なら出る。試験用の participant だけのネットワークも出る）。同じ種類のほかのネットワークにも、別の ECU が 1 つだけいるときは、文はそのネットワークを挙げ、1 つのバスのつもりなら、片方の名前を `networks` から消して、その ECU に書く `network_names` の行を言う |
 | `test-participant-talks-on-bridged-network` | 警告 | `role: test` で J1939 のノードを申告した participant と、ブリッジ（`role: bridge`。なければ `role` を書いていない `describe: false` の participant）が同じネットワークにいるかもしれない。その participant の送信とアドレスの主張が実機のバスに出る（文は、ブリッジが確かにいるのか、いるかもしれないのかと、直し方を言う。[試験のための participant とブリッジ](simulation-config.md#試験のための-participant-とブリッジrole)） |
 | `not-checked` | 注記 | `describe: false` の participant（照合していない） |
 | `participant-disabled` | 注記 | 外した participant（`enabled: false`、`--disable`。照合も起動もしない） |
@@ -70,6 +70,12 @@
 | `variable-map-collision` | 誤り | 対応の名前が、実行ファイルのほかの変数の見える名前と同じ。または、同じ変数に対応を 2 つ書いた |
 | `variable-map-absent` | 誤り | `absent: true` と書いた名前の変数が、実行ファイルにある |
 | `variable-map-not-checked` | 注記 | `describe: false` の participant に `variables` がある（実行の前には比べられない。合わない対応は、実行の所見 `variable-map-not-applied` になる） |
+| `network-map-undeclared` | 誤り | `network_names` のキーが `networks` にない（キーはシミュレーションの名前、値は実行ファイルの名前。値のほうが `networks` にあれば、文は逆に書いた行を言う。[ネットワークの名前を合わせる](simulation-config.md#ネットワークの名前を合わせるnetwork_names)） |
+| `network-map-collision` | 誤り | `network_names` が、実行ファイルの 1 つのネットワークに 2 つの名前を付けている（1 つの値を 2 つのキーに書いた）。または、対応の後で、実行ファイルの 2 つのネットワークが同じ名前になる（替えた先の名前のネットワークを、実行ファイルが自分でも持っている） |
+| `network-map-unknown` | 誤り | `network_names` の値の名前のネットワークを、実行ファイルが使っていない（文は、実行ファイルのネットワークの一覧と、近い名前を言う） |
+| `network-map-unsupported` | 誤り | `network_names` を書いた participant の実行ファイルが、`--map-network` を受け取れない（自己申告の `features` に `map-network` がない。前の版の vehicle-sil で作った実行ファイル）。ほかの規則は、対応を当てた名前で続ける |
+| `network-map-not-ascii` | 誤り | Windows のランチャーだけ: `network_names` の行のキーか値に、ASCII でない文字がある（Windows の ECU の実行ファイルは、その `--map-network` を断る） |
+| `network-map-not-checked` | 注記 | `describe: false` の participant に `network_names` がある（照合できない。`run` は `--map-network` を足すので、ecu_main でない実行ファイルは、起動のときに引数の誤りで終わる） |
 | `variant-participant` | 誤り | 機種（`variants`）の `participants` に、構成の `participants` にない名前がある |
 | `scenario-nothing-checked` | 警告 | `--scenario` のシナリオの確かめる手順（`expect`、`wait_until`）が、この構成（機種）では全部飛ぶ。シナリオは何も確かめずに通る（[scenario.md](scenario.md) の「機種とパラメーター」。シナリオのほかの `code` も scenario.md にあります） |
 | `usage` | 誤り | 引数の誤り（`--json` のときの JSON だけ）。機種を書いた構成に `--variant` がない、ない機種の名前、シナリオにない名前の `--param`、も含みます |
@@ -87,7 +93,8 @@
 - `address-shared` の「別のアドレスへ移る」は、移る先が空いていることを前提にします。NAME のないノードは Address Claim をしないので、任意アドレスの範囲にそのノードがいると、移ったノードと重なることがあります。照合は移る先を決めないので、これは確かめません。
 - `unused-network`、`single-participant`、`lin-no-master` は、すべての participant の自己申告がそろったときだけ出します。照合できなかった participant（`failed` と `skipped`）がいる間は出しません（その participant の誤りを先に直します）。`describe: false` の participant がいるときは注記です（その participant が使っているかもしれないため。文言にもそう書きます）。
 - イーサネットの MAC アドレスは、ECU が `ethernet()` に渡して申告した値です（[ecu-executable.md](ecu-executable.md) の `networks[].mac`）。実際に送るフレームの送り元のアドレスは見ません。同じアドレスでも、別のネットワークなら重なりとみなしません。表では、ネットワークの欄にアドレスを書きます（`ETH (ethernet 02:00:00:00:00:01)`。申告がなければ `ETH (ethernet)`）。
-- ネットワークを使う participant は、名前と種類の両方が合うものです（表と JSON の `networks[].participants` も同じです）。
+- ネットワークを使う participant は、名前と種類の両方が合うものです（表と JSON の `networks[].participants` も同じです）。名前は、participant の `network_names` を当てた後の名前（シミュレーションの名前）で比べます。アドレスの重なり、LIN の master など、ネットワークの規則は全部この名前で動きます。
+- `network_names` に構成ファイルだけで分かる誤り（`network-map-undeclared`、1 つの値を 2 つのキーに書いた `network-map-collision`、形の誤り `value`、`network-map-not-ascii`）がある participant は、照合しません（`skipped`。意図と違う名前で比べないためです）。`network_names` のうち、キーと値が同じ行は、どの規則も見ません。
 - `networks` にないネットワークの上の、アドレスと NAME の重なりは確かめません（先に `unknown-network` を直します）。種類を読めなかったネットワークも確かめません。
 
 ## 出力
@@ -96,7 +103,7 @@
 
 ### 人向け
 
-participant の表（申告されたステップ幅とネットワーク。J1939 はノードの求めたアドレス、`any` は 254。`role` が `ecu` でない participant は、名前の後に `(role: test)` などと書く）、ネットワークの表（使う participant）、見つけたもの、最後に結果の 1 行（誤り、警告、注記の数）です。見つけたものは 1 つが 1 行で、`error:`、`warning:`、`note:` で始まり、`<ファイル>:<行>: <何が、どの値で、どう直すか> [<code>]` の形です（行のないものはファイル名だけ）。行の終わりの `[...]` は所見の名前（`code`。上の表と JSON の `code` と同じ）で、文書の説明を名前で探せます（GCC の `[-W...]` と同じ置き方なので、行の先頭は `error:` などのままです）。誤り、警告、注記の順に、それぞれ行の順です。添える文（標準エラーの末尾、文法の誤りの場所など）は、次の行から 4 文字下げて書きます。ファイル名は、引数に書いたとおりです。表の幅は文字の数で揃えます（全角の文字があるとずれます）。
+participant の表（申告されたステップ幅とネットワーク。J1939 はノードの求めたアドレス、`any` は 254。`network_names` で名前を替えたネットワークは `VehicleCAN <- J1939_CAN (j1939 0x00)` と、シミュレーションの名前、実行ファイルの名前の順に書く。`role` が `ecu` でない participant は、名前の後に `(role: test)` などと書く）、ネットワークの表（使う participant）、見つけたもの、最後に結果の 1 行（誤り、警告、注記の数）です。見つけたものは 1 つが 1 行で、`error:`、`warning:`、`note:` で始まり、`<ファイル>:<行>: <何が、どの値で、どう直すか> [<code>]` の形です（行のないものはファイル名だけ）。行の終わりの `[...]` は所見の名前（`code`。上の表と JSON の `code` と同じ）で、文書の説明を名前で探せます（GCC の `[-W...]` と同じ置き方なので、行の先頭は `error:` などのままです）。誤り、警告、注記の順に、それぞれ行の順です。添える文（標準エラーの末尾、文法の誤りの場所など）は、次の行から 4 文字下げて書きます。ファイル名は、引数に書いたとおりです。表の幅は文字の数で揃えます（全角の文字があるとずれます）。
 
 <!-- vehicle_sil_launch check simulation.yaml -->
 ```text
@@ -149,7 +156,7 @@ Body_LIN   lin   -
 
 error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number) [name-conflict]
 error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms [step-mismatch]
-error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables) [unknown-key]
+error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables, network_names) [unknown-key]
 warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs [unused-network]
 
 failed: 3 errors, 1 warning, 0 notes
@@ -174,13 +181,14 @@ failed: 3 errors, 1 warning, 0 notes
 | `variant`、`variants` | 機種を書いた構成（`variants`）のときだけあります。`variant` は選んだ機種（`--variant`）、`variants` は構成にある機種の名前の配列。`--variant` がない、または名前が違うとき（`result` が `"usage"`）は、`variant` が `null` で、`variants` に選べる名前が出ます |
 | `params` | 構成に `params` があるときだけあります。共通の `params` に、選んだ機種の `params` を重ねたもの。要素は `name`、`value`（`true`・`false`、数、文字列）、`from`（`configuration` か `variant`） |
 | `stop_at_ms`、`start_timeout_ms`、`stop_timeout_ms`、`registry_uri` | 構成ファイルの値（読めないときと、書いていない `stop_at_ms` と `registry_uri` は `null`。`start_timeout_ms` と `stop_timeout_ms` は既定の値も） |
-| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`manual`（`--manual` を当てた後の値）、`role`（`"ecu"`、`"test"`、`"bridge"`）、`step_ms`（なければ `null`）、`status`、`reported`、`variables`、`variable_map`（`variables` を書いた participant だけ）、`control` |
+| `participants[]` | 構成ファイルの順。`name`（読めなかったときは `null`）、`line`（行）、`command`、`describe`、`required`、`enabled`（`--disable` と `--enable` を当てた後の値）、`manual`（`--manual` を当てた後の値）、`role`（`"ecu"`、`"test"`、`"bridge"`）、`step_ms`（なければ `null`）、`status`、`reported`、`variables`、`variable_map`（`variables` を書いた participant だけ）、`network_map`（`network_names` を書いた participant だけ）、`control` |
 | `participants[].status` | `"described"`（自己申告を読んだ）、`"not_checked"`（`describe: false`）、`"failed"`（実行ファイルがない、`--describe` の失敗）、`"skipped"`（構成ファイルの誤りで進めなかった）、`"disabled"`（外した。項目に誤りがあっても） |
-| `participants[].reported` | 自己申告（`described` のときだけ。ほかは `null`）: `vehicle_sil`、`name`、`step_ns`、`networks`（`--describe` の JSON と同じ形。変数は次の `variables`） |
+| `participants[].reported` | 自己申告（`described` のときだけ。ほかは `null`）: `vehicle_sil`、`name`、`step_ns`、`networks`（`--describe` の JSON と同じ形。`name` は実行ファイルの名前のままで、`network_names` を当てる前です。変数は次の `variables`） |
 | `participants[].variables` | シミュレーションから見える ECU の変数の配列（`ecu.connected`、続いて宣言の順）。構成ファイルの `variables`（対応表）を当てた後の名前、型、範囲、単位です（シナリオと Control API が見るものと同じ）。対応表がなければ、ECU が申告したままです。要素の形は `--describe` の JSON の `variables[]` と同じです（`name`、`type`、`causality`、`unit`、`min`、`max`、`step`、`description`、`items`、`builtin`。[ecu-executable.md](ecu-executable.md) の「JSON の形式」）。空の配列は「変数が 0 個」です。`null` は「わからない」です: 自己申告のない participant（`describe: false`）、外した participant、自己申告を読めなかった participant、`variables` を書かない古い vehicle-sil の ECU。実行の前に、どの ECU にどの変数があるかを見るのに使います |
 | `participants[].variable_map` | 構成ファイルの `variables` に書いた対応の配列（書いた順）。`variables` のない participant には、このキーがありません。要素は `name`（シミュレーションで使う名前）、`line`（行）、`from`（実行ファイルの変数名。`absent` なら `null`）、`absent`、`scale` と `offset`（一次式の形でなければ両方 `null`。片方だけ書いたときは、もう片方に既定の 1 か 0 が入ります）、`unit`（書いていなければ `null`）、`map`（`name` と `value` の配列。なければ `null`）。読めなかった対応（誤り `value` など）は入りません |
+| `participants[].network_map` | 構成ファイルの `network_names` に書いた行の配列（書いた順。機種の行を重ねた後）。`network_names` のない participant には、このキーがありません。要素は `name`（シミュレーションの名前）、`line`（行）、`from`（実行ファイルの名前）。キーと値が同じ行も入ります。読めなかった行（誤り `value`）は入りません |
 | `participants[].control` | ECU が申告した、変数の出し方（`transport`: いまは `"silkit"`、`wire_version`: メッセージの形式の版）。申告がない（`--no-control`、古い実行ファイル）、照合していない、失敗した、外した participant では `null` |
-| `networks[]` | 構成ファイルの順。`name`、`kind`（読めなかったときは `null`）、`line`、`participants`（使う participant 名。構成ファイルの順） |
+| `networks[]` | 構成ファイルの順。`name`、`kind`（読めなかったときは `null`）、`line`、`participants`（使う participant 名。構成ファイルの順。`network_names` を当てた後の名前で数える） |
 | `findings[]` | 人向けと同じ順。`severity`（`"error"`、`"warning"`、`"note"`）、`code`、`file`（構成ファイル。`--scenario` のシナリオについての所見では、シナリオのファイルで、`line` はその行）、`line`（なければ `null`）、`participant`、`network`（関係するもの。なければ `null`）、`message`（1 行）、`detail`（添える文。なければ `null`） |
 
 <!-- engine-alone.yaml -->

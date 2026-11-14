@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// An ecu_main executable for the tests of vehicle_sil_launch run, without networks. With
+// An ecu_main executable for the tests of vehicle_sil_launch run, without networks unless its
+// behaviour names some. With
 // "--autonomous <name> <registry URI>" it is instead a participant that runs on its own (autonomous,
 // in real time, as a hand-started peer outside the file): it writes "<name>.running" in its working
 // directory once it runs and stays until it is ended.
@@ -45,6 +46,14 @@
 //   request                 declares the input "request" (a bool that always reads false; its setter
 //                           counts every write, whatever its value) and the output "requests" (the
 //                           writes counted so far)
+//   talk <network>          has the raw CAN network <network> (the name in its code) and sends one frame
+//                           there in every 10 ms step (may be given for several networks)
+//   hear <network>          has the raw CAN network <network> and writes "<name>.heard" in its working
+//                           directory when the first frame arrives there
+// With the file "test-ecu-old" in its working directory, the participants it names (words separated
+// by spaces) are executables of a vehicle-sil before --map-network: their --describe has no
+// "features" (and the raw CAN network "OLD_CAN"), and started for a run they write
+// "<name>.started" and end with exit code 4, as for an argument they do not know.
 // With the file "test-ecu-no-control" in its working directory, the ECUs started there run with
 // --no-control (their --describe still has the variables): an executable that describes
 // variables and never offers them.
@@ -198,6 +207,24 @@ public:
                 ecu.agent().output_enum("mode_now", [this] { return mode_; }, modes);
                 ecu.output("pulse", &pulse_);
             }
+            else if (word == "talk")
+            {
+                std::string network;
+                in >> network;
+                talk_.push_back(&ecu.can(network));
+            }
+            else if (word == "hear")
+            {
+                std::string network;
+                in >> network;
+                ecu.can(network).on_frame([this](const vehicle_sil::can::TimedFrame&) {
+                    if (!heard_)
+                    {
+                        heard_ = true;
+                        std::ofstream(name_ + ".heard") << "heard\n";
+                    }
+                });
+            }
             else if (word == "request")
             {
                 ecu.input("request", [] { return false; }, [this](bool) { ++requests_; });
@@ -243,6 +270,14 @@ public:
         });
         ecu.every(10ms, [this](vehicle_sil::SimTime now) {
             ++ticks_;
+            for (vehicle_sil::can::RawChannel* channel : talk_)
+            {
+                vehicle_sil::can::Frame frame;
+                frame.id = 0x18FF0001;
+                frame.length = 1;
+                frame.data[0] = static_cast<std::uint8_t>(ticks_);
+                static_cast<void>(channel->send(frame));
+            }
             const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
             if (level_ != last_level_)
             {
@@ -332,6 +367,8 @@ private:
     std::int64_t mode_ = 0;
     bool pulse_ = false;
     std::int64_t requests_ = 0;
+    std::vector<vehicle_sil::can::RawChannel*> talk_{};
+    bool heard_ = false;
 };
 
 } // namespace
@@ -358,9 +395,35 @@ int main(int argc, char** argv)
     std::vector<char*> args(argv, argv + argc);
     static char no_control[] = "--no-control";
     bool describe = false;
+    std::string name = "TestEcu";
     for (int i = 1; i < argc; ++i)
     {
         describe = describe || std::string(argv[i]) == "--describe";
+        if (std::string(argv[i]) == "--name" && i + 1 < argc)
+        {
+            name = argv[i + 1];
+        }
+    }
+    if (std::ifstream old("test-ecu-old"); old)
+    {
+        for (std::string word; old >> word;)
+        {
+            if (word != name)
+            {
+                continue;
+            }
+            if (describe)
+            {
+                std::printf("{\"vehicle_sil_ecu\": 1, \"vehicle_sil\": \"0.1.0\", \"name\": \"%s\", \"step_ns\": 10000000, "
+                            "\"networks\": [{\"name\": \"OLD_CAN\", \"kind\": \"can\", \"use\": \"raw\", \"nodes\": []}], "
+                            "\"variables\": [], \"control\": null}\n",
+                            name.c_str());
+                return 0;
+            }
+            std::ofstream(name + ".started") << "started\n";
+            std::fprintf(stderr, "error: unknown argument \"--map-network\"\n");
+            return 4;
+        }
     }
     if (std::ifstream("test-ecu-no-control") && !describe)
     {

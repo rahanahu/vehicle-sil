@@ -373,22 +373,25 @@ TEST_CASE(every_network_of_an_ecu_must_be_in_networks_with_its_kind)
     // Engine is on the only other CAN network itself: 'J1939CAN' is not another name for it.
     check_text(s.check(),
                "E 6 unknown-network: participant 'Engine': the executable uses the network 'J1939CAN' (j1939), which is "
-               "not in networks: add it to networks with kind: can, or have the ECU's author correct the name in its "
-               "code (did you mean 'J1939_CAN'?)\n"
+               "not in networks: add it to networks with kind: can, or, if it is a network of this file under another "
+               "name, add network_names: { <name in networks>: J1939CAN } to this participant (did you mean "
+               "'J1939_CAN'?)\n"
                "E 6 kind-mismatch: participant 'Engine': the executable uses the network 'Body' as can (raw), but networks "
                "says kind: lin (line 5): correct the kind, or the network in the ECU\n"
                "E 6 unknown-network: participant 'Engine': the executable uses the network 'Diag' (raw), which is not in "
-               "networks: add it to networks with kind: can, or have the ECU's author correct the name in its code\n"
+               "networks: add it to networks with kind: can, or, if it is a network of this file under another name, "
+               "add network_names: { <name in networks>: Diag } to this participant\n"
                "W 5 unused-network: network 'Body': no participant uses it: remove it, or check the network names in the "
                "ECUs\n");
     // A network whose kind could not be read is not checked (its own error says why).
     s.config.networks[1].valid = false;
     check_text(s.check(), "E 6 unknown-network: participant 'Engine': the executable uses the network 'J1939CAN' (j1939), "
-                          "which is not in networks: add it to networks with kind: can, or have the ECU's author correct "
-                          "the name in its code (did you mean 'J1939_CAN'?)\n"
+                          "which is not in networks: add it to networks with kind: can, or, if it is a network of this "
+                          "file under another name, add network_names: { <name in networks>: J1939CAN } to this "
+                          "participant (did you mean 'J1939_CAN'?)\n"
                           "E 6 unknown-network: participant 'Engine': the executable uses the network 'Diag' (raw), which "
-                          "is not in networks: add it to networks with kind: can, or have the ECU's author correct the name "
-                          "in its code\n");
+                          "is not in networks: add it to networks with kind: can, or, if it is a network of this file "
+                          "under another name, add network_names: { <name in networks>: Diag } to this participant\n");
 }
 
 TEST_CASE(an_unknown_network_names_the_networks_of_its_kind_that_may_be_the_same_bus)
@@ -398,10 +401,19 @@ TEST_CASE(an_unknown_network_names_the_networks_of_its_kind_that_may_be_the_same
     s.network("J1939_CAN", NetworkKind::Can, 3)
         .described(participant("Engine", 6), ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)})}))
         .described(participant("Dashboard", 9), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)})}));
-    const std::string fix = ": if 'VehicleCAN' is meant to be that bus, the names must be the same, and the configuration "
-                            "cannot rename a network, so the author of one of the ECUs changes the name in its code (the "
-                            "name passed to can() or j1939()) and builds it again; if 'VehicleCAN' is a bus of its own, add "
-                            "it to networks with kind: can\n";
+    // The fix is written in the file, in the direction of network_names: the simulation's name
+    // (in networks) first, then the name in Dashboard's executable.
+    const std::string fix = ": if 'VehicleCAN' is meant to be that bus, say so in this file: add network_names: { "
+                            "J1939_CAN: VehicleCAN } to the participant 'Dashboard' (<simulation's name>: <executable's "
+                            "name>; the executable stays as it is); if 'VehicleCAN' is a bus of its own, add it to "
+                            "networks with kind: can\n";
+    // No name to map to while neither is in networks: one of them is added first.
+    const auto neither = [](const std::string& name) {
+        return ": if '" + name + "' is meant to be that bus, choose one name for the bus: add it to networks with kind: "
+               "can, and add network_names: { <that name>: <the executable's name> } to each participant whose "
+               "executable names the bus differently (<simulation's name>: <executable's name>; the executables stay as "
+               "they are); if '" + name + "' is a bus of its own, add it to networks with kind: can\n";
+    };
     check_text(s.check(), "E 9 unknown-network: participant 'Dashboard': the executable uses the network 'VehicleCAN' "
                           "(j1939), which is not in networks. Another network of kind can in this simulation is "
                           "'J1939_CAN' (line 3, used by Engine)" + fix +
@@ -412,13 +424,10 @@ TEST_CASE(an_unknown_network_names_the_networks_of_its_kind_that_may_be_the_same
     s.config.networks.clear();
     check_text(s.check(), "E 6 unknown-network: participant 'Engine': the executable uses the network 'J1939_CAN' (j1939), "
                           "which is not in networks. Another network of kind can in this simulation is 'VehicleCAN' (not "
-                          "in networks either, used by Dashboard): if 'J1939_CAN' is meant to be that bus, the names must "
-                          "be the same, and the configuration cannot rename a network, so the author of one of the ECUs "
-                          "changes the name in its code (the name passed to can() or j1939()) and builds it again; if "
-                          "'J1939_CAN' is a bus of its own, add it to networks with kind: can\n"
+                          "in networks either, used by Dashboard)" + neither("J1939_CAN") +
                           "E 9 unknown-network: participant 'Dashboard': the executable uses the network 'VehicleCAN' "
                           "(j1939), which is not in networks. Another network of kind can in this simulation is "
-                          "'J1939_CAN' (not in networks either, used by Engine)" + fix);
+                          "'J1939_CAN' (not in networks either, used by Engine)" + neither("VehicleCAN"));
 
     // Two candidates (one used by a participant for testing too); a network of another kind and a
     // network in networks that no one uses are not.
@@ -435,8 +444,9 @@ TEST_CASE(an_unknown_network_names_the_networks_of_its_kind_that_may_be_the_same
     const std::string got = t.check();
     CHECK(got.find("E 14 unknown-network: participant 'Dashboard': the executable uses the network 'VehicleCAN' (j1939), "
                    "which is not in networks. Other networks of kind can in this simulation are 'J1939_CAN' (line 3, used "
-                   "by Engine) and 'Diag' (line 4, used by Tester): if 'VehicleCAN' is meant to be one of those buses, the "
-                   "names must be the same,") != std::string::npos);
+                   "by Engine) and 'Diag' (line 4, used by Tester): if 'VehicleCAN' is meant to be one of those buses, say "
+                   "so in this file: add network_names: { <one of them, in networks>: VehicleCAN } to the participant "
+                   "'Dashboard' (") != std::string::npos);
     CHECK(got.find("'Spare' (line") == std::string::npos && got.find("'Body' (line") == std::string::npos);
 }
 
@@ -500,16 +510,18 @@ TEST_CASE(networks_of_one_kind_with_one_ecu_each_may_be_one_bus_named_twice)
         .described(participant("Engine", 9), ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)})}))
         .described(participant("Dashboard", 12), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)}),
                                                                          NetworkDescription{"Body", NetworkUse::LinMaster, {}}}));
-    const std::string rest = ", the ECUs name it differently, and the configuration cannot rename a network, so the "
-                             "author of one of them changes the name in its code\n";
+    const auto rest = [](const std::string& removed, const std::string& kept, const std::string& who) {
+        return ", keep one of the two names: remove '" + removed + "' from networks and add network_names: { " + kept +
+               ": " + removed + " } to the participant '" + who + "'\n";
+    };
     check_text(s.check(), "W 3 single-participant: network 'J1939_CAN': only Engine is on it, so what it sends there "
                           "reaches no one: add the other participants of this network, or remove it; the network "
                           "'VehicleCAN' (line 5, only Dashboard) of kind can also has one ECU: if it is meant to be the "
-                          "same bus" + rest +
+                          "same bus" + rest("J1939_CAN", "VehicleCAN", "Engine") +
                           "W 5 single-participant: network 'VehicleCAN': only Dashboard is on it, so what it sends there "
                           "reaches no one: add the other participants of this network, or remove it; the network "
                           "'J1939_CAN' (line 3, only Engine) of kind can also has one ECU: if it is meant to be the same "
-                          "bus" + rest +
+                          "bus" + rest("VehicleCAN", "J1939_CAN", "Dashboard") +
                           "W 7 single-participant: network 'Body': only Dashboard is on it, so what it sends there "
                           "reaches no one: add the other participants of this network, or remove it\n");
 
@@ -542,7 +554,8 @@ TEST_CASE(networks_of_one_kind_with_one_ecu_each_may_be_one_bus_named_twice)
     CHECK(t.check().find("W 3 single-participant: network 'A': only P is on it, so what it sends there reaches no one: add "
                          "the other participants of this network, or remove it; the networks 'B' (line 4, only Q) and 'C' "
                          "(line 5, only R) of kind can also have one ECU each: if one of them is meant to be the same bus, "
-                         "the ECUs name it differently") != std::string::npos);
+                         "keep one of the two names: remove 'A' from networks and add network_names: { <that network>: A "
+                         "} to the participant 'P'\n") != std::string::npos);
 }
 
 TEST_CASE(a_test_participant_with_j1939_nodes_where_a_bridge_may_be_is_a_warning)
@@ -1797,4 +1810,309 @@ TEST_CASE(check_file_a_disabled_entry_with_errors_and_an_unreadable_enabled)
     // The JSON says disabled for Ghost.
     CHECK(format_json(r).find("      \"enabled\": false,\n      \"manual\": false,\n      \"role\": \"ecu\",\n      \"step_ms\": null,\n      \"status\": \"disabled\",\n") !=
           std::string::npos);
+}
+
+// --- network_names -----------------------------------------------------------------------------
+
+namespace {
+
+/// `reported`, of an executable that takes --map-network (as ecu_main says in "features").
+ReportedEcu taking_map(ReportedEcu reported)
+{
+    reported.description.features = {"map-network"};
+    return reported;
+}
+
+/// `p` with the lines of network_names `names` (simulation's name, executable's name), one per
+/// line of the file from `line` on.
+ParticipantConfig named(ParticipantConfig p, std::size_t line, const std::vector<std::pair<std::string, std::string>>& names)
+{
+    for (const auto& [name, from] : names)
+    {
+        p.network_names.push_back(NetworkName{name, from, line++});
+    }
+    return p;
+}
+
+NetworkDescription raw(const std::string& name) { return NetworkDescription{name, NetworkUse::Raw, {}}; }
+
+std::string network_of(const Finding& f) { return f.code + "(" + f.participant + "," + f.network + ")"; }
+
+} // namespace
+
+TEST_CASE(reads_the_features_of_a_description_and_keeps_the_names_it_does_not_know)
+{
+    const std::string head = R"({"vehicle_sil_ecu": 1, "name": "A", "step_ns": null, "networks": [])";
+    // An open list: a name of a later vehicle-sil is no error.
+    const ReportedEcu read = read_description(head + R"(, "features": ["map-network", "something-later"]})");
+    CHECK(read.description.features == std::vector<std::string>({"map-network", "something-later"}));
+    // An executable of a vehicle-sil before the key, and one that takes nothing: none.
+    CHECK(read_description(head + "}").description.features.empty());
+    CHECK(read_description(head + R"(, "features": []})").description.features.empty());
+    for (const std::string bad : {R"(, "features": "map-network"})", R"(, "features": [1]})"})
+    {
+        bool refused = false;
+        try
+        {
+            static_cast<void>(read_description(head + bad));
+        }
+        catch (const DescriptionError&)
+        {
+            refused = true;
+        }
+        CHECK(refused);
+    }
+}
+
+TEST_CASE(a_renamed_network_is_under_the_simulations_name_in_every_rule)
+{
+    // Engine's code says J1939_CAN, the file says VehicleCAN, which is what Dashboard's code says.
+    const auto pair = [](std::vector<std::pair<std::string, std::string>> names) {
+        Setup s;
+        s.network("VehicleCAN", NetworkKind::Can, 3)
+            .described(named(participant("Engine", 6), 8, std::move(names)),
+                       taking_map(ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)})})))
+            .described(participant("Dashboard", 10), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)})}));
+        return s;
+    };
+    Setup s = pair({{"VehicleCAN", "J1939_CAN"}});
+    check_text(s.check(), "");
+    // seen_networks() is what every rule reads: the simulation's name, with the executable's beside it.
+    const std::vector<SeenNetwork> seen = seen_networks(s.config.participants[0], *s.results[0].ecu);
+    CHECK(seen.size() == 1 && seen[0].network.name == "VehicleCAN" && seen[0].executable_name == "J1939_CAN" &&
+          seen[0].renamed() && seen[0].line == 8 && seen[0].network.nodes.size() == 1);
+    // Without the line, the names are two networks, as before.
+    CHECK(pair({}).check().find("E 6 unknown-network: participant 'Engine': the executable uses the network 'J1939_CAN' "
+                                "(j1939), which is not in networks. Another network of kind can in this simulation is "
+                                "'VehicleCAN' (line 3, used by Dashboard): if 'J1939_CAN' is meant to be that bus, say so in "
+                                "this file: add network_names: { VehicleCAN: J1939_CAN } to the participant 'Engine' (") == 0);
+    // A line whose two names are the same is no line.
+    CHECK(pair({{"J1939_CAN", "J1939_CAN"}}).check() == pair({}).check());
+
+    // The rules of the kind: the nodes of both executables are on the one network.
+    s.results[1].ecu->description.networks[0].nodes[0].address = 0x00;
+    check_text(s.check(), "E 3 address-conflict: network 'VehicleCAN': Engine and Dashboard both ask for the address 0x00 "
+                          "(0), and Dashboard has no NAME, so it does not take part in the address claim and keeps sending "
+                          "from that address: give each node its own address\n");
+
+    // The kind is compared under the simulation's name, and the message has both names.
+    Setup k;
+    k.network("VehicleCAN", NetworkKind::Can, 3)
+        .network("Body", NetworkKind::Lin, 4)
+        .described(named(participant("Engine", 6), 8, {{"Body", "J1939_CAN"}}),
+                   taking_map(ecu("Engine", 10ms, {on_j1939("J1939_CAN", {})})));
+    CHECK(k.check().find("E 6 kind-mismatch: participant 'Engine': the executable uses the network 'Body' ('J1939_CAN' in "
+                         "the executable) as can (j1939), but networks says kind: lin (line 4): correct the kind, the line "
+                         "of network_names (line 8), or the network in the ECU\n") == 0);
+    CHECK(check_participants(k.config, k.results, "1.0.0")[0].network == "Body");
+
+    // One master on a LIN network, whatever the executables call it.
+    Setup l;
+    l.network("Body", NetworkKind::Lin, 3)
+        .described(named(participant("Door", 5), 7, {{"Body", "LIN_A"}}),
+                   taking_map(ecu("Door", 10ms, {NetworkDescription{"LIN_A", NetworkUse::LinMaster, {}}})))
+        .described(participant("Seat", 9), ecu("Seat", 10ms, {NetworkDescription{"Body", NetworkUse::LinMaster, {}}}));
+    check_text(l.check(), "E 3 lin-masters: network 'Body': Door and Seat are both LIN masters, but a LIN network has one "
+                          "master: make all but one of them slaves\n");
+
+    // j1939() and can() of one name are both renamed; two names may be swapped.
+    Setup w;
+    w.network("A", NetworkKind::Can, 3)
+        .network("B", NetworkKind::Can, 4)
+        .described(named(participant("P", 6), 8, {{"A", "B"}, {"B", "A"}}),
+                   taking_map(ecu("P", 10ms, {on_j1939("A", {node(0x10)}), raw("A"), raw("B")})))
+        .described(participant("Q", 11), ecu("Q", 10ms, {on_j1939("B", {node(0x10)}), raw("A")}));
+    check_text(w.check(), "E 4 address-conflict: network 'B': P and Q both ask for the address 0x10 (16), and P and Q have "
+                          "no NAME, so they do not take part in the address claim and keep sending from that address: give "
+                          "each node its own address\n");
+    CheckReport r;
+    r.file = "sim.yaml";
+    r.config = w.config;
+    r.participants = w.results;
+    CHECK(format_text(r).find("P            10 ms  B <- A (j1939 0x10), B <- A (raw), A <- B (raw)\n"
+                              "Q            10 ms  B (j1939 0x10), A (raw)\n") != std::string::npos);
+}
+
+TEST_CASE(a_network_alone_under_a_renamed_name_says_which_line_to_replace)
+{
+    // Engine's J1939_CAN is VehicleCAN by a line of the file, and no one else is there; Dashboard
+    // is alone on BodyCAN. The fix names the executable's name, and the line it replaces.
+    Setup s;
+    s.network("VehicleCAN", NetworkKind::Can, 3)
+        .network("BodyCAN", NetworkKind::Can, 4)
+        .described(named(participant("Engine", 6), 8, {{"VehicleCAN", "J1939_CAN"}}),
+                   taking_map(ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)}), raw("Diag")})))
+        .described(participant("Dashboard", 10), ecu("Dashboard", 10ms, {on_j1939("BodyCAN", {node(0x28)})}));
+    check_text(s.check(),
+               // Engine is on VehicleCAN itself, so that is not a candidate for its 'Diag'.
+               "E 6 unknown-network: participant 'Engine': the executable uses the network 'Diag' (raw), which is not in "
+               "networks. Another network of kind can in this simulation is 'BodyCAN' (line 4, used by Dashboard): if "
+               "'Diag' is meant to be that bus, say so in this file: add network_names: { BodyCAN: Diag } to the "
+               "participant 'Engine' (<simulation's name>: <executable's name>; the executable stays as it is); if 'Diag' "
+               "is a bus of its own, add it to networks with kind: can\n"
+               "W 3 single-participant: network 'VehicleCAN': only Engine is on it, so what it sends there reaches no "
+               "one: add the other participants of this network, or remove it; the network 'BodyCAN' (line 4, only "
+               "Dashboard) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: "
+               "remove 'VehicleCAN' from networks and add network_names: { BodyCAN: J1939_CAN } to the participant "
+               "'Engine' (in place of VehicleCAN: J1939_CAN)\n"
+               "W 4 single-participant: network 'BodyCAN': only Dashboard is on it, so what it sends there reaches no "
+               "one: add the other participants of this network, or remove it; the network 'VehicleCAN' (line 3, only "
+               "Engine) of kind can also has one ECU: if it is meant to be the same bus, keep one of the two names: "
+               "remove 'BodyCAN' from networks and add network_names: { VehicleCAN: BodyCAN } to the participant "
+               "'Dashboard'\n");
+}
+
+TEST_CASE(network_names_must_fit_what_the_executable_describes)
+{
+    // An executable of a vehicle-sil before --map-network (no "features" in its description): it
+    // would end with a usage error when started. The other rules go on with the names applied.
+    Setup old;
+    old.network("VehicleCAN", NetworkKind::Can, 3)
+        .network("Body", NetworkKind::Lin, 4)
+        .described(named(participant("Engine", 6), 8, {{"VehicleCAN", "J1939_CAN"}, {"Body", "LIN"}}),
+                   ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)}),
+                                         NetworkDescription{"LIN", NetworkUse::LinMaster, {}}}, "0.9.0"))
+        .described(participant("Dashboard", 12), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)}),
+                                                                         NetworkDescription{"Body", NetworkUse::LinSlave, {}}}));
+    check_text(old.check(),
+               "E 8 network-map-unsupported: participant 'Engine': network_names needs an executable that takes "
+               "--map-network, and this one does not say that it does (no \"map-network\" in the features of its "
+               "--describe; it was built with vehicle-sil 0.9.0): have its author build it again with vehicle-sil 1.0.0 "
+               "or later, or remove network_names and use the executable's own names in networks ('J1939_CAN' instead of "
+               "'VehicleCAN' and 'LIN' instead of 'Body'), with network_names for the other participants on them\n"
+               "N 6 version-mismatch: participant 'Engine': the executable was built with vehicle-sil 0.9.0, "
+               "vehicle_sil_launch with 1.0.0: if they do not work together, build them from the same version\n");
+    CHECK(network_of(check_participants(old.config, old.results, "1.0.0")[0]) == "network-map-unsupported(Engine,)");
+    // A name of a later vehicle-sil beside it changes nothing; the name alone is what is asked for.
+    old.results[0].ecu->description.features = {"something-later"};
+    CHECK(old.check().find("E 8 network-map-unsupported: ") == 0);
+    old.results[0].ecu->description.features = {"something-later", "map-network"};
+    CHECK(old.check().find("network-map-unsupported") == std::string::npos);
+    // An executable without the feature and an entry without lines (or with lines that rename nothing): as before.
+    old.results[0].ecu->description.features = {};
+    old.config.participants[0].network_names = {NetworkName{"VehicleCAN", "VehicleCAN", 8}};
+    CHECK(old.check().find("network-map-") == std::string::npos);
+
+    // The value is a network of the executable.
+    Setup typo;
+    typo.network("VehicleCAN", NetworkKind::Can, 3)
+        .network("Body", NetworkKind::Lin, 4)
+        .described(named(participant("Engine", 6), 8, {{"VehicleCAN", "J1939_CAM"}, {"Body", "Elsewhere"}}),
+                   taking_map(ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)}), raw("J1939_CAN"),
+                                                    NetworkDescription{"BodyLIN", NetworkUse::LinMaster, {}}})));
+    const std::vector<Finding> found = check_participants(typo.config, typo.results, "1.0.0");
+    CHECK(lines(found).find(
+              "E 8 network-map-unknown: participant 'Engine': network_names says that 'VehicleCAN' is the executable's "
+              "network 'J1939_CAM', but the executable has no network of that name (its networks: 'J1939_CAN' (j1939), "
+              "'J1939_CAN' (raw), 'BodyLIN' (lin_master)): correct the value (did you mean 'J1939_CAN'?), or remove the "
+              "line\n"
+              "E 9 network-map-unknown: participant 'Engine': network_names says that 'Body' is the executable's network "
+              "'Elsewhere', but the executable has no network of that name (its networks: 'J1939_CAN' (j1939), "
+              "'J1939_CAN' (raw), 'BodyLIN' (lin_master)): correct the value, or remove the line\n") == 0);
+    CHECK(network_of(found[0]) == "network-map-unknown(Engine,VehicleCAN)" && network_of(found[1]) == "network-map-unknown(Engine,Body)");
+    Setup none;
+    none.network("VehicleCAN", NetworkKind::Can, 3)
+        .described(named(participant("Engine", 6), 8, {{"VehicleCAN", "J1939_CAN"}}), taking_map(ecu("Engine", 10ms, {})));
+    CHECK(none.check().find("but the executable has no network of that name (it has no networks): correct the value, or "
+                            "remove the line\n") != std::string::npos);
+
+    // Two networks of the executable under one name would be one bus.
+    Setup twice;
+    twice.network("VehicleCAN", NetworkKind::Can, 3)
+        .network("BodyCAN", NetworkKind::Can, 4)
+        .described(named(participant("Engine", 6), 8, {{"VehicleCAN", "J1939_CAN"}}),
+                   taking_map(ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)}), raw("VehicleCAN")})))
+        .described(participant("Dashboard", 10), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)})}));
+    const std::vector<Finding> clash = check_participants(twice.config, twice.results, "1.0.0");
+    CHECK(lines(clash).find(
+              "E 8 network-map-collision: participant 'Engine': with network_names, the executable's 'J1939_CAN' becomes "
+              "'VehicleCAN', and the executable also has a network it calls 'VehicleCAN' itself, so two of its networks "
+              "would be one bus: give the executable's own 'VehicleCAN' another name of networks too (network_names: { "
+              "<another name in networks>: VehicleCAN }), or remove this line\n") == 0);
+    CHECK(network_of(clash[0]) == "network-map-collision(Engine,VehicleCAN)");
+    // With the other one renamed as well, nothing is wrong.
+    twice.config.participants[0].network_names.push_back(NetworkName{"BodyCAN", "VehicleCAN", 9});
+    CHECK(twice.check().find("network-map-") == std::string::npos);
+}
+
+TEST_CASE(a_disabled_participant_with_network_names_is_not_compared)
+{
+    // Its lines would be wrong for its executable (no such network, no --map-network): it is not
+    // in the simulation, so the check does not say so, and the rules are about the rest.
+    Setup s;
+    s.network("VehicleCAN", NetworkKind::Can, 3)
+        .described(named(participant("Engine", 6), 8, {{"VehicleCAN", "J1939_CAM"}}),
+                   ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)})}))
+        .described(participant("Dashboard", 10), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)})}));
+    s.config.participants[0].enabled = false;
+    s.results[0] = ParticipantResult{ParticipantStatus::Disabled, std::nullopt};
+    check_text(s.check(), "N 6 participant-disabled: participant 'Engine': disabled (enabled: false, or --disable): it is "
+                          "neither checked nor started, and the other findings are about the simulation without it\n"
+                          "W 3 single-participant: network 'VehicleCAN': only Dashboard is on it, so what it sends there "
+                          "reaches no one: add the other participants of this network, or remove it\n");
+}
+
+TEST_CASE(the_reports_show_both_names_of_a_renamed_network)
+{
+    Setup s;
+    s.network("VehicleCAN", NetworkKind::Can, 3)
+        .network("Body", NetworkKind::Lin, 4)
+        .described(named(participant("Engine", 6), 8, {{"VehicleCAN", "J1939_CAN"}, {"Body", "Body"}}),
+                   taking_map(ecu("Engine", 10ms, {on_j1939("J1939_CAN", {node(0x00, kEngineName)}),
+                                                    NetworkDescription{"Body", NetworkUse::LinMaster, {}}})))
+        .described(participant("Dashboard", 11), ecu("Dashboard", 10ms, {on_j1939("VehicleCAN", {node(0x28)})}))
+        .unchecked("Door", 13);
+    s.config.participants[2].network_names = {NetworkName{"Body", "DoorLIN", 15}};
+    CheckReport r;
+    r.file = "sim.yaml";
+    r.config = s.config;
+    r.participants = s.results;
+    // For people: the simulation's name, then the executable's; the network table has the simulation's only.
+    const std::string text = format_text(r);
+    CHECK(text.find("participant  step   networks\n"
+                    "Engine       10 ms  VehicleCAN <- J1939_CAN (j1939 0x00), Body (lin_master)\n"
+                    "Dashboard    10 ms  VehicleCAN (j1939 0x28)\n"
+                    "Door         -      not checked (describe: false)\n"
+                    "\n"
+                    "network     kind  participants\n"
+                    "VehicleCAN  can   Engine, Dashboard\n"
+                    "Body        lin   Engine\n") != std::string::npos);
+    // For programs: "reported" is what the executable said, under its names; network_map has the
+    // lines as written (also the one that renames nothing), only for an entry that has some; the
+    // networks' participants are under the simulation's names.
+    const std::string json = format_json(r);
+    CHECK(json.find("        \"networks\": [\n"
+                    "          {\n"
+                    "            \"name\": \"J1939_CAN\",\n"
+                    "            \"kind\": \"can\",\n"
+                    "            \"use\": \"j1939\",\n") != std::string::npos);
+    CHECK(json.find("      \"network_map\": [\n"
+                    "        {\n"
+                    "          \"name\": \"VehicleCAN\",\n"
+                    "          \"line\": 8,\n"
+                    "          \"from\": \"J1939_CAN\"\n"
+                    "        },\n"
+                    "        {\n"
+                    "          \"name\": \"Body\",\n"
+                    "          \"line\": 9,\n"
+                    "          \"from\": \"Body\"\n"
+                    "        }\n"
+                    "      ],\n") != std::string::npos);
+    CHECK(json.find("      \"network_map\": [\n"
+                    "        {\n"
+                    "          \"name\": \"Body\",\n"
+                    "          \"line\": 15,\n"
+                    "          \"from\": \"DoorLIN\"\n"
+                    "        }\n"
+                    "      ],\n") != std::string::npos);
+    CHECK(json.find("      \"name\": \"VehicleCAN\",\n      \"kind\": \"can\",\n      \"line\": 3,\n      \"participants\": [\n"
+                    "        \"Engine\",\n        \"Dashboard\"\n      ]") != std::string::npos);
+    // An entry without network_names has no such key: its JSON is what it was.
+    std::size_t count = 0;
+    for (auto at = json.find("\"network_map\""); at != std::string::npos; at = json.find("\"network_map\"", at + 1))
+    {
+        ++count;
+    }
+    CHECK_EQ(count, std::size_t{2});
+    CHECK(format_json(mixed_report()).find("network_map") == std::string::npos);
 }

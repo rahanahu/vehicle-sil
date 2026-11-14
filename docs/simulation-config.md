@@ -52,7 +52,7 @@ participants:
 | `time_step_ms` | | controller の刻み（ミリ秒の仮想時間、1 以上 10^12 以下の整数）。一時停止とステップ送りの細かさ、速さを合わせる細かさです。書かなければ、最速のときは 10 です（`stop_at_ms` が 10 の倍数でなければ、`stop_at_ms` と 10 の最大公約数）。速さを指定したときは、さらに ECU のステップ幅との最大公約数にします（[等速で動かす](simulation-run.md#等速で動かす)の「刻みと ECU のステップ」）。書いたときは `stop_at_ms` の約数にします（誤り `value`） |
 | `late_tolerance_ms` | | 遅れの許容（実時間のミリ秒、1 以上 10^12 以下の整数）。刻みの遅れがこれを超えたら、遅れた刻みに数えます。書かなければ 10 です（刻みと速さによりません） |
 | `networks` | はい | ネットワークの配列（空でもかまいません）。ECU が使うネットワークは、すべてここに書きます |
-| `networks[].name` | はい | ネットワークの名前（ECU の `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡す名前） |
+| `networks[].name` | はい | ネットワークの名前（ECU の `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡す名前。実行ファイルが別の名前で呼んでいるときは、その participant の `network_names` に書きます） |
 | `networks[].kind` | はい | `can`、`lin`、`ethernet` のどれか |
 | `participants` | はい | participant の配列（1 つ以上） |
 | `participants[].name` | はい | participant 名。照合では、ecu_main の実行ファイルに `--name` で渡します。空でなく、1 行で（制御文字なし）、`-` で始まらないこと。`SimulationController`（vehicle-sil の controller の participant 名）は使えません |
@@ -66,6 +66,7 @@ participants:
 | `variants` | | 機種の対応（機種の名前 → 共通の部分との差分）。書いた構成は、`check` と `run` に `--variant <名前>` が要ります（[機種](#機種variants--variant)） |
 | `params` | | シナリオのパラメーターの値（名前 → 値）。シナリオの `${名前}` に入ります（[シナリオのパラメーター](#シナリオのパラメーターparams--param)） |
 | `participants[].variables` | | 変数の対応表。シミュレーションで使う名前から、この実行ファイルの変数への対応を書きます（[変数の名前と値を合わせる](#変数の名前と値を合わせるvariables)）。書いていない変数は、実行ファイルの名前のまま見えます |
+| `participants[].network_names` | | ネットワークの名前の対応。シミュレーションの名前（`networks` の名前）から、この実行ファイルがコードで使っている名前への対応を書きます（[ネットワークの名前を合わせる](#ネットワークの名前を合わせるnetwork_names)）。書いていないネットワークは、実行ファイルの名前のままです |
 
 - 知らないキーはエラーです（打ち間違いを黙って無視しません）。近い名前があれば示します。同じキーを 2 回書くのもエラーです。
 - **エディターの補完**: JSON Schema は [schema/simulation.schema.json](../schema/simulation.schema.json) です。YAML の言語サーバーを使うエディターでは、ファイルの先頭に `# yaml-language-server: $schema=<このファイルへのパス>` と書くと、キーの補完と説明、形の検査が効きます（上の例の 1 行目。パスは、書いているファイルのディレクトリから数えます）。スキーマが見るのは、キーと値の形だけです。実行ファイルと合っているか、同じキーの 2 回目、キーの組み合わせは、`check` が確かめます。JSON で書いたファイル（最初の文字が `{`）にはコメントを書けないので、エディターの設定で、ファイルとスキーマを結び付けます（VS Code なら `json.schemas` に、ファイルの名前のパターンとスキーマのパスを書く）。ファイルの中に `"$schema"` のキーは書けません（ランチャーが、知らないキーの誤りにします）。ひな形には `schema/` に写しが入っていて、`get_tools.py` が、取ってきた道具の版のスキーマで上書きします。道具の圧縮ファイルでは `schema/` にあります。
@@ -92,16 +93,17 @@ participants:
 
 ### ecu_main の実行ファイル（`describe: true`）
 
-- `command` には、`ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--help`、`-h`。`--name=X` の形も）を書けません（誤り）。
+- `command` には、`ecu_main` の引数（`--describe`、`--name`、`--registry-uri`、`--local`、`--run-for-ms`、`--start-timeout-ms`、`--map-network`、`--help`、`-h`。`--name=X` の形も）を書けません（誤り `launcher-argument`）。`--map-network` は `network_names` に書きます（[ネットワークの名前を合わせる](#ネットワークの名前を合わせるnetwork_names)）。
 - `--no-control` は `command` に書けます。その ECU は変数を出しません。照合の `--describe` にも同じ引数が渡るので、自己申告の `control` が `null` になり、`run` はその ECU の hello を待ちません（[変数を読み書きする口](simulation-run.md#変数を読み書きする口)）。
 - `--silkit-config <file>` も `command` に書けます（`command: [engine/vehicle_sil_engine_ecu, --silkit-config, engine.silkit.yaml]`）。その ECU に SIL Kit の構成ファイルを渡します。相対パスは、構成ファイルのあるディレクトリから数えます（participant の作業ディレクトリ）。照合の `--describe` にも渡るので、ファイルがない、SIL Kit が受け付けない、participant 名と違う `ParticipantName` がある、といった誤りは、照合で `describe-failed` として分かります（[ecu-executable.md](ecu-executable.md) の「SIL Kit の構成を渡す」）。
-- 照合では、`command` の引数（`{{語}}` を `{語}` に戻したもの）に `--describe --name <participant 名>` を足して動かします。`run` では `--name <participant 名> --registry-uri <URI> --start-timeout-ms <ms>` を足します。`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です（開始を待つのはランチャーで、来なかった participant を挙げるのもランチャーです。ECU の制限は、ランチャーがいなくなったときのためのものです）。自分で起動する必須の participant がいる実行では、開始に上限がないので、10^12（`1000000000000`）です。
+- 照合では、`command` の引数（`{{語}}` を `{語}` に戻したもの）に `--describe --name <participant 名>` を足して動かします。`run` では `--name <participant 名> --registry-uri <URI> --start-timeout-ms <ms>` を足します。`<ms>` は `start_timeout_ms + stop_timeout_ms + 10000` です（開始を待つのはランチャーで、来なかった participant を挙げるのもランチャーです。ECU の制限は、ランチャーがいなくなったときのためのものです）。自分で起動する必須の participant がいる実行では、開始に上限がないので、10^12（`1000000000000`）です。`network_names` があれば、その後ろに `--map-network <シミュレーションの名前>=<実行ファイルの名前>` を、書いた順に足します（照合の `--describe` には足しません）。
 - `required: false` は書けません（誤り `not-required-ecu`）。ecu_main の実行ファイルは coordinated の participant として参加し、SIL Kit は必須でない coordinated の participant を始めないためです。ECU を外して動かすときは、`enabled: false` を書くか、`--disable <participant 名>` を付けます（[participant を外す](#participant-を外すenabled--disable--enable)）。
 
 ### ほかの実行ファイル（`describe: false`）
 
 - 照合しません。名前、ステップ幅、ネットワークを確かめられないことを注記します。`step_ms` を書いても照合しないので、注記します。
 - `run` は、書いた引数（プレースホルダーを置き換えたもの）のまま起動します。`required: true`（既定）の participant は、`{registry_uri}` の registry に、participant 名で、coordinated のライフサイクルで参加する必要があります（シミュレーションはそれを待ちます）。シミュレーションに参加しない道具（ログを取るだけのものなど）は `required: false` にします。
+- `network_names` を書くと、`run` は、プレースホルダーを置き換えた引数の後ろに `--map-network <シミュレーションの名前>=<実行ファイルの名前>` を足します。受け取れるのは ecu_main の実行ファイルだけです（[ネットワークの名前を合わせる](#ネットワークの名前を合わせるnetwork_names)）。
 
 ### participant を外す（`enabled`、`--disable`、`--enable`）
 
@@ -137,7 +139,7 @@ passed: 0 errors, 1 warning, 1 note
 ECU をデバッガーから動かすときなど、ある participant を `run` ではなく自分で起動するときは、その participant に `manual: true` を書きます。ファイルを書き換えずに、その実行だけ自分で起動するときは、`check` と `run` に `--manual <participant 名>` を付けます（繰り返せます）。`run` はその participant を起動せず、起動するコマンドを書いて、参加してくるのを待ちます。
 
 - 照合は、ほかの participant と同じです（`describe: true` なら `--describe` を動かします）。manual の participant ごとに注記 `participant-manual` を出します。
-- `run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を書きます（下の例）。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`）。そのコマンドを、書いてあるディレクトリで実行します（デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します）。引数の引用は、Linux では POSIX sh（bash、zsh）に貼る形です。Windows では、コマンドプロンプト（cmd.exe）に貼る形で、C ランタイムがコマンドラインを読む決まりで引用し、`&` `|` `<` `>` `^` を含む引数も `"` で囲みます。実行ファイルのパスは `\` で区切ります。cmd.exe は `"` の中でも `%...%` を展開するので、`%` を含む引数は直して貼ります。PowerShell に貼るときは、`"` で囲んだ実行ファイルの前に `&` を足し、`$` と `` ` `` を含む引数を直します。`--events` では、事象 `participant` の `state` が `manual` の行が、同じものを持ちます。
+- `run` は、その participant を起動する順番のところで、作業ディレクトリと、起動するコマンドの 1 行を書きます（下の例）。引数は、`run` が自分で起動するときと同じです（ecu_main の実行ファイルには `--name`、`--registry-uri`、`--start-timeout-ms`。`network_names` があれば `--map-network` も）。そのコマンドを、書いてあるディレクトリで実行します（デバッガーでは、実行ファイル、引数、作業ディレクトリに分けて設定します）。引数の引用は、Linux では POSIX sh（bash、zsh）に貼る形です。Windows では、コマンドプロンプト（cmd.exe）に貼る形で、C ランタイムがコマンドラインを読む決まりで引用し、`&` `|` `<` `>` `^` を含む引数も `"` で囲みます。実行ファイルのパスは `\` で区切ります。cmd.exe は `"` の中でも `%...%` を展開するので、`%` を含む引数は直して貼ります。PowerShell に貼るときは、`"` で囲んだ実行ファイルの前に `&` を足し、`$` と `` ` `` を含む引数を直します。`--events` では、事象 `participant` の `state` が `manual` の行が、同じものを持ちます。
 - `registry_uri` がループバックのアドレスでないときは、コマンドの前の行に「with VEHICLE_SIL_LISTEN_ON_NETWORK=1 in its environment」と書き、注記 `participant-manual` にも書きます。その変数を設定して起動します（[待ち受けるアドレス](simulation-run.md#待ち受けるアドレス)）。ほかのコンピューターで起動するときは、`--registry-uri` を、`registry at` の次の行（`from other computers, join at ...`）の URI に変えます。そこでは変数は要りません（[howto/multi-pc.md](howto/multi-pc.md)）。
 - 待っている間に、構成ファイルにない名前の participant がシミュレーションの開始を待っていると（`--name` の打ち間違いなど。2 秒 ServicesCreated のまま、または Error）、`participant '<名前>' joined the simulation, but this run has no participant of that name (did you mean '<近い名前>'?): it waits for the simulation's start, which only the participants of the file get; ...` の行を 1 回書きます。その participant は始まりません。`run` は、構成ファイルの名前の participant を待ち続けます。構成ファイルにない participant でも、自分で動く（autonomous の）もの（実時間の Peer、ブリッジ）は、シミュレーションの参加者として扱い、何も書きません。
 - `registry_uri` を書いていなければ、manual の必須の participant がいる実行は、registry を `silkit://127.0.0.1:8500` で立てます。コマンドが実行ごとに変わらないので、デバッガーの設定を 1 度作れば使い回せます。そのポートを別のプログラムが使っていれば `setup` の誤りです（`registry_uri` に別のポートを書きます）。
@@ -237,6 +239,43 @@ participants:
 
 `describe: false` の participant にも `variables` は書けますが、実行の前には比べられません（注記 `variable-map-not-checked`）。対応は、その participant の変数の口がつながったときに当てます。合わなかった対応は当てず、そのときに実行の行（`[vehicle_sil_launch] participant ...: variables: ...`、事象では `log`）で知らせ、終わりに実行の所見 `variable-map-not-applied`（誤り）にします。その実行の間、合わなかった対応の変数は実行ファイルの名前と値のまま読めますが、その対応の名前（キーと `from`）への書き込みは断ります（共通の名前のつもりで書いた値が、別の変数や変換なしの値として入るのを防ぐためです）。
 
+### ネットワークの名前を合わせる（`network_names`）
+
+ECU の実行ファイルは、ネットワークの名前をコードに持っています（`j1939("J1939_CAN")` など）。別々の人が作った ECU は、同じバスを違う名前で呼んでいることがあります。`network_names` に対応を書くと、実行ファイルを作り直さずに、そのネットワークをシミュレーションの名前のバスにつなげます。
+
+```yaml
+networks:
+  - name: VehicleCAN
+    kind: can
+participants:
+  - name: Engine
+    command: [engine/engine_ecu]          # コードでは j1939("J1939_CAN")
+    network_names:
+      VehicleCAN: J1939_CAN               # この実行ファイルの J1939_CAN は、シミュレーションの VehicleCAN
+  - name: Dashboard
+    command: [dashboard/dashboard_ecu]    # コードでも VehicleCAN。対応は要りません
+```
+
+向きは、どこでも「シミュレーションの名前: 実行ファイルの名前」です（`variables` と同じです）。
+
+- キーは `networks` にある名前です（ないと誤り `network-map-undeclared`）。値は、実行ファイルが `j1939()`、`can()`、`lin_master()`、`lin_slave()`、`ethernet()` に渡している名前です。
+- 対応は名前ごとに効きます。同じ名前の `j1939()` と `can()` は、両方替わります。種類は替わりません。書いていないネットワークは、実行ファイルの名前のままです。
+- 実行ファイルの 1 つのネットワークに付けられる名前は 1 つです。1 つの値を 2 つのキーに書くことも、対応の後で実行ファイルの 2 つのネットワークが同じ名前になることも誤りです（`network-map-collision`）。2 つの名前の入れ替え（`A: B` と `B: A`）は書けます。
+- キーと値が同じ行（`VehicleCAN: VehicleCAN`）は、行がないのと同じです。機種で、共通の行を消すのに使います。
+- キーは、空でなく、`=` を含まず、`-` で始まらないこと（誤り `value`。引数 `--map-network <キー>=<値>` で渡すためです）。
+- `run` は、対応のある participant の引数の最後に、`--map-network VehicleCAN=J1939_CAN` を書いた順に足します。起動した実行ファイルは、コードの `J1939_CAN` を SIL Kit の `VehicleCAN` につなぎます（[ecu-executable.md](ecu-executable.md) の「引数」）。ECU のコードから見える名前は変わりません。自分で起動する participant（`manual`）のコマンドと、事象 `participant` の `command` にも、同じ引数が出ます。
+- 照合（`check`、`run` の最初）は、自己申告のネットワークを対応の後の名前に直してから、規則を当てます。表、`check --json` の `networks[].participants`、所見の `network` は、シミュレーションの名前です。表の participant の行には `VehicleCAN <- J1939_CAN (j1939 0x00)` と両方の名前が出ます。`check --json` では、`participants[].network_map` に書いた行が、`participants[].reported.networks[].name` に実行ファイルの名前が出ます。
+- 照合は、対応を自己申告と比べます: 値の名前のネットワークを実行ファイルが使っていない（`network-map-unknown`）、実行ファイルが `--map-network` を受け取れない（`network-map-unsupported`。自己申告の `features` に `map-network` がない、前の版の vehicle-sil で作った実行ファイルです。作り直すか、`networks` の名前をその実行ファイルの名前にして、ほかの participant の側に対応を書きます）。どれも誤りで、`run` は何も起動しません。
+- `describe: false` の participant にも書けます（OS の違う別のコンピューターで自分で起動する ECU など）。照合できないので、注記 `network-map-not-checked` を出します。`--map-network` を受け取れるのは ecu_main の実行ファイルだけです。ブリッジやほかの道具には `network_names` を書かず、その実行ファイルの引数か設定に、シミュレーションの名前を書きます。`describe: false` の `command` に `--map-network` を自分で書くこともできますが、`network_names` と両方は書けません（誤り `launcher-argument`）。
+
+制限:
+
+- Windows のランチャーでは、対応のあるネットワークの名前（キーと値）は ASCII だけです（誤り `network-map-not-ascii`）。Windows の ECU の実行ファイルは、ASCII でない `--map-network` を断ります（引数がコードページで届くためです）。Linux のランチャーはこの誤りを出さないので、Linux から起動を指示して Windows のコンピューターで ECU を動かすときも、対応のあるネットワークの名前は ASCII にします。
+- 監視用の変数（`j1939.<ネットワーク名>.bus_state` など）の名前は、`run` ではシミュレーションの名前になります（`j1939.VehicleCAN.*`）。`describe: false` の participant の `variables` でこの変数を `from` に書いているときは、その名前を合わせます。
+- `--silkit-config` で渡す SIL Kit の構成のコントローラーに `Network` があると、対応と一緒には使えません（起動のときに実行ファイルが終了コード 3 で断ります）。rapidyaml なしでビルドした ECU は、対応と `--silkit-config` の併用そのものを、同じく起動のときに断ります。どちらも照合では分かりません。
+- 外から渡したポートの J1939（`j1939(name, port)`）の名前に対応を書いても、照合では分かりません（起動のときに終了コード 3）。
+- `network_names` は、`describe: false` の participant がどのネットワークにいるかの申告にはなりません（照合は、その participant のネットワークを今までどおり知りません）。
+
 ### 機種（`variants`、`--variant`）
 
 実行ファイルや変数の対応が機種ごとに違うときは、共通の部分を `participants` に書き、機種ごとの差分を `variants` に書きます。`check` と `run` は、`--variant <名前>` で選んだ機種の差分を共通の部分に重ねた構成を、照合し、実行します（全部の機種を順に回すのは `test` です。[simulation-run.md](simulation-run.md#シナリオをまとめて回すvehicle_sil_launch-test)「シナリオをまとめて回す」）。シナリオは共通の名前だけを使うので、どの機種にも同じものを当てられます。
@@ -267,6 +306,7 @@ variants:
 | `variants.<機種>.participants.<participant>` | 共通の部分の participant の、この機種での違い。キーは participant 名で、`participants` にある名前だけを書けます（誤り `variant-participant`） |
 | `…<participant>.command` | 実行ファイルと引数。共通の `command` の全体を置き換えます。書き方と決まりは `participants[].command` と同じです |
 | `…<participant>.variables` | 変数の対応表。共通の `variables` に、対応 1 つずつ重ねます: 同じ名前（キー）の対応は置き換え、ない名前は足します |
+| `…<participant>.network_names` | ネットワークの名前の対応。共通の `network_names` に、行ごとに重ねます: 同じキーの行は置き換え（キーと値が同じ行は、共通の行を消します）、ないキーは足します |
 | `…<participant>.enabled` | `true` か `false`。共通の `enabled` を置き換えます |
 | `variants.<機種>.params` | パラメーター。共通の `params` に、名前ごとに重ねます |
 

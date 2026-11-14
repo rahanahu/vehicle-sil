@@ -1486,6 +1486,43 @@ TEST_CASE(the_ecu_waits_for_the_start_longer_than_the_launcher)
     CHECK_EQ(launch::detail::ecu_start_timeout_ms(c), kMaxMillis);
 }
 
+TEST_CASE(a_participant_is_started_with_its_network_names_after_everything_else)
+{
+    using vehicle_sil::launch::detail::participant_arguments;
+    const auto words = [](const std::vector<std::string>& list) {
+        std::string out;
+        for (const std::string& word : list)
+        {
+            out += "[" + word + "]";
+        }
+        return out + "\n";
+    };
+    SimulationConfig config;
+    config.start_timeout_ms = 2000;
+    ParticipantConfig p;
+    p.name = "Engine";
+    p.command = {"engine/engine_ecu", "--verbose"};
+    const std::string timeout = std::to_string(vehicle_sil::launch::detail::ecu_start_timeout_ms(config));
+    const std::string own = "[--verbose][--name][Engine][--registry-uri][silkit://127.0.0.1:8500][--start-timeout-ms][" + timeout + "]";
+    // Without network_names: what it was.
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500")), own + "\n");
+    // In the file's order and direction (<simulation's name>=<executable's name>), after the
+    // launcher's own arguments; a line whose two names are the same is not given.
+    p.network_names = {NetworkName{"VehicleCAN", "J1939_CAN", 5}, NetworkName{"Body", "Body", 6},
+                       NetworkName{"Body CAN", "CAN_B", 7}};
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500")),
+               own + "[--map-network][VehicleCAN=J1939_CAN][--map-network][Body CAN=CAN_B]\n");
+    // describe: false: after its command with the placeholders replaced, and a name that looks
+    // like a placeholder stays as it is.
+    p.describe = false;
+    p.command = {"tools/remote", "--uri", "{registry_uri}", "--as", "{name}"};
+    p.network_names = {NetworkName{"{name}", "{registry_uri}", 5}};
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500")),
+               "[--uri][silkit://127.0.0.1:8500][--as][Engine][--map-network][{name}={registry_uri}]\n");
+    p.network_names.clear();
+    check_text(words(participant_arguments(config, p, "silkit://127.0.0.1:8500")), "[--uri][silkit://127.0.0.1:8500][--as][Engine]\n");
+}
+
 TEST_CASE(the_command_to_start_a_participant_by_hand_is_quoted_for_the_shell)
 {
     using vehicle_sil::launch::detail::shell_command_line;

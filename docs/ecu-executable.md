@@ -135,9 +135,10 @@ engine_ecu --registry-uri silkit://localhost:8500 --map-network VehicleCAN=J1939
 - 終了コード 3 になる場合（どれも、シミュレーションが始まる前に 1 行で言います）:
   - 実行ファイルの名前のネットワークを、ECU が持たない（文言に、ECU のネットワークを並べます）。
   - 替えた後で、ECU の 2 つのネットワークが同じ名前になる（`--map-network B=A` で、コードが `A` と `B` の両方を持つ。入れ替えの `--map-network B=A --map-network A=B` は書けます）。
-  - `--silkit-config` の構成が、コントローラー（`CanControllers`、`LinControllers`、`EthernetControllers`）に `Network` を書いている（SIL Kit は構成の `Network` を優先するので、どちらが効くか分からなくなります。名前を替えない `--map-network` だけなら断りません）。ソースからビルドしていない SIL Kit を使う vehicle-sil のビルドは、構成を読めないので、名前を替える `--map-network` と `--silkit-config` の併用を、構成の内容によらず断ります（`PeerOptions::network_names` と participant の構成も同じです）。
+  - `--silkit-config` の構成が、コントローラー（`CanControllers`、`LinControllers`、`EthernetControllers`、`FlexrayControllers`）に `Network` を書いている（SIL Kit は構成の `Network` を優先するので、どちらが効くか分からなくなります。名前を替えるネットワークと関係のないコントローラーでも断ります。名前を替えない `--map-network` だけなら断りません）。ソースからビルドしていない SIL Kit を使う vehicle-sil のビルドは、構成を読めないので、名前を替える `--map-network` と `--silkit-config` の併用を、構成の内容によらず断ります（`PeerOptions::network_names` と participant の構成も同じです）。
   - ECU が、替えた後の監視の出力と同じ名前の変数（`j1939.VehicleCAN.bus_state` など）を宣言している。
 - Windows（MinGW）では、名前を替えるネットワークに ASCII の名前を使ってください。ASCII でない文字のある `--map-network` は終了コード 4 です。Windows の引数はコードページに変換されて届き、コードページにない文字は `?` や似た文字に置き換わるので、そのまま読むと、誤りなしに別の名前のネットワークに載ってしまいます。`ecu_main` は、この引数だけを変換前のコマンドラインで確かめます（`main()` の `argc` と `argv` をそのまま渡したとき）。Linux では、ASCII か UTF-8 の名前を書けます（どちらでもないバイト列は終了コード 4）。
+- `vehicle_sil_launch` では、この引数を `command` に書かず、構成ファイルの participant の `network_names` に書きます（`network_names: { VehicleCAN: J1939_CAN }`。[simulation-config.md](simulation-config.md) の「ネットワークの名前を合わせる（`network_names`）」）。`run` が、ほかの引数の後ろに `--map-network` を足して起動し、`check` は、自己申告のネットワークを対応の後の名前で照合します。ecu_main の実行ファイル（`describe: true`）の `command` に書くと、構成ファイルの誤り `launcher-argument` です。
 - `ecu_main` を使わないプログラムは、`SilKitOptions::network_names`（`Simulation`）か `PeerOptions::network_names`（`Peer`）に、同じ向き（シミュレーションの名前 → コードの名前）で渡します。1 つのプロセスに複数の ECU を載せた `Simulation` では、全部の ECU に同じ対応が効き、その名前のネットワークを持たない ECU には何もしません（持たない名前を誤りにするのは `ecu_main` だけです）。`Peer::j1939(name, port)`（呼び出し側が作ったポート）の名前には対応を書けません（`std::invalid_argument`。SIL Kit のネットワークにつながないので、替えるものがありません）。
 
 ## `Ecu::describe()`

@@ -58,7 +58,7 @@
         "properties": {
           "name": {
             "$ref": "#/definitions/name",
-            "description": "The network's name: the one the ECUs give to j1939(), can(), lin_master(), lin_slave() or ethernet().",
+            "description": "The network's name in the simulation: the one the ECUs give to j1939(), can(), lin_master(), lin_slave() or ethernet(), unless the network_names of a participant says which name its executable uses for it.",
             "examples": ["J1939_CAN"]
           },
           "kind": {
@@ -118,6 +118,9 @@
           },
           "variables": {
             "$ref": "#/definitions/variables"
+          },
+          "network_names": {
+            "$ref": "#/definitions/network_names"
           }
         }
       }
@@ -170,6 +173,13 @@
       "propertyNames": { "minLength": 1 },
       "additionalProperties": { "$ref": "#/definitions/variable" },
       "examples": [{ "engine.throttle": "throttle_pct", "engine.speed": { "from": "rpm_x10", "scale": 0.1, "unit": "rpm" }, "engine.gear": { "from": "gear_raw", "map": { "P": 0, "R": 1, "N": 2, "D": 3 } }, "engine.turbo": { "absent": true } }]
+    },
+    "network_names": {
+      "type": "object",
+      "description": "The names of the networks for this participant: the simulation's name of a network (the key, a name from networks) and the name the executable's code gives it (the value). For an executable whose code names a network differently from this file; a network that is not listed keeps the executable's name. run gives the executable --map-network <key>=<value>, which an executable made with ecu_main takes if its --describe lists \"map-network\" in features. A line whose two names are the same stands for no line (a variant writes it to take a common line away). On Windows, the names of a renamed network must be ASCII.",
+      "propertyNames": { "pattern": "^[^-=][^=]*$" },
+      "additionalProperties": { "$ref": "#/definitions/name" },
+      "examples": [{ "VehicleCAN": "J1939_CAN" }]
     },
     "variable": {
       "description": "One of: the executable's name of the variable (renames it); { from, scale, offset } (the value seen is the executable's value * scale + offset); { from, map } (names for its values); { absent: true } (this executable does not have it).",
@@ -258,6 +268,10 @@
               "variables": {
                 "$ref": "#/definitions/variables",
                 "description": "Variable mappings laid over the common ones: a mapping of the same name replaces the common one, another name is added."
+              },
+              "network_names": {
+                "$ref": "#/definitions/network_names",
+                "description": "Network names laid over the common ones: a line with the same key replaces the common one (with the two names the same: takes it away), another key is added."
               },
               "enabled": {
                 "type": "boolean",

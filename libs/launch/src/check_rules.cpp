@@ -242,6 +242,9 @@ struct Rules
     /// why).
     std::vector<std::size_t> bridges{};
     bool bridges_marked = false;
+    /// The networks of each participant that counts (is_on_any()) as the simulation sees them
+    /// (seen_networks()); empty for the others. Every rule reads the networks from here.
+    std::vector<std::vector<SeenNetwork>> seen{};
 
     void add(Severity severity, const char* code, std::size_t line, std::string message, const std::string& participant,
              const std::string& network) const
@@ -249,34 +252,6 @@ struct Rules
         out.push_back(Finding{severity, code, std::move(message), line, participant, network});
     }
 };
-
-/// The Ecu function that gives a network this use its name: "j1939()".
-const char* ecu_call(NetworkUse use)
-{
-    switch (use)
-    {
-    case NetworkUse::Raw: return "can()";
-    case NetworkUse::J1939: return "j1939()";
-    case NetworkUse::LinMaster: return "lin_master()";
-    case NetworkUse::LinSlave: return "lin_slave()";
-    case NetworkUse::Ethernet: return "ethernet()";
-    }
-    return "";
-}
-
-/// The Ecu functions that name a network of `kind`, for messages: "can() or j1939()".
-std::string ecu_calls(NetworkKind kind)
-{
-    std::vector<std::string> calls;
-    for (const NetworkUse use : kNetworkUses)
-    {
-        if (kind_of(use) == kind)
-        {
-            calls.emplace_back(ecu_call(use));
-        }
-    }
-    return detail::or_list(calls);
-}
 
 /// The enabled participants that described themselves and use the network `name` as `kind`, in
 /// the order of the file, without entry `except`; only those without role: test if `ecus_only`.
@@ -291,9 +266,9 @@ std::vector<std::string> users_of(const Rules& rules, const std::string& name, N
         {
             continue;
         }
-        const auto& used = rules.results[i].ecu->description.networks;
+        const auto& used = rules.seen[i];
         if (std::any_of(used.begin(), used.end(),
-                        [&](const NetworkDescription& n) { return n.name == name && n.kind() == kind; }))
+                        [&](const SeenNetwork& n) { return n.network.name == name && n.network.kind() == kind; }))
         {
             users.push_back(p.name);
         }
@@ -301,23 +276,34 @@ std::vector<std::string> users_of(const Rules& rules, const std::string& name, N
     return users;
 }
 
-/// How to fix unknown-network: entry `i` uses `used`, which is not in networks. When another
-/// network of the same kind that entry `i` is not on has participants (in networks, or used by
-/// another participant without being in networks), the two names may be meant for one bus: name
-/// those networks and say who changes what (the configuration cannot rename a network).
+/// "'VehicleCAN'", and with the executable's name for a network that the entry renames:
+/// "'VehicleCAN' ('J1939_CAN' in the executable)".
+std::string both_names(const SeenNetwork& seen)
+{
+    return "'" + seen.network.name + "'" +
+           (seen.renamed() ? " ('" + seen.executable_name + "' in the executable)" : std::string{});
+}
+
+/// How to fix unknown-network: entry `i` uses `used` (under the executable's name: a network that
+/// the entry renames is in networks), which is not in networks. When another network of the same
+/// kind that entry `i` is not on has participants (in networks, or used by another participant
+/// without being in networks), the two names may be meant for one bus: name those networks and
+/// say what to write in this file (network_names of the participant; the executable stays as it
+/// is).
 std::string unknown_network_fix(const Rules& rules, std::size_t i, const NetworkDescription& used,
                                 const std::map<std::string, const NetworkConfig*>& networks,
                                 const std::vector<std::string>& networkNames)
 {
     const NetworkKind kind = used.kind();
     const std::string kindText = to_string(kind);
-    const auto& own = rules.results[i].ecu->description.networks;
+    const std::string who = rules.config.participants[i].name;
     std::set<std::string> seen;
-    for (const auto& n : own)
+    for (const auto& n : rules.seen[i])
     {
-        seen.insert(n.name);
+        seen.insert(n.network.name);
     }
     std::vector<std::string> others;
+    std::vector<std::string> listed; // those of `others` that are in networks
     for (const auto& network : rules.config.networks)
     {
         if (network.valid && network.kind == kind && !seen.contains(network.name))
@@ -328,6 +314,7 @@ std::string unknown_network_fix(const Rules& rules, std::size_t i, const Network
             {
                 others.push_back("'" + network.name + "' (line " + std::to_string(network.line) + ", used by " +
                                  and_list(users) + ")");
+                listed.push_back(network.name);
             }
         }
     }
@@ -337,12 +324,13 @@ std::string unknown_network_fix(const Rules& rules, std::size_t i, const Network
         {
             continue;
         }
-        for (const auto& n : rules.results[j].ecu->description.networks)
+        for (const auto& n : rules.seen[j])
         {
-            if (n.kind() == kind && !networks.contains(n.name) && seen.insert(n.name).second)
+            const std::string& name = n.network.name;
+            if (n.network.kind() == kind && !networks.contains(name) && seen.insert(name).second)
             {
-                others.push_back("'" + n.name + "' (not in networks either, used by " +
-                                 and_list(users_of(rules, n.name, kind, i, false)) + ")");
+                others.push_back("'" + name + "' (not in networks either, used by " +
+                                 and_list(users_of(rules, name, kind, i, false)) + ")");
             }
         }
     }
@@ -350,18 +338,27 @@ std::string unknown_network_fix(const Rules& rules, std::size_t i, const Network
     {
         const std::string guess = detail::closest(used.name, networkNames);
         return ": add it to networks with kind: " + kindText +
-               ", or have the ECU's author correct the name in its code" +
-               (guess.empty() ? "" : " (did you mean '" + guess + "'?)");
+               ", or, if it is a network of this file under another name, add network_names: { <name in networks>: " +
+               used.name + " } to this participant" + (guess.empty() ? "" : " (did you mean '" + guess + "'?)");
     }
-    return ". " +
-           (others.size() == 1 ? "Another network of kind " + kindText + " in this simulation is "
-                               : "Other networks of kind " + kindText + " in this simulation are ") +
-           and_list(others) + ": if '" + used.name + "' is meant to be " +
-           (others.size() == 1 ? "that bus" : "one of those buses") +
-           ", the names must be the same, and the configuration cannot rename a network, so the author of one of the "
-           "ECUs changes the name in its code (the name passed to " +
-           ecu_calls(kind) + ") and builds it again; if '" + used.name +
-           "' is a bus of its own, add it to networks with kind: " + kindText;
+    const std::string start = ". " +
+                              (others.size() == 1 ? "Another network of kind " + kindText + " in this simulation is "
+                                                  : "Other networks of kind " + kindText + " in this simulation are ") +
+                              and_list(others) + ": if '" + used.name + "' is meant to be " +
+                              (others.size() == 1 ? "that bus" : "one of those buses");
+    const std::string own = "; if '" + used.name + "' is a bus of its own, add it to networks with kind: " + kindText;
+    if (listed.empty())
+    {
+        // No name to map to yet: one of the names goes to networks first.
+        return start + ", choose one name for the bus: add it to networks with kind: " + kindText +
+               ", and add network_names: { <that name>: <the executable's name> } to each participant whose executable "
+               "names the bus differently (<simulation's name>: <executable's name>; the executables stay as they are)" +
+               own;
+    }
+    return start + ", say so in this file: add network_names: { " +
+           (others.size() == 1 ? listed.front() : std::string("<one of them, in networks>")) + ": " + used.name +
+           " } to the participant '" + who +
+           "' (<simulation's name>: <executable's name>; the executable stays as it is)" + own;
 }
 
 /// The finding's code of a mapping that does not fit the executable's variables.
@@ -377,6 +374,85 @@ const char* variable_map_code(control::MapProblemKind kind)
     case control::MapProblemKind::Present: return "variable-map-absent";
     }
     return "value";
+}
+
+/// The network_names of entry `i` against what its executable described: whether it takes
+/// --map-network, whether it has each network the lines name, and whether two of its networks
+/// end up under one name. The rules after it read the networks with the lines applied, also
+/// when one of these errors is there: their findings are about the simulation the file means.
+void check_network_names(const Rules& rules, std::size_t i, const ParticipantConfig& p, const ReportedEcu& reported,
+                         std::string_view launcher_version)
+{
+    const std::vector<NetworkName> renames = renamed_networks(p);
+    if (renames.empty())
+    {
+        return;
+    }
+    const std::string prefix = participant_prefix(p.name);
+    const std::vector<SeenNetwork>& seen = rules.seen[i];
+    const auto& features = reported.description.features;
+    if (std::find(features.begin(), features.end(), ecu_executable::kFeatureMapNetwork) == features.end())
+    {
+        std::vector<std::string> own;
+        for (const NetworkName& entry : renames)
+        {
+            own.push_back("'" + entry.from + "' instead of '" + entry.name + "'");
+        }
+        rules.add(Severity::Error, "network-map-unsupported", renames.front().line,
+            prefix + "network_names needs an executable that takes --map-network, and this one does not say that it "
+                     "does (no \"map-network\" in the features of its --describe" +
+                (reported.vehicle_sil_version.empty() ? std::string{}
+                                                      : "; it was built with vehicle-sil " + reported.vehicle_sil_version) +
+                "): have its author build it again with vehicle-sil " + std::string(launcher_version) +
+                " or later, or remove network_names and use the executable's own " +
+                (own.size() == 1 ? "name" : "names") + " in networks (" + and_list(own) +
+                "), with network_names for the other participants on " + (own.size() == 1 ? "it" : "them"),
+            p.name, "");
+    }
+    // What the executable has, under its own names, once each.
+    std::vector<std::string> names;
+    std::vector<std::string> shown;
+    for (const SeenNetwork& n : seen)
+    {
+        if (std::find(names.begin(), names.end(), n.executable_name) == names.end())
+        {
+            names.push_back(n.executable_name);
+        }
+        const std::string text = "'" + n.executable_name + "' (" + to_string(n.network.use) + ")";
+        if (std::find(shown.begin(), shown.end(), text) == shown.end())
+        {
+            shown.push_back(text);
+        }
+    }
+    for (const NetworkName& entry : renames)
+    {
+        if (std::find(names.begin(), names.end(), entry.from) == names.end())
+        {
+            const std::string guess = detail::closest(entry.from, names);
+            rules.add(Severity::Error, "network-map-unknown", entry.line,
+                prefix + "network_names says that '" + entry.name + "' is the executable's network '" + entry.from +
+                    "', but the executable has no network of that name (" +
+                    (shown.empty() ? std::string("it has no networks") : "its networks: " + detail::join(shown)) +
+                    "): correct the value" + (guess.empty() ? "" : " (did you mean '" + guess + "'?)") +
+                    ", or remove the line",
+                p.name, entry.name);
+            continue;
+        }
+        // The executable's own network of the simulation's name, which no line gives another name.
+        const bool taken = std::any_of(seen.begin(), seen.end(), [&entry](const SeenNetwork& n) {
+            return !n.renamed() && n.network.name == entry.name;
+        });
+        if (taken)
+        {
+            rules.add(Severity::Error, "network-map-collision", entry.line,
+                prefix + "with network_names, the executable's '" + entry.from + "' becomes '" + entry.name +
+                    "', and the executable also has a network it calls '" + entry.name +
+                    "' itself, so two of its networks would be one bus: give the executable's own '" + entry.name +
+                    "' another name of networks too (network_names: { <another name in networks>: " + entry.name +
+                    " }), or remove this line",
+                p.name, entry.name);
+        }
+    }
 }
 
 /// The participant `p` (entry `i`) against its entry: name, step, networks, variables, version.
@@ -449,9 +525,11 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
                 p.name, "");
         }
     }
+    check_network_names(rules, i, p, *result.ecu, launcher_version);
     std::set<std::string> reported;
-    for (const auto& network : ecu.networks)
+    for (const SeenNetwork& seen : rules.seen[i])
     {
+        const NetworkDescription& network = seen.network;
         if (!reported.insert(network.name + "\n" + to_string(network.kind())).second)
         {
             continue;
@@ -467,9 +545,11 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
         else if (it->second->valid && it->second->kind != network.kind())
         {
             rules.add(Severity::Error, "kind-mismatch", p.line,
-                prefix + "the executable uses the network '" + network.name + "' as " + to_string(network.kind()) +
+                prefix + "the executable uses the network " + both_names(seen) + " as " + to_string(network.kind()) +
                     " (" + to_string(network.use) + "), but networks says kind: " + to_string(it->second->kind) +
-                    " (line " + std::to_string(it->second->line) + "): correct the kind, or the network in the ECU",
+                    " (line " + std::to_string(it->second->line) + "): correct the kind, " +
+                    (seen.renamed() ? "the line of network_names (line " + std::to_string(seen.line) + "), " : "") +
+                    "or the network in the ECU",
                 p.name, network.name);
         }
     }
@@ -772,8 +852,17 @@ void check_test_on_bridged_network(const Rules& rules, const NetworkConfig& netw
                 " this network to a real bus";
     }
     const std::string fix = "--disable " + (on.empty() ? maybe : on).front();
+    std::string talked = "'" + network.name + "'";
+    for (const SeenNetwork& seen : rules.seen[talker])
+    {
+        if (seen.network.name == network.name && seen.network.kind() == network.kind && !seen.network.nodes.empty())
+        {
+            talked = both_names(seen);
+            break;
+        }
+    }
     rules.add(Severity::Warning, "test-participant-talks-on-bridged-network", p.line,
-        participant_prefix(p.name) + "it has role: test and J1939 nodes on network '" + network.name + "', and " +
+        participant_prefix(p.name) + "it has role: test and J1939 nodes on network " + talked + ", and " +
             where + ": what it sends there goes out on the real bus too, its address claims among it, and a real "
             "ECU with the same address fights it for the address: let it only listen there (no J1939 nodes), or "
             "leave the bridge out of runs with it (" + fix + ", or enabled: false in a variant)" +
@@ -784,6 +873,38 @@ void check_test_on_bridged_network(const Rules& rules, const NetworkConfig& netw
                                           : " are not bridges, write role: ecu for them") +
                        " (and role: bridge for a bridge)"),
         p.name, network.name);
+}
+
+/// For single-participant: what to write so that `network`, which only the ECU `ecu` is on, is the
+/// bus `other` of networks ("": one of several of them): "add network_names: { J1939_CAN: VehicleCAN } to
+/// the participant 'Dashboard'". The value is the executable's name; a line that renames the
+/// network already is said to be replaced.
+std::string same_bus_lines(const Rules& rules, const NetworkConfig& network, const std::string& ecu, const std::string& other)
+{
+    std::vector<std::string> lines;
+    std::vector<std::string> replaced;
+    for (std::size_t i = 0; i < rules.config.participants.size() && i < rules.seen.size(); ++i)
+    {
+        if (rules.config.participants[i].name != ecu)
+        {
+            continue;
+        }
+        for (const SeenNetwork& seen : rules.seen[i])
+        {
+            const std::string line = (other.empty() ? std::string("<that network>") : other) + ": " + seen.executable_name;
+            if (seen.network.name == network.name && seen.network.kind() == network.kind &&
+                std::find(lines.begin(), lines.end(), line) == lines.end())
+            {
+                lines.push_back(line);
+                if (seen.renamed())
+                {
+                    replaced.push_back(seen.network.name + ": " + seen.executable_name);
+                }
+            }
+        }
+    }
+    return "add network_names: { " + detail::join(lines) + " } to the participant '" + ecu + "'" +
+           (replaced.empty() ? std::string{} : " (in place of " + detail::join(replaced) + ")");
 }
 
 /// The network `network` (of a valid kind): who is on it, then the rules of its kind.
@@ -806,8 +927,9 @@ void check_network(const Rules& rules, const NetworkConfig& network)
         const std::string& who = rules.config.participants[i].name;
         const bool test = rules.config.participants[i].role == ParticipantRole::Test;
         std::vector<J1939NodeDescription> own;
-        for (const auto& used : rules.results[i].ecu->description.networks)
+        for (const SeenNetwork& seen : rules.seen[i])
         {
+            const NetworkDescription& used = seen.network;
             if (used.name != network.name || used.kind() != network.kind)
             {
                 continue;
@@ -873,6 +995,7 @@ void check_network(const Rules& rules, const NetworkConfig& network)
         // Other networks of the same kind with one ECU each, another one: perhaps one bus that the
         // ECUs name differently.
         std::vector<std::string> alone;
+        std::vector<std::string> aloneNames;
         if (ecus == 1)
         {
             for (const auto& other : rules.config.networks)
@@ -886,6 +1009,7 @@ void check_network(const Rules& rules, const NetworkConfig& network)
                 {
                     alone.push_back("'" + other.name + "' (line " + std::to_string(other.line) + ", only " +
                                     them.front() + ")");
+                    aloneNames.push_back(other.name);
                 }
             }
         }
@@ -897,8 +1021,8 @@ void check_network(const Rules& rules, const NetworkConfig& network)
                                                " also has one ECU: if it is meant to be the same bus"
                                          : "the networks " + and_list(alone) + " of kind " + to_string(network.kind) +
                                                " also have one ECU each: if one of them is meant to be the same bus") +
-                      ", the ECUs name it differently, and the configuration cannot rename a network, so the author "
-                      "of one of them changes the name in its code";
+                      ", keep one of the two names: remove '" + network.name + "' from networks and " +
+                      same_bus_lines(rules, network, ecu, aloneNames.size() == 1 ? aloneNames.front() : std::string{});
         rules.add(weight, "single-participant", network.line,
             prefix +
                 (tests.empty() ? "only " + ecu + " is on it, so what it sends there reaches no one" + rules.not_counted +
@@ -964,6 +1088,14 @@ std::vector<Finding> check_participants(const SimulationConfig& config, const st
         return false;
     };
     Rules rules{config, results, out};
+    rules.seen.resize(config.participants.size());
+    for (std::size_t i = 0; i < config.participants.size() && i < results.size(); ++i)
+    {
+        if (is_on_any(config.participants[i], results[i]))
+        {
+            rules.seen[i] = seen_networks(config.participants[i], *results[i].ecu);
+        }
+    }
     rules.incomplete = any_enabled(ParticipantStatus::Failed) || any_enabled(ParticipantStatus::Skipped);
     rules.unchecked = any_enabled(ParticipantStatus::NotChecked);
     rules.not_counted = rules.unchecked ? " (participants with describe: false are not counted)" : "";

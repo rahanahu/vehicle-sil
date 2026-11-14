@@ -99,6 +99,20 @@ public:
             offer.wire_version = static_cast<int>(version);
             out.description.control = std::move(offer);
         }
+        // Absent (an executable of an earlier vehicle-sil): none. An open list: every name is kept,
+        // and whoever asks for one (ecu_executable::kFeatureMapNetwork) ignores the others.
+        if (const auto features = find(root_, "features"); features != ryml::NONE)
+        {
+            if (!tree_.is_seq(features))
+            {
+                fail("features is not an array");
+            }
+            index = 0;
+            for (auto item = tree_.first_child(features); item != ryml::NONE; item = tree_.next_sibling(item), ++index)
+            {
+                out.description.features.push_back(text(item, "features[" + std::to_string(index) + "]"));
+            }
+        }
         return out;
     }
 
