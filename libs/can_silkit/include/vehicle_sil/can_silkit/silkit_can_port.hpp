@@ -16,6 +16,7 @@
 #include <silkit/services/can/ICanController.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -66,6 +67,8 @@ struct SilKitCanPortOptions
 struct SilKitCanPortStatistics
 {
     std::uint64_t received = 0;          ///< Frames queued for the stack.
+    std::uint64_t received_without_time = 0; ///< Virtual time: of those, frames that came without a
+                                             ///< usable time (see SilKitCanPort).
     std::uint64_t receive_rejected = 0;  ///< Frames that are not classic CAN data frames.
     std::uint64_t receive_overflows = 0; ///< Frames dropped because the inbox was full.
     std::uint64_t error_state_changes = 0; ///< Error state changes SIL Kit reported (BusStateChanged).
@@ -99,6 +102,13 @@ struct SilKitCanPortStatistics
 /// with SIL Kit's timestamp, which is the sender's step time. release_before(now) hands over the
 /// frames stamped before `now` in (time, arrival) order. Frames that are not classic CAN data
 /// frames are dropped and counted.
+///
+/// A sender without time synchronisation (e.g. the Vector XL CAN bridge) has no step time. SIL
+/// Kit gives its frames this participant's current step time instead, except before this
+/// participant's first step, where they keep std::chrono::nanoseconds::min(). The port does not
+/// pass that on: a frame with a negative timestamp gets the time of this participant's latest
+/// step when it arrives (0 before the first step) and is released at the next step. Counted in
+/// received_without_time. The same goes for events.
 ///
 /// Sending: SendFrame() at the time of the current step; SIL Kit stamps the frame with the step
 /// time itself. TimedFrame::time goes into the userContext (encode_send_time()), so that a
@@ -158,6 +168,8 @@ private:
     /// Queues an event (virtual time: at event.time; real time: stamped on arrival). An event
     /// that is not a transmit acknowledgement keeps a place for each outstanding frame.
     void push_event(const PortEvent& event, bool acknowledgement) noexcept;
+    /// Virtual time: SIL Kit's timestamp, or for a negative one the time of the latest step.
+    [[nodiscard]] SimTime stamp(std::chrono::nanoseconds timestamp) const noexcept;
 
     SilKit::Services::Can::ICanController& controller_;
     StepInbox<Frame> inbox_;      ///< virtual time
@@ -165,6 +177,9 @@ private:
     std::mutex overflow_mutex_;   ///< virtual time: guards overflow_
     OverflowCollector overflow_;
     std::optional<RealTimeReceiver> real_time_;
+    /// Virtual time: `now` of the latest release_before(), in ns (written on the driver's thread,
+    /// read on SIL Kit's).
+    std::atomic<std::int64_t> step_time_ns_{0};
     std::atomic<std::uint64_t> event_refusals_{0}; ///< virtual time: error states without a place
     std::size_t transmit_capacity_;
     std::atomic<std::size_t> outstanding_{0}; ///< changed on the driver's thread only; atomic for statistics()
@@ -175,6 +190,7 @@ private:
     std::optional<SilKit::Util::HandlerId> error_state_handler_;
 
     std::atomic<std::uint64_t> received_{0};
+    std::atomic<std::uint64_t> received_without_time_{0};
     std::atomic<std::uint64_t> receive_rejected_{0};
     std::atomic<std::uint64_t> sent_{0};
     std::atomic<std::uint64_t> send_failed_{0};

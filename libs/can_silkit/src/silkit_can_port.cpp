@@ -196,6 +196,15 @@ void SilKitCanPort::close() noexcept
     }
 }
 
+SimTime SilKitCanPort::stamp(std::chrono::nanoseconds timestamp) const noexcept
+{
+    if (timestamp < std::chrono::nanoseconds::zero())
+    {
+        return SimTime{} + std::chrono::nanoseconds(step_time_ns_.load(std::memory_order_acquire));
+    }
+    return from_silkit_time(timestamp);
+}
+
 void SilKitCanPort::set_wakeup(Wakeup wakeup)
 {
     if (real_time_)
@@ -241,7 +250,7 @@ void SilKitCanPort::on_error_state(const sk::CanErrorStateChangeEvent& event) no
         return; // NotAvailable: the controller is not initialised; nothing to report
     }
     error_state_changes_.fetch_add(1, std::memory_order_relaxed);
-    out.time = from_silkit_time(event.timestamp);
+    out.time = stamp(event.timestamp);
     push_event(out, false);
 }
 
@@ -261,10 +270,14 @@ void SilKitCanPort::on_frame(const sk::CanFrameEvent& event)
         }
         return;
     }
-    const SimTime time = from_silkit_time(event.timestamp);
+    const SimTime time = stamp(event.timestamp);
     if (inbox_.push(time, *frame))
     {
         received_.fetch_add(1, std::memory_order_relaxed);
+        if (event.timestamp < std::chrono::nanoseconds::zero())
+        {
+            received_without_time_.fetch_add(1, std::memory_order_relaxed);
+        }
         return;
     }
     const std::lock_guard lock(overflow_mutex_);
@@ -290,7 +303,7 @@ void SilKitCanPort::on_transmit(const sk::CanFrameTransmitEvent& event) noexcept
     default:
         return;
     }
-    out.time = from_silkit_time(event.timestamp);
+    out.time = stamp(event.timestamp);
     out.id = event.canId;
     out.send_time = decode_send_time(event.userContext);
     push_event(out, true);
@@ -306,6 +319,8 @@ std::size_t SilKitCanPort::release_before(SimTime now, FrameSink sink)
     {
         return real_time_->release_before(now, sink);
     }
+    // A frame without a time that arrives from here on belongs to this step.
+    step_time_ns_.store(to_ns(now), std::memory_order_release);
     return inbox_.drain_before(now, [&sink](SimTime time, Frame& frame) { sink(TimedFrame{time, frame}); });
 }
 
@@ -369,6 +384,7 @@ SilKitCanPortStatistics SilKitCanPort::statistics() const
 {
     SilKitCanPortStatistics s;
     s.received = received_.load(std::memory_order_relaxed);
+    s.received_without_time = received_without_time_.load(std::memory_order_relaxed);
     s.receive_rejected = receive_rejected_.load(std::memory_order_relaxed);
     s.receive_overflows = real_time_ ? real_time_->overflows() : inbox_.overflows();
     s.error_state_changes = error_state_changes_.load(std::memory_order_relaxed);
