@@ -198,6 +198,37 @@ void expect_text(const std::string& actual, const std::string& expected, const s
     log("CHECK " + what + " -> ok");
 }
 
+/// The example's directory as a copy in the work directory: simulation.yaml and the ECUs of engine/
+/// and dashboard/ (hard links to the built files, copies where the file system has no links; on
+/// Windows the DLLs next to them too). The files that the docs show with mistakes in them are
+/// written here, where their relative paths find the ECUs as in the example, so that nothing that
+/// fails on purpose lies next to the example that works (build/<preset>/examples/ecu_main/).
+fs::path example_copy(const Options& o)
+{
+    const fs::path dir = o.work_dir / "example";
+    for (const std::string sub : {"engine", "dashboard"})
+    {
+        fs::create_directories(dir / sub);
+        for (const fs::directory_entry& entry : fs::directory_iterator(o.example_dir / sub))
+        {
+            if (!entry.is_regular_file())
+            {
+                continue;
+            }
+            const fs::path to = dir / sub / entry.path().filename();
+            fs::remove(to);
+            std::error_code no_link;
+            fs::create_hard_link(entry.path(), to, no_link);
+            if (no_link)
+            {
+                fs::copy_file(entry.path(), to);
+            }
+        }
+    }
+    fs::copy_file(o.example_dir / "simulation.yaml", dir / "simulation.yaml", fs::copy_options::overwrite_existing);
+    return dir;
+}
+
 /// What the program wrote, with `path` (as given, and as JSON writes it) shown as `shown`.
 std::string shown_as(std::string text, const fs::path& path, const std::string& shown)
 {
@@ -252,7 +283,9 @@ void docs(const Options& o)
                 block_after(o.docs, "<!-- vehicle_sil_launch check simulation.yaml -->"), "check simulation.yaml");
     expect_text(passed.standard_error, "", "check simulation.yaml: stderr");
 
-    const fs::path twoEngines = o.example_dir / "two-engines.yaml";
+    // The files with mistakes go to a copy of the example, not next to the example that works.
+    const fs::path mistakes = example_copy(o);
+    const fs::path twoEngines = mistakes / "two-engines.yaml";
     write_file(twoEngines, block_after(o.docs, "<!-- two-engines.yaml -->"));
     const Captured failed = launch(o, {"check", shown_path(twoEngines)});
     expect_code(failed, 1, "check two-engines.yaml");
@@ -266,7 +299,7 @@ void docs(const Options& o)
                 block_after(o.docs, "<!-- vehicle_sil_launch check simulation.yaml --disable Dashboard -->"),
                 "check simulation.yaml --disable Dashboard");
 
-    const fs::path alone = o.example_dir / "engine-alone.yaml";
+    const fs::path alone = mistakes / "engine-alone.yaml";
     write_file(alone, block_after(o.docs, "<!-- engine-alone.yaml -->"));
     const Captured json = launch(o, {"check", shown_path(alone), "--json"});
     expect_code(json, 1, "check engine-alone.yaml --json");

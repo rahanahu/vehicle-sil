@@ -162,6 +162,7 @@ def test_template_archive(tmp: Path) -> None:
         z.extractall(unpacked)
     top = unpacked / f"vehicle-sil-template-{VERSION}"
     for name in ["LICENSE", "CMakeLists.txt", "CMakePresets.json", "README.md", ".gitignore", "get_tools.py", "simulation.yaml",
+                 "simulation.live.yaml", "simulation.live.dashboard.yaml",
                  "engine/main.cpp", "dashboard/main.cpp", "scenarios/throttle_step.yaml"]:
         check((top / name).is_file(), f"the template archive has {name}")
     check(not any(re.search(r"/(build|bin|tools|__pycache__)/", n) for n in names), f"no build output in it: {names}")

@@ -41,6 +41,8 @@ add_subdirectory(launch)
 add_subdirectory(multi_host)
 # The ECU project template (template/) and its fetch script.
 add_subdirectory(template)
+# The scripts of scripts/ with tests of their own.
+add_subdirectory(scripts)
 add_subdirectory(peer)
 add_subdirectory(control_silkit)
 # The J1939 stack, its parts, the typed messages and the boundary checks; uses no example.

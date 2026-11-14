@@ -12,4 +12,8 @@ configure_file(scenarios/throttle_step.yaml scenarios/throttle_step.yaml COPYONL
 configure_file(scenarios/engine_disconnect.yaml scenarios/engine_disconnect.yaml COPYONLY)
 # The browser GUI's dashboard of simulation.yaml and the panel it loads (docs/gui.md).
 configure_file(simulation.dashboard.yaml simulation.dashboard.yaml COPYONLY)
+# The same two at the speed of a clock and without an end, to watch in the GUI (scripts/run-gui.py).
+# The GUI reads <configuration>.dashboard.yaml: the same dashboard under that name.
+configure_file(simulation.live.yaml simulation.live.yaml COPYONLY)
+configure_file(simulation.dashboard.yaml simulation.live.dashboard.yaml COPYONLY)
 configure_file(panels/rpm-bar.js panels/rpm-bar.js COPYONLY)
