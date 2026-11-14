@@ -20,6 +20,8 @@ import sys
 import unicodedata
 from pathlib import Path
 
+import job_summary
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -129,4 +131,4 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(job_summary.run(lambda: main(sys.argv[1:])))

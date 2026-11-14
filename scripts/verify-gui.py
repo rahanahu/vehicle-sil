@@ -54,6 +54,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import job_summary
 from busy_machine import DEFAULT_LIMIT_S, wait_until_quiet
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -326,4 +327,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(job_summary.run(main))

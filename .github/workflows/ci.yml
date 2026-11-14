@@ -2,6 +2,8 @@
 # sanitizer, one with the control server, and one of them also
 # with the oldest CMake that docs/build.md asks for, Windows with MSYS2 UCRT64), the browser GUI, and the Python code. Each job calls the repository's script that a developer
 # runs (AGENTS.md, "検証とスクリプト"); on failure, its logs (build/logs) are kept as an artifact.
+# The scripts also write their summary to the job's summary on the run's page (scripts/job_summary.py); a failure
+# there names the artifact of its logs (VEHICLE_SIL_LOG_ARTIFACT).
 # Security: read-only token, no secrets, actions pinned by commit hash (the tag in the comment).
 name: ci
 
@@ -82,6 +84,7 @@ jobs:
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       # Empty (not set) for the thread sanitizer: its preset's default factor (4) applies.
       VEHICLE_SIL_TEST_TIMEOUT_SCALE: ${{ matrix.preset != 'linux-clang-tsan' && '3' || '' }}
+      VEHICLE_SIL_LOG_ARTIFACT: logs-${{ matrix.preset }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -223,6 +226,8 @@ jobs:
             ccache-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}-
             ccache-linux-gcc-release-
       - name: Configure, build and test
+        env:
+          VEHICLE_SIL_LOG_ARTIFACT: logs-linux-gcc-release-cmake-${{ env.CMAKE_OLDEST }}
         run: |
           cmake --version | head -n 1
           cmake --version | grep -qxF "cmake version $CMAKE_OLDEST"
@@ -255,6 +260,7 @@ jobs:
       CCACHE_MAXSIZE: 1G
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      VEHICLE_SIL_LOG_ARTIFACT: logs-windows-mingw-release
     steps:
       # The sources as they are in the repository (LF), as on Linux.
       - name: Keep LF line ends
@@ -316,6 +322,8 @@ jobs:
     name: gui (server, screen, examples)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      VEHICLE_SIL_LOG_ARTIFACT: logs-gui
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -353,6 +361,8 @@ jobs:
     name: python (3.11, .python-version, lowest dependencies)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      VEHICLE_SIL_LOG_ARTIFACT: logs-python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
