@@ -149,9 +149,16 @@ SIL Kit の簡易シミュレーション（trivial simulation）は、調停も
 
 - そのネットワークのコントローラーは、SIL Kit が自動で詳細シミュレーションに切り替えます。各 participant のコードは変わりません。
 - 受信のフレームの時刻は送信の終わりです。送信側には、同じ時刻の TX のフレームと送信確認（`Transmitted`）を、送信側の userContext を付けて返します。コントローラーごとの送信キュー（既定 64）があふれた要求には `TransmitQueueFull` の送信確認を返し、送信しません。
-- 時刻と決定論: 時刻同期に参加し、ステップ T で、T より前に送られた要求（vehicle-sil のポートが userContext に入れた送信時刻）を取り込み、[T, T + ステップ幅) に始まる送信を決めます。結果は送信時刻とステップ幅だけで決まり、他の participant のステップ幅やスレッドのタイミングによりません。目印のない要求（vehicle-sil 以外の participant）と、最後のステップより 1 秒以上先の時刻の要求は、最後のステップの時刻で扱い、数えます。この扱いは決定的ではありません。
+- 時刻と決定論: 時刻同期に参加し、ステップ T で、T より前に送られた要求（vehicle-sil のポートが userContext に入れた送信時刻）を取り込み、[T, T + ステップ幅) に始まる送信を決めます。結果は送信時刻とステップ幅だけで決まり、他の participant のステップ幅やスレッドのタイミングによりません。目印のない要求（vehicle-sil 以外の participant）と、最後のステップより 1 秒以上先の時刻の要求は、最後のステップの時刻で扱い、数えます。この扱いは決定的ではありません。送信を待つフレームがあるコントローラーが `Reset()` を呼ぶ実行も、決定的ではありません（どのフレームが `Transmitted` で、どれが `Canceled` かが、1 ステップぶん決まりません。下の `Reset()` の項）。
 - ビットレート: そのネットワークで最初に `SetBaudRate()` を呼んだコントローラーの値、なければ `--default-bitrate`（既定 500 kbit/s）です。後から違う値が来たら数えて警告し、使いません。vehicle-sil のポートは CommunicationReady で `SetBaudRate()` を呼ぶので、coordinated の participant（`vehicle_sil_launch run` の ECU、`Simulation`）の値は、起動の順によらず届きます。autonomous の participant と、コントローラーを作ってすぐ `SetBaudRate()` を呼ぶほかのプログラムの値は、シミュレーターを見つける前だと届きません（SIL Kit の挙動。docs/dependencies.md）。ポートにビットレートを設定しない構成と、そういう participant のために、ネットワークのビットレートは `--default-bitrate` でも指定してください。
-- コントローラーのモードの変更（`Start()`、`Stop()` など）には、次のステップで状態の変化を返します。フレームは、モードによらず、送信者以外の接続中の全コントローラーに届けます（autonomous の participant の `Start()` は届かないことがあるので、モードで止めません）。CAN FD とリモートフレームの要求は捨てて数えます。
+- コントローラーのモード: 送信を捨てる条件と、受信がモードによらないことは、SIL Kit の簡易シミュレーションと同じです。`Reset()` の取り消し（`Canceled` の送信確認）は、送信を待つフレームがあるこのシミュレーターだけのものです。
+  - モードの変更（`Start()`、`Stop()`、`Sleep()`、`Reset()`）には、次のステップで状態の変化を返します。
+  - 送信: `Started` 以外のモードを伝えてきたコントローラーがその後に送った要求は、捨てて数えます（`rejected`）。送信確認は返しません。コントローラーごとに、最初の 1 回だけ警告を出します（始め直してまた止めても、2 回目は出しません）。警告は、フレームの ID、コントローラーの番号、伝えてきたモード（stopped、asleep、reset）を言います。番号は SIL Kit がそのコントローラーに付けたもので、シミュレーターが見つけた順に、全部のネットワークを通して 1 から数えます（participant やコントローラーの名前は、Network Simulator API からは取れません）。モードを変える前に送った要求は、そのまま送信します（コントローラーが呼んだ順で決まり、スレッドのタイミングによりません）。
+  - モードを一度も伝えてこないコントローラーは、始めたものとして扱います。シミュレーターを見つける前の `Start()` は届かないためです（autonomous の participant。docs/dependencies.md）。
+  - 受信: フレームは、受信側のモードによらず、送信者以外の接続中の全コントローラーに届けます。
+  - `Reset()` は送信の要求の取り消しを伴います。そのコントローラーの、まだ送信が始まっていないフレームは、バスに出さずに捨てて数え（`rejected`）、`Canceled` の送信確認を返します。取り消しが効くのは、`Reset()` が届いた後に始まる最初のステップです（その前のステップで送信が決まったフレームは届きます）。`Reset()` と同じ時刻のシミュレーターのステップは、`Reset()` が届く前に走ることも後に走ることもあるので、そのステップで始まるはずだったフレームは、`Transmitted` のことも `Canceled` のこともあります。`Reset()` の後は、`Start()` を呼ぶまで送れません。エラー処理のリセットの求めには、何もしません（エラー状態を模擬しないため）。
+  - listen only にあたるモードは、SIL Kit の CAN コントローラーにありません。
+- CAN FD とリモートフレームの要求は捨てて数えます。
 - 受け箱（ネットワークごとに 4096 要求）があふれたら、捨てて数え、警告します。あふれた実行は決定的ではありません。
 - 設定にあっても、まだどのコントローラーも参加していないネットワークは何もしません（SIL Kit は最初のコントローラーが現れたときにフレームを配る手段を渡します）。Vector のものと共用する設定に、使わない CAN ネットワークがあってもかまいません。
 - 使っているビットレートと、それが既定値かコントローラーの設定かを、ログに出します。
@@ -171,7 +178,7 @@ SimulatedNetworks:
 ```
 
 - 形式は Vector SIL Kit Network Simulator の設定ファイル（`SchemaVersion: 1`、YAML か JSON）です。`Type: CAN` のネットワークだけを模擬します。ほかの種類のネットワーク、`Switches`、知らないキーは受け付けて警告します。必須の項目がない、`SchemaVersion` が 1 でない、種類が CAN、LIN、Ethernet、FlexRay のどれでもない、名前が重複している、といったファイルは使いません。
-- コマンドラインは Vector のものと同じ形です: `vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--log <level>] [--participant-configuration <file>] <configuration>`（短い形 `-n -u -l -c` も同じ。participant 名の既定は `NetworkSimulator`）。`-c` のファイルの中の相対パスは、実行時のカレントディレクトリから解決します。`-c` の構成には、書いていないキーに vehicle-sil の既定を足します（待ち受けるアドレス、Windows の TCP、`Experimental.TimeSynchronization.DynamicSimulationStep: false`）。`ParticipantName` が `--name` と違う、`Middleware.RegistryUri` が `--connect-uri` と違う、`DynamicSimulationStep` が `true`、のどれかなら、接続する前に準備の失敗（終了コード 3）にして、直し方を言います（[core.md](core.md) の「SIL Kit の構成の既定」）。この実行ファイルだけの設定（`--default-bitrate`、`--transmit-queue`、`--start-timeout-ms`）はコマンドラインで渡し、設定ファイルには書きません。Vector のものが同じファイルを読めるようにするためです。
+- コマンドラインは Vector のものと同じ形です: `vehicle_sil_can_bus_simulator [--name <participant>] [--connect-uri <uri>] [--log <level>] [--participant-configuration <file>] <configuration>`（短い形 `-n -u -l -c` も同じ。participant 名の既定は `NetworkSimulator`）。Windows では、引数をワイド文字のコマンドラインから UTF-8 で読みます（ASCII 以外の文字を含むパスと名前を使えます）。`-c` のファイルの中の相対パスは、実行時のカレントディレクトリから解決します。`-c` の構成には、書いていないキーに vehicle-sil の既定を足します（待ち受けるアドレス、Windows の TCP、`Experimental.TimeSynchronization.DynamicSimulationStep: false`）。`ParticipantName` が `--name` と違う、`Middleware.RegistryUri` が `--connect-uri` と違う、`DynamicSimulationStep` が `true`、のどれかなら、接続する前に準備の失敗（終了コード 3）にして、直し方を言います（[core.md](core.md) の「SIL Kit の構成の既定」）。この実行ファイルだけの設定（`--default-bitrate`、`--transmit-queue`、`--start-timeout-ms`）はコマンドラインで渡し、設定ファイルには書きません。Vector のものが同じファイルを読めるようにするためです。
 - 終了コード: 0 正常に終了、1 シミュレーション中の失敗、3 準備の失敗（設定ファイル、接続）、4 使い方の誤り。
 
 Vector SIL Kit Network Simulator との差し替え:

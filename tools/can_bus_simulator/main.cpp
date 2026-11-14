@@ -5,6 +5,7 @@
 // same command line and network simulator configuration file as the Vector SIL Kit Network
 // Simulator, so one can replace the other by swapping the executable.
 #include "vehicle_sil/cli/args.hpp"
+#include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/can_netsim/can_bus_simulator.hpp"
 #include "vehicle_sil/can_netsim/network_simulator_config.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
@@ -16,6 +17,7 @@
 #include <charconv>
 #include <chrono>
 #include <csignal>
+#include <cstddef>
 #include <cstdio>
 #include <exception>
 #include <fstream>
@@ -23,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -122,19 +125,20 @@ std::uint64_t parse_number(std::string_view option, std::string_view text, std::
     return value;
 }
 
-Options parse(int argc, char** argv)
+/// `arguments`: the command line after the program name, as UTF-8.
+Options parse(const std::vector<std::string>& arguments)
 {
     Options options;
     bool hasConfiguration = false;
-    for (int i = 1; i < argc; ++i)
+    for (std::size_t i = 0; i < arguments.size(); ++i)
     {
-        const std::string_view arg = argv[i];
+        const std::string_view arg = arguments[i];
         const auto value = [&]() -> std::string_view {
-            if (i + 1 >= argc)
+            if (i + 1 >= arguments.size())
             {
                 throw cli::UsageError("missing value for " + std::string(arg));
             }
-            return argv[++i];
+            return arguments[++i];
         };
         if (arg == "-h" || arg == "--help")
         {
@@ -197,15 +201,20 @@ Options parse(int argc, char** argv)
     return options;
 }
 
+/// The content of the file at `path` (UTF-8, as the command line gives it).
 std::string read_file(const std::string& path)
 {
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(cli::utf8_path(path), std::ios::binary);
     if (!in)
     {
         throw std::runtime_error(path + ": cannot open the file");
     }
     std::ostringstream content;
     content << in.rdbuf();
+    if (in.bad())
+    {
+        throw std::runtime_error(path + ": cannot read the file");
+    }
     return content.str();
 }
 
@@ -235,7 +244,7 @@ int main(int argc, char** argv)
     Options options;
     try
     {
-        options = parse(argc, argv);
+        options = parse(cli::utf8_arguments(argc, argv));
     }
     catch (const cli::UsageError& e)
     {
@@ -260,7 +269,8 @@ int main(int argc, char** argv)
     std::string silkitConfiguration;
     try
     {
-        config = can::load_network_simulator_config(options.configuration);
+        // Not load_network_simulator_config(): it takes the path in the code page on Windows.
+        config = can::parse_network_simulator_config(read_file(options.configuration), options.configuration);
         networks = config.can_networks();
         silkitConfiguration = participant_configuration(options);
     }
