@@ -219,6 +219,10 @@ struct ControlServer::Impl
         builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS, 1);
         builder.AddChannelArgument(GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS, 5000);
         builder.AddChannelArgument(GRPC_ARG_HTTP2_MAX_PINGS_WITHOUT_DATA, 0);
+        // One server per port: with SO_REUSEPORT (gRPC's default where the system has it), a second
+        // launcher would listen on the same port too, and which of the two a client reaches
+        // would be open. Without it, the second one fails as for a port any other program has.
+        builder.AddChannelArgument(GRPC_ARG_ALLOW_REUSEPORT, 0);
         builder.AddListeningPort(options.listen, credentials, &port);
         builder.RegisterService(clients.get());
         server = builder.BuildAndStart();

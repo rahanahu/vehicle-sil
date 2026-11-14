@@ -484,8 +484,11 @@ namespace detail {
 /// The --start-timeout-ms the launcher gives an ecu_main executable: longer than the launcher's own
 /// wait for the start, so that the launcher, not the ECU, decides that the start failed and names
 /// who did not join; the ECU's limit only ends it if the launcher is gone. kMaxMillis if the start
-/// waits for a participant someone starts by hand (waits_for_manual()): that may take any time.
-[[nodiscard]] std::int64_t ecu_start_timeout_ms(const SimulationConfig& config);
+/// waits for a participant someone starts by hand (waits_for_manual()) or, with
+/// `stands_still_before_start`, stands still before the first step until a command (--start-paused
+/// with a control server): either may take any time, and the ECU is not Running until it is over.
+/// The launcher's own limits (before and after the wait) still end a start that does not come.
+[[nodiscard]] std::int64_t ecu_start_timeout_ms(const SimulationConfig& config, bool stands_still_before_start);
 
 /// One line for this system's shell that starts `executable` (as given) with `arguments`: on
 /// Windows for cmd.exe, quoted as the C runtimes read a command line back (an argument in double

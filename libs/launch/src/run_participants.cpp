@@ -14,13 +14,15 @@
 
 namespace vehicle_sil::launch {
 
-std::int64_t detail::ecu_start_timeout_ms(const SimulationConfig& config)
+std::int64_t detail::ecu_start_timeout_ms(const SimulationConfig& config, bool stands_still_before_start)
 {
     // The launcher waits start_timeout_ms for the start and then stops the participants within
     // stop_timeout_ms; the ECU must not give up first (it would end, and the launcher would name it
     // instead of who did not join). 10 s more for a slow machine; never more than ecu_main accepts.
-    // A start that waits for someone to start a participant by hand may take any time.
-    if (waits_for_manual(config))
+    // A start that waits for someone to start a participant by hand may take any time, and so may
+    // one that stands still before the first step until a control client's command: the ECUs are
+    // not Running before it, and a limit of theirs would end the run while it stands still.
+    if (waits_for_manual(config) || stands_still_before_start)
     {
         return kMaxMillis;
     }
@@ -160,7 +162,7 @@ bool RunParticipants::start_children(const std::string& uri)
         {
             arguments = expand_placeholders(rest, "", "");
             arguments.insert(arguments.end(), {"--name", p.name, "--registry-uri", uri, "--start-timeout-ms",
-                                               std::to_string(detail::ecu_start_timeout_ms(ctx_.config))});
+                                               std::to_string(detail::ecu_start_timeout_ms(ctx_.config, ctx_.holds()))});
         }
         else
         {
