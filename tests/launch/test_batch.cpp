@@ -100,7 +100,7 @@ TEST_CASE(a_test_that_cannot_begin_runs_nothing)
     // A file that is not there.
     const TestReport missing = test_file(dir / "none.yaml", "none.yaml", options);
     CHECK(missing.result() == TestResult::Unreadable && missing.exit_code() == 3 && missing.runs.empty());
-    check_text(format_test_text(missing), "error: none.yaml: the file does not exist: check the path\n\n"
+    check_text(format_test_text(missing), "error: none.yaml: the file does not exist: check the path [file]\n\n"
                                         "cannot read none.yaml: nothing was run\n");
 
     // A variant the file does not have: the check's words.
@@ -348,7 +348,7 @@ TEST_CASE(a_test_that_left_runs_out_or_ran_nothing_does_not_just_pass)
              "medium   a.yaml    not run  the launcher's connection to the simulation did not close in the run before it\n"
              "medium   b.yaml    not run  the launcher's connection to the simulation did not close in the run before it\n"
              "\n"
-             "error: sim.yaml: " + leftMessage + "\n"
+             "error: sim.yaml: " + leftMessage + " [test-runs-left]\n"
              "\n"
              "FAILED: 4 runs, 2 passed, 0 failed, 0 skipped, 2 not run (the launcher's connection to the simulation did not close)\n");
     const std::string leftJson = format_test_json(left);
@@ -380,13 +380,13 @@ TEST_CASE(a_test_that_left_runs_out_or_ran_nothing_does_not_just_pass)
              "\n"
              "warning: sim.yaml: nothing was run: all 2 runs were skipped, because no scenario is for the variant small (the only "
              "of each scenario; --variant chose what runs). Run a variant the scenarios are for, or correct their only. The test "
-             "checked nothing: it passes (--strict would fail on that)\n"
+             "checked nothing: it passes (--strict would fail on that) [test-nothing-run]\n"
              "\n"
              "passed: 2 runs, 0 passed, 0 failed, 2 skipped\n");
     none.strict = true;
     CHECK(none.result() == TestResult::Failed && none.exit_code() == 1);
     const std::string strictText = format_test_text(none);
-    CHECK(strictText.find("The test checked nothing, and --strict fails on that\n\nFAILED: 2 runs, 0 passed, 0 failed, 2 skipped (--strict)\n") !=
+    CHECK(strictText.find("The test checked nothing, and --strict fails on that [test-nothing-run]\n\nFAILED: 2 runs, 0 passed, 0 failed, 2 skipped (--strict)\n") !=
           std::string::npos);
     CHECK(format_test_json(none).find("      \"severity\": \"warning\",\n      \"code\": \"test-nothing-run\",\n") != std::string::npos);
     // One run that ran is enough, also with --strict; and without --variant the remark does not name it.

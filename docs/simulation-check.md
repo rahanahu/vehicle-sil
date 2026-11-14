@@ -45,7 +45,7 @@
 | `describe-unknown-value` | 誤り | 自己申告の、決まった値をとるキー（`kind`、`use`、`type`、`causality`）に、この `vehicle_sil_launch` が知らない値がある（新しい vehicle-sil の ECU。文は、キーと値、知っている値、両方の vehicle-sil の版を言う）。その participant だけの誤りで、ほかは照合を続ける |
 | `name-mismatch` | 誤り | 自己申告の `name` が participant 名と違う（`--name` を `ecu_main` に渡していない） |
 | `step-mismatch` | 誤り | `step_ms` が自己申告のステップ幅と違う（実時間で、ステップ幅のない ECU も） |
-| `unknown-network` | 誤り | ECU が `networks` にないネットワークを使う |
+| `unknown-network` | 誤り | ECU が `networks` にないネットワークを使う。同じ種類のネットワークで、その participant が使わず、ほかの participant が使うもの（`networks` にあるものも、ないものも）があれば、文はそれを名指しして、1 つのバスのつもりなら名前をそろえること（構成ファイルでは付け替えられないので、ECU を書いた人が直して作り直す）、別のバスなら `networks` に足すことを言う。なければ `networks` に足すことを先に言う |
 | `kind-mismatch` | 誤り | ECU がネットワークを `networks` と違う種類（CAN、LIN、イーサネット）で使う |
 | `address-conflict` | 誤り | 同じネットワークの 2 つ以上の J1939 ノードが同じアドレスを求め、どれかが動けない（下の表） |
 | `address-shared` | 警告 | 同じアドレスを求めるノードのうち、NAME の最も小さいノードが取り、ほかはどれも別のアドレスへ移る |
@@ -55,7 +55,7 @@
 | `ethernet-duplicate-mac` | 誤り | 1 つのイーサネットのネットワークで、2 つ以上の participant が同じ MAC アドレスを申告している（文は participant とアドレスを言う）。同じアドレスをわざと使う構成（待機系と現用系など）では、1 つを残してほかの participant の `eth::ChannelOptions::mac` を渡さずにおくと、`ethernet-mac-unknown` の注記だけになる（`mac` のないチャネルは `Accept::Addressed` を使えない。同じステップで送ったフレームの順は、SIL Kit では実行ごとに変わりうる） |
 | `ethernet-mac-unknown` | 注記 | イーサネットのネットワークに、MAC アドレスを申告しない participant がいる（`ethernet()` にアドレスを渡していない ECU。アドレスの重なりを確かめられない） |
 | `unused-network` | 警告（同上のときは注記） | どの participant も使わないネットワーク |
-| `single-participant` | 警告（同上のときは注記） | participant が 1 つだけのネットワーク（送ったものを誰も受けない）。`role: test` の participant は数えない（ECU が 1 つと spy なら出る。試験用の participant だけのネットワークも出る） |
+| `single-participant` | 警告（同上のときは注記） | participant が 1 つだけのネットワーク（送ったものを誰も受けない）。`role: test` の participant は数えない（ECU が 1 つと spy なら出る。試験用の participant だけのネットワークも出る）。同じ種類のほかのネットワークにも、別の ECU が 1 つだけいるときは、文はそのネットワークを挙げ、1 つのバスを ECU が別の名前で呼んでいるかもしれないと言う |
 | `test-participant-talks-on-bridged-network` | 警告 | `role: test` で J1939 のノードを申告した participant と、ブリッジ（`role: bridge`。なければ `role` を書いていない `describe: false` の participant）が同じネットワークにいるかもしれない。その participant の送信とアドレスの主張が実機のバスに出る（文は、ブリッジが確かにいるのか、いるかもしれないのかと、直し方を言う。[試験のための participant とブリッジ](simulation-config.md#試験のための-participant-とブリッジrole)） |
 | `not-checked` | 注記 | `describe: false` の participant（照合していない） |
 | `participant-disabled` | 注記 | 外した participant（`enabled: false`、`--disable`。照合も起動もしない） |
@@ -96,7 +96,7 @@
 
 ### 人向け
 
-participant の表（申告されたステップ幅とネットワーク。J1939 はノードの求めたアドレス、`any` は 254。`role` が `ecu` でない participant は、名前の後に `(role: test)` などと書く）、ネットワークの表（使う participant）、見つけたもの、最後に結果の 1 行（誤り、警告、注記の数）です。見つけたものは 1 つが 1 行で、`error:`、`warning:`、`note:` で始まり、`<ファイル>:<行>: <何が、どの値で、どう直すか>` の形です（行のないものはファイル名だけ）。誤り、警告、注記の順に、それぞれ行の順です。添える文（標準エラーの末尾、文法の誤りの場所など）は、次の行から 4 文字下げて書きます。ファイル名は、引数に書いたとおりです。表の幅は文字の数で揃えます（全角の文字があるとずれます）。
+participant の表（申告されたステップ幅とネットワーク。J1939 はノードの求めたアドレス、`any` は 254。`role` が `ecu` でない participant は、名前の後に `(role: test)` などと書く）、ネットワークの表（使う participant）、見つけたもの、最後に結果の 1 行（誤り、警告、注記の数）です。見つけたものは 1 つが 1 行で、`error:`、`warning:`、`note:` で始まり、`<ファイル>:<行>: <何が、どの値で、どう直すか> [<code>]` の形です（行のないものはファイル名だけ）。行の終わりの `[...]` は所見の名前（`code`。上の表と JSON の `code` と同じ）で、文書の説明を名前で探せます（GCC の `[-W...]` と同じ置き方なので、行の先頭は `error:` などのままです）。誤り、警告、注記の順に、それぞれ行の順です。添える文（標準エラーの末尾、文法の誤りの場所など）は、次の行から 4 文字下げて書きます。ファイル名は、引数に書いたとおりです。表の幅は文字の数で揃えます（全角の文字があるとずれます）。
 
 <!-- vehicle_sil_launch check simulation.yaml -->
 ```text
@@ -147,10 +147,10 @@ network    kind  participants
 J1939_CAN  can   Engine, Engine2, Dashboard
 Body_LIN   lin   -
 
-error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number)
-error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms
-error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables)
-warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs
+error: two-engines.yaml:4: network 'J1939_CAN': Engine and Engine2 have the same J1939 NAME 0x00000000FE000001, and they ask for the same address 0x00 (0), which none of them keeps (an equal NAME loses the address claim): each node needs its own NAME (for a second copy of an ECU, change its identity number) [name-conflict]
+error: two-engines.yaml:11: participant 'Engine': step_ms is 20, but the executable's step is 10 ms: write step_ms: 10, or remove step_ms [step-mismatch]
+error: two-engines.yaml:16: participant 'Dashboard': unknown key 'requried': did you mean 'required'? (the keys here: name, command, step_ms, describe, required, enabled, manual, role, variables) [unknown-key]
+warning: two-engines.yaml:6: network 'Body_LIN': no participant uses it: remove it, or check the network names in the ECUs [unused-network]
 
 failed: 3 errors, 1 warning, 0 notes
 ```

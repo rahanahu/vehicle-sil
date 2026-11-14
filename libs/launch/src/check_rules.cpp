@@ -250,6 +250,120 @@ struct Rules
     }
 };
 
+/// The Ecu function that gives a network this use its name: "j1939()".
+const char* ecu_call(NetworkUse use)
+{
+    switch (use)
+    {
+    case NetworkUse::Raw: return "can()";
+    case NetworkUse::J1939: return "j1939()";
+    case NetworkUse::LinMaster: return "lin_master()";
+    case NetworkUse::LinSlave: return "lin_slave()";
+    case NetworkUse::Ethernet: return "ethernet()";
+    }
+    return "";
+}
+
+/// The Ecu functions that name a network of `kind`, for messages: "can() or j1939()".
+std::string ecu_calls(NetworkKind kind)
+{
+    std::vector<std::string> calls;
+    for (const NetworkUse use : kNetworkUses)
+    {
+        if (kind_of(use) == kind)
+        {
+            calls.emplace_back(ecu_call(use));
+        }
+    }
+    return detail::or_list(calls);
+}
+
+/// The enabled participants that described themselves and use the network `name` as `kind`, in
+/// the order of the file, without entry `except`; only those without role: test if `ecus_only`.
+std::vector<std::string> users_of(const Rules& rules, const std::string& name, NetworkKind kind, std::size_t except,
+                                  bool ecus_only)
+{
+    std::vector<std::string> users;
+    for (std::size_t i = 0; i < rules.config.participants.size() && i < rules.results.size(); ++i)
+    {
+        const ParticipantConfig& p = rules.config.participants[i];
+        if (i == except || !is_on_any(p, rules.results[i]) || (ecus_only && p.role == ParticipantRole::Test))
+        {
+            continue;
+        }
+        const auto& used = rules.results[i].ecu->description.networks;
+        if (std::any_of(used.begin(), used.end(),
+                        [&](const NetworkDescription& n) { return n.name == name && n.kind() == kind; }))
+        {
+            users.push_back(p.name);
+        }
+    }
+    return users;
+}
+
+/// How to fix unknown-network: entry `i` uses `used`, which is not in networks. When another
+/// network of the same kind that entry `i` is not on has participants (in networks, or used by
+/// another participant without being in networks), the two names may be meant for one bus: name
+/// those networks and say who changes what (the configuration cannot rename a network).
+std::string unknown_network_fix(const Rules& rules, std::size_t i, const NetworkDescription& used,
+                                const std::map<std::string, const NetworkConfig*>& networks,
+                                const std::vector<std::string>& networkNames)
+{
+    const NetworkKind kind = used.kind();
+    const std::string kindText = to_string(kind);
+    const auto& own = rules.results[i].ecu->description.networks;
+    std::set<std::string> seen;
+    for (const auto& n : own)
+    {
+        seen.insert(n.name);
+    }
+    std::vector<std::string> others;
+    for (const auto& network : rules.config.networks)
+    {
+        if (network.valid && network.kind == kind && !seen.contains(network.name))
+        {
+            seen.insert(network.name);
+            const auto users = users_of(rules, network.name, kind, i, false);
+            if (!users.empty())
+            {
+                others.push_back("'" + network.name + "' (line " + std::to_string(network.line) + ", used by " +
+                                 and_list(users) + ")");
+            }
+        }
+    }
+    for (std::size_t j = 0; j < rules.config.participants.size() && j < rules.results.size(); ++j)
+    {
+        if (j == i || !is_on_any(rules.config.participants[j], rules.results[j]))
+        {
+            continue;
+        }
+        for (const auto& n : rules.results[j].ecu->description.networks)
+        {
+            if (n.kind() == kind && !networks.contains(n.name) && seen.insert(n.name).second)
+            {
+                others.push_back("'" + n.name + "' (not in networks either, used by " +
+                                 and_list(users_of(rules, n.name, kind, i, false)) + ")");
+            }
+        }
+    }
+    if (others.empty())
+    {
+        const std::string guess = detail::closest(used.name, networkNames);
+        return ": add it to networks with kind: " + kindText +
+               ", or have the ECU's author correct the name in its code" +
+               (guess.empty() ? "" : " (did you mean '" + guess + "'?)");
+    }
+    return ". " +
+           (others.size() == 1 ? "Another network of kind " + kindText + " in this simulation is "
+                               : "Other networks of kind " + kindText + " in this simulation are ") +
+           and_list(others) + ": if '" + used.name + "' is meant to be " +
+           (others.size() == 1 ? "that bus" : "one of those buses") +
+           ", the names must be the same, and the configuration cannot rename a network, so the author of one of the "
+           "ECUs changes the name in its code (the name passed to " +
+           ecu_calls(kind) + ") and builds it again; if '" + used.name +
+           "' is a bus of its own, add it to networks with kind: " + kindText;
+}
+
 /// The finding's code of a mapping that does not fit the executable's variables.
 const char* variable_map_code(control::MapProblemKind kind)
 {
@@ -345,12 +459,9 @@ void check_participant(const Rules& rules, std::size_t i, const ParticipantConfi
         const auto it = networks.find(network.name);
         if (it == networks.end())
         {
-            const std::string guess = detail::closest(network.name, networkNames);
             rules.add(Severity::Error, "unknown-network", p.line,
                 prefix + "the executable uses the network '" + network.name + "' (" + to_string(network.use) +
-                    "), which is not in networks: add it to networks with kind: " + to_string(network.kind()) +
-                    ", or correct the network's name in the ECU" +
-                    (guess.empty() ? "" : " (did you mean '" + guess + "'?)"),
+                    "), which is not in networks" + unknown_network_fix(rules, i, network, networks, networkNames),
                 p.name, network.name);
         }
         else if (it->second->valid && it->second->kind != network.kind())
@@ -759,6 +870,35 @@ void check_network(const Rules& rules, const NetworkConfig& network)
                 ecu = who;
             }
         }
+        // Other networks of the same kind with one ECU each, another one: perhaps one bus that the
+        // ECUs name differently.
+        std::vector<std::string> alone;
+        if (ecus == 1)
+        {
+            for (const auto& other : rules.config.networks)
+            {
+                if (&other == &network || !other.valid || other.kind != network.kind)
+                {
+                    continue;
+                }
+                const auto them = users_of(rules, other.name, other.kind, rules.config.participants.size(), true);
+                if (them.size() == 1 && them.front() != ecu)
+                {
+                    alone.push_back("'" + other.name + "' (line " + std::to_string(other.line) + ", only " +
+                                    them.front() + ")");
+                }
+            }
+        }
+        const std::string sameBus =
+            alone.empty()
+                ? std::string{}
+                : "; " +
+                      (alone.size() == 1 ? "the network " + alone.front() + " of kind " + to_string(network.kind) +
+                                               " also has one ECU: if it is meant to be the same bus"
+                                         : "the networks " + and_list(alone) + " of kind " + to_string(network.kind) +
+                                               " also have one ECU each: if one of them is meant to be the same bus") +
+                      ", the ECUs name it differently, and the configuration cannot rename a network, so the author "
+                      "of one of them changes the name in its code";
         rules.add(weight, "single-participant", network.line,
             prefix +
                 (tests.empty() ? "only " + ecu + " is on it, so what it sends there reaches no one" + rules.not_counted +
@@ -769,7 +909,8 @@ void check_network(const Rules& rules, const NetworkConfig& network)
                            ": add the other ECUs of this network, or remove it"
                      : "only participants for testing (role: test: " + and_list(tests) +
                            ") are on it, so there is no ECU for them there" + rules.not_counted +
-                           ": add the ECUs of this network, or remove it"),
+                           ": add the ECUs of this network, or remove it") +
+                sameBus,
             "", network.name);
     }
     for (const std::size_t talker : talkingTests)

@@ -198,8 +198,8 @@ Dashboard    -      disabled
 network    kind  participants
 J1939_CAN  can   Engine
 
-warning: simulation.yaml:8: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it
-note: simulation.yaml:14: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it
+warning: simulation.yaml:8: network 'J1939_CAN': only Engine is on it, so what it sends there reaches no one: add the other participants of this network, or remove it [single-participant]
+note: simulation.yaml:14: participant 'Dashboard': disabled (enabled: false, or --disable): it is neither checked nor started, and the other findings are about the simulation without it [participant-disabled]
 
 run: the simulation ran to stop_at_ms (1000 ms) and ended
 
@@ -583,7 +583,7 @@ FAILED: 4 runs, 2 passed, 1 failed, 1 skipped
 
 1 組だけを回し直すコマンド（`to see a failed run in full, ...`）は、最初に失敗した組のものです。`test` に付けた引数のうち、その組に効くものを並べるので、同じ実行になります: `--param`（その組のシナリオにある名前だけ）、`--disable`、`--enable`、`--strict`、`--timeout-ms`、`--describe-timeout-ms`。空白などを含むパスと値は、POSIX のシェル（sh、bash）に貼れるように `'...'` で囲みます（Windows のコマンドプロンプトでは `'` が引用にならないので、`"..."` に書き換えます）。
 
-`test` 全体の所見は、表の後に `<重大度>: <構成ファイル>: <文>` の 1 行で出ます（`--json` では `findings[]`）。
+`test` 全体の所見は、表の後に `<重大度>: <構成ファイル>: <文> [<code>]` の 1 行で出ます（`--json` では `findings[]`）。
 
 | コード | 重大度 | 意味 |
 |---|---|---|
