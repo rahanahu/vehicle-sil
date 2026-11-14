@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: rahanahu <rahanahu@gmail.com>
+Date: Sat, 14 Nov 2026 12:00:00 +0900
+Subject: [PATCH] vasio: remove only the peer's own entry from the name table
+
+The registry gives a connecting peer the name from its announcement
+(SetInfo()) before it checks whether the name is in use. When it refuses
+the peer because another participant has that name, the refused peer
+carries the same name, and when its connection ends,
+RemovePeerFromConnection() erases the name from _participantNameToPeer
+without looking at which peer the entry belongs to. The entry of the
+participant that has the name is gone: the registry ignores the
+RemoteParticipantConnectRequest of a participant that joins afterwards
+and can reach that participant only through the registry ("Ignoring
+invalid RemoteParticipantConnectRequest"), and the join times out
+waiting for its reply. The registry's proxy uses the same table.
+
+Erase the entry only if it maps to the peer that is removed.
+AssociateParticipantNameAndPeer() already keeps an existing entry
+(insert()), so the refused peer never had one of its own.
+---
+ SilKit/source/core/vasio/VAsioConnection.cpp | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/SilKit/source/core/vasio/VAsioConnection.cpp b/SilKit/source/core/vasio/VAsioConnection.cpp
+index b99147d..ec0ab8e 100644
+--- a/SilKit/source/core/vasio/VAsioConnection.cpp
++++ b/SilKit/source/core/vasio/VAsioConnection.cpp
+@@ -1441,7 +1441,13 @@ void VAsioConnection::RemovePeerFromConnection(IVAsioPeer* peer)
+         auto simulationIt{_participantNameToPeer.find(peer->GetSimulationName())};
+         if (simulationIt != _participantNameToPeer.end())
+         {
+-            simulationIt->second.erase(peer->GetInfo().participantName);
++            // Only the peer's own entry: a peer that was refused because another one has its
++            // name carries that name too, and must not remove the other one's entry.
++            auto participantIt{simulationIt->second.find(peer->GetInfo().participantName)};
++            if (participantIt != simulationIt->second.end() && participantIt->second == peer)
++            {
++                simulationIt->second.erase(participantIt);
++            }
+         }
+     }
+ 
+-- 
+2.56.0
+

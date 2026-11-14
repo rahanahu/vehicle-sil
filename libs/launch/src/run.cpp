@@ -197,6 +197,7 @@ public:
             }
         }
         std::string uri;
+        std::string listened;
         try
         {
             registry = SilKit::Vendor::Vector::CreateSilKitRegistry(
@@ -207,7 +208,8 @@ public:
                 ctx_.config.registry_uri.value_or(fixed ? std::string(kManualRegistryUri) : std::string("silkit://127.0.0.1:0"));
             try
             {
-                uri = uri_for_participants(registry->StartListening(listen));
+                listened = registry->StartListening(listen);
+                uri = uri_for_participants(listened);
             }
             catch (const std::exception& e)
             {
@@ -222,6 +224,13 @@ public:
             }
             out_.event([&uri](EventStream& e) { e.registry(uri); });
             out_.say("registry at " + uri);
+            if (!is_loopback_registry_uri(listen))
+            {
+                // On [::]: IPv6, and IPv4 too where such a socket takes it.
+                const bool any6 = listened.rfind("silkit://[::]:", 0) == 0;
+                const bool ipv4 = !any6 || detail::ipv6_any_takes_ipv4();
+                out_.say(detail::other_computers_line(listened, detail::host_addresses(ipv4, any6), any6 && !ipv4));
+            }
             SimulationControllerOptions c;
             c.participant_name = std::string(kControllerName);
             c.registry_uri = uri;

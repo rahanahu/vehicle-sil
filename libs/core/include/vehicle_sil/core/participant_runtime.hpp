@@ -126,10 +126,22 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
                                                                std::string_view registry_uri,
                                                                std::optional<bool> listen_on_network = std::nullopt);
 
-/// The SIL Kit configuration (JSON) for a registry that vehicle-sil starts: as
-/// default_participant_configuration() on Windows (TCP connections), but without acceptors (a
-/// registry listens at the URI it is started with, ISilKitRegistry::StartListening()).
+/// The SIL Kit configuration (JSON) for a registry that vehicle-sil starts: without local-domain
+/// sockets on every system (TCP only, so that StartListening() fails when its port is taken instead
+/// of going on with a local-domain socket only), and without acceptors (a registry listens at the
+/// URI it is started with, ISilKitRegistry::StartListening()).
 [[nodiscard]] std::string_view default_registry_configuration() noexcept;
+
+/// SilKit::CreateParticipant(), tried again for up to `name_in_use_wait` while the registry refuses
+/// the name as in use ("A participant with the same name ... already exists"): the registry may not
+/// yet have seen the end of an earlier participant with this name (a process restarted at once;
+/// over a network it takes longer). After that, SilKit::ProtocolError with SIL Kit's message, the
+/// time waited and what it may mean. Other failures are thrown at once; a negative wait is
+/// std::invalid_argument. ParticipantRuntime uses it; so can a program that makes its own SIL Kit
+/// participants.
+[[nodiscard]] std::unique_ptr<SilKit::IParticipant> create_participant(
+    std::shared_ptr<SilKit::Config::IParticipantConfiguration> config, const std::string& name,
+    const std::string& registry_uri, std::chrono::milliseconds name_in_use_wait);
 
 struct ParticipantRuntimeOptions
 {
@@ -144,6 +156,11 @@ struct ParticipantRuntimeOptions
     std::optional<bool> listen_on_network{};
     /// Upper bound for stop() and the destructor to wait for the lifecycle to shut down.
     std::chrono::milliseconds shutdown_timeout{5000};
+    /// How long the constructor tries again while the registry refuses the name as in use ("A
+    /// participant with the same name ... already exists"): the registry may not yet have seen the
+    /// end of an earlier participant with this name (a process restarted at once). After that, the
+    /// refusal is thrown with the time waited. Negative: std::invalid_argument.
+    std::chrono::milliseconds name_in_use_wait{5000};
     LifecycleMode lifecycle_mode = LifecycleMode::Autonomous;
     /// Empty: no time synchronisation; the participant runs in wall-clock time.
     std::optional<VirtualTimeOptions> virtual_time{};
@@ -200,7 +217,8 @@ struct PeerStatus
 class ParticipantRuntime
 {
 public:
-    /// Connects to the registry. Throws SilKit::SilKitError (or a subclass) on failure.
+    /// Connects to the registry (see ParticipantRuntimeOptions::name_in_use_wait). Throws
+    /// SilKit::SilKitError (or a subclass) on failure.
     explicit ParticipantRuntime(ParticipantRuntimeOptions options);
     ~ParticipantRuntime();
 
@@ -350,6 +368,8 @@ public:
     [[nodiscard]] SilKit::Services::Orchestration::ParticipantState state() const;
 
     [[nodiscard]] PeerStatus peer_status(const std::string& participant_name) const;
+    /// The names of the participants peer_status() knows a state of (this one's too), in order.
+    [[nodiscard]] std::vector<std::string> peer_names() const;
 
     /// Re-reads the statuses SIL Kit's system monitor knows, so that peer_status() also reports
     /// one whose notification was missed (see resync_peers()). Must not be called from a SIL Kit

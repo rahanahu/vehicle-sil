@@ -10,6 +10,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,6 +23,55 @@ namespace {
 namespace orch = SilKit::Services::Orchestration;
 
 } // namespace
+
+std::string StandStill::look(std::int64_t now_ms, bool paused, std::optional<std::chrono::nanoseconds> overdue,
+                             std::chrono::steady_clock::time_point wall)
+{
+    const auto stood_ms = [&](std::chrono::steady_clock::duration d) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+    };
+    if (over_)
+    {
+        return {};
+    }
+    if (paused || now_ms != last_ms_)
+    {
+        std::string line;
+        if (said_ > 0 && !paused)
+        {
+            line = "virtual time advances again: it stood still for " + std::to_string(stood_ms(wall - since_) / 1000) +
+                   " s at t=" + std::to_string(last_ms_) + " ms";
+        }
+        last_ms_ = now_ms;
+        since_ = wall;
+        said_ = 0;
+        return line;
+    }
+    const std::int64_t stood = overdue ? stood_ms(*overdue) : stood_ms(wall - since_);
+    const std::size_t before = said_;
+    while (said_ < std::size(kSayAfterMs) && stood >= kSayAfterMs[said_])
+    {
+        ++said_;
+    }
+    if (said_ == before)
+    {
+        return {};
+    }
+    return "virtual time has not advanced for " + std::to_string(stood / 1000) + " s (at t=" + std::to_string(now_ms) +
+           " ms, not paused): a participant may have lost its network connection (on another computer), stand still "
+           "in a debugger, or hang in a step; the run waits on (a run with --timeout-ms ends when that has passed)";
+}
+
+std::string StandStill::stopping(std::int64_t now_ms, std::chrono::steady_clock::time_point wall)
+{
+    std::string line;
+    if (!over_ && said_ > 0 && now_ms != last_ms_)
+    {
+        line = look(now_ms, false, std::nullopt, wall);
+    }
+    over_ = true; // says no more
+    return line;
+}
 
 void RunWatch::note_timing(SimulationController& controller)
 {
@@ -74,11 +125,26 @@ int RunWatch::watch(SimulationController& controller)
         // The events of what changed (here: the one look per poll the watch gives).
         notes_.note_joined(controller, outcome_);
         notes_.note_time(controller, TimeNote::Poll, outcome_);
+        const TimeState time = controller.time_state();
         if (!running)
         {
+            // It moved again just before it stopped (a simulation that ends soon after).
+            if (const std::string line = stand_still_.stopping(sim_ms(controller, time), std::chrono::steady_clock::now());
+                !line.empty())
+            {
+                out_.say(line);
+            }
             // Stopping: the ends of the processes are looked at after the simulation's end
             // (RunParticipants::end_children()), so that they come after it in the output.
             return false;
+        }
+        if (const std::string line = stand_still_.look(
+                sim_ms(controller, time), time.paused,
+                time.speed ? std::optional<std::chrono::nanoseconds>(time.current_lateness) : std::nullopt,
+                std::chrono::steady_clock::now());
+            !line.empty())
+        {
+            out_.say(line);
         }
         std::vector<bool> known;
         for (const auto& run : outcome_.participants)
@@ -135,6 +201,11 @@ int RunWatch::watch(SimulationController& controller)
     };
     target.abort = [&controller] { controller.abort(); };
     const WatchResult watched = watch_simulation(target, watch);
+    if (const std::string line = stand_still_.stopping(sim_ms(controller, controller.time_state()), std::chrono::steady_clock::now());
+        !line.empty())
+    {
+        out_.say(line);
+    }
     scenario_.finish(controller, watched, forScenario, outcome_);
     note_timing(controller);
     notes_.note_time(controller, TimeNote::Last, outcome_);

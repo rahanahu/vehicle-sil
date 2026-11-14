@@ -22,6 +22,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace vehicle_sil::launch::detail {
 
@@ -145,6 +146,11 @@ private:
     /// --timeout-ms passed before the simulation started (a run that waits for a participant started
     /// by hand): `waiting_for` says for what. Returns false (it did not start).
     bool start_timed_out(const std::string& waiting_for);
+    /// Says once of each participant that joined the simulation under a name this run does not
+    /// have and waits for the start (a mistyped --name of a participant started by hand;
+    /// StrangerWait): the run waits on without it. One outside the file that runs on its own
+    /// (autonomous) is not named.
+    void tell_strangers(SimulationController& controller);
 
     const RunContext& ctx_;
     RunOutput& out_;
@@ -156,6 +162,8 @@ private:
     RunStartWindow window_;
     /// --timeout-ms passed during the start (start_given_up()); what it waited for.
     std::string manual_timed_out_;
+    std::vector<std::string> strangers_told_;
+    StrangerWait stranger_wait_;
     bool before_start_failed_ = false;
 };
 

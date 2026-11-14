@@ -59,13 +59,13 @@ if(TARGET vehicle_sil_launch AND TARGET vehicle_sil_engine_ecu)
   vehicle_sil_add_scenario_tests(vehicle_sil_launch_run_launcher
     PREFIX launch_run LABELS integration launch TIMEOUT 300
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/run
-    SCENARIOS docs check crash step optional not_joined quitter hang grandchild path network interrupt interrupt_twice
+    SCENARIOS docs check crash step optional not_joined quitter hang grandchild path network busy_port interrupt interrupt_twice
               interrupt_ending ended_early timeout no_console killed usage disabled events events_usage stdin_stop
               stdin_eof stdin_twice stdin_ending output_closed stdin_killed no_console_stdin stop_once events_stalled
-              events_slow events_findings events_nonblocking events_output events_stderr realtime late stall
+              events_slow events_findings events_nonblocking events_output events_stderr realtime late stall stand_still
               speed_change step_width pause_step paused_failures time_usage control scenario scenario_same
               scenario_disconnect scenario_failures manual manual_late manual_fails manual_stop manual_frozen
-              manual_thawed manual_again manual_timeout
+              manual_thawed manual_again manual_timeout manual_stranger
     ARGS --launch $<TARGET_FILE:vehicle_sil_launch>
          --test-ecu $<TARGET_FILE:vehicle_sil_launch_test_ecu>
          --helper $<TARGET_FILE:vehicle_sil_process_helper>

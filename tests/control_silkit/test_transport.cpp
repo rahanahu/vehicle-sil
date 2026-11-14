@@ -141,6 +141,9 @@ struct TestEcu
             o.max_idle = 1ms;
         }
         o.monitor = false;
+        // A process started anew under the name of one that has just gone: the peer waits while the
+        // registry still holds the name (on a slow machine that takes a while).
+        o.name_in_use_wait = 30s;
         peer = std::make_unique<Peer>(o);
         AgentOptions agent;
         agent.sample_period = options.sample_period;
@@ -1167,25 +1170,10 @@ TEST_CASE(a_real_time_peer_is_a_peer_too_and_a_restarted_one_replaces_the_old)
             return false;
         },
         30s));
-    // The registry may still hold the name of the process that has just gone (see started_anew()).
-    for (const auto give_up = Wall::now() + 30s;;)
-    {
-        try
-        {
-            real = std::make_unique<TestEcu>("Real", registry.uri, EcuOptions{.virtual_time = false});
-            real->peer->start(30s);
-            break;
-        }
-        catch (const std::exception& e)
-        {
-            real.reset();
-            if (std::string(e.what()).find("already exists") == std::string::npos || Wall::now() > give_up)
-            {
-                throw;
-            }
-        }
-        std::this_thread::sleep_for(20ms);
-    }
+    // The registry may still hold the name of the process that has just gone: the peer waits for it
+    // (PeerOptions::name_in_use_wait).
+    real = std::make_unique<TestEcu>("Real", registry.uri, EcuOptions{.virtual_time = false});
+    real->peer->start(30s);
     CHECK(eventually(
         [&] {
             for (const auto& peer : hub.peers())
@@ -1268,8 +1256,12 @@ struct RawAgent
     RawAgent(std::string agent_name, const std::string& uri, std::uint64_t agent_session) :
       name(std::move(agent_name)), session(agent_session)
     {
-        participant = SilKit::CreateParticipant(
-            SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(uri)), name, uri);
+        // A process started anew under the name of one that has just gone: the registry may refuse
+        // the name until it has seen the end of the old connection (on a slow machine that takes a
+        // while); create_participant() tries again until then.
+        participant = vehicle_sil::create_participant(
+            SilKit::Config::ParticipantConfigurationFromString(vehicle_sil::default_participant_configuration(uri)), name, uri,
+            30s);
         hello_out = participant->CreateDataPublisher(topics::kHelloTopic, topics::spec(topics::kHelloTopic), 1);
         step_out = participant->CreateDataPublisher(topics::kStepTopic, topics::spec(topics::kStepTopic), 0);
         submitted_out = participant->CreateDataPublisher(topics::kSubmittedTopic, topics::spec(topics::kSubmittedTopic), 0);
@@ -1318,30 +1310,6 @@ struct RawAgent
     }
     void step(const wire::Bytes& bytes) { step_out->Publish(topics::span_of(bytes)); }
 };
-
-/// The agent of a process started anew under the name of one that has just gone. The registry
-/// learns of the end of the old connection on its own, maybe after the participants did (on a
-/// slow machine): until then it refuses the name ("a participant with the same name ... already
-/// exists"). Tried again until it takes it.
-std::unique_ptr<RawAgent> started_anew(const std::string& name, const std::string& uri, std::uint64_t session)
-{
-    const auto give_up = Wall::now() + 30s;
-    for (;;)
-    {
-        try
-        {
-            return std::make_unique<RawAgent>(name, uri, session);
-        }
-        catch (const std::exception& e)
-        {
-            if (std::string(e.what()).find("already exists") == std::string::npos || Wall::now() > give_up)
-            {
-                throw;
-            }
-        }
-        std::this_thread::sleep_for(20ms);
-    }
-}
 
 /// A sample of `variables` values of the types RawAgent::hello() announces.
 Snapshot sample_of(std::size_t variables, std::uint64_t sequence)
@@ -1554,8 +1522,8 @@ TEST_CASE(a_participant_started_anew_after_it_failed_is_connected_again)
     for (int round = 0; round < 5; ++round)
     {
         // A process with a running lifecycle and an agent ...
-        // From the second round on the name was in use a moment ago: see started_anew().
-        auto first = started_anew("Crash", registry.uri, 1000 + 2 * static_cast<std::uint64_t>(round));
+        // From the second round on the name was in use a moment ago (RawAgent waits for it).
+        auto first = std::make_unique<RawAgent>("Crash", registry.uri, 1000 + 2 * static_cast<std::uint64_t>(round));
         auto* lifecycle = first->participant->CreateLifecycleService({orch::OperationMode::Autonomous});
         first->hello(3);
         auto done = lifecycle->StartLifecycle();
@@ -1567,7 +1535,7 @@ TEST_CASE(a_participant_started_anew_after_it_failed_is_connected_again)
         CHECK(side.controller->runtime().peer_status("Crash").state == orch::ParticipantState::Error);
         // ... and is started anew under its name. Its hello comes before any lifecycle state of
         // the new process: what the hub knows of "Crash" then is still the old Error.
-        const auto anew = started_anew("Crash", registry.uri, 1001 + 2 * static_cast<std::uint64_t>(round));
+        const auto anew = std::make_unique<RawAgent>("Crash", registry.uri, 1001 + 2 * static_cast<std::uint64_t>(round));
         RawAgent& second = *anew;
         second.answers.store(true);
         second.hello(3);

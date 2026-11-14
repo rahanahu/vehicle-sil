@@ -42,7 +42,7 @@ int main(int argc, char** argv)
 |---|---|
 | 0 | 終わった（`--describe` は JSON を書いた。`--registry-uri` はシミュレーションが終わった。`--local` は時間まで動いた） |
 | 1 | 実行中に ECU が失敗した（ステップの例外。`SimulationError`） |
-| 3 | 準備に失敗した（`App` のコンストラクターの例外、`EcuMainOptions` の誤り、registry に接続できない、シミュレーションが始まらない、標準出力に書けない） |
+| 3 | 準備に失敗した（`App` のコンストラクターの例外、`EcuMainOptions` の誤り、registry に接続できない、シミュレーションが始まらない、標準出力に書けない）。registry に接続できないときの文（`cannot join the simulation at "<URI>": ...`）は、確かめること（`vehicle_sil_launch run` を先に起動して待たせる、URI のアドレスとポート、そのコンピューターのファイアウォール、同じ名前の participant）を挙げます。registry が名前を使用中として断ったときは、5 秒（`--start-timeout-ms` がそれより短ければ、その時間）作り直してから失敗します（同じ名前ですぐに起動し直したとき、registry が前のプロセスの終わりにまだ気づいていないことがあるため）。そのときの文は、待った時間と名前のことだけを言います（registry には届いているので、確かめることの一覧は付けません） |
 | 4 | 引数の誤り |
 | 130 | `--registry-uri` で、止まるよう求められた（下の「止まるよう求められたとき」） |
 

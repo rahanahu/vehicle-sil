@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 //
-// An ecu_main executable for the tests of vehicle_sil_launch run, without networks. It steps every
+// An ecu_main executable for the tests of vehicle_sil_launch run, without networks. With
+// "--autonomous <name> <registry URI>" it is instead a participant that runs on its own (autonomous,
+// in real time, as a hand-started peer outside the file): it writes "<name>.running" in its working
+// directory once it runs and stays until it is ended.
+// It steps every
 // 10 ms, or every <n> ms if the file "test-ecu-step-ms" in its working directory holds <n> (every
 // test ECU started there, and its --describe). What it does besides comes from the file
 // "<name>.behaviour" in its working directory (none: nothing), words separated by spaces:
@@ -43,6 +47,7 @@
 // variables and never offers them.
 #include "spawn_sleeper.hpp"
 
+#include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/simulation/ecu_main.hpp"
 
 #include <chrono>
@@ -323,6 +328,18 @@ private:
 
 int main(int argc, char** argv)
 {
+    if (argc == 4 && std::string(argv[1]) == "--autonomous")
+    {
+        vehicle_sil::ParticipantRuntimeOptions options;
+        options.participant_name = argv[2];
+        options.registry_uri = argv[3];
+        options.lifecycle_mode = vehicle_sil::LifecycleMode::Autonomous;
+        vehicle_sil::ParticipantRuntime runtime(options);
+        runtime.start(std::chrono::seconds(30));
+        std::ofstream(std::string(argv[2]) + ".running") << "running\n";
+        std::this_thread::sleep_for(std::chrono::minutes(5));
+        return 0;
+    }
     long long step = 10;
     if (std::ifstream in("test-ecu-step-ms"); in)
     {

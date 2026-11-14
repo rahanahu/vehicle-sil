@@ -196,6 +196,63 @@ void RunStart::note_control()
     control_.note_links(outcome_, start, [this](std::size_t i) { return participants_.in_run(i); });
 }
 
+bool StrangerWait::look(const std::string& name, State state, std::chrono::steady_clock::time_point now)
+{
+    if (state != State::ServicesCreated)
+    {
+        since_.erase(name);
+        return state == State::Error;
+    }
+    return since_.emplace(name, now).first->second + kHold <= now;
+}
+
+void RunStart::tell_strangers(SimulationController& controller)
+{
+    std::vector<std::string> ours{std::string(kControllerName)};
+    std::vector<std::string> waited;
+    for (const auto& p : ctx_.config.participants)
+    {
+        if (p.enabled)
+        {
+            ours.push_back(p.name);
+        }
+    }
+    for (const auto& name : controller.missing_participants())
+    {
+        waited.push_back(name);
+    }
+    for (const auto& name : controller.runtime().peer_names())
+    {
+        if (std::find(ours.begin(), ours.end(), name) != ours.end() ||
+            std::find(strangers_told_.begin(), strangers_told_.end(), name) != strangers_told_.end())
+        {
+            continue;
+        }
+        // Only one that waits for the start (coordinated): it stays in ServicesCreated while the
+        // run waits (the controller tells the participants which are required only once they all
+        // have joined), and SIL Kit puts it in Error after that. One outside the file that runs on
+        // its own (autonomous: a peer in real time, a bridge) goes on to Running at once: it is
+        // part of the simulation and is not named.
+        const auto state = controller.runtime().peer_status(name).state;
+        const auto seen = state == orch::ParticipantState::ServicesCreated ? StrangerWait::State::ServicesCreated
+                          : state == orch::ParticipantState::Error         ? StrangerWait::State::Error
+                                                                            : StrangerWait::State::Other;
+        if (!stranger_wait_.look(name, seen, std::chrono::steady_clock::now()))
+        {
+            continue;
+        }
+        strangers_told_.push_back(name);
+        const std::string guess = detail::closest(name, waited);
+        out_.say("participant '" + name + "' joined the simulation, but this run has no participant of that name" +
+                 (guess.empty() ? std::string{} : " (did you mean '" + guess + "'?)") +
+                 (state == orch::ParticipantState::Error
+                      ? ": SIL Kit put it in the Error state, as it waits for the simulation's start, which only the "
+                        "participants of the file get"
+                      : ": it waits for the simulation's start, which only the participants of the file get") +
+                 "; start it with the name the file gives it (--name)");
+    }
+}
+
 bool RunStart::wait_for_start(SimulationController& controller)
 {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ctx_.config.start_timeout_ms);
@@ -236,6 +293,7 @@ bool RunStart::wait_for_start(SimulationController& controller)
         const bool onlyManual = std::all_of(missing.begin(), missing.end(), manual);
         const bool late = !onlyManual && std::chrono::steady_clock::now() >= deadline;
         notes_.note_joined(controller, outcome_);
+        tell_strangers(controller);
         const int ended = participants_.look_at_children(true);
         if (ended >= 0 && !late)
         {

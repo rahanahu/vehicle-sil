@@ -77,6 +77,10 @@
 //   scenario_failures  a wait that times out, a simulation that stops before the scenario is over, an
 //                ECU that fails in the middle, a scenario with errors (nothing is started), the
 //                command line
+//   stand_still  an ECU that stands still in a step for 11 s: the launcher says that time does not
+//                advance, and when it does again
+//   busy_port    the registry's port taken by another program, and by a run that waits: the setup
+//                error at once, the first run goes on
 //   manual       participants started by hand (--manual, manual: true), started by this test from
 //                the command the launcher writes, as a person would copy it: the example and its
 //                lines in docs/simulation-config.md. The other parts, each a scenario of its own
@@ -84,7 +88,9 @@
 //                and standing still in a step, as in a debugger), manual_fails (it fails while the
 //                simulation runs: the events), manual_stop (a stop before the start ends one that
 //                has joined), manual_frozen and manual_thawed (frozen as a debugger would), manual_again
-//                (ended before the start), manual_timeout (--timeout-ms while the launcher waits)
+//                (ended before the start), manual_timeout (--timeout-ms while the launcher waits),
+//                manual_stranger (started with a mistyped name: the launcher says so; not of an
+//                autonomous participant outside the file)
 #include "launcher_support.hpp"
 #include "spawn_sleeper.hpp"
 
@@ -2956,6 +2962,31 @@ void stall(const Options& o)
     }
 }
 
+void stand_still(const Options& o)
+{
+    // An ECU that stands still in its step at 100 ms for 11 s (as one that lost its network
+    // connection, or hangs): after 10 s the launcher says that virtual time does not advance, and
+    // what may cause it; when it moves again, it says so. The run passes.
+    const fs::path dir = scenario_dir(o,
+                                      "vehicle_sil_simulation: 1\n"
+                                      "stop_at_ms: 300\n"
+                                      "networks: []\n"
+                                      "participants:\n"
+                                      "  - name: Auto\n"
+                                      "    command: [" + ecu(o) + "]\n",
+                                      {{"Auto", "slow-at-ms 100 11000"}});
+    const Captured run = launch(o, {"run", "sim.yaml"}, dir);
+    expect_code(run, 0, "a run with a step of 11 s");
+    require(contains(run.standard_error, "[vehicle_sil_launch] virtual time has not advanced for 10 s (at t=") &&
+                contains(run.standard_error, " ms, not paused): a participant may have lost its network connection (on "
+                                             "another computer), stand still in a debugger, or hang in a step; the run "
+                                             "waits on (a run with --timeout-ms ends when that has passed)\n"),
+            "the line after 10 s:\n" + run.standard_error);
+    require(contains(run.standard_error, "[vehicle_sil_launch] virtual time advances again: it stood still for 1"),
+            "the line when it moves again:\n" + run.standard_error);
+    require(!contains(run.standard_error, "has not advanced for 60 s"), "nothing more:\n" + run.standard_error);
+}
+
 void speed_change(const Options& o)
 {
     // Speed 1 up to 200 ms or a little further, then speed 4: the 800 ms (or a little less) that
@@ -3828,6 +3859,7 @@ void network(const Options& o)
         require(contains(all, "[Env] VEHICLE_SIL_LISTEN_ON_NETWORK=0\n"), "0 on 127.0.0.1:\n" + all);
         require(contains(all, "start it yourself (manual: true, or --manual). In the directory "), "the manual line as it was:\n" + all);
         require(!contains(all, "VEHICLE_SIL_LISTEN_ON_NETWORK=1"), "no 1 anywhere on 127.0.0.1:\n" + all);
+        require(!contains(all, "from other computers"), "nothing for other computers on 127.0.0.1:\n" + all);
     }
     // The launcher's own environment has 1: not passed on, and a note.
 #ifdef _WIN32
@@ -3861,6 +3893,14 @@ void network(const Options& o)
             "the note on the registry:\n" + run.standard_output);
     require(contains(run.standard_output, " is not a loopback address: the registry and the participants listen on the network"),
             "the note says what it means:\n" + run.standard_output);
+    // Right after the registry's line, where other computers join (this computer's addresses).
+    require(contains(run.standard_error, "\n[vehicle_sil_launch] from other computers, join at silkit://") &&
+                contains(run.standard_error, ": give it as --registry-uri to a participant started by hand on another "
+                                             "computer (instead of the loopback address in its command; it needs no "
+                                             "VEHICLE_SIL_LISTEN_ON_NETWORK)\n"),
+            "the line for other computers:\n" + run.standard_error);
+    require(run.standard_error.find("from other computers") > run.standard_error.find("[vehicle_sil_launch] registry at"),
+            "after the registry's line:\n" + run.standard_error);
     // The participant's own line (the note names the variable too).
     require(contains(all, "[Env] VEHICLE_SIL_LISTEN_ON_NETWORK=1\n"), "the participant got the variable:\n" + all);
     require(contains(all, "not starting Hand: start it yourself (manual: true, or --manual). In the directory ") &&
@@ -3879,6 +3919,55 @@ void network(const Options& o)
     require(contains(checked.standard_output, "registry_uri silkit://0.0.0.0:"), "check has the note:\n" + checked.standard_output);
 #endif
 }
+
+/// A TCP socket that listens on 127.0.0.1 at a free port for as long as it lives (another program
+/// at a registry's port).
+class Listener
+{
+public:
+    Listener()
+    {
+#ifdef _WIN32
+        WSADATA data;
+        require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "WSAStartup failed");
+        socket_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        require(socket_ != INVALID_SOCKET, "cannot make a socket");
+        int size = sizeof(sockaddr_in);
+#else
+        socket_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        require(socket_ >= 0, "cannot make a socket");
+        socklen_t size = sizeof(sockaddr_in);
+#endif
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        const bool listening = ::bind(socket_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+                               ::listen(socket_, 4) == 0 &&
+                               ::getsockname(socket_, reinterpret_cast<sockaddr*>(&address), &size) == 0;
+        require(listening, "cannot listen on 127.0.0.1");
+        port_ = ntohs(address.sin_port);
+    }
+    Listener(const Listener&) = delete;
+    Listener& operator=(const Listener&) = delete;
+    ~Listener()
+    {
+#ifdef _WIN32
+        closesocket(socket_);
+        WSACleanup();
+#else
+        ::close(socket_);
+#endif
+    }
+    int port() const { return port_; }
+
+private:
+#ifdef _WIN32
+    SOCKET socket_ = INVALID_SOCKET;
+#else
+    int socket_ = -1;
+#endif
+    int port_ = 0;
+};
 
 /// A string value of an event line as JSON writes it (the escapes of a path undone).
 std::string json_text(const std::string& line, const std::string& key)
@@ -4171,6 +4260,98 @@ void manual_timeout(const Options& o)
     }
 }
 
+void busy_port(const Options& o)
+{
+    // The registry's port is taken: run fails at once with the setup error, before it starts
+    // anything (the registry does not go on with a local-domain socket only).
+    const auto config = [&o](int port) {
+        return "vehicle_sil_simulation: 1\n"
+               "stop_at_ms: 300\n"
+               "registry_uri: silkit://127.0.0.1:" + std::to_string(port) + "\n"
+               "networks: []\n"
+               "participants:\n"
+               "  - name: Auto\n"
+               "    command: [" + ecu(o) + "]\n"
+               "  - name: Hand\n"
+               "    command: [" + ecu(o) + "]\n"
+               "    manual: true\n";
+    };
+    const auto refused = [](const Captured& run, int port, const std::string& what) {
+        expect_code(run, 3, what);
+        const std::string uri = "silkit://127.0.0.1:" + std::to_string(port);
+        require(contains(run.standard_output, "error: sim.yaml: cannot set up the simulation: the registry cannot listen at " +
+                                                  uri + ": ") &&
+                    contains(run.standard_output, "(does another registry run there? choose another port in registry_uri, "
+                                                  "or leave it out for a free port)"),
+                what + ": the setup error names the port:\n" + run.standard_output);
+        require(!contains(run.standard_error, "[vehicle_sil_launch] registry at") &&
+                    !contains(run.standard_error, "[vehicle_sil_launch] starting Auto"),
+                what + ": no registry, nothing started:\n" + run.standard_error);
+    };
+    {
+        const Listener other;
+        const fs::path dir = scenario_dir(o, config(other.port()));
+        refused(launch(o, {"run", "sim.yaml"}, dir), other.port(), "another program at the registry's port");
+    }
+    // A second run at the port of a run that waits for a participant started by hand: refused, and
+    // the first one goes on with its own registry (the participant started by hand joins it).
+    const int port = free_port();
+    const fs::path dir = hand_dir(o, "busy", config(port), {{"Auto", ""}, {"Hand", ""}});
+    Live first(o, dir, {"run", "sim.yaml"});
+    const std::string err = first.wait_for_error(
+        [](const std::string& text) { return contains(text, "[vehicle_sil_launch] waiting for Hand to join (manual): "); });
+    const HandCommand hand = hand_command(err, "Hand");
+    require(!hand.line.empty(), "the first run waits for Hand:\n" + err);
+    refused(launch(o, {"run", "sim.yaml"}, dir), port, "a second run at the port of the first");
+    ByHand byHand(hand.line, hand.directory);
+    const auto [status, out] = first.finish_unchecked();
+    require(status && status->code == 0, "the first run, with Hand, ends with 0:\n" + out_of(out) + "--- stderr ---\n" + first.err());
+    const auto ended = byHand.wait(30s);
+    require(ended && ended->code == 0, "Hand, started by hand, ends with 0");
+}
+
+void manual_stranger(const Options& o)
+{
+    // Started by hand with a mistyped name: it waits for the start (in ServicesCreated), and the
+    // launcher says so once, and waits on for Hand. A participant
+    // outside the file that runs on its own (autonomous) is not named: it is one of the simulation.
+    const fs::path dir = hand_dir(o, "stranger", hand_config(o, "stop_at_ms: 300\n", ""), {{"Auto", ""}, {"Hand", ""}});
+    Live live(o, dir, {"run", "sim.yaml"});
+    const std::string err = live.wait_for_error(
+        [](const std::string& text) { return contains(text, "[vehicle_sil_launch] waiting for Hand to join (manual): "); });
+    const HandCommand hand = hand_command(err, "Hand");
+    require(!hand.line.empty(), "the launcher waits for Hand:\n" + err);
+    const auto uriAt = hand.line.find("--registry-uri ");
+    require(uriAt != std::string::npos, "the command has --registry-uri: " + hand.line);
+    const std::string uri = hand.line.substr(uriAt + 15, hand.line.find(' ', uriAt + 15) - uriAt - 15);
+    ByHand sender("\"" + shown_path(o.test_ecu) + "\" --autonomous Sender " + uri, hand.directory);
+    const fs::path running = fs::path(hand.directory) / "Sender.running";
+    for (int i = 0; i < 300 && !fs::exists(running); ++i)
+    {
+        std::this_thread::sleep_for(100ms);
+    }
+    require(fs::exists(running), "the autonomous participant Sender runs");
+    std::string mistyped = hand.line;
+    const auto at = mistyped.find("--name Hand ");
+    require(at != std::string::npos, "the command has --name Hand: " + mistyped);
+    mistyped.replace(at, 12, "--name hand ");
+    ByHand stranger(mistyped, hand.directory);
+    const std::string line = "[vehicle_sil_launch] participant 'hand' joined the simulation, but this run has no participant "
+                             "of that name (did you mean 'Hand'?): it waits for the simulation's start, which only the "
+                             "participants of the file get; start it with the name the file gives it (--name)\n";
+    const std::string told = live.wait_for_error([&](const std::string& text) { return contains(text, line); });
+    require(contains(told, line), "the launcher names the stranger:\n" + told);
+    // The launcher looks again meanwhile (several times): it has said it once.
+    std::this_thread::sleep_for(1500ms);
+    ByHand byHand(hand.line, hand.directory);
+    const auto [status, out] = live.finish_unchecked();
+    require(status && status->code == 0, "the run with Hand ends with 0:\n" + out_of(out) + "--- stderr ---\n" + live.err());
+    const std::string all = live.err();
+    require(all.find(line) == all.rfind(line), "said once:\n" + all);
+    require(!contains(all, "'Sender'"), "nothing of the autonomous participant:\n" + all);
+    require(byHand.wait(30s).has_value(), "Hand ends by itself");
+}
+
 void manual(const Options& o)
 {
     {
@@ -4230,7 +4411,7 @@ int main(int argc, char** argv)
         const std::vector<std::pair<std::string, void (*)(const Options&)>> scenarios = {
             {"docs", docs},         {"check", check},     {"crash", crash},         {"step", step},
             {"optional", optional}, {"not_joined", not_joined}, {"quitter", quitter}, {"hang", hang},
-            {"grandchild", grandchild}, {"path", path},   {"network", network}, {"interrupt", interrupt}, {"interrupt_twice", interrupt_twice},
+            {"grandchild", grandchild}, {"path", path},   {"network", network}, {"busy_port", busy_port}, {"stand_still", stand_still}, {"manual_stranger", manual_stranger}, {"interrupt", interrupt}, {"interrupt_twice", interrupt_twice},
             {"killed", killed}, {"ended_early", ended_early}, {"interrupt_ending", interrupt_ending},
             {"timeout", timeout}, {"no_console", no_console},
             {"usage", usage}, {"disabled", disabled}, {"events", events}, {"events_usage", events_usage},

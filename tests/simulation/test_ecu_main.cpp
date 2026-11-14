@@ -7,10 +7,12 @@
 // registry that cannot be reached, a start that times out (--start-timeout-ms) or fails, the
 // ECU's variables offered to a hub over SIL Kit (and --no-control), and the template form passing
 // its arguments to the application.
+#include "silkit_test_util.hpp"
 #include "test_harness.hpp"
 
 #include "vehicle_sil/control/hub.hpp"
 #include "vehicle_sil/control_silkit/hub_transport.hpp"
+#include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/core/simulation_controller.hpp"
 #include "vehicle_sil/ecu/executable.hpp"
 #include "vehicle_sil/simulation/ecu_main.hpp"
@@ -453,9 +455,30 @@ TEST_CASE(ecu_main_reports_a_registry_it_cannot_join_with_exit_3)
     require(r.code == 3, "exit 3", r);
     require(lines(r.err) == 1, "one line (SIL Kit's message has line breaks)", r);
     require(r.err.rfind("error: Engine: cannot join the simulation at \"not-a-uri\": ", 0) == 0, "the URI", r);
-    require(contains(r.err, "(check the URI, e.g. silkit://localhost:8500, that sil-kit-registry runs there, and that no "
-                            "other participant there is named \"Engine\")\n"),
+    require(contains(r.err, "(check that vehicle_sil_launch run (or the registry) is started first and waits for the "
+                            "participants; that the URI has the address of the computer it runs on (127.0.0.1 on this "
+                            "one) and the port of its registry_uri, e.g. silkit://192.0.2.10:8500; that a firewall "
+                            "there lets this computer in; and that no other participant there is named \"Engine\")\n"),
             "what to do", r);
+    CHECK_EQ(probe.made, 0);
+}
+
+TEST_CASE(ecu_main_says_only_the_name_when_the_registry_refuses_it)
+{
+    // The registry was reached: what to check for a registry that cannot be reached is left out.
+    vehicle_sil::unit::InProcessRegistry registry;
+    vehicle_sil::ParticipantRuntimeOptions taken;
+    taken.participant_name = "Engine";
+    taken.registry_uri = registry.uri;
+    const vehicle_sil::ParticipantRuntime first(taken);
+    Probe probe;
+    const Result r = call({"--registry-uri", registry.uri, "--start-timeout-ms", "300"}, probe);
+    require(r.code == 3, "exit 3", r);
+    require(lines(r.err) == 1, "one line", r);
+    require(contains(r.err, "(the registry refused the name \"Engine\" for 300 ms: another participant of this simulation "
+                            "uses it"),
+            "the name, and how long (no longer than --start-timeout-ms)", r);
+    require(!contains(r.err, "(check that"), "nothing of a registry that cannot be reached", r);
     CHECK_EQ(probe.made, 0);
 }
 
@@ -688,7 +711,7 @@ TEST_CASE(ecu_main_reports_a_registry_where_nothing_listens_with_exit_3)
     require(r.code == 3, "exit 3", r);
     require(lines(r.err) == 1, "one line", r);
     require(r.err.rfind("error: Engine: cannot join the simulation at \"silkit://127.0.0.1:9\": ", 0) == 0, "the URI", r);
-    require(contains(r.err, "and that no other participant there is named \"Engine\")\n"), "the three causes", r);
+    require(contains(r.err, "and that no other participant there is named \"Engine\")\n"), "the causes", r);
 }
 
 TEST_CASE(ecu_main_start_timeout_and_start_failure)

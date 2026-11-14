@@ -73,6 +73,8 @@ struct PeerOptions
     /// CAN ports in real-time mode, or external ports such as Vector XL).
     std::optional<VirtualTimeOptions> virtual_time = VirtualTimeOptions{};
     std::chrono::milliseconds shutdown_timeout{5000};
+    /// As ParticipantRuntimeOptions::name_in_use_wait.
+    std::chrono::milliseconds name_in_use_wait{5000};
     /// Real time: the longest time between two steps (RealTimeDriverOptions::max_idle).
     SimDuration max_idle = std::chrono::milliseconds(10);
     /// Real time: the clock of the driver and the ports. nullptr: the peer uses a

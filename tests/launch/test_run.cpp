@@ -19,7 +19,9 @@
 #include <mutex>
 #include <optional>
 #include <cstdint>
+#include <cstdio>
 #include <string>
+#include <initializer_list>
 #include <vector>
 
 #ifndef _WIN32
@@ -1135,6 +1137,196 @@ TEST_CASE(the_participants_reach_a_registry_on_every_address_at_the_loopback_add
     CHECK(launch::detail::uri_for_participants("silkit://[::]:8500") == "silkit://[::1]:8500");
     CHECK(launch::detail::uri_for_participants("silkit://192.168.1.2:8500") == "silkit://192.168.1.2:8500");
     CHECK(launch::detail::uri_for_participants("silkit://127.0.0.1:41234") == "silkit://127.0.0.1:41234");
+}
+
+TEST_CASE(a_simulation_that_stands_still_is_told_of_at_10_s_60_s_and_10_min)
+{
+    using launch::detail::StandStill;
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point t0{};
+    const std::string why = " ms, not paused): a participant may have lost its network connection (on another computer), "
+                            "stand still in a debugger, or hang in a step; the run waits on (a run with --timeout-ms "
+                            "ends when that has passed)";
+    StandStill s;
+    CHECK(s.look(0, false, std::nullopt, t0).empty());
+    CHECK(s.look(10, false, std::nullopt, t0 + 1s).empty()); // it moves
+    CHECK(s.look(10, false, std::nullopt, t0 + 10s).empty()); // 9 s
+    CHECK(s.look(10, false, std::nullopt, t0 + 11s) == "virtual time has not advanced for 10 s (at t=10" + why);
+    CHECK(s.look(10, false, std::nullopt, t0 + 12s).empty()); // once
+    CHECK(s.look(10, false, std::nullopt, t0 + 61s) == "virtual time has not advanced for 60 s (at t=10" + why);
+    CHECK(s.look(10, false, std::nullopt, t0 + 300s).empty());
+    CHECK(s.look(10, false, std::nullopt, t0 + 601s) == "virtual time has not advanced for 600 s (at t=10" + why);
+    CHECK(s.look(10, false, std::nullopt, t0 + 6000s).empty()); // not again
+    CHECK(s.look(20, false, std::nullopt, t0 + 6001s) == "virtual time advances again: it stood still for 6000 s at t=10 ms");
+    CHECK(s.look(30, false, std::nullopt, t0 + 6002s).empty());
+    // Paused: it stands still on purpose; after the pause it counts anew.
+    CHECK(s.look(30, true, std::nullopt, t0 + 6100s).empty());
+    CHECK(s.look(30, false, std::nullopt, t0 + 6105s).empty());
+    CHECK(s.look(30, true, std::nullopt, t0 + 6200s).empty());
+    CHECK(s.look(30, false, std::nullopt, t0 + 6209s).empty()); // 9 s since the pause
+    CHECK(!s.look(30, false, std::nullopt, t0 + 6211s).empty());
+    // Paused after a line: no "again" (it was paused, not freed).
+    CHECK(s.look(30, true, std::nullopt, t0 + 6212s).empty());
+    // It stops: the line that it moved, once, if it did after a line; then nothing.
+    StandStill ends;
+    CHECK(ends.look(10, false, std::nullopt, t0).empty());
+    CHECK(!ends.look(10, false, std::nullopt, t0 + 10s).empty());
+    CHECK(ends.stopping(300, t0 + 11s) == "virtual time advances again: it stood still for 11 s at t=10 ms");
+    CHECK(ends.stopping(300, t0 + 12s).empty());
+    CHECK(ends.look(300, false, std::nullopt, t0 + 100s).empty());
+    StandStill stuck;
+    CHECK(stuck.look(10, false, std::nullopt, t0).empty());
+    CHECK(!stuck.look(10, false, std::nullopt, t0 + 10s).empty());
+    CHECK(stuck.stopping(10, t0 + 11s).empty()); // stopped where it stood
+    // Stopping before any look, and again: nothing (the first look never came).
+    StandStill early;
+    CHECK(early.stopping(10, t0 + 100s).empty());
+    CHECK(early.stopping(20, t0 + 200s).empty());
+    CHECK(early.look(30, false, std::nullopt, t0 + 300s).empty());
+    // At a set speed: only the time past the next step's deadline counts.
+    StandStill paced;
+    CHECK(paced.look(0, false, std::chrono::nanoseconds(0), t0).empty());
+    CHECK(paced.look(0, false, std::chrono::nanoseconds(0), t0 + 100s).empty()); // a slow speed: on time
+    CHECK(paced.look(0, false, std::chrono::nanoseconds(9s), t0 + 109s).empty());
+    CHECK(paced.look(0, false, std::chrono::nanoseconds(70s), t0 + 170s) == "virtual time has not advanced for 70 s (at t=0" + why);
+}
+
+TEST_CASE(a_participant_outside_the_file_is_named_when_it_waits_for_the_start)
+{
+    using launch::detail::StrangerWait;
+    using State = StrangerWait::State;
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point t0{};
+    StrangerWait w;
+    // In ServicesCreated: named once it has stayed there for 2 s.
+    CHECK(!w.look("hand", State::ServicesCreated, t0));
+    CHECK(!w.look("hand", State::ServicesCreated, t0 + 1999ms));
+    CHECK(w.look("hand", State::ServicesCreated, t0 + 2000ms));
+    // An autonomous one passes it on its way to Running: not named, and it counts anew.
+    CHECK(!w.look("Sender", State::ServicesCreated, t0));
+    CHECK(!w.look("Sender", State::Other, t0 + 100ms));
+    CHECK(!w.look("Sender", State::Other, t0 + 5000ms));
+    CHECK(!w.look("Sender", State::ServicesCreated, t0 + 6000ms));
+    CHECK(!w.look("Sender", State::ServicesCreated, t0 + 7999ms));
+    CHECK(w.look("Sender", State::ServicesCreated, t0 + 8000ms));
+    // In Error: at once.
+    CHECK(w.look("Late", State::Error, t0));
+    CHECK(!w.look("Other", State::Other, t0));
+}
+
+TEST_CASE(other_computers_are_told_where_to_join)
+{
+    using launch::detail::HostAddress;
+    using launch::detail::other_computers_line;
+    const std::string tail = ": give it as --registry-uri to a participant started by hand on another computer (instead of "
+                             "the loopback address in its command; it needs no VEHICLE_SIL_LISTEN_ON_NETWORK)";
+    CHECK(other_computers_line("silkit://0.0.0.0:8500", {{"192.0.2.10", true}}) ==
+          "from other computers, join at silkit://192.0.2.10:8500 (this computer's address)" + tail);
+    // The first on the network of the default route (host_addresses() puts it first).
+    CHECK(other_computers_line("silkit://0.0.0.0:8500", {{"192.0.2.10", true}, {"198.51.100.5", false}, {"172.17.0.1", false}}) ==
+          "from other computers, join at silkit://192.0.2.10:8500, silkit://198.51.100.5:8500 or silkit://172.17.0.1:8500 "
+          "(this computer's addresses; the first is on the network of its default route, usually the one the others reach)" +
+              tail);
+    // None or all with the default route: nothing to tell them apart.
+    CHECK(other_computers_line("silkit://0.0.0.0:8500", {{"192.0.2.10", false}, {"198.51.100.5", false}}) ==
+          "from other computers, join at silkit://192.0.2.10:8500 or silkit://198.51.100.5:8500 (this computer's addresses)" +
+              tail);
+    CHECK(other_computers_line("silkit://0.0.0.0:8500", {{"192.0.2.10", true}, {"198.51.100.5", true}}) ==
+          "from other computers, join at silkit://192.0.2.10:8500 or silkit://198.51.100.5:8500 (this computer's addresses)" +
+              tail);
+    // [::]: IPv6 addresses; where it takes no IPv4 (Windows), the line says how to get it.
+    CHECK(other_computers_line("silkit://[::]:8501", {{"[2001:db8::10]", true}}, true) ==
+          "from other computers, join at silkit://[2001:db8::10]:8501 (this computer's address; it listens on IPv6 only "
+          "here: for IPv4, write registry_uri: silkit://0.0.0.0:8501)" + tail);
+    CHECK(other_computers_line("silkit://[::]:8501", {{"192.0.2.10", true}, {"[2001:db8::10]", true}}) ==
+          "from other computers, join at silkit://192.0.2.10:8501 or silkit://[2001:db8::10]:8501 (this computer's addresses)" +
+              tail);
+    CHECK(other_computers_line("silkit://0.0.0.0:8500", {}) ==
+          "from other computers, join at silkit://<an address of this computer>:8500 (none found here: ipconfig on "
+          "Windows, ip addr elsewhere, shows them)" + tail);
+    CHECK(other_computers_line("silkit://[::]:8500", {}, true) ==
+          "from other computers, join at silkit://<an address of this computer>:8500 (none found here: ipconfig on "
+          "Windows, ip addr elsewhere, shows them; it listens on IPv6 only here: for IPv4, write registry_uri: "
+          "silkit://0.0.0.0:8500)" + tail);
+    // A registry on one address: that one, whatever this computer has.
+    CHECK(other_computers_line("silkit://192.0.2.10:8500", {{"198.51.100.5", true}}) ==
+          "from other computers, join at silkit://192.0.2.10:8500" + tail);
+    // Which addresses are listed: not 0/8, loopback or link-local.
+    using launch::detail::reachable_ipv4_text;
+    const auto text = [](std::uint8_t a, std::uint8_t b, std::uint8_t c, std::uint8_t d) {
+        const std::uint8_t bytes[] = {a, b, c, d};
+        return reachable_ipv4_text(bytes);
+    };
+    CHECK(text(192, 0, 2, 18) == "192.0.2.18");
+    CHECK(text(10, 0, 2, 255) == "10.0.2.255");
+    CHECK(text(169, 253, 1, 1) == "169.253.1.1");
+    CHECK(text(127, 0, 0, 1).empty());
+    CHECK(text(127, 255, 0, 9).empty());
+    CHECK(text(169, 254, 3, 4).empty());
+    CHECK(text(0, 0, 0, 0).empty());
+    using launch::detail::reachable_ipv6_text;
+    const auto text6 = [](std::initializer_list<std::uint8_t> head, std::uint8_t last) {
+        std::uint8_t bytes[16] = {};
+        std::copy(head.begin(), head.end(), bytes);
+        bytes[15] = last;
+        return reachable_ipv6_text(bytes);
+    };
+    CHECK(text6({0x20, 0x01, 0x0d, 0xb8}, 0x10) == "[2001:db8::10]");
+    CHECK(text6({0xfd, 0x12}, 1) == "[fd12::1]"); // unique local: in a LAN
+    CHECK(text6({0xfe, 0xc0}, 1) == "[fec0::1]");
+    CHECK(text6({}, 0).empty());                 // ::
+    CHECK(text6({}, 1).empty());                 // ::1
+    CHECK(text6({0xfe, 0x80}, 1).empty());       // link-local
+    CHECK(text6({0xfe, 0xbf}, 1).empty());       // link-local too (fe80::/10)
+    CHECK(text6({0xff, 0x02}, 1).empty());       // multicast
+    CHECK(text6({0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 192, 0, 2}, 10).empty()); // ::ffff:192.0.2.10
+    // The interfaces with a default route (Linux: /proc/net/route, /proc/net/ipv6_route).
+    const std::string v4 = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+                           "eth0\t00000000\t0100A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n"
+                           "eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n"
+                           "docker0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
+                           "wg0\t00000000\t00000000\t0000\t0\t0\t0\t00000000\t0\t0\t0\n"       // not up
+                           "virbr0\t00000000\t00000000\t0201\t0\t0\t0\t00000000\t0\t0\t0\n"    // unreachable
+                           "tun0\t00000000\t00000000\t0001\t0\t0\t0\tFFFFFFFF\t0\t0\t0\n";     // 0.0.0.0/32
+    const std::string zero = std::string(32, '0');
+    const std::string v6 = zero + " 00 " + zero + " 00 fe800000000000000000000000000001 00000400 00000001 00000000 00000003 wlan0\n" +
+                           zero + " 00 " + zero + " 00 " + zero + " ffffffff 00000001 00000000 00200200 lo\n" + // unreachable
+                           zero + " 00 " + zero + " 00 " + zero + " 00000400 00000001 00000000 00000201 eth9\n" + // rejects
+                           "fe800000000000000000000000000000 40 " + zero + " 00 " + zero + " 00000100 00000001 00000000 00000001 eth0\n";
+    CHECK((launch::detail::default_route_interfaces(v4, v6) == std::vector<std::string>{"eth0", "wlan0"}));
+    CHECK(launch::detail::default_route_interfaces("", "").empty());
+    // The order: those with the default route first, IPv4 before IPv6, otherwise as they are.
+    const auto order = launch::detail::in_order(
+        {{"[2001:db8::5]", false}, {"172.17.0.1", false}, {"[2001:db8::10]", true}, {"198.51.100.5", false}, {"192.0.2.10", true}});
+    std::string seen;
+    for (const HostAddress& a : order)
+    {
+        seen += a.host + (a.default_route ? "*" : "") + " ";
+    }
+    if (seen != "192.0.2.10* [2001:db8::10]* 172.17.0.1 198.51.100.5 [2001:db8::5] ")
+    {
+        std::fprintf(stderr, "the order: %s\n", seen.c_str());
+    }
+    CHECK(seen == "192.0.2.10* [2001:db8::10]* 172.17.0.1 198.51.100.5 [2001:db8::5] ");
+    // This computer's addresses: none loopback or link-local, those with the default route first.
+    const auto here = launch::detail::host_addresses(true, true);
+    bool before = true;
+    for (const HostAddress& a : here)
+    {
+        CHECK(!a.host.empty() && a.host.rfind("127.", 0) != 0 && a.host.rfind("169.254.", 0) != 0 && a.host != "0.0.0.0");
+        CHECK(a.host.front() == '[' ? a.host.back() == ']' && a.host.rfind("[fe80", 0) != 0 && a.host != "[::1]"
+                                    : std::count(a.host.begin(), a.host.end(), '.') == 3);
+        CHECK(before || !a.default_route);
+        before = a.default_route;
+    }
+    for (const HostAddress& a : launch::detail::host_addresses(true, false))
+    {
+        CHECK(a.host.front() != '[');
+    }
+    for (const HostAddress& a : launch::detail::host_addresses(false, true))
+    {
+        CHECK(a.host.front() == '[');
+    }
 }
 
 TEST_CASE(a_participants_line_is_shown_without_control_characters_and_its_log_has_a_plain_name)
