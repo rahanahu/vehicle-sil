@@ -12,7 +12,9 @@
 //                             receipts are switched off (own_tx_dropped == 0).
 //   list-channels             --list-channels prints the CAN channels by target, not the LIN one.
 //   bad-channel               a channel number that does not exist: exit 3 with the available list.
-//   bad-usage                 an invalid --xl-target: exit 4.
+//   bad-usage                 an invalid --xl-target: exit 4, with the error and where the options
+//                             are, not the whole usage text.
+//   no-registry               no registry at the address: exit 3, with the address and what to do.
 //   no-driver                 the XL driver cannot be opened: exit 3.
 //   device-lost               the XL device disappears while the bridge runs (fake: 1.5 s after the
 //                             driver was opened): the bridge reports it and exits 1 on its own,
@@ -378,7 +380,20 @@ int main(int argc, char** argv)
         else if (options.scenario == "bad-usage")
         {
             result = run_single(options, {"--registry-uri", "silkit://127.0.0.1:1", "--xl-target", "cancase", "--xl-channel", "1"},
-                                cli::kExitUsage, {"--xl-target must be 'virtual' or 'physical'"}, {});
+                                cli::kExitUsage,
+                                {"error: --xl-target must be 'virtual' or 'physical', got: cancase",
+                                 "Run 'vehicle_sil_vector_xl_bridge --help' for the options."},
+                                {"usage:", "--bitrate"});
+        }
+        else if (options.scenario == "no-registry")
+        {
+            const std::string nowhere = "silkit://127.0.0.1:1";
+            result = run_single(options, {"--registry-uri", nowhere, "--xl-target", "virtual", "--xl-channel", "1"},
+                                cli::kExitSetupFailed,
+                                {"[bridge] FAIL setup: cannot connect to the SIL Kit registry at " + nowhere + " (",
+                                 "). Start the registry first ('sil-kit-registry --listen-uri " + nowhere +
+                                     "'), or give the address it listens at with --registry-uri."},
+                                {});
         }
         else if (options.scenario == "no-driver")
         {

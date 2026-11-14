@@ -1,10 +1,21 @@
 # The control server of vehicle_sil_launch run --control (libs/control_grpc, gRPC). Added only with
 # VEHICLE_SIL_BUILD_CONTROL_SERVER.
+if(NOT VEHICLE_SIL_BUILD_CONTROL_SERVER)
+  return()
+endif()
 vehicle_sil_add_harness_tests(vehicle_sil_control_server_tests
   PREFIX control_server LABELS unit control control_server TIMEOUT 120
-  SOURCES test_grpc_ping.cpp test_control_server.cpp test_security.cpp
-          test_convert.cpp test_limits.cpp test_simulation_monitor.cpp test_authorization.cpp
-          test_authorization_rules.cpp test_snapshot.cpp test_observe_only.cpp
+  SOURCES
+    test_authorization.cpp
+    test_authorization_rules.cpp
+    test_control_server.cpp
+    test_convert.cpp
+    test_grpc_ping.cpp
+    test_limits.cpp
+    test_observe_only.cpp
+    test_security.cpp
+    test_simulation_monitor.cpp
+    test_snapshot.cpp
   LINK vehicle_sil::control_proto vehicle_sil::control_grpc vehicle_sil::control_silkit vehicle_sil::peer)
 target_include_directories(vehicle_sil_control_server_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/control_grpc/src)
 target_compile_definitions(vehicle_sil_control_server_tests PRIVATE

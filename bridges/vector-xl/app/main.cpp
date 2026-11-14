@@ -8,9 +8,11 @@
 //             1 failed while running: the SIL Kit participant stopped or ended on its own (e.g.
 //               connection lost) or the XL channel stopped working (e.g. device removed),
 //             3 setup failed (XL driver, channel selection, SIL Kit), 4 bad command line.
+#include "vehicle_sil/bridge_runtime/registry_failure.hpp"
 #include "vehicle_sil/bridge_runtime/run_bridge.hpp"
 #include "vehicle_sil/cli/args.hpp"
 #include "vehicle_sil/cli/console.hpp"
+#include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/core/participant_runtime.hpp"
 #include "vehicle_sil/vector_xl/bridge_options.hpp"
 #include "vehicle_sil/vector_xl/can_bridge.hpp"
@@ -24,6 +26,7 @@
 #include <exception>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -76,6 +79,24 @@ private:
     bool problems_before_ = false;
 };
 
+/// The participant, connected to the registry. A registry that does not answer is the usual first
+/// failure: say where the bridge looked and what to do, not only SIL Kit's text.
+std::unique_ptr<ParticipantRuntime> connect_to_registry(const ParticipantRuntimeOptions& options)
+{
+    try
+    {
+        return std::make_unique<ParticipantRuntime>(options);
+    }
+    catch (const std::exception& e)
+    {
+        if (auto message = bridge_runtime::registry_failure_message(e.what(), options.registry_uri))
+        {
+            throw std::runtime_error(*message);
+        }
+        throw;
+    }
+}
+
 int run(const BridgeOptions& options)
 {
     // Declaration order is destruction order in reverse: the bridge goes first, then the XL
@@ -112,7 +133,7 @@ int run(const BridgeOptions& options)
         ParticipantRuntimeOptions runtimeOptions{options.participant, options.registry_uri};
         // Bounded so that stopping fits in the time Windows grants a closed console (run_bridge.hpp).
         runtimeOptions.shutdown_timeout = kSilKitShutdownTimeout;
-        runtime = std::make_unique<ParticipantRuntime>(runtimeOptions);
+        runtime = connect_to_registry(runtimeOptions);
         auto& controller = *runtime->participant().CreateCanController("VectorXlBridge", options.network);
 
         XlCanPortOptions portOptions;
@@ -180,11 +201,14 @@ int main(int argc, char** argv)
     BridgeOptions options;
     try
     {
-        options = parse_bridge_options(std::vector<std::string_view>(argv + 1, argv + argc));
+        // UTF-8 on Windows too: SIL Kit takes the names and the address as UTF-8.
+        const std::vector<std::string> arguments = cli::utf8_arguments(argc, argv);
+        options = parse_bridge_options(std::vector<std::string_view>(arguments.begin(), arguments.end()));
     }
     catch (const BridgeUsageError& e)
     {
-        std::fprintf(stderr, "error: %s\n\n%s", e.what(), bridge_usage().c_str());
+        // Two lines: the whole usage text would push the error out of sight.
+        std::fprintf(stderr, "error: %s\nRun 'vehicle_sil_vector_xl_bridge --help' for the options.\n", e.what());
         return kExitUsage;
     }
     if (options.help)

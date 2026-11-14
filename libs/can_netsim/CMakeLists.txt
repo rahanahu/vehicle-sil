@@ -8,7 +8,8 @@ endif()
 
 add_library(vehicle_sil_can_netsim STATIC
   src/can_bus_simulator.cpp
-  src/network_simulator_config.cpp)
+  src/network_simulator_config.cpp
+)
 add_library(vehicle_sil::can_netsim ALIAS vehicle_sil_can_netsim)
 set_target_properties(vehicle_sil_can_netsim PROPERTIES EXPORT_NAME can_netsim)
 target_include_directories(vehicle_sil_can_netsim PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

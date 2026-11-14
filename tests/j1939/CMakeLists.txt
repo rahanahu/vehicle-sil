@@ -3,12 +3,20 @@
 # VEHICLE_SIL_BUILD_EXAMPLES.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_tests
   PREFIX j1939 LABELS unit j1939 TIMEOUT 60
-  SOURCES test_j1939_types.cpp test_j1939_network.cpp test_j1939_request.cpp
-          test_j1939_address_claim.cpp test_j1939_address_management.cpp
-          test_j1939_transport_bam.cpp test_j1939_transport_rts.cpp
-          test_j1939_transport_faults.cpp test_j1939_bus_timing.cpp
-          test_j1939_outage.cpp test_j1939_real_time.cpp test_j1939_toolbox.cpp
-          test_j1939_observer.cpp
+  SOURCES
+    test_j1939_address_claim.cpp
+    test_j1939_address_management.cpp
+    test_j1939_bus_timing.cpp
+    test_j1939_network.cpp
+    test_j1939_observer.cpp
+    test_j1939_outage.cpp
+    test_j1939_real_time.cpp
+    test_j1939_request.cpp
+    test_j1939_toolbox.cpp
+    test_j1939_transport_bam.cpp
+    test_j1939_transport_faults.cpp
+    test_j1939_transport_rts.cpp
+    test_j1939_types.cpp
   LINK vehicle_sil::j1939)
 target_include_directories(vehicle_sil_j1939_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -17,9 +25,15 @@ target_include_directories(vehicle_sil_j1939_tests PRIVATE ${CMAKE_CURRENT_SOURC
 # and toolbox; the boundary test checks their sources and links.
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_parts_tests
   PREFIX j1939_parts LABELS unit j1939 TIMEOUT 60
-  SOURCES test_j1939_dm13.cpp test_j1939_diagnostics.cpp test_j1939_identification.cpp
-          test_j1939_periodic_sender.cpp test_j1939_requester.cpp test_j1939_monitor.cpp
-          test_j1939_exchange.cpp test_j1939_pid_stream_example.cpp
+  SOURCES
+    test_j1939_diagnostics.cpp
+    test_j1939_dm13.cpp
+    test_j1939_exchange.cpp
+    test_j1939_identification.cpp
+    test_j1939_monitor.cpp
+    test_j1939_periodic_sender.cpp
+    test_j1939_pid_stream_example.cpp
+    test_j1939_requester.cpp
   LINK vehicle_sil::j1939_diagnostics vehicle_sil::j1939_periodic_sender vehicle_sil::j1939_requester
        vehicle_sil::j1939_monitor vehicle_sil::j1939_address_commander vehicle_sil::j1939_exchange)
 # The part of examples/pid_stream is header only: its test includes it from there.
@@ -59,7 +73,10 @@ vehicle_sil_add_j1939_codec(vehicle_sil_codec_test_messages codec/codec_test_mes
                             codec/codec_tricky_names.yaml codec/codec_profiles.yaml)
 vehicle_sil_add_harness_tests(vehicle_sil_j1939_codec_tests
   PREFIX j1939_codec LABELS unit j1939 TIMEOUT 60
-  SOURCES test_j1939_codec.cpp test_j1939_codec_node.cpp test_j1939_codec_profiles.cpp
+  SOURCES
+    test_j1939_codec.cpp
+    test_j1939_codec_node.cpp
+    test_j1939_codec_profiles.cpp
   LINK vehicle_sil_codec_test_messages vehicle_sil::j1939_monitor vehicle_sil::testkit)
 target_include_directories(vehicle_sil_j1939_codec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME j1939_codec.generator

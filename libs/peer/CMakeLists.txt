@@ -3,7 +3,10 @@
 # vehicle_sil::lin_silkit ports), Ethernet channels (on vehicle_sil::eth_silkit ports) and its control agent (vehicle_sil::control, with the peer's
 # monitoring outputs), assembled and run on virtual or real time. Uses only the public APIs of
 # the libraries below. Internal for now: the API may change.
-add_library(vehicle_sil_peer STATIC src/peer.cpp src/peer_monitor.cpp)
+add_library(vehicle_sil_peer STATIC
+  src/peer.cpp
+  src/peer_monitor.cpp
+)
 add_library(vehicle_sil::peer ALIAS vehicle_sil_peer)
 set_target_properties(vehicle_sil_peer PROPERTIES EXPORT_NAME peer)
 target_include_directories(vehicle_sil_peer PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

@@ -28,6 +28,7 @@
 // their writes and reads go to the run's hub; main ends the server after the run, before the
 // result.
 #include "vehicle_sil/cli/args.hpp"
+#include "vehicle_sil/cli/utf8.hpp"
 #include "vehicle_sil/launch/check.hpp"
 #include "vehicle_sil/launch/events.hpp"
 #include "vehicle_sil/launch/run.hpp"
@@ -163,32 +164,6 @@ constexpr const char* kUsage =
     "            130 run or test was interrupted (or stopped)\n"
     "the file format: docs/simulation-config.md; check: docs/simulation-check.md; run: docs/simulation-run.md;\n"
     "events and commands: docs/simulation-events.md; scenarios: docs/scenario.md\n";
-
-/// The command line as UTF-8: on Windows from the wide command line (argv is in the code page).
-std::vector<std::string> utf8_arguments(int argc, char** argv)
-{
-#ifdef _WIN32
-    (void)argc;
-    (void)argv;
-    std::vector<std::string> out;
-    int count = 0;
-    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &count);
-    for (int i = 1; wide != nullptr && i < count; ++i)
-    {
-        const int size = WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, nullptr, 0, nullptr, nullptr);
-        std::string text(static_cast<std::size_t>(size > 0 ? size - 1 : 0), '\0');
-        if (size > 1)
-        {
-            WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, text.data(), size, nullptr, nullptr);
-        }
-        out.push_back(std::move(text));
-    }
-    LocalFree(wide);
-    return out;
-#else
-    return std::vector<std::string>(argv + 1, argv + argc);
-#endif
-}
 
 #ifdef _WIN32
 /// Writes UTF-8 `text` to the console `handle` as UTF-16 (whatever its code page). false if
@@ -1302,7 +1277,7 @@ int main(int argc, char** argv)
     // reap the participants itself, and their exit codes would be lost.
     std::signal(SIGCHLD, SIG_DFL);
 #endif
-    std::vector<std::string> arguments = utf8_arguments(argc, argv);
+    std::vector<std::string> arguments = cli::utf8_arguments(argc, argv);
     if (const auto first = positional_arguments(arguments); !first.empty() && first.front() == "test")
     {
         arguments = spread_scenarios(arguments);

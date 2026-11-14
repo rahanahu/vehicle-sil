@@ -16,7 +16,8 @@ add_library(vehicle_sil_eth_link STATIC
   src/os_link_errors.cpp
   src/os_links.cpp
   src/pcap/pcap_errors.cpp
-  src/pcap/pcap_link.cpp)
+  src/pcap/pcap_link.cpp
+)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(vehicle_sil_eth_link PRIVATE
     src/linux/linux_link.cpp

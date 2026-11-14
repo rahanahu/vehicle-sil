@@ -5,10 +5,6 @@ if(NOT TARGET vehicle_sil::launch)
 endif()
 add_executable(vehicle_sil_launch main.cpp)
 target_link_libraries(vehicle_sil_launch PRIVATE vehicle_sil::launch vehicle_sil::process vehicle_sil_cli)
-if(WIN32)
-  # CommandLineToArgvW: the command line as UTF-8.
-  target_link_libraries(vehicle_sil_launch PRIVATE shell32)
-endif()
 # run --control: the Control Server (gRPC) on the run's hub, only with VEHICLE_SIL_BUILD_CONTROL_SERVER.
 if(TARGET vehicle_sil::control_grpc)
   target_sources(vehicle_sil_launch PRIVATE control_server.cpp)

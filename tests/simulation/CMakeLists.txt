@@ -5,8 +5,14 @@
 # as a function.
 vehicle_sil_add_harness_tests(vehicle_sil_simulation_tests
   PREFIX simulation LABELS unit simulation TIMEOUT 180
-  SOURCES test_simulation.cpp test_lin_simulation.cpp test_describe.cpp test_ecu_main.cpp test_disconnect.cpp
-          test_network_kinds.cpp test_ethernet.cpp
+  SOURCES
+    test_describe.cpp
+    test_disconnect.cpp
+    test_ecu_main.cpp
+    test_ethernet.cpp
+    test_lin_simulation.cpp
+    test_network_kinds.cpp
+    test_simulation.cpp
   LINK vehicle_sil::simulation vehicle_sil::testkit vehicle_sil::control_silkit)
 # simulation_internal.hpp: the tests shorten a wait of the library.
 target_include_directories(vehicle_sil_simulation_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/simulation/src)
@@ -66,7 +72,12 @@ if(TARGET vehicle_sil_engine_ecu)
   vehicle_sil_add_scenario_tests(vehicle_sil_ecu_main_launcher
     PREFIX ecu_main LABELS integration simulation TIMEOUT 180
     WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/ecu_main
-    SCENARIOS describe local silkit usage signal
+    SCENARIOS
+      describe
+      local
+      signal
+      silkit
+      usage
     ARGS --registry $<TARGET_FILE:sil-kit-registry>
          --controller $<TARGET_FILE:vehicle_sil_sim_controller>
          --engine $<TARGET_FILE:vehicle_sil_engine_ecu>
