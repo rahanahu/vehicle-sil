@@ -166,6 +166,13 @@ def check() -> Report:
     report.tool("clang++", "clang++", needed=False,
                 purpose="the linux-clang-* presets, three of the five that scripts/verify.py --linux runs",
                 fix="install Clang (Fedora: dnf install clang; Ubuntu: apt install clang)")
+    # The control server's pinned gRPC is built with FetchContent, which needs a newer CMake than the rest
+    # (cmake/VehicleSilGrpc.cmake); a gRPC that find_package(gRPC CONFIG) finds does not.
+    report.tool("CMake for gRPC", "cmake", at_least=(3, 28), needed=False,
+                purpose="the linux-gcc-control preset and other builds with VEHICLE_SIL_BUILD_CONTROL_SERVER=ON "
+                        "that build gRPC themselves",
+                fix="install CMake 3.28 or newer, or install gRPC so that find_package(gRPC CONFIG) finds it "
+                    "(docs/dependencies.md)")
     if not WINDOWS:
         links(report, shutil.which("g++"), "libstdc++ (static)", ["-static-libstdc++", "-static-libgcc"],
               purpose="the linux-gcc-static preset", fix="Fedora: dnf install libstdc++-static (Ubuntu has it with g++)")

@@ -1,5 +1,5 @@
 # Checks of every push to main and every pull request: the C++ build and tests (Linux presets, one with the thread
-# sanitizer and one of them also
+# sanitizer, one with the control server, and one of them also
 # with the oldest CMake that docs/build.md asks for, Windows with MSYS2 UCRT64), the browser GUI, and the Python code. Each job calls the repository's script that a developer
 # runs (AGENTS.md, "検証とスクリプト"); on failure, its logs (build/logs) are kept as an artifact.
 # Security: read-only token, no secrets, actions pinned by commit hash (the tag in the comment).
@@ -54,7 +54,7 @@ jobs:
           if [ "$docs_only" = true ]; then
             presets='["linux-gcc-debug"]'
           else
-            presets='["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-clang-tsan"]'
+            presets='["linux-gcc-debug", "linux-gcc-release", "linux-gcc-static", "linux-clang-tsan", "linux-gcc-control"]'
           fi
           echo "docs_only=$docs_only" | tee -a "$GITHUB_OUTPUT"
           echo "presets=$presets" | tee -a "$GITHUB_OUTPUT"
@@ -69,10 +69,13 @@ jobs:
       matrix:
         # linux-gcc-static: VEHICLE_SIL_STATIC=ON (SIL Kit and the C++ runtime linked into each executable)
         # linux-clang-tsan: the thread sanitizer; a race in a test or in the product shows only here
+        # linux-gcc-control: VEHICLE_SIL_BUILD_CONTROL_SERVER=ON (the pinned gRPC built with FetchContent, the
+        # control server's tests, and the GUI server against this launcher and its control server)
         preset: ${{ fromJSON(needs.changes.outputs.presets) }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 1G
+      # gRPC, protobuf, abseil and BoringSSL are most of what linux-gcc-control compiles: it needs more room.
+      CCACHE_MAXSIZE: ${{ matrix.preset == 'linux-gcc-control' && '2G' || '1G' }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       # Empty (not set) for the thread sanitizer: its preset's default factor (4) applies.
@@ -118,10 +121,31 @@ jobs:
         run: python3 scripts/verify.py ${{ matrix.preset }} --tag ci
       # The GUI's tests play recordings of the launcher (gui/server/tests/recordings): are they still what this
       # launcher and the ecu_main example ECUs write? (Standard library only. Cases that need the control server
-      # are skipped and said so: the preset is built without it.)
+      # are skipped and said so: the preset is built without it; linux-gcc-control compares them.)
       - name: The GUI's recordings against this launcher
         if: matrix.preset == 'linux-gcc-release'
         run: python3 gui/server/tests/record_launcher.py --launcher build/linux-gcc-release/tools/launch/vehicle_sil_launch --compare
+      # The Python client's tests and the examples of examples/launch_control are added only where CMake finds a
+      # Python with grpcio and grpcio-tools (here the uv environment); without one they would be left out silently.
+      - name: The control server's Python tests were run
+        if: matrix.preset == 'linux-gcc-control'
+        run: |
+          expected="control_server.python_client control_server.launcher control_server.example_write_before_start control_server.example_pause_and_step"
+          listed=$(ctest --test-dir build/linux-gcc-control -N -L python)
+          for name in $expected; do
+            if ! grep -qE "Test +#[0-9]+: $name\$" <<<"$listed"; then
+              echo "::error::$name is not registered: CMake found no Python 3.11+ with grpcio and grpcio-tools (see 'the Python client tests are skipped' in build/logs/ci-linux-gcc-control-configure.log); run uv sync --locked before the configure"
+              exit 1
+            fi
+          done
+      # The GUI server against this launcher and its control server (gui/server/tests/test_real_launcher.py records
+      # every case again, those with the control server too, and compares; test_real_variables.py reads and writes
+      # the example ECUs' variables). The screen and its browser tests are in the gui job (without a real launcher).
+      - name: The GUI server against this launcher
+        if: matrix.preset == 'linux-gcc-control'
+        run: >-
+          python3 scripts/verify-gui.py --skip-web --skip-e2e --no-wait --tag ci
+          --launcher build/linux-gcc-control/tools/launch/vehicle_sil_launch
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
