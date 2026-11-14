@@ -175,9 +175,20 @@ public:
     CanBridge(CanBridge&&) = delete;
     CanBridge& operator=(CanBridge&&) = delete;
 
-    /// Starts the external port, registers the SIL Kit RX handler and starts the controller.
-    /// Throws on failure (and leaves the bridge stopped).
+    /// Starts the external port and registers the SIL Kit RX handler: frames from SIL Kit go to
+    /// the external bus from here on. Call it before the participant's lifecycle starts. The SIL
+    /// Kit controller is started by start_controller(); a start() after start_controller() was
+    /// called (a restart) starts the controller as well. Throws on failure (and leaves the bridge
+    /// stopped).
     void start();
+
+    /// Starts the SIL Kit controller: frames from the external bus go to SIL Kit from here on
+    /// (those that came before are not forwarded and not counted). Call it from the participant's
+    /// CommunicationReady handler (ParticipantRuntime::add_communication_ready_handler()), where
+    /// SIL Kit wants ICanController::Start() called: on its thread, before Running. Before
+    /// start(), it only notes that the time has come. Nothing a second time. If the controller
+    /// cannot be started, fault() tells why.
+    void start_controller() noexcept;
 
     /// Stops forwarding in both directions. Safe to call more than once.
     void stop() noexcept;
@@ -207,6 +218,8 @@ private:
     std::mutex lifecycle_mutex_;
     std::optional<SilKit::Util::HandlerId> silkit_handler_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> controller_started_{false}; ///< the controller is started (until stop())
+    bool communication_ready_ = false;            ///< start_controller() was called; guarded by lifecycle_mutex_
 
     std::atomic<std::uint64_t> silkit_to_external_{0};
     std::atomic<std::uint64_t> external_to_silkit_{0};

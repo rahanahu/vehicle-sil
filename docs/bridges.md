@@ -2,6 +2,8 @@
 
 実機の CAN（Vector の XL Driver Library で使える機器と Vector Virtual CAN）につなぐ人と、ブリッジを直す人向けです。前に読む文書はありません。ブリッジを直す人は、次に [code-map.md](code-map.md) の「Vector XL CAN Bridge」を読みます。
 
+イーサネットのブリッジ（`vehicle_sil_ethernet_bridge`）は [ethernet-bridge.md](ethernet-bridge.md) にあります。
+
 `vehicle_sil_vector_xl_bridge` は、SIL Kit の CAN ネットワークと Vector XL の CAN チャネルの間で、クラシック CAN のフレームを双方向に転送します。XL のチャネルには、Vector Virtual CAN と、CANcase や VN16xx などの物理 CAN を使えます。
 
 > [!WARNING]
@@ -56,6 +58,7 @@ vehicle_sil_vector_xl_bridge --registry-uri silkit://127.0.0.1:8500 --network J1
 
 - 識別子（11 bit / 29 bit）、IDE、RTR、DLC、データを変えずに転送します。ただし SIL Kit から XL へは、DLC 9〜15（クラシック CAN ではどれもデータ 8 バイト）を DLC 8 として送ります。`xlCanTransmit` が受け付ける DLC は 0〜8 のためです（XL Driver Library のマニュアル）。XL から SIL Kit へは、受け取った DLC のまま転送します。
 - CAN FD、CAN XL、不正な ID や DLC のフレームは転送せず、`silkit_rejected` または `xl_rejected` に数えます。XL 側の ID は受信イベントから 11/29 ビットで取り出すので、`xl_rejected` に数えるのは実際には DLC が 15 を超えるフレームです。
+- XL から SIL Kit への転送は、participant が SIL Kit の CommunicationReady に達してから始めます（ブリッジは、そこで SIL Kit のコントローラーを始めます。SIL Kit が勧めている時点です）。それまでに XL から届いたフレームは転送せず、数えません（起動の直後の短い間です）。SIL Kit から XL への転送は、その前から運びます。
 - XL のエラーフレームは転送せず、`error_frames` に数えます。XL の受信キューのあふれは `overruns` に数えます。
 - 統計値は終了時に 1 行で出力します。対象は次のとおりです: `silkit_to_xl`、`xl_to_silkit`、`own_tx_dropped`、`error_frames`、`overruns`、`silkit_rejected`、`xl_rejected`、`xl_queue_full`、`xl_tx_failures`、`silkit_tx_failures`、`xl_tx_dropped`、`xl_tx_unsent`。
 
@@ -138,7 +141,7 @@ vehicle_sil_vector_xl_bridge --registry-uri <uri> --xl-target <virtual|physical>
   - 起動の途中の状態（ReadyToRun など）は失敗にしません。監視を始めてから 1 秒たっても Running にならなければ `waiting for the SIL Kit participant to reach Running (state <状態>; at most 15000 ms)` を 1 回出し、15 秒たっても Running にならなければ `FAIL: SIL Kit participant did not reach Running within 15000 ms (state <状態>); its SIL Kit log may say why` を出して終了コード 1 で終わります。
   - Paused は失敗にしません（ブリッジは自分では一時停止しません）。
 - Windows でコンソールのウィンドウを閉じたとき（ログオフ、シャットダウンも）は、`SetConsoleCtrlHandler` のハンドラーが停止を求め、統計を出し終わるまで最長 4 秒待ってから、ブリッジの終了コードでプロセスを終えます。Windows はハンドラーが戻るとプロセスを終わらせ、待つのも 5 秒ほどまでだからです。Windows の約 5 秒は変えられないので、統計は SIL Kit の participant を止める前に出し、participant の停止を待つのは最長 2 秒にしています。それでも 4 秒を超えると、Windows がプロセスを終わらせ、終了コードは 0 になりません（統計は出た後です）。
-- 止める要求の受け方、監視のループ、止める順（統計を SIL Kit の participant の停止より先に出す）、終了コード、コンソールを閉じたときの 4 秒は、`bridges/common` の `run_bridge()`（`vehicle_sil::bridge_runtime`）にあります。ブリッジの実行ファイルはこれを共有します。
+- 止める要求の受け方、監視のループ、止める順（止める直前に出た警告、統計の順に、SIL Kit の participant の停止より先に出す）、終了コード、コンソールを閉じたときの 4 秒は、`bridges/common` の `run_bridge()`（`vehicle_sil::bridge_runtime`）にあります。ブリッジの実行ファイルはこれを共有します。
 
 ## ビルド
 

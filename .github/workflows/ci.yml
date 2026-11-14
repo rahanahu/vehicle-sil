@@ -83,8 +83,9 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - name: Install Ninja and ccache
-        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache
+      # ethtool: ethernet_bridge.netns.packet turns an offload off with it.
+      - name: Install Ninja, ccache and ethtool
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache ethtool
       - name: Python environment (PyYAML for the code generator, gRPC for the Python tests)
         run: uv sync --locked
       # The thread sanitizer cannot map its shadow memory when the kernel randomizes addresses with more bits.
@@ -109,6 +110,10 @@ jobs:
       - name: Configure, build and test
         env:
           VEHICLE_SIL_REQUIRE_MULTI_HOST: ${{ matrix.preset == 'linux-gcc-release' && '1' || '' }}
+          # The Ethernet bridge on real interfaces (ethernet_bridge.netns.*): where the TAP device, the veth pair or
+          # a packet socket cannot be made in the namespace, or setpriv or ethtool is missing, the test fails rather
+          # than skips or leaves a part out, and its first line says what could not be made.
+          VEHICLE_SIL_REQUIRE_ETHERNET_NETNS: ${{ matrix.preset == 'linux-gcc-release' && '1' || '' }}
         run: python3 scripts/verify.py ${{ matrix.preset }} --tag ci
       # The GUI's tests play recordings of the launcher (gui/server/tests/recordings): are they still what this
       # launcher and the ecu_main example ECUs write? (Standard library only. Cases that need the control server

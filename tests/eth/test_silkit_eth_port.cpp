@@ -63,20 +63,42 @@ TEST_CASE(silkit_eth_port_activates_the_controller_and_removes_its_handlers_on_c
         SilKitEthPort port(controller);
         CHECK(port.is_open());
         CHECK(port.time_domain() == TimeDomain::Virtual);
-        CHECK(controller.active());
+        // The constructor only listens; start() (from the CommunicationReady handler) activates.
+        CHECK(!port.is_started());
+        CHECK(!controller.active());
         CHECK_EQ(controller.handler_count(), 3u);
+        // A step before start() is a mistake of the program, and says what to call.
+        CHECK(throws_with<std::logic_error>(
+            [&] { static_cast<void>(port.release_before(at(1ms), [](const TimedFrame&) {})); },
+            "vehicle_sil::eth::SilKitEthPort: a step ran before start(): the controller is not activated, so SIL Kit "
+            "would refuse every frame this port sends. Call start() from the participant's CommunicationReady handler "
+            "(ParticipantRuntime::add_communication_ready_handler())"));
+        CHECK(throws_with<std::logic_error>(
+            [&] { static_cast<void>(port.send(TimedFrame{at(1ms), make_frame(kBroadcast, mac(1), 1, 0)})); },
+            "vehicle_sil::eth::SilKitEthPort: send() before start(): "));
+        port.start();
+        CHECK(port.is_started());
+        CHECK(controller.active());
         CHECK(port.statistics().link_up);
+        port.start(); // a second time: nothing
         port.close();
         CHECK(!port.is_open());
+        CHECK(!port.is_started());
         CHECK(!controller.active());
         CHECK_EQ(controller.handler_count(), 0u);
         CHECK(port.send(TimedFrame{at(1ms), make_frame(kBroadcast, mac(1), 1, 0)}) == SendResult::Failed);
         port.close(); // idempotent
+        port.start(); // after close(): nothing
+        CHECK(!controller.active());
     }
-    // Construction that fails leaves no handler behind.
+    // An activation that fails leaves the port open and not started.
     FakeEthernetController failing;
     failing.throw_on_activate = true;
-    CHECK(throws<std::runtime_error>([&] { SilKitEthPort port(failing); }));
+    {
+        SilKitEthPort port(failing);
+        CHECK(throws<std::runtime_error>([&] { port.start(); }));
+        CHECK(port.is_open() && !port.is_started());
+    }
     CHECK_EQ(failing.handler_count(), 0u);
 
     SilKitEthPortOptions zero;
@@ -89,6 +111,7 @@ TEST_CASE(silkit_eth_port_releases_frames_before_now_in_time_then_arrival_order)
 {
     FakeEthernetController controller;
     SilKitEthPort port(controller);
+    port.start();
     controller.deliver(vehicle_sil::unit::frame_bytes(kBroadcast, mac(3), 1, 0, 64), 2ms);
     controller.deliver(vehicle_sil::unit::frame_bytes(kBroadcast, mac(2), 1, 0, 64), 1ms);
     controller.deliver(vehicle_sil::unit::frame_bytes(kBroadcast, mac(1), 1, 0, 64), 2ms);
@@ -111,6 +134,7 @@ TEST_CASE(silkit_eth_port_gives_frames_without_time_the_time_of_the_latest_step)
 {
     FakeEthernetController controller;
     SilKitEthPort port(controller);
+    port.start();
     // Before the first step: time 0, released at the first step after 0.
     controller.deliver(frame_bytes(kBroadcast, mac(7), 1, 0, 64), kNoTime);
     CHECK(release(port, at(0ms)).empty());
@@ -144,11 +168,17 @@ TEST_CASE(silkit_eth_port_sends_and_queues_the_acknowledgements_for_the_next_ste
 {
     FakeEthernetController controller;
     SilKitEthPort port(controller);
+    port.start();
     controller.now = 5ms;
     const Frame frame = make_frame(mac(2), mac(1), 1, 0, 20);
     CHECK(port.send(TimedFrame{at(5ms), frame}) == SendResult::Accepted);
     CHECK_EQ(controller.sent().size(), 1u);
-    CHECK(controller.sent()[0] == std::vector<std::uint8_t>(frame.bytes().begin(), frame.bytes().end())); // not padded here
+    // A frame shorter than 60 bytes goes out padded with zero bytes (a network simulator may
+    // refuse a short one; a receiving SIL Kit controller would pad it anyway).
+    std::vector<std::uint8_t> padded(frame.bytes().begin(), frame.bytes().end());
+    CHECK(padded.size() < 60u);
+    padded.resize(60, 0);
+    CHECK(controller.sent()[0] == padded);
     CHECK(release_events(port, at(5ms)).empty());
 
     controller.ack_status = sk::EthernetTransmitStatus::LinkDown;
@@ -180,6 +210,7 @@ TEST_CASE(silkit_eth_port_reports_inbox_overflow_and_close_discards_what_is_queu
     SilKitEthPortOptions options;
     options.inbox_capacity = 2;
     SilKitEthPort port(controller, options);
+    port.start();
     controller.now = 1ms;
     CHECK(port.send(TimedFrame{at(1ms), make_frame(kBroadcast, mac(1), 1, 0)}) == SendResult::Accepted);
     for (std::uint8_t i = 0; i < 5; ++i)
@@ -207,6 +238,7 @@ TEST_CASE(silkit_eth_port_reports_acknowledgements_its_event_queue_could_not_kee
     SilKitEthPortOptions options;
     options.event_capacity = 1;
     SilKitEthPort port(controller, options);
+    port.start();
     controller.now = 1ms;
     for (std::uint8_t i = 0; i < 3; ++i)
     {

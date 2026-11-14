@@ -41,7 +41,7 @@ struct SilKitCanPortOptions
     std::size_t inbox_capacity = 1024;
     /// Event queue capacity (> 0): transmit acknowledgements waiting for the next step.
     std::size_t event_capacity = 1024;
-    /// Bit rate passed to the controller with SetBaudRate() before it starts (0: not set).
+    /// Bit rate passed to the controller with SetBaudRate() in start() (0: not set).
     /// SIL Kit's trivial simulation ignores it; a network simulator uses it for the
     /// transmission time.
     std::uint32_t bitrate = 0;
@@ -89,9 +89,17 @@ struct SilKitCanPortStatistics
 /// (TimeDomain::RealTime, SilKitCanPortOptions::real_time_clock).
 ///
 /// The constructor adds a receive handler (RX direction only, so the port never sees its own
-/// frames), a transmit handler and an error state handler, then starts the controller. close()
-/// removes the handlers and stops the controller; after close() returns, SIL Kit no longer
-/// calls into the port.
+/// frames), a transmit handler and an error state handler; frames that arrive from then on are
+/// queued. start() sets the bit rate and starts the controller: call it from the participant's
+/// CommunicationReady handler (ParticipantRuntime::add_communication_ready_handler();
+/// vehicle_sil::Peer does it for its ports). That is where SIL Kit wants ICanController::SetBaudRate()
+/// and Start() called: on its own thread, before the first step, and for a Coordinated participant
+/// at a point where every participant's services are known, so that a network simulator gets both
+/// whichever program was started first. An Autonomous participant has no such promise (a simulator
+/// that it has not found yet does not learn the bit rate or the start). A step before start()
+/// (release_before() or send()) throws std::logic_error: SIL Kit drops a frame sent to a controller
+/// that is not started, without an acknowledgement. close() removes the handlers and stops the
+/// controller; after close() returns, SIL Kit no longer calls into the port.
 ///
 /// Real time: frames, acknowledgements and error states are stamped with their arrival on the
 /// driver's clock (RealTimeReceiver), and each arrival wakes the driver (set_wakeup()). The
@@ -134,8 +142,9 @@ struct SilKitCanPortStatistics
 /// destroy the stack, then destroy the ParticipantRuntime (which owns the controller).
 ///
 /// Threading: SIL Kit calls the handlers on its own thread; release_before() and send() run on
-/// the step handler's thread. close() may be called from any thread except a SIL Kit handler of
-/// this controller.
+/// the step handler's thread. start() is for a SIL Kit handler (CommunicationReady); it and
+/// close() may run at the same time. close() may be called from any thread except a SIL Kit
+/// handler of this controller.
 class SilKitCanPort final : public Port
 {
 public:
@@ -154,11 +163,20 @@ public:
     std::size_t release_events_before(SimTime now, PortEventSink sink) override;
     void set_wakeup(Wakeup wakeup) override;
 
+    /// Sets the bit rate (SilKitCanPortOptions::bitrate, if not 0) and starts the controller.
+    /// From the participant's CommunicationReady handler (see the class). Does nothing after
+    /// close() or a second time. Throws what ICanController::SetBaudRate() or Start() throws; the
+    /// port is then not started.
+    void start();
+
     /// Removes the handlers, stops the controller and discards queued frames. Idempotent.
     /// send() after close() returns Failed; release_before() releases nothing.
     void close() noexcept;
 
+    /// From the constructor until close().
     [[nodiscard]] bool is_open() const noexcept { return open_.load(std::memory_order_acquire); }
+    /// From start() until close().
+    [[nodiscard]] bool is_started() const noexcept { return started_.load(std::memory_order_acquire); }
     [[nodiscard]] SilKitCanPortStatistics statistics() const;
 
 private:
@@ -170,6 +188,8 @@ private:
     void push_event(const PortEvent& event, bool acknowledgement) noexcept;
     /// Virtual time: SIL Kit's timestamp, or for a negative one the time of the latest step.
     [[nodiscard]] SimTime stamp(std::chrono::nanoseconds timestamp) const noexcept;
+    /// Throws std::logic_error unless started; `what` is what happened before start().
+    void require_started(const char* what) const;
 
     SilKit::Services::Can::ICanController& controller_;
     StepInbox<Frame> inbox_;      ///< virtual time
@@ -182,9 +202,11 @@ private:
     std::atomic<std::int64_t> step_time_ns_{0};
     std::atomic<std::uint64_t> event_refusals_{0}; ///< virtual time: error states without a place
     std::size_t transmit_capacity_;
+    std::uint32_t bitrate_; ///< for start()
     std::atomic<std::size_t> outstanding_{0}; ///< changed on the driver's thread only; atomic for statistics()
     std::mutex lifecycle_mutex_;
     std::atomic<bool> open_{false};
+    std::atomic<bool> started_{false};
     std::optional<SilKit::Util::HandlerId> frame_handler_;
     std::optional<SilKit::Util::HandlerId> transmit_handler_;
     std::optional<SilKit::Util::HandlerId> error_state_handler_;

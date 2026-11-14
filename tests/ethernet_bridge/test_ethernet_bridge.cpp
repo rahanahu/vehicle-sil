@@ -61,6 +61,7 @@ struct Fixture
     {
         link.set_echo_own(echo);
         bridge.start();
+        bridge.start_controller(); // what the participant's CommunicationReady handler does
     }
 
     /// Everything sent so far went through.
@@ -201,6 +202,8 @@ struct TwoBridges
         b2.emplace(c2, link2, o2);
         b1->start();
         b2->start();
+        b1->start_controller();
+        b2->start_controller();
     }
 
     ~TwoBridges()
@@ -505,6 +508,24 @@ TEST_CASE(bridge_counts_what_sil_kit_did_not_transmit)
     CHECK_TEXT(f.bridge.last_error(), "SIL Kit SendFrame failed: fake SendFrame failure");
 }
 
+TEST_CASE(bridge_passes_and_counts_frames_with_an_incomplete_checksum)
+{
+    EthernetBridgeOptions options;
+    options.filter.ether_types = {kExperimental};
+    Fixture f(options);
+    const auto frame = make_frame(kEcu, kOutside, kExperimental);
+    f.link.receive(frame);
+    f.link.receive_checksum_incomplete(frame);
+    f.link.receive_checksum_incomplete(make_frame(kEcu, kOutside, 0x0800)); // filtered: not handed over, not counted
+    CHECK(eventually([&] { return f.silkit.sent_count() == 2 && f.link.idle(); }, 5000ms));
+    const auto s = f.bridge.statistics();
+    CHECK_EQ(s.ext_to_silkit, std::uint64_t{2});
+    CHECK_EQ(s.ext_checksum_incomplete, std::uint64_t{1});
+    CHECK_EQ(s.filtered_from_ext, std::uint64_t{1});
+    // The warning is the link's (a packet link gives it once); the bridge adds none of its own.
+    CHECK(f.bridge.take_warnings().empty());
+}
+
 TEST_CASE(bridge_counts_overruns_also_those_reported_by_stop)
 {
     Fixture f;
@@ -553,11 +574,54 @@ TEST_CASE(bridge_start_failure_of_sil_kit_stops_the_link_again)
     FakeEthernetController silkit;
     silkit.throw_on_activate = true;
     EthernetBridge bridge(silkit, link);
+    bridge.start();
+    // A controller that cannot be activated: a fault (the caller stops), not an exception out of
+    // SIL Kit's handler.
+    bridge.start_controller();
+    CHECK(bridge.fault() ==
+          std::optional<std::string>("activating the SIL Kit Ethernet controller failed: fake Activate failure"));
+    bridge.stop();
+    // After CommunicationReady, start() activates the controller and throws if that fails.
     CHECK(vehicle_sil::unit::throws_with<std::runtime_error>([&] { bridge.start(); }, "fake Activate failure"));
     CHECK(!bridge.running());
     CHECK(!link.started());
     CHECK_EQ(silkit.frame_handler_count(), std::size_t{0});
     CHECK_EQ(silkit.transmit_handler_count(), std::size_t{0});
+}
+
+TEST_CASE(bridge_activates_the_controller_at_communication_ready_and_forwards_into_sil_kit_from_then_on)
+{
+    FakeSegment segment;
+    FakeLink link(segment, "eth-test");
+    FakeEthernetController silkit;
+    EthernetBridge bridge(silkit, link);
+    bridge.start();
+    CHECK(bridge.running());
+    CHECK(!silkit.active());
+    // SIL Kit to the link: at once. The link to SIL Kit: not before the controller is active
+    // (SIL Kit would refuse the frame), and not counted.
+    silkit.deliver(make_frame(kOutside, kEcu, kExperimental));
+    CHECK_EQ(segment.transmitted().size(), std::size_t{1});
+    segment.send(make_frame(kEcu, kOutside, kExperimental));
+    CHECK(eventually([&] { return segment.idle(); }, 5000ms));
+    CHECK_EQ(silkit.sent_count(), std::size_t{0});
+    CHECK_EQ(bridge.statistics().ext_to_silkit, 0u);
+    bridge.start_controller();
+    CHECK(silkit.active());
+    bridge.start_controller(); // a second time: nothing
+    segment.send(make_frame(kEcu, kOutside, kExperimental));
+    CHECK(eventually([&] { return silkit.sent_count() == 1; }, 5000ms));
+    CHECK(!bridge.fault());
+
+    // CommunicationReady before start(): start() activates.
+    FakeSegment segment2;
+    FakeLink link2(segment2, "eth-test");
+    FakeEthernetController silkit2;
+    EthernetBridge early(silkit2, link2);
+    early.start_controller();
+    CHECK(!silkit2.active());
+    early.start();
+    CHECK(silkit2.active());
 }
 
 TEST_CASE(bridge_stop_removes_the_handlers_and_ends_forwarding)

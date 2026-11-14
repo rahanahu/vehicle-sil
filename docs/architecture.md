@@ -21,7 +21,7 @@ flowchart LR
 - 外からの操作は Control API（gRPC）で、ランチャーの Control Server（`run --control`）が受けます（[control-api.md](control-api.md)）。
 - GUI は別のプロセスです。GUI サーバー（`gui/server`）がランチャーを動かし、Control API のクライアントになって、ブラウザの画面に中継します（[gui.md](gui.md)）。
 - 実機の CAN には、Vector XL CAN Bridge が実時間でつなぎます（[bridges.md](bridges.md)）。
-- SIL Kit の Ethernet と外のイーサネットの間でフレームを運ぶ部品は、ライブラリとしてあります（[ethernet-bridge.md](ethernet-bridge.md)）。
+- SIL Kit の Ethernet と外のイーサネットの間でフレームを運ぶブリッジ `vehicle_sil_ethernet_bridge` があります。外のインターフェースを開けるのは、いまは Linux の TAP デバイスと packet ソケットだけです（[ethernet-bridge.md](ethernet-bridge.md)）。
 
 ## 構成
 
@@ -36,7 +36,7 @@ vehicle-sil/
 ├── libs/can_netsim/  vehicle_sil::can_netsim  簡易 CAN Network Simulator（SIL Kit の Network Simulator API）
 ├── libs/eth/         vehicle_sil::eth    生のイーサネットのフレームの基盤（フレーム、ポート、vehicle_sil::step の上のチャネル、仮想ネットワーク。SIL Kit に依存しない）
 ├── libs/eth_silkit/  vehicle_sil::eth_silkit  vehicle_sil::eth のポートの SIL Kit 実装（仮想時間）
-├── libs/eth_link/    vehicle_sil::eth_link  イーサネットのブリッジの外の側: 外のインターフェースの口、絞り込み、輪を防ぐ MAC の表（SIL Kit に依存しない）
+├── libs/eth_link/    vehicle_sil::eth_link  イーサネットのブリッジの外の側: 外のインターフェースの口、絞り込み、輪を防ぐ MAC の表、Linux の TAP デバイスと packet ソケットの口（SIL Kit に依存しない）
 ├── libs/j1939/       vehicle_sil::j1939  J1939 スタック（vehicle_sil::can の上。SIL Kit に依存しない）と、そのプロトコル部品（parts/）、型付きメッセージ（codec/）
 ├── libs/ecu/         vehicle_sil::ecu    ECU のアプリケーションを組み立てる入口 Ecu（変数の宣言と、自己申告 describe() とその JSON を含む。SIL Kit に依存しない）
 ├── libs/local/       vehicle_sil::local  プロセス内の仮想 CAN バスと仮想 LIN バスの上で ECU を仮想時間で回す LocalBench（SIL Kit に依存しない）
@@ -52,7 +52,7 @@ vehicle-sil/
 ├── python/vehicle_sil_control/ Control API の Python クライアントと CLI、`vehicle_sil_launch run --control` を子プロセスで動かす助け
 ├── bridges/common/  ブリッジの実行ファイルが共有する run_bridge()（止め方、監視のループ、止める順、終了コード。内部用）
 ├── bridges/vector-xl/ Vector XL CAN Bridge（転送のコアは移植可能、XL バックエンドと実行ファイルは Windows 専用）
-├── bridges/ethernet/ イーサネットのブリッジ（SIL Kit の Ethernet と外のインターフェースの間の転送、統計、引数の解釈。プラットフォームに依存しない）
+├── bridges/ethernet/ イーサネットのブリッジ（SIL Kit の Ethernet と外のインターフェースの間の転送、統計、引数の解釈、実行ファイル。どのプラットフォームでもビルドする）
 ├── tools/common/     実行ファイル共通のコマンドライン解析、終了コード、ログ出力（内部用、ヘッダーのみ）
 ├── tools/sim_controller/ 仮想時間のシミュレーションを開始・停止する system controller（vehicle_sil_sim_controller）
 ├── tools/can_bus_simulator/ 簡易 CAN Network Simulator の実行ファイル（vehicle_sil_can_bus_simulator）
@@ -120,8 +120,9 @@ vehicle-sil/
 | `vehicle_sil::vector_xl_bridge_core` | — | CAN ブリッジのコア（`vehicle_sil::vector_xl::CanBridge` など）と、外部 CAN ポートを `vehicle_sil::can` の実時間のポートにする `ExternalPortAdapter`。プラットフォームに依存しない。ほかに `ExternalCanPort` |
 | `vehicle_sil::vector_xl`（Windows のみ） | — | Vector XL Driver のバックエンド（`XlDriver`、`XlCanPort`）。Windows 専用で、XL Driver Library が必要。ほかに `vehicle_sil::vector_xl::XlDriver` |
 | `vehicle_sil_vector_xl_bridge`（Windows のみ、実行ファイル） | — | ブリッジの CLI |
-| `vehicle_sil::eth_link` | — | イーサネットのブリッジの外の側: 外のインターフェースの口 `vehicle_sil::eth_link::ExternalLink`、絞り込み `FrameFilter`、輪を防ぐ `MacSideTable`。SIL Kit に依存しない（[ethernet-bridge.md](ethernet-bridge.md)） |
-| `vehicle_sil::ethernet_bridge_core` | — | SIL Kit の `IEthernetController` と `ExternalLink` の間でフレームを運ぶ `vehicle_sil::ethernet_bridge::EthernetBridge`、統計と監視の行、引数の解釈。プラットフォームに依存しない |
+| `vehicle_sil::eth_link` | — | イーサネットのブリッジの外の側: 外のインターフェースの口 `vehicle_sil::eth_link::ExternalLink`、絞り込み `FrameFilter`、輪を防ぐ `MacSideTable`、OS の口（`make_tap_link()`、`make_packet_link()`。Linux だけ）。SIL Kit に依存しない（[ethernet-bridge.md](ethernet-bridge.md)） |
+| `vehicle_sil::ethernet_bridge_core` | — | SIL Kit の `IEthernetController` と `ExternalLink` の間でフレームを運ぶ `vehicle_sil::ethernet_bridge::EthernetBridge`、統計と監視の行、引数の解釈、起動の 1 行。プラットフォームに依存しない |
+| `vehicle_sil_ethernet_bridge`（実行ファイル） | — | イーサネットのブリッジの CLI。どのプラットフォームでもビルドする（外のインターフェースを開けるのは Linux の `tap` と `packet`） |
 
 利用側は必要なターゲットだけをリンクします。依存ライブラリは `EXCLUDE_FROM_ALL` で追加しているので、リンクしないものはビルドされません（外部プロジェクトから取り込んだときは vehicle-sil のライブラリも同じです）。
 
@@ -184,4 +185,4 @@ vehicle-sil 自体を直す人と、契約や制限を確かめたい人が、�
 | [internals/virtual-time.md](internals/virtual-time.md) | 共通仮想時間: 進み方、実時間との結合、時間ゲート（一時停止、ステップ実行、速度、遅れ）、受信の順序、固定周期 `tick()` の統合 |
 | [internals/control.md](internals/control.md) | Control API の中: Control Agent、Hub、SIL Kit の上の運び手、Control Server、ランチャーの Control Server、シナリオ |
 | [bridges.md](bridges.md) | Vector XL CAN Bridge: 使い方、転送の契約、バスの監視、スレッド、検証の範囲 |
-| [ethernet-bridge.md](ethernet-bridge.md) | イーサネットのブリッジ: 外のインターフェースの口、転送、絞り込み、輪の防ぎ方、統計と監視の行、引数 |
+| [ethernet-bridge.md](ethernet-bridge.md) | イーサネットのブリッジ: 使い方、バックエンド（`tap`、`packet`）と権限、外のインターフェースの口、転送、絞り込み、輪の防ぎ方、統計と監視の行、引数、確かめた範囲 |

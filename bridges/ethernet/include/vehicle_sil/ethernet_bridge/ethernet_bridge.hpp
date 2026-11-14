@@ -54,6 +54,9 @@ struct EthernetBridgeStatistics
     /// SendFrame threw, or SIL Kit acknowledged a frame as not transmitted (that frame was
     /// counted in ext_to_silkit when it was handed over).
     std::uint64_t silkit_tx_failures = 0;
+    /// Frames from the link handed to SIL Kit although their TCP or UDP checksum is not filled in
+    /// (eth_link::LinkEvent::checksum_incomplete; they are counted in ext_to_silkit too).
+    std::uint64_t ext_checksum_incomplete = 0;
 };
 
 /// One line "stats silkit_to_ext=N ext_to_silkit=N ..." with every counter. The key names are
@@ -68,8 +71,8 @@ struct EthernetBridgeHealth
 };
 
 /// Whether a problem counter grew from `before` to `now`: loop_suspected, mac_unguarded, oversize,
-/// malformed, ext_overruns, ext_queue_full, ext_tx_failures, silkit_tx_failures. The forwarded, filtered
-/// and own_tx_dropped counts are not problems.
+/// malformed, ext_overruns, ext_queue_full, ext_tx_failures, silkit_tx_failures, ext_checksum_incomplete.
+/// The forwarded, filtered and own_tx_dropped counts are not problems.
 [[nodiscard]] bool problems_grew(const EthernetBridgeStatistics& before, const EthernetBridgeStatistics& now) noexcept;
 
 /// One line about the link between two samples taken by the caller (once a second), or nullopt:
@@ -118,9 +121,22 @@ public:
     EthernetBridge(EthernetBridge&&) = delete;
     EthernetBridge& operator=(EthernetBridge&&) = delete;
 
-    /// Starts the external link, registers the SIL Kit handlers and activates the controller.
-    /// Throws on failure (eth_link::LinkError from the link) and leaves the bridge stopped.
+    /// Starts the external link and registers the SIL Kit handlers: frames from SIL Kit go to the
+    /// link from here on. Call it before the participant's lifecycle starts. The SIL Kit
+    /// controller is activated by start_controller(); a start() after start_controller() was
+    /// called (a restart) activates the controller as well. Throws on failure (eth_link::LinkError
+    /// from the link) and leaves the bridge stopped.
     void start();
+
+    /// Activates the SIL Kit controller: frames from the link go to SIL Kit from here on (those
+    /// that came before are not forwarded and not counted). Call it from the participant's
+    /// CommunicationReady handler (ParticipantRuntime::add_communication_ready_handler()), where
+    /// SIL Kit wants IEthernetController::Activate() called: on its thread, before Running. A
+    /// network simulator that the controller has not found yet does not learn of an earlier
+    /// Activate(), and a second Activate() does nothing. Before start(), it only notes that the
+    /// time has come. Nothing a second time. If the controller cannot be activated, fault() tells
+    /// why.
+    void start_controller() noexcept;
 
     /// Stops forwarding in both directions. Safe to call more than once.
     void stop() noexcept;
@@ -142,7 +158,7 @@ private:
     void on_silkit_frame(const SilKit::Services::Ethernet::EthernetFrameEvent& event);
     void on_silkit_transmit(const SilKit::Services::Ethernet::EthernetFrameTransmitEvent& event);
     void on_external_event(const eth_link::LinkEvent& event);
-    void on_external_frame(std::span<const std::uint8_t> frame);
+    void on_external_frame(std::span<const std::uint8_t> frame, bool checksum_incomplete);
     /// Whether a frame from the outside whose source is on the SIL Kit side is the bridge's own
     /// coming back. Today: whether the link echoes its transmissions at all. (A link that echoes
     /// could keep a record of the frames sent and match them here, to find a second bridge.)
@@ -165,6 +181,8 @@ private:
     std::optional<SilKit::Util::HandlerId> frame_handler_;
     std::optional<SilKit::Util::HandlerId> transmit_handler_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> controller_started_{false}; ///< the controller is activated (until stop())
+    bool communication_ready_ = false;            ///< start_controller() was called; guarded by lifecycle_mutex_
     bool link_echoes_ = false; // set by start() before the link starts
 
     std::atomic<std::uint64_t> silkit_to_ext_{0};
@@ -180,6 +198,7 @@ private:
     std::atomic<std::uint64_t> ext_queue_full_{0};
     std::atomic<std::uint64_t> ext_tx_failures_{0};
     std::atomic<std::uint64_t> silkit_tx_failures_{0};
+    std::atomic<std::uint64_t> ext_checksum_incomplete_{0};
 
     mutable std::mutex error_mutex_; // also guards link_state_, fault_, warnings_, named_conflicts_
     std::string last_error_;
