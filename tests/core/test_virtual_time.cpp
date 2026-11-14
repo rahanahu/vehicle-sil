@@ -322,6 +322,100 @@ TEST_CASE(virtual_time_step_handler_exception_is_reported)
     controller.abort();
 }
 
+namespace {
+
+/// What "Ecu" (a ParticipantRuntime with a step of 10 ms and the given SIL Kit configuration) sees
+/// next to "Driver": a plain SIL Kit participant with a step of 3 ms that asks every participant
+/// for dynamic simulation steps (Experimental.TimeSynchronization.DynamicSimulationStep: true), as
+/// a network simulator of another vendor may.
+struct BesideADynamicStepDriver
+{
+    std::vector<std::pair<SimDuration, SimDuration>> steps; ///< time and size of each step of "Ecu"
+    std::optional<orch::ParticipantState> state;            ///< the state "Ecu" ended in
+    std::string step_error;
+    std::size_t driver_steps = 0;
+};
+
+BesideADynamicStepDriver run_beside_a_dynamic_step_driver(const std::string& ecu_configuration)
+{
+    BesideADynamicStepDriver result;
+    InProcessRegistry registry;
+    SimulationControllerOptions controllerOptions;
+    controllerOptions.registry_uri = registry.uri;
+    controllerOptions.required_participants = {"Ecu", "Driver"};
+    controllerOptions.stop_at = 60ms;
+    controllerOptions.shutdown_timeout = 2s;
+    SimulationController controller(controllerOptions);
+
+    auto options = coordinated_options("Ecu", registry.uri, VirtualTimeOptions{10ms, std::nullopt});
+    options.participant_configuration = ecu_configuration;
+    options.shutdown_timeout = 2s;
+    ParticipantRuntime ecu(options);
+    std::mutex mutex;
+    ecu.set_step_handler([&](SimTime now, SimDuration step) {
+        const std::lock_guard lock(mutex);
+        result.steps.emplace_back(now.time_since_epoch(), step);
+    });
+
+    std::atomic<std::size_t> driverSteps{0};
+    const auto driver = SilKit::CreateParticipant(
+        // A configuration of the test's own (participant_configuration_or_default() keeps it as it is).
+        SilKit::Config::ParticipantConfigurationFromString(participant_configuration_or_default(
+            R"({"Middleware":{"EnableDomainSockets":false},)"
+            R"("Experimental":{"TimeSynchronization":{"DynamicSimulationStep":true}}})",
+            registry.uri)),
+        "Driver", registry.uri);
+    auto* driverLifecycle = driver->CreateLifecycleService({orch::OperationMode::Coordinated});
+    driverLifecycle->CreateTimeSyncService()->SetSimulationStepHandler(
+        [&driverSteps](std::chrono::nanoseconds, std::chrono::nanoseconds) { driverSteps.fetch_add(1); }, 3ms);
+    auto driverDone = driverLifecycle->StartLifecycle();
+
+    start_together(controller, {&ecu}, 30s);
+    CHECK(vehicle_sil::unit::eventually(
+        [&] { return controller.failed_participant().has_value() || controller.wait_until_finished(0ms).has_value(); }, 30s));
+    result.state = ecu.wait_until_finished(10s);
+    if (controller.failed_participant().has_value())
+    {
+        controller.abort(); // SIL Kit does not end the simulation for a participant in Error
+    }
+    CHECK(driverDone.wait_for(10s) == std::future_status::ready);
+    result.step_error = ecu.step_error();
+    result.driver_steps = driverSteps.load();
+    const std::lock_guard lock(mutex);
+    return result;
+}
+
+} // namespace
+
+TEST_CASE(virtual_time_keeps_its_step_when_another_participant_asks_for_dynamic_steps)
+{
+    // The default configuration opts out: the steps stay on the participant's own grid.
+    const auto result = run_beside_a_dynamic_step_driver("");
+    CHECK(result.state == std::optional(orch::ParticipantState::Shutdown));
+    CHECK(result.step_error.empty());
+    CHECK(result.driver_steps >= 20u); // 60 ms in steps of 3 ms: the driver did run beside it
+    CHECK(result.steps.size() >= 6u);
+    for (std::size_t i = 0; i < result.steps.size(); ++i)
+    {
+        CHECK_EQ(result.steps[i].first.count(), (10ms * static_cast<long long>(i)).count() * 1'000'000);
+        CHECK_EQ(result.steps[i].second.count(), SimDuration(10ms).count());
+    }
+}
+
+TEST_CASE(virtual_time_fails_the_step_that_sil_kit_shortened)
+{
+    // A configuration of the caller's that leaves the key out follows the driver: SIL Kit cuts the
+    // step of 10 ms down to the driver's 3 ms. The participant fails instead of running off its grid.
+    const auto result = run_beside_a_dynamic_step_driver(R"({"Middleware":{"EnableDomainSockets":false}})");
+    CHECK(result.state == std::optional(orch::ParticipantState::Error));
+    CHECK(result.steps.empty()); // the first step is already the short one; the handler never ran
+    std::fprintf(stderr, "%s\n", result.step_error.c_str());
+    CHECK(result.step_error.find("SIL Kit gave this participant a step of 3000000 ns at t=0 ns, not its own 10000000 ns") !=
+          std::string::npos);
+    CHECK(result.step_error.find("\"Experimental\":{\"TimeSynchronization\":{\"DynamicSimulationStep\":false}}") !=
+          std::string::npos);
+}
+
 /// A coordinated simulation of "Faulty" alone, with a controller that ends it only by an abort,
 /// and a log of the states of "Faulty". The step handler at 30 ms tells `entered`, then waits until
 /// the test calls release(); `fails` makes it throw then.

@@ -59,11 +59,13 @@ Host ──refers to──> ポートと Network（所有しない）
 
 ## SIL Kit の構成の既定
 
-- `ParticipantRuntimeOptions::participant_configuration` が `"{}"`（既定）か空なら、`ParticipantRuntime` は `default_participant_configuration(registry_uri)`（`participant_runtime.hpp`）で participant を作ります。SIL Kit の既定から変えるのは 2 つです。
+- `ParticipantRuntimeOptions::participant_configuration` が `"{}"`（既定）か空なら、`ParticipantRuntime` は `default_participant_configuration(registry_uri)`（`participant_runtime.hpp`）で participant を作ります。SIL Kit の既定から変えるのは 3 つです。
   - registry の URI のホストがループバックのアドレス（`is_loopback_registry_uri()`: `127.0.0.0/8` を `getaddrinfo()` が読む数の書き方で、`::1`、IPv6 に写した `127.x.x.x`、`localhost`。名前は引きません）なら、`Middleware.AcceptorUris` でループバックのアドレスだけで待ち受けます（TCP の `127.0.0.1` か `::1`、ポート 0。Windows 以外では、ほかに一時ディレクトリの新しい名前の local-domain ソケット）。
   - `ParticipantRuntimeOptions::listen_on_network`（`std::optional<bool>`。`SimulationControllerOptions` にも同じもの）が `true` なら足さず、`false` なら URI だけで決めます。空なら環境変数 `VEHICLE_SIL_LISTEN_ON_NETWORK`（`kListenOnNetworkVariable`）を読みます: `1` なら足さない、`0`・空・なしなら URI で決める、ほかの値は `std::invalid_argument`。`vehicle_sil_launch run` は controller に値を渡し、子にはいつも変数を渡します（[simulation-run.md](../simulation-run.md) の「待ち受けるアドレス」）。
   - Windows では `Middleware.EnableDomainSockets: false`（[dependencies.md](../dependencies.md) の SIL Kit（Windows）の節）。
-- 自分の構成を渡したときは、それをそのまま使います（待ち受けるアドレスも、その構成のとおり）。
+  - いつも `Experimental.TimeSynchronization.DynamicSimulationStep: false`。このキーがない participant は、ほかの participant（ネットワークのシミュレーターなど）が `true` で参加すると、SIL Kit にステップを全員の最小の幅まで縮められます。`false` なら、自分の幅のままです。
+- 自分の構成を渡したときは、それをそのまま使います（待ち受けるアドレスも、その構成のとおり）。`"Experimental":{"TimeSynchronization":{"DynamicSimulationStep":false}}` も自分で書きます。
+- 仮想時間の `ParticipantRuntime` は、SIL Kit が渡したステップの幅が `VirtualTimeOptions::step` と違うと、ステップのハンドラーを呼ばずにそのステップを失敗にします（participant は Error、`step_error()` は「SIL Kit gave this participant a step of ... ns at t=... ns, not its own ... ns: ...」で、構成に足すキーを言います）。ステップの格子、`TickScheduler`、時間ゲートが固定の幅を前提にしているためです。既定の構成では起きません。
 - vehicle-sil が立てる registry（`vehicle_sil_launch run`、`Simulation`）は `default_registry_configuration()` で作ります。registry は自分の URI のアドレスで待ち受けます（`AcceptorUris` を使いません）。どの OS でも `Middleware.EnableDomainSockets: false` です（TCP だけ）。SIL Kit の registry は、TCP のポートで待ち受けられなくても local-domain ソケットだけで動き続け、同じ URI のほかの registry の local-domain のパスを奪います。TCP だけにすると、ふさがったポートで `StartListening()` がすぐ失敗します。
 - `ParticipantRuntime` は participant を `create_participant()` で作ります。registry が名前を使用中として断る間（「A participant with the same name ... already exists」）、`ParticipantRuntimeOptions::name_in_use_wait`（既定 5000 ms。`PeerOptions` にも同じもの。`Simulation` は `start_timeout` を超えない値にします）まで、50 ms おきに作り直します。同じ名前で起動し直したプロセスでは、registry が前の接続の終わりにまだ気づいていないことがあるためです（遅い機械、ネットワーク越し）。過ぎたら、SIL Kit の文に、待った時間と、ほかの participant が同じ名前を使っているかもしれないことを足して `SilKit::ProtocolError` です。ほかの失敗はすぐに投げます。SIL Kit の participant を自分で作るプログラム（試験の生の Agent など）も、この関数を使えます。
 - `libs/`、`tools/`、`bridges/`、`tests/` で文字列から SIL Kit の構成を作る所は、これらの関数を通ります（試験 `core.silkit_configuration_defaults`）。

@@ -106,6 +106,11 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
 ///   process stayed after it was told to end; with TCP connections that was not seen
 ///   (docs/dependencies.md says what was tried and what is a guess).
 ///
+/// And for every registry: no dynamic simulation steps
+/// (Experimental.TimeSynchronization.DynamicSimulationStep: false). Without the key, SIL Kit cuts
+/// the steps of a participant down to the smallest step of the simulation as soon as another
+/// participant asks for it, and the fixed step that ParticipantRuntime promises is gone.
+///
 /// Each call makes a new name for the local-domain socket. Throws std::invalid_argument for a value
 /// of kListenOnNetworkVariable other than 1, 0 or empty, when it reads it.
 [[nodiscard]] std::string default_participant_configuration(std::string_view registry_uri,
@@ -114,14 +119,16 @@ inline constexpr std::string_view kListenOnNetworkVariable = "VEHICLE_SIL_LISTEN
 /// default_participant_configuration() with more members of the top level: `members` is their
 /// JSON without the braces (`"Logging":{...}`), or empty. For a program that makes a
 /// configuration of its own, so that the defaults are made in one place. `members` must not
-/// have "Middleware".
+/// have "Middleware" or "Experimental".
 [[nodiscard]] std::string default_participant_configuration_with(std::string_view registry_uri, std::string_view members,
                                                                  std::optional<bool> listen_on_network = std::nullopt);
 
 /// `configuration` as it is if it configures anything; default_participant_configuration() if it
 /// is "{}" or empty (white space aside). A configuration of the caller's own is used as it is: on
-/// Windows it should set Middleware.EnableDomainSockets to false as well, and it listens where it
-/// says (on every address unless it has Middleware.AcceptorUris).
+/// Windows it should set Middleware.EnableDomainSockets to false as well, it listens where it
+/// says (on every address unless it has Middleware.AcceptorUris), and it should set
+/// Experimental.TimeSynchronization.DynamicSimulationStep to false (a ParticipantRuntime whose
+/// step SIL Kit cut fails that step).
 [[nodiscard]] std::string participant_configuration_or_default(std::string_view configuration,
                                                                std::string_view registry_uri,
                                                                std::optional<bool> listen_on_network = std::nullopt);
@@ -207,7 +214,10 @@ struct PeerStatus
 /// synchronisation with a fixed step. set_step_handler() must be called before start(). The
 /// simulation logic then runs in the step handler; wait_until_finished() waits for the end of
 /// the simulation. Exceptions thrown by the step handler are caught: the participant reports
-/// a SIL Kit error and goes to Error, and step_error() returns the message. Virtual time then
+/// a SIL Kit error and goes to Error, and step_error() returns the message. The same happens,
+/// without the handler being called, when SIL Kit gives a step of another size than
+/// VirtualTimeOptions::step (dynamic simulation steps, which the default configuration turns
+/// off). Virtual time then
 /// stops advancing for everyone until the system controller aborts or stops the simulation
 /// (see SimulationController::failed_participant()).
 ///
@@ -397,6 +407,8 @@ private:
     /// Runs the step handler; on an exception records step_error_, reports a SIL Kit error and
     /// returns false.
     bool run_step_handler(SimTime now, SimDuration step);
+    /// Records step_error_ and reports a SIL Kit error (once). Only from the step.
+    void fail_step(std::string error);
     /// Sleeps until `deadline` unless a stop is requested first.
     void pace_until(std::chrono::steady_clock::time_point deadline);
     /// Re-reads the current status of every connected participant from the system monitor.
