@@ -98,6 +98,7 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
 | SIL Kit | publish/subscribe（`vehicle_sil::control_silkit`、examples/virtual_time） | `CreateDataPublisher`（履歴 0。hello だけ履歴 1）、`CreateDataSubscriber`、`IDataPublisher::Publish`、`PubSubSpec`（トピックとメディアタイプ。ラベルは使わない） |
 | SIL Kit | 他参加者の監視 | `CreateSystemMonitor`、`AddParticipantStatusHandler`（`SetParticipantConnectedHandler` と `SetParticipantDisconnectedHandler` は使わない。「上流の既知の不具合」を参照） |
 | SIL Kit | CAN | `CreateCanController`、`ICanController::Start/Stop/SendFrame/SetBaudRate`、`AddFrameHandler`、`AddFrameTransmitHandler`。`SendFrame` の userContext に送信時刻を入れる（簡易 CAN Network Simulator との取り決め） |
+| SIL Kit | Ethernet（`vehicle_sil::ethernet_bridge_core`） | `CreateEthernetController`、`IEthernetController::Activate/Deactivate/SendFrame`、`AddFrameHandler`（RX の向きだけ）、`AddFrameTransmitHandler`（`Transmitted` 以外の確認だけ） |
 | SIL Kit | Network Simulator（experimental、`vehicle_sil::can_netsim`） | `Experimental::Participant::CreateNetworkSimulator`、`INetworkSimulator::SimulateNetwork/Start`、`ISimulatedNetwork`、`Can::ISimulatedCanController`、`Can::ICanEventProducer::Produce`（フレーム、送信確認、状態の変化） |
 | SIL Kit | プロセス内レジストリ（`Simulation`、`vehicle_sil_launch run`） | `Vendor::Vector::CreateSilKitRegistry`、`StartListening` |
 
@@ -121,6 +122,13 @@ SIL Kit 本体は C++17 でビルドされます。C++ API はヘッダーのみ
   - participant の構成の `EnableMessageAggregation` は既定の Off のままであること（On にした participant は、データのメッセージを溜めてから送るので、上の順序の前提が変わります）。
   - participant を壊すと、まだソケットに書いていない送信は捨てられます（同じ相手への前の送信を書いている途中なら、その後ろに積んだ送信は書かれません）。そのため、Agent の「最後の知らせ」は、Hub の返事を待ってから participant を壊します（`AgentTransport` のデストラクター。internals/control.md の「接続の終わり」）。participant が生きている間は、積んだ送信は順に書かれます。
 - 時刻同期した participant が送るメッセージのタイムスタンプは、送信時のステップの時刻です。
+- Ethernet（`EthernetBridge` が前提にしています。試験 `ethernet_bridge.silkit_*` が、埋めることと、自分の送信が RX のハンドラーに来ないことを確かめます）:
+  - `SendFrame` は、呼び出しの中でフレームのバイト列を写します。ブリッジは、外の口のハンドラーの間だけ有効なバッファーをそのまま渡します。
+  - trivial simulation では、送ったフレームはほかの participant に RX として、自分には TX として届きます。RX の向きだけで登録したハンドラーには、自分の送信は来ません。
+  - trivial simulation では、`Activate()` でコントローラーはすぐ `LinkUp` になり、送信の確認は `SendFrame` の中で同期に呼ばれます。状態は、`LinkUp` なら `Transmitted`、`LinkDown` なら `LinkDown`、`Activate()` の前なら `ControllerInactive` です。
+  - 受け手は、60 バイトより短いフレームを 0 で埋めてからハンドラーに渡します（`EthController::ReceiveMsgInternal`）。送る側には最小長の検査がありません。最大長の検査は、送る側にも受ける側にも見当たりません。
+  - `RemoveFrameHandler` は、CAN と同じく、実行中のハンドラーの終了を待ってから戻ります（ハンドラーの呼び出しと削除が同じ `recursive_mutex` で直列化されている）。
+  - コントローラーは、フレームのハンドラーを、ハンドラーの集まりの `recursive_mutex` を持ったまま呼びます（`SynchronizedHandlers::InvokeAll`）。trivial simulation の `SendFrame` は、自分への TX の配達で同じ集まりの `InvokeAll` を通るので、同じ錠を取ります。そのため、外の口の受信スレッドが呼ぶ `SendFrame` は、SIL Kit の受信スレッドが `EthernetBridge` のハンドラー（その中の `ExternalLink::transmit()`）を終えるまで待ちます。`ExternalLink` の契約（`transmit()` はブロックせず、ハンドラーの間に `transmit()` の取る錠を持たない）は、これを前提にしています。
 - CAN の `SendFrame` の userContext は、ポインタの値（64 ビット）のまま運ばれます。ネットワークシミュレーターの `CanFrameRequest` と送信確認には届き、他の受信者の RX のフレームでは `nullptr` になります（`CanController::ReceiveMsg`）。`SilKitCanPort` は送信時刻を入れ、簡易 CAN Network Simulator がそれを読みます。
 - Network Simulator API（experimental）: あるネットワークの模擬を引き受ける participant が現れると、そのネットワークの CAN コントローラーは詳細シミュレーションに切り替わり、送信の要求、ボーレート、モードの変更をその participant に送ります。コントローラーの状態（`Started` など）は、シミュレーターが返す状態の変化で初めて変わります。`ControllerDescriptor` は見つけた順の通し番号で、決定的ではありません。
 - コントローラーがシミュレーターを見つける前に呼んだ `SetBaudRate()` と `Start()` は、trivial simulation で処理され、見つけた後もシミュレーターに送り直されません。すでに見つけているシミュレーターは、コントローラーを作った時点で同じスレッドから知らされます。そのため、シミュレーターを先に起動しても、ピアのコントローラーの設定が届くとは限りません。簡易 CAN Network Simulator は、ビットレートが届かなければ `--default-bitrate` を使い、フレームの配送をモードで止めません。シミュレーションが始まった後の送信は、すべてシミュレーターを通ります。
