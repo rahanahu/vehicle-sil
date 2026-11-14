@@ -476,6 +476,8 @@ Ecu& Simulation::add_ecu(std::string name, SimDuration step)
     o.registry_uri = s.uri;
     o.lifecycle = LifecycleMode::Coordinated;
     o.virtual_time = VirtualTimeOptions{step, std::nullopt, std::nullopt};
+    // Within the start timeout: a name still held by an earlier process is waited for no longer.
+    o.name_in_use_wait = std::min(o.name_in_use_wait, s.options.start_timeout);
     s.names.reserve(s.names.size() + 1);
     auto peer = std::make_unique<Peer>(std::move(o));
     // As on the local buses: a name is a CAN or a LIN network for all the ECUs of this process.

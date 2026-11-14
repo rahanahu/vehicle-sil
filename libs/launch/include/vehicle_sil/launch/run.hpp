@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -565,6 +566,90 @@ StopRequest record_stop_request(ParticipantRun& run, bool sent, const std::optio
 /// on every address ("silkit://0.0.0.0:<port>", "silkit://[::]:<port>") is reached at the loopback
 /// address; any other URI as it is.
 [[nodiscard]] std::string uri_for_participants(std::string uri);
+/// Tells, while the simulation runs, that its virtual time stands still although it is not paused:
+/// a participant lost its network connection (nobody notices that by itself for minutes), stands
+/// still in a debugger, or hangs in a step. look() once per look of the run's watch.
+class StandStill
+{
+public:
+    /// When it has stood still this long (wall-clock time), look() says so; each once.
+    static constexpr std::int64_t kSayAfterMs[] = {10000, 60000, 600000};
+
+    /// `now_ms`: the controller's virtual time; `paused`: it stands still on purpose (a pause, a
+    /// step); `overdue`: at a set speed, how long the next step is past its deadline (it stands
+    /// still between deadlines on purpose), empty as fast as possible; `wall`: the steady clock.
+    /// The line to write, or "" (also once it moves again after a line: then it says so).
+    [[nodiscard]] std::string look(std::int64_t now_ms, bool paused, std::optional<std::chrono::nanoseconds> overdue,
+                                   std::chrono::steady_clock::time_point wall);
+    /// The simulation is no longer running (it stops): only the line that it moved again, if it
+    /// did after a line; from then on, nothing.
+    [[nodiscard]] std::string stopping(std::int64_t now_ms, std::chrono::steady_clock::time_point wall);
+
+private:
+    std::int64_t last_ms_ = -1;
+    std::chrono::steady_clock::time_point since_{};
+    std::size_t said_ = 0;
+    bool over_ = false; ///< stopping() was called: nothing more
+};
+
+/// Tells which participants outside the file wait for the simulation's start (a mistyped --name):
+/// one in Error, or in ServicesCreated for kHold (an autonomous participant passes that state at
+/// once on its way to Running). look() for each such participant at each look of the start's wait.
+class StrangerWait
+{
+public:
+    enum class State
+    {
+        ServicesCreated,
+        Error,
+        Other, ///< any other state, or none known
+    };
+    static constexpr std::chrono::milliseconds kHold{2000};
+
+    /// Whether `name`, in `state` at `now`, waits for the start.
+    [[nodiscard]] bool look(const std::string& name, State state, std::chrono::steady_clock::time_point now);
+
+private:
+    std::map<std::string, std::chrono::steady_clock::time_point, std::less<>> since_;
+};
+
+/// "a.b.c.d" of the IPv4 address `bytes` (4 bytes, network order); "" for one that other computers
+/// do not reach (0.0.0.0/8, loopback 127/8, link-local 169.254/16).
+[[nodiscard]] std::string reachable_ipv4_text(const std::uint8_t* bytes);
+/// "[...]" of the IPv6 address `bytes` (16 bytes); "" for one that other computers do not reach
+/// (::, ::1, link-local fe80::/10, multicast, an IPv4 address written as IPv6).
+[[nodiscard]] std::string reachable_ipv6_text(const std::uint8_t* bytes);
+/// The names of the network interfaces with a default route, from the text of /proc/net/route and
+/// /proc/net/ipv6_route (Linux; either may be empty): each once, in the order found.
+[[nodiscard]] std::vector<std::string> default_route_interfaces(std::string_view ipv4_routes, std::string_view ipv6_routes);
+
+/// An address of this computer that other computers may reach.
+struct HostAddress
+{
+    std::string host;           ///< a.b.c.d, or [...] for IPv6
+    bool default_route = false; ///< its interface has the default route (most likely the one to give)
+};
+
+/// This computer's addresses that other computers may reach: of the network interfaces that are up
+/// and running (Windows: operational), without loopback and link-local addresses, each once;
+/// those of an interface with a default route first (a virtual one of WSL, Docker or a VM rarely
+/// has it), IPv4 before IPv6, otherwise in the system's order. Empty if there are none or they
+/// cannot be read. `ipv4`, `ipv6`: which of them.
+[[nodiscard]] std::vector<HostAddress> host_addresses(bool ipv4, bool ipv6);
+/// `addresses` in the order host_addresses() gives: those with the default route first, IPv4 before
+/// IPv6, otherwise as they are.
+[[nodiscard]] std::vector<HostAddress> in_order(std::vector<HostAddress> addresses);
+/// Whether a registry that listens on [::] here takes IPv4 connections too: Linux unless
+/// net.ipv6.bindv6only is 1; not on Windows (IPV6_V6ONLY is set there by default, and SIL Kit keeps it).
+[[nodiscard]] bool ipv6_any_takes_ipv4();
+/// The line run writes after "registry at" when other computers may reach the registry: where a
+/// participant on another computer joins. `uri` is where the registry listens; one on every address
+/// ("silkit://0.0.0.0:<port>", "silkit://[::]:<port>") is reached at one of `addresses`
+/// (host_addresses()), or, without any, at an address of this computer the line tells how to
+/// find; any other URI as it is. `ipv6_only`: a registry on [::] takes no IPv4 (the line says
+/// how to take it).
+[[nodiscard]] std::string other_computers_line(const std::string& uri, const std::vector<HostAddress>& addresses,
+                                               bool ipv6_only = false);
 /// One line of a participant's output as the launcher shows it: control characters (C0 but tabs,
 /// DEL, C1) and bytes that are not UTF-8 as '?'.
 [[nodiscard]] std::string printable(std::string_view line);

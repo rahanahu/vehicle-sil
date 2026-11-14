@@ -104,6 +104,7 @@ Peer::Peer(PeerOptions options) :
     runtimeOptions.registry_uri = options_.registry_uri;
     runtimeOptions.participant_configuration = options_.participant_configuration;
     runtimeOptions.shutdown_timeout = options_.shutdown_timeout;
+    runtimeOptions.name_in_use_wait = options_.name_in_use_wait;
     runtimeOptions.lifecycle_mode = options_.lifecycle;
     runtimeOptions.virtual_time = options_.virtual_time;
     if (options_.virtual_time)

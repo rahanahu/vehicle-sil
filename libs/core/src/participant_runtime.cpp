@@ -8,14 +8,17 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -353,11 +356,10 @@ std::string participant_configuration_or_default(std::string_view configuration,
 
 std::string_view default_registry_configuration() noexcept
 {
-#ifdef _WIN32
+    // TCP only, on every system: a registry that cannot listen on its TCP port then fails at once.
+    // With a local-domain socket, SIL Kit's registry goes on without the TCP port (another program,
+    // or another registry, has it) and takes the local-domain path of a registry with the same URI.
     return R"({"Middleware":{"EnableDomainSockets":false}})";
-#else
-    return "{}";
-#endif
 }
 
 bool is_running(const PeerStatus& status) noexcept
@@ -368,6 +370,41 @@ bool is_running(const PeerStatus& status) noexcept
 bool has_finished(const PeerStatus& status) noexcept
 {
     return status.state && is_terminal_or_stopping(*status.state);
+}
+
+std::unique_ptr<SilKit::IParticipant> create_participant(std::shared_ptr<SilKit::Config::IParticipantConfiguration> config,
+                                                         const std::string& name, const std::string& registry_uri,
+                                                         std::chrono::milliseconds name_in_use_wait)
+{
+    if (name_in_use_wait < std::chrono::milliseconds::zero())
+    {
+        throw std::invalid_argument("name_in_use_wait must not be negative");
+    }
+    const auto give_up = std::chrono::steady_clock::now() + name_in_use_wait;
+    for (;;)
+    {
+        try
+        {
+            return SilKit::CreateParticipant(config, name, registry_uri);
+        }
+        catch (const std::exception& e)
+        {
+            const std::string what = e.what();
+            if (what.find("already exists in the simulation") == std::string::npos)
+            {
+                throw;
+            }
+            if (std::chrono::steady_clock::now() >= give_up)
+            {
+                throw SilKit::ProtocolError(
+                    what + " (the registry refused the name \"" + name + "\" for " + std::to_string(name_in_use_wait.count()) +
+                    " ms: another participant of this simulation uses it, or the registry has not yet seen the end of "
+                    "an earlier participant with this name; give each participant a name of its own, or end the other "
+                    "one)");
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
 }
 
 ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
@@ -394,7 +431,7 @@ ParticipantRuntime::ParticipantRuntime(ParticipantRuntimeOptions options) :
 
     auto config = SilKit::Config::ParticipantConfigurationFromString(participant_configuration_or_default(
         options_.participant_configuration, options_.registry_uri, options_.listen_on_network));
-    participant_ = SilKit::CreateParticipant(config, options_.participant_name, options_.registry_uri);
+    participant_ = create_participant(config, options_.participant_name, options_.registry_uri, options_.name_in_use_wait);
 
     // Handlers registered below capture `this`. If a later call throws, destroy the
     // participant (which removes them) before the members they use go away.
@@ -1066,6 +1103,20 @@ PeerStatus ParticipantRuntime::peer_status(const std::string& participant_name) 
     const std::lock_guard lock(peers_mutex_);
     const auto it = peers_.find(participant_name);
     return it == peers_.end() ? PeerStatus{} : it->second.status;
+}
+
+std::vector<std::string> ParticipantRuntime::peer_names() const
+{
+    const std::lock_guard lock(peers_mutex_);
+    std::vector<std::string> names;
+    for (const auto& [name, record] : peers_)
+    {
+        if (record.status.state)
+        {
+            names.push_back(name);
+        }
+    }
+    return names;
 }
 
 bool ParticipantRuntime::wait_for_peer(const std::string& participant_name,

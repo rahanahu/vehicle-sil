@@ -30,6 +30,7 @@ add_subdirectory(testkit)
 add_subdirectory(ecu)
 add_subdirectory(simulation)
 add_subdirectory(launch)
+add_subdirectory(multi_host)
 # The ECU project template (template/) and its fetch script.
 add_subdirectory(template)
 add_subdirectory(peer)

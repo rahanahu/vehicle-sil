@@ -944,3 +944,16 @@ TEST_CASE(peer_finds_a_raw_channel_by_name)
     CHECK(peer.run(60s) == orch::ParticipantState::Shutdown);
     CHECK(!peer.failed());
 }
+
+TEST_CASE(peer_passes_on_how_long_it_waits_for_a_name_in_use)
+{
+    // PeerOptions::name_in_use_wait reaches the runtime: the name stays in use, the second peer
+    // gives up after that long and says so.
+    InProcessRegistry registry;
+    PeerOptions o;
+    o.participant = "Taken";
+    o.registry_uri = registry.uri;
+    Peer first(o);
+    o.name_in_use_wait = 200ms;
+    CHECK(throws_with<SilKit::ProtocolError>([&] { Peer second(o); }, "refused the name \"Taken\" for 200 ms"));
+}

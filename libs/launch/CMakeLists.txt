@@ -15,6 +15,7 @@ add_library(vehicle_sil_launch_lib STATIC
   src/check_rules.cpp
   src/describe_read.cpp
   src/events.cpp
+  src/host_addresses.cpp
   src/run.cpp
   src/run_assess.cpp
   src/run_control.cpp
@@ -40,4 +41,8 @@ target_link_libraries(vehicle_sil_launch_lib PRIVATE vehicle_sil::control_silkit
 # The YAML/JSON parser that SIL Kit builds from its ThirdParty directory (rapidyaml, MIT); the
 # public headers do not include it.
 target_link_libraries(vehicle_sil_launch_lib PRIVATE rapidyaml)
+# This computer's addresses (host_addresses.cpp): GetAdaptersAddresses on Windows.
+if(WIN32)
+  target_link_libraries(vehicle_sil_launch_lib PRIVATE iphlpapi ws2_32)
+endif()
 vehicle_sil_target_defaults(vehicle_sil_launch_lib)

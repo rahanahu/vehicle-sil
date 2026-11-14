@@ -17,7 +17,8 @@ namespace vehicle_sil::launch::detail {
 
 /// Watches the simulation from its start to its end.
 ///
-/// Threads and locks: the main thread only; no state and no lock of its own. What it reads of
+/// Threads and locks: the main thread only; no lock of its own, and no state but what it says of
+/// a simulation that stands still (StandStill). What it reads of
 /// other threads is atomic (RunScenario::over(), the hold's times of RunStart) or the
 /// controller's. It ends the time commands (TimeCommands::detach()) once the simulation is over.
 class RunWatch
@@ -46,6 +47,7 @@ private:
     const RunStart& start_;
     RunParticipants& participants_;
     RunOutcome& outcome_; ///< the main thread's
+    StandStill stand_still_;
 };
 
 } // namespace vehicle_sil::launch::detail

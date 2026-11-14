@@ -342,10 +342,9 @@ TEST_CASE(control_peer_agent_monitor_names_must_not_clash)
         CHECK(described.back().name == "still.open");
     }
     {
-        // A registry of its own: the first one may still hold the name of the peer that has just gone.
-        InProcessRegistry fresh;
+        // The same registry may still hold the name of the peer that has just gone: the new peer
+        // waits until it is free (PeerOptions::name_in_use_wait).
         PeerOptions plain = o;
-        plain.registry_uri = fresh.uri;
         plain.monitor = false;
         Peer peer(plain);
         CHECK(throws<std::invalid_argument>([&] { peer.input("peer.speed", &x); }));

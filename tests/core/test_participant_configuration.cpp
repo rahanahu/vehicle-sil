@@ -244,12 +244,8 @@ TEST_CASE(a_participant_given_no_configuration_gets_the_default_and_one_of_its_o
     CHECK(contains(default_participant_configuration("silkit://[0:0:0:0:0:0:0:1]:1"), R"("tcp://[::1]:0")"));
     CHECK(contains(default_participant_configuration("silkit://[::ffff:127.0.0.1]:1"), R"("tcp://127.0.0.1:0")"));
     CHECK(contains(default_participant_configuration("silkit://127.1:1"), R"("tcp://127.0.0.1:0")"));
-    // A registry: never acceptors (it listens at its URI).
-#ifdef _WIN32
-    CHECK(std::string(default_registry_configuration()) == network);
-#else
-    CHECK(std::string(default_registry_configuration()) == "{}");
-#endif
+    // A registry: never acceptors (it listens at its URI), and TCP only on every system.
+    CHECK(std::string(default_registry_configuration()) == R"({"Middleware":{"EnableDomainSockets":false}})");
 
     CHECK(participant_configuration_or_default("{}", "silkit://0.0.0.0:1") == network);
     CHECK(participant_configuration_or_default("", "silkit://0.0.0.0:1") == network);

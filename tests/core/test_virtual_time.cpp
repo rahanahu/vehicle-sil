@@ -12,7 +12,12 @@
 #include <silkit/services/orchestration/ISystemMonitor.hpp>
 #include <silkit/services/orchestration/string_utils.hpp>
 
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 #include <algorithm>
+#include <filesystem>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -535,4 +540,100 @@ TEST_CASE(virtual_time_api_misuse_is_rejected)
         // No required participants.
         CHECK(throws<std::invalid_argument>([&] { SimulationController controller(options); }));
     }
+}
+
+TEST_CASE(participant_runtime_waits_while_the_registry_still_has_the_name)
+{
+    // A participant with the name ends while another process (here: the same) joins with it: the
+    // registry refuses the name until it has seen the end; the runtime tries again until then.
+    InProcessRegistry registry;
+    ParticipantRuntimeOptions options;
+    options.participant_name = "Again";
+    options.registry_uri = registry.uri;
+    auto earlier = std::make_unique<ParticipantRuntime>(options);
+    const auto began = std::chrono::steady_clock::now();
+    std::thread ender([&] {
+        std::this_thread::sleep_for(300ms);
+        earlier.reset();
+    });
+    std::unique_ptr<ParticipantRuntime> again;
+    try
+    {
+        options.name_in_use_wait = 20s;
+        again = std::make_unique<ParticipantRuntime>(options);
+    }
+    catch (const std::exception& e)
+    {
+        std::fprintf(stderr, "refused: %s\n", e.what());
+    }
+    ender.join();
+    CHECK(again != nullptr);
+    // It was refused at first (the earlier one still had the name).
+    CHECK(std::chrono::steady_clock::now() - began >= 250ms);
+}
+
+TEST_CASE(a_refused_name_leaves_the_registry_able_to_relay_to_the_participant_that_has_it)
+{
+#ifndef _WIN32
+    // "Engine" accepts connections only on a local-domain socket, so a participant without
+    // local-domain sockets reaches it only through the registry (a connect request it relays:
+    // Engine connects to it). A second "Engine" is refused; the registry must still know where
+    // the first one is, or the participant after it cannot join.
+    InProcessRegistry registry;
+    const std::string socket =
+        (std::filesystem::temp_directory_path() / ("vsil-relay-" + std::to_string(::getpid()) + ".sock")).string();
+    // Configurations of the test's own (participant_configuration_or_default() keeps them as they are).
+    const auto config = [&registry](const std::string& middleware) {
+        return SilKit::Config::ParticipantConfigurationFromString(
+            participant_configuration_or_default("{\"Middleware\":{" + middleware + "}}", registry.uri));
+    };
+    const auto engine = create_participant(
+        config("\"EnableDomainSockets\":true,\"AcceptorUris\":[\"local://" + socket + "\"]"), "Engine", registry.uri, 0ms);
+    const auto tcp_only = config("\"EnableDomainSockets\":false,\"AcceptorUris\":[\"tcp://127.0.0.1:0\"]");
+    // The relay works (the reference).
+    CHECK(create_participant(tcp_only, "Before", registry.uri, 0ms) != nullptr);
+    CHECK(throws<SilKit::ProtocolError>([&] { static_cast<void>(create_participant(tcp_only, "Engine", registry.uri, 0ms)); }));
+    std::this_thread::sleep_for(200ms); // the registry sees the refused one's end
+    std::unique_ptr<SilKit::IParticipant> after;
+    try
+    {
+        after = create_participant(tcp_only, "After", registry.uri, 0ms);
+    }
+    catch (const std::exception& e)
+    {
+        std::fprintf(stderr, "the participant after the refused one could not join: %s\n", e.what());
+    }
+    CHECK(after != nullptr);
+    std::filesystem::remove(socket);
+#endif
+}
+
+TEST_CASE(participant_runtime_says_how_long_the_name_was_refused)
+{
+    InProcessRegistry registry;
+    ParticipantRuntimeOptions options;
+    options.participant_name = "Twice";
+    options.registry_uri = registry.uri;
+    ParticipantRuntime first(options);
+    options.name_in_use_wait = 300ms;
+    const auto began = std::chrono::steady_clock::now();
+    std::string message;
+    try
+    {
+        ParticipantRuntime second(options);
+    }
+    catch (const std::exception& e)
+    {
+        message = e.what();
+    }
+    CHECK(std::chrono::steady_clock::now() - began >= 300ms);
+    CHECK(message.find("A participant with the same name 'Twice' already exists") != std::string::npos);
+    CHECK(message.find("(the registry refused the name \"Twice\" for 300 ms: another participant of this simulation "
+                       "uses it, or the registry has not yet seen the end of an earlier participant with this name; ") !=
+          std::string::npos);
+    // Without waiting: refused at once; a negative wait is a mistake.
+    options.name_in_use_wait = 0ms;
+    CHECK(throws<SilKit::ProtocolError>([&] { ParticipantRuntime second(options); }));
+    options.name_in_use_wait = -1ms;
+    CHECK(throws<std::invalid_argument>([&] { ParticipantRuntime second(options); }));
 }

@@ -141,7 +141,7 @@ with Launch("build/linux-gcc-release/tools/launch/vehicle_sil_launch", "simulati
 - `Launch(launcher, config, address="0", start_paused=False, arguments=(), cwd=None, stderr=None, keep_logs=True)`: `arguments` は `run` のほかの引数（`--speed`、`--disable`、`--control-credentials` など）です。`events`（読んだ事象の dict の一覧）、`result`、`wait_for_event(event, timeout, after=None, **keys)`（キーの値が合う最初の事象を待つ）、`send(command)`（標準入力に命令を 1 行）、`stop()`、`wait(timeout)`、`returncode`。ランチャーが結果を書かずに終わったときや、待つ事象が来ないまま実行が終わったときは `LaunchError` です（文言に結果と誤りの所見）。
 - 自分でランチャーを起動するときは、`control_address(lines)` が、事象の行（文字列か dict）から最初の `control_server` の `address` を返します。
 
-別のコンピューターから、TLS とトークンを付けたランチャー（上の「認証」）にも、同じようにつなぎます。
+別のコンピューターから、TLS とトークンを付けたランチャー（上の「認証」）にも、同じようにつなぎます（証明書の作り方と、つながらないときの文は [howto/multi-pc.md](howto/multi-pc.md)）。
 
 ```python
 from vehicle_sil_control import Control, ms
