@@ -1,16 +1,17 @@
 #!/usr/bin/env node
-// GUI サーバー（vehicle-sil-gui）の口を、画面を使わずに叩く最小のクライアント。素の JavaScript で、依存はない
-// （Node 22 以上の標準の fetch と WebSocket だけ）。構成ファイルを照合して実行を始め、事象を読みながら終わりを待ち、
-// 結果を表示する。口の形は gui/protocol/README.md。
+// The smallest client that calls the API of the GUI server (vehicle-sil-gui) without the screens. Plain JavaScript with
+// no dependencies (only the standard fetch and WebSocket of Node 22 or later). It checks a configuration file, starts a
+// run, reads the events until the end and prints the result. The API: gui/protocol/README.md.
 //
-//   VEHICLE_SIL_GUI_URL='<サーバーが表示した URL（#token= つき）>' node examples/gui_client/run.mjs <構成ファイル（root からの相対）>
+//   VEHICLE_SIL_GUI_URL='<URL the server printed (with #token=)>' node examples/gui_client/run.mjs <configuration file (relative to the root)>
 //
-// URL は環境変数で渡す（コマンドの引数に書くと、トークンが同じ PC のほかの利用者のプロセスの一覧と、シェルの
-// 履歴に残るため）。引数の先頭に URL を書いてもよい。クライアントのライブラリを使う同じ例は run-with-library.mjs。
+// Pass the URL in the environment variable (on the command line, the token would show in the process list to other
+// users of the computer and stay in the shell history). The URL may also be the first argument. The same example with
+// the client library: run-with-library.mjs.
 //
-// 終了コード: 0 は結果が passed、1 は失敗（照合の誤り、実行の失敗、サーバーの誤り、時間切れ）、2 は使い方の誤り。
+// Exit codes: 0 the result is passed, 1 failed (check errors, a failed run, a server error, a timeout), 2 usage error.
 
-const PROTOCOL = 1; // このクライアントが読む口の版（api/app と hello の vehicle_sil_gui）
+const PROTOCOL = 1; // the API version this client reads (vehicle_sil_gui in api/app and hello)
 
 function usage(message) {
   console.error(`run.mjs: ${message}`);
@@ -43,10 +44,10 @@ const token = new URLSearchParams(url.hash.slice(1)).get("token");
 if (!token) usage("the URL has no #token=...: use the URL the server printed");
 url.hash = "";
 const base = url.href; // http://127.0.0.1:<port>/
-// サーバーは、自分自身の origin からの POST と WebSocket だけを受け付ける（ブラウザなら自分で付ける）
+// The server accepts POST and WebSocket only from its own origin (a browser sends it by itself)
 const origin = url.origin;
 
-/** HTTP の要求。失敗は、サーバーの誤りの文（直し方を含む）で投げる。 */
+/** Sends an HTTP request. On failure, throws with the server's error message (which says how to fix it). */
 async function call(method, path, body) {
   const headers = { Authorization: `Bearer ${token}` };
   if (method === "POST")
@@ -69,11 +70,11 @@ async function call(method, path, body) {
   return answer;
 }
 
-/** WebSocket でつなぎ、認証して、届いた通知を onMessage に渡す。 */
+/** Connects over WebSocket, authenticates and passes each incoming message to onMessage. */
 function connect(onMessage) {
   const wsUrl = new URL("ws", base);
   wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
-  // Node の WebSocket は、2 つ目の引数で握手のヘッダーを付けられる（ブラウザでは Origin が自動で付く）
+  // Node's WebSocket takes handshake headers in the second argument (a browser adds Origin by itself)
   const socket = new WebSocket(wsUrl, { headers: { Origin: origin } });
   socket.onopen = () => socket.send(JSON.stringify({ type: "auth", token }));
   socket.onmessage = (event) => onMessage(JSON.parse(event.data));
@@ -104,9 +105,9 @@ async function main() {
   console.log(`check: ${check.result} (errors ${check.errors ?? 0})`);
   if (check.result !== "passed") finish(1);
 
-  let session = null; // 始めた実行の番号（api/run の応答まで null）
+  let session = null; // the session ID of the run we started (null until api/run answers)
   let synced = false;
-  const ended = new Map(); // 応答より先に終わりが届いた実行の要約
+  const ended = new Map(); // summaries of runs whose end arrived before the answer
   const end = (summary) => {
     const result =
       summary.result?.result ?? "none (the launcher ended without a result)";
@@ -120,14 +121,14 @@ async function main() {
             reject(new Error("unknown protocol version in hello"));
           break;
         case "synced":
-          // 再送を受け終えた: ここから始めると、始めた実行の事象を取りこぼさない
+          // The replay is complete: starting from here, no event of the run we start is missed
           if (!synced) {
             synced = true;
             resolve(socket);
           }
           break;
         case "event": {
-          // 応答の前に届く事象も、始めた実行のもの（サーバーは一度に 1 つしか実行しない）
+          // Events that arrive before the answer belong to our run too (the server runs one at a time)
           if (session !== null && message.session !== session) break;
           const event = message.event;
           if (event.event === "phase") console.log(`phase: ${event.phase}`);
@@ -135,7 +136,7 @@ async function main() {
             console.log(`participant ${event.name}: ${event.state}`);
           if (event.event === "finding")
             console.log(`finding: ${event.severity} ${event.message}`);
-          // ほかの事象（log、time、知らない事象）は読み飛ばす
+          // Skip other events (log, time, unknown ones)
           break;
         }
         case "session": {
@@ -149,7 +150,7 @@ async function main() {
           console.log(`server: ${message.code}: ${message.message}`);
           if (message.code === "unauthorized") finish(1);
           break;
-        // 知らない通知（後の版で足されるもの）は読み飛ばす
+        // Skip unknown messages (added by later versions)
       }
     });
     socket.onclose = (event) => {

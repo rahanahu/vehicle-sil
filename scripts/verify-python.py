@@ -12,8 +12,9 @@ needs no C++ build:
            with archives made there, no network)
   schema   tests/schema/test_schemas.py: the JSON Schemas of schema/ against the examples and the documents (the
            part that needs no launcher; CTest runs all of it, as schema.files_and_launcher)
-  scripts  scripts/*.py --help, tests/scripts/test_run_gui.py (scripts/run-gui.py) and
-           tests/scripts/test_job_summary.py (scripts/job_summary.py)
+  scripts  scripts/*.py --help, tests/scripts/test_run_gui.py (scripts/run-gui.py),
+           tests/scripts/test_job_summary.py (scripts/job_summary.py) and tests/scripts/test_check_docs.py
+           (scripts/check-docs.py)
   control  generates the gRPC stubs of the Control API, imports the client and its tests, and runs
            `python -m vehicle_sil_control --help` and the examples of examples/launch_control with
            --help
@@ -210,15 +211,17 @@ def check_version(uv: str, version: str, tag: str, files: list[str],
     def scripts(s: Step) -> bool:
         return all([s.run([python, p, "--help"]) for p in files if p.startswith("scripts/")] +
                    [s.run([python, "tests/scripts/test_run_gui.py"]),
-                    s.run([python, "tests/scripts/test_job_summary.py"])])
+                    s.run([python, "tests/scripts/test_job_summary.py"]),
+                    s.run([python, "tests/scripts/test_check_docs.py"])])
 
     def control(s: Step) -> bool:
         if not s.run([python, "-m", "vehicle_sil_control.generate", "--out", str(stubs)]):
             return False
         return all([
             s.run([python, "-c", "import vehicle_sil_control as c; c.Control; print('imported', c.__name__)"]),
-            s.run([python, "-c", "import test_python_client, test_launcher"], cwd=ROOT / "tests" / "control_server"),
+            s.run([python, "-c", "import test_python_client, test_launcher, test_guide_operate_signals"], cwd=ROOT / "tests" / "control_server"),
             s.run([python, "-m", "vehicle_sil_control", "--help"]),
+            s.run([python, "-m", "py_compile", "examples/launch_control/write_and_read.py"]),
             s.run([python, "examples/launch_control/write_before_start.py", "--help"]),
             s.run([python, "examples/launch_control/pause_and_step.py", "--help"]),
         ])

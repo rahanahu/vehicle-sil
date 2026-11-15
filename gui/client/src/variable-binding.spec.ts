@@ -5,8 +5,9 @@ import { FakeWebSockets } from './testing/fake-web-socket';
 import { BoundVariable, DROPPED_MESSAGE, VariableBinding } from './variable-binding';
 import { VariableRef } from './variables';
 
-// client.variables.bind: 変数 1 つの値の状態、書けるかどうかと理由、見えている間だけの watch、同じ変数の bind が
-// 書き込みの様子を分け合うこと。書き込みの様子の遷移そのものは variable-writes.spec.ts。
+// client.variables.bind: the value state of one variable, whether it can be written and why not, watching only while
+// visible, and binds of the same variable sharing the write status. The write status transitions themselves are tested
+// in variable-writes.spec.ts.
 
 const variable = (name: string, fields: object) => ({
   name,
@@ -128,7 +129,7 @@ describe('client.variables.bind', () => {
     await vi.advanceTimersByTimeAsync(BATCH_MS);
   }
 
-  /** クライアントが送った watch と unwatch。 */
+  /** The watch and unwatch the client sent. */
   const watches = () =>
     socket().sent.filter((m) => (m as { type: string }).type !== 'auth') as {
       type: string;
@@ -136,7 +137,7 @@ describe('client.variables.bind', () => {
       period_ms?: number;
     }[];
 
-  /** まだ答えていない api/write を取り出す。 */
+  /** Takes an api/write not answered yet. */
   const requests = (): FakeRequest[] => {
     const found = http.requests.filter((r) => r.request.path === 'api/write');
     for (const request of found) http.requests.splice(http.requests.indexOf(request), 1);
@@ -162,15 +163,15 @@ describe('client.variables.bind', () => {
     expect(state().condition).toEqual({ kind: 'live', reading: state().reading });
     await deliver(values(1300, true, { 'engine.speed': 1460 }));
     expect(state().condition.kind).toBe('paused');
-    // ECU が切れた: 値は残すが、古い
+    // The ECU disconnected: the value is kept, but stale
     await deliver(changed('ready', false));
     expect(state().condition).toMatchObject({ kind: 'stale', why: 'peer' });
-    // 値の読み取りが失敗し続けている（ready のまま理由がある）
+    // Reading values keeps failing (a reason while still ready)
     await deliver(changed('ready', true, { reason: 'the values could not be read' }));
     expect(state().condition).toMatchObject({ kind: 'stale', why: 'reading' });
     await deliver(changed('ended', false));
     expect(state().condition).toMatchObject({ kind: 'ended', reading: { value: 1460 } });
-    // クライアントとサーバーの接続が切れた
+    // The connection between the client and the server dropped
     socket().fail();
     expect(state().condition).toMatchObject({ kind: 'stale', why: 'connection' });
     expect(state().block).toBe('read-only');
@@ -185,7 +186,7 @@ describe('client.variables.bind', () => {
       condition: { kind: 'missing' },
       block: 'missing',
     });
-    // 原型のキーに当たる名前も、ない変数
+    // A name that matches a key of the prototype is still a missing variable
     const odd = client.variables.bind({ peer: 'constructor', name: 'toString' });
     expect(odd.state.get().condition).toEqual({ kind: 'missing' });
     nothing.close();
@@ -199,7 +200,7 @@ describe('client.variables.bind', () => {
     expect(watches()).toEqual([]);
     expect(speed.state.get().reading).toBeUndefined();
     speed.setVisible(true);
-    speed.setVisible(true); // 同じなら何もしない
+    speed.setVisible(true); // No change if the same
     await deliver(values(200, false, { 'engine.speed': 900 }));
     expect(watches().map((m) => m.type)).toEqual(['watch']);
     expect(speed.state.get().reading).toMatchObject({ value: 900 });
@@ -213,7 +214,7 @@ describe('client.variables.bind', () => {
     expect(speed.state.get().reading).toMatchObject({ value: 1000 });
     speed.close();
     speed.close();
-    speed.setVisible(true); // 閉じた後は何もしない
+    speed.setVisible(true); // Does nothing after close
     await deliver();
     expect(watches().map((m) => m.type)).toEqual(['watch', 'unwatch', 'watch', 'unwatch']);
   });
@@ -238,7 +239,7 @@ describe('client.variables.bind', () => {
       { sampleMs: 200, value: 900 },
       { sampleMs: 300, value: 1000 },
     ]);
-    // 点が増えるたびに state が知らせる（グラフは、その知らせで history() を読み直す）
+    // state notifies whenever a point is added (a graph reads history() again on that notification)
     expect(seen).toEqual([1, 2, 3]);
     expect(plain.history()).toEqual([]);
     graph.setVisible(false);
@@ -315,14 +316,14 @@ describe('client.variables.bind', () => {
     expect(requests()).toEqual([]);
     await deliver(values(100, false, { 'engine.demand': 20 }));
     expect(slider.state.get().block).toBeNull();
-    // 値を受け取っていなくても、送った値があれば動かせる
+    // Without a received value, a value sent is enough to move it
     const other = client.variables.bind(ref('engine.demand'));
     other.write(30);
     slider.setVisible(false);
     expect(slider.state.get()).toMatchObject({ reading: undefined, pending: 30, block: null });
     const unbounded = client.variables.bind(ref('engine.offset'), { needsRange: true });
     expect(unbounded.state.get().block).toBe('no-range');
-    // 部品に依らない理由が先
+    // Widget-independent reasons come first
     await deliver(changed('ended'));
     expect(unbounded.state.get().block).toBe('ended');
     for (const bound of [slider, other, unbounded]) bound.close();
@@ -335,10 +336,10 @@ describe('client.variables.bind', () => {
     const seen: BoundVariable[] = [];
     second.state.subscribe((state) => seen.push(state));
     first.write(true);
-    // もう 1 つの bind の購読者にも、読みに行く前に知らせが届く
+    // The subscribers of the other bind are notified too, before anyone reads
     expect(seen.map((s) => s.writeStatus.kind)).toEqual(['sending']);
     expect(second.state.get()).toMatchObject({ writeStatus: { kind: 'sending' }, pending: true });
-    // もう 1 つの bind から書いても、重ねて送らない（受け取られたら最後の値を送る）
+    // A write from the other bind is not sent on top (once received, the last value is sent)
     second.write(false);
     const [request] = requests();
     expect(request.request.body).toEqual({
@@ -353,7 +354,7 @@ describe('client.variables.bind', () => {
     expect(requests().map((r) => r.request.body)).toEqual([
       { session: 1, writes: { Engine: { 'engine.enabled': false } } },
     ]);
-    // ほかの変数の bind は、この書き込みを見ない
+    // A bind of another variable does not see this write
     const other = client.variables.bind(ref('engine.offset'), { visible: false });
     expect(other.state.get()).toMatchObject({ writeStatus: { kind: 'idle' }, pending: null });
     for (const bound of [second, again, other]) bound.close();
@@ -381,27 +382,27 @@ describe('client.variables.bind', () => {
     await deliver(hello());
     const enabled = client.variables.bind(ref('engine.enabled'));
     enabled.write(true);
-    enabled.write(false); // 前の書き込みを待つ間: 覚えておくだけ
+    enabled.write(false); // While waiting for the previous write: only held
     const [request] = requests();
     await deliver(changed('ended'));
     let told: BoundVariable | null = null;
     enabled.state.subscribe((state) => (told = state));
     request.flush({ session_id: 1, operation: 4 });
     expect(requests()).toEqual([]);
-    // 購読者にも、読みに行く前に届いている
+    // The subscribers got it too, before anyone reads
     expect(told).toMatchObject({ writeStatus: { kind: 'dropped' }, pending: null });
     expect(enabled.state.get()).toMatchObject({
       writeStatus: { kind: 'dropped', message: DROPPED_MESSAGE },
       pending: null,
     });
-    // 受け取られた書き込みの結果は、様子の欄を変えない
+    // The result of a write that was received does not change the status field
     await deliver(operation(4, 'applied', true));
     expect(enabled.state.get().writeStatus.kind).toBe('dropped');
     enabled.close();
   });
 
   it('gives the state of now whoever asks first, and tells its subscribers only of changes', async () => {
-    // bind より先に購読した人が、知らせの中で読んでも、いまの様子
+    // A subscriber added before the bind reads the current status within the notification
     const inside: (string | null | undefined)[] = [];
     let enabled: VariableBinding | null = null;
     client.connection.state.subscribe(() => inside.push(enabled?.state.get().block));
@@ -410,7 +411,7 @@ describe('client.variables.bind', () => {
     enabled.state.subscribe((state) => seen.push(state));
     await deliver(hello());
     expect(seen.map((s) => s.block)).toEqual([null]);
-    // 変数に関わらない変化（ログの行）では知らせない
+    // A change unrelated to variables (a log line) does not notify
     await deliver({
       type: 'event',
       session: 1,
@@ -425,7 +426,7 @@ describe('client.variables.bind', () => {
     await vi.advanceTimersByTimeAsync(500);
     socket().open();
     await deliver(hello());
-    // 閉じた後は知らせず、書かない
+    // After close, no notifications and no writes
     expect(seen).toHaveLength(2);
     enabled.write(true);
     enabled.reject('no');

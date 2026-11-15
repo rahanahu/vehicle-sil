@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=../../../schema/scenario.schema.json
+# The dashboard shows the speed the engine sends (the guide docs/howto/integrate-ecus.md).
+vehicle_sil_scenario: 1
+name: the dashboard receives the engine speed
+steps:
+  - at_ms: 0
+    set: { Engine.engine.throttle: 50 }
+  - expect: { Dashboard.dashboard.engine_speed: { ge: 1700 } }
+    within_ms: 600

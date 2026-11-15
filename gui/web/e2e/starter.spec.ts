@@ -26,7 +26,7 @@ test.beforeAll(async () => {
   if (!existsSync(BUNDLE)) {
     throw new Error(`${BUNDLE} is missing: run npm run build:client in gui/web first`);
   }
-  // README のとおり、ひな形を写してライブラリを隣に置く
+  // As README.md says: copy the starter and put the library next to it
   screen = mkdtempSync(join(tmpdir(), 'vehicle-sil-gui-starter-'));
   cpSync(join(REPOSITORY, 'examples', 'gui_starter'), screen, { recursive: true });
   copyFileSync(BUNDLE, join(screen, 'vehicle-sil-gui-client.mjs'));
