@@ -47,7 +47,7 @@ using vehicle_sil::j1939::ReceivedFrame;
 using vehicle_sil::j1939::SendStatus;
 using vehicle_sil::j1939::SniffDelivery;
 using vehicle_sil::j1939::SniffedTransfer;
-using vehicle_sil::j1939::SniffEnd;
+using vehicle_sil::j1939::SniffResult;
 using vehicle_sil::j1939::SnifferOptions;
 using vehicle_sil::j1939::SnifferStatistics;
 using vehicle_sil::j1939::Timer;
@@ -86,7 +86,7 @@ NetworkOptions quiet()
 
 struct Ended
 {
-    SniffEnd end;
+    SniffResult end;
     std::uint32_t pgn;
     std::uint8_t sa;
     std::uint8_t da;
@@ -111,8 +111,8 @@ struct Recording
     void attach(Listener& listener)
     {
         listener.on_any_message([this](const Message& m) { heard.push_back(seen_of(m)); });
-        listener.on_transfer([this](const SniffedTransfer& t) {
-            ended.push_back(Ended{t.end, t.pgn.value(), t.source, t.destination, t.reason, t.time, t.conflicting_packets});
+        listener.on_transfer_end([this](const SniffedTransfer& t) {
+            ended.push_back(Ended{t.result, t.pgn.value(), t.source, t.destination, static_cast<std::uint8_t>(t.reason), t.time, t.conflicting_packets});
         });
         listener.on_frame([this](const ReceivedFrame& f) {
             frames.push_back(HeardFrame{f.time, f.frame.id, Bytes(f.data.begin(), f.data.end()), f.local});
@@ -132,9 +132,9 @@ struct Recording
         }
         return out;
     }
-    [[nodiscard]] std::vector<SniffEnd> ends() const
+    [[nodiscard]] std::vector<SniffResult> ends() const
     {
-        std::vector<SniffEnd> out;
+        std::vector<SniffResult> out;
         for (const auto& e : ended)
         {
             out.push_back(e.end);
@@ -147,7 +147,7 @@ struct Recording
     std::vector<HeardFrame> frames;
 };
 
-using EndList = std::vector<SniffEnd>;
+using EndList = std::vector<SniffResult>;
 
 /// ECUs A, B and C (one node each, an engine of this repository) and a participant that listens
 /// (a Network with a Listener; without a node unless the test adds some), each on its own host
@@ -292,7 +292,7 @@ TEST_CASE(listener_hears_a_connection_between_two_other_ecus_as_the_receiver_get
         CHECK(atB.at(0).data == payload(100));
         CHECK(rig.recording.heard == atB);    // group, priority, addresses, time and bytes; nothing else
         CHECK(rig.ecus[2]->seen.empty());     // C, a node, still hears nothing of it
-        CHECK(rig.recording.ends() == (EndList{SniffEnd::Completed}));
+        CHECK(rig.recording.ends() == (EndList{SniffResult::Completed}));
         CHECK_EQ(rig.recording.ended.at(0).conflicting, 0u);
         CHECK(rig.recording.ended.at(0).time == atB.at(0).time);
         CHECK_EQ(rig.listener->open_transfers(), 0u);
@@ -366,7 +366,7 @@ TEST_CASE(listener_hears_transfers_that_run_at_the_same_time)
         CHECK(rig.recording.heard_of(kC, kB) == rig.seen_at(1, kC, kB));
         CHECK(rig.recording.heard_of(kC, kGlobal) == rig.seen_at(1, kC, kGlobal));
         CHECK_EQ(rig.recording.heard.size(), 4u);
-        CHECK(rig.recording.ends() == (EndList{SniffEnd::Completed, SniffEnd::Completed, SniffEnd::Completed}));
+        CHECK(rig.recording.ends() == (EndList{SniffResult::Completed, SniffResult::Completed, SniffResult::Completed}));
         rig.check_listened_only();
     }
 }
@@ -457,7 +457,7 @@ TEST_CASE(listener_does_not_hand_on_a_connection_the_receiver_refused_or_gave_up
         rig.run_until(at(5s));
         CHECK(rig.ecus[1]->seen.empty());
         CHECK(rig.recording.heard.empty());
-        CHECK(rig.recording.ends() == (EndList{SniffEnd::AbortedByReceiver}));
+        CHECK(rig.recording.ends() == (EndList{SniffResult::AbortedByReceiver}));
         CHECK_EQ(rig.listener->open_transfers(), 0u);
         CHECK_EQ(rig.stats().orphan_control, 0u);
         rig.check_listened_only();
@@ -498,7 +498,7 @@ TEST_CASE(listener_with_a_node_gets_the_messages_of_that_nodes_connections_once_
         CHECK(rig.recording.heard_of(kA, kB) == rig.seen_at(1, kA, kB));
         CHECK_EQ(rig.recording.heard.size(), 2u);
         // Only the connection between A and B was sniffed; the node's own left no trace there.
-        CHECK(rig.recording.ends() == (EndList{SniffEnd::Completed}));
+        CHECK(rig.recording.ends() == (EndList{SniffResult::Completed}));
         CHECK_EQ(rig.stats().started, 1u);
         CHECK_EQ(rig.stats().orphan_control, 0u);
         CHECK_EQ(rig.stats().orphan_data, 0u);
@@ -592,7 +592,7 @@ TEST_CASE(listener_does_not_hear_the_nodes_of_its_own_network_whether_it_has_one
             CHECK(!from_tool(f));
             CHECK(!f.local);
         }
-        CHECK(run->recording.ends() == (EndList{SniffEnd::Completed}));
+        CHECK(run->recording.ends() == (EndList{SniffResult::Completed}));
         CHECK_EQ(run->statistics.started, 1u);
         CHECK_EQ(run->statistics.orphan_control + run->statistics.orphan_data + run->statistics.no_session, 0u);
     }
@@ -682,7 +682,7 @@ TEST_CASE(listener_ends_a_followed_transfer_as_lost_when_a_node_takes_its_addres
     bench.inject(at(24ms), dt(kA, kB, 2, message));
     bench.inject(at(26ms), dt(kA, kB, 3, message));
     bench.step(); // 30 ms
-    CHECK(recording.ended == (std::vector<Ended>{Ended{SniffEnd::Lost, kPgn, kA, kB, 0, at(24ms), 0}}));
+    CHECK(recording.ended == (std::vector<Ended>{Ended{SniffResult::Lost, kPgn, kA, kB, 0, at(24ms), 0}}));
     CHECK_EQ(listener.open_transfers(), 0u);
     CHECK_EQ(listener.sniffer_statistics().lost, 1u);
     CHECK_EQ(listener.sniffer_statistics().orphan_data, 0u); // not fed: the address is the node's
@@ -700,7 +700,7 @@ TEST_CASE(listener_ends_a_followed_transfer_as_lost_when_a_node_takes_its_addres
     CHECK_EQ(recording.heard.size(), 1u); // the claim, a single frame
     inject_connection(bench, at(51ms), kA, kB, payload(14, 2));
     bench.step(); // 60 ms
-    CHECK(recording.ends() == (EndList{SniffEnd::Lost, SniffEnd::Completed}));
+    CHECK(recording.ends() == (EndList{SniffResult::Lost, SniffResult::Completed}));
     CHECK_EQ(recording.heard.size(), 2u);
     CHECK(recording.heard.back().data == payload(14, 2));
     CHECK_EQ(listener.sniffer_statistics().orphan_control, 0u);
@@ -727,7 +727,7 @@ TEST_CASE(listener_ends_a_followed_transfer_as_lost_when_a_node_takes_the_sender
     CHECK_EQ(listener.open_transfers(), 2u);
     bench.inject(at(13ms), cts(kB, kA, 5, 1, kPgn)); // to the node's address
     bench.step(); // 20 ms
-    CHECK(recording.ended == (std::vector<Ended>{Ended{SniffEnd::Lost, kPgn, kA, kB, 0, at(13ms), 0}}));
+    CHECK(recording.ended == (std::vector<Ended>{Ended{SniffResult::Lost, kPgn, kA, kB, 0, at(13ms), 0}}));
     CHECK_EQ(listener.open_transfers(), 1u); // C to B goes on
     CHECK_EQ(listener.sniffer_statistics().orphan_control, 0u);
 }
@@ -776,10 +776,10 @@ TEST_CASE(listener_order_for_one_frame_is_the_frame_then_its_message_then_the_tr
         listener.on_frame([&](const ReceivedFrame& f) { log.push_back("frame " + kind(f)); });
         listener.on_any_message([&](const Message& m) { log.push_back("message " + std::to_string(m.data.size())); });
         listener.on_message(Pgn{kPgn}, [&](const Message&) { log.push_back("message again"); });
-        listener.on_transfer([&](const SniffedTransfer& t) {
-            log.push_back("transfer " + std::to_string(static_cast<int>(t.end)) + " " + std::to_string(t.data.size()));
+        listener.on_transfer_end([&](const SniffedTransfer& t) {
+            log.push_back("transfer " + std::to_string(static_cast<int>(t.result)) + " " + std::to_string(t.data.size()));
         });
-        listener.on_transfer([&](const SniffedTransfer&) { log.push_back("transfer again"); });
+        listener.on_transfer_end([&](const SniffedTransfer&) { log.push_back("transfer again"); });
         bench.step();
         inject_connection(bench, at(1ms), kA, kB, payload(14));
         bench.step();
@@ -805,8 +805,8 @@ TEST_CASE(listener_decides_what_ended_by_time_at_the_end_of_the_steps_frames_bef
     Bench bench(quiet());
     Listener listener(bench.network);
     std::vector<std::string> log;
-    listener.on_transfer([&](const SniffedTransfer& t) {
-        log.push_back("transfer " + std::to_string(static_cast<int>(t.end)) + " " + std::to_string(to_ns(t.time)) + " " +
+    listener.on_transfer_end([&](const SniffedTransfer& t) {
+        log.push_back("transfer " + std::to_string(static_cast<int>(t.result)) + " " + std::to_string(to_ns(t.time)) + " " +
                       std::to_string(to_ns(t.noticed)));
     });
     listener.on_any_message([&](const Message&) { log.push_back("message"); });
@@ -829,7 +829,7 @@ TEST_CASE(listener_decides_what_ended_by_time_at_the_end_of_the_steps_frames_bef
     CHECK(log.empty());
     CHECK_EQ(listener.open_transfers(), 1u);
     bench.step(); // 1510 ms
-    CHECK(log == (std::vector<std::string>{"transfer " + std::to_string(static_cast<int>(SniffEnd::TimedOut)) +
+    CHECK(log == (std::vector<std::string>{"transfer " + std::to_string(static_cast<int>(SniffResult::TimedOut)) +
                                                " 1255000000 1510000000",
                                            "timer 1505 ms", "timer 1510 ms"}));
     CHECK_EQ(listener.open_transfers(), 0u);
@@ -897,7 +897,7 @@ struct Misuse
             break;
         case In::Transfer:
         case In::TimedOutTransfer:
-            listener.on_transfer([run](const SniffedTransfer&) { run(); });
+            listener.on_transfer_end([run](const SniffedTransfer&) { run(); });
             break;
         }
         bench.app = [this](SimTime) { ++application_steps; };
@@ -1034,7 +1034,7 @@ TEST_CASE(listener_handlers_are_registered_outside_its_handlers)
     listener.on_frame([&](const ReceivedFrame&) {
         const std::function<void()> calls[] = {
             [&] { listener.on_message(Pgn{kPgn}, [](const Message&) {}); },
-            [&] { listener.on_transfer([](const SniffedTransfer&) {}); },
+            [&] { listener.on_transfer_end([](const SniffedTransfer&) {}); },
             [&] { listener.on_frame([](const ReceivedFrame&) {}); },
         };
         for (const auto& call : calls)
@@ -1054,7 +1054,7 @@ TEST_CASE(listener_handlers_are_registered_outside_its_handlers)
     CHECK(throws<std::logic_error>([&] { bench.step(); }));
     CHECK_EQ(said.size(), 3u);
     CHECK_TEXT(said.at(0), "vehicle_sil::j1939::Listener: on_message()" + text);
-    CHECK_TEXT(said.at(1), "vehicle_sil::j1939::Listener: on_transfer()" + text);
+    CHECK_TEXT(said.at(1), "vehicle_sil::j1939::Listener: on_transfer_end()" + text);
     CHECK_TEXT(said.at(2), "vehicle_sil::j1939::Listener: on_frame()" + text);
 }
 
@@ -1065,7 +1065,7 @@ TEST_CASE(listener_rejects_empty_handlers_and_options_that_cannot_work)
     CHECK(throws_with<std::invalid_argument>([&] { listener.on_message(Pgn{kPgn}, {}); },
                                              "vehicle_sil::j1939::Listener: on_message() got an empty handler. Pass a callable"));
     CHECK(throws_with<std::invalid_argument>([&] { listener.on_any_message({}); }, "on_any_message() got an empty handler"));
-    CHECK(throws_with<std::invalid_argument>([&] { listener.on_transfer({}); }, "on_transfer() got an empty handler"));
+    CHECK(throws_with<std::invalid_argument>([&] { listener.on_transfer_end({}); }, "on_transfer_end() got an empty handler"));
     CHECK(throws_with<std::invalid_argument>([&] { listener.on_frame({}); }, "on_frame() got an empty handler"));
     // The sniffer's own check; the seat is not taken by a Listener that was not created.
     Bench other(quiet());
@@ -1182,7 +1182,7 @@ TEST_CASE(listener_can_be_destroyed_from_a_nodes_handler)
     std::size_t transfers = 0;
     auto listener = std::make_unique<Listener>(bench.network);
     listener->on_any_message([&](const Message&) { ++heard; });
-    listener->on_transfer([&](const SniffedTransfer&) { ++transfers; });
+    listener->on_transfer_end([&](const SniffedTransfer&) { ++transfers; });
     Node& node = bench.add_node(kTool);
     node.on_message(Pgn{kPgnPropB}, [&](const Message&) { listener.reset(); });
     bench.step();
@@ -1235,8 +1235,8 @@ TEST_CASE(listener_reports_other_transfers_a_frame_ends_before_that_frames_own_m
     std::vector<std::string> log;
     listener.on_frame([&](const ReceivedFrame& f) { log.push_back("frame " + std::to_string(f.pgn.value())); });
     listener.on_any_message([&](const Message& m) { log.push_back("message " + std::to_string(m.pgn.value())); });
-    listener.on_transfer([&](const SniffedTransfer& t) {
-        log.push_back("transfer " + std::to_string(static_cast<int>(t.end)) + " " + std::to_string(to_ns(t.time)));
+    listener.on_transfer_end([&](const SniffedTransfer& t) {
+        log.push_back("transfer " + std::to_string(static_cast<int>(t.result)) + " " + std::to_string(to_ns(t.time)));
     });
     node.on_any_message([&](const Message&) { log.push_back("node"); });
     while (bench.next_time() <= at(1500ms))
@@ -1254,7 +1254,7 @@ TEST_CASE(listener_reports_other_transfers_a_frame_ends_before_that_frames_own_m
     bench.step(); // 3100 ms
     const std::string pgn = std::to_string(kPgnPropB);
     CHECK(log == (std::vector<std::string>{"frame " + pgn,
-                                            "transfer " + std::to_string(static_cast<int>(SniffEnd::TimedOut)) + " 2751000000",
+                                            "transfer " + std::to_string(static_cast<int>(SniffResult::TimedOut)) + " 2751000000",
                                             "message " + pgn, "node"}));
 }
 
@@ -1268,7 +1268,7 @@ class Watcher
 public:
     explicit Watcher(Listener& listener)
       : messages_(listener, listener.on_any_message([this](const Message&) { count(); })),
-        transfers_(listener, listener.on_transfer([this](const SniffedTransfer&) { count(); })),
+        transfers_(listener, listener.on_transfer_end([this](const SniffedTransfer&) { count(); })),
         frames_(listener, listener.on_frame([this](const ReceivedFrame&) { count(); }))
     {
     }
@@ -1327,7 +1327,7 @@ TEST_CASE(listener_handlers_can_be_removed_by_id_and_a_subscription_moves)
     const Listener::HandlerId first = listener.on_any_message([&](const Message&) { log.push_back("first"); });
     const Listener::HandlerId second = listener.on_message(Pgn{kPgnPropB}, [&](const Message&) { log.push_back("second"); });
     const Listener::HandlerId frames = listener.on_frame([&](const ReceivedFrame&) { log.push_back("frame"); });
-    const Listener::HandlerId transfers = listener.on_transfer([&](const SniffedTransfer&) { log.push_back("transfer"); });
+    const Listener::HandlerId transfers = listener.on_transfer_end([&](const SniffedTransfer&) { log.push_back("transfer"); });
     CHECK(!(first == second));
     CHECK(!(frames == transfers));
     CHECK(!(first == Listener::HandlerId{}));
@@ -1399,7 +1399,7 @@ TEST_CASE(listener_handler_can_remove_itself_and_others_while_it_runs)
             case In::TimedOutTransfer:
                 break;
             }
-            return listener.on_transfer([body](const SniffedTransfer&) { body(); });
+            return listener.on_transfer_end([body](const SniffedTransfer&) { body(); });
         };
         before = ListenerSubscription(listener, add([&] { log.push_back("before"); }));
         const auto gone = std::make_shared<Says>(&log, "handler object destroyed");
@@ -1462,7 +1462,7 @@ TEST_CASE(listener_subscription_outlives_the_listener_and_the_network)
             late = ListenerSubscription(listener, listener.on_any_message([&](const Message&) { ++calls; }));
             // A handler that owns a subscription of the same listener: destroyed with it.
             auto owned = std::make_shared<ListenerSubscription>(listener, listener.on_frame([&](const ReceivedFrame&) { ++calls; }));
-            static_cast<void>(listener.on_transfer([owned](const SniffedTransfer&) {}));
+            static_cast<void>(listener.on_transfer_end([owned](const SniffedTransfer&) {}));
             owned.reset();
             onNode = ListenerSubscription(listener, listener.on_frame([&](const ReceivedFrame&) { ++calls; }));
             bench.step();
@@ -1546,7 +1546,7 @@ std::vector<std::string> run_nodes(std::optional<bool> hearLocal)
         listener = std::make_unique<Listener>(bench.network, options);
         listener->on_any_message([&](const Message&) { ++heard; });
         listener->on_frame([&](const ReceivedFrame&) { ++heard; });
-        listener->on_transfer([&](const SniffedTransfer&) { ++heard; });
+        listener->on_transfer_end([&](const SniffedTransfer&) { ++heard; });
     }
     bench.app = [&](SimTime now) {
         if (now == at(300ms))

@@ -90,7 +90,7 @@ enum class Shape : std::uint8_t
 
 /// true for the groups that are single-frame only: a message of such a group that was assembled
 /// from a transfer is not handed on (the engine's receiver ends the transfer without a message,
-/// the sniffer reports SniffEnd::Refused).
+/// the sniffer reports SniffResult::Refused).
 [[nodiscard]] constexpr bool single_frame_only(Pgn pgn) noexcept
 {
     return pgn == kPgnAddressClaimed || pgn == kPgnRequest;

@@ -22,7 +22,7 @@ using vehicle_sil::j1939::Message;
 using vehicle_sil::j1939::ProtocolTiming;
 using vehicle_sil::j1939::SniffDelivery;
 using vehicle_sil::j1939::SniffedTransfer;
-using vehicle_sil::j1939::SniffEnd;
+using vehicle_sil::j1939::SniffResult;
 using vehicle_sil::j1939::SnifferOptions;
 using vehicle_sil::j1939::SnifferStatistics;
 using vehicle_sil::j1939::SniffFrame;
@@ -42,7 +42,7 @@ constexpr std::uint8_t kBusyReason = 1;
 
 struct Heard
 {
-    SniffEnd end;
+    SniffResult end;
     std::uint32_t pgn;
     std::uint8_t sa;
     std::uint8_t da;
@@ -59,9 +59,9 @@ struct Sniffer
 {
     explicit Sniffer(SnifferOptions options = {}, const ProtocolTiming& timing = {}) : sniffer(options, timing)
     {
-        sniffer.on_transfer([this](const SniffedTransfer& t) {
-            heard.push_back(Heard{t.end, t.pgn.value(), t.source, t.destination, t.size, t.started, t.time, t.noticed,
-                                  t.reason, t.priority, Bytes(t.data.begin(), t.data.end())});
+        sniffer.on_transfer_end([this](const SniffedTransfer& t) {
+            heard.push_back(Heard{t.result, t.pgn.value(), t.source, t.destination, t.length, t.started, t.time, t.noticed,
+                                  static_cast<std::uint8_t>(t.reason), t.priority, Bytes(t.data.begin(), t.data.end())});
         });
     }
     void feed(SimTime time, const J1939Frame& f) { sniffer.feed(TimedFrame{time, to_can(f)}); }
@@ -73,9 +73,9 @@ struct Sniffer
         }
     }
     [[nodiscard]] const SnifferStatistics& stats() const { return sniffer.statistics(); }
-    [[nodiscard]] std::vector<SniffEnd> ends() const
+    [[nodiscard]] std::vector<SniffResult> ends() const
     {
-        std::vector<SniffEnd> out;
+        std::vector<SniffResult> out;
         for (const auto& h : heard)
         {
             out.push_back(h.end);
@@ -87,7 +87,7 @@ struct Sniffer
     std::vector<Heard> heard;
 };
 
-using EndList = std::vector<SniffEnd>;
+using EndList = std::vector<SniffResult>;
 
 SnifferOptions with_broadcasts()
 {
@@ -123,7 +123,7 @@ TEST_CASE(sniffer_reports_a_connection_when_the_receiver_acknowledges)
     s.feed(at(30ms), eoma(kB, kA, 20, kPgn));
     CHECK_EQ(s.heard.size(), 1u);
     const Heard& h = s.heard[0];
-    CHECK(h.end == SniffEnd::Completed);
+    CHECK(h.end == SniffResult::Completed);
     CHECK_EQ(h.pgn, kPgn);
     CHECK_EQ(h.sa, kA);
     CHECK_EQ(h.da, kB);
@@ -145,7 +145,7 @@ TEST_CASE(sniffer_transfer_reads_as_a_message)
 {
     TransferSniffer sniffer;
     std::vector<Seen> seen;
-    sniffer.on_transfer([&](const SniffedTransfer& t) {
+    sniffer.on_transfer_end([&](const SniffedTransfer& t) {
         const Message m = t.message();
         seen.push_back(seen_of(m));
     });
@@ -169,7 +169,7 @@ TEST_CASE(sniffer_takes_decoded_frames_and_raw_frames_alike)
                                                             {at(4ms), eoma(kB, kA, 9, kPgn)}};
     TransferSniffer sniffer;
     std::vector<Bytes> got;
-    sniffer.on_transfer([&](const SniffedTransfer& t) { got.emplace_back(t.data.begin(), t.data.end()); });
+    sniffer.on_transfer_end([&](const SniffedTransfer& t) { got.emplace_back(t.data.begin(), t.data.end()); });
     for (const auto& [time, f] : frames)
     {
         sniffer.feed(SniffFrame{time, Pgn{f.pgn}, f.priority, f.sa, f.da, f.data});
@@ -186,7 +186,7 @@ TEST_CASE(sniffer_takes_decoded_frames_and_raw_frames_alike)
     standard.length = 8;
     standard.data = {16, 9, 0, 2, 0xFF, 0x00, 0xEF, 0x00}; // would be an RTS in a 29-bit frame
     s.sniffer.feed(TimedFrame{at(1501ms), standard});
-    CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+    CHECK(s.ends() == (EndList{SniffResult::TimedOut}));
     CHECK_EQ(s.stats().started, 1u);
 }
 
@@ -205,7 +205,7 @@ TEST_CASE(sniffer_stores_packets_by_number_and_keeps_the_first_of_a_repeated_one
     s.feed(at(25ms), dt(kA, kB, 1, message));
     s.feed(at(26ms), dt(kA, kB, 3, message));
     s.feed(at(40ms), eoma(kB, kA, 30, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Completed}));
     CHECK(s.heard[0].data == message);
     CHECK_EQ(s.stats().repeated_packets, 2u);
     CHECK_EQ(s.stats().conflicting_packets, 1u);
@@ -230,7 +230,7 @@ TEST_CASE(sniffer_counts_packets_it_cannot_store)
     s.feed(at(21ms), dts(kA, kB, message, 1, 2));
     s.feed(at(22ms), last);
     s.feed(at(30ms), eoma(kB, kA, 16, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Completed}));
     CHECK(s.heard[0].data == message);
     CHECK_EQ(s.stats().bad_packets, 4u);
 }
@@ -249,7 +249,7 @@ TEST_CASE(sniffer_time_of_a_retransmitted_message_is_the_last_packet_the_receive
     s.feed(at(41ms), dt(kA, kB, 4, message));
     s.feed(at(42ms), dt(kA, kB, 5, message));
     s.feed(at(50ms), eoma(kB, kA, 30, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Completed}));
     CHECK(s.heard[0].time == at(42ms));
     CHECK(s.heard[0].data == message);
     CHECK_EQ(s.stats().retransmit_requests, 1u);
@@ -265,7 +265,7 @@ TEST_CASE(sniffer_time_does_not_move_with_a_packet_repeated_after_the_last_one)
     s.feed(at(21ms), dt(kA, kB, 2, message)); // the receiver has the message here
     s.feed(at(25ms), dt(kA, kB, 2, message));
     s.feed(at(30ms), eoma(kB, kA, 14, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Completed}));
     CHECK(s.heard[0].time == at(21ms));
 }
 
@@ -280,7 +280,7 @@ TEST_CASE(sniffer_time_for_a_receiver_that_asks_for_single_packets)
     s.feed(at(30ms), cts(kB, kA, 1, 3, kPgn));
     s.feed(at(40ms), dt(kA, kB, 3, message));
     s.feed(at(50ms), eoma(kB, kA, 30, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Completed}));
     CHECK(s.heard[0].time == at(40ms));
 }
 
@@ -295,7 +295,7 @@ TEST_CASE(sniffer_with_all_packets_seen_does_not_wait_for_the_acknowledgement)
     s.feed(at(21ms), dt(kA, kB, 1, message));
     CHECK(s.heard.empty());
     s.feed(at(22ms), dt(kA, kB, 2, message));
-    CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Completed}));
     CHECK(s.heard[0].time == at(22ms));
     CHECK(s.heard[0].data == message);
     // What follows finds no transfer.
@@ -318,14 +318,14 @@ TEST_CASE(sniffer_ends_a_transfer_on_an_abort_from_either_side)
     CHECK(s.heard.empty());
     CHECK_EQ(s.stats().orphan_control, 1u);
     s.feed(at(30ms), conn_abort(kB, kA, 5, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::AbortedByReceiver}));
+    CHECK(s.ends() == (EndList{SniffResult::AbortedByReceiver}));
     CHECK_EQ(s.heard[0].reason, 5u);
     CHECK(s.heard[0].time == at(30ms));
     CHECK(s.heard[0].data.empty());
 
     s.feed(at(100ms), rts(kA, kB, 30, kPgn));
     s.feed(at(110ms), conn_abort(kA, kB, 250, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::AbortedByReceiver, SniffEnd::AbortedBySender}));
+    CHECK(s.ends() == (EndList{SniffResult::AbortedByReceiver, SniffResult::AbortedBySender}));
     CHECK_EQ(s.heard[1].reason, 250u);
     CHECK(s.heard[1].started == at(100ms));
     CHECK_EQ(s.stats().aborted_by_receiver, 1u);
@@ -342,10 +342,10 @@ TEST_CASE(sniffer_abort_between_two_ecus_that_send_to_each_other_ends_the_transf
     s.feed(at(0ms), rts(kA, kB, 30, kPgn));
     s.feed(at(1ms), rts(kB, kA, 40, kPgn));
     s.feed(at(10ms), conn_abort(kB, kA, 2, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::AbortedByReceiver}));
+    CHECK(s.ends() == (EndList{SniffResult::AbortedByReceiver}));
     CHECK_EQ(s.heard[0].sa, kA);
     s.feed(at(11ms), conn_abort(kB, kA, 2, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::AbortedByReceiver, SniffEnd::AbortedBySender}));
+    CHECK(s.ends() == (EndList{SniffResult::AbortedByReceiver, SniffResult::AbortedBySender}));
     CHECK_EQ(s.heard[1].sa, kB);
 }
 
@@ -359,7 +359,7 @@ TEST_CASE(sniffer_times_out_a_connection_after_the_timeout_and_the_grace)
     CHECK(s.heard.empty());
     CHECK_EQ(s.sniffer.active(), 1u);
     s.sniffer.advance(at(100ms + 1250ms + 250ms + 1ns));
-    CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+    CHECK(s.ends() == (EndList{SniffResult::TimedOut}));
     CHECK(s.heard[0].time == at(100ms + 1250ms)); // without the grace, whatever the step
     CHECK(s.heard[0].noticed == at(100ms + 1250ms + 250ms + 1ns));
     CHECK_EQ(s.stats().timed_out, 1u);
@@ -382,7 +382,7 @@ TEST_CASE(sniffer_counts_the_time_from_the_last_frame_of_the_transfer)
     s.feed(at(5500ms), dt(kA, kB, 2, message));     // exactly at the timeout and the grace
     CHECK(s.heard.empty());
     s.feed(at(7001ms), dt(kA, kB, 3, message));
-    CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+    CHECK(s.ends() == (EndList{SniffResult::TimedOut}));
     CHECK(s.heard[0].time == at(5500ms + 1250ms));
     CHECK_EQ(s.stats().orphan_data, 1u); // the packet that came too late
 }
@@ -393,7 +393,7 @@ TEST_CASE(sniffer_abort_within_the_grace_ends_the_transfer_as_aborted)
     Sniffer s;
     s.feed(at(0ms), rts(kA, kB, 30, kPgn));
     s.feed(at(1260ms), conn_abort(kA, kB, kTimeoutReason, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::AbortedBySender}));
+    CHECK(s.ends() == (EndList{SniffResult::AbortedBySender}));
     CHECK_EQ(s.heard[0].reason, kTimeoutReason);
     CHECK(s.heard[0].time == at(1260ms));
     CHECK_EQ(s.stats().orphan_control, 0u);
@@ -403,7 +403,7 @@ TEST_CASE(sniffer_abort_within_the_grace_ends_the_transfer_as_aborted)
     stepped.feed(at(0ms), rts(kA, kB, 30, kPgn));
     stepped.sniffer.advance(at(1255ms));
     stepped.feed(at(1260ms), conn_abort(kA, kB, kTimeoutReason, kPgn));
-    CHECK(stepped.ends() == (EndList{SniffEnd::AbortedBySender}));
+    CHECK(stepped.ends() == (EndList{SniffResult::AbortedBySender}));
     CHECK_EQ(stepped.stats().orphan_control, 0u);
 }
 
@@ -419,7 +419,7 @@ TEST_CASE(sniffer_abort_after_the_grace_finds_no_transfer_whatever_the_steps)
             s.sniffer.advance(at(1600ms));
         }
         s.feed(at(1700ms), conn_abort(kA, kB, kTimeoutReason, kPgn));
-        CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+        CHECK(s.ends() == (EndList{SniffResult::TimedOut}));
         CHECK(s.heard[0].time == at(1250ms));
         CHECK_EQ(s.stats().orphan_control, 1u);
     }
@@ -430,7 +430,7 @@ TEST_CASE(sniffer_abort_after_the_grace_finds_no_transfer_whatever_the_steps)
     s.feed(at(0ms), rts(kA, kB, 30, kPgn));
     s.sniffer.advance(at(1600ms));
     s.feed(at(1700ms), conn_abort(kA, kB, kTimeoutReason, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::AbortedBySender}));
+    CHECK(s.ends() == (EndList{SniffResult::AbortedBySender}));
 }
 
 TEST_CASE(sniffer_timeouts_can_be_changed)
@@ -446,7 +446,7 @@ TEST_CASE(sniffer_timeouts_can_be_changed)
     s.sniffer.advance(at(50ms));
     CHECK(s.heard.empty());
     s.sniffer.advance(at(51ms));
-    CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+    CHECK(s.ends() == (EndList{SniffResult::TimedOut}));
     CHECK_EQ(s.heard[0].sa, kC);
     CHECK(s.heard[0].time == at(50ms));
     s.sniffer.advance(at(100ms));
@@ -479,7 +479,7 @@ TEST_CASE(sniffer_timeouts_left_empty_follow_the_engine_timing)
     s.sniffer.advance(at(100ms));
     CHECK(s.heard.empty());
     s.sniffer.advance(at(101ms));
-    CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+    CHECK(s.ends() == (EndList{SniffResult::TimedOut}));
     CHECK_EQ(s.heard[0].sa, kC);
     s.sniffer.advance(at(400ms));
     CHECK_EQ(s.heard.size(), 1u);
@@ -501,7 +501,7 @@ TEST_CASE(sniffer_broadcast_packet_exactly_at_the_timeout_is_taken_and_the_next_
         s.feed(at(0ms), bam(kA, 14, kPgn));
         s.feed(at(750ms), dt(kA, kGlobal, 1, message));
         s.feed(at(1500ms), dt(kA, kGlobal, 2, message));
-        CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+        CHECK(s.ends() == (EndList{SniffResult::Completed}));
         CHECK(s.heard[0].data == message);
         CHECK(s.heard[0].time == at(1500ms));
         CHECK_EQ(s.heard[0].da, kGlobal);
@@ -511,7 +511,7 @@ TEST_CASE(sniffer_broadcast_packet_exactly_at_the_timeout_is_taken_and_the_next_
         s.feed(at(0ms), bam(kA, 14, kPgn));
         s.feed(at(750ms), dt(kA, kGlobal, 1, message));
         s.feed(at(1500ms + 1ns), dt(kA, kGlobal, 2, message));
-        CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+        CHECK(s.ends() == (EndList{SniffResult::TimedOut}));
         CHECK(s.heard[0].time == at(1500ms)); // the last packet + the timeout: no grace
         CHECK_EQ(s.stats().orphan_data, 1u);
     }
@@ -533,7 +533,7 @@ TEST_CASE(sniffer_follows_broadcasts_only_when_asked)
     on.feed(at(0ms), bam(kA, 14, kPgn));
     on.feed(at(50ms), dt(kA, kGlobal, 1, message));
     on.feed(at(100ms), dt(kA, kGlobal, 2, message));
-    CHECK(on.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(on.ends() == (EndList{SniffResult::Completed}));
     CHECK(on.heard[0].data == message);
     CHECK(on.heard[0].started == at(0ms));
     CHECK(on.heard[0].time == at(100ms));
@@ -555,7 +555,7 @@ TEST_CASE(sniffer_loses_a_broadcast_with_a_missing_repeated_or_reordered_packet)
             time += 50ms;
             s.feed(time, dt(kA, kGlobal, static_cast<std::uint8_t>(k), message));
         }
-        CHECK(s.ends() == (EndList{SniffEnd::Lost}));
+        CHECK(s.ends() == (EndList{SniffResult::Lost}));
         CHECK(s.heard[0].time == time);
         CHECK_EQ(s.stats().lost, 1u);
         // The rest of it finds no transfer.
@@ -585,12 +585,12 @@ TEST_CASE(sniffer_new_broadcast_of_a_sender_replaces_the_running_one)
     CHECK(s.heard.empty());
     CHECK_EQ(s.stats().announcements_malformed, 1u);
     s.feed(at(100ms), bam(kA, 14, kOther));
-    CHECK(s.ends() == (EndList{SniffEnd::Replaced}));
+    CHECK(s.ends() == (EndList{SniffResult::Replaced}));
     CHECK_EQ(s.heard[0].pgn, kPgn);
     CHECK(s.heard[0].time == at(100ms));
     s.feed(at(150ms), dt(kA, kGlobal, 1, second));
     s.feed(at(200ms), dt(kA, kGlobal, 2, second));
-    CHECK(s.ends() == (EndList{SniffEnd::Replaced, SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Replaced, SniffResult::Completed}));
     CHECK_EQ(s.heard[1].pgn, kOther);
     CHECK(s.heard[1].data == second);
     // A broadcast and a connection of the same sender run side by side.
@@ -609,18 +609,18 @@ TEST_CASE(sniffer_new_rts_for_the_same_group_replaces_the_transfer)
     open(s, 30);
     s.feed(at(20ms), dts(kA, kB, first, 1, 3));
     s.feed(at(50ms), rts(kA, kB, 30, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::Replaced}));
+    CHECK(s.ends() == (EndList{SniffResult::Replaced}));
     CHECK(s.heard[0].time == at(50ms));
     s.feed(at(60ms), cts(kB, kA, 5, 1, kPgn));
     s.feed(at(70ms), dts(kA, kB, second, 1, 5));
     s.feed(at(80ms), eoma(kB, kA, 30, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::Replaced, SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Replaced, SniffResult::Completed}));
     CHECK(s.heard[1].data == second); // nothing of the first one is left
     CHECK(s.heard[1].started == at(50ms));
     // As the engine's receiver: a malformed RTS for the same group also ends the running one.
     s.feed(at(100ms), rts(kA, kB, 30, kPgn));
     s.feed(at(110ms), rts(kA, kB, 30, kPgn, 0xFF, 9));
-    CHECK(s.ends() == (EndList{SniffEnd::Replaced, SniffEnd::Completed, SniffEnd::Replaced}));
+    CHECK(s.ends() == (EndList{SniffResult::Replaced, SniffResult::Completed, SniffResult::Replaced}));
     CHECK_EQ(s.stats().announcements_malformed, 1u);
     CHECK_EQ(s.sniffer.active(), 0u);
 }
@@ -638,7 +638,7 @@ TEST_CASE(sniffer_ignores_an_rts_for_another_group_while_a_transfer_runs)
     CHECK_EQ(s.stats().orphan_control, 0u);
     s.feed(at(50ms), dts(kA, kB, message, 3, 5));
     s.feed(at(60ms), eoma(kB, kA, 30, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Completed}));
     CHECK(s.heard[0].data == message);
     CHECK_EQ(s.heard[0].pgn, kPgn);
 }
@@ -665,7 +665,7 @@ TEST_CASE(sniffer_after_an_ignored_rts_only_an_acknowledgement_completes_the_tra
     s.sniffer.advance(at(5s));
     // The announcement the receiver did not refuse is followed when the transfer times out,
     // and is too old by then.
-    CHECK(s.ends() == (EndList{SniffEnd::TimedOut, SniffEnd::TimedOut}));
+    CHECK(s.ends() == (EndList{SniffResult::TimedOut, SniffResult::TimedOut}));
     CHECK_EQ(s.heard[0].pgn, kPgn);
     CHECK_EQ(s.heard[1].pgn, kOther);
     CHECK(s.heard[1].time == at(30ms + 1250ms));
@@ -677,7 +677,7 @@ TEST_CASE(sniffer_after_an_ignored_rts_only_an_acknowledgement_completes_the_tra
     t.feed(at(40ms), dts(kA, kB, first, 3, 5));
     CHECK(t.heard.empty());
     t.feed(at(50ms), eoma(kB, kA, 30, kPgn));
-    CHECK(t.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(t.ends() == (EndList{SniffResult::Completed}));
     CHECK(t.heard[0].data == first);
 }
 
@@ -694,13 +694,13 @@ TEST_CASE(sniffer_follows_an_ignored_rts_when_the_receiver_answers_it)
     s.feed(at(30ms), other);
     CHECK(s.heard.empty());
     s.feed(at(40ms), cts(kB, kA, 2, 1, kOther));
-    CHECK(s.ends() == (EndList{SniffEnd::Replaced}));
+    CHECK(s.ends() == (EndList{SniffResult::Replaced}));
     CHECK_EQ(s.heard[0].pgn, kPgn);
     CHECK(s.heard[0].time == at(30ms)); // the announcement
     CHECK(s.heard[0].noticed == at(40ms));
     s.feed(at(50ms), dts(kA, kB, second, 1, 2));
     s.feed(at(60ms), eoma(kB, kA, 14, kOther));
-    CHECK(s.ends() == (EndList{SniffEnd::Replaced, SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Replaced, SniffResult::Completed}));
     CHECK_EQ(s.heard[1].pgn, kOther);
     CHECK_EQ(s.heard[1].priority, 3);
     CHECK(s.heard[1].started == at(30ms));
@@ -718,7 +718,7 @@ TEST_CASE(sniffer_follows_an_ignored_rts_when_the_receiver_answers_it)
     t.feed(at(40ms), eoma(kB, kA, 30, kPgn));
     CHECK(t.heard.empty());
     t.feed(at(40ms), cts(kB, kA, 2, 1, kOther));
-    CHECK(t.ends() == (EndList{SniffEnd::Incomplete}));
+    CHECK(t.ends() == (EndList{SniffResult::Incomplete}));
     CHECK(t.heard[0].time == at(40ms));
     CHECK_EQ(t.sniffer.active(), 1u);
     CHECK_EQ(t.stats().orphan_control, 0u);
@@ -741,18 +741,18 @@ TEST_CASE(sniffer_follows_an_ignored_rts_when_the_receiver_ends_the_transfer_bef
         if (aborts)
         {
             s.feed(at(60ms), conn_abort(kB, kA, kTimeoutReason, kPgn));
-            CHECK(s.ends() == (EndList{SniffEnd::AbortedByReceiver}));
+            CHECK(s.ends() == (EndList{SniffResult::AbortedByReceiver}));
         }
         else
         {
             s.feed(at(60ms), eoma(kB, kA, 30, kPgn));
-            CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+            CHECK(s.ends() == (EndList{SniffResult::Completed}));
         }
         CHECK_EQ(s.sniffer.active(), 1u);
         s.feed(at(60ms), cts(kB, kA, 2, 1, kOther));
         s.feed(at(70ms), conn_abort(kA, kB, 2, kOther));
         CHECK_EQ(s.heard.size(), 2u);
-        CHECK(s.heard[1].end == SniffEnd::AbortedBySender);
+        CHECK(s.heard[1].end == SniffResult::AbortedBySender);
         CHECK_EQ(s.heard[1].pgn, kOther);
         CHECK(s.heard[1].started == at(31ms)); // the later of the two
         CHECK_EQ(s.stats().orphan_control, 0u);
@@ -766,7 +766,7 @@ TEST_CASE(sniffer_follows_an_ignored_rts_when_the_receiver_ends_the_transfer_bef
         s.feed(at(40ms), {conn_abort(kB, kA, kBusyReason, kOther), conn_abort(kB, kA, kBusyReason, kOther)});
         s.feed(at(50ms), dts(kA, kB, message, 1, 5));
         s.feed(at(60ms), eoma(kB, kA, 30, kPgn));
-        CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+        CHECK(s.ends() == (EndList{SniffResult::Completed}));
         CHECK_EQ(s.sniffer.active(), 0u);
         CHECK_EQ(s.stats().orphan_control, 0u);
 
@@ -774,7 +774,7 @@ TEST_CASE(sniffer_follows_an_ignored_rts_when_the_receiver_ends_the_transfer_bef
         open(t, 30);
         t.feed(at(30ms), rts(kA, kB, 14, kOther));
         t.feed(at(40ms), conn_abort(kA, kB, 2, kPgn));
-        CHECK(t.ends() == (EndList{SniffEnd::AbortedBySender}));
+        CHECK(t.ends() == (EndList{SniffResult::AbortedBySender}));
         CHECK_EQ(t.sniffer.active(), 0u);
     }
 }
@@ -794,13 +794,13 @@ TEST_CASE(sniffer_does_not_follow_an_ignored_rts_that_waited_longer_than_an_answ
         s.feed(at(1540ms), eoma(kB, kA, 30, kPgn));
         if (late)
         {
-            CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+            CHECK(s.ends() == (EndList{SniffResult::Completed}));
         }
         else
         {
             // Followed, but the acknowledgement came after the time in which the announcement
             // is answered: it ends at once, and does not wait for a packet to revive it.
-            CHECK(s.ends() == (EndList{SniffEnd::Completed, SniffEnd::TimedOut}));
+            CHECK(s.ends() == (EndList{SniffResult::Completed, SniffResult::TimedOut}));
             CHECK_EQ(s.heard[1].pgn, kOther);
             CHECK(s.heard[1].time == at(30ms + 1250ms));
         }
@@ -825,11 +825,11 @@ TEST_CASE(sniffer_times_out_a_followed_announcement_whenever_advance_is_called)
         if (advances)
         {
             s.sniffer.advance(at(1000ms));
-            CHECK(s.ends() == (EndList{SniffEnd::Incomplete}));
+            CHECK(s.ends() == (EndList{SniffResult::Incomplete}));
             CHECK_EQ(s.sniffer.active(), 1u); // not too old yet
         }
         s.feed(at(2000ms), dt(kA, kB, 1, message));
-        CHECK(s.ends() == (EndList{SniffEnd::Incomplete, SniffEnd::TimedOut}));
+        CHECK(s.ends() == (EndList{SniffResult::Incomplete, SniffResult::TimedOut}));
         CHECK_EQ(s.sniffer.active(), 0u);
         s.sniffer.advance(at(10s));
         CHECK_EQ(s.heard.size(), 2u);
@@ -870,7 +870,7 @@ TEST_CASE(sniffer_follows_an_ignored_rts_when_the_running_transfer_times_out)
         feed(at(1511ms), dt(kA, kB, 2, second));
         feed(at(1512ms), dt(kA, kB, 3, second));
         feed(at(1513ms), eoma(kB, kA, 20, kOther));
-        CHECK(s.ends() == (EndList{SniffEnd::TimedOut, SniffEnd::Completed}));
+        CHECK(s.ends() == (EndList{SniffResult::TimedOut, SniffResult::Completed}));
         CHECK_EQ(s.heard[0].pgn, kPgn);
         CHECK(s.heard[0].time == at(2ms + 1250ms));
         CHECK_EQ(s.heard[1].pgn, kOther);
@@ -891,11 +891,11 @@ TEST_CASE(sniffer_follows_an_ignored_rts_when_the_running_transfer_times_out)
         if (advances)
         {
             s.sniffer.advance(at(1511ms));
-            CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+            CHECK(s.ends() == (EndList{SniffResult::TimedOut}));
             CHECK_EQ(s.sniffer.active(), 1u);
         }
         s.sniffer.advance(at(10s));
-        CHECK(s.ends() == (EndList{SniffEnd::TimedOut, SniffEnd::TimedOut}));
+        CHECK(s.ends() == (EndList{SniffResult::TimedOut, SniffResult::TimedOut}));
         CHECK_EQ(s.heard[1].pgn, kOther);
         CHECK(s.heard[1].time == at(1499ms + 1250ms));
         CHECK_EQ(s.stats().started, 2u);
@@ -908,7 +908,7 @@ TEST_CASE(sniffer_follows_an_ignored_rts_when_the_running_transfer_times_out)
         s.feed(at(1499ms), rts(kA, kB, 20, kOther));
         s.feed(at(1500ms), conn_abort(kB, kA, kBusyReason, kOther));
         s.sniffer.advance(at(10s));
-        CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+        CHECK(s.ends() == (EndList{SniffResult::TimedOut}));
         CHECK_EQ(s.stats().started, 1u);
         CHECK_EQ(s.stats().orphan_control, 0u);
     }
@@ -932,7 +932,7 @@ TEST_CASE(sniffer_forgets_a_refused_announcement_also_after_a_malformed_one_for_
     s.feed(at(31ms), dt(kA, kB, 3, message));
     s.feed(at(32ms), eoma(kB, kA, 20, kPgn));
     s.sniffer.advance(at(10s));
-    CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Completed}));
     CHECK_EQ(s.stats().started, 1u);
     CHECK_EQ(s.stats().announcements_ignored, 2u);
     CHECK_EQ(s.stats().orphan_control, 0u);
@@ -950,11 +950,11 @@ TEST_CASE(sniffer_can_replace_the_transfer_on_an_rts_for_another_group)
     CHECK(s.heard.empty());
     CHECK_EQ(s.stats().announcements_malformed, 1u);
     s.feed(at(30ms), rts(kA, kB, 14, kOther));
-    CHECK(s.ends() == (EndList{SniffEnd::Replaced}));
+    CHECK(s.ends() == (EndList{SniffResult::Replaced}));
     CHECK_EQ(s.heard[0].pgn, kPgn);
     s.feed(at(40ms), dts(kA, kB, second, 1, 2));
     s.feed(at(50ms), eoma(kB, kA, 14, kOther));
-    CHECK(s.ends() == (EndList{SniffEnd::Replaced, SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Replaced, SniffResult::Completed}));
     CHECK_EQ(s.heard[1].pgn, kOther);
     CHECK(s.heard[1].data == second);
     CHECK_EQ(s.stats().announcements_ignored, 0u);
@@ -971,14 +971,14 @@ TEST_CASE(sniffer_refuses_a_group_that_is_single_frame_only)
         open(s, 14, pgn);
         s.feed(at(20ms), dts(kA, kB, message, 1, 2));
         s.feed(at(30ms), eoma(kB, kA, 14, pgn));
-        CHECK(s.ends() == (EndList{SniffEnd::Refused}));
+        CHECK(s.ends() == (EndList{SniffResult::Refused}));
         CHECK(s.heard[0].data.empty());
         CHECK(s.heard[0].time == at(20ms));
         CHECK_EQ(s.heard[0].pgn, pgn);
         s.feed(at(100ms), bam(kA, 14, pgn));
         s.feed(at(150ms), dt(kA, kGlobal, 1, message));
         s.feed(at(200ms), dt(kA, kGlobal, 2, message));
-        CHECK(s.ends() == (EndList{SniffEnd::Refused, SniffEnd::Refused}));
+        CHECK(s.ends() == (EndList{SniffResult::Refused, SniffResult::Refused}));
         CHECK_EQ(s.stats().refused, 2u);
         CHECK_EQ(s.stats().completed, 0u);
     }
@@ -1000,7 +1000,7 @@ TEST_CASE(sniffer_decides_an_early_acknowledgement_when_the_time_moves_on)
         CHECK(s.heard.empty());
         CHECK_EQ(s.sniffer.active(), 1u);
         s.feed(at(30ms), dt(kA, kB, 3, message));
-        CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+        CHECK(s.ends() == (EndList{SniffResult::Completed}));
         CHECK(s.heard[0].data == message);
         CHECK(s.heard[0].time == at(30ms));
     }
@@ -1011,7 +1011,7 @@ TEST_CASE(sniffer_decides_an_early_acknowledgement_when_the_time_moves_on)
         s.feed(at(20ms), dts(kA, kB, message, 1, 2));
         s.feed(at(30ms), eoma(kB, kA, 20, kPgn));
         s.sniffer.advance(at(31ms));
-        CHECK(s.ends() == (EndList{SniffEnd::Incomplete}));
+        CHECK(s.ends() == (EndList{SniffResult::Incomplete}));
         CHECK(s.heard[0].time == at(30ms));
         CHECK(s.heard[0].noticed == at(31ms));
         CHECK(s.heard[0].data.empty());
@@ -1024,7 +1024,7 @@ TEST_CASE(sniffer_decides_an_early_acknowledgement_when_the_time_moves_on)
         s.feed(at(20ms), dts(kA, kB, message, 1, 2));
         s.feed(at(30ms), eoma(kB, kA, 20, kPgn));
         s.feed(at(31ms), dt(kA, kB, 3, message));
-        CHECK(s.ends() == (EndList{SniffEnd::Incomplete}));
+        CHECK(s.ends() == (EndList{SniffResult::Incomplete}));
         CHECK_EQ(s.stats().orphan_data, 1u);
     }
 }
@@ -1046,7 +1046,7 @@ TEST_CASE(sniffer_drops_a_transfer_it_joined_in_the_middle_and_takes_the_next)
     s.feed(at(110ms), cts(kB, kA, 3, 1, kPgn));
     s.feed(at(120ms), dts(kA, kB, message, 1, 3));
     s.feed(at(130ms), eoma(kB, kA, 20, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Completed}));
     CHECK_EQ(s.stats().started, 1u);
 }
 
@@ -1063,7 +1063,7 @@ TEST_CASE(sniffer_without_a_free_place_counts_the_announcement_and_stopped_trans
     CHECK_EQ(s.sniffer.active(), 2u);
     // The first one has stopped: it is cleared before the new one looks for a place.
     s.feed(at(1501ms), rts(kC, kB, 30, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::TimedOut}));
+    CHECK(s.ends() == (EndList{SniffResult::TimedOut}));
     CHECK_EQ(s.heard[0].da, kB);
     CHECK_EQ(s.stats().no_session, 1u);
     CHECK_EQ(s.stats().started, 3u);
@@ -1092,7 +1092,7 @@ TEST_CASE(sniffer_follows_transfers_that_run_at_the_same_time)
     s.feed(at(200ms), eoma(kB, kC, 20, kOther));
     s.feed(at(200ms), eoma(kA, kB, 20, kPgn));
     s.feed(at(200ms), eoma(kB, kA, 20, kPgn));
-    CHECK(s.ends() == (EndList{SniffEnd::Completed, SniffEnd::Completed, SniffEnd::Completed, SniffEnd::Completed}));
+    CHECK(s.ends() == (EndList{SniffResult::Completed, SniffResult::Completed, SniffResult::Completed, SniffResult::Completed}));
     CHECK(s.heard[0].data == all);
     CHECK(s.heard[1].data == cb);
     CHECK(s.heard[2].data == ba);
@@ -1172,7 +1172,7 @@ TEST_CASE(sniffer_handler_may_not_call_back_into_the_sniffer)
     TransferSniffer sniffer;
     std::string said;
     int calls = 0;
-    sniffer.on_transfer([&](const SniffedTransfer&) {
+    sniffer.on_transfer_end([&](const SniffedTransfer&) {
         ++calls;
         try
         {
@@ -1183,18 +1183,18 @@ TEST_CASE(sniffer_handler_may_not_call_back_into_the_sniffer)
             said = e.what();
         }
         CHECK(throws_with<std::logic_error>([&] { sniffer.feed(TimedFrame{at(10s), to_can(rts(kA, kB, 30, kPgn))}); },
-                                            "feed() was called from the on_transfer handler"));
-        CHECK(throws_with<std::logic_error>([&] { sniffer.on_transfer({}); },
-                                            "on_transfer() was called from the on_transfer handler"));
+                                            "feed() was called from the on_transfer_end handler"));
+        CHECK(throws_with<std::logic_error>([&] { sniffer.on_transfer_end({}); },
+                                            "on_transfer_end() was called from the on_transfer_end handler"));
         CHECK_EQ(sniffer.active(), 0u); // the transfer is over when the handler hears of it
     });
     sniffer.feed(TimedFrame{at(0ms), to_can(rts(kA, kB, 30, kPgn))});
     sniffer.feed(TimedFrame{at(1ms), to_can(conn_abort(kA, kB, 2, kPgn))});
     CHECK_EQ(calls, 1);
-    CHECK(said == "vehicle_sil::j1939::TransferSniffer: advance() was called from the on_transfer handler. "
+    CHECK(said == "vehicle_sil::j1939::TransferSniffer: advance() was called from the on_transfer_end handler. "
                   "Copy what the handler needs and call it after feed() or advance() has returned");
     // Usable again afterwards, and without a handler transfers are only counted.
-    sniffer.on_transfer({});
+    sniffer.on_transfer_end({});
     sniffer.feed(TimedFrame{at(2ms), to_can(rts(kA, kB, 30, kPgn))});
     sniffer.advance(at(10s));
     CHECK_EQ(sniffer.statistics().timed_out, 1u);
@@ -1205,7 +1205,7 @@ TEST_CASE(sniffer_handler_that_throws_leaves_the_sniffer_usable)
 {
     TransferSniffer sniffer;
     int calls = 0;
-    sniffer.on_transfer([&](const SniffedTransfer&) {
+    sniffer.on_transfer_end([&](const SniffedTransfer&) {
         throw std::runtime_error("handler " + std::to_string(++calls));
     });
     sniffer.feed(TimedFrame{at(0ms), to_can(rts(kA, kB, 30, kPgn))});
@@ -1226,12 +1226,12 @@ TEST_CASE(sniffer_handles_the_frame_before_it_passes_on_what_the_handler_threw)
     // leaves feed() afterwards.
     Sniffer s;
     int calls = 0;
-    std::vector<SniffEnd> ends;
+    std::vector<SniffResult> ends;
     Bytes data;
-    s.sniffer.on_transfer([&](const SniffedTransfer& t) {
-        ends.push_back(t.end);
+    s.sniffer.on_transfer_end([&](const SniffedTransfer& t) {
+        ends.push_back(t.result);
         data.assign(t.data.begin(), t.data.end());
-        if (t.end != SniffEnd::Completed)
+        if (t.result != SniffResult::Completed)
         {
             throw std::runtime_error("handler " + std::to_string(++calls));
         }
@@ -1240,14 +1240,14 @@ TEST_CASE(sniffer_handles_the_frame_before_it_passes_on_what_the_handler_threw)
     s.feed(at(0ms), rts(kA, kC, 30, kPgn)); // never answered
     s.feed(at(1400ms), rts(kA, kB, 30, kPgn));
     CHECK(throws_with<std::runtime_error>([&] { s.feed(at(1501ms), rts(kA, kB, 14, kPgn)); }, "handler 1"));
-    CHECK(ends == (EndList{SniffEnd::TimedOut, SniffEnd::Replaced}));
+    CHECK(ends == (EndList{SniffResult::TimedOut, SniffResult::Replaced}));
     CHECK_EQ(s.sniffer.active(), 1u);
     CHECK_EQ(s.stats().started, 3u);
     // Nothing is left over for the next call, and the announcement is followed.
     s.feed(at(1510ms), cts(kB, kA, 2, 1, kPgn));
     s.feed(at(1520ms), dts(kA, kB, message, 1, 2));
     s.feed(at(1530ms), eoma(kB, kA, 14, kPgn));
-    CHECK(ends == (EndList{SniffEnd::TimedOut, SniffEnd::Replaced, SniffEnd::Completed}));
+    CHECK(ends == (EndList{SniffResult::TimedOut, SniffResult::Replaced, SniffResult::Completed}));
     CHECK(data == message);
     CHECK_EQ(s.stats().orphan_control, 0u);
     CHECK_EQ(s.stats().orphan_data, 0u);
@@ -1268,7 +1268,7 @@ TEST_CASE(sniffer_ends_the_transfers_from_and_to_an_address_as_lost)
     CHECK(s.heard.size() == 3u);
     for (const Heard& h : s.heard)
     {
-        CHECK(h.end == SniffEnd::Lost);
+        CHECK(h.end == SniffResult::Lost);
         CHECK(h.time == at(5ms));
         CHECK(h.noticed == at(5ms));
         CHECK(h.sa == kA || h.da == kA);
@@ -1285,7 +1285,7 @@ TEST_CASE(sniffer_ends_the_transfers_from_and_to_an_address_as_lost)
     s.feed(at(20ms), dts(kB, kC, message, 1, 5));
     s.feed(at(30ms), eoma(kC, kB, 30, kPgn));
     CHECK(s.heard.size() == 4u);
-    CHECK(s.heard[3].end == SniffEnd::Completed);
+    CHECK(s.heard[3].end == SniffResult::Completed);
     CHECK(s.heard[3].data == message);
     CHECK_EQ(s.stats().lost, 3u);
     // The frames of the ended transfers find none, and a new announcement is followed again.
@@ -1302,7 +1302,7 @@ TEST_CASE(sniffer_ending_the_transfers_of_an_address_forgets_the_announcement_th
     s.feed(at(20ms), rts(kA, kB, 14, kOther)); // ignored and remembered
     CHECK_EQ(s.stats().announcements_ignored, 1u);
     CHECK_EQ(s.sniffer.end_transfers_of(kB, at(25ms)), 1u);
-    CHECK(s.ends() == (EndList{SniffEnd::Lost}));
+    CHECK(s.ends() == (EndList{SniffResult::Lost}));
     CHECK_EQ(s.sniffer.active(), 0u);
     // The receiver's answer to the remembered announcement starts nothing.
     s.feed(at(30ms), cts(kB, kA, 2, 1, kOther));
@@ -1326,9 +1326,9 @@ TEST_CASE(sniffer_ending_the_transfers_of_an_address_moves_the_time_first)
         }
         CHECK_EQ(s.sniffer.end_transfers_of(kA, at(1600ms)), 1u);
         CHECK(s.heard.size() == 2u);
-        CHECK(s.heard[0].end == SniffEnd::TimedOut);
+        CHECK(s.heard[0].end == SniffResult::TimedOut);
         CHECK(s.heard[0].time == at(1250ms));
-        CHECK(s.heard[1].end == SniffEnd::Lost);
+        CHECK(s.heard[1].end == SniffResult::Lost);
         CHECK(s.heard[1].da == kC);
         CHECK(s.heard[1].time == at(1600ms));
     }
@@ -1337,14 +1337,14 @@ TEST_CASE(sniffer_ending_the_transfers_of_an_address_moves_the_time_first)
         open(s, 14);
         s.feed(at(20ms), eoma(kB, kA, 14, kPgn)); // before any packet
         CHECK_EQ(s.sniffer.end_transfers_of(kA, at(20ms)), 1u); // the same time: not decided yet
-        CHECK(s.ends() == (EndList{SniffEnd::Lost}));
+        CHECK(s.ends() == (EndList{SniffResult::Lost}));
     }
     {
         Sniffer s;
         open(s, 14);
         s.feed(at(20ms), eoma(kB, kA, 14, kPgn));
         CHECK_EQ(s.sniffer.end_transfers_of(kA, at(21ms)), 0u); // decided by the time
-        CHECK(s.ends() == (EndList{SniffEnd::Incomplete}));
+        CHECK(s.ends() == (EndList{SniffResult::Incomplete}));
         // An earlier time moves nothing back.
         s.feed(at(100ms), rts(kA, kB, 30, kPgn));
         CHECK_EQ(s.sniffer.end_transfers_of(kB, at(50ms)), 1u);
@@ -1357,11 +1357,11 @@ TEST_CASE(sniffer_ending_the_transfers_of_an_address_follows_the_handler_rules)
 {
     TransferSniffer sniffer;
     int calls = 0;
-    sniffer.on_transfer([&](const SniffedTransfer&) {
+    sniffer.on_transfer_end([&](const SniffedTransfer&) {
         ++calls;
         CHECK(throws_with<std::logic_error>(
             [&] { static_cast<void>(sniffer.end_transfers_of(kA, at(1s))); },
-            "vehicle_sil::j1939::TransferSniffer: end_transfers_of() was called from the on_transfer handler. Copy "
+            "vehicle_sil::j1939::TransferSniffer: end_transfers_of() was called from the on_transfer_end handler. Copy "
             "what the handler needs and call it after feed() or advance() has returned"));
         throw std::runtime_error("handler " + std::to_string(calls));
     });
@@ -1373,7 +1373,7 @@ TEST_CASE(sniffer_ending_the_transfers_of_an_address_follows_the_handler_rules)
     CHECK_EQ(sniffer.active(), 0u);
     CHECK_EQ(sniffer.statistics().lost, 2u);
     // Without transfers and without a handler it is a plain 0.
-    sniffer.on_transfer({});
+    sniffer.on_transfer_end({});
     CHECK_EQ(sniffer.end_transfers_of(kA, at(2ms)), 0u);
     TransferSniffer fresh;
     CHECK_EQ(fresh.end_transfers_of(kA, at(0ms)), 0u);

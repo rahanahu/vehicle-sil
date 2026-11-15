@@ -977,7 +977,7 @@ TEST_CASE(steady_state_steps_with_a_listener_do_not_allocate)
     listener.on_message(Pgn{0xEF00}, [&](const Message& m) { bytes += m.data.size(); });
     listener.on_any_message([&](const Message&) { ++messages; });
     listener.on_frame([&](const vehicle_sil::j1939::ReceivedFrame&) { ++frames; });
-    listener.on_transfer([&](const vehicle_sil::j1939::SniffedTransfer&) { ++transfers; });
+    listener.on_transfer_end([&](const vehicle_sil::j1939::SniffedTransfer&) { ++transfers; });
     // Handlers that are removed while the steps are counted: one from its own call, one from a
     // node's handler.
     std::size_t removed = 0;
@@ -1062,7 +1062,7 @@ TEST_CASE(following_transfers_with_a_sniffer_does_not_allocate)
     vehicle_sil::j1939::TransferSniffer sniffer(options);
     std::size_t ended = 0;
     std::size_t bytes = 0;
-    sniffer.on_transfer([&](const vehicle_sil::j1939::SniffedTransfer& t) {
+    sniffer.on_transfer_end([&](const vehicle_sil::j1939::SniffedTransfer& t) {
         ++ended;
         bytes += t.message().data.size();
     });

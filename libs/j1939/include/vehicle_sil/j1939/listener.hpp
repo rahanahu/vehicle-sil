@@ -58,7 +58,7 @@ struct ListenerOptions
     /// nodes: with a single node nothing of it is heard, whatever this says. So this is not
     /// the way to count what a node sent; use the node's own results for that
     /// (Node::on_transfer_end(), the result of a Requester). The connections of the Network's
-    /// own nodes are not reported by on_transfer() either way, and a connection (RTS/CTS) from
+    /// own nodes are not reported by on_transfer_end() either way, and a connection (RTS/CTS) from
     /// a node of this Network to another participant gives its frames only, no message: the
     /// Network assembles only what is addressed to its nodes, and the frames of its own nodes
     /// are not followed.
@@ -72,7 +72,7 @@ struct ListenerOptions
 ///   frame and a broadcast (BAM): as the Network received it. A message to a node of this
 ///   Network over a connection: as the Network assembled it. A connection between two other
 ///   ECUs: as the TransferSniffer assembled it from the frames. Each message once.
-/// - on_transfer(): how each connection between two other ECUs ended, also those that gave no
+/// - on_transfer_end(): how each connection between two other ECUs ended, also those that gave no
 ///   message (aborted, timed out, missed packets).
 /// - on_frame(): every frame, before anything else that follows from it.
 ///
@@ -92,14 +92,14 @@ struct ListenerOptions
 /// repository's engine gets for the same frames: group, priority, source, destination, time and
 /// bytes. Code that reads a Message in a node's handler can read it here. A Message does not
 /// say whether its transfer had conflicting packets (a packet seen twice with different bytes:
-/// the receiver may have taken the other one). That is known from the on_transfer() handlers,
+/// the receiver may have taken the other one). That is known from the on_transfer_end() handlers,
 /// which are called for the same transfer right after the message handlers
 /// (SniffedTransfer::conflicting_packets), and from sniffer_statistics().conflicting_packets,
 /// which counts them all: while it is 0, every message handed on was the receiver's. Publish
 /// that counter with the others, or use the value in the message handler and discard it
-/// when the on_transfer() handler right after (same group, source and destination) reports it
+/// when the on_transfer_end() handler right after (same group, source and destination) reports it
 /// Completed with conflicting packets. Other messages (single frames, BAM, messages addressed
-/// to a node of this Network) get no on_transfer() call and cannot differ from the receiver's.
+/// to a node of this Network) get no on_transfer_end() call and cannot differ from the receiver's.
 /// With SniffDelivery::WhenAllPacketsSeen the receiver may also have dropped a transfer that is
 /// handed on here (it had no chance to say so; e.g. the sender's address changed hands, which
 /// the sniffer does not read).
@@ -112,10 +112,10 @@ struct ListenerOptions
 /// address. After the node lost the address, its conversations are followed again.
 ///
 /// Order, for one frame: first the on_frame() handlers. Then what the frame's time or address
-/// ended of other transfers (TimedOut, Incomplete, Lost): their on_transfer() handlers. Then
+/// ended of other transfers (TimedOut, Incomplete, Lost): their on_transfer_end() handlers. Then
 /// what the frame itself brings: a connection between other ECUs that it completes is handed to
-/// the message handlers and right after to the on_transfer() handlers (any other end, such as
-/// an abort: the on_transfer() handlers only); a single frame, or a message the Network
+/// the message handlers and right after to the on_transfer_end() handlers (any other end, such as
+/// an abort: the on_transfer_end() handlers only); a single frame, or a message the Network
 /// assembled with it, is handed to the message handlers. So the end of another transfer can be
 /// reported before the message of the frame that made the sniffer notice it: compare the times.
 /// For one message: the Network's Observer, then the Listener, then the handlers of the
@@ -157,7 +157,7 @@ class Listener final
 {
 public:
     using MessageHandler = std::function<void(const Message&)>;
-    using TransferHandler = std::function<void(const SniffedTransfer&)>;
+    using SniffHandler = std::function<void(const SniffedTransfer&)>;
     using FrameHandler = std::function<void(const ReceivedFrame&)>;
 
     /// Handle of a registered handler of this Listener (of any of the four kinds).
@@ -184,13 +184,13 @@ public:
     /// The id removes it again (remove_handler(), ListenerSubscription); dropped, the handler
     /// stays for the Listener's life.
     /// A message of a connection between two other ECUs has the receiver's bytes if its transfer
-    /// had no conflicting packets, which the on_transfer() handlers are told right after; other
-    /// messages get no on_transfer() call (see the class comment).
+    /// had no conflicting packets, which the on_transfer_end() handlers are told right after; other
+    /// messages get no on_transfer_end() call (see the class comment).
     HandlerId on_message(Pgn pgn, MessageHandler handler);
     HandlerId on_any_message(MessageHandler handler);
     /// Adds a handler for the end of every connection between two other ECUs. A Completed one
     /// was handed to the message handlers just before. The same conditions as on_message().
-    HandlerId on_transfer(TransferHandler handler);
+    HandlerId on_transfer_end(SniffHandler handler);
     /// Adds a handler for every frame. The same conditions as on_message().
     HandlerId on_frame(FrameHandler handler);
 

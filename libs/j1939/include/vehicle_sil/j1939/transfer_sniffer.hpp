@@ -41,12 +41,12 @@ struct SniffFrame
 };
 
 /// How a followed transfer ended.
-enum class SniffEnd : std::uint8_t
+enum class SniffResult : std::uint8_t
 {
     Completed,         ///< Every packet was seen (and, by default, the receiver acknowledged): `data` is the message.
     Incomplete,        ///< The receiver acknowledged, but the sniffer missed packets.
-    AbortedBySender,   ///< Connection Abort from the sender; `reason` is its reason byte.
-    AbortedByReceiver, ///< Connection Abort from the receiver; `reason` is its reason byte.
+    AbortedBySender,   ///< Connection Abort from the sender; `reason` is its reason.
+    AbortedByReceiver, ///< Connection Abort from the receiver; `reason` is its reason.
     Replaced,          ///< The sender announced again before the transfer ended (for another group:
                        ///< when the receiver answered that announcement, see SniffSecondAnnouncement).
     Lost,              ///< A broadcast with a missing, repeated or out-of-order packet, or a transfer
@@ -71,16 +71,18 @@ enum class SniffEnd : std::uint8_t
 ///   decide). It depends on the listener's step size and on what else is on the bus.
 struct SniffedTransfer
 {
-    SniffEnd end = SniffEnd::Completed;
+    SniffResult result = SniffResult::Completed;
     Pgn pgn{};
     Priority priority = kDefaultPriority; ///< Of the announcement.
     Address source = kNullAddress;
     Address destination = kGlobalAddress; ///< kGlobalAddress for a broadcast.
-    std::size_t size = 0;                 ///< The announced size in bytes.
+    std::size_t length = 0;               ///< The announced length in bytes.
     SimTime started{};
     SimTime time{};
     SimTime noticed{};
-    std::uint8_t reason = 0;              ///< AbortedBySender, AbortedByReceiver: the reason byte; else 0.
+    /// AbortedBySender, AbortedByReceiver: the reason of the Connection Abort (a byte that
+    /// AbortReason has no name for is passed as it is); else AbortReason::None.
+    AbortReason reason = AbortReason::None;
     /// Repeated packets of this transfer whose bytes differed from the first one seen (each is
     /// also counted in SnifferStatistics::conflicting_packets). Not 0: the sniffer cannot know
     /// which of the two the receiver took, so the bytes of a Completed transfer may differ from
@@ -88,7 +90,7 @@ struct SniffedTransfer
     /// the transfer before arrives during this one; a sender that repeats a packet repeats its
     /// bytes.
     std::uint32_t conflicting_packets = 0;
-    /// Completed: the message (`size` bytes), valid during the handler call only. Else empty.
+    /// Completed: the message (`length` bytes), valid during the handler call only. Else empty.
     std::span<const std::uint8_t> data{};
 
     /// The transfer as a Message. For a Completed transfer whose conflicting_packets is 0 it has
@@ -177,7 +179,7 @@ struct SnifferOptions
 struct SnifferStatistics
 {
     std::uint64_t started = 0;             ///< Transfers followed (announcements taken).
-    // One per ended transfer, by SniffEnd:
+    // One per ended transfer, by SniffResult:
     std::uint64_t completed = 0;
     std::uint64_t incomplete = 0;
     std::uint64_t aborted_by_sender = 0;
@@ -246,12 +248,12 @@ public:
     TransferSniffer& operator=(const TransferSniffer&) = delete;
 
     /// Sets the handler called for every transfer that ends, from feed() or advance(). The
-    /// handler must not call feed(), advance() or on_transfer() of this sniffer
+    /// handler must not call feed(), advance() or on_transfer_end() of this sniffer
     /// (std::logic_error). If the handler throws, feed() or advance() first finishes its work
     /// (the frame is handled, every transfer that is due has ended and was reported) and then
     /// passes the exception on; if several calls threw, the first one. Nothing is left for the
     /// next call, so do not feed the frame again.
-    void on_transfer(Handler handler);
+    void on_transfer_end(Handler handler);
 
     /// One frame of the bus. Frames other than TP.CM and TP.DT only move the time on.
     void feed(const SniffFrame& frame);
@@ -293,8 +295,8 @@ private:
     void time_out(Session& session);
     [[nodiscard]] static Announcement announcement(const SniffFrame& frame) noexcept;
     Session* start(const Announcement& announcement, bool broadcast); ///< nullptr: no free place
-    void end(Session& session, SniffEnd how, SimTime time, std::uint8_t reason = 0);
-    void report(const Session& session, SniffEnd how, SimTime time, std::uint8_t reason);
+    void end(Session& session, SniffResult how, SimTime time, AbortReason reason = AbortReason::None);
+    void report(const Session& session, SniffResult how, SimTime time, AbortReason reason);
     void pass_on_what_the_handler_threw();
     void complete(Session& session, SimTime time);
     void on_control(const SniffFrame& frame);

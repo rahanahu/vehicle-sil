@@ -58,22 +58,6 @@ enum class SendStatus : std::uint8_t
                      ///< going: its broadcast (BAM), or its transfer to the same destination.
 };
 
-/// Reason byte of a transport Connection Abort.
-enum class AbortReason : std::uint8_t
-{
-    None = 0,              ///< No abort (TransferEnd of a transfer that was not aborted).
-    Busy = 1,              ///< Already in a connection with the sender; cannot take another one.
-    ResourcesNeeded = 2,   ///< The system needs the resources of the session.
-    Timeout = 3,
-    CtsWhileSending = 4,   ///< A clear-to-send came before the packets of the last one were sent.
-    RetransmitLimit = 5,   ///< Too many retransmission requests.
-    UnexpectedData = 6,    ///< A data packet came when none was expected.
-    BadSequence = 7,       ///< A sequence number that cannot be recovered from.
-    DuplicateSequence = 8,
-    TooLarge = 9,          ///< The message is longer than the receiver can take.
-    Other = 250,           ///< Any other error.
-};
-
 /// What Node::send() does with a transfer (a message longer than 8 bytes) that cannot start yet
 /// because the node's transfer it would run beside is still going (or no transmit session is
 /// free).
